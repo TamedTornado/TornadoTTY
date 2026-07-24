@@ -374,11 +374,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             persistWorkspaceSnapshot(reason: .cleanExit, generation: generation, synchronously: true)
             try? sessionRestoreStore.markCleanExit()
         }
-        AgentIPCServer.shared.stop()
         for controller in windowControllers.values {
             controller.tearDownRuntime()
         }
         windowControllers.removeAll()
+        // Stopped only after the panes are gone. `stop()` now deletes the
+        // runtime directory synchronously, and that directory holds the
+        // ephemeral agent home overlays (CODEX_HOME, KIMI_CODE_HOME, …) that
+        // those panes' processes are still using — removing it first would pull
+        // state out from under live agents. Tearing down first also lets an
+        // agent's final hook events still be delivered.
+        AgentIPCServer.shared.stop()
         if let configObserverID {
             configStore.removeObserver(configObserverID)
         }

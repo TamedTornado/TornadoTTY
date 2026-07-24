@@ -402,16 +402,31 @@ final class AgentIPCServer: @unchecked Sendable {
 
     private static let maxRequestBytes = 256 * 1024
     private static let connectionTimeoutSeconds: Int = 2
+    /// Name of the per-directory advisory lock proving a live owner. Not
+    /// private so tests build their fixtures from the same constant — a rename
+    /// would otherwise silently decouple them and leave the tests passing while
+    /// exercising the pid fallback instead of the lock.
+    static let lockFileName = "lock"
+    /// How often a running server re-checks that its socket still exists on
+    /// disk. Only a `stat`, so the interval can stay short enough that a pane
+    /// recovers within one prompt of the user noticing something is off.
+    private static let revalidationIntervalSeconds = 60
 
     private let fileManager: FileManager
     private let authentication: AgentIPCAuthentication
     let instanceID: String
     private let queue = DispatchQueue(label: "be.zenjoy.zentty.agent-ipc")
     private let diagnosticsEnabled: Bool
+    private let baseRuntimeDirectoryOverride: URL?
     private var socketFileDescriptor: Int32 = -1
     private var socketPath: String?
     private var runtimeDirectoryURL: URL?
     private var readSource: DispatchSourceRead?
+    private var revalidationTimer: DispatchSourceTimer?
+    /// Held open for as long as this instance owns its runtime directory. The
+    /// kernel releases the lock when the process exits *or crashes*, which is
+    /// what lets other instances reap the directory safely.
+    private var runtimeLockFileDescriptor: Int32 = -1
     /// Pane IDs whose first agent bootstrap should skip the integration-consent
     /// prompt because the pane was spawned by a workspace restore/import (the
     /// user did not actively launch it). Populated on the main actor during
@@ -426,12 +441,14 @@ final class AgentIPCServer: @unchecked Sendable {
         fileManager: FileManager = .default,
         authentication: AgentIPCAuthentication = AgentIPCAuthentication(),
         instanceID: String = UUID().uuidString.lowercased(),
-        diagnosticsEnabled: Bool = ProcessInfo.processInfo.environment["ZENTTY_IPC_DIAGNOSTICS"] == "1"
+        diagnosticsEnabled: Bool = ProcessInfo.processInfo.environment["ZENTTY_IPC_DIAGNOSTICS"] == "1",
+        baseRuntimeDirectory: URL? = nil
     ) {
         self.fileManager = fileManager
         self.authentication = authentication
         self.instanceID = instanceID
         self.diagnosticsEnabled = diagnosticsEnabled
+        self.baseRuntimeDirectoryOverride = baseRuntimeDirectory
     }
 
     /// Mark a pane so its first agent bootstrap skips the consent prompt (see
@@ -485,107 +502,182 @@ final class AgentIPCServer: @unchecked Sendable {
 
     @discardableResult
     func startIfNeeded() -> String? {
-        queue.sync { () -> String? in
-            if let socketPath {
+        queue.sync { startOrRevalidateLocked() }
+    }
+
+    /// Start the listener, or re-establish it if the socket has disappeared
+    /// from disk. Confined to `queue`.
+    ///
+    /// The revalidation half exists because the runtime directory can be
+    /// deleted out from under a running instance — cache cleaners, an OS purge,
+    /// a stray `rm -rf`. When that happens the listening descriptor stays bound
+    /// to an unlinked inode, so the app sees a perfectly healthy socket while
+    /// every client `connect()` fails with `ENOENT`. Nothing surfaces: the shell
+    /// integration discards its own errors by design. Panes then lose cwd and
+    /// git-branch reporting until the app is restarted.
+    private func startOrRevalidateLocked() -> String? {
+        if let socketPath {
+            if isBoundSocketPresent(atPath: socketPath) {
                 return socketPath
             }
 
-            do {
-                cleanupStaleRuntimeDirectories(in: baseRuntimeDirectoryURL())
-                let runtimeDirectoryURL = try makeRuntimeDirectory()
-                let socketURL = runtimeDirectoryURL.appendingPathComponent("zentty.sock", isDirectory: false)
-                let socketPath = socketURL.path
+            agentIPCLogger.error(
+                "IPC socket vanished from \(socketPath, privacy: .public); rebinding in place"
+            )
+            teardownListenerLocked(removeRuntimeDirectory: false)
+        }
 
-                // The handle owns the descriptor (and, once armed, the bound
-                // socket-file unlink) for the whole error-prone setup below. Any
-                // `throw` triggers this `defer`, which closes the fd and unlinks
-                // the socket path exactly as the old per-branch cleanup did. On
-                // success we `takeOwnership()` before returning, making the
-                // `close()` a no-op and handing the fd to the source's cancel
-                // handler as the sole remaining owner.
-                let handle = try UnixSocketHandle(domain: AF_UNIX, type: SOCK_STREAM, protocol: 0)
-                defer { handle.close() }
+        // Armed on the first attempt rather than on the first success, so a
+        // transient failure (full disk, a parent directory momentarily gone) is
+        // retried instead of leaving the instance mute until it restarts.
+        startRevalidationTimerLocked()
 
-                var address = sockaddr_un()
-                address.sun_family = sa_family_t(AF_UNIX)
-                let utf8Path = socketPath.utf8CString
-                guard utf8Path.count <= MemoryLayout.size(ofValue: address.sun_path) else {
-                    throw AgentIPCError.invalidMessage
-                }
-                // Remove any stale socket file from a prior run so `bind`
-                // doesn't fail with EADDRINUSE, then arm the handle to unlink
-                // the socket we're about to bind if setup fails past here.
-                unlink(socketPath)
-                handle.unlinkPathOnClose(socketPath)
-                _ = withUnsafeMutablePointer(to: &address.sun_path.0) { pointer in
-                    utf8Path.withUnsafeBufferPointer { buffer in
-                        memcpy(pointer, buffer.baseAddress, buffer.count)
-                    }
-                }
+        do {
+            cleanupStaleRuntimeDirectories(in: baseRuntimeDirectoryURL())
+            if baseRuntimeDirectoryOverride == nil {
+                // Skipped when a test injects its own root, so a test run never
+                // reaches into the real home directory.
+                cleanupStaleRuntimeDirectories(in: legacyBaseRuntimeDirectoryURL())
+            }
 
-                let bindResult = withUnsafePointer(to: &address) {
-                    $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                        bind(
-                            handle.fileDescriptor,
-                            $0,
-                            socklen_t(MemoryLayout<sockaddr_un>.size)
-                        )
-                    }
-                }
-                guard bindResult == 0 else {
-                    throw POSIXError(.init(rawValue: errno) ?? .EIO)
-                }
+            let runtimeDirectoryURL = try makeRuntimeDirectory()
+            try acquireRuntimeLockLocked(in: runtimeDirectoryURL)
+            let socketURL = runtimeDirectoryURL.appendingPathComponent("zentty.sock", isDirectory: false)
+            let listener = try bindListener(at: socketURL.path)
 
-                guard listen(handle.fileDescriptor, SOMAXCONN) == 0 else {
-                    throw POSIXError(.init(rawValue: errno) ?? .EIO)
-                }
+            self.runtimeDirectoryURL = runtimeDirectoryURL
+            self.socketPath = listener.socketPath
+            self.socketFileDescriptor = listener.fileDescriptor
+            self.readSource = listener.source
+            return listener.socketPath
+        } catch {
+            // Unconditional: a failure here silently disables every agent hook
+            // and all pane context reporting, so it must never depend on a
+            // diagnostics env var being set ahead of time.
+            agentIPCLogger.error("Failed to start IPC socket: \(error.localizedDescription, privacy: .public)")
+            releaseRuntimeLockLocked()
+            return nil
+        }
+    }
 
-                let flags = fcntl(handle.fileDescriptor, F_GETFL)
-                _ = fcntl(handle.fileDescriptor, F_SETFL, flags | O_NONBLOCK)
-                let descriptorFlags = fcntl(handle.fileDescriptor, F_GETFD)
-                _ = fcntl(handle.fileDescriptor, F_SETFD, descriptorFlags | FD_CLOEXEC)
+    private struct Listener {
+        let fileDescriptor: Int32
+        let source: DispatchSourceRead
+        let socketPath: String
+    }
 
-                let fileDescriptor = handle.fileDescriptor
-                let readSource = DispatchSource.makeReadSource(fileDescriptor: fileDescriptor, queue: queue)
-                readSource.setEventHandler { [weak self] in
-                    self?.acceptPendingConnections()
-                }
-                let cleanupSocketPath = socketPath
-                let cleanupRuntimeDirectoryURL = runtimeDirectoryURL
-                let cleanupFileManager = fileManager
-                readSource.setCancelHandler { [weak self] in
-                    close(fileDescriptor)
-                    unlink(cleanupSocketPath)
-                    try? cleanupFileManager.removeItem(at: cleanupRuntimeDirectoryURL)
-                    self?.socketFileDescriptor = -1
-                }
-                readSource.resume()
+    /// Bind and arm a listening socket at `socketPath`. Shared by first start
+    /// and by rebinding, so both produce an identically configured listener.
+    private func bindListener(at socketPath: String) throws -> Listener {
+        // The handle owns the descriptor (and, once armed, the bound
+        // socket-file unlink) for the whole error-prone setup below. Any
+        // `throw` triggers this `defer`, which closes the fd and unlinks
+        // the socket path exactly as the old per-branch cleanup did. On
+        // success we `takeOwnership()` before returning, making the
+        // `close()` a no-op and handing the fd to the source's cancel
+        // handler as the sole remaining owner.
+        let handle = try UnixSocketHandle(domain: AF_UNIX, type: SOCK_STREAM, protocol: 0)
+        defer { handle.close() }
 
-                // Hand the descriptor's lifetime to the cancel handler above;
-                // the setup `defer` no longer touches it.
-                handle.takeOwnership()
-
-                self.runtimeDirectoryURL = runtimeDirectoryURL
-                self.socketPath = socketPath
-                self.socketFileDescriptor = fileDescriptor
-                self.readSource = readSource
-                return socketPath
-            } catch {
-                logError("Failed to start IPC socket: \(error.localizedDescription)")
-                return nil
+        var address = sockaddr_un()
+        address.sun_family = sa_family_t(AF_UNIX)
+        let utf8Path = socketPath.utf8CString
+        guard utf8Path.count <= MemoryLayout.size(ofValue: address.sun_path) else {
+            throw AgentIPCError.invalidMessage
+        }
+        // Remove any stale socket file from a prior run so `bind`
+        // doesn't fail with EADDRINUSE, then arm the handle to unlink
+        // the socket we're about to bind if setup fails past here.
+        unlink(socketPath)
+        handle.unlinkPathOnClose(socketPath)
+        _ = withUnsafeMutablePointer(to: &address.sun_path.0) { pointer in
+            utf8Path.withUnsafeBufferPointer { buffer in
+                memcpy(pointer, buffer.baseAddress, buffer.count)
             }
         }
+
+        let bindResult = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                bind(
+                    handle.fileDescriptor,
+                    $0,
+                    socklen_t(MemoryLayout<sockaddr_un>.size)
+                )
+            }
+        }
+        guard bindResult == 0 else {
+            throw POSIXError(.init(rawValue: errno) ?? .EIO)
+        }
+
+        guard listen(handle.fileDescriptor, SOMAXCONN) == 0 else {
+            throw POSIXError(.init(rawValue: errno) ?? .EIO)
+        }
+
+        let flags = fcntl(handle.fileDescriptor, F_GETFL)
+        _ = fcntl(handle.fileDescriptor, F_SETFL, flags | O_NONBLOCK)
+        let descriptorFlags = fcntl(handle.fileDescriptor, F_GETFD)
+        _ = fcntl(handle.fileDescriptor, F_SETFD, descriptorFlags | FD_CLOEXEC)
+
+        let fileDescriptor = handle.fileDescriptor
+        let source = DispatchSource.makeReadSource(fileDescriptor: fileDescriptor, queue: queue)
+        source.setEventHandler { [weak self] in
+            self?.acceptPendingConnections()
+        }
+        // Closing the descriptor is all this handler does. It runs
+        // asynchronously on `queue`, so it must not unlink the socket path or
+        // remove the runtime directory: during a rebind that would land *after*
+        // the replacement has been created at the same path and delete it.
+        // Both of those are done synchronously in `teardownListenerLocked`.
+        source.setCancelHandler {
+            close(fileDescriptor)
+        }
+        source.resume()
+
+        // Hand the descriptor's lifetime to the cancel handler above;
+        // the setup `defer` no longer touches it.
+        handle.takeOwnership()
+
+        return Listener(fileDescriptor: fileDescriptor, source: source, socketPath: socketPath)
     }
 
     func stop() {
         queue.sync {
-            let activeSource = readSource
-            readSource = nil
-            socketPath = nil
-            runtimeDirectoryURL = nil
-            socketFileDescriptor = -1
-            activeSource?.cancel()
+            stopRevalidationTimerLocked()
+            teardownListenerLocked(removeRuntimeDirectory: true)
         }
+    }
+
+    /// Tear down the active listener. Confined to `queue`.
+    ///
+    /// `removeRuntimeDirectory` is `false` when rebinding at the same path: the
+    /// directory is about to be recreated, and the socket file is unlinked by
+    /// `bindListener` anyway. Removal is synchronous rather than deferred to the
+    /// source's cancel handler so that it is guaranteed to have happened by the
+    /// time `stop()` returns — during app termination the handler may otherwise
+    /// never get to run.
+    private func teardownListenerLocked(removeRuntimeDirectory: Bool) {
+        readSource?.cancel()
+        readSource = nil
+        socketFileDescriptor = -1
+
+        if removeRuntimeDirectory {
+            if let socketPath {
+                unlink(socketPath)
+            }
+            if let runtimeDirectoryURL {
+                do {
+                    try fileManager.removeItem(at: runtimeDirectoryURL)
+                } catch {
+                    agentIPCLogger.error(
+                        "Failed to remove IPC runtime directory: \(error.localizedDescription, privacy: .public)"
+                    )
+                }
+            }
+        }
+
+        releaseRuntimeLockLocked()
+        socketPath = nil
+        runtimeDirectoryURL = nil
     }
 
     func currentRuntimeDirectoryURL() -> URL? {
@@ -594,18 +686,110 @@ final class AgentIPCServer: @unchecked Sendable {
         }
     }
 
+    /// Re-check the socket periodically so an instance recovers on its own,
+    /// rather than only when the next pane happens to be created.
+    private func startRevalidationTimerLocked() {
+        guard revalidationTimer == nil else {
+            return
+        }
+
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        // Generous leeway: this is a background health check, so it should
+        // coalesce with other wakeups rather than pin an exact 60s tick.
+        timer.schedule(
+            deadline: .now() + .seconds(Self.revalidationIntervalSeconds),
+            repeating: .seconds(Self.revalidationIntervalSeconds),
+            leeway: .seconds(10)
+        )
+        timer.setEventHandler { [weak self] in
+            // Already on `queue`, so this calls the locked variant directly.
+            // Deliberately unguarded: after a failed rebind `socketPath` is nil,
+            // and that is exactly the state that needs retrying. `stop()`
+            // cancels this timer before tearing down, so it can never resurrect
+            // a server that was shut down on purpose.
+            _ = self?.startOrRevalidateLocked()
+        }
+        timer.resume()
+        revalidationTimer = timer
+    }
+
+    private func stopRevalidationTimerLocked() {
+        revalidationTimer?.cancel()
+        revalidationTimer = nil
+    }
+
+    /// Create (or recreate) this instance's runtime directory.
+    ///
+    /// The name is derived from `instanceID`, which is fixed for the process, so
+    /// the socket path is **stable for the instance's lifetime**. That is what
+    /// makes rebinding useful: a pane shell captures `ZENTTY_INSTANCE_SOCKET`
+    /// when it spawns and its environment cannot be changed afterwards, so a
+    /// replacement socket at a fresh path would leave every existing pane
+    /// stranded and only help newly created ones.
     private func makeRuntimeDirectory() throws -> URL {
         let baseDirectory = baseRuntimeDirectoryURL()
         try fileManager.createDirectory(at: baseDirectory, withIntermediateDirectories: true)
+        // Only the run directory is ours to lock down. Its parents (`~/.config`,
+        // `~/.config/zentty`) are shared with the user's own files, so their
+        // permissions are left exactly as found.
         try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: baseDirectory.path)
 
         let runtimeDirectory = baseDirectory.appendingPathComponent(
-            "ipc-\(ProcessInfo.processInfo.processIdentifier)-\(UUID().uuidString.prefix(8))",
+            runtimeDirectoryName,
             isDirectory: true
         )
         try fileManager.createDirectory(at: runtimeDirectory, withIntermediateDirectories: true)
         try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: runtimeDirectory.path)
         return runtimeDirectory
+    }
+
+    private var runtimeDirectoryName: String {
+        "ipc-\(ProcessInfo.processInfo.processIdentifier)-\(instanceID.prefix(8))"
+    }
+
+    /// Whether the socket is still on disk *as a socket*. A plain existence
+    /// check would accept any regular file left at the path and report the
+    /// listener healthy, which is the precise failure this check exists to
+    /// catch — clients would keep failing to connect and nothing would rebind.
+    private func isBoundSocketPresent(atPath path: String) -> Bool {
+        var status = stat()
+        guard stat(path, &status) == 0 else {
+            return false
+        }
+        return (status.st_mode & mode_t(S_IFMT)) == mode_t(S_IFSOCK)
+    }
+
+    /// Take the advisory lock marking this runtime directory as owned by a live
+    /// process. Confined to `queue`.
+    private func acquireRuntimeLockLocked(in runtimeDirectory: URL) throws {
+        releaseRuntimeLockLocked()
+
+        let lockPath = runtimeDirectory
+            .appendingPathComponent(Self.lockFileName, isDirectory: false)
+            .path
+        // `O_CLOEXEC` is essential: without it every spawned agent inherits this
+        // descriptor and keeps the lock held long after Zentty exits, so the
+        // directory would never be reaped again.
+        let descriptor = open(lockPath, O_CREAT | O_RDWR | O_CLOEXEC, 0o600)
+        guard descriptor >= 0 else {
+            throw POSIXError(.init(rawValue: errno) ?? .EIO)
+        }
+        guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
+            let failure = errno
+            close(descriptor)
+            throw POSIXError(.init(rawValue: failure) ?? .EIO)
+        }
+        runtimeLockFileDescriptor = descriptor
+    }
+
+    private func releaseRuntimeLockLocked() {
+        guard runtimeLockFileDescriptor >= 0 else {
+            return
+        }
+        // Closing releases the flock. The kernel does the same on process death,
+        // which is what makes the reaper crash-proof.
+        close(runtimeLockFileDescriptor)
+        runtimeLockFileDescriptor = -1
     }
 
     private func acceptPendingConnections() {
@@ -644,7 +828,7 @@ final class AgentIPCServer: @unchecked Sendable {
                 return
             }
 
-            logError("Socket accept failed: \(String(cString: strerror(errno)))")
+            agentIPCLogger.error("Socket accept failed: \(String(cString: strerror(errno)), privacy: .public)")
             return
         }
     }
@@ -1305,10 +1489,18 @@ final class AgentIPCServer: @unchecked Sendable {
     }
 
     private func baseRuntimeDirectoryURL() -> URL {
-        fileManager.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library", isDirectory: true)
-            .appendingPathComponent("Caches", isDirectory: true)
-            .appendingPathComponent("Zentty", isDirectory: true)
+        if let baseRuntimeDirectoryOverride {
+            return baseRuntimeDirectoryOverride
+        }
+
+        return ZenttyRuntimePaths.currentRootURL(homeDirectory: fileManager.homeDirectoryForCurrentUser)
+    }
+
+    /// Where runtime directories lived before the move off `~/Library/Caches`.
+    /// Swept alongside the current root so directories left by earlier builds
+    /// are reaped instead of lingering forever.
+    private func legacyBaseRuntimeDirectoryURL() -> URL {
+        ZenttyRuntimePaths.legacyRootURL(homeDirectory: fileManager.homeDirectoryForCurrentUser)
     }
 
     private func cleanupStaleRuntimeDirectories(in baseDirectory: URL) {
@@ -1321,17 +1513,71 @@ final class AgentIPCServer: @unchecked Sendable {
         }
 
         for directory in directories where directory.lastPathComponent.hasPrefix("ipc-") {
-            let components = directory.lastPathComponent.split(separator: "-")
-            guard components.count >= 2, let pid = Int32(components[1]) else {
+            guard directory.lastPathComponent != runtimeDirectoryName else {
                 continue
             }
-            if pid == ProcessInfo.processInfo.processIdentifier {
+            guard isAbandonedRuntimeDirectory(directory) else {
                 continue
             }
-            if kill(pid, 0) == 0 || errno == EPERM {
-                continue
+            do {
+                try fileManager.removeItem(at: directory)
+            } catch {
+                let name = directory.lastPathComponent
+                agentIPCLogger.error(
+                    "Failed to reap stale IPC directory \(name, privacy: .public): \(error.localizedDescription, privacy: .public)"
+                )
             }
-            try? fileManager.removeItem(at: directory)
         }
+    }
+
+    /// Whether no live process owns `directory`.
+    ///
+    /// Liveness is proven by trying to take the directory's advisory lock rather
+    /// than by probing the pid encoded in its name. A pid can be recycled by an
+    /// unrelated process, and the old `kill(pid, 0)` check then read the
+    /// directory as owned forever, leaking it permanently. An `flock` is
+    /// released by the kernel on exit and on crash, so acquiring it is proof
+    /// that nobody is home.
+    ///
+    /// There is a microsecond-wide window in which another instance has created
+    /// its lock file but not yet taken the lock, and would be reaped here. It is
+    /// left unguarded deliberately: the two syscalls are adjacent, and the
+    /// victim's own revalidation re-creates the directory at the same path
+    /// within the interval, so the worst case is self-correcting.
+    private func isAbandonedRuntimeDirectory(_ directory: URL) -> Bool {
+        let lockPath = directory
+            .appendingPathComponent(Self.lockFileName, isDirectory: false)
+            .path
+        let descriptor = open(lockPath, O_RDWR | O_CLOEXEC)
+        guard descriptor >= 0 else {
+            guard errno == ENOENT else {
+                // Present but unreadable: no proof either way, so leave it be.
+                return false
+            }
+            // Written by a build that predates locking — fall back to the pid.
+            return hasDeadOwnerPid(directory)
+        }
+        defer { close(descriptor) }
+
+        guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
+            return false
+        }
+        flock(descriptor, LOCK_UN)
+        return true
+    }
+
+    /// Legacy liveness probe, kept only for directories with no lock file.
+    private func hasDeadOwnerPid(_ directory: URL) -> Bool {
+        let components = directory.lastPathComponent.split(separator: "-")
+        guard components.count >= 2, let pid = Int32(components[1]) else {
+            return false
+        }
+        if pid == ProcessInfo.processInfo.processIdentifier {
+            return false
+        }
+        if kill(pid, 0) == 0 || errno == EPERM {
+            return false
+        }
+        return true
     }
 }
