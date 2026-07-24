@@ -4841,6 +4841,64 @@ final class AgentStatusSupportTests: XCTestCase {
         XCTAssertTrue(realConfig.contains(KimiHooksInstaller.beginMarker))
     }
 
+    func test_agent_launch_bootstrap_strips_stale_overlay_kimi_home_under_the_current_runtime_root() throws {
+        let runtimeDirectory = try makeTemporaryDirectory(named: "agent-launch-modern-kimi-strip-new-runtime")
+        let homeDirectory = try makeTemporaryDirectory(named: "agent-launch-modern-kimi-strip-new-home")
+        let kimiCodeHome = homeDirectory.appendingPathComponent(".kimi-code", isDirectory: true)
+        try FileManager.default.createDirectory(at: kimiCodeHome, withIntermediateDirectories: true)
+        try #"default_model = "kimi-code/kimi-for-coding""#.write(
+            to: kimiCodeHome.appendingPathComponent("config.toml", isDirectory: false),
+            atomically: true,
+            encoding: .utf8
+        )
+        let fakeKimiURL = try makeFakeKimiBinary(modern: true)
+
+        // Same stale-overlay case as the legacy-root test above, but under the
+        // runtime root the server actually creates today. Without this the move
+        // off ~/Library/Caches would silently stop stale overlays from being
+        // stripped, and hooks would be installed into a throwaway directory.
+        let staleOverlayHome = ZenttyRuntimePaths
+            .currentRootURL(homeDirectory: homeDirectory)
+            .appendingPathComponent("ipc-11370-9183AB50/launch/wl_x/pn_y/kimi/home", isDirectory: true)
+            .path
+
+        let request = AgentIPCRequest(
+            kind: .bootstrap,
+            arguments: ["chat"],
+            standardInput: nil,
+            environment: [
+                "HOME": homeDirectory.path,
+                "KIMI_CODE_HOME": staleOverlayHome,
+                "ZENTTY_REAL_BINARY": fakeKimiURL.path,
+                "ZENTTY_CLI_BIN": "/tmp/zentty",
+                "ZENTTY_KIMI_VARIANT": "modern",
+            ],
+            expectsResponse: true,
+            tool: .kimi
+        )
+
+        let plan = try AgentLaunchBootstrap.makePlan(
+            request: request,
+            target: AgentIPCTarget(
+                windowID: WindowID("window-main"),
+                worklaneID: WorklaneID("worklane-main"),
+                paneID: PaneID("pane-main")
+            ),
+            runtimeDirectoryURL: runtimeDirectory
+        )
+
+        XCTAssertEqual(plan.unsetEnvironment, ["KIMI_CODE_HOME"])
+        XCTAssertNil(plan.setEnvironment["KIMI_CODE_HOME"])
+        let realConfig = try String(
+            contentsOf: kimiCodeHome.appendingPathComponent("config.toml", isDirectory: false),
+            encoding: .utf8
+        )
+        XCTAssertTrue(
+            realConfig.contains(KimiHooksInstaller.beginMarker),
+            "hooks must land in the real ~/.kimi-code, not in the ephemeral overlay"
+        )
+    }
+
     func test_agent_launch_bootstrap_skips_kimi_hook_install_for_custom_home() throws {
         let runtimeDirectory = try makeTemporaryDirectory(named: "agent-launch-modern-kimi-custom-runtime")
         let homeDirectory = try makeTemporaryDirectory(named: "agent-launch-modern-kimi-custom-home")
