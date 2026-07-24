@@ -13,6 +13,52 @@ enum AgentIPCProtocol {
     static let consentPanelTimeoutMargin = 30
 }
 
+/// Filesystem roots holding Zentty's per-process runtime state: the IPC socket
+/// and the ephemeral agent home overlays underneath it (`launch/…`).
+///
+/// Lives here, next to the other app/CLI shared constants, because both targets
+/// need to recognise such a path after the fact: when a stale overlay directory
+/// leaks into an agent's environment (`KIMI_CODE_HOME`, `CODEX_HOME`) it must be
+/// rejected rather than mistaken for the user's real home.
+enum ZenttyRuntimePaths {
+    /// Current root, relative to the user's home: `~/.config/zentty/run`.
+    /// Deliberately *not* under `~/Library/Caches`, which the OS and cleaner
+    /// utilities are entitled to empty at any moment — including out from under
+    /// a running instance, which silently severs every pane's connection to the
+    /// app until it restarts.
+    static let currentRootComponents = [".config", "zentty", "run"]
+
+    /// The pre-relocation root. Still matched so overlay paths captured by a
+    /// long-lived agent process before the move are still recognised as ours.
+    static let legacyRootComponents = ["Library", "Caches", "Zentty"]
+
+    /// The directory holding this machine's runtime state. Callers build the
+    /// real root through here so it cannot drift from the substring used by
+    /// `isRuntimeOverlayPath` — a drift would silently stop stale overlays from
+    /// being recognised, with no failing build to catch it.
+    static func currentRootURL(homeDirectory: URL) -> URL {
+        url(under: homeDirectory, components: currentRootComponents)
+    }
+
+    static func legacyRootURL(homeDirectory: URL) -> URL {
+        url(under: homeDirectory, components: legacyRootComponents)
+    }
+
+    static func isRuntimeOverlayPath(_ path: String) -> Bool {
+        let standardized = URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL.path
+        return standardized.range(of: matchFragment(for: currentRootComponents)) != nil
+            || standardized.range(of: matchFragment(for: legacyRootComponents)) != nil
+    }
+
+    private static func url(under homeDirectory: URL, components: [String]) -> URL {
+        components.reduce(homeDirectory) { $0.appendingPathComponent($1, isDirectory: true) }
+    }
+
+    private static func matchFragment(for components: [String]) -> String {
+        "/" + components.joined(separator: "/") + "/"
+    }
+}
+
 enum AgentIPCRequestKind: String, Codable, Equatable {
     case ipc
     case bootstrap

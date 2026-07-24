@@ -214,7 +214,7 @@ enum KimiHooksInstaller {
 
     /// The real modern-kimi `config.toml` we install the managed block into: a
     /// user-set `KIMI_CODE_HOME` (unless it points at a stale Zentty runtime
-    /// overlay under `~/Library/Caches/Zentty/`), else `$HOME/.kimi-code`.
+    /// overlay — see `ZenttyRuntimePaths`), else `$HOME/.kimi-code`.
     static func modernConfigURL(environment: [String: String]) -> URL {
         if let kimiHome = environment["KIMI_CODE_HOME"]?.nonBlank,
            !isZenttyRuntimeOverlayPath(kimiHome) {
@@ -225,8 +225,7 @@ enum KimiHooksInstaller {
     }
 
     private static func isZenttyRuntimeOverlayPath(_ path: String) -> Bool {
-        URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL.path
-            .range(of: "/Library/Caches/Zentty/") != nil
+        ZenttyRuntimePaths.isRuntimeOverlayPath(path)
     }
 
     /// Serializes read-merge-write cycles on the shared real config.toml.

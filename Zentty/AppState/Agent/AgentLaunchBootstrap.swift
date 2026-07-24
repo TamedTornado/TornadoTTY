@@ -793,11 +793,12 @@ enum AgentLaunchBootstrap {
             .appendingPathComponent(".kimi-code", isDirectory: true)
     }
 
-    /// Whether a path lives under Zentty's per-process runtime cache
-    /// (`~/Library/Caches/Zentty/`) — i.e. a stale ephemeral overlay path.
+    /// Whether a path lives under Zentty's per-process runtime directory — i.e.
+    /// a stale ephemeral overlay path. Matches the legacy cache root too, so a
+    /// value captured by a long-lived agent before the relocation is still
+    /// recognised rather than mistaken for a real user home.
     private static func isZenttyRuntimeHomePath(_ path: String) -> Bool {
-        URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL.path
-            .range(of: "/Library/Caches/Zentty/") != nil
+        ZenttyRuntimePaths.isRuntimeOverlayPath(path)
     }
 
     private static func claudePlan(
