@@ -36,6 +36,13 @@ final class CompanionBridgeTests: XCTestCase {
         }
     }
 
+    /// Captures the audit trail so the end-to-end test can assert the recorded
+    /// device is the *authenticated* one, not anything the phone claimed.
+    private final class RecordingAudit: CompanionInputAuditing {
+        private(set) var records: [CompanionInputAuditRecord] = []
+        func record(_ record: CompanionInputAuditRecord) { records.append(record) }
+    }
+
     private final class FakePaneTextProvider: CompanionPaneTextProviding {
         var readouts: [String: CompanionPaneTextReadout] = [:]
         func companionReadPaneText(paneId: String, includeScrollback: Bool, lineLimit: Int?) -> CompanionPaneTextReadout? {
@@ -77,6 +84,7 @@ final class CompanionBridgeTests: XCTestCase {
     private var pairingStore: CompanionPairingStore!
     private var provider: FakeDashboardProvider!
     private var sink: FakeInputSink!
+    private var audit: RecordingAudit!
     private var feed: CompanionDashboardFeed!
     private var paneTextProvider: FakePaneTextProvider!
     private var paneTextFeed: CompanionPaneTextFeed!
@@ -106,6 +114,7 @@ final class CompanionBridgeTests: XCTestCase {
         pairingStore = CompanionPairingStore(configDirectoryURL: tempDir)
         provider = FakeDashboardProvider()
         sink = FakeInputSink()
+        audit = RecordingAudit()
         feed = CompanionDashboardFeed(provider: provider, debounceInterval: 0.01)
         paneTextProvider = FakePaneTextProvider()
         paneTextFeed = CompanionPaneTextFeed(provider: paneTextProvider, debounceInterval: 0.01)
@@ -127,7 +136,7 @@ final class CompanionBridgeTests: XCTestCase {
             dashboardFeed: feed,
             paneTextFeed: paneTextFeed,
             transcriptFeed: transcriptFeed,
-            inputRouter: CompanionInputRouter(sink: sink),
+            inputRouter: CompanionInputRouter(sink: sink, audit: audit),
             leaseManager: leaseManager,
             isFeatureEnabled: { true }
         )
@@ -252,6 +261,19 @@ final class CompanionBridgeTests: XCTestCase {
         XCTAssertEqual(sink.sends.count, 1)
         XCTAssertEqual(sink.sends.first?.text, "ship it\r")
         XCTAssertEqual(sink.sends.first?.paneId, "pane-1")
+
+        // …and lands in the audit trail against the handshake-authenticated device.
+        XCTAssertEqual(audit.records.count, 1)
+        XCTAssertEqual(
+            audit.records.first,
+            CompanionInputAuditRecord(
+                paneId: "pane-1",
+                deviceId: phone.deviceId,
+                kind: .text,
+                length: 8,
+                outcome: .ok
+            )
+        )
 
         driver.close()
         await driver.runTask.value

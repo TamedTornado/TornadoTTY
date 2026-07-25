@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Zentty Mobile Companion — JS workspace root (wire, relay, mobile).",
+  "description": "Zentty Mobile Companion \u2014 JS workspace root (wire, relay, mobile).",
   "scripts": {
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
@@ -11,8 +11,5 @@
   },
   "engines": {
     "node": ">=20"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": ["esbuild"]
   }
 }

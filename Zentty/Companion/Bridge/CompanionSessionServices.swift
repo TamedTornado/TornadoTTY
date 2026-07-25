@@ -82,7 +82,10 @@ protocol CompanionSessionServicing: AnyObject {
     func removeDashboardSubscriber(_ token: CompanionDashboardSubscriptionToken)
 
     // Input
-    func routeInput(_ message: CompanionMessage) -> CompanionInputAck
+    /// Injects an input-family message into its pane and records it in the audit
+    /// trail. `deviceId` is the session's authenticated device, not the wire
+    /// payload — the payload carries no trustworthy identity.
+    func routeInput(_ message: CompanionMessage, fromDeviceId deviceId: String?) -> CompanionInputAck
 
     // Pane text lane
     /// Registers a connection's `pane.text` sink; returns a token to unregister

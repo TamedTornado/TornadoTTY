@@ -125,6 +125,57 @@ final class CompanionPaneBytesFeedTests: XCTestCase {
         XCTAssertEqual(attached.startSeq, 0)
     }
 
+    /// Regression: a cold attach to a pane with a full 1 MiB ring used to base64
+    /// the whole tail into `replay`, producing a frame far past the relay's
+    /// 256 KiB cap — which the relay enforces as the ws `maxPayload` and answers
+    /// by closing the connection (1009).
+    func testColdAttachClampsFullRingAndMarksTruncated() {
+        let feed = CompanionPaneBytesFeed()
+        let token = feed.addWatcher { _ in }
+
+        let capacity = CompanionPaneBytesRing.defaultCapacity
+        var filler = Data(repeating: 0x2E, count: capacity)
+        // Tag the final byte so we can prove the RECENT end is what survives.
+        filler[capacity - 1] = 0x5A
+        feed.ingest(paneId: "p1", epoch: "e1", bytes: filler)
+
+        let attached = feed.attach(token: token, paneId: "p1", lastSeq: nil, epoch: nil)
+        let replay = b64Decode(attached.replay)
+        XCTAssertTrue(attached.truncated)
+        XCTAssertEqual(replay.count, CompanionPaneBytesFeed.maxReplayBytes)
+        XCTAssertEqual(replay.last, 0x5A)
+        XCTAssertEqual(attached.startSeq, capacity - CompanionPaneBytesFeed.maxReplayBytes)
+        // startSeq + decoded(replay) must still be the ring head so the phone's
+        // next expected offset lines up with live chunks.
+        XCTAssertEqual(attached.startSeq + replay.count, capacity)
+    }
+
+    func testWarmAttachClampsOversizeResumeGap() {
+        let feed = CompanionPaneBytesFeed()
+        let token = feed.addWatcher { _ in }
+
+        let total = CompanionPaneBytesFeed.maxReplayBytes * 2
+        feed.ingest(paneId: "p1", epoch: "e1", bytes: Data(repeating: 0x41, count: total))
+
+        // Phone fell behind by more than one frame's worth of bytes.
+        let attached = feed.attach(token: token, paneId: "p1", lastSeq: 0, epoch: "e1")
+        let replay = b64Decode(attached.replay)
+        XCTAssertTrue(attached.truncated)
+        XCTAssertEqual(replay.count, CompanionPaneBytesFeed.maxReplayBytes)
+        XCTAssertEqual(attached.startSeq, total - CompanionPaneBytesFeed.maxReplayBytes)
+    }
+
+    func testWarmAttachWithinCapStaysContiguous() {
+        let feed = CompanionPaneBytesFeed()
+        let token = feed.addWatcher { _ in }
+        feed.ingest(paneId: "p1", epoch: "e1", bytes: Data(repeating: 0x41, count: 4096))
+
+        let attached = feed.attach(token: token, paneId: "p1", lastSeq: 1024, epoch: "e1")
+        XCTAssertFalse(attached.truncated)
+        XCTAssertEqual(attached.startSeq, 1024)
+        XCTAssertEqual(b64Decode(attached.replay).count, 3072)
+    }
+
     func testRingSliceAtHeadIsEmpty() {
         var ring = CompanionPaneBytesRing(capacity: 64)
         ring.append(Data("abcd".utf8))

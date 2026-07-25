@@ -54,6 +54,51 @@ export const PANE_BYTES_MAX_CHUNK_BYTES = 32 * 1024;
 export const PANE_BYTES_MAX_CHUNK_B64_LEN =
   Math.ceil(PANE_BYTES_MAX_CHUNK_BYTES / 3) * 4;
 
+/**
+ * Max decoded byte length of an `attached.replay` tail before base64 encoding.
+ * Producers MUST send only the most RECENT bytes that fit and set
+ * `truncated: true` when the retained ring is larger.
+ *
+ * The mac's ring is 1 MiB, so an unbounded cold-attach replay would blow past
+ * the relay's 256 KiB frame cap — and the relay enforces that as the WebSocket
+ * `maxPayload`, which CLOSES the connection (1009) rather than rejecting the
+ * frame. Budget, worst case, for a replay of R raw bytes:
+ *
+ *   1. `replay` std-base64:            ceil(R/3)*4      ≈ 1.334·R
+ *   2. envelope JSON (v/id/type/
+ *      replyTo/paneId/epoch/startSeq)  ≤ 512 B
+ *   3. session seal                    + 24 B  (8-byte counter || 16-byte tag)
+ *   4. sealed → base64url `sealed`     ≈ 1.334×
+ *   5. `relay.frame` JSON (type/to/
+ *      from, 43-char device ids)       ≤ 256 B
+ *
+ *   total ≈ (4/3)·((4/3)·R + 512 + 24) + 256 = (16/9)·R + ~971
+ *
+ * Solving `(16/9)·R + 971 ≤ 262144` gives R ≤ ~143 KiB. But the frame cap is NOT
+ * the binding constraint — the per-device byte bucket is. `bytesPerSec` defaults
+ * to the same 256 KiB (config.ts:61) and is the bucket's FULL capacity, so a
+ * frame sized against `maxFrameBytes` alone eats most of a second's budget in one
+ * go. A 143 KiB replay (~254 KiB on the wire) leaves almost nothing, so on a pane
+ * that is still producing output the following `pane.bytes.chunk` frames are
+ * rate-limited away; the lane sees a seq gap, resyncs, gets another huge replay,
+ * and never converges. The pane appears to stall.
+ *
+ * So size against the bucket instead: 32 KiB raw is ~58 KiB on the wire, ~23% of
+ * one second's budget, leaving ample room for live chunks to keep flowing. It
+ * matches {@link PANE_BYTES_MAX_CHUNK_BYTES} — one chunk's worth — which is the
+ * right unit for a warm resume. Cold attach does not depend on this budget: once
+ * a grid snapshot is present the mac sends `replay: ""` and the snapshot carries
+ * the screen.
+ */
+export const PANE_BYTES_MAX_REPLAY_BYTES = 32 * 1024;
+
+/**
+ * Max base64 string length for an `attached.replay` field: `ceil(N/3)*4` for
+ * N = {@link PANE_BYTES_MAX_REPLAY_BYTES}.
+ */
+export const PANE_BYTES_MAX_REPLAY_B64_LEN =
+  Math.ceil(PANE_BYTES_MAX_REPLAY_BYTES / 3) * 4;
+
 /** Standard-base64 body (RFC 4648 §4). Empty string = zero bytes. */
 const Base64Std = z.string().regex(/^[A-Za-z0-9+/]*={0,2}$/, 'standard base64');
 
@@ -97,8 +142,11 @@ export const PaneBytesAttach = z
  *   phone resets its emulator before applying `replay`.
  * - `startSeq`: the byte offset of the FIRST byte in `replay`. Subsequent
  *   `pane.bytes.chunk.seq` values continue from `startSeq + decoded(replay)`.
- * - `replay`: standard-base64 tail-ring bytes from `startSeq`. May be empty
- *   (`""`) — e.g. a cold attach to a surface with no buffered output yet.
+ * - `replay`: standard-base64 tail-ring bytes from `startSeq`, decoded length ≤
+ *   {@link PANE_BYTES_MAX_REPLAY_BYTES}. May be empty (`""`) — e.g. a cold
+ *   attach to a surface with no buffered output yet. When the mac's ring holds
+ *   more than the cap it sends the most recent bytes that fit and sets
+ *   `truncated: true`.
  * - `truncated`: `true` when the ring could NOT cover the requested resume
  *   point (`lastSeq`/`epoch` fell off the back of the ring, or the epoch
  *   changed). The phone MUST reset its emulator before writing `replay`, since
@@ -108,7 +156,7 @@ export const PaneBytesAttached = z.object({
   paneId: z.string(),
   epoch: z.string(),
   startSeq: z.number().int().gte(0),
-  replay: Base64Std,
+  replay: Base64Std.max(PANE_BYTES_MAX_REPLAY_B64_LEN),
   truncated: z.boolean(),
 });
 

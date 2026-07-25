@@ -98,6 +98,17 @@ final class CompanionPaneBytesFeed {
     /// Decoded chunk size cap — mirrors `PANE_BYTES_MAX_CHUNK_BYTES` on the wire.
     static let maxChunkBytes = 32 * 1024
 
+    /// Decoded replay cap — mirrors `PANE_BYTES_MAX_REPLAY_BYTES` on the wire.
+    /// The ring is far larger than a single frame may be: base64, the session
+    /// seal, and the relay's base64url framing together expand a replay by ~16/9,
+    /// and the relay closes (1009) rather than rejects a frame over its 256 KiB
+    /// cap. The binding constraint is tighter still — the relay's per-device
+    /// *byte-rate* bucket has that same 256 KiB as its whole one-second capacity,
+    /// so an attach big enough to fit the frame cap would starve the live chunks
+    /// that follow it and stall the pane. One chunk's worth is the right budget.
+    /// Replies past this cap carry the most recent bytes and `truncated`.
+    static let maxReplayBytes = 32 * 1024
+
     private struct Watcher {
         /// Panes this connection is currently attached to.
         var paneIds: Set<String> = []
@@ -218,13 +229,13 @@ final class CompanionPaneBytesFeed {
                 truncated: false
             )
         }
-        let (startSeq, data) = state.ring.tail()
+        let replay = Self.boundedReplay(paneId: paneId, tail: state.ring.tail())
         return CompanionPaneBytesAttached(
             paneId: paneId,
             epoch: state.epoch,
-            startSeq: startSeq,
-            replay: data.base64EncodedString(),
-            truncated: false
+            startSeq: replay.startSeq,
+            replay: replay.encoded,
+            truncated: replay.dropped
         )
     }
 
@@ -240,33 +251,36 @@ final class CompanionPaneBytesFeed {
             return truncatedReply(paneId: paneId)
         }
         if let data = state.ring.slice(fromSeq: lastSeq) {
+            // A resumable gap can still exceed one frame; clamping drops the
+            // oldest of it, which makes the reply a fresh tail, not a resume.
+            let replay = Self.boundedReplay(paneId: paneId, tail: (startSeq: lastSeq, data: data))
             return CompanionPaneBytesAttached(
                 paneId: paneId,
                 epoch: state.epoch,
-                startSeq: lastSeq,
-                replay: data.base64EncodedString(),
-                truncated: false
+                startSeq: replay.startSeq,
+                replay: replay.encoded,
+                truncated: replay.dropped
             )
         }
         // Ring rolled past lastSeq (or lastSeq ahead of head).
-        let (startSeq, data) = state.ring.tail()
+        let replay = Self.boundedReplay(paneId: paneId, tail: state.ring.tail())
         return CompanionPaneBytesAttached(
             paneId: paneId,
             epoch: state.epoch,
-            startSeq: startSeq,
-            replay: data.base64EncodedString(),
+            startSeq: replay.startSeq,
+            replay: replay.encoded,
             truncated: true
         )
     }
 
     private func truncatedReply(paneId: String) -> CompanionPaneBytesAttached {
         if let state = panes[paneId] {
-            let (startSeq, data) = state.ring.tail()
+            let replay = Self.boundedReplay(paneId: paneId, tail: state.ring.tail())
             return CompanionPaneBytesAttached(
                 paneId: paneId,
                 epoch: state.epoch,
-                startSeq: startSeq,
-                replay: data.base64EncodedString(),
+                startSeq: replay.startSeq,
+                replay: replay.encoded,
                 truncated: true
             )
         }
@@ -278,6 +292,28 @@ final class CompanionPaneBytesFeed {
             startSeq: 0,
             replay: "",
             truncated: true
+        )
+    }
+
+    /// Clamps a replay tail to ``maxReplayBytes``, keeping the most RECENT bytes
+    /// and advancing `startSeq` past the dropped prefix. `dropped` is true when
+    /// bytes were shed, which the caller reports as `truncated` so the phone
+    /// resets its emulator instead of splicing a non-contiguous tail.
+    private static func boundedReplay(
+        paneId: String,
+        tail: (startSeq: Int, data: Data)
+    ) -> (startSeq: Int, encoded: String, dropped: Bool) {
+        guard tail.data.count > maxReplayBytes else {
+            return (tail.startSeq, tail.data.base64EncodedString(), false)
+        }
+        let shed = tail.data.count - maxReplayBytes
+        companionPaneBytesLogger.info(
+            "replay clamped to wire cap: pane=\(paneId, privacy: .public) dropped=\(shed, privacy: .public)"
+        )
+        return (
+            tail.startSeq + shed,
+            Data(tail.data.suffix(maxReplayBytes)).base64EncodedString(),
+            true
         )
     }
 

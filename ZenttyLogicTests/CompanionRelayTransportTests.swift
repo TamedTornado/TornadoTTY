@@ -459,7 +459,7 @@ private final class FakeRelayServices: CompanionSessionServicing {
         feed.removeSubscriber(token)
     }
 
-    func routeInput(_ message: CompanionMessage) -> CompanionInputAck {
+    func routeInput(_ message: CompanionMessage, fromDeviceId deviceId: String?) -> CompanionInputAck {
         CompanionInputAck(ok: false, error: "unsupported")
     }
 

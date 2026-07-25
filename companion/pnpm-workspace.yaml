@@ -4,5 +4,8 @@ packages:
   # no-op until their directories exist.
   - 'relay'
   - 'mobile'
-allowBuilds:
-  esbuild: set this to true or false
+# esbuild is the only dependency allowed to run a build script: the relay bundles
+# itself with it (`pnpm --filter @zentty/relay bundle`, and relay/Dockerfile).
+# pnpm 11 reads this here, not from a `pnpm` field in package.json.
+onlyBuiltDependencies:
+  - esbuild

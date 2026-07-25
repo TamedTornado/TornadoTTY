@@ -319,7 +319,9 @@ final class CompanionSession {
                 try await sendExpectedHello(replyTo: envelope.id)
                 return
             }
-            let ack = services.routeInput(envelope.message)
+            // The audit trail gets the authenticated `pairedDeviceId`; the
+            // payloads' own ids (if any) are advisory and never trusted.
+            let ack = services.routeInput(envelope.message, fromDeviceId: pairedDeviceId)
             try await sendSealed(.inputAck(ack), replyTo: envelope.id)
 
         case .paneWatch(let payload):

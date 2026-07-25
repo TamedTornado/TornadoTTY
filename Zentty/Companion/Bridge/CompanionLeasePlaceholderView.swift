@@ -2,10 +2,11 @@ import AppKit
 
 /// The desktop overlay shown over a pane while a phone holds its control lease
 /// (spec §2.6). The pane's live surface keeps rendering behind the overlay (a
-/// render keep-alive streams it to the phone mirror), so the overlay lets that
-/// content stay visible but *recede*: a translucent scrim darkens the evolving
-/// terminal while a centered frosted card names the controlling device and
-/// offers a "Take Back Control" button that reclaims the pane instantly.
+/// render keep-alive streams it to the phone mirror), and it is reframed to the
+/// phone's exact grid and centered in the pane. The overlay dims everything
+/// *around* that centered grid — the scrim carries a cutout for it — while a
+/// frosted card names the controlling device, states the grid it is pinned to,
+/// and offers a "Take Back Control" button that reclaims the pane instantly.
 ///
 /// Compositing note: the scrim is a plain layer-backed view (a dynamic dark
 /// fill) rather than a full-pane vibrancy view. Within-window vibrancy is not a
@@ -26,7 +27,10 @@ final class CompanionLeasePlaceholderView: NSView {
         static let glyphPointSize: CGFloat = 30
         static let glyphToTitle: CGFloat = 14
         static let titleToMessage: CGFloat = 5
+        static let messageToGrid: CGFloat = 8
         static let messageToButton: CGFloat = 18
+        /// Breathing room between the live grid's edge and the card.
+        static let cardToGridGap: CGFloat = 16
     }
 
     private enum Animation {
@@ -42,12 +46,23 @@ final class CompanionLeasePlaceholderView: NSView {
     private let glyphView = NSImageView()
     private let titleLabel = NSTextField(labelWithString: "Controlled remotely")
     private let messageLabel = NSTextField(wrappingLabelWithString: "")
+    private let gridLabel = NSTextField(labelWithString: "")
+    private let textStack = NSStackView()
     private let takeBackButton = NSButton(title: "Take Back Control", target: nil, action: nil)
 
-    init(deviceName: String, onTakeBack: @escaping () -> Void) {
+    /// Vertical offset of the card from the pane's centre, driven by
+    /// `setLiveGridRect` so the card never sits on top of the live grid.
+    private lazy var cardCenterYConstraint: NSLayoutConstraint =
+        cardContainer.centerYAnchor.constraint(equalTo: centerYAnchor)
+
+    init(
+        deviceName: String,
+        gridSize: (cols: Int, rows: Int)? = nil,
+        onTakeBack: @escaping () -> Void
+    ) {
         self.onTakeBack = onTakeBack
         super.init(frame: .zero)
-        setup(deviceName: deviceName)
+        setup(deviceName: deviceName, gridSize: gridSize)
     }
 
     @available(*, unavailable)
@@ -61,13 +76,66 @@ final class CompanionLeasePlaceholderView: NSView {
         messageLabel.stringValue = Self.message(for: deviceName)
     }
 
+    /// Refreshes both lines in place. A lease is re-applied on every phone-side
+    /// resize and on supersede, so the card must follow without being rebuilt.
+    func update(deviceName: String, gridSize: (cols: Int, rows: Int)?) {
+        updateDeviceName(deviceName)
+        applyGridSize(gridSize)
+    }
+
+    /// The rect (in this view's coordinates) occupied by the live, centered grid.
+    /// The scrim leaves it undimmed; `nil` dims the whole pane.
+    ///
+    /// The card is pushed clear of that rect so the cutout actually exposes live
+    /// output: centering both on the pane would park a 340pt-wide card over a
+    /// 360pt-wide grid, occluding exactly what the cutout exists to reveal.
+    func setLiveGridRect(_ rect: CGRect?) {
+        scrimView.cutoutRect = rect
+        positionCard(clearOf: rect)
+    }
+
+    /// Moves the card below the live grid when there is room, otherwise above it,
+    /// falling back to pane-centered when no grid rect is known (or it fills the
+    /// pane, in which case nothing is undimmed anyway).
+    private func positionCard(clearOf gridRect: CGRect?) {
+        guard let gridRect, !gridRect.isEmpty else {
+            cardCenterYConstraint.constant = 0
+            return
+        }
+        // AppKit's default (unflipped) geometry: minY is the bottom edge.
+        let spaceBelow = gridRect.minY - bounds.minY
+        let spaceAbove = bounds.maxY - gridRect.maxY
+        let needed = cardContainer.fittingSize.height + Layout.cardToGridGap
+        let paneCenterY = bounds.midY
+
+        if spaceBelow >= needed {
+            cardCenterYConstraint.constant = (gridRect.minY - needed / 2) - paneCenterY
+        } else if spaceAbove >= needed {
+            cardCenterYConstraint.constant = (gridRect.maxY + needed / 2) - paneCenterY
+        } else {
+            // The grid leaves no room on either side; centering keeps the card
+            // fully on-screen, and an edge-to-edge grid has nothing to reveal.
+            cardCenterYConstraint.constant = 0
+        }
+    }
+
+    private func applyGridSize(_ gridSize: (cols: Int, rows: Int)?) {
+        guard let gridSize, gridSize.cols > 0, gridSize.rows > 0 else {
+            gridLabel.stringValue = ""
+            gridLabel.isHidden = true
+            return
+        }
+        gridLabel.stringValue = "\(gridSize.cols) × \(gridSize.rows)"
+        gridLabel.isHidden = false
+    }
+
     private static func message(for deviceName: String) -> String {
         let trimmed = deviceName.trimmingCharacters(in: .whitespacesAndNewlines)
         let name = trimmed.isEmpty ? "another device" : trimmed
         return "This pane is controlled by \(name)."
     }
 
-    private func setup(deviceName: String) {
+    private func setup(deviceName: String, gridSize: (cols: Int, rows: Int)?) {
         wantsLayer = true
         translatesAutoresizingMaskIntoConstraints = false
 
@@ -116,6 +184,21 @@ final class CompanionLeasePlaceholderView: NSView {
         messageLabel.maximumNumberOfLines = 0
         messageLabel.translatesAutoresizingMaskIntoConstraints = false
 
+        // Monospaced digits keep the grid line from jittering as the phone
+        // re-measures its viewport mid-lease.
+        gridLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium)
+        gridLabel.textColor = .tertiaryLabelColor
+        gridLabel.alignment = .center
+        gridLabel.translatesAutoresizingMaskIntoConstraints = false
+        applyGridSize(gridSize)
+
+        textStack.orientation = .vertical
+        textStack.alignment = .width
+        textStack.spacing = Layout.titleToMessage
+        textStack.translatesAutoresizingMaskIntoConstraints = false
+        textStack.setViews([titleLabel, messageLabel, gridLabel], in: .top)
+        textStack.setCustomSpacing(Layout.messageToGrid, after: messageLabel)
+
         takeBackButton.bezelStyle = .rounded
         takeBackButton.controlSize = .large
         takeBackButton.keyEquivalent = "\r"
@@ -124,8 +207,7 @@ final class CompanionLeasePlaceholderView: NSView {
         takeBackButton.translatesAutoresizingMaskIntoConstraints = false
 
         cardView.addSubview(glyphView)
-        cardView.addSubview(titleLabel)
-        cardView.addSubview(messageLabel)
+        cardView.addSubview(textStack)
         cardView.addSubview(takeBackButton)
 
         NSLayoutConstraint.activate([
@@ -135,8 +217,10 @@ final class CompanionLeasePlaceholderView: NSView {
             scrimView.bottomAnchor.constraint(equalTo: bottomAnchor),
 
             cardContainer.centerXAnchor.constraint(equalTo: centerXAnchor),
-            cardContainer.centerYAnchor.constraint(equalTo: centerYAnchor),
+            cardCenterYConstraint,
             cardContainer.widthAnchor.constraint(lessThanOrEqualToConstant: Layout.cardMaxWidth),
+            cardContainer.topAnchor.constraint(greaterThanOrEqualTo: topAnchor, constant: 12),
+            cardContainer.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -12),
             cardContainer.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 12),
             cardContainer.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -12),
 
@@ -148,15 +232,11 @@ final class CompanionLeasePlaceholderView: NSView {
             glyphView.topAnchor.constraint(equalTo: cardView.topAnchor, constant: Layout.cardInset),
             glyphView.centerXAnchor.constraint(equalTo: cardView.centerXAnchor),
 
-            titleLabel.topAnchor.constraint(equalTo: glyphView.bottomAnchor, constant: Layout.glyphToTitle),
-            titleLabel.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: Layout.cardInset),
-            titleLabel.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -Layout.cardInset),
+            textStack.topAnchor.constraint(equalTo: glyphView.bottomAnchor, constant: Layout.glyphToTitle),
+            textStack.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: Layout.cardInset),
+            textStack.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -Layout.cardInset),
 
-            messageLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: Layout.titleToMessage),
-            messageLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
-            messageLabel.trailingAnchor.constraint(equalTo: titleLabel.trailingAnchor),
-
-            takeBackButton.topAnchor.constraint(equalTo: messageLabel.bottomAnchor, constant: Layout.messageToButton),
+            takeBackButton.topAnchor.constraint(equalTo: textStack.bottomAnchor, constant: Layout.messageToButton),
             takeBackButton.centerXAnchor.constraint(equalTo: cardView.centerXAnchor),
             takeBackButton.bottomAnchor.constraint(equalTo: cardView.bottomAnchor, constant: -Layout.cardInset),
         ])
@@ -225,6 +305,18 @@ final class CompanionLeasePlaceholderView: NSView {
         messageLabel.stringValue
     }
 
+    var gridTextForTesting: String {
+        gridLabel.stringValue
+    }
+
+    var isGridLineHiddenForTesting: Bool {
+        gridLabel.isHidden
+    }
+
+    var liveGridRectForTesting: CGRect? {
+        scrimView.cutoutRect
+    }
+
     /// Fires the button's action exactly as a click would, for the detached
     /// component test (no window / run loop needed).
     func simulateTakeBackTapForTesting() {
@@ -232,15 +324,41 @@ final class CompanionLeasePlaceholderView: NSView {
     }
 }
 
-/// Translucent dark fill that darkens (but keeps visible) the live pane surface
-/// behind the overlay. Re-resolves its color through `updateLayer` so it tracks
-/// light/dark appearance changes — a one-time `cgColor` snapshot would not.
+/// Translucent dark fill that dims the pane around the centered live grid. The
+/// grid itself is punched out (even-odd fill) so it keeps reading as live while
+/// the surround recedes; with no cutout the whole pane dims. Drawn rather than
+/// set as a layer background so the cutout and the light/dark alpha are both
+/// re-resolved on every redraw.
 private final class ScrimView: NSView {
-    override var wantsUpdateLayer: Bool { true }
+    var cutoutRect: CGRect? {
+        didSet {
+            guard cutoutRect != oldValue else { return }
+            needsDisplay = true
+        }
+    }
 
-    override func updateLayer() {
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        needsDisplay = true
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
         let isDark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
         let alpha: CGFloat = isDark ? 0.55 : 0.42
-        layer?.backgroundColor = NSColor.black.withAlphaComponent(alpha).cgColor
+        let path = NSBezierPath(rect: bounds)
+        if let cutoutRect {
+            let hole = cutoutRect.intersection(bounds)
+            if !hole.isNull, !hole.isEmpty {
+                path.append(NSBezierPath(rect: hole))
+                path.windingRule = .evenOdd
+            }
+        }
+        NSColor.black.withAlphaComponent(alpha).setFill()
+        path.fill()
     }
 }

@@ -504,8 +504,8 @@ final class CompanionBridgeServer: CompanionSessionServicing {
         dashboardFeed.removeSubscriber(token)
     }
 
-    func routeInput(_ message: CompanionMessage) -> CompanionInputAck {
-        inputRouter.handle(message) ?? CompanionInputAck(ok: false, error: "unsupported")
+    func routeInput(_ message: CompanionMessage, fromDeviceId deviceId: String?) -> CompanionInputAck {
+        inputRouter.handle(message, fromDeviceId: deviceId) ?? CompanionInputAck(ok: false, error: "unsupported")
     }
 
     func addPaneTextWatcher(_ send: @escaping (CompanionPaneText) -> Void) -> CompanionPaneWatchToken {
