@@ -3,7 +3,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { FlatList, RefreshControl, StyleSheet, View } from 'react-native';
 
 import { EmptyState, Screen, StaleBanner, WorklaneSection } from '@/components';
-import { isStale, orderWorklanes, useCompanionStore } from '@/store';
+import { isStale, useCompanionStore } from '@/store';
 import { colors, space } from '@/theme';
 
 /**
@@ -25,7 +25,11 @@ export default function DashboardScreen() {
     }, [deviceId, connect]),
   );
 
-  const worklanes = useMemo(() => orderWorklanes(view?.worklanes ?? []), [view?.worklanes]);
+  // Preserve the Mac's worklane order verbatim: the feed already emits them in
+  // desktop-sidebar order, and reordering (e.g. floating attention lanes) would
+  // break the user's spatial memory of their own workspace. Attention is conveyed
+  // per-section by a badge, not by moving the lane.
+  const worklanes = useMemo(() => view?.worklanes ?? [], [view?.worklanes]);
   const status = view?.status ?? 'connecting';
   const stale = isStale(status, (view?.worklanes.length ?? 0) > 0);
 
@@ -90,6 +94,6 @@ const styles = StyleSheet.create({
     marginBottom: space.lg,
   },
   separator: {
-    height: space.xl,
+    height: space.md,
   },
 });

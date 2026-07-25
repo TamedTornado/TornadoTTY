@@ -131,6 +131,85 @@ final class CompanionPairingViewModelTests: XCTestCase {
         XCTAssertEqual(mintCount, 3)
     }
 
+    // MARK: - Endpoint re-mint (async listener port)
+
+    /// The LAN listener reports its port asynchronously, so the first offer the
+    /// bridge mints is usually endpoint-less (no lanHint, empty relayUrl). Once the
+    /// bridge signals the port appeared, the session must re-mint so the fresh
+    /// offer carries a LAN hint — otherwise the phone gets an unreachable code.
+    func testSessionReMintsWhenEndpointAppears() {
+        var mintCount = 0
+        // First mint: no endpoint (port not yet up). Subsequent mints: LAN hint set.
+        let session = CompanionPairingSession(mint: {
+            mintCount += 1
+            let hint = mintCount == 1 ? nil : CompanionLanHint(host: "mac.local", port: 51820)
+            return CompanionPairingOffer(
+                relayUrl: "",
+                lanHint: hint,
+                macDeviceId: "d",
+                macPubKey: "k",
+                secret: "secret-\(mintCount)",
+                expiresAt: Int((Date().timeIntervalSince1970 + 120) * 1000)
+            )
+        })
+
+        XCTAssertEqual(mintCount, 1)
+        XCTAssertTrue(session.currentOfferLacksEndpoint, "first offer is endpoint-less")
+
+        // Port appeared → re-mints, picking up the LAN hint.
+        XCTAssertTrue(session.regenerateIfMissingEndpoint())
+        XCTAssertEqual(mintCount, 2)
+        XCTAssertEqual(session.current.offer.secret, "secret-2")
+        XCTAssertFalse(session.currentOfferLacksEndpoint)
+    }
+
+    /// Re-minting churns the pairing secret, so it must NOT happen when the current
+    /// offer is already reachable — a spurious advertising-change signal on a
+    /// healthy offer should be a no-op.
+    func testSessionDoesNotReMintWhenEndpointAlreadyPresent() {
+        var mintCount = 0
+        let session = CompanionPairingSession(mint: {
+            mintCount += 1
+            return CompanionPairingOffer(
+                relayUrl: "",
+                lanHint: CompanionLanHint(host: "mac.local", port: 51820),
+                macDeviceId: "d",
+                macPubKey: "k",
+                secret: "secret-\(mintCount)",
+                expiresAt: Int((Date().timeIntervalSince1970 + 120) * 1000)
+            )
+        })
+
+        XCTAssertEqual(mintCount, 1)
+        XCTAssertFalse(session.currentOfferLacksEndpoint)
+
+        // Already reachable → no re-mint, secret preserved.
+        XCTAssertFalse(session.regenerateIfMissingEndpoint())
+        XCTAssertEqual(mintCount, 1)
+        XCTAssertEqual(session.current.offer.secret, "secret-1")
+    }
+
+    /// A relay URL alone (no LAN hint) is a reachable endpoint, so a relay-only
+    /// offer must not be treated as endpoint-less and must not re-mint.
+    func testRelayOnlyOfferIsNotEndpointLess() {
+        var mintCount = 0
+        let session = CompanionPairingSession(mint: {
+            mintCount += 1
+            return CompanionPairingOffer(
+                relayUrl: "wss://relay.zenjoy.be",
+                lanHint: nil,
+                macDeviceId: "d",
+                macPubKey: "k",
+                secret: "secret-\(mintCount)",
+                expiresAt: Int((Date().timeIntervalSince1970 + 120) * 1000)
+            )
+        })
+
+        XCTAssertFalse(session.currentOfferLacksEndpoint)
+        XCTAssertFalse(session.regenerateIfMissingEndpoint())
+        XCTAssertEqual(mintCount, 1)
+    }
+
     // MARK: - Paired device row
 
     func testPairedDeviceRowFormatting() {

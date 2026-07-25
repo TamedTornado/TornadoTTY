@@ -7,8 +7,6 @@ import {
   applySnapshot,
   countAttention,
   isStale,
-  orderPanes,
-  orderWorklanes,
   type Worklane,
 } from '../dashboard';
 
@@ -114,43 +112,6 @@ describe('applyDelta', () => {
       removedPaneIds: [],
     });
     expect(next[0].attention).toBe(false);
-  });
-});
-
-describe('orderPanes', () => {
-  it('pins attention panes to the top while preserving order within each group', () => {
-    const ordered = orderPanes([
-      pane({ paneId: 'a', worklaneId: 'w1' }),
-      pane({ paneId: 'b', worklaneId: 'w1', requiresHumanAttention: true }),
-      pane({ paneId: 'c', worklaneId: 'w1' }),
-      pane({ paneId: 'd', worklaneId: 'w1', requiresHumanAttention: true }),
-    ]);
-    expect(ordered.map((p) => p.paneId)).toEqual(['b', 'd', 'a', 'c']);
-  });
-
-  it('is a no-op ordering when nothing needs attention', () => {
-    const input = [
-      pane({ paneId: 'a', worklaneId: 'w1' }),
-      pane({ paneId: 'b', worklaneId: 'w1' }),
-    ];
-    expect(orderPanes(input).map((p) => p.paneId)).toEqual(['a', 'b']);
-  });
-});
-
-describe('orderWorklanes', () => {
-  it('floats worklanes with attention above the rest and orders their panes', () => {
-    const model = applySnapshot({
-      worklanes: [
-        worklane('calm', [pane({ paneId: 'a', worklaneId: 'calm' })]),
-        worklane('busy', [
-          pane({ paneId: 'b', worklaneId: 'busy' }),
-          pane({ paneId: 'c', worklaneId: 'busy', requiresHumanAttention: true }),
-        ]),
-      ],
-    });
-    const ordered = orderWorklanes(model);
-    expect(ordered.map((w) => w.id)).toEqual(['busy', 'calm']);
-    expect(ordered[0].panes.map((p) => p.paneId)).toEqual(['c', 'b']);
   });
 });
 

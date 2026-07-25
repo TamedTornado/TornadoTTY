@@ -84,6 +84,10 @@ function withNSETarget(config) {
       }
     }
 
+    // addTarget already embeds the appex into the first target (a "Copy Files"
+    // phase) and adds the target dependency. Adding our own embed phase would
+    // put the same PBXBuildFile in two phases, which Xcodeproj (CocoaPods)
+    // rejects with "Consistency issue: no parent for object" on save.
     const target = project.addTarget(TARGET_NAME, 'app_extension', TARGET_NAME, bundleId);
 
     project.addBuildPhase(
@@ -94,17 +98,6 @@ function withNSETarget(config) {
     );
     project.addBuildPhase([], 'PBXResourcesBuildPhase', 'Resources', target.uuid);
     project.addBuildPhase([], 'PBXFrameworksBuildPhase', 'Frameworks', target.uuid);
-
-    // Embed the extension into the main app ("Embed App Extensions").
-    const mainTargetUuid = project.getFirstTarget().uuid;
-    project.addBuildPhase(
-      [`${TARGET_NAME}.appex`],
-      'PBXCopyFilesBuildPhase',
-      'Embed App Extensions',
-      mainTargetUuid,
-      'app_extension',
-    );
-    project.addTargetDependency(mainTargetUuid, [target.uuid]);
 
     // Per-configuration build settings for the extension.
     const configurations = project.pbxXCBuildConfigurationSection();

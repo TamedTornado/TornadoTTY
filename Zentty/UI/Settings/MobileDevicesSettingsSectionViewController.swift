@@ -334,11 +334,24 @@ final class MobileDevicesSettingsSectionViewController: SettingsScrollableSectio
         let sheet = MobileDevicesPairingSheetViewController(
             session: session,
             onClose: { [weak self] in
+                // Tear down the advertising subscription before clearing offers, so
+                // the stopListener() that cancelPairingOffers may trigger doesn't
+                // fire back into a half-dismissed sheet.
+                bridge.onAdvertisingStateChanged = nil
                 bridge.cancelPairingOffers()
                 self?.reloadDevicesAndStatus()
             }
         )
         pairingSheetController = sheet
+        // The listener reports its port asynchronously, so the offer just minted is
+        // usually endpoint-less for a moment. When the port appears, re-mint the
+        // displayed offer so it gains a LAN hint and flip the status row from
+        // "Idle"/"Starting" to "Advertising on port N". [weak] so neither the sheet
+        // nor this controller is retained by the bridge's closure.
+        bridge.onAdvertisingStateChanged = { [weak self, weak sheet] in
+            sheet?.advertisingStateDidChange()
+            self?.reloadDevicesAndStatus()
+        }
         presentAsSheet(sheet)
         // Refresh so the status row reflects the listener that minting just started.
         reloadDevicesAndStatus()

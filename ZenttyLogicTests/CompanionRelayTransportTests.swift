@@ -412,6 +412,7 @@ private final class FakeRelayServices: CompanionSessionServicing {
 
     private final class EmptyPaneTextProvider: CompanionPaneTextProviding {
         func companionReadPaneText(paneId: String, includeScrollback: Bool, lineLimit: Int?) -> CompanionPaneTextReadout? { nil }
+        func companionSetPaneRenderKeepAlive(paneId: String, active: Bool) {}
     }
 
     private final class EmptyTranscriptSource: CompanionTranscriptSourceProviding {
@@ -425,6 +426,7 @@ private final class FakeRelayServices: CompanionSessionServicing {
     private let transcriptSource = EmptyTranscriptSource()
     private let feed: CompanionDashboardFeed
     private let paneTextFeed: CompanionPaneTextFeed
+    private let paneBytesFeed: CompanionPaneBytesFeed
     private let transcriptFeed: CompanionTranscriptFeed
     private let leaseManager: CompanionLeaseManager
 
@@ -432,6 +434,7 @@ private final class FakeRelayServices: CompanionSessionServicing {
         self.identity = identity
         self.feed = CompanionDashboardFeed(provider: provider)
         self.paneTextFeed = CompanionPaneTextFeed(provider: paneTextProvider)
+        self.paneBytesFeed = CompanionPaneBytesFeed()
         self.transcriptFeed = CompanionTranscriptFeed(source: transcriptSource)
         self.leaseManager = CompanionLeaseManager(applier: nil)
     }
@@ -480,6 +483,29 @@ private final class FakeRelayServices: CompanionSessionServicing {
         paneTextFeed.scrollback(paneId: paneId, lineLimit: lineLimit)
     }
 
+    func addPaneBytesWatcher(
+        _ send: @escaping (CompanionPaneBytesChunk) -> Void
+    ) -> CompanionPaneBytesToken {
+        paneBytesFeed.addWatcher(sendChunk: send)
+    }
+
+    func removePaneBytesWatcher(_ token: CompanionPaneBytesToken) {
+        paneBytesFeed.removeWatcher(token)
+    }
+
+    func attachPaneBytes(
+        token: CompanionPaneBytesToken,
+        paneId: String,
+        lastSeq: Int?,
+        epoch: String?
+    ) -> CompanionPaneBytesAttached {
+        paneBytesFeed.attach(token: token, paneId: paneId, lastSeq: lastSeq, epoch: epoch)
+    }
+
+    func detachPaneBytes(token: CompanionPaneBytesToken, paneId: String) {
+        paneBytesFeed.detach(token: token, paneId: paneId)
+    }
+
     func addTranscriptSubscriber(
         _ send: @escaping (CompanionTranscriptEvent) -> Void
     ) -> CompanionTranscriptSubscriberToken {
@@ -519,12 +545,12 @@ private final class FakeRelayServices: CompanionSessionServicing {
         leaseManager.heartbeat(token: token, leaseId: leaseId)
     }
 
-    func leaseResize(leaseId: String, cols: Int, rows: Int) {
-        leaseManager.resize(leaseId: leaseId, cols: cols, rows: rows)
+    func leaseResize(token: CompanionLeaseClientToken, leaseId: String, cols: Int, rows: Int) {
+        leaseManager.resize(token: token, leaseId: leaseId, cols: cols, rows: rows)
     }
 
-    func leaseRelease(leaseId: String) {
-        leaseManager.release(leaseId: leaseId)
+    func leaseRelease(token: CompanionLeaseClientToken, leaseId: String) {
+        leaseManager.release(token: token, leaseId: leaseId)
     }
 
     func registerPush(phoneDeviceId: String, platform: CompanionPushPlatform, token: String) {}

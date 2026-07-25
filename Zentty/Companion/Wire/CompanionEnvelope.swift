@@ -84,6 +84,11 @@ enum CompanionMessage: Equatable, Sendable {
     case paneUnwatch(CompanionPaneUnwatch)
     case paneText(CompanionPaneText)
     case paneScrollback(CompanionPaneScrollback)
+    // pane.bytes.*
+    case paneBytesAttach(CompanionPaneBytesAttach)
+    case paneBytesAttached(CompanionPaneBytesAttached)
+    case paneBytesChunk(CompanionPaneBytesChunk)
+    case paneBytesDetach(CompanionPaneBytesDetach)
     // input.*
     case inputText(CompanionInputText)
     case inputKey(CompanionInputKeyMessage)
@@ -126,6 +131,10 @@ enum CompanionMessage: Equatable, Sendable {
         case .paneUnwatch: return CompanionPaneUnwatch.messageType
         case .paneText: return CompanionPaneText.messageType
         case .paneScrollback: return CompanionPaneScrollback.messageType
+        case .paneBytesAttach: return CompanionPaneBytesAttach.messageType
+        case .paneBytesAttached: return CompanionPaneBytesAttached.messageType
+        case .paneBytesChunk: return CompanionPaneBytesChunk.messageType
+        case .paneBytesDetach: return CompanionPaneBytesDetach.messageType
         case .inputText: return CompanionInputText.messageType
         case .inputKey: return CompanionInputKeyMessage.messageType
         case .inputQuickAction: return CompanionInputQuickAction.messageType
@@ -168,6 +177,10 @@ enum CompanionMessage: Equatable, Sendable {
         case CompanionPaneUnwatch.messageType: self = .paneUnwatch(try decode(CompanionPaneUnwatch.self))
         case CompanionPaneText.messageType: self = .paneText(try decode(CompanionPaneText.self))
         case CompanionPaneScrollback.messageType: self = .paneScrollback(try decode(CompanionPaneScrollback.self))
+        case CompanionPaneBytesAttach.messageType: self = .paneBytesAttach(try decode(CompanionPaneBytesAttach.self))
+        case CompanionPaneBytesAttached.messageType: self = .paneBytesAttached(try decode(CompanionPaneBytesAttached.self))
+        case CompanionPaneBytesChunk.messageType: self = .paneBytesChunk(try decode(CompanionPaneBytesChunk.self))
+        case CompanionPaneBytesDetach.messageType: self = .paneBytesDetach(try decode(CompanionPaneBytesDetach.self))
         case CompanionInputText.messageType: self = .inputText(try decode(CompanionInputText.self))
         case CompanionInputKeyMessage.messageType: self = .inputKey(try decode(CompanionInputKeyMessage.self))
         case CompanionInputQuickAction.messageType: self = .inputQuickAction(try decode(CompanionInputQuickAction.self))
@@ -209,6 +222,10 @@ enum CompanionMessage: Equatable, Sendable {
         case .paneUnwatch(let p): try container.encode(p, forKey: .payload)
         case .paneText(let p): try container.encode(p, forKey: .payload)
         case .paneScrollback(let p): try container.encode(p, forKey: .payload)
+        case .paneBytesAttach(let p): try container.encode(p, forKey: .payload)
+        case .paneBytesAttached(let p): try container.encode(p, forKey: .payload)
+        case .paneBytesChunk(let p): try container.encode(p, forKey: .payload)
+        case .paneBytesDetach(let p): try container.encode(p, forKey: .payload)
         case .inputText(let p): try container.encode(p, forKey: .payload)
         case .inputKey(let p): try container.encode(p, forKey: .payload)
         case .inputQuickAction(let p): try container.encode(p, forKey: .payload)

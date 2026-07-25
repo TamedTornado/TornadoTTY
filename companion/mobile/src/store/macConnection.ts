@@ -36,11 +36,19 @@ import {
   type Worklane,
 } from './dashboard';
 import type { PaneTextFrame } from './paneText';
+import type { PaneBytesChunkFrame } from './paneBytesLane';
 import { PaneController, type PaneRuntimeState, type PaneTransport } from './paneController';
 
 /** Serializable per-Mac state the store holds and screens render. */
 export interface MacConnectionState {
   status: ConnState;
+  /**
+   * True only once the encrypted {@link PhoneSession} has completed its handshake
+   * and can carry input. `status: 'connected'` fires earlier, on raw transport
+   * connect, so input gated on `status` alone would be silently dropped during
+   * the handshake gap. Screens gate input/quick-actions on this instead.
+   */
+  sessionReady: boolean;
   /** Which transport carried the current/last connection. */
   transport?: 'direct' | 'relay';
   /** Relay-reported peer presence (Mac reachable), when known. */
@@ -92,6 +100,9 @@ export class MacConnection {
   private session?: PhoneSession;
   private running = false;
   private stopped = false;
+  /** Set while the run loop is sleeping between reconnect attempts; calling it
+   * cuts the sleep short so an explicit {@link refresh} reconnects promptly. */
+  private wakeReconnect?: () => void;
   private worklanes: Worklane[];
   private readonly panes = new Map<string, PaneController>();
   /** Stable transport seam handed to every {@link PaneController}; reads the
@@ -108,7 +119,7 @@ export class MacConnection {
     this.sessionUpThresholdMs = deps.sessionUpThresholdMs ?? DEFAULT_SESSION_UP_THRESHOLD_MS;
     this.worklanes = deps.initialWorklanes ?? [];
     this.registrar = new PushRegistrar(deps.identity.deviceId);
-    this.state = { status: 'connecting', worklanes: this.worklanes, panes: {} };
+    this.state = { status: 'connecting', sessionReady: false, worklanes: this.worklanes, panes: {} };
     this.paneTransport = {
       send: (type, payload) => {
         if (this.session?.state === 'ready') {
@@ -170,13 +181,40 @@ export class MacConnection {
     }
   }
 
-  /** Force a reconnect (pull-to-refresh): drop the live session, keep cached data. */
+  /** Force a reconnect (pull-to-refresh): drop the live session, keep cached data.
+   * If the loop is mid-backoff (offline, sleeping), cut the sleep short and reset
+   * the backoff so the reconnect happens now rather than after the delay. */
   refresh(): void {
     if (!this.running) {
       this.start();
       return;
     }
     this.session?.close();
+    if (this.wakeReconnect) {
+      this.reconnectBackoff.reset();
+      this.wakeReconnect();
+    }
+  }
+
+  /**
+   * Nudge the run loop out of reconnect backoff (app foregrounded — iOS suspends
+   * sockets/timers in the background, so the pacing sleep can outlast its delay).
+   * Unlike {@link refresh} this never drops a live session: it is a no-op while
+   * connected or mid-connect, only cuts a pending backoff sleep short, and starts
+   * the loop if it is not running.
+   */
+  wake(): void {
+    if (this.stopped) {
+      return;
+    }
+    if (this.wakeReconnect) {
+      this.reconnectBackoff.reset();
+      this.wakeReconnect();
+      return;
+    }
+    if (!this.running) {
+      this.start();
+    }
   }
 
   /** Tear down permanently: no further reconnects. */
@@ -222,7 +260,7 @@ export class MacConnection {
       if (this.stopped) {
         break;
       }
-      this.emit({ status: 'offline' });
+      this.emit({ status: 'offline', sessionReady: false });
       // A session that stayed ready past the threshold was healthy; a fresh drop
       // shouldn't inherit accumulated backoff. Otherwise back off exponentially so
       // a Mac that accepts + handshakes then instantly drops can't trigger a storm.
@@ -231,9 +269,27 @@ export class MacConnection {
       if (uptime >= this.sessionUpThresholdMs) {
         this.reconnectBackoff.reset();
       }
-      await this.delay(this.reconnectBackoff.next());
+      await this.reconnectSleep(this.reconnectBackoff.next());
     }
     this.running = false;
+  }
+
+  /** Interruptible reconnect pacing: sleeps for `ms`, but resolves early if
+   * {@link refresh} fires while we wait. */
+  private reconnectSleep(ms: number): Promise<void> {
+    return new Promise<void>((resolve) => {
+      let settled = false;
+      const done = (): void => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        this.wakeReconnect = undefined;
+        resolve();
+      };
+      this.wakeReconnect = done;
+      void this.delay(ms).then(done);
+    });
   }
 
   /** Relay-reported peer presence. If the Mac goes unreachable while a session is
@@ -247,12 +303,14 @@ export class MacConnection {
   }
 
   private onManagerStatus(status: ConnectionStatus): void {
+    // Transport-level status only. `sessionReady` stays false until the session
+    // handshake resolves (see runSession), so input isn't offered in the gap.
     if (status.state === 'connected') {
-      this.emit({ status: 'connected', transport: status.transport, lastConnectedAt: Date.now() });
+      this.emit({ status: 'connected', sessionReady: false, transport: status.transport, lastConnectedAt: Date.now() });
     } else if (status.state === 'connecting') {
-      this.emit({ status: 'connecting' });
+      this.emit({ status: 'connecting', sessionReady: false });
     } else {
-      this.emit({ status: 'offline' });
+      this.emit({ status: 'offline', sessionReady: false });
     }
   }
 
@@ -277,6 +335,8 @@ export class MacConnection {
         .connect()
         .then(() => {
           this.sessionReadyAt = this.now();
+          // Handshake done: the session can now carry input. Screens gate on this.
+          this.emit({ sessionReady: true });
           // The Mac answers a subscribe with a fresh dashboard.snapshot, then
           // streams dashboard.delta frames (both routed via onMessage).
           session.send('dashboard.subscribe', {});
@@ -306,6 +366,11 @@ export class MacConnection {
     } else if (message.type === 'pane.text') {
       const payload = message.payload as PaneTextFrame;
       this.panes.get(payload.paneId)?.onPaneText(payload);
+    } else if (message.type === 'pane.bytes.chunk') {
+      // `pane.bytes.attached` is a correlated reply (routed by replyTo in the
+      // session), so only the unsolicited live chunks land here.
+      const payload = message.payload as PaneBytesChunkFrame;
+      this.panes.get(payload.paneId)?.onPaneBytesChunk(payload);
     } else if (message.type === 'lease.revoked') {
       const payload = message.payload as { leaseId: string; reason: LeaseRevokedReason };
       // A revoked frame carries no paneId; the holder recognizes its own leaseId.

@@ -18,7 +18,7 @@ import {
 } from '@zentty/wire';
 import type { RelayConfig } from './config.js';
 import { createLogger, type Logger } from './log.js';
-import { DeviceLimiter } from './rateLimit.js';
+import { DeviceLimiter, TokenBucket } from './rateLimit.js';
 import { classifySealed, verifyRelayAuth } from './crypto.js';
 import type { PushGateway } from './push/gateway.js';
 
@@ -34,6 +34,12 @@ interface Conn {
   nonce: string;
   deviceId: string | null;
   limiter: DeviceLimiter | null;
+  /**
+   * Raw per-connection inbound message limiter. Charged on every socket message
+   * BEFORE auth and independent of the per-device limiter, so an unauthenticated
+   * client cannot flood the JSON parser. A socket that exceeds it is closed.
+   */
+  msgBucket: TokenBucket;
   /** Distinct target ids this connection watches; source of truth for reaping. */
   watching: Set<string>;
   /** Timer that closes the socket if auth is not completed in time. */
@@ -73,6 +79,28 @@ export function createRelayServer(
   const devices = new Map<string, Conn>();
   // target deviceId -> set of watcher deviceIds subscribed to its status.
   const watchers = new Map<string, Set<string>>();
+  // deviceId -> its rate limiter. Keyed by device (not connection) and kept in a
+  // bounded LRU so a client cannot reset its throttle by reconnecting; the Map's
+  // insertion order is the LRU order (mirrors the push gateway's makeAdmitter).
+  const limiters = new Map<string, DeviceLimiter>();
+
+  function limiterFor(deviceId: string): DeviceLimiter {
+    let limiter = limiters.get(deviceId);
+    if (limiter) {
+      limiters.delete(deviceId); // touch: re-insert at the most-recent end
+    } else {
+      limiter = new DeviceLimiter(config);
+    }
+    limiters.set(deviceId, limiter);
+    while (limiters.size > config.maxDeviceLimiters) {
+      const oldest = limiters.keys().next().value;
+      if (oldest === undefined) {
+        break;
+      }
+      limiters.delete(oldest);
+    }
+    return limiter;
+  }
 
   function send(conn: Conn, frame: AnyRelayFrame): void {
     if (conn.ws.readyState !== WebSocket.OPEN) {
@@ -180,7 +208,9 @@ export function createRelayServer(
     // so reap the prior connection's watches here before it is dropped.
     const prior = devices.get(deviceId);
     conn.deviceId = deviceId;
-    conn.limiter = new DeviceLimiter(config);
+    // Reuse the device's limiter across reconnects so throttling is not reset by
+    // dropping and re-authenticating.
+    conn.limiter = limiterFor(deviceId);
     devices.set(deviceId, conn);
     if (prior && prior !== conn) {
       reapWatches(prior);
@@ -210,15 +240,31 @@ export function createRelayServer(
       sendError(conn, 'frame_too_large', 'frame exceeds size cap');
       return;
     }
-    const sealed = classifySealed(frame.sealed, config.maxPairingSealedBytes);
-    if (sealed.pairingTooLarge) {
-      sendError(conn, 'frame_too_large', 'pairing payload exceeds cap');
-      return;
-    }
-    const decision = limiter.admit(wireBytes, sealed.isPairing);
+    // Rate-admit FIRST, on the raw wire byte length, before inspecting the
+    // payload. Classifying a frame (base64url decode + JSON.parse of up to
+    // maxFrameBytes) is comparatively expensive, so it must never run for a frame
+    // the limiter would reject — otherwise a flood of large frames burns CPU
+    // regardless of the rate cap.
+    const decision = limiter.admit(wireBytes, false);
     if (!decision.ok) {
       sendError(conn, decision.reason ?? 'rate_limited', 'rate limit exceeded');
       return;
+    }
+    // Only classify frames small enough to *be* a plaintext pairing envelope.
+    // base64url expands ~4/3, so a blob that could decode within the pairing cap
+    // is at most this long; anything larger is an (already admitted) encrypted
+    // frame and is forwarded without ever being decoded or parsed.
+    const maxPairingSealedWire = Math.ceil((config.maxPairingSealedBytes * 4) / 3) + 4;
+    if (frame.sealed.length <= maxPairingSealedWire) {
+      const sealed = classifySealed(frame.sealed, config.maxPairingSealedBytes);
+      if (sealed.pairingTooLarge) {
+        sendError(conn, 'frame_too_large', 'pairing payload exceeds cap');
+        return;
+      }
+      if (sealed.isPairing && !limiter.admitPairing()) {
+        sendError(conn, 'rate_limited', 'rate limit exceeded');
+        return;
+      }
     }
 
     const target = devices.get(to);
@@ -257,6 +303,17 @@ export function createRelayServer(
   }
 
   function handleMessage(conn: Conn, data: RawData): void {
+    // Raw per-connection message-rate guard, charged BEFORE parsing and before
+    // auth. maxPayload/authTimeoutMs/maxConnectionsPerIp bound size, lifetime and
+    // fan-out, but nothing else caps how fast one socket can push messages into
+    // JSON.parse pre-auth. A socket over the cap is closed outright.
+    if (!conn.msgBucket.take(1)) {
+      logger.warn('closing socket: message rate exceeded', {
+        deviceId: conn.deviceId,
+      });
+      conn.ws.close(1008, 'message rate exceeded');
+      return;
+    }
     const text = typeof data === 'string' ? data : data.toString('utf8');
     const wireBytes = Buffer.byteLength(text, 'utf8');
     let frame: AnyRelayFrame;
@@ -344,6 +401,10 @@ export function createRelayServer(
       nonce: randomBytes(32).toString('base64url'),
       deviceId: null,
       limiter: null,
+      msgBucket: new TokenBucket(
+        config.maxMessagesPerSec,
+        config.maxMessagesPerSec,
+      ),
       watching: new Set(),
       authTimer: null,
     };

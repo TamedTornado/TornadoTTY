@@ -16,11 +16,20 @@ extension AppDelegate: CompanionDashboardStateProviding {
         orderedWindowControllersForDiscovery().flatMap { controller -> [CompanionDashboardWorklane] in
             let windowOrder = controller.windowOrder + 1
             return controller.discoveryWorkspaceState.worklanes.map { worklane in
-                let panes: [CompanionPaneSummary] = worklane.paneStripState.panes.compactMap { pane in
-                    guard let status = worklane.auxiliaryStateByPaneID[pane.id]?.agentStatus else {
-                        return nil
-                    }
+                let panes: [CompanionPaneSummary] = worklane.paneStripState.panes.map { pane in
+                    let auxiliary = worklane.auxiliaryStateByPaneID[pane.id]
                     let title = WorklaneContextFormatter.trimmed(pane.customTitle) ?? pane.title
+                    guard let status = auxiliary?.agentStatus else {
+                        // Plain terminal pane (no agent): still listed so the phone
+                        // mirrors the sidebar; it gets terminal-only affordances
+                        // (no tool, no transcript) and never demands attention.
+                        return CompanionDashboardMapping.plainSummary(
+                            paneID: pane.id.rawValue,
+                            worklaneID: worklane.id.rawValue,
+                            title: title,
+                            workingDirectory: auxiliary?.presentation.cwd ?? ""
+                        )
+                    }
                     return CompanionDashboardMapping.summary(
                         paneID: pane.id.rawValue,
                         worklaneID: worklane.id.rawValue,
@@ -28,9 +37,12 @@ extension AppDelegate: CompanionDashboardStateProviding {
                         status: status
                     )
                 }
+                // Only the user-set worklane title travels; the phone hides the
+                // header label when it is empty rather than showing a derived one.
+                let title = WorklaneContextFormatter.trimmed(worklane.title) ?? ""
                 return CompanionDashboardWorklane(
                     id: worklane.id.rawValue,
-                    title: worklane.title ?? "",
+                    title: title,
                     windowId: windowOrder,
                     attention: panes.contains { $0.requiresHumanAttention },
                     panes: panes
@@ -86,6 +98,14 @@ extension AppDelegate: CompanionInputSink {
         let paneID = PaneID(paneId)
         guard let controller = windowController(containingPane: paneID) else { return false }
         return controller.sendText(text, to: paneID)
+    }
+
+    /// Injects a named key as a real key event (not pasted text) so cursor-key
+    /// CSI keeps its `ESC` and Return submits. See `CompanionInputSink`.
+    func companionSendKey(_ key: TerminalSpecialKey, toPaneId paneId: String) -> Bool {
+        let paneID = PaneID(paneId)
+        guard let controller = windowController(containingPane: paneID) else { return false }
+        return controller.sendSpecialKey(key, to: paneID)
     }
 }
 
@@ -148,5 +168,13 @@ extension AppDelegate: CompanionPaneTextProviding {
             gridRows: grid?.rows ?? 0,
             cursorRow: nil
         )
+    }
+
+    /// Resolves the pane and pins/unpins its render keepalive so a mirrored pane
+    /// keeps repainting even when occluded (backgrounded, or under a control-lease
+    /// placeholder). A no-op when the pane is unknown or has no live runtime.
+    func companionSetPaneRenderKeepAlive(paneId: String, active: Bool) {
+        let paneID = PaneID(paneId)
+        windowController(containingPane: paneID)?.setCompanionRenderKeepAlive(active, for: paneID)
     }
 }

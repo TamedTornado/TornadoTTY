@@ -28,7 +28,7 @@ final class CompanionWireConformanceTests: XCTestCase {
         let rawMessage: [String: Any]
     }
 
-    private static let expectedEnvelopeFileCount = 32
+    private static let expectedEnvelopeFileCount = 36
     private static let expectedRelayFileCount = 8
 
     // MARK: - Loading
@@ -183,6 +183,7 @@ final class CompanionWireConformanceTests: XCTestCase {
             "session.hello", "session.ready", "session.ping", "session.pong", "session.error",
             "dashboard.subscribe", "dashboard.snapshot", "dashboard.delta",
             "pane.watch", "pane.unwatch", "pane.text", "pane.scrollback",
+            "pane.bytes.attach", "pane.bytes.attached", "pane.bytes.chunk", "pane.bytes.detach",
             "input.text", "input.key", "input.quickAction", "input.ack",
             "transcript.subscribe", "transcript.snapshot", "transcript.delta", "transcript.unavailable",
             "lease.request", "lease.grant", "lease.heartbeat", "lease.resize", "lease.release", "lease.revoked",
@@ -311,14 +312,13 @@ final class CompanionWireConformanceTests: XCTestCase {
     /// string* exactly as sent in `relay.challenge` — not its decoded bytes.
     /// `relay.challenge.json`'s valid case nonce is that same frozen nonce.
     ///
-    /// Note: this deliberately does NOT use `CompanionRelayAuthProof.message`,
-    /// which signs over the *decoded* nonce bytes — a real cross-language
-    /// mismatch with the relay's `verifyRelayAuth` (see
-    /// `companion/relay/src/crypto.ts`). That mismatch was confirmed directly
-    /// against this vector's signature: the decoded-bytes form does not
-    /// verify, only the string form does. Left unfixed here since it's a
-    /// production auth-handshake behavior change, out of scope for a
-    /// conformance-suite fix — flagged for a follow-up.
+    /// Note: this verifies independently rather than going through
+    /// `CompanionRelayAuthProof.message`, which agrees with this vector:
+    /// it signs the UTF-8 *string* form `label + nonce` (the base64url nonce
+    /// exactly as transmitted, not its decoded bytes), matching the relay's
+    /// `verifyRelayAuth` (`companion/relay/src/crypto.ts`) and the mobile
+    /// client (`companion/mobile/.../connection.ts`). All three
+    /// implementations are consistent.
     func testRelayAuthVectorInteropSignature() throws {
         let cases = try loadRelayCases()
 

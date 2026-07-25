@@ -89,6 +89,32 @@ final class CompanionPairingSession {
     func regenerate() {
         current = CompanionPairingOfferModel(offer: mint())
     }
+
+    /// True when the displayed offer carries no way for the phone to reach this
+    /// Mac — no LAN hint *and* an empty relay URL. The sheet shows a caution while
+    /// this holds so an unreachable code is never presented silently.
+    var currentOfferLacksEndpoint: Bool {
+        Self.offerLacksEndpoint(current.offer)
+    }
+
+    /// Re-mints only when the current offer has no reachable endpoint, so the fresh
+    /// offer can pick up a LAN hint once the listener's port has appeared. Does
+    /// nothing (and does not churn the secret) when the current offer is already
+    /// reachable. Returns `true` when it re-minted, so the caller can re-render.
+    ///
+    /// Called when the bridge signals its advertising state changed: at that point
+    /// `advertisedPort` is set, so the re-mint captures the LAN hint the first,
+    /// pre-`.ready` mint missed.
+    @discardableResult
+    func regenerateIfMissingEndpoint() -> Bool {
+        guard Self.offerLacksEndpoint(current.offer) else { return false }
+        current = CompanionPairingOfferModel(offer: mint())
+        return true
+    }
+
+    private static func offerLacksEndpoint(_ offer: CompanionPairingOffer) -> Bool {
+        offer.lanHint == nil && offer.relayUrl.isEmpty
+    }
 }
 
 // MARK: - Paired device row

@@ -85,8 +85,9 @@ export const TranscriptRole = z.enum([
 export type TranscriptRole = z.infer<typeof TranscriptRole>;
 
 /**
- * One normalized transcript entry. Adapter-specific detail rides in `raw` only
- * when small; the typed fields are the cross-tool contract.
+ * One normalized transcript entry. The typed fields below are the cross-tool
+ * contract; adapters that need to carry extra detail should extend this
+ * schema deliberately rather than reaching for an untyped catch-all.
  */
 export const TranscriptEntry = z.object({
   id: z.string(),
@@ -97,6 +98,5 @@ export const TranscriptEntry = z.object({
   toolInput: z.unknown().optional(),
   toolResultSummary: z.string().optional(),
   status: z.string().optional(),
-  raw: z.unknown().optional(),
 });
 export type TranscriptEntry = z.infer<typeof TranscriptEntry>;

@@ -4,6 +4,7 @@ import { pairingMessages } from './families/pairing';
 import { sessionMessages } from './families/session';
 import { dashboardMessages } from './families/dashboard';
 import { paneMessages } from './families/pane';
+import { paneBytesMessages } from './families/paneBytes';
 import { inputMessages } from './families/input';
 import { transcriptMessages } from './families/transcript';
 import { leaseMessages } from './families/lease';
@@ -19,6 +20,7 @@ export const MESSAGE_SCHEMAS = {
   ...sessionMessages,
   ...dashboardMessages,
   ...paneMessages,
+  ...paneBytesMessages,
   ...inputMessages,
   ...transcriptMessages,
   ...leaseMessages,

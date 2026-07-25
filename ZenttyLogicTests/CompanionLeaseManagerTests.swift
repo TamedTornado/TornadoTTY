@@ -189,8 +189,8 @@ final class CompanionLeaseManagerTests: XCTestCase {
         let grant = manager.request(token: token, paneId: "p1", cols: 40, rows: 30, deviceName: "iPhone")
         await clock.waitForWaiters(1) // expiry loop
 
-        manager.resize(leaseId: grant.leaseId, cols: 50, rows: 35)
-        manager.resize(leaseId: grant.leaseId, cols: 60, rows: 45)
+        manager.resize(token: token, leaseId: grant.leaseId, cols: 50, rows: 35)
+        manager.resize(token: token, leaseId: grant.leaseId, cols: 60, rows: 45)
         await clock.waitForWaiters(3) // expiry + two resize debounces parked
 
         clock.releaseAll()
@@ -241,7 +241,7 @@ final class CompanionLeaseManagerTests: XCTestCase {
         let token = manager.addClient { revocations.append($0) }
 
         let grant = manager.request(token: token, paneId: "p1", cols: 40, rows: 30, deviceName: "iPhone")
-        manager.release(leaseId: grant.leaseId)
+        manager.release(token: token, leaseId: grant.leaseId)
 
         // Phone-initiated release restores but sends no lease.revoked.
         XCTAssertTrue(revocations.isEmpty)

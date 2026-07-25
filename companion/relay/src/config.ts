@@ -30,6 +30,18 @@ export interface RelayConfig {
   authTimeoutMs: number;
   /** Per-socket outbound buffer cap (bytes); frames past it are dropped. */
   maxBufferedBytes: number;
+  /**
+   * Raw per-connection inbound message rate (msgs/sec, burst == this). A cheap
+   * guard applied on every socket message BEFORE auth and independent of the
+   * post-auth DeviceLimiter; a socket that exceeds it is closed.
+   */
+  maxMessagesPerSec: number;
+  /**
+   * Max distinct per-device rate limiters kept in memory (LRU-evicted past
+   * this). Limiters are keyed by deviceId and survive reconnect so a client
+   * cannot reset its throttle by dropping and re-authenticating.
+   */
+  maxDeviceLimiters: number;
   logLevel: LogLevel;
 }
 
@@ -55,21 +67,36 @@ const DEFAULTS: RelayConfig = {
   maxConnectionsPerIp: 64,
   authTimeoutMs: 10_000,
   maxBufferedBytes: 4 * 1024 * 1024,
+  maxMessagesPerSec: 250,
+  maxDeviceLimiters: 10_000,
   logLevel: 'info',
 };
 
+/**
+ * Parse an integer env var, clamped to [min, max]. A value outside the range —
+ * including 0 where 0 would silently disable a protection — is a loud startup
+ * error, matching the fail-fast style of the push-config loaders. Set min to 0
+ * only for knobs where 0 is a real, safe value (e.g. PORT=0 == ephemeral port).
+ */
 function intEnv(
   env: NodeJS.ProcessEnv,
   key: string,
   fallback: number,
+  min: number,
+  max: number,
 ): number {
   const raw = env[key];
   if (raw === undefined || raw.trim() === '') {
     return fallback;
   }
   const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed < 0) {
+  if (!Number.isFinite(parsed) || !Number.isInteger(parsed)) {
     throw new Error(`invalid integer for ${key}: ${JSON.stringify(raw)}`);
+  }
+  if (parsed < min || parsed > max) {
+    throw new Error(
+      `${key} out of range: ${parsed} (expected ${min}..${max})`,
+    );
   }
   return parsed;
 }
@@ -215,17 +242,27 @@ export function loadPushConfig(env: NodeJS.ProcessEnv = process.env): PushConfig
     ...(apns ? { apns } : {}),
     ...(fcm ? { fcm } : {}),
     ...(tokenStorePath !== undefined ? { tokenStorePath } : {}),
-    rateBurst: intEnv(env, 'PUSH_RATE_BURST', PUSH_DEFAULT_RATE_BURST),
-    ratePerMin: intEnv(env, 'PUSH_RATE_PER_MIN', PUSH_DEFAULT_RATE_PER_MIN),
+    rateBurst: intEnv(env, 'PUSH_RATE_BURST', PUSH_DEFAULT_RATE_BURST, 1, 1_000_000),
+    ratePerMin: intEnv(
+      env,
+      'PUSH_RATE_PER_MIN',
+      PUSH_DEFAULT_RATE_PER_MIN,
+      1,
+      1_000_000,
+    ),
     maxRateBuckets: intEnv(
       env,
       'PUSH_MAX_RATE_BUCKETS',
       PUSH_DEFAULT_MAX_RATE_BUCKETS,
+      1,
+      10_000_000,
     ),
     maxPhonesPerMac: intEnv(
       env,
       'PUSH_MAX_PHONES_PER_MAC',
       PUSH_DEFAULT_MAX_PHONES_PER_MAC,
+      1,
+      1_000_000,
     ),
   };
 }
@@ -235,29 +272,56 @@ export function loadPushConfig(env: NodeJS.ProcessEnv = process.env): PushConfig
  * PORT, RATE_FRAMES_PER_SEC, RATE_BYTES_PER_SEC, RATE_PAIRING_PER_MIN,
  * RATE_MAX_FRAME_BYTES, RATE_MAX_PAIRING_SEALED_BYTES, MAX_WATCHED_PEERS,
  * MAX_CONNECTIONS, MAX_CONNECTIONS_PER_IP, AUTH_TIMEOUT_MS, MAX_BUFFERED_BYTES,
- * LOG_LEVEL.
+ * MAX_MESSAGES_PER_SEC, MAX_DEVICE_LIMITERS, LOG_LEVEL. Every numeric knob is
+ * bounded so a misconfigured 0 (which would silently disable a protection) or an
+ * absurd value fails loudly at startup.
  */
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): RelayConfig {
   return {
-    port: intEnv(env, 'PORT', DEFAULTS.port),
-    framesPerSec: intEnv(env, 'RATE_FRAMES_PER_SEC', DEFAULTS.framesPerSec),
-    bytesPerSec: intEnv(env, 'RATE_BYTES_PER_SEC', DEFAULTS.bytesPerSec),
-    pairingPerMin: intEnv(env, 'RATE_PAIRING_PER_MIN', DEFAULTS.pairingPerMin),
-    maxFrameBytes: intEnv(env, 'RATE_MAX_FRAME_BYTES', DEFAULTS.maxFrameBytes),
+    // PORT 0 is a legitimate request for an OS-assigned ephemeral port.
+    port: intEnv(env, 'PORT', DEFAULTS.port, 0, 65_535),
+    framesPerSec: intEnv(env, 'RATE_FRAMES_PER_SEC', DEFAULTS.framesPerSec, 1, 1_000_000),
+    bytesPerSec: intEnv(env, 'RATE_BYTES_PER_SEC', DEFAULTS.bytesPerSec, 1, 1_073_741_824),
+    pairingPerMin: intEnv(env, 'RATE_PAIRING_PER_MIN', DEFAULTS.pairingPerMin, 1, 1_000_000),
+    maxFrameBytes: intEnv(env, 'RATE_MAX_FRAME_BYTES', DEFAULTS.maxFrameBytes, 1, 67_108_864),
     maxPairingSealedBytes: intEnv(
       env,
       'RATE_MAX_PAIRING_SEALED_BYTES',
       DEFAULTS.maxPairingSealedBytes,
+      1,
+      67_108_864,
     ),
-    maxWatchedPeers: intEnv(env, 'MAX_WATCHED_PEERS', DEFAULTS.maxWatchedPeers),
-    maxConnections: intEnv(env, 'MAX_CONNECTIONS', DEFAULTS.maxConnections),
+    maxWatchedPeers: intEnv(env, 'MAX_WATCHED_PEERS', DEFAULTS.maxWatchedPeers, 1, 10_000_000),
+    maxConnections: intEnv(env, 'MAX_CONNECTIONS', DEFAULTS.maxConnections, 1, 10_000_000),
     maxConnectionsPerIp: intEnv(
       env,
       'MAX_CONNECTIONS_PER_IP',
       DEFAULTS.maxConnectionsPerIp,
+      1,
+      10_000_000,
     ),
-    authTimeoutMs: intEnv(env, 'AUTH_TIMEOUT_MS', DEFAULTS.authTimeoutMs),
-    maxBufferedBytes: intEnv(env, 'MAX_BUFFERED_BYTES', DEFAULTS.maxBufferedBytes),
+    authTimeoutMs: intEnv(env, 'AUTH_TIMEOUT_MS', DEFAULTS.authTimeoutMs, 1, 3_600_000),
+    maxBufferedBytes: intEnv(
+      env,
+      'MAX_BUFFERED_BYTES',
+      DEFAULTS.maxBufferedBytes,
+      1,
+      1_073_741_824,
+    ),
+    maxMessagesPerSec: intEnv(
+      env,
+      'MAX_MESSAGES_PER_SEC',
+      DEFAULTS.maxMessagesPerSec,
+      1,
+      10_000_000,
+    ),
+    maxDeviceLimiters: intEnv(
+      env,
+      'MAX_DEVICE_LIMITERS',
+      DEFAULTS.maxDeviceLimiters,
+      1,
+      10_000_000,
+    ),
     logLevel: logLevelEnv(env, DEFAULTS.logLevel),
   };
 }

@@ -23,6 +23,14 @@ protocol CompanionPaneTextProviding: AnyObject {
         includeScrollback: Bool,
         lineLimit: Int?
     ) -> CompanionPaneTextReadout?
+
+    /// Toggles a per-pane render keepalive so a mirrored pane keeps issuing render
+    /// pulses even when its desktop surface would otherwise be occluded (a
+    /// backgrounded pane, or one under a control-lease placeholder). Driven on the
+    /// 0↔1 watcher edge for a pane; a no-op when the pane has no live surface.
+    /// Without it an occluded surface stops repainting, so the phone's mirror
+    /// (which is fed by render pulses) goes dark.
+    func companionSetPaneRenderKeepAlive(paneId: String, active: Bool)
 }
 
 // MARK: - Watcher token
@@ -36,10 +44,12 @@ struct CompanionPaneWatchToken: Hashable, Sendable {
 // MARK: - Feed
 
 /// Streams `pane.text` for watched panes. On each coalesced `.contentChanged`
-/// pulse for a watched pane it debounces `debounceInterval`, re-reads the pane
+/// pulse for a watched pane it throttles to `debounceInterval`, re-reads the pane
 /// viewport through the provider, and pushes a monotonically-sequenced
 /// `pane.text` to every connection watching that pane — skipping the send when
-/// the text is byte-identical to the last snapshot. `pane.scrollback` is a
+/// the readout (text + grid) is identical to the last snapshot. A newly joining
+/// watcher also gets an immediate viewport snapshot so an idle pane is never
+/// blank. `pane.scrollback` is a
 /// one-shot full read. `@MainActor`: the provider reads the main-actor terminal
 /// graph.
 ///
@@ -69,12 +79,18 @@ final class CompanionPaneTextFeed {
     /// Monotonic sequence per pane. Persists across watch/unwatch so a rewatch
     /// keeps advancing; cleared only when the pane closes.
     private var seqByPane: [String: Int] = [:]
-    /// Last text pushed per pane, for suppressing no-op re-reads.
-    private var lastTextByPane: [String: String] = [:]
-    /// Debounce generation per pane. Every `.contentChanged` bumps it; only the
-    /// task carrying the current generation is allowed to emit, so a burst
-    /// collapses to a single trailing-edge send without cancelling tasks.
-    private var debounceGenByPane: [String: Int] = [:]
+    /// Last readout pushed per pane, for suppressing no-op re-reads. Keyed on the
+    /// whole readout (text + grid) so a reflow that keeps the text identical but
+    /// changes the grid — e.g. a lease takeover pinning 51×28 — still emits.
+    private var lastReadoutByPane: [String: CompanionPaneTextReadout] = [:]
+    /// Panes with a throttle window in flight. While a pane is in this set,
+    /// further `.contentChanged` pulses coalesce into the pending emit instead
+    /// of postponing it — a trailing THROTTLE, not a debounce. A debounce here
+    /// starves the phone during continuous output (streaming agents pulse
+    /// faster than the interval, so the emit would never fire); the throttle
+    /// guarantees a frame at most every `debounceInterval` and at least one
+    /// per interval while output flows.
+    private var throttlePendingPanes: Set<String> = []
 
     private var observationEnabled = false
 
@@ -100,10 +116,14 @@ final class CompanionPaneTextFeed {
         return token
     }
 
-    /// Drops a connection entirely (disconnect): removes all its watches and
+    /// Drops a connection entirely (disconnect): removes all its watches, releases
+    /// the render keepalive on any pane it was the last watcher of, and
     /// re-evaluates the render-observation gate.
     func removeWatcher(_ token: CompanionPaneWatchToken) {
-        guard watchers.removeValue(forKey: token) != nil else { return }
+        guard let removed = watchers.removeValue(forKey: token) else { return }
+        for paneId in removed.paneIds where !isWatched(paneId) {
+            releaseUnwatchedPane(paneId)
+        }
         syncObservation()
     }
 
@@ -111,35 +131,57 @@ final class CompanionPaneTextFeed {
 
     func watch(token: CompanionPaneWatchToken, paneId: String) {
         guard watchers[token] != nil else { return }
-        watchers[token]?.paneIds.insert(paneId)
+        let wasWatched = isWatched(paneId)
+        guard watchers[token]?.paneIds.insert(paneId).inserted == true else { return }
+        // First watcher on this pane: keep its surface rendering so it produces
+        // the render pulses this feed streams from.
+        if !wasWatched {
+            provider?.companionSetPaneRenderKeepAlive(paneId: paneId, active: true)
+        }
+        // Immediately hand the joining watcher the current viewport. Without this
+        // an idle pane (no render pulse coming) leaves a fresh watcher blank
+        // forever; the send bypasses the shared dedupe so a second watcher joining
+        // an already-primed, unchanged pane still gets its snapshot.
+        if let send = watchers[token]?.send {
+            sendInitialSnapshot(paneId: paneId, to: send)
+        }
         syncObservation()
     }
 
     func unwatch(token: CompanionPaneWatchToken, paneId: String) {
         guard watchers[token]?.paneIds.remove(paneId) != nil else { return }
         if !isWatched(paneId) {
-            // Last watcher gone: forget the pending debounce and snapshot so a
-            // later rewatch re-sends current content (seq stays monotonic).
-            debounceGenByPane[paneId] = nil
-            lastTextByPane[paneId] = nil
+            releaseUnwatchedPane(paneId)
         }
         syncObservation()
     }
 
+    /// The pane lost its last watcher: forget the pending debounce and snapshot so
+    /// a later rewatch re-sends current content (seq stays monotonic), and drop the
+    /// render keepalive so the surface can return to its occlusion-driven behavior.
+    private func releaseUnwatchedPane(_ paneId: String) {
+        throttlePendingPanes.remove(paneId)
+        lastReadoutByPane[paneId] = nil
+        provider?.companionSetPaneRenderKeepAlive(paneId: paneId, active: false)
+    }
+
     // MARK: Signals
 
-    /// A coalesced render pulse for `paneId`. Debounces, then re-reads and emits.
+    /// A coalesced render pulse for `paneId`. Throttles, then re-reads and emits:
+    /// the first pulse opens a window; pulses inside the window coalesce into
+    /// the single emit that fires when it closes.
     func handleContentChanged(paneId: String) {
         guard isWatched(paneId) else { return }
-        let generation = (debounceGenByPane[paneId] ?? 0) + 1
-        debounceGenByPane[paneId] = generation
+        guard !throttlePendingPanes.contains(paneId) else { return }
+        throttlePendingPanes.insert(paneId)
         let interval = debounceInterval
         let sleep = self.sleep
         Task { [weak self] in
             try? await sleep(interval)
             guard let self else { return }
-            guard self.debounceGenByPane[paneId] == generation else { return }
-            self.debounceGenByPane[paneId] = nil
+            // Unwatch/close during the window cleared the pending flag; a
+            // stale task must not emit or re-insert state for the pane.
+            guard self.throttlePendingPanes.remove(paneId) != nil else { return }
             self.emitPaneText(paneId: paneId)
         }
     }
@@ -152,10 +194,11 @@ final class CompanionPaneTextFeed {
         for token in watchers.keys {
             watchers[token]?.paneIds.remove(paneId)
         }
-        debounceGenByPane[paneId] = nil
-        lastTextByPane[paneId] = nil
+        throttlePendingPanes.remove(paneId)
+        lastReadoutByPane[paneId] = nil
         seqByPane[paneId] = nil
         if wasWatched {
+            provider?.companionSetPaneRenderKeepAlive(paneId: paneId, active: false)
             syncObservation()
         }
     }
@@ -190,13 +233,39 @@ final class CompanionPaneTextFeed {
             return
         }
 
-        guard lastTextByPane[paneId] != readout.text else { return }
+        guard lastReadoutByPane[paneId] != readout else { return }
+        lastReadoutByPane[paneId] = readout
 
+        let message = makePaneText(paneId: paneId, readout: readout)
+        for target in targets {
+            target.send(message)
+        }
+    }
+
+    /// One-shot viewport read handed straight to a single joining watcher (not the
+    /// shared fan-out). Bypasses the `lastReadoutByPane` dedupe on purpose so every
+    /// new watcher gets a baseline frame, and deliberately does *not* update it —
+    /// clobbering the shared snapshot here could suppress a pending debounced emit
+    /// and starve the panes' existing watchers. A pane with no live surface yet
+    /// sends nothing; the next content pulse delivers its first frame.
+    private func sendInitialSnapshot(paneId: String, to send: (CompanionPaneText) -> Void) {
+        guard let readout = provider?.companionReadPaneText(
+            paneId: paneId,
+            includeScrollback: false,
+            lineLimit: nil
+        ) else {
+            return
+        }
+        send(makePaneText(paneId: paneId, readout: readout))
+    }
+
+    /// Builds a `pane.text` for the pane and advances its monotonic `seq`. Shared
+    /// by the debounced fan-out and the per-watcher initial snapshot so both stamp
+    /// frames identically.
+    private func makePaneText(paneId: String, readout: CompanionPaneTextReadout) -> CompanionPaneText {
         let seq = (seqByPane[paneId] ?? 0) + 1
         seqByPane[paneId] = seq
-        lastTextByPane[paneId] = readout.text
-
-        let message = CompanionPaneText(
+        return CompanionPaneText(
             paneId: paneId,
             seq: seq,
             viewport: readout.text,
@@ -205,9 +274,6 @@ final class CompanionPaneTextFeed {
             gridRows: readout.gridRows,
             truncatedScrollback: false
         )
-        for target in targets {
-            target.send(message)
-        }
     }
 
     private func isWatched(_ paneId: String) -> Bool {

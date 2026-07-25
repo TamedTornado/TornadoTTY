@@ -11,7 +11,11 @@ export { EmptyState } from './EmptyState';
 export { InlineNotice } from './InlineNotice';
 export { PaneTabBar } from './PaneTabBar';
 export { TerminalView } from './TerminalView';
+export {
+  XtermTerminalView,
+  type XtermTerminalHandle,
+} from './XtermTerminalView';
 export { InputBar } from './InputBar';
 export { QuickActionsBar } from './QuickActionsBar';
-export { TakeoverControls } from './TakeoverControls';
+export { ControlIndicator } from './ControlIndicator';
 export { TranscriptView } from './TranscriptView';

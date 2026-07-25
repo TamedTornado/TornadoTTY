@@ -99,7 +99,10 @@ struct CompanionKeychainStore: CompanionKeychainStoring {
     func store(_ data: Data, account: String) throws {
         var attributes = baseQuery(account: account)
         attributes[kSecValueData as String] = data
-        attributes[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+        // ThisDeviceOnly: the long-term Ed25519 identity key must never sync to
+        // iCloud Keychain, migrate to a new Mac, or land in an encrypted backup —
+        // it is this device's stable identity, pinned by peers at pairing time.
+        attributes[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
 
         let status = SecItemAdd(attributes as CFDictionary, nil)
         switch status {

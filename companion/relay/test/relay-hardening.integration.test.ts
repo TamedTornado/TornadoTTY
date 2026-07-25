@@ -253,6 +253,47 @@ describe('relay hardening — connection lifecycle', () => {
     expect(code).toBe(1013);
   });
 
+  it('closes a socket that floods messages before authenticating', async () => {
+    // Cap the raw per-connection message rate low; an unauthenticated client that
+    // blasts past it is closed (1008) before it can flood the JSON parser.
+    const port = await startServer({ maxMessagesPerSec: 5 });
+    const a = await connectDevice(port);
+    await a.waitType('relay.challenge');
+    const closeCode = new Promise<number>((resolve) => {
+      a.ws.on('close', (code) => resolve(code));
+    });
+    // Send well past the burst budget without ever authenticating.
+    for (let i = 0; i < 50; i++) {
+      a.send({ type: 'garbage', i });
+    }
+    expect(await closeCode).toBe(1008);
+  });
+
+  it('does not reset a device throttle across reconnects', async () => {
+    // Frame budget is 1/sec (a ~1s refill window keeps the reconnect race safe).
+    // A device spends it, reconnects, and must still be throttled — the limiter
+    // is keyed by deviceId and survives the new socket.
+    const port = await startServer({ framesPerSec: 1, maxMessagesPerSec: 1000 });
+    const keys = makeKeypair();
+    const target = fakeId('peer');
+
+    const a = await connectDevice(port);
+    await a.authenticate(keys);
+    // First frame spends the budget; the second exhausts it -> rate_limited.
+    a.send({ type: 'relay.frame', to: target, from: keys.deviceId, sealed: fakeId('f-0') });
+    a.send({ type: 'relay.frame', to: target, from: keys.deviceId, sealed: fakeId('f-x') });
+    expect((await a.waitType('relay.error')).code).toBe('rate_limited');
+
+    // Reconnect the SAME device immediately. The bucket has not refilled, so the
+    // very next frame is still throttled (a fresh per-connection limiter would
+    // have reset the budget and let this through).
+    a.close();
+    const a2 = await connectDevice(port);
+    await a2.authenticate(keys);
+    a2.send({ type: 'relay.frame', to: target, from: keys.deviceId, sealed: fakeId('f-y') });
+    expect((await a2.waitType('relay.error')).code).toBe('rate_limited');
+  });
+
   it('rejects an oversized frame at the ws maxPayload layer', async () => {
     const port = await startServer({ maxFrameBytes: 1024 });
     const a = await connectDevice(port);

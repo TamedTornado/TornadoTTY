@@ -5,12 +5,19 @@ private let companionInputLogger = Logger(subsystem: "be.zenjoy.zentty", categor
 
 // MARK: - Input sink seam
 
-/// The single injection primitive the router needs: write bytes to a pane's live
-/// terminal. Implemented by `AppDelegate` (resolve pane → `sendText`); faked in
-/// tests. Returns `false` when the pane is unknown or has no live runtime.
+/// The injection primitives the router needs. Implemented by `AppDelegate`
+/// (resolve pane → terminal runtime); faked in tests. Both return `false` when
+/// the pane is unknown or has no live runtime.
+///
+/// Two paths, deliberately: printable text goes through `companionSendText`
+/// (libghostty's text/paste path), while non-printable keys go through
+/// `companionSendKey` (a real key event). The split matters — the text path wraps
+/// input in bracketed paste, which strips the `ESC` from cursor-key CSI sequences
+/// and turns a submitting `CR` into a literal `LF`. Control keys must not take it.
 @MainActor
 protocol CompanionInputSink: AnyObject {
     func companionSendText(_ text: String, toPaneId paneId: String) -> Bool
+    func companionSendKey(_ key: TerminalSpecialKey, toPaneId paneId: String) -> Bool
 }
 
 // MARK: - Router
@@ -32,20 +39,24 @@ final class CompanionInputRouter {
     func handle(_ message: CompanionMessage) -> CompanionInputAck? {
         switch message {
         case .inputText(let payload):
-            return inject(payload.text, into: payload.paneId)
+            return injectText(payload.text, into: payload.paneId)
         case .inputKey(let payload):
-            return inject(Self.bytes(for: payload.key), into: payload.paneId)
+            return injectKey(Self.specialKey(for: payload.key), into: payload.paneId)
         case .inputQuickAction(let payload):
-            guard let text = Self.bytes(forQuickAction: payload.actionId) else {
+            switch Self.action(forQuickAction: payload.actionId) {
+            case .key(let key):
+                return injectKey(key, into: payload.paneId)
+            case .text(let text):
+                return injectText(text, into: payload.paneId)
+            case .none:
                 return CompanionInputAck(ok: false, error: "unknown_action")
             }
-            return inject(text, into: payload.paneId)
         default:
             return nil
         }
     }
 
-    private func inject(_ text: String, into paneId: String) -> CompanionInputAck {
+    private func injectText(_ text: String, into paneId: String) -> CompanionInputAck {
         guard let sink else {
             return CompanionInputAck(ok: false, error: "unavailable")
         }
@@ -53,59 +64,69 @@ final class CompanionInputRouter {
         return CompanionInputAck(ok: ok, error: ok ? nil : "pane_not_found")
     }
 
+    private func injectKey(_ key: TerminalSpecialKey, into paneId: String) -> CompanionInputAck {
+        guard let sink else {
+            return CompanionInputAck(ok: false, error: "unavailable")
+        }
+        let ok = sink.companionSendKey(key, toPaneId: paneId)
+        return CompanionInputAck(ok: ok, error: ok ? nil : "pane_not_found")
+    }
+
     // MARK: Key mapping
 
-    /// Named keys → terminal bytes, mirroring the tmux special-key mapping used
-    /// by `TmuxCompatIPCHandler` so the phone and `tmux send-keys` agree. This is
-    /// the single control-key entry point for the companion: like the tmux path,
-    /// it routes every key through `CompanionInputSink.companionSendText` (raw
-    /// bytes into the pty) rather than synthesizing `NSEvent`s, so no public
-    /// `submitControlKey` on the surface is needed.
-    ///
-    /// Arrows emit the standard CSI ("normal cursor key") sequences. libghostty
-    /// exposes no API to read a surface's DECCKM (application-cursor-key) mode, so
-    /// the bridge cannot switch to the `ESC O` form when a full-screen app has
-    /// enabled it. In practice TUIs that request application mode also accept the
-    /// normal CSI arrows, so this is a safe default rather than a correctness gap.
-    static func bytes(for key: CompanionInputKey) -> String {
+    /// Named wire key → the terminal's `TerminalSpecialKey`. The surface encodes
+    /// the actual bytes via a real key event, so arrows honor the pane's DECCKM
+    /// (application-cursor-key) mode and Return submits — neither of which survives
+    /// the paste/text path. This 1:1 map is the whole "key policy": every named key
+    /// is a key event, never pasted text.
+    static func specialKey(for key: CompanionInputKey) -> TerminalSpecialKey {
         switch key {
-        case .enter: return "\r"
-        case .escape: return "\u{1b}"
-        case .tab: return "\t"
-        case .up: return "\u{1b}[A"
-        case .down: return "\u{1b}[B"
-        case .right: return "\u{1b}[C"
-        case .left: return "\u{1b}[D"
-        case .ctrlC: return "\u{03}"
-        case .ctrlD: return "\u{04}"
-        case .ctrlZ: return "\u{1a}"
-        case .ctrlR: return "\u{12}"
+        case .enter: return .enter
+        case .escape: return .escape
+        case .tab: return .tab
+        case .up: return .up
+        case .down: return .down
+        case .right: return .right
+        case .left: return .left
+        case .ctrlC: return .ctrlC
+        case .ctrlD: return .ctrlD
+        case .ctrlZ: return .ctrlZ
+        case .ctrlR: return .ctrlR
         }
     }
 
-    /// Quick-action id → terminal bytes.
+    /// How a quick action is delivered: a real key event, pasted text, or nothing.
+    enum QuickAction: Equatable {
+        case key(TerminalSpecialKey)
+        case text(String)
+        case none
+    }
+
+    /// Quick-action id → delivery.
     ///
     /// v1 is deliberately coarse: without the pane's current prompt shape the
     /// bridge cannot know which numbered option "approve" maps to, so it sends
     /// the safe defaults — Enter selects the highlighted choice (usually "Yes"),
     /// Escape cancels — plus explicit `option:N` presets the phone can build
-    /// from a numbered menu. M4 refines this once prompt heuristics feed the
-    /// dashboard the concrete choices per pane.
-    static func bytes(forQuickAction actionId: String) -> String? {
+    /// from a numbered menu. Enter/Escape/interrupt go through the key path (so
+    /// Enter actually submits); `option:N` is a printable digit, so it pastes as
+    /// text. M4 refines this once prompt heuristics feed the dashboard the
+    /// concrete choices per pane.
+    static func action(forQuickAction actionId: String) -> QuickAction {
         switch actionId {
         case "approve", "enter", "submit":
-            return "\r"
+            return .key(.enter)
         case "deny", "escape", "cancel":
-            return "\u{1b}"
+            return .key(.escape)
         case "interrupt":
-            return "\u{03}"
+            return .key(.ctrlC)
         default:
             if actionId.hasPrefix("option:") {
                 let value = String(actionId.dropFirst("option:".count))
-                guard !value.isEmpty, value.allSatisfy(\.isNumber) else { return nil }
-                return value
+                guard !value.isEmpty, value.allSatisfy(\.isNumber) else { return .none }
+                return .text(value)
             }
-            return nil
+            return .none
         }
     }
 }

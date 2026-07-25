@@ -1,4 +1,4 @@
-import { useCallback, useRef } from 'react';
+import { useCallback, useMemo, useRef } from 'react';
 import {
   ActivityIndicator,
   type LayoutChangeEvent,
@@ -26,11 +26,13 @@ const STICK_THRESHOLD = 48;
 export function TerminalView({
   text,
   scrollbackLoading,
+  scrollbackError,
   onPullTop,
   onMeasure,
 }: {
   text?: PaneTextState;
   scrollbackLoading?: boolean;
+  scrollbackError?: boolean;
   onPullTop?: () => void;
   onMeasure?: (widthPx: number, heightPx: number) => void;
 }) {
@@ -38,9 +40,14 @@ export function TerminalView({
   const stickToBottom = useRef(true);
   const pulledTop = useRef(false);
 
-  const content = text
-    ? (text.scrollback ? `${text.scrollback}\n` : '') + text.viewport
-    : '';
+  // Rebuild the rendered string only when the viewport advances (seq) or freshly
+  // fetched scrollback attaches — not on every unrelated re-render. The viewport
+  // can be up to a full grid and scrollback up to 2000 lines, so folding them on
+  // each frame is the hot path here.
+  const content = useMemo(
+    () => (text ? (text.scrollback ? `${text.scrollback}\n` : '') + text.viewport : ''),
+    [text?.seq, text?.scrollback],
+  );
   const lineWidth = Math.max(text?.gridCols ?? 1, 1) * TERMINAL_CELL_WIDTH + space.lg * 2;
 
   const onLayout = useCallback(
@@ -81,6 +88,10 @@ export function TerminalView({
         <View style={styles.loadingBar}>
           <ActivityIndicator size="small" color={colors.textFaint} />
           <Text style={styles.loadingText}>Loading scrollback…</Text>
+        </View>
+      ) : scrollbackError ? (
+        <View style={styles.loadingBar}>
+          <Text style={styles.loadingText}>Couldn't load history — pull to retry</Text>
         </View>
       ) : null}
       <ScrollView

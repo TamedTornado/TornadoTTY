@@ -704,6 +704,14 @@ final class RootViewController: NSViewController {
             case .historyChanged:
                 self.updatePaneNavigationButtonState()
             case .auxiliaryStateUpdated(_, _, let impacts):
+                // Sweep-driven agent state changes (e.g. bounded `.starting`
+                // demoting to `.idle`) arrive here rather than through the
+                // hook-payload path, so the mobile companion must be nudged
+                // from this seam too or phone badges go stale. The feed
+                // debounces recomputes internally.
+                if !impacts.isDisjoint(with: .presentationChrome) {
+                    CompanionBridgeServer.shared?.ingestAgentStatusChange()
+                }
                 if impacts.contains(.openWith) {
                     self.updateOpenWithChromeState()
                     self.serverCommands.schedulePassiveServerDetectionRefresh()

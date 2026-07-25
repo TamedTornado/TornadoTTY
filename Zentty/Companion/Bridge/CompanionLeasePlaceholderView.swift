@@ -1,28 +1,45 @@
 import AppKit
 
-/// The desktop placeholder shown over a pane while a phone holds its control
-/// lease (spec §2.6): a centered card naming the controlling device with an
-/// always-visible "Take Back Control" button that reclaims the pane instantly.
+/// The desktop overlay shown over a pane while a phone holds its control lease
+/// (spec §2.6). The pane's live surface keeps rendering behind the overlay (a
+/// render keep-alive streams it to the phone mirror), so the overlay lets that
+/// content stay visible but *recede*: a translucent scrim darkens the evolving
+/// terminal while a centered frosted card names the controlling device and
+/// offers a "Take Back Control" button that reclaims the pane instantly.
 ///
-/// Styling mirrors the pane status/failure overlay (`PaneContainerView`):
-/// a rounded, masked card over a dimmed backdrop, a semibold title, a secondary
-/// message, and a rounded action button — built from system materials so the
-/// view stands alone (it is exercised in a detached AppKit component test with no
-/// window or theme injection).
+/// Compositing note: the scrim is a plain layer-backed view (a dynamic dark
+/// fill) rather than a full-pane vibrancy view. Within-window vibrancy is not a
+/// dependable way to sample the pane's Metal-backed surface, so we darken with a
+/// translucent layer that always composites correctly over Metal and keeps the
+/// live content visible underneath. The frosted look is reserved for the small
+/// card, which sits over the scrim (a normal layer) and therefore blurs
+/// predictably.
+///
+/// The view stands alone from system materials so it can be exercised in a
+/// detached AppKit component test with no window or theme injection.
 @MainActor
 final class CompanionLeasePlaceholderView: NSView {
     private enum Layout {
-        static let cornerRadius: CGFloat = 10
-        static let cardInset: CGFloat = 24
-        static let cardMaxWidth: CGFloat = 360
-        static let titleToMessage: CGFloat = 6
-        static let messageToButton: CGFloat = 16
+        static let cornerRadius: CGFloat = 14
+        static let cardInset: CGFloat = 26
+        static let cardMaxWidth: CGFloat = 340
+        static let glyphPointSize: CGFloat = 30
+        static let glyphToTitle: CGFloat = 14
+        static let titleToMessage: CGFloat = 5
+        static let messageToButton: CGFloat = 18
+    }
+
+    private enum Animation {
+        static let fadeDuration: TimeInterval = 0.18
+        static let appearScale: CGFloat = 0.96
     }
 
     private let onTakeBack: () -> Void
 
-    private let backdropView = NSView()
+    private let scrimView = ScrimView()
+    private let cardContainer = NSView()
     private let cardView = NSVisualEffectView()
+    private let glyphView = NSImageView()
     private let titleLabel = NSTextField(labelWithString: "Controlled remotely")
     private let messageLabel = NSTextField(wrappingLabelWithString: "")
     private let takeBackButton = NSButton(title: "Take Back Control", target: nil, action: nil)
@@ -54,10 +71,16 @@ final class CompanionLeasePlaceholderView: NSView {
         wantsLayer = true
         translatesAutoresizingMaskIntoConstraints = false
 
-        backdropView.wantsLayer = true
-        backdropView.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.45).cgColor
-        backdropView.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(backdropView)
+        scrimView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(scrimView)
+
+        // The container carries the (unclipped) drop shadow; the material inside
+        // clips itself to the rounded corners. Keeping them separate lets the card
+        // both cast a shadow and mask its blur.
+        cardContainer.wantsLayer = true
+        cardContainer.layer?.masksToBounds = false
+        cardContainer.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(cardContainer)
 
         cardView.material = .hudWindow
         cardView.blendingMode = .withinWindow
@@ -67,9 +90,21 @@ final class CompanionLeasePlaceholderView: NSView {
         cardView.layer?.cornerCurve = .continuous
         cardView.layer?.masksToBounds = true
         cardView.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(cardView)
+        cardContainer.addSubview(cardView)
 
-        titleLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
+        if let glyph = NSImage(systemSymbolName: "iphone", accessibilityDescription: nil) {
+            glyphView.image = glyph
+            glyphView.symbolConfiguration = NSImage.SymbolConfiguration(
+                pointSize: Layout.glyphPointSize,
+                weight: .regular
+            )
+        }
+        glyphView.contentTintColor = .secondaryLabelColor
+        glyphView.imageScaling = .scaleProportionallyUpOrDown
+        glyphView.translatesAutoresizingMaskIntoConstraints = false
+        glyphView.setContentHuggingPriority(.required, for: .vertical)
+
+        titleLabel.font = NSFont.systemFont(ofSize: 15, weight: .semibold)
         titleLabel.textColor = .labelColor
         titleLabel.alignment = .center
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -82,28 +117,38 @@ final class CompanionLeasePlaceholderView: NSView {
         messageLabel.translatesAutoresizingMaskIntoConstraints = false
 
         takeBackButton.bezelStyle = .rounded
+        takeBackButton.controlSize = .large
         takeBackButton.keyEquivalent = "\r"
         takeBackButton.target = self
         takeBackButton.action = #selector(handleTakeBack)
         takeBackButton.translatesAutoresizingMaskIntoConstraints = false
 
+        cardView.addSubview(glyphView)
         cardView.addSubview(titleLabel)
         cardView.addSubview(messageLabel)
         cardView.addSubview(takeBackButton)
 
         NSLayoutConstraint.activate([
-            backdropView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            backdropView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            backdropView.topAnchor.constraint(equalTo: topAnchor),
-            backdropView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            scrimView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            scrimView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            scrimView.topAnchor.constraint(equalTo: topAnchor),
+            scrimView.bottomAnchor.constraint(equalTo: bottomAnchor),
 
-            cardView.centerXAnchor.constraint(equalTo: centerXAnchor),
-            cardView.centerYAnchor.constraint(equalTo: centerYAnchor),
-            cardView.widthAnchor.constraint(lessThanOrEqualToConstant: Layout.cardMaxWidth),
-            cardView.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 12),
-            cardView.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -12),
+            cardContainer.centerXAnchor.constraint(equalTo: centerXAnchor),
+            cardContainer.centerYAnchor.constraint(equalTo: centerYAnchor),
+            cardContainer.widthAnchor.constraint(lessThanOrEqualToConstant: Layout.cardMaxWidth),
+            cardContainer.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 12),
+            cardContainer.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -12),
 
-            titleLabel.topAnchor.constraint(equalTo: cardView.topAnchor, constant: Layout.cardInset),
+            cardView.leadingAnchor.constraint(equalTo: cardContainer.leadingAnchor),
+            cardView.trailingAnchor.constraint(equalTo: cardContainer.trailingAnchor),
+            cardView.topAnchor.constraint(equalTo: cardContainer.topAnchor),
+            cardView.bottomAnchor.constraint(equalTo: cardContainer.bottomAnchor),
+
+            glyphView.topAnchor.constraint(equalTo: cardView.topAnchor, constant: Layout.cardInset),
+            glyphView.centerXAnchor.constraint(equalTo: cardView.centerXAnchor),
+
+            titleLabel.topAnchor.constraint(equalTo: glyphView.bottomAnchor, constant: Layout.glyphToTitle),
             titleLabel.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: Layout.cardInset),
             titleLabel.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -Layout.cardInset),
 
@@ -115,6 +160,58 @@ final class CompanionLeasePlaceholderView: NSView {
             takeBackButton.centerXAnchor.constraint(equalTo: cardView.centerXAnchor),
             takeBackButton.bottomAnchor.constraint(equalTo: cardView.bottomAnchor, constant: -Layout.cardInset),
         ])
+
+        setAccessibilityElement(true)
+        setAccessibilityRole(.group)
+        setAccessibilityLabel("Pane controlled remotely")
+
+        applyCardShadow()
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        applyCardShadow()
+    }
+
+    /// A soft drop shadow lifts the card off the receding surface. Rebuilt on
+    /// appearance changes so it reads on both light and dark backdrops.
+    private func applyCardShadow() {
+        guard let layer = cardContainer.layer else { return }
+        let isDark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        layer.shadowColor = NSColor.black.cgColor
+        layer.shadowOpacity = isDark ? 0.55 : 0.28
+        layer.shadowRadius = 22
+        layer.shadowOffset = CGSize(width: 0, height: -6)
+        layer.masksToBounds = false
+    }
+
+    // MARK: - Appearance transitions
+
+    /// Fades the overlay in from transparent with a subtle card lift, matching the
+    /// app's short overlay timings (~180ms, ease-out).
+    func animateIn() {
+        alphaValue = 0
+        cardContainer.layer?.transform = CATransform3DMakeScale(Animation.appearScale, Animation.appearScale, 1)
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = Animation.fadeDuration
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            context.allowsImplicitAnimation = true
+            animator().alphaValue = 1
+            cardContainer.layer?.transform = CATransform3DIdentity
+        }
+    }
+
+    /// Fades the overlay out, then removes it from its superview. Safe to call on a
+    /// view that has already been detached from the lease (the host clears its
+    /// reference first so a fresh lease builds a new overlay).
+    func animateOutAndRemove() {
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = Animation.fadeDuration
+            context.timingFunction = CAMediaTimingFunction(name: .easeIn)
+            animator().alphaValue = 0
+        }, completionHandler: { [weak self] in
+            self?.removeFromSuperview()
+        })
     }
 
     @objc
@@ -132,5 +229,18 @@ final class CompanionLeasePlaceholderView: NSView {
     /// component test (no window / run loop needed).
     func simulateTakeBackTapForTesting() {
         handleTakeBack()
+    }
+}
+
+/// Translucent dark fill that darkens (but keeps visible) the live pane surface
+/// behind the overlay. Re-resolves its color through `updateLayer` so it tracks
+/// light/dark appearance changes — a one-time `cgColor` snapshot would not.
+private final class ScrimView: NSView {
+    override var wantsUpdateLayer: Bool { true }
+
+    override func updateLayer() {
+        let isDark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        let alpha: CGFloat = isDark ? 0.55 : 0.42
+        layer?.backgroundColor = NSColor.black.withAlphaComponent(alpha).cgColor
     }
 }

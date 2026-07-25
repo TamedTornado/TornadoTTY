@@ -58,6 +58,11 @@ export interface LeaseControllerDeps {
   sendResize: (leaseId: string, cols: number, rows: number) => void;
   sendRelease: (leaseId: string) => void;
   onChange: (snapshot: LeaseSnapshot) => void;
+  /** Whether the transport can currently reach the Mac. Gates heartbeats; a gap
+   * longer than the lease expiry degrades the lease to read-only. Default `true`. */
+  isReady?: () => boolean;
+  /** Injectable clock (tests). Default {@link Date.now}. */
+  now?: () => number;
   timers?: Partial<LeaseTimers>;
   /** Resize debounce; default 300ms to match the Mac. */
   resizeDebounceMs?: number;
@@ -67,9 +72,15 @@ export class LeaseController {
   private readonly deps: LeaseControllerDeps;
   private readonly timers: LeaseTimers;
   private readonly resizeDebounceMs: number;
+  private readonly isReady: () => boolean;
+  private readonly now: () => number;
   private snap: LeaseSnapshot = idleLease;
   private heartbeatHandle: unknown;
   private resizeHandle: unknown;
+  /** Lease expiry (ms) from the active grant; drives the read-only degrade. */
+  private expiryMs?: number;
+  /** ms-epoch a heartbeat last actually reached the Mac (or the grant time). */
+  private lastHeartbeatSentAt?: number;
   /** Bumped on every request/release/reset; a resolving grant checks it to avoid
    * binding a lease the caller has since abandoned. */
   private epoch = 0;
@@ -77,6 +88,8 @@ export class LeaseController {
   constructor(deps: LeaseControllerDeps) {
     this.deps = deps;
     this.resizeDebounceMs = deps.resizeDebounceMs ?? 300;
+    this.isReady = deps.isReady ?? (() => true);
+    this.now = deps.now ?? Date.now;
     this.timers = {
       setInterval: deps.timers?.setInterval ?? ((cb, ms) => setInterval(cb, ms)),
       clearInterval: deps.timers?.clearInterval ?? ((h) => clearInterval(h as ReturnType<typeof setInterval>)),
@@ -106,8 +119,11 @@ export class LeaseController {
       return;
     }
     if (this.epoch !== epoch) {
-      // The caller released/re-requested while the grant was in flight; let the
-      // Mac's supersede/expiry path reclaim this orphaned lease.
+      // The caller released/re-requested while the grant was in flight. Proactively
+      // release the just-granted lease so we never leak control after leaving the
+      // screen — the Mac would otherwise only reclaim it on the ~15s heartbeat
+      // expiry. (A no-op if the transport is already down; the Mac expires it then.)
+      this.deps.sendRelease(grant.leaseId);
       return;
     }
     this.set({
@@ -120,6 +136,58 @@ export class LeaseController {
       revokedReason: undefined,
       error: undefined,
     });
+    this.expiryMs = grant.expiryMs;
+    this.startHeartbeat(grant.leaseId, grant.heartbeatIntervalMs);
+  }
+
+  /**
+   * Re-validate a held lease after a session reconnect (spec §2.6). Heartbeats
+   * are dropped while the transport is down, so a gap longer than the Mac's lease
+   * expiry means the Mac has already revoked the lease into a now-dead session —
+   * leaving the phone stuck on `held` forever. Re-request a fresh grant: on
+   * success the lease renews (new leaseId), on failure it degrades to a read-only
+   * mirror. A no-op unless a lease is currently held.
+   */
+  async reconcile(): Promise<void> {
+    if (this.snap.status !== 'held') {
+      return;
+    }
+    const cols = this.snap.client?.cols ?? this.snap.effective?.cols;
+    const rows = this.snap.client?.rows ?? this.snap.effective?.rows;
+    if (cols === undefined || rows === undefined) {
+      return;
+    }
+    const epoch = ++this.epoch;
+    this.stopHeartbeat();
+    let grant: LeaseGrantData;
+    try {
+      grant = await this.deps.requestGrant(cols, rows);
+    } catch {
+      if (this.epoch !== epoch) {
+        return;
+      }
+      // The Mac couldn't renew (expired into a dead session, pane gone, or
+      // unreachable): fall back to a read-only mirror rather than a stale hold.
+      this.clearResize();
+      this.set({ status: 'readonly', revokedReason: 'expired' });
+      return;
+    }
+    if (this.epoch !== epoch) {
+      // Released/re-requested during the reconnect renew: release the orphan.
+      this.deps.sendRelease(grant.leaseId);
+      return;
+    }
+    this.set({
+      status: 'held',
+      leaseId: grant.leaseId,
+      effective: grant.effective,
+      client: grant.client,
+      isCurrentClientLimiting: grant.isCurrentClientLimiting,
+      heartbeatIntervalMs: grant.heartbeatIntervalMs,
+      revokedReason: undefined,
+      error: undefined,
+    });
+    this.expiryMs = grant.expiryMs;
     this.startHeartbeat(grant.leaseId, grant.heartbeatIntervalMs);
   }
 
@@ -176,9 +244,30 @@ export class LeaseController {
 
   private startHeartbeat(leaseId: string, intervalMs: number): void {
     this.stopHeartbeat();
+    this.lastHeartbeatSentAt = this.now();
     this.heartbeatHandle = this.timers.setInterval(() => {
-      this.deps.sendHeartbeat(leaseId);
+      this.onHeartbeatTick(leaseId);
     }, intervalMs);
+  }
+
+  /** One heartbeat tick. Sends when the transport is up; when it is down long
+   * enough that the Mac must have expired the lease, degrade to a read-only
+   * mirror instead of showing a dead `held` state indefinitely. */
+  private onHeartbeatTick(leaseId: string): void {
+    if (this.isReady()) {
+      this.deps.sendHeartbeat(leaseId);
+      this.lastHeartbeatSentAt = this.now();
+      return;
+    }
+    if (
+      this.expiryMs !== undefined &&
+      this.lastHeartbeatSentAt !== undefined &&
+      this.now() - this.lastHeartbeatSentAt >= this.expiryMs
+    ) {
+      this.stopHeartbeat();
+      this.clearResize();
+      this.set({ status: 'readonly', revokedReason: 'expired' });
+    }
   }
 
   private stopHeartbeat(): void {

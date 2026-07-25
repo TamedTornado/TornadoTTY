@@ -18,6 +18,14 @@ import Foundation
 // The field is implemented over eight little-endian `UInt32` limbs (256 bits).
 // `UInt32 × UInt32` fits in `UInt64`, so every carry is exact and easy to reason
 // about; performance is irrelevant (one conversion per push wake).
+//
+// ⚠️ NOT CONSTANT-TIME. Every operation here (`canonical` early-outs, the
+// square-and-multiply in `inverse`, the data-dependent carry folds) branches and
+// terminates on the *value* of its inputs, so it leaks timing/observable
+// signals about the numbers it processes. This is safe ONLY because it operates
+// exclusively on the phone's *public* Ed25519 key (a value already known to any
+// observer). This arithmetic MUST NEVER be reused on a secret scalar, private
+// key, or shared secret — doing so would expose it through a timing side channel.
 enum Curve25519MontgomeryMap {
     /// Number of 32-bit limbs in a field element (256 bits).
     private static let limbCount = 8
@@ -123,6 +131,10 @@ enum Curve25519MontgomeryMap {
 
     /// Modular inverse via Fermat: a^(p-2) mod p. Exponent p-2 = 2^255 - 21, whose
     /// little-endian bytes are `0xEB, 0xFF×30, 0x7F`.
+    ///
+    /// ⚠️ NOT constant-time: the square-and-multiply below branches on the bits of
+    /// a fixed public exponent and the operand `a` is derived from the phone's
+    /// PUBLIC key. Never call this on a secret scalar — it would leak it via timing.
     private static func inverse(_ a: [UInt32]) -> [UInt32] {
         var exponent = [UInt8](repeating: 0xFF, count: 32)
         exponent[0] = 0xEB

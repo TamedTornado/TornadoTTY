@@ -101,3 +101,43 @@ export function formatRelativeTime(ts: number, now: number = Date.now()): string
   const days = Math.floor(hours / 24);
   return `${days}d ago`;
 }
+
+/**
+ * True when `cp` is part of a leading agent/emoji glyph we want to drop from a
+ * pane title. Covers the emoji planes agents actually prefix with (Claude's
+ * `✳`, spinners, status dots) plus the joiners/modifiers that bind a cluster
+ * together (ZWJ, variation selectors, skin-tone modifiers, regional
+ * indicators). Deliberately leading-only — see {@link cleanPaneTitle}.
+ */
+function isLeadingGlyphCodePoint(cp: number): boolean {
+  return (
+    cp === 0x200d || // zero-width joiner
+    (cp >= 0xfe00 && cp <= 0xfe0f) || // variation selectors
+    (cp >= 0x2190 && cp <= 0x21ff) || // arrows
+    (cp >= 0x2300 && cp <= 0x23ff) || // misc technical (⌛ ⏳ …)
+    (cp >= 0x2600 && cp <= 0x27bf) || // misc symbols + dingbats (✳ ✅ …)
+    (cp >= 0x2b00 && cp <= 0x2bff) || // stars, arrows (⭐ ⬛ …)
+    (cp >= 0x1f000 && cp <= 0x1faff) // emoji supplementary planes
+  );
+}
+
+/**
+ * Strip a leading emoji/agent-glyph cluster (and the whitespace after it) from a
+ * pane title. The desktop app derives titles from the terminal's own title,
+ * which agents frequently prefix with a status glyph (e.g. `✳ Refactoring`);
+ * the mobile UI already shows the agent logo in its own tile, so the embedded
+ * glyph is a duplicate. Defensive: only strips a genuine leading glyph run, and
+ * never returns an empty string (falls back to the original title).
+ */
+export function cleanPaneTitle(title: string): string {
+  const chars = Array.from(title);
+  let i = 0;
+  while (i < chars.length && isLeadingGlyphCodePoint(chars[i].codePointAt(0) ?? 0)) {
+    i += 1;
+  }
+  if (i === 0) {
+    return title;
+  }
+  const rest = chars.slice(i).join('').replace(/^\s+/, '');
+  return rest.length > 0 ? rest : title;
+}

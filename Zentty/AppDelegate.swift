@@ -229,6 +229,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         )
+        // Byte feed is injectable (ingestPaneBytes); live PTY tee lands when
+        // GhosttyKit exposes an output callback (Phase 2). The feed + route are
+        // fully wired so attach/detach/chunk work as soon as bytes are ingested.
+        let paneBytesFeed = CompanionPaneBytesFeed()
         let transcriptFeed = CompanionTranscriptFeed(source: self)
         let inputRouter = CompanionInputRouter(sink: self)
         let leaseManager = CompanionLeaseManager(applier: self)
@@ -237,12 +241,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             pairingStore: pairingStore,
             dashboardFeed: dashboardFeed,
             paneTextFeed: paneTextFeed,
+            paneBytesFeed: paneBytesFeed,
             transcriptFeed: transcriptFeed,
             inputRouter: inputRouter,
             leaseManager: leaseManager,
             isFeatureEnabled: { [weak self] in self?.configStore.current.companion.enabled ?? false },
             relayUrlProvider: { [weak self] in self?.configStore.current.companion.relayUrl ?? "" },
-            pushGatewayUrlProvider: { [weak self] in self?.configStore.current.companion.pushGatewayUrl ?? "" }
+            pushGatewayUrlProvider: { [weak self] in self?.configStore.current.companion.pushGatewayUrl ?? "" },
+            preferredListenPort: { [weak self] in
+                guard let port = self?.configStore.current.companion.listenPort, port > 0 else { return nil }
+                return UInt16(exactly: port)
+            },
+            persistListenPort: { [weak self] port in
+                try? self?.configStore.update { $0.companion.listenPort = Int(port) }
+            }
         )
         bridge.installAsShared()
         companionBridge = bridge

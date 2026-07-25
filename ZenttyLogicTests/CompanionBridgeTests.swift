@@ -25,8 +25,13 @@ final class CompanionBridgeTests: XCTestCase {
 
     private final class FakeInputSink: CompanionInputSink {
         var sends: [(text: String, paneId: String)] = []
+        var keySends: [(key: TerminalSpecialKey, paneId: String)] = []
         func companionSendText(_ text: String, toPaneId paneId: String) -> Bool {
             sends.append((text, paneId))
+            return true
+        }
+        func companionSendKey(_ key: TerminalSpecialKey, toPaneId paneId: String) -> Bool {
+            keySends.append((key, paneId))
             return true
         }
     }
@@ -36,6 +41,7 @@ final class CompanionBridgeTests: XCTestCase {
         func companionReadPaneText(paneId: String, includeScrollback: Bool, lineLimit: Int?) -> CompanionPaneTextReadout? {
             readouts[paneId]
         }
+        func companionSetPaneRenderKeepAlive(paneId: String, active: Bool) {}
     }
 
     private final class FakeTranscriptSource: CompanionTranscriptSourceProviding {
@@ -262,13 +268,6 @@ final class CompanionBridgeTests: XCTestCase {
                 lastSeenAt: Date()
             )
         )
-        paneTextProvider.readouts["pane-1"] = CompanionPaneTextReadout(
-            text: "build succeeded",
-            gridCols: 100,
-            gridRows: 30,
-            cursorRow: nil
-        )
-
         let driver = try await openEncryptedSession(phone: phone)
         try await driver.send(.sessionHello(CompanionSessionHello(
             supported: CompanionVersionRange(min: 1, max: 1),
@@ -286,7 +285,15 @@ final class CompanionBridgeTests: XCTestCase {
             return XCTFail("Expected session.pong, got \(pong.type)")
         }
 
-        // A render pulse yields exactly one debounced pane.text.
+        // The pane paints only after the watch registers, so no initial snapshot
+        // preempts the assertion below; a render pulse then yields exactly one
+        // debounced pane.text.
+        paneTextProvider.readouts["pane-1"] = CompanionPaneTextReadout(
+            text: "build succeeded",
+            gridCols: 100,
+            gridRows: 30,
+            cursorRow: nil
+        )
         server.ingestPaneContentChange(paneID: "pane-1")
         let text = try await driver.receive()
         guard case .paneText(let textPayload) = text.message else {
@@ -423,6 +430,94 @@ final class CompanionBridgeTests: XCTestCase {
 
         driver.close()
         await driver.runTask.value
+    }
+
+    /// Regression: paired phones reconnect via the host + port captured at pairing
+    /// time (no runtime Bonjour re-resolution), so the listener port must survive
+    /// relaunches. The first ever bind pins the OS-picked ephemeral port via
+    /// `persistListenPort`; a "relaunched" server given that pin must come back on
+    /// exactly the same port.
+    func testListenerPinsFirstPortAndRebindsItAcrossRestarts() async throws {
+        var pinnedPort: UInt16?
+        let firstLaunch = makeListeningServer(
+            preferredListenPort: { nil },
+            persistListenPort: { pinnedPort = $0 }
+        )
+        let firstPort = try await advertisedPort(of: firstLaunch, startVia: { firstLaunch.makePairingOffer() })
+        XCTAssertEqual(pinnedPort, firstPort, "first bind must persist the port it landed on")
+        firstLaunch.stop()
+        // Wait for the cancelled listener to release the port before "relaunching".
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        var repinned: UInt16?
+        let secondLaunch = makeListeningServer(
+            preferredListenPort: { pinnedPort },
+            persistListenPort: { repinned = $0 }
+        )
+        let secondPort = try await advertisedPort(of: secondLaunch, startVia: { secondLaunch.makePairingOffer() })
+        XCTAssertEqual(secondPort, firstPort, "relaunch must rebind the pinned port")
+        XCTAssertNil(repinned, "a pinned bind must not rewrite the stored port")
+        secondLaunch.stop()
+    }
+
+    /// When the pinned port is held by another process (a second Zentty instance
+    /// from a parallel worktree), the bind falls back to an ephemeral port so the
+    /// bridge stays reachable — but must not rewrite the pin, so the next launch
+    /// retries the port the phone knows.
+    func testPinnedPortConflictFallsBackToEphemeralWithoutRewritingPin() async throws {
+        var pinnedPort: UInt16?
+        let holder = makeListeningServer(
+            preferredListenPort: { nil },
+            persistListenPort: { pinnedPort = $0 }
+        )
+        let heldPort = try await advertisedPort(of: holder, startVia: { holder.makePairingOffer() })
+
+        var rewrittenPin: UInt16?
+        let contender = makeListeningServer(
+            preferredListenPort: { pinnedPort },
+            persistListenPort: { rewrittenPin = $0 }
+        )
+        let fallbackPort = try await advertisedPort(of: contender, startVia: { contender.makePairingOffer() })
+        XCTAssertNotEqual(fallbackPort, heldPort, "conflicting pin must fall back to a fresh ephemeral port")
+        XCTAssertNil(rewrittenPin, "the fallback must not overwrite the pinned port")
+        contender.stop()
+        holder.stop()
+    }
+
+    private func makeListeningServer(
+        preferredListenPort: @escaping () -> UInt16?,
+        persistListenPort: @escaping (UInt16) -> Void
+    ) -> CompanionBridgeServer {
+        CompanionBridgeServer(
+            identity: macIdentity,
+            pairingStore: pairingStore,
+            dashboardFeed: feed,
+            paneTextFeed: paneTextFeed,
+            transcriptFeed: transcriptFeed,
+            inputRouter: CompanionInputRouter(sink: sink),
+            leaseManager: leaseManager,
+            isFeatureEnabled: { true },
+            preferredListenPort: preferredListenPort,
+            persistListenPort: persistListenPort
+        )
+    }
+
+    /// Starts the server's listener via `startVia` and awaits the advertised port
+    /// (the listener reports `.ready` asynchronously).
+    private func advertisedPort(
+        of server: CompanionBridgeServer,
+        startVia start: () -> Void
+    ) async throws -> UInt16 {
+        let ready = expectation(description: "listener advertises a port")
+        ready.assertForOverFulfill = false
+        server.onAdvertisingStateChanged = {
+            if server.currentStatus().port != nil {
+                ready.fulfill()
+            }
+        }
+        start()
+        await fulfillment(of: [ready], timeout: 5)
+        return try XCTUnwrap(server.currentStatus().port.map { UInt16($0) })
     }
 
     /// Disabling the feature (or unpairing the last device) must not only stop the
@@ -569,6 +664,25 @@ final class CompanionBridgeTests: XCTestCase {
 
         driver.close()
         await driver.runTask.value
+    }
+
+    // MARK: - Plain (agent-less) pane mapping
+
+    func testPlainSummaryListsAgentlessPaneAsIdleTerminalOnly() {
+        let summary = CompanionDashboardMapping.plainSummary(
+            paneID: "p-plain",
+            worklaneID: "wl-1",
+            title: "shell",
+            workingDirectory: "/Users/peter/src"
+        )
+        XCTAssertEqual(summary.state, .idle)
+        XCTAssertNil(summary.tool)
+        XCTAssertNil(summary.sessionId)
+        XCTAssertFalse(summary.hasTranscript)
+        XCTAssertFalse(summary.requiresHumanAttention)
+        XCTAssertEqual(summary.interactionKind, CompanionInteractionKind.none)
+        XCTAssertEqual(summary.workingDirectory, "/Users/peter/src")
+        XCTAssertNil(summary.taskProgress)
     }
 
     // MARK: - Helpers

@@ -80,6 +80,30 @@ enum CompanionDashboardMapping {
             taskProgress: progress
         )
     }
+
+    /// Summary for a pane with no agent attached: a plain shell the phone can
+    /// still open (terminal only). `idle` is the honest resting state; no tool
+    /// means no Conversation tab and the generic pane glyph on the phone.
+    static func plainSummary(
+        paneID: String,
+        worklaneID: String,
+        title: String,
+        workingDirectory: String
+    ) -> CompanionPaneSummary {
+        CompanionPaneSummary(
+            paneId: paneID,
+            worklaneId: worklaneID,
+            title: title,
+            tool: nil,
+            state: .idle,
+            interactionKind: .none,
+            requiresHumanAttention: false,
+            workingDirectory: workingDirectory,
+            sessionId: nil,
+            hasTranscript: false,
+            taskProgress: nil
+        )
+    }
 }
 
 // MARK: - Feed

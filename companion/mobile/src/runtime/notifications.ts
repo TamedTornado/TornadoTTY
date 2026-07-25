@@ -52,7 +52,13 @@ export async function fetchDevicePushToken(): Promise<PushToken | undefined> {
       return undefined;
     }
     const token = await Notifications.getDevicePushTokenAsync();
-    const platform = token.type === 'ios' ? 'apns' : 'fcm';
+    // Explicit platform mapping: anything expo reports that is neither APNs
+    // nor FCM (e.g. a web token) means push is unavailable on this build —
+    // degrade to foreground updates rather than guessing.
+    const platform = token.type === 'ios' ? 'apns' : token.type === 'android' ? 'fcm' : undefined;
+    if (!platform) {
+      return undefined;
+    }
     const data = typeof token.data === 'string' ? token.data : String(token.data);
     if (!data) {
       return undefined;
@@ -69,19 +75,6 @@ export function addResponseListener(
 ): () => void {
   const sub = Notifications.addNotificationResponseReceivedListener((response) => {
     const data = response.notification.request.content.data;
-    if (data && typeof data === 'object') {
-      handler(data as Record<string, unknown>);
-    }
-  });
-  return () => sub.remove();
-}
-
-/** Subscribe to notifications received while the app is foregrounded. */
-export function addReceivedListener(
-  handler: (data: Record<string, unknown>) => void,
-): () => void {
-  const sub = Notifications.addNotificationReceivedListener((notification) => {
-    const data = notification.request.content.data;
     if (data && typeof data === 'object') {
       handler(data as Record<string, unknown>);
     }

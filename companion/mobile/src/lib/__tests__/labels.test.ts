@@ -3,6 +3,7 @@ import { describe, expect, it } from '@jest/globals';
 import {
   agentIconKey,
   agentIconSvg,
+  cleanPaneTitle,
   formatRelativeTime,
   interactionKindLabel,
   paneStateLabel,
@@ -60,6 +61,35 @@ describe('toolIconName', () => {
 
   it('keeps a distinct glyph for Antigravity, which has no logo yet', () => {
     expect(toolIconName('antigravity')).toBe('rocket-outline');
+  });
+});
+
+describe('cleanPaneTitle', () => {
+  it('strips a leading agent glyph and the whitespace after it', () => {
+    expect(cleanPaneTitle('✳ Refactoring the store')).toBe('Refactoring the store');
+    expect(cleanPaneTitle('✅  Done')).toBe('Done');
+    expect(cleanPaneTitle('🤖 claude')).toBe('claude');
+  });
+
+  it('strips glyph clusters with variation selectors and joiners', () => {
+    expect(cleanPaneTitle('✳️ Building')).toBe('Building');
+    expect(cleanPaneTitle('👨‍💻 Coding')).toBe('Coding');
+  });
+
+  it('leaves plain titles untouched', () => {
+    expect(cleanPaneTitle('Refactoring the store')).toBe('Refactoring the store');
+    expect(cleanPaneTitle('main.swift')).toBe('main.swift');
+    expect(cleanPaneTitle('')).toBe('');
+  });
+
+  it('does not strip a leading digit, dash, or letter', () => {
+    expect(cleanPaneTitle('3 pending tasks')).toBe('3 pending tasks');
+    expect(cleanPaneTitle('- draft')).toBe('- draft');
+  });
+
+  it('falls back to the original when the title is only a glyph', () => {
+    expect(cleanPaneTitle('✳')).toBe('✳');
+    expect(cleanPaneTitle('🤖')).toBe('🤖');
   });
 });
 

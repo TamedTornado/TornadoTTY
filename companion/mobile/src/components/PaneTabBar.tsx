@@ -35,6 +35,9 @@ export function PaneTabBar({
             onPress={() => onChange(tab)}
             accessibilityRole="tab"
             accessibilityState={{ selected }}
+            // Compact ~32pt track; hitSlop lifts the effective target past the
+            // 44pt HIG minimum without adding vertical chrome.
+            hitSlop={{ top: 8, bottom: 8 }}
             style={[styles.tab, selected && styles.tabSelected]}
           >
             <Text style={[styles.label, selected && styles.labelSelected]}>{LABEL[tab]}</Text>
@@ -48,24 +51,25 @@ export function PaneTabBar({
 const styles = StyleSheet.create({
   bar: {
     flexDirection: 'row',
-    gap: space.xs,
-    padding: space.xs,
-    borderRadius: radius.md,
+    gap: 2,
+    padding: 2,
+    borderRadius: radius.sm,
     backgroundColor: colors.surface,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.border,
   },
   tab: {
     flex: 1,
-    paddingVertical: space.sm,
+    paddingVertical: space.xs + 2,
     alignItems: 'center',
-    borderRadius: radius.sm,
+    justifyContent: 'center',
+    borderRadius: radius.sm - 2,
   },
   tabSelected: {
     backgroundColor: colors.surfaceRaised,
   },
   label: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
     color: colors.textDim,
   },

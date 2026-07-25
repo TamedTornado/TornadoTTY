@@ -1,9 +1,15 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 
-import type { TranscriptEntry, TranscriptUnavailableReason } from '@zentty/wire';
+import type { TranscriptUnavailableReason } from '@zentty/wire';
 import type { TranscriptState } from '@/store';
+import {
+  projectTranscript,
+  type ToolPair,
+  type TranscriptRenderItem,
+} from '@/store/transcriptProjection';
+import { parseInlineSpans, parseMarkdownBlocks } from '@/lib/markdownLite';
 import { EmptyState } from './EmptyState';
 import { colors, mono, radius, space, type } from '@/theme';
 
@@ -23,13 +29,22 @@ const UNAVAILABLE: Record<TranscriptUnavailableReason, { title: string; message:
 };
 
 /**
- * Native phone-width transcript for adapted tools (spec §2.5): message bubbles,
- * collapsible tool-call cards, and tool results. Approvals reuse the pinned
- * quick-actions bar in the parent, so this view is purely the conversation.
+ * Native phone-width transcript for adapted tools (spec §2.5). Entries pass
+ * through `projectTranscript` first: tool calls pair with their results,
+ * long tool bursts collapse into one expandable group, and repeated system
+ * markers merge — the list shows the conversation, not the plumbing.
+ * Assistant prose renders full-width with lightweight markdown; only user
+ * messages get bubble chrome. Approvals reuse the pinned quick-actions bar
+ * in the parent, so this view is purely the conversation.
  */
 export function TranscriptView({ transcript }: { transcript: TranscriptState }) {
-  const listRef = useRef<FlatList<TranscriptEntry>>(null);
+  const listRef = useRef<FlatList<TranscriptRenderItem>>(null);
   const stick = useRef(true);
+
+  const items = useMemo(
+    () => (transcript.status === 'active' ? projectTranscript(transcript.entries) : []),
+    [transcript.status, transcript.entries],
+  );
 
   const onContentSizeChange = useCallback(() => {
     if (stick.current) {
@@ -51,7 +66,7 @@ export function TranscriptView({ transcript }: { transcript: TranscriptState }) 
     );
   }
 
-  if (transcript.entries.length === 0) {
+  if (items.length === 0) {
     return (
       <EmptyState
         icon="chatbubble-ellipses-outline"
@@ -64,9 +79,9 @@ export function TranscriptView({ transcript }: { transcript: TranscriptState }) 
   return (
     <FlatList
       ref={listRef}
-      data={transcript.entries}
-      keyExtractor={(entry) => entry.id}
-      renderItem={({ item }) => <Entry entry={item} />}
+      data={items}
+      keyExtractor={(item) => item.id}
+      renderItem={({ item }) => <Row item={item} />}
       contentContainerStyle={styles.list}
       onContentSizeChange={onContentSizeChange}
       ListHeaderComponent={
@@ -79,43 +94,94 @@ export function TranscriptView({ transcript }: { transcript: TranscriptState }) 
   );
 }
 
-function Entry({ entry }: { entry: TranscriptEntry }) {
-  switch (entry.role) {
-    case 'tool_use':
-      return <ToolCallCard entry={entry} />;
-    case 'tool_result':
-      return <ToolResultCard entry={entry} />;
+function Row({ item }: { item: TranscriptRenderItem }) {
+  switch (item.kind) {
+    case 'toolGroup':
+      return <ToolGroupRow tools={item.tools} failedCount={item.failedCount} />;
+    case 'tool':
+      return <ToolCard pair={item} />;
     case 'system':
-      return <Text style={styles.system}>{entry.text ?? entry.status ?? 'system'}</Text>;
+      return (
+        <Text style={styles.system}>
+          {item.text}
+          {item.repeat > 1 ? ` ×${item.repeat}` : ''}
+        </Text>
+      );
     case 'user':
       return (
-        <View style={[styles.bubble, styles.userBubble]}>
-          <Text style={styles.bubbleText}>{entry.text ?? ''}</Text>
+        <View style={styles.userBubble}>
+          <MarkdownText text={item.entry.text ?? ''} />
         </View>
       );
     default:
       return (
-        <View style={[styles.bubble, styles.assistantBubble]}>
-          <Text style={styles.bubbleText}>{entry.text ?? ''}</Text>
+        <View style={styles.assistant}>
+          <MarkdownText text={item.entry.text ?? ''} />
         </View>
       );
   }
 }
 
-function ToolCallCard({ entry }: { entry: TranscriptEntry }) {
+/** Fenced code → mono block; prose lines → bold/inline-code aware text. */
+function MarkdownText({ text }: { text: string }) {
+  const blocks = useMemo(() => parseMarkdownBlocks(text), [text]);
+  return (
+    <View style={styles.markdown}>
+      {blocks.map((block, index) =>
+        block.type === 'code' ? (
+          <View key={index} style={styles.codeBlock}>
+            <Text style={styles.codeText}>{block.text}</Text>
+          </View>
+        ) : (
+          <Text key={index} style={styles.bodyText}>
+            {parseInlineSpans(block.text).map((span, spanIndex) => (
+              <Text
+                key={spanIndex}
+                style={[span.bold && styles.boldSpan, span.code && styles.codeSpan]}
+              >
+                {span.text}
+              </Text>
+            ))}
+          </Text>
+        ),
+      )}
+    </View>
+  );
+}
+
+const RUNNING = new Set(['running', 'pending', 'in_progress', 'starting']);
+const FAILED = new Set(['error', 'failed']);
+
+/** One card per tool call: name + status up top, result summary underneath,
+ * tap to reveal the raw input and full result. */
+function ToolCard({ pair }: { pair: ToolPair }) {
   const [open, setOpen] = useState(false);
-  const detail = formatToolInput(entry.toolInput);
+  const status = pair.call?.status ?? pair.result?.status;
+  const detail = formatToolInput(pair.call?.toolInput);
+  const summary = pair.result?.toolResultSummary ?? pair.result?.text;
+  const expandable = Boolean(detail || (summary && summary.length > 160));
+
   return (
     <Pressable
-      onPress={() => detail && setOpen((v) => !v)}
+      onPress={() => expandable && setOpen((v) => !v)}
       style={styles.toolCard}
       accessibilityRole="button"
     >
       <View style={styles.toolHead}>
-        <Ionicons name="construct-outline" size={15} color={colors.starting} />
-        <Text style={styles.toolName}>{entry.toolName ?? 'tool'}</Text>
-        {entry.status ? <Text style={styles.toolStatus}>{entry.status}</Text> : null}
-        {detail ? (
+        {status && RUNNING.has(status) ? (
+          <ActivityIndicator size="small" color={colors.starting} />
+        ) : (
+          <Ionicons
+            name={status && FAILED.has(status) ? 'alert-circle-outline' : 'construct-outline'}
+            size={15}
+            color={status && FAILED.has(status) ? colors.danger : colors.starting}
+          />
+        )}
+        <Text style={styles.toolName} numberOfLines={1}>
+          {pair.call?.toolName ?? 'tool'}
+        </Text>
+        {status ? <Text style={styles.toolStatus}>{status}</Text> : null}
+        {expandable ? (
           <Ionicons
             name={open ? 'chevron-up' : 'chevron-down'}
             size={15}
@@ -125,17 +191,49 @@ function ToolCallCard({ entry }: { entry: TranscriptEntry }) {
         ) : null}
       </View>
       {open && detail ? <Text style={styles.toolDetail}>{detail}</Text> : null}
+      {summary ? (
+        <Text style={styles.resultText} numberOfLines={open ? undefined : 4}>
+          {summary}
+        </Text>
+      ) : null}
     </Pressable>
   );
 }
 
-function ToolResultCard({ entry }: { entry: TranscriptEntry }) {
+/** Collapsed burst of finished tool calls: "Ran N tools · M failed". */
+function ToolGroupRow({ tools, failedCount }: { tools: ToolPair[]; failedCount: number }) {
+  const [open, setOpen] = useState(false);
+  const title = useMemo(() => {
+    const parts = [`Ran ${tools.length} tools`];
+    if (failedCount > 0) {
+      parts.push(`${failedCount} failed`);
+    }
+    return parts.join(' · ');
+  }, [tools.length, failedCount]);
+
   return (
-    <View style={styles.resultCard}>
-      <Ionicons name="return-down-forward-outline" size={14} color={colors.online} />
-      <Text style={styles.resultText} numberOfLines={8}>
-        {entry.toolResultSummary ?? entry.text ?? 'done'}
-      </Text>
+    <View style={styles.groupWrap}>
+      <Pressable
+        onPress={() => setOpen((v) => !v)}
+        style={styles.groupHead}
+        accessibilityRole="button"
+        accessibilityLabel={title}
+        accessibilityHint={open ? 'Collapse tool calls' : 'Expand tool calls'}
+      >
+        <Ionicons name="terminal-outline" size={15} color={colors.textFaint} />
+        <Text style={styles.groupTitle}>{title}</Text>
+        <Ionicons
+          name={open ? 'chevron-up' : 'chevron-down'}
+          size={14}
+          color={colors.textFaint}
+          style={styles.chevron}
+        />
+      </Pressable>
+      {open
+        ? tools.map((pair, index) => (
+            <ToolCard key={pair.call?.id ?? pair.result?.id ?? index} pair={pair} />
+          ))
+        : null}
     </View>
   );
 }
@@ -173,26 +271,46 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginBottom: space.md,
   },
-  bubble: {
-    maxWidth: '92%',
+  userBubble: {
+    alignSelf: 'flex-end',
+    maxWidth: '88%',
     paddingVertical: space.sm,
     paddingHorizontal: space.md,
     borderRadius: radius.md,
-  },
-  userBubble: {
-    alignSelf: 'flex-end',
     backgroundColor: colors.accentDim,
   },
-  assistantBubble: {
-    alignSelf: 'flex-start',
-    backgroundColor: colors.surface,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
+  assistant: {
+    alignSelf: 'stretch',
   },
-  bubbleText: {
+  markdown: {
+    gap: space.sm,
+  },
+  bodyText: {
     color: colors.text,
     fontSize: 15,
-    lineHeight: 21,
+    lineHeight: 22,
+  },
+  boldSpan: {
+    fontWeight: '700',
+  },
+  codeSpan: {
+    fontFamily: mono,
+    fontSize: 13,
+    color: colors.textDim,
+    backgroundColor: colors.surface,
+  },
+  codeBlock: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.sm,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+    padding: space.md,
+  },
+  codeText: {
+    fontFamily: mono,
+    fontSize: 12,
+    lineHeight: 17,
+    color: colors.textDim,
   },
   system: {
     textAlign: 'center',
@@ -214,6 +332,7 @@ const styles = StyleSheet.create({
     gap: space.sm,
   },
   toolName: {
+    flexShrink: 1,
     color: colors.text,
     fontSize: 14,
     fontWeight: '600',
@@ -231,20 +350,28 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: colors.textDim,
   },
-  resultCard: {
-    flexDirection: 'row',
-    alignSelf: 'stretch',
-    gap: space.sm,
-    padding: space.md,
-    borderRadius: radius.md,
-    backgroundColor: '#0C1410',
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: '#1E3A24',
-  },
   resultText: {
-    flex: 1,
     fontFamily: mono,
     fontSize: 12,
+    lineHeight: 17,
     color: colors.textDim,
+  },
+  groupWrap: {
+    gap: space.md,
+  },
+  groupHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+    paddingVertical: space.sm,
+    paddingHorizontal: space.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+  },
+  groupTitle: {
+    color: colors.textDim,
+    fontSize: 13,
   },
 });

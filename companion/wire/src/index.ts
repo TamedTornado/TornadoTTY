@@ -66,6 +66,7 @@ export * from './families/pairing';
 export * from './families/session';
 export * from './families/dashboard';
 export * from './families/pane';
+export * from './families/paneBytes';
 export * from './families/input';
 export * from './families/transcript';
 export * from './families/lease';

@@ -197,8 +197,21 @@ final class CompanionLeaseManager {
 
     /// Renews a lease and rebinds delivery to the heartbeating connection (so a
     /// reconnect keeps receiving revocations). Unknown / stale ids are ignored.
+    ///
+    /// Ownership (defense-in-depth against a leaked `leaseId`): the current holder
+    /// always renews. A *different* token may take the lease over only when the
+    /// prior holder's connection is gone (`clients[...] == nil`) — that is the
+    /// documented reconnect-rebind (same phone, new connection → new token). While
+    /// the holder is still connected, a mismatched token is treated as a hijack
+    /// attempt and ignored.
     func heartbeat(token: CompanionLeaseClientToken, leaseId: String) {
         guard let paneId = paneIdByLeaseId[leaseId], var lease = leasesByPane[paneId] else { return }
+        if token != lease.clientToken, clients[lease.clientToken] != nil {
+            companionLeaseLogger.error(
+                "Ignoring lease.heartbeat from non-holder token for lease \(leaseId, privacy: .public)"
+            )
+            return
+        }
         lease.lastHeartbeat = now()
         lease.clientToken = token
         leasesByPane[paneId] = lease
@@ -208,8 +221,12 @@ final class CompanionLeaseManager {
 
     /// Re-requests the grid on rotation / font change, debounced 300ms. Re-clamps,
     /// re-applies the surface size in place, and counts as a sign of life.
-    func resize(leaseId: String, cols: Int, rows: Int) {
-        guard paneIdByLeaseId[leaseId] != nil else { return }
+    ///
+    /// Ownership: honored only for the lease's current holder (defense-in-depth
+    /// against a leaked `leaseId`). A reconnecting phone becomes the holder via
+    /// `heartbeat` before it resizes.
+    func resize(token: CompanionLeaseClientToken, leaseId: String, cols: Int, rows: Int) {
+        guard let paneId = paneIdByLeaseId[leaseId], leasesByPane[paneId]?.clientToken == token else { return }
         let generation = (resizeGenByLease[leaseId] ?? 0) + 1
         resizeGenByLease[leaseId] = generation
         Task { @MainActor [weak self] in
@@ -239,8 +256,10 @@ final class CompanionLeaseManager {
     // MARK: - lease.release / end paths
 
     /// Phone-initiated release: restore the pane. No `lease.revoked` — the phone
-    /// already knows.
-    func release(leaseId: String) {
+    /// already knows. Honored only for the lease's current holder (defense-in-depth
+    /// against a leaked `leaseId`); a non-holder release is ignored.
+    func release(token: CompanionLeaseClientToken, leaseId: String) {
+        guard let paneId = paneIdByLeaseId[leaseId], leasesByPane[paneId]?.clientToken == token else { return }
         revokeLease(leaseId, reason: nil, restore: true)
     }
 

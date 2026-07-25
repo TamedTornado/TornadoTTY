@@ -60,6 +60,7 @@ describe('MacConnection reconnect backoff', () => {
     delays: number[];
     clock: { value: number };
     sessionUpThresholdMs: number;
+    delay?: (ms: number) => Promise<void>;
   }) {
     identity = makePhoneIdentity(sodium);
     macSeed = sodium.randomBytes(32);
@@ -98,9 +99,11 @@ describe('MacConnection reconnect backoff', () => {
       deviceName: 'iPhone',
       appVersion: '1.0.0',
       now: () => overrides.clock.value,
-      delay: async (ms: number) => {
-        overrides.delays.push(ms);
-      },
+      delay:
+        overrides.delay ??
+        (async (ms: number) => {
+          overrides.delays.push(ms);
+        }),
       // Deterministic backoff (no jitter) so delays are exactly base * 2^n.
       reconnectBackoff: { base: 100, cap: 100_000, jitter: (c) => c },
       sessionUpThresholdMs: overrides.sessionUpThresholdMs,
@@ -161,5 +164,88 @@ describe('MacConnection reconnect backoff', () => {
     conn.stop();
     provide(newCycle().phoneT);
     await flush();
+  });
+
+  it('cuts a pending reconnect sleep short when woken (app foregrounded)', async () => {
+    const delays: number[] = [];
+    const clock = { value: 1_000 };
+    // A delay that never settles on its own: only wake() can end the sleep.
+    const { conn, provide } = makeHarness({
+      delays,
+      clock,
+      sessionUpThresholdMs: 30_000,
+      delay: (ms) => {
+        delays.push(ms);
+        return new Promise<void>(() => undefined);
+      },
+    });
+
+    conn.start();
+    const c1 = newCycle();
+    provide(c1.phoneT);
+    await flush(); // handshake completes; session reaches ready
+    c1.macT.close();
+    await flush(); // run loop emits offline + parks in the backoff sleep
+    expect(delays).toEqual([100]);
+    expect(conn.state.status).toBe('offline');
+
+    // Foreground wake: the reconnect happens now, without the sleep elapsing.
+    conn.wake();
+    const c2 = newCycle();
+    provide(c2.phoneT);
+    await flush();
+
+    expect(conn.state.status).toBe('connected');
+    expect(conn.state.sessionReady).toBe(true);
+    expect(delays).toEqual([100]); // backoff was reset, not re-entered
+
+    conn.stop();
+    provide(newCycle().phoneT);
+    await flush();
+  });
+
+  it('wake() is a no-op while a session is live', async () => {
+    const delays: number[] = [];
+    const clock = { value: 1_000 };
+    const { conn, provide } = makeHarness({ delays, clock, sessionUpThresholdMs: 30_000 });
+
+    conn.start();
+    provide(newCycle().phoneT);
+    await flush();
+    expect(conn.state.sessionReady).toBe(true);
+
+    conn.wake();
+    await flush();
+
+    // Still on the same live session: no drop, no reconnect scheduled.
+    expect(conn.state.status).toBe('connected');
+    expect(conn.state.sessionReady).toBe(true);
+    expect(delays).toEqual([]);
+
+    conn.stop();
+    await flush();
+  });
+
+  it('wake() does not restart a stopped connection', async () => {
+    const delays: number[] = [];
+    const clock = { value: 1_000 };
+    const { conn, provide } = makeHarness({ delays, clock, sessionUpThresholdMs: 30_000 });
+
+    conn.start();
+    provide(newCycle().phoneT);
+    await flush();
+    conn.stop();
+    await flush();
+
+    let opens = 0;
+    const previous = mockOpeners.openDirect;
+    mockOpeners.openDirect = (h) => {
+      opens += 1;
+      return previous(h);
+    };
+
+    conn.wake();
+    await flush();
+    expect(opens).toBe(0);
   });
 });

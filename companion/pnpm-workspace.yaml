@@ -4,3 +4,5 @@ packages:
   # no-op until their directories exist.
   - 'relay'
   - 'mobile'
+allowBuilds:
+  esbuild: set this to true or false

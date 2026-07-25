@@ -1162,6 +1162,18 @@ final class MainWindowController: NSObject, NSWindowDelegate {
         return true
     }
 
+    /// Injects a non-printable key (cursor keys, Return, Esc, Tab, control-letters)
+    /// as a real key event. Companion input uses this instead of `sendText` so the
+    /// bytes survive libghostty's bracketed-paste wrapping. Returns `false` when the
+    /// pane has no live runtime.
+    @discardableResult
+    func sendSpecialKey(_ key: TerminalSpecialKey, to paneID: PaneID) -> Bool {
+        guard let runtime = runtimeRegistry.runtime(for: paneID) else {
+            return false
+        }
+        return runtime.adapter.sendSpecialKey(key)
+    }
+
     func readText(from paneID: PaneID, includeScrollback: Bool, lineLimit: Int?) -> String? {
         guard let runtime = runtimeRegistry.runtime(for: paneID),
               let reader = runtime.adapter as? TerminalTextReading
@@ -1198,6 +1210,13 @@ final class MainWindowController: NSObject, NSWindowDelegate {
     /// the placeholder. Safe to call for an unknown / already-restored pane.
     func restoreControlLease(from paneID: PaneID) {
         runtimeRegistry.runtime(for: paneID)?.hostView.endControlLease()
+    }
+
+    /// Pins/unpins a pane's companion render keepalive so it keeps repainting while
+    /// the phone mirrors it, even when its surface is occluded (backgrounded or
+    /// under a control-lease placeholder). Safe to call for an unknown pane.
+    func setCompanionRenderKeepAlive(_ active: Bool, for paneID: PaneID) {
+        runtimeRegistry.runtime(for: paneID)?.hostView.setCompanionRenderKeepAlive(active)
     }
 
     /// Live grid dimensions (columns × rows) for a pane, or `nil` when the pane is

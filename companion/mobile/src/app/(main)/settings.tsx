@@ -5,6 +5,7 @@ import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Button, EmptyState, Screen } from '@/components';
 import type { PairedMac } from '@/core';
 import { APP_VERSION } from '@/runtime/device';
+import { syncPushKeyMirror } from '@/runtime/pushKeyMirror';
 import { useCompanionStore } from '@/store';
 import { colors, radius, space, type } from '@/theme';
 
@@ -15,6 +16,11 @@ import { colors, radius, space, type } from '@/theme';
 export default function SettingsScreen() {
   const macs = useCompanionStore((s) => s.macs);
   const unpair = useCompanionStore((s) => s.unpair);
+
+  /** Unpair, then re-mirror the NSE key material without the removed Mac. */
+  const unpairAndSync = (macDeviceId: string) => {
+    void unpair(macDeviceId).then(syncPushKeyMirror);
+  };
 
   return (
     <Screen>
@@ -32,7 +38,7 @@ export default function SettingsScreen() {
               <MacSettingsRow
                 key={mac.macDeviceId}
                 mac={mac}
-                onUnpair={() => void unpair(mac.macDeviceId)}
+                onUnpair={() => unpairAndSync(mac.macDeviceId)}
               />
             ))}
           </View>

@@ -94,6 +94,21 @@ protocol CompanionSessionServicing: AnyObject {
     /// One-shot scrollback read for a `pane.scrollback` request.
     func paneScrollback(paneId: String, lineLimit: Int?) -> CompanionPaneScrollback
 
+    // Pane bytes lane (raw PTY stream)
+    /// Registers a connection's `pane.bytes.chunk` sink; returns a token to
+    /// unregister on disconnect.
+    func addPaneBytesWatcher(_ send: @escaping (CompanionPaneBytesChunk) -> Void) -> CompanionPaneBytesToken
+    func removePaneBytesWatcher(_ token: CompanionPaneBytesToken)
+    /// Handles `pane.bytes.attach` (request/reply) and starts live fan-out.
+    func attachPaneBytes(
+        token: CompanionPaneBytesToken,
+        paneId: String,
+        lastSeq: Int?,
+        epoch: String?
+    ) -> CompanionPaneBytesAttached
+    /// Handles `pane.bytes.detach` — stop live chunks for this pane on this connection.
+    func detachPaneBytes(token: CompanionPaneBytesToken, paneId: String)
+
     // Transcript lane
     /// Registers a connection's `transcript.delta` / `transcript.unavailable`
     /// sink; returns a token to unregister on disconnect.
@@ -117,8 +132,8 @@ protocol CompanionSessionServicing: AnyObject {
         deviceName: String
     ) -> CompanionLeaseGrant
     func leaseHeartbeat(token: CompanionLeaseClientToken, leaseId: String)
-    func leaseResize(leaseId: String, cols: Int, rows: Int)
-    func leaseRelease(leaseId: String)
+    func leaseResize(token: CompanionLeaseClientToken, leaseId: String, cols: Int, rows: Int)
+    func leaseRelease(token: CompanionLeaseClientToken, leaseId: String)
 
     // Push
     /// Records a phone's push token (from `push.register`) on its pairing and

@@ -7,7 +7,8 @@ import Foundation
 // forward opaquely; only the paired phone's Notification Service Extension can open
 // it, using key material it already holds from pairing — no live session required.
 //
-// Scheme ("zentty-push/v1"), mirrored by the mobile NSE with react-native-libsodium:
+// Scheme ("zentty-push/v1"), mirrored by the mobile NSE (CryptoKit) and the
+// companion app's JS side (@stablelib — see companion/mobile/src/runtime/sodium.ts):
 //
 //   1. Static-static X25519 shared secret between the two device *identities*:
 //        macCurveSK   = crypto_sign_ed25519_sk_to_curve25519(macEd25519Priv)
@@ -22,8 +23,8 @@ import Foundation
 //   3. Seal = ChaCha20-Poly1305-IETF(seal key, random 12-byte nonce, plaintext),
 //      serialized as nonce(12) || ciphertext || tag(16), then Base64 (standard).
 //      This is CryptoKit's `ChaChaPoly.SealedBox.combined`; the NSE splits the
-//      first 12 bytes as the nonce and feeds `ciphertext || tag` to libsodium's
-//      `crypto_aead_chacha20poly1305_ietf_decrypt`.
+//      first 12 bytes as the nonce and opens `ciphertext || tag` with CryptoKit,
+//      the JS side with @stablelib's ChaCha20Poly1305 (same IETF construction).
 //
 // The plaintext is the JSON `{title, body, paneId, worklaneId}` (sorted keys).
 enum CompanionPushSeal {

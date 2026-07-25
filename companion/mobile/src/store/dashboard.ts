@@ -116,34 +116,6 @@ export function applyDelta(current: Worklane[], delta: DashboardDeltaPayload): W
     .map(withDerivedAttention);
 }
 
-/**
- * Order panes for display: rows that require human attention are pinned to the
- * top, each group keeping its incoming (server) order. Partitioning (rather than
- * a comparator) guarantees stability regardless of the engine's sort.
- */
-export function orderPanes(panes: PaneSummary[]): PaneSummary[] {
-  const attention: PaneSummary[] = [];
-  const rest: PaneSummary[] = [];
-  for (const pane of panes) {
-    (pane.requiresHumanAttention ? attention : rest).push(pane);
-  }
-  return [...attention, ...rest];
-}
-
-/**
- * Order worklane sections for display: sections containing an attention pane come
- * first (stable), and every section's panes are ordered via {@link orderPanes}.
- */
-export function orderWorklanes(worklanes: Worklane[]): Worklane[] {
-  const withOrderedPanes = worklanes.map((w) => ({ ...w, panes: orderPanes(w.panes) }));
-  const attention: Worklane[] = [];
-  const rest: Worklane[] = [];
-  for (const w of withOrderedPanes) {
-    (w.attention ? attention : rest).push(w);
-  }
-  return [...attention, ...rest];
-}
-
 /** Total panes awaiting a human across all worklanes — drives the header count. */
 export function countAttention(worklanes: Worklane[]): number {
   let n = 0;

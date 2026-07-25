@@ -13,6 +13,8 @@ import { colors, space } from '@/theme';
 export default function MacsScreen() {
   const macs = useCompanionStore((s) => s.macs);
   const views = useCompanionStore((s) => s.views);
+  const ready = useCompanionStore((s) => s.ready);
+  const hydrate = useCompanionStore((s) => s.hydrate);
   const connect = useCompanionStore((s) => s.connect);
   const reconnect = useCompanionStore((s) => s.reconnect);
   const [refreshing, setRefreshing] = useState(false);
@@ -34,6 +36,26 @@ export default function MacsScreen() {
   }, [macs, reconnect]);
 
   if (macs.length === 0) {
+    if (!ready) {
+      // Hydration failed (e.g. a transient SecureStore error): offer a manual
+      // retry instead of implying no Macs are paired.
+      return (
+        <Screen>
+          <EmptyState
+            icon="cloud-offline-outline"
+            title="Couldn't load pairings"
+            message="Something went wrong reading your saved pairings."
+            action={
+              <Button
+                label="Retry"
+                icon="refresh"
+                onPress={() => void hydrate().catch(() => undefined)}
+              />
+            }
+          />
+        </Screen>
+      );
+    }
     return (
       <Screen>
         <EmptyState

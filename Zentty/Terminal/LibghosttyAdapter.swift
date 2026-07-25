@@ -58,8 +58,9 @@ protocol LibghosttySurfaceControlling: AnyObject {
         modifiers: NSEvent.ModifierFlags
     ) -> Bool
     func sendText(_ text: String)
+    func sendSpecialKey(_ key: TerminalSpecialKey) -> Bool
     func cancelPromptInput()
-    func submitReturn()
+    @discardableResult func submitReturn() -> Bool
     func performBindingAction(_ action: String) -> Bool
     func scroll(toOffset offset: Double)
     func hasSelection() -> Bool
@@ -71,6 +72,7 @@ extension LibghosttySurfaceControlling {
     var mouseCaptured: Bool { false }
     var mouseScrollIsTerminalInput: Bool { mouseCaptured }
     func cancelPromptInput() {}
+    func sendSpecialKey(_ key: TerminalSpecialKey) -> Bool { false }
     func translatedKeyEvent(for event: NSEvent) -> NSEvent { event }
     func setSmoothScrollingEnabled(_ enabled: Bool) {}
     func scroll(toOffset offset: Double) {
@@ -85,7 +87,7 @@ protocol LibghosttySurfaceTextReading: AnyObject {
 }
 
 @MainActor
-final class LibghosttyAdapter: TerminalAdapter, TerminalSearchControlling, TerminalTextReading, TerminalControlLeasing {
+final class LibghosttyAdapter: TerminalAdapter, TerminalSearchControlling, TerminalTextReading, TerminalControlLeasing, TerminalRenderKeepAliving {
     private let runtime: any LibghosttyRuntimeProviding
     private let paneID: PaneID
     private let diagnostics: TerminalDiagnostics
@@ -98,6 +100,12 @@ final class LibghosttyAdapter: TerminalAdapter, TerminalSearchControlling, Termi
     private var surfaceController: (any LibghosttySurfaceControlling)?
     private var lastSurfaceActivity = TerminalSurfaceActivity(isVisible: false, isFocused: false)
     private var hasAppliedSurfaceActivity = false
+    /// True while a companion control lease pins the surface to a fixed grid; the
+    /// desktop occlusion is normally suspended in that state.
+    private var isUnderControlLease = false
+    /// True while the phone is mirroring this pane; forces the surface un-occluded
+    /// (overriding both backgrounding and a control lease) so it keeps repainting.
+    private var companionRenderKeepAlive = false
     private var inheritedConfigTemplate: ghostty_surface_config_s?
 
     var hasScrollback: Bool { surfaceController?.hasScrollback ?? false }
@@ -162,6 +170,13 @@ final class LibghosttyAdapter: TerminalAdapter, TerminalSearchControlling, Termi
         surfaceController?.sendText(text)
     }
 
+    // Companion control keys route here (not through sendText) so the ESC in
+    // cursor-key CSI and a real Return survive libghostty's bracketed-paste
+    // wrapping. Returns `false` when no live surface backs the pane.
+    func sendSpecialKey(_ key: TerminalSpecialKey) -> Bool {
+        surfaceController?.sendSpecialKey(key) ?? false
+    }
+
     func cancelPromptInput() {
         surfaceController?.cancelPromptInput()
     }
@@ -195,15 +210,41 @@ final class LibghosttyAdapter: TerminalAdapter, TerminalSearchControlling, Termi
         guard hostView.applyLeasedViewport(cols: cols, rows: rows) else { return false }
         // Suspend desktop rendering while the phone owns the surface. The
         // placeholder overlay covers the pane regardless, so this is a best-effort
-        // optimization rather than the correctness guarantee.
-        surfaceController?.setOcclusionVisible(false)
+        // optimization rather than the correctness guarantee — but it must yield to
+        // a companion render keepalive, otherwise an occluded surface stops
+        // repainting and the phone's own mirror goes dark.
+        isUnderControlLease = true
+        reapplyOcclusion()
         return true
     }
 
     func releaseControlLease() {
         hostView.releaseLeasedViewport()
-        // Restore occlusion to whatever the pane's current activity implies.
-        surfaceController?.setOcclusionVisible(lastSurfaceActivity.isVisible)
+        isUnderControlLease = false
+        // Restore occlusion to whatever the pane's current activity (or an active
+        // companion keepalive) implies.
+        reapplyOcclusion()
+    }
+
+    // MARK: - Companion render keepalive
+
+    func setCompanionRenderKeepAlive(_ active: Bool) {
+        guard companionRenderKeepAlive != active else { return }
+        companionRenderKeepAlive = active
+        reapplyOcclusion()
+    }
+
+    /// Desired surface visibility, resolving the three inputs by precedence: a
+    /// companion mirror pins it visible; otherwise a control lease occludes it;
+    /// otherwise it follows the pane's activity (visible = foreground).
+    private var shouldSurfaceRender: Bool {
+        if companionRenderKeepAlive { return true }
+        if isUnderControlLease { return false }
+        return lastSurfaceActivity.isVisible
+    }
+
+    private func reapplyOcclusion() {
+        surfaceController?.setOcclusionVisible(shouldSurfaceRender)
     }
 
     func setSurfaceActivity(_ activity: TerminalSurfaceActivity) {
@@ -229,7 +270,9 @@ final class LibghosttyAdapter: TerminalAdapter, TerminalSearchControlling, Termi
             }
 
             if isFirstApplication || previouslyAppliedActivity.isVisible != activity.isVisible {
-                surfaceController.setOcclusionVisible(activity.isVisible)
+                // Resolve through the shared precedence: a companion keepalive or a
+                // control lease can override the raw activity visibility.
+                surfaceController.setOcclusionVisible(shouldSurfaceRender)
             }
 
             if !previouslyAppliedActivity.isVisible && activity.isVisible {

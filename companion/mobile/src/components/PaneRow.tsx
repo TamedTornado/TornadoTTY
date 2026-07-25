@@ -3,18 +3,28 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import type { PaneSummary } from '@zentty/wire';
 
-import { interactionKindLabel } from '@/lib/labels';
-import { colors, radius, space, type } from '@/theme';
+import { cleanPaneTitle, interactionKindLabel } from '@/lib/labels';
+import { colors, space, type } from '@/theme';
 
 import { StateBadge } from './StateBadge';
 import { ToolIcon } from './ToolIcon';
 
 /**
- * One pane row: tool glyph, title + working dir, and a state badge. Rows that
- * require human attention get an amber edge and an interaction-kind chip so the
- * "why it's waiting" reads at a glance.
+ * One pane row inside a {@link WorklaneSection} card: tool glyph, title + working
+ * dir, and a state badge. Siblings are separated by a hairline divider (`first`
+ * suppresses it on the top row) so a lane's panes read as one grouped list. Rows
+ * that require human attention get an amber wash and an interaction-kind chip so
+ * the "why it's waiting" reads at a glance.
  */
-export function PaneRow({ pane, onPress }: { pane: PaneSummary; onPress?: () => void }) {
+export function PaneRow({
+  pane,
+  first = false,
+  onPress,
+}: {
+  pane: PaneSummary;
+  first?: boolean;
+  onPress?: () => void;
+}) {
   const attention = pane.requiresHumanAttention;
   const interaction = interactionKindLabel(pane.interactionKind);
 
@@ -23,15 +33,17 @@ export function PaneRow({ pane, onPress }: { pane: PaneSummary; onPress?: () => 
       onPress={onPress}
       style={({ pressed }) => [
         styles.row,
+        !first && styles.divider,
         attention && styles.attention,
         pressed && styles.pressed,
       ]}
       accessibilityRole="button"
     >
+      {attention ? <View style={styles.attentionBar} /> : null}
       <ToolIcon tool={pane.tool} color={attention ? colors.attention : colors.textDim} />
       <View style={styles.body}>
         <Text style={type.rowTitle} numberOfLines={1}>
-          {pane.title}
+          {cleanPaneTitle(pane.title)}
         </Text>
         <View style={styles.metaRow}>
           {attention && interaction ? (
@@ -68,14 +80,23 @@ const styles = StyleSheet.create({
     gap: space.md,
     paddingVertical: space.md,
     paddingHorizontal: space.md,
-    borderRadius: radius.md,
-    backgroundColor: colors.surface,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
+  },
+  divider: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
   },
   attention: {
-    borderColor: colors.attention,
     backgroundColor: '#1C1A12',
+  },
+  // A thin amber spine on the leading edge so a waiting sibling stands out
+  // within the grouped card without a full border.
+  attentionBar: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    width: 3,
+    backgroundColor: colors.attention,
   },
   pressed: {
     backgroundColor: colors.surfaceRaised,

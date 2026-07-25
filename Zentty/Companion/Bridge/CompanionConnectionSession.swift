@@ -18,6 +18,12 @@ private let companionSessionLogger = Logger(subsystem: "be.zenjoy.zentty", categ
 /// across actors; only the transport `send`/`receive` suspend.
 @MainActor
 final class CompanionSession {
+    /// A connection has this long to get from accept to a completed `session.hello`
+    /// (i.e. `session.ready` sent). One that stalls — connects and sends nothing, or
+    /// dawdles mid-handshake — is force-closed so it can't pin a slot against the
+    /// LAN session cap. Generous enough for a real ECDH round-trip over a slow link.
+    static let handshakeTimeout: TimeInterval = 15
+
     private let connection: CompanionTransportConnection
     private weak var services: (any CompanionSessionServicing)?
 
@@ -25,6 +31,7 @@ final class CompanionSession {
     private var didCompleteHello = false
     private var dashboardToken: CompanionDashboardSubscriptionToken?
     private var paneTextToken: CompanionPaneWatchToken?
+    private var paneBytesToken: CompanionPaneBytesToken?
     private var transcriptToken: CompanionTranscriptSubscriberToken?
     private var leaseClientToken: CompanionLeaseClientToken?
 
@@ -48,6 +55,18 @@ final class CompanionSession {
     // MARK: - Run loop
 
     func run() async {
+        // Handshake watchdog: a connection that hasn't reached `session.ready`
+        // (`didCompleteHello`) within the deadline is force-closed, unblocking its
+        // pending receive() and letting the normal teardown path run. Guards against
+        // a peer that connects and stalls, holding a slot against the session cap.
+        let watchdog = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(Self.handshakeTimeout * 1_000_000_000))
+            guard let self, !self.didCompleteHello else { return }
+            companionSessionLogger.error("Companion handshake timed out; closing connection")
+            self.connection.close()
+        }
+        defer { watchdog.cancel() }
+
         do {
             let continued = try await handleOpeningFrame()
             if continued {
@@ -71,6 +90,10 @@ final class CompanionSession {
         if let paneTextToken {
             services?.removePaneTextWatcher(paneTextToken)
             self.paneTextToken = nil
+        }
+        if let paneBytesToken {
+            services?.removePaneBytesWatcher(paneBytesToken)
+            self.paneBytesToken = nil
         }
         if let transcriptToken {
             services?.removeTranscriptSubscriber(transcriptToken)
@@ -122,6 +145,19 @@ final class CompanionSession {
         )
         guard isValid else {
             try await sendPlaintext(.pairingReject(CompanionPairingReject(reason: "invalid_proof")))
+            return
+        }
+
+        // The proof authenticates only `phonePubKey`. Bind the record's identity to
+        // that proven key by requiring `phoneDeviceId == base64url(phonePubKey)` —
+        // the same convention `CompanionDeviceIdentity.deviceId` uses — so a holder
+        // of the one-time secret cannot register an arbitrary or colliding deviceId
+        // against a key it proved control of.
+        guard
+            let phonePubData = CompanionBase64URL.decode(request.phonePubKey),
+            CompanionBase64URL.encode(phonePubData) == request.phoneDeviceId
+        else {
+            try await sendPlaintext(.pairingReject(CompanionPairingReject(reason: "device_id_mismatch")))
             return
         }
 
@@ -313,6 +349,29 @@ final class CompanionSession {
             let reply = services.paneScrollback(paneId: payload.paneId, lineLimit: payload.lineLimit)
             try await sendSealed(.paneScrollback(reply), replyTo: envelope.id)
 
+        case .paneBytesAttach(let payload):
+            guard didCompleteHello else {
+                try await sendExpectedHello(replyTo: envelope.id)
+                return
+            }
+            let token = ensurePaneBytesWatcher(services: services)
+            let reply = services.attachPaneBytes(
+                token: token,
+                paneId: payload.paneId,
+                lastSeq: payload.lastSeq,
+                epoch: payload.epoch
+            )
+            try await sendSealed(.paneBytesAttached(reply), replyTo: envelope.id)
+
+        case .paneBytesDetach(let payload):
+            guard didCompleteHello else {
+                try await sendExpectedHello(replyTo: envelope.id)
+                return
+            }
+            if let paneBytesToken {
+                services.detachPaneBytes(token: paneBytesToken, paneId: payload.paneId)
+            }
+
         case .transcriptSubscribe(let payload):
             guard didCompleteHello else {
                 try await sendExpectedHello(replyTo: envelope.id)
@@ -354,14 +413,16 @@ final class CompanionSession {
                 try await sendExpectedHello(replyTo: envelope.id)
                 return
             }
-            services.leaseResize(leaseId: payload.leaseId, cols: payload.cols, rows: payload.rows)
+            let token = ensureLeaseClient(services: services)
+            services.leaseResize(token: token, leaseId: payload.leaseId, cols: payload.cols, rows: payload.rows)
 
         case .leaseRelease(let payload):
             guard didCompleteHello else {
                 try await sendExpectedHello(replyTo: envelope.id)
                 return
             }
-            services.leaseRelease(leaseId: payload.leaseId)
+            let token = ensureLeaseClient(services: services)
+            services.leaseRelease(token: token, leaseId: payload.leaseId)
 
         case .pushRegister(let payload):
             guard didCompleteHello else {
@@ -434,6 +495,27 @@ final class CompanionSession {
         } catch {
             companionSessionLogger.error(
                 "Failed to send pane text: \(String(describing: error), privacy: .public)"
+            )
+        }
+    }
+
+    // MARK: - Pane bytes stream
+
+    private func ensurePaneBytesWatcher(services: any CompanionSessionServicing) -> CompanionPaneBytesToken {
+        if let paneBytesToken { return paneBytesToken }
+        let token = services.addPaneBytesWatcher { [weak self] chunk in
+            Task { [weak self] in await self?.deliverPaneBytesChunk(chunk) }
+        }
+        paneBytesToken = token
+        return token
+    }
+
+    private func deliverPaneBytesChunk(_ chunk: CompanionPaneBytesChunk) async {
+        do {
+            try await sendSealed(.paneBytesChunk(chunk))
+        } catch {
+            companionSessionLogger.error(
+                "Failed to send pane bytes chunk: \(String(describing: error), privacy: .public)"
             )
         }
     }

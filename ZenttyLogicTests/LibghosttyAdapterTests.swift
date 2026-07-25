@@ -1136,7 +1136,7 @@ private final class LibghosttySurfaceControllerSpy: LibghosttySurfaceControlling
         modifiers: NSEvent.ModifierFlags
     ) -> Bool { false }
     func sendText(_ text: String) { sentTexts.append(text) }
-    func submitReturn() { submitReturnCallCount += 1 }
+    func submitReturn() -> Bool { submitReturnCallCount += 1; return true }
     func cancelPromptInput() { cancelPromptInputCallCount += 1 }
     func performBindingAction(_ action: String) -> Bool {
         bindingActions.append(action)

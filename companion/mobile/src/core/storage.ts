@@ -100,10 +100,18 @@ export class CorruptPairingsError extends Error {
 export class CompanionStorage {
   private readonly kv: KVStore;
   private readonly sodium: SodiumLike;
+  /**
+   * Backing store for small UI preferences. Kept separate from {@link kv} so
+   * identity + pairings live in the Keychain/Keystore while throwaway UI prefs
+   * go to a plain, faster store that is wiped on uninstall. Defaults to `kv` for
+   * tests and callers that don't split the two.
+   */
+  private readonly prefsKv: KVStore;
 
-  constructor(kv: KVStore, sodium: SodiumLike) {
+  constructor(kv: KVStore, sodium: SodiumLike, prefsKv: KVStore = kv) {
     this.kv = kv;
     this.sodium = sodium;
+    this.prefsKv = prefsKv;
   }
 
   /**
@@ -222,11 +230,11 @@ export class CompanionStorage {
       return;
     }
     prefs[key] = value;
-    await this.kv.setItem(PREFS_KEY, JSON.stringify(prefs));
+    await this.prefsKv.setItem(PREFS_KEY, JSON.stringify(prefs));
   }
 
   private async loadPrefs(): Promise<Record<string, string>> {
-    const stored = await this.kv.getItem(PREFS_KEY);
+    const stored = await this.prefsKv.getItem(PREFS_KEY);
     if (!stored) {
       return {};
     }

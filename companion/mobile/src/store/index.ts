@@ -12,6 +12,13 @@ export {
   type PaneTextState,
 } from './paneText';
 export {
+  PaneBytesLane,
+  decodedBase64Length,
+  type PaneBytesEffects,
+  type PaneBytesChunkFrame,
+  type PaneBytesAttachedPayload,
+} from './paneBytesLane';
+export {
   LeaseController,
   idleLease,
   type LeaseSnapshot,
@@ -37,8 +44,6 @@ export {
 export {
   applySnapshot,
   applyDelta,
-  orderPanes,
-  orderWorklanes,
   countAttention,
   isStale,
   type Worklane,
@@ -50,5 +55,6 @@ export {
   parseOffer,
   pairWithOffer,
   PairingExpiredError,
+  PairingNoEndpointError,
   PairingParseError,
 } from './pairing';

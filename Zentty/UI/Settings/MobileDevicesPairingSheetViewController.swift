@@ -13,13 +13,21 @@ final class MobileDevicesPairingSheetViewController: NSViewController {
     private let onClose: () -> Void
 
     private var countdownTimer: Timer?
+    private var copyFeedbackWorkItem: DispatchWorkItem?
 
     private let qrImageView = NSImageView()
     private let codeField = NSTextField(labelWithString: "")
     private let countdownLabel = NSTextField(labelWithString: "")
     private let hintLabel = NSTextField(labelWithString: "")
+    private let cautionLabel = NSTextField(labelWithString: "")
+    private let copyCodeButton = NSButton(title: "Copy Code", target: nil, action: nil)
 
     private static let qrDisplaySize: CGFloat = 240
+    /// Width of the wrapped manual-code block, matching the subtitle's cap so
+    /// the sheet stays a consistent width regardless of code length.
+    private static let codeFieldWidth: CGFloat = 320
+    private static let copyFeedbackTitle = "Copied"
+    private static let copyIdleTitle = "Copy Code"
 
     init(session: CompanionPairingSession, onClose: @escaping () -> Void) {
         self.session = session
@@ -81,21 +89,67 @@ final class MobileDevicesPairingSheetViewController: NSViewController {
         codeHeader.alignment = .center
         stack.addArrangedSubview(codeHeader)
 
-        codeField.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        // Wraps the full base64url code instead of ellipsizing it — the manual
+        // code is the phone's only fallback when it can't scan the QR, so
+        // truncating it here would make that fallback useless.
+        codeField.font = .monospacedSystemFont(ofSize: 10, weight: .regular)
         codeField.isSelectable = true
-        codeField.isBezeled = true
-        codeField.bezelStyle = .roundedBezel
-        codeField.drawsBackground = true
-        codeField.lineBreakMode = .byTruncatingMiddle
-        codeField.alignment = .center
+        codeField.isBezeled = false
+        codeField.drawsBackground = false
+        codeField.lineBreakMode = .byCharWrapping
+        codeField.maximumNumberOfLines = 0
+        codeField.cell?.wraps = true
+        codeField.alignment = .left
         codeField.translatesAutoresizingMaskIntoConstraints = false
-        stack.addArrangedSubview(codeField)
-        codeField.widthAnchor.constraint(equalToConstant: 300).isActive = true
+        // `labelWithString:` defaults to single-line mode; disable it so the
+        // cell actually lays the text out across multiple wrapped lines.
+        (codeField.cell as? NSTextFieldCell)?.usesSingleLineMode = false
+        // Without this a wrapping NSTextField reports a single-line intrinsic
+        // height inside the stack view; 20 = the 10pt horizontal insets below.
+        codeField.preferredMaxLayoutWidth = Self.codeFieldWidth - 20
+
+        // A rounded, subtly-filled wrapper (no NSTextField bezel, which looks
+        // wrong on a multi-line label) with real insets so the wrapped code
+        // doesn't touch the border.
+        let codeBackground = CodeBackgroundView()
+        codeBackground.translatesAutoresizingMaskIntoConstraints = false
+        codeBackground.wantsLayer = true
+        codeBackground.layer?.cornerRadius = 6
+        codeBackground.layer?.cornerCurve = .continuous
+        codeBackground.layer?.borderWidth = 1
+        codeBackground.addSubview(codeField)
+        stack.addArrangedSubview(codeBackground)
+        NSLayoutConstraint.activate([
+            codeBackground.widthAnchor.constraint(equalToConstant: Self.codeFieldWidth),
+            codeField.topAnchor.constraint(equalTo: codeBackground.topAnchor, constant: 8),
+            codeField.bottomAnchor.constraint(equalTo: codeBackground.bottomAnchor, constant: -8),
+            codeField.leadingAnchor.constraint(equalTo: codeBackground.leadingAnchor, constant: 10),
+            codeField.trailingAnchor.constraint(equalTo: codeBackground.trailingAnchor, constant: -10),
+        ])
+
+        copyCodeButton.target = self
+        copyCodeButton.action = #selector(handleCopyCode(_:))
+        copyCodeButton.bezelStyle = .rounded
+        copyCodeButton.controlSize = .small
+        stack.addArrangedSubview(copyCodeButton)
 
         hintLabel.font = .systemFont(ofSize: 11, weight: .regular)
         hintLabel.textColor = .tertiaryLabelColor
         hintLabel.alignment = .center
         stack.addArrangedSubview(hintLabel)
+
+        // Shown only while the offer carries no reachable endpoint (no LAN hint and
+        // no relay), so an unscannable-but-unreachable code is never presented as
+        // if it will work. Cleared once the listener's port appears and the offer
+        // is re-minted with a LAN hint.
+        cautionLabel.font = .systemFont(ofSize: 11, weight: .medium)
+        cautionLabel.textColor = .systemOrange
+        cautionLabel.alignment = .center
+        cautionLabel.lineBreakMode = .byWordWrapping
+        cautionLabel.maximumNumberOfLines = 0
+        cautionLabel.isHidden = true
+        stack.addArrangedSubview(cautionLabel)
+        cautionLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 320).isActive = true
 
         let buttonRow = NSStackView()
         buttonRow.orientation = .horizontal
@@ -128,6 +182,7 @@ final class MobileDevicesPairingSheetViewController: NSViewController {
     override func viewWillDisappear() {
         super.viewWillDisappear()
         stopCountdown()
+        copyFeedbackWorkItem?.cancel()
         onClose()
     }
 
@@ -155,6 +210,16 @@ final class MobileDevicesPairingSheetViewController: NSViewController {
         }
     }
 
+    /// Called by the settings section when the bridge signals its advertising
+    /// state changed (the LAN listener came up or went away). Re-mints when the
+    /// displayed offer still lacks an endpoint so it can pick up the now-live LAN
+    /// hint, and re-renders to clear the caution.
+    func advertisingStateDidChange() {
+        if session.regenerateIfMissingEndpoint() {
+            render(session.current)
+        }
+    }
+
     // MARK: - Actions
 
     @objc
@@ -169,6 +234,23 @@ final class MobileDevicesPairingSheetViewController: NSViewController {
         sheetWindow.sheetParent?.endSheet(sheetWindow)
     }
 
+    @objc
+    private func handleCopyCode(_ sender: Any?) {
+        // Read the code at click time rather than capturing it earlier — the
+        // session re-mints on expiry, so a stale capture could copy a code
+        // the phone can no longer redeem.
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(session.current.manualCode, forType: .string)
+
+        copyFeedbackWorkItem?.cancel()
+        copyCodeButton.title = Self.copyFeedbackTitle
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.copyCodeButton.title = Self.copyIdleTitle
+        }
+        copyFeedbackWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: workItem)
+    }
+
     // MARK: - Rendering
 
     private func render(_ model: CompanionPairingOfferModel) {
@@ -176,6 +258,23 @@ final class MobileDevicesPairingSheetViewController: NSViewController {
         codeField.stringValue = model.manualCode
         countdownLabel.stringValue = "Expires in \(model.countdownText())"
         hintLabel.stringValue = "The code refreshes automatically when it expires."
+
+        // While the offer has no reachable endpoint, warn instead of presenting a
+        // dead code. The listener reports its port asynchronously, so the very
+        // first minted offer is usually endpoint-less for a moment; if the listener
+        // never comes up (permission denied, port exhaustion, feature disabled) the
+        // caution simply persists.
+        let lacksEndpoint = session.currentOfferLacksEndpoint
+        cautionLabel.isHidden = !lacksEndpoint
+        if lacksEndpoint {
+            cautionLabel.stringValue = "Waiting for the local network listener\u{2026}"
+        }
+
+        // The old code's "Copied" feedback no longer applies to a freshly
+        // minted code — reset it so the button doesn't lie about what's on
+        // the pasteboard.
+        copyFeedbackWorkItem?.cancel()
+        copyCodeButton.title = Self.copyIdleTitle
     }
 
     /// Renders a string into a crisp QR `NSImage` sized for `displaySize`.
@@ -197,5 +296,17 @@ final class MobileDevicesPairingSheetViewController: NSViewController {
         let image = NSImage(size: rep.size)
         image.addRepresentation(rep)
         return image
+    }
+}
+
+/// Rounded fill behind the manual pairing code that re-resolves its dynamic
+/// colors through `updateLayer`, so it tracks light/dark appearance changes
+/// (a one-time `cgColor` snapshot would not).
+private final class CodeBackgroundView: NSView {
+    override var wantsUpdateLayer: Bool { true }
+
+    override func updateLayer() {
+        layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        layer?.borderColor = NSColor.separatorColor.cgColor
     }
 }

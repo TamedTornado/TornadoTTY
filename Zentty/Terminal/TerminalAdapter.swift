@@ -7,6 +7,26 @@ enum TerminalSurfaceContext: Equatable, Sendable {
     case split
 }
 
+/// A non-printable terminal key the app can inject as a real *key event* rather
+/// than as pasted text. This matters because libghostty's text path
+/// (`ghostty_surface_text`) wraps input in bracketed paste, which strips the
+/// `ESC` out of cursor-key CSI sequences and delivers `Return`'s `CR` as a
+/// literal `LF`. Routing these through the key encoder lets libghostty emit the
+/// correct bytes (and honor DECCKM application-cursor-key mode for arrows).
+enum TerminalSpecialKey: Equatable, Sendable {
+    case enter
+    case escape
+    case tab
+    case up
+    case down
+    case left
+    case right
+    case ctrlC
+    case ctrlD
+    case ctrlZ
+    case ctrlR
+}
+
 struct TerminalSessionRequest: Equatable, Sendable {
     var workingDirectory: String?
     var command: String?
@@ -193,6 +213,7 @@ protocol TerminalAdapter: AnyObject {
     func startSession(using request: TerminalSessionRequest) throws
     func setSurfaceActivity(_ activity: TerminalSurfaceActivity)
     func sendText(_ text: String)
+    func sendSpecialKey(_ key: TerminalSpecialKey) -> Bool
     func cancelPromptInput()
     func submitCommand(_ command: String)
     func close()
@@ -203,6 +224,11 @@ protocol TerminalAdapter: AnyObject {
 @MainActor
 extension TerminalAdapter {
     func cancelPromptInput() {}
+
+    // Default for non-Libghostty adapters (mocks, tests). The Libghostty adapter
+    // overrides this to synthesize a real key event. Returns `false` so callers
+    // can detect that no live surface consumed the key.
+    func sendSpecialKey(_ key: TerminalSpecialKey) -> Bool { false }
 
     // Default for non-Libghostty adapters (mocks, tests). The Libghostty adapter
     // overrides this to send a synthetic Return key event *outside* bracketed-paste
@@ -234,6 +260,18 @@ protocol TerminalControlLeasing: AnyObject {
     func applyControlLease(cols: Int, rows: Int) -> Bool
     /// Restores the frame-derived viewport and re-enables desktop rendering.
     func releaseControlLease()
+}
+
+/// Companion render keepalive: while the phone mirrors a pane, its surface must
+/// keep issuing render pulses (the source of `pane.text` frames) even when it is
+/// occluded — backgrounded, or hidden behind a control-lease placeholder. This
+/// pins the surface un-occluded independently of activity and lease state.
+/// Adopted by the libghostty adapter; other adapters (mocks) inherit the no-op
+/// default.
+@MainActor
+protocol TerminalRenderKeepAliving: AnyObject {
+    /// Pins (or unpins) the surface un-occluded for companion streaming.
+    func setCompanionRenderKeepAlive(_ active: Bool)
 }
 
 @MainActor

@@ -1,7 +1,7 @@
 /**
  * The app's single zustand store: paired-Mac list, this phone's identity, and a
  * live {@link MacConnectionState} per Mac. Live socket data flows through here
- * (not TanStack Query) because it is push, not request/response — the store is fed
+ * because it is push, not request/response — the store is fed
  * by long-lived {@link MacConnection} controllers held in a module registry.
  */
 import { create } from 'zustand';
@@ -51,6 +51,12 @@ export interface CompanionStore {
   connect: (macDeviceId: string) => Promise<void>;
   /** Force-reconnect a Mac (pull-to-refresh). */
   reconnect: (macDeviceId: string) => Promise<void>;
+  /**
+   * Nudge every known Mac connection out of reconnect backoff (app foregrounded —
+   * iOS suspends sockets/timers in the background). A no-op for connections that
+   * are live or already connecting.
+   */
+  wakeConnections: () => void;
   /** Persist a freshly paired Mac and begin connecting. */
   addPairedMac: (mac: PairedMac) => Promise<void>;
   /** Remove a pairing locally and tear down its connection. */
@@ -82,7 +88,12 @@ export const useCompanionStore = create<CompanionStore>((set, get) => ({
         const identity = await storage.loadOrCreateIdentity();
         const macs = await storage.listPairings();
         set({ identity, macs, ready: true });
-      })();
+      })().catch((error: unknown) => {
+        // Drop the cached promise so the next hydrate() retries from scratch
+        // instead of wedging the store on a transient SecureStore failure.
+        hydrating = undefined;
+        throw error;
+      });
     }
     await hydrating;
   },
@@ -118,7 +129,14 @@ export const useCompanionStore = create<CompanionStore>((set, get) => ({
   },
 
   connect: async (macDeviceId) => {
-    await get().hydrate();
+    try {
+      await get().hydrate();
+    } catch {
+      // Hydration failed (e.g. a transient SecureStore error): stay offline
+      // rather than throwing into `void connect(...)` call sites. The next
+      // screen focus, pull-to-refresh, or foreground wake retries.
+      return;
+    }
     const existing = controllers.get(macDeviceId);
     if (existing) {
       existing.start();
@@ -158,6 +176,12 @@ export const useCompanionStore = create<CompanionStore>((set, get) => ({
       return;
     }
     await get().connect(macDeviceId);
+  },
+
+  wakeConnections: () => {
+    for (const connection of controllers.values()) {
+      connection.wake();
+    }
   },
 
   addPairedMac: async (mac) => {

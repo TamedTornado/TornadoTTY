@@ -7,9 +7,11 @@ import UserNotifications
 /// your attention"); the specific content rides along sealed in `data.zentty` and
 /// is opened here so the notification banner shows what actually needs attention.
 ///
-/// Seal scheme (must match core/pushCrypto.ts and the Mac's push seal):
-///   key    = HKDF-SHA256(ikm = X25519(phonePriv, macPub), salt = "",
-///                        info = "zentty-push", length = 32)
+/// Seal scheme (must match core/pushCrypto.ts and the Mac's push seal
+/// byte-for-byte — keep in sync with Zentty/Companion/Push/CompanionPushSeal.swift,
+/// especially the HKDF salt, which is fixed, non-empty, and versioned):
+///   key    = HKDF-SHA256(ikm = X25519(phonePriv, macPub),
+///                        salt = "zentty-push/v1", info = "zentty-push", length = 32)
 ///   sealed = nonce(12) || ChaCha20-Poly1305-IETF(ciphertext) || tag(16)
 ///
 /// The X25519 key material is supplied by the app in the shared App Group so the
@@ -20,6 +22,10 @@ import UserNotifications
 final class NotificationService: UNNotificationServiceExtension {
     /// Must match the App Group id injected by the config plugin.
     private static let appGroupId = "group.be.zenjoy.zentty.mobile"
+    /// HKDF salt/info — must stay in sync with `CompanionPushSeal.hkdfSalt` /
+    /// `.hkdfInfo` on the Mac and `PUSH_SEAL_SALT` / `PUSH_SEAL_LABEL` in
+    /// core/pushCrypto.ts, or every wake banner silently falls back to generic.
+    private static let hkdfSalt = Data("zentty-push/v1".utf8)
     private static let hkdfInfo = Data("zentty-push".utf8)
     private static let fallbackTitle = "Zentty"
     private static let fallbackBody = "An agent needs your attention."
@@ -96,7 +102,7 @@ final class NotificationService: UNNotificationServiceExtension {
 
         let key = shared.hkdfDerivedSymmetricKey(
             using: SHA256.self,
-            salt: Data(),
+            salt: hkdfSalt,
             sharedInfo: hkdfInfo,
             outputByteCount: 32
         )

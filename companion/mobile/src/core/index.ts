@@ -4,7 +4,8 @@
  * Nothing here imports React or any Expo UI module; it is pure TypeScript with an
  * injectable native-crypto adapter ({@link SodiumLike}), a byte transport
  * ({@link TransportLike}), and a key/value store ({@link KVStore}). Screens wire
- * these to react-native-libsodium, WebSockets, and expo-secure-store.
+ * these to @stablelib primitives (src/runtime/sodium.ts), WebSockets, and
+ * expo-secure-store.
  */
 
 export { encodeBase64Url, decodeBase64Url, isValidUnpaddedBase64Url } from './base64url';
@@ -34,10 +35,15 @@ export {
   parsePairingOffer,
   computePairingProof,
   PairingRejectedError,
+  PairingTimeoutError,
   HandshakeError,
   SessionClosedError,
+  RequestTimeoutError,
   VersionMismatchError,
   RemoteSessionError,
+  DEFAULT_HANDSHAKE_TIMEOUT_MS,
+  DEFAULT_PAIRING_TIMEOUT_MS,
+  DEFAULT_REQUEST_TIMEOUT_MS,
 } from './session';
 export type {
   TransportLike,
@@ -86,3 +92,6 @@ export {
   resolvePushDeepLink,
 } from './pushWake';
 export type { PushWakeEnvelope, PushWakeContent, PushDeepLink } from './pushWake';
+
+export { buildPushKeyMaterial } from './pushKeyMaterial';
+export type { PushKeyMaterial } from './pushKeyMaterial';

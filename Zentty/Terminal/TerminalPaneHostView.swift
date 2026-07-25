@@ -294,6 +294,7 @@ final class TerminalPaneHostView: NSView, TerminalViewportDiagnosticsContextConf
             placeholder.autoresizingMask = [.width, .height]
             addSubview(placeholder, positioned: .above, relativeTo: terminalView)
             leasePlaceholderView = placeholder
+            placeholder.animateIn()
         }
         return true
     }
@@ -302,8 +303,18 @@ final class TerminalPaneHostView: NSView, TerminalViewportDiagnosticsContextConf
     /// desktop rendering, and remove the placeholder.
     func endControlLease() {
         (adapter as? TerminalControlLeasing)?.releaseControlLease()
-        leasePlaceholderView?.removeFromSuperview()
+        // Clear the reference first so a fresh lease builds a new overlay, then let
+        // the detached view fade itself out and self-remove.
+        let departing = leasePlaceholderView
         leasePlaceholderView = nil
+        departing?.animateOutAndRemove()
+    }
+
+    /// Pins/unpins the companion render keepalive on the adapter: while active the
+    /// surface stays un-occluded so it keeps issuing render pulses for the phone's
+    /// mirror, overriding both the backgrounded-pane and control-lease occlusion.
+    func setCompanionRenderKeepAlive(_ active: Bool) {
+        (adapter as? TerminalRenderKeepAliving)?.setCompanionRenderKeepAlive(active)
     }
 
     var isUnderControlLeaseForTesting: Bool {

@@ -48,15 +48,54 @@ class FrameQueue<T> {
   }
 }
 
-/** Open a text-framed WebSocket, resolving once the connection is established. */
-export function openTextSocket(url: string): Promise<TextSocket> {
+/**
+ * Default ceiling on the WebSocket connect (TCP + upgrade) before we give up.
+ * A peer that accepts the socket but never completes the handshake would
+ * otherwise hang the caller forever. Matches the session handshake ceiling.
+ */
+export const DEFAULT_CONNECT_TIMEOUT_MS = 10_000;
+
+/** Arm the connect deadline: on expiry, close the half-open socket and reject. */
+function armConnectTimeout(
+  ws: { close: () => void },
+  url: string,
+  connectTimeoutMs: number,
+  reject: (error: Error) => void,
+): ReturnType<typeof setTimeout> | undefined {
+  if (connectTimeoutMs <= 0) {
+    return undefined;
+  }
+  return setTimeout(() => {
+    try {
+      ws.close();
+    } catch {
+      // Closing a half-open socket must not mask the timeout error.
+    }
+    reject(new Error(`websocket connect timed out: ${url}`));
+  }, connectTimeoutMs);
+}
+
+/** Open a text-framed WebSocket, resolving once the connection is established.
+ * Rejects if the connect does not complete within `connectTimeoutMs`
+ * (default {@link DEFAULT_CONNECT_TIMEOUT_MS}; `0` disables the deadline). */
+export function openTextSocket(
+  url: string,
+  connectTimeoutMs: number = DEFAULT_CONNECT_TIMEOUT_MS,
+): Promise<TextSocket> {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(url);
     const queue = new FrameQueue<string>();
     let opened = false;
+    const timer = armConnectTimeout(ws, url, connectTimeoutMs, reject);
+    const clearTimer = (): void => {
+      if (timer) {
+        clearTimeout(timer);
+      }
+    };
 
     ws.onopen = () => {
       opened = true;
+      clearTimer();
       resolve({
         send: (text: string) => {
           ws.send(text);
@@ -72,6 +111,7 @@ export function openTextSocket(url: string): Promise<TextSocket> {
     };
     ws.onerror = () => {
       if (!opened) {
+        clearTimer();
         reject(new Error(`websocket connect failed: ${url}`));
       }
     };
@@ -79,16 +119,27 @@ export function openTextSocket(url: string): Promise<TextSocket> {
   });
 }
 
-/** Open a binary WebSocket as a byte-level transport, resolving once connected. */
-export function openByteSocket(url: string): Promise<TransportLike> {
+/** Open a binary WebSocket as a byte-level transport, resolving once connected.
+ * Same connect deadline as {@link openTextSocket}. */
+export function openByteSocket(
+  url: string,
+  connectTimeoutMs: number = DEFAULT_CONNECT_TIMEOUT_MS,
+): Promise<TransportLike> {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(url);
     ws.binaryType = 'arraybuffer';
     const queue = new FrameQueue<Uint8Array>();
     let opened = false;
+    const timer = armConnectTimeout(ws, url, connectTimeoutMs, reject);
+    const clearTimer = (): void => {
+      if (timer) {
+        clearTimeout(timer);
+      }
+    };
 
     ws.onopen = () => {
       opened = true;
+      clearTimer();
       resolve({
         send: (frame: Uint8Array) => {
           ws.send(frame);
@@ -108,6 +159,7 @@ export function openByteSocket(url: string): Promise<TransportLike> {
     };
     ws.onerror = () => {
       if (!opened) {
+        clearTimer();
         reject(new Error(`websocket connect failed: ${url}`));
       }
     };

@@ -415,7 +415,8 @@ final class LibghosttySurface: LibghosttySurfaceControlling, LibghosttySurfaceTe
         }
     }
 
-    func submitReturn() {
+    @discardableResult
+    func submitReturn() -> Bool {
         guard let event = NSEvent.keyEvent(
             with: .keyDown,
             location: .zero,
@@ -428,9 +429,64 @@ final class LibghosttySurface: LibghosttySurfaceControlling, LibghosttySurfaceTe
             isARepeat: false,
             keyCode: UInt16(kVK_Return)
         ) else {
-            return
+            return false
         }
-        _ = sendKey(event: event, action: .press, text: "\r", composing: false)
+        return sendKey(event: event, action: .press, text: "\r", composing: false)
+    }
+
+    /// Injects a non-printable key as a real key event so libghostty encodes the
+    /// correct bytes. Unlike `sendText`, this bypasses bracketed-paste wrapping —
+    /// the ESC in a cursor-key CSI and a submitting Return both survive, and
+    /// arrows honor the surface's DECCKM (application-cursor-key) mode. Mirrors the
+    /// real-keyboard path (`sendKey(event:)`) rather than pasting raw byte strings.
+    @discardableResult
+    func sendSpecialKey(_ key: TerminalSpecialKey) -> Bool {
+        switch key {
+        case .enter:
+            return submitReturn()
+        case .escape:
+            return submitPlainKey(character: "\u{1b}", keyCode: UInt16(kVK_Escape))
+        case .tab:
+            return submitPlainKey(character: "\t", keyCode: UInt16(kVK_Tab))
+        case .up:
+            return submitPlainKey(character: "\u{F700}", keyCode: UInt16(kVK_UpArrow))
+        case .down:
+            return submitPlainKey(character: "\u{F701}", keyCode: UInt16(kVK_DownArrow))
+        case .left:
+            return submitPlainKey(character: "\u{F702}", keyCode: UInt16(kVK_LeftArrow))
+        case .right:
+            return submitPlainKey(character: "\u{F703}", keyCode: UInt16(kVK_RightArrow))
+        case .ctrlC:
+            return submitControlKey(character: "\u{03}", charactersIgnoringModifiers: "c", keyCode: UInt16(kVK_ANSI_C))
+        case .ctrlD:
+            return submitControlKey(character: "\u{04}", charactersIgnoringModifiers: "d", keyCode: UInt16(kVK_ANSI_D))
+        case .ctrlZ:
+            return submitControlKey(character: "\u{1a}", charactersIgnoringModifiers: "z", keyCode: UInt16(kVK_ANSI_Z))
+        case .ctrlR:
+            return submitControlKey(character: "\u{12}", charactersIgnoringModifiers: "r", keyCode: UInt16(kVK_ANSI_R))
+        }
+    }
+
+    /// A key press with no modifiers. Arrows/escape/tab pass their raw character
+    /// so `shouldSendText` drops the C0/private-use bytes and libghostty encodes
+    /// the key from its keycode — exactly the real-keyboard path.
+    @discardableResult
+    private func submitPlainKey(character: String, keyCode: UInt16) -> Bool {
+        guard let event = NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: [],
+            timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: 0,
+            context: nil,
+            characters: character,
+            charactersIgnoringModifiers: character,
+            isARepeat: false,
+            keyCode: keyCode
+        ) else {
+            return false
+        }
+        return sendKey(event: event, action: .press, text: nil, composing: false)
     }
 
     func cancelPromptInput() {
@@ -446,11 +502,12 @@ final class LibghosttySurface: LibghosttySurfaceControlling, LibghosttySurfaceTe
         )
     }
 
+    @discardableResult
     private func submitControlKey(
         character: String,
         charactersIgnoringModifiers: String,
         keyCode: UInt16
-    ) {
+    ) -> Bool {
         guard let event = NSEvent.keyEvent(
             with: .keyDown,
             location: .zero,
@@ -463,9 +520,9 @@ final class LibghosttySurface: LibghosttySurfaceControlling, LibghosttySurfaceTe
             isARepeat: false,
             keyCode: keyCode
         ) else {
-            return
+            return false
         }
-        _ = sendKey(event: event, action: .press, text: nil, composing: false)
+        return sendKey(event: event, action: .press, text: nil, composing: false)
     }
 
     func readText(includeScrollback: Bool, lineLimit: Int?) -> String? {

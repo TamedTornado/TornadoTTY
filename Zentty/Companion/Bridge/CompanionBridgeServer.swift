@@ -19,15 +19,30 @@ final class CompanionBridgeServer: CompanionSessionServicing {
 
     static let bonjourServiceType = "_zentty._tcp"
 
+    /// Upper bound on concurrent live LAN sessions. Mirrors the relay path's
+    /// `CompanionRelayTransport.maxPeerSessions` so a flood of TCP connects cannot
+    /// make the Mac spawn unbounded sessions before each one's handshake deadline
+    /// drops it. New connections past the cap are refused at accept time.
+    static let maxLanSessions = CompanionRelayTransport.maxPeerSessions
+
     let identity: CompanionDeviceIdentity
     private let pairingStore: CompanionPairingStore
     private let dashboardFeed: CompanionDashboardFeed
     private let paneTextFeed: CompanionPaneTextFeed
+    private let paneBytesFeed: CompanionPaneBytesFeed
     private let transcriptFeed: CompanionTranscriptFeed
     private let inputRouter: CompanionInputRouter
     private let leaseManager: CompanionLeaseManager
     private let isFeatureEnabled: () -> Bool
     private let relayUrlProvider: () -> String
+    /// The pinned LAN port from config (`companion.listen_port`), or `nil` when
+    /// none is stored yet. Paired phones reconnect via the host + port captured
+    /// at pairing time — there is no runtime Bonjour re-resolution — so the
+    /// listener must come back on the same port across relaunches.
+    private let preferredListenPort: () -> UInt16?
+    /// Persists the port the first ephemeral bind landed on, pinning it for
+    /// every subsequent launch.
+    private let persistListenPort: (UInt16) -> Void
     /// Gates real `NWListener` binding. Always on in the app; tests pass `false`
     /// so the run-state edge logic is exercisable without opening a socket (the
     /// firewall would otherwise prompt on a hosted test binary).
@@ -38,6 +53,19 @@ final class CompanionBridgeServer: CompanionSessionServicing {
     private var listener: NWListener?
     private var activeSessions: [CompanionSession] = []
     private var advertisedPort: UInt16?
+    /// True while the live listener was bound to the pinned port, so a bind
+    /// failure (port momentarily held by another process, e.g. a second Zentty
+    /// instance) can fall back to an ephemeral port exactly once. Sticky for the
+    /// rest of the process so the fallback cannot loop; the pin itself is left
+    /// untouched and is retried on the next launch.
+    private var pinnedPortBindFailed = false
+    /// Whether the in-flight bind should persist the port it lands on — set only
+    /// when no pin exists yet, so an ephemeral fallback never overwrites the pin.
+    private var persistPortOnReady = false
+    /// Whether the live listener ever reached `.ready`. Distinguishes a bind-time
+    /// conflict (fall back to ephemeral) from a later runtime failure (keep the
+    /// pin; the old stop-and-wait behavior applies).
+    private var listenerBecameReady = false
 
     private var relayTransport: CompanionRelayTransport?
     /// The relay URL the live transport was built for, so a settings change swaps
@@ -53,11 +81,19 @@ final class CompanionBridgeServer: CompanionSessionServicing {
     /// revoke), so the settings UI can refresh its list.
     var onPairedDevicesChanged: (([CompanionPairedDevice]) -> Void)?
 
+    /// Fired on the main actor whenever `advertisedPort` transitions — set when the
+    /// listener reports `.ready`, cleared when it stops or fails. The listener
+    /// reports its port asynchronously, so an offer minted before `.ready` carries
+    /// no LAN hint; this lets an open pairing sheet re-mint and the settings status
+    /// row refresh the moment the endpoint appears (or disappears).
+    var onAdvertisingStateChanged: (() -> Void)?
+
     init(
         identity: CompanionDeviceIdentity,
         pairingStore: CompanionPairingStore,
         dashboardFeed: CompanionDashboardFeed,
         paneTextFeed: CompanionPaneTextFeed,
+        paneBytesFeed: CompanionPaneBytesFeed = CompanionPaneBytesFeed(),
         transcriptFeed: CompanionTranscriptFeed,
         inputRouter: CompanionInputRouter,
         leaseManager: CompanionLeaseManager,
@@ -65,18 +101,23 @@ final class CompanionBridgeServer: CompanionSessionServicing {
         relayUrlProvider: @escaping () -> String = { "" },
         pushGatewayUrlProvider: @escaping () -> String = { "" },
         pushTransport: CompanionPushHTTPTransport = CompanionPushURLSessionTransport(),
-        lanListenerEnabled: @escaping () -> Bool = { true }
+        lanListenerEnabled: @escaping () -> Bool = { true },
+        preferredListenPort: @escaping () -> UInt16? = { nil },
+        persistListenPort: @escaping (UInt16) -> Void = { _ in }
     ) {
         self.identity = identity
         self.pairingStore = pairingStore
         self.dashboardFeed = dashboardFeed
         self.paneTextFeed = paneTextFeed
+        self.paneBytesFeed = paneBytesFeed
         self.transcriptFeed = transcriptFeed
         self.inputRouter = inputRouter
         self.leaseManager = leaseManager
         self.isFeatureEnabled = isFeatureEnabled
         self.relayUrlProvider = relayUrlProvider
         self.lanListenerEnabled = lanListenerEnabled
+        self.preferredListenPort = preferredListenPort
+        self.persistListenPort = persistListenPort
         self.pushCoordinator = CompanionPushCoordinator(
             identity: identity,
             pairingStore: pairingStore,
@@ -177,11 +218,22 @@ final class CompanionBridgeServer: CompanionSessionServicing {
         guard listener == nil else { return }
         do {
             let parameters = NWParameters.tcp
+            // Rebinding the pinned port right after a relaunch must not fail on
+            // the previous process's TIME_WAIT sockets.
+            parameters.allowLocalEndpointReuse = true
             let webSocketOptions = NWProtocolWebSocket.Options()
             webSocketOptions.autoReplyPing = true
             parameters.defaultProtocolStack.applicationProtocols.insert(webSocketOptions, at: 0)
 
-            let listener = try NWListener(using: parameters)
+            let pinnedPort = pinnedPortBindFailed ? nil : preferredListenPort()
+            persistPortOnReady = preferredListenPort() == nil
+            listenerBecameReady = false
+            let listener: NWListener
+            if let pinnedPort, let port = NWEndpoint.Port(rawValue: pinnedPort) {
+                listener = try NWListener(using: parameters, on: port)
+            } else {
+                listener = try NWListener(using: parameters)
+            }
             let txtRecord = NWTXTRecord(["deviceId": identity.deviceId])
             listener.service = NWListener.Service(
                 type: CompanionBridgeServer.bonjourServiceType,
@@ -207,25 +259,70 @@ final class CompanionBridgeServer: CompanionSessionServicing {
         guard let listener else { return }
         listener.cancel()
         self.listener = nil
-        advertisedPort = nil
+        setAdvertisedPort(nil)
         companionBridgeLogger.info("Companion bridge listener stopped")
     }
 
     private func handleListenerState(_ state: NWListener.State) {
         switch state {
         case .ready:
-            advertisedPort = listener?.port?.rawValue
+            listenerBecameReady = true
+            let port = listener?.port?.rawValue
+            setAdvertisedPort(port)
+            // First-ever bind (no pin stored): pin the ephemeral port the OS
+            // picked so it survives relaunches — the paired phone reconnects to
+            // exactly this host + port and has no way to discover a new one.
+            if persistPortOnReady, let port {
+                persistPortOnReady = false
+                persistListenPort(port)
+                companionBridgeLogger.info(
+                    "Pinned companion listen port \(port, privacy: .public)"
+                )
+            }
         case .failed(let error):
             companionBridgeLogger.error(
                 "Companion listener failed: \(String(describing: error), privacy: .public)"
             )
+            let wasPinnedBind = !listenerBecameReady
+                && !pinnedPortBindFailed
+                && preferredListenPort() != nil
             stopListener()
+            // The pinned port can be transiently unavailable (typically another
+            // Zentty instance from a parallel worktree holding it). Fall back to
+            // an ephemeral port once — without overwriting the pin, so the next
+            // launch tries the phone-known port again.
+            if wasPinnedBind {
+                pinnedPortBindFailed = true
+                companionBridgeLogger.error(
+                    "Pinned companion port unavailable; falling back to an ephemeral port"
+                )
+                startListenerIfNeeded()
+            }
         default:
             break
         }
     }
 
+    /// Updates `advertisedPort` and, on a real change, fires
+    /// `onAdvertisingStateChanged` so the settings UI can react to the listener
+    /// coming up (or going away). Edge-triggered to avoid redundant re-renders.
+    private func setAdvertisedPort(_ newValue: UInt16?) {
+        guard advertisedPort != newValue else { return }
+        advertisedPort = newValue
+        onAdvertisingStateChanged?()
+    }
+
     private func accept(_ connection: NWConnection) {
+        // Bound concurrent LAN sessions (DoS guard): refuse the connect outright
+        // rather than spawning a session that would sit blocked in receive() until
+        // its handshake deadline. Mirrors the relay peer cap.
+        guard activeSessions.count < Self.maxLanSessions else {
+            companionBridgeLogger.error(
+                "Refusing companion LAN connection: at session cap (\(Self.maxLanSessions, privacy: .public))"
+            )
+            connection.cancel()
+            return
+        }
         let transport = CompanionNetworkConnection(connection: connection, queue: listenerQueue)
         trackSession(CompanionSession(connection: transport, services: self))
     }
@@ -263,8 +360,20 @@ final class CompanionBridgeServer: CompanionSessionServicing {
     /// runtime is torn down, and any lease on the pane is revoked (`pane_closed`).
     func ingestPaneClosed(paneID: String) {
         paneTextFeed.handlePaneClosed(paneId: paneID)
+        paneBytesFeed.handlePaneClosed(paneId: paneID)
         transcriptFeed.handlePaneClosed(paneId: paneID)
         leaseManager.handlePaneClosed(paneId: paneID)
+        // Plain (agent-less) panes emit no agent-status change on close, so the
+        // dashboard would otherwise keep listing them until the next recompute.
+        dashboardFeed.scheduleRecompute()
+    }
+
+    // MARK: - Pane bytes lane signals
+
+    /// Forward raw PTY output into the byte ring + live fan-out. Called from the
+    /// libghostty PTY tee once available; unit tests inject synthetic bytes.
+    func ingestPaneBytes(paneID: String, epoch: String, bytes: Data) {
+        paneBytesFeed.ingest(paneId: paneID, epoch: epoch, bytes: bytes)
     }
 
     // MARK: - Pairing offer (settings UI)
@@ -419,6 +528,31 @@ final class CompanionBridgeServer: CompanionSessionServicing {
         paneTextFeed.scrollback(paneId: paneId, lineLimit: lineLimit)
     }
 
+    // MARK: Pane bytes lane
+
+    func addPaneBytesWatcher(
+        _ send: @escaping (CompanionPaneBytesChunk) -> Void
+    ) -> CompanionPaneBytesToken {
+        paneBytesFeed.addWatcher(sendChunk: send)
+    }
+
+    func removePaneBytesWatcher(_ token: CompanionPaneBytesToken) {
+        paneBytesFeed.removeWatcher(token)
+    }
+
+    func attachPaneBytes(
+        token: CompanionPaneBytesToken,
+        paneId: String,
+        lastSeq: Int?,
+        epoch: String?
+    ) -> CompanionPaneBytesAttached {
+        paneBytesFeed.attach(token: token, paneId: paneId, lastSeq: lastSeq, epoch: epoch)
+    }
+
+    func detachPaneBytes(token: CompanionPaneBytesToken, paneId: String) {
+        paneBytesFeed.detach(token: token, paneId: paneId)
+    }
+
     // MARK: Transcript lane
 
     func addTranscriptSubscriber(
@@ -455,19 +589,27 @@ final class CompanionBridgeServer: CompanionSessionServicing {
         rows: Int,
         deviceName: String
     ) -> CompanionLeaseGrant {
-        leaseManager.request(token: token, paneId: paneId, cols: cols, rows: rows, deviceName: deviceName)
+        let grant = leaseManager.request(token: token, paneId: paneId, cols: cols, rows: rows, deviceName: deviceName)
+        // Belt-and-braces: the takeover reflows the surface to the phone's grid
+        // (e.g. 51×28). The un-occluded surface repaints and pushes a fresh frame on
+        // its own, but nudge the feed too so the phone reliably gets a `pane.text`
+        // stamped with the new grid even if the reflow's render pulse is missed.
+        // A no-op when the pane isn't watched; the feed's readout-level dedupe keeps
+        // it from double-sending when the natural pulse already landed.
+        paneTextFeed.handleContentChanged(paneId: paneId)
+        return grant
     }
 
     func leaseHeartbeat(token: CompanionLeaseClientToken, leaseId: String) {
         leaseManager.heartbeat(token: token, leaseId: leaseId)
     }
 
-    func leaseResize(leaseId: String, cols: Int, rows: Int) {
-        leaseManager.resize(leaseId: leaseId, cols: cols, rows: rows)
+    func leaseResize(token: CompanionLeaseClientToken, leaseId: String, cols: Int, rows: Int) {
+        leaseManager.resize(token: token, leaseId: leaseId, cols: cols, rows: rows)
     }
 
-    func leaseRelease(leaseId: String) {
-        leaseManager.release(leaseId: leaseId)
+    func leaseRelease(token: CompanionLeaseClientToken, leaseId: String) {
+        leaseManager.release(token: token, leaseId: leaseId)
     }
 
     // MARK: Push

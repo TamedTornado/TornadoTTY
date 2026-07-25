@@ -87,4 +87,14 @@ export class DeviceLimiter {
     }
     return { ok: true };
   }
+
+  /**
+   * Charge only the tighter pairing-window bucket. The frames+bytes buckets are
+   * charged separately (and first, on raw wire bytes) so the expensive pairing
+   * classification never runs before a frame is rate-admitted. Returns false
+   * when the pairing budget is exhausted.
+   */
+  admitPairing(): boolean {
+    return this.pairing.take(1);
+  }
 }

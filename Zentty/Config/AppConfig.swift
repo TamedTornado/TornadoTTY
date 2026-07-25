@@ -295,8 +295,14 @@ struct AppConfig: Equatable, Sendable {
         /// foreground dashboard updates keep working. Typically the same host as
         /// the relay, so a self-hosted relay+gateway is one URL each.
         var pushGatewayUrl: String
+        /// TCP port the LAN listener binds. Paired phones reconnect via the
+        /// host + port captured at pairing time (no runtime Bonjour resolution),
+        /// so the port must survive relaunches: 0 means "pick an ephemeral port
+        /// on first bind, then pin it here". A non-zero value (learned or
+        /// user-set) is requested on every launch.
+        var listenPort: Int
 
-        static let `default` = Companion(enabled: true, relayUrl: "", pushGatewayUrl: "")
+        static let `default` = Companion(enabled: true, relayUrl: "", pushGatewayUrl: "", listenPort: 0)
     }
 
     /// Per-agent enable/disable state for Zentty's CLI integrations. Persistent

@@ -11,14 +11,16 @@ import {
 } from 'react-native';
 
 import { Button, InlineNotice, Screen } from '@/components';
-import { ConnectionFailedError, PairingRejectedError } from '@/core';
+import { ConnectionFailedError, PairingRejectedError, PairingTimeoutError } from '@/core';
 import {
   PairingExpiredError,
+  PairingNoEndpointError,
   PairingParseError,
   pairWithOffer,
   parseOffer,
   useCompanionStore,
 } from '@/store';
+import { syncPushKeyMirror } from '@/runtime/pushKeyMirror';
 import { colors, radius, space, type } from '@/theme';
 
 type Mode = 'camera' | 'manual';
@@ -58,6 +60,8 @@ export default function ScanScreen() {
         const offer = parseOffer(raw);
         const mac = await pairWithOffer(offer);
         await addPairedMac(mac);
+        // Mirror the NSE key material (best-effort; never fails the pairing).
+        void syncPushKeyMirror();
         router.replace('/');
       } catch (error) {
         busy.current = false;
@@ -230,6 +234,14 @@ function errorStatus(error: unknown): Status {
   if (error instanceof PairingParseError) {
     return { k: 'error', tone: 'error', title: 'Not a Zentty code', message: error.message };
   }
+  if (error instanceof PairingNoEndpointError) {
+    return {
+      k: 'error',
+      tone: 'error',
+      title: 'Code has no connection info',
+      message: error.message,
+    };
+  }
   if (error instanceof PairingRejectedError) {
     return {
       k: 'error',
@@ -245,6 +257,14 @@ function errorStatus(error: unknown): Status {
       title: "Couldn't reach your Mac",
       message:
         'No direct or relay connection succeeded. Make sure Zentty is running and on the same network or reachable via the relay.',
+    };
+  }
+  if (error instanceof PairingTimeoutError) {
+    return {
+      k: 'error',
+      tone: 'warning',
+      title: 'Pairing timed out',
+      message: 'Check that both devices are online, then generate a fresh code and try again.',
     };
   }
   return {
