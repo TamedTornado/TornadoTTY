@@ -93,6 +93,10 @@ protocol LibghosttyPTYStreaming: AnyObject {
     var ptyStreamEpoch: String { get }
     /// Installs (or removes, with `nil`) the raw-PTY tee.
     func setPTYStreamSink(_ sink: LibghosttyPTYStreamSink?)
+    /// Captures the current screen as replayable VT bytes, for a consumer
+    /// attaching mid-session. `nil` when there is no live surface or the capture
+    /// failed. Expensive — see ``TerminalPTYStreaming``.
+    func captureScreenSnapshot() -> TerminalScreenSnapshot?
 }
 
 @MainActor
@@ -291,6 +295,12 @@ final class LibghosttyAdapter: TerminalAdapter, TerminalSearchControlling, Termi
         streaming.setPTYStreamSink { epoch, seq, bytes in
             sink(epoch, seq, bytes)
         }
+    }
+
+    /// Captures the pane's screen for a phone attaching mid-session. Resolves the
+    /// live surface the same way the byte-stream install does.
+    func captureCompanionScreenSnapshot() -> TerminalScreenSnapshot? {
+        (surfaceController as? LibghosttyPTYStreaming)?.captureScreenSnapshot()
     }
 
     /// Desired surface visibility, resolving the three inputs by precedence: a

@@ -70,6 +70,11 @@ export default function PaneDetailScreen() {
   const xtermRef = useRef<XtermTerminalHandle>(null);
   const [byteLaneSupported, setByteLaneSupported] = useState(true);
   const byteLaneFallbackRef = useRef(false);
+  // The mac's authoritative grid from the latest snapshot. While we mirror
+  // read-only the emulator is pinned to it and letterboxed; the phone only fits
+  // to its own size once it holds a control lease (then the mac follows).
+  const [macGrid, setMacGrid] = useState<{ cols: number; rows: number } | undefined>(undefined);
+  const inControlRef = useRef(false);
 
   const hasTranscript = pane?.hasTranscript ?? false;
   const { active, tabs, setTab } = usePaneTab(paneId, hasTranscript);
@@ -81,6 +86,53 @@ export default function PaneDetailScreen() {
   // is ready — keystrokes only reach the Mac while we hold control, and the
   // ControlIndicator explains, and offers a retry, whenever we don't.
   const inControl = lease.status === 'held';
+
+  /**
+   * Emulator sinks for the byte lane. `onGrid` carries the mac's snapshot
+   * geometry and is invoked between the reset and the snapshot write, so it must
+   * apply synchronously (the view queues ops in order) rather than waiting for a
+   * render. It reads the lease through a ref so the sinks stay stable.
+   */
+  const makeByteEffects = useCallback(
+    () => ({
+      onWrite: (dataB64: string) => xtermRef.current?.write(dataB64),
+      onReset: () => xtermRef.current?.reset(),
+      onGrid: (cols: number, rows: number) => {
+        setMacGrid({ cols, rows });
+        if (!inControlRef.current) {
+          xtermRef.current?.setGrid(cols, rows);
+        }
+      },
+      onUnsupported: () => {
+        byteLaneFallbackRef.current = true;
+        setByteLaneSupported(false);
+      },
+    }),
+    [],
+  );
+
+  // Geometry ownership follows the lease: read-only mirroring pins the emulator
+  // to the mac's snapshot grid (letterboxed), holding control hands the grid back
+  // to the fit addon — the one state where the mac follows the phone and
+  // re-snapshots.
+  const applyGeometry = useCallback(() => {
+    const term = xtermRef.current;
+    if (!term) {
+      return;
+    }
+    if (inControlRef.current) {
+      term.releaseGrid();
+    } else if (macGrid) {
+      term.setGrid(macGrid.cols, macGrid.rows);
+    }
+  }, [macGrid]);
+
+  useEffect(() => {
+    inControlRef.current = inControl;
+    if (byteLaneSupported) {
+      applyGeometry();
+    }
+  }, [applyGeometry, byteLaneSupported, inControl]);
 
   // Resolve + watch the pane on focus, and implicitly request control (spec: entering
   // a pane on the phone takes control automatically). Leaving unwatches, which drops
@@ -108,14 +160,7 @@ export default function PaneDetailScreen() {
         // plain-text TerminalView for the rest of this screen's lifetime.
         // Transient timeouts do not sticky-fallback — resync retries later.
         if (!byteLaneFallbackRef.current) {
-          controller.attachBytes({
-            onWrite: (dataB64) => xtermRef.current?.write(dataB64),
-            onReset: () => xtermRef.current?.reset(),
-            onUnsupported: () => {
-              byteLaneFallbackRef.current = true;
-              setByteLaneSupported(false);
-            },
-          });
+          controller.attachBytes(makeByteEffects());
         }
       });
       return () => {
@@ -123,7 +168,7 @@ export default function PaneDetailScreen() {
         focusedRef.current = false;
         controllerRef.current?.unwatch();
       };
-    }, [deviceId, paneId, ensurePaneController]),
+    }, [deviceId, paneId, ensurePaneController, makeByteEffects]),
   );
 
   // Subscribe to the transcript the first time Conversation becomes active.
@@ -143,15 +188,8 @@ export default function PaneDetailScreen() {
     if (!controller || !focusedRef.current) {
       return;
     }
-    controller.attachBytes({
-      onWrite: (dataB64) => xtermRef.current?.write(dataB64),
-      onReset: () => xtermRef.current?.reset(),
-      onUnsupported: () => {
-        byteLaneFallbackRef.current = true;
-        setByteLaneSupported(false);
-      },
-    });
-  }, [active]);
+    controller.attachBytes(makeByteEffects());
+  }, [active, makeByteEffects]);
 
   // Backgrounding releases control (heartbeats would otherwise stop and the Mac
   // expires the lease after ~15s anyway; releasing is the clean path so the Mac
@@ -265,7 +303,11 @@ export default function PaneDetailScreen() {
               pointerEvents={hasTranscript && active === 'conversation' ? 'none' : 'auto'}
             >
               {byteLaneSupported ? (
-                <XtermTerminalView ref={xtermRef} onResize={onXtermResize} />
+                <XtermTerminalView
+                  ref={xtermRef}
+                  onResize={onXtermResize}
+                  onReady={applyGeometry}
+                />
               ) : (
                 <TerminalView
                   text={runtime?.text}

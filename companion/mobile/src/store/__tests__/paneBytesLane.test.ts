@@ -44,10 +44,15 @@ function manualB64(bin: string): string {
   return out;
 }
 
+/** One emitted effect, in order — the snapshot apply order is the contract. */
+type Op = { op: 'reset' } | { op: 'grid'; cols: number; rows: number } | { op: 'write'; d: string };
+
 interface Sinks extends PaneBytesEffects {
   writes: string[];
   resets: number;
   unsupported: number;
+  /** Ordered log of reset/grid/write so apply ORDER can be asserted. */
+  ops: Op[];
 }
 
 function makeEffects(): Sinks {
@@ -55,11 +60,17 @@ function makeEffects(): Sinks {
     writes: [] as string[],
     resets: 0,
     unsupported: 0,
+    ops: [] as Op[],
     onWrite(b64: string) {
       s.writes.push(b64);
+      s.ops.push({ op: 'write', d: b64 });
     },
     onReset() {
       s.resets += 1;
+      s.ops.push({ op: 'reset' });
+    },
+    onGrid(cols: number, rows: number) {
+      s.ops.push({ op: 'grid', cols, rows });
     },
     onUnsupported() {
       s.unsupported += 1;
@@ -74,6 +85,9 @@ function attachedReply(payload: {
   startSeq: number;
   replay: string;
   truncated: boolean;
+  snapshot?: string;
+  snapshotCols?: number;
+  snapshotRows?: number;
 }): ParsedMessage {
   return {
     v: 1,
@@ -456,5 +470,187 @@ describe('PaneBytesLane resync and pending follow-up', () => {
     // or cold if epoch was unset at gap time — either is a recovery path.
     expect(secondPayload).toBeDefined();
     expect(fx.unsupported).toBe(0);
+  });
+});
+
+// ---- grid snapshot (cold attach correctness) --------------------------------
+//
+// A raw byte tail alone renders as garbage when attaching to a running TUI: it
+// starts mid-escape-sequence and misses every mode set before the retained
+// window. The mac therefore captures a replayable VT snapshot of the screen. The
+// apply order is fixed (reset → size → snapshot → replay), and the snapshot is
+// EXCLUDED from seq arithmetic — folding it in would shift every later chunk.
+
+describe('PaneBytesLane snapshot', () => {
+  it('applies reset, grid, snapshot, then replay — in that order', async () => {
+    const snapshot = b64OfLength(64);
+    const replay = b64OfLength(12);
+    const request = jest.fn(async () =>
+      attachedReply({
+        epoch: 'e1',
+        startSeq: 100,
+        replay,
+        truncated: false,
+        snapshot,
+        snapshotCols: 120,
+        snapshotRows: 40,
+      }),
+    );
+    const fx = makeEffects();
+    const lane = new PaneBytesLane('p1', makeTransport({ request }), fx);
+
+    await lane.attach();
+
+    expect(fx.ops).toEqual([
+      { op: 'reset' },
+      { op: 'grid', cols: 120, rows: 40 },
+      { op: 'write', d: snapshot },
+      { op: 'write', d: replay },
+    ]);
+  });
+
+  it('excludes the snapshot from the expected offset', async () => {
+    const snapshot = b64OfLength(4096);
+    const replay = b64OfLength(12);
+    const request = jest.fn(async () =>
+      attachedReply({
+        epoch: 'e1',
+        startSeq: 100,
+        replay,
+        truncated: false,
+        snapshot,
+        snapshotCols: 80,
+        snapshotRows: 24,
+      }),
+    );
+    const fx = makeEffects();
+    const lane = new PaneBytesLane('p1', makeTransport({ request }), fx);
+
+    await lane.attach();
+
+    // startSeq + decoded(replay) only — NOT + decoded(snapshot).
+    expect(lane.expectedOffset).toBe(112);
+
+    // The very first live chunk must be contiguous at that offset.
+    const next = b64OfLength(5);
+    void lane.onChunk(chunk('e1', 112, next));
+    expect(fx.writes[fx.writes.length - 1]).toBe(next);
+    expect(lane.expectedOffset).toBe(117);
+  });
+
+  it('holds the offset at startSeq when the snapshot comes with an empty replay', async () => {
+    const snapshot = b64OfLength(300);
+    const request = jest.fn(async () =>
+      attachedReply({
+        epoch: 'e1',
+        startSeq: 8192,
+        replay: '',
+        truncated: false,
+        snapshot,
+        snapshotCols: 100,
+        snapshotRows: 30,
+      }),
+    );
+    const fx = makeEffects();
+    const lane = new PaneBytesLane('p1', makeTransport({ request }), fx);
+
+    await lane.attach();
+
+    expect(fx.ops).toEqual([
+      { op: 'reset' },
+      { op: 'grid', cols: 100, rows: 30 },
+      { op: 'write', d: snapshot },
+    ]);
+    expect(lane.expectedOffset).toBe(8192);
+  });
+
+  it('still applies the snapshot when the mac omits the grid', async () => {
+    const snapshot = b64OfLength(16);
+    const request = jest.fn(async () =>
+      attachedReply({ epoch: 'e1', startSeq: 0, replay: '', truncated: false, snapshot }),
+    );
+    const fx = makeEffects();
+    const lane = new PaneBytesLane('p1', makeTransport({ request }), fx);
+
+    await lane.attach();
+
+    expect(fx.ops).toEqual([{ op: 'reset' }, { op: 'write', d: snapshot }]);
+  });
+
+  it('tolerates effects that do not implement onGrid', async () => {
+    const request = jest.fn(async () =>
+      attachedReply({
+        epoch: 'e1',
+        startSeq: 0,
+        replay: '',
+        truncated: false,
+        snapshot: b64OfLength(8),
+        snapshotCols: 80,
+        snapshotRows: 24,
+      }),
+    );
+    const writes: string[] = [];
+    const lane = new PaneBytesLane('p1', makeTransport({ request }), {
+      onWrite: (d) => writes.push(d),
+      onReset: () => {},
+      onUnsupported: () => {},
+    });
+
+    await expect(lane.attach()).resolves.toBeUndefined();
+    expect(writes).toEqual([b64OfLength(8)]);
+  });
+
+  it('leaves behaviour unchanged when no snapshot is present', async () => {
+    const replay = b64OfLength(10);
+    const request = jest.fn(async () =>
+      attachedReply({ epoch: 'e1', startSeq: 5, replay, truncated: false }),
+    );
+    const fx = makeEffects();
+    const lane = new PaneBytesLane('p1', makeTransport({ request }), fx);
+
+    await lane.attach();
+
+    expect(fx.ops).toEqual([{ op: 'write', d: replay }]);
+    expect(fx.resets).toBe(0);
+    expect(lane.expectedOffset).toBe(15);
+  });
+
+  it('repaints (resets first) when a snapshot arrives mid-session after a gap', async () => {
+    const firstReplay = b64OfLength(4);
+    const snapshot = b64OfLength(200);
+    const request = jest
+      .fn<() => Promise<ParsedMessage>>()
+      .mockResolvedValueOnce(
+        attachedReply({ epoch: 'e1', startSeq: 0, replay: firstReplay, truncated: false }),
+      )
+      // Resync reply for the same epoch, NOT truncated — the snapshot alone must
+      // still force a reset, or the repaint stacks on the stale screen.
+      .mockResolvedValueOnce(
+        attachedReply({
+          epoch: 'e1',
+          startSeq: 40,
+          replay: '',
+          truncated: false,
+          snapshot,
+          snapshotCols: 90,
+          snapshotRows: 26,
+        }),
+      );
+    const fx = makeEffects();
+    const lane = new PaneBytesLane('p1', makeTransport({ request }), fx);
+
+    await lane.attach();
+    expect(fx.resets).toBe(0);
+
+    // A chunk beyond the expected offset is a gap → warm re-attach.
+    await lane.onChunk(chunk('e1', 999, b64OfLength(2)));
+
+    expect(fx.ops).toEqual([
+      { op: 'write', d: firstReplay },
+      { op: 'reset' },
+      { op: 'grid', cols: 90, rows: 26 },
+      { op: 'write', d: snapshot },
+    ]);
+    expect(lane.expectedOffset).toBe(40);
   });
 });

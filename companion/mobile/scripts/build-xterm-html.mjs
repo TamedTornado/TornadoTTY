@@ -32,9 +32,13 @@ if (/<\/script>/i.test(xtermJs) || /<\/script>/i.test(fitJs)) {
 // injectJavaScript); postMessage is the WebView → RN surface (ready + resize).
 const bridge = `
 (function () {
-  var pending = [];
   var term = null;
   var fit = null;
+  // Non-null while the MAC owns the grid: the emulator is pinned to the mac's
+  // snapshot geometry and CSS-scaled (letterboxed) into whatever room the phone
+  // has. Cleared once the phone holds a control lease, which is the only state
+  // where the mac follows the phone's size and the fit addon may run.
+  var fixed = null;
 
   function post(msg) {
     if (window.ReactNativeWebView) {
@@ -52,8 +56,52 @@ const bridge = `
     return out;
   }
 
+  // CSS cell metrics, so the pinned grid's natural pixel size can be computed.
+  function cellSize() {
+    try {
+      var d = term._core._renderService.dimensions.css.cell;
+      if (d && d.width > 0 && d.height > 0) { return d; }
+    } catch (e) {}
+    return null;
+  }
+
+  // Letterbox: scale the fixed grid to fit the available box and centre it.
+  // Never scale up past 1 — magnified cells look worse than empty margins.
+  function applyLetterbox() {
+    var el = term && term.element;
+    var host = document.getElementById('root');
+    if (!el || !host) { return; }
+    if (!fixed) {
+      el.style.transform = '';
+      el.style.transformOrigin = '';
+      el.style.width = '';
+      el.style.height = '';
+      return;
+    }
+    var cell = cellSize();
+    if (!cell) { return; }
+    var natW = cell.width * fixed.cols;
+    var natH = cell.height * fixed.rows;
+    var pad = 16; // #root padding, both sides
+    var availW = Math.max(host.clientWidth - pad, 1);
+    var availH = Math.max(host.clientHeight - pad, 1);
+    var scale = Math.min(availW / natW, availH / natH, 1);
+    el.style.width = natW + 'px';
+    el.style.height = natH + 'px';
+    el.style.transformOrigin = 'top left';
+    el.style.transform =
+      'translate(' + ((availW - natW * scale) / 2) + 'px,' +
+      ((availH - natH * scale) / 2) + 'px) scale(' + scale + ')';
+  }
+
   function doFit() {
-    if (!term || !fit) { return; }
+    if (!term) { return; }
+    if (fixed) {
+      // Mac-authoritative: the phone must not renegotiate the grid, only rescale.
+      applyLetterbox();
+      return;
+    }
+    if (!fit) { return; }
     try { fit.fit(); } catch (e) {}
     post({ type: 'resize', cols: term.cols, rows: term.rows });
   }
@@ -65,6 +113,20 @@ const bridge = `
     },
     reset: function () { if (term) { term.reset(); } },
     fit: doFit,
+    // Pin the emulator to the mac's snapshot grid and letterbox it.
+    setGrid: function (cols, rows) {
+      if (!term) { return; }
+      fixed = { cols: cols, rows: rows };
+      try { term.resize(cols, rows); } catch (e) {}
+      applyLetterbox();
+    },
+    // Hand the grid back to the phone (control lease held): un-pin and refit.
+    releaseGrid: function () {
+      if (!term) { return; }
+      fixed = null;
+      applyLetterbox();
+      doFit();
+    },
     setTheme: function (theme) { if (term) { term.options.theme = theme; } }
   };
 

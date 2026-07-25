@@ -1225,6 +1225,12 @@ private final class LibghosttySurfaceControllerSpy: LibghosttySurfaceControlling
         ptyStreamSink = sink
         lifecycleEvents.append(sink == nil ? .removeTee : .installTee)
     }
+    var screenSnapshot: TerminalScreenSnapshot?
+    private(set) var screenSnapshotCallCount = 0
+    func captureScreenSnapshot() -> TerminalScreenSnapshot? {
+        screenSnapshotCallCount += 1
+        return screenSnapshot
+    }
     func inheritedConfig(for context: ghostty_surface_context_e) -> ghostty_surface_config_s? {
         inheritedConfigRequests.append(context)
         guard let inheritedConfigContext else {

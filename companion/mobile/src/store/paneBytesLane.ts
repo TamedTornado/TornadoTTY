@@ -16,6 +16,10 @@
  *   `seq + decodedByteLength(data)`. A chunk whose `seq` != our expected offset is
  *   a gap → warm re-attach carrying `lastSeq` as the exclusive resume cursor
  *   (the first missing byte offset).
+ * - `snapshot` (cold attach / post-gap resync) is a self-contained VT stream that
+ *   reproduces the mac's screen. It is applied as reset → grid → write, and is
+ *   EXCLUDED from seq arithmetic: the next expected offset stays
+ *   `startSeq + decodedByteLength(replay)`.
  *
  * Version gating: a mac too old to speak this lane answers with a wrong type
  * (e.g. `session.error` / `unsupported_type`); {@link PaneBytesEffects.onUnsupported}
@@ -42,6 +46,16 @@ export interface PaneBytesEffects {
   onReset(): void;
   /** The mac can't speak this lane — fall back to the plain-text path. */
   onUnsupported(): void;
+  /**
+   * The mac's authoritative grid at snapshot-capture time. Emitted between
+   * {@link onReset} and the snapshot {@link onWrite} so the emulator is already
+   * the right size when the snapshot's cursor/scroll-region bytes land. The view
+   * layer sizes the emulator to this grid and letterboxes it while mirroring
+   * read-only; it only fits to the phone's own grid while a control lease is
+   * held (then the mac follows and re-snapshots). Optional so callers that do
+   * not render geometry (tests, headless consumers) need not implement it.
+   */
+  onGrid?(cols: number, rows: number): void;
 }
 
 /**
@@ -257,8 +271,18 @@ export class PaneBytesLane {
         this.pendingFollowup = { kind: 'cold' };
         return;
       }
-      const shouldReset = p.truncated || (this.epoch !== undefined && p.epoch !== this.epoch);
-      if (shouldReset) {
+      // A snapshot IS the resync: reset unconditionally (so one arriving mid-
+      // session repaints instead of stacking on the stale screen), size to the
+      // mac's grid, then write it. `truncated` is advisory in that case.
+      if (p.snapshot !== undefined) {
+        this.effects.onReset();
+        if (p.snapshotCols !== undefined && p.snapshotRows !== undefined) {
+          this.effects.onGrid?.(p.snapshotCols, p.snapshotRows);
+        }
+        if (p.snapshot.length > 0) {
+          this.effects.onWrite(p.snapshot);
+        }
+      } else if (p.truncated || (this.epoch !== undefined && p.epoch !== this.epoch)) {
         this.effects.onReset();
       }
       this.epoch = p.epoch;

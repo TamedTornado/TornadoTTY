@@ -99,6 +99,31 @@ export const PANE_BYTES_MAX_REPLAY_BYTES = 32 * 1024;
 export const PANE_BYTES_MAX_REPLAY_B64_LEN =
   Math.ceil(PANE_BYTES_MAX_REPLAY_BYTES / 3) * 4;
 
+/**
+ * Max decoded bytes for an `attached.snapshot`.
+ *
+ * A snapshot gets a larger budget than a replay — it is what makes cold attach
+ * correct, and a cold attach sends `replay: ""` so the two are never charged
+ * against the same frame. Composition for a dense screen: ~6 KB of OSC 4
+ * palette, plus per-cell SGR-encoded content.
+ *
+ * But it is sized against the same binding constraint as `replay`: the relay's
+ * per-device BYTE BUCKET, not the frame cap. "One-shot, not steady-state" is a
+ * trap here — the moment right after a cold attach is exactly when a TUI's
+ * redraw burst is densest, so a snapshot that eats the second's budget gets its
+ * own follow-up chunks rate-limited away. The phone then sees a gap, re-attaches,
+ * hits the capture throttle, and falls back to a byte tail. 48 KiB is ~86 KiB on
+ * the wire (~34% of one second), leaving room for the burst to land.
+ *
+ * Captures over the cap fall back to a plain byte tail rather than being sent —
+ * see `CompanionPaneBytesFeed.maxSnapshotBytes`, which must stay in lockstep.
+ */
+export const PANE_BYTES_MAX_SNAPSHOT_BYTES = 48 * 1024;
+
+/** Max base64 string length for `attached.snapshot`. */
+export const PANE_BYTES_MAX_SNAPSHOT_B64_LEN =
+  Math.ceil(PANE_BYTES_MAX_SNAPSHOT_BYTES / 3) * 4;
+
 /** Standard-base64 body (RFC 4648 §4). Empty string = zero bytes. */
 const Base64Std = z.string().regex(/^[A-Za-z0-9+/]*={0,2}$/, 'standard base64');
 
@@ -151,6 +176,34 @@ export const PaneBytesAttach = z
  *   point (`lastSeq`/`epoch` fell off the back of the ring, or the epoch
  *   changed). The phone MUST reset its emulator before writing `replay`, since
  *   `replay` is then a fresh tail rather than a continuation.
+ * - `snapshot`: a self-contained VT byte stream reproducing the pane's screen
+ *   (see below). Present on cold attach; absent on a clean warm resume.
+ * - `snapshotRows` / `snapshotCols`: the mac's grid at capture time.
+ *
+ * ## Applying a snapshot
+ *
+ * A raw byte tail cannot reconstruct a TUI screen — replaying it into a fresh
+ * emulator starts mid-escape-sequence and misses every mode set before the
+ * retained window. So when `snapshot` is present the phone MUST:
+ *
+ *   1. reset its emulator,
+ *   2. size it to `snapshotCols` × `snapshotRows`,
+ *   3. write `snapshot`,
+ *   4. write `replay` (usually `""` when a snapshot is present).
+ *
+ * The snapshot is EXCLUDED from seq arithmetic: `startSeq` still describes
+ * `replay`'s first byte only, and the phone's next expected offset stays
+ * `startSeq + decoded(replay)`. Do not concatenate the snapshot into `replay` —
+ * that would shift the offset and corrupt the very first chunk.
+ *
+ * `truncated` remains for compatibility but is advisory when a snapshot is
+ * present: the snapshot IS the resync.
+ *
+ * The mac is authoritative for grid size on this lane. The phone letterboxes to
+ * `snapshotCols` × `snapshotRows` while mirroring read-only and only fits to its
+ * own grid once it holds a control lease — at which point the mac follows and
+ * re-snapshots. Any other arrangement makes the snapshot and the live tail
+ * disagree about reflow.
  */
 export const PaneBytesAttached = z.object({
   paneId: z.string(),
@@ -158,6 +211,9 @@ export const PaneBytesAttached = z.object({
   startSeq: z.number().int().gte(0),
   replay: Base64Std.max(PANE_BYTES_MAX_REPLAY_B64_LEN),
   truncated: z.boolean(),
+  snapshot: Base64Std.max(PANE_BYTES_MAX_SNAPSHOT_B64_LEN).optional(),
+  snapshotRows: z.number().int().positive().optional(),
+  snapshotCols: z.number().int().positive().optional(),
 });
 
 /**

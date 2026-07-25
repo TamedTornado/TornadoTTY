@@ -1,5 +1,5 @@
 repo=https://github.com/dedene/ghostty.git
-revision=8f95770b26c563399554ddbadc59ed1d054522a3
+revision=5a3c6145e3f5668068eb440523e64c14d2d88df0
 upstream_repo=https://github.com/ghostty-org/ghostty.git
 upstream_revision=19e20f7664dc7a755d2d7a16ab545b2503f26caf
 patch_branch=zentty/companion-tee

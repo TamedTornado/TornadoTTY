@@ -400,6 +400,13 @@ final class TerminalPaneHostView: NSView, TerminalViewportDiagnosticsContextConf
         return true
     }
 
+    /// Captures the pane's screen as replayable VT bytes for a companion attaching
+    /// mid-session. `nil` for adapters that cannot snapshot (mocks) or when there
+    /// is no live surface.
+    func captureCompanionScreenSnapshot() -> TerminalScreenSnapshot? {
+        (adapter as? TerminalPTYStreaming)?.captureCompanionScreenSnapshot()
+    }
+
     var isUnderControlLeaseForTesting: Bool {
         leasePlaceholderView != nil
     }

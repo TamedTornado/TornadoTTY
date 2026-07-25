@@ -215,4 +215,23 @@ extension AppDelegate: CompanionPaneBytesProviding {
             onBytes(epoch, seq, bytes)
         }, for: paneID)
     }
+
+    /// Resolves the pane and captures its screen as replayable VT bytes, so a
+    /// phone attaching mid-session repaints from a real screen instead of a byte
+    /// tail that starts mid-escape-sequence.
+    func companionCapturePaneSnapshot(paneId: String) -> CompanionPaneSnapshot? {
+        let paneID = PaneID(paneId)
+        guard let controller = windowController(containingPane: paneID),
+              let snapshot = controller.captureCompanionScreenSnapshot(from: paneID)
+        else {
+            return nil
+        }
+        return CompanionPaneSnapshot(
+            data: snapshot.data,
+            seq: snapshot.seq,
+            cols: snapshot.cols,
+            rows: snapshot.rows,
+            epoch: snapshot.epoch
+        )
+    }
 }

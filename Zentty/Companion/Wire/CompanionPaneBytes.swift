@@ -85,6 +85,36 @@ struct CompanionPaneBytesAttached: CompanionMessagePayload {
     var startSeq: Int
     var replay: String
     var truncated: Bool
+    /// Self-contained VT byte stream reproducing the pane's screen, base64.
+    /// Present on cold attach; a raw byte tail alone cannot rebuild a TUI screen.
+    /// The phone resets, sizes to `snapshotCols`×`snapshotRows`, writes this,
+    /// then writes `replay`. Excluded from seq arithmetic — `startSeq` still
+    /// describes `replay`'s first byte only.
+    var snapshot: String?
+    /// The mac's grid at capture time. The mac is authoritative for grid size on
+    /// this lane, so these are an instruction to the phone, not a hint.
+    var snapshotRows: Int?
+    var snapshotCols: Int?
+
+    init(
+        paneId: String,
+        epoch: String,
+        startSeq: Int,
+        replay: String,
+        truncated: Bool,
+        snapshot: String? = nil,
+        snapshotRows: Int? = nil,
+        snapshotCols: Int? = nil
+    ) {
+        self.paneId = paneId
+        self.epoch = epoch
+        self.startSeq = startSeq
+        self.replay = replay
+        self.truncated = truncated
+        self.snapshot = snapshot
+        self.snapshotRows = snapshotRows
+        self.snapshotCols = snapshotCols
+    }
 }
 
 /// `pane.bytes.chunk` (mac → phone). One run of raw PTY output. `seq` is the byte

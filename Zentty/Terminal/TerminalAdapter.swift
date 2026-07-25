@@ -288,6 +288,30 @@ typealias TerminalPTYByteSink = @MainActor (_ epoch: String, _ seq: Int, _ bytes
 protocol TerminalPTYStreaming: AnyObject {
     /// Installs (or removes, with `nil`) the pane's PTY byte sink.
     func setCompanionByteStream(_ sink: TerminalPTYByteSink?)
+    /// Captures the pane's current screen as replayable VT bytes for a consumer
+    /// attaching mid-session, or `nil` when no live surface backs the pane or the
+    /// capture failed.
+    ///
+    /// EXPENSIVE: walks every active cell while holding the terminal engine's
+    /// renderer mutex, which blocks its io-reader thread. Same cost class as
+    /// reading screen text — throttle it, never call it per frame.
+    func captureCompanionScreenSnapshot() -> TerminalScreenSnapshot?
+}
+
+/// One screen capture as replayable VT bytes: written to a freshly reset emulator
+/// sized `cols`×`rows` it reproduces the screen, including the modes that change
+/// how LATER bytes are interpreted. `seq` is the absolute PTY offset the capture
+/// reflects — every byte below it is already baked in, so a consumer applies teed
+/// bytes at or after `seq` and discards anything below.
+struct TerminalScreenSnapshot: Sendable {
+    var data: Data
+    var seq: Int
+    var cols: Int
+    var rows: Int
+    /// The surface's PTY stream epoch at capture time. The capture and the live
+    /// byte stream must agree on it, or a consumer that repaints from the
+    /// snapshot discards the very next chunk as belonging to another stream.
+    var epoch: String
 }
 
 @MainActor

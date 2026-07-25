@@ -161,6 +161,11 @@ export class PaneController {
    */
   attachBytes(effects: PaneBytesEffects): void {
     const wrapped: PaneBytesEffects = {
+      // Spread first so any effect this wrapper does not deliberately intercept
+      // is forwarded. Listing hooks by hand silently dropped `onGrid` (optional
+      // on the interface, so the compiler said nothing), which made the whole
+      // mac-authoritative geometry policy dead code in the shipped path.
+      ...effects,
       onWrite: (data) => effects.onWrite(data),
       onReset: () => effects.onReset(),
       onUnsupported: () => {

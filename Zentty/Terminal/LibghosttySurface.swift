@@ -2,6 +2,9 @@ import AppKit
 import Carbon.HIToolbox
 import Foundation
 import GhosttyKit
+import OSLog
+
+private let libghosttySurfaceLogger = Logger(subsystem: "be.zenjoy.zentty", category: "LibghosttySurface")
 
 /// C trampoline for libghostty's raw-PTY tee.
 ///
@@ -366,6 +369,41 @@ final class LibghosttySurface: LibghosttySurfaceControlling, LibghosttySurfaceTe
             surface,
             libghosttyPTYTeeCallback,
             Unmanaged.passUnretained(tee).toOpaque()
+        )
+    }
+
+    /// Captures the current screen as a replayable VT byte stream, so a phone
+    /// attaching mid-session can repaint instead of trying to rebuild a TUI screen
+    /// from a raw byte tail that starts mid-escape-sequence.
+    ///
+    /// The palette is included: the phone does not share the Mac's theme, so
+    /// bare palette indices in the capture would resolve against its own.
+    ///
+    /// EXPENSIVE — walks every active cell under the renderer state mutex, which
+    /// blocks the io-reader thread for the duration. Callers must throttle.
+    func captureScreenSnapshot() -> TerminalScreenSnapshot? {
+        guard let surface else { return nil }
+
+        var capture = ghostty_snapshot_s()
+        let options = ghostty_snapshot_opts_s(include_palette: true)
+        guard ghostty_surface_snapshot(surface, options, &capture) else {
+            libghosttySurfaceLogger.error(
+                "screen snapshot failed: pane=\(self.paneID.rawValue, privacy: .public)"
+            )
+            return nil
+        }
+        // We own the returned bytes on success; free them however we exit.
+        defer { ghostty_string_free(capture.data) }
+
+        guard let pointer = capture.data.ptr, capture.data.len > 0 else {
+            return nil
+        }
+        return TerminalScreenSnapshot(
+            data: Data(bytes: pointer, count: Int(capture.data.len)),
+            seq: Int(capture.seq),
+            cols: Int(capture.cols),
+            rows: Int(capture.rows),
+            epoch: ptyStreamEpoch
         )
     }
 

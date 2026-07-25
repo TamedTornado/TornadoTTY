@@ -9,6 +9,25 @@ private let companionPaneBytesLogger = Logger(subsystem: "be.zenjoy.zentty", cat
 /// `seq` is the surface-absolute byte offset of `bytes[0]` within `epoch`.
 typealias CompanionPaneBytesStreamSink = @MainActor (_ epoch: String, _ seq: Int, _ bytes: Data) -> Void
 
+/// One screen capture of a pane as replayable VT bytes.
+///
+/// `data` written to a freshly reset emulator sized `cols`×`rows` reproduces the
+/// screen — content, cursor, styles, alt-screen, scrolling region, and the modes
+/// that change how LATER bytes are interpreted. `seq` is the absolute PTY offset
+/// the capture reflects: every byte below it is already baked in, so the consumer
+/// applies teed bytes at or after `seq` and discards anything below.
+struct CompanionPaneSnapshot: Sendable {
+    var data: Data
+    var seq: Int
+    var cols: Int
+    var rows: Int
+    /// The surface's stream epoch at capture time. Carried with the capture, not
+    /// minted here: a cold attach to an already-running pane has no teed byte
+    /// yet, so inventing a placeholder would make the first live chunk arrive
+    /// under a different epoch and wipe the freshly-painted screen.
+    var epoch: String
+}
+
 /// Producer seam for the raw-PTY lane: resolves a pane to its live surface and
 /// installs/removes the libghostty PTY tee. `@MainActor`-implemented by
 /// `AppDelegate` (pane → window controller → host view → adapter → surface);
@@ -26,6 +45,17 @@ protocol CompanionPaneBytesProviding: AnyObject {
     /// will ever produce.
     @discardableResult
     func companionSetPaneByteStream(paneId: String, onBytes: CompanionPaneBytesStreamSink?) -> Bool
+
+    /// Captures the pane's current screen as replayable VT bytes, resolving the
+    /// pane to its live surface the same way the byte-stream install does.
+    ///
+    /// Returns `nil` when the pane has no live surface or the capture failed, in
+    /// which case the caller falls back to a plain byte tail.
+    ///
+    /// EXPENSIVE: walks every active cell under libghostty's renderer mutex,
+    /// blocking the io-reader thread — the same cost class as reading screen
+    /// text. The feed throttles calls; never drive this per frame.
+    func companionCapturePaneSnapshot(paneId: String) -> CompanionPaneSnapshot?
 }
 
 // MARK: - Watcher token
@@ -192,6 +222,23 @@ final class CompanionPaneBytesFeed {
     /// Replies past this cap carry the most recent bytes and `truncated`.
     static let maxReplayBytes = 32 * 1024
 
+    /// Decoded screen-snapshot cap — mirrors `PANE_BYTES_MAX_SNAPSHOT_BYTES` on
+    /// the wire. A snapshot rides in a frame that carries `replay: ""`, so the two
+    /// caps are never charged against the same frame, and it is a one-shot attach
+    /// cost rather than a steady-state one. A capture past this cap is dropped and
+    /// the attach falls back to the tail-replay path — an oversize frame would
+    /// make the relay close the socket (1009) instead of rejecting it.
+    static let maxSnapshotBytes = 48 * 1024
+
+    /// Minimum wall-clock gap between two screen captures of the SAME pane.
+    ///
+    /// Cold attach is user-driven and so naturally rare, but nothing stops a phone
+    /// from re-attaching in a reconnect storm, and each capture holds libghostty's
+    /// renderer mutex while it walks every active cell. Inside the window the
+    /// attach falls back to a byte tail, which is exactly what it did before
+    /// snapshots existed.
+    static let minSnapshotInterval: TimeInterval = 1
+
     private struct Watcher {
         /// Panes this connection is currently attached to.
         var paneIds: Set<String> = []
@@ -210,13 +257,21 @@ final class CompanionPaneBytesFeed {
     /// Panes with a live PTY tee installed, so install/remove stay balanced on the
     /// 0↔1 attached-watcher edge.
     private var streamingPanes: Set<String> = []
+    /// Wall clock of the last screen capture per pane, for the throttle.
+    private var lastSnapshotAt: [String: Date] = [:]
+    private let minSnapshotInterval: TimeInterval
+    private let now: () -> Date
 
     init(
         provider: (any CompanionPaneBytesProviding)? = nil,
-        ringCapacity: Int = CompanionPaneBytesRing.defaultCapacity
+        ringCapacity: Int = CompanionPaneBytesRing.defaultCapacity,
+        minSnapshotInterval: TimeInterval = CompanionPaneBytesFeed.minSnapshotInterval,
+        now: @escaping () -> Date = Date.init
     ) {
         self.provider = provider
         self.ringCapacity = ringCapacity
+        self.minSnapshotInterval = minSnapshotInterval
+        self.now = now
     }
 
     // MARK: Watcher lifecycle
@@ -338,6 +393,7 @@ final class CompanionPaneBytesFeed {
     /// attach starts cold, and clear every watch on the pane.
     func handlePaneClosed(paneId: String) {
         panes.removeValue(forKey: paneId)
+        lastSnapshotAt.removeValue(forKey: paneId)
         for (token, var watcher) in watchers {
             watcher.paneIds.remove(paneId)
             watchers[token] = watcher
@@ -363,6 +419,15 @@ final class CompanionPaneBytesFeed {
 
     private func coldAttach(token: CompanionPaneBytesToken, paneId: String) -> CompanionPaneBytesAttached {
         markAttached(token: token, paneId: paneId)
+
+        // A cold attacher has no emulator state at all, so a byte tail alone would
+        // start mid-escape-sequence and miss every mode set before the retained
+        // window. Repaint from a screen capture instead when one is available.
+        if let snapshot = captureSnapshot(paneId: paneId) {
+            adoptSnapshotEpoch(paneId: paneId, snapshot: snapshot)
+            return snapshotReply(paneId: paneId, epoch: snapshot.epoch, snapshot: snapshot, truncated: false)
+        }
+
         guard let state = panes[paneId] else {
             // No surface output yet — empty stream, mint a placeholder epoch so
             // the phone has a baseline; live chunks will arrive once ingest runs.
@@ -382,7 +447,12 @@ final class CompanionPaneBytesFeed {
             epoch: state.epoch,
             startSeq: replay.startSeq,
             replay: replay.encoded,
-            truncated: replay.dropped
+            // Always `true` on a cold attach that falls back to a byte tail. A
+            // tail is never a continuation of the receiver's state: it starts
+            // mid-escape-sequence, so the phone MUST reset before writing it.
+            // Reporting `false` here (because the tail happened to fit) let a
+            // throttled re-attach paint garbage on top of a correct screen.
+            truncated: true
         )
     }
 
@@ -397,30 +467,29 @@ final class CompanionPaneBytesFeed {
             // Epoch mismatch or unknown pane → truncated fresh tail (or empty).
             return truncatedReply(paneId: paneId)
         }
-        if let data = state.ring.slice(fromSeq: lastSeq) {
-            // A resumable gap can still exceed one frame; clamping drops the
-            // oldest of it, which makes the reply a fresh tail, not a resume.
-            let replay = Self.boundedReplay(paneId: paneId, tail: (startSeq: lastSeq, data: data))
+        if let data = state.ring.slice(fromSeq: lastSeq), data.count <= Self.maxReplayBytes {
+            // Contiguous and inside one frame: a clean resume. The phone's
+            // emulator is already correct, so no capture — splicing is both
+            // cheaper and more faithful than a repaint.
             return CompanionPaneBytesAttached(
                 paneId: paneId,
                 epoch: state.epoch,
-                startSeq: replay.startSeq,
-                replay: replay.encoded,
-                truncated: replay.dropped
+                startSeq: lastSeq,
+                replay: data.base64EncodedString(),
+                truncated: false
             )
         }
-        // Ring rolled past lastSeq (or lastSeq ahead of head).
-        let replay = Self.boundedReplay(paneId: paneId, tail: state.ring.tail())
-        return CompanionPaneBytesAttached(
-            paneId: paneId,
-            epoch: state.epoch,
-            startSeq: replay.startSeq,
-            replay: replay.encoded,
-            truncated: true
-        )
+        // Either the ring rolled past `lastSeq` (or it is ahead of the head), or
+        // the resumable gap does not fit one frame. Both mean the phone cannot
+        // splice, so it must repaint — the same case as a cold attach.
+        return truncatedReply(paneId: paneId)
     }
 
     private func truncatedReply(paneId: String) -> CompanionPaneBytesAttached {
+        if let snapshot = captureSnapshot(paneId: paneId) {
+            adoptSnapshotEpoch(paneId: paneId, snapshot: snapshot)
+            return snapshotReply(paneId: paneId, epoch: snapshot.epoch, snapshot: snapshot, truncated: true)
+        }
         if let state = panes[paneId] {
             let replay = Self.boundedReplay(paneId: paneId, tail: state.ring.tail())
             return CompanionPaneBytesAttached(
@@ -439,6 +508,95 @@ final class CompanionPaneBytesFeed {
             startSeq: 0,
             replay: "",
             truncated: true
+        )
+    }
+
+    /// Captures the pane's screen through the provider seam, subject to the
+    /// per-pane throttle and the wire's decoded-size cap.
+    ///
+    /// Returns `nil` whenever the attach should fall back to a plain byte tail:
+    /// no provider, an unresolvable pane, a failed capture, a capture inside the
+    /// throttle window, or one too large for the wire.
+    private func captureSnapshot(paneId: String) -> CompanionPaneSnapshot? {
+        guard let provider else { return nil }
+
+        let timestamp = now()
+        if let last = lastSnapshotAt[paneId], timestamp.timeIntervalSince(last) < minSnapshotInterval {
+            companionPaneBytesLogger.info(
+                "snapshot throttled: pane=\(paneId, privacy: .public) falling back to byte tail"
+            )
+            return nil
+        }
+
+        guard let snapshot = provider.companionCapturePaneSnapshot(paneId: paneId) else { return nil }
+        // Charge the throttle for any capture that actually ran, oversize or not:
+        // the cost was paid under the renderer mutex either way.
+        lastSnapshotAt[paneId] = timestamp
+
+        guard snapshot.rows > 0, snapshot.cols > 0 else {
+            companionPaneBytesLogger.error(
+                "snapshot has empty grid: pane=\(paneId, privacy: .public)"
+            )
+            return nil
+        }
+        guard snapshot.data.count <= Self.maxSnapshotBytes else {
+            companionPaneBytesLogger.error(
+                """
+                snapshot over wire cap: pane=\(paneId, privacy: .public) \
+                bytes=\(snapshot.data.count, privacy: .public) falling back to byte tail
+                """
+            )
+            return nil
+        }
+        return snapshot
+    }
+
+    /// Current epoch for a pane, minting a ring for it when the first attach beats
+    /// the first byte. A snapshot reply needs an epoch even when nothing has been
+    /// teed yet.
+    /// Adopts the capture's own epoch as this pane's stream epoch, rebasing the
+    /// ring to the capture point.
+    ///
+    /// The epoch MUST come from the surface, never be minted here. A cold attach
+    /// to an already-running pane installs the tee at attach time, so no byte has
+    /// been teed yet and there is no `PaneState`. Minting a placeholder meant the
+    /// first real chunk arrived under libghostty's actual `ptyStreamEpoch`, the
+    /// phone saw an epoch mismatch, and it wiped the screen the snapshot had just
+    /// painted correctly — then hit the capture throttle on the retry and fell
+    /// back to a garbage byte tail. Exactly the flagship case.
+    private func adoptSnapshotEpoch(paneId: String, snapshot: CompanionPaneSnapshot) {
+        var state = panes[paneId] ?? PaneState(
+            epoch: snapshot.epoch,
+            ring: CompanionPaneBytesRing(capacity: ringCapacity)
+        )
+        if state.epoch != snapshot.epoch {
+            state = PaneState(epoch: snapshot.epoch, ring: CompanionPaneBytesRing(capacity: ringCapacity))
+        }
+        // Everything below the capture point is already baked into the snapshot,
+        // so the ring restarts there rather than replaying it.
+        state.ring.reset(toSeq: snapshot.seq)
+        panes[paneId] = state
+    }
+
+    /// Reply carrying a screen capture. `replay` is always empty and `startSeq` is
+    /// the capture's own offset: the snapshot is excluded from seq arithmetic, so
+    /// the phone's next expected chunk offset is exactly `startSeq`. Shipping the
+    /// ring tail alongside would double-apply bytes already baked into the capture.
+    private func snapshotReply(
+        paneId: String,
+        epoch: String,
+        snapshot: CompanionPaneSnapshot,
+        truncated: Bool
+    ) -> CompanionPaneBytesAttached {
+        CompanionPaneBytesAttached(
+            paneId: paneId,
+            epoch: epoch,
+            startSeq: snapshot.seq,
+            replay: "",
+            truncated: truncated,
+            snapshot: snapshot.data.base64EncodedString(),
+            snapshotRows: snapshot.rows,
+            snapshotCols: snapshot.cols
         )
     }
 

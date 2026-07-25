@@ -23,7 +23,10 @@ final class CompanionPaneBytesFeedTests: XCTestCase {
         XCTAssertEqual(attached.paneId, "p1")
         XCTAssertEqual(attached.epoch, "e1")
         XCTAssertEqual(attached.startSeq, 0)
-        XCTAssertEqual(attached.truncated, false)
+        // A cold attach that falls back to a byte tail is ALWAYS truncated: the
+        // tail starts mid-escape-sequence, so it is never a continuation of the
+        // receiver's state and the phone must reset before writing it.
+        XCTAssertEqual(attached.truncated, true)
         XCTAssertEqual(b64Decode(attached.replay), payload)
         // Cold attach does not re-fan prior bytes as live chunks.
         XCTAssertTrue(chunks.isEmpty)
@@ -356,6 +359,229 @@ final class CompanionPaneBytesFeedTests: XCTestCase {
         XCTAssertEqual(String(data: b64Decode(chunks[0].data), encoding: .utf8), "hi")
     }
 
+    // MARK: - Cold-attach screen snapshot
+
+    private func makeSnapshot(
+        _ text: String = "\u{1B}[2J\u{1B}[H$ vim",
+        seq: Int = 4096,
+        cols: Int = 120,
+        rows: Int = 40,
+        epoch: String = "e1"
+    ) -> CompanionPaneSnapshot {
+        CompanionPaneSnapshot(data: Data(text.utf8), seq: seq, cols: cols, rows: rows, epoch: epoch)
+    }
+
+    /// A cold attacher has no emulator state, so a byte tail alone starts
+    /// mid-escape-sequence. It must get a screen capture instead — and the tail
+    /// must NOT ride along, or the phone applies bytes already baked into it.
+    func testColdAttachCarriesSnapshotAndEmptyReplay() {
+        let provider = PaneBytesProviderSpy()
+        provider.snapshots["p1"] = makeSnapshot(seq: 4096, cols: 120, rows: 40)
+        let feed = CompanionPaneBytesFeed(provider: provider)
+        let token = feed.addWatcher { _ in }
+        feed.ingest(paneId: "p1", epoch: "e1", seq: 0, bytes: Data("stale-tail".utf8))
+
+        let attached = feed.attach(token: token, paneId: "p1", lastSeq: nil, epoch: nil)
+
+        XCTAssertEqual(b64Decode(attached.snapshot ?? ""), makeSnapshot().data)
+        XCTAssertEqual(attached.snapshotCols, 120)
+        XCTAssertEqual(attached.snapshotRows, 40)
+        XCTAssertEqual(attached.replay, "")
+        // startSeq is the capture's own offset, so the phone's next expected
+        // chunk offset (startSeq + decoded(replay)) is exactly the capture point.
+        XCTAssertEqual(attached.startSeq, 4096)
+        XCTAssertEqual(attached.epoch, "e1")
+        XCTAssertFalse(attached.truncated)
+    }
+
+    /// Cold attach before any byte has been teed still needs a repaint — that is
+    /// precisely the running-TUI case — and an epoch to hang later chunks off.
+    func testColdAttachSnapshotsBeforeAnyBytesArrive() {
+        let provider = PaneBytesProviderSpy()
+        provider.snapshots["p1"] = makeSnapshot(seq: 900)
+        let feed = CompanionPaneBytesFeed(provider: provider)
+        let token = feed.addWatcher { _ in }
+
+        let attached = feed.attach(token: token, paneId: "p1", lastSeq: nil, epoch: nil)
+
+        XCTAssertNotNil(attached.snapshot)
+        XCTAssertEqual(attached.startSeq, 900)
+        XCTAssertFalse(attached.epoch.isEmpty)
+    }
+
+    /// A clean warm resume splices; the phone's emulator is already correct, so
+    /// paying for a capture (and forcing a repaint) would be strictly worse.
+    func testCleanWarmResumeCarriesNoSnapshot() {
+        let provider = PaneBytesProviderSpy()
+        provider.snapshots["p1"] = makeSnapshot()
+        let feed = CompanionPaneBytesFeed(provider: provider)
+        let token = feed.addWatcher { _ in }
+        feed.ingest(paneId: "p1", epoch: "e1", seq: 0, bytes: Data("abcdefgh".utf8))
+
+        let attached = feed.attach(token: token, paneId: "p1", lastSeq: 4, epoch: "e1")
+
+        XCTAssertNil(attached.snapshot)
+        XCTAssertNil(attached.snapshotRows)
+        XCTAssertNil(attached.snapshotCols)
+        XCTAssertFalse(attached.truncated)
+        XCTAssertEqual(attached.startSeq, 4)
+        XCTAssertEqual(String(data: b64Decode(attached.replay), encoding: .utf8), "efgh")
+        XCTAssertEqual(provider.snapshotRequests, [])
+    }
+
+    /// The ring rolled past the phone's cursor: it cannot splice, so it repaints.
+    func testTruncatedWarmAttachCarriesSnapshot() {
+        let provider = PaneBytesProviderSpy()
+        provider.snapshots["p1"] = makeSnapshot(seq: 16)
+        let feed = CompanionPaneBytesFeed(provider: provider, ringCapacity: 8)
+        let token = feed.addWatcher { _ in }
+        feed.ingest(paneId: "p1", epoch: "e1", seq: 0, bytes: Data("0123456789ABCDEF".utf8))
+
+        let attached = feed.attach(token: token, paneId: "p1", lastSeq: 0, epoch: "e1")
+
+        XCTAssertTrue(attached.truncated)
+        XCTAssertNotNil(attached.snapshot)
+        XCTAssertEqual(attached.replay, "")
+        XCTAssertEqual(attached.startSeq, 16)
+    }
+
+    /// A resumable-but-oversize gap is a fresh tail, not a resume, so it repaints
+    /// too rather than shipping 32 KiB of bytes the phone cannot splice.
+    func testOversizeResumeGapCarriesSnapshot() {
+        let provider = PaneBytesProviderSpy()
+        provider.snapshots["p1"] = makeSnapshot(seq: 64 * 1024)
+        let feed = CompanionPaneBytesFeed(provider: provider)
+        let token = feed.addWatcher { _ in }
+        let total = CompanionPaneBytesFeed.maxReplayBytes * 2
+        feed.ingest(paneId: "p1", epoch: "e1", seq: 0, bytes: Data(repeating: 0x41, count: total))
+
+        let attached = feed.attach(token: token, paneId: "p1", lastSeq: 0, epoch: "e1")
+
+        XCTAssertTrue(attached.truncated)
+        XCTAssertNotNil(attached.snapshot)
+        XCTAssertEqual(attached.replay, "")
+        XCTAssertEqual(attached.startSeq, 64 * 1024)
+    }
+
+    /// Over the wire's decoded cap the relay closes the socket (1009) rather than
+    /// rejecting the frame, so an oversize capture is dropped for the old
+    /// tail-replay path instead of sent.
+    func testOversizeSnapshotFallsBackToTailReplay() {
+        let provider = PaneBytesProviderSpy()
+        provider.snapshots["p1"] = CompanionPaneSnapshot(
+            data: Data(repeating: 0x41, count: CompanionPaneBytesFeed.maxSnapshotBytes + 1),
+            seq: 4096,
+            cols: 120,
+            rows: 40,
+            epoch: "e1"
+        )
+        let feed = CompanionPaneBytesFeed(provider: provider)
+        let token = feed.addWatcher { _ in }
+        feed.ingest(paneId: "p1", epoch: "e1", seq: 0, bytes: Data("tail".utf8))
+
+        let attached = feed.attach(token: token, paneId: "p1", lastSeq: nil, epoch: nil)
+
+        XCTAssertNil(attached.snapshot)
+        XCTAssertEqual(String(data: b64Decode(attached.replay), encoding: .utf8), "tail")
+        XCTAssertEqual(attached.startSeq, 0)
+    }
+
+    /// A capture at exactly the cap is still sendable.
+    func testSnapshotAtExactlyTheCapIsSent() {
+        let provider = PaneBytesProviderSpy()
+        provider.snapshots["p1"] = CompanionPaneSnapshot(
+            data: Data(repeating: 0x41, count: CompanionPaneBytesFeed.maxSnapshotBytes),
+            seq: 7,
+            cols: 80,
+            rows: 24,
+            epoch: "e1"
+        )
+        let feed = CompanionPaneBytesFeed(provider: provider)
+        let token = feed.addWatcher { _ in }
+
+        let attached = feed.attach(token: token, paneId: "p1", lastSeq: nil, epoch: nil)
+
+        XCTAssertEqual(b64Decode(attached.snapshot ?? "").count, CompanionPaneBytesFeed.maxSnapshotBytes)
+    }
+
+    /// A capture holds libghostty's renderer mutex while it walks every active
+    /// cell, so a phone re-attaching in a reconnect storm must not be able to loop
+    /// it. Inside the throttle window the attach degrades to a byte tail.
+    func testSnapshotIsThrottledPerPane() {
+        var clock = Date(timeIntervalSince1970: 1_000)
+        let provider = PaneBytesProviderSpy()
+        provider.snapshots["p1"] = makeSnapshot(seq: 10)
+        provider.snapshots["p2"] = makeSnapshot(seq: 20)
+        let feed = CompanionPaneBytesFeed(
+            provider: provider,
+            minSnapshotInterval: 5,
+            now: { clock }
+        )
+        let token = feed.addWatcher { _ in }
+        feed.ingest(paneId: "p1", epoch: "e1", seq: 0, bytes: Data("tail".utf8))
+
+        XCTAssertNotNil(feed.attach(token: token, paneId: "p1", lastSeq: nil, epoch: nil).snapshot)
+
+        // Immediate re-attach: throttled, so no capture comes back. The ring was
+        // rebased to the capture point when the snapshot was adopted — those
+        // bytes are baked into it — so there is no tail left to replay either,
+        // and the reply is honestly empty rather than a stale fragment.
+        feed.detach(token: token, paneId: "p1")
+        let throttled = feed.attach(token: token, paneId: "p1", lastSeq: nil, epoch: nil)
+        XCTAssertNil(throttled.snapshot)
+        XCTAssertEqual(throttled.replay, "")
+        XCTAssertTrue(throttled.truncated)
+        XCTAssertEqual(provider.snapshotRequests, ["p1"])
+
+        // The throttle is per pane: another pane still captures.
+        XCTAssertNotNil(feed.attach(token: token, paneId: "p2", lastSeq: nil, epoch: nil).snapshot)
+
+        // Past the interval, p1 captures again.
+        clock = clock.addingTimeInterval(5)
+        feed.detach(token: token, paneId: "p1")
+        XCTAssertNotNil(feed.attach(token: token, paneId: "p1", lastSeq: nil, epoch: nil).snapshot)
+        XCTAssertEqual(provider.snapshotRequests, ["p1", "p2", "p1"])
+    }
+
+    /// An oversize capture still cost the renderer mutex, so it charges the
+    /// throttle — otherwise a pane that always captures too big would let a
+    /// reconnect storm hammer libghostty unbounded.
+    func testOversizeCaptureStillChargesTheThrottle() {
+        let clock = Date(timeIntervalSince1970: 1_000)
+        let provider = PaneBytesProviderSpy()
+        provider.snapshots["p1"] = CompanionPaneSnapshot(
+            data: Data(repeating: 0x41, count: CompanionPaneBytesFeed.maxSnapshotBytes + 1),
+            seq: 4096,
+            cols: 120,
+            rows: 40,
+            epoch: "e1"
+        )
+        let feed = CompanionPaneBytesFeed(
+            provider: provider,
+            minSnapshotInterval: 5,
+            now: { clock }
+        )
+        let token = feed.addWatcher { _ in }
+
+        _ = feed.attach(token: token, paneId: "p1", lastSeq: nil, epoch: nil)
+        feed.detach(token: token, paneId: "p1")
+        _ = feed.attach(token: token, paneId: "p1", lastSeq: nil, epoch: nil)
+
+        XCTAssertEqual(provider.snapshotRequests, ["p1"])
+    }
+
+    /// No provider (or an unresolvable pane) keeps the pre-snapshot behaviour.
+    func testColdAttachWithoutProviderKeepsTailReplay() {
+        let feed = CompanionPaneBytesFeed()
+        let token = feed.addWatcher { _ in }
+        feed.ingest(paneId: "p1", epoch: "e1", seq: 0, bytes: Data("tail".utf8))
+
+        let attached = feed.attach(token: token, paneId: "p1", lastSeq: nil, epoch: nil)
+
+        XCTAssertNil(attached.snapshot)
+        XCTAssertEqual(String(data: b64Decode(attached.replay), encoding: .utf8), "tail")
+    }
+
     func testRingSliceAtHeadIsEmpty() {
         var ring = CompanionPaneBytesRing(capacity: 64)
         ring.append(Data("abcd".utf8))
@@ -388,6 +614,9 @@ private final class PaneBytesProviderSpy: CompanionPaneBytesProviding {
     /// Panes the spy pretends it cannot resolve, so a test can exercise the
     /// failed-install path (a pane whose window is still restoring, or gone).
     var unresolvablePanes: Set<String> = []
+    /// Capture the spy hands back per pane; `nil` means "no live surface".
+    var snapshots: [String: CompanionPaneSnapshot] = [:]
+    private(set) var snapshotRequests: [String] = []
 
     @discardableResult
     func companionSetPaneByteStream(paneId: String, onBytes: CompanionPaneBytesStreamSink?) -> Bool {
@@ -400,5 +629,11 @@ private final class PaneBytesProviderSpy: CompanionPaneBytesProviding {
         installs.append(paneId)
         sinks[paneId] = onBytes
         return true
+    }
+
+    func companionCapturePaneSnapshot(paneId: String) -> CompanionPaneSnapshot? {
+        snapshotRequests.append(paneId)
+        guard !unresolvablePanes.contains(paneId) else { return nil }
+        return snapshots[paneId]
     }
 }

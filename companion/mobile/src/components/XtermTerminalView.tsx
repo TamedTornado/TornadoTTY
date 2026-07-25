@@ -18,6 +18,19 @@ export interface XtermTerminalHandle {
   write(dataB64: string): void;
   /** Discard emulator state (fresh baseline before a replay). */
   reset(): void;
+  /**
+   * Pin the emulator to the mac's authoritative grid and letterbox it into the
+   * available space. Disables the fit addon: while mirroring read-only the mac
+   * owns the geometry, so the phone must not renegotiate it. Queued in order
+   * with {@link reset}/{@link write} so a snapshot lands at the right size.
+   */
+  setGrid(cols: number, rows: number): void;
+  /**
+   * Hand the grid back to the phone: re-enable the fit addon and report the
+   * fitted size. Only valid while a control lease is held — that is the one
+   * state where the mac follows the phone's size (and re-snapshots).
+   */
+  releaseGrid(): void;
 }
 
 export interface XtermTerminalViewProps {
@@ -56,7 +69,11 @@ const XTERM_THEME = {
   brightWhite: '#FFFFFF',
 } as const;
 
-type Op = { t: 'w'; d: string } | { t: 'r' };
+type Op =
+  | { t: 'w'; d: string }
+  | { t: 'r' }
+  | { t: 'g'; c: number; r: number }
+  | { t: 'u' };
 
 /**
  * Streaming VT emulator backed by xterm.js inside a self-contained WebView (all
@@ -67,6 +84,13 @@ type Op = { t: 'w'; d: string } | { t: 'r' };
  * The RN → WebView bridge is `injectJavaScript` (cheapest path, bypasses React
  * reconciliation); queued writes/resets are coalesced into one injection per
  * animation frame. WebView → RN is `postMessage` for boot + fit dimensions.
+ *
+ * Geometry has two modes. By default the fit addon owns the grid and reports it
+ * through {@link XtermTerminalViewProps.onResize}. Once the mac sends a snapshot
+ * grid, {@link XtermTerminalHandle.setGrid} pins the emulator to it and
+ * letterboxes — the mac is authoritative while the phone mirrors read-only, and
+ * no `resize` is posted in that mode. {@link XtermTerminalHandle.releaseGrid}
+ * restores fit, and is only used while a control lease is held.
  */
 export const XtermTerminalView = forwardRef<XtermTerminalHandle, XtermTerminalViewProps>(
   function XtermTerminalView({ onReady, onResize, fontSize = 12, scrollback = 5000 }, ref) {
@@ -89,18 +113,27 @@ export const XtermTerminalView = forwardRef<XtermTerminalHandle, XtermTerminalVi
         }
       };
       for (const op of ops.current) {
-        if (op.t === 'r') {
-          emitBatch();
-          parts.push('r()');
-        } else {
+        if (op.t === 'w') {
           batch.push(op.d);
+          continue;
+        }
+        // Everything else is ordering-sensitive against the pending writes
+        // (reset → grid → snapshot), so flush the batch before emitting it.
+        emitBatch();
+        if (op.t === 'r') {
+          parts.push('r()');
+        } else if (op.t === 'g') {
+          parts.push(`g(${op.c},${op.r})`);
+        } else {
+          parts.push('u()');
         }
       }
       emitBatch();
       ops.current = [];
       const js =
         '(function(){var z=window.__zentty;if(!z){return;}' +
-        'var w=function(a){z.writeBatch(a);},r=function(){z.reset();};' +
+        'var w=function(a){z.writeBatch(a);},r=function(){z.reset();},' +
+        'g=function(c,r){z.setGrid(c,r);},u=function(){z.releaseGrid();};' +
         parts.join(';') +
         ';})();true;';
       webRef.current?.injectJavaScript(js);
@@ -121,6 +154,14 @@ export const XtermTerminalView = forwardRef<XtermTerminalHandle, XtermTerminalVi
         },
         reset: () => {
           ops.current.push({ t: 'r' });
+          schedule();
+        },
+        setGrid: (cols: number, rows: number) => {
+          ops.current.push({ t: 'g', c: cols, r: rows });
+          schedule();
+        },
+        releaseGrid: () => {
+          ops.current.push({ t: 'u' });
           schedule();
         },
       }),

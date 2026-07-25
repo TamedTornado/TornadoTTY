@@ -1228,6 +1228,14 @@ final class MainWindowController: NSObject, NSWindowDelegate {
         return runtime.hostView.setCompanionByteStream(sink)
     }
 
+    /// Captures a pane's screen as replayable VT bytes so a companion attaching
+    /// mid-session can repaint. `nil` when the pane is unknown, has no live
+    /// runtime, or its adapter cannot snapshot. Expensive — the companion feed
+    /// throttles it.
+    func captureCompanionScreenSnapshot(from paneID: PaneID) -> TerminalScreenSnapshot? {
+        runtimeRegistry.runtime(for: paneID)?.hostView.captureCompanionScreenSnapshot()
+    }
+
     /// Live grid dimensions (columns × rows) for a pane, or `nil` when the pane is
     /// unknown or has no live runtime. Used by the companion pane-text feed to
     /// stamp `pane.text` with `gridCols`/`gridRows`.
