@@ -370,10 +370,13 @@ final class CompanionBridgeServer: CompanionSessionServicing {
 
     // MARK: - Pane bytes lane signals
 
-    /// Forward raw PTY output into the byte ring + live fan-out. Called from the
-    /// libghostty PTY tee once available; unit tests inject synthetic bytes.
-    func ingestPaneBytes(paneID: String, epoch: String, bytes: Data) {
-        paneBytesFeed.ingest(paneId: paneID, epoch: epoch, bytes: bytes)
+    /// Forward raw PTY output into the byte ring + live fan-out. The feed installs
+    /// the libghostty tee itself on the first attach, so in production this is
+    /// reached from that tee's drain; unit tests inject synthetic bytes.
+    /// `seq` is the producer's absolute offset within `epoch` (see
+    /// `CompanionPaneBytesFeed.ingest`).
+    func ingestPaneBytes(paneID: String, epoch: String, seq: Int, bytes: Data) {
+        paneBytesFeed.ingest(paneId: paneID, epoch: epoch, seq: seq, bytes: bytes)
     }
 
     // MARK: - Pairing offer (settings UI)

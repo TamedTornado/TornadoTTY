@@ -1,5 +1,8 @@
 import AppKit
 import Foundation
+import OSLog
+
+private let companionLogger = Logger(subsystem: "be.zenjoy.zentty", category: "CompanionBridge")
 
 // MARK: - Dashboard state source
 
@@ -176,5 +179,40 @@ extension AppDelegate: CompanionPaneTextProviding {
     func companionSetPaneRenderKeepAlive(paneId: String, active: Bool) {
         let paneID = PaneID(paneId)
         windowController(containingPane: paneID)?.setCompanionRenderKeepAlive(active, for: paneID)
+    }
+}
+
+// MARK: - Pane raw-PTY byte source
+
+extension AppDelegate: CompanionPaneBytesProviding {
+    /// Resolves the pane and installs (or removes) its libghostty PTY tee, so the
+    /// byte lane streams the exact bytes the child process wrote.
+    ///
+    /// Returns whether the install actually landed. The feed only records a pane
+    /// as streaming on `true`, so a pane that could not be resolved yet (one in a
+    /// window still being restored, say) is retried on the next attach instead of
+    /// being remembered as installed — which would leave the phone with a valid
+    /// attach reply and then silence forever, since the phone's recovery is only
+    /// ever triggered by an arriving chunk.
+    @discardableResult
+    func companionSetPaneByteStream(paneId: String, onBytes: CompanionPaneBytesStreamSink?) -> Bool {
+        let paneID = PaneID(paneId)
+        guard let controller = windowController(containingPane: paneID) else {
+            // Only worth reporting for an install; a removal for a pane that is
+            // already gone is the normal teardown ordering.
+            if onBytes != nil {
+                companionLogger.error(
+                    "No window controller for pane \(paneId, privacy: .public); byte stream not installed"
+                )
+            }
+            return false
+        }
+        guard let onBytes else {
+            controller.setCompanionByteStream(nil, for: paneID)
+            return true
+        }
+        return controller.setCompanionByteStream({ epoch, seq, bytes in
+            onBytes(epoch, seq, bytes)
+        }, for: paneID)
     }
 }

@@ -229,10 +229,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         )
-        // Byte feed is injectable (ingestPaneBytes); live PTY tee lands when
-        // GhosttyKit exposes an output callback (Phase 2). The feed + route are
-        // fully wired so attach/detach/chunk work as soon as bytes are ingested.
-        let paneBytesFeed = CompanionPaneBytesFeed()
+        // The byte feed drives its own producer: on the first `pane.bytes.attach`
+        // it installs the pane's libghostty PTY tee through this provider, and
+        // removes it when the last watcher goes away.
+        let paneBytesFeed = CompanionPaneBytesFeed(provider: self)
         let transcriptFeed = CompanionTranscriptFeed(source: self)
         let inputRouter = CompanionInputRouter(sink: self)
         let leaseManager = CompanionLeaseManager(applier: self)

@@ -390,6 +390,16 @@ final class TerminalPaneHostView: NSView, TerminalViewportDiagnosticsContextConf
         (adapter as? TerminalRenderKeepAliving)?.setCompanionRenderKeepAlive(active)
     }
 
+    /// Installs/removes the companion raw-PTY byte stream on the adapter. A no-op
+    /// for adapters that cannot tee their PTY (mocks).
+    /// - Returns: `false` when this pane has no byte-streaming adapter.
+    @discardableResult
+    func setCompanionByteStream(_ sink: TerminalPTYByteSink?) -> Bool {
+        guard let streaming = adapter as? TerminalPTYStreaming else { return false }
+        streaming.setCompanionByteStream(sink)
+        return true
+    }
+
     var isUnderControlLeaseForTesting: Bool {
         leasePlaceholderView != nil
     }

@@ -1219,6 +1219,15 @@ final class MainWindowController: NSObject, NSWindowDelegate {
         runtimeRegistry.runtime(for: paneID)?.hostView.setCompanionRenderKeepAlive(active)
     }
 
+    /// Installs (or removes, with `nil`) the pane's companion raw-PTY byte stream.
+    /// Safe to call for an unknown pane; returns `false` when the pane has no live
+    /// runtime or its adapter cannot tee PTY output.
+    @discardableResult
+    func setCompanionByteStream(_ sink: TerminalPTYByteSink?, for paneID: PaneID) -> Bool {
+        guard let runtime = runtimeRegistry.runtime(for: paneID) else { return false }
+        return runtime.hostView.setCompanionByteStream(sink)
+    }
+
     /// Live grid dimensions (columns × rows) for a pane, or `nil` when the pane is
     /// unknown or has no live runtime. Used by the companion pane-text feed to
     /// stamp `pane.text` with `gridCols`/`gridRows`.

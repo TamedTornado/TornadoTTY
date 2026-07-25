@@ -80,6 +80,21 @@ extension LibghosttySurfaceControlling {
     }
 }
 
+/// Main-actor sink for a surface's coalesced raw-PTY runs. `seq` is libghostty's
+/// absolute byte offset from surface creation.
+typealias LibghosttyPTYStreamSink = @MainActor (_ epoch: String, _ seq: Int, _ bytes: Data) -> Void
+
+/// A surface that can hand out its raw PTY output (the companion byte lane's
+/// producer). Split from `LibghosttySurfaceControlling` so surface doubles that
+/// do not stream bytes stay unaffected.
+@MainActor
+protocol LibghosttyPTYStreaming: AnyObject {
+    /// Opaque id for this surface's byte-stream lifetime.
+    var ptyStreamEpoch: String { get }
+    /// Installs (or removes, with `nil`) the raw-PTY tee.
+    func setPTYStreamSink(_ sink: LibghosttyPTYStreamSink?)
+}
+
 @MainActor
 protocol LibghosttySurfaceTextReading: AnyObject {
     func readText(includeScrollback: Bool, lineLimit: Int?) -> String?
@@ -87,7 +102,7 @@ protocol LibghosttySurfaceTextReading: AnyObject {
 }
 
 @MainActor
-final class LibghosttyAdapter: TerminalAdapter, TerminalSearchControlling, TerminalTextReading, TerminalControlLeasing, TerminalRenderKeepAliving {
+final class LibghosttyAdapter: TerminalAdapter, TerminalSearchControlling, TerminalTextReading, TerminalControlLeasing, TerminalRenderKeepAliving, TerminalPTYStreaming {
     private let runtime: any LibghosttyRuntimeProviding
     private let paneID: PaneID
     private let diagnostics: TerminalDiagnostics
@@ -106,6 +121,9 @@ final class LibghosttyAdapter: TerminalAdapter, TerminalSearchControlling, Termi
     /// True while the phone is mirroring this pane; forces the surface un-occluded
     /// (overriding both backgrounding and a control lease) so it keeps repainting.
     private var companionRenderKeepAlive = false
+    /// Held so a session started (or restarted) later re-installs the tee. Cleared
+    /// only when the companion detaches.
+    private var companionByteSink: TerminalPTYByteSink?
     private var inheritedConfigTemplate: ghostty_surface_config_s?
 
     var hasScrollback: Bool { surfaceController?.hasScrollback ?? false }
@@ -158,10 +176,20 @@ final class LibghosttyAdapter: TerminalAdapter, TerminalSearchControlling, Termi
             self.surfaceController = surfaceController
             hasAppliedSurfaceActivity = false
             setSurfaceActivity(lastSurfaceActivity)
+            // A phone attached before this surface existed (or across a shell
+            // respawn) still gets bytes: re-install its tee on the new surface,
+            // which mints a fresh epoch so the phone resets its emulator.
+            applyCompanionByteStream()
         }
     }
 
     func close() {
+        // Uninstall the tee before the surface is freed; once the removal returns
+        // libghostty guarantees no callback is in flight. `companionByteSink` is
+        // kept so a surface started later re-installs it.
+        if companionByteSink != nil {
+            (surfaceController as? LibghosttyPTYStreaming)?.setPTYStreamSink(nil)
+        }
         surfaceController?.close()
         surfaceController = nil
     }
@@ -232,6 +260,37 @@ final class LibghosttyAdapter: TerminalAdapter, TerminalSearchControlling, Termi
         guard companionRenderKeepAlive != active else { return }
         companionRenderKeepAlive = active
         reapplyOcclusion()
+    }
+
+    // MARK: - Companion raw-PTY byte stream
+
+    /// Installs (or removes) the pane's PTY tee. Called on the 0↔1 edge of the
+    /// byte lane's watchers for this pane, so a Mac nobody is mirroring pays
+    /// nothing on the io-reader thread.
+    func setCompanionByteStream(_ sink: TerminalPTYByteSink?) {
+        guard sink != nil else {
+            let hadSink = companionByteSink != nil
+            companionByteSink = nil
+            if hadSink {
+                (surfaceController as? LibghosttyPTYStreaming)?.setPTYStreamSink(nil)
+            }
+            return
+        }
+        companionByteSink = sink
+        applyCompanionByteStream()
+    }
+
+    /// Installs the held sink on the current surface. A no-op when no companion is
+    /// attached, so a plain session start never touches the tee.
+    private func applyCompanionByteStream() {
+        guard let sink = companionByteSink,
+              let streaming = surfaceController as? LibghosttyPTYStreaming
+        else {
+            return
+        }
+        streaming.setPTYStreamSink { epoch, seq, bytes in
+            sink(epoch, seq, bytes)
+        }
     }
 
     /// Desired surface visibility, resolving the three inputs by precedence: a

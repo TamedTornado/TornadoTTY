@@ -274,6 +274,22 @@ protocol TerminalRenderKeepAliving: AnyObject {
     func setCompanionRenderKeepAlive(_ active: Bool)
 }
 
+/// One coalesced run of raw PTY output, delivered on the main actor.
+/// `epoch` identifies the surface lifetime the offsets belong to and `seq` is the
+/// absolute byte offset of `bytes[0]` within that lifetime — a forward jump means
+/// bytes were lost and the consumer must resync rather than splice.
+typealias TerminalPTYByteSink = @MainActor (_ epoch: String, _ seq: Int, _ bytes: Data) -> Void
+
+/// Companion raw-PTY byte lane: streams the exact bytes the child process wrote
+/// so the phone can drive its own VT emulator. Installed only while a phone is
+/// attached to the pane's byte lane. Adopted by the libghostty adapter; other
+/// adapters (mocks) inherit the no-op default.
+@MainActor
+protocol TerminalPTYStreaming: AnyObject {
+    /// Installs (or removes, with `nil`) the pane's PTY byte sink.
+    func setCompanionByteStream(_ sink: TerminalPTYByteSink?)
+}
+
 @MainActor
 protocol TerminalSearchControlling: AnyObject {
     var searchDidChange: ((TerminalSearchEvent) -> Void)? { get set }

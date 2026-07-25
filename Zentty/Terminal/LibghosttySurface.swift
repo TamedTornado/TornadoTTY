@@ -1,6 +1,30 @@
 import AppKit
 import Carbon.HIToolbox
+import Foundation
 import GhosttyKit
+
+/// C trampoline for libghostty's raw-PTY tee.
+///
+/// Runs on the surface's io-reader thread while libghostty holds its renderer
+/// state mutex, with no autorelease pool. It must not call any `ghostty_*`
+/// function, block, or dispatch synchronously — it copies into the tee's
+/// accumulator and returns.
+private func libghosttyPTYTeeCallback(
+    _ userdata: UnsafeMutableRawPointer?,
+    _ seq: UInt64,
+    _ data: UnsafePointer<UInt8>?,
+    _ length: UInt
+) {
+    guard let userdata, let data, length > 0 else {
+        return
+    }
+
+    let tee = Unmanaged<LibghosttyPTYTee>.fromOpaque(userdata).takeUnretainedValue()
+    tee.receive(
+        seq: seq,
+        bytes: UnsafeRawBufferPointer(start: UnsafeRawPointer(data), count: Int(length))
+    )
+}
 
 struct LibghosttySurfaceScrollbarUpdate: Equatable, Sendable {
     let total: UInt64
@@ -142,9 +166,16 @@ final class LibghosttySurfaceActionCoalescer {
 }
 
 @MainActor
-final class LibghosttySurface: LibghosttySurfaceControlling, LibghosttySurfaceTextReading {
+final class LibghosttySurface: LibghosttySurfaceControlling, LibghosttySurfaceTextReading, LibghosttyPTYStreaming {
     nonisolated(unsafe) var surface: ghostty_surface_t?
     nonisolated(unsafe) private let actionCoalescer = LibghosttySurfaceActionCoalescer()
+    /// Opaque id for THIS surface's byte stream. Minted once per surface, so it
+    /// changes exactly when the surface is recreated (new pane, shell respawn)
+    /// and never merely because the tee was reinstalled.
+    nonisolated let ptyStreamEpoch = UUID().uuidString
+    /// The live tee, retained for exactly as long as it is installed in libghostty.
+    /// `nonisolated(unsafe)` so `deinit` can tear it down before the surface is freed.
+    nonisolated(unsafe) private var ptyTee: LibghosttyPTYTee?
     nonisolated let paneID: PaneID
     nonisolated let diagnostics: TerminalDiagnostics
     private var metadata = TerminalMetadata()
@@ -283,15 +314,73 @@ final class LibghosttySurface: LibghosttySurfaceControlling, LibghosttySurfaceTe
 
     func close() {
         guard let surface else { return }
+        removePTYTee()
         ghostty_surface_request_close(surface)
         ghostty_surface_free(surface)
         self.surface = nil
     }
 
     deinit {
+        // Order matters: uninstall the tee (which guarantees no callback is in
+        // flight and drops our `userdata`) before the surface goes away.
+        removePTYTee()
         if let surface {
             ghostty_surface_free(surface)
         }
+    }
+
+    // MARK: - Raw PTY tee (companion byte lane)
+
+    /// Installs (or removes, with `nil`) the raw-PTY tee for this surface.
+    ///
+    /// The sink is invoked on the main actor with coalesced runs of bytes; `seq`
+    /// is libghostty's absolute offset from surface creation, which keeps
+    /// advancing while no tee is installed, so a consumer sees a forward jump
+    /// instead of a silent splice after any period without a tee.
+    func setPTYStreamSink(_ sink: LibghosttyPTYStreamSink?) {
+        guard let surface else {
+            // No live surface: drop any stale tee so nothing outlives it.
+            removePTYTee()
+            return
+        }
+
+        guard let sink else {
+            removePTYTee()
+            return
+        }
+
+        // Uninstall any previous tee first: overwriting the stored reference would
+        // deallocate it while libghostty still holds its pointer, and the io-reader
+        // thread could fire into freed memory before the replacement lands.
+        removePTYTee()
+
+        let epoch = ptyStreamEpoch
+        let tee = LibghosttyPTYTee(epoch: epoch) { batch in
+            sink(epoch, batch.startSeq, batch.bytes)
+        }
+        // Retain the tee in a stored property BEFORE handing libghostty an
+        // unretained pointer to it, and only ever release it after the matching
+        // uninstall (see `removePTYTee`).
+        ptyTee = tee
+        ghostty_surface_set_pty_tee(
+            surface,
+            libghosttyPTYTeeCallback,
+            Unmanaged.passUnretained(tee).toOpaque()
+        )
+    }
+
+    /// Uninstalls the tee, then releases it.
+    ///
+    /// Safe by contract: `ghostty_surface_set_pty_tee` takes the same renderer
+    /// state mutex the io-reader thread holds for the whole of its callback, so
+    /// once the uninstall returns no callback is in flight and none can fire
+    /// again — only then is it safe to drop the `userdata` we handed out.
+    nonisolated private func removePTYTee() {
+        guard ptyTee != nil else { return }
+        if let surface {
+            ghostty_surface_set_pty_tee(surface, nil, nil)
+        }
+        ptyTee = nil
     }
 
     func updateViewport(size: CGSize, scale: CGFloat, displayID: UInt32?) {
