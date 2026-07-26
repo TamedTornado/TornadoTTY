@@ -300,7 +300,13 @@ final class CompanionSession {
                 return
             }
             didCompleteHello = true
-            try await sendSealed(.sessionReady(CompanionSessionReady(v: effective)), replyTo: envelope.id)
+            // Restate the LAN endpoint on every handshake so the phone's cached
+            // hint self-heals — including over the relay, which is exactly the
+            // path still working when a stale hint has broken direct connection.
+            try await sendSealed(
+                .sessionReady(CompanionSessionReady(v: effective, lanHint: services.currentLanHint)),
+                replyTo: envelope.id
+            )
 
         case .sessionPing(let ping):
             try await sendSealed(.sessionPong(CompanionSessionPong(ts: ping.ts)), replyTo: envelope.id)

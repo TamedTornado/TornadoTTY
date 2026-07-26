@@ -16,6 +16,15 @@ struct CompanionSessionReady: CompanionMessagePayload {
     static let messageType = "session.ready"
 
     var v: Int
+    /// This Mac's current direct-LAN endpoint, restated on every handshake so the
+    /// phone's cached hint self-heals after a rename or a port change. `nil` when
+    /// there is no live listener — which means "no update", not "forget it".
+    var lanHint: CompanionLanHint?
+
+    init(v: Int, lanHint: CompanionLanHint? = nil) {
+        self.v = v
+        self.lanHint = lanHint
+    }
 }
 
 /// `session.ping`.

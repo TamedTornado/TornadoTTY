@@ -11,7 +11,14 @@
       "bundleIdentifier": "be.zenjoy.zentty.mobile",
       "supportsTablet": false,
       "infoPlist": {
-        "EXDevMenuShowFloatingActionButton": false
+        "EXDevMenuShowFloatingActionButton": false,
+        "NSLocalNetworkUsageDescription": "Zentty connects directly to your Mac over your local network so your panes mirror instantly, without traffic leaving your home or office.",
+        "NSBonjourServices": [
+          "_zentty._tcp"
+        ],
+        "NSAppTransportSecurity": {
+          "NSAllowsLocalNetworking": true
+        }
       },
       "entitlements": {
         "keychain-access-groups": [
@@ -27,7 +34,12 @@
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "usesCleartextTraffic": true,
+      "permissions": [
+        "android.permission.ACCESS_NETWORK_STATE",
+        "android.permission.CHANGE_WIFI_MULTICAST_STATE"
+      ]
     },
     "plugins": [
       "expo-router",

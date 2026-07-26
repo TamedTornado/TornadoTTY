@@ -227,6 +227,9 @@ final class CompanionBridgeTests: XCTestCase {
             return XCTFail("Expected session.ready, got \(ready.type)")
         }
         XCTAssertEqual(readyPayload.v, 1)
+        // No listener is bound in these tests, so there is no endpoint to restate.
+        // An absent hint means "no update" — the phone keeps whatever it cached.
+        XCTAssertNil(readyPayload.lanHint)
 
         // dashboard.subscribe → dashboard.snapshot
         try await driver.send(.dashboardSubscribe(CompanionDashboardSubscribe()))

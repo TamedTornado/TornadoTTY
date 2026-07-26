@@ -442,6 +442,10 @@ private final class FakeRelayServices: CompanionSessionServicing {
     var localDeviceName: String { "TestMac" }
     var appVersion: String { "1.0" }
 
+    /// Overridable so a test can assert the hint restated in `session.ready`.
+    var lanHint: CompanionLanHint?
+    var currentLanHint: CompanionLanHint? { lanHint }
+
     func pairedDevice(withId deviceId: String) -> CompanionPairedDevice? { nil }
     func verifyPairingProof(phonePublicKey: String, proof: String) -> Bool { true }
     func recordPairing(_ device: CompanionPairedDevice) { recordedPairings.append(device.deviceId) }

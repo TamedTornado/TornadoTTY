@@ -109,6 +109,8 @@ export interface FakeMacOptions {
   onMessage?: (message: { type: string; id: string; payload: unknown }) => void;
   /** Invoked once, right after `session.ready` is sent. */
   afterReady?: (mac: FakeMac) => void | Promise<void>;
+  /** LAN endpoint restated in `session.ready`, mirroring a real mac. */
+  lanHint?: { host: string; port: number };
 }
 
 /** The Mac-side counterpart used to drive the phone core in tests. */
@@ -254,7 +256,13 @@ export class FakeMac {
         );
         return;
       }
-      this.sendSealed('session.ready', { v: PROTOCOL_VERSION }, message.id);
+      this.sendSealed(
+        'session.ready',
+        this.opts.lanHint
+          ? { v: PROTOCOL_VERSION, lanHint: this.opts.lanHint }
+          : { v: PROTOCOL_VERSION },
+        message.id,
+      );
       await this.opts.afterReady?.(this);
       return;
     }

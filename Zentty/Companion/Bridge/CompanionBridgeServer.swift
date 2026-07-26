@@ -394,9 +394,7 @@ final class CompanionBridgeServer: CompanionSessionServicing {
         startListenerIfNeeded()
         let relayURL = relayURL ?? relayUrlProvider()
         let minted = pairingStore.mintOffer(ttl: ttl)
-        let lanHint = advertisedPort.map {
-            CompanionLanHint(host: ProcessInfo.processInfo.hostName, port: Int($0))
-        }
+        let lanHint = currentLanHint
         return CompanionPairingOffer(
             relayUrl: relayURL,
             lanHint: lanHint,
@@ -467,6 +465,19 @@ final class CompanionBridgeServer: CompanionSessionServicing {
 
     var appVersion: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
+    }
+
+    /// The endpoint a phone should dial for a direct connection, or `nil` while no
+    /// listener is bound.
+    ///
+    /// `hostName` is the Bonjour `.local` name rather than an address, so it
+    /// re-resolves on every connect and already survives a DHCP change. What it
+    /// does not survive is a rename or a different port — which is why this is
+    /// restated in every `session.ready`.
+    var currentLanHint: CompanionLanHint? {
+        advertisedPort.map {
+            CompanionLanHint(host: ProcessInfo.processInfo.hostName, port: Int($0))
+        }
     }
 
     func pairedDevice(withId deviceId: String) -> CompanionPairedDevice? {

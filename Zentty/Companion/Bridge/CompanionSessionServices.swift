@@ -66,6 +66,11 @@ protocol CompanionSessionServicing: AnyObject {
     /// This build's app version string (for `session.hello`).
     var appVersion: String { get }
 
+    /// This Mac's current direct-LAN endpoint, or `nil` when no listener is
+    /// bound. Restated in every `session.ready` so a phone's cached hint survives
+    /// a rename or a port change without re-pairing.
+    var currentLanHint: CompanionLanHint? { get }
+
     // Pairing
     func pairedDevice(withId deviceId: String) -> CompanionPairedDevice?
     /// Verifies a `pairing.request` proof against outstanding one-time offers.

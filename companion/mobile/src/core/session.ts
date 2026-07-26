@@ -315,6 +315,13 @@ export interface PhoneSessionOptions {
   /** Fired for a dropped/undecryptable frame (e.g. replay); non-fatal. */
   onFrameError?: (error: Error) => void;
   /**
+   * Fired when `session.ready` carries the mac's current LAN endpoint, so the
+   * caller can refresh its cached hint. Makes direct connection self-healing:
+   * a hint that went stale (mac renamed, listener on a new port) is corrected by
+   * any successful handshake, including one that came in over the relay.
+   */
+  onLanHint?: (lanHint: { host: string; port: number }) => void;
+  /**
    * Ceiling from {@link connect} to `session.ready`. If the crypto handshake or
    * the sealed hello/ready exchange does not complete in time, the session is
    * closed with a {@link HandshakeError} so the caller can reconnect with backoff.
@@ -593,7 +600,17 @@ export class PhoneSession {
   private dispatch(message: ParsedMessage): void {
     if (this._state === 'handshaking') {
       if (message.type === 'session.ready') {
-        this._version = (message.payload as { v: number }).v;
+        const payload = message.payload as {
+          v: number;
+          lanHint?: { host: string; port: number };
+        };
+        this._version = payload.v;
+        // The mac restates its LAN endpoint on every handshake. An ABSENT hint
+        // means "no listener right now", not "forget the one you have" — a mac
+        // reachable only over the relay today may be reachable directly later.
+        if (payload.lanHint) {
+          this.opts.onLanHint?.(payload.lanHint);
+        }
         this.setState('ready');
         this.ready?.resolve();
         this.ready = undefined;

@@ -468,3 +468,65 @@ describe('PhoneSession', () => {
     await macRun;
   });
 });
+
+describe('PhoneSession lanHint refresh', () => {
+  it('surfaces a lanHint restated in session.ready', async () => {
+    const sodium = await loadSodium();
+    const identity = makePhoneIdentity(sodium);
+    const macSeed = sodium.randomBytes(32);
+    const [phoneT, macT] = makePipe();
+    const mac = new FakeMac({
+      transport: macT,
+      sodium,
+      macIdentitySeed: macSeed,
+      phoneIdentityPublicKey: identity.publicKey,
+      lanHint: { host: 'renamed-mac.local', port: 7777 },
+    });
+    void mac.run().catch(() => undefined);
+
+    const seen: Array<{ host: string; port: number }> = [];
+    const session = new PhoneSession({
+      transport: phoneT,
+      identity,
+      mac: mac.pairedRecord(),
+      sodium,
+      deviceName: 'phone',
+      appVersion: '1.0',
+      onLanHint: (hint) => seen.push(hint),
+    });
+    await session.connect();
+    session.close();
+
+    expect(seen).toEqual([{ host: 'renamed-mac.local', port: 7777 }]);
+  });
+
+  it('does not fire when the mac has no listener bound', async () => {
+    const sodium = await loadSodium();
+    const identity = makePhoneIdentity(sodium);
+    const macSeed = sodium.randomBytes(32);
+    const [phoneT, macT] = makePipe();
+    const mac = new FakeMac({
+      transport: macT,
+      sodium,
+      macIdentitySeed: macSeed,
+      phoneIdentityPublicKey: identity.publicKey,
+    });
+    void mac.run().catch(() => undefined);
+
+    const seen: Array<{ host: string; port: number }> = [];
+    const session = new PhoneSession({
+      transport: phoneT,
+      identity,
+      mac: mac.pairedRecord(),
+      sodium,
+      deviceName: 'phone',
+      appVersion: '1.0',
+      onLanHint: (hint) => seen.push(hint),
+    });
+    await session.connect();
+    session.close();
+
+    // An absent hint means "no listener right now", never "forget the cached one".
+    expect(seen).toEqual([]);
+  });
+});

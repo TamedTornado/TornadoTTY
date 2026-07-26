@@ -83,6 +83,12 @@ export interface MacConnectionDeps {
   initialWorklanes?: Worklane[];
   /** Current native push token, read on every session-ready to register with the Mac. */
   pushToken?: () => PushToken | undefined;
+  /**
+   * Persists a refreshed direct-LAN endpoint for this Mac. Called only when the
+   * Mac reports an endpoint that differs from the cached one, so a steady state
+   * writes nothing.
+   */
+  onLanHintChanged?: (lanHint: { host: string; port: number }) => void;
 }
 
 /** A session that stays ready at least this long is treated as healthy, resetting backoff. */
@@ -324,6 +330,7 @@ export class MacConnection {
         deviceName: this.deps.deviceName,
         appVersion: this.deps.appVersion,
         onMessage: (message) => this.onMessage(message),
+        onLanHint: (lanHint) => this.onLanHint(lanHint),
         onStateChange: (sessionState: SessionState) => {
           if (sessionState === 'closed') {
             resolve();
@@ -354,6 +361,23 @@ export class MacConnection {
           session.close();
         });
     });
+  }
+
+  /**
+   * The Mac restated its LAN endpoint. Update the in-memory copy used by the
+   * next reconnect and hand it up for persistence — but only on a real change,
+   * so a steady state does no writes.
+   *
+   * This is what makes direct connection self-healing: the correction arrives
+   * over whatever path is working, which in the broken case is the relay.
+   */
+  private onLanHint(lanHint: { host: string; port: number }): void {
+    const current = this.deps.mac.lanHint;
+    if (current && current.host === lanHint.host && current.port === lanHint.port) {
+      return;
+    }
+    this.deps.mac = { ...this.deps.mac, lanHint };
+    this.deps.onLanHintChanged?.(lanHint);
   }
 
   private onMessage(message: ParsedMessage): void {

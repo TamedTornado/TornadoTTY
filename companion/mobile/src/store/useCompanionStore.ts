@@ -163,6 +163,20 @@ export const useCompanionStore = create<CompanionStore>((set, get) => ({
       pushToken: () => get().pushToken,
       onChange: (state) =>
         set((s) => ({ views: { ...s.views, [macDeviceId]: state } })),
+      // The Mac restated a different LAN endpoint (renamed, or a new listener
+      // port). Persist it and update the in-memory list so the next reconnect —
+      // and the next app launch — dial the right place.
+      onLanHintChanged: (lanHint) => {
+        void (async () => {
+          const storage = await getStorage();
+          const stored = await storage.getPairing(macDeviceId);
+          if (!stored) return;
+          await storage.addPairing({ ...stored, lanHint });
+          set((s) => ({
+            macs: s.macs.map((m) => (m.macDeviceId === macDeviceId ? { ...m, lanHint } : m)),
+          }));
+        })();
+      },
     });
     controllers.set(macDeviceId, connection);
     set((s) => ({ views: { ...s.views, [macDeviceId]: connection.state } }));
