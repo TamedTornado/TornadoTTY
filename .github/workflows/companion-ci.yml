@@ -9,7 +9,12 @@
 name: Companion CI
 
 on:
+  # Push is limited to main. On a branch with an open PR, keying the concurrency
+  # group cannot dedupe the two events — `push` and `pull_request` carry
+  # different refs AND different SHAs (the PR event uses the merge commit) — so
+  # every commit would run the whole job twice.
   push:
+    branches: [main]
     paths:
       - 'companion/**'
       - '.github/workflows/companion-ci.yml'
