@@ -503,7 +503,10 @@ final class LibghosttyRuntime: LibghosttyRuntimeProviding {
         }
 
         // Ghostty evaluates contrast against a fully transparent background as black,
-        // which can turn dark foregrounds white. Preserve theme colors on the app backdrop.
+        // which can turn dark foregrounds white. Unlike the other overrides in this file,
+        // this deliberately discards a user-set minimum-contrast: on the forced-transparent
+        // surface the contrast math runs against a background that is not actually visible,
+        // so honoring the user's value would apply a miscomputed adjustment, not their intent.
         var lines = "background-opacity = 0\nminimum-contrast = 1\n"
 
         guard !userConfigContainsBackgroundBlur(userConfigContents) else {

@@ -185,7 +185,9 @@ final class LibghosttyRuntimeTests: XCTestCase {
         XCTAssertFalse(contents?.contains("window-padding-y") ?? true)
     }
 
-    func testTransparentBackgroundOverrideContents_preservesThemeColorsOnTransparentSurface() {
+    // Intentional: a user-set minimum-contrast is discarded on the forced-transparent
+    // surface, where Ghostty would evaluate it against a background that is not visible.
+    func testTransparentBackgroundOverrideContents_overridesUserConfiguredMinimumContrast() {
         let contents = LibghosttyRuntime.transparentBackgroundOverrideContents(
             userConfigContents: """
             background-opacity = 0.95
