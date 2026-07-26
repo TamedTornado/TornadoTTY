@@ -428,7 +428,16 @@ final class LibghosttySurface: LibghosttySurfaceControlling, LibghosttySurfaceTe
         var width: Double = 0
         var height: Double = 0
         ghostty_surface_ime_point(surface, &x, &y, &width, &height)
-        return CGRect(x: x, y: y, width: width, height: height)
+        let scale = hostView?.window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1
+        return Self.imeRectInPoints(x: x, y: y, width: width, height: height, scale: scale)
+    }
+
+    /// libghostty's `ime_point` divides x, y, and height by the content scale but
+    /// leaves width in device pixels (upstream skips that divide on purpose,
+    /// "pending more investigation"), so width needs its own divide to make the
+    /// whole rect points.
+    static func imeRectInPoints(x: Double, y: Double, width: Double, height: Double, scale: CGFloat) -> CGRect {
+        CGRect(x: x, y: y, width: width / Double(max(scale, 1)), height: height)
     }
 
     func submitReturn() {

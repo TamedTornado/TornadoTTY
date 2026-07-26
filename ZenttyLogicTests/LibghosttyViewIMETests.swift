@@ -112,6 +112,31 @@ final class LibghosttyViewIMETests: AppKitTestCase {
     }
 }
 
+// `ghostty_surface_ime_point` hands back x/y/height in points but width in device
+// pixels (upstream leaves the width divide out on purpose), so `imeRect()` has to
+// normalise width itself or the caret rect is twice as wide on Retina and the
+// candidate window drifts right as the composition grows.
+@MainActor
+final class LibghosttySurfaceIMERectScalingTests: XCTestCase {
+    func test_width_is_scaled_from_pixels_to_points_on_retina() {
+        let rect = LibghosttySurface.imeRectInPoints(x: 120, y: 208, width: 32, height: 16, scale: 2)
+
+        XCTAssertEqual(rect, CGRect(x: 120, y: 208, width: 16, height: 16))
+    }
+
+    func test_rect_is_unchanged_at_1x() {
+        let rect = LibghosttySurface.imeRectInPoints(x: 120, y: 208, width: 16, height: 16, scale: 1)
+
+        XCTAssertEqual(rect, CGRect(x: 120, y: 208, width: 16, height: 16))
+    }
+
+    func test_degenerate_scale_does_not_inflate_the_width() {
+        let rect = LibghosttySurface.imeRectInPoints(x: 0, y: 0, width: 16, height: 16, scale: 0)
+
+        XCTAssertEqual(rect.width, 16)
+    }
+}
+
 private final class IMESurfaceSpy: LibghosttySurfaceControlling {
     var hasScrollback = false
     var cellWidth: CGFloat = 8
