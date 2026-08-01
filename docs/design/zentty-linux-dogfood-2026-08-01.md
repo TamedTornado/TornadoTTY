@@ -92,6 +92,11 @@ delegates to the explicit constructor, limiting compatibility risk.
   surface, and exited 0 through the unchanged `Surface.new` call path.
 - The complete post-patch `zig build test` command passed. Intentional
   negative-test warnings matched the baseline class of output.
+- Ghostty commit `e753619f3` promoted the spike from log inspection to an
+  assertion-based integration probe. It fails unless the plain host is the
+  process-default application, the Ghostty core surface initializes, the PTY
+  child-exit notification arrives, and every core tick succeeds. Both Wayland
+  and X11/Xwayland printed `embed-spike: PASS` and exited 0.
 
 ## Incidents and repairs
 
@@ -179,6 +184,26 @@ delegates to the explicit constructor, limiting compatibility risk.
   Wayland rerun also exited 0.
 - **Outcome:** Repaired in the integration host; this ordering becomes a
   required lifecycle contract for the eventual embedding API.
+
+### Default-application assertion initially depended on GLib ordering
+
+- **Observation:** The first semantic probe reported
+  `default_plain=false` even though surface initialization, PTY exit, and
+  teardown all succeeded.
+- **Consequence:** The probe correctly refused to certify that the explicit
+  owner was independent of process-default application state.
+- **Diagnosis:** The host created its non-running Ghostty runtime before
+  running the plain `GtkApplication`; relying on implicit GLib default-
+  application selection made the assertion dependent on construction and
+  startup order.
+- **Repair:** The activation callback now explicitly installs the plain host
+  with `g_application_set_default` before constructing `GhosttySurface`.
+- **Evidence:** This recreates the original failing condition deliberately,
+  but `newWithApplication` now initializes and runs the surface. Both backend
+  probes asserted the plain default, core initialization, child exit, and
+  tick health, printed `PASS`, and exited 0.
+- **Outcome:** Test assumption repaired; process-default independence is now a
+  deterministic assertion instead of an inference from logs.
 
 ### Baseline display access was unavailable inside the filesystem sandbox
 
