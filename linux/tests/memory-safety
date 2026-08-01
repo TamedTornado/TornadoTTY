@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+ghostty_source="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
+binary="${repo_root}/build/linux/bin/zentty-linux"
+metadata="${repo_root}/build/linux/build-metadata"
+backend="${GDK_BACKEND:-wayland}"
+receipt="${repo_root}/build/linux/memory-safety-${backend}.log"
+
+if ! command -v valgrind >/dev/null; then
+    echo "error: valgrind is required" >&2
+    exit 1
+fi
+if [[ ! -x "${binary}" ]]; then
+    echo "error: ${binary} does not exist; run linux/scripts/build-local" >&2
+    exit 1
+fi
+if [[ ! -f "${metadata}" ]] ||
+    ! grep -Fx "optimize=Debug" "${metadata}" >/dev/null; then
+    echo "error: memory-safety requires a Debug host; run GHOSTTY_OPTIMIZE=Debug linux/scripts/build-local" >&2
+    exit 1
+fi
+for suppression in \
+    "${ghostty_source}/valgrind.supp" \
+    "${ghostty_source}/src/gtk_embed_spike.valgrind.supp" \
+    "${repo_root}/linux/tests/valgrind.supp"; do
+    if [[ ! -f "${suppression}" ]]; then
+        echo "error: required suppression file not found: ${suppression}" >&2
+        exit 1
+    fi
+done
+
+GDK_BACKEND="${backend}" \
+ZENTTY_LINUX_INTEGRATION_TEST=1 \
+ZENTTY_LINUX_ASYNC_BACKEND=epoll \
+timeout 300s valgrind \
+    --error-exitcode=99 \
+    --leak-check=full \
+    --show-leak-kinds=definite,indirect \
+    --errors-for-leak-kinds=definite,indirect \
+    --suppressions="${ghostty_source}/valgrind.supp" \
+    --suppressions="${ghostty_source}/src/gtk_embed_spike.valgrind.supp" \
+    --suppressions="${repo_root}/linux/tests/valgrind.supp" \
+    "${binary}" >"${receipt}" 2>&1
+
+grep -F "zentty-linux: integration PASS" "${receipt}" >/dev/null
+grep -F "definitely lost: 0 bytes" "${receipt}" >/dev/null
+grep -F "indirectly lost: 0 bytes" "${receipt}" >/dev/null
+grep -F "ERROR SUMMARY: 0 errors" "${receipt}" >/dev/null
+
+echo "Zentty Linux memory-safety integration passed (${backend})"

@@ -1,0 +1,10 @@
+# Ubuntu 24.04's stripped librsvg emits undefined-value reports while GTK's
+# icon loader initializes SVG types. Keep this test-only suppression bounded by
+# the external library at the source and GDK Pixbuf at the consumer.
+{
+   GTK SVG loader stripped librsvg undefined values
+   Memcheck:Cond
+   obj:*librsvg*.so*
+   ...
+   fun:gdk_pixbuf_loader_close
+}

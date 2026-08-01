@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+backend="${GDK_BACKEND:-wayland}"
+build_dir="${repo_root}/build/linux"
+stage_dir="${build_dir}/staged-bundle-${backend}"
+
+rm -rf "${stage_dir}"
+mkdir -p "${stage_dir}/bin" "${stage_dir}/lib"
+cp "${build_dir}/bin/zentty-linux" "${stage_dir}/bin/"
+cp "${build_dir}/lib/libghostty-gtk-embed.so" "${stage_dir}/lib/"
+cp "${build_dir}/lib/libgtk4-layer-shell.so" "${stage_dir}/lib/"
+
+dependencies="$(ldd "${stage_dir}/bin/zentty-linux")"
+if grep -F "not found" <<<"${dependencies}" >/dev/null; then
+    printf '%s\n' "${dependencies}" >&2
+    exit 1
+fi
+grep -F "${stage_dir}/bin/../lib/libghostty-gtk-embed.so" \
+    <<<"${dependencies}" >/dev/null
+grep -F "${stage_dir}/bin/../lib/libgtk4-layer-shell.so" \
+    <<<"${dependencies}" >/dev/null
+
+GDK_BACKEND="${backend}" \
+ZENTTY_LINUX_BINARY="${stage_dir}/bin/zentty-linux" \
+ZENTTY_TEST_RECEIPT_NAME="staged-bundle-${backend}" \
+    "${repo_root}/linux/tests/single-terminal"
+
+echo "Zentty Linux staged bundle passed (${backend})"

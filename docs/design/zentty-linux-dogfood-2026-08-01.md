@@ -437,15 +437,189 @@ the event. Real GTK controller and IME coverage remains a separate gate.
 - **Outcome:** Open environment gap. Qualify with a real 2x output or controlled
   nested compositor rather than manufacturing a pass.
 
+## Product-boundary integration milestone
+
+The disposable Ghostty-owned spike is now frozen. Product work moved to a
+separate C/GTK host under Zentty, consuming an experimental shared-library and
+C-header boundary from the Ghostty fork. The first real host creates a plain
+`GtkApplication`, embeds the returned Ghostty widget, runs a real PTY command,
+acknowledges exact terminal output through an OSC title transition, observes
+initialization and child exit, continuously drives the Ghostty core mailbox,
+and tears the widget and runtime down in documented order.
+
+- The actual Zentty host passed the single-terminal semantic test on native
+  Wayland and on X11/Xwayland.
+- Ten independent process lifecycles passed per backend. Each run required
+  activation, terminal initialization, exact child output acknowledgement,
+  child exit, successful core ticks, and clean process exit.
+- A staged bundle containing only the Zentty executable, Ghostty embedding
+  library, and private layer-shell dependency resolved all libraries from its
+  own relative `bin`/`lib` layout and passed on both backends.
+- The boundary is compiled by a normal C17 compiler with warnings as errors
+  against the installed public header; the test does not import Ghostty Zig
+  implementation files or execute the old spike.
+- The complete post-boundary Ghostty Debug regression command passed with the
+  same intentional negative-path warnings as the qualified baseline:
+  `zig build test -Doptimize=Debug -Dcpu=baseline
+  -fno-sys=gtk4-layer-shell`.
+- The engine fork commit `b8d920495` is public and pinned by full revision in
+  `linux/ghostty.lock`. A clean no-override build cloned that public fork into
+  the ignored dependency directory, fetched and detached at the exact lock,
+  built the ReleaseSafe bundle, and passed the real host test on both display
+  backends.
+- The reproducible `linux/tests/qualify-local` orchestration completed from the
+  pinned checkout: ReleaseSafe single-terminal, staged-bundle, and ten-process
+  lifecycle gates passed on both backends; Debug Valgrind gates passed on both;
+  the script then restored ReleaseSafe and passed both final semantic checks.
+
+### The first reusable Ghostty library selected the wrong runtime
+
+- **Observation:** The initial shared-library artifact did not compile with
+  the GTK embedding implementation even though the equivalent executable
+  spike did.
+- **Consequence:** A working in-tree executable was not evidence of a usable
+  external product boundary.
+- **Diagnosis:** Ghostty selected its embedded runtime for every library
+  artifact, and its shared dependency builder omitted GTK dependencies for
+  libraries unconditionally.
+- **Repair:** Library artifacts now select GTK only when the configured
+  application runtime is GTK, and only such libraries receive the native GTK
+  dependency set. Existing non-GTK libraries retain their prior behavior.
+- **Evidence:** `zig build gtk-embed-lib` succeeds and exports the initial
+  runtime/surface entry points through `libghostty-gtk-embed.so`.
+- **Outcome:** Minimal build-system distinction added; the complete Ghostty
+  Debug regression passed before the engine change was committed and pushed.
+
+### Building Ghostty from Zentty's working directory broke resources
+
+- **Observation:** The first Zentty build script invoked Ghostty with
+  `zig build --build-file .../ghostty/build.zig` while its current directory
+  remained the Zentty repository. Ghostty's resource generator failed with
+  `FileNotFound`.
+- **Consequence:** The local integration build was not reproducible across
+  repository boundaries.
+- **Diagnosis:** Parts of Ghostty's resource build intentionally resolve paths
+  relative to the repository working directory, not only the build-file path.
+- **Repair:** The script enters the selected Ghostty checkout in a subshell and
+  invokes its ordinary build command there.
+- **Evidence:** Resource generation and the embedding-library build complete
+  through the Zentty build script.
+- **Outcome:** Host build now respects the engine repository's build contract
+  rather than patching resource paths downstream.
+
+### Bundling the private layer-shell library exposed ELF lookup mistakes
+
+- **Observation:** The Zentty executable linked, but its first real Wayland
+  run exited 127 because `libgtk4-layer-shell.so` was not found, even though
+  the file had been copied beside the Ghostty library.
+- **Consequence:** A successful link falsely appeared to be a distributable
+  integration.
+- **Diagnosis:** Ghostty's `-fno-sys=gtk4-layer-shell` build produces a private
+  dynamic library inside Zig's cache. The first resolver also parsed ldd's
+  `=> not found` text as a path, and the executable's RUNPATH does not supply a
+  transitive lookup path when the dependent Ghostty library has its own
+  RUNPATH.
+- **Repair:** The build identifies the exact built dependency, copies it into
+  the product `lib` directory, supplies a link-time `rpath-link`, and gives the
+  Ghostty embedding library a Linux `$ORIGIN` RUNPATH so its private dependency
+  is discoverable beside it.
+- **Evidence:** `ldd` reports no missing dependency; isolated staged bundles
+  resolve both non-system libraries from their own relative layout and pass
+  the full semantic host test on Wayland and X11/Xwayland.
+- **Outcome:** Relocatable local bundle qualified. System packaging and ABI
+  versioning remain open work.
+
+### The actual host reproduced the Valgrind io_uring stall
+
+- **Observation:** The first product-boundary Valgrind run initialized OpenGL,
+  started the real PTY, and saw its read thread exit, but it never received the
+  child watcher notification and timed out after 300 seconds.
+- **Consequence:** Reusing the spike's memory result would not qualify the real
+  shared-library boundary or Zentty teardown.
+- **Diagnosis:** The real host reproduced the previously observed Valgrind and
+  io_uring incompatibility. An environment variable invented by the first
+  Zentty test script had no effect because the library exposed no way to make
+  the required pre-event-loop backend selection.
+- **Repair:** The experimental C boundary now offers explicit default, epoll,
+  and io_uring runtime construction. The memory test requests epoll through
+  that API; ordinary product runs retain automatic selection.
+- **Evidence:** With explicit epoll, the instrumented real host observes exact
+  terminal output, child exit, teardown, and semantic `PASS` in seconds rather
+  than timing out.
+- **Outcome:** Runtime capability exposed instead of hiding a test-only switch
+  inside the Zentty process.
+
+### The first product Valgrind completion found unresolved value reports
+
+- **Observation:** After the epoll repair, Valgrind completed with zero
+  definite and indirect leaks but returned 99 for uninitialized-value and
+  conditional-branch reports. The tail of the first receipt showed Ubuntu's
+  stripped `librsvg` while GTK initialized its SVG icon loader.
+- **Consequence:** The actual-host memory gate is still red despite successful
+  product lifecycle assertions and zero owned leaks.
+- **Diagnosis:** The first diagnosis was incomplete: Ghostty's existing
+  suppression does expect an librsvg symbol absent from this stripped system
+  library, but a follow-up run with Valgrind suppression generation showed
+  earlier reports in Ghostty's `ensureLocale` path through Zig's writer and
+  memcpy implementation. A first bounded librsvg-to-GDK suppression therefore
+  could not and should not hide all 32 contexts.
+- **Repair:** No broad suppression and no passing claim has been made. Exact
+  suppression candidates were captured for diagnosis. The next run must
+  separate optimizer/tool false positives from an actual initialization bug;
+  product-owned `ensureLocale` frames are not classified as external noise.
+- **Evidence:** Current receipt records `integration PASS`, 0 bytes definitely
+  lost, 0 bytes indirectly lost, and `61 errors from 32 contexts`.
+- **Outcome:** Open ReleaseSafe instrumentation investigation. This is recorded
+  as a failure, not converted into a pass.
+
+### Debug instrumentation separated the ReleaseSafe reports
+
+- **Observation:** Rebuilding the identical shared-library boundary in Debug
+  mode eliminated the Ghostty `ensureLocale` value reports. With the narrow
+  external SVG-loader suppression, the actual Zentty host passed Valgrind on
+  both Wayland and X11/Xwayland.
+- **Consequence:** The memory gate needs to state which artifact it qualifies;
+  silently substituting Debug for the ReleaseSafe product would overclaim.
+- **Diagnosis:** The remaining product-owned reports are specific to optimized
+  Zig writer/memcpy code generation under Valgrind on this host. This narrows
+  the issue but does not yet prove those reports harmless.
+- **Repair:** The build accepts an explicit optimization mode and writes build
+  metadata containing that mode and the exact Ghostty revision. The memory
+  script refuses to run unless the current host is a recorded Debug build.
+- **Evidence:** Debug Wayland and X11/Xwayland receipts each contain semantic
+  `integration PASS`, zero definite leaks, zero indirect leaks, and
+  `ERROR SUMMARY: 0 errors`.
+- **Outcome:** Debug memory safety qualified for the real product boundary.
+  ReleaseSafe value correctness remains a separate open gate and is not
+  covered by this pass.
+
+### The first memory script still defaulted to the sibling checkout
+
+- **Observation:** Review after the full matrix found that the build defaulted
+  to the pinned ignored checkout, while the memory script still defaulted its
+  suppression-file path to `../ghostty`.
+- **Consequence:** The test happened to pass on the development machine but
+  would fail—or consume files from the wrong revision—on a clean public clone.
+- **Diagnosis:** The pinned-source change updated the build path but missed one
+  test-only default. The recorded binary metadata was correct; the auxiliary
+  suppression source was not guaranteed to match it.
+- **Repair:** The memory test now defaults to the same pinned
+  `build/linux-deps/ghostty` checkout and retains an explicit
+  `GHOSTTY_SOURCE_DIR` override for engine development.
+- **Evidence:** Static path audit now gives the build and memory gate the same
+  no-override source root. A clean-clone CI run remains a required independent
+  confirmation.
+- **Outcome:** Reproducibility defect repaired before the Zentty commit.
+
 ## Current next gate
 
-The explicit-owner, simultaneous-surface, repeated lifecycle, memory-safety,
-programmatic input, bidirectional clipboard, focus, resize, and normal-scale
-spike is now qualified. The next Ghostty-first gate is physical GTK key-event
-translation, IME composition, and a real compositor scale-factor change on
-both display backends. Zentty application code remains out of scope until
-those engine contracts are understood and tested or explicitly recorded as
-environment-dependent manual qualification.
+The Ghostty spike remains historical evidence and must not evolve into the
+product. The current product-boundary gaps are ReleaseSafe Valgrind value
+correctness, multiple simultaneous terminals, programmatic and physical
+keyboard input, bidirectional clipboard, focus, resize, IME composition, and a
+genuine scaled compositor on both display backends. A public CI environment
+with controlled nested compositors is also still required; local desktop
+receipts alone are not the final automation standard.
 
 The experiment remains an internal Zig/GTK integration surface rather than a
 public Ghostty ABI. Any extraction proposed upstream should be smaller than the
