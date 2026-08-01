@@ -43,7 +43,7 @@ test receipts, leak checks, or observed live behavior.
 
 ## Qualification baseline
 
-Baseline qualification has started but is not complete.
+Baseline qualification is complete for the unchanged Ghostty application.
 
 - The public Zentty and Ghostty forks exist and are locally configured with
   their source remotes.
@@ -54,20 +54,46 @@ Baseline qualification has started but is not complete.
   `src/apprt/gtk/class/surface.zig` plus a direct `GhosttyWindow` ancestor
   dependency.
 - The development host did not initially provide Zig, GTK4 development
-  metadata, or libadwaita development metadata. Toolchain installation and the
-  unchanged build remain the first executable gate.
+  metadata, or libadwaita development metadata. The baseline was built with
+  checksum-verified Zig 0.15.2, Blueprint Compiler 0.16.0 at tag commit
+  `04ef0944`, GTK 4.14.5, and libadwaita 1.5.0.
+- Unchanged debug build passed:
+  `zig build -Doptimize=Debug -Dcpu=baseline -fno-sys=gtk4-layer-shell`.
+  `ghostty +version` reported GTK runtime 4.14.5, libadwaita runtime 1.5.0,
+  OpenGL, X11, and Wayland support.
+- The full unchanged regression command passed:
+  `zig build test -Doptimize=Debug -Dcpu=baseline -fno-sys=gtk4-layer-shell`.
+  The warning output was produced by intentional negative-path tests; the
+  command exited zero.
+- A native Wayland smoke test created and realized the GTK surface, created an
+  OpenGL 4.6 EGL context, started a real PTY child, observed its zero exit after
+  2002 ms, unrealized the surface, and exited zero.
+- An X11/Xwayland smoke test exercised the same path with
+  `GDK_BACKEND=x11`; it selected the X11 protocol, realized OpenGL 4.6,
+  observed the PTY child's zero exit after 1999 ms, unrealized, and exited
+  zero.
 
 ## Incidents and repairs
 
-No implementation incident has yet reached diagnosis or repair. New entries
-must be added here as soon as a baseline, embedding, integration, or live Linux
-failure is observed.
+### Baseline display access was unavailable inside the filesystem sandbox
+
+- **Observation:** The first Wayland smoke command exited 1 with
+  `Gtk: Failed to open display`.
+- **Consequence:** No compositor claim could be made from the sandboxed run.
+- **Diagnosis:** The managed command sandbox could not access the user's
+  compositor socket. The Ghostty binary had already built successfully.
+- **Repair:** Re-ran the identical executable and backend selection with
+  explicit permission to access the live graphical session.
+- **Evidence:** Both the Wayland and X11/Xwayland runs then selected their
+  requested protocol, realized the OpenGL surface, ran and reaped a real PTY
+  child, unrealized the surface, and exited zero.
+- **Outcome:** Harness/environment issue resolved; no Ghostty source change.
 
 ## Current next gate
 
-Install the pinned Zig and Linux GTK development toolchain, build unchanged
-Ghostty at `4e9fe4bb5`, and validate it under both Wayland and X11 before making
-embedding changes.
+Build the minimal non-Ghostty GTK host and let it fail against the current
+surface implementation. That failure will define the first narrow extraction
+patch; Zentty application code remains out of scope at this gate.
 
 The first architectural experiment will use a minimal Zig/GTK host. Its purpose
 is to determine the smallest explicit runtime context that can replace the
