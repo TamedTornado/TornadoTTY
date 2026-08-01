@@ -75,6 +75,41 @@ Baseline qualification is complete for the unchanged Ghostty application.
 
 ## Incidents and repairs
 
+### Spike root was initially below the Zig module boundary
+
+- **Observation:** The first spike compile rejected
+  `@import("../class/surface.zig")` as an import outside the module path.
+- **Consequence:** The alternate host did not compile, so it had not yet
+  exercised Ghostty code.
+- **Diagnosis:** Zig scopes relative imports to the root module's directory;
+  placing the executable root below `src/apprt/gtk` prevented it from
+  importing the rest of Ghostty's source tree.
+- **Repair:** Moved only the executable root to `src/gtk_embed_spike.zig` and
+  retained the GTK-specific implementation and build step isolation.
+- **Evidence:** The next build compiled 91 of 93 steps and launched the host.
+- **Outcome:** Harness construction issue resolved; no production API change.
+
+### Plain GtkApplication cannot construct GhosttySurface
+
+- **Observation:** The minimal host activated a plain `GtkApplication`, then
+  panicked while executing `Surface.new(.none)`.
+- **Consequence:** Ghostty's existing GTK widget cannot currently be embedded
+  by another GTK application, despite GTK, GObject, Blueprint, and OpenGL
+  already being portable.
+- **Diagnosis:** Template initialization queried the surface's `key-sequence`
+  property. `getKeySequence` called `Application.default()`, which runtime-
+  checked the process default application as `GhosttyApplication`; the actual
+  default was the host's `GtkApplication`, so the optional cast was null and
+  the forced unwrap panicked at `class/application.zig:232`. This is the first
+  dynamically proven instance of the 18 static process-global dependencies.
+- **Repair:** Not yet applied. The extraction will introduce explicit runtime
+  ownership for a surface instead of weakening or bypassing the GObject type
+  check.
+- **Evidence:** The debug stack passed through `getKeySequence`, the GObject
+  property getter, `gtk.Widget.initTemplate`, `Surface.new`, and the spike's
+  activation callback. The process exited 1, as expected for this gate.
+- **Outcome:** Reproduced and diagnosed; this is the first source-change gate.
+
 ### Baseline display access was unavailable inside the filesystem sandbox
 
 - **Observation:** The first Wayland smoke command exited 1 with
@@ -91,9 +126,10 @@ Baseline qualification is complete for the unchanged Ghostty application.
 
 ## Current next gate
 
-Build the minimal non-Ghostty GTK host and let it fail against the current
-surface implementation. That failure will define the first narrow extraction
-patch; Zentty application code remains out of scope at this gate.
+Replace the surface's first process-default lookup with explicit runtime
+ownership, then repeatedly extend the same host until a real PTY initializes,
+renders, exits, and tears down. Zentty application code remains out of scope at
+this gate.
 
 The first architectural experiment will use a minimal Zig/GTK host. Its purpose
 is to determine the smallest explicit runtime context that can replace the
