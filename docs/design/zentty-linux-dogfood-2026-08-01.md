@@ -28,6 +28,19 @@ claims. An unchanged Ghostty build establishes the baseline. The alternate host
 must independently prove surface creation, PTY operation, input, resizing,
 multiple surfaces, focus, and teardown.
 
+## Acceptance and evidence standard
+
+This port uses integration qualification as its primary credibility gate. Each
+milestone must publish reproducible commands and concise result receipts for
+the upstream Ghostty regression suite, a real alternate GTK host, Wayland and
+X11, multi-surface lifecycle and stress behavior, and applicable live desktop,
+IME, scaling, clipboard, and GPU checks. Later Zentty milestones must exercise
+the packaged application end to end.
+
+An environment that was not run is a documented gap, not a pass. Screenshots
+may supplement evidence but cannot replace semantic assertions, process state,
+test receipts, leak checks, or observed live behavior.
+
 ## Qualification baseline
 
 Baseline qualification has started but is not complete.

@@ -57,6 +57,21 @@ entry, and observed result agree.
 Ghostty-fork fixes and this report live in separate repositories. Cross-link
 their commit hashes and publish both parts as one documented repair operation.
 
+### Linux port integration qualification
+
+Treat integration coverage as the primary credibility gate. Unit tests alone
+cannot certify the port. Every embedding or Linux-shell milestone must exercise
+the real Ghostty engine, GTK widget lifecycle, PTY, renderer, and display
+backend through the public/downstream integration boundary.
+
+The required gate includes unchanged Ghostty regression tests; a minimal host
+under Wayland and X11; multi-surface focus, resize, input, output, exit, and
+teardown; configuration and host-callback propagation; repeated lifecycle and
+leak checks; and live GNOME/KDE, IME, scaling, clipboard, and GPU qualification
+where automation cannot faithfully reproduce the environment. Publish exact
+commands and result receipts in the field report. Do not describe a milestone
+as complete when a required environment is untested; label the gap explicitly.
+
 ## Project Generation
 
 - Treat `project.yml` as the source of truth for Xcode project structure and generated build scripts.

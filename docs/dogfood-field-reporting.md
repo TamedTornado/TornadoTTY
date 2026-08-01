@@ -66,3 +66,34 @@ The canonical report lives in `TamedTornado/zentty`; engine fixes may live in
 
 If a follow-up is deliberately deferred, track it publicly and link it from the
 report.
+
+## Integration qualification standard
+
+The Linux port must be externally auditable. A passing unit test is necessary
+but is not evidence that an embedded terminal works. Each milestone must retain
+the commands and concise receipts for all applicable layers:
+
+1. **Upstream regression.** Run the focused Ghostty tests for changed modules,
+   the full Zig test gate before milestone integration, formatting checks, and
+   an unchanged standalone Ghostty build.
+2. **Embedding contract.** Build a host that is not `GhosttyApplication` and
+   verify runtime initialization, one and multiple surfaces, PTY input/output,
+   resize, focus transfer, configuration, host callbacks, child exit, window
+   close, and deterministic teardown.
+3. **Display backends.** Run the same host through native Wayland and X11. Use
+   automated headless backends in CI and retain live compositor checks for
+   behavior that a headless server cannot establish.
+4. **Desktop matrix.** Qualify GNOME/Mutter and KDE/KWin, mixed and fractional
+   scaling, standard and primary clipboards, dead keys, Compose, ibus, fcitx,
+   and representative Intel/AMD/NVIDIA paths as infrastructure permits.
+5. **Stress and resources.** Repeatedly create and destroy surfaces, run a
+   many-pane workload, close terminals with active and exited children, and use
+   Valgrind or equivalent tooling to detect GTK/GObject, PTY, and renderer
+   lifecycle leaks.
+6. **Zentty end to end.** Exercise launch, worklane and pane operations, session
+   persistence and restoration, agent status, command routing, and clean quit
+   through the packaged Linux application rather than isolated models.
+
+Record skipped environments as explicit qualification gaps with a reason and a
+tracked follow-up. Never collapse “not run” into “passed.” Prefer semantic
+assertions and process-visible evidence over screenshots alone.
