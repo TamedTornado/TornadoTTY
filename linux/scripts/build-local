@@ -82,6 +82,19 @@ cc \
     $(pkg-config --cflags --libs gtk4) \
     -o "${output_dir}/bin/zentty-linux"
 
+cc \
+    -std=c17 \
+    -Wall \
+    -Wextra \
+    -Werror \
+    -I"${ghostty_source}/zig-out/include" \
+    "${repo_root}/linux/tests/api-contract.c" \
+    -L"${output_dir}/lib" \
+    -Wl,-rpath-link,"${output_dir}/lib" \
+    -Wl,--disable-new-dtags,-rpath,'$ORIGIN/../lib' \
+    -lghostty-gtk-embed \
+    -o "${output_dir}/bin/api-contract"
+
 printf 'ghostty_source=%s\nghostty_revision=%s\noptimize=%s\n' \
     "${ghostty_source}" \
     "${ghostty_revision}" \

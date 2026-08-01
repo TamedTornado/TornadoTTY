@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+binary="${repo_root}/build/linux/bin/zentty-linux"
+api_contract="${repo_root}/build/linux/bin/api-contract"
+receipt="${repo_root}/build/linux/host-contract.log"
+
+if [[ ! -x "${binary}" ]]; then
+    echo "error: ${binary} does not exist; run linux/scripts/build-local" >&2
+    exit 1
+fi
+if [[ ! -x "${api_contract}" ]]; then
+    echo "error: ${api_contract} does not exist; run linux/scripts/build-local" >&2
+    exit 1
+fi
+
+"${api_contract}" | grep -Fx "api-contract: PASS" >/dev/null
+
+set +e
+ZENTTY_LINUX_INTEGRATION_TEST=1 \
+ZENTTY_LINUX_INTEGRATION_SURFACES=5 \
+    "${binary}" >"${receipt}" 2>&1
+status=$?
+set -e
+
+if [[ "${status}" -ne 64 ]]; then
+    echo "error: invalid surface count exited ${status}, expected 64" >&2
+    cat "${receipt}" >&2
+    exit 1
+fi
+grep -Fx "zentty-linux: invalid integration surface count" \
+    "${receipt}" >/dev/null
+
+echo "Zentty Linux host contract checks passed"

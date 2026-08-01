@@ -611,15 +611,180 @@ and tears the widget and runtime down in documented order.
   confirmation.
 - **Outcome:** Reproducibility defect repaired before the Zentty commit.
 
+## Multi-terminal product milestone
+
+Status: **qualified locally**. This reviewable increment moves simultaneous
+surface, focus, and resize qualification out of the frozen Ghostty spike and
+into the real Zentty executable. Acceptance requires four terminal widgets in
+a product-owned GTK grid, four independent PTYs with exact output and exit
+acknowledgements, focus transfer through every surface, a product layout reflow
+observed by a terminal allocation, clean teardown, and identical
+semantic results on Wayland and X11/Xwayland. The one-terminal, staged-bundle,
+repeated-lifecycle, memory, and Ghostty regression gates must remain green.
+
+The host now accepts a bounded integration-only surface count. Invalid counts
+must fail before GTK or Ghostty initialization with a stable usage exit status;
+normal product startup remains one terminal until actual Zentty workspace state
+owns pane creation.
+
+### Focusing the wrapper widget did not focus Ghostty's terminal area
+
+- **Observation:** The first four-terminal Wayland run initialized all four
+  OpenGL surfaces, acknowledged all four exact outputs, and observed all four
+  child exits, but timed out with only the initially focused terminal
+  confirmed and no resize qualification.
+- **Consequence:** Generic `gtk_widget_grab_focus()` on the returned public
+  widget cannot implement pane selection, so the product boundary is
+  insufficient even though terminal rendering and PTYs work.
+- **Diagnosis:** `GhosttySurface` is a composite widget. Its Zig `grabFocus`
+  method deliberately focuses the private `GtkGLArea`; asking GTK to focus the
+  outer `AdwBin` does not transfer focus into that private child.
+- **Repair:** Added one narrow embedding operation that delegates focus to the
+  terminal surface without exposing the private GTK child or Ghostty Zig type.
+  The Zentty test verifies the result through GTK's public root focus ancestry
+  rather than trusting the operation call.
+- **Evidence:** Failed receipt records `initialized=4 titles=4 children=4
+  focus=1 resize=0` and a semantic `FAIL` after the 12-second deadline.
+- **Outcome:** Subsequent Wayland runs confirmed all four focus transfers; no
+  timing increase or weakened focus assertion was accepted.
+
+### A fixed resize target matched the four-pane minimum allocation
+
+- **Observation:** After adding the narrow focus operation, the next Wayland
+  run confirmed all four focus transfers but timed out with resize still
+  unchanged.
+- **Consequence:** The focus repair was proven independently, but the combined
+  milestone remained red.
+- **Diagnosis:** Four rendered terminal widgets caused GTK to choose a window
+  allocation at least as large as the fixed 1200-pixel test target. Reapplying
+  that default therefore did not guarantee a size transition.
+- **Repair:** The test now reads the mapped window allocation and requests an
+  explicit increase of 200 by 100 pixels. It still requires the compositor to
+  apply the request and a terminal allocation to change before passing.
+- **Evidence:** The failed intermediate receipt records `focus=4 resize=0`;
+  a second relative-default-size attempt also left the allocation unchanged.
+- **Outcome:** GTK documentation confirms default size is an initial-size hint,
+  not a deterministic live resize mechanism. The product test now reflows its
+  four live panes from a two-column grid to a one-column grid and requires the
+  terminal allocation to change. A genuine externally driven compositor
+  resize remains a separate environment gate rather than a manufactured pass.
+
+### Four live product panes passed on both display backends
+
+- **Observation:** With the focus boundary and deterministic product reflow,
+  the real Zentty host completed its four-terminal scenario on native Wayland
+  and X11/Xwayland.
+- **Consequence:** Simultaneous surfaces, pane focus, and allocation changes no
+  longer rely on the disposable in-tree Ghostty spike.
+- **Evidence:** The receipt requires and records four initializations, four
+  distinct OSC output acknowledgements, four focus confirmations, a changed
+  terminal width after live grid reattachment, four child exits, successful
+  core ticks, semantic `PASS`, and process exit zero.
+- **Outcome:** Multi-terminal behavior qualified on both backends. The existing
+  single-terminal and staged-bundle gates were rerun on both and remained
+  green; stress, memory, and full Ghostty regressions remain pending.
+
+### Product-boundary input and clipboard qualification
+
+Status: **qualified locally**. A separate four-pane scenario targets operations
+the product needs but generic `GtkWidget` does not expose for Ghostty's private
+terminal child. The proposed boundary adds only terminal focus, UTF-8 input,
+and an asynchronous standard-clipboard paste request.
+
+The test does not accept successful API return values as proof. One real PTY
+must verify exact submitted keyboard text and acknowledge it through an OSC
+title. A second PTY must issue an OSC 52 clipboard write; Zentty must place the
+exact value onto the real GDK clipboard, request an asynchronous paste into a
+different surface, observe Ghostty's completion signal, release the canonical
+line with a carriage return through the same text path, and receive a second
+exact child acknowledgement. All prior
+multi-pane focus, reflow, lifecycle, and backend assertions remain active.
+
+#### Key injection initially ignored Ghostty's input-effect result
+
+- **Observation:** The first ReleaseSafe library build failed because the new
+  Enter-key wrapper discarded `CoreSurface.keyCallback`'s non-void
+  `InputEffect` result implicitly.
+- **Consequence:** The C boundary did not compile; no interaction result was
+  claimed.
+- **Diagnosis:** The wrapper needs only success/failure for its boolean ABI,
+  but Zig requires every semantic return value to be handled explicitly.
+- **Repair:** Explicitly discard the effect after successful dispatch while
+  retaining error-to-false conversion.
+- **Evidence:** The corrected ReleaseSafe library and C host compile with
+  warnings as errors.
+- **Outcome:** Compile-time contract caught and repaired before host testing.
+  The key-specific wrapper was subsequently removed entirely: carriage return
+  through the generic text path exercises the required PTY behavior without a
+  one-value, test-shaped public key enum.
+
+#### Exact input and clipboard round trips passed on both backends
+
+- **Observation:** The real four-pane Zentty interaction scenario passed on
+  native Wayland and X11/Xwayland.
+- **Evidence:** The keyboard API reported submission, but the gate passed only
+  after the target PTY read and compared `zentty-product-keyboard` and emitted
+  its acknowledgement. A different PTY emitted OSC 52 containing
+  `zentty-product-clipboard`; Zentty observed the exact write, stored it in the
+  GDK standard clipboard, started Ghostty's asynchronous paste on another
+  surface, observed `clipboard-read`, sent carriage return, and received the
+  child's exact acknowledgement. Four focus transitions, live pane reflow,
+  four child exits, core ticks, and teardown also passed.
+- **Outcome:** Programmatic input and real GDK clipboard round trips qualified
+  through the product boundary on both display backends. Physical key-event
+  translation and IME remain separate gates.
+
+The public header is also compiled from an independent C17 contract program
+with warnings as errors. It verifies invalid async-backend rejection, null-safe
+runtime destruction, null runtime tick and surface creation failure, null-safe
+focus, and false-returning null input/clipboard operations before any desktop
+integration test runs.
+
+The complete Ghostty Debug regression suite passed after the focus, text, and
+clipboard operations were added. Its warning output remained the same
+intentional negative-path class recorded at baseline.
+
+Ghostty commit `7fa70f310` contains only the three minimal surface operations
+and their C declarations. It is public on `zentty/gtk-embed` and is pinned by
+full revision in Zentty. The initially proposed one-value key API was not
+committed.
+
+The final `linux/tests/qualify-local` run at this milestone passed from the
+public full-revision lock. It covered the C ABI contract, single terminal,
+four simultaneous terminals, exact keyboard and bidirectional GDK clipboard
+round trips, focus, live pane reflow, staged relocation, ten process
+lifecycles, and final ReleaseSafe semantic checks on both display backends;
+the pinned full Ghostty Debug regression and both Debug Valgrind gates also
+passed. The orchestrator restored a ReleaseSafe artifact before exiting.
+
+#### Shell syntax check glob included the new C contract source
+
+- **Observation:** A pre-regression `bash -n linux/tests/*` invocation tried to
+  parse `api-contract.c` as shell and failed at `int main(void)`.
+- **Consequence:** The regression command did not start; this supplied no
+  engine test result.
+- **Diagnosis:** Adding a C source beside executable test drivers made the old
+  broad shell glob invalid.
+- **Repair:** Syntax checks enumerate executable shell drivers rather than all
+  files in the directory. The C source continues to compile with `-Werror` in
+  the normal build.
+- **Evidence:** The corrected driver ran against exact pinned commit
+  `7fa70f310` and the complete suite exited zero.
+- **Outcome:** Test invocation error recorded separately from product status;
+  the regression itself is green.
+
 ## Current next gate
 
 The Ghostty spike remains historical evidence and must not evolve into the
-product. The current product-boundary gaps are ReleaseSafe Valgrind value
-correctness, multiple simultaneous terminals, programmatic and physical
-keyboard input, bidirectional clipboard, focus, resize, IME composition, and a
-genuine scaled compositor on both display backends. A public CI environment
-with controlled nested compositors is also still required; local desktop
-receipts alone are not the final automation standard.
+product. The next product stage is a real Linux worklane UI and persistent
+workspace model using the now-qualified multi-surface boundary; normal startup
+intentionally remains one terminal until that product model owns pane creation.
+Remaining engine/environment gaps are physical GTK key-event translation, IME
+composition, a genuine externally driven resize, real scaled compositors,
+ReleaseSafe Valgrind value correctness, and public CI with controlled Wayland
+and X11 environments. Packaging and install/uninstall qualification also
+remain open. Local desktop receipts alone are not the final automation
+standard.
 
 The experiment remains an internal Zig/GTK integration surface rather than a
 public Ghostty ABI. Any extraction proposed upstream should be smaller than the

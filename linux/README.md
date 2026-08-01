@@ -26,10 +26,11 @@ The complete local matrix is one command:
 linux/tests/qualify-local
 ```
 
-It runs the ReleaseSafe semantic, staged-bundle, and ten-process lifecycle
-matrix on both backends; rebuilds Debug for both memory gates; then restores a
-ReleaseSafe bundle and reruns both semantic checks. The individual commands
-below are useful while diagnosing a specific gate.
+It runs the ReleaseSafe semantic, four-terminal focus/resize, staged-bundle,
+input/clipboard, and ten-process lifecycle matrix on both backends; runs the
+complete pinned Ghostty Debug regression suite; rebuilds Debug for both memory
+gates; then restores a ReleaseSafe bundle and reruns both semantic checks. The
+individual commands below are useful while diagnosing a specific gate.
 
 ReleaseSafe product boundary:
 
@@ -37,6 +38,10 @@ ReleaseSafe product boundary:
 linux/scripts/build-local
 GDK_BACKEND=wayland linux/tests/single-terminal
 GDK_BACKEND=x11 linux/tests/single-terminal
+GDK_BACKEND=wayland linux/tests/multi-terminal
+GDK_BACKEND=x11 linux/tests/multi-terminal
+GDK_BACKEND=wayland linux/tests/interaction
+GDK_BACKEND=x11 linux/tests/interaction
 GDK_BACKEND=wayland linux/tests/staged-bundle
 GDK_BACKEND=x11 linux/tests/staged-bundle
 GDK_BACKEND=wayland linux/tests/repeated-lifecycle
