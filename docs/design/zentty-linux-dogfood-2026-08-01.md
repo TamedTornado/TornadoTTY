@@ -127,6 +127,38 @@ lifecycle and memory-safety gate without adding Zentty application code.
   reachable third-party process-global state remains reported, not classified
   as a test failure.
 
+## Interaction qualification
+
+Ghostty commit `8f5141d7e` adds a separate `gtk-embed-interaction` target. It
+keeps the lifecycle probe simple while using four specialized real PTYs to
+test cross-surface behavior.
+
+- A programmatic embedder text submission plus a distinct Enter key event was
+  sent through Ghostty core to a child. The child verified the exact bytes and
+  returned an OSC title acknowledgement; the host asserted that acknowledgement
+  before accepting child exit.
+- Another child issued an OSC 52 clipboard write. The host asserted the exact
+  standard-clipboard contents, asynchronously read them back through GDK, and
+  pasted them into a second PTY. That child verified the exact bytes and sent a
+  separate title acknowledgement. Both `clipboard-write` and `clipboard-read`
+  signals were required.
+- The host moved focus through all four embedded surfaces and checked each
+  surface's focus state after GTK delivered the transition.
+- A live window resize changed every terminal allocation and caused the resize
+  child to receive `SIGWINCH`. The host independently asserted that the tested
+  widget width changed from 1000 to 1200 pixels.
+- Post-map content scale was read and required to be positive for every
+  surface. The development display reported 1.00 on both axes.
+- The ReleaseSafe interaction target passed with all semantic assertions and
+  four clean child exits on native Wayland and X11/Xwayland. The full debug
+  Ghostty regression suite passed afterward.
+
+This is not yet a claim that compositor-generated physical keyboard events or
+an external IME were automated. Wayland intentionally prevents ordinary
+clients from globally synthesizing trusted input. The target instead proves
+the input contract an embedding host calls after its toolkit has interpreted
+the event. Real GTK controller and IME coverage remains a separate gate.
+
 ## Incidents and repairs
 
 ### Spike root was initially below the Zig module boundary
@@ -337,14 +369,83 @@ lifecycle and memory-safety gate without adding Zentty application code.
 - **Outcome:** Environment failure recorded separately; no cache deletion,
   dependency repinning, or source workaround was used.
 
+### The first keyboard child waited for the wrong byte count
+
+- **Observation:** The first interaction run sent keyboard input but timed out
+  with only three of four children exited.
+- **Consequence:** A boolean "input sent" assertion was insufficient evidence
+  that the PTY received the intended data.
+- **Diagnosis:** The harness counted `ghostty-embed-keyboard` as 23 bytes; it is
+  22. The child therefore consumed the following carriage return as data,
+  rejected the value, and deliberately stayed alive.
+- **Repair:** Corrected the byte count and added a child-to-host OSC title
+  acknowledgement. The target now requires both successful API submission and
+  exact child verification.
+- **Evidence:** Subsequent runs logged `keyboard input acknowledged by child`,
+  observed that child's exit, and passed on both backends.
+- **Outcome:** Harness defect repaired and the semantic assertion strengthened.
+
+### Clipboard paste remained buffered by the PTY line discipline
+
+- **Observation:** The host observed exact OSC clipboard write and asynchronous
+  clipboard-read signals, but the receiving child remained blocked.
+- **Consequence:** Toolkit clipboard success still did not prove delivery to
+  the PTY.
+- **Diagnosis:** The shell PTY was in canonical mode. The clipboard contained
+  no newline, so the kernel correctly buffered it rather than satisfying the
+  child's read.
+- **Repair:** After successful asynchronous clipboard completion, the probe
+  sends a distinct Enter key event to release the canonical line. The child
+  verifies only the 23 clipboard bytes and acknowledges via its title.
+- **Evidence:** Both backends logged clipboard write, read, exact child
+  acknowledgement, and child exit before `PASS`.
+- **Outcome:** Test now reflects real terminal line-discipline behavior instead
+  of weakening the clipboard assertion.
+
+### Fixed-time focus and resize checks were briefly flaky
+
+- **Observation:** One debug run confirmed three of four focus transfers and
+  another sampled the old width before Wayland applied the resize.
+- **Consequence:** The first timing scheme could reject correct asynchronous
+  compositor behavior.
+- **Diagnosis:** The focus cycle and resize were scheduled at overlapping fixed
+  deadlines, and a failed focus sample advanced rather than retrying the same
+  widget.
+- **Repair:** Focus retries the same surface until GTK reports it focused;
+  resize runs after focus qualification and repeats its observation until the
+  allocation changes or the overall deadline expires.
+- **Evidence:** Stabilized Wayland and X11/Xwayland runs confirmed all four
+  focus transfers and the 1000-to-1200 width change.
+- **Outcome:** Harness timing repaired without extending or bypassing semantic
+  failure conditions.
+
+### Forced 2x scale did not produce a 2x Wayland content scale
+
+- **Observation:** Running the full interaction target with `GDK_SCALE=2` and
+  a required minimum content scale of 2 still reported 1.00 for every mapped
+  surface and correctly failed `scales=0/4`.
+- **Consequence:** High-DPI behavior is not qualified on this host; setting an
+  environment variable is not accepted as proof of a compositor scale change.
+- **Diagnosis:** In the native Wayland session, the compositor continued to
+  advertise scale 1 to GTK. Moving the check from initialization to after map
+  confirmed that early widget timing was not the cause.
+- **Repair:** No production workaround was introduced. The probe retains an
+  optional minimum-scale assertion for a genuine scaled compositor/monitor.
+- **Evidence:** The forced run exercised and passed every other interaction
+  assertion but failed only the explicit 2x scale requirement. Normal-scale
+  Wayland and X11/Xwayland reruns passed with post-map scale 1.00.
+- **Outcome:** Open environment gap. Qualify with a real 2x output or controlled
+  nested compositor rather than manufacturing a pass.
+
 ## Current next gate
 
-The explicit-owner, simultaneous-surface, repeated lifecycle, and memory-safety
-spike is now qualified. The next Ghostty-first gate is automated interaction:
-resize, focus transfer, keyboard input with terminal-state verification,
-clipboard in both directions, scale-factor changes, and IME behavior on both
-display backends. Zentty application code remains out of scope until those
-engine contracts are understood and tested.
+The explicit-owner, simultaneous-surface, repeated lifecycle, memory-safety,
+programmatic input, bidirectional clipboard, focus, resize, and normal-scale
+spike is now qualified. The next Ghostty-first gate is physical GTK key-event
+translation, IME composition, and a real compositor scale-factor change on
+both display backends. Zentty application code remains out of scope until
+those engine contracts are understood and tested or explicitly recorded as
+environment-dependent manual qualification.
 
 The experiment remains an internal Zig/GTK integration surface rather than a
 public Ghostty ABI. Any extraction proposed upstream should be smaller than the
