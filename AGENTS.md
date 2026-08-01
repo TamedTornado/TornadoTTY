@@ -38,6 +38,25 @@ Guidelines:
 - Do not add design docs, specs, or plans to git unless Peter explicitly asks.
 - It is fine to create them locally for discussion or planning, but keep them untracked and ignored by default.
 
+## Linux Port Dogfood Field Reports
+
+The public Linux port is an explicit downstream exception to the design-doc
+rule above. Maintain its production-style dogfood record while investigating
+and repairing the Ghostty GTK embedding and Zentty Linux application.
+
+Follow [`docs/dogfood-field-reporting.md`](docs/dogfood-field-reporting.md).
+The active report is
+[`docs/design/zentty-linux-dogfood-2026-08-01.md`](docs/design/zentty-linux-dogfood-2026-08-01.md).
+
+Do not reconstruct the record at the end of a long implementation run. Record
+observed behavior, impact, evidence identifiers, diagnosis, failed attempts,
+repair, regression coverage, and live outcome as each becomes known. Clearly
+label hypotheses. A repair is incomplete until its code, tests, field-report
+entry, and observed result agree.
+
+Ghostty-fork fixes and this report live in separate repositories. Cross-link
+their commit hashes and publish both parts as one documented repair operation.
+
 ## Project Generation
 
 - Treat `project.yml` as the source of truth for Xcode project structure and generated build scripts.
