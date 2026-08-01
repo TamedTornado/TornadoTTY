@@ -73,6 +73,26 @@ Baseline qualification is complete for the unchanged Ghostty application.
   observed the PTY child's zero exit after 1999 ms, unrealized, and exited
   zero.
 
+## First embedding milestone
+
+Ghostty commit `32f631d5f` is the first working extraction spike. A plain
+`GtkApplication` owns the window while an explicit, non-default Ghostty GTK
+runtime owns `GhosttySurface`. The legacy Ghostty constructor remains and
+delegates to the explicit constructor, limiting compatibility risk.
+
+- `Surface` no longer reads `Application.default()` after construction; its
+  allocator, core app, runtime app, configuration, window protocol, clipboard,
+  notification, and teardown paths resolve through its retained owner.
+- The alternate host selected native Wayland, constructed and realized the
+  widget, initialized OpenGL 4.6, started `/bin/sh` through a real PTY, observed
+  exit 0 after 1999 ms, destroyed and finalized the surface, and exited 0.
+- The identical host selected X11/Xwayland, ran the same PTY path with exit 0
+  after 1998 ms, finalized the surface, and exited 0.
+- Normal Ghostty still selected Wayland, ran a real PTY child, finalized the
+  surface, and exited 0 through the unchanged `Surface.new` call path.
+- The complete post-patch `zig build test` command passed. Intentional
+  negative-test warnings matched the baseline class of output.
+
 ## Incidents and repairs
 
 ### Spike root was initially below the Zig module boundary
@@ -102,13 +122,63 @@ Baseline qualification is complete for the unchanged Ghostty application.
   default was the host's `GtkApplication`, so the optional cast was null and
   the forced unwrap panicked at `class/application.zig:232`. This is the first
   dynamically proven instance of the 18 static process-global dependencies.
-- **Repair:** Not yet applied. The extraction will introduce explicit runtime
-  ownership for a surface instead of weakening or bypassing the GObject type
-  check.
+- **Repair:** Added a retained explicit owner and `newWithApplication`; the
+  existing `new` delegates with `Application.default()` for compatibility.
+  All later surface operations use the retained owner. Template getters use
+  the C allocator only during the narrow GObject construction interval before
+  the owner can be attached.
 - **Evidence:** The debug stack passed through `getKeySequence`, the GObject
   property getter, `gtk.Widget.initTemplate`, `Surface.new`, and the spike's
   activation callback. The process exited 1, as expected for this gate.
-- **Outcome:** Reproduced and diagnosed; this is the first source-change gate.
+- **Outcome:** Repaired at Ghostty commit `32f631d5f`; qualified on Wayland,
+  X11/Xwayland, the normal Ghostty application, and the full regression suite.
+
+### Anonymous constructor option structs were not interchangeable
+
+- **Observation:** The first compatibility wrapper failed to compile because
+  Zig treated the textually identical anonymous option structs on `new` and
+  `newWithApplication` as distinct types.
+- **Consequence:** Normal Ghostty could not build with the first draft.
+- **Diagnosis:** Anonymous structs have type identity per declaration rather
+  than structural interchangeability.
+- **Repair:** Introduced one named `Surface.NewOptions` type and used it for
+  both constructors.
+- **Evidence:** The unchanged Ghostty build and subsequent full test suite
+  compiled and passed.
+- **Outcome:** Source compatibility preserved with a smaller shared contract.
+
+### GLib callback constants translated as booleans
+
+- **Observation:** The spike's first periodic core-tick callback did not
+  compile when returning `G_SOURCE_CONTINUE` from a C-ABI function declared to
+  return `c_int`.
+- **Consequence:** The host could not yet drive the Ghostty core mailbox from
+  the plain GTK event loop.
+- **Diagnosis:** Zig's C translation exposed the GLib macros as booleans while
+  `GSourceFunc` uses `gboolean`, an integer ABI type.
+- **Repair:** Returned explicit ABI values `1` for continue and `0` for remove.
+- **Evidence:** The callback compiled and drained core surface messages during
+  both compositor runs.
+- **Outcome:** Harness ABI corrected; no production behavior was weakened.
+
+### X11 teardown retained the surface past core-app destruction
+
+- **Observation:** The first successful X11 PTY run unrealized its widget but
+  then asserted that `font_grid_set.count()` was nonzero in `App.deinit`.
+- **Consequence:** X11 functionality worked, but lifecycle qualification
+  failed and the command exited 1.
+- **Diagnosis:** Destroying the X11 window was not sufficient to synchronously
+  finalize every GObject before the host destroyed the Ghostty core. The
+  `GtkApplication` still owned pending teardown work, and the repeating tick
+  source also remained registered.
+- **Repair:** The host now removes its tick source, destroys the window, quits,
+  unreferences the host application, and drains the default GLib context
+  before terminating the Ghostty runtime and core.
+- **Evidence:** Two subsequent X11 runs finalized renderer and IO threads,
+  logged `surface closed`, produced no panic, and exited 0. The matching
+  Wayland rerun also exited 0.
+- **Outcome:** Repaired in the integration host; this ordering becomes a
+  required lifecycle contract for the eventual embedding API.
 
 ### Baseline display access was unavailable inside the filesystem sandbox
 
@@ -126,10 +196,10 @@ Baseline qualification is complete for the unchanged Ghostty application.
 
 ## Current next gate
 
-Replace the surface's first process-default lookup with explicit runtime
-ownership, then repeatedly extend the same host until a real PTY initializes,
-renders, exits, and tears down. Zentty application code remains out of scope at
-this gate.
+Turn the single-surface spike into a deterministic integration target with
+semantic assertions, then qualify repeated creation/destruction, simultaneous
+surfaces, resize/focus/input, clipboard, and leak behavior on both backends.
+Zentty application code remains out of scope at this gate.
 
 The first architectural experiment will use a minimal Zig/GTK host. Its purpose
 is to determine the smallest explicit runtime context that can replace the
