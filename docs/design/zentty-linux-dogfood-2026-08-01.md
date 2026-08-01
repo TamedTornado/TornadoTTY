@@ -98,6 +98,35 @@ delegates to the explicit constructor, limiting compatibility risk.
   child-exit notification arrives, and every core tick succeeds. Both Wayland
   and X11/Xwayland printed `embed-spike: PASS` and exited 0.
 
+## Lifecycle and memory qualification
+
+Ghostty commits `44743e839` and `94fe18e78` extend the spike into a repeatable
+lifecycle and memory-safety gate without adding Zentty application code.
+
+- The default host now creates four simultaneous `GhosttySurface` widgets,
+  each backed by an independent real PTY child. It asserts the exact number of
+  core initializations and child-exit notifications, continues checking every
+  core tick, and drains finalization before destroying the Ghostty core.
+- One four-surface debug run passed on native Wayland and one passed through
+  X11/Xwayland. Both observed four initializations, four child exits, four
+  `surface closed` events, and `embed-spike: PASS`.
+- Ten consecutive process runs passed per backend: 40 constructed, initialized,
+  exercised, and finalized terminal surfaces on Wayland, plus another 40 on
+  X11/Xwayland. No run timed out or returned a nonzero status.
+- The complete post-change debug regression command passed:
+  `zig build test -Doptimize=Debug -Dcpu=baseline
+  -fno-sys=gtk4-layer-shell`.
+- A focused regression test frees the source configuration arena immediately
+  after building a POSIX shell subprocess command, then verifies that all
+  generated `argv` strings remain valid.
+- The ReleaseSafe Valgrind gate runs one real surface and PTY with the epoll
+  libxev backend. Both native Wayland and X11/Xwayland passed with zero
+  definite leaks, zero indirect leaks, and `ERROR SUMMARY: 0 errors` after
+  narrowly suppressing confirmed process-global allocations in the dynamic
+  loader, GTK GIO module scan, and fontconfig/Expat caches. Possibly-lost and
+  reachable third-party process-global state remains reported, not classified
+  as a test failure.
+
 ## Incidents and repairs
 
 ### Spike root was initially below the Zig module boundary
@@ -219,17 +248,108 @@ delegates to the explicit constructor, limiting compatibility risk.
   child, unrealized the surface, and exited zero.
 - **Outcome:** Harness/environment issue resolved; no Ghostty source change.
 
+### Four-surface stress exposed a shell-command lifetime bug
+
+- **Observation:** Valgrind reported that `execve` read a command argument from
+  memory already freed when the temporary surface configuration was destroyed.
+- **Consequence:** The live PTY commonly appeared to work because the stale
+  bytes had not yet been overwritten, but the POSIX shell command path had a
+  genuine use-after-free.
+- **Diagnosis:** `execCommand` cloned strings for a direct command but appended
+  the `.shell` command pointer without cloning it. The pointer usually belonged
+  to the temporary `Config` arena, while the subprocess retained `argv` in its
+  own longer-lived arena.
+- **Repair:** The shell branch now duplicates its zero-terminated command into
+  the subprocess allocator, matching the existing direct-command ownership
+  rule. A focused test destroys the command arena before inspecting `argv`.
+- **Evidence:** The focused test passed, the full Ghostty regression suite
+  passed, both four-surface compositor runs passed, and both final Valgrind
+  gates completed with zero errors.
+- **Outcome:** Repaired in isolated Ghostty commit `44743e839`, separate from
+  the embedding API work so it can be reviewed independently.
+
+### Debug Valgrind was too slow for a useful integration gate
+
+- **Observation:** A four-surface Debug build under Valgrind did not complete
+  within 180 seconds and had only partially initialized OpenGL.
+- **Consequence:** The first memory-check command was not deterministic enough
+  for CI or credible repeated qualification.
+- **Diagnosis:** Instrumenting four debug OpenGL terminal stacks multiplied
+  startup cost without increasing the memory-lifetime coverage needed for this
+  gate.
+- **Repair:** The dedicated target uses ReleaseSafe and one real surface while
+  the normal debug target retains four simultaneous surfaces and repeated-run
+  stress coverage.
+- **Evidence:** The final one-surface Valgrind runs completed on both backends,
+  exercised OpenGL, PTY creation and exit, and teardown, and exited zero.
+- **Outcome:** Test matrix split by purpose rather than weakening either gate.
+
+### Valgrind and io_uring stalled after the child exited
+
+- **Observation:** The first ReleaseSafe Valgrind run reached PTY reader exit
+  but did not deliver the child watcher event before a 300-second timeout.
+- **Consequence:** The host could not complete its child-exit assertion or
+  teardown under Memcheck.
+- **Diagnosis:** The ordinary io_uring path passes live tests, but its kernel
+  interface is not reliably driven under Valgrind instrumentation. This was a
+  tool/backend interaction, not evidence that the normal runtime had stalled.
+- **Repair:** Only the Valgrind target requests libxev's epoll backend before
+  surface IO loops are created. Normal embedding tests continue to exercise
+  Ghostty's default io_uring selection.
+- **Evidence:** With epoll, Valgrind observed child exit and complete teardown
+  on both Wayland and X11/Xwayland.
+- **Outcome:** Deterministic instrumentation path added without changing
+  production backend selection.
+
+### Platform-global allocations initially failed the leak gate
+
+- **Observation:** After the Ghostty command use-after-free was repaired,
+  Valgrind still returned 99 for small definite and indirect allocations whose
+  stacks terminated in the ELF loader, GTK's GIO module scan, or
+  fontconfig/Expat configuration parsing.
+- **Consequence:** Treating all process-exit allocations alike produced a
+  failing gate even though none were owned by the surface or embedding patch.
+- **Diagnosis:** These libraries intentionally retain process-global caches and
+  dynamically loaded module metadata. Ghostty's existing suppression file did
+  not match several Ubuntu 24.04 stripped-library stack shapes.
+- **Repair:** Added a spike-local suppression file with stack-specific rules;
+  it is applied in addition to Ghostty's existing file. Definite and indirect
+  Ghostty-owned allocations, invalid reads/writes, and other address errors
+  remain fatal.
+- **Evidence:** Final Wayland summary: 0 definite, 0 indirect, 0 errors. Final
+  X11/Xwayland summary: 0 definite, 0 indirect, 0 errors. Each run also printed
+  the host's semantic `PASS` result.
+- **Outcome:** Leak policy now distinguishes confirmed platform lifetime from
+  product regressions without a blanket leak suppression.
+
+### The managed sandbox made Zig's global cache read-only
+
+- **Observation:** A post-change full regression invocation inside the
+  filesystem sandbox failed before compilation with `ReadOnlyFileSystem` for
+  `/home/jason/.cache/zig` and secondary `manifest_create Unexpected` errors.
+- **Consequence:** That invocation supplied no source-code test result.
+- **Diagnosis:** Ghostty's already-populated Zig package and compiler caches are
+  outside the workspace write roots.
+- **Repair:** Re-ran the identical command with explicit permission to use the
+  existing cache, just as live compositor tests require explicit desktop
+  access.
+- **Evidence:** The elevated command completed the entire suite and exited 0.
+- **Outcome:** Environment failure recorded separately; no cache deletion,
+  dependency repinning, or source workaround was used.
+
 ## Current next gate
 
-Turn the single-surface spike into a deterministic integration target with
-semantic assertions, then qualify repeated creation/destruction, simultaneous
-surfaces, resize/focus/input, clipboard, and leak behavior on both backends.
-Zentty application code remains out of scope at this gate.
+The explicit-owner, simultaneous-surface, repeated lifecycle, and memory-safety
+spike is now qualified. The next Ghostty-first gate is automated interaction:
+resize, focus transfer, keyboard input with terminal-state verification,
+clipboard in both directions, scale-factor changes, and IME behavior on both
+display backends. Zentty application code remains out of scope until those
+engine contracts are understood and tested.
 
-The first architectural experiment will use a minimal Zig/GTK host. Its purpose
-is to determine the smallest explicit runtime context that can replace the
-surface's process-global `GhosttyApplication` assumptions. It is not initially
-a public ABI and is not initially intended for upstream submission.
+The experiment remains an internal Zig/GTK integration surface rather than a
+public Ghostty ABI. Any extraction proposed upstream should be smaller than the
+fork's test harness, preserve the legacy constructor, and be independently
+reviewable.
 
 ## AI disclosure
 
