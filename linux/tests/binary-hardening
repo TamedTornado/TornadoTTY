@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+build_dir="${repo_root}/build/linux"
+executables=(
+    "${build_dir}/bin/zentty-linux"
+    "${build_dir}/bin/api-contract"
+    "${build_dir}/bin/host-options-test"
+)
+libraries=(
+    "${build_dir}/lib/libghostty-gtk-embed.so"
+    "${build_dir}/lib/libgtk4-layer-shell.so"
+)
+
+check_common() {
+    local artifact="$1"
+    readelf -h "${artifact}" | grep -F "DYN" >/dev/null
+    readelf -lW "${artifact}" | grep -F "GNU_RELRO" >/dev/null
+    local stack
+    stack="$(readelf -lW "${artifact}" | grep -F "GNU_STACK")"
+    grep -F "RW" <<<"${stack}" >/dev/null
+    if grep -F "RWE" <<<"${stack}" >/dev/null; then
+        echo "error: executable stack: ${artifact}" >&2
+        exit 1
+    fi
+    readelf -dW "${artifact}" | grep -E "BIND_NOW|FLAGS_1.*NOW" >/dev/null
+}
+
+for executable in "${executables[@]}"; do
+    check_common "${executable}"
+    readelf -dW "${executable}" | grep -E "FLAGS_1.*PIE" >/dev/null
+done
+for library in "${libraries[@]}"; do
+    check_common "${library}"
+done
+
+echo "Zentty Linux binary hardening checks passed"

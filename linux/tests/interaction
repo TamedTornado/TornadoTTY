@@ -4,7 +4,8 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 binary="${repo_root}/build/linux/bin/zentty-linux"
 backend="${GDK_BACKEND:-wayland}"
-receipt="${repo_root}/build/linux/interaction-${backend}.log"
+receipt_name="${ZENTTY_TEST_RECEIPT_NAME:-interaction-${backend}}"
+receipt="${repo_root}/build/linux/${receipt_name}.log"
 
 if [[ ! -x "${binary}" ]]; then
     echo "error: ${binary} does not exist; run linux/scripts/build-local" >&2

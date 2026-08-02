@@ -779,12 +779,424 @@ The Ghostty spike remains historical evidence and must not evolve into the
 product. The next product stage is a real Linux worklane UI and persistent
 workspace model using the now-qualified multi-surface boundary; normal startup
 intentionally remains one terminal until that product model owns pane creation.
-Remaining engine/environment gaps are physical GTK key-event translation, IME
-composition, a genuine externally driven resize, real scaled compositors,
-ReleaseSafe Valgrind value correctness, and public CI with controlled Wayland
-and X11 environments. Packaging and install/uninstall qualification also
-remain open. Local desktop receipts alone are not the final automation
-standard.
+The current gap inventory and status are authoritative only in
+`linux/qualification-matrix.json`. This historical checkpoint predates the
+controlled X11 physical-key and external-resize harnesses added on 2026-08-02;
+it must not be read as the current result. Local desktop receipts alone are not
+the final automation standard.
+
+## 2026-08-02 exhaustive-coverage audit
+
+Status: **implemented local suite PASS; release and full Linux qualification
+NOT PASSED**. A second-pass audit rejected the premise that the milestone was
+already exhaustively tested. The live feature paths were strong, but several
+public-boundary misuse and reproducibility cases had only comments or implicit
+behavior rather than executable contracts.
+
+### Runtime and widget handle misuse was not defended
+
+- **Observation:** The first C contract checked null handles and an invalid
+  backend, but did not exercise concurrent runtimes, stale runtime reuse,
+  runtime recreation, uninitialized surfaces, or ordinary GTK widgets passed
+  to Ghostty-specific operations.
+- **Consequence:** The public API could overwrite process-global Ghostty state
+  on a second constructor call and blindly cast a foreign `GtkWidget`, making
+  accidental client misuse capable of corruption rather than a clean failure.
+- **Diagnosis:** Header prose said one runtime was allowed and functions
+  accepted `GtkWidget *`, but the implementation did not enforce either
+  contract.
+- **Repair:** In progress: track the one active runtime, reject foreign/stale
+  handles without dereferencing them, allow recreation only after teardown,
+  and validate every surface operation with Ghostty's registered GObject type.
+  Expand the independent C17 contract to cover all these states, including an
+  uninitialized real Ghostty surface.
+- **Evidence:** The independent C17 contract now passes with both epoll and
+  io_uring construction under Wayland and X11. Each process checks invalid,
+  null, foreign, concurrent, stale, and uninitialized states plus active tick,
+  real surface construction, idempotent free, and recreation rejection.
+- **Outcome:** Public handle and process-lifecycle contract hardened and
+  executable on all four backend combinations.
+
+### A pinned revision did not guarantee a clean source tree
+
+- **Observation:** The build and regression scripts compared `HEAD` with the
+  lock but did not reject modified tracked or untracked files in the managed
+  dependency checkout.
+- **Consequence:** A nominally pinned qualification could compile local edits
+  while its metadata reported only the public commit, undermining
+  reproducibility.
+- **Diagnosis:** Git revision identity and worktree identity were conflated.
+- **Repair:** Managed builds now validate lock syntax, exact origin URL, clean
+  status before checkout, full revision after checkout, and record
+  `ghostty_tree=clean`. Explicit development overrides may build a dirty tree
+  but record it as dirty; the pinned regression gate always rejects dirt.
+- **Evidence:** The managed public build completed with exact origin/revision
+  and wrote `ghostty_tree=clean`; the regression driver intentionally pointed
+  at the dirty development checkout failed before invoking Zig with the
+  expected clean-tree diagnostic.
+- **Outcome:** Pin integrity and dirty-tree rejection qualified.
+
+### Host option parsing had branch gaps and no unit boundary
+
+- **Observation:** Surface-count parsing lived as a private function inside the
+  500-line GTK host, accepted libc whitespace/sign variants implicitly, and
+  tested only the value `5`. An explicitly invalid async backend silently fell
+  back to automatic selection, while explicit io_uring was not wired at all.
+- **Consequence:** Configuration failure behavior was neither strict nor
+  exhaustively enumerable, and successful public async constructors did not
+  prove the product selected them.
+- **Diagnosis:** Pure option policy and GTK process orchestration were mixed.
+- **Repair:** Extract strict pure C parsers for canonical counts 1 through 4
+  and `auto`/`epoll`/`io_uring`. Add table-driven unit coverage for nulls,
+  boundaries, signs, whitespace, leading zeroes, overflow-shaped strings,
+  spelling/case errors, and null outputs. Add host exit-64 wiring checks and
+  real mapped PTY runs for both async backends on both display backends.
+- **Evidence:** Pure parser tests compile with `-Werror` and pass every table
+  row. The actual host rejects invalid count/backend wiring with exit 64.
+  Mapped real-PTY runs pass for epoll and io_uring under both Wayland and X11.
+- **Outcome:** Option policy separated from GTK orchestration and all declared
+  branches covered at unit and process-integration levels.
+
+### The C host build used only baseline warnings and implicit hardening
+
+- **Observation:** Host and contract programs used `-Wall -Wextra -Werror`,
+  but relied on distribution defaults for optimization, PIE, RELRO, immediate
+  binding, stack protection, executable-stack policy, and fortified libc.
+- **Consequence:** A ReleaseSafe Ghostty library could be packaged beside an
+  unoptimized host whose hardening was accidental rather than reviewable.
+- **Diagnosis:** The build distinguished Ghostty optimization modes but did not
+  apply the same intent to the C boundary.
+- **Repair:** Centralize strict C flags including pedantic, conversion, shadow,
+  format, prototype, and missing-prototype diagnostics. Build Debug hosts with
+  `-O0 -g3`; build release hosts with `-O2`, fortification, and assertions
+  disabled. Link PIE with stack protector, RELRO, NOW, and non-executable stack,
+  and record host optimization in metadata.
+- **Evidence:** Strict release rebuild passed. Metadata records
+  `host_optimize=Release`; ELF inspection reports PIE (`DYN`/`FLAGS_1 PIE`),
+  GNU RELRO, `BIND_NOW`, and a read/write non-executable GNU stack.
+- **Outcome:** Compiler policy and binary hardening made explicit and verified.
+
+#### GTK's public header failed whole-program pedantic mode
+
+- **Observation:** The first strict build failed because GTK 4.14's
+  `gdkdmabufformats.h` expands an autoptr macro with an extra file-scope
+  semicolon rejected by GCC `-Wpedantic -Werror`.
+- **Consequence:** Applying project diagnostics indiscriminately to dependency
+  headers made a valid host impossible to compile.
+- **Diagnosis:** `pkg-config` supplies GTK include directories as ordinary
+  `-I` paths, so GCC attributes dependency-header pedantic diagnostics to the
+  application compilation.
+- **Repair:** Retain all actionable strict warnings globally; apply pedantic
+  error mode to the pure host-options module/test that has no GTK header
+  expansion. Do not suppress or patch GTK downstream.
+- **Evidence:** Hardened GTK host/API builds pass without pedantic suppression;
+  the pure option module/test passes with pedantic errors enabled.
+- **Outcome:** Dependency diagnostic isolated without weakening project-owned
+  pure C coverage.
+
+#### GObject validation initially passed an untyped pointer
+
+- **Observation:** The first hardened ReleaseSafe build failed in
+  `gobject.ext.cast` because `anyopaque` is not statically guaranteed to be a
+  `GTypeInstance`.
+- **Consequence:** The new foreign-widget defense did not compile; no contract
+  result was claimed.
+- **Diagnosis:** The public ABI erases the pointer type, while the generated
+  GObject helper intentionally requires an explicit type-instance assertion
+  before it performs the runtime type check.
+- **Repair:** Convert the non-null ABI pointer to `GTypeInstance` explicitly,
+  then use the generated checked cast to `GhosttySurface`.
+- **Evidence:** Corrected ReleaseSafe build completed and foreign `GtkButton`
+  operations were rejected without a crash in all contract runs.
+- **Outcome:** Compile-time type boundary preserved rather than bypassed with a
+  blind `Surface` cast.
+
+#### Runtime recreation crashed in process-global signal setup
+
+- **Observation:** The expanded contract safely rejected a concurrent runtime
+  but panicked in Zig's POSIX signal setup when it attempted to create another
+  runtime after fully freeing the first.
+- **Consequence:** The header's initial "one active runtime" wording implied a
+  sequential lifecycle that Ghostty process-global state does not support.
+- **Diagnosis:** `GlobalState.deinit` is sufficient for process shutdown, not
+  for reinitializing every signal and native subsystem in the same process.
+- **Repair:** Enforce one successful runtime construction for the entire
+  process lifetime. Freeing clears the active handle so stale operations fail,
+  but does not reopen construction. The header now states this explicitly and
+  the contract requires recreation rejection.
+- **Evidence:** Recreation is rejected cleanly in four independent contract
+  combinations; no second Ghostty initialization occurs.
+- **Outcome:** Real lifecycle defect found by negative coverage; no attempt was
+  made to broaden Ghostty's global reinitialization semantics for Zentty.
+
+#### Constructing Ghostty after `gtk_init` violated initialization order
+
+- **Observation:** The first recreation repair still panicked during the
+  contract's initial valid runtime construction because the expanded C test
+  created a GTK button—and therefore called `gtk_init`—before Ghostty.
+- **Consequence:** The contract exposed another undocumented process-level
+  precondition rather than reaching its lifecycle assertions.
+- **Diagnosis:** Ghostty runtime initialization owns native signal and GTK
+  setup ordering. The real Zentty host already constructs it first, but the
+  public header did not state that requirement.
+- **Repair:** Construct the one Ghostty runtime before `gtk_init` or any other
+  GTK object, document the ordering in the public header, then create the
+  foreign GTK widget used for type-rejection checks.
+- **Evidence:** Both async backends passed under both display backends when the
+  runtime was constructed first.
+- **Outcome:** Initialization order is now an explicit ABI contract instead of
+  an accidental property of the working host.
+
+### DOGFOOD-2026-08-02-QUALIFICATION-MATRIX: prose exclusions were invisible to automation
+
+- **Observation:** Several known gaps were listed only in narrative text. The
+  old `qualify-local` shell sequence could pass without representing physical
+  key translation, IME, external resize, real compositor scaling,
+  ReleaseSafe Valgrind, installation ownership, or controlled public CI.
+- **Consequence:** “The local script passed” was too easy to misread as
+  release or full Linux qualification. A missing command was indistinguishable
+  from a deliberately blocked requirement.
+- **Diagnosis:** There was no executable inventory against which prose and the
+  runner could be reconciled.
+- **Repair:** `linux/qualification-matrix.json` now owns every cell and one of
+  five explicit states: `PASS`, `FAIL`, `BLOCKED`, `XFAIL`, or
+  `NOT_IMPLEMENTED`. The runner validates the complete ReleaseSafe/Debug ×
+  Wayland/X11 × default/epoll/io_uring × single/multi product grid and required
+  non-functional capabilities, executes every PASS/XFAIL command in order,
+  treats exit 77 as an unexpected skip, and writes JSON plus a short report.
+  It independently reports implemented-local, release, and full-Linux claims.
+- **Evidence:** Runner self-tests deliberately remove a required cell, invent
+  a status, skip unexpectedly, make an XFAIL stale, fail a PASS command, and
+  assert an impossible full-qualification claim. Every malformed fixture is
+  rejected and the valid fixture reports local-only success.
+- **Outcome:** No known gap can disappear from qualification silently. The
+  authoritative matrix supersedes older gap prose in this report.
+
+### The first ABI audit found 14,259 exported implementation symbols
+
+- **Observation:** The experimental shared library exported the eight intended
+  `ghostty_gtk_embed_*` functions plus thousands of statically linked FreeType,
+  Fontconfig, XML, ImGui, and other dependency symbols.
+- **Consequence:** A nominally tiny C ABI accidentally exposed a huge unstable
+  surface and could interpose dependency symbols in a host process.
+- **Diagnosis:** Zig's dynamic library link included static dependencies with
+  default symbol visibility and no ELF export policy.
+- **Repair:** Add one Linux version script beside the experimental Ghostty
+  library and set it only on that build artifact. Zentty's `abi-surface` gate
+  compares every exported text symbol with the exact eight-function allowlist.
+- **Evidence:** The rebuilt library reports eight exported text symbols, all
+  versioned `GHOSTTY_GTK_EMBED_1.0`; any extra or missing symbol fails the local
+  matrix.
+- **Outcome:** The fork's experimental ABI is genuinely minimal without
+  changing normal Ghostty build products.
+
+### GCC's analyzer could not prove the parsed terminal bound
+
+- **Observation:** Enabling `-fanalyzer` failed the first host rebuild with a
+  possible out-of-bounds write while clearing the fixed four-slot terminal
+  array during teardown.
+- **Consequence:** The parser does enforce one through four, but that fact lived
+  in another translation unit and was not locally visible to the analyzer or a
+  future maintainer changing the assignment.
+- **Diagnosis:** Teardown trusted a cross-module invariant at the final memory
+  write rather than defending the array locally.
+- **Repair:** Bound the teardown loop by both the selected count and the actual
+  array capacity. Retain `-fanalyzer` under `-Werror` for all project C builds.
+- **Evidence:** Debug and release C builds pass conversion, shadow, format,
+  prototype, stack-protection, and analyzer diagnostics.
+- **Outcome:** Static analysis produced a useful defense-in-depth repair rather
+  than being disabled as a false positive.
+
+### Controlled X11 was locally feasible; sandbox display absence was not a pass
+
+- **Observation:** Xvfb and xdotool were installed, but an unelevated Xvfb
+  probe could not open its own display socket. The same probe outside the
+  filesystem/process sandbox succeeded.
+- **Consequence:** Treating the first environmental failure as either product
+  failure or skipped success would have misclassified a feasible matrix cell.
+- **Diagnosis:** The managed command sandbox, not GTK or Ghostty, prevented the
+  nested X server socket from operating.
+- **Repair:** Add a deterministic `controlled-x11` harness using Xvfb at a
+  fixed 1280×800×24 screen and software OpenGL. Missing Xvfb/xdotool exits 77,
+  which the matrix rejects as an unexpected skip.
+- **Evidence:** The nested server independently maps the real product host and
+  completes both the physical-key and external-resize drivers.
+- **Outcome:** Controlled local X11 is PASS. Controlled Wayland and public CI
+  remain explicit BLOCKED cells; they were not inferred from this result.
+
+### Physical X11 key translation now crosses the native GTK event path
+
+- **Observation:** The prior input test called the embedding C text-injection
+  API and explicitly did not prove native GDK key translation.
+- **Consequence:** Keyboard input could pass while real key events were broken.
+- **Repair:** In controlled Xvfb, xdotool focuses the mapped Zentty window,
+  types `zentty-physical-key`, and sends Return. The child PTY acknowledges only
+  the exact line by changing the terminal title; the integration process then
+  requires that title and clean child exit.
+- **Evidence:** The X11 physical-key matrix cell passes with the real GTK
+  controller, Ghostty input handling, PTY, shell, terminal parser, and title
+  notification in the path.
+- **Outcome:** Physical X11 key translation is PASS. Wayland remains BLOCKED on
+  a controlled compositor plus virtual-input prerequisite, not silently
+  skipped.
+
+### An external X11 client now drives the resize qualification
+
+- **Observation:** The existing multi-terminal test reflowed its own GTK grid;
+  this proved live surface allocation changes but not a compositor/server-side
+  window resize.
+- **Repair:** The host exposes a test-only readiness point after four mapped
+  surfaces and focus qualification. A separate xdotool process discovers the
+  X11 window and changes it from the outside; the host passes only after its
+  terminal allocation changes and all PTYs complete.
+- **Evidence:** The controlled Xvfb run records `external resize ready`, an
+  externally requested 700×500 window, a changed terminal width, and the exact
+  four-surface integration PASS summary.
+- **Outcome:** Externally driven X11 resize is PASS. The Wayland cell remains
+  NOT_IMPLEMENTED until a controlled compositor-side driver exists.
+
+### DOGFOOD-2026-08-02-RELEASESAFE-VALGRIND: optimized instrumentation is still red
+
+- **Observation:** The real four-surface ReleaseSafe interaction completes its
+  semantic PASS, but Valgrind exits 99 with optimized-build
+  uninitialized-value reports. After narrowly suppressing the independently
+  diagnosed system Fontconfig/IBus caches, Wayland reports zero
+  definite/indirect bytes and 695 errors; X11 reports 160 definite bytes, 66
+  indirect bytes, and 668 errors.
+- **Consequence:** A Debug-only clean result may not be represented as memory
+  qualification for the shipped optimization mode.
+- **Repair:** Make ReleaseSafe Valgrind a command-backed XFAIL on both display
+  backends with this tracking ID. The runner treats exit 77 as an unexpected
+  skip and a zero exit as a stale XFAIL, so the defect cannot become permanent
+  folklore or a false pass.
+- **Evidence:** Both command-backed XFAILs ran in the final matrix. Each receipt
+  includes the exact four-surface semantic PASS followed by its Valgrind
+  failure; neither is an environmental skip.
+- **Outcome:** Unresolved. This XFAIL prevents release and exhaustive/full
+  Linux qualification.
+
+### The first full matrix invocation was interrupted by the command session
+
+- **Observation:** The initial long matrix invocation lost its controlling tool
+  session midway through ReleaseSafe X11 interaction. The cell log was opened
+  but empty, and no summary was written.
+- **Diagnosis:** The independently rerun X11 interaction passed in 6.6 seconds;
+  the aborted invocation left no product failure receipt.
+- **Repair:** Treat an absent final summary as an incomplete run, never as a
+  pass. Rerun the entire matrix under a persistently polled command session
+  after all audit changes are complete.
+- **Outcome:** In progress; final totals must come only from the completed JSON
+  summary.
+
+### The first completed matrix correctly failed a dirty regression checkout
+
+- **Observation:** The first end-to-end matrix reached every cell, but the
+  Ghostty regression cell rejected the explicit development checkout because
+  the audited changes were still uncommitted.
+- **Consequence:** The implemented-local result was FAIL even though the build
+  intentionally permits a dirty developer override and records it as dirty.
+- **Diagnosis:** The build override and the pinned regression gate have
+  deliberately different trust policies. The latter must never qualify a
+  worktree that cannot be identified by commit.
+- **Repair:** Do not weaken the regression gate. Commit the reviewed Ghostty
+  patch, update Zentty's exact lock, and rerun against the now-clean local
+  checkout before pushing.
+- **Evidence:** The failed cell stopped before Zig with `Ghostty regression
+  requires a clean pinned checkout`.
+- **Outcome:** Resolved by Ghostty commit
+  `5fc8fa2cf4b27bfe27072d561de98f33b2c16636`; the final pinned regression cell
+  passed against a clean tree.
+
+### Expanded Valgrind exposed an Ubuntu Fontconfig metrics cache
+
+- **Observation:** Both Debug semantic runs passed, but Valgrind found one or
+  two stripped Fontconfig/Pango metrics-cache roots and their children. This
+  produced 8–13 leak errors per single-surface run and similar failures for
+  four surfaces.
+- **Consequence:** The newly expanded Debug matrix failed; representing the old
+  one-surface historical result as current would have been incorrect.
+- **Diagnosis:** Ubuntu's stripped Fontconfig library prevents the existing
+  upstream function-name suppressions from matching. Every allocation began
+  in system Fontconfig and reached GTK through
+  `pango_context_get_metrics`; no Ghostty-owned frame was present.
+- **Repair:** Add test-local suppressions bounded by allocation kind,
+  `libfontconfig.so`, Pango metrics consumption, and indirect-only child
+  records. Do not suppress possible leaks or Ghostty-library allocation roots.
+- **Evidence:** After repair, one- and four-surface Debug runs on both Wayland
+  and X11 report semantic PASS, zero definite/indirect bytes, and zero errors.
+- **Outcome:** External process-global cache isolated without weakening the
+  Ghostty memory boundary.
+
+### Valgrind needed a test deadline, not a semantic shortcut
+
+- **Observation:** The first ReleaseSafe four-surface Valgrind reproduction
+  hit the host's normal 12-second integration deadline before all PTYs
+  completed, obscuring the memory result with a semantic timeout.
+- **Repair:** The memory driver enables a test-only 240-second internal
+  deadline while retaining its independent 300-second process timeout. Normal
+  integrations and the product path keep their original deadlines/behavior.
+- **Evidence:** The rerun completes the exact four-surface keyboard, clipboard,
+  focus, resize, title, and child-exit PASS before Valgrind returns 99 for the
+  tracked optimized-build reports.
+- **Outcome:** ReleaseSafe remains XFAIL for memory evidence, not because the
+  semantic harness timed out.
+
+### The first controlled physical-key matrix cell raced internal focus
+
+- **Observation:** A standalone controlled key run passed, but the first full
+  matrix run later sent its line before Ghostty's internal input widget owned
+  GTK focus. The shell received no matching line and exited with no title
+  acknowledgement.
+- **Consequence:** The physical-key cell failed nondeterministically despite a
+  mapped top-level X window.
+- **Diagnosis:** X11 top-level focus and Ghostty's composite-widget internal
+  focus are separate states; waiting only for surface initialization was
+  insufficient.
+- **Repair:** The host now repeatedly requests Ghostty surface focus and emits
+  a readiness marker only after `GtkRoot` confirms focus lies inside that
+  surface. The external driver waits for that marker, focuses the top-level X11
+  window, then injects keys. The matrix repeats the entire nested-Xvfb process
+  three times.
+- **Evidence:** The final matrix repeated a fresh nested-Xvfb process three
+  times; all runs received the exact PTY line and title acknowledgement.
+- **Outcome:** Focus synchronization made event-driven rather than timing-based.
+
+### Repeated X11 focus exposed separate IBus and layout caches
+
+- **Observation:** After the initial Fontconfig repair, one-surface X11 and all
+  Wayland Debug Valgrind cells passed, but four X11 focus transitions retained
+  one tiny IBus preedit object and a stripped Fontconfig layout cache.
+- **Consequence:** The second complete matrix still correctly failed one PASS
+  cell rather than averaging away a backend/scenario-specific memory result.
+- **Diagnosis:** Allocation stacks were bounded to GTK's external IBus input
+  module during `Surface.updateFocus`, or to Fontconfig consumed through
+  `pango_layout_get_size`; the one-surface path did not create them.
+- **Repair:** Add allocation-kind and library/function-bounded suppressions for
+  only those external caches. Possible leaks and any Ghostty allocation root
+  remain unsuppressed.
+- **Evidence:** The repaired four-surface Debug X11 cell reports the exact
+  semantic PASS, zero definite/indirect bytes, and zero errors in both its
+  focused rerun and the final complete matrix.
+- **Outcome:** Backend-specific external cache behavior isolated without
+  weakening product-owned leak detection.
+
+### Final authoritative matrix result
+
+- **Command:** `GHOSTTY_SOURCE_DIR=/home/jason/Projects/ghostty
+  linux/tests/qualify-local`
+- **Pinned dependency:**
+  `5fc8fa2cf4b27bfe27072d561de98f33b2c16636`, clean tree,
+  ReleaseSafe artifact restored at completion.
+- **Declared cells:** 53 PASS, 0 FAIL, 5 BLOCKED, 2 XFAIL, and 4
+  NOT_IMPLEMENTED (64 total).
+- **Execution result:** Every PASS command passed; both XFAIL commands failed
+  for their tracked Valgrind defect; there were no failed PASS cells,
+  unexpected skips, or stale XFAILs. The machine record is
+  `build/linux/qualification-summary.json`.
+- **Claims:** **implemented local suite PASSED**; **release qualification NOT
+  PASSED**; **full Linux qualification NOT PASSED**.
+- **Limitation:** This is intentionally not “exhaustive QA.” Any such claim is
+  prohibited while the 11 non-PASS cells remain.
 
 The experiment remains an internal Zig/GTK integration surface rather than a
 public Ghostty ABI. Any extraction proposed upstream should be smaller than the

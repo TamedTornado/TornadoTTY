@@ -1,9 +1,10 @@
 #include <ghostty/gtk.h>
 #include <gtk/gtk.h>
 
+#include "host_options.h"
+
 #include <stdbool.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
 #define ZENTTY_MAX_TERMINALS 4
@@ -16,6 +17,7 @@ typedef struct {
     guint index;
     bool title_acknowledged;
     bool child_exited;
+    bool initialized;
 } ZenttyTerminal;
 
 struct ZenttyLinuxHost {
@@ -37,12 +39,13 @@ struct ZenttyLinuxHost {
     guint timeout_source;
     bool integration_test;
     bool interaction_test;
+    bool external_resize_test;
+    bool physical_key_test;
     bool activated;
     bool interaction_started;
     bool keyboard_sent;
     bool clipboard_write;
     bool clipboard_read;
-    bool resize_requested;
     bool resize_observed;
     bool interaction_qualified;
     bool tick_failed;
@@ -84,6 +87,10 @@ static gboolean integration_timeout(gpointer userdata) {
 static void terminal_initialized(GtkWidget *terminal, gpointer userdata) {
     (void) terminal;
     ZenttyTerminal *slot = userdata;
+    if (slot->initialized) {
+        return;
+    }
+    slot->initialized = true;
     slot->host->initialized_count++;
     g_printerr(
         "zentty-linux: terminal initialized index=%u count=%u\n",
@@ -101,7 +108,9 @@ static void terminal_title_changed(
     ZenttyTerminal *slot = userdata;
     char *title = NULL;
     char *expected = NULL;
-    if (slot->host->interaction_test && slot->index == 0) {
+    if (slot->host->physical_key_test) {
+        expected = g_strdup("zentty-linux-physical-key-ack");
+    } else if (slot->host->interaction_test && slot->index == 0) {
         expected = g_strdup("zentty-linux-keyboard-ack");
     } else if (slot->host->interaction_test && slot->index == 1) {
         expected = g_strdup("zentty-linux-clipboard-ack");
@@ -152,7 +161,8 @@ static void terminal_clipboard_write(
 static void terminal_clipboard_read(GtkWidget *terminal, gpointer userdata) {
     (void) terminal;
     ZenttyTerminal *slot = userdata;
-    if (!slot->host->interaction_test || slot->index != 1) {
+    if (!slot->host->interaction_test || slot->host->clipboard_read ||
+        slot->index != 1) {
         return;
     }
 
@@ -190,6 +200,19 @@ static bool terminal_contains_focus(const ZenttyTerminal *slot) {
     return focused != NULL &&
         (focused == slot->widget ||
             gtk_widget_is_ancestor(focused, slot->widget));
+}
+
+static gboolean qualify_physical_key(gpointer userdata) {
+    ZenttyLinuxHost *host = userdata;
+    ZenttyTerminal *slot = &host->terminals[0];
+    if (!slot->initialized || !terminal_contains_focus(slot)) {
+        ghostty_gtk_embed_surface_grab_focus(slot->widget);
+        return G_SOURCE_CONTINUE;
+    }
+
+    host->qualification_source = 0;
+    g_printerr("zentty-linux: physical key input ready\n");
+    return G_SOURCE_REMOVE;
 }
 
 static gboolean qualify_multi_terminal(gpointer userdata) {
@@ -250,6 +273,14 @@ static gboolean qualify_multi_terminal(gpointer userdata) {
             );
             return G_SOURCE_CONTINUE;
         }
+        if (host->external_resize_test) {
+            g_printerr(
+                "zentty-linux: external resize ready width=%d\n",
+                host->resize_width_before
+            );
+            host->interaction_phase = 2;
+            return G_SOURCE_CONTINUE;
+        }
         for (guint index = 0; index < host->terminal_count; index++) {
             g_object_ref(host->terminals[index].widget);
             gtk_grid_remove(
@@ -268,7 +299,6 @@ static gboolean qualify_multi_terminal(gpointer userdata) {
             );
             g_object_unref(host->terminals[index].widget);
         }
-        host->resize_requested = true;
         host->interaction_phase = 2;
         return G_SOURCE_CONTINUE;
     }
@@ -288,21 +318,6 @@ static gboolean qualify_multi_terminal(gpointer userdata) {
     );
     quit_integration_when_complete(host);
     return G_SOURCE_REMOVE;
-}
-
-static guint integration_terminal_count(void) {
-    const char *value = g_getenv("ZENTTY_LINUX_INTEGRATION_SURFACES");
-    if (value == NULL) {
-        return 1;
-    }
-
-    char *end = NULL;
-    const unsigned long count = strtoul(value, &end, 10);
-    if (end == value || *end != '\0' || count < 1 ||
-        count > ZENTTY_MAX_TERMINALS) {
-        return 0;
-    }
-    return (guint) count;
 }
 
 static void activate(GtkApplication *application, gpointer userdata) {
@@ -325,7 +340,14 @@ static void activate(GtkApplication *application, gpointer userdata) {
 
         char *integration_command = NULL;
         const char *command = configured_command;
-        if (host->interaction_test && command == NULL && index == 0) {
+        if (host->physical_key_test && command == NULL) {
+            integration_command = g_strdup(
+                "IFS= read -r value; "
+                "[ \"$value\" = zentty-physical-key ] && "
+                "printf '\033]2;zentty-linux-physical-key-ack\a'; sleep 1"
+            );
+            command = integration_command;
+        } else if (host->interaction_test && command == NULL && index == 0) {
             integration_command = g_strdup(
                 "IFS= read -r value; "
                 "[ \"$value\" = zentty-product-keyboard ] && "
@@ -415,6 +437,13 @@ static void activate(GtkApplication *application, gpointer userdata) {
     if (host->integration_test) {
         if (host->terminal_count == 1) {
             host->interaction_qualified = true;
+            if (host->physical_key_test) {
+                host->qualification_source = g_timeout_add(
+                    50,
+                    qualify_physical_key,
+                    host
+                );
+            }
         } else {
             host->qualification_source = g_timeout_add(
                 50,
@@ -423,7 +452,9 @@ static void activate(GtkApplication *application, gpointer userdata) {
             );
         }
         host->timeout_source = g_timeout_add_seconds(
-            host->terminal_count > 1 ? 12 : 8,
+            g_getenv("ZENTTY_LINUX_SLOW_INTEGRATION_TEST") != NULL
+                ? 240
+                : (host->terminal_count > 1 ? 12 : 8),
             integration_timeout,
             host
         );
@@ -449,7 +480,9 @@ static void destroy_host_window(ZenttyLinuxHost *host) {
         gtk_window_destroy(host->window);
         host->window = NULL;
         host->grid = NULL;
-        for (guint index = 0; index < host->terminal_count; index++) {
+        for (guint index = 0;
+            index < host->terminal_count && index < ZENTTY_MAX_TERMINALS;
+            index++) {
             host->terminals[index].widget = NULL;
         }
     }
@@ -459,23 +492,35 @@ int main(int argc, char **argv) {
     ZenttyLinuxHost host = {0};
     host.interaction_test =
         g_getenv("ZENTTY_LINUX_INTERACTION_TEST") != NULL;
-    host.integration_test = host.interaction_test ||
+    host.external_resize_test =
+        g_getenv("ZENTTY_LINUX_EXTERNAL_RESIZE_TEST") != NULL;
+    host.physical_key_test =
+        g_getenv("ZENTTY_LINUX_PHYSICAL_KEY_TEST") != NULL;
+    host.integration_test = host.interaction_test || host.external_resize_test ||
+        host.physical_key_test ||
         g_getenv("ZENTTY_LINUX_INTEGRATION_TEST") != NULL;
-    host.terminal_count = host.interaction_test ? 4 :
-        (host.integration_test ? integration_terminal_count() : 1);
-    if (host.terminal_count == 0) {
+    unsigned int terminal_count = 1;
+    if (host.interaction_test || host.external_resize_test) {
+        terminal_count = 4;
+    } else if (host.integration_test &&
+        !zentty_parse_terminal_count(
+            g_getenv("ZENTTY_LINUX_INTEGRATION_SURFACES"),
+            &terminal_count
+        )) {
         g_printerr("zentty-linux: invalid integration surface count\n");
         return 64;
     }
+    host.terminal_count = terminal_count;
 
     const char *async_backend = g_getenv("ZENTTY_LINUX_ASYNC_BACKEND");
-    if (async_backend != NULL && strcmp(async_backend, "epoll") == 0) {
-        host.runtime = ghostty_gtk_embed_runtime_new_with_async_backend(
-            GHOSTTY_GTK_EMBED_ASYNC_EPOLL
-        );
-    } else {
-        host.runtime = ghostty_gtk_embed_runtime_new();
+    ghostty_gtk_embed_async_backend_t selected_backend;
+    if (!zentty_parse_async_backend(async_backend, &selected_backend)) {
+        g_printerr("zentty-linux: invalid async backend\n");
+        return 64;
     }
+    host.runtime = ghostty_gtk_embed_runtime_new_with_async_backend(
+        selected_backend
+    );
     if (host.runtime == NULL) {
         g_printerr("zentty-linux: failed to initialize Ghostty runtime\n");
         return 1;

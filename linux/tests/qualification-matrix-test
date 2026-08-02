@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+runner="${repo_root}/linux/tests/qualification-matrix"
+source_matrix="${repo_root}/linux/qualification-matrix.json"
+temp_dir="$(mktemp -d)"
+trap 'rm -rf "${temp_dir}"' EXIT
+
+base="${temp_dir}/base.json"
+jq '.cells |= map(
+    if .status == "PASS" then .command = "true"
+    elif .status == "XFAIL" then .command = "false"
+    else . end
+)' "${source_matrix}" >"${base}"
+
+run_expect_failure() {
+    local name="$1"
+    local pattern="$2"
+    local matrix="$3"
+    local mode="${4:-run}"
+    local output="${temp_dir}/${name}.log"
+    local summary="${temp_dir}/${name}-summary.json"
+    local args=()
+    if [[ "${mode}" == "validate" ]]; then
+        args+=(--validate-only)
+    fi
+    set +e
+    ZENTTY_QUALIFICATION_MATRIX="${matrix}" \
+    ZENTTY_QUALIFICATION_SUMMARY="${summary}" \
+        "${runner}" "${args[@]}" >"${output}" 2>&1
+    local status=$?
+    set -e
+    if [[ "${status}" -eq 0 ]]; then
+        echo "error: ${name} unexpectedly passed" >&2
+        cat "${output}" >&2
+        exit 1
+    fi
+    grep -F "${pattern}" "${output}" >/dev/null || {
+        echo "error: ${name} did not report ${pattern}" >&2
+        cat "${output}" >&2
+        exit 1
+    }
+}
+
+missing="${temp_dir}/missing.json"
+jq '.cells |= map(select(.id != "debug-x11-io-uring-multi"))' \
+    "${base}" >"${missing}"
+run_expect_failure missing-cell \
+    "missing terminal cell: Debug/x11/io_uring/multi" "${missing}" validate
+
+unknown="${temp_dir}/unknown.json"
+jq '(.cells[] | select(.id == "build-release") | .status) = "SKIP"' \
+    "${base}" >"${unknown}"
+run_expect_failure unknown-status "unknown statuses" "${unknown}" validate
+
+unexpected_skip="${temp_dir}/unexpected-skip.json"
+jq '(.cells[] | select(.id == "build-release") | .command) = "exit 77"' \
+    "${base}" >"${unexpected_skip}"
+run_expect_failure unexpected-skip "UNEXPECTED_SKIP" "${unexpected_skip}"
+
+stale_xfail="${temp_dir}/stale-xfail.json"
+jq '(.cells[] | select(.status == "XFAIL") | .command) = "true"' \
+    "${base}" >"${stale_xfail}"
+run_expect_failure stale-xfail "STALE_XFAIL" "${stale_xfail}"
+
+failed="${temp_dir}/failed.json"
+jq '(.cells[] | select(.id == "build-release") | .command) = "exit 9"' \
+    "${base}" >"${failed}"
+run_expect_failure failed-command "build-release" "${failed}"
+grep -F "FAIL" "${temp_dir}/failed-command.log" >/dev/null
+
+incorrect_full="${temp_dir}/incorrect-full.json"
+jq '.claims.full_linux_qualification_passed = true' \
+    "${base}" >"${incorrect_full}"
+run_expect_failure incorrect-full \
+    "incorrectly claims full Linux qualification" "${incorrect_full}" validate
+
+ZENTTY_QUALIFICATION_MATRIX="${base}" \
+ZENTTY_QUALIFICATION_SUMMARY="${temp_dir}/passing-summary.json" \
+    "${runner}" >/dev/null
+jq -e '
+    .claims.implemented_local_suite_passed == true and
+    .claims.release_qualification_passed == false and
+    .claims.full_linux_qualification_passed == false
+' "${temp_dir}/passing-summary.json" >/dev/null
+
+echo "Qualification matrix runner tests passed"

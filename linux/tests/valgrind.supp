@@ -8,3 +8,87 @@
    ...
    fun:gdk_pixbuf_loader_close
 }
+
+# Ubuntu 24.04's stripped Fontconfig retains the Pango metrics cache through
+# process exit. The direct allocation originates in Fontconfig and reaches GTK
+# only through pango_context_get_metrics; do not suppress other Fontconfig or
+# Ghostty allocations.
+{
+   GTK Pango Fontconfig metrics cache
+   Memcheck:Leak
+   match-leak-kinds: definite,indirect
+   fun:realloc
+   obj:*libfontconfig.so*
+   ...
+   fun:pango_context_get_metrics
+}
+{
+   GTK Pango Fontconfig metrics cache children
+   Memcheck:Leak
+   match-leak-kinds: indirect
+   fun:calloc
+   obj:*libfontconfig.so*
+   ...
+   fun:pango_context_get_metrics
+}
+{
+   GTK Pango Fontconfig metrics cache strings
+   Memcheck:Leak
+   match-leak-kinds: indirect
+   fun:malloc
+   fun:strdup
+   obj:*libfontconfig.so*
+}
+{
+   GTK Pango Fontconfig metrics cache nodes
+   Memcheck:Leak
+   match-leak-kinds: indirect
+   fun:malloc
+   obj:*libfontconfig.so*
+}
+{
+   GTK Pango Fontconfig layout cache
+   Memcheck:Leak
+   match-leak-kinds: definite,indirect
+   fun:realloc
+   obj:*libfontconfig.so*
+   ...
+   fun:pango_layout_get_size
+}
+{
+   GTK Pango Fontconfig layout cache children
+   Memcheck:Leak
+   match-leak-kinds: indirect
+   fun:calloc
+   obj:*libfontconfig.so*
+   ...
+   fun:pango_layout_get_size
+}
+
+# GTK's external IBus input module retains a tiny empty preedit text object
+# after repeated focus transitions. Require both the IBus constructor/module
+# and Ghostty's standard GTK focus callback so unrelated GObject leaks remain
+# visible.
+{
+   GTK IBus focus preedit object
+   Memcheck:Leak
+   match-leak-kinds: definite,indirect
+   fun:g_type_create_instance
+   ...
+   fun:ibus_text_new_from_string
+   obj:*libim-ibus.so*
+   ...
+   fun:*Surface.updateFocus
+}
+{
+   GTK IBus focus preedit string
+   Memcheck:Leak
+   match-leak-kinds: indirect
+   fun:malloc
+   fun:g_malloc
+   fun:g_strdup
+   fun:ibus_text_new_from_string
+   obj:*libim-ibus.so*
+   ...
+   fun:*Surface.updateFocus
+}

@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+binary="${repo_root}/build/linux/bin/zentty-linux"
+receipt="${repo_root}/build/linux/external-resize-x11.log"
+
+GDK_BACKEND=x11 \
+ZENTTY_LINUX_EXTERNAL_RESIZE_TEST=1 \
+ZENTTY_LINUX_ASYNC_BACKEND=epoll \
+    "${binary}" >"${receipt}" 2>&1 &
+host_pid=$!
+cleanup() {
+    kill "${host_pid}" 2>/dev/null || true
+    wait "${host_pid}" 2>/dev/null || true
+}
+trap cleanup EXIT
+
+window_id=""
+for _ in $(seq 1 200); do
+    window_id="$(xdotool search --name '^Zentty Linux$' 2>/dev/null | head -n 1 || true)"
+    if [[ -n "${window_id}" ]] &&
+        grep -F "zentty-linux: external resize ready" "${receipt}" >/dev/null 2>&1; then
+        break
+    fi
+    sleep 0.05
+done
+if [[ -z "${window_id}" ]]; then
+    echo "error: Zentty window was not discoverable" >&2
+    cat "${receipt}" >&2
+    exit 1
+fi
+grep -F "zentty-linux: external resize ready" "${receipt}" >/dev/null || {
+    echo "error: Zentty did not reach external resize readiness" >&2
+    cat "${receipt}" >&2
+    exit 1
+}
+
+xdotool windowsize "${window_id}" 700 500
+
+set +e
+timeout 20s tail --pid="${host_pid}" -f /dev/null
+wait_status=$?
+set -e
+if [[ "${wait_status}" -ne 0 ]]; then
+    echo "error: Zentty did not exit after external resize" >&2
+    cat "${receipt}" >&2
+    exit 1
+fi
+wait "${host_pid}"
+trap - EXIT
+
+grep -F "zentty-linux: resize observed" "${receipt}" >/dev/null
+grep -F "zentty-linux: integration PASS surfaces=4" "${receipt}" >/dev/null
+echo "Zentty Linux externally driven X11 resize passed"

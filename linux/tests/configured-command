@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+backend="${GDK_BACKEND:-wayland}"
+
+GDK_BACKEND="${backend}" \
+ZENTTY_LINUX_COMMAND="printf '\033]2;zentty-linux-integration-0\a'; sleep 1" \
+ZENTTY_TEST_RECEIPT_NAME="configured-command-${backend}" \
+    "${repo_root}/linux/tests/single-terminal"
+
+echo "Zentty Linux configured command passed (${backend})"

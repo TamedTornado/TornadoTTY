@@ -4,9 +4,12 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 ghostty_source="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
 binary="${repo_root}/build/linux/bin/zentty-linux"
+api_contract="${repo_root}/build/linux/bin/api-contract"
 metadata="${repo_root}/build/linux/build-metadata"
 backend="${GDK_BACKEND:-wayland}"
-receipt="${repo_root}/build/linux/memory-safety-${backend}.log"
+scenario="${ZENTTY_MEMORY_SCENARIO:-single}"
+expected_optimize="${ZENTTY_MEMORY_EXPECT_OPTIMIZE:-Debug}"
+receipt="${repo_root}/build/linux/memory-safety-${scenario}-${backend}.log"
 
 if ! command -v valgrind >/dev/null; then
     echo "error: valgrind is required" >&2
@@ -16,9 +19,23 @@ if [[ ! -x "${binary}" ]]; then
     echo "error: ${binary} does not exist; run linux/scripts/build-local" >&2
     exit 1
 fi
+if [[ ! -x "${api_contract}" ]]; then
+    echo "error: ${api_contract} does not exist; run linux/scripts/build-local" >&2
+    exit 1
+fi
+if [[ "${scenario}" != "single" && "${scenario}" != "interaction" &&
+    "${scenario}" != "api" ]]; then
+    echo "error: ZENTTY_MEMORY_SCENARIO must be single, interaction, or api" >&2
+    exit 1
+fi
 if [[ ! -f "${metadata}" ]] ||
-    ! grep -Fx "optimize=Debug" "${metadata}" >/dev/null; then
-    echo "error: memory-safety requires a Debug host; run GHOSTTY_OPTIMIZE=Debug linux/scripts/build-local" >&2
+    ! grep -Fx "optimize=${expected_optimize}" "${metadata}" >/dev/null; then
+    echo "error: memory-safety requires optimize=${expected_optimize}" >&2
+    exit 1
+fi
+if [[ "${expected_optimize}" == "Debug" ]] &&
+    ! grep -Fx "host_optimize=Debug" "${metadata}" >/dev/null; then
+    echo "error: memory-safety requires a Debug C host" >&2
     exit 1
 fi
 for suppression in \
@@ -31,10 +48,26 @@ for suppression in \
     fi
 done
 
-GDK_BACKEND="${backend}" \
-ZENTTY_LINUX_INTEGRATION_TEST=1 \
-ZENTTY_LINUX_ASYNC_BACKEND=epoll \
-timeout 300s valgrind \
+environment=(
+    "GDK_BACKEND=${backend}"
+    "ZENTTY_LINUX_ASYNC_BACKEND=epoll"
+    "ZENTTY_LINUX_SLOW_INTEGRATION_TEST=1"
+)
+program=("${binary}")
+case "${scenario}" in
+    single)
+        environment+=("ZENTTY_LINUX_INTEGRATION_TEST=1")
+        ;;
+    interaction)
+        environment+=("ZENTTY_LINUX_INTERACTION_TEST=1")
+        ;;
+    api)
+        environment+=("ZENTTY_API_CONTRACT_ASYNC_BACKEND=epoll")
+        program=("${api_contract}")
+        ;;
+esac
+
+env "${environment[@]}" timeout 300s valgrind \
     --error-exitcode=99 \
     --leak-check=full \
     --show-leak-kinds=definite,indirect \
@@ -42,11 +75,18 @@ timeout 300s valgrind \
     --suppressions="${ghostty_source}/valgrind.supp" \
     --suppressions="${ghostty_source}/src/gtk_embed_spike.valgrind.supp" \
     --suppressions="${repo_root}/linux/tests/valgrind.supp" \
-    "${binary}" >"${receipt}" 2>&1
+    "${program[@]}" >"${receipt}" 2>&1
 
-grep -F "zentty-linux: integration PASS" "${receipt}" >/dev/null
+if [[ "${scenario}" == "api" ]]; then
+    grep -Fx "api-contract: PASS" "${receipt}" >/dev/null
+else
+    grep -F "zentty-linux: integration PASS" "${receipt}" >/dev/null
+fi
+if [[ "${scenario}" == "interaction" ]]; then
+    grep -F "keyboard=1 clipboard=1/1" "${receipt}" >/dev/null
+fi
 grep -F "definitely lost: 0 bytes" "${receipt}" >/dev/null
 grep -F "indirectly lost: 0 bytes" "${receipt}" >/dev/null
 grep -F "ERROR SUMMARY: 0 errors" "${receipt}" >/dev/null
 
-echo "Zentty Linux memory-safety integration passed (${backend})"
+echo "Zentty Linux memory-safety integration passed (${scenario}, ${backend})"

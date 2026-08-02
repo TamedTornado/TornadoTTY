@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+scenario="${ZENTTY_CONTROLLED_X11_SCENARIO:-all}"
+iterations="${ZENTTY_CONTROLLED_X11_ITERATIONS:-1}"
+
+for dependency in xvfb-run xdotool; do
+    if ! command -v "${dependency}" >/dev/null; then
+        echo "controlled-x11: missing prerequisite ${dependency}" >&2
+        exit 77
+    fi
+done
+if [[ "${scenario}" != "all" && "${scenario}" != "resize" &&
+    "${scenario}" != "physical-key" ]]; then
+    echo "error: ZENTTY_CONTROLLED_X11_SCENARIO must be all, resize, or physical-key" >&2
+    exit 64
+fi
+if ! [[ "${iterations}" =~ ^[1-9][0-9]*$ ]]; then
+    echo "error: ZENTTY_CONTROLLED_X11_ITERATIONS must be a positive integer" >&2
+    exit 64
+fi
+
+for ((iteration = 1; iteration <= iterations; iteration++)); do
+    if [[ "${scenario}" == "all" || "${scenario}" == "resize" ]]; then
+        timeout 30s xvfb-run -a -s '-screen 0 1280x800x24' \
+            env LIBGL_ALWAYS_SOFTWARE=1 \
+            "${repo_root}/linux/tests/external-resize-driver"
+    fi
+    if [[ "${scenario}" == "all" || "${scenario}" == "physical-key" ]]; then
+        timeout 30s xvfb-run -a -s '-screen 0 1280x800x24' \
+            env LIBGL_ALWAYS_SOFTWARE=1 \
+            "${repo_root}/linux/tests/physical-key-driver"
+    fi
+done
+
+echo "Zentty Linux controlled X11 environment passed"

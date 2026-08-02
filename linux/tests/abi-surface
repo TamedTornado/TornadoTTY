@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+library="${repo_root}/build/linux/lib/libghostty-gtk-embed.so"
+
+if [[ ! -f "${library}" ]]; then
+    echo "error: ${library} does not exist; run linux/scripts/build-local" >&2
+    exit 1
+fi
+
+expected="$({
+    printf '%s\n' \
+        ghostty_gtk_embed_runtime_free \
+        ghostty_gtk_embed_runtime_new \
+        ghostty_gtk_embed_runtime_new_with_async_backend \
+        ghostty_gtk_embed_runtime_tick \
+        ghostty_gtk_embed_surface_grab_focus \
+        ghostty_gtk_embed_surface_new \
+        ghostty_gtk_embed_surface_request_paste \
+        ghostty_gtk_embed_surface_send_text
+} | sort)"
+actual="$(
+    nm -D --defined-only "${library}" |
+        awk '$2 == "T" || $2 == "W" { print $3 }' |
+        sed 's/@.*//' |
+        sort
+)"
+
+if [[ "${actual}" != "${expected}" ]]; then
+    echo "error: Ghostty GTK embedding ABI exports differ" >&2
+    diff -u <(printf '%s\n' "${expected}") <(printf '%s\n' "${actual}") >&2 || true
+    exit 1
+fi
+
+echo "Ghostty GTK embedding ABI surface passed"

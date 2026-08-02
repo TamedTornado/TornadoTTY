@@ -21,6 +21,10 @@ if [[ "${actual_revision}" != "${expected_revision}" ]]; then
     echo "error: Ghostty checkout is ${actual_revision}; expected ${expected_revision}" >&2
     exit 1
 fi
+if [[ -n "$(git -C "${ghostty_source}" status --porcelain)" ]]; then
+    echo "error: Ghostty regression requires a clean pinned checkout" >&2
+    exit 1
+fi
 
 (
     cd "${ghostty_source}"

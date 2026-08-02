@@ -10,12 +10,40 @@ zig="${ZIG:-${repo_root}/../.tools/zig-x86_64-linux-0.15.2/zig}"
 blueprint_dir="${BLUEPRINT_COMPILER_DIR:-${repo_root}/../.tools/blueprint-compiler-0.16.0/bin}"
 output_dir="${repo_root}/build/linux"
 optimize="${GHOSTTY_OPTIMIZE:-ReleaseSafe}"
+c_flags=(
+    -std=c17
+    -Wall
+    -Wextra
+    -Werror
+    -Wconversion
+    -Wshadow
+    -Wformat=2
+    -Wstrict-prototypes
+    -Wmissing-prototypes
+    -fanalyzer
+    -fstack-protector-strong
+    -fPIE
+)
+link_flags=(
+    -pie
+    -Wl,-z,relro
+    -Wl,-z,now
+    -Wl,-z,noexecstack
+)
+if [[ "${optimize}" == "Debug" ]]; then
+    c_flags+=(-O0 -g3)
+    host_optimize="Debug"
+else
+    c_flags+=(-O2 -g -DNDEBUG -D_FORTIFY_SOURCE=3)
+    host_optimize="Release"
+fi
 
 if [[ ! -x "${zig}" ]]; then
     echo "error: Zig 0.15.2 not found at ${zig}" >&2
     exit 1
 fi
-if [[ -z "${ghostty_repo}" || -z "${ghostty_revision}" ]]; then
+if [[ ! "${ghostty_repo}" =~ ^https://github\.com/[^/]+/[^/]+\.git$ ]] ||
+    [[ ! "${ghostty_revision}" =~ ^[0-9a-f]{40}$ ]]; then
     echo "error: invalid Ghostty lock file: ${lock_file}" >&2
     exit 1
 fi
@@ -24,6 +52,15 @@ if [[ -z "${GHOSTTY_SOURCE_DIR:-}" ]]; then
         mkdir -p "$(dirname "${ghostty_source}")"
         git clone --filter=blob:none --no-checkout \
             "${ghostty_repo}" "${ghostty_source}"
+    fi
+    if [[ -n "$(git -C "${ghostty_source}" status --porcelain)" ]]; then
+        echo "error: managed Ghostty checkout is dirty: ${ghostty_source}" >&2
+        exit 1
+    fi
+    actual_origin="$(git -C "${ghostty_source}" remote get-url origin)"
+    if [[ "${actual_origin}" != "${ghostty_repo}" ]]; then
+        echo "error: managed Ghostty origin is ${actual_origin}; expected ${ghostty_repo}" >&2
+        exit 1
     fi
     git -C "${ghostty_source}" fetch origin "${ghostty_revision}"
     git -C "${ghostty_source}" checkout --detach "${ghostty_revision}"
@@ -36,6 +73,10 @@ actual_revision="$(git -C "${ghostty_source}" rev-parse HEAD)"
 if [[ "${actual_revision}" != "${ghostty_revision}" ]]; then
     echo "error: Ghostty checkout is ${actual_revision}; expected ${ghostty_revision}" >&2
     exit 1
+fi
+ghostty_tree="clean"
+if [[ -n "$(git -C "${ghostty_source}" status --porcelain)" ]]; then
+    ghostty_tree="dirty"
 fi
 
 (
@@ -69,36 +110,57 @@ fi
 cp "${layer_shell_library}" "${output_dir}/lib/"
 
 cc \
-    -std=c17 \
-    -Wall \
-    -Wextra \
-    -Werror \
+    "${c_flags[@]}" \
     -I"${ghostty_source}/zig-out/include" \
+    -I"${repo_root}/linux/src" \
     "${repo_root}/linux/src/main.c" \
+    "${repo_root}/linux/src/host_options.c" \
     -L"${output_dir}/lib" \
     -Wl,-rpath-link,"${output_dir}/lib" \
     -Wl,--disable-new-dtags,-rpath,'$ORIGIN/../lib' \
     -lghostty-gtk-embed \
     $(pkg-config --cflags --libs gtk4) \
+    "${link_flags[@]}" \
     -o "${output_dir}/bin/zentty-linux"
 
 cc \
-    -std=c17 \
-    -Wall \
-    -Wextra \
-    -Werror \
+    "${c_flags[@]}" \
     -I"${ghostty_source}/zig-out/include" \
     "${repo_root}/linux/tests/api-contract.c" \
     -L"${output_dir}/lib" \
     -Wl,-rpath-link,"${output_dir}/lib" \
     -Wl,--disable-new-dtags,-rpath,'$ORIGIN/../lib' \
     -lghostty-gtk-embed \
+    $(pkg-config --cflags --libs gtk4) \
+    "${link_flags[@]}" \
     -o "${output_dir}/bin/api-contract"
 
-printf 'ghostty_source=%s\nghostty_revision=%s\noptimize=%s\n' \
+cc \
+    "${c_flags[@]}" \
+    -Wpedantic \
+    -I"${ghostty_source}/zig-out/include" \
+    -I"${repo_root}/linux/src" \
+    "${repo_root}/linux/src/host_options.c" \
+    "${repo_root}/linux/tests/host-options-test.c" \
+    "${link_flags[@]}" \
+    -o "${output_dir}/bin/host-options-test"
+
+c++ \
+    -std=c++17 \
+    -Wall \
+    -Wextra \
+    -Werror \
+    -Wpedantic \
+    -fsyntax-only \
+    -I"${ghostty_source}/zig-out/include" \
+    "${repo_root}/linux/tests/api-header-cpp.cc"
+
+printf 'ghostty_source=%s\nghostty_revision=%s\nghostty_tree=%s\noptimize=%s\nhost_optimize=%s\n' \
     "${ghostty_source}" \
     "${ghostty_revision}" \
+    "${ghostty_tree}" \
     "${optimize}" \
+    "${host_optimize}" \
     >"${output_dir}/build-metadata"
 
 echo "Built ${output_dir}/bin/zentty-linux"

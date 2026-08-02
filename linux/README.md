@@ -18,48 +18,46 @@ The current host is deliberately small. Product features should enter only
 with failing end-to-end tests; the old Ghostty spike remains disposable
 evidence and must not become the Zentty implementation.
 
-## Qualification commands
+## Qualification
 
-The complete local matrix is one command:
+`linux/qualification-matrix.json` is the single authoritative qualification
+inventory. Every row declares one of `PASS`, `FAIL`, `BLOCKED`, `XFAIL`, or
+`NOT_IMPLEMENTED`, and the runner rejects missing terminal combinations,
+unknown states, unexplained blockers, untracked expected failures, unexpected
+skips, and stale XFAILs. Prose documentation is explanatory only and may not
+override that file.
+
+Run every presently executable cell with:
 
 ```sh
 linux/tests/qualify-local
 ```
 
-It runs the ReleaseSafe semantic, four-terminal focus/resize, staged-bundle,
-input/clipboard, and ten-process lifecycle matrix on both backends; runs the
-complete pinned Ghostty Debug regression suite; rebuilds Debug for both memory
-gates; then restores a ReleaseSafe bundle and reruns both semantic checks. The
-individual commands below are useful while diagnosing a specific gate.
+The command writes `build/linux/qualification-summary.json` and a log per cell
+under `build/linux/matrix-logs/`. Its report deliberately distinguishes an
+implemented local-suite pass from release qualification and full Linux
+qualification. Non-pass required cells prevent the latter claims even when
+every executable local command succeeds.
 
-ReleaseSafe product boundary:
+Validate matrix structure without executing product tests:
 
 ```sh
-linux/scripts/build-local
-GDK_BACKEND=wayland linux/tests/single-terminal
-GDK_BACKEND=x11 linux/tests/single-terminal
-GDK_BACKEND=wayland linux/tests/multi-terminal
-GDK_BACKEND=x11 linux/tests/multi-terminal
+linux/tests/qualification-matrix --validate-only
+linux/tests/qualification-matrix-test
+```
+
+Useful narrow diagnostic commands remain available:
+
+```sh
 GDK_BACKEND=wayland linux/tests/interaction
 GDK_BACKEND=x11 linux/tests/interaction
-GDK_BACKEND=wayland linux/tests/staged-bundle
-GDK_BACKEND=x11 linux/tests/staged-bundle
-GDK_BACKEND=wayland linux/tests/repeated-lifecycle
-GDK_BACKEND=x11 linux/tests/repeated-lifecycle
+ZENTTY_CONTROLLED_X11_SCENARIO=physical-key linux/tests/controlled-x11
+ZENTTY_CONTROLLED_X11_SCENARIO=resize linux/tests/controlled-x11
 ```
 
-Debug memory boundary:
-
-```sh
-GHOSTTY_OPTIMIZE=Debug linux/scripts/build-local
-GDK_BACKEND=wayland linux/tests/memory-safety
-GDK_BACKEND=x11 linux/tests/memory-safety
-```
-
-The memory script refuses an artifact whose build metadata does not say
-`optimize=Debug`. ReleaseSafe currently has a separately recorded open
-Valgrind value-report investigation; a Debug pass must not be represented as a
-ReleaseSafe memory result.
+The controlled X11 harness uses Xvfb and software rendering; missing required
+tools exit as an unexpected skip rather than a pass. The matrix records the
+absence of an equivalent controlled Wayland environment explicitly.
 
 See `docs/design/zentty-linux-dogfood-2026-08-01.md` for commands, failures,
 repairs, receipts, environment limits, and the complete qualification record.

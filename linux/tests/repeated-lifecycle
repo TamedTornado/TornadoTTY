@@ -4,16 +4,26 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 backend="${GDK_BACKEND:-wayland}"
 iterations="${ZENTTY_TEST_ITERATIONS:-10}"
+mode="${ZENTTY_LIFECYCLE_MODE:-single}"
 
 if ! [[ "${iterations}" =~ ^[1-9][0-9]*$ ]]; then
     echo "error: ZENTTY_TEST_ITERATIONS must be a positive integer" >&2
     exit 1
 fi
+if [[ "${mode}" != "single" && "${mode}" != "interaction" ]]; then
+    echo "error: ZENTTY_LIFECYCLE_MODE must be single or interaction" >&2
+    exit 1
+fi
+
+test_script="${repo_root}/linux/tests/single-terminal"
+if [[ "${mode}" == "interaction" ]]; then
+    test_script="${repo_root}/linux/tests/interaction"
+fi
 
 for ((iteration = 1; iteration <= iterations; iteration++)); do
     GDK_BACKEND="${backend}" \
-    ZENTTY_TEST_RECEIPT_NAME="lifecycle-${backend}-${iteration}" \
-        "${repo_root}/linux/tests/single-terminal"
+    ZENTTY_TEST_RECEIPT_NAME="lifecycle-${mode}-${backend}-${iteration}" \
+        "${test_script}"
 done
 
-echo "Zentty Linux repeated lifecycle passed (${backend}, ${iterations} runs)"
+echo "Zentty Linux repeated lifecycle passed (${mode}, ${backend}, ${iterations} runs)"

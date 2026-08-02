@@ -1,0 +1,161 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+matrix="${ZENTTY_QUALIFICATION_MATRIX:-${repo_root}/linux/qualification-matrix.json}"
+summary="${ZENTTY_QUALIFICATION_SUMMARY:-${repo_root}/build/linux/qualification-summary.json}"
+validate_only=false
+
+if [[ "${1:-}" == "--validate-only" ]]; then
+    validate_only=true
+elif [[ $# -ne 0 ]]; then
+    echo "usage: $0 [--validate-only]" >&2
+    exit 64
+fi
+
+fail() {
+    echo "qualification-matrix: error: $*" >&2
+    exit 1
+}
+
+command -v jq >/dev/null || fail "jq is required"
+jq -e '.schema_version == 1 and (.cells | type == "array")' \
+    "${matrix}" >/dev/null || fail "invalid matrix schema"
+
+duplicate_ids="$(jq -r '[.cells[].id] | group_by(.)[] | select(length > 1) | .[0]' "${matrix}")"
+[[ -z "${duplicate_ids}" ]] || fail "duplicate cell IDs: ${duplicate_ids}"
+
+unknown_status="$(jq -r '.cells[] | select(.status != "PASS" and .status != "FAIL" and .status != "BLOCKED" and .status != "XFAIL" and .status != "NOT_IMPLEMENTED") | .id + "=" + (.status | tostring)' "${matrix}")"
+[[ -z "${unknown_status}" ]] || fail "unknown statuses: ${unknown_status}"
+
+missing_fields="$(jq -r '.cells[] | select((.id | type) != "string" or (.order | type) != "number" or (.capability | type) != "string" or (.display | type) != "string" or (.optimize | type) != "string" or (.async_backend | type) != "string" or (.terminals | type) != "string" or (.status | type) != "string" or (.tier | type) != "string") | .id // "<missing-id>"' "${matrix}")"
+[[ -z "${missing_fields}" ]] || fail "cells with missing fields: ${missing_fields}"
+
+invalid_explanations="$(jq -r '.cells[] | select((.status == "BLOCKED" and ((.prerequisite // "") | length) == 0) or ((.status == "XFAIL" or .status == "NOT_IMPLEMENTED" or .status == "FAIL") and ((.defect // "") | length) == 0)) | .id' "${matrix}")"
+[[ -z "${invalid_explanations}" ]] || fail "non-pass cells without prerequisite/defect: ${invalid_explanations}"
+
+invalid_commands="$(jq -r '.cells[] | select((.status == "PASS" or .status == "XFAIL") and ((.command // "") | length) == 0) | .id' "${matrix}")"
+[[ -z "${invalid_commands}" ]] || fail "executable cells without commands: ${invalid_commands}"
+
+untracked_xfails="$(jq -r '.cells[] | select(.status == "XFAIL" and ((.tracking // "") | length) == 0) | .id' "${matrix}")"
+[[ -z "${untracked_xfails}" ]] || fail "XFAIL cells without tracking IDs: ${untracked_xfails}"
+
+for capability in $(jq -r '.required_capabilities[]' "${matrix}"); do
+    jq -e --arg capability "${capability}" \
+        '.cells | any(.capability == $capability)' "${matrix}" >/dev/null ||
+        fail "missing required capability: ${capability}"
+done
+
+for optimize in ReleaseSafe Debug; do
+    for display in wayland x11; do
+        for async_backend in default epoll io_uring; do
+            for terminals in single multi; do
+                jq -e \
+                    --arg optimize "${optimize}" \
+                    --arg display "${display}" \
+                    --arg async_backend "${async_backend}" \
+                    --arg terminals "${terminals}" \
+                    '.cells | any(
+                        .capability == "terminal_behavior" and
+                        .optimize == $optimize and
+                        .display == $display and
+                        .async_backend == $async_backend and
+                        .terminals == $terminals
+                    )' "${matrix}" >/dev/null ||
+                    fail "missing terminal cell: ${optimize}/${display}/${async_backend}/${terminals}"
+            done
+        done
+    done
+done
+
+if jq -e '.claims.full_linux_qualification_passed == true and any(.cells[]; .status != "PASS")' "${matrix}" >/dev/null; then
+    fail "matrix incorrectly claims full Linux qualification"
+fi
+if jq -e '.claims.release_qualification_passed == true and any(.cells[]; .tier == "release" and .status != "PASS")' "${matrix}" >/dev/null; then
+    fail "matrix incorrectly claims release qualification"
+fi
+if jq -e '.claims.implemented_local_suite_passed == true and any(.cells[]; .status == "FAIL")' "${matrix}" >/dev/null; then
+    fail "matrix incorrectly claims the implemented local suite passed"
+fi
+
+if "${validate_only}"; then
+    echo "Qualification matrix schema and coverage passed"
+    exit 0
+fi
+
+mkdir -p "$(dirname "${summary}")" "${repo_root}/build/linux/matrix-logs"
+results='[]'
+run_failed=false
+while IFS= read -r cell; do
+    id="$(jq -r '.id' <<<"${cell}")"
+    status="$(jq -r '.status' <<<"${cell}")"
+    command="$(jq -r '.command // empty' <<<"${cell}")"
+    outcome="DECLARED_${status}"
+    exit_code=null
+
+    if [[ "${status}" == "FAIL" ]]; then
+        outcome="FAIL"
+        run_failed=true
+    elif [[ "${status}" == "PASS" || "${status}" == "XFAIL" ]]; then
+        log="${repo_root}/build/linux/matrix-logs/${id}.log"
+        set +e
+        (cd "${repo_root}" && bash -o pipefail -c "${command}") >"${log}" 2>&1
+        code=$?
+        set -e
+        exit_code="${code}"
+        if [[ "${code}" -eq 77 ]]; then
+            outcome="UNEXPECTED_SKIP"
+            run_failed=true
+        elif [[ "${status}" == "PASS" && "${code}" -eq 0 ]]; then
+            outcome="PASS"
+        elif [[ "${status}" == "PASS" ]]; then
+            outcome="FAIL"
+            run_failed=true
+        elif [[ "${code}" -eq 0 ]]; then
+            outcome="STALE_XFAIL"
+            run_failed=true
+        else
+            outcome="XFAIL"
+        fi
+        printf '%-62s %s\n' "${id}" "${outcome}"
+    fi
+
+    result="$(jq -cn --arg id "${id}" --arg declared "${status}" --arg outcome "${outcome}" --argjson exit_code "${exit_code}" '{id: $id, declared_status: $declared, outcome: $outcome, exit_code: $exit_code}')"
+    results="$(jq -cn --argjson results "${results}" --argjson result "${result}" '$results + [$result]')"
+done < <(jq -c '.cells | sort_by(.order, .id)[]' "${matrix}")
+
+totals="$(jq '.cells | group_by(.status) | map({key: .[0].status, value: length}) | from_entries | {PASS: (.PASS // 0), FAIL: (.FAIL // 0), BLOCKED: (.BLOCKED // 0), XFAIL: (.XFAIL // 0), NOT_IMPLEMENTED: (.NOT_IMPLEMENTED // 0)}' "${matrix}")"
+implemented_local=false
+if ! "${run_failed}"; then
+    implemented_local=true
+fi
+release=false
+if "${implemented_local}" && jq -e 'all(.cells[] | select(.tier == "release"); .status == "PASS")' "${matrix}" >/dev/null; then
+    release=true
+fi
+full=false
+if "${release}" && jq -e 'all(.cells[]; .status == "PASS")' "${matrix}" >/dev/null; then
+    full=true
+fi
+
+jq -n \
+    --argjson totals "${totals}" \
+    --argjson results "${results}" \
+    --argjson implemented_local "${implemented_local}" \
+    --argjson release "${release}" \
+    --argjson full "${full}" \
+    '{schema_version: 1, totals_by_declared_status: $totals, results: $results, claims: {implemented_local_suite_passed: $implemented_local, release_qualification_passed: $release, full_linux_qualification_passed: $full}}' \
+    >"${summary}"
+
+printf '\nImplemented local suite: %s\n' "$("${implemented_local}" && echo PASSED || echo FAILED)"
+printf 'Release qualification:    %s\n' "$("${release}" && echo PASSED || echo NOT_PASSED)"
+printf 'Full Linux qualification: %s\n' "$("${full}" && echo PASSED || echo NOT_PASSED)"
+printf 'Declared totals: PASS=%s FAIL=%s BLOCKED=%s XFAIL=%s NOT_IMPLEMENTED=%s\n' \
+    "$(jq -r '.PASS' <<<"${totals}")" \
+    "$(jq -r '.FAIL' <<<"${totals}")" \
+    "$(jq -r '.BLOCKED' <<<"${totals}")" \
+    "$(jq -r '.XFAIL' <<<"${totals}")" \
+    "$(jq -r '.NOT_IMPLEMENTED' <<<"${totals}")"
+echo "Machine summary: ${summary}"
+
+"${implemented_local}" || exit 1

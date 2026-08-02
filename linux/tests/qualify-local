@@ -2,27 +2,4 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-
-"${repo_root}/linux/scripts/build-local"
-"${repo_root}/linux/tests/host-contract"
-for backend in wayland x11; do
-    GDK_BACKEND="${backend}" "${repo_root}/linux/tests/single-terminal"
-    GDK_BACKEND="${backend}" "${repo_root}/linux/tests/multi-terminal"
-    GDK_BACKEND="${backend}" "${repo_root}/linux/tests/interaction"
-    GDK_BACKEND="${backend}" "${repo_root}/linux/tests/staged-bundle"
-    GDK_BACKEND="${backend}" "${repo_root}/linux/tests/repeated-lifecycle"
-done
-
-"${repo_root}/linux/tests/ghostty-regression"
-
-GHOSTTY_OPTIMIZE=Debug "${repo_root}/linux/scripts/build-local"
-for backend in wayland x11; do
-    GDK_BACKEND="${backend}" "${repo_root}/linux/tests/memory-safety"
-done
-
-"${repo_root}/linux/scripts/build-local"
-for backend in wayland x11; do
-    GDK_BACKEND="${backend}" "${repo_root}/linux/tests/single-terminal"
-done
-
-echo "Zentty Linux local qualification passed"
+exec "${repo_root}/linux/tests/qualification-matrix"
