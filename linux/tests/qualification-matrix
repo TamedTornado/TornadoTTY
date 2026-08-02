@@ -37,6 +37,9 @@ invalid_explanations="$(jq -r '.cells[] | select((.status == "BLOCKED" and ((.pr
 invalid_commands="$(jq -r '.cells[] | select((.status == "PASS" or .status == "XFAIL") and ((.command // "") | length) == 0) | .id' "${matrix}")"
 [[ -z "${invalid_commands}" ]] || fail "executable cells without commands: ${invalid_commands}"
 
+invalid_valgrind_reports="$(jq -r '.cells[] | select(.capability == "valgrind" and ((((.valgrind_report // "") | type) != "string") or (((.valgrind_report // "") | length) == 0))) | .id' "${matrix}")"
+[[ -z "${invalid_valgrind_reports}" ]] || fail "Valgrind cells without report paths: ${invalid_valgrind_reports}"
+
 untracked_xfails="$(jq -r '.cells[] | select(.status == "XFAIL" and ((.tracking // "") | length) == 0) | .id' "${matrix}")"
 [[ -z "${untracked_xfails}" ]] || fail "XFAIL cells without tracking IDs: ${untracked_xfails}"
 
@@ -90,14 +93,22 @@ while IFS= read -r cell; do
     id="$(jq -r '.id' <<<"${cell}")"
     status="$(jq -r '.status' <<<"${cell}")"
     command="$(jq -r '.command // empty' <<<"${cell}")"
+    valgrind_report="$(jq -r '.valgrind_report // empty' <<<"${cell}")"
     outcome="DECLARED_${status}"
     exit_code=null
+    valgrind=null
 
     if [[ "${status}" == "FAIL" ]]; then
         outcome="FAIL"
         run_failed=true
     elif [[ "${status}" == "PASS" || "${status}" == "XFAIL" ]]; then
         log="${repo_root}/build/linux/matrix-logs/${id}.log"
+        if [[ -n "${valgrind_report}" ]]; then
+            if [[ "${valgrind_report}" != /* ]]; then
+                valgrind_report="${repo_root}/${valgrind_report}"
+            fi
+            rm -f "${valgrind_report}"
+        fi
         set +e
         (cd "${repo_root}" && bash -o pipefail -c "${command}") >"${log}" 2>&1
         code=$?
@@ -117,10 +128,29 @@ while IFS= read -r cell; do
         else
             outcome="XFAIL"
         fi
-        printf '%-62s %s\n' "${id}" "${outcome}"
+        if [[ -n "${valgrind_report}" ]]; then
+            if [[ ! -f "${valgrind_report}" ]] || ! jq -e '
+                (.raw.errors | type == "number") and
+                (.raw.definite_bytes | type == "number") and
+                (.raw.indirect_bytes | type == "number") and
+                (.post_suppression.errors | type == "number") and
+                (.post_suppression.definite_bytes | type == "number") and
+                (.post_suppression.indirect_bytes | type == "number")
+            ' "${valgrind_report}" >/dev/null 2>&1; then
+                outcome="MISSING_OR_INVALID_VALGRIND_REPORT"
+                run_failed=true
+            else
+                valgrind="$(jq -c . "${valgrind_report}")"
+            fi
+        fi
+        display_outcome="${outcome}"
+        if [[ -n "${valgrind_report}" && "${outcome}" == "PASS" ]]; then
+            display_outcome="PASS with reviewed suppressions"
+        fi
+        printf '%-62s %s\n' "${id}" "${display_outcome}"
     fi
 
-    result="$(jq -cn --arg id "${id}" --arg declared "${status}" --arg outcome "${outcome}" --argjson exit_code "${exit_code}" '{id: $id, declared_status: $declared, outcome: $outcome, exit_code: $exit_code}')"
+    result="$(jq -cn --arg id "${id}" --arg declared "${status}" --arg outcome "${outcome}" --argjson exit_code "${exit_code}" --argjson valgrind "${valgrind}" '{id: $id, declared_status: $declared, outcome: $outcome, exit_code: $exit_code} + if $valgrind == null then {} else {valgrind: $valgrind} end')"
     results="$(jq -cn --argjson results "${results}" --argjson result "${result}" '$results + [$result]')"
 done < <(jq -c '.cells | sort_by(.order, .id)[]' "${matrix}")
 
@@ -144,7 +174,7 @@ jq -n \
     --argjson implemented_local "${implemented_local}" \
     --argjson release "${release}" \
     --argjson full "${full}" \
-    '{schema_version: 1, totals_by_declared_status: $totals, results: $results, claims: {implemented_local_suite_passed: $implemented_local, release_qualification_passed: $release, full_linux_qualification_passed: $full}}' \
+    '{schema_version: 1, totals_by_declared_status: $totals, results: $results, valgrind_reports: [$results[] | select(has("valgrind")) | {id, declared_status, outcome, description: (if .outcome == "PASS" then "PASS with reviewed suppressions" else .outcome end), raw: .valgrind.raw, post_suppression: .valgrind.post_suppression, raw_receipt: .valgrind.raw_receipt, suppressed_receipt: .valgrind.suppressed_receipt, suppression_usage: .valgrind.suppression_usage}], claims: {implemented_local_suite_passed: $implemented_local, release_qualification_passed: $release, full_linux_qualification_passed: $full}}' \
     >"${summary}"
 
 printf '\nImplemented local suite: %s\n' "$("${implemented_local}" && echo PASSED || echo FAILED)"

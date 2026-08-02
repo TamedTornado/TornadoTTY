@@ -2,6 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+source "${repo_root}/linux/tests/lib/valgrind-report"
 ghostty_source="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
 binary="${repo_root}/build/linux/bin/zentty-linux"
 api_contract="${repo_root}/build/linux/bin/api-contract"
@@ -9,18 +10,22 @@ metadata="${repo_root}/build/linux/build-metadata"
 backend="${GDK_BACKEND:-wayland}"
 scenario="${ZENTTY_MEMORY_SCENARIO:-single}"
 expected_optimize="${ZENTTY_MEMORY_EXPECT_OPTIMIZE:-Debug}"
-receipt="${repo_root}/build/linux/memory-safety-${scenario}-${backend}.log"
+receipt_base="${repo_root}/build/linux/memory-safety-${expected_optimize}-${scenario}-${backend}"
+raw_receipt="${receipt_base}.raw.log"
+suppressed_receipt="${receipt_base}.suppressed.log"
+report="${receipt_base}.json"
+effective_suppressions=(
+    "${ghostty_source}/valgrind.supp"
+    "${ghostty_source}/src/gtk_embed_spike.valgrind.supp"
+    "${repo_root}/linux/tests/valgrind.supp"
+)
 
-if ! command -v valgrind >/dev/null; then
-    echo "error: valgrind is required" >&2
+if ! command -v valgrind >/dev/null || ! command -v jq >/dev/null; then
+    echo "error: valgrind and jq are required" >&2
     exit 1
 fi
-if [[ ! -x "${binary}" ]]; then
-    echo "error: ${binary} does not exist; run linux/scripts/build-local" >&2
-    exit 1
-fi
-if [[ ! -x "${api_contract}" ]]; then
-    echo "error: ${api_contract} does not exist; run linux/scripts/build-local" >&2
+if [[ ! -x "${binary}" || ! -x "${api_contract}" ]]; then
+    echo "error: Linux test binaries do not exist; run linux/scripts/build-local" >&2
     exit 1
 fi
 if [[ "${scenario}" != "single" && "${scenario}" != "interaction" &&
@@ -38,10 +43,7 @@ if [[ "${expected_optimize}" == "Debug" ]] &&
     echo "error: memory-safety requires a Debug C host" >&2
     exit 1
 fi
-for suppression in \
-    "${ghostty_source}/valgrind.supp" \
-    "${ghostty_source}/src/gtk_embed_spike.valgrind.supp" \
-    "${repo_root}/linux/tests/valgrind.supp"; do
+for suppression in "${effective_suppressions[@]}"; do
     if [[ ! -f "${suppression}" ]]; then
         echo "error: required suppression file not found: ${suppression}" >&2
         exit 1
@@ -67,26 +69,92 @@ case "${scenario}" in
         ;;
 esac
 
+valgrind_flags=(
+    -s
+    --num-callers=40
+    --leak-check=full
+    --show-leak-kinds=definite,indirect
+    --errors-for-leak-kinds=definite,indirect
+)
+
+set +e
 env "${environment[@]}" timeout 300s valgrind \
+    "${valgrind_flags[@]}" \
+    "${program[@]}" >"${raw_receipt}" 2>&1
+raw_status=$?
+set -e
+if [[ "${raw_status}" -ne 0 ]]; then
+    echo "error: unsuppressed Valgrind execution exited ${raw_status}" >&2
+    exit "${raw_status}"
+fi
+
+suppression_flags=()
+for suppression in "${effective_suppressions[@]}"; do
+    suppression_flags+=("--suppressions=${suppression}")
+done
+set +e
+env "${environment[@]}" timeout 300s valgrind \
+    "${valgrind_flags[@]}" \
     --error-exitcode=99 \
-    --leak-check=full \
-    --show-leak-kinds=definite,indirect \
-    --errors-for-leak-kinds=definite,indirect \
-    --suppressions="${ghostty_source}/valgrind.supp" \
-    --suppressions="${ghostty_source}/src/gtk_embed_spike.valgrind.supp" \
-    --suppressions="${repo_root}/linux/tests/valgrind.supp" \
-    "${program[@]}" >"${receipt}" 2>&1
+    "${suppression_flags[@]}" \
+    "${program[@]}" >"${suppressed_receipt}" 2>&1
+suppressed_status=$?
+set -e
 
-if [[ "${scenario}" == "api" ]]; then
-    grep -Fx "api-contract: PASS" "${receipt}" >/dev/null
-else
-    grep -F "zentty-linux: integration PASS" "${receipt}" >/dev/null
-fi
-if [[ "${scenario}" == "interaction" ]]; then
-    grep -F "keyboard=1 clipboard=1/1" "${receipt}" >/dev/null
-fi
-grep -F "definitely lost: 0 bytes" "${receipt}" >/dev/null
-grep -F "indirectly lost: 0 bytes" "${receipt}" >/dev/null
-grep -F "ERROR SUMMARY: 0 errors" "${receipt}" >/dev/null
+assert_semantic_pass() {
+    local receipt="$1"
+    if [[ "${scenario}" == "api" ]]; then
+        grep -Fx "api-contract: PASS" "${receipt}" >/dev/null
+    else
+        grep -F "zentty-linux: integration PASS" "${receipt}" >/dev/null
+    fi
+    if [[ "${scenario}" == "interaction" ]]; then
+        grep -F "keyboard=1 clipboard=1/1" "${receipt}" >/dev/null
+    fi
+}
+assert_semantic_pass "${raw_receipt}"
+assert_semantic_pass "${suppressed_receipt}"
 
-echo "Zentty Linux memory-safety integration passed (${scenario}, ${backend})"
+raw_metrics="$(zentty_valgrind_metrics_json "${raw_receipt}")"
+suppressed_metrics="$(zentty_valgrind_metrics_json "${suppressed_receipt}")"
+suppression_usage="$(zentty_valgrind_usage_json \
+    "${suppressed_receipt}" \
+    "${effective_suppressions[@]}")"
+suppression_files='[]'
+for suppression in "${effective_suppressions[@]}"; do
+    item="$(jq -cn \
+        --arg path "${suppression}" \
+        --arg sha256 "$(sha256sum "${suppression}" | awk '{print $1}')" \
+        '{path: $path, sha256: $sha256}')"
+    suppression_files="$(jq -cn \
+        --argjson values "${suppression_files}" \
+        --argjson item "${item}" \
+        '$values + [$item]')"
+done
+
+jq -n \
+    --arg optimize "${expected_optimize}" \
+    --arg scenario "${scenario}" \
+    --arg backend "${backend}" \
+    --arg raw_receipt "${raw_receipt}" \
+    --arg suppressed_receipt "${suppressed_receipt}" \
+    --arg valgrind_version "$(valgrind --version)" \
+    --argjson raw "${raw_metrics}" \
+    --argjson post "${suppressed_metrics}" \
+    --argjson suppression_files "${suppression_files}" \
+    --argjson suppression_usage "${suppression_usage}" \
+    '{optimize: $optimize, scenario: $scenario, display_backend: $backend, raw_receipt: $raw_receipt, suppressed_receipt: $suppressed_receipt, valgrind_version: $valgrind_version, valgrind_builtin_suppressions: true, effective_suppression_files: $suppression_files, suppression_usage: $suppression_usage, raw: $raw, post_suppression: $post}' \
+    >"${report}"
+
+if [[ "${expected_optimize}" == "Debug" ]]; then
+    if [[ "${suppressed_status}" -ne 0 ]]; then
+        echo "error: suppressed Debug Valgrind exited ${suppressed_status}" >&2
+        exit "${suppressed_status}"
+    fi
+    jq -e '.post_suppression.errors == 0 and .post_suppression.definite_bytes == 0 and .post_suppression.indirect_bytes == 0' \
+        "${report}" >/dev/null
+    echo "Zentty Linux memory-safety PASS with reviewed suppressions (${scenario}, ${backend})"
+    exit 0
+fi
+
+exit "${suppressed_status}"

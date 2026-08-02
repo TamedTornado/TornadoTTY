@@ -1198,6 +1198,165 @@ behavior rather than executable contracts.
 - **Limitation:** This is intentionally not “exhaustive QA.” Any such claim is
   prohibited while the 11 non-PASS cells remain.
 
+### DOGFOOD-2026-08-02-VALGRIND-SUPPRESSION-GOVERNANCE: zero-after-suppression was not raw cleanliness
+
+- **Observation:** Earlier receipts retained only a suppression-enabled
+  Valgrind run. Several historical statements above consequently say “zero
+  errors” or “clean” without preserving the non-project-suppressed evidence
+  needed to audit that claim.
+- **Consequence:** A growing, stale, or over-broad suppression could hide a
+  regression while the qualification report continued to look green.
+- **Repair:** Every Valgrind cell now runs twice and preserves adjacent
+  `*.raw.log` and `*.suppressed.log` receipts plus a JSON record. “Raw” means
+  no Ghostty or Zentty suppression file; Valgrind 3.22.0 built-in
+  suppressions remain active and are declared in the manifest. The matrix
+  summary embeds raw and post-suppression totals and rule usage. Debug results
+  are named **PASS with reviewed suppressions**. This paragraph supersedes any
+  older wording above that could be read as an unsuppressed-clean result.
+- **Raw evidence:** The final 40-frame Debug product receipts expose expected
+  system cache findings rather than zero totals: single/interaction Wayland
+  each report 242 errors, 3,296 definitely-lost bytes, and 28,606
+  indirectly-lost bytes; single X11 reports 141, 2,016, and 14,406;
+  interaction X11 reports 247, 3,376, and 28,643. API-only Wayland/X11 report
+  4/352/132 and 5/408/132 respectively. The reviewed Debug receipts reduce those reported
+  error, definite-byte, and indirect-byte totals to zero. These figures are
+  evidence for reviewed suppression behavior, not a product claim of raw
+  cleanliness.
+- **Manifest:** `linux/tests/valgrind-suppressions.json` gives each of the nine
+  project rules a tracking ID, exact finding type, affected package versions
+  and environment, expected match/byte range, scenario allowlist,
+  justification, and reproducer. It also pins the complete effective inherited
+  set: Ghostty's 233-rule `valgrind.supp`, its six-rule embedding suppression
+  file, and Valgrind's built-ins. Ghostty's main file contains duplicate names,
+  so its audit identity is the pinned Ghostty revision plus exact hash and rule
+  count, while per-run receipts retain actual usage.
+- **Governance tests:** The validator rejects an added untracked project rule,
+  increased match count or byte range, a required rule with no observed use,
+  a rule used outside its scenario, a child rule without its documented root,
+  changed inherited hashes/counts, and missing paired receipts. Its negative
+  self-test constructs and observes failures for suppression growth, stale
+  suppression, out-of-scenario matching, and untracked addition.
+- **Stale receipt defense:** Before a Valgrind cell executes, the matrix runner
+  removes that cell's prior JSON report. A command that fails before producing
+  fresh paired evidence is therefore reported as missing/invalid evidence; it
+  cannot inherit a prior run's apparently valid totals.
+- **First audit rerun:** The first full governed matrix correctly failed its
+  governance PASS cell: ReleaseSafe X11 used the already-narrowed metrics
+  string rule six times/3,276 bytes, outside the initially reviewed 2–4-match
+  range. The exact rule itself was not broadened and ReleaseSafe remained red;
+  review showed the same five consecutive Fontconfig frames beside its metrics
+  root. The intermediate manifest temporarily admitted 2–6 matches while
+  retaining the existing byte ceiling and scenario allowlist. Because qualification had a failed PASS
+  cell, its summary was rejected and the entire matrix was scheduled again.
+- **Stale-rule discovery:** After reviewing the count failure, governance next
+  rejected both old Pango layout-cache rules as stale: neither appeared in any
+  receipt from that completed matrix. Removing them made the next full run
+  correctly fail when the nondeterministic cache returned (five contexts,
+  512 definite and 128 indirect bytes). Rather than waive staleness or depend
+  on product timing, the standalone non-Ghostty harness now explicitly creates
+  and sizes a Pango layout. This makes the root/child evidence a deterministic
+  governed scenario; both rules remain tracked only because that harness uses
+  them on every qualification run.
+- **Apparent product cardinality variance:** At Memcheck's default caller
+  depth, X11 startup appeared to produce two string-child shapes depending on
+  cache order. That was not accepted as a permissive numeric range; the audit
+  increased caller depth before setting a final baseline.
+- **Complete-stack correction:** Raising Memcheck receipts from the default
+  caller depth to 40 exposed additional deep allocations matching the already
+  narrowed five/eight-Fontconfig-frame shapes. Governance rejected the old
+  counts (for example, 10 rather than 2 string contexts). The manifest now
+  records exact 40-frame per-scenario baselines; no suppression pattern was
+  broadened. This also made both Pango roots simultaneously visible in the
+  standalone harness.
+
+### Broad Fontconfig children were narrowed and tied to their cache roots
+
+- **Observation:** The first Fontconfig child rules admitted `malloc` or
+  `strdup` followed by only one stripped `libfontconfig` frame. That was too
+  broad even though the sampled stacks appeared external.
+- **Repair:** The string rule now requires `strdup` followed by five
+  consecutive Fontconfig frames; the node rule requires `malloc` followed by
+  eight consecutive Fontconfig frames. Each child rule must appear in the
+  same JSON receipt as the separately bounded Pango metrics-cache root or
+  governance fails.
+- **Evidence:** The standalone GTK receipt records two explicitly requested
+  metrics roots alongside the narrowed node/string children. Product receipts
+  record one root on X11 or two on Wayland alongside the corresponding reviewed child cardinality.
+  No child-only receipt is accepted.
+- **Remaining uncertainty:** Stripped distro symbols prevent assigning the
+  internal Fontconfig functions by name. The repeated-library shape,
+  allocation primitive, named Pango consumer on the root, external
+  reproducer, fixed environment, and enforced co-occurrence are the narrowest
+  deterministic evidence available on this package build.
+
+### A non-Ghostty GTK/IBus program reproduced the focus findings
+
+- **Observation:** A stack passing through `Surface.updateFocus` proved a
+  product trigger but did not prove that Ghostty lacked lifecycle
+  responsibility.
+- **Attempt:** A private D-Bus plus Xvfb run did not load `libim-ibus` and did
+  not reproduce the finding. That environmental absence was recorded as a
+  failed reproduction attempt, never converted into a pass.
+- **Repair:** `ibus-focus-reproducer.c` is a standalone GtkApplication using
+  ordinary GTK entries and `GtkIMMulticontext`; it neither links nor loads
+  Ghostty. On the controlled current Xwayland session with
+  `GTK_IM_MODULE=ibus`, repeated focus-in/focus-out reproduces allocations
+  rooted at `ibus_text_new_from_string` in `libim-ibus.so`.
+- **Lifecycle check:** Adding explicit client detachment initially placed it
+  after window destruction. Valgrind immediately exposed two invalid reads in
+  GTK/IBus because detachment consulted the already-freed widget. Moving
+  `gtk_im_context_set_client_widget(context, NULL)` before window destruction
+  removes that reproducer-owned lifecycle defect; it was not suppressed.
+- **Evidence:** The initial focus-only raw receipt reported 77 errors, 1,920
+  definitely-lost bytes, and 14,424 indirectly-lost bytes. After the same
+  harness was extended to deterministically exercise both Pango roots, the
+  combined raw receipt reports 334 errors, 4,480 definite bytes, and 27,001
+  indirect bytes. Its reviewed receipt reaches zero for those totals and
+  records exact per-scenario rule counts. The IBus allocation stack terminates
+  in the reproducer's focus driver rather than `Surface.updateFocus`.
+- **Remaining uncertainty:** External reproducibility makes an IBus/GTK cache
+  diagnosis credible but does **not** absolve Ghostty of lifecycle
+  responsibility. The rules remain narrowly bounded to IBus construction,
+  scenario-restricted, count-limited, and auditable.
+
+### ReleaseSafe remains an evidence-bearing XFAIL
+
+- **Decision:** The project suppression set was not broadened to make the
+  optimized build green. Both ReleaseSafe Valgrind cells retain raw and
+  reviewed receipts, return their nonzero Memcheck status, and remain tracked
+  XFAILs. Governance treats a zero result as stale XFAIL rather than silently
+  promoting it.
+- **Qualification consequence:** Neither release nor full Linux qualification
+  may be claimed while these or any other required matrix cells are XFAIL,
+  BLOCKED, FAIL, or NOT_IMPLEMENTED.
+
+### Suppression-governed authoritative matrix result
+
+- **Command:** `GHOSTTY_SOURCE_DIR=/home/jason/Projects/ghostty
+  linux/tests/qualify-local`
+- **Pinned dependency:** Ghostty
+  `5fc8fa2cf4b27bfe27072d561de98f33b2c16636`, clean; the matrix restored the
+  ReleaseSafe artifacts before its final cells.
+- **Declared totals:** 55 PASS, 0 FAIL, 5 BLOCKED, 2 XFAIL, and 4
+  NOT_IMPLEMENTED (66 total).
+- **Execution:** Every executable PASS cell passed, including suppression
+  governance and its negative self-tests. Both ReleaseSafe Valgrind cells
+  produced paired receipts and remained the expected nonzero XFAILs. There
+  were no failed PASS cells, unexpected skips, or stale XFAILs.
+- **ReleaseSafe evidence:** Wayland raw/post reports 937/695 errors,
+  3,296/0 definite bytes, and 28,606/0 indirect bytes. X11 raw/post reports
+  911/665 errors, 3,456/0 definite bytes, and 28,042/0 indirect bytes. These
+  remain XFAIL because hundreds of post-suppression errors are unresolved.
+- **Claims:** **implemented local suite PASSED**; **release qualification NOT
+  PASSED**; **full Linux qualification NOT PASSED**. This result supersedes
+  the earlier 53-PASS authoritative checkpoint above.
+- **Machine evidence:** `build/linux/qualification-summary.json` embeds all
+  nine Valgrind JSON reports, their paired receipt paths, raw/post totals, and
+  suppression usage. Build receipts are intentionally ignored rather than
+  committed.
+- **Limitation:** This is not exhaustive QA. Eleven declared cells remain
+  BLOCKED, XFAIL, or NOT_IMPLEMENTED.
+
 The experiment remains an internal Zig/GTK integration surface rather than a
 public Ghostty ABI. Any extraction proposed upstream should be smaller than the
 fork's test harness, preserve the legacy constructor, and be independently

@@ -145,6 +145,13 @@ cc \
     "${link_flags[@]}" \
     -o "${output_dir}/bin/host-options-test"
 
+cc \
+    "${c_flags[@]}" \
+    "${repo_root}/linux/tests/ibus-focus-reproducer.c" \
+    $(pkg-config --cflags --libs gtk4) \
+    "${link_flags[@]}" \
+    -o "${output_dir}/bin/ibus-focus-reproducer"
+
 c++ \
     -std=c++17 \
     -Wall \

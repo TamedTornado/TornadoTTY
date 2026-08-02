@@ -7,11 +7,25 @@ source_matrix="${repo_root}/linux/qualification-matrix.json"
 temp_dir="$(mktemp -d)"
 trap 'rm -rf "${temp_dir}"' EXIT
 
+valgrind_template="${temp_dir}/valgrind-template.json"
+valgrind_fixture="${temp_dir}/valgrind.json"
+jq -n '{
+    raw_receipt: "fixture.raw.log",
+    suppressed_receipt: "fixture.suppressed.log",
+    raw: {errors: 1, contexts: 1, definite_bytes: 10, definite_blocks: 1, indirect_bytes: 0, indirect_blocks: 0},
+    post_suppression: {errors: 0, contexts: 0, definite_bytes: 0, definite_blocks: 0, indirect_bytes: 0, indirect_blocks: 0},
+    suppression_usage: []
+}' >"${valgrind_template}"
+
 base="${temp_dir}/base.json"
-jq '.cells |= map(
+jq --arg report "${valgrind_fixture}" --arg template "${valgrind_template}" '.cells |= map(
     if .status == "PASS" then .command = "true"
     elif .status == "XFAIL" then .command = "false"
     else . end
+    | if has("valgrind_report") then
+        .valgrind_report = $report |
+        .command = ("cp " + $template + " " + $report + "; " + .command)
+      else . end
 )' "${source_matrix}" >"${base}"
 
 run_expect_failure() {
@@ -60,7 +74,8 @@ jq '(.cells[] | select(.id == "build-release") | .command) = "exit 77"' \
 run_expect_failure unexpected-skip "UNEXPECTED_SKIP" "${unexpected_skip}"
 
 stale_xfail="${temp_dir}/stale-xfail.json"
-jq '(.cells[] | select(.status == "XFAIL") | .command) = "true"' \
+jq --arg template "${valgrind_template}" --arg report "${valgrind_fixture}" \
+    '(.cells[] | select(.status == "XFAIL") | .command) = ("cp " + $template + " " + $report + "; true")' \
     "${base}" >"${stale_xfail}"
 run_expect_failure stale-xfail "STALE_XFAIL" "${stale_xfail}"
 
@@ -69,6 +84,13 @@ jq '(.cells[] | select(.id == "build-release") | .command) = "exit 9"' \
     "${base}" >"${failed}"
 run_expect_failure failed-command "build-release" "${failed}"
 grep -F "FAIL" "${temp_dir}/failed-command.log" >/dev/null
+
+stale_report="${temp_dir}/stale-report.json"
+jq '(.cells[] | select(.id == "debug-valgrind-api-wayland") | .command) = "false"' \
+    "${base}" >"${stale_report}"
+cp "${valgrind_template}" "${valgrind_fixture}"
+run_expect_failure stale-report \
+    "MISSING_OR_INVALID_VALGRIND_REPORT" "${stale_report}"
 
 incorrect_full="${temp_dir}/incorrect-full.json"
 jq '.claims.full_linux_qualification_passed = true' \
@@ -82,7 +104,13 @@ ZENTTY_QUALIFICATION_SUMMARY="${temp_dir}/passing-summary.json" \
 jq -e '
     .claims.implemented_local_suite_passed == true and
     .claims.release_qualification_passed == false and
-    .claims.full_linux_qualification_passed == false
+    .claims.full_linux_qualification_passed == false and
+    (.valgrind_reports | length) == 9 and
+    all(.valgrind_reports[];
+        .raw.errors == 1 and
+        .post_suppression.errors == 0 and
+        (if .outcome == "PASS" then .description == "PASS with reviewed suppressions" else true end)
+    )
 ' "${temp_dir}/passing-summary.json" >/dev/null
 
 echo "Qualification matrix runner tests passed"

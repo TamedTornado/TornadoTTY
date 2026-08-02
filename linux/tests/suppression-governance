@@ -1,0 +1,172 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+manifest="${ZENTTY_SUPPRESSION_MANIFEST:-${repo_root}/linux/tests/valgrind-suppressions.json}"
+reports_dir="${ZENTTY_SUPPRESSION_REPORTS_DIR:-${repo_root}/build/linux}"
+ghostty_source="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
+
+fail() {
+    echo "suppression-governance: error: $*" >&2
+    exit 1
+}
+
+resolve_path() {
+    local base="$1"
+    local path="$2"
+    case "${base}" in
+        repo) printf '%s/%s\n' "${repo_root}" "${path}" ;;
+        ghostty) printf '%s/%s\n' "${ghostty_source}" "${path}" ;;
+        absolute) printf '%s\n' "${path}" ;;
+        *) fail "unknown suppression base ${base}" ;;
+    esac
+}
+
+jq -e '
+    .schema_version == 1 and
+    (.rules | type == "array") and
+    all(.rules[];
+        (.rule_name | type == "string" and length > 0) and
+        (.tracking_id | type == "string" and length > 0) and
+        (.affected | type == "string" and length > 0) and
+        (.finding_type | type == "string" and length > 0) and
+        (.justification | type == "string" and length > 0) and
+        (.reproducer | type == "string" and length > 0) and
+        (.allowed_scenarios | type == "array" and length > 0) and
+        (.required_usage | type == "boolean") and
+        (.expected_suppressed.matches.min | type == "number") and
+        (.expected_suppressed.matches.max | type == "number") and
+        (.expected_by_scenario // {} | type == "object")
+    ) and
+    ([.rules[].rule_name] | length == (unique | length)) and
+    ([.rules[].tracking_id] | length == (unique | length))
+' \
+    "${manifest}" >/dev/null || fail "invalid manifest"
+
+project_path="$(jq -r '.project_suppression_file.path' "${manifest}")"
+if [[ "${project_path}" != /* ]]; then
+    project_path="${repo_root}/${project_path}"
+fi
+[[ -f "${project_path}" ]] || fail "project suppression file missing"
+project_sha="$(sha256sum "${project_path}" | awk '{print $1}')"
+expected_project_sha="$(jq -r '.project_suppression_file.sha256' "${manifest}")"
+
+mapfile -t actual_rules < <(
+    awk '/^[[:space:]]*\{/ {getline; sub(/^[[:space:]]*/, ""); print}' \
+        "${project_path}" | sort
+)
+mapfile -t tracked_rules < <(jq -r '.rules[].rule_name' "${manifest}" | sort)
+if ! diff -u \
+    <(printf '%s\n' "${tracked_rules[@]}") \
+    <(printf '%s\n' "${actual_rules[@]}") >/dev/null; then
+    fail "untracked suppression added or tracked suppression removed"
+fi
+[[ "${#actual_rules[@]}" -eq "$(jq -r '.project_suppression_file.rule_count' "${manifest}")" ]] ||
+    fail "project suppression rule count changed"
+[[ "${project_sha}" == "${expected_project_sha}" ]] ||
+    fail "project suppression hash changed without manifest review"
+
+expected_valgrind="$(jq -r '.effective_inherited_sets[] | select(.base == "builtin") | .version' "${manifest}")"
+[[ "$(valgrind --version)" == "${expected_valgrind}" ]] ||
+    fail "Valgrind built-in suppression version changed"
+
+inherited_hashes=()
+while IFS= read -r inherited; do
+    base="$(jq -r '.base' <<<"${inherited}")"
+    path="$(jq -r '.path' <<<"${inherited}")"
+    resolved="$(resolve_path "${base}" "${path}")"
+    [[ -f "${resolved}" ]] || fail "effective inherited suppression missing: ${resolved}"
+    sha="$(sha256sum "${resolved}" | awk '{print $1}')"
+    [[ "${sha}" == "$(jq -r '.sha256' <<<"${inherited}")" ]] ||
+        fail "inherited suppression hash changed: ${path}"
+    count="$(awk '/^[[:space:]]*\{/ {count++} END {print count + 0}' "${resolved}")"
+    [[ "${count}" -eq "$(jq -r '.rule_count' <<<"${inherited}")" ]] ||
+        fail "inherited suppression rule count changed: ${path}"
+    inherited_hashes+=("${sha}")
+done < <(jq -c '.effective_inherited_sets[] | select(.base != "builtin")' "${manifest}")
+
+shopt -s nullglob
+reports=("${reports_dir}"/memory-safety-*.json)
+shopt -u nullglob
+[[ "${#reports[@]}" -gt 0 ]] || fail "no Valgrind reports found"
+
+declare -A seen=()
+project_suffix="${project_path#${repo_root}/}"
+for report in "${reports[@]}"; do
+    jq -e '
+        (.raw.errors | type == "number") and
+        (.raw.definite_bytes | type == "number") and
+        (.raw.indirect_bytes | type == "number") and
+        (.post_suppression.errors | type == "number") and
+        (.post_suppression.definite_bytes | type == "number") and
+        (.post_suppression.indirect_bytes | type == "number") and
+        (.suppression_usage | type == "array")
+    ' "${report}" >/dev/null || fail "malformed Valgrind report: ${report}"
+    raw_receipt="$(jq -r '.raw_receipt' "${report}")"
+    suppressed_receipt="$(jq -r '.suppressed_receipt' "${report}")"
+    [[ -f "${raw_receipt}" && -f "${suppressed_receipt}" ]] ||
+        fail "raw or suppressed receipt missing for ${report}"
+    jq -e --arg sha "${project_sha}" \
+        '.effective_suppression_files | any(.sha256 == $sha)' \
+        "${report}" >/dev/null || fail "project suppression absent from ${report}"
+    for sha in "${inherited_hashes[@]}"; do
+        jq -e --arg sha "${sha}" \
+            '.effective_suppression_files | any(.sha256 == $sha)' \
+            "${report}" >/dev/null || fail "inherited suppression absent from ${report}"
+    done
+
+    scenario="$(jq -r '.optimize + "/" + .scenario + "/" + .display_backend' "${report}")"
+    while IFS= read -r usage; do
+        rule="$(jq -r '.rule_name' <<<"${usage}")"
+        if ! jq -e --arg rule "${rule}" \
+            '.rules | any(.rule_name == $rule)' "${manifest}" >/dev/null; then
+            fail "untracked suppression used: ${rule}"
+        fi
+        if ! jq -e --arg rule "${rule}" --arg scenario "${scenario}" \
+            '.rules[] | select(.rule_name == $rule) | .allowed_scenarios | index($scenario) != null' \
+            "${manifest}" >/dev/null; then
+            fail "suppression matched outside documented scenario: ${rule} in ${scenario}"
+        fi
+        matches="$(jq -r '.matches' <<<"${usage}")"
+        expected="$(jq -c --arg rule "${rule}" --arg scenario "${scenario}" '
+            .rules[] | select(.rule_name == $rule) |
+            (.expected_by_scenario[$scenario] // .expected_suppressed)
+        ' "${manifest}")"
+        bytes="$(jq -r '.bytes // "null"' <<<"${usage}")"
+        minimum="$(jq -r '.matches.min' <<<"${expected}")"
+        maximum="$(jq -r '.matches.max' <<<"${expected}")"
+        if (( matches < minimum || matches > maximum )); then
+            fail "suppression count outside reviewed range: ${rule}=${matches}, expected ${minimum}-${maximum}"
+        fi
+        expected_bytes="$(jq -c '.bytes' <<<"${expected}")"
+        if [[ "${expected_bytes}" == "null" ]]; then
+            [[ "${bytes}" == "null" ]] || fail "unexpected byte count for ${rule}"
+        else
+            byte_min="$(jq -r '.min' <<<"${expected_bytes}")"
+            byte_max="$(jq -r '.max' <<<"${expected_bytes}")"
+            [[ "${bytes}" != "null" ]] || fail "missing byte count for ${rule}"
+            if (( bytes < byte_min || bytes > byte_max )); then
+                fail "suppressed bytes outside reviewed range: ${rule}=${bytes}, expected ${byte_min}-${byte_max}"
+            fi
+        fi
+        root="$(jq -r --arg rule "${rule}" '.rules[] | select(.rule_name == $rule) | .requires_root_rule // empty' "${manifest}")"
+        if [[ -n "${root}" ]] && ! jq -e \
+            --arg suffix "${project_suffix}" \
+            --arg root "${root}" \
+            '.suppression_usage | any((.file | endswith($suffix)) and .rule_name == $root)' \
+            "${report}" >/dev/null; then
+            fail "child suppression used without reviewed root: ${rule}"
+        fi
+        seen["${rule}"]=1
+    done < <(jq -c \
+        --arg suffix "${project_suffix}" \
+        '.suppression_usage[] | select(.file | endswith($suffix))' \
+        "${report}")
+done
+
+while IFS= read -r required; do
+    [[ -n "${seen[${required}]:-}" ]] ||
+        fail "tracked suppression became stale: ${required}"
+done < <(jq -r '.rules[] | select(.required_usage == true) | .rule_name' "${manifest}")
+
+echo "Valgrind suppression governance passed"

@@ -1,0 +1,173 @@
+{
+  "schema_version": 1,
+  "manifest_semantics": {
+    "expected_suppressed.matches": "Expected Valgrind used_suppression context count; ranges or per-scenario exact values are enforced.",
+    "expected_suppressed.bytes": "Expected suppressed bytes; null means Valgrind does not emit a byte count for that finding type."
+  },
+  "environment": {
+    "os": "Ubuntu 24.04 amd64",
+    "valgrind": "3.22.0",
+    "gtk": "4.14.5+ds-0ubuntu0.10",
+    "glib": "2.80.0-6ubuntu3.8",
+    "fontconfig": "2.15.0-1.1ubuntu2",
+    "pango": "1.52.1+ds-1build1",
+    "librsvg": "2.58.0+dfsg-1build1",
+    "ibus": "1.5.29-2"
+  },
+  "project_suppression_file": {
+    "path": "linux/tests/valgrind.supp",
+    "sha256": "d383aa6330805e6870bca941fb64b97eea670a110955246ad9940a72084dbf6d",
+    "rule_count": 9
+  },
+  "effective_inherited_sets": [
+    {
+      "id": "ghostty-main",
+      "base": "ghostty",
+      "path": "valgrind.supp",
+      "sha256": "8b782389ff232acdfca2e7cda0f4ef0fafbf5e699e1e07a096d9184bbccfcb44",
+      "rule_count": 233,
+      "audit": "Pinned wholesale because this is Ghostty's own regression suppression set. Duplicate rule names prevent name-only identity; hash, rule count, runtime usage, and the pinned Ghostty revision are therefore all checked."
+    },
+    {
+      "id": "ghostty-gtk-embed",
+      "base": "ghostty",
+      "path": "src/gtk_embed_spike.valgrind.supp",
+      "sha256": "6f1113cacd4ebd9cd48430d4b125c0923e7e97b5463892119e8789a4e811996c",
+      "rule_count": 6,
+      "audit": "Embedding-specific inherited rules cover loader metadata, Fontconfig, and GTK GIO initialization. The exact file is pinned and every used rule is retained in each report."
+    },
+    {
+      "id": "valgrind-builtins",
+      "base": "builtin",
+      "version": "valgrind-3.22.0",
+      "audit": "Valgrind built-in suppressions remain enabled in both raw and reviewed runs; raw means no Ghostty or Zentty suppression files, not --default-suppressions=no."
+    }
+  ],
+  "rules": [
+    {
+      "rule_name": "GTK SVG loader stripped librsvg undefined values",
+      "tracking_id": "ZENTTY-VG-SVG-001",
+      "affected": "Ubuntu librsvg 2.58.0, GTK 4.14.5 GdkPixbuf SVG icon loading, Wayland or X11/Xwayland",
+      "finding_type": "Memcheck:Cond undefined-value contexts",
+      "expected_suppressed": {"matches": {"min": 11, "max": 11}, "bytes": null},
+      "allowed_scenarios": ["Debug/single/wayland", "Debug/interaction/wayland", "Debug/single/x11", "Debug/interaction/x11", "ReleaseSafe/interaction/wayland", "ReleaseSafe/interaction/x11"],
+      "justification": "The producer frame is the stripped external librsvg loader and the consumer terminates at gdk_pixbuf_loader_close; Ghostty frames are excluded from the rule.",
+      "reproducer": "GDK_BACKEND=wayland ZENTTY_MEMORY_SCENARIO=single linux/tests/memory-safety; compare its .raw.log and .suppressed.log receipts.",
+      "required_usage": true
+    },
+    {
+      "rule_name": "GTK Pango Fontconfig metrics cache",
+      "tracking_id": "ZENTTY-VG-FONT-METRICS-ROOT-001",
+      "affected": "Ubuntu Fontconfig 2.15.0 and Pango 1.52.1 process-global metrics cache",
+      "finding_type": "Memcheck:Leak definite root through pango_context_get_metrics",
+      "expected_suppressed": {"matches": {"min": 1, "max": 2}, "bytes": {"min": 13100, "max": 26300}},
+      "expected_by_scenario": {
+        "Debug/ibus-focus/x11": {"matches": {"min": 2, "max": 2}, "bytes": {"min": 10182, "max": 10182}}
+      },
+      "allowed_scenarios": ["Debug/single/wayland", "Debug/interaction/wayland", "Debug/single/x11", "Debug/interaction/x11", "Debug/ibus-focus/x11", "ReleaseSafe/interaction/wayland", "ReleaseSafe/interaction/x11"],
+      "justification": "The allocation begins in stripped Fontconfig and is consumed through the named Pango metrics API. Child rules are permitted only when this root is present in the same report.",
+      "reproducer": "linux/tests/ibus-focus-reproducer.c reproduces the root without linking Ghostty; linux/tests/ibus-focus-memory preserves raw and reviewed receipts.",
+      "required_usage": true
+    },
+    {
+      "rule_name": "GTK Pango Fontconfig metrics cache children",
+      "tracking_id": "ZENTTY-VG-FONT-METRICS-CALLOC-001",
+      "affected": "Ubuntu Fontconfig 2.15.0 indirect calloc children of the Pango metrics cache",
+      "finding_type": "Memcheck:Leak indirect children with pango_context_get_metrics consumer",
+      "expected_suppressed": {"matches": {"min": 16, "max": 32}, "bytes": {"min": 512, "max": 1024}},
+      "allowed_scenarios": ["Debug/single/wayland", "Debug/interaction/wayland", "Debug/single/x11", "Debug/interaction/x11", "Debug/ibus-focus/x11", "ReleaseSafe/interaction/wayland", "ReleaseSafe/interaction/x11"],
+      "requires_root_rule": "GTK Pango Fontconfig metrics cache",
+      "justification": "Every frame includes both stripped Fontconfig and pango_context_get_metrics; usage must co-occur with the separately tracked root.",
+      "reproducer": "The non-Ghostty Pango/IBus reproducer yields 32 matches/1024 bytes beside two metrics roots; product X11 yields 16/512 beside one root.",
+      "required_usage": true
+    },
+    {
+      "rule_name": "GTK Pango Fontconfig metrics cache strings",
+      "tracking_id": "ZENTTY-VG-FONT-METRICS-STRINGS-001",
+      "affected": "Ubuntu Fontconfig 2.15.0 deep recursive string nodes owned by the Pango metrics cache",
+      "finding_type": "Memcheck:Leak indirect malloc/strdup children",
+      "expected_suppressed": {"matches": {"min": 8, "max": 18}, "bytes": {"min": 2289, "max": 4634}},
+      "expected_by_scenario": {
+        "Debug/single/wayland": {"matches": {"min": 10, "max": 10}, "bytes": {"min": 4634, "max": 4634}},
+        "Debug/interaction/wayland": {"matches": {"min": 10, "max": 10}, "bytes": {"min": 4634, "max": 4634}},
+        "Debug/single/x11": {"matches": {"min": 8, "max": 8}, "bytes": {"min": 2289, "max": 2289}},
+        "Debug/interaction/x11": {"matches": {"min": 10, "max": 10}, "bytes": {"min": 4634, "max": 4634}},
+        "Debug/ibus-focus/x11": {"matches": {"min": 18, "max": 18}, "bytes": {"min": 2962, "max": 2962}},
+        "ReleaseSafe/interaction/wayland": {"matches": {"min": 10, "max": 10}, "bytes": {"min": 4634, "max": 4634}},
+        "ReleaseSafe/interaction/x11": {"matches": {"min": 8, "max": 8}, "bytes": {"min": 4536, "max": 4536}}
+      },
+      "allowed_scenarios": ["Debug/single/wayland", "Debug/interaction/wayland", "Debug/single/x11", "Debug/interaction/x11", "Debug/ibus-focus/x11", "ReleaseSafe/interaction/wayland", "ReleaseSafe/interaction/x11"],
+      "requires_root_rule": "GTK Pango Fontconfig metrics cache",
+      "justification": "The prior one-frame Fontconfig rule was rejected. This rule now requires strdup followed by five consecutive stripped Fontconfig frames and is valid only beside the metrics root.",
+      "reproducer": "With 40-frame receipts, the non-Ghostty Pango/IBus reproducer records 18 matches/2962 bytes beside two explicitly requested metrics roots; product receipts have exact scenario baselines above.",
+      "required_usage": true
+    },
+    {
+      "rule_name": "GTK Pango Fontconfig metrics cache nodes",
+      "tracking_id": "ZENTTY-VG-FONT-METRICS-NODES-001",
+      "affected": "Ubuntu Fontconfig 2.15.0 deep recursive node graph owned by the Pango metrics cache",
+      "finding_type": "Memcheck:Leak indirect malloc children",
+      "expected_suppressed": {"matches": {"min": 1, "max": 1}, "bytes": {"min": 3872, "max": 7744}},
+      "expected_by_scenario": {
+        "Debug/single/wayland": {"matches": {"min": 1, "max": 1}, "bytes": {"min": 7744, "max": 7744}},
+        "Debug/interaction/wayland": {"matches": {"min": 1, "max": 1}, "bytes": {"min": 7744, "max": 7744}},
+        "Debug/single/x11": {"matches": {"min": 1, "max": 1}, "bytes": {"min": 3872, "max": 3872}},
+        "Debug/interaction/x11": {"matches": {"min": 1, "max": 1}, "bytes": {"min": 7744, "max": 7744}},
+        "Debug/ibus-focus/x11": {"matches": {"min": 1, "max": 1}, "bytes": {"min": 4384, "max": 4384}},
+        "ReleaseSafe/interaction/wayland": {"matches": {"min": 1, "max": 1}, "bytes": {"min": 7744, "max": 7744}},
+        "ReleaseSafe/interaction/x11": {"matches": {"min": 1, "max": 1}, "bytes": {"min": 7744, "max": 7744}}
+      },
+      "allowed_scenarios": ["Debug/single/wayland", "Debug/interaction/wayland", "Debug/single/x11", "Debug/interaction/x11", "Debug/ibus-focus/x11", "ReleaseSafe/interaction/wayland", "ReleaseSafe/interaction/x11"],
+      "requires_root_rule": "GTK Pango Fontconfig metrics cache",
+      "justification": "The prior malloc-plus-one-Fontconfig rule was rejected. This replacement requires eight consecutive stripped Fontconfig frames and root co-occurrence.",
+      "reproducer": "The non-Ghostty Pango/IBus reproducer records 1 match/4384 bytes beside two explicitly requested metrics roots; product receipts record 5728-11456 bytes.",
+      "required_usage": true
+    },
+    {
+      "rule_name": "GTK Pango Fontconfig layout cache",
+      "tracking_id": "ZENTTY-VG-FONT-LAYOUT-ROOT-001",
+      "affected": "Ubuntu Fontconfig 2.15.0 and Pango 1.52.1 X11 layout cache",
+      "finding_type": "Memcheck:Leak definite root through pango_layout_get_size",
+      "expected_suppressed": {"matches": {"min": 1, "max": 1}, "bytes": {"min": 13100, "max": 13200}},
+      "allowed_scenarios": ["Debug/interaction/x11", "Debug/ibus-focus/x11", "ReleaseSafe/interaction/x11"],
+      "justification": "The consumer is the named Pango layout API and the rule does not match metrics-only or API-lifecycle scenarios.",
+      "reproducer": "linux/tests/ibus-focus-reproducer.c calls pango_layout_get_size directly without Ghostty; the X11 product interaction can also produce this cache.",
+      "required_usage": true
+    },
+    {
+      "rule_name": "GTK Pango Fontconfig layout cache children",
+      "tracking_id": "ZENTTY-VG-FONT-LAYOUT-CALLOC-001",
+      "affected": "Ubuntu Fontconfig 2.15.0 indirect calloc children of the X11 Pango layout cache",
+      "finding_type": "Memcheck:Leak indirect children through pango_layout_get_size",
+      "expected_suppressed": {"matches": {"min": 16, "max": 16}, "bytes": {"min": 512, "max": 512}},
+      "allowed_scenarios": ["Debug/interaction/x11", "Debug/ibus-focus/x11", "ReleaseSafe/interaction/x11"],
+      "requires_root_rule": "GTK Pango Fontconfig layout cache",
+      "justification": "The rule includes the Pango layout consumer and is rejected if the root is absent in the same report.",
+      "reproducer": "The standalone GTK/IBus reproducer deliberately sizes a Pango layout and records this child only beside the layout root.",
+      "required_usage": true
+    },
+    {
+      "rule_name": "GTK IBus focus preedit object",
+      "tracking_id": "ZENTTY-VG-IBUS-PREEDIT-ROOT-001",
+      "affected": "Ubuntu GTK 4.14.5 IBus module and libibus 1.5.29 on the live Xwayland desktop",
+      "finding_type": "Memcheck:Leak definite/indirect IBusText preedit objects after focus-out",
+      "expected_suppressed": {"matches": {"min": 2, "max": 4}, "bytes": {"min": 145, "max": 580}},
+      "allowed_scenarios": ["Debug/interaction/x11", "Debug/ibus-focus/x11", "ReleaseSafe/interaction/x11"],
+      "justification": "A standalone GtkIMMulticontext reproducer creates the same IBusText roots without Ghostty. This establishes external reproducibility but does not eliminate Ghostty lifecycle responsibility; that uncertainty remains documented.",
+      "reproducer": "GDK_BACKEND=x11 GTK_IM_MODULE=ibus linux/tests/ibus-focus-memory; raw stacks terminate in advance_focus in ibus-focus-reproducer.c rather than Surface.updateFocus.",
+      "required_usage": true
+    },
+    {
+      "rule_name": "GTK IBus focus preedit string",
+      "tracking_id": "ZENTTY-VG-IBUS-PREEDIT-STRING-001",
+      "affected": "Ubuntu GTK 4.14.5 IBus module/libibus 1.5.29 empty preedit strings",
+      "finding_type": "Memcheck:Leak indirect g_strdup child of IBusText",
+      "expected_suppressed": {"matches": {"min": 1, "max": 2}, "bytes": {"min": 1, "max": 4}},
+      "allowed_scenarios": ["Debug/interaction/x11", "Debug/ibus-focus/x11", "ReleaseSafe/interaction/x11"],
+      "requires_root_rule": "GTK IBus focus preedit object",
+      "justification": "The full stack includes g_strdup, ibus_text_new_from_string, and the external GTK IBus module; it must co-occur with the IBusText root.",
+      "reproducer": "The standalone GTK/IBus raw receipt records the same one-byte strings without linking or loading Ghostty.",
+      "required_usage": true
+    }
+  ]
+}

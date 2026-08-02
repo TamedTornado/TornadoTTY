@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+
+zentty_valgrind_metrics_json() {
+    local receipt="$1"
+    local definite indirect errors contexts suppressed_errors suppressed_contexts
+    read -r definite _ < <(
+        grep -E 'definitely lost:' "${receipt}" | tail -n 1 |
+            sed -E 's/.*definitely lost: *([0-9,]+) bytes in ([0-9,]+) blocks.*/\1 \2/' |
+            tr -d ','
+    )
+    read -r indirect _ < <(
+        grep -E 'indirectly lost:' "${receipt}" | tail -n 1 |
+            sed -E 's/.*indirectly lost: *([0-9,]+) bytes in ([0-9,]+) blocks.*/\1 \2/' |
+            tr -d ','
+    )
+    read -r errors contexts suppressed_errors suppressed_contexts < <(
+        grep -E 'ERROR SUMMARY:' "${receipt}" | tail -n 1 |
+            sed -E 's/.*ERROR SUMMARY: ([0-9,]+) errors from ([0-9,]+) contexts \(suppressed: ([0-9,]+) from ([0-9,]+)\).*/\1 \2 \3 \4/' |
+            tr -d ','
+    )
+    jq -cn \
+        --argjson errors "${errors}" \
+        --argjson contexts "${contexts}" \
+        --argjson definite "${definite}" \
+        --argjson indirect "${indirect}" \
+        --argjson suppressed_errors "${suppressed_errors}" \
+        --argjson suppressed_contexts "${suppressed_contexts}" \
+        '{errors: $errors, contexts: $contexts, definite_bytes: $definite, indirect_bytes: $indirect, valgrind_suppressed_errors: $suppressed_errors, valgrind_suppressed_contexts: $suppressed_contexts}'
+}
+
+zentty_valgrind_usage_json() {
+    local receipt="$1"
+    shift
+    local usage='[]'
+    local suppression line prefix count rest name tail item
+    for suppression in "$@"; do
+        while IFS= read -r line; do
+            prefix="${line#*used_suppression:}"
+            read -r count rest <<<"${prefix}"
+            name="${rest%% ${suppression}:*}"
+            tail="${rest#* ${suppression}:}"
+            local bytes=null blocks=null errors=null contexts=null
+            if [[ "${tail}" =~ suppressed:\ ([0-9,]+)\ bytes\ in\ ([0-9,]+)\ blocks ]]; then
+                bytes="${BASH_REMATCH[1]//,/}"
+                blocks="${BASH_REMATCH[2]//,/}"
+            elif [[ "${tail}" =~ suppressed:\ ([0-9,]+)\ errors\ from\ ([0-9,]+)\ contexts ]]; then
+                errors="${BASH_REMATCH[1]//,/}"
+                contexts="${BASH_REMATCH[2]//,/}"
+            fi
+            item="$(jq -cn \
+                --arg file "${suppression}" \
+                --arg name "${name}" \
+                --argjson matches "${count}" \
+                --argjson bytes "${bytes}" \
+                --argjson blocks "${blocks}" \
+                --argjson errors "${errors}" \
+                --argjson contexts "${contexts}" \
+                '{file: $file, rule_name: $name, matches: $matches, bytes: $bytes, blocks: $blocks, errors: $errors, contexts: $contexts}')"
+            usage="$(jq -cn \
+                --argjson usage "${usage}" \
+                --argjson item "${item}" \
+                '$usage + [$item]')"
+        done < <(grep -F " ${suppression}:" "${receipt}" || true)
+    done
+    printf '%s\n' "${usage}"
+}

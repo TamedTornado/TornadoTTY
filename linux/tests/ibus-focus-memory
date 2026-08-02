@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+source "${repo_root}/linux/tests/lib/valgrind-report"
+ghostty_source="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
+binary="${repo_root}/build/linux/bin/ibus-focus-reproducer"
+metadata="${repo_root}/build/linux/build-metadata"
+receipt_base="${repo_root}/build/linux/memory-safety-Debug-ibus-focus-x11"
+raw_receipt="${receipt_base}.raw.log"
+suppressed_receipt="${receipt_base}.suppressed.log"
+report="${receipt_base}.json"
+effective_suppressions=(
+    "${ghostty_source}/valgrind.supp"
+    "${ghostty_source}/src/gtk_embed_spike.valgrind.supp"
+    "${repo_root}/linux/tests/valgrind.supp"
+)
+
+if [[ ! -x "${binary}" ]] ||
+    ! grep -Fx "host_optimize=Debug" "${metadata}" >/dev/null; then
+    echo "error: ibus-focus-memory requires the Debug test binary" >&2
+    exit 1
+fi
+for suppression in "${effective_suppressions[@]}"; do
+    [[ -f "${suppression}" ]] || {
+        echo "error: required suppression file not found: ${suppression}" >&2
+        exit 1
+    }
+done
+
+flags=(
+    -s
+    --num-callers=40
+    --leak-check=full
+    --show-leak-kinds=definite,indirect
+    --errors-for-leak-kinds=definite,indirect
+)
+environment=(GDK_BACKEND=x11 GTK_IM_MODULE=ibus)
+
+env "${environment[@]}" timeout 120s valgrind \
+    "${flags[@]}" \
+    "${binary}" >"${raw_receipt}" 2>&1
+
+suppression_flags=()
+for suppression in "${effective_suppressions[@]}"; do
+    suppression_flags+=("--suppressions=${suppression}")
+done
+set +e
+env "${environment[@]}" timeout 120s valgrind \
+    "${flags[@]}" \
+    --error-exitcode=99 \
+    "${suppression_flags[@]}" \
+    "${binary}" >"${suppressed_receipt}" 2>&1
+suppressed_status=$?
+set -e
+
+for receipt in "${raw_receipt}" "${suppressed_receipt}"; do
+    grep -Fx "ibus-focus-reproducer: PASS" "${receipt}" >/dev/null
+done
+grep -F "libim-ibus.so" "${raw_receipt}" >/dev/null
+grep -F "ibus_text_new_from_string" "${raw_receipt}" >/dev/null
+
+raw_metrics="$(zentty_valgrind_metrics_json "${raw_receipt}")"
+suppressed_metrics="$(zentty_valgrind_metrics_json "${suppressed_receipt}")"
+suppression_usage="$(zentty_valgrind_usage_json \
+    "${suppressed_receipt}" \
+    "${effective_suppressions[@]}")"
+suppression_files='[]'
+for suppression in "${effective_suppressions[@]}"; do
+    item="$(jq -cn \
+        --arg path "${suppression}" \
+        --arg sha256 "$(sha256sum "${suppression}" | awk '{print $1}')" \
+        '{path: $path, sha256: $sha256}')"
+    suppression_files="$(jq -cn \
+        --argjson values "${suppression_files}" \
+        --argjson item "${item}" \
+        '$values + [$item]')"
+done
+
+jq -n \
+    --arg raw_receipt "${raw_receipt}" \
+    --arg suppressed_receipt "${suppressed_receipt}" \
+    --arg valgrind_version "$(valgrind --version)" \
+    --argjson raw "${raw_metrics}" \
+    --argjson post "${suppressed_metrics}" \
+    --argjson suppression_files "${suppression_files}" \
+    --argjson suppression_usage "${suppression_usage}" \
+    '{optimize: "Debug", scenario: "ibus-focus", display_backend: "x11", raw_receipt: $raw_receipt, suppressed_receipt: $suppressed_receipt, valgrind_version: $valgrind_version, valgrind_builtin_suppressions: true, effective_suppression_files: $suppression_files, suppression_usage: $suppression_usage, raw: $raw, post_suppression: $post}' \
+    >"${report}"
+
+if [[ "${suppressed_status}" -ne 0 ]]; then
+    echo "error: suppressed IBus reproducer exited ${suppressed_status}" >&2
+    exit "${suppressed_status}"
+fi
+jq -e '.post_suppression.errors == 0 and .post_suppression.definite_bytes == 0 and .post_suppression.indirect_bytes == 0' \
+    "${report}" >/dev/null
+echo "Non-Ghostty GTK/IBus reproducer PASS with reviewed suppressions"

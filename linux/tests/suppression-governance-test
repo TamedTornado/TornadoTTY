@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+validator="${repo_root}/linux/tests/suppression-governance"
+temp_dir="$(mktemp -d)"
+trap 'rm -rf "${temp_dir}"' EXIT
+suppression="${temp_dir}/fixture.supp"
+manifest="${temp_dir}/manifest.json"
+reports="${temp_dir}/reports"
+mkdir -p "${reports}"
+
+write_suppression() {
+    cat >"${suppression}" <<'EOF'
+{
+   fixture rule
+   Memcheck:Leak
+   fun:malloc
+}
+EOF
+}
+
+write_manifest() {
+    jq -n \
+        --arg path "${suppression}" \
+        --arg sha256 "$(sha256sum "${suppression}" | awk '{print $1}')" \
+        --arg valgrind "$(valgrind --version)" \
+        '{
+            schema_version: 1,
+            project_suppression_file: {path: $path, sha256: $sha256, rule_count: 1},
+            effective_inherited_sets: [{id: "builtin", base: "builtin", version: $valgrind}],
+            rules: [{
+                rule_name: "fixture rule",
+                tracking_id: "FIXTURE-1",
+                affected: "fixture",
+                finding_type: "Memcheck:Leak",
+                expected_suppressed: {matches: {min: 1, max: 1}, bytes: {min: 10, max: 10}},
+                allowed_scenarios: ["Debug/single/wayland"],
+                justification: "fixture",
+                reproducer: "fixture",
+                required_usage: true
+            }]
+        }' >"${manifest}"
+}
+
+write_report() {
+    local matches="$1"
+    local backend="$2"
+    local rule="$3"
+    local raw="${temp_dir}/raw.log"
+    local suppressed="${temp_dir}/suppressed.log"
+    touch "${raw}" "${suppressed}"
+    jq -n \
+        --arg project "${suppression}" \
+        --arg sha256 "$(sha256sum "${suppression}" | awk '{print $1}')" \
+        --arg backend "${backend}" \
+        --arg raw "${raw}" \
+        --arg suppressed "${suppressed}" \
+        --arg rule "${rule}" \
+        --argjson matches "${matches}" \
+        '{
+            optimize: "Debug", scenario: "single", display_backend: $backend,
+            raw_receipt: $raw, suppressed_receipt: $suppressed,
+            effective_suppression_files: [{path: $project, sha256: $sha256}],
+            suppression_usage: [{file: $project, rule_name: $rule, matches: $matches, bytes: 10, blocks: 1, errors: null, contexts: null}],
+            raw: {errors: 1, definite_bytes: 10, indirect_bytes: 0},
+            post_suppression: {errors: 0, definite_bytes: 0, indirect_bytes: 0}
+        }' >"${reports}/memory-safety-fixture.json"
+}
+
+expect_failure() {
+    local label="$1"
+    local pattern="$2"
+    local output="${temp_dir}/${label}.log"
+    set +e
+    ZENTTY_SUPPRESSION_MANIFEST="${manifest}" \
+    ZENTTY_SUPPRESSION_REPORTS_DIR="${reports}" \
+        "${validator}" >"${output}" 2>&1
+    status=$?
+    set -e
+    [[ "${status}" -ne 0 ]] || {
+        echo "error: ${label} unexpectedly passed" >&2
+        exit 1
+    }
+    grep -F "${pattern}" "${output}" >/dev/null || {
+        echo "error: ${label} did not report ${pattern}" >&2
+        cat "${output}" >&2
+        exit 1
+    }
+}
+
+write_suppression
+write_manifest
+write_report 1 wayland "fixture rule"
+ZENTTY_SUPPRESSION_MANIFEST="${manifest}" \
+ZENTTY_SUPPRESSION_REPORTS_DIR="${reports}" \
+    "${validator}" >/dev/null
+
+write_report 2 wayland "fixture rule"
+expect_failure increased-count "suppression count outside reviewed range"
+
+jq '.suppression_usage = []' \
+    "${reports}/memory-safety-fixture.json" >"${temp_dir}/stale.json"
+mv "${temp_dir}/stale.json" "${reports}/memory-safety-fixture.json"
+expect_failure stale "tracked suppression became stale"
+
+write_report 1 x11 "fixture rule"
+expect_failure outside-scenario "suppression matched outside documented scenario"
+
+write_report 1 wayland "fixture rule"
+cat >>"${suppression}" <<'EOF'
+{
+   untracked rule
+   Memcheck:Leak
+   fun:calloc
+}
+EOF
+expect_failure untracked "untracked suppression added"
+
+echo "Valgrind suppression governance tests passed"

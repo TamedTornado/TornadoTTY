@@ -38,12 +38,23 @@
    fun:malloc
    fun:strdup
    obj:*libfontconfig.so*
+   obj:*libfontconfig.so*
+   obj:*libfontconfig.so*
+   obj:*libfontconfig.so*
+   obj:*libfontconfig.so*
 }
 {
    GTK Pango Fontconfig metrics cache nodes
    Memcheck:Leak
    match-leak-kinds: indirect
    fun:malloc
+   obj:*libfontconfig.so*
+   obj:*libfontconfig.so*
+   obj:*libfontconfig.so*
+   obj:*libfontconfig.so*
+   obj:*libfontconfig.so*
+   obj:*libfontconfig.so*
+   obj:*libfontconfig.so*
    obj:*libfontconfig.so*
 }
 {
@@ -67,8 +78,9 @@
 
 # GTK's external IBus input module retains a tiny empty preedit text object
 # after repeated focus transitions. Require both the IBus constructor/module
-# and Ghostty's standard GTK focus callback so unrelated GObject leaks remain
-# visible.
+# and GTK's IBus constructor path. A separate non-Ghostty GtkIMMulticontext
+# reproducer establishes the same finding; scenario governance prevents this
+# rule from silently matching unrelated runs.
 {
    GTK IBus focus preedit object
    Memcheck:Leak
@@ -77,8 +89,6 @@
    ...
    fun:ibus_text_new_from_string
    obj:*libim-ibus.so*
-   ...
-   fun:*Surface.updateFocus
 }
 {
    GTK IBus focus preedit string
@@ -89,6 +99,4 @@
    fun:g_strdup
    fun:ibus_text_new_from_string
    obj:*libim-ibus.so*
-   ...
-   fun:*Surface.updateFocus
 }

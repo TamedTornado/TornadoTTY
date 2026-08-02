@@ -39,6 +39,21 @@ implemented local-suite pass from release qualification and full Linux
 qualification. Non-pass required cells prevent the latter claims even when
 every executable local command succeeds.
 
+Each Valgrind cell also writes an unsuppressed `*.raw.log`, a reviewed
+`*.suppressed.log`, and a JSON report containing raw and post-suppression
+error/leak totals. Here, “raw” means that no Ghostty or Zentty suppression file
+is loaded; Valgrind's version-pinned built-in suppressions remain active. The
+qualification summary embeds those reports. A successful Debug result is
+described only as **PASS with reviewed suppressions**, never as an
+unsuppressed-clean run.
+
+`tests/valgrind-suppressions.json` is the suppression manifest. It identifies
+every Zentty rule and pins/audits the inherited Ghostty and Valgrind sets.
+`tests/suppression-governance` rejects untracked, stale, out-of-scenario, or
+expanded suppression usage; its negative self-test is
+`tests/suppression-governance-test`. ReleaseSafe Valgrind remains an XFAIL and
+is not made green by expanding suppressions.
+
 Validate matrix structure without executing product tests:
 
 ```sh
