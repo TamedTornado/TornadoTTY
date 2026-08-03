@@ -1,0 +1,636 @@
+{
+  "schema_version": 1,
+  "contract_id": "zentty-linux-product-architecture",
+  "decision": "rust-gtk4-rs",
+  "ui_authority": "glib-main-context",
+  "product_host": "zentty-linux",
+  "qualification_host": "linux/src/main.c",
+  "qualification_host_freeze": {
+    "manifest": "linux/test-policy/qualification-host-freeze.json",
+    "requirement_id": "ZL-2-QUALIFICATION-HOST-FREEZE",
+    "test_id": "TEST-QUALIFICATION-HOST-FREEZE",
+    "qualification_cell_id": "qualification-host-freeze",
+    "policy": "qualification-only-no-product-behavior; retire by replacement/removal, never extension"
+  },
+  "ghostty_revision": "5fc8fa2cf4b27bfe27072d561de98f33b2c16636",
+  "workspace_crates": [
+    {
+      "name": "zentty-core",
+      "kind": "library",
+      "shipped": true,
+      "responsibilities": [
+        "workspace-model",
+        "worklane-and-pane-commands",
+        "persistence-schema-and-migrations",
+        "agent-state-projection",
+        "platform-service-traits"
+      ],
+      "workspace_dependencies": [],
+      "forbidden_dependency_classes": [
+        "gtk",
+        "gobject",
+        "linux-only",
+        "ghostty-ffi"
+      ],
+      "unsafe_policy": "forbid"
+    },
+    {
+      "name": "zentty-ghostty-sys",
+      "kind": "raw-ffi-library",
+      "shipped": true,
+      "responsibilities": [
+        "raw-ghostty-c-abi-declarations",
+        "abi-constants-and-opaque-types",
+        "native-link-metadata"
+      ],
+      "workspace_dependencies": [],
+      "forbidden_dependency_classes": [
+        "product-state",
+        "product-commands",
+        "gtk-rust-wrapper"
+      ],
+      "unsafe_policy": "ffi-declarations-only"
+    },
+    {
+      "name": "zentty-ghostty",
+      "kind": "safe-adapter-library",
+      "shipped": true,
+      "responsibilities": [
+        "ghostty-runtime-owner",
+        "ghostty-surface-owner",
+        "gobject-transfer-adapter",
+        "callback-quiescence",
+        "safe-terminal-api"
+      ],
+      "workspace_dependencies": [
+        "zentty-ghostty-sys"
+      ],
+      "forbidden_dependency_classes": [
+        "product-state",
+        "product-commands"
+      ],
+      "unsafe_policy": "private-reviewed-ffi-modules-only"
+    },
+    {
+      "name": "zentty-linux",
+      "kind": "binary",
+      "shipped": true,
+      "responsibilities": [
+        "gtk-application-shell",
+        "window-worklane-pane-projection",
+        "linux-platform-services",
+        "composition-root",
+        "lifecycle-orchestration"
+      ],
+      "workspace_dependencies": [
+        "zentty-core",
+        "zentty-ghostty"
+      ],
+      "forbidden_dependency_classes": [
+        "zentty-ghostty-sys-direct",
+        "test-support"
+      ],
+      "unsafe_policy": "forbid"
+    },
+    {
+      "name": "zentty-test-support",
+      "kind": "test-library",
+      "shipped": false,
+      "responsibilities": [
+        "controlled-child-programs",
+        "isolated-xdg-layouts",
+        "receipt-builders",
+        "product-process-drivers"
+      ],
+      "workspace_dependencies": [
+        "zentty-core",
+        "zentty-ghostty"
+      ],
+      "forbidden_dependency_classes": [
+        "zentty-ghostty-sys-direct",
+        "production-feature-flags"
+      ],
+      "unsafe_policy": "forbid"
+    }
+  ],
+  "allowed_workspace_edges": [
+    "zentty-ghostty->zentty-ghostty-sys",
+    "zentty-linux->zentty-core",
+    "zentty-linux->zentty-ghostty",
+    "zentty-test-support->zentty-core",
+    "zentty-test-support->zentty-ghostty"
+  ],
+  "long_lived_owners": [
+    "ApplicationRuntimeOwner",
+    "GhosttyRuntimeOwner",
+    "PlatformServicesOwner",
+    "PersistenceCoordinator",
+    "WindowOwner",
+    "WorklaneOwner",
+    "PaneOwner",
+    "GhosttySurfaceOwner",
+    "CallbackRegistrationOwner",
+    "GlibSourceOwner",
+    "GtkObjectOwner",
+    "GhosttyPtyOwner",
+    "GhosttyChildProcessOwner",
+    "PlatformTaskOwner",
+    "ShutdownCoordinator"
+  ],
+  "lifecycle": {
+    "creation_order": [
+      "acquire-default-glib-main-context-without-gtk-init-or-gtk-objects",
+      "create-ghostty-runtime",
+      "initialize-gtk-and-create-gtk-application",
+      "create-platform-services-and-load-validated-pane-records",
+      "create-windows-worklanes-and-transient-terminal-instances"
+    ],
+    "shutdown_order": [
+      "enter-shutting-down-and-stop-user-input",
+      "cancel-and-join-event-producers",
+      "quiesce-callbacks-and-remove-recurring-sources",
+      "drain-or-explicitly-discard-queued-typed-events",
+      "freeze-and-validate-final-pane-record-snapshot",
+      "atomically-save-frozen-snapshot",
+      "destroy-terminal-instances-without-pane-record-close-mutations",
+      "destroy-gtk-windows-and-application",
+      "free-ghostty-runtime-after-all-native-surface-references-finalize",
+      "release-glib-main-context"
+    ],
+    "runtime_before_gtk": "required-by-pinned-ghostty-abi",
+    "shutdown_model_mode": "preserve-durable-topology"
+  },
+  "pane_contract": {
+    "durable_type": "PaneRecord",
+    "transient_type": "TerminalInstance",
+    "restore_order": "apply-and-validate-pane-record-topology-before-terminal-construction",
+    "restore_constructor_failure": "retain-pane-record-and-project-failed-retry-state",
+    "new_pane_transaction": "construct-terminal-from-draft-record-before-atomic-model-commit-or-roll-back",
+    "shutdown_teardown": "destroy-terminal-instance-without-ordinary-close-pane-transition"
+  },
+  "toolchain": {
+    "edition": "2024",
+    "pinned_channel": "1.97.1",
+    "msrv": "1.85.0",
+    "msrv_basis": "first-stable-toolchain-with-edition-2024",
+    "normal_job": "pinned-locked-shipped-default-plus-reviewed-all-features",
+    "msrv_job": "msrv-locked-shipped-default-feature-graph",
+    "lockfile": "committed-workspace-root",
+    "format": "cargo-fmt-check",
+    "lint": "clippy-all-targets-all-features-deny-warnings",
+    "dependency_audit": [
+      "cargo-deny",
+      "cargo-audit"
+    ]
+  },
+  "gtk_compatibility": {
+    "gtk4_rs_baseline": "0.11.3",
+    "gtk4_rs_upstream_msrv": "1.83.0",
+    "minimum_native_gtk": "4.14.0",
+    "maximum_enabled_api_feature": "v4_14",
+    "floor_test": "build-and-run-locked-shipped-default-feature-graph-against-native-gtk-4.14-with-v4_14"
+  },
+  "ffi_contract": {
+    "surface_gobject_transfer": "unproven-requires-explicit-header-contract-and-native-test",
+    "surface_transfer_owner_issue": 11,
+    "safe_surface_constructor_owner_issue": 13,
+    "safe_surface_constructor_gate": "closed-until-issue-11-header-and-native-finalize-proof",
+    "surface_widget_exposure": "hidden-adapter-owned-widget-never-returned-as-cloneable-gtk-wrapper",
+    "runtime_lease": "stable-per-surface-gobject-qdata-destroy-notify-releases-counted-runtime-lease-only-at-native-finalization",
+    "runtime_free_gate": "nonblocking-deferred-last-lease-release-on-glib-ui-thread",
+    "rust_unwind_across_c": "forbidden",
+    "public_raw_pointers": "forbidden",
+    "required_test_contracts": [
+      {
+        "requirement_id": "ZL-13-RUST-GHOSTTY-ADAPTER",
+        "test_id": "TEST-RUST-GHOSTTY-CALLBACK-DROP",
+        "assertions": [
+          "positive-fresh-process-runtime-before-gtk",
+          "gtk-first-misuse-rejected-in-an-isolated-process",
+          "surface-widget-cannot-escape-as-a-cloneable-gtk-wrapper",
+          "surface-lease-qdata-is-never-replaced-stolen-or-cleared",
+          "qdata-destroy-notify-releases-runtime-lease-only-on-native-finalization",
+          "runtime-owner-never-blocks-ui-waiting-for-finalization"
+        ]
+      }
+    ]
+  },
+  "persistence": {
+    "schema": "workspace-state-v1.schema.json",
+    "schema_sha256": "89a649bf0b770f03860aff423df8824d0054aac0ece2691077f76e2bfcb685ed",
+    "semantic_rules": "tests/workspace-state-v1.jq",
+    "semantic_rules_sha256": "753c44bc8468ee7f2c3467efd941cefbe39de7c3141ef84688753e2d1474852b",
+    "current_version": 1,
+    "command_representation": "approved-non-secret-launch-profile-reference-only",
+    "unknown_fields": "reject-and-preserve-original",
+    "newer_versions": "reject-and-preserve-original",
+    "older_versions": "sequential-explicit-migration",
+    "write_protocol": "same-directory-temp-fsync-rename-fsync-directory",
+    "forbidden_persisted_classes": [
+      "credentials",
+      "clipboard-contents",
+      "agent-transcripts",
+      "environment",
+      "unapproved-secrets"
+    ]
+  },
+  "follow_up_issues": {
+    "workspace-and-persistence": 3,
+    "gtk-product-shell": 4,
+    "terminal-lifecycle": 5,
+    "recovery": 6,
+    "workflow-and-agent-parity": 7,
+    "display-input-ime-scaling": 8,
+    "packaging": 9,
+    "public-ci": 10,
+    "ghostty-api-review": 11,
+    "qualification-architecture": 12,
+    "rust-bootstrap-and-adapter": 13
+  },
+  "cross_stream_traceability": [
+    {
+      "requirement_id": "ZL-2-PRODUCT-BOUNDARY",
+      "test_ids": ["TEST-PRODUCT-BOUNDARY"],
+      "qualification_cell_ids": ["product-boundary-wayland", "product-boundary-x11"]
+    },
+    {
+      "requirement_id": "ZL-2-ARCHITECTURE-CONTRACT",
+      "test_ids": ["TEST-ARCHITECTURE-CONTRACT"],
+      "qualification_cell_ids": ["architecture-contract-v1"]
+    },
+    {
+      "requirement_id": "ZL-13-RUST-GHOSTTY-ADAPTER",
+      "test_ids": ["TEST-RUST-GHOSTTY-PRODUCT-USAGE", "TEST-RUST-GHOSTTY-CALLBACK-DROP", "TEST-RUST-GHOSTTY-CONFIG"],
+      "qualification_cell_ids": ["rust-ghostty-api-product-usage", "rust-ghostty-callback-drop-order", "rust-ghostty-config-construction"]
+    },
+    {
+      "requirement_id": "ZL-3-WORKSPACE-PERSISTENCE",
+      "test_ids": ["TEST-WORKSPACE-SCHEMA", "TEST-WORKSPACE-PERSISTENCE", "TEST-WORKSPACE-RESTORE"],
+      "qualification_cell_ids": ["workspace-schema-v1-contract", "workspace-persistence-unit", "product-workspace-restore-wayland", "product-workspace-restore-x11"]
+    },
+    {
+      "requirement_id": "ZL-4-WORKLANE-SHELL",
+      "test_ids": ["TEST-WORKLANE-LIFECYCLE"],
+      "qualification_cell_ids": ["product-worklanes-wayland", "product-worklanes-x11"]
+    },
+    {
+      "requirement_id": "ZL-5-PANE-TERMINAL-LIFECYCLE",
+      "test_ids": ["TEST-PANE-TERMINAL-LIFECYCLE"],
+      "qualification_cell_family_id": "product-pane-terminal-lifecycle-v1"
+    },
+    {
+      "requirement_id": "ZL-6-RECOVERY",
+      "test_ids": ["TEST-WORKSPACE-RECOVERY"],
+      "qualification_cell_ids": ["workspace-recovery-interrupted-write", "workspace-recovery-corrupt-state"]
+    },
+    {
+      "requirement_id": "ZL-7-PLATFORM-SERVICES",
+      "test_ids": ["TEST-PLATFORM-XDG", "TEST-PLATFORM-OPEN", "TEST-PLATFORM-NOTIFICATIONS", "TEST-PLATFORM-CLIPBOARD", "TEST-PLATFORM-SETTINGS", "TEST-PLATFORM-PROCESS"],
+      "qualification_cell_ids": ["platform-xdg-paths-contract", "platform-open-url-file-contract", "platform-notification-portal-contract", "platform-clipboard-wayland", "platform-clipboard-x11", "platform-settings-contract", "platform-process-launch-contract"]
+    }
+  ],
+  "qualification_cell_families": [
+    {
+      "id": "product-pane-terminal-lifecycle-v1",
+      "requirement_id": "ZL-5-PANE-TERMINAL-LIFECYCLE",
+      "test_id": "TEST-PANE-TERMINAL-LIFECYCLE",
+      "capability": "product_pane_terminal_lifecycle",
+      "cell_id_template": "product-pane-lifecycle-{optimize}-{display}-{async_backend}-{terminals}",
+      "order": 70,
+      "axes": {
+        "display": ["wayland", "x11"],
+        "optimize": ["release", "debug"],
+        "matrix_optimize": {"release": "ReleaseSafe", "debug": "Debug"},
+        "async_backend": ["default", "epoll", "io-uring"],
+        "matrix_async_backend": {"default": "default", "epoll": "epoll", "io-uring": "io_uring"},
+        "terminals": ["single", "multi"]
+      },
+      "status": "NOT_IMPLEMENTED",
+      "tier": "release",
+      "tracking": "GH-5",
+      "defect": "The delivered Rust/GTK product and safe Ghostty adapter do not yet provide the product-owned pane/terminal lifecycle harness on this matrix axis.",
+      "expected_cell_count": 24,
+      "authoritative": false
+    }
+  ],
+  "qualification_handoff_scope": "reconciled-non-authoritative-mirror-of-issue-12-matrix",
+  "proposed_qualification_capabilities": [
+    {
+      "id": "product_boundary",
+      "cells": [
+        "product-boundary-wayland",
+        "product-boundary-x11"
+      ]
+    },
+    {
+      "id": "architecture_contract",
+      "cells": [
+        "architecture-contract-v1"
+      ]
+    },
+    {
+      "id": "workspace_schema",
+      "cells": [
+        "workspace-schema-v1-contract"
+      ]
+    },
+    {
+      "id": "workspace_persistence",
+      "cells": [
+        "workspace-persistence-unit"
+      ]
+    },
+    {
+      "id": "workspace_restore",
+      "cells": [
+        "product-workspace-restore-wayland",
+        "product-workspace-restore-x11"
+      ]
+    },
+    {
+      "id": "product_worklanes",
+      "cells": [
+        "product-worklanes-wayland",
+        "product-worklanes-x11"
+      ]
+    },
+    {
+      "id": "recovery",
+      "cells": [
+        "workspace-recovery-interrupted-write",
+        "workspace-recovery-corrupt-state"
+      ]
+    },
+    {
+      "id": "platform_xdg_paths",
+      "cells": [
+        "platform-xdg-paths-contract"
+      ]
+    },
+    {
+      "id": "platform_open",
+      "cells": [
+        "platform-open-url-file-contract"
+      ]
+    },
+    {
+      "id": "platform_notifications",
+      "cells": [
+        "platform-notification-portal-contract"
+      ]
+    },
+    {
+      "id": "platform_clipboard",
+      "cells": [
+        "platform-clipboard-wayland",
+        "platform-clipboard-x11"
+      ]
+    },
+    {
+      "id": "platform_settings",
+      "cells": [
+        "platform-settings-contract"
+      ]
+    },
+    {
+      "id": "platform_process_launch",
+      "cells": [
+        "platform-process-launch-contract"
+      ]
+    }
+  ],
+  "proposed_qualification_cells": [
+    {
+      "id": "product-boundary-wayland",
+      "capability": "product_boundary",
+      "status": "NOT_IMPLEMENTED",
+      "tier": "release",
+      "display": "wayland",
+      "optimize": "ReleaseSafe",
+      "async_backend": "default",
+      "terminals": "multi",
+      "tracking": "GH-2",
+      "defect": "The current C executable is a qualification host. Issue #2 reserves the real Rust/GTK user-delivered product boundary; no equivalent product cell exists yet.",
+      "authoritative": false
+    },
+    {
+      "id": "product-boundary-x11",
+      "capability": "product_boundary",
+      "status": "NOT_IMPLEMENTED",
+      "tier": "release",
+      "display": "x11",
+      "optimize": "ReleaseSafe",
+      "async_backend": "default",
+      "terminals": "multi",
+      "tracking": "GH-2",
+      "defect": "The current C executable is a qualification host. Issue #2 reserves the real Rust/GTK user-delivered product boundary; no equivalent product cell exists yet.",
+      "authoritative": false
+    },
+    {
+      "id": "architecture-contract-v1",
+      "capability": "architecture_contract",
+      "status": "PASS",
+      "tier": "release",
+      "display": "none",
+      "optimize": "n/a",
+      "async_backend": "n/a",
+      "terminals": "n/a",
+      "command": "linux/tests/architecture-contract",
+      "authoritative": false
+    },
+    {
+      "id": "workspace-schema-v1-contract",
+      "capability": "workspace_schema",
+      "status": "PASS",
+      "tier": "release",
+      "display": "none",
+      "optimize": "n/a",
+      "async_backend": "n/a",
+      "terminals": "multi",
+      "command": "linux/tests/workspace-schema-contract",
+      "authoritative": false
+    },
+    {
+      "id": "workspace-persistence-unit",
+      "capability": "workspace_persistence",
+      "status": "NOT_IMPLEMENTED",
+      "tier": "release",
+      "display": "none",
+      "optimize": "Debug",
+      "async_backend": "n/a",
+      "terminals": "multi",
+      "tracking": "GH-3",
+      "defect": "Pure-Rust atomic persistence, migration, corruption, ordering, selection, and secret-exclusion tests do not exist yet.",
+      "authoritative": false
+    },
+    {
+      "id": "product-workspace-restore-wayland",
+      "capability": "workspace_restore",
+      "status": "NOT_IMPLEMENTED",
+      "tier": "release",
+      "display": "wayland",
+      "optimize": "ReleaseSafe",
+      "async_backend": "default",
+      "terminals": "multi",
+      "tracking": "GH-3",
+      "defect": "The delivered Rust/GTK product does not yet restore persisted multi-worklane state on Wayland.",
+      "authoritative": false
+    },
+    {
+      "id": "product-workspace-restore-x11",
+      "capability": "workspace_restore",
+      "status": "NOT_IMPLEMENTED",
+      "tier": "release",
+      "display": "x11",
+      "optimize": "ReleaseSafe",
+      "async_backend": "default",
+      "terminals": "multi",
+      "tracking": "GH-3",
+      "defect": "The delivered Rust/GTK product does not yet restore persisted multi-worklane state on X11/Xwayland.",
+      "authoritative": false
+    },
+    {
+      "id": "product-worklanes-wayland",
+      "capability": "product_worklanes",
+      "status": "NOT_IMPLEMENTED",
+      "tier": "release",
+      "display": "wayland",
+      "optimize": "ReleaseSafe",
+      "async_backend": "default",
+      "terminals": "multi",
+      "tracking": "GH-4",
+      "defect": "The delivered Rust/GTK product does not yet own worklane/pane creation, focus, movement, close, and teardown on Wayland.",
+      "authoritative": false
+    },
+    {
+      "id": "product-worklanes-x11",
+      "capability": "product_worklanes",
+      "status": "NOT_IMPLEMENTED",
+      "tier": "release",
+      "display": "x11",
+      "optimize": "ReleaseSafe",
+      "async_backend": "default",
+      "terminals": "multi",
+      "tracking": "GH-4",
+      "defect": "The delivered Rust/GTK product does not yet own worklane/pane creation, focus, movement, close, and teardown on X11/Xwayland.",
+      "authoritative": false
+    },
+    {
+      "id": "workspace-recovery-interrupted-write",
+      "capability": "recovery",
+      "status": "NOT_IMPLEMENTED",
+      "tier": "release",
+      "display": "none",
+      "optimize": "Debug",
+      "async_backend": "n/a",
+      "terminals": "multi",
+      "tracking": "GH-6",
+      "defect": "No deterministic interrupted-write, fsync, rename, and prior-state recovery contract exists yet.",
+      "authoritative": false
+    },
+    {
+      "id": "workspace-recovery-corrupt-state",
+      "capability": "recovery",
+      "status": "NOT_IMPLEMENTED",
+      "tier": "release",
+      "display": "none",
+      "optimize": "Debug",
+      "async_backend": "n/a",
+      "terminals": "multi",
+      "tracking": "GH-6",
+      "defect": "No deterministic malformed/unsupported workspace state classification and recovery contract exists yet.",
+      "authoritative": false
+    },
+    {
+      "id": "platform-xdg-paths-contract",
+      "capability": "platform_xdg_paths",
+      "status": "NOT_IMPLEMENTED",
+      "tier": "release",
+      "display": "none",
+      "optimize": "Debug",
+      "async_backend": "n/a",
+      "terminals": "n/a",
+      "tracking": "GH-7",
+      "defect": "The Linux XDG path interface and isolated-filesystem contract test do not exist yet.",
+      "authoritative": false
+    },
+    {
+      "id": "platform-open-url-file-contract",
+      "capability": "platform_open",
+      "status": "NOT_IMPLEMENTED",
+      "tier": "release",
+      "display": "none",
+      "optimize": "Debug",
+      "async_backend": "n/a",
+      "terminals": "n/a",
+      "tracking": "GH-7",
+      "defect": "The Linux URL/file opening interface and real protocol/failure contract test do not exist yet.",
+      "authoritative": false
+    },
+    {
+      "id": "platform-notification-portal-contract",
+      "capability": "platform_notifications",
+      "status": "NOT_IMPLEMENTED",
+      "tier": "release",
+      "display": "none",
+      "optimize": "Debug",
+      "async_backend": "n/a",
+      "terminals": "n/a",
+      "tracking": "GH-7",
+      "defect": "The Linux notification/portal interface and real D-Bus/failure contract test do not exist yet.",
+      "authoritative": false
+    },
+    {
+      "id": "platform-clipboard-wayland",
+      "capability": "platform_clipboard",
+      "status": "NOT_IMPLEMENTED",
+      "tier": "release",
+      "display": "wayland",
+      "optimize": "ReleaseSafe",
+      "async_backend": "default",
+      "terminals": "multi",
+      "tracking": "GH-7",
+      "defect": "The delivered product does not yet prove standard/primary clipboard semantics through a real Wayland compositor.",
+      "authoritative": false
+    },
+    {
+      "id": "platform-clipboard-x11",
+      "capability": "platform_clipboard",
+      "status": "NOT_IMPLEMENTED",
+      "tier": "release",
+      "display": "x11",
+      "optimize": "ReleaseSafe",
+      "async_backend": "default",
+      "terminals": "multi",
+      "tracking": "GH-7",
+      "defect": "The delivered product does not yet prove standard/primary clipboard semantics through a real X11/Xwayland server.",
+      "authoritative": false
+    },
+    {
+      "id": "platform-settings-contract",
+      "capability": "platform_settings",
+      "status": "NOT_IMPLEMENTED",
+      "tier": "release",
+      "display": "none",
+      "optimize": "Debug",
+      "async_backend": "n/a",
+      "terminals": "n/a",
+      "tracking": "GH-7",
+      "defect": "The Linux settings interface, schema/default behavior, persistence boundary, and failure contract test do not exist yet.",
+      "authoritative": false
+    },
+    {
+      "id": "platform-process-launch-contract",
+      "capability": "platform_process_launch",
+      "status": "NOT_IMPLEMENTED",
+      "tier": "release",
+      "display": "none",
+      "optimize": "Debug",
+      "async_backend": "n/a",
+      "terminals": "n/a",
+      "tracking": "GH-7",
+      "defect": "The Linux process-launch interface lacks exact argv/environment/CWD, signal, failure, and teardown contract tests.",
+      "authoritative": false
+    }
+  ]
+}

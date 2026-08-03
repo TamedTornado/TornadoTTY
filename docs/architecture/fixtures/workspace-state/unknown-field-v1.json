@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "workspace_id": "8ec56e57-54a6-4bb8-8d30-733617894b63",
+  "revision": 7,
+  "active_window_id": "5b667f15-a90d-4624-bbce-22b82f58b63e",
+  "credentials": "must-not-be-ignored",
+  "windows": [
+    {
+      "id": "5b667f15-a90d-4624-bbce-22b82f58b63e",
+      "order": 0,
+      "active_worklane_id": "054eef18-f179-4479-9f09-334e63410bb7",
+      "worklanes": [
+        {
+          "id": "054eef18-f179-4479-9f09-334e63410bb7",
+          "order": 0,
+          "title": null,
+          "layout": {
+            "columns": [
+              {
+                "index": 0,
+                "weight": 1.0
+              }
+            ]
+          },
+          "active_pane_id": "01f1dd85-2ed3-4564-83f8-a658ab55e409",
+          "panes": [
+            {
+              "id": "01f1dd85-2ed3-4564-83f8-a658ab55e409",
+              "order": 0,
+              "title": null,
+              "layout": {
+                "column": 0,
+                "row": 0,
+                "row_weight": 1.0
+              },
+              "cwd": "/home/user",
+              "command": {
+                "launch_profile_id": "default-shell"
+              },
+              "agent": null
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

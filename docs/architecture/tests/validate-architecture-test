@@ -1,0 +1,260 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+architecture_dir="${repo_root}/docs/architecture"
+validator="${architecture_dir}/tests/validate-architecture"
+source_contract="${architecture_dir}/linux-product-architecture-v1.json"
+source_schema="${architecture_dir}/workspace-state-v1.schema.json"
+source_rules="${architecture_dir}/tests/workspace-state-v1.jq"
+valid_fixture="${architecture_dir}/fixtures/workspace-state/valid-v1.json"
+temp_dir="$(mktemp -d)"
+trap 'rm -rf "${temp_dir}"' EXIT
+
+run_expect_failure() {
+    local name="$1"
+    local pattern="$2"
+    shift 2
+    local output="${temp_dir}/${name}.log"
+    set +e
+    env "$@" "${validator}" >"${output}" 2>&1
+    local status=$?
+    set -e
+    if [[ "${status}" -eq 0 ]]; then
+        echo "architecture-contract-test: ${name} unexpectedly passed" >&2
+        cat "${output}" >&2
+        exit 1
+    fi
+    grep -F "${pattern}" "${output}" >/dev/null || {
+        echo "architecture-contract-test: ${name} did not report '${pattern}'" >&2
+        cat "${output}" >&2
+        exit 1
+    }
+}
+
+invalid_edge="${temp_dir}/invalid-edge.json"
+jq '(.workspace_crates[] | select(.name == "zentty-core") | .workspace_dependencies) = ["zentty-linux"]' \
+    "${source_contract}" >"${invalid_edge}"
+run_expect_failure invalid-edge "architecture contract invariants failed" \
+    "ZENTTY_ARCHITECTURE_CONTRACT=${invalid_edge}"
+
+unsafe_core="${temp_dir}/unsafe-core.json"
+jq '(.workspace_crates[] | select(.name == "zentty-core") | .unsafe_policy) = "allow"' \
+    "${source_contract}" >"${unsafe_core}"
+run_expect_failure unsafe-core "architecture contract invariants failed" \
+    "ZENTTY_ARCHITECTURE_CONTRACT=${unsafe_core}"
+
+missing_owner="${temp_dir}/missing-owner.json"
+jq '.long_lived_owners -= ["GhosttyPtyOwner"]' \
+    "${source_contract}" >"${missing_owner}"
+run_expect_failure missing-owner "architecture contract invariants failed" \
+    "ZENTTY_ARCHITECTURE_CONTRACT=${missing_owner}"
+
+invalid_creation_order="${temp_dir}/invalid-creation-order.json"
+jq '.lifecycle.creation_order[1:3] |= reverse' \
+    "${source_contract}" >"${invalid_creation_order}"
+run_expect_failure invalid-creation-order "architecture contract invariants failed" \
+    "ZENTTY_ARCHITECTURE_CONTRACT=${invalid_creation_order}"
+
+invalid_shutdown_order="${temp_dir}/invalid-shutdown-order.json"
+jq '.lifecycle.shutdown_order[4:7] |= reverse' \
+    "${source_contract}" >"${invalid_shutdown_order}"
+run_expect_failure invalid-shutdown-order "architecture contract invariants failed" \
+    "ZENTTY_ARCHITECTURE_CONTRACT=${invalid_shutdown_order}"
+
+blocking_runtime_free="${temp_dir}/blocking-runtime-free.json"
+jq '.ffi_contract.runtime_free_gate = "block-until-weak-ref-callback"' \
+    "${source_contract}" >"${blocking_runtime_free}"
+run_expect_failure blocking-runtime-free "architecture contract invariants failed" \
+    "ZENTTY_ARCHITECTURE_CONTRACT=${blocking_runtime_free}"
+
+premature_runtime_lease="${temp_dir}/premature-runtime-lease.json"
+jq '.ffi_contract.runtime_lease = "release-when-surface-owner-drops"' \
+    "${source_contract}" >"${premature_runtime_lease}"
+run_expect_failure premature-runtime-lease "architecture contract invariants failed" \
+    "ZENTTY_ARCHITECTURE_CONTRACT=${premature_runtime_lease}"
+
+minimal_msrv_graph="${temp_dir}/minimal-msrv-graph.json"
+jq '.toolchain.msrv_job = "msrv-minimal-features"' \
+    "${source_contract}" >"${minimal_msrv_graph}"
+run_expect_failure minimal-msrv-graph "architecture contract invariants failed" \
+    "ZENTTY_ARCHITECTURE_CONTRACT=${minimal_msrv_graph}"
+
+drifted_traceability="${temp_dir}/drifted-traceability.json"
+jq '(.cross_stream_traceability[] |
+    select(.requirement_id == "ZL-4-WORKLANE-SHELL") |
+    .test_ids[0]) = "TEST-WORKLANES"' \
+    "${source_contract}" >"${drifted_traceability}"
+run_expect_failure drifted-traceability "architecture contract invariants failed" \
+    "ZENTTY_ARCHITECTURE_CONTRACT=${drifted_traceability}"
+
+drifted_pane_family="${temp_dir}/drifted-pane-family.json"
+jq '.qualification_cell_families[0].axes.async_backend = ["default", "epoll"]' \
+    "${source_contract}" >"${drifted_pane_family}"
+run_expect_failure drifted-pane-family "architecture contract invariants failed" \
+    "ZENTTY_ARCHITECTURE_CONTRACT=${drifted_pane_family}"
+
+missing_pane_family_cell="${temp_dir}/missing-pane-family-cell.json"
+jq '.cells |= map(select(.id != "product-pane-lifecycle-debug-x11-io-uring-multi"))' \
+    "${repo_root}/linux/qualification-matrix.json" >"${missing_pane_family_cell}"
+run_expect_failure missing-pane-family-cell \
+    "pane-terminal qualification family differs from authoritative matrix" \
+    "ZENTTY_QUALIFICATION_MATRIX=${missing_pane_family_cell}"
+
+invalid_proposed_status="${temp_dir}/invalid-proposed-status.json"
+jq '.proposed_qualification_cells[0].status = "SKIP"' \
+    "${source_contract}" >"${invalid_proposed_status}"
+run_expect_failure invalid-proposed-status "architecture contract invariants failed" \
+    "ZENTTY_ARCHITECTURE_CONTRACT=${invalid_proposed_status}"
+
+drifted_matrix="${temp_dir}/drifted-matrix.json"
+jq '(.cells[] | select(.id == "workspace-schema-v1-contract") | .command) = "true"' \
+    "${repo_root}/linux/qualification-matrix.json" >"${drifted_matrix}"
+run_expect_failure drifted-matrix "architecture qualification mirror differs from authoritative matrix" \
+    "ZENTTY_QUALIFICATION_MATRIX=${drifted_matrix}"
+
+drifted_defect="${temp_dir}/drifted-defect.json"
+jq '(.proposed_qualification_cells[] | select(.id == "product-boundary-wayland") | .defect) = "arbitrary stale mirror defect"' \
+    "${source_contract}" >"${drifted_defect}"
+run_expect_failure drifted-defect "architecture qualification mirror differs from authoritative matrix" \
+    "ZENTTY_ARCHITECTURE_CONTRACT=${drifted_defect}"
+
+drifted_prerequisite="${temp_dir}/drifted-prerequisite.json"
+jq '(.proposed_qualification_cells[] | select(.id == "architecture-contract-v1") | .prerequisite) = "arbitrary stale mirror prerequisite"' \
+    "${source_contract}" >"${drifted_prerequisite}"
+run_expect_failure drifted-prerequisite "architecture qualification mirror differs from authoritative matrix" \
+    "ZENTTY_ARCHITECTURE_CONTRACT=${drifted_prerequisite}"
+
+permissive_schema="${temp_dir}/permissive-schema.json"
+jq '.additionalProperties = true' "${source_schema}" >"${permissive_schema}"
+run_expect_failure permissive-schema "workspace schema invariants failed" \
+    "ZENTTY_WORKSPACE_SCHEMA=${permissive_schema}"
+
+changed_schema="${temp_dir}/changed-schema.json"
+jq '.description += " seeded checksum mutation"' \
+    "${source_schema}" >"${changed_schema}"
+run_expect_failure changed-schema "workspace schema checksum changed" \
+    "ZENTTY_WORKSPACE_SCHEMA=${changed_schema}"
+
+changed_rules="${temp_dir}/changed-rules.jq"
+cp "${source_rules}" "${changed_rules}"
+printf '\n# seeded semantic-rule mutation\n' >>"${changed_rules}"
+run_expect_failure changed-rules "workspace semantic-rule checksum changed" \
+    "ZENTTY_WORKSPACE_RULES=${changed_rules}"
+
+run_expect_failure malformed-accepted "malformed v1 fixture was accepted" \
+    "ZENTTY_WORKSPACE_MALFORMED_FIXTURE=${valid_fixture}"
+run_expect_failure unknown-accepted "unknown-field v1 fixture was accepted" \
+    "ZENTTY_WORKSPACE_UNKNOWN_FIXTURE=${valid_fixture}"
+run_expect_failure old-accepted "old v0 fixture was accepted as current v1" \
+    "ZENTTY_WORKSPACE_OLD_FIXTURE=${valid_fixture}"
+
+duplicate_id_fixture="${temp_dir}/duplicate-id-v1.json"
+jq '(.windows[0].worklanes[0].panes[1].id) = .windows[0].worklanes[0].panes[0].id' \
+    "${valid_fixture}" >"${duplicate_id_fixture}"
+run_expect_failure duplicate-id "valid v1 fixture was rejected" \
+    "ZENTTY_WORKSPACE_VALID_FIXTURE=${duplicate_id_fixture}"
+
+dangling_active_fixture="${temp_dir}/dangling-active-v1.json"
+jq '(.windows[0].worklanes[0].active_pane_id) = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"' \
+    "${valid_fixture}" >"${dangling_active_fixture}"
+run_expect_failure dangling-active "valid v1 fixture was rejected" \
+    "ZENTTY_WORKSPACE_VALID_FIXTURE=${dangling_active_fixture}"
+
+gapped_order_fixture="${temp_dir}/gapped-order-v1.json"
+jq '(.windows[0].worklanes[0].panes[1].order) = 2' \
+    "${valid_fixture}" >"${gapped_order_fixture}"
+run_expect_failure gapped-order "valid v1 fixture was rejected" \
+    "ZENTTY_WORKSPACE_VALID_FIXTURE=${gapped_order_fixture}"
+
+duplicate_order_fixture="${temp_dir}/duplicate-order-v1.json"
+jq '(.windows[0].worklanes[0].panes[1].order) = 0' \
+    "${valid_fixture}" >"${duplicate_order_fixture}"
+run_expect_failure duplicate-order "valid v1 fixture was rejected" \
+    "ZENTTY_WORKSPACE_VALID_FIXTURE=${duplicate_order_fixture}"
+
+gapped_row_fixture="${temp_dir}/gapped-row-v1.json"
+jq '(.windows[0].worklanes[0].panes[1].layout.row) = 2' \
+    "${valid_fixture}" >"${gapped_row_fixture}"
+run_expect_failure gapped-row "valid v1 fixture was rejected" \
+    "ZENTTY_WORKSPACE_VALID_FIXTURE=${gapped_row_fixture}"
+
+duplicate_row_fixture="${temp_dir}/duplicate-row-v1.json"
+jq '(.windows[0].worklanes[0].panes[1].layout.row) = 0' \
+    "${valid_fixture}" >"${duplicate_row_fixture}"
+run_expect_failure duplicate-row "valid v1 fixture was rejected" \
+    "ZENTTY_WORKSPACE_VALID_FIXTURE=${duplicate_row_fixture}"
+
+gapped_column_fixture="${temp_dir}/gapped-column-v1.json"
+jq '(.windows[0].worklanes[0].layout.columns) += [{"index":2,"weight":1}]' \
+    "${valid_fixture}" >"${gapped_column_fixture}"
+run_expect_failure gapped-column "valid v1 fixture was rejected" \
+    "ZENTTY_WORKSPACE_VALID_FIXTURE=${gapped_column_fixture}"
+
+duplicate_column_fixture="${temp_dir}/duplicate-column-v1.json"
+jq '(.windows[0].worklanes[0].layout.columns) += [{"index":0,"weight":1}]' \
+    "${valid_fixture}" >"${duplicate_column_fixture}"
+run_expect_failure duplicate-column "valid v1 fixture was rejected" \
+    "ZENTTY_WORKSPACE_VALID_FIXTURE=${duplicate_column_fixture}"
+
+cross_type_id_fixture="${temp_dir}/cross-type-id-v1.json"
+jq '(.windows[0].worklanes[0].id) = .windows[0].id |
+    (.windows[0].active_worklane_id) = .windows[0].id' \
+    "${valid_fixture}" >"${cross_type_id_fixture}"
+run_expect_failure cross-type-id "valid v1 fixture was rejected" \
+    "ZENTTY_WORKSPACE_VALID_FIXTURE=${cross_type_id_fixture}"
+
+invalid_column_weight_fixture="${temp_dir}/invalid-column-weight-v1.json"
+jq '(.windows[0].worklanes[0].layout.columns[0].weight) = 0' \
+    "${valid_fixture}" >"${invalid_column_weight_fixture}"
+run_expect_failure invalid-column-weight "valid v1 fixture was rejected" \
+    "ZENTTY_WORKSPACE_VALID_FIXTURE=${invalid_column_weight_fixture}"
+
+invalid_row_weight_fixture="${temp_dir}/invalid-row-weight-v1.json"
+jq '(.windows[0].worklanes[0].panes[0].layout.row_weight) = -1' \
+    "${valid_fixture}" >"${invalid_row_weight_fixture}"
+run_expect_failure invalid-row-weight "valid v1 fixture was rejected" \
+    "ZENTTY_WORKSPACE_VALID_FIXTURE=${invalid_row_weight_fixture}"
+
+dangling_column_fixture="${temp_dir}/dangling-column-v1.json"
+jq '(.windows[0].worklanes[0].panes[1].layout.column) = 1' \
+    "${valid_fixture}" >"${dangling_column_fixture}"
+run_expect_failure dangling-column "valid v1 fixture was rejected" \
+    "ZENTTY_WORKSPACE_VALID_FIXTURE=${dangling_column_fixture}"
+
+nul_fixture="${temp_dir}/nul-v1.json"
+jq '(.windows[0].worklanes[0].panes[0].title) = "visible\u0000hidden"' \
+    "${valid_fixture}" >"${nul_fixture}"
+run_expect_failure embedded-nul "valid v1 fixture was rejected" \
+    "ZENTTY_WORKSPACE_VALID_FIXTURE=${nul_fixture}"
+
+secret_fixture="${temp_dir}/secret-v1.json"
+jq '(.windows[0].worklanes[0].panes[0].title) = "Bearer seeded-fake-value"' \
+    "${valid_fixture}" >"${secret_fixture}"
+run_expect_failure secret-value "valid fixture contains secret-like key or value" \
+    "ZENTTY_WORKSPACE_VALID_FIXTURE=${secret_fixture}"
+
+assert_secret_form_rejected() {
+    local name="$1"
+    local value="$2"
+    local fixture="${temp_dir}/${name}-v1.json"
+    jq --arg value "${value}" \
+        '(.windows[0].worklanes[0].panes[0].title) = $value' \
+        "${valid_fixture}" >"${fixture}"
+    run_expect_failure "${name}" "valid fixture contains secret-like key or value" \
+        "ZENTTY_WORKSPACE_VALID_FIXTURE=${fixture}"
+}
+
+assert_secret_form_rejected authorization-basic \
+    "Authorization: Basic c2VlZGVkLWZha2U="
+assert_secret_form_rejected basic-scheme \
+    "Basic c2VlZGVkLWZha2U="
+assert_secret_form_rejected digest-scheme \
+    'Digest username="seeded", response="fake"'
+assert_secret_form_rejected api-key-header \
+    "X-Api-Key: seeded-fake-value"
+fake_github_provider="$(printf '%s%s' 'ghp' '_seededfakecredential123456')"
+assert_secret_form_rejected github-provider "${fake_github_provider}"
+
+"${validator}" >/dev/null
+echo "Architecture validator negative self-tests passed"

@@ -1,0 +1,425 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+architecture_dir="${repo_root}/docs/architecture"
+contract="${ZENTTY_ARCHITECTURE_CONTRACT:-${architecture_dir}/linux-product-architecture-v1.json}"
+authoritative_matrix="${ZENTTY_QUALIFICATION_MATRIX:-${repo_root}/linux/qualification-matrix.json}"
+schema="${ZENTTY_WORKSPACE_SCHEMA:-${architecture_dir}/workspace-state-v1.schema.json}"
+rules="${ZENTTY_WORKSPACE_RULES:-${architecture_dir}/tests/workspace-state-v1.jq}"
+valid_fixture="${ZENTTY_WORKSPACE_VALID_FIXTURE:-${architecture_dir}/fixtures/workspace-state/valid-v1.json}"
+malformed_fixture="${ZENTTY_WORKSPACE_MALFORMED_FIXTURE:-${architecture_dir}/fixtures/workspace-state/malformed-v1.json}"
+old_fixture="${ZENTTY_WORKSPACE_OLD_FIXTURE:-${architecture_dir}/fixtures/workspace-state/old-version-v0.json}"
+unknown_fixture="${ZENTTY_WORKSPACE_UNKNOWN_FIXTURE:-${architecture_dir}/fixtures/workspace-state/unknown-field-v1.json}"
+no_secrets_fixture="${ZENTTY_WORKSPACE_NO_SECRETS_FIXTURE:-${architecture_dir}/fixtures/workspace-state/no-secrets-v1.json}"
+
+fail() {
+    echo "architecture-contract: error: $*" >&2
+    exit 1
+}
+
+command -v jq >/dev/null || fail "jq is required"
+command -v sha256sum >/dev/null || fail "sha256sum is required"
+
+for json_file in \
+    "${contract}" \
+    "${authoritative_matrix}" \
+    "${schema}" \
+    "${valid_fixture}" \
+    "${malformed_fixture}" \
+    "${old_fixture}" \
+    "${unknown_fixture}" \
+    "${no_secrets_fixture}"; do
+    jq empty "${json_file}" >/dev/null 2>&1 || fail "invalid JSON: ${json_file}"
+done
+[[ -r "${rules}" ]] || fail "workspace semantic rules are not readable: ${rules}"
+
+jq -e '
+    .schema_version == 1 and
+    .contract_id == "zentty-linux-product-architecture" and
+    .decision == "rust-gtk4-rs" and
+    .ui_authority == "glib-main-context" and
+    .product_host == "zentty-linux" and
+    .qualification_host == "linux/src/main.c" and
+    .qualification_host_freeze == {
+        "manifest": "linux/test-policy/qualification-host-freeze.json",
+        "requirement_id": "ZL-2-QUALIFICATION-HOST-FREEZE",
+        "test_id": "TEST-QUALIFICATION-HOST-FREEZE",
+        "qualification_cell_id": "qualification-host-freeze",
+        "policy": "qualification-only-no-product-behavior; retire by replacement/removal, never extension"
+    } and
+    .ghostty_revision == "5fc8fa2cf4b27bfe27072d561de98f33b2c16636" and
+    ([.workspace_crates[].name] | sort) == ([
+        "zentty-core",
+        "zentty-ghostty-sys",
+        "zentty-ghostty",
+        "zentty-linux",
+        "zentty-test-support"
+    ] | sort) and
+    ([.workspace_crates[].name] | length) == ([.workspace_crates[].name] | unique | length) and
+    ([.workspace_crates[] |
+        .name as $from |
+        .workspace_dependencies[] |
+        "\($from)->\(.)"
+    ] | sort) == (.allowed_workspace_edges | sort) and
+    (.workspace_crates[] | select(.name == "zentty-core") | . as $crate |
+        $crate.workspace_dependencies == [] and
+        $crate.unsafe_policy == "forbid" and
+        all("gtk", "gobject", "linux-only", "ghostty-ffi"; . as $item |
+            $crate.forbidden_dependency_classes | index($item) != null)
+    ) and
+    (.workspace_crates[] | select(.name == "zentty-ghostty-sys") |
+        .workspace_dependencies == [] and .unsafe_policy == "ffi-declarations-only") and
+    (.workspace_crates[] | select(.name == "zentty-ghostty") |
+        .workspace_dependencies == ["zentty-ghostty-sys"] and
+        .unsafe_policy == "private-reviewed-ffi-modules-only") and
+    (.workspace_crates[] | select(.name == "zentty-linux") |
+        (.workspace_dependencies | sort) == (["zentty-core", "zentty-ghostty"] | sort) and
+        .unsafe_policy == "forbid") and
+    (.workspace_crates[] | select(.name == "zentty-test-support") |
+        .shipped == false and .unsafe_policy == "forbid") and
+    ([
+        "ApplicationRuntimeOwner",
+        "GhosttyRuntimeOwner",
+        "PlatformServicesOwner",
+        "PersistenceCoordinator",
+        "WindowOwner",
+        "WorklaneOwner",
+        "PaneOwner",
+        "GhosttySurfaceOwner",
+        "CallbackRegistrationOwner",
+        "GlibSourceOwner",
+        "GtkObjectOwner",
+        "GhosttyPtyOwner",
+        "GhosttyChildProcessOwner",
+        "PlatformTaskOwner",
+        "ShutdownCoordinator"
+    ] - .long_lived_owners | length) == 0 and
+    .lifecycle.creation_order == [
+        "acquire-default-glib-main-context-without-gtk-init-or-gtk-objects",
+        "create-ghostty-runtime",
+        "initialize-gtk-and-create-gtk-application",
+        "create-platform-services-and-load-validated-pane-records",
+        "create-windows-worklanes-and-transient-terminal-instances"
+    ] and
+    .lifecycle.shutdown_order == [
+        "enter-shutting-down-and-stop-user-input",
+        "cancel-and-join-event-producers",
+        "quiesce-callbacks-and-remove-recurring-sources",
+        "drain-or-explicitly-discard-queued-typed-events",
+        "freeze-and-validate-final-pane-record-snapshot",
+        "atomically-save-frozen-snapshot",
+        "destroy-terminal-instances-without-pane-record-close-mutations",
+        "destroy-gtk-windows-and-application",
+        "free-ghostty-runtime-after-all-native-surface-references-finalize",
+        "release-glib-main-context"
+    ] and
+    .lifecycle.runtime_before_gtk == "required-by-pinned-ghostty-abi" and
+    .lifecycle.shutdown_model_mode == "preserve-durable-topology" and
+    .pane_contract == {
+        "durable_type": "PaneRecord",
+        "transient_type": "TerminalInstance",
+        "restore_order": "apply-and-validate-pane-record-topology-before-terminal-construction",
+        "restore_constructor_failure": "retain-pane-record-and-project-failed-retry-state",
+        "new_pane_transaction": "construct-terminal-from-draft-record-before-atomic-model-commit-or-roll-back",
+        "shutdown_teardown": "destroy-terminal-instance-without-ordinary-close-pane-transition"
+    } and
+    .toolchain.edition == "2024" and
+    .toolchain.pinned_channel == "1.97.1" and
+    .toolchain.msrv == "1.85.0" and
+    .toolchain.msrv_basis == "first-stable-toolchain-with-edition-2024" and
+    .toolchain.normal_job == "pinned-locked-shipped-default-plus-reviewed-all-features" and
+    .toolchain.msrv_job == "msrv-locked-shipped-default-feature-graph" and
+    .toolchain.lockfile == "committed-workspace-root" and
+    .gtk_compatibility.gtk4_rs_baseline == "0.11.3" and
+    .gtk_compatibility.gtk4_rs_upstream_msrv == "1.83.0" and
+    .gtk_compatibility.minimum_native_gtk == "4.14.0" and
+    .gtk_compatibility.maximum_enabled_api_feature == "v4_14" and
+    .gtk_compatibility.floor_test == "build-and-run-locked-shipped-default-feature-graph-against-native-gtk-4.14-with-v4_14" and
+    .ffi_contract.surface_gobject_transfer == "unproven-requires-explicit-header-contract-and-native-test" and
+    .ffi_contract.surface_transfer_owner_issue == 11 and
+    .ffi_contract.safe_surface_constructor_owner_issue == 13 and
+    .ffi_contract.safe_surface_constructor_gate == "closed-until-issue-11-header-and-native-finalize-proof" and
+    .ffi_contract.surface_widget_exposure == "hidden-adapter-owned-widget-never-returned-as-cloneable-gtk-wrapper" and
+    .ffi_contract.runtime_lease == "stable-per-surface-gobject-qdata-destroy-notify-releases-counted-runtime-lease-only-at-native-finalization" and
+    .ffi_contract.runtime_free_gate == "nonblocking-deferred-last-lease-release-on-glib-ui-thread" and
+    .ffi_contract.required_test_contracts == [{
+        "requirement_id": "ZL-13-RUST-GHOSTTY-ADAPTER",
+        "test_id": "TEST-RUST-GHOSTTY-CALLBACK-DROP",
+        "assertions": [
+            "positive-fresh-process-runtime-before-gtk",
+            "gtk-first-misuse-rejected-in-an-isolated-process",
+            "surface-widget-cannot-escape-as-a-cloneable-gtk-wrapper",
+            "surface-lease-qdata-is-never-replaced-stolen-or-cleared",
+            "qdata-destroy-notify-releases-runtime-lease-only-on-native-finalization",
+            "runtime-owner-never-blocks-ui-waiting-for-finalization"
+        ]
+    }] and
+    .ffi_contract.rust_unwind_across_c == "forbidden" and
+    .ffi_contract.public_raw_pointers == "forbidden" and
+    .persistence.current_version == 1 and
+    .persistence.schema_sha256 == "89a649bf0b770f03860aff423df8824d0054aac0ece2691077f76e2bfcb685ed" and
+    .persistence.semantic_rules == "tests/workspace-state-v1.jq" and
+    .persistence.semantic_rules_sha256 == "753c44bc8468ee7f2c3467efd941cefbe39de7c3141ef84688753e2d1474852b" and
+    .persistence.command_representation == "approved-non-secret-launch-profile-reference-only" and
+    .persistence.unknown_fields == "reject-and-preserve-original" and
+    .persistence.newer_versions == "reject-and-preserve-original" and
+    .persistence.older_versions == "sequential-explicit-migration" and
+    .persistence.write_protocol == "same-directory-temp-fsync-rename-fsync-directory" and
+    .qualification_cell_families == [{
+        "id": "product-pane-terminal-lifecycle-v1",
+        "requirement_id": "ZL-5-PANE-TERMINAL-LIFECYCLE",
+        "test_id": "TEST-PANE-TERMINAL-LIFECYCLE",
+        "capability": "product_pane_terminal_lifecycle",
+        "cell_id_template": "product-pane-lifecycle-{optimize}-{display}-{async_backend}-{terminals}",
+        "order": 70,
+        "axes": {
+            "display": ["wayland", "x11"],
+            "optimize": ["release", "debug"],
+            "matrix_optimize": {"release": "ReleaseSafe", "debug": "Debug"},
+            "async_backend": ["default", "epoll", "io-uring"],
+            "matrix_async_backend": {"default": "default", "epoll": "epoll", "io-uring": "io_uring"},
+            "terminals": ["single", "multi"]
+        },
+        "status": "NOT_IMPLEMENTED",
+        "tier": "release",
+        "tracking": "GH-5",
+        "defect": "The delivered Rust/GTK product and safe Ghostty adapter do not yet provide the product-owned pane/terminal lifecycle harness on this matrix axis.",
+        "expected_cell_count": 24,
+        "authoritative": false
+    }] and
+    ([.proposed_qualification_capabilities[].id] | sort) == ([
+        "product_boundary",
+        "architecture_contract",
+        "workspace_schema",
+        "workspace_persistence",
+        "workspace_restore",
+        "product_worklanes",
+        "recovery",
+        "platform_xdg_paths",
+        "platform_open",
+        "platform_notifications",
+        "platform_clipboard",
+        "platform_settings",
+        "platform_process_launch"
+    ] | sort) and
+    ([.proposed_qualification_capabilities[].cells[]] | length) ==
+        ([.proposed_qualification_capabilities[].cells[]] | unique | length) and
+    ([.proposed_qualification_capabilities[].cells[]] | sort) ==
+        ([.proposed_qualification_cells[].id] | sort) and
+    (. as $contract |
+        all(.proposed_qualification_capabilities[]; . as $capability |
+            all($capability.cells[]; . as $cell_id |
+                any($contract.proposed_qualification_cells[];
+                    .id == $cell_id and .capability == $capability.id)))) and
+    ([.proposed_qualification_cells[].id] | length) ==
+        ([.proposed_qualification_cells[].id] | unique | length) and
+    .qualification_handoff_scope == "reconciled-non-authoritative-mirror-of-issue-12-matrix" and
+    .cross_stream_traceability == [
+        {
+            "requirement_id": "ZL-2-PRODUCT-BOUNDARY",
+            "test_ids": ["TEST-PRODUCT-BOUNDARY"],
+            "qualification_cell_ids": ["product-boundary-wayland", "product-boundary-x11"]
+        },
+        {
+            "requirement_id": "ZL-2-ARCHITECTURE-CONTRACT",
+            "test_ids": ["TEST-ARCHITECTURE-CONTRACT"],
+            "qualification_cell_ids": ["architecture-contract-v1"]
+        },
+        {
+            "requirement_id": "ZL-13-RUST-GHOSTTY-ADAPTER",
+            "test_ids": ["TEST-RUST-GHOSTTY-PRODUCT-USAGE", "TEST-RUST-GHOSTTY-CALLBACK-DROP", "TEST-RUST-GHOSTTY-CONFIG"],
+            "qualification_cell_ids": ["rust-ghostty-api-product-usage", "rust-ghostty-callback-drop-order", "rust-ghostty-config-construction"]
+        },
+        {
+            "requirement_id": "ZL-3-WORKSPACE-PERSISTENCE",
+            "test_ids": ["TEST-WORKSPACE-SCHEMA", "TEST-WORKSPACE-PERSISTENCE", "TEST-WORKSPACE-RESTORE"],
+            "qualification_cell_ids": ["workspace-schema-v1-contract", "workspace-persistence-unit", "product-workspace-restore-wayland", "product-workspace-restore-x11"]
+        },
+        {
+            "requirement_id": "ZL-4-WORKLANE-SHELL",
+            "test_ids": ["TEST-WORKLANE-LIFECYCLE"],
+            "qualification_cell_ids": ["product-worklanes-wayland", "product-worklanes-x11"]
+        },
+        {
+            "requirement_id": "ZL-5-PANE-TERMINAL-LIFECYCLE",
+            "test_ids": ["TEST-PANE-TERMINAL-LIFECYCLE"],
+            "qualification_cell_family_id": "product-pane-terminal-lifecycle-v1"
+        },
+        {
+            "requirement_id": "ZL-6-RECOVERY",
+            "test_ids": ["TEST-WORKSPACE-RECOVERY"],
+            "qualification_cell_ids": ["workspace-recovery-interrupted-write", "workspace-recovery-corrupt-state"]
+        },
+        {
+            "requirement_id": "ZL-7-PLATFORM-SERVICES",
+            "test_ids": ["TEST-PLATFORM-XDG", "TEST-PLATFORM-OPEN", "TEST-PLATFORM-NOTIFICATIONS", "TEST-PLATFORM-CLIPBOARD", "TEST-PLATFORM-SETTINGS", "TEST-PLATFORM-PROCESS"],
+            "qualification_cell_ids": ["platform-xdg-paths-contract", "platform-open-url-file-contract", "platform-notification-portal-contract", "platform-clipboard-wayland", "platform-clipboard-x11", "platform-settings-contract", "platform-process-launch-contract"]
+        }
+    ] and
+    all(.proposed_qualification_cells[]; .tier == "release") and
+    all(.proposed_qualification_cells[];
+        if (.capability == "product_boundary" or .capability == "workspace_restore" or
+            .capability == "product_worklanes" or .capability == "platform_clipboard")
+        then (.display == "wayland" or .display == "x11") and
+             .optimize == "ReleaseSafe" and .async_backend == "default" and
+             .terminals == "multi"
+        elif .capability == "architecture_contract"
+        then .display == "none" and .optimize == "n/a" and
+             .async_backend == "n/a" and .terminals == "n/a"
+        elif .capability == "workspace_schema"
+        then .display == "none" and .optimize == "n/a" and
+             .async_backend == "n/a" and .terminals == "multi"
+        elif (.capability == "workspace_persistence" or .capability == "recovery")
+        then .display == "none" and .optimize == "Debug" and
+             .async_backend == "n/a" and .terminals == "multi"
+        else .display == "none" and .optimize == "Debug" and
+             .async_backend == "n/a" and .terminals == "n/a"
+        end) and
+    all(.proposed_qualification_cells[];
+        .authoritative == false and
+        (.status == "PASS" or .status == "FAIL" or .status == "BLOCKED" or
+         .status == "XFAIL" or .status == "NOT_IMPLEMENTED") and
+        (.id | type == "string" and length > 0) and
+        (.capability | type == "string" and length > 0) and
+        (.display | type == "string") and
+        (.optimize | type == "string") and
+        (.async_backend | type == "string") and
+        (.terminals | type == "string") and
+        (if .status == "PASS" then (.command | type == "string" and length > 0)
+         elif .status == "BLOCKED" then (.prerequisite | type == "string" and length > 0)
+         else (.defect | type == "string" and length > 0) end) and
+        (if .status == "NOT_IMPLEMENTED" or .status == "XFAIL"
+         then (.tracking | type == "string" and test("^GH-[0-9]+$")) else true end)
+    ) and
+    (.follow_up_issues | [to_entries[].value] | sort) == [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
+' "${contract}" >/dev/null || fail "architecture contract invariants failed"
+
+jq -e --slurpfile matrix "${authoritative_matrix}" '
+    all(.proposed_qualification_cells[]; . as $mirror |
+        any($matrix[0].cells[]; . as $cell |
+            $cell.id == $mirror.id and
+            $cell.capability == $mirror.capability and
+            $cell.status == $mirror.status and
+            $cell.tier == $mirror.tier and
+            $cell.display == $mirror.display and
+            $cell.optimize == $mirror.optimize and
+            $cell.async_backend == $mirror.async_backend and
+            $cell.terminals == $mirror.terminals and
+            ($cell.command // null) == ($mirror.command // null) and
+            ($cell.tracking // null) == ($mirror.tracking // null) and
+            ($cell.prerequisite // null) == ($mirror.prerequisite // null) and
+            ($cell.defect // null) == ($mirror.defect // null)))
+' "${contract}" >/dev/null || fail "architecture qualification mirror differs from authoritative matrix"
+
+jq -e --slurpfile matrix "${authoritative_matrix}" '
+    .qualification_cell_families[0] as $family |
+    [
+      $family.axes.optimize[] as $optimize |
+      $family.axes.display[] as $display |
+      $family.axes.async_backend[] as $async_backend |
+      $family.axes.terminals[] as $terminals |
+      {
+        id: ("product-pane-lifecycle-" + $optimize + "-" + $display + "-" + $async_backend + "-" + $terminals),
+        optimize: $family.axes.matrix_optimize[$optimize],
+        display: $display,
+        async_backend: $family.axes.matrix_async_backend[$async_backend],
+        terminals: $terminals
+      }
+    ] as $expected |
+    ($expected | length) == $family.expected_cell_count and
+    ($expected | map(.id) | length) == ($expected | map(.id) | unique | length) and
+    all($expected[]; . as $expected_cell |
+      any($matrix[0].cells[]; . as $cell |
+        $cell.id == $expected_cell.id and
+        $cell.order == $family.order and
+        $cell.capability == $family.capability and
+        $cell.display == $expected_cell.display and
+        $cell.optimize == $expected_cell.optimize and
+        $cell.async_backend == $expected_cell.async_backend and
+        $cell.terminals == $expected_cell.terminals and
+        $cell.status == $family.status and
+        $cell.tier == $family.tier and
+        $cell.tracking == $family.tracking and
+        $cell.defect == $family.defect)) and
+    ([ $matrix[0].cells[] | select(.capability == $family.capability) | .id ] | sort) ==
+      ($expected | map(.id) | sort)
+' "${contract}" >/dev/null || fail "pane-terminal qualification family differs from authoritative matrix"
+
+jq -e '
+    .["$schema"] == "https://json-schema.org/draft/2020-12/schema" and
+    .type == "object" and
+    .additionalProperties == false and
+    .properties.schema_version.const == 1 and
+    .["$defs"].stable_id.pattern == "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$" and
+    (.required | sort) == ([
+        "schema_version", "workspace_id", "revision", "active_window_id", "windows"
+    ] | sort) and
+    .["$defs"].window.additionalProperties == false and
+    .["$defs"].worklane.additionalProperties == false and
+    .["$defs"].worklane_layout.additionalProperties == false and
+    .["$defs"].column_layout.additionalProperties == false and
+    .["$defs"].pane.additionalProperties == false and
+    .["$defs"].pane.properties.title.pattern == "^[^\\u0000]+$" and
+    .["$defs"].pane.properties.cwd.pattern == "^/[^\\u0000]*$" and
+    .["$defs"].command.additionalProperties == false and
+    (.["$defs"].command.required | sort) == ["launch_profile_id"] and
+    (.["$defs"].command.properties | keys) == ["launch_profile_id"] and
+    .["$defs"].command.properties.launch_profile_id.pattern == "^[a-z][a-z0-9._-]{0,63}$" and
+    .["$defs"].agent.additionalProperties == false and
+    .["$defs"].agent.properties.resume_id.pattern == "^[^\\u0000]+$" and
+    (.["x-zentty-invariants"].unknown_fields | startswith("Reject"))
+' "${schema}" >/dev/null || fail "workspace schema invariants failed"
+
+expected_schema_sha256="$(jq -r '.persistence.schema_sha256' "${contract}")"
+actual_schema_sha256="$(sha256sum "${schema}" | cut -d ' ' -f 1)"
+[[ "${actual_schema_sha256}" == "${expected_schema_sha256}" ]] ||
+    fail "workspace schema checksum changed without a versioned contract update"
+
+expected_rules_sha256="$(jq -r '.persistence.semantic_rules_sha256' "${contract}")"
+actual_rules_sha256="$(sha256sum "${rules}" | cut -d ' ' -f 1)"
+[[ "${actual_rules_sha256}" == "${expected_rules_sha256}" ]] ||
+    fail "workspace semantic-rule checksum changed without a versioned contract update"
+
+ZENTTY_SCHEMA_VALIDATION_MODE=v1 jq -e -f "${rules}" "${valid_fixture}" >/dev/null ||
+    fail "valid v1 fixture was rejected"
+ZENTTY_SCHEMA_VALIDATION_MODE=v1 jq -e -f "${rules}" "${no_secrets_fixture}" >/dev/null ||
+    fail "no-secrets v1 fixture was rejected"
+
+if ZENTTY_SCHEMA_VALIDATION_MODE=v1 jq -e -f "${rules}" "${malformed_fixture}" >/dev/null; then
+    fail "malformed v1 fixture was accepted"
+fi
+if ZENTTY_SCHEMA_VALIDATION_MODE=v1 jq -e -f "${rules}" "${old_fixture}" >/dev/null; then
+    fail "old v0 fixture was accepted as current v1"
+fi
+if ZENTTY_SCHEMA_VALIDATION_MODE=v1 jq -e -f "${rules}" "${unknown_fixture}" >/dev/null; then
+    fail "unknown-field v1 fixture was accepted"
+fi
+ZENTTY_SCHEMA_VALIDATION_MODE=v0-migration jq -e -f "${rules}" "${old_fixture}" >/dev/null ||
+    fail "recognized v0 fixture did not migrate to valid v1"
+
+reject_secret_like_content() {
+    local fixture="$1"
+    jq -e '
+        ([paths as $path |
+            select(($path[-1] | type) == "string") |
+            ($path[-1] | ascii_downcase) |
+            select(test("(^|_)(password|credential|secret|token|api[_-]?key|authorization|clipboard|transcript|environment|env)(_|$)"))
+        ] | length) == 0 and
+        ([.. | strings |
+            select(test("((authorization|proxy-authorization|x-api-key)[[:space:]]*:|(^|[[:space:]])(basic[[:space:]]+[a-z0-9+/=]{8,}|digest[[:space:]]+[^[:space:]]|bearer[[:space:]]+[^[:space:]])|begin[[:space:]]+(rsa[[:space:]]+)?private[[:space:]]+key|sk-[a-z0-9]{8}|gh[pousr]_[a-z0-9]{8}|github_pat_[a-z0-9_]{8}|xox[baprs]-[a-z0-9-]{8}|AKIA[0-9A-Z]{12}|AIza[0-9A-Za-z_-]{16}|--?(password|token|api[-_]?key|secret)(=|$)|://[^/@:]+:[^/@]+@)"; "i"))
+        ] | length) == 0 and
+        ([.. | strings | select(contains("\u0000"))] | length) == 0
+    ' "${fixture}" >/dev/null
+}
+
+reject_secret_like_content "${valid_fixture}" || fail "valid fixture contains secret-like key or value"
+reject_secret_like_content "${no_secrets_fixture}" || fail "no-secrets fixture contains secret-like key or value"
+
+grep -F '`src/main.c` is the C qualification host' "${repo_root}/linux/README.md" >/dev/null ||
+    fail "Linux README does not label src/main.c as the qualification host"
+if grep -F '`src/main.c` is the minimal GTK product executable' "${repo_root}/linux/README.md" >/dev/null; then
+    fail "Linux README still labels src/main.c as the product executable"
+fi
+
+echo "Architecture contract and workspace schema fixtures passed"

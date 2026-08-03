@@ -1,0 +1,24 @@
+{
+  "schema_version": 0,
+  "workspace_id": "8ec56e57-54a6-4bb8-8d30-733617894b63",
+  "active_window": "5b667f15-a90d-4624-bbce-22b82f58b63e",
+  "windows": [
+    {
+      "id": "5b667f15-a90d-4624-bbce-22b82f58b63e",
+      "active_worklane": "054eef18-f179-4479-9f09-334e63410bb7",
+      "worklanes": [
+        {
+          "id": "054eef18-f179-4479-9f09-334e63410bb7",
+          "active_pane": "01f1dd85-2ed3-4564-83f8-a658ab55e409",
+          "panes": [
+            {
+              "id": "01f1dd85-2ed3-4564-83f8-a658ab55e409",
+              "cwd": "/home/user/Development/zentty",
+              "command_profile": "default-shell"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
