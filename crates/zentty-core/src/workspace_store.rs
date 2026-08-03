@@ -5,7 +5,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::{Workspace, WorkspaceError};
+use crate::{FirstRunSpec, StableIdSource, Workspace, WorkspaceError, WorkspaceLoad};
 
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -50,6 +50,34 @@ impl WorkspaceStore {
         load_path(&self.backup_path())
     }
 
+    /// Loads an existing workspace or atomically creates the documented
+    /// first-run topology only when the primary is absent.
+    ///
+    /// A malformed, unsupported, unreadable, or non-regular primary never
+    /// falls back to first-run creation.
+    ///
+    /// # Errors
+    ///
+    /// Returns the existing load error, a first-run construction error, or an
+    /// atomic-save error. No primary is published when construction fails.
+    pub fn load_or_create(
+        &self,
+        source: &mut impl StableIdSource,
+        spec: &FirstRunSpec,
+    ) -> Result<WorkspaceLoad, WorkspaceStoreError> {
+        if let Some(workspace) = self.load()? {
+            return Ok(WorkspaceLoad::Existing(workspace));
+        }
+        let workspace = Workspace::first_run(source, spec).map_err(|source| {
+            WorkspaceStoreError::InvalidState {
+                path: self.path.clone(),
+                source,
+            }
+        })?;
+        self.save(&workspace)?;
+        Ok(WorkspaceLoad::Created(workspace))
+    }
+
     /// Atomically replaces the primary and retains the previous complete
     /// primary as a separately atomic backup.
     ///
@@ -65,13 +93,13 @@ impl WorkspaceStore {
                 path: self.path.clone(),
                 source,
             })?;
-        self.save_bytes_with_observer(&bytes, |_| Ok(()))
+        self.save_bytes_with_operations(&bytes, &mut RealAtomicOperations)
     }
 
-    fn save_bytes_with_observer(
+    fn save_bytes_with_operations(
         &self,
         bytes: &[u8],
-        mut observe: impl FnMut(WriteStage) -> io::Result<()>,
+        operations: &mut impl AtomicOperations,
     ) -> Result<(), WorkspaceStoreError> {
         let parent = self
             .path
@@ -99,19 +127,37 @@ impl WorkspaceStore {
             reject_non_regular_existing(&self.path, "read previous workspace")?;
             let previous = fs::read(&self.path)
                 .map_err(|source| io_source("read previous workspace", &self.path, source))?;
-            atomic_replace(&self.backup_path(), &previous, &mut observe)?;
+            atomic_replace(&self.backup_path(), &previous, operations)?;
         }
-        atomic_replace(&self.path, bytes, &mut observe)
+        atomic_replace(&self.path, bytes, operations)
     }
 }
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-enum WriteStage {
-    TempCreated,
-    DataWritten,
-    DataSynced,
-    Renamed,
-    DirectorySynced,
+trait AtomicOperations {
+    fn write_all(&mut self, file: &mut File, bytes: &[u8]) -> io::Result<()>;
+    fn sync_file(&mut self, file: &File) -> io::Result<()>;
+    fn rename(&mut self, source: &Path, destination: &Path) -> io::Result<()>;
+    fn sync_directory(&mut self, path: &Path) -> io::Result<()>;
+}
+
+struct RealAtomicOperations;
+
+impl AtomicOperations for RealAtomicOperations {
+    fn write_all(&mut self, file: &mut File, bytes: &[u8]) -> io::Result<()> {
+        file.write_all(bytes)
+    }
+
+    fn sync_file(&mut self, file: &File) -> io::Result<()> {
+        file.sync_all()
+    }
+
+    fn rename(&mut self, source: &Path, destination: &Path) -> io::Result<()> {
+        fs::rename(source, destination)
+    }
+
+    fn sync_directory(&mut self, path: &Path) -> io::Result<()> {
+        File::open(path)?.sync_all()
+    }
 }
 
 #[derive(Debug)]
@@ -180,7 +226,7 @@ fn load_path(path: &Path) -> Result<Option<Workspace>, WorkspaceStoreError> {
 fn atomic_replace(
     path: &Path,
     bytes: &[u8],
-    observe: &mut impl FnMut(WriteStage) -> io::Result<()>,
+    operations: &mut impl AtomicOperations,
 ) -> Result<(), WorkspaceStoreError> {
     let parent = path
         .parent()
@@ -189,27 +235,20 @@ fn atomic_replace(
     reject_non_regular_existing(path, "replace workspace file")?;
     let (mut file, temp_path) = create_temp(path)?;
     let mut cleanup = TempCleanup::new(temp_path.clone());
-    observe(WriteStage::TempCreated)
-        .map_err(|source| io_source("observe temp creation", &temp_path, source))?;
-    file.write_all(bytes)
+    operations
+        .write_all(&mut file, bytes)
         .map_err(|source| io_source("write workspace temp", &temp_path, source))?;
-    observe(WriteStage::DataWritten)
-        .map_err(|source| io_source("observe temp write", &temp_path, source))?;
-    file.sync_all()
+    operations
+        .sync_file(&file)
         .map_err(|source| io_source("sync workspace temp", &temp_path, source))?;
-    observe(WriteStage::DataSynced)
-        .map_err(|source| io_source("observe temp sync", &temp_path, source))?;
     drop(file);
-    fs::rename(&temp_path, path)
+    operations
+        .rename(&temp_path, path)
         .map_err(|source| io_source("rename workspace temp", path, source))?;
     cleanup.disarm();
-    observe(WriteStage::Renamed)
-        .map_err(|source| io_source("observe workspace rename", path, source))?;
-    File::open(parent)
-        .and_then(|directory| directory.sync_all())
+    operations
+        .sync_directory(parent)
         .map_err(|source| io_source("sync workspace directory", parent, source))?;
-    observe(WriteStage::DirectorySynced)
-        .map_err(|source| io_source("observe directory sync", parent, source))?;
     Ok(())
 }
 
@@ -333,41 +372,120 @@ mod tests {
         path
     }
 
-    #[test]
-    fn failure_before_rename_preserves_primary_and_removes_temp() {
-        let directory = test_directory("before-rename");
-        let store = WorkspaceStore::new(directory.join("workspace.json"));
-        let original = workspace().to_json().unwrap();
-        fs::write(store.path(), &original).unwrap();
-        let updated = {
-            let mut value = workspace();
-            value
-                .rename_worklane(&id(2), &id(3), Some("updated".into()))
-                .unwrap();
-            value.to_json().unwrap()
-        };
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+    enum FaultOperation {
+        Write,
+        FileSync,
+        Rename,
+        DirectorySync,
+    }
 
-        let mut synced_files = 0;
-        let result = store.save_bytes_with_observer(&updated, |stage| {
-            if stage == WriteStage::DataSynced {
-                synced_files += 1;
+    struct FailingAtomicOperations {
+        target: FaultOperation,
+        fail_on: usize,
+        matching_calls: usize,
+        real: RealAtomicOperations,
+    }
+
+    impl FailingAtomicOperations {
+        fn new(target: FaultOperation, fail_on: usize) -> Self {
+            Self {
+                target,
+                fail_on,
+                matching_calls: 0,
+                real: RealAtomicOperations,
             }
-            if synced_files == 2 && stage == WriteStage::DataSynced {
-                Err(io::Error::other("injected interruption"))
+        }
+
+        fn fail_now(&mut self, operation: FaultOperation) -> io::Result<()> {
+            if self.target != operation {
+                return Ok(());
+            }
+            self.matching_calls += 1;
+            if self.matching_calls == self.fail_on {
+                Err(io::Error::other(format!(
+                    "injected {operation:?} failure {}",
+                    self.fail_on
+                )))
             } else {
                 Ok(())
             }
-        });
-        assert!(result.is_err());
-        assert_eq!(fs::read(store.path()).unwrap(), original);
-        assert_eq!(fs::read(store.backup_path()).unwrap(), original);
-        assert!(fs::read_dir(&directory).unwrap().all(|entry| {
+        }
+    }
+
+    impl AtomicOperations for FailingAtomicOperations {
+        fn write_all(&mut self, file: &mut File, bytes: &[u8]) -> io::Result<()> {
+            self.fail_now(FaultOperation::Write)?;
+            self.real.write_all(file, bytes)
+        }
+
+        fn sync_file(&mut self, file: &File) -> io::Result<()> {
+            self.fail_now(FaultOperation::FileSync)?;
+            self.real.sync_file(file)
+        }
+
+        fn rename(&mut self, source: &Path, destination: &Path) -> io::Result<()> {
+            self.fail_now(FaultOperation::Rename)?;
+            self.real.rename(source, destination)
+        }
+
+        fn sync_directory(&mut self, path: &Path) -> io::Result<()> {
+            self.fail_now(FaultOperation::DirectorySync)?;
+            self.real.sync_directory(path)
+        }
+    }
+
+    fn assert_no_temp_files(directory: &Path) {
+        assert!(fs::read_dir(directory).unwrap().all(|entry| {
             !entry
                 .unwrap()
                 .file_name()
                 .to_string_lossy()
                 .contains(".tmp.")
         }));
-        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn exact_atomic_operation_failures_preserve_a_complete_recoverable_state() {
+        for operation in [
+            FaultOperation::Write,
+            FaultOperation::FileSync,
+            FaultOperation::Rename,
+            FaultOperation::DirectorySync,
+        ] {
+            for fail_on in 1..=2 {
+                let directory = test_directory(&format!("{operation:?}-{fail_on}"));
+                let store = WorkspaceStore::new(directory.join("workspace.json"));
+                let original = workspace().to_json().unwrap();
+                fs::write(store.path(), &original).unwrap();
+                let updated = {
+                    let mut value = workspace();
+                    value
+                        .rename_worklane(&id(2), &id(3), Some("updated".into()))
+                        .unwrap();
+                    value.to_json().unwrap()
+                };
+                let result = store.save_bytes_with_operations(
+                    &updated,
+                    &mut FailingAtomicOperations::new(operation, fail_on),
+                );
+                assert!(
+                    matches!(result, Err(WorkspaceStoreError::Io { .. })),
+                    "{operation:?} call {fail_on} unexpectedly succeeded"
+                );
+
+                let primary = fs::read(store.path()).unwrap();
+                if operation == FaultOperation::DirectorySync && fail_on == 2 {
+                    assert_eq!(primary, updated, "renamed primary must be complete");
+                } else {
+                    assert_eq!(primary, original, "old primary must remain complete");
+                }
+                if store.backup_path().exists() {
+                    assert_eq!(fs::read(store.backup_path()).unwrap(), original);
+                }
+                assert_no_temp_files(&directory);
+                fs::remove_dir_all(directory).unwrap();
+            }
+        }
     }
 }

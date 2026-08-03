@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::rc::Rc;
 use std::time::Duration;
-use zentty_core::WorkspaceStore;
+use zentty_core::{FirstRunSpec, StableId, StableIdSource, WorkspaceError, WorkspaceStore};
 use zentty_ghostty::{AsyncBackend, GhosttyRuntime, SurfaceConfig};
 
 #[derive(Debug)]
@@ -32,6 +32,14 @@ impl Default for Options {
             workspace_state: None,
             terminal_count_explicit: false,
         }
+    }
+}
+
+struct GlibStableIds;
+
+impl StableIdSource for GlibStableIds {
+    fn next_id(&mut self) -> Result<StableId, WorkspaceError> {
+        StableId::parse(glib::uuid_string_random().as_str())
     }
 }
 
@@ -206,10 +214,13 @@ fn run_lifecycle_cycle(
 fn run() -> Result<(), String> {
     let mut options = parse_options()?;
     if let Some(path) = &options.workspace_state {
-        let workspace = WorkspaceStore::new(path)
-            .load()
-            .map_err(|error| error.to_string())?
-            .ok_or_else(|| format!("workspace state does not exist: {}", path.display()))?;
+        let cwd = std::env::current_dir()
+            .map_err(|error| format!("cannot determine first-run CWD: {error}"))?;
+        let load = WorkspaceStore::new(path)
+            .load_or_create(&mut GlibStableIds, &FirstRunSpec::new(cwd, "default-shell"))
+            .map_err(|error| error.to_string())?;
+        let was_created = load.was_created();
+        let workspace = load.into_workspace();
         let window = workspace
             .active_window()
             .ok_or_else(|| "workspace active window does not resolve".to_owned())?;
@@ -225,7 +236,8 @@ fn run() -> Result<(), String> {
         }
         options.terminal_count = restored_terminal_count;
         eprintln!(
-            "zentty-linux: workspace-loaded id={} revision={} window={} worklane={} panes={}",
+            "zentty-linux: workspace-{} id={} revision={} window={} worklane={} panes={}",
+            if was_created { "created" } else { "loaded" },
             workspace.id(),
             workspace.revision(),
             window.id(),

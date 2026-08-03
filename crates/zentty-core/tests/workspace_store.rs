@@ -2,7 +2,10 @@ use std::fs::{self, File, OpenOptions};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use zentty_core::{Pane, StableId, Workspace, WorkspaceStore, WorkspaceStoreError};
+use zentty_core::{
+    FirstRunSpec, Pane, StableId, StableIdSource, Workspace, WorkspaceError, WorkspaceLoad,
+    WorkspaceStore, WorkspaceStoreError,
+};
 
 static DIRECTORY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -38,6 +41,34 @@ fn workspace() -> Workspace {
         Pane::new(id(4), "/tmp", "default").unwrap(),
     )
     .unwrap()
+}
+
+struct SequentialIds {
+    next: u64,
+    calls: usize,
+}
+
+impl SequentialIds {
+    fn new(next: u64) -> Self {
+        Self { next, calls: 0 }
+    }
+}
+
+impl StableIdSource for SequentialIds {
+    fn next_id(&mut self) -> Result<StableId, WorkspaceError> {
+        let generated = id(self.next);
+        self.next += 1;
+        self.calls += 1;
+        Ok(generated)
+    }
+}
+
+struct CollidingIds;
+
+impl StableIdSource for CollidingIds {
+    fn next_id(&mut self) -> Result<StableId, WorkspaceError> {
+        Ok(id(300))
+    }
 }
 
 #[test]
@@ -120,4 +151,73 @@ fn symlink_primary_is_rejected_for_load_and_save() {
         Err(WorkspaceStoreError::Io { .. })
     ));
     assert_eq!(fs::read(target).unwrap(), original);
+}
+
+#[test]
+fn missing_state_creates_one_documented_topology_exactly_once() {
+    let directory = TestDirectory::new("first-run");
+    let store = WorkspaceStore::new(directory.0.join("workspace.json"));
+    let spec = FirstRunSpec::new("/tmp", "default-shell");
+    let mut source = SequentialIds::new(100);
+
+    let created = store.load_or_create(&mut source, &spec).unwrap();
+    assert!(created.was_created());
+    assert_eq!(source.calls, 4);
+    let workspace = created.workspace();
+    assert_eq!(workspace.revision(), 0);
+    assert_eq!(workspace.windows().len(), 1);
+    assert_eq!(workspace.windows()[0].worklanes().len(), 1);
+    assert_eq!(workspace.windows()[0].worklanes()[0].panes().len(), 1);
+    assert_eq!(
+        workspace.windows()[0].worklanes()[0].panes()[0].cwd(),
+        std::path::Path::new("/tmp")
+    );
+    assert_eq!(
+        workspace.windows()[0].worklanes()[0].panes()[0].launch_profile_id(),
+        "default-shell"
+    );
+    assert_eq!(store.load().unwrap(), Some(workspace.clone()));
+
+    let existing = store.load_or_create(&mut source, &spec).unwrap();
+    assert!(matches!(existing, WorkspaceLoad::Existing(_)));
+    assert_eq!(source.calls, 4, "existing state consumed new identities");
+    assert_eq!(existing.into_workspace(), workspace.clone());
+}
+
+#[test]
+fn invalid_or_colliding_first_run_never_publishes_a_primary() {
+    let directory = TestDirectory::new("first-run-invalid");
+    let store = WorkspaceStore::new(directory.0.join("workspace.json"));
+    let mut source = SequentialIds::new(200);
+    let invalid = FirstRunSpec::new("relative", "default-shell");
+    assert!(matches!(
+        store.load_or_create(&mut source, &invalid),
+        Err(WorkspaceStoreError::InvalidState { .. })
+    ));
+    assert!(!store.path().exists());
+
+    assert!(matches!(
+        store.load_or_create(
+            &mut CollidingIds,
+            &FirstRunSpec::new("/tmp", "default-shell")
+        ),
+        Err(WorkspaceStoreError::InvalidState { .. })
+    ));
+    assert!(!store.path().exists());
+}
+
+#[test]
+fn corrupt_primary_never_falls_back_to_first_run() {
+    let directory = TestDirectory::new("first-run-corrupt");
+    let store = WorkspaceStore::new(directory.0.join("workspace.json"));
+    let corrupt = b"{corrupt";
+    fs::write(store.path(), corrupt).unwrap();
+    let mut source = SequentialIds::new(400);
+
+    assert!(matches!(
+        store.load_or_create(&mut source, &FirstRunSpec::new("/tmp", "default-shell")),
+        Err(WorkspaceStoreError::InvalidState { .. })
+    ));
+    assert_eq!(source.calls, 0);
+    assert_eq!(fs::read(store.path()).unwrap(), corrupt);
 }

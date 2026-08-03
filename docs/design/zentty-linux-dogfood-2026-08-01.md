@@ -3910,9 +3910,12 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   interruption test failed during backup publication rather than primary
   publication, and that load followed symlinks; the test now counts both file
   syncs and load/save reject non-regular existing paths.
-- **Current limit:** Exact injected failures *inside* write, file `fsync`,
-  rename, and directory `fsync`, concurrent multi-process stress, stale backup
-  policy, first-run ID generation, and product restart remain unfinished. The
+- **Limit at this checkpoint:** Exact injected failures *inside* write, file
+  `fsync`, rename, and directory `fsync`, concurrent multi-process stress,
+  stale backup policy, first-run ID generation, and product restart were
+  unfinished. First-run creation/reload is implemented by the later
+  `DOGFOOD-2026-08-03-FIRST-RUN-WORKSPACE` record and exact operation faults by
+  `DOGFOOD-2026-08-03-ATOMIC-OPERATION-FAULTS`. The
   matrix persistence cell stays `NOT_IMPLEMENTED` until the complete owning
   suite and real-product restoration path exist.
 
@@ -3954,7 +3957,56 @@ test harness, preserve the legacy constructor, and be independently reviewable.
 - **Scope:** This is a pure model test and is not represented as product or
   filesystem qualification. It completes the deterministic mutation-sequence
   portion of GH-3 while the matrix cell remains `NOT_IMPLEMENTED` for the
-  remaining fault, first-run, and recovery-policy gaps.
+  then-remaining fault, first-run, and recovery-policy gaps. First-run is
+  implemented by the following record.
+
+### DOGFOOD-2026-08-03-FIRST-RUN-WORKSPACE: absence creates; corruption never does
+
+- **Core contract:** A platform-provided `StableIdSource` supplies exactly four
+  IDs for the documented first-run topology: one workspace, one window, one
+  worklane, and one pane. `WorkspaceStore::load_or_create` invokes it only when
+  the primary is genuinely absent, validates the configured absolute CWD and
+  launch-profile reference, and atomically publishes the resulting v1 state.
+- **Fail-closed coverage:** Real-filesystem tests prove creation occurs once,
+  reload consumes no new IDs, invalid CWD or colliding IDs publish no primary,
+  and corrupt primary bytes are unchanged without invoking the ID source.
+  Warning-denied Clippy found that a test-only colliding source was declared
+  after executable statements; moving the fixture to module scope repaired the
+  structure before commit.
+- **Product implementation:** The Linux composition root uses GLib's real
+  random UUID-v4 source. A missing explicit `--workspace-state` path creates a
+  mode-0600 workspace before GTK/Ghostty startup; subsequent launch restores
+  the same workspace identity rather than recreating it.
+- **Real E2E evidence:** The staged ReleaseSafe product passed controlled
+  Wayland and X11 scenarios that created first-run state, asserted the exact
+  one-pane topology and PTY acknowledgement, verified mode 0600, reloaded the
+  same generated workspace ID without changing file bytes, and then exercised
+  the existing two-pane fixture path. No missing or corrupt state was treated
+  as a test skip.
+- **Remaining boundary:** Ordinary XDG path selection and launch-profile/CWD
+  availability validation remain separate platform work. First-run completion
+  narrows but does not promote the broad persistence or workspace-restore
+  matrix cells.
+
+### DOGFOOD-2026-08-03-ATOMIC-OPERATION-FAULTS: failures occur at the real seam
+
+- **Architecture correction:** The earlier write-stage observer could stop
+  between operations, but it could not prove the behavior when `write_all`,
+  file `fsync`, `rename`, or directory `fsync` itself returned an error. It was
+  replaced by one private atomic-operation seam. Production delegates every
+  operation directly to `std::fs`/`File`; focused tests substitute only the
+  single failing syscall boundary while all surrounding temporary-file,
+  backup, cleanup, and parsing behavior remains real.
+- **Deterministic cases:** Each of the four operations fails once during backup
+  publication and once during primary publication. Write, file-sync, and
+  rename failures preserve the old complete primary. Directory-sync failure
+  after primary rename reports failure while leaving the new primary complete,
+  accurately distinguishing publication from confirmed durability. Every case
+  retains a complete recoverable state and leaves no temporary file.
+- **Claim boundary:** This closes the exact atomic-operation fault gap recorded
+  on GH-3. The broad persistence cell remains `NOT_IMPLEMENTED` until explicit
+  backup restoration and rejected-primary preservation policy are implemented
+  and tested.
 
 ## AI disclosure
 

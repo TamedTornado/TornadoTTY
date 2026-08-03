@@ -161,6 +161,11 @@ This is not yet full workspace restoration. Only the active worklane is
 projected, `--command` is still a temporary shared command override, and no
 worklane UI mutation or save/relaunch path is claimed.
 
+If the explicit workspace path is missing, the product atomically creates the
+documented first-run topology (one window, one worklane, one pane) using GLib
+version-4 UUIDs. Invalid or corrupt existing state fails closed and is never
+replaced by first-run state.
+
 The nested environments prove real GTK/GDK, display-protocol and software-
 renderer integration. Weston headless intentionally has no input seat. These
 receipts therefore do not qualify a representative GNOME/KDE session, physical

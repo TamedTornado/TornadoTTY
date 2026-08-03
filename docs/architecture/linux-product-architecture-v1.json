@@ -464,7 +464,7 @@
       "async_backend": "n/a",
       "terminals": "multi",
       "tracking": "GH-3",
-      "defect": "The Rust model now has strict v0/v1 codec, deterministic mutation sequences, and real atomic-store coverage, but exact injected write/fsync/rename failures, first-run construction, and complete backup/recovery policy remain unfinished.",
+      "defect": "The Rust model now has strict v0/v1 codec, deterministic mutation sequences, documented first-run creation, and exact atomic-operation fault coverage, but the complete backup/recovery policy remains unfinished.",
       "authoritative": false
     },
     {
