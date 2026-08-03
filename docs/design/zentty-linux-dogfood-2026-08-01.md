@@ -4183,6 +4183,33 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   `product-worklanes-{wayland,x11}` stay `NOT_IMPLEMENTED`; these successful
   runs are narrow vertical-slice evidence, not full issue #4 qualification.
 
+### DOGFOOD-2026-08-03-WORKLANE-EDIT-ACTIONS: stale focus is not selection
+
+- **Test-first state extension:** A focused red test required left/right pane
+  reordering to preserve stable identity and focus at both boundaries. The
+  resulting core transitions complement the already-tested worklane title,
+  color, and final-index reorder behavior.
+- **Product controls:** The sidebar now exposes an active-worklane name entry,
+  color cycling, and move-up/down controls. The pane toolbar exposes left/right
+  reorder controls. Visible controls and automation dispatch the same named GTK
+  actions; title input is trimmed by the core rather than normalized in GTK.
+- **Real integration failure:** The expanded X11 scenario successfully renamed,
+  colored, and reordered a worklane but never emitted the pane-move action.
+  Deferred focus events from earlier renders were arriving after a newer split
+  had selected pane 4, resetting model focus to pane 1 at the left boundary.
+  Deferral alone prevented callback-stack mutation but did not establish event
+  freshness.
+- **Repair:** A deferred focus event now resolves the surface by stable pane ID
+  and mutates selection only if that exact widget still owns GTK focus when the
+  idle task runs. Stale events disappear instead of overwriting newer product
+  state. The action scenario then passed on both controlled X11 and native
+  Wayland with the final reordered worklane/pane topology, trimmed title, red
+  color, four distinct real PTY processes, and clean child exits.
+- **Boundary:** Color cycling is functional but rich source-equivalent color
+  styling is not. The flat left/right pane order does not yet implement the
+  source multi-column/vertical layout or cross-worklane moves. The broad
+  worklane cells remain `NOT_IMPLEMENTED`.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were

@@ -15,6 +15,46 @@ pub enum WorklaneColor {
     Pink,
 }
 
+impl WorklaneColor {
+    pub const ALL: [Self; 12] = [
+        Self::Red,
+        Self::Orange,
+        Self::Amber,
+        Self::Yellow,
+        Self::Lime,
+        Self::Green,
+        Self::Teal,
+        Self::Cyan,
+        Self::Blue,
+        Self::Indigo,
+        Self::Purple,
+        Self::Pink,
+    ];
+
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Red => "red",
+            Self::Orange => "orange",
+            Self::Amber => "amber",
+            Self::Yellow => "yellow",
+            Self::Lime => "lime",
+            Self::Green => "green",
+            Self::Teal => "teal",
+            Self::Cyan => "cyan",
+            Self::Blue => "blue",
+            Self::Indigo => "indigo",
+            Self::Purple => "purple",
+            Self::Pink => "pink",
+        }
+    }
+
+    #[must_use]
+    pub fn named(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|color| color.as_str() == name)
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PaneState {
     pub id: String,
@@ -230,6 +270,46 @@ impl WorkspaceState {
             return false;
         }
         pane_id.clone_into(&mut worklane.focused_pane_id);
+        true
+    }
+
+    /// Moves the focused pane one position left in the active worklane.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if an internal transition violated the focused-pane
+    /// invariant.
+    pub fn move_focused_pane_left(&mut self) -> bool {
+        let worklane = self.active_worklane_mut();
+        let focused_index = worklane
+            .panes
+            .iter()
+            .position(|pane| pane.id == worklane.focused_pane_id)
+            .expect("workspace invariant: focused pane exists");
+        if focused_index == 0 {
+            return false;
+        }
+        worklane.panes.swap(focused_index, focused_index - 1);
+        true
+    }
+
+    /// Moves the focused pane one position right in the active worklane.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if an internal transition violated the focused-pane
+    /// invariant.
+    pub fn move_focused_pane_right(&mut self) -> bool {
+        let worklane = self.active_worklane_mut();
+        let focused_index = worklane
+            .panes
+            .iter()
+            .position(|pane| pane.id == worklane.focused_pane_id)
+            .expect("workspace invariant: focused pane exists");
+        if focused_index + 1 == worklane.panes.len() {
+            return false;
+        }
+        worklane.panes.swap(focused_index, focused_index + 1);
         true
     }
 

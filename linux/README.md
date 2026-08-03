@@ -27,14 +27,15 @@ or restore that complete recipe; the Wayland/X11 product-restore cells remain
 `NOT_IMPLEMENTED`.
 
 The delivered GTK binary now has the first source-backed worklane shell slice:
-an ordered worklane sidebar, named GTK actions for worklane creation/selection
-and pane split/close, and one real Ghostty surface/PTTY per pane. The focused
+an ordered worklane sidebar, named GTK actions for worklane
+creation/selection/rename/reorder/color and pane split/close/reorder, and one
+real Ghostty surface/PTTY per pane. The focused
 `rust-workspace-actions` scenario drives those same actions in the staged binary
 and proves two worklanes, four distinct PTY children, topology, and selection
-under controlled Wayland and X11. Rename, reorder, color controls, complete pane
-layout/movement, recipe restoration, and the full source sidebar summaries are
-not implemented, so the broad product-worklane qualification cells remain
-`NOT_IMPLEMENTED`.
+under controlled Wayland and X11. Rich color presentation, multi-row/column
+pane layout and cross-worklane movement, recipe restoration, and the full
+source sidebar summaries are not implemented, so the broad product-worklane
+qualification cells remain `NOT_IMPLEMENTED`.
 
 ## Qualification
 

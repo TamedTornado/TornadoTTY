@@ -67,3 +67,20 @@ fn closing_a_specific_inactive_pane_removes_its_lane_without_changing_selection(
     assert_eq!(state.active_worklane_id(), "worklane-a");
     assert_eq!(state.close_pane("missing"), ClosePaneOutcome::NotFound);
 }
+
+#[test]
+fn focused_pane_moves_within_the_active_worklane_without_losing_focus() {
+    let mut state = WorkspaceState::new("worklane-a", "pane-a");
+    assert!(state.split_focused_pane_right("pane-b"));
+    assert!(state.split_focused_pane_right("pane-c"));
+    assert_eq!(state.active_pane_ids(), ["pane-a", "pane-b", "pane-c"]);
+
+    assert!(state.move_focused_pane_left());
+    assert_eq!(state.active_pane_ids(), ["pane-a", "pane-c", "pane-b"]);
+    assert_eq!(state.focused_pane_id(), Some("pane-c"));
+    assert!(state.move_focused_pane_left());
+    assert_eq!(state.active_pane_ids(), ["pane-c", "pane-a", "pane-b"]);
+    assert!(!state.move_focused_pane_left());
+    assert!(state.move_focused_pane_right());
+    assert_eq!(state.active_pane_ids(), ["pane-a", "pane-c", "pane-b"]);
+}

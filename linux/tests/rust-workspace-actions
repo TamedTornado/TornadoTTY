@@ -31,7 +31,7 @@ layer_directory="${ghostty_root}/${layer_runpath}"
 log="$(mktemp)"
 trap 'rm -f -- "${log}"' EXIT
 
-child_command='printf "\033]2;zentty-workspace-$$\a"; sleep 1'
+child_command='printf "\033]2;zentty-workspace-$$\a"; sleep 2'
 set +e
 timeout --foreground --kill-after=2s 20s \
     env LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
@@ -57,7 +57,15 @@ grep -Fxq 'zentty-linux: action=select-worklane id=worklane-1' "${log}" ||
     fail "select-worklane action did not run"
 grep -Fxq 'zentty-linux: action=split-pane-right pane=pane-4' "${log}" ||
     fail "reselected first worklane did not split"
-grep -Fxq 'zentty-linux: topology=worklane-1:pane-1,pane-4*|worklane-2:pane-2,pane-3' "${log}" ||
+grep -Fxq 'zentty-linux: action=rename-worklane id=worklane-1 title="  Frontend  "' "${log}" ||
+    fail "rename-worklane action did not preserve action input for trimming"
+grep -Fxq 'zentty-linux: action=cycle-worklane-color id=worklane-1 color=red' "${log}" ||
+    fail "worklane color action did not run"
+grep -Fxq 'zentty-linux: action=move-worklane target=1' "${log}" ||
+    fail "worklane reorder action did not run"
+grep -Fxq 'zentty-linux: action=move-pane-left' "${log}" ||
+    fail "pane reorder action did not run"
+grep -Fxq 'zentty-linux: topology=worklane-2[title=none,color=none]:pane-2,pane-3|worklane-1[title=Frontend,color=red]:pane-4,pane-1*' "${log}" ||
     fail "final worklane/pane topology or active selection is wrong"
 
 [[ "$(grep -Fxc 'zentty-linux: terminal-ready' "${log}" || true)" -eq 4 ]] ||
