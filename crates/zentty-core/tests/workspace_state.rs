@@ -55,3 +55,15 @@ fn duplicate_ids_and_invalid_reorders_are_rejected_without_mutation() {
     assert_eq!(state.worklane_ids(), ["worklane-a"]);
     assert_eq!(state.active_pane_ids(), ["pane-a"]);
 }
+
+#[test]
+fn closing_a_specific_inactive_pane_removes_its_lane_without_changing_selection() {
+    let mut state = WorkspaceState::new("worklane-a", "pane-a");
+    assert!(state.create_worklane("worklane-b", "pane-b"));
+    assert!(state.select_worklane("worklane-a"));
+
+    assert_eq!(state.close_pane("pane-b"), ClosePaneOutcome::Closed);
+    assert_eq!(state.worklane_ids(), ["worklane-a"]);
+    assert_eq!(state.active_worklane_id(), "worklane-a");
+    assert_eq!(state.close_pane("missing"), ClosePaneOutcome::NotFound);
+}

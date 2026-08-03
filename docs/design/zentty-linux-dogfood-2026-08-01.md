@@ -4137,6 +4137,52 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   The next change must bind these commands to named GTK actions and prove the
   resulting real Ghostty surfaces under controlled Wayland and X11.
 
+### DOGFOOD-2026-08-03-REAL-GTK-WORKLANE-SLICE: actions expose real lifecycle defects
+
+- **Product slice:** The staged Rust binary now renders an ordered worklane
+  sidebar and active pane area. `workspace.new-worklane`,
+  `workspace.select-worklane`, `workspace.split-pane-right`, and
+  `workspace.close-pane` are named GTK actions used by the visible controls and
+  the deterministic product driver. Every pane owns a real `GhosttySurface`;
+  focus changes and child exits enqueue state work until after the originating
+  GTK/Ghostty callback returns.
+- **Real integration failure:** The first controlled X11 smoke aborted before a
+  window appeared. Presenting the window synchronously entered the terminal
+  focus controller while `ApplicationShell` still held an immutable `RefCell`
+  borrow; the callback attempted a mutable borrow, panicked, and could not
+  unwind through GTK's C trampoline. Focus mutation is now posted to the GLib
+  idle queue. The unchanged staged product then passed both nested X11 and
+  native Wayland smoke.
+- **Scenario failure:** The first four-pane action run hung after only panes 1
+  and 4 initialized. All actions had been invoked synchronously before the main
+  loop, so panes 2 and 3 became inactive before GTK ever mapped them; Ghostty
+  correctly never started their PTYs, while the driver incorrectly counted
+  them as live. The driver now activates one real GTK action per mapped UI
+  interval. All four surfaces initialize and emit four distinct process-based
+  OSC titles. A 20-second process deadline makes future missing lifecycle
+  completion a bounded failure rather than another hang.
+- **Receipt repair:** The first shell command escaped `$$` into a literal title,
+  which would have made four processes look identical. A single-quoted driver
+  command now leaves `$$` for each real child shell, and the test requires four
+  unique numeric title values.
+- **Inactive exit repair:** The initial state API could close only the focused
+  pane. A new red test showed that a shell exit in an inactive worklane needed
+  source-compatible targeted removal without changing the active selection.
+  `close_pane` now owns that transition; Ghostty child-exit callbacks invoke it
+  from an idle task rather than deleting a surface on the native callback
+  stack.
+- **Real results:** `rust-workspace-actions` passed against the staged
+  ReleaseSafe binary under controlled X11/Xvfb and native Wayland/Weston. Each
+  run proved two worklanes, the exact final four-pane topology, named action
+  dispatch, four initialized Ghostty terminals, four distinct PTY child PIDs
+  observed through OSC titles, and four child exits. No terminal, PTY, GTK,
+  renderer, compositor, or process component was faked.
+- **Remaining boundary:** Rename/reorder/color UI, vertical stacks and pane
+  moves, persistence projection/restore, attention and agent summaries, and
+  accessibility/focus qualification remain unimplemented. Therefore
+  `product-worklanes-{wayland,x11}` stay `NOT_IMPLEMENTED`; these successful
+  runs are narrow vertical-slice evidence, not full issue #4 qualification.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were

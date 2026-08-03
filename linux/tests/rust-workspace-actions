@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
+ghostty_root="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
+backend="${GDK_BACKEND:-}"
+
+fail() {
+    echo "rust-workspace-actions: error: $*" >&2
+    exit 1
+}
+
+[[ "${backend}" == wayland || "${backend}" == x11 ]] ||
+    fail "GDK_BACKEND must be wayland or x11"
+command -v readelf >/dev/null || fail "readelf is required"
+command -v timeout >/dev/null || fail "timeout is required"
+[[ -x "${product}" ]] || fail "delivered Rust product is not built: ${product}"
+[[ -f "${ghostty_root}/zig-out/lib/libghostty-gtk-embed.so" ]] ||
+    fail "pinned Ghostty library is not built"
+
+layer_runpath="$(
+    readelf -d "${ghostty_root}/zig-out/lib/libghostty-gtk-embed.so" |
+        sed -n 's/.*Library runpath: \[\([^]]*\)\].*/\1/p' |
+        cut -d: -f1
+)"
+[[ "${layer_runpath}" == .zig-cache/* ]] ||
+    fail "Ghostty library has no pinned relative layer-shell runpath"
+layer_directory="${ghostty_root}/${layer_runpath}"
+
+log="$(mktemp)"
+trap 'rm -f -- "${log}"' EXIT
+
+child_command='printf "\033]2;zentty-workspace-$$\a"; sleep 1'
+set +e
+timeout --foreground --kill-after=2s 20s \
+    env LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+    "${product}" \
+    --command "${child_command}" \
+    --exercise-workspace-actions \
+    --quit-after-last-terminal-exit >"${log}" 2>&1
+status=$?
+set -e
+
+if (( status != 0 )); then
+    cat "${log}" >&2
+    fail "workspace action scenario exited ${status}"
+fi
+
+grep -Fxq 'zentty-linux: workspace-action-scenario complete' "${log}" ||
+    fail "the delivered product did not complete its named GTK action sequence"
+grep -Fxq 'zentty-linux: action=new-worklane id=worklane-2 pane=pane-2' "${log}" ||
+    fail "new-worklane action did not create its real pane"
+grep -Fxq 'zentty-linux: action=split-pane-right pane=pane-3' "${log}" ||
+    fail "active second worklane did not split"
+grep -Fxq 'zentty-linux: action=select-worklane id=worklane-1' "${log}" ||
+    fail "select-worklane action did not run"
+grep -Fxq 'zentty-linux: action=split-pane-right pane=pane-4' "${log}" ||
+    fail "reselected first worklane did not split"
+grep -Fxq 'zentty-linux: topology=worklane-1:pane-1,pane-4*|worklane-2:pane-2,pane-3' "${log}" ||
+    fail "final worklane/pane topology or active selection is wrong"
+
+[[ "$(grep -Fxc 'zentty-linux: terminal-ready' "${log}" || true)" -eq 4 ]] ||
+    fail "not every product pane initialized a real Ghostty terminal"
+[[ "$(grep -Fxc 'zentty-linux: child-exited' "${log}" || true)" -eq 4 ]] ||
+    fail "not every real PTY child exited through the product"
+[[ "$(sed -n 's/^zentty-linux: title=zentty-workspace-\([0-9][0-9]*\)$/\1/p' "${log}" | sort -u | wc -l)" -eq 4 ]] ||
+    fail "the four panes did not prove distinct real PTY child processes"
+if grep -Eq 'panicked at|thread caused non-unwinding panic|RefCell already borrowed' "${log}"; then
+    cat "${log}" >&2
+    fail "the GTK action scenario panicked"
+fi
+
+echo "Rust workspace actions passed: ${backend}, worklanes=2, panes=4, real-pty-children=4"

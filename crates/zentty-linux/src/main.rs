@@ -1,12 +1,15 @@
 #![forbid(unsafe_code)]
 
+mod application_shell;
+
+use application_shell::ApplicationShell;
 use gtk::glib;
 use gtk::prelude::*;
 use std::cell::Cell;
 use std::process::ExitCode;
 use std::rc::Rc;
 use std::time::Duration;
-use zentty_ghostty::{AsyncBackend, GhosttyRuntime, SurfaceConfig};
+use zentty_ghostty::{AsyncBackend, GhosttyRuntime};
 
 #[derive(Debug)]
 struct Options {
@@ -15,6 +18,7 @@ struct Options {
     terminal_count: usize,
     lifecycle_cycles: usize,
     async_backend: AsyncBackend,
+    exercise_workspace_actions: bool,
 }
 
 impl Default for Options {
@@ -25,6 +29,7 @@ impl Default for Options {
             terminal_count: 1,
             lifecycle_cycles: 1,
             async_backend: AsyncBackend::Default,
+            exercise_workspace_actions: false,
         }
     }
 }
@@ -51,6 +56,9 @@ fn parse_options() -> Result<Options, String> {
             }
             "--quit-after-last-terminal-exit" => {
                 options.quit_after_last_terminal_exit = true;
+            }
+            "--exercise-workspace-actions" => {
+                options.exercise_workspace_actions = true;
             }
             "--terminal-count" => {
                 let value = arguments
@@ -92,53 +100,22 @@ fn run_lifecycle_cycle(
     cycle: usize,
 ) -> Result<(), String> {
     let main_loop = glib::MainLoop::new(None, false);
-    let window = gtk::Window::new();
-    window.set_title(Some(zentty_core::PRODUCT_NAME));
-    window.set_default_size(1000, 700);
-    let terminal_box = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    terminal_box.set_homogeneous(true);
-    let remaining_children = Rc::new(Cell::new(options.terminal_count));
-    let mut surfaces = Vec::with_capacity(options.terminal_count);
-
-    for _ in 0..options.terminal_count {
-        let surface = runtime
-            .create_surface(&SurfaceConfig {
-                command: options.command.clone(),
-                title: zentty_core::PRODUCT_NAME.to_owned(),
-            })
-            .map_err(|error| error.to_string())?;
-        surface.on_initialized(|| eprintln!("zentty-linux: terminal-ready"));
-        surface.on_title_changed(|title| eprintln!("zentty-linux: title={title}"));
-
-        let child_loop = main_loop.clone();
-        let child_count = Rc::clone(&remaining_children);
-        let quit_after_last_terminal_exit = options.quit_after_last_terminal_exit;
-        surface.on_child_exited(move || {
-            eprintln!("zentty-linux: child-exited");
-            let remaining = child_count.get();
-            if remaining == 0 {
-                eprintln!("zentty-linux: duplicate child-exited callback");
-                return;
-            }
-            child_count.set(remaining - 1);
-            if remaining == 1 && quit_after_last_terminal_exit {
-                child_loop.quit();
-            }
-        });
-        terminal_box.append(surface.widget());
-        surfaces.push(surface);
-    }
-
-    window.set_child(Some(&terminal_box));
+    let shell = ApplicationShell::new(
+        runtime,
+        options.command.clone(),
+        options.terminal_count,
+        options.quit_after_last_terminal_exit,
+        &main_loop,
+    )?;
     let close_loop = main_loop.clone();
-    window.connect_close_request(move |_| {
+    shell.borrow().window().connect_close_request(move |_| {
         close_loop.quit();
         glib::Propagation::Proceed
     });
 
     let ticking_runtime = runtime.clone();
     let tick_loop = main_loop.clone();
-    let observed_window = window.clone();
+    let observed_window = shell.borrow().window().clone();
     let last_window_size = Rc::new(Cell::new((0, 0)));
     let ticking_window_size = Rc::clone(&last_window_size);
     let tick_source = glib::timeout_add_local(Duration::from_millis(10), move || {
@@ -162,28 +139,21 @@ fn run_lifecycle_cycle(
         }
     });
 
-    window.present();
-    if let Some(surface) = surfaces.first() {
-        surface.grab_focus();
+    shell.borrow().present();
+    if options.exercise_workspace_actions {
+        ApplicationShell::schedule_workspace_actions(&shell);
     }
     main_loop.run();
 
     tick_source.remove();
-    window.set_child(gtk::Widget::NONE);
-    for surface in &surfaces {
-        terminal_box.remove(surface.widget());
-    }
-    window.close();
-    drop(surfaces);
-    drop(terminal_box);
-    drop(window);
+    shell.borrow_mut().detach_and_close();
     while glib::MainContext::default().pending() {
         glib::MainContext::default().iteration(false);
     }
-    if options.quit_after_last_terminal_exit && remaining_children.get() != 0 {
+    if options.quit_after_last_terminal_exit && shell.borrow().live_children() != 0 {
         return Err(format!(
             "lifecycle cycle {cycle} ended with {} live children",
-            remaining_children.get()
+            shell.borrow().live_children()
         ));
     }
     eprintln!("zentty-linux: lifecycle-cycle={cycle} complete");

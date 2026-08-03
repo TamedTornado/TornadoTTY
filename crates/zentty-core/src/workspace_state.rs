@@ -240,23 +240,47 @@ impl WorkspaceState {
     /// Panics only if an internal state transition has violated active-lane,
     /// focused-pane, or non-empty-workspace invariants.
     pub fn close_focused_pane(&mut self) -> ClosePaneOutcome {
-        if self.active_worklane().panes.len() == 1 {
+        let pane_id = self.active_worklane().focused_pane_id.clone();
+        self.close_pane(&pane_id)
+    }
+
+    /// Closes a pane in any worklane, including an inactive pane whose shell
+    /// exited. The last pane in the last worklane requests window closure and
+    /// remains in the model, matching the source confirmation boundary.
+    pub fn close_pane(&mut self, pane_id: &str) -> ClosePaneOutcome {
+        let Some((worklane_index, pane_index)) =
+            self.worklanes
+                .iter()
+                .enumerate()
+                .find_map(|(worklane_index, worklane)| {
+                    worklane
+                        .panes
+                        .iter()
+                        .position(|pane| pane.id == pane_id)
+                        .map(|pane_index| (worklane_index, pane_index))
+                })
+        else {
+            return ClosePaneOutcome::NotFound;
+        };
+
+        if self.worklanes[worklane_index].panes.len() == 1 {
             if self.worklanes.len() == 1 {
                 return ClosePaneOutcome::CloseWindow;
             }
-            self.close_active_worklane();
+            let removed_active = self.worklanes[worklane_index].id == self.active_worklane_id;
+            self.worklanes.remove(worklane_index);
+            if removed_active {
+                let replacement_index = worklane_index
+                    .saturating_sub(1)
+                    .min(self.worklanes.len() - 1);
+                self.active_worklane_id = self.worklanes[replacement_index].id.clone();
+            }
             return ClosePaneOutcome::Closed;
         }
-        let worklane = self.active_worklane_mut();
-        let focused_index = worklane
-            .panes
-            .iter()
-            .position(|pane| pane.id == worklane.focused_pane_id)
-            .expect("workspace invariant: focused pane exists");
-        worklane.panes.remove(focused_index);
-        let replacement_index = focused_index
-            .saturating_sub(1)
-            .min(worklane.panes.len() - 1);
+
+        let worklane = &mut self.worklanes[worklane_index];
+        worklane.panes.remove(pane_index);
+        let replacement_index = pane_index.saturating_sub(1).min(worklane.panes.len() - 1);
         worklane.focused_pane_id = worklane.panes[replacement_index].id.clone();
         ClosePaneOutcome::Closed
     }
@@ -291,4 +315,5 @@ impl WorkspaceState {
 pub enum ClosePaneOutcome {
     Closed,
     CloseWindow,
+    NotFound,
 }
