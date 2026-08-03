@@ -9,9 +9,7 @@ support_tests=(
     linux/tests/isolated-session-test
     linux/tests/nested-x11-test
     linux/tests/nested-wayland-test
-    linux/tests/controlled-x11-test
     linux/tests/controlled-ibus-x11-test
-    linux/tests/qualification-host-freeze-test
     linux/tests/ghostty-async-backend-abi-test
     linux/tests/suppression-governance-test
 )

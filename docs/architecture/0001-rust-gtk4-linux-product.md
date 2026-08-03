@@ -11,8 +11,9 @@
   `5fc8fa2cf4b27bfe27072d561de98f33b2c16636`
 
 `MUST`, `MUST NOT`, `SHOULD`, and `MAY` are used normatively. This ADR is a
-contract for issues #3 through #13, not permission to add product behavior to
-the current C host.
+contract for issues #3 through #13. The transitional C host referenced in the
+original decision was retired after the Rust replacement passed its real
+Wayland/X11 parity gates.
 
 ## Decision
 
@@ -30,10 +31,10 @@ does not have a second general-purpose async runtime. All workspace concepts
 remain in Zentty; no worklane, pane-topology, persistence, agent, or platform
 service concept may cross into Ghostty.
 
-`linux/src/main.c` and `linux/src/host_options.*` are the **C qualification
-host**. They prove the extracted engine boundary and are neither the product
-architecture nor a base to extend. Product behavior begins only in the Rust
-workspace established by #13.
+The former `linux/src/main.c` and `linux/src/host_options.*` C qualification
+host proved the extracted engine boundary and was then deleted. The staged
+`build/linux/bin/zentty-linux` artifact is now the Rust product; retained C/C++
+programs are dependency probes only.
 
 ## Why this boundary
 
@@ -463,12 +464,10 @@ unknown fields, secret-like keys/values, invalid dependency direction, unsafe
 leakage, and missing owners. It does not claim that Rust product persistence
 exists.
 
-Until the Rust product replaces it, the C qualification host is mechanically
-frozen by `linux/test-policy/qualification-host-freeze.json`. The validator
-requires the exact closed-world `linux/src` inventory plus byte-for-byte
-SHA-256 identities for those sources and `linux/scripts/build-local`. Extending
-that host to implement product behavior is not an allowed shortcut; a reviewed
-policy update may repair qualification truth, while retirement removes the host.
+The C qualification host was mechanically frozen during the replacement
+overlap and then removed after the Rust product passed the replacement gates.
+The authoritative matrix rejects any surviving terminal-behavior command that
+names a retired C-host test.
 
 The machine contract uses #12's stable `ZL-*` requirement and `TEST-*` test
 vocabulary exactly. `linux/qualification-matrix.json` owns authoritative

@@ -4,13 +4,12 @@
   "decision": "rust-gtk4-rs",
   "ui_authority": "glib-main-context",
   "product_host": "zentty-linux",
-  "qualification_host": "linux/src/main.c",
-  "qualification_host_freeze": {
-    "manifest": "linux/test-policy/qualification-host-freeze.json",
-    "requirement_id": "ZL-2-QUALIFICATION-HOST-FREEZE",
-    "test_id": "TEST-QUALIFICATION-HOST-FREEZE",
-    "qualification_cell_id": "qualification-host-freeze",
-    "policy": "qualification-only-no-product-behavior; retire by replacement/removal, never extension"
+  "qualification_host": null,
+  "qualification_host_retirement": {
+    "replaced_by": "build/linux/bin/zentty-linux",
+    "replacement_language": "rust",
+    "legacy_sources_removed": true,
+    "legacy_matrix_cells_removed": true
   },
   "ghostty_revision": "5fc8fa2cf4b27bfe27072d561de98f33b2c16636",
   "workspace_crates": [
@@ -403,27 +402,25 @@
     {
       "id": "product-boundary-wayland",
       "capability": "product_boundary",
-      "status": "NOT_IMPLEMENTED",
+      "status": "PASS",
       "tier": "release",
       "display": "wayland",
       "optimize": "ReleaseSafe",
       "async_backend": "default",
       "terminals": "multi",
-      "tracking": "GH-2",
-      "defect": "The current C executable is a qualification host. Issue #2 reserves the real Rust/GTK user-delivered product boundary; no equivalent product cell exists yet.",
+      "command": "build/linux/bin/zentty-linux --command \"printf '\\033]2;zentty-product-wayland\\a'; sleep 0.1\" --terminal-count 2 --async-backend default --quit-after-last-terminal-exit",
       "authoritative": false
     },
     {
       "id": "product-boundary-x11",
       "capability": "product_boundary",
-      "status": "NOT_IMPLEMENTED",
+      "status": "PASS",
       "tier": "release",
       "display": "x11",
       "optimize": "ReleaseSafe",
       "async_backend": "default",
       "terminals": "multi",
-      "tracking": "GH-2",
-      "defect": "The current C executable is a qualification host. Issue #2 reserves the real Rust/GTK user-delivered product boundary; no equivalent product cell exists yet.",
+      "command": "build/linux/bin/zentty-linux --command \"printf '\\033]2;zentty-product-x11\\a'; sleep 0.1\" --terminal-count 2 --async-backend default --quit-after-last-terminal-exit",
       "authoritative": false
     },
     {

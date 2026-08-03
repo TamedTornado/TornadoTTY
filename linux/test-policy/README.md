@@ -12,8 +12,6 @@ The normative execution plan is
   inventory in `../qualification-matrix.json`.
 - `environment-manifest.schema.json` describes receipts emitted by controlled
   Wayland, X11, and isolated-session wrappers.
-- `qualification-host-freeze.json` freezes the disposable C qualification host
-  during the short Rust replacement overlap. It is deleted with that host.
 - `../tests/valgrind-suppressions.json` and its adjacent schema govern the
   effective Valgrind suppression set.
 

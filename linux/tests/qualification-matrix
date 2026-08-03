@@ -155,10 +155,7 @@ invalid_environment_profiles="$(jq -r '
          elif .environment_profile == "phase-managed-wayland-v1" then
             (.display == "wayland" and has_valgrind) | not
          elif .environment_profile == "phase-managed-x11-v1" then
-            (.display == "x11" and
-             (has_valgrind or
-              ((.capability == "physical_key_translation" or
-                .capability == "external_resize") and (has_valgrind | not)))) | not
+            (.display == "x11" and has_valgrind) | not
          else true end)
       )
     ) |
@@ -179,12 +176,7 @@ invalid_environment_dispatch="$(jq -r '
       wrapper_count("isolated-session") > 0 or
       wrapper_count("nested-x11") > 0 or
       wrapper_count("nested-wayland") > 0 or
-      (if .environment_profile == "phase-managed-x11-v1" and
-          (.capability == "physical_key_translation" or
-           .capability == "external_resize") and
-          (((.valgrind_report // "") | length) == 0) then
-         wrapper_count("controlled-x11") != 1
-       else wrapper_count("controlled-x11") != 0 end)
+      wrapper_count("controlled-x11") != 0
     )) |
     .id
 ' "${matrix}")"
@@ -192,7 +184,8 @@ invalid_environment_dispatch="$(jq -r '
     fail "cells bypass or double-nest their runtime environment owner: ${invalid_environment_dispatch}"
 
 invalid_valgrind_reports="$(jq -r '.cells[] | select(
-    (.capability == "valgrind" or has("valgrind_report")) and
+    (((.capability == "valgrind") and
+      (.status == "PASS" or .status == "XFAIL")) or has("valgrind_report")) and
     ((((.valgrind_report? | type) == "string") and (.valgrind_report | length) > 0) | not)
 ) | .id' "${matrix}")"
 [[ -z "${invalid_valgrind_reports}" ]] || fail "Valgrind cells without report paths: ${invalid_valgrind_reports}"
@@ -356,34 +349,6 @@ matrix_runner_environment_json() {
         --argjson evidence_file "$(jq -c '.evidence_file' <<<"${validated}")" '
         {
           profile:$profile,owner:"matrix-runner",harness:$harness,
-          sessions:[{role:"cell",session_id:$session_id}],
-          evidence_files:[$evidence_file]
-        }
-    '
-}
-
-matrix_controlled_x11_environment_json() {
-    local profile="$1"
-    local report="$2"
-    local command_exit_code="$3"
-    local minimum_started_at_epoch="$4"
-    local wrapper="${repo_root}/linux/tests/nested-x11"
-    local harness="linux/tests/controlled-x11"
-    local expected_command='["linux/tests/controlled-x11"]'
-    local validated harness_identity
-
-    validated="$(zentty_controlled_environment_validate_report \
-        "${report}" "${wrapper}" x11 "${command_exit_code}" \
-        "${expected_command}" "${minimum_started_at_epoch}" 900)" || return 1
-    harness_identity="$(zentty_controlled_environment_harness_json \
-        "${repo_root}" "${harness}")" || return 1
-    jq -cn \
-        --arg profile "${profile}" \
-        --argjson harness "${harness_identity}" \
-        --arg session_id "$(jq -r '.session_id' <<<"${validated}")" \
-        --argjson evidence_file "$(jq -c '.evidence_file' <<<"${validated}")" '
-        {
-          profile:$profile,owner:"cell-command",harness:$harness,
           sessions:[{role:"cell",session_id:$session_id}],
           evidence_files:[$evidence_file]
         }
@@ -578,15 +543,7 @@ while IFS= read -r cell; do
                 )
                 ;;
             phase-managed-x11-v1)
-                if [[ -z "${valgrind_report}" ]]; then
-                    cell_command=(
-                        "${sanitized_environment[@]}"
-                        "ZENTTY_NESTED_X11_REPORT=${environment_report}"
-                        "${shell_command[@]}"
-                    )
-                else
-                    cell_command=("${sanitized_environment[@]}" "${shell_command[@]}")
-                fi
+                cell_command=("${sanitized_environment[@]}" "${shell_command[@]}")
                 ;;
             phase-managed-wayland-v1)
                 cell_command=("${sanitized_environment[@]}" "${shell_command[@]}")
@@ -719,18 +676,6 @@ while IFS= read -r cell; do
                         "${environment_profile}" "${environment_report}" \
                         "${exit_code}" "${command}" "${cell_started_at_epoch}" \
                         "${environment_capture_span_seconds}")"; then
-                        if [[ "${outcome}" != "UNEXPECTED_SKIP" ||
-                            -e "${environment_report}" || -L "${environment_report}" ]]; then
-                            outcome="MISSING_OR_INVALID_ENVIRONMENT_REPORT"
-                        fi
-                        run_failed=true
-                        environment=null
-                    fi
-                    ;;
-                phase-managed-x11-v1)
-                    if ! environment="$(matrix_controlled_x11_environment_json \
-                        "${environment_profile}" "${environment_report}" \
-                        "${exit_code}" "${cell_started_at_epoch}")"; then
                         if [[ "${outcome}" != "UNEXPECTED_SKIP" ||
                             -e "${environment_report}" || -L "${environment_report}" ]]; then
                             outcome="MISSING_OR_INVALID_ENVIRONMENT_REPORT"

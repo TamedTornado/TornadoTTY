@@ -40,13 +40,12 @@ jq -e '
     .decision == "rust-gtk4-rs" and
     .ui_authority == "glib-main-context" and
     .product_host == "zentty-linux" and
-    .qualification_host == "linux/src/main.c" and
-    .qualification_host_freeze == {
-        "manifest": "linux/test-policy/qualification-host-freeze.json",
-        "requirement_id": "ZL-2-QUALIFICATION-HOST-FREEZE",
-        "test_id": "TEST-QUALIFICATION-HOST-FREEZE",
-        "qualification_cell_id": "qualification-host-freeze",
-        "policy": "qualification-only-no-product-behavior; retire by replacement/removal, never extension"
+    .qualification_host == null and
+    .qualification_host_retirement == {
+        "replaced_by": "build/linux/bin/zentty-linux",
+        "replacement_language": "rust",
+        "legacy_sources_removed": true,
+        "legacy_matrix_cells_removed": true
     } and
     .ghostty_revision == "5fc8fa2cf4b27bfe27072d561de98f33b2c16636" and
     ([.workspace_crates[].name] | sort) == ([
@@ -416,10 +415,9 @@ reject_secret_like_content() {
 reject_secret_like_content "${valid_fixture}" || fail "valid fixture contains secret-like key or value"
 reject_secret_like_content "${no_secrets_fixture}" || fail "no-secrets fixture contains secret-like key or value"
 
-grep -F '`src/main.c` is the C qualification host' "${repo_root}/linux/README.md" >/dev/null ||
-    fail "Linux README does not label src/main.c as the qualification host"
-if grep -F '`src/main.c` is the minimal GTK product executable' "${repo_root}/linux/README.md" >/dev/null; then
-    fail "Linux README still labels src/main.c as the product executable"
-fi
+grep -F 'The former C qualification application is' "${repo_root}/linux/README.md" >/dev/null ||
+    fail "Linux README does not record C qualification-host retirement"
+[[ ! -e "${repo_root}/linux/src/main.c" ]] ||
+    fail "retired C qualification-host source still exists"
 
 echo "Architecture contract and workspace schema fixtures passed"

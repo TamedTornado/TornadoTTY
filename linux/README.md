@@ -138,13 +138,13 @@ linux/tests/nested-wayland-test
 linux/tests/lib/controlled-environment-test
 ```
 
-Useful narrow product diagnostics remain available:
+Useful real-product diagnostics remain available:
 
 ```sh
-GDK_BACKEND=wayland linux/tests/interaction
-GDK_BACKEND=x11 linux/tests/interaction
-ZENTTY_CONTROLLED_X11_SCENARIO=physical-key linux/tests/controlled-x11
-ZENTTY_CONTROLLED_X11_SCENARIO=resize linux/tests/controlled-x11
+GDK_BACKEND=wayland linux/tests/nested-wayland linux/tests/rust-product-smoke
+GDK_BACKEND=x11 linux/tests/nested-x11 linux/tests/rust-product-smoke
+GDK_BACKEND=wayland linux/tests/nested-wayland linux/tests/rust-product-lifecycle
+GDK_BACKEND=x11 linux/tests/nested-x11 linux/tests/rust-product-lifecycle
 ```
 
 The nested environments prove real GTK/GDK, display-protocol and software-

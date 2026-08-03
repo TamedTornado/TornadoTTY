@@ -88,9 +88,9 @@ if [[ ! -f "${metadata}" ]] ||
     echo "error: memory-safety requires optimize=${expected_optimize}" >&2
     exit 1
 fi
-if [[ "${expected_optimize}" == "Debug" ]] &&
-    ! grep -Fx "host_optimize=Debug" "${metadata}" >/dev/null; then
-    echo "error: memory-safety requires a Debug C host" >&2
+if [[ "${expected_optimize}" == "Debug" && "${scenario}" != api ]] &&
+    ! grep -Fx "product_profile=debug" "${metadata}" >/dev/null; then
+    echo "error: memory-safety requires the Debug Rust product" >&2
     exit 1
 fi
 for suppression in "${effective_suppressions[@]}"; do

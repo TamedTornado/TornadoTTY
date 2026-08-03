@@ -3781,6 +3781,44 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   batched Debug output ended before the final X11/io_uring/multi acknowledgement;
   that exact cell was rerun independently and passed.
 
+### DOGFOOD-2026-08-03-C-HOST-RETIREMENT: disposable application path removed
+
+- **Deletion:** The frozen application sources `linux/src/main.c` and
+  `host_options.*`, their option unit, single/multi/interaction/configuration/
+  repeated-lifecycle tests, freeze manifest/tests, and C-host-specific X11
+  drivers were removed. `build-local` no longer has a source or build edge to
+  that application. Retained C/C++ files are limited to public-header/ABI
+  probes and independent GTK/IBus/mnemonic reproducers; none is packaged as
+  Zentty.
+- **Replacement evidence:** Before deletion, the staged Rust product passed
+  the exact display, optimization, async-backend, and terminal-count axes that
+  had been assigned to the C host. The Rust smoke itself now owns real X11 key
+  injection and external resize, so the extra C-host-specific controlled-X11
+  driver layer was deleted rather than wrapped around the new product.
+- **Qualification cleanup:** Terminal and lifecycle cells name only the Rust
+  integration tests. Product-boundary cells now launch the staged Rust binary.
+  The architecture contract records a null qualification host and fails if
+  `linux/src/main.c` reappears. `qualify-local` no longer runs freeze or retired
+  controlled-X11 support tests.
+- **Memory truth correction:** Historical C-host single/multi Debug Valgrind
+  PASS and ReleaseSafe XFAIL receipts were not transferred to the Rust
+  product. Those six Rust-product cells are now explicit `NOT_IMPLEMENTED`
+  gaps with no executable command or current report claim. The independently
+  reproduced GTK mnemonic defect remains in its focused raw reproducer rather
+  than keeping C API/product Valgrind cells alive. The old generalized
+  `memory-safety` producer remains temporarily only because suppression-runner
+  negative fixtures inspect its fail-closed publication logic; no matrix or
+  product test invokes its retired single/interaction modes.
+- **Interrupted Rust memory attempt:** A real staged Rust/Wayland Valgrind run
+  reached surface realization but was terminated by the tool execution window
+  before a heap summary, matching the earlier partial attempt. Its partial raw
+  log is rejected evidence. Rather than resurrecting a long-running harness or
+  claiming parity, the matrix now states the missing Rust memory cells plainly.
+- **IBus evidence boundary:** The suppression-governance self-test passed after
+  the metadata migration. A fresh full IBus/Valgrind execution was interrupted
+  before it published a final receipt, so it is not counted as fresh runtime
+  evidence for this change.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were

@@ -1667,7 +1667,7 @@ expect_producer_rejection() {
     local rejected_report="$6"
     local output="${temp_dir}/${label}.log"
 
-    printf 'optimize=%s\nhost_optimize=Debug\nibus_focus_reproducer_sha256=%s\n' \
+    printf 'optimize=%s\nproduct_profile=debug\nprobe_profile=debug\nibus_focus_reproducer_sha256=%s\n' \
         "${optimize}" \
         "$(sha256sum "${producer_fixture_root}/linux/tests/ibus-focus-reproducer.c" | awk '{print $1}')" \
         >"${producer_fixture_root}/build/linux/build-metadata"
@@ -1708,7 +1708,7 @@ expect_producer_rejection release-timeout-publication \
 expect_producer_rejection ibus-status-publication \
     "${fake_ibus_producer}" Debug ibus 99 "${ibus_report}"
 
-printf 'optimize=Debug\nhost_optimize=Debug\nibus_focus_reproducer_sha256=%s\n' \
+printf 'optimize=Debug\nproduct_profile=debug\nprobe_profile=debug\nibus_focus_reproducer_sha256=%s\n' \
     "$(sha256sum "${producer_fixture_root}/linux/tests/ibus-focus-reproducer.c" | awk '{print $1}')" \
     >"${producer_fixture_root}/build/linux/build-metadata"
 PATH="${fake_bin}:${PATH}" \
@@ -1739,7 +1739,7 @@ jq -e '
     exit 1
 }
 
-printf 'optimize=Debug\nhost_optimize=Debug\nibus_focus_reproducer_sha256=%s\n' \
+printf 'optimize=Debug\nproduct_profile=debug\nprobe_profile=debug\nibus_focus_reproducer_sha256=%s\n' \
     "$(printf stale | sha256sum | awk '{print $1}')" \
     >"${producer_fixture_root}/build/linux/build-metadata"
 set +e
@@ -1757,7 +1757,7 @@ set -e
         exit 1
     }
 
-printf 'optimize=ReleaseSafe\nhost_optimize=Debug\nibus_focus_reproducer_sha256=%s\n' \
+printf 'optimize=ReleaseSafe\nproduct_profile=release-safe\nprobe_profile=release\nibus_focus_reproducer_sha256=%s\n' \
     "$(sha256sum "${producer_fixture_root}/linux/tests/ibus-focus-reproducer.c" | awk '{print $1}')" \
     >"${producer_fixture_root}/build/linux/build-metadata"
 set +e
@@ -1778,7 +1778,7 @@ jq -e '.suppressed_exit_code == 99' "${release_report}" >/dev/null || {
     exit 1
 }
 
-printf 'optimize=Debug\nhost_optimize=Debug\nibus_focus_reproducer_sha256=%s\n' \
+printf 'optimize=Debug\nproduct_profile=debug\nprobe_profile=debug\nibus_focus_reproducer_sha256=%s\n' \
     "$(sha256sum "${producer_fixture_root}/linux/tests/ibus-focus-reproducer.c" | awk '{print $1}')" \
     >"${producer_fixture_root}/build/linux/build-metadata"
 printf '{"stale":true}\n' >"${debug_report}"

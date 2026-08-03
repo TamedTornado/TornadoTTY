@@ -173,7 +173,7 @@ if [[ ! -x "${controlled_ibus}" ]]; then
     fail "controlled IBus wrapper is not executable: ${controlled_ibus}"
 fi
 if [[ ! -x "${binary}" ]] ||
-    ! grep -Fx "host_optimize=Debug" "${metadata}" >/dev/null; then
+    ! grep -Fx "probe_profile=debug" "${metadata}" >/dev/null; then
     echo "error: ibus-focus-memory requires the Debug test binary" >&2
     exit 1
 fi
