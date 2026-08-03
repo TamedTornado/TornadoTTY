@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+source_file="${repo_root}/linux/tests/gtk-mnemonic-memory-reproducer.c"
+binary="${repo_root}/build/linux/gtk-mnemonic-memory-reproducer"
+receipt="${repo_root}/build/linux/gtk-mnemonic-memory-reproducer.raw.log"
+
+fail() {
+    echo "gtk-mnemonic-memory-reproducer: error: $*" >&2
+    exit 1
+}
+
+command -v cc >/dev/null || fail "cc is required"
+command -v pkg-config >/dev/null || fail "pkg-config is required"
+command -v valgrind >/dev/null || fail "valgrind is required"
+pkg-config --exists 'gtk4 = 4.14.5' ||
+    fail "this tracked reproducer requires the qualified GTK 4.14.5"
+
+mkdir -p "$(dirname "${binary}")"
+read -r -a gtk_flags <<<"$(pkg-config --cflags --libs gtk4)"
+cc -Wall -Wextra -Werror "${source_file}" -o "${binary}" \
+    "${gtk_flags[@]}"
+rm -f -- "${receipt}"
+
+GDK_BACKEND=wayland "${repo_root}/linux/tests/nested-wayland" \
+    valgrind \
+    --leak-check=full \
+    --show-leak-kinds=definite,indirect \
+    --errors-for-leak-kinds=definite,indirect \
+    --log-file="${receipt}" \
+    "${binary}"
+
+[[ -s "${receipt}" ]] || fail "Valgrind did not produce a raw receipt"
+finding="$({
+    sed -n \
+        '/24 bytes in 1 blocks are definitely lost/,/^==[0-9]*== $/p' \
+        "${receipt}" || true
+} | head -80)"
+grep -F 'gtk_widget_add_mnemonic_label' <<<"${finding}" >/dev/null ||
+    fail "tracked 24-byte GTK mnemonic finding is absent or changed; review it as stale"
+grep -F 'gtk_label_set_mnemonic_widget' <<<"${finding}" >/dev/null ||
+    fail "mnemonic finding no longer has the documented GTK label context"
+grep -F '/gtk-mnemonic-memory-reproducer)' <<<"${finding}" >/dev/null ||
+    fail "mnemonic finding was not triggered by the minimal GTK probe"
+
+echo "Tracked GTK mnemonic leak reproduced without Ghostty: gtk=$(pkg-config --modversion gtk4), raw_receipt=${receipt}"

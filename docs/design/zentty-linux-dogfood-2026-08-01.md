@@ -3669,6 +3669,50 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   backends, configuration/CWD, callback fault cases, Rust-product Valgrind,
   staging, IME, Wayland input/resize, and compositor scaling remain non-PASS.
 
+### DOGFOOD-2026-08-03-GTK-MNEMONIC-ISOLATION: the 24-byte leak is upstream of Ghostty
+
+- **Discovery:** The 24-byte definite loss previously attributed to the
+  `SurfaceChildExitedBanner` construction path is reproducible with a
+  minimal non-Ghostty GTK program which only initializes GTK, constructs a
+  mnemonic `GtkButton`, sinks its floating reference, and releases it. Under
+  the controlled Weston/Wayland environment and system GTK 4.14.5, Valgrind
+  reports the same allocation through `g_list_prepend`,
+  `gtk_widget_list_mnemonic_labels`, `gtk_widget_add_mnemonic_label`, and
+  `gtk_label_set_mnemonic_widget`.
+- **Source-level cause boundary:** GTK 4.14.5's
+  `gtk_widget_add_mnemonic_label` passes a newly allocated `GList` to the
+  accessible `labelled-by` relation. Its source comment says the accessibility
+  context takes ownership. The observed allocation survives release of a
+  plain GTK button, so neither Zentty's Rust ownership nor Ghostty's banner
+  lifecycle is necessary to trigger it. This is evidence of a GTK/accessibility
+  lifecycle defect at the qualified library version, not proof about every
+  newer GTK version.
+- **Failed narrowing attempts:** Clearing an Adwaita banner button label before
+  release did not remove the finding. Removing Adwaita entirely and explicitly
+  clearing the plain label's mnemonic widget also did not remove it. These
+  failed experiments rule out a useful Ghostty-side cleanup workaround; they
+  are not being converted into production changes or suppressions.
+- **Permanent focused reproducer:**
+  `linux/tests/gtk-mnemonic-memory-reproducer.c` contains no Ghostty or Zentty
+  product code. `linux/tests/gtk-mnemonic-memory-reproducer` compiles it against
+  exactly GTK 4.14.5, runs unsuppressed Valgrind in a fresh controlled Wayland
+  compositor, preserves the raw receipt, and fails if the exact tracked stack
+  disappears or changes. A disappearance is therefore a stale-defect review,
+  never an automatic pass.
+- **Rust-product Valgrind attempt:** A bounded unsuppressed run of the real Rust
+  product reached real Ghostty surface realization and rendering, but the
+  execution was externally interrupted before Valgrind emitted a heap summary.
+  Its partial log is not valid evidence and is not reported as a pass or fail.
+  No additional long-running general harness was built around that interrupted
+  attempt.
+- **Decision:** Do not patch Ghostty or broaden a suppression for this finding.
+  Keep the two Debug API Valgrind cells as explicit tracked FAILs and retain the
+  independent GTK reproducer as the disposition required by recovery-plan
+  milestone 3. Rust-product Valgrind remains non-PASS until a complete focused
+  run exists. The remaining upstream uncertainty is whether current GTK has
+  repaired the accessibility relation ownership defect; no upstream issue has
+  yet been filed or adopted as the tracker.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were
