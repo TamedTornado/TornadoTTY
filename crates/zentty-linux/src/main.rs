@@ -3,11 +3,9 @@
 use gtk::glib;
 use gtk::prelude::*;
 use std::cell::Cell;
-use std::path::PathBuf;
 use std::process::ExitCode;
 use std::rc::Rc;
 use std::time::Duration;
-use zentty_core::{FirstRunSpec, StableId, StableIdSource, WorkspaceError, WorkspaceStore};
 use zentty_ghostty::{AsyncBackend, GhosttyRuntime, SurfaceConfig};
 
 #[derive(Debug)]
@@ -17,8 +15,6 @@ struct Options {
     terminal_count: usize,
     lifecycle_cycles: usize,
     async_backend: AsyncBackend,
-    workspace_state: Option<PathBuf>,
-    terminal_count_explicit: bool,
 }
 
 impl Default for Options {
@@ -29,17 +25,7 @@ impl Default for Options {
             terminal_count: 1,
             lifecycle_cycles: 1,
             async_backend: AsyncBackend::Default,
-            workspace_state: None,
-            terminal_count_explicit: false,
         }
-    }
-}
-
-struct GlibStableIds;
-
-impl StableIdSource for GlibStableIds {
-    fn next_id(&mut self) -> Result<StableId, WorkspaceError> {
-        StableId::parse(glib::uuid_string_random().as_str())
     }
 }
 
@@ -71,7 +57,6 @@ fn parse_options() -> Result<Options, String> {
                     .next()
                     .ok_or_else(|| "--terminal-count requires a value".to_owned())?;
                 options.terminal_count = parse_positive_count("--terminal-count", &value)?;
-                options.terminal_count_explicit = true;
             }
             "--lifecycle-cycles" => {
                 let value = arguments
@@ -94,12 +79,6 @@ fn parse_options() -> Result<Options, String> {
                         ));
                     }
                 };
-            }
-            "--workspace-state" => {
-                options.workspace_state =
-                    Some(PathBuf::from(arguments.next().ok_or_else(|| {
-                        "--workspace-state requires a value".to_owned()
-                    })?));
             }
             _ => return Err(format!("unknown argument: {argument}")),
         }
@@ -212,39 +191,7 @@ fn run_lifecycle_cycle(
 }
 
 fn run() -> Result<(), String> {
-    let mut options = parse_options()?;
-    if let Some(path) = &options.workspace_state {
-        let cwd = std::env::current_dir()
-            .map_err(|error| format!("cannot determine first-run CWD: {error}"))?;
-        let load = WorkspaceStore::new(path)
-            .load_or_create(&mut GlibStableIds, &FirstRunSpec::new(cwd, "default-shell"))
-            .map_err(|error| error.to_string())?;
-        let was_created = load.was_created();
-        let workspace = load.into_workspace();
-        let window = workspace
-            .active_window()
-            .ok_or_else(|| "workspace active window does not resolve".to_owned())?;
-        let worklane = window
-            .active_worklane()
-            .ok_or_else(|| "workspace active worklane does not resolve".to_owned())?;
-        let restored_terminal_count = worklane.panes().len();
-        if options.terminal_count_explicit && options.terminal_count != restored_terminal_count {
-            return Err(format!(
-                "--terminal-count={} conflicts with restored active worklane pane count={restored_terminal_count}",
-                options.terminal_count
-            ));
-        }
-        options.terminal_count = restored_terminal_count;
-        eprintln!(
-            "zentty-linux: workspace-{} id={} revision={} window={} worklane={} panes={}",
-            if was_created { "created" } else { "loaded" },
-            workspace.id(),
-            workspace.revision(),
-            window.id(),
-            worklane.id(),
-            restored_terminal_count
-        );
-    }
+    let options = parse_options()?;
 
     // Ghostty owns process-global initialization that must precede GTK.
     let runtime = GhosttyRuntime::new(options.async_backend).map_err(|error| error.to_string())?;

@@ -4046,6 +4046,27 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   mutation work aimed primarily at test governance are no longer feature
   prerequisites.
 
+### DOGFOOD-2026-08-03-INVENTED-WORKSPACE-REMOVAL: wrong green code is deleted
+
+- **Removal:** The incompatible Rust workspace model, schema-v1 codec,
+  primary/`.bak` store, first-run state-file API, four model/store suites, and
+  persisted-fixture product projection were removed rather than adapted in
+  place. Cargo and architecture/matrix declarations were returned to the last
+  pre-workspace checkpoint. Historical dogfood records remain so the work and
+  scope failure do not disappear from the public record.
+- **Reason:** Keeping thoroughly tested but source-incompatible types would
+  bias the replacement toward their invented workspace UUID/revision,
+  launch-profile, strict decoding, flattened layout, and backup assumptions.
+  A clean boundary is safer than gradually renaming the wrong contract.
+- **Verification:** After deletion, the warning-clean Cargo workspace tests and
+  doc tests passed, Clippy passed with warnings denied, the architecture
+  contract and its negative fixtures passed, the qualification matrix
+  validated, and `git diff --check` passed. These checks prove a coherent
+  removal only; they make no workspace-parity claim.
+- **Next red:** Replacement begins from Swift-compatible
+  `WorkspaceRecipe`/`SessionRestoreEnvelope` fixtures and source behavior, not
+  from the removed Linux schema or its tests.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were

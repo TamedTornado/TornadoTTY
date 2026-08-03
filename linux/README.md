@@ -147,25 +147,6 @@ GDK_BACKEND=wayland linux/tests/nested-wayland linux/tests/rust-product-lifecycl
 GDK_BACKEND=x11 linux/tests/nested-x11 linux/tests/rust-product-lifecycle
 ```
 
-The current workspace vertical slice can project the persisted active
-worklane into real terminal surfaces:
-
-```sh
-build/linux/bin/zentty-linux \
-  --workspace-state /path/to/workspace.json \
-  --command 'printf "workspace terminal\n"' \
-  --quit-after-last-terminal-exit
-```
-
-This is not yet full workspace restoration. Only the active worklane is
-projected, `--command` is still a temporary shared command override, and no
-worklane UI mutation or save/relaunch path is claimed.
-
-If the explicit workspace path is missing, the product atomically creates the
-documented first-run topology (one window, one worklane, one pane) using GLib
-version-4 UUIDs. Invalid or corrupt existing state fails closed and is never
-replaced by first-run state.
-
 The nested environments prove real GTK/GDK, display-protocol and software-
 renderer integration. Weston headless intentionally has no input seat. These
 receipts therefore do not qualify a representative GNOME/KDE session, physical

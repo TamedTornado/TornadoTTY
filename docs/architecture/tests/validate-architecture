@@ -192,7 +192,6 @@ jq -e '
         "architecture_contract",
         "workspace_schema",
         "workspace_persistence",
-        "workspace_active_lane_projection",
         "workspace_restore",
         "product_worklanes",
         "recovery",
@@ -233,8 +232,8 @@ jq -e '
         },
         {
             "requirement_id": "ZL-3-WORKSPACE-PERSISTENCE",
-            "test_ids": ["TEST-WORKSPACE-SCHEMA", "TEST-WORKSPACE-PERSISTENCE", "TEST-WORKSPACE-ACTIVE-LANE-PROJECTION", "TEST-WORKSPACE-RESTORE"],
-            "qualification_cell_ids": ["workspace-schema-v1-contract", "workspace-persistence-unit", "product-workspace-active-lane-wayland", "product-workspace-active-lane-x11", "product-workspace-restore-wayland", "product-workspace-restore-x11"]
+            "test_ids": ["TEST-WORKSPACE-SCHEMA", "TEST-WORKSPACE-PERSISTENCE", "TEST-WORKSPACE-RESTORE"],
+            "qualification_cell_ids": ["workspace-schema-v1-contract", "workspace-persistence-unit", "product-workspace-restore-wayland", "product-workspace-restore-x11"]
         },
         {
             "requirement_id": "ZL-4-WORKLANE-SHELL",
@@ -259,8 +258,7 @@ jq -e '
     ] and
     all(.proposed_qualification_cells[]; .tier == "release") and
     all(.proposed_qualification_cells[];
-        if (.capability == "product_boundary" or .capability == "workspace_active_lane_projection" or
-            .capability == "workspace_restore" or
+        if (.capability == "product_boundary" or .capability == "workspace_restore" or
             .capability == "product_worklanes" or .capability == "platform_clipboard")
         then (.display == "wayland" or .display == "x11") and
              .optimize == "ReleaseSafe" and .async_backend == "default" and
