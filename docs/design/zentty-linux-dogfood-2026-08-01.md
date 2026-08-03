@@ -4320,6 +4320,39 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   this is recorded as incomplete evidence, not a pass. The focused
   `-Dapp-runtime=none` ReleaseSafe build passed.
 
+### DOGFOOD-2026-08-03-SOURCE-INVENTORY: planning dependencies must be executable
+
+- **Process failure:** After completing the fork repair and compound-sidebar
+  slice, work stopped at a response boundary even though there was no blocker
+  or review gate. The next public dependency had only been read, not started.
+  Issue #7 explicitly precedes accepting replacement workspace and product
+  contracts, so beginning persistence implementation without its source-backed
+  inventory would have returned to freelancing.
+- **Repair:** `zentty-linux-feature-inventory.json` now records 32 stable
+  requirements across workspace/session behavior, worklanes, panes, command
+  routing, and coding agents. Every entry names its Swift sources and tests,
+  release classification, parity or Linux-necessity origin, user impact, owner
+  issue, implementation status, current tests and product scenarios, and a
+  proportionate next test plan.
+- **Agent granularity:** Codex, Claude Code, Gemini, OpenCode, Amp, Copilot,
+  Cursor, Droid, Kimi, Pi, OMP, Grok, Antigravity, Hermes, Vibe, Small Harness,
+  and custom explicit agents each have their own stable entry. Shared consent,
+  IPC, reducer, and presentation infrastructure is recorded separately rather
+  than substituting a generic “agent support” checkbox.
+- **Executable governance:** `linux/tests/feature-inventory` rejects unknown
+  classifications and statuses, duplicate IDs, unsafe or missing source/test
+  paths, missing required categories, missing individual agent entries, and
+  platform alternatives or blockers without explanations. Its self-test
+  injects duplicate IDs, an unknown classification, a missing source, a
+  missing Codex entry, and a missing platform-alternative explanation; each
+  mutation was rejected. The authoritative inventory passed with 32 entries:
+  17 `REQUIRED_INITIAL_RELEASE`, 14 `REQUIRED_LATER`, and one
+  `PLATFORM_ALTERNATIVE`.
+- **Boundary:** This is the immediate issue-#7 inventory for the four categories
+  that gate workspace/product work. The remaining issue-#7 categories still
+  require the same source audit before the overall feature-inventory issue can
+  close. No grouped deferred agent entry is being treated as complete support.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were

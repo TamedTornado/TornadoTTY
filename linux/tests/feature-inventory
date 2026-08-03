@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+inventory="${1:-${repo_root}/docs/design/zentty-linux-feature-inventory.json}"
+
+fail() {
+    echo "feature-inventory: error: $*" >&2
+    exit 1
+}
+
+command -v jq >/dev/null || fail "jq is required"
+[[ -f "${inventory}" ]] || fail "inventory not found: ${inventory}"
+jq empty "${inventory}" 2>/dev/null || fail "inventory is not valid JSON"
+
+jq -e '
+    .schema_version == 1 and
+    (.scope | type == "string" and length > 0) and
+    (.entries | type == "array" and length > 0) and
+    all(.entries[];
+        (.id | type == "string" and test("^[a-z0-9]+([.-][a-z0-9]+)*$")) and
+        (.category | IN("workspace_session", "worklanes", "panes", "command_routing", "coding_agents")) and
+        (.behavior | type == "string" and length > 0) and
+        (.source | type == "array" and length > 0) and
+        (.swift_tests | type == "array" and length > 0) and
+        (.classification | IN("REQUIRED_INITIAL_RELEASE", "REQUIRED_LATER", "PLATFORM_ALTERNATIVE", "NOT_APPLICABLE", "BLOCKED")) and
+        (.origin | IN("PORT_PARITY", "LINUX_NECESSITY")) and
+        (.user_impact | type == "string" and length > 0) and
+        (.linux_owner_issue | type == "number" and . > 0 and floor == .) and
+        (.implementation_status | IN("IMPLEMENTED", "PARTIAL", "MODEL_ONLY", "NOT_IMPLEMENTED", "BLOCKED")) and
+        (.focused_tests | type == "array") and
+        (.product_scenarios | type == "array") and
+        (.test_plan | type == "string" and length > 0) and
+        (if (.classification == "PLATFORM_ALTERNATIVE" or .classification == "BLOCKED")
+         then (.alternative_or_blocker | type == "string" and length > 0)
+         else .alternative_or_blocker == null
+         end)
+    )
+' "${inventory}" >/dev/null || fail "inventory schema or enum contract failed"
+
+duplicate_ids="$(jq -r '.entries[].id' "${inventory}" | LC_ALL=C sort | uniq -d)"
+[[ -z "${duplicate_ids}" ]] || fail "duplicate IDs: ${duplicate_ids//$'\n'/, }"
+
+while IFS= read -r relative_path; do
+    [[ "${relative_path}" != /* && "${relative_path}" != *".."* ]] ||
+        fail "unsafe repository path: ${relative_path}"
+    [[ -f "${repo_root}/${relative_path}" ]] || fail "referenced file is missing: ${relative_path}"
+done < <(jq -r '.entries[] | .source[], .swift_tests[], .focused_tests[], .product_scenarios[]' "${inventory}" | LC_ALL=C sort -u)
+
+expected_agents=(
+    amp antigravity claude-code codex copilot cursor custom droid gemini grok
+    hermes kimi omp opencode pi small-harness vibe
+)
+for agent in "${expected_agents[@]}"; do
+    count="$(jq --arg id "agent.${agent}" '[.entries[] | select(.id == $id)] | length' "${inventory}")"
+    [[ "${count}" == 1 ]] || fail "agent ${agent} must have exactly one individual inventory entry"
+done
+
+required_categories=(workspace_session worklanes panes command_routing coding_agents)
+for category in "${required_categories[@]}"; do
+    jq -e --arg category "${category}" 'any(.entries[]; .category == $category)' \
+        "${inventory}" >/dev/null || fail "required category is absent: ${category}"
+done
+
+totals="$(jq -c '
+    reduce .entries[] as $entry ({}; .[$entry.classification] += 1)
+' "${inventory}")"
+echo "feature-inventory: PASS entries=$(jq '.entries | length' "${inventory}") classifications=${totals}"
