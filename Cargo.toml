@@ -1,0 +1,22 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/zentty-core",
+    "crates/zentty-ghostty-sys",
+    "crates/zentty-ghostty",
+    "crates/zentty-linux",
+    "crates/zentty-test-support",
+]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.85"
+license = "GPL-3.0-only"
+repository = "https://github.com/TamedTornado/zentty"
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[workspace.lints.clippy]
+all = "deny"
+pedantic = "deny"

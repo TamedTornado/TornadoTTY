@@ -3570,6 +3570,32 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   qualification. The next implementation work is the Rust vertical slice, not
   another qualification framework feature.
 
+### DOGFOOD-2026-08-03-RUST-VERTICAL-SLICE-RED: delivered binary, missing adapter
+
+- **Toolchain:** Rust 1.97.1 with Clippy and rustfmt was installed through
+  rustup as pinned by ADR 0001. The workspace uses edition 2024, declares MSRV
+  1.85, commits one root lockfile, and introduces no JavaScript tooling.
+- **Scaffold:** The five ratified crates now exist with their required
+  dependency direction. The raw crate declares only the pinned language-
+  neutral Ghostty ABI; ordinary product code cannot depend on it directly.
+  The safe adapter and delivered binary deliberately return an explicit
+  not-implemented result rather than pretending to open a terminal.
+- **Initial failed attempt:** The first red invocation was invalid because
+  `cargo fmt --check`, then Clippy's missing-errors-documentation lint, stopped
+  before the product binary was built. Those toolchain failures were repaired
+  and the red test was rerun; missing-binary output was not accepted as the
+  semantic red.
+- **Valid semantic reds:** After workspace tests, warning-denied Clippy, and a
+  successful `zentty-linux` build, the same delivered executable ran inside
+  real nested Weston/Wayland and Xvfb/X11 environments. In both cases it exited
+  78 with `Rust product terminal boundary is not implemented`; the smoke test
+  then failed because no real terminal lifecycle completed. This is the
+  intended missing-adapter failure. No fixture or alternate application
+  implementation produced a false terminal acknowledgement.
+- **Next repair:** Implement only the raw link boundary, safe main-thread
+  runtime/surface ownership, GTK composition root, title/child-exit callbacks,
+  and teardown required to turn these exact Wayland and X11 reds green.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were

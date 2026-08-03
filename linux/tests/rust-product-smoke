@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+product="${repo_root}/target/debug/zentty-linux"
+backend="${GDK_BACKEND:-}"
+
+fail() {
+    echo "rust-product-smoke: error: $*" >&2
+    exit 1
+}
+
+[[ "${backend}" == wayland || "${backend}" == x11 ]] ||
+    fail "GDK_BACKEND must be wayland or x11"
+[[ -x "${product}" ]] || fail "delivered Rust product is not built: ${product}"
+
+log="$(mktemp)"
+trap 'rm -f -- "${log}"' EXIT
+set +e
+"${product}" \
+    --command "printf '\033]2;zentty-rust-smoke-${backend}\a'; sleep 0.1" \
+    --quit-after-last-terminal-exit >"${log}" 2>&1
+status=$?
+set -e
+
+[[ "${status}" -eq 0 ]] || {
+    cat "${log}" >&2
+    fail "product exited ${status} before terminal lifecycle completed"
+}
+grep -Fx 'zentty-linux: terminal-ready' "${log}" >/dev/null ||
+    fail "product did not acknowledge a real Ghostty terminal"
+grep -Fx "zentty-linux: title=zentty-rust-smoke-${backend}" "${log}" >/dev/null ||
+    fail "PTY output did not reach the real Ghostty title property"
+grep -Fx 'zentty-linux: child-exited' "${log}" >/dev/null ||
+    fail "product did not acknowledge child exit"
+
+echo "Rust product smoke passed: ${backend}"

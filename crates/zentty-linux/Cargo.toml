@@ -1,0 +1,14 @@
+[package]
+name = "zentty-linux"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+zentty-core = { path = "../zentty-core" }
+zentty-ghostty = { path = "../zentty-ghostty" }
+
+[lints]
+workspace = true
