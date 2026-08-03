@@ -4353,6 +4353,29 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   require the same source audit before the overall feature-inventory issue can
   close. No grouped deferred agent entry is being treated as complete support.
 
+### DOGFOOD-2026-08-03-RECIPE-PROJECTION: unsupported layout must fail before persistence
+
+- **Test-first boundary:** The first issue-#3 product prerequisite imports a
+  source `WindowRecipe` into Linux state and projects mutations back into that
+  exact recipe. Existing pane command, CWD, title, height, bookmark-origin, and
+  frame metadata is preserved while title, color, focus, and order come from
+  current product state.
+- **Rejected silent conversion:** The current Linux pane renderer has not yet
+  ported source multi-column geometry. Import therefore rejects zero or
+  multiple columns, empty worklanes, and duplicate worklane or pane IDs instead
+  of flattening them and later overwriting a valid source snapshot. A focused
+  test proves a two-column recipe returns the explicit unsupported-layout
+  error.
+- **Test repairs:** The first malformed-layout test failed to compile because a
+  single expression borrowed the test window mutably and immutably. Cloning the
+  source column before mutation fixed the test construction. Warning-denied
+  Clippy then caught a potentially wrapping `usize`-to-`i64` pane-number cast;
+  checked conversion plus saturating increment now makes the boundary explicit.
+- **Evidence and limitation:** Eight workspace-state tests pass, including
+  source-fixture metadata preservation and rejected multi-column import. This
+  is a focused model prerequisite only; no real product restore or persistence
+  claim is made yet, and multi-column product layout remains required by #4.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were

@@ -15,7 +15,7 @@ pub use workspace_recipe::{
 };
 pub use workspace_state::{
     ClosePaneOutcome, PaneState, SidebarPaneSummary, SidebarWorklaneSummary, WorklaneColor,
-    WorklaneState, WorkspaceState,
+    WorklaneState, WorkspaceState, WorkspaceStateImportError,
 };
 
 /// Stable product identity shared by platform composition roots.

@@ -116,6 +116,166 @@ impl WorkspaceState {
         }
     }
 
+    /// Imports the single-window, single-column subset currently rendered by
+    /// the Linux shell. Unsupported source layouts fail explicitly instead of
+    /// being silently flattened and later persisted incorrectly.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorkspaceStateImportError`] for empty, duplicate, invalidly
+    /// focused, or multi-column source state.
+    pub fn from_window_recipe(window: &WindowRecipe) -> Result<Self, WorkspaceStateImportError> {
+        if window.worklanes.is_empty() {
+            return Err(WorkspaceStateImportError::EmptyWindow);
+        }
+        let mut worklane_ids = BTreeSet::new();
+        let mut pane_ids = BTreeSet::new();
+        let mut worklanes = Vec::with_capacity(window.worklanes.len());
+        for recipe in &window.worklanes {
+            if !worklane_ids.insert(recipe.id.clone()) {
+                return Err(WorkspaceStateImportError::DuplicateWorklane(
+                    recipe.id.clone(),
+                ));
+            }
+            let [column] = recipe.columns.as_slice() else {
+                return Err(WorkspaceStateImportError::UnsupportedColumnCount {
+                    worklane_id: recipe.id.clone(),
+                    count: recipe.columns.len(),
+                });
+            };
+            if column.panes.is_empty() {
+                return Err(WorkspaceStateImportError::EmptyWorklane(recipe.id.clone()));
+            }
+            let mut panes = Vec::with_capacity(column.panes.len());
+            for pane in &column.panes {
+                if !pane_ids.insert(pane.id.clone()) {
+                    return Err(WorkspaceStateImportError::DuplicatePane(pane.id.clone()));
+                }
+                panes.push(PaneState {
+                    id: pane.id.clone(),
+                    title: pane
+                        .custom_title
+                        .as_deref()
+                        .or(pane.title_seed.as_deref())
+                        .or(pane.last_activity_title.as_deref())
+                        .unwrap_or("shell")
+                        .to_owned(),
+                });
+            }
+            let focused_pane_id = column
+                .focused_pane_id
+                .as_deref()
+                .filter(|id| panes.iter().any(|pane| pane.id == *id))
+                .unwrap_or(&panes[0].id)
+                .to_owned();
+            worklanes.push(WorklaneState {
+                id: recipe.id.clone(),
+                title: recipe.title.clone(),
+                color: recipe.color.as_deref().and_then(WorklaneColor::named),
+                panes,
+                focused_pane_id,
+            });
+        }
+        let active_worklane_id = window
+            .active_worklane_id
+            .as_deref()
+            .filter(|id| worklanes.iter().any(|worklane| worklane.id == *id))
+            .unwrap_or(&worklanes[0].id)
+            .to_owned();
+        Ok(Self {
+            worklanes,
+            active_worklane_id,
+        })
+    }
+
+    /// Projects current Linux state back into a source-compatible window while
+    /// preserving recipe metadata for panes and worklanes that still exist.
+    #[must_use]
+    pub fn to_window_recipe(&self, template: &WindowRecipe) -> WindowRecipe {
+        let existing_worklanes: BTreeMap<&str, &WorklaneRecipe> = template
+            .worklanes
+            .iter()
+            .map(|worklane| (worklane.id.as_str(), worklane))
+            .collect();
+        let worklanes = self
+            .worklanes
+            .iter()
+            .map(|state| {
+                let existing = existing_worklanes.get(state.id.as_str()).copied();
+                let existing_column = existing.and_then(|worklane| worklane.columns.first());
+                let existing_panes: BTreeMap<&str, &PaneRecipe> = existing_column
+                    .into_iter()
+                    .flat_map(|column| &column.panes)
+                    .map(|pane| (pane.id.as_str(), pane))
+                    .collect();
+                let existing_heights: BTreeMap<&str, f64> = existing_column
+                    .into_iter()
+                    .flat_map(|column| column.panes.iter().zip(&column.pane_heights))
+                    .map(|(pane, height)| (pane.id.as_str(), *height))
+                    .collect();
+                let panes = state
+                    .panes
+                    .iter()
+                    .map(|pane| {
+                        existing_panes.get(pane.id.as_str()).map_or_else(
+                            || PaneRecipe {
+                                id: pane.id.clone(),
+                                custom_title: None,
+                                title_seed: Some(pane.title.clone()),
+                                working_directory: None,
+                                last_activity_title: None,
+                                last_run_command: None,
+                            },
+                            |recipe| (*recipe).clone(),
+                        )
+                    })
+                    .collect();
+                let pane_heights = state
+                    .panes
+                    .iter()
+                    .map(|pane| {
+                        existing_heights
+                            .get(pane.id.as_str())
+                            .copied()
+                            .unwrap_or(1.0)
+                    })
+                    .collect();
+                let column_id = existing_column.map_or_else(
+                    || format!("column-{}", state.id),
+                    |column| column.id.clone(),
+                );
+                let minimum_next_pane = i64::try_from(state.panes.len())
+                    .unwrap_or(i64::MAX)
+                    .saturating_add(1);
+                WorklaneRecipe {
+                    id: state.id.clone(),
+                    title: state.title.clone(),
+                    next_pane_number: existing.map_or(minimum_next_pane, |worklane| {
+                        worklane.next_pane_number.max(minimum_next_pane)
+                    }),
+                    focused_column_id: Some(column_id.clone()),
+                    columns: vec![ColumnRecipe {
+                        id: column_id,
+                        width: existing_column.map_or(1.0, |column| column.width),
+                        focused_pane_id: Some(state.focused_pane_id.clone()),
+                        last_focused_pane_id: Some(state.focused_pane_id.clone()),
+                        pane_heights,
+                        panes,
+                    }],
+                    color: state.color.map(|color| color.as_str().to_owned()),
+                    bookmark_origin_id: existing
+                        .and_then(|worklane| worklane.bookmark_origin_id.clone()),
+                }
+            })
+            .collect();
+        WindowRecipe {
+            id: template.id.clone(),
+            frame: template.frame.clone(),
+            worklanes,
+            active_worklane_id: Some(self.active_worklane_id.clone()),
+        }
+    }
+
     #[must_use]
     pub fn worklanes(&self) -> &[WorklaneState] {
         &self.worklanes
@@ -468,3 +628,34 @@ pub enum ClosePaneOutcome {
     CloseWindow,
     NotFound,
 }
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum WorkspaceStateImportError {
+    EmptyWindow,
+    EmptyWorklane(String),
+    UnsupportedColumnCount { worklane_id: String, count: usize },
+    DuplicateWorklane(String),
+    DuplicatePane(String),
+}
+
+impl fmt::Display for WorkspaceStateImportError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EmptyWindow => formatter.write_str("workspace window has no worklanes"),
+            Self::EmptyWorklane(id) => write!(formatter, "worklane {id} has no panes"),
+            Self::UnsupportedColumnCount { worklane_id, count } => write!(
+                formatter,
+                "worklane {worklane_id} has {count} columns; Linux currently requires exactly one"
+            ),
+            Self::DuplicateWorklane(id) => write!(formatter, "duplicate worklane ID: {id}"),
+            Self::DuplicatePane(id) => write!(formatter, "duplicate pane ID: {id}"),
+        }
+    }
+}
+
+impl Error for WorkspaceStateImportError {}
+use std::collections::{BTreeMap, BTreeSet};
+use std::error::Error;
+use std::fmt;
+
+use crate::{ColumnRecipe, PaneRecipe, WindowRecipe, WorklaneRecipe};

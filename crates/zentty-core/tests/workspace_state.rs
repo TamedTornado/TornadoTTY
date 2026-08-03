@@ -1,4 +1,9 @@
-use zentty_core::{ClosePaneOutcome, WorklaneColor, WorkspaceState};
+use zentty_core::{
+    ClosePaneOutcome, SessionRestoreEnvelope, WorklaneColor, WorkspaceState,
+    WorkspaceStateImportError,
+};
+
+const V3_ENVELOPE: &[u8] = include_bytes!("fixtures/session-restore-v3.json");
 
 #[test]
 fn worklane_commands_preserve_order_selection_and_source_title_semantics() {
@@ -105,4 +110,56 @@ fn sidebar_summaries_are_compound_worklane_and_pane_presentations() {
     assert!(!summaries[0].pane_rows[0].is_focused);
     assert_eq!(summaries[0].pane_rows[1].primary_text, "cargo test");
     assert!(summaries[0].pane_rows[1].is_focused);
+}
+
+#[test]
+fn source_window_round_trip_preserves_metadata_while_applying_product_state() {
+    let envelope = SessionRestoreEnvelope::from_json(V3_ENVELOPE).unwrap();
+    let template = &envelope.workspace.windows[0];
+    let mut state = WorkspaceState::from_window_recipe(template).unwrap();
+
+    assert_eq!(state.worklane_ids(), ["worklane-main"]);
+    assert_eq!(state.active_pane_ids(), ["pane-agent", "pane-shell"]);
+    assert_eq!(state.focused_pane_id(), Some("pane-agent"));
+    assert!(state.set_worklane_title("worklane-main", Some("  Linux port  ")));
+    assert!(state.set_worklane_color("worklane-main", Some(WorklaneColor::Purple)));
+    assert!(state.select_pane("pane-shell"));
+
+    let projected = state.to_window_recipe(template);
+    assert_eq!(projected.worklanes[0].title.as_deref(), Some("Linux port"));
+    assert_eq!(projected.worklanes[0].color.as_deref(), Some("purple"));
+    assert_eq!(
+        projected.worklanes[0].columns[0].focused_pane_id.as_deref(),
+        Some("pane-shell")
+    );
+    assert_eq!(
+        projected.worklanes[0].columns[0].pane_heights,
+        [420.0, 280.0]
+    );
+    assert_eq!(
+        projected.worklanes[0].columns[0].panes[0]
+            .last_run_command
+            .as_deref(),
+        Some("cargo test")
+    );
+    assert_eq!(
+        projected.worklanes[0].bookmark_origin_id.as_deref(),
+        Some("bookmark-main")
+    );
+}
+
+#[test]
+fn unsupported_multi_column_recipe_fails_instead_of_flattening() {
+    let envelope = SessionRestoreEnvelope::from_json(V3_ENVELOPE).unwrap();
+    let mut window = envelope.workspace.windows[0].clone();
+    let duplicate_column = window.worklanes[0].columns[0].clone();
+    window.worklanes[0].columns.push(duplicate_column);
+
+    assert_eq!(
+        WorkspaceState::from_window_recipe(&window),
+        Err(WorkspaceStateImportError::UnsupportedColumnCount {
+            worklane_id: "worklane-main".to_owned(),
+            count: 2,
+        })
+    );
 }
