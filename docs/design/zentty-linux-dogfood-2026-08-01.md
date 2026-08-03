@@ -4116,6 +4116,27 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   a worklane UI or restored Linux product. No Wayland/X11 product result is
   claimed by these display-independent tests.
 
+### DOGFOOD-2026-08-03-WORKLANE-STATE-FIRST-RED: begin the real product slice
+
+- **Scope:** Issue #4 now starts from the source `WorklaneStore` behaviors used
+  by the GTK shell: default non-empty topology, create-after-current, active
+  selection, trimmed optional titles, colors, final-index reordering,
+  close-with-previous-selection, pane split/select, and last-pane window-close
+  signaling. Stable IDs are supplied by the caller, matching the source's
+  injected runtime identity owner rather than inventing persistence IDs.
+- **Test-first red:** `cargo test --locked -p zentty-core --test
+  workspace_state` initially failed to compile on the deliberately absent
+  `WorkspaceState`, `WorklaneColor`, and `ClosePaneOutcome` imports. Three
+  focused transition tests then went green after the smallest state model was
+  added.
+- **Lint repair:** Warning-denied Clippy required panic-contract documentation
+  for invariant-backed accessors and preferred `clone_into` for reused string
+  allocations. The contracts and assignments were corrected without lint
+  suppression.
+- **Boundary:** This checkpoint does not promote either product-worklane cell.
+  The next change must bind these commands to named GTK actions and prove the
+  resulting real Ghostty surfaces under controlled Wayland and X11.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were
