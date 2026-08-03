@@ -3940,6 +3940,22 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   mutate, save, and relaunch multiple worklanes, and the CLI command override
   still stands in for approved launch-profile resolution.
 
+### DOGFOOD-2026-08-03-WORKSPACE-SEQUENCE-COVERAGE: deterministic state-machine exercise
+
+- **Focused property-style test:** Thirty-two named deterministic seeds now
+  drive 500 model commands each (16,000 transitions total) across add, rename,
+  reorder, select, and remove operations for worklanes and panes. Collection
+  bounds deliberately force both growth and repair paths without a fuzzing
+  runtime or nondeterministic failure report.
+- **Assertions after every command:** The test checks global child-entity ID
+  uniqueness, active-window/worklane/pane resolution, non-empty topology,
+  normalized pane rows, and a strict JSON encode/decode equality round-trip.
+  A failure reports the replayable seed and exact step.
+- **Scope:** This is a pure model test and is not represented as product or
+  filesystem qualification. It completes the deterministic mutation-sequence
+  portion of GH-3 while the matrix cell remains `NOT_IMPLEMENTED` for the
+  remaining fault, first-run, and recovery-policy gaps.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were
