@@ -5,6 +5,8 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+links = "ghostty-gtk-embed"
+build = "build.rs"
 
 [lints]
 workspace = true

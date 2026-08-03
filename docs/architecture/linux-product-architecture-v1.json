@@ -171,7 +171,7 @@
   "toolchain": {
     "edition": "2024",
     "pinned_channel": "1.97.1",
-    "msrv": "1.85.0",
+    "msrv": "1.92.0",
     "msrv_basis": "first-stable-toolchain-with-edition-2024",
     "normal_job": "pinned-locked-shipped-default-plus-reviewed-all-features",
     "msrv_job": "msrv-locked-shipped-default-feature-graph",
@@ -185,7 +185,7 @@
   },
   "gtk_compatibility": {
     "gtk4_rs_baseline": "0.11.3",
-    "gtk4_rs_upstream_msrv": "1.83.0",
+    "gtk4_rs_upstream_msrv": "1.92.0",
     "minimum_native_gtk": "4.14.0",
     "maximum_enabled_api_feature": "v4_14",
     "floor_test": "build-and-run-locked-shipped-default-feature-graph-against-native-gtk-4.14-with-v4_14"

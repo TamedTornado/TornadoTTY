@@ -4,6 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 product="${repo_root}/target/debug/zentty-linux"
 backend="${GDK_BACKEND:-}"
+ghostty_root="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
 
 fail() {
     echo "rust-product-smoke: error: $*" >&2
@@ -13,15 +14,71 @@ fail() {
 [[ "${backend}" == wayland || "${backend}" == x11 ]] ||
     fail "GDK_BACKEND must be wayland or x11"
 [[ -x "${product}" ]] || fail "delivered Rust product is not built: ${product}"
+[[ -f "${ghostty_root}/zig-out/lib/libghostty-gtk-embed.so" ]] ||
+    fail "pinned Ghostty library is not built"
+command -v readelf >/dev/null || fail "readelf is required"
+layer_runpath="$(
+    readelf -d "${ghostty_root}/zig-out/lib/libghostty-gtk-embed.so" |
+        sed -n 's/.*Library runpath: \[\([^]]*\)\].*/\1/p' |
+        cut -d: -f1
+)"
+[[ "${layer_runpath}" == .zig-cache/* ]] ||
+    fail "Ghostty library has no pinned relative layer-shell runpath"
+layer_directory="${ghostty_root}/${layer_runpath}"
+[[ -f "${layer_directory}/libgtk4-layer-shell.so" ]] ||
+    fail "Ghostty layer-shell dependency is missing"
 
 log="$(mktemp)"
-trap 'rm -f -- "${log}"' EXIT
+product_pid=""
+cleanup() {
+    if [[ "${product_pid}" =~ ^[1-9][0-9]*$ ]]; then
+        kill -TERM "${product_pid}" 2>/dev/null || true
+        wait "${product_pid}" 2>/dev/null || true
+    fi
+    rm -f -- "${log}"
+}
+trap cleanup EXIT
+
+if [[ "${backend}" == x11 ]]; then
+    command -v xdotool >/dev/null || fail "xdotool is required for real X11 input and resize"
+    child_command='IFS= read -r value; [ "$value" = zentty-rust-input ] || exit 44; printf '\''\033]2;zentty-rust-smoke-x11\a'\''; sleep 0.1'
+else
+    child_command="printf '\\033]2;zentty-rust-smoke-wayland\\a'; sleep 0.1"
+fi
+
 set +e
+LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
 "${product}" \
-    --command "printf '\033]2;zentty-rust-smoke-${backend}\a'; sleep 0.1" \
-    --quit-after-last-terminal-exit >"${log}" 2>&1
+    --command "${child_command}" \
+    --quit-after-last-terminal-exit >"${log}" 2>&1 &
+product_pid=$!
+set -e
+
+if [[ "${backend}" == x11 ]]; then
+    window_id=""
+    for _ in $(seq 1 200); do
+        window_id="$(xdotool search --name '^Zentty$' 2>/dev/null | head -1 || true)"
+        if [[ "${window_id}" =~ ^[1-9][0-9]*$ ]] &&
+            grep -Fxq 'zentty-linux: terminal-ready' "${log}"; then
+            break
+        fi
+        sleep 0.05
+    done
+    [[ "${window_id}" =~ ^[1-9][0-9]*$ ]] || fail "real Zentty X11 window did not appear"
+    grep -Fxq 'zentty-linux: terminal-ready' "${log}" ||
+        fail "real Ghostty terminal did not establish input readiness"
+    xdotool windowsize --sync "${window_id}" 820 640
+    xdotool windowfocus --sync "${window_id}"
+    sleep 0.1
+    xdotool type --window "${window_id}" --delay 5 zentty-rust-input
+    xdotool key --window "${window_id}" Return
+fi
+
+set +e
+wait "${product_pid}"
 status=$?
 set -e
+product_pid=""
 
 [[ "${status}" -eq 0 ]] || {
     cat "${log}" >&2
@@ -33,5 +90,11 @@ grep -Fx "zentty-linux: title=zentty-rust-smoke-${backend}" "${log}" >/dev/null 
     fail "PTY output did not reach the real Ghostty title property"
 grep -Fx 'zentty-linux: child-exited' "${log}" >/dev/null ||
     fail "product did not acknowledge child exit"
+if [[ "${backend}" == x11 ]]; then
+    grep -Fx 'zentty-linux: window-size=820x640' "${log}" >/dev/null || {
+        cat "${log}" >&2
+        fail "externally driven X11 resize did not reach the delivered product"
+    }
+fi
 
 echo "Rust product smoke passed: ${backend}"

@@ -521,14 +521,14 @@ authoritative matrix and fails on drift.
 - Rust edition is **2024**. The bootstrap pins the normal/release `rustc` and
   Cargo to **1.97.1**, the current stable patch listed by the official
   [Rust releases](https://blog.rust-lang.org/releases/) on the decision date.
-  The separate project MSRV is **1.85.0**, the first stable release supporting
-  edition 2024; every shipped crate declares `rust-version = "1.85"`. This
-  floor comes from Zentty's language-edition decision, not a transitive
-  dependency: current
-  [gtk4-rs 0.11.3 documentation](https://gtk-rs.org/gtk4-rs/stable/latest/docs/gtk4/)
-  reports its own MSRV as 1.83, but edition-2024 Zentty cannot promise 1.83.
+  The separate project MSRV is **1.92.0** and every shipped crate declares
+  `rust-version = "1.92"`. The original architecture draft proposed 1.85 from
+  the edition-2024 language floor, but the resolved `gtk4-rs` 0.11.3 package
+  and its 0.22/0.11 dependency family declare Rust 1.92. Package metadata and a
+  locked resolution are authoritative over the earlier documentation
+  inference.
   CI has distinct jobs. Pinned 1.97.1 runs the locked shipped/default feature
-  graph plus reviewed all-feature/clippy coverage. MSRV 1.85.0 MUST compile and
+  graph plus reviewed all-feature/clippy coverage. MSRV 1.92.0 MUST compile and
   test the **same committed lockfile and exact shipped/default feature graph**,
   including the `zentty-linux` release binary; a minimal-feature-only build is
   not an MSRV claim. The observed development default (1.93.0) is neither

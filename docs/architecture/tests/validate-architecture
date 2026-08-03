@@ -126,13 +126,13 @@ jq -e '
     } and
     .toolchain.edition == "2024" and
     .toolchain.pinned_channel == "1.97.1" and
-    .toolchain.msrv == "1.85.0" and
+    .toolchain.msrv == "1.92.0" and
     .toolchain.msrv_basis == "first-stable-toolchain-with-edition-2024" and
     .toolchain.normal_job == "pinned-locked-shipped-default-plus-reviewed-all-features" and
     .toolchain.msrv_job == "msrv-locked-shipped-default-feature-graph" and
     .toolchain.lockfile == "committed-workspace-root" and
     .gtk_compatibility.gtk4_rs_baseline == "0.11.3" and
-    .gtk_compatibility.gtk4_rs_upstream_msrv == "1.83.0" and
+    .gtk_compatibility.gtk4_rs_upstream_msrv == "1.92.0" and
     .gtk_compatibility.minimum_native_gtk == "4.14.0" and
     .gtk_compatibility.maximum_enabled_api_feature == "v4_14" and
     .gtk_compatibility.floor_test == "build-and-run-locked-shipped-default-feature-graph-against-native-gtk-4.14-with-v4_14" and

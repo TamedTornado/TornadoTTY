@@ -3596,6 +3596,79 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   runtime/surface ownership, GTK composition root, title/child-exit callbacks,
   and teardown required to turn these exact Wayland and X11 reds green.
 
+### DOGFOOD-2026-08-03-RUST-VERTICAL-SLICE-GREEN: real product replaces the red
+
+- **Adapter boundary:** `zentty-ghostty-sys` now links the pinned
+  `libghostty-gtk-embed.so`; `zentty-ghostty` is the only ordinary crate that
+  calls its raw functions. Unsafe calls are confined to the adapter with an
+  invariant comment on every block. `Rc` runtime leases make runtime and
+  surface types main-thread-only and keep the runtime alive through surface
+  destruction. Compile-fail doctests prove runtime `!Send`/`!Sync` and surface
+  `!Send`.
+- **Ownership implementation:** The runtime is constructed before `gtk::init`.
+  Signal IDs are disconnected during surface drop; the window removes its
+  child, drains the main context, and only then releases the final runtime
+  lease.
+- **Transfer-assumption review caught a real defect:** The first adapter draft
+  described `surface_new` as full-transfer and used `from_glib_full`, despite
+  the existing API audit explicitly recording that the header does not state a
+  transfer mode. Source review showed that the pinned implementation returns a
+  newly constructed floating `GtkWidget`. The adapter now checks
+  `g_object_is_floating` at runtime, rejects transfer drift, and uses
+  `from_glib_none` to sink exactly that floating reference before the widget is
+  attached to a container. This downstream check remains a reason to seek a
+  small language-neutral transfer annotation upstream.
+- **Correct ownership exposed hidden teardown failure:** With the earlier
+  incorrect wrapper, both smoke tests appeared green. Once Rust actually owned
+  and released the surface reference, Ghostty aborted during runtime free
+  because its font grid still contained one surface. The composition root had
+  closed but retained the final Rust `gtk::Window` wrapper. Dropping that
+  window before draining the main context allowed surface finalization to
+  complete; both backends then passed. The prior green was invalidated rather
+  than preserved as evidence.
+- **First green-attempt failure:** The Rust binary linked the real Ghostty
+  library but the loader could not find its pinned
+  `libgtk4-layer-shell.so`. The smoke test now derives the relative layer-shell
+  directory from the built Ghostty ELF RUNPATH and includes that exact
+  directory in its runtime search path. The first parser expression for that
+  RUNPATH was too narrow and rejected the real colon-separated value; it was
+  corrected and rerun rather than bypassed.
+- **Real product result:** The delivered `target/debug/zentty-linux` now opens a
+  real GTK window containing a real Ghostty terminal under both nested
+  Weston/Wayland and Xvfb/X11. A deterministic PTY child changes the real
+  Ghostty title property and exits; the product observes terminal init, exact
+  title, child exit, and performs orderly shutdown. Three independent fresh-
+  process iterations passed on each backend with distinct controlled-session
+  identities.
+- **Real X11 input and resize:** The X11 case now drives the actual window with
+  `xdotool`, resizes it to 820x640, focuses it, types
+  `zentty-rust-input`, and presses Return. The child validates those PTY bytes
+  before emitting the title acknowledgement. The product observes the exact
+  820x640 allocation and exits after the child. This is real X11 protocol and
+  GTK/Ghostty input, not a call to the adapter's synthetic text method.
+- **X11 readiness race:** A post-ownership rerun attempted `X_SetInputFocus`
+  as soon as the top-level window name appeared and intermittently received
+  `BadMatch`; a generic map-state retry still could not establish the semantic
+  readiness of the inner terminal. The driver now waits for the product's real
+  `terminal-ready` signal before focusing, matching the established physical-
+  key driver. The repaired run passes without a correctness sleep other than
+  the existing bounded 100 ms X focus settling interval.
+- **Wayland limitation:** The controlled Weston protocol inventory exposes no
+  virtual-keyboard or virtual-pointer protocol, so equivalent external
+  Wayland input is not fabricated. PTY output/lifecycle is green there;
+  physical Wayland input and external resize retain their explicit matrix
+  gaps.
+- **MSRV correction:** Registry package metadata for the locked `gtk4` 0.11.3
+  graph requires Rust 1.92, contradicting the ADR's earlier inference that the
+  dependency supported 1.83 and Zentty could use 1.85. The workspace and
+  architecture contract now declare MSRV 1.92.0. Rust 1.92.0 was installed,
+  and the exact committed lockfile passed all workspace unit and compile-fail
+  doc tests at that floor.
+- **Claim boundary:** This is the first real Rust vertical slice, not full
+  product or release qualification. Multi-surface behavior, all async
+  backends, configuration/CWD, callback fault cases, Rust-product Valgrind,
+  staging, IME, Wayland input/resize, and compositor scaling remain non-PASS.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were
