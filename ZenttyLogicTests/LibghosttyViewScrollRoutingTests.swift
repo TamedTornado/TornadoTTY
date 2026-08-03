@@ -51,6 +51,19 @@ final class LibghosttyViewScrollRoutingTests: AppKitTestCase {
         XCTAssertTrue(view.trackingAreas.contains { $0.options.contains(.activeAlways) })
     }
 
+    func test_mouse_shape_change_defers_cursor_application_until_cursor_update() throws {
+        var appliedCursors: [NSCursor] = []
+        view.setCursorApplicationForTesting { appliedCursors.append($0) }
+
+        view.setMouseCursorShape(GHOSTTY_MOUSE_SHAPE_POINTER)
+
+        XCTAssertTrue(appliedCursors.isEmpty)
+
+        view.cursorUpdate(with: try makeMouseEvent(type: .mouseMoved, location: CGPoint(x: 120, y: 180)))
+
+        XCTAssertEqual(appliedCursors, [.pointingHand])
+    }
+
     func test_detached_view_does_not_push_viewport_size() {
         view.frame = NSRect(x: 0, y: 0, width: 3200, height: 900)
 

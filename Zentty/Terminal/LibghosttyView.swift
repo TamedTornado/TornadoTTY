@@ -1566,6 +1566,7 @@ final class LibghosttyView: NSView, TerminalFocusReporting, TerminalViewportDiag
     private var markedTextSelection = NSRange(location: NSNotFound, length: 0)
     private var selectedTextStorageRange = NSRange(location: NSNotFound, length: 0)
     private var currentCursor: NSCursor = .iBeam
+    private var cursorApplication: (NSCursor) -> Void = { $0.set() }
     private var mouseTrackingArea: NSTrackingArea?
     private var mouseInteractionSuppressionRects: [CGRect] = []
     private var activeSecondaryMouseRouting: SecondaryMouseRouting?
@@ -1700,7 +1701,7 @@ final class LibghosttyView: NSView, TerminalFocusReporting, TerminalViewportDiag
         guard !isPointInsideSuppressedMouseRegion(convert(event.locationInWindow, from: nil)) else {
             return
         }
-        currentCursor.set()
+        cursorApplication(currentCursor)
     }
 
     func setMouseCursorShape(_ shape: ghostty_action_mouse_shape_e) {
@@ -1731,15 +1732,11 @@ final class LibghosttyView: NSView, TerminalFocusReporting, TerminalViewportDiag
 
         guard cursor != currentCursor else { return }
         currentCursor = cursor
-        if let window {
-            let location = convert(window.mouseLocationOutsideOfEventStream, from: nil)
-            if !isPointInsideSuppressedMouseRegion(location) {
-                currentCursor.set()
-            }
-        } else {
-            currentCursor.set()
-        }
         window?.invalidateCursorRects(for: self)
+    }
+
+    func setCursorApplicationForTesting(_ application: @escaping (NSCursor) -> Void) {
+        cursorApplication = application
     }
 
     override func mouseDown(with event: NSEvent) {
