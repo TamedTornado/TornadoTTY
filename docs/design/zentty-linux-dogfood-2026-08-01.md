@@ -3819,6 +3819,35 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   before it published a final receipt, so it is not counted as fresh runtime
   evidence for this change.
 
+### DOGFOOD-2026-08-03-WORKSPACE-MODEL-FIRST-SLICE: topology commands begin in Rust
+
+- **Test-first scope:** Focused `zentty-core` integration tests now specify
+  create, rename, reorder, select, and removal behavior for worklanes and
+  panes. They also specify global child-entity identity, revision changes,
+  last-pane/last-worklane refusal, schema-shaped IDs, absolute CWDs, and
+  approved launch-profile references. No GTK, Ghostty, filesystem persistence,
+  or product matrix claim was added to make these model tests look like E2E.
+- **Selection repair decision:** Removing the active entity selects the item
+  that shifted into the removed index; removing the last item selects its
+  previous neighbor. Stable vector order, rather than an independently mutable
+  order integer, is authoritative in memory.
+- **Validation boundary:** `zentty-core` validates that a persisted CWD is
+  absolute and contains no NUL, but does not ask the filesystem whether it
+  currently exists. The platform launch boundary must report a missing CWD or
+  launch profile without rewriting durable state. This preserves a
+  platform-neutral, restart-safe model and remains unimplemented product work.
+- **Failure and repair:** The first Clippy gate rejected every new fallible
+  public operation because its error contract was undocumented. The APIs now
+  carry explicit `# Errors` sections. Diff review also found that a generic
+  reorder helper reported a missing pane as a missing worklane, and that
+  initial/add-worklane construction could reuse IDs inside the same new
+  topology. Focused ownership-specific errors and constructor duplicate tests
+  repaired both defects before commit.
+- **Current limit:** Serialization, migration, atomic persistence, corruption
+  recovery, property sequences, product restoration, and UI projection remain
+  explicitly unimplemented. The authoritative `workspace_persistence` cells
+  therefore remain gaps.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were
