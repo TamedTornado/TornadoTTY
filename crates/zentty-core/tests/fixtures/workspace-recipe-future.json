@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 99,
+  "futureWorkspaceKey": {"keptByFutureZenTTY": true},
+  "windows": [
+    {
+      "id": "future-window",
+      "futureWindowKey": "ignored by the current decoder",
+      "worklanes": [
+        {
+          "id": "future-worklane",
+          "title": "MAIN",
+          "nextPaneNumber": 1,
+          "columns": [],
+          "futureWorklaneKey": 42
+        }
+      ],
+      "activeWorklaneID": "future-worklane"
+    }
+  ],
+  "activeWindowID": "future-window"
+}

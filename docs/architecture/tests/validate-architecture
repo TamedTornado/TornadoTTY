@@ -5,13 +5,10 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 architecture_dir="${repo_root}/docs/architecture"
 contract="${ZENTTY_ARCHITECTURE_CONTRACT:-${architecture_dir}/linux-product-architecture-v1.json}"
 authoritative_matrix="${ZENTTY_QUALIFICATION_MATRIX:-${repo_root}/linux/qualification-matrix.json}"
-schema="${ZENTTY_WORKSPACE_SCHEMA:-${architecture_dir}/workspace-state-v1.schema.json}"
-rules="${ZENTTY_WORKSPACE_RULES:-${architecture_dir}/tests/workspace-state-v1.jq}"
-valid_fixture="${ZENTTY_WORKSPACE_VALID_FIXTURE:-${architecture_dir}/fixtures/workspace-state/valid-v1.json}"
-malformed_fixture="${ZENTTY_WORKSPACE_MALFORMED_FIXTURE:-${architecture_dir}/fixtures/workspace-state/malformed-v1.json}"
-old_fixture="${ZENTTY_WORKSPACE_OLD_FIXTURE:-${architecture_dir}/fixtures/workspace-state/old-version-v0.json}"
-unknown_fixture="${ZENTTY_WORKSPACE_UNKNOWN_FIXTURE:-${architecture_dir}/fixtures/workspace-state/unknown-field-v1.json}"
-no_secrets_fixture="${ZENTTY_WORKSPACE_NO_SECRETS_FIXTURE:-${architecture_dir}/fixtures/workspace-state/no-secrets-v1.json}"
+v3_fixture="${repo_root}/crates/zentty-core/tests/fixtures/session-restore-v3.json"
+unversioned_fixture="${repo_root}/crates/zentty-core/tests/fixtures/workspace-recipe-unversioned.json"
+future_fixture="${repo_root}/crates/zentty-core/tests/fixtures/workspace-recipe-future.json"
+rust_recipe_contract="${repo_root}/crates/zentty-core/src/workspace_recipe.rs"
 
 fail() {
     echo "architecture-contract: error: $*" >&2
@@ -19,20 +16,16 @@ fail() {
 }
 
 command -v jq >/dev/null || fail "jq is required"
-command -v sha256sum >/dev/null || fail "sha256sum is required"
 
 for json_file in \
     "${contract}" \
     "${authoritative_matrix}" \
-    "${schema}" \
-    "${valid_fixture}" \
-    "${malformed_fixture}" \
-    "${old_fixture}" \
-    "${unknown_fixture}" \
-    "${no_secrets_fixture}"; do
+    "${v3_fixture}" \
+    "${unversioned_fixture}" \
+    "${future_fixture}"; do
     jq empty "${json_file}" >/dev/null 2>&1 || fail "invalid JSON: ${json_file}"
 done
-[[ -r "${rules}" ]] || fail "workspace semantic rules are not readable: ${rules}"
+[[ -r "${rust_recipe_contract}" ]] || fail "Rust workspace recipe contract is not readable"
 
 jq -e '
     .schema_version == 1 and
@@ -156,15 +149,27 @@ jq -e '
     }] and
     .ffi_contract.rust_unwind_across_c == "forbidden" and
     .ffi_contract.public_raw_pointers == "forbidden" and
-    .persistence.current_version == 1 and
-    .persistence.schema_sha256 == "89a649bf0b770f03860aff423df8824d0054aac0ece2691077f76e2bfcb685ed" and
-    .persistence.semantic_rules == "tests/workspace-state-v1.jq" and
-    .persistence.semantic_rules_sha256 == "753c44bc8468ee7f2c3467efd941cefbe39de7c3141ef84688753e2d1474852b" and
-    .persistence.command_representation == "approved-non-secret-launch-profile-reference-only" and
-    .persistence.unknown_fields == "reject-and-preserve-original" and
-    .persistence.newer_versions == "reject-and-preserve-original" and
-    .persistence.older_versions == "sequential-explicit-migration" and
-    .persistence.write_protocol == "same-directory-temp-fsync-rename-fsync-directory" and
+    .persistence.source_contracts == ["Zentty/Restore/WorkspaceRecipe.swift", "Zentty/Restore/SessionRestoreStore.swift"] and
+    .persistence.rust_contract == "crates/zentty-core/src/workspace_recipe.rs" and
+    .persistence.workspace_recipe_version == 3 and
+    .persistence.session_envelope_version == 1 and
+    .persistence.command_representation == "source-compatible-last-run-command-and-separate-agent-restore-drafts" and
+    .persistence.unknown_fields == "ignore-as-current-swift-decoder-does" and
+    .persistence.newer_versions == "preserve-versioned-titles-and-mark-current-on-migration" and
+    .persistence.older_versions == "sanitize-generated-titles-only-when-unversioned" and
+    .persistence.write_protocol == "atomic-snapshot-and-lifecycle-replacement-without-backup-generations" and
+    .persistence.fixtures == [
+        "crates/zentty-core/tests/fixtures/session-restore-v3.json",
+        "crates/zentty-core/tests/fixtures/workspace-recipe-unversioned.json",
+        "crates/zentty-core/tests/fixtures/workspace-recipe-future.json"
+    ] and
+    .persistence.forbidden_persisted_classes == [
+        "credentials",
+        "clipboard-contents",
+        "agent-transcripts",
+        "ambient-process-environment-outside-agent-launch-snapshots",
+        "unapproved-secrets"
+    ] and
     .qualification_cell_families == [{
         "id": "product-pane-terminal-lifecycle-v1",
         "requirement_id": "ZL-5-PANE-TERMINAL-LIFECYCLE",
@@ -233,7 +238,7 @@ jq -e '
         {
             "requirement_id": "ZL-3-WORKSPACE-PERSISTENCE",
             "test_ids": ["TEST-WORKSPACE-SCHEMA", "TEST-WORKSPACE-PERSISTENCE", "TEST-WORKSPACE-RESTORE"],
-            "qualification_cell_ids": ["workspace-schema-v1-contract", "workspace-persistence-unit", "product-workspace-restore-wayland", "product-workspace-restore-x11"]
+            "qualification_cell_ids": ["workspace-recipe-v3-contract", "workspace-persistence-unit", "product-workspace-restore-wayland", "product-workspace-restore-x11"]
         },
         {
             "requirement_id": "ZL-4-WORKLANE-SHELL",
@@ -346,78 +351,26 @@ jq -e --slurpfile matrix "${authoritative_matrix}" '
 ' "${contract}" >/dev/null || fail "pane-terminal qualification family differs from authoritative matrix"
 
 jq -e '
-    .["$schema"] == "https://json-schema.org/draft/2020-12/schema" and
-    .type == "object" and
-    .additionalProperties == false and
-    .properties.schema_version.const == 1 and
-    .["$defs"].stable_id.pattern == "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$" and
-    (.required | sort) == ([
-        "schema_version", "workspace_id", "revision", "active_window_id", "windows"
-    ] | sort) and
-    .["$defs"].window.additionalProperties == false and
-    .["$defs"].worklane.additionalProperties == false and
-    .["$defs"].worklane_layout.additionalProperties == false and
-    .["$defs"].column_layout.additionalProperties == false and
-    .["$defs"].pane.additionalProperties == false and
-    .["$defs"].pane.properties.title.pattern == "^[^\\u0000]+$" and
-    .["$defs"].pane.properties.cwd.pattern == "^/[^\\u0000]*$" and
-    .["$defs"].command.additionalProperties == false and
-    (.["$defs"].command.required | sort) == ["launch_profile_id"] and
-    (.["$defs"].command.properties | keys) == ["launch_profile_id"] and
-    .["$defs"].command.properties.launch_profile_id.pattern == "^[a-z][a-z0-9._-]{0,63}$" and
-    .["$defs"].agent.additionalProperties == false and
-    .["$defs"].agent.properties.resume_id.pattern == "^[^\\u0000]+$" and
-    (.["x-zentty-invariants"].unknown_fields | startswith("Reject"))
-' "${schema}" >/dev/null || fail "workspace schema invariants failed"
+    .schemaVersion == 1 and
+    .reason == "liveSnapshot" and
+    .workspace.schemaVersion == 3 and
+    .workspace.windows[0].worklanes[0].columns[0].panes[0].lastRunCommand == "cargo test" and
+    .restoreDraftWindows[0].paneDrafts[0].kind == "agentResume"
+' "${v3_fixture}" >/dev/null || fail "source-compatible v3 fixture shape changed"
 
-expected_schema_sha256="$(jq -r '.persistence.schema_sha256' "${contract}")"
-actual_schema_sha256="$(sha256sum "${schema}" | cut -d ' ' -f 1)"
-[[ "${actual_schema_sha256}" == "${expected_schema_sha256}" ]] ||
-    fail "workspace schema checksum changed without a versioned contract update"
+jq -e '
+    has("schemaVersion") | not
+' "${unversioned_fixture}" >/dev/null || fail "unversioned fixture gained a schema version"
 
-expected_rules_sha256="$(jq -r '.persistence.semantic_rules_sha256' "${contract}")"
-actual_rules_sha256="$(sha256sum "${rules}" | cut -d ' ' -f 1)"
-[[ "${actual_rules_sha256}" == "${expected_rules_sha256}" ]] ||
-    fail "workspace semantic-rule checksum changed without a versioned contract update"
-
-ZENTTY_SCHEMA_VALIDATION_MODE=v1 jq -e -f "${rules}" "${valid_fixture}" >/dev/null ||
-    fail "valid v1 fixture was rejected"
-ZENTTY_SCHEMA_VALIDATION_MODE=v1 jq -e -f "${rules}" "${no_secrets_fixture}" >/dev/null ||
-    fail "no-secrets v1 fixture was rejected"
-
-if ZENTTY_SCHEMA_VALIDATION_MODE=v1 jq -e -f "${rules}" "${malformed_fixture}" >/dev/null; then
-    fail "malformed v1 fixture was accepted"
-fi
-if ZENTTY_SCHEMA_VALIDATION_MODE=v1 jq -e -f "${rules}" "${old_fixture}" >/dev/null; then
-    fail "old v0 fixture was accepted as current v1"
-fi
-if ZENTTY_SCHEMA_VALIDATION_MODE=v1 jq -e -f "${rules}" "${unknown_fixture}" >/dev/null; then
-    fail "unknown-field v1 fixture was accepted"
-fi
-ZENTTY_SCHEMA_VALIDATION_MODE=v0-migration jq -e -f "${rules}" "${old_fixture}" >/dev/null ||
-    fail "recognized v0 fixture did not migrate to valid v1"
-
-reject_secret_like_content() {
-    local fixture="$1"
-    jq -e '
-        ([paths as $path |
-            select(($path[-1] | type) == "string") |
-            ($path[-1] | ascii_downcase) |
-            select(test("(^|_)(password|credential|secret|token|api[_-]?key|authorization|clipboard|transcript|environment|env)(_|$)"))
-        ] | length) == 0 and
-        ([.. | strings |
-            select(test("((authorization|proxy-authorization|x-api-key)[[:space:]]*:|(^|[[:space:]])(basic[[:space:]]+[a-z0-9+/=]{8,}|digest[[:space:]]+[^[:space:]]|bearer[[:space:]]+[^[:space:]])|begin[[:space:]]+(rsa[[:space:]]+)?private[[:space:]]+key|sk-[a-z0-9]{8}|gh[pousr]_[a-z0-9]{8}|github_pat_[a-z0-9_]{8}|xox[baprs]-[a-z0-9-]{8}|AKIA[0-9A-Z]{12}|AIza[0-9A-Za-z_-]{16}|--?(password|token|api[-_]?key|secret)(=|$)|://[^/@:]+:[^/@]+@)"; "i"))
-        ] | length) == 0 and
-        ([.. | strings | select(contains("\u0000"))] | length) == 0
-    ' "${fixture}" >/dev/null
-}
-
-reject_secret_like_content "${valid_fixture}" || fail "valid fixture contains secret-like key or value"
-reject_secret_like_content "${no_secrets_fixture}" || fail "no-secrets fixture contains secret-like key or value"
+jq -e '
+    .schemaVersion == 99 and
+    has("futureWorkspaceKey") and
+    .windows[0].worklanes[0].title == "MAIN"
+' "${future_fixture}" >/dev/null || fail "future-compatible fixture shape changed"
 
 grep -F 'The former C qualification application is' "${repo_root}/linux/README.md" >/dev/null ||
     fail "Linux README does not record C qualification-host retirement"
 [[ ! -e "${repo_root}/linux/src/main.c" ]] ||
     fail "retired C qualification-host source still exists"
 
-echo "Architecture contract and workspace schema fixtures passed"
+echo "Architecture contract and source-compatible workspace fixtures passed"

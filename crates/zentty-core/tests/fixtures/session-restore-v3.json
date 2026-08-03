@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 1,
+  "savedAt": 807321600.5,
+  "reason": "liveSnapshot",
+  "workspace": {
+    "schemaVersion": 3,
+    "windows": [
+      {
+        "id": "window-main",
+        "frame": {
+          "x": 1721.0,
+          "y": -1.0,
+          "width": 1720.0,
+          "height": 1410.0,
+          "screenX": 0.0,
+          "screenY": 0.0,
+          "screenWidth": 3440.0,
+          "screenHeight": 1410.0
+        },
+        "worklanes": [
+          {
+            "id": "worklane-main",
+            "title": "Nimbu API",
+            "nextPaneNumber": 3,
+            "focusedColumnID": "column-left",
+            "columns": [
+              {
+                "id": "column-left",
+                "width": 640.0,
+                "focusedPaneID": "pane-agent",
+                "lastFocusedPaneID": "pane-shell",
+                "paneHeights": [420.0, 280.0],
+                "panes": [
+                  {
+                    "id": "pane-agent",
+                    "customTitle": "Agent",
+                    "titleSeed": "Codex",
+                    "workingDirectory": "/tmp/project",
+                    "lastActivityTitle": "Reviewing",
+                    "lastRunCommand": "cargo test"
+                  },
+                  {
+                    "id": "pane-shell",
+                    "workingDirectory": "/tmp/project"
+                  }
+                ]
+              }
+            ],
+            "color": "blue",
+            "bookmarkOriginID": "bookmark-main"
+          }
+        ],
+        "activeWorklaneID": "worklane-main"
+      }
+    ],
+    "activeWindowID": "window-main"
+  },
+  "restoreDraftWindows": [
+    {
+      "windowID": "window-main",
+      "paneDrafts": [
+        {
+          "paneID": "pane-agent",
+          "kind": "agentResume",
+          "toolName": "Codex",
+          "sessionID": "session-codex",
+          "workingDirectory": "/tmp/project",
+          "trackedPID": 4242,
+          "agentLaunchSnapshot": {
+            "arguments": ["codex", "resume", "session-codex"],
+            "environment": {"TERM": "xterm-ghostty"}
+          }
+        }
+      ]
+    }
+  ]
+}

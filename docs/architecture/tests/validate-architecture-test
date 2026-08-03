@@ -5,9 +5,6 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 architecture_dir="${repo_root}/docs/architecture"
 validator="${architecture_dir}/tests/validate-architecture"
 source_contract="${architecture_dir}/linux-product-architecture-v1.json"
-source_schema="${architecture_dir}/workspace-state-v1.schema.json"
-source_rules="${architecture_dir}/tests/workspace-state-v1.jq"
-valid_fixture="${architecture_dir}/fixtures/workspace-state/valid-v1.json"
 temp_dir="$(mktemp -d)"
 trap 'rm -rf "${temp_dir}"' EXIT
 
@@ -108,7 +105,7 @@ run_expect_failure invalid-proposed-status "architecture contract invariants fai
     "ZENTTY_ARCHITECTURE_CONTRACT=${invalid_proposed_status}"
 
 drifted_matrix="${temp_dir}/drifted-matrix.json"
-jq '(.cells[] | select(.id == "workspace-schema-v1-contract") | .command) = "true"' \
+jq '(.cells[] | select(.id == "workspace-recipe-v3-contract") | .command) = "true"' \
     "${repo_root}/linux/qualification-matrix.json" >"${drifted_matrix}"
 run_expect_failure drifted-matrix "architecture qualification mirror differs from authoritative matrix" \
     "ZENTTY_QUALIFICATION_MATRIX=${drifted_matrix}"
@@ -124,137 +121,6 @@ jq '(.proposed_qualification_cells[] | select(.id == "architecture-contract-v1")
     "${source_contract}" >"${drifted_prerequisite}"
 run_expect_failure drifted-prerequisite "architecture qualification mirror differs from authoritative matrix" \
     "ZENTTY_ARCHITECTURE_CONTRACT=${drifted_prerequisite}"
-
-permissive_schema="${temp_dir}/permissive-schema.json"
-jq '.additionalProperties = true' "${source_schema}" >"${permissive_schema}"
-run_expect_failure permissive-schema "workspace schema invariants failed" \
-    "ZENTTY_WORKSPACE_SCHEMA=${permissive_schema}"
-
-changed_schema="${temp_dir}/changed-schema.json"
-jq '.description += " seeded checksum mutation"' \
-    "${source_schema}" >"${changed_schema}"
-run_expect_failure changed-schema "workspace schema checksum changed" \
-    "ZENTTY_WORKSPACE_SCHEMA=${changed_schema}"
-
-changed_rules="${temp_dir}/changed-rules.jq"
-cp "${source_rules}" "${changed_rules}"
-printf '\n# seeded semantic-rule mutation\n' >>"${changed_rules}"
-run_expect_failure changed-rules "workspace semantic-rule checksum changed" \
-    "ZENTTY_WORKSPACE_RULES=${changed_rules}"
-
-run_expect_failure malformed-accepted "malformed v1 fixture was accepted" \
-    "ZENTTY_WORKSPACE_MALFORMED_FIXTURE=${valid_fixture}"
-run_expect_failure unknown-accepted "unknown-field v1 fixture was accepted" \
-    "ZENTTY_WORKSPACE_UNKNOWN_FIXTURE=${valid_fixture}"
-run_expect_failure old-accepted "old v0 fixture was accepted as current v1" \
-    "ZENTTY_WORKSPACE_OLD_FIXTURE=${valid_fixture}"
-
-duplicate_id_fixture="${temp_dir}/duplicate-id-v1.json"
-jq '(.windows[0].worklanes[0].panes[1].id) = .windows[0].worklanes[0].panes[0].id' \
-    "${valid_fixture}" >"${duplicate_id_fixture}"
-run_expect_failure duplicate-id "valid v1 fixture was rejected" \
-    "ZENTTY_WORKSPACE_VALID_FIXTURE=${duplicate_id_fixture}"
-
-dangling_active_fixture="${temp_dir}/dangling-active-v1.json"
-jq '(.windows[0].worklanes[0].active_pane_id) = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"' \
-    "${valid_fixture}" >"${dangling_active_fixture}"
-run_expect_failure dangling-active "valid v1 fixture was rejected" \
-    "ZENTTY_WORKSPACE_VALID_FIXTURE=${dangling_active_fixture}"
-
-gapped_order_fixture="${temp_dir}/gapped-order-v1.json"
-jq '(.windows[0].worklanes[0].panes[1].order) = 2' \
-    "${valid_fixture}" >"${gapped_order_fixture}"
-run_expect_failure gapped-order "valid v1 fixture was rejected" \
-    "ZENTTY_WORKSPACE_VALID_FIXTURE=${gapped_order_fixture}"
-
-duplicate_order_fixture="${temp_dir}/duplicate-order-v1.json"
-jq '(.windows[0].worklanes[0].panes[1].order) = 0' \
-    "${valid_fixture}" >"${duplicate_order_fixture}"
-run_expect_failure duplicate-order "valid v1 fixture was rejected" \
-    "ZENTTY_WORKSPACE_VALID_FIXTURE=${duplicate_order_fixture}"
-
-gapped_row_fixture="${temp_dir}/gapped-row-v1.json"
-jq '(.windows[0].worklanes[0].panes[1].layout.row) = 2' \
-    "${valid_fixture}" >"${gapped_row_fixture}"
-run_expect_failure gapped-row "valid v1 fixture was rejected" \
-    "ZENTTY_WORKSPACE_VALID_FIXTURE=${gapped_row_fixture}"
-
-duplicate_row_fixture="${temp_dir}/duplicate-row-v1.json"
-jq '(.windows[0].worklanes[0].panes[1].layout.row) = 0' \
-    "${valid_fixture}" >"${duplicate_row_fixture}"
-run_expect_failure duplicate-row "valid v1 fixture was rejected" \
-    "ZENTTY_WORKSPACE_VALID_FIXTURE=${duplicate_row_fixture}"
-
-gapped_column_fixture="${temp_dir}/gapped-column-v1.json"
-jq '(.windows[0].worklanes[0].layout.columns) += [{"index":2,"weight":1}]' \
-    "${valid_fixture}" >"${gapped_column_fixture}"
-run_expect_failure gapped-column "valid v1 fixture was rejected" \
-    "ZENTTY_WORKSPACE_VALID_FIXTURE=${gapped_column_fixture}"
-
-duplicate_column_fixture="${temp_dir}/duplicate-column-v1.json"
-jq '(.windows[0].worklanes[0].layout.columns) += [{"index":0,"weight":1}]' \
-    "${valid_fixture}" >"${duplicate_column_fixture}"
-run_expect_failure duplicate-column "valid v1 fixture was rejected" \
-    "ZENTTY_WORKSPACE_VALID_FIXTURE=${duplicate_column_fixture}"
-
-cross_type_id_fixture="${temp_dir}/cross-type-id-v1.json"
-jq '(.windows[0].worklanes[0].id) = .windows[0].id |
-    (.windows[0].active_worklane_id) = .windows[0].id' \
-    "${valid_fixture}" >"${cross_type_id_fixture}"
-run_expect_failure cross-type-id "valid v1 fixture was rejected" \
-    "ZENTTY_WORKSPACE_VALID_FIXTURE=${cross_type_id_fixture}"
-
-invalid_column_weight_fixture="${temp_dir}/invalid-column-weight-v1.json"
-jq '(.windows[0].worklanes[0].layout.columns[0].weight) = 0' \
-    "${valid_fixture}" >"${invalid_column_weight_fixture}"
-run_expect_failure invalid-column-weight "valid v1 fixture was rejected" \
-    "ZENTTY_WORKSPACE_VALID_FIXTURE=${invalid_column_weight_fixture}"
-
-invalid_row_weight_fixture="${temp_dir}/invalid-row-weight-v1.json"
-jq '(.windows[0].worklanes[0].panes[0].layout.row_weight) = -1' \
-    "${valid_fixture}" >"${invalid_row_weight_fixture}"
-run_expect_failure invalid-row-weight "valid v1 fixture was rejected" \
-    "ZENTTY_WORKSPACE_VALID_FIXTURE=${invalid_row_weight_fixture}"
-
-dangling_column_fixture="${temp_dir}/dangling-column-v1.json"
-jq '(.windows[0].worklanes[0].panes[1].layout.column) = 1' \
-    "${valid_fixture}" >"${dangling_column_fixture}"
-run_expect_failure dangling-column "valid v1 fixture was rejected" \
-    "ZENTTY_WORKSPACE_VALID_FIXTURE=${dangling_column_fixture}"
-
-nul_fixture="${temp_dir}/nul-v1.json"
-jq '(.windows[0].worklanes[0].panes[0].title) = "visible\u0000hidden"' \
-    "${valid_fixture}" >"${nul_fixture}"
-run_expect_failure embedded-nul "valid v1 fixture was rejected" \
-    "ZENTTY_WORKSPACE_VALID_FIXTURE=${nul_fixture}"
-
-secret_fixture="${temp_dir}/secret-v1.json"
-jq '(.windows[0].worklanes[0].panes[0].title) = "Bearer seeded-fake-value"' \
-    "${valid_fixture}" >"${secret_fixture}"
-run_expect_failure secret-value "valid fixture contains secret-like key or value" \
-    "ZENTTY_WORKSPACE_VALID_FIXTURE=${secret_fixture}"
-
-assert_secret_form_rejected() {
-    local name="$1"
-    local value="$2"
-    local fixture="${temp_dir}/${name}-v1.json"
-    jq --arg value "${value}" \
-        '(.windows[0].worklanes[0].panes[0].title) = $value' \
-        "${valid_fixture}" >"${fixture}"
-    run_expect_failure "${name}" "valid fixture contains secret-like key or value" \
-        "ZENTTY_WORKSPACE_VALID_FIXTURE=${fixture}"
-}
-
-assert_secret_form_rejected authorization-basic \
-    "Authorization: Basic c2VlZGVkLWZha2U="
-assert_secret_form_rejected basic-scheme \
-    "Basic c2VlZGVkLWZha2U="
-assert_secret_form_rejected digest-scheme \
-    'Digest username="seeded", response="fake"'
-assert_secret_form_rejected api-key-header \
-    "X-Api-Key: seeded-fake-value"
-fake_github_provider="$(printf '%s%s' 'ghp' '_seededfakecredential123456')"
-assert_secret_form_rejected github-provider "${fake_github_provider}"
 
 "${validator}" >/dev/null
 echo "Architecture validator negative self-tests passed"

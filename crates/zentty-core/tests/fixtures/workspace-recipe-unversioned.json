@@ -1,0 +1,30 @@
+{
+  "windows": [
+    {
+      "id": "legacy-window",
+      "worklanes": [
+        {
+          "id": "legacy-main",
+          "title": "MAIN",
+          "nextPaneNumber": 1,
+          "columns": [],
+          "color": null,
+          "bookmarkOriginID": null
+        },
+        {
+          "id": "legacy-ws",
+          "title": "WS 3",
+          "nextPaneNumber": 1,
+          "columns": []
+        },
+        {
+          "id": "legacy-named",
+          "title": "  Nimbu support  ",
+          "nextPaneNumber": 1,
+          "columns": []
+        }
+      ]
+    }
+  ],
+  "activeWindowID": "legacy-window"
+}

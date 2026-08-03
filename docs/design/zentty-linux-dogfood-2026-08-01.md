@@ -4067,6 +4067,55 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   `WorkspaceRecipe`/`SessionRestoreEnvelope` fixtures and source behavior, not
   from the removed Linux schema or its tests.
 
+### DOGFOOD-2026-08-03-SOURCE-COMPATIBLE-SESSION-CORE: port the recipe, not the plan
+
+- **Source inventory:** The replacement was derived field-by-field from
+  `WorkspaceRecipe.swift`, `SessionRestoreStore.swift`,
+  `AgentStatusPayload.swift`, and their XCTest suites. It represents recipe
+  version 3, envelope version 1, frames, worklane/column/pane layout, separate
+  agent restore drafts, live/clean save reasons, lifecycle decisions,
+  meaningfulness, draft merging, and accepted-generation ordering. IDs remain
+  ordinary source-compatible strings rather than invented UUID-v4 types.
+- **Test-first red:** The first recipe fixture test failed to compile because
+  no Rust recipe/envelope types existed. Store tests likewise failed to compile
+  before `SessionRestoreStore`, launch decisions, requests, and generation
+  behavior existed. Those were the intended missing-product reds, not missing
+  compositor or harness failures.
+- **Compatibility defect found by the fixture:** The first decoder used Serde's
+  generic camel-case conversion, which produced `paneId`, `windowId`, and
+  `trackedPid`; Swift encodes acronym fields as `paneID`, `windowID`, and
+  `trackedPID`. The real v3 envelope failed at `paneID`. Explicit field names
+  repaired every acronym boundary before acceptance.
+- **Dependency/environment failure:** The first dependency resolution ran in a
+  network-restricted sandbox and could not resolve crates.io. It was not
+  interpreted as a product failure or pass. The same pinned, previously
+  reviewed Serde versions were fetched with authorized network access.
+- **Lint repair:** Warning-denied Clippy rejected exact floating-point equality
+  in a fixture assertion. The test now uses an epsilon comparison. Clippy also
+  required `ZenTTY` to be code-formatted in API documentation. No lint was
+  suppressed.
+- **Persistence behavior:** `restore-snapshot.json` and
+  `restore-lifecycle.json` use same-directory atomic replacement without a
+  backup file. Corrupt snapshots remain unchanged. Clean-exit saves retain a
+  prior live agent draft only while its pane still exists, and stale request
+  generations cannot overwrite a newer accepted save.
+- **Architecture cleanup:** The invented schema-v1 JSON Schema, jq semantic
+  program, fixtures, secret-pattern campaign, and standalone shell contract
+  were deleted. The architecture contract now checks the source-compatible
+  fixture identities and delegates codec/migration semantics to focused Rust
+  tests. Matrix cells `workspace-recipe-v3-contract` and
+  `workspace-persistence-unit` are PASS; product restoration remains explicitly
+  `NOT_IMPLEMENTED`.
+- **Final reconciliation defect:** Diff review found one stale responsibility
+  table entry still describing the removed Linux schema v1, plus a machine
+  policy that broadly forbade persisted environment data even though the real
+  source contract optionally stores an agent launch snapshot environment.
+  The table now names recipe v3/envelope v1, and the exclusion is narrowed to
+  ambient process environment outside those source-defined snapshots.
+- **Claim boundary:** This is platform-neutral recipe/session store parity, not
+  a worklane UI or restored Linux product. No Wayland/X11 product result is
+  claimed by these display-independent tests.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were

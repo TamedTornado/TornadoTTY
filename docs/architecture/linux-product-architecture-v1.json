@@ -215,21 +215,25 @@
     ]
   },
   "persistence": {
-    "schema": "workspace-state-v1.schema.json",
-    "schema_sha256": "89a649bf0b770f03860aff423df8824d0054aac0ece2691077f76e2bfcb685ed",
-    "semantic_rules": "tests/workspace-state-v1.jq",
-    "semantic_rules_sha256": "753c44bc8468ee7f2c3467efd941cefbe39de7c3141ef84688753e2d1474852b",
-    "current_version": 1,
-    "command_representation": "approved-non-secret-launch-profile-reference-only",
-    "unknown_fields": "reject-and-preserve-original",
-    "newer_versions": "reject-and-preserve-original",
-    "older_versions": "sequential-explicit-migration",
-    "write_protocol": "same-directory-temp-fsync-rename-fsync-directory",
+    "source_contracts": ["Zentty/Restore/WorkspaceRecipe.swift", "Zentty/Restore/SessionRestoreStore.swift"],
+    "rust_contract": "crates/zentty-core/src/workspace_recipe.rs",
+    "workspace_recipe_version": 3,
+    "session_envelope_version": 1,
+    "command_representation": "source-compatible-last-run-command-and-separate-agent-restore-drafts",
+    "unknown_fields": "ignore-as-current-swift-decoder-does",
+    "newer_versions": "preserve-versioned-titles-and-mark-current-on-migration",
+    "older_versions": "sanitize-generated-titles-only-when-unversioned",
+    "write_protocol": "atomic-snapshot-and-lifecycle-replacement-without-backup-generations",
+    "fixtures": [
+      "crates/zentty-core/tests/fixtures/session-restore-v3.json",
+      "crates/zentty-core/tests/fixtures/workspace-recipe-unversioned.json",
+      "crates/zentty-core/tests/fixtures/workspace-recipe-future.json"
+    ],
     "forbidden_persisted_classes": [
       "credentials",
       "clipboard-contents",
       "agent-transcripts",
-      "environment",
+      "ambient-process-environment-outside-agent-launch-snapshots",
       "unapproved-secrets"
     ]
   },
@@ -265,7 +269,7 @@
     {
       "requirement_id": "ZL-3-WORKSPACE-PERSISTENCE",
       "test_ids": ["TEST-WORKSPACE-SCHEMA", "TEST-WORKSPACE-PERSISTENCE", "TEST-WORKSPACE-RESTORE"],
-      "qualification_cell_ids": ["workspace-schema-v1-contract", "workspace-persistence-unit", "product-workspace-restore-wayland", "product-workspace-restore-x11"]
+      "qualification_cell_ids": ["workspace-recipe-v3-contract", "workspace-persistence-unit", "product-workspace-restore-wayland", "product-workspace-restore-x11"]
     },
     {
       "requirement_id": "ZL-4-WORKLANE-SHELL",
@@ -330,7 +334,7 @@
     {
       "id": "workspace_schema",
       "cells": [
-        "workspace-schema-v1-contract"
+        "workspace-recipe-v3-contract"
       ]
     },
     {
@@ -436,7 +440,7 @@
       "authoritative": false
     },
     {
-      "id": "workspace-schema-v1-contract",
+      "id": "workspace-recipe-v3-contract",
       "capability": "workspace_schema",
       "status": "PASS",
       "tier": "release",
@@ -444,20 +448,20 @@
       "optimize": "n/a",
       "async_backend": "n/a",
       "terminals": "multi",
-      "command": "linux/tests/workspace-schema-contract",
+      "command": "cargo test --locked -p zentty-core --test workspace_recipe",
       "authoritative": false
     },
     {
       "id": "workspace-persistence-unit",
       "capability": "workspace_persistence",
-      "status": "NOT_IMPLEMENTED",
+      "status": "PASS",
       "tier": "release",
       "display": "none",
       "optimize": "Debug",
       "async_backend": "n/a",
       "terminals": "multi",
-      "tracking": "GH-3",
-      "defect": "Pure-Rust atomic persistence, migration, corruption, ordering, selection, and secret-exclusion tests do not exist yet.",
+      "environment_profile": "isolated-none-v1",
+      "command": "cargo test --locked -p zentty-core --test session_restore_store",
       "authoritative": false
     },
     {

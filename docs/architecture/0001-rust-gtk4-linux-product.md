@@ -4,8 +4,8 @@
 - **Decision date:** 2026-08-02
 - **Architecture contract:**
   [`linux-product-architecture-v1.json`](linux-product-architecture-v1.json)
-- **Workspace-state contract:**
-  [`workspace-state-v1.schema.json`](workspace-state-v1.schema.json)
+- **Workspace/session contract:** Swift `WorkspaceRecipe` version 3 and
+  `SessionRestoreEnvelope`, mirrored by `zentty-core`
 - **Applies from:** Zentty `8c08e7ed987d46fcda65d716cf02845a2c98b285`
 - **Engine boundary:** Ghostty
   `5fc8fa2cf4b27bfe27072d561de98f33b2c16636`
@@ -315,91 +315,56 @@ event routing and does not justify deleting the prior valid state.
   runtime-owner drop, native finalize-before-runtime-free, reentrancy, and
   late-callback tests.
 
-## Workspace state version 1
+## Workspace recipe and session snapshots
 
-The JSON Schema is normative for shape and allow-listed fields. Its
-`x-zentty-invariants` plus the rules below are normative semantic constraints.
-The dependency-light validator and fixtures are design-time executable
-evidence; #3 reimplements the same rules in `zentty-core` with unit/property
-and migration tests.
-
-Published version 1 is immutable; both the schema and executable semantic-rule
-artifact SHA-256 values are pinned in the architecture contract. An
-incompatible shape or semantic change creates schema version 2,
-a v1-to-v2 migration, and fixtures; it never silently edits what “version 1”
-means. A correction to the v1 artifact itself requires an ADR amendment and a
-checksum, validator, fixture, and compatibility review in the same change.
+The Swift implementation is the parity authority. `zentty-core` mirrors
+`WorkspaceRecipe` version 3, `SessionRestoreEnvelope`,
+`SessionRestoreDraftWindow`, `PaneRestoreDraft`, and `AgentLaunchSnapshot`.
+The source-compatible fixtures and owning Rust tests live under
+`crates/zentty-core/tests`.
 
 ### Durable content
 
-Version 1 stores stable, canonical-lowercase RFC 4122-variant UUIDv4 IDs;
-explicit contiguous ordering; active window, worklane, and pane selection;
-worklane/pane layout weights and coordinates; local absolute CWD; an approved
-durable launch-profile reference representing the pane command; optional user
-title; and an optional non-secret agent adapter/resume identifier. Identity is
-globally unique, every active ID resolves inside its containing object, and
-every persisted string rejects NUL.
+The recipe stores ordered windows and optional frames; ordered worklanes with
+title, next-pane number, focused column, color, and bookmark origin; columns
+with identity, width, focused/last-focused pane and pane heights; and panes
+with identity, custom/title seed, working directory, last activity title, and
+last-run command. Active window and worklane identities remain optional, as in
+the Swift types.
 
-It intentionally excludes window-system handles, GTK/GObject data, runtime
-pointers, PIDs/PTY fds, focus history, renderer state, scrollback, live server
-discovery, live agent status, notification bodies, and timestamps that do not
-change restoration behavior.
+Agent restoration is separate envelope data. A pane restore draft contains the
+tool/session/working-directory/process identity and optional launch snapshot
+used by the existing resume policy. It is not an inline pane attribute or a
+generic launch-profile reference.
 
-`command` contains only `launch_profile_id`, matching a restricted non-secret
-identifier grammar. Workspace state has no free-form program, argv, header,
-environment, or shell-command field. The profile definition is separately
-validated durable configuration and may contain executable/argument templates
-but never credential values; a profile that requires authentication contains
-only an approved secret-provider handle. `ProcessLauncher` resolves the
-profile and secret handle into transient argv/environment immediately before
-spawn, outside `PaneRecord` and the serializer. Agent/PTY output, shell
-history, process discovery, and transient resolved launch data have no write
-path into `command`.
+GTK/GObject/Ghostty handles, PTY descriptors, scrollback, clipboard payloads,
+agent transcripts, and live presentation state are not part of the recipe.
+Agent launch environments are persisted only where the existing
+`AgentLaunchSnapshot` contract does so; #7 owns per-agent security/parity review
+rather than an invented blanket schema rule.
 
-The schema MUST NOT persist credentials, API keys/tokens, authorization headers,
-clipboard contents, agent prompts/responses/transcripts, arbitrary environment
-variables, or any unapproved secret. This is enforced by a strict allow-list,
-the profile-reference data-flow boundary above, NUL rejection, and a
-defense-in-depth credential-pattern validator covering authorization schemes,
-headers, URLs, and known provider forms—not a redact-after-serialization pass.
-`agent.resume_id` is allowed only when
-the adapter has classified it as a non-secret opaque identifier. Unknown or
-unclassified agent material stays transient.
+### Read, migration, and write behavior
 
-### Read, migration, corruption, and write behavior
+1. Swift-compatible camel-case JSON and enum values are required.
+2. Missing optional keys decode as `nil`; unknown keys are ignored by the
+   current decoder, including keys from a newer writer.
+3. Only an unversioned recipe sanitizes legacy generated `MAIN` and `WS N`
+   titles. Versioned recipes preserve titles verbatim. Migration then marks the
+   recipe as version 3.
+4. The meaningfulness classifier omits the untouched default one-window,
+   one-worklane, one-column, one-pane workspace while retaining user changes.
+5. `restore-snapshot.json` and `restore-lifecycle.json` are atomically replaced.
+   There is no `.bak`, backup browser, or generation history.
+6. Debounced live and synchronous clean-exit saves use monotonically accepted
+   request generations so an older queued request cannot overwrite a newer
+   accepted request.
+7. A corrupt snapshot produces an error and remains untouched. Successful
+   restore consumes the snapshot; source-defined unusable restore handling is
+   owned by the application shell.
 
-1. Read a bounded regular file from the platform state path without following
-   an attacker-controlled symlink. Do not log raw bytes.
-2. Parse JSON and inspect `schema_version` before decoding version-specific
-   fields.
-3. Version 1 with any unknown field is rejected. A newer version is rejected.
-   In either case leave bytes untouched, disable automatic saves, and expose a
-   visible read-only recovery path; silently dropping fields is forbidden.
-4. The committed v0 fixture is the only recognized old design fixture. Its
-   migration renames the three `active_*` keys, sets `revision` to zero,
-   assigns array-index `order`, supplies unit layout weights/zero-based pane
-   rows, renames the already-approved `command_profile` reference to
-   `command.launch_profile_id`, and adds null titles/agents. It never migrates
-   free argv or secret material into v1.
-   Each future version adds one explicit sequential migration. Skipping a
-   version is forbidden.
-5. Validate shape, ordering, uniqueness, references, CWD, and confidentiality
-   after every migration. Retain a mode-0600 pre-migration backup before
-   replacing the original.
-6. Malformed JSON, invalid state, I/O failure, or failed migration leaves the
-   original untouched and automatic saves disabled. It must not become an
-   empty workspace overwrite.
-7. An ordinary save holds an exclusive workspace lock; serializes and
-   validates in memory; creates a mode-0600 exclusive temporary file in the
-   same directory; writes all bytes; flushes and fsyncs the file; atomically
-   renames it over the primary; and fsyncs the directory. Any pre-rename
-   failure removes only the temporary file. Post-rename fsync failure is an
-   explicit indeterminate durability error, not success.
-
-The fixtures cover a valid state, malformed state, recognized v0 input,
-unknown-field rejection, and an explicit no-secret example. #6 owns crash and
-interrupted-write product qualification; this ADR fixes the invariant it must
-prove.
+Any intentional departure from these source semantics requires a separate
+operator-approved compatibility decision. Generic backup/versioning and
+kill-at-every-filesystem-phase campaigns are not implicit port requirements.
 
 ## Platform-service boundary
 
@@ -431,7 +396,7 @@ create worklanes or panes.
 | Contract | Linux | macOS | Compatibility rule |
 | --- | --- | --- | --- |
 | Workspace transitions and commands | New `zentty-core` | Existing Swift models/actions | Same stable-ID/topology outcomes; implementations need not share code |
-| Durable restoration | Strict schema v1 under XDG state | Existing `WorkspaceRecipe`/`SessionRestoreStore` | No automatic cross-import; platform fixtures assert semantic cases |
+| Durable restoration | Source-compatible `WorkspaceRecipe` v3 and session envelope v1 under XDG state | Existing `WorkspaceRecipe`/`SessionRestoreStore` | Rust parity fixtures assert the source-defined JSON, migration, and lifecycle semantics; storage locations remain platform-native |
 | UI/event loop | GTK4/GLib | AppKit main actor/run loop | Each remains sole UI authority |
 | Terminal engine | Safe wrapper over Ghostty GTK C ABI | GhosttyKit/AppKit adapter | Ghostty stays generic; platform surface types stay isolated |
 | Windows/worklanes/panes | `zentty-linux` GTK projection | Existing controllers/views | Multiple worklanes and panes, focus and restoration are shared behaviors |
@@ -484,7 +449,7 @@ axes:
 - `ZL-3-WORKSPACE-PERSISTENCE` / `TEST-WORKSPACE-SCHEMA`,
   `TEST-WORKSPACE-PERSISTENCE`, `TEST-WORKSPACE-RESTORE`: capabilities
   `workspace_schema`, `workspace_persistence`, and `workspace_restore`, with
-  cells `workspace-schema-v1-contract`, `workspace-persistence-unit`, and the
+  cells `workspace-recipe-v3-contract`, `workspace-persistence-unit`, and the
   two `product-workspace-restore-{wayland,x11}` cells;
 - `ZL-4-WORKLANE-SHELL` / `TEST-WORKLANE-LIFECYCLE`: capability
   `product_worklanes`, cells `product-worklanes-wayland` and

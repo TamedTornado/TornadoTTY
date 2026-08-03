@@ -19,6 +19,13 @@ as Zentty.
   exact staged executable and assert behavior across Rust, the C ABI, GTK,
   Ghostty, PTY, renderer, and compositor boundaries.
 
+The platform-neutral core mirrors ZenTTY's `WorkspaceRecipe` version 3,
+`SessionRestoreEnvelope`, atomic snapshot/lifecycle files, migration,
+meaningfulness filtering, restore-draft merging, and stale-generation rule.
+This is model/store parity only. The GTK product does not yet project, mutate,
+or restore that complete recipe; the Wayland/X11 product-restore cells remain
+`NOT_IMPLEMENTED`.
+
 ## Qualification
 
 `linux/qualification-matrix.json` is the single authoritative qualification
