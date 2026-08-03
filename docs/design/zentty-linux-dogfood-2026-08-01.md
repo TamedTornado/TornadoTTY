@@ -4290,9 +4290,10 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   `ghostty-org/ghostty`. The GTK embedding commits and companion tee commit were
   independently rebased onto official commit
   `ac04fc276169c70d31aa6fcfc5b43fc160d6fe6e`; neither refreshed branch contains
-  the unrelated smooth-scroll series. The old smooth-scroll branch remains
-  preserved but deliberately was not labeled current: its renderer conflicts
-  require a real feature port rather than an automated conflict resolution.
+  the unrelated smooth-scroll series. The old smooth-scroll tip is preserved
+  as `archive/pre-refork-smooth-scroll`; the misleading
+  `zentty/smooth-scroll` branch was removed. Its renderer conflicts require a
+  real feature port rather than an automated conflict resolution.
 - **Current-upstream failures:** Ghostty now requires Zig 0.16.0. That migration
   exposed a missing bundled `gtk4-layer-shell` translate-c include path,
   removed global-state and enum-conversion APIs, and a teardown assumption in
