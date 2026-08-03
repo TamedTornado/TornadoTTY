@@ -223,6 +223,13 @@ impl Window {
     pub const fn active_worklane_id(&self) -> &StableId {
         &self.active_worklane_id
     }
+
+    #[must_use]
+    pub fn active_worklane(&self) -> Option<&Worklane> {
+        self.worklanes
+            .iter()
+            .find(|worklane| worklane.id == self.active_worklane_id)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -292,6 +299,13 @@ impl Workspace {
     #[must_use]
     pub const fn active_window_id(&self) -> &StableId {
         &self.active_window_id
+    }
+
+    #[must_use]
+    pub fn active_window(&self) -> Option<&Window> {
+        self.windows
+            .iter()
+            .find(|window| window.id == self.active_window_id)
     }
 
     /// Appends a worklane containing its required initial pane.

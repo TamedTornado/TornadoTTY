@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
+backend="${GDK_BACKEND:-}"
+ghostty_root="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
+async_backend="${ZENTTY_LINUX_ASYNC_BACKEND:-default}"
+fixture="${repo_root}/docs/architecture/fixtures/workspace-state/valid-v1.json"
+
+fail() {
+    echo "rust-product-workspace: error: $*" >&2
+    exit 1
+}
+
+[[ "${backend}" == wayland || "${backend}" == x11 ]] ||
+    fail "GDK_BACKEND must be wayland or x11"
+[[ "${async_backend}" == default || "${async_backend}" == epoll ||
+    "${async_backend}" == io_uring ]] || fail "invalid async backend"
+[[ -x "${product}" ]] || fail "delivered Rust product is not built: ${product}"
+[[ -f "${fixture}" ]] || fail "workspace fixture is missing"
+
+state_directory="$(mktemp -d)"
+state="${state_directory}/workspace.json"
+log="${state_directory}/product.log"
+conflict_log="${state_directory}/conflict.log"
+cp -- "${fixture}" "${state}"
+before="$(sha256sum "${state}" | awk '{print $1}')"
+trap 'rm -rf -- "${state_directory}"' EXIT
+
+set +e
+"${product}" \
+    --workspace-state "${state}" \
+    --terminal-count 1 >"${conflict_log}" 2>&1
+conflict_status=$?
+set -e
+[[ "${conflict_status}" -eq 1 ]] ||
+    fail "conflicting terminal count exited ${conflict_status}, expected 1"
+grep -Fx \
+    'zentty-linux: --terminal-count=1 conflicts with restored active worklane pane count=2' \
+    "${conflict_log}" >/dev/null || fail "conflicting topology diagnostic was not exact"
+[[ "$(sha256sum "${state}" | awk '{print $1}')" == "${before}" ]] ||
+    fail "rejected topology conflict rewrote durable state"
+
+set +e
+LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+    "${product}" \
+    --workspace-state "${state}" \
+    --command "printf '\033]2;zentty-workspace-${backend}\a'; sleep 0.1" \
+    --async-backend "${async_backend}" \
+    --quit-after-last-terminal-exit >"${log}" 2>&1
+status=$?
+set -e
+
+[[ "${status}" -eq 0 ]] || {
+    cat "${log}" >&2
+    fail "product exited ${status} while restoring the workspace"
+}
+grep -Fx \
+    'zentty-linux: workspace-loaded id=8ec56e57-54a6-4bb8-8d30-733617894b63 revision=7 window=5b667f15-a90d-4624-bbce-22b82f58b63e worklane=054eef18-f179-4479-9f09-334e63410bb7 panes=2' \
+    "${log}" >/dev/null || {
+    cat "${log}" >&2
+    fail "product did not report the exact restored topology"
+}
+[[ "$(grep -Fxc 'zentty-linux: terminal-ready' "${log}" || true)" -eq 2 ]] ||
+    fail "product did not create one real terminal per persisted active-worklane pane"
+[[ "$(grep -Fxc "zentty-linux: title=zentty-workspace-${backend}" "${log}" || true)" -eq 2 ]] ||
+    fail "restored terminals did not produce independent semantic acknowledgements"
+[[ "$(grep -Fxc 'zentty-linux: child-exited' "${log}" || true)" -eq 2 ]] ||
+    fail "restored terminal children did not both exit"
+after="$(sha256sum "${state}" | awk '{print $1}')"
+[[ "${after}" == "${before}" ]] || fail "read-only restoration unexpectedly rewrote durable state"
+
+echo "Rust product workspace restoration passed: ${backend}, backend=${async_backend}, panes=2"

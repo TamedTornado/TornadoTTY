@@ -3916,6 +3916,30 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   matrix persistence cell stays `NOT_IMPLEMENTED` until the complete owning
   suite and real-product restoration path exist.
 
+### DOGFOOD-2026-08-03-PRODUCT-WORKSPACE-PROJECTION: persisted panes drive the binary
+
+- **Product path:** The staged `zentty-linux` binary accepts an explicit
+  `--workspace-state` path, strictly loads it through `WorkspaceStore`, resolves
+  the active window/worklane, and creates one real Ghostty surface for each
+  persisted pane in that active worklane. An explicit conflicting
+  `--terminal-count` fails instead of silently overriding durable topology.
+- **Real E2E evidence:** The committed v1 workspace fixture drove two real
+  Ghostty terminals and child PTYs in the same staged ReleaseSafe binary under
+  controlled headless Weston/Wayland and Xvfb/X11. Both runs asserted the exact
+  workspace/revision/window/worklane IDs, two readiness callbacks, two
+  terminal-title acknowledgements, two child exits, successful product exit,
+  and byte-identical state before/after the read-only projection.
+- **Environmental failure:** The first nested-Wayland attempt ran inside the
+  restricted command sandbox; Weston failed its private socket `bind` with
+  `Operation not permitted`. That absence was not converted to PASS. The same
+  test was rerun with the controlled GUI/service permission and passed on both
+  display protocols.
+- **Claim boundary:** Two new `workspace_active_lane_projection` cells record
+  exactly this slice. The broader `workspace_restore` cells remain
+  `NOT_IMPLEMENTED`: the current GTK shell does not retain, display, navigate,
+  mutate, save, and relaunch multiple worklanes, and the CLI command override
+  still stands in for approved launch-profile resolution.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were

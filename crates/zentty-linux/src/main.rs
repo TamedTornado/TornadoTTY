@@ -3,9 +3,11 @@
 use gtk::glib;
 use gtk::prelude::*;
 use std::cell::Cell;
+use std::path::PathBuf;
 use std::process::ExitCode;
 use std::rc::Rc;
 use std::time::Duration;
+use zentty_core::WorkspaceStore;
 use zentty_ghostty::{AsyncBackend, GhosttyRuntime, SurfaceConfig};
 
 #[derive(Debug)]
@@ -15,6 +17,8 @@ struct Options {
     terminal_count: usize,
     lifecycle_cycles: usize,
     async_backend: AsyncBackend,
+    workspace_state: Option<PathBuf>,
+    terminal_count_explicit: bool,
 }
 
 impl Default for Options {
@@ -25,6 +29,8 @@ impl Default for Options {
             terminal_count: 1,
             lifecycle_cycles: 1,
             async_backend: AsyncBackend::Default,
+            workspace_state: None,
+            terminal_count_explicit: false,
         }
     }
 }
@@ -57,6 +63,7 @@ fn parse_options() -> Result<Options, String> {
                     .next()
                     .ok_or_else(|| "--terminal-count requires a value".to_owned())?;
                 options.terminal_count = parse_positive_count("--terminal-count", &value)?;
+                options.terminal_count_explicit = true;
             }
             "--lifecycle-cycles" => {
                 let value = arguments
@@ -79,6 +86,12 @@ fn parse_options() -> Result<Options, String> {
                         ));
                     }
                 };
+            }
+            "--workspace-state" => {
+                options.workspace_state =
+                    Some(PathBuf::from(arguments.next().ok_or_else(|| {
+                        "--workspace-state requires a value".to_owned()
+                    })?));
             }
             _ => return Err(format!("unknown argument: {argument}")),
         }
@@ -191,7 +204,35 @@ fn run_lifecycle_cycle(
 }
 
 fn run() -> Result<(), String> {
-    let options = parse_options()?;
+    let mut options = parse_options()?;
+    if let Some(path) = &options.workspace_state {
+        let workspace = WorkspaceStore::new(path)
+            .load()
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| format!("workspace state does not exist: {}", path.display()))?;
+        let window = workspace
+            .active_window()
+            .ok_or_else(|| "workspace active window does not resolve".to_owned())?;
+        let worklane = window
+            .active_worklane()
+            .ok_or_else(|| "workspace active worklane does not resolve".to_owned())?;
+        let restored_terminal_count = worklane.panes().len();
+        if options.terminal_count_explicit && options.terminal_count != restored_terminal_count {
+            return Err(format!(
+                "--terminal-count={} conflicts with restored active worklane pane count={restored_terminal_count}",
+                options.terminal_count
+            ));
+        }
+        options.terminal_count = restored_terminal_count;
+        eprintln!(
+            "zentty-linux: workspace-loaded id={} revision={} window={} worklane={} panes={}",
+            workspace.id(),
+            workspace.revision(),
+            window.id(),
+            worklane.id(),
+            restored_terminal_count
+        );
+    }
 
     // Ghostty owns process-global initialization that must precede GTK.
     let runtime = GhosttyRuntime::new(options.async_backend).map_err(|error| error.to_string())?;
