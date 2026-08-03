@@ -53,4 +53,12 @@ expect_failure 'owned by a fixture or self-test'
 write_matrix 'linux/tests/api-contract' PASS 'build/linux/bin/zentty-linux --integration-child /tmp/child'
 "${contract}" "${temp_dir}/matrix.json" >/dev/null
 
+jq -n '{cells:[{id:"terminal-wayland",capability:"terminal_behavior",status:"PASS",command:"linux/tests/single-terminal"}]}' \
+    >"${temp_dir}/matrix.json"
+expect_failure 'does not launch the Rust product integration test'
+
+jq -n '{cells:[{id:"terminal-wayland",capability:"terminal_behavior",status:"PASS",command:"GDK_BACKEND=wayland linux/tests/rust-product-smoke"}]}' \
+    >"${temp_dir}/matrix.json"
+"${contract}" "${temp_dir}/matrix.json" >/dev/null
+
 echo "Qualification boundary contract self-tests passed"

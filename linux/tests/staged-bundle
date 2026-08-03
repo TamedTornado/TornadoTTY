@@ -24,7 +24,6 @@ grep -F "${stage_dir}/bin/../lib/libgtk4-layer-shell.so" \
 
 GDK_BACKEND="${backend}" \
 ZENTTY_LINUX_BINARY="${stage_dir}/bin/zentty-linux" \
-ZENTTY_TEST_RECEIPT_NAME="staged-bundle-${backend}" \
-    "${repo_root}/linux/tests/single-terminal"
+    "${repo_root}/linux/tests/rust-product-smoke"
 
 echo "Zentty Linux staged bundle passed (${backend})"

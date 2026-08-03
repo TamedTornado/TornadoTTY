@@ -14,6 +14,7 @@ struct Options {
     quit_after_last_terminal_exit: bool,
     terminal_count: usize,
     lifecycle_cycles: usize,
+    async_backend: AsyncBackend,
 }
 
 impl Default for Options {
@@ -23,6 +24,7 @@ impl Default for Options {
             quit_after_last_terminal_exit: false,
             terminal_count: 1,
             lifecycle_cycles: 1,
+            async_backend: AsyncBackend::Default,
         }
     }
 }
@@ -61,6 +63,22 @@ fn parse_options() -> Result<Options, String> {
                     .next()
                     .ok_or_else(|| "--lifecycle-cycles requires a value".to_owned())?;
                 options.lifecycle_cycles = parse_positive_count("--lifecycle-cycles", &value)?;
+            }
+            "--async-backend" => {
+                options.async_backend = match arguments
+                    .next()
+                    .ok_or_else(|| "--async-backend requires a value".to_owned())?
+                    .as_str()
+                {
+                    "default" => AsyncBackend::Default,
+                    "epoll" => AsyncBackend::Epoll,
+                    "io_uring" => AsyncBackend::IoUring,
+                    value => {
+                        return Err(format!(
+                            "--async-backend must be default, epoll, or io_uring; got {value}"
+                        ));
+                    }
+                };
             }
             _ => return Err(format!("unknown argument: {argument}")),
         }
@@ -176,7 +194,7 @@ fn run() -> Result<(), String> {
     let options = parse_options()?;
 
     // Ghostty owns process-global initialization that must precede GTK.
-    let runtime = GhosttyRuntime::new(AsyncBackend::Default).map_err(|error| error.to_string())?;
+    let runtime = GhosttyRuntime::new(options.async_backend).map_err(|error| error.to_string())?;
     gtk::init().map_err(|error| format!("GTK initialization failed: {error}"))?;
 
     for cycle in 1..=options.lifecycle_cycles {

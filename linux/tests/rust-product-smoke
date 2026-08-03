@@ -2,12 +2,14 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-product="${repo_root}/target/debug/zentty-linux"
+product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
 backend="${GDK_BACKEND:-}"
 ghostty_root="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
 scenario="${ZENTTY_RUST_SCENARIO:-single}"
 terminal_count="${ZENTTY_RUST_TERMINALS:-1}"
 lifecycle_cycles="${ZENTTY_RUST_CYCLES:-1}"
+async_backend="${ZENTTY_LINUX_ASYNC_BACKEND:-default}"
+[[ "${async_backend}" == auto ]] && async_backend=default
 
 fail() {
     echo "rust-product-smoke: error: $*" >&2
@@ -20,6 +22,8 @@ fail() {
     fail "ZENTTY_RUST_SCENARIO must be single or lifecycle"
 [[ "${terminal_count}" =~ ^[1-9][0-9]*$ ]] || fail "invalid terminal count"
 [[ "${lifecycle_cycles}" =~ ^[1-9][0-9]*$ ]] || fail "invalid lifecycle cycle count"
+[[ "${async_backend}" == default || "${async_backend}" == epoll ||
+    "${async_backend}" == io_uring ]] || fail "invalid async backend"
 [[ -x "${product}" ]] || fail "delivered Rust product is not built: ${product}"
 [[ -f "${ghostty_root}/zig-out/lib/libghostty-gtk-embed.so" ]] ||
     fail "pinned Ghostty library is not built"
@@ -63,6 +67,7 @@ LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH
     --command "${child_command}" \
     --terminal-count "${terminal_count}" \
     --lifecycle-cycles "${lifecycle_cycles}" \
+    --async-backend "${async_backend}" \
     --quit-after-last-terminal-exit >"${log}" 2>&1 &
 product_pid=$!
 set -e

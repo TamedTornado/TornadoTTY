@@ -20,3 +20,9 @@ unsafe_op_in_unsafe_fn = "deny"
 [workspace.lints.clippy]
 all = "deny"
 pedantic = "deny"
+
+[profile.release-safe]
+inherits = "release"
+debug = true
+debug-assertions = true
+overflow-checks = true

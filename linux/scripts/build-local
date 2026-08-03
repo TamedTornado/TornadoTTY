@@ -2,7 +2,6 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-bash "${repo_root}/linux/tests/qualification-host-freeze"
 lock_file="${repo_root}/linux/ghostty.lock"
 ghostty_repo="$(sed -n 's/^repo=//p' "${lock_file}")"
 ghostty_revision="$(sed -n 's/^revision=//p' "${lock_file}")"
@@ -13,7 +12,7 @@ zig_global_cache="${repo_root}/build/linux-deps/zig-global-cache"
 zig_local_cache="${ghostty_source}/.zig-cache"
 output_dir="${repo_root}/build/linux"
 optimize="${GHOSTTY_OPTIMIZE:-ReleaseSafe}"
-c_flags=(
+c_probe_flags=(
     -std=c17
     -Wall
     -Wextra
@@ -27,7 +26,7 @@ c_flags=(
     -fstack-protector-strong
     -fPIE
 )
-link_flags=(
+c_probe_link_flags=(
     -pie
     "-Wl,-z,relro"
     "-Wl,-z,now"
@@ -36,11 +35,13 @@ link_flags=(
 gtk4_flags_text="$(pkg-config --cflags --libs gtk4)"
 read -r -a gtk4_flags <<<"${gtk4_flags_text}"
 if [[ "${optimize}" == "Debug" ]]; then
-    c_flags+=(-O0 -g3)
-    host_optimize="Debug"
+    c_probe_flags+=(-O0 -g3)
+    cargo_profile="debug"
+    cargo_arguments=(build --workspace --locked)
 else
-    c_flags+=(-O2 -g -DNDEBUG -D_FORTIFY_SOURCE=3)
-    host_optimize="Release"
+    c_probe_flags+=(-O2 -g -DNDEBUG -D_FORTIFY_SOURCE=3)
+    cargo_profile="release-safe"
+    cargo_arguments=(build --workspace --locked --profile release-safe)
 fi
 
 if [[ ! -x "${zig}" ]]; then
@@ -119,22 +120,12 @@ if [[ -z "${layer_shell_library}" || ! -f "${layer_shell_library}" ]]; then
 fi
 cp "${layer_shell_library}" "${output_dir}/lib/"
 
-cc \
-    "${c_flags[@]}" \
-    -I"${ghostty_source}/zig-out/include" \
-    -I"${repo_root}/linux/src" \
-    "${repo_root}/linux/src/main.c" \
-    "${repo_root}/linux/src/host_options.c" \
-    -L"${output_dir}/lib" \
-    -Wl,-rpath-link,"${output_dir}/lib" \
-    -Wl,--disable-new-dtags,-rpath,'$ORIGIN/../lib' \
-    -lghostty-gtk-embed \
-    "${gtk4_flags[@]}" \
-    "${link_flags[@]}" \
-    -o "${output_dir}/bin/zentty-linux"
+cargo "${cargo_arguments[@]}"
+cp "${repo_root}/target/${cargo_profile}/zentty-linux" \
+    "${output_dir}/bin/zentty-linux"
 
 cc \
-    "${c_flags[@]}" \
+    "${c_probe_flags[@]}" \
     -I"${ghostty_source}/zig-out/include" \
     "${repo_root}/linux/tests/api-contract.c" \
     -L"${output_dir}/lib" \
@@ -142,24 +133,14 @@ cc \
     -Wl,--disable-new-dtags,-rpath,'$ORIGIN/../lib' \
     -lghostty-gtk-embed \
     "${gtk4_flags[@]}" \
-    "${link_flags[@]}" \
+    "${c_probe_link_flags[@]}" \
     -o "${output_dir}/bin/api-contract"
 
 cc \
-    "${c_flags[@]}" \
-    -Wpedantic \
-    -I"${ghostty_source}/zig-out/include" \
-    -I"${repo_root}/linux/src" \
-    "${repo_root}/linux/src/host_options.c" \
-    "${repo_root}/linux/tests/host-options-test.c" \
-    "${link_flags[@]}" \
-    -o "${output_dir}/bin/host-options-test"
-
-cc \
-    "${c_flags[@]}" \
+    "${c_probe_flags[@]}" \
     "${repo_root}/linux/tests/ibus-focus-reproducer.c" \
     "${gtk4_flags[@]}" \
-    "${link_flags[@]}" \
+    "${c_probe_link_flags[@]}" \
     -o "${output_dir}/bin/ibus-focus-reproducer"
 
 c++ \
@@ -172,12 +153,12 @@ c++ \
     -I"${ghostty_source}/zig-out/include" \
     "${repo_root}/linux/tests/api-header-cpp.cc"
 
-printf 'ghostty_source=%s\nghostty_revision=%s\nghostty_tree=%s\noptimize=%s\nhost_optimize=%s\nibus_focus_reproducer_sha256=%s\n' \
+printf 'ghostty_source=%s\nghostty_revision=%s\nghostty_tree=%s\noptimize=%s\nproduct_profile=%s\nibus_focus_reproducer_sha256=%s\n' \
     "${ghostty_source}" \
     "${ghostty_revision}" \
     "${ghostty_tree}" \
     "${optimize}" \
-    "${host_optimize}" \
+    "${cargo_profile}" \
     "$(sha256sum "${repo_root}/linux/tests/ibus-focus-reproducer.c" | awk '{print $1}')" \
     >"${output_dir}/build-metadata"
 

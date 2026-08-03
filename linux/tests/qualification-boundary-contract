@@ -45,4 +45,18 @@ done < <(jq -r '
     [.id,.command] | @tsv
 ' "${matrix}")
 
+while IFS=$'\t' read -r id command; do
+    [[ -n "${id}" ]] || continue
+    [[ "${command}" == *"linux/tests/rust-product-smoke"* ||
+        "${command}" == *"linux/tests/rust-product-lifecycle"* ]] ||
+        fail "terminal product cell ${id} does not launch the Rust product integration test"
+    [[ "${command}" != *"linux/tests/single-terminal"* &&
+        "${command}" != *"linux/tests/multi-terminal"* ]] ||
+        fail "terminal product cell ${id} still launches the retired C host test"
+done < <(jq -r '
+    .cells[] |
+    select(.status == "PASS" and .capability == "terminal_behavior") |
+    [.id,.command] | @tsv
+' "${matrix}")
+
 echo "Qualification boundary contract passed"

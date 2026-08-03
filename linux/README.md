@@ -1,32 +1,23 @@
-# Zentty Linux qualification host
+# Zentty Linux product and qualification
 
-This directory contains a transitional C qualification host and its
-external-boundary integration tests. It is **not** the delivered Rust/GTK Linux
-product reserved by issue #2, and it does not build or import Ghostty's
-historical in-tree embedding spike.
+This directory contains the real Rust/GTK Linux product's build, packaging and
+external-boundary integration tests. The former C qualification application is
+retired; retained C files are narrow dependency probes and are never packaged
+as Zentty.
 
 ## Architecture
 
-- `src/main.c` is the C qualification host for the qualified downstream
-  Ghostty boundary. It is not the Zentty product executable or a foundation
-  for product features.
-- The production shell is specified as Rust + `gtk4-rs` in
+- The production shell is Rust + `gtk4-rs` as specified in
   [`docs/architecture/0001-rust-gtk4-linux-product.md`](../docs/architecture/0001-rust-gtk4-linux-product.md)
-  and will be bootstrapped by issue #13.
+  and implemented in the root Cargo workspace.
 - `ghostty.lock` pins the public Ghostty fork and exact embedding revision.
 - `scripts/build-local` fetches that revision unless `GHOSTTY_SOURCE_DIR`
   selects an already-verified checkout, builds the shared embedding library,
-  and stages a relative `bin`/`lib` bundle under ignored `build/linux`.
-- `tests/` launches that qualification executable and asserts behavior across
-  the C ABI, GTK, Ghostty, PTY, renderer, and compositor boundary.
-
-The current host is deliberately small and frozen to qualification behavior.
-Product behavior must not be added to it to make future Rust product cells
-green. Product features enter the later Rust application only with failing
-end-to-end tests; both this host and the old Ghostty spike remain disposable
-evidence. Host retirement requires removal of the legacy host tests/cells from
-the active graph plus a fresh reviewed replacement receipt for every gated
-product cell.
+  builds the Cargo product, and stages a relative `bin`/`lib` bundle under
+  ignored `build/linux`.
+- `tests/rust-product-smoke` and `tests/rust-product-lifecycle` launch that
+  exact staged executable and assert behavior across Rust, the C ABI, GTK,
+  Ghostty, PTY, renderer, and compositor boundaries.
 
 ## Qualification
 

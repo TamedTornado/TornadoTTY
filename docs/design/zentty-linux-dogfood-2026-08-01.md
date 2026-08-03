@@ -3746,6 +3746,41 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   backends after the multi/lifecycle change. This does not qualify other async
   backends or ReleaseSafe builds.
 
+### DOGFOOD-2026-08-03-RUST-STAGED-ASYNC-AXES: the delivered binary replaces the C host
+
+- **Build boundary:** `linux/scripts/build-local` no longer compiles
+  `linux/src/main.c` or the C host-options implementation. It builds the pinned
+  Ghostty shared library, builds the real Cargo workspace with `--locked`, and
+  stages the Rust `zentty-linux` binary beside its two private shared
+  libraries. C and C++ remain only for the language-neutral ABI and independent
+  IBus probes.
+- **Relocation and hardening:** A product-local linker argument gives the Rust
+  executable a non-transitive `$ORIGIN/../lib` RPATH. `ldd` resolves both
+  `libghostty-gtk-embed.so` and its pinned `libgtk4-layer-shell.so` from the
+  staged bundle. PIE, RELRO, non-executable stack, and immediate binding checks
+  pass on the staged Rust executable and retained probes.
+- **ReleaseSafe definition:** Cargo's new `release-safe` profile inherits
+  optimized release code while retaining debug information, debug assertions,
+  and overflow checks. It is the Rust counterpart to the pinned Ghostty
+  `ReleaseSafe` build; build metadata records both the Ghostty optimization and
+  Rust product profile.
+- **Async semantic red:** Before implementation, the real staged product
+  rejected `--async-backend epoll` and the controlled Wayland integration test
+  failed with exit 1. The product now maps only `default`, `epoll`, and
+  `io_uring` into the fixed safe-adapter enum; unknown values remain errors.
+- **Complete terminal axes exercised:** The exact staged Rust binary passed all
+  24 terminal-behavior combinations: Debug and ReleaseSafe; Wayland and X11;
+  default, epoll, and io_uring; and single plus two-simultaneous/three-cycle
+  behavior. Each combination used a fresh controlled display session. The
+  terminal matrix commands now name the Rust product tests rather than the
+  retired C-host tests.
+- **Runner interruption:** The first clean ReleaseSafe Cargo build exceeded one
+  tool-call capture window after compiling dependencies. No process survived
+  and no artifact or metadata was accepted. The same locked build was resumed
+  from Cargo's cache, completed, staged, and only then tested. Likewise, the
+  batched Debug output ended before the final X11/io_uring/multi acknowledgement;
+  that exact cell was rerun independently and passed.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were

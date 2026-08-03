@@ -6,7 +6,6 @@ build_dir="${repo_root}/build/linux"
 executables=(
     "${build_dir}/bin/zentty-linux"
     "${build_dir}/bin/api-contract"
-    "${build_dir}/bin/host-options-test"
     "${build_dir}/bin/ibus-focus-reproducer"
 )
 libraries=(
