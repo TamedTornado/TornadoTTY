@@ -3882,6 +3882,40 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   rename, backup/recovery, failure injection, and preservation of corrupt input
   on disk remain required before the persistence unit cell can become PASS.
 
+### DOGFOOD-2026-08-03-ATOMIC-WORKSPACE-STORE: real filesystem replacement starts
+
+- **Implementation:** `WorkspaceStore` uses a real advisory file lock, an
+  exclusive same-directory temporary file, complete write plus file `fsync`,
+  atomic rename, and directory `fsync`. On Unix, newly published primary and
+  backup files are mode `0600`. A second save first atomically preserves the
+  complete prior primary as `.bak`; recovery is an explicit `load_backup`
+  operation and never silently overwrites or substitutes for a corrupt
+  primary.
+- **Real-system tests:** Tests use actual temporary directories, files,
+  advisory locks, renames, permission metadata, directory sync, and symlinks.
+  They prove missing-state behavior, save/load, old-primary backup, corrupt
+  primary byte preservation, explicit backup recovery, lock contention with
+  no primary change, and rejection of a symlink primary for both read and
+  write. There is no fake filesystem in the integration path.
+- **Deterministic interruption:** A private write-stage observer injects an
+  error after the new primary temp has been fully synced but before its rename,
+  after the prior primary backup has completed. The old primary and backup
+  remain byte-identical and the uncommitted temp is removed. The observer is
+  not public API and the successful product path still executes real I/O.
+- **Failure and repair:** Rust's stabilized file locking reports
+  `TryLockError`, not `io::Error`; the first compile rejected treating it like
+  an I/O error. The implementation now distinguishes contention from an
+  underlying lock failure. Warning-denied Clippy then required explicit
+  non-truncating lock-file semantics. Review also found that the first
+  interruption test failed during backup publication rather than primary
+  publication, and that load followed symlinks; the test now counts both file
+  syncs and load/save reject non-regular existing paths.
+- **Current limit:** Exact injected failures *inside* write, file `fsync`,
+  rename, and directory `fsync`, concurrent multi-process stress, stale backup
+  policy, first-run ID generation, and product restart remain unfinished. The
+  matrix persistence cell stays `NOT_IMPLEMENTED` until the complete owning
+  suite and real-product restoration path exist.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were
