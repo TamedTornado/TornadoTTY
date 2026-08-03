@@ -4210,6 +4210,115 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   source multi-column/vertical layout or cross-worklane moves. The broad
   worklane cells remain `NOT_IMPLEMENTED`.
 
+### DOGFOOD-2026-08-03-OPERATOR-SIDEBAR-REJECTION: actions are not UX parity
+
+- **Operator failure:** Hands-on testing found no discoverable way to rename a
+  worklane and immediately identified the Linux worklane list as unlike
+  ZenTTY. The only rename affordance was an unlabeled entry below the list that
+  committed on Enter. Plain GTK buttons and a pile of global edit controls did
+  not reproduce the source experience.
+- **Source reconciliation:** ZenTTY renders each worklane as a compound card:
+  optional top title, focused context, status/attention and progress, nested
+  pane rows, server/remote details, active and color treatment, drag/reorder,
+  and row/pane context menus. Rename is a worklane context-menu command that
+  opens a modal editor with Save and Cancel; it is not a permanently visible
+  anonymous text field.
+- **Claim correction:** The preceding commits prove real GTK action dispatch,
+  model transitions, Ghostty surfaces, and PTYs. They do not prove sidebar UX
+  parity. Calling the button list a ZenTTY sidebar overstated the delivered
+  feature even though the broad matrix cells correctly remained
+  `NOT_IMPLEMENTED`.
+- **Order correction:** Sidebar row presentation, nested pane selection, color
+  treatment, contextual rename, and discoverable interaction now precede
+  persistence projection. UX is a product contract, not optional polish.
+
+### DOGFOOD-2026-08-03-COMPOUND-SIDEBAR: real widgets exposed a lease defect
+
+- **Source-shaped repair:** The plain worklane buttons and global edit fields
+  were replaced with compound cards containing an optional worklane title,
+  current terminal context, active/color treatment, nested selectable pane
+  rows, a visible per-row action menu, and a modal Rename Worklane editor with
+  Save, Cancel, and source-matching empty-name behavior. Move and color actions
+  live on the row menu rather than in an unrelated global control strip.
+- **Test-first presentation contract:** Core tests require ordered compound
+  summaries with stable worklane/pane IDs, focused-pane state, terminal titles,
+  active state, and color. The real product scenario now requires exact card
+  receipts for both the active titled card and inactive card, in addition to
+  the existing named-action, topology, real-surface, and real-PTY assertions.
+- **Native teardown failure:** The first controlled X11 run completed every UI
+  action and observed all four real child exits, then aborted in
+  `ghostty_gtk_embed_runtime_free`. Weak-reference instrumentation proved GTK/GSK
+  had finalized only two widgets; the other two externally retained GObjects
+  outlived the Rust `GhosttySurface` wrappers. The wrapper-held runtime lease
+  therefore ended before the native widget lifetime actually ended.
+- **Rejected mitigations:** Clearing the sidebar, clearing window focus/default
+  references, draining immediately pending GLib work, and waiting across an
+  unmap frame each changed which widgets finalized but did not establish the
+  missing ownership invariant. None was misreported as a pass, and no timeout,
+  suppression, or Ghostty assertion was weakened.
+- **Ownership repair:** Each returned Ghostty GObject owns a runtime lease that
+  GTK releases at GObject finalization. The adapter also performs Ghostty's
+  explicit core-surface close before GObject disposal. Ghostty global teardown
+  therefore cannot race render-system references that outlive the host wrapper,
+  while terminal state does not linger until an external GTK reference happens
+  to disappear. The host performs a bounded two-phase unmap and surface release
+  without holding a `RefCell` borrow across callbacks.
+- **Real results:** Warning-denied Clippy passed for the Ghostty adapter and
+  Linux product. The ReleaseSafe staged product then passed the four-terminal
+  worklane/action scenario under both private Xvfb/X11 and headless
+  Weston/Wayland, including clean native runtime teardown.
+- **Remaining UX boundary:** These cards cover the source's basic worklane and
+  pane interaction shape, but agent status/attention, progress, server/remote
+  details, bookmarks, drag/reorder gestures, full pane context menus, and
+  accessibility qualification remain. The broad product worklane cells must
+  remain `NOT_IMPLEMENTED`; this is not a claim of full ZenTTY parity.
+
+### DOGFOOD-2026-08-03-DIRECT-UPSTREAM-REFORK: provenance repair exposed stale stacked branches
+
+- **Discovery:** GitHub showed that `TamedTornado/ghostty` had been forked from
+  `dedene/ghostty`, not directly from `ghostty-org/ghostty`. The downstream
+  commits were safe, but all three published feature branches shared a
+  702-commit-old merge base and the embedding and companion branches also
+  contained unrelated smooth-scroll commits.
+- **Preservation before deletion:** Every old ref was captured in the verified
+  bundle `backups/ghostty-pre-refork-2026-08-03.bundle` outside this repository.
+  Its SHA-256 is
+  `6f981df185a688a940183c675e1ffefd35d44c3758f93cd0a6c4d042fac97866`.
+  The operator deleted the incorrect GitHub fork only after the refs and bundle
+  were verified.
+- **Repair:** The public fork was recreated directly from
+  `ghostty-org/ghostty`. The GTK embedding commits and companion tee commit were
+  independently rebased onto official commit
+  `ac04fc276169c70d31aa6fcfc5b43fc160d6fe6e`; neither refreshed branch contains
+  the unrelated smooth-scroll series. The old smooth-scroll branch remains
+  preserved but deliberately was not labeled current: its renderer conflicts
+  require a real feature port rather than an automated conflict resolution.
+- **Current-upstream failures:** Ghostty now requires Zig 0.16.0. That migration
+  exposed a missing bundled `gtk4-layer-shell` translate-c include path,
+  removed global-state and enum-conversion APIs, and a teardown assumption in
+  `GlobalShortcuts` that the process-default `GApplication` must be a
+  `GhosttyApplication`. A plain embedding host disproved the last assumption
+  with a post-PASS abort. `GlobalShortcuts` now uses its actual owning
+  application, and the alternate GTK host exits cleanly.
+- **Ownership clarification:** The Rust GObject-held runtime lease remains the
+  protection against GTK references outliving Rust wrappers. In addition, the
+  embedding ABI explicitly closes each Ghostty core surface before widget
+  disposal; pre-init close is defined and tested. These are complementary
+  lifecycle guarantees, not a lease-only repair.
+- **Real evidence:** The refreshed GTK branch built on current official Ghostty
+  and its four-surface plain-host and interaction scenarios passed under a
+  private Xvfb display. Zentty then rebuilt from the exact refreshed commit
+  `958d97ecdb659babdf530cb5562525134baec2a4`. The delivered ReleaseSafe product
+  passed the two-worklane/four-pane scenario under both private Xvfb/X11 and
+  private headless Weston/Wayland, with four real PTYs and four native surface
+  finalizations. The Rust workspace tests also passed.
+- **Companion branch:** The independently refreshed tee branch builds the real
+  Linux C library on current Ghostty. Its sequence state now has a focused test
+  proving detach/reattach gaps remain detectable. The full monolithic Ghostty
+  test command was stopped after two no-output runs exceeded six minutes;
+  this is recorded as incomplete evidence, not a pass. The focused
+  `-Dapp-runtime=none` ReleaseSafe build passed.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were

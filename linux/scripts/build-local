@@ -6,7 +6,7 @@ lock_file="${repo_root}/linux/ghostty.lock"
 ghostty_repo="$(sed -n 's/^repo=//p' "${lock_file}")"
 ghostty_revision="$(sed -n 's/^revision=//p' "${lock_file}")"
 ghostty_source="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
-zig="${ZIG:-${repo_root}/../.tools/zig-x86_64-linux-0.15.2/zig}"
+zig="${ZIG:-${repo_root}/../.tools/zig-x86_64-linux-0.16.0/zig}"
 blueprint_dir="${BLUEPRINT_COMPILER_DIR:-${repo_root}/../.tools/blueprint-compiler-0.16.0/bin}"
 zig_global_cache="${repo_root}/build/linux-deps/zig-global-cache"
 zig_local_cache="${ghostty_source}/.zig-cache"
@@ -47,7 +47,7 @@ else
 fi
 
 if [[ ! -x "${zig}" ]]; then
-    echo "error: Zig 0.15.2 not found at ${zig}" >&2
+    echo "error: Zig 0.16.0 not found at ${zig}" >&2
     exit 1
 fi
 if [[ ! "${ghostty_repo}" =~ ^https://github\.com/[^/]+/[^/]+\.git$ ]] ||

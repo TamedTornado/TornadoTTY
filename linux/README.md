@@ -26,8 +26,9 @@ This is model/store parity only. The GTK product does not yet project, mutate,
 or restore that complete recipe; the Wayland/X11 product-restore cells remain
 `NOT_IMPLEMENTED`.
 
-The delivered GTK binary now has the first source-backed worklane shell slice:
-an ordered worklane sidebar, named GTK actions for worklane
+The delivered GTK binary currently has an interaction scaffold for the first
+source-backed worklane shell slice: compound worklane cards with nested pane
+rows and contextual rename, plus named GTK actions for worklane
 creation/selection/rename/reorder/color and pane split/close/reorder, and one
 real Ghostty surface/PTTY per pane. The focused
 `rust-workspace-actions` scenario drives those same actions in the staged binary
@@ -36,6 +37,10 @@ under controlled Wayland and X11. Rich color presentation, multi-row/column
 pane layout and cross-worklane movement, recipe restoration, and the full
 source sidebar summaries are not implemented, so the broad product-worklane
 qualification cells remain `NOT_IMPLEMENTED`.
+
+The compound cards are not yet full ZenTTY sidebar parity. Agent status and
+attention, progress, server/remote details, bookmarks, drag gestures, complete
+context menus, and accessibility qualification remain active work.
 
 ## Qualification
 
