@@ -3848,6 +3848,40 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   explicitly unimplemented. The authoritative `workspace_persistence` cells
   therefore remain gaps.
 
+### DOGFOOD-2026-08-03-WORKSPACE-SCHEMA-CODEC: strict v0/v1 state enters the model
+
+- **Dependency decision:** `zentty-core` now uses exact, deliberately
+  non-latest pins `serde 1.0.228` and `serde_json 1.0.145`; `Cargo.lock`
+  records registry sources and checksums. Cargo reported newer available
+  releases while resolving these versions, so the change does not silently
+  select the newest publication. No build script or Git dependency was added.
+- **Real schema alignment:** The Rust codec loads the committed v1 architecture
+  fixture, preserves worklane/pane titles, column and row weights, launch
+  profile references, and approved non-secret agent resume metadata, and
+  round-trips to canonical v1 JSON. The committed v0 fixture migrates in
+  memory and its canonical v1 output reloads identically.
+- **Compatibility evidence:** The entire locked workspace, including the new
+  codec and its fixtures, passed under the declared Rust 1.92.0 MSRV as well as
+  the pinned development toolchain's format, test, and warning-denied Clippy
+  gates.
+- **Fail-closed discoveries:** Serde's unknown-field rejection alone was
+  insufficient for cross-object invariants. Conversion now separately rejects
+  duplicate IDs, dangling selections, noncontiguous orders/rows, empty
+  collections, unknown columns, invalid weights, malformed IDs/paths/profiles,
+  and secret-bearing unknown fields. Newer schema versions remain a distinct
+  unsupported-version error rather than being interpreted or overwritten.
+- **Failure and repair:** The first compile exposed an invalid attempt to
+  format Serde's error category with `Display`. The first Clippy pass then
+  rejected a 102-line decoder and a needlessly owned JSON error. Window,
+  worklane, and pane conversion now have focused functions, and diagnostics
+  borrow the source error while retaining line, column, and structural detail.
+  Clippy subsequently found and repaired an over-complex test type and
+  unnested error pattern.
+- **Current limit:** This is an in-memory strict codec, not durable storage.
+  Same-directory exclusive temp creation, file and directory `fsync`, atomic
+  rename, backup/recovery, failure injection, and preservation of corrupt input
+  on disk remain required before the persistence unit cell can become PASS.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were

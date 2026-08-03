@@ -3,7 +3,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct StableId(String);
+pub struct StableId(pub(super) String);
 
 impl StableId {
     /// Parses the UUID-shaped stable identifier used by the durable schema.
@@ -33,12 +33,27 @@ impl fmt::Display for StableId {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Pane {
-    id: StableId,
-    title: Option<String>,
-    cwd: PathBuf,
-    launch_profile_id: String,
+    pub(super) id: StableId,
+    pub(super) title: Option<String>,
+    pub(super) layout: PaneLayout,
+    pub(super) cwd: PathBuf,
+    pub(super) launch_profile_id: String,
+    pub(super) agent: Option<AgentResume>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct PaneLayout {
+    pub(super) column: usize,
+    pub(super) row: usize,
+    pub(super) row_weight: f64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AgentResume {
+    pub(super) adapter: String,
+    pub(super) resume_id: String,
 }
 
 impl Pane {
@@ -67,8 +82,14 @@ impl Pane {
         Ok(Self {
             id,
             title: None,
+            layout: PaneLayout {
+                column: 0,
+                row: 0,
+                row_weight: 1.0,
+            },
             cwd,
             launch_profile_id,
+            agent: None,
         })
     }
 
@@ -91,14 +112,59 @@ impl Pane {
     pub fn title(&self) -> Option<&str> {
         self.title.as_deref()
     }
+
+    #[must_use]
+    pub const fn layout(&self) -> &PaneLayout {
+        &self.layout
+    }
+
+    #[must_use]
+    pub const fn agent(&self) -> Option<&AgentResume> {
+        self.agent.as_ref()
+    }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+impl PaneLayout {
+    #[must_use]
+    pub const fn column(&self) -> usize {
+        self.column
+    }
+
+    #[must_use]
+    pub const fn row(&self) -> usize {
+        self.row
+    }
+
+    #[must_use]
+    pub const fn row_weight(&self) -> f64 {
+        self.row_weight
+    }
+}
+
+impl AgentResume {
+    #[must_use]
+    pub fn adapter(&self) -> &str {
+        &self.adapter
+    }
+
+    #[must_use]
+    pub fn resume_id(&self) -> &str {
+        &self.resume_id
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct Worklane {
-    id: StableId,
-    title: Option<String>,
-    panes: Vec<Pane>,
-    active_pane_id: StableId,
+    pub(super) id: StableId,
+    pub(super) title: Option<String>,
+    pub(super) columns: Vec<ColumnLayout>,
+    pub(super) panes: Vec<Pane>,
+    pub(super) active_pane_id: StableId,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ColumnLayout {
+    pub(super) weight: f64,
 }
 
 impl Worklane {
@@ -118,16 +184,28 @@ impl Worklane {
     }
 
     #[must_use]
+    pub fn columns(&self) -> &[ColumnLayout] {
+        &self.columns
+    }
+
+    #[must_use]
     pub const fn active_pane_id(&self) -> &StableId {
         &self.active_pane_id
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+impl ColumnLayout {
+    #[must_use]
+    pub const fn weight(&self) -> f64 {
+        self.weight
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct Window {
-    id: StableId,
-    worklanes: Vec<Worklane>,
-    active_worklane_id: StableId,
+    pub(super) id: StableId,
+    pub(super) worklanes: Vec<Worklane>,
+    pub(super) active_worklane_id: StableId,
 }
 
 impl Window {
@@ -147,12 +225,12 @@ impl Window {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Workspace {
-    id: StableId,
-    revision: u64,
-    windows: Vec<Window>,
-    active_window_id: StableId,
+    pub(super) id: StableId,
+    pub(super) revision: u64,
+    pub(super) windows: Vec<Window>,
+    pub(super) active_window_id: StableId,
 }
 
 impl Workspace {
@@ -188,6 +266,7 @@ impl Workspace {
                 worklanes: vec![Worklane {
                     id: worklane_id,
                     title: None,
+                    columns: vec![ColumnLayout { weight: 1.0 }],
                     panes: vec![initial_pane],
                     active_pane_id,
                 }],
@@ -238,6 +317,7 @@ impl Workspace {
         window.worklanes.push(Worklane {
             id: worklane_id,
             title,
+            columns: vec![ColumnLayout { weight: 1.0 }],
             panes: vec![initial_pane],
             active_pane_id,
         });
@@ -338,7 +418,15 @@ impl Workspace {
         pane: Pane,
     ) -> Result<(), WorkspaceError> {
         self.reject_duplicate(pane.id())?;
-        self.worklane_mut(window_id, worklane_id)?.panes.push(pane);
+        let lane = self.worklane_mut(window_id, worklane_id)?;
+        let mut pane = pane;
+        pane.layout.column = 0;
+        pane.layout.row = lane
+            .panes
+            .iter()
+            .filter(|existing| existing.layout.column == 0)
+            .count();
+        lane.panes.push(pane);
         self.changed();
         Ok(())
     }
@@ -359,6 +447,7 @@ impl Workspace {
         let source = position(&lane.panes, pane_id, |pane| pane.id())
             .ok_or_else(|| WorkspaceError::PaneNotFound(pane_id.clone()))?;
         move_item(&mut lane.panes, source, destination)?;
+        normalize_rows(lane);
         self.changed();
         Ok(())
     }
@@ -402,6 +491,7 @@ impl Workspace {
         let index = position(&lane.panes, pane_id, |pane| pane.id())
             .ok_or_else(|| WorkspaceError::PaneNotFound(pane_id.clone()))?;
         let removed = lane.panes.remove(index);
+        normalize_rows(lane);
         if &lane.active_pane_id == pane_id {
             let repaired = index.min(lane.panes.len() - 1);
             lane.active_pane_id = lane.panes[repaired].id.clone();
@@ -462,6 +552,8 @@ pub enum WorkspaceError {
     InvalidDestination { destination: usize, len: usize },
     CannotRemoveFinalWorklane,
     CannotRemoveFinalPane,
+    InvalidPersistedState(String),
+    UnsupportedSchemaVersion(u64),
 }
 
 impl fmt::Display for WorkspaceError {
@@ -491,6 +583,12 @@ impl fmt::Display for WorkspaceError {
             Self::CannotRemoveFinalPane => {
                 formatter.write_str("cannot remove the final pane from a worklane")
             }
+            Self::InvalidPersistedState(detail) => {
+                write!(formatter, "invalid persisted workspace state: {detail}")
+            }
+            Self::UnsupportedSchemaVersion(version) => {
+                write!(formatter, "unsupported workspace schema version: {version}")
+            }
         }
     }
 }
@@ -509,7 +607,7 @@ fn is_stable_id(value: &str) -> bool {
 }
 
 fn is_valid_cwd(path: &Path) -> bool {
-    path.is_absolute() && !path.as_os_str().to_string_lossy().contains('\0')
+    path.is_absolute() && path.to_str().is_some_and(|value| !value.contains('\0'))
 }
 
 fn is_launch_profile_id(value: &str) -> bool {
@@ -547,4 +645,17 @@ fn move_item<T>(
     let item = items.remove(source);
     items.insert(destination, item);
     Ok(())
+}
+
+fn normalize_rows(lane: &mut Worklane) {
+    for column in 0..lane.columns.len() {
+        for (row, pane) in lane
+            .panes
+            .iter_mut()
+            .filter(|pane| pane.layout.column == column)
+            .enumerate()
+        {
+            pane.layout.row = row;
+        }
+    }
 }
