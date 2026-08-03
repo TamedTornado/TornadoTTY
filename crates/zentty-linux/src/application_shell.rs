@@ -6,7 +6,10 @@ use std::time::Duration;
 use gtk::gio;
 use gtk::glib::{self, variant::ToVariant};
 use gtk::prelude::*;
-use zentty_core::{ClosePaneOutcome, WorklaneColor, WorkspaceState};
+use zentty_core::{
+    ClosePaneOutcome, ColumnRecipe, PaneRecipe, WindowRecipe, WorklaneColor, WorklaneRecipe,
+    WorkspaceState,
+};
 use zentty_ghostty::{GhosttyRuntime, GhosttySurface, SurfaceConfig};
 
 use crate::sidebar;
@@ -37,6 +40,7 @@ pub(crate) struct ApplicationShell {
     quit_after_last_terminal_exit: bool,
     next_worklane_number: usize,
     next_pane_number: usize,
+    window_template: WindowRecipe,
 }
 
 impl ApplicationShell {
@@ -46,6 +50,7 @@ impl ApplicationShell {
         terminal_count: usize,
         quit_after_last_terminal_exit: bool,
         main_loop: &glib::MainLoop,
+        restored_window: Option<WindowRecipe>,
     ) -> Result<Rc<RefCell<Self>>, String> {
         let window = gtk::Window::new();
         window.set_title(Some(zentty_core::PRODUCT_NAME));
@@ -90,7 +95,31 @@ impl ApplicationShell {
         root.append(&content);
         window.set_child(Some(&root));
 
-        let state = WorkspaceState::new("worklane-1", "pane-1");
+        let restored = restored_window.is_some();
+        let window_template = restored_window.unwrap_or_else(default_window_recipe);
+        let state = WorkspaceState::from_window_recipe(&window_template)
+            .map_err(|error| format!("workspace restore failed: {error}"))?;
+        let next_worklane_number = next_numeric_identity(
+            state
+                .worklanes()
+                .iter()
+                .map(|worklane| worklane.id.as_str()),
+            "worklane-",
+        );
+        let next_pane_number = next_numeric_identity(
+            state
+                .worklanes()
+                .iter()
+                .flat_map(|worklane| &worklane.panes)
+                .map(|pane| pane.id.as_str()),
+            "pane-",
+        );
+        let initial_pane_ids = state
+            .worklanes()
+            .iter()
+            .flat_map(|worklane| &worklane.panes)
+            .map(|pane| pane.id.clone())
+            .collect::<Vec<_>>();
         let shell = Rc::new(RefCell::new(Self {
             window,
             sidebar,
@@ -103,14 +132,19 @@ impl ApplicationShell {
             main_loop: main_loop.clone(),
             live_children: Rc::new(Cell::new(0)),
             quit_after_last_terminal_exit,
-            next_worklane_number: 2,
-            next_pane_number: 2,
+            next_worklane_number,
+            next_pane_number,
+            window_template,
         }));
 
         Self::install_actions(&shell);
-        Self::create_surface(&shell, "pane-1")?;
-        for _ in 1..terminal_count {
-            Self::split_focused_pane_right(&shell)?;
+        for pane_id in initial_pane_ids {
+            Self::create_surface(&shell, &pane_id)?;
+        }
+        if !restored {
+            for _ in 1..terminal_count {
+                Self::split_focused_pane_right(&shell)?;
+            }
         }
         shell.borrow().render();
         Ok(shell)
@@ -122,6 +156,10 @@ impl ApplicationShell {
 
     pub(crate) fn live_children(&self) -> usize {
         self.live_children.get()
+    }
+
+    pub(crate) fn window_recipe(&self) -> WindowRecipe {
+        self.state.to_window_recipe(&self.window_template)
     }
 
     pub(crate) fn present(&self) {
@@ -153,7 +191,7 @@ impl ApplicationShell {
         Ok(())
     }
 
-    pub(crate) fn schedule_workspace_actions(shell: &Rc<RefCell<Self>>) {
+    pub(crate) fn schedule_workspace_actions(shell: &Rc<RefCell<Self>>, quit_when_complete: bool) {
         let weak = Rc::downgrade(shell);
         let step = Rc::new(Cell::new(0_u8));
         glib::timeout_add_local(Duration::from_millis(100), move || {
@@ -177,6 +215,9 @@ impl ApplicationShell {
                 7 => window.activate_action("workspace.move-pane-left", None),
                 _ => {
                     eprintln!("zentty-linux: workspace-action-scenario complete");
+                    if quit_when_complete {
+                        shell.borrow().main_loop.quit();
+                    }
                     return glib::ControlFlow::Break;
                 }
             };
@@ -615,5 +656,43 @@ impl ApplicationShell {
 fn remove_all_children(container: &gtk::Box) {
     while let Some(child) = container.first_child() {
         container.remove(&child);
+    }
+}
+
+fn next_numeric_identity<'a>(ids: impl Iterator<Item = &'a str>, prefix: &str) -> usize {
+    ids.filter_map(|id| id.strip_prefix(prefix)?.parse::<usize>().ok())
+        .max()
+        .unwrap_or(0)
+        .saturating_add(1)
+}
+
+fn default_window_recipe() -> WindowRecipe {
+    WindowRecipe {
+        id: "window-1".to_owned(),
+        frame: None,
+        worklanes: vec![WorklaneRecipe {
+            id: "worklane-1".to_owned(),
+            title: None,
+            next_pane_number: 2,
+            focused_column_id: Some("column-worklane-1".to_owned()),
+            columns: vec![ColumnRecipe {
+                id: "column-worklane-1".to_owned(),
+                width: 1.0,
+                focused_pane_id: Some("pane-1".to_owned()),
+                last_focused_pane_id: Some("pane-1".to_owned()),
+                pane_heights: vec![1.0],
+                panes: vec![PaneRecipe {
+                    id: "pane-1".to_owned(),
+                    custom_title: None,
+                    title_seed: Some("shell".to_owned()),
+                    working_directory: None,
+                    last_activity_title: None,
+                    last_run_command: None,
+                }],
+            }],
+            color: None,
+            bookmark_origin_id: None,
+        }],
+        active_worklane_id: Some("worklane-1".to_owned()),
     }
 }

@@ -4376,6 +4376,40 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   is a focused model prerequisite only; no real product restore or persistence
   claim is made yet, and multi-column product layout remains required by #4.
 
+### DOGFOOD-2026-08-03-REAL-RESTORE-RELAUNCH: preserve the source envelope around real GTK actions
+
+- **Product path:** Normal startup now resolves the XDG/HOME state directory,
+  reads `restore-snapshot.json` and `restore-lifecycle.json`, selects the exact
+  single source window, marks the launch unclean, constructs real Ghostty
+  surfaces for every imported pane, and renders the restored worklane IDs,
+  titles, colors, pane IDs, and focus. Clean shutdown projects current state
+  into the source envelope, atomically saves it, then marks the lifecycle clean.
+- **Real scenario:** `rust-session-restore` seeds the staged ReleaseSafe binary
+  with the Swift-compatible v3 fixture, launches the real GTK/Ghostty product,
+  drives the named worklane actions, and quits through the product lifecycle.
+  It asserts the emitted JSON preserved the window frame, worklane bookmark,
+  pane heights, last command, and separate Codex restore draft while adding the
+  real renamed and colored worklane. It then launches the same staged binary a
+  second time from that output and requires the saved worklane/pane identities
+  and compound sidebar metadata before further automation mutates anything.
+- **No fake system boundary:** Both passes use the real executable, JSON files,
+  atomic store, GTK widgets, Ghostty library, terminal surfaces, PTYs, child
+  processes, renderer, and compositor. The scenario passed under private
+  Xvfb/X11 and private headless Weston/Wayland. The existing four-terminal
+  worklane scenario also passed again on both compositors after persistence was
+  enabled.
+- **Coding-standard failure:** Adding separate exit booleans for child-exit and
+  action-completion automation triggered warning-denied Clippy's excessive-bool
+  rule. A single `ExitPolicy` enum now makes the mutually exclusive lifecycle
+  modes explicit rather than suppressing the lint.
+- **Qualification boundary:** This proves a real source-envelope
+  restore/persist/relaunch slice, not the full `workspace_restore` cells. The
+  product deliberately rejects multiple windows and zero/multiple columns;
+  multi-window and source column geometry, real CWD launch, live debounce,
+  meaningless-default deletion, corrupt-snapshot recovery UI, and crash
+  relaunch remain. The broad Wayland and X11 restore cells therefore stay
+  `NOT_IMPLEMENTED`.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were

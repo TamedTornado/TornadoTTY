@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
+ghostty_root="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
+backend="${GDK_BACKEND:-}"
+fixture="${repo_root}/crates/zentty-core/tests/fixtures/session-restore-v3.json"
+
+fail() {
+    echo "rust-session-restore: error: $*" >&2
+    exit 1
+}
+
+[[ "${backend}" == wayland || "${backend}" == x11 ]] ||
+    fail "GDK_BACKEND must be wayland or x11"
+for dependency in jq readelf timeout mktemp cp grep; do
+    command -v "${dependency}" >/dev/null || fail "${dependency} is required"
+done
+[[ -x "${product}" ]] || fail "delivered Rust product is not built: ${product}"
+[[ -f "${ghostty_root}/zig-out/lib/libghostty-gtk-embed.so" ]] ||
+    fail "pinned Ghostty library is not built"
+
+layer_runpath="$(
+    readelf -d "${ghostty_root}/zig-out/lib/libghostty-gtk-embed.so" |
+        sed -n 's/.*Library runpath: \[\([^]]*\)\].*/\1/p' |
+        cut -d: -f1
+)"
+[[ "${layer_runpath}" == .zig-cache/* ]] || fail "Ghostty layer-shell runpath is missing"
+layer_directory="${ghostty_root}/${layer_runpath}"
+
+state_dir="$(mktemp -d)"
+first_log="$(mktemp)"
+second_log="$(mktemp)"
+trap 'rm -rf -- "${state_dir}"; rm -f -- "${first_log}" "${second_log}"' EXIT
+cp "${fixture}" "${state_dir}/restore-snapshot.json"
+
+run_product() {
+    local receipt="$1"
+    set +e
+    timeout --foreground --kill-after=2s 20s \
+        env LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+        "${product}" \
+        --state-directory "${state_dir}" \
+        --command 'sleep 30' \
+        --exercise-workspace-actions \
+        --quit-after-workspace-actions >"${receipt}" 2>&1
+    local status=$?
+    set -e
+    if (( status != 0 )); then
+        cat "${receipt}" >&2
+        fail "product restore run exited ${status}"
+    fi
+}
+
+run_product "${first_log}"
+
+snapshot="${state_dir}/restore-snapshot.json"
+lifecycle="${state_dir}/restore-lifecycle.json"
+[[ -f "${snapshot}" && -f "${lifecycle}" ]] || fail "clean shutdown did not publish both state files"
+jq -e '
+    .reason == "cleanExit" and
+    .workspace.schemaVersion == 3 and
+    .workspace.activeWindowID == "window-main" and
+    (.workspace.windows | length == 1) and
+    (.workspace.windows[0].frame.width == 1720) and
+    (.workspace.windows[0].worklanes[] | select(.id == "worklane-main") |
+        .bookmarkOriginID == "bookmark-main" and
+        .columns[0].paneHeights == [420, 280] and
+        .columns[0].panes[0].lastRunCommand == "cargo test") and
+    (.workspace.windows[0].worklanes[] | select(.id == "worklane-1") |
+        .title == "Frontend" and .color == "red") and
+    (.restoreDraftWindows[0].paneDrafts[0].sessionID == "session-codex")
+' "${snapshot}" >/dev/null || fail "persisted source envelope lost metadata or product mutations"
+jq -e '.cleanExit == true' "${lifecycle}" >/dev/null || fail "clean lifecycle marker was not written"
+
+run_product "${second_log}"
+grep -F 'zentty-linux: topology=worklane-main[title=Nimbu API,color=blue]:pane-agent,pane-shell|worklane-1[title=Frontend,color=red]:' \
+    "${second_log}" >/dev/null || {
+    cat "${second_log}" >&2
+    fail "relaunch did not render the exact saved worklane and pane identities before mutation"
+}
+grep -F 'zentty-linux: sidebar-card id=worklane-main panes=2 active=false title=Some("Nimbu API")' \
+    "${second_log}" >/dev/null || fail "relaunch did not render restored source sidebar metadata"
+
+echo "Rust session restore passed: ${backend}, source-envelope=preserved, relaunch=real"

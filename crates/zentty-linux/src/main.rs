@@ -7,30 +7,45 @@ use application_shell::ApplicationShell;
 use gtk::glib;
 use gtk::prelude::*;
 use std::cell::Cell;
+use std::path::PathBuf;
 use std::process::ExitCode;
 use std::rc::Rc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use zentty_core::{
+    SaveReason, SessionRestoreEnvelope, SessionRestoreStore, WindowRecipe, WorkspaceRecipe,
+};
 use zentty_ghostty::{AsyncBackend, GhosttyRuntime};
 
 #[derive(Debug)]
 struct Options {
     command: Option<String>,
-    quit_after_last_terminal_exit: bool,
+    exit_policy: ExitPolicy,
     terminal_count: usize,
     lifecycle_cycles: usize,
     async_backend: AsyncBackend,
     exercise_workspace_actions: bool,
+    state_directory: Option<PathBuf>,
+    restore_enabled: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ExitPolicy {
+    Manual,
+    LastTerminal,
+    WorkspaceActions,
 }
 
 impl Default for Options {
     fn default() -> Self {
         Self {
             command: None,
-            quit_after_last_terminal_exit: false,
+            exit_policy: ExitPolicy::Manual,
             terminal_count: 1,
             lifecycle_cycles: 1,
             async_backend: AsyncBackend::Default,
             exercise_workspace_actions: false,
+            state_directory: None,
+            restore_enabled: true,
         }
     }
 }
@@ -56,10 +71,22 @@ fn parse_options() -> Result<Options, String> {
                 );
             }
             "--quit-after-last-terminal-exit" => {
-                options.quit_after_last_terminal_exit = true;
+                options.exit_policy = ExitPolicy::LastTerminal;
             }
             "--exercise-workspace-actions" => {
                 options.exercise_workspace_actions = true;
+            }
+            "--quit-after-workspace-actions" => {
+                options.exit_policy = ExitPolicy::WorkspaceActions;
+            }
+            "--state-directory" => {
+                options.state_directory =
+                    Some(PathBuf::from(arguments.next().ok_or_else(|| {
+                        "--state-directory requires a value".to_owned()
+                    })?));
+            }
+            "--no-session-restore" => {
+                options.restore_enabled = false;
             }
             "--terminal-count" => {
                 let value = arguments
@@ -92,6 +119,11 @@ fn parse_options() -> Result<Options, String> {
             _ => return Err(format!("unknown argument: {argument}")),
         }
     }
+    if options.exit_policy == ExitPolicy::WorkspaceActions && !options.exercise_workspace_actions {
+        return Err(
+            "--quit-after-workspace-actions requires --exercise-workspace-actions".to_owned(),
+        );
+    }
     Ok(options)
 }
 
@@ -99,14 +131,16 @@ fn run_lifecycle_cycle(
     runtime: &GhosttyRuntime,
     options: &Options,
     cycle: usize,
-) -> Result<(), String> {
+    restored_window: Option<WindowRecipe>,
+) -> Result<WindowRecipe, String> {
     let main_loop = glib::MainLoop::new(None, false);
     let shell = ApplicationShell::new(
         runtime,
         options.command.clone(),
         options.terminal_count,
-        options.quit_after_last_terminal_exit,
+        options.exit_policy == ExitPolicy::LastTerminal,
         &main_loop,
+        restored_window,
     )?;
     let close_loop = main_loop.clone();
     shell.borrow().window().connect_close_request(move |_| {
@@ -142,11 +176,15 @@ fn run_lifecycle_cycle(
 
     shell.borrow().present();
     if options.exercise_workspace_actions {
-        ApplicationShell::schedule_workspace_actions(&shell);
+        ApplicationShell::schedule_workspace_actions(
+            &shell,
+            options.exit_policy == ExitPolicy::WorkspaceActions,
+        );
     }
     main_loop.run();
 
     tick_source.remove();
+    let window_recipe = shell.borrow().window_recipe();
     shell.borrow_mut().detach_and_close();
     settle_gtk_teardown();
     shell.borrow_mut().release_surfaces()?;
@@ -154,14 +192,14 @@ fn run_lifecycle_cycle(
     while glib::MainContext::default().pending() {
         glib::MainContext::default().iteration(false);
     }
-    if options.quit_after_last_terminal_exit && shell.borrow().live_children() != 0 {
+    if options.exit_policy == ExitPolicy::LastTerminal && shell.borrow().live_children() != 0 {
         return Err(format!(
             "lifecycle cycle {cycle} ended with {} live children",
             shell.borrow().live_children()
         ));
     }
     eprintln!("zentty-linux: lifecycle-cycle={cycle} complete");
-    Ok(())
+    Ok(window_recipe)
 }
 
 fn settle_gtk_teardown() {
@@ -178,15 +216,96 @@ fn settle_gtk_teardown() {
 fn run() -> Result<(), String> {
     let options = parse_options()?;
 
+    let state_directory = match &options.state_directory {
+        Some(path) => path.clone(),
+        None => default_state_directory()?,
+    };
+    let store = SessionRestoreStore::new(
+        state_directory.join("restore-snapshot.json"),
+        state_directory.join("restore-lifecycle.json"),
+    );
+    let launch_decision = store
+        .prepare_for_launch(options.restore_enabled)
+        .map_err(|error| error.to_string())?;
+    let restored_drafts = launch_decision.as_ref().map_or_else(Vec::new, |decision| {
+        decision.envelope.restore_draft_windows.clone()
+    });
+    let mut restored_window = launch_decision
+        .as_ref()
+        .map(|decision| select_restored_window(&decision.envelope.workspace))
+        .transpose()?;
+    store
+        .mark_launch_started(reference_timestamp())
+        .map_err(|error| error.to_string())?;
+
     // Ghostty owns process-global initialization that must precede GTK.
     let runtime = GhosttyRuntime::new(options.async_backend).map_err(|error| error.to_string())?;
     gtk::init().map_err(|error| format!("GTK initialization failed: {error}"))?;
 
     for cycle in 1..=options.lifecycle_cycles {
-        run_lifecycle_cycle(&runtime, &options, cycle)?;
+        restored_window = Some(run_lifecycle_cycle(
+            &runtime,
+            &options,
+            cycle,
+            restored_window,
+        )?);
     }
     drop(runtime);
+    let window = restored_window.expect("positive lifecycle cycle count");
+    let workspace = WorkspaceRecipe {
+        schema_version: Some(WorkspaceRecipe::CURRENT_SCHEMA_VERSION),
+        active_window_id: Some(window.id.clone()),
+        windows: vec![window],
+    };
+    store
+        .save_snapshot(&SessionRestoreEnvelope {
+            schema_version: 1,
+            saved_at: reference_timestamp(),
+            reason: SaveReason::CleanExit,
+            workspace,
+            restore_draft_windows: restored_drafts,
+        })
+        .map_err(|error| error.to_string())?;
+    store
+        .mark_clean_exit(reference_timestamp())
+        .map_err(|error| error.to_string())?;
     Ok(())
+}
+
+fn select_restored_window(workspace: &WorkspaceRecipe) -> Result<WindowRecipe, String> {
+    if workspace.windows.len() != 1 {
+        return Err(format!(
+            "workspace restore has {} windows; Linux currently requires exactly one",
+            workspace.windows.len()
+        ));
+    }
+    let window = &workspace.windows[0];
+    if workspace
+        .active_window_id
+        .as_deref()
+        .is_some_and(|id| id != window.id)
+    {
+        return Err("workspace active window does not exist".to_owned());
+    }
+    Ok(window.clone())
+}
+
+fn default_state_directory() -> Result<PathBuf, String> {
+    if let Some(path) = std::env::var_os("XDG_STATE_HOME") {
+        return Ok(PathBuf::from(path).join("zentty"));
+    }
+    std::env::var_os("HOME")
+        .map(|home| PathBuf::from(home).join(".local/state/zentty"))
+        .ok_or_else(|| "neither XDG_STATE_HOME nor HOME is set".to_owned())
+}
+
+fn reference_timestamp() -> f64 {
+    const APPLE_REFERENCE_EPOCH: f64 = 978_307_200.0;
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0.0, |duration| {
+            duration.as_secs_f64() - APPLE_REFERENCE_EPOCH
+        })
 }
 
 fn main() -> ExitCode {

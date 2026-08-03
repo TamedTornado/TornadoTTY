@@ -14,7 +14,7 @@
       "linux_owner_issue": 3,
       "implementation_status": "PARTIAL",
       "focused_tests": ["crates/zentty-core/tests/workspace_recipe.rs"],
-      "product_scenarios": [],
+      "product_scenarios": ["linux/tests/rust-session-restore"],
       "test_plan": "Add staged-product import, action mutation, clean-exit export, and exact relaunch assertions under controlled X11 and Wayland.",
       "alternative_or_blocker": null
     },
@@ -30,7 +30,7 @@
       "linux_owner_issue": 3,
       "implementation_status": "PARTIAL",
       "focused_tests": ["crates/zentty-core/tests/session_restore_store.rs"],
-      "product_scenarios": [],
+      "product_scenarios": ["linux/tests/rust-session-restore"],
       "test_plan": "Drive real GTK actions, wait for the real debounce or clean-exit path, and inspect and relaunch from the produced envelope.",
       "alternative_or_blocker": null
     },
