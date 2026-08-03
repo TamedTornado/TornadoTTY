@@ -1568,6 +1568,7 @@ final class LibghosttyView: NSView, TerminalFocusReporting, TerminalViewportDiag
     private var currentCursor: NSCursor = .iBeam
     private var cursorApplication: (NSCursor) -> Void = { $0.set() }
     private var mouseTrackingArea: NSTrackingArea?
+    private var cursorTrackingArea: NSTrackingArea?
     private var mouseInteractionSuppressionRects: [CGRect] = []
     private var activeSecondaryMouseRouting: SecondaryMouseRouting?
     private var forwardsActiveSecondaryMouseDrag = false
@@ -1653,14 +1654,25 @@ final class LibghosttyView: NSView, TerminalFocusReporting, TerminalViewportDiag
         if let existing = mouseTrackingArea {
             removeTrackingArea(existing)
         }
-        let area = NSTrackingArea(
+        if let existing = cursorTrackingArea {
+            removeTrackingArea(existing)
+        }
+        let mouseArea = NSTrackingArea(
             rect: .zero,
-            options: [.mouseMoved, .mouseEnteredAndExited, .cursorUpdate, .activeAlways, .inVisibleRect],
+            options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect],
             owner: self,
             userInfo: nil
         )
-        addTrackingArea(area)
-        mouseTrackingArea = area
+        let cursorArea = NSTrackingArea(
+            rect: .zero,
+            options: [.cursorUpdate, .activeInKeyWindow, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(mouseArea)
+        addTrackingArea(cursorArea)
+        mouseTrackingArea = mouseArea
+        cursorTrackingArea = cursorArea
     }
 
     override func mouseEntered(with event: NSEvent) {
@@ -1690,11 +1702,6 @@ final class LibghosttyView: NSView, TerminalFocusReporting, TerminalViewportDiag
             return
         }
         forwardMousePosition(event)
-    }
-
-    override func resetCursorRects() {
-        super.resetCursorRects()
-        addCursorRect(bounds, cursor: currentCursor)
     }
 
     override func cursorUpdate(with event: NSEvent) {
@@ -1732,11 +1739,37 @@ final class LibghosttyView: NSView, TerminalFocusReporting, TerminalViewportDiag
 
         guard cursor != currentCursor else { return }
         currentCursor = cursor
-        window?.invalidateCursorRects(for: self)
+        applyCurrentCursorIfOwned()
     }
 
     func setCursorApplicationForTesting(_ application: @escaping (NSCursor) -> Void) {
         cursorApplication = application
+    }
+
+    func ownsCursor(at locationInView: CGPoint, hitView: NSView?) -> Bool {
+        guard bounds.contains(locationInView),
+              !isPointInsideSuppressedMouseRegion(locationInView),
+              let hitView
+        else {
+            return false
+        }
+
+        return hitView === self || hitView.isDescendant(of: self)
+    }
+
+    private func applyCurrentCursorIfOwned() {
+        guard let window, let contentView = window.contentView else { return }
+        let locationInWindow = window.mouseLocationOutsideOfEventStream
+        let locationInView = convert(locationInWindow, from: nil)
+        let locationInContentView = contentView.convert(locationInWindow, from: nil)
+        guard ownsCursor(
+            at: locationInView,
+            hitView: contentView.hitTest(locationInContentView)
+        ) else {
+            return
+        }
+
+        cursorApplication(currentCursor)
     }
 
     override func mouseDown(with event: NSEvent) {

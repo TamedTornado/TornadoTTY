@@ -51,6 +51,16 @@ final class LibghosttyViewScrollRoutingTests: AppKitTestCase {
         XCTAssertTrue(view.trackingAreas.contains { $0.options.contains(.activeAlways) })
     }
 
+    func test_cursor_tracking_area_uses_supported_key_window_activation() throws {
+        view.updateTrackingAreas()
+
+        let cursorArea = try XCTUnwrap(
+            view.trackingAreas.first { $0.options.contains(.cursorUpdate) }
+        )
+        XCTAssertTrue(cursorArea.options.contains(.activeInKeyWindow))
+        XCTAssertFalse(cursorArea.options.contains(.activeAlways))
+    }
+
     func test_mouse_shape_change_defers_cursor_application_until_cursor_update() throws {
         var appliedCursors: [NSCursor] = []
         view.setCursorApplicationForTesting { appliedCursors.append($0) }
@@ -62,6 +72,23 @@ final class LibghosttyViewScrollRoutingTests: AppKitTestCase {
         view.cursorUpdate(with: try makeMouseEvent(type: .mouseMoved, location: CGPoint(x: 120, y: 180)))
 
         XCTAssertEqual(appliedCursors, [.pointingHand])
+    }
+
+    func test_cursor_ownership_requires_terminal_to_be_topmost_at_pointer() {
+        let point = CGPoint(x: 120, y: 180)
+        let overlay = NSView(frame: view.bounds)
+        let terminalChild = NSView(frame: view.bounds)
+        view.addSubview(terminalChild)
+
+        XCTAssertTrue(view.ownsCursor(at: point, hitView: view))
+        XCTAssertTrue(view.ownsCursor(at: point, hitView: terminalChild))
+        XCTAssertFalse(view.ownsCursor(at: point, hitView: overlay))
+        XCTAssertFalse(view.ownsCursor(at: CGPoint(x: -1, y: -1), hitView: view))
+
+        view.setMouseInteractionSuppressionRects([
+            CGRect(x: 100, y: 160, width: 40, height: 40),
+        ])
+        XCTAssertFalse(view.ownsCursor(at: point, hitView: view))
     }
 
     func test_detached_view_does_not_push_viewport_size() {
