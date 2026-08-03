@@ -5,6 +5,8 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 ghostty_source="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
 zig="${ZIG:-${repo_root}/../.tools/zig-x86_64-linux-0.15.2/zig}"
 blueprint_dir="${BLUEPRINT_COMPILER_DIR:-${repo_root}/../.tools/blueprint-compiler-0.16.0/bin}"
+zig_global_cache="${repo_root}/build/linux-deps/zig-global-cache"
+zig_local_cache="${ghostty_source}/.zig-cache"
 receipt="${repo_root}/build/linux/ghostty-regression.log"
 expected_revision="$(sed -n 's/^revision=//p' "${repo_root}/linux/ghostty.lock")"
 
@@ -25,10 +27,13 @@ if [[ -n "$(git -C "${ghostty_source}" status --porcelain)" ]]; then
     echo "error: Ghostty regression requires a clean pinned checkout" >&2
     exit 1
 fi
+mkdir -p "${zig_global_cache}" "${zig_local_cache}"
 
 (
     cd "${ghostty_source}"
     PATH="${blueprint_dir}:$(dirname "${zig}"):${PATH}" \
+        ZIG_GLOBAL_CACHE_DIR="${zig_global_cache}" \
+        ZIG_LOCAL_CACHE_DIR="${zig_local_cache}" \
         "${zig}" build test \
         -Doptimize=Debug \
         -Dcpu=baseline \

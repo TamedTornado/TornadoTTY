@@ -3,8 +3,21 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 matrix="${ZENTTY_QUALIFICATION_MATRIX:-${repo_root}/linux/qualification-matrix.json}"
-summary="${ZENTTY_QUALIFICATION_SUMMARY:-${repo_root}/build/linux/qualification-summary.json}"
+default_summary="${repo_root}/build/linux/qualification-summary.json"
+summary="${ZENTTY_QUALIFICATION_SUMMARY:-${default_summary}}"
+# shellcheck source=linux/tests/lib/valgrind-report
+source "${repo_root}/linux/tests/lib/valgrind-report"
+# shellcheck source=linux/tests/lib/controlled-environment
+source "${repo_root}/linux/tests/lib/controlled-environment"
+# shellcheck source=linux/tests/lib/qualification-outcome
+source "${repo_root}/linux/tests/lib/qualification-outcome"
 validate_only=false
+
+allowed_tiers='["local","release","full"]'
+allowed_displays='["none","wayland","x11","both"]'
+allowed_optimizations='["n/a","ReleaseSafe","Debug","both"]'
+allowed_async_backends='["n/a","default","epoll","io_uring","all"]'
+allowed_terminal_counts='["n/a","single","multi","all"]'
 
 if [[ "${1:-}" == "--validate-only" ]]; then
     validate_only=true
@@ -18,9 +31,72 @@ fail() {
     exit 1
 }
 
+if ! "${validate_only}"; then
+    command -v flock >/dev/null || fail "flock is required"
+    mkdir -p "$(dirname "${summary}")"
+    summary="$(cd "$(dirname "${summary}")" && pwd)/$(basename "${summary}")"
+    if [[ "${summary}" == "${default_summary}" ]]; then
+        logs_dir="${repo_root}/build/linux/matrix-logs"
+    else
+        logs_dir="${summary}.logs"
+    fi
+    mkdir -p "$(dirname "${logs_dir}")"
+    logs_dir="$(cd "$(dirname "${logs_dir}")" && pwd)/$(basename "${logs_dir}")"
+    [[ ! -L "${logs_dir}" ]] || fail "matrix logs directory may not be a symlink: ${logs_dir}"
+    [[ ! -e "${logs_dir}" || -d "${logs_dir}" ]] ||
+        fail "matrix logs path is not a directory: ${logs_dir}"
+    exec 8>"${logs_dir}.lock"
+    flock -n 8 || fail "matrix evidence is already being produced: ${logs_dir}"
+
+    # An interrupted or invalid new run must not leave a prior summary or log
+    # looking current. The lock prevents another writer from losing evidence.
+    rm -f -- "${summary}"
+    if [[ -d "${logs_dir}" ]]; then
+        unexpected_log_entry="$(find "${logs_dir}" -mindepth 1 -maxdepth 1 ! -type f -print -quit)"
+        [[ -z "${unexpected_log_entry}" ]] ||
+            fail "unexpected entry in matrix logs directory: ${unexpected_log_entry}"
+        find "${logs_dir}" -mindepth 1 -maxdepth 1 -type f -delete
+    fi
+    mkdir -p "${logs_dir}"
+fi
+
 command -v jq >/dev/null || fail "jq is required"
+command -v sha256sum >/dev/null || fail "sha256sum is required"
+command -v stat >/dev/null || fail "stat is required"
+command -v mktemp >/dev/null || fail "mktemp is required"
+command -v readlink >/dev/null || fail "readlink is required"
+command -v date >/dev/null || fail "date is required"
+command -v env >/dev/null || fail "env is required"
+
 jq -e '.schema_version == 1 and (.cells | type == "array")' \
     "${matrix}" >/dev/null || fail "invalid matrix schema"
+
+jq -e '
+    (keys | sort) == ["axes","cells","claims","required_capabilities","schema_version"] and
+    (.axes | keys | sort) == ["async_backend","display","optimize","status","terminals","tier"] and
+    (.claims | keys | sort) == [
+        "full_linux_qualification_passed",
+        "implemented_local_suite_passed",
+        "product_boundary_qualification_passed",
+        "qualification_host_retired",
+        "release_qualification_passed"
+    ] and
+    all(.claims[]; type == "boolean")
+' "${matrix}" >/dev/null || fail "matrix root, axes, or claims are not closed-world"
+
+jq -e '
+    .axes.display == {
+        "none":"No display server is exercised",
+        "wayland":"GTK Wayland backend",
+        "x11":"GTK X11 backend on native X11, Xvfb, or Xwayland as identified by the cell harness",
+        "both":"Separate Wayland and X11 evidence is required or aggregated"
+    } and
+    .axes.optimize == ["n/a","ReleaseSafe","Debug","both"] and
+    .axes.async_backend == ["n/a","default","epoll","io_uring","all"] and
+    .axes.terminals == ["n/a","single","multi","all"] and
+    .axes.status == ["PASS","FAIL","BLOCKED","XFAIL","NOT_IMPLEMENTED"] and
+    .axes.tier == ["local","release","full"]
+' "${matrix}" >/dev/null || fail "matrix axis declarations differ from the closed-world contract"
 
 duplicate_ids="$(jq -r '[.cells[].id] | group_by(.)[] | select(length > 1) | .[0]' "${matrix}")"
 [[ -z "${duplicate_ids}" ]] || fail "duplicate cell IDs: ${duplicate_ids}"
@@ -31,17 +107,167 @@ unknown_status="$(jq -r '.cells[] | select(.status != "PASS" and .status != "FAI
 missing_fields="$(jq -r '.cells[] | select((.id | type) != "string" or (.order | type) != "number" or (.capability | type) != "string" or (.display | type) != "string" or (.optimize | type) != "string" or (.async_backend | type) != "string" or (.terminals | type) != "string" or (.status | type) != "string" or (.tier | type) != "string") | .id // "<missing-id>"' "${matrix}")"
 [[ -z "${missing_fields}" ]] || fail "cells with missing fields: ${missing_fields}"
 
+invalid_orders="$(jq -r '.cells[] | select((.order | type) != "number" or .order < 0 or (.order | floor) != .order) | .id // "<missing-id>"' "${matrix}")"
+[[ -z "${invalid_orders}" ]] || fail "cells with invalid order: ${invalid_orders}"
+
+unknown_tiers="$(jq -r --argjson allowed "${allowed_tiers}" '.cells[] | select(.tier as $value | $allowed | index($value) == null) | .id + "=" + (.tier | tostring)' "${matrix}")"
+[[ -z "${unknown_tiers}" ]] || fail "unknown tiers: ${unknown_tiers}"
+unknown_displays="$(jq -r --argjson allowed "${allowed_displays}" '.cells[] | select(.display as $value | $allowed | index($value) == null) | .id + "=" + (.display | tostring)' "${matrix}")"
+[[ -z "${unknown_displays}" ]] || fail "unknown displays: ${unknown_displays}"
+unknown_optimizations="$(jq -r --argjson allowed "${allowed_optimizations}" '.cells[] | select(.optimize as $value | $allowed | index($value) == null) | .id + "=" + (.optimize | tostring)' "${matrix}")"
+[[ -z "${unknown_optimizations}" ]] || fail "unknown optimizations: ${unknown_optimizations}"
+unknown_async_backends="$(jq -r --argjson allowed "${allowed_async_backends}" '.cells[] | select(.async_backend as $value | $allowed | index($value) == null) | .id + "=" + (.async_backend | tostring)' "${matrix}")"
+[[ -z "${unknown_async_backends}" ]] || fail "unknown async backends: ${unknown_async_backends}"
+unknown_terminal_counts="$(jq -r --argjson allowed "${allowed_terminal_counts}" '.cells[] | select(.terminals as $value | $allowed | index($value) == null) | .id + "=" + (.terminals | tostring)' "${matrix}")"
+[[ -z "${unknown_terminal_counts}" ]] || fail "unknown terminal counts: ${unknown_terminal_counts}"
+
+duplicate_capabilities="$(jq -r '.required_capabilities | group_by(.)[] | select(length > 1) | .[0]' "${matrix}")"
+[[ -z "${duplicate_capabilities}" ]] || fail "duplicate required capabilities: ${duplicate_capabilities}"
+unknown_capabilities="$(jq -r '. as $matrix | .cells[] | select(.capability as $capability | $matrix.required_capabilities | index($capability) == null) | .id + "=" + .capability' "${matrix}")"
+[[ -z "${unknown_capabilities}" ]] || fail "cells with undeclared capabilities: ${unknown_capabilities}"
+
+invalid_ids="$(jq -r '.cells[] | select((.id | type) != "string" or (.id | test("^[a-z0-9][a-z0-9-]*$") | not)) | .id // "<missing-id>"' "${matrix}")"
+[[ -z "${invalid_ids}" ]] || fail "cells with unsafe IDs: ${invalid_ids}"
+
 invalid_explanations="$(jq -r '.cells[] | select((.status == "BLOCKED" and ((.prerequisite // "") | length) == 0) or ((.status == "XFAIL" or .status == "NOT_IMPLEMENTED" or .status == "FAIL") and ((.defect // "") | length) == 0)) | .id' "${matrix}")"
 [[ -z "${invalid_explanations}" ]] || fail "non-pass cells without prerequisite/defect: ${invalid_explanations}"
 
 invalid_commands="$(jq -r '.cells[] | select((.status == "PASS" or .status == "XFAIL") and ((.command // "") | length) == 0) | .id' "${matrix}")"
 [[ -z "${invalid_commands}" ]] || fail "executable cells without commands: ${invalid_commands}"
 
-invalid_valgrind_reports="$(jq -r '.cells[] | select(.capability == "valgrind" and ((((.valgrind_report // "") | type) != "string") or (((.valgrind_report // "") | length) == 0))) | .id' "${matrix}")"
+invalid_environment_profiles="$(jq -r '
+    def executable: .status == "PASS" or .status == "XFAIL";
+    def has_valgrind: ((.valgrind_report? | type) == "string" and
+        (.valgrind_report | length) > 0);
+    .cells[] |
+    select(
+      (executable and ((.environment_profile? | type) != "string" or
+        (.environment_profile | length) == 0)) or
+      ((.environment_profile? | type) == "string" and
+        (.environment_profile | length) > 0 and
+        (if .environment_profile == "isolated-none-v1" then
+            ((.display == "none" or .display == "both") and
+             (has_valgrind | not)) | not
+         elif .environment_profile == "nested-x11-v1" then
+            (.display == "x11" and (has_valgrind | not)) | not
+         elif .environment_profile == "nested-wayland-v1" then
+            (.display == "wayland" and (has_valgrind | not)) | not
+         elif .environment_profile == "phase-managed-wayland-v1" then
+            (.display == "wayland" and has_valgrind) | not
+         elif .environment_profile == "phase-managed-x11-v1" then
+            (.display == "x11" and
+             (has_valgrind or
+              ((.capability == "physical_key_translation" or
+                .capability == "external_resize") and (has_valgrind | not)))) | not
+         else true end)
+      )
+    ) |
+    .id + "=" + (.environment_profile // "<missing>")
+' "${matrix}")"
+[[ -z "${invalid_environment_profiles}" ]] ||
+    fail "missing, unknown, or incompatible runtime environment profiles: ${invalid_environment_profiles}"
+
+invalid_environment_dispatch="$(jq -r '
+    def executable: .status == "PASS" or .status == "XFAIL";
+    def wrapper_count($name):
+      [(.command // "") | scan(
+        "(^|[[:space:];|&])((\\./)?linux/tests/)?" + $name +
+        "([[:space:];|&]|$)"
+      )] | length;
+    .cells[] |
+    select(executable and (
+      wrapper_count("isolated-session") > 0 or
+      wrapper_count("nested-x11") > 0 or
+      wrapper_count("nested-wayland") > 0 or
+      (if .environment_profile == "phase-managed-x11-v1" and
+          (.capability == "physical_key_translation" or
+           .capability == "external_resize") and
+          (((.valgrind_report // "") | length) == 0) then
+         wrapper_count("controlled-x11") != 1
+       else wrapper_count("controlled-x11") != 0 end)
+    )) |
+    .id
+' "${matrix}")"
+[[ -z "${invalid_environment_dispatch}" ]] ||
+    fail "cells bypass or double-nest their runtime environment owner: ${invalid_environment_dispatch}"
+
+invalid_valgrind_reports="$(jq -r '.cells[] | select(
+    (.capability == "valgrind" or has("valgrind_report")) and
+    ((((.valgrind_report? | type) == "string") and (.valgrind_report | length) > 0) | not)
+) | .id' "${matrix}")"
 [[ -z "${invalid_valgrind_reports}" ]] || fail "Valgrind cells without report paths: ${invalid_valgrind_reports}"
+
+invalid_valgrind_metadata="$(jq -r '.cells[] | select(
+    ((.valgrind_report? | type) == "string" and (.valgrind_report | length) > 0) and
+    (
+      (.optimize != "Debug" and .optimize != "ReleaseSafe") or
+      (.display != "wayland" and .display != "x11") or
+      ((.expected_valgrind_scenario // "") | type) != "string" or
+      ((.expected_valgrind_scenario // "") | length) == 0
+    )
+) | .id' "${matrix}")"
+[[ -z "${invalid_valgrind_metadata}" ]] ||
+    fail "Valgrind cells without valid expected report metadata: ${invalid_valgrind_metadata}"
+
+duplicate_valgrind_reports="$(jq -r '[.cells[] | select((.valgrind_report? | type) == "string" and (.valgrind_report | length) > 0) | .valgrind_report] | group_by(.)[] | select(length > 1) | .[0]' "${matrix}")"
+[[ -z "${duplicate_valgrind_reports}" ]] ||
+    fail "duplicate Valgrind report paths: ${duplicate_valgrind_reports}"
+
+valgrind_reports_dir=""
+normalized_valgrind_report_paths='[]'
+while IFS= read -r valgrind_cell; do
+    valgrind_cell_id="$(jq -r '.id' <<<"${valgrind_cell}")"
+    valgrind_path="$(jq -r '.valgrind_report' <<<"${valgrind_cell}")"
+    valgrind_optimize="$(jq -r '.optimize' <<<"${valgrind_cell}")"
+    valgrind_scenario="$(jq -r '.expected_valgrind_scenario' <<<"${valgrind_cell}")"
+    valgrind_display="$(jq -r '.display' <<<"${valgrind_cell}")"
+    if [[ "${valgrind_path}" != /* ]]; then
+        valgrind_path="${repo_root}/${valgrind_path}"
+    fi
+    valgrind_path="$(readlink -m -- "${valgrind_path}")"
+    normalized_valgrind_report_paths="$(jq -cn \
+        --argjson paths "${normalized_valgrind_report_paths}" \
+        --arg path "${valgrind_path}" '$paths + [$path]')"
+    expected_valgrind_name="memory-safety-${valgrind_optimize}-${valgrind_scenario}-${valgrind_display}.json"
+    [[ "$(basename "${valgrind_path}")" == "${expected_valgrind_name}" ]] ||
+        fail "Valgrind cell ${valgrind_cell_id} report is not canonical: ${valgrind_path}"
+    if [[ -z "${valgrind_reports_dir}" ]]; then
+        valgrind_reports_dir="$(dirname "${valgrind_path}")"
+    elif [[ "$(dirname "${valgrind_path}")" != "${valgrind_reports_dir}" ]]; then
+        fail "Valgrind reports do not share one evidence directory: ${valgrind_path}"
+    fi
+done < <(jq -c '.cells[] | select((.valgrind_report? | type) == "string" and (.valgrind_report | length) > 0)' "${matrix}")
+[[ -n "${valgrind_reports_dir}" ]] || fail "matrix has no Valgrind report cells"
+duplicate_normalized_valgrind_reports="$(jq -r \
+    'sort | group_by(.)[] | select(length > 1) | .[0]' \
+    <<<"${normalized_valgrind_report_paths}")"
+[[ -z "${duplicate_normalized_valgrind_reports}" ]] ||
+    fail "duplicate normalized Valgrind report paths: ${duplicate_normalized_valgrind_reports}"
+normalized_valgrind_report_paths="$(jq -c 'sort' \
+    <<<"${normalized_valgrind_report_paths}")"
+valgrind_evidence_lock="${valgrind_reports_dir}/.zentty-valgrind-evidence.lock"
+
+governance_cell_count="$(jq '[.cells[] | select(.suppression_review_governance == true)] | length' "${matrix}")"
+[[ "${governance_cell_count}" -eq 1 ]] ||
+    fail "matrix must declare exactly one suppression-governance cell"
+governance_cell_id="$(jq -r '.cells[] | select(.suppression_review_governance == true) | .id' "${matrix}")"
+jq -e '
+    [.cells[] | select(.suppression_review_governance == true)] as $governance |
+    ($governance | length) == 1 and
+    $governance[0].status == "PASS" and
+    ($governance[0].command | type == "string" and length > 0) and
+    all(.cells[] | select(((.valgrind_report // "") | length) > 0);
+        .order < $governance[0].order or
+        (.order == $governance[0].order and .id < $governance[0].id)
+    )
+' "${matrix}" >/dev/null ||
+    fail "suppression-governance cell must execute after every Valgrind report cell"
 
 untracked_xfails="$(jq -r '.cells[] | select(.status == "XFAIL" and ((.tracking // "") | length) == 0) | .id' "${matrix}")"
 [[ -z "${untracked_xfails}" ]] || fail "XFAIL cells without tracking IDs: ${untracked_xfails}"
+
+invalid_xfail_exits="$(jq -r '.cells[] | select(.status == "XFAIL" and (((.expected_exit_code // null) | type) != "number" or .expected_exit_code <= 0 or .expected_exit_code > 255 or .expected_exit_code == 77 or (.expected_exit_code | floor) != .expected_exit_code)) | .id' "${matrix}")"
+[[ -z "${invalid_xfail_exits}" ]] || fail "XFAIL cells without a valid exact expected exit code: ${invalid_xfail_exits}"
 
 for capability in $(jq -r '.required_capabilities[]' "${matrix}"); do
     jq -e --arg capability "${capability}" \
@@ -81,55 +307,355 @@ if jq -e '.claims.implemented_local_suite_passed == true and any(.cells[]; .stat
     fail "matrix incorrectly claims the implemented local suite passed"
 fi
 
+"${repo_root}/linux/tests/qualification-boundary-contract" "${matrix}" >/dev/null
+
 if "${validate_only}"; then
     echo "Qualification matrix schema and coverage passed"
     exit 0
 fi
 
-mkdir -p "$(dirname "${summary}")" "${repo_root}/build/linux/matrix-logs"
+expected_valgrind_report_paths="${normalized_valgrind_report_paths}"
+
+matrix_runner_environment_json() {
+    local profile="$1"
+    local report="$2"
+    local command_exit_code="$3"
+    local command="$4"
+    local minimum_started_at_epoch="$5"
+    local max_capture_span_seconds="$6"
+    local backend harness wrapper expected_command validated harness_identity
+
+    case "${profile}" in
+        isolated-none-v1)
+            backend=none
+            harness="linux/tests/isolated-session"
+            ;;
+        nested-x11-v1)
+            backend=x11
+            harness="linux/tests/nested-x11"
+            ;;
+        nested-wayland-v1)
+            backend=wayland
+            harness="linux/tests/nested-wayland"
+            ;;
+        *) return 1 ;;
+    esac
+    wrapper="${repo_root}/${harness}"
+    expected_command="$(jq -cn --arg command "${command}" \
+        '["bash","-o","pipefail","-c",$command]')"
+    validated="$(zentty_controlled_environment_validate_report \
+        "${report}" "${wrapper}" "${backend}" "${command_exit_code}" \
+        "${expected_command}" "${minimum_started_at_epoch}" \
+        "${max_capture_span_seconds}")" || return 1
+    harness_identity="$(zentty_controlled_environment_harness_json \
+        "${repo_root}" "${harness}")" || return 1
+    jq -cn \
+        --arg profile "${profile}" \
+        --argjson harness "${harness_identity}" \
+        --arg session_id "$(jq -r '.session_id' <<<"${validated}")" \
+        --argjson evidence_file "$(jq -c '.evidence_file' <<<"${validated}")" '
+        {
+          profile:$profile,owner:"matrix-runner",harness:$harness,
+          sessions:[{role:"cell",session_id:$session_id}],
+          evidence_files:[$evidence_file]
+        }
+    '
+}
+
+matrix_controlled_x11_environment_json() {
+    local profile="$1"
+    local report="$2"
+    local command_exit_code="$3"
+    local minimum_started_at_epoch="$4"
+    local wrapper="${repo_root}/linux/tests/nested-x11"
+    local harness="linux/tests/controlled-x11"
+    local expected_command='["linux/tests/controlled-x11"]'
+    local validated harness_identity
+
+    validated="$(zentty_controlled_environment_validate_report \
+        "${report}" "${wrapper}" x11 "${command_exit_code}" \
+        "${expected_command}" "${minimum_started_at_epoch}" 900)" || return 1
+    harness_identity="$(zentty_controlled_environment_harness_json \
+        "${repo_root}" "${harness}")" || return 1
+    jq -cn \
+        --arg profile "${profile}" \
+        --argjson harness "${harness_identity}" \
+        --arg session_id "$(jq -r '.session_id' <<<"${validated}")" \
+        --argjson evidence_file "$(jq -c '.evidence_file' <<<"${validated}")" '
+        {
+          profile:$profile,owner:"cell-command",harness:$harness,
+          sessions:[{role:"cell",session_id:$session_id}],
+          evidence_files:[$evidence_file]
+        }
+    '
+}
+
+matrix_valgrind_environment_json() {
+    local profile="$1"
+    local report="$2"
+    local backend="$3"
+    local field harness harness_identity
+
+    case "${backend}" in
+        x11)
+            field=x11_phase_environment
+            harness="linux/tests/nested-x11"
+            ;;
+        wayland)
+            field=wayland_phase_environment
+            harness="linux/tests/nested-wayland"
+            ;;
+        *) return 1 ;;
+    esac
+    harness_identity="$(zentty_controlled_environment_harness_json \
+        "${repo_root}" "${harness}")" || return 1
+    jq -ce \
+        --arg profile "${profile}" \
+        --arg field "${field}" \
+        --argjson harness "${harness_identity}" '
+        .[$field] as $phase |
+        {
+          profile:$profile,owner:"cell-command",harness:$harness,
+          sessions:[
+            {role:"raw",session_id:$phase.raw.session_id},
+            {role:"suppressed",session_id:$phase.suppressed.session_id}
+          ],
+          evidence_files:[
+            {
+              path:$phase.raw.report,
+              sha256:$phase.raw.report_identity.sha256,
+              captured_at_epoch:$phase.raw.report_identity.captured_at_epoch
+            },
+            {
+              path:$phase.suppressed.report,
+              sha256:$phase.suppressed.report_identity.sha256,
+              captured_at_epoch:$phase.suppressed.report_identity.captured_at_epoch
+            }
+          ]
+        }
+    ' "${report}"
+}
+
+matrix_ibus_environment_json() {
+    local profile="$1"
+    local report="$2"
+    local harness="linux/tests/controlled-ibus-x11"
+    local harness_identity harness_sha report_identity
+
+    harness_identity="$(zentty_controlled_environment_harness_json \
+        "${repo_root}" "${harness}")" || return 1
+    harness_sha="$(jq -r '.sha256' <<<"${harness_identity}")"
+    if ! jq -e --arg harness "${harness}" --arg harness_sha "${harness_sha}" '
+        (.controlled_environment | keys | sort) == [
+          "harness","harness_sha256","ibus_sync_mode","phase_isolation",
+          "raw_session_id","suppressed_session_id"
+        ] and
+        .controlled_environment.harness == $harness and
+        .controlled_environment.harness_sha256 == $harness_sha and
+        .controlled_environment.phase_isolation == true and
+        .controlled_environment.ibus_sync_mode == "1" and
+        (.controlled_environment.raw_session_id |
+          type == "string" and test("^[0-9a-f]{64}$")) and
+        (.controlled_environment.suppressed_session_id |
+          type == "string" and test("^[0-9a-f]{64}$")) and
+        .controlled_environment.raw_session_id !=
+          .controlled_environment.suppressed_session_id
+    ' "${report}" >/dev/null 2>&1; then
+        echo "qualification-matrix: error: IBus controlled environment is missing, stale, or malformed" >&2
+        return 1
+    fi
+    report_identity="$(jq -cn \
+        --arg path "${report}" \
+        --arg sha256 "$(sha256sum -- "${report}" | awk '{print $1}')" \
+        --argjson captured_at_epoch "$(stat -c %Y -- "${report}")" '
+        {path:$path,sha256:$sha256,captured_at_epoch:$captured_at_epoch}
+    ')"
+    jq -c \
+        --arg profile "${profile}" \
+        --argjson harness "${harness_identity}" \
+        --argjson evidence_file "${report_identity}" '
+        .controlled_environment as $controlled |
+        {
+          profile:$profile,owner:"cell-command",harness:$harness,
+          sessions:[
+            {role:"raw",session_id:$controlled.raw_session_id},
+            {role:"suppressed",session_id:$controlled.suppressed_session_id}
+          ],
+          evidence_files:[$evidence_file]
+        }
+    ' "${report}"
+}
+
 results='[]'
 run_failed=false
+retained_valgrind_evidence_lock_fd=""
 while IFS= read -r cell; do
     id="$(jq -r '.id' <<<"${cell}")"
     status="$(jq -r '.status' <<<"${cell}")"
     command="$(jq -r '.command // empty' <<<"${cell}")"
+    expected_exit_code="$(jq -r '.expected_exit_code // "null"' <<<"${cell}")"
     valgrind_report="$(jq -r '.valgrind_report // empty' <<<"${cell}")"
+    environment_profile="$(jq -r '.environment_profile // empty' <<<"${cell}")"
+    cell_optimize="$(jq -r '.optimize' <<<"${cell}")"
+    cell_display="$(jq -r '.display' <<<"${cell}")"
+    expected_valgrind_scenario="$(jq -r '.expected_valgrind_scenario // empty' <<<"${cell}")"
+    is_suppression_governance="$(jq -r '.suppression_review_governance // false' <<<"${cell}")"
     outcome="DECLARED_${status}"
     exit_code=null
     valgrind=null
+    environment=null
+    log_identity=null
+    valgrind_report_identity=null
+    cell_evidence_lock_fd=""
+    cell_evidence_lock_acquired=false
+    retain_cell_evidence_lock=false
+    environment_capture_span_seconds=900
 
     if [[ "${status}" == "FAIL" ]]; then
         outcome="FAIL"
         run_failed=true
     elif [[ "${status}" == "PASS" || "${status}" == "XFAIL" ]]; then
-        log="${repo_root}/build/linux/matrix-logs/${id}.log"
+        log="${logs_dir}/${id}.log"
         if [[ -n "${valgrind_report}" ]]; then
             if [[ "${valgrind_report}" != /* ]]; then
                 valgrind_report="${repo_root}/${valgrind_report}"
             fi
-            rm -f "${valgrind_report}"
+            valgrind_report="$(readlink -m -- "${valgrind_report}")"
         fi
+        if [[ -n "${valgrind_report}" || "${is_suppression_governance}" == "true" ]]; then
+            if zentty_valgrind_acquire_evidence_lock \
+                "${valgrind_evidence_lock}" cell_evidence_lock_fd; then
+                cell_evidence_lock_acquired=true
+                if [[ -n "${valgrind_report}" ]]; then
+                    rm -f -- \
+                        "${valgrind_report}" \
+                        "${valgrind_report%.json}.raw.log" \
+                        "${valgrind_report%.json}.suppressed.log" \
+                        "${valgrind_report%.json}.raw.environment" \
+                        "${valgrind_report%.json}.suppressed.environment"
+                fi
+                if [[ "${is_suppression_governance}" == "true" ]]; then
+                    retain_cell_evidence_lock=true
+                fi
+            else
+                printf 'qualification-matrix: error: could not acquire Valgrind evidence-set lock: %s\n' \
+                    "${valgrind_evidence_lock}" >"${log}"
+            fi
+        fi
+        environment_report="${logs_dir}/${id}.environment.json"
+        rm -f -- "${environment_report}"
+        cell_started_at_epoch="$(date +%s)"
+        shell_command=(bash -o pipefail -c "${command}")
+        sanitized_environment=(
+            env
+            -u ZENTTY_ISOLATED_SESSION_REPORT
+            -u ZENTTY_NESTED_X11_REPORT
+            -u ZENTTY_NESTED_WAYLAND_REPORT
+        )
+        case "${environment_profile}" in
+            isolated-none-v1)
+                cell_command=(
+                    "${sanitized_environment[@]}"
+                    "ZENTTY_ISOLATED_SESSION_REPORT=${environment_report}"
+                    "${repo_root}/linux/tests/isolated-session"
+                    "${shell_command[@]}"
+                )
+                ;;
+            nested-x11-v1)
+                cell_command=(
+                    "${sanitized_environment[@]}"
+                    "ZENTTY_NESTED_X11_REPORT=${environment_report}"
+                    "${repo_root}/linux/tests/nested-x11"
+                    "${shell_command[@]}"
+                )
+                ;;
+            nested-wayland-v1)
+                cell_command=(
+                    "${sanitized_environment[@]}"
+                    "ZENTTY_NESTED_WAYLAND_REPORT=${environment_report}"
+                    "${repo_root}/linux/tests/nested-wayland"
+                    "${shell_command[@]}"
+                )
+                ;;
+            phase-managed-x11-v1)
+                if [[ -z "${valgrind_report}" ]]; then
+                    cell_command=(
+                        "${sanitized_environment[@]}"
+                        "ZENTTY_NESTED_X11_REPORT=${environment_report}"
+                        "${shell_command[@]}"
+                    )
+                else
+                    cell_command=("${sanitized_environment[@]}" "${shell_command[@]}")
+                fi
+                ;;
+            phase-managed-wayland-v1)
+                cell_command=("${sanitized_environment[@]}" "${shell_command[@]}")
+                ;;
+            *)
+                fail "unhandled runtime environment profile for ${id}: ${environment_profile}"
+                ;;
+        esac
         set +e
-        (cd "${repo_root}" && bash -o pipefail -c "${command}") >"${log}" 2>&1
-        code=$?
+        if [[ -n "${valgrind_report}" || "${is_suppression_governance}" == "true" ]] &&
+            ! "${cell_evidence_lock_acquired}"; then
+            code=1
+        elif [[ "${is_suppression_governance}" == "true" ]]; then
+            (cd "${repo_root}" && \
+                ZENTTY_VALGRIND_EXPECTED_REPORTS_JSON="${expected_valgrind_report_paths}" \
+                ZENTTY_VALGRIND_EVIDENCE_LOCK_FD="${cell_evidence_lock_fd}" \
+                ZENTTY_VALGRIND_EVIDENCE_LOCK_PATH="${valgrind_evidence_lock}" \
+                "${cell_command[@]}") >"${log}" 2>&1
+            code=$?
+        elif [[ -n "${valgrind_report}" ]]; then
+            (cd "${repo_root}" && \
+                ZENTTY_VALGRIND_EVIDENCE_LOCK_FD="${cell_evidence_lock_fd}" \
+                ZENTTY_VALGRIND_EVIDENCE_LOCK_PATH="${valgrind_evidence_lock}" \
+                "${cell_command[@]}") >"${log}" 2>&1
+            code=$?
+        else
+            (cd "${repo_root}" && "${cell_command[@]}") >"${log}" 2>&1
+            code=$?
+        fi
         set -e
         exit_code="${code}"
-        if [[ "${code}" -eq 77 ]]; then
-            outcome="UNEXPECTED_SKIP"
+        log_identity="$(jq -cn \
+            --arg path "${log}" \
+            --arg sha256 "$(sha256sum "${log}" | awk '{print $1}')" \
+            '{path:$path,sha256:$sha256}')"
+        outcome="$(zentty_qualification_classify_outcome \
+            "${status}" "${code}" "${expected_exit_code}")"
+        if zentty_qualification_outcome_failed "${outcome}"; then
             run_failed=true
-        elif [[ "${status}" == "PASS" && "${code}" -eq 0 ]]; then
-            outcome="PASS"
-        elif [[ "${status}" == "PASS" ]]; then
-            outcome="FAIL"
-            run_failed=true
-        elif [[ "${code}" -eq 0 ]]; then
-            outcome="STALE_XFAIL"
-            run_failed=true
-        else
-            outcome="XFAIL"
         fi
         if [[ -n "${valgrind_report}" ]]; then
-            if [[ ! -f "${valgrind_report}" ]] || ! jq -e '
+            expected_raw_receipt="${valgrind_report%.json}.raw.log"
+            expected_suppressed_receipt="${valgrind_report%.json}.suppressed.log"
+            if [[ ! -f "${valgrind_report}" || -L "${valgrind_report}" ]] || ! jq -e \
+                --arg expected_optimize "${cell_optimize}" \
+                --arg expected_display "${cell_display}" \
+                --arg expected_scenario "${expected_valgrind_scenario}" \
+                --arg expected_raw_receipt "${expected_raw_receipt}" \
+                --arg expected_suppressed_receipt "${expected_suppressed_receipt}" \
+                --argjson command_exit_code "${exit_code}" '
+                (.optimize == $expected_optimize) and
+                (.display_backend == $expected_display) and
+                (.scenario == $expected_scenario) and
+                (.suppressed_exit_code | type == "number" and . >= 0 and floor == .) and
+                .suppressed_exit_code == $command_exit_code and
+                (if $expected_optimize == "Debug" then
+                    .suppressed_exit_code == 0
+                 elif $expected_optimize == "ReleaseSafe" then
+                    (.suppressed_exit_code == 0 or .suppressed_exit_code == 99)
+                 else false end) and
+                .raw_receipt == $expected_raw_receipt and
+                .suppressed_receipt == $expected_suppressed_receipt and
+                (.report_generated_at_epoch | type == "number" and . >= 0 and floor == .) and
+                (.receipt_identities.raw.sha256 | type == "string" and test("^[0-9a-f]{64}$")) and
+                (.receipt_identities.raw.captured_at_epoch | type == "number" and . >= 0 and floor == .) and
+                (.receipt_identities.suppressed.sha256 | type == "string" and test("^[0-9a-f]{64}$")) and
+                (.receipt_identities.suppressed.captured_at_epoch | type == "number" and . >= 0 and floor == .) and
+                .receipt_identities.raw.captured_at_epoch <= .receipt_identities.suppressed.captured_at_epoch and
+                .receipt_identities.suppressed.captured_at_epoch <= .report_generated_at_epoch and
                 (.raw.errors | type == "number") and
                 (.raw.definite_bytes | type == "number") and
                 (.raw.indirect_bytes | type == "number") and
@@ -139,20 +665,235 @@ while IFS= read -r cell; do
             ' "${valgrind_report}" >/dev/null 2>&1; then
                 outcome="MISSING_OR_INVALID_VALGRIND_REPORT"
                 run_failed=true
+            elif [[ "${cell_display}" == "x11" &&
+                "${expected_valgrind_scenario}" != "ibus-focus" ]] &&
+                ! zentty_valgrind_validate_x11_phase_environment \
+                    "${valgrind_report}" \
+                    "${valgrind_report}" \
+                    "${repo_root}/linux/tests/nested-x11" \
+                    900; then
+                outcome="MISSING_OR_INVALID_VALGRIND_REPORT"
+                run_failed=true
+            elif [[ "${cell_display}" == "wayland" &&
+                "${expected_valgrind_scenario}" != "ibus-focus" ]] &&
+                ! zentty_valgrind_validate_wayland_phase_environment \
+                    "${valgrind_report}" \
+                    "${valgrind_report}" \
+                    "${repo_root}/linux/tests/nested-wayland" \
+                    900; then
+                outcome="MISSING_OR_INVALID_VALGRIND_REPORT"
+                run_failed=true
+            elif [[ ! -f "${expected_raw_receipt}" || -L "${expected_raw_receipt}" ||
+                ! -s "${expected_raw_receipt}" ||
+                ! -f "${expected_suppressed_receipt}" || -L "${expected_suppressed_receipt}" ||
+                ! -s "${expected_suppressed_receipt}" ]]; then
+                outcome="MISSING_OR_INVALID_VALGRIND_REPORT"
+                run_failed=true
             else
                 valgrind="$(jq -c . "${valgrind_report}")"
+                valgrind_report_identity="$(jq -cn \
+                    --arg path "${valgrind_report}" \
+                    --arg sha256 "$(sha256sum "${valgrind_report}" | awk '{print $1}')" \
+                    '{path:$path,sha256:$sha256}')"
             fi
         fi
-        display_outcome="${outcome}"
-        if [[ -n "${valgrind_report}" && "${outcome}" == "PASS" ]]; then
-            display_outcome="PASS with reviewed suppressions"
+        if [[ "${valgrind}" != null ]]; then
+            if [[ "${expected_valgrind_scenario}" == "ibus-focus" ]]; then
+                if ! environment="$(matrix_ibus_environment_json \
+                    "${environment_profile}" "${valgrind_report}")"; then
+                    outcome="MISSING_OR_INVALID_ENVIRONMENT_REPORT"
+                    run_failed=true
+                    environment=null
+                fi
+            elif ! environment="$(matrix_valgrind_environment_json \
+                "${environment_profile}" "${valgrind_report}" \
+                "${cell_display}")"; then
+                outcome="MISSING_OR_INVALID_ENVIRONMENT_REPORT"
+                run_failed=true
+                environment=null
+            fi
+        elif [[ -z "${valgrind_report}" ]]; then
+            case "${environment_profile}" in
+                isolated-none-v1 | nested-x11-v1 | nested-wayland-v1)
+                    if ! environment="$(matrix_runner_environment_json \
+                        "${environment_profile}" "${environment_report}" \
+                        "${exit_code}" "${command}" "${cell_started_at_epoch}" \
+                        "${environment_capture_span_seconds}")"; then
+                        if [[ "${outcome}" != "UNEXPECTED_SKIP" ||
+                            -e "${environment_report}" || -L "${environment_report}" ]]; then
+                            outcome="MISSING_OR_INVALID_ENVIRONMENT_REPORT"
+                        fi
+                        run_failed=true
+                        environment=null
+                    fi
+                    ;;
+                phase-managed-x11-v1)
+                    if ! environment="$(matrix_controlled_x11_environment_json \
+                        "${environment_profile}" "${environment_report}" \
+                        "${exit_code}" "${cell_started_at_epoch}")"; then
+                        if [[ "${outcome}" != "UNEXPECTED_SKIP" ||
+                            -e "${environment_report}" || -L "${environment_report}" ]]; then
+                            outcome="MISSING_OR_INVALID_ENVIRONMENT_REPORT"
+                        fi
+                        run_failed=true
+                        environment=null
+                    fi
+                    ;;
+            esac
         fi
-        printf '%-62s %s\n' "${id}" "${display_outcome}"
+        if "${cell_evidence_lock_acquired}"; then
+            if "${retain_cell_evidence_lock}"; then
+                retained_valgrind_evidence_lock_fd="${cell_evidence_lock_fd}"
+            else
+                exec {cell_evidence_lock_fd}>&-
+            fi
+        fi
+        printf '%-62s %s\n' "${id}" "${outcome}"
     fi
 
-    result="$(jq -cn --arg id "${id}" --arg declared "${status}" --arg outcome "${outcome}" --argjson exit_code "${exit_code}" --argjson valgrind "${valgrind}" '{id: $id, declared_status: $declared, outcome: $outcome, exit_code: $exit_code} + if $valgrind == null then {} else {valgrind: $valgrind} end')"
+    result="$(jq -cn \
+        --arg id "${id}" \
+        --arg declared "${status}" \
+        --arg outcome "${outcome}" \
+        --argjson exit_code "${exit_code}" \
+        --argjson expected_exit_code "${expected_exit_code}" \
+        --argjson log "${log_identity}" \
+        --argjson environment "${environment}" \
+        --argjson valgrind "${valgrind}" \
+        --argjson valgrind_report "${valgrind_report_identity}" '
+        {id: $id, declared_status: $declared, outcome: $outcome, exit_code: $exit_code} +
+        if $expected_exit_code == null then {} else {expected_exit_code: $expected_exit_code} end +
+        if $log == null then {} else {log: $log} end +
+        if $environment == null then {} else {environment: $environment} end +
+        if $valgrind == null then {} else {valgrind: $valgrind, valgrind_report: $valgrind_report} end
+    ')"
     results="$(jq -cn --argjson results "${results}" --argjson result "${result}" '$results + [$result]')"
 done < <(jq -c '.cells | sort_by(.order, .id)[]' "${matrix}")
+
+jq -e '
+    all(.[] | select(has("environment"));
+      (.environment | keys | sort) ==
+        ["evidence_files","harness","owner","profile","sessions"] and
+      (.environment.profile == "isolated-none-v1" or
+       .environment.profile == "nested-x11-v1" or
+       .environment.profile == "nested-wayland-v1" or
+       .environment.profile == "phase-managed-x11-v1" or
+       .environment.profile == "phase-managed-wayland-v1") and
+      (.environment.owner == "matrix-runner" or
+       .environment.owner == "cell-command") and
+      (.environment.harness | keys | sort) == ["path","sha256"] and
+      (.environment.harness.path | type == "string" and length > 0) and
+      (.environment.harness.sha256 | test("^[0-9a-f]{64}$")) and
+      (.environment.sessions | type == "array" and length > 0 and
+       all(.[];
+         (keys | sort) == ["role","session_id"] and
+         (.role == "cell" or .role == "raw" or .role == "suppressed") and
+         (.session_id | test("^[0-9a-f]{64}$"))) and
+       ([.[].session_id] | unique | length) == length) and
+      (.environment.evidence_files | type == "array" and length > 0 and
+       all(.[];
+         (keys | sort) == ["captured_at_epoch","path","sha256"] and
+         (.path | type == "string" and length > 0) and
+         (.sha256 | test("^[0-9a-f]{64}$")) and
+         (.captured_at_epoch | type == "number" and . >= 0 and floor == .)))
+    )
+' <<<"${results}" >/dev/null || fail "normalized runtime environment evidence is malformed"
+
+[[ -n "${retained_valgrind_evidence_lock_fd}" ]] ||
+    fail "suppression governance did not retain the Valgrind evidence lease; refusing to publish a summary"
+
+evidence_changed=false
+while IFS= read -r identity; do
+    identity_path="$(jq -r '.path' <<<"${identity}")"
+    identity_sha="$(jq -r '.sha256' <<<"${identity}")"
+    identity_captured_at="$(jq -r '.captured_at_epoch // "null"' <<<"${identity}")"
+    resolved_identity_path="${identity_path}"
+    if [[ "${resolved_identity_path}" != /* ]]; then
+        resolved_identity_path="${repo_root}/${resolved_identity_path}"
+    fi
+    if [[ ! -f "${resolved_identity_path}" || -L "${resolved_identity_path}" ]] ||
+        [[ "${identity_captured_at}" != "null" && ! -s "${resolved_identity_path}" ]] ||
+        [[ "$(sha256sum "${resolved_identity_path}" | awk '{print $1}')" != "${identity_sha}" ]] ||
+        [[ "${identity_captured_at}" != "null" && "$(stat -c %Y "${resolved_identity_path}")" != "${identity_captured_at}" ]]; then
+        echo "qualification-matrix: error: run evidence changed before summary publication: ${identity_path}" >&2
+        evidence_changed=true
+    fi
+done < <(jq -c '
+    .[] |
+    (
+      .log?,
+      .valgrind_report?,
+      .environment.evidence_files[]?,
+      if has("valgrind") then
+        {
+          path:.valgrind.raw_receipt,
+          sha256:.valgrind.receipt_identities.raw.sha256,
+          captured_at_epoch:.valgrind.receipt_identities.raw.captured_at_epoch
+        },
+        {
+          path:.valgrind.suppressed_receipt,
+          sha256:.valgrind.receipt_identities.suppressed.sha256,
+          captured_at_epoch:.valgrind.receipt_identities.suppressed.captured_at_epoch
+        },
+        if .valgrind.x11_phase_environment? != null then
+          {
+            path:.valgrind.x11_phase_environment.raw.report,
+            sha256:.valgrind.x11_phase_environment.raw.report_identity.sha256,
+            captured_at_epoch:.valgrind.x11_phase_environment.raw.report_identity.captured_at_epoch
+          },
+          {
+            path:.valgrind.x11_phase_environment.suppressed.report,
+            sha256:.valgrind.x11_phase_environment.suppressed.report_identity.sha256,
+            captured_at_epoch:.valgrind.x11_phase_environment.suppressed.report_identity.captured_at_epoch
+          }
+        elif .valgrind.wayland_phase_environment? != null then
+          {
+            path:.valgrind.wayland_phase_environment.raw.report,
+            sha256:.valgrind.wayland_phase_environment.raw.report_identity.sha256,
+            captured_at_epoch:.valgrind.wayland_phase_environment.raw.report_identity.captured_at_epoch
+          },
+          {
+            path:.valgrind.wayland_phase_environment.suppressed.report,
+            sha256:.valgrind.wayland_phase_environment.suppressed.report_identity.sha256,
+            captured_at_epoch:.valgrind.wayland_phase_environment.suppressed.report_identity.captured_at_epoch
+          }
+        else empty end
+      else empty end
+    ) |
+    select(. != null)
+' <<<"${results}")
+while IFS= read -r harness; do
+    harness_path="$(jq -r '.path' <<<"${harness}")"
+    harness_sha="$(jq -r '.sha256' <<<"${harness}")"
+    resolved_harness_path="${harness_path}"
+    if [[ "${resolved_harness_path}" != /* ]]; then
+        resolved_harness_path="${repo_root}/${resolved_harness_path}"
+    fi
+    if [[ ! -f "${resolved_harness_path}" || -L "${resolved_harness_path}" ]] ||
+        [[ "$(sha256sum -- "${resolved_harness_path}" | awk '{print $1}')" != "${harness_sha}" ]]; then
+        echo "qualification-matrix: error: runtime environment harness changed before summary publication: ${harness_path}" >&2
+        evidence_changed=true
+    fi
+done < <(jq -c '.[] | .environment.harness? | select(. != null)' <<<"${results}")
+if "${evidence_changed}"; then
+    run_failed=true
+fi
+
+expected_valgrind_ids="$(jq -c '[.cells[] | select(((.valgrind_report // "") | length) > 0) | .id] | sort' "${matrix}")"
+actual_valgrind_ids="$(jq -c '[.[] | select(has("valgrind_report")) | .id] | sort' <<<"${results}")"
+actual_valgrind_report_paths="$(jq -c '[.[] | select(has("valgrind_report")) | .valgrind_report.path] | sort' <<<"${results}")"
+report_set_complete=false
+if [[ "${expected_valgrind_ids}" == "${actual_valgrind_ids}" ]] &&
+    [[ "${expected_valgrind_report_paths}" == "${actual_valgrind_report_paths}" ]] &&
+    ! "${evidence_changed}"; then
+    report_set_complete=true
+fi
+governance_outcome="$(jq -r --arg id "${governance_cell_id}" '[.[] | select(.id == $id) | .outcome][0] // "MISSING"' <<<"${results}")"
+suppression_reviewed=false
+if "${report_set_complete}" && [[ "${governance_outcome}" == "PASS" ]]; then
+    suppression_reviewed=true
+fi
+suppression_reports="$(jq -c '[.[] | select(has("valgrind_report")) | {id, path:.valgrind_report.path, sha256:.valgrind_report.sha256}] | sort_by(.id)' <<<"${results}")"
 
 totals="$(jq '.cells | group_by(.status) | map({key: .[0].status, value: length}) | from_entries | {PASS: (.PASS // 0), FAIL: (.FAIL // 0), BLOCKED: (.BLOCKED // 0), XFAIL: (.XFAIL // 0), NOT_IMPLEMENTED: (.NOT_IMPLEMENTED // 0)}' "${matrix}")"
 implemented_local=false
@@ -167,19 +908,99 @@ full=false
 if "${release}" && jq -e 'all(.cells[]; .status == "PASS")' "${matrix}" >/dev/null; then
     full=true
 fi
+product_boundary=false
+if "${implemented_local}" && jq -e '
+    . as $matrix |
+    ["product-boundary-wayland","product-boundary-x11"] as $required |
+    all($required[]; . as $id | any($matrix.cells[]; .id == $id and .status == "PASS"))
+' "${matrix}" >/dev/null && jq -e --argjson results "${results}" '
+    ["product-boundary-wayland","product-boundary-x11"] as $required |
+    all($required[]; . as $id | any($results[]; .id == $id and .outcome == "PASS"))
+' <<<"{}" >/dev/null; then
+    product_boundary=true
+fi
+qualification_host_retired=false
+if "${implemented_local}" && "${product_boundary}" &&
+    jq -e '.claims.qualification_host_retired == true' "${matrix}" >/dev/null; then
+    qualification_host_retired=true
+fi
 
+summary_temp="$(mktemp "${summary}.tmp.XXXXXX")"
+trap 'rm -f -- "${summary_temp}"' EXIT
 jq -n \
     --argjson totals "${totals}" \
     --argjson results "${results}" \
+    --arg logs_directory "${logs_dir}" \
+    --arg governance_cell_id "${governance_cell_id}" \
+    --argjson expected_valgrind_report_paths "${expected_valgrind_report_paths}" \
+    --arg governance_outcome "${governance_outcome}" \
+    --argjson suppression_reviewed "${suppression_reviewed}" \
+    --argjson suppression_reports "${suppression_reports}" \
     --argjson implemented_local "${implemented_local}" \
+    --argjson product_boundary "${product_boundary}" \
+    --argjson qualification_host_retired "${qualification_host_retired}" \
     --argjson release "${release}" \
     --argjson full "${full}" \
-    '{schema_version: 1, totals_by_declared_status: $totals, results: $results, valgrind_reports: [$results[] | select(has("valgrind")) | {id, declared_status, outcome, description: (if .outcome == "PASS" then "PASS with reviewed suppressions" else .outcome end), raw: .valgrind.raw, post_suppression: .valgrind.post_suppression, raw_receipt: .valgrind.raw_receipt, suppressed_receipt: .valgrind.suppressed_receipt, suppression_usage: .valgrind.suppression_usage}], claims: {implemented_local_suite_passed: $implemented_local, release_qualification_passed: $release, full_linux_qualification_passed: $full}}' \
-    >"${summary}"
+    '{
+      schema_version: 1,
+      totals_by_declared_status: $totals,
+      logs_directory: $logs_directory,
+      results: $results,
+      suppression_review: {
+        governance_cell_id: $governance_cell_id,
+        governance_outcome: $governance_outcome,
+        accepted: $suppression_reviewed,
+        expected_report_paths: $expected_valgrind_report_paths,
+        reports: $suppression_reports
+      },
+      valgrind_reports: [$results[] | select(has("valgrind")) | {
+        id,
+        declared_status,
+        outcome,
+        log,
+        report: .valgrind_report,
+        suppression_review: (if $suppression_reviewed then "ACCEPTED" else "NOT_ACCEPTED" end),
+        description: (
+          if .outcome == "PASS" and $suppression_reviewed then "PASS with reviewed suppressions"
+          elif .outcome == "PASS" then "PASS; suppression review not accepted"
+          else .outcome end
+        ),
+        raw: .valgrind.raw,
+        post_suppression: .valgrind.post_suppression,
+        optimize: .valgrind.optimize,
+        scenario: .valgrind.scenario,
+        display_backend: .valgrind.display_backend,
+        suppressed_exit_code: .valgrind.suppressed_exit_code,
+        raw_receipt: .valgrind.raw_receipt,
+        suppressed_receipt: .valgrind.suppressed_receipt,
+        report_generated_at_epoch: .valgrind.report_generated_at_epoch,
+        receipt_identities: .valgrind.receipt_identities,
+        suppression_usage: .valgrind.suppression_usage
+      } + if .valgrind.x11_phase_environment? != null then {
+        x11_phase_environment: .valgrind.x11_phase_environment
+      } elif .valgrind.wayland_phase_environment? != null then {
+        wayland_phase_environment: .valgrind.wayland_phase_environment
+      } else {} end],
+      claims: {
+        implemented_local_suite_passed: $implemented_local,
+        product_boundary_qualification_passed: $product_boundary,
+        qualification_host_retired: $qualification_host_retired,
+        release_qualification_passed: $release,
+        full_linux_qualification_passed: $full
+      }
+    }' \
+    >"${summary_temp}"
+mv -f -- "${summary_temp}" "${summary}"
+summary_temp=""
+trap - EXIT
+if [[ -n "${retained_valgrind_evidence_lock_fd}" ]]; then
+    exec {retained_valgrind_evidence_lock_fd}>&-
+fi
 
 printf '\nImplemented local suite: %s\n' "$("${implemented_local}" && echo PASSED || echo FAILED)"
 printf 'Release qualification:    %s\n' "$("${release}" && echo PASSED || echo NOT_PASSED)"
 printf 'Full Linux qualification: %s\n' "$("${full}" && echo PASSED || echo NOT_PASSED)"
+printf 'Suppression review:        %s\n' "$("${suppression_reviewed}" && echo ACCEPTED || echo NOT_ACCEPTED)"
 printf 'Declared totals: PASS=%s FAIL=%s BLOCKED=%s XFAIL=%s NOT_IMPLEMENTED=%s\n' \
     "$(jq -r '.PASS' <<<"${totals}")" \
     "$(jq -r '.FAIL' <<<"${totals}")" \

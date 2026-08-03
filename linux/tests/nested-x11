@@ -1,0 +1,344 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+for dependency in readlink sha256sum awk; do
+    if ! command -v "${dependency}" >/dev/null 2>&1; then
+        echo "nested-x11: SKIP missing runtime dependency: ${dependency}" >&2
+        exit 77
+    fi
+done
+
+readonly ready_marker="nested-x11: READY private-xvfb private-xauthority backend=x11 software-renderer=1"
+wrapper_path="$(readlink -f -- "${BASH_SOURCE[0]}")"
+readonly wrapper_path
+wrapper_sha256="$(sha256sum "${wrapper_path}" | awk '{print $1}')"
+readonly wrapper_sha256
+
+fail() {
+    echo "nested-x11: error: $*" >&2
+    exit 1
+}
+
+pid_is_running() {
+    local pid="$1"
+    local state
+
+    kill -0 "${pid}" 2>/dev/null || return 1
+    state="$(ps -o stat= -p "${pid}" 2>/dev/null || true)"
+    [[ -n "${state}" && "${state}" != Z* ]]
+}
+
+terminate_owned_pid() {
+    local pid="$1"
+
+    if ! pid_is_running "${pid}"; then
+        wait "${pid}" 2>/dev/null || true
+        return
+    fi
+    kill -TERM "${pid}" 2>/dev/null || true
+    for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+        pid_is_running "${pid}" || break
+        sleep 0.05
+    done
+    if pid_is_running "${pid}"; then
+        kill -KILL "${pid}" 2>/dev/null || true
+    fi
+    wait "${pid}" 2>/dev/null || true
+}
+
+verify_approved_session_membership() {
+    local run_root="$1"
+    local require_leader="$2"
+    local ownership_approved=false
+    local expected_session_group
+    local session_identity
+    local actual_sid
+    local actual_pgid
+
+    for _ in {1..100}; do
+        if [[ -s "${run_root}/ownership-approved" ]]; then
+            ownership_approved=true
+            break
+        fi
+        sleep 0.01
+    done
+    [[ "${ownership_approved}" == true ]] ||
+        fail "private-session ownership was not approved by its parent"
+    read -r expected_session_group <"${run_root}/ownership-approved"
+    [[ "${expected_session_group}" =~ ^[1-9][0-9]*$ ]] ||
+        fail "private-session ownership approval is malformed"
+    session_identity="$(ps -o sid=,pgid= -p "$$" 2>/dev/null || true)"
+    read -r actual_sid actual_pgid <<<"${session_identity}"
+    [[ "${actual_sid}" == "${expected_session_group}" &&
+        "${actual_pgid}" == "${expected_session_group}" ]] ||
+        fail "private-session process is outside its approved session and process group"
+    if [[ "${require_leader}" == true ]]; then
+        [[ "${expected_session_group}" == "$$" ]] ||
+            fail "private-session supervisor does not own its approved session and process group"
+    fi
+}
+
+if [[ "${1:-}" == "--private-x11-supervisor" ]]; then
+    shift
+    (( $# > 0 )) || {
+        echo "usage: nested-x11 COMMAND [ARG ...]" >&2
+        exit 64
+    }
+
+    run_root="${ZENTTY_NESTED_X11_RUN_ROOT:?}"
+    [[ "${ZENTTY_NESTED_X11_WRAPPER_SHA256:-}" == "${wrapper_sha256}" ]] ||
+        fail "wrapper identity changed before private-session supervision"
+    verify_approved_session_membership "${run_root}" true
+    exec xvfb-run \
+        -a \
+        -f "${run_root}/Xauthority" \
+        -e "${run_root}/xvfb.log" \
+        -s "-screen 0 1280x1024x24 -nolisten tcp" \
+        env ZENTTY_NESTED_X11_RUN_ROOT="${run_root}" \
+        "${wrapper_path}" --private-x11-inner "$@"
+fi
+
+if [[ "${1:-}" == "--private-x11-inner" ]]; then
+    shift
+    (( $# > 0 )) || {
+        echo "usage: nested-x11 COMMAND [ARG ...]" >&2
+        exit 64
+    }
+
+    run_root="${ZENTTY_NESTED_X11_RUN_ROOT:?}"
+    expected_authority="${run_root}/Xauthority"
+    [[ "${ZENTTY_NESTED_X11_WRAPPER_SHA256:-}" == "${wrapper_sha256}" ]] ||
+        fail "wrapper identity changed before private-session startup"
+    verify_approved_session_membership "${run_root}" false
+    rm -f -- "${run_root}/ownership-approved"
+    [[ "${HOME:-}" == "${run_root}/home" ]] || fail "HOME escaped the private session"
+    [[ "${XDG_CONFIG_HOME:-}" == "${run_root}/config" ]] || fail "XDG_CONFIG_HOME escaped the private session"
+    [[ "${XDG_CACHE_HOME:-}" == "${run_root}/cache" ]] || fail "XDG_CACHE_HOME escaped the private session"
+    [[ "${XDG_DATA_HOME:-}" == "${run_root}/data" ]] || fail "XDG_DATA_HOME escaped the private session"
+    [[ "${XDG_STATE_HOME:-}" == "${run_root}/state" ]] || fail "XDG_STATE_HOME escaped the private session"
+    [[ "${XDG_RUNTIME_DIR:-}" == "${run_root}/runtime" ]] || fail "XDG_RUNTIME_DIR escaped the private session"
+    [[ "${TMPDIR:-}" == "${run_root}/tmp" ]] || fail "TMPDIR escaped the private session"
+    [[ "${DISPLAY:-}" =~ ^:[0-9]+([.][0-9]+)?$ ]] ||
+        fail "private Xvfb did not export a local display"
+    [[ "${XAUTHORITY:-}" == "${expected_authority}" ]] ||
+        fail "private Xvfb did not export its owned authority file"
+    [[ -f "${XAUTHORITY}" && ! -L "${XAUTHORITY}" ]] ||
+        fail "private Xvfb authority is missing or unsafe"
+    xdpyinfo >/dev/null 2>&1 || fail "private Xvfb display did not become ready"
+    xdpyinfo >"${run_root}/display.info" 2>&1 ||
+        fail "private Xvfb display proof could not be captured"
+    glxinfo -B >"${run_root}/renderer.info" 2>&1 ||
+        fail "private Xvfb renderer did not become ready"
+    grep -Eq '^[[:space:]]*Accelerated:[[:space:]]+no[[:space:]]*$|^OpenGL renderer string:.*(llvmpipe|softpipe|swrast)' \
+        "${run_root}/renderer.info" || fail "private Xvfb did not prove a software renderer"
+
+    jq -n \
+        --arg display "${DISPLAY}" \
+        --arg vendor "$(sed -n 's/^[[:space:]]*vendor string:[[:space:]]*//p' "${run_root}/display.info" | head -n 1)" \
+        --arg vendor_release "$(sed -n 's/^[[:space:]]*vendor release number:[[:space:]]*//p' "${run_root}/display.info" | head -n 1)" \
+        --arg renderer "$(sed -n 's/^OpenGL renderer string:[[:space:]]*//p' "${run_root}/renderer.info" | head -n 1)" \
+        --arg renderer_vendor "$(sed -n 's/^OpenGL vendor string:[[:space:]]*//p' "${run_root}/renderer.info" | head -n 1)" \
+        --arg renderer_version "$(sed -n 's/^OpenGL version string:[[:space:]]*//p' "${run_root}/renderer.info" | head -n 1)" \
+        '{display:$display,vendor:$vendor,vendor_release:$vendor_release,renderer:$renderer,renderer_vendor:$renderer_vendor,renderer_version:$renderer_version}' \
+        >"${run_root}/session-facts.json"
+    jq -e '
+        (.display | test("^:[0-9]+([.][0-9]+)?$")) and
+        (.vendor | length > 0) and
+        (.vendor_release | length > 0) and
+        (.renderer | length > 0) and
+        (.renderer_vendor | length > 0) and
+        (.renderer_version | length > 0)
+    ' "${run_root}/session-facts.json" >/dev/null ||
+        fail "private Xvfb environment proof was incomplete"
+
+    unset ZENTTY_NESTED_X11_RUN_ROOT
+    printf '%s\n' "${ready_marker}"
+    printf 'nested-x11: SESSION %s\n' "${ZENTTY_NESTED_X11_SESSION_ID}"
+    exec "$@"
+fi
+
+(( $# > 0 )) || {
+    echo "usage: nested-x11 COMMAND [ARG ...]" >&2
+    exit 64
+}
+
+for dependency in \
+    xvfb-run Xvfb xauth xdpyinfo glxinfo grep jq sha256sum awk sed head \
+    readlink date setsid ps kill sleep mktemp mkdir chmod rm env; do
+    if ! command -v "${dependency}" >/dev/null 2>&1; then
+        echo "nested-x11: SKIP missing runtime dependency: ${dependency}" >&2
+        exit 77
+    fi
+done
+
+report="${ZENTTY_NESTED_X11_REPORT:-}"
+report_temp=""
+if [[ -n "${report}" ]]; then
+    if [[ "${report}" != /* ]]; then
+        report="$(pwd)/${report}"
+    fi
+    report="$(readlink -m -- "${report}")"
+    [[ ! -L "${report}" ]] || fail "environment report may not be a symlink"
+    [[ -d "$(dirname "${report}")" ]] ||
+        fail "environment report parent does not exist"
+    rm -f -- "${report}"
+fi
+
+run_root="$(mktemp -d /tmp/zentty-nested-x11.XXXXXX)"
+started_at_epoch="$(date +%s)"
+session_id="$(printf '%s\n' "${run_root}" "${started_at_epoch}" "$$" | sha256sum | awk '{print $1}')"
+mkdir -p \
+    "${run_root}/home" \
+    "${run_root}/config" \
+    "${run_root}/cache" \
+    "${run_root}/data" \
+    "${run_root}/state" \
+    "${run_root}/runtime" \
+    "${run_root}/tmp"
+chmod 700 "${run_root}" "${run_root}"/*
+session_pid=""
+session_pgid=""
+terminate_session() {
+    if [[ "${session_pgid}" =~ ^[1-9][0-9]*$ ]]; then
+        kill -TERM -- "-${session_pgid}" 2>/dev/null || true
+        for _ in 1 2 3 4 5 6 7 8 9 10; do
+            if ! ps -eo pgid= | awk -v expected="${session_pgid}" '$1 == expected { found=1 } END { exit !found }'; then
+                break
+            fi
+            sleep 0.05
+        done
+        kill -KILL -- "-${session_pgid}" 2>/dev/null || true
+    elif [[ "${session_pid}" =~ ^[1-9][0-9]*$ ]] &&
+        pid_is_running "${session_pid}"; then
+        terminate_owned_pid "${session_pid}"
+    elif [[ "${session_pid}" =~ ^[1-9][0-9]*$ ]]; then
+        wait "${session_pid}" 2>/dev/null || true
+    fi
+}
+cleanup() {
+    trap - EXIT HUP INT TERM
+    terminate_session
+    if [[ -n "${report_temp}" ]]; then
+        rm -f -- "${report_temp}"
+    fi
+    rm -rf -- "${run_root}"
+}
+signal_exit() {
+    local status="$1"
+    exit "${status}"
+}
+trap cleanup EXIT
+trap 'signal_exit 129' HUP
+trap 'signal_exit 130' INT
+trap 'signal_exit 143' TERM
+
+unset \
+    DISPLAY WAYLAND_DISPLAY WAYLAND_SOCKET MIR_SOCKET \
+    XAUTHORITY XAUTHLOCALHOSTNAME \
+    DBUS_SESSION_BUS_ADDRESS DBUS_STARTER_ADDRESS DBUS_STARTER_BUS_TYPE \
+    DBUS_SYSTEM_BUS_ADDRESS DBUS_SESSION_BUS_PID DBUS_SESSION_BUS_WINDOWID \
+    AT_SPI_BUS_ADDRESS IBUS_ADDRESS IBUS_ADDRESS_FILE IBUS_USE_PORTAL \
+    IBUS_ENABLE_SYNC_MODE GTK_IM_MODULE WESTON_LAUNCHER_SOCK
+export HOME="${run_root}/home"
+export XDG_CONFIG_HOME="${run_root}/config"
+export XDG_CACHE_HOME="${run_root}/cache"
+export XDG_DATA_HOME="${run_root}/data"
+export XDG_STATE_HOME="${run_root}/state"
+export XDG_RUNTIME_DIR="${run_root}/runtime"
+export TMPDIR="${run_root}/tmp"
+export GDK_BACKEND=x11
+export XDG_SESSION_TYPE=x11
+export LIBGL_ALWAYS_SOFTWARE=1
+export GSETTINGS_BACKEND=memory
+export GIO_USE_VFS=local
+export NO_AT_BRIDGE=1
+export GTK_A11Y=none
+export ZENTTY_NESTED_X11_SESSION_ID="${session_id}"
+export ZENTTY_NESTED_X11_WRAPPER_SHA256="${wrapper_sha256}"
+
+set +e
+setsid env ZENTTY_NESTED_X11_RUN_ROOT="${run_root}" \
+    "${wrapper_path}" --private-x11-supervisor "$@" &
+session_pid=$!
+for _ in {1..50}; do
+    session_identity="$(ps -o sid=,pgid= -p "${session_pid}" 2>/dev/null || true)"
+    read -r actual_sid actual_pgid <<<"${session_identity}"
+    if [[ "${actual_sid}" == "${session_pid}" &&
+        "${actual_pgid}" == "${session_pid}" ]]; then
+        session_pgid="${session_pid}"
+        printf '%s\n' "${session_pgid}" >"${run_root}/ownership-approved"
+        break
+    fi
+    pid_is_running "${session_pid}" || break
+    sleep 0.01
+done
+[[ -n "${session_pgid}" ]] ||
+    fail "private session did not establish an owned session and process group"
+wait "${session_pid}"
+status=$?
+set -e
+
+terminate_session
+remaining_processes="$(ps -eo pid=,pgid= | awk -v expected="${session_pgid}" '$2 == expected { print $1 }')"
+[[ -z "${remaining_processes}" ]] || fail "private X11 process group survived cleanup"
+[[ "$(sha256sum "${wrapper_path}" | awk '{print $1}')" == "${wrapper_sha256}" ]] ||
+    fail "wrapper identity changed during private-session execution"
+
+if [[ "${status}" -ne 0 && -s "${run_root}/xvfb.log" ]]; then
+    while IFS= read -r line; do
+        printf 'nested-x11: Xvfb: %s\n' "${line}" >&2
+    done <"${run_root}/xvfb.log"
+fi
+
+if [[ -f "${run_root}/session-facts.json" ]]; then
+    facts="$(jq -c . "${run_root}/session-facts.json")"
+    display="$(jq -r '.display' <<<"${facts}")"
+    if DISPLAY="${display}" XAUTHORITY="${run_root}/Xauthority" xdpyinfo >/dev/null 2>&1; then
+        fail "private Xvfb remained reachable after session exit"
+    fi
+else
+    facts=""
+fi
+
+rm -rf -- "${run_root}"
+trap - EXIT HUP INT TERM
+
+if [[ -n "${report}" && -n "${facts}" ]]; then
+    finished_at_epoch="$(date +%s)"
+    command_json="$(printf '%s\0' "$@" | jq -Rs 'split("\u0000")[:-1]')"
+    report_temp="$(mktemp "${report}.tmp.XXXXXX")"
+    jq -n \
+        --arg session_id "${session_id}" \
+        --arg wrapper_path "${wrapper_path}" \
+        --arg wrapper_sha256 "${wrapper_sha256}" \
+        --argjson process_group "${session_pgid}" \
+        --argjson started_at_epoch "${started_at_epoch}" \
+        --argjson finished_at_epoch "${finished_at_epoch}" \
+        --argjson command "${command_json}" \
+        --argjson command_exit_code "${status}" \
+        --argjson facts "${facts}" '
+        {
+          schema_version:1,
+          session_id:$session_id,
+          backend:"x11",
+          wrapper:{path:$wrapper_path,sha256:$wrapper_sha256},
+          started_at_epoch:$started_at_epoch,
+          finished_at_epoch:$finished_at_epoch,
+          command:$command,
+          command_exit_code:$command_exit_code,
+          server:{name:"Xvfb",endpoint:$facts.display,vendor:$facts.vendor,vendor_release:$facts.vendor_release},
+          renderer:{software:true,name:$facts.renderer,vendor:$facts.renderer_vendor,version:$facts.renderer_version},
+          isolation:{
+            ambient_display_sanitized:true,
+            ambient_dbus_sanitized:true,
+            process_group:$process_group,
+            run_root_removed:true,
+            display_unreachable_after:true,
+            remaining_processes:[]
+          }
+        }
+    ' >"${report_temp}"
+    mv -f -- "${report_temp}" "${report}"
+    report_temp=""
+fi
+exit "${status}"

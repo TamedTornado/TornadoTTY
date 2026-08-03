@@ -2,7 +2,10 @@
   "schema_version": 1,
   "manifest_semantics": {
     "expected_suppressed.matches": "Expected Valgrind used_suppression context count; ranges or per-scenario exact values are enforced.",
-    "expected_suppressed.bytes": "Expected suppressed bytes; null means Valgrind does not emit a byte count for that finding type."
+    "expected_suppressed.bytes": "Expected suppressed bytes; null means Valgrind does not emit a byte count for that finding type.",
+    "usage_profiles": "Optional exact, scenario-specific cross-rule tuples are enforced only where an exact lost-record partition is a valid behavioral oracle.",
+    "usage_profiles.evidence_identity": "An exact-profile evidence identity names a locally reviewed, gitignored archive and its recorded checksums; it does not claim that a clean clone contains that archive.",
+    "protocol_ceilings": "A protocol-derived ceiling binds variable Memcheck lost/reachable partitions to a fixed acknowledged lifecycle, pinned runtime/source identities, per-rule context/byte/block limits, cross-rule relations, and paired raw/suppressed evidence."
   },
   "environment": {
     "os": "Ubuntu 24.04 amd64",
@@ -40,7 +43,130 @@
       "id": "valgrind-builtins",
       "base": "builtin",
       "version": "valgrind-3.22.0",
-      "audit": "Valgrind built-in suppressions remain enabled in both raw and reviewed runs; raw means no Ghostty or Zentty suppression files, not --default-suppressions=no."
+      "audit": "Valgrind built-in suppressions remain enabled in both raw and suppression-enabled candidate runs; raw means no Ghostty or Zentty suppression files, not --default-suppressions=no."
+    }
+  ],
+  "usage_profiles": [],
+  "protocol_ceilings": [
+    {
+      "id": "IBUS-PREEDIT-ACKNOWLEDGED-EIGHT-CALL-CEILING",
+      "scenario": "Debug/ibus-focus/x11",
+      "runtime_identity": {
+        "gtk": "4.14.5",
+        "ibus": "1.5.29-2",
+        "ibus_gtk4": "1.5.29-2",
+        "libibus": "1.5.29-2"
+      },
+      "source_identity": {
+        "repository": "https://github.com/ibus/ibus.git",
+        "version": "1.5.29",
+        "revision": "0ad8e77bd36545974ad8acd0a5283cf72bc7c8ad",
+        "path": "client/gtk4/ibusimcontext.c",
+        "sha256": "421dec0149829c84d7ce292e9134a31d39f3b5170e168b66ebf42da3546cd6fa"
+      },
+      "lifecycle": {
+        "contract": "linux/tests/lib/ibus-focus-protocol",
+        "contract_sha256": "5c940161c1086feff86f94038023b3eec9c829066148c8a00e8763e5e2955612",
+        "wrapper": "linux/tests/controlled-ibus-x11",
+        "wrapper_sha256": "24ffd8bb69c42c662447b3320fcbdb75387c71efb6ba84865d9dcdbc96f56db3",
+        "reproducer": "linux/tests/ibus-focus-reproducer.c",
+        "reproducer_sha256": "03c9449c7a0a33693e2a469480ee521df3ee72693ba3f8af10b362260499775b",
+        "sync_mode_environment": "IBUS_ENABLE_SYNC_MODE",
+        "sync_mode_value": "1",
+        "focus_cycles": 4,
+        "clear_calls_per_cycle": 2,
+        "expected_clear_calls": 8
+      },
+      "evidence_identity": {
+        "reviewed": true,
+        "verification_scope": "identity-only-local-archive",
+        "public_access": {
+          "status": "NOT_IMPLEMENTED",
+          "tracking": "GH-10",
+          "locator": null,
+          "reason": "The complete paired receipts are retained only in a gitignored local archive pending redaction, external attestation, and public artifact retention."
+        },
+        "archive_path": "build/linux/qualification-runs/2026-08-03-ibus-acknowledged-ceiling-paired-8",
+        "total_runs": 8,
+        "independent_executions": true,
+        "executable": {
+          "path": "ibus-focus-reproducer",
+          "sha256": "c105beb6ee2e105c212496f3f822c968706002d59607d5100ec6bb476a7cead3"
+        },
+        "receipt_pairs": [
+          {
+            "run": 1,
+            "raw_receipt": {"path": "run-1.raw.log", "sha256": "af2be05760a9e5f38a6446cf5538b36c0cefd0a800be169848fe1a5c4ab456ff"},
+            "suppressed_receipt": {"path": "run-1.suppressed.log", "sha256": "34c554a090c2624269306d9ed4217732a3ea35ca6256178eafc079b5ac9bb323"},
+            "report": {"path": "run-1.json", "sha256": "8b82fbd855847d42ce69818dd5098d1cd0b5ae15b5d01dd14276f2564f016629"}
+          },
+          {
+            "run": 2,
+            "raw_receipt": {"path": "run-2.raw.log", "sha256": "1e2385436fd39fca13690eac2ba68ba7e830429f34c8d7841c66d1c70001ae3a"},
+            "suppressed_receipt": {"path": "run-2.suppressed.log", "sha256": "cf9edf5ac8347fcf369d415c8adace5abe56e3e428d46f51815ec9a58b793e41"},
+            "report": {"path": "run-2.json", "sha256": "c35441c2febe72bbd6989dbb33108bef576b91fc0c0bfa8c4530dd7673ae904b"}
+          },
+          {
+            "run": 3,
+            "raw_receipt": {"path": "run-3.raw.log", "sha256": "523a359a8c435008ab033c27cfb75359ff5ea63de417c1485fe239f61bfe6568"},
+            "suppressed_receipt": {"path": "run-3.suppressed.log", "sha256": "6b292b24d45f87a087d87cb8c681a7f0926800b3ae685aa1f8d588dc06d8c96e"},
+            "report": {"path": "run-3.json", "sha256": "6769d7795109f56e1bb9bbb2ec65347384d2e9211feae9aa2e29257f096e9ad4"}
+          },
+          {
+            "run": 4,
+            "raw_receipt": {"path": "run-4.raw.log", "sha256": "6f44343d25fafe5405607490be46e0ecc93d567772777b703a9b75cc7b4c513a"},
+            "suppressed_receipt": {"path": "run-4.suppressed.log", "sha256": "9b3bd1107ad8372c8a67f0794a31244ba141394b1217615796559e1b8c4c250e"},
+            "report": {"path": "run-4.json", "sha256": "9f7755cbb913c214982dee3f2436427339b37936c45d771fc89eabaabf90b5cc"}
+          },
+          {
+            "run": 5,
+            "raw_receipt": {"path": "run-5.raw.log", "sha256": "ac7d37e4c25702968b87f1e9c33c619cb77730e308ff70a2fd8c1af02281548b"},
+            "suppressed_receipt": {"path": "run-5.suppressed.log", "sha256": "bc954820b23eb776528b989054e7b7d623e8ce41920ddc7f0a08898706bf5073"},
+            "report": {"path": "run-5.json", "sha256": "f88d0d5974103575866fe6875b0ec68baa752a765180a24cea7513fc3d4959de"}
+          },
+          {
+            "run": 6,
+            "raw_receipt": {"path": "run-6.raw.log", "sha256": "619f8e83092f1ae430b2e3e0e078ce27e7846eaf3052a333b47602808c94e934"},
+            "suppressed_receipt": {"path": "run-6.suppressed.log", "sha256": "3395f83de528047a95b4d6677cce9034e5c7f632dabbd85feb1c41854d5bb6a1"},
+            "report": {"path": "run-6.json", "sha256": "abba0e4295a0d586afad58836f8d9082e566cfe60e4d048fa30c1ab307ac2485"}
+          },
+          {
+            "run": 7,
+            "raw_receipt": {"path": "run-7.raw.log", "sha256": "c808441e4936fd13d67c6957d072c6b92cec0d65d9ac646b76db5c5a44420c71"},
+            "suppressed_receipt": {"path": "run-7.suppressed.log", "sha256": "83a6896f40bae1d7314b00faf1c26201bbfee6801b5e2d637e30250807ff6cdd"},
+            "report": {"path": "run-7.json", "sha256": "7f14145ddd04fee81e66db43f27989171b7b244861c1d52da58e5501ff7ce436"}
+          },
+          {
+            "run": 8,
+            "raw_receipt": {"path": "run-8.raw.log", "sha256": "cca4d5e32fe705b6a564c3b511a649695696b22a3780f6f739465ef940ad4515"},
+            "suppressed_receipt": {"path": "run-8.suppressed.log", "sha256": "31f554d0c19b96359d85f4159cf4aa55063b7b280e29b5163a609f0a5abbb8c4"},
+            "report": {"path": "run-8.json", "sha256": "ae138fff8c3a697f0eb4c8b21affffe01d6d9e2b8ae5889b95ae0137be43f0ec"}
+          }
+        ],
+        "checksums_receipt": {
+          "path": "SHA256SUMS",
+          "sha256": "4a4ed6b88b5f3339730b74bac41d3964cc512b494348d78054a4fe8c86f2d28f"
+        }
+      },
+      "rules": [
+        {
+          "rule_name": "GTK IBus focus preedit object",
+          "matches": {"min": 4, "max": 4},
+          "bytes": {"min": 290, "max": 1160},
+          "blocks": {"min": 4, "max": 16}
+        },
+        {
+          "rule_name": "GTK IBus focus preedit string",
+          "matches": {"min": 2, "max": 2},
+          "bytes": {"min": 2, "max": 8},
+          "blocks": {"min": 2, "max": 8}
+        }
+      ],
+      "relations": {
+        "string_bytes_equal_blocks": true,
+        "string_requires_object": true,
+        "all_usage_requires_acknowledged_lifecycle": true
+      }
     }
   ],
   "rules": [
@@ -62,11 +188,12 @@
       "finding_type": "Memcheck:Leak definite root through pango_context_get_metrics",
       "expected_suppressed": {"matches": {"min": 1, "max": 2}, "bytes": {"min": 13100, "max": 26300}},
       "expected_by_scenario": {
-        "Debug/ibus-focus/x11": {"matches": {"min": 2, "max": 2}, "bytes": {"min": 10182, "max": 10182}}
+        "Debug/single/x11": {"matches": {"min": 1, "max": 1}, "bytes": {"min": 8656, "max": 13200}},
+        "Debug/ibus-focus/x11": {"matches": {"min": 2, "max": 2}, "bytes": {"min": 10150, "max": 10182}}
       },
       "allowed_scenarios": ["Debug/single/wayland", "Debug/interaction/wayland", "Debug/single/x11", "Debug/interaction/x11", "Debug/ibus-focus/x11", "ReleaseSafe/interaction/wayland", "ReleaseSafe/interaction/x11"],
       "justification": "The allocation begins in stripped Fontconfig and is consumed through the named Pango metrics API. Child rules are permitted only when this root is present in the same report.",
-      "reproducer": "linux/tests/ibus-focus-reproducer.c reproduces the root without linking Ghostty; linux/tests/ibus-focus-memory preserves raw and reviewed receipts.",
+      "reproducer": "linux/tests/ibus-focus-reproducer.c reproduces the root without linking Ghostty; linux/tests/ibus-focus-memory preserves raw and suppression-enabled candidate receipts pending qualification governance.",
       "required_usage": true
     },
     {
@@ -75,6 +202,9 @@
       "affected": "Ubuntu Fontconfig 2.15.0 indirect calloc children of the Pango metrics cache",
       "finding_type": "Memcheck:Leak indirect children with pango_context_get_metrics consumer",
       "expected_suppressed": {"matches": {"min": 16, "max": 32}, "bytes": {"min": 512, "max": 1024}},
+      "expected_by_scenario": {
+        "Debug/ibus-focus/x11": {"matches": {"min": 31, "max": 32}, "bytes": {"min": 992, "max": 1024}}
+      },
       "allowed_scenarios": ["Debug/single/wayland", "Debug/interaction/wayland", "Debug/single/x11", "Debug/interaction/x11", "Debug/ibus-focus/x11", "ReleaseSafe/interaction/wayland", "ReleaseSafe/interaction/x11"],
       "requires_root_rule": "GTK Pango Fontconfig metrics cache",
       "justification": "Every frame includes both stripped Fontconfig and pango_context_get_metrics; usage must co-occur with the separately tracked root.",
@@ -88,18 +218,18 @@
       "finding_type": "Memcheck:Leak indirect malloc/strdup children",
       "expected_suppressed": {"matches": {"min": 8, "max": 18}, "bytes": {"min": 2289, "max": 4634}},
       "expected_by_scenario": {
-        "Debug/single/wayland": {"matches": {"min": 10, "max": 10}, "bytes": {"min": 4634, "max": 4634}},
+        "Debug/single/wayland": {"matches": {"min": 10, "max": 18}, "bytes": {"min": 4394, "max": 4634}},
         "Debug/interaction/wayland": {"matches": {"min": 10, "max": 10}, "bytes": {"min": 4634, "max": 4634}},
-        "Debug/single/x11": {"matches": {"min": 8, "max": 8}, "bytes": {"min": 2289, "max": 2289}},
-        "Debug/interaction/x11": {"matches": {"min": 10, "max": 10}, "bytes": {"min": 4634, "max": 4634}},
-        "Debug/ibus-focus/x11": {"matches": {"min": 18, "max": 18}, "bytes": {"min": 2962, "max": 2962}},
+        "Debug/single/x11": {"matches": {"min": 8, "max": 21}, "bytes": {"min": 1933, "max": 2289}},
+        "Debug/interaction/x11": {"matches": {"min": 8, "max": 10}, "bytes": {"min": 2289, "max": 4634}},
+        "Debug/ibus-focus/x11": {"matches": {"min": 4, "max": 4}, "bytes": {"min": 4618, "max": 4618}},
         "ReleaseSafe/interaction/wayland": {"matches": {"min": 10, "max": 10}, "bytes": {"min": 4634, "max": 4634}},
-        "ReleaseSafe/interaction/x11": {"matches": {"min": 8, "max": 8}, "bytes": {"min": 4536, "max": 4536}}
+        "ReleaseSafe/interaction/x11": {"matches": {"min": 4, "max": 8}, "bytes": {"min": 2182, "max": 4536}}
       },
       "allowed_scenarios": ["Debug/single/wayland", "Debug/interaction/wayland", "Debug/single/x11", "Debug/interaction/x11", "Debug/ibus-focus/x11", "ReleaseSafe/interaction/wayland", "ReleaseSafe/interaction/x11"],
       "requires_root_rule": "GTK Pango Fontconfig metrics cache",
       "justification": "The prior one-frame Fontconfig rule was rejected. This rule now requires strdup followed by five consecutive stripped Fontconfig frames and is valid only beside the metrics root.",
-      "reproducer": "With 40-frame receipts, the non-Ghostty Pango/IBus reproducer records 18 matches/2962 bytes beside two explicitly requested metrics roots; product receipts have exact scenario baselines above.",
+      "reproducer": "With 40-frame receipts, the non-Ghostty Pango/IBus reproducer records 18 matches/2962 bytes beside two explicitly requested metrics roots; two reviewed cold/warm product runs establish only the bounded scenario variants above.",
       "required_usage": true
     },
     {
@@ -107,20 +237,20 @@
       "tracking_id": "ZENTTY-VG-FONT-METRICS-NODES-001",
       "affected": "Ubuntu Fontconfig 2.15.0 deep recursive node graph owned by the Pango metrics cache",
       "finding_type": "Memcheck:Leak indirect malloc children",
-      "expected_suppressed": {"matches": {"min": 1, "max": 1}, "bytes": {"min": 3872, "max": 7744}},
+      "expected_suppressed": {"matches": {"min": 1, "max": 1}, "bytes": {"min": 3872, "max": 8256}},
       "expected_by_scenario": {
-        "Debug/single/wayland": {"matches": {"min": 1, "max": 1}, "bytes": {"min": 7744, "max": 7744}},
+        "Debug/single/wayland": {"matches": {"min": 1, "max": 1}, "bytes": {"min": 6560, "max": 7744}},
         "Debug/interaction/wayland": {"matches": {"min": 1, "max": 1}, "bytes": {"min": 7744, "max": 7744}},
-        "Debug/single/x11": {"matches": {"min": 1, "max": 1}, "bytes": {"min": 3872, "max": 3872}},
-        "Debug/interaction/x11": {"matches": {"min": 1, "max": 1}, "bytes": {"min": 7744, "max": 7744}},
-        "Debug/ibus-focus/x11": {"matches": {"min": 1, "max": 1}, "bytes": {"min": 4384, "max": 4384}},
+        "Debug/single/x11": {"matches": {"min": 1, "max": 1}, "bytes": {"min": 2688, "max": 3872}},
+        "Debug/interaction/x11": {"matches": {"min": 1, "max": 1}, "bytes": {"min": 3872, "max": 7744}},
+        "Debug/ibus-focus/x11": {"matches": {"min": 1, "max": 1}, "bytes": {"min": 8256, "max": 8256}},
         "ReleaseSafe/interaction/wayland": {"matches": {"min": 1, "max": 1}, "bytes": {"min": 7744, "max": 7744}},
-        "ReleaseSafe/interaction/x11": {"matches": {"min": 1, "max": 1}, "bytes": {"min": 7744, "max": 7744}}
+        "ReleaseSafe/interaction/x11": {"matches": {"min": 1, "max": 1}, "bytes": {"min": 3872, "max": 7744}}
       },
       "allowed_scenarios": ["Debug/single/wayland", "Debug/interaction/wayland", "Debug/single/x11", "Debug/interaction/x11", "Debug/ibus-focus/x11", "ReleaseSafe/interaction/wayland", "ReleaseSafe/interaction/x11"],
       "requires_root_rule": "GTK Pango Fontconfig metrics cache",
       "justification": "The prior malloc-plus-one-Fontconfig rule was rejected. This replacement requires eight consecutive stripped Fontconfig frames and root co-occurrence.",
-      "reproducer": "The non-Ghostty Pango/IBus reproducer records 1 match/4384 bytes beside two explicitly requested metrics roots; product receipts record 5728-11456 bytes.",
+      "reproducer": "The non-Ghostty Pango/IBus reproducer records 1 match/4384 bytes beside two explicitly requested metrics roots; two reviewed cold/warm product runs establish the narrower per-scenario bounds above.",
       "required_usage": true
     },
     {
@@ -129,6 +259,9 @@
       "affected": "Ubuntu Fontconfig 2.15.0 and Pango 1.52.1 X11 layout cache",
       "finding_type": "Memcheck:Leak definite root through pango_layout_get_size",
       "expected_suppressed": {"matches": {"min": 1, "max": 1}, "bytes": {"min": 13100, "max": 13200}},
+      "expected_by_scenario": {
+        "Debug/ibus-focus/x11": {"matches": {"min": 2, "max": 2}, "bytes": {"min": 26135, "max": 26208}}
+      },
       "allowed_scenarios": ["Debug/interaction/x11", "Debug/ibus-focus/x11", "ReleaseSafe/interaction/x11"],
       "justification": "The consumer is the named Pango layout API and the rule does not match metrics-only or API-lifecycle scenarios.",
       "reproducer": "linux/tests/ibus-focus-reproducer.c calls pango_layout_get_size directly without Ghostty; the X11 product interaction can also produce this cache.",
@@ -140,6 +273,9 @@
       "affected": "Ubuntu Fontconfig 2.15.0 indirect calloc children of the X11 Pango layout cache",
       "finding_type": "Memcheck:Leak indirect children through pango_layout_get_size",
       "expected_suppressed": {"matches": {"min": 16, "max": 16}, "bytes": {"min": 512, "max": 512}},
+      "expected_by_scenario": {
+        "Debug/ibus-focus/x11": {"matches": {"min": 29, "max": 31}, "bytes": {"min": 928, "max": 992}}
+      },
       "allowed_scenarios": ["Debug/interaction/x11", "Debug/ibus-focus/x11", "ReleaseSafe/interaction/x11"],
       "requires_root_rule": "GTK Pango Fontconfig layout cache",
       "justification": "The rule includes the Pango layout consumer and is rejected if the root is absent in the same report.",
@@ -149,12 +285,15 @@
     {
       "rule_name": "GTK IBus focus preedit object",
       "tracking_id": "ZENTTY-VG-IBUS-PREEDIT-ROOT-001",
-      "affected": "Ubuntu GTK 4.14.5 IBus module and libibus 1.5.29 on the live Xwayland desktop",
+      "affected": "Ubuntu GTK 4.14.5 IBus module and libibus 1.5.29 in the controlled Xvfb/private-D-Bus/private-IBus xkb:us::eng environment",
       "finding_type": "Memcheck:Leak definite/indirect IBusText preedit objects after focus-out",
       "expected_suppressed": {"matches": {"min": 2, "max": 4}, "bytes": {"min": 145, "max": 580}},
+      "expected_by_scenario": {
+        "Debug/ibus-focus/x11": {"matches": {"min": 4, "max": 4}, "bytes": {"min": 290, "max": 1160}}
+      },
       "allowed_scenarios": ["Debug/interaction/x11", "Debug/ibus-focus/x11", "ReleaseSafe/interaction/x11"],
-      "justification": "A standalone GtkIMMulticontext reproducer creates the same IBusText roots without Ghostty. This establishes external reproducibility but does not eliminate Ghostty lifecycle responsibility; that uncertainty remains documented.",
-      "reproducer": "GDK_BACKEND=x11 GTK_IM_MODULE=ibus linux/tests/ibus-focus-memory; raw stacks terminate in advance_focus in ibus-focus-reproducer.c rather than Surface.updateFocus.",
+      "justification": "A standalone GtkIMMulticontext reproducer creates the same IBusText roots without loading or linking Ghostty. Four server-acknowledged focus-out/reset cycles with pinned GTK4 sync mode call the leaking external IBus clear-preedit path exactly eight times. The protocol ceiling permits only the source-derived lost-record maximum of 145 bytes and two object-rule blocks per call while retaining exact context and scenario limits; it does not eliminate Ghostty lifecycle responsibility.",
+      "reproducer": "linux/tests/ibus-focus-memory under linux/tests/controlled-ibus-x11; a required raw loss record contains ibus_text_new_from_string, libim-ibus.so, and drive_lifecycle in ibus-focus-reproducer.c.",
       "required_usage": true
     },
     {
@@ -163,10 +302,13 @@
       "affected": "Ubuntu GTK 4.14.5 IBus module/libibus 1.5.29 empty preedit strings",
       "finding_type": "Memcheck:Leak indirect g_strdup child of IBusText",
       "expected_suppressed": {"matches": {"min": 1, "max": 2}, "bytes": {"min": 1, "max": 4}},
+      "expected_by_scenario": {
+        "Debug/ibus-focus/x11": {"matches": {"min": 2, "max": 2}, "bytes": {"min": 2, "max": 8}}
+      },
       "allowed_scenarios": ["Debug/interaction/x11", "Debug/ibus-focus/x11", "ReleaseSafe/interaction/x11"],
       "requires_root_rule": "GTK IBus focus preedit object",
-      "justification": "The full stack includes g_strdup, ibus_text_new_from_string, and the external GTK IBus module; it must co-occur with the IBusText root.",
-      "reproducer": "The standalone GTK/IBus raw receipt records the same one-byte strings without linking or loading Ghostty.",
+      "justification": "The full stack includes g_strdup, ibus_text_new_from_string, and the external GTK IBus module. It must co-occur with the IBusText root, its one-byte strings must equal its suppressed block count, and both stay at or below the acknowledged eight-call protocol ceiling. Independent raw and suppressed processes prevent one shared external service from coupling the receipts.",
+      "reproducer": "The standalone GTK/IBus raw receipt records the same one-byte strings without linking or loading Ghostty; linux/tests/ibus-focus-memory verifies the three stack anchors occur in one loss record.",
       "required_usage": true
     }
   ]

@@ -3,11 +3,24 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 validator="${repo_root}/linux/tests/suppression-governance"
+export ZENTTY_SUPPRESSION_MANIFEST_SCHEMA="${repo_root}/linux/tests/valgrind-suppressions.schema.json"
+source "${repo_root}/linux/tests/lib/valgrind-report"
+source "${repo_root}/linux/tests/lib/ibus-focus-protocol"
+# The self-test creates and owns isolated evidence sets. A parent matrix may
+# itself hold a production evidence lease while invoking this test; do not let
+# that inherited lease masquerade as ownership of any fixture lock.
+unset ZENTTY_VALGRIND_EVIDENCE_LOCK_FD ZENTTY_VALGRIND_EVIDENCE_LOCK_PATH
 temp_dir="$(mktemp -d)"
 trap 'rm -rf "${temp_dir}"' EXIT
 suppression="${temp_dir}/fixture.supp"
 manifest="${temp_dir}/manifest.json"
 reports="${temp_dir}/reports"
+report="${reports}/memory-safety-Debug-single-wayland.json"
+nested_x11="${repo_root}/linux/tests/nested-x11"
+nested_wayland="${repo_root}/linux/tests/nested-wayland"
+raw_receipt="${report%.json}.raw.log"
+suppressed_receipt="${report%.json}.suppressed.log"
+expected_reports_json="$(jq -cn --arg report "${report}" '[$report]')"
 mkdir -p "${reports}"
 
 write_suppression() {
@@ -27,8 +40,25 @@ write_manifest() {
         --arg valgrind "$(valgrind --version)" \
         '{
             schema_version: 1,
+            manifest_semantics: {
+                "expected_suppressed.matches": "fixture match semantics",
+                "expected_suppressed.bytes": "fixture byte semantics",
+                usage_profiles: "fixture exact profile semantics",
+                "usage_profiles.evidence_identity": "fixture identity-only evidence semantics",
+                protocol_ceilings: "fixture acknowledged lifecycle ceiling semantics"
+            },
+            environment: {
+                os: "fixture", valgrind: "fixture", gtk: "fixture",
+                glib: "fixture", fontconfig: "fixture", pango: "fixture",
+                librsvg: "fixture", ibus: "fixture"
+            },
             project_suppression_file: {path: $path, sha256: $sha256, rule_count: 1},
-            effective_inherited_sets: [{id: "builtin", base: "builtin", version: $valgrind}],
+            effective_inherited_sets: [{
+                id: "builtin", base: "builtin", version: $valgrind,
+                audit: "fixture built-in suppression audit"
+            }],
+            usage_profiles: [],
+            protocol_ceilings: [],
             rules: [{
                 rule_name: "fixture rule",
                 tracking_id: "FIXTURE-1",
@@ -47,25 +77,182 @@ write_report() {
     local matches="$1"
     local backend="$2"
     local rule="$3"
-    local raw="${temp_dir}/raw.log"
-    local suppressed="${temp_dir}/suppressed.log"
-    touch "${raw}" "${suppressed}"
+    local bytes="${4:-10}"
+    local raw_identity suppressed_identity report_generated_at_epoch
+    local raw_metrics suppressed_metrics suppression_usage suppressed_contexts
+    local raw_environment suppressed_environment phase_environment
+    local raw_environment_identity suppressed_environment_identity
+    local raw_session suppressed_session wrapper_sha nested_wrapper
+    local phase_harness phase_environment_field
+    local raw_server suppressed_server renderer isolation
+
+    cat >"${raw_receipt}" <<'EOF'
+==1== definitely lost: 10 bytes in 1 blocks
+==1== indirectly lost: 0 bytes in 0 blocks
+==1== ERROR SUMMARY: 1 errors from 1 contexts (suppressed: 0 from 0)
+EOF
+    if (( matches > 0 )); then
+        suppressed_contexts=1
+    else
+        suppressed_contexts=0
+    fi
+    cat >"${suppressed_receipt}" <<EOF
+==2== definitely lost: 0 bytes in 0 blocks
+==2== indirectly lost: 0 bytes in 0 blocks
+==2== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: ${matches} from ${suppressed_contexts})
+EOF
+    if (( matches > 0 )); then
+        printf '%s\n' \
+            "==2== used_suppression: ${matches} ${rule} ${suppression}:1 suppressed: ${bytes} bytes in 1 blocks" \
+            >>"${suppressed_receipt}"
+    fi
+    raw_identity="$(zentty_valgrind_receipt_identity_json "${raw_receipt}")"
+    suppressed_identity="$(zentty_valgrind_receipt_identity_json "${suppressed_receipt}")"
+    raw_metrics="$(zentty_valgrind_metrics_json "${raw_receipt}")"
+    suppressed_metrics="$(zentty_valgrind_metrics_json "${suppressed_receipt}")"
+    suppression_usage="$(zentty_valgrind_usage_json \
+        "${suppressed_receipt}" "${suppression}")"
+    report_generated_at_epoch="$(date +%s)"
+    raw_environment="${report%.json}.raw.environment"
+    suppressed_environment="${report%.json}.suppressed.environment"
+    rm -f -- "${raw_environment}" "${suppressed_environment}"
+    raw_session="$(printf '%s:raw\n' "${report}" | sha256sum | awk '{print $1}')"
+    suppressed_session="$(printf '%s:suppressed\n' "${report}" | sha256sum | awk '{print $1}')"
+    if [[ "${backend}" == "x11" ]]; then
+        nested_wrapper="${nested_x11}"
+        phase_harness="linux/tests/nested-x11"
+        phase_environment_field="x11_phase_environment"
+        raw_server='{"name":"Xvfb","endpoint":":9753","vendor":"fixture","vendor_release":"1"}'
+        suppressed_server='{"name":"Xvfb","endpoint":":9754","vendor":"fixture","vendor_release":"1"}'
+        renderer='{"software":true,"name":"llvmpipe (fixture)","vendor":"fixture","version":"1"}'
+        isolation='{"ambient_display_sanitized":true,"ambient_dbus_sanitized":true,"process_group":9753,"run_root_removed":true,"display_unreachable_after":true,"remaining_processes":[]}'
+    else
+        nested_wrapper="${nested_wayland}"
+        phase_harness="linux/tests/nested-wayland"
+        phase_environment_field="wayland_phase_environment"
+        raw_server='{"name":"Weston","version":"13.0.0","backend":"headless","endpoint":"wayland-z-1111111111111111","width":1280,"height":1024,"scale":1,"protocols":["wl_compositor","wl_output","wl_shm","xdg_wm_base"],"wayland_info_sha256":"1111111111111111111111111111111111111111111111111111111111111111"}'
+        suppressed_server='{"name":"Weston","version":"13.0.0","backend":"headless","endpoint":"wayland-z-2222222222222222","width":1280,"height":1024,"scale":1,"protocols":["wl_compositor","wl_output","wl_shm","xdg_wm_base"],"wayland_info_sha256":"2222222222222222222222222222222222222222222222222222222222222222"}'
+        renderer='{"software":true,"name":"Pixman","proof":"Using Pixman renderer"}'
+        isolation='{"ambient_display_sanitized":true,"ambient_dbus_sanitized":true,"process_group":9753,"run_root_removed":true,"display_unreachable_after":true,"remaining_processes":[]}'
+    fi
+    wrapper_sha="$(sha256sum "${nested_wrapper}" | awk '{print $1}')"
+    jq -n \
+        --arg session "${raw_session}" \
+        --arg backend "${backend}" \
+        --arg wrapper "${nested_wrapper}" \
+        --arg wrapper_sha "${wrapper_sha}" \
+        --argjson started "$((report_generated_at_epoch - 3))" \
+        --argjson finished "$((report_generated_at_epoch - 2))" \
+        --argjson server "${raw_server}" \
+        --argjson renderer "${renderer}" \
+        --argjson isolation "${isolation}" '
+        {
+          schema_version:1,session_id:$session,backend:$backend,
+          wrapper:{path:$wrapper,sha256:$wrapper_sha},
+          started_at_epoch:$started,finished_at_epoch:$finished,
+          command:["env","valgrind"],command_exit_code:0,
+          server:$server,renderer:$renderer,isolation:$isolation
+        }
+    ' >"${raw_environment}"
+    jq -n \
+        --arg session "${suppressed_session}" \
+        --arg backend "${backend}" \
+        --arg wrapper "${nested_wrapper}" \
+        --arg wrapper_sha "${wrapper_sha}" \
+        --argjson started "$((report_generated_at_epoch - 1))" \
+        --argjson finished "${report_generated_at_epoch}" \
+        --argjson server "${suppressed_server}" \
+        --argjson renderer "${renderer}" \
+        --argjson isolation "${isolation}" '
+        {
+          schema_version:1,session_id:$session,backend:$backend,
+          wrapper:{path:$wrapper,sha256:$wrapper_sha},
+          started_at_epoch:$started,finished_at_epoch:$finished,
+          command:["env","valgrind","--error-exitcode=99","--suppressions=/fixture.supp"],command_exit_code:0,
+          server:$server,renderer:$renderer,isolation:$isolation
+        }
+    ' >"${suppressed_environment}"
+    touch -d "@${report_generated_at_epoch}" \
+        "${raw_environment}" "${suppressed_environment}"
+    raw_environment_identity="$(zentty_valgrind_receipt_identity_json \
+        "${raw_environment}")"
+    suppressed_environment_identity="$(zentty_valgrind_receipt_identity_json \
+        "${suppressed_environment}")"
+    phase_environment="$(jq -cn \
+        --arg harness "${phase_harness}" \
+        --arg harness_sha256 "${wrapper_sha}" \
+        --arg raw_report "${raw_environment}" \
+        --arg raw_session "${raw_session}" \
+        --argjson raw_identity "${raw_environment_identity}" \
+        --arg suppressed_report "${suppressed_environment}" \
+        --arg suppressed_session "${suppressed_session}" \
+        --argjson suppressed_identity "${suppressed_environment_identity}" '
+        {
+          harness:$harness,harness_sha256:$harness_sha256,phase_isolation:true,
+          raw:{report:$raw_report,report_identity:$raw_identity,session_id:$raw_session},
+          suppressed:{report:$suppressed_report,report_identity:$suppressed_identity,session_id:$suppressed_session}
+        }
+    ')"
     jq -n \
         --arg project "${suppression}" \
         --arg sha256 "$(sha256sum "${suppression}" | awk '{print $1}')" \
         --arg backend "${backend}" \
-        --arg raw "${raw}" \
-        --arg suppressed "${suppressed}" \
-        --arg rule "${rule}" \
-        --argjson matches "${matches}" \
+        --arg raw "${raw_receipt}" \
+        --arg suppressed "${suppressed_receipt}" \
+        --arg valgrind_version "$(valgrind --version)" \
+        --argjson report_generated_at_epoch "${report_generated_at_epoch}" \
+        --argjson raw_identity "${raw_identity}" \
+        --argjson suppressed_identity "${suppressed_identity}" \
+        --argjson raw_metrics "${raw_metrics}" \
+        --argjson suppressed_metrics "${suppressed_metrics}" \
+        --argjson suppression_usage "${suppression_usage}" \
+        --arg phase_environment_field "${phase_environment_field}" \
+        --argjson phase_environment "${phase_environment}" \
         '{
             optimize: "Debug", scenario: "single", display_backend: $backend,
             raw_receipt: $raw, suppressed_receipt: $suppressed,
+            suppressed_exit_code: 0,
+            valgrind_version: $valgrind_version,
+            valgrind_builtin_suppressions: true,
+            report_generated_at_epoch: $report_generated_at_epoch,
+            receipt_identities: {raw: $raw_identity, suppressed: $suppressed_identity},
             effective_suppression_files: [{path: $project, sha256: $sha256}],
-            suppression_usage: [{file: $project, rule_name: $rule, matches: $matches, bytes: 10, blocks: 1, errors: null, contexts: null}],
-            raw: {errors: 1, definite_bytes: 10, indirect_bytes: 0},
-            post_suppression: {errors: 0, definite_bytes: 0, indirect_bytes: 0}
-        }' >"${reports}/memory-safety-fixture.json"
+            suppression_usage: $suppression_usage,
+            raw: $raw_metrics,
+            post_suppression: $suppressed_metrics
+        } + {($phase_environment_field):$phase_environment}' >"${report}"
+}
+
+refresh_phase_environment_binding() {
+    local raw_environment="${report%.json}.raw.environment"
+    local suppressed_environment="${report%.json}.suppressed.environment"
+    local raw_identity suppressed_identity generated phase_environment_field
+
+    raw_identity="$(zentty_valgrind_receipt_identity_json "${raw_environment}")"
+    suppressed_identity="$(zentty_valgrind_receipt_identity_json \
+        "${suppressed_environment}")"
+    generated="$(date +%s)"
+    phase_environment_field="$(jq -r '
+        if .display_backend == "x11" then
+            "x11_phase_environment"
+        else
+            "wayland_phase_environment"
+        end
+    ' "${report}")"
+    jq \
+        --arg field "${phase_environment_field}" \
+        --arg raw_session "$(jq -r '.session_id' "${raw_environment}")" \
+        --arg suppressed_session "$(jq -r '.session_id' "${suppressed_environment}")" \
+        --argjson raw_identity "${raw_identity}" \
+        --argjson suppressed_identity "${suppressed_identity}" \
+        --argjson generated "${generated}" '
+        .[$field].raw.session_id = $raw_session |
+        .[$field].raw.report_identity = $raw_identity |
+        .[$field].suppressed.session_id = $suppressed_session |
+        .[$field].suppressed.report_identity = $suppressed_identity |
+        .report_generated_at_epoch = $generated
+    ' "${report}" >"${temp_dir}/refreshed-phase-report.json"
+    mv "${temp_dir}/refreshed-phase-report.json" "${report}"
 }
 
 expect_failure() {
@@ -75,6 +262,8 @@ expect_failure() {
     set +e
     ZENTTY_SUPPRESSION_MANIFEST="${manifest}" \
     ZENTTY_SUPPRESSION_REPORTS_DIR="${reports}" \
+    ZENTTY_VALGRIND_EXPECTED_REPORTS_JSON="${expected_reports_json}" \
+    ZENTTY_SUPPRESSION_VALIDATION_NOW_EPOCH="${ZENTTY_SUPPRESSION_VALIDATION_NOW_EPOCH:-$(date +%s)}" \
         "${validator}" >"${output}" 2>&1
     status=$?
     set -e
@@ -94,18 +283,328 @@ write_manifest
 write_report 1 wayland "fixture rule"
 ZENTTY_SUPPRESSION_MANIFEST="${manifest}" \
 ZENTTY_SUPPRESSION_REPORTS_DIR="${reports}" \
+ZENTTY_VALGRIND_EXPECTED_REPORTS_JSON="${expected_reports_json}" \
+ZENTTY_SUPPRESSION_VALIDATION_NOW_EPOCH="$(date +%s)" \
     "${validator}" >/dev/null
+
+rm -f -- "${report%.json}.raw.environment"
+expect_failure missing-wayland-phase-environment \
+    "raw nested Wayland environment report is missing or unsafe"
+
+write_report 1 wayland "fixture rule"
+jq 'del(.wayland_phase_environment)' "${report}" \
+    >"${temp_dir}/missing-wayland-phase-binding.json"
+mv "${temp_dir}/missing-wayland-phase-binding.json" "${report}"
+expect_failure missing-wayland-phase-binding \
+    "missing or malformed Wayland Valgrind phase environment identity"
+
+write_report 1 wayland "fixture rule"
+raw_wayland_session="$(jq -r '.session_id' "${report%.json}.raw.environment")"
+jq --arg session "${raw_wayland_session}" '.session_id = $session' \
+    "${report%.json}.suppressed.environment" \
+    >"${temp_dir}/reused-wayland-environment.json"
+mv "${temp_dir}/reused-wayland-environment.json" \
+    "${report%.json}.suppressed.environment"
+refresh_phase_environment_binding
+expect_failure reused-wayland-phase-session \
+    "raw and suppressed Valgrind phases reused a nested Wayland session"
+
+write_report 1 wayland "fixture rule"
+jq '.started_at_epoch -= 1000' "${report%.json}.raw.environment" \
+    >"${temp_dir}/stale-wayland-environment.json"
+mv "${temp_dir}/stale-wayland-environment.json" \
+    "${report%.json}.raw.environment"
+refresh_phase_environment_binding
+expect_failure stale-wayland-phase-environment \
+    "nested Wayland Valgrind phase chronology or command binding is invalid or stale"
+
+write_report 1 wayland "fixture rule"
+jq '.server.version = "forged"' "${report%.json}.raw.environment" \
+    >"${temp_dir}/stale-wayland-hash.json"
+mv "${temp_dir}/stale-wayland-hash.json" \
+    "${report%.json}.raw.environment"
+expect_failure stale-wayland-report-hash \
+    "raw nested Wayland environment identity is stale"
+
+write_report 1 wayland "fixture rule"
+jq '.backend = "x11"' "${report%.json}.raw.environment" \
+    >"${temp_dir}/wrong-wayland-backend.json"
+mv "${temp_dir}/wrong-wayland-backend.json" \
+    "${report%.json}.raw.environment"
+refresh_phase_environment_binding
+expect_failure wrong-wayland-backend \
+    "raw nested Wayland environment report is malformed"
+
+write_report 1 wayland "fixture rule"
+jq '.command_exit_code = 7' "${report%.json}.raw.environment" \
+    >"${temp_dir}/wrong-wayland-status.json"
+mv "${temp_dir}/wrong-wayland-status.json" \
+    "${report%.json}.raw.environment"
+refresh_phase_environment_binding
+expect_failure wrong-wayland-status \
+    "raw nested Wayland environment report is malformed"
+
+write_report 1 wayland "fixture rule"
+jq '.command += ["--suppressions=/forged.supp"]' \
+    "${report%.json}.raw.environment" \
+    >"${temp_dir}/wrong-wayland-command-role.json"
+mv "${temp_dir}/wrong-wayland-command-role.json" \
+    "${report%.json}.raw.environment"
+refresh_phase_environment_binding
+expect_failure wrong-wayland-command-role \
+    "nested Wayland Valgrind phase chronology or command binding is invalid or stale"
+
+write_report 1 wayland "fixture rule"
+jq '.wayland_phase_environment.harness_sha256 = ("f" * 64)' \
+    "${report}" >"${temp_dir}/stale-wayland-harness.json"
+mv "${temp_dir}/stale-wayland-harness.json" "${report}"
+expect_failure stale-wayland-harness \
+    "missing or malformed Wayland Valgrind phase environment identity"
+
+write_report 1 wayland "fixture rule"
+jq '.protocol = {ceiling_id:"UNREVIEWED"}' \
+    "${report}" >"${temp_dir}/unreviewed-protocol-metadata.json"
+mv "${temp_dir}/unreviewed-protocol-metadata.json" "${report}"
+expect_failure unreviewed-protocol-metadata \
+    "report contains protocol metadata outside a reviewed ceiling"
+
+extra_report="${reports}/memory-safety-valid-extra.json"
+cp -- "${report}" "${extra_report}"
+expect_failure valid-extra-report "Valgrind report set does not match expected allowlist"
+rm -f -- "${extra_report}"
+
+mv -- "${report}" "${temp_dir}/missing-report.json"
+expect_failure missing-report "Valgrind report set does not match expected allowlist"
+mv -- "${temp_dir}/missing-report.json" "${report}"
 
 write_report 2 wayland "fixture rule"
 expect_failure increased-count "suppression count outside reviewed range"
 
-jq '.suppression_usage = []' \
-    "${reports}/memory-safety-fixture.json" >"${temp_dir}/stale.json"
-mv "${temp_dir}/stale.json" "${reports}/memory-safety-fixture.json"
+write_report 1 wayland "fixture rule" 11
+expect_failure increased-bytes "suppressed bytes outside reviewed range"
+
+write_report 0 wayland "fixture rule"
 expect_failure stale "tracked suppression became stale"
 
+wayland_report="${report}"
+wayland_raw_receipt="${raw_receipt}"
+wayland_suppressed_receipt="${suppressed_receipt}"
+rm -f -- "${wayland_report}"
+report="${reports}/memory-safety-Debug-single-x11.json"
+raw_receipt="${report%.json}.raw.log"
+suppressed_receipt="${report%.json}.suppressed.log"
+expected_reports_json="$(jq -cn --arg report "${report}" '[$report]')"
 write_report 1 x11 "fixture rule"
 expect_failure outside-scenario "suppression matched outside documented scenario"
+
+jq '(.rules[] | select(.rule_name == "fixture rule") |
+    .allowed_scenarios) = ["Debug/single/x11"]' \
+    "${manifest}" >"${temp_dir}/x11-manifest.json"
+mv "${temp_dir}/x11-manifest.json" "${manifest}"
+write_report 1 x11 "fixture rule"
+ZENTTY_SUPPRESSION_MANIFEST="${manifest}" \
+ZENTTY_SUPPRESSION_REPORTS_DIR="${reports}" \
+ZENTTY_VALGRIND_EXPECTED_REPORTS_JSON="${expected_reports_json}" \
+ZENTTY_SUPPRESSION_VALIDATION_NOW_EPOCH="$(date +%s)" \
+    "${validator}" >/dev/null
+
+write_report 1 x11 "fixture rule"
+jq '.isolation.process_group = 0' "${report%.json}.raw.environment" \
+    >"${temp_dir}/invalid-x11-process-group.json"
+mv "${temp_dir}/invalid-x11-process-group.json" \
+    "${report%.json}.raw.environment"
+refresh_phase_environment_binding
+expect_failure invalid-x11-process-group \
+    "raw nested X11 environment report is malformed"
+
+write_report 1 x11 "fixture rule"
+rm -f -- "${report%.json}.raw.environment"
+expect_failure missing-x11-phase-environment \
+    "raw nested X11 environment report is missing or unsafe"
+
+write_report 1 x11 "fixture rule"
+raw_x11_session="$(jq -r '.session_id' "${report%.json}.raw.environment")"
+jq --arg session "${raw_x11_session}" '.session_id = $session' \
+    "${report%.json}.suppressed.environment" \
+    >"${temp_dir}/reused-x11-environment.json"
+mv "${temp_dir}/reused-x11-environment.json" \
+    "${report%.json}.suppressed.environment"
+refresh_phase_environment_binding
+expect_failure reused-x11-phase-session \
+    "raw and suppressed Valgrind phases reused a nested X11 session"
+
+write_report 1 x11 "fixture rule"
+jq '.started_at_epoch -= 1000' "${report%.json}.raw.environment" \
+    >"${temp_dir}/stale-x11-environment.json"
+mv "${temp_dir}/stale-x11-environment.json" \
+    "${report%.json}.raw.environment"
+refresh_phase_environment_binding
+expect_failure stale-x11-phase-environment \
+    "nested X11 Valgrind phase chronology or command binding is invalid or stale"
+
+write_manifest
+rm -f -- \
+    "${report}" \
+    "${raw_receipt}" \
+    "${suppressed_receipt}" \
+    "${report%.json}.raw.environment" \
+    "${report%.json}.suppressed.environment"
+report="${wayland_report}"
+raw_receipt="${wayland_raw_receipt}"
+suppressed_receipt="${wayland_suppressed_receipt}"
+expected_reports_json="$(jq -cn --arg report "${report}" '[$report]')"
+
+write_report 1 wayland "fixture rule"
+jq '.raw.errors = 0' "${report}" >"${temp_dir}/forged-raw-metrics.json"
+mv "${temp_dir}/forged-raw-metrics.json" "${report}"
+expect_failure forged-raw-metrics "raw metrics do not match bound receipt"
+
+write_report 1 wayland "fixture rule"
+jq '.post_suppression.contexts = 7' \
+    "${report}" >"${temp_dir}/forged-post-metrics.json"
+mv "${temp_dir}/forged-post-metrics.json" "${report}"
+expect_failure forged-post-metrics "post-suppression metrics do not match bound receipt"
+
+write_report 1 wayland "fixture rule"
+jq '.suppression_usage[0].matches = 2' \
+    "${report}" >"${temp_dir}/forged-usage.json"
+mv "${temp_dir}/forged-usage.json" "${report}"
+expect_failure forged-usage "suppression usage does not match bound receipt"
+
+write_report 1 wayland "fixture rule"
+printf '%s\n' \
+    '==2== used_suppression: 1 unreviewed rule /tmp/unreviewed.supp:1 suppressed: 1 bytes in 1 blocks' \
+    >>"${suppressed_receipt}"
+suppressed_identity="$(zentty_valgrind_receipt_identity_json "${suppressed_receipt}")"
+report_generated_at_epoch="$(date +%s)"
+jq \
+    --argjson suppressed_identity "${suppressed_identity}" \
+    --argjson generated "${report_generated_at_epoch}" \
+    '.receipt_identities.suppressed = $suppressed_identity |
+     .report_generated_at_epoch = $generated' \
+    "${report}" >"${temp_dir}/unrecognized-usage.json"
+mv "${temp_dir}/unrecognized-usage.json" "${report}"
+expect_failure unrecognized-usage "suppression usage contains an unrecognized file"
+
+write_report 1 wayland "fixture rule"
+jq '.effective_suppression_files += [{path: "/tmp/extra.supp", sha256: "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"}]' \
+    "${report}" >"${temp_dir}/extra-suppression.json"
+mv "${temp_dir}/extra-suppression.json" "${report}"
+expect_failure extra-suppression "effective explicit suppression file set mismatch"
+
+write_report 1 wayland "fixture rule"
+jq '.suppressed_exit_code = 99' \
+    "${report}" >"${temp_dir}/invalid-debug-status.json"
+mv "${temp_dir}/invalid-debug-status.json" "${report}"
+jq '.command_exit_code = 99' "${report%.json}.suppressed.environment" \
+    >"${temp_dir}/invalid-debug-environment-status.json"
+mv "${temp_dir}/invalid-debug-environment-status.json" \
+    "${report%.json}.suppressed.environment"
+refresh_phase_environment_binding
+expect_failure invalid-debug-status "suppressed exit code is not publishable"
+
+write_report 1 wayland "fixture rule"
+raw_epoch="$(jq -r '.receipt_identities.raw.captured_at_epoch' "${report}")"
+printf 'replacement raw Valgrind fixture\n' >"${raw_receipt}"
+touch -d "@${raw_epoch}" "${raw_receipt}"
+expect_failure replaced-raw "raw receipt checksum mismatch"
+
+write_report 1 wayland "fixture rule"
+: >"${raw_receipt}"
+expect_failure empty-raw "raw receipt missing or empty"
+
+write_report 1 wayland "fixture rule"
+suppressed_epoch="$(jq -r '.receipt_identities.suppressed.captured_at_epoch' "${report}")"
+touch -d "@$((suppressed_epoch + 1))" "${suppressed_receipt}"
+expect_failure touched-suppressed "suppressed receipt capture epoch mismatch"
+
+write_report 1 wayland "fixture rule"
+raw_epoch="$(jq -r '.receipt_identities.raw.captured_at_epoch' "${report}")"
+jq --argjson generated "$((raw_epoch - 1))" \
+    '.report_generated_at_epoch = $generated' \
+    "${report}" >"${temp_dir}/chronology.json"
+mv "${temp_dir}/chronology.json" "${report}"
+expect_failure chronology "Valgrind receipt chronology invalid"
+
+write_report 1 wayland "fixture rule"
+generated_epoch="$(jq -r '.report_generated_at_epoch' "${report}")"
+raw_epoch="$((generated_epoch - 901))"
+touch -d "@${raw_epoch}" "${raw_receipt}"
+jq --argjson raw_epoch "${raw_epoch}" \
+    '.receipt_identities.raw.captured_at_epoch = $raw_epoch' \
+    "${report}" >"${temp_dir}/stale-capture-span.json"
+mv "${temp_dir}/stale-capture-span.json" "${report}"
+expect_failure stale-capture-span "Valgrind receipt capture span is stale"
+
+write_report 1 wayland "fixture rule"
+validation_now="$(date +%s)"
+raw_epoch="$((validation_now - 86403))"
+suppressed_epoch="$((validation_now - 86402))"
+generated_epoch="$((validation_now - 86401))"
+touch -d "@${raw_epoch}" "${raw_receipt}"
+touch -d "@${suppressed_epoch}" "${suppressed_receipt}"
+jq \
+    --argjson raw_epoch "${raw_epoch}" \
+    --argjson suppressed_epoch "${suppressed_epoch}" \
+    --argjson generated_epoch "${generated_epoch}" \
+    '.receipt_identities.raw.captured_at_epoch = $raw_epoch |
+     .receipt_identities.suppressed.captured_at_epoch = $suppressed_epoch |
+     .report_generated_at_epoch = $generated_epoch' \
+    "${report}" >"${temp_dir}/stale-report.json"
+mv "${temp_dir}/stale-report.json" "${report}"
+ZENTTY_SUPPRESSION_VALIDATION_NOW_EPOCH="${validation_now}"
+export ZENTTY_SUPPRESSION_VALIDATION_NOW_EPOCH
+expect_failure stale-report "stale Valgrind report"
+unset ZENTTY_SUPPRESSION_VALIDATION_NOW_EPOCH
+
+write_report 1 wayland "fixture rule"
+rm -f -- "${suppressed_receipt}"
+ln "${raw_receipt}" "${suppressed_receipt}"
+expect_failure shared-receipt "Valgrind evidence files share an inode"
+rm -f -- "${suppressed_receipt}"
+
+write_report 1 wayland "fixture rule"
+outside_raw_receipt="${temp_dir}/outside.raw.log"
+cp --preserve=timestamps -- "${raw_receipt}" "${outside_raw_receipt}"
+outside_raw_identity="$(zentty_valgrind_receipt_identity_json "${outside_raw_receipt}")"
+jq \
+    --arg outside "${outside_raw_receipt}" \
+    --argjson identity "${outside_raw_identity}" \
+    '.raw_receipt = $outside | .receipt_identities.raw = $identity' \
+    "${report}" >"${temp_dir}/outside-raw-report.json"
+mv "${temp_dir}/outside-raw-report.json" "${report}"
+expect_failure outside-raw-receipt "raw receipt path is not canonical"
+
+write_report 1 wayland "fixture rule"
+mv -- "${raw_receipt}" "${raw_receipt}.real"
+ln -s -- "${raw_receipt}.real" "${raw_receipt}"
+expect_failure symlink-raw-receipt "raw receipt is not a regular non-symlink file"
+rm -f -- "${raw_receipt}"
+mv -- "${raw_receipt}.real" "${raw_receipt}"
+
+write_report 1 wayland "fixture rule"
+x11_report="${reports}/memory-safety-Debug-single-x11.json"
+x11_raw_receipt="${x11_report%.json}.raw.log"
+x11_suppressed_receipt="${x11_report%.json}.suppressed.log"
+ln -- "${raw_receipt}" "${x11_raw_receipt}"
+cp -- "${suppressed_receipt}" "${x11_suppressed_receipt}"
+x11_raw_identity="$(zentty_valgrind_receipt_identity_json "${x11_raw_receipt}")"
+x11_suppressed_identity="$(zentty_valgrind_receipt_identity_json "${x11_suppressed_receipt}")"
+jq \
+    --arg raw "${x11_raw_receipt}" \
+    --arg suppressed "${x11_suppressed_receipt}" \
+    --argjson raw_identity "${x11_raw_identity}" \
+    --argjson suppressed_identity "${x11_suppressed_identity}" '
+    .display_backend = "x11" |
+    .raw_receipt = $raw |
+    .suppressed_receipt = $suppressed |
+    .receipt_identities.raw = $raw_identity |
+    .receipt_identities.suppressed = $suppressed_identity
+' "${report}" >"${x11_report}"
+expected_reports_json="$(jq -cn --arg wayland "${report}" --arg x11 "${x11_report}" '[$wayland,$x11]')"
+expect_failure cross-report-hardlink "Valgrind evidence files share an inode"
+expected_reports_json="$(jq -cn --arg report "${report}" '[$report]')"
+rm -f -- "${x11_report}" "${x11_raw_receipt}" "${x11_suppressed_receipt}"
 
 write_report 1 wayland "fixture rule"
 cat >>"${suppression}" <<'EOF'
@@ -116,5 +615,1265 @@ cat >>"${suppression}" <<'EOF'
 }
 EOF
 expect_failure untracked "untracked suppression added"
+
+write_suppression
+cat >>"${suppression}" <<'EOF'
+{
+   fixture child rule
+   Memcheck:Leak
+   fun:calloc
+}
+EOF
+write_manifest
+jq \
+    --arg sha256 "$(sha256sum "${suppression}" | awk '{print $1}')" '
+    .project_suppression_file.sha256 = $sha256 |
+    .project_suppression_file.rule_count = 2 |
+    .rules[0].expected_suppressed.bytes = {min:10,max:20} |
+    .rules += [{
+        rule_name:"fixture child rule",
+        tracking_id:"FIXTURE-2",
+        affected:"fixture",
+        finding_type:"Memcheck:Leak",
+        expected_suppressed:{matches:{min:1,max:1},bytes:{min:5,max:6}},
+        allowed_scenarios:["Debug/single/wayland"],
+        justification:"fixture",
+        reproducer:"fixture",
+        required_usage:true
+    }] |
+    .usage_profiles = [
+        {
+            id:"FIXTURE-PROFILE-A",
+            scenario:"Debug/single/wayland",
+            environment:"fixture",
+            evidence_identity:{
+                reviewed:true,
+                verification_scope:"identity-only-local-archive",
+                public_access:{
+                    status:"NOT_IMPLEMENTED",
+                    tracking:"GH-10",
+                    locator:null,
+                    reason:"fixture evidence is not publicly hosted"
+                },
+                archive_path:"build/linux/qualification-runs/fixture-profile-a",
+                observed_runs:1,
+                total_runs:2,
+                independent_executions:true,
+                raw_receipt:{
+                    path:"memory-safety-Debug-single-wayland.raw.log",
+                    sha256:("a" * 64)
+                },
+                suppressed_receipt:{
+                    path:"memory-safety-Debug-single-wayland.suppressed.log",
+                    sha256:("b" * 64)
+                },
+                report:{
+                    path:"memory-safety-Debug-single-wayland.json",
+                    sha256:("c" * 64)
+                },
+                checksums_receipt:{path:"SHA256SUMS",sha256:("d" * 64)}
+            },
+            reproducer:"fixture",
+            rules:[
+                {rule_name:"fixture rule",matches:1,bytes:10,blocks:1},
+                {rule_name:"fixture child rule",matches:1,bytes:5,blocks:1}
+            ]
+        },
+        {
+            id:"FIXTURE-PROFILE-B",
+            scenario:"Debug/single/wayland",
+            environment:"fixture",
+            evidence_identity:{
+                reviewed:true,
+                verification_scope:"identity-only-local-archive",
+                public_access:{
+                    status:"NOT_IMPLEMENTED",
+                    tracking:"GH-10",
+                    locator:null,
+                    reason:"fixture evidence is not publicly hosted"
+                },
+                archive_path:"build/linux/qualification-runs/fixture-profile-b",
+                observed_runs:1,
+                total_runs:2,
+                independent_executions:true,
+                raw_receipt:{
+                    path:"memory-safety-Debug-single-wayland.raw.log",
+                    sha256:("e" * 64)
+                },
+                suppressed_receipt:{
+                    path:"memory-safety-Debug-single-wayland.suppressed.log",
+                    sha256:("f" * 64)
+                },
+                report:{
+                    path:"memory-safety-Debug-single-wayland.json",
+                    sha256:("1" * 64)
+                },
+                checksums_receipt:{path:"SHA256SUMS",sha256:("2" * 64)}
+            },
+            reproducer:"fixture",
+            rules:[
+                {rule_name:"fixture rule",matches:1,bytes:20,blocks:2},
+                {rule_name:"fixture child rule",matches:1,bytes:6,blocks:2}
+            ]
+        }
+    ]
+' "${manifest}" >"${temp_dir}/profile-manifest.json"
+mv "${temp_dir}/profile-manifest.json" "${manifest}"
+
+write_profile_usage_report() {
+    local first_bytes="$1"
+    local first_blocks="$2"
+    local child_bytes="$3"
+    local child_blocks="$4"
+    local suppressed_identity report_generated_at_epoch
+    local suppressed_metrics suppression_usage
+
+    cat >"${suppressed_receipt}" <<EOF
+==2== definitely lost: 0 bytes in 0 blocks
+==2== indirectly lost: 0 bytes in 0 blocks
+==2== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 2 from 2)
+==2== used_suppression: 1 fixture rule ${suppression}:1 suppressed: ${first_bytes} bytes in ${first_blocks} blocks
+==2== used_suppression: 1 fixture child rule ${suppression}:6 suppressed: ${child_bytes} bytes in ${child_blocks} blocks
+EOF
+    suppressed_identity="$(zentty_valgrind_receipt_identity_json \
+        "${suppressed_receipt}")"
+    suppressed_metrics="$(zentty_valgrind_metrics_json "${suppressed_receipt}")"
+    suppression_usage="$(zentty_valgrind_usage_json \
+        "${suppressed_receipt}" "${suppression}")"
+    report_generated_at_epoch="$(date +%s)"
+    jq \
+        --argjson suppressed_identity "${suppressed_identity}" \
+        --argjson suppressed_metrics "${suppressed_metrics}" \
+        --argjson suppression_usage "${suppression_usage}" \
+        --argjson generated "${report_generated_at_epoch}" '
+        .receipt_identities.suppressed = $suppressed_identity |
+        .post_suppression = $suppressed_metrics |
+        .suppression_usage = $suppression_usage |
+        .report_generated_at_epoch = $generated
+    ' "${report}" >"${temp_dir}/profile-report.json"
+    mv "${temp_dir}/profile-report.json" "${report}"
+}
+
+write_report 1 wayland "fixture rule"
+write_profile_usage_report 10 1 5 1
+ZENTTY_SUPPRESSION_MANIFEST="${manifest}" \
+ZENTTY_SUPPRESSION_REPORTS_DIR="${reports}" \
+ZENTTY_VALGRIND_EXPECTED_REPORTS_JSON="${expected_reports_json}" \
+ZENTTY_SUPPRESSION_VALIDATION_NOW_EPOCH="$(date +%s)" \
+    "${validator}" >/dev/null
+
+write_profile_usage_report 20 2 5 1
+expect_failure mixed-usage-profile \
+    "suppression usage does not match any reviewed exact profile"
+
+write_profile_usage_report 15 1 5 1
+expect_failure intermediate-usage-profile \
+    "suppression usage does not match any reviewed exact profile"
+
+write_profile_usage_report 20 2 6 2
+ZENTTY_SUPPRESSION_MANIFEST="${manifest}" \
+ZENTTY_SUPPRESSION_REPORTS_DIR="${reports}" \
+ZENTTY_VALGRIND_EXPECTED_REPORTS_JSON="${expected_reports_json}" \
+ZENTTY_SUPPRESSION_VALIDATION_NOW_EPOCH="$(date +%s)" \
+    "${validator}" >/dev/null
+
+cp "${manifest}" "${temp_dir}/valid-profile-manifest.json"
+expect_invalid_profile_manifest() {
+    local label="$1"
+    local mutation="$2"
+    local diagnostic="$3"
+
+    jq "${mutation}" "${temp_dir}/valid-profile-manifest.json" \
+        >"${temp_dir}/${label}.json"
+    mv "${temp_dir}/${label}.json" "${manifest}"
+    expect_failure "${label}" "${diagnostic}"
+}
+
+expect_invalid_profile_manifest mismatched-profile-rule-set \
+    'del(.usage_profiles[0].rules[1])' \
+    "manifest does not conform to suppression schema"
+expect_invalid_profile_manifest untracked-profile-rule \
+    '.usage_profiles[0].rules[0].rule_name = "untracked profile rule"' \
+    "invalid manifest"
+expect_invalid_profile_manifest missing-raw-evidence-hash \
+    'del(.usage_profiles[0].evidence_identity.raw_receipt.sha256)' \
+    "manifest does not conform to suppression schema"
+expect_invalid_profile_manifest missing-suppressed-evidence-hash \
+    'del(.usage_profiles[0].evidence_identity.suppressed_receipt.sha256)' \
+    "manifest does not conform to suppression schema"
+expect_invalid_profile_manifest missing-report-evidence-hash \
+    'del(.usage_profiles[0].evidence_identity.report.sha256)' \
+    "manifest does not conform to suppression schema"
+expect_invalid_profile_manifest missing-checksums-evidence-hash \
+    'del(.usage_profiles[0].evidence_identity.checksums_receipt.sha256)' \
+    "manifest does not conform to suppression schema"
+expect_invalid_profile_manifest missing-observed-run-count \
+    'del(.usage_profiles[0].evidence_identity.observed_runs)' \
+    "manifest does not conform to suppression schema"
+expect_invalid_profile_manifest missing-total-run-count \
+    'del(.usage_profiles[0].evidence_identity.total_runs)' \
+    "manifest does not conform to suppression schema"
+expect_invalid_profile_manifest malformed-evidence-hash \
+    '.usage_profiles[0].evidence_identity.raw_receipt.sha256 = "not-a-sha256"' \
+    "manifest does not conform to suppression schema"
+expect_invalid_profile_manifest unsafe-evidence-archive-path \
+    '.usage_profiles[0].evidence_identity.archive_path = "../unreviewed"' \
+    "manifest does not conform to suppression schema"
+expect_invalid_profile_manifest mismatched-evidence-receipt-path \
+    '.usage_profiles[0].evidence_identity.raw_receipt.path = "memory-safety-other.raw.log"' \
+    "invalid manifest"
+expect_invalid_profile_manifest inconsistent-observation-count \
+    '.usage_profiles[0].evidence_identity.observed_runs = 2' \
+    "invalid manifest"
+expect_invalid_profile_manifest fractional-observation-count \
+    '.usage_profiles[0].evidence_identity.observed_runs = 1.5' \
+    "manifest does not conform to suppression schema"
+expect_invalid_profile_manifest unreviewed-profile \
+    '.usage_profiles[0].evidence_identity.reviewed = false' \
+    "manifest does not conform to suppression schema"
+expect_invalid_profile_manifest coupled-executions-profile \
+    '.usage_profiles[0].evidence_identity.independent_executions = false' \
+    "manifest does not conform to suppression schema"
+expect_invalid_profile_manifest false-public-access-profile \
+    '.usage_profiles[0].evidence_identity.public_access.status = "PASS"' \
+    "manifest does not conform to suppression schema"
+expect_invalid_profile_manifest profile-value-outside-reviewed-range \
+    '.usage_profiles[0].rules[0].bytes = 21' \
+    "invalid manifest"
+
+write_suppression
+write_manifest
+write_report 1 wayland "fixture rule"
+governance_lock="${reports}/.zentty-valgrind-evidence.lock"
+governance_lock_fd=""
+zentty_valgrind_acquire_evidence_lock "${governance_lock}" governance_lock_fd
+zentty_valgrind_validate_evidence_lock_descriptor \
+    "${governance_lock}" "${governance_lock_fd}"
+ZENTTY_VALGRIND_EVIDENCE_LOCK_FD="${governance_lock_fd}" \
+ZENTTY_VALGRIND_EVIDENCE_LOCK_PATH="${governance_lock}" \
+ZENTTY_SUPPRESSION_MANIFEST="${manifest}" \
+ZENTTY_SUPPRESSION_REPORTS_DIR="${reports}" \
+ZENTTY_VALGRIND_EXPECTED_REPORTS_JSON="${expected_reports_json}" \
+ZENTTY_SUPPRESSION_VALIDATION_NOW_EPOCH="$(date +%s)" \
+    "${validator}" >/dev/null
+
+set +e
+(
+    exec {governance_lock_fd}>&-
+    unset ZENTTY_VALGRIND_EVIDENCE_LOCK_FD ZENTTY_VALGRIND_EVIDENCE_LOCK_PATH
+    ZENTTY_SUPPRESSION_MANIFEST="${manifest}" \
+    ZENTTY_SUPPRESSION_REPORTS_DIR="${reports}" \
+    ZENTTY_VALGRIND_EXPECTED_REPORTS_JSON="${expected_reports_json}" \
+    ZENTTY_SUPPRESSION_VALIDATION_NOW_EPOCH="$(date +%s)" \
+        "${validator}"
+) >"${temp_dir}/governance-lock-contention.log" 2>&1
+governance_contention_status=$?
+set -e
+[[ "${governance_contention_status}" -ne 0 ]] &&
+    grep -F "Valgrind evidence is already being produced" \
+        "${temp_dir}/governance-lock-contention.log" >/dev/null || {
+    echo "error: governance did not reject a concurrent evidence producer" >&2
+    cat "${temp_dir}/governance-lock-contention.log" >&2
+    exit 1
+}
+exec {governance_lock_fd}>&-
+
+lock_file="${temp_dir}/evidence.lock"
+lock_owner_fd=""
+zentty_valgrind_acquire_evidence_lock "${lock_file}" lock_owner_fd
+zentty_valgrind_validate_evidence_lock_descriptor \
+    "${lock_file}" "${lock_owner_fd}"
+(
+    ZENTTY_VALGRIND_EVIDENCE_LOCK_FD="${lock_owner_fd}"
+    ZENTTY_VALGRIND_EVIDENCE_LOCK_PATH="${lock_file}"
+    export ZENTTY_VALGRIND_EVIDENCE_LOCK_FD ZENTTY_VALGRIND_EVIDENCE_LOCK_PATH
+    inherited_lock_fd=""
+    zentty_valgrind_acquire_evidence_lock "${lock_file}" inherited_lock_fd
+    [[ "${inherited_lock_fd}" == "${lock_owner_fd}" ]]
+    zentty_valgrind_validate_evidence_lock_descriptor \
+        "${lock_file}" "${inherited_lock_fd}"
+)
+set +e
+(
+    ZENTTY_VALGRIND_EVIDENCE_LOCK_FD="${lock_owner_fd}"
+    ZENTTY_VALGRIND_EVIDENCE_LOCK_PATH="${temp_dir}/wrong.lock"
+    export ZENTTY_VALGRIND_EVIDENCE_LOCK_FD ZENTTY_VALGRIND_EVIDENCE_LOCK_PATH
+    wrong_lock_fd=""
+    zentty_valgrind_acquire_evidence_lock "${lock_file}" wrong_lock_fd
+    wrong_lock_status=$?
+    [[ -z "${wrong_lock_fd}" ]] || exit 1
+    exit "${wrong_lock_status}"
+) >"${temp_dir}/wrong-inherited-lock.log" 2>&1
+wrong_inherited_status=$?
+set -e
+[[ "${wrong_inherited_status}" -ne 0 ]] &&
+    grep -F "lock path does not match" "${temp_dir}/wrong-inherited-lock.log" >/dev/null || {
+    echo "error: mismatched inherited evidence-lock path was accepted" >&2
+    exit 1
+}
+set +e
+(
+    exec {lock_owner_fd}>&-
+    contender_fd=""
+    zentty_valgrind_acquire_evidence_lock "${lock_file}" contender_fd
+    contender_status=$?
+    [[ -z "${contender_fd}" ]] || exit 1
+    exit "${contender_status}"
+) >"${temp_dir}/lock-contention.log" 2>&1
+lock_contention_status=$?
+set -e
+[[ "${lock_contention_status}" -ne 0 ]] || {
+    echo "error: a second evidence producer unexpectedly acquired the lock" >&2
+    exit 1
+}
+grep -F "Valgrind evidence is already being produced" \
+    "${temp_dir}/lock-contention.log" >/dev/null || {
+    echo "error: evidence lock contention did not fail with the expected diagnostic" >&2
+    exit 1
+}
+exec {lock_owner_fd}>&-
+released_lock_fd=""
+zentty_valgrind_acquire_evidence_lock "${lock_file}" released_lock_fd
+zentty_valgrind_validate_evidence_lock_descriptor \
+    "${lock_file}" "${released_lock_fd}"
+exec {released_lock_fd}>&-
+
+status_report="${temp_dir}/status-report.json"
+printf '{"stale":true}\n' >"${status_report}"
+if zentty_valgrind_require_publishable_status \
+    Debug 99 "${status_report}" >/dev/null 2>&1; then
+    echo "error: Debug status 99 unexpectedly allowed report publication" >&2
+    exit 1
+fi
+[[ ! -e "${status_report}" ]] || {
+    echo "error: rejected Debug status left a report publishable" >&2
+    exit 1
+}
+printf '{"stale":true}\n' >"${status_report}"
+if zentty_valgrind_require_publishable_status \
+    ReleaseSafe 124 "${status_report}" >/dev/null 2>&1; then
+    echo "error: incomplete ReleaseSafe status unexpectedly allowed publication" >&2
+    exit 1
+fi
+[[ ! -e "${status_report}" ]] || {
+    echo "error: rejected ReleaseSafe status left a report publishable" >&2
+    exit 1
+}
+printf '{"current":true}\n' >"${status_report}"
+zentty_valgrind_require_publishable_status \
+    ReleaseSafe 99 "${status_report}"
+[[ -e "${status_report}" ]] || {
+    echo "error: completed ReleaseSafe XFAIL status discarded its report" >&2
+    exit 1
+}
+
+run_protocol_ceiling_tests() (
+    set -euo pipefail
+
+    local fixture_root="${temp_dir}/protocol-ceiling-fixture"
+    local fixture_suppression="${fixture_root}/fixture.supp"
+    local fixture_manifest="${fixture_root}/manifest.json"
+    local fixture_reports="${fixture_root}/reports"
+    local fixture_report="${fixture_reports}/memory-safety-Debug-ibus-focus-x11.json"
+    local fixture_raw="${fixture_report%.json}.raw.log"
+    local fixture_suppressed="${fixture_report%.json}.suppressed.log"
+    local fixture_executable="${fixture_root}/ibus-focus-reproducer"
+    local fixture_expected_reports
+    local gtk_version ibus_version ibus_gtk4_version libibus_version
+    local contract_sha wrapper_sha reproducer_sha suppression_sha
+
+    mkdir -p "${fixture_reports}"
+    cat >"${fixture_executable}" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+    chmod +x "${fixture_executable}"
+    export ZENTTY_IBUS_FOCUS_EXPECTED_EXECUTABLE="${fixture_executable}"
+    cat >"${fixture_suppression}" <<'EOF'
+{
+   GTK IBus focus preedit object
+   Memcheck:Leak
+   fun:ibus_text_new_from_string
+}
+{
+   GTK IBus focus preedit string
+   Memcheck:Leak
+   fun:g_strdup
+}
+EOF
+    suppression_sha="$(sha256sum "${fixture_suppression}" | awk '{print $1}')"
+    gtk_version="$(pkg-config --modversion gtk4)"
+    ibus_version="$(dpkg-query -W -f='${Version}' ibus)"
+    ibus_gtk4_version="$(dpkg-query -W -f='${Version}' ibus-gtk4)"
+    libibus_version="$(dpkg-query -W -f='${Version}' libibus-1.0-5)"
+    contract_sha="$(sha256sum "${repo_root}/linux/tests/lib/ibus-focus-protocol" | awk '{print $1}')"
+    wrapper_sha="$(sha256sum "${repo_root}/linux/tests/controlled-ibus-x11" | awk '{print $1}')"
+    reproducer_sha="$(sha256sum "${repo_root}/linux/tests/ibus-focus-reproducer.c" | awk '{print $1}')"
+    fixture_expected_reports="$(jq -cn --arg report "${fixture_report}" '[$report]')"
+
+    write_protocol_manifest() {
+        jq -n \
+            --arg suppression "${fixture_suppression}" \
+            --arg suppression_sha "${suppression_sha}" \
+            --arg valgrind "$(valgrind --version)" \
+            --arg gtk "${gtk_version}" \
+            --arg ibus "${ibus_version}" \
+            --arg ibus_gtk4 "${ibus_gtk4_version}" \
+            --arg libibus "${libibus_version}" \
+            --arg contract_sha "${contract_sha}" \
+            --arg wrapper_sha "${wrapper_sha}" \
+            --arg reproducer_sha "${reproducer_sha}" \
+            --arg executable_sha "$(sha256sum "${fixture_executable}" | awk '{print $1}')" '
+            {
+                schema_version: 1,
+                manifest_semantics: {
+                    "expected_suppressed.matches": "fixture match semantics",
+                    "expected_suppressed.bytes": "fixture byte semantics",
+                    usage_profiles: "fixture exact profile semantics",
+                    "usage_profiles.evidence_identity": "fixture evidence semantics",
+                    protocol_ceilings: "fixture acknowledged lifecycle semantics"
+                },
+                environment: {
+                    os: "fixture", valgrind: "fixture", gtk: $gtk,
+                    glib: "fixture", fontconfig: "fixture", pango: "fixture",
+                    librsvg: "fixture", ibus: $ibus
+                },
+                project_suppression_file: {
+                    path: $suppression, sha256: $suppression_sha, rule_count: 2
+                },
+                effective_inherited_sets: [{
+                    id: "builtin", base: "builtin", version: $valgrind,
+                    audit: "fixture built-in suppression audit"
+                }],
+                usage_profiles: [],
+                protocol_ceilings: [{
+                    id: "IBUS-PREEDIT-ACKNOWLEDGED-EIGHT-CALL-CEILING",
+                    scenario: "Debug/ibus-focus/x11",
+                    runtime_identity: {
+                        gtk: $gtk, ibus: $ibus, ibus_gtk4: $ibus_gtk4,
+                        libibus: $libibus
+                    },
+                    source_identity: {
+                        repository: "https://github.com/ibus/ibus.git",
+                        version: "1.5.29",
+                        revision: "0ad8e77bd36545974ad8acd0a5283cf72bc7c8ad",
+                        path: "client/gtk4/ibusimcontext.c",
+                        sha256: "421dec0149829c84d7ce292e9134a31d39f3b5170e168b66ebf42da3546cd6fa"
+                    },
+                    lifecycle: {
+                        contract: "linux/tests/lib/ibus-focus-protocol",
+                        contract_sha256: $contract_sha,
+                        wrapper: "linux/tests/controlled-ibus-x11",
+                        wrapper_sha256: $wrapper_sha,
+                        reproducer: "linux/tests/ibus-focus-reproducer.c",
+                        reproducer_sha256: $reproducer_sha,
+                        sync_mode_environment: "IBUS_ENABLE_SYNC_MODE",
+                        sync_mode_value: "1",
+                        focus_cycles: 4,
+                        clear_calls_per_cycle: 2,
+                        expected_clear_calls: 8
+                    },
+                    evidence_identity: {
+                        reviewed: true,
+                        verification_scope: "identity-only-local-archive",
+                        public_access: {
+                            status: "NOT_IMPLEMENTED", tracking: "GH-10",
+                            locator: null, reason: "fixture evidence is local"
+                        },
+                        archive_path: "build/linux/qualification-runs/fixture-protocol-ceiling",
+                        total_runs: 1,
+                        independent_executions: true,
+                        executable: {
+                            path: "ibus-focus-reproducer",
+                            sha256: $executable_sha
+                        },
+                        receipt_pairs: [{
+                            run: 1,
+                            raw_receipt: {path: "run-1.raw.log", sha256: ("a" * 64)},
+                            suppressed_receipt: {path: "run-1.suppressed.log", sha256: ("b" * 64)},
+                            report: {path: "run-1.json", sha256: ("c" * 64)}
+                        }],
+                        checksums_receipt: {path: "SHA256SUMS", sha256: ("d" * 64)}
+                    },
+                    rules: [
+                        {
+                            rule_name: "GTK IBus focus preedit object",
+                            matches: {min: 4, max: 4},
+                            bytes: {min: 290, max: 1160},
+                            blocks: {min: 4, max: 16}
+                        },
+                        {
+                            rule_name: "GTK IBus focus preedit string",
+                            matches: {min: 2, max: 2},
+                            bytes: {min: 2, max: 8},
+                            blocks: {min: 2, max: 8}
+                        }
+                    ],
+                    relations: {
+                        string_bytes_equal_blocks: true,
+                        string_requires_object: true,
+                        all_usage_requires_acknowledged_lifecycle: true
+                    }
+                }],
+                rules: [
+                    {
+                        rule_name: "GTK IBus focus preedit object",
+                        tracking_id: "FIXTURE-IBUS-OBJECT",
+                        affected: "fixture IBus 1.5.29",
+                        finding_type: "Memcheck:Leak object",
+                        expected_suppressed: {
+                            matches: {min: 4, max: 4},
+                            bytes: {min: 290, max: 1160}
+                        },
+                        allowed_scenarios: ["Debug/ibus-focus/x11"],
+                        justification: "fixture acknowledged object ceiling",
+                        reproducer: "fixture",
+                        required_usage: true
+                    },
+                    {
+                        rule_name: "GTK IBus focus preedit string",
+                        tracking_id: "FIXTURE-IBUS-STRING",
+                        affected: "fixture IBus 1.5.29",
+                        finding_type: "Memcheck:Leak child string",
+                        expected_suppressed: {
+                            matches: {min: 2, max: 2},
+                            bytes: {min: 2, max: 8}
+                        },
+                        allowed_scenarios: ["Debug/ibus-focus/x11"],
+                        requires_root_rule: "GTK IBus focus preedit object",
+                        justification: "fixture acknowledged string ceiling",
+                        reproducer: "fixture",
+                        required_usage: true
+                    }
+                ]
+            }
+        ' >"${fixture_manifest}"
+    }
+
+    write_protocol_lifecycle() {
+        local receipt="$1"
+        local session="$2"
+        {
+            printf '%s session-id=%s\n' \
+                "$(zentty_ibus_focus_controlled_marker_prefix)" "${session}"
+            printf '==100== Command: %s\n' "${fixture_executable}"
+            zentty_ibus_focus_expected_lifecycle
+        } >"${receipt}"
+    }
+
+    write_protocol_report() {
+        local object_matches="${1:-4}"
+        local object_bytes="${2:-290}"
+        local object_blocks="${3:-4}"
+        local string_matches="${4:-2}"
+        local string_bytes="${5:-2}"
+        local string_blocks="${6:-2}"
+        local raw_identity suppressed_identity raw_metrics suppressed_metrics usage
+
+        write_protocol_lifecycle "${fixture_raw}" "101-protoraw"
+        cat >>"${fixture_raw}" <<'EOF'
+==101== 290 bytes in 4 blocks are definitely lost
+==101==    by 0x1: ibus_text_new_from_string
+==101==    by 0x2: libim-ibus.so
+==101==    by 0x3: drive_lifecycle (ibus-focus-reproducer.c:1)
+==101==
+==101== definitely lost: 290 bytes in 4 blocks
+==101== indirectly lost: 2 bytes in 2 blocks
+==101== ERROR SUMMARY: 6 errors from 6 contexts (suppressed: 0 from 0)
+EOF
+        write_protocol_lifecycle "${fixture_suppressed}" "102-protosupp"
+        cat >>"${fixture_suppressed}" <<EOF
+==102== definitely lost: 0 bytes in 0 blocks
+==102== indirectly lost: 0 bytes in 0 blocks
+==102== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: $((object_matches + string_matches)) from 2)
+==102== used_suppression: ${object_matches} GTK IBus focus preedit object ${fixture_suppression}:1 suppressed: ${object_bytes} bytes in ${object_blocks} blocks
+==102== used_suppression: ${string_matches} GTK IBus focus preedit string ${fixture_suppression}:6 suppressed: ${string_bytes} bytes in ${string_blocks} blocks
+EOF
+        raw_identity="$(zentty_valgrind_receipt_identity_json "${fixture_raw}")"
+        suppressed_identity="$(zentty_valgrind_receipt_identity_json "${fixture_suppressed}")"
+        raw_metrics="$(zentty_valgrind_metrics_json "${fixture_raw}")"
+        suppressed_metrics="$(zentty_valgrind_metrics_json "${fixture_suppressed}")"
+        usage="$(zentty_valgrind_usage_json \
+            "${fixture_suppressed}" "${fixture_suppression}")"
+        jq -n \
+            --arg suppression "${fixture_suppression}" \
+            --arg suppression_sha "${suppression_sha}" \
+            --arg raw "${fixture_raw}" \
+            --arg suppressed "${fixture_suppressed}" \
+            --arg contract_sha "${contract_sha}" \
+            --arg wrapper_sha "${wrapper_sha}" \
+            --arg reproducer_sha "${reproducer_sha}" \
+            --arg valgrind_version "$(valgrind --version)" \
+            --arg executable "${fixture_executable}" \
+            --arg executable_sha "$(sha256sum "${fixture_executable}" | awk '{print $1}')" \
+            --arg gtk_runtime "${gtk_version}" \
+            --arg ibus_runtime "${ibus_version}" \
+            --arg ibus_gtk4_runtime "${ibus_gtk4_version}" \
+            --arg libibus_runtime "${libibus_version}" \
+            --argjson raw_identity "${raw_identity}" \
+            --argjson suppressed_identity "${suppressed_identity}" \
+            --argjson raw_metrics "${raw_metrics}" \
+            --argjson suppressed_metrics "${suppressed_metrics}" \
+            --argjson usage "${usage}" \
+            --argjson generated "$(date +%s)" '
+            {
+                optimize: "Debug", scenario: "ibus-focus", display_backend: "x11",
+                controlled_environment: {
+                    harness: "linux/tests/controlled-ibus-x11",
+                    harness_sha256: $wrapper_sha,
+                    raw_session_id: "101-protoraw",
+                    suppressed_session_id: "102-protosupp",
+                    phase_isolation: true,
+                    ibus_sync_mode: "1"
+                },
+                protocol: {
+                    ceiling_id: "IBUS-PREEDIT-ACKNOWLEDGED-EIGHT-CALL-CEILING",
+                    contract: "linux/tests/lib/ibus-focus-protocol",
+                    contract_sha256: $contract_sha,
+                    reproducer: "linux/tests/ibus-focus-reproducer.c",
+                    reproducer_sha256: $reproducer_sha,
+                    executable: $executable,
+                    executable_sha256: $executable_sha,
+                    runtime_identity: {
+                        gtk: $gtk_runtime, ibus: $ibus_runtime,
+                        ibus_gtk4: $ibus_gtk4_runtime, libibus: $libibus_runtime
+                    },
+                    source_identity: {
+                        repository: "https://github.com/ibus/ibus.git",
+                        version: "1.5.29",
+                        revision: "0ad8e77bd36545974ad8acd0a5283cf72bc7c8ad",
+                        path: "client/gtk4/ibusimcontext.c",
+                        sha256: "421dec0149829c84d7ce292e9134a31d39f3b5170e168b66ebf42da3546cd6fa"
+                    },
+                    focus_cycles: 4,
+                    active_acknowledgements: 4,
+                    inactive_acknowledgements: 4,
+                    clear_calls_per_cycle: 2,
+                    expected_clear_calls: 8
+                },
+                raw_receipt: $raw,
+                suppressed_receipt: $suppressed,
+                suppressed_exit_code: 0,
+                report_generated_at_epoch: $generated,
+                receipt_identities: {raw: $raw_identity, suppressed: $suppressed_identity},
+                valgrind_version: $valgrind_version,
+                valgrind_builtin_suppressions: true,
+                effective_suppression_files: [{path: $suppression, sha256: $suppression_sha}],
+                suppression_usage: $usage,
+                raw: $raw_metrics,
+                post_suppression: $suppressed_metrics
+            }
+        ' >"${fixture_report}"
+    }
+
+    refresh_protocol_report() {
+        local raw_identity suppressed_identity raw_metrics suppressed_metrics usage
+        local captured_epoch
+        captured_epoch="$(date +%s)"
+        touch -d "@$((captured_epoch - 1))" "${fixture_raw}"
+        touch -d "@${captured_epoch}" "${fixture_suppressed}"
+        raw_identity="$(zentty_valgrind_receipt_identity_json "${fixture_raw}")"
+        suppressed_identity="$(zentty_valgrind_receipt_identity_json "${fixture_suppressed}")"
+        raw_metrics="$(zentty_valgrind_metrics_json "${fixture_raw}")"
+        suppressed_metrics="$(zentty_valgrind_metrics_json "${fixture_suppressed}")"
+        usage="$(zentty_valgrind_usage_json \
+            "${fixture_suppressed}" "${fixture_suppression}")"
+        jq \
+            --argjson raw_identity "${raw_identity}" \
+            --argjson suppressed_identity "${suppressed_identity}" \
+            --argjson raw_metrics "${raw_metrics}" \
+            --argjson suppressed_metrics "${suppressed_metrics}" \
+            --argjson usage "${usage}" \
+            --argjson generated "${captured_epoch}" '
+            .receipt_identities = {raw: $raw_identity, suppressed: $suppressed_identity} |
+            .raw = $raw_metrics |
+            .post_suppression = $suppressed_metrics |
+            .suppression_usage = $usage |
+            .report_generated_at_epoch = $generated
+        ' "${fixture_report}" >"${fixture_root}/refreshed.json"
+        mv "${fixture_root}/refreshed.json" "${fixture_report}"
+    }
+
+    expect_protocol_failure() {
+        local label="$1"
+        local diagnostic="$2"
+        local output="${fixture_root}/${label}.log"
+        set +e
+        ZENTTY_SUPPRESSION_MANIFEST="${fixture_manifest}" \
+        ZENTTY_SUPPRESSION_REPORTS_DIR="${fixture_reports}" \
+        ZENTTY_VALGRIND_EXPECTED_REPORTS_JSON="${fixture_expected_reports}" \
+        ZENTTY_SUPPRESSION_VALIDATION_NOW_EPOCH="$(date +%s)" \
+            "${validator}" >"${output}" 2>&1
+        local status=$?
+        set -e
+        [[ "${status}" -ne 0 ]] || {
+            echo "error: protocol ${label} unexpectedly passed" >&2
+            exit 1
+        }
+        grep -F "${diagnostic}" "${output}" >/dev/null || {
+            echo "error: protocol ${label} lacked diagnostic: ${diagnostic}" >&2
+            cat "${output}" >&2
+            exit 1
+        }
+    }
+
+    expect_protocol_manifest_failure() {
+        local label="$1"
+        local mutation="$2"
+        local diagnostic="$3"
+
+        write_protocol_manifest
+        write_protocol_report
+        jq "${mutation}" "${fixture_manifest}" \
+            >"${fixture_root}/${label}.manifest.json"
+        mv "${fixture_root}/${label}.manifest.json" "${fixture_manifest}"
+        expect_protocol_failure "${label}" "${diagnostic}"
+    }
+
+    write_protocol_manifest
+    write_protocol_report
+    ZENTTY_SUPPRESSION_MANIFEST="${fixture_manifest}" \
+    ZENTTY_SUPPRESSION_REPORTS_DIR="${fixture_reports}" \
+    ZENTTY_VALGRIND_EXPECTED_REPORTS_JSON="${fixture_expected_reports}" \
+    ZENTTY_SUPPRESSION_VALIDATION_NOW_EPOCH="$(date +%s)" \
+        "${validator}" >/dev/null
+
+    write_protocol_report 5 290 4 2 2 2
+    expect_protocol_failure increased-protocol-matches \
+        "suppression count outside reviewed range"
+    write_protocol_report 4 1161 4 2 2 2
+    expect_protocol_failure increased-protocol-bytes \
+        "suppressed bytes outside reviewed range"
+    write_protocol_report 4 290 17 2 2 2
+    expect_protocol_failure increased-protocol-blocks \
+        "violates the acknowledged protocol ceiling"
+    write_protocol_report 4 290 3 2 2 2
+    expect_protocol_failure below-protocol-blocks \
+        "violates the acknowledged protocol ceiling"
+    write_protocol_report 4 290 4 2 3 2
+    expect_protocol_failure invalid-string-relation \
+        "violates the acknowledged protocol ceiling"
+    write_protocol_report
+    sed -i '/cycle=2 ibus-context=active/d' "${fixture_raw}"
+    refresh_protocol_report
+    expect_protocol_failure missing-protocol-acknowledgement \
+        "raw receipt lacks the exact acknowledged lifecycle"
+    write_protocol_report
+    printf '%s\n' '==101== ibus-focus-reproducer: error: injected fixture failure' \
+        >>"${fixture_raw}"
+    refresh_protocol_report
+    expect_protocol_failure protocol-runtime-error \
+        "raw receipt contains an IBus runtime error"
+    write_protocol_report
+    printf '%s\n' 'controlled-ibus-x11: READY malformed-second-marker' \
+        >>"${fixture_raw}"
+    refresh_protocol_report
+    expect_protocol_failure duplicate-controlled-marker \
+        "raw receipt is not bound to its controlled executable"
+    write_protocol_report
+    first_marker="$(head -n 1 "${fixture_raw}")"
+    tail -n +2 "${fixture_raw}" >"${fixture_root}/moved-marker.raw.log"
+    printf '%s\n' "${first_marker}" >>"${fixture_root}/moved-marker.raw.log"
+    mv "${fixture_root}/moved-marker.raw.log" "${fixture_raw}"
+    refresh_protocol_report
+    expect_protocol_failure moved-controlled-marker \
+        "raw receipt is not bound to its controlled executable"
+    write_protocol_report
+    sed -i "s#Command: ${fixture_executable}#Command: ${fixture_executable}-other#" \
+        "${fixture_raw}"
+    refresh_protocol_report
+    expect_protocol_failure wrong-protocol-command \
+        "raw receipt is not bound to its controlled executable"
+    write_protocol_report
+    printf '%s\n' \
+        '==101== ERROR SUMMARY: 1 errors from 1 contexts (suppressed: 0 from 0)' \
+        >>"${fixture_raw}"
+    refresh_protocol_report
+    expect_protocol_failure conflicting-valgrind-summary \
+        "raw receipt contains missing or conflicting Valgrind summaries"
+    write_protocol_report
+    sed -i '/cycle=3 ibus-context=inactive/d' "${fixture_suppressed}"
+    refresh_protocol_report
+    expect_protocol_failure suppressed-missing-acknowledgement \
+        "suppressed receipt lacks the exact acknowledged lifecycle"
+    write_protocol_report
+    printf '%s\n' 'ibus-focus-reproducer: error: suppressed fixture failure' \
+        >>"${fixture_suppressed}"
+    refresh_protocol_report
+    expect_protocol_failure suppressed-runtime-error \
+        "suppressed receipt contains an IBus runtime error"
+    write_protocol_report
+    printf '%s\n' 'controlled-ibus-x11: READY malformed-suppressed-marker' \
+        >>"${fixture_suppressed}"
+    refresh_protocol_report
+    expect_protocol_failure suppressed-duplicate-marker \
+        "suppressed receipt is not bound to its controlled executable"
+    write_protocol_report
+    sed -i 's/sync-mode=1/sync-mode=0/' "${fixture_raw}"
+    refresh_protocol_report
+    expect_protocol_failure wrong-receipt-sync-mode \
+        "raw receipt is not bound to its controlled executable"
+    write_protocol_report
+    sed -i '/drive_lifecycle (ibus-focus-reproducer.c:/d' "${fixture_raw}"
+    refresh_protocol_report
+    expect_protocol_failure unbound-protocol-stack \
+        "raw receipt lacks the bound IBus loss stack"
+    write_protocol_report
+    sed -i 's/session-id=102-protosupp/session-id=101-protoraw/' \
+        "${fixture_suppressed}"
+    refresh_protocol_report
+    expect_protocol_failure reused-protocol-session \
+        "reused a controlled session"
+    write_protocol_report
+    jq '.controlled_environment.ibus_sync_mode = "0"' \
+        "${fixture_report}" >"${fixture_root}/wrong-report-sync.json"
+    mv "${fixture_root}/wrong-report-sync.json" "${fixture_report}"
+    expect_protocol_failure wrong-report-sync-mode \
+        "protocol report identity or lifecycle metadata drifted"
+    write_protocol_report
+    jq '.protocol.ceiling_id = "WRONG-CEILING"' \
+        "${fixture_report}" >"${fixture_root}/wrong-ceiling-id.json"
+    mv "${fixture_root}/wrong-ceiling-id.json" "${fixture_report}"
+    expect_protocol_failure wrong-report-ceiling-id \
+        "protocol report identity or lifecycle metadata drifted"
+    write_protocol_report
+    jq 'del(.protocol)' "${fixture_report}" \
+        >"${fixture_root}/missing-report-protocol.json"
+    mv "${fixture_root}/missing-report-protocol.json" "${fixture_report}"
+    expect_protocol_failure missing-report-protocol \
+        "protocol report identity or lifecycle metadata drifted"
+    write_protocol_report
+    jq '.controlled_environment.phase_isolation = false' \
+        "${fixture_report}" >"${fixture_root}/coupled-report.json"
+    mv "${fixture_root}/coupled-report.json" "${fixture_report}"
+    expect_protocol_failure coupled-protocol-phases \
+        "protocol report identity or lifecycle metadata drifted"
+    write_protocol_report
+    jq '.protocol.runtime_identity.gtk = "0.0.0"' \
+        "${fixture_report}" >"${fixture_root}/wrong-report-runtime.json"
+    mv "${fixture_root}/wrong-report-runtime.json" "${fixture_report}"
+    expect_protocol_failure wrong-report-runtime \
+        "protocol report identity or lifecycle metadata drifted"
+    write_protocol_report
+    jq '.protocol.source_identity.sha256 = ("f" * 64)' \
+        "${fixture_report}" >"${fixture_root}/wrong-report-source.json"
+    mv "${fixture_root}/wrong-report-source.json" "${fixture_report}"
+    expect_protocol_failure wrong-report-source \
+        "protocol report identity or lifecycle metadata drifted"
+    write_protocol_report
+    sed -i '/GTK IBus focus preedit string/d' "${fixture_suppressed}"
+    refresh_protocol_report
+    expect_protocol_failure missing-protocol-rule \
+        "violates the acknowledged protocol ceiling"
+    write_protocol_report
+    sed -i \
+        -e 's/definitely lost: 0 bytes in 0 blocks/definitely lost: 1 bytes in 1 blocks/' \
+        -e 's/ERROR SUMMARY: 0 errors from 0 contexts/ERROR SUMMARY: 1 errors from 1 contexts/' \
+        "${fixture_suppressed}"
+    refresh_protocol_report
+    expect_protocol_failure nonzero-protocol-post-suppression \
+        "violates the acknowledged protocol ceiling"
+
+    expect_protocol_manifest_failure missing-protocol-ceiling \
+        '.protocol_ceilings = []' "invalid manifest"
+    expect_protocol_manifest_failure duplicate-protocol-ceiling \
+        '.protocol_ceilings += [.protocol_ceilings[0]]' "invalid manifest"
+    expect_protocol_manifest_failure protocol-evidence-count-mismatch \
+        '.protocol_ceilings[0].evidence_identity.total_runs = 2' "invalid manifest"
+    expect_protocol_manifest_failure protocol-evidence-path-mismatch \
+        '.protocol_ceilings[0].evidence_identity.receipt_pairs[0].raw_receipt.path = "wrong.raw.log"' \
+        "invalid manifest"
+    expect_protocol_manifest_failure protocol-evidence-hash-reuse \
+        '.protocol_ceilings[0].evidence_identity.receipt_pairs[0].suppressed_receipt.sha256 = ("a" * 64)' \
+        "invalid manifest"
+    expect_protocol_manifest_failure protocol-rule-ceiling-drift \
+        '.protocol_ceilings[0].rules[0].blocks.max = 17' "invalid manifest"
+    expect_protocol_manifest_failure protocol-runtime-drift \
+        '.protocol_ceilings[0].runtime_identity.gtk = "0.0.0"' \
+        "protocol GTK runtime identity drifted"
+    expect_protocol_manifest_failure protocol-executable-hash-drift \
+        '.protocol_ceilings[0].evidence_identity.executable.sha256 = ("0" * 64)' \
+        "protocol executable identity drifted"
+    expect_protocol_manifest_failure protocol-source-version-drift \
+        '.protocol_ceilings[0].source_identity.version = "1.5.28"' \
+        "manifest does not conform to suppression schema"
+    expect_protocol_manifest_failure protocol-source-revision-drift \
+        '.protocol_ceilings[0].source_identity.revision = ("f" * 40)' \
+        "manifest does not conform to suppression schema"
+    expect_protocol_manifest_failure protocol-upstream-hash-drift \
+        '.protocol_ceilings[0].source_identity.sha256 = ("f" * 64)' \
+        "manifest does not conform to suppression schema"
+    expect_protocol_manifest_failure protocol-source-hash-drift \
+        '.protocol_ceilings[0].lifecycle.contract_sha256 = ("0" * 64)' \
+        "protocol lifecycle source identity drifted"
+)
+
+run_protocol_ceiling_tests
+
+producer_fixture_root="${temp_dir}/producer-fixture"
+fake_bin="${producer_fixture_root}/fake-bin"
+mkdir -p \
+    "${fake_bin}" \
+    "${producer_fixture_root}/linux/tests/lib" \
+    "${producer_fixture_root}/build/linux/bin" \
+    "${producer_fixture_root}/build/linux-deps/ghostty/src"
+cp -- "${repo_root}/linux/tests/memory-safety" \
+    "${producer_fixture_root}/linux/tests/memory-safety"
+cp -- "${repo_root}/linux/tests/ibus-focus-memory" \
+    "${producer_fixture_root}/linux/tests/ibus-focus-memory"
+cp -- "${repo_root}/linux/tests/lib/valgrind-report" \
+    "${producer_fixture_root}/linux/tests/lib/valgrind-report"
+cp -- "${repo_root}/linux/tests/lib/controlled-environment" \
+    "${producer_fixture_root}/linux/tests/lib/controlled-environment"
+cp -- "${repo_root}/linux/tests/lib/ibus-focus-protocol" \
+    "${producer_fixture_root}/linux/tests/lib/ibus-focus-protocol"
+cat >"${producer_fixture_root}/linux/tests/ibus-focus-reproducer.c" <<'EOF'
+/* Fixture source identity for ibus-focus-memory producer tests. */
+EOF
+cat >"${producer_fixture_root}/linux/tests/controlled-ibus-x11" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s session-id=%s-fixture\n' \
+    'controlled-ibus-x11: READY x11-display private-xvfb private-dbus foreground-ibus engine=xkb:us::eng sync-mode=1' \
+    "${BASHPID}"
+exec "$@"
+EOF
+cat >"${producer_fixture_root}/linux/tests/nested-wayland" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+report="${ZENTTY_NESTED_WAYLAND_REPORT:?}"
+started_at_epoch="$(date +%s)"
+set +e
+"$@"
+command_exit_code=$?
+set -e
+finished_at_epoch="$(date +%s)"
+session_id="$(printf '%s:%s:%s\n' "${report}" "${BASHPID}" "${started_at_epoch}" |
+    sha256sum | awk '{print $1}')"
+wrapper="$(readlink -f -- "$0")"
+wrapper_sha256="$(sha256sum -- "${wrapper}" | awk '{print $1}')"
+report_temp="$(mktemp "${report}.tmp.XXXXXX")"
+jq -n \
+    --arg session_id "${session_id}" \
+    --arg wrapper "${wrapper}" \
+    --arg wrapper_sha256 "${wrapper_sha256}" \
+    --argjson started_at_epoch "${started_at_epoch}" \
+    --argjson finished_at_epoch "${finished_at_epoch}" \
+    --argjson command_exit_code "${command_exit_code}" \
+    --args '{
+      schema_version:1,
+      session_id:$session_id,
+      backend:"wayland",
+      wrapper:{path:$wrapper,sha256:$wrapper_sha256},
+      started_at_epoch:$started_at_epoch,
+      finished_at_epoch:$finished_at_epoch,
+      command:$ARGS.positional,
+      command_exit_code:$command_exit_code,
+      server:{
+        name:"Weston",version:"13.0.0",backend:"headless",
+        endpoint:("wayland-z-" + ($session_id[0:16])),
+        width:1280,height:1024,scale:1,
+        protocols:["wl_compositor","wl_output","wl_shm","xdg_wm_base"],
+        wayland_info_sha256:("1" * 64)
+      },
+      renderer:{software:true,name:"Pixman",proof:"Using Pixman renderer"},
+      isolation:{
+        ambient_display_sanitized:true,ambient_dbus_sanitized:true,
+        process_group:1,run_root_removed:true,
+        display_unreachable_after:true,remaining_processes:[]
+      }
+    }' -- "$@" >"${report_temp}"
+mv -f -- "${report_temp}" "${report}"
+exit "${command_exit_code}"
+EOF
+touch \
+    "${producer_fixture_root}/build/linux/bin/zentty-linux" \
+    "${producer_fixture_root}/build/linux/bin/api-contract" \
+    "${producer_fixture_root}/build/linux-deps/ghostty/valgrind.supp" \
+    "${producer_fixture_root}/build/linux-deps/ghostty/src/gtk_embed_spike.valgrind.supp" \
+    "${producer_fixture_root}/linux/tests/valgrind.supp"
+chmod +x \
+    "${producer_fixture_root}/linux/tests/controlled-ibus-x11" \
+    "${producer_fixture_root}/linux/tests/nested-wayland" \
+    "${producer_fixture_root}/build/linux/bin/zentty-linux" \
+    "${producer_fixture_root}/build/linux/bin/api-contract"
+cat >"${producer_fixture_root}/build/linux/bin/ibus-focus-reproducer" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "${1:-}" == "--self-test-context-paths" ]] || exit 0
+EOF
+chmod +x "${producer_fixture_root}/build/linux/bin/ibus-focus-reproducer"
+cat >"${fake_bin}/valgrind" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == "--version" ]]; then
+    echo "valgrind-fixture"
+    exit 0
+fi
+suppressed=false
+for argument in "$@"; do
+    [[ "${argument}" == "--error-exitcode=99" ]] && suppressed=true
+done
+if [[ "${ZENTTY_FAKE_VALGRIND_KIND:-memory}" == "ibus" ]]; then
+    echo "==9== Command: ${*: -1}"
+    echo "ibus-focus-reproducer: delegate=ibus type=IBusIMContext"
+    echo "ibus-focus-reproducer: window=mapped clients=4"
+    echo "ibus-focus-reproducer: baseline-context=ready"
+    for cycle in 1 2 3 4; do
+        echo "ibus-focus-reproducer: cycle=${cycle} ibus-context=active"
+        echo "ibus-focus-reproducer: cycle=${cycle} focus=verified preedit=empty cursor=0 attributes=empty"
+        echo "ibus-focus-reproducer: cycle=${cycle} ibus-context=inactive"
+    done
+    echo "ibus-focus-reproducer: teardown=complete cycles=4 late-callbacks=0"
+    echo "ibus-focus-reproducer: PASS"
+    echo "==9== 1 bytes in 1 blocks are indirectly lost"
+    echo "==9==    by 0x1: ibus_text_new_from_string"
+    echo "==9==    by 0x2: libim-ibus.so"
+    echo "==9==    by 0x3: drive_lifecycle (ibus-focus-reproducer.c:1)"
+    echo "==9=="
+else
+    echo "zentty-linux: integration PASS"
+fi
+echo "==9== definitely lost: 0 bytes in 0 blocks"
+echo "==9== indirectly lost: 0 bytes in 0 blocks"
+echo "==9== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)"
+if "${suppressed}"; then
+    exit "${ZENTTY_FAKE_SUPPRESSED_STATUS:-0}"
+fi
+EOF
+chmod +x "${fake_bin}/valgrind"
+real_jq="$(command -v jq)"
+cat >"${fake_bin}/jq" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "\${ZENTTY_FAIL_REPORT_JQ:-}" == "1" ]]; then
+    for argument in "\$@"; do
+        if [[ "\${argument}" == "report_generated_at_epoch" ]]; then
+            printf '{"partial":'
+            exit 42
+        fi
+    done
+fi
+exec "${real_jq}" "\$@"
+EOF
+chmod +x "${fake_bin}/jq"
+
+expect_producer_rejection() {
+    local label="$1"
+    local producer="$2"
+    local optimize="$3"
+    local kind="$4"
+    local rejected_status="$5"
+    local rejected_report="$6"
+    local output="${temp_dir}/${label}.log"
+
+    printf 'optimize=%s\nhost_optimize=Debug\nibus_focus_reproducer_sha256=%s\n' \
+        "${optimize}" \
+        "$(sha256sum "${producer_fixture_root}/linux/tests/ibus-focus-reproducer.c" | awk '{print $1}')" \
+        >"${producer_fixture_root}/build/linux/build-metadata"
+    printf '{"stale":true}\n' >"${rejected_report}"
+    set +e
+    PATH="${fake_bin}:${PATH}" \
+    ZENTTY_MEMORY_EXPECT_OPTIMIZE="${optimize}" \
+    ZENTTY_FAKE_VALGRIND_KIND="${kind}" \
+    ZENTTY_FAKE_SUPPRESSED_STATUS="${rejected_status}" \
+        "${producer}" >"${output}" 2>&1
+    producer_status=$?
+    set -e
+    [[ "${producer_status}" -eq "${rejected_status}" ]] || {
+        echo "error: ${label} exited ${producer_status}, expected ${rejected_status}" >&2
+        cat "${output}" >&2
+        exit 1
+    }
+    [[ ! -e "${rejected_report}" ]] || {
+        echo "error: ${label} left rejected JSON publishable" >&2
+        exit 1
+    }
+    grep -F "cannot publish a report" "${output}" >/dev/null || {
+        echo "error: ${label} lacked the rejected-publication diagnostic" >&2
+        cat "${output}" >&2
+        exit 1
+    }
+}
+
+fake_memory_producer="${producer_fixture_root}/linux/tests/memory-safety"
+fake_ibus_producer="${producer_fixture_root}/linux/tests/ibus-focus-memory"
+debug_report="${producer_fixture_root}/build/linux/memory-safety-Debug-single-wayland.json"
+release_report="${producer_fixture_root}/build/linux/memory-safety-ReleaseSafe-single-wayland.json"
+ibus_report="${producer_fixture_root}/build/linux/memory-safety-Debug-ibus-focus-x11.json"
+expect_producer_rejection debug-status-publication \
+    "${fake_memory_producer}" Debug memory 99 "${debug_report}"
+expect_producer_rejection release-timeout-publication \
+    "${fake_memory_producer}" ReleaseSafe memory 124 "${release_report}"
+expect_producer_rejection ibus-status-publication \
+    "${fake_ibus_producer}" Debug ibus 99 "${ibus_report}"
+
+printf 'optimize=Debug\nhost_optimize=Debug\nibus_focus_reproducer_sha256=%s\n' \
+    "$(sha256sum "${producer_fixture_root}/linux/tests/ibus-focus-reproducer.c" | awk '{print $1}')" \
+    >"${producer_fixture_root}/build/linux/build-metadata"
+PATH="${fake_bin}:${PATH}" \
+ZENTTY_FAKE_VALGRIND_KIND=ibus \
+ZENTTY_FAKE_SUPPRESSED_STATUS=0 \
+    "${fake_ibus_producer}" >"${temp_dir}/ibus-successful-publication.log" 2>&1
+jq -e '
+    .suppressed_exit_code == 0 and
+    .controlled_environment.phase_isolation == true and
+    .controlled_environment.ibus_sync_mode == "1" and
+    .controlled_environment.raw_session_id !=
+        .controlled_environment.suppressed_session_id and
+    .protocol.ceiling_id ==
+        "IBUS-PREEDIT-ACKNOWLEDGED-EIGHT-CALL-CEILING" and
+    .protocol.focus_cycles == 4 and
+    .protocol.active_acknowledgements == 4 and
+    .protocol.inactive_acknowledgements == 4 and
+    .protocol.expected_clear_calls == 8 and
+    (.protocol.executable_sha256 | test("^[0-9a-f]{64}$")) and
+    .protocol.source_identity.revision ==
+        "0ad8e77bd36545974ad8acd0a5283cf72bc7c8ad" and
+    .protocol.runtime_identity.ibus == "1.5.29-2" and
+    .post_suppression.errors == 0 and
+    .post_suppression.definite_bytes == 0 and
+    .post_suppression.indirect_bytes == 0
+' "${ibus_report}" >/dev/null || {
+    echo "error: successful IBus producer report omitted its protocol contract" >&2
+    exit 1
+}
+
+printf 'optimize=Debug\nhost_optimize=Debug\nibus_focus_reproducer_sha256=%s\n' \
+    "$(printf stale | sha256sum | awk '{print $1}')" \
+    >"${producer_fixture_root}/build/linux/build-metadata"
+set +e
+PATH="${fake_bin}:${PATH}" \
+ZENTTY_FAKE_VALGRIND_KIND=ibus \
+ZENTTY_FAKE_SUPPRESSED_STATUS=0 \
+    "${fake_ibus_producer}" >"${temp_dir}/ibus-stale-source-metadata.log" 2>&1
+stale_source_status=$?
+set -e
+[[ "${stale_source_status}" -ne 0 ]] &&
+    grep -F "binary metadata does not match current source" \
+        "${temp_dir}/ibus-stale-source-metadata.log" >/dev/null &&
+    [[ ! -e "${ibus_report}" ]] || {
+        echo "error: IBus producer accepted stale reproducer source metadata" >&2
+        exit 1
+    }
+
+printf 'optimize=ReleaseSafe\nhost_optimize=Debug\nibus_focus_reproducer_sha256=%s\n' \
+    "$(sha256sum "${producer_fixture_root}/linux/tests/ibus-focus-reproducer.c" | awk '{print $1}')" \
+    >"${producer_fixture_root}/build/linux/build-metadata"
+set +e
+PATH="${fake_bin}:${PATH}" \
+ZENTTY_MEMORY_EXPECT_OPTIMIZE=ReleaseSafe \
+ZENTTY_FAKE_VALGRIND_KIND=memory \
+ZENTTY_FAKE_SUPPRESSED_STATUS=99 \
+    "${fake_memory_producer}" >"${temp_dir}/release-xfail-publication.log" 2>&1
+release_status=$?
+set -e
+[[ "${release_status}" -eq 99 ]] || {
+    echo "error: completed ReleaseSafe XFAIL exited ${release_status}, expected 99" >&2
+    cat "${temp_dir}/release-xfail-publication.log" >&2
+    exit 1
+}
+jq -e '.suppressed_exit_code == 99' "${release_report}" >/dev/null || {
+    echo "error: completed ReleaseSafe XFAIL did not publish its exact exit code" >&2
+    exit 1
+}
+
+printf 'optimize=Debug\nhost_optimize=Debug\nibus_focus_reproducer_sha256=%s\n' \
+    "$(sha256sum "${producer_fixture_root}/linux/tests/ibus-focus-reproducer.c" | awk '{print $1}')" \
+    >"${producer_fixture_root}/build/linux/build-metadata"
+printf '{"stale":true}\n' >"${debug_report}"
+set +e
+PATH="${fake_bin}:${PATH}" \
+ZENTTY_MEMORY_EXPECT_OPTIMIZE=Debug \
+ZENTTY_FAKE_VALGRIND_KIND=memory \
+ZENTTY_FAKE_SUPPRESSED_STATUS=0 \
+ZENTTY_FAIL_REPORT_JQ=1 \
+    "${fake_memory_producer}" >"${temp_dir}/atomic-report-publication.log" 2>&1
+atomic_report_status=$?
+set -e
+[[ "${atomic_report_status}" -eq 42 ]] || {
+    echo "error: interrupted report publication exited ${atomic_report_status}, expected 42" >&2
+    cat "${temp_dir}/atomic-report-publication.log" >&2
+    exit 1
+}
+[[ ! -e "${debug_report}" ]] &&
+    ! compgen -G "${debug_report}.tmp.*" >/dev/null || {
+    echo "error: interrupted report publication exposed stale, final, or temporary JSON" >&2
+    exit 1
+}
+
+producer_set_lock="${producer_fixture_root}/build/linux/.zentty-valgrind-evidence.lock"
+producer_set_lock_fd=""
+zentty_valgrind_acquire_evidence_lock "${producer_set_lock}" producer_set_lock_fd
+ZENTTY_VALGRIND_EVIDENCE_LOCK_FD="${producer_set_lock_fd}" \
+ZENTTY_VALGRIND_EVIDENCE_LOCK_PATH="${producer_set_lock}" \
+PATH="${fake_bin}:${PATH}" \
+ZENTTY_MEMORY_EXPECT_OPTIMIZE=Debug \
+ZENTTY_FAKE_VALGRIND_KIND=memory \
+ZENTTY_FAKE_SUPPRESSED_STATUS=0 \
+    "${fake_memory_producer}" >"${temp_dir}/inherited-producer-lock.log" 2>&1 || {
+    echo "error: producer did not reuse the inherited evidence-set lock" >&2
+    cat "${temp_dir}/inherited-producer-lock.log" >&2
+    exit 1
+}
+exec {producer_set_lock_fd}>&-
+jq -e '
+    .optimize == "Debug" and
+    .suppressed_exit_code == 0 and
+    .wayland_phase_environment.phase_isolation == true and
+    .wayland_phase_environment.harness == "linux/tests/nested-wayland" and
+    .wayland_phase_environment.raw.session_id !=
+        .wayland_phase_environment.suppressed.session_id
+' \
+    "${debug_report}" >/dev/null || {
+    echo "error: inherited-lock producer did not atomically publish its report" >&2
+    exit 1
+}
+zentty_valgrind_validate_display_phase_environment \
+    "${debug_report}" "${debug_report}" \
+    "${producer_fixture_root}/linux/tests/nested-wayland" wayland 900 || {
+    echo "error: fake Wayland producer omitted current, role-bound phase evidence" >&2
+    exit 1
+}
+
+assert_source_order() {
+    local label="$1"
+    local producer="$2"
+    local before_pattern="$3"
+    local after_pattern="$4"
+    local before_line after_line
+
+    before_line="$(grep -nF "${before_pattern}" "${producer}" | head -n 1 | cut -d: -f1 || true)"
+    after_line="$(grep -nF "${after_pattern}" "${producer}" | head -n 1 | cut -d: -f1 || true)"
+    [[ -n "${before_line}" && -n "${after_line}" && "${before_line}" -lt "${after_line}" ]] || {
+        echo "error: ${label} source ordering is not fail-closed: ${producer}" >&2
+        exit 1
+    }
+}
+
+for producer in \
+    "${repo_root}/linux/tests/memory-safety" \
+    "${repo_root}/linux/tests/ibus-focus-memory"; do
+    assert_source_order "evidence lock" "${producer}" \
+        "zentty_valgrind_acquire_evidence_lock" \
+        'rm -f --'
+    assert_source_order "suppressed-status publication gate" "${producer}" \
+        "zentty_valgrind_require_publishable_status" "jq -n"
+    assert_source_order "atomic report publication" "${producer}" \
+        'report_temp="$(mktemp' 'mv -f -- "${report_temp}" "${report}"'
+    grep -F -- '--argjson suppressed_exit_code "${suppressed_status}"' \
+        "${producer}" >/dev/null || {
+        echo "error: producer does not bind the suppressed exit code: ${producer}" >&2
+        exit 1
+    }
+    if grep -F "reviewed suppressions" "${producer}" >/dev/null; then
+        echo "error: producer contains a premature reviewed-suppressions label: ${producer}" >&2
+        exit 1
+    fi
+    grep -F "suppression governance pending" "${producer}" >/dev/null || {
+        echo "error: producer does not disclose pending suppression governance: ${producer}" >&2
+        exit 1
+    }
+done
 
 echo "Valgrind suppression governance tests passed"

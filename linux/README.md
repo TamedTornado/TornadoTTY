@@ -1,22 +1,32 @@
-# Zentty Linux host
+# Zentty Linux qualification host
 
-This directory contains the Linux product host and its external-boundary
-integration tests. It does not build or import Ghostty's historical in-tree
-embedding spike.
+This directory contains a transitional C qualification host and its
+external-boundary integration tests. It is **not** the delivered Rust/GTK Linux
+product reserved by issue #2, and it does not build or import Ghostty's
+historical in-tree embedding spike.
 
 ## Architecture
 
-- `src/main.c` is the minimal GTK product executable.
+- `src/main.c` is the C qualification host for the qualified downstream
+  Ghostty boundary. It is not the Zentty product executable or a foundation
+  for product features.
+- The production shell is specified as Rust + `gtk4-rs` in
+  [`docs/architecture/0001-rust-gtk4-linux-product.md`](../docs/architecture/0001-rust-gtk4-linux-product.md)
+  and will be bootstrapped by issue #13.
 - `ghostty.lock` pins the public Ghostty fork and exact embedding revision.
 - `scripts/build-local` fetches that revision unless `GHOSTTY_SOURCE_DIR`
   selects an already-verified checkout, builds the shared embedding library,
   and stages a relative `bin`/`lib` bundle under ignored `build/linux`.
-- `tests/` launches that product executable and asserts behavior across the C
-  ABI, GTK, Ghostty, PTY, renderer, and compositor boundary.
+- `tests/` launches that qualification executable and asserts behavior across
+  the C ABI, GTK, Ghostty, PTY, renderer, and compositor boundary.
 
-The current host is deliberately small. Product features should enter only
-with failing end-to-end tests; the old Ghostty spike remains disposable
-evidence and must not become the Zentty implementation.
+The current host is deliberately small and frozen to qualification behavior.
+Product behavior must not be added to it to make future Rust product cells
+green. Product features enter the later Rust application only with failing
+end-to-end tests; both this host and the old Ghostty spike remain disposable
+evidence. Host retirement requires removal of the legacy host tests/cells from
+the active graph plus a fresh reviewed replacement receipt for every gated
+product cell.
 
 ## Qualification
 
@@ -39,18 +49,49 @@ implemented local-suite pass from release qualification and full Linux
 qualification. Non-pass required cells prevent the latter claims even when
 every executable local command succeeds.
 
-Each Valgrind cell also writes an unsuppressed `*.raw.log`, a reviewed
-`*.suppressed.log`, and a JSON report containing raw and post-suppression
-error/leak totals. Here, “raw” means that no Ghostty or Zentty suppression file
-is loaded; Valgrind's version-pinned built-in suppressions remain active. The
-qualification summary embeds those reports. A successful Debug result is
-described only as **PASS with reviewed suppressions**, never as an
-unsuppressed-clean run.
+Each authoritative matrix Valgrind cell producer writes an unsuppressed
+`*.raw.log`, a suppression-enabled candidate `*.suppressed.log`, and a JSON
+report containing raw and post-suppression error/leak totals. Here, “raw” means
+that no Ghostty or Zentty suppression file is loaded; Valgrind's version-pinned
+built-in suppressions remain active. Producer success means only that the
+semantic and post-suppression checks passed while suppression governance
+remains pending. The qualification summary embeds those reports and describes
+a successful Debug result as **PASS with reviewed suppressions** only after
+governance accepts the complete unchanged report set. It never describes the
+result as an unsuppressed-clean run.
 
-`tests/valgrind-suppressions.json` is the suppression manifest. It identifies
-every Zentty rule and pins/audits the inherited Ghostty and Valgrind sets.
+For every ordinary X11 Valgrind report, the raw and suppression-enabled phases
+run sequentially in two fresh `tests/nested-x11` sessions rather than sharing a
+cell-level display. The report binds the current nested harness hash plus each
+phase's distinct session ID and `*.environment` receipt identity. Matrix and
+suppression governance reject missing, changed, stale, reordered, or reused
+phase identities; exit 77 remains an unexpected skip rather than a pass.
+
+`tests/valgrind-suppressions.json` is the suppression manifest and is validated
+against the adjacent closed-world Draft 2020-12 schema. It identifies every
+Zentty rule, pins/audits the inherited Ghostty and Valgrind sets, and records
+structured identities for reviewed local characterization evidence. The
+standalone `Debug/ibus-focus/x11` contract pins GTK4 synchronous IBus mode,
+requires four exact baseline-to-active-to-baseline focus acknowledgements, and
+therefore bounds eight source-derived external clear-preedit calls. Only that
+scenario may use its protocol ceiling: the object rule is limited to
+`4/1160/16` matches/bytes/blocks and the child string rule to `2/8/8`, with
+string bytes equal to blocks and the child forbidden without its root. Missing
+or reordered acknowledgements, identity drift, and any over-ceiling use fail.
+These gitignored identities are not public proof; public access remains
+`NOT_IMPLEMENTED` under GH-10 until retained public artifacts exist.
+
+Three earlier exploratory archives—
+`2026-08-03-ibus-one-cycle-characterization`,
+`2026-08-03-ibus-two-cycle-characterization`, and
+`2026-08-03-ibus-focus-ack-characterization`—each contain eight
+suppression-enabled receipts but no raw companions. Their original `/tmp`
+executables are unavailable, and raw-before-suppressed chronology cannot be
+reconstructed. Their checksums preserve what was observed, but they are not
+paired, reviewed, public, or qualification evidence and do not authorize a
+suppression.
 `tests/suppression-governance` rejects untracked, stale, out-of-scenario, or
-expanded suppression usage; its negative self-test is
+expanded or over-ceiling suppression usage; its negative self-test is
 `tests/suppression-governance-test`. ReleaseSafe Valgrind remains an XFAIL and
 is not made green by expanding suppressions.
 
@@ -61,7 +102,52 @@ linux/tests/qualification-matrix --validate-only
 linux/tests/qualification-matrix-test
 ```
 
-Useful narrow diagnostic commands remain available:
+The focused support policy lives in `test-policy/`. Framework self-tests run
+once before the matrix through `tests/qualify-local`; they are not product
+qualification cells. The former recursive runner, Bash-governance mutation,
+attestation, and archive layers were intentionally retired by the recovery
+plan because they tested the evidence machinery rather than Zentty.
+
+`ghostty-async-backend-abi-representation` is a command-backed tracked XFAIL:
+the C17/C++17 probe rejects generated-header drift, prints default and
+`-fshort-enums` sizes, and exits exactly 99 for the current enum-versus-`c_int`
+mismatch. Its focused self-test runs before the matrix. Missing checkout,
+compiler, or header prerequisites exit 77; every other nonzero exit is an
+unexpected XFAIL failure rather than the tracked defect.
+
+## Controlled local environments
+
+Executable matrix cells do not inherit the developer's desktop session. Each
+cell declares exactly one closed environment profile:
+
+- `isolated-none-v1` uses `tests/isolated-session` with private HOME, XDG and
+  temporary roots and no ambient display, D-Bus, AT-SPI or IBus endpoints.
+- `nested-x11-v1` uses a fresh private Xvfb server and software renderer through
+  `tests/nested-x11`.
+- `nested-wayland-v1` uses a fresh Weston headless compositor and Pixman
+  renderer through `tests/nested-wayland`.
+- `phase-managed-x11-v1` and `phase-managed-wayland-v1` are reserved for tests
+  such as Valgrind whose raw and suppression-enabled phases must own distinct
+  controlled sessions. Controlled input/resize tests that already own Xvfb use
+  the phase-managed profile to prevent accidental double nesting.
+
+The runner removes inherited report destinations and session markers before
+dispatch. Every wrapper emits a machine-readable receipt that identifies its
+current wrapper hash, session, command, timestamps, backend, renderer and
+cleanup result. The runner validates those receipts before and after the cell
+set and retains them as qualification evidence. Missing prerequisites exit 77
+and remain unexpected skips; environmental absence never becomes a pass.
+
+Focused environment tests are:
+
+```sh
+linux/tests/isolated-session-test
+linux/tests/nested-x11-test
+linux/tests/nested-wayland-test
+linux/tests/lib/controlled-environment-test
+```
+
+Useful narrow product diagnostics remain available:
 
 ```sh
 GDK_BACKEND=wayland linux/tests/interaction
@@ -70,9 +156,12 @@ ZENTTY_CONTROLLED_X11_SCENARIO=physical-key linux/tests/controlled-x11
 ZENTTY_CONTROLLED_X11_SCENARIO=resize linux/tests/controlled-x11
 ```
 
-The controlled X11 harness uses Xvfb and software rendering; missing required
-tools exit as an unexpected skip rather than a pass. The matrix records the
-absence of an equivalent controlled Wayland environment explicitly.
+The nested environments prove real GTK/GDK, display-protocol and software-
+renderer integration. Weston headless intentionally has no input seat. These
+receipts therefore do not qualify a representative GNOME/KDE session, physical
+GPU, native input, IME, clipboard or fractional scaling; those remain separate
+matrix cells with their actual statuses and prerequisites.
 
-See `docs/design/zentty-linux-dogfood-2026-08-01.md` for commands, failures,
-repairs, receipts, environment limits, and the complete qualification record.
+See `docs/design/zentty-linux-dogfood-2026-08-01.md` for the chronological
+field and qualification record, including superseded snapshots, current gaps,
+commands, failures, repairs, receipts, and the latest completed run.

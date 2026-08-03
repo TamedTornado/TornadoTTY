@@ -1,0 +1,397 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+wrapper="${repo_root}/linux/tests/nested-wayland"
+temp_dir="$(mktemp -d)"
+fake_bin="${temp_dir}/bin"
+capture_dir="${temp_dir}/capture"
+wrapper_pid=""
+
+cleanup() {
+    if [[ "${wrapper_pid}" =~ ^[1-9][0-9]*$ ]]; then
+        kill -TERM "${wrapper_pid}" 2>/dev/null || true
+        wait "${wrapper_pid}" 2>/dev/null || true
+    fi
+    rm -rf -- "${temp_dir}"
+}
+trap cleanup EXIT
+
+fail() {
+    echo "nested-wayland-test: error: $*" >&2
+    exit 1
+}
+
+[[ -x "${wrapper}" ]] || fail "nested Wayland wrapper is missing or not executable: ${wrapper}"
+mkdir -p "${fake_bin}" "${capture_dir}"
+
+cat >"${fake_bin}/weston" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${1:-}" == "--version" ]]; then
+    echo "weston 13.0.0"
+    exit 0
+fi
+
+[[ -z "${DISPLAY:-}" ]] || exit 81
+[[ "${WAYLAND_DISPLAY:-}" =~ ^wayland-z-[0-9a-f]{16}$ ]] || exit 82
+[[ -z "${XAUTHORITY:-}" ]] || exit 83
+[[ -z "${XAUTHLOCALHOSTNAME:-}" ]] || exit 106
+[[ -z "${MIR_SOCKET:-}" ]] || exit 107
+[[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]] || exit 84
+[[ -z "${IBUS_ADDRESS:-}" ]] || exit 85
+[[ -z "${GTK_IM_MODULE:-}" ]] || exit 86
+[[ -z "${DBUS_STARTER_ADDRESS:-}" ]] || exit 98
+[[ -z "${DBUS_STARTER_BUS_TYPE:-}" ]] || exit 99
+[[ -z "${DBUS_SYSTEM_BUS_ADDRESS:-}" ]] || exit 100
+[[ -z "${DBUS_SESSION_BUS_PID:-}" ]] || exit 108
+[[ -z "${DBUS_SESSION_BUS_WINDOWID:-}" ]] || exit 109
+[[ -z "${AT_SPI_BUS_ADDRESS:-}" ]] || exit 101
+[[ -z "${IBUS_ADDRESS_FILE:-}" ]] || exit 102
+[[ -z "${IBUS_USE_PORTAL:-}" ]] || exit 103
+[[ -z "${IBUS_ENABLE_SYNC_MODE:-}" ]] || exit 110
+[[ -z "${WAYLAND_SOCKET:-}" ]] || exit 104
+[[ -z "${WESTON_LAUNCHER_SOCK:-}" ]] || exit 105
+[[ "${GDK_BACKEND:-}" == wayland ]] || exit 87
+[[ "${XDG_SESSION_TYPE:-}" == wayland ]] || exit 88
+[[ "${LIBGL_ALWAYS_SOFTWARE:-}" == 1 ]] || exit 89
+
+backend=""
+renderer=""
+socket=""
+width=""
+height=""
+scale=""
+idle=""
+config=""
+log=""
+for argument in "$@"; do
+    case "${argument}" in
+        --backend=*) backend="${argument#*=}" ;;
+        --renderer=*) renderer="${argument#*=}" ;;
+        --socket=*) socket="${argument#*=}" ;;
+        --width=*) width="${argument#*=}" ;;
+        --height=*) height="${argument#*=}" ;;
+        --scale=*) scale="${argument#*=}" ;;
+        --idle-time=*) idle="${argument#*=}" ;;
+        --no-config) config="none" ;;
+        --log=*) log="${argument#*=}" ;;
+        *) exit 90 ;;
+    esac
+done
+
+[[ "${backend}" == headless ]] || exit 91
+[[ "${renderer}" == pixman ]] || exit 92
+[[ "${socket}" =~ ^wayland-z-[0-9a-f]{16}$ ]] || exit 93
+[[ "${width}" == 1280 && "${height}" == 1024 ]] || exit 94
+[[ "${scale}" == 1 && "${idle}" == 0 && "${config}" == none ]] || exit 95
+[[ "${log}" == "${XDG_RUNTIME_DIR%/runtime}/weston.log" ]] || exit 96
+
+printf '%s\n' "${XDG_RUNTIME_DIR%/runtime}" >"${ZENTTY_FAKE_WAYLAND_CAPTURE}/run-root"
+printf '%s\n' "${socket}" >"${ZENTTY_FAKE_WAYLAND_CAPTURE}/socket-name"
+cat >"${log}" <<'LOG'
+weston 13.0.0
+Loading module '/fixture/libweston/headless-backend.so'
+Using Pixman renderer
+Output 'headless' enabled with head(s) headless
+LOG
+if [[ "${ZENTTY_FAKE_WESTON_RENDERER_PROOF:-1}" == 0 ]]; then
+    sed -i '/Using Pixman renderer/d' "${log}"
+fi
+if [[ "${ZENTTY_FAKE_WESTON_STATUS:-0}" -ne 0 ]]; then
+    exit "${ZENTTY_FAKE_WESTON_STATUS}"
+fi
+
+socket_path="${XDG_RUNTIME_DIR}/${socket}"
+active="${ZENTTY_FAKE_WAYLAND_CAPTURE}/display-active"
+socat_pid=""
+cleanup_server() {
+    trap - EXIT HUP INT TERM
+    rm -f -- "${active}"
+    if [[ "${socat_pid}" =~ ^[1-9][0-9]*$ ]]; then
+        kill -TERM "${socat_pid}" 2>/dev/null || true
+        wait "${socat_pid}" 2>/dev/null || true
+    fi
+    rm -f -- "${socket_path}"
+}
+trap cleanup_server EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+socat UNIX-LISTEN:"${socket_path}",fork EXEC:/bin/cat &
+socat_pid=$!
+for _ in $(seq 1 100); do
+    [[ -S "${socket_path}" ]] && break
+    sleep 0.01
+done
+[[ -S "${socket_path}" ]] || exit 97
+: >"${active}"
+wait "${socat_pid}"
+EOF
+
+cat >"${fake_bin}/wayland-info" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ $# -eq 0 ]] || exit 71
+[[ -z "${DISPLAY:-}" ]] || exit 72
+[[ "${WAYLAND_DISPLAY:-}" =~ ^wayland-z-[0-9a-f]{16}$ ]] || exit 73
+[[ -S "${XDG_RUNTIME_DIR}/${WAYLAND_DISPLAY}" ]] || exit 74
+[[ -f "${ZENTTY_FAKE_WAYLAND_CAPTURE}/display-active" ]] || exit 75
+[[ "${ZENTTY_FAKE_WAYLAND_INFO_STATUS:-0}" -eq 0 ]] ||
+    exit "${ZENTTY_FAKE_WAYLAND_INFO_STATUS}"
+cat <<'INFO'
+interface: 'wl_shm', version: 1, name: 1
+interface: 'wl_compositor', version: 6, name: 2
+interface: 'wl_output', version: 4, name: 3
+INFO
+if [[ "${ZENTTY_FAKE_WAYLAND_INFO_COMPLETE:-1}" == 1 ]]; then
+    echo "interface: 'xdg_wm_base', version: 6, name: 4"
+fi
+EOF
+
+cat >"${fake_bin}/session-probe" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+[[ -z "${DISPLAY:-}" ]] || exit 51
+[[ "${WAYLAND_DISPLAY:-}" =~ ^wayland-z-[0-9a-f]{16}$ ]] || exit 52
+[[ -z "${XAUTHORITY:-}" ]] || exit 53
+[[ -z "${XAUTHLOCALHOSTNAME:-}" ]] || exit 83
+[[ -z "${MIR_SOCKET:-}" ]] || exit 84
+[[ "${GDK_BACKEND:-}" == wayland ]] || exit 54
+[[ "${XDG_SESSION_TYPE:-}" == wayland ]] || exit 55
+[[ "${LIBGL_ALWAYS_SOFTWARE:-}" == 1 ]] || exit 56
+[[ -z "${ZENTTY_NESTED_WAYLAND_RUN_ROOT:-}" ]] || exit 57
+run_root="${XDG_RUNTIME_DIR%/runtime}"
+[[ "${HOME:-}" == "${run_root}/home" ]] || exit 58
+[[ "${XDG_CONFIG_HOME:-}" == "${run_root}/config" ]] || exit 59
+[[ "${XDG_CACHE_HOME:-}" == "${run_root}/cache" ]] || exit 60
+[[ "${XDG_DATA_HOME:-}" == "${run_root}/data" ]] || exit 61
+[[ "${XDG_STATE_HOME:-}" == "${run_root}/state" ]] || exit 62
+[[ "${TMPDIR:-}" == "${run_root}/tmp" ]] || exit 63
+[[ "$(stat -c %a "${XDG_RUNTIME_DIR}")" == 700 ]] || exit 64
+[[ -S "${XDG_RUNTIME_DIR}/${WAYLAND_DISPLAY}" ]] || exit 65
+[[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]] || exit 66
+[[ -z "${IBUS_ADDRESS:-}" ]] || exit 67
+[[ -z "${GTK_IM_MODULE:-}" ]] || exit 68
+[[ -z "${DBUS_STARTER_ADDRESS:-}" ]] || exit 71
+[[ -z "${DBUS_STARTER_BUS_TYPE:-}" ]] || exit 72
+[[ -z "${DBUS_SYSTEM_BUS_ADDRESS:-}" ]] || exit 73
+[[ -z "${DBUS_SESSION_BUS_PID:-}" ]] || exit 85
+[[ -z "${DBUS_SESSION_BUS_WINDOWID:-}" ]] || exit 86
+[[ -z "${AT_SPI_BUS_ADDRESS:-}" ]] || exit 74
+[[ -z "${IBUS_ADDRESS_FILE:-}" ]] || exit 75
+[[ -z "${IBUS_USE_PORTAL:-}" ]] || exit 76
+[[ -z "${IBUS_ENABLE_SYNC_MODE:-}" ]] || exit 87
+[[ -z "${WAYLAND_SOCKET:-}" ]] || exit 77
+[[ -z "${WESTON_LAUNCHER_SOCK:-}" ]] || exit 78
+[[ "${ZENTTY_NESTED_WAYLAND_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] || exit 69
+[[ "${ZENTTY_NESTED_WAYLAND_WRAPPER_SHA256:-}" =~ ^[0-9a-f]{64}$ ]] || exit 70
+printf 'probe: PASS\n'
+case "${1:-0}" in
+    grandchild)
+        (trap '' TERM; while :; do sleep 1; done) &
+        printf '%s\n' "$!" >"${ZENTTY_FAKE_WAYLAND_CAPTURE}/grandchild-pid"
+        exit 0
+        ;;
+    block)
+        printf '%s\n' "$$" >"${ZENTTY_FAKE_WAYLAND_CAPTURE}/blocking-child-pid"
+        : >"${ZENTTY_FAKE_WAYLAND_CAPTURE}/blocking-ready"
+        while :; do sleep 1; done
+        ;;
+    *) exit "${1:-0}" ;;
+esac
+EOF
+
+chmod +x "${fake_bin}/weston" "${fake_bin}/wayland-info" "${fake_bin}/session-probe"
+export PATH="${fake_bin}:${PATH}"
+export ZENTTY_FAKE_WAYLAND_CAPTURE="${capture_dir}"
+export DISPLAY=:0
+export WAYLAND_DISPLAY=wayland-0
+export MIR_SOCKET=/poison/mir.sock
+export XAUTHORITY=/tmp/poison-Xauthority
+export XAUTHLOCALHOSTNAME=poison-host
+export GDK_BACKEND=x11
+export XDG_SESSION_TYPE=x11
+export LIBGL_ALWAYS_SOFTWARE=0
+export DBUS_SESSION_BUS_ADDRESS=unix:path=/poison/session-bus
+export DBUS_STARTER_ADDRESS=unix:path=/poison/starter-bus
+export DBUS_STARTER_BUS_TYPE=session
+export DBUS_SYSTEM_BUS_ADDRESS=unix:path=/poison/system-bus
+export DBUS_SESSION_BUS_PID=99999
+export DBUS_SESSION_BUS_WINDOWID=99999
+export AT_SPI_BUS_ADDRESS=unix:path=/poison/at-spi
+export IBUS_ADDRESS=unix:path=/poison/ibus
+export IBUS_ADDRESS_FILE=/tmp/poison-ibus-address
+export IBUS_USE_PORTAL=1
+export IBUS_ENABLE_SYNC_MODE=1
+export GTK_IM_MODULE=poison
+export WAYLAND_SOCKET=42
+export WESTON_LAUNCHER_SOCK=43
+
+success_log="${temp_dir}/success.log"
+success_report="${temp_dir}/success.environment.json"
+set +e
+ZENTTY_NESTED_WAYLAND_REPORT="${success_report}" \
+    "${wrapper}" session-probe >"${success_log}" 2>&1
+success_status=$?
+set -e
+[[ "${success_status}" -eq 0 ]] || {
+    cat "${success_log}" >&2
+    fail "private session failed with ${success_status}"
+}
+grep -Fx "nested-wayland: READY private-weston-headless backend=wayland software-renderer=1" \
+    "${success_log}" >/dev/null || fail "private-session marker was not emitted"
+grep -Fx "probe: PASS" "${success_log}" >/dev/null ||
+    fail "child did not run in the private Wayland session"
+read -r successful_run_root <"${capture_dir}/run-root"
+[[ ! -e "${successful_run_root}" ]] || fail "private run root survived success"
+jq -e \
+    --arg wrapper "${wrapper}" \
+    --arg wrapper_sha "$(sha256sum "${wrapper}" | awk '{print $1}')" '
+    .schema_version == 1 and
+    (.session_id | test("^[0-9a-f]{64}$")) and
+    .backend == "wayland" and
+    .server == {
+      name:"Weston",version:"13.0.0",backend:"headless",
+      endpoint:.server.endpoint,width:1280,height:1024,scale:1,
+      protocols:["wl_compositor","wl_output","wl_shm","xdg_wm_base"],
+      wayland_info_sha256:.server.wayland_info_sha256
+    } and
+    (.server.endpoint | test("^wayland-z-[0-9a-f]{16}$")) and
+    (.server.wayland_info_sha256 | test("^[0-9a-f]{64}$")) and
+    .renderer == {software:true,name:"Pixman",proof:"Using Pixman renderer"} and
+    .wrapper == {path:$wrapper,sha256:$wrapper_sha} and
+    .command == ["session-probe"] and
+    .command_exit_code == 0 and
+    .isolation.ambient_display_sanitized == true and
+    .isolation.ambient_dbus_sanitized == true and
+    (.isolation.process_group | type == "number" and . > 0 and floor == .) and
+    .isolation.run_root_removed == true and
+    .isolation.display_unreachable_after == true and
+    .isolation.remaining_processes == [] and
+    (.started_at_epoch | type == "number") and
+    (.finished_at_epoch | type == "number") and
+    .started_at_epoch <= .finished_at_epoch
+' "${success_report}" >/dev/null || fail "private-session report is incomplete"
+success_session="$(jq -r '.session_id' "${success_report}")"
+
+second_report="${temp_dir}/second.environment.json"
+ZENTTY_NESTED_WAYLAND_REPORT="${second_report}" \
+    "${wrapper}" session-probe >"${temp_dir}/second.log" 2>&1
+second_session="$(jq -r '.session_id' "${second_report}")"
+[[ "${second_session}" != "${success_session}" ]] ||
+    fail "consecutive private sessions reused one identity"
+
+failure_report="${temp_dir}/child-failure.environment.json"
+set +e
+ZENTTY_NESTED_WAYLAND_REPORT="${failure_report}" \
+    "${wrapper}" session-probe 42 >"${temp_dir}/child-failure.log" 2>&1
+child_status=$?
+set -e
+[[ "${child_status}" -eq 42 ]] || fail "child status was not propagated"
+jq -e '.command_exit_code == 42 and .command == ["session-probe","42"]' \
+    "${failure_report}" >/dev/null || fail "failed-child report lost the exact status"
+read -r failed_run_root <"${capture_dir}/run-root"
+[[ ! -e "${failed_run_root}" ]] || fail "private run root survived child failure"
+
+"${wrapper}" session-probe grandchild >"${temp_dir}/grandchild.log" 2>&1
+read -r grandchild_pid <"${capture_dir}/grandchild-pid"
+if kill -0 "${grandchild_pid}" 2>/dev/null; then
+    fail "background grandchild survived private-session success"
+fi
+
+signal_report="${temp_dir}/signal.environment.json"
+ZENTTY_NESTED_WAYLAND_REPORT="${signal_report}" \
+    "${wrapper}" session-probe block >"${temp_dir}/signal.log" 2>&1 &
+wrapper_pid=$!
+for _ in $(seq 1 100); do
+    [[ -f "${capture_dir}/blocking-ready" ]] && break
+    sleep 0.01
+done
+[[ -f "${capture_dir}/blocking-ready" ]] || fail "signal fixture never became ready"
+kill -TERM "${wrapper_pid}"
+set +e
+wait "${wrapper_pid}"
+signal_status=$?
+set -e
+wrapper_pid=""
+[[ "${signal_status}" -eq 143 ]] || fail "TERM did not propagate exact status 143"
+[[ ! -e "${signal_report}" ]] || fail "interrupted session published an environment report"
+read -r blocking_child_pid <"${capture_dir}/blocking-child-pid"
+if kill -0 "${blocking_child_pid}" 2>/dev/null; then
+    fail "blocking child survived wrapper TERM cleanup"
+fi
+read -r signaled_run_root <"${capture_dir}/run-root"
+[[ ! -e "${signaled_run_root}" ]] || fail "private run root survived wrapper TERM"
+
+stale_report="${temp_dir}/stale.environment.json"
+printf '{"stale":true}\n' >"${stale_report}"
+set +e
+ZENTTY_FAKE_WESTON_STATUS=77 \
+ZENTTY_NESTED_WAYLAND_REPORT="${stale_report}" \
+    "${wrapper}" session-probe >"${temp_dir}/service-absence.log" 2>&1
+service_status=$?
+set -e
+[[ "${service_status}" -eq 77 ]] || fail "Weston service status was not propagated"
+[[ ! -e "${stale_report}" ]] || fail "failed service retained a stale report"
+read -r absent_run_root <"${capture_dir}/run-root"
+[[ ! -e "${absent_run_root}" ]] || fail "private run root survived service absence"
+
+for failure_case in renderer wayland_info protocol; do
+    failure_case_report="${temp_dir}/${failure_case}.environment.json"
+    set +e
+    if [[ "${failure_case}" == renderer ]]; then
+        ZENTTY_FAKE_WESTON_RENDERER_PROOF=0 \
+        ZENTTY_NESTED_WAYLAND_REPORT="${failure_case_report}" \
+            "${wrapper}" session-probe >"${temp_dir}/${failure_case}.log" 2>&1
+    elif [[ "${failure_case}" == wayland_info ]]; then
+        ZENTTY_FAKE_WAYLAND_INFO_STATUS=19 \
+        ZENTTY_NESTED_WAYLAND_REPORT="${failure_case_report}" \
+            "${wrapper}" session-probe >"${temp_dir}/${failure_case}.log" 2>&1
+    else
+        ZENTTY_FAKE_WAYLAND_INFO_COMPLETE=0 \
+        ZENTTY_NESTED_WAYLAND_REPORT="${failure_case_report}" \
+            "${wrapper}" session-probe >"${temp_dir}/${failure_case}.log" 2>&1
+    fi
+    failure_case_status=$?
+    set -e
+    [[ "${failure_case_status}" -ne 0 ]] || fail "${failure_case} failure passed"
+    [[ ! -e "${failure_case_report}" ]] || fail "${failure_case} failure published a report"
+    read -r failure_case_root <"${capture_dir}/run-root"
+    [[ ! -e "${failure_case_root}" ]] || fail "${failure_case} failure retained its root"
+done
+
+atomic_report="${temp_dir}/atomic.environment.json"
+atomic_target="${temp_dir}/atomic-target"
+printf 'untouched\n' >"${atomic_target}"
+ln -s "${atomic_target}" "${atomic_report}"
+set +e
+ZENTTY_NESTED_WAYLAND_REPORT="${atomic_report}" \
+    "${wrapper}" session-probe >"${temp_dir}/symlink-report.log" 2>&1
+symlink_status=$?
+set -e
+[[ "${symlink_status}" -ne 0 ]] || fail "symlink report destination passed"
+[[ "$(cat "${atomic_target}")" == untouched ]] || fail "symlink report target changed"
+
+if find "${temp_dir}" -maxdepth 1 -name '*.tmp.*' -print -quit | grep -q .; then
+    fail "temporary report survived atomic publication"
+fi
+
+missing_bin="${temp_dir}/missing-bin"
+mkdir -p "${missing_bin}"
+for dependency in bash readlink sha256sum awk; do
+    ln -s "$(command -v "${dependency}")" "${missing_bin}/${dependency}"
+done
+set +e
+PATH="${missing_bin}" "${wrapper}" session-probe \
+    >"${temp_dir}/missing-runtime.log" 2>&1
+missing_status=$?
+set -e
+[[ "${missing_status}" -eq 77 ]] || fail "missing runtime dependency did not exit 77"
+grep -F "SKIP missing runtime dependency: weston" \
+    "${temp_dir}/missing-runtime.log" >/dev/null ||
+    fail "missing runtime dependency was not identified"
+
+echo "Nested Wayland wrapper tests passed"

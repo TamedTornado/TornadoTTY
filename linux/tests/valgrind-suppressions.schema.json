@@ -1,0 +1,446 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:zentty:linux:valgrind-suppressions:v1",
+  "title": "Zentty Valgrind suppression governance manifest",
+  "description": "Closed-world shape for suppression rules and identity-only references to locally retained review evidence. Validation does not imply that gitignored evidence is present or cryptographically verified in a clean clone.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "manifest_semantics",
+    "environment",
+    "project_suppression_file",
+    "effective_inherited_sets",
+    "usage_profiles",
+    "protocol_ceilings",
+    "rules"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "manifest_semantics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "expected_suppressed.matches",
+        "expected_suppressed.bytes",
+        "usage_profiles",
+        "usage_profiles.evidence_identity",
+        "protocol_ceilings"
+      ],
+      "properties": {
+        "expected_suppressed.matches": {"type": "string", "minLength": 1},
+        "expected_suppressed.bytes": {"type": "string", "minLength": 1},
+        "usage_profiles": {"type": "string", "minLength": 1},
+        "usage_profiles.evidence_identity": {"type": "string", "minLength": 1},
+        "protocol_ceilings": {"type": "string", "minLength": 1}
+      }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "os",
+        "valgrind",
+        "gtk",
+        "glib",
+        "fontconfig",
+        "pango",
+        "librsvg",
+        "ibus"
+      ],
+      "properties": {
+        "os": {"type": "string", "minLength": 1},
+        "valgrind": {"type": "string", "minLength": 1},
+        "gtk": {"type": "string", "minLength": 1},
+        "glib": {"type": "string", "minLength": 1},
+        "fontconfig": {"type": "string", "minLength": 1},
+        "pango": {"type": "string", "minLength": 1},
+        "librsvg": {"type": "string", "minLength": 1},
+        "ibus": {"type": "string", "minLength": 1}
+      }
+    },
+    "project_suppression_file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "rule_count"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "rule_count": {"type": "integer", "minimum": 1}
+      }
+    },
+    "effective_inherited_sets": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "oneOf": [
+          {"$ref": "#/$defs/inherited_file_set"},
+          {"$ref": "#/$defs/inherited_builtin_set"}
+        ]
+      }
+    },
+    "usage_profiles": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/usage_profile"}
+    },
+    "protocol_ceilings": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/protocol_ceiling"}
+    },
+    "rules": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/suppression_rule"}
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "range": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["min", "max"],
+      "properties": {
+        "min": {"type": "integer", "minimum": 0},
+        "max": {"type": "integer", "minimum": 0}
+      }
+    },
+    "expected_usage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["matches", "bytes"],
+      "properties": {
+        "matches": {"$ref": "#/$defs/range"},
+        "bytes": {
+          "oneOf": [
+            {"$ref": "#/$defs/range"},
+            {"type": "null"}
+          ]
+        }
+      }
+    },
+    "evidence_file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+        },
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "profile_evidence_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reviewed",
+        "verification_scope",
+        "public_access",
+        "archive_path",
+        "observed_runs",
+        "total_runs",
+        "independent_executions",
+        "raw_receipt",
+        "suppressed_receipt",
+        "report",
+        "checksums_receipt"
+      ],
+      "properties": {
+        "reviewed": {"const": true},
+        "verification_scope": {"const": "identity-only-local-archive"},
+        "public_access": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "tracking", "locator", "reason"],
+          "properties": {
+            "status": {"const": "NOT_IMPLEMENTED"},
+            "tracking": {"const": "GH-10"},
+            "locator": {"type": "null"},
+            "reason": {"type": "string", "minLength": 1}
+          }
+        },
+        "archive_path": {
+          "type": "string",
+          "pattern": "^build/linux/qualification-runs/[A-Za-z0-9][A-Za-z0-9._-]*$"
+        },
+        "observed_runs": {"type": "integer", "minimum": 1},
+        "total_runs": {"type": "integer", "minimum": 1},
+        "independent_executions": {"const": true},
+        "raw_receipt": {"$ref": "#/$defs/evidence_file"},
+        "suppressed_receipt": {"$ref": "#/$defs/evidence_file"},
+        "report": {"$ref": "#/$defs/evidence_file"},
+        "checksums_receipt": {
+          "allOf": [
+            {"$ref": "#/$defs/evidence_file"},
+            {"properties": {"path": {"const": "SHA256SUMS"}}}
+          ]
+        }
+      }
+    },
+    "profile_rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rule_name", "matches", "bytes", "blocks"],
+      "properties": {
+        "rule_name": {"type": "string", "minLength": 1},
+        "matches": {"type": "integer", "minimum": 0},
+        "bytes": {"type": "integer", "minimum": 0},
+        "blocks": {"type": "integer", "minimum": 0}
+      }
+    },
+    "usage_profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "scenario", "environment", "evidence_identity", "reproducer", "rules"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[A-Z0-9][A-Z0-9-]*$"},
+        "scenario": {"type": "string", "pattern": "^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$"},
+        "environment": {"type": "string", "minLength": 1},
+        "evidence_identity": {"$ref": "#/$defs/profile_evidence_identity"},
+        "reproducer": {"type": "string", "minLength": 1},
+        "rules": {
+          "type": "array",
+          "minItems": 2,
+          "items": {"$ref": "#/$defs/profile_rule"}
+        }
+      }
+    },
+    "protocol_evidence_pair": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run", "raw_receipt", "suppressed_receipt", "report"],
+      "properties": {
+        "run": {"type": "integer", "minimum": 1},
+        "raw_receipt": {"$ref": "#/$defs/evidence_file"},
+        "suppressed_receipt": {"$ref": "#/$defs/evidence_file"},
+        "report": {"$ref": "#/$defs/evidence_file"}
+      }
+    },
+    "protocol_evidence_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reviewed",
+        "verification_scope",
+        "public_access",
+        "archive_path",
+        "total_runs",
+        "independent_executions",
+        "executable",
+        "receipt_pairs",
+        "checksums_receipt"
+      ],
+      "properties": {
+        "reviewed": {"const": true},
+        "verification_scope": {"const": "identity-only-local-archive"},
+        "public_access": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "tracking", "locator", "reason"],
+          "properties": {
+            "status": {"const": "NOT_IMPLEMENTED"},
+            "tracking": {"const": "GH-10"},
+            "locator": {"type": "null"},
+            "reason": {"type": "string", "minLength": 1}
+          }
+        },
+        "archive_path": {
+          "type": "string",
+          "pattern": "^build/linux/qualification-runs/[A-Za-z0-9][A-Za-z0-9._-]*$"
+        },
+        "total_runs": {"type": "integer", "minimum": 1},
+        "independent_executions": {"const": true},
+        "executable": {
+          "allOf": [
+            {"$ref": "#/$defs/evidence_file"},
+            {"properties": {"path": {"const": "ibus-focus-reproducer"}}}
+          ]
+        },
+        "receipt_pairs": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/protocol_evidence_pair"}
+        },
+        "checksums_receipt": {
+          "allOf": [
+            {"$ref": "#/$defs/evidence_file"},
+            {"properties": {"path": {"const": "SHA256SUMS"}}}
+          ]
+        }
+      }
+    },
+    "protocol_rule_ceiling": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rule_name", "matches", "bytes", "blocks"],
+      "properties": {
+        "rule_name": {"type": "string", "minLength": 1},
+        "matches": {"$ref": "#/$defs/range"},
+        "bytes": {"$ref": "#/$defs/range"},
+        "blocks": {"$ref": "#/$defs/range"}
+      }
+    },
+    "protocol_ceiling": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "scenario",
+        "runtime_identity",
+        "source_identity",
+        "lifecycle",
+        "evidence_identity",
+        "rules",
+        "relations"
+      ],
+      "properties": {
+        "id": {"const": "IBUS-PREEDIT-ACKNOWLEDGED-EIGHT-CALL-CEILING"},
+        "scenario": {"const": "Debug/ibus-focus/x11"},
+        "runtime_identity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["gtk", "ibus", "ibus_gtk4", "libibus"],
+          "properties": {
+            "gtk": {"type": "string", "minLength": 1},
+            "ibus": {"type": "string", "minLength": 1},
+            "ibus_gtk4": {"type": "string", "minLength": 1},
+            "libibus": {"type": "string", "minLength": 1}
+          }
+        },
+        "source_identity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["repository", "version", "revision", "path", "sha256"],
+          "properties": {
+            "repository": {"const": "https://github.com/ibus/ibus.git"},
+            "version": {"const": "1.5.29"},
+            "revision": {"const": "0ad8e77bd36545974ad8acd0a5283cf72bc7c8ad"},
+            "path": {"const": "client/gtk4/ibusimcontext.c"},
+            "sha256": {"const": "421dec0149829c84d7ce292e9134a31d39f3b5170e168b66ebf42da3546cd6fa"}
+          }
+        },
+        "lifecycle": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "contract",
+            "contract_sha256",
+            "wrapper",
+            "wrapper_sha256",
+            "reproducer",
+            "reproducer_sha256",
+            "sync_mode_environment",
+            "sync_mode_value",
+            "focus_cycles",
+            "clear_calls_per_cycle",
+            "expected_clear_calls"
+          ],
+          "properties": {
+            "contract": {"const": "linux/tests/lib/ibus-focus-protocol"},
+            "contract_sha256": {"$ref": "#/$defs/sha256"},
+            "wrapper": {"const": "linux/tests/controlled-ibus-x11"},
+            "wrapper_sha256": {"$ref": "#/$defs/sha256"},
+            "reproducer": {"const": "linux/tests/ibus-focus-reproducer.c"},
+            "reproducer_sha256": {"$ref": "#/$defs/sha256"},
+            "sync_mode_environment": {"const": "IBUS_ENABLE_SYNC_MODE"},
+            "sync_mode_value": {"const": "1"},
+            "focus_cycles": {"const": 4},
+            "clear_calls_per_cycle": {"const": 2},
+            "expected_clear_calls": {"const": 8}
+          }
+        },
+        "evidence_identity": {"$ref": "#/$defs/protocol_evidence_identity"},
+        "rules": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": {"$ref": "#/$defs/protocol_rule_ceiling"}
+        },
+        "relations": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "string_bytes_equal_blocks",
+            "string_requires_object",
+            "all_usage_requires_acknowledged_lifecycle"
+          ],
+          "properties": {
+            "string_bytes_equal_blocks": {"const": true},
+            "string_requires_object": {"const": true},
+            "all_usage_requires_acknowledged_lifecycle": {"const": true}
+          }
+        }
+      }
+    },
+    "inherited_file_set": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "base", "path", "sha256", "rule_count", "audit"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "base": {"enum": ["repo", "ghostty", "absolute"]},
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "rule_count": {"type": "integer", "minimum": 1},
+        "audit": {"type": "string", "minLength": 1}
+      }
+    },
+    "inherited_builtin_set": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "base", "version", "audit"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "base": {"const": "builtin"},
+        "version": {"type": "string", "minLength": 1},
+        "audit": {"type": "string", "minLength": 1}
+      }
+    },
+    "suppression_rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rule_name",
+        "tracking_id",
+        "affected",
+        "finding_type",
+        "expected_suppressed",
+        "allowed_scenarios",
+        "justification",
+        "reproducer",
+        "required_usage"
+      ],
+      "properties": {
+        "rule_name": {"type": "string", "minLength": 1},
+        "tracking_id": {"type": "string", "minLength": 1},
+        "affected": {"type": "string", "minLength": 1},
+        "finding_type": {"type": "string", "minLength": 1},
+        "expected_suppressed": {"$ref": "#/$defs/expected_usage"},
+        "expected_by_scenario": {
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$"
+          },
+          "additionalProperties": {"$ref": "#/$defs/expected_usage"}
+        },
+        "allowed_scenarios": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$"
+          }
+        },
+        "requires_root_rule": {"type": "string", "minLength": 1},
+        "justification": {"type": "string", "minLength": 1},
+        "reproducer": {"type": "string", "minLength": 1},
+        "required_usage": {"type": "boolean"}
+      }
+    }
+  }
+}

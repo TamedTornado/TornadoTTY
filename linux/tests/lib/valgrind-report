@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 
+_zentty_valgrind_report_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=linux/tests/lib/controlled-environment
+source "${_zentty_valgrind_report_lib_dir}/controlled-environment"
+unset _zentty_valgrind_report_lib_dir
+
 zentty_valgrind_metrics_json() {
     local receipt="$1"
     local definite indirect errors contexts suppressed_errors suppressed_contexts
@@ -63,4 +68,331 @@ zentty_valgrind_usage_json() {
         done < <(grep -F " ${suppression}:" "${receipt}" || true)
     done
     printf '%s\n' "${usage}"
+}
+
+zentty_valgrind_receipt_identity_json() {
+    local receipt="$1"
+    local captured_at_epoch
+
+    [[ -s "${receipt}" ]] || {
+        echo "error: Valgrind receipt is missing or empty: ${receipt}" >&2
+        return 1
+    }
+    captured_at_epoch="$(stat -c %Y -- "${receipt}")"
+    [[ "${captured_at_epoch}" =~ ^[0-9]+$ ]] || {
+        echo "error: invalid Valgrind receipt timestamp: ${receipt}" >&2
+        return 1
+    }
+
+    jq -cn \
+        --arg sha256 "$(sha256sum -- "${receipt}" | awk '{print $1}')" \
+        --argjson captured_at_epoch "${captured_at_epoch}" \
+        '{sha256: $sha256, captured_at_epoch: $captured_at_epoch}'
+}
+
+zentty_valgrind_validate_display_phase_environment() {
+    local document="$1"
+    local canonical_report="$2"
+    local display_wrapper="$3"
+    local expected_backend="$4"
+    local max_capture_span_seconds="$5"
+    local environment_field other_environment_field harness display_label
+    local canonical_wrapper wrapper_sha256
+    local expected_raw_environment expected_suppressed_environment
+    local raw_environment suppressed_environment
+    local phase phase_path expected_sha expected_epoch actual_sha actual_epoch
+    local phase_expected_exit phase_expected_command
+    local raw_session_id suppressed_session_id
+
+    case "${expected_backend}" in
+        x11)
+            environment_field="x11_phase_environment"
+            other_environment_field="wayland_phase_environment"
+            harness="linux/tests/nested-x11"
+            display_label="X11"
+            ;;
+        wayland)
+            environment_field="wayland_phase_environment"
+            other_environment_field="x11_phase_environment"
+            harness="linux/tests/nested-wayland"
+            display_label="Wayland"
+            ;;
+        *)
+            echo "error: invalid Valgrind phase display backend: ${expected_backend}" >&2
+            return 1
+            ;;
+    esac
+
+    [[ -f "${document}" && ! -L "${document}" ]] || {
+        echo "error: ${display_label} Valgrind report is missing or unsafe: ${document}" >&2
+        return 1
+    }
+    [[ "${max_capture_span_seconds}" =~ ^[1-9][0-9]*$ ]] || {
+        echo "error: invalid ${display_label} Valgrind phase capture span" >&2
+        return 1
+    }
+    canonical_report="$(readlink -m -- "${canonical_report}")"
+    canonical_wrapper="$(readlink -f -- "${display_wrapper}")" || {
+        echo "error: nested ${display_label} wrapper is missing: ${display_wrapper}" >&2
+        return 1
+    }
+    [[ -f "${canonical_wrapper}" && ! -L "${display_wrapper}" ]] || {
+        echo "error: nested ${display_label} wrapper is missing or unsafe: ${display_wrapper}" >&2
+        return 1
+    }
+    wrapper_sha256="$(sha256sum -- "${canonical_wrapper}" | awk '{print $1}')"
+    expected_raw_environment="${canonical_report%.json}.raw.environment"
+    expected_suppressed_environment="${canonical_report%.json}.suppressed.environment"
+
+    if ! jq -e \
+        --arg backend "${expected_backend}" \
+        --arg field "${environment_field}" \
+        --arg other_field "${other_environment_field}" \
+        --arg harness "${harness}" \
+        --arg wrapper_sha256 "${wrapper_sha256}" \
+        --arg raw "${expected_raw_environment}" \
+        --arg suppressed "${expected_suppressed_environment}" '
+        .display_backend == $backend and
+        (has($other_field) | not) and
+        (.[$field] | keys | sort) ==
+            ["harness","harness_sha256","phase_isolation","raw","suppressed"] and
+        .[$field].harness == $harness and
+        .[$field].harness_sha256 == $wrapper_sha256 and
+        .[$field].phase_isolation == true and
+        .[$field].raw.report == $raw and
+        .[$field].suppressed.report == $suppressed and
+        ([.[$field].raw, .[$field].suppressed] | all(
+            (keys | sort) == ["report","report_identity","session_id"] and
+            (.session_id | type == "string" and test("^[0-9a-f]{64}$")) and
+            (.report_identity | keys | sort) ==
+                ["captured_at_epoch","sha256"] and
+            (.report_identity.sha256 | type == "string" and test("^[0-9a-f]{64}$")) and
+            (.report_identity.captured_at_epoch |
+                type == "number" and . >= 0 and floor == .)
+        ))
+    ' "${document}" >/dev/null 2>&1; then
+        echo "error: missing or malformed ${display_label} Valgrind phase environment identity" >&2
+        return 1
+    fi
+
+    raw_environment="$(jq -r --arg field "${environment_field}" \
+        '.[$field].raw.report' "${document}")"
+    suppressed_environment="$(jq -r --arg field "${environment_field}" \
+        '.[$field].suppressed.report' "${document}")"
+    for phase in raw suppressed; do
+        if [[ "${phase}" == raw ]]; then
+            phase_path="${raw_environment}"
+        else
+            phase_path="${suppressed_environment}"
+        fi
+        [[ -f "${phase_path}" && ! -L "${phase_path}" && -s "${phase_path}" ]] || {
+            echo "error: ${phase} nested ${display_label} environment report is missing or unsafe" >&2
+            return 1
+        }
+        expected_sha="$(jq -r --arg field "${environment_field}" \
+            --arg phase "${phase}" '.[$field][$phase].report_identity.sha256' \
+            "${document}")"
+        expected_epoch="$(jq -r --arg field "${environment_field}" \
+            --arg phase "${phase}" \
+            '.[$field][$phase].report_identity.captured_at_epoch' "${document}")"
+        actual_sha="$(sha256sum -- "${phase_path}" | awk '{print $1}')"
+        actual_epoch="$(stat -c %Y -- "${phase_path}")"
+        [[ "${actual_sha}" == "${expected_sha}" &&
+            "${actual_epoch}" == "${expected_epoch}" ]] || {
+            echo "error: ${phase} nested ${display_label} environment identity is stale" >&2
+            return 1
+        }
+        if [[ "${phase}" == raw ]]; then
+            phase_expected_exit=0
+        else
+            phase_expected_exit="$(jq -r '.suppressed_exit_code' "${document}")"
+        fi
+        phase_expected_command="$(jq -c '.command' "${phase_path}")"
+        if ! zentty_controlled_environment_validate_report \
+            "${phase_path}" "${canonical_wrapper}" "${expected_backend}" \
+            "${phase_expected_exit}" "${phase_expected_command}" 0 \
+            2147483647 >/dev/null 2>&1; then
+            echo "error: ${phase} nested ${display_label} environment report is malformed" >&2
+            return 1
+        fi
+    done
+
+    if ! jq -e -n \
+        --slurpfile report "${document}" \
+        --slurpfile raw "${raw_environment}" \
+        --slurpfile suppressed "${suppressed_environment}" \
+        --arg field "${environment_field}" \
+        --argjson max_capture_span_seconds "${max_capture_span_seconds}" '
+        $report[0] as $report |
+        $raw[0] as $raw |
+        $suppressed[0] as $suppressed |
+        $report[$field].raw.session_id == $raw.session_id and
+        $report[$field].suppressed.session_id == $suppressed.session_id and
+        $raw.session_id != $suppressed.session_id and
+        $raw.command_exit_code == 0 and
+        $suppressed.command_exit_code == $report.suppressed_exit_code and
+        ([ $raw.command[] | select(. == "valgrind") ] | length) == 1 and
+        ([ $suppressed.command[] | select(. == "valgrind") ] | length) == 1 and
+        (any($raw.command[]; startswith("--suppressions=")) | not) and
+        (any($raw.command[]; . == "--error-exitcode=99") | not) and
+        ([ $suppressed.command[] |
+            select(startswith("--suppressions=")) ] | length) > 0 and
+        ([ $suppressed.command[] |
+            select(. == "--error-exitcode=99") ] | length) == 1 and
+        ([ $suppressed.command[] |
+            select(. != "--error-exitcode=99" and
+                (startswith("--suppressions=") | not)) ]) == $raw.command and
+        $raw.finished_at_epoch <= $suppressed.started_at_epoch and
+        $suppressed.finished_at_epoch <= $report.report_generated_at_epoch and
+        $raw.finished_at_epoch <=
+            $report[$field].raw.report_identity.captured_at_epoch and
+        $suppressed.finished_at_epoch <=
+            $report[$field].suppressed.report_identity.captured_at_epoch and
+        $report[$field].raw.report_identity.captured_at_epoch <=
+            $report[$field].suppressed.report_identity.captured_at_epoch and
+        $report[$field].suppressed.report_identity.captured_at_epoch <=
+            $report.report_generated_at_epoch and
+        ($report.report_generated_at_epoch - $raw.started_at_epoch) <=
+            $max_capture_span_seconds
+    ' >/dev/null 2>&1; then
+        raw_session_id="$(jq -r '.session_id' "${raw_environment}")"
+        suppressed_session_id="$(jq -r '.session_id' "${suppressed_environment}")"
+        if [[ "${raw_session_id}" == "${suppressed_session_id}" ]]; then
+            echo "error: raw and suppressed Valgrind phases reused a nested ${display_label} session" >&2
+        else
+            echo "error: nested ${display_label} Valgrind phase chronology or command binding is invalid or stale" >&2
+        fi
+        return 1
+    fi
+}
+
+# Compatibility entry points keep existing callers strict while sharing the
+# backend-specific closed-world validation above.
+zentty_valgrind_validate_x11_phase_environment() {
+    zentty_valgrind_validate_display_phase_environment \
+        "$1" "$2" "$3" x11 "$4"
+}
+
+zentty_valgrind_validate_wayland_phase_environment() {
+    zentty_valgrind_validate_display_phase_environment \
+        "$1" "$2" "$3" wayland "$4"
+}
+
+zentty_valgrind_acquire_evidence_lock() {
+    local lock_file="$1"
+    local descriptor_variable="$2"
+    local descriptor inherited_descriptor advertised_lock actual_lock
+
+    command -v flock >/dev/null || {
+        echo "error: flock is required for Valgrind evidence locking" >&2
+        return 1
+    }
+    command -v readlink >/dev/null || {
+        echo "error: readlink is required for Valgrind evidence locking" >&2
+        return 1
+    }
+
+    lock_file="$(readlink -m -- "${lock_file}")"
+    advertised_lock="${ZENTTY_VALGRIND_EVIDENCE_LOCK_PATH:-}"
+    inherited_descriptor="${ZENTTY_VALGRIND_EVIDENCE_LOCK_FD:-}"
+    if [[ -n "${advertised_lock}" ]] &&
+        [[ "$(readlink -m -- "${advertised_lock}")" != "${lock_file}" ]]; then
+        echo "error: inherited Valgrind evidence lock path does not match: ${lock_file}" >&2
+        return 1
+    fi
+
+    if [[ -n "${inherited_descriptor}" ]]; then
+        if [[ -z "${advertised_lock}" || ! "${inherited_descriptor}" =~ ^[0-9]+$ ||
+            ! -e "/proc/self/fd/${inherited_descriptor}" ]]; then
+            echo "error: invalid inherited Valgrind evidence lock descriptor" >&2
+            return 1
+        fi
+        actual_lock="$(readlink -f -- "/proc/self/fd/${inherited_descriptor}")" || {
+            echo "error: cannot resolve inherited Valgrind evidence lock descriptor" >&2
+            return 1
+        }
+        if [[ "${actual_lock}" != "${lock_file}" ]]; then
+            echo "error: inherited Valgrind evidence lock descriptor points to ${actual_lock}, expected ${lock_file}" >&2
+            return 1
+        fi
+        if ! flock -n "${inherited_descriptor}"; then
+            echo "error: inherited Valgrind evidence lock is not held: ${lock_file}" >&2
+            return 1
+        fi
+        printf -v "${descriptor_variable}" '%s' "${inherited_descriptor}"
+        return 0
+    fi
+
+    [[ ! -L "${lock_file}" ]] || {
+        echo "error: Valgrind evidence lock may not be a symbolic link: ${lock_file}" >&2
+        return 1
+    }
+    exec {descriptor}>"${lock_file}" || {
+        echo "error: cannot open Valgrind evidence lock: ${lock_file}" >&2
+        return 1
+    }
+    actual_lock="$(readlink -f -- "/proc/self/fd/${descriptor}")" || {
+        exec {descriptor}>&-
+        echo "error: cannot resolve Valgrind evidence lock descriptor: ${lock_file}" >&2
+        return 1
+    }
+    if [[ "${actual_lock}" != "${lock_file}" || -L "${lock_file}" ]]; then
+        exec {descriptor}>&-
+        echo "error: Valgrind evidence lock identity changed while opening: ${lock_file}" >&2
+        return 1
+    fi
+    if ! flock -n "${descriptor}"; then
+        exec {descriptor}>&-
+        echo "error: Valgrind evidence is already being produced: ${lock_file}" >&2
+        return 1
+    fi
+    printf -v "${descriptor_variable}" '%s' "${descriptor}"
+}
+
+zentty_valgrind_validate_evidence_lock_descriptor() {
+    local lock_file="$1"
+    local descriptor="$2"
+    local actual_lock
+
+    lock_file="$(readlink -m -- "${lock_file}")"
+    if [[ ! "${descriptor}" =~ ^[0-9]+$ ||
+        ! -e "/proc/self/fd/${descriptor}" ]]; then
+        echo "error: invalid acquired Valgrind evidence lock descriptor" >&2
+        return 1
+    fi
+    actual_lock="$(readlink -f -- "/proc/self/fd/${descriptor}")" || {
+        echo "error: cannot resolve acquired Valgrind evidence lock descriptor" >&2
+        return 1
+    }
+    if [[ "${actual_lock}" != "${lock_file}" ]]; then
+        echo "error: acquired Valgrind evidence lock descriptor points to ${actual_lock}, expected ${lock_file}" >&2
+        return 1
+    fi
+    if ! flock -n "${descriptor}"; then
+        echo "error: acquired Valgrind evidence lock is not held: ${lock_file}" >&2
+        return 1
+    fi
+}
+
+zentty_valgrind_suppressed_status_allows_report() {
+    local optimize="$1"
+    local status="$2"
+
+    case "${optimize}:${status}" in
+        Debug:0 | ReleaseSafe:0 | ReleaseSafe:99) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+zentty_valgrind_require_publishable_status() {
+    local optimize="$1"
+    local status="$2"
+    local report="$3"
+
+    if zentty_valgrind_suppressed_status_allows_report "${optimize}" "${status}"; then
+        return 0
+    fi
+    rm -f -- "${report}"
+    echo "error: suppressed ${optimize} Valgrind status ${status} cannot publish a report" >&2
+    return 1
 }

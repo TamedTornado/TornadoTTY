@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+matrix="${1:-${repo_root}/linux/qualification-matrix.json}"
+
+fail() {
+    echo "qualification-boundary-contract: error: $*" >&2
+    exit 1
+}
+
+command -v jq >/dev/null || fail "jq is required"
+[[ -f "${matrix}" ]] || fail "matrix is missing: ${matrix}"
+jq -e '.cells | type == "array"' "${matrix}" >/dev/null 2>&1 ||
+    fail "matrix does not contain a cells array"
+
+forbidden_aggregate='(^|[[:space:];|&])(linux/tests/)?(qualification-matrix|qualification-matrix-test|qualification-mutations|qualification-mutations-test)([[:space:];|&]|$)'
+
+while IFS=$'\t' read -r id command; do
+    [[ -n "${id}" ]] || continue
+    if [[ "${command}" =~ ${forbidden_aggregate} ]]; then
+        fail "matrix cell ${id} invokes an aggregate qualification command"
+    fi
+    if [[ "${command}" =~ (^|[[:space:];|&])linux/tests/[a-z0-9-]+-test([[:space:];|&]|$) ]]; then
+        fail "matrix cell ${id} invokes a support self-test"
+    fi
+done < <(jq -r '.cells[] | select((.command // "") != "") | [.id,.command] | @tsv' "${matrix}")
+
+while IFS=$'\t' read -r id command; do
+    [[ -n "${id}" ]] || continue
+    [[ "${command}" == *"build/linux/bin/zentty-linux"* ]] ||
+        fail "executable product cell ${id} does not launch the delivered Rust product"
+    [[ "${command}" != *"fixture"* && "${command}" != *"self-test"* ]] ||
+        fail "executable product cell ${id} is owned by a fixture or self-test"
+done < <(jq -r '
+    .cells[] |
+    select(
+        (.status == "PASS" or .status == "XFAIL") and
+        (.capability == "product_boundary" or
+         .capability == "product_worklanes" or
+         .capability == "product_pane_terminal_lifecycle" or
+         .capability == "workspace_restore" or
+         .capability == "platform_clipboard")
+    ) |
+    [.id,.command] | @tsv
+' "${matrix}")
+
+echo "Qualification boundary contract passed"

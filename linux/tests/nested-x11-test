@@ -1,0 +1,384 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+wrapper="${repo_root}/linux/tests/nested-x11"
+temp_dir="$(mktemp -d)"
+fake_bin="${temp_dir}/bin"
+capture_dir="${temp_dir}/capture"
+wrapper_pid=""
+
+cleanup() {
+    if [[ "${wrapper_pid}" =~ ^[1-9][0-9]*$ ]] &&
+        kill -0 "${wrapper_pid}" 2>/dev/null; then
+        kill -TERM "${wrapper_pid}" 2>/dev/null || true
+        wait "${wrapper_pid}" 2>/dev/null || true
+    fi
+    rm -rf -- "${temp_dir}"
+}
+trap cleanup EXIT
+
+fail() {
+    echo "nested-x11-test: error: $*" >&2
+    exit 1
+}
+
+wait_for_file() {
+    local path="$1"
+    for _ in {1..300}; do
+        [[ -s "${path}" ]] && return 0
+        sleep 0.01
+    done
+    fail "timed out waiting for fixture file: ${path}"
+}
+
+assert_dead() {
+    local pid="$1"
+    local label="$2"
+    if kill -0 "${pid}" 2>/dev/null; then
+        fail "${label} process ${pid} survived cleanup"
+    fi
+}
+
+mkdir -p "${fake_bin}" "${capture_dir}"
+
+cat >"${fake_bin}/xvfb-run" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+[[ -z "${DISPLAY:-}" ]] || exit 81
+[[ -z "${WAYLAND_DISPLAY:-}" ]] || exit 82
+[[ -z "${WAYLAND_SOCKET:-}" ]] || exit 93
+[[ -z "${MIR_SOCKET:-}" ]] || exit 94
+[[ -z "${XAUTHORITY:-}" ]] || exit 83
+[[ -z "${XAUTHLOCALHOSTNAME:-}" ]] || exit 84
+[[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]] || exit 90
+[[ -z "${DBUS_STARTER_ADDRESS:-}" ]] || exit 95
+[[ -z "${DBUS_STARTER_BUS_TYPE:-}" ]] || exit 96
+[[ -z "${DBUS_SYSTEM_BUS_ADDRESS:-}" ]] || exit 97
+[[ -z "${DBUS_SESSION_BUS_PID:-}" ]] || exit 98
+[[ -z "${DBUS_SESSION_BUS_WINDOWID:-}" ]] || exit 99
+[[ -z "${AT_SPI_BUS_ADDRESS:-}" ]] || exit 100
+[[ -z "${IBUS_ADDRESS:-}" ]] || exit 91
+[[ -z "${IBUS_ADDRESS_FILE:-}" ]] || exit 101
+[[ -z "${IBUS_USE_PORTAL:-}" ]] || exit 102
+[[ -z "${IBUS_ENABLE_SYNC_MODE:-}" ]] || exit 103
+[[ -z "${GTK_IM_MODULE:-}" ]] || exit 92
+[[ -z "${WESTON_LAUNCHER_SOCK:-}" ]] || exit 104
+[[ "${GDK_BACKEND:-}" == x11 ]] || exit 85
+[[ "${XDG_SESSION_TYPE:-}" == x11 ]] || exit 86
+[[ "${LIBGL_ALWAYS_SOFTWARE:-}" == 1 ]] || exit 87
+printf '%s\n' "${BASHPID}" >"${ZENTTY_FAKE_X11_CAPTURE}/session-supervisor-pid"
+
+authority=""
+error_log=""
+server_args=""
+while (( $# > 0 )); do
+    case "$1" in
+        -a)
+            shift
+            ;;
+        -f)
+            authority="$2"
+            shift 2
+            ;;
+        -e)
+            error_log="$2"
+            shift 2
+            ;;
+        -s)
+            server_args="$2"
+            shift 2
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
+
+[[ -n "${authority}" && -n "${error_log}" ]] || exit 88
+[[ "${server_args}" == "-screen 0 1280x1024x24 -nolisten tcp" ]] || exit 89
+printf '%s\n' "${authority%/Xauthority}" >"${ZENTTY_FAKE_X11_CAPTURE}/run-root"
+: >"${authority}"
+: >"${error_log}"
+if [[ "${ZENTTY_FAKE_XVFB_STATUS:-0}" -ne 0 ]]; then
+    exit "${ZENTTY_FAKE_XVFB_STATUS}"
+fi
+
+export DISPLAY=:9753
+export XAUTHORITY="${authority}"
+touch "${ZENTTY_FAKE_X11_CAPTURE}/display-active"
+set +e
+"$@"
+status=$?
+set -e
+rm -f "${ZENTTY_FAKE_X11_CAPTURE}/display-active"
+exit "${status}"
+EOF
+
+cat >"${fake_bin}/xdpyinfo" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "${DISPLAY:-}" == :9753 ]]
+[[ -f "${XAUTHORITY:-}" ]]
+[[ -f "${ZENTTY_FAKE_X11_CAPTURE}/display-active" ]]
+printf 'name of display: %s\n' "${DISPLAY}"
+printf 'version number:    11.0\n'
+printf 'vendor string:    The X.Org Foundation\n'
+printf 'vendor release number:    12101012\n'
+printf 'dimensions:    1280x1024 pixels (338x270 millimeters)\n'
+printf 'resolution:    96x96 dots per inch\n'
+EOF
+
+cat >"${fake_bin}/glxinfo" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "${DISPLAY:-}" == :9753 ]]
+[[ "${LIBGL_ALWAYS_SOFTWARE:-}" == 1 ]]
+printf '    Accelerated: no\nOpenGL renderer string: llvmpipe (fixture)\n'
+printf 'OpenGL vendor string: Mesa/X.org\nOpenGL version string: 4.5 fixture\n'
+EOF
+
+cat >"${fake_bin}/session-probe" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+[[ "${DISPLAY:-}" == :9753 ]] || exit 51
+[[ -z "${WAYLAND_DISPLAY:-}" ]] || exit 52
+[[ "${XAUTHORITY:-}" == /tmp/zentty-nested-x11.*/Xauthority ]] || exit 53
+[[ "${GDK_BACKEND:-}" == x11 ]] || exit 54
+[[ "${XDG_SESSION_TYPE:-}" == x11 ]] || exit 55
+[[ "${LIBGL_ALWAYS_SOFTWARE:-}" == 1 ]] || exit 56
+[[ -z "${ZENTTY_NESTED_X11_RUN_ROOT:-}" ]] || exit 57
+run_root="${XAUTHORITY%/Xauthority}"
+[[ "${HOME:-}" == "${run_root}/home" ]] || exit 58
+[[ "${XDG_CONFIG_HOME:-}" == "${run_root}/config" ]] || exit 59
+[[ "${XDG_CACHE_HOME:-}" == "${run_root}/cache" ]] || exit 60
+[[ "${XDG_DATA_HOME:-}" == "${run_root}/data" ]] || exit 61
+[[ "${XDG_STATE_HOME:-}" == "${run_root}/state" ]] || exit 62
+[[ "${XDG_RUNTIME_DIR:-}" == "${run_root}/runtime" ]] || exit 63
+[[ "${TMPDIR:-}" == "${run_root}/tmp" ]] || exit 64
+[[ "$(stat -c %a "${XDG_RUNTIME_DIR}")" == 700 ]] || exit 65
+[[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]] || exit 66
+[[ -z "${DBUS_STARTER_ADDRESS:-}" ]] || exit 71
+[[ -z "${DBUS_STARTER_BUS_TYPE:-}" ]] || exit 72
+[[ -z "${DBUS_SYSTEM_BUS_ADDRESS:-}" ]] || exit 73
+[[ -z "${DBUS_SESSION_BUS_PID:-}" ]] || exit 74
+[[ -z "${DBUS_SESSION_BUS_WINDOWID:-}" ]] || exit 75
+[[ -z "${AT_SPI_BUS_ADDRESS:-}" ]] || exit 76
+[[ -z "${IBUS_ADDRESS:-}" ]] || exit 67
+[[ -z "${IBUS_ADDRESS_FILE:-}" ]] || exit 77
+[[ -z "${IBUS_USE_PORTAL:-}" ]] || exit 78
+[[ -z "${IBUS_ENABLE_SYNC_MODE:-}" ]] || exit 79
+[[ -z "${GTK_IM_MODULE:-}" ]] || exit 68
+[[ -z "${WAYLAND_SOCKET:-}" ]] || exit 80
+[[ -z "${MIR_SOCKET:-}" ]] || exit 81
+[[ -z "${WESTON_LAUNCHER_SOCK:-}" ]] || exit 82
+[[ "${ZENTTY_NESTED_X11_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] || exit 69
+[[ "${ZENTTY_NESTED_X11_WRAPPER_SHA256:-}" =~ ^[0-9a-f]{64}$ ]] || exit 70
+printf 'probe: PASS\n'
+if [[ "${1:-}" == "grandchild" ]]; then
+    (trap '' TERM; while :; do sleep 1; done) &
+    printf '%s\n' "$!" >"${ZENTTY_FAKE_X11_CAPTURE}/grandchild-pid"
+    exit 0
+fi
+if [[ "${1:-}" == "block" ]]; then
+    printf '%s\n' "$$" >"${ZENTTY_FAKE_X11_CAPTURE}/blocking-child-pid"
+    : >"${ZENTTY_FAKE_X11_CAPTURE}/blocking-ready"
+    while :; do sleep 1; done
+fi
+exit "${1:-0}"
+EOF
+
+ln -s "$(command -v true)" "${fake_bin}/Xvfb"
+ln -s "$(command -v true)" "${fake_bin}/xauth"
+chmod +x \
+    "${fake_bin}/xvfb-run" \
+    "${fake_bin}/xdpyinfo" \
+    "${fake_bin}/glxinfo" \
+    "${fake_bin}/session-probe"
+
+export PATH="${fake_bin}:${PATH}"
+export ZENTTY_FAKE_X11_CAPTURE="${capture_dir}"
+export DISPLAY=:0
+export WAYLAND_DISPLAY=wayland-0
+export WAYLAND_SOCKET=/poison/wayland.sock
+export MIR_SOCKET=/poison/mir.sock
+export XAUTHORITY=/tmp/poison-Xauthority
+export XAUTHLOCALHOSTNAME=poison-host
+export GDK_BACKEND=wayland
+export XDG_SESSION_TYPE=wayland
+export LIBGL_ALWAYS_SOFTWARE=0
+export DBUS_SESSION_BUS_ADDRESS=unix:path=/poison/session-bus
+export DBUS_STARTER_ADDRESS=unix:path=/poison/starter-bus
+export DBUS_STARTER_BUS_TYPE=session
+export DBUS_SYSTEM_BUS_ADDRESS=unix:path=/poison/system-bus
+export DBUS_SESSION_BUS_PID=99999
+export DBUS_SESSION_BUS_WINDOWID=99999
+export AT_SPI_BUS_ADDRESS=unix:path=/poison/a11y-bus
+export IBUS_ADDRESS=unix:path=/poison/ibus
+export IBUS_ADDRESS_FILE=/poison/ibus-address
+export IBUS_USE_PORTAL=1
+export IBUS_ENABLE_SYNC_MODE=1
+export GTK_IM_MODULE=poison
+export WESTON_LAUNCHER_SOCK=/poison/weston-launcher.sock
+
+success_log="${temp_dir}/success.log"
+success_report="${temp_dir}/success.environment.json"
+set +e
+ZENTTY_NESTED_X11_REPORT="${success_report}" \
+    "${wrapper}" session-probe >"${success_log}" 2>&1
+success_status=$?
+set -e
+[[ "${success_status}" -eq 0 ]] || {
+    cat "${success_log}" >&2
+    fail "private session failed with ${success_status}"
+}
+grep -Fx "nested-x11: READY private-xvfb private-xauthority backend=x11 software-renderer=1" \
+    "${success_log}" >/dev/null || fail "private-session marker was not emitted"
+grep -Fx "probe: PASS" "${success_log}" >/dev/null ||
+    fail "child did not run in the private X11 session"
+read -r successful_run_root <"${capture_dir}/run-root"
+[[ ! -e "${successful_run_root}" ]] || fail "private run root survived success"
+read -r successful_process_group <"${capture_dir}/session-supervisor-pid"
+jq -e \
+    --arg wrapper "${wrapper}" \
+    --arg wrapper_sha "$(sha256sum "${wrapper}" | awk '{print $1}')" \
+    --argjson process_group "${successful_process_group}" '
+    .schema_version == 1 and
+    (.session_id | test("^[0-9a-f]{64}$")) and
+    .backend == "x11" and
+    .server.name == "Xvfb" and
+    .server.vendor == "The X.Org Foundation" and
+    .server.vendor_release == "12101012" and
+    .renderer.software == true and
+    .renderer.name == "llvmpipe (fixture)" and
+    .wrapper == {path:$wrapper,sha256:$wrapper_sha} and
+    .command == ["session-probe"] and
+    .command_exit_code == 0 and
+    .isolation.ambient_display_sanitized == true and
+    .isolation.ambient_dbus_sanitized == true and
+    (.isolation.process_group |
+      . == $process_group and type == "number" and . > 0 and floor == .) and
+    .isolation.run_root_removed == true and
+    .isolation.display_unreachable_after == true and
+    .isolation.remaining_processes == [] and
+    (.started_at_epoch | type == "number") and
+    (.finished_at_epoch | type == "number") and
+    .started_at_epoch <= .finished_at_epoch
+' "${success_report}" >/dev/null || fail "private-session report is incomplete"
+
+set +e
+failure_report="${temp_dir}/child-failure.environment.json"
+ZENTTY_NESTED_X11_REPORT="${failure_report}" \
+    "${wrapper}" session-probe 42 >"${temp_dir}/child-failure.log" 2>&1
+child_status=$?
+set -e
+[[ "${child_status}" -eq 42 ]] || fail "child status was not propagated"
+jq -e '.command_exit_code == 42 and .command == ["session-probe","42"]' \
+    "${failure_report}" >/dev/null || fail "failed-child report lost the exact status"
+read -r failed_run_root <"${capture_dir}/run-root"
+[[ ! -e "${failed_run_root}" ]] || fail "private run root survived child failure"
+
+"${wrapper}" session-probe grandchild >"${temp_dir}/grandchild.log" 2>&1
+read -r grandchild_pid <"${capture_dir}/grandchild-pid"
+if kill -0 "${grandchild_pid}" 2>/dev/null; then
+    fail "background grandchild survived private-session success"
+fi
+
+signal_report="${temp_dir}/signal.environment.json"
+ZENTTY_NESTED_X11_REPORT="${signal_report}" \
+    "${wrapper}" session-probe block >"${temp_dir}/signal.log" 2>&1 &
+wrapper_pid=$!
+for _ in $(seq 1 100); do
+    [[ -f "${capture_dir}/blocking-ready" ]] && break
+    sleep 0.01
+done
+[[ -f "${capture_dir}/blocking-ready" ]] || fail "signal fixture never became ready"
+kill -TERM "${wrapper_pid}"
+set +e
+wait "${wrapper_pid}"
+signal_status=$?
+set -e
+wrapper_pid=""
+[[ "${signal_status}" -eq 143 ]] || fail "TERM did not propagate exact status 143"
+[[ ! -e "${signal_report}" ]] || fail "interrupted session published an environment report"
+read -r blocking_child_pid <"${capture_dir}/blocking-child-pid"
+if kill -0 "${blocking_child_pid}" 2>/dev/null; then
+    fail "blocking child survived wrapper TERM cleanup"
+fi
+read -r signaled_run_root <"${capture_dir}/run-root"
+[[ ! -e "${signaled_run_root}" ]] || fail "private run root survived wrapper TERM"
+
+for service_iteration in {1..20}; do
+    set +e
+    ZENTTY_FAKE_XVFB_STATUS=77 \
+        "${wrapper}" session-probe >"${temp_dir}/service-absence.log" 2>&1
+    service_status=$?
+    set -e
+    [[ "${service_status}" -eq 77 ]] ||
+        fail "Xvfb service absence iteration ${service_iteration} returned ${service_status}, not 77"
+    read -r absent_run_root <"${capture_dir}/run-root"
+    [[ ! -e "${absent_run_root}" ]] ||
+        fail "private run root survived service absence iteration ${service_iteration}"
+done
+
+misleading_bin="${temp_dir}/misleading-bin"
+misleading_report="${temp_dir}/misleading.environment.json"
+mkdir -p "${misleading_bin}"
+cat >"${misleading_bin}/setsid" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+capture="${ZENTTY_FAKE_X11_CAPTURE:?}"
+printf '%s\n' "${BASHPID}" >"${capture}/misleading-setsid-pid"
+for argument in "$@"; do
+    case "${argument}" in
+        ZENTTY_NESTED_X11_RUN_ROOT=*)
+            printf '%s\n' "${argument#*=}" >"${capture}/misleading-run-root"
+            ;;
+    esac
+done
+exec "$@"
+EOF
+chmod +x "${misleading_bin}/setsid"
+printf '{"stale":true}\n' >"${misleading_report}"
+rm -f "${capture_dir}/misleading-setsid-pid" \
+    "${capture_dir}/misleading-run-root"
+set +e
+PATH="${misleading_bin}:${PATH}" \
+    ZENTTY_NESTED_X11_REPORT="${misleading_report}" \
+    "${wrapper}" session-probe >"${temp_dir}/misleading.log" 2>&1
+misleading_status=$?
+set -e
+[[ "${misleading_status}" -eq 1 ]] ||
+    fail "misleading setsid did not fail session ownership validation"
+grep -F "did not establish an owned session and process group" \
+    "${temp_dir}/misleading.log" >/dev/null ||
+    fail "misleading setsid failure did not identify the ownership defect"
+wait_for_file "${capture_dir}/misleading-setsid-pid"
+read -r misleading_pid <"${capture_dir}/misleading-setsid-pid"
+assert_dead "${misleading_pid}" "misleading setsid"
+wait_for_file "${capture_dir}/misleading-run-root"
+read -r misleading_run_root <"${capture_dir}/misleading-run-root"
+[[ ! -e "${misleading_run_root}" ]] ||
+    fail "private root survived failed session ownership validation"
+[[ ! -e "${misleading_report}" ]] ||
+    fail "failed session ownership retained stale or partial evidence"
+
+missing_bin="${temp_dir}/missing-bin"
+mkdir -p "${missing_bin}"
+for dependency in bash readlink sha256sum awk; do
+    ln -s "$(command -v "${dependency}")" "${missing_bin}/${dependency}"
+done
+set +e
+PATH="${missing_bin}" "${wrapper}" session-probe \
+    >"${temp_dir}/missing-runtime.log" 2>&1
+missing_status=$?
+set -e
+[[ "${missing_status}" -eq 77 ]] || fail "missing runtime dependency did not exit 77"
+grep -F "SKIP missing runtime dependency: xvfb-run" \
+    "${temp_dir}/missing-runtime.log" >/dev/null ||
+    fail "missing runtime dependency was not identified"
+
+echo "Nested X11 wrapper tests passed"

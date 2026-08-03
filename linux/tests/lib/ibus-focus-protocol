@@ -1,0 +1,184 @@
+#!/usr/bin/env bash
+
+zentty_ibus_focus_protocol_ceiling_id() {
+    printf '%s\n' 'IBUS-PREEDIT-ACKNOWLEDGED-EIGHT-CALL-CEILING'
+}
+
+zentty_ibus_focus_source_repository() {
+    printf '%s\n' 'https://github.com/ibus/ibus.git'
+}
+
+zentty_ibus_focus_source_version() {
+    printf '%s\n' '1.5.29'
+}
+
+zentty_ibus_focus_source_revision() {
+    printf '%s\n' '0ad8e77bd36545974ad8acd0a5283cf72bc7c8ad'
+}
+
+zentty_ibus_focus_source_path() {
+    printf '%s\n' 'client/gtk4/ibusimcontext.c'
+}
+
+zentty_ibus_focus_source_sha256() {
+    printf '%s\n' '421dec0149829c84d7ce292e9134a31d39f3b5170e168b66ebf42da3546cd6fa'
+}
+
+zentty_ibus_focus_controlled_marker_prefix() {
+    printf '%s\n' \
+        'controlled-ibus-x11: READY x11-display private-xvfb private-dbus foreground-ibus engine=xkb:us::eng sync-mode=1'
+}
+
+zentty_ibus_focus_controlled_session_id() {
+    local receipt="$1"
+    local marker_prefix
+    local marker_lines=()
+    local marker_line
+
+    [[ -f "${receipt}" ]] || return 1
+    marker_prefix="$(zentty_ibus_focus_controlled_marker_prefix)"
+    mapfile -t marker_lines < <(
+        grep -E '^controlled-ibus-x11: READY' "${receipt}" || true
+    )
+    (( ${#marker_lines[@]} == 1 )) || return 1
+    marker_line="${marker_lines[0]}"
+    if [[ ! "${marker_line}" =~ ^controlled-ibus-x11:\ READY\ x11-display\ private-xvfb\ private-dbus\ foreground-ibus\ engine=xkb:us::eng\ sync-mode=1\ session-id=([1-9][0-9]*-[[:alnum:]]+)$ ]]; then
+        return 1
+    fi
+    printf '%s\n' "${BASH_REMATCH[1]}"
+}
+
+zentty_ibus_focus_receipt_has_no_runtime_errors() {
+    local receipt="$1"
+
+    [[ -f "${receipt}" ]] || return 1
+    ! grep -E \
+        'Unable to connect to ibus|ibus-focus-reproducer: error:' \
+        "${receipt}" >/dev/null
+}
+
+zentty_ibus_focus_valgrind_summaries_are_consistent() {
+    local receipt="$1"
+
+    [[ -f "${receipt}" ]] || return 1
+    awk '
+        /^==[0-9]+==[[:space:]]+definitely lost:/ {
+            sub(/^==[0-9]+==[[:space:]]+/, "")
+            definite[$0] = 1
+            definite_count++
+        }
+        /^==[0-9]+==[[:space:]]+indirectly lost:/ {
+            sub(/^==[0-9]+==[[:space:]]+/, "")
+            indirect[$0] = 1
+            indirect_count++
+        }
+        /^==[0-9]+==[[:space:]]+ERROR SUMMARY:/ {
+            sub(/^==[0-9]+==[[:space:]]+/, "")
+            errors[$0] = 1
+            error_count++
+        }
+        END {
+            for (value in definite) definite_unique++
+            for (value in indirect) indirect_unique++
+            for (value in errors) error_unique++
+            valid = definite_count >= 1 && definite_unique == 1 &&
+                indirect_count >= 1 && indirect_unique == 1 &&
+                error_count >= 1 && error_unique == 1
+            exit valid ? 0 : 1
+        }
+    ' "${receipt}"
+}
+
+zentty_ibus_focus_receipt_has_bound_execution() {
+    local receipt="$1"
+    local expected_executable="$2"
+    local marker_entries=()
+    local command_entries=()
+    local delegate_entries=()
+    local marker_line command_line delegate_line command_value
+
+    [[ -f "${receipt}" && -n "${expected_executable}" ]] || return 1
+    zentty_ibus_focus_controlled_session_id "${receipt}" >/dev/null || return 1
+    mapfile -t marker_entries < <(
+        grep -nF "$(zentty_ibus_focus_controlled_marker_prefix) session-id=" \
+            "${receipt}" || true
+    )
+    mapfile -t command_entries < <(
+        grep -nE '^==[0-9]+== Command: ' "${receipt}" || true
+    )
+    mapfile -t delegate_entries < <(
+        grep -nF 'ibus-focus-reproducer: delegate=ibus type=IBusIMContext' \
+            "${receipt}" || true
+    )
+    (( ${#marker_entries[@]} == 1 &&
+        ${#command_entries[@]} == 1 &&
+        ${#delegate_entries[@]} == 1 )) || return 1
+    marker_line="${marker_entries[0]%%:*}"
+    command_line="${command_entries[0]%%:*}"
+    delegate_line="${delegate_entries[0]%%:*}"
+    command_value="${command_entries[0]#*:}"
+    command_value="${command_value#* Command: }"
+    [[ "${command_value}" == "${expected_executable}" &&
+        "${marker_line}" -lt "${command_line}" &&
+        "${command_line}" -lt "${delegate_line}" ]]
+}
+
+zentty_ibus_focus_expected_lifecycle() {
+    cat <<'EOF'
+ibus-focus-reproducer: delegate=ibus type=IBusIMContext
+ibus-focus-reproducer: window=mapped clients=4
+ibus-focus-reproducer: baseline-context=ready
+ibus-focus-reproducer: cycle=1 ibus-context=active
+ibus-focus-reproducer: cycle=1 focus=verified preedit=empty cursor=0 attributes=empty
+ibus-focus-reproducer: cycle=1 ibus-context=inactive
+ibus-focus-reproducer: cycle=2 ibus-context=active
+ibus-focus-reproducer: cycle=2 focus=verified preedit=empty cursor=0 attributes=empty
+ibus-focus-reproducer: cycle=2 ibus-context=inactive
+ibus-focus-reproducer: cycle=3 ibus-context=active
+ibus-focus-reproducer: cycle=3 focus=verified preedit=empty cursor=0 attributes=empty
+ibus-focus-reproducer: cycle=3 ibus-context=inactive
+ibus-focus-reproducer: cycle=4 ibus-context=active
+ibus-focus-reproducer: cycle=4 focus=verified preedit=empty cursor=0 attributes=empty
+ibus-focus-reproducer: cycle=4 ibus-context=inactive
+ibus-focus-reproducer: teardown=complete cycles=4 late-callbacks=0
+ibus-focus-reproducer: PASS
+EOF
+}
+
+zentty_ibus_focus_actual_lifecycle() {
+    local receipt="$1"
+
+    grep -E \
+        '^ibus-focus-reproducer: (delegate=|window=|baseline-context=|cycle=|teardown=|PASS$)' \
+        "${receipt}" || true
+}
+
+zentty_ibus_focus_receipt_has_exact_lifecycle() {
+    local receipt="$1"
+    local expected_lifecycle actual_lifecycle
+
+    [[ -f "${receipt}" ]] || return 1
+    expected_lifecycle="$(zentty_ibus_focus_expected_lifecycle)"
+    actual_lifecycle="$(zentty_ibus_focus_actual_lifecycle "${receipt}")"
+    [[ "${actual_lifecycle}" == "${expected_lifecycle}" ]]
+}
+
+zentty_ibus_focus_raw_stack_is_bound() {
+    local receipt="$1"
+
+    awk '
+        function matching_record() {
+            return record ~ / bytes in [0-9,]+ blocks are (definitely|indirectly) lost/ &&
+                record ~ /ibus_text_new_from_string/ &&
+                record ~ /libim-ibus\.so/ &&
+                record ~ /drive_lifecycle \(ibus-focus-reproducer\.c:/
+        }
+        /^==[0-9]+==[[:space:]]*$/ {
+            if (matching_record()) exit 0
+            record = ""
+            next
+        }
+        { record = record $0 "\n" }
+        END { exit matching_record() ? 0 : 1 }
+    ' "${receipt}"
+}

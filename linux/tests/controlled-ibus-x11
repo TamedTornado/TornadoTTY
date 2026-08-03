@@ -1,0 +1,399 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly controlled_session_marker_prefix="controlled-ibus-x11: READY x11-display private-xvfb private-dbus foreground-ibus engine=xkb:us::eng sync-mode=1"
+startup_timeout_seconds="${ZENTTY_CONTROLLED_IBUS_STARTUP_TIMEOUT_SECONDS:-45}"
+service_timeout_seconds="${ZENTTY_CONTROLLED_IBUS_SERVICE_TIMEOUT_SECONDS:-10}"
+query_timeout_seconds="${ZENTTY_CONTROLLED_IBUS_QUERY_TIMEOUT_SECONDS:-2}"
+
+fail() {
+    echo "controlled-ibus-x11: error: $*" >&2
+    exit 1
+}
+
+validate_timeout_setting() {
+    local name="$1"
+    local value="$2"
+    local maximum="$3"
+
+    if [[ ! "${value}" =~ ^[1-9][0-9]*$ ]] ||
+        (( ${#value} > ${#maximum} )) ||
+        (( 10#${value} > maximum )); then
+        echo "controlled-ibus-x11: error: ${name} must be an integer from 1 to ${maximum}" >&2
+        exit 64
+    fi
+}
+
+validate_timeout_setting \
+    ZENTTY_CONTROLLED_IBUS_STARTUP_TIMEOUT_SECONDS \
+    "${startup_timeout_seconds}" 300
+validate_timeout_setting \
+    ZENTTY_CONTROLLED_IBUS_SERVICE_TIMEOUT_SECONDS \
+    "${service_timeout_seconds}" 120
+validate_timeout_setting \
+    ZENTTY_CONTROLLED_IBUS_QUERY_TIMEOUT_SECONDS \
+    "${query_timeout_seconds}" 30
+
+bounded_query() {
+    timeout --foreground --kill-after=1s "${query_timeout_seconds}s" "$@"
+}
+
+pid_is_running() {
+    local pid="$1"
+    local state
+
+    kill -0 "${pid}" 2>/dev/null || return 1
+    state="$(ps -o stat= -p "${pid}" 2>/dev/null || true)"
+    [[ -n "${state}" && "${state}" != Z* ]]
+}
+
+terminate_owned_pid() {
+    local pid="$1"
+
+    pid_is_running "${pid}" || {
+        wait "${pid}" 2>/dev/null || true
+        return
+    }
+
+    kill -TERM "${pid}" 2>/dev/null || true
+    for _ in {1..100}; do
+        pid_is_running "${pid}" || break
+        sleep 0.02
+    done
+    if pid_is_running "${pid}"; then
+        kill -KILL "${pid}" 2>/dev/null || true
+    fi
+    wait "${pid}" 2>/dev/null || true
+}
+
+run_inside_private_bus() {
+    local run_root="${ZENTTY_CONTROLLED_IBUS_RUN_ROOT:?}"
+    local session_id="${ZENTTY_CONTROLLED_IBUS_SESSION_ID:?}"
+    local ibus_log="${run_root}/ibus-daemon.log"
+    local engine_query="${run_root}/ibus-list-engine.log"
+    local ibus_pid=""
+    local child_pid=""
+    local ready=false
+    local address=""
+    local engine_readback=""
+    local service_deadline
+
+    cleanup_inner() {
+        trap - EXIT HUP INT TERM
+        if [[ -n "${child_pid}" ]]; then
+            terminate_owned_pid "${child_pid}"
+        fi
+        if [[ -n "${ibus_pid}" ]]; then
+            terminate_owned_pid "${ibus_pid}"
+        fi
+    }
+    signal_inner() {
+        local status="$1"
+        exit "${status}"
+    }
+    trap cleanup_inner EXIT
+    trap 'signal_inner 129' HUP
+    trap 'signal_inner 130' INT
+    trap 'signal_inner 143' TERM
+
+    if ! bounded_query xdpyinfo >/dev/null 2>&1; then
+        fail "private X11 display did not become ready"
+    fi
+
+    ibus-daemon \
+        --single \
+        --panel=disable \
+        --config=disable \
+        --emoji-extension=disable \
+        --cache=none >"${ibus_log}" 2>&1 &
+    ibus_pid=$!
+
+    service_deadline=$((SECONDS + service_timeout_seconds))
+    while (( SECONDS <= service_deadline )); do
+        if ! pid_is_running "${ibus_pid}"; then
+            break
+        fi
+        address="$(bounded_query ibus address 2>/dev/null || true)"
+        if [[ -n "${address}" && "${address}" != "(null)" &&
+            "${address}" != *"can't be made"* &&
+            "${address}" != *"Unable to connect to ibus"* ]] &&
+            bounded_query ibus list-engine >"${engine_query}" 2>&1 &&
+            grep -Eq '^[[:space:]]+[^[:space:]]+ - ' "${engine_query}" &&
+            ! grep -F "A connection to the bus can't be made" \
+                "${engine_query}" >/dev/null &&
+            ! grep -F "Unable to connect to ibus" \
+                "${engine_query}" >/dev/null; then
+            ready=true
+            break
+        fi
+        sleep 0.02
+    done
+
+    if [[ "${ready}" != true ]]; then
+        echo "controlled-ibus-x11: error: private IBus did not become ready" >&2
+        if [[ -s "${ibus_log}" ]]; then
+            sed 's/^/controlled-ibus-x11: ibus-daemon: /' "${ibus_log}" >&2
+        fi
+        exit 1
+    fi
+    if ! bounded_query ibus engine xkb:us::eng >/dev/null 2>&1; then
+        fail "private IBus could not select xkb:us::eng"
+    fi
+    ready=false
+    service_deadline=$((SECONDS + service_timeout_seconds))
+    while (( SECONDS <= service_deadline )); do
+        engine_readback="$(bounded_query ibus engine 2>/dev/null || true)"
+        if [[ "${engine_readback}" == "xkb:us::eng" ]]; then
+            ready=true
+            break
+        fi
+        sleep 0.02
+    done
+    [[ "${ready}" == true ]] ||
+        fail "private IBus did not acknowledge xkb:us::eng"
+    if [[ ! "${address}" =~ ^unix:path=([^,]+),guid=([0-9a-f]{32})$ ]]; then
+        fail "private IBus returned a malformed or compound address"
+    fi
+    local address_path="${BASH_REMATCH[1]}"
+    local address_parent="${address_path%/*}"
+    local controlled_ibus_parent="${run_root}/cache/ibus"
+    local canonical_address_parent
+    local canonical_controlled_ibus_parent
+    canonical_address_parent="$(readlink -f -- "${address_parent}")"
+    canonical_controlled_ibus_parent="$(
+        readlink -f -- "${controlled_ibus_parent}"
+    )"
+    if [[ "${canonical_address_parent}" != \
+        "${canonical_controlled_ibus_parent}" ]]; then
+        fail "private IBus returned an address outside the controlled root"
+    fi
+    export IBUS_ADDRESS="${address}"
+
+    : >"${run_root}/session.ready"
+    printf '%s session-id=%s\n' \
+        "${controlled_session_marker_prefix}" "${session_id}"
+    unset ZENTTY_CONTROLLED_IBUS_RUN_ROOT ZENTTY_CONTROLLED_IBUS_SESSION_ID
+
+    set +e
+    "$@" &
+    child_pid=$!
+    wait "${child_pid}"
+    local child_status=$?
+    child_pid=""
+    set -e
+    cleanup_inner
+    return "${child_status}"
+}
+
+if [[ "${1:-}" == "--private-bus-inner" ]]; then
+    shift
+    run_inside_private_bus "$@"
+    exit $?
+fi
+
+if (( $# == 0 )); then
+    echo "usage: controlled-ibus-x11 COMMAND [ARG ...]" >&2
+    exit 64
+fi
+
+for dependency in \
+    xvfb-run Xvfb xauth xdpyinfo dbus-run-session dbus-daemon ibus-daemon ibus \
+    setsid ps grep sed mktemp mkdir chmod rm sleep env bash cat timeout readlink; do
+    if ! command -v "${dependency}" >/dev/null 2>&1; then
+        echo "controlled-ibus-x11: SKIP missing runtime dependency: ${dependency}" >&2
+        exit 77
+    fi
+done
+
+run_root="$(mktemp -d /tmp/controlled-ibus-x11.XXXXXX)"
+cleanup_unstarted_root() {
+    trap - EXIT HUP INT TERM
+    rm -rf -- "${run_root}"
+}
+trap cleanup_unstarted_root EXIT
+trap 'cleanup_unstarted_root; exit 129' HUP
+trap 'cleanup_unstarted_root; exit 130' INT
+trap 'cleanup_unstarted_root; exit 143' TERM
+session_id="${BASHPID}-${run_root##*.}"
+session_supervisor_pid=""
+session_pgid=""
+session_pgid_file="${run_root}/session.pgid"
+session_start_file="${run_root}/session.start"
+session_cancel_file="${run_root}/session.cancel"
+session_ready_file="${run_root}/session.ready"
+
+load_session_pgid() {
+    local candidate=""
+
+    [[ -n "${session_pgid}" ]] && return 0
+    [[ -s "${session_pgid_file}" ]] || return 1
+    read -r candidate <"${session_pgid_file}"
+    [[ "${candidate}" =~ ^[1-9][0-9]*$ ]] || return 2
+    session_pgid="${candidate}"
+}
+
+session_group_is_owned() {
+    local session_identity=""
+    local actual_sid=""
+    local actual_pgid=""
+
+    load_session_pgid || return $?
+    session_identity="$(ps -o sid=,pgid= -p "${session_pgid}" 2>/dev/null || true)"
+    read -r actual_sid actual_pgid <<<"${session_identity}"
+    [[ "${actual_sid}" == "${session_pgid}" &&
+        "${actual_pgid}" == "${session_pgid}" ]]
+}
+
+terminate_session_group() {
+    if [[ -d "${run_root}" ]]; then
+        : >"${session_cancel_file}"
+    fi
+    if [[ -z "${session_pgid}" ]]; then
+        for _ in {1..100}; do
+            load_session_pgid && break
+            sleep 0.01
+        done
+    fi
+    if [[ -n "${session_pgid}" ]] &&
+        kill -0 -- "-${session_pgid}" 2>/dev/null; then
+        kill -TERM -- "-${session_pgid}" 2>/dev/null || true
+        for _ in {1..100}; do
+            kill -0 -- "-${session_pgid}" 2>/dev/null || break
+            sleep 0.02
+        done
+        if kill -0 -- "-${session_pgid}" 2>/dev/null; then
+            kill -KILL -- "-${session_pgid}" 2>/dev/null || true
+            for _ in {1..100}; do
+                kill -0 -- "-${session_pgid}" 2>/dev/null || break
+                sleep 0.01
+            done
+        fi
+    fi
+    if [[ -n "${session_supervisor_pid}" ]]; then
+        if pid_is_running "${session_supervisor_pid}"; then
+            kill -TERM "${session_supervisor_pid}" 2>/dev/null || true
+        fi
+        wait "${session_supervisor_pid}" 2>/dev/null || true
+    fi
+}
+
+cleanup_outer() {
+    trap - EXIT HUP INT TERM
+    terminate_session_group
+    rm -rf -- "${run_root}"
+}
+signal_outer() {
+    local status="$1"
+    exit "${status}"
+}
+trap cleanup_outer EXIT
+trap 'signal_outer 129' HUP
+trap 'signal_outer 130' INT
+trap 'signal_outer 143' TERM
+
+mkdir -p \
+    "${run_root}/home" \
+    "${run_root}/config" \
+    "${run_root}/cache" \
+    "${run_root}/data" \
+    "${run_root}/state" \
+    "${run_root}/runtime" \
+    "${run_root}/tmp"
+chmod 700 "${run_root}" "${run_root}"/*
+cat >"${run_root}/dbus-session.conf" <<EOF
+<busconfig>
+  <type>session</type>
+  <keep_umask/>
+  <listen>unix:dir=${run_root}/runtime</listen>
+  <auth>EXTERNAL</auth>
+  <policy context="default">
+    <allow send_destination="*" eavesdrop="true"/>
+    <allow eavesdrop="true"/>
+    <allow own="*"/>
+  </policy>
+</busconfig>
+EOF
+
+(
+    unset DISPLAY WAYLAND_DISPLAY XAUTHORITY
+    unset DBUS_SESSION_BUS_ADDRESS DBUS_STARTER_ADDRESS DBUS_STARTER_BUS_TYPE
+    unset DBUS_SYSTEM_BUS_ADDRESS DBUS_SESSION_BUS_PID DBUS_SESSION_BUS_WINDOWID
+    unset IBUS_ADDRESS IBUS_ADDRESS_FILE IBUS_USE_PORTAL
+    export HOME="${run_root}/home"
+    export XDG_CONFIG_HOME="${run_root}/config"
+    export XDG_CACHE_HOME="${run_root}/cache"
+    export XDG_DATA_HOME="${run_root}/data"
+    export XDG_STATE_HOME="${run_root}/state"
+    export XDG_RUNTIME_DIR="${run_root}/runtime"
+    export TMPDIR="${run_root}/tmp"
+    export GDK_BACKEND=x11
+    export GTK_IM_MODULE=ibus
+    export IBUS_ENABLE_SYNC_MODE=1
+    export XDG_SESSION_TYPE=x11
+    export GSETTINGS_BACKEND=memory
+    export GIO_USE_VFS=local
+    export NO_AT_BRIDGE=1
+    export GTK_A11Y=none
+    export LIBGL_ALWAYS_SOFTWARE=1
+
+    setsid --fork --wait bash -c '
+        set -euo pipefail
+        pgid_file=$1
+        start_file=$2
+        cancel_file=$3
+        shift 3
+        printf "%s\n" "${BASHPID}" >"${pgid_file}"
+        while [[ ! -e "${start_file}" ]]; do
+            [[ ! -e "${cancel_file}" ]] || exit 125
+            sleep 0.01
+        done
+        [[ ! -e "${cancel_file}" ]] || exit 125
+        exec "$@"
+    ' controlled-ibus-session \
+        "${session_pgid_file}" \
+        "${session_start_file}" \
+        "${session_cancel_file}" \
+        xvfb-run -a -s "-screen 0 1280x1024x24 -nolisten tcp" \
+        dbus-run-session --config-file="${run_root}/dbus-session.conf" -- \
+        env ZENTTY_CONTROLLED_IBUS_RUN_ROOT="${run_root}" \
+        ZENTTY_CONTROLLED_IBUS_SESSION_ID="${session_id}" \
+        "${BASH_SOURCE[0]}" --private-bus-inner "$@"
+) &
+session_supervisor_pid=$!
+
+startup_deadline=$((SECONDS + startup_timeout_seconds))
+while (( SECONDS <= startup_deadline )); do
+    if [[ -s "${session_pgid_file}" ]] ||
+        ! pid_is_running "${session_supervisor_pid}"; then
+        break
+    fi
+    sleep 0.01
+done
+if [[ -s "${session_pgid_file}" ]]; then
+    if ! session_group_is_owned; then
+        fail "invalid private session process group"
+    fi
+    : >"${session_start_file}"
+elif pid_is_running "${session_supervisor_pid}"; then
+    fail "controlled session ownership deadline exceeded"
+fi
+
+while [[ ! -e "${session_ready_file}" ]] &&
+    pid_is_running "${session_supervisor_pid}" &&
+    (( SECONDS <= startup_deadline )); do
+    sleep 0.01
+done
+if [[ ! -e "${session_ready_file}" ]] &&
+    pid_is_running "${session_supervisor_pid}"; then
+    fail "controlled session startup deadline exceeded"
+fi
+
+set +e
+wait "${session_supervisor_pid}"
+session_status=$?
+session_supervisor_pid=""
+set -e
+
+terminate_session_group
+session_pgid=""
+exit "${session_status}"

@@ -440,8 +440,12 @@ create worklanes or panes.
 
 ## Test and qualification strategy
 
-All implementation follows #12's red/environment-proof/green/fault/mutation/
-matrix order. The boundary claimed determines the test:
+All implementation starts with a focused semantic red test and, for product
+behavior, a real delivered-product boundary red test. The minimum production
+change makes those tests green before the matrix cell is enabled. Mutation
+testing is added later only for focused Rust logic with a specific owning test;
+it is not an implementation prerequisite for the first vertical slice. The
+boundary claimed determines the test:
 
 | Tier | Primary evidence | Doubles allowed | Claim prohibited |
 | --- | --- | --- | --- |
@@ -563,9 +567,10 @@ authoritative matrix and fails on drift.
 - Build scripts and proc macros are executable supply-chain code and receive
   the same source/license audit. Binding generation must be reproducible from
   the pinned Ghostty header; release builds do not download code.
-- `cargo-mutants` is not accepted or pinned by this ADR. #12 must evaluate it
-  against the chosen toolchain before adding it; curated FFI/lifecycle mutants
-  remain mandatory because generated mutants cannot prove native ownership.
+- `cargo-mutants` is not accepted or pinned by this ADR. It may be evaluated
+  only after the first Rust vertical slice is green. Any later mutation must
+  target focused Rust state/ownership logic and name one focused owning test;
+  generated mutants never substitute for native lifecycle integration.
 
 No JavaScript dependency is introduced here. If later tooling introduces one,
 it uses pnpm and repository configuration `minimumReleaseAge: 10080` (or
@@ -642,7 +647,7 @@ Open, tracked risks are:
 - #9 must settle distro/package and third-party-notice delivery details while
   preserving the lock/source/license policy.
 - #12 owns reconciliation of the proposed capability/cell IDs with the
-  authoritative matrix and mutation/receipt traceability.
+  authoritative matrix and focused support-test policy.
 
 Passing this ADR's self-tests means only that the architecture artifacts are
 internally consistent. It does not mean the Rust workspace, Linux product,

@@ -1,0 +1,225 @@
+#!/usr/bin/env bash
+
+zentty_controlled_environment_validate_report() {
+    local report="$1"
+    local wrapper="$2"
+    local expected_backend="$3"
+    local expected_exit_code="$4"
+    local expected_command="$5"
+    local minimum_started_at_epoch="$6"
+    local max_capture_span_seconds="$7"
+    local canonical_report canonical_wrapper wrapper_sha256 captured_at_epoch
+
+    case "${expected_backend}" in
+        none | x11 | wayland) ;;
+        *)
+            echo "controlled-environment: error: unknown backend: ${expected_backend}" >&2
+            return 1
+            ;;
+    esac
+    [[ "${expected_exit_code}" =~ ^([0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])$ ]] || {
+        echo "controlled-environment: error: invalid expected command exit" >&2
+        return 1
+    }
+    jq -e 'type == "array" and length > 0 and all(.[]; type == "string")' \
+        <<<"${expected_command}" >/dev/null 2>&1 || {
+        echo "controlled-environment: error: invalid expected command identity" >&2
+        return 1
+    }
+    [[ "${minimum_started_at_epoch}" =~ ^[0-9]+$ ]] || {
+        echo "controlled-environment: error: invalid minimum start timestamp" >&2
+        return 1
+    }
+    [[ "${max_capture_span_seconds}" =~ ^[1-9][0-9]*$ ]] || {
+        echo "controlled-environment: error: invalid maximum capture span" >&2
+        return 1
+    }
+    [[ -f "${report}" && ! -L "${report}" && -s "${report}" ]] || {
+        echo "controlled-environment: error: report is missing or unsafe: ${report}" >&2
+        return 1
+    }
+    [[ -f "${wrapper}" && ! -L "${wrapper}" ]] || {
+        echo "controlled-environment: error: wrapper is missing or unsafe: ${wrapper}" >&2
+        return 1
+    }
+    canonical_report="$(readlink -m -- "${report}")"
+    canonical_wrapper="$(readlink -f -- "${wrapper}")" || {
+        echo "controlled-environment: error: wrapper cannot be resolved: ${wrapper}" >&2
+        return 1
+    }
+    wrapper_sha256="$(sha256sum -- "${canonical_wrapper}" | awk '{print $1}')"
+    captured_at_epoch="$(stat -c %Y -- "${canonical_report}")"
+    [[ "${captured_at_epoch}" =~ ^[0-9]+$ ]] || {
+        echo "controlled-environment: error: invalid report timestamp: ${report}" >&2
+        return 1
+    }
+
+    if ! jq -e \
+        --arg backend "${expected_backend}" \
+        --arg wrapper "${canonical_wrapper}" \
+        --arg wrapper_sha256 "${wrapper_sha256}" \
+        --argjson expected_exit_code "${expected_exit_code}" \
+        --argjson expected_command "${expected_command}" \
+        --argjson minimum_started_at_epoch "${minimum_started_at_epoch}" \
+        --argjson max_capture_span_seconds "${max_capture_span_seconds}" \
+        --argjson captured_at_epoch "${captured_at_epoch}" '
+        . as $environment |
+        .schema_version == 1 and
+        (.session_id | type == "string" and test("^[0-9a-f]{64}$")) and
+        .backend == $backend and
+        .wrapper == {path:$wrapper,sha256:$wrapper_sha256} and
+        (.started_at_epoch | type == "number" and . >= 0 and floor == .) and
+        (.finished_at_epoch | type == "number" and . >= 0 and floor == .) and
+        .started_at_epoch >= $minimum_started_at_epoch and
+        .started_at_epoch <= .finished_at_epoch and
+        (.finished_at_epoch - .started_at_epoch) <= $max_capture_span_seconds and
+        .finished_at_epoch <= $captured_at_epoch and
+        .command == $expected_command and
+        .command_exit_code == $expected_exit_code and
+        if $backend == "none" then
+            (keys | sort) == [
+                "backend","command","command_exit_code","environment",
+                "finished_at_epoch","isolation","renderer","schema_version",
+                "server","session_id","started_at_epoch","wrapper"
+            ] and
+            .server == null and .renderer == null and
+            .environment == {
+                home_isolated:true,xdg_isolated:true,tmp_isolated:true,mode:"0700",
+                policy:{
+                    gsettings_backend:"memory",gio_use_vfs:"local",
+                    no_at_bridge:"1",gtk_a11y:"none"
+                }
+            } and
+            (.isolation | keys | sort) == [
+                "ambient_dbus_sanitized","ambient_display_sanitized",
+                "ambient_ibus_sanitized","process_group",
+                "remaining_processes","run_root_removed"
+            ] and
+            .isolation.ambient_display_sanitized == true and
+            .isolation.ambient_dbus_sanitized == true and
+            .isolation.ambient_ibus_sanitized == true and
+            (.isolation.process_group | type == "number" and . > 0 and floor == .) and
+            .isolation.run_root_removed == true and
+            .isolation.remaining_processes == []
+        elif $backend == "x11" then
+            (keys | sort) == [
+                "backend","command","command_exit_code","finished_at_epoch",
+                "isolation","renderer","schema_version","server","session_id",
+                "started_at_epoch","wrapper"
+            ] and
+            (.server | keys | sort) ==
+                ["endpoint","name","vendor","vendor_release"] and
+            .server.name == "Xvfb" and
+            (.server.endpoint | type == "string" and test("^:[0-9]+([.][0-9]+)?$")) and
+            (.server.vendor | type == "string" and length > 0) and
+            (.server.vendor_release | type == "string" and length > 0) and
+            (.renderer | keys | sort) == ["name","software","vendor","version"] and
+            .renderer.software == true and
+            (.renderer.name | type == "string" and length > 0) and
+            (.renderer.vendor | type == "string" and length > 0) and
+            (.renderer.version | type == "string" and length > 0) and
+            (.isolation | keys | sort) == [
+                "ambient_dbus_sanitized","ambient_display_sanitized",
+                "display_unreachable_after","process_group",
+                "remaining_processes","run_root_removed"
+            ] and
+            .isolation.ambient_display_sanitized == true and
+            .isolation.ambient_dbus_sanitized == true and
+            (.isolation.process_group | type == "number" and . > 0 and floor == .) and
+            .isolation.run_root_removed == true and
+            .isolation.display_unreachable_after == true and
+            .isolation.remaining_processes == []
+        else
+            (keys | sort) == [
+                "backend","command","command_exit_code","finished_at_epoch",
+                "isolation","renderer","schema_version","server","session_id",
+                "started_at_epoch","wrapper"
+            ] and
+            (.server | keys | sort) == [
+                "backend","endpoint","height","name","protocols","scale",
+                "version","wayland_info_sha256","width"
+            ] and
+            .server.name == "Weston" and
+            (.server.version | type == "string" and length > 0) and
+            .server.backend == "headless" and
+            (.server.endpoint | type == "string" and test("^wayland-z-[0-9a-f]{16}$")) and
+            .server.width == 1280 and .server.height == 1024 and .server.scale == 1 and
+            (.server.protocols | type == "array" and length >= 4 and
+                all(.[]; type == "string" and length > 0) and
+                length == (unique | length)) and
+            all(["wl_compositor","wl_output","wl_shm","xdg_wm_base"][];
+                . as $protocol | $environment.server.protocols | index($protocol) != null) and
+            (.server.wayland_info_sha256 | type == "string" and test("^[0-9a-f]{64}$")) and
+            .renderer == {software:true,name:"Pixman",proof:"Using Pixman renderer"} and
+            (.isolation | keys | sort) == [
+                "ambient_dbus_sanitized","ambient_display_sanitized",
+                "display_unreachable_after","process_group",
+                "remaining_processes","run_root_removed"
+            ] and
+            .isolation.ambient_display_sanitized == true and
+            .isolation.ambient_dbus_sanitized == true and
+            (.isolation.process_group | type == "number" and . > 0 and floor == .) and
+            .isolation.run_root_removed == true and
+            .isolation.display_unreachable_after == true and
+            .isolation.remaining_processes == []
+        end
+    ' "${canonical_report}" >/dev/null 2>&1; then
+        echo "controlled-environment: error: malformed, stale, or mismatched ${expected_backend} report: ${report}" >&2
+        return 1
+    fi
+
+    jq -cn \
+        --arg session_id "$(jq -r '.session_id' "${canonical_report}")" \
+        --arg path "${canonical_report}" \
+        --arg sha256 "$(sha256sum -- "${canonical_report}" | awk '{print $1}')" \
+        --argjson captured_at_epoch "${captured_at_epoch}" '
+        {
+          session_id:$session_id,
+          evidence_file:{
+            path:$path,sha256:$sha256,captured_at_epoch:$captured_at_epoch
+          }
+        }
+    '
+}
+
+zentty_controlled_environment_revalidate_identity() {
+    local identity="$1"
+    local path expected_sha256 expected_captured_at_epoch
+
+    if ! jq -e '
+        (keys | sort) == ["captured_at_epoch","path","sha256"] and
+        (.path | type == "string" and length > 0) and
+        (.sha256 | type == "string" and test("^[0-9a-f]{64}$")) and
+        (.captured_at_epoch | type == "number" and . >= 0 and floor == .)
+    ' <<<"${identity}" >/dev/null 2>&1; then
+        echo "controlled-environment: error: malformed evidence identity" >&2
+        return 1
+    fi
+    path="$(jq -r '.path' <<<"${identity}")"
+    expected_sha256="$(jq -r '.sha256' <<<"${identity}")"
+    expected_captured_at_epoch="$(jq -r '.captured_at_epoch' <<<"${identity}")"
+    [[ -f "${path}" && ! -L "${path}" && -s "${path}" ]] &&
+        [[ "$(sha256sum -- "${path}" | awk '{print $1}')" == "${expected_sha256}" ]] &&
+        [[ "$(stat -c %Y -- "${path}")" == "${expected_captured_at_epoch}" ]] || {
+        echo "controlled-environment: error: evidence identity changed: ${path}" >&2
+        return 1
+    }
+}
+
+zentty_controlled_environment_harness_json() {
+    local repo_root="$1"
+    local harness="$2"
+    local absolute_harness="${harness}"
+
+    if [[ "${absolute_harness}" != /* ]]; then
+        absolute_harness="${repo_root}/${absolute_harness}"
+    fi
+    [[ -f "${absolute_harness}" && ! -L "${absolute_harness}" ]] || {
+        echo "controlled-environment: error: harness is missing or unsafe: ${harness}" >&2
+        return 1
+    }
+    jq -cn \
+        --arg path "${harness}" \
+        --arg sha256 "$(sha256sum -- "${absolute_harness}" | awk '{print $1}')" \
+        '{path:$path,sha256:$sha256}'
+}

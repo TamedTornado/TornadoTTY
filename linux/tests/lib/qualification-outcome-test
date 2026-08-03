@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+# shellcheck source=linux/tests/lib/qualification-outcome
+source "${repo_root}/linux/tests/lib/qualification-outcome"
+
+assert_outcome() {
+    local expected="$1"
+    local status="$2"
+    local command="$3"
+    local expected_exit="${4:-}"
+    local code outcome
+
+    set +e
+    bash -o pipefail -c "${command}" >/dev/null 2>&1
+    code=$?
+    set -e
+    outcome="$(zentty_qualification_classify_outcome \
+        "${status}" "${code}" "${expected_exit}")"
+    [[ "${outcome}" == "${expected}" ]] || {
+        echo "qualification-outcome-test: expected ${expected}, got ${outcome}" >&2
+        exit 1
+    }
+}
+
+assert_outcome PASS PASS 'exit 0'
+assert_outcome FAIL PASS 'exit 42'
+assert_outcome UNEXPECTED_SKIP PASS 'exit 77'
+assert_outcome XFAIL XFAIL 'exit 99' 99
+assert_outcome STALE_XFAIL XFAIL 'exit 0' 99
+assert_outcome UNEXPECTED_XFAIL_FAILURE XFAIL 'exit 42' 99
+assert_outcome UNEXPECTED_SKIP XFAIL 'exit 77' 99
+
+zentty_qualification_outcome_failed PASS && exit 1
+zentty_qualification_outcome_failed XFAIL && exit 1
+zentty_qualification_outcome_failed DECLARED_BLOCKED && exit 1
+zentty_qualification_outcome_failed DECLARED_NOT_IMPLEMENTED && exit 1
+zentty_qualification_outcome_failed FAIL || exit 1
+zentty_qualification_outcome_failed STALE_XFAIL || exit 1
+zentty_qualification_outcome_failed UNEXPECTED_SKIP || exit 1
+
+echo "Qualification outcome classifier tests passed"

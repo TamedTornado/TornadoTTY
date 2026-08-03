@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+contract="${repo_root}/linux/tests/qualification-boundary-contract"
+temp_dir="$(mktemp -d)"
+trap 'rm -rf -- "${temp_dir}"' EXIT
+
+write_matrix() {
+    local command="$1"
+    local product_status="${2:-NOT_IMPLEMENTED}"
+    local product_command="${3:-}"
+    jq -n \
+        --arg command "${command}" \
+        --arg product_status "${product_status}" \
+        --arg product_command "${product_command}" '
+        {
+          cells:[
+            {id:"dependency-probe",capability:"api_misuse",status:"PASS",command:$command},
+            {id:"product-wayland",capability:"product_boundary",status:$product_status,command:$product_command}
+          ]
+        }
+    ' >"${temp_dir}/matrix.json"
+}
+
+expect_failure() {
+    local expected="$1"
+    if "${contract}" "${temp_dir}/matrix.json" >"${temp_dir}/stdout" 2>"${temp_dir}/stderr"; then
+        echo "qualification-boundary-contract-test: expected failure: ${expected}" >&2
+        exit 1
+    fi
+    grep -F "${expected}" "${temp_dir}/stderr" >/dev/null || {
+        cat "${temp_dir}/stderr" >&2
+        exit 1
+    }
+}
+
+write_matrix 'linux/tests/api-contract'
+"${contract}" "${temp_dir}/matrix.json" >/dev/null
+
+write_matrix 'linux/tests/qualification-matrix'
+expect_failure 'invokes an aggregate qualification command'
+
+write_matrix 'linux/tests/suppression-governance-test'
+expect_failure 'invokes a support self-test'
+
+write_matrix 'linux/tests/api-contract' PASS 'linux/tests/product-fixture'
+expect_failure 'does not launch the delivered Rust product'
+
+write_matrix 'linux/tests/api-contract' PASS 'build/linux/bin/zentty-linux --self-test'
+expect_failure 'owned by a fixture or self-test'
+
+write_matrix 'linux/tests/api-contract' PASS 'build/linux/bin/zentty-linux --integration-child /tmp/child'
+"${contract}" "${temp_dir}/matrix.json" >/dev/null
+
+echo "Qualification boundary contract self-tests passed"

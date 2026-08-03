@@ -5,112 +5,46 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 runner="${repo_root}/linux/tests/qualification-matrix"
 source_matrix="${repo_root}/linux/qualification-matrix.json"
 temp_dir="$(mktemp -d)"
-trap 'rm -rf "${temp_dir}"' EXIT
+trap 'rm -rf -- "${temp_dir}"' EXIT
 
-valgrind_template="${temp_dir}/valgrind-template.json"
-valgrind_fixture="${temp_dir}/valgrind.json"
-jq -n '{
-    raw_receipt: "fixture.raw.log",
-    suppressed_receipt: "fixture.suppressed.log",
-    raw: {errors: 1, contexts: 1, definite_bytes: 10, definite_blocks: 1, indirect_bytes: 0, indirect_blocks: 0},
-    post_suppression: {errors: 0, contexts: 0, definite_bytes: 0, definite_blocks: 0, indirect_bytes: 0, indirect_blocks: 0},
-    suppression_usage: []
-}' >"${valgrind_template}"
-
-base="${temp_dir}/base.json"
-jq --arg report "${valgrind_fixture}" --arg template "${valgrind_template}" '.cells |= map(
-    if .status == "PASS" then .command = "true"
-    elif .status == "XFAIL" then .command = "false"
-    else . end
-    | if has("valgrind_report") then
-        .valgrind_report = $report |
-        .command = ("cp " + $template + " " + $report + "; " + .command)
-      else . end
-)' "${source_matrix}" >"${base}"
-
-run_expect_failure() {
-    local name="$1"
-    local pattern="$2"
-    local matrix="$3"
-    local mode="${4:-run}"
-    local output="${temp_dir}/${name}.log"
-    local summary="${temp_dir}/${name}-summary.json"
-    local args=()
-    if [[ "${mode}" == "validate" ]]; then
-        args+=(--validate-only)
-    fi
-    set +e
-    ZENTTY_QUALIFICATION_MATRIX="${matrix}" \
-    ZENTTY_QUALIFICATION_SUMMARY="${summary}" \
-        "${runner}" "${args[@]}" >"${output}" 2>&1
-    local status=$?
-    set -e
-    if [[ "${status}" -eq 0 ]]; then
-        echo "error: ${name} unexpectedly passed" >&2
-        cat "${output}" >&2
+expect_validation_failure() {
+    local expected="$1"
+    if ZENTTY_QUALIFICATION_MATRIX="${temp_dir}/matrix.json" \
+        "${runner}" --validate-only \
+        >"${temp_dir}/stdout" 2>"${temp_dir}/stderr"; then
+        echo "qualification-matrix-test: expected validation failure: ${expected}" >&2
         exit 1
     fi
-    grep -F "${pattern}" "${output}" >/dev/null || {
-        echo "error: ${name} did not report ${pattern}" >&2
-        cat "${output}" >&2
+    grep -F "${expected}" "${temp_dir}/stderr" >/dev/null || {
+        cat "${temp_dir}/stderr" >&2
         exit 1
     }
 }
 
-missing="${temp_dir}/missing.json"
-jq '.cells |= map(select(.id != "debug-x11-io-uring-multi"))' \
-    "${base}" >"${missing}"
-run_expect_failure missing-cell \
-    "missing terminal cell: Debug/x11/io_uring/multi" "${missing}" validate
+"${runner}" --validate-only >/dev/null
+"${repo_root}/linux/tests/qualification-boundary-contract-test" >/dev/null
+"${repo_root}/linux/tests/lib/qualification-outcome-test" >/dev/null
 
-unknown="${temp_dir}/unknown.json"
-jq '(.cells[] | select(.id == "build-release") | .status) = "SKIP"' \
-    "${base}" >"${unknown}"
-run_expect_failure unknown-status "unknown statuses" "${unknown}" validate
+# A required matrix coordinate may not disappear silently.
+jq 'del(.cells[] | select(.id == "debug-wayland-epoll-single"))' \
+    "${source_matrix}" >"${temp_dir}/matrix.json"
+expect_validation_failure 'missing terminal cell: Debug/wayland/epoll/single'
 
-unexpected_skip="${temp_dir}/unexpected-skip.json"
-jq '(.cells[] | select(.id == "build-release") | .command) = "exit 77"' \
-    "${base}" >"${unexpected_skip}"
-run_expect_failure unexpected-skip "UNEXPECTED_SKIP" "${unexpected_skip}"
+# Status vocabulary is closed; SKIPPED is never an accepted qualification result.
+jq '(.cells[] | select(.id == "install-uninstall")).status = "SKIPPED"' \
+    "${source_matrix}" >"${temp_dir}/matrix.json"
+expect_validation_failure 'unknown statuses: install-uninstall=SKIPPED'
 
-stale_xfail="${temp_dir}/stale-xfail.json"
-jq --arg template "${valgrind_template}" --arg report "${valgrind_fixture}" \
-    '(.cells[] | select(.status == "XFAIL") | .command) = ("cp " + $template + " " + $report + "; true")' \
-    "${base}" >"${stale_xfail}"
-run_expect_failure stale-xfail "STALE_XFAIL" "${stale_xfail}"
-
-failed="${temp_dir}/failed.json"
-jq '(.cells[] | select(.id == "build-release") | .command) = "exit 9"' \
-    "${base}" >"${failed}"
-run_expect_failure failed-command "build-release" "${failed}"
-grep -F "FAIL" "${temp_dir}/failed-command.log" >/dev/null
-
-stale_report="${temp_dir}/stale-report.json"
-jq '(.cells[] | select(.id == "debug-valgrind-api-wayland") | .command) = "false"' \
-    "${base}" >"${stale_report}"
-cp "${valgrind_template}" "${valgrind_fixture}"
-run_expect_failure stale-report \
-    "MISSING_OR_INVALID_VALGRIND_REPORT" "${stale_report}"
-
-incorrect_full="${temp_dir}/incorrect-full.json"
+# Full qualification cannot be asserted while any explicit gap remains.
 jq '.claims.full_linux_qualification_passed = true' \
-    "${base}" >"${incorrect_full}"
-run_expect_failure incorrect-full \
-    "incorrectly claims full Linux qualification" "${incorrect_full}" validate
+    "${source_matrix}" >"${temp_dir}/matrix.json"
+expect_validation_failure 'matrix incorrectly claims full Linux qualification'
 
-ZENTTY_QUALIFICATION_MATRIX="${base}" \
-ZENTTY_QUALIFICATION_SUMMARY="${temp_dir}/passing-summary.json" \
+# The production runner must use the focused classifier tested above.
+# The grep intentionally matches the literal source line.
+# shellcheck disable=SC2016
+grep -F 'source "${repo_root}/linux/tests/lib/qualification-outcome"' \
     "${runner}" >/dev/null
-jq -e '
-    .claims.implemented_local_suite_passed == true and
-    .claims.release_qualification_passed == false and
-    .claims.full_linux_qualification_passed == false and
-    (.valgrind_reports | length) == 9 and
-    all(.valgrind_reports[];
-        .raw.errors == 1 and
-        .post_suppression.errors == 0 and
-        (if .outcome == "PASS" then .description == "PASS with reviewed suppressions" else true end)
-    )
-' "${temp_dir}/passing-summary.json" >/dev/null
+grep -F 'zentty_qualification_classify_outcome' "${runner}" >/dev/null
 
-echo "Qualification matrix runner tests passed"
+echo "Qualification matrix focused tests passed"

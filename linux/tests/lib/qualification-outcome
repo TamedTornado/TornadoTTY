@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+
+zentty_qualification_classify_outcome() {
+    local declared_status="$1"
+    local exit_code="$2"
+    local expected_exit_code="${3:-}"
+
+    if [[ "${exit_code}" -eq 77 ]]; then
+        printf '%s\n' UNEXPECTED_SKIP
+    elif [[ "${declared_status}" == PASS && "${exit_code}" -eq 0 ]]; then
+        printf '%s\n' PASS
+    elif [[ "${declared_status}" == PASS ]]; then
+        printf '%s\n' FAIL
+    elif [[ "${declared_status}" == XFAIL && "${exit_code}" -eq 0 ]]; then
+        printf '%s\n' STALE_XFAIL
+    elif [[ "${declared_status}" == XFAIL &&
+        -n "${expected_exit_code}" &&
+        "${exit_code}" -eq "${expected_exit_code}" ]]; then
+        printf '%s\n' XFAIL
+    elif [[ "${declared_status}" == XFAIL ]]; then
+        printf '%s\n' UNEXPECTED_XFAIL_FAILURE
+    else
+        printf '%s\n' "DECLARED_${declared_status}"
+    fi
+}
+
+zentty_qualification_outcome_failed() {
+    case "$1" in
+        PASS | XFAIL | DECLARED_BLOCKED | DECLARED_NOT_IMPLEMENTED)
+            return 1
+            ;;
+        *)
+            return 0
+            ;;
+    esac
+}

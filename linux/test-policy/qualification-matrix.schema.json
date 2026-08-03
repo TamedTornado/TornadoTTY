@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:zentty:linux-test-policy:qualification-matrix:v1",
+  "title": "Zentty Linux qualification matrix",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "axes", "claims", "required_capabilities", "cells"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "axes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["display", "optimize", "async_backend", "terminals", "status", "tier"],
+      "properties": {
+        "display": {
+          "const": {
+            "none": "No display server is exercised",
+            "wayland": "GTK Wayland backend",
+            "x11": "GTK X11 backend on native X11, Xvfb, or Xwayland as identified by the cell harness",
+            "both": "Separate Wayland and X11 evidence is required or aggregated"
+          }
+        },
+        "optimize": {"const": ["n/a", "ReleaseSafe", "Debug", "both"]},
+        "async_backend": {"const": ["n/a", "default", "epoll", "io_uring", "all"]},
+        "terminals": {"const": ["n/a", "single", "multi", "all"]},
+        "status": {"const": ["PASS", "FAIL", "BLOCKED", "XFAIL", "NOT_IMPLEMENTED"]},
+        "tier": {"const": ["local", "release", "full"]}
+      }
+    },
+    "claims": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "implemented_local_suite_passed",
+        "product_boundary_qualification_passed",
+        "qualification_host_retired",
+        "release_qualification_passed",
+        "full_linux_qualification_passed"
+      ],
+      "properties": {
+        "implemented_local_suite_passed": {"type": "boolean"},
+        "product_boundary_qualification_passed": {"type": "boolean"},
+        "qualification_host_retired": {"type": "boolean"},
+        "release_qualification_passed": {"type": "boolean"},
+        "full_linux_qualification_passed": {"type": "boolean"}
+      }
+    },
+    "required_capabilities": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"}
+    },
+    "cells": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/cell"}
+    }
+  },
+  "$defs": {
+    "cell": {
+      "type": "object",
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {"enum": ["PASS", "XFAIL"]}
+            },
+            "required": ["status"]
+          },
+          "then": {"required": ["environment_profile"]},
+          "else": {"not": {"required": ["environment_profile"]}}
+        }
+      ],
+      "required": ["id", "order", "capability", "display", "optimize", "async_backend", "terminals", "status", "tier"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"},
+        "order": {"type": "integer", "minimum": 0},
+        "capability": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+        "display": {"enum": ["none", "wayland", "x11", "both"]},
+        "optimize": {"enum": ["n/a", "ReleaseSafe", "Debug", "both"]},
+        "async_backend": {"enum": ["n/a", "default", "epoll", "io_uring", "all"]},
+        "terminals": {"enum": ["n/a", "single", "multi", "all"]},
+        "status": {"enum": ["PASS", "FAIL", "BLOCKED", "XFAIL", "NOT_IMPLEMENTED"]},
+        "tier": {"enum": ["local", "release", "full"]},
+        "environment_profile": {
+          "enum": [
+            "isolated-none-v1",
+            "nested-x11-v1",
+            "nested-wayland-v1",
+            "phase-managed-x11-v1",
+            "phase-managed-wayland-v1"
+          ]
+        },
+        "command": {"type": "string", "minLength": 1},
+        "defect": {"type": "string", "minLength": 1},
+        "prerequisite": {"type": "string", "minLength": 1},
+        "tracking": {"type": "string", "minLength": 1},
+        "expected_exit_code": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 255,
+          "not": {"const": 77}
+        },
+        "expected_valgrind_scenario": {"type": "string", "minLength": 1},
+        "valgrind_report": {"type": "string", "minLength": 1},
+        "suppression_review_governance": {"type": "boolean"}
+      }
+    }
+  }
+}

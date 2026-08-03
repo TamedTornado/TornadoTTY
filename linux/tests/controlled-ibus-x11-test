@@ -1,0 +1,607 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+wrapper="${repo_root}/linux/tests/controlled-ibus-x11"
+marker_prefix="controlled-ibus-x11: READY x11-display private-xvfb private-dbus foreground-ibus engine=xkb:us::eng sync-mode=1"
+temp_dir="$(mktemp -d)"
+fake_bin="${temp_dir}/bin"
+signal_wrapper_pid=""
+
+# This is a deterministic orchestration unit test. The fakes deliberately do
+# not certify real Xvfb, D-Bus, or IBus topology; ibus-focus-memory is the real
+# service integration gate.
+
+cleanup() {
+    if [[ -n "${signal_wrapper_pid}" ]] &&
+        kill -0 "${signal_wrapper_pid}" 2>/dev/null; then
+        kill -TERM "${signal_wrapper_pid}" 2>/dev/null || true
+        wait "${signal_wrapper_pid}" 2>/dev/null || true
+    fi
+    rm -rf -- "${temp_dir}"
+}
+trap cleanup EXIT
+
+fail() {
+    echo "controlled-ibus-x11-test: error: $*" >&2
+    exit 1
+}
+
+assert_dead() {
+    local pid="$1"
+    local label="$2"
+
+    if kill -0 "${pid}" 2>/dev/null; then
+        fail "${label} process ${pid} survived wrapper cleanup"
+    fi
+}
+
+assert_cleaned() {
+    local capture_dir="$1"
+    local expect_term_marker="$2"
+    local run_root
+    local daemon_pid
+
+    [[ -s "${capture_dir}/run-root" ]] || fail "fixture did not capture its private root"
+    read -r run_root <"${capture_dir}/run-root"
+    [[ ! -e "${run_root}" ]] || fail "private root survived cleanup: ${run_root}"
+
+    [[ -s "${capture_dir}/daemon.pid" ]] || fail "fixture did not capture ibus-daemon PID"
+    read -r daemon_pid <"${capture_dir}/daemon.pid"
+    assert_dead "${daemon_pid}" "ibus-daemon"
+
+    if [[ "${expect_term_marker}" == true ]]; then
+        [[ -f "${capture_dir}/daemon.stopped" ]] ||
+            fail "ibus-daemon did not receive a cleanup signal"
+    fi
+}
+
+wait_for_file() {
+    local path="$1"
+
+    for _ in {1..200}; do
+        [[ -s "${path}" ]] && return 0
+        sleep 0.01
+    done
+    fail "timed out waiting for fixture file: ${path}"
+}
+
+mkdir -p "${fake_bin}"
+
+cat >"${fake_bin}/xvfb-run" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+[[ -z "${DISPLAY:-}" ]] || exit 91
+[[ -z "${WAYLAND_DISPLAY:-}" ]] || exit 92
+[[ -z "${XAUTHORITY:-}" ]] || exit 93
+[[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]] || exit 94
+[[ -z "${DBUS_STARTER_ADDRESS:-}" ]] || exit 95
+[[ -z "${IBUS_ADDRESS:-}" ]] || exit 96
+[[ -z "${IBUS_ADDRESS_FILE:-}" ]] || exit 97
+[[ "${IBUS_ENABLE_SYNC_MODE:-}" == 1 ]] || exit 101
+[[ -z "${DBUS_SYSTEM_BUS_ADDRESS:-}" ]] || exit 98
+[[ -z "${DBUS_SESSION_BUS_PID:-}" ]] || exit 99
+[[ -z "${IBUS_USE_PORTAL:-}" ]] || exit 100
+printf 'sanitized\n' >"${ZENTTY_FAKE_CAPTURE_DIR}/xvfb-entry"
+
+if [[ "${ZENTTY_FAKE_XVFB_MODE:-ready}" == hang ]]; then
+    printf '%s\n' "${BASHPID}" >"${ZENTTY_FAKE_CAPTURE_DIR}/xvfb.pid"
+    printf '%s\n' "${HOME%/home}" >"${ZENTTY_FAKE_CAPTURE_DIR}/xvfb-run-root"
+    trap 'printf "stopped\n" >"${ZENTTY_FAKE_CAPTURE_DIR}/xvfb.stopped"; exit 143' TERM HUP INT
+    while :; do
+        sleep 1
+    done
+fi
+
+while (( $# > 0 )); do
+    case "$1" in
+        -a)
+            shift
+            ;;
+        -s)
+            shift 2
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
+
+export DISPLAY=:4242
+export XAUTHORITY="${TMPDIR}/fake-Xauthority"
+: >"${XAUTHORITY}"
+exec "$@"
+EOF
+
+cat >"${fake_bin}/dbus-run-session" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+[[ "${1:-}" == --config-file=* ]] || exit 80
+config_file="${1#--config-file=}"
+shift
+[[ "${1:-}" == "--" ]] || exit 81
+shift
+[[ -f "${config_file}" ]] || exit 88
+grep -F '<listen>unix:dir=' "${config_file}" >/dev/null || exit 89
+if grep -F '<standard_session_servicedirs' "${config_file}" >/dev/null; then
+    exit 90
+fi
+[[ "${DISPLAY:-}" == :4242 ]] || exit 82
+[[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]] || exit 83
+[[ -z "${DBUS_STARTER_ADDRESS:-}" ]] || exit 84
+[[ -z "${IBUS_ADDRESS:-}" ]] || exit 85
+[[ "${IBUS_ENABLE_SYNC_MODE:-}" == 1 ]] || exit 101
+[[ -z "${DBUS_SYSTEM_BUS_ADDRESS:-}" ]] || exit 86
+[[ -z "${IBUS_USE_PORTAL:-}" ]] || exit 87
+printf 'sanitized\n' >"${ZENTTY_FAKE_CAPTURE_DIR}/dbus-entry"
+
+export DBUS_SESSION_BUS_ADDRESS="unix:path=${XDG_RUNTIME_DIR}/fake-session-bus"
+exec "$@"
+EOF
+
+cat >"${fake_bin}/ibus-daemon" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+printf '%s\n' "$@" >"${ZENTTY_FAKE_CAPTURE_DIR}/daemon.args"
+printf '%s\n' "${BASHPID}" >"${ZENTTY_FAKE_CAPTURE_DIR}/daemon.pid"
+printf '%s\n' "${HOME%/home}" >"${ZENTTY_FAKE_CAPTURE_DIR}/run-root"
+if [[ "${ZENTTY_FAKE_IBUS_MODE:-ready}" == fail-readiness ]]; then
+    echo "fixture daemon failed before registration" >&2
+    exit 33
+fi
+trap 'printf "stopped\n" >"${ZENTTY_FAKE_CAPTURE_DIR}/daemon.stopped"; exit 0' TERM HUP INT
+while :; do
+    sleep 1
+done
+EOF
+
+cat >"${fake_bin}/xdpyinfo" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "${DISPLAY:-}" == :4242 ]]
+printf 'ready\n' >"${ZENTTY_FAKE_CAPTURE_DIR}/x11-query"
+printf 'name of display: %s\n' "${DISPLAY}"
+EOF
+
+cat >"${fake_bin}/ibus" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+case "${1:-}" in
+    address)
+        if [[ "${ZENTTY_FAKE_IBUS_MODE:-ready}" == slow-query &&
+            ! -e "${ZENTTY_FAKE_CAPTURE_DIR}/slow-query.attempted" ]]; then
+            : >"${ZENTTY_FAKE_CAPTURE_DIR}/slow-query.attempted"
+            printf '%s\n' "${BASHPID}" >"${ZENTTY_FAKE_CAPTURE_DIR}/slow-query.pid"
+            trap 'printf "stopped\n" >"${ZENTTY_FAKE_CAPTURE_DIR}/slow-query.stopped"; exit 143' TERM HUP INT
+            while :; do
+                sleep 1
+            done
+        fi
+        mkdir -p "${XDG_CACHE_HOME}/ibus"
+        case "${ZENTTY_FAKE_IBUS_MODE:-ready}" in
+            outside-address)
+                printf 'unix:path=/tmp/not-controlled/fake-ibus,guid=0123456789abcdef0123456789abcdef\n'
+                ;;
+            traversal-address)
+                printf 'unix:path=%s/ibus/../../outside/fake-ibus,guid=0123456789abcdef0123456789abcdef\n' "${XDG_CACHE_HOME}"
+                ;;
+            compound-address)
+                printf 'unix:path=%s/ibus/fake-ibus,guid=0123456789abcdef0123456789abcdef;unix:path=/tmp/outside\n' "${XDG_CACHE_HOME}"
+                ;;
+            *)
+                printf 'unix:path=%s/ibus/fake-ibus,guid=0123456789abcdef0123456789abcdef\n' "${XDG_CACHE_HOME}"
+                ;;
+        esac
+        ;;
+    list-engine)
+        printf 'language: English\n  xkb:us::eng - English (US)\n'
+        ;;
+    engine)
+        if [[ -n "${2:-}" ]]; then
+            printf '%s\n' "${2}" >"${ZENTTY_FAKE_CAPTURE_DIR}/engine"
+        elif [[ "${ZENTTY_FAKE_ENGINE_READBACK:-selected}" == wrong ]]; then
+            printf 'xkb:gb::eng\n'
+        else
+            cat "${ZENTTY_FAKE_CAPTURE_DIR}/engine"
+        fi
+        ;;
+    *)
+        exit 2
+        ;;
+esac
+EOF
+
+cat >"${fake_bin}/setsid" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${ZENTTY_FAKE_SETSID_MODE:-normal}" != delay-ownership ]]; then
+    exec /usr/bin/setsid "$@"
+fi
+
+[[ "${1:-}" == --fork && "${2:-}" == --wait ]] || exit 75
+shift 2
+exec /usr/bin/setsid --fork --wait bash -c '
+    printf "%s\n" "${BASHPID}" >"${ZENTTY_FAKE_CAPTURE_DIR}/delayed-session.pid"
+    sleep 0.3
+    exec "$@"
+' controlled-ibus-delayed-ownership "$@"
+EOF
+
+cat >"${fake_bin}/session-probe" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+capture_dir="${ZENTTY_FAKE_CAPTURE_DIR:?}"
+touch "${capture_dir}/child-ran"
+run_root="${HOME%/home}"
+
+[[ "${DISPLAY:-}" == :4242 ]] || exit 51
+[[ -z "${WAYLAND_DISPLAY:-}" ]] || exit 52
+[[ "${DBUS_SESSION_BUS_ADDRESS:-}" == "unix:path=${XDG_RUNTIME_DIR}/fake-session-bus" ]] || exit 53
+[[ -z "${DBUS_STARTER_ADDRESS:-}" ]] || exit 54
+[[ -z "${DBUS_STARTER_BUS_TYPE:-}" ]] || exit 55
+[[ -z "${DBUS_SYSTEM_BUS_ADDRESS:-}" ]] || exit 69
+[[ -z "${DBUS_SESSION_BUS_PID:-}" ]] || exit 70
+[[ -z "${DBUS_SESSION_BUS_WINDOWID:-}" ]] || exit 71
+[[ "${IBUS_ADDRESS:-}" == "unix:path=${XDG_CACHE_HOME}/ibus/fake-ibus,guid=0123456789abcdef0123456789abcdef" ]] || exit 56
+[[ -z "${IBUS_ADDRESS_FILE:-}" ]] || exit 57
+[[ "${IBUS_ENABLE_SYNC_MODE:-}" == 1 ]] || exit 75
+[[ -z "${IBUS_USE_PORTAL:-}" ]] || exit 72
+[[ "${XDG_CONFIG_HOME}" == "${run_root}/config" ]] || exit 58
+[[ "${XDG_CACHE_HOME}" == "${run_root}/cache" ]] || exit 59
+[[ "${XDG_DATA_HOME}" == "${run_root}/data" ]] || exit 60
+[[ "${XDG_STATE_HOME}" == "${run_root}/state" ]] || exit 61
+[[ "${XDG_RUNTIME_DIR}" == "${run_root}/runtime" ]] || exit 62
+[[ "${TMPDIR}" == "${run_root}/tmp" ]] || exit 63
+[[ "$(stat -c '%a' "${XDG_RUNTIME_DIR}")" == 700 ]] || exit 64
+[[ "${GDK_BACKEND:-}" == x11 ]] || exit 65
+[[ "${GTK_IM_MODULE:-}" == ibus ]] || exit 66
+[[ "${LIBGL_ALWAYS_SOFTWARE:-}" == 1 ]] || exit 68
+[[ "${GTK_A11Y:-}" == none ]] || exit 73
+[[ "${GIO_USE_VFS:-}" == local ]] || exit 74
+
+printf '%s\n' "${run_root}" >"${capture_dir}/child-run-root"
+case "${1:-success}" in
+    success)
+        echo "controlled child: PASS"
+        ;;
+    fail)
+        exit 42
+        ;;
+    block)
+        printf '%s\n' "${BASHPID}" >"${capture_dir}/child.pid"
+        trap 'printf "stopped\n" >"${capture_dir}/child.stopped"; exit 143' TERM HUP INT
+        while :; do
+            sleep 1
+        done
+        ;;
+    *)
+        exit 67
+        ;;
+esac
+EOF
+
+chmod +x "${fake_bin}"/*
+
+original_path="${PATH}"
+export PATH="${fake_bin}:${PATH}"
+export DISPLAY=:poison-display
+export WAYLAND_DISPLAY=poison-wayland
+export XAUTHORITY=/poison/xauthority
+export DBUS_SESSION_BUS_ADDRESS=unix:path=/poison/session-bus
+export DBUS_STARTER_ADDRESS=unix:path=/poison/starter-bus
+export DBUS_STARTER_BUS_TYPE=session
+export DBUS_SYSTEM_BUS_ADDRESS=unix:path=/poison/system-bus
+export DBUS_SESSION_BUS_PID=99999
+export DBUS_SESSION_BUS_WINDOWID=99999
+export IBUS_ADDRESS=unix:path=/poison/ibus
+export IBUS_ADDRESS_FILE=/poison/ibus-address
+export IBUS_USE_PORTAL=poison-portal
+export IBUS_ENABLE_SYNC_MODE=0
+
+success_capture="${temp_dir}/success"
+mkdir -p "${success_capture}"
+set +e
+ZENTTY_FAKE_CAPTURE_DIR="${success_capture}" \
+    "${wrapper}" session-probe success \
+    >"${success_capture}/stdout" 2>"${success_capture}/stderr"
+success_status=$?
+set -e
+if [[ "${success_status}" -ne 0 ]]; then
+    cat "${success_capture}/stderr" >&2
+    fail "success fixture exited ${success_status}"
+fi
+if ! grep -Ex \
+    "^${marker_prefix} session-id=[1-9][0-9]*-[[:alnum:]]+$" \
+    "${success_capture}/stdout" >/dev/null; then
+    fail "success receipt lacks an exact controlled-session marker with an ID"
+fi
+success_session_id="$(sed -n \
+    "s/^${marker_prefix} session-id=//p" \
+    "${success_capture}/stdout")"
+grep -Fx "controlled child: PASS" "${success_capture}/stdout" >/dev/null ||
+    fail "wrapped command stdout did not reach wrapper stdout"
+[[ -f "${success_capture}/xvfb-entry" &&
+    -f "${success_capture}/x11-query" &&
+    -f "${success_capture}/dbus-entry" ]] ||
+    fail "inherited display, D-Bus, or IBus state reached a private-session boundary"
+for required_arg in \
+    --single --panel=disable --config=disable --emoji-extension=disable --cache=none; do
+    grep -Fx -- "${required_arg}" "${success_capture}/daemon.args" >/dev/null ||
+        fail "ibus-daemon invocation lacks ${required_arg}"
+done
+grep -Fx 'xkb:us::eng' "${success_capture}/engine" >/dev/null ||
+    fail "wrapper did not select and read back the deterministic IBus engine"
+if grep -Ex -- '--replace|-r|--daemonize|-d' "${success_capture}/daemon.args" >/dev/null; then
+    fail "ibus-daemon invocation used replace or daemonize mode"
+fi
+assert_cleaned "${success_capture}" true
+echo "controlled IBus success/isolation test passed"
+
+failure_capture="${temp_dir}/child-failure"
+mkdir -p "${failure_capture}"
+set +e
+ZENTTY_FAKE_CAPTURE_DIR="${failure_capture}" \
+    "${wrapper}" session-probe fail \
+    >"${failure_capture}/stdout" 2>"${failure_capture}/stderr"
+failure_status=$?
+set -e
+[[ "${failure_status}" -eq 42 ]] ||
+    fail "wrapped child status 42 became ${failure_status}"
+if ! grep -Ex \
+    "^${marker_prefix} session-id=[1-9][0-9]*-[[:alnum:]]+$" \
+    "${failure_capture}/stdout" >/dev/null; then
+    fail "child-failure receipt lacks an exact controlled-session marker with an ID"
+fi
+failure_session_id="$(sed -n \
+    "s/^${marker_prefix} session-id=//p" \
+    "${failure_capture}/stdout")"
+[[ "${success_session_id}" != "${failure_session_id}" ]] ||
+    fail "two wrapper invocations reused session ID ${success_session_id}"
+assert_cleaned "${failure_capture}" true
+if cmp -s "${success_capture}/child-run-root" "${failure_capture}/child-run-root"; then
+    fail "two wrapper invocations reused the same private root"
+fi
+echo "controlled IBus child-failure/cleanup test passed"
+
+readiness_capture="${temp_dir}/readiness-failure"
+mkdir -p "${readiness_capture}"
+set +e
+ZENTTY_FAKE_CAPTURE_DIR="${readiness_capture}" \
+ZENTTY_FAKE_IBUS_MODE=fail-readiness \
+    "${wrapper}" session-probe success \
+    >"${readiness_capture}/stdout" 2>"${readiness_capture}/stderr"
+readiness_status=$?
+set -e
+[[ "${readiness_status}" -ne 0 ]] || fail "readiness failure unexpectedly passed"
+grep -F "private IBus did not become ready" "${readiness_capture}/stderr" >/dev/null ||
+    fail "readiness failure lacked a diagnostic"
+if grep -F "${marker_prefix} session-id=" \
+    "${readiness_capture}/stdout" >/dev/null; then
+    fail "readiness failure emitted the controlled-session marker"
+fi
+[[ ! -e "${readiness_capture}/child-ran" ]] ||
+    fail "wrapped command ran before private IBus readiness"
+assert_cleaned "${readiness_capture}" false
+echo "controlled IBus readiness-failure test passed"
+
+signal_capture="${temp_dir}/signal-cleanup"
+mkdir -p "${signal_capture}"
+ZENTTY_FAKE_CAPTURE_DIR="${signal_capture}" \
+    "${wrapper}" session-probe block \
+    >"${signal_capture}/stdout" 2>"${signal_capture}/stderr" &
+signal_wrapper_pid=$!
+wait_for_file "${signal_capture}/child.pid"
+wait_for_file "${signal_capture}/daemon.pid"
+kill -TERM "${signal_wrapper_pid}"
+set +e
+wait "${signal_wrapper_pid}"
+signal_status=$?
+set -e
+signal_wrapper_pid=""
+[[ "${signal_status}" -eq 143 ]] ||
+    fail "TERM status 143 became ${signal_status}"
+read -r signal_child_pid <"${signal_capture}/child.pid"
+assert_dead "${signal_child_pid}" "wrapped child"
+[[ -f "${signal_capture}/child.stopped" ]] ||
+    fail "wrapped child did not receive a cleanup signal"
+assert_cleaned "${signal_capture}" true
+echo "controlled IBus signal-cleanup test passed"
+
+startup_race_capture="${temp_dir}/startup-signal-race"
+mkdir -p "${startup_race_capture}"
+ZENTTY_FAKE_CAPTURE_DIR="${startup_race_capture}" \
+ZENTTY_FAKE_SETSID_MODE=delay-ownership \
+    "${wrapper}" session-probe block \
+    >"${startup_race_capture}/stdout" 2>"${startup_race_capture}/stderr" &
+signal_wrapper_pid=$!
+wait_for_file "${startup_race_capture}/delayed-session.pid"
+kill -TERM "${signal_wrapper_pid}"
+set +e
+wait "${signal_wrapper_pid}"
+startup_race_status=$?
+set -e
+signal_wrapper_pid=""
+[[ "${startup_race_status}" -eq 143 ]] ||
+    fail "startup-race TERM status 143 became ${startup_race_status}"
+read -r delayed_session_pid <"${startup_race_capture}/delayed-session.pid"
+assert_dead "${delayed_session_pid}" "delayed private session"
+[[ ! -e "${startup_race_capture}/child-ran" ]] ||
+    fail "wrapped child ran after cancellation during session ownership"
+[[ ! -e "${startup_race_capture}/daemon.pid" ]] ||
+    fail "IBus started after cancellation during session ownership"
+echo "controlled IBus startup-signal ownership test passed"
+
+startup_deadline_capture="${temp_dir}/startup-deadline"
+mkdir -p "${startup_deadline_capture}"
+set +e
+timeout --kill-after=1s 4s env \
+    ZENTTY_FAKE_CAPTURE_DIR="${startup_deadline_capture}" \
+    ZENTTY_FAKE_XVFB_MODE=hang \
+    ZENTTY_CONTROLLED_IBUS_STARTUP_TIMEOUT_SECONDS=1 \
+    "${wrapper}" session-probe success \
+    >"${startup_deadline_capture}/stdout" 2>"${startup_deadline_capture}/stderr"
+startup_deadline_status=$?
+set -e
+[[ "${startup_deadline_status}" -eq 1 ]] ||
+    fail "internal startup deadline status 1 became ${startup_deadline_status}"
+grep -F "controlled session startup deadline exceeded" \
+    "${startup_deadline_capture}/stderr" >/dev/null ||
+    fail "startup deadline lacked a diagnostic"
+read -r startup_xvfb_pid <"${startup_deadline_capture}/xvfb.pid"
+assert_dead "${startup_xvfb_pid}" "startup Xvfb fixture"
+[[ -f "${startup_deadline_capture}/xvfb.stopped" ]] ||
+    fail "startup deadline did not stop its Xvfb fixture"
+read -r startup_run_root <"${startup_deadline_capture}/xvfb-run-root"
+[[ ! -e "${startup_run_root}" ]] ||
+    fail "startup deadline retained private root ${startup_run_root}"
+[[ ! -e "${startup_deadline_capture}/child-ran" ]] ||
+    fail "wrapped child ran before startup readiness"
+echo "controlled IBus startup-deadline test passed"
+
+query_timeout_capture="${temp_dir}/query-timeout"
+mkdir -p "${query_timeout_capture}"
+set +e
+timeout --kill-after=1s 5s env \
+    ZENTTY_FAKE_CAPTURE_DIR="${query_timeout_capture}" \
+    ZENTTY_FAKE_IBUS_MODE=slow-query \
+    ZENTTY_CONTROLLED_IBUS_QUERY_TIMEOUT_SECONDS=1 \
+    ZENTTY_CONTROLLED_IBUS_STARTUP_TIMEOUT_SECONDS=4 \
+    "${wrapper}" session-probe success \
+    >"${query_timeout_capture}/stdout" 2>"${query_timeout_capture}/stderr"
+query_timeout_status=$?
+set -e
+[[ "${query_timeout_status}" -eq 0 ]] || {
+    cat "${query_timeout_capture}/stderr" >&2
+    fail "bounded slow query fixture exited ${query_timeout_status}"
+}
+[[ -f "${query_timeout_capture}/slow-query.stopped" ]] ||
+    fail "slow IBus query was not bounded and stopped"
+read -r slow_query_pid <"${query_timeout_capture}/slow-query.pid"
+assert_dead "${slow_query_pid}" "slow IBus query"
+assert_cleaned "${query_timeout_capture}" true
+echo "controlled IBus query-timeout test passed"
+
+engine_failure_capture="${temp_dir}/engine-readback-failure"
+mkdir -p "${engine_failure_capture}"
+set +e
+timeout --kill-after=1s 5s env \
+    ZENTTY_FAKE_CAPTURE_DIR="${engine_failure_capture}" \
+    ZENTTY_FAKE_ENGINE_READBACK=wrong \
+    ZENTTY_CONTROLLED_IBUS_SERVICE_TIMEOUT_SECONDS=1 \
+    ZENTTY_CONTROLLED_IBUS_STARTUP_TIMEOUT_SECONDS=4 \
+    "${wrapper}" session-probe success \
+    >"${engine_failure_capture}/stdout" 2>"${engine_failure_capture}/stderr"
+engine_failure_status=$?
+set -e
+[[ "${engine_failure_status}" -eq 1 ]] ||
+    fail "wrong engine readback status 1 became ${engine_failure_status}"
+grep -F "private IBus did not acknowledge xkb:us::eng" \
+    "${engine_failure_capture}/stderr" >/dev/null ||
+    fail "wrong engine readback lacked a diagnostic"
+if grep -F "${marker_prefix} session-id=" \
+    "${engine_failure_capture}/stdout" >/dev/null; then
+    fail "wrong engine readback emitted a controlled-session marker"
+fi
+[[ ! -e "${engine_failure_capture}/child-ran" ]] ||
+    fail "wrapped child ran after wrong engine readback"
+assert_cleaned "${engine_failure_capture}" true
+echo "controlled IBus engine-readback negative test passed"
+
+outside_address_capture="${temp_dir}/outside-address-failure"
+mkdir -p "${outside_address_capture}"
+set +e
+ZENTTY_FAKE_CAPTURE_DIR="${outside_address_capture}" \
+ZENTTY_FAKE_IBUS_MODE=outside-address \
+    "${wrapper}" session-probe success \
+    >"${outside_address_capture}/stdout" \
+    2>"${outside_address_capture}/stderr"
+outside_address_status=$?
+set -e
+[[ "${outside_address_status}" -eq 1 ]] ||
+    fail "outside IBus address status 1 became ${outside_address_status}"
+grep -F "private IBus returned an address outside the controlled root" \
+    "${outside_address_capture}/stderr" >/dev/null ||
+    fail "outside IBus address lacked a diagnostic"
+if grep -F "${marker_prefix} session-id=" \
+    "${outside_address_capture}/stdout" >/dev/null; then
+    fail "outside IBus address emitted a controlled-session marker"
+fi
+[[ ! -e "${outside_address_capture}/child-ran" ]] ||
+    fail "wrapped child ran with an IBus address outside the controlled root"
+assert_cleaned "${outside_address_capture}" true
+echo "controlled IBus outside-address negative test passed"
+
+for address_mode in traversal-address compound-address; do
+    address_capture="${temp_dir}/${address_mode}-failure"
+    mkdir -p "${address_capture}"
+    set +e
+    ZENTTY_FAKE_CAPTURE_DIR="${address_capture}" \
+    ZENTTY_FAKE_IBUS_MODE="${address_mode}" \
+        "${wrapper}" session-probe success \
+        >"${address_capture}/stdout" 2>"${address_capture}/stderr"
+    address_status=$?
+    set -e
+    [[ "${address_status}" -eq 1 ]] ||
+        fail "${address_mode} status 1 became ${address_status}"
+    if [[ "${address_mode}" == traversal-address ]]; then
+        address_diagnostic="private IBus returned an address outside the controlled root"
+    else
+        address_diagnostic="private IBus returned a malformed or compound address"
+    fi
+    grep -F "${address_diagnostic}" "${address_capture}/stderr" >/dev/null ||
+        fail "${address_mode} lacked its containment diagnostic"
+    if grep -F "${marker_prefix} session-id=" \
+        "${address_capture}/stdout" >/dev/null; then
+        fail "${address_mode} emitted a controlled-session marker"
+    fi
+    [[ ! -e "${address_capture}/child-ran" ]] ||
+        fail "wrapped child ran with ${address_mode}"
+    assert_cleaned "${address_capture}" true
+done
+echo "controlled IBus traversal/compound-address negative tests passed"
+
+missing_bin="${temp_dir}/missing-bin"
+mkdir -p "${missing_bin}"
+for dependency in \
+    bash xvfb-run Xvfb xauth xdpyinfo dbus-run-session dbus-daemon ibus-daemon; do
+    ln -s "$(PATH="${original_path}" command -v "${dependency}")" \
+        "${missing_bin}/${dependency}"
+done
+set +e
+PATH="${missing_bin}" "${wrapper}" true \
+    >"${temp_dir}/missing.stdout" 2>"${temp_dir}/missing.stderr"
+missing_status=$?
+set -e
+[[ "${missing_status}" -eq 77 ]] ||
+    fail "missing runtime dependency status 77 became ${missing_status}"
+grep -F "missing runtime dependency: ibus" "${temp_dir}/missing.stderr" >/dev/null ||
+    fail "missing runtime dependency lacked a diagnostic"
+echo "controlled IBus missing-dependency test passed"
+
+missing_cat_bin="${temp_dir}/missing-cat-bin"
+mkdir -p "${missing_cat_bin}"
+for dependency in \
+    bash xvfb-run Xvfb xauth xdpyinfo dbus-run-session dbus-daemon ibus-daemon \
+    ibus setsid ps grep sed mktemp mkdir chmod rm sleep env timeout readlink; do
+    ln -s "$(PATH="${original_path}" command -v "${dependency}")" \
+        "${missing_cat_bin}/${dependency}"
+done
+set +e
+PATH="${missing_cat_bin}" "${wrapper}" true \
+    >"${temp_dir}/missing-cat.stdout" 2>"${temp_dir}/missing-cat.stderr"
+missing_cat_status=$?
+set -e
+[[ "${missing_cat_status}" -eq 77 ]] ||
+    fail "missing cat dependency status 77 became ${missing_cat_status}"
+grep -F "missing runtime dependency: cat" \
+    "${temp_dir}/missing-cat.stderr" >/dev/null ||
+    fail "missing cat dependency lacked a diagnostic"
+echo "controlled IBus complete dependency-preflight test passed"
+
+echo "controlled IBus wrapper tests passed"

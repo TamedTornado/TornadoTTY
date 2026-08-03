@@ -3,6 +3,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "${repo_root}/linux/tests/lib/valgrind-report"
+source "${repo_root}/linux/tests/lib/ibus-focus-protocol"
 ghostty_source="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
 binary="${repo_root}/build/linux/bin/ibus-focus-reproducer"
 metadata="${repo_root}/build/linux/build-metadata"
@@ -10,17 +11,180 @@ receipt_base="${repo_root}/build/linux/memory-safety-Debug-ibus-focus-x11"
 raw_receipt="${receipt_base}.raw.log"
 suppressed_receipt="${receipt_base}.suppressed.log"
 report="${receipt_base}.json"
+controlled_ibus="${repo_root}/linux/tests/controlled-ibus-x11"
+controlled_ibus_harness="linux/tests/controlled-ibus-x11"
+protocol_ceiling_id="$(zentty_ibus_focus_protocol_ceiling_id)"
+controlled_marker_prefix="$(zentty_ibus_focus_controlled_marker_prefix)"
+evidence_lock="$(dirname "${report}")/.zentty-valgrind-evidence.lock"
+max_capture_span_seconds=900
 effective_suppressions=(
     "${ghostty_source}/valgrind.supp"
     "${ghostty_source}/src/gtk_embed_spike.valgrind.supp"
     "${repo_root}/linux/tests/valgrind.supp"
 )
 
+evidence_lock_fd=""
+zentty_valgrind_acquire_evidence_lock "${evidence_lock}" evidence_lock_fd || exit 1
+zentty_valgrind_validate_evidence_lock_descriptor \
+    "${evidence_lock}" "${evidence_lock_fd}" || exit 1
+
+# Any failed focused invocation must invalidate all prior publishable evidence.
+rm -f -- "${raw_receipt}" "${suppressed_receipt}" "${report}"
+
+fail() {
+    echo "ibus-focus-memory: error: $*" >&2
+    exit 1
+}
+
+require_semantic_receipt() {
+    local receipt="$1"
+
+    controlled_session_id "${receipt}" >/dev/null
+    zentty_ibus_focus_receipt_has_no_runtime_errors "${receipt}" ||
+        fail "receipt reports an unavailable IBus connection or lifecycle error: ${receipt}"
+    zentty_ibus_focus_valgrind_summaries_are_consistent "${receipt}" ||
+        fail "receipt contains missing or conflicting Valgrind summaries: ${receipt}"
+    zentty_ibus_focus_receipt_has_bound_execution "${receipt}" "${binary}" ||
+        fail "receipt is not bound to the controlled reproducer execution: ${receipt}"
+    zentty_ibus_focus_receipt_has_exact_lifecycle "${receipt}" ||
+        fail "receipt lacks the exact ordered acknowledged four-cycle IBus lifecycle: ${receipt}"
+}
+
+controlled_session_id() {
+    local receipt="$1"
+
+    zentty_ibus_focus_controlled_session_id "${receipt}" ||
+        fail "receipt must contain exactly one valid controlled-session marker: ${receipt}"
+}
+
+require_distinct_controlled_sessions() {
+    local raw="$1"
+    local suppressed="$2"
+    local raw_id
+    local suppressed_id
+
+    raw_id="$(controlled_session_id "${raw}")"
+    suppressed_id="$(controlled_session_id "${suppressed}")"
+    [[ "${raw_id}" != "${suppressed_id}" ]] ||
+        fail "raw and suppressed receipts reused controlled session ${raw_id}"
+}
+
+require_raw_ibus_stack() {
+    local receipt="$1"
+    require_semantic_receipt "${receipt}"
+    zentty_ibus_focus_raw_stack_is_bound "${receipt}" || fail \
+        "raw receipt lacks one bound IBus/module/reproducer loss record: ${receipt}"
+}
+
+receipt_self_test_dir="$(mktemp -d)"
+report_temp=""
+cleanup() {
+    rm -rf -- "${receipt_self_test_dir}"
+    if [[ -n "${report_temp}" ]]; then
+        rm -f -- "${report_temp}"
+    fi
+}
+trap cleanup EXIT
+valid_fixture="${receipt_self_test_dir}/valid.log"
+missing_marker_fixture="${receipt_self_test_dir}/missing-marker.log"
+missing_ack_fixture="${receipt_self_test_dir}/missing-ack.log"
+missing_controlled_fixture="${receipt_self_test_dir}/missing-controlled.log"
+forged_session_fixture="${receipt_self_test_dir}/forged-session.log"
+unable_ibus_fixture="${receipt_self_test_dir}/unable-ibus.log"
+reused_session_fixture="${receipt_self_test_dir}/reused-session.log"
+split_stack_fixture="${receipt_self_test_dir}/split-stack.log"
+non_loss_stack_fixture="${receipt_self_test_dir}/non-loss-stack.log"
+cat >"${valid_fixture}" <<EOF
+controlled-ibus-x11: READY x11-display private-xvfb private-dbus foreground-ibus engine=xkb:us::eng sync-mode=1 session-id=101-fixtureraw
+==101== Command: ${binary}
+ibus-focus-reproducer: delegate=ibus type=IBusIMContext
+ibus-focus-reproducer: window=mapped clients=4
+ibus-focus-reproducer: baseline-context=ready
+ibus-focus-reproducer: cycle=1 ibus-context=active
+ibus-focus-reproducer: cycle=1 focus=verified preedit=empty cursor=0 attributes=empty
+ibus-focus-reproducer: cycle=1 ibus-context=inactive
+ibus-focus-reproducer: cycle=2 ibus-context=active
+ibus-focus-reproducer: cycle=2 focus=verified preedit=empty cursor=0 attributes=empty
+ibus-focus-reproducer: cycle=2 ibus-context=inactive
+ibus-focus-reproducer: cycle=3 ibus-context=active
+ibus-focus-reproducer: cycle=3 focus=verified preedit=empty cursor=0 attributes=empty
+ibus-focus-reproducer: cycle=3 ibus-context=inactive
+ibus-focus-reproducer: cycle=4 ibus-context=active
+ibus-focus-reproducer: cycle=4 focus=verified preedit=empty cursor=0 attributes=empty
+ibus-focus-reproducer: cycle=4 ibus-context=inactive
+ibus-focus-reproducer: teardown=complete cycles=4 late-callbacks=0
+ibus-focus-reproducer: PASS
+==101== 113 bytes in 1 blocks are definitely lost
+==101==    by 0x1: ibus_text_new_from_string
+==101==    by 0x2: libim-ibus.so
+==101==    by 0x3: drive_lifecycle (ibus-focus-reproducer.c:1)
+==101==
+==101== definitely lost: 113 bytes in 1 blocks
+==101== indirectly lost: 1 bytes in 1 blocks
+==101== ERROR SUMMARY: 2 errors from 2 contexts (suppressed: 0 from 0)
+EOF
+require_raw_ibus_stack "${valid_fixture}"
+grep -Fv "delegate=ibus type=IBusIMContext" \
+    "${valid_fixture}" >"${missing_marker_fixture}"
+if (require_raw_ibus_stack "${missing_marker_fixture}" >/dev/null 2>&1); then
+    fail "raw receipt without the active IBus delegate marker unexpectedly passed"
+fi
+grep -Fv "cycle=2 ibus-context=active" \
+    "${valid_fixture}" >"${missing_ack_fixture}"
+if (require_raw_ibus_stack "${missing_ack_fixture}" >/dev/null 2>&1); then
+    fail "raw receipt without every IBus focus acknowledgement unexpectedly passed"
+fi
+grep -Fv "${controlled_marker_prefix} session-id=" \
+    "${valid_fixture}" >"${missing_controlled_fixture}"
+if (require_raw_ibus_stack "${missing_controlled_fixture}" >/dev/null 2>&1); then
+    fail "raw receipt without a controlled-session marker unexpectedly passed"
+fi
+sed 's/session-id=101-fixtureraw/session-id=forged/' \
+    "${valid_fixture}" >"${forged_session_fixture}"
+if (require_raw_ibus_stack "${forged_session_fixture}" >/dev/null 2>&1); then
+    fail "raw receipt with a forged controlled-session marker unexpectedly passed"
+fi
+cp "${valid_fixture}" "${unable_ibus_fixture}"
+echo "Unable to connect to ibus" >>"${unable_ibus_fixture}"
+if (require_raw_ibus_stack "${unable_ibus_fixture}" >/dev/null 2>&1); then
+    fail "raw receipt with an unavailable IBus connection unexpectedly passed"
+fi
+sed '/libim-ibus\.so/d' "${valid_fixture}" >"${split_stack_fixture}"
+cat >>"${split_stack_fixture}" <<'EOF'
+==101== 1 bytes in 1 blocks are indirectly lost
+==101==    by 0x2: libim-ibus.so
+==101==
+EOF
+if (require_raw_ibus_stack "${split_stack_fixture}" >/dev/null 2>&1); then
+    fail "raw receipt with split IBus stack anchors unexpectedly passed"
+fi
+sed 's/113 bytes in 1 blocks are definitely lost/Invalid read of size 8/' \
+    "${valid_fixture}" >"${non_loss_stack_fixture}"
+if (require_raw_ibus_stack "${non_loss_stack_fixture}" >/dev/null 2>&1); then
+    fail "raw receipt with a non-loss IBus stack unexpectedly passed"
+fi
+cp "${valid_fixture}" "${reused_session_fixture}"
+if (require_distinct_controlled_sessions \
+    "${valid_fixture}" "${reused_session_fixture}" >/dev/null 2>&1); then
+    fail "raw and suppressed fixtures with a reused session ID unexpectedly passed"
+fi
+
+if [[ ! -x "${controlled_ibus}" ]]; then
+    fail "controlled IBus wrapper is not executable: ${controlled_ibus}"
+fi
 if [[ ! -x "${binary}" ]] ||
     ! grep -Fx "host_optimize=Debug" "${metadata}" >/dev/null; then
     echo "error: ibus-focus-memory requires the Debug test binary" >&2
     exit 1
 fi
+expected_reproducer_sha256="$(sed -n \
+    's/^ibus_focus_reproducer_sha256=//p' "${metadata}")"
+actual_reproducer_sha256="$(sha256sum \
+    "${repo_root}/linux/tests/ibus-focus-reproducer.c" | awk '{print $1}')"
+[[ "${expected_reproducer_sha256}" == "${actual_reproducer_sha256}" ]] ||
+    fail "Debug reproducer binary metadata does not match current source"
+"${binary}" --self-test-context-paths >/dev/null ||
+    fail "IBus CurrentInputContext path contract self-test failed"
 for suppression in "${effective_suppressions[@]}"; do
     [[ -f "${suppression}" ]] || {
         echo "error: required suppression file not found: ${suppression}" >&2
@@ -32,12 +196,10 @@ flags=(
     -s
     --num-callers=40
     --leak-check=full
-    --show-leak-kinds=definite,indirect
-    --errors-for-leak-kinds=definite,indirect
+    "--show-leak-kinds=definite,indirect"
+    "--errors-for-leak-kinds=definite,indirect"
 )
-environment=(GDK_BACKEND=x11 GTK_IM_MODULE=ibus)
-
-env "${environment[@]}" timeout 120s valgrind \
+"${controlled_ibus}" timeout 120s valgrind \
     "${flags[@]}" \
     "${binary}" >"${raw_receipt}" 2>&1
 
@@ -46,19 +208,27 @@ for suppression in "${effective_suppressions[@]}"; do
     suppression_flags+=("--suppressions=${suppression}")
 done
 set +e
-env "${environment[@]}" timeout 120s valgrind \
+"${controlled_ibus}" timeout 120s valgrind \
     "${flags[@]}" \
     --error-exitcode=99 \
     "${suppression_flags[@]}" \
     "${binary}" >"${suppressed_receipt}" 2>&1
 suppressed_status=$?
 set -e
+if ! zentty_valgrind_require_publishable_status \
+    "Debug" "${suppressed_status}" "${report}"; then
+    unacceptable_status="${suppressed_status}"
+    if (( unacceptable_status == 0 )); then
+        unacceptable_status=1
+    fi
+    exit "${unacceptable_status}"
+fi
 
-for receipt in "${raw_receipt}" "${suppressed_receipt}"; do
-    grep -Fx "ibus-focus-reproducer: PASS" "${receipt}" >/dev/null
-done
-grep -F "libim-ibus.so" "${raw_receipt}" >/dev/null
-grep -F "ibus_text_new_from_string" "${raw_receipt}" >/dev/null
+require_raw_ibus_stack "${raw_receipt}"
+require_semantic_receipt "${suppressed_receipt}"
+require_distinct_controlled_sessions "${raw_receipt}" "${suppressed_receipt}"
+raw_session_id="$(controlled_session_id "${raw_receipt}")"
+suppressed_session_id="$(controlled_session_id "${suppressed_receipt}")"
 
 raw_metrics="$(zentty_valgrind_metrics_json "${raw_receipt}")"
 suppressed_metrics="$(zentty_valgrind_metrics_json "${suppressed_receipt}")"
@@ -77,21 +247,61 @@ for suppression in "${effective_suppressions[@]}"; do
         '$values + [$item]')"
 done
 
+raw_receipt_identity="$(zentty_valgrind_receipt_identity_json "${raw_receipt}")"
+suppressed_receipt_identity="$(zentty_valgrind_receipt_identity_json "${suppressed_receipt}")"
+for identity_command in pkg-config dpkg-query; do
+    command -v "${identity_command}" >/dev/null ||
+        fail "${identity_command} is required for IBus protocol identity"
+done
+report_generated_at_epoch="$(date +%s)"
+raw_captured_at_epoch="$(jq -r '.captured_at_epoch' <<<"${raw_receipt_identity}")"
+suppressed_captured_at_epoch="$(jq -r '.captured_at_epoch' <<<"${suppressed_receipt_identity}")"
+if (( raw_captured_at_epoch > suppressed_captured_at_epoch ||
+    suppressed_captured_at_epoch > report_generated_at_epoch )); then
+    fail "Valgrind receipt chronology is invalid"
+fi
+if (( report_generated_at_epoch - raw_captured_at_epoch > max_capture_span_seconds )); then
+    fail "Valgrind receipt capture span exceeds ${max_capture_span_seconds}s"
+fi
+
+report_temp="$(mktemp "${report}.tmp.XXXXXX")"
 jq -n \
     --arg raw_receipt "${raw_receipt}" \
     --arg suppressed_receipt "${suppressed_receipt}" \
     --arg valgrind_version "$(valgrind --version)" \
+    --arg controlled_ibus_harness "${controlled_ibus_harness}" \
+    --arg controlled_ibus_sha256 "$(sha256sum "${controlled_ibus}" | awk '{print $1}')" \
+    --arg protocol_contract "linux/tests/lib/ibus-focus-protocol" \
+    --arg protocol_ceiling_id "${protocol_ceiling_id}" \
+    --arg protocol_contract_sha256 "$(sha256sum "${repo_root}/linux/tests/lib/ibus-focus-protocol" | awk '{print $1}')" \
+    --arg reproducer "linux/tests/ibus-focus-reproducer.c" \
+    --arg reproducer_sha256 "${actual_reproducer_sha256}" \
+    --arg executable "${binary}" \
+    --arg executable_sha256 "$(sha256sum "${binary}" | awk '{print $1}')" \
+    --arg gtk_runtime "$(pkg-config --modversion gtk4)" \
+    --arg ibus_runtime "$(dpkg-query -W -f='${Version}' ibus)" \
+    --arg ibus_gtk4_runtime "$(dpkg-query -W -f='${Version}' ibus-gtk4)" \
+    --arg libibus_runtime "$(dpkg-query -W -f='${Version}' libibus-1.0-5)" \
+    --arg source_repository "$(zentty_ibus_focus_source_repository)" \
+    --arg source_version "$(zentty_ibus_focus_source_version)" \
+    --arg source_revision "$(zentty_ibus_focus_source_revision)" \
+    --arg source_path "$(zentty_ibus_focus_source_path)" \
+    --arg source_sha256 "$(zentty_ibus_focus_source_sha256)" \
+    --arg raw_session_id "${raw_session_id}" \
+    --arg suppressed_session_id "${suppressed_session_id}" \
+    --argjson suppressed_exit_code "${suppressed_status}" \
+    --argjson report_generated_at_epoch "${report_generated_at_epoch}" \
+    --argjson raw_receipt_identity "${raw_receipt_identity}" \
+    --argjson suppressed_receipt_identity "${suppressed_receipt_identity}" \
     --argjson raw "${raw_metrics}" \
     --argjson post "${suppressed_metrics}" \
     --argjson suppression_files "${suppression_files}" \
     --argjson suppression_usage "${suppression_usage}" \
-    '{optimize: "Debug", scenario: "ibus-focus", display_backend: "x11", raw_receipt: $raw_receipt, suppressed_receipt: $suppressed_receipt, valgrind_version: $valgrind_version, valgrind_builtin_suppressions: true, effective_suppression_files: $suppression_files, suppression_usage: $suppression_usage, raw: $raw, post_suppression: $post}' \
-    >"${report}"
+    '{optimize: "Debug", scenario: "ibus-focus", display_backend: "x11", controlled_environment: {harness: $controlled_ibus_harness, harness_sha256: $controlled_ibus_sha256, raw_session_id: $raw_session_id, suppressed_session_id: $suppressed_session_id, phase_isolation: true, ibus_sync_mode: "1"}, protocol: {ceiling_id: $protocol_ceiling_id, contract: $protocol_contract, contract_sha256: $protocol_contract_sha256, reproducer: $reproducer, reproducer_sha256: $reproducer_sha256, executable: $executable, executable_sha256: $executable_sha256, runtime_identity: {gtk: $gtk_runtime, ibus: $ibus_runtime, ibus_gtk4: $ibus_gtk4_runtime, libibus: $libibus_runtime}, source_identity: {repository: $source_repository, version: $source_version, revision: $source_revision, path: $source_path, sha256: $source_sha256}, focus_cycles: 4, active_acknowledgements: 4, inactive_acknowledgements: 4, clear_calls_per_cycle: 2, expected_clear_calls: 8}, raw_receipt: $raw_receipt, suppressed_receipt: $suppressed_receipt, suppressed_exit_code: $suppressed_exit_code, report_generated_at_epoch: $report_generated_at_epoch, receipt_identities: {raw: $raw_receipt_identity, suppressed: $suppressed_receipt_identity}, valgrind_version: $valgrind_version, valgrind_builtin_suppressions: true, effective_suppression_files: $suppression_files, suppression_usage: $suppression_usage, raw: $raw, post_suppression: $post}' \
+    >"${report_temp}"
 
-if [[ "${suppressed_status}" -ne 0 ]]; then
-    echo "error: suppressed IBus reproducer exited ${suppressed_status}" >&2
-    exit "${suppressed_status}"
-fi
 jq -e '.post_suppression.errors == 0 and .post_suppression.definite_bytes == 0 and .post_suppression.indirect_bytes == 0' \
-    "${report}" >/dev/null
-echo "Non-Ghostty GTK/IBus reproducer PASS with reviewed suppressions"
+    "${report_temp}" >/dev/null
+mv -f -- "${report_temp}" "${report}"
+report_temp=""
+echo "Non-Ghostty GTK/IBus reproducer semantic and post-suppression checks PASS; suppression governance pending"

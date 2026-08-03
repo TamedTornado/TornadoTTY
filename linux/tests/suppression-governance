@@ -2,14 +2,33 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+source "${repo_root}/linux/tests/lib/valgrind-report"
+source "${repo_root}/linux/tests/lib/ibus-focus-protocol"
 manifest="${ZENTTY_SUPPRESSION_MANIFEST:-${repo_root}/linux/tests/valgrind-suppressions.json}"
+manifest_schema="${ZENTTY_SUPPRESSION_MANIFEST_SCHEMA:-${repo_root}/linux/tests/valgrind-suppressions.schema.json}"
 reports_dir="${ZENTTY_SUPPRESSION_REPORTS_DIR:-${repo_root}/build/linux}"
+matrix="${ZENTTY_QUALIFICATION_MATRIX:-${repo_root}/linux/qualification-matrix.json}"
 ghostty_source="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
+protocol_executable="${ZENTTY_IBUS_FOCUS_EXPECTED_EXECUTABLE:-${repo_root}/build/linux/bin/ibus-focus-reproducer}"
+nested_x11="${repo_root}/linux/tests/nested-x11"
+nested_wayland="${repo_root}/linux/tests/nested-wayland"
+max_report_age_seconds=86400
+max_capture_span_seconds=900
+validation_now="${ZENTTY_SUPPRESSION_VALIDATION_NOW_EPOCH:-$(date +%s)}"
 
 fail() {
     echo "suppression-governance: error: $*" >&2
     exit 1
 }
+
+[[ "${validation_now}" =~ ^[0-9]+$ ]] ||
+    fail "ZENTTY_SUPPRESSION_VALIDATION_NOW_EPOCH must be a non-negative integer"
+
+command -v jsonschema >/dev/null || fail "jsonschema is required"
+jq empty "${manifest_schema}" >/dev/null 2>&1 ||
+    fail "invalid suppression manifest schema"
+jsonschema -V Draft202012Validator "${manifest_schema}" -i "${manifest}" \
+    >/dev/null 2>&1 || fail "manifest does not conform to suppression schema"
 
 resolve_path() {
     local base="$1"
@@ -23,9 +42,15 @@ resolve_path() {
 }
 
 jq -e '
+    . as $manifest |
+    ([.rules[].rule_name] | unique) as $rule_names |
+    ([.rules[] | {key: .rule_name, value: .}] | from_entries) as $rules_by_name |
     .schema_version == 1 and
     (.rules | type == "array") and
+    (.usage_profiles | type == "array") and
+    (.protocol_ceilings | type == "array") and
     all(.rules[];
+        . as $rule |
         (.rule_name | type == "string" and length > 0) and
         (.tracking_id | type == "string" and length > 0) and
         (.affected | type == "string" and length > 0) and
@@ -36,12 +61,182 @@ jq -e '
         (.required_usage | type == "boolean") and
         (.expected_suppressed.matches.min | type == "number") and
         (.expected_suppressed.matches.max | type == "number") and
-        (.expected_by_scenario // {} | type == "object")
+        (.expected_suppressed.matches.min <=
+            .expected_suppressed.matches.max) and
+        ((.expected_suppressed.bytes == null) or
+            (.expected_suppressed.bytes.min <=
+                .expected_suppressed.bytes.max)) and
+        (.expected_by_scenario // {} | type == "object") and
+        all((.expected_by_scenario // {}) | to_entries[];
+            (.key as $scenario |
+                $rule.allowed_scenarios | index($scenario) != null) and
+            (.value.matches.min <= .value.matches.max) and
+            ((.value.bytes == null) or
+                (.value.bytes.min <= .value.bytes.max)))
     ) and
     ([.rules[].rule_name] | length == (unique | length)) and
-    ([.rules[].tracking_id] | length == (unique | length))
+    ([.rules[].tracking_id] | length == (unique | length)) and
+    all(.usage_profiles[];
+        . as $profile |
+        ($profile.scenario | gsub("/"; "-")) as $scenario_filename |
+        (.id | type == "string" and length > 0) and
+        (.scenario | type == "string" and length > 0) and
+        (.environment | type == "string" and length > 0) and
+        (.evidence_identity.reviewed == true) and
+        (.evidence_identity.verification_scope == "identity-only-local-archive") and
+        (.evidence_identity.public_access.status == "NOT_IMPLEMENTED") and
+        (.evidence_identity.public_access.tracking == "GH-10") and
+        (.evidence_identity.public_access.locator == null) and
+        (.evidence_identity.observed_runs <=
+            .evidence_identity.total_runs) and
+        (.evidence_identity.report.path ==
+            ("memory-safety-" + $scenario_filename + ".json")) and
+        (.evidence_identity.raw_receipt.path ==
+            ("memory-safety-" + $scenario_filename + ".raw.log")) and
+        (.evidence_identity.suppressed_receipt.path ==
+            ("memory-safety-" + $scenario_filename + ".suppressed.log")) and
+        (.reproducer | type == "string" and length > 0) and
+        (.rules | type == "array" and length > 0) and
+        ([.rules[].rule_name] | length == (unique | length)) and
+        all(.rules[];
+            . as $profile_rule |
+            ($rules_by_name[$profile_rule.rule_name]) as $tracked_rule |
+            ($tracked_rule.expected_by_scenario[$profile.scenario] //
+                $tracked_rule.expected_suppressed) as $expected |
+            (.rule_name | type == "string" and length > 0) and
+            (.matches | type == "number" and . >= 0 and floor == .) and
+            (.bytes | type == "number" and . >= 0 and floor == .) and
+            (.blocks | type == "number" and . >= 0 and floor == .) and
+            ($tracked_rule != null) and
+            ($tracked_rule.allowed_scenarios |
+                index($profile.scenario) != null) and
+            ($profile_rule.matches >= $expected.matches.min and
+                $profile_rule.matches <= $expected.matches.max) and
+            ($expected.bytes != null) and
+            ($profile_rule.bytes >= $expected.bytes.min and
+                $profile_rule.bytes <= $expected.bytes.max) and
+            (($tracked_rule.requires_root_rule // null) as $root |
+                $root == null or
+                any($profile.rules[]; .rule_name == $root))
+        )
+    ) and
+    ([.usage_profiles[].id] | length == (unique | length)) and
+    all(.usage_profiles[].rules[].rule_name;
+        . as $profile_rule | $rule_names | index($profile_rule) != null
+    ) and
+    all(.usage_profiles | group_by(.scenario)[];
+        . as $profiles |
+        (.[0].rules | map(.rule_name) | sort) as $expected_names |
+        all(.[]; (.rules | map(.rule_name) | sort) == $expected_names) and
+        (map(.evidence_identity.total_runs) | unique | length) == 1 and
+        (map(.evidence_identity.observed_runs) | add) ==
+            $profiles[0].evidence_identity.total_runs and
+        ([.[] | (.rules | sort_by(.rule_name))] |
+            length == (unique | length))
+    ) and
+    ([.usage_profiles[].evidence_identity.archive_path] |
+        length == (unique | length)) and
+    all(["raw_receipt", "suppressed_receipt", "report", "checksums_receipt"][];
+        . as $evidence_kind |
+        ([$manifest.usage_profiles[].evidence_identity[$evidence_kind].sha256] |
+            length == (unique | length))
+    ) and
+    all(.protocol_ceilings[];
+        . as $ceiling |
+        (.lifecycle.focus_cycles * .lifecycle.clear_calls_per_cycle ==
+            .lifecycle.expected_clear_calls) and
+        (.evidence_identity.total_runs ==
+            (.evidence_identity.receipt_pairs | length)) and
+        ([.evidence_identity.receipt_pairs[].run] | sort) ==
+            [range(1; .evidence_identity.total_runs + 1)] and
+        ([.evidence_identity.executable.sha256,
+            .evidence_identity.checksums_receipt.sha256,
+            (.evidence_identity.receipt_pairs[] |
+                .raw_receipt.sha256,
+                .suppressed_receipt.sha256,
+                .report.sha256)] |
+            length == (unique | length)) and
+        all(.evidence_identity.receipt_pairs[];
+            . as $pair |
+            (.raw_receipt.path == ("run-" + ($pair.run | tostring) + ".raw.log")) and
+            (.suppressed_receipt.path ==
+                ("run-" + ($pair.run | tostring) + ".suppressed.log")) and
+            (.report.path == ("run-" + ($pair.run | tostring) + ".json"))) and
+        (.rules | sort_by(.rule_name)) == [
+            {rule_name: "GTK IBus focus preedit object", matches: {min: 4, max: 4}, bytes: {min: 290, max: 1160}, blocks: {min: 4, max: 16}},
+            {rule_name: "GTK IBus focus preedit string", matches: {min: 2, max: 2}, bytes: {min: 2, max: 8}, blocks: {min: 2, max: 8}}
+        ] and
+        all(.rules[];
+            . as $ceiling_rule |
+            ($rules_by_name[$ceiling_rule.rule_name]) as $tracked_rule |
+            ($tracked_rule != null) and
+            ($tracked_rule.allowed_scenarios | index($ceiling.scenario) != null))
+    ) and
+    ([.protocol_ceilings[].id] | length == (unique | length)) and
+    ([.protocol_ceilings[].scenario] | length == (unique | length)) and
+    (([.rules[] |
+        select(
+            .rule_name == "GTK IBus focus preedit object" or
+            .rule_name == "GTK IBus focus preedit string") |
+        .allowed_scenarios[] |
+        select(. == "Debug/ibus-focus/x11")] | length == 0) or
+        ([.protocol_ceilings[] |
+            select(.scenario == "Debug/ibus-focus/x11")] | length == 1))
 ' \
     "${manifest}" >/dev/null || fail "invalid manifest"
+
+if jq -e '.protocol_ceilings | length > 0' "${manifest}" >/dev/null; then
+    command -v pkg-config >/dev/null ||
+        fail "pkg-config is required for protocol runtime identity"
+    command -v dpkg-query >/dev/null ||
+        fail "dpkg-query is required for protocol runtime identity"
+    [[ -f "${protocol_executable}" && ! -L "${protocol_executable}" ]] ||
+        fail "protocol executable is not a regular non-symlink file"
+    protocol_executable_sha256="$(sha256sum "${protocol_executable}" | awk '{print $1}')"
+    [[ "${protocol_executable_sha256}" == "$(jq -r \
+        '.protocol_ceilings[0].evidence_identity.executable.sha256' \
+        "${manifest}")" ]] ||
+        fail "protocol executable identity drifted"
+    protocol_gtk="$(jq -r '.protocol_ceilings[0].runtime_identity.gtk' \
+        "${manifest}")"
+    [[ "$(pkg-config --modversion gtk4)" == "${protocol_gtk}" ]] ||
+        fail "protocol GTK runtime identity drifted"
+    while IFS=$'\t' read -r package_name manifest_field; do
+        expected_version="$(jq -r \
+            --arg field "${manifest_field}" \
+            '.protocol_ceilings[0].runtime_identity[$field]' \
+            "${manifest}")"
+        actual_version="$(dpkg-query -W -f='${Version}' \
+            "${package_name}" 2>/dev/null || true)"
+        [[ -n "${actual_version}" &&
+            "${actual_version}" == "${expected_version}" ]] ||
+            fail "protocol runtime identity drifted for ${package_name}"
+    done <<'EOF'
+ibus	ibus
+ibus-gtk4	ibus_gtk4
+libibus-1.0-5	libibus
+EOF
+
+    while IFS=$'\t' read -r manifest_path_field manifest_hash_field; do
+        relative_path="$(jq -r \
+            --arg field "${manifest_path_field}" \
+            '.protocol_ceilings[0].lifecycle[$field]' \
+            "${manifest}")"
+        expected_hash="$(jq -r \
+            --arg field "${manifest_hash_field}" \
+            '.protocol_ceilings[0].lifecycle[$field]' \
+            "${manifest}")"
+        [[ -f "${repo_root}/${relative_path}" ]] ||
+            fail "protocol lifecycle source identity drifted: ${relative_path}"
+        actual_hash="$(sha256sum "${repo_root}/${relative_path}" | awk '{print $1}')"
+        [[ "${actual_hash}" == "${expected_hash}" ]] ||
+            fail "protocol lifecycle source identity drifted: ${relative_path}"
+    done <<'EOF'
+contract	contract_sha256
+wrapper	wrapper_sha256
+reproducer	reproducer_sha256
+EOF
+fi
 
 project_path="$(jq -r '.project_suppression_file.path' "${manifest}")"
 if [[ "${project_path}" != /* ]]; then
@@ -71,6 +266,7 @@ expected_valgrind="$(jq -r '.effective_inherited_sets[] | select(.base == "built
     fail "Valgrind built-in suppression version changed"
 
 inherited_hashes=()
+inherited_paths=()
 while IFS= read -r inherited; do
     base="$(jq -r '.base' <<<"${inherited}")"
     path="$(jq -r '.path' <<<"${inherited}")"
@@ -83,37 +279,380 @@ while IFS= read -r inherited; do
     [[ "${count}" -eq "$(jq -r '.rule_count' <<<"${inherited}")" ]] ||
         fail "inherited suppression rule count changed: ${path}"
     inherited_hashes+=("${sha}")
+    inherited_paths+=("${resolved}")
 done < <(jq -c '.effective_inherited_sets[] | select(.base != "builtin")' "${manifest}")
+
+expected_explicit_suppression_hashes='[]'
+for sha in "${project_sha}" "${inherited_hashes[@]}"; do
+    expected_explicit_suppression_hashes="$(jq -cn \
+        --argjson values "${expected_explicit_suppression_hashes}" \
+        --arg sha "${sha}" \
+        '$values + [$sha]')"
+done
+jq -e 'length == (unique | length)' <<<"${expected_explicit_suppression_hashes}" >/dev/null ||
+    fail "manifest explicit suppression SHA set contains duplicates"
+effective_suppression_paths=("${inherited_paths[@]}" "${project_path}")
+
+[[ -d "${reports_dir}" ]] || fail "Valgrind reports directory missing: ${reports_dir}"
+reports_dir="$(cd "${reports_dir}" && pwd -P)"
+evidence_lock="${reports_dir}/.zentty-valgrind-evidence.lock"
+evidence_lock_fd=""
+zentty_valgrind_acquire_evidence_lock "${evidence_lock}" evidence_lock_fd ||
+    fail "could not acquire the Valgrind evidence-set lock"
+zentty_valgrind_validate_evidence_lock_descriptor \
+    "${evidence_lock}" "${evidence_lock_fd}" ||
+    fail "acquired Valgrind evidence-set lock is invalid"
+
+expected_reports_json="${ZENTTY_VALGRIND_EXPECTED_REPORTS_JSON:-}"
+if [[ -z "${expected_reports_json}" ]]; then
+    [[ -f "${matrix}" ]] || fail "qualification matrix missing: ${matrix}"
+    expected_reports_json="$(jq -c '
+        [.cells[] |
+            select(((.valgrind_report // "") | type) == "string" and
+                ((.valgrind_report // "") | length) > 0) |
+            .valgrind_report]
+    ' "${matrix}")" || fail "cannot derive expected Valgrind reports from matrix"
+fi
+jq -e '
+    type == "array" and length > 0 and
+    all(.[]; type == "string" and length > 0) and
+    length == (unique | length)
+' <<<"${expected_reports_json}" >/dev/null ||
+    fail "expected Valgrind report allowlist must be a non-empty unique JSON string array"
+
+normalized_expected_reports='[]'
+while IFS= read -r expected_report; do
+    if [[ "${expected_report}" != /* ]]; then
+        expected_report="${repo_root}/${expected_report}"
+    fi
+    expected_report="$(readlink -m -- "${expected_report}")"
+    [[ "$(dirname "${expected_report}")" == "${reports_dir}" &&
+        "$(basename "${expected_report}")" == memory-safety-*.json ]] ||
+        fail "expected Valgrind report is outside the reports directory: ${expected_report}"
+    normalized_expected_reports="$(jq -cn \
+        --argjson reports "${normalized_expected_reports}" \
+        --arg report "${expected_report}" \
+        '$reports + [$report]')"
+done < <(jq -r '.[]' <<<"${expected_reports_json}")
 
 shopt -s nullglob
 reports=("${reports_dir}"/memory-safety-*.json)
 shopt -u nullglob
-[[ "${#reports[@]}" -gt 0 ]] || fail "no Valgrind reports found"
+actual_reports_json='[]'
+for report in "${reports[@]}"; do
+    actual_reports_json="$(jq -cn \
+        --argjson reports "${actual_reports_json}" \
+        --arg report "${report}" \
+        '$reports + [$report]')"
+done
+if ! jq -e -n \
+    --argjson expected "${normalized_expected_reports}" \
+    --argjson actual "${actual_reports_json}" \
+    '($expected | sort) == ($actual | sort)' >/dev/null; then
+    report_set_difference="$(jq -cn \
+        --argjson expected "${normalized_expected_reports}" \
+        --argjson actual "${actual_reports_json}" \
+        '{missing: ($expected - $actual), unexpected: ($actual - $expected)}')"
+    fail "Valgrind report set does not match expected allowlist: ${report_set_difference}"
+fi
 
 declare -A seen=()
+declare -A seen_evidence_identities=()
+declare -A seen_protocol_ceilings=()
+record_evidence_identity() {
+    local path="$1"
+    local label="$2"
+    local identity
+
+    [[ -f "${path}" && ! -L "${path}" ]] ||
+        fail "${label} is not a regular non-symlink file: ${path}"
+    identity="$(stat -Lc '%d:%i' -- "${path}")" ||
+        fail "cannot identify ${label}: ${path}"
+    if [[ -n "${seen_evidence_identities[${identity}]:-}" ]]; then
+        fail "Valgrind evidence files share an inode: ${seen_evidence_identities[${identity}]} and ${path}"
+    fi
+    seen_evidence_identities["${identity}"]="${path}"
+}
+
+validate_protocol_ceiling_report() {
+    local report="$1"
+    local scenario="$2"
+    local raw_receipt="$3"
+    local suppressed_receipt="$4"
+    local ceiling
+    local ceiling_id
+    local raw_session_id
+    local suppressed_session_id
+
+    ceiling="$(jq -c --arg scenario "${scenario}" \
+        '.protocol_ceilings[] | select(.scenario == $scenario)' \
+        "${manifest}")"
+    if [[ -z "${ceiling}" ]]; then
+        jq -e 'has("protocol") or has("controlled_environment")' \
+            "${report}" >/dev/null &&
+            fail "report contains protocol metadata outside a reviewed ceiling: ${report}"
+        return 0
+    fi
+    ceiling_id="$(jq -r '.id' <<<"${ceiling}")"
+    [[ -z "${seen_protocol_ceilings[${ceiling_id}]:-}" ]] ||
+        fail "protocol ceiling was exercised by more than one report: ${ceiling_id}"
+
+    zentty_ibus_focus_receipt_has_exact_lifecycle "${raw_receipt}" ||
+        fail "protocol raw receipt lacks the exact acknowledged lifecycle: ${report}"
+    zentty_ibus_focus_receipt_has_exact_lifecycle "${suppressed_receipt}" ||
+        fail "protocol suppressed receipt lacks the exact acknowledged lifecycle: ${report}"
+    zentty_ibus_focus_receipt_has_no_runtime_errors "${raw_receipt}" ||
+        fail "protocol raw receipt contains an IBus runtime error: ${report}"
+    zentty_ibus_focus_receipt_has_no_runtime_errors "${suppressed_receipt}" ||
+        fail "protocol suppressed receipt contains an IBus runtime error: ${report}"
+    zentty_ibus_focus_valgrind_summaries_are_consistent "${raw_receipt}" ||
+        fail "protocol raw receipt contains missing or conflicting Valgrind summaries: ${report}"
+    zentty_ibus_focus_valgrind_summaries_are_consistent "${suppressed_receipt}" ||
+        fail "protocol suppressed receipt contains missing or conflicting Valgrind summaries: ${report}"
+    zentty_ibus_focus_receipt_has_bound_execution \
+        "${raw_receipt}" "${protocol_executable}" ||
+        fail "protocol raw receipt is not bound to its controlled executable: ${report}"
+    zentty_ibus_focus_receipt_has_bound_execution \
+        "${suppressed_receipt}" "${protocol_executable}" ||
+        fail "protocol suppressed receipt is not bound to its controlled executable: ${report}"
+    zentty_ibus_focus_raw_stack_is_bound "${raw_receipt}" ||
+        fail "protocol raw receipt lacks the bound IBus loss stack: ${report}"
+    raw_session_id="$(zentty_ibus_focus_controlled_session_id \
+        "${raw_receipt}")" ||
+        fail "protocol raw receipt lacks its controlled session identity: ${report}"
+    suppressed_session_id="$(zentty_ibus_focus_controlled_session_id \
+        "${suppressed_receipt}")" ||
+        fail "protocol suppressed receipt lacks its controlled session identity: ${report}"
+    [[ "${raw_session_id}" != "${suppressed_session_id}" ]] ||
+        fail "protocol raw and suppressed receipts reused a controlled session: ${report}"
+
+    jq -e \
+        --argjson ceiling "${ceiling}" \
+        --arg executable "${protocol_executable}" \
+        --arg executable_sha256 "${protocol_executable_sha256}" \
+        --arg raw_session_id "${raw_session_id}" \
+        --arg suppressed_session_id "${suppressed_session_id}" '
+        .controlled_environment == {
+            harness: $ceiling.lifecycle.wrapper,
+            harness_sha256: $ceiling.lifecycle.wrapper_sha256,
+            raw_session_id: $raw_session_id,
+            suppressed_session_id: $suppressed_session_id,
+            phase_isolation: true,
+            ibus_sync_mode: $ceiling.lifecycle.sync_mode_value
+        } and
+        .protocol == {
+            ceiling_id: $ceiling.id,
+            contract: $ceiling.lifecycle.contract,
+            contract_sha256: $ceiling.lifecycle.contract_sha256,
+            reproducer: $ceiling.lifecycle.reproducer,
+            reproducer_sha256: $ceiling.lifecycle.reproducer_sha256,
+            executable: $executable,
+            executable_sha256: $executable_sha256,
+            runtime_identity: $ceiling.runtime_identity,
+            source_identity: $ceiling.source_identity,
+            focus_cycles: $ceiling.lifecycle.focus_cycles,
+            active_acknowledgements: $ceiling.lifecycle.focus_cycles,
+            inactive_acknowledgements: $ceiling.lifecycle.focus_cycles,
+            clear_calls_per_cycle: $ceiling.lifecycle.clear_calls_per_cycle,
+            expected_clear_calls: $ceiling.lifecycle.expected_clear_calls
+        }
+    ' "${report}" >/dev/null ||
+        fail "protocol report identity or lifecycle metadata drifted: ${report}"
+
+    jq -e \
+        --argjson ceiling "${ceiling}" \
+        --arg project "${project_path}" '
+        . as $report |
+        [$report.suppression_usage[] |
+            select(
+                (.file == $project) and
+                (.rule_name == "GTK IBus focus preedit object" or
+                    .rule_name == "GTK IBus focus preedit string")
+            )
+        ] as $usage |
+        ($usage | length) == 2 and
+        ($usage | map(.rule_name) | unique | length) == 2 and
+        all($usage[];
+            . as $actual |
+            ($ceiling.rules[] |
+                select(.rule_name == $actual.rule_name)) as $limit |
+            ($actual.matches | type == "number" and floor == .) and
+            ($actual.bytes | type == "number" and floor == .) and
+            ($actual.blocks | type == "number" and floor == .) and
+            ($actual.matches >= $limit.matches.min and
+                $actual.matches <= $limit.matches.max) and
+            ($actual.bytes >= $limit.bytes.min and
+                $actual.bytes <= $limit.bytes.max) and
+            ($actual.blocks >= $limit.blocks.min and
+                $actual.blocks <= $limit.blocks.max)
+        ) and
+        ($usage[] |
+            select(.rule_name == "GTK IBus focus preedit string") |
+            .bytes == .blocks) and
+        $report.post_suppression.errors == 0 and
+        $report.post_suppression.definite_bytes == 0 and
+        $report.post_suppression.indirect_bytes == 0
+    ' "${report}" >/dev/null ||
+        fail "suppression usage exceeds or violates the acknowledged protocol ceiling: ${report}"
+    seen_protocol_ceilings["${ceiling_id}"]=1
+}
+
 project_suffix="${project_path#${repo_root}/}"
 for report in "${reports[@]}"; do
+    record_evidence_identity "${report}" "Valgrind report"
     jq -e '
-        (.raw.errors | type == "number") and
-        (.raw.definite_bytes | type == "number") and
-        (.raw.indirect_bytes | type == "number") and
-        (.post_suppression.errors | type == "number") and
-        (.post_suppression.definite_bytes | type == "number") and
-        (.post_suppression.indirect_bytes | type == "number") and
-        (.suppression_usage | type == "array")
+        try (
+            (.raw.errors | type == "number") and
+            (.raw.definite_bytes | type == "number") and
+            (.raw.indirect_bytes | type == "number") and
+            (.post_suppression.errors | type == "number") and
+            (.post_suppression.definite_bytes | type == "number") and
+            (.post_suppression.indirect_bytes | type == "number") and
+            (.suppression_usage | type == "array") and
+            (.effective_suppression_files | type == "array" and length > 0) and
+            all(.effective_suppression_files[];
+                (.path | type == "string" and length > 0) and
+                (.sha256 | type == "string" and test("^[0-9a-f]{64}$"))
+            ) and
+            (.optimize | type == "string" and length > 0) and
+            (.scenario | type == "string" and length > 0) and
+            (.display_backend | type == "string" and length > 0) and
+            (.valgrind_version | type == "string" and length > 0) and
+            (.valgrind_builtin_suppressions | type == "boolean") and
+            (.suppressed_exit_code |
+                type == "number" and . >= 0 and floor == .) and
+            (.raw_receipt | type == "string" and length > 0) and
+            (.suppressed_receipt | type == "string" and length > 0) and
+            (.report_generated_at_epoch |
+                type == "number" and . >= 0 and floor == .) and
+            ([.receipt_identities.raw, .receipt_identities.suppressed] | all(
+                (.sha256 | type == "string" and test("^[0-9a-f]{64}$")) and
+                (.captured_at_epoch |
+                    type == "number" and . >= 0 and floor == .)
+            ))
+        ) catch false
     ' "${report}" >/dev/null || fail "malformed Valgrind report: ${report}"
+    optimize="$(jq -r '.optimize' "${report}")"
+    report_scenario="$(jq -r '.scenario' "${report}")"
+    report_backend="$(jq -r '.display_backend' "${report}")"
+    case "${optimize}/${report_scenario}/${report_backend}" in
+        Debug/single/wayland|Debug/single/x11|\
+        Debug/interaction/wayland|Debug/interaction/x11|\
+        Debug/api/wayland|Debug/api/x11|\
+        Debug/ibus-focus/x11|\
+        ReleaseSafe/interaction/wayland|ReleaseSafe/interaction/x11) ;;
+        *) fail "invalid Valgrind report identity: ${optimize}/${report_scenario}/${report_backend}" ;;
+    esac
+    expected_report="${reports_dir}/memory-safety-${optimize}-${report_scenario}-${report_backend}.json"
+    [[ "${report}" == "${expected_report}" ]] ||
+        fail "Valgrind report identity does not match its canonical filename: ${report}"
+
+    expected_raw_receipt="${report%.json}.raw.log"
+    expected_suppressed_receipt="${report%.json}.suppressed.log"
     raw_receipt="$(jq -r '.raw_receipt' "${report}")"
     suppressed_receipt="$(jq -r '.suppressed_receipt' "${report}")"
-    [[ -f "${raw_receipt}" && -f "${suppressed_receipt}" ]] ||
-        fail "raw or suppressed receipt missing for ${report}"
-    jq -e --arg sha "${project_sha}" \
-        '.effective_suppression_files | any(.sha256 == $sha)' \
-        "${report}" >/dev/null || fail "project suppression absent from ${report}"
-    for sha in "${inherited_hashes[@]}"; do
-        jq -e --arg sha "${sha}" \
-            '.effective_suppression_files | any(.sha256 == $sha)' \
-            "${report}" >/dev/null || fail "inherited suppression absent from ${report}"
-    done
+    [[ "${raw_receipt}" == "${expected_raw_receipt}" ]] ||
+        fail "raw receipt path is not canonical for ${report}: ${raw_receipt}"
+    [[ "${suppressed_receipt}" == "${expected_suppressed_receipt}" ]] ||
+        fail "suppressed receipt path is not canonical for ${report}: ${suppressed_receipt}"
+    record_evidence_identity "${raw_receipt}" "raw receipt"
+    record_evidence_identity "${suppressed_receipt}" "suppressed receipt"
+    [[ -s "${raw_receipt}" ]] || fail "raw receipt missing or empty for ${report}"
+    [[ -s "${suppressed_receipt}" ]] ||
+        fail "suppressed receipt missing or empty for ${report}"
+
+    expected_raw_sha="$(jq -r '.receipt_identities.raw.sha256' "${report}")"
+    expected_suppressed_sha="$(jq -r '.receipt_identities.suppressed.sha256' "${report}")"
+    [[ "$(sha256sum -- "${raw_receipt}" | awk '{print $1}')" == "${expected_raw_sha}" ]] ||
+        fail "raw receipt checksum mismatch for ${report}"
+    [[ "$(sha256sum -- "${suppressed_receipt}" | awk '{print $1}')" == "${expected_suppressed_sha}" ]] ||
+        fail "suppressed receipt checksum mismatch for ${report}"
+
+    raw_captured_at_epoch="$(jq -r '.receipt_identities.raw.captured_at_epoch' "${report}")"
+    suppressed_captured_at_epoch="$(jq -r '.receipt_identities.suppressed.captured_at_epoch' "${report}")"
+    report_generated_at_epoch="$(jq -r '.report_generated_at_epoch' "${report}")"
+    [[ "$(stat -c %Y -- "${raw_receipt}")" == "${raw_captured_at_epoch}" ]] ||
+        fail "raw receipt capture epoch mismatch for ${report}"
+    [[ "$(stat -c %Y -- "${suppressed_receipt}")" == "${suppressed_captured_at_epoch}" ]] ||
+        fail "suppressed receipt capture epoch mismatch for ${report}"
+    if (( raw_captured_at_epoch > suppressed_captured_at_epoch ||
+        suppressed_captured_at_epoch > report_generated_at_epoch )); then
+        fail "Valgrind receipt chronology invalid for ${report}"
+    fi
+    if (( report_generated_at_epoch - raw_captured_at_epoch > max_capture_span_seconds )); then
+        fail "Valgrind receipt capture span is stale for ${report}"
+    fi
+    if (( report_generated_at_epoch > validation_now ||
+        validation_now - report_generated_at_epoch > max_report_age_seconds )); then
+        fail "stale Valgrind report: ${report}"
+    fi
+    if [[ "${report_scenario}" != "ibus-focus" ]]; then
+        if [[ "${report_backend}" == "x11" ]]; then
+            phase_wrapper="${nested_x11}"
+            phase_environment_field="x11_phase_environment"
+            phase_display_label="X11"
+        else
+            phase_wrapper="${nested_wayland}"
+            phase_environment_field="wayland_phase_environment"
+            phase_display_label="Wayland"
+        fi
+        zentty_valgrind_validate_display_phase_environment \
+            "${report}" "${report}" "${phase_wrapper}" \
+            "${report_backend}" \
+            "${max_capture_span_seconds}" ||
+            fail "ordinary ${phase_display_label} Valgrind phase isolation is invalid for ${report}"
+        record_evidence_identity \
+            "$(jq -r --arg field "${phase_environment_field}" \
+                '.[$field].raw.report' "${report}")" \
+            "raw nested ${phase_display_label} environment report"
+        record_evidence_identity \
+            "$(jq -r --arg field "${phase_environment_field}" \
+                '.[$field].suppressed.report' "${report}")" \
+            "suppressed nested ${phase_display_label} environment report"
+    fi
+
+    suppressed_exit_code="$(jq -r '.suppressed_exit_code' "${report}")"
+    zentty_valgrind_suppressed_status_allows_report \
+        "${optimize}" "${suppressed_exit_code}" ||
+        fail "suppressed exit code is not publishable for ${report}"
+    jq -e --arg expected_valgrind "${expected_valgrind}" '
+        .valgrind_version == $expected_valgrind and
+        .valgrind_builtin_suppressions == true
+    ' "${report}" >/dev/null ||
+        fail "Valgrind runtime or built-in suppression identity drifted for ${report}"
+    if [[ "${report_scenario}" == "ibus-focus" && "${optimize}" != "Debug" ]]; then
+        fail "IBus report has an invalid optimization mode: ${report}"
+    fi
+
+    jq -e --argjson expected "${expected_explicit_suppression_hashes}" '
+        (.effective_suppression_files | map(.sha256)) as $actual |
+        ($actual | length) == ($actual | unique | length) and
+        ($actual | sort) == ($expected | sort)
+    ' "${report}" >/dev/null ||
+        fail "effective explicit suppression file set mismatch for ${report}"
+
+    recomputed_raw_metrics="$(zentty_valgrind_metrics_json "${raw_receipt}")" ||
+        fail "cannot recompute raw metrics for ${report}"
+    jq -e --argjson recomputed "${recomputed_raw_metrics}" \
+        '.raw == $recomputed' "${report}" >/dev/null ||
+        fail "raw metrics do not match bound receipt for ${report}"
+    recomputed_post_metrics="$(zentty_valgrind_metrics_json "${suppressed_receipt}")" ||
+        fail "cannot recompute post-suppression metrics for ${report}"
+    jq -e --argjson recomputed "${recomputed_post_metrics}" \
+        '.post_suppression == $recomputed' "${report}" >/dev/null ||
+        fail "post-suppression metrics do not match bound receipt for ${report}"
+    recomputed_suppression_usage="$(zentty_valgrind_usage_json \
+        "${suppressed_receipt}" \
+        "${effective_suppression_paths[@]}")" ||
+        fail "cannot recompute suppression usage for ${report}"
+    receipt_usage_line_count="$(grep -Fc 'used_suppression:' \
+        "${suppressed_receipt}" || true)"
+    recomputed_usage_count="$(jq -r 'length' <<<"${recomputed_suppression_usage}")"
+    [[ "${receipt_usage_line_count}" -eq "${recomputed_usage_count}" ]] ||
+        fail "suppression usage contains an unrecognized file for ${report}"
+    jq -e --argjson recomputed "${recomputed_suppression_usage}" \
+        '.suppression_usage == $recomputed' "${report}" >/dev/null ||
+        fail "suppression usage does not match bound receipt for ${report}"
 
     scenario="$(jq -r '.optimize + "/" + .scenario + "/" + .display_backend' "${report}")"
     while IFS= read -r usage; do
@@ -162,11 +701,44 @@ for report in "${reports[@]}"; do
         --arg suffix "${project_suffix}" \
         '.suppression_usage[] | select(.file | endswith($suffix))' \
         "${report}")
+    if jq -e --arg scenario "${scenario}" \
+        '.usage_profiles | any(.scenario == $scenario)' \
+        "${manifest}" >/dev/null; then
+        jq -e \
+            --arg scenario "${scenario}" \
+            --arg suffix "${project_suffix}" \
+            --slurpfile manifest "${manifest}" '
+            . as $report |
+            [$manifest[0].usage_profiles[] |
+                select(.scenario == $scenario)] as $profiles |
+            any($profiles[];
+                . as $profile |
+                ($profile.rules | map(.rule_name)) as $profile_rule_names |
+                ([$report.suppression_usage[] |
+                    select(
+                        (.file | endswith($suffix)) and
+                        (.rule_name as $name |
+                            $profile_rule_names | index($name) != null)
+                    ) |
+                    {rule_name, matches, bytes, blocks}
+                ] | sort_by(.rule_name)) ==
+                ($profile.rules | sort_by(.rule_name))
+            )
+        ' "${report}" >/dev/null ||
+            fail "suppression usage does not match any reviewed exact profile for ${scenario}"
+    fi
+    validate_protocol_ceiling_report \
+        "${report}" "${scenario}" "${raw_receipt}" "${suppressed_receipt}"
 done
 
 while IFS= read -r required; do
     [[ -n "${seen[${required}]:-}" ]] ||
         fail "tracked suppression became stale: ${required}"
 done < <(jq -r '.rules[] | select(.required_usage == true) | .rule_name' "${manifest}")
+
+while IFS= read -r required_ceiling; do
+    [[ -n "${seen_protocol_ceilings[${required_ceiling}]:-}" ]] ||
+        fail "protocol ceiling was not exercised: ${required_ceiling}"
+done < <(jq -r '.protocol_ceilings[].id' "${manifest}")
 
 echo "Valgrind suppression governance passed"

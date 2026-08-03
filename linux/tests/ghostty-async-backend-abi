@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+prerequisite_failure() {
+    echo "ghostty-async-backend-abi: prerequisite error: $*" >&2
+    exit 77
+}
+
+for command in awk cat cc c++ git mktemp rm sed sha256sum; do
+    command -v "${command}" >/dev/null || prerequisite_failure "required command not found: ${command}"
+done
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+ghostty_source="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
+expected_revision="$(sed -n 's/^revision=//p' "${repo_root}/linux/ghostty.lock")"
+[[ -n "${expected_revision}" ]] || prerequisite_failure "linux/ghostty.lock has no revision"
+probe="${repo_root}/linux/tests/ghostty-async-backend-abi.c"
+[[ -f "${probe}" ]] || prerequisite_failure "representation probe source missing"
+if ! temp_dir="$(mktemp -d)"; then
+    prerequisite_failure "could not create a temporary directory"
+fi
+trap 'rm -rf "${temp_dir}"' EXIT
+
+git -C "${ghostty_source}" rev-parse --is-inside-work-tree >/dev/null 2>&1 ||
+    prerequisite_failure "Ghostty checkout missing: ${ghostty_source}"
+if ! actual_revision="$(git -C "${ghostty_source}" rev-parse HEAD)"; then
+    prerequisite_failure "could not resolve Ghostty checkout revision"
+fi
+[[ "${actual_revision}" == "${expected_revision}" ]] ||
+    prerequisite_failure "Ghostty checkout is not the locked revision"
+if ! checkout_status="$(git -C "${ghostty_source}" status --porcelain)"; then
+    prerequisite_failure "could not inspect Ghostty checkout status"
+fi
+[[ -z "${checkout_status}" ]] ||
+    prerequisite_failure "Ghostty checkout is dirty"
+
+include_dir="${ghostty_source}/include"
+source_header="${include_dir}/ghostty/gtk.h"
+installed_header="${ghostty_source}/zig-out/include/ghostty/gtk.h"
+[[ -f "${source_header}" ]] || prerequisite_failure "public Ghostty GTK source header missing"
+if [[ -f "${installed_header}" ]] &&
+   [[ "$(sha256sum "${installed_header}" | awk '{print $1}')" != "$(sha256sum "${source_header}" | awk '{print $1}')" ]]; then
+    prerequisite_failure "generated installed header differs from the pinned source header"
+fi
+
+for language in c17 c++17; do
+    compiler=cc
+    standard=c17
+    language_flags=()
+    if [[ "${language}" == "c++17" ]]; then
+        compiler=c++
+        standard=c++17
+        language_flags+=(-x c++)
+    fi
+    for mode in default short; do
+        representation_flags=()
+        if [[ "${mode}" == "short" ]]; then
+            representation_flags+=(-fshort-enums)
+        fi
+        if ! "${compiler}" -std="${standard}" -Wall -Wextra -Werror -Wpedantic \
+            "${language_flags[@]}" "${representation_flags[@]}" \
+            -I"${include_dir}" "${probe}" -o "${temp_dir}/${language}-${mode}"; then
+            prerequisite_failure "${language}/${mode} representation probe did not compile"
+        fi
+        "${temp_dir}/${language}-${mode}" >"${temp_dir}/${language}-${mode}.out" ||
+            prerequisite_failure "${language}/${mode} representation probe did not run"
+        cat "${temp_dir}/${language}-${mode}.out"
+    done
+done
+
+expected_values='values=0,1,2'
+declare \
+    c17_default_enum_size="" c17_default_c_int_size="" \
+    c17_short_enum_size="" c17_short_c_int_size="" \
+    cxx17_default_enum_size="" cxx17_default_c_int_size="" \
+    cxx17_short_enum_size="" cxx17_short_c_int_size=""
+for language in c17 c++17; do
+    for mode in default short; do
+        output="$(cat "${temp_dir}/${language}-${mode}.out")"
+        [[ "${output}" == *"language=${language}"* && "${output}" == *"${expected_values}"* ]] ||
+            prerequisite_failure "${language}/${mode} output or discriminants changed"
+        enum_size="$(sed -n 's/.*enum_size=\([0-9][0-9]*\).*/\1/p' <<<"${output}")"
+        c_int_size="$(sed -n 's/.*c_int_size=\([0-9][0-9]*\).*/\1/p' <<<"${output}")"
+        [[ -n "${enum_size}" && -n "${c_int_size}" ]] || prerequisite_failure "${language}/${mode} output could not be parsed"
+        printf -v "${language//+/x}_${mode}_enum_size" '%s' "${enum_size}"
+        printf -v "${language//+/x}_${mode}_c_int_size" '%s' "${c_int_size}"
+    done
+done
+
+[[ "${c17_default_enum_size}" == "${c17_default_c_int_size}" &&
+   "${cxx17_default_enum_size}" == "${cxx17_default_c_int_size}" ]] ||
+    prerequisite_failure "default enum representation differs from c_int"
+[[ "${c17_default_c_int_size}" == "${c17_short_c_int_size}" &&
+   "${cxx17_default_c_int_size}" == "${cxx17_short_c_int_size}" &&
+   "${c17_default_c_int_size}" == "${cxx17_default_c_int_size}" ]] ||
+    prerequisite_failure "c_int representation differs across language/compiler modes"
+[[ "${c17_short_enum_size}" == "${cxx17_short_enum_size}" ]] ||
+    prerequisite_failure "C17 and C++17 short-enum representations disagree"
+
+if [[ "${c17_short_enum_size}" == "${c17_short_c_int_size}" ]]; then
+    echo "ghostty-async-backend-abi: compatible fixed-width representation"
+    exit 0
+fi
+
+echo "ghostty-async-backend-abi: XFAIL enum_size=${c17_short_enum_size} c_int_size=${c17_short_c_int_size} under -fshort-enums" >&2
+exit 99

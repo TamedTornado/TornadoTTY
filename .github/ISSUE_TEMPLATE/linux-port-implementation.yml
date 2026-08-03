@@ -1,0 +1,63 @@
+name: Linux port implementation slice
+description: Test-first Rust product behavior against real Linux services
+title: "Linux: "
+labels:
+  - linux
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Follow [`linux/test-policy/README.md`](../../linux/test-policy/README.md).
+        The C executable is a disposable qualification host, not the product.
+        Environmental absence is BLOCKED or NOT_IMPLEMENTED, never PASS.
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: State observable product behavior, failure behavior, and ownership/lifecycle requirements.
+    validations:
+      required: true
+  - type: input
+    id: cells
+    attributes:
+      label: Qualification-cell IDs
+      description: Name every affected matrix cell and required display/build/backend/cardinality axis.
+      placeholder: product-example-wayland, product-example-x11
+    validations:
+      required: true
+  - type: textarea
+    id: real_boundary
+    attributes:
+      label: Real system boundary
+      description: Name the delivered Rust executable and real Ghostty, GTK, PTY, display, input, IME, filesystem, or packaging services exercised.
+    validations:
+      required: true
+  - type: textarea
+    id: red
+    attributes:
+      label: Required failing tests
+      description: Describe the focused failure and real product-boundary failure that must exist before implementation. Missing tools, compile failure, skip, timeout, or screenshot-only evidence does not count.
+    validations:
+      required: true
+  - type: textarea
+    id: negative
+    attributes:
+      label: Negative and lifecycle cases
+      description: Include applicable misuse, teardown, callback, concurrency, interruption, and rollback behavior.
+    validations:
+      required: true
+  - type: checkboxes
+    id: discipline
+    attributes:
+      label: Completion discipline
+      options:
+        - label: The production behavior will be written only after its focused and real-boundary tests fail for the intended reason.
+          required: true
+        - label: Product integrations will launch the delivered Rust artifact without an alternate test implementation.
+          required: true
+        - label: Required matrix gaps will remain explicit until their real cells execute successfully.
+          required: true
+        - label: Every discovery, failure, repair, command, and limitation will be recorded in dogfood.
+          required: true
+        - label: The focused diff will be reviewed, tested, committed, and pushed before the next milestone.
+          required: true

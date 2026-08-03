@@ -2,4 +2,24 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+support_tests=(
+    linux/tests/qualification-matrix-test
+    linux/tests/lib/controlled-environment-test
+    linux/tests/isolated-session-test
+    linux/tests/nested-x11-test
+    linux/tests/nested-wayland-test
+    linux/tests/controlled-x11-test
+    linux/tests/controlled-ibus-x11-test
+    linux/tests/qualification-host-freeze-test
+    linux/tests/ghostty-async-backend-abi-test
+    linux/tests/suppression-governance-test
+)
+
+for test_path in "${support_tests[@]}"; do
+    echo "support: ${test_path}"
+    "${repo_root}/${test_path}"
+done
+
+echo "product/dependency matrix: linux/tests/qualification-matrix"
 exec "${repo_root}/linux/tests/qualification-matrix"

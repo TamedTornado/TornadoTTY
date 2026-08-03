@@ -1,0 +1,163 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+validator="${repo_root}/linux/tests/lib/controlled-environment"
+temp_dir="$(mktemp -d)"
+trap 'rm -rf -- "${temp_dir}"' EXIT
+
+fail() {
+    echo "controlled-environment-test: error: $*" >&2
+    exit 1
+}
+
+expect_failure() {
+    local name="$1"
+    shift
+    if "$@" >"${temp_dir}/${name}.out" 2>"${temp_dir}/${name}.err"; then
+        fail "${name} unexpectedly passed"
+    fi
+}
+
+[[ -f "${validator}" ]] || fail "shared validator is missing: ${validator}"
+# shellcheck source=linux/tests/lib/controlled-environment
+source "${validator}"
+
+now="$(date +%s)"
+started="$((now - 2))"
+finished="$((now - 1))"
+command_json='["bash","-o","pipefail","-c","true"]'
+
+write_report() {
+    local backend="$1"
+    local report="$2"
+    local wrapper="${repo_root}/linux/tests/isolated-session"
+    case "${backend}" in
+        x11) wrapper="${repo_root}/linux/tests/nested-x11" ;;
+        wayland) wrapper="${repo_root}/linux/tests/nested-wayland" ;;
+    esac
+    local wrapper_sha
+    wrapper_sha="$(sha256sum -- "${wrapper}" | awk '{print $1}')"
+
+    jq -n \
+        --arg backend "${backend}" \
+        --arg wrapper "${wrapper}" \
+        --arg wrapper_sha "${wrapper_sha}" \
+        --arg session "$(printf '%s\n' "${report}" | sha256sum | awk '{print $1}')" \
+        --argjson started "${started}" \
+        --argjson finished "${finished}" \
+        --argjson command "${command_json}" '
+        {
+          schema_version:1,session_id:$session,backend:$backend,
+          wrapper:{path:$wrapper,sha256:$wrapper_sha},
+          started_at_epoch:$started,finished_at_epoch:$finished,
+          command:$command,command_exit_code:0
+        } + if $backend == "none" then {
+          server:null,renderer:null,
+          environment:{
+            home_isolated:true,xdg_isolated:true,tmp_isolated:true,mode:"0700",
+            policy:{gsettings_backend:"memory",gio_use_vfs:"local",no_at_bridge:"1",gtk_a11y:"none"}
+          },
+          isolation:{
+            ambient_display_sanitized:true,ambient_dbus_sanitized:true,
+            ambient_ibus_sanitized:true,process_group:4101,
+            run_root_removed:true,remaining_processes:[]
+          }
+        } elif $backend == "x11" then {
+          server:{name:"Xvfb",endpoint:":9753",vendor:"fixture",vendor_release:"1"},
+          renderer:{software:true,name:"llvmpipe (fixture)",vendor:"fixture",version:"1"},
+          isolation:{
+            ambient_display_sanitized:true,ambient_dbus_sanitized:true,
+            process_group:4102,run_root_removed:true,
+            display_unreachable_after:true,remaining_processes:[]
+          }
+        } else {
+          server:{
+            name:"Weston",version:"13.0.0",backend:"headless",
+            endpoint:"wayland-z-0123456789abcdef",width:1280,height:1024,
+            scale:1,protocols:["wl_compositor","wl_output","wl_shm","xdg_wm_base"],
+            wayland_info_sha256:("a" * 64)
+          },
+          renderer:{software:true,name:"Pixman",proof:"Using Pixman renderer"},
+          isolation:{
+            ambient_display_sanitized:true,ambient_dbus_sanitized:true,
+            process_group:4103,run_root_removed:true,
+            display_unreachable_after:true,remaining_processes:[]
+          }
+        } end
+    ' >"${report}"
+    touch -d "@${now}" "${report}"
+}
+
+for backend in none x11 wayland; do
+    report="${temp_dir}/${backend}.environment.json"
+    write_report "${backend}" "${report}"
+    wrapper="${repo_root}/linux/tests/isolated-session"
+    [[ "${backend}" == x11 ]] && wrapper="${repo_root}/linux/tests/nested-x11"
+    [[ "${backend}" == wayland ]] && wrapper="${repo_root}/linux/tests/nested-wayland"
+    identity="$(zentty_controlled_environment_validate_report \
+        "${report}" "${wrapper}" "${backend}" 0 \
+        "${command_json}" "$((started - 1))" 900)" ||
+        fail "valid ${backend} report was rejected"
+    jq -e \
+        --arg path "${report}" \
+        --arg session "$(jq -r '.session_id' "${report}")" '
+        (keys | sort) == ["evidence_file","session_id"] and
+        .session_id == $session and
+        .evidence_file.path == $path and
+        (.evidence_file.sha256 | test("^[0-9a-f]{64}$")) and
+        (.evidence_file.captured_at_epoch | type == "number")
+    ' <<<"${identity}" >/dev/null || fail "${backend} identity is malformed"
+    zentty_controlled_environment_revalidate_identity \
+        "$(jq -c '.evidence_file' <<<"${identity}")" ||
+        fail "${backend} evidence identity did not revalidate"
+done
+
+expect_failure missing-report \
+    zentty_controlled_environment_validate_report \
+    "${temp_dir}/missing.json" "${repo_root}/linux/tests/nested-x11" x11 0 \
+    "${command_json}" "$((started - 1))" 900
+
+ln -s "${temp_dir}/x11.environment.json" "${temp_dir}/symlink.environment.json"
+expect_failure symlink-report \
+    zentty_controlled_environment_validate_report \
+    "${temp_dir}/symlink.environment.json" "${repo_root}/linux/tests/nested-x11" x11 0 \
+    "${command_json}" "$((started - 1))" 900
+
+mutate_and_reject() {
+    local name="$1"
+    local filter="$2"
+    local backend="${3:-x11}"
+    local wrapper="${repo_root}/linux/tests/nested-x11"
+    [[ "${backend}" == none ]] && wrapper="${repo_root}/linux/tests/isolated-session"
+    local mutated="${temp_dir}/${name}.json"
+    jq "${filter}" "${temp_dir}/${backend}.environment.json" >"${mutated}"
+    touch -d "@${now}" "${mutated}"
+    expect_failure "${name}" \
+        zentty_controlled_environment_validate_report \
+        "${mutated}" "${wrapper}" "${backend}" 0 \
+        "${command_json}" "$((started - 1))" 900
+}
+
+mutate_and_reject wrong-backend '.backend = "wayland"'
+mutate_and_reject wrong-wrapper-hash '.wrapper.sha256 = ("f" * 64)'
+mutate_and_reject wrong-exit '.command_exit_code = 42'
+mutate_and_reject wrong-command '.command = ["true"]'
+mutate_and_reject invalid-process-group '.isolation.process_group = 0'
+mutate_and_reject open-world-shape '.isolation.unreviewed = true'
+mutate_and_reject invalid-none-policy '.environment.policy.gsettings_backend = "keyfile"' none
+
+expect_failure stale-report \
+    zentty_controlled_environment_validate_report \
+    "${temp_dir}/x11.environment.json" "${repo_root}/linux/tests/nested-x11" x11 0 \
+    "${command_json}" "$((started + 1))" 900
+
+x11_identity="$(zentty_controlled_environment_validate_report \
+    "${temp_dir}/x11.environment.json" "${repo_root}/linux/tests/nested-x11" x11 0 \
+    "${command_json}" "$((started - 1))" 900)"
+printf '\n' >>"${temp_dir}/x11.environment.json"
+expect_failure changed-identity \
+    zentty_controlled_environment_revalidate_identity \
+    "$(jq -c '.evidence_file' <<<"${x11_identity}")"
+
+echo "Controlled environment validator tests passed"

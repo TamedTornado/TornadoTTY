@@ -358,7 +358,7 @@ the event. Real GTK controller and IME coverage remains a separate gate.
 
 - **Observation:** A post-change full regression invocation inside the
   filesystem sandbox failed before compilation with `ReadOnlyFileSystem` for
-  `/home/jason/.cache/zig` and secondary `manifest_create Unexpected` errors.
+  `$HOME/.cache/zig` and secondary `manifest_create Unexpected` errors.
 - **Consequence:** That invocation supplied no source-code test result.
 - **Diagnosis:** Ghostty's already-populated Zig package and compiler caches are
   outside the workspace write roots.
@@ -1063,7 +1063,7 @@ behavior rather than executable contracts.
   diagnosed system Fontconfig/IBus caches, Wayland reports zero
   definite/indirect bytes and 695 errors; X11 reports 160 definite bytes, 66
   indirect bytes, and 668 errors.
-- **Consequence:** A Debug-only clean result may not be represented as memory
+- **Consequence:** A Debug zero-after-suppression result may not be represented as memory
   qualification for the shipped optimization mode.
 - **Repair:** Make ReleaseSafe Valgrind a command-backed XFAIL on both display
   backends with this tracking ID. The runner treats exit 77 as an unexpected
@@ -1123,7 +1123,8 @@ behavior rather than executable contracts.
   `libfontconfig.so`, Pango metrics consumption, and indirect-only child
   records. Do not suppress possible leaks or Ghostty-library allocation roots.
 - **Evidence:** After repair, one- and four-surface Debug runs on both Wayland
-  and X11 report semantic PASS, zero definite/indirect bytes, and zero errors.
+  and X11 report semantic PASS and, in their suppression-enabled receipts,
+  zero definite/indirect bytes and zero errors.
 - **Outcome:** External process-global cache isolated without weakening the
   Ghostty memory boundary.
 
@@ -1175,14 +1176,15 @@ behavior rather than executable contracts.
   only those external caches. Possible leaks and any Ghostty allocation root
   remain unsuppressed.
 - **Evidence:** The repaired four-surface Debug X11 cell reports the exact
-  semantic PASS, zero definite/indirect bytes, and zero errors in both its
-  focused rerun and the final complete matrix.
+  semantic PASS and, in its suppression-enabled receipt, zero
+  definite/indirect bytes and zero errors in both its focused rerun and the
+  final complete matrix.
 - **Outcome:** Backend-specific external cache behavior isolated without
   weakening product-owned leak detection.
 
-### Final authoritative matrix result
+### Historical 64-cell matrix checkpoint
 
-- **Command:** `GHOSTTY_SOURCE_DIR=/home/jason/Projects/ghostty
+- **Command:** `GHOSTTY_SOURCE_DIR=<pinned-ghostty-checkout>
   linux/tests/qualify-local`
 - **Pinned dependency:**
   `5fc8fa2cf4b27bfe27072d561de98f33b2c16636`, clean tree,
@@ -1210,18 +1212,22 @@ behavior rather than executable contracts.
   `*.raw.log` and `*.suppressed.log` receipts plus a JSON record. “Raw” means
   no Ghostty or Zentty suppression file; Valgrind 3.22.0 built-in
   suppressions remain active and are declared in the manifest. The matrix
-  summary embeds raw and post-suppression totals and rule usage. Debug results
-  are named **PASS with reviewed suppressions**. This paragraph supersedes any
-  older wording above that could be read as an unsuppressed-clean result.
-- **Raw evidence:** The final 40-frame Debug product receipts expose expected
+  summary embeds raw and post-suppression totals and rule usage. At that
+  checkpoint, after governance accepted the complete evidence set, matrix
+  Debug results were named **PASS with reviewed suppressions**. Producers emit
+  only suppression-enabled candidates pending governance. This paragraph
+  supersedes any older wording above that could be read as an
+  unsuppressed-clean result.
+- **Raw evidence:** The final 40-frame Debug qualification-host raw/candidate
+  receipt pairs expose expected
   system cache findings rather than zero totals: single/interaction Wayland
   each report 242 errors, 3,296 definitely-lost bytes, and 28,606
   indirectly-lost bytes; single X11 reports 141, 2,016, and 14,406;
   interaction X11 reports 247, 3,376, and 28,643. API-only Wayland/X11 report
-  4/352/132 and 5/408/132 respectively. The reviewed Debug receipts reduce those reported
-  error, definite-byte, and indirect-byte totals to zero. These figures are
-  evidence for reviewed suppression behavior, not a product claim of raw
-  cleanliness.
+  4/352/132 and 5/408/132 respectively. The then-governance-accepted
+  suppression-enabled receipts reduce those reported error, definite-byte,
+  and indirect-byte totals to zero. These figures are evidence for reviewed
+  suppression behavior, not a product claim of raw cleanliness.
 - **Manifest:** `linux/tests/valgrind-suppressions.json` gives each of the nine
   project rules a tracking ID, exact finding type, affected package versions
   and environment, expected match/byte range, scenario allowlist,
@@ -1299,40 +1305,49 @@ behavior rather than executable contracts.
   failed reproduction attempt, never converted into a pass.
 - **Repair:** `ibus-focus-reproducer.c` is a standalone GtkApplication using
   ordinary GTK entries and `GtkIMMulticontext`; it neither links nor loads
-  Ghostty. On the controlled current Xwayland session with
-  `GTK_IM_MODULE=ibus`, repeated focus-in/focus-out reproduces allocations
-  rooted at `ibus_text_new_from_string` in `libim-ibus.so`.
+  Ghostty. It explicitly selects context ID `ibus`, verifies that
+  `IBusIMContext` is registered as a `GtkIMContext`, separates focus-in and
+  focus-out across main-loop ticks, and retrieves complete preedit state while
+  focused. Both independent receipts must contain the delegate/type marker;
+  the raw receipt must additionally retain `ibus_text_new_from_string` and
+  `libim-ibus.so` stacks.
 - **Lifecycle check:** Adding explicit client detachment initially placed it
   after window destruction. Valgrind immediately exposed two invalid reads in
   GTK/IBus because detachment consulted the already-freed widget. Moving
   `gtk_im_context_set_client_widget(context, NULL)` before window destruction
   removes that reproducer-owned lifecycle defect; it was not suppressed.
-- **Evidence:** The initial focus-only raw receipt reported 77 errors, 1,920
-  definitely-lost bytes, and 14,424 indirectly-lost bytes. After the same
-  harness was extended to deterministically exercise both Pango roots, the
-  combined raw receipt reports 334 errors, 4,480 definite bytes, and 27,001
-  indirect bytes. Its reviewed receipt reaches zero for those totals and
-  records exact per-scenario rule counts. The IBus allocation stack terminates
-  in the reproducer's focus driver rather than `Surface.updateFocus`.
+- **Evidence:** The repaired raw receipt reports 334 errors, 4,640 definite
+  bytes, and 27,067 indirect bytes and contains the delegate marker plus IBus
+  constructor/module stacks terminating in `advance_focus`. Its independent
+  then-governance-accepted suppression-enabled receipt reaches zero errors and
+  zero definite/indirect loss. The
+  focused-only suppression usage is exactly 6 matches/870 bytes/12 blocks for
+  the preedit object and 3 matches/6 bytes/6 blocks for its string child;
+  scenario-specific bounds govern those standalone counts while
+  qualification-host interaction scenarios retain the narrower shared bounds.
 - **Remaining uncertainty:** External reproducibility makes an IBus/GTK cache
   diagnosis credible but does **not** absolve Ghostty of lifecycle
   responsibility. The rules remain narrowly bounded to IBus construction,
-  scenario-restricted, count-limited, and auditable.
+  scenario-restricted, count-limited, and auditable. The raw process still
+  emits an IBus event-queue warning, so this proves the forced GTK IBus
+  allocation path—not daemon/engine readiness or IME composition. The product
+  IME qualification cells remain non-PASS.
 
 ### ReleaseSafe remains an evidence-bearing XFAIL
 
 - **Decision:** The project suppression set was not broadened to make the
   optimized build green. Both ReleaseSafe Valgrind cells retain raw and
-  reviewed receipts, return their nonzero Memcheck status, and remain tracked
-  XFAILs. Governance treats a zero result as stale XFAIL rather than silently
-  promoting it.
+  suppression-enabled candidate receipts; governance records their
+  classification without converting the nonzero Memcheck result into PASS.
+  They remain tracked XFAILs. Governance treats a zero result as stale XFAIL
+  rather than silently promoting it.
 - **Qualification consequence:** Neither release nor full Linux qualification
   may be claimed while these or any other required matrix cells are XFAIL,
   BLOCKED, FAIL, or NOT_IMPLEMENTED.
 
-### Suppression-governed authoritative matrix result
+### Historical 66-cell suppression-governed checkpoint
 
-- **Command:** `GHOSTTY_SOURCE_DIR=/home/jason/Projects/ghostty
+- **Command:** `GHOSTTY_SOURCE_DIR=<pinned-ghostty-checkout>
   linux/tests/qualify-local`
 - **Pinned dependency:** Ghostty
   `5fc8fa2cf4b27bfe27072d561de98f33b2c16636`, clean; the matrix restored the
@@ -1357,10 +1372,2203 @@ behavior rather than executable contracts.
 - **Limitation:** This is not exhaustive QA. Eleven declared cells remain
   BLOCKED, XFAIL, or NOT_IMPLEMENTED.
 
-The experiment remains an internal Zig/GTK integration surface rather than a
-public Ghostty ABI. Any extraction proposed upstream should be smaller than the
-fork's test harness, preserve the legacy constructor, and be independently
-reviewable.
+### DOGFOOD-2026-08-02-RUST-ARCHITECTURE-CONTRACT: qualification host was still described as the product
+
+- **Evidence identity:** Architecture work started from Zentty
+  `8c08e7ed987d46fcda65d716cf02845a2c98b285` and the locked Ghostty
+  `5fc8fa2cf4b27bfe27072d561de98f33b2c16636`. `gh issue view` first failed on
+  GitHub's Projects Classic GraphQL deprecation, so the exact #1, #2, and #12
+  bodies were read with `gh api repos/TamedTornado/zentty/issues/{1,2,12}`.
+  The local evidence host reports Rust 1.93.0 and GTK 4.14.5.
+- **Observation and impact:** `linux/README.md` called `linux/src/main.c` the
+  “minimal GTK product executable” even though epic #1 and issues #2/#13
+  ratify it as qualification evidence only. Leaving that description in place
+  invited product state, commands, and UI to accrete in the disposable C
+  harness and contradicted the required retirement path.
+- **Repair:** The README now calls it the C qualification host, freezes it to
+  qualification behavior, and points to the normative Rust + `gtk4-rs` ADR.
+  No C behavior or Cargo product bootstrap was added.
+- **Terminology supersession:** Earlier phrases in this chronological report
+  such as “actual Zentty host,” “real Zentty executable,” “product-owned” panes,
+  “product receipts,” and “product boundary” referred to the transitional C
+  qualification host. Those historical labels are non-authoritative and are
+  superseded by the qualification-host classification; their retained evidence
+  does not establish delivered Rust/GTK product behavior. The authoritative
+  status and boundary remain `linux/qualification-matrix.json` and
+  `linux/test-policy/traceability.json`.
+- **Inventory discovery:** The macOS sources do not form one portable layer.
+  `WorklaneStore`/`PaneStripState`, `WorkspaceRecipe`/`SessionRestoreStore`,
+  typed pane/action routing, `Libghostty*`, agent projection, server discovery,
+  configuration, and AppKit platform integrations are separate
+  responsibilities. The accepted Linux split therefore keeps semantic
+  workspace/command/persistence/agent projection in `zentty-core`; confines
+  raw ABI and safe GTK ownership to `zentty-ghostty-sys` and
+  `zentty-ghostty`; and leaves GTK/platform composition to `zentty-linux`.
+  `zentty-test-support` is non-shipped and cannot select a parallel product
+  implementation.
+- **Rejected approaches:** Extending the C host, porting AppKit/Swift, adding
+  Electron, and choosing a non-GTK Rust UI were rejected because each either
+  preserves the qualification-host mistake or introduces a second native
+  rendering/embedding boundary. A second general-purpose async runtime was
+  also rejected by default; the GLib main context remains authoritative.
+- **Ownership discovery:** The current Ghostty header says only that “normal
+  GTK container ownership rules apply” to a created surface; it does not state
+  an exact floating/full/borrowed transfer. The C host's
+  `g_object_ref_sink` is usage evidence, not a language-neutral ownership
+  contract. The ADR therefore keeps the Rust constructor internal/unsafe until
+  #11 first adds an explicit header contract and a matching native ref/finalize
+  test; that scoped proof is a hard prerequisite for #13 to perform exactly one
+  matching gtk4-rs adoption operation. An
+  earlier draft that assumed a floating transfer was rejected before final
+  validation. A later lifetime review also rejected tying the runtime lease to
+  the Rust surface owner: GTK parent or child traversal can retain another
+  native reference. The final contract attaches a counted lease as stable
+  per-surface GObject qdata, releases it only from the native destroy notify,
+  and defers final runtime free on the GLib UI thread without blocking that
+  thread waiting for finalization.
+- **Compatibility decision:** An early draft made Rust 1.88 both the normal
+  pin and MSRV while also naming two jobs; that was incoherent and provided no
+  principled reason for 1.88. The accepted contract instead pins the
+  normal/release compiler to official current stable 1.97.1 and sets the
+  separate MSRV to 1.85.0, the first edition-2024 compiler. This floor is
+  deliberately not gtk4-rs's transitive minimum: current gtk4-rs 0.11.3
+  documents Rust 1.83. Native GTK is separate again; the bootstrap may enable
+  at most gtk4-rs `v4_14` APIs so Ubuntu 24.04's observed GTK 4.14.5 remains
+  supported. #13 owns the actual bootstrap and distinct pinned/MSRV jobs; the
+  observed local Rust 1.93 does not establish either job. The final job
+  contract is exact: normal CI uses the pinned compiler, committed lockfile,
+  shipped/default graph plus separately reviewed all-features coverage; the
+  MSRV job uses that same locked shipped/default graph rather than a minimal
+  feature subset. The native floor job builds and runs that locked graph
+  against GTK 4.14 with at most `v4_14` APIs.
+- **Persistence contract:** The committed strict v1 JSON Schema and fixtures
+  cover stable IDs, contiguous order, layout, active selections, CWD,
+  an approved non-secret `launch_profile_id` reference, and a narrowly
+  classified non-secret agent resume ID. Free-form program/argv, headers,
+  environment, and secret-provider results are not serializable; the platform
+  resolves the profile and any secret handles only into transient launch data.
+  Unknown/newer fields and corrupt data are preserved and block automatic
+  overwrite; v0 migrates sequentially; successful writes use a private
+  same-directory temporary file, file fsync, atomic rename, and directory
+  fsync. Credentials, clipboard contents, transcripts, arbitrary environment,
+  and unapproved secrets are absent by allow-list rather than post-hoc
+  redaction. Both the JSON Schema and executable jq semantic rules have pinned
+  SHA-256 values so a semantic-only edit cannot silently redefine v1.
+- **Validator false-negative found and repaired:** The first jq rule named its
+  parameter `$keys`, which collided with the `keys` filter and let the seeded
+  unknown-field fixture pass. Active-ID expressions also needed parentheses
+  to prevent pipe precedence from bypassing preceding checks. Renaming the
+  parameter, making reference predicates explicit, and retaining a negative
+  self-test restored strict rejection. Two earlier validator implementation
+  errors (a lost crate context inside `all`, and an unparenthesized schema
+  `startswith`) failed closed and were fixed; neither produced a false PASS.
+- **Post-green layout regression:** After the first green receipt, the schema
+  was strengthened to model weighted pane columns rather than one ambiguous
+  worklane weight. The next independent run failed the valid fixture with
+  `Cannot iterate over null`: `all($columns[]; ...)` changed jq's current value
+  to a column before the predicate tried `.panes[]`. Capturing the worklane as
+  `$worklane` before iterating columns repaired the validator. The complete
+  focused plus matrix-governance command below was rerun after that repair;
+  the earlier green receipt is superseded.
+- **Adversarial contract review and repair:** A second review found that the
+  earlier green artifacts were not yet sufficiently mechanical. The final
+  machine contract now requires Ghostty runtime creation before `gtk_init`,
+  `GtkApplication`, or any GTK object and names fresh-process positive and
+  isolated GTK-first misuse assertions. It distinguishes durable `PaneRecord`
+  topology from optional transient `TerminalInstance` state: restore commits
+  topology first and retains failed/retry panes, new-pane construction uses a
+  draft before atomic model commit, and application shutdown never routes
+  ordinary close mutations. Shutdown now has one asserted order: stop input;
+  cancel/join producers; quiesce callbacks and recurring sources; drain or
+  explicitly discard queued events; freeze/validate; atomically save; destroy
+  transient terminal and GTK projections; then free the runtime after native
+  finalization and release GLib. This correction supersedes any earlier prose
+  that implied ordinary pane closes during application teardown.
+- **Adversarial validator gaps and repair:** The same review added negative
+  proof for duplicate and gapped layout rows/columns, cross-type stable-ID
+  collisions, nonpositive weights, dangling columns, and embedded NUL. Secret
+  probes now cover Basic, Digest, Authorization and API-key headers, bearer and
+  provider-token shapes, in addition to forbidden key names and URL userinfo.
+  A semantic-rule checksum mutation is tested independently from the schema
+  checksum. During that negative-test work, the first changed-schema seed
+  modified an asserted CWD pattern and therefore correctly failed at the shape
+  invariant before reaching the intended checksum diagnostic; changing only
+  the schema description made the checksum test exercise the intended path.
+  This was a self-test targeting error, not a false architecture PASS.
+- **Focused regression proof:**
+  `bash -n docs/architecture/tests/validate-architecture
+  docs/architecture/tests/validate-architecture-test` passed.
+  `docs/architecture/tests/validate-architecture` reports
+  `Architecture contract and workspace schema fixtures passed`.
+  `docs/architecture/tests/validate-architecture-test` reports
+  `Architecture validator negative self-tests passed`. The latter observes
+  rejection of an illegal dependency edge, unsafe core policy, missing
+  lifetime owner, reordered startup/shutdown, premature or blocking runtime
+  lease policy, a minimal-feature-only MSRV job, drifted #12 traceability,
+  invalid proposed matrix status, permissive or silently changed v1 schema,
+  silently changed semantic rules, accepted malformed/old/unknown fixtures,
+  duplicate and cross-type stable IDs, dangling active IDs/columns, gapped or
+  duplicate order/rows/columns, nonpositive weights, embedded NUL, and seeded
+  fake Basic/Digest/Bearer/header/provider secret shapes.
+- **Existing test-system compatibility:**
+  `linux/tests/qualification-matrix --validate-only` reports
+  `Qualification matrix schema and coverage passed`, and
+  `linux/tests/qualification-matrix-test` reports
+  `Qualification matrix runner tests passed`. These are matrix-governance
+  receipts, not execution of the product/qualification-host cells.
+- **Authoritative-matrix boundary:** This stream did not edit
+  `linux/qualification-matrix.json`; #12 owns authoritative granularity and
+  reconciliation. The final limited proposal uses #12's exact vocabulary:
+  capabilities `product_boundary`, `architecture_contract`,
+  `workspace_schema`, `workspace_persistence`, `workspace_restore`,
+  `product_worklanes`, `recovery`, `platform_xdg_paths`, `platform_open`,
+  `platform_notifications`, `platform_clipboard`, `platform_settings`, and
+  `platform_process_launch`, with cells `product-boundary-wayland`,
+  `product-boundary-x11`, `architecture-contract-v1`,
+  `workspace-schema-v1-contract`, `workspace-persistence-unit`,
+  `product-workspace-restore-wayland`, `product-workspace-restore-x11`,
+  `product-worklanes-wayland`, `product-worklanes-x11`,
+  `workspace-recovery-interrupted-write`,
+  `workspace-recovery-corrupt-state`, `platform-xdg-paths-contract`,
+  `platform-open-url-file-contract`,
+  `platform-notification-portal-contract`, `platform-clipboard-wayland`,
+  `platform-clipboard-x11`, `platform-settings-contract`, and
+  `platform-process-launch-contract`. It also pins the matching #12 requirement
+  and test IDs (`ZL-2-*`, `ZL-6-RECOVERY`, `ZL-7-PLATFORM-SERVICES`, and
+  `ZL-13-RUST-GHOSTTY-ADAPTER`) and exact display/optimization/async/terminal
+  axes. The machine contract proposes the two currently executable design
+  checks as `PASS` and every product/implementation cell as tracked
+  `NOT_IMPLEMENTED`; all carry
+  `authoritative: false` until #12 reconciles them.
+- **Outcome and limits:** The architecture and fixtures are executable design
+  contracts only. They do not implement or qualify the Rust product. #3–#13
+  retain their named implementation, recovery, parity, compositor, packaging,
+  API, test-system, and bootstrap work. Release/full qualification remain NOT
+  PASSED, the existing ReleaseSafe Valgrind XFAILs remain unchanged, and the
+  proposed matrix cells are not authoritative until #12 adds them with honest
+  initial states.
+
+## 2026-08-02 test-architecture and traceability contract checkpoint
+
+This checkpoint records the isolated issue #12 worktree before canonical
+cross-stream integration, without rewriting the older authoritative matrix
+receipts above. Its 94-cell snapshot declared 57 `PASS`, 0 `FAIL`, 5
+`BLOCKED`, 3 `XFAIL`, and 29 `NOT_IMPLEMENTED`. Those historical declarations
+were superseded by the reconciled canonical checkpoint below; they are not the
+current matrix totals or a new full-run result.
+The newly reserved product, persistence, recovery, platform, Ghostty audit,
+ABI, and Rust-adapter rows make previously aggregate gaps independently
+visible. `product_boundary_qualification_passed`,
+`qualification_host_retired`, release qualification, and full qualification
+remain false.
+
+### Failures observed while making the policy executable
+
+- The first repository validator used invalid or wrong-context `jq` generator
+  expressions. Positive validation failed before any policy could be trusted.
+  Each root value is now captured explicitly, and the positive repository and
+  corruption fixtures exercise the corrected expressions.
+- A valid environment fixture still returned nonzero because the final
+  no-secret `grep` result leaked out as the function status. The validator now
+  returns success explicitly after a clean scan.
+- The first redactor replaced a password with a string that its own scanner
+  still classified as a credential. It now replaces the entire assignment with
+  a neutral marker, writes through a same-directory unpredictable `mktemp`
+  under `umask 077`, refuses same-path overwrite, and atomically renames the
+  public derivative.
+- A C-host integration tier was initially capable of looking like delivered
+  product evidence. `qualification_host_integration` is now a separate claim
+  tier, and a negative fixture plus curated mutant reject host-as-product
+  promotion.
+- Aggregate future-product cells hid partial coverage. The matrix now has
+  separate architecture, workspace schema/persistence/restore, worklane,
+  recovery, Linux platform-service, Ghostty ABI/audit, and Rust-adapter cells.
+- A declarative retirement bit could have remained true while host tests still
+  ran. Retirement now requires the historical host tests/cells to be absent
+  from the active graph, every disposition and replacement cell to appear in a
+  fresh reviewed retirement record, every replacement receipt to validate, and
+  every replacement command in the current run to pass. The runner self-test
+  proves both the complete positive path and a current failed replacement
+  forcing `qualification_host_retired=false`.
+- Receipt/review fixtures originally accepted empty acknowledgements,
+  unrelated known IDs, an old environment, arbitrary stage receipt strings,
+  and stale final evidence. Receipts are now bound to their cell, owner,
+  deliberate test selection, tier, status, exact command, environment features,
+  artifact identity, and environment capture interval. Construction reviews
+  resolve and hash every stage receipt. Requirements and semantic-red receipts
+  may remain older immutable historical evidence; green and later qualification
+  evidence stays fresh.
+- The mutation runner initially saw its own target-integrity checksum failure
+  before the intended owning negative test. Its isolated copy now updates all
+  manifest identities for the one deliberately mutated target, allowing the
+  intended test to kill the mutant. Patch/syntax/test logs remain separate so a
+  pattern in patch output cannot create a false kill.
+- Production mutation evidence was initially written under a temporary
+  self-test directory and deleted. The isolated self-test then removed the
+  stale default receipt first, ran the initial ten production mutants, required
+  exactly 10/10
+  intended kills and zero survivors/wrong outcomes, then preserves
+  `build/linux/qualification-mutations.json` and every hashed phase log. Direct
+  unmanifested patches, unsafe equivalence-evidence paths, and unreviewed
+  equivalent dispositions are rejected.
+- Audit reconciliation exposed the C enum/Zig `c_int` representation hazard.
+  `linux/tests/ghostty-async-backend-abi` compiles the pinned clean header as
+  C17 and C++17, with default and `-fshort-enums` representation plus static
+  discriminant assertions. It prints all four exact sizes and currently exits
+  99 for the tracked 1-byte-versus-4-byte mismatch. The matrix records that as
+  `DOGFOOD-2026-08-02-GHOSTTY-ASYNC-ENUM-ABI`; a missing prerequisite exits 77
+  and a fixed-width header would return zero and therefore expose stale XFAIL.
+
+### Evidence and remaining limitations
+
+The focused commands are `linux/tests/test-architecture repository`,
+`linux/tests/test-architecture-test`,
+`linux/tests/qualification-mutations-test`,
+`linux/tests/qualification-matrix --validate-only`,
+`linux/tests/qualification-matrix-test`, and
+`linux/tests/suppression-governance-test`. Their latest exact outcomes belong
+to this working-tree checkpoint and do not supersede the older full matrix
+receipt unless a new `linux/tests/qualify-local` run is recorded separately.
+
+The required full-run attempt in this detached worktree was retained rather
+than relabeled. The first invocation resolved the existing relative tool
+default to `zentty-worktrees/.tools`, so `build-release` reported the missing
+Zig 0.15.2 executable and every dependent qualification-host command failed.
+No failure was treated as PASS. The repair was an explicit rerun with the known
+`ZENTTY_TOOLS_DIR` Zig and Blueprint paths plus the pinned clean
+`GHOSTTY_SOURCE_DIR=<pinned-ghostty-checkout>`. That rerun built both
+ReleaseSafe and Debug and passed the focused policy, mutation, build,
+host-contract, and Ghostty-regression commands, but the sandbox could not open
+the operator's `$XDG_RUNTIME_DIR` Wayland/X11 display sockets. Representative
+receipts report `Gtk: Failed to open display`; controlled X11 reports that its
+window was undiscoverable; io_uring variants also preserve the exact
+`AsyncBackendUnavailable` error. Valgrind commands that could not create their
+current reports were classified `MISSING_OR_INVALID_VALGRIND_REPORT`, not
+XFAIL. The resulting machine summary records 9 PASS outcomes, 41 FAIL, 9
+missing/invalid Valgrind reports, 1 expected XFAIL (the enum ABI probe), 5
+declared BLOCKED, and 29 declared NOT_IMPLEMENTED; every qualification claim is
+false. A canonical approval-capable worktree must rerun the matrix before any
+new full-run qualification statement.
+
+The isolated issue #12 worktree did not contain issue #11's executable API
+inventory or the runtime-initialization-order harness, so those cells remained
+explicit `NOT_IMPLEMENTED` in that snapshot. Canonical integration below
+promotes only the now-present static inventory; runtime initialization order
+remains `NOT_IMPLEMENTED`. Real old/new ABI loading, real Rust calls, safe
+callback/drop ownership, product/workspace/platform behavior, installed
+artifacts, controlled public CI, representative desktops/hardware, and host
+retirement also remain unqualified. Regex scanning plus required human
+inspection reduces public-evidence disclosure risk; it cannot prove every
+possible secret form absent.
+
+### The preparatory API audit separated three different Ghostty bases
+
+- **Observation:** Issue #11 asks for the exact downstream Ghostty diff, but
+  the local checkout has no `upstream/*` remote-tracking ref. Its fork
+  `origin/main` is `3706abab0c962d9c93c4c4af853149f9d55f4deb`, while
+  the already recorded official commit is the later
+  `19e20f7664dc7a755d2d7a16ab545b2503f26caf`. Eight unrelated downstream
+  smooth-scroll commits then lead to
+  `4e9fe4bb5adbd0140b0a94133bd39672076cb6de`, the immediate parent of the
+  11-commit embedding series. Treating `3706abab0..HEAD` or
+  `19e20f766..HEAD` as only the embedding patch would mix unrelated history
+  into the API review.
+- **Impact:** An upstream review or rebase plan based on the wrong range would
+  overstate the embedding change, obscure independent fixes, and make the
+  product-usage audit unreliable.
+- **Evidence:** In the clean, read-only Ghostty checkout at
+  `5fc8fa2cf4b27bfe27072d561de98f33b2c16636`, `git merge-base HEAD
+  origin/main` returned `3706abab0c962d9c93c4c4af853149f9d55f4deb`;
+  `git for-each-ref refs/remotes/upstream/` returned no ref; and the first
+  embedding commit `321afcd7610e67035aa7188a0d790dc011682169^` resolved
+  to `4e9fe4bb5adbd0140b0a94133bd39672076cb6de`. No fetch, rebase, or upstream
+  contact was performed.
+- **Inventory:** `19e20f766..4e9fe4bb5` is 8 commits, 20 files, 105 hunks,
+  +747/-83. `4e9fe4bb5..5fc8fa2cf` is 11 commits, 12 files, 40 hunks,
+  +930/-35. The complete downstream delta from the recorded official commit
+  is therefore 19 commits, 32 files, 145 hunks, +1677/-118. Per-file patch
+  hashes and hunk counts are public in `linux/ghostty-api-audit.json` and
+  explained in `docs/ghostty-gtk-embedding-api-audit.md`.
+- **Patch-identity defect and repair:** The first audit revision hashed plain
+  `git diff --binary` output. Its abbreviated `index` lines could vary with an
+  operator's `core.abbrev`, so those first hashes were not canonical even
+  though the source ranges were correct. Every range/file identity now uses
+  explicit SHA-1 full-index lines, Myers/three-line/no-fusion hunking, fixed
+  prefixes/order/quoting, disabled global attributes/relative paths/indent
+  heuristic/renames/color/external diff/text conversion, C locale, and
+  SHA-256. The normalized range hashes are respectively
+  `9d028d9d6436080952d6679385784559a5583e473149d9b862141f06a05dff0a`,
+  `6fc5aa33b3a85d76bf6cbf89d72c84a1658093c3c96a8d5aaeb0359f616744a1`,
+  and `94f9d7b72a8e6011dda8feba2b6d6dc402a1d6c9227e5f726e3663843c863bb1`.
+  A validator self-test reruns under conflicting `core.abbrev=12`; the earlier
+  non-normalized hashes are superseded.
+- **ABI discovery:** The installed header, Zig implementation, and ELF version
+  script agree on exactly eight function exports. The header defines two
+  Ghostty-owned types—one opaque runtime and one async-backend enum with three
+  values—and separately forward-declares the external GTK-owned `GtkWidget`.
+  `surface_new` returns that external type, while focus, text, and paste accept
+  it as their surface handle. The ABI is therefore C-language-neutral but not
+  GTK-neutral. The existing artifact assigns all eight functions to
+  `GHOSTTY_GTK_EMBED_1.0`, but the current `abi-surface` test strips version
+  suffixes and does not verify that node. The SONAME is unversioned and no
+  compile-time/runtime ABI identity supports a clear old/new mismatch.
+- **High-severity async-enum ABI defect:** The public
+  `ghostty_gtk_embed_async_backend_t` is a C enum with implementation-defined
+  representation, while Zig accepts `c_int`. A valid C/C++ consumer compiled
+  with `-fshort-enums` can use a one-byte enum. The three values and current
+  `std::is_enum` assertion do not establish size, alignment, compatible
+  integer type, calling convention, or raw Rust representation. This is an
+  open ABI defect, not a hypothetical product enhancement; the constructor
+  signature must not be ratified or safely bound until repaired and proven
+  across C17, C++17, and Rust with default and short-enum compiler modes.
+  The deterministic
+  `linux/tests/ghostty-async-backend-abi` probe confirmed
+  `sizeof` changed from 4 to 1 under `-fshort-enums` in both C17 and C++17,
+  then exited 99 as tracked XFAIL `GH-11`. It does not call the library or
+  test Rust. Full repaired C/C++/Rust size, alignment, and real-call acceptance
+  therefore remains NOT_IMPLEMENTED rather than being inferred from this
+  diagnosis evidence.
+- **Initialization-order prerequisite:** Both successful current callers
+  create the runtime before `gtk_init()`/`GtkApplication`, as the header
+  requires because Ghostty owns signal and GTK setup order. No fresh-process
+  negative test constructs any GTK object first and then proves safe,
+  actionable constructor failure. That missing misuse test is now explicit
+  rather than inferred from the positive order.
+- **Product evidence boundary:** Every current non-test caller is in the C
+  qualification host. There is no Rust product caller. The default constructor
+  has no C-host caller at all; text injection and programmatic paste are test
+  controls. Runtime construction/free, surface construction, and focus are
+  likely product capabilities, while public ticking and the two test controls
+  remain predictions. `surface_new` currently accepts a shell string/title,
+  not #13's typed argv, CWD, environment, and approved configuration.
+- **Ownership/callback gap:** The contract is GTK-main-thread-only. The header
+  says only “normal GTK container ownership rules” for the returned
+  `GtkWidget`; it does not declare floating, full, container, or none transfer.
+  Direct container attachment in the C host and `g_object_ref_sink` in the API
+  test are caller assumptions, not a stable transfer contract, so this
+  ambiguity blocks a safe Rust constructor. All surfaces must nevertheless
+  finalize, pending GLib work must drain, and sources/callbacks must stop before
+  runtime free. The public header also does not declare the `init`,
+  `clipboard-write`, `clipboard-read`, `title`, and `child-exited` GObject
+  signal/property contract used by the host, and no test faults callback
+  delivery during Rust-style drop. This is missing proof, not an observed
+  repair.
+- **Patch decision:** This work makes no upstream acceptance prediction and no
+  final #11 decision. Plausibly independent review units are the shell-command
+  lifetime fix, explicit non-default GTK application ownership, minimal shared
+  library foundation, product-proven optional operations, and export/version
+  hardening. Downstream policy, private spike, and its suppressions remain
+  separate. The current chronological commits require repartitioning before
+  any such review.
+- **Validator:**
+  `GHOSTTY_SOURCE_DIR=<pinned-ghostty-checkout>
+  linux/tests/ghostty-api-audit --self-test` recomputed all ranges, all 32
+  normalized per-file patch
+  hashes/hunk counts, the 19-commit order, and the eight-name header/Zig/version
+  allowlists and the external GTK type roles. It returned `Ghostty API audit
+  inventory passed: 32 files, 145 hunks, 8 allowlisted function exports, 2
+  Ghostty-owned public types, 1 external GtkWidget dependency` and required an
+  identical child PASS under conflicting `core.abbrev=12`.
+- **Proposed matrix reconciliation:** The matrix was intentionally unchanged.
+  The new `ghostty-async-backend-abi-representation` cell is proposed XFAIL
+  under requirement `ZL-11-GHOSTTY-ABI-COMPAT` and test
+  `TEST-GHOSTTY-ASYNC-BACKEND-ABI`, tracked by `GH-11` with expected exit 99.
+  Its full repaired C/C++/Rust acceptance remains NOT_IMPLEMENTED. The
+  initialization-order misuse proposal is `ghostty-runtime-initialization-order` /
+  `ZL-11-GHOSTTY-API-AUDIT` / `TEST-GHOSTTY-RUNTIME-INIT-ORDER`. Inventory,
+  version, and mismatch use #12's existing `TEST-GHOSTTY-API-AUDIT`,
+  `TEST-GHOSTTY-ABI-VERSION`, and `TEST-GHOSTTY-ABI-MISMATCH`; product usage,
+  callback drop, and config use its existing `ZL-13-RUST-GHOSTTY-ADAPTER`
+  mappings. Every proposed cell also has an explicit #11,
+  #13/#5, or #12 integration owner in the JSON. These are not authoritative
+  #12 registry entries until that owner reconciles them.
+- **Uncertainty:** A current official merge-base, rebase conflicts, real Rust
+  ownership/callers, callback teardown, configuration shape, symbol mismatch,
+  and the existing ReleaseSafe/compositor/IME/scaling/public-CI gaps remain
+  unproven. They may not be converted to PASS by this static audit.
+- **Evidence authority correction:** The audit validator's PASS claims only
+  static normalized inventory identity. The following compiler/linker/runtime
+  observations did not retain a new environment manifest, executable/library
+  checksum, or fresh public receipt bundle, so they create no new
+  qualification claim. The canonical owners remain `build-release`,
+  `release-api-{wayland,x11}-{default,epoll,io-uring}`,
+  `ghostty-regression`, and `matrix-runner-self-test`; the version-node gap
+  remains a proposed cell.
+- **Focused observations:** `linux/tests/qualification-matrix
+  --validate-only` and `linux/tests/qualification-matrix-test` passed. C17 and
+  C++17 warning-as-error syntax checks against the source header passed. A
+  temporary `api-contract` linked against the existing pinned ReleaseSafe
+  artifact passed all six separate Wayland/X11 by default/epoll/io_uring
+  processes. `nm -D
+  --defined-only --with-symbol-versions` reported exactly the eight audited
+  `@@GHOSTTY_GTK_EMBED_1.0` functions, and `readelf -d` reported the unversioned
+  `libghostty-gtk-embed.so` SONAME.
+- **Failed display attempt retained:** The first API-contract invocation inside
+  the managed command sandbox reached GTK but failed with `Failed to open
+  display`. This was not classified as a Ghostty failure or pass. Reusing the
+  same temporary binary with approved display-socket access produced
+  `api-contract: PASS` for all six display/backend combinations.
+- **Unchanged Ghostty regression:** To avoid writing the read-only checkout,
+  the existing Zig dependency cache was copied to `/tmp` and the build cache,
+  global cache, and prefix were all redirected there. `zig build test
+  -Doptimize=Debug -Dcpu=baseline -Demit-macos-app=false
+  -fno-sys=gtk4-layer-shell` completed with 94/94 build steps, 2707/2738 tests
+  passed, 31 skipped, and no failures. The temporary caches were removed and
+  Ghostty remained clean at
+  `5fc8fa2cf4b27bfe27072d561de98f33b2c16636`.
+- **Qualification scope:** The full Zentty display/Valgrind matrix was not
+  rerun for this read-only preparatory audit. The last authoritative matrix
+  result above remains qualification-host boundary evidence; none of its
+  non-PASS cells or claims changed.
+
+## 2026-08-02 canonical cross-stream integration and adversarial QA checkpoint
+
+- **Reconciliation:** The Rust architecture, Ghostty API audit, and issue #12
+  test-policy worktrees were integrated only after their focused validators
+  passed and an independent adversarial review completed. At that checkpoint,
+  the then-authoritative matrix contained 94 cells: 60 `PASS`, 0 `FAIL`, 5
+  `BLOCKED`, 3 `XFAIL`, and 26 `NOT_IMPLEMENTED`. `architecture-contract-v1`,
+  `workspace-schema-v1-contract`, and the static
+  `ghostty-api-audit-inventory` are the only cross-stream promotions. The
+  runtime-initialization-order, safe Rust call/drop/config, old/new ABI,
+  product, persistence, platform, packaging, desktop, and public-CI gaps stay
+  explicitly non-PASS. The architecture artifact is a mechanically checked,
+  non-authoritative mirror of the matrix subset; the matrix remains the single
+  status authority.
+- **First canonical full run:** An approval-capable real-display run executed
+  all command-backed cells. It retained 58 `PASS`, 2 `FAIL`, 3 expected
+  `XFAIL`, 5 declared `BLOCKED`, and 26 declared `NOT_IMPLEMENTED` outcomes.
+  Real ReleaseSafe/Debug builds, Wayland and X11, all three async backends,
+  single/multi terminals, ABI misuse/lifecycle, staged artifacts, the pinned
+  Ghostty regression suite, Debug Valgrind, ReleaseSafe Valgrind XFAILs,
+  controlled X11 resize/key input, architecture/schema, API audit, and the enum
+  XFAIL all executed. The implemented-local claim correctly remained false.
+- **Mutation signal-classification failure and repair:** Under loaded full
+  runs, the crash fixture's real `SIGSEGV` waited behind host core handling
+  long enough for its one-second deadline to classify it as `TIMEOUT`. A
+  focused run had previously passed, exposing a load-dependent self-test.
+  Disabling core generation with `ulimit -c 0` was not sufficient: a later
+  canonical full run repeated exit 124 under load. The fixture now sends
+  uncatchable, non-core-dumping `SIGKILL` to its real shell and gives the crash
+  fixture a five-second scheduling deadline. GNU `timeout` reports 137, which
+  the runner classifies as `CRASH`, without entering host core handling. The
+  separate `TIMEOUT` fixture still sleeps five seconds behind a one-second
+  deadline and returns 124. The curated suite was expanded
+  from 10 to 17 mutants for exact runner and receipt XFAIL exits, exact
+  cell/test promotion and receipt ownership, Authorization scanning,
+  Authorization redaction, and closed-world schema enforcement. The last
+  production receipt before the final receipt-XFAIL additions records 15/15
+  intended kills with zero survivors, wrong failures, compile failures,
+  timeouts, crashes, or apply failures. At this checkpoint a fresh 17-mutant
+  rerun was still required; later focused and full-matrix runs below completed
+  17/17 intended kills with every other classification at zero.
+- **Suppression-governance failure and review:** The first full run stopped
+  governance when a current X11 Fontconfig child graph reported one
+  3,872-byte node context where an earlier reviewed run had 7,744 bytes. Later
+  receipts also partitioned the same deep `pango_context_get_metrics` cache as
+  21 smaller `strdup` contexts/1,933 bytes and one 2,688-byte node graph.
+  ReleaseSafe X11 likewise produced the already narrow Pango-root stack with a
+  smaller partition. Raw receipts retain the allocation-to-Fontconfig-to-Pango
+  frames and the non-Ghostty Pango/IBus reproducer remains the independent
+  root proof. No Valgrind suppression rule was added or widened. Only the
+  manifest's reviewed per-scenario usage bounds were changed to include the
+  two observed cold/warm partitions while preserving the prior byte upper
+  bounds. The per-scenario context-count ceiling rose from 8 to 21 to describe
+  that smaller allocation partition explicitly. Growth outside those bounds,
+  rootless child use, scenario drift, staleness,
+  and untracked rules still fail. Governance and its negative self-tests pass.
+- **Adversarial findings and repairs:** The first integrated review proved that
+  any nonzero XFAIL exit could masquerade as the tracked defect, an N:M
+  requirement mapping could let an unimplemented cell borrow another test's
+  PASS, common Basic/Bearer/Digest Authorization credentials escaped public
+  redaction, the default audit command required an undocumented environment
+  variable, committed JSON Schemas were not executed, architecture prose still
+  described pre-integration proposal state, and an ignored stale generated
+  Ghostty header could preserve the enum XFAIL after source repair. XFAIL rows
+  now require exact exit 99 and classify every other nonzero exit separately;
+  multi-test mappings name exact `cell_test_ids`; receipt binding uses only
+  those owners; authorization families are both scanned and redacted; the
+  audit defaults to the managed locked checkout; Draft 2020-12 schemas execute
+  against each instance and retain closed-world invariants; architecture and
+  matrix fields cross-check; and the ABI probe compiles the pinned source
+  header only after rejecting generated-header hash drift. Focused negative
+  tests and curated mutants cover the false-pass paths.
+- **Receipt XFAIL review and repair:** The follow-up review found that the
+  matrix runner required exit 99 but the independently publishable receipt
+  validator still accepted any nonzero XFAIL result. It also exposed that the
+  receipt binder admitted only `PASS` owner tests, making a legitimate XFAIL
+  receipt impossible. Receipt binding now requires the owning test status to
+  equal the cell status, the result exit to equal the cell's exact
+  `expected_exit_code`, and the receipt tracking ID to equal the cell tracking
+  ID. A valid exact-XFAIL fixture and a rejected exit-42 fixture exercise the
+  contract, and a dedicated mutant must prove the latter cannot regress.
+- **Conservative static claims:** The matrix's input claim is no longer used
+  as evidence that the implemented local suite passed before a current run.
+  Its committed value is conservative `false`; only the freshly generated
+  machine summary may report the runtime-derived implemented-local result.
+- **Concurrent mutation evidence collision and repair:** During parallel
+  review, two legitimate mutation-runner invocations shared and deleted the
+  same `build/linux/mutation-logs` paths. The affected run failed closed with
+  missing hashes and `WRONG_TEST_FAILURE`; it did not create a false pass, but
+  it proved that the receipt was not reproducible under concurrent use. The
+  runner now takes a nonblocking exclusive `flock` on its summary before it
+  removes any prior result or log. A real two-process self-test holds the first
+  run inside an owning test, proves the second is rejected, and then verifies
+  the lock-owning result remains intact.
+- **Architecture mirror drift and repair:** Follow-up review also proved that
+  the ADR promised a field-for-field non-authoritative mirror while the
+  validator omitted `defect` and `prerequisite`; all 16 mirrored
+  `NOT_IMPLEMENTED` defect strings had consequently drifted from the matrix.
+  The mirror now copies the authoritative text, validation compares both
+  fields in addition to the existing axes/command/tracking fields, and
+  independent negative fixtures mutate each field.
+- **XFAIL owner semantics and repair:** Tightening receipt binding initially
+  required an owner test's inventory status to equal the cell status. That
+  made the ABI XFAIL receiptable, but made both legitimate ReleaseSafe
+  Valgrind XFAILs impossible to receipt because their real memory-safety
+  harness is implemented (`PASS`) while the observed qualification cell is
+  expected to fail. The rule now distinguishes harness availability from cell
+  outcome:
+  PASS cells require PASS owners; XFAIL cells require every owner to be an
+  implemented PASS or XFAIL test; the receipt still requires the cell's exact
+  status, exit, tracking ID, command, tier, features, and exact owner set. A
+  ReleaseSafe Wayland receipt fixture proves the PASS-harness/XFAIL-cell case,
+  while a repository negative fixture rejects an unavailable ABI owner.
+- **Mutation lock scope repair:** Review of the first lock showed that locking
+  by summary filename was narrower than the actual shared resource: custom
+  summary names in one directory still share `mutation-logs`. The lock now
+  keys the evidence directory itself. The collision test deliberately uses
+  different summary filenames in the same directory, proving that the second
+  writer cannot corrupt the first writer's shared phase evidence.
+- **Concurrency-lock self-test deadline repair:** The collision fixture
+  intentionally holds the owning process for two seconds so the competing
+  invocation can observe the lock, but its generated manifest inherited the
+  one-second default classification deadline.
+  The competing writer was rejected correctly while the lock owner was
+  misclassified as `TIMEOUT`. Fixture manifests make deadlines
+  fixture-specific: `TIMEOUT` retains its real one-second deadline, while
+  `CRASH` and `CONCURRENCY_LOCK` use five seconds for load headroom appropriate
+  to their asserted outcomes.
+- **Mutant patch artifact whitespace and repair:** Final staged/no-index
+  diff-integrity checks found literal whitespace-only context lines in six
+  reviewed mutant patch artifacts. The patches were regenerated as
+  zero-context hunks; applying old and new forms with GNU `patch` produced
+  byte-identical mutated targets, so mutation semantics did not change.
+  Manifest patch SHA-256 values were refreshed for the new artifact bytes.
+  Because the reviewed patches and hashes changed, the complete mutation suite
+  must be rerun before closeout.
+- **Second canonical full run:** All 94 authoritative cells were evaluated:
+  58 command-backed outcomes passed, the three tracked XFAILs exited exactly
+  99, five cells remained declared `BLOCKED`, and 26 remained declared
+  `NOT_IMPLEMENTED`. Exactly two outcomes failed closed. The mutation runner's
+  production 17-mutant phase passed, but its real-SIGSEGV classification
+  self-test again became `TIMEOUT` under full load. Suppression governance then
+  rejected a newly observed but already narrowly matched Wayland Fontconfig
+  cache partition. All five claims correctly remained false. The failed-run
+  summary is archived under
+  `build/linux/qualification-runs/2026-08-02-final-run-failed-governance/`
+  with SHA-256
+  `7471075edbe73d4ad54abcb78454313f8ca93a8f36ebe8b04cb5b16541624484`.
+- **Second-run Wayland Fontconfig partition and governance stop:** The
+  `Debug/single/wayland` raw/suppressed pair both completed the
+  qualification-host scenario. The raw process retained the reviewed two-root
+  `pango_context_get_metrics` graph with a 7,744-byte/242-block
+  eight-Fontconfig-frame node, while the paired suppressed process matched the
+  unchanged rule and separately present roots with a 6,560-byte/205-block node
+  and an 18-context/4,394-byte string partition; post-suppression
+  definite/indirect loss remained zero. Governance correctly stopped on the
+  prior exact node baseline and would next reject the string baseline. Raw,
+  suppressed, and bound JSON receipts were archived with SHA-256 values
+  `086215e98ff107aa6a6b3458fae6fe3b96692f3ccd398a28386283ce7cb853ba`,
+  `0d7564b61b0b221332e7c2512a8256eeb7074afc14a606985bb31e0b2a21a1c7`,
+  and `887178e5a8957145205f6f1bc78fa43beae029ec5b72174243bafa0926ff9e84`.
+  No suppression pattern changed: only this scenario's node range becomes one
+  match/6,560-7,744 bytes and its string range 10-18 matches/4,394-4,634 bytes,
+  preserving both prior byte ceilings while raising only the observed string
+  context ceiling from 10 to 18. ReleaseSafe remains exact exit-99 XFAIL.
+- **Independent Valgrind receipts:** Raw and suppression-enabled receipts run
+  the same real scenario in two sequential processes; allocation-context
+  partitions may therefore differ and are not expected to add arithmetically.
+  Qualification requires each process's semantic scenario to pass, retains
+  both receipts, reports both totals, and governs suppression use by exact
+  scenario/rule ranges and required root co-occurrence rather than pretending
+  the two executions are a single conserved event stream.
+- **Ghostty lifecycle contract red tests:** A separate Ghostty worktree added
+  test-only C17 lifecycle contracts with no production changes. Repeated
+  runtime creation, stale tick, double free, and post-free recreation obeyed
+  the current one-runtime process contract. Constructor-after-`gtk_init()`
+  instead panicked at the internal initialization assertion, and freeing the
+  runtime with a live surface deinitialized its allocator before surface
+  teardown, producing leak reports and an incorrect-alignment panic. These are
+  upstream-candidate lifecycle contracts, not a Zentty prototype. Before that
+  boundary was reinforced, the agent ran the already tracked
+  `gtk-embed-spike` baseline once; it passed, left no process or modified spike
+  artifact, and no further spike command was allowed.
+- **Third canonical full run and IBus fail-closed receipt:** After the mutation
+  and Fontconfig repairs, mutation qualification, suppression governance, and
+  every other executable cell reached its expected outcome. The standalone
+  IBus raw process completed its generic harness path but did not contain the
+  required constructor/module stack, while the later suppressed process did;
+  the wrapper correctly refused to publish JSON and the matrix reported
+  `MISSING_OR_INVALID_VALGRIND_REPORT`. The 59-PASS/1-failure summary is
+  archived under
+  `build/linux/qualification-runs/2026-08-02-final-run-failed-ibus-raw-proof/`
+  with SHA-256
+  `2bcda8ad9c7da78967086a3404429c1e014ae964a53ca3eb0e365cf9632fc645`.
+  Its raw and suppressed receipts are preserved there as
+  `0d6c12affb80fc36ea76bbd516bddac35aa4b16e55f19c0816d15438b81545f4`
+  and `a7930f7d62ebd3ad7e870e781aa6603576702b0c9dd84a3d5ec42921061a2b46`.
+- **Deterministic IBus trigger and candidate cardinality:** The repaired focused
+  run forces and asserts the real GTK IBus delegate in both processes, holds
+  focus across a main-loop turn, and explicitly retrieves preedit state. The
+  wrapper deletes stale evidence before preflight and an inline negative test
+  proves that stack text and generic PASS without the delegate marker cannot
+  qualify. The focused raw/suppressed/JSON receipt SHA-256 values are
+  `c97a03b5907a4d91d3e8585ce16c1dfae68bd1f20e113cafd60236c5f8dbc03f`,
+  `5493aede4da7ca9ebba8e218ced2462be68f0459a2cfca404fa125d6e68fb139`,
+  and `3962c8683b218c38471e9c389f41ef9352623df5748ec3224c41a482e7f87519`.
+  The stronger deliberate trigger increased only the focused reproducer's IBus
+  usage to exact 6/870 and 3/6 counts. Governance failed closed before review;
+  scenario-only exact overrides now describe those two existing stack families
+  while global qualification-host bounds and every suppression rule remain
+  unchanged.
+- **Focused IBus confirmation remained variable:** A second independent
+  focused run again proved the forced delegate marker, required raw IBus stack,
+  semantic PASS, and zero post-suppression errors/definite/indirect loss, but
+  its candidate usage partition changed to 4 matches/580 bytes for the object
+  and 2 matches/4 bytes for the string. The raw/suppressed/JSON receipts are
+  preserved as
+  `84a29a09412ec15076d6c5a755b07f96a1968c3b3d4d6e93aeac41c35d2c17dd`,
+  `a2fc300f8ba0659f1ccbaa4a4b580d40fa31c50db8fa636eee9e38c1cc849f65`,
+  and `e034e98fe1e66eec96924d3ddd3c876361c023955b9f13241b98f66791e70e50`.
+  Governance rejected the difference; its archived log is
+  `40360462832904e3d83c6ea997d11aa63ce45c37212ec04bc560d0b7965414a6`.
+  The manifest was not widened again to make this run green. A controlled,
+  independently preconditioned IBus service/engine environment or an
+  exact-profile governance contract is still required.
+- **Mutation stale-summary and publication repair:** Read-only review found
+  that the mutation runner acquired its shared evidence-directory lock and
+  deleted the prior summary only after tool, source, manifest, inventory, and
+  path preflight. Any such early failure could therefore leave an older PASS
+  JSON publishable. The runner now acquires that same directory lock first,
+  invalidates the prior summary while holding it, and performs every remaining
+  preflight afterward. Final JSON is written to a same-directory `mktemp` file
+  and atomically renamed only after `jq` succeeds; the existing per-phase log
+  paths and SHA-256 identities are unchanged. Fixture-only self-tests seeded a
+  stale PASS before deterministic missing-`jq`, invalid-JSON, unmanifested
+  patch, and target-hash failures and proved it was removed. A wrapped final
+  `jq` wrote a partial byte sequence and terminated by signal; no summary or
+  partial temporary JSON remained. `linux/tests/qualification-mutations-test
+  --fixtures-only` passed. No production mutation or full qualification run
+  was performed for this focused repair.
+- **Mutation custom-summary evidence isolation repair:** Independent review of
+  the first repair found that custom summary filenames in one directory still
+  shared `mutation-logs`: a rejected competing writer could leave its own
+  stale PASS JSON, and a later sequential writer could replace phase logs
+  referenced by an earlier summary. The canonical default retains
+  `build/linux/mutation-logs`, while every custom summary now derives the
+  independent `${summary}.logs` directory. An explicit absolute override is
+  accepted only for a lexically safe `mutation-logs` or `*.logs` directory.
+  Each invocation locks and invalidates its exact summary first, then locks the
+  actual phase-log directory before touching evidence. The contention fixture
+  seeds the rejected writer's stale PASS, forces both writers onto one reviewed
+  explicit log directory, proves rejection removes the stale summary, and
+  revalidates the lock owner's phase-log hashes. A sequential fixture publishes
+  two different custom summaries and proves that both independent log trees
+  and every recorded phase hash remain current. Unsafe override rejection,
+  atomic publication, and all prior preflight invalidation fixtures remain in
+  the same focused gate. `linux/tests/qualification-mutations-test
+  --fixtures-only` passed; no production mutant or full qualification command
+  was run for this repair.
+- **Valgrind receipt identity, freshness, and reviewed-label repair:** The existing
+  JSON report named raw and suppressed receipt paths but did not bind the
+  bytes or capture times at those paths. The producers also printed “PASS with
+  reviewed suppressions” before governance had accepted exact report usage;
+  the variable focused IBus run proved that label could be premature. The
+  Proposal B repair makes both producers publish each receipt's SHA-256 and
+  filesystem capture epoch,
+  plus the report-generation epoch; the general producer also deletes stale
+  evidence before preflight. The existing receipt path fields remain stable,
+  and the additive identity-field schema was coordinated with the matrix
+  integration stream. Producers reject reversed chronology or a capture span
+  over 15 minutes. Governance requires non-empty independent files, recomputes
+  both hashes and exact mtimes, enforces chronological raw, suppressed, and
+  report ordering, and rejects reports older than 24 hours. Focused negative
+  fixtures reject replaced, empty, touched, shared, reversed-chronology,
+  over-span, and stale evidence. Producer success text now states that semantic
+  and post-suppression checks passed while suppression governance remains
+  pending; a static negative assertion rejects either producer reintroducing
+  the premature reviewed label. Focused patch validation with `bash -n`,
+  `linux/tests/suppression-governance-test`, and direct validation of the
+  suppression-range mutant pass; no full production mutation, qualification,
+  GUI, or spike run was performed. Existing reports intentionally fail closed
+  until a fresh producer run emits the new identity fields, so this scoped
+  repair does not change the stopping decision or restore any qualification
+  claim.
+- **Matrix evidence-isolation and suppression-review semantics:** Matrix runs
+  now own summary-derived log directories, so custom-summary and self-test runs
+  cannot overwrite canonical `build/linux/matrix-logs`. Every command-backed
+  result binds its log path and SHA-256, and every Valgrind result binds the
+  exact report identity retained by the summary. A Valgrind cell may report a
+  semantic `PASS`, but `PASS with reviewed suppressions` is emitted only when
+  the suppression-governance cell accepts the complete unchanged report set
+  from that run. A negative fixture retains the rejected IBus 4/580 object and
+  2/4 string partition and proves it remains `NOT_ACCEPTED`. This harness repair
+  creates no new qualification result; the last full-run claims remain false
+  pending a fresh full rerun.
+- **Valgrind bound-content and publication repair:** Follow-up review found
+  that byte-bound receipts still did not prove the JSON metrics or suppression
+  usage were derived from those bytes, effective suppression-file checks
+  allowed extra entries, concurrent same-scenario producers could delete or
+  mix each other's evidence, and a failed suppressed Debug/IBus execution
+  could leave a JSON report. Governance now reparses raw and post-suppression
+  metrics and the complete explicit suppression usage from the bound receipts
+  and requires exact JSON equality before applying reviewed ranges. Each
+  report's unique explicit suppression SHA set must equal exactly the project
+  file plus every non-builtin inherited set. Both producers take a nonblocking
+  per-scenario evidence lock before stale deletion. Debug and IBus publish only
+  after suppressed exit zero; ReleaseSafe preserves completed exit-zero or
+  exact exit-99 evidence, records `suppressed_exit_code`, and rejects timeout,
+  signal, and other incomplete statuses without JSON publication. Deterministic
+  fixtures reject forged raw/post metrics, forged or unrecognized usage, an
+  extra suppression file, lock contention, and unacceptable publication
+  statuses while retaining the governance-pending producer wording. Focused
+  syntax, governance, and direct suppression-range mutant validation pass; no
+  full qualification, production mutation, GUI, or spike run was performed.
+  The last qualification claims therefore remain unchanged and false.
+- **Suppression-governance report-set binding:** Final review found that
+  governance globbed every recent `memory-safety-*.json` in the evidence
+  directory, so an otherwise valid ad-hoc report outside the matrix set could
+  satisfy a required-usage rule. Governance now requires an exact non-empty
+  report allowlist, derives the standalone default from the authoritative
+  matrix, and rejects both missing and unexpected reports before accumulating
+  suppression usage. Matrix orchestration injects the absolute report paths
+  for its run; custom governance fixtures inject their own exact allowlist. A
+  valid extra-report fixture and a missing-report fixture both fail closed.
+  Focused shell syntax, governance self-test, and direct suppression-range
+  mutant validation pass; no full qualification, production mutation, GUI, or
+  spike run was performed, so all qualification claims remain unchanged and
+  false.
+- **Matrix report-to-cell and governance-order closure:** Matrix report cells
+  now declare their expected Valgrind scenario and accept a report only when
+  its optimization mode, display backend, scenario, and suppressed exit code
+  match that cell and the observed command result. Debug requires exit zero;
+  ReleaseSafe permits only completed zero or exact Valgrind exit 99. Exactly
+  one tagged suppression-governance cell must sort after every report producer,
+  and the runner injects its exact absolute report-path allowlist before a final
+  byte-identity recheck. The summary projects these bindings and the expected
+  set. Custom summaries retain summary-derived log directories, while the
+  unsafe explicit log-directory override has been removed. Focused fixtures
+  reject missing, fractional, and mismatched exit codes; swapped optimization,
+  display, and scenario metadata; and missing, duplicate, or reordered
+  governance. `linux/tests/qualification-matrix-test` and all five refreshed
+  matrix mutant dry-runs pass. No full qualification, production mutation, GUI,
+  or spike run was performed, so qualification claims remain unchanged and
+  false.
+- **Documentation and policy terminology reconciliation:** A text-only
+  consistency review found that producer-owned suppression-enabled receipts
+  were still called reviewed before governance, later dogfood prose still used
+  product terminology for qualification-host evidence, and the stopping
+  decision blurred declared matrix status with observed run outcomes. The
+  README, traceability inventory, suppression manifest, and post-correction
+  dogfood terminology now reserve reviewed classification for governance
+  acceptance. The architecture correction explicitly supersedes older
+  host-as-product labels without rewriting their historical evidence. JSON,
+  repository test-architecture validation, and its self-test pass. No IDs,
+  statuses, commands, schema structure, or qualification claims changed.
+- **Production mutation rerun exposed two real fixture defects:** The first
+  post-repair 17-mutant run failed closed with 15 expected kills, one timeout,
+  and one wrong-test failure. `MUT-QA-STALE-VALGRIND-RECEIPT` still seeded an
+  obsolete metadata-free Valgrind template and retained a 120-second deadline
+  even though its owning matrix self-test now approaches two minutes. Its
+  fixture now seeds the cell-specific Debug/Wayland/API receipt, runs the
+  command with the receipt's exact exit zero, expects the deletion mutant to
+  make `stale-report` pass incorrectly, and allows a 300-second deadline.
+  `MUT-QA-RETAIN-SUMMARY` was correctly killed by the newer, earlier
+  missing-`jq` stale-evidence assertion, but the manifest still expected a
+  later diagnostic; its exact expected pattern now names the earliest
+  deterministic assertion. A concurrent audit attempt also showed that the
+  production test wrapper itself wrote a stale marker before the runner-owned
+  summary lock. The runner rejected the competing producer correctly, but the
+  wrapper could still replace the lock owner's in-progress summary. That
+  unsynchronized test-only write was removed; stale invalidation remains
+  covered by isolated fixtures. At that point the failed receipt remained in
+  `build/linux/qualification-mutations.json`; no pass was claimed pending a
+  clean, canonical single-writer production rerun.
+- **First complete canonical single-writer rerun of the 94-cell snapshot:** The repaired
+  production mutation suite killed all 17 required mutants with zero survivor,
+  timeout, crash, compile, apply, or wrong-test classifications. The final
+  94-cell local matrix reran that suite and every then-executable cell; its
+  mutation summary SHA-256 is
+  `b8a3517d50d131cd4d05d946fddff142c8d709d3e20b168eb64747dcb0c69bb0`.
+  The then-authoritative 94-cell matrix declared 60 `PASS`, 0 `FAIL`, 5
+  `BLOCKED`, 3 `XFAIL`, and 26 `NOT_IMPLEMENTED` cells. Execution observed 59 `PASS`, one
+  `FAIL`, 3 exact `XFAIL`, 5 declared-blocked, and 26
+  declared-not-implemented outcomes. All Debug suppression-enabled candidates
+  had zero post-suppression errors, contexts, definite bytes, and indirect
+  bytes; across the seven Debug reports, the corresponding raw totals were
+  1,218 errors/contexts, 17,544 definite bytes, and 127,658 indirect bytes.
+  The two ReleaseSafe reports remain exact exit-99 `XFAIL`s: together they
+  retained 1,360 post-suppression errors in 367 contexts, with zero definite
+  or indirect leak bytes, from raw totals of 1,849 errors, 849 contexts, 6,752
+  definite bytes, and 57,258 indirect bytes. These are suppression-enabled
+  candidate results, not unsuppressed-clean or reviewed-suppression claims.
+  Governance rejected the focused IBus candidate because the object rule used
+  4 matches/870 bytes instead of the reviewed exact 6/870 and its child string
+  rule used 2 matches/6 bytes instead of 3/6. No range or suppression was
+  broadened. Consequently suppression review is `NOT_ACCEPTED`, the
+  implemented local suite failed, and all five qualification claims remain
+  false. The machine summary SHA-256 is
+  `d6f793743197bc014b0b46029773359edc8b24fc17016c9c987a49772358d74f`.
+  Its 148-file ignored evidence archive is
+  `build/linux/qualification-runs/2026-08-02T163628Z`; the archive
+  `SHA256SUMS` receipt hash is
+  `812420a54e9c089c011b28a6bd7ef48ef725abb957152bf93a6551286dbf5d68`.
+- **Final public-evidence and reality-boundary review:** Independent read-only
+  review found that the final IBus paragraph called suppression `matches`
+  `contexts`, the preparatory Ghostty audit still described already-integrated
+  matrix rows as proposals, two traceability rows named a qualification host,
+  built library, future Rust binding, or raw ABI component their actual static
+  commands never execute, and public prose retained operator-specific home and
+  runtime-directory paths. The public docs now use portable variables, label
+  the audit JSON's proposal fields as historical, point to the later canonical
+  full run, and reserve real-component claims for the exact clean source,
+  header, export source, version script, and C17/C++17 compilers actually used.
+  Internal agent jargon in “root-owned” was replaced by canonical
+  single-writer terminology. Provider-shaped fake secret fixtures are now
+  assembled from split literals at runtime so public secret scanning cannot
+  mistake committed test source for a credential; the generated fixtures and
+  their rejection behavior are unchanged. No product, Ghostty, matrix status,
+  suppression, or retained full-run receipt changed in this evidence-labeling
+  correction.
+- **Real interruption remained fail-closed:** A second canonical full rerun was
+  started after the evidence-labeling corrections. The execution session was
+  lost during the production mutation cell when the operator reported an
+  unexpected machine restart. On recovery there was no running qualification
+  process and both canonical current-result files,
+  `build/linux/qualification-summary.json` and
+  `build/linux/qualification-mutations.json`, were absent. Persistent lock
+  pathnames remained but no process held them. The prior 148-file ignored
+  archive and its `SHA256SUMS` hash were unchanged. Thus the interrupted run
+  exposed neither a stale PASS nor partial JSON as current evidence; a complete
+  current-policy rerun is still required before commit.
+- **Recovered 2026-08-02 evidence-labeling-policy rerun completed:** The
+  restarted canonical run executed all 94 cells declared by that snapshot.
+  All 17 required mutants were killed for their intended reasons with every
+  adverse classification at zero; the mutation-summary SHA-256 is
+  `bab577877470d48a08d3d168bb1773a579e32945b1ef85ed5be15b26b9bff91f`.
+  Execution again produced 59 `PASS`, one `FAIL`, three exact `XFAIL`, five
+  declared-blocked, and 26 declared-not-implemented outcomes against declared
+  totals of 60 `PASS`, 0 `FAIL`, 5 `BLOCKED`, 3 `XFAIL`, and 26
+  `NOT_IMPLEMENTED`. Across seven Debug candidates the raw totals were 1,215
+  errors/contexts, 17,464 definite bytes, and 127,625 indirect bytes; all four
+  post-suppression metrics were zero. The two ReleaseSafe XFAIL candidates
+  repeated raw totals of 1,849 errors, 849 contexts, 6,752 definite bytes, and
+  57,258 indirect bytes and post-suppression totals of 1,360 errors in 367
+  contexts with zero definite/indirect leak bytes. Suppression governance again
+  failed closed on the variable IBus partition: the object rule produced six
+  matches/725 bytes rather than the reviewed 6/870, and the child string rule
+  produced three matches/5 bytes rather than 3/6. No manifest range was
+  widened. The governance log SHA-256 is
+  `8b9e64cd26b9dc1e91edba5f216f4d53d3ad896366b0535797a52503180f0ac5`;
+  suppression review is `NOT_ACCEPTED` and all five qualification claims are
+  false. That run's machine-summary SHA-256 is
+  `bfa2e79ece05f89c139eb68b61b2bb15eba3f1ebbf58fec50713106a44d531b2`.
+  The ignored 150-file archive is
+  `build/linux/qualification-runs/2026-08-02T174535Z`, whose `SHA256SUMS`
+  receipt hash is
+  `43446d4619347c33497d697027917d2f6b4c1461a648ff2b1d543f4fab324d5c`.
+- **Qualification stopping decision for the 94-cell snapshot:** Repeating
+  desktop-session runs until a favorable cache partition appears would defeat
+  suppression governance. Work stopped at that checkpoint with the limitation
+  explicit: the complete execution
+  observed 59 executable PASS outcomes, one failed suppression-governance
+  outcome caused by the variable IBus usage partition, three exact XFAIL
+  outcomes, five declared `BLOCKED` cells, and 26 declared `NOT_IMPLEMENTED`
+  cells. That observed run was distinct from the then-authoritative declared
+  matrix state of 60 `PASS`, 0 `FAIL`, 5 `BLOCKED`, 3 `XFAIL`, and 26
+  `NOT_IMPLEMENTED` cells. All five authoritative claims remain false. This is
+  a reviewable qualification foundation, not exhaustive QA and not a completed
+  Zentty Linux port.
+- **Post-run policy expansion (no new qualification claim):** The current
+  authoritative inventory declares 120 cells: 61 `PASS`, 0 `FAIL`, 5
+  `BLOCKED`, 3 `XFAIL`, and 51 `NOT_IMPLEMENTED`; `mutations.json` declares 25
+  required-kill mutants. These are declarations, not observed outcomes. Until
+  a fresh canonical 120-cell and 25-mutant run is completed and recorded, the
+  94-cell archives remain historical only and all five qualification claims
+  remain false.
+
+## 2026-08-02 post-reboot qualification-policy hardening
+
+### DOGFOOD-2026-08-02-CLOSED-WORLD-INVENTORY: prose gaps could escape the matrix
+
+- **Discovery:** The 94-cell snapshot did not mechanically enumerate the full
+  Rust product lifecycle cross-product, external evidence attestation, or the
+  transitional qualification-host freeze. Several axes and JSON objects also
+  admitted undeclared values or properties even though prose described the
+  intended closed world.
+- **Repair:** The authoritative matrix now declares 120 cells with all axis
+  values, required capabilities, cell fields, and claims validated by a
+  committed Draft 2020-12 schema plus semantic checks. The added product family
+  is an exact 24-cell cross-product of Debug/ReleaseSafe, Wayland/X11,
+  default/epoll/io_uring, and single/multi terminal behavior. It remains
+  `NOT_IMPLEMENTED`; qualification-host evidence cannot promote it. The current
+  declaration is 61 `PASS`, 0 `FAIL`, 5 `BLOCKED`, 3 `XFAIL`, and 51
+  `NOT_IMPLEMENTED`. At that snapshot, traceability contained 27 requirements,
+  48 tests, and 27 mappings covering all 120 cells; the controlled IBus harness
+  added below raises the current test count to 49.
+- **Fail-closed attestation:** A committed external-attestation policy and
+  schema deliberately remain `NOT_IMPLEMENTED`. Repository-produced receipts
+  cannot self-authorize product-boundary, host-retirement, release, or full
+  claims. Negative tests proved that setting those claims true is rejected and
+  that changing the local attestation document to `PASS` cannot bypass its
+  schema.
+
+### DOGFOOD-2026-08-02-HOST-FREEZE: the C qualification host could drift into product
+
+- **Discovery:** Prose called the C executable transitional, but no early build
+  gate prevented a later edit from silently adding product behavior to the
+  qualification host.
+- **Repair:** `qualification-host-freeze.json` pins the exact three files under
+  `linux/src/`, their modes and byte hashes, and the complete `build-local`
+  script hash. `linux/tests/qualification-host-freeze` runs before compilation;
+  its self-test rejects additions, removals, content drift, mode drift, and
+  build-script drift. The manifest remains outside its own frozen set so the
+  contract is not recursively self-hashed.
+
+### DOGFOOD-2026-08-02-VALGRIND-EVIDENCE-LEASE: receipts were individually valid but not one leased set
+
+- **Discovery:** Atomic individual report writes were insufficient. A matrix
+  could enumerate a mixture while another producer invalidated or replaced a
+  neighboring receipt. A failed governance-lock acquisition could also reach
+  summary publication without retaining the evidence-set lease.
+- **Repair:** Every producer and governance consumer now uses one canonical
+  `.zentty-valgrind-evidence.lock` per report directory. Inherited descriptors
+  are bound back to the advertised path through `/proc/self/fd`; producer JSON
+  is same-directory temporary output atomically renamed only after semantic
+  validation. Governance requires the exact canonical JSON/raw/candidate file
+  set, rejects symlinks and shared inodes, and holds the lease through final
+  byte/timestamp revalidation and atomic matrix-summary publication. If the
+  governance cell cannot retain that lease, the runner refuses to publish any
+  summary rather than emit an unverifiable failure receipt.
+- **Adversarial coverage:** Self-tests now cover early and late lock
+  contention, interrupted publication, mismatched inherited paths, noncanonical
+  reports, normalized path aliases and duplicate destinations, missing receipt
+  identities, wrong receipt paths, symlink receipts, empty receipts, hardlinks,
+  byte changes, and timestamp-only changes. A read-only audit caught the missing
+  late-contention case before final qualification; the first fixture attempted
+  to append its signal after `exit 99` and therefore falsely passed. Moving the
+  signal before the exact XFAIL exit and inserting a deterministic lock-owner
+  handshake reproduced the race and proved the fail-closed repair.
+- **Test-process cleanup:** Interrupted-summary publication runs in a verified
+  isolated process group. The EXIT trap now kills that group when safe, falls
+  back to its leader if PGID discovery fails, and recovers the late-contention
+  child PID from its receipt so assertion failures cannot strand fixture
+  processes.
+- **Harness failure repaired:** A single report-generation epoch was captured
+  before creating every fixture. When setup crossed a wall-clock second, later
+  receipt mtimes exceeded the claimed report epoch and produced intermittent
+  `MISSING_OR_INVALID_VALGRIND_REPORT` outcomes. Each fixture now captures its
+  own report epoch after its receipt mtimes. The complete matrix-runner
+  self-test subsequently passed.
+
+### DOGFOOD-2026-08-02-MUTATION-SNAPSHOT: mutation receipts could outlive their inputs
+
+- **Discovery:** The prior runner copied a new source tree per mutant and did
+  not bind the final summary to one immutable suite snapshot, the exact patch
+  target set, or final phase-log and live-input identities.
+- **Repair:** The manifest now declares 25 required-kill mutants. One immutable
+  source snapshot and deterministic path/type/mode/content tree identity feed
+  separate per-mutant sandboxes. Patch-touched paths must exactly equal declared
+  targets. Before atomic publication the runner revalidates the exact phase-log
+  set and hashes, live manifest, patch inventory and content, targets,
+  equivalence evidence, immutable snapshot, and live source tree.
+- **First 25-mutant run:** 23 mutants died for the expected reason; two were
+  classified `WRONG_TEST_FAILURE`, so no passing claim was made. The false-full
+  mutant disabled only the matrix guard and was still rejected by the external
+  attestation guard. Its reviewed patch now disables both independent guards so
+  the owning test proves the complete defense. The final-input mutant was
+  correctly caught by the earlier live-source-tree fixture rather than the
+  later manifest fixture; its expected diagnostic now names that earliest
+  deterministic failure. All 25 patches subsequently applied without fuzz,
+  and classification-only mutation self-tests passed. A fresh production
+  25-mutant run remains required after the source tree is otherwise final.
+
+### Stopping state before the first expanded run
+
+Focused matrix, architecture, mutation-fixture, suppression-governance, and
+qualification-host-freeze tests pass. This is not release or full Linux
+qualification. ReleaseSafe Valgrind remains XFAIL by policy, the current
+product cells and external attestation remain unimplemented, controlled public
+CI and representative-environment prerequisites remain blocked, and the
+variable IBus suppression partition still requires a new real-system
+governance decision backed by a fresh canonical run. All five authoritative
+claims remain false.
+
+### DOGFOOD-2026-08-02-EXPANDED-MATRIX-FIRST-DECLARED-OUTCOME-RUN: all presently executable cells produced their declared outcome
+
+- **Command and result:** An approval-capable `linux/tests/qualify-local` run
+  executed the complete 120-cell inventory. Execution observed 61 `PASS`, 3
+  exact `XFAIL`, 5 declared `BLOCKED`, and 51 declared `NOT_IMPLEMENTED`
+  outcomes, with no `FAIL`, unexpected skip, stale XFAIL, or invalid receipt.
+  The implemented-local claim was true for that source snapshot and run.
+  Product-boundary, qualification-host
+  retirement, release, and full-Linux claims remain false.
+- **Mutation evidence:** The source-snapshot-bound production suite killed all
+  25 required mutants for the intended reason. Survivor, compile, timeout,
+  crash, wrong-test, and apply-failure totals are all zero. The mutation
+  summary SHA-256 is
+  `6d5f164f9521f8f0ab1f302e47523701b5d5cf7d2a0b7fe6d5d1b41876643940`;
+  its source tree identity is
+  `75129873bce71fa55ec4805544ba3c41ff67a0b60cc2ec8017fa532a85260249`.
+- **Valgrind evidence:** Suppression governance accepted all nine canonical
+  report/raw/candidate triplets, so the seven Debug matrix results are **PASS
+  with reviewed suppressions**, not unsuppressed-clean. Their raw aggregate is
+  1,112 errors/contexts, 16,184 definite bytes, and 113,421 indirect bytes;
+  all four post-suppression error/leak totals are zero. The standalone
+  non-Ghostty GTK/IBus reproducer produced the reviewed exact partitions again:
+  six matches/870 bytes for the preedit object and three matches/6 bytes for
+  its string child. No suppression or range was broadened. The two ReleaseSafe
+  reports remain exact exit-99 XFAILs with 1,743 raw errors in 743 contexts,
+  5,312 definite bytes, and 43,000 indirect bytes; post-suppression they retain
+  1,360 errors in 367 contexts and zero definite/indirect leak bytes.
+- **Receipts:** The machine-summary SHA-256 is
+  `b2f23c5cb254bca67714d2ad645f516ccc7d96be3a134103a33c8e6cafaf8391`.
+  The ignored 169-file evidence archive is
+  `build/linux/qualification-runs/2026-08-02T194755Z-120-cell-pass`; its 168
+  bound file identities validate with `sha256sum -c`, and the `SHA256SUMS`
+  receipt hash is
+  `01e260039a766931712f49eef6b27f84e6b224887450238b55b6d4c4a7129da6`.
+- **Public-plan reconciliation:** Public issues #1, #5, #12, and #13 now use
+  the 120-cell and 25-mutant inventories, distinguish raw from
+  suppression-enabled candidates, state the external-attestation gate, and do
+  not describe qualification-host or historical evidence as product coverage.
+- **Final-source rule:** Adding this chronological receipt changes
+  documentation bytes after the recorded source snapshot. Therefore the
+  complete executable matrix must run once more without any subsequent source
+  edit before commit. This entry records the first expanded run with every
+  executable cell producing its declared outcome; it does not describe an
+  unsuppressed-clean run or predeclare final confirmation.
+
+### DOGFOOD-2026-08-02-IBUS-EXACT-PROFILES: one reviewed allocation partition was not the only real reproducer outcome
+
+- **Failure:** The required no-further-source-edits confirmation reran all 120
+  cells. Every cell produced its declared outcome except suppression
+  governance, which failed closed. The IBus object rule retained its exact six
+  matches but reported 725 bytes/10 blocks instead of 870/12; its required
+  child retained three matches but reported 5 bytes/5 blocks instead of 6/6.
+  The matrix observed one `FAIL`, set implemented-local false, rejected
+  suppression review, and kept every promoted claim false. No retry was called
+  a pass.
+- **Raw comparison:** The first expanded declared-outcome run's IBus raw
+  receipt has
+  SHA-256
+  `01de77d6ea0d433e2212b54f8f8cf6b0e8baa1326e6e37367133fd87d7c84c78`;
+  each of its three `ibus_text_new_from_string` string and IBusText loss
+  contexts retained two blocks. The failed confirmation's raw receipt has
+  SHA-256
+  `160ec1006ac39d129d462613b50e20d811fa51087d2f947f1a5e122eab63a6c7`;
+  the same three non-Ghostty `advance_focus` call sites remained, but one
+  string/IBusText context retained one block and the other two retained two.
+  Both receipts use the same GTK 4.14.5 IBus module/libibus 1.5.29 environment
+  and standalone GtkIMMulticontext reproducer. This is an allocation partition
+  inside the external reproducer, not evidence that Ghostty has been absolved
+  of lifecycle responsibility. The failed confirmation is retained under
+  `build/linux/qualification-runs/2026-08-02T202016Z-exact-profile-discovery`;
+  its `SHA256SUMS` receipt hash is
+  `c9ae8c42d2d43c3dd5ad304e8543cb840e801cedc7bed01f55543e2af8957d7f`.
+- **Rejected repair:** Merely changing the per-scenario byte bounds from one
+  exact value to a broad range would accept unreviewed intermediate and mixed
+  results. The suppression stack itself was not widened, and ReleaseSafe was
+  not promoted.
+- **Historical repair:** At that checkpoint the manifest recorded two named,
+  evidence-identified exact usage
+  profiles. One requires the coupled object/string tuples
+  `6/870/12 + 3/6/6`; the other requires `6/725/10 + 3/5/5`, expressed as
+  matches/bytes/blocks. Ordinary per-rule count and byte bounds remain an
+  initial guard, but a profiled scenario must equal one complete tuple. The
+  runner rejects mixtures of fields or rules from different profiles, so an
+  increase, intermediate value, missing child/root, outside-scenario match, or
+  stale rule remains a failure.
+- **Tests:** The suppression-governance self-test proves both exact profiles
+  pass, a cross-profile mixture fails with the exact-profile diagnostic, and a
+  profile referencing an untracked rule makes the manifest invalid. Existing
+  count-increase, stale, outside-scenario, untracked-suppression, receipt
+  identity, lock, and producer-publication tests remained green. At that
+  checkpoint, the failed-run receipts passed governance under the exact second
+  profile; a fresh complete source-snapshot-bound qualification run was still
+  required before commit.
+- **Outside-scenario fixture repair:** The first post-reboot execution of the
+  strengthened outside-scenario test failed before exercising its intended
+  guard: its isolated evidence directory still contained the preceding
+  canonical Wayland report while the expected-report allowlist had switched to
+  the canonical X11 report. Closed-world evidence validation correctly
+  rejected that unexpected Wayland JSON. The fixture now removes the prior
+  report before constructing X11 evidence; its raw receipts are harmless until
+  the next fixture rewrite, and no production validator or suppression rule
+  changed. This failed test and repair occurred before the required final
+  qualification run.
+- **Mutation lock and receipt-chronology failure:** A recovery inspection
+  invoked `qualification-mutations --help`, but that runner intentionally has
+  no help mode and treated the invocation as a production run. The supervising
+  command failed to retain the yielded session handle, so that run continued
+  into the subsequent complete matrix execution. The matrix mutation cell
+  correctly failed closed because the production summary lock was already
+  held; no concurrent summary was accepted. The remaining executable product,
+  GUI, packaging, Valgrind, and governance cells produced their declared
+  outcomes, but implemented-local remained false because one required PASS
+  cell failed. The complete evidence set is archived at
+  `build/linux/qualification-runs/2026-08-02T204410Z-mutation-lock-and-chronology-failure`;
+  its 168 bound file hashes validate and its `SHA256SUMS` receipt SHA-256 is
+  `e9e945ebc9f08c70a8ce93f9083714d1d200ea27884ae4f0569387d5d3e712cf`.
+- **Negative-fixture repair:** The accidentally launched mutation run killed
+  24 required mutants for the expected reason, then classified
+  `MUT-QA-VALGRIND-CANONICAL-RECEIPTS` as a wrong-test failure. Its
+  outside-tree raw-receipt fixture used an ordinary copy; if that copy crossed
+  a one-second filesystem timestamp boundary, raw-receipt chronology failed
+  before the intended canonical-path assertion. The fixture now preserves the
+  source receipt timestamp when copying. This does not relax receipt identity,
+  chronology, canonical-path, or mutation classification policy. A standalone
+  25-mutant run and another complete matrix run are required after this source
+  edit.
+
+### DOGFOOD-2026-08-02-CONTROLLED-IBUS: the developer desktop was not a qualification environment
+
+- **Third-profile failure:** The next complete 120-cell run killed all 25
+  required mutants, but suppression governance again failed closed. The live
+  desktop reproducer produced the previously unreviewed coupled IBus tuple
+  `6/1160/16 + 3/8/8` (matches/bytes/blocks). The observed matrix outcomes were
+  60 `PASS`, one `FAIL`, three exact `XFAIL`, five declared `BLOCKED`, and 51
+  declared `NOT_IMPLEMENTED`; all five claims were false. The evidence set is
+  preserved at
+  `build/linux/qualification-runs/2026-08-02T211431Z-third-ibus-profile-discovery`.
+  Its `SHA256SUMS` receipt is
+  `a8de29192c3a315d971b090eb767001361ba715afc0b96434462084abca99127`,
+  the rejected summary is
+  `47f3fbe4d4ede94da52b3aa7766485e9560777a3ce87458817f5515e63f0ad74`,
+  and the passing 25-mutant receipt is
+  `d55e591287e6e11efb166396777c531093e4eab7ea89ce7dc5ef02643f400cfe`.
+- **Decision:** The third tuple was not added to the manifest. All three old
+  profiles shared the operator's desktop display, bus, IBus daemon, caches, and
+  timing. Repeatedly admitting whichever allocation partition appeared would
+  have converted environment drift into policy. A new test-first harness now
+  runs the standalone non-Ghostty reproducer under a fresh Xvfb display, a
+  private D-Bus with service activation omitted, a foreground real IBus daemon,
+  isolated `HOME`, `TMPDIR`, and XDG roots, the explicit `xkb:us::eng` engine,
+  and `GIO_USE_VFS=local`. Raw and suppression-enabled Valgrind phases invoke
+  the wrapper separately and must report different controlled-session IDs.
+  The wrapper self-test covers sanitized inherited state, readiness, exact
+  daemon options, engine selection and readback, child status propagation,
+  unique roots and IDs, signal cleanup, and missing dependencies. Test policy
+  classifies this as a controlled protocol environment, not product-level or
+  representative desktop/IME evidence. Traceability now contains 27
+  requirements, 49 tests, and 27 mappings.
+- **Lifecycle repair:** The external C reproducer uses four neutral focusable
+  drawing areas so no `GtkEntry` creates an unrelated IM context. It proves the
+  active delegate is `IBusIMContext`, waits for a mapped window and verified
+  focus, performs exactly four focus-in/focus-out/reset/detach cycles, verifies
+  empty preedit text, cursor zero, and empty attributes on every cycle, drains
+  teardown, and rejects late callbacks. Both receipts must contain the exact
+  ordered lifecycle. The raw receipt must also contain
+  `ibus_text_new_from_string`, `libim-ibus.so`, and the reproducer's
+  `drive_lifecycle` frame in one loss record. This proves an external trigger;
+  it does not establish that Ghostty is free of lifecycle responsibility.
+- **Portal cleanup failure:** The first strengthened harness still allowed
+  D-Bus service activation. One raw phase activated an XDG document portal and
+  `rm -rf` raced its FUSE mount, failing with
+  `runtime/doc: Is a directory` before the suppression-enabled phase. The
+  partial raw artifact is preserved in
+  `build/linux/qualification-runs/2026-08-02-ibus-controlled-strengthened-8`.
+  Two leaked controlled roots (`/tmp/controlled-ibus-x11.XsjuaW` and
+  `/tmp/controlled-ibus-x11.y4MT61`) were explicitly unmounted with
+  `fusermount3 -uz`, removed, and verified absent from both the filesystem and
+  mount table. The private bus configuration now omits standard service
+  directories, so the controlled session cannot activate desktop portals.
+- **GVfs failure and repair:** With service activation disabled but before VFS
+  isolation, the suppression-enabled candidate exited 99 with three new GVfs
+  losses: 104 definite bytes and 45 indirect bytes. No report was published,
+  and no suppression was added. `GIO_USE_VFS=local` removed that external
+  plugin path. A real non-Valgrind smoke then completed without a surviving
+  process, root, mount, or portal. This was an environment repair, not a green
+  classification of environmental absence.
+- **Controlled characterization:** Ten consecutive real raw/suppressed pairs
+  ran with the final private environment and pinned engine. All ten preserved
+  both receipts plus their report, passed semantic and post-suppression checks,
+  passed `sha256sum -c`, used 20 globally unique session IDs, and kept raw and
+  suppression-enabled phases isolated. Four exact coupled IBus tuples were
+  observed: `4/870/12 + 2/6/6` in six pairs, `4/725/10 + 2/5/5` in two,
+  `4/290/4 + 2/2/2` in one, and `4/580/8 + 2/4/4` in one. The archives are
+  `build/linux/qualification-runs/2026-08-03-ibus-pinned-engine-{1..10}`.
+  Representative raw/suppressed/report hashes are recorded in
+  `linux/tests/valgrind-suppressions.json`; every profile cites both independent
+  executions rather than inferring suppressed usage from a raw receipt.
+- **Public-evidence limitation:** Those ten paths are ignored local build
+  evidence, not externally attested or publicly retrievable artifacts. The
+  complete receipt set is about 11.6 MB uncompressed and 183 KB as a
+  deterministic tar/gzip stream, so size is not the blocker; the raw logs also
+  contain 330 operator-home path occurrences and require deliberate derivation
+  and privacy review before publication. No URL or retention promise exists.
+  The manifest therefore identifies local hashes and must not call them public
+  proof. Publishing a redacted, checksum-linked all-ten bundle belongs to the
+  still-`BLOCKED` controlled-public-CI/artifact-retention work in GH-10; four
+  representatives would prove the four tuple shapes but not their stated
+  frequencies.
+- **Historical governance outcome:** At that checkpoint only the four observed
+  complete object/string tuples were accepted for `Debug/ibus-focus/x11`;
+  mixtures and intermediate tuples failed. The controlled Pango/Fontconfig
+  counts were also recorded as
+  scenario-specific reviewed bounds instead of inheriting incompatible
+  product-desktop expectations. The nine project suppression patterns and
+  their hash were not changed, inherited Ghostty suppression sets remain part
+  of every effective-set audit, and ReleaseSafe Valgrind remains `XFAIL`.
+  At that checkpoint focused suppression governance passed against the tenth
+  controlled pair as **PASS with reviewed suppressions**, never as an
+  unsuppressed-clean result. Because that documentation and manifest repair
+  changed source bytes,
+  a fresh source-snapshot-bound mutation run and a complete 120-cell run remain
+  required before commit; exhaustive, release, and full Linux QA are not
+  claimed.
+- **Producer-fixture repair:** The first targeted governance self-test after
+  adding the wrapper failed before its intended rejected-publication assertion:
+  its isolated producer tree copied `ibus-focus-memory` but not the newly
+  required `controlled-ibus-x11` entrypoint, so expected exit 99 became exit 1.
+  The fixture now supplies an explicit controlled-boundary double and the fake
+  Valgrind receipt emits the exact four-cycle lifecycle plus all three required
+  stack anchors in one loss record. The test again reaches the publication
+  gate, verifies rejected Debug status 99 cannot leave JSON, and passes. No
+  product, external service, or suppression behavior was relaxed.
+- **Adversarial wrapper audit:** A read-only process audit found five holes
+  after the initial controlled runs. A TERM arriving before the detached
+  session wrote its process-group file could reap only the `setsid` supervisor;
+  the new red test reproduced a surviving session process and failed with
+  `delayed private session process ... survived wrapper cleanup`. Xvfb/D-Bus
+  startup and individual service queries also lacked hard deadlines, the fake
+  engine readback merely echoed setter state, `cat` was invoked but absent from
+  dependency preflight, and the raw-stack predicate did not require a
+  definite/indirect loss header. The repaired wrapper uses an owned
+  start/cancel handshake before launching services, validates the session ID
+  and process group, enforces bounded startup/service/query deadlines, checks
+  the real engine response, and preflights every direct command including
+  `cat` and `timeout`. New negatives cover the startup signal race, startup
+  deadline, a hung query, wrong engine acknowledgement, missing `cat`, and a
+  same-stack non-loss record. All focused tests and a real-service smoke pass,
+  with no remaining controlled root or matching process. The fake topology
+  still proves orchestration contracts only; real-service execution remains a
+  separate required matrix path.
+- **Historical profile-schema repair:** Public review found that the suppression
+  manifest was constrained only by inline `jq` and that profile provenance was
+  free-form prose. A committed closed-world Draft 2020-12 schema validates the
+  full manifest. At that checkpoint each profile carried a structured
+  `evidence_identity` with its
+  local archive, observation count, total characterization runs, independent
+  raw/suppressed assertion, and the raw, suppressed, report, and `SHA256SUMS`
+  paths and hashes. Governance also rejects fractional or inconsistent counts,
+  duplicate identities or tuples, scenario/filename/range/root mismatches,
+  unreviewed or coupled executions, and any false public-access claim. The
+  repository architecture gate now includes this ninth policy schema. This is
+  **identity validation for locally retained ignored evidence**, not public
+  cryptographic verification: `public_access` remains explicitly
+  `NOT_IMPLEMENTED`, tracked by GH-10, with a null locator. A final audit then
+  found that the focused self-test could inherit an external schema override
+  and that the architecture gate asserted only the new schema's top-level
+  closure. The self-test now exports the canonical adjacent schema, while the
+  architecture gate pins evidence-identity/public-access closure and required
+  fields; a negative fixture weakens nested `additionalProperties` and proves
+  that future permissiveness is rejected.
+- **Non-quiescent audit failures:** A read-only inventory agent started the
+  matrix and mutation self-tests while the supervisor was still integrating
+  the schema and wrapper patches. The matrix fixture first failed closed on
+  the intentionally stale target hash for `suppression-governance`, and then
+  on the newly changed `test-architecture` hash; the canonical old mutation
+  and matrix receipts were correctly identified as stale. After the 14 exact
+  target-hash references were refreshed, a supervisor-side combined self-test
+  reached the production mutation phase while the agent's second copy still
+  held the canonical lock, so it refused to run with `mutation summary is
+  already being produced`. The agent was stopped, both overlapping sessions
+  exited 130, no concurrent result was accepted, and no remaining process held
+  either lock. The mutation runner's fixture-only suite then passed. Final
+  production mutation and matrix execution remain deferred until the source is
+  explicitly quiescent; this coordination failure is not counted as a product
+  or test pass.
+- **Final focused real-service check:** The first build command mistakenly
+  passed `Debug` as a positional argument to `build-local`; that script selects
+  mode only through `GHOSTTY_OPTIMIZE`, so it built ReleaseSafe and
+  `ibus-focus-memory` correctly refused to run against mismatched metadata. No
+  result was accepted. With `GHOSTTY_OPTIMIZE=Debug`, the strict host and
+  reproducer rebuilt, the final controlled real Xvfb/private-D-Bus/private-IBus
+  pair passed its lifecycle and post-suppression checks, and governance passed.
+  Raw receipt SHA-256 is
+  `aee98731e42b951c7964867ddba86089f72cbc1f1f9380eaa9d1d8244525d8c6`;
+  it reports 427 errors in 427 contexts, 6,080 definite bytes, and 41,395
+  indirect bytes. The independent suppression-enabled receipt SHA-256 is
+  `24e32805380b94af02f9de978b3f24ceab20cd87c8584e26050c6bcf24d91f42`;
+  all post-suppression error/leak totals are zero and the reviewed IBus tuple is
+  `4/725/10 + 2/5/5`. The JSON report SHA-256 is
+  `1d30386b1bf38c1f1b77744c21eef7d4f9e4a234241fa92523078f97f13e8772`.
+  This result is **PASS with reviewed suppressions**, not an unsuppressed-clean
+  or product/IME qualification result.
+- **Full-run IBus profile rejection:** The ensuing complete 120-cell run again
+  killed all 25 required mutants, but suppression governance rejected a fifth
+  previously unseen controlled IBus tuple, `4/516/7 + 2/4/4`. The observed
+  outcomes were 60 `PASS`, one `FAIL`, three exact `XFAIL`, five declared
+  `BLOCKED`, and 51 declared `NOT_IMPLEMENTED`; all five qualification claims
+  remained false. The 168 evidence files plus checksum receipt are archived at
+  `build/linux/qualification-runs/2026-08-02T232853Z-120-cell-ibus-profile-failure`.
+  Its `SHA256SUMS` SHA-256 is
+  `b8bb1c856a78ba0032faa6c795761ab0981f1d3d053115b45e49d79f582d1c9f`,
+  the rejected summary SHA-256 is
+  `9659f05f6d561cc994824023e9ed5fa17ccec75d934a83ba2777c6ad2d0600e5`,
+  and the passing mutation summary SHA-256 is
+  `10569314992411f927e01e860cc0c5fcad9a6fcec430006fc6937152215f9600`.
+  Merely appending the fifth tuple was rejected: the first run after the
+  ten-pair characterization disproved convergence of the enumerated-profile
+  model and would have made a final green run scheduler-dependent.
+- **Rejected readiness experiments:** Eight fresh private-session runs of a
+  copied one-client/one-cycle reproducer produced no IBus-rule matches. Eight
+  corresponding two-client/two-cycle runs produced the smallest reviewed
+  tuples only twice (`4/290/4 + 2/2/2` once and `2/145/2 + 1/1/1` once); six
+  produced no IBus-rule match. An initial unelevated two-cycle attempt was not
+  evidence: the sandbox rejected each private D-Bus Unix socket with
+  `Operation not permitted`, the wrapper returned nonzero, and the runs were
+  replaced outside the sandbox. A separate same-session warm-up experiment
+  also remained non-deterministic, producing eight different outcomes that
+  included two new partial tuples. Fixed delays, retries until a known tuple,
+  profile accretion, and warm-up were therefore all rejected as ways to obtain
+  a green qualification result.
+- **IBus source ownership discovery:** Inspection of the exact official IBus
+  1.5.29 tag (`0ad8e77bd36545974ad8acd0a5283cf72bc7c8ad`) explains both the
+  external finding and its variable count. In
+  `client/gtk4/ibusimcontext.c`, input-context construction is asynchronous;
+  `ibus_im_context_focus_out` calls `ibus_im_context_clear_preedit_text` only
+  after that private context exists. The latter passes a newly allocated empty
+  `IBusText` directly to `_ibus_context_update_preedit_text_cb`, which copies
+  its fields but does not release the passed object. The existing reproducer
+  proved the module type, widget focus, and preedit contents, but did not prove
+  that `_create_input_context_done` had completed before each measured cycle.
+  The next red/green repair is an event acknowledgement, not a delay: query the
+  private bus's `CurrentInputContext` property and require the GTK context to
+  become active before each focus-out/reset, then require it to become inactive
+  before the next cycle or teardown. Until that protocol is implemented and
+  characterized, the full matrix honestly remains failed and no suppression
+  profile is accepted or widened.
+
+### DOGFOOD-2026-08-03-IBUS-ACKNOWLEDGED-CEILING: replace stochastic tuples with a causal protocol
+
+- **Intentional red test:** The receipt contract was changed first to require a
+  baseline `CurrentInputContext`, an active-context acknowledgement before each
+  focus-out/reset, and restoration of the baseline after every cycle. The old
+  binary then failed with `receipt lacks the exact ordered acknowledged
+  four-cycle IBus lifecycle`. This was the expected test-first failure; it was
+  not accepted as environmental absence.
+- **Lifecycle repair:** The standalone GTK4 reproducer now queries the real
+  private IBus service over GDBus. It requires baseline→active→baseline for
+  each of four cycles, re-queries and compares the active object path to reject
+  per-cycle path substitution, and keeps focus, preedit, teardown, and
+  late-callback assertions. A pure path-contract self-test rejects malformed,
+  baseline, substituted, and unexpected paths. The controlled wrapper pins
+  `IBUS_ENABLE_SYNC_MODE=1`, exports only a single canonical private Unix IBus
+  address, and rejects outside, traversal, and compound addresses. An early
+  cleanup trap closes the temporary-root signal window. The first wrapper
+  fixture expected the exported address before the wrapper exported it and
+  failed with exit 56; exporting only the validated address repaired the
+  contract. A multiline Bash conditional then failed with `unexpected argument
+  newline`; computing and comparing the canonical hash/path separately removed
+  that parser-dependent form.
+- **Exact external ownership:** A fresh clone of the official IBus `1.5.29` tag
+  is commit `0ad8e77bd36545974ad8acd0a5283cf72bc7c8ad`.
+  `client/gtk4/ibusimcontext.c` has SHA-256
+  `421dec0149829c84d7ce292e9134a31d39f3b5170e168b66ebf42da3546cd6fa`;
+  the tag also contains byte-identical gtk2 and gtk3 copies. In the GTK4 path,
+  `ibus_im_context_clear_preedit_text` allocates an empty `IBusText`, invokes a
+  callback that copies fields, and never releases the hidden object. With sync
+  mode 1, focus-out clears once and reset clears once. Four acknowledged cycles
+  therefore execute exactly eight externally owned clear calls. The application
+  cannot release the hidden temporary, but this does not absolve Ghostty or the
+  future product of their own lifecycle responsibilities.
+- **Why exact tuples were rejected:** Even after the acknowledgements, eight
+  fresh suppression-enabled exploratory runs produced different lost/reachable
+  partitions, from object/string `4/869/12 + 2/5/5` through
+  `4/1160/16 + 2/8/8`. The causal call count stayed fixed; Memcheck's
+  conservative shutdown reachability classification did not. The source-derived
+  maximum is 145 bytes/two object-rule blocks plus one byte/one string-rule
+  block per call, hence the narrow maxima `4/1160/16` and `2/8/8`. Fixed delays,
+  warm-up, retry-until-known, and further profile accretion remain rejected.
+- **Suppressed-only evidence defect:**
+  `2026-08-03-ibus-one-cycle-characterization`,
+  `2026-08-03-ibus-two-cycle-characterization`, and
+  `2026-08-03-ibus-focus-ack-characterization` each preserve eight
+  suppression-enabled receipts and a valid checksum file but no raw companion.
+  Their original `/tmp` binaries and sources are gone, and a new raw run would
+  violate both executable identity and raw-before-suppressed chronology. They
+  are retained unchanged as rejected exploratory evidence; they are not paired,
+  reviewed, public, or qualification evidence and authorize no suppression.
+  Retroactively manufacturing companions or replacing their checksums was
+  explicitly rejected. The authoritative replacement must create a raw run
+  first and a suppression-enabled run second under distinct fresh sessions for
+  every trial.
+- **Governance repair:** Exact tuple profiles were removed for this scenario.
+  A closed-world `protocol_ceilings` entry instead binds the exact scenario,
+  runtime package versions, official source revision/hash, hashed wrapper,
+  hashed lifecycle contract, hashed reproducer source and executable, four
+  active plus four inactive acknowledgements, two calls per cycle, eight fresh
+  paired trials, and match/byte/block ceilings. Governance requires the child
+  string rule to coexist with its root and have bytes equal blocks. It rejects
+  ceiling metadata on other scenarios, missing or duplicate ceiling use,
+  source/runtime/executable drift, coupled sessions, malformed or misplaced
+  READY markers, wrong Valgrind command identity, missing/reordered lifecycle
+  markers, split raw stack anchors, conflicting duplicate Valgrind summaries,
+  nonzero post-suppression totals, max-plus-one counts/bytes/blocks, and stale,
+  rootless, untracked, or out-of-scenario rules.
+- **False-positive audits:** The first shared summary predicate used a multiline
+  `awk exit !(` form that Ubuntu `mawk` rejected; an explicit Boolean restored
+  portability. A timing audit also caught a self-test race: mutating a raw
+  fixture after its candidate made raw mtime newer and could fail chronology
+  depending on the second boundary. The refresh helper now sets raw then
+  candidate epochs deterministically before recomputing identities. A further
+  audit found that taking only Valgrind's last summary could hide a conflicting
+  earlier summary and that a valid READY line appended after PASS was not proof
+  of wrapper execution. Receipts now require consistent duplicate summaries
+  and the order READY < exact Valgrind `Command:` < lifecycle. Runtime-error
+  detection rejects the reproducer error phrase even when Valgrind prefixes it.
+- **Build-boundary failure:** The first post-reboot Debug build stopped at
+  `protected build entrypoint hash drift: linux/scripts/build-local`. Adding
+  the reproducer source identity to build metadata had intentionally changed a
+  frozen entrypoint. The freeze manifest was explicitly reviewed and updated,
+  its positive and adversarial self-tests passed, and only then did the pinned
+  clean Ghostty Debug build complete. An earlier unelevated build attempt had
+  also failed on sandboxed network/DNS access; the actual pinned fetch/build
+  was rerun with the required permission rather than treating absence as PASS.
+- **Paired replacement evidence:** One strengthened real pair first verified
+  the new command, source, runtime, executable, lifecycle, and summary binding;
+  it was not counted because the characterization archive had not yet recorded
+  its identity before execution. The replacement archive
+  `build/linux/qualification-runs/2026-08-03-ibus-acknowledged-ceiling-paired-8`
+  was then initialized before any counted run with the binary, build metadata,
+  compiler/runtime/source identities, wrapper/contract/source hashes, and all
+  three suppression hashes. Eight sequential trials each ran raw first and
+  suppression-enabled second under distinct fresh controlled sessions. All 16
+  session IDs are unique, every pair has exact acknowledgements and command
+  binding, every candidate has zero post-suppression totals, and all 36 files
+  pass `sha256sum -c`. Observed object/string tuples were
+  `4/1015/14 + 2/7/7` three times, `4/1160/16 + 2/8/8` three times,
+  `4/870/12 + 2/6/6` once, and `4/1096/15 + 2/8/8` once. The
+  `SHA256SUMS` SHA-256 is
+  `4a4ed6b88b5f3339730b74bac41d3964cc512b494348d78054a4fe8c86f2d28f`.
+  The authoritative manifest now names every raw/candidate/report hash and
+  the copied executable hash, and focused production governance passes as
+  **PASS with reviewed suppressions**.
+- **Current qualification boundary:** The 29-mutant required-kill run and
+  complete 120-cell qualification must still finish after source quiescence.
+  Until those receipts exist, all five promoted claims remain false,
+  ReleaseSafe Valgrind remains `XFAIL`, real product IME remains
+  `NOT_IMPLEMENTED`, and no unsuppressed-clean, exhaustive, release, or full
+  Linux QA result is claimed.
+- **First 29-mutant execution failure:** The first expanded production mutation
+  run killed 27 mutants for their declared reasons and had zero survivors, but
+  correctly failed overall because the two new patch artifacts were not cleanly
+  applicable. `MUT-QA-IBUS-PROTOCOL-BLOCK-CEILING` had a malformed unified-diff
+  hunk count. `MUT-QA-PROTOCOL-SCHEMA-CLOSED-WORLD` applied only with fuzz after
+  a later invariant inserted the exact ceiling ID into adjacent context; the
+  runner rejects fuzzy application as an identity failure. Neither was counted
+  as killed. Both reviewed patch hunks were regenerated against the quiescent
+  sources, verified with `patch --dry-run --fuzz=0`, and their manifest hashes
+  were refreshed. The failed 27/29 receipt is diagnostic evidence only; a fresh
+  complete 29/29 run is required before the matrix.
+- **Production-total assertion drift:** The next production runner receipt
+  contained 29 reviewed and required mutants, all 29 classified
+  `KILLED_EXPECTED`, and zero adverse classifications, but
+  `qualification-mutations-test` still compared all three success totals to the
+  former literal value 25 and therefore reported a false red result after the
+  successful run. The owning test now derives reviewed, required-kill, and
+  equivalent totals from the exact manifest whose SHA-256 is bound by the
+  receipt, also requires the result count to equal the manifest inventory, and
+  retains the zero-adverse-classification checks. A fixture proves that adding
+  a manifest entry while refreshing only the manifest identity cannot leave old
+  summary totals accepted. `bash -n` and the fixture-only mutation suite pass;
+  a fresh source-snapshot-bound production rerun remains required after this
+  test and report change.
+- **Concurrent-source production abort:** A fresh production rerun was started
+  after those fixture checks, but `linux/tests/nested-x11` and its owning test
+  changed in the shared worktree while the 29-mutant run was still executing.
+  The run was interrupted rather than accepted; the mutation runner left no
+  publishable `build/linux/qualification-mutations.json`. This is a worktree
+  coordination failure, not mutation evidence. A complete rerun against a
+  quiescent source snapshot remains required.
+- **Post-reboot ambient-X11 failure:** The subsequent 120-cell attempt exposed
+  that 24 ordinary executable X11 cells inherited the operator's `DISPLAY=:0`
+  and Xauthority state. The compositor was live, but the qualification process
+  had no valid MIT-MAGIC-COOKIE, so GTK reported `Failed to open display`.
+  The focused Xvfb-owned resize, physical-key, and IBus cells passed, proving
+  this was an orchestration defect rather than product evidence. The failed
+  summary retained 60 observed PASS outcomes, one policy FAIL, three expected
+  XFAIL outcomes, five declared BLOCKED cells, and 51 declared
+  NOT_IMPLEMENTED cells; every promoted claim remained false. The checksum-
+  intact diagnostic archive is
+  `build/linux/qualification-runs/2026-08-03T062053Z-120-cell-post-reboot-x11-failure`;
+  its `SHA256SUMS` SHA-256 is
+  `653cb7eae20365141b8d5ba17239a44b2349869bf1d3de90e25d0b607cc5900f`.
+  Wrapping the entire matrix in the developer display was rejected. Each
+  executable X11 cell now starts through a fresh nested Xvfb boundary so server
+  failure or absence remains a real nonzero result.
+- **Nested-X11 isolation red:** Review of the first nested wrapper found that
+  it isolated display, Xauthority, HOME, XDG paths, and temporary storage but
+  still inherited the operator's D-Bus and IBus endpoints and published no
+  machine-bound session identity. The wrapper test was strengthened first with
+  poisoned `DBUS_SESSION_BUS_ADDRESS`, `IBUS_ADDRESS`, and `GTK_IM_MODULE`, a
+  required 64-hex session/wrapper identity, and a closed semantic environment
+  report for success and child failure. The unmodified wrapper failed at the
+  fake Xvfb boundary with exit 90 because the poisoned session bus remained
+  visible. This is the intended environment-contract red; it is not a product
+  failure or qualification result.
+- **Nested-X11 isolation repair:** The wrapper now clears parent D-Bus, IBus,
+  accessibility-bus, and input-module endpoints; exports a unique hashed
+  session and exact wrapper identity; owns the Xvfb/client process group; kills
+  stubborn background grandchildren; proves `xdpyinfo` server identity and a
+  `glxinfo` software renderer; verifies the display is unreachable after
+  teardown; deletes the private root; and only then atomically publishes its
+  machine-readable environment report. Focused fixtures cover poisoned parent
+  state, success, exact child failure, missing service, background descendants,
+  TERM cleanup, stale-report removal, and absent dependencies. A real
+  ReleaseSafe Zentty/Ghostty single-terminal run passed under this boundary
+  with X.Org Xvfb vendor release 12101011 and Mesa llvmpipe. This proves the
+  controlled X11 host boundary, not a representative native-X11/Xwayland GPU
+  desktop.
+- **Ownership and sanitation audit:** Static review found that the first
+  nested-X11 wrapper assigned the `setsid` child PID as its process group
+  without proving SID=PGID=PID, then relied on negative-PGID cleanup. It also
+  claimed ambient bus sanitation while leaving `WAYLAND_SOCKET`, `MIR_SOCKET`,
+  D-Bus system/session metadata, several IBus address/sync variables, and the
+  Weston launcher socket inherited. A poison-first fixture failed with exit 93
+  when `WAYLAND_SOCKET` reached the fake Xvfb supervisor. The wrapper now clears
+  the complete declared session-endpoint set and requires parent, supervisor,
+  and inner agreement on the exact owned session/process group before any test
+  child executes. An ambient-group fake `setsid` fails safely without a
+  negative-group signal.
+- **Fast-service-exit race:** The initial ownership handshake still launched
+  `xvfb-run` directly under `setsid`. An immediate fake Xvfb exit 77 could occur
+  before the parent observed its SID/PGID, converting the exact service status
+  into ownership failure 1. Eight earlier green repetitions missed the race;
+  root's next focused run and traced receipt exposed it. A stable wrapper-owned
+  supervisor now waits for ownership approval and only then `exec`s `xvfb-run`,
+  so fast service absence happens after proof and remains exactly 77. The full
+  suite exercises 20 immediate failures per run; 80 post-fix iterations plus an
+  independent root suite passed.
+- **Environmental false lead:** An unelevated real smoke attempt reported that
+  `/tmp/.X11-unix` could not establish listeners and should be root-owned. The
+  wrapper cleaned all processes and roots, and that result was not classified
+  as host or product evidence. Repeating outside the filesystem/socket sandbox
+  started the real Xvfb, ran the actual ReleaseSafe Zentty/Ghostty terminal and
+  PTY assertions, published the proven process group, and passed. The earlier
+  message was therefore sandbox-environment evidence, not a compositor defect.
+- **Double-nesting defect and repair:** The first matrix-level wrapper would
+  have placed `physical-key-x11` and `external-resize-x11` around a second
+  Xvfb because `controlled-x11` still allocated its own display per driver.
+  A new orchestration test failed before reaching its fake driver. The driver
+  coordinator now reuses a valid runner-owned nested session, or allocates
+  exactly one generic nested session when invoked diagnostically on its own.
+  Two `all` iterations run one server plus two resize and two physical-key
+  drivers; a matrix-owned three-iteration key scenario starts no second server.
+  The real externally driven resize scenario then passed through one isolated
+  Xvfb session with exact PTY/geometry acknowledgement.
+- **Source-identity duplication:** Matrix and archive evidence now need the
+  same source-tree identity already used by mutation publication. Copying that
+  algorithm into a second runner would permit byte-identical trees to acquire
+  different identities after one copy changed. A focused fixture first failed
+  because no shared library existed, then pinned content, mode, symlink-target,
+  ignored `.git`/`build`, missing-root, algorithm-name, and exclusion behavior.
+  `qualification-mutations` now consumes the shared read-only implementation;
+  its full classification-only fixture suite passes without changing the
+  identity algorithm.
+
+### DOGFOOD-2026-08-03-X11-VALGRIND-PHASE-ISOLATION: bind each phase to a fresh session
+
+- **Observed defect and repair:** A single nested wrapper around an ordinary
+  X11 matrix cell still let its raw and suppression-enabled Valgrind processes
+  share one display and environment. `linux/tests/memory-safety` now invokes
+  `linux/tests/nested-x11` separately and sequentially for the two phases. Each
+  invocation atomically records its controlled environment; the main report
+  binds the current wrapper SHA-256, canonical `*.environment` path, file hash
+  and mtime, and a distinct 64-hex session ID.
+- **Fail-closed evidence review:** Shared validation reopens both environment
+  records, checks current identities and closed server/renderer/isolation
+  facts, binds phase exit codes and Valgrind command roles, and enforces raw
+  finish before suppressed start before report generation within 900 seconds.
+  Matrix publication leases both files and carries their identities into the
+  summary. Governance rejects missing, changed, stale, reordered, or reused
+  phase evidence rather than treating an absent nested runtime as a pass.
+- **Focused result:** `linux/tests/suppression-governance-test`,
+  `linux/tests/qualification-matrix-test`, matrix validation, repository
+  architecture validation, and Bash syntax checks passed. Negative fixtures
+  cover missing, reused, and stale identities in both governance and the matrix
+  runner. This focused repair did not run the complete product matrix and does
+  not promote any qualification claim.
+
+### DOGFOOD-2026-08-03-WAYLAND-VALGRIND-PHASE-ISOLATION: raw and reviewed runs cannot share one Weston
+
+- **Test-first red:** After nested Wayland became available, governance still
+  accepted an ordinary Wayland Valgrind report with no controlled phase
+  environments. The focused negative reported
+  `missing-wayland-phase-environment unexpectedly passed`. Ambient compositor
+  inheritance and one shared Weston for both phases were rejected.
+- **Repair:** `memory-safety` now starts raw and suppression-enabled Wayland
+  runs sequentially through two fresh nested-Wayland sessions, exactly as the
+  X11 path does. Its report binds the current harness hash, two atomic
+  environment-report identities, and two distinct session IDs under a separate
+  `wayland_phase_environment` key; the existing X11 key remains stable. Shared
+  validation enforces backend-specific closed-world server/renderer/isolation
+  shapes, normalized raw versus suppression command roles, exact exit status,
+  identity/mtime, session inequality, and chronology. Governance consumes both
+  backend forms.
+- **Adversarial proof:** Focused fixtures reject missing binding or payload,
+  reused sessions, stale chronology or hashes, wrong backend/status/command
+  role, stale wrapper identity, and malformed process-group proof. The first
+  follow-up fixture that added X11's newly honest process group failed against
+  the old exact validator, proving schema drift rather than being relaxed; the
+  shared validator now requires a positive process group for both controlled
+  backends. Warning-level ShellCheck, governance tests, Bash syntax, and diff
+  checks pass.
+- **Current real-run boundary:** The installed build was ReleaseSafe when this
+  focused work completed, so no Debug Wayland Valgrind receipt was manufactured
+  or obtained by an unrecorded rebuild. A real Debug pair remains required in
+  the final ordered matrix after the Debug build cell. ReleaseSafe remains
+  `XFAIL`; no suppression was broadened and no qualification claim changed.
+
+### DOGFOOD-2026-08-03-CONTROLLED-WAYLAND-DEPENDENCIES: install, do not waive, the real compositor boundary
+
+- **Environmental prerequisite:** The post-reboot host already provided
+  Xwayland `23.2.6`, but it did not provide a nested Wayland compositor or the
+  `wayland-info` protocol client. Treating that absence as PASS, inheriting the
+  operator desktop, or substituting a fake protocol server were rejected.
+- **Narrow host change:** With operator authorization, Ubuntu packages Weston
+  `13.0.0-4build3` and wayland-utils `1.2.0-1build1` were installed from the
+  Ubuntu 24.04 archives, including only their package-managed runtime
+  dependencies (approximately 7 MB installed). This enables a real Weston
+  headless compositor plus a real Wayland protocol probe for the controlled
+  integration boundary. It does not establish representative GNOME, KDE,
+  hardware-GPU, or fractional-scaling coverage.
+- **Unrelated package-source warning:** `apt-get update` reported that the
+  separately configured Unity Hub repository could not be signature-verified
+  because public key `BE3E6EA534E8243F` was unavailable. Ubuntu archive indexes
+  remained usable and the requested Ubuntu packages installed successfully.
+  The third-party repository warning was neither suppressed nor described as a
+  test success; repairing operator package-source configuration is outside this
+  project's qualification boundary.
+- **Remaining proof obligation:** Package presence is only a prerequisite.
+  The nested-Wayland harness must still demonstrate a fresh private runtime,
+  compositor and renderer identity, poisoned-parent isolation, process-group
+  cleanup, exact child status propagation, atomic evidence, and real
+  Zentty/Ghostty execution before any affected matrix cell can pass.
+
+### DOGFOOD-2026-08-03-NESTED-WAYLAND: a headless compositor is real but intentionally has no input seat
+
+- **Test-first red:** Before implementation, the focused wrapper suite failed
+  because `linux/tests/nested-wayland` did not exist. The harness then required
+  poisoned-parent isolation, exact Weston arguments, compositor and protocol
+  failures, consecutive unique sessions, child failure 42, wrapper TERM 143,
+  TERM-resistant grandchildren, Weston exit 77, missing dependencies, unsafe
+  report targets, and atomic-publication cleanup before the wrapper was added.
+- **Semantic discovery:** Real Weston headless/Pixman does not advertise
+  `wl_seat`. Requiring it would either make a display-only integration boundary
+  unusable or encourage fabricated input evidence. The closed protocol proof
+  therefore requires `wl_compositor`, `wl_output`, `wl_shm`, and `xdg_wm_base`
+  only. Physical Wayland key injection and IME remain separate non-PASS cells;
+  this harness cannot promote them.
+- **Controlled repair:** Every invocation now creates a private mode-0700
+  runtime, HOME, XDG paths, and temporary directory; clears ambient Wayland,
+  X11, D-Bus, AT-SPI, IBus, and GTK input-module state; starts Weston 13 in a
+  fresh owned session/process group with the headless backend, Pixman renderer,
+  1280x1024 output at integer scale 1, no configuration, and a unique socket;
+  and validates the real compositor with `wayland-info` before running the
+  child. Cleanup kills descendants, makes the socket unreachable, removes the
+  root, revalidates the wrapper hash, and only then atomically publishes the
+  machine report.
+- **Static sanitation/bootstrap audit:** The first green wrapper still left
+  `MIR_SOCKET`, Xauthority hostname metadata, D-Bus session PID/window IDs, and
+  IBus sync mode inherited while claiming the corresponding boundaries clean.
+  Poisoned fake Weston and child assertions were added and the variables are
+  now cleared. Separating wrapper identity assignment from `readonly` also
+  stopped masking command-substitution failure, which exposed that a host
+  missing bootstrap `readlink`, `sha256sum`, or `awk` could exit 127 before the
+  advertised dependency gate. All private-session wrappers now gate those
+  bootstrap tools explicitly and still report missing runtime services as 77.
+  The first updated Wayland missing-dependency test failed before its fixture
+  linked the bootstrap tools; correcting the fixture restored the intended
+  missing-Weston classification rather than weakening the wrapper.
+- **Focused and real green:** The complete fake-service suite passes outside
+  the filesystem sandbox, where Unix sockets are available. Two independent
+  real Weston headless/Pixman smoke reviews also emitted the exact READY and
+  unique SESSION markers, ran a child against the live private socket, produced
+  a valid cleanup-bound report, and left no Weston processes or run roots. A
+  subsequent real ReleaseSafe `single-terminal` run started the actual
+  Zentty/Ghostty binary against another fresh Weston session and completed its
+  PTY and terminal assertions with the report bound to child exit zero. This
+  proves a controlled software-rendered display boundary, not GNOME, KDE,
+  native hardware acceleration, input injection, IME, or fractional scaling.
+- **Remaining integration:** Ordinary matrix cells and both Valgrind phases
+  must explicitly select and bind this environment profile. Package presence
+  and standalone wrapper success do not yet change any qualification claim.
+
+### DOGFOOD-2026-08-03-DISPLAY-NONE-ISOLATION: no display must mean no inherited desktop session
+
+- **Boundary defect:** Display-`none` cells previously ran directly in the
+  operator environment. They did not open a GTK surface, but they could still
+  read the operator HOME/XDG state or inherit display, D-Bus, AT-SPI, and IBus
+  endpoints. That made `none` a matrix label rather than an enforced runtime
+  contract.
+- **Ownership review red:** The first private-session implementation assigned
+  its background PID as the process-group ID without proving that `setsid`
+  actually created SID=PGID=PID. Negative-PGID cleanup on that assumption could
+  signal an ambient group. Root review rejected the implicit ownership claim.
+- **Repair:** `linux/tests/isolated-session` now creates mode-0700 private HOME,
+  XDG, runtime, and temporary paths; clears display, Xauthority, graphics,
+  D-Bus, AT-SPI, IBus, and GTK input-module state; and selects memory-backed
+  settings, local GIO, and disabled accessibility bridging. Parent and inner
+  processes independently prove SID=PGID=PID through an approval handshake
+  before the child executes. If ownership cannot be proved, cleanup addresses
+  only the exact child PID and never sends a negative process-group signal.
+- **Adversarial proof:** The focused suite poisons every ambient variable,
+  covers exact success and child failure, fresh identities, stale-report
+  replacement, TERM 143, a TERM-resistant background grandchild, missing
+  dependencies, unsafe report targets, and atomic publication. A misleading
+  fake `setsid` that stays in the ambient group fails with the ownership error,
+  removes its private root and stale report, kills only its child, and leaves
+  the test runner alive. Five stress repetitions plus an independent root run
+  passed.
+- **Real display-free smoke:** A fresh isolated session ran the real committed
+  architecture/workspace contract suite with no display endpoints and produced
+  a cleanup-bound report containing the proven process group and exit zero.
+  Matrix dispatch and evidence archival remain pending; standalone success does
+  not promote a qualification claim.
+- **Build-cache boundary:** A truly private HOME also removes Zig's implicit
+  user-global cache, so leaving the default would make reproducibility and
+  network behavior depend on operator state and would redownload dependencies
+  for each fresh cell. `build-local` and the pinned Ghostty regression now set
+  repository-owned local and global Zig cache paths under ignored `build/`.
+  The protected build entrypoint changed, so its freeze-manifest hash was
+  explicitly reviewed and refreshed; both positive and adversarial freeze tests
+  passed. A cold private-HOME ReleaseSafe build populated the new global cache,
+  rebuilt the real Ghostty embedding and Zentty host, and passed binary
+  hardening and ABI checks. A subsequent fresh private session reused the cache
+  and passed the same gates. Neither build read the operator HOME.
+
+### DOGFOOD-2026-08-03-RELOCATABLE-ARCHIVE: evidence must survive deletion of its build tree
+
+- **Initial false positive:** The first archive verifier checked only the
+  files that remained listed in its index. Removing one evidence payload and
+  its index entry therefore passed even though the embedded matrix summary
+  still referenced that evidence. The intended negative test reported
+  `unexpectedly passed archive verification`; that red result was retained as
+  a verifier defect rather than weakened or reclassified.
+- **Cross-link repair:** The verifier now derives the complete evidence set
+  independently from the archived matrix summary and requires a one-to-one
+  path-and-SHA-256 match with every index evidence entry. Indexed extras,
+  missing summary references, conflicting hashes, duplicate source or archive
+  paths, traversal, symlinks, hard links, missing payloads, changed payloads,
+  and unindexed filesystem entries all fail closed.
+- **Independent receipt:** Each archive also carries `SHA256SUMS` for its index
+  and every payload. Verification requires the checksum inventory to equal the
+  index inventory exactly and then runs strict checksum validation; missing,
+  corrupt, or extra receipt entries fail. A fixture creates an archive with
+  basename-colliding evidence, relocates it, deletes all original files, and
+  successfully re-verifies the copy before exercising every adversarial case.
+- **Current boundary:** This focused archive self-test passes, but the archive
+  collector must be extended when the qualification summary gains controlled-
+  environment and source-snapshot identities. No final archive or qualification
+  claim exists until that integration is complete and a quiescent full run has
+  been archived and independently re-verified.
+
+### DOGFOOD-2026-08-03-SHELL-STATIC-AUDIT: make the orchestration code independently lintable
+
+- **Installed test prerequisite:** The host did not provide ShellCheck. With
+  operator authorization, Ubuntu's ShellCheck `0.9.0-1` package was installed
+  from the 24.04 universe archive (approximately 19.5 MB installed). The
+  package's noninteractive debconf frontend fallbacks were informational; the
+  package configured successfully.
+- **First audit findings:** Warning-level analysis of the stable new harnesses
+  found masked command failures in two declaration-and-substitution forms in
+  `isolated-session`, an unchecked `cd` in the shared tree-identity algorithm,
+  and a dynamic source path in its test. It also identified one pattern-expansion
+  ambiguity in archive relative-path removal. ShellCheck's info-only
+  `SC2317` reports for functions invoked indirectly by Bash `trap` remain a
+  known static-analysis false positive and are not suppressed in source.
+- **Repair and proof:** Assignment and readonly declarations are now separate,
+  the identity subshell fails if `cd` fails, the test sources the library from a
+  stable repository-relative path, and the archive prefix is quoted inside the
+  parameter expansion. Warning-level ShellCheck then passed, followed by the
+  isolated-session, tree-identity, and relocatable-archive self-tests and a
+  clean diff whitespace check. The complete changed-shell inventory still must
+  be linted after all agents reach source quiescence.
+
+### DOGFOOD-2026-08-03-CONTROLLED-ENVIRONMENT-VALIDATION: wrapper success is not matrix evidence
+
+- **Test-first red:** The matrix-profile implementation first introduced a
+  focused test for a shared controlled-environment validator. It failed because
+  `linux/tests/lib/controlled-environment` did not yet exist. This deliberately
+  prevented three wrapper-specific, partially overlapping interpretations from
+  becoming the qualification contract.
+- **Closed contract:** The new validator accepts only the exact current
+  display-free, nested-X11, or nested-Wayland report shape. It binds the report
+  to the current regular non-symlink wrapper and its SHA-256, the expected
+  backend, exact command vector and exit status, a bounded chronology, a
+  backend-specific positive process group, sanitized ambient boundaries,
+  software renderer identity where applicable, completed cleanup, and no
+  remaining processes. The Weston shape additionally requires the four
+  protocol globals actually available in the headless compositor; it does not
+  invent an input seat.
+- **Identity repair:** Successful validation returns the session ID plus the
+  report path, SHA-256, and filesystem capture time. A separate final
+  revalidation rejects deletion, symlink replacement, content drift, or mtime
+  drift after the cell. Negative tests cover all three valid backends, missing
+  and symlink reports, wrong backend/wrapper hash/exit/command, invalid process
+  ownership, open-world additions, invalid private-session policy, stale
+  chronology, and post-capture evidence mutation.
+- **Current result and limit:** The focused validator suite is green. The
+  Valgrind report library is being refactored to consume the same backend
+  contract, but the five-profile matrix dispatcher, final evidence
+  revalidation, relocatable archive integration, mutation kills, and quiescent
+  full run remain incomplete. A passing wrapper self-test or validator self-
+  test is therefore not yet a matrix qualification result.
+
+### DOGFOOD-2026-08-03-SCOPE-CORRECTION: qualification displaced the product milestone
+
+- **Management finding:** After more than a day of execution, the Linux effort
+  had substantially proved the Ghostty embedding boundary but was still
+  extending qualification infrastructure. The C host is a useful real-system
+  boundary fixture, not a Zentty port; the planned Rust/GTK product shell had
+  not started. Continuing to generalize the proof system would optimize the
+  spike rather than deliver the next product milestone.
+- **Decision:** Qualification work is now bounded to the three already-open
+  seams: five-profile matrix dispatch and environment evidence, an immutable
+  authoritative-input/source-tree snapshot, and archival of that evidence.
+  Only mutations directly protecting those claims may be added. After focused
+  suites, one complete presently-executable matrix run, archive relocation and
+  review, this change set must be committed and pushed.
+- **Explicit non-goals before the product slice:** Do not add another schema
+  family, harness family, generalized policy layer, or archive feature unless a
+  concrete failing test in the bounded gate proves it necessary. The next
+  milestone is the first Rust/gtk4-rs vertical slice using the real Ghostty
+  boundary: a window, terminal, PTY input/output, resize, and shutdown under
+  controlled Wayland and X11.
+
+### DOGFOOD-2026-08-03-QUALIFICATION-INPUT-SNAPSHOT: one run must use one source tree
+
+- **Test-first red and boundary:** The focused snapshot suite initially failed
+  because no helper existed. The bounded implementation records the complete
+  source-tree identity, excluding only repository-root `.git` and `build`, plus
+  exact identities for the matrix, its schema, the matrix runner,
+  traceability, and the shared tree-identity library. Capture and validation
+  double-read the tree and files so a mixed-source run cannot publish a normal
+  qualification summary.
+- **Adversarial green:** The initial suite passes missing, unknown, duplicate,
+  reused, out-of-tree, symlink, hard-link and non-regular authoritative inputs;
+  unsafe output paths; open-world or changed snapshot data; byte, timestamp,
+  mode, path and tree drift; deterministic replacement during capture and
+  validation; atomic failure; Bash syntax; and warning-level ShellCheck.
+- **Independent audit red:** A separate read-only review then replaced the
+  output parent immediately before the final `mv`, renaming `build` to
+  `build.real` and inserting `build -> build.real`. Capture returned zero and
+  published through the substituted symlink, while immediate validation
+  correctly failed. This was a real time-of-check/time-of-use defect in the
+  capture success contract.
+- **Bound-publication repair:** Capture now opens the original output parent,
+  stages and publishes relative to that directory descriptor, and compares the
+  public path, descriptor path, device and inode immediately before and after
+  publication. It also binds the output leaf, hashes the published bytes, and
+  preserves a private atomic backup of any prior snapshot. Unsafe topology or
+  leaf replacement restores the prior bytes (or removes a newly created leaf),
+  fails capture, and removes staging through the still-open descriptor even
+  when the public parent was renamed. The exact adversarial `mv` wrapper now
+  produces nonzero, preserves the sentinel snapshot through the attack, and
+  leaves no staging residue. The focused suite, syntax check and warning-level
+  ShellCheck pass after repair; matrix integration remains the acceptance gate.
+- **Archive integration:** The relocatable archive now requires the eventual
+  top-level snapshot path/hash/capture-time identity and treats it as a unique
+  member of the summary-derived closed evidence set. Missing, malformed,
+  aliased, tampered, deleted or unindexed snapshot evidence fails even when an
+  attacker re-signs the archive index and checksum receipt. The extended
+  archive self-test, syntax check and warning-level ShellCheck pass. The
+  capture race is now repaired; final end-to-end acceptance waits for the
+  matrix run.
+
+### DOGFOOD-2026-08-03-PROFILE-RUNNER-FIRST-RED: missing environment evidence hid an unexpected skip
+
+- **First executable runner result:** Once current mutation target hashes were
+  refreshed, matrix validation passed and the full focused runner suite reached
+  its controlled-service absence case. The fake Xvfb service returned the
+  contractually reserved exit 77. The runner initially classified the cell as
+  `UNEXPECTED_SKIP`, then attempted to validate the environment report that a
+  service failing before startup cannot produce and overwrote the result with
+  `MISSING_OR_INVALID_ENVIRONMENT_REPORT`. The self-test failed because the
+  required skip classification had disappeared.
+- **Impact:** Both outcomes fail qualification, so this did not create a false
+  pass. It did make the machine result less precise and violated the explicit
+  requirement to distinguish environmental absence from an ordinary harness
+  or product failure. The absence of a receipt must not erase the reserved exit
+  classification, and it must never be converted into environment evidence.
+- **Disposition:** The bounded precedence repair and exact regression are now
+  implemented as described below. The same default-sandbox run also lacked
+  fake-Wayland socket receipts; a later elevated run operated the Unix-socket
+  fake successfully and established that those lines were sandbox artifacts,
+  not host defects.
+
+### DOGFOOD-2026-08-03-PROFILE-RUNNER-FIXTURE-REPAIRS: stricter ownership exposed stale test assumptions
+
+- **Skip repair and true fake-service cause:** The runner now preserves
+  `UNEXPECTED_SKIP` only when exit 77 accompanies a genuinely absent controlled
+  report; a present but malformed report remains a harness failure. The next
+  elevated run showed normal X11 cells missing reports after the absence case.
+  The injected variable was explicitly scoped and cleared, but the actual
+  defect was in the fake: its `xdpyinfo` always succeeded even after fake
+  `xvfb-run` exited, so the real nested wrapper correctly refused to claim that
+  Xvfb was unreachable after cleanup. The fake now owns a lifecycle marker,
+  and `xdpyinfo` succeeds only while that marker exists. Direct observation
+  then showed absent Xvfb as `UNEXPECTED_SKIP` without environment evidence and
+  later normal X11 cells producing valid reports.
+- **Stale-XFAIL fixture repair:** The stale ReleaseSafe Wayland fixture changed
+  the aggregate suppressed exit from 99 to zero but left its suppression-phase
+  environment receipt claiming 99. The stricter shared validator rejected the
+  inconsistent receipt before the intended stale-XFAIL assertion. A dedicated
+  exit-zero suppressed environment fixture and refreshed phase identity now
+  make the command, report and receipt agree; the runner then reports the
+  intended `STALE_XFAIL`.
+- **Supervision failure:** Two focused suites briefly overlapped because an
+  asynchronous tool wait returned without an exit status and the sandboxed
+  process query could not see the elevated host process. The older run was
+  terminated, all descendant processes were confirmed gone, and subsequent
+  suites are launched and polled serially by durable session ID. Although each
+  suite used a separate build-tree root, overlapping qualification runs are not
+  accepted as evidence.
+- **Late-contention red:** The next serialized complete suite passed every
+  environment profile through both ReleaseSafe and Debug, including all Debug
+  Valgrind fixtures, then stopped at its adversarial late evidence-lock case.
+  Moving that fixture's wait command away from a now-forbidden controlled-X11
+  substitution satisfied static ownership, but the external contender did not
+  acquire the released lock before the wait timed out; the wait cell failed and
+  governance subsequently passed. The final summary was still correctly
+  non-passing.
+- **Late-contention diagnosis and repair:** A one-case diagnostic proved the
+  waiter never reached `flock`: its 30-second pre-signal loop expired before the
+  now-profiled fixture runner reached the ReleaseSafe Valgrind cell. The signal
+  existed only after the waiter had exited. This was stale fixture timing, not
+  a leaked descriptor or production lock failure. The external producer now
+  receives a bounded 300-second whole-run prelude deadline while the in-cell
+  acquisition acknowledgement remains 30 seconds. The isolated rerun observed
+  the signal, showed the waiter held no inherited lock descriptor, acquired the
+  lock, made the wait cell pass, forced governance lock acquisition to fail,
+  and ended with `suppression governance did not retain the Valgrind evidence
+  lease; refusing to publish a summary`. No production lock rule was changed.
+
+### DOGFOOD-2026-08-03-ATOMIC-PUBLICATION-DEADLINE: the adversary expired before the runner arrived
+
+- **Discovery:** After the late-lock fixture was repaired, the serialized
+  runner suite reached the atomic-summary adversary and failed because that
+  helper also used a 30-second whole-run pre-signal deadline. The profiled
+  runner legitimately needed longer to reach summary publication, so the
+  adversary exited before it could replace the output parent. This was another
+  stale fixture deadline, not evidence that atomic publication had failed.
+- **Repair and focused evidence:** The whole-run marker wait is now bounded at
+  300 seconds, while all action and acknowledgement waits remain narrowly
+  bounded. An isolated copy of the exact atomic fixture observed the marker,
+  performed the replacement, and passed the expected rejection and cleanup
+  assertions. The complete focused runner suite remains the final acceptance
+  gate; the isolated diagnostic is not substituted for it.
+
+### DOGFOOD-2026-08-03-MUTATION-INVENTORY-DRIFT: reviewed patches stopped applying
+
+- **Discovery:** The mandatory all-patch dry run found four reviewed mutants
+  whose hunks no longer applied after the bounded runner, suppression-lock and
+  immutable-input changes. A fifth governance error was caught earlier when a
+  new archive mutant named an owning test that was absent from traceability.
+  Neither condition was converted into a mutation pass.
+- **Repair:** The stale receipt mutant now covers the raw, suppressed and both
+  environment receipts; the dimension mutant covers the runner plus both
+  authoritative tier declarations in the matrix schema; the Valgrind lock
+  mutant removes both acquisition and descriptor validation; and the mutation
+  input mutant uses the shared tree-identity helper's current name. The archive
+  self-test is now an explicit traceability entry under matrix integrity, while
+  the matrix cell remains owned only by the matrix runner. Patch identities
+  were refreshed only after every hunk applied cleanly to its declared target.
+- **Remaining gate:** Patch applicability and repository architecture now pass.
+  Each mutant still must be killed for its declared reason by the production
+  mutation suite before this evidence set can be committed.
+
+### DOGFOOD-2026-08-03-RETIREMENT-FIXTURE-PROFILE: promoted cells need controlled owners
+
+- **Full-suite red:** The first complete runner self-test after the deadline
+  repairs ran for roughly 25 minutes and reached its final self-attested host
+  retirement fixture. That fixture intentionally promotes future product and
+  Wayland input/resize cells to `PASS`, but it predated mandatory environment
+  profiles and left four promoted executable cells without controlled owners.
+  The runner correctly rejected the fixture before the intended external-
+  attestation assertion.
+- **Fixture repair:** The retirement transform now assigns every newly
+  executable profile-less cell to the matching nested Wayland or X11 owner (or
+  isolated no-display owner). It does not weaken production profile
+  validation. The complete serialized suite must be rerun; the failed run is
+  retained as diagnostic evidence only.
+- **Second full-suite red:** That repair exposed the complementary stale case:
+  renamed X11 physical-input and resize cells retained their former
+  `phase-managed-x11-v1` profile. That profile is intentionally restricted to
+  the authoritative unrenamed matrix IDs and Valgrind phases, so the renamed
+  retirement cells were rejected for bypassing their owner. The retirement
+  transform now reassigns every renamed non-Valgrind host cell by display;
+  Valgrind replacements retain their required phase-managed profile. Again,
+  production validation was not relaxed.
+- **Third full-suite red and policy repair:** The next run passed runner-level
+  ownership and reached repository architecture validation. Two checks there
+  hard-coded the active qualification-host X11/IBus cell IDs even when the
+  matrix truthfully declared the host retired. That made the already-designed
+  retirement path structurally impossible. Generic profile compatibility,
+  closed-world traceability and retirement-receipt validation still apply in
+  both states; only the exact active-host ID/topology assertions are now
+  conditional on `qualification_host_retired == false`. The current matrix
+  still exercises the unchanged strict branch. A retired matrix must continue
+  through the external-attestation gate rather than failing on legacy names.
+- **Complete runner green; focused fixture red:** The fourth serialized runner
+  suite passed end to end. The subsequent architecture self-test found that
+  its generic missing-entrypoint fixture mutated `TEST-MATRIX-RUNNER`, whose
+  complete identity is intentionally checked earlier by the environment-
+  profile contract. It therefore failed for that earlier invariant rather
+  than the intended entrypoint rule. The fixture now uses the independently
+  mapped archive test, which is not part of that specialized contract; no
+  production ordering or validation was weakened.
+
+### DOGFOOD-2026-08-03-PRODUCTION-MUTATION-RUN: exact kills, not timeouts
+
+- **First complete result:** All 32 reviewed mutants applied and executed, but
+  the suite correctly failed qualification: 27 were killed for their declared
+  reason, four matrix-runner mutants timed out, and the tier closed-world
+  mutant died for the wrong reason. There were no survivors, crashes, compile
+  failures or apply failures. A timeout is not accepted as a mutation kill.
+- **Timeout cause and bounded repair:** The monolithic runner self-test now
+  takes about 26 minutes, while four early/mid-suite mutant deadlines still
+  ranged from 120 to 300 seconds. The directly mutation-owned dynamic cases
+  (unexpected skip, unrelated XFAIL exit, and stale Valgrind receipt) now run
+  immediately after the shared real profiled-input case; the static false-full
+  claim runs before them. Their deadlines are 300 seconds, long enough for the
+  exact controlled execution but far below the whole suite runtime. This
+  changes test construction order, not classification policy.
+- **Wrong-reason cause and repair:** The tier mutant changed both the cell enum
+  and the authoritative axes `const`. Its fixture intentionally leaves the
+  declared axes unchanged while inserting an undeclared `nightly` cell, so the
+  altered axes `const` made the schema reject the document before the intended
+  runner assertion. The mutant now changes only the cell enum and runner
+  allowlist, precisely modeling a cell value admitted outside the unchanged
+  authoritative axis. A complete production rerun is required; the 27/32
+  receipt is diagnostic and cannot be published as passing.
+- **Rerun result:** The repaired production suite passed all 32 reviewed
+  required mutants: `KILLED_EXPECTED=32`, with zero survivors, timeouts,
+  crashes, wrong-reason failures, compile failures or apply failures. The
+  published mutation receipt and all phase-log hashes remain subject to the
+  final qualification archive and source-snapshot gate.
+- **Warning gate discovery:** The repository-wide executable-Bash warning gate
+  then found that ShellCheck could not infer the eight variable names assigned
+  dynamically by the C/C++ enum-representation loop. Runtime tests were green,
+  but warning-clean source is required. The probe now declares the complete
+  closed variable set before `printf -v`; behavior and the tracked XFAIL are
+  unchanged.
+
+### DOGFOOD-2026-08-03-FULL-MATRIX-CAPTURE-SPAN: exhaustive cells exceeded the ordinary receipt bound
+
+- **First final-matrix red:** The quiescent 121-cell run spent 27 minutes in
+  `matrix-runner-self-test`, which passed, emitted a complete closed-world
+  display-none receipt, and cleaned every child. The outer runner nevertheless
+  rejected that receipt because ordinary cells were uniformly limited to a
+  900-second capture span. The later mutation-suite cell is also known to take
+  roughly 18 minutes. This was a real integration defect: focused execution
+  had not wrapped either exhaustive governance suite in its final matrix
+  environment owner.
+- **Bounded repair:** Ordinary matrix-owned cells remain limited to 900 seconds.
+  Only the two named exhaustive governance cells receive a 3600-second maximum,
+  passed explicitly into the same strict controlled-environment validator.
+  Command identity, wrapper hash, start floor, exit code, cleanup, environment
+  topology, report timestamp and final revalidation remain unchanged. No
+  environmental absence or overlong ordinary cell is converted into a pass.
+- **Run disposition:** Once the first cell failed, the run could no longer
+  qualify anything. It was terminated by its isolated process group during a
+  later cell, and host inspection confirmed no qualification, nested-display,
+  mutation or Weston process remained. Its partial evidence is diagnostic
+  only; the complete matrix must restart from a new source snapshot.
+
+This is a downstream experimental installed ABI, not an upstream-supported
+Ghostty API. Any extraction proposed upstream should be smaller than the fork's
+test harness, preserve the legacy constructor, and be independently reviewable.
+
+### DOGFOOD-2026-08-03-TEST-ARCHITECTURE-RESET: real integration, not recursive governance
+
+- **Operator correction:** The 121-cell inventory contained valuable real
+  Ghostty/GTK/PTY/display coverage but no Rust Zentty product. Recursive runner
+  self-tests, a Bash-governance mutation campaign and increasingly elaborate
+  evidence checks had become a disproportionate share of the work. The term
+  “paranoid” had been applied to distrust of the harness instead of focused
+  exercise of the delivered system.
+- **Decision:** The normative recovery plan is
+  [`linux-rust-port-recovery-plan.md`](linux-rust-port-recovery-plan.md). It
+  preserves real controlled services, raw/suppressed Valgrind evidence,
+  explicit gaps and small C ABI probes; removes recursive qualification and
+  the Bash mutation campaign from product qualification; builds the Rust slice
+  test-first; and deletes the C application after a short parity overlap.
+- **Scope control:** No new schema, archive format, mutation framework or
+  generalized harness may be added before the Rust window/terminal/PTY/resize/
+  shutdown path passes under real controlled Wayland and X11. The next review
+  artifact is product code and real product E2E evidence, not a larger QA
+  framework.
+
+### DOGFOOD-2026-08-03-MNEMONIC-LABEL-LEAK: real Debug failure preserved
+
+- **Cleanup:** Process inspection after the interrupted aggregate run found no
+  qualification runner, mutation runner, Valgrind, Weston, or Xvfb child. The
+  only pattern matches were the inspection command and its sandbox parent.
+- **Raw evidence:** The ignored diagnostic receipts remain at
+  `build/linux/memory-safety-Debug-api-{wayland,x11}.{raw,suppressed}.log`.
+  Both raw runs report five contexts. After the already reviewed suppression
+  set, both backends retain one error: 24 bytes definitely lost in one block.
+- **Shared stack:** The surviving allocation passes through
+  `gtk_widget_add_mnemonic_label`, `gtk_label_set_mnemonic_widget`,
+  `adw_banner_set_button_label`, and Ghostty's
+  `SurfaceChildExitedBanner.init` at `surface_child_exited.zig:73`.
+- **Qualification decision:** No suppression was added. The authoritative
+  `debug-valgrind-api-wayland` and `debug-valgrind-api-x11` cells are now
+  explicit FAIL entries under this tracking ID. Milestone 3 must reduce the
+  finding to a focused GTK/libadwaita or Ghostty reproducer and repair it at
+  the owning layer; current evidence does not determine ownership.
+
+### DOGFOOD-2026-08-03-NONRECURSIVE-QUALIFICATION: delete the test of the test
+
+- **Test-first red:** The new focused qualification-boundary contract passed
+  its own negative fixtures, then failed the repository matrix because
+  `matrix-runner-self-test` invoked the aggregate runner from inside the
+  aggregate runner.
+- **Repair:** Framework self-test, mutation-suite, host-freeze, attestation,
+  and controlled-IBus-self-test cells were removed from the product/dependency
+  matrix. Support self-tests now run once before the matrix. The special
+  3600-second receipt allowance was deleted.
+- **Focused runner tests:** Exit classification is now a small shared helper.
+  Its tests execute real shell exits for PASS, failed command, unexpected exit
+  77, exact XFAIL, stale XFAIL, and wrong XFAIL failure. Matrix validation
+  separately proves rejection of a missing terminal coordinate, unknown
+  status, and false full-qualification claim.
+- **Runtime:** The focused matrix suite completes in approximately 1.7 seconds
+  on this host. The previous recursive suite was interrupted during this
+  repair rather than allowed to consume another multi-minute session; the
+  last completed historical measurement was roughly 27 minutes. Suppression
+  governance remains a separate focused test and completed in 40.8 seconds.
+- **Controlled-wrapper rerun:** The first nested-Wayland wrapper self-test was
+  correctly red inside the filesystem sandbox because its fixture could not
+  bind the private Unix display socket (`socat: Operation not permitted`). It
+  was rerun outside that sandbox rather than classified as PASS or absence;
+  the same test then passed. X11, controlled IBus, host freeze, async-ABI, and
+  suppression-governance focused tests also passed in the controlled host
+  environment. The complete support gate now takes roughly one minute rather
+  than nesting multi-minute aggregate runs.
+- **Removed machinery:** The Bash mutation campaign, nested qualification
+  archive, source-snapshot/tree-identity layer, generalized test-architecture
+  validator, attestation/review/retirement schemas, and their fixtures were
+  deleted or deferred. They did not qualify a delivered Zentty binary.
+- **Remaining boundary:** The real C-host and Valgrind cells are retained only
+  for the short Rust parity overlap. Their evidence is not Rust product
+  qualification. The next implementation work is the Rust vertical slice, not
+  another qualification framework feature.
 
 ## AI disclosure
 

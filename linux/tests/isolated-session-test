@@ -1,0 +1,328 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+wrapper="${repo_root}/linux/tests/isolated-session"
+temp_dir="$(mktemp -d)"
+fake_bin="${temp_dir}/bin"
+capture_dir="${temp_dir}/capture"
+signal_wrapper_pid=""
+
+cleanup() {
+    if [[ "${signal_wrapper_pid}" =~ ^[1-9][0-9]*$ ]] &&
+        kill -0 "${signal_wrapper_pid}" 2>/dev/null; then
+        kill -TERM "${signal_wrapper_pid}" 2>/dev/null || true
+        wait "${signal_wrapper_pid}" 2>/dev/null || true
+    fi
+    rm -rf -- "${temp_dir}"
+}
+trap cleanup EXIT
+
+fail() {
+    echo "isolated-session-test: error: $*" >&2
+    exit 1
+}
+
+wait_for_file() {
+    local path="$1"
+    for _ in {1..300}; do
+        [[ -s "${path}" ]] && return 0
+        sleep 0.01
+    done
+    fail "timed out waiting for fixture file: ${path}"
+}
+
+assert_dead() {
+    local pid="$1"
+    local label="$2"
+    if kill -0 "${pid}" 2>/dev/null; then
+        fail "${label} process ${pid} survived cleanup"
+    fi
+}
+
+mkdir -p "${fake_bin}" "${capture_dir}"
+cat >"${fake_bin}/session-probe" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+capture="${ZENTTY_ISOLATED_TEST_CAPTURE:?}"
+run_root="${HOME%/home}"
+printf '%s\n' "${run_root}" >"${capture}/run-root"
+printf '%s\n' "${ZENTTY_ISOLATED_SESSION_ID:-}" >"${capture}/session-id"
+printf '%s\n' "${ZENTTY_ISOLATED_SESSION_WRAPPER_SHA256:-}" >"${capture}/wrapper-sha"
+printf '%s\n' "${BASHPID}" >"${capture}/session-process-id"
+
+[[ "${run_root}" == /tmp/zentty-isolated-session.* ]] || exit 51
+[[ "${XDG_CONFIG_HOME:-}" == "${run_root}/config" ]] || exit 52
+[[ "${XDG_CACHE_HOME:-}" == "${run_root}/cache" ]] || exit 53
+[[ "${XDG_DATA_HOME:-}" == "${run_root}/data" ]] || exit 54
+[[ "${XDG_STATE_HOME:-}" == "${run_root}/state" ]] || exit 55
+[[ "${XDG_RUNTIME_DIR:-}" == "${run_root}/runtime" ]] || exit 56
+[[ "${TMPDIR:-}" == "${run_root}/tmp" ]] || exit 57
+[[ "${GSETTINGS_BACKEND:-}" == memory ]] || exit 58
+[[ "${GIO_USE_VFS:-}" == local ]] || exit 59
+[[ "${NO_AT_BRIDGE:-}" == 1 ]] || exit 60
+[[ "${GTK_A11Y:-}" == none ]] || exit 61
+[[ "${ZENTTY_ISOLATED_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] || exit 62
+[[ "${ZENTTY_ISOLATED_SESSION_WRAPPER_SHA256:-}" =~ ^[0-9a-f]{64}$ ]] || exit 63
+
+for poisoned_name in \
+    DISPLAY WAYLAND_DISPLAY WAYLAND_SOCKET MIR_SOCKET \
+    XAUTHORITY XAUTHLOCALHOSTNAME GDK_BACKEND XDG_SESSION_TYPE \
+    LIBGL_ALWAYS_SOFTWARE \
+    DBUS_SESSION_BUS_ADDRESS DBUS_STARTER_ADDRESS DBUS_STARTER_BUS_TYPE \
+    DBUS_SYSTEM_BUS_ADDRESS DBUS_SESSION_BUS_PID DBUS_SESSION_BUS_WINDOWID \
+    AT_SPI_BUS_ADDRESS IBUS_ADDRESS IBUS_ADDRESS_FILE IBUS_USE_PORTAL \
+    IBUS_ENABLE_SYNC_MODE GTK_IM_MODULE; do
+    [[ -z "${!poisoned_name:-}" ]] || exit 64
+done
+
+case "${1:-success}" in
+    success)
+        printf 'isolated child: PASS\n'
+        ;;
+    fail)
+        exit 42
+        ;;
+    grandchild)
+        (
+            trap '' TERM HUP INT
+            printf '%s\n' "${BASHPID}" >"${capture}/grandchild.pid"
+            while :; do sleep 1; done
+        ) &
+        wait_pid=$!
+        wait_for_marker=false
+        for _ in {1..100}; do
+            [[ -s "${capture}/grandchild.pid" ]] && {
+                wait_for_marker=true
+                break
+            }
+            sleep 0.01
+        done
+        [[ "${wait_for_marker}" == true ]] || exit 65
+        disown "${wait_pid}" 2>/dev/null || true
+        ;;
+    block)
+        printf '%s\n' "${BASHPID}" >"${capture}/blocking-child.pid"
+        trap 'printf "stopped\n" >"${capture}/blocking-child.stopped"; exit 143' TERM HUP INT
+        while :; do sleep 1; done
+        ;;
+    *)
+        exit 66
+        ;;
+esac
+EOF
+chmod +x "${fake_bin}/session-probe"
+
+export PATH="${fake_bin}:${PATH}"
+export ZENTTY_ISOLATED_TEST_CAPTURE="${capture_dir}"
+export DISPLAY=:0
+export WAYLAND_DISPLAY=wayland-0
+export WAYLAND_SOCKET=/poison/wayland.sock
+export MIR_SOCKET=/poison/mir.sock
+export XAUTHORITY=/poison/Xauthority
+export XAUTHLOCALHOSTNAME=poison-host
+export GDK_BACKEND=x11
+export XDG_SESSION_TYPE=x11
+export LIBGL_ALWAYS_SOFTWARE=0
+export DBUS_SESSION_BUS_ADDRESS=unix:path=/poison/session-bus
+export DBUS_STARTER_ADDRESS=unix:path=/poison/starter-bus
+export DBUS_STARTER_BUS_TYPE=session
+export DBUS_SYSTEM_BUS_ADDRESS=unix:path=/poison/system-bus
+export DBUS_SESSION_BUS_PID=99999
+export DBUS_SESSION_BUS_WINDOWID=99999
+export AT_SPI_BUS_ADDRESS=unix:path=/poison/a11y-bus
+export IBUS_ADDRESS=unix:path=/poison/ibus
+export IBUS_ADDRESS_FILE=/poison/ibus-address
+export IBUS_USE_PORTAL=1
+export IBUS_ENABLE_SYNC_MODE=1
+export GTK_IM_MODULE=ibus
+export HOME=/poison/home
+export XDG_CONFIG_HOME=/poison/config
+export XDG_CACHE_HOME=/poison/cache
+export XDG_DATA_HOME=/poison/data
+export XDG_STATE_HOME=/poison/state
+export XDG_RUNTIME_DIR=/poison/runtime
+export TMPDIR=/poison/tmp
+export GSETTINGS_BACKEND=keyfile
+export GIO_USE_VFS=gvfs
+export NO_AT_BRIDGE=0
+export GTK_A11Y=full
+
+success_report="${temp_dir}/success-environment.json"
+success_log="${temp_dir}/success.log"
+ZENTTY_ISOLATED_SESSION_REPORT="${success_report}" \
+    "${wrapper}" session-probe success >"${success_log}" 2>&1
+grep -Fx \
+    "isolated-session: READY backend=none private-home private-xdg private-tmp private-process-group" \
+    "${success_log}" >/dev/null || fail "ready marker was not emitted"
+grep -Fx "isolated child: PASS" "${success_log}" >/dev/null ||
+    fail "success child did not run"
+successful_run_root="$(cat "${capture_dir}/run-root")"
+[[ ! -e "${successful_run_root}" ]] || fail "private root survived success"
+success_session="$(cat "${capture_dir}/session-id")"
+success_wrapper_sha="$(cat "${capture_dir}/wrapper-sha")"
+success_process_id="$(cat "${capture_dir}/session-process-id")"
+jq -e \
+    --arg wrapper "${wrapper}" \
+    --arg wrapper_sha "$(sha256sum "${wrapper}" | awk '{print $1}')" \
+    --arg session "${success_session}" \
+    --argjson process_group "${success_process_id}" '
+    (keys | sort) == [
+      "backend","command","command_exit_code","environment","finished_at_epoch",
+      "isolation","renderer","schema_version","server","session_id",
+      "started_at_epoch","wrapper"
+    ] and
+    .schema_version == 1 and
+    .session_id == $session and
+    (.session_id | test("^[0-9a-f]{64}$")) and
+    .backend == "none" and
+    .wrapper == {path:$wrapper,sha256:$wrapper_sha} and
+    .command == ["session-probe","success"] and
+    .command_exit_code == 0 and
+    .server == null and .renderer == null and
+    .environment == {
+      home_isolated:true,xdg_isolated:true,tmp_isolated:true,mode:"0700",
+      policy:{gsettings_backend:"memory",gio_use_vfs:"local",no_at_bridge:"1",gtk_a11y:"none"}
+    } and
+    .isolation == {
+      ambient_display_sanitized:true,
+      ambient_dbus_sanitized:true,
+      ambient_ibus_sanitized:true,
+      process_group:.isolation.process_group,
+      run_root_removed:true,
+      remaining_processes:[]
+    } and
+    (.isolation.process_group |
+      . == $process_group and type == "number" and . > 0 and floor == .) and
+    (.started_at_epoch | type == "number") and
+    (.finished_at_epoch | type == "number") and
+    .started_at_epoch <= .finished_at_epoch
+' "${success_report}" >/dev/null || fail "success environment report is invalid"
+[[ "${success_wrapper_sha}" == "$(sha256sum "${wrapper}" | awk '{print $1}')" ]] ||
+    fail "child wrapper identity was not stable"
+
+failure_report="${temp_dir}/failure-environment.json"
+printf '{"stale":true}\n' >"${failure_report}"
+set +e
+ZENTTY_ISOLATED_SESSION_REPORT="${failure_report}" \
+    "${wrapper}" session-probe fail >"${temp_dir}/failure.log" 2>&1
+failure_status=$?
+set -e
+[[ "${failure_status}" -eq 42 ]] || fail "child failure status was not propagated"
+jq -e '.command_exit_code == 42 and .command == ["session-probe","fail"]' \
+    "${failure_report}" >/dev/null || fail "failure report did not replace stale evidence"
+failure_session="$(jq -r '.session_id' "${failure_report}")"
+[[ "${failure_session}" != "${success_session}" ]] || fail "sessions reused an identity"
+if compgen -G "${failure_report}.tmp.*" >/dev/null; then
+    fail "atomic report temporary file survived failure publication"
+fi
+
+grandchild_report="${temp_dir}/grandchild-environment.json"
+rm -f "${capture_dir}/grandchild.pid"
+ZENTTY_ISOLATED_SESSION_REPORT="${grandchild_report}" \
+    "${wrapper}" session-probe grandchild >"${temp_dir}/grandchild.log" 2>&1
+wait_for_file "${capture_dir}/grandchild.pid"
+grandchild_pid="$(cat "${capture_dir}/grandchild.pid")"
+assert_dead "${grandchild_pid}" "background grandchild"
+jq -e '.command_exit_code == 0 and .isolation.remaining_processes == []' \
+    "${grandchild_report}" >/dev/null || fail "grandchild cleanup report is invalid"
+
+signal_report="${temp_dir}/signal-environment.json"
+printf '{"stale":true}\n' >"${signal_report}"
+rm -f "${capture_dir}/blocking-child.pid" "${capture_dir}/blocking-child.stopped"
+ZENTTY_ISOLATED_SESSION_REPORT="${signal_report}" \
+    "${wrapper}" session-probe block >"${temp_dir}/signal.log" 2>&1 &
+signal_wrapper_pid=$!
+wait_for_file "${capture_dir}/blocking-child.pid"
+signal_run_root="$(cat "${capture_dir}/run-root")"
+blocking_child_pid="$(cat "${capture_dir}/blocking-child.pid")"
+kill -TERM "${signal_wrapper_pid}"
+set +e
+wait "${signal_wrapper_pid}"
+signal_status=$?
+set -e
+signal_wrapper_pid=""
+[[ "${signal_status}" -eq 143 ]] || fail "TERM status was not propagated"
+assert_dead "${blocking_child_pid}" "blocking child"
+[[ ! -e "${signal_run_root}" ]] || fail "private root survived TERM"
+[[ ! -e "${signal_report}" ]] || fail "TERM retained stale or partial report"
+[[ -f "${capture_dir}/blocking-child.stopped" ]] ||
+    fail "blocking child did not receive cleanup signal"
+if compgen -G "${signal_report}.tmp.*" >/dev/null; then
+    fail "atomic report temporary file survived TERM"
+fi
+
+symlink_target="${temp_dir}/symlink-target.json"
+symlink_report="${temp_dir}/symlink-report.json"
+printf 'target sentinel\n' >"${symlink_target}"
+ln -s "${symlink_target}" "${symlink_report}"
+set +e
+ZENTTY_ISOLATED_SESSION_REPORT="${symlink_report}" \
+    "${wrapper}" session-probe success >"${temp_dir}/symlink.log" 2>&1
+symlink_status=$?
+set -e
+[[ "${symlink_status}" -ne 0 ]] || fail "symlink report path was accepted"
+[[ "$(cat "${symlink_target}")" == "target sentinel" ]] ||
+    fail "symlink report target was modified"
+
+misleading_bin="${temp_dir}/misleading-bin"
+misleading_report="${temp_dir}/misleading-environment.json"
+mkdir -p "${misleading_bin}"
+cat >"${misleading_bin}/setsid" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+capture="${ZENTTY_ISOLATED_TEST_CAPTURE:?}"
+printf '%s\n' "${BASHPID}" >"${capture}/misleading-setsid.pid"
+for argument in "$@"; do
+    case "${argument}" in
+        ZENTTY_ISOLATED_SESSION_RUN_ROOT=*)
+            printf '%s\n' "${argument#*=}" >"${capture}/misleading-run-root"
+            ;;
+    esac
+done
+trap 'exit 143' TERM HUP INT
+while :; do sleep 1; done
+EOF
+chmod +x "${misleading_bin}/setsid"
+printf '{"stale":true}\n' >"${misleading_report}"
+rm -f "${capture_dir}/misleading-setsid.pid" \
+    "${capture_dir}/misleading-run-root"
+set +e
+PATH="${misleading_bin}:${PATH}" \
+    ZENTTY_ISOLATED_SESSION_REPORT="${misleading_report}" \
+    "${wrapper}" session-probe success >"${temp_dir}/misleading.log" 2>&1
+misleading_status=$?
+set -e
+[[ "${misleading_status}" -eq 1 ]] ||
+    fail "misleading setsid did not fail session ownership validation"
+grep -F "did not establish an owned session and process group" \
+    "${temp_dir}/misleading.log" >/dev/null ||
+    fail "misleading setsid failure did not identify the ownership defect"
+wait_for_file "${capture_dir}/misleading-setsid.pid"
+misleading_pid="$(cat "${capture_dir}/misleading-setsid.pid")"
+assert_dead "${misleading_pid}" "misleading setsid"
+wait_for_file "${capture_dir}/misleading-run-root"
+misleading_run_root="$(cat "${capture_dir}/misleading-run-root")"
+[[ ! -e "${misleading_run_root}" ]] ||
+    fail "private root survived failed session ownership validation"
+[[ ! -e "${misleading_report}" ]] ||
+    fail "failed session ownership retained stale or partial evidence"
+
+missing_bin="${temp_dir}/missing-bin"
+mkdir -p "${missing_bin}"
+for dependency in bash readlink sha256sum awk; do
+    ln -s "$(command -v "${dependency}")" "${missing_bin}/${dependency}"
+done
+set +e
+PATH="${missing_bin}" "${wrapper}" session-probe success \
+    >"${temp_dir}/missing-dependency.log" 2>&1
+missing_status=$?
+set -e
+[[ "${missing_status}" -eq 77 ]] || fail "missing dependency did not exit 77"
+grep -F "SKIP missing runtime dependency: jq" \
+    "${temp_dir}/missing-dependency.log" >/dev/null ||
+    fail "missing dependency was not identified"
+
+echo "Isolated display-none session tests passed"

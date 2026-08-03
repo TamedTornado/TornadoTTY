@@ -10,15 +10,65 @@ metadata="${repo_root}/build/linux/build-metadata"
 backend="${GDK_BACKEND:-wayland}"
 scenario="${ZENTTY_MEMORY_SCENARIO:-single}"
 expected_optimize="${ZENTTY_MEMORY_EXPECT_OPTIMIZE:-Debug}"
+if [[ "${backend}" != "wayland" && "${backend}" != "x11" ]]; then
+    echo "error: GDK_BACKEND must be wayland or x11" >&2
+    exit 1
+fi
+if [[ "${scenario}" != "single" && "${scenario}" != "interaction" &&
+    "${scenario}" != "api" ]]; then
+    echo "error: ZENTTY_MEMORY_SCENARIO must be single, interaction, or api" >&2
+    exit 1
+fi
+if [[ "${expected_optimize}" != "Debug" && "${expected_optimize}" != "ReleaseSafe" ]]; then
+    echo "error: ZENTTY_MEMORY_EXPECT_OPTIMIZE must be Debug or ReleaseSafe" >&2
+    exit 1
+fi
 receipt_base="${repo_root}/build/linux/memory-safety-${expected_optimize}-${scenario}-${backend}"
 raw_receipt="${receipt_base}.raw.log"
 suppressed_receipt="${receipt_base}.suppressed.log"
 report="${receipt_base}.json"
+raw_environment_report="${receipt_base}.raw.environment"
+suppressed_environment_report="${receipt_base}.suppressed.environment"
+nested_x11="${repo_root}/linux/tests/nested-x11"
+nested_wayland="${repo_root}/linux/tests/nested-wayland"
+if [[ "${backend}" == "x11" ]]; then
+    phase_wrapper="${nested_x11}"
+    phase_harness="linux/tests/nested-x11"
+    phase_environment_field="x11_phase_environment"
+    display_label="X11"
+else
+    phase_wrapper="${nested_wayland}"
+    phase_harness="linux/tests/nested-wayland"
+    phase_environment_field="wayland_phase_environment"
+    display_label="Wayland"
+fi
+evidence_lock="$(dirname "${report}")/.zentty-valgrind-evidence.lock"
+max_capture_span_seconds=900
 effective_suppressions=(
     "${ghostty_source}/valgrind.supp"
     "${ghostty_source}/src/gtk_embed_spike.valgrind.supp"
     "${repo_root}/linux/tests/valgrind.supp"
 )
+
+evidence_lock_fd=""
+zentty_valgrind_acquire_evidence_lock "${evidence_lock}" evidence_lock_fd || exit 1
+zentty_valgrind_validate_evidence_lock_descriptor \
+    "${evidence_lock}" "${evidence_lock_fd}" || exit 1
+
+# Any failed invocation must invalidate all prior publishable evidence.
+rm -f -- \
+    "${raw_receipt}" \
+    "${suppressed_receipt}" \
+    "${raw_environment_report}" \
+    "${suppressed_environment_report}" \
+    "${report}"
+report_temp=""
+cleanup() {
+    if [[ -n "${report_temp}" ]]; then
+        rm -f -- "${report_temp}"
+    fi
+}
+trap cleanup EXIT
 
 if ! command -v valgrind >/dev/null || ! command -v jq >/dev/null; then
     echo "error: valgrind and jq are required" >&2
@@ -28,9 +78,9 @@ if [[ ! -x "${binary}" || ! -x "${api_contract}" ]]; then
     echo "error: Linux test binaries do not exist; run linux/scripts/build-local" >&2
     exit 1
 fi
-if [[ "${scenario}" != "single" && "${scenario}" != "interaction" &&
-    "${scenario}" != "api" ]]; then
-    echo "error: ZENTTY_MEMORY_SCENARIO must be single, interaction, or api" >&2
+if [[ ! -f "${phase_wrapper}" || -L "${phase_wrapper}" ||
+    ! -x "${phase_wrapper}" ]]; then
+    echo "error: nested ${display_label} phase harness is missing or unsafe: ${phase_wrapper}" >&2
     exit 1
 fi
 if [[ ! -f "${metadata}" ]] ||
@@ -73,14 +123,21 @@ valgrind_flags=(
     -s
     --num-callers=40
     --leak-check=full
-    --show-leak-kinds=definite,indirect
-    --errors-for-leak-kinds=definite,indirect
+    "--show-leak-kinds=definite,indirect"
+    "--errors-for-leak-kinds=definite,indirect"
 )
 
-set +e
-env "${environment[@]}" timeout 300s valgrind \
+raw_command=(env "${environment[@]}" timeout 300s valgrind \
     "${valgrind_flags[@]}" \
-    "${program[@]}" >"${raw_receipt}" 2>&1
+    "${program[@]}")
+set +e
+if [[ "${backend}" == "x11" ]]; then
+    ZENTTY_NESTED_X11_REPORT="${raw_environment_report}" \
+        "${phase_wrapper}" "${raw_command[@]}" >"${raw_receipt}" 2>&1
+else
+    ZENTTY_NESTED_WAYLAND_REPORT="${raw_environment_report}" \
+        "${phase_wrapper}" "${raw_command[@]}" >"${raw_receipt}" 2>&1
+fi
 raw_status=$?
 set -e
 if [[ "${raw_status}" -ne 0 ]]; then
@@ -92,14 +149,29 @@ suppression_flags=()
 for suppression in "${effective_suppressions[@]}"; do
     suppression_flags+=("--suppressions=${suppression}")
 done
-set +e
-env "${environment[@]}" timeout 300s valgrind \
+suppressed_command=(env "${environment[@]}" timeout 300s valgrind \
     "${valgrind_flags[@]}" \
     --error-exitcode=99 \
     "${suppression_flags[@]}" \
-    "${program[@]}" >"${suppressed_receipt}" 2>&1
+    "${program[@]}")
+set +e
+if [[ "${backend}" == "x11" ]]; then
+    ZENTTY_NESTED_X11_REPORT="${suppressed_environment_report}" \
+        "${phase_wrapper}" "${suppressed_command[@]}" >"${suppressed_receipt}" 2>&1
+else
+    ZENTTY_NESTED_WAYLAND_REPORT="${suppressed_environment_report}" \
+        "${phase_wrapper}" "${suppressed_command[@]}" >"${suppressed_receipt}" 2>&1
+fi
 suppressed_status=$?
 set -e
+if ! zentty_valgrind_require_publishable_status \
+    "${expected_optimize}" "${suppressed_status}" "${report}"; then
+    unacceptable_status="${suppressed_status}"
+    if (( unacceptable_status == 0 )); then
+        unacceptable_status=1
+    fi
+    exit "${unacceptable_status}"
+fi
 
 assert_semantic_pass() {
     local receipt="$1"
@@ -132,6 +204,54 @@ for suppression in "${effective_suppressions[@]}"; do
         '$values + [$item]')"
 done
 
+raw_environment_identity="$(zentty_valgrind_receipt_identity_json \
+    "${raw_environment_report}")"
+suppressed_environment_identity="$(zentty_valgrind_receipt_identity_json \
+    "${suppressed_environment_report}")"
+raw_session_id="$(jq -r '.session_id' "${raw_environment_report}")"
+suppressed_session_id="$(jq -r '.session_id' "${suppressed_environment_report}")"
+phase_environment="$(jq -cn \
+    --arg harness "${phase_harness}" \
+    --arg harness_sha256 "$(sha256sum "${phase_wrapper}" | awk '{print $1}')" \
+    --arg raw_report "${raw_environment_report}" \
+    --arg raw_session_id "${raw_session_id}" \
+    --argjson raw_identity "${raw_environment_identity}" \
+    --arg suppressed_report "${suppressed_environment_report}" \
+    --arg suppressed_session_id "${suppressed_session_id}" \
+    --argjson suppressed_identity "${suppressed_environment_identity}" '
+    {
+      harness:$harness,
+      harness_sha256:$harness_sha256,
+      phase_isolation:true,
+      raw:{
+        report:$raw_report,
+        report_identity:$raw_identity,
+        session_id:$raw_session_id
+      },
+      suppressed:{
+        report:$suppressed_report,
+        report_identity:$suppressed_identity,
+        session_id:$suppressed_session_id
+      }
+    }
+')"
+
+raw_receipt_identity="$(zentty_valgrind_receipt_identity_json "${raw_receipt}")"
+suppressed_receipt_identity="$(zentty_valgrind_receipt_identity_json "${suppressed_receipt}")"
+report_generated_at_epoch="$(date +%s)"
+raw_captured_at_epoch="$(jq -r '.captured_at_epoch' <<<"${raw_receipt_identity}")"
+suppressed_captured_at_epoch="$(jq -r '.captured_at_epoch' <<<"${suppressed_receipt_identity}")"
+if (( raw_captured_at_epoch > suppressed_captured_at_epoch ||
+    suppressed_captured_at_epoch > report_generated_at_epoch )); then
+    echo "error: Valgrind receipt chronology is invalid" >&2
+    exit 1
+fi
+if (( report_generated_at_epoch - raw_captured_at_epoch > max_capture_span_seconds )); then
+    echo "error: Valgrind receipt capture span exceeds ${max_capture_span_seconds}s" >&2
+    exit 1
+fi
+
+report_temp="$(mktemp "${report}.tmp.XXXXXX")"
 jq -n \
     --arg optimize "${expected_optimize}" \
     --arg scenario "${scenario}" \
@@ -139,22 +259,35 @@ jq -n \
     --arg raw_receipt "${raw_receipt}" \
     --arg suppressed_receipt "${suppressed_receipt}" \
     --arg valgrind_version "$(valgrind --version)" \
+    --argjson suppressed_exit_code "${suppressed_status}" \
+    --argjson report_generated_at_epoch "${report_generated_at_epoch}" \
+    --argjson raw_receipt_identity "${raw_receipt_identity}" \
+    --argjson suppressed_receipt_identity "${suppressed_receipt_identity}" \
     --argjson raw "${raw_metrics}" \
     --argjson post "${suppressed_metrics}" \
     --argjson suppression_files "${suppression_files}" \
     --argjson suppression_usage "${suppression_usage}" \
-    '{optimize: $optimize, scenario: $scenario, display_backend: $backend, raw_receipt: $raw_receipt, suppressed_receipt: $suppressed_receipt, valgrind_version: $valgrind_version, valgrind_builtin_suppressions: true, effective_suppression_files: $suppression_files, suppression_usage: $suppression_usage, raw: $raw, post_suppression: $post}' \
-    >"${report}"
+    --arg phase_environment_field "${phase_environment_field}" \
+    --argjson phase_environment "${phase_environment}" \
+    '{optimize: $optimize, scenario: $scenario, display_backend: $backend, raw_receipt: $raw_receipt, suppressed_receipt: $suppressed_receipt, suppressed_exit_code: $suppressed_exit_code, report_generated_at_epoch: $report_generated_at_epoch, receipt_identities: {raw: $raw_receipt_identity, suppressed: $suppressed_receipt_identity}, valgrind_version: $valgrind_version, valgrind_builtin_suppressions: true, effective_suppression_files: $suppression_files, suppression_usage: $suppression_usage, raw: $raw, post_suppression: $post} + {($phase_environment_field):$phase_environment}' \
+    >"${report_temp}"
+
+if ! zentty_valgrind_validate_display_phase_environment \
+    "${report_temp}" "${report}" "${phase_wrapper}" "${backend}" \
+    "${max_capture_span_seconds}"; then
+    echo "error: ${display_label} Valgrind phases did not produce distinct current nested sessions" >&2
+    exit 1
+fi
 
 if [[ "${expected_optimize}" == "Debug" ]]; then
-    if [[ "${suppressed_status}" -ne 0 ]]; then
-        echo "error: suppressed Debug Valgrind exited ${suppressed_status}" >&2
-        exit "${suppressed_status}"
-    fi
     jq -e '.post_suppression.errors == 0 and .post_suppression.definite_bytes == 0 and .post_suppression.indirect_bytes == 0' \
-        "${report}" >/dev/null
-    echo "Zentty Linux memory-safety PASS with reviewed suppressions (${scenario}, ${backend})"
+        "${report_temp}" >/dev/null
+    mv -f -- "${report_temp}" "${report}"
+    report_temp=""
+    echo "Zentty Linux memory-safety semantic and post-suppression checks PASS; suppression governance pending (${scenario}, ${backend})"
     exit 0
 fi
 
+mv -f -- "${report_temp}" "${report}"
+report_temp=""
 exit "${suppressed_status}"
