@@ -4008,6 +4008,44 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   backup restoration and rejected-primary preservation policy are implemented
   and tested.
 
+### DOGFOOD-2026-08-03-PORT-SCOPE-AUDIT: the plan designed instead of porting
+
+- **Trigger:** Operator review challenged the newly implemented `.bak`
+  recovery path as a made-up feature. Direct comparison with
+  `WorkspaceRecipe.swift`, `SessionRestoreStore.swift`, `AppDelegate.swift`,
+  and their tests confirmed that ZenTTY has no backup generations or explicit
+  backup-recovery command.
+- **Broader discovery:** The divergence was not limited to `.bak`. The Rust v1
+  schema requires an invented workspace UUID/revision and launch-profile
+  reference, rejects newer versions and unknown fields, omits source fields
+  such as window frames/worklane colors/column focus/pane heights, and places
+  agent resume data inside panes. ZenTTY uses `WorkspaceRecipe` version 3,
+  forward-compatible migration behavior, separate restore drafts, atomic
+  `restore-snapshot.json`, and a clean-exit lifecycle marker.
+- **Process failure:** Issue #7 required a source-backed parity inventory, but
+  the dependency order allowed architecture and persistence implementation to
+  start first. The Linux issue text then became the authority even though its
+  persistence requirements had been authored by the same planning process.
+  Test rigor amplified the wrong contract instead of detecting the scope
+  error.
+- **Immediate correction:** Implementation expansion stopped. The 617-line
+  uncommitted explicit recovery diff was saved privately for audit and removed
+  from the worktree without commit or push. The public epic and issues #2–#7,
+  #12, and #13 were rewritten around source parity, Linux necessities, and
+  proportionate real-system testing. The full finding and commit disposition
+  are recorded in `linux-port-issue-audit-2026-08-03.md`.
+- **Historical claim correction:** The preceding workspace model, codec,
+  persistence, projection, sequence, first-run, and atomic-fault records remain
+  an accurate account of what was built and tested, but they do **not** prove a
+  ZenTTY feature port. Their implementation is scheduled for removal and
+  replacement with the source-compatible recipe/session model. No prior PASS
+  is silently reinterpreted as parity.
+- **Testing correction:** Real product/PTY/Wayland/X11 tests remain required
+  where a user or system boundary is claimed. Recursive harness certification,
+  automatic cross-products, external signed receipt infrastructure, and
+  mutation work aimed primarily at test governance are no longer feature
+  prerequisites.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were
