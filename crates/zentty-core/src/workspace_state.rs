@@ -58,6 +58,24 @@ impl WorklaneColor {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PaneState {
     pub id: String,
+    pub title: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SidebarPaneSummary {
+    pub pane_id: String,
+    pub primary_text: String,
+    pub is_focused: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SidebarWorklaneSummary {
+    pub worklane_id: String,
+    pub top_label: Option<String>,
+    pub primary_text: String,
+    pub pane_rows: Vec<SidebarPaneSummary>,
+    pub is_active: bool,
+    pub color: Option<WorklaneColor>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -90,6 +108,7 @@ impl WorkspaceState {
                 color: None,
                 panes: vec![PaneState {
                     id: pane_id.clone(),
+                    title: "shell".to_owned(),
                 }],
                 focused_pane_id: pane_id,
             }],
@@ -143,6 +162,36 @@ impl WorkspaceState {
         Some(self.active_worklane().focused_pane_id.as_str())
     }
 
+    #[must_use]
+    pub fn sidebar_summaries(&self) -> Vec<SidebarWorklaneSummary> {
+        self.worklanes
+            .iter()
+            .map(|worklane| {
+                let primary_text = worklane
+                    .panes
+                    .iter()
+                    .find(|pane| pane.id == worklane.focused_pane_id)
+                    .map_or_else(|| "shell".to_owned(), |pane| pane.title.clone());
+                SidebarWorklaneSummary {
+                    worklane_id: worklane.id.clone(),
+                    top_label: worklane.title.clone(),
+                    primary_text,
+                    pane_rows: worklane
+                        .panes
+                        .iter()
+                        .map(|pane| SidebarPaneSummary {
+                            pane_id: pane.id.clone(),
+                            primary_text: pane.title.clone(),
+                            is_focused: pane.id == worklane.focused_pane_id,
+                        })
+                        .collect(),
+                    is_active: worklane.id == self.active_worklane_id,
+                    color: worklane.color,
+                }
+            })
+            .collect()
+    }
+
     pub fn create_worklane(
         &mut self,
         worklane_id: impl Into<String>,
@@ -164,6 +213,7 @@ impl WorkspaceState {
                 color: None,
                 panes: vec![PaneState {
                     id: pane_id.clone(),
+                    title: "shell".to_owned(),
                 }],
                 focused_pane_id: pane_id,
             },
@@ -258,6 +308,7 @@ impl WorkspaceState {
             focused_index + 1,
             PaneState {
                 id: pane_id.clone(),
+                title: "shell".to_owned(),
             },
         );
         worklane.focused_pane_id = pane_id;
@@ -270,6 +321,26 @@ impl WorkspaceState {
             return false;
         }
         pane_id.clone_into(&mut worklane.focused_pane_id);
+        true
+    }
+
+    pub fn set_pane_title(&mut self, pane_id: &str, title: &str) -> bool {
+        let Some(pane) = self
+            .worklanes
+            .iter_mut()
+            .flat_map(|worklane| &mut worklane.panes)
+            .find(|pane| pane.id == pane_id)
+        else {
+            return false;
+        };
+        let title = match title.trim() {
+            "" => "shell",
+            title => title,
+        };
+        if pane.title == title {
+            return false;
+        }
+        title.clone_into(&mut pane.title);
         true
     }
 

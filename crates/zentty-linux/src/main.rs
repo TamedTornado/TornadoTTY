@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 mod application_shell;
+mod sidebar;
 
 use application_shell::ApplicationShell;
 use gtk::glib;
@@ -147,6 +148,9 @@ fn run_lifecycle_cycle(
 
     tick_source.remove();
     shell.borrow_mut().detach_and_close();
+    settle_gtk_teardown();
+    shell.borrow_mut().release_surfaces()?;
+    settle_gtk_teardown();
     while glib::MainContext::default().pending() {
         glib::MainContext::default().iteration(false);
     }
@@ -158,6 +162,17 @@ fn run_lifecycle_cycle(
     }
     eprintln!("zentty-linux: lifecycle-cycle={cycle} complete");
     Ok(())
+}
+
+fn settle_gtk_teardown() {
+    // GSK can retain GL-area widgets until the next frame after their window
+    // is unmapped. Keep Ghostty's surface wrappers alive across that frame,
+    // then give finalizers the same bounded opportunity after releasing the
+    // wrappers. No ApplicationShell borrow is held while callbacks run.
+    let settle_loop = glib::MainLoop::new(None, false);
+    let quit_loop = settle_loop.clone();
+    glib::timeout_add_local_once(Duration::from_millis(50), move || quit_loop.quit());
+    settle_loop.run();
 }
 
 fn run() -> Result<(), String> {

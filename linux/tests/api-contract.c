@@ -22,7 +22,9 @@ static int reject_null_and_foreign_handles(void) {
 
     ghostty_gtk_embed_surface_grab_focus(NULL);
     ghostty_gtk_embed_surface_grab_focus(foreign_surface);
-    if (ghostty_gtk_embed_surface_send_text(NULL, "text") ||
+    if (ghostty_gtk_embed_surface_close(NULL) ||
+        ghostty_gtk_embed_surface_close(foreign_surface) ||
+        ghostty_gtk_embed_surface_send_text(NULL, "text") ||
         ghostty_gtk_embed_surface_send_text(foreign_surface, "text") ||
         ghostty_gtk_embed_surface_request_paste(NULL) ||
         ghostty_gtk_embed_surface_request_paste(foreign_surface)) {
@@ -64,6 +66,10 @@ static int enforce_runtime_lifecycle(
         return 1;
     }
     ghostty_gtk_embed_surface_grab_focus(surface);
+    if (!ghostty_gtk_embed_surface_close(surface)) {
+        fputs("api-contract: uninitialized surface close rejected\n", stderr);
+        return 1;
+    }
     g_object_unref(surface);
     while (g_main_context_iteration(NULL, false)) {}
 

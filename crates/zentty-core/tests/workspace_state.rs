@@ -84,3 +84,25 @@ fn focused_pane_moves_within_the_active_worklane_without_losing_focus() {
     assert!(state.move_focused_pane_right());
     assert_eq!(state.active_pane_ids(), ["pane-a", "pane-c", "pane-b"]);
 }
+
+#[test]
+fn sidebar_summaries_are_compound_worklane_and_pane_presentations() {
+    let mut state = WorkspaceState::new("worklane-a", "pane-a");
+    assert!(state.split_focused_pane_right("pane-b"));
+    assert!(state.set_pane_title("pane-a", "project shell"));
+    assert!(state.set_pane_title("pane-b", "cargo test"));
+    assert!(state.set_worklane_title("worklane-a", Some("  Nimbu API  ")));
+    assert!(state.set_worklane_color("worklane-a", Some(WorklaneColor::Blue)));
+
+    let summaries = state.sidebar_summaries();
+    assert_eq!(summaries.len(), 1);
+    assert_eq!(summaries[0].top_label.as_deref(), Some("Nimbu API"));
+    assert_eq!(summaries[0].primary_text, "cargo test");
+    assert_eq!(summaries[0].color, Some(WorklaneColor::Blue));
+    assert!(summaries[0].is_active);
+    assert_eq!(summaries[0].pane_rows.len(), 2);
+    assert_eq!(summaries[0].pane_rows[0].primary_text, "project shell");
+    assert!(!summaries[0].pane_rows[0].is_focused);
+    assert_eq!(summaries[0].pane_rows[1].primary_text, "cargo test");
+    assert!(summaries[0].pane_rows[1].is_focused);
+}

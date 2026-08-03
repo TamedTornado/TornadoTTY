@@ -38,6 +38,7 @@ pub enum Error {
     },
     SurfaceConstructorFailed,
     UnexpectedSurfaceTransfer,
+    SurfaceCloseFailed,
     InputFailed,
     TickFailed,
 }
@@ -63,6 +64,7 @@ impl fmt::Display for Error {
             Self::UnexpectedSurfaceTransfer => {
                 formatter.write_str("Ghostty surface constructor did not return a floating widget")
             }
+            Self::SurfaceCloseFailed => formatter.write_str("Ghostty surface close failed"),
             Self::InputFailed => formatter.write_str("Ghostty terminal input failed"),
             Self::TickFailed => formatter.write_str("Ghostty runtime tick failed"),
         }
@@ -193,8 +195,20 @@ impl GhosttyRuntime {
         // floating. `from_glib_none` sinks that floating reference and gives
         // the Rust wrapper exactly one owned reference before any container
         // sees the widget.
-        let widget =
+        let widget: gtk::Widget =
             unsafe { glib::translate::from_glib_none(raw.as_ptr().cast::<gtk::ffi::GtkWidget>()) };
+        // GTK/GSK may retain a widget beyond the host wrapper's final strong
+        // reference (for example, until an unmapped GL area's last frame is
+        // retired). Tie a runtime lease to GObject finalization itself so
+        // native global teardown cannot race those external references.
+        // SAFETY: This adapter exclusively owns this private key, never reads
+        // or replaces its value, and stores the single declared Rust type.
+        unsafe {
+            widget.set_qdata(
+                glib::Quark::from_str("zentty-ghostty-runtime-lease"),
+                Rc::clone(&self.inner),
+            );
+        }
         Ok(GhosttySurface {
             widget,
             handlers: RefCell::new(Vec::new()),
@@ -240,6 +254,31 @@ impl GhosttySurface {
         // SAFETY: `widget` owns a live Ghostty surface reference and the `Rc`
         // runtime lease prevents native teardown during the call.
         unsafe { sys::ghostty_gtk_embed_surface_grab_focus(self.widget.as_ptr().cast()) };
+    }
+
+    /// Disposes a detached native widget and consumes the host wrapper.
+    ///
+    /// The adapter disconnects its callbacks first and consuming `self`
+    /// prevents host use of the non-functional object. The `GObject` qdata
+    /// runtime lease remains until finalization if GTK/GSK retains the widget.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::SurfaceCloseFailed`] if native Ghostty rejects the
+    /// explicit embedding lifecycle transition.
+    pub fn dispose(mut self) -> Result<(), Error> {
+        for handler in self.handlers.get_mut().drain(..) {
+            self.widget.disconnect(handler);
+        }
+        // SAFETY: The live widget came from the embedding constructor and has
+        // been detached by the composition root before this consuming call.
+        if !unsafe { sys::ghostty_gtk_embed_surface_close(self.widget.as_ptr().cast()) } {
+            return Err(Error::SurfaceCloseFailed);
+        }
+        // SAFETY: The composition root has detached the widget, and consuming
+        // the only safe host handle prevents use after GObject disposal.
+        unsafe { self.widget.run_dispose() };
+        Ok(())
     }
 
     /// Sends UTF-8 text through Ghostty's terminal input path.

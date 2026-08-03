@@ -9,6 +9,8 @@ use gtk::prelude::*;
 use zentty_core::{ClosePaneOutcome, WorklaneColor, WorkspaceState};
 use zentty_ghostty::{GhosttyRuntime, GhosttySurface, SurfaceConfig};
 
+use crate::sidebar;
+
 const ACTION_NEW_WORKLANE: &str = "new-worklane";
 const ACTION_SELECT_WORKLANE: &str = "select-worklane";
 const ACTION_SPLIT_PANE_RIGHT: &str = "split-pane-right";
@@ -19,6 +21,7 @@ const ACTION_MOVE_WORKLANE_UP: &str = "move-worklane-up";
 const ACTION_MOVE_WORKLANE_DOWN: &str = "move-worklane-down";
 const ACTION_MOVE_PANE_LEFT: &str = "move-pane-left";
 const ACTION_MOVE_PANE_RIGHT: &str = "move-pane-right";
+const ACTION_SELECT_PANE: &str = "select-pane";
 
 pub(crate) struct ApplicationShell {
     window: gtk::Window,
@@ -26,6 +29,7 @@ pub(crate) struct ApplicationShell {
     pane_box: gtk::Box,
     state: WorkspaceState,
     surfaces: BTreeMap<String, GhosttySurface>,
+    focus_controllers: BTreeMap<String, gtk::EventControllerFocus>,
     runtime: GhosttyRuntime,
     command: Option<String>,
     main_loop: glib::MainLoop,
@@ -46,14 +50,14 @@ impl ApplicationShell {
         let window = gtk::Window::new();
         window.set_title(Some(zentty_core::PRODUCT_NAME));
         window.set_default_size(1000, 700);
+        sidebar::install_styles();
 
         let root = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         let sidebar = gtk::Box::new(gtk::Orientation::Vertical, 6);
-        sidebar.set_width_request(190);
-        sidebar.set_margin_top(12);
-        sidebar.set_margin_bottom(12);
-        sidebar.set_margin_start(12);
-        sidebar.set_margin_end(12);
+        sidebar.set_width_request(250);
+        let sidebar_scroll = gtk::ScrolledWindow::new();
+        sidebar_scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+        sidebar_scroll.set_child(Some(&sidebar));
 
         let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
         content.set_hexpand(true);
@@ -82,7 +86,7 @@ impl ApplicationShell {
         pane_box.set_vexpand(true);
         content.append(&toolbar);
         content.append(&pane_box);
-        root.append(&sidebar);
+        root.append(&sidebar_scroll);
         root.append(&content);
         window.set_child(Some(&root));
 
@@ -93,6 +97,7 @@ impl ApplicationShell {
             pane_box,
             state,
             surfaces: BTreeMap::new(),
+            focus_controllers: BTreeMap::new(),
             runtime: runtime.clone(),
             command,
             main_loop: main_loop.clone(),
@@ -125,10 +130,27 @@ impl ApplicationShell {
     }
 
     pub(crate) fn detach_and_close(&mut self) {
+        gtk::prelude::GtkWindowExt::set_focus(&self.window, gtk::Widget::NONE);
+        self.window.set_default_widget(gtk::Widget::NONE);
+        for (pane_id, controller) in std::mem::take(&mut self.focus_controllers) {
+            if let Some(surface) = self.surfaces.get(&pane_id) {
+                surface.widget().remove_controller(&controller);
+            }
+        }
         remove_all_children(&self.pane_box);
+        // The shell retains `sidebar` after detaching the root widget. Clear
+        // its cards explicitly so their menu popovers and window-capturing
+        // callbacks are finalized before Ghostty's process-global teardown.
+        sidebar::clear(&self.sidebar);
         self.window.set_child(gtk::Widget::NONE);
         self.window.close();
-        self.surfaces.clear();
+    }
+
+    pub(crate) fn release_surfaces(&mut self) -> Result<(), String> {
+        for (_, surface) in std::mem::take(&mut self.surfaces) {
+            surface.dispose().map_err(|error| error.to_string())?;
+        }
+        Ok(())
     }
 
     pub(crate) fn schedule_workspace_actions(shell: &Rc<RefCell<Self>>) {
@@ -148,7 +170,7 @@ impl ApplicationShell {
                 ),
                 4 => window.activate_action(
                     "workspace.rename-worklane",
-                    Some(&"  Frontend  ".to_variant()),
+                    Some(&("worklane-1", "  Frontend  ").to_variant()),
                 ),
                 5 => window.activate_action("workspace.cycle-worklane-color", None),
                 6 => window.activate_action("workspace.move-worklane-down", None),
@@ -231,23 +253,41 @@ impl ApplicationShell {
     }
 
     fn install_edit_actions(shell: &Rc<RefCell<Self>>, group: &gio::SimpleActionGroup) {
-        let rename_worklane =
-            gio::SimpleAction::new(ACTION_RENAME_WORKLANE, Some(glib::VariantTy::STRING));
+        let string_pair = glib::VariantTy::new("(ss)").expect("static action type is valid");
+        let rename_worklane = gio::SimpleAction::new(ACTION_RENAME_WORKLANE, Some(string_pair));
         let weak = Rc::downgrade(shell);
         rename_worklane.connect_activate(move |_, parameter| {
-            let (Some(shell), Some(title)) =
-                (weak.upgrade(), parameter.and_then(glib::Variant::str))
-            else {
+            let (Some(shell), Some((worklane_id, title))) = (
+                weak.upgrade(),
+                parameter.and_then(glib::Variant::get::<(String, String)>),
+            ) else {
                 return;
             };
             let mut shell = shell.borrow_mut();
-            let active_id = shell.state.active_worklane_id().to_owned();
-            if shell.state.set_worklane_title(&active_id, Some(title)) {
-                eprintln!("zentty-linux: action=rename-worklane id={active_id} title={title:?}");
+            if shell.state.set_worklane_title(&worklane_id, Some(&title)) {
+                eprintln!("zentty-linux: action=rename-worklane id={worklane_id} title={title:?}");
                 shell.render();
             }
         });
         group.add_action(&rename_worklane);
+
+        let select_pane = gio::SimpleAction::new(ACTION_SELECT_PANE, Some(string_pair));
+        let weak = Rc::downgrade(shell);
+        select_pane.connect_activate(move |_, parameter| {
+            let (Some(shell), Some((worklane_id, pane_id))) = (
+                weak.upgrade(),
+                parameter.and_then(glib::Variant::get::<(String, String)>),
+            ) else {
+                return;
+            };
+            let mut shell = shell.borrow_mut();
+            if shell.state.select_worklane(&worklane_id) && shell.state.select_pane(&pane_id) {
+                eprintln!("zentty-linux: action=select-pane worklane={worklane_id} pane={pane_id}");
+                shell.render();
+                shell.focus_selected_surface();
+            }
+        });
+        group.add_action(&select_pane);
 
         Self::add_simple_action(shell, group, ACTION_CYCLE_WORKLANE_COLOR, |shell| {
             let active_id = shell.state.active_worklane_id().to_owned();
@@ -380,7 +420,11 @@ impl ApplicationShell {
         let mut shell_ref = shell.borrow_mut();
         match shell_ref.state.close_pane(pane_id) {
             ClosePaneOutcome::Closed => {
-                shell_ref.surfaces.remove(pane_id);
+                if let Err(error) = shell_ref.remove_surface(pane_id) {
+                    drop(shell_ref);
+                    Self::report_action_error(shell, ACTION_CLOSE_PANE, &error);
+                    return;
+                }
                 eprintln!("zentty-linux: action=close-pane pane={pane_id}");
                 shell_ref.render();
                 shell_ref.focus_selected_surface();
@@ -408,9 +452,21 @@ impl ApplicationShell {
             eprintln!("zentty-linux: terminal-ready-pane={ready_id}");
         });
         let title_id = pane_id.to_owned();
+        let weak = Rc::downgrade(shell);
         surface.on_title_changed(move |title| {
             eprintln!("zentty-linux: title={title}");
             eprintln!("zentty-linux: title-pane={title_id} value={title}");
+            let weak = weak.clone();
+            let title_id = title_id.clone();
+            let title = title.clone();
+            glib::idle_add_local_once(move || {
+                if let Some(shell) = weak.upgrade() {
+                    let mut shell = shell.borrow_mut();
+                    if shell.state.set_pane_title(&title_id, &title) {
+                        shell.render();
+                    }
+                }
+            });
         });
         let weak = Rc::downgrade(shell);
         let exited_id = pane_id.to_owned();
@@ -446,21 +502,37 @@ impl ApplicationShell {
                 }
             });
         });
-        surface.widget().add_controller(focus_controller);
+        surface.widget().add_controller(focus_controller.clone());
 
         let mut shell = shell.borrow_mut();
         shell.live_children.set(shell.live_children.get() + 1);
+        shell
+            .focus_controllers
+            .insert(pane_id.to_owned(), focus_controller);
         shell.surfaces.insert(pane_id.to_owned(), surface);
         Ok(())
     }
 
     fn handle_child_exit(shell: &Rc<RefCell<Self>>, pane_id: &str) {
-        let shell_ref = shell.borrow_mut();
+        let mut shell_ref = shell.borrow_mut();
         let remaining = shell_ref.live_children.get().saturating_sub(1);
         shell_ref.live_children.set(remaining);
-        if remaining == 0 && shell_ref.quit_after_last_terminal_exit {
-            shell_ref.main_loop.quit();
-        } else if !shell_ref.quit_after_last_terminal_exit {
+        if shell_ref.quit_after_last_terminal_exit {
+            let outcome = shell_ref.state.close_pane(pane_id);
+            if let Err(error) = shell_ref.remove_surface(pane_id) {
+                eprintln!("zentty-linux: child-exit cleanup failed: {error}");
+                shell_ref.main_loop.quit();
+                return;
+            }
+            match outcome {
+                ClosePaneOutcome::Closed => shell_ref.render(),
+                ClosePaneOutcome::CloseWindow => remove_all_children(&shell_ref.pane_box),
+                ClosePaneOutcome::NotFound => {}
+            }
+            if remaining == 0 {
+                shell_ref.main_loop.quit();
+            }
+        } else {
             drop(shell_ref);
             Self::close_pane(shell, pane_id);
         }
@@ -471,6 +543,21 @@ impl ApplicationShell {
         shell.borrow().main_loop.quit();
     }
 
+    fn remove_surface(&mut self, pane_id: &str) -> Result<(), String> {
+        if let Some(controller) = self.focus_controllers.remove(pane_id)
+            && let Some(surface) = self.surfaces.get(pane_id)
+        {
+            surface.widget().remove_controller(&controller);
+        }
+        if let Some(surface) = self.surfaces.remove(pane_id) {
+            if surface.widget().parent().as_ref() == Some(self.pane_box.upcast_ref()) {
+                self.pane_box.remove(surface.widget());
+            }
+            surface.dispose().map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
+
     fn take_pane_id(&mut self) -> String {
         let id = format!("pane-{}", self.next_pane_number);
         self.next_pane_number += 1;
@@ -478,58 +565,8 @@ impl ApplicationShell {
     }
 
     fn render(&self) {
-        remove_all_children(&self.sidebar);
         remove_all_children(&self.pane_box);
-
-        let heading = gtk::Label::new(Some("Worklanes"));
-        heading.set_xalign(0.0);
-        self.sidebar.append(&heading);
-        for (index, worklane) in self.state.worklanes().iter().enumerate() {
-            let label = worklane
-                .title
-                .clone()
-                .unwrap_or_else(|| format!("Worklane {}", index + 1));
-            let button = gtk::Button::with_label(&label);
-            button.set_action_name(Some("workspace.select-worklane"));
-            button.set_action_target_value(Some(&worklane.id.to_variant()));
-            if worklane.id == self.state.active_worklane_id() {
-                button.add_css_class("suggested-action");
-            }
-            self.sidebar.append(&button);
-        }
-        let new_button = gtk::Button::with_label("New worklane");
-        new_button.set_action_name(Some("workspace.new-worklane"));
-        self.sidebar.append(&new_button);
-
-        let rename_entry = gtk::Entry::new();
-        rename_entry.set_placeholder_text(Some("Worklane name"));
-        rename_entry.set_text(
-            self.state
-                .active_worklane()
-                .title
-                .as_deref()
-                .unwrap_or_default(),
-        );
-        let rename_window = self.window.clone();
-        rename_entry.connect_activate(move |entry| {
-            if let Err(error) = rename_window.activate_action(
-                "workspace.rename-worklane",
-                Some(&entry.text().as_str().to_variant()),
-            ) {
-                eprintln!("zentty-linux: rename control failed: {error}");
-            }
-        });
-        self.sidebar.append(&rename_entry);
-
-        let color_button = gtk::Button::with_label("Next worklane color");
-        color_button.set_action_name(Some("workspace.cycle-worklane-color"));
-        self.sidebar.append(&color_button);
-        let move_up_button = gtk::Button::with_label("Move worklane up");
-        move_up_button.set_action_name(Some("workspace.move-worklane-up"));
-        self.sidebar.append(&move_up_button);
-        let move_down_button = gtk::Button::with_label("Move worklane down");
-        move_down_button.set_action_name(Some("workspace.move-worklane-down"));
-        self.sidebar.append(&move_down_button);
+        sidebar::render(&self.sidebar, &self.window, &self.state.sidebar_summaries());
 
         for pane_id in self.state.active_pane_ids() {
             if let Some(surface) = self.surfaces.get(pane_id) {

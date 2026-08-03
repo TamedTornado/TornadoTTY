@@ -30,6 +30,7 @@ unsafe extern "C" {
         title: *const c_char,
     ) -> *mut GtkWidget;
     pub fn ghostty_gtk_embed_surface_grab_focus(surface: *mut GtkWidget);
+    pub fn ghostty_gtk_embed_surface_close(surface: *mut GtkWidget) -> bool;
     pub fn ghostty_gtk_embed_surface_send_text(
         surface: *mut GtkWidget,
         text: *const c_char,
