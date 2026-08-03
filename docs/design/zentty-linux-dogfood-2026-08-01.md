@@ -3713,6 +3713,39 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   repaired the accessibility relation ownership defect; no upstream issue has
   yet been filed or adopted as the tracker.
 
+### DOGFOOD-2026-08-03-RUST-MULTI-LIFECYCLE: real simultaneous and repeated surfaces
+
+- **Semantic red:** The new real-product lifecycle test was written before the
+  product support. The delivered binary rejected `--terminal-count` and exited
+  1 inside controlled Wayland, so the test failed before any acknowledgement;
+  this established a product-boundary red rather than a fixture failure.
+- **Implementation:** The Rust composition root now accepts bounded terminal
+  and lifecycle-cycle counts. Each cycle creates all requested real Ghostty
+  surfaces before presenting one real GTK window, waits for every independent
+  child-exit callback, removes every widget, releases its wrappers and window,
+  drains GLib, and then starts the next cycle with the same Ghostty runtime.
+  Runtime initialization still precedes GTK and runtime release still follows
+  every surface lifecycle.
+- **Real concurrency proof:** The deterministic PTY children create distinct
+  PID markers and wait at a filesystem barrier sized to the requested terminal
+  count before any child emits its title. A two-terminal run therefore cannot
+  complete by accidentally creating surfaces sequentially. The same delivered
+  binary completed two simultaneous terminals across three sequential cycles
+  under fresh controlled Weston/Wayland and Xvfb/X11 sessions. All six init,
+  exact-title, and child-exit callbacks plus all three cycle completions were
+  observed on each backend.
+- **Repairs during green:** Warning-denied Clippy rejected an owned `String`
+  parameter that only needed a borrowed `str`; the parser was narrowed and its
+  1-through-16 boundary gained a unit regression. The first post-build GUI run
+  still launched the older `target/debug/zentty-linux` because `cargo test`
+  built only the hashed test binary. The delivered binary was explicitly
+  rebuilt before accepting either backend result. No stale binary result was
+  counted.
+- **Regression:** The original single-terminal smoke, including real X11 key
+  events and external resize, was rerun successfully under both controlled
+  backends after the multi/lifecycle change. This does not qualify other async
+  backends or ReleaseSafe builds.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were

@@ -5,6 +5,9 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 product="${repo_root}/target/debug/zentty-linux"
 backend="${GDK_BACKEND:-}"
 ghostty_root="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
+scenario="${ZENTTY_RUST_SCENARIO:-single}"
+terminal_count="${ZENTTY_RUST_TERMINALS:-1}"
+lifecycle_cycles="${ZENTTY_RUST_CYCLES:-1}"
 
 fail() {
     echo "rust-product-smoke: error: $*" >&2
@@ -13,6 +16,10 @@ fail() {
 
 [[ "${backend}" == wayland || "${backend}" == x11 ]] ||
     fail "GDK_BACKEND must be wayland or x11"
+[[ "${scenario}" == single || "${scenario}" == lifecycle ]] ||
+    fail "ZENTTY_RUST_SCENARIO must be single or lifecycle"
+[[ "${terminal_count}" =~ ^[1-9][0-9]*$ ]] || fail "invalid terminal count"
+[[ "${lifecycle_cycles}" =~ ^[1-9][0-9]*$ ]] || fail "invalid lifecycle cycle count"
 [[ -x "${product}" ]] || fail "delivered Rust product is not built: ${product}"
 [[ -f "${ghostty_root}/zig-out/lib/libghostty-gtk-embed.so" ]] ||
     fail "pinned Ghostty library is not built"
@@ -29,6 +36,7 @@ layer_directory="${ghostty_root}/${layer_runpath}"
     fail "Ghostty layer-shell dependency is missing"
 
 log="$(mktemp)"
+barrier="$(mktemp -d)"
 product_pid=""
 cleanup() {
     if [[ "${product_pid}" =~ ^[1-9][0-9]*$ ]]; then
@@ -36,10 +44,13 @@ cleanup() {
         wait "${product_pid}" 2>/dev/null || true
     fi
     rm -f -- "${log}"
+    rm -rf -- "${barrier}"
 }
 trap cleanup EXIT
 
-if [[ "${backend}" == x11 ]]; then
+if [[ "${scenario}" == lifecycle ]]; then
+    child_command="touch '${barrier}'/\$\$; while [ \"\$(find '${barrier}' -type f | wc -l)\" -lt '${terminal_count}' ]; do sleep 0.01; done; printf '\\033]2;zentty-rust-smoke-${backend}\\a'; sleep 0.1"
+elif [[ "${backend}" == x11 ]]; then
     command -v xdotool >/dev/null || fail "xdotool is required for real X11 input and resize"
     child_command='IFS= read -r value; [ "$value" = zentty-rust-input ] || exit 44; printf '\''\033]2;zentty-rust-smoke-x11\a'\''; sleep 0.1'
 else
@@ -50,11 +61,13 @@ set +e
 LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
 "${product}" \
     --command "${child_command}" \
+    --terminal-count "${terminal_count}" \
+    --lifecycle-cycles "${lifecycle_cycles}" \
     --quit-after-last-terminal-exit >"${log}" 2>&1 &
 product_pid=$!
 set -e
 
-if [[ "${backend}" == x11 ]]; then
+if [[ "${backend}" == x11 && "${scenario}" == single ]]; then
     window_id=""
     for _ in $(seq 1 200); do
         window_id="$(xdotool search --name '^Zentty$' 2>/dev/null | head -1 || true)"
@@ -84,17 +97,20 @@ product_pid=""
     cat "${log}" >&2
     fail "product exited ${status} before terminal lifecycle completed"
 }
-grep -Fx 'zentty-linux: terminal-ready' "${log}" >/dev/null ||
-    fail "product did not acknowledge a real Ghostty terminal"
-grep -Fx "zentty-linux: title=zentty-rust-smoke-${backend}" "${log}" >/dev/null ||
-    fail "PTY output did not reach the real Ghostty title property"
-grep -Fx 'zentty-linux: child-exited' "${log}" >/dev/null ||
-    fail "product did not acknowledge child exit"
-if [[ "${backend}" == x11 ]]; then
+expected_events=$((terminal_count * lifecycle_cycles))
+[[ "$(grep -Fxc 'zentty-linux: terminal-ready' "${log}" || true)" -eq "${expected_events}" ]] ||
+    fail "product did not acknowledge every real Ghostty terminal"
+[[ "$(grep -Fxc "zentty-linux: title=zentty-rust-smoke-${backend}" "${log}" || true)" -eq "${expected_events}" ]] ||
+    fail "PTY output did not reach every real Ghostty title property"
+[[ "$(grep -Fxc 'zentty-linux: child-exited' "${log}" || true)" -eq "${expected_events}" ]] ||
+    fail "product did not acknowledge every child exit"
+[[ "$(grep -Ec '^zentty-linux: lifecycle-cycle=[0-9]+ complete$' "${log}" || true)" -eq "${lifecycle_cycles}" ]] ||
+    fail "product did not complete every lifecycle cycle"
+if [[ "${backend}" == x11 && "${scenario}" == single ]]; then
     grep -Fx 'zentty-linux: window-size=820x640' "${log}" >/dev/null || {
         cat "${log}" >&2
         fail "externally driven X11 resize did not reach the delivered product"
     }
 fi
 
-echo "Rust product smoke passed: ${backend}"
+echo "Rust product smoke passed: ${backend}, scenario=${scenario}, terminals=${terminal_count}, cycles=${lifecycle_cycles}"
