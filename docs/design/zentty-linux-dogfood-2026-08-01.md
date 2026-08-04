@@ -4738,6 +4738,11 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   and source-test totals while retaining one concise human line. The live audit
   and all focused mutations pass; the audit document is now complete at its
   recorded source head and the feature-implementation freeze is lifted.
+- **Public receipt correction:** The first issue-closing comment expanded the
+  short commit name by hand and published a nonexistent full hash. The comment
+  was immediately edited to the exact `git rev-parse HEAD` value
+  `cbe6a545f65ab7765a9e6ac0c13ba48989c1c4bf`. Public receipts must copy exact
+  object IDs from Git rather than reconstructing them from abbreviated output.
 - **Remaining uncertainty:** These closure gates make omission and ownership
   drift reviewable, but they cannot prove that a human interpretation of every
   covered method is semantically perfect. Any later source discrepancy remains
