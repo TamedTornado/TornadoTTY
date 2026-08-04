@@ -4852,6 +4852,13 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   script before launching the product. The assertion now captures the final
   receipt in a named variable before comparing it; this was a harness syntax
   failure, not a product pass or an environmental skip.
+- **Public receipt correction:** Despite the existing audit rule against
+  reconstructing object IDs, the first issue update again expanded the short
+  commit name by hand and published a nonexistent hash. It was corrected
+  immediately to the direct `git rev-parse HEAD` receipt
+  `33a0a86b442e32b204f7529556777deba46a87ec`. This repeat failure reinforces
+  that public automation must consume Git output rather than model-generated
+  hash text.
 - **Remaining limitation:** Pane topology mutations still rebuild the pane
   containers and may reparent surviving Ghostty widgets. That path is distinct
   from ordinary resize/title/sidebar updates but should eventually become a
