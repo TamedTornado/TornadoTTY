@@ -16,6 +16,10 @@ use zentty_ghostty::{GhosttyRuntime, GhosttySurface, SurfaceConfig};
 use crate::{
     pane_controls::{self, PaneControlAction, PaneFrame, PanePresentation},
     pane_scroll_switch::{PaneScrollSwitch, ScrollSwitchResult, ScrollUnit},
+    peek_scroll_navigation::{
+        Direction as PeekScrollDirection, PeekScrollNavigation, Result as PeekScrollResult,
+        ScrollUnit as PeekScrollUnit,
+    },
     sidebar,
     window_chrome::WindowChrome,
     worklane_peek::{
@@ -49,6 +53,8 @@ const ACTION_NAVIGATE_BACK: &str = "navigate-back";
 const ACTION_NAVIGATE_FORWARD: &str = "navigate-forward";
 const ACTION_NEXT_PANE: &str = "next-pane";
 const ACTION_PREVIOUS_PANE: &str = "previous-pane";
+const ACTION_NEXT_WORKLANE: &str = "next-worklane";
+const ACTION_PREVIOUS_WORKLANE: &str = "previous-worklane";
 const PRIMARY_RIGHT_BEHAVIOR: PaneRightInsertionBehavior = PaneRightInsertionBehavior::VisibleSplit;
 const WORKLANE_PEEK_TAB_HOLD_THRESHOLD: Duration = Duration::from_millis(200);
 
@@ -75,6 +81,7 @@ pub(crate) struct ApplicationShell {
     shutting_down: bool,
     preferred_sidebar_width: Rc<Cell<i32>>,
     adjusting_sidebar_width: Rc<Cell<bool>>,
+    sidebar_reveal_generation: Rc<Cell<u64>>,
     peek_phase: PeekPhase,
     peek_generation: u64,
     peek_tab_down: bool,
@@ -145,15 +152,10 @@ impl ApplicationShell {
                 .map(|pane| pane.id.as_str()),
             "pane-",
         );
-        let initial_pane_ids = state
-            .worklanes()
-            .iter()
-            .flat_map(|worklane| &worklane.columns)
-            .flat_map(|column| &column.panes)
-            .map(|pane| pane.id.clone())
-            .collect::<Vec<_>>();
+        let initial_pane_ids = workspace_pane_ids(&state);
         let preferred_sidebar_width = Rc::new(Cell::new(SidebarWidthPreference::DEFAULT));
         let adjusting_sidebar_width = Rc::new(Cell::new(false));
+        let sidebar_reveal_generation = Rc::new(Cell::new(0));
         let shell = Rc::new(RefCell::new(Self {
             window,
             chrome,
@@ -177,6 +179,7 @@ impl ApplicationShell {
             shutting_down: false,
             preferred_sidebar_width: Rc::clone(&preferred_sidebar_width),
             adjusting_sidebar_width: Rc::clone(&adjusting_sidebar_width),
+            sidebar_reveal_generation,
             peek_phase: PeekPhase::Idle,
             peek_generation: 0,
             peek_tab_down: false,
@@ -187,6 +190,7 @@ impl ApplicationShell {
 
         Self::install_actions(&shell);
         Self::install_pane_traversal_shortcuts(&shell);
+        Self::install_peek_scroll_navigation(&shell);
         Self::install_pane_scroll_switching(&shell);
         for pane_id in initial_pane_ids {
             Self::create_surface(&shell, &pane_id)?;
@@ -314,7 +318,9 @@ impl ApplicationShell {
                 ),
                 17 => window.activate_action("workspace.next-pane", None),
                 18 => window.activate_action("workspace.previous-pane", None),
-                19 if close_worklane_when_complete => window
+                19 => window.activate_action("workspace.next-worklane", None),
+                20 => window.activate_action("workspace.previous-worklane", None),
+                21 if close_worklane_when_complete => window
                     .activate_action("workspace.close-worklane", Some(&"worklane-1".to_variant())),
                 _ => {
                     eprintln!("zentty-linux: workspace-action-scenario complete");
@@ -411,6 +417,12 @@ impl ApplicationShell {
         Self::add_simple_action(shell, &group, ACTION_PREVIOUS_PANE, |shell| {
             shell.select_adjacent_pane(false);
         });
+        Self::add_simple_action(shell, &group, ACTION_NEXT_WORKLANE, |shell| {
+            shell.select_adjacent_worklane(true);
+        });
+        Self::add_simple_action(shell, &group, ACTION_PREVIOUS_WORKLANE, |shell| {
+            shell.select_adjacent_worklane(false);
+        });
 
         Self::install_edit_actions(shell, &group);
 
@@ -429,6 +441,22 @@ impl ApplicationShell {
             let Some(shell) = weak.upgrade() else {
                 return glib::Propagation::Proceed;
             };
+            if !shell.borrow().peek_phase.is_active()
+                && modifiers.contains(gdk::ModifierType::CONTROL_MASK)
+                && (key == gdk::Key::Page_Down || key == gdk::Key::Page_Up)
+            {
+                shell
+                    .borrow_mut()
+                    .select_adjacent_worklane(key == gdk::Key::Page_Down);
+                return glib::Propagation::Stop;
+            }
+            if !shell.borrow().peek_phase.is_active()
+                && modifiers.contains(gdk::ModifierType::ALT_MASK)
+                && (key == gdk::Key::Left || key == gdk::Key::Right)
+            {
+                shell.borrow_mut().navigate_history(key == gdk::Key::Left);
+                return glib::Propagation::Stop;
+            }
             if is_tab && modifiers.contains(gdk::ModifierType::CONTROL_MASK) {
                 let repeated = {
                     let mut shell = shell.borrow_mut();
@@ -729,6 +757,50 @@ impl ApplicationShell {
             }
         });
         shell.borrow().pane_scroll.add_controller(controller);
+    }
+
+    fn install_peek_scroll_navigation(shell: &Rc<RefCell<Self>>) {
+        let controller = gtk::EventControllerScroll::new(
+            gtk::EventControllerScrollFlags::BOTH_AXES | gtk::EventControllerScrollFlags::KINETIC,
+        );
+        controller.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let gesture = Rc::new(RefCell::new(PeekScrollNavigation::default()));
+        let beginning = Rc::clone(&gesture);
+        controller.connect_scroll_begin(move |_| beginning.borrow_mut().reset());
+        let ending = Rc::clone(&gesture);
+        controller.connect_scroll_end(move |_| ending.borrow_mut().reset());
+        let weak = Rc::downgrade(shell);
+        controller.connect_scroll(move |controller, dx, dy| {
+            let Some(shell) = weak.upgrade() else {
+                return glib::Propagation::Proceed;
+            };
+            if !matches!(shell.borrow().peek_phase, PeekPhase::Peeking { .. }) {
+                gesture.borrow_mut().reset();
+                return glib::Propagation::Proceed;
+            }
+            let unit = match controller.unit() {
+                gdk::ScrollUnit::Wheel => PeekScrollUnit::Wheel,
+                gdk::ScrollUnit::Surface => PeekScrollUnit::Surface,
+                _ => return glib::Propagation::Stop,
+            };
+            if unit == PeekScrollUnit::Wheel {
+                gesture.borrow_mut().reset();
+            }
+            match gesture.borrow_mut().handle(dx, dy, unit) {
+                PeekScrollResult::Navigate(direction) => {
+                    let direction = match direction {
+                        PeekScrollDirection::Left => PeekSpatialDirection::Left,
+                        PeekScrollDirection::Right => PeekSpatialDirection::Right,
+                        PeekScrollDirection::Up => PeekSpatialDirection::Up,
+                        PeekScrollDirection::Down => PeekSpatialDirection::Down,
+                    };
+                    Self::spatially_navigate_peek(&shell, direction);
+                    glib::Propagation::Stop
+                }
+                PeekScrollResult::Consumed | PeekScrollResult::Unhandled => glib::Propagation::Stop,
+            }
+        });
+        shell.borrow().peek_view.widget().add_controller(controller);
     }
 
     fn install_pane_creation_actions(shell: &Rc<RefCell<Self>>, group: &gio::SimpleActionGroup) {
@@ -1555,6 +1627,7 @@ impl ApplicationShell {
             self.state.can_navigate_back(),
             self.state.can_navigate_forward(),
         );
+        self.schedule_active_worklane_reveal();
     }
 
     fn refresh_sidebar_metadata(&self) {
@@ -1567,7 +1640,50 @@ impl ApplicationShell {
             self.state.can_navigate_back(),
             self.state.can_navigate_forward(),
         );
+        self.schedule_active_worklane_reveal();
         self.refresh_pane_presentation();
+    }
+
+    fn schedule_active_worklane_reveal(&self) {
+        let generation = self.sidebar_reveal_generation.get().wrapping_add(1);
+        self.sidebar_reveal_generation.set(generation);
+        let tracker = Rc::clone(&self.sidebar_reveal_generation);
+        let sidebar = self.sidebar.clone();
+        let scroll = self.sidebar_scroll.clone();
+        let worklane_id = self.state.active_worklane_id().to_owned();
+        glib::idle_add_local_once(move || {
+            if tracker.get() != generation {
+                return;
+            }
+            let tracker_again = Rc::clone(&tracker);
+            glib::idle_add_local_once(move || {
+                if tracker_again.get() != generation {
+                    return;
+                }
+                let Some(card) = sidebar::worklane_card(&sidebar, &worklane_id) else {
+                    return;
+                };
+                let Some(bounds) = card.compute_bounds(&sidebar) else {
+                    return;
+                };
+                let adjustment = scroll.vadjustment();
+                let top = adjustment.value();
+                let card_top = f64::from(bounds.y());
+                if let Some((card_top, card_bottom)) = sidebar::reveal_range(
+                    top,
+                    adjustment.page_size(),
+                    card_top,
+                    f64::from(bounds.height()),
+                ) {
+                    adjustment.clamp_page(card_top, card_bottom);
+                    eprintln!(
+                        "zentty-linux: sidebar-reveal worklane={} value={}",
+                        worklane_id,
+                        adjustment.value()
+                    );
+                }
+            });
+        });
     }
 
     fn navigate_history(&mut self, backward: bool) {
@@ -1622,6 +1738,24 @@ impl ApplicationShell {
         } else {
             self.render();
         }
+        self.focus_selected_surface();
+    }
+
+    fn select_adjacent_worklane(&mut self, forward: bool) {
+        if !self.state.select_adjacent_worklane(forward) {
+            return;
+        }
+        eprintln!(
+            "zentty-linux: action={} worklane={} pane={}",
+            if forward {
+                ACTION_NEXT_WORKLANE
+            } else {
+                ACTION_PREVIOUS_WORKLANE
+            },
+            self.state.active_worklane_id(),
+            self.state.focused_pane_id().unwrap_or("none")
+        );
+        self.render();
         self.focus_selected_surface();
     }
 
@@ -1816,6 +1950,16 @@ fn build_root(chrome: &WindowChrome, body: &gtk::Paned) -> (gtk::Overlay, Workla
     let peek_view = WorklanePeekView::new();
     overlay.add_overlay(peek_view.widget());
     (overlay, peek_view)
+}
+
+fn workspace_pane_ids(state: &WorkspaceState) -> Vec<String> {
+    state
+        .worklanes()
+        .iter()
+        .flat_map(|worklane| &worklane.columns)
+        .flat_map(|column| &column.panes)
+        .map(|pane| pane.id.clone())
+        .collect()
 }
 
 fn clear_pane_columns(container: &gtk::Box) {

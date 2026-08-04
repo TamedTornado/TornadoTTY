@@ -560,6 +560,26 @@ impl WorkspaceState {
         true
     }
 
+    pub fn select_adjacent_worklane(&mut self, forward: bool) -> bool {
+        if self.worklanes.len() < 2 {
+            return false;
+        }
+        let Some(index) = self
+            .worklanes
+            .iter()
+            .position(|worklane| worklane.id == self.active_worklane_id)
+        else {
+            return false;
+        };
+        let target = if forward {
+            (index + 1) % self.worklanes.len()
+        } else {
+            index.checked_sub(1).unwrap_or(self.worklanes.len() - 1)
+        };
+        let id = self.worklanes[target].id.clone();
+        self.select_worklane(&id)
+    }
+
     pub fn select_worklane_and_pane(&mut self, worklane_id: &str, pane_id: &str) -> bool {
         let Some(worklane) = self
             .worklanes

@@ -5526,6 +5526,48 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   card selection. The complete five-terminal workflow remains the acceptance
   boundary.
 
+### DOGFOOD-2026-08-04-NAVIGATION-SIDEBAR-PEEK-BATCH: five source navigation affordances
+
+- **Scope:** This batch implements five related source-derived behaviors rather
+  than introducing new product concepts: next/previous worklane traversal,
+  keyboard Back/Forward, active-worklane sidebar reveal, spatial Peek scrolling,
+  and the selected-pane Peek HUD.
+- **Worklane navigation:** `WorkspaceState` now advances and wraps in sidebar
+  order without changing the focused pane remembered by either lane. Linux
+  exposes named next/previous-worklane actions and Ctrl+PageDown/PageUp. The
+  real Wayland five-PTY workflow invokes both actions after cross-lane pane
+  traversal and proves the expected lane and pane identity on every transition.
+- **History navigation:** Alt+Left and Alt+Right now use the existing
+  browser-style pane history rather than reaching the terminal as escape
+  sequences. The controlled X11 workflow drives both chords while a real
+  Ghostty surface owns focus and requires the exact Back/Forward model and PTY
+  receipts. Recent-command UI and cross-window routing remain unimplemented, so
+  the inventory records the larger feature as `PARTIAL`, not complete.
+- **Sidebar reveal:** Selection renders schedule a generation-guarded two-idle
+  visibility check matching `SidebarActiveWorklaneAutoScroller.swift`; only a
+  card outside the current viewport is clamped into view. Focused tests pin the
+  source condition and cover fully visible, clipped-above and clipped-below
+  geometry. An overflowing real-sidebar scenario is still explicitly listed in
+  the feature inventory rather than implied by the smaller live scenario.
+- **Peek wheel/gesture navigation:** Peek owns a capture-phase GTK scroll
+  controller only while open. Wheel input navigates in both spatial axes;
+  precise surface input locks an axis, accumulates the source 40-point
+  threshold, and switches at most once per gesture. Pure tests pin the source
+  threshold and transition rules. Controlled X11 additionally sends a real
+  horizontal wheel event into an open Peek and proves the selected live pane
+  changed; physical precision-touchpad/natural-direction coverage remains
+  outstanding.
+- **Peek context HUD:** The overlay now reports the selected pane title and
+  worklane title while terminal input remains shielded. Controlled X11 requires
+  the exact HUD value produced from a real PTY title before exercising wheel,
+  arrows, commit, cancel and pointer selection.
+- **Regression evidence:** `cargo test --workspace`, strict all-target Clippy,
+  feature-inventory validation, ReleaseSafe staging, the complete nested-X11
+  source-UX workflow, and the complete nested-Wayland workspace-action workflow
+  all passed. Both display workflows use real GTK, Ghostty surfaces, PTYs and
+  child processes in controlled compositors; no terminal or workspace model is
+  faked.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were

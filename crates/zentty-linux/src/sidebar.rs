@@ -443,6 +443,24 @@ fn find_named_widget(root: &gtk::Widget, name: &str) -> Option<gtk::Widget> {
     None
 }
 
+pub(crate) fn worklane_card(sidebar: &gtk::Box, worklane_id: &str) -> Option<gtk::Widget> {
+    find_named_widget(
+        sidebar.upcast_ref(),
+        &widget_name("worklane-card", worklane_id),
+    )
+}
+
+pub(crate) fn reveal_range(
+    viewport_top: f64,
+    viewport_height: f64,
+    card_top: f64,
+    card_height: f64,
+) -> Option<(f64, f64)> {
+    let card_bottom = card_top + card_height;
+    let viewport_bottom = viewport_top + viewport_height;
+    (card_top < viewport_top || card_bottom > viewport_bottom).then_some((card_top, card_bottom))
+}
+
 fn make_pane_context_menu(
     window: &gtk::Window,
     worklane_id: &str,
@@ -714,7 +732,7 @@ fn remove_all_children(container: &gtk::Box) {
 
 #[cfg(test)]
 mod tests {
-    use super::{WorklaneSelectionState, pane_action_specs, selection_state};
+    use super::{WorklaneSelectionState, pane_action_specs, reveal_range, selection_state};
     use crate::source_ui;
 
     #[test]
@@ -745,5 +763,21 @@ mod tests {
         assert_eq!(selection_state(false), WorklaneSelectionState::Inactive);
         assert_eq!(selection_state(true).css_class(), "worklane-tint-active");
         assert_eq!(selection_state(false).css_class(), "worklane-tint-inactive");
+    }
+
+    #[test]
+    fn active_worklane_reveal_only_scrolls_when_the_whole_card_is_not_visible() {
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../Zentty/UI/Sidebar/SidebarActiveWorklaneAutoScroller.swift"
+        ));
+        assert!(source.contains("if !isVisible(worklaneID)"));
+
+        assert_eq!(reveal_range(100.0, 300.0, 125.0, 80.0), None);
+        assert_eq!(reveal_range(100.0, 300.0, 80.0, 80.0), Some((80.0, 160.0)));
+        assert_eq!(
+            reveal_range(100.0, 300.0, 360.0, 80.0),
+            Some((360.0, 440.0))
+        );
     }
 }

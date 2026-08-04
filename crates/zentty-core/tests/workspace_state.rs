@@ -323,6 +323,23 @@ fn adjacent_pane_traversal_follows_sidebar_order_and_wraps_across_worklanes() {
 }
 
 #[test]
+fn adjacent_worklane_traversal_wraps_without_changing_each_lanes_focused_pane() {
+    let mut state = WorkspaceState::new("worklane-a", "pane-a");
+    assert!(state.create_worklane("worklane-b", "pane-b"));
+    assert!(state.select_worklane("worklane-a"));
+    let first_pane = state.focused_pane_id().map(str::to_owned);
+
+    assert!(state.select_adjacent_worklane(true));
+    let second_id = state.active_worklane_id().to_owned();
+    let second_pane = state.focused_pane_id().map(str::to_owned);
+    assert!(state.select_adjacent_worklane(true));
+    assert_eq!(state.focused_pane_id(), first_pane.as_deref());
+    assert!(state.select_adjacent_worklane(false));
+    assert_eq!(state.active_worklane_id(), second_id);
+    assert_eq!(state.focused_pane_id(), second_pane.as_deref());
+}
+
+#[test]
 fn right_insertion_commands_preserve_their_distinct_width_contracts() {
     let mut added = WorkspaceState::new("lane-1", "pane-1");
     assert!(added.add_pane_right_without_resizing("pane-2", 719.0));

@@ -140,6 +140,7 @@ pub(crate) struct PanePreview {
 pub(crate) struct WorklanePeekView {
     root: gtk::Box,
     content: gtk::Box,
+    hud: gtk::Label,
 }
 
 impl WorklanePeekView {
@@ -157,12 +158,19 @@ impl WorklanePeekView {
         content.add_css_class("zentty-peek-content");
         content.set_halign(gtk::Align::Center);
         content.set_valign(gtk::Align::Center);
+        content.set_vexpand(true);
         root.append(&content);
+
+        let hud = gtk::Label::new(None);
+        hud.add_css_class("zentty-peek-hud");
+        hud.set_halign(gtk::Align::Center);
+        hud.set_margin_bottom(30);
+        root.append(&hud);
 
         // Make the backdrop an input target. Pane buttons remain the more
         // specific targets, while clicks elsewhere cannot reach a terminal.
         root.add_controller(gtk::GestureClick::new());
-        Self { root, content }
+        Self { root, content, hud }
     }
 
     pub(crate) fn widget(&self) -> &gtk::Widget {
@@ -172,6 +180,7 @@ impl WorklanePeekView {
     pub(crate) fn hide(&self) {
         self.root.set_visible(false);
         clear_box(&self.content);
+        self.hud.set_text("");
     }
 
     pub(crate) fn render(
@@ -184,8 +193,12 @@ impl WorklanePeekView {
         let on_select: Rc<dyn Fn(PaneReference)> = Rc::new(on_select);
         let mut current_worklane = String::new();
         let mut lane: Option<gtk::Box> = None;
+        let mut selected_hud = String::new();
 
         for preview in previews {
+            if preview.reference == *selected {
+                selected_hud = format!("{}  •  {}", preview.pane_title, preview.worklane_title);
+            }
             if preview.reference.worklane_id != current_worklane {
                 current_worklane.clone_from(&preview.reference.worklane_id);
                 let group = gtk::Box::new(gtk::Orientation::Vertical, 8);
@@ -228,6 +241,8 @@ impl WorklanePeekView {
                 .expect("a pane preview always follows a worklane")
                 .append(&button);
         }
+        self.hud.set_text(&selected_hud);
+        eprintln!("zentty-linux: worklane-peek-hud value={selected_hud:?}");
         self.root.set_visible(true);
     }
 }
@@ -245,6 +260,7 @@ fn install_styles() {
          .zentty-peek-content { padding: 18px; }\n\
          .zentty-peek-worklane { background: #171b21; border-radius: 12px; padding: 12px; }\n\
          .zentty-peek-heading { color: #d7dce5; font-weight: 700; font-size: 15px; }\n\
+         .zentty-peek-hud { background: alpha(#000000, 0.58); color: #ffffff; border-radius: 10px; padding: 8px 14px; font-weight: 600; }\n\
          .zentty-peek-pane { background: #252b34; border: 2px solid transparent; border-radius: 9px; padding: 6px; }\n\
          .zentty-peek-pane:hover { background: #303845; }\n\
          .zentty-peek-pane.selected { border-color: #65a7ff; background: #303845; }",

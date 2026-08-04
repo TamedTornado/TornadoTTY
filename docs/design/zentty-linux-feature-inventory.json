@@ -303,7 +303,7 @@
       "implementation_status": "PARTIAL",
       "focused_tests": ["crates/zentty-linux/src/worklane_peek.rs"],
       "product_scenarios": ["linux/tests/rust-source-ux-x11"],
-      "test_plan": "Retain the physical Tab-duration contract: Tab release before 200ms traverses even while Control stays held, while Tab remaining down beyond 200ms opens Peek. Preserve repeated-key, spatial-arrow, Escape, Control-release and exact-card-click X11 routes. Add controlled precision swipe/natural-direction evidence, multiple-window targeting, project/attention context, reduced-motion transitions, and proof that every neighboring-lane terminal preview remains live before promoting this feature from PARTIAL.",
+      "test_plan": "Retain the physical Tab-duration contract: Tab release before 200ms traverses even while Control stays held, while Tab remaining down beyond 200ms opens Peek. Preserve repeated-key, spatial-arrow, real horizontal-wheel, Escape, Control-release, selected-pane HUD and exact-card-click X11 routes. Add controlled precision-touchpad/natural-direction evidence, multiple-window targeting, attention context, reduced-motion transitions, and proof that every neighboring-lane terminal preview remains live before promoting this feature from PARTIAL.",
       "alternative_or_blocker": null
     },
     {
@@ -319,7 +319,7 @@
       "implementation_status": "PARTIAL",
       "focused_tests": [],
       "product_scenarios": ["linux/tests/rust-workspace-actions", "linux/tests/rust-source-ux-x11"],
-      "test_plan": "Extend the delivered contextual pane-action slice with annotated source screenshot coverage, semantic accessibility inspection, deterministic visual states, sidebar modes, and proof that every chrome interaction preserves real terminal focus.",
+      "test_plan": "Extend the delivered contextual pane-action and active-worklane auto-reveal slice with annotated source screenshot coverage, semantic accessibility inspection, deterministic visual states, sidebar modes, an overflowing real-sidebar reveal scenario, and proof that every chrome interaction preserves real terminal focus.",
       "alternative_or_blocker": null
     },
     {
@@ -332,10 +332,10 @@
       "origin": "PORT_PARITY",
       "user_impact": "High-pane-count workflows need reversible navigation and direct return to recently used or attention-requesting work.",
       "linux_owner_issue": 16,
-      "implementation_status": "NOT_IMPLEMENTED",
-      "focused_tests": [],
-      "product_scenarios": [],
-      "test_plan": "Navigate real panes through every route, close/move targets, use multiple windows, and assert history pruning, back/forward order, hidden-column reveal and final PTY focus; mutation-test history transitions.",
+      "implementation_status": "PARTIAL",
+      "focused_tests": ["crates/zentty-core/src/pane_focus_history.rs", "crates/zentty-core/tests/workspace_state.rs"],
+      "product_scenarios": ["linux/tests/rust-source-ux-x11", "linux/tests/rust-workspace-actions"],
+      "test_plan": "Preserve the delivered browser-style Back/Forward stacks, real Alt+Left/Right and chrome-button routes, adjacent-pane traversal, and Ctrl+PageUp/PageDown worklane actions. Add recent-command UI, attention/search/menu/fleet/palette routing, real keyboard worklane traversal in both display backends, multiple-window history, hidden-column reveal, and mutation coverage before promoting this feature from PARTIAL.",
       "alternative_or_blocker": null
     },
     {
