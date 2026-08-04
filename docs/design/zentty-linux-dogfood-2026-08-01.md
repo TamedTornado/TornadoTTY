@@ -5639,16 +5639,25 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   `SidebarView.syncReorderSpacer()` displays the prospective insertion slot.
   Linux now preserves those semantics with native GTK DnD rather than treating
   the earlier target border as source parity.
+- **Rejected first repair:** A full-card drag ghost, faded origin, and brighter
+  before/after edge were clearer but still behaved like an old insertion-line
+  list. Jason correctly rejected that as an inadequate substitute for the live
+  slotting already present in ordinary browser interfaces and in Zentty's own
+  source.
 - **Repair:** Worklane headers use grab/grabbing cursors. Beginning a drag
-  installs a full-card `WidgetPaintable` drag ghost and visibly lifts the source
-  card. Pointer motion creates a bright, spaced before/after insertion edge at
-  the target midpoint; leaving, dropping, cancellation, and drag completion
-  clear all temporary state.
+  installs a full-card `WidgetPaintable` ghost, removes the source row from
+  normal layout, and replaces it with an equal-height GTK spacer. Pointer
+  motion moves that spacer before or after the target card, so surrounding
+  cards reflow live around the actual prospective slot. Cancellation restores
+  the unchanged original ordering; a drop commits through the stable-ID model;
+  every completion path restores the card and removes temporary state.
 - **Test correction:** Focused tests pin midpoint direction and the corresponding
   source preview hooks. The real nine-worklane X11 scenario now requires
-  receipts emitted after the lifted source class, card ghost, directional
-  insertion class, and cleanup are applied, in addition to requiring the final
-  stable-ID order. A final-order assertion alone is no longer sufficient.
+  receipts emitted after the source card is detached, full-size spacer is
+  installed, card ghost is created, preview slot is moved with live reflow, and
+  cleanup is applied, in addition to requiring the final stable-ID order. A
+  final-order assertion or insertion-line receipt alone is no longer
+  sufficient.
 - **Remaining visual review:** GTK supplies the compositor-owned drag-icon
   motion, so automated acceptance proves the real DnD path and the actual
   intermediate state transitions rather than pixel-faking a pointer drag.
