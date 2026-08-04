@@ -72,13 +72,11 @@ impl ApplicationShell {
         let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
         content.set_hexpand(true);
         content.set_vexpand(true);
-        let toolbar = build_toolbar();
 
         let pane_box = gtk::Box::new(gtk::Orientation::Horizontal, 1);
         pane_box.set_homogeneous(true);
         pane_box.set_hexpand(true);
         pane_box.set_vexpand(true);
-        content.append(&toolbar);
         content.append(&pane_box);
         root.append(&sidebar_scroll);
         root.append(&content);
@@ -786,28 +784,6 @@ impl ApplicationShell {
             .collect::<Vec<_>>()
             .join("|")
     }
-}
-
-fn build_toolbar() -> gtk::Box {
-    let toolbar = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    toolbar.set_margin_top(6);
-    toolbar.set_margin_bottom(6);
-    toolbar.set_margin_start(6);
-    toolbar.set_margin_end(6);
-    for (label, action) in [
-        ("Split right", ACTION_SPLIT_PANE_RIGHT),
-        ("Split below", ACTION_SPLIT_PANE_BELOW),
-        ("Close pane", ACTION_CLOSE_PANE),
-        ("Move pane left", ACTION_MOVE_PANE_LEFT),
-        ("Move pane right", ACTION_MOVE_PANE_RIGHT),
-        ("Move pane up", ACTION_MOVE_PANE_UP),
-        ("Move pane down", ACTION_MOVE_PANE_DOWN),
-    ] {
-        let button = gtk::Button::with_label(label);
-        button.set_action_name(Some(&format!("workspace.{action}")));
-        toolbar.append(&button);
-    }
-    toolbar
 }
 
 fn clear_pane_columns(container: &gtk::Box) {

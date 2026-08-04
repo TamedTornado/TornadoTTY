@@ -4749,6 +4749,49 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   a dogfood finding and must revise the inventory and owner issue before its
   implementation proceeds.
 
+### DOGFOOD-2026-08-04-CONTEXTUAL-PANE-ACTIONS: remove the developer toolbar, not the commands
+
+- **Source mismatch:** The Linux shell exposed split, close, and move as seven
+  permanent text buttons above every terminal. Zentty instead puts pane commands
+  in the pane/drag-zone context surface and reserves compact icon chrome for
+  global navigation and layout controls. The toolbar was functional scaffolding,
+  not acceptable source UX.
+- **Test-first boundary:** A focused Rust test first named the required
+  contextual action catalog and failed to compile because no such catalog
+  existed. The delivered catalog now covers source-named right/below splits,
+  four-direction movement, and close with symbolic icons. This is a deliberate
+  first subset of the larger source pane menu, not a claim that rename, copy,
+  paste, move-to-window/worklane, or restored-command actions are complete.
+- **Product repair:** The permanent text toolbar was deleted. Each hierarchical
+  sidebar pane row now has an icon-only overflow button with tooltip and
+  accessible label; its popover uses icon-plus-text contextual commands. A
+  contextual command first selects its exact worklane/pane and then activates
+  the existing named product action on the next GTK main-loop turn, so rebuilding
+  the sidebar cannot redirect the command to whichever pane was previously
+  focused. The source-style `+ New worklane` capsule also replaces the isolated
+  plus button.
+- **Visual discovery:** The first real Xvfb screenshot showed that GTK's default
+  label colors became nearly illegible against the custom dark sidebar. Explicit
+  sidebar, title, row, create-button, and overflow-control foreground colors
+  repaired the contrast. A second full-root capture proved the GTK popover is a
+  separate real X11 window and showed all seven contextual items and icons.
+- **Real interaction evidence:** A controlled X11 pointer clicked the actual
+  pane overflow control and `New Pane Right`; the staged product created a
+  second real Ghostty surface and PTY and both children exited cleanly. That path
+  is now the maintained `linux/tests/rust-source-ux-x11` scenario. The existing
+  five-pane staged workflow still passes under controlled X11 and Wayland.
+- **Environment failure:** The first post-reboot Xvfb invocation ran inside a
+  filesystem namespace that presented `/tmp/.X11-unix` as owned by `nobody`, so
+  Xorg correctly refused to bind. The host directory has the standard root/1777
+  ownership; GUI integration was rerun outside that remapping namespace rather
+  than weakening X11 permissions or converting the absence into a pass.
+- **Remaining UX:** This slice removes the most conspicuous scaffolding but does
+  not complete issue #16. The source leading icon chrome, pane rename, full pane
+  menu, move-to-worklane/window destinations, hover-only disclosure, terminal
+  focus restoration after menu dismissal, accessibility-tree assertions,
+  Wayland pointer driving, sidebar sizing/modes, and reviewed visual states
+  remain required.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were

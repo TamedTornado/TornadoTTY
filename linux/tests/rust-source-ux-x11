@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
+ghostty_root="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
+log=""
+product_pid=""
+
+fail() {
+    if [[ -n "${log}" && -f "${log}" ]]; then
+        cat "${log}" >&2
+    fi
+    echo "rust-source-ux-x11: error: $*" >&2
+    exit 1
+}
+
+cleanup() {
+    if [[ "${product_pid}" =~ ^[1-9][0-9]*$ ]]; then
+        kill -TERM "${product_pid}" 2>/dev/null || true
+        wait "${product_pid}" 2>/dev/null || true
+    fi
+    [[ -z "${log}" ]] || rm -f -- "${log}"
+}
+trap cleanup EXIT
+
+[[ "${GDK_BACKEND:-}" == x11 ]] || fail "GDK_BACKEND must be x11"
+[[ "${ZENTTY_NESTED_X11_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+    fail "the source UX scenario must run through linux/tests/nested-x11"
+for dependency in cut grep head mktemp readelf sed seq sleep tail timeout xdotool; do
+    command -v "${dependency}" >/dev/null || fail "${dependency} is required"
+done
+[[ -x "${product}" ]] || fail "delivered Rust product is not built: ${product}"
+
+layer_runpath="$(
+    readelf -d "${ghostty_root}/zig-out/lib/libghostty-gtk-embed.so" |
+        sed -n 's/.*Library runpath: \[\([^]]*\)\].*/\1/p' |
+        cut -d: -f1
+)"
+[[ "${layer_runpath}" == .zig-cache/* ]] ||
+    fail "Ghostty library has no pinned relative layer-shell runpath"
+layer_directory="${ghostty_root}/${layer_runpath}"
+
+log="$(mktemp)"
+state_directory="$(mktemp -d)"
+trap 'rm -rf -- "${state_directory}"; cleanup' EXIT
+GDK_SCALE=1 \
+GDK_DPI_SCALE=1 \
+LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+    "${product}" \
+    --command 'sleep 5' \
+    --state-directory "${state_directory}" \
+    --no-session-restore \
+    --quit-after-last-terminal-exit >"${log}" 2>&1 &
+product_pid=$!
+
+window_id=""
+for _ in $(seq 1 200); do
+    window_id="$(xdotool search --name '^Zentty$' 2>/dev/null | head -1 || true)"
+    if [[ "${window_id}" =~ ^[1-9][0-9]*$ ]] &&
+        grep -Fxq 'zentty-linux: terminal-ready' "${log}"; then
+        break
+    fi
+    sleep 0.05
+done
+[[ "${window_id}" =~ ^[1-9][0-9]*$ ]] || fail "real Zentty X11 window did not appear"
+
+# The controlled Xvfb profile fixes the window at 1000x700. Drive the pane-row
+# overflow icon and its first contextual item through the real X11 pointer;
+# direct model/action activation would not prove that the replacement UX is
+# reachable after removing the developer toolbar.
+xdotool mousemove --window "${window_id}" 580 132 click 1
+sleep 0.2
+xdotool mousemove --window "${window_id}" 580 195 click 1
+
+set +e
+timeout --foreground --kill-after=2s 12s tail --pid="${product_pid}" -f /dev/null
+wait_status=$?
+set -e
+if (( wait_status != 0 )); then
+    fail "product did not finish after the pointer-driven split"
+fi
+set +e
+wait "${product_pid}"
+product_status=$?
+set -e
+product_pid=""
+(( product_status == 0 )) || fail "product exited ${product_status}"
+
+grep -Fxq 'zentty-linux: action=split-pane-right pane=pane-2' "${log}" ||
+    fail "the contextual New Pane Right item did not activate its product action"
+[[ "$(grep -Fxc 'zentty-linux: terminal-ready' "${log}" || true)" -eq 2 ]] ||
+    fail "the pointer-driven split did not initialize a second real Ghostty terminal"
+[[ "$(grep -Fxc 'zentty-linux: child-exited' "${log}" || true)" -eq 2 ]] ||
+    fail "both real PTY children did not exit through the product"
+if grep -Eq 'panicked at|thread caused non-unwinding panic|RefCell already borrowed|CRITICAL: Gtk|has a parent GtkBox' "${log}"; then
+    fail "the contextual action reported a panic or GTK lifecycle critical"
+fi
+
+echo "Rust source UX passed: x11, external-pointer=context-menu, split=real-ghostty-pty"

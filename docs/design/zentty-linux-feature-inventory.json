@@ -206,8 +206,8 @@
       "linux_owner_issue": 4,
       "implementation_status": "PARTIAL",
       "focused_tests": [],
-      "product_scenarios": ["linux/tests/rust-workspace-actions"],
-      "test_plan": "Inventory source commands, map them to named GTK actions and accelerators, and drive representative real controls with accessibility inspection.",
+      "product_scenarios": ["linux/tests/rust-workspace-actions", "linux/tests/rust-source-ux-x11"],
+      "test_plan": "Continue the source command inventory beyond the delivered contextual pane-action slice, map remaining commands to named GTK actions and accelerators, and add semantic accessibility inspection without replacing real pointer coverage.",
       "alternative_or_blocker": "GTK4 actions, accelerators, popovers, and Linux accessibility APIs replace AppKit menus and key equivalents."
     },
     {
@@ -318,8 +318,8 @@
       "linux_owner_issue": 16,
       "implementation_status": "PARTIAL",
       "focused_tests": [],
-      "product_scenarios": ["linux/tests/rust-workspace-actions"],
-      "test_plan": "Annotate the source screenshot, drive real GTK controls/accessibility in nested compositors, compare deterministic visual states, and prove sidebar/chrome interactions preserve real terminal focus.",
+      "product_scenarios": ["linux/tests/rust-workspace-actions", "linux/tests/rust-source-ux-x11"],
+      "test_plan": "Extend the delivered contextual pane-action slice with annotated source screenshot coverage, semantic accessibility inspection, deterministic visual states, sidebar modes, and proof that every chrome interaction preserves real terminal focus.",
       "alternative_or_blocker": null
     },
     {
