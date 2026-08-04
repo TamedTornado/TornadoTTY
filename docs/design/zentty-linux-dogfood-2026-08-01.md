@@ -4328,7 +4328,7 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   Issue #7 explicitly precedes accepting replacement workspace and product
   contracts, so beginning persistence implementation without its source-backed
   inventory would have returned to freelancing.
-- **Repair:** `zentty-linux-feature-inventory.json` now records 32 stable
+- **Historical partial repair:** `zentty-linux-feature-inventory.json` initially recorded 32 stable
   requirements across workspace/session behavior, worklanes, panes, command
   routing, and coding agents. Every entry names its Swift sources and tests,
   release classification, parity or Linux-necessity origin, user impact, owner
@@ -4345,13 +4345,15 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   platform alternatives or blockers without explanations. Its self-test
   injects duplicate IDs, an unknown classification, a missing source, a
   missing Codex entry, and a missing platform-alternative explanation; each
-  mutation was rejected. The authoritative inventory passed with 32 entries:
+  mutation was rejected. That initial partial inventory passed with 32 entries:
   17 `REQUIRED_INITIAL_RELEASE`, 14 `REQUIRED_LATER`, and one
   `PLATFORM_ALTERNATIVE`.
-- **Boundary:** This is the immediate issue-#7 inventory for the four categories
+- **Boundary:** This was the immediate issue-#7 inventory for five categories
   that gate workspace/product work. The remaining issue-#7 categories still
   require the same source audit before the overall feature-inventory issue can
-  close. No grouped deferred agent entry is being treated as complete support.
+  close. It was not a complete product inventory; the 2026-08-04 exhaustive
+  re-audit below supersedes its counts and completeness assumptions. No grouped
+  deferred agent entry is being treated as complete support.
 
 ### DOGFOOD-2026-08-03-RECIPE-PROJECTION: unsupported layout must fail before persistence
 
@@ -4544,9 +4546,170 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   contract without flattening richer restored workspaces.
 - **Remaining limitation:** GTK boxes currently divide available space equally;
   stored width and height values round-trip but do not yet drive resizable
-  dividers. Real divider drag, resize persistence, cross-worklane pane moves,
-  and multiple windows remain open. Accordingly the broad restore cells stay
-  `NOT_IMPLEMENTED`; this slice does not claim exhaustive or full Linux QA.
+  dividers. Real divider drag, resize persistence, the source contextual
+  cross-worklane move UI, and multiple windows remain open. Accordingly the
+  broad restore cells stay `NOT_IMPLEMENTED`; this slice does not claim
+  exhaustive or full Linux QA.
+
+### DOGFOOD-2026-08-04-CROSS-WORKLANE-TRANSFER: preserve one terminal while changing lanes
+
+- **Source contract:** The ordinary same-window transfer removes the focused
+  pane from the active worklane, reconciles the source column, appends the pane
+  as a focused rightmost destination column, activates the destination, and
+  removes an emptied source worklane. Moving to the current or a missing lane
+  is not a transfer.
+- **Test-first implementation:** Two focused model tests were added before the
+  product method existed; the expected compile failure named the missing
+  `transfer_focused_pane_to_worklane` boundary. The implementation preserves
+  pane ID/title and column width, reconciles the removed height, generates a
+  collision-free destination column ID, updates focus, and removes an empty
+  source. Fourteen workspace-state tests pass. Warning-denied Clippy then
+  rejected the expanded GTK action installer at 110 lines, so the parameterized
+  transfer action received its own focused installer instead of a lint waiver.
+- **Real product path:** `workspace.move-pane-to-worklane` accepts a destination
+  worklane ID and moves the existing model/surface identity; it does not create
+  a replacement Ghostty surface or PTY. The staged scenario now moves the fifth
+  live terminal from a vertical source stack into the destination's rightmost
+  column, verifies exact topology/focus/sidebar receipts, and still requires
+  five distinct PTY children and five native surface finalizations. A second
+  independent real-product run quits immediately after the named actions and
+  asserts the clean JSON snapshot contains the transferred topology. Both runs
+  pass in private Weston/Wayland and Xvfb/X11 environments.
+- **Timing failure:** Extending the sequence by one action made the original
+  two-second child lifetime expire during the final geometry transition on
+  Wayland. The harness correctly failed because the pane disappeared before
+  the assertion. The child lifetime is now five seconds—bounded by the existing
+  20-second process timeout—so every real terminal remains live through the
+  action contract and then exits normally.
+- **Shutdown defect exposed by persistence:** The first X11 immediate-shutdown
+  run timed out after GTK reported several `GhosttySurface` widgets still had
+  `GtkBox` parents during dispose. `detach_and_close` had unparented them, but
+  child-exit callbacks fired during the teardown settling frame, performed
+  ordinary close mutations, and rendered the surviving surfaces back into the
+  detached pane tree. The shell now enters an explicit `shutting_down` state
+  before detachment; initialization, title, focus, and child-exit callbacks
+  cannot mutate or re-render after that boundary. The repaired X11 and Wayland
+  runs pass, and the scenario now rejects GTK lifecycle criticals explicitly.
+- **UX boundary:** This slice intentionally adds no new text toolbar control.
+  It supplies the source-semantic model and named GTK action needed by the
+  eventual source-accurate icon/context-menu UX tracked in issue #4. Until that
+  affordance and its accessibility behavior land, broad worklane UX parity
+  remains `NOT_IMPLEMENTED`.
+
+### DOGFOOD-2026-08-04-TMUX-COMPAT-AUDIT: correct the multiplexer boundary before porting it
+
+- **Discovery:** The planning inventory contained generic Agent IPC and Claude
+  Code entries but no explicit owner for Zentty's bundled `tmux` shim,
+  `__tmux-compat` CLI, command translator, format renderer, or compatibility
+  store. That allowed us to discuss a “Zentty muxer” without a testable source
+  contract. Issue #14 and the machine-readable feature entry now make this
+  required initial-release behavior explicit.
+- **Architecture correction:** Source inspection does not show a standalone
+  tmux-equivalent daemon that owns PTYs. The shim re-executes the Zentty CLI;
+  the CLI sends authenticated requests to the private Unix-domain Agent IPC
+  server inside the running app; the handler translates the supported tmux
+  vocabulary into existing worklane, pane, layout, terminal-input, and capture
+  operations. Ghostty surfaces remain the terminal/PTY owner. The Linux port
+  must preserve this boundary rather than accidentally building a second mux.
+- **Source behavior captured:** The compatibility store records buffers,
+  active panes, per-worklane team anchors, subordinate column IDs, and the
+  leader width from before the team layout. A first agent split creates a
+  right-side golden-ratio column, later splits stack vertically there while
+  retaining leader focus, and killing the last subordinate restores the leader
+  width. The handler also exposes selected send/select/kill/list/display,
+  format, resize/layout, capture, options, buffer, and wait semantics, plus
+  documented no-op or unsupported behavior.
+- **Test decision:** The port plan requires a real staged and installed shim
+  subprocess, private Unix socket, running Zentty application, Ghostty surface,
+  and PTY scenario. Focused parser/protocol/store tests and mutation testing
+  support that path rather than replacing it. Security negatives cover private
+  permissions, routing authentication, stale and substituted endpoints,
+  malformed/oversized input, corruption, concurrency, and restart. Only the
+  external model response may be controlled.
+- **Remaining uncertainty:** The full source command-by-command result contract
+  and Claude Code version compatibility still need golden fixtures before Rust
+  implementation begins. Until those fixtures and the real product scenarios
+  pass, this feature remains `NOT_IMPLEMENTED`; ordinary pane splitting is not
+  evidence that agent-team compatibility works.
+
+### DOGFOOD-2026-08-04-EXHAUSTIVE-FEATURE-REAUDIT: internal consistency was not completeness
+
+- **Operator finding:** Missing the tmux compatibility layer was not an isolated
+  typo. The 33-entry inventory still covered only five selected categories and
+  referenced 82 of 362 Swift product/CLI files. Its validator could prove that
+  declared entries were well-formed, but not that the product had been fully
+  discovered. Calling it authoritative without that qualification was a process
+  failure and made further unsupervised implementation unsafe.
+- **Evidence expansion:** The re-audit read the repository README, CLI, agent
+  hook and protocol documentation; every current public Zentty documentation
+  guide and the product/comparison material; all 39 public releases from
+  `v0.1.7` through `v0.1.45`; the complete source/test directory and command/
+  settings registries; and `assets/screenshot.png` at original resolution. The
+  screenshot confirms that source UX means icon chrome, a hierarchical
+  worklane/pane sidebar, path/git/agent/attention information, and horizontally
+  scrolling terminal columns—not the current Linux text-action scaffolding.
+- **External corroboration:** Five substantive Reddit discussions were read for
+  workflow and risk evidence: users report multiple agents plus servers/logs,
+  missed approvals, accidental closes, need for exact-pane jumps and durable
+  naming/context, and distrust of broad-but-unreliable agent detection. A Warp
+  discussion specifically warns against agent features fighting normal terminal
+  I/O. These discussions validate testing priorities but do not authorize
+  invented parity such as mobile control, token accounting, or automatic
+  worktree orchestration. Reddit's public search JSON returned HTTP 403 and
+  exact web search found no indexed Zentty-specific Reddit thread; that access
+  limitation is recorded rather than treated as proof of absence.
+- **Recovered scope:** The inventory now has 60 feature entries across 14
+  required categories: 34 `REQUIRED_INITIAL_RELEASE`, 18 `REQUIRED_LATER`, and
+  8 `PLATFORM_ALTERNATIVE`. New explicit owners cover Worklane Peek, live
+  multiwindow handoff, source sidebar/chrome, global search, Clean Copy/Markdown,
+  SSH transfer, bookmarks, git/PR/project icons, Open With, dev servers, task
+  runners, Task Manager, settings/TOML/shortcuts/themes, notifications/inbox/
+  fleet status/sleep inhibition, full CLI/shell integration, window lifecycle,
+  updates, privacy/About/licenses, and performance diagnostics. Public issues
+  #15 through #23 own the audit and implementation families; #14 owns agent-team
+  tmux compatibility.
+- **Executable repair:** `zentty-feature-evidence-2026-08-04.json` records the
+  audited source head, every public release tag and feature mapping, official
+  docs, screenshot observations, external discussions, all 70 registered app
+  commands, all nine settings sections, narrow product-source directory rules,
+  and exact mappings for previously unreferenced tests. The runner now fails on
+  stale commands/settings/releases, unknown evidence features, missing docs/
+  screenshots, broad source catch-alls, uncovered product files, uncovered test
+  files, duplicate test evidence, and unreviewed test exclusions. All 362 Swift
+  product/CLI files and 200 Swift logic/integration files are covered; three
+  test-only AppKit/fixture helpers have explicit reviewed exclusions.
+- **Governance mutation receipts:** Runner self-tests delete a release mapping,
+  alter command/settings counts, remove a source subsystem, inject an overbroad
+  UI catch-all, remove screenshot evidence, delete a test mapping, weaken an
+  exclusion, duplicate test evidence, and reference an unknown feature. Every
+  mutation is rejected. The live 60-entry inventory and runner tests pass.
+- **Runner performance repair:** The first coverage implementation invoked
+  `jq`, `dirname`, and `git rev-parse` once per source file, test, or release.
+  With every mutation rerunning the validator, the self-test exceeded its
+  30-second command window and stopped before a final receipt. Coverage sets and
+  directory rules are now loaded once into Bash associative arrays, path parents
+  use parameter expansion, and repository tags are read in one Git call. The
+  authoritative check now completes in about 0.8 seconds and all mutations in
+  about 5.5 seconds; exhaustive governance no longer requires an abusive test
+  architecture.
+- **Verification invocation error:** The first final governance chain named a
+  nonexistent `linux/tests/architecture-contract-v1` path after confusing the
+  matrix cell ID with its executable. The shell failed explicitly. The actual
+  `linux/tests/architecture-contract`, qualification-boundary contract, and
+  both negative self-test suites were then run and passed; no alias or silent
+  skip was added to hide the operator error.
+- **Qualification separation:** The previously running authoritative Linux
+  qualification completed successfully for its presently executable cells with
+  declared totals `PASS=48`, `FAIL=0`, `BLOCKED=5`, `XFAIL=1`, and
+  `NOT_IMPLEMENTED=53`; release and full qualification remain not passed. The
+  feature re-audit does not convert any of the newly planned product behavior
+  into a qualification pass.
+- **Remaining uncertainty:** File/subsystem, command, settings, release, docs,
+  screenshot, and test closure greatly reduce omission risk but cannot prove a
+  human never misunderstood behavior inside a covered file. Issue #15 therefore
+  remains open until its source-to-feature review and public issue acceptance
+  criteria are independently reconciled. No further feature implementation
+  should outrun that plan.
 
 ## AI disclosure
 

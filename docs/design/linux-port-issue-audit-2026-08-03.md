@@ -7,6 +7,12 @@
   model before completing the source-backed ZenTTY feature inventory required
   by issue #7.
 
+> **2026-08-04 supersession note:** This corrective audit identified the right
+> rule but did not finish the source-wide inventory. The exhaustive evidence
+> audit in `zentty-exhaustive-feature-audit-2026-08-04.md`, its machine-readable
+> evidence ledger, and public issues #15–#23 supersede any implication here that
+> the earlier five-category inventory was complete.
+
 ## Audit rule
 
 ZenTTY's Swift implementation and tests are the authority for product parity.

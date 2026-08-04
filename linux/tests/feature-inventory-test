@@ -4,6 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 runner="${repo_root}/linux/tests/feature-inventory"
 source_inventory="${repo_root}/docs/design/zentty-linux-feature-inventory.json"
+source_evidence="${repo_root}/docs/design/zentty-feature-evidence-2026-08-04.json"
 temp_dir="$(mktemp -d)"
 trap 'rm -rf -- "${temp_dir}"' EXIT
 
@@ -12,6 +13,21 @@ expect_rejected() {
     local expected="$2"
     local receipt="${temp_dir}/${name}.log"
     if "${runner}" "${temp_dir}/${name}.json" >"${receipt}" 2>&1; then
+        echo "feature-inventory-test: ${name} unexpectedly passed" >&2
+        exit 1
+    fi
+    grep -F "${expected}" "${receipt}" >/dev/null || {
+        cat "${receipt}" >&2
+        echo "feature-inventory-test: ${name} lacked expected failure" >&2
+        exit 1
+    }
+}
+
+expect_evidence_rejected() {
+    local name="$1"
+    local expected="$2"
+    local receipt="${temp_dir}/${name}.log"
+    if "${runner}" "${source_inventory}" "${temp_dir}/${name}.json" >"${receipt}" 2>&1; then
         echo "feature-inventory-test: ${name} unexpectedly passed" >&2
         exit 1
     fi
@@ -39,5 +55,61 @@ expect_rejected missing-agent "agent codex must have exactly one individual inve
 jq '(.entries[] | select(.classification == "PLATFORM_ALTERNATIVE") | .alternative_or_blocker) = null' \
     "${source_inventory}" >"${temp_dir}/missing-alternative.json"
 expect_rejected missing-alternative "schema or enum contract failed"
+
+jq '.first_party_documents[0].features += ["missing.feature"]' \
+    "${source_evidence}" >"${temp_dir}/unknown-evidence-feature.json"
+expect_evidence_rejected unknown-evidence-feature "evidence references unknown feature"
+
+jq '.public_release_tags |= .[:-1]' \
+    "${source_evidence}" >"${temp_dir}/missing-release.json"
+expect_evidence_rejected missing-release "public release ledger must contain all 39 releases"
+
+jq '.release_feature_map |= .[:-1]' \
+    "${source_evidence}" >"${temp_dir}/unmapped-release.json"
+expect_evidence_rejected unmapped-release "release feature map must cover every public release"
+
+jq '.release_feature_map[0].features = []' \
+    "${source_evidence}" >"${temp_dir}/empty-release-evidence.json"
+expect_evidence_rejected empty-release-evidence "evidence ledger schema failed"
+
+jq '.command_registry.expected_case_count += 1' \
+    "${source_evidence}" >"${temp_dir}/stale-command-registry.json"
+expect_evidence_rejected stale-command-registry "command registry coverage is stale"
+
+jq '.settings_registry.expected_sections |= .[:-1]' \
+    "${source_evidence}" >"${temp_dir}/stale-settings-registry.json"
+expect_evidence_rejected stale-settings-registry "settings registry coverage is stale"
+
+jq 'del(.source_coverage[] | select(.directory == "Zentty/Servers"))' \
+    "${source_evidence}" >"${temp_dir}/uncovered-source.json"
+expect_evidence_rejected uncovered-source "product source file has no feature coverage"
+
+jq '.source_coverage += [{"directory":"Zentty/UI","recursive":true,"features":["application.sidebar-chrome-source-ux"]}]' \
+    "${source_evidence}" >"${temp_dir}/broad-source-rule.json"
+expect_evidence_rejected broad-source-rule "evidence ledger schema failed"
+
+jq '.screenshots = []' \
+    "${source_evidence}" >"${temp_dir}/missing-screenshot.json"
+expect_evidence_rejected missing-screenshot "evidence ledger schema failed"
+
+jq 'del(.first_party_documents[] | select(.id == "site-tmux"))' \
+    "${source_evidence}" >"${temp_dir}/missing-required-document.json"
+expect_evidence_rejected missing-required-document "required first-party document evidence is missing"
+
+jq '.source_head = "0000000000000000000000000000000000000000"' \
+    "${source_evidence}" >"${temp_dir}/stale-source-head.json"
+expect_evidence_rejected stale-source-head "audited source head is absent"
+
+jq 'del(.test_coverage[] | select(.path == "ZenttyLogicTests/TmuxFormatRendererTests.swift"))' \
+    "${source_evidence}" >"${temp_dir}/uncovered-test.json"
+expect_evidence_rejected uncovered-test "test file has no feature coverage or reviewed exclusion"
+
+jq '.test_infrastructure_exclusions[0].reason = "short"' \
+    "${source_evidence}" >"${temp_dir}/unreviewed-test-exclusion.json"
+expect_evidence_rejected unreviewed-test-exclusion "evidence ledger schema failed"
+
+jq '.test_coverage += [.test_coverage[0]]' \
+    "${source_evidence}" >"${temp_dir}/duplicate-test-evidence.json"
+expect_evidence_rejected duplicate-test-evidence "duplicate test evidence paths"
 
 echo "feature-inventory runner tests passed"

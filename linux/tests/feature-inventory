@@ -3,6 +3,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 inventory="${1:-${repo_root}/docs/design/zentty-linux-feature-inventory.json}"
+evidence="${2:-${repo_root}/docs/design/zentty-feature-evidence-2026-08-04.json}"
 
 fail() {
     echo "feature-inventory: error: $*" >&2
@@ -12,6 +13,8 @@ fail() {
 command -v jq >/dev/null || fail "jq is required"
 [[ -f "${inventory}" ]] || fail "inventory not found: ${inventory}"
 jq empty "${inventory}" 2>/dev/null || fail "inventory is not valid JSON"
+[[ -f "${evidence}" ]] || fail "evidence ledger not found: ${evidence}"
+jq empty "${evidence}" 2>/dev/null || fail "evidence ledger is not valid JSON"
 
 jq -e '
     .schema_version == 1 and
@@ -19,7 +22,12 @@ jq -e '
     (.entries | type == "array" and length > 0) and
     all(.entries[];
         (.id | type == "string" and test("^[a-z0-9]+([.-][a-z0-9]+)*$")) and
-        (.category | IN("workspace_session", "worklanes", "panes", "command_routing", "coding_agents")) and
+        (.category | IN(
+            "workspace_session", "worklanes", "panes", "command_routing", "coding_agents",
+            "terminal_foundation", "application_shell", "search_clipboard", "project_context",
+            "project_utilities", "configuration", "desktop_integration", "cli_shell",
+            "lifecycle_trust"
+        )) and
         (.behavior | type == "string" and length > 0) and
         (.source | type == "array" and length > 0) and
         (.swift_tests | type == "array" and length > 0) and
@@ -56,7 +64,212 @@ for agent in "${expected_agents[@]}"; do
     [[ "${count}" == 1 ]] || fail "agent ${agent} must have exactly one individual inventory entry"
 done
 
-required_categories=(workspace_session worklanes panes command_routing coding_agents)
+jq -e '
+    .schema_version == 1 and
+    (.audit_date | type == "string" and length > 0) and
+    (.source_head | type == "string" and test("^[0-9a-f]{40}$")) and
+    (.latest_public_release | type == "string" and length > 0) and
+    (.public_release_tags | type == "array" and length > 0) and
+    (.release_feature_map | type == "array" and length > 0) and
+    (.first_party_documents | type == "array" and length > 0) and
+    (.screenshots | type == "array" and length > 0) and
+    (.external_discussions | type == "array" and length > 0) and
+    (.source_coverage | type == "array" and length > 0) and
+    (.root_source_files | type == "array" and length > 0) and
+    (.test_coverage | type == "array" and length > 0) and
+    (.test_infrastructure_exclusions | type == "array") and
+    all(.first_party_documents[];
+        (.id | type == "string" and length > 0) and
+        (.location | type == "string" and length > 0) and
+        (.features | type == "array" and length > 0)
+    ) and
+    all(.screenshots[];
+        (.id | type == "string" and length > 0) and
+        (.location | type == "string" and length > 0) and
+        (.observations | type == "array" and length > 0) and
+        (.features | type == "array" and length > 0)
+    ) and
+    all(.external_discussions[];
+        (.id | type == "string" and length > 0) and
+        (.location | type == "string" and startswith("https://")) and
+        (.role | IN("workflow_corroboration", "risk_corroboration")) and
+        (.features | type == "array" and length > 0)
+    ) and
+    all(.source_coverage[];
+        (.directory | type == "string" and startswith("Zentty")) and
+        ((.recursive == false) or (.directory | IN("Zentty", "Zentty/UI", "Zentty/AppState") | not)) and
+        (.recursive | type == "boolean") and
+        (.features | type == "array" and length > 0)
+    ) and
+    all(.release_feature_map[];
+        (.tag | type == "string" and length > 0) and
+        (.features | type == "array" and length > 0)
+    ) and
+    all(.root_source_files[];
+        (.path | type == "string" and startswith("Zentty/") and endswith(".swift")) and
+        (.features | type == "array" and length > 0)
+    ) and
+    all(.test_coverage[];
+        (.path | type == "string" and test("^Zentty(Logic|Integration)Tests/.+\\.swift$")) and
+        (.features | type == "array" and length > 0)
+    ) and
+    all(.test_infrastructure_exclusions[];
+        (.path | type == "string" and test("^Zentty(Logic|Integration)Tests/.+\\.swift$")) and
+        (.reason | type == "string" and length > 20)
+    )
+' "${evidence}" >/dev/null || fail "evidence ledger schema failed"
+
+declare -A inventory_id_set=()
+while IFS= read -r feature_id; do
+    inventory_id_set["${feature_id}"]=1
+done < <(jq -r '.entries[].id' "${inventory}")
+while IFS= read -r feature_id; do
+    [[ -n "${inventory_id_set[${feature_id}]:-}" ]] ||
+        fail "evidence references unknown feature: ${feature_id}"
+done < <(jq -r '
+    .first_party_documents[].features[],
+    .screenshots[].features[],
+    .external_discussions[].features[],
+    .release_feature_map[].features[],
+    .source_coverage[].features[],
+    .root_source_files[].features[],
+    .test_coverage[].features[],
+    .command_registry.feature,
+    .settings_registry.feature
+' "${evidence}" | LC_ALL=C sort -u)
+
+while IFS= read -r location; do
+    if [[ "${location}" == http://* || "${location}" == https://* ]]; then
+        continue
+    fi
+    [[ -f "${repo_root}/${location}" ]] || fail "evidence file is missing: ${location}"
+done < <(jq -r '.first_party_documents[].location, .screenshots[].location' "${evidence}")
+
+[[ "$(jq -r '.public_release_tags | length' "${evidence}")" == 39 ]] ||
+    fail "public release ledger must contain all 39 releases from v0.1.7 through v0.1.45"
+[[ "$(jq -r '.public_release_tags[0]' "${evidence}")" == v0.1.7 ]] ||
+    fail "public release ledger must begin at v0.1.7"
+[[ "$(jq -r '.public_release_tags[-1]' "${evidence}")" == "$(jq -r '.latest_public_release' "${evidence}")" ]] ||
+    fail "latest public release does not match the release ledger tail"
+release_tags="$(jq -r '.public_release_tags[]' "${evidence}")"
+mapped_release_tags="$(jq -r '.release_feature_map[].tag' "${evidence}")"
+[[ "${mapped_release_tags}" == "${release_tags}" ]] ||
+    fail "release feature map must cover every public release exactly once and in order"
+declare -A repository_tag_set=()
+while IFS= read -r release_tag; do
+    repository_tag_set["${release_tag}"]=1
+done < <(git -C "${repo_root}" tag --list)
+while IFS= read -r release_tag; do
+    [[ -n "${repository_tag_set[${release_tag}]:-}" ]] ||
+        fail "audited public release tag is absent: ${release_tag}"
+done < <(jq -r '.public_release_tags[]' "${evidence}")
+git -C "${repo_root}" cat-file -e "$(jq -r '.source_head' "${evidence}")^{commit}" 2>/dev/null ||
+    fail "audited source head is absent"
+if git -C "${repo_root}" show-ref --verify --quiet refs/remotes/upstream/main; then
+    expected_source_head="$(git -C "${repo_root}" merge-base HEAD refs/remotes/upstream/main)"
+    [[ "$(jq -r '.source_head' "${evidence}")" == "${expected_source_head}" ]] ||
+        fail "audited source head is stale relative to the port branch"
+fi
+
+required_document_ids="$(printf '%s\n' \
+    repo-readme repo-cli repo-agent-hooks repo-agent-protocol site-home site-docs-index \
+    site-getting-started site-worklanes-panes site-agent-workflows site-shortcuts site-cli \
+    site-themes-settings site-tmux site-reference site-faq | LC_ALL=C sort)"
+actual_document_ids="$(jq -r '.first_party_documents[].id' "${evidence}" | LC_ALL=C sort)"
+[[ "${actual_document_ids}" == "${required_document_ids}" ]] ||
+    fail "required first-party document evidence is missing or unexpected"
+[[ "$(jq -r '[.screenshots[] | select(.id == "repository-hero")] | length' "${evidence}")" == 1 ]] ||
+    fail "repository hero screenshot evidence is missing or duplicated"
+[[ "$(jq -r '.external_discussions | length' "${evidence}")" -ge 5 ]] ||
+    fail "external workflow/risk evidence is incomplete"
+
+for evidence_array in first_party_documents screenshots external_discussions release_feature_map; do
+    duplicate_evidence_ids="$(jq -r --arg key "${evidence_array}" '
+        .[$key][] | .id // .tag
+    ' "${evidence}" | LC_ALL=C sort | uniq -d)"
+    [[ -z "${duplicate_evidence_ids}" ]] ||
+        fail "duplicate evidence IDs in ${evidence_array}: ${duplicate_evidence_ids//$'\n'/, }"
+done
+
+command_file="${repo_root}/$(jq -r '.command_registry.location' "${evidence}")"
+expected_command_count="$(jq -r '.command_registry.expected_case_count' "${evidence}")"
+actual_command_count="$(
+    awk '/^enum AppCommandID:/,/^}/' "${command_file}" | grep -c '^    case '
+)"
+[[ "${actual_command_count}" == "${expected_command_count}" ]] ||
+    fail "command registry coverage is stale: expected ${expected_command_count}, found ${actual_command_count}"
+
+settings_file="${repo_root}/$(jq -r '.settings_registry.location' "${evidence}")"
+expected_settings="$(jq -r '.settings_registry.expected_sections[]' "${evidence}")"
+actual_settings="$(awk '/^enum SettingsSection:/,/^}/' "${settings_file}" | sed -n 's/^    case \([A-Za-z][A-Za-z]*\)$/\1/p')"
+[[ "${actual_settings}" == "${expected_settings}" ]] ||
+    fail "settings registry coverage is stale"
+
+while IFS= read -r directory; do
+    [[ -d "${repo_root}/${directory}" ]] || fail "source coverage directory is missing: ${directory}"
+done < <(jq -r '.source_coverage[].directory' "${evidence}")
+
+while IFS= read -r root_file; do
+    [[ -f "${repo_root}/${root_file}" ]] || fail "covered root source file is missing: ${root_file}"
+done < <(jq -r '.root_source_files[].path' "${evidence}")
+
+declare -A covered_root_source=()
+while IFS= read -r root_file; do
+    covered_root_source["${root_file}"]=1
+done < <(jq -r '.root_source_files[].path' "${evidence}")
+mapfile -t source_coverage_rules < <(
+    jq -r '.source_coverage[] | [.directory, (.recursive | tostring)] | @tsv' "${evidence}"
+)
+
+while IFS= read -r source_file; do
+    covered=false
+    if [[ -n "${covered_root_source[${source_file}]:-}" ]]; then
+        covered=true
+    fi
+    if [[ "${covered}" == false ]]; then
+        source_directory="${source_file%/*}"
+        for source_rule in "${source_coverage_rules[@]}"; do
+            IFS=$'\t' read -r directory recursive <<<"${source_rule}"
+            if [[ "${recursive}" == true && ("${source_directory}" == "${directory}" || "${source_directory}" == "${directory}/"*) ]] ||
+                [[ "${recursive}" == false && "${source_directory}" == "${directory}" ]]; then
+                covered=true
+                break
+            fi
+        done
+    fi
+    [[ "${covered}" == true ]] || fail "product source file has no feature coverage: ${source_file}"
+done < <(
+    find "${repo_root}/Zentty" -type f -name '*.swift' -printf 'Zentty/%P\n'
+    find "${repo_root}/ZenttyCLI" -type f -name '*.swift' -printf 'ZenttyCLI/%P\n'
+)
+
+duplicate_test_paths="$(jq -r '.test_coverage[].path, .test_infrastructure_exclusions[].path' \
+    "${evidence}" | LC_ALL=C sort | uniq -d)"
+[[ -z "${duplicate_test_paths}" ]] || fail "duplicate test evidence paths: ${duplicate_test_paths//$'\n'/, }"
+
+while IFS= read -r covered_test; do
+    [[ -f "${repo_root}/${covered_test}" ]] || fail "covered test file is missing: ${covered_test}"
+done < <(jq -r '.test_coverage[].path, .test_infrastructure_exclusions[].path' "${evidence}")
+
+declare -A covered_tests=()
+while IFS= read -r test_file; do
+    covered_tests["${test_file}"]=1
+done < <(
+    jq -r '.entries[].swift_tests[]' "${inventory}"
+    jq -r '.test_coverage[].path, .test_infrastructure_exclusions[].path' "${evidence}"
+)
+while IFS= read -r test_file; do
+    [[ -n "${covered_tests[${test_file}]:-}" ]] ||
+        fail "test file has no feature coverage or reviewed exclusion: ${test_file}"
+done < <(find "${repo_root}/ZenttyLogicTests" "${repo_root}/ZenttyIntegrationTests" \
+    -maxdepth 1 -type f -name '*.swift' -printf '%p\n' |
+    sed "s#^${repo_root}/##" | LC_ALL=C sort)
+
+required_categories=(
+    workspace_session worklanes panes command_routing coding_agents
+    terminal_foundation application_shell search_clipboard project_context
+    project_utilities configuration desktop_integration cli_shell lifecycle_trust
+)
 for category in "${required_categories[@]}"; do
     jq -e --arg category "${category}" 'any(.entries[]; .category == $category)' \
         "${inventory}" >/dev/null || fail "required category is absent: ${category}"
