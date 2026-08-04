@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
+library_directory="$(dirname "${product}")/../lib"
+
+fail() {
+    echo "run-local: error: $*" >&2
+    exit 1
+}
+
+[[ -x "${product}" ]] ||
+    fail "staged product is missing; run linux/scripts/build-local first"
+[[ -f "${library_directory}/libghostty-gtk-embed.so" ]] ||
+    fail "staged Ghostty library is missing; run linux/scripts/build-local first"
+[[ -f "${library_directory}/libgtk4-layer-shell.so" ]] ||
+    fail "staged GTK layer-shell library is missing; run linux/scripts/build-local first"
+[[ -n "${DISPLAY:-}" || -n "${WAYLAND_DISPLAY:-}" ]] ||
+    fail "no graphical Wayland or X11 display is available"
+
+# The staged executable carries an origin-relative RPATH to ../lib. Launch it
+# exactly as it will be packaged instead of reaching into Ghostty's build tree
+# or synthesizing an LD_LIBRARY_PATH in every developer command.
+exec "${product}" "$@"

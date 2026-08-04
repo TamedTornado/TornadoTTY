@@ -4792,6 +4792,27 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   Wayland pointer driving, sidebar sizing/modes, and reviewed visual states
   remain required.
 
+### DOGFOOD-2026-08-04-LOCAL-LAUNCH-CONTRACT: a product nobody can launch is not dogfoodable
+
+- **Operator failure:** When asked to run the product after the UX slice, the
+  implementation had a build command but no documented canonical local launch
+  command. The operator started rediscovering Ghostty's private build-tree
+  runpath instead of immediately launching Zentty. That is unacceptable for a
+  project intended to be dogfooded and eventually trusted by other developers.
+- **Repair:** `linux/scripts/run-local` now validates the staged executable and
+  its two required staged libraries, requires a graphical display, forwards
+  product arguments, and executes the exact staged artifact. The binary already
+  owns a packaged-style `$ORIGIN/../lib` RPATH, so the launcher deliberately
+  does not construct `LD_LIBRARY_PATH` or depend on Ghostty's cache layout.
+- **Documentation:** The README now gives the canonical two commands—build with
+  `linux/scripts/build-local`, run with `linux/scripts/run-local`—and clearly
+  labels the result as a development build rather than a supported package.
+- **Prevention:** Future manual and automated dogfooding must start through the
+  canonical staged launcher unless a test specifically owns a lower-level ABI
+  boundary. Any extra launch incantation is evidence that the launcher or
+  packaging contract is incomplete and must be repaired, not tribal knowledge
+  to rediscover.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were

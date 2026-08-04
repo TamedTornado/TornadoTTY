@@ -69,6 +69,32 @@ Zentty is in active development. Expect rapid iteration, rough edges, and occasi
 
 ## Build
 
+### Linux port
+
+The Linux port is under active development on the `linux/port` branch. Build
+the staged Rust/GTK application and its pinned Ghostty library, then launch that
+same staged artifact:
+
+```bash
+linux/scripts/build-local
+linux/scripts/run-local
+```
+
+`run-local` uses the executable's packaged-style `$ORIGIN/../lib` RPATH. It does
+not require a hand-written `LD_LIBRARY_PATH` or a path into Ghostty's build
+cache. Arguments are forwarded to the product; for example, an isolated test
+workspace can be launched with:
+
+```bash
+linux/scripts/run-local --state-directory /tmp/zentty-state --no-session-restore
+```
+
+This is currently a development build, not a supported Linux package. The
+public feature inventory and remaining parity work live in issues #1 and
+#16–#23.
+
+### macOS
+
 Zentty requires a local `GhosttyKit.xcframework` before the app can build normally.
 
 Build the framework:
