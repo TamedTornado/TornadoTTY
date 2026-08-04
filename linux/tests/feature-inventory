@@ -4,6 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 inventory="${1:-${repo_root}/docs/design/zentty-linux-feature-inventory.json}"
 evidence="${2:-${repo_root}/docs/design/zentty-feature-evidence-2026-08-04.json}"
+summary_path="${3:-}"
 
 fail() {
     echo "feature-inventory: error: $*" >&2
@@ -39,6 +40,10 @@ jq -e '
         (.focused_tests | type == "array") and
         (.product_scenarios | type == "array") and
         (.test_plan | type == "string" and length > 0) and
+        (if .implementation_status == "IMPLEMENTED"
+         then (.focused_tests | length > 0) and (.product_scenarios | length > 0)
+         else true
+         end) and
         (if (.classification == "PLATFORM_ALTERNATIVE" or .classification == "BLOCKED")
          then (.alternative_or_blocker | type == "string" and length > 0)
          else .alternative_or_blocker == null
@@ -69,6 +74,7 @@ jq -e '
     (.audit_date | type == "string" and length > 0) and
     (.source_head | type == "string" and test("^[0-9a-f]{40}$")) and
     (.latest_public_release | type == "string" and length > 0) and
+    (.linux_issues | type == "array" and length > 0) and
     (.public_release_tags | type == "array" and length > 0) and
     (.release_feature_map | type == "array" and length > 0) and
     (.first_party_documents | type == "array" and length > 0) and
@@ -78,6 +84,38 @@ jq -e '
     (.root_source_files | type == "array" and length > 0) and
     (.test_coverage | type == "array" and length > 0) and
     (.test_infrastructure_exclusions | type == "array") and
+    all(.linux_issues[];
+        (.number | type == "number" and . > 0 and floor == .) and
+        (.state | IN("OPEN", "CLOSED")) and
+        (.depends_on | type == "array" and all(.[]; type == "number" and . > 0 and floor == .)) and
+        (.features | type == "array" and all(.[]; type == "string" and length > 0)) and
+        (.title | type == "string" and length > 0) and
+        (.url | type == "string" and test("^https://github\\.com/TamedTornado/zentty/issues/[0-9]+$"))
+    ) and
+    (.command_registry.location | type == "string" and length > 0) and
+    (.command_registry.commands | type == "object" and length > 0) and
+    all(.command_registry.commands | to_entries[];
+        (.key | type == "string" and length > 0) and
+        (.value | type == "string" and length > 0)
+    ) and
+    (.pane_command_registry.location | type == "string" and length > 0) and
+    (.pane_command_registry.commands | type == "object" and length > 0) and
+    all(.pane_command_registry.commands | to_entries[];
+        (.key | type == "string" and test("^[A-Za-z][A-Za-z0-9]*$")) and
+        (.value | type == "string" and length > 0)
+    ) and
+    (.settings_registry.location | type == "string" and length > 0) and
+    (.settings_registry.sections | type == "object" and length > 0) and
+    all(.settings_registry.sections | to_entries[];
+        (.key | type == "string" and length > 0) and
+        (.value | type == "string" and length > 0)
+    ) and
+    (.cli_registry.directory | type == "string" and length > 0) and
+    (.cli_registry.commands | type == "object" and length > 0) and
+    all(.cli_registry.commands | to_entries[];
+        (.key | type == "string" and test("^[A-Za-z][A-Za-z0-9]*$")) and
+        (.value | type == "string" and length > 0)
+    ) and
     all(.first_party_documents[];
         (.id | type == "string" and length > 0) and
         (.location | type == "string" and length > 0) and
@@ -119,6 +157,30 @@ jq -e '
     )
 ' "${evidence}" >/dev/null || fail "evidence ledger schema failed"
 
+duplicate_issue_numbers="$(jq -r '.linux_issues[].number' "${evidence}" | LC_ALL=C sort -n | uniq -d)"
+[[ -z "${duplicate_issue_numbers}" ]] ||
+    fail "duplicate Linux issue numbers: ${duplicate_issue_numbers//$'\n'/, }"
+
+declare -A issue_state_set=()
+while IFS=$'\t' read -r issue_number issue_state; do
+    issue_state_set["${issue_number}"]="${issue_state}"
+done < <(jq -r '.linux_issues[] | [.number, .state] | @tsv' "${evidence}")
+while IFS=$'\t' read -r owner_issue implementation_status; do
+    [[ -n "${issue_state_set[${owner_issue}]:-}" ]] ||
+        fail "feature references nonexistent owner issue: ${owner_issue}"
+    [[ "${issue_state_set[${owner_issue}]}" == OPEN || "${implementation_status}" == IMPLEMENTED ]] ||
+        fail "feature references closed owner issue: ${owner_issue}"
+done < <(jq -r '.entries[] | [.linux_owner_issue, .implementation_status] | @tsv' "${inventory}" | LC_ALL=C sort -u)
+while IFS= read -r dependency_issue; do
+    [[ -n "${issue_state_set[${dependency_issue}]:-}" ]] ||
+        fail "issue dependency is absent from the reviewed ledger: ${dependency_issue}"
+done < <(jq -r '.linux_issues[].depends_on[]' "${evidence}" | LC_ALL=C sort -nu)
+
+inventory_owner_pairs="$(jq -r '.entries[] | [.linux_owner_issue, .id] | @tsv' "${inventory}" | LC_ALL=C sort -n -k1,1 -k2,2)"
+ledger_owner_pairs="$(jq -r '.linux_issues[] as $issue | $issue.features[] | [$issue.number, .] | @tsv' "${evidence}" | LC_ALL=C sort -n -k1,1 -k2,2)"
+[[ "${inventory_owner_pairs}" == "${ledger_owner_pairs}" ]] ||
+    fail "feature owner assignment drifted from the reviewed issue ledger"
+
 declare -A inventory_id_set=()
 while IFS= read -r feature_id; do
     inventory_id_set["${feature_id}"]=1
@@ -131,11 +193,14 @@ done < <(jq -r '
     .screenshots[].features[],
     .external_discussions[].features[],
     .release_feature_map[].features[],
+    .linux_issues[].features[],
     .source_coverage[].features[],
     .root_source_files[].features[],
     .test_coverage[].features[],
-    .command_registry.feature,
-    .settings_registry.feature
+    .command_registry.commands[],
+    .pane_command_registry.commands[],
+    .settings_registry.sections[],
+    .cli_registry.commands[]
 ' "${evidence}" | LC_ALL=C sort -u)
 
 while IFS= read -r location; do
@@ -192,18 +257,42 @@ for evidence_array in first_party_documents screenshots external_discussions rel
 done
 
 command_file="${repo_root}/$(jq -r '.command_registry.location' "${evidence}")"
-expected_command_count="$(jq -r '.command_registry.expected_case_count' "${evidence}")"
-actual_command_count="$(
-    awk '/^enum AppCommandID:/,/^}/' "${command_file}" | grep -c '^    case '
+expected_commands="$(jq -r '.command_registry.commands | keys[]' "${evidence}" | LC_ALL=C sort)"
+actual_commands="$(
+    awk '/^enum AppCommandID:/,/^}/' "${command_file}" |
+        sed -n 's/^    case [A-Za-z][A-Za-z]* = "\([^"]*\)"$/\1/p' |
+        LC_ALL=C sort
 )"
-[[ "${actual_command_count}" == "${expected_command_count}" ]] ||
-    fail "command registry coverage is stale: expected ${expected_command_count}, found ${actual_command_count}"
+[[ "${actual_commands}" == "${expected_commands}" ]] ||
+    fail "command registry coverage is stale or incomplete"
+
+pane_command_file="${repo_root}/$(jq -r '.pane_command_registry.location' "${evidence}")"
+expected_pane_commands="$(jq -r '.pane_command_registry.commands | keys[]' "${evidence}" | LC_ALL=C sort)"
+actual_pane_commands="$(
+    awk '/^enum PaneCommand:/,/^}/' "${pane_command_file}" |
+        sed -n 's/^    case \([A-Za-z][A-Za-z0-9]*\).*$/\1/p' |
+        LC_ALL=C sort
+)"
+[[ "${actual_pane_commands}" == "${expected_pane_commands}" ]] ||
+    fail "pane command registry coverage is stale or incomplete"
 
 settings_file="${repo_root}/$(jq -r '.settings_registry.location' "${evidence}")"
-expected_settings="$(jq -r '.settings_registry.expected_sections[]' "${evidence}")"
+expected_settings="$(jq -r '.settings_registry.sections | keys[]' "${evidence}" | LC_ALL=C sort)"
 actual_settings="$(awk '/^enum SettingsSection:/,/^}/' "${settings_file}" | sed -n 's/^    case \([A-Za-z][A-Za-z]*\)$/\1/p')"
+actual_settings="$(printf '%s\n' "${actual_settings}" | LC_ALL=C sort)"
 [[ "${actual_settings}" == "${expected_settings}" ]] ||
     fail "settings registry coverage is stale"
+
+cli_directory="${repo_root}/$(jq -r '.cli_registry.directory' "${evidence}")"
+[[ -d "${cli_directory}" ]] || fail "CLI registry directory is missing"
+expected_cli_commands="$(jq -r '.cli_registry.commands | keys[]' "${evidence}" | LC_ALL=C sort)"
+actual_cli_commands="$(
+    grep -Rh '^struct [A-Za-z][A-Za-z0-9]*: ParsableCommand' "${cli_directory}" --include='*.swift' |
+        sed -n 's/^struct \([A-Za-z][A-Za-z0-9]*\): ParsableCommand.*$/\1/p' |
+        LC_ALL=C sort
+)"
+[[ "${actual_cli_commands}" == "${expected_cli_commands}" ]] ||
+    fail "CLI command registry coverage is stale or incomplete"
 
 while IFS= read -r directory; do
     [[ -d "${repo_root}/${directory}" ]] || fail "source coverage directory is missing: ${directory}"
@@ -278,4 +367,43 @@ done
 totals="$(jq -c '
     reduce .entries[] as $entry ({}; .[$entry.classification] += 1)
 ' "${inventory}")"
-echo "feature-inventory: PASS entries=$(jq '.entries | length' "${inventory}") classifications=${totals}"
+implementation_totals="$(jq -c '
+    reduce .entries[] as $entry ({}; .[$entry.implementation_status] += 1)
+' "${inventory}")"
+category_totals="$(jq -c '
+    reduce .entries[] as $entry ({}; .[$entry.category] += 1)
+' "${inventory}")"
+entry_count="$(jq '.entries | length' "${inventory}")"
+
+if [[ -n "${summary_path}" ]]; then
+    jq -n \
+        --arg result PASS \
+        --argjson entry_count "${entry_count}" \
+        --argjson classifications "${totals}" \
+        --argjson implementation_statuses "${implementation_totals}" \
+        --argjson categories "${category_totals}" \
+        --argjson commands "$(jq '.command_registry.commands | length' "${evidence}")" \
+        --argjson pane_commands "$(jq '.pane_command_registry.commands | length' "${evidence}")" \
+        --argjson settings_sections "$(jq '.settings_registry.sections | length' "${evidence}")" \
+        --argjson cli_commands "$(jq '.cli_registry.commands | length' "${evidence}")" \
+        --argjson source_files "$(find "${repo_root}/Zentty" "${repo_root}/ZenttyCLI" -type f -name '*.swift' | wc -l)" \
+        --argjson test_files "$(find "${repo_root}/ZenttyLogicTests" "${repo_root}/ZenttyIntegrationTests" -type f -name '*.swift' | wc -l)" \
+        '{
+            schema_version: 1,
+            result: $result,
+            entry_count: $entry_count,
+            classifications: $classifications,
+            implementation_statuses: $implementation_statuses,
+            categories: $categories,
+            evidence: {
+                app_commands: $commands,
+                pane_commands: $pane_commands,
+                settings_sections: $settings_sections,
+                cli_commands: $cli_commands,
+                swift_product_files: $source_files,
+                swift_test_files: $test_files
+            }
+        }' >"${summary_path}"
+fi
+
+echo "feature-inventory: PASS entries=${entry_count} classifications=${totals} implementation=${implementation_totals}"

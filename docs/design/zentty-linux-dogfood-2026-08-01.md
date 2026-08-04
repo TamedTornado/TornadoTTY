@@ -4706,10 +4706,43 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   into a qualification pass.
 - **Remaining uncertainty:** File/subsystem, command, settings, release, docs,
   screenshot, and test closure greatly reduce omission risk but cannot prove a
-  human never misunderstood behavior inside a covered file. Issue #15 therefore
-  remains open until its source-to-feature review and public issue acceptance
-  criteria are independently reconciled. No further feature implementation
-  should outrun that plan.
+  human never misunderstood behavior inside a covered file. At this checkpoint
+  issue #15 therefore remained open pending the source-to-feature and public
+  issue reconciliation recorded in the following closure entry; no feature
+  implementation was allowed to outrun that plan.
+
+### DOGFOOD-2026-08-04-AUDIT-CLOSURE-GATES: counts were not command ownership
+
+- **Discovery:** The first exhaustive-audit commit said all 70 app commands and
+  nine settings sections were covered, but the evidence ledger stored only
+  their counts and assigned each entire registry to one broad feature. A new or
+  replaced command with the same total could therefore pass. The embedded CLI
+  and `PaneCommand` registries also lacked item-level closure, public owner
+  issues were numbers without a reviewed existence/state/dependency ledger,
+  and a feature could be changed to `IMPLEMENTED` without any real-product
+  scenario.
+- **Repair:** The evidence ledger now maps every one of the 70 `AppCommandID`
+  raw values, 33 `PaneCommand` cases, 47 embedded CLI `ParsableCommand` types,
+  and nine settings sections to a primary feature. The runner compares exact
+  source sets rather than counts. A reviewed public issue ledger maps every
+  feature to one reviewed owner and records issue dependencies; the runner
+  rejects nonexistent owners, owners closed before their features are
+  implemented, missing dependencies, duplicate issues, and owner drift.
+- **False-claim protection:** An `IMPLEMENTED` entry must name both focused
+  tests and a real-product scenario. Mutation tests now prove rejection of an
+  owner swap, a false implemented status, removed test-plan evidence, missing
+  or closed owner issues, an absent dependency, duplicate issue records, stale
+  app/pane/CLI/settings registries, and unknown registry owners.
+- **Reporting:** The runner can write a machine-readable JSON receipt containing
+  generated classification, implementation, category, registry, product-source,
+  and source-test totals while retaining one concise human line. The live audit
+  and all focused mutations pass; the audit document is now complete at its
+  recorded source head and the feature-implementation freeze is lifted.
+- **Remaining uncertainty:** These closure gates make omission and ownership
+  drift reviewable, but they cannot prove that a human interpretation of every
+  covered method is semantically perfect. Any later source discrepancy remains
+  a dogfood finding and must revise the inventory and owner issue before its
+  implementation proceeds.
 
 ## AI disclosure
 

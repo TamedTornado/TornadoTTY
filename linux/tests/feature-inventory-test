@@ -38,7 +38,24 @@ expect_evidence_rejected() {
     }
 }
 
-"${runner}" "${source_inventory}" >/dev/null
+"${runner}" "${source_inventory}" "${source_evidence}" "${temp_dir}/summary.json" >/dev/null
+jq -e '
+    .schema_version == 1 and
+    .result == "PASS" and
+    .entry_count == 60 and
+    .classifications.REQUIRED_INITIAL_RELEASE == 34 and
+    .implementation_statuses.NOT_IMPLEMENTED == 45 and
+    .evidence.app_commands == 70 and
+    .evidence.pane_commands == 33 and
+    .evidence.settings_sections == 9 and
+    .evidence.cli_commands == 47 and
+    .evidence.swift_product_files == 362 and
+    .evidence.swift_test_files == 200
+' "${temp_dir}/summary.json" >/dev/null || {
+    cat "${temp_dir}/summary.json" >&2
+    echo "feature-inventory-test: machine summary is incomplete or incorrect" >&2
+    exit 1
+}
 
 jq '.entries += [.entries[0]]' "${source_inventory}" >"${temp_dir}/duplicate.json"
 expect_rejected duplicate "duplicate IDs"
@@ -56,9 +73,37 @@ jq '(.entries[] | select(.classification == "PLATFORM_ALTERNATIVE") | .alternati
     "${source_inventory}" >"${temp_dir}/missing-alternative.json"
 expect_rejected missing-alternative "schema or enum contract failed"
 
+jq '(.entries[] | select(.id == "workspace.recipe-v3") | .linux_owner_issue) = 4' \
+    "${source_inventory}" >"${temp_dir}/owner-swap.json"
+expect_rejected owner-swap "feature owner assignment drifted from the reviewed issue ledger"
+
+jq '(.entries[] | select(.id == "pane.drag-drop") | .implementation_status) = "IMPLEMENTED"' \
+    "${source_inventory}" >"${temp_dir}/false-implemented-status.json"
+expect_rejected false-implemented-status "schema or enum contract failed"
+
+jq '.entries[0].test_plan = ""' \
+    "${source_inventory}" >"${temp_dir}/removed-acceptance-evidence.json"
+expect_rejected removed-acceptance-evidence "schema or enum contract failed"
+
 jq '.first_party_documents[0].features += ["missing.feature"]' \
     "${source_evidence}" >"${temp_dir}/unknown-evidence-feature.json"
 expect_evidence_rejected unknown-evidence-feature "evidence references unknown feature"
+
+jq 'del(.linux_issues[] | select(.number == 23))' \
+    "${source_evidence}" >"${temp_dir}/missing-owner-issue.json"
+expect_evidence_rejected missing-owner-issue "feature references nonexistent owner issue"
+
+jq '(.linux_issues[] | select(.number == 3) | .state) = "CLOSED"' \
+    "${source_evidence}" >"${temp_dir}/closed-owner-issue.json"
+expect_evidence_rejected closed-owner-issue "feature references closed owner issue"
+
+jq '(.linux_issues[] | select(.number == 3) | .depends_on) += [999]' \
+    "${source_evidence}" >"${temp_dir}/missing-dependency-issue.json"
+expect_evidence_rejected missing-dependency-issue "issue dependency is absent from the reviewed ledger"
+
+jq '.linux_issues += [.linux_issues[0]]' \
+    "${source_evidence}" >"${temp_dir}/duplicate-issue.json"
+expect_evidence_rejected duplicate-issue "duplicate Linux issue numbers"
 
 jq '.public_release_tags |= .[:-1]' \
     "${source_evidence}" >"${temp_dir}/missing-release.json"
@@ -72,13 +117,37 @@ jq '.release_feature_map[0].features = []' \
     "${source_evidence}" >"${temp_dir}/empty-release-evidence.json"
 expect_evidence_rejected empty-release-evidence "evidence ledger schema failed"
 
-jq '.command_registry.expected_case_count += 1' \
+jq 'del(.command_registry.commands["pane.close_focused"])' \
     "${source_evidence}" >"${temp_dir}/stale-command-registry.json"
-expect_evidence_rejected stale-command-registry "command registry coverage is stale"
+expect_evidence_rejected stale-command-registry "command registry coverage is stale or incomplete"
 
-jq '.settings_registry.expected_sections |= .[:-1]' \
+jq 'del(.settings_registry.sections.agents)' \
     "${source_evidence}" >"${temp_dir}/stale-settings-registry.json"
 expect_evidence_rejected stale-settings-registry "settings registry coverage is stale"
+
+jq '.command_registry.commands["pane.close_focused"] = "missing.feature"' \
+    "${source_evidence}" >"${temp_dir}/unknown-command-owner.json"
+expect_evidence_rejected unknown-command-owner "evidence references unknown feature"
+
+jq 'del(.pane_command_registry.commands.closeFocusedPane)' \
+    "${source_evidence}" >"${temp_dir}/stale-pane-command-registry.json"
+expect_evidence_rejected stale-pane-command-registry "pane command registry coverage is stale or incomplete"
+
+jq '.pane_command_registry.commands.closeFocusedPane = "missing.feature"' \
+    "${source_evidence}" >"${temp_dir}/unknown-pane-command-owner.json"
+expect_evidence_rejected unknown-pane-command-owner "evidence references unknown feature"
+
+jq '.settings_registry.sections.agents = "missing.feature"' \
+    "${source_evidence}" >"${temp_dir}/unknown-settings-owner.json"
+expect_evidence_rejected unknown-settings-owner "evidence references unknown feature"
+
+jq 'del(.cli_registry.commands.TmuxCompatCommand)' \
+    "${source_evidence}" >"${temp_dir}/stale-cli-registry.json"
+expect_evidence_rejected stale-cli-registry "CLI command registry coverage is stale or incomplete"
+
+jq '.cli_registry.commands.TmuxCompatCommand = "missing.feature"' \
+    "${source_evidence}" >"${temp_dir}/unknown-cli-owner.json"
+expect_evidence_rejected unknown-cli-owner "evidence references unknown feature"
 
 jq 'del(.source_coverage[] | select(.directory == "Zentty/Servers"))' \
     "${source_evidence}" >"${temp_dir}/uncovered-source.json"
