@@ -51,6 +51,36 @@ fn pane_action_specs() -> &'static [PaneActionSpec] {
     &PANE_ACTIONS
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum WorklaneSelectionState {
+    Active,
+    Inactive,
+}
+
+impl WorklaneSelectionState {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::Inactive => "inactive",
+        }
+    }
+
+    fn css_class(self) -> &'static str {
+        match self {
+            Self::Active => "worklane-tint-active",
+            Self::Inactive => "worklane-tint-inactive",
+        }
+    }
+}
+
+fn selection_state(is_active: bool) -> WorklaneSelectionState {
+    if is_active {
+        WorklaneSelectionState::Active
+    } else {
+        WorklaneSelectionState::Inactive
+    }
+}
+
 pub(crate) fn install_styles() {
     let Some(display) = gtk::gdk::Display::default() else {
         return;
@@ -59,25 +89,39 @@ pub(crate) fn install_styles() {
     provider.load_from_string(
         ".zentty-sidebar { background: #17191d; color: #e7e9ed; padding: 10px; }\n\
          .zentty-sidebar-header { color: #f1f3f5; font-weight: 700; font-size: 15px; }\n\
-         .worklane-card { background: #202329; border: 1px solid #30343b; border-radius: 10px; padding: 7px; }\n\
-         .worklane-card-active { background: #272b32; border-color: #596273; }\n\
-         .worklane-card-red { border-left: 4px solid #f56565; }\n\
-         .worklane-card-orange { border-left: 4px solid #ed8936; }\n\
-         .worklane-card-amber { border-left: 4px solid #d69e2e; }\n\
-         .worklane-card-yellow { border-left: 4px solid #ecc94b; }\n\
-         .worklane-card-lime { border-left: 4px solid #9ae6b4; }\n\
-         .worklane-card-green { border-left: 4px solid #48bb78; }\n\
-         .worklane-card-teal { border-left: 4px solid #38b2ac; }\n\
-         .worklane-card-cyan { border-left: 4px solid #4fd1c5; }\n\
-         .worklane-card-blue { border-left: 4px solid #4299e1; }\n\
-         .worklane-card-indigo { border-left: 4px solid #667eea; }\n\
-         .worklane-card-purple { border-left: 4px solid #9f7aea; }\n\
-         .worklane-card-pink { border-left: 4px solid #ed64a6; }\n\
-         .worklane-title { color: #f1f3f5; font-weight: 700; }\n\
+         .worklane-card { background: #1e2126; border: 1px solid #30343b; border-radius: 10px; padding: 7px; }\n\
+         .worklane-card-active { background: #343a45; border-color: #7c8799; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35); }\n\
+         .worklane-tint-inactive.worklane-card-red { border-left: 4px solid rgba(245, 101, 101, 0.34); }\n\
+         .worklane-tint-inactive.worklane-card-orange { border-left: 4px solid rgba(237, 137, 54, 0.34); }\n\
+         .worklane-tint-inactive.worklane-card-amber { border-left: 4px solid rgba(214, 158, 46, 0.34); }\n\
+         .worklane-tint-inactive.worklane-card-yellow { border-left: 4px solid rgba(236, 201, 75, 0.34); }\n\
+         .worklane-tint-inactive.worklane-card-lime { border-left: 4px solid rgba(154, 230, 180, 0.34); }\n\
+         .worklane-tint-inactive.worklane-card-green { border-left: 4px solid rgba(72, 187, 120, 0.34); }\n\
+         .worklane-tint-inactive.worklane-card-teal { border-left: 4px solid rgba(56, 178, 172, 0.34); }\n\
+         .worklane-tint-inactive.worklane-card-cyan { border-left: 4px solid rgba(79, 209, 197, 0.34); }\n\
+         .worklane-tint-inactive.worklane-card-blue { border-left: 4px solid rgba(66, 153, 225, 0.34); }\n\
+         .worklane-tint-inactive.worklane-card-indigo { border-left: 4px solid rgba(102, 126, 234, 0.34); }\n\
+         .worklane-tint-inactive.worklane-card-purple { border-left: 4px solid rgba(159, 122, 234, 0.34); }\n\
+         .worklane-tint-inactive.worklane-card-pink { border-left: 4px solid rgba(237, 100, 166, 0.34); }\n\
+         .worklane-tint-active.worklane-card-red { background: rgba(245, 101, 101, 0.20); border-color: rgba(245, 101, 101, 0.62); border-left: 4px solid rgba(245, 101, 101, 0.95); }\n\
+         .worklane-tint-active.worklane-card-orange { background: rgba(237, 137, 54, 0.20); border-color: rgba(237, 137, 54, 0.62); border-left: 4px solid rgba(237, 137, 54, 0.95); }\n\
+         .worklane-tint-active.worklane-card-amber { background: rgba(214, 158, 46, 0.20); border-color: rgba(214, 158, 46, 0.62); border-left: 4px solid rgba(214, 158, 46, 0.95); }\n\
+         .worklane-tint-active.worklane-card-yellow { background: rgba(236, 201, 75, 0.20); border-color: rgba(236, 201, 75, 0.62); border-left: 4px solid rgba(236, 201, 75, 0.95); }\n\
+         .worklane-tint-active.worklane-card-lime { background: rgba(154, 230, 180, 0.20); border-color: rgba(154, 230, 180, 0.62); border-left: 4px solid rgba(154, 230, 180, 0.95); }\n\
+         .worklane-tint-active.worklane-card-green { background: rgba(72, 187, 120, 0.20); border-color: rgba(72, 187, 120, 0.62); border-left: 4px solid rgba(72, 187, 120, 0.95); }\n\
+         .worklane-tint-active.worklane-card-teal { background: rgba(56, 178, 172, 0.20); border-color: rgba(56, 178, 172, 0.62); border-left: 4px solid rgba(56, 178, 172, 0.95); }\n\
+         .worklane-tint-active.worklane-card-cyan { background: rgba(79, 209, 197, 0.20); border-color: rgba(79, 209, 197, 0.62); border-left: 4px solid rgba(79, 209, 197, 0.95); }\n\
+         .worklane-tint-active.worklane-card-blue { background: rgba(66, 153, 225, 0.20); border-color: rgba(66, 153, 225, 0.62); border-left: 4px solid rgba(66, 153, 225, 0.95); }\n\
+         .worklane-tint-active.worklane-card-indigo { background: rgba(102, 126, 234, 0.20); border-color: rgba(102, 126, 234, 0.62); border-left: 4px solid rgba(102, 126, 234, 0.95); }\n\
+         .worklane-tint-active.worklane-card-purple { background: rgba(159, 122, 234, 0.20); border-color: rgba(159, 122, 234, 0.62); border-left: 4px solid rgba(159, 122, 234, 0.95); }\n\
+         .worklane-tint-active.worklane-card-pink { background: rgba(237, 100, 166, 0.20); border-color: rgba(237, 100, 166, 0.62); border-left: 4px solid rgba(237, 100, 166, 0.95); }\n\
+         .worklane-title { color: #b8bec8; font-weight: 700; }\n\
+         .worklane-card-active .worklane-title { color: #ffffff; }\n\
          .worklane-context { color: #a7adb8; font-size: 12px; }\n\
          .pane-row { color: #e7e9ed; border-radius: 6px; padding: 5px 7px; }\n\
          .pane-row-focused { background: #343943; }\n\
-         .pane-marker { color: #69db7c; }\n\
+         .pane-marker { color: #727a86; }\n\
+         .worklane-card-active .pane-marker { color: #69db7c; }\n\
          .sidebar-create-worklane { color: #d8dbe1; border-radius: 7px; padding: 5px 8px; }\n\
          .sidebar-pane-actions { color: #c7cbd2; min-width: 26px; min-height: 26px; padding: 2px; }\n\
          .pane-context-action { padding: 5px 8px; }\n\
@@ -135,25 +179,28 @@ fn make_worklane_card(
     let card = gtk::Box::new(gtk::Orientation::Vertical, 4);
     card.set_widget_name(&widget_name("worklane-card", &summary.worklane_id));
     card.add_css_class("worklane-card");
-    if summary.is_active {
-        card.add_css_class("worklane-card-active");
-    }
     if let Some(color) = summary.color {
         card.add_css_class(&format!("worklane-card-{}", color.as_str()));
     }
+    apply_worklane_visual_state(card.upcast_ref(), summary);
 
     let header = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     let select = gtk::Button::new();
+    select.set_widget_name(&widget_name("worklane-select", &summary.worklane_id));
     select.set_has_frame(false);
     select.set_hexpand(true);
     select.set_action_name(Some("workspace.select-worklane"));
     select.set_action_target_value(Some(&summary.worklane_id.to_variant()));
+    select.set_accessible_role(gtk::AccessibleRole::Button);
+    select.update_state(&[gtk::accessible::State::Selected(Some(summary.is_active))]);
 
     let heading = gtk::Box::new(gtk::Orientation::Vertical, 1);
     let top = summary
         .top_label
         .clone()
         .unwrap_or_else(|| format!("Worklane {}", index + 1));
+    let accessible_label = format!("{top}, {}", summary.primary_text);
+    select.update_property(&[gtk::accessible::Property::Label(&accessible_label)]);
     let top_label = gtk::Label::new(Some(&top));
     top_label.set_widget_name(&widget_name("worklane-title", &summary.worklane_id));
     top_label.add_css_class("worklane-title");
@@ -237,16 +284,23 @@ pub(crate) fn update_metadata(sidebar: &gtk::Box, summaries: &[SidebarWorklaneSu
         ) else {
             return false;
         };
-        card.remove_css_class("worklane-card-active");
+        card.remove_css_class("worklane-tint-active");
+        card.remove_css_class("worklane-tint-inactive");
         for color in zentty_core::WorklaneColor::ALL {
             card.remove_css_class(&format!("worklane-card-{}", color.as_str()));
-        }
-        if summary.is_active {
-            card.add_css_class("worklane-card-active");
         }
         if let Some(color) = summary.color {
             card.add_css_class(&format!("worklane-card-{}", color.as_str()));
         }
+        apply_worklane_visual_state(&card, summary);
+
+        let Some(select) = find_named_widget(
+            sidebar.upcast_ref(),
+            &widget_name("worklane-select", &summary.worklane_id),
+        ) else {
+            return false;
+        };
+        select.update_state(&[gtk::accessible::State::Selected(Some(summary.is_active))]);
 
         let Some(title) = find_named_label(
             sidebar.upcast_ref(),
@@ -296,6 +350,26 @@ pub(crate) fn update_metadata(sidebar: &gtk::Box, summaries: &[SidebarWorklaneSu
         }
     }
     true
+}
+
+fn apply_worklane_visual_state(card: &gtk::Widget, summary: &SidebarWorklaneSummary) {
+    let state = selection_state(summary.is_active);
+    card.remove_css_class("worklane-card-active");
+    card.remove_css_class("worklane-tint-active");
+    card.remove_css_class("worklane-tint-inactive");
+    card.add_css_class(state.css_class());
+    if summary.is_active {
+        card.add_css_class("worklane-card-active");
+    }
+    let tint = summary.color.map_or_else(
+        || "none".to_owned(),
+        |color| format!("{}-{}", color.as_str(), state.as_str()),
+    );
+    eprintln!(
+        "zentty-linux: worklane-visual id={} selection={} tint={tint}",
+        summary.worklane_id,
+        state.as_str()
+    );
 }
 
 fn widget_name(kind: &str, id: &str) -> String {
@@ -452,7 +526,7 @@ fn remove_all_children(container: &gtk::Box) {
 
 #[cfg(test)]
 mod tests {
-    use super::pane_action_specs;
+    use super::{WorklaneSelectionState, pane_action_specs, selection_state};
 
     #[test]
     fn pane_actions_are_contextual_and_source_named() {
@@ -473,5 +547,13 @@ mod tests {
             ]
         );
         assert!(actions.iter().all(|action| !action.icon.is_empty()));
+    }
+
+    #[test]
+    fn worklane_selection_is_independent_from_persistent_identity_color() {
+        assert_eq!(selection_state(true), WorklaneSelectionState::Active);
+        assert_eq!(selection_state(false), WorklaneSelectionState::Inactive);
+        assert_eq!(selection_state(true).css_class(), "worklane-tint-active");
+        assert_eq!(selection_state(false).css_class(), "worklane-tint-inactive");
     }
 }

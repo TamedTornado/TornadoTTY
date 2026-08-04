@@ -4971,6 +4971,31 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   the XDG/TOML settings format; this slice does not create a competing JSON or
   state-directory preference file merely to turn an acceptance checkbox green.
 
+### DOGFOOD-2026-08-04-WORKLANE-SELECTION-HIERARCHY: repair the state, not the identity
+
+- **Test-first boundary:** The restored real-product scenario now requires a
+  colored inactive worklane to report a subdued identity tint and the selected
+  colored worklane to report a strengthened tint. It failed against the staged
+  product because the earlier static stripe exposed no active/inactive visual
+  semantics.
+- **Repair:** Worklane color remains durable identity. Inactive colored cards
+  use a low-intensity leading tint; selected colored cards use a stronger tint,
+  broader colored fill/border, brighter title, and elevated shadow. Colorless
+  selection retains a strong neutral fill and border. Remembered focused-pane
+  markers are muted inside inactive worklanes and green only in the active
+  card. The worklane button also publishes GTK's accessible selected state.
+- **Stable-update requirement:** In-place metadata refresh now changes active,
+  inactive, color, tint, marker, and accessible-selected state without
+  replacing live row widgets. A selection change therefore cannot repair the
+  visual ambiguity by reintroducing the title/menu destruction race.
+- **Evidence:** Source-state resolution has a focused Rust test. The staged
+  restore/relaunch workflow presents both inactive-blue and active-red receipts
+  and passes with real Ghostty surfaces under controlled X11 and Wayland.
+- **Remaining visual boundary:** This ports the source information hierarchy,
+  not pixel-perfect AppKit compositing. Light theme, user-selectable subtle
+  versus vivid emphasis, hover/pressed screenshots, contrast measurement, and
+  reviewed deterministic visual baselines remain issue #16/#20 work.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were

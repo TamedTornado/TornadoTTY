@@ -113,5 +113,9 @@ grep -F 'zentty-linux: geometry=worklane-main:column-left[pane-agent,pane-shell]
 }
 grep -F 'zentty-linux: sidebar-card id=worklane-main panes=3 active=false title=Some("Nimbu API")' \
     "${second_log}" >/dev/null || fail "relaunch did not render restored source sidebar metadata"
+grep -F 'zentty-linux: worklane-visual id=worklane-main selection=inactive tint=blue-inactive' \
+    "${second_log}" >/dev/null || fail "inactive worklane identity color was not visually subdued"
+grep -F 'zentty-linux: worklane-visual id=worklane-1 selection=active tint=red-active' \
+    "${second_log}" >/dev/null || fail "active worklane selection did not strengthen its identity tint"
 
 echo "Rust session restore passed: ${backend}, source-envelope=preserved, relaunch=real"
