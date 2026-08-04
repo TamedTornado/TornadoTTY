@@ -4851,9 +4851,57 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   three-child lifecycle.
 - **Harness repair:** The scenario's child command formerly slept for a fixed ten
   seconds after one input, creating a race once the new pointer step was added.
-  It now reads until real terminal EOF; the test sends Ctrl-D to each pane and
-  keeps the same product-owned child-exit assertions without waiting on arbitrary
-  sleeps.
+  It now reads until real terminal EOF, and the later pane-control slice closes
+  every surface through the product's owned `Close Pane` path. The scenario no
+  longer waits on arbitrary child sleeps or guesses changing canvas coordinates
+  merely to tear itself down.
+
+### DOGFOOD-2026-08-04-PANE-LOCAL-HOVER-CONTROLS: preserve source routes, add exact-pane fast actions
+
+- **Product decision:** The source sidebar overflow, terminal/drag-zone context
+  menu, and window Arrange routes remain product features. Linux additionally
+  exposes a compact top-right pane-local cluster on pane hover for the current
+  source-named `Split Right`, `New Pane Below`, and `Close Pane` actions. This is
+  an explicit Linux UX extension, not a false claim that the macOS source already
+  has the same three-button cluster.
+- **Semantic boundary:** Linux currently renders all columns homogeneously in the
+  visible viewport, so the right action is `Split Right`. The distinct source
+  `Add Pane Right` behavior remains unimplemented until non-homogeneous widths
+  and horizontal worklane expansion exist; it was not added as an alias.
+- **Ownership repair:** Each live Ghostty surface now has one durable GTK overlay
+  frame retained across workspace re-renders. Its controls close over the stable
+  pane ID and explicitly select that pane before dispatch. Rebuilding columns
+  moves frames rather than parenting a live surface into newly allocated wrappers,
+  and teardown detaches the terminal before Ghostty disposal.
+- **Hover discovery:** Toggling GTK `can-target` while the pointer crossed into
+  the disclosed control cluster caused unstable enter/leave picking. Controls now
+  retain stable hit testing, while opacity controls disclosure; deferred leave
+  checks `EventControllerMotion::contains_pointer()` so crossing into a child
+  button does not hide its own parent cluster.
+- **Lifecycle discovery:** Closing the final pane previously quit the main loop
+  without removing its live surface, leaving `live_children=1` under the
+  last-terminal exit contract. The final-pane branch now performs the same owned
+  surface disposal/decrement before quitting. A real window-manager close was
+  also rejected as UX-test teardown after it exposed Ghostty drawing against an
+  already-invalid X drawable; pane-owned closure preserves the safe teardown
+  order instead of suppressing the X error.
+- **Real X11 evidence:** The staged product was driven with real X11 pointer and
+  keyboard events through sidebar `Split Right`, pane-local `New Pane Below` on
+  an unfocused left pane, pane-local `Split Right` on the right pane, all created
+  panes' `Close Pane` controls, and the preserved Arrange route. Receipts proved
+  exact owning IDs and geometry; five real Ghostty surfaces and five PTY children
+  initialized, accepted input, and disposed without GTK criticals or X errors.
+- **Cross-compositor evidence and limit:** The same staged overlay build passed
+  the five-pane real-PTY workspace lifecycle in controlled X11 and controlled
+  headless Weston Wayland. Wayland pointer injection is not yet part of the local
+  harness, so this is not a claim that hover controls have real-pointer Wayland
+  coverage; that explicit issue #16 acceptance cell remains open.
+- **Remaining UX qualification:** The focused Rust catalog test proves exact
+  source labels are attached as tooltips and accessible names, but automated
+  assistive-technology tree inspection and keyboard traversal into the disclosed
+  cluster are not yet implemented. Reviewed dark/light and fractional-scale
+  screenshots are also still required. The sidebar and Arrange alternatives
+  remain available; none of these gaps is being converted into a pass.
 
 ### DOGFOOD-2026-08-04-LOCAL-LAUNCH-CONTRACT: a product nobody can launch is not dogfoodable
 

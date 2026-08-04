@@ -12,7 +12,11 @@ use zentty_core::{
 };
 use zentty_ghostty::{GhosttyRuntime, GhosttySurface, SurfaceConfig};
 
-use crate::{sidebar, window_chrome::WindowChrome};
+use crate::{
+    pane_controls::{self, PaneControlAction, PaneFrame},
+    sidebar,
+    window_chrome::WindowChrome,
+};
 
 const ACTION_TOGGLE_SIDEBAR: &str = "toggle-sidebar";
 const ACTION_NEW_WORKLANE: &str = "new-worklane";
@@ -44,6 +48,7 @@ pub(crate) struct ApplicationShell {
     pane_box: gtk::Box,
     state: WorkspaceState,
     surfaces: BTreeMap<String, GhosttySurface>,
+    pane_frames: BTreeMap<String, PaneFrame>,
     focus_controllers: BTreeMap<String, gtk::EventControllerFocus>,
     runtime: GhosttyRuntime,
     command: Option<String>,
@@ -71,6 +76,7 @@ impl ApplicationShell {
         window.set_title(Some(zentty_core::PRODUCT_NAME));
         window.set_default_size(1000, 700);
         sidebar::install_styles();
+        pane_controls::install_styles();
 
         let body = gtk::Paned::new(gtk::Orientation::Horizontal);
         body.set_position(SidebarWidthPreference::DEFAULT);
@@ -136,6 +142,7 @@ impl ApplicationShell {
             pane_box,
             state,
             surfaces: BTreeMap::new(),
+            pane_frames: BTreeMap::new(),
             focus_controllers: BTreeMap::new(),
             runtime: runtime.clone(),
             command,
@@ -209,6 +216,10 @@ impl ApplicationShell {
             }
         }
         clear_pane_columns(&self.pane_box);
+        for frame in self.pane_frames.values() {
+            frame.detach_terminal();
+        }
+        self.pane_frames.clear();
         // The shell retains `sidebar` after detaching the root widget. Clear
         // its cards explicitly so their menu popovers and window-capturing
         // callbacks are finalized before Ghostty's process-global teardown.
@@ -752,6 +763,33 @@ impl ApplicationShell {
         }
     }
 
+    fn activate_pane_control(shell: &Rc<RefCell<Self>>, pane_id: &str, action: PaneControlAction) {
+        {
+            let mut shell_ref = shell.borrow_mut();
+            if shell_ref.shutting_down || !shell_ref.state.select_pane(pane_id) {
+                return;
+            }
+            shell_ref.refresh_sidebar_metadata();
+        }
+        eprintln!(
+            "zentty-linux: pane-control action={} target={pane_id}",
+            action.id()
+        );
+        match action {
+            PaneControlAction::SplitRight => {
+                if let Err(error) = Self::split_focused_pane_right(shell) {
+                    Self::report_action_error(shell, ACTION_SPLIT_PANE_RIGHT, &error);
+                }
+            }
+            PaneControlAction::NewPaneBelow => {
+                if let Err(error) = Self::split_focused_pane_below(shell) {
+                    Self::report_action_error(shell, ACTION_SPLIT_PANE_BELOW, &error);
+                }
+            }
+            PaneControlAction::ClosePane => Self::close_pane(shell, pane_id),
+        }
+    }
+
     fn close_worklane(shell: &Rc<RefCell<Self>>, worklane_id: &str) {
         let pane_ids = {
             let shell = shell.borrow();
@@ -804,7 +842,15 @@ impl ApplicationShell {
                 shell_ref.render();
                 shell_ref.focus_selected_surface();
             }
-            ClosePaneOutcome::CloseWindow => shell_ref.main_loop.quit(),
+            ClosePaneOutcome::CloseWindow => {
+                if let Err(error) = shell_ref.remove_live_surface(pane_id) {
+                    drop(shell_ref);
+                    Self::report_action_error(shell, ACTION_CLOSE_PANE, &error);
+                    return;
+                }
+                eprintln!("zentty-linux: action=close-pane pane={pane_id} close-window=true");
+                shell_ref.main_loop.quit();
+            }
             ClosePaneOutcome::NotFound => {}
         }
     }
@@ -904,13 +950,30 @@ impl ApplicationShell {
         });
         surface.widget().add_controller(focus_controller.clone());
 
+        let frame = Self::create_pane_frame(shell, pane_id, surface.widget());
+
         let mut shell = shell.borrow_mut();
         shell.live_children.set(shell.live_children.get() + 1);
         shell
             .focus_controllers
             .insert(pane_id.to_owned(), focus_controller);
+        shell.pane_frames.insert(pane_id.to_owned(), frame);
         shell.surfaces.insert(pane_id.to_owned(), surface);
         Ok(())
+    }
+
+    fn create_pane_frame(
+        shell: &Rc<RefCell<Self>>,
+        pane_id: &str,
+        terminal: &gtk::Widget,
+    ) -> PaneFrame {
+        let weak = Rc::downgrade(shell);
+        let control_pane_id = pane_id.to_owned();
+        PaneFrame::new(pane_id, terminal, move |action| {
+            if let Some(shell) = weak.upgrade() {
+                Self::activate_pane_control(&shell, &control_pane_id, action);
+            }
+        })
     }
 
     fn handle_child_exit(shell: &Rc<RefCell<Self>>, pane_id: &str) {
@@ -957,12 +1020,15 @@ impl ApplicationShell {
             surface.widget().remove_controller(&controller);
         }
         if let Some(surface) = self.surfaces.remove(pane_id) {
-            if let Some(parent) = surface
-                .widget()
-                .parent()
-                .and_then(|parent| parent.downcast::<gtk::Box>().ok())
-            {
-                parent.remove(surface.widget());
+            if let Some(frame) = self.pane_frames.remove(pane_id) {
+                if let Some(parent) = frame
+                    .widget()
+                    .parent()
+                    .and_then(|parent| parent.downcast::<gtk::Box>().ok())
+                {
+                    parent.remove(frame.widget());
+                }
+                frame.detach_terminal();
             }
             surface.dispose().map_err(|error| error.to_string())?;
         }
@@ -993,8 +1059,8 @@ impl ApplicationShell {
             column_box.set_hexpand(true);
             column_box.set_vexpand(true);
             for pane in &column.panes {
-                if let Some(surface) = self.surfaces.get(&pane.id) {
-                    column_box.append(surface.widget());
+                if let Some(frame) = self.pane_frames.get(&pane.id) {
+                    column_box.append(frame.widget());
                 }
             }
             self.pane_box.append(&column_box);

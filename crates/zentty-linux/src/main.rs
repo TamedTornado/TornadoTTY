@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 mod application_shell;
+mod pane_controls;
 mod sidebar;
 mod source_ui;
 mod window_chrome;

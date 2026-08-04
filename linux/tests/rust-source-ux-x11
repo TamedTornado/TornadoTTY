@@ -218,9 +218,53 @@ done
 grep -Fxq 'zentty-linux: focus-pane pane=pane-1' "${log}" ||
     fail "clicking the original Ghostty pane did not update workspace focus"
 
-# The source arrange-panes icon is not decorative. Open its real popover and
-# drive New Pane Below. Because pane-1 was just selected, pane-3 must join the
-# original left column rather than whichever column was previously focused.
+# Hover the original pane and drive its pane-local New Pane Below icon. Because
+# the control owns pane-1, pane-3 must join the original left column regardless
+# of the previously focused right terminal.
+xdotool mousemove --window "${window_id}" 688 60 click 1
+for _ in $(seq 1 100); do
+    grep -Fxq 'zentty-linux: pane-control action=new-pane-below target=pane-1' "${log}" && break
+    sleep 0.05
+done
+grep -Fxq 'zentty-linux: pane-control action=new-pane-below target=pane-1' "${log}" ||
+    fail "the original pane's hover New Pane Below control did not target pane-1"
+for _ in $(seq 1 100); do
+    grep -Fxq 'zentty-linux: terminal-ready-pane=pane-3' "${log}" && break
+    sleep 0.05
+done
+grep -Fxq 'zentty-linux: terminal-ready-pane=pane-3' "${log}" ||
+    fail "the pane-local below control did not create a third real terminal"
+grep -Fxq 'zentty-linux: geometry=worklane-1:column-worklane-1[pane-1,pane-3],column-pane-2[pane-2]' "${log}" ||
+    fail "New Pane Below did not split the pointer-focused pane's own column"
+
+# Exercise the pane-local Split Right control on pane-2, not on the currently
+# focused pane-3. Its owning identity must create pane-4 immediately to the
+# right of pane-2. Then close that exact transient pane through its own control.
+xdotool mousemove --window "${window_id}" 1000 350
+xdotool mousemove --window "${window_id}" 1118 60 click 1
+for _ in $(seq 1 100); do
+    grep -Fxq 'zentty-linux: pane-control action=split-right target=pane-2' "${log}" && break
+    sleep 0.05
+done
+grep -Fxq 'zentty-linux: pane-control action=split-right target=pane-2' "${log}" ||
+    fail "the right pane's hover Split Right control did not target pane-2"
+for _ in $(seq 1 100); do
+    grep -Fxq 'zentty-linux: terminal-ready-pane=pane-4' "${log}" && break
+    sleep 0.05
+done
+grep -Fxq 'zentty-linux: geometry=worklane-1:column-worklane-1[pane-1,pane-3],column-pane-2[pane-2],column-pane-4[pane-4]' "${log}" ||
+    fail "pane-2's Split Right control did not create its adjacent column"
+xdotool mousemove --window "${window_id}" 1000 350
+xdotool mousemove --window "${window_id}" 1178 60 click 1
+for _ in $(seq 1 100); do
+    grep -Fxq 'zentty-linux: pane-control action=close-pane target=pane-4' "${log}" && break
+    sleep 0.05
+done
+grep -Fxq 'zentty-linux: pane-control action=close-pane target=pane-4' "${log}" ||
+    fail "the transient right pane's Close Pane control did not target pane-4"
+
+# Preserve the original source Arrange coverage as a separate route. Its
+# Split Right item now creates pane-5 from the focused pane-2.
 xdotool mousemove --window "${window_id}" 52 18 click 1
 for _ in $(seq 1 100); do
     grep -Fxq 'zentty-linux: chrome-popover=arrange-panes state=open' "${log}" && break
@@ -228,46 +272,60 @@ for _ in $(seq 1 100); do
 done
 grep -Fxq 'zentty-linux: chrome-popover=arrange-panes state=open' "${log}" ||
     fail "the real arrange-panes icon did not open its popover"
-xdotool mousemove --window "${window_id}" 100 115 click 1
+xdotool mousemove --window "${window_id}" 100 80 click 1
 for _ in $(seq 1 100); do
-    grep -Fxq 'zentty-linux: terminal-ready-pane=pane-3' "${log}" && break
+    grep -Fxq 'zentty-linux: terminal-ready-pane=pane-5' "${log}" && break
     sleep 0.05
 done
-grep -Fxq 'zentty-linux: terminal-ready-pane=pane-3' "${log}" ||
-    fail "the real arrange-panes popover did not create a third terminal"
-grep -Fxq 'zentty-linux: geometry=worklane-1:column-worklane-1[pane-1,pane-3],column-pane-2[pane-2]' "${log}" ||
-    fail "New Pane Below did not split the pointer-focused pane's own column"
-for _ in $(seq 1 100); do
-    [[ "$(grep -Fxc 'zentty-linux: chrome-popover=arrange-panes state=closed' "${log}" || true)" -ge 1 ]] && break
-    sleep 0.05
-done
-[[ "$(grep -Fxc 'zentty-linux: chrome-popover=arrange-panes state=closed' "${log}" || true)" -ge 1 ]] ||
-    fail "the arrange-panes popover retained keyboard input after activation"
+grep -Fxq 'zentty-linux: terminal-ready-pane=pane-5' "${log}" ||
+    fail "the real arrange-panes popover did not create pane-5"
 xdotool type --window "${window_id}" --delay 10 'arranged-pane'
 xdotool key --window "${window_id}" Return
 for _ in $(seq 1 100); do
-    grep -Fxq 'zentty-linux: title-pane=pane-3 value=focus:arranged-pane' "${log}" && break
+    grep -Fxq 'zentty-linux: title-pane=pane-5 value=focus:arranged-pane' "${log}" && break
     sleep 0.05
 done
-grep -Fxq 'zentty-linux: title-pane=pane-3 value=focus:arranged-pane' "${log}" ||
+grep -Fxq 'zentty-linux: title-pane=pane-5 value=focus:arranged-pane' "${log}" ||
     fail "keyboard input did not reach the arranged real Ghostty PTY"
 
-# End all three real children with terminal EOF rather than a fixed sleep. This
-# keeps the scenario bounded while preserving the product-owned child-exit path.
-xdotool mousemove --window "${window_id}" 500 200 click 1
-xdotool key --window "${window_id}" ctrl+d
+# Close each exact pane through its own hover-revealed Close Pane control. This
+# both exercises the new pane-local targeting contract and gives Ghostty the
+# product-owned surface-disposal sequence instead of destroying the X drawable
+# underneath its renderer.
+# Remove pane-5 first so the remaining three-pane geometry returns to the
+# already-qualified two-column layout and fixed controlled coordinates.
+xdotool mousemove --window "${window_id}" 1000 350
+xdotool mousemove --window "${window_id}" 1178 60 click 1
 for _ in $(seq 1 100); do
-    grep -Fxq 'zentty-linux: child-exited-pane=pane-1' "${log}" && break
+    grep -Fxq 'zentty-linux: pane-control action=close-pane target=pane-5' "${log}" && break
     sleep 0.05
 done
-xdotool mousemove --window "${window_id}" 1000 350 click 1
-xdotool key --window "${window_id}" ctrl+d
+grep -Fxq 'zentty-linux: pane-control action=close-pane target=pane-5' "${log}" ||
+    fail "the arranged pane's Close Pane control did not target pane-5"
+xdotool mousemove --window "${window_id}" 500 200
+xdotool mousemove --window "${window_id}" 718 60 click 1
 for _ in $(seq 1 100); do
-    grep -Fxq 'zentty-linux: child-exited-pane=pane-2' "${log}" && break
+    grep -Fxq 'zentty-linux: pane-control action=close-pane target=pane-1' "${log}" && break
     sleep 0.05
 done
-xdotool mousemove --window "${window_id}" 700 350 click 1
-xdotool key --window "${window_id}" ctrl+d
+grep -Fxq 'zentty-linux: pane-control action=close-pane target=pane-1' "${log}" ||
+    fail "the original pane's hover Close Pane control did not target pane-1"
+xdotool mousemove --window "${window_id}" 1000 350
+xdotool mousemove --window "${window_id}" 1178 60 click 1
+for _ in $(seq 1 100); do
+    grep -Fxq 'zentty-linux: pane-control action=close-pane target=pane-2' "${log}" && break
+    sleep 0.05
+done
+grep -Fxq 'zentty-linux: pane-control action=close-pane target=pane-2' "${log}" ||
+    fail "the right pane's hover Close Pane control did not target pane-2"
+xdotool mousemove --window "${window_id}" 700 350
+xdotool mousemove --window "${window_id}" 1178 60 click 1
+for _ in $(seq 1 100); do
+    grep -Fxq 'zentty-linux: pane-control action=close-pane target=pane-3' "${log}" && break
+    sleep 0.05
+done
+grep -Fxq 'zentty-linux: pane-control action=close-pane target=pane-3' "${log}" ||
+    fail "the final pane's hover Close Pane control did not target pane-3"
 
 set +e
 timeout --foreground --kill-after=2s 7s tail --pid="${product_pid}" -f /dev/null
@@ -286,15 +344,21 @@ product_pid=""
 grep -Fxq 'zentty-linux: action=split-pane-right pane=pane-2' "${log}" ||
     fail "the contextual Split Right item did not activate after Rename Pane"
 grep -Fxq 'zentty-linux: action=split-pane-below pane=pane-3' "${log}" ||
-    fail "the arrange-panes icon did not activate its real below action"
-[[ "$(grep -Fxc 'zentty-linux: terminal-ready' "${log}" || true)" -eq 3 ]] ||
-    fail "the pointer-driven controls did not initialize three real Ghostty terminals"
-[[ "$(grep -Fxc 'zentty-linux: child-exited' "${log}" || true)" -eq 3 ]] ||
-    fail "all three real PTY children did not exit through the product"
-[[ "$(grep -Fc 'info(io_exec): started subcommand' "${log}" || true)" -eq 3 ]] ||
+    fail "the pane-local below control did not activate its product action"
+grep -Fxq 'zentty-linux: action=split-pane-right pane=pane-4' "${log}" ||
+    fail "the pane-local right control did not activate its product action"
+grep -Fxq 'zentty-linux: action=split-pane-right pane=pane-5' "${log}" ||
+    fail "the arrange-panes icon did not activate its real split action"
+grep -Fxq 'zentty-linux: pane-controls pane=pane-1 state=shown' "${log}" ||
+    fail "hover did not disclose pane-1's local control cluster"
+grep -Fxq 'zentty-linux: pane-controls pane=pane-1 state=hidden' "${log}" ||
+    fail "leaving pane-1 did not dismiss its local control cluster"
+[[ "$(grep -Fxc 'zentty-linux: terminal-ready' "${log}" || true)" -eq 5 ]] ||
+    fail "the pointer-driven controls did not initialize five real Ghostty terminals"
+[[ "$(grep -Fc 'info(io_exec): started subcommand' "${log}" || true)" -eq 5 ]] ||
     fail "the scenario did not retain exactly one child process per real pane"
 if grep -Eq 'panicked at|thread caused non-unwinding panic|RefCell already borrowed|CRITICAL: Gtk|has a parent GtkBox' "${log}"; then
     fail "the contextual action reported a panic or GTK lifecycle critical"
 fi
 
-echo "Rust source UX passed: x11, leading-chrome=real-pointer, pane-rename=durable, focus=real-pty-and-model, contextual-right-and-focused-below=real"
+echo "Rust source UX passed: x11, focus=real-pty-and-model, pane-local-right-below-close=real-pointer, contextual-and-arrange-routes=real"
