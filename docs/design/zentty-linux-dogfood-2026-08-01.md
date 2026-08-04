@@ -5644,20 +5644,35 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   list. Jason correctly rejected that as an inadequate substitute for the live
   slotting already present in ordinary browser interfaces and in Zentty's own
   source.
+- **Rejected second repair:** Moving an equal-height dashed rectangle produced
+  correct live reflow but still presented the destination as an abstract empty
+  slot. Jason rejected the placeholder because a contemporary reorder should
+  show the actual list item occupying its prospective position.
 - **Repair:** Worklane headers use grab/grabbing cursors. Beginning a drag
-  installs a full-card `WidgetPaintable` ghost, removes the source row from
-  normal layout, and replaces it with an equal-height GTK spacer. Pointer
-  motion moves that spacer before or after the target card, so surrounding
-  cards reflow live around the actual prospective slot. Cancellation restores
+  removes the source row from normal layout and replaces it with a fully
+  rendered, noninteractive card proxy containing the real worklane title,
+  context, pane rows, focus markers, identity color, and selection treatment.
+  The same rendered proxy supplies the compositor drag paintable. Pointer
+  motion moves the card proxy before or after the target, so surrounding cards
+  reflow around the actual item rather than an outline. Cancellation restores
   the unchanged original ordering; a drop commits through the stable-ID model;
-  every completion path restores the card and removes temporary state.
+  every completion path restores the model-owned card and removes the proxy.
+- **Intentional Linux selection behavior:** macOS Zentty's gesture tracker calls
+  the row action only for a click; crossing the drag threshold reorders without
+  selecting, and `WorklaneStore.moveWorklane` preserves the previous active
+  lane. Jason preferred the conventional browser/editor tab-strip behavior.
+  Linux therefore selects the stable worklane ID when the drag begins, retains
+  that lane's remembered focused pane, and keeps it selected after either drop
+  or cancellation. This is an explicit UX divergence, not accidental source
+  drift.
 - **Test correction:** Focused tests pin midpoint direction and the corresponding
   source preview hooks. The real nine-worklane X11 scenario now requires
-  receipts emitted after the source card is detached, full-size spacer is
-  installed, card ghost is created, preview slot is moved with live reflow, and
-  cleanup is applied, in addition to requiring the final stable-ID order. A
-  final-order assertion or insertion-line receipt alone is no longer
-  sufficient.
+  receipts emitted after the source card is detached, rendered proxy and card
+  ghost are created, preview slot is moved with live reflow, and cleanup is
+  applied. The real scenario first makes another worklane active, then requires
+  the dragged worklane's real selection action and remembered pane identity in
+  addition to the final stable-ID order. A final-order, insertion-line, or
+  empty-spacer receipt alone is no longer sufficient.
 - **Remaining visual review:** GTK supplies the compositor-owned drag-icon
   motion, so automated acceptance proves the real DnD path and the actual
   intermediate state transitions rather than pixel-faking a pointer drag.

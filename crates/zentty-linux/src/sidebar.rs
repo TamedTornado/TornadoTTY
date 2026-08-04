@@ -123,7 +123,7 @@ pub(crate) fn install_styles() {
          .zentty-sidebar-floating { background: #17191d; border-right: 1px solid #4a5260; box-shadow: 10px 0 24px rgba(0, 0, 0, 0.45); }\n\
          .zentty-sidebar-header { color: #f1f3f5; font-weight: 700; font-size: 15px; }\n\
          .worklane-card { background: #1e2126; border: 1px solid #30343b; border-radius: 10px; padding: 7px; }\n\
-         .worklane-reorder-spacer { background: alpha(#65a7ff, 0.12); border: 2px dashed alpha(#65a7ff, 0.88); border-radius: 10px; margin-top: 2px; margin-bottom: 2px; }\n\
+         .worklane-drag-preview { border-color: #65a7ff; box-shadow: 0 8px 22px rgba(0, 0, 0, 0.62), inset 0 0 0 1px alpha(#65a7ff, 0.72); }\n\
          .worklane-card-active { background: #343a45; border-color: #7c8799; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35); }\n\
          .worklane-tint-inactive.worklane-card-red { border-left: 4px solid rgba(245, 101, 101, 0.34); }\n\
          .worklane-tint-inactive.worklane-card-orange { border-left: 4px solid rgba(237, 137, 54, 0.34); }\n\
@@ -311,7 +311,7 @@ fn make_worklane_card(
         worklane_count,
     )));
     header.append(&menu);
-    install_worklane_drag_source(&header, &card, &summary.worklane_id);
+    install_worklane_drag_source(&header, &card, summary, index);
     install_worklane_drop_target(&card, &summary.worklane_id);
     card.append(&header);
 
@@ -366,12 +366,17 @@ fn collect_named_ids(widget: &gtk::Widget, prefix: &str, ids: &mut Vec<String>) 
     }
 }
 
-fn install_worklane_drag_source(header: &gtk::Box, card: &gtk::Box, worklane_id: &str) {
+fn install_worklane_drag_source(
+    header: &gtk::Box,
+    card: &gtk::Box,
+    summary: &SidebarWorklaneSummary,
+    index: usize,
+) {
     let source = gtk::DragSource::new();
     source.set_actions(gtk::gdk::DragAction::MOVE);
     source.set_propagation_phase(gtk::PropagationPhase::Capture);
     header.set_cursor_from_name(Some("grab"));
-    let worklane_id = worklane_id.to_owned();
+    let worklane_id = summary.worklane_id.clone();
     let prepare_id = worklane_id.clone();
     source.connect_prepare(move |_, _, _| {
         Some(gtk::gdk::ContentProvider::for_value(&prepare_id.to_value()))
@@ -379,14 +384,20 @@ fn install_worklane_drag_source(header: &gtk::Box, card: &gtk::Box, worklane_id:
     let begin_card = card.clone();
     let begin_header = header.clone();
     let begin_id = worklane_id.clone();
+    let mut begin_summary = summary.clone();
+    begin_summary.is_active = true;
     source.connect_drag_begin(move |source, _| {
-        let paintable = gtk::WidgetPaintable::new(Some(&begin_card));
+        let selected = begin_card
+            .activate_action("workspace.select-worklane", Some(&begin_id.to_variant()))
+            .is_ok();
+        let preview = make_worklane_drag_preview_card(&begin_summary, index);
+        begin_worklane_drag_preview(&begin_card, &preview);
+        let paintable = gtk::WidgetPaintable::new(Some(&preview));
         source.set_icon(Some(&paintable), 24, 18);
         begin_card.add_css_class("worklane-dragged");
-        begin_worklane_drag_preview(&begin_card);
         begin_header.set_cursor_from_name(Some("grabbing"));
         eprintln!(
-            "zentty-linux: worklane-drag=begin id={begin_id} visual=floating ghost=card slot=full"
+            "zentty-linux: worklane-drag=begin id={begin_id} selected={selected} visual=floating ghost=card slot=rendered"
         );
     });
     let end_card = card.clone();
@@ -451,25 +462,21 @@ fn install_worklane_drop_target(card: &gtk::Box, target_id: &str) {
     card.add_controller(target);
 }
 
-const WORKLANE_REORDER_SPACER_NAME: &str = "zentty-worklane-reorder-spacer";
+const WORKLANE_REORDER_PREVIEW_NAME: &str = "zentty-worklane-reorder-preview";
 
 fn sidebar_for_card(card: &gtk::Box) -> Option<gtk::Box> {
     card.parent()
         .and_then(|parent| parent.downcast::<gtk::Box>().ok())
 }
 
-fn begin_worklane_drag_preview(card: &gtk::Box) {
+fn begin_worklane_drag_preview(card: &gtk::Box, preview: &gtk::Box) {
     let Some(sidebar) = sidebar_for_card(card) else {
         return;
     };
-    remove_worklane_drag_spacer(&sidebar);
-    let spacer = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    spacer.set_widget_name(WORKLANE_REORDER_SPACER_NAME);
-    spacer.add_css_class("worklane-reorder-spacer");
-    spacer.set_height_request(card.height().max(1));
-    spacer.set_can_target(false);
-    sidebar.append(&spacer);
-    sidebar.reorder_child_after(&spacer, card.prev_sibling().as_ref());
+    remove_worklane_drag_preview(&sidebar);
+    preview.set_height_request(card.height().max(1));
+    sidebar.append(preview);
+    sidebar.reorder_child_after(preview, card.prev_sibling().as_ref());
     card.set_visible(false);
 }
 
@@ -477,7 +484,8 @@ fn move_worklane_drag_preview(target_card: &gtk::Box, edge: WorklaneDropEdge) {
     let Some(sidebar) = sidebar_for_card(target_card) else {
         return;
     };
-    let Some(spacer) = find_named_widget(sidebar.upcast_ref(), WORKLANE_REORDER_SPACER_NAME) else {
+    let Some(preview) = find_named_widget(sidebar.upcast_ref(), WORKLANE_REORDER_PREVIEW_NAME)
+    else {
         return;
     };
     let previous = match edge {
@@ -485,7 +493,7 @@ fn move_worklane_drag_preview(target_card: &gtk::Box, edge: WorklaneDropEdge) {
         WorklaneDropEdge::Before => {
             let mut previous = target_card.prev_sibling();
             while previous.as_ref().is_some_and(|widget| {
-                widget.widget_name() == WORKLANE_REORDER_SPACER_NAME
+                widget.widget_name() == WORKLANE_REORDER_PREVIEW_NAME
                     || widget.has_css_class("worklane-dragged")
             }) {
                 previous = previous.and_then(|widget| widget.prev_sibling());
@@ -493,12 +501,12 @@ fn move_worklane_drag_preview(target_card: &gtk::Box, edge: WorklaneDropEdge) {
             previous
         }
     };
-    sidebar.reorder_child_after(&spacer, previous.as_ref());
+    sidebar.reorder_child_after(&preview, previous.as_ref());
 }
 
-fn remove_worklane_drag_spacer(sidebar: &gtk::Box) {
-    if let Some(spacer) = find_named_widget(sidebar.upcast_ref(), WORKLANE_REORDER_SPACER_NAME) {
-        sidebar.remove(&spacer);
+fn remove_worklane_drag_preview(sidebar: &gtk::Box) {
+    if let Some(preview) = find_named_widget(sidebar.upcast_ref(), WORKLANE_REORDER_PREVIEW_NAME) {
+        sidebar.remove(&preview);
     }
 }
 
@@ -506,8 +514,66 @@ fn clear_worklane_drag_feedback(card: &gtk::Box) {
     card.set_visible(true);
     card.remove_css_class("worklane-dragged");
     if let Some(sidebar) = sidebar_for_card(card) {
-        remove_worklane_drag_spacer(&sidebar);
+        remove_worklane_drag_preview(&sidebar);
     }
+}
+
+fn make_worklane_drag_preview_card(summary: &SidebarWorklaneSummary, index: usize) -> gtk::Box {
+    let preview = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    preview.set_widget_name(WORKLANE_REORDER_PREVIEW_NAME);
+    preview.add_css_class("worklane-card");
+    preview.add_css_class("worklane-drag-preview");
+    preview.set_can_target(false);
+    if let Some(color) = summary.color {
+        preview.add_css_class(&format!("worklane-card-{}", color.as_str()));
+    }
+    apply_worklane_visual_state(preview.upcast_ref(), summary);
+
+    let header = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    let heading = gtk::Box::new(gtk::Orientation::Vertical, 1);
+    heading.set_hexpand(true);
+    let title_text = summary
+        .top_label
+        .clone()
+        .unwrap_or_else(|| format!("Worklane {}", index + 1));
+    let title = gtk::Label::new(Some(&title_text));
+    title.add_css_class("worklane-title");
+    title.set_xalign(0.0);
+    title.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    let context = gtk::Label::new(Some(&summary.primary_text));
+    context.add_css_class("worklane-context");
+    context.set_xalign(0.0);
+    context.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+    heading.append(&title);
+    heading.append(&context);
+    header.append(&heading);
+    let menu_icon = gtk::Image::from_icon_name("view-more-symbolic");
+    menu_icon.set_margin_start(10);
+    menu_icon.set_margin_end(10);
+    header.append(&menu_icon);
+    preview.append(&header);
+
+    for pane in &summary.pane_rows {
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        row.add_css_class("pane-row");
+        if pane.is_focused {
+            row.add_css_class("pane-row-focused");
+        }
+        let marker = gtk::Label::new(Some(if pane.is_focused { "●" } else { "○" }));
+        marker.add_css_class("pane-marker");
+        let pane_title = gtk::Label::new(Some(&pane.primary_text));
+        pane_title.set_xalign(0.0);
+        pane_title.set_hexpand(true);
+        pane_title.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        row.append(&marker);
+        row.append(&pane_title);
+        let pane_menu_icon = gtk::Image::from_icon_name("view-more-symbolic");
+        pane_menu_icon.set_margin_start(8);
+        pane_menu_icon.set_margin_end(8);
+        row.append(&pane_menu_icon);
+        preview.append(&row);
+    }
+    preview
 }
 
 fn make_pane_row(
