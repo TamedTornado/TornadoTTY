@@ -298,6 +298,31 @@ fn pane_navigation_history_crosses_worklanes_and_preserves_browser_semantics() {
 }
 
 #[test]
+fn adjacent_pane_traversal_follows_sidebar_order_and_wraps_across_worklanes() {
+    const SOURCE: &str =
+        include_str!("../../../Zentty/UI/WorklanePeek/WorklanePeekSelectionState.swift");
+
+    let mut state = WorkspaceState::new("lane-1", "pane-1");
+    assert!(state.split_focused_pane_below("pane-2"));
+    assert!(state.create_worklane("lane-2", "pane-3"));
+
+    assert!(state.select_adjacent_pane(true));
+    assert_eq!(state.active_worklane_id(), "lane-1");
+    assert_eq!(state.focused_pane_id(), Some("pane-1"));
+    assert!(state.select_adjacent_pane(true));
+    assert_eq!(state.focused_pane_id(), Some("pane-2"));
+    assert!(state.select_adjacent_pane(true));
+    assert_eq!(state.active_worklane_id(), "lane-2");
+    assert_eq!(state.focused_pane_id(), Some("pane-3"));
+    assert!(state.select_adjacent_pane(false));
+    assert_eq!(state.active_worklane_id(), "lane-1");
+    assert_eq!(state.focused_pane_id(), Some("pane-2"));
+
+    assert!(SOURCE.contains("paneStripState.panes.map"));
+    assert!(SOURCE.contains("(currentIndex + direction.offset + count) % count"));
+}
+
+#[test]
 fn right_insertion_commands_preserve_their_distinct_width_contracts() {
     let mut added = WorkspaceState::new("lane-1", "pane-1");
     assert!(added.add_pane_right_without_resizing("pane-2", 719.0));

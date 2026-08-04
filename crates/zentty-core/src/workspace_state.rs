@@ -439,6 +439,40 @@ impl WorkspaceState {
         self.select_history_target(&target)
     }
 
+    pub fn select_adjacent_pane(&mut self, forward: bool) -> bool {
+        let Some(current) = self.current_pane_reference() else {
+            return false;
+        };
+        let references = self
+            .worklanes
+            .iter()
+            .flat_map(|worklane| {
+                worklane.columns.iter().flat_map(|column| {
+                    column
+                        .panes
+                        .iter()
+                        .map(|pane| PaneReference::new(&worklane.id, &pane.id))
+                })
+            })
+            .collect::<Vec<_>>();
+        if references.len() < 2 {
+            return false;
+        }
+        let Some(current_index) = references
+            .iter()
+            .position(|reference| reference == &current)
+        else {
+            return false;
+        };
+        let target_index = if forward {
+            (current_index + 1) % references.len()
+        } else {
+            current_index.checked_sub(1).unwrap_or(references.len() - 1)
+        };
+        let target = &references[target_index];
+        self.select_worklane_and_pane(&target.worklane_id, &target.pane_id)
+    }
+
     #[must_use]
     pub fn sidebar_summaries(&self) -> Vec<SidebarWorklaneSummary> {
         self.worklanes

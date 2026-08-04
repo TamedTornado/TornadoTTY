@@ -98,6 +98,10 @@ grep -Fxq 'zentty-linux: action=move-pane-down' "${log}" ||
     fail "vertical move-down action did not run"
 grep -Fxq 'zentty-linux: action=move-pane-to-worklane pane=pane-5 target=worklane-2' "${log}" ||
     fail "cross-worklane pane transfer action did not run"
+grep -Fxq 'zentty-linux: action=next-pane worklane=worklane-1 pane=pane-4' "${log}" ||
+    fail "next-pane did not cross into the next worklane in sidebar order"
+grep -Fxq 'zentty-linux: action=previous-pane worklane=worklane-2 pane=pane-5' "${log}" ||
+    fail "previous-pane did not return across the worklane boundary"
 grep -Fxq 'zentty-linux: action=close-worklane id=worklane-1 panes=2' "${log}" ||
     fail "targeted worklane close did not dispose its two real panes"
 grep -Fxq 'zentty-linux: topology=worklane-2[title=none,color=none]:pane-2,pane-3,pane-5*|worklane-1[title=Frontend,color=red]:pane-4,pane-1' "${log}" ||

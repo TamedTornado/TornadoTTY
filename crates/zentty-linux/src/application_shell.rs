@@ -3,9 +3,9 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::time::Duration;
 
-use gtk::gio;
 use gtk::glib::{self, variant::ToVariant};
 use gtk::prelude::*;
+use gtk::{gdk, gio};
 use zentty_core::{
     ClosePaneOutcome, ColumnRecipe, PaneLayoutPolicy, PaneRecipe, PaneRightInsertionBehavior,
     SidebarWidthPreference, WindowRecipe, WorklaneColor, WorklaneRecipe, WorkspaceState,
@@ -41,6 +41,8 @@ const ACTION_MOVE_PANE_TO_WORKLANE: &str = "move-pane-to-worklane";
 const ACTION_SELECT_PANE: &str = "select-pane";
 const ACTION_NAVIGATE_BACK: &str = "navigate-back";
 const ACTION_NAVIGATE_FORWARD: &str = "navigate-forward";
+const ACTION_NEXT_PANE: &str = "next-pane";
+const ACTION_PREVIOUS_PANE: &str = "previous-pane";
 const PRIMARY_RIGHT_BEHAVIOR: PaneRightInsertionBehavior = PaneRightInsertionBehavior::VisibleSplit;
 
 pub(crate) struct ApplicationShell {
@@ -171,6 +173,7 @@ impl ApplicationShell {
         install_sidebar_width_tracking(&body, preferred_sidebar_width, adjusting_sidebar_width);
 
         Self::install_actions(&shell);
+        Self::install_pane_traversal_shortcuts(&shell);
         for pane_id in initial_pane_ids {
             Self::create_surface(&shell, &pane_id)?;
         }
@@ -292,7 +295,9 @@ impl ApplicationShell {
                     "workspace.move-pane-to-worklane",
                     Some(&"worklane-2".to_variant()),
                 ),
-                17 if close_worklane_when_complete => window
+                17 => window.activate_action("workspace.next-pane", None),
+                18 => window.activate_action("workspace.previous-pane", None),
+                19 if close_worklane_when_complete => window
                     .activate_action("workspace.close-worklane", Some(&"worklane-1".to_variant())),
                 _ => {
                     eprintln!("zentty-linux: workspace-action-scenario complete");
@@ -383,6 +388,12 @@ impl ApplicationShell {
         Self::add_simple_action(shell, &group, ACTION_NAVIGATE_FORWARD, |shell| {
             shell.navigate_history(false);
         });
+        Self::add_simple_action(shell, &group, ACTION_NEXT_PANE, |shell| {
+            shell.select_adjacent_pane(true);
+        });
+        Self::add_simple_action(shell, &group, ACTION_PREVIOUS_PANE, |shell| {
+            shell.select_adjacent_pane(false);
+        });
 
         Self::install_edit_actions(shell, &group);
 
@@ -390,6 +401,26 @@ impl ApplicationShell {
             .borrow()
             .window
             .insert_action_group("workspace", Some(&group));
+    }
+
+    fn install_pane_traversal_shortcuts(shell: &Rc<RefCell<Self>>) {
+        let controller = gtk::EventControllerKey::new();
+        controller.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let weak = Rc::downgrade(shell);
+        controller.connect_key_pressed(move |_, key, _, modifiers| {
+            let is_tab = key == gdk::Key::Tab || key == gdk::Key::ISO_Left_Tab;
+            if !is_tab || !modifiers.contains(gdk::ModifierType::CONTROL_MASK) {
+                return glib::Propagation::Proceed;
+            }
+            let Some(shell) = weak.upgrade() else {
+                return glib::Propagation::Proceed;
+            };
+            let forward =
+                key != gdk::Key::ISO_Left_Tab && !modifiers.contains(gdk::ModifierType::SHIFT_MASK);
+            shell.borrow_mut().select_adjacent_pane(forward);
+            glib::Propagation::Stop
+        });
+        shell.borrow().window.add_controller(controller);
     }
 
     fn install_pane_creation_actions(shell: &Rc<RefCell<Self>>, group: &gio::SimpleActionGroup) {
@@ -1251,6 +1282,29 @@ impl ApplicationShell {
                 ACTION_NAVIGATE_BACK
             } else {
                 ACTION_NAVIGATE_FORWARD
+            },
+            self.state.active_worklane_id(),
+            self.state.focused_pane_id().unwrap_or("none")
+        );
+        if previous_worklane == self.state.active_worklane_id() {
+            self.refresh_sidebar_metadata();
+        } else {
+            self.render();
+        }
+        self.focus_selected_surface();
+    }
+
+    fn select_adjacent_pane(&mut self, forward: bool) {
+        let previous_worklane = self.state.active_worklane_id().to_owned();
+        if !self.state.select_adjacent_pane(forward) {
+            return;
+        }
+        eprintln!(
+            "zentty-linux: action={} worklane={} pane={}",
+            if forward {
+                ACTION_NEXT_PANE
+            } else {
+                ACTION_PREVIOUS_PANE
             },
             self.state.active_worklane_id(),
             self.state.focused_pane_id().unwrap_or("none")

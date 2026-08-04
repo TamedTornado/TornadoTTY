@@ -5337,6 +5337,36 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   adaptive-primary parity is deferred with the management features rather than
   presented as an isolated and confusing partial port.
 
+### DOGFOOD-2026-08-04-PANE-TRAVERSAL: offscreen panes need a real keyboard route
+
+- **Dependency exposed by Add:** Full-width worklane columns are intentionally
+  allowed to live offscreen, but Linux only offered sidebar clicks and browser
+  history after insertion. Keeping Add explicit avoids making that partial UX
+  the default; it does not remove the need for source pane traversal.
+- **Source contract:** `WorklanePeekTraversal` flattens panes in sidebar order,
+  wraps at both ends, and crosses worklane boundaries. The source Ctrl-Tab
+  controller disambiguates a quick tap from a hold: quick release traverses one
+  pane, while holding opens Worklane Peek at the current pane.
+- **Implemented slice:** The Rust workspace model now performs the same stable
+  sidebar-order traversal in both directions and records the resulting focus
+  transition normally. GTK captures Ctrl-Tab and Ctrl-Shift-Tab before the
+  embedded terminal, exposes equivalent `next-pane` and `previous-pane` named
+  actions, updates the owning worklane when traversal crosses a boundary, and
+  restores keyboard focus to the selected real Ghostty surface.
+- **Real-system evidence:** The controlled-X11 source workflow sends physical
+  Ctrl-Shift-Tab and Ctrl-Tab chords while Ghostty owns focus, requires exact
+  action receipts for pane 1 and pane 2, and then types distinct OSC-title input
+  through each selected real PTY. The existing five-terminal pointer,
+  persistence, focus-history, Add, Split, and lifecycle assertions still pass.
+  A source-pinned Rust test covers forward/backward wrapping and cross-worklane
+  traversal.
+- **Remaining boundary:** Linux currently performs the quick traversal on the
+  Tab key press rather than deferring it to Control release. Hold detection,
+  the 0.2-second arming threshold, Worklane Peek overlay, input shielding,
+  spatial arrow/gesture navigation, cancellation with Escape, transition
+  animation, and reduced-motion behavior remain issue #16 work. This slice is
+  a production keyboard route, not a claim that Worklane Peek has been ported.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were
