@@ -22,6 +22,9 @@ const ACTION_SPLIT_PANE_BELOW: &str = "split-pane-below";
 const ACTION_CLOSE_PANE: &str = "close-pane";
 const ACTION_RENAME_WORKLANE: &str = "rename-worklane";
 const ACTION_CYCLE_WORKLANE_COLOR: &str = "cycle-worklane-color";
+const ACTION_SET_WORKLANE_COLOR: &str = "set-worklane-color";
+const ACTION_CLOSE_WORKLANE: &str = "close-worklane";
+const ACTION_MOVE_WORKLANE: &str = "move-worklane";
 const ACTION_MOVE_WORKLANE_UP: &str = "move-worklane-up";
 const ACTION_MOVE_WORKLANE_DOWN: &str = "move-worklane-down";
 const ACTION_MOVE_PANE_LEFT: &str = "move-pane-left";
@@ -220,7 +223,11 @@ impl ApplicationShell {
         Ok(())
     }
 
-    pub(crate) fn schedule_workspace_actions(shell: &Rc<RefCell<Self>>, quit_when_complete: bool) {
+    pub(crate) fn schedule_workspace_actions(
+        shell: &Rc<RefCell<Self>>,
+        quit_when_complete: bool,
+        close_worklane_when_complete: bool,
+    ) {
         let weak = Rc::downgrade(shell);
         let step = Rc::new(Cell::new(0_u8));
         glib::timeout_add_local(Duration::from_millis(100), move || {
@@ -239,8 +246,14 @@ impl ApplicationShell {
                     "workspace.rename-worklane",
                     Some(&("worklane-1", "  Frontend  ").to_variant()),
                 ),
-                5 => window.activate_action("workspace.cycle-worklane-color", None),
-                6 => window.activate_action("workspace.move-worklane-down", None),
+                5 => window.activate_action(
+                    "workspace.set-worklane-color",
+                    Some(&("worklane-1", "red").to_variant()),
+                ),
+                6 => window.activate_action(
+                    "workspace.move-worklane",
+                    Some(&("worklane-1", "down").to_variant()),
+                ),
                 7 => window.activate_action("workspace.move-pane-left", None),
                 8 => window.activate_action("workspace.split-pane-below", None),
                 9 => window.activate_action("workspace.move-pane-up", None),
@@ -249,6 +262,8 @@ impl ApplicationShell {
                     "workspace.move-pane-to-worklane",
                     Some(&"worklane-2".to_variant()),
                 ),
+                12 if close_worklane_when_complete => window
+                    .activate_action("workspace.close-worklane", Some(&"worklane-1".to_variant())),
                 _ => {
                     eprintln!("zentty-linux: workspace-action-scenario complete");
                     if quit_when_complete {
@@ -374,22 +389,7 @@ impl ApplicationShell {
 
     fn install_edit_actions(shell: &Rc<RefCell<Self>>, group: &gio::SimpleActionGroup) {
         let string_pair = glib::VariantTy::new("(ss)").expect("static action type is valid");
-        let rename_worklane = gio::SimpleAction::new(ACTION_RENAME_WORKLANE, Some(string_pair));
-        let weak = Rc::downgrade(shell);
-        rename_worklane.connect_activate(move |_, parameter| {
-            let (Some(shell), Some((worklane_id, title))) = (
-                weak.upgrade(),
-                parameter.and_then(glib::Variant::get::<(String, String)>),
-            ) else {
-                return;
-            };
-            let mut shell = shell.borrow_mut();
-            if shell.state.set_worklane_title(&worklane_id, Some(&title)) {
-                eprintln!("zentty-linux: action=rename-worklane id={worklane_id} title={title:?}");
-                shell.refresh_sidebar_metadata();
-            }
-        });
-        group.add_action(&rename_worklane);
+        Self::install_worklane_edit_actions(shell, group, string_pair);
 
         let select_pane = gio::SimpleAction::new(ACTION_SELECT_PANE, Some(string_pair));
         let weak = Rc::downgrade(shell);
@@ -470,6 +470,96 @@ impl ApplicationShell {
         });
     }
 
+    fn install_worklane_edit_actions(
+        shell: &Rc<RefCell<Self>>,
+        group: &gio::SimpleActionGroup,
+        string_pair: &glib::VariantTy,
+    ) {
+        let rename_worklane = gio::SimpleAction::new(ACTION_RENAME_WORKLANE, Some(string_pair));
+        let weak = Rc::downgrade(shell);
+        rename_worklane.connect_activate(move |_, parameter| {
+            let (Some(shell), Some((worklane_id, title))) = (
+                weak.upgrade(),
+                parameter.and_then(glib::Variant::get::<(String, String)>),
+            ) else {
+                return;
+            };
+            let mut shell = shell.borrow_mut();
+            if shell.state.set_worklane_title(&worklane_id, Some(&title)) {
+                eprintln!("zentty-linux: action=rename-worklane id={worklane_id} title={title:?}");
+                shell.refresh_sidebar_metadata();
+            }
+        });
+        group.add_action(&rename_worklane);
+
+        let set_worklane_color =
+            gio::SimpleAction::new(ACTION_SET_WORKLANE_COLOR, Some(string_pair));
+        let weak = Rc::downgrade(shell);
+        set_worklane_color.connect_activate(move |_, parameter| {
+            let (Some(shell), Some((worklane_id, color_name))) = (
+                weak.upgrade(),
+                parameter.and_then(glib::Variant::get::<(String, String)>),
+            ) else {
+                return;
+            };
+            let color = if color_name.is_empty() {
+                None
+            } else if let Some(color) = WorklaneColor::named(&color_name) {
+                Some(color)
+            } else {
+                eprintln!(
+                    "zentty-linux: action=set-worklane-color rejected id={worklane_id} color={color_name}"
+                );
+                return;
+            };
+            let mut shell = shell.borrow_mut();
+            if shell.state.set_worklane_color(&worklane_id, color) {
+                eprintln!(
+                    "zentty-linux: action=set-worklane-color id={worklane_id} color={}",
+                    color.map_or("none", WorklaneColor::as_str)
+                );
+                shell.refresh_sidebar_metadata();
+            }
+        });
+        group.add_action(&set_worklane_color);
+
+        let close_worklane =
+            gio::SimpleAction::new(ACTION_CLOSE_WORKLANE, Some(glib::VariantTy::STRING));
+        let weak = Rc::downgrade(shell);
+        close_worklane.connect_activate(move |_, parameter| {
+            let (Some(shell), Some(worklane_id)) =
+                (weak.upgrade(), parameter.and_then(glib::Variant::str))
+            else {
+                return;
+            };
+            Self::close_worklane(&shell, worklane_id);
+        });
+        group.add_action(&close_worklane);
+
+        let move_worklane = gio::SimpleAction::new(ACTION_MOVE_WORKLANE, Some(string_pair));
+        let weak = Rc::downgrade(shell);
+        move_worklane.connect_activate(move |_, parameter| {
+            let (Some(shell), Some((worklane_id, direction))) = (
+                weak.upgrade(),
+                parameter.and_then(glib::Variant::get::<(String, String)>),
+            ) else {
+                return;
+            };
+            let delta = match direction.as_str() {
+                "up" => -1,
+                "down" => 1,
+                _ => return,
+            };
+            let mut shell = shell.borrow_mut();
+            if shell.move_worklane(&worklane_id, delta) {
+                eprintln!(
+                    "zentty-linux: action=move-worklane id={worklane_id} direction={direction}"
+                );
+            }
+        });
+        group.add_action(&move_worklane);
+    }
+
     fn install_pane_transfer_action(shell: &Rc<RefCell<Self>>, group: &gio::SimpleActionGroup) {
         let move_pane =
             gio::SimpleAction::new(ACTION_MOVE_PANE_TO_WORKLANE, Some(glib::VariantTy::STRING));
@@ -514,22 +604,28 @@ impl ApplicationShell {
     }
 
     fn move_active_worklane(&mut self, delta: isize) {
+        let active_id = self.state.active_worklane_id().to_owned();
+        self.move_worklane(&active_id, delta);
+    }
+
+    fn move_worklane(&mut self, worklane_id: &str, delta: isize) -> bool {
         let Some(index) = self
             .state
             .worklanes()
             .iter()
-            .position(|worklane| worklane.id == self.state.active_worklane_id())
+            .position(|worklane| worklane.id == worklane_id)
         else {
-            return;
+            return false;
         };
         let Some(target) = index.checked_add_signed(delta) else {
-            return;
+            return false;
         };
-        let active_id = self.state.active_worklane_id().to_owned();
-        if self.state.move_worklane(&active_id, target) {
+        if self.state.move_worklane(worklane_id, target) {
             eprintln!("zentty-linux: action=move-worklane target={target}");
             self.render_sidebar();
+            return true;
         }
+        false
     }
 
     fn create_worklane(shell: &Rc<RefCell<Self>>) -> Result<(), String> {
@@ -600,11 +696,50 @@ impl ApplicationShell {
         }
     }
 
+    fn close_worklane(shell: &Rc<RefCell<Self>>, worklane_id: &str) {
+        let pane_ids = {
+            let shell = shell.borrow();
+            shell
+                .state
+                .worklanes()
+                .iter()
+                .find(|worklane| worklane.id == worklane_id)
+                .map(|worklane| {
+                    worklane
+                        .columns
+                        .iter()
+                        .flat_map(|column| &column.panes)
+                        .map(|pane| pane.id.clone())
+                        .collect::<Vec<_>>()
+                })
+        };
+        let Some(pane_ids) = pane_ids else {
+            return;
+        };
+        let mut shell_ref = shell.borrow_mut();
+        if !shell_ref.state.close_worklane(worklane_id) {
+            return;
+        }
+        for pane_id in &pane_ids {
+            if let Err(error) = shell_ref.remove_live_surface(pane_id) {
+                drop(shell_ref);
+                Self::report_action_error(shell, ACTION_CLOSE_WORKLANE, &error);
+                return;
+            }
+        }
+        eprintln!(
+            "zentty-linux: action=close-worklane id={worklane_id} panes={}",
+            pane_ids.len()
+        );
+        shell_ref.render();
+        shell_ref.focus_selected_surface();
+    }
+
     fn close_pane(shell: &Rc<RefCell<Self>>, pane_id: &str) {
         let mut shell_ref = shell.borrow_mut();
         match shell_ref.state.close_pane(pane_id) {
             ClosePaneOutcome::Closed => {
-                if let Err(error) = shell_ref.remove_surface(pane_id) {
+                if let Err(error) = shell_ref.remove_live_surface(pane_id) {
                     drop(shell_ref);
                     Self::report_action_error(shell, ACTION_CLOSE_PANE, &error);
                     return;
@@ -724,6 +859,10 @@ impl ApplicationShell {
 
     fn handle_child_exit(shell: &Rc<RefCell<Self>>, pane_id: &str) {
         let mut shell_ref = shell.borrow_mut();
+        if !shell_ref.surfaces.contains_key(pane_id) {
+            eprintln!("zentty-linux: child-exit-after-dispose pane={pane_id} ignored");
+            return;
+        }
         let remaining = shell_ref.live_children.get().saturating_sub(1);
         shell_ref.live_children.set(remaining);
         if shell_ref.shutting_down {
@@ -772,6 +911,14 @@ impl ApplicationShell {
             surface.dispose().map_err(|error| error.to_string())?;
         }
         Ok(())
+    }
+
+    fn remove_live_surface(&mut self, pane_id: &str) -> Result<(), String> {
+        if self.surfaces.contains_key(pane_id) {
+            self.live_children
+                .set(self.live_children.get().saturating_sub(1));
+        }
+        self.remove_surface(pane_id)
     }
 
     fn take_pane_id(&mut self) -> String {

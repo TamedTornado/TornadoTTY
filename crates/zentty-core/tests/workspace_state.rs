@@ -34,6 +34,24 @@ fn worklane_commands_preserve_order_selection_and_source_title_semantics() {
 }
 
 #[test]
+fn closing_a_named_worklane_preserves_unrelated_active_selection() {
+    let mut state = WorkspaceState::new("worklane-a", "pane-a");
+    assert!(state.create_worklane("worklane-b", "pane-b"));
+    assert!(state.create_worklane("worklane-c", "pane-c"));
+    assert!(state.select_worklane("worklane-b"));
+
+    assert!(state.close_worklane("worklane-a"));
+    assert_eq!(state.worklane_ids(), ["worklane-b", "worklane-c"]);
+    assert_eq!(state.active_worklane_id(), "worklane-b");
+
+    assert!(state.close_worklane("worklane-b"));
+    assert_eq!(state.worklane_ids(), ["worklane-c"]);
+    assert_eq!(state.active_worklane_id(), "worklane-c");
+    assert!(!state.close_worklane("worklane-c"));
+    assert!(!state.close_worklane("missing"));
+}
+
+#[test]
 fn pane_commands_keep_real_terminal_identity_attached_to_stable_panes() {
     let mut state = WorkspaceState::new("worklane-a", "pane-a");
 

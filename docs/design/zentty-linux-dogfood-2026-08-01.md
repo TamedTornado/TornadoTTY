@@ -4996,6 +4996,45 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   versus vivid emphasis, hover/pressed screenshots, contrast measurement, and
   reviewed deterministic visual baselines remain issue #16/#20 work.
 
+### DOGFOOD-2026-08-04-WORKLANE-MENU: replace cycling scaffolding with source actions
+
+- **Source mismatch:** The Linux worklane overflow exposed `Move Up`, `Move
+  Down`, and `Next Color` as undifferentiated text buttons. The source menu
+  uses named, icon-bearing rename/close/move actions, hides impossible edge
+  moves, and offers the complete color palette. Cycling through twelve colors
+  was developer scaffolding, not a port of the user feature.
+- **Repair:** The GTK menu now supplies accessible icon actions for rename,
+  close, and only the available move directions. Reordering and closing target
+  the row's stable worklane identity without selecting it as a side effect.
+  The color picker exposes `none` plus all twelve source colors, publishes the
+  selected state, and sets the exact requested color. Closing the sole
+  worklane is disabled. Bookmark and preset entries remain owned by issue #18
+  and are not represented by fake disabled commands.
+- **Test-first model finding:** A focused state test initially failed because
+  only `close_active_worklane` existed. The new identity-targeted close keeps
+  an unrelated active lane selected, chooses a valid neighbor when closing the
+  active lane, and rejects missing/last-lane requests.
+- **Real lifecycle failure and repair:** The first controlled close scenario
+  timed out after disposing two live Ghostty surfaces. Explicit disposal does
+  not deliver the later child-exit callback used for natural PTY termination,
+  so the product's live-child counter remained two too high. Explicit user
+  closes now retire the counter synchronously; natural exits retain their
+  callback path, and a late callback for an already removed identity is
+  ignored rather than decrementing twice. The first corrected assertion then incorrectly demanded five
+  natural-exit receipts. The accurate contract is two explicit native surface
+  closes plus three natural exits, with five native finalization receipts in
+  total.
+- **Evidence:** Pedantic clippy, all Rust unit/integration/doc tests, and the
+  staged five-real-PTY action/persistence scenario pass under controlled X11
+  and Wayland. The scenario sets an exact color, reorders a named lane by
+  stable identity, explicitly closes its two real PTYs, observes
+  all five native surface finalizations, and separately proves the unclosed
+  two-lane topology persists.
+- **Remaining boundary:** Deterministic pointer and screenshot coverage of the
+  open popover, hover disclosure, keyboard traversal, and the eventual
+  bookmark/preset sections remain issue #16/#18 work. This record does not
+  claim those visual states have been reviewed.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were

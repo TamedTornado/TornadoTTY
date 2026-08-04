@@ -192,6 +192,7 @@ fn run_lifecycle_cycle(
         ApplicationShell::schedule_workspace_actions(
             &shell,
             options.exit_policy == ExitPolicy::WorkspaceActions,
+            options.exit_policy == ExitPolicy::LastTerminal,
         );
     }
     main_loop.run();

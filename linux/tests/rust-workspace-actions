@@ -72,10 +72,12 @@ grep -Fxq 'zentty-linux: action=split-pane-right pane=pane-4' "${log}" ||
     fail "reselected first worklane did not split"
 grep -Fxq 'zentty-linux: action=rename-worklane id=worklane-1 title="  Frontend  "' "${log}" ||
     fail "rename-worklane action did not preserve action input for trimming"
-grep -Fxq 'zentty-linux: action=cycle-worklane-color id=worklane-1 color=red' "${log}" ||
-    fail "worklane color action did not run"
+grep -Fxq 'zentty-linux: action=set-worklane-color id=worklane-1 color=red' "${log}" ||
+    fail "exact worklane color action did not run"
 grep -Fxq 'zentty-linux: action=move-worklane target=1' "${log}" ||
     fail "worklane reorder action did not run"
+grep -Fxq 'zentty-linux: action=move-worklane id=worklane-1 direction=down' "${log}" ||
+    fail "targeted worklane reorder action did not run"
 grep -Fxq 'zentty-linux: action=move-pane-left' "${log}" ||
     fail "pane reorder action did not run"
 grep -Fxq 'zentty-linux: action=split-pane-below pane=pane-5' "${log}" ||
@@ -86,6 +88,8 @@ grep -Fxq 'zentty-linux: action=move-pane-down' "${log}" ||
     fail "vertical move-down action did not run"
 grep -Fxq 'zentty-linux: action=move-pane-to-worklane pane=pane-5 target=worklane-2' "${log}" ||
     fail "cross-worklane pane transfer action did not run"
+grep -Fxq 'zentty-linux: action=close-worklane id=worklane-1 panes=2' "${log}" ||
+    fail "targeted worklane close did not dispose its two real panes"
 grep -Fxq 'zentty-linux: topology=worklane-2[title=none,color=none]:pane-2,pane-3,pane-5*|worklane-1[title=Frontend,color=red]:pane-4,pane-1' "${log}" ||
     fail "final worklane/pane topology or active selection is wrong"
 grep -Fxq 'zentty-linux: geometry=worklane-2:column-pane-2[pane-2],column-pane-3[pane-3],column-pane-5[pane-5]|worklane-1:column-worklane-1[pane-4,pane-1]' "${log}" ||
@@ -97,11 +101,11 @@ grep -Fxq 'zentty-linux: sidebar-card id=worklane-2 panes=3 active=true title=No
 
 [[ "$(grep -Fxc 'zentty-linux: terminal-ready' "${log}" || true)" -eq 5 ]] ||
     fail "not every product pane initialized a real Ghostty terminal"
-[[ "$(grep -Fxc 'zentty-linux: child-exited' "${log}" || true)" -eq 5 ]] ||
-    fail "not every real PTY child exited through the product"
+[[ "$(grep -Fxc 'zentty-linux: child-exited' "${log}" || true)" -eq 3 ]] ||
+    fail "the three retained PTY children did not report their natural exits"
 native_closed="$(grep -Fc 'info(surface): surface closed addr=' "${log}" || true)"
 if [[ "${native_closed}" -ne 5 ]]; then
-    fail "expected 5 finalized native Ghostty surfaces, observed ${native_closed}"
+    fail "expected 2 explicitly closed and 3 naturally exited Ghostty surfaces, observed ${native_closed}"
 fi
 [[ "$(sed -n 's/^zentty-linux: title=zentty-workspace-\([0-9][0-9]*\)$/\1/p' "${log}" | sort -u | wc -l)" -eq 5 ]] ||
     fail "the five panes did not prove distinct real PTY child processes"

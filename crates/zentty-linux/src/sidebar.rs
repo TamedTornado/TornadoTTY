@@ -125,6 +125,14 @@ pub(crate) fn install_styles() {
          .sidebar-create-worklane { color: #d8dbe1; border-radius: 7px; padding: 5px 8px; }\n\
          .sidebar-pane-actions { color: #c7cbd2; min-width: 26px; min-height: 26px; padding: 2px; }\n\
          .pane-context-action { padding: 5px 8px; }\n\
+         .worklane-context-action { padding: 5px 8px; }\n\
+         .worklane-color-choice { min-width: 28px; min-height: 28px; padding: 0; border-radius: 14px; }\n\
+         .worklane-color-red { color: #f56565; } .worklane-color-orange { color: #ed8936; }\n\
+         .worklane-color-amber { color: #d69e2e; } .worklane-color-yellow { color: #ecc94b; }\n\
+         .worklane-color-lime { color: #9ae6b4; } .worklane-color-green { color: #48bb78; }\n\
+         .worklane-color-teal { color: #38b2ac; } .worklane-color-cyan { color: #4fd1c5; }\n\
+         .worklane-color-blue { color: #4299e1; } .worklane-color-indigo { color: #667eea; }\n\
+         .worklane-color-purple { color: #9f7aea; } .worklane-color-pink { color: #ed64a6; }\n\
          .zentty-window-chrome { background: #15171a; min-height: 38px; padding: 3px 10px; }\n\
          .zentty-window-context { color: #aeb4be; font-weight: 600; }\n\
          .zentty-chrome-icon { color: #d5d9df; min-width: 28px; min-height: 28px; padding: 0; border-radius: 7px; }",
@@ -163,7 +171,7 @@ pub(crate) fn render(
     sidebar.append(&header);
 
     for (index, summary) in summaries.iter().enumerate() {
-        sidebar.append(&make_worklane_card(window, summary, index));
+        sidebar.append(&make_worklane_card(window, summary, index, summaries.len()));
     }
 }
 
@@ -175,6 +183,7 @@ fn make_worklane_card(
     window: &gtk::Window,
     summary: &SidebarWorklaneSummary,
     index: usize,
+    worklane_count: usize,
 ) -> gtk::Box {
     let card = gtk::Box::new(gtk::Orientation::Vertical, 4);
     card.set_widget_name(&widget_name("worklane-card", &summary.worklane_id));
@@ -219,7 +228,14 @@ fn make_worklane_card(
     let menu = gtk::MenuButton::new();
     menu.set_icon_name("view-more-symbolic");
     menu.set_tooltip_text(Some("Worklane actions"));
-    menu.set_popover(Some(&make_context_menu(window, summary)));
+    menu.set_accessible_role(gtk::AccessibleRole::Button);
+    menu.update_property(&[gtk::accessible::Property::Label("Worklane actions")]);
+    menu.set_popover(Some(&make_context_menu(
+        window,
+        summary,
+        index,
+        worklane_count,
+    )));
     header.append(&menu);
     card.append(&header);
 
@@ -435,40 +451,141 @@ fn make_pane_context_menu(window: &gtk::Window, worklane_id: &str, pane_id: &str
     popover
 }
 
-fn make_context_menu(window: &gtk::Window, summary: &SidebarWorklaneSummary) -> gtk::Popover {
+fn make_context_menu(
+    window: &gtk::Window,
+    summary: &SidebarWorklaneSummary,
+    index: usize,
+    worklane_count: usize,
+) -> gtk::Popover {
     let popover = gtk::Popover::new();
-    let menu = gtk::Box::new(gtk::Orientation::Vertical, 3);
+    let menu = gtk::Box::new(gtk::Orientation::Vertical, 2);
     menu.set_margin_top(6);
     menu.set_margin_bottom(6);
     menu.set_margin_start(6);
     menu.set_margin_end(6);
 
-    let rename = gtk::Button::with_label("Rename Worklane…");
+    let rename = menu_button("Rename Worklane…", "document-edit-symbolic");
     let rename_window = window.clone();
     let worklane_id = summary.worklane_id.clone();
     let current_title = summary.top_label.clone().unwrap_or_default();
+    let rename_popover = popover.clone();
     rename.connect_clicked(move |_| {
+        rename_popover.popdown();
         present_rename_dialog(&rename_window, &worklane_id, &current_title);
     });
     menu.append(&rename);
 
-    for (label, action) in [
-        ("Move Up", "workspace.move-worklane-up"),
-        ("Move Down", "workspace.move-worklane-down"),
-        ("Next Color", "workspace.cycle-worklane-color"),
-    ] {
-        let button = gtk::Button::with_label(label);
-        let action_window = window.clone();
-        let worklane_id = summary.worklane_id.clone();
-        button.connect_clicked(move |_| {
-            let _ = action_window
-                .activate_action("workspace.select-worklane", Some(&worklane_id.to_variant()));
-            let _ = action_window.activate_action(action, None);
-        });
-        menu.append(&button);
+    let close = menu_button("Close Worklane", "edit-delete-symbolic");
+    close.set_sensitive(worklane_count > 1);
+    close.set_action_name(Some("workspace.close-worklane"));
+    close.set_action_target_value(Some(&summary.worklane_id.to_variant()));
+    let close_popover = popover.clone();
+    close.connect_clicked(move |_| close_popover.popdown());
+    menu.append(&close);
+
+    if index > 0 {
+        menu.append(&targeted_move_button(
+            "Move Worklane Up",
+            "go-up-symbolic",
+            &summary.worklane_id,
+            "up",
+            &popover,
+        ));
     }
+    if index + 1 < worklane_count {
+        menu.append(&targeted_move_button(
+            "Move Worklane Down",
+            "go-down-symbolic",
+            &summary.worklane_id,
+            "down",
+            &popover,
+        ));
+    }
+
+    let color_heading = gtk::Label::new(Some("Worklane Color"));
+    color_heading.set_xalign(0.0);
+    color_heading.set_margin_top(4);
+    color_heading.update_property(&[gtk::accessible::Property::Label("Worklane Color")]);
+    menu.append(&color_heading);
+    let colors = gtk::FlowBox::new();
+    colors.set_selection_mode(gtk::SelectionMode::None);
+    colors.set_max_children_per_line(7);
+    colors.set_min_children_per_line(7);
+    colors.set_row_spacing(4);
+    colors.set_column_spacing(4);
+    colors.insert(
+        &color_button(summary, None, "No worklane color", "×", &popover),
+        -1,
+    );
+    for color in zentty_core::WorklaneColor::ALL {
+        let label = format!("{} worklane color", color.as_str());
+        colors.insert(
+            &color_button(summary, Some(color), &label, "●", &popover),
+            -1,
+        );
+    }
+    menu.append(&colors);
     popover.set_child(Some(&menu));
     popover
+}
+
+fn menu_button(label: &str, icon: &str) -> gtk::Button {
+    let button = gtk::Button::new();
+    button.add_css_class("worklane-context-action");
+    let content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    content.append(&gtk::Image::from_icon_name(icon));
+    let text = gtk::Label::new(Some(label));
+    text.set_xalign(0.0);
+    text.set_hexpand(true);
+    content.append(&text);
+    button.set_child(Some(&content));
+    button.set_tooltip_text(Some(label));
+    button.update_property(&[gtk::accessible::Property::Label(label)]);
+    button
+}
+
+fn targeted_move_button(
+    label: &str,
+    icon: &str,
+    worklane_id: &str,
+    direction: &str,
+    popover: &gtk::Popover,
+) -> gtk::Button {
+    let button = menu_button(label, icon);
+    button.set_action_name(Some("workspace.move-worklane"));
+    button.set_action_target_value(Some(&(worklane_id, direction).to_variant()));
+    let popover = popover.clone();
+    button.connect_clicked(move |_| popover.popdown());
+    button
+}
+
+fn color_button(
+    summary: &SidebarWorklaneSummary,
+    color: Option<zentty_core::WorklaneColor>,
+    label: &str,
+    glyph: &str,
+    popover: &gtk::Popover,
+) -> gtk::Button {
+    let selected = summary.color == color;
+    let button = gtk::Button::with_label(if selected { "✓" } else { glyph });
+    button.add_css_class("worklane-color-choice");
+    if let Some(color) = color {
+        button.add_css_class(&format!("worklane-color-{}", color.as_str()));
+    }
+    button.set_tooltip_text(Some(label));
+    button.update_property(&[gtk::accessible::Property::Label(label)]);
+    button.update_state(&[gtk::accessible::State::Selected(Some(selected))]);
+    button.set_action_name(Some("workspace.set-worklane-color"));
+    button.set_action_target_value(Some(
+        &(
+            summary.worklane_id.as_str(),
+            color.map_or("", zentty_core::WorklaneColor::as_str),
+        )
+            .to_variant(),
+    ));
+    let popover = popover.clone();
+    button.connect_clicked(move |_| popover.popdown());
+    button
 }
 
 fn present_rename_dialog(window: &gtk::Window, worklane_id: &str, current_title: &str) {

@@ -501,15 +501,25 @@ impl WorkspaceState {
     /// Panics only if an internal state transition has violated active-ID or
     /// non-empty-workspace invariants.
     pub fn close_active_worklane(&mut self) -> bool {
+        let active_id = self.active_worklane_id.clone();
+        self.close_worklane(&active_id)
+    }
+
+    /// Removes a worklane by stable identity when another worklane can replace
+    /// it. Closing an inactive worklane does not change the current selection.
+    pub fn close_worklane(&mut self, id: &str) -> bool {
         if self.worklanes.len() == 1 {
             return false;
         }
-        let active_index = self
-            .active_worklane_index()
-            .expect("workspace invariant: active worklane exists");
-        self.worklanes.remove(active_index);
-        let replacement_index = active_index.saturating_sub(1).min(self.worklanes.len() - 1);
-        self.active_worklane_id = self.worklanes[replacement_index].id.clone();
+        let Some(index) = self.worklanes.iter().position(|worklane| worklane.id == id) else {
+            return false;
+        };
+        let was_active = self.active_worklane_id == id;
+        self.worklanes.remove(index);
+        if was_active {
+            let replacement_index = index.saturating_sub(1).min(self.worklanes.len() - 1);
+            self.active_worklane_id = self.worklanes[replacement_index].id.clone();
+        }
         true
     }
 
