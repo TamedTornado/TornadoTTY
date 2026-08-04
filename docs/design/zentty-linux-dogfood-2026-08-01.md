@@ -4916,6 +4916,28 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   preference/persistence, hover-peek motion, active-row reveal, full arrange
   layouts, navigation history, and notification behavior remain issue #16 work.
 
+### DOGFOOD-2026-08-04-WORKLANE-COLOR-SELECTION: identity color is not selection
+
+- **Dogfood confusion:** The Frontend worklane retained its orange leading edge
+  after another worklane became active. The state is correct—amber is Frontend's
+  durable worklane color—but the Linux presentation made that stripe look like
+  the selection indicator because its intensity stayed constant while the
+  active card's neutral background/border change was too subtle.
+- **Source behavior:** macOS Zentty keeps color attached to worklane identity,
+  subdues that tint while inactive, and makes selection clear through stronger
+  fill, border, text contrast, and elevation. In vivid-selection mode, the
+  selected card derives its broader treatment from the worklane color rather
+  than displaying the same permanent stripe in every state.
+- **Decision:** Do not move or clear Frontend's amber color when selection
+  changes. Issue #16's polish work must instead port the source state hierarchy:
+  visibly distinct active and inactive cards, state-dependent identity-tint
+  intensity, color-derived vivid selection, hover/pressed treatment, and
+  contrast in both dark and light themes. Automated visual/state coverage must
+  reject a colored inactive row being mistaken for the active row.
+- **Current status:** This is recorded work, not repaired behavior. Until that
+  slice lands, the static stripe is only a temporary identity-color rendering
+  and must not be described as source-accurate selection UX.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were
