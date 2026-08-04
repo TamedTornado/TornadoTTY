@@ -39,9 +39,11 @@ in the staged binary and proves two worklanes, five distinct PTY children,
 column topology, and selection under private Weston/Wayland and Xvfb/X11.
 Those focused scenarios must be launched through `linux/tests/nested-wayland`
 or `linux/tests/nested-x11`; they reject an ambient desktop. Exact divider
-sizing, cross-worklane movement, and the remaining rich sidebar states are not
-implemented, so the broad product-worklane qualification cells remain
-`NOT_IMPLEMENTED`.
+sizing, the source contextual cross-worklane move affordance, and the remaining
+rich sidebar states are not implemented, so the broad product-worklane
+qualification cells remain `NOT_IMPLEMENTED`. The underlying same-window move
+model and parameterized GTK action are implemented and covered with a clean
+snapshot; no temporary text toolbar button was added for that action.
 
 The compound cards are not yet full ZenTTY sidebar parity. Agent status and
 attention, progress, server/remote details, bookmarks, drag gestures, complete

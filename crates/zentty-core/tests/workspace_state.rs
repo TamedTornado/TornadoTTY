@@ -125,6 +125,43 @@ fn focused_pane_moves_within_the_active_worklane_without_losing_focus() {
 }
 
 #[test]
+fn focused_pane_transfers_to_existing_worklane_as_a_focused_column() {
+    let mut state = WorkspaceState::new("worklane-a", "pane-a");
+    assert!(state.split_focused_pane_below("pane-b"));
+    assert!(state.set_pane_title("pane-b", "agent review"));
+    assert!(state.create_worklane("worklane-b", "pane-c"));
+    assert!(state.select_worklane("worklane-a"));
+
+    assert!(state.transfer_focused_pane_to_worklane("worklane-b"));
+    assert_eq!(state.worklane_ids(), ["worklane-a", "worklane-b"]);
+    assert_eq!(state.active_worklane_id(), "worklane-b");
+    assert_eq!(state.active_pane_ids(), ["pane-c", "pane-b"]);
+    assert_eq!(state.focused_pane_id(), Some("pane-b"));
+    assert_eq!(state.active_columns().len(), 2);
+    assert_eq!(state.active_columns()[1].id, "column-pane-b");
+    assert_eq!(state.active_columns()[1].panes[0].title, "agent review");
+    assert_eq!(state.worklanes()[0].columns[0].pane_heights, [1.0]);
+}
+
+#[test]
+fn cross_worklane_transfer_removes_an_empty_source_and_rejects_invalid_targets() {
+    let mut state = WorkspaceState::new("worklane-a", "pane-a");
+    assert!(state.create_worklane("worklane-b", "pane-b"));
+    assert!(state.select_worklane("worklane-a"));
+
+    let unchanged = state.clone();
+    assert!(!state.transfer_focused_pane_to_worklane("worklane-a"));
+    assert!(!state.transfer_focused_pane_to_worklane("missing"));
+    assert_eq!(state, unchanged);
+
+    assert!(state.transfer_focused_pane_to_worklane("worklane-b"));
+    assert_eq!(state.worklane_ids(), ["worklane-b"]);
+    assert_eq!(state.active_worklane_id(), "worklane-b");
+    assert_eq!(state.active_pane_ids(), ["pane-b", "pane-a"]);
+    assert_eq!(state.focused_pane_id(), Some("pane-a"));
+}
+
+#[test]
 fn sidebar_summaries_are_compound_worklane_and_pane_presentations() {
     let mut state = WorkspaceState::new("worklane-a", "pane-a");
     assert!(state.split_focused_pane_right("pane-b"));

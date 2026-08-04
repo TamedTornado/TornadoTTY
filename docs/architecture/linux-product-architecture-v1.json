@@ -500,7 +500,7 @@
       "async_backend": "default",
       "terminals": "multi",
       "tracking": "GH-4",
-      "defect": "A real compound-card worklane slice owns creation, selection, rename, reorder, color, ordered columns, vertical and horizontal pane splits, focus, close, and teardown under controlled Wayland, but exact divider sizing, cross-worklane pane movement, attention/progress, failure states, and accessibility remain.",
+      "defect": "A real compound-card worklane slice owns creation, selection, rename, reorder, color, ordered columns, vertical and horizontal pane splits, same-window cross-worklane transfer, focus, close, and teardown under controlled Wayland, but exact divider sizing, the source contextual move affordance, attention/progress, failure states, and accessibility remain.",
       "authoritative": false
     },
     {
@@ -513,7 +513,7 @@
       "async_backend": "default",
       "terminals": "multi",
       "tracking": "GH-4",
-      "defect": "A real compound-card worklane slice owns creation, selection, rename, reorder, color, ordered columns, vertical and horizontal pane splits, focus, close, and teardown under controlled X11, but exact divider sizing, cross-worklane pane movement, attention/progress, failure states, and accessibility remain.",
+      "defect": "A real compound-card worklane slice owns creation, selection, rename, reorder, color, ordered columns, vertical and horizontal pane splits, same-window cross-worklane transfer, focus, close, and teardown under controlled X11, but exact divider sizing, the source contextual move affordance, attention/progress, failure states, and accessibility remain.",
       "authoritative": false
     },
     {

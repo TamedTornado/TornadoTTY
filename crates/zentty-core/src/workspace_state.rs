@@ -729,6 +729,88 @@ impl WorkspaceState {
         self.move_focused_pane_vertically(1)
     }
 
+    /// Moves the focused pane from the active worklane into a new rightmost
+    /// column in an existing worklane, matching the default source transfer.
+    /// The destination becomes active and focused; an emptied source worklane
+    /// is removed.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if an internal state transition has violated active
+    /// worklane, focused-column, or focused-pane invariants.
+    pub fn transfer_focused_pane_to_worklane(&mut self, target_worklane_id: &str) -> bool {
+        let Some(source_index) = self
+            .worklanes
+            .iter()
+            .position(|worklane| worklane.id == self.active_worklane_id)
+        else {
+            return false;
+        };
+        let Some(target_index) = self
+            .worklanes
+            .iter()
+            .position(|worklane| worklane.id == target_worklane_id)
+        else {
+            return false;
+        };
+        if source_index == target_index {
+            return false;
+        }
+
+        let source_column_index = self.worklanes[source_index]
+            .columns
+            .iter()
+            .position(|column| column.id == self.worklanes[source_index].focused_column_id)
+            .expect("workspace invariant: focused column exists");
+        let pane_id = self.worklanes[source_index].columns[source_column_index]
+            .focused_pane_id
+            .clone();
+        let width = self.worklanes[source_index].columns[source_column_index].width;
+        let (pane, _) = remove_pane(
+            &mut self.worklanes[source_index].columns[source_column_index],
+            &pane_id,
+        );
+
+        if self.worklanes[source_index].columns[source_column_index]
+            .panes
+            .is_empty()
+        {
+            self.worklanes[source_index]
+                .columns
+                .remove(source_column_index);
+            if let Some(replacement_id) = self.worklanes[source_index]
+                .columns
+                .get(source_column_index)
+                .or_else(|| self.worklanes[source_index].columns.last())
+                .map(|column| column.id.clone())
+            {
+                self.worklanes[source_index].focused_column_id = replacement_id;
+            }
+        }
+
+        let source_removed = self.worklanes[source_index].columns.is_empty();
+        if source_removed {
+            self.worklanes.remove(source_index);
+        }
+        let target_index = if source_removed && source_index < target_index {
+            target_index - 1
+        } else {
+            target_index
+        };
+        let column_id = self.unique_column_id(&pane_id);
+        self.worklanes[target_index].columns.push(PaneColumnState {
+            id: column_id.clone(),
+            width,
+            panes: vec![pane],
+            pane_heights: vec![1.0],
+            focused_pane_id: pane_id.clone(),
+            last_focused_pane_id: pane_id,
+        });
+        self.worklanes[target_index].focused_column_id = column_id;
+        target_worklane_id.clone_into(&mut self.active_worklane_id);
+        true
+    }
+
     /// Closes the focused pane or requests window closure for the last pane.
     ///
     /// # Panics
@@ -869,6 +951,33 @@ impl WorkspaceState {
             .flat_map(|worklane| &worklane.columns)
             .flat_map(|column| &column.panes)
             .any(|pane| pane.id == id)
+    }
+
+    fn unique_column_id(&self, pane_id: &str) -> String {
+        let base = format!("column-{pane_id}");
+        if !self
+            .worklanes
+            .iter()
+            .flat_map(|worklane| &worklane.columns)
+            .any(|column| column.id == base)
+        {
+            return base;
+        }
+        let column_count: usize = self
+            .worklanes
+            .iter()
+            .map(|worklane| worklane.columns.len())
+            .sum();
+        (2..=column_count + 2)
+            .map(|suffix| format!("{base}-{suffix}"))
+            .find(|candidate| {
+                !self
+                    .worklanes
+                    .iter()
+                    .flat_map(|worklane| &worklane.columns)
+                    .any(|column| column.id == *candidate)
+            })
+            .expect("workspace invariant: available generated column identity")
     }
 }
 

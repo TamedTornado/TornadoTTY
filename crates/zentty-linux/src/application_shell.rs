@@ -27,6 +27,7 @@ const ACTION_MOVE_PANE_LEFT: &str = "move-pane-left";
 const ACTION_MOVE_PANE_RIGHT: &str = "move-pane-right";
 const ACTION_MOVE_PANE_UP: &str = "move-pane-up";
 const ACTION_MOVE_PANE_DOWN: &str = "move-pane-down";
+const ACTION_MOVE_PANE_TO_WORKLANE: &str = "move-pane-to-worklane";
 const ACTION_SELECT_PANE: &str = "select-pane";
 
 pub(crate) struct ApplicationShell {
@@ -44,6 +45,7 @@ pub(crate) struct ApplicationShell {
     next_worklane_number: usize,
     next_pane_number: usize,
     window_template: WindowRecipe,
+    shutting_down: bool,
 }
 
 impl ApplicationShell {
@@ -123,6 +125,7 @@ impl ApplicationShell {
             next_worklane_number,
             next_pane_number,
             window_template,
+            shutting_down: false,
         }));
 
         Self::install_actions(&shell);
@@ -155,6 +158,7 @@ impl ApplicationShell {
     }
 
     pub(crate) fn detach_and_close(&mut self) {
+        self.shutting_down = true;
         gtk::prelude::GtkWindowExt::set_focus(&self.window, gtk::Widget::NONE);
         self.window.set_default_widget(gtk::Widget::NONE);
         for (pane_id, controller) in std::mem::take(&mut self.focus_controllers) {
@@ -203,6 +207,10 @@ impl ApplicationShell {
                 8 => window.activate_action("workspace.split-pane-below", None),
                 9 => window.activate_action("workspace.move-pane-up", None),
                 10 => window.activate_action("workspace.move-pane-down", None),
+                11 => window.activate_action(
+                    "workspace.move-pane-to-worklane",
+                    Some(&"worklane-2".to_variant()),
+                ),
                 _ => {
                     eprintln!("zentty-linux: workspace-action-scenario complete");
                     if quit_when_complete {
@@ -332,6 +340,8 @@ impl ApplicationShell {
         });
         group.add_action(&select_pane);
 
+        Self::install_pane_transfer_action(shell, group);
+
         Self::add_simple_action(shell, group, ACTION_CYCLE_WORKLANE_COLOR, |shell| {
             let active_id = shell.state.active_worklane_id().to_owned();
             let current = shell.state.active_worklane().color;
@@ -384,6 +394,33 @@ impl ApplicationShell {
                 shell.focus_selected_surface();
             }
         });
+    }
+
+    fn install_pane_transfer_action(shell: &Rc<RefCell<Self>>, group: &gio::SimpleActionGroup) {
+        let move_pane =
+            gio::SimpleAction::new(ACTION_MOVE_PANE_TO_WORKLANE, Some(glib::VariantTy::STRING));
+        let weak = Rc::downgrade(shell);
+        move_pane.connect_activate(move |_, parameter| {
+            let (Some(shell), Some(target_worklane_id)) =
+                (weak.upgrade(), parameter.and_then(glib::Variant::str))
+            else {
+                return;
+            };
+            let mut shell = shell.borrow_mut();
+            let pane_id = shell.state.focused_pane_id().map(str::to_owned);
+            if shell
+                .state
+                .transfer_focused_pane_to_worklane(target_worklane_id)
+            {
+                eprintln!(
+                    "zentty-linux: action=move-pane-to-worklane pane={} target={target_worklane_id}",
+                    pane_id.as_deref().unwrap_or("unknown")
+                );
+                shell.render();
+                shell.focus_selected_surface();
+            }
+        });
+        group.add_action(&move_pane);
     }
 
     fn add_simple_action(
@@ -531,6 +568,9 @@ impl ApplicationShell {
                     return;
                 };
                 let shell = shell.borrow();
+                if shell.shutting_down {
+                    return;
+                }
                 if shell.state.focused_pane_id() == Some(ready_id.as_str()) {
                     shell.focus_selected_surface();
                 }
@@ -547,6 +587,9 @@ impl ApplicationShell {
             glib::idle_add_local_once(move || {
                 if let Some(shell) = weak.upgrade() {
                     let mut shell = shell.borrow_mut();
+                    if shell.shutting_down {
+                        return;
+                    }
                     if shell.state.set_pane_title(&title_id, &title) {
                         shell.render();
                     }
@@ -577,6 +620,9 @@ impl ApplicationShell {
                 let Some(shell) = weak.upgrade() else {
                     return;
                 };
+                if shell.borrow().shutting_down {
+                    return;
+                }
                 let still_focused = shell
                     .borrow()
                     .surfaces
@@ -602,6 +648,9 @@ impl ApplicationShell {
         let mut shell_ref = shell.borrow_mut();
         let remaining = shell_ref.live_children.get().saturating_sub(1);
         shell_ref.live_children.set(remaining);
+        if shell_ref.shutting_down {
+            return;
+        }
         if shell_ref.quit_after_last_terminal_exit {
             let outcome = shell_ref.state.close_pane(pane_id);
             if let Err(error) = shell_ref.remove_surface(pane_id) {
