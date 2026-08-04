@@ -4813,6 +4813,51 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   packaging contract is incomplete and must be repaired, not tribal knowledge
   to rediscover.
 
+### DOGFOOD-2026-08-04-RESIZE-PRESENTATION: a redraw that looks like a restart is still a product bug
+
+- **Live discovery:** Resizing the dogfood window exposed two defects at once.
+  The sidebar expanded to roughly half of a wide window, and terminal contents
+  visibly disappeared and returned often enough to look like repeated shell
+  restarts. The captured process receipt contained exactly one PTY child start
+  and no child exit before the window closed, so the shell process did not
+  restart. That did not make the visible failure acceptable.
+- **Root cause:** A `250` width request was only a minimum. Long sidebar labels
+  contributed a much larger natural width to the horizontal box. Separately,
+  every terminal title notification called the full renderer. That renderer
+  removed each live Ghostty widget from the GTK tree and appended it again,
+  causing Ghostty to reload its GL presentation while retaining the PTY. Window
+  resizing made those redraws especially conspicuous; the compositor was not
+  restarting the terminal.
+- **Test-first failure:** The controlled real-X11 source-UX scenario was extended
+  before the repair. It externally widened the real window, required a measured
+  sidebar allocation of 250 pixels, delivered two OSC title changes through a
+  real PTY, and counted Ghostty GL initialization and child-process starts. It
+  failed first because the product exposed neither the intended allocation nor
+  the required receipt.
+- **Repair:** The top-level layout now uses a GTK split view with a 250-pixel
+  initial sidebar position, a non-expanding start child, and an explicitly
+  shrinkable sidebar so label natural widths cannot consume terminal space.
+  Sidebar-only state changes—terminal titles, worklane title/color/order, and
+  same-worklane selection—rebuild only sidebar presentation and never detach a
+  Ghostty widget. An allocation receipt makes external-resize behavior directly
+  observable by integration tests.
+- **Real-system evidence:** The staged ReleaseSafe product passed the controlled
+  X11 scenario after an actual external `xdotool` resize. The final measured
+  sidebar allocation was 250 pixels; both OSC titles arrived; the original
+  Ghostty GL presentation initialized once; one child remained one child; and a
+  real pointer-driven pane split still created and retired a second PTY.
+- **Harness repair:** Tightening the assertion from “250 appeared sometime” to
+  “the final observed width is 250” initially split a Bash `[[ ... ]]`
+  expression across an invalid newline. The controlled runner rejected the
+  script before launching the product. The assertion now captures the final
+  receipt in a named variable before comparing it; this was a harness syntax
+  failure, not a product pass or an environmental skip.
+- **Remaining limitation:** Pane topology mutations still rebuild the pane
+  containers and may reparent surviving Ghostty widgets. That path is distinct
+  from ordinary resize/title/sidebar updates but should eventually become a
+  keyed incremental renderer. The present fix does not claim that compositor,
+  fractional-scaling, or full topology qualification cells are complete.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were

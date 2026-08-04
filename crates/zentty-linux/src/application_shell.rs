@@ -33,6 +33,7 @@ const ACTION_SELECT_PANE: &str = "select-pane";
 pub(crate) struct ApplicationShell {
     window: gtk::Window,
     sidebar: gtk::Box,
+    sidebar_scroll: gtk::ScrolledWindow,
     pane_box: gtk::Box,
     state: WorkspaceState,
     surfaces: BTreeMap<String, GhosttySurface>,
@@ -62,9 +63,11 @@ impl ApplicationShell {
         window.set_default_size(1000, 700);
         sidebar::install_styles();
 
-        let root = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        let root = gtk::Paned::new(gtk::Orientation::Horizontal);
+        root.set_position(250);
+        root.set_resize_start_child(false);
+        root.set_shrink_start_child(true);
         let sidebar = gtk::Box::new(gtk::Orientation::Vertical, 6);
-        sidebar.set_width_request(250);
         let sidebar_scroll = gtk::ScrolledWindow::new();
         sidebar_scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
         sidebar_scroll.set_child(Some(&sidebar));
@@ -78,8 +81,8 @@ impl ApplicationShell {
         pane_box.set_hexpand(true);
         pane_box.set_vexpand(true);
         content.append(&pane_box);
-        root.append(&sidebar_scroll);
-        root.append(&content);
+        root.set_start_child(Some(&sidebar_scroll));
+        root.set_end_child(Some(&content));
         window.set_child(Some(&root));
 
         let window_template = restored_window.unwrap_or_else(default_window_recipe);
@@ -111,6 +114,7 @@ impl ApplicationShell {
         let shell = Rc::new(RefCell::new(Self {
             window,
             sidebar,
+            sidebar_scroll,
             pane_box,
             state,
             surfaces: BTreeMap::new(),
@@ -140,6 +144,10 @@ impl ApplicationShell {
 
     pub(crate) fn window(&self) -> &gtk::Window {
         &self.window
+    }
+
+    pub(crate) fn sidebar_container(&self) -> &gtk::ScrolledWindow {
+        &self.sidebar_scroll
     }
 
     pub(crate) fn live_children(&self) -> usize {
@@ -251,9 +259,14 @@ impl ApplicationShell {
                 return;
             };
             let mut shell = shell.borrow_mut();
+            let changed = shell.state.active_worklane_id() != id;
             if shell.state.select_worklane(id) {
                 eprintln!("zentty-linux: action=select-worklane id={id}");
-                shell.render();
+                if changed {
+                    shell.render();
+                } else {
+                    shell.render_sidebar();
+                }
                 shell.focus_selected_surface();
             }
         });
@@ -315,7 +328,7 @@ impl ApplicationShell {
             let mut shell = shell.borrow_mut();
             if shell.state.set_worklane_title(&worklane_id, Some(&title)) {
                 eprintln!("zentty-linux: action=rename-worklane id={worklane_id} title={title:?}");
-                shell.render();
+                shell.render_sidebar();
             }
         });
         group.add_action(&rename_worklane);
@@ -330,9 +343,14 @@ impl ApplicationShell {
                 return;
             };
             let mut shell = shell.borrow_mut();
+            let worklane_changed = shell.state.active_worklane_id() != worklane_id;
             if shell.state.select_worklane(&worklane_id) && shell.state.select_pane(&pane_id) {
                 eprintln!("zentty-linux: action=select-pane worklane={worklane_id} pane={pane_id}");
-                shell.render();
+                if worklane_changed {
+                    shell.render();
+                } else {
+                    shell.render_sidebar();
+                }
                 shell.focus_selected_surface();
             }
         });
@@ -355,7 +373,7 @@ impl ApplicationShell {
                     "zentty-linux: action=cycle-worklane-color id={active_id} color={}",
                     next.map_or("none", WorklaneColor::as_str)
                 );
-                shell.render();
+                shell.render_sidebar();
             }
         });
         Self::add_simple_action(shell, group, ACTION_MOVE_WORKLANE_UP, |shell| {
@@ -452,7 +470,7 @@ impl ApplicationShell {
         let active_id = self.state.active_worklane_id().to_owned();
         if self.state.move_worklane(&active_id, target) {
             eprintln!("zentty-linux: action=move-worklane target={target}");
-            self.render();
+            self.render_sidebar();
         }
     }
 
@@ -589,7 +607,7 @@ impl ApplicationShell {
                         return;
                     }
                     if shell.state.set_pane_title(&title_id, &title) {
-                        shell.render();
+                        shell.render_sidebar();
                     }
                 }
             });
@@ -626,8 +644,12 @@ impl ApplicationShell {
                     .surfaces
                     .get(&focus_id)
                     .is_some_and(|surface| surface.widget().has_focus());
-                if still_focused && shell.borrow_mut().state.select_pane(&focus_id) {
-                    eprintln!("zentty-linux: focus-pane pane={focus_id}");
+                if still_focused {
+                    let changed = shell.borrow_mut().state.select_pane(&focus_id);
+                    if changed {
+                        eprintln!("zentty-linux: focus-pane pane={focus_id}");
+                        shell.borrow().render_sidebar();
+                    }
                 }
             });
         });
@@ -702,7 +724,7 @@ impl ApplicationShell {
 
     fn render(&self) {
         clear_pane_columns(&self.pane_box);
-        sidebar::render(&self.sidebar, &self.window, &self.state.sidebar_summaries());
+        self.render_sidebar();
 
         for column in self.state.active_columns() {
             let column_box = gtk::Box::new(gtk::Orientation::Vertical, 1);
@@ -718,6 +740,10 @@ impl ApplicationShell {
         }
         eprintln!("zentty-linux: topology={}", self.topology_receipt());
         eprintln!("zentty-linux: geometry={}", self.geometry_receipt());
+    }
+
+    fn render_sidebar(&self) {
+        sidebar::render(&self.sidebar, &self.window, &self.state.sidebar_summaries());
     }
 
     fn focus_selected_surface(&self) {

@@ -151,8 +151,11 @@ fn run_lifecycle_cycle(
     let ticking_runtime = runtime.clone();
     let tick_loop = main_loop.clone();
     let observed_window = shell.borrow().window().clone();
+    let observed_sidebar = shell.borrow().sidebar_container().clone();
     let last_window_size = Rc::new(Cell::new((0, 0)));
     let ticking_window_size = Rc::clone(&last_window_size);
+    let last_sidebar_width = Rc::new(Cell::new(0));
+    let ticking_sidebar_width = Rc::clone(&last_sidebar_width);
     let tick_source = glib::timeout_add_local(Duration::from_millis(10), move || {
         let window_size = (observed_window.width(), observed_window.height());
         if window_size != ticking_window_size.get() && window_size.0 > 0 && window_size.1 > 0 {
@@ -161,6 +164,11 @@ fn run_lifecycle_cycle(
                 window_size.0, window_size.1
             );
             ticking_window_size.set(window_size);
+        }
+        let sidebar_width = observed_sidebar.width();
+        if sidebar_width != ticking_sidebar_width.get() && sidebar_width > 0 {
+            eprintln!("zentty-linux: sidebar-width={sidebar_width}");
+            ticking_sidebar_width.set(sidebar_width);
         }
         if let Err(error) = ticking_runtime.tick() {
             eprintln!("zentty-linux: {error}");
