@@ -1,0 +1,141 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
+ghostty_root="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
+log="$(mktemp)"
+state_directory="$(mktemp -d)"
+product_pid=""
+
+fail() {
+    grep -E 'worklane-drag|reorder-worklane|sidebar-(reveal|active-visible)' "${log}" >&2 || true
+    tail -40 "${log}" >&2
+    echo "rust-sidebar-management-x11: error: $*" >&2
+    exit 1
+}
+
+cleanup() {
+    if [[ "${product_pid}" =~ ^[1-9][0-9]*$ ]]; then
+        kill -TERM "${product_pid}" 2>/dev/null || true
+        wait "${product_pid}" 2>/dev/null || true
+    fi
+    rm -f -- "${log}"
+    rm -rf -- "${state_directory}"
+}
+trap cleanup EXIT
+
+[[ "${GDK_BACKEND:-}" == x11 ]] || fail "GDK_BACKEND must be x11"
+[[ "${ZENTTY_NESTED_X11_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+    fail "scenario must run through linux/tests/nested-x11"
+for dependency in grep mktemp readelf sed seq sleep xdotool; do
+    command -v "${dependency}" >/dev/null || fail "${dependency} is required"
+done
+
+layer_runpath="$(
+    readelf -d "${ghostty_root}/zig-out/lib/libghostty-gtk-embed.so" |
+        sed -n 's/.*Library runpath: \[\([^]]*\)\].*/\1/p' |
+        cut -d: -f1
+)"
+layer_directory="${ghostty_root}/${layer_runpath}"
+
+GDK_SCALE=1 GDK_DPI_SCALE=1 \
+LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+    "${product}" \
+    --command 'sleep 6' \
+    --state-directory "${state_directory}" \
+    --no-session-restore \
+    --quit-after-last-terminal-exit >"${log}" 2>&1 &
+product_pid=$!
+
+window_id=""
+for _ in $(seq 1 200); do
+    window_id="$(xdotool search --name '^Zentty$' 2>/dev/null | head -1 || true)"
+    [[ "${window_id}" =~ ^[1-9][0-9]*$ ]] && grep -Fxq 'zentty-linux: terminal-ready' "${log}" && break
+    sleep 0.05
+done
+[[ "${window_id}" =~ ^[1-9][0-9]*$ ]] || fail "real Zentty window did not appear"
+xdotool windowsize --sync "${window_id}" 1000 700
+
+# Nine real worklanes overflow the controlled 700px sidebar. Every creation is
+# driven through the visible New worklane button and owns a real Ghostty PTY.
+for pane_number in $(seq 2 9); do
+    xdotool mousemove --window "${window_id}" 100 68 click 1
+    for _ in $(seq 1 120); do
+        grep -Fxq "zentty-linux: terminal-ready-pane=pane-${pane_number}" "${log}" && break
+        sleep 0.05
+    done
+    grep -Fxq "zentty-linux: terminal-ready-pane=pane-${pane_number}" "${log}" ||
+        fail "New worklane did not create real pane-${pane_number}"
+done
+grep -Fq 'zentty-linux: sidebar-reveal worklane=worklane-9 value=' "${log}" ||
+    fail "the active overflowing worklane was not automatically revealed"
+
+# Real keyboard traversal wraps to the first lane and must scroll it back into
+# view rather than leaving the selected worklane offscreen.
+xdotool key --window "${window_id}" ctrl+Page_Down
+for _ in $(seq 1 100); do
+    grep -Fxq 'zentty-linux: action=next-worklane worklane=worklane-1 pane=pane-1' "${log}" && break
+    sleep 0.05
+done
+grep -Fxq 'zentty-linux: action=next-worklane worklane=worklane-1 pane=pane-1' "${log}" ||
+    fail "Ctrl+PageDown did not wrap to the first real worklane"
+for _ in $(seq 1 100); do
+    grep -Fq 'zentty-linux: sidebar-active-visible worklane=worklane-1 value=' "${log}" && break
+    sleep 0.05
+done
+grep -Fq 'zentty-linux: sidebar-active-visible worklane=worklane-1 value=' "${log}" ||
+    fail "wrapped selection did not reveal the first sidebar row"
+
+# Drag worklane 1 between worklanes 2 and 3 through GTK DnD. The insertion slot is
+# calculated after excluding the dragged ID, exactly like the source model.
+xdotool mousemove --window "${window_id}" 120 128 mousedown 1
+sleep 0.25
+for drag_y in 165 205 245 285 325 350; do
+    xdotool mousemove --sync --window "${window_id}" 120 "${drag_y}"
+    sleep 0.12
+done
+xdotool mouseup 1
+for _ in $(seq 1 120); do
+    grep -Fxq 'zentty-linux: action=reorder-worklane id=worklane-1 insertion=1 order=worklane-2,worklane-1,worklane-3,worklane-4,worklane-5,worklane-6,worklane-7,worklane-8,worklane-9 active=worklane-1 pane=pane-1' "${log}" && break
+    sleep 0.05
+done
+grep -Fxq 'zentty-linux: action=reorder-worklane id=worklane-1 insertion=1 order=worklane-2,worklane-1,worklane-3,worklane-4,worklane-5,worklane-6,worklane-7,worklane-8,worklane-9 active=worklane-1 pane=pane-1' "${log}" ||
+    fail "real sidebar drag did not reorder the stable worklane ID"
+
+# Linux maps the source Command+Control arrow commands to Super+Control. Move
+# the same active lane back through the real capture-phase keyboard route.
+move_up_count="$(grep -Fxc 'zentty-linux: action=move-worklane target=0' "${log}" || true)"
+xdotool key --window "${window_id}" ctrl+super+Up
+for _ in $(seq 1 100); do
+    (( $(grep -Fxc 'zentty-linux: action=move-worklane target=0' "${log}" || true) > move_up_count )) && break
+    sleep 0.05
+done
+(( $(grep -Fxc 'zentty-linux: action=move-worklane target=0' "${log}" || true) > move_up_count )) ||
+    fail "Ctrl+Super+Up did not move the active worklane through the real key route"
+
+# Reordering and selection metadata must reuse existing rows rather than
+# rebuilding all nine cards and invalidating their pointer/focus state.
+[[ "$(grep -Fc 'zentty-linux: sidebar-card id=worklane-4 panes=1 ' "${log}" || true)" -eq 1 ]] ||
+    fail "an unaffected worklane card was rebuilt during selection or reorder"
+
+# Let all nine real children exit naturally. This uses the product-owned
+# surface-disposal route; destroying the X window underneath live renderers is
+# separately tracked lifecycle work and is not part of sidebar acceptance.
+for _ in $(seq 1 240); do
+    kill -0 "${product_pid}" 2>/dev/null || break
+    sleep 0.05
+done
+kill -0 "${product_pid}" 2>/dev/null && fail "product did not finish after all real children exited"
+set +e
+wait "${product_pid}"
+product_status=$?
+set -e
+product_pid=""
+(( product_status == 0 )) || fail "product exited ${product_status} after natural child completion"
+
+if grep -Eq 'panicked at|thread caused non-unwinding panic|RefCell already borrowed|CRITICAL: Gtk|has a parent GtkBox' "${log}"; then
+    fail "sidebar management reported a panic or GTK lifecycle critical"
+fi
+
+echo "Rust sidebar management passed: x11, worklanes=9, overflow=revealed, drag-reorder=real, rows=stable"

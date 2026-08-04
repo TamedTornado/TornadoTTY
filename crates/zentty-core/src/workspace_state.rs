@@ -641,6 +641,24 @@ impl WorkspaceState {
         true
     }
 
+    /// Moves a worklane into an insertion slot computed after excluding the
+    /// dragged worklane, matching the sidebar drag-preview model.
+    pub fn reorder_worklane(&mut self, id: &str, insertion_index: usize) -> bool {
+        let Some(from_index) = self.worklanes.iter().position(|worklane| worklane.id == id) else {
+            return false;
+        };
+        if insertion_index >= self.worklanes.len() {
+            return false;
+        }
+        let final_index = insertion_index;
+        if from_index == final_index {
+            return false;
+        }
+        let worklane = self.worklanes.remove(from_index);
+        self.worklanes.insert(final_index, worklane);
+        true
+    }
+
     /// Removes the active worklane when another worklane can replace it.
     ///
     /// # Panics

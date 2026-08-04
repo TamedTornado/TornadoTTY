@@ -5,6 +5,7 @@ mod pane_controls;
 mod pane_scroll_switch;
 mod peek_scroll_navigation;
 mod sidebar;
+mod sidebar_visibility;
 mod source_ui;
 mod window_chrome;
 mod worklane_peek;

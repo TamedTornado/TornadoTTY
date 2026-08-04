@@ -21,6 +21,7 @@ use crate::{
         ScrollUnit as PeekScrollUnit,
     },
     sidebar,
+    sidebar_visibility::{Event as SidebarVisibilityEvent, Mode as SidebarVisibilityMode},
     window_chrome::WindowChrome,
     worklane_peek::{
         self, Direction as PeekDirection, PanePreview, Phase as PeekPhase,
@@ -41,6 +42,7 @@ const ACTION_CYCLE_WORKLANE_COLOR: &str = "cycle-worklane-color";
 const ACTION_SET_WORKLANE_COLOR: &str = "set-worklane-color";
 const ACTION_CLOSE_WORKLANE: &str = "close-worklane";
 const ACTION_MOVE_WORKLANE: &str = "move-worklane";
+const ACTION_REORDER_WORKLANE: &str = "reorder-worklane";
 const ACTION_MOVE_WORKLANE_UP: &str = "move-worklane-up";
 const ACTION_MOVE_WORKLANE_DOWN: &str = "move-worklane-down";
 const ACTION_MOVE_PANE_LEFT: &str = "move-pane-left";
@@ -62,6 +64,8 @@ pub(crate) struct ApplicationShell {
     window: gtk::Window,
     chrome: WindowChrome,
     body: gtk::Paned,
+    sidebar_reservation: gtk::Box,
+    sidebar_hover_rail: gtk::Box,
     sidebar: gtk::Box,
     sidebar_scroll: gtk::ScrolledWindow,
     pane_scroll: gtk::ScrolledWindow,
@@ -82,9 +86,24 @@ pub(crate) struct ApplicationShell {
     preferred_sidebar_width: Rc<Cell<i32>>,
     adjusting_sidebar_width: Rc<Cell<bool>>,
     sidebar_reveal_generation: Rc<Cell<u64>>,
+    sidebar_visibility: crate::sidebar_visibility::State,
+    sidebar_visibility_generation: u64,
     peek_phase: PeekPhase,
     peek_generation: u64,
     peek_tab_down: bool,
+    peek_view: WorklanePeekView,
+}
+
+struct ShellWidgets {
+    window: gtk::Window,
+    chrome: WindowChrome,
+    body: gtk::Paned,
+    sidebar: gtk::Box,
+    sidebar_scroll: gtk::ScrolledWindow,
+    sidebar_reservation: gtk::Box,
+    sidebar_hover_rail: gtk::Box,
+    pane_scroll: gtk::ScrolledWindow,
+    pane_box: gtk::Box,
     peek_view: WorklanePeekView,
 }
 
@@ -97,41 +116,20 @@ impl ApplicationShell {
         main_loop: &glib::MainLoop,
         restored_window: Option<WindowRecipe>,
     ) -> Result<Rc<RefCell<Self>>, String> {
-        let window = gtk::Window::new();
-        window.set_title(Some(zentty_core::PRODUCT_NAME));
-        window.set_default_size(1000, 700);
         sidebar::install_styles();
         pane_controls::install_styles();
-
-        let body = gtk::Paned::new(gtk::Orientation::Horizontal);
-        body.set_position(SidebarWidthPreference::DEFAULT);
-        body.set_resize_start_child(false);
-        body.set_shrink_start_child(true);
-        let sidebar = gtk::Box::new(gtk::Orientation::Vertical, 6);
-        let sidebar_scroll = gtk::ScrolledWindow::new();
-        sidebar_scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
-        sidebar_scroll.set_child(Some(&sidebar));
-
-        let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        content.set_hexpand(true);
-        content.set_vexpand(true);
-
-        let pane_box = gtk::Box::new(gtk::Orientation::Horizontal, 1);
-        pane_box.set_homogeneous(false);
-        pane_box.set_hexpand(true);
-        pane_box.set_vexpand(true);
-        let pane_scroll = gtk::ScrolledWindow::new();
-        pane_scroll.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Never);
-        pane_scroll.set_hexpand(true);
-        pane_scroll.set_vexpand(true);
-        pane_scroll.set_child(Some(&pane_box));
-        content.append(&pane_scroll);
-        body.set_start_child(Some(&sidebar_scroll));
-        body.set_end_child(Some(&content));
-
-        let chrome = WindowChrome::new();
-        let (overlay, peek_view) = build_root(&chrome, &body);
-        window.set_child(Some(&overlay));
+        let ShellWidgets {
+            window,
+            chrome,
+            body,
+            sidebar,
+            sidebar_scroll,
+            sidebar_reservation,
+            sidebar_hover_rail,
+            pane_scroll,
+            pane_box,
+            peek_view,
+        } = build_shell_widgets();
 
         let window_template = restored_window.unwrap_or_else(default_window_recipe);
         let state = WorkspaceState::from_window_recipe(&window_template)
@@ -160,6 +158,8 @@ impl ApplicationShell {
             window,
             chrome,
             body: body.clone(),
+            sidebar_reservation,
+            sidebar_hover_rail,
             sidebar,
             sidebar_scroll,
             pane_scroll,
@@ -180,15 +180,23 @@ impl ApplicationShell {
             preferred_sidebar_width: Rc::clone(&preferred_sidebar_width),
             adjusting_sidebar_width: Rc::clone(&adjusting_sidebar_width),
             sidebar_reveal_generation,
+            sidebar_visibility: crate::sidebar_visibility::State::default(),
+            sidebar_visibility_generation: 0,
             peek_phase: PeekPhase::Idle,
             peek_generation: 0,
             peek_tab_down: false,
             peek_view,
         }));
 
-        install_sidebar_width_tracking(&body, preferred_sidebar_width, adjusting_sidebar_width);
+        install_sidebar_width_tracking(
+            &body,
+            &shell.borrow().sidebar_scroll,
+            preferred_sidebar_width,
+            adjusting_sidebar_width,
+        );
 
         Self::install_actions(&shell);
+        Self::install_sidebar_visibility(&shell);
         Self::install_pane_traversal_shortcuts(&shell);
         Self::install_peek_scroll_navigation(&shell);
         Self::install_pane_scroll_switching(&shell);
@@ -218,7 +226,11 @@ impl ApplicationShell {
         }
         let target =
             SidebarWidthPreference::clamped(self.preferred_sidebar_width.get(), available_width);
-        if self.body.position() != target {
+        self.sidebar_scroll.set_width_request(target);
+        self.sidebar_reservation.set_width_request(target);
+        if self.sidebar_visibility.mode() == SidebarVisibilityMode::PinnedOpen
+            && self.body.position() != target
+        {
             self.adjusting_sidebar_width.set(true);
             self.body.set_position(target);
             self.adjusting_sidebar_width.set(false);
@@ -350,14 +362,12 @@ impl ApplicationShell {
                 return;
             };
             let visible = {
-                let shell = shell.borrow();
-                let visible = !shell.sidebar_scroll.is_visible();
-                shell.sidebar_scroll.set_visible(visible);
-                eprintln!(
-                    "zentty-linux: sidebar-visibility={}",
-                    if visible { "pinned-open" } else { "hidden" }
-                );
-                visible
+                let mut shell = shell.borrow_mut();
+                shell
+                    .sidebar_visibility
+                    .handle(SidebarVisibilityEvent::TogglePressed);
+                shell.apply_sidebar_visibility();
+                shell.sidebar_visibility.mode() != SidebarVisibilityMode::Hidden
             };
             let weak = Rc::downgrade(&shell);
             glib::idle_add_local_once(move || {
@@ -432,6 +442,136 @@ impl ApplicationShell {
             .insert_action_group("workspace", Some(&group));
     }
 
+    fn install_sidebar_visibility(shell: &Rc<RefCell<Self>>) {
+        let rail_motion = gtk::EventControllerMotion::new();
+        let weak = Rc::downgrade(shell);
+        rail_motion.connect_enter(move |_, _, _| {
+            if let Some(shell) = weak.upgrade() {
+                let Ok(mut shell) = shell.try_borrow_mut() else {
+                    return;
+                };
+                shell
+                    .sidebar_visibility
+                    .handle(SidebarVisibilityEvent::HoverRailEntered);
+                shell.apply_sidebar_visibility();
+            }
+        });
+        let weak = Rc::downgrade(shell);
+        rail_motion.connect_leave(move |_| {
+            if let Some(shell) = weak.upgrade() {
+                let changed = shell.try_borrow_mut().is_ok_and(|mut shell| {
+                    shell
+                        .sidebar_visibility
+                        .handle(SidebarVisibilityEvent::HoverRailExited);
+                    true
+                });
+                if changed {
+                    Self::schedule_sidebar_dismissal(&shell);
+                }
+            }
+        });
+        shell
+            .borrow()
+            .sidebar_hover_rail
+            .add_controller(rail_motion);
+
+        let sidebar_motion = gtk::EventControllerMotion::new();
+        let weak = Rc::downgrade(shell);
+        sidebar_motion.connect_enter(move |_, _, _| {
+            if let Some(shell) = weak.upgrade() {
+                let Ok(mut shell) = shell.try_borrow_mut() else {
+                    return;
+                };
+                shell.sidebar_visibility_generation =
+                    shell.sidebar_visibility_generation.wrapping_add(1);
+                shell
+                    .sidebar_visibility
+                    .handle(SidebarVisibilityEvent::SidebarEntered);
+            }
+        });
+        let weak = Rc::downgrade(shell);
+        sidebar_motion.connect_leave(move |_| {
+            if let Some(shell) = weak.upgrade() {
+                let changed = shell.try_borrow_mut().is_ok_and(|mut shell| {
+                    shell
+                        .sidebar_visibility
+                        .handle(SidebarVisibilityEvent::SidebarExited);
+                    true
+                });
+                if changed {
+                    Self::schedule_sidebar_dismissal(&shell);
+                }
+            }
+        });
+        shell.borrow().sidebar_scroll.add_controller(sidebar_motion);
+    }
+
+    fn schedule_sidebar_dismissal(shell: &Rc<RefCell<Self>>) {
+        let generation = {
+            let Ok(mut shell) = shell.try_borrow_mut() else {
+                return;
+            };
+            shell.sidebar_visibility_generation =
+                shell.sidebar_visibility_generation.wrapping_add(1);
+            shell.sidebar_visibility_generation
+        };
+        let weak = Rc::downgrade(shell);
+        glib::timeout_add_local_once(Duration::from_millis(250), move || {
+            let Some(shell) = weak.upgrade() else {
+                return;
+            };
+            let Ok(mut shell) = shell.try_borrow_mut() else {
+                return;
+            };
+            if shell.sidebar_visibility_generation != generation {
+                return;
+            }
+            if shell
+                .sidebar_visibility
+                .handle(SidebarVisibilityEvent::DismissTimerElapsed)
+            {
+                shell.apply_sidebar_visibility();
+                shell.focus_selected_surface();
+            }
+        });
+    }
+
+    fn apply_sidebar_visibility(&mut self) {
+        self.sidebar_visibility_generation = self.sidebar_visibility_generation.wrapping_add(1);
+        let width = SidebarWidthPreference::clamped(
+            self.preferred_sidebar_width.get(),
+            self.window.width().max(1),
+        );
+        self.sidebar_scroll.set_width_request(width);
+        match self.sidebar_visibility.mode() {
+            SidebarVisibilityMode::PinnedOpen => {
+                if self.body.start_child().is_none() {
+                    self.body.set_start_child(Some(&self.sidebar_reservation));
+                }
+                self.sidebar_reservation.set_width_request(width);
+                self.body.set_position(width);
+                self.sidebar_scroll
+                    .remove_css_class("zentty-sidebar-floating");
+                self.sidebar_scroll.set_visible(true);
+                self.sidebar_hover_rail.set_visible(false);
+                eprintln!("zentty-linux: sidebar-visibility=pinned-open");
+            }
+            SidebarVisibilityMode::Hidden => {
+                self.body.set_start_child(None::<&gtk::Widget>);
+                self.sidebar_scroll.set_visible(false);
+                self.sidebar_hover_rail.set_visible(true);
+                eprintln!("zentty-linux: sidebar-visibility=hidden");
+            }
+            SidebarVisibilityMode::HoverPeek => {
+                self.body.set_start_child(None::<&gtk::Widget>);
+                self.sidebar_scroll.add_css_class("zentty-sidebar-floating");
+                self.sidebar_scroll.set_visible(true);
+                self.sidebar_hover_rail.set_visible(true);
+                eprintln!("zentty-linux: sidebar-visibility=hover-peek");
+            }
+        }
+    }
+
     fn install_pane_traversal_shortcuts(shell: &Rc<RefCell<Self>>) {
         let controller = gtk::EventControllerKey::new();
         controller.set_propagation_phase(gtk::PropagationPhase::Capture);
@@ -441,6 +581,16 @@ impl ApplicationShell {
             let Some(shell) = weak.upgrade() else {
                 return glib::Propagation::Proceed;
             };
+            if !shell.borrow().peek_phase.is_active()
+                && modifiers.contains(gdk::ModifierType::CONTROL_MASK)
+                && modifiers.contains(gdk::ModifierType::SUPER_MASK)
+                && (key == gdk::Key::Up || key == gdk::Key::Down)
+            {
+                shell
+                    .borrow_mut()
+                    .move_active_worklane(if key == gdk::Key::Up { -1 } else { 1 });
+                return glib::Propagation::Stop;
+            }
             if !shell.borrow().peek_phase.is_active()
                 && modifiers.contains(gdk::ModifierType::CONTROL_MASK)
                 && (key == gdk::Key::Page_Down || key == gdk::Key::Page_Up)
@@ -1042,6 +1192,14 @@ impl ApplicationShell {
         });
         group.add_action(&close_worklane);
 
+        Self::install_worklane_move_actions(shell, group, string_pair);
+    }
+
+    fn install_worklane_move_actions(
+        shell: &Rc<RefCell<Self>>,
+        group: &gio::SimpleActionGroup,
+        string_pair: &glib::VariantTy,
+    ) {
         let move_worklane = gio::SimpleAction::new(ACTION_MOVE_WORKLANE, Some(string_pair));
         let weak = Rc::downgrade(shell);
         move_worklane.connect_activate(move |_, parameter| {
@@ -1064,6 +1222,56 @@ impl ApplicationShell {
             }
         });
         group.add_action(&move_worklane);
+
+        let reorder_worklane = gio::SimpleAction::new(ACTION_REORDER_WORKLANE, Some(string_pair));
+        let weak = Rc::downgrade(shell);
+        reorder_worklane.connect_activate(move |_, parameter| {
+            let (Some(shell), Some((worklane_id, placement))) = (
+                weak.upgrade(),
+                parameter.and_then(glib::Variant::get::<(String, String)>),
+            ) else {
+                return;
+            };
+            let Some((edge, target_id)) = placement.split_once(':') else {
+                return;
+            };
+            let mut shell = shell.borrow_mut();
+            let filtered = shell
+                .state
+                .worklanes()
+                .iter()
+                .filter(|worklane| worklane.id != worklane_id)
+                .map(|worklane| worklane.id.clone())
+                .collect::<Vec<_>>();
+            let Some(target_index) = filtered.iter().position(|id| id == target_id) else {
+                return;
+            };
+            let insertion_index = match edge {
+                "before" => target_index,
+                "after" => target_index + 1,
+                _ => return,
+            };
+            if shell
+                .state
+                .reorder_worklane(&worklane_id, insertion_index)
+            {
+                eprintln!(
+                    "zentty-linux: action=reorder-worklane id={worklane_id} insertion={insertion_index} order={} active={} pane={}",
+                    shell
+                        .state
+                        .worklanes()
+                        .iter()
+                        .map(|worklane| worklane.id.as_str())
+                        .collect::<Vec<_>>()
+                        .join(","),
+                    shell.state.active_worklane_id(),
+                    shell.state.focused_pane_id().unwrap_or("none")
+                );
+                shell.render_sidebar();
+                shell.focus_selected_surface();
+            }
+        });
+        group.add_action(&reorder_worklane);
     }
 
     fn install_pane_transfer_action(shell: &Rc<RefCell<Self>>, group: &gio::SimpleActionGroup) {
@@ -1682,6 +1890,11 @@ impl ApplicationShell {
                         adjustment.value()
                     );
                 }
+                eprintln!(
+                    "zentty-linux: sidebar-active-visible worklane={} value={}",
+                    worklane_id,
+                    adjustment.value()
+                );
             });
         });
     }
@@ -1922,9 +2135,11 @@ impl ApplicationShell {
 
 fn install_sidebar_width_tracking(
     body: &gtk::Paned,
+    sidebar: &gtk::ScrolledWindow,
     preferred_width: Rc<Cell<i32>>,
     adjusting_width: Rc<Cell<bool>>,
 ) {
+    let sidebar = sidebar.clone();
     body.connect_position_notify(move |body| {
         if adjusting_width.get() || body.width() <= 0 {
             return;
@@ -1932,6 +2147,7 @@ fn install_sidebar_width_tracking(
         let position = body.position();
         let clamped = SidebarWidthPreference::clamped(position, body.width());
         preferred_width.set(clamped);
+        sidebar.set_width_request(clamped);
         if position != clamped {
             adjusting_width.set(true);
             body.set_position(clamped);
@@ -1941,15 +2157,76 @@ fn install_sidebar_width_tracking(
     });
 }
 
-fn build_root(chrome: &WindowChrome, body: &gtk::Paned) -> (gtk::Overlay, WorklanePeekView) {
+fn build_shell_widgets() -> ShellWidgets {
+    let window = gtk::Window::new();
+    window.set_title(Some(zentty_core::PRODUCT_NAME));
+    window.set_default_size(1000, 700);
+    let body = gtk::Paned::new(gtk::Orientation::Horizontal);
+    body.set_position(SidebarWidthPreference::DEFAULT);
+    body.set_resize_start_child(false);
+    body.set_shrink_start_child(true);
+    let sidebar = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    let sidebar_scroll = gtk::ScrolledWindow::new();
+    sidebar_scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+    sidebar_scroll.set_child(Some(&sidebar));
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    content.set_hexpand(true);
+    content.set_vexpand(true);
+    let pane_box = gtk::Box::new(gtk::Orientation::Horizontal, 1);
+    pane_box.set_hexpand(true);
+    pane_box.set_vexpand(true);
+    let pane_scroll = gtk::ScrolledWindow::new();
+    pane_scroll.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Never);
+    pane_scroll.set_hexpand(true);
+    pane_scroll.set_vexpand(true);
+    pane_scroll.set_child(Some(&pane_box));
+    content.append(&pane_scroll);
+    let sidebar_reservation = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    sidebar_reservation.set_width_request(SidebarWidthPreference::DEFAULT);
+    body.set_start_child(Some(&sidebar_reservation));
+    body.set_end_child(Some(&content));
+    let chrome = WindowChrome::new();
+    let (overlay, peek_view, sidebar_hover_rail) = build_root(&chrome, &body, &sidebar_scroll);
+    window.set_child(Some(&overlay));
+    ShellWidgets {
+        window,
+        chrome,
+        body,
+        sidebar,
+        sidebar_scroll,
+        sidebar_reservation,
+        sidebar_hover_rail,
+        pane_scroll,
+        pane_box,
+        peek_view,
+    }
+}
+
+fn build_root(
+    chrome: &WindowChrome,
+    body: &gtk::Paned,
+    sidebar: &gtk::ScrolledWindow,
+) -> (gtk::Overlay, WorklanePeekView, gtk::Box) {
     let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
     root.append(chrome.widget());
     root.append(body);
     let overlay = gtk::Overlay::new();
     overlay.set_child(Some(&root));
+    let hover_rail = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    hover_rail.set_width_request(8);
+    hover_rail.set_halign(gtk::Align::Start);
+    hover_rail.set_valign(gtk::Align::Fill);
+    hover_rail.set_margin_top(38);
+    hover_rail.set_visible(false);
+    overlay.add_overlay(&hover_rail);
+    sidebar.set_width_request(SidebarWidthPreference::DEFAULT);
+    sidebar.set_halign(gtk::Align::Start);
+    sidebar.set_valign(gtk::Align::Fill);
+    sidebar.set_margin_top(38);
+    overlay.add_overlay(sidebar);
     let peek_view = WorklanePeekView::new();
     overlay.add_overlay(peek_view.widget());
-    (overlay, peek_view)
+    (overlay, peek_view, hover_rail)
 }
 
 fn workspace_pane_ids(state: &WorkspaceState) -> Vec<String> {

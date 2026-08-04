@@ -134,6 +134,22 @@ for _ in $(seq 1 100); do
 done
 grep -Fxq 'zentty-linux: sidebar-visibility=hidden' "${log}" ||
     fail "the real leading-chrome toggle did not hide the sidebar"
+hover_count="$(grep -Fxc 'zentty-linux: sidebar-visibility=hover-peek' "${log}" || true)"
+xdotool mousemove --window "${window_id}" 2 350
+for _ in $(seq 1 100); do
+    (( $(grep -Fxc 'zentty-linux: sidebar-visibility=hover-peek' "${log}" || true) > hover_count )) && break
+    sleep 0.05
+done
+(( $(grep -Fxc 'zentty-linux: sidebar-visibility=hover-peek' "${log}" || true) > hover_count )) ||
+    fail "the hidden sidebar rail did not open the source hover overlay"
+hidden_count="$(grep -Fxc 'zentty-linux: sidebar-visibility=hidden' "${log}" || true)"
+xdotool mousemove --window "${window_id}" 700 350
+for _ in $(seq 1 100); do
+    (( $(grep -Fxc 'zentty-linux: sidebar-visibility=hidden' "${log}" || true) > hidden_count )) && break
+    sleep 0.05
+done
+(( $(grep -Fxc 'zentty-linux: sidebar-visibility=hidden' "${log}" || true) > hidden_count )) ||
+    fail "leaving the floating sidebar did not dismiss it after the source delay"
 xdotool mousemove --window "${window_id}" 16 18 click 1
 for _ in $(seq 1 100); do
     grep -Fxq 'zentty-linux: sidebar-visibility=pinned-open' "${log}" && break

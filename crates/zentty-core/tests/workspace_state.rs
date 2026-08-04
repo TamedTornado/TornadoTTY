@@ -340,6 +340,33 @@ fn adjacent_worklane_traversal_wraps_without_changing_each_lanes_focused_pane() 
 }
 
 #[test]
+fn drag_insertion_reorders_stable_worklane_ids_without_changing_selection() {
+    const SOURCE: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../Zentty/UI/Sidebar/SidebarWorklaneReorderModel.swift"
+    ));
+    let mut state = WorkspaceState::new("a", "pane-a");
+    assert!(state.create_worklane("b", "pane-b"));
+    assert!(state.create_worklane("c", "pane-c"));
+    assert_eq!(state.active_worklane_id(), "c");
+
+    assert!(state.reorder_worklane("a", 2));
+    assert_eq!(
+        state
+            .worklanes()
+            .iter()
+            .map(|worklane| worklane.id.as_str())
+            .collect::<Vec<_>>(),
+        ["b", "c", "a"]
+    );
+    assert_eq!(state.active_worklane_id(), "c");
+    assert!(!state.reorder_worklane("missing", 0));
+    assert!(!state.reorder_worklane("a", 3));
+    assert!(SOURCE.contains("currentOrder.filter { $0 != draggedID }"));
+    assert!(SOURCE.contains("order.insert(draggedID, at: insertionIndex)"));
+}
+
+#[test]
 fn right_insertion_commands_preserve_their_distinct_width_contracts() {
     let mut added = WorkspaceState::new("lane-1", "pane-1");
     assert!(added.add_pane_right_without_resizing("pane-2", 719.0));

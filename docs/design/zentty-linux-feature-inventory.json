@@ -62,8 +62,8 @@
       "linux_owner_issue": 4,
       "implementation_status": "PARTIAL",
       "focused_tests": ["crates/zentty-core/tests/workspace_state.rs"],
-      "product_scenarios": ["linux/tests/rust-workspace-actions"],
-      "test_plan": "Extend the real two-worklane scenario to removal and source keyboard navigation without duplicating unrelated matrix axes.",
+      "product_scenarios": ["linux/tests/rust-workspace-actions", "linux/tests/rust-sidebar-management-x11"],
+      "test_plan": "Preserve the delivered real menu/action, Ctrl+Super+Arrow and pointer drag reorder routes, including stable identity, active selection, overflow and automatic reveal. Add controlled Wayland pointer drag and persisted-order relaunch evidence before promoting this feature from PARTIAL.",
       "alternative_or_blocker": null
     },
     {
@@ -318,8 +318,8 @@
       "linux_owner_issue": 16,
       "implementation_status": "PARTIAL",
       "focused_tests": [],
-      "product_scenarios": ["linux/tests/rust-workspace-actions", "linux/tests/rust-source-ux-x11"],
-      "test_plan": "Extend the delivered contextual pane-action and active-worklane auto-reveal slice with annotated source screenshot coverage, semantic accessibility inspection, deterministic visual states, sidebar modes, an overflowing real-sidebar reveal scenario, and proof that every chrome interaction preserves real terminal focus.",
+      "product_scenarios": ["linux/tests/rust-workspace-actions", "linux/tests/rust-source-ux-x11", "linux/tests/rust-sidebar-management-x11"],
+      "test_plan": "Extend the delivered contextual pane actions, keyed row reconciliation, real overflowing-sidebar reveal, and pinned/hidden/hover-overlay modes with annotated source screenshot coverage, semantic accessibility inspection, persisted visibility, reduced-motion transitions, controlled Wayland hover/drag, and proof that every chrome interaction preserves real terminal focus.",
       "alternative_or_blocker": null
     },
     {

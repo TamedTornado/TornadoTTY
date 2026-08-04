@@ -5568,6 +5568,64 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   child processes in controlled compositors; no terminal or workspace model is
   faked.
 
+### DOGFOOD-2026-08-04-WORKLANE-SIDEBAR-MANAGEMENT: real overflow, drag and overlay modes
+
+- **Scope:** The next five source-backed sidebar behaviors are now a coherent
+  product slice: worklane Move Up/Down keyboard routing, pointer drag reorder,
+  controlled overflow with active-row reveal, stable keyed row reconciliation,
+  and pinned/hidden/hover-overlay visibility.
+- **Reorder semantics:** The core accepts an insertion slot computed after
+  excluding the dragged stable ID, matching
+  `SidebarWorklaneReorderModel.swift`. Existing menu actions remain available;
+  Linux maps the source Command+Control arrows to Ctrl+Super+Up/Down. A new GTK
+  `DragSource` on each worklane header and card-local `DropTarget`s route through
+  the same model without recreating terminals.
+- **Real pointer and keyboard evidence:** A dedicated controlled-X11 scenario
+  creates nine worklanes through the visible New worklane button, proving nine
+  real Ghostty surfaces, PTYs and children. It drags worklane 1 between lanes 2
+  and 3 through real GTK DnD, requires the exact final order, active worklane and
+  focused real pane, then moves it back with a real Ctrl+Super+Up chord.
+- **Overflow evidence:** The nine real rows exceed a 700px window. Selecting the
+  ninth lane clamps the GTK vertical adjustment to reveal it; real
+  Ctrl+PageDown wraps to lane 1 and the post-layout receipt proves that row is
+  visible again. Environmental absence is not treated as a pass.
+- **Stable reconciliation:** Sidebar rendering now retains compatible card
+  widgets, reorders them in place, creates only new/structurally changed cards,
+  and removes stale ones. The real scenario proves an unaffected middle card is
+  constructed once across nine insertions, selection, drag, and keyboard
+  reorder. This preserves its hover, focus, controllers and popover identity.
+- **Visibility modes:** The sidebar now stays in a top-level GTK overlay while a
+  reservation pane supplies pinned layout width. The source state machine
+  switches among pinned-open, hidden and floating hover-peek; a narrow hidden
+  rail reveals it, pointer entry cancels dismissal, and leaving dismisses after
+  250ms without stealing terminal focus. Controlled X11 drives the real chrome
+  button, rail and pointer-exit route; focused tests pin the Swift state names
+  and transitions.
+- **Failure and repair:** The first real split after keyed reconciliation
+  synchronously unparented a sidebar row, which emitted a GTK motion event while
+  `ApplicationShell` was already mutably borrowed. The callback originally used
+  `borrow_mut` and aborted with a non-unwinding `RefCell already borrowed`
+  panic. Motion callbacks now use `try_borrow_mut` and ignore reentrant layout
+  notifications; the complete five-terminal X11 workflow then passed.
+- **Harness corrections:** The initial overflow assertion expected an explicit
+  clamp receipt when GTK had already returned the adjustment to zero during
+  reconciliation. A post-layout active-visible receipt now proves either path.
+  The first DnD used a single synthetic pointer jump, which began a drag but
+  crossed no GTK target; incremental real pointer motion exposed both target
+  cards and completed the drop. Neither harness gap was converted into a pass.
+- **Lifecycle discovery outside this slice:** Abrupt X11 `windowclose` with nine
+  live renderers produced GDK `BadWindow`, consistent with the already tracked
+  product-owned surface-shutdown requirement. The sidebar scenario now finishes
+  through nine natural child exits and product-owned disposal; this avoids
+  conflating an unresolved lifecycle defect with sidebar acceptance rather than
+  suppressing or declaring it clean.
+- **Regression evidence:** Workspace tests, strict all-target Clippy,
+  feature-inventory validation, ReleaseSafe staging, the complete controlled
+  X11 source-UX scenario, the nine-worklane controlled X11 sidebar scenario, and
+  the complete controlled Wayland five-PTY workspace scenario all pass. Physical
+  Wayland pointer DnD and persisted visibility/order remain explicit inventory
+  gaps.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were

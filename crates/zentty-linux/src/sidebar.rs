@@ -95,8 +95,10 @@ pub(crate) fn install_styles() {
     let provider = gtk::CssProvider::new();
     provider.load_from_string(
         ".zentty-sidebar { background: #17191d; color: #e7e9ed; padding: 10px; }\n\
+         .zentty-sidebar-floating { background: #17191d; border-right: 1px solid #4a5260; box-shadow: 10px 0 24px rgba(0, 0, 0, 0.45); }\n\
          .zentty-sidebar-header { color: #f1f3f5; font-weight: 700; font-size: 15px; }\n\
          .worklane-card { background: #1e2126; border: 1px solid #30343b; border-radius: 10px; padding: 7px; }\n\
+         .worklane-drop-target { border-color: #65a7ff; box-shadow: inset 0 0 0 2px alpha(#65a7ff, 0.55); }\n\
          .worklane-card-active { background: #343a45; border-color: #7c8799; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35); }\n\
          .worklane-tint-inactive.worklane-card-red { border-left: 4px solid rgba(245, 101, 101, 0.34); }\n\
          .worklane-tint-inactive.worklane-card-orange { border-left: 4px solid rgba(237, 137, 54, 0.34); }\n\
@@ -156,10 +158,49 @@ pub(crate) fn render(
     window: &gtk::Window,
     summaries: &[SidebarWorklaneSummary],
 ) {
-    remove_all_children(sidebar);
     sidebar.add_css_class("zentty-sidebar");
+    let header = ensure_header(sidebar);
+    let expected_ids = summaries
+        .iter()
+        .map(|summary| summary.worklane_id.as_str())
+        .collect::<Vec<_>>();
+    let mut child = header.next_sibling();
+    while let Some(widget) = child {
+        child = widget.next_sibling();
+        let keep = expected_ids
+            .iter()
+            .any(|id| widget.widget_name() == widget_name("worklane-card", id));
+        if !keep {
+            sidebar.remove(&widget);
+        }
+    }
+    let mut previous: gtk::Widget = header.upcast();
+    for (index, summary) in summaries.iter().enumerate() {
+        let name = widget_name("worklane-card", &summary.worklane_id);
+        let card = find_named_widget(sidebar.upcast_ref(), &name)
+            .filter(|card| card_is_compatible(card, summary))
+            .unwrap_or_else(|| {
+                if let Some(stale) = find_named_widget(sidebar.upcast_ref(), &name) {
+                    sidebar.remove(&stale);
+                }
+                let card = make_worklane_card(window, summary, index, summaries.len());
+                sidebar.append(&card);
+                card.upcast()
+            });
+        sidebar.reorder_child_after(&card, Some(&previous));
+        previous = card;
+    }
+    let _ = update_metadata(sidebar, summaries);
+}
 
+fn ensure_header(sidebar: &gtk::Box) -> gtk::Box {
+    if let Some(header) = find_named_widget(sidebar.upcast_ref(), "zentty-sidebar-header")
+        .and_then(|widget| widget.downcast::<gtk::Box>().ok())
+    {
+        return header;
+    }
     let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    header.set_widget_name("zentty-sidebar-header");
     let add = gtk::Button::new();
     add.add_css_class("sidebar-create-worklane");
     add.set_hexpand(true);
@@ -175,11 +216,8 @@ pub(crate) fn render(
     add.update_property(&[gtk::accessible::Property::Label(source_ui::NEW_WORKLANE)]);
     add.set_action_name(Some("workspace.new-worklane"));
     header.append(&add);
-    sidebar.append(&header);
-
-    for (index, summary) in summaries.iter().enumerate() {
-        sidebar.append(&make_worklane_card(window, summary, index, summaries.len()));
-    }
+    sidebar.prepend(&header);
+    header
 }
 
 pub(crate) fn clear(sidebar: &gtk::Box) {
@@ -199,6 +237,10 @@ fn make_worklane_card(
         card.add_css_class(&format!("worklane-card-{}", color.as_str()));
     }
     apply_worklane_visual_state(card.upcast_ref(), summary);
+    let custom_title = gtk::Label::new(summary.top_label.as_deref());
+    custom_title.set_widget_name(&widget_name("worklane-custom-title", &summary.worklane_id));
+    custom_title.set_visible(false);
+    card.append(&custom_title);
 
     let header = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     let select = gtk::Button::new();
@@ -244,6 +286,8 @@ fn make_worklane_card(
         worklane_count,
     )));
     header.append(&menu);
+    install_worklane_drag_source(&header, &summary.worklane_id);
+    install_worklane_drop_target(&card, &summary.worklane_id);
     card.append(&header);
 
     for pane in &summary.pane_rows {
@@ -258,6 +302,94 @@ fn make_worklane_card(
         summary.top_label
     );
     card
+}
+
+fn card_is_compatible(card: &gtk::Widget, summary: &SidebarWorklaneSummary) -> bool {
+    let custom_title = find_named_label(
+        card,
+        &widget_name("worklane-custom-title", &summary.worklane_id),
+    )
+    .map(|label| label.text().to_string());
+    if custom_title.as_deref() != Some(summary.top_label.as_deref().unwrap_or("")) {
+        return false;
+    }
+    let current_color = zentty_core::WorklaneColor::ALL
+        .into_iter()
+        .find(|color| card.has_css_class(&format!("worklane-card-{}", color.as_str())));
+    if current_color != summary.color {
+        return false;
+    }
+    let mut pane_ids = Vec::new();
+    collect_named_ids(card, "zentty-pane-row-", &mut pane_ids);
+    pane_ids
+        == summary
+            .pane_rows
+            .iter()
+            .map(|pane| pane.pane_id.clone())
+            .collect::<Vec<_>>()
+}
+
+fn collect_named_ids(widget: &gtk::Widget, prefix: &str, ids: &mut Vec<String>) {
+    let name = widget.widget_name();
+    if let Some(id) = name.strip_prefix(prefix) {
+        ids.push(id.to_owned());
+    }
+    let mut child = widget.first_child();
+    while let Some(widget) = child {
+        collect_named_ids(&widget, prefix, ids);
+        child = widget.next_sibling();
+    }
+}
+
+fn install_worklane_drag_source(header: &gtk::Box, worklane_id: &str) {
+    let source = gtk::DragSource::new();
+    source.set_actions(gtk::gdk::DragAction::MOVE);
+    source.set_propagation_phase(gtk::PropagationPhase::Capture);
+    let worklane_id = worklane_id.to_owned();
+    let prepare_id = worklane_id.clone();
+    source.connect_prepare(move |_, _, _| {
+        Some(gtk::gdk::ContentProvider::for_value(&prepare_id.to_value()))
+    });
+    source.connect_drag_begin(move |_, _| {
+        eprintln!("zentty-linux: worklane-drag=begin id={worklane_id}");
+    });
+    header.add_controller(source);
+}
+
+fn install_worklane_drop_target(card: &gtk::Box, target_id: &str) {
+    let target = gtk::DropTarget::new(String::static_type(), gtk::gdk::DragAction::MOVE);
+    let card_enter = card.clone();
+    let enter_id = target_id.to_owned();
+    target.connect_enter(move |_, _, _| {
+        card_enter.add_css_class("worklane-drop-target");
+        eprintln!("zentty-linux: worklane-drag=target id={enter_id}");
+        gtk::gdk::DragAction::MOVE
+    });
+    let card_leave = card.clone();
+    target.connect_leave(move |_| card_leave.remove_css_class("worklane-drop-target"));
+    let card_drop = card.clone();
+    let target_id = target_id.to_owned();
+    target.connect_drop(move |_, value, _, y| {
+        card_drop.remove_css_class("worklane-drop-target");
+        let Ok(dragged_id) = value.get::<String>() else {
+            return false;
+        };
+        if dragged_id == target_id {
+            return false;
+        }
+        let below_midpoint = y >= f64::from(card_drop.height()) / 2.0;
+        let placement = format!(
+            "{}:{target_id}",
+            if below_midpoint { "after" } else { "before" }
+        );
+        card_drop
+            .activate_action(
+                "workspace.reorder-worklane",
+                Some(&(dragged_id.as_str(), placement.as_str()).to_variant()),
+            )
+            .is_ok()
+    });
+    card.add_controller(target);
 }
 
 fn make_pane_row(
@@ -355,6 +487,22 @@ pub(crate) fn update_metadata(sidebar: &gtk::Box, summaries: &[SidebarWorklaneSu
             return false;
         };
         context.set_text(&summary.primary_text);
+        let accessible_label = format!("{title_text}, {}", summary.primary_text);
+        select.update_property(&[gtk::accessible::Property::Label(&accessible_label)]);
+        let Some(move_up) = find_named_widget(
+            sidebar.upcast_ref(),
+            &widget_name("worklane-move-up", &summary.worklane_id),
+        ) else {
+            return false;
+        };
+        move_up.set_sensitive(index > 0);
+        let Some(move_down) = find_named_widget(
+            sidebar.upcast_ref(),
+            &widget_name("worklane-move-down", &summary.worklane_id),
+        ) else {
+            return false;
+        };
+        move_down.set_sensitive(index + 1 < summaries.len());
 
         for pane in &summary.pane_rows {
             let Some(row) = find_named_widget(
@@ -565,24 +713,26 @@ fn make_context_menu(
     close.connect_clicked(move |_| close_popover.popdown());
     menu.append(&close);
 
-    if index > 0 {
-        menu.append(&targeted_move_button(
-            source_ui::MOVE_WORKLANE_UP,
-            "go-up-symbolic",
-            &summary.worklane_id,
-            "up",
-            &popover,
-        ));
-    }
-    if index + 1 < worklane_count {
-        menu.append(&targeted_move_button(
-            source_ui::MOVE_WORKLANE_DOWN,
-            "go-down-symbolic",
-            &summary.worklane_id,
-            "down",
-            &popover,
-        ));
-    }
+    let move_up = targeted_move_button(
+        source_ui::MOVE_WORKLANE_UP,
+        "go-up-symbolic",
+        &summary.worklane_id,
+        "up",
+        &popover,
+    );
+    move_up.set_widget_name(&widget_name("worklane-move-up", &summary.worklane_id));
+    move_up.set_sensitive(index > 0);
+    menu.append(&move_up);
+    let move_down = targeted_move_button(
+        source_ui::MOVE_WORKLANE_DOWN,
+        "go-down-symbolic",
+        &summary.worklane_id,
+        "down",
+        &popover,
+    );
+    move_down.set_widget_name(&widget_name("worklane-move-down", &summary.worklane_id));
+    move_down.set_sensitive(index + 1 < worklane_count);
+    menu.append(&move_down);
 
     let color_heading = gtk::Label::new(Some(source_ui::WORKLANE_COLOR));
     color_heading.set_xalign(0.0);
