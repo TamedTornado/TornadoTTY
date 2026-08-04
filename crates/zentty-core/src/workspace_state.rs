@@ -417,6 +417,12 @@ impl WorkspaceState {
         self.focus_history.can_go_forward()
     }
 
+    #[must_use]
+    pub fn recent_pane_references(&self) -> Vec<PaneReference> {
+        self.focus_history
+            .recent_references(&self.live_pane_references())
+    }
+
     pub fn navigate_back(&mut self) -> bool {
         let Some(current) = self.current_pane_reference() else {
             return false;

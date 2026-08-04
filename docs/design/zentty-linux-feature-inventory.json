@@ -188,9 +188,9 @@
       "origin": "PORT_PARITY",
       "user_impact": "Many Zentty workflows would be present but undiscoverable or unreachable on Linux.",
       "linux_owner_issue": 7,
-      "implementation_status": "NOT_IMPLEMENTED",
-      "focused_tests": [],
-      "product_scenarios": [],
+      "implementation_status": "PARTIAL",
+      "focused_tests": ["crates/zentty-core/src/command_palette.rs"],
+      "product_scenarios": ["linux/tests/rust-source-ux-x11"],
       "test_plan": "Port deterministic result resolution, then open the real palette and invoke worklane, pane, and agent commands through named GTK actions.",
       "alternative_or_blocker": null
     },

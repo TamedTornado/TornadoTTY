@@ -5680,6 +5680,46 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   later polish pass; it is not a substitute for the functional integration
   assertions.
 
+### DOGFOOD-2026-08-04-COMMAND-PALETTE-FIRST-SLICE: discoverable pane and action routing
+
+- **Scope:** The first command-palette batch delivers five connected behaviors:
+  Ctrl+Shift+P opening/toggling while Ghostty owns focus; field-aware command
+  and pane search; keyboard transfer from the search field into results;
+  Enter/Escape execution and dismissal with terminal-input shielding; and
+  exact-pane navigation plus source-style recent-pane ordering.
+- **Source contract:** Linux pins `CommandPaletteResultsResolver` empty-state
+  Recent Panes behavior and exact/prefix/token/substring promotion rather than
+  inventing a flat string-filter menu. Pane results carry stable worklane and
+  pane IDs and execute through the same named `select-pane` action used by the
+  sidebar. Initial actions route through the existing named workspace actions.
+- **Linux presentation:** A real GTK overlay supplies a themed panel and
+  full-window scrim. The scrim prevents terminal click-through; outside click,
+  Escape, and shortcut toggle dismiss the palette. Search and results expose
+  accessible names, and selected-row treatment remains visible independently
+  of pointer hover.
+- **Real-system evidence:** The controlled-X11 source workflow opens the
+  palette with physical Ctrl+Shift+P above a focused real Ghostty surface,
+  searches a durable renamed pane down to one result, traverses and executes it
+  with real keys, then types through the newly selected real PTY. The workflow
+  subsequently uses ordinary pane traversal and Back/Forward, proving palette
+  navigation composes with—not replaces—the shared focus history.
+- **Failure prevention:** The test explicitly begins on a different pane and
+  requires the stable-ID palette target receipt and a PTY-produced title from
+  the selected terminal. A model-only selection or search fixture cannot pass.
+- **Inventory repair:** The first narrow-looking status patch matched the first
+  generic `NOT_IMPLEMENTED`/empty-evidence triple in the JSON and accidentally
+  attached palette evidence to `pane.drag-drop`. The inventory runner accepted
+  the internally valid but semantically wrong ownership; its negative test then
+  failed because that same entry no longer lacked evidence. Diff review found
+  the mismatch before commit. The repair targets both stable IDs explicitly,
+  restores `pane.drag-drop`, promotes only `commands.palette-routing`, and moves
+  the false-IMPLEMENTED negative case to still-empty `pane.search`.
+- **Remaining scope:** Status is intentionally `PARTIAL`. The complete command
+  registry and availability resolver, persisted recent actions, settings,
+  worklane colors, tasks, servers, Open With, agent actions, reviewed light
+  theme screenshots, and multi-window targeting remain owned by issues #7 and
+  #16–#23. This slice does not claim those absent providers.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were

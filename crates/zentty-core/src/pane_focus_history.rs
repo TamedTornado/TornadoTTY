@@ -55,6 +55,16 @@ impl PaneFocusHistory {
         }
     }
 
+    pub(crate) fn recent_references(&self, live: &BTreeSet<PaneReference>) -> Vec<PaneReference> {
+        let mut recent = Vec::new();
+        for reference in self.back_stack.iter().rev() {
+            if live.contains(reference) && !recent.contains(reference) {
+                recent.push(reference.clone());
+            }
+        }
+        recent
+    }
+
     pub(crate) fn navigate_back(
         &mut self,
         current: PaneReference,

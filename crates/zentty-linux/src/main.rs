@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 mod application_shell;
+mod command_palette;
 mod pane_controls;
 mod pane_scroll_switch;
 mod peek_scroll_navigation;

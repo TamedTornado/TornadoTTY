@@ -7,13 +7,14 @@ use gtk::glib::{self, variant::ToVariant};
 use gtk::prelude::*;
 use gtk::{gdk, gio};
 use zentty_core::{
-    ClosePaneOutcome, ColumnRecipe, PaneLayoutPolicy, PaneRecipe, PaneReference,
-    PaneRightInsertionBehavior, SidebarWidthPreference, WindowRecipe, WorklaneColor,
+    ClosePaneOutcome, ColumnRecipe, CommandPaletteItem, PaneLayoutPolicy, PaneRecipe,
+    PaneReference, PaneRightInsertionBehavior, SidebarWidthPreference, WindowRecipe, WorklaneColor,
     WorklaneRecipe, WorkspaceState,
 };
 use zentty_ghostty::{GhosttyRuntime, GhosttySurface, SurfaceConfig};
 
 use crate::{
+    command_palette::CommandPaletteView,
     pane_controls::{self, PaneControlAction, PaneFrame, PanePresentation},
     pane_scroll_switch::{PaneScrollSwitch, ScrollSwitchResult, ScrollUnit},
     peek_scroll_navigation::{
@@ -57,6 +58,7 @@ const ACTION_NEXT_PANE: &str = "next-pane";
 const ACTION_PREVIOUS_PANE: &str = "previous-pane";
 const ACTION_NEXT_WORKLANE: &str = "next-worklane";
 const ACTION_PREVIOUS_WORKLANE: &str = "previous-worklane";
+const ACTION_DISMISS_COMMAND_PALETTE: &str = "dismiss-command-palette";
 const PRIMARY_RIGHT_BEHAVIOR: PaneRightInsertionBehavior = PaneRightInsertionBehavior::VisibleSplit;
 const WORKLANE_PEEK_TAB_HOLD_THRESHOLD: Duration = Duration::from_millis(200);
 
@@ -92,6 +94,7 @@ pub(crate) struct ApplicationShell {
     peek_generation: u64,
     peek_tab_down: bool,
     peek_view: WorklanePeekView,
+    command_palette: CommandPaletteView,
 }
 
 struct ShellWidgets {
@@ -105,6 +108,7 @@ struct ShellWidgets {
     pane_scroll: gtk::ScrolledWindow,
     pane_box: gtk::Box,
     peek_view: WorklanePeekView,
+    command_palette: CommandPaletteView,
 }
 
 impl ApplicationShell {
@@ -129,6 +133,7 @@ impl ApplicationShell {
             pane_scroll,
             pane_box,
             peek_view,
+            command_palette,
         } = build_shell_widgets();
 
         let window_template = restored_window.unwrap_or_else(default_window_recipe);
@@ -186,6 +191,7 @@ impl ApplicationShell {
             peek_generation: 0,
             peek_tab_down: false,
             peek_view,
+            command_palette,
         }));
 
         install_sidebar_width_tracking(
@@ -200,6 +206,7 @@ impl ApplicationShell {
         Self::install_pane_traversal_shortcuts(&shell);
         Self::install_peek_scroll_navigation(&shell);
         Self::install_pane_scroll_switching(&shell);
+        Self::install_command_palette_shortcut(&shell);
         for pane_id in initial_pane_ids {
             Self::create_surface(&shell, &pane_id)?;
         }
@@ -256,6 +263,7 @@ impl ApplicationShell {
         self.peek_phase = PeekPhase::Idle;
         self.peek_tab_down = false;
         self.peek_view.hide();
+        self.command_palette.hide();
         gtk::prelude::GtkWindowExt::set_focus(&self.window, gtk::Widget::NONE);
         self.window.set_default_widget(gtk::Widget::NONE);
         for (pane_id, controller) in std::mem::take(&mut self.focus_controllers) {
@@ -378,6 +386,17 @@ impl ApplicationShell {
             eprintln!("zentty-linux: action=toggle-sidebar visible={visible}");
         });
         group.add_action(&toggle_sidebar);
+
+        let dismiss_palette = gio::SimpleAction::new(ACTION_DISMISS_COMMAND_PALETTE, None);
+        let weak = Rc::downgrade(shell);
+        dismiss_palette.connect_activate(move |_, _| {
+            let Some(shell) = weak.upgrade() else {
+                return;
+            };
+            shell.borrow().command_palette.hide();
+            shell.borrow().focus_selected_surface();
+        });
+        group.add_action(&dismiss_palette);
 
         let new_worklane = gio::SimpleAction::new(ACTION_NEW_WORKLANE, None);
         let weak = Rc::downgrade(shell);
@@ -907,6 +926,107 @@ impl ApplicationShell {
             }
         });
         shell.borrow().pane_scroll.add_controller(controller);
+    }
+
+    fn install_command_palette_shortcut(shell: &Rc<RefCell<Self>>) {
+        let controller = gtk::EventControllerKey::new();
+        controller.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let weak = Rc::downgrade(shell);
+        controller.connect_key_pressed(move |_, key, _, modifiers| {
+            let Some(shell) = weak.upgrade() else {
+                return glib::Propagation::Proceed;
+            };
+            if shell.borrow().command_palette.is_visible() && key == gdk::Key::Escape {
+                shell.borrow().command_palette.hide();
+                shell.borrow().focus_selected_surface();
+                return glib::Propagation::Stop;
+            }
+            let required = gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::SHIFT_MASK;
+            if !matches!(key, gdk::Key::p | gdk::Key::P)
+                || !modifiers.contains(required)
+                || modifiers.intersects(gdk::ModifierType::ALT_MASK | gdk::ModifierType::SUPER_MASK)
+            {
+                return glib::Propagation::Proceed;
+            }
+            let shell_ref = shell.borrow();
+            if shell_ref.command_palette.is_visible() {
+                shell_ref.command_palette.hide();
+                shell_ref.focus_selected_surface();
+            } else {
+                let (items, current) = shell_ref.command_palette_items();
+                shell_ref.command_palette.show(
+                    items,
+                    shell_ref.state.recent_pane_references(),
+                    current,
+                );
+            }
+            glib::Propagation::Stop
+        });
+        shell.borrow().window.add_controller(controller);
+    }
+
+    fn command_palette_items(&self) -> (Vec<CommandPaletteItem>, Option<PaneReference>) {
+        let current = self
+            .state
+            .focused_pane_id()
+            .map(|pane_id| PaneReference::new(self.state.active_worklane_id(), pane_id));
+        let mut items = self
+            .state
+            .worklanes()
+            .iter()
+            .enumerate()
+            .flat_map(|(index, worklane)| {
+                let lane_title = worklane
+                    .title
+                    .clone()
+                    .unwrap_or_else(|| format!("Worklane {}", index + 1));
+                worklane.columns.iter().flat_map(move |column| {
+                    let lane_title = lane_title.clone();
+                    column.panes.iter().map(move |pane| {
+                        CommandPaletteItem::pane(
+                            pane.custom_title
+                                .clone()
+                                .unwrap_or_else(|| pane.live_title.clone()),
+                            lane_title.clone(),
+                            PaneReference::new(&worklane.id, &pane.id),
+                        )
+                    })
+                })
+            })
+            .collect::<Vec<_>>();
+        items.extend([
+            CommandPaletteItem::action(
+                "New Worklane",
+                "Create another worklane",
+                "workspace lane",
+                ACTION_NEW_WORKLANE,
+            ),
+            CommandPaletteItem::action(
+                "Split Right",
+                "Split the focused pane into a visible right column",
+                "pane column",
+                ACTION_SPLIT_PANE_RIGHT,
+            ),
+            CommandPaletteItem::action(
+                "New Pane Below",
+                "Split the focused pane vertically",
+                "pane split down",
+                ACTION_SPLIT_PANE_BELOW,
+            ),
+            CommandPaletteItem::action(
+                "Toggle Sidebar",
+                "Show or hide the worklane sidebar",
+                "navigation",
+                ACTION_TOGGLE_SIDEBAR,
+            ),
+            CommandPaletteItem::action(
+                "Close Pane",
+                "Close the focused pane",
+                "terminal",
+                ACTION_CLOSE_PANE,
+            ),
+        ]);
+        (items, current)
     }
 
     fn install_peek_scroll_navigation(shell: &Rc<RefCell<Self>>) {
@@ -2186,7 +2306,8 @@ fn build_shell_widgets() -> ShellWidgets {
     body.set_start_child(Some(&sidebar_reservation));
     body.set_end_child(Some(&content));
     let chrome = WindowChrome::new();
-    let (overlay, peek_view, sidebar_hover_rail) = build_root(&chrome, &body, &sidebar_scroll);
+    let (overlay, peek_view, command_palette, sidebar_hover_rail) =
+        build_root(&chrome, &body, &sidebar_scroll);
     window.set_child(Some(&overlay));
     ShellWidgets {
         window,
@@ -2199,6 +2320,7 @@ fn build_shell_widgets() -> ShellWidgets {
         pane_scroll,
         pane_box,
         peek_view,
+        command_palette,
     }
 }
 
@@ -2206,7 +2328,7 @@ fn build_root(
     chrome: &WindowChrome,
     body: &gtk::Paned,
     sidebar: &gtk::ScrolledWindow,
-) -> (gtk::Overlay, WorklanePeekView, gtk::Box) {
+) -> (gtk::Overlay, WorklanePeekView, CommandPaletteView, gtk::Box) {
     let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
     root.append(chrome.widget());
     root.append(body);
@@ -2226,7 +2348,9 @@ fn build_root(
     overlay.add_overlay(sidebar);
     let peek_view = WorklanePeekView::new();
     overlay.add_overlay(peek_view.widget());
-    (overlay, peek_view, hover_rail)
+    let command_palette = CommandPaletteView::new();
+    overlay.add_overlay(command_palette.widget());
+    (overlay, peek_view, command_palette, hover_rail)
 }
 
 fn workspace_pane_ids(state: &WorkspaceState) -> Vec<String> {

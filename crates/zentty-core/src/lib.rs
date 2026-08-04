@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+mod command_palette;
 mod pane_focus_history;
 mod pane_layout;
 mod session_restore_store;
@@ -26,3 +27,6 @@ pub use workspace_state::{
 
 /// Stable product identity shared by platform composition roots.
 pub const PRODUCT_NAME: &str = "Zentty";
+pub use command_palette::{
+    CommandPaletteGroup, CommandPaletteItem, CommandPaletteTarget, resolve_command_palette,
+};
