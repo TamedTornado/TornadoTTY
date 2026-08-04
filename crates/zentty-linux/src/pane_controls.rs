@@ -53,15 +53,10 @@ pub(crate) struct PanePresentation {
 }
 
 impl PanePresentation {
-    const INACTIVE_OPACITY: f64 = 0.7;
-
-    fn opacity(self) -> f64 {
-        if self.focused {
-            1.0
-        } else {
-            Self::INACTIVE_OPACITY
-        }
-    }
+    // GTK opacity applies to the fully composited Ghostty surface, not merely
+    // its emphasis treatment. Keep terminal content opaque until Linux owns a
+    // backdrop-aware equivalent of Zentty's inactive-pane presentation.
+    const SURFACE_OPACITY: f64 = 1.0;
 
     fn color_class(self) -> Option<String> {
         self.worklane_color
@@ -178,7 +173,7 @@ impl PaneFrame {
         if let Some(color_class) = presentation.color_class() {
             self.root.add_css_class(&color_class);
         }
-        self.root.set_opacity(presentation.opacity());
+        self.root.set_opacity(PanePresentation::SURFACE_OPACITY);
     }
 
     pub(crate) fn detach_terminal(&self) {
@@ -201,11 +196,11 @@ pub(crate) fn install_styles() {
     let provider = gtk::CssProvider::new();
     provider.load_from_string(
         ".zentty-pane-frame {\n\
-             border: 1px solid alpha(white, 0.10);\n\
+             border: 2px solid alpha(white, 0.08);\n\
          }\n\
          .zentty-pane-frame-focused {\n\
-             border-color: alpha(#aeb8c8, 0.72);\n\
-             box-shadow: inset 0 0 0 1px alpha(#aeb8c8, 0.20);\n\
+             border-color: #69a7ff;\n\
+             box-shadow: inset 0 0 0 1px alpha(#69a7ff, 0.48), 0 0 14px alpha(#69a7ff, 0.22);\n\
          }\n\
          .zentty-pane-frame-focused.zentty-pane-color-red { border-color: #f56565; box-shadow: inset 0 0 0 1px alpha(#f56565, 0.30), 0 0 12px alpha(#f56565, 0.18); }\n\
          .zentty-pane-frame-focused.zentty-pane-color-orange { border-color: #ed8936; box-shadow: inset 0 0 0 1px alpha(#ed8936, 0.30), 0 0 12px alpha(#ed8936, 0.18); }\n\
@@ -266,7 +261,7 @@ mod tests {
     }
 
     #[test]
-    fn pane_presentation_preserves_source_focus_semantics_and_defaults() {
+    fn pane_presentation_preserves_source_focus_without_washing_terminal_content() {
         let focused = PanePresentation {
             focused: true,
             worklane_color: Some(WorklaneColor::Amber),
@@ -276,8 +271,11 @@ mod tests {
             worklane_color: None,
         };
 
-        assert!((focused.opacity() - 1.0).abs() < f64::EPSILON);
-        assert!((inactive.opacity() - 0.7).abs() < f64::EPSILON);
+        assert!(
+            (PanePresentation::SURFACE_OPACITY - 1.0).abs() < f64::EPSILON,
+            "terminal content must not be washed out to indicate focus"
+        );
+        assert!(!inactive.focused);
         assert_eq!(
             focused.color_class().as_deref(),
             Some("zentty-pane-color-amber")

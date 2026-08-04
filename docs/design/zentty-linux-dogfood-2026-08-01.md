@@ -5192,24 +5192,44 @@ test harness, preserve the legacy constructor, and be independently reviewable.
 - **Source contract:** `PaneContainerView` renders a focused border, derives
   that border and its optional glow from the worklane color, and falls back to
   the theme's focused-pane border without a color. `AppConfig.Panes.default`
-  enables borders and gives inactive panes 0.7 opacity. Linux now implements
-  those defaults instead of inventing a separate selection treatment.
-- **Repair:** Every durable GTK pane frame receives an explicit presentation
-  state from the active worklane and exact focused pane. Focused panes remain
-  fully opaque with a strong neutral or worklane-colored border; unfocused
-  panes retain their border and use the source-default 0.7 opacity. In-place
+  enables borders and gives inactive panes 0.7 opacity. The initial Linux
+  translation attempted both defaults before dogfood exposed that GTK's
+  whole-widget opacity does not preserve the intended result.
+- **Initial repair:** Every durable GTK pane frame receives an explicit
+  presentation state from the active worklane and exact focused pane. In-place
   focus and color changes refresh pane presentation without reconstructing or
-  restarting any Ghostty surface.
+  restarting any Ghostty surface. The first implementation also applied the
+  source-default 0.7 opacity to the entire unfocused GTK overlay.
+- **Dogfood rejection:** Applying GTK widget opacity to an embedded Ghostty
+  surface alpha-composited the whole terminal against the light toplevel
+  backing. The result was a conspicuous gray wash over every unfocused pane,
+  degraded terminal colors and contrast, and did not resemble a deliberate
+  macOS emphasis treatment. Jason rejected that styling during immediate
+  product review.
+- **Correction:** Linux keeps every terminal surface fully opaque and conveys
+  focus with the neutral or worklane-colored pane border/glow only. This is an
+  explicit platform adaptation, not a claim that inactive-opacity parity is
+  complete. A future implementation must own the dark pane backing or apply
+  emphasis without fading terminal content; it may not restore whole-widget
+  opacity merely because the numeric source default is 0.7.
+- **Visual review boundary:** A stronger two-pixel focus border was judged
+  adequate only as a placeholder, not final polish. A subsequent uncommitted
+  experiment added a permanent pane-context header; it exposed the GTK
+  toplevel's white backing at its reserved control gutter and the tiny label
+  did not improve the hierarchy enough to justify more iteration. The
+  experiment was removed rather than allowed to become product by accident.
+  Issue #16 retains ownership of a deliberate final focus treatment and the
+  source pane-context-label feature.
 - **Evidence:** A focused Rust test pins the Linux rules to the checked-in Swift
   focus and configuration sources. All nine Linux unit tests and pedantic
   Clippy pass. The staged real-pointer X11 source-UX scenario passes focus,
   owner-relative right/below actions, close, and global Arrange against real
   PTYs. The staged five-PTY workspace scenario also passes under controlled X11
   and controlled Wayland.
-- **Remaining boundary:** This is behavior and source-default coverage, not a
-  claim of pixel-identical AppKit compositing. Reviewed dark/light screenshot
-  baselines, contrast measurements, settings-driven border/opacity changes,
-  and assistive-technology inspection remain issue #16/#20 work.
+- **Remaining boundary:** This is focus behavior, not a claim of pixel-identical
+  AppKit compositing. Inactive-emphasis parity, reviewed dark/light screenshot
+  baselines, contrast measurements, settings-driven border behavior, and
+  assistive-technology inspection remain issue #16/#20 work.
 
 ## AI disclosure
 
