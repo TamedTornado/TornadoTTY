@@ -138,6 +138,8 @@ pub struct WorklaneState {
 pub struct WorkspaceState {
     worklanes: Vec<WorklaneState>,
     active_worklane_id: String,
+    focus_history: PaneFocusHistory,
+    is_navigating_history: bool,
 }
 
 impl WorkspaceState {
@@ -161,6 +163,8 @@ impl WorkspaceState {
                 focused_column_id: format!("column-{pane_id}"),
             }],
             active_worklane_id: worklane_id,
+            focus_history: PaneFocusHistory::default(),
+            is_navigating_history: false,
         }
     }
 
@@ -259,6 +263,8 @@ impl WorkspaceState {
         Ok(Self {
             worklanes,
             active_worklane_id,
+            focus_history: PaneFocusHistory::default(),
+            is_navigating_history: false,
         })
     }
 
@@ -402,6 +408,38 @@ impl WorkspaceState {
     }
 
     #[must_use]
+    pub fn can_navigate_back(&self) -> bool {
+        self.focus_history.can_go_back()
+    }
+
+    #[must_use]
+    pub fn can_navigate_forward(&self) -> bool {
+        self.focus_history.can_go_forward()
+    }
+
+    pub fn navigate_back(&mut self) -> bool {
+        let Some(current) = self.current_pane_reference() else {
+            return false;
+        };
+        let live = self.live_pane_references();
+        let Some(target) = self.focus_history.navigate_back(current, &live) else {
+            return false;
+        };
+        self.select_history_target(&target)
+    }
+
+    pub fn navigate_forward(&mut self) -> bool {
+        let Some(current) = self.current_pane_reference() else {
+            return false;
+        };
+        let live = self.live_pane_references();
+        let Some(target) = self.focus_history.navigate_forward(current, &live) else {
+            return false;
+        };
+        self.select_history_target(&target)
+    }
+
+    #[must_use]
     pub fn sidebar_summaries(&self) -> Vec<SidebarWorklaneSummary> {
         self.worklanes
             .iter()
@@ -447,6 +485,7 @@ impl WorkspaceState {
         worklane_id: impl Into<String>,
         pane_id: impl Into<String>,
     ) -> bool {
+        let previous = self.current_pane_reference();
         let worklane_id = worklane_id.into();
         let pane_id = pane_id.into();
         if self.contains_worklane(&worklane_id) || self.contains_pane(&pane_id) {
@@ -473,6 +512,7 @@ impl WorkspaceState {
             },
         );
         self.active_worklane_id = worklane_id;
+        self.record_focus_transition(previous);
         true
     }
 
@@ -480,8 +520,33 @@ impl WorkspaceState {
         if !self.contains_worklane(id) {
             return false;
         }
+        let previous = self.current_pane_reference();
         id.clone_into(&mut self.active_worklane_id);
+        self.record_focus_transition(previous);
         true
+    }
+
+    pub fn select_worklane_and_pane(&mut self, worklane_id: &str, pane_id: &str) -> bool {
+        let Some(worklane) = self
+            .worklanes
+            .iter()
+            .find(|worklane| worklane.id == worklane_id)
+        else {
+            return false;
+        };
+        if !worklane
+            .columns
+            .iter()
+            .any(|column| column.panes.iter().any(|pane| pane.id == pane_id))
+        {
+            return false;
+        }
+
+        let previous = self.current_pane_reference();
+        worklane_id.clone_into(&mut self.active_worklane_id);
+        let selected = self.select_pane_without_history(pane_id);
+        self.record_focus_transition(previous);
+        selected
     }
 
     pub fn set_worklane_title(&mut self, id: &str, title: Option<&str>) -> bool {
@@ -559,6 +624,7 @@ impl WorkspaceState {
     /// Panics only if an internal state transition has violated active-lane or
     /// focused-pane invariants.
     pub fn split_focused_pane_right(&mut self, pane_id: impl Into<String>) -> bool {
+        let previous = self.current_pane_reference();
         let pane_id = pane_id.into();
         if self.contains_pane(&pane_id) {
             return false;
@@ -582,6 +648,7 @@ impl WorkspaceState {
             },
         );
         worklane.focused_column_id = format!("column-{pane_id}");
+        self.record_focus_transition(previous);
         true
     }
 
@@ -593,6 +660,7 @@ impl WorkspaceState {
     /// Panics only if an internal state transition has violated focused-column
     /// or focused-pane invariants.
     pub fn split_focused_pane_below(&mut self, pane_id: impl Into<String>) -> bool {
+        let previous = self.current_pane_reference();
         let pane_id = pane_id.into();
         if self.contains_pane(&pane_id) {
             return false;
@@ -616,10 +684,20 @@ impl WorkspaceState {
         column.pane_heights.insert(focused_index + 1, height / 2.0);
         column.focused_pane_id.clone_from(&pane_id);
         column.last_focused_pane_id = pane_id;
+        self.record_focus_transition(previous);
         true
     }
 
     pub fn select_pane(&mut self, pane_id: &str) -> bool {
+        let previous = self.current_pane_reference();
+        let selected = self.select_pane_without_history(pane_id);
+        if selected {
+            self.record_focus_transition(previous);
+        }
+        selected
+    }
+
+    fn select_pane_without_history(&mut self, pane_id: &str) -> bool {
         let worklane = self.active_worklane_mut();
         for column in &mut worklane.columns {
             if column.panes.iter().any(|pane| pane.id == pane_id) {
@@ -979,6 +1057,42 @@ impl WorkspaceState {
         true
     }
 
+    fn current_pane_reference(&self) -> Option<PaneReference> {
+        self.focused_pane_id()
+            .map(|pane_id| PaneReference::new(self.active_worklane_id.clone(), pane_id.to_owned()))
+    }
+
+    fn live_pane_references(&self) -> BTreeSet<PaneReference> {
+        self.worklanes
+            .iter()
+            .flat_map(|worklane| {
+                worklane
+                    .columns
+                    .iter()
+                    .flat_map(|column| &column.panes)
+                    .map(|pane| PaneReference::new(worklane.id.clone(), pane.id.clone()))
+            })
+            .collect()
+    }
+
+    fn record_focus_transition(&mut self, previous: Option<PaneReference>) {
+        if self.is_navigating_history {
+            return;
+        }
+        if let Some(previous) = previous
+            && self.current_pane_reference().as_ref() != Some(&previous)
+        {
+            self.focus_history.record(previous);
+        }
+    }
+
+    fn select_history_target(&mut self, target: &PaneReference) -> bool {
+        self.is_navigating_history = true;
+        let selected = self.select_worklane_and_pane(&target.worklane_id, &target.pane_id);
+        self.is_navigating_history = false;
+        selected
+    }
+
     fn active_worklane_mut(&mut self) -> &mut WorklaneState {
         let active_id = self.active_worklane_id.clone();
         self.worklanes
@@ -1095,4 +1209,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 
-use crate::{ColumnRecipe, PaneRecipe, WindowRecipe, WorklaneRecipe};
+use crate::{
+    ColumnRecipe, PaneRecipe, PaneReference, WindowRecipe, WorklaneRecipe,
+    pane_focus_history::PaneFocusHistory,
+};

@@ -38,6 +38,8 @@ const ACTION_MOVE_PANE_UP: &str = "move-pane-up";
 const ACTION_MOVE_PANE_DOWN: &str = "move-pane-down";
 const ACTION_MOVE_PANE_TO_WORKLANE: &str = "move-pane-to-worklane";
 const ACTION_SELECT_PANE: &str = "select-pane";
+const ACTION_NAVIGATE_BACK: &str = "navigate-back";
+const ACTION_NAVIGATE_FORWARD: &str = "navigate-forward";
 
 pub(crate) struct ApplicationShell {
     window: gtk::Window,
@@ -254,31 +256,33 @@ impl ApplicationShell {
                     "workspace.select-worklane",
                     Some(&"worklane-1".to_variant()),
                 ),
-                4 => window.activate_action(
+                4 | 5 => window.activate_action("workspace.navigate-back", None),
+                6 | 7 => window.activate_action("workspace.navigate-forward", None),
+                8 => window.activate_action(
                     "workspace.rename-worklane",
                     Some(&("worklane-1", "  Frontend  ").to_variant()),
                 ),
-                5 => window.activate_action(
+                9 => window.activate_action(
                     "workspace.rename-pane",
                     Some(&("pane-4", "  Review Shell  ").to_variant()),
                 ),
-                6 => window.activate_action(
+                10 => window.activate_action(
                     "workspace.set-worklane-color",
                     Some(&("worklane-1", "red").to_variant()),
                 ),
-                7 => window.activate_action(
+                11 => window.activate_action(
                     "workspace.move-worklane",
                     Some(&("worklane-1", "down").to_variant()),
                 ),
-                8 => window.activate_action("workspace.move-pane-left", None),
-                9 => window.activate_action("workspace.split-pane-below", None),
-                10 => window.activate_action("workspace.move-pane-up", None),
-                11 => window.activate_action("workspace.move-pane-down", None),
-                12 => window.activate_action(
+                12 => window.activate_action("workspace.move-pane-left", None),
+                13 => window.activate_action("workspace.split-pane-below", None),
+                14 => window.activate_action("workspace.move-pane-up", None),
+                15 => window.activate_action("workspace.move-pane-down", None),
+                16 => window.activate_action(
                     "workspace.move-pane-to-worklane",
                     Some(&"worklane-2".to_variant()),
                 ),
-                13 if close_worklane_when_complete => window
+                17 if close_worklane_when_complete => window
                     .activate_action("workspace.close-worklane", Some(&"worklane-1".to_variant())),
                 _ => {
                     eprintln!("zentty-linux: workspace-action-scenario complete");
@@ -395,6 +399,13 @@ impl ApplicationShell {
         });
         group.add_action(&close_pane);
 
+        Self::add_simple_action(shell, &group, ACTION_NAVIGATE_BACK, |shell| {
+            shell.navigate_history(true);
+        });
+        Self::add_simple_action(shell, &group, ACTION_NAVIGATE_FORWARD, |shell| {
+            shell.navigate_history(false);
+        });
+
         Self::install_edit_actions(shell, &group);
 
         shell
@@ -419,7 +430,7 @@ impl ApplicationShell {
             };
             let mut shell = shell.borrow_mut();
             let worklane_changed = shell.state.active_worklane_id() != worklane_id;
-            if shell.state.select_worklane(&worklane_id) && shell.state.select_pane(&pane_id) {
+            if shell.state.select_worklane_and_pane(&worklane_id, &pane_id) {
                 eprintln!("zentty-linux: action=select-pane worklane={worklane_id} pane={pane_id}");
                 if worklane_changed {
                     shell.render();
@@ -1073,7 +1084,11 @@ impl ApplicationShell {
     fn render_sidebar(&self) {
         let summaries = self.state.sidebar_summaries();
         sidebar::render(&self.sidebar, &self.window, &summaries);
-        self.chrome.render(&summaries);
+        self.chrome.render(
+            &summaries,
+            self.state.can_navigate_back(),
+            self.state.can_navigate_forward(),
+        );
     }
 
     fn refresh_sidebar_metadata(&self) {
@@ -1081,8 +1096,44 @@ impl ApplicationShell {
         if !sidebar::update_metadata(&self.sidebar, &summaries) {
             sidebar::render(&self.sidebar, &self.window, &summaries);
         }
-        self.chrome.render(&summaries);
+        self.chrome.render(
+            &summaries,
+            self.state.can_navigate_back(),
+            self.state.can_navigate_forward(),
+        );
         self.refresh_pane_presentation();
+    }
+
+    fn navigate_history(&mut self, backward: bool) {
+        let previous_worklane = self.state.active_worklane_id().to_owned();
+        let changed = if backward {
+            self.state.navigate_back()
+        } else {
+            self.state.navigate_forward()
+        };
+        if !changed {
+            // Navigation purges closed/stale references while searching. Even
+            // without a target, refresh button sensitivity to reflect the
+            // resulting history stacks.
+            self.refresh_sidebar_metadata();
+            return;
+        }
+        eprintln!(
+            "zentty-linux: action={} worklane={} pane={}",
+            if backward {
+                ACTION_NAVIGATE_BACK
+            } else {
+                ACTION_NAVIGATE_FORWARD
+            },
+            self.state.active_worklane_id(),
+            self.state.focused_pane_id().unwrap_or("none")
+        );
+        if previous_worklane == self.state.active_worklane_id() {
+            self.refresh_sidebar_metadata();
+        } else {
+            self.render();
+        }
+        self.focus_selected_surface();
     }
 
     fn refresh_pane_presentation(&self) {

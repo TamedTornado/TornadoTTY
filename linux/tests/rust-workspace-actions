@@ -70,6 +70,14 @@ grep -Fxq 'zentty-linux: action=select-worklane id=worklane-1' "${log}" ||
     fail "select-worklane action did not run"
 grep -Fxq 'zentty-linux: action=split-pane-right pane=pane-4' "${log}" ||
     fail "reselected first worklane did not split"
+grep -Fxq 'zentty-linux: action=navigate-back worklane=worklane-1 pane=pane-1' "${log}" ||
+    fail "back navigation did not return to the preceding pane"
+grep -Fxq 'zentty-linux: action=navigate-back worklane=worklane-2 pane=pane-3' "${log}" ||
+    fail "back navigation did not cross to the preceding worklane"
+grep -Fxq 'zentty-linux: action=navigate-forward worklane=worklane-1 pane=pane-1' "${log}" ||
+    fail "forward navigation did not cross back to the first worklane"
+grep -Fxq 'zentty-linux: action=navigate-forward worklane=worklane-1 pane=pane-4' "${log}" ||
+    fail "forward navigation did not restore the newest pane"
 grep -Fxq 'zentty-linux: action=rename-worklane id=worklane-1 title="  Frontend  "' "${log}" ||
     fail "rename-worklane action did not preserve action input for trimming"
 grep -Fxq 'zentty-linux: action=rename-pane id=pane-4 title="  Review Shell  "' "${log}" ||

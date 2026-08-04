@@ -5231,6 +5231,39 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   baselines, contrast measurements, settings-driven border behavior, and
   assistive-technology inspection remain issue #16/#20 work.
 
+### DOGFOOD-2026-08-04-PANE-NAVIGATION: disabled chrome is not a feature
+
+- **Observed gap:** The source-ordered Back and Forward icon buttons were
+  present in Linux chrome but permanently disabled. They accurately disclosed
+  that navigation was not implemented, but leaving them as decoration blocked
+  a primary source workflow and made the chrome look more complete than it was.
+- **Source contract:** `PaneFocusHistory` uses browser semantics: record the
+  pane being left, clear Forward on a new branch, cap Back at 100 entries, and
+  skip references whose pane has closed. A reference contains both worklane and
+  pane identity, so navigation can cross worklanes. History is runtime state,
+  not workspace persistence data.
+- **Implementation:** A platform-neutral Rust history model is pinned to the
+  checked-in Swift source. `WorkspaceState` records real focus transitions,
+  provides atomic worklane-plus-pane selection, exposes dynamic Back/Forward
+  availability, and suppresses recording while traversing history. GTK chrome
+  now binds both icon buttons to named actions, updates their enabled state,
+  renders the target worklane when navigation crosses lanes, and restores
+  focus to the exact embedded Ghostty surface. Exhausted stale references also
+  refresh button availability instead of leaving a dead enabled control.
+- **Real-system evidence:** The five-real-PTY workspace scenario traverses Back
+  twice across a worklane boundary and Forward twice under both controlled X11
+  and Wayland, then completes its existing transfer, persistence, and lifecycle
+  assertions. The controlled-X11 pointer scenario clicks the actual chrome
+  buttons and sends distinct input through the original and newer PTYs after
+  each traversal. Pure Rust coverage verifies forward invalidation, depth
+  limiting, stale-pane skipping, and cross-worklane selection.
+- **Remaining boundary:** The source controller debounces focus recording for
+  0.5 seconds; Linux currently records each completed distinct model focus
+  transition immediately. Keyboard shortcuts, recent-pane presentation, the
+  source debounce policy, deterministic disabled/hover screenshots, and a
+  Wayland pointer-injection route remain issue #16 work. This slice does not
+  claim those adjacent navigation features.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were

@@ -274,6 +274,30 @@ fn pane_custom_identity_survives_runtime_titles_and_clears_to_live_fallback() {
 }
 
 #[test]
+fn pane_navigation_history_crosses_worklanes_and_preserves_browser_semantics() {
+    let mut state = WorkspaceState::new("lane-1", "pane-1");
+    assert!(state.split_focused_pane_right("pane-2"));
+    assert!(state.create_worklane("lane-2", "pane-3"));
+
+    assert!(state.can_navigate_back());
+    assert!(!state.can_navigate_forward());
+    assert!(state.navigate_back());
+    assert_eq!(state.active_worklane_id(), "lane-1");
+    assert_eq!(state.focused_pane_id(), Some("pane-2"));
+    assert!(state.navigate_back());
+    assert_eq!(state.focused_pane_id(), Some("pane-1"));
+    assert!(state.can_navigate_forward());
+    assert!(state.navigate_forward());
+    assert_eq!(state.focused_pane_id(), Some("pane-2"));
+
+    assert!(state.select_worklane_and_pane("lane-2", "pane-3"));
+    assert!(!state.can_navigate_forward());
+    assert!(state.navigate_back());
+    assert_eq!(state.active_worklane_id(), "lane-1");
+    assert_eq!(state.focused_pane_id(), Some("pane-2"));
+}
+
+#[test]
 fn multi_column_recipe_round_trip_preserves_source_topology() {
     let envelope = SessionRestoreEnvelope::from_json(V3_ENVELOPE).unwrap();
     let mut window = envelope.workspace.windows[0].clone();

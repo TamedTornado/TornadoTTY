@@ -47,6 +47,8 @@ const CHROME_CONTROLS: [ChromeControlSpec; 5] = [
 pub(crate) struct WindowChrome {
     root: gtk::CenterBox,
     context: gtk::Label,
+    back: gtk::Button,
+    forward: gtk::Button,
 }
 
 impl WindowChrome {
@@ -71,8 +73,10 @@ impl WindowChrome {
         leading.append(&arrange);
 
         let back = icon_button(CHROME_CONTROLS[2]);
+        back.set_action_name(Some("workspace.navigate-back"));
         leading.append(&back);
         let forward = icon_button(CHROME_CONTROLS[3]);
+        forward.set_action_name(Some("workspace.navigate-forward"));
         leading.append(&forward);
 
         let notifications = icon_button(CHROME_CONTROLS[4]);
@@ -94,14 +98,24 @@ impl WindowChrome {
                 .collect::<Vec<_>>()
                 .join(",")
         );
-        Self { root, context }
+        Self {
+            root,
+            context,
+            back,
+            forward,
+        }
     }
 
     pub(crate) fn widget(&self) -> &gtk::CenterBox {
         &self.root
     }
 
-    pub(crate) fn render(&self, summaries: &[SidebarWorklaneSummary]) {
+    pub(crate) fn render(
+        &self,
+        summaries: &[SidebarWorklaneSummary],
+        can_navigate_back: bool,
+        can_navigate_forward: bool,
+    ) {
         let text = summaries
             .iter()
             .find(|summary| summary.is_active)
@@ -122,6 +136,8 @@ impl WindowChrome {
         self.context.set_text(&text);
         self.context
             .update_property(&[gtk::accessible::Property::Label(text.as_str())]);
+        self.back.set_sensitive(can_navigate_back);
+        self.forward.set_sensitive(can_navigate_forward);
     }
 }
 
