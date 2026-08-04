@@ -303,7 +303,7 @@
       "implementation_status": "PARTIAL",
       "focused_tests": ["crates/zentty-linux/src/worklane_peek.rs"],
       "product_scenarios": ["linux/tests/rust-source-ux-x11"],
-      "test_plan": "Retain immediate Ctrl-Tab traversal plus explicit Super-Tab/Super-W Peek, repeated-key, spatial-arrow, Escape, Super-release and exact-card-click X11 routes. Stock GNOME Wayland owns Super-Tab, so qualify Super-W there without claiming compositor interception. Add controlled precision swipe/natural-direction evidence, multiple-window targeting, project/attention context, reduced-motion transitions, and proof that every neighboring-lane terminal preview remains live before promoting this feature from PARTIAL.",
+      "test_plan": "Retain the physical Tab-duration contract: Tab release before 200ms traverses even while Control stays held, while Tab remaining down beyond 200ms opens Peek. Preserve repeated-key, spatial-arrow, Escape, Control-release and exact-card-click X11 routes. Add controlled precision swipe/natural-direction evidence, multiple-window targeting, project/attention context, reduced-motion transitions, and proof that every neighboring-lane terminal preview remains live before promoting this feature from PARTIAL.",
       "alternative_or_blocker": null
     },
     {

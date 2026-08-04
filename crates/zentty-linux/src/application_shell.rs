@@ -50,6 +50,7 @@ const ACTION_NAVIGATE_FORWARD: &str = "navigate-forward";
 const ACTION_NEXT_PANE: &str = "next-pane";
 const ACTION_PREVIOUS_PANE: &str = "previous-pane";
 const PRIMARY_RIGHT_BEHAVIOR: PaneRightInsertionBehavior = PaneRightInsertionBehavior::VisibleSplit;
+const WORKLANE_PEEK_TAB_HOLD_THRESHOLD: Duration = Duration::from_millis(200);
 
 pub(crate) struct ApplicationShell {
     window: gtk::Window,
@@ -75,6 +76,7 @@ pub(crate) struct ApplicationShell {
     preferred_sidebar_width: Rc<Cell<i32>>,
     adjusting_sidebar_width: Rc<Cell<bool>>,
     peek_phase: PeekPhase,
+    peek_generation: u64,
     peek_tab_down: bool,
     peek_view: WorklanePeekView,
 }
@@ -176,6 +178,7 @@ impl ApplicationShell {
             preferred_sidebar_width: Rc::clone(&preferred_sidebar_width),
             adjusting_sidebar_width: Rc::clone(&adjusting_sidebar_width),
             peek_phase: PeekPhase::Idle,
+            peek_generation: 0,
             peek_tab_down: false,
             peek_view,
         }));
@@ -426,10 +429,7 @@ impl ApplicationShell {
             let Some(shell) = weak.upgrade() else {
                 return glib::Propagation::Proceed;
             };
-            if is_tab
-                && (modifiers.contains(gdk::ModifierType::SUPER_MASK)
-                    || modifiers.contains(gdk::ModifierType::CONTROL_MASK))
-            {
+            if is_tab && modifiers.contains(gdk::ModifierType::CONTROL_MASK) {
                 let repeated = {
                     let mut shell = shell.borrow_mut();
                     let repeated = shell.peek_tab_down;
@@ -448,25 +448,14 @@ impl ApplicationShell {
                 } else {
                     PeekDirection::Backward
                 };
-                if modifiers.contains(gdk::ModifierType::SUPER_MASK) {
-                    Self::handle_peek_tab(&shell, direction);
-                } else {
-                    shell.borrow_mut().select_adjacent_pane(forward);
-                }
-                return glib::Propagation::Stop;
-            }
-            if (key == gdk::Key::w || key == gdk::Key::W)
-                && modifiers.contains(gdk::ModifierType::SUPER_MASK)
-            {
-                Self::open_peek(&shell);
+                Self::handle_peek_tab(&shell, direction);
                 return glib::Propagation::Stop;
             }
             if key == gdk::Key::Escape && shell.borrow().peek_phase.is_active() {
                 Self::cancel_peek(&shell);
                 return glib::Propagation::Stop;
             }
-            if (modifiers.contains(gdk::ModifierType::CONTROL_MASK)
-                || modifiers.contains(gdk::ModifierType::SUPER_MASK))
+            if modifiers.contains(gdk::ModifierType::CONTROL_MASK)
                 && matches!(shell.borrow().peek_phase, PeekPhase::Peeking { .. })
             {
                 let direction = match key {
@@ -495,7 +484,8 @@ impl ApplicationShell {
             };
             if key == gdk::Key::Tab || key == gdk::Key::ISO_Left_Tab {
                 shell.borrow_mut().peek_tab_down = false;
-            } else if key == gdk::Key::Super_L || key == gdk::Key::Super_R {
+                Self::handle_peek_tab_released(&shell);
+            } else if key == gdk::Key::Control_L || key == gdk::Key::Control_R {
                 shell.borrow_mut().peek_tab_down = false;
                 Self::commit_peek(&shell);
             }
@@ -507,8 +497,26 @@ impl ApplicationShell {
         let phase = shell.borrow().peek_phase.clone();
         match phase {
             PeekPhase::Idle => {
-                Self::open_peek(shell);
+                let generation = {
+                    let mut shell = shell.borrow_mut();
+                    shell.peek_generation = shell.peek_generation.wrapping_add(1);
+                    let generation = shell.peek_generation;
+                    shell.peek_phase = PeekPhase::Armed {
+                        generation,
+                        pending: direction,
+                    };
+                    generation
+                };
+                eprintln!("zentty-linux: worklane-peek=armed generation={generation}");
+                let weak = Rc::downgrade(shell);
+                glib::timeout_add_local_once(WORKLANE_PEEK_TAB_HOLD_THRESHOLD, move || {
+                    let Some(shell) = weak.upgrade() else {
+                        return;
+                    };
+                    Self::open_peek_after_tab_hold(&shell, generation);
+                });
             }
+            PeekPhase::Armed { .. } => {}
             PeekPhase::Peeking {
                 original,
                 current,
@@ -531,8 +539,34 @@ impl ApplicationShell {
         }
     }
 
+    fn handle_peek_tab_released(shell: &Rc<RefCell<Self>>) {
+        let phase = shell.borrow().peek_phase.clone();
+        if let PeekPhase::Armed { pending, .. } = phase {
+            shell.borrow_mut().peek_phase = PeekPhase::Idle;
+            shell
+                .borrow_mut()
+                .select_adjacent_pane(pending == PeekDirection::Forward);
+            eprintln!("zentty-linux: worklane-peek=quick-tab-release");
+        }
+    }
+
+    fn open_peek_after_tab_hold(shell: &Rc<RefCell<Self>>, generation: u64) {
+        if !shell.borrow().peek_tab_down
+            || !matches!(
+                shell.borrow().peek_phase,
+                PeekPhase::Armed {
+                    generation: armed_generation,
+                    ..
+                } if armed_generation == generation
+            )
+        {
+            return;
+        }
+        Self::open_peek(shell);
+    }
+
     fn open_peek(shell: &Rc<RefCell<Self>>) {
-        if shell.borrow().peek_phase.is_active() {
+        if matches!(shell.borrow().peek_phase, PeekPhase::Peeking { .. }) {
             return;
         }
         let traversal = shell.borrow().pane_references_in_sidebar_order();
@@ -545,7 +579,7 @@ impl ApplicationShell {
             current: origin,
             traversal,
         };
-        eprintln!("zentty-linux: worklane-peek=open trigger=explicit-shortcut");
+        eprintln!("zentty-linux: worklane-peek=open trigger=tab-hold");
         Self::refresh_peek_view(shell);
     }
 
@@ -553,6 +587,13 @@ impl ApplicationShell {
         let phase = shell.borrow().peek_phase.clone();
         match phase {
             PeekPhase::Idle => {}
+            PeekPhase::Armed { pending, .. } => {
+                shell.borrow_mut().peek_phase = PeekPhase::Idle;
+                shell
+                    .borrow_mut()
+                    .select_adjacent_pane(pending == PeekDirection::Forward);
+                eprintln!("zentty-linux: worklane-peek=quick-modifier-release");
+            }
             PeekPhase::Peeking { current, .. } => {
                 shell.borrow_mut().peek_phase = PeekPhase::Idle;
                 shell.borrow().peek_view.hide();

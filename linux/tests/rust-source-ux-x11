@@ -298,23 +298,24 @@ xdotool keyup --window "${window_id}" ctrl
 xdotool key --window "${window_id}" ctrl+Tab
 sleep 0.1
 
-# Super+Tab is the Linux overview gesture where the compositor delivers it to
-# the application. It opens Peek explicitly with no timer. Super+Left previews
-# the pane in the left column and releasing Super commits that exact pane.
-xdotool keydown --window "${window_id}" super
-xdotool key --window "${window_id}" Tab
-grep -Fxq 'zentty-linux: worklane-peek=open trigger=explicit-shortcut' "${log}" ||
-    fail "Super+Tab did not explicitly open Worklane Peek"
+# This time keep physical Tab down beyond the source 200ms threshold. Peek must
+# open only because Tab remains down, not merely because Control remains down.
+xdotool keydown --window "${window_id}" ctrl
+xdotool keydown --window "${window_id}" Tab
+sleep 0.3
+grep -Fxq 'zentty-linux: worklane-peek=open trigger=tab-hold' "${log}" ||
+    fail "holding physical Tab did not open Worklane Peek"
+xdotool keyup --window "${window_id}" Tab
 xdotool key --window "${window_id}" Left
 grep -Fxq 'zentty-linux: worklane-peek=spatial worklane=worklane-1 pane=pane-1' "${log}" ||
     fail "Worklane Peek did not spatially preview the left pane"
-xdotool keyup --window "${window_id}" super
+xdotool keyup --window "${window_id}" ctrl
 for _ in $(seq 1 100); do
     grep -Fxq 'zentty-linux: worklane-peek=commit worklane=worklane-1 pane=pane-1' "${log}" && break
     sleep 0.05
 done
 grep -Fxq 'zentty-linux: worklane-peek=commit worklane=worklane-1 pane=pane-1' "${log}" ||
-    fail "releasing Super did not commit the Worklane Peek preview"
+    fail "releasing Control did not commit the Worklane Peek preview"
 xdotool type --window "${window_id}" --delay 10 'peek-spatial-commit'
 xdotool key --window "${window_id}" Return
 for _ in $(seq 1 100); do
@@ -324,15 +325,17 @@ done
 grep -Fxq 'zentty-linux: title-pane=pane-1 value=focus:peek-spatial-commit' "${log}" ||
     fail "Worklane Peek commit did not restore the selected real PTY"
 
-# Super+W is the compositor-safe Ubuntu/Wayland route. Open through that route,
-# advance with Super+Tab, then cancel with Escape and restore the origin.
-xdotool keydown --window "${window_id}" super
-xdotool key --window "${window_id}" w
+# Hold Tab to open again, release Tab while keeping Control down, advance with
+# a fresh Ctrl+Tab tap, then cancel with Escape and restore the origin.
+xdotool keydown --window "${window_id}" ctrl
+xdotool keydown --window "${window_id}" Tab
+sleep 0.3
+xdotool keyup --window "${window_id}" Tab
 xdotool key --window "${window_id}" Tab
 grep -Fxq 'zentty-linux: worklane-peek=preview worklane=worklane-1 pane=pane-2' "${log}" ||
     fail "a repeated Tab did not advance the open Worklane Peek"
 xdotool key --window "${window_id}" Escape
-xdotool keyup --window "${window_id}" super
+xdotool keyup --window "${window_id}" ctrl
 grep -Fxq 'zentty-linux: worklane-peek=cancel' "${log}" ||
     fail "Escape did not cancel Worklane Peek"
 xdotool type --window "${window_id}" --delay 10 'peek-cancel-origin'
@@ -345,14 +348,16 @@ grep -Fxq 'zentty-linux: title-pane=pane-1 value=focus:peek-cancel-origin' "${lo
     fail "Escape did not restore Worklane Peek's original real PTY"
 
 # Return to pane 2, reopen Peek, and select the first visible card with the
-# real pointer. The click only previews; Super release owns the exact commit.
+# real pointer. The click only previews; Control release owns the exact commit.
 xdotool key --window "${window_id}" ctrl+Tab
 for _ in $(seq 1 100); do
     grep -Fxq 'zentty-linux: action=next-pane worklane=worklane-1 pane=pane-2' "${log}" && break
     sleep 0.05
 done
-xdotool keydown --window "${window_id}" super
-xdotool key --window "${window_id}" w
+xdotool keydown --window "${window_id}" ctrl
+xdotool keydown --window "${window_id}" Tab
+sleep 0.3
+xdotool keyup --window "${window_id}" Tab
 xdotool mousemove --window "${window_id}" 600 270 click 1
 for _ in $(seq 1 100); do
     grep -Fxq 'zentty-linux: worklane-peek=click worklane=worklane-1 pane=pane-1' "${log}" && break
@@ -360,9 +365,9 @@ for _ in $(seq 1 100); do
 done
 grep -Fxq 'zentty-linux: worklane-peek=click worklane=worklane-1 pane=pane-1' "${log}" ||
     fail "clicking a visible Worklane Peek card did not preview its exact pane"
-xdotool keyup --window "${window_id}" super
+xdotool keyup --window "${window_id}" ctrl
 grep -Fxq 'zentty-linux: worklane-peek=commit worklane=worklane-1 pane=pane-1' "${log}" ||
-    fail "the clicked Worklane Peek card was not committed on Super release"
+    fail "the clicked Worklane Peek card was not committed on Control release"
 
 # Return to pane 2 so the existing horizontal-scroll assertions retain their
 # source-pinned starting state.

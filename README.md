@@ -89,14 +89,12 @@ workspace can be launched with:
 linux/scripts/run-local --state-directory /tmp/zentty-state --no-session-restore
 ```
 
-Current Linux pane-navigation shortcuts are:
+Current Linux pane navigation uses the duration of the **Tab key itself**:
 
-- `Ctrl+Tab` / `Ctrl+Shift+Tab`: immediately select the next/previous pane.
-- `Super+W`: open Worklane Peek; release `Super` to commit or press `Escape`
-  to cancel.
-- `Super+Tab`: also opens Worklane Peek when the desktop delivers it to the
-  application. Stock GNOME reserves this chord for application switching, so
-  `Super+W` is the dependable Ubuntu/Wayland route.
+- Tap `Ctrl+Tab` / `Ctrl+Shift+Tab`: select the next/previous pane as soon as
+  Tab is released. Keeping Control held afterward does not open anything.
+- Hold Tab in either chord for 200ms: open Worklane Peek. Release Control to
+  commit the preview or press `Escape` to cancel.
 
 This is currently a development build, not a supported Linux package. The
 public feature inventory and remaining parity work live in issues #1 and

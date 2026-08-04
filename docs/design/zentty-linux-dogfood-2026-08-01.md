@@ -5498,6 +5498,34 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   tracking remains only to prevent a single physical key press from becoming
   repeated traversal through GTK auto-repeat.
 
+### DOGFOOD-2026-08-04-WORKLANE-PEEK-TAB-DURATION: measure the key that is held
+
+- **Third user correction:** Super+W was technically available but was a poor
+  product shortcut. More importantly, immediate Ctrl-Tab discarded a useful
+  source interaction because the earlier ports had measured the wrong thing.
+  The meaningful distinction is a Tab tap versus a Tab hold—not whether the
+  user happens to retain Control after tapping Tab.
+- **Corrected event model:** A Ctrl-Tab key-down arms the source 200ms timer.
+  Tab key-up before the timer fires immediately traverses one pane and cancels
+  the pending hold, even while Control remains physically down. If and only if
+  Tab is still down when the timer fires, Peek opens at the original pane.
+  Releasing Tab after opening leaves Peek available for fresh traversal taps;
+  Control release commits and Escape cancels. GTK Tab auto-repeat is discarded
+  while the physical key remains down.
+- **Removed workaround:** Super+W and the application-level Super+Tab path were
+  removed. The GNOME compositor fact in the preceding record remains useful
+  evidence for why Super+Tab was not dependable, but it is no longer part of
+  Zentty's current input contract. Armed generations and the timer are restored
+  only for Tab-down duration; they no longer observe Control dwell time.
+- **Real-system regression:** The controlled X11 workflow taps Tab, requires
+  traversal on Tab release, then keeps Control down for 650ms and requires no
+  Peek receipt. A separate chord keeps physical Tab down for 300ms and requires
+  Peek to open; releasing Tab alone must not close it, spatial navigation must
+  work, and releasing Control must commit the exact real PTY. The same true
+  hold route covers repeated traversal, Escape restoration, and real-pointer
+  card selection. The complete five-terminal workflow remains the acceptance
+  boundary.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were

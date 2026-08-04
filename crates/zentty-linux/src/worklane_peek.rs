@@ -21,6 +21,10 @@ pub(crate) enum SpatialDirection {
 pub(crate) enum Phase {
     #[default]
     Idle,
+    Armed {
+        generation: u64,
+        pending: Direction,
+    },
     Peeking {
         original: PaneReference,
         current: PaneReference,
@@ -36,7 +40,7 @@ impl Phase {
     pub(crate) fn selected(&self) -> Option<&PaneReference> {
         match self {
             Self::Peeking { current, .. } => Some(current),
-            Self::Idle => None,
+            Self::Idle | Self::Armed { .. } => None,
         }
     }
 }
