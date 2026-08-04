@@ -48,7 +48,7 @@ GDK_SCALE=1 \
 GDK_DPI_SCALE=1 \
 LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
     "${product}" \
-    --command 'printf "\033]2;zentty-title-one\a"; sleep 0.2; printf "\033]2;zentty-title-two\a"; IFS= read -r line; printf "\033]2;focus:%s\a" "$line"; sleep 10' \
+    --command 'printf "\033]2;zentty-title-one\a"; sleep 0.2; printf "\033]2;zentty-title-two\a"; while IFS= read -r line; do printf "\033]2;focus:%s\a" "$line"; done' \
     --state-directory "${state_directory}" \
     --no-session-restore \
     --quit-after-last-terminal-exit >"${log}" 2>&1 &
@@ -207,8 +207,20 @@ done
 grep -Fxq 'zentty-linux: title-pane=pane-2 value=focus:second-pane' "${log}" ||
     fail "the contextual split did not leave input focused in its new real PTY"
 
+# Return focus to the original terminal with a real pointer click. GTK focus
+# entering a Ghostty descendant must update the durable workspace selection;
+# otherwise a subsequent layout action silently targets the stale right pane.
+xdotool mousemove --window "${window_id}" 500 350 click 1
+for _ in $(seq 1 100); do
+    grep -Fxq 'zentty-linux: focus-pane pane=pane-1' "${log}" && break
+    sleep 0.05
+done
+grep -Fxq 'zentty-linux: focus-pane pane=pane-1' "${log}" ||
+    fail "clicking the original Ghostty pane did not update workspace focus"
+
 # The source arrange-panes icon is not decorative. Open its real popover and
-# drive the first layout command through the pointer into a third Ghostty PTY.
+# drive New Pane Below. Because pane-1 was just selected, pane-3 must join the
+# original left column rather than whichever column was previously focused.
 xdotool mousemove --window "${window_id}" 52 18 click 1
 for _ in $(seq 1 100); do
     grep -Fxq 'zentty-linux: chrome-popover=arrange-panes state=open' "${log}" && break
@@ -216,13 +228,15 @@ for _ in $(seq 1 100); do
 done
 grep -Fxq 'zentty-linux: chrome-popover=arrange-panes state=open' "${log}" ||
     fail "the real arrange-panes icon did not open its popover"
-xdotool mousemove --window "${window_id}" 100 80 click 1
+xdotool mousemove --window "${window_id}" 100 115 click 1
 for _ in $(seq 1 100); do
     grep -Fxq 'zentty-linux: terminal-ready-pane=pane-3' "${log}" && break
     sleep 0.05
 done
 grep -Fxq 'zentty-linux: terminal-ready-pane=pane-3' "${log}" ||
     fail "the real arrange-panes popover did not create a third terminal"
+grep -Fxq 'zentty-linux: geometry=worklane-1:column-worklane-1[pane-1,pane-3],column-pane-2[pane-2]' "${log}" ||
+    fail "New Pane Below did not split the pointer-focused pane's own column"
 for _ in $(seq 1 100); do
     [[ "$(grep -Fxc 'zentty-linux: chrome-popover=arrange-panes state=closed' "${log}" || true)" -ge 1 ]] && break
     sleep 0.05
@@ -238,8 +252,25 @@ done
 grep -Fxq 'zentty-linux: title-pane=pane-3 value=focus:arranged-pane' "${log}" ||
     fail "keyboard input did not reach the arranged real Ghostty PTY"
 
+# End all three real children with terminal EOF rather than a fixed sleep. This
+# keeps the scenario bounded while preserving the product-owned child-exit path.
+xdotool mousemove --window "${window_id}" 500 200 click 1
+xdotool key --window "${window_id}" ctrl+d
+for _ in $(seq 1 100); do
+    grep -Fxq 'zentty-linux: child-exited-pane=pane-1' "${log}" && break
+    sleep 0.05
+done
+xdotool mousemove --window "${window_id}" 1000 350 click 1
+xdotool key --window "${window_id}" ctrl+d
+for _ in $(seq 1 100); do
+    grep -Fxq 'zentty-linux: child-exited-pane=pane-2' "${log}" && break
+    sleep 0.05
+done
+xdotool mousemove --window "${window_id}" 700 350 click 1
+xdotool key --window "${window_id}" ctrl+d
+
 set +e
-timeout --foreground --kill-after=2s 17s tail --pid="${product_pid}" -f /dev/null
+timeout --foreground --kill-after=2s 7s tail --pid="${product_pid}" -f /dev/null
 wait_status=$?
 set -e
 if (( wait_status != 0 )); then
@@ -254,8 +285,8 @@ product_pid=""
 
 grep -Fxq 'zentty-linux: action=split-pane-right pane=pane-2' "${log}" ||
     fail "the contextual Split Right item did not activate after Rename Pane"
-grep -Fxq 'zentty-linux: action=split-pane-right pane=pane-3' "${log}" ||
-    fail "the arrange-panes icon did not activate its real split action"
+grep -Fxq 'zentty-linux: action=split-pane-below pane=pane-3' "${log}" ||
+    fail "the arrange-panes icon did not activate its real below action"
 [[ "$(grep -Fxc 'zentty-linux: terminal-ready' "${log}" || true)" -eq 3 ]] ||
     fail "the pointer-driven controls did not initialize three real Ghostty terminals"
 [[ "$(grep -Fxc 'zentty-linux: child-exited' "${log}" || true)" -eq 3 ]] ||
@@ -266,4 +297,4 @@ if grep -Eq 'panicked at|thread caused non-unwinding panic|RefCell already borro
     fail "the contextual action reported a panic or GTK lifecycle critical"
 fi
 
-echo "Rust source UX passed: x11, leading-chrome=real-pointer, pane-rename=durable, focus=real-pty, contextual-and-arrange-splits=real"
+echo "Rust source UX passed: x11, leading-chrome=real-pointer, pane-rename=durable, focus=real-pty-and-model, contextual-right-and-focused-below=real"

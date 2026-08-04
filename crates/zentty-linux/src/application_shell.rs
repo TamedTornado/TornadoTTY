@@ -878,9 +878,10 @@ impl ApplicationShell {
         let focus_controller = gtk::EventControllerFocus::new();
         let weak = Rc::downgrade(shell);
         let focus_id = pane_id.to_owned();
-        focus_controller.connect_enter(move |_| {
+        focus_controller.connect_enter(move |controller| {
             let weak = weak.clone();
             let focus_id = focus_id.clone();
+            let controller = controller.clone();
             glib::idle_add_local_once(move || {
                 let Some(shell) = weak.upgrade() else {
                     return;
@@ -888,12 +889,11 @@ impl ApplicationShell {
                 if shell.borrow().shutting_down {
                     return;
                 }
-                let still_focused = shell
-                    .borrow()
-                    .surfaces
-                    .get(&focus_id)
-                    .is_some_and(|surface| surface.widget().has_focus());
-                if still_focused {
+                // Ghostty owns focusable descendants inside its embedding
+                // widget. Widget::has_focus only describes the wrapper itself,
+                // while EventControllerFocus::contains_focus covers the
+                // controller widget and its descendants.
+                if controller.contains_focus() {
                     let changed = shell.borrow_mut().state.select_pane(&focus_id);
                     if changed {
                         eprintln!("zentty-linux: focus-pane pane={focus_id}");

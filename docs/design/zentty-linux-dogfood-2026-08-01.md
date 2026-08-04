@@ -4829,6 +4829,32 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   width-preserving-add distinction. This turns the audit from prose into a build
   failure if the port invents the same blended command again.
 
+### DOGFOOD-2026-08-04-GHOSTTY-DESCENDANT-FOCUS: GTK wrapper focus is not terminal focus
+
+- **Operator failure:** After `Split Right`, clicking the original terminal
+  moved keyboard focus but `New Pane Below` continued to split the right column.
+  Runtime receipts contained no `focus-pane` transition for the terminal click,
+  proving the GTK view and durable workspace model had diverged.
+- **Reproduced first:** The maintained X11 source-UX scenario now creates two
+  real Ghostty surfaces, clicks the original surface with the real pointer,
+  requires its durable focus receipt, invokes `New Pane Below`, and requires the
+  new pane to appear immediately below that exact pane in the original column.
+  The staged pre-repair product failed at the missing focus receipt.
+- **Root cause:** The focus-enter callback deferred correctly but then queried
+  `Widget::has_focus()` on Ghostty's outer embedding widget. Actual GTK focus is
+  owned by a descendant inside the embed, so the wrapper-only predicate rejected
+  a valid focus transition.
+- **Repair:** The callback now uses the installed
+  `EventControllerFocus::contains_focus()` predicate, whose GTK contract covers
+  the controller widget and descendants. The repaired staged product passed the
+  pointer focus receipt, exact left-column geometry, real PTY input, and clean
+  three-child lifecycle.
+- **Harness repair:** The scenario's child command formerly slept for a fixed ten
+  seconds after one input, creating a race once the new pointer step was added.
+  It now reads until real terminal EOF; the test sends Ctrl-D to each pane and
+  keeps the same product-owned child-exit assertions without waiting on arbitrary
+  sleeps.
+
 ### DOGFOOD-2026-08-04-LOCAL-LAUNCH-CONTRACT: a product nobody can launch is not dogfoodable
 
 - **Operator failure:** When asked to run the product after the UX slice, the
