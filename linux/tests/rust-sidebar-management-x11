@@ -102,6 +102,12 @@ for _ in $(seq 1 120); do
 done
 grep -Fxq 'zentty-linux: action=reorder-worklane id=worklane-1 insertion=1 order=worklane-2,worklane-1,worklane-3,worklane-4,worklane-5,worklane-6,worklane-7,worklane-8,worklane-9 active=worklane-1 pane=pane-1' "${log}" ||
     fail "real sidebar drag did not reorder the stable worklane ID"
+grep -Fxq 'zentty-linux: worklane-drag=begin id=worklane-1 visual=lifted ghost=card' "${log}" ||
+    fail "real sidebar drag did not display the lifted-card source feedback"
+grep -Eq '^zentty-linux: worklane-drag=indicator target=worklane-[23] edge=(before|after)$' "${log}" ||
+    fail "real sidebar drag did not display a directional insertion slot"
+grep -Fxq 'zentty-linux: worklane-drag=end id=worklane-1 visual=cleared' "${log}" ||
+    fail "real sidebar drag did not clear its intermediate visual state"
 
 # Linux maps the source Command+Control arrow commands to Super+Control. Move
 # the same active lane back through the real capture-phase keyboard route.

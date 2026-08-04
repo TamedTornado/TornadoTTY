@@ -1,5 +1,7 @@
 use gtk::glib::variant::ToVariant;
 use gtk::prelude::*;
+use std::cell::Cell;
+use std::rc::Rc;
 use zentty_core::SidebarWorklaneSummary;
 
 use crate::source_ui;
@@ -88,6 +90,36 @@ fn selection_state(is_active: bool) -> WorklaneSelectionState {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum WorklaneDropEdge {
+    Before,
+    After,
+}
+
+impl WorklaneDropEdge {
+    fn at(pointer_y: f64, card_height: i32) -> Self {
+        if pointer_y < f64::from(card_height) / 2.0 {
+            Self::Before
+        } else {
+            Self::After
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Before => "before",
+            Self::After => "after",
+        }
+    }
+
+    fn css_class(self) -> &'static str {
+        match self {
+            Self::Before => "worklane-drop-before",
+            Self::After => "worklane-drop-after",
+        }
+    }
+}
+
 pub(crate) fn install_styles() {
     let Some(display) = gtk::gdk::Display::default() else {
         return;
@@ -98,7 +130,9 @@ pub(crate) fn install_styles() {
          .zentty-sidebar-floating { background: #17191d; border-right: 1px solid #4a5260; box-shadow: 10px 0 24px rgba(0, 0, 0, 0.45); }\n\
          .zentty-sidebar-header { color: #f1f3f5; font-weight: 700; font-size: 15px; }\n\
          .worklane-card { background: #1e2126; border: 1px solid #30343b; border-radius: 10px; padding: 7px; }\n\
-         .worklane-drop-target { border-color: #65a7ff; box-shadow: inset 0 0 0 2px alpha(#65a7ff, 0.55); }\n\
+         .worklane-dragged { opacity: 0.52; border-color: #65a7ff; box-shadow: 0 8px 22px rgba(0, 0, 0, 0.62), inset 0 0 0 1px alpha(#65a7ff, 0.72); }\n\
+         .worklane-drop-before { margin-top: 12px; box-shadow: 0 -6px 0 -2px #65a7ff, 0 -6px 12px -2px alpha(#65a7ff, 0.72); }\n\
+         .worklane-drop-after { margin-bottom: 12px; box-shadow: 0 6px 0 -2px #65a7ff, 0 6px 12px -2px alpha(#65a7ff, 0.72); }\n\
          .worklane-card-active { background: #343a45; border-color: #7c8799; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35); }\n\
          .worklane-tint-inactive.worklane-card-red { border-left: 4px solid rgba(245, 101, 101, 0.34); }\n\
          .worklane-tint-inactive.worklane-card-orange { border-left: 4px solid rgba(237, 137, 54, 0.34); }\n\
@@ -286,7 +320,7 @@ fn make_worklane_card(
         worklane_count,
     )));
     header.append(&menu);
-    install_worklane_drag_source(&header, &summary.worklane_id);
+    install_worklane_drag_source(&header, &card, &summary.worklane_id);
     install_worklane_drop_target(&card, &summary.worklane_id);
     card.append(&header);
 
@@ -341,47 +375,84 @@ fn collect_named_ids(widget: &gtk::Widget, prefix: &str, ids: &mut Vec<String>) 
     }
 }
 
-fn install_worklane_drag_source(header: &gtk::Box, worklane_id: &str) {
+fn install_worklane_drag_source(header: &gtk::Box, card: &gtk::Box, worklane_id: &str) {
     let source = gtk::DragSource::new();
     source.set_actions(gtk::gdk::DragAction::MOVE);
     source.set_propagation_phase(gtk::PropagationPhase::Capture);
+    header.set_cursor_from_name(Some("grab"));
     let worklane_id = worklane_id.to_owned();
     let prepare_id = worklane_id.clone();
     source.connect_prepare(move |_, _, _| {
         Some(gtk::gdk::ContentProvider::for_value(&prepare_id.to_value()))
     });
-    source.connect_drag_begin(move |_, _| {
-        eprintln!("zentty-linux: worklane-drag=begin id={worklane_id}");
+    let begin_card = card.clone();
+    let begin_header = header.clone();
+    let begin_id = worklane_id.clone();
+    source.connect_drag_begin(move |source, _| {
+        let paintable = gtk::WidgetPaintable::new(Some(&begin_card));
+        source.set_icon(Some(&paintable), 24, 18);
+        begin_card.add_css_class("worklane-dragged");
+        begin_header.set_cursor_from_name(Some("grabbing"));
+        eprintln!("zentty-linux: worklane-drag=begin id={begin_id} visual=lifted ghost=card");
+    });
+    let end_card = card.clone();
+    let end_header = header.clone();
+    let end_id = worklane_id.clone();
+    source.connect_drag_end(move |_, _, _| {
+        clear_worklane_drag_feedback(&end_card);
+        end_header.set_cursor_from_name(Some("grab"));
+        eprintln!("zentty-linux: worklane-drag=end id={end_id} visual=cleared");
+    });
+    let cancel_id = worklane_id;
+    source.connect_drag_cancel(move |_, _, reason| {
+        eprintln!("zentty-linux: worklane-drag=cancel id={cancel_id} reason={reason:?}");
+        false
     });
     header.add_controller(source);
 }
 
 fn install_worklane_drop_target(card: &gtk::Box, target_id: &str) {
     let target = gtk::DropTarget::new(String::static_type(), gtk::gdk::DragAction::MOVE);
-    let card_enter = card.clone();
     let enter_id = target_id.to_owned();
     target.connect_enter(move |_, _, _| {
-        card_enter.add_css_class("worklane-drop-target");
         eprintln!("zentty-linux: worklane-drag=target id={enter_id}");
         gtk::gdk::DragAction::MOVE
     });
+    let last_edge = Rc::new(Cell::new(None));
+    let motion_edge = Rc::clone(&last_edge);
+    let card_motion = card.clone();
+    let motion_id = target_id.to_owned();
+    target.connect_motion(move |_, _, y| {
+        let edge = WorklaneDropEdge::at(y, card_motion.height());
+        if motion_edge.get() != Some(edge) {
+            clear_sibling_drop_edges(&card_motion);
+            card_motion.add_css_class(edge.css_class());
+            motion_edge.set(Some(edge));
+            eprintln!(
+                "zentty-linux: worklane-drag=indicator target={motion_id} edge={}",
+                edge.as_str()
+            );
+        }
+        gtk::gdk::DragAction::MOVE
+    });
     let card_leave = card.clone();
-    target.connect_leave(move |_| card_leave.remove_css_class("worklane-drop-target"));
+    let leave_edge = Rc::clone(&last_edge);
+    target.connect_leave(move |_| {
+        clear_drop_edge(&card_leave);
+        leave_edge.set(None);
+    });
     let card_drop = card.clone();
     let target_id = target_id.to_owned();
     target.connect_drop(move |_, value, _, y| {
-        card_drop.remove_css_class("worklane-drop-target");
+        clear_sibling_drop_edges(&card_drop);
         let Ok(dragged_id) = value.get::<String>() else {
             return false;
         };
         if dragged_id == target_id {
             return false;
         }
-        let below_midpoint = y >= f64::from(card_drop.height()) / 2.0;
-        let placement = format!(
-            "{}:{target_id}",
-            if below_midpoint { "after" } else { "before" }
-        );
+        let edge = WorklaneDropEdge::at(y, card_drop.height());
+        let placement = format!("{}:{target_id}", edge.as_str());
         card_drop
             .activate_action(
                 "workspace.reorder-worklane",
@@ -390,6 +461,32 @@ fn install_worklane_drop_target(card: &gtk::Box, target_id: &str) {
             .is_ok()
     });
     card.add_controller(target);
+}
+
+fn clear_drop_edge(card: &gtk::Box) {
+    card.remove_css_class(WorklaneDropEdge::Before.css_class());
+    card.remove_css_class(WorklaneDropEdge::After.css_class());
+}
+
+fn clear_sibling_drop_edges(card: &gtk::Box) {
+    let Some(sidebar) = card
+        .parent()
+        .and_then(|parent| parent.downcast::<gtk::Box>().ok())
+    else {
+        clear_drop_edge(card);
+        return;
+    };
+    let mut child = sidebar.first_child();
+    while let Some(widget) = child {
+        child = widget.next_sibling();
+        widget.remove_css_class(WorklaneDropEdge::Before.css_class());
+        widget.remove_css_class(WorklaneDropEdge::After.css_class());
+    }
+}
+
+fn clear_worklane_drag_feedback(card: &gtk::Box) {
+    card.remove_css_class("worklane-dragged");
+    clear_sibling_drop_edges(card);
 }
 
 fn make_pane_row(
@@ -882,7 +979,9 @@ fn remove_all_children(container: &gtk::Box) {
 
 #[cfg(test)]
 mod tests {
-    use super::{WorklaneSelectionState, pane_action_specs, reveal_range, selection_state};
+    use super::{
+        WorklaneDropEdge, WorklaneSelectionState, pane_action_specs, reveal_range, selection_state,
+    };
     use crate::source_ui;
 
     #[test]
@@ -913,6 +1012,27 @@ mod tests {
         assert_eq!(selection_state(false), WorklaneSelectionState::Inactive);
         assert_eq!(selection_state(true).css_class(), "worklane-tint-active");
         assert_eq!(selection_state(false).css_class(), "worklane-tint-inactive");
+    }
+
+    #[test]
+    fn worklane_drop_edge_changes_at_the_card_midpoint() {
+        assert_eq!(WorklaneDropEdge::at(0.0, 100), WorklaneDropEdge::Before);
+        assert_eq!(WorklaneDropEdge::at(49.9, 100), WorklaneDropEdge::Before);
+        assert_eq!(WorklaneDropEdge::at(50.0, 100), WorklaneDropEdge::After);
+        assert_eq!(WorklaneDropEdge::at(100.0, 100), WorklaneDropEdge::After);
+        assert_eq!(WorklaneDropEdge::Before.as_str(), "before");
+        assert_eq!(WorklaneDropEdge::After.as_str(), "after");
+    }
+
+    #[test]
+    fn drag_feedback_contract_is_pinned_to_the_source_preview() {
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../Zentty/UI/Sidebar/SidebarView.swift"
+        ));
+        assert!(source.contains("button.setReorderDragActive(true)"));
+        assert!(source.contains("syncReorderSpacer()"));
+        assert!(source.contains("positionDraggedWorklaneButton"));
     }
 
     #[test]

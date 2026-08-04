@@ -5626,6 +5626,36 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   Wayland pointer DnD and persisted visibility/order remain explicit inventory
   gaps.
 
+### DOGFOOD-2026-08-04-WORKLANE-DRAG-AFFORDANCE: a correct drop was not a usable drag
+
+- **User discovery:** The first Linux drag implementation changed the model in
+  the right place but gave almost no indication that a worklane had been
+  grabbed or where it would land. Its controlled-X11 test asserted only the
+  final worklane order, so a technically successful but visibly poor
+  interaction passed acceptance.
+- **Source reconciliation:** The macOS implementation does not merely outline a
+  destination row. `SidebarDragCoordinator` detaches and positions the dragged
+  card under the pointer, marks it reorder-active, and
+  `SidebarView.syncReorderSpacer()` displays the prospective insertion slot.
+  Linux now preserves those semantics with native GTK DnD rather than treating
+  the earlier target border as source parity.
+- **Repair:** Worklane headers use grab/grabbing cursors. Beginning a drag
+  installs a full-card `WidgetPaintable` drag ghost and visibly lifts the source
+  card. Pointer motion creates a bright, spaced before/after insertion edge at
+  the target midpoint; leaving, dropping, cancellation, and drag completion
+  clear all temporary state.
+- **Test correction:** Focused tests pin midpoint direction and the corresponding
+  source preview hooks. The real nine-worklane X11 scenario now requires
+  receipts emitted after the lifted source class, card ghost, directional
+  insertion class, and cleanup are applied, in addition to requiring the final
+  stable-ID order. A final-order assertion alone is no longer sufficient.
+- **Remaining visual review:** GTK supplies the compositor-owned drag-icon
+  motion, so automated acceptance proves the real DnD path and the actual
+  intermediate state transitions rather than pixel-faking a pointer drag.
+  Human review still determines whether spacing, color, and shadow deserve a
+  later polish pass; it is not a substitute for the functional integration
+  assertions.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were
