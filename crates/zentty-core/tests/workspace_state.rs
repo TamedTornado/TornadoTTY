@@ -157,7 +157,10 @@ fn focused_pane_transfers_to_existing_worklane_as_a_focused_column() {
     assert_eq!(state.focused_pane_id(), Some("pane-b"));
     assert_eq!(state.active_columns().len(), 2);
     assert_eq!(state.active_columns()[1].id, "column-pane-b");
-    assert_eq!(state.active_columns()[1].panes[0].title, "agent review");
+    assert_eq!(
+        state.active_columns()[1].panes[0].live_title,
+        "agent review"
+    );
     assert_eq!(state.worklanes()[0].columns[0].pane_heights, [1.0]);
 }
 
@@ -235,6 +238,39 @@ fn source_window_round_trip_preserves_metadata_while_applying_product_state() {
         projected.worklanes[0].bookmark_origin_id.as_deref(),
         Some("bookmark-main")
     );
+}
+
+#[test]
+fn pane_custom_identity_survives_runtime_titles_and_clears_to_live_fallback() {
+    let envelope = SessionRestoreEnvelope::from_json(V3_ENVELOPE).unwrap();
+    let template = &envelope.workspace.windows[0];
+    let mut state = WorkspaceState::from_window_recipe(template).unwrap();
+
+    assert_eq!(
+        state.sidebar_summaries()[0].pane_rows[0].primary_text,
+        "Agent"
+    );
+    assert!(state.set_pane_title("pane-agent", "  compiling  "));
+    assert_eq!(
+        state.sidebar_summaries()[0].pane_rows[0].primary_text,
+        "Agent"
+    );
+    assert!(state.set_pane_custom_title("pane-agent", Some("  Review Agent  ")));
+    assert_eq!(
+        state.sidebar_summaries()[0].pane_rows[0].primary_text,
+        "Review Agent"
+    );
+    assert!(state.set_pane_custom_title("pane-agent", Some("   ")));
+    assert_eq!(
+        state.sidebar_summaries()[0].pane_rows[0].primary_text,
+        "compiling"
+    );
+
+    let projected = state.to_window_recipe(template);
+    let pane = &projected.worklanes[0].columns[0].panes[0];
+    assert_eq!(pane.custom_title, None);
+    assert_eq!(pane.last_activity_title.as_deref(), Some("compiling"));
+    assert_eq!(pane.title_seed.as_deref(), Some("Codex"));
 }
 
 #[test]

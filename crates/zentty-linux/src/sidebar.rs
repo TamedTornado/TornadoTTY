@@ -240,46 +240,7 @@ fn make_worklane_card(
     card.append(&header);
 
     for pane in &summary.pane_rows {
-        let row = gtk::Box::new(gtk::Orientation::Horizontal, 2);
-        row.set_widget_name(&widget_name("pane-row", &pane.pane_id));
-        row.add_css_class("pane-row");
-        if pane.is_focused {
-            row.add_css_class("pane-row-focused");
-        }
-        let select = gtk::Button::new();
-        select.set_has_frame(false);
-        select.set_hexpand(true);
-        select.set_action_name(Some("workspace.select-pane"));
-        select.set_action_target_value(Some(
-            &(summary.worklane_id.as_str(), pane.pane_id.as_str()).to_variant(),
-        ));
-        let pane_content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        let marker = gtk::Label::new(Some(if pane.is_focused { "●" } else { "○" }));
-        marker.set_widget_name(&widget_name("pane-marker", &pane.pane_id));
-        marker.add_css_class("pane-marker");
-        let pane_title = gtk::Label::new(Some(&pane.primary_text));
-        pane_title.set_widget_name(&widget_name("pane-title", &pane.pane_id));
-        pane_title.set_xalign(0.0);
-        pane_title.set_hexpand(true);
-        pane_title.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        pane_content.append(&marker);
-        pane_content.append(&pane_title);
-        select.set_child(Some(&pane_content));
-        row.append(&select);
-
-        let pane_menu = gtk::MenuButton::new();
-        pane_menu.add_css_class("sidebar-pane-actions");
-        pane_menu.set_icon_name("view-more-symbolic");
-        pane_menu.set_tooltip_text(Some("Pane actions"));
-        pane_menu.set_accessible_role(gtk::AccessibleRole::Button);
-        pane_menu.update_property(&[gtk::accessible::Property::Label("Pane actions")]);
-        pane_menu.set_popover(Some(&make_pane_context_menu(
-            window,
-            &summary.worklane_id,
-            &pane.pane_id,
-        )));
-        row.append(&pane_menu);
-        card.append(&row);
+        card.append(&make_pane_row(window, summary, pane));
     }
 
     eprintln!(
@@ -290,6 +251,57 @@ fn make_worklane_card(
         summary.top_label
     );
     card
+}
+
+fn make_pane_row(
+    window: &gtk::Window,
+    summary: &SidebarWorklaneSummary,
+    pane: &zentty_core::SidebarPaneSummary,
+) -> gtk::Box {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 2);
+    row.set_widget_name(&widget_name("pane-row", &pane.pane_id));
+    row.add_css_class("pane-row");
+    if pane.is_focused {
+        row.add_css_class("pane-row-focused");
+    }
+    let select = gtk::Button::new();
+    select.set_has_frame(false);
+    select.set_hexpand(true);
+    select.set_action_name(Some("workspace.select-pane"));
+    select.set_action_target_value(Some(
+        &(summary.worklane_id.as_str(), pane.pane_id.as_str()).to_variant(),
+    ));
+    select.set_accessible_role(gtk::AccessibleRole::Button);
+    select.update_property(&[gtk::accessible::Property::Label(pane.primary_text.as_str())]);
+    select.update_state(&[gtk::accessible::State::Selected(Some(pane.is_focused))]);
+    let pane_content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    let marker = gtk::Label::new(Some(if pane.is_focused { "●" } else { "○" }));
+    marker.set_widget_name(&widget_name("pane-marker", &pane.pane_id));
+    marker.add_css_class("pane-marker");
+    let pane_title = gtk::Label::new(Some(&pane.primary_text));
+    pane_title.set_widget_name(&widget_name("pane-title", &pane.pane_id));
+    pane_title.set_xalign(0.0);
+    pane_title.set_hexpand(true);
+    pane_title.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    pane_content.append(&marker);
+    pane_content.append(&pane_title);
+    select.set_child(Some(&pane_content));
+    row.append(&select);
+
+    let pane_menu = gtk::MenuButton::new();
+    pane_menu.add_css_class("sidebar-pane-actions");
+    pane_menu.set_icon_name("view-more-symbolic");
+    pane_menu.set_tooltip_text(Some("Pane actions"));
+    pane_menu.set_accessible_role(gtk::AccessibleRole::Button);
+    pane_menu.update_property(&[gtk::accessible::Property::Label("Pane actions")]);
+    pane_menu.set_popover(Some(&make_pane_context_menu(
+        window,
+        &summary.worklane_id,
+        pane,
+        summary.pane_rows.len() > 1,
+    )));
+    row.append(&pane_menu);
+    row
 }
 
 pub(crate) fn update_metadata(sidebar: &gtk::Box, summaries: &[SidebarWorklaneSummary]) -> bool {
@@ -363,6 +375,20 @@ pub(crate) fn update_metadata(sidebar: &gtk::Box, summaries: &[SidebarWorklaneSu
                 return false;
             };
             title.set_text(&pane.primary_text);
+            eprintln!(
+                "zentty-linux: pane-display id={} label={:?} custom={}",
+                pane.pane_id,
+                pane.primary_text,
+                pane.custom_title.is_some()
+            );
+            let Some(select) = row
+                .first_child()
+                .and_then(|child| child.downcast::<gtk::Button>().ok())
+            else {
+                return false;
+            };
+            select.update_property(&[gtk::accessible::Property::Label(pane.primary_text.as_str())]);
+            select.update_state(&[gtk::accessible::State::Selected(Some(pane.is_focused))]);
         }
     }
     true
@@ -410,7 +436,12 @@ fn find_named_widget(root: &gtk::Widget, name: &str) -> Option<gtk::Widget> {
     None
 }
 
-fn make_pane_context_menu(window: &gtk::Window, worklane_id: &str, pane_id: &str) -> gtk::Popover {
+fn make_pane_context_menu(
+    window: &gtk::Window,
+    worklane_id: &str,
+    pane: &zentty_core::SidebarPaneSummary,
+    can_close: bool,
+) -> gtk::Popover {
     let popover = gtk::Popover::new();
     let menu = gtk::Box::new(gtk::Orientation::Vertical, 2);
     menu.set_margin_top(6);
@@ -418,7 +449,27 @@ fn make_pane_context_menu(window: &gtk::Window, worklane_id: &str, pane_id: &str
     menu.set_margin_start(6);
     menu.set_margin_end(6);
 
+    let rename = menu_button("Rename Pane…", "document-edit-symbolic");
+    let rename_window = window.clone();
+    let pane_id = pane.pane_id.clone();
+    let current_title = pane.custom_title.clone().unwrap_or_default();
+    let rename_popover = popover.clone();
+    rename.connect_clicked(move |_| {
+        rename_popover.popdown();
+        present_rename_dialog(
+            &rename_window,
+            "Rename Pane",
+            "workspace.rename-pane",
+            &pane_id,
+            &current_title,
+        );
+    });
+    menu.append(&rename);
+
     for action in pane_action_specs() {
+        if action.action == "close-pane" && !can_close {
+            continue;
+        }
         let button = gtk::Button::new();
         button.add_css_class("pane-context-action");
         button.set_tooltip_text(Some(action.label));
@@ -432,7 +483,7 @@ fn make_pane_context_menu(window: &gtk::Window, worklane_id: &str, pane_id: &str
 
         let action_window = window.clone();
         let worklane_id = worklane_id.to_owned();
-        let pane_id = pane_id.to_owned();
+        let pane_id = pane.pane_id.clone();
         let action_name = action.action;
         button.connect_clicked(move |_| {
             let _ = action_window.activate_action(
@@ -471,7 +522,13 @@ fn make_context_menu(
     let rename_popover = popover.clone();
     rename.connect_clicked(move |_| {
         rename_popover.popdown();
-        present_rename_dialog(&rename_window, &worklane_id, &current_title);
+        present_rename_dialog(
+            &rename_window,
+            "Rename Worklane",
+            "workspace.rename-worklane",
+            &worklane_id,
+            &current_title,
+        );
     });
     menu.append(&rename);
 
@@ -588,9 +645,15 @@ fn color_button(
     button
 }
 
-fn present_rename_dialog(window: &gtk::Window, worklane_id: &str, current_title: &str) {
+fn present_rename_dialog(
+    window: &gtk::Window,
+    title: &str,
+    action_name: &str,
+    target_id: &str,
+    current_title: &str,
+) {
     let dialog = gtk::Window::builder()
-        .title("Rename Worklane")
+        .title(title)
         .transient_for(window)
         .modal(true)
         .default_width(320)
@@ -620,14 +683,15 @@ fn present_rename_dialog(window: &gtk::Window, worklane_id: &str, current_title:
 
     let cancel_dialog = dialog.clone();
     cancel.connect_clicked(move |_| cancel_dialog.close());
-    let worklane_id = worklane_id.to_owned();
+    let target_id = target_id.to_owned();
+    let action_name = action_name.to_owned();
     let action_window = window.clone();
     let save_dialog = dialog.clone();
     let save_entry = entry.clone();
     save.connect_clicked(move |_| {
         let _ = action_window.activate_action(
-            "workspace.rename-worklane",
-            Some(&(worklane_id.as_str(), save_entry.text().as_str()).to_variant()),
+            &action_name,
+            Some(&(target_id.as_str(), save_entry.text().as_str()).to_variant()),
         );
         save_dialog.close();
     });

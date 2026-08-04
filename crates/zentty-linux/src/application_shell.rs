@@ -21,6 +21,7 @@ const ACTION_SPLIT_PANE_RIGHT: &str = "split-pane-right";
 const ACTION_SPLIT_PANE_BELOW: &str = "split-pane-below";
 const ACTION_CLOSE_PANE: &str = "close-pane";
 const ACTION_RENAME_WORKLANE: &str = "rename-worklane";
+const ACTION_RENAME_PANE: &str = "rename-pane";
 const ACTION_CYCLE_WORKLANE_COLOR: &str = "cycle-worklane-color";
 const ACTION_SET_WORKLANE_COLOR: &str = "set-worklane-color";
 const ACTION_CLOSE_WORKLANE: &str = "close-worklane";
@@ -247,22 +248,26 @@ impl ApplicationShell {
                     Some(&("worklane-1", "  Frontend  ").to_variant()),
                 ),
                 5 => window.activate_action(
+                    "workspace.rename-pane",
+                    Some(&("pane-4", "  Review Shell  ").to_variant()),
+                ),
+                6 => window.activate_action(
                     "workspace.set-worklane-color",
                     Some(&("worklane-1", "red").to_variant()),
                 ),
-                6 => window.activate_action(
+                7 => window.activate_action(
                     "workspace.move-worklane",
                     Some(&("worklane-1", "down").to_variant()),
                 ),
-                7 => window.activate_action("workspace.move-pane-left", None),
-                8 => window.activate_action("workspace.split-pane-below", None),
-                9 => window.activate_action("workspace.move-pane-up", None),
-                10 => window.activate_action("workspace.move-pane-down", None),
-                11 => window.activate_action(
+                8 => window.activate_action("workspace.move-pane-left", None),
+                9 => window.activate_action("workspace.split-pane-below", None),
+                10 => window.activate_action("workspace.move-pane-up", None),
+                11 => window.activate_action("workspace.move-pane-down", None),
+                12 => window.activate_action(
                     "workspace.move-pane-to-worklane",
                     Some(&"worklane-2".to_variant()),
                 ),
-                12 if close_worklane_when_complete => window
+                13 if close_worklane_when_complete => window
                     .activate_action("workspace.close-worklane", Some(&"worklane-1".to_variant())),
                 _ => {
                     eprintln!("zentty-linux: workspace-action-scenario complete");
@@ -390,6 +395,7 @@ impl ApplicationShell {
     fn install_edit_actions(shell: &Rc<RefCell<Self>>, group: &gio::SimpleActionGroup) {
         let string_pair = glib::VariantTy::new("(ss)").expect("static action type is valid");
         Self::install_worklane_edit_actions(shell, group, string_pair);
+        Self::install_pane_rename_action(shell, group, string_pair);
 
         let select_pane = gio::SimpleAction::new(ACTION_SELECT_PANE, Some(string_pair));
         let weak = Rc::downgrade(shell);
@@ -470,6 +476,38 @@ impl ApplicationShell {
         });
     }
 
+    fn install_pane_rename_action(
+        shell: &Rc<RefCell<Self>>,
+        group: &gio::SimpleActionGroup,
+        string_pair: &glib::VariantTy,
+    ) {
+        let rename_pane = gio::SimpleAction::new(ACTION_RENAME_PANE, Some(string_pair));
+        let weak = Rc::downgrade(shell);
+        rename_pane.connect_activate(move |_, parameter| {
+            let (Some(shell), Some((pane_id, title))) = (
+                weak.upgrade(),
+                parameter.and_then(glib::Variant::get::<(String, String)>),
+            ) else {
+                return;
+            };
+            let changed = {
+                let mut shell_ref = shell.borrow_mut();
+                let changed = shell_ref
+                    .state
+                    .set_pane_custom_title(&pane_id, Some(&title));
+                if changed {
+                    shell_ref.refresh_sidebar_metadata();
+                }
+                changed
+            };
+            if changed {
+                eprintln!("zentty-linux: action=rename-pane id={pane_id} title={title:?}");
+                Self::schedule_terminal_focus(&shell);
+            }
+        });
+        group.add_action(&rename_pane);
+    }
+
     fn install_worklane_edit_actions(
         shell: &Rc<RefCell<Self>>,
         group: &gio::SimpleActionGroup,
@@ -484,10 +522,19 @@ impl ApplicationShell {
             ) else {
                 return;
             };
-            let mut shell = shell.borrow_mut();
-            if shell.state.set_worklane_title(&worklane_id, Some(&title)) {
+            let changed = {
+                let mut shell_ref = shell.borrow_mut();
+                let changed = shell_ref
+                    .state
+                    .set_worklane_title(&worklane_id, Some(&title));
+                if changed {
+                    shell_ref.refresh_sidebar_metadata();
+                }
+                changed
+            };
+            if changed {
                 eprintln!("zentty-linux: action=rename-worklane id={worklane_id} title={title:?}");
-                shell.refresh_sidebar_metadata();
+                Self::schedule_terminal_focus(&shell);
             }
         });
         group.add_action(&rename_worklane);
@@ -601,6 +648,15 @@ impl ApplicationShell {
             }
         });
         group.add_action(&action);
+    }
+
+    fn schedule_terminal_focus(shell: &Rc<RefCell<Self>>) {
+        let weak = Rc::downgrade(shell);
+        glib::timeout_add_local_once(Duration::from_millis(50), move || {
+            if let Some(shell) = weak.upgrade() {
+                shell.borrow().present();
+            }
+        });
     }
 
     fn move_active_worklane(&mut self, delta: isize) {
@@ -965,6 +1021,7 @@ impl ApplicationShell {
         if let Some(pane_id) = self.state.focused_pane_id()
             && let Some(surface) = self.surfaces.get(pane_id)
         {
+            gtk::prelude::GtkWindowExt::set_focus(&self.window, Some(surface.widget()));
             surface.grab_focus();
         }
     }

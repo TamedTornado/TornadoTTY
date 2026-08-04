@@ -58,7 +58,40 @@ impl WorklaneColor {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PaneState {
     pub id: String,
-    pub title: String,
+    pub custom_title: Option<String>,
+    pub live_title: String,
+}
+
+impl PaneState {
+    fn new(id: String) -> Self {
+        Self {
+            id,
+            custom_title: None,
+            live_title: "shell".to_owned(),
+        }
+    }
+
+    fn display_title(&self) -> &str {
+        self.custom_title.as_deref().unwrap_or(&self.live_title)
+    }
+
+    fn from_recipe(recipe: &PaneRecipe) -> Self {
+        Self {
+            id: recipe.id.clone(),
+            custom_title: recipe
+                .custom_title
+                .as_deref()
+                .map(str::trim)
+                .filter(|title| !title.is_empty())
+                .map(str::to_owned),
+            live_title: recipe
+                .last_activity_title
+                .as_deref()
+                .or(recipe.title_seed.as_deref())
+                .unwrap_or("shell")
+                .to_owned(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -75,6 +108,7 @@ pub struct PaneColumnState {
 pub struct SidebarPaneSummary {
     pub pane_id: String,
     pub primary_text: String,
+    pub custom_title: Option<String>,
     pub is_focused: bool,
 }
 
@@ -119,10 +153,7 @@ impl WorkspaceState {
                 columns: vec![PaneColumnState {
                     id: format!("column-{pane_id}"),
                     width: 1.0,
-                    panes: vec![PaneState {
-                        id: pane_id.clone(),
-                        title: "shell".to_owned(),
-                    }],
+                    panes: vec![PaneState::new(pane_id.clone())],
                     pane_heights: vec![1.0],
                     focused_pane_id: pane_id.clone(),
                     last_focused_pane_id: pane_id.clone(),
@@ -173,16 +204,7 @@ impl WorkspaceState {
                     if !pane_ids.insert(pane.id.clone()) {
                         return Err(WorkspaceStateImportError::DuplicatePane(pane.id.clone()));
                     }
-                    panes.push(PaneState {
-                        id: pane.id.clone(),
-                        title: pane
-                            .custom_title
-                            .as_deref()
-                            .or(pane.title_seed.as_deref())
-                            .or(pane.last_activity_title.as_deref())
-                            .unwrap_or("shell")
-                            .to_owned(),
-                    });
+                    panes.push(PaneState::from_recipe(pane));
                 }
                 let focused_pane_id = column
                     .focused_pane_id
@@ -268,17 +290,22 @@ impl WorkspaceState {
                             .panes
                             .iter()
                             .map(|pane| {
-                                existing_panes.get(pane.id.as_str()).map_or_else(
+                                let mut recipe = existing_panes.get(pane.id.as_str()).map_or_else(
                                     || PaneRecipe {
                                         id: pane.id.clone(),
-                                        custom_title: None,
-                                        title_seed: Some(pane.title.clone()),
+                                        custom_title: pane.custom_title.clone(),
+                                        title_seed: Some(pane.live_title.clone()),
                                         working_directory: None,
                                         last_activity_title: None,
                                         last_run_command: None,
                                     },
                                     |recipe| (*recipe).clone(),
-                                )
+                                );
+                                recipe.custom_title.clone_from(&pane.custom_title);
+                                if pane.live_title != "shell" {
+                                    recipe.last_activity_title = Some(pane.live_title.clone());
+                                }
+                                recipe
                             })
                             .collect();
                         ColumnRecipe {
@@ -389,7 +416,10 @@ impl WorkspaceState {
                     .iter()
                     .flat_map(|column| &column.panes)
                     .find(|pane| Some(pane.id.as_str()) == focused_pane_id)
-                    .map_or_else(|| "shell".to_owned(), |pane| pane.title.clone());
+                    .map_or_else(
+                        || "shell".to_owned(),
+                        |pane| pane.display_title().to_owned(),
+                    );
                 SidebarWorklaneSummary {
                     worklane_id: worklane.id.clone(),
                     top_label: worklane.title.clone(),
@@ -400,7 +430,8 @@ impl WorkspaceState {
                         .flat_map(|column| &column.panes)
                         .map(|pane| SidebarPaneSummary {
                             pane_id: pane.id.clone(),
-                            primary_text: pane.title.clone(),
+                            primary_text: pane.display_title().to_owned(),
+                            custom_title: pane.custom_title.clone(),
                             is_focused: Some(pane.id.as_str()) == focused_pane_id,
                         })
                         .collect(),
@@ -433,10 +464,7 @@ impl WorkspaceState {
                 columns: vec![PaneColumnState {
                     id: format!("column-{pane_id}"),
                     width: 1.0,
-                    panes: vec![PaneState {
-                        id: pane_id.clone(),
-                        title: "shell".to_owned(),
-                    }],
+                    panes: vec![PaneState::new(pane_id.clone())],
                     pane_heights: vec![1.0],
                     focused_pane_id: pane_id.clone(),
                     last_focused_pane_id: pane_id.clone(),
@@ -547,10 +575,7 @@ impl WorkspaceState {
             PaneColumnState {
                 id: format!("column-{pane_id}"),
                 width,
-                panes: vec![PaneState {
-                    id: pane_id.clone(),
-                    title: "shell".to_owned(),
-                }],
+                panes: vec![PaneState::new(pane_id.clone())],
                 pane_heights: vec![1.0],
                 focused_pane_id: pane_id.clone(),
                 last_focused_pane_id: pane_id.clone(),
@@ -584,13 +609,9 @@ impl WorkspaceState {
             .position(|pane| pane.id == column.focused_pane_id)
             .expect("workspace invariant: focused pane exists");
         let height = column.pane_heights[focused_index];
-        column.panes.insert(
-            focused_index + 1,
-            PaneState {
-                id: pane_id.clone(),
-                title: "shell".to_owned(),
-            },
-        );
+        column
+            .panes
+            .insert(focused_index + 1, PaneState::new(pane_id.clone()));
         column.pane_heights[focused_index] = height / 2.0;
         column.pane_heights.insert(focused_index + 1, height / 2.0);
         column.focused_pane_id.clone_from(&pane_id);
@@ -625,10 +646,31 @@ impl WorkspaceState {
             "" => "shell",
             title => title,
         };
-        if pane.title == title {
+        if pane.live_title == title {
             return false;
         }
-        title.clone_into(&mut pane.title);
+        title.clone_into(&mut pane.live_title);
+        true
+    }
+
+    pub fn set_pane_custom_title(&mut self, pane_id: &str, title: Option<&str>) -> bool {
+        let Some(pane) = self
+            .worklanes
+            .iter_mut()
+            .flat_map(|worklane| &mut worklane.columns)
+            .flat_map(|column| &mut column.panes)
+            .find(|pane| pane.id == pane_id)
+        else {
+            return false;
+        };
+        let title = title
+            .map(str::trim)
+            .filter(|title| !title.is_empty())
+            .map(str::to_owned);
+        if pane.custom_title == title {
+            return false;
+        }
+        pane.custom_title = title;
         true
     }
 

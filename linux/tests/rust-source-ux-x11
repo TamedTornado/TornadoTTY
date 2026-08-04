@@ -48,7 +48,7 @@ GDK_SCALE=1 \
 GDK_DPI_SCALE=1 \
 LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
     "${product}" \
-    --command 'printf "\033]2;zentty-title-one\a"; sleep 0.2; printf "\033]2;zentty-title-two\a"; IFS= read -r line; printf "\033]2;focus:%s\a" "$line"; sleep 5' \
+    --command 'printf "\033]2;zentty-title-one\a"; sleep 0.2; printf "\033]2;zentty-title-two\a"; IFS= read -r line; printf "\033]2;focus:%s\a" "$line"; sleep 10' \
     --state-directory "${state_directory}" \
     --no-session-restore \
     --quit-after-last-terminal-exit >"${log}" 2>&1 &
@@ -154,12 +154,43 @@ grep -Fxq 'zentty-linux: title-pane=pane-1 value=focus:retained-focus' "${log}" 
 [[ "$(grep -Fc 'zentty-linux: sidebar-card id=' "${log}" || true)" -eq 1 ]] ||
     fail "metadata-only title/focus changes destroyed and rebuilt the live sidebar row"
 
-# Drive the pane-row overflow icon and its first contextual item through the
-# real X11 pointer. Direct model/action activation would not prove that the
-# replacement UX remains reachable at the expected sidebar geometry.
+# Drive the source-first Rename Pane item through the real X11 pointer and
+# modal editor. Then send another title through the real PTY: the durable name
+# must remain the sidebar identity instead of being overwritten by OSC churn.
 xdotool mousemove --window "${window_id}" 250 170 click 1
 sleep 0.2
 xdotool mousemove --window "${window_id}" 250 233 click 1
+rename_window=""
+for _ in $(seq 1 100); do
+    rename_window="$(xdotool search --name '^Rename Pane$' 2>/dev/null | head -1 || true)"
+    [[ "${rename_window}" =~ ^[1-9][0-9]*$ ]] && break
+    sleep 0.05
+done
+[[ "${rename_window}" =~ ^[1-9][0-9]*$ ]] || fail "the pane menu did not open Rename Pane"
+xdotool windowfocus "${rename_window}"
+xdotool type --delay 10 'Pointer Named'
+xdotool key Return
+for _ in $(seq 1 100); do
+    grep -Fxq 'zentty-linux: action=rename-pane id=pane-1 title="Pointer Named"' "${log}" && break
+    sleep 0.05
+done
+grep -Fxq 'zentty-linux: action=rename-pane id=pane-1 title="Pointer Named"' "${log}" ||
+    fail "the real rename editor did not set a durable pane title"
+sleep 0.1
+xdotool type --window "${window_id}" --delay 10 'renamed-focus'
+xdotool key --window "${window_id}" Return
+for _ in $(seq 1 100); do
+    grep -Fxq 'zentty-linux: title-pane=pane-1 value=focus:renamed-focus' "${log}" && break
+    sleep 0.05
+done
+grep -Fxq 'zentty-linux: pane-display id=pane-1 label="Pointer Named" custom=true' "${log}" ||
+    fail "a later real PTY title overwrote the durable pane identity"
+
+# Reopen the same real pane menu and activate New Pane Right, now correctly
+# located after Rename Pane rather than assuming the old scaffolding order.
+xdotool mousemove --window "${window_id}" 250 170 click 1
+sleep 0.2
+xdotool mousemove --window "${window_id}" 250 270 click 1
 
 for _ in $(seq 1 100); do
     grep -Fxq 'zentty-linux: terminal-ready-pane=pane-2' "${log}" && break
@@ -208,7 +239,7 @@ grep -Fxq 'zentty-linux: title-pane=pane-3 value=focus:arranged-pane' "${log}" |
     fail "keyboard input did not reach the arranged real Ghostty PTY"
 
 set +e
-timeout --foreground --kill-after=2s 12s tail --pid="${product_pid}" -f /dev/null
+timeout --foreground --kill-after=2s 17s tail --pid="${product_pid}" -f /dev/null
 wait_status=$?
 set -e
 if (( wait_status != 0 )); then
@@ -222,7 +253,7 @@ product_pid=""
 (( product_status == 0 )) || fail "product exited ${product_status}"
 
 grep -Fxq 'zentty-linux: action=split-pane-right pane=pane-2' "${log}" ||
-    fail "the contextual New Pane Right item did not activate its product action"
+    fail "the contextual New Pane Right item did not activate after Rename Pane"
 grep -Fxq 'zentty-linux: action=split-pane-right pane=pane-3' "${log}" ||
     fail "the arrange-panes icon did not activate its real split action"
 [[ "$(grep -Fxc 'zentty-linux: terminal-ready' "${log}" || true)" -eq 3 ]] ||
@@ -235,4 +266,4 @@ if grep -Eq 'panicked at|thread caused non-unwinding panic|RefCell already borro
     fail "the contextual action reported a panic or GTK lifecycle critical"
 fi
 
-echo "Rust source UX passed: x11, leading-chrome=real-pointer, focus=real-pty, contextual-and-arrange-splits=real"
+echo "Rust source UX passed: x11, leading-chrome=real-pointer, pane-rename=durable, focus=real-pty, contextual-and-arrange-splits=real"

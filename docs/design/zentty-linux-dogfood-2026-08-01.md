@@ -5035,6 +5035,43 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   bookmark/preset sections remain issue #16/#18 work. This record does not
   claim those visual states have been reviewed.
 
+### DOGFOOD-2026-08-04-PANE-IDENTITY: durable names are not terminal titles
+
+- **Source mismatch:** Linux used one `PaneState.title` for both the user-owned
+  pane name and volatile OSC/process titles. A terminal title update therefore
+  silently erased a restored custom title, and the pane menu omitted the
+  source-first `Rename Pane…` action entirely.
+- **Test-first repair:** The core model now separates trimmed optional
+  `custom_title` from `live_title`, resolves sidebar identity as custom before
+  live fallback, and projects both fields back into the source-compatible
+  restore recipe. The focused test failed first because no custom-title API
+  existed; it now proves runtime title churn cannot overwrite a custom name,
+  clearing the custom name reveals the latest live title, and both meanings
+  persist in their correct fields.
+- **Product repair:** Pane overflow now begins with the accessible icon-bearing
+  Rename Pane editor, hides Close Pane for the sole pane, and updates row label
+  and accessible selected/name state in place. The staged action scenario
+  renames a real pane and verifies the trimmed custom title in the persisted
+  snapshot under both controlled compositors.
+- **Pointer-test discovery:** The old X11 scenario clicked the first menu item
+  assuming it was `New Pane Right`; after source order was restored it opened
+  Rename Pane and correctly failed the stale assertion. The scenario now uses
+  the real pointer, modal entry, Save action, subsequent real PTY OSC title,
+  and the second contextual item.
+- **Focus failure and repair:** Saving the modal initially left GTK focus on
+  the sidebar pane button. Immediate typing activated that button instead of
+  reaching the PTY. An idle-only Ghostty focus request and then a delayed
+  widget-only request both reproduced the failure. After the modal is fully
+  unmapped, Zentty now re-presents the owning toplevel, explicitly assigns GTK
+  toplevel focus to the Ghostty widget, and invokes Ghostty's internal focus
+  handoff. The real PTY then receives input after rename and after the
+  contextual split.
+- **Evidence:** Pedantic clippy and all Rust tests pass. Controlled X11 pointer
+  evidence proves Rename Pane, durable display identity across later OSC
+  churn, terminal focus restoration, contextual split, arrange split, and
+  three distinct real PTYs. Controlled X11/Wayland action and restore tests
+  cover persisted custom-title semantics. No screenshot-baseline claim is made.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were
