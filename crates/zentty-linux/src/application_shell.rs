@@ -994,7 +994,13 @@ impl ApplicationShell {
                 })
             })
             .collect::<Vec<_>>();
-        items.extend([
+        items.extend(Self::command_palette_action_items());
+        (items, current)
+    }
+
+    #[allow(clippy::too_many_lines)] // Interim until the source command registry is ported.
+    fn command_palette_action_items() -> Vec<CommandPaletteItem> {
+        vec![
             CommandPaletteItem::action(
                 "New Worklane",
                 "Create another worklane",
@@ -1006,6 +1012,12 @@ impl ApplicationShell {
                 "Split the focused pane into a visible right column",
                 "pane column",
                 ACTION_SPLIT_PANE_RIGHT,
+            ),
+            CommandPaletteItem::action(
+                "Add Pane Right",
+                "Add a full-width pane to the right of the focused column",
+                "pane column canvas",
+                ACTION_ADD_PANE_RIGHT,
             ),
             CommandPaletteItem::action(
                 "New Pane Below",
@@ -1025,8 +1037,85 @@ impl ApplicationShell {
                 "terminal",
                 ACTION_CLOSE_PANE,
             ),
-        ]);
-        (items, current)
+            CommandPaletteItem::action(
+                "Navigate Back",
+                "Return to the previously focused pane",
+                "history browser previous",
+                ACTION_NAVIGATE_BACK,
+            ),
+            CommandPaletteItem::action(
+                "Navigate Forward",
+                "Move forward through pane focus history",
+                "history browser next",
+                ACTION_NAVIGATE_FORWARD,
+            ),
+            CommandPaletteItem::action(
+                "Focus Next Pane",
+                "Focus the next pane in sidebar order",
+                "navigation terminal",
+                ACTION_NEXT_PANE,
+            ),
+            CommandPaletteItem::action(
+                "Focus Previous Pane",
+                "Focus the previous pane in sidebar order",
+                "navigation terminal",
+                ACTION_PREVIOUS_PANE,
+            ),
+            CommandPaletteItem::action(
+                "Next Worklane",
+                "Focus the next worklane",
+                "navigation workspace lane",
+                ACTION_NEXT_WORKLANE,
+            ),
+            CommandPaletteItem::action(
+                "Previous Worklane",
+                "Focus the previous worklane",
+                "navigation workspace lane",
+                ACTION_PREVIOUS_WORKLANE,
+            ),
+            CommandPaletteItem::action(
+                "Move Worklane Up",
+                "Move the active worklane earlier in the sidebar",
+                "reorder workspace lane",
+                ACTION_MOVE_WORKLANE_UP,
+            ),
+            CommandPaletteItem::action(
+                "Move Worklane Down",
+                "Move the active worklane later in the sidebar",
+                "reorder workspace lane",
+                ACTION_MOVE_WORKLANE_DOWN,
+            ),
+            CommandPaletteItem::action(
+                "Move Pane Left",
+                "Move the focused pane one column left",
+                "reorder terminal column",
+                ACTION_MOVE_PANE_LEFT,
+            ),
+            CommandPaletteItem::action(
+                "Move Pane Right",
+                "Move the focused pane one column right",
+                "reorder terminal column",
+                ACTION_MOVE_PANE_RIGHT,
+            ),
+            CommandPaletteItem::action(
+                "Move Pane Up",
+                "Move the focused pane upward in its column",
+                "reorder terminal split",
+                ACTION_MOVE_PANE_UP,
+            ),
+            CommandPaletteItem::action(
+                "Move Pane Down",
+                "Move the focused pane downward in its column",
+                "reorder terminal split",
+                ACTION_MOVE_PANE_DOWN,
+            ),
+            CommandPaletteItem::action(
+                "Cycle Worklane Color",
+                "Choose the next worklane identity color",
+                "appearance workspace lane",
+                ACTION_CYCLE_WORKLANE_COLOR,
+            ),
+        ]
     }
 
     fn install_peek_scroll_navigation(shell: &Rc<RefCell<Self>>) {

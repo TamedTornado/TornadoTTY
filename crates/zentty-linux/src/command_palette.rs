@@ -36,6 +36,7 @@ impl CommandPaletteView {
         panel.set_valign(gtk::Align::Start);
         panel.set_margin_top(110);
         let entry = gtk::SearchEntry::new();
+        entry.add_css_class("command-palette-search");
         entry.set_placeholder_text(Some("Search commands, panes, and settings"));
         entry.update_property(&[gtk::accessible::Property::Label("Command Palette Search")]);
         let list = gtk::ListBox::new();
@@ -201,13 +202,23 @@ fn install_styles() {
     };
     let provider = gtk::CssProvider::new();
     provider.load_from_string(
-        ".command-palette-backdrop { background: rgba(5, 7, 10, 0.48); }\n\
-         .command-palette { background: #20242b; border: 1px solid #596273; border-radius: 12px; padding: 12px; box-shadow: 0 18px 48px rgba(0,0,0,0.65); }\n\
-         .command-palette-results { background: transparent; }\n\
-         .command-palette-result { background: transparent; border-radius: 7px; padding: 7px 10px; }\n\
-         .command-palette-result:hover, row:selected .command-palette-result { background: #343b47; }\n\
-         .command-palette-title { color: #f3f4f6; font-weight: 650; }\n\
-         .command-palette-subtitle { color: #aab1bd; font-size: 12px; }",
+        ".command-palette-backdrop { background: rgba(5, 7, 10, 0.52); }\n\
+         .command-palette { background: #20242b; border: 1px solid #596273; border-radius: 10px; padding: 0; box-shadow: 0 18px 48px rgba(0,0,0,0.72); }\n\
+         .command-palette-search { min-height: 44px; margin: 10px; padding: 0 12px; background: #15181d; color: #f7f8fa; caret-color: #ffffff; border: 1px solid #717b8c; border-radius: 6px; font-size: 17px; box-shadow: none; }\n\
+         .command-palette-search:focus { border-color: #5b9cff; box-shadow: 0 0 0 1px #5b9cff; }\n\
+         .command-palette-search text { background: transparent; color: #f7f8fa; caret-color: #ffffff; }\n\
+         .command-palette-search text selection { background: #3478f6; color: #ffffff; }\n\
+         .command-palette-search image { color: #b8c0cc; }\n\
+         .command-palette-search placeholder { color: #8993a1; }\n\
+         .command-palette-results { margin: 0; padding: 6px; background: #20242b; border-top: 1px solid #363c46; border-radius: 0 0 10px 10px; }\n\
+         .command-palette-results row { margin: 1px 0; padding: 0; background: transparent; border-radius: 5px; }\n\
+         .command-palette-result { min-height: 38px; background: transparent; border: 0; border-radius: 5px; padding: 6px 10px; box-shadow: none; }\n\
+         .command-palette-results row:hover .command-palette-result { background: #2a2d2e; }\n\
+         .command-palette-results row:selected .command-palette-result { background: #094771; }\n\
+         .command-palette-results row:selected .command-palette-title { color: #ffffff; }\n\
+         .command-palette-results row:selected .command-palette-subtitle { color: #d7e8f5; }\n\
+         .command-palette-title { color: #f3f4f6; font-size: 13px; font-weight: 600; }\n\
+         .command-palette-subtitle { color: #aab1bd; font-size: 11px; }",
     );
     gtk::style_context_add_provider_for_display(
         &display,

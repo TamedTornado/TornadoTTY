@@ -5730,6 +5730,52 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   theme screenshots, and multi-window targeting remain owned by issues #7 and
   #16–#23. This slice does not claim those absent providers.
 
+### DOGFOOD-2026-08-04-COMMAND-PALETTE-CONTRAST: visible input and editor-style hierarchy
+
+- **Observed failure:** Human dogfooding immediately found that typed palette
+  input was effectively invisible and that the first GTK treatment did not
+  resemble the Sublime Text / VS Code interaction it is meant to evoke. The
+  palette styled result labels but left the native `GtkSearchEntry` foreground,
+  caret, placeholder, and internal text node to theme inheritance. On the dark
+  custom panel, that produced an unacceptable low-contrast editor surface.
+- **Repair:** The search entry now has an explicit palette-local class and
+  defines its input background, foreground, caret, selection, placeholder,
+  icon, focus ring, type size, and 44px target. The panel now uses a compact
+  editor-command surface: flush search/results regions, a real separator,
+  restrained rows, VS Code-style blue selection, distinct hover treatment,
+  and selected-state title/subtitle contrast. No global GTK entry or button
+  styling changed.
+- **Evidence boundary:** Functional palette routing and real-input shielding
+  remain covered by `linux/tests/rust-source-ux-x11`. Styling still requires
+  human review on the actual desktop; a source assertion over CSS strings would
+  not establish visual quality and has deliberately not been substituted for
+  that review. An attempted `xdotool` convenience keystroke could not address
+  the compositor-managed desktop window (`BadWindow`); it was not treated as a
+  product failure or evidence. The rebuilt application is running for direct
+  Wayland-desktop review instead.
+- **Immediate follow-up:** Human review correctly rejected a polished shell
+  around only five searchable commands as functionally useless. The palette
+  inventory had exposed only the first actions from the earlier routing spike,
+  despite Zentty Linux already owning many more tested named actions. The
+  repair registers the existing Add Pane Right, history, pane/worklane focus,
+  worklane reorder, pane reorder, and worklane-color routes using the exact
+  source command titles. These are real shared actions, not palette-only
+  callbacks. Providers that do not yet exist in the Linux product remain
+  explicit future scope rather than inert menu entries.
+- **Interim-code decision:** Jason explicitly chose to leave this hand-listed
+  bridge in place while the product feature set grows; the complete source
+  registry and contextual availability resolver remain the intended endpoint.
+  Pedantic Clippy rejected the first inline expansion because it pushed
+  `command_palette_items` past the 100-line policy. The initial extraction
+  patch also duplicated the adjacent peek-scroll function and introduced an
+  invalid marker body; inspection caught that edit before compilation or
+  commit. The repair restored the original peek implementation exactly and
+  isolated the temporary palette list behind a narrowly documented
+  `too_many_lines` allowance rather than weakening repository-wide linting.
+  After the repair, the complete controlled X11 source-UX workflow passed with
+  the rebuilt ReleaseSafe product in session
+  `779d67afc3f7ed66d71c5380c4d7b91e700ea0bed8d731e388e1e9626c91963c`.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were
