@@ -5381,7 +5381,7 @@ test harness, preserve the legacy constructor, and be independently reviewable.
 
 - **Five-feature batch:** Linux now (1) defers a quick Ctrl-Tab or
   Ctrl-Shift-Tab step until Control release, (2) abandons that deferred step
-  and opens Worklane Peek at the original pane after the source 200ms hold,
+  and opens Worklane Peek at the original pane after a timed hold,
   (3) previews repeated Tab traversal and source-shaped spatial arrow targets,
   (4) commits on Control release or restores the original pane with Escape
   while shielding ordinary terminal key input, and (5) preview-selects an
@@ -5401,8 +5401,8 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   produces a continuously live thumbnail; that gap remains explicit in the
   feature inventory rather than treating a title fallback as equivalent.
 - **Real-system evidence:** The controlled X11 workflow drives physical quick
-  chords while a real Ghostty PTY owns focus; holds Control across Tab for more
-  than 200ms; spatially selects the left pane; releases Control and types
+  chords while a real Ghostty PTY owns focus; holds Control across Tab beyond
+  the configured threshold; spatially selects the left pane; releases Control and types
   through the selected PTY; reopens, advances, cancels with Escape and types
   through the restored PTY; then clicks a visible card at real window
   coordinates and commits it. The scenario retains its five real terminal
@@ -5423,6 +5423,46 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   inactive-worklane live-preview evidence are not part of this batch. The
   authoritative feature remains `PARTIAL`; these omissions are not silently
   promoted by the passing X11 picker scenario.
+
+### DOGFOOD-2026-08-04-WORKLANE-PEEK-HOLD: synthetic speed hid an unusable threshold
+
+- **User-observed failure:** On the real desktop every ordinary Ctrl-Tab opened
+  Worklane Peek. The product receipts confirmed each chord reached
+  `worklane-peek=open trigger=hold`; this was not a rendering illusion or user
+  misunderstanding.
+- **Source re-audit:** The checked-in original
+  `WorklanePeekController.swift` really does default `holdThreshold` to 0.2
+  seconds, schedules from the first Tab press, and treats Control release as
+  the quick-tap discriminator. `WorklanePeekKeyMonitor.swift` also reports
+  every matching Tab key-down while the monitor is installed. The initial
+  Linux port therefore copied the source state machine faithfully, but copied
+  a timing value that did not survive real GTK/Linux keyboard behavior.
+- **Test-design failure:** The first X11 test used `xdotool key ctrl+Tab`, which
+  presses and releases the entire chord nearly instantaneously. It proved the
+  release route existed but did not represent a human chord and therefore
+  missed the usability failure. This is precisely the kind of synthetic pass
+  the real-system policy is intended to reject.
+- **Repair:** Linux retains the source idle/armed/peeking semantics but uses a
+  500ms deliberate-long-press boundary. The GTK controller separately tracks
+  the physical Tab-down interval and discards key auto-repeat; holding Tab is
+  one hold and cannot be misread as a series of traversal taps. This is an
+  explicit platform timing adaptation, not an unacknowledged source constant
+  change.
+- **Regression contract:** Controlled X11 now holds Control for 300ms after a
+  real Tab tap and requires normal traversal with no Peek-open receipt, then
+  holds physical Ctrl and Tab for 650ms and requires exactly a hold-open with
+  no auto-repeat preview. The existing spatial, commit, Escape, exact-card,
+  PTY-input, five-terminal, resize, and lifecycle checks remain in the same
+  real-product scenario.
+- **Harness failure exposed by the longer real chord:** Two complete runs
+  passed the new Peek assertions but later clicked pane 2's still-disclosed
+  Close control while expecting the just-created pane 4. The test had moved to
+  a coordinate immediately after GTK's asynchronous split/auto-scroll without
+  first proving the pointer entered pane 4. The repair repeatedly enters the
+  visible terminal within a bound and requires pane 4's real hover receipt
+  before clicking its Close control. This removes scheduler luck without
+  bypassing GTK or replacing the pointer route; the complete scenario then
+  passed.
 
 ## AI disclosure
 

@@ -279,15 +279,35 @@ done
 grep -Fxq 'zentty-linux: title-pane=pane-2 value=focus:shortcut-next' "${log}" ||
     fail "next-pane traversal did not restore the second real PTY"
 
-# Hold the physical Ctrl+Tab chord beyond Zentty's 200ms disambiguation
+# Reproduce a human-duration quick chord rather than relying only on xdotool's
+# near-instant `key` helper. Keeping Control down for 300ms after tapping Tab
+# must traverse normally and must not flash Worklane Peek.
+peek_open_count="$(grep -Fc 'zentty-linux: worklane-peek=open' "${log}" || true)"
+xdotool keydown --window "${window_id}" ctrl
+xdotool key --window "${window_id}" shift+Tab
+sleep 0.3
+xdotool keyup --window "${window_id}" ctrl
+sleep 0.25
+[[ "$(grep -Fc 'zentty-linux: worklane-peek=open' "${log}" || true)" == "${peek_open_count}" ]] ||
+    fail "an ordinary 300ms Ctrl-Tab chord incorrectly opened Worklane Peek"
+grep -Fxq 'zentty-linux: action=previous-pane worklane=worklane-1 pane=pane-1' "${log}" ||
+    fail "the human-duration quick chord did not traverse normally"
+xdotool key --window "${window_id}" ctrl+Tab
+sleep 0.1
+
+# Hold the physical Ctrl+Tab chord beyond Linux's deliberate 500ms long-press
 # threshold. Unlike a quick tap, this must open Worklane Peek without moving
 # the active pane. Ctrl+Left spatially previews the pane in the left column;
 # releasing Ctrl commits it and restores input to that real PTY.
 xdotool keydown --window "${window_id}" ctrl
-xdotool key --window "${window_id}" Tab
-sleep 0.3
+peek_preview_count="$(grep -Fc 'zentty-linux: worklane-peek=preview' "${log}" || true)"
+xdotool keydown --window "${window_id}" Tab
+sleep 0.65
+xdotool keyup --window "${window_id}" Tab
 grep -Fxq 'zentty-linux: worklane-peek=open trigger=hold' "${log}" ||
     fail "holding Ctrl+Tab did not open Worklane Peek"
+[[ "$(grep -Fc 'zentty-linux: worklane-peek=preview' "${log}" || true)" == "${peek_preview_count}" ]] ||
+    fail "physical Tab auto-repeat was mistaken for repeated Peek traversal"
 xdotool key --window "${window_id}" Left
 grep -Fxq 'zentty-linux: worklane-peek=spatial worklane=worklane-1 pane=pane-1' "${log}" ||
     fail "Worklane Peek did not spatially preview the left pane"
@@ -312,7 +332,7 @@ grep -Fxq 'zentty-linux: title-pane=pane-1 value=focus:peek-spatial-commit' "${l
 # to the pane at which the picker opened.
 xdotool keydown --window "${window_id}" ctrl
 xdotool key --window "${window_id}" Tab
-sleep 0.3
+sleep 0.65
 xdotool key --window "${window_id}" Tab
 grep -Fxq 'zentty-linux: worklane-peek=preview worklane=worklane-1 pane=pane-2' "${log}" ||
     fail "a repeated Tab did not advance the open Worklane Peek"
@@ -338,7 +358,7 @@ for _ in $(seq 1 100); do
 done
 xdotool keydown --window "${window_id}" ctrl
 xdotool key --window "${window_id}" Tab
-sleep 0.3
+sleep 0.65
 xdotool mousemove --window "${window_id}" 600 270 click 1
 for _ in $(seq 1 100); do
     grep -Fxq 'zentty-linux: worklane-peek=click worklane=worklane-1 pane=pane-1' "${log}" && break
@@ -440,7 +460,17 @@ for _ in $(seq 1 100); do
 done
 grep -Fxq 'zentty-linux: geometry=worklane-1:column-worklane-1[pane-1,pane-3],column-pane-2[pane-2],column-pane-4[pane-4]' "${log}" ||
     fail "pane-2's Split Right control did not create its adjacent column"
-xdotool mousemove --window "${window_id}" 1000 350
+# GTK applies the post-split auto-scroll on the next layout frame. Re-enter
+# the newly visible real pane until its hover controller confirms ownership;
+# clicking a stale coordinate while pane-2's controls remain disclosed would
+# only test scheduler luck.
+for _ in $(seq 1 100); do
+    xdotool mousemove --window "${window_id}" 1000 350
+    grep -Fxq 'zentty-linux: pane-controls pane=pane-4 state=shown' "${log}" && break
+    sleep 0.05
+done
+grep -Fxq 'zentty-linux: pane-controls pane=pane-4 state=shown' "${log}" ||
+    fail "the auto-scrolled transient pane never became the real hover target"
 xdotool mousemove --window "${window_id}" 1178 60 click 1
 for _ in $(seq 1 100); do
     grep -Fxq 'zentty-linux: pane-control action=close-pane target=pane-4' "${log}" && break

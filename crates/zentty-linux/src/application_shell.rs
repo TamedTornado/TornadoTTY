@@ -50,6 +50,11 @@ const ACTION_NAVIGATE_FORWARD: &str = "navigate-forward";
 const ACTION_NEXT_PANE: &str = "next-pane";
 const ACTION_PREVIOUS_PANE: &str = "previous-pane";
 const PRIMARY_RIGHT_BEHAVIOR: PaneRightInsertionBehavior = PaneRightInsertionBehavior::VisibleSplit;
+// The AppKit source uses 200ms. On GTK, an ordinary human Ctrl-Tab chord can
+// retain Control beyond that point even though Tab was tapped immediately.
+// Use a deliberate long-press boundary and separately suppress key repeat so
+// Linux preserves the source gesture's intent rather than its unusable timing.
+const WORKLANE_PEEK_HOLD_THRESHOLD: Duration = Duration::from_millis(500);
 
 pub(crate) struct ApplicationShell {
     window: gtk::Window,
@@ -76,6 +81,7 @@ pub(crate) struct ApplicationShell {
     adjusting_sidebar_width: Rc<Cell<bool>>,
     peek_phase: PeekPhase,
     peek_generation: u64,
+    peek_tab_down: bool,
     peek_view: WorklanePeekView,
 }
 
@@ -177,6 +183,7 @@ impl ApplicationShell {
             adjusting_sidebar_width: Rc::clone(&adjusting_sidebar_width),
             peek_phase: PeekPhase::Idle,
             peek_generation: 0,
+            peek_tab_down: false,
             peek_view,
         }));
 
@@ -235,6 +242,7 @@ impl ApplicationShell {
     pub(crate) fn detach_and_close(&mut self) {
         self.shutting_down = true;
         self.peek_phase = PeekPhase::Idle;
+        self.peek_tab_down = false;
         self.peek_view.hide();
         gtk::prelude::GtkWindowExt::set_focus(&self.window, gtk::Widget::NONE);
         self.window.set_default_widget(gtk::Widget::NONE);
@@ -426,6 +434,17 @@ impl ApplicationShell {
                 return glib::Propagation::Proceed;
             };
             if is_tab && modifiers.contains(gdk::ModifierType::CONTROL_MASK) {
+                let repeated = {
+                    let mut shell = shell.borrow_mut();
+                    let repeated = shell.peek_tab_down;
+                    shell.peek_tab_down = true;
+                    repeated
+                };
+                if repeated {
+                    // GTK key-pressed signals include keyboard auto-repeat.
+                    // A held physical Tab is one hold, not a stream of taps.
+                    return glib::Propagation::Stop;
+                }
                 let forward = key != gdk::Key::ISO_Left_Tab
                     && !modifiers.contains(gdk::ModifierType::SHIFT_MASK);
                 Self::handle_peek_tab(
@@ -466,9 +485,13 @@ impl ApplicationShell {
         });
         let weak = Rc::downgrade(shell);
         controller.connect_key_released(move |_, key, _, _| {
-            if (key == gdk::Key::Control_L || key == gdk::Key::Control_R)
-                && let Some(shell) = weak.upgrade()
-            {
+            let Some(shell) = weak.upgrade() else {
+                return;
+            };
+            if key == gdk::Key::Tab || key == gdk::Key::ISO_Left_Tab {
+                shell.borrow_mut().peek_tab_down = false;
+            } else if key == gdk::Key::Control_L || key == gdk::Key::Control_R {
+                shell.borrow_mut().peek_tab_down = false;
                 Self::commit_peek(&shell);
             }
         });
@@ -491,7 +514,7 @@ impl ApplicationShell {
                 };
                 eprintln!("zentty-linux: worklane-peek=armed generation={generation}");
                 let weak = Rc::downgrade(shell);
-                glib::timeout_add_local_once(Duration::from_millis(200), move || {
+                glib::timeout_add_local_once(WORKLANE_PEEK_HOLD_THRESHOLD, move || {
                     let Some(shell) = weak.upgrade() else {
                         return;
                     };
