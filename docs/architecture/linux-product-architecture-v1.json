@@ -11,7 +11,7 @@
     "legacy_sources_removed": true,
     "legacy_matrix_cells_removed": true
   },
-  "ghostty_revision": "5fc8fa2cf4b27bfe27072d561de98f33b2c16636",
+  "ghostty_revision": "958d97ecdb659babdf530cb5562525134baec2a4",
   "workspace_crates": [
     {
       "name": "zentty-core",
@@ -474,7 +474,7 @@
       "async_backend": "default",
       "terminals": "multi",
       "tracking": "GH-3",
-      "defect": "The delivered Rust/GTK product does not yet restore persisted multi-worklane state on Wayland.",
+      "defect": "A real single-window multi-column/vertical-pane restore-persist-relaunch slice passes under controlled Wayland, but full qualification still lacks multiple windows, exact divider sizing and resize persistence, CWD launch, live debounce, corrupt-state recovery UI, and crash relaunch.",
       "authoritative": false
     },
     {
@@ -487,7 +487,7 @@
       "async_backend": "default",
       "terminals": "multi",
       "tracking": "GH-3",
-      "defect": "The delivered Rust/GTK product does not yet restore persisted multi-worklane state on X11/Xwayland.",
+      "defect": "A real single-window multi-column/vertical-pane restore-persist-relaunch slice passes under controlled X11, but full qualification still lacks multiple windows, exact divider sizing and resize persistence, CWD launch, live debounce, corrupt-state recovery UI, and crash relaunch.",
       "authoritative": false
     },
     {
@@ -500,7 +500,7 @@
       "async_backend": "default",
       "terminals": "multi",
       "tracking": "GH-4",
-      "defect": "The delivered Rust/GTK product does not yet own worklane/pane creation, focus, movement, close, and teardown on Wayland.",
+      "defect": "A real compound-card worklane slice owns creation, selection, rename, reorder, color, ordered columns, vertical and horizontal pane splits, focus, close, and teardown under controlled Wayland, but exact divider sizing, cross-worklane pane movement, attention/progress, failure states, and accessibility remain.",
       "authoritative": false
     },
     {
@@ -513,7 +513,7 @@
       "async_backend": "default",
       "terminals": "multi",
       "tracking": "GH-4",
-      "defect": "The delivered Rust/GTK product does not yet own worklane/pane creation, focus, movement, close, and teardown on X11/Xwayland.",
+      "defect": "A real compound-card worklane slice owns creation, selection, rename, reorder, color, ordered columns, vertical and horizontal pane splits, focus, close, and teardown under controlled X11, but exact divider sizing, cross-worklane pane movement, attention/progress, failure states, and accessibility remain.",
       "authoritative": false
     },
     {

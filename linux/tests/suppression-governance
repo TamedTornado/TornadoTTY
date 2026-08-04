@@ -357,6 +357,7 @@ if ! jq -e -n \
 fi
 
 declare -A seen=()
+declare -A seen_scenarios=()
 declare -A seen_evidence_identities=()
 declare -A seen_protocol_ceilings=()
 record_evidence_identity() {
@@ -655,6 +656,7 @@ for report in "${reports[@]}"; do
         fail "suppression usage does not match bound receipt for ${report}"
 
     scenario="$(jq -r '.optimize + "/" + .scenario + "/" + .display_backend' "${report}")"
+    seen_scenarios["${scenario}"]=1
     while IFS= read -r usage; do
         rule="$(jq -r '.rule_name' <<<"${usage}")"
         if ! jq -e --arg rule "${rule}" \
@@ -732,8 +734,19 @@ for report in "${reports[@]}"; do
 done
 
 while IFS= read -r required; do
-    [[ -n "${seen[${required}]:-}" ]] ||
-        fail "tracked suppression became stale: ${required}"
+    required_scenario_exercised=false
+    while IFS= read -r allowed_scenario; do
+        if [[ -n "${seen_scenarios[${allowed_scenario}]:-}" ]]; then
+            required_scenario_exercised=true
+            break
+        fi
+    done < <(jq -r --arg required "${required}" '
+        .rules[] | select(.rule_name == $required) | .allowed_scenarios[]
+    ' "${manifest}")
+    if "${required_scenario_exercised}"; then
+        [[ -n "${seen[${required}]:-}" ]] ||
+            fail "tracked suppression became stale: ${required}"
+    fi
 done < <(jq -r '.rules[] | select(.required_usage == true) | .rule_name' "${manifest}")
 
 while IFS= read -r required_ceiling; do

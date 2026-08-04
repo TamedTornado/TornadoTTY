@@ -15,7 +15,7 @@ The machine-readable companion is
 is `GHOSTTY_SOURCE_DIR=/path/to/ghostty linux/tests/ghostty-api-audit`. Each
 changed file records its aggregate add/delete count, exact hunk count, and the
 SHA-256 of its binary Git patch. The validator recomputes those values for all
-32 files and three ranges, so a changed, added, removed, or unaccounted hunk is
+15 files and two ranges, so a changed, added, removed, or unaccounted hunk is
 detectable without committing generated patches.
 
 Every patch identity is normalized independently of operator Git config:
@@ -31,72 +31,28 @@ conversion, C locale, and SHA-256 over the resulting bytes.
 
 The read-only Ghostty checkout inspected for this report was clean at:
 
-- head: `5fc8fa2cf4b27bfe27072d561de98f33b2c16636`
-- branch/ref: `zentty/gtk-embed`, also `origin/zentty/gtk-embed`
-- configured remotes: `origin=TamedTornado/ghostty`,
-  `dedene=dedene/ghostty`, and `upstream=ghostty-org/ghostty`
+- head: `958d97ecdb659babdf530cb5562525134baec2a4`
+- branch/ref: the locked direct-fork GTK embedding branch
+- configured origin: `TamedTornado/ghostty`, whose GitHub parent/source is
+  `ghostty-org/ghostty`
 
-The locally available bases require careful wording:
-
-1. `19e20f7664dc7a755d2d7a16ab545b2503f26caf` is the official Ghostty
-   commit recorded by the existing Zentty dogfood history and is present
-   locally. It is the parent/base of the eight inherited smooth-scroll
-   commits.
-2. `4e9fe4bb5adbd0140b0a94133bd39672076cb6de` is the immediate base of the
-   11-commit GTK embedding series. It already contains the unrelated
-   downstream smooth-scroll stack.
-3. There is **no local `upstream/*` remote-tracking ref**, so this audit cannot
-   truthfully claim a merge-base with current official `upstream/main`.
-4. Local fork ref `origin/main` is
-   `3706abab0c962d9c93c4c4af853149f9d55f4deb`, and
-   `git merge-base HEAD origin/main` is that same commit. That ref is older
-   than recorded official base `19e20f766`; using `3706abab0..HEAD` as an
-   "embedding diff" would incorrectly include intervening official commits
-   and dependency changes.
-
-No fetch or rebase was performed, so the facts above are a local snapshot, not
-a statement about the current upstream branch.
+The direct fork was rebuilt after the earlier fork-provenance error. The
+audited `origin/main`, recorded official base, and embedding-series base are
+all `ac04fc276169c70d31aa6fcfc5b43fc160d6fe6e`. The branch contains 14
+downstream commits after that base. The unrelated inherited smooth-scroll
+series is not in this branch; it remains only on the explicitly archived
+pre-refork branch and is outside this audit.
 
 | Range | Meaning | Commits | Files | Hunks | Lines | Patch SHA-256 |
 |---|---|---:|---:|---:|---:|---|
-| `19e20f766..4e9fe4bb5` | inherited smooth/elastic-scroll stack | 8 | 20 | 105 | +747/-83 | `9d028d9d6436080952d6679385784559a5583e473149d9b862141f06a05dff0a` |
-| `4e9fe4bb5..5fc8fa2cf` | GTK embedding series | 11 | 12 | 40 | +930/-35 | `6fc5aa33b3a85d76bf6cbf89d72c84a1658093c3c96a8d5aaeb0359f616744a1` |
-| `19e20f766..5fc8fa2cf` | complete downstream delta from recorded official base | 19 | 32 | 145 | +1677/-118 | `94f9d7b72a8e6011dda8feba2b6d6dc402a1d6c9227e5f726e3663843c863bb1` |
+| `ac04fc276..958d97ecd` | GTK embedding series | 14 | 15 | 46 | +991/-53 | `45dcab2c30565ddf12ba95f20a3cbff92aaec48590ad45c00d839b18c2685942` |
+| `ac04fc276..958d97ecd` | complete direct-fork downstream delta | 14 | 15 | 46 | +991/-53 | `45dcab2c30565ddf12ba95f20a3cbff92aaec48590ad45c00d839b18c2685942` |
 
 ## Complete downstream file/hunk ledger
 
 The hunk count and per-file patch identity are normative in the JSON. The
 table below provides the human classification of every changed file; no file
-in `19e20f766..5fc8fa2cf` is omitted.
-
-### Inherited smooth-scroll partition (not embedding)
-
-| File | Change | Hunks | Classification |
-|---|---:|---:|---|
-| `include/ghostty.h` | +4/-1 | 2 | fractional/elastic scroll C API |
-| `include/ghostty/vt/terminal.h` | +1/-1 | 1 | fractional scrollbar offset |
-| `macos/Sources/Ghostty/Ghostty.Action.swift` | +1/-1 | 1 | Swift fractional scroll action |
-| `macos/Sources/Ghostty/Ghostty.Surface.swift` | +12/-0 | 1 | Swift bridge |
-| `macos/Sources/Ghostty/Surface View/SurfaceScrollView.swift` | +12/-5 | 8 | macOS scroll state/scrollbar |
-| `macos/Sources/Ghostty/Surface View/SurfaceView_AppKit.swift` | +6/-14 | 6 | AppKit event forwarding |
-| `src/Surface.zig` | +314/-24 | 24 | core scroll state, behavior, tests |
-| `src/apprt/embedded.zig` | +22/-0 | 1 | existing embedded C API bridge |
-| `src/renderer/State.zig` | +5/-0 | 1 | renderer scroll state |
-| `src/renderer/generic.zig` | +90/-9 | 12 | renderer calculations |
-| `src/renderer/metal/shaders.zig` | +6/-0 | 1 | Metal uniform layout |
-| `src/renderer/opengl/shaders.zig` | +6/-0 | 1 | OpenGL uniform layout |
-| `src/renderer/shaders/glsl/cell_bg.f.glsl` | +1/-1 | 1 | fractional cell background |
-| `src/renderer/shaders/glsl/cell_text.f.glsl` | +11/-0 | 2 | fractional text clipping |
-| `src/renderer/shaders/glsl/cell_text.v.glsl` | +1/-1 | 1 | fractional text offset |
-| `src/renderer/shaders/glsl/common.glsl` | +2/-0 | 1 | shared uniform |
-| `src/renderer/shaders/glsl/image.v.glsl` | +1/-1 | 1 | fractional image offset |
-| `src/renderer/shaders/shaders.metal` | +13/-4 | 6 | Metal shader behavior |
-| `src/terminal/PageList.zig` | +7/-2 | 4 | scrollbar model |
-| `src/terminal/render.zig` | +232/-19 | 30 | terminal render state/tests |
-
-Recommendation for all 105 hunks: keep them outside the #11 embedding review.
-They may have their own value and history, but this audit makes no judgment on
-that separate feature.
+in `ac04fc276..958d97ecd` is omitted.
 
 ### GTK embedding partition
 
@@ -104,15 +60,18 @@ that separate feature.
 |---|---:|---:|---|
 | `AGENTS.md` | +24/-0 | 1 | Zentty-only dogfood policy; downstream only. |
 | `build.zig` | +126/-0 | 2 | Shared library/header install and private spike steps are combined; split generic build plumbing from test orchestration. |
-| `include/ghostty/gtk.h` | +69/-0 | 1 | Experimental language-neutral ABI; retain as evidence, then minimize after Rust callers exist. |
+| `include/ghostty/gtk.h` | +80/-0 | 1 | Experimental language-neutral ABI; retain as evidence, then minimize after Rust callers exist. |
+| `pkg/gtk4-layer-shell/build.zig` | +5/-0 | 1 | Current-upstream shared-library dependency plumbing. |
 | `src/apprt.zig` | +4/-1 | 1 | Select GTK runtime for a GTK library; retain only with that product. |
 | `src/apprt/gtk/Surface.zig` | +1/-3 | 2 | Route through explicit surface owner; plausible generic foundation. |
-| `src/apprt/gtk/class/surface.zig` | +54/-28 | 26 | Store/ref/unref explicit `Application` and replace default-app lookups in construction, config, input, notifications, resize, clipboard, and finalization; plausible generic foundation needing focused tests. |
+| `src/apprt/gtk/class/application.zig` | +1/-1 | 1 | Current-upstream explicit application runtime plumbing. |
+| `src/apprt/gtk/class/global_shortcuts.zig` | +13/-3 | 5 | Non-default application owner support for global shortcuts. |
+| `src/apprt/gtk/class/surface.zig` | +71/-42 | 25 | Store/ref/unref explicit `Application` and replace default-app lookups in construction, config, input, notifications, resize, clipboard, and finalization; plausible generic foundation needing focused tests. |
 | `src/build/SharedDeps.zig` | +4/-2 | 1 | GTK library native dependencies; keep with library build plumbing. |
-| `src/gtk_embed_lib.version-script` | +13/-0 | 1 | Eight-symbol ELF allowlist/version node; retain if library remains and expand version-policy tests. |
-| `src/gtk_embed_lib.zig` | +156/-0 | 1 | Runtime and all eight exports; defer final surface until Rust product evidence. |
+| `src/gtk_embed_lib.version-script` | +14/-0 | 1 | Nine-symbol ELF allowlist/version node; retain if library remains and expand version-policy tests. |
+| `src/gtk_embed_lib.zig` | +173/-0 | 1 | Runtime and all nine exports; defer final surface until Rust product evidence. |
 | `src/gtk_embed_spike.valgrind.supp` | +71/-0 | 1 | Private external-library suppressions; downstream test evidence only. |
-| `src/gtk_embed_spike.zig` | +377/-0 | 1 | Private Zig alternate host reaching internal APIs; not proof of a public boundary. |
+| `src/gtk_embed_spike.zig` | +373/-0 | 1 | Private Zig alternate host reaching internal APIs; not proof of a public boundary. |
 | `src/termio/Exec.zig` | +31/-1 | 2 | Independent generic command-lifetime fix plus unit test; review separately. |
 
 ## Current patch partition quality
@@ -120,18 +79,19 @@ that separate feature.
 The history is good chronological dogfood evidence, but it is not yet an
 independently reviewable generic patch series:
 
-- `321afcd7` and `df682209` are explicitly downstream policy.
-- `b9d9b9d5`, `e753619f`, `94fe18e7`, and `8f5141d7` grow a private Zig spike
+- `4de99904` and `47e47ac0` are explicitly downstream policy.
+- `116aa7ad`, `a67e1e7a`, `683c72ed`, and `cdf03636` grow a private Zig spike
   that reaches Ghostty internals rather than the installed C boundary.
-- `32f631d5` contains the plausibly generic explicit-application ownership
+- `6c230758` contains the plausibly generic explicit-application ownership
   change, but also edits that private spike.
-- `44743e83` is a self-contained POSIX shell-command lifetime repair with a
+- `910114ab` is a self-contained POSIX shell-command lifetime repair with a
   focused regression test and is plausibly independent of embedding.
-- `b8d92049` combines library build plumbing, runtime selection, header, and
+- `d733efbf` combines library build plumbing, runtime selection, header, and
   implementation.
-- `7fa70f31` is separable optional focus/text/paste surface area.
-- `5fc8fa2c` combines API documentation, handle checks, version visibility,
-  and build changes.
+- `ea2b445c` is separable optional focus/text/paste surface area.
+- `3ff0b36e`, `dfd8db8`, and `4c07b759` harden the ABI and add explicit surface
+  closure. `958d97ec` ports that reviewed series to the current official base
+  and necessarily touches three additional upstream GTK build/class files.
 
 A plausible future review partition—without predicting acceptance—is:
 
@@ -148,7 +108,7 @@ No patch or upstream communication was prepared.
 
 ## Exported ABI inventory
 
-The ELF version script has exactly **8 exported function symbols**, all under
+The ELF version script has exactly **9 exported function symbols**, all under
 `GHOSTTY_GTK_EMBED_1.0`; it hides every other implementation symbol. The
 header additionally defines two **Ghostty-owned** ABI types and three enum
 values:
@@ -176,14 +136,15 @@ NOT_IMPLEMENTED.
 
 It also has one explicit **external public type dependency**: GTK-owned
 `GtkWidget`, forward-declared as `typedef struct _GtkWidget GtkWidget;`.
-`surface_new` returns `GtkWidget *`; `surface_grab_focus`, `surface_send_text`,
-and `surface_request_paste` each accept it as their surface handle. Thus the
+`surface_new` returns `GtkWidget *`; `surface_close`, `surface_grab_focus`,
+`surface_send_text`, and `surface_request_paste` each accept it as their
+surface handle. Thus the
 boundary is language-neutral C but not GTK-neutral: consumers must bind GTK's
 GObject/widget type and lifetime rules. This dependency is distinct from the
 two Ghostty-owned types, and its currently ambiguous constructor transfer is a
 safe-Rust blocker.
 
-A non-authoritative observation of the existing built artifact found all eight
+A non-authoritative observation of the existing built artifact found all nine
 names as default-versioned `@@GHOSTTY_GTK_EMBED_1.0` symbols. Its SONAME was
 the unversioned `libghostty-gtk-embed.so`; the static audit does not claim this
 as fresh build or runtime qualification.
@@ -208,6 +169,7 @@ check, but an arbitrary dangling pointer cannot be made safe by that check.
 | `ghostty_gtk_embed_runtime_free` | C host/API teardown | Required as safe `Drop` or equivalent | Retain; prove drop races and error policy. |
 | `ghostty_gtk_embed_runtime_tick` | One-millisecond C-host GLib timer/API test | Likely under current implementation, but could become an internal GLib source | Defer public retention; investigate self-scheduling. |
 | `ghostty_gtk_embed_surface_new` | One/four C-host real terminals and API test | Construction is required, current shell-string signature is not acceptable for #13 | Retain capability; redesign for typed argv/CWD/environment/config. |
+| `ghostty_gtk_embed_surface_close` | Rust product pane and repeated lifecycle teardown | Required by the current safe wrapper unless closure becomes a documented GObject disposal contract | Retain current capability; prove callback/drop ordering before upstream proposal. |
 | `ghostty_gtk_embed_surface_grab_focus` | C host focus/physical-key paths and misuse test | Likely active-pane requirement under #5 | Likely retain after real product focus proof. |
 | `ghostty_gtk_embed_surface_send_text` | C qualification control and misuse test only | Possible programmatic text action, not yet proven | Defer/remove if real product has no caller. |
 | `ghostty_gtk_embed_surface_request_paste` | C qualification clipboard relay and misuse test only | Possible product paste action; normal widget shortcuts may suffice | Defer/remove if real product has no caller. |
@@ -250,7 +212,7 @@ The JSON records each operation separately. Cross-cutting findings are:
   ignores invalid live GObjects. Text is NUL-terminated UTF-8 and reports only
   boolean success. Paste is standard-clipboard-only and completes
   asynchronously by signal, with no cancellation contract.
-- **Symbol/version policy:** `linux/tests/abi-surface` validates the eight
+- **Symbol/version policy:** `linux/tests/abi-surface` validates the nine
   names after stripping `@...`, so it does not assert the version node. There
   is no ABI macro/query symbol, versioned SONAME, tested evolution policy, or
   deliberate old/new mismatch failure. Non-ELF GTK targets are unqualified.
@@ -265,7 +227,7 @@ At the pinned checkpoint, the authoritative matrix records:
 - focus, text injection, standard clipboard paste, allocation/resize, staged
   relocation, binary hardening, and repeated lifecycle;
 - C17 compilation and partial C++17 signature/enum compilation;
-- an exact eight-name exported-symbol allowlist;
+- an exact nine-name exported-symbol allowlist;
 - API misuse rejection for null/foreign runtime and surface handles, invalid
   backend, second runtime, stale runtime, double free, null text, and
   uninitialized surface text/paste;
@@ -302,11 +264,10 @@ matrix's compositor/IME/scaling/public-CI gaps remain unchanged.
    `-fshort-enums` proof. There is also no version-node assertion,
    compile-time/runtime ABI identity, versioned SONAME, mismatch failure,
    deprecation policy, or non-ELF visibility policy. C++ signature assertions
-   cover only two of eight functions.
-8. **Rebase/current upstream:** no current upstream ref was available, and the
-   task intentionally performed no fetch/rebase. Conflict and regression
-   measurements against a current official revision remain for later #11
-   work.
+   cover only two of nine functions.
+8. **Future rebase:** this audit is exact for official base `ac04fc276` and
+   locked downstream head `958d97ec`; later official movement requires a new
+   normalized audit rather than silently reusing these identities.
 9. **Qualification gaps:** ReleaseSafe Valgrind, controlled native Wayland
    input/IME/resize/scaling, X11 IME/scaling, packaging, and public CI remain
    non-PASS exactly as the unchanged matrix declares.
@@ -320,7 +281,7 @@ the matrix. They have since been reconciled into the authoritative
 | Authoritative ID | Requirement / test ID | Current declared state | Purpose |
 |---|---|---|---|
 | `ghostty-api-audit-inventory` | `ZL-11-GHOSTTY-API-AUDIT` / `TEST-GHOSTTY-API-AUDIT` | PASS after validator/self-test | Static normalized commit/file/hunk/source allowlist identity only. |
-| `ghostty-abi-version-node` | `ZL-11-GHOSTTY-ABI-COMPAT` / `TEST-GHOSTTY-ABI-VERSION` | NOT_IMPLEMENTED | Assert the eight ELF exports carry the intended node. |
+| `ghostty-abi-version-node` | `ZL-11-GHOSTTY-ABI-COMPAT` / `TEST-GHOSTTY-ABI-VERSION` | NOT_IMPLEMENTED | Assert the nine ELF exports carry the intended node. |
 | `ghostty-async-backend-abi-representation` | `ZL-11-GHOSTTY-ABI-COMPAT` / `TEST-GHOSTTY-ASYNC-BACKEND-ABI` | XFAIL, `DOGFOOD-2026-08-02-GHOSTTY-ASYNC-ENUM-ABI` | The deterministic C17/C++17 header probe exits 99 after reproducing 4-byte default versus 1-byte `-fshort-enums` representation. Full repaired C/C++/Rust size, alignment, and real-library call acceptance remains NOT_IMPLEMENTED. |
 | `ghostty-runtime-initialization-order` | `ZL-11-GHOSTTY-API-AUDIT` / `TEST-GHOSTTY-RUNTIME-INIT-ORDER` | NOT_IMPLEMENTED | Prove runtime-before-`gtk_init`/any GTK object and safe reversed-order failure. |
 | `rust-ghostty-api-product-usage` | `ZL-13-RUST-GHOSTTY-ADAPTER` / `TEST-RUST-GHOSTTY-PRODUCT-USAGE` | NOT_IMPLEMENTED | Trace every retained function to real safe-wrapper/product callers. |
@@ -343,7 +304,7 @@ public rendering normalizes operator-specific locations; set
 git -C "$GHOSTTY_SOURCE_DIR" status --short --branch
 git -C "$GHOSTTY_SOURCE_DIR" show-ref
 git -C "$GHOSTTY_SOURCE_DIR" merge-base HEAD origin/main
-git -C "$GHOSTTY_SOURCE_DIR" log --reverse --oneline 19e20f766..HEAD
+git -C "$GHOSTTY_SOURCE_DIR" log --reverse --oneline ac04fc276..HEAD
 # The validator owns the full normalized diff command. In abbreviated form:
 git -C "$GHOSTTY_SOURCE_DIR" \
   -c core.abbrev=40 -c core.attributesFile=/dev/null -c core.quotePath=true \
@@ -366,7 +327,7 @@ GHOSTTY_SOURCE_DIR="$GHOSTTY_SOURCE_DIR" \
 The final command returned:
 
 ```text
-Ghostty API audit inventory passed: 32 files, 145 hunks, 8 allowlisted function exports, 2 Ghostty-owned public types, 1 external GtkWidget dependency
+Ghostty API audit inventory passed: 15 files, 46 hunks, 9 allowlisted function exports, 2 Ghostty-owned public types, 1 external GtkWidget dependency
 Ghostty API audit normalization self-test passed: conflicting core.abbrev=12 did not change diff identities
 ```
 
@@ -455,14 +416,14 @@ PATH="$(dirname "$BLUEPRINT_COMPILER"):$(dirname "$ZIG"):$PATH" \
 
 Non-authoritative local observations, except for the static validator itself:
 
-- audit validator: PASS, 32 files / 145 hunks / 8 allowlisted exports / 2
+- audit validator: PASS, 15 files / 46 hunks / 9 allowlisted exports / 2
   Ghostty-owned public types / 1 external `GtkWidget` dependency;
 - qualification schema and negative runner self-tests: PASS;
 - C17 and C++17 warning-as-error syntax checks: PASS;
 - public C API contract: all six Wayland/X11 by default/epoll/io_uring
   combinations were observed to pass against the existing pinned ReleaseSafe
   artifact, but no new authoritative receipt was retained;
-- built ABI observation: exactly 8 `T`/`W` exports, each
+- built ABI observation: exactly 9 `T`/`W` exports, each
   `@@GHOSTTY_GTK_EMBED_1.0`; SONAME `libghostty-gtk-embed.so`;
 - full Ghostty Debug observation: 94/94 build steps succeeded, 2707/2738 tests
   passed, 31 skipped, zero failures; the canonical claim remains the matrix's

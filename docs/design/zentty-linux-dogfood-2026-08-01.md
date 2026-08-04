@@ -4360,12 +4360,11 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   exact recipe. Existing pane command, CWD, title, height, bookmark-origin, and
   frame metadata is preserved while title, color, focus, and order come from
   current product state.
-- **Rejected silent conversion:** The current Linux pane renderer has not yet
-  ported source multi-column geometry. Import therefore rejects zero or
-  multiple columns, empty worklanes, and duplicate worklane or pane IDs instead
-  of flattening them and later overwriting a valid source snapshot. A focused
-  test proves a two-column recipe returns the explicit unsupported-layout
-  error.
+- **Initial rejected conversion, since lifted:** At this stage the Linux pane
+  renderer had not yet ported source multi-column geometry. Import therefore
+  rejected zero or multiple columns instead of flattening and overwriting a
+  valid source snapshot. `DOGFOOD-2026-08-04-COLUMN-GEOMETRY` records the later
+  model and renderer port which replaced this temporary boundary.
 - **Test repairs:** The first malformed-layout test failed to compile because a
   single expression borrowed the test window mutably and immutably. Cloning the
   source column before mutation fixed the test construction. Warning-denied
@@ -4402,13 +4401,152 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   action-completion automation triggered warning-denied Clippy's excessive-bool
   rule. A single `ExitPolicy` enum now makes the mutually exclusive lifecycle
   modes explicit rather than suppressing the lint.
-- **Qualification boundary:** This proves a real source-envelope
-  restore/persist/relaunch slice, not the full `workspace_restore` cells. The
-  product deliberately rejects multiple windows and zero/multiple columns;
-  multi-window and source column geometry, real CWD launch, live debounce,
-  meaningless-default deletion, corrupt-snapshot recovery UI, and crash
-  relaunch remain. The broad Wayland and X11 restore cells therefore stay
-  `NOT_IMPLEMENTED`.
+- **Qualification boundary at this stage:** This proved a real source-envelope
+  restore/persist/relaunch slice, not the full `workspace_restore` cells. At
+  that point the product deliberately rejected multiple windows and
+  zero/multiple columns. The later column port is recorded below; multi-window,
+  exact divider sizing, real CWD launch, live debounce, meaningless-default
+  deletion, corrupt-snapshot recovery UI, and crash relaunch still remain. The
+  broad Wayland and X11 restore cells therefore stay `NOT_IMPLEMENTED`.
+
+### DOGFOOD-2026-08-04-COLUMN-GEOMETRY: port topology before divider polish
+
+- **Source discovery:** `PaneStripState` does not model panes as one flat row.
+  A worklane owns ordered columns; each column owns ordered vertical panes,
+  independent width and height values, and current/last focus. Moving left or
+  right transfers a pane at the neighboring column's leading position, while
+  moving beyond an edge extracts a pane from a multi-pane edge column.
+- **Repair:** `WorkspaceState` now preserves column IDs, widths, vertical pane
+  heights, focused column, and current/last focused pane. Horizontal split
+  creates an adjacent column; vertical split inserts below; four-direction
+  moves follow the source topology; close and focus transitions retain valid
+  column invariants. The GTK product renders a horizontal row of vertical
+  terminal columns and exposes named actions and visible controls for both
+  split directions and all four move directions.
+- **Failures found while building:** The first refactor intentionally broke all
+  remaining flat `worklane.panes` consumers, which made the incomplete port
+  compile-fail rather than silently flatten recipes. A legacy move test then
+  exposed that the source edge behavior creates a new column rather than
+  refusing the move; its expectations were corrected to the Swift semantics.
+  Warning-denied Clippy required extracting toolbar construction rather than
+  allowing the GTK constructor to grow past the project line limit. The first
+  real vertical-action run then failed because an earlier, unfocused PTY exited
+  between move-up and move-down: `close_pane` incorrectly reassigned focus for
+  every removal. The close transition now changes focus only when the removed
+  pane or column owned focus, with a focused regression test; newly initialized
+  terminals also reassert model focus after their GTK surface becomes ready.
+  The repaired rerun reached its final geometry assertion and exposed a test
+  typo (`column-pane-1` instead of the product's stable source/default identity
+  `column-worklane-1`); the assertion was corrected without changing product
+  behavior.
+- **Real-system evidence:** `rust-session-restore` now injects a second source
+  column into the v3 fixture, creates three real Ghostty/PTY surfaces across a
+  vertical pair and an adjacent column, persists exact IDs and numeric recipe
+  geometry, and proves the same structure on relaunch. The workspace scenario
+  now creates a fifth real terminal through the vertical-split GTK action,
+  moves it up and down, and asserts both flattened and column receipts. Both
+  scenarios passed with private software-rendered Weston/Wayland and
+  Xvfb/X11.
+- **Environmental discovery:** Running Xvfb inside the filesystem sandbox
+  failed because the rebooted environment exposes `/tmp/.X11-unix` as
+  `nobody:nogroup`; the nested harness correctly reported failure rather than
+  converting absence into a pass. The approved outside-sandbox private Xvfb
+  run owned its session and passed. Weston likewise requires the approved
+  socket-capable environment and passed there.
+- **Qualification discovery:** The authoritative rerun caught a stale ABI
+  allowlist left by the earlier surface-lifecycle slice: the Rust wrapper and C
+  contract already used `ghostty_gtk_embed_surface_close`, but `abi-surface`
+  still rejected that real export. The allowlist now includes the owned close
+  symbol. This was a qualification defect, not a reason to remove or hide the
+  lifecycle API.
+- **Fork-provenance audit repair:** The recreated direct fork changed the
+  actual downstream comparison boundary, but the machine-readable Ghostty API
+  audit still described the deleted indirect-fork history. Qualification
+  correctly failed rather than accepting that receipt. The audit now compares
+  official/direct-fork `main` at
+  `ac04fc276169c70d31aa6fcfc5b43fc160d6fe6e` to the pinned embedding head
+  `958d97ecdb659babdf530cb5562525134baec2a4`: 14 commits, 15 files, 46 hunks,
+  and nine allowlisted functions. The obsolete inherited smooth-scroll range
+  is no longer presented as part of this fork. The architecture contract and
+  ADR were also repinned to the actual managed Ghostty revision.
+- **Long-running upstream regression evidence:** The pinned Ghostty Debug
+  regression cell took roughly ten minutes on this host, but process
+  inspection showed the test process continuously consuming a CPU rather than
+  hanging. It completed successfully. This is retained as the upstream-owned
+  regression boundary, not multiplied into every product scenario.
+- **Operator-interface discovery:** `qualify-local` has no `--help` mode; an
+  attempted help query therefore started the suite and reached the nested
+  compositor boundary before failing under restricted socket access. The real
+  qualification rerun was subsequently launched in its approved controlled
+  environment. Future operator invocations must use the documented no-argument
+  interface rather than probing it as a conventional option parser.
+- **IBus summary normalization defect:** The standalone controlled IBus
+  wrapper intentionally identifies its independently launched raw and
+  suppressed phases with process/random-token markers such as
+  `970879-C9xhyI`. The matrix runner incorrectly treated those markers as if
+  they were generic 64-hex controlled-environment receipt IDs, so a passing
+  real reproducer was classified as missing environment evidence. The runner
+  now validates the wrapper-owned marker grammar and hashes each marker into
+  the summary's opaque 64-hex identity. Focused runner tests prove valid,
+  deterministic, distinct, and malformed-marker behavior.
+- **Suppression-governance sequencing and scope:** Running `restore-release`
+  before governance replaced the Debug standalone IBus executable with a
+  ReleaseSafe build, making the reviewed protocol executable identity appear
+  to drift. Governance now runs immediately after the Debug IBus evidence cell.
+  A focused rerun then exposed a second policy error: rules belonging only to
+  retired C-host scenarios were declared stale from the unrelated standalone
+  IBus scenario. Required usage is now enforced whenever the current evidence
+  set actually exercises one of a rule's documented allowed scenarios; rules
+  for non-executable real-product scenarios remain explicitly tracked and
+  cannot be called stale or clean from unrelated evidence. The existing stale,
+  outside-scenario, count-growth, and untracked-rule negative tests still pass.
+  One obsolete ReleaseSafe JSON and its paired receipts from a removed matrix
+  cell were explicitly deleted before rerunning governance; unexpected JSON
+  evidence continues to fail closed.
+- **Source-parity review after the first green product run:** Comparing the Rust
+  move implementation back to `PaneStripState.movePane` found that moving into
+  an existing column must equalize the destination's stored heights, while the
+  source gives the removed height to its adjacent pane. The initial Rust port
+  instead carried the old height into the target and left the source total
+  short. The model now follows the source rule and a focused regression test
+  asserts both columns' geometry. This was found by code review rather than by
+  the end-to-end action receipt, demonstrating why source-semantic unit tests
+  remain useful beneath real-system scenarios.
+- **Focused-test isolation failure:** After the authoritative suite passed, a
+  manual focused command invoked `rust-workspace-actions` directly against the
+  ambient X11 desktop. It restored the prior Wayland run's real user state, so
+  stable generated IDs began at `pane-9` instead of `pane-2` and the assertion
+  failed. This was a test invocation defect, not a product action defect, but
+  it exposed two unacceptable harness properties: the failure path deleted its
+  temporary log without printing it, and the scenario allowed an uncontrolled
+  developer desktop at all. The failure helper now emits the complete retained
+  product log, and both focused restore/action scenarios reject execution
+  unless the appropriate nested Weston/Xvfb wrapper supplies a valid session
+  identity. Direct-invocation negative checks fail as intended; fresh isolated
+  reruns pass on both controlled compositors with real PTYs and product state.
+  The mistaken ambient runs updated the real files under
+  `~/.local/state/zentty` at 2026-08-04 06:45 local time. No pre-run receipt was
+  captured, so those files were left untouched rather than guessing at or
+  deleting operator state. The new mandatory nested-session guard prevents
+  this focused harness from repeating that contamination.
+- **Lifecycle regression caught by the broad cell:** The first authoritative
+  matrix rerun then stalled in the multi-terminal lifecycle cell. Its retained
+  real product log showed GTK rejecting a terminal append because removing a
+  column box does not automatically unparent its retained Ghostty children.
+  The renderer now explicitly removes every surface from its old column before
+  rebuilding the column tree. This is why the broad lifecycle cell remains
+  valuable in addition to the focused restore/action scenarios. Its next run
+  exposed a second interaction with real persistence: after cycle one removed
+  exited panes, the next internally restored cycle treated the recipe as a
+  user restore and skipped the requested terminal count. Construction now adds
+  only the requested deficit in the active worklane—never removing restored
+  panes—so repeated lifecycle cycles preserve their explicit test/product CLI
+  contract without flattening richer restored workspaces.
+- **Remaining limitation:** GTK boxes currently divide available space equally;
+  stored width and height values round-trip but do not yet drive resizable
+  dividers. Real divider drag, resize persistence, cross-worklane pane moves,
+  and multiple windows remain open. Accordingly the broad restore cells stay
+  `NOT_IMPLEMENTED`; this slice does not claim exhaustive or full Linux QA.
 
 ## AI disclosure
 

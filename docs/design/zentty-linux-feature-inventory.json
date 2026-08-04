@@ -106,12 +106,12 @@
       "swift_tests": ["ZenttyLogicTests/PaneStripStateTests.swift", "ZenttyLogicTests/PaneCommandExecutorTests.swift", "ZenttyLogicTests/MoveToWorklaneMenuBuilderTests.swift"],
       "classification": "REQUIRED_INITIAL_RELEASE",
       "origin": "PORT_PARITY",
-      "user_impact": "The current flat row cannot reproduce real Zentty multi-column and vertical coding layouts.",
+      "user_impact": "The structural column port now renders real horizontal and vertical terminals, but equal-sized GTK boxes do not yet reproduce persisted divider proportions or resize gestures.",
       "linux_owner_issue": 4,
       "implementation_status": "PARTIAL",
       "focused_tests": ["crates/zentty-core/tests/workspace_state.rs"],
-      "product_scenarios": ["linux/tests/rust-workspace-actions"],
-      "test_plan": "Port the column model first, then exercise horizontal and vertical real terminals and cross-worklane movement on both compositors.",
+      "product_scenarios": ["linux/tests/rust-workspace-actions", "linux/tests/rust-session-restore"],
+      "test_plan": "Replace equal-size column boxes with source-equivalent resizable dividers, persist their proportions, then exercise cross-worklane movement and real divider drags on both compositors.",
       "alternative_or_blocker": null
     },
     {

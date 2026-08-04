@@ -40,7 +40,7 @@ jq -e '
         "legacy_sources_removed": true,
         "legacy_matrix_cells_removed": true
     } and
-    .ghostty_revision == "5fc8fa2cf4b27bfe27072d561de98f33b2c16636" and
+    .ghostty_revision == "958d97ecdb659babdf530cb5562525134baec2a4" and
     ([.workspace_crates[].name] | sort) == ([
         "zentty-core",
         "zentty-ghostty-sys",

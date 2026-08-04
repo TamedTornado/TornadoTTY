@@ -14,7 +14,14 @@ fail() {
 
 [[ "${backend}" == wayland || "${backend}" == x11 ]] ||
     fail "GDK_BACKEND must be wayland or x11"
-for dependency in jq readelf timeout mktemp cp grep; do
+if [[ "${backend}" == wayland ]]; then
+    [[ "${ZENTTY_NESTED_WAYLAND_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+        fail "Wayland restore must run through linux/tests/nested-wayland"
+else
+    [[ "${ZENTTY_NESTED_X11_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+        fail "X11 restore must run through linux/tests/nested-x11"
+fi
+for dependency in jq readelf timeout mktemp grep; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
 [[ -x "${product}" ]] || fail "delivered Rust product is not built: ${product}"
@@ -33,7 +40,21 @@ state_dir="$(mktemp -d)"
 first_log="$(mktemp)"
 second_log="$(mktemp)"
 trap 'rm -rf -- "${state_dir}"; rm -f -- "${first_log}" "${second_log}"' EXIT
-cp "${fixture}" "${state_dir}/restore-snapshot.json"
+jq '
+    .workspace.windows[0].worklanes[0].nextPaneNumber = 4 |
+    .workspace.windows[0].worklanes[0].columns += [{
+        "id": "column-right",
+        "width": 320,
+        "focusedPaneID": "pane-review",
+        "lastFocusedPaneID": "pane-review",
+        "paneHeights": [700],
+        "panes": [{
+            "id": "pane-review",
+            "customTitle": "Review",
+            "workingDirectory": "/tmp/project"
+        }]
+    }]
+' "${fixture}" >"${state_dir}/restore-snapshot.json"
 
 run_product() {
     local receipt="$1"
@@ -66,8 +87,13 @@ jq -e '
     (.workspace.windows[0].frame.width == 1720) and
     (.workspace.windows[0].worklanes[] | select(.id == "worklane-main") |
         .bookmarkOriginID == "bookmark-main" and
+        (.columns | length) == 2 and
         .columns[0].paneHeights == [420, 280] and
-        .columns[0].panes[0].lastRunCommand == "cargo test") and
+        .columns[0].panes[0].lastRunCommand == "cargo test" and
+        .columns[1].id == "column-right" and
+        .columns[1].width == 320 and
+        .columns[1].paneHeights == [700] and
+        .columns[1].panes[0].id == "pane-review") and
     (.workspace.windows[0].worklanes[] | select(.id == "worklane-1") |
         .title == "Frontend" and .color == "red") and
     (.restoreDraftWindows[0].paneDrafts[0].sessionID == "session-codex")
@@ -75,12 +101,17 @@ jq -e '
 jq -e '.cleanExit == true' "${lifecycle}" >/dev/null || fail "clean lifecycle marker was not written"
 
 run_product "${second_log}"
-grep -F 'zentty-linux: topology=worklane-main[title=Nimbu API,color=blue]:pane-agent,pane-shell|worklane-1[title=Frontend,color=red]:' \
+grep -F 'zentty-linux: topology=worklane-main[title=Nimbu API,color=blue]:pane-agent,pane-shell,pane-review|worklane-1[title=Frontend,color=red]:' \
     "${second_log}" >/dev/null || {
     cat "${second_log}" >&2
     fail "relaunch did not render the exact saved worklane and pane identities before mutation"
 }
-grep -F 'zentty-linux: sidebar-card id=worklane-main panes=2 active=false title=Some("Nimbu API")' \
+grep -F 'zentty-linux: geometry=worklane-main:column-left[pane-agent,pane-shell],column-right[pane-review]|worklane-1:' \
+    "${second_log}" >/dev/null || {
+    cat "${second_log}" >&2
+    fail "relaunch did not render the exact saved horizontal and vertical pane geometry"
+}
+grep -F 'zentty-linux: sidebar-card id=worklane-main panes=3 active=false title=Some("Nimbu API")' \
     "${second_log}" >/dev/null || fail "relaunch did not render restored source sidebar metadata"
 
 echo "Rust session restore passed: ${backend}, source-envelope=preserved, relaunch=real"

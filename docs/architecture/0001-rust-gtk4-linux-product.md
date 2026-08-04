@@ -8,7 +8,7 @@
   `SessionRestoreEnvelope`, mirrored by `zentty-core`
 - **Applies from:** Zentty `8c08e7ed987d46fcda65d716cf02845a2c98b285`
 - **Engine boundary:** Ghostty
-  `5fc8fa2cf4b27bfe27072d561de98f33b2c16636`
+  `958d97ecdb659babdf530cb5562525134baec2a4`
 
 `MUST`, `MUST NOT`, `SHOULD`, and `MAY` are used normatively. This ADR is a
 contract for issues #3 through #13. The transitional C host referenced in the

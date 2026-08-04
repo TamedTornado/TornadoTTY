@@ -68,15 +68,15 @@ jq -e '
     (.diff_identity.digest_algorithm == "sha256") and
     (.diff_identity.locale == "C") and
     (.diff_identity.normalization | length) == 21 and
-    (.ranges | length) == 3 and
-    (.files | length) == 32 and
-    (.abi.exported_function_count == 8) and
+    (.ranges | length) == 2 and
+    (.files | length) == 15 and
+    (.abi.exported_function_count == 9) and
     (.abi.operations | length) == .abi.exported_function_count and
     (.abi.ghostty_owned_public_type_count == 2) and
     (.abi.ghostty_owned_public_types | length) == .abi.ghostty_owned_public_type_count and
     (.abi.external_public_type_dependencies | length) == 1 and
     (.abi.external_public_type_dependencies[0].name == "GtkWidget") and
-    (.abi.external_public_type_dependencies[0].roles | length) == 4 and
+        (.abi.external_public_type_dependencies[0].roles | length) == 5 and
     (.abi.public_enum_values | length) == 3 and
     (.abi.prerequisites | any(.id == "runtime-before-gtk-init")) and
     (.abi.abi_defects | any(
@@ -173,7 +173,7 @@ done
     fail "local fork-main merge base differs from the audit"
 git -C "${ghostty_source}" merge-base --is-ancestor "${official_base}" "${embedding_base}" ||
     fail "recorded official base is not an ancestor of the embedding base"
-[[ "$(git -C "${ghostty_source}" rev-parse 321afcd7610e67035aa7188a0d790dc011682169^)" == "${embedding_base}" ]] ||
+[[ "$(git -C "${ghostty_source}" rev-parse 4de99904a04be6af23c89013d78ec2605986ade7^)" == "${embedding_base}" ]] ||
     fail "embedding series no longer begins immediately after the recorded embedding base"
 
 upstream_refs_present=false
@@ -216,12 +216,11 @@ validate_range() {
     [[ "${actual_commits}" == "${expected_commits}" ]] || fail "${id} commit count differs"
 }
 
-validate_range inherited-smooth-scroll
 validate_range gtk-embedding
 validate_range all-downstream-from-recorded-official-base
 
-for partition in inherited-smooth-scroll gtk-embedding; do
-    range_id="${partition}"
+partition=gtk-embedding
+range_id="${partition}"
     base="$(jq -r --arg id "${range_id}" '.ranges[] | select(.id == $id) | .base' "${inventory}")"
     range_head="$(jq -r --arg id "${range_id}" '.ranges[] | select(.id == $id) | .head' "${inventory}")"
     expected_count="$(jq -r --arg p "${partition}" '[.files[] | select(.partition == $p)] | length' "${inventory}")"
@@ -249,7 +248,6 @@ for partition in inherited-smooth-scroll gtk-embedding; do
              (.hunks | tostring), .patch_sha256, .path] | @tsv
         ' "${inventory}"
     )
-done
 
 expected_commits="$(jq -r '.commits[].id' "${inventory}")"
 actual_commits="$(git -C "${ghostty_source}" rev-list --reverse "${official_base}..${head}")"
@@ -287,10 +285,10 @@ grep -Fx 'typedef struct _GtkWidget GtkWidget;' "${ghostty_source}/include/ghost
     fail "GtkWidget forward declaration differs from inventory"
 [[ "$(grep -Ec '^GtkWidget \*ghostty_gtk_embed_surface_new\(' "${ghostty_source}/include/ghostty/gtk.h")" == 1 ]] ||
     fail "GtkWidget surface-constructor return role differs from inventory"
-[[ "$(grep -Eoc 'GtkWidget \*surface' "${ghostty_source}/include/ghostty/gtk.h")" == 3 ]] ||
+[[ "$(grep -Eoc 'GtkWidget \*surface' "${ghostty_source}/include/ghostty/gtk.h")" == 4 ]] ||
     fail "GtkWidget surface-operation parameter roles differ from inventory"
 
-pass_message="Ghostty API audit inventory passed: 32 files, 145 hunks, 8 allowlisted function exports, 2 Ghostty-owned public types, 1 external GtkWidget dependency"
+pass_message="Ghostty API audit inventory passed: 15 files, 46 hunks, 9 allowlisted function exports, 2 Ghostty-owned public types, 1 external GtkWidget dependency"
 echo "${pass_message}"
 
 if [[ "${mode}" == "--self-test" ]]; then

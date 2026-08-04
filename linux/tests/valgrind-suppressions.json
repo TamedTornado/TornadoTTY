@@ -3,6 +3,7 @@
   "manifest_semantics": {
     "expected_suppressed.matches": "Expected Valgrind used_suppression context count; ranges or per-scenario exact values are enforced.",
     "expected_suppressed.bytes": "Expected suppressed bytes; null means Valgrind does not emit a byte count for that finding type.",
+    "required_usage": "A required rule must be observed whenever this evidence set exercises at least one of its allowed scenarios. Rules whose real-product scenarios are not presently executable remain tracked but cannot be declared stale from an unrelated scenario.",
     "usage_profiles": "Optional exact, scenario-specific cross-rule tuples are enforced only where an exact lost-record partition is a valid behavioral oracle.",
     "usage_profiles.evidence_identity": "An exact-profile evidence identity names a locally reviewed, gitignored archive and its recorded checksums; it does not claim that a clean clone contains that archive.",
     "protocol_ceilings": "A protocol-derived ceiling binds variable Memcheck lost/reachable partitions to a fixed acknowledged lifecycle, pinned runtime/source identities, per-rule context/byte/block limits, cross-rule relations, and paired raw/suppressed evidence."

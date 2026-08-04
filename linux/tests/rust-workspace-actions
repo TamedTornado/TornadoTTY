@@ -5,14 +5,25 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
 ghostty_root="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
 backend="${GDK_BACKEND:-}"
+log=""
 
 fail() {
+    if [[ -n "${log}" && -f "${log}" ]]; then
+        cat "${log}" >&2
+    fi
     echo "rust-workspace-actions: error: $*" >&2
     exit 1
 }
 
 [[ "${backend}" == wayland || "${backend}" == x11 ]] ||
     fail "GDK_BACKEND must be wayland or x11"
+if [[ "${backend}" == wayland ]]; then
+    [[ "${ZENTTY_NESTED_WAYLAND_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+        fail "Wayland workspace actions must run through linux/tests/nested-wayland"
+else
+    [[ "${ZENTTY_NESTED_X11_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+        fail "X11 workspace actions must run through linux/tests/nested-x11"
+fi
 command -v readelf >/dev/null || fail "readelf is required"
 command -v timeout >/dev/null || fail "timeout is required"
 [[ -x "${product}" ]] || fail "delivered Rust product is not built: ${product}"
@@ -43,7 +54,6 @@ status=$?
 set -e
 
 if (( status != 0 )); then
-    cat "${log}" >&2
     fail "workspace action scenario exited ${status}"
 fi
 
@@ -65,27 +75,33 @@ grep -Fxq 'zentty-linux: action=move-worklane target=1' "${log}" ||
     fail "worklane reorder action did not run"
 grep -Fxq 'zentty-linux: action=move-pane-left' "${log}" ||
     fail "pane reorder action did not run"
-grep -Fxq 'zentty-linux: topology=worklane-2[title=none,color=none]:pane-2,pane-3|worklane-1[title=Frontend,color=red]:pane-4,pane-1*' "${log}" ||
+grep -Fxq 'zentty-linux: action=split-pane-below pane=pane-5' "${log}" ||
+    fail "vertical split action did not create its real pane"
+grep -Fxq 'zentty-linux: action=move-pane-up' "${log}" ||
+    fail "vertical move-up action did not run"
+grep -Fxq 'zentty-linux: action=move-pane-down' "${log}" ||
+    fail "vertical move-down action did not run"
+grep -Fxq 'zentty-linux: topology=worklane-2[title=none,color=none]:pane-2,pane-3|worklane-1[title=Frontend,color=red]:pane-4,pane-5,pane-1*' "${log}" ||
     fail "final worklane/pane topology or active selection is wrong"
-grep -Fxq 'zentty-linux: sidebar-card id=worklane-1 panes=2 active=true title=Some("Frontend")' "${log}" ||
+grep -Fxq 'zentty-linux: geometry=worklane-2:column-pane-2[pane-2],column-pane-3[pane-3]|worklane-1:column-worklane-1[pane-4,pane-5,pane-1]' "${log}" ||
+    fail "final horizontal and vertical pane geometry is wrong"
+grep -Fxq 'zentty-linux: sidebar-card id=worklane-1 panes=3 active=true title=Some("Frontend")' "${log}" ||
     fail "compound active worklane card did not render its title and nested pane count"
 grep -Fxq 'zentty-linux: sidebar-card id=worklane-2 panes=2 active=false title=None' "${log}" ||
     fail "compound inactive worklane card did not render its nested pane count"
 
-[[ "$(grep -Fxc 'zentty-linux: terminal-ready' "${log}" || true)" -eq 4 ]] ||
+[[ "$(grep -Fxc 'zentty-linux: terminal-ready' "${log}" || true)" -eq 5 ]] ||
     fail "not every product pane initialized a real Ghostty terminal"
-[[ "$(grep -Fxc 'zentty-linux: child-exited' "${log}" || true)" -eq 4 ]] ||
+[[ "$(grep -Fxc 'zentty-linux: child-exited' "${log}" || true)" -eq 5 ]] ||
     fail "not every real PTY child exited through the product"
 native_closed="$(grep -Fc 'info(surface): surface closed addr=' "${log}" || true)"
-if [[ "${native_closed}" -ne 4 ]]; then
-    cat "${log}" >&2
-    fail "expected 4 finalized native Ghostty surfaces, observed ${native_closed}"
+if [[ "${native_closed}" -ne 5 ]]; then
+    fail "expected 5 finalized native Ghostty surfaces, observed ${native_closed}"
 fi
-[[ "$(sed -n 's/^zentty-linux: title=zentty-workspace-\([0-9][0-9]*\)$/\1/p' "${log}" | sort -u | wc -l)" -eq 4 ]] ||
-    fail "the four panes did not prove distinct real PTY child processes"
+[[ "$(sed -n 's/^zentty-linux: title=zentty-workspace-\([0-9][0-9]*\)$/\1/p' "${log}" | sort -u | wc -l)" -eq 5 ]] ||
+    fail "the five panes did not prove distinct real PTY child processes"
 if grep -Eq 'panicked at|thread caused non-unwinding panic|RefCell already borrowed' "${log}"; then
-    cat "${log}" >&2
     fail "the GTK action scenario panicked"
 fi
 
-echo "Rust workspace actions passed: ${backend}, worklanes=2, panes=4, real-pty-children=4"
+echo "Rust workspace actions passed: ${backend}, worklanes=2, panes=5, real-pty-children=5"

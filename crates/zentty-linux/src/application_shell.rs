@@ -17,6 +17,7 @@ use crate::sidebar;
 const ACTION_NEW_WORKLANE: &str = "new-worklane";
 const ACTION_SELECT_WORKLANE: &str = "select-worklane";
 const ACTION_SPLIT_PANE_RIGHT: &str = "split-pane-right";
+const ACTION_SPLIT_PANE_BELOW: &str = "split-pane-below";
 const ACTION_CLOSE_PANE: &str = "close-pane";
 const ACTION_RENAME_WORKLANE: &str = "rename-worklane";
 const ACTION_CYCLE_WORKLANE_COLOR: &str = "cycle-worklane-color";
@@ -24,6 +25,8 @@ const ACTION_MOVE_WORKLANE_UP: &str = "move-worklane-up";
 const ACTION_MOVE_WORKLANE_DOWN: &str = "move-worklane-down";
 const ACTION_MOVE_PANE_LEFT: &str = "move-pane-left";
 const ACTION_MOVE_PANE_RIGHT: &str = "move-pane-right";
+const ACTION_MOVE_PANE_UP: &str = "move-pane-up";
+const ACTION_MOVE_PANE_DOWN: &str = "move-pane-down";
 const ACTION_SELECT_PANE: &str = "select-pane";
 
 pub(crate) struct ApplicationShell {
@@ -67,23 +70,7 @@ impl ApplicationShell {
         let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
         content.set_hexpand(true);
         content.set_vexpand(true);
-        let toolbar = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        toolbar.set_margin_top(6);
-        toolbar.set_margin_bottom(6);
-        toolbar.set_margin_start(6);
-        toolbar.set_margin_end(6);
-        let split_button = gtk::Button::with_label("Split pane");
-        split_button.set_action_name(Some("workspace.split-pane-right"));
-        let close_button = gtk::Button::with_label("Close pane");
-        close_button.set_action_name(Some("workspace.close-pane"));
-        let move_left_button = gtk::Button::with_label("Move pane left");
-        move_left_button.set_action_name(Some("workspace.move-pane-left"));
-        let move_right_button = gtk::Button::with_label("Move pane right");
-        move_right_button.set_action_name(Some("workspace.move-pane-right"));
-        toolbar.append(&split_button);
-        toolbar.append(&close_button);
-        toolbar.append(&move_left_button);
-        toolbar.append(&move_right_button);
+        let toolbar = build_toolbar();
 
         let pane_box = gtk::Box::new(gtk::Orientation::Horizontal, 1);
         pane_box.set_homogeneous(true);
@@ -95,7 +82,6 @@ impl ApplicationShell {
         root.append(&content);
         window.set_child(Some(&root));
 
-        let restored = restored_window.is_some();
         let window_template = restored_window.unwrap_or_else(default_window_recipe);
         let state = WorkspaceState::from_window_recipe(&window_template)
             .map_err(|error| format!("workspace restore failed: {error}"))?;
@@ -110,14 +96,16 @@ impl ApplicationShell {
             state
                 .worklanes()
                 .iter()
-                .flat_map(|worklane| &worklane.panes)
+                .flat_map(|worklane| &worklane.columns)
+                .flat_map(|column| &column.panes)
                 .map(|pane| pane.id.as_str()),
             "pane-",
         );
         let initial_pane_ids = state
             .worklanes()
             .iter()
-            .flat_map(|worklane| &worklane.panes)
+            .flat_map(|worklane| &worklane.columns)
+            .flat_map(|column| &column.panes)
             .map(|pane| pane.id.clone())
             .collect::<Vec<_>>();
         let shell = Rc::new(RefCell::new(Self {
@@ -141,10 +129,9 @@ impl ApplicationShell {
         for pane_id in initial_pane_ids {
             Self::create_surface(&shell, &pane_id)?;
         }
-        if !restored {
-            for _ in 1..terminal_count {
-                Self::split_focused_pane_right(&shell)?;
-            }
+        let active_terminal_count = shell.borrow().state.active_pane_ids().len();
+        for _ in active_terminal_count..terminal_count {
+            Self::split_focused_pane_right(&shell)?;
         }
         shell.borrow().render();
         Ok(shell)
@@ -175,7 +162,7 @@ impl ApplicationShell {
                 surface.widget().remove_controller(&controller);
             }
         }
-        remove_all_children(&self.pane_box);
+        clear_pane_columns(&self.pane_box);
         // The shell retains `sidebar` after detaching the root widget. Clear
         // its cards explicitly so their menu popovers and window-capturing
         // callbacks are finalized before Ghostty's process-global teardown.
@@ -213,6 +200,9 @@ impl ApplicationShell {
                 5 => window.activate_action("workspace.cycle-worklane-color", None),
                 6 => window.activate_action("workspace.move-worklane-down", None),
                 7 => window.activate_action("workspace.move-pane-left", None),
+                8 => window.activate_action("workspace.split-pane-below", None),
+                9 => window.activate_action("workspace.move-pane-up", None),
+                10 => window.activate_action("workspace.move-pane-down", None),
                 _ => {
                     eprintln!("zentty-linux: workspace-action-scenario complete");
                     if quit_when_complete {
@@ -271,6 +261,18 @@ impl ApplicationShell {
             };
             if let Err(error) = Self::split_focused_pane_right(&shell) {
                 Self::report_action_error(&shell, ACTION_SPLIT_PANE_RIGHT, &error);
+            }
+        });
+        group.add_action(&split_pane);
+
+        let split_pane = gio::SimpleAction::new(ACTION_SPLIT_PANE_BELOW, None);
+        let weak = Rc::downgrade(shell);
+        split_pane.connect_activate(move |_, _| {
+            let Some(shell) = weak.upgrade() else {
+                return;
+            };
+            if let Err(error) = Self::split_focused_pane_below(&shell) {
+                Self::report_action_error(&shell, ACTION_SPLIT_PANE_BELOW, &error);
             }
         });
         group.add_action(&split_pane);
@@ -368,6 +370,20 @@ impl ApplicationShell {
                 shell.focus_selected_surface();
             }
         });
+        Self::add_simple_action(shell, group, ACTION_MOVE_PANE_UP, |shell| {
+            if shell.state.move_focused_pane_up() {
+                eprintln!("zentty-linux: action=move-pane-up");
+                shell.render();
+                shell.focus_selected_surface();
+            }
+        });
+        Self::add_simple_action(shell, group, ACTION_MOVE_PANE_DOWN, |shell| {
+            if shell.state.move_focused_pane_down() {
+                eprintln!("zentty-linux: action=move-pane-down");
+                shell.render();
+                shell.focus_selected_surface();
+            }
+        });
     }
 
     fn add_simple_action(
@@ -431,10 +447,26 @@ impl ApplicationShell {
     }
 
     fn split_focused_pane_right(shell: &Rc<RefCell<Self>>) -> Result<(), String> {
+        Self::split_focused_pane(shell, ACTION_SPLIT_PANE_RIGHT, |state, pane_id| {
+            state.split_focused_pane_right(pane_id)
+        })
+    }
+
+    fn split_focused_pane_below(shell: &Rc<RefCell<Self>>) -> Result<(), String> {
+        Self::split_focused_pane(shell, ACTION_SPLIT_PANE_BELOW, |state, pane_id| {
+            state.split_focused_pane_below(pane_id)
+        })
+    }
+
+    fn split_focused_pane(
+        shell: &Rc<RefCell<Self>>,
+        action: &str,
+        update: impl FnOnce(&mut WorkspaceState, String) -> bool,
+    ) -> Result<(), String> {
         let pane_id = {
             let mut shell = shell.borrow_mut();
             let pane_id = shell.take_pane_id();
-            if !shell.state.split_focused_pane_right(pane_id.clone()) {
+            if !update(&mut shell.state, pane_id.clone()) {
                 return Err("generated duplicate pane identity".to_owned());
             }
             pane_id
@@ -444,7 +476,7 @@ impl ApplicationShell {
             return Err(error);
         }
         let shell_ref = shell.borrow();
-        eprintln!("zentty-linux: action=split-pane-right pane={pane_id}");
+        eprintln!("zentty-linux: action={action} pane={pane_id}");
         shell_ref.render();
         shell_ref.focus_selected_surface();
         Ok(())
@@ -488,9 +520,21 @@ impl ApplicationShell {
             .map_err(|error| error.to_string())?;
 
         let ready_id = pane_id.to_owned();
+        let weak = Rc::downgrade(shell);
         surface.on_initialized(move || {
             eprintln!("zentty-linux: terminal-ready");
             eprintln!("zentty-linux: terminal-ready-pane={ready_id}");
+            let weak = weak.clone();
+            let ready_id = ready_id.clone();
+            glib::idle_add_local_once(move || {
+                let Some(shell) = weak.upgrade() else {
+                    return;
+                };
+                let shell = shell.borrow();
+                if shell.state.focused_pane_id() == Some(ready_id.as_str()) {
+                    shell.focus_selected_surface();
+                }
+            });
         });
         let title_id = pane_id.to_owned();
         let weak = Rc::downgrade(shell);
@@ -567,7 +611,7 @@ impl ApplicationShell {
             }
             match outcome {
                 ClosePaneOutcome::Closed => shell_ref.render(),
-                ClosePaneOutcome::CloseWindow => remove_all_children(&shell_ref.pane_box),
+                ClosePaneOutcome::CloseWindow => clear_pane_columns(&shell_ref.pane_box),
                 ClosePaneOutcome::NotFound => {}
             }
             if remaining == 0 {
@@ -591,8 +635,12 @@ impl ApplicationShell {
             surface.widget().remove_controller(&controller);
         }
         if let Some(surface) = self.surfaces.remove(pane_id) {
-            if surface.widget().parent().as_ref() == Some(self.pane_box.upcast_ref()) {
-                self.pane_box.remove(surface.widget());
+            if let Some(parent) = surface
+                .widget()
+                .parent()
+                .and_then(|parent| parent.downcast::<gtk::Box>().ok())
+            {
+                parent.remove(surface.widget());
             }
             surface.dispose().map_err(|error| error.to_string())?;
         }
@@ -606,15 +654,23 @@ impl ApplicationShell {
     }
 
     fn render(&self) {
-        remove_all_children(&self.pane_box);
+        clear_pane_columns(&self.pane_box);
         sidebar::render(&self.sidebar, &self.window, &self.state.sidebar_summaries());
 
-        for pane_id in self.state.active_pane_ids() {
-            if let Some(surface) = self.surfaces.get(pane_id) {
-                self.pane_box.append(surface.widget());
+        for column in self.state.active_columns() {
+            let column_box = gtk::Box::new(gtk::Orientation::Vertical, 1);
+            column_box.set_homogeneous(true);
+            column_box.set_hexpand(true);
+            column_box.set_vexpand(true);
+            for pane in &column.panes {
+                if let Some(surface) = self.surfaces.get(&pane.id) {
+                    column_box.append(surface.widget());
+                }
             }
+            self.pane_box.append(&column_box);
         }
         eprintln!("zentty-linux: topology={}", self.topology_receipt());
+        eprintln!("zentty-linux: geometry={}", self.geometry_receipt());
     }
 
     fn focus_selected_surface(&self) {
@@ -636,8 +692,9 @@ impl ApplicationShell {
                     worklane.title.as_deref().unwrap_or("none"),
                     worklane.color.map_or("none", WorklaneColor::as_str),
                     worklane
-                        .panes
+                        .columns
                         .iter()
+                        .flat_map(|column| &column.panes)
                         .map(|pane| pane.id.as_str())
                         .collect::<Vec<_>>()
                         .join(","),
@@ -651,11 +708,67 @@ impl ApplicationShell {
             .collect::<Vec<_>>()
             .join("|")
     }
+
+    fn geometry_receipt(&self) -> String {
+        self.state
+            .worklanes()
+            .iter()
+            .map(|worklane| {
+                format!(
+                    "{}:{}",
+                    worklane.id,
+                    worklane
+                        .columns
+                        .iter()
+                        .map(|column| format!(
+                            "{}[{}]",
+                            column.id,
+                            column
+                                .panes
+                                .iter()
+                                .map(|pane| pane.id.as_str())
+                                .collect::<Vec<_>>()
+                                .join(",")
+                        ))
+                        .collect::<Vec<_>>()
+                        .join(",")
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("|")
+    }
 }
 
-fn remove_all_children(container: &gtk::Box) {
-    while let Some(child) = container.first_child() {
-        container.remove(&child);
+fn build_toolbar() -> gtk::Box {
+    let toolbar = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    toolbar.set_margin_top(6);
+    toolbar.set_margin_bottom(6);
+    toolbar.set_margin_start(6);
+    toolbar.set_margin_end(6);
+    for (label, action) in [
+        ("Split right", ACTION_SPLIT_PANE_RIGHT),
+        ("Split below", ACTION_SPLIT_PANE_BELOW),
+        ("Close pane", ACTION_CLOSE_PANE),
+        ("Move pane left", ACTION_MOVE_PANE_LEFT),
+        ("Move pane right", ACTION_MOVE_PANE_RIGHT),
+        ("Move pane up", ACTION_MOVE_PANE_UP),
+        ("Move pane down", ACTION_MOVE_PANE_DOWN),
+    ] {
+        let button = gtk::Button::with_label(label);
+        button.set_action_name(Some(&format!("workspace.{action}")));
+        toolbar.append(&button);
+    }
+    toolbar
+}
+
+fn clear_pane_columns(container: &gtk::Box) {
+    while let Some(column_widget) = container.first_child() {
+        if let Ok(column) = column_widget.clone().downcast::<gtk::Box>() {
+            while let Some(surface) = column.first_child() {
+                column.remove(&surface);
+            }
+        }
+        container.remove(&column_widget);
     }
 }
 

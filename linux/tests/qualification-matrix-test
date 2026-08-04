@@ -25,6 +25,18 @@ expect_validation_failure() {
 "${repo_root}/linux/tests/qualification-boundary-contract-test" >/dev/null
 "${repo_root}/linux/tests/lib/qualification-outcome-test" >/dev/null
 
+# The IBus harness deliberately emits process/random-token markers, while the
+# common matrix summary schema requires opaque 64-hex session identities.
+source "${repo_root}/linux/tests/lib/controlled-environment"
+ibus_session_id="$(zentty_controlled_ibus_session_id '970879-C9xhyI')"
+[[ "${ibus_session_id}" =~ ^[0-9a-f]{64}$ ]]
+[[ "${ibus_session_id}" == "$(zentty_controlled_ibus_session_id '970879-C9xhyI')" ]]
+[[ "${ibus_session_id}" != "$(zentty_controlled_ibus_session_id '970880-C9xhyI')" ]]
+if zentty_controlled_ibus_session_id 'not-a-controlled-marker' >/dev/null 2>&1; then
+    echo "qualification-matrix-test: malformed IBus marker was accepted" >&2
+    exit 1
+fi
+
 # A required matrix coordinate may not disappear silently.
 jq 'del(.cells[] | select(.id == "debug-wayland-epoll-single"))' \
     "${source_matrix}" >"${temp_dir}/matrix.json"

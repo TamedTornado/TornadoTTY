@@ -22,21 +22,26 @@ as Zentty.
 The platform-neutral core mirrors ZenTTY's `WorkspaceRecipe` version 3,
 `SessionRestoreEnvelope`, atomic snapshot/lifecycle files, migration,
 meaningfulness filtering, restore-draft merging, and stale-generation rule.
-This is model/store parity only. The GTK product does not yet project, mutate,
-or restore that complete recipe; the Wayland/X11 product-restore cells remain
+The GTK product now restores and persists one source window with ordered
+columns, vertical pane stacks, stable IDs, focus, and stored numeric geometry,
+then proves a real relaunch from the result. Multiple windows, live divider
+resize/persistence, CWD launch, corrupt-state recovery UI, and crash relaunch
+remain, so the broad Wayland/X11 product-restore cells are still
 `NOT_IMPLEMENTED`.
 
 The delivered GTK binary currently has an interaction scaffold for the first
 source-backed worklane shell slice: compound worklane cards with nested pane
 rows and contextual rename, plus named GTK actions for worklane
-creation/selection/rename/reorder/color and pane split/close/reorder, and one
-real Ghostty surface/PTTY per pane. The focused
-`rust-workspace-actions` scenario drives those same actions in the staged binary
-and proves two worklanes, four distinct PTY children, topology, and selection
-under controlled Wayland and X11. Rich color presentation, multi-row/column
-pane layout and cross-worklane movement, recipe restoration, and the full
-source sidebar summaries are not implemented, so the broad product-worklane
-qualification cells remain `NOT_IMPLEMENTED`.
+creation/selection/rename/reorder/color and horizontal/vertical pane
+split/close/four-direction movement, with one real Ghostty surface/PTY per
+pane. The focused `rust-workspace-actions` scenario drives those same actions
+in the staged binary and proves two worklanes, five distinct PTY children,
+column topology, and selection under private Weston/Wayland and Xvfb/X11.
+Those focused scenarios must be launched through `linux/tests/nested-wayland`
+or `linux/tests/nested-x11`; they reject an ambient desktop. Exact divider
+sizing, cross-worklane movement, and the remaining rich sidebar states are not
+implemented, so the broad product-worklane qualification cells remain
+`NOT_IMPLEMENTED`.
 
 The compound cards are not yet full ZenTTY sidebar parity. Agent status and
 attention, progress, server/remote details, bookmarks, drag gestures, complete

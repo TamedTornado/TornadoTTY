@@ -406,6 +406,7 @@ matrix_ibus_environment_json() {
     local report="$2"
     local harness="linux/tests/controlled-ibus-x11"
     local harness_identity harness_sha report_identity
+    local raw_controlled_id suppressed_controlled_id raw_session_id suppressed_session_id
 
     harness_identity="$(zentty_controlled_environment_harness_json \
         "${repo_root}" "${harness}")" || return 1
@@ -420,15 +421,20 @@ matrix_ibus_environment_json() {
         .controlled_environment.phase_isolation == true and
         .controlled_environment.ibus_sync_mode == "1" and
         (.controlled_environment.raw_session_id |
-          type == "string" and test("^[0-9a-f]{64}$")) and
+          type == "string" and test("^[1-9][0-9]*-[A-Za-z0-9]+$")) and
         (.controlled_environment.suppressed_session_id |
-          type == "string" and test("^[0-9a-f]{64}$")) and
+          type == "string" and test("^[1-9][0-9]*-[A-Za-z0-9]+$")) and
         .controlled_environment.raw_session_id !=
           .controlled_environment.suppressed_session_id
     ' "${report}" >/dev/null 2>&1; then
         echo "qualification-matrix: error: IBus controlled environment is missing, stale, or malformed" >&2
         return 1
     fi
+    raw_controlled_id="$(jq -r '.controlled_environment.raw_session_id' "${report}")"
+    suppressed_controlled_id="$(jq -r '.controlled_environment.suppressed_session_id' "${report}")"
+    raw_session_id="$(zentty_controlled_ibus_session_id "${raw_controlled_id}")" || return 1
+    suppressed_session_id="$(zentty_controlled_ibus_session_id \
+        "${suppressed_controlled_id}")" || return 1
     report_identity="$(jq -cn \
         --arg path "${report}" \
         --arg sha256 "$(sha256sum -- "${report}" | awk '{print $1}')" \
@@ -438,13 +444,15 @@ matrix_ibus_environment_json() {
     jq -c \
         --arg profile "${profile}" \
         --argjson harness "${harness_identity}" \
+        --arg raw_session_id "${raw_session_id}" \
+        --arg suppressed_session_id "${suppressed_session_id}" \
         --argjson evidence_file "${report_identity}" '
         .controlled_environment as $controlled |
         {
           profile:$profile,owner:"cell-command",harness:$harness,
           sessions:[
-            {role:"raw",session_id:$controlled.raw_session_id},
-            {role:"suppressed",session_id:$controlled.suppressed_session_id}
+            {role:"raw",session_id:$raw_session_id},
+            {role:"suppressed",session_id:$suppressed_session_id}
           ],
           evidence_files:[$evidence_file]
         }

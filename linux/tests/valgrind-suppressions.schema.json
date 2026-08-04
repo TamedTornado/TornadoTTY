@@ -23,6 +23,7 @@
       "required": [
         "expected_suppressed.matches",
         "expected_suppressed.bytes",
+        "required_usage",
         "usage_profiles",
         "usage_profiles.evidence_identity",
         "protocol_ceilings"
@@ -30,6 +31,7 @@
       "properties": {
         "expected_suppressed.matches": {"type": "string", "minLength": 1},
         "expected_suppressed.bytes": {"type": "string", "minLength": 1},
+        "required_usage": {"type": "string", "minLength": 1},
         "usage_profiles": {"type": "string", "minLength": 1},
         "usage_profiles.evidence_identity": {"type": "string", "minLength": 1},
         "protocol_ceilings": {"type": "string", "minLength": 1}

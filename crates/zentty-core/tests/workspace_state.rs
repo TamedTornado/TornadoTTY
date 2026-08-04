@@ -1,5 +1,5 @@
 use zentty_core::{
-    ClosePaneOutcome, SessionRestoreEnvelope, WorklaneColor, WorkspaceState,
+    ClosePaneOutcome, PaneRecipe, SessionRestoreEnvelope, WorklaneColor, WorkspaceState,
     WorkspaceStateImportError,
 };
 
@@ -51,6 +51,37 @@ fn pane_commands_keep_real_terminal_identity_attached_to_stable_panes() {
 }
 
 #[test]
+fn closing_an_unfocused_pane_does_not_steal_focus() {
+    let mut state = WorkspaceState::new("worklane-a", "pane-a");
+    assert!(state.split_focused_pane_right("pane-b"));
+    assert_eq!(state.focused_pane_id(), Some("pane-b"));
+
+    assert_eq!(state.close_pane("pane-a"), ClosePaneOutcome::Closed);
+    assert_eq!(state.active_pane_ids(), ["pane-b"]);
+    assert_eq!(state.focused_pane_id(), Some("pane-b"));
+
+    assert!(state.split_focused_pane_below("pane-c"));
+    assert_eq!(state.close_pane("pane-b"), ClosePaneOutcome::Closed);
+    assert_eq!(state.active_pane_ids(), ["pane-c"]);
+    assert_eq!(state.focused_pane_id(), Some("pane-c"));
+}
+
+#[test]
+fn vertical_pane_commands_preserve_column_identity_and_geometry() {
+    let mut state = WorkspaceState::new("worklane-a", "pane-a");
+
+    assert!(state.split_focused_pane_below("pane-b"));
+    assert_eq!(state.active_columns().len(), 1);
+    assert_eq!(state.active_pane_ids(), ["pane-a", "pane-b"]);
+    assert_eq!(state.active_columns()[0].pane_heights, [0.5, 0.5]);
+    assert!(state.move_focused_pane_up());
+    assert_eq!(state.active_pane_ids(), ["pane-b", "pane-a"]);
+    assert!(!state.move_focused_pane_up());
+    assert!(state.move_focused_pane_down());
+    assert_eq!(state.active_pane_ids(), ["pane-a", "pane-b"]);
+}
+
+#[test]
 fn duplicate_ids_and_invalid_reorders_are_rejected_without_mutation() {
     let mut state = WorkspaceState::new("worklane-a", "pane-a");
     assert!(!state.create_worklane("worklane-a", "pane-b"));
@@ -85,9 +116,12 @@ fn focused_pane_moves_within_the_active_worklane_without_losing_focus() {
     assert_eq!(state.focused_pane_id(), Some("pane-c"));
     assert!(state.move_focused_pane_left());
     assert_eq!(state.active_pane_ids(), ["pane-c", "pane-a", "pane-b"]);
+    assert!(state.move_focused_pane_left());
+    assert_eq!(state.active_columns().len(), 3);
     assert!(!state.move_focused_pane_left());
     assert!(state.move_focused_pane_right());
-    assert_eq!(state.active_pane_ids(), ["pane-a", "pane-c", "pane-b"]);
+    assert_eq!(state.active_pane_ids(), ["pane-c", "pane-a", "pane-b"]);
+    assert_eq!(state.active_columns().len(), 2);
 }
 
 #[test]
@@ -149,17 +183,79 @@ fn source_window_round_trip_preserves_metadata_while_applying_product_state() {
 }
 
 #[test]
-fn unsupported_multi_column_recipe_fails_instead_of_flattening() {
+fn multi_column_recipe_round_trip_preserves_source_topology() {
     let envelope = SessionRestoreEnvelope::from_json(V3_ENVELOPE).unwrap();
     let mut window = envelope.workspace.windows[0].clone();
-    let duplicate_column = window.worklanes[0].columns[0].clone();
-    window.worklanes[0].columns.push(duplicate_column);
+    window.worklanes[0].columns.push(zentty_core::ColumnRecipe {
+        id: "column-right".to_owned(),
+        width: 320.0,
+        focused_pane_id: Some("pane-review".to_owned()),
+        last_focused_pane_id: Some("pane-review".to_owned()),
+        pane_heights: vec![700.0],
+        panes: vec![PaneRecipe {
+            id: "pane-review".to_owned(),
+            custom_title: Some("Review".to_owned()),
+            title_seed: None,
+            working_directory: Some("/tmp/project".to_owned()),
+            last_activity_title: None,
+            last_run_command: None,
+        }],
+    });
+    window.worklanes[0].focused_column_id = Some("column-right".to_owned());
+
+    let state = WorkspaceState::from_window_recipe(&window).unwrap();
+    assert_eq!(state.active_columns().len(), 2);
+    assert_eq!(
+        state.active_pane_ids(),
+        ["pane-agent", "pane-shell", "pane-review"]
+    );
+    assert_eq!(state.focused_pane_id(), Some("pane-review"));
+    let projected = state.to_window_recipe(&window);
+    assert_eq!(projected.worklanes[0].columns, window.worklanes[0].columns);
+}
+
+#[test]
+fn cross_column_move_matches_source_height_reconciliation() {
+    let envelope = SessionRestoreEnvelope::from_json(V3_ENVELOPE).unwrap();
+    let mut window = envelope.workspace.windows[0].clone();
+    window.worklanes[0].columns.push(zentty_core::ColumnRecipe {
+        id: "column-right".to_owned(),
+        width: 320.0,
+        focused_pane_id: Some("pane-review".to_owned()),
+        last_focused_pane_id: Some("pane-review".to_owned()),
+        pane_heights: vec![700.0],
+        panes: vec![PaneRecipe {
+            id: "pane-review".to_owned(),
+            custom_title: Some("Review".to_owned()),
+            title_seed: None,
+            working_directory: Some("/tmp/project".to_owned()),
+            last_activity_title: None,
+            last_run_command: None,
+        }],
+    });
+
+    let mut state = WorkspaceState::from_window_recipe(&window).unwrap();
+    assert!(state.move_focused_pane_right());
+    assert_eq!(state.active_columns()[0].pane_heights, [700.0]);
+    assert_eq!(state.active_columns()[1].pane_heights, [1.0, 1.0]);
+    assert_eq!(
+        state.active_pane_ids(),
+        ["pane-shell", "pane-agent", "pane-review"]
+    );
+    assert_eq!(state.focused_pane_id(), Some("pane-agent"));
+}
+
+#[test]
+fn duplicate_column_identity_is_rejected() {
+    let envelope = SessionRestoreEnvelope::from_json(V3_ENVELOPE).unwrap();
+    let mut window = envelope.workspace.windows[0].clone();
+    let duplicate = window.worklanes[0].columns[0].clone();
+    window.worklanes[0].columns.push(duplicate);
 
     assert_eq!(
         WorkspaceState::from_window_recipe(&window),
-        Err(WorkspaceStateImportError::UnsupportedColumnCount {
-            worklane_id: "worklane-main".to_owned(),
-            count: 2,
-        })
+        Err(WorkspaceStateImportError::DuplicateColumn(
+            "column-left".to_owned()
+        ))
     );
 }

@@ -223,3 +223,17 @@ zentty_controlled_environment_harness_json() {
         --arg sha256 "$(sha256sum -- "${absolute_harness}" | awk '{print $1}')" \
         '{path:$path,sha256:$sha256}'
 }
+
+# The IBus harness owns a short-lived process/random-token marker rather than a
+# generic controlled-environment receipt. Convert that marker to the closed
+# 64-hex identity used by qualification summaries without pretending the raw
+# marker already satisfies the generic receipt schema.
+zentty_controlled_ibus_session_id() {
+    local controlled_id="$1"
+
+    [[ "${controlled_id}" =~ ^[1-9][0-9]*-[A-Za-z0-9]+$ ]] || {
+        echo "controlled-environment: error: malformed IBus session marker" >&2
+        return 1
+    }
+    printf '%s' "${controlled_id}" | sha256sum | awk '{print $1}'
+}

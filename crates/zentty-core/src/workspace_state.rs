@@ -61,6 +61,16 @@ pub struct PaneState {
     pub title: String,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct PaneColumnState {
+    pub id: String,
+    pub width: f64,
+    pub panes: Vec<PaneState>,
+    pub pane_heights: Vec<f64>,
+    pub focused_pane_id: String,
+    pub last_focused_pane_id: String,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SidebarPaneSummary {
     pub pane_id: String,
@@ -78,19 +88,19 @@ pub struct SidebarWorklaneSummary {
     pub color: Option<WorklaneColor>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct WorklaneState {
     pub id: String,
     pub title: Option<String>,
     pub color: Option<WorklaneColor>,
-    pub panes: Vec<PaneState>,
-    pub focused_pane_id: String,
+    pub columns: Vec<PaneColumnState>,
+    pub focused_column_id: String,
 }
 
 /// Platform-neutral subset of `WorklaneStore` used by the first Linux GTK
 /// product slice. Callers supply stable identities, just as the Swift store
 /// delegates identity creation to `RuntimeIdentity`.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct WorkspaceState {
     worklanes: Vec<WorklaneState>,
     active_worklane_id: String,
@@ -106,29 +116,37 @@ impl WorkspaceState {
                 id: worklane_id.clone(),
                 title: None,
                 color: None,
-                panes: vec![PaneState {
-                    id: pane_id.clone(),
-                    title: "shell".to_owned(),
+                columns: vec![PaneColumnState {
+                    id: format!("column-{pane_id}"),
+                    width: 1.0,
+                    panes: vec![PaneState {
+                        id: pane_id.clone(),
+                        title: "shell".to_owned(),
+                    }],
+                    pane_heights: vec![1.0],
+                    focused_pane_id: pane_id.clone(),
+                    last_focused_pane_id: pane_id.clone(),
                 }],
-                focused_pane_id: pane_id,
+                focused_column_id: format!("column-{pane_id}"),
             }],
             active_worklane_id: worklane_id,
         }
     }
 
-    /// Imports the single-window, single-column subset currently rendered by
-    /// the Linux shell. Unsupported source layouts fail explicitly instead of
-    /// being silently flattened and later persisted incorrectly.
+    /// Imports source worklane columns and vertical pane geometry without
+    /// flattening stable identities or persisted sizing metadata.
     ///
     /// # Errors
     ///
-    /// Returns [`WorkspaceStateImportError`] for empty, duplicate, invalidly
-    /// focused, or multi-column source state.
+    /// Returns [`WorkspaceStateImportError`] for empty or duplicate source
+    /// state. Missing focus references fall back to the first valid item, as
+    /// the source model does during restoration.
     pub fn from_window_recipe(window: &WindowRecipe) -> Result<Self, WorkspaceStateImportError> {
         if window.worklanes.is_empty() {
             return Err(WorkspaceStateImportError::EmptyWindow);
         }
         let mut worklane_ids = BTreeSet::new();
+        let mut column_ids = BTreeSet::new();
         let mut pane_ids = BTreeSet::new();
         let mut worklanes = Vec::with_capacity(window.worklanes.len());
         for recipe in &window.worklanes {
@@ -137,43 +155,77 @@ impl WorkspaceState {
                     recipe.id.clone(),
                 ));
             }
-            let [column] = recipe.columns.as_slice() else {
-                return Err(WorkspaceStateImportError::UnsupportedColumnCount {
-                    worklane_id: recipe.id.clone(),
-                    count: recipe.columns.len(),
-                });
-            };
-            if column.panes.is_empty() {
+            if recipe.columns.is_empty() {
                 return Err(WorkspaceStateImportError::EmptyWorklane(recipe.id.clone()));
             }
-            let mut panes = Vec::with_capacity(column.panes.len());
-            for pane in &column.panes {
-                if !pane_ids.insert(pane.id.clone()) {
-                    return Err(WorkspaceStateImportError::DuplicatePane(pane.id.clone()));
+            let mut columns = Vec::with_capacity(recipe.columns.len());
+            for column in &recipe.columns {
+                if !column_ids.insert(column.id.clone()) {
+                    return Err(WorkspaceStateImportError::DuplicateColumn(
+                        column.id.clone(),
+                    ));
                 }
-                panes.push(PaneState {
-                    id: pane.id.clone(),
-                    title: pane
-                        .custom_title
-                        .as_deref()
-                        .or(pane.title_seed.as_deref())
-                        .or(pane.last_activity_title.as_deref())
-                        .unwrap_or("shell")
-                        .to_owned(),
+                if column.panes.is_empty() {
+                    return Err(WorkspaceStateImportError::EmptyColumn(column.id.clone()));
+                }
+                let mut panes = Vec::with_capacity(column.panes.len());
+                for pane in &column.panes {
+                    if !pane_ids.insert(pane.id.clone()) {
+                        return Err(WorkspaceStateImportError::DuplicatePane(pane.id.clone()));
+                    }
+                    panes.push(PaneState {
+                        id: pane.id.clone(),
+                        title: pane
+                            .custom_title
+                            .as_deref()
+                            .or(pane.title_seed.as_deref())
+                            .or(pane.last_activity_title.as_deref())
+                            .unwrap_or("shell")
+                            .to_owned(),
+                    });
+                }
+                let focused_pane_id = column
+                    .focused_pane_id
+                    .as_deref()
+                    .filter(|id| panes.iter().any(|pane| pane.id == *id))
+                    .unwrap_or(&panes[0].id)
+                    .to_owned();
+                let last_focused_pane_id = column
+                    .last_focused_pane_id
+                    .as_deref()
+                    .filter(|id| panes.iter().any(|pane| pane.id == *id))
+                    .unwrap_or(&focused_pane_id)
+                    .to_owned();
+                let pane_heights = if column.pane_heights.len() == panes.len() {
+                    column
+                        .pane_heights
+                        .iter()
+                        .map(|height| sanitize_dimension(*height))
+                        .collect()
+                } else {
+                    vec![1.0; panes.len()]
+                };
+                columns.push(PaneColumnState {
+                    id: column.id.clone(),
+                    width: sanitize_dimension(column.width),
+                    panes,
+                    pane_heights,
+                    focused_pane_id,
+                    last_focused_pane_id,
                 });
             }
-            let focused_pane_id = column
-                .focused_pane_id
+            let focused_column_id = recipe
+                .focused_column_id
                 .as_deref()
-                .filter(|id| panes.iter().any(|pane| pane.id == *id))
-                .unwrap_or(&panes[0].id)
+                .filter(|id| columns.iter().any(|column| column.id == *id))
+                .unwrap_or(&columns[0].id)
                 .to_owned();
             worklanes.push(WorklaneState {
                 id: recipe.id.clone(),
                 title: recipe.title.clone(),
                 color: recipe.color.as_deref().and_then(WorklaneColor::named),
-                panes,
-                focused_pane_id,
+                columns,
+                focused_column_id,
             });
         }
         let active_worklane_id = window
@@ -202,49 +254,45 @@ impl WorkspaceState {
             .iter()
             .map(|state| {
                 let existing = existing_worklanes.get(state.id.as_str()).copied();
-                let existing_column = existing.and_then(|worklane| worklane.columns.first());
-                let existing_panes: BTreeMap<&str, &PaneRecipe> = existing_column
+                let existing_panes: BTreeMap<&str, &PaneRecipe> = existing
                     .into_iter()
+                    .flat_map(|worklane| &worklane.columns)
                     .flat_map(|column| &column.panes)
                     .map(|pane| (pane.id.as_str(), pane))
                     .collect();
-                let existing_heights: BTreeMap<&str, f64> = existing_column
-                    .into_iter()
-                    .flat_map(|column| column.panes.iter().zip(&column.pane_heights))
-                    .map(|(pane, height)| (pane.id.as_str(), *height))
-                    .collect();
-                let panes = state
-                    .panes
+                let columns = state
+                    .columns
                     .iter()
-                    .map(|pane| {
-                        existing_panes.get(pane.id.as_str()).map_or_else(
-                            || PaneRecipe {
-                                id: pane.id.clone(),
-                                custom_title: None,
-                                title_seed: Some(pane.title.clone()),
-                                working_directory: None,
-                                last_activity_title: None,
-                                last_run_command: None,
-                            },
-                            |recipe| (*recipe).clone(),
-                        )
+                    .map(|column| {
+                        let panes = column
+                            .panes
+                            .iter()
+                            .map(|pane| {
+                                existing_panes.get(pane.id.as_str()).map_or_else(
+                                    || PaneRecipe {
+                                        id: pane.id.clone(),
+                                        custom_title: None,
+                                        title_seed: Some(pane.title.clone()),
+                                        working_directory: None,
+                                        last_activity_title: None,
+                                        last_run_command: None,
+                                    },
+                                    |recipe| (*recipe).clone(),
+                                )
+                            })
+                            .collect();
+                        ColumnRecipe {
+                            id: column.id.clone(),
+                            width: column.width,
+                            focused_pane_id: Some(column.focused_pane_id.clone()),
+                            last_focused_pane_id: Some(column.last_focused_pane_id.clone()),
+                            pane_heights: column.pane_heights.clone(),
+                            panes,
+                        }
                     })
                     .collect();
-                let pane_heights = state
-                    .panes
-                    .iter()
-                    .map(|pane| {
-                        existing_heights
-                            .get(pane.id.as_str())
-                            .copied()
-                            .unwrap_or(1.0)
-                    })
-                    .collect();
-                let column_id = existing_column.map_or_else(
-                    || format!("column-{}", state.id),
-                    |column| column.id.clone(),
-                );
-                let minimum_next_pane = i64::try_from(state.panes.len())
+                let pane_count: usize = state.columns.iter().map(|column| column.panes.len()).sum();
+                let minimum_next_pane = i64::try_from(pane_count)
                     .unwrap_or(i64::MAX)
                     .saturating_add(1);
                 WorklaneRecipe {
@@ -253,15 +301,8 @@ impl WorkspaceState {
                     next_pane_number: existing.map_or(minimum_next_pane, |worklane| {
                         worklane.next_pane_number.max(minimum_next_pane)
                     }),
-                    focused_column_id: Some(column_id.clone()),
-                    columns: vec![ColumnRecipe {
-                        id: column_id,
-                        width: existing_column.map_or(1.0, |column| column.width),
-                        focused_pane_id: Some(state.focused_pane_id.clone()),
-                        last_focused_pane_id: Some(state.focused_pane_id.clone()),
-                        pane_heights,
-                        panes,
-                    }],
+                    focused_column_id: Some(state.focused_column_id.clone()),
+                    columns,
                     color: state.color.map(|color| color.as_str().to_owned()),
                     bookmark_origin_id: existing
                         .and_then(|worklane| worklane.bookmark_origin_id.clone()),
@@ -311,15 +352,26 @@ impl WorkspaceState {
     #[must_use]
     pub fn active_pane_ids(&self) -> Vec<&str> {
         self.active_worklane()
-            .panes
+            .columns
             .iter()
+            .flat_map(|column| &column.panes)
             .map(|pane| pane.id.as_str())
             .collect()
     }
 
     #[must_use]
+    pub fn active_columns(&self) -> &[PaneColumnState] {
+        &self.active_worklane().columns
+    }
+
+    #[must_use]
     pub fn focused_pane_id(&self) -> Option<&str> {
-        Some(self.active_worklane().focused_pane_id.as_str())
+        let worklane = self.active_worklane();
+        worklane
+            .columns
+            .iter()
+            .find(|column| column.id == worklane.focused_column_id)
+            .map(|column| column.focused_pane_id.as_str())
     }
 
     #[must_use]
@@ -327,22 +379,29 @@ impl WorkspaceState {
         self.worklanes
             .iter()
             .map(|worklane| {
-                let primary_text = worklane
-                    .panes
+                let focused_pane_id = worklane
+                    .columns
                     .iter()
-                    .find(|pane| pane.id == worklane.focused_pane_id)
+                    .find(|column| column.id == worklane.focused_column_id)
+                    .map(|column| column.focused_pane_id.as_str());
+                let primary_text = worklane
+                    .columns
+                    .iter()
+                    .flat_map(|column| &column.panes)
+                    .find(|pane| Some(pane.id.as_str()) == focused_pane_id)
                     .map_or_else(|| "shell".to_owned(), |pane| pane.title.clone());
                 SidebarWorklaneSummary {
                     worklane_id: worklane.id.clone(),
                     top_label: worklane.title.clone(),
                     primary_text,
                     pane_rows: worklane
-                        .panes
+                        .columns
                         .iter()
+                        .flat_map(|column| &column.panes)
                         .map(|pane| SidebarPaneSummary {
                             pane_id: pane.id.clone(),
                             primary_text: pane.title.clone(),
-                            is_focused: pane.id == worklane.focused_pane_id,
+                            is_focused: Some(pane.id.as_str()) == focused_pane_id,
                         })
                         .collect(),
                     is_active: worklane.id == self.active_worklane_id,
@@ -371,11 +430,18 @@ impl WorkspaceState {
                 id: worklane_id.clone(),
                 title: None,
                 color: None,
-                panes: vec![PaneState {
-                    id: pane_id.clone(),
-                    title: "shell".to_owned(),
+                columns: vec![PaneColumnState {
+                    id: format!("column-{pane_id}"),
+                    width: 1.0,
+                    panes: vec![PaneState {
+                        id: pane_id.clone(),
+                        title: "shell".to_owned(),
+                    }],
+                    pane_heights: vec![1.0],
+                    focused_pane_id: pane_id.clone(),
+                    last_focused_pane_id: pane_id.clone(),
                 }],
-                focused_pane_id: pane_id,
+                focused_column_id: format!("column-{pane_id}"),
             },
         );
         self.active_worklane_id = worklane_id;
@@ -447,7 +513,8 @@ impl WorkspaceState {
         true
     }
 
-    /// Adds and focuses a pane immediately to the right of the focused pane.
+    /// Adds and focuses a new single-pane column immediately to the right of
+    /// the focused column.
     ///
     /// # Panics
     ///
@@ -460,35 +527,86 @@ impl WorkspaceState {
         }
         let worklane = self.active_worklane_mut();
         let focused_index = worklane
+            .columns
+            .iter()
+            .position(|column| column.id == worklane.focused_column_id)
+            .expect("workspace invariant: focused column exists");
+        let width = worklane.columns[focused_index].width;
+        worklane.columns.insert(
+            focused_index + 1,
+            PaneColumnState {
+                id: format!("column-{pane_id}"),
+                width,
+                panes: vec![PaneState {
+                    id: pane_id.clone(),
+                    title: "shell".to_owned(),
+                }],
+                pane_heights: vec![1.0],
+                focused_pane_id: pane_id.clone(),
+                last_focused_pane_id: pane_id.clone(),
+            },
+        );
+        worklane.focused_column_id = format!("column-{pane_id}");
+        true
+    }
+
+    /// Adds and focuses a pane immediately below the focused pane in the same
+    /// column.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if an internal state transition has violated focused-column
+    /// or focused-pane invariants.
+    pub fn split_focused_pane_below(&mut self, pane_id: impl Into<String>) -> bool {
+        let pane_id = pane_id.into();
+        if self.contains_pane(&pane_id) {
+            return false;
+        }
+        let worklane = self.active_worklane_mut();
+        let column = worklane
+            .columns
+            .iter_mut()
+            .find(|column| column.id == worklane.focused_column_id)
+            .expect("workspace invariant: focused column exists");
+        let focused_index = column
             .panes
             .iter()
-            .position(|pane| pane.id == worklane.focused_pane_id)
+            .position(|pane| pane.id == column.focused_pane_id)
             .expect("workspace invariant: focused pane exists");
-        worklane.panes.insert(
+        let height = column.pane_heights[focused_index];
+        column.panes.insert(
             focused_index + 1,
             PaneState {
                 id: pane_id.clone(),
                 title: "shell".to_owned(),
             },
         );
-        worklane.focused_pane_id = pane_id;
+        column.pane_heights[focused_index] = height / 2.0;
+        column.pane_heights.insert(focused_index + 1, height / 2.0);
+        column.focused_pane_id.clone_from(&pane_id);
+        column.last_focused_pane_id = pane_id;
         true
     }
 
     pub fn select_pane(&mut self, pane_id: &str) -> bool {
         let worklane = self.active_worklane_mut();
-        if !worklane.panes.iter().any(|pane| pane.id == pane_id) {
-            return false;
+        for column in &mut worklane.columns {
+            if column.panes.iter().any(|pane| pane.id == pane_id) {
+                pane_id.clone_into(&mut column.focused_pane_id);
+                pane_id.clone_into(&mut column.last_focused_pane_id);
+                worklane.focused_column_id.clone_from(&column.id);
+                return true;
+            }
         }
-        pane_id.clone_into(&mut worklane.focused_pane_id);
-        true
+        false
     }
 
     pub fn set_pane_title(&mut self, pane_id: &str, title: &str) -> bool {
         let Some(pane) = self
             .worklanes
             .iter_mut()
-            .flat_map(|worklane| &mut worklane.panes)
+            .flat_map(|worklane| &mut worklane.columns)
+            .flat_map(|column| &mut column.panes)
             .find(|pane| pane.id == pane_id)
         else {
             return false;
@@ -504,7 +622,8 @@ impl WorkspaceState {
         true
     }
 
-    /// Moves the focused pane one position left in the active worklane.
+    /// Moves the focused pane into the preceding column, or extracts it into a
+    /// new leading column when the first column contains multiple panes.
     ///
     /// # Panics
     ///
@@ -512,19 +631,46 @@ impl WorkspaceState {
     /// invariant.
     pub fn move_focused_pane_left(&mut self) -> bool {
         let worklane = self.active_worklane_mut();
-        let focused_index = worklane
-            .panes
+        let column_index = worklane
+            .columns
             .iter()
-            .position(|pane| pane.id == worklane.focused_pane_id)
-            .expect("workspace invariant: focused pane exists");
-        if focused_index == 0 {
+            .position(|column| column.id == worklane.focused_column_id)
+            .expect("workspace invariant: focused column exists");
+        if column_index == 0 && worklane.columns[0].panes.len() == 1 {
             return false;
         }
-        worklane.panes.swap(focused_index, focused_index - 1);
+        let pane_id = worklane.columns[column_index].focused_pane_id.clone();
+        let (pane, height) = remove_pane(&mut worklane.columns[column_index], &pane_id);
+        if column_index == 0 {
+            let column_id = format!("column-{}", pane.id);
+            worklane.columns.insert(
+                0,
+                PaneColumnState {
+                    id: column_id.clone(),
+                    width: worklane.columns[0].width,
+                    panes: vec![pane],
+                    pane_heights: vec![height],
+                    focused_pane_id: pane_id.clone(),
+                    last_focused_pane_id: pane_id,
+                },
+            );
+            worklane.focused_column_id = column_id;
+        } else {
+            if worklane.columns[column_index].panes.is_empty() {
+                worklane.columns.remove(column_index);
+            }
+            let destination = &mut worklane.columns[column_index - 1];
+            destination.panes.insert(0, pane);
+            destination.pane_heights = vec![1.0; destination.panes.len()];
+            destination.focused_pane_id.clone_from(&pane_id);
+            destination.last_focused_pane_id = pane_id;
+            worklane.focused_column_id.clone_from(&destination.id);
+        }
         true
     }
 
-    /// Moves the focused pane one position right in the active worklane.
+    /// Moves the focused pane into the following column, or extracts it into a
+    /// new trailing column when the last column contains multiple panes.
     ///
     /// # Panics
     ///
@@ -532,16 +678,55 @@ impl WorkspaceState {
     /// invariant.
     pub fn move_focused_pane_right(&mut self) -> bool {
         let worklane = self.active_worklane_mut();
-        let focused_index = worklane
-            .panes
+        let column_index = worklane
+            .columns
             .iter()
-            .position(|pane| pane.id == worklane.focused_pane_id)
-            .expect("workspace invariant: focused pane exists");
-        if focused_index + 1 == worklane.panes.len() {
+            .position(|column| column.id == worklane.focused_column_id)
+            .expect("workspace invariant: focused column exists");
+        if column_index + 1 == worklane.columns.len()
+            && worklane.columns[column_index].panes.len() == 1
+        {
             return false;
         }
-        worklane.panes.swap(focused_index, focused_index + 1);
+        let pane_id = worklane.columns[column_index].focused_pane_id.clone();
+        let (pane, height) = remove_pane(&mut worklane.columns[column_index], &pane_id);
+        if column_index + 1 == worklane.columns.len() {
+            let column_id = format!("column-{}", pane.id);
+            worklane.columns.push(PaneColumnState {
+                id: column_id.clone(),
+                width: worklane.columns[column_index].width,
+                panes: vec![pane],
+                pane_heights: vec![height],
+                focused_pane_id: pane_id.clone(),
+                last_focused_pane_id: pane_id,
+            });
+            worklane.focused_column_id = column_id;
+        } else {
+            let source_removed = worklane.columns[column_index].panes.is_empty();
+            if source_removed {
+                worklane.columns.remove(column_index);
+            }
+            let destination_index = if source_removed {
+                column_index
+            } else {
+                column_index + 1
+            };
+            let destination = &mut worklane.columns[destination_index];
+            destination.panes.insert(0, pane);
+            destination.pane_heights = vec![1.0; destination.panes.len()];
+            destination.focused_pane_id.clone_from(&pane_id);
+            destination.last_focused_pane_id = pane_id;
+            worklane.focused_column_id.clone_from(&destination.id);
+        }
         true
+    }
+
+    pub fn move_focused_pane_up(&mut self) -> bool {
+        self.move_focused_pane_vertically(-1)
+    }
+
+    pub fn move_focused_pane_down(&mut self) -> bool {
+        self.move_focused_pane_vertically(1)
     }
 
     /// Closes the focused pane or requests window closure for the last pane.
@@ -551,7 +736,10 @@ impl WorkspaceState {
     /// Panics only if an internal state transition has violated active-lane,
     /// focused-pane, or non-empty-workspace invariants.
     pub fn close_focused_pane(&mut self) -> ClosePaneOutcome {
-        let pane_id = self.active_worklane().focused_pane_id.clone();
+        let pane_id = self
+            .focused_pane_id()
+            .expect("workspace invariant: focused pane exists")
+            .to_owned();
         self.close_pane(&pane_id)
     }
 
@@ -559,22 +747,33 @@ impl WorkspaceState {
     /// exited. The last pane in the last worklane requests window closure and
     /// remains in the model, matching the source confirmation boundary.
     pub fn close_pane(&mut self, pane_id: &str) -> ClosePaneOutcome {
-        let Some((worklane_index, pane_index)) =
-            self.worklanes
-                .iter()
-                .enumerate()
-                .find_map(|(worklane_index, worklane)| {
-                    worklane
-                        .panes
-                        .iter()
-                        .position(|pane| pane.id == pane_id)
-                        .map(|pane_index| (worklane_index, pane_index))
-                })
+        let Some((worklane_index, column_index, pane_index)) = self
+            .worklanes
+            .iter()
+            .enumerate()
+            .find_map(|(worklane_index, worklane)| {
+                worklane
+                    .columns
+                    .iter()
+                    .enumerate()
+                    .find_map(|(column_index, column)| {
+                        column
+                            .panes
+                            .iter()
+                            .position(|pane| pane.id == pane_id)
+                            .map(|pane_index| (worklane_index, column_index, pane_index))
+                    })
+            })
         else {
             return ClosePaneOutcome::NotFound;
         };
 
-        if self.worklanes[worklane_index].panes.len() == 1 {
+        let pane_count: usize = self.worklanes[worklane_index]
+            .columns
+            .iter()
+            .map(|column| column.panes.len())
+            .sum();
+        if pane_count == 1 {
             if self.worklanes.len() == 1 {
                 return ClosePaneOutcome::CloseWindow;
             }
@@ -590,10 +789,60 @@ impl WorkspaceState {
         }
 
         let worklane = &mut self.worklanes[worklane_index];
-        worklane.panes.remove(pane_index);
-        let replacement_index = pane_index.saturating_sub(1).min(worklane.panes.len() - 1);
-        worklane.focused_pane_id = worklane.panes[replacement_index].id.clone();
+        if worklane.columns[column_index].panes.len() == 1 {
+            let removed_focused_column =
+                worklane.columns[column_index].id == worklane.focused_column_id;
+            worklane.columns.remove(column_index);
+            if removed_focused_column {
+                let replacement_index = column_index
+                    .saturating_sub(1)
+                    .min(worklane.columns.len() - 1);
+                let replacement = &worklane.columns[replacement_index];
+                worklane.focused_column_id.clone_from(&replacement.id);
+            }
+        } else {
+            let column = &mut worklane.columns[column_index];
+            let removed_focused_pane = column.focused_pane_id == pane_id;
+            column.panes.remove(pane_index);
+            let removed_height = column.pane_heights.remove(pane_index);
+            let replacement_index = pane_index.saturating_sub(1).min(column.panes.len() - 1);
+            column.pane_heights[replacement_index] += removed_height;
+            if removed_focused_pane {
+                column.focused_pane_id = column.panes[replacement_index].id.clone();
+                column
+                    .last_focused_pane_id
+                    .clone_from(&column.focused_pane_id);
+                worklane.focused_column_id.clone_from(&column.id);
+            } else if column.last_focused_pane_id == pane_id {
+                column
+                    .last_focused_pane_id
+                    .clone_from(&column.focused_pane_id);
+            }
+        }
         ClosePaneOutcome::Closed
+    }
+
+    fn move_focused_pane_vertically(&mut self, direction: isize) -> bool {
+        let worklane = self.active_worklane_mut();
+        let column = worklane
+            .columns
+            .iter_mut()
+            .find(|column| column.id == worklane.focused_column_id)
+            .expect("workspace invariant: focused column exists");
+        let focused_index = column
+            .panes
+            .iter()
+            .position(|pane| pane.id == column.focused_pane_id)
+            .expect("workspace invariant: focused pane exists");
+        let Some(destination) = focused_index.checked_add_signed(direction) else {
+            return false;
+        };
+        if destination >= column.panes.len() {
+            return false;
+        }
+        column.panes.swap(focused_index, destination);
+        column.pane_heights.swap(focused_index, destination);
+        true
     }
 
     fn active_worklane_mut(&mut self) -> &mut WorklaneState {
@@ -617,8 +866,36 @@ impl WorkspaceState {
     fn contains_pane(&self, id: &str) -> bool {
         self.worklanes
             .iter()
-            .flat_map(|worklane| &worklane.panes)
+            .flat_map(|worklane| &worklane.columns)
+            .flat_map(|column| &column.panes)
             .any(|pane| pane.id == id)
+    }
+}
+
+fn remove_pane(column: &mut PaneColumnState, pane_id: &str) -> (PaneState, f64) {
+    let pane_index = column
+        .panes
+        .iter()
+        .position(|pane| pane.id == pane_id)
+        .expect("workspace invariant: focused pane exists");
+    let pane = column.panes.remove(pane_index);
+    let height = column.pane_heights.remove(pane_index);
+    let replacement_index = pane_index
+        .saturating_sub(1)
+        .min(column.panes.len().saturating_sub(1));
+    if let Some(replacement) = column.panes.get(replacement_index) {
+        column.pane_heights[replacement_index] += height;
+        column.focused_pane_id.clone_from(&replacement.id);
+        column.last_focused_pane_id.clone_from(&replacement.id);
+    }
+    (pane, height)
+}
+
+fn sanitize_dimension(value: f64) -> f64 {
+    if value.is_finite() && value > 0.0 {
+        value
+    } else {
+        1.0
     }
 }
 
@@ -633,8 +910,9 @@ pub enum ClosePaneOutcome {
 pub enum WorkspaceStateImportError {
     EmptyWindow,
     EmptyWorklane(String),
-    UnsupportedColumnCount { worklane_id: String, count: usize },
+    EmptyColumn(String),
     DuplicateWorklane(String),
+    DuplicateColumn(String),
     DuplicatePane(String),
 }
 
@@ -642,12 +920,10 @@ impl fmt::Display for WorkspaceStateImportError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::EmptyWindow => formatter.write_str("workspace window has no worklanes"),
-            Self::EmptyWorklane(id) => write!(formatter, "worklane {id} has no panes"),
-            Self::UnsupportedColumnCount { worklane_id, count } => write!(
-                formatter,
-                "worklane {worklane_id} has {count} columns; Linux currently requires exactly one"
-            ),
+            Self::EmptyWorklane(id) => write!(formatter, "worklane {id} has no columns"),
+            Self::EmptyColumn(id) => write!(formatter, "column {id} has no panes"),
             Self::DuplicateWorklane(id) => write!(formatter, "duplicate worklane ID: {id}"),
+            Self::DuplicateColumn(id) => write!(formatter, "duplicate column ID: {id}"),
             Self::DuplicatePane(id) => write!(formatter, "duplicate pane ID: {id}"),
         }
     }

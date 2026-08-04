@@ -43,6 +43,7 @@ write_manifest() {
             manifest_semantics: {
                 "expected_suppressed.matches": "fixture match semantics",
                 "expected_suppressed.bytes": "fixture byte semantics",
+                required_usage: "fixture scenario-conditional usage semantics",
                 usage_profiles: "fixture exact profile semantics",
                 "usage_profiles.evidence_identity": "fixture identity-only evidence semantics",
                 protocol_ceilings: "fixture acknowledged lifecycle ceiling semantics"
@@ -1029,6 +1030,7 @@ EOF
                 manifest_semantics: {
                     "expected_suppressed.matches": "fixture match semantics",
                     "expected_suppressed.bytes": "fixture byte semantics",
+                    required_usage: "fixture scenario-conditional usage semantics",
                     usage_profiles: "fixture exact profile semantics",
                     "usage_profiles.evidence_identity": "fixture evidence semantics",
                     protocol_ceilings: "fixture acknowledged lifecycle semantics"
