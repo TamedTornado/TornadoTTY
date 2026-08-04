@@ -2,6 +2,7 @@
 
 mod application_shell;
 mod sidebar;
+mod source_ui;
 mod window_chrome;
 
 use application_shell::ApplicationShell;

@@ -1,6 +1,8 @@
 use gtk::prelude::*;
 use zentty_core::SidebarWorklaneSummary;
 
+use crate::source_ui;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct ChromeControlSpec {
     id: &'static str,
@@ -12,31 +14,31 @@ struct ChromeControlSpec {
 const CHROME_CONTROLS: [ChromeControlSpec; 5] = [
     ChromeControlSpec {
         id: "toggle-sidebar",
-        label: "Toggle sidebar",
+        label: source_ui::TOGGLE_SIDEBAR,
         icon: "sidebar-show-symbolic",
         enabled: true,
     },
     ChromeControlSpec {
         id: "arrange-panes",
-        label: "Arrange panes",
+        label: source_ui::ARRANGE_PANES,
         icon: "view-grid-symbolic",
         enabled: true,
     },
     ChromeControlSpec {
         id: "back",
-        label: "Go back",
+        label: source_ui::NAVIGATE_BACK,
         icon: "go-previous-symbolic",
         enabled: false,
     },
     ChromeControlSpec {
         id: "forward",
-        label: "Go forward",
+        label: source_ui::NAVIGATE_FORWARD,
         icon: "go-next-symbolic",
         enabled: false,
     },
     ChromeControlSpec {
         id: "notifications",
-        label: "Notifications",
+        label: source_ui::NOTIFICATIONS,
         icon: "preferences-system-notifications-symbolic",
         enabled: false,
     },
@@ -151,8 +153,16 @@ fn arrange_panes_popover() -> gtk::Popover {
     menu.set_margin_start(6);
     menu.set_margin_end(6);
     for (label, icon, action) in [
-        ("New Pane Right", "go-next-symbolic", "split-pane-right"),
-        ("New Pane Below", "go-down-symbolic", "split-pane-below"),
+        (
+            source_ui::SPLIT_RIGHT,
+            "go-next-symbolic",
+            "split-pane-right",
+        ),
+        (
+            source_ui::NEW_PANE_BELOW,
+            "go-down-symbolic",
+            "split-pane-below",
+        ),
     ] {
         let button = gtk::Button::new();
         let content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
@@ -174,17 +184,18 @@ fn arrange_panes_popover() -> gtk::Popover {
 #[cfg(test)]
 mod tests {
     use super::CHROME_CONTROLS;
+    use crate::source_ui;
 
     #[test]
     fn leading_chrome_matches_the_source_control_order_and_availability() {
         assert_eq!(
             CHROME_CONTROLS.map(|control| (control.id, control.label, control.enabled)),
             [
-                ("toggle-sidebar", "Toggle sidebar", true),
-                ("arrange-panes", "Arrange panes", true),
-                ("back", "Go back", false),
-                ("forward", "Go forward", false),
-                ("notifications", "Notifications", false),
+                ("toggle-sidebar", source_ui::TOGGLE_SIDEBAR, true),
+                ("arrange-panes", source_ui::ARRANGE_PANES, true),
+                ("back", source_ui::NAVIGATE_BACK, false),
+                ("forward", source_ui::NAVIGATE_FORWARD, false),
+                ("notifications", source_ui::NOTIFICATIONS, false),
             ]
         );
         assert!(

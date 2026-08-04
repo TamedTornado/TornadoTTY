@@ -4792,6 +4792,43 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   Wayland pointer driving, sidebar sizing/modes, and reviewed visual states
   remain required.
 
+### DOGFOOD-2026-08-04-PANE-LOCAL-CONTROLS: contextual means attached to the terminal pane
+
+- **Operator correction:** Putting pane actions only in the sidebar overflow or
+  window-level Arrange menu is not sufficient contextual UX. The high-frequency
+  source-named primary right action, `New Pane Below`, and `Close Pane` belong to
+  the terminal pane they affect, as a compact top-right icon cluster disclosed on
+  pane hover or keyboard focus. Less common commands can remain in the full
+  context menu.
+- **Targeting contract:** Pane-local controls must carry their owning pane ID;
+  they may not depend on whichever pane the application model still considers
+  focused. This directly covers the observed failure where a below split kept
+  modifying the right column after the operator clicked another terminal.
+- **Plan repair:** Issue #16 now explicitly requires pane-local hover controls,
+  non-hover/accessibility alternatives, exact-pane action routing, and real
+  pointer-driven X11 and Wayland coverage of reveal, right/below/close,
+  geometry, PTY focus/survival, accessible names, and dismissal.
+- **Terminology failure:** The Linux scaffolding and its tests called the
+  rightward command `New Pane Right`, a phrase not owned by the Zentty source.
+  Zentty deliberately distinguishes `Split Right` (resize so both columns are
+  visible) from `Add Pane Right` (preserve the current column width), while the
+  vertical source command is `New Pane Below`. Generalizing those verbs erased a
+  product behavior. Until the adaptive preference is ported, Linux's current
+  keep-visible behavior must be named `Split Right`; the opposite command must
+  remain a separately tracked capability rather than an alias.
+- **Follow-up audit:** Reviewing every action label currently rendered by Linux
+  found a second vocabulary drift: disabled chrome controls said `Go back` and
+  `Go forward`, while the source commands and tooltips are `Navigate Back` and
+  `Navigate Forward`. Both were repaired. Every other current Linux action was
+  either an exact source label or a clearly classified GTK-only accessible
+  description. The durable audit is
+  `docs/design/zentty-linux-action-vocabulary-audit-2026-08-04.md`.
+- **Prevention:** Current Linux UI surfaces now consume a shared source-owned
+  vocabulary module. Its tests read the checked-in Swift sources to verify the
+  cited terms and separately assert the source's visible-split versus
+  width-preserving-add distinction. This turns the audit from prose into a build
+  failure if the port invents the same blended command again.
+
 ### DOGFOOD-2026-08-04-LOCAL-LAUNCH-CONTRACT: a product nobody can launch is not dogfoodable
 
 - **Operator failure:** When asked to run the product after the UX slice, the

@@ -2,6 +2,8 @@ use gtk::glib::variant::ToVariant;
 use gtk::prelude::*;
 use zentty_core::SidebarWorklaneSummary;
 
+use crate::source_ui;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct PaneActionSpec {
     label: &'static str,
@@ -11,37 +13,37 @@ struct PaneActionSpec {
 
 const PANE_ACTIONS: [PaneActionSpec; 7] = [
     PaneActionSpec {
-        label: "New Pane Right",
+        label: source_ui::SPLIT_RIGHT,
         icon: "go-next-symbolic",
         action: "split-pane-right",
     },
     PaneActionSpec {
-        label: "New Pane Below",
+        label: source_ui::NEW_PANE_BELOW,
         icon: "go-down-symbolic",
         action: "split-pane-below",
     },
     PaneActionSpec {
-        label: "Move Pane Left",
+        label: source_ui::MOVE_PANE_LEFT,
         icon: "go-previous-symbolic",
         action: "move-pane-left",
     },
     PaneActionSpec {
-        label: "Move Pane Right",
+        label: source_ui::MOVE_PANE_RIGHT,
         icon: "go-next-symbolic",
         action: "move-pane-right",
     },
     PaneActionSpec {
-        label: "Move Pane Up",
+        label: source_ui::MOVE_PANE_UP,
         icon: "go-up-symbolic",
         action: "move-pane-up",
     },
     PaneActionSpec {
-        label: "Move Pane Down",
+        label: source_ui::MOVE_PANE_DOWN,
         icon: "go-down-symbolic",
         action: "move-pane-down",
     },
     PaneActionSpec {
-        label: "Close Pane",
+        label: source_ui::CLOSE_PANE,
         icon: "edit-delete-symbolic",
         action: "close-pane",
     },
@@ -158,14 +160,14 @@ pub(crate) fn render(
     add.set_hexpand(true);
     let add_content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     add_content.append(&gtk::Image::from_icon_name("list-add-symbolic"));
-    let add_label = gtk::Label::new(Some("New worklane"));
+    let add_label = gtk::Label::new(Some(source_ui::NEW_WORKLANE));
     add_label.set_xalign(0.0);
     add_label.set_hexpand(true);
     add_content.append(&add_label);
     add.set_child(Some(&add_content));
-    add.set_tooltip_text(Some("New worklane"));
+    add.set_tooltip_text(Some(source_ui::NEW_WORKLANE));
     add.set_accessible_role(gtk::AccessibleRole::Button);
-    add.update_property(&[gtk::accessible::Property::Label("New worklane")]);
+    add.update_property(&[gtk::accessible::Property::Label(source_ui::NEW_WORKLANE)]);
     add.set_action_name(Some("workspace.new-worklane"));
     header.append(&add);
     sidebar.append(&header);
@@ -449,7 +451,7 @@ fn make_pane_context_menu(
     menu.set_margin_start(6);
     menu.set_margin_end(6);
 
-    let rename = menu_button("Rename Pane…", "document-edit-symbolic");
+    let rename = menu_button(source_ui::RENAME_PANE, "document-edit-symbolic");
     let rename_window = window.clone();
     let pane_id = pane.pane_id.clone();
     let current_title = pane.custom_title.clone().unwrap_or_default();
@@ -515,7 +517,7 @@ fn make_context_menu(
     menu.set_margin_start(6);
     menu.set_margin_end(6);
 
-    let rename = menu_button("Rename Worklane…", "document-edit-symbolic");
+    let rename = menu_button(source_ui::RENAME_WORKLANE, "document-edit-symbolic");
     let rename_window = window.clone();
     let worklane_id = summary.worklane_id.clone();
     let current_title = summary.top_label.clone().unwrap_or_default();
@@ -532,7 +534,7 @@ fn make_context_menu(
     });
     menu.append(&rename);
 
-    let close = menu_button("Close Worklane", "edit-delete-symbolic");
+    let close = menu_button(source_ui::CLOSE_WORKLANE, "edit-delete-symbolic");
     close.set_sensitive(worklane_count > 1);
     close.set_action_name(Some("workspace.close-worklane"));
     close.set_action_target_value(Some(&summary.worklane_id.to_variant()));
@@ -542,7 +544,7 @@ fn make_context_menu(
 
     if index > 0 {
         menu.append(&targeted_move_button(
-            "Move Worklane Up",
+            source_ui::MOVE_WORKLANE_UP,
             "go-up-symbolic",
             &summary.worklane_id,
             "up",
@@ -551,7 +553,7 @@ fn make_context_menu(
     }
     if index + 1 < worklane_count {
         menu.append(&targeted_move_button(
-            "Move Worklane Down",
+            source_ui::MOVE_WORKLANE_DOWN,
             "go-down-symbolic",
             &summary.worklane_id,
             "down",
@@ -559,10 +561,10 @@ fn make_context_menu(
         ));
     }
 
-    let color_heading = gtk::Label::new(Some("Worklane Color"));
+    let color_heading = gtk::Label::new(Some(source_ui::WORKLANE_COLOR));
     color_heading.set_xalign(0.0);
     color_heading.set_margin_top(4);
-    color_heading.update_property(&[gtk::accessible::Property::Label("Worklane Color")]);
+    color_heading.update_property(&[gtk::accessible::Property::Label(source_ui::WORKLANE_COLOR)]);
     menu.append(&color_heading);
     let colors = gtk::FlowBox::new();
     colors.set_selection_mode(gtk::SelectionMode::None);
@@ -708,6 +710,7 @@ fn remove_all_children(container: &gtk::Box) {
 #[cfg(test)]
 mod tests {
     use super::{WorklaneSelectionState, pane_action_specs, selection_state};
+    use crate::source_ui;
 
     #[test]
     fn pane_actions_are_contextual_and_source_named() {
@@ -718,13 +721,13 @@ mod tests {
                 .map(|action| (action.label, action.action))
                 .collect::<Vec<_>>(),
             [
-                ("New Pane Right", "split-pane-right"),
-                ("New Pane Below", "split-pane-below"),
-                ("Move Pane Left", "move-pane-left"),
-                ("Move Pane Right", "move-pane-right"),
-                ("Move Pane Up", "move-pane-up"),
-                ("Move Pane Down", "move-pane-down"),
-                ("Close Pane", "close-pane"),
+                (source_ui::SPLIT_RIGHT, "split-pane-right"),
+                (source_ui::NEW_PANE_BELOW, "split-pane-below"),
+                (source_ui::MOVE_PANE_LEFT, "move-pane-left"),
+                (source_ui::MOVE_PANE_RIGHT, "move-pane-right"),
+                (source_ui::MOVE_PANE_UP, "move-pane-up"),
+                (source_ui::MOVE_PANE_DOWN, "move-pane-down"),
+                (source_ui::CLOSE_PANE, "close-pane"),
             ]
         );
         assert!(actions.iter().all(|action| !action.icon.is_empty()));

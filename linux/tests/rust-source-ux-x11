@@ -186,7 +186,7 @@ done
 grep -Fxq 'zentty-linux: pane-display id=pane-1 label="Pointer Named" custom=true' "${log}" ||
     fail "a later real PTY title overwrote the durable pane identity"
 
-# Reopen the same real pane menu and activate New Pane Right, now correctly
+# Reopen the same real pane menu and activate Split Right, now correctly
 # located after Rename Pane rather than assuming the old scaffolding order.
 xdotool mousemove --window "${window_id}" 250 170 click 1
 sleep 0.2
@@ -253,7 +253,7 @@ product_pid=""
 (( product_status == 0 )) || fail "product exited ${product_status}"
 
 grep -Fxq 'zentty-linux: action=split-pane-right pane=pane-2' "${log}" ||
-    fail "the contextual New Pane Right item did not activate after Rename Pane"
+    fail "the contextual Split Right item did not activate after Rename Pane"
 grep -Fxq 'zentty-linux: action=split-pane-right pane=pane-3' "${log}" ||
     fail "the arrange-panes icon did not activate its real split action"
 [[ "$(grep -Fxc 'zentty-linux: terminal-ready' "${log}" || true)" -eq 3 ]] ||
