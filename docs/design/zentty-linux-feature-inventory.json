@@ -172,10 +172,10 @@
       "origin": "PORT_PARITY",
       "user_impact": "Long coding and agent transcripts are impractical to navigate without terminal search.",
       "linux_owner_issue": 7,
-      "implementation_status": "NOT_IMPLEMENTED",
-      "focused_tests": [],
-      "product_scenarios": [],
-      "test_plan": "Expose the minimum Ghostty search ABI only if necessary, then search distinctive output in a real terminal from the installed product.",
+      "implementation_status": "PARTIAL",
+      "focused_tests": ["crates/zentty-linux/src/pane_search.rs", "crates/zentty-ghostty-sys/src/lib.rs"],
+      "product_scenarios": ["linux/tests/rust-pane-search", "linux/tests/rust-pane-search-wayland"],
+      "test_plan": "Qualify the installed product and reviewed light/dark/fractional-scale visuals. Physical X11 covers search, navigation, selection-to-find, typed-query hide-with-remembered-highlights, selection-query close-and-clear, live-query/corner retention, and PTY focus; controlled Wayland covers the same real Ghostty core and named routes but its headless Weston lacks virtual-keyboard injection.",
       "alternative_or_blocker": null
     },
     {

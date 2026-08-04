@@ -1,0 +1,209 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
+backend="${GDK_BACKEND:-}"
+log=""
+state_directory=""
+product_pid=""
+window_id=""
+
+fail() {
+    [[ -z "${log}" || ! -f "${log}" ]] || cat "${log}" >&2
+    echo "rust-pane-search: error: $*" >&2
+    exit 1
+}
+
+cleanup() {
+    if [[ "${product_pid}" =~ ^[1-9][0-9]*$ ]]; then
+        kill -TERM "${product_pid}" 2>/dev/null || true
+        wait "${product_pid}" 2>/dev/null || true
+    fi
+    [[ -z "${log}" ]] || rm -f -- "${log}"
+    [[ -z "${state_directory}" ]] || rm -rf -- "${state_directory}"
+}
+trap cleanup EXIT
+
+case "${backend}" in
+    x11)
+        [[ "${ZENTTY_NESTED_X11_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+            fail "X11 search must run through linux/tests/nested-x11"
+        command -v xdotool >/dev/null || fail "xdotool is required for X11 search"
+        ;;
+    wayland)
+        [[ "${ZENTTY_NESTED_WAYLAND_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+            fail "Wayland search must run through linux/tests/nested-wayland"
+        command -v wtype >/dev/null || fail "wtype is required for Wayland search"
+        ;;
+    *) fail "GDK_BACKEND must be x11 or wayland" ;;
+esac
+for dependency in grep mktemp seq sleep; do
+    command -v "${dependency}" >/dev/null || fail "${dependency} is required"
+done
+[[ -x "${product}" ]] || fail "staged product is not built: ${product}"
+
+press_ctrl_shift() {
+    local key="$1"
+    if [[ "${backend}" == x11 ]]; then
+        xdotool key --window "${window_id}" "ctrl+shift+${key}"
+    else
+        wtype -M ctrl -M shift -k "${key}" -m shift -m ctrl
+    fi
+}
+
+press_key() {
+    local key="$1"
+    if [[ "${backend}" == x11 ]]; then
+        xdotool key --window "${window_id}" "${key}"
+    else
+        wtype -k "${key}"
+    fi
+}
+
+type_text() {
+    local value="$1"
+    if [[ "${backend}" == x11 ]]; then
+        xdotool type --window "${window_id}" --delay 10 "${value}"
+    else
+        wtype "${value}"
+    fi
+}
+
+wait_for_fixed() {
+    local receipt="$1"
+    local message="$2"
+    for _ in $(seq 1 160); do
+        grep -Fxq "${receipt}" "${log}" && return
+        sleep 0.05
+    done
+    fail "${message}"
+}
+
+log="$(mktemp)"
+state_directory="$(mktemp -d)"
+GDK_SCALE=1 GDK_DPI_SCALE=1 \
+    "${product}" \
+    --command 'printf "selectable alpha\nnoise\nselectable beta\nselectable gamma\n"; while IFS= read -r line; do printf "\033]2;focus:%s\a" "$line"; done' \
+    --state-directory "${state_directory}" \
+    --no-session-restore \
+    --quit-after-last-terminal-exit >"${log}" 2>&1 &
+product_pid=$!
+
+wait_for_fixed 'zentty-linux: terminal-ready-pane=pane-1' \
+    "real Ghostty search surface did not initialize"
+for _ in $(seq 1 160); do
+    grep -Fq 'zentty-linux: search-state pane=pane-1 active=false total=None selected=None' "${log}" && break
+    sleep 0.05
+done
+grep -Fq 'zentty-linux: search-state pane=pane-1 active=false total=None selected=None' "${log}" ||
+    fail "Ghostty search overlay was not observed"
+
+if [[ "${backend}" == x11 ]]; then
+    for _ in $(seq 1 160); do
+        window_id="$(xdotool search --name '^Zentty$' 2>/dev/null | head -1 || true)"
+        [[ "${window_id}" =~ ^[1-9][0-9]*$ ]] && break
+        sleep 0.05
+    done
+    [[ "${window_id}" =~ ^[1-9][0-9]*$ ]] || fail "real X11 Zentty window did not appear"
+    xdotool windowfocus --sync "${window_id}"
+else
+    # Zentty is the only client in the private Weston session and is focused
+    # when its first real terminal reports ready.
+    sleep 0.2
+fi
+
+# Physical Linux shortcut -> named Zentty action -> generic Ghostty binding
+# parser -> real scrollback search -> Ghostty-owned draggable HUD and counts.
+press_ctrl_shift f
+wait_for_fixed 'zentty-linux: action=find pane=pane-1 binding="start_search"' \
+    "Ctrl+Shift+F did not route through the focused real surface"
+for _ in $(seq 1 160); do
+    grep -Fq 'zentty-linux: search-state pane=pane-1 active=true' "${log}" && break
+    sleep 0.05
+done
+grep -Fq 'zentty-linux: search-state pane=pane-1 active=true' "${log}" ||
+    fail "Ghostty search HUD did not become active"
+type_text selectable
+for _ in $(seq 1 200); do
+    grep -Fq 'zentty-linux: search-state pane=pane-1 active=true total=Some(3)' "${log}" && break
+    sleep 0.05
+done
+grep -Fq 'zentty-linux: search-state pane=pane-1 active=true total=Some(3)' "${log}" ||
+    fail "real Ghostty scrollback did not report all three matches"
+
+selected_receipts="$(grep -Ec 'zentty-linux: search-state pane=pane-1 active=true total=Some\(3\) selected=Some\([0-9]+\)' "${log}" || true)"
+press_key F3
+wait_for_fixed 'zentty-linux: action=find-next pane=pane-1 binding="navigate_search:next"' \
+    "F3 did not invoke Find Next"
+for _ in $(seq 1 160); do
+    [[ "$(grep -Ec 'zentty-linux: search-state pane=pane-1 active=true total=Some\(3\) selected=Some\([0-9]+\)' "${log}" || true)" -gt "${selected_receipts}" ]] && break
+    sleep 0.05
+done
+[[ "$(grep -Ec 'zentty-linux: search-state pane=pane-1 active=true total=Some\(3\) selected=Some\([0-9]+\)' "${log}" || true)" -gt "${selected_receipts}" ]] ||
+    fail "Find Next did not move the real Ghostty match"
+
+if [[ "${backend}" == x11 ]]; then
+    xdotool key --window "${window_id}" shift+F3
+else
+    wtype -M shift -k F3 -m shift
+fi
+wait_for_fixed 'zentty-linux: action=find-previous pane=pane-1 binding="navigate_search:previous"' \
+    "Shift+F3 did not invoke Find Previous"
+
+hidden_receipts="$(grep -Fc 'zentty-linux: action=hide-search pane=pane-1' "${log}" || true)"
+press_key Escape
+for _ in $(seq 1 160); do
+    [[ "$(grep -Fc 'zentty-linux: action=hide-search pane=pane-1' "${log}" || true)" -gt "${hidden_receipts}" ]] &&
+        grep -Fq 'zentty-linux: search-state pane=pane-1 active=false total=Some(3)' "${log}" && break
+    sleep 0.05
+done
+[[ "$(grep -Fc 'zentty-linux: action=hide-search pane=pane-1' "${log}" || true)" -gt "${hidden_receipts}" ]] ||
+    fail "Escape did not hide the populated search HUD"
+grep -Fq 'zentty-linux: search-state pane=pane-1 active=false total=Some(3)' "${log}" ||
+    fail "hiding search incorrectly discarded the live pane query"
+type_text search-focus
+press_key Return
+wait_for_fixed 'zentty-linux: title-pane=pane-1 value=focus:search-focus' \
+    "search dismissal did not restore input to the same real PTY"
+
+if [[ "${backend}" == x11 ]]; then
+    # Select the first rendered word with a real pointer gesture, then route
+    # Ctrl+Shift+E through Ghostty's own selection-to-search implementation.
+    xdotool mousemove --window "${window_id}" 330 50 click --repeat 2 --delay 80 1
+    press_ctrl_shift e
+    wait_for_fixed 'zentty-linux: action=use-selection-for-find pane=pane-1 binding="search_selection"' \
+        "physical selection-to-find did not route to Ghostty"
+    for _ in $(seq 1 200); do
+        grep -Eq 'zentty-linux: search-state pane=pane-1 active=true total=Some\(3\)' "${log}" && break
+        sleep 0.05
+    done
+    grep -Eq 'zentty-linux: search-state pane=pane-1 active=true total=Some\(3\)' "${log}" ||
+        fail "real terminal selection did not become the three-match search query"
+
+    # Ghostty's GTK HUD is genuinely draggable. Move it across both midpoints,
+    # require the real overlay properties to snap to the opposite corner, then
+    # close/reopen and prove both the corner and live-pane query are remembered.
+    xdotool mousemove --window "${window_id}" 800 70 mousedown 1 \
+        mousemove --window "${window_id}" --sync 350 630 mouseup 1
+    for _ in $(seq 1 160); do
+        grep -Fq 'halign=Start valign=End' "${log}" && break
+        sleep 0.05
+    done
+    grep -Fq 'halign=Start valign=End' "${log}" ||
+        fail "dragged search HUD did not snap to the opposite pane corner"
+    press_key Escape
+    active_receipts="$(grep -Fc 'zentty-linux: search-state pane=pane-1 active=true' "${log}" || true)"
+    press_ctrl_shift f
+    for _ in $(seq 1 160); do
+        [[ "$(grep -Fc 'zentty-linux: search-state pane=pane-1 active=true' "${log}" || true)" -gt "${active_receipts}" ]] && break
+        sleep 0.05
+    done
+    tail -40 "${log}" | grep -Fq 'active=true total=Some(3)' ||
+        fail "reopened HUD did not remember the live pane query"
+    tail -40 "${log}" | grep -Fq 'halign=Start valign=End' ||
+        fail "reopened HUD did not remember its live-pane corner"
+    press_key Escape
+fi
+
+echo "Rust pane search passed: ${backend}, scrollback=real-ghostty, navigation=physical, focus=real-pty"

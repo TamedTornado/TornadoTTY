@@ -17,6 +17,7 @@ use crate::{
     command_palette::CommandPaletteView,
     pane_controls::{self, PaneControlAction, PaneFrame, PanePresentation},
     pane_scroll_switch::{PaneScrollSwitch, ScrollSwitchResult, ScrollUnit},
+    pane_search::{SearchShortcut, resolve_shortcut},
     peek_scroll_navigation::{
         Direction as PeekScrollDirection, PeekScrollNavigation, Result as PeekScrollResult,
         ScrollUnit as PeekScrollUnit,
@@ -59,6 +60,10 @@ const ACTION_PREVIOUS_PANE: &str = "previous-pane";
 const ACTION_NEXT_WORKLANE: &str = "next-worklane";
 const ACTION_PREVIOUS_WORKLANE: &str = "previous-worklane";
 const ACTION_DISMISS_COMMAND_PALETTE: &str = "dismiss-command-palette";
+const ACTION_FIND: &str = "find";
+const ACTION_USE_SELECTION_FOR_FIND: &str = "use-selection-for-find";
+const ACTION_FIND_NEXT: &str = "find-next";
+const ACTION_FIND_PREVIOUS: &str = "find-previous";
 const PRIMARY_RIGHT_BEHAVIOR: PaneRightInsertionBehavior = PaneRightInsertionBehavior::VisibleSplit;
 const WORKLANE_PEEK_TAB_HOLD_THRESHOLD: Duration = Duration::from_millis(200);
 
@@ -207,6 +212,7 @@ impl ApplicationShell {
         Self::install_peek_scroll_navigation(&shell);
         Self::install_pane_scroll_switching(&shell);
         Self::install_command_palette_shortcut(&shell);
+        Self::install_search_shortcuts(&shell);
         for pane_id in initial_pane_ids {
             Self::create_surface(&shell, &pane_id)?;
         }
@@ -360,6 +366,56 @@ impl ApplicationShell {
         });
     }
 
+    pub(crate) fn schedule_pane_search_actions(
+        shell: &Rc<RefCell<Self>>,
+        quit_when_complete: bool,
+    ) {
+        let weak = Rc::downgrade(shell);
+        let step = Rc::new(Cell::new(0_u8));
+        glib::timeout_add_local(Duration::from_millis(120), move || {
+            let Some(shell) = weak.upgrade() else {
+                return glib::ControlFlow::Break;
+            };
+            let window = shell.borrow().window.clone();
+            let result = match step.get() {
+                0 => require_invalid_binding_action_rejected(&shell),
+                1 => window.activate_action("workspace.find", None),
+                2 => {
+                    shell.borrow().perform_focused_binding_action(
+                        "search-scenario-query",
+                        "search:selectable",
+                    );
+                    Ok(())
+                }
+                3 => require_focused_search_state(&shell, true, Some(3), None),
+                4 => window.activate_action("workspace.find-next", None),
+                5 => require_focused_search_state(&shell, true, Some(3), Some(true)),
+                6 => window.activate_action("workspace.find-previous", None),
+                7 => {
+                    shell
+                        .borrow()
+                        .perform_focused_binding_action("search-scenario-end", "end_search");
+                    Ok(())
+                }
+                8 => require_focused_search_state(&shell, false, None, Some(false)),
+                _ => {
+                    eprintln!("zentty-linux: pane-search-action-scenario complete");
+                    if quit_when_complete {
+                        shell.borrow().main_loop.quit();
+                    }
+                    return glib::ControlFlow::Break;
+                }
+            };
+            if let Err(error) = result {
+                eprintln!("zentty-linux: pane-search-action-scenario failed: {error}");
+                shell.borrow().main_loop.quit();
+                return glib::ControlFlow::Break;
+            }
+            step.set(step.get() + 1);
+            glib::ControlFlow::Continue
+        });
+    }
+
     fn install_actions(shell: &Rc<RefCell<Self>>) {
         let group = gio::SimpleActionGroup::new();
 
@@ -452,6 +508,7 @@ impl ApplicationShell {
         Self::add_simple_action(shell, &group, ACTION_PREVIOUS_WORKLANE, |shell| {
             shell.select_adjacent_worklane(false);
         });
+        Self::install_search_actions(shell, &group);
 
         Self::install_edit_actions(shell, &group);
 
@@ -459,6 +516,21 @@ impl ApplicationShell {
             .borrow()
             .window
             .insert_action_group("workspace", Some(&group));
+    }
+
+    fn install_search_actions(shell: &Rc<RefCell<Self>>, group: &gio::SimpleActionGroup) {
+        Self::add_simple_action(shell, group, ACTION_FIND, |shell| {
+            shell.perform_focused_binding_action(ACTION_FIND, "start_search");
+        });
+        Self::add_simple_action(shell, group, ACTION_USE_SELECTION_FOR_FIND, |shell| {
+            shell.perform_focused_binding_action(ACTION_USE_SELECTION_FOR_FIND, "search_selection");
+        });
+        Self::add_simple_action(shell, group, ACTION_FIND_NEXT, |shell| {
+            shell.perform_focused_binding_action(ACTION_FIND_NEXT, "navigate_search:next");
+        });
+        Self::add_simple_action(shell, group, ACTION_FIND_PREVIOUS, |shell| {
+            shell.perform_focused_binding_action(ACTION_FIND_PREVIOUS, "navigate_search:previous");
+        });
     }
 
     fn install_sidebar_visibility(shell: &Rc<RefCell<Self>>) {
@@ -965,6 +1037,64 @@ impl ApplicationShell {
         shell.borrow().window.add_controller(controller);
     }
 
+    fn install_search_shortcuts(shell: &Rc<RefCell<Self>>) {
+        let controller = gtk::EventControllerKey::new();
+        controller.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let weak = Rc::downgrade(shell);
+        controller.connect_key_pressed(move |_, key, _, modifiers| {
+            let Some(shell) = weak.upgrade() else {
+                return glib::Propagation::Proceed;
+            };
+            if shell.borrow().command_palette.is_visible() || shell.borrow().peek_phase.is_active()
+            {
+                return glib::Propagation::Proceed;
+            }
+            if key == gdk::Key::Escape {
+                let hidden = {
+                    let shell = shell.borrow();
+                    let Some(pane_id) = shell.state.focused_pane_id() else {
+                        return glib::Propagation::Proceed;
+                    };
+                    let Some(surface) = shell.surfaces.get(pane_id) else {
+                        return glib::Propagation::Proceed;
+                    };
+                    let Some(overlay) = find_ghostty_search_overlay(surface.widget()) else {
+                        return glib::Propagation::Proceed;
+                    };
+                    let Some(entry) = find_search_entry(&overlay) else {
+                        return glib::Propagation::Proceed;
+                    };
+                    if !overlay.property::<bool>("active") || entry.text().is_empty() {
+                        false
+                    } else {
+                        overlay.set_property("active", false);
+                        eprintln!("zentty-linux: action=hide-search pane={pane_id}");
+                        true
+                    }
+                };
+                if hidden {
+                    shell.borrow().focus_selected_surface();
+                    return glib::Propagation::Stop;
+                }
+            }
+            let Some(shortcut) = resolve_shortcut(key, modifiers) else {
+                return glib::Propagation::Proceed;
+            };
+            let action = match shortcut {
+                SearchShortcut::Find => ACTION_FIND,
+                SearchShortcut::UseSelection => ACTION_USE_SELECTION_FOR_FIND,
+                SearchShortcut::Next => ACTION_FIND_NEXT,
+                SearchShortcut::Previous => ACTION_FIND_PREVIOUS,
+            };
+            // Action activation is synchronous. Clone the GTK handle before
+            // dispatch so the action callback can mutably borrow the shell.
+            let window = shell.borrow().window.clone();
+            let _ = window.activate_action(&format!("workspace.{action}"), None);
+            glib::Propagation::Stop
+        });
+        shell.borrow().window.add_controller(controller);
+    }
+
     fn command_palette_items(&self) -> (Vec<CommandPaletteItem>, Option<PaneReference>) {
         let current = self
             .state
@@ -1115,7 +1245,48 @@ impl ApplicationShell {
                 "appearance workspace lane",
                 ACTION_CYCLE_WORKLANE_COLOR,
             ),
+            CommandPaletteItem::action(
+                "Find",
+                "Search the focused terminal's real scrollback",
+                "search pane terminal",
+                ACTION_FIND,
+            ),
+            CommandPaletteItem::action(
+                "Use Selection for Find",
+                "Search for the focused terminal selection",
+                "search pane selection terminal",
+                ACTION_USE_SELECTION_FOR_FIND,
+            ),
+            CommandPaletteItem::action(
+                "Find Next",
+                "Select the next terminal search match",
+                "search pane navigation",
+                ACTION_FIND_NEXT,
+            ),
+            CommandPaletteItem::action(
+                "Find Previous",
+                "Select the previous terminal search match",
+                "search pane navigation",
+                ACTION_FIND_PREVIOUS,
+            ),
         ]
+    }
+
+    fn perform_focused_binding_action(&self, action: &str, binding: &str) {
+        let Some(pane_id) = self.state.focused_pane_id() else {
+            eprintln!("zentty-linux: action={action} error=no-focused-pane");
+            return;
+        };
+        let Some(surface) = self.surfaces.get(pane_id) else {
+            eprintln!("zentty-linux: action={action} pane={pane_id} error=no-live-surface");
+            return;
+        };
+        match surface.perform_binding_action(binding) {
+            Ok(()) => eprintln!("zentty-linux: action={action} pane={pane_id} binding={binding:?}"),
+            Err(error) => {
+                eprintln!("zentty-linux: action={action} pane={pane_id} error={error}");
+            }
+        }
     }
 
     fn install_peek_scroll_navigation(shell: &Rc<RefCell<Self>>) {
@@ -1781,6 +1952,9 @@ impl ApplicationShell {
                 if shell.shutting_down {
                     return;
                 }
+                if let Some(surface) = shell.surfaces.get(&ready_id) {
+                    observe_ghostty_search_state(surface.widget(), &ready_id);
+                }
                 if shell.state.focused_pane_id() == Some(ready_id.as_str()) {
                     shell.focus_selected_surface();
                 }
@@ -2340,6 +2514,132 @@ impl ApplicationShell {
             .collect::<Vec<_>>()
             .join("|")
     }
+}
+
+fn observe_ghostty_search_state(root: &gtk::Widget, pane_id: &str) {
+    let Some(overlay) = find_ghostty_search_overlay(root) else {
+        eprintln!("zentty-linux: search-overlay pane={pane_id} error=not-found");
+        return;
+    };
+    log_ghostty_search_state(&overlay, pane_id);
+    let pane_id = pane_id.to_owned();
+    overlay.connect_notify_local(None, move |overlay, property| {
+        if matches!(
+            property.name(),
+            "active"
+                | "has-search-total"
+                | "search-total"
+                | "has-search-selected"
+                | "search-selected"
+                | "halign-target"
+                | "valign-target"
+        ) {
+            log_ghostty_search_state(overlay, &pane_id);
+        }
+    });
+}
+
+fn find_ghostty_search_overlay(root: &gtk::Widget) -> Option<gtk::Widget> {
+    let mut child = root.first_child();
+    while let Some(widget) = child {
+        if widget.type_().name() == "GhosttySearchOverlay" {
+            return Some(widget);
+        }
+        if let Some(found) = find_ghostty_search_overlay(&widget) {
+            return Some(found);
+        }
+        child = widget.next_sibling();
+    }
+    None
+}
+
+fn find_search_entry(root: &gtk::Widget) -> Option<gtk::SearchEntry> {
+    let mut child = root.first_child();
+    while let Some(widget) = child {
+        if let Ok(entry) = widget.clone().downcast::<gtk::SearchEntry>() {
+            return Some(entry);
+        }
+        if let Some(entry) = find_search_entry(&widget) {
+            return Some(entry);
+        }
+        child = widget.next_sibling();
+    }
+    None
+}
+
+fn log_ghostty_search_state(overlay: &gtk::Widget, pane_id: &str) {
+    let active = overlay.property::<bool>("active");
+    let total = overlay
+        .property::<bool>("has-search-total")
+        .then(|| overlay.property::<u64>("search-total"));
+    let selected = overlay
+        .property::<bool>("has-search-selected")
+        .then(|| overlay.property::<u64>("search-selected"));
+    let horizontal = overlay.property::<gtk::Align>("halign-target");
+    let vertical = overlay.property::<gtk::Align>("valign-target");
+    eprintln!(
+        "zentty-linux: search-state pane={pane_id} active={active} total={total:?} selected={selected:?} halign={horizontal:?} valign={vertical:?}"
+    );
+}
+
+fn require_focused_search_state(
+    shell: &Rc<RefCell<ApplicationShell>>,
+    expected_active: bool,
+    expected_total: Option<u64>,
+    expected_selection_presence: Option<bool>,
+) -> Result<(), glib::BoolError> {
+    let shell = shell.borrow();
+    let pane_id = shell
+        .state
+        .focused_pane_id()
+        .ok_or_else(|| glib::bool_error!("no focused pane"))?;
+    let surface = shell
+        .surfaces
+        .get(pane_id)
+        .ok_or_else(|| glib::bool_error!("focused pane has no live surface"))?;
+    let overlay = find_ghostty_search_overlay(surface.widget())
+        .ok_or_else(|| glib::bool_error!("Ghostty search overlay is missing"))?;
+    let active = overlay.property::<bool>("active");
+    let total = overlay
+        .property::<bool>("has-search-total")
+        .then(|| overlay.property::<u64>("search-total"));
+    let has_selection = overlay.property::<bool>("has-search-selected");
+    if active != expected_active
+        || total != expected_total
+        || expected_selection_presence.is_some_and(|expected| expected != has_selection)
+    {
+        return Err(glib::bool_error!(
+            "unexpected search state: active={active} total={total:?} selected={has_selection}"
+        ));
+    }
+    eprintln!(
+        "zentty-linux: pane-search-action-scenario verified active={active} total={total:?} selected={has_selection}"
+    );
+    Ok(())
+}
+
+fn require_invalid_binding_action_rejected(
+    shell: &Rc<RefCell<ApplicationShell>>,
+) -> Result<(), glib::BoolError> {
+    let shell = shell.borrow();
+    let pane_id = shell
+        .state
+        .focused_pane_id()
+        .ok_or_else(|| glib::bool_error!("no focused pane"))?;
+    let surface = shell
+        .surfaces
+        .get(pane_id)
+        .ok_or_else(|| glib::bool_error!("focused pane has no live surface"))?;
+    if surface
+        .perform_binding_action("zentty_invalid_binding_action")
+        .is_ok()
+    {
+        return Err(glib::bool_error!(
+            "Ghostty accepted an invalid embedding binding action"
+        ));
+    }
+    eprintln!("zentty-linux: pane-search-action-scenario invalid-binding=rejected");
+    Ok(())
 }
 
 fn install_sidebar_width_tracking(

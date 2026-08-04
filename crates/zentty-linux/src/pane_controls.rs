@@ -282,7 +282,39 @@ pub(crate) fn install_styles() {
              box-shadow: none;\n\
          }\n\
          .zentty-pane-control:hover { background: alpha(white, 0.12); }\n\
-         .zentty-pane-control:active { background: alpha(white, 0.20); }",
+         .zentty-pane-control:active { background: alpha(white, 0.20); }\n\
+         .zentty-pane-frame .search-overlay {\n\
+             padding: 8px 10px;\n\
+             margin: 14px;\n\
+             border-radius: 12px;\n\
+             outline-style: solid;\n\
+             outline-color: #596273;\n\
+             outline-width: 1px;\n\
+             background: alpha(#20242b, 0.97);\n\
+             box-shadow: 0 10px 30px alpha(black, 0.55);\n\
+             color: #f3f4f6;\n\
+         }\n\
+         .zentty-pane-frame .search-overlay entry {\n\
+             min-height: 30px;\n\
+             background: #15181d;\n\
+             color: #f7f8fa;\n\
+             caret-color: #ffffff;\n\
+             border: 1px solid #717b8c;\n\
+             border-radius: 6px;\n\
+         }\n\
+         .zentty-pane-frame .search-overlay entry:focus {\n\
+             border-color: #5b9cff;\n\
+             box-shadow: 0 0 0 1px #5b9cff;\n\
+         }\n\
+         .zentty-pane-frame .search-overlay button {\n\
+             min-width: 28px;\n\
+             min-height: 28px;\n\
+             padding: 0;\n\
+             color: #e8ebf0;\n\
+             background: transparent;\n\
+             box-shadow: none;\n\
+         }\n\
+         .zentty-pane-frame .search-overlay button:hover { background: alpha(white, 0.12); }",
     );
     gtk::style_context_add_provider_for_display(
         &gdk::Display::default().expect("GTK display initialized"),

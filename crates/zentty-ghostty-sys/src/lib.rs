@@ -35,6 +35,11 @@ unsafe extern "C" {
         surface: *mut GtkWidget,
         text: *const c_char,
     ) -> bool;
+    pub fn ghostty_gtk_embed_surface_binding_action(
+        surface: *mut GtkWidget,
+        action: *const c_char,
+        action_len: usize,
+    ) -> bool;
     pub fn ghostty_gtk_embed_surface_request_paste(surface: *mut GtkWidget) -> bool;
 }
 

@@ -4,6 +4,7 @@ mod application_shell;
 mod command_palette;
 mod pane_controls;
 mod pane_scroll_switch;
+mod pane_search;
 mod peek_scroll_navigation;
 mod sidebar;
 mod sidebar_visibility;
@@ -32,6 +33,7 @@ struct Options {
     lifecycle_cycles: usize,
     async_backend: AsyncBackend,
     exercise_workspace_actions: bool,
+    exercise_pane_search: bool,
     state_directory: Option<PathBuf>,
     restore_enabled: bool,
 }
@@ -41,6 +43,7 @@ enum ExitPolicy {
     Manual,
     LastTerminal,
     WorkspaceActions,
+    PaneSearch,
 }
 
 impl Default for Options {
@@ -52,6 +55,7 @@ impl Default for Options {
             lifecycle_cycles: 1,
             async_backend: AsyncBackend::Default,
             exercise_workspace_actions: false,
+            exercise_pane_search: false,
             state_directory: None,
             restore_enabled: true,
         }
@@ -84,8 +88,14 @@ fn parse_options() -> Result<Options, String> {
             "--exercise-workspace-actions" => {
                 options.exercise_workspace_actions = true;
             }
+            "--exercise-pane-search" => {
+                options.exercise_pane_search = true;
+            }
             "--quit-after-workspace-actions" => {
                 options.exit_policy = ExitPolicy::WorkspaceActions;
+            }
+            "--quit-after-pane-search" => {
+                options.exit_policy = ExitPolicy::PaneSearch;
             }
             "--state-directory" => {
                 options.state_directory =
@@ -131,6 +141,9 @@ fn parse_options() -> Result<Options, String> {
         return Err(
             "--quit-after-workspace-actions requires --exercise-workspace-actions".to_owned(),
         );
+    }
+    if options.exit_policy == ExitPolicy::PaneSearch && !options.exercise_pane_search {
+        return Err("--quit-after-pane-search requires --exercise-pane-search".to_owned());
     }
     Ok(options)
 }
@@ -200,6 +213,12 @@ fn run_lifecycle_cycle(
             &shell,
             options.exit_policy == ExitPolicy::WorkspaceActions,
             options.exit_policy == ExitPolicy::LastTerminal,
+        );
+    }
+    if options.exercise_pane_search {
+        ApplicationShell::schedule_pane_search_actions(
+            &shell,
+            options.exit_policy == ExitPolicy::PaneSearch,
         );
     }
     main_loop.run();

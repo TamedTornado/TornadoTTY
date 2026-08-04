@@ -40,6 +40,7 @@ pub enum Error {
     UnexpectedSurfaceTransfer,
     SurfaceCloseFailed,
     InputFailed,
+    BindingActionFailed,
     TickFailed,
 }
 
@@ -66,6 +67,9 @@ impl fmt::Display for Error {
             }
             Self::SurfaceCloseFailed => formatter.write_str("Ghostty surface close failed"),
             Self::InputFailed => formatter.write_str("Ghostty terminal input failed"),
+            Self::BindingActionFailed => {
+                formatter.write_str("Ghostty terminal binding action failed")
+            }
             Self::TickFailed => formatter.write_str("Ghostty runtime tick failed"),
         }
     }
@@ -297,6 +301,27 @@ impl GhosttySurface {
             sys::ghostty_gtk_embed_surface_send_text(self.widget.as_ptr().cast(), text.as_ptr())
         };
         succeeded.then_some(()).ok_or(Error::InputFailed)
+    }
+
+    /// Invokes a Ghostty binding action through the terminal core's native
+    /// parser and dispatcher.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::BindingActionFailed`] when the action is malformed,
+    /// unsupported, or rejected by the live terminal surface.
+    pub fn perform_binding_action(&self, action: &str) -> Result<(), Error> {
+        // SAFETY: `widget` owns a live Ghostty surface reference. The action
+        // bytes remain valid for the synchronous call, and the explicit byte
+        // length means no C-string conversion or trailing NUL is required.
+        let succeeded = unsafe {
+            sys::ghostty_gtk_embed_surface_binding_action(
+                self.widget.as_ptr().cast(),
+                action.as_ptr().cast(),
+                action.len(),
+            )
+        };
+        succeeded.then_some(()).ok_or(Error::BindingActionFailed)
     }
 
     pub fn on_initialized(&self, callback: impl Fn() + 'static) {

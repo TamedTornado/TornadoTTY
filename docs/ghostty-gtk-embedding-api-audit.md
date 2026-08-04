@@ -171,6 +171,7 @@ check, but an arbitrary dangling pointer cannot be made safe by that check.
 | `ghostty_gtk_embed_surface_new` | One/four C-host real terminals and API test | Construction is required, current shell-string signature is not acceptable for #13 | Retain capability; redesign for typed argv/CWD/environment/config. |
 | `ghostty_gtk_embed_surface_close` | Rust product pane and repeated lifecycle teardown | Required by the current safe wrapper unless closure becomes a documented GObject disposal contract | Retain current capability; prove callback/drop ordering before upstream proposal. |
 | `ghostty_gtk_embed_surface_grab_focus` | C host focus/physical-key paths and misuse test | Likely active-pane requirement under #5 | Likely retain after real product focus proof. |
+| `ghostty_gtk_embed_surface_binding_action` | Rust product pane-search actions plus real X11/Wayland scrollback scenarios | Likely generic terminal-owned action bridge | Retain as one generic parser/dispatcher; keep shortcuts and product policy in Zentty. |
 | `ghostty_gtk_embed_surface_send_text` | C qualification control and misuse test only | Possible programmatic text action, not yet proven | Defer/remove if real product has no caller. |
 | `ghostty_gtk_embed_surface_request_paste` | C qualification clipboard relay and misuse test only | Possible product paste action; normal widget shortcuts may suffice | Defer/remove if real product has no caller. |
 

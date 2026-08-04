@@ -70,13 +70,13 @@ jq -e '
     (.diff_identity.normalization | length) == 21 and
     (.ranges | length) == 2 and
     (.files | length) == 15 and
-    (.abi.exported_function_count == 9) and
+    (.abi.exported_function_count == 10) and
     (.abi.operations | length) == .abi.exported_function_count and
     (.abi.ghostty_owned_public_type_count == 2) and
     (.abi.ghostty_owned_public_types | length) == .abi.ghostty_owned_public_type_count and
     (.abi.external_public_type_dependencies | length) == 1 and
     (.abi.external_public_type_dependencies[0].name == "GtkWidget") and
-        (.abi.external_public_type_dependencies[0].roles | length) == 5 and
+        (.abi.external_public_type_dependencies[0].roles | length) == 6 and
     (.abi.public_enum_values | length) == 3 and
     (.abi.prerequisites | any(.id == "runtime-before-gtk-init")) and
     (.abi.abi_defects | any(
@@ -285,10 +285,10 @@ grep -Fx 'typedef struct _GtkWidget GtkWidget;' "${ghostty_source}/include/ghost
     fail "GtkWidget forward declaration differs from inventory"
 [[ "$(grep -Ec '^GtkWidget \*ghostty_gtk_embed_surface_new\(' "${ghostty_source}/include/ghostty/gtk.h")" == 1 ]] ||
     fail "GtkWidget surface-constructor return role differs from inventory"
-[[ "$(grep -Eoc 'GtkWidget \*surface' "${ghostty_source}/include/ghostty/gtk.h")" == 4 ]] ||
+[[ "$(grep -Eoc 'GtkWidget \*surface' "${ghostty_source}/include/ghostty/gtk.h")" == 5 ]] ||
     fail "GtkWidget surface-operation parameter roles differ from inventory"
 
-pass_message="Ghostty API audit inventory passed: 15 files, 46 hunks, 9 allowlisted function exports, 2 Ghostty-owned public types, 1 external GtkWidget dependency"
+pass_message="Ghostty API audit inventory passed: 15 files, 46 hunks, 10 allowlisted function exports, 2 Ghostty-owned public types, 1 external GtkWidget dependency"
 echo "${pass_message}"
 
 if [[ "${mode}" == "--self-test" ]]; then

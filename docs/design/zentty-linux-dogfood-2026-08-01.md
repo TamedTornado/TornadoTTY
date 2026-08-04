@@ -5776,6 +5776,122 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   the rebuilt ReleaseSafe product in session
   `779d67afc3f7ed66d71c5380c4d7b91e700ea0bed8d731e388e1e9626c91963c`.
 
+### DOGFOOD-2026-08-04-PANE-SEARCH: real Ghostty scrollback and source command routing
+
+- **Scope:** This large slice ports pane-local Find, Use Selection for Find,
+  Find Next, Find Previous, dismissal/focus restoration, a draggable
+  terminal-themed HUD, searchable palette routes, and controlled X11/Wayland
+  product scenarios. It deliberately uses Ghostty's renderer, scrollback,
+  selection, match navigation, and existing GTK search overlay; Zentty does not
+  add a second terminal buffer or search engine.
+- **Ghostty boundary:** Fork commit
+  `5c261e53539d61822754ea45de32aa798ff4bde9` adds one 29-line generic GTK
+  embedding primitive, `ghostty_gtk_embed_surface_binding_action`. It mirrors
+  Ghostty's established embedded C API by passing public binding strings
+  through `Binding.Action.parse` and `Surface.performBindingAction`. The ABI
+  rejects null, uninitialized, malformed, unknown, and failed actions; the
+  Rust safe adapter converts failure to `BindingActionFailed`. Search policy,
+  shortcuts, palette registration, scenarios, and styling remain in Zentty.
+- **Source/Linux command decision:** The source commands remain Find, Use
+  Selection for Find, Find Next, and Find Previous. Linux maps them to
+  Ctrl+Shift+F, Ctrl+Shift+E, F3, and Shift+F3 so ordinary Ctrl+F/Ctrl+E stay
+  available to terminal applications. A focused test pins both the source
+  command vocabulary and that pass-through decision.
+- **Real X11 evidence:** Final controlled session
+  `3692f4ffc054832c89d4458a7916de0825b71e84a026405d720a5ec47fda1aa8`
+  used physical keys and a real pointer against the staged ReleaseSafe GTK
+  product. A real PTY emitted three distinctive matches; Ghostty reported all
+  three, F3/Shift+F3 navigated them, Escape hid the populated search while
+  retaining those matches, subsequent input reached the same PTY, and a
+  double-click terminal selection became the
+  three-match query through Search Selection. The real HUD was then dragged
+  across both pane midpoints, snapped from top-trailing to bottom-leading, and
+  reopened with both that live-pane corner and the three-match query retained.
+  No direct model call or copied scrollback fixture could satisfy the receipts.
+- **Crash found and repaired:** The first physical Ctrl+Shift+F run aborted in
+  `RefCell already borrowed`. The capture controller activated a synchronous
+  named action while retaining an immutable `ApplicationShell` borrow; the
+  action callback then correctly requested a mutable borrow. The controller
+  now clones the GTK window handle and releases the shell borrow before action
+  dispatch. This was a product defect exposed only by the real key path, not a
+  Ghostty or GTK failure.
+- **Ghostty state discovery:** Search produces a valid total before selecting a
+  current match; the first test incorrectly required `selected=Some` as soon
+  as the three-match total appeared. Receipts showed `total=Some(3),
+  selected=None`; F3 then selected a match. The assertion was narrowed to the
+  actual two-stage contract instead of changing product behavior.
+- **Hide-versus-clear discovery:** Ghostty's direct text-entry search and its
+  selection-driven search expose different GTK entry state. The first revised
+  X11 assertion incorrectly demanded Zentty's populated-entry hide receipt
+  after a pointer selection search; the real overlay instead had an empty
+  `SearchEntry` while Ghostty's core still reported three matches, so Escape
+  correctly followed Ghostty's close-and-clear path. The product interceptor
+  is now deliberately narrow: Escape hides a visible, explicitly populated
+  entry without discarding its match state and restores PTY focus; empty-entry
+  selection search retains Ghostty's native close behavior. The scenario proves
+  the former immediately after typed search and does not mislabel the latter.
+- **Controlled Wayland boundary:** The first private-Weston attempt used
+  `wtype`, which failed because this installed headless Weston does not expose
+  the virtual-keyboard protocol. That absence is not a physical-input pass.
+  Final controlled session
+  `b87e9dd2f2535dbacb635194d0f47fef1af6edc9be5b2ed659bde414d7003965`
+  instead exercised the staged product, real Wayland compositor, real Ghostty
+  renderer/surface/PTY/scrollback, named actions, binding parser, three-match
+  query, navigation, invalid-action rejection, and end-search state through a
+  deterministic in-product scenario. Physical Wayland injection remains the
+  already declared `physical-key-wayland` BLOCKED cell; it was not silently
+  converted to PASS.
+- **Build failures:** A direct Zig build first used the read-only default cache,
+  then lacked the vendored layer-shell flag, then used the wrong
+  `blueprint-compiler` path. None counted as product evidence. Reusing the
+  checked-in build script's writable caches, `-fno-sys=gtk4-layer-shell`, and
+  pinned compiler path produced the ReleaseSafe library and exported versioned
+  symbol successfully.
+- **Test-linkage repair:** A first raw-ABI unit test called the new dynamic
+  symbol directly. That made the otherwise declaration-only sys test binary
+  require `libghostty-gtk-embed.so` at process startup, breaking ordinary
+  `cargo test --workspace` outside a staged-library environment. The raw call
+  was removed; null/unknown handling is owned by the Ghostty implementation,
+  while the controlled live-surface Wayland scenario now proves an invalid
+  binding is rejected through the safe adapter without weakening the normal
+  workspace test contract.
+- **ABI audit repair:** The first focused qualification run correctly rejected
+  the new binding-action export because the exact ABI allowlist and reviewed
+  Ghostty delta ledger still described nine functions and the prior fork head.
+  The allowlist, machine-readable API operation, external `GtkWidget` role,
+  commit/range identities, and three affected per-file hashes now describe the
+  ten-function locked fork exactly. This was an audit failure, not waived test
+  noise; `abi-surface` and `ghostty-api-audit` had to pass before the slice
+  could qualify.
+- **Qualification entry-point discovery:** `linux/tests/qualify-local` has no
+  argument parser. An attempted `--help` therefore began the support suite and
+  reached the private-Wayland wrapper, where the restricted sandbox correctly
+  rejected its Unix-socket bind. That partial attempt is not evidence. The
+  final invocation uses the entry point as documented, with controlled-display
+  permission, and records only its complete machine summary.
+- **Remaining scope:** `pane.search` advances from `NOT_IMPLEMENTED` to
+  `PARTIAL`. The typed-query hide-with-remembered-highlights path and Ghostty's
+  selection-query close-and-clear path are now distinct and covered. Reviewed
+  light-theme/fractional-scale visuals,
+  installed-package execution, and full physical Wayland input remain
+  explicit. Window-global search is a separate still-`NOT_IMPLEMENTED`
+  inventory entry and is not implied here.
+- **Final executable qualification:** After the diff and ABI-ledger repair,
+  `linux/tests/qualify-local` completed every presently executable matrix cell.
+  Declared totals are `PASS=48`, `FAIL=0`, `BLOCKED=5`, `XFAIL=1`, and
+  `NOT_IMPLEMENTED=53`; the implemented local suite and product boundary pass,
+  while release and full Linux qualification correctly remain false. Debug
+  Valgrind is **PASS with reviewed suppressions**, never described as
+  unsuppressed-clean: its preserved raw receipt reports 427 errors/contexts,
+  6,240 definite bytes, and 41,461 indirect bytes; post-suppression totals are
+  zero errors/contexts/definite/indirect bytes with 427 reviewed suppressed
+  errors/contexts. ReleaseSafe Valgrind remains the declared XFAIL and no
+  suppression was broadened. The same checkpoint also passed workspace tests,
+  Clippy with warnings denied, the pinned full Ghostty Debug regression,
+  exact ten-symbol ABI validation, audit normalization self-test, hardening,
+  feature-inventory runner tests, real source-UX X11, real workspace Wayland,
+  real pane-search X11, and real pane-search Wayland.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were
