@@ -5701,11 +5701,21 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   palette with physical Ctrl+Shift+P above a focused real Ghostty surface,
   searches a durable renamed pane down to one result, traverses and executes it
   with real keys, then types through the newly selected real PTY. The workflow
-  subsequently uses ordinary pane traversal and Back/Forward, proving palette
-  navigation composes with—not replaces—the shared focus history.
+  then reopens the palette twice: one run types a query and dismisses with
+  Escape, explicitly rejecting any query text in the PTY receipt; the other
+  clicks the real full-window scrim outside the panel. Both must restore input
+  to the same PTY. The workflow subsequently uses ordinary pane traversal and
+  Back/Forward, proving palette navigation composes with—not replaces—the
+  shared focus history.
 - **Failure prevention:** The test explicitly begins on a different pane and
   requires the stable-ID palette target receipt and a PTY-produced title from
   the selected terminal. A model-only selection or search fixture cannot pass.
+  The extended dismissal run passed in controlled session
+  `a283797ebd53501a80603cdd5f66f57db8c0e3cb09934d11e03f420058a5b89f`.
+  Its first sandboxed launch could not create an Xvfb socket because the
+  sandbox did not own `/tmp/.X11-unix`; that environmental failure was not
+  counted as product evidence. The identical scenario passed only after the
+  existing controlled-X11 permission boundary was used.
 - **Inventory repair:** The first narrow-looking status patch matched the first
   generic `NOT_IMPLEMENTED`/empty-evidence triple in the JSON and accidentally
   attached palette evidence to `pane.drag-drop`. The inventory runner accepted

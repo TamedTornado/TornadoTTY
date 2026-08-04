@@ -253,6 +253,59 @@ for _ in $(seq 1 100); do
 done
 grep -Fxq 'zentty-linux: title-pane=pane-1 value=focus:palette-focus' "${log}" ||
     fail "palette dismissal did not restore real PTY input to the selected pane"
+
+# Reopen the real overlay and prove that text typed while it owns focus cannot
+# leak into the PTY. Escape must dismiss it and restore focus to pane 1.
+shown_before="$(grep -Fc 'zentty-linux: command-palette=shown' "${log}" || true)"
+hidden_before="$(grep -Fc 'zentty-linux: command-palette=hidden' "${log}" || true)"
+xdotool key --window "${window_id}" ctrl+shift+p
+for _ in $(seq 1 100); do
+    [[ "$(grep -Fc 'zentty-linux: command-palette=shown' "${log}" || true)" -gt "${shown_before}" ]] && break
+    sleep 0.05
+done
+xdotool type --window "${window_id}" --delay 10 'shielded-query'
+xdotool key --window "${window_id}" Escape
+for _ in $(seq 1 100); do
+    [[ "$(grep -Fc 'zentty-linux: command-palette=hidden' "${log}" || true)" -gt "${hidden_before}" ]] && break
+    sleep 0.05
+done
+[[ "$(grep -Fc 'zentty-linux: command-palette=hidden' "${log}" || true)" -gt "${hidden_before}" ]] ||
+    fail "Escape did not dismiss the command palette"
+xdotool type --window "${window_id}" --delay 10 'palette-escape'
+xdotool key --window "${window_id}" Return
+for _ in $(seq 1 100); do
+    grep -Fxq 'zentty-linux: title-pane=pane-1 value=focus:palette-escape' "${log}" && break
+    sleep 0.05
+done
+grep -Fxq 'zentty-linux: title-pane=pane-1 value=focus:palette-escape' "${log}" ||
+    fail "Escape dismissal did not restore real PTY focus"
+grep -Fq 'focus:shielded-query' "${log}" &&
+    fail "command-palette search input leaked into the real PTY"
+
+# The full-window scrim is functional rather than decorative: a click outside
+# the centered palette dismisses it without clicking through into Ghostty.
+shown_before="$(grep -Fc 'zentty-linux: command-palette=shown' "${log}" || true)"
+hidden_before="$(grep -Fc 'zentty-linux: command-palette=hidden' "${log}" || true)"
+xdotool key --window "${window_id}" ctrl+shift+p
+for _ in $(seq 1 100); do
+    [[ "$(grep -Fc 'zentty-linux: command-palette=shown' "${log}" || true)" -gt "${shown_before}" ]] && break
+    sleep 0.05
+done
+xdotool mousemove --window "${window_id}" 900 650 click 1
+for _ in $(seq 1 100); do
+    [[ "$(grep -Fc 'zentty-linux: command-palette=hidden' "${log}" || true)" -gt "${hidden_before}" ]] && break
+    sleep 0.05
+done
+[[ "$(grep -Fc 'zentty-linux: command-palette=hidden' "${log}" || true)" -gt "${hidden_before}" ]] ||
+    fail "outside click did not dismiss the command-palette scrim"
+xdotool type --window "${window_id}" --delay 10 'palette-outside'
+xdotool key --window "${window_id}" Return
+for _ in $(seq 1 100); do
+    grep -Fxq 'zentty-linux: title-pane=pane-1 value=focus:palette-outside' "${log}" && break
+    sleep 0.05
+done
+grep -Fxq 'zentty-linux: title-pane=pane-1 value=focus:palette-outside' "${log}" ||
+    fail "outside-click dismissal did not restore real PTY focus"
 # Return to pane 2 through the real traversal route so the existing Back/Forward
 # scenario retains its original pane-2 -> pane-1 -> pane-2 contract.
 xdotool key --window "${window_id}" ctrl+Tab
