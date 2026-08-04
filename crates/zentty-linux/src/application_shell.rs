@@ -14,6 +14,7 @@ use zentty_ghostty::{GhosttyRuntime, GhosttySurface, SurfaceConfig};
 
 use crate::{
     pane_controls::{self, PaneControlAction, PaneFrame, PanePresentation},
+    pane_scroll_switch::{PaneScrollSwitch, ScrollSwitchResult, ScrollUnit},
     sidebar,
     window_chrome::WindowChrome,
 };
@@ -174,6 +175,7 @@ impl ApplicationShell {
 
         Self::install_actions(&shell);
         Self::install_pane_traversal_shortcuts(&shell);
+        Self::install_pane_scroll_switching(&shell);
         for pane_id in initial_pane_ids {
             Self::create_surface(&shell, &pane_id)?;
         }
@@ -421,6 +423,52 @@ impl ApplicationShell {
             glib::Propagation::Stop
         });
         shell.borrow().window.add_controller(controller);
+    }
+
+    fn install_pane_scroll_switching(shell: &Rc<RefCell<Self>>) {
+        let controller = gtk::EventControllerScroll::new(
+            gtk::EventControllerScrollFlags::BOTH_AXES | gtk::EventControllerScrollFlags::KINETIC,
+        );
+        controller.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let gesture = Rc::new(RefCell::new(PaneScrollSwitch::default()));
+        let beginning = Rc::clone(&gesture);
+        controller.connect_scroll_begin(move |_| beginning.borrow_mut().reset());
+        let ending = Rc::clone(&gesture);
+        controller.connect_scroll_end(move |_| ending.borrow_mut().reset());
+        let weak = Rc::downgrade(shell);
+        controller.connect_scroll(move |controller, dx, dy| {
+            let unit = match controller.unit() {
+                gdk::ScrollUnit::Wheel => ScrollUnit::Wheel,
+                gdk::ScrollUnit::Surface => ScrollUnit::Surface,
+                _ => return glib::Propagation::Proceed,
+            };
+            if unit == ScrollUnit::Wheel {
+                gesture.borrow_mut().reset();
+            }
+            let shifted = controller
+                .current_event_state()
+                .contains(gdk::ModifierType::SHIFT_MASK);
+            match gesture
+                .borrow_mut()
+                .handle(dx, dy, shifted, unit, glib::monotonic_time())
+            {
+                ScrollSwitchResult::Previous => {
+                    if let Some(shell) = weak.upgrade() {
+                        shell.borrow_mut().select_adjacent_pane(false);
+                    }
+                    glib::Propagation::Stop
+                }
+                ScrollSwitchResult::Next => {
+                    if let Some(shell) = weak.upgrade() {
+                        shell.borrow_mut().select_adjacent_pane(true);
+                    }
+                    glib::Propagation::Stop
+                }
+                ScrollSwitchResult::Consumed => glib::Propagation::Stop,
+                ScrollSwitchResult::Unhandled => glib::Propagation::Proceed,
+            }
+        });
+        shell.borrow().pane_scroll.add_controller(controller);
     }
 
     fn install_pane_creation_actions(shell: &Rc<RefCell<Self>>, group: &gio::SimpleActionGroup) {

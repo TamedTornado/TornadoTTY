@@ -5353,19 +5353,32 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   embedded terminal, exposes equivalent `next-pane` and `previous-pane` named
   actions, updates the owning worklane when traversal crosses a boundary, and
   restores keyboard focus to the selected real Ghostty surface.
+- **Gesture follow-up:** The pane canvas now owns source-shaped horizontal
+  scroll switching. Surface gestures accumulate the source 40-unit threshold,
+  switch at most once per gesture, and retain its 0.15-second post-switch
+  cooldown; discrete horizontal wheel and Shift-wheel events use the source
+  one-unit threshold. Ordinary vertical scrolling remains unhandled by Zentty
+  so Ghostty retains terminal scrollback ownership.
 - **Real-system evidence:** The controlled-X11 source workflow sends physical
   Ctrl-Shift-Tab and Ctrl-Tab chords while Ghostty owns focus, requires exact
   action receipts for pane 1 and pane 2, and then types distinct OSC-title input
   through each selected real PTY. The existing five-terminal pointer,
   persistence, focus-history, Add, Split, and lifecycle assertions still pass.
   A source-pinned Rust test covers forward/backward wrapping and cross-worklane
-  traversal.
+  traversal. The same real-X11 workflow sends horizontal wheel-left and
+  wheel-right events over the terminal canvas, requires new traversal receipts,
+  and types through both resulting PTY selections. Pure gesture tests cover
+  threshold accumulation, one-switch shielding, cooldown, Shift-wheel, and
+  vertical-scrollback pass-through.
 - **Remaining boundary:** Linux currently performs the quick traversal on the
   Tab key press rather than deferring it to Control release. Hold detection,
   the 0.2-second arming threshold, Worklane Peek overlay, input shielding,
   spatial arrow/gesture navigation, cancellation with Escape, transition
-  animation, and reduced-motion behavior remain issue #16 work. This slice is
-  a production keyboard route, not a claim that Worklane Peek has been ported.
+  animation, and reduced-motion behavior remain issue #16 work. A physical
+  precision-touchpad route under Wayland and explicit natural-scroll-direction
+  qualification also remain; X11 horizontal wheel evidence does not silently
+  promote those environments. This slice is production traversal, not a claim
+  that Worklane Peek has been ported.
 
 ## AI disclosure
 

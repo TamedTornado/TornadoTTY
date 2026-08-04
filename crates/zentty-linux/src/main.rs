@@ -2,6 +2,7 @@
 
 mod application_shell;
 mod pane_controls;
+mod pane_scroll_switch;
 mod sidebar;
 mod source_ui;
 mod window_chrome;
