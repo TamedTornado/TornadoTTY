@@ -5315,6 +5315,27 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   column resizing, durable width restoration, Wayland pointer injection, and
   reviewed screenshots remain issue #16/#20 work. The current focus border is
   still the explicitly accepted placeholder from the preceding dogfood record.
+- **Immediate visual dogfood:** The first Linux translation used the generic
+  `application-add-symbolic` glyph for the pane-local `Add Pane Right` control.
+  On the real desktop it rendered as an unfamiliar application/grid-like icon
+  and Jason rejected it. The pane-local primary control now retains the
+  previously accepted right-arrow glyph while its tooltip, accessible label,
+  widget identity, action, and width behavior continue to disambiguate Add
+  from Split. This is a reviewed Linux icon choice, not a claim of exact SF
+  Symbols artwork.
+- **Real-desktop management dependency:** With a full-viewport focused column,
+  Add correctly preserved both widths and scrolled to the new column, but every
+  existing pane disappeared from the viewport. A boundary-centering experiment
+  still left two viewport-wide panes paging past each other and Jason rejected
+  it. Source review confirmed this is intentional worklane-strip behavior, not
+  Split behavior: Zentty manages potentially many offscreen panes with
+  horizontal gestures, Worklane Peek, Ctrl-Tab traversal, Recent Panes, focus
+  history, and automatic positioning. Linux has not ported that complete
+  management system yet. Until it does, the pane-local primary control remains
+  `Split Right` at all widths so its result stays visible. `Add Pane Right`
+  remains an explicit contextual/Arrange action with its full-width contract;
+  adaptive-primary parity is deferred with the management features rather than
+  presented as an isolated and confusing partial port.
 
 ## AI disclosure
 

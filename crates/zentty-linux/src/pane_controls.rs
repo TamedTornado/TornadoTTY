@@ -44,8 +44,7 @@ impl PaneControlAction {
 
     const fn icon(self) -> &'static str {
         match self {
-            Self::SplitRight => "go-next-symbolic",
-            Self::AddPaneRight => "application-add-symbolic",
+            Self::SplitRight | Self::AddPaneRight => "go-next-symbolic",
             Self::NewPaneBelow => "go-down-symbolic",
             Self::ClosePane => "window-close-symbolic",
         }
@@ -311,6 +310,11 @@ mod tests {
                 ("new-pane-below", source_ui::NEW_PANE_BELOW),
                 ("close-pane", source_ui::CLOSE_PANE),
             ]
+        );
+        assert_eq!(
+            PaneControlAction::AddPaneRight.icon(),
+            PaneControlAction::SplitRight.icon(),
+            "the reviewed pane-local right-arrow glyph must not regress to the rejected generic application-add icon"
         );
     }
 

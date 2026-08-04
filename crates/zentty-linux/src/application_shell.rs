@@ -7,8 +7,8 @@ use gtk::gio;
 use gtk::glib::{self, variant::ToVariant};
 use gtk::prelude::*;
 use zentty_core::{
-    ClosePaneOutcome, ColumnRecipe, PaneLayoutPolicy, PaneRecipe, SidebarWidthPreference,
-    WindowRecipe, WorklaneColor, WorklaneRecipe, WorkspaceState,
+    ClosePaneOutcome, ColumnRecipe, PaneLayoutPolicy, PaneRecipe, PaneRightInsertionBehavior,
+    SidebarWidthPreference, WindowRecipe, WorklaneColor, WorklaneRecipe, WorkspaceState,
 };
 use zentty_ghostty::{GhosttyRuntime, GhosttySurface, SurfaceConfig};
 
@@ -41,6 +41,7 @@ const ACTION_MOVE_PANE_TO_WORKLANE: &str = "move-pane-to-worklane";
 const ACTION_SELECT_PANE: &str = "select-pane";
 const ACTION_NAVIGATE_BACK: &str = "navigate-back";
 const ACTION_NAVIGATE_FORWARD: &str = "navigate-forward";
+const PRIMARY_RIGHT_BEHAVIOR: PaneRightInsertionBehavior = PaneRightInsertionBehavior::VisibleSplit;
 
 pub(crate) struct ApplicationShell {
     window: gtk::Window,
@@ -1277,10 +1278,13 @@ impl ApplicationShell {
     }
 
     fn refresh_right_insertion_behavior(&self) {
-        let behavior = PaneLayoutPolicy::adaptive_right_behavior(self.pane_viewport_width());
         for pane_id in self.state.active_pane_ids() {
             if let Some(frame) = self.pane_frames.get(pane_id) {
-                frame.set_right_behavior(behavior);
+                // Linux does not yet provide Zentty's horizontal gesture,
+                // Worklane Peek, and recent-pane management. Keep the
+                // pane-local primary action visible until that navigation
+                // ecosystem makes full-width offscreen panes discoverable.
+                frame.set_right_behavior(PRIMARY_RIGHT_BEHAVIOR);
             }
         }
     }

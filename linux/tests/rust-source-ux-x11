@@ -94,26 +94,6 @@ latest_sidebar_width="$(grep -F 'zentty-linux: sidebar-width=' "${log}" | tail -
 [[ "${latest_sidebar_width}" == 'zentty-linux: sidebar-width=280' ]] ||
     fail "the preferred sidebar width was lost after temporary window clamping"
 
-# The default adaptive source policy changes the pane-local primary verb at a
-# 1920px pane viewport. Prove the staged control updates in place in both
-# directions without recreating its terminal.
-xdotool windowsize --sync "${window_id}" 2300 700
-for _ in $(seq 1 100); do
-    grep -Fxq 'zentty-linux: pane-right-control pane=pane-1 action=split-right' "${log}" && break
-    sleep 0.05
-done
-grep -Fxq 'zentty-linux: pane-right-control pane=pane-1 action=split-right' "${log}" ||
-    fail "the adaptive primary action did not become Split Right at a wide viewport"
-xdotool windowsize --sync "${window_id}" 1200 700
-for _ in $(seq 1 100); do
-    [[ "$(grep -F 'zentty-linux: pane-right-control pane=pane-1 action=' "${log}" | tail -1)" == \
-        'zentty-linux: pane-right-control pane=pane-1 action=add-pane-right' ]] && break
-    sleep 0.05
-done
-[[ "$(grep -F 'zentty-linux: pane-right-control pane=pane-1 action=' "${log}" | tail -1)" == \
-    'zentty-linux: pane-right-control pane=pane-1 action=add-pane-right' ]] ||
-    fail "the adaptive primary action did not return to Add Pane Right"
-
 # Drag the real GTK divider rather than calling a model setter. The allocation
 # must follow the pointer and the preferred width must survive returning the
 # divider to its source default before the remaining coordinate-driven flow.
@@ -293,45 +273,24 @@ grep -Fxq 'zentty-linux: terminal-ready-pane=pane-3' "${log}" ||
 grep -Fxq 'zentty-linux: geometry=worklane-1:column-worklane-1[pane-1,pane-3],column-pane-2[pane-2]' "${log}" ||
     fail "New Pane Below did not split the pointer-focused pane's own column"
 
-# At the controlled 1200px window width, Zentty's default adaptive policy makes
-# the pane-local primary command Add Pane Right. Exercise it on pane-2, not on
-# the currently focused pane-3. Its owning identity must create pane-4 to the
-# right without shrinking pane-2, then scroll the expanded worklane into view.
-# Close that exact transient pane through its own control.
+# Until Linux ports Zentty's complete offscreen-pane management system, the
+# pane-local primary command remains Split Right. Exercise it on pane-2, not on
+# the currently focused pane-3, and prove the resulting visible pair belongs to
+# pane-2. Close that exact transient pane through its own control.
 xdotool mousemove --window "${window_id}" 1000 350
 xdotool mousemove --window "${window_id}" 1118 60 click 1
 for _ in $(seq 1 100); do
-    grep -Fxq 'zentty-linux: pane-control action=add-pane-right target=pane-2' "${log}" && break
+    grep -Fxq 'zentty-linux: pane-control action=split-right target=pane-2' "${log}" && break
     sleep 0.05
 done
-grep -Fxq 'zentty-linux: pane-control action=add-pane-right target=pane-2' "${log}" ||
-    fail "the right pane's adaptive Add Pane Right control did not target pane-2"
+grep -Fxq 'zentty-linux: pane-control action=split-right target=pane-2' "${log}" ||
+    fail "the right pane's visible Split Right control did not target pane-2"
 for _ in $(seq 1 100); do
     grep -Fxq 'zentty-linux: terminal-ready-pane=pane-4' "${log}" && break
     sleep 0.05
 done
 grep -Fxq 'zentty-linux: geometry=worklane-1:column-worklane-1[pane-1,pane-3],column-pane-2[pane-2],column-pane-4[pane-4]' "${log}" ||
-    fail "pane-2's Add Pane Right control did not create its adjacent column"
-added_layout="$(grep -F 'zentty-linux: pane-layout ' "${log}" | grep -F 'column-pane-4:' | tail -1)"
-added_viewport="$(sed -n 's/.*viewport=\([0-9][0-9]*\).*/\1/p' <<<"${added_layout}")"
-added_content="$(sed -n 's/.*content=\([0-9][0-9]*\).*/\1/p' <<<"${added_layout}")"
-pane_two_width="$(sed -n 's/.*column-pane-2:\([0-9][0-9]*\).*/\1/p' <<<"${added_layout}")"
-pane_four_width="$(sed -n 's/.*column-pane-4:\([0-9][0-9]*\).*/\1/p' <<<"${added_layout}")"
-[[ -n "${added_viewport}" && -n "${added_content}" && -n "${pane_two_width}" ]] ||
-    fail "Add Pane Right produced no machine-readable rendered-width receipt"
-(( added_content > added_viewport )) ||
-    fail "Add Pane Right did not expand the horizontally scrollable worklane"
-[[ "${pane_two_width}" == "${pane_four_width}" ]] ||
-    fail "Add Pane Right shrank the owning pane instead of preserving its width"
-for _ in $(seq 1 100); do
-    grep -Eq '^zentty-linux: pane-scroll value=[1-9][0-9]* maximum=[1-9][0-9]*$' "${log}" && break
-    sleep 0.05
-done
-scroll_receipt="$(grep -E '^zentty-linux: pane-scroll value=[0-9]+ maximum=[0-9]+$' "${log}" | tail -1)"
-scroll_value="$(sed -n 's/.*value=\([0-9][0-9]*\).*/\1/p' <<<"${scroll_receipt}")"
-scroll_maximum="$(sed -n 's/.*maximum=\([0-9][0-9]*\).*/\1/p' <<<"${scroll_receipt}")"
-[[ -n "${scroll_value}" && "${scroll_value}" == "${scroll_maximum}" && "${scroll_value}" != 0 ]] ||
-    fail "Add Pane Right did not scroll the newly added real pane into view"
+    fail "pane-2's Split Right control did not create its adjacent column"
 xdotool mousemove --window "${window_id}" 1000 350
 xdotool mousemove --window "${window_id}" 1178 60 click 1
 for _ in $(seq 1 100); do
@@ -341,8 +300,8 @@ done
 grep -Fxq 'zentty-linux: pane-control action=close-pane target=pane-4' "${log}" ||
     fail "the transient right pane's Close Pane control did not target pane-4"
 
-# Preserve the original source Arrange coverage as a separate route. Its
-# Split Right item now creates pane-5 from the focused pane-2.
+# Preserve explicit Add Pane Right coverage as a separate route. The second
+# Arrange item creates full-width pane-5 from the focused pane-2.
 xdotool mousemove --window "${window_id}" 52 18 click 1
 for _ in $(seq 1 100); do
     grep -Fxq 'zentty-linux: chrome-popover=arrange-panes state=open' "${log}" && break
@@ -350,13 +309,13 @@ for _ in $(seq 1 100); do
 done
 grep -Fxq 'zentty-linux: chrome-popover=arrange-panes state=open' "${log}" ||
     fail "the real arrange-panes icon did not open its popover"
-xdotool mousemove --window "${window_id}" 100 80 click 1
+xdotool mousemove --window "${window_id}" 100 114 click 1
 for _ in $(seq 1 100); do
     grep -Fxq 'zentty-linux: terminal-ready-pane=pane-5' "${log}" && break
     sleep 0.05
 done
 grep -Fxq 'zentty-linux: terminal-ready-pane=pane-5' "${log}" ||
-    fail "the real arrange-panes popover did not create pane-5"
+    fail "the real Arrange Add Pane Right action did not create pane-5"
 xdotool type --window "${window_id}" --delay 10 'arranged-pane'
 xdotool key --window "${window_id}" Return
 for _ in $(seq 1 100); do
@@ -423,10 +382,10 @@ grep -Fxq 'zentty-linux: action=split-pane-right pane=pane-2' "${log}" ||
     fail "the contextual Split Right item did not activate after Rename Pane"
 grep -Fxq 'zentty-linux: action=split-pane-below pane=pane-3' "${log}" ||
     fail "the pane-local below control did not activate its product action"
-grep -Fxq 'zentty-linux: action=add-pane-right pane=pane-4' "${log}" ||
-    fail "the adaptive pane-local Add Pane Right control did not activate its product action"
-grep -Fxq 'zentty-linux: action=split-pane-right pane=pane-5' "${log}" ||
-    fail "the arrange-panes icon did not activate its real split action"
+grep -Fxq 'zentty-linux: action=split-pane-right pane=pane-4' "${log}" ||
+    fail "the pane-local Split Right control did not activate its product action"
+grep -Fxq 'zentty-linux: action=add-pane-right pane=pane-5' "${log}" ||
+    fail "the Arrange popover did not activate its explicit Add Pane Right action"
 grep -Fxq 'zentty-linux: pane-controls pane=pane-1 state=shown' "${log}" ||
     fail "hover did not disclose pane-1's local control cluster"
 grep -Fxq 'zentty-linux: pane-controls pane=pane-1 state=hidden' "${log}" ||
