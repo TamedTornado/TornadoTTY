@@ -5183,6 +5183,34 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   three distinct real PTYs. Controlled X11/Wayland action and restore tests
   cover persisted custom-title semantics. No screenshot-baseline claim is made.
 
+### DOGFOOD-2026-08-04-PANE-FOCUS-PRESENTATION: model focus must be visible in the canvas
+
+- **Observed gap:** Pane focus already selected the correct real Ghostty surface
+  and sidebar row, but the terminal canvas itself gave no reliable visual cue
+  after a split. This made a correct owning-pane operation hard to predict and
+  weakened the pane-local controls added in the preceding slice.
+- **Source contract:** `PaneContainerView` renders a focused border, derives
+  that border and its optional glow from the worklane color, and falls back to
+  the theme's focused-pane border without a color. `AppConfig.Panes.default`
+  enables borders and gives inactive panes 0.7 opacity. Linux now implements
+  those defaults instead of inventing a separate selection treatment.
+- **Repair:** Every durable GTK pane frame receives an explicit presentation
+  state from the active worklane and exact focused pane. Focused panes remain
+  fully opaque with a strong neutral or worklane-colored border; unfocused
+  panes retain their border and use the source-default 0.7 opacity. In-place
+  focus and color changes refresh pane presentation without reconstructing or
+  restarting any Ghostty surface.
+- **Evidence:** A focused Rust test pins the Linux rules to the checked-in Swift
+  focus and configuration sources. All nine Linux unit tests and pedantic
+  Clippy pass. The staged real-pointer X11 source-UX scenario passes focus,
+  owner-relative right/below actions, close, and global Arrange against real
+  PTYs. The staged five-PTY workspace scenario also passes under controlled X11
+  and controlled Wayland.
+- **Remaining boundary:** This is behavior and source-default coverage, not a
+  claim of pixel-identical AppKit compositing. Reviewed dark/light screenshot
+  baselines, contrast measurements, settings-driven border/opacity changes,
+  and assistive-technology inspection remain issue #16/#20 work.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were

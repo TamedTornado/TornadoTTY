@@ -13,7 +13,7 @@ use zentty_core::{
 use zentty_ghostty::{GhosttyRuntime, GhosttySurface, SurfaceConfig};
 
 use crate::{
-    pane_controls::{self, PaneControlAction, PaneFrame},
+    pane_controls::{self, PaneControlAction, PaneFrame, PanePresentation},
     sidebar,
     window_chrome::WindowChrome,
 };
@@ -1052,6 +1052,7 @@ impl ApplicationShell {
     fn render(&self) {
         clear_pane_columns(&self.pane_box);
         self.render_sidebar();
+        self.refresh_pane_presentation();
 
         for column in self.state.active_columns() {
             let column_box = gtk::Box::new(gtk::Orientation::Vertical, 1);
@@ -1081,6 +1082,20 @@ impl ApplicationShell {
             sidebar::render(&self.sidebar, &self.window, &summaries);
         }
         self.chrome.render(&summaries);
+        self.refresh_pane_presentation();
+    }
+
+    fn refresh_pane_presentation(&self) {
+        let focused_pane_id = self.state.focused_pane_id();
+        let worklane_color = self.state.active_worklane().color;
+        for pane_id in self.state.active_pane_ids() {
+            if let Some(frame) = self.pane_frames.get(pane_id) {
+                frame.set_presentation(PanePresentation {
+                    focused: Some(pane_id) == focused_pane_id,
+                    worklane_color,
+                });
+            }
+        }
     }
 
     fn focus_selected_surface(&self) {

@@ -3,6 +3,7 @@ use std::rc::Rc;
 
 use gtk::gdk;
 use gtk::prelude::*;
+use zentty_core::WorklaneColor;
 
 use crate::source_ui;
 
@@ -43,6 +44,29 @@ impl PaneControlAction {
 
 pub(crate) struct PaneFrame {
     root: gtk::Overlay,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct PanePresentation {
+    pub(crate) focused: bool,
+    pub(crate) worklane_color: Option<WorklaneColor>,
+}
+
+impl PanePresentation {
+    const INACTIVE_OPACITY: f64 = 0.7;
+
+    fn opacity(self) -> f64 {
+        if self.focused {
+            1.0
+        } else {
+            Self::INACTIVE_OPACITY
+        }
+    }
+
+    fn color_class(self) -> Option<String> {
+        self.worklane_color
+            .map(|color| format!("zentty-pane-color-{}", color.as_str()))
+    }
 }
 
 impl PaneFrame {
@@ -138,6 +162,25 @@ impl PaneFrame {
         &self.root
     }
 
+    pub(crate) fn set_presentation(&self, presentation: PanePresentation) {
+        self.root.remove_css_class("zentty-pane-frame-focused");
+        self.root.remove_css_class("zentty-pane-frame-unfocused");
+        for color in WorklaneColor::ALL {
+            self.root
+                .remove_css_class(&format!("zentty-pane-color-{}", color.as_str()));
+        }
+
+        self.root.add_css_class(if presentation.focused {
+            "zentty-pane-frame-focused"
+        } else {
+            "zentty-pane-frame-unfocused"
+        });
+        if let Some(color_class) = presentation.color_class() {
+            self.root.add_css_class(&color_class);
+        }
+        self.root.set_opacity(presentation.opacity());
+    }
+
     pub(crate) fn detach_terminal(&self) {
         self.root.set_child(gtk::Widget::NONE);
     }
@@ -157,7 +200,26 @@ fn set_revealed(controls: &gtk::Box, revealed: &Cell<bool>, pane_id: &str, value
 pub(crate) fn install_styles() {
     let provider = gtk::CssProvider::new();
     provider.load_from_string(
-        ".zentty-pane-controls {\n\
+        ".zentty-pane-frame {\n\
+             border: 1px solid alpha(white, 0.10);\n\
+         }\n\
+         .zentty-pane-frame-focused {\n\
+             border-color: alpha(#aeb8c8, 0.72);\n\
+             box-shadow: inset 0 0 0 1px alpha(#aeb8c8, 0.20);\n\
+         }\n\
+         .zentty-pane-frame-focused.zentty-pane-color-red { border-color: #f56565; box-shadow: inset 0 0 0 1px alpha(#f56565, 0.30), 0 0 12px alpha(#f56565, 0.18); }\n\
+         .zentty-pane-frame-focused.zentty-pane-color-orange { border-color: #ed8936; box-shadow: inset 0 0 0 1px alpha(#ed8936, 0.30), 0 0 12px alpha(#ed8936, 0.18); }\n\
+         .zentty-pane-frame-focused.zentty-pane-color-amber { border-color: #d69e2e; box-shadow: inset 0 0 0 1px alpha(#d69e2e, 0.30), 0 0 12px alpha(#d69e2e, 0.18); }\n\
+         .zentty-pane-frame-focused.zentty-pane-color-yellow { border-color: #ecc94b; box-shadow: inset 0 0 0 1px alpha(#ecc94b, 0.30), 0 0 12px alpha(#ecc94b, 0.18); }\n\
+         .zentty-pane-frame-focused.zentty-pane-color-lime { border-color: #9ae6b4; box-shadow: inset 0 0 0 1px alpha(#9ae6b4, 0.30), 0 0 12px alpha(#9ae6b4, 0.18); }\n\
+         .zentty-pane-frame-focused.zentty-pane-color-green { border-color: #48bb78; box-shadow: inset 0 0 0 1px alpha(#48bb78, 0.30), 0 0 12px alpha(#48bb78, 0.18); }\n\
+         .zentty-pane-frame-focused.zentty-pane-color-teal { border-color: #38b2ac; box-shadow: inset 0 0 0 1px alpha(#38b2ac, 0.30), 0 0 12px alpha(#38b2ac, 0.18); }\n\
+         .zentty-pane-frame-focused.zentty-pane-color-cyan { border-color: #4fd1c5; box-shadow: inset 0 0 0 1px alpha(#4fd1c5, 0.30), 0 0 12px alpha(#4fd1c5, 0.18); }\n\
+         .zentty-pane-frame-focused.zentty-pane-color-blue { border-color: #4299e1; box-shadow: inset 0 0 0 1px alpha(#4299e1, 0.30), 0 0 12px alpha(#4299e1, 0.18); }\n\
+         .zentty-pane-frame-focused.zentty-pane-color-indigo { border-color: #667eea; box-shadow: inset 0 0 0 1px alpha(#667eea, 0.30), 0 0 12px alpha(#667eea, 0.18); }\n\
+         .zentty-pane-frame-focused.zentty-pane-color-purple { border-color: #9f7aea; box-shadow: inset 0 0 0 1px alpha(#9f7aea, 0.30), 0 0 12px alpha(#9f7aea, 0.18); }\n\
+         .zentty-pane-frame-focused.zentty-pane-color-pink { border-color: #ed64a6; box-shadow: inset 0 0 0 1px alpha(#ed64a6, 0.30), 0 0 12px alpha(#ed64a6, 0.18); }\n\
+         .zentty-pane-controls {\n\
              padding: 3px;\n\
              border-radius: 7px;\n\
              background: alpha(#15171b, 0.92);\n\
@@ -184,8 +246,12 @@ pub(crate) fn install_styles() {
 
 #[cfg(test)]
 mod tests {
-    use super::PaneControlAction;
+    use super::{PaneControlAction, PanePresentation};
     use crate::source_ui;
+    use zentty_core::WorklaneColor;
+
+    const PANE_SOURCE: &str = include_str!("../../../Zentty/UI/PaneStrip/PaneContainerView.swift");
+    const CONFIG_SOURCE: &str = include_str!("../../../Zentty/Config/AppConfig.swift");
 
     #[test]
     fn pane_local_controls_use_current_source_commands_without_conflation() {
@@ -197,5 +263,28 @@ mod tests {
                 ("close-pane", source_ui::CLOSE_PANE),
             ]
         );
+    }
+
+    #[test]
+    fn pane_presentation_preserves_source_focus_semantics_and_defaults() {
+        let focused = PanePresentation {
+            focused: true,
+            worklane_color: Some(WorklaneColor::Amber),
+        };
+        let inactive = PanePresentation {
+            focused: false,
+            worklane_color: None,
+        };
+
+        assert!((focused.opacity() - 1.0).abs() < f64::EPSILON);
+        assert!((inactive.opacity() - 0.7).abs() < f64::EPSILON);
+        assert_eq!(
+            focused.color_class().as_deref(),
+            Some("zentty-pane-color-amber")
+        );
+        assert!(CONFIG_SOURCE.contains("showBorders: true"));
+        assert!(CONFIG_SOURCE.contains("inactiveOpacity: 0.7"));
+        assert!(PANE_SOURCE.contains("if isFocused, let worklaneColor"));
+        assert!(PANE_SOURCE.contains("theme.paneBorderFocused"));
     }
 }
