@@ -5379,7 +5379,7 @@ test harness, preserve the legacy constructor, and be independently reviewable.
 
 ### DOGFOOD-2026-08-04-WORKLANE-PEEK: port the gesture, not a generic switcher
 
-- **Five-feature batch:** Linux now (1) defers a quick Ctrl-Tab or
+- **Initial five-feature batch (superseded below):** Linux initially (1) deferred a quick Ctrl-Tab or
   Ctrl-Shift-Tab step until Control release, (2) abandons that deferred step
   and opens Worklane Peek at the original pane after a timed hold,
   (3) previews repeated Tab traversal and source-shaped spatial arrow targets,
@@ -5442,13 +5442,13 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   release route existed but did not represent a human chord and therefore
   missed the usability failure. This is precisely the kind of synthetic pass
   the real-system policy is intended to reject.
-- **Repair:** Linux retains the source idle/armed/peeking semantics but uses a
+- **Intermediate repair (superseded below):** Linux retained the source idle/armed/peeking semantics but used a
   500ms deliberate-long-press boundary. The GTK controller separately tracks
   the physical Tab-down interval and discards key auto-repeat; holding Tab is
   one hold and cannot be misread as a series of traversal taps. This is an
   explicit platform timing adaptation, not an unacknowledged source constant
   change.
-- **Regression contract:** Controlled X11 now holds Control for 300ms after a
+- **Intermediate regression contract:** Controlled X11 held Control for 300ms after a
   real Tab tap and requires normal traversal with no Peek-open receipt, then
   holds physical Ctrl and Tab for 650ms and requires exactly a hold-open with
   no auto-repeat preview. The existing spatial, commit, Escape, exact-card,
@@ -5463,6 +5463,40 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   before clicking its Close control. This removes scheduler luck without
   bypassing GTK or replacing the pointer route; the complete scenario then
   passed.
+
+### DOGFOOD-2026-08-04-WORKLANE-PEEK-SHORTCUT: Linux does not need tap-versus-hold
+
+- **Second user-observed failure:** Raising the timer did not fix the actual
+  interaction. A quick Ctrl-Tab still deferred traversal until Control release,
+  and retaining Control still eventually opened Peek. The implementation was
+  behaving as coded, but the copied macOS gesture remained wrong for the Linux
+  product.
+- **Design correction:** Ctrl-Tab and Ctrl-Shift-Tab now traverse immediately
+  on the physical Tab press. Holding Control has no Peek meaning and no timer
+  exists. Worklane Peek is an explicit overview command: Super+Tab where the
+  desktop delivers that chord, plus Super+W as the application-owned Linux
+  route. Releasing Super commits the preview; Escape cancels it. This preserves
+  the source feature and selection behavior without preserving an unsuitable
+  AppKit input disambiguation scheme.
+- **Ubuntu/Wayland constraint proved locally:** This development system reports
+  `ubuntu:GNOME/wayland`, and GNOME's live
+  `org.gnome.desktop.wm.keybindings switch-applications` binding owns
+  `<Super>Tab`. A focused Wayland client cannot override that compositor
+  shortcut. Zentty therefore supports Super+Tab on desktops/compositors that
+  deliver it but does not pretend it works on stock Ubuntu GNOME; Super+W is
+  the operational app-local route without modifying the user's desktop
+  settings.
+- **Real-system regression:** Controlled X11 proves Ctrl-Shift-Tab changes the
+  selected real PTY while Control remains physically held for 650ms and emits
+  no Peek-open receipt. It then opens Peek explicitly through Super+Tab,
+  spatially selects and commits on Super release; opens through Super+W,
+  traverses and cancels with Escape; and opens through Super+W again for an
+  exact real-pointer card selection. All prior five-PTY, layout, resize,
+  contextual-control, scrolling, focus, and lifecycle assertions pass.
+- **Removed complexity:** The Linux shell no longer has armed generations,
+  hold timers, pending directions, or Control-release commits. Tab-down
+  tracking remains only to prevent a single physical key press from becoming
+  repeated traversal through GTK auto-repeat.
 
 ## AI disclosure
 
