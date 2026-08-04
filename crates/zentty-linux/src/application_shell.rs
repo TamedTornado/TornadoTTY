@@ -7,8 +7,9 @@ use gtk::glib::{self, variant::ToVariant};
 use gtk::prelude::*;
 use gtk::{gdk, gio};
 use zentty_core::{
-    ClosePaneOutcome, ColumnRecipe, PaneLayoutPolicy, PaneRecipe, PaneRightInsertionBehavior,
-    SidebarWidthPreference, WindowRecipe, WorklaneColor, WorklaneRecipe, WorkspaceState,
+    ClosePaneOutcome, ColumnRecipe, PaneLayoutPolicy, PaneRecipe, PaneReference,
+    PaneRightInsertionBehavior, SidebarWidthPreference, WindowRecipe, WorklaneColor,
+    WorklaneRecipe, WorkspaceState,
 };
 use zentty_ghostty::{GhosttyRuntime, GhosttySurface, SurfaceConfig};
 
@@ -17,6 +18,10 @@ use crate::{
     pane_scroll_switch::{PaneScrollSwitch, ScrollSwitchResult, ScrollUnit},
     sidebar,
     window_chrome::WindowChrome,
+    worklane_peek::{
+        self, Direction as PeekDirection, PanePreview, Phase as PeekPhase,
+        SpatialDirection as PeekSpatialDirection, WorklanePeekView,
+    },
 };
 
 const ACTION_TOGGLE_SIDEBAR: &str = "toggle-sidebar";
@@ -69,6 +74,9 @@ pub(crate) struct ApplicationShell {
     shutting_down: bool,
     preferred_sidebar_width: Rc<Cell<i32>>,
     adjusting_sidebar_width: Rc<Cell<bool>>,
+    peek_phase: PeekPhase,
+    peek_generation: u64,
+    peek_view: WorklanePeekView,
 }
 
 impl ApplicationShell {
@@ -113,10 +121,8 @@ impl ApplicationShell {
         body.set_end_child(Some(&content));
 
         let chrome = WindowChrome::new();
-        let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        root.append(chrome.widget());
-        root.append(&body);
-        window.set_child(Some(&root));
+        let (overlay, peek_view) = build_root(&chrome, &body);
+        window.set_child(Some(&overlay));
 
         let window_template = restored_window.unwrap_or_else(default_window_recipe);
         let state = WorkspaceState::from_window_recipe(&window_template)
@@ -169,6 +175,9 @@ impl ApplicationShell {
             shutting_down: false,
             preferred_sidebar_width: Rc::clone(&preferred_sidebar_width),
             adjusting_sidebar_width: Rc::clone(&adjusting_sidebar_width),
+            peek_phase: PeekPhase::Idle,
+            peek_generation: 0,
+            peek_view,
         }));
 
         install_sidebar_width_tracking(&body, preferred_sidebar_width, adjusting_sidebar_width);
@@ -225,6 +234,8 @@ impl ApplicationShell {
 
     pub(crate) fn detach_and_close(&mut self) {
         self.shutting_down = true;
+        self.peek_phase = PeekPhase::Idle;
+        self.peek_view.hide();
         gtk::prelude::GtkWindowExt::set_focus(&self.window, gtk::Widget::NONE);
         self.window.set_default_widget(gtk::Widget::NONE);
         for (pane_id, controller) in std::mem::take(&mut self.focus_controllers) {
@@ -411,18 +422,251 @@ impl ApplicationShell {
         let weak = Rc::downgrade(shell);
         controller.connect_key_pressed(move |_, key, _, modifiers| {
             let is_tab = key == gdk::Key::Tab || key == gdk::Key::ISO_Left_Tab;
-            if !is_tab || !modifiers.contains(gdk::ModifierType::CONTROL_MASK) {
-                return glib::Propagation::Proceed;
-            }
             let Some(shell) = weak.upgrade() else {
                 return glib::Propagation::Proceed;
             };
-            let forward =
-                key != gdk::Key::ISO_Left_Tab && !modifiers.contains(gdk::ModifierType::SHIFT_MASK);
-            shell.borrow_mut().select_adjacent_pane(forward);
-            glib::Propagation::Stop
+            if is_tab && modifiers.contains(gdk::ModifierType::CONTROL_MASK) {
+                let forward = key != gdk::Key::ISO_Left_Tab
+                    && !modifiers.contains(gdk::ModifierType::SHIFT_MASK);
+                Self::handle_peek_tab(
+                    &shell,
+                    if forward {
+                        PeekDirection::Forward
+                    } else {
+                        PeekDirection::Backward
+                    },
+                );
+                return glib::Propagation::Stop;
+            }
+            if key == gdk::Key::Escape && shell.borrow().peek_phase.is_active() {
+                Self::cancel_peek(&shell);
+                return glib::Propagation::Stop;
+            }
+            if modifiers.contains(gdk::ModifierType::CONTROL_MASK)
+                && matches!(shell.borrow().peek_phase, PeekPhase::Peeking { .. })
+            {
+                let direction = match key {
+                    gdk::Key::Left => Some(PeekSpatialDirection::Left),
+                    gdk::Key::Right => Some(PeekSpatialDirection::Right),
+                    gdk::Key::Up => Some(PeekSpatialDirection::Up),
+                    gdk::Key::Down => Some(PeekSpatialDirection::Down),
+                    _ => None,
+                };
+                if let Some(direction) = direction {
+                    Self::spatially_navigate_peek(&shell, direction);
+                    return glib::Propagation::Stop;
+                }
+            }
+            if matches!(shell.borrow().peek_phase, PeekPhase::Peeking { .. }) {
+                // A visible picker owns the interaction. No ordinary key
+                // press may leak into the still-focused Ghostty surface.
+                return glib::Propagation::Stop;
+            }
+            glib::Propagation::Proceed
+        });
+        let weak = Rc::downgrade(shell);
+        controller.connect_key_released(move |_, key, _, _| {
+            if (key == gdk::Key::Control_L || key == gdk::Key::Control_R)
+                && let Some(shell) = weak.upgrade()
+            {
+                Self::commit_peek(&shell);
+            }
         });
         shell.borrow().window.add_controller(controller);
+    }
+
+    fn handle_peek_tab(shell: &Rc<RefCell<Self>>, direction: PeekDirection) {
+        let phase = shell.borrow().peek_phase.clone();
+        match phase {
+            PeekPhase::Idle => {
+                let generation = {
+                    let mut shell = shell.borrow_mut();
+                    shell.peek_generation = shell.peek_generation.wrapping_add(1);
+                    let generation = shell.peek_generation;
+                    shell.peek_phase = PeekPhase::Armed {
+                        generation,
+                        pending: direction,
+                    };
+                    generation
+                };
+                eprintln!("zentty-linux: worklane-peek=armed generation={generation}");
+                let weak = Rc::downgrade(shell);
+                glib::timeout_add_local_once(Duration::from_millis(200), move || {
+                    let Some(shell) = weak.upgrade() else {
+                        return;
+                    };
+                    Self::open_peek_after_hold(&shell, generation);
+                });
+            }
+            PeekPhase::Armed { pending, .. } => {
+                let traversal = shell.borrow().pane_references_in_sidebar_order();
+                let Some(origin) = shell.borrow().current_pane_reference() else {
+                    Self::cancel_peek(shell);
+                    return;
+                };
+                let Some(first) = worklane_peek::step(&traversal, &origin, pending) else {
+                    Self::cancel_peek(shell);
+                    return;
+                };
+                shell
+                    .borrow_mut()
+                    .select_adjacent_pane(pending == PeekDirection::Forward);
+                let current = worklane_peek::step(&traversal, &first, direction)
+                    .unwrap_or_else(|| first.clone());
+                shell.borrow_mut().peek_phase = PeekPhase::Peeking {
+                    original: first,
+                    current,
+                    traversal,
+                };
+                eprintln!("zentty-linux: worklane-peek=open trigger=second-tab");
+                Self::refresh_peek_view(shell);
+            }
+            PeekPhase::Peeking {
+                original,
+                current,
+                traversal,
+            } => {
+                let Some(next) = worklane_peek::step(&traversal, &current, direction) else {
+                    return;
+                };
+                eprintln!(
+                    "zentty-linux: worklane-peek=preview worklane={} pane={}",
+                    next.worklane_id, next.pane_id
+                );
+                shell.borrow_mut().peek_phase = PeekPhase::Peeking {
+                    original,
+                    current: next,
+                    traversal,
+                };
+                Self::refresh_peek_view(shell);
+            }
+        }
+    }
+
+    fn open_peek_after_hold(shell: &Rc<RefCell<Self>>, generation: u64) {
+        if !matches!(
+            shell.borrow().peek_phase,
+            PeekPhase::Armed {
+                generation: armed_generation,
+                ..
+            } if armed_generation == generation
+        ) {
+            return;
+        }
+        let traversal = shell.borrow().pane_references_in_sidebar_order();
+        let Some(origin) = shell.borrow().current_pane_reference() else {
+            Self::cancel_peek(shell);
+            return;
+        };
+        shell.borrow_mut().peek_phase = PeekPhase::Peeking {
+            original: origin.clone(),
+            current: origin,
+            traversal,
+        };
+        eprintln!("zentty-linux: worklane-peek=open trigger=hold");
+        Self::refresh_peek_view(shell);
+    }
+
+    fn commit_peek(shell: &Rc<RefCell<Self>>) {
+        let phase = shell.borrow().peek_phase.clone();
+        match phase {
+            PeekPhase::Idle => {}
+            PeekPhase::Armed { pending, .. } => {
+                shell.borrow_mut().peek_phase = PeekPhase::Idle;
+                shell
+                    .borrow_mut()
+                    .select_adjacent_pane(pending == PeekDirection::Forward);
+                eprintln!("zentty-linux: worklane-peek=quick-commit");
+            }
+            PeekPhase::Peeking { current, .. } => {
+                shell.borrow_mut().peek_phase = PeekPhase::Idle;
+                shell.borrow().peek_view.hide();
+                shell.borrow_mut().select_pane_reference(&current, true);
+                eprintln!(
+                    "zentty-linux: worklane-peek=commit worklane={} pane={}",
+                    current.worklane_id, current.pane_id
+                );
+            }
+        }
+    }
+
+    fn cancel_peek(shell: &Rc<RefCell<Self>>) {
+        let phase = shell.borrow().peek_phase.clone();
+        shell.borrow_mut().peek_phase = PeekPhase::Idle;
+        shell.borrow().peek_view.hide();
+        if let PeekPhase::Peeking { original, .. } = phase {
+            shell.borrow_mut().select_pane_reference(&original, true);
+        }
+        eprintln!("zentty-linux: worklane-peek=cancel");
+    }
+
+    fn spatially_navigate_peek(shell: &Rc<RefCell<Self>>, direction: PeekSpatialDirection) {
+        let phase = shell.borrow().peek_phase.clone();
+        let PeekPhase::Peeking {
+            original,
+            current,
+            traversal,
+        } = phase
+        else {
+            return;
+        };
+        let Some(target) =
+            worklane_peek::spatial_target(shell.borrow().state.worklanes(), &current, direction)
+        else {
+            return;
+        };
+        shell.borrow_mut().peek_phase = PeekPhase::Peeking {
+            original,
+            current: target.clone(),
+            traversal,
+        };
+        eprintln!(
+            "zentty-linux: worklane-peek=spatial worklane={} pane={}",
+            target.worklane_id, target.pane_id
+        );
+        Self::refresh_peek_view(shell);
+    }
+
+    fn preview_peek_selection(shell: &Rc<RefCell<Self>>, target: &PaneReference) {
+        let phase = shell.borrow().peek_phase.clone();
+        let PeekPhase::Peeking {
+            original,
+            traversal,
+            ..
+        } = phase
+        else {
+            return;
+        };
+        if !traversal.contains(target) {
+            return;
+        }
+        shell.borrow_mut().peek_phase = PeekPhase::Peeking {
+            original,
+            current: target.clone(),
+            traversal,
+        };
+        eprintln!(
+            "zentty-linux: worklane-peek=click worklane={} pane={}",
+            target.worklane_id, target.pane_id
+        );
+        Self::refresh_peek_view(shell);
+    }
+
+    fn refresh_peek_view(shell: &Rc<RefCell<Self>>) {
+        let selected = shell.borrow().peek_phase.selected().cloned();
+        let Some(selected) = selected else {
+            return;
+        };
+        let previews = shell.borrow().peek_previews();
+        let weak = Rc::downgrade(shell);
+        shell
+            .borrow()
+            .peek_view
+            .render(previews, &selected, move |target| {
+                if let Some(shell) = weak.upgrade() {
+                    Self::preview_peek_selection(&shell, &target);
+                }
+            });
     }
 
     fn install_pane_scroll_switching(shell: &Rc<RefCell<Self>>) {
@@ -1365,6 +1609,74 @@ impl ApplicationShell {
         self.focus_selected_surface();
     }
 
+    fn pane_references_in_sidebar_order(&self) -> Vec<PaneReference> {
+        self.state
+            .worklanes()
+            .iter()
+            .flat_map(|worklane| {
+                worklane.columns.iter().flat_map(|column| {
+                    column
+                        .panes
+                        .iter()
+                        .map(|pane| PaneReference::new(&worklane.id, &pane.id))
+                })
+            })
+            .collect()
+    }
+
+    fn current_pane_reference(&self) -> Option<PaneReference> {
+        self.state
+            .focused_pane_id()
+            .map(|pane_id| PaneReference::new(self.state.active_worklane_id(), pane_id))
+    }
+
+    fn select_pane_reference(&mut self, target: &PaneReference, focus_terminal: bool) {
+        let previous_worklane = self.state.active_worklane_id().to_owned();
+        if !self
+            .state
+            .select_worklane_and_pane(&target.worklane_id, &target.pane_id)
+        {
+            return;
+        }
+        if previous_worklane == self.state.active_worklane_id() {
+            self.refresh_sidebar_metadata();
+        } else {
+            self.render();
+        }
+        if focus_terminal {
+            self.focus_selected_surface();
+        }
+    }
+
+    fn peek_previews(&self) -> Vec<PanePreview> {
+        self.state
+            .worklanes()
+            .iter()
+            .enumerate()
+            .flat_map(|(worklane_index, worklane)| {
+                let worklane_title = worklane
+                    .title
+                    .clone()
+                    .unwrap_or_else(|| format!("Worklane {}", worklane_index + 1));
+                worklane.columns.iter().flat_map(move |column| {
+                    let worklane_title = worklane_title.clone();
+                    column.panes.iter().filter_map(move |pane| {
+                        let terminal = self.surfaces.get(&pane.id)?.widget().clone();
+                        Some(PanePreview {
+                            reference: PaneReference::new(&worklane.id, &pane.id),
+                            worklane_title: worklane_title.clone(),
+                            pane_title: pane
+                                .custom_title
+                                .clone()
+                                .unwrap_or_else(|| pane.live_title.clone()),
+                            terminal,
+                        })
+                    })
+                })
+            })
+            .collect()
+    }
+
     fn refresh_pane_presentation(&self) {
         let focused_pane_id = self.state.focused_pane_id();
         let worklane_color = self.state.active_worklane().color;
@@ -1477,6 +1789,17 @@ fn install_sidebar_width_tracking(
         }
         eprintln!("zentty-linux: sidebar-preferred-width={clamped}");
     });
+}
+
+fn build_root(chrome: &WindowChrome, body: &gtk::Paned) -> (gtk::Overlay, WorklanePeekView) {
+    let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    root.append(chrome.widget());
+    root.append(body);
+    let overlay = gtk::Overlay::new();
+    overlay.set_child(Some(&root));
+    let peek_view = WorklanePeekView::new();
+    overlay.add_overlay(peek_view.widget());
+    (overlay, peek_view)
 }
 
 fn clear_pane_columns(container: &gtk::Box) {

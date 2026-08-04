@@ -6,6 +6,7 @@ mod pane_scroll_switch;
 mod sidebar;
 mod source_ui;
 mod window_chrome;
+mod worklane_peek;
 
 use application_shell::ApplicationShell;
 use gtk::glib;

@@ -5370,15 +5370,59 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   and types through both resulting PTY selections. Pure gesture tests cover
   threshold accumulation, one-switch shielding, cooldown, Shift-wheel, and
   vertical-scrollback pass-through.
-- **Remaining boundary:** Linux currently performs the quick traversal on the
-  Tab key press rather than deferring it to Control release. Hold detection,
-  the 0.2-second arming threshold, Worklane Peek overlay, input shielding,
-  spatial arrow/gesture navigation, cancellation with Escape, transition
-  animation, and reduced-motion behavior remain issue #16 work. A physical
-  precision-touchpad route under Wayland and explicit natural-scroll-direction
-  qualification also remain; X11 horizontal wheel evidence does not silently
-  promote those environments. This slice is production traversal, not a claim
-  that Worklane Peek has been ported.
+- **Superseded boundary:** Quick traversal release timing, hold detection, the
+  picker overlay, keyboard spatial navigation, Escape cancellation, and click
+  preview were delivered and tested in the following record. Precision swipe,
+  natural-scroll qualification, transitions/reduced motion, project/attention
+  context, multiple-window targeting, and proof of inactive-worklane live GL
+  thumbnails remain issue #16 work.
+
+### DOGFOOD-2026-08-04-WORKLANE-PEEK: port the gesture, not a generic switcher
+
+- **Five-feature batch:** Linux now (1) defers a quick Ctrl-Tab or
+  Ctrl-Shift-Tab step until Control release, (2) abandons that deferred step
+  and opens Worklane Peek at the original pane after the source 200ms hold,
+  (3) previews repeated Tab traversal and source-shaped spatial arrow targets,
+  (4) commits on Control release or restores the original pane with Escape
+  while shielding ordinary terminal key input, and (5) preview-selects an
+  exact pane card with the pointer before the same release-to-commit step.
+- **Source fidelity repair:** The preceding traversal slice switched on Tab
+  press and explicitly documented that compromise. Porting
+  `WorklanePeekController` showed why it could not remain: the first step must
+  be deferred so a hold can open on the current pane rather than visibly
+  jumping away and back. The GTK controller now preserves the source's idle,
+  armed, and peeking phases rather than layering a timer onto immediate
+  traversal.
+- **Real preview mechanism and uncertainty:** Each card uses GTK's
+  `WidgetPaintable` over the existing Ghostty widget, so the overlay never
+  reparents a surface or creates a replacement terminal. The active
+  worklane's mapped terminals therefore remain real paintable sources. This
+  run does **not** yet prove that an unparented inactive-worklane GL surface
+  produces a continuously live thumbnail; that gap remains explicit in the
+  feature inventory rather than treating a title fallback as equivalent.
+- **Real-system evidence:** The controlled X11 workflow drives physical quick
+  chords while a real Ghostty PTY owns focus; holds Control across Tab for more
+  than 200ms; spatially selects the left pane; releases Control and types
+  through the selected PTY; reopens, advances, cancels with Escape and types
+  through the restored PTY; then clicks a visible card at real window
+  coordinates and commits it. The scenario retains its five real terminal
+  children and all prior resize, sidebar, history, contextual-control,
+  horizontal-scroll, GL-reload, and lifecycle assertions. Pure Rust tests pin
+  wrap order and spatial column/split/worklane rules to the checked-in Swift
+  source. The complete Rust workspace tests and pedantic Clippy pass.
+- **Discovery:** A GTK overlay can cover a still-focused terminal without
+  stealing keyboard focus. That is useful for restoration but dangerous by
+  default: unhandled key events would still reach Ghostty. The window's capture
+  controller therefore consumes every ordinary key press while phase is
+  peeking, and the visible backdrop is itself a pointer target. Tab, Escape,
+  Control release, spatial arrows, and pane-card clicks are the only picker
+  routes currently admitted.
+- **Remaining boundary:** Precision touchpad spatial swipe and natural-scroll
+  behavior, Worklane Peek transitions and reduced-motion behavior,
+  project/attention icons, multi-window active-target correctness, and direct
+  inactive-worklane live-preview evidence are not part of this batch. The
+  authoritative feature remains `PARTIAL`; these omissions are not silently
+  promoted by the passing X11 picker scenario.
 
 ## AI disclosure
 
