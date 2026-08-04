@@ -4834,8 +4834,8 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   real PTY, and counted Ghostty GL initialization and child-process starts. It
   failed first because the product exposed neither the intended allocation nor
   the required receipt.
-- **Repair:** The top-level layout now uses a GTK split view with a 250-pixel
-  initial sidebar position, a non-expanding start child, and an explicitly
+- **Repair:** The top-level layout now uses a GTK split view with a tactical
+  250-pixel initial sidebar position, a non-expanding start child, and an explicitly
   shrinkable sidebar so label natural widths cannot consume terminal space.
   Sidebar-only state changes—terminal titles, worklane title/color/order, and
   same-worklane selection—rebuild only sidebar presentation and never detach a
@@ -4864,6 +4864,57 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   from ordinary resize/title/sidebar updates but should eventually become a
   keyed incremental renderer. The present fix does not claim that compositor,
   fractional-scaling, or full topology qualification cells are complete.
+
+### DOGFOOD-2026-08-04-LEADING-CHROME: source controls must be functional and must return input
+
+- **Source boundary:** `LeadingChromeControlsBar.swift`,
+  `SidebarToggleButton.swift`, `PaneNavigationButtons.swift`, and the repository
+  hero establish the leading order: sidebar toggle, pane arrangement,
+  back/forward navigation, and notification inbox. The Linux window had none of
+  that chrome. A new focused `window_chrome.rs` component owns this presentation
+  rather than expanding the application composition file.
+- **Test-first failure:** The maintained real-X11 source-UX scenario first
+  required the ordered control receipt, real pointer toggling, PTY input after
+  hide/show, and unchanged GL/child ownership. It failed against the staged
+  product because the chrome did not exist. The delivered toggle and arrange
+  controls are enabled; back, forward, and notifications are visibly disabled
+  rather than falsely advertising unimplemented behavior. Every control has a
+  symbolic icon, tooltip, accessible button role, and accessible label.
+- **Interaction discovery:** Extending the scenario exposed a race hidden by
+  earlier happy-path timing. An OSC title receipt was emitted before its queued
+  sidebar rebuild; a pointer could open a row menu just as the rebuild destroyed
+  that menu. Metadata-only changes now update named worklane/pane widgets in
+  place—including title, focus marker, active state, and color—and fall back to
+  a rebuild only when the expected topology is absent.
+- **Focus discovery:** The first real arrange-menu activation created a third
+  Ghostty surface but left its GTK popover open. The popover retained keyboard
+  input, so the new PTY never received the test line and the product correctly
+  failed to finish. Arrange-menu actions now explicitly dismiss their popover;
+  the controlled test requires the close receipt and proves input by having the
+  real child publish an OSC title derived from the typed line.
+- **Harness findings:** The initial guessed arrange-menu coordinate missed the
+  item. A temporary controlled hit-target probe measured the actual popover
+  state and action receipts; the maintained test now waits for an explicit open
+  receipt before clicking the measured item. Xvfb also clamped an impossible
+  1600-pixel request to its 1280-pixel screen, so the maintained external-resize
+  request is now an honest 1200 pixels. Neither miss was converted into a pass.
+- **Real-system evidence:** The staged ReleaseSafe X11 product now survives
+  external resize, two real OSC title changes, real-pointer sidebar hide/show,
+  keyboard return to the original PTY, a real pane-row context split, a real
+  leading-chrome arrange split, and input into all three PTYs. Before topology
+  mutations, the original terminal retains one GL presentation and one child.
+  Rust fmt/clippy/unit/doc tests plus staged smoke, five-pane workspace, and
+  source-envelope restore scenarios pass under controlled X11 and Wayland.
+- **Visual evidence boundary:** The staged build was launched on the real GNOME
+  desktop for dogfooding, but GNOME denied programmatic `ScreenshotWindow`
+  access and no trusted screenshot utility is installed. This slice therefore
+  claims semantic and interaction coverage, not a reviewed desktop screenshot.
+- **Remaining parity:** Source inspection corrected another assumption: Zentty's
+  default sidebar width is 280 points, clamped to 180–420 and at most one third
+  of available width, with persisted configured width. The current 250-pixel
+  tactical width is no longer allowed to be described as source parity. Width
+  preference/persistence, hover-peek motion, active-row reveal, full arrange
+  layouts, navigation history, and notification behavior remain issue #16 work.
 
 ## AI disclosure
 

@@ -12,8 +12,9 @@ use zentty_core::{
 };
 use zentty_ghostty::{GhosttyRuntime, GhosttySurface, SurfaceConfig};
 
-use crate::sidebar;
+use crate::{sidebar, window_chrome::WindowChrome};
 
+const ACTION_TOGGLE_SIDEBAR: &str = "toggle-sidebar";
 const ACTION_NEW_WORKLANE: &str = "new-worklane";
 const ACTION_SELECT_WORKLANE: &str = "select-worklane";
 const ACTION_SPLIT_PANE_RIGHT: &str = "split-pane-right";
@@ -32,6 +33,7 @@ const ACTION_SELECT_PANE: &str = "select-pane";
 
 pub(crate) struct ApplicationShell {
     window: gtk::Window,
+    chrome: WindowChrome,
     sidebar: gtk::Box,
     sidebar_scroll: gtk::ScrolledWindow,
     pane_box: gtk::Box,
@@ -63,10 +65,10 @@ impl ApplicationShell {
         window.set_default_size(1000, 700);
         sidebar::install_styles();
 
-        let root = gtk::Paned::new(gtk::Orientation::Horizontal);
-        root.set_position(250);
-        root.set_resize_start_child(false);
-        root.set_shrink_start_child(true);
+        let body = gtk::Paned::new(gtk::Orientation::Horizontal);
+        body.set_position(250);
+        body.set_resize_start_child(false);
+        body.set_shrink_start_child(true);
         let sidebar = gtk::Box::new(gtk::Orientation::Vertical, 6);
         let sidebar_scroll = gtk::ScrolledWindow::new();
         sidebar_scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
@@ -81,8 +83,13 @@ impl ApplicationShell {
         pane_box.set_hexpand(true);
         pane_box.set_vexpand(true);
         content.append(&pane_box);
-        root.set_start_child(Some(&sidebar_scroll));
-        root.set_end_child(Some(&content));
+        body.set_start_child(Some(&sidebar_scroll));
+        body.set_end_child(Some(&content));
+
+        let chrome = WindowChrome::new();
+        let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        root.append(chrome.widget());
+        root.append(&body);
         window.set_child(Some(&root));
 
         let window_template = restored_window.unwrap_or_else(default_window_recipe);
@@ -113,6 +120,7 @@ impl ApplicationShell {
             .collect::<Vec<_>>();
         let shell = Rc::new(RefCell::new(Self {
             window,
+            chrome,
             sidebar,
             sidebar_scroll,
             pane_box,
@@ -238,6 +246,32 @@ impl ApplicationShell {
     fn install_actions(shell: &Rc<RefCell<Self>>) {
         let group = gio::SimpleActionGroup::new();
 
+        let toggle_sidebar = gio::SimpleAction::new(ACTION_TOGGLE_SIDEBAR, None);
+        let weak = Rc::downgrade(shell);
+        toggle_sidebar.connect_activate(move |_, _| {
+            let Some(shell) = weak.upgrade() else {
+                return;
+            };
+            let visible = {
+                let shell = shell.borrow();
+                let visible = !shell.sidebar_scroll.is_visible();
+                shell.sidebar_scroll.set_visible(visible);
+                eprintln!(
+                    "zentty-linux: sidebar-visibility={}",
+                    if visible { "pinned-open" } else { "hidden" }
+                );
+                visible
+            };
+            let weak = Rc::downgrade(&shell);
+            glib::idle_add_local_once(move || {
+                if let Some(shell) = weak.upgrade() {
+                    shell.borrow().focus_selected_surface();
+                }
+            });
+            eprintln!("zentty-linux: action=toggle-sidebar visible={visible}");
+        });
+        group.add_action(&toggle_sidebar);
+
         let new_worklane = gio::SimpleAction::new(ACTION_NEW_WORKLANE, None);
         let weak = Rc::downgrade(shell);
         new_worklane.connect_activate(move |_, _| {
@@ -265,7 +299,7 @@ impl ApplicationShell {
                 if changed {
                     shell.render();
                 } else {
-                    shell.render_sidebar();
+                    shell.refresh_sidebar_metadata();
                 }
                 shell.focus_selected_surface();
             }
@@ -328,7 +362,7 @@ impl ApplicationShell {
             let mut shell = shell.borrow_mut();
             if shell.state.set_worklane_title(&worklane_id, Some(&title)) {
                 eprintln!("zentty-linux: action=rename-worklane id={worklane_id} title={title:?}");
-                shell.render_sidebar();
+                shell.refresh_sidebar_metadata();
             }
         });
         group.add_action(&rename_worklane);
@@ -349,7 +383,7 @@ impl ApplicationShell {
                 if worklane_changed {
                     shell.render();
                 } else {
-                    shell.render_sidebar();
+                    shell.refresh_sidebar_metadata();
                 }
                 shell.focus_selected_surface();
             }
@@ -373,7 +407,7 @@ impl ApplicationShell {
                     "zentty-linux: action=cycle-worklane-color id={active_id} color={}",
                     next.map_or("none", WorklaneColor::as_str)
                 );
-                shell.render_sidebar();
+                shell.refresh_sidebar_metadata();
             }
         });
         Self::add_simple_action(shell, group, ACTION_MOVE_WORKLANE_UP, |shell| {
@@ -607,7 +641,7 @@ impl ApplicationShell {
                         return;
                     }
                     if shell.state.set_pane_title(&title_id, &title) {
-                        shell.render_sidebar();
+                        shell.refresh_sidebar_metadata();
                     }
                 }
             });
@@ -648,7 +682,7 @@ impl ApplicationShell {
                     let changed = shell.borrow_mut().state.select_pane(&focus_id);
                     if changed {
                         eprintln!("zentty-linux: focus-pane pane={focus_id}");
-                        shell.borrow().render_sidebar();
+                        shell.borrow().refresh_sidebar_metadata();
                     }
                 }
             });
@@ -743,7 +777,17 @@ impl ApplicationShell {
     }
 
     fn render_sidebar(&self) {
-        sidebar::render(&self.sidebar, &self.window, &self.state.sidebar_summaries());
+        let summaries = self.state.sidebar_summaries();
+        sidebar::render(&self.sidebar, &self.window, &summaries);
+        self.chrome.render(&summaries);
+    }
+
+    fn refresh_sidebar_metadata(&self) {
+        let summaries = self.state.sidebar_summaries();
+        if !sidebar::update_metadata(&self.sidebar, &summaries) {
+            sidebar::render(&self.sidebar, &self.window, &summaries);
+        }
+        self.chrome.render(&summaries);
     }
 
     fn focus_selected_surface(&self) {

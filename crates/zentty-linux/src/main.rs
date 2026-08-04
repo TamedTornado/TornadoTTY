@@ -2,6 +2,7 @@
 
 mod application_shell;
 mod sidebar;
+mod window_chrome;
 
 use application_shell::ApplicationShell;
 use gtk::glib;

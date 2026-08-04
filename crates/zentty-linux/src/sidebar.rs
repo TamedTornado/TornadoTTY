@@ -80,7 +80,10 @@ pub(crate) fn install_styles() {
          .pane-marker { color: #69db7c; }\n\
          .sidebar-create-worklane { color: #d8dbe1; border-radius: 7px; padding: 5px 8px; }\n\
          .sidebar-pane-actions { color: #c7cbd2; min-width: 26px; min-height: 26px; padding: 2px; }\n\
-         .pane-context-action { padding: 5px 8px; }",
+         .pane-context-action { padding: 5px 8px; }\n\
+         .zentty-window-chrome { background: #15171a; min-height: 38px; padding: 3px 10px; }\n\
+         .zentty-window-context { color: #aeb4be; font-weight: 600; }\n\
+         .zentty-chrome-icon { color: #d5d9df; min-width: 28px; min-height: 28px; padding: 0; border-radius: 7px; }",
     );
     gtk::style_context_add_provider_for_display(
         &display,
@@ -130,6 +133,7 @@ fn make_worklane_card(
     index: usize,
 ) -> gtk::Box {
     let card = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    card.set_widget_name(&widget_name("worklane-card", &summary.worklane_id));
     card.add_css_class("worklane-card");
     if summary.is_active {
         card.add_css_class("worklane-card-active");
@@ -151,10 +155,12 @@ fn make_worklane_card(
         .clone()
         .unwrap_or_else(|| format!("Worklane {}", index + 1));
     let top_label = gtk::Label::new(Some(&top));
+    top_label.set_widget_name(&widget_name("worklane-title", &summary.worklane_id));
     top_label.add_css_class("worklane-title");
     top_label.set_xalign(0.0);
     top_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
     let context = gtk::Label::new(Some(&summary.primary_text));
+    context.set_widget_name(&widget_name("worklane-context", &summary.worklane_id));
     context.add_css_class("worklane-context");
     context.set_xalign(0.0);
     context.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
@@ -172,6 +178,7 @@ fn make_worklane_card(
 
     for pane in &summary.pane_rows {
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 2);
+        row.set_widget_name(&widget_name("pane-row", &pane.pane_id));
         row.add_css_class("pane-row");
         if pane.is_focused {
             row.add_css_class("pane-row-focused");
@@ -185,8 +192,10 @@ fn make_worklane_card(
         ));
         let pane_content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         let marker = gtk::Label::new(Some(if pane.is_focused { "●" } else { "○" }));
+        marker.set_widget_name(&widget_name("pane-marker", &pane.pane_id));
         marker.add_css_class("pane-marker");
         let pane_title = gtk::Label::new(Some(&pane.primary_text));
+        pane_title.set_widget_name(&widget_name("pane-title", &pane.pane_id));
         pane_title.set_xalign(0.0);
         pane_title.set_hexpand(true);
         pane_title.set_ellipsize(gtk::pango::EllipsizeMode::End);
@@ -218,6 +227,97 @@ fn make_worklane_card(
         summary.top_label
     );
     card
+}
+
+pub(crate) fn update_metadata(sidebar: &gtk::Box, summaries: &[SidebarWorklaneSummary]) -> bool {
+    for (index, summary) in summaries.iter().enumerate() {
+        let Some(card) = find_named_widget(
+            sidebar.upcast_ref(),
+            &widget_name("worklane-card", &summary.worklane_id),
+        ) else {
+            return false;
+        };
+        card.remove_css_class("worklane-card-active");
+        for color in zentty_core::WorklaneColor::ALL {
+            card.remove_css_class(&format!("worklane-card-{}", color.as_str()));
+        }
+        if summary.is_active {
+            card.add_css_class("worklane-card-active");
+        }
+        if let Some(color) = summary.color {
+            card.add_css_class(&format!("worklane-card-{}", color.as_str()));
+        }
+
+        let Some(title) = find_named_label(
+            sidebar.upcast_ref(),
+            &widget_name("worklane-title", &summary.worklane_id),
+        ) else {
+            return false;
+        };
+        let title_text = summary
+            .top_label
+            .clone()
+            .unwrap_or_else(|| format!("Worklane {}", index + 1));
+        title.set_text(&title_text);
+        let Some(context) = find_named_label(
+            sidebar.upcast_ref(),
+            &widget_name("worklane-context", &summary.worklane_id),
+        ) else {
+            return false;
+        };
+        context.set_text(&summary.primary_text);
+
+        for pane in &summary.pane_rows {
+            let Some(row) = find_named_widget(
+                sidebar.upcast_ref(),
+                &widget_name("pane-row", &pane.pane_id),
+            ) else {
+                return false;
+            };
+            if pane.is_focused {
+                row.add_css_class("pane-row-focused");
+            } else {
+                row.remove_css_class("pane-row-focused");
+            }
+            let Some(marker) = find_named_label(
+                sidebar.upcast_ref(),
+                &widget_name("pane-marker", &pane.pane_id),
+            ) else {
+                return false;
+            };
+            marker.set_text(if pane.is_focused { "●" } else { "○" });
+            let Some(title) = find_named_label(
+                sidebar.upcast_ref(),
+                &widget_name("pane-title", &pane.pane_id),
+            ) else {
+                return false;
+            };
+            title.set_text(&pane.primary_text);
+        }
+    }
+    true
+}
+
+fn widget_name(kind: &str, id: &str) -> String {
+    format!("zentty-{kind}-{id}")
+}
+
+fn find_named_label(root: &gtk::Widget, name: &str) -> Option<gtk::Label> {
+    find_named_widget(root, name)?.downcast::<gtk::Label>().ok()
+}
+
+fn find_named_widget(root: &gtk::Widget, name: &str) -> Option<gtk::Widget> {
+    if root.widget_name() == name {
+        return Some(root.clone());
+    }
+    let mut child = root.first_child();
+    while let Some(widget) = child {
+        if let Some(found) = find_named_widget(&widget, name) {
+            return Some(found);
+        }
+        child = widget.next_sibling();
+    }
+    None
 }
 
 fn make_pane_context_menu(window: &gtk::Window, worklane_id: &str, pane_id: &str) -> gtk::Popover {

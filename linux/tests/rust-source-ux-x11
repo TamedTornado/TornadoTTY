@@ -48,7 +48,7 @@ GDK_SCALE=1 \
 GDK_DPI_SCALE=1 \
 LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
     "${product}" \
-    --command 'printf "\033]2;zentty-title-one\a"; sleep 0.2; printf "\033]2;zentty-title-two\a"; sleep 5' \
+    --command 'printf "\033]2;zentty-title-one\a"; sleep 0.2; printf "\033]2;zentty-title-two\a"; IFS= read -r line; printf "\033]2;focus:%s\a" "$line"; sleep 5' \
     --state-directory "${state_directory}" \
     --no-session-restore \
     --quit-after-last-terminal-exit >"${log}" 2>&1 &
@@ -75,9 +75,9 @@ grep -Fxq 'zentty-linux: title-pane=pane-1 value=zentty-title-two' "${log}" ||
     fail "the real terminal did not deliver both title changes"
 
 # The controlled Xvfb profile fixes scale and starts at 1000x700. Widen the
-# real window first: the sidebar must remain at its 250px product width rather
-# than consuming the terminal's additional space from its natural label width.
-xdotool windowsize --sync "${window_id}" 1600 700
+# real window first: the sidebar must remain at the slice's tactical 250px
+# width rather than consuming terminal space from its natural label width.
+xdotool windowsize --sync "${window_id}" 1200 700
 sleep 0.2
 latest_sidebar_width="$(grep -F 'zentty-linux: sidebar-width=' "${log}" | tail -1)"
 [[ "${latest_sidebar_width}" == 'zentty-linux: sidebar-width=250' ]] ||
@@ -87,12 +87,90 @@ latest_sidebar_width="$(grep -F 'zentty-linux: sidebar-width=' "${log}" | tail -
 [[ "$(grep -Fc 'info(io_exec): started subcommand' "${log}" || true)" -eq 1 ]] ||
     fail "title/sidebar updates restarted the real terminal child"
 
+# Exercise the source leading-chrome sidebar toggle with the real pointer. The
+# sidebar must leave and return without moving chrome, reloading Ghostty's GL
+# presentation, restarting the PTY, or retaining keyboard focus itself.
+grep -Fxq 'zentty-linux: chrome-controls=toggle-sidebar,arrange-panes,back,forward,notifications' "${log}" ||
+    fail "the source leading chrome control group was not presented"
+xdotool mousemove --window "${window_id}" 16 18 click 1
+for _ in $(seq 1 100); do
+    grep -Fxq 'zentty-linux: sidebar-visibility=hidden' "${log}" && break
+    sleep 0.05
+done
+grep -Fxq 'zentty-linux: sidebar-visibility=hidden' "${log}" ||
+    fail "the real leading-chrome toggle did not hide the sidebar"
+xdotool mousemove --window "${window_id}" 16 18 click 1
+for _ in $(seq 1 100); do
+    grep -Fxq 'zentty-linux: sidebar-visibility=pinned-open' "${log}" && break
+    sleep 0.05
+done
+grep -Fxq 'zentty-linux: sidebar-visibility=pinned-open' "${log}" ||
+    fail "the leading chrome did not remain reachable while the sidebar was hidden"
+xdotool type --window "${window_id}" --delay 10 'retained-focus'
+xdotool key --window "${window_id}" Return
+for _ in $(seq 1 100); do
+    grep -Fxq 'zentty-linux: title-pane=pane-1 value=focus:retained-focus' "${log}" && break
+    sleep 0.05
+done
+grep -Fxq 'zentty-linux: title-pane=pane-1 value=focus:retained-focus' "${log}" ||
+    fail "keyboard input did not return to the real Ghostty PTY after toggling the sidebar"
+[[ "$(grep -Fc 'info(opengl): loaded OpenGL' "${log}" || true)" -eq 1 ]] ||
+    fail "sidebar visibility reattached the Ghostty widget"
+[[ "$(grep -Fc 'zentty-linux: sidebar-card id=' "${log}" || true)" -eq 1 ]] ||
+    fail "metadata-only title/focus changes destroyed and rebuilt the live sidebar row"
+
 # Drive the pane-row overflow icon and its first contextual item through the
 # real X11 pointer. Direct model/action activation would not prove that the
 # replacement UX remains reachable at the expected sidebar geometry.
-xdotool mousemove --window "${window_id}" 220 132 click 1
+xdotool mousemove --window "${window_id}" 220 170 click 1
 sleep 0.2
-xdotool mousemove --window "${window_id}" 220 195 click 1
+xdotool mousemove --window "${window_id}" 220 233 click 1
+
+for _ in $(seq 1 100); do
+    grep -Fxq 'zentty-linux: terminal-ready-pane=pane-2' "${log}" && break
+    sleep 0.05
+done
+grep -Fxq 'zentty-linux: terminal-ready-pane=pane-2' "${log}" ||
+    fail "the contextual split did not focus a second real terminal"
+xdotool type --window "${window_id}" --delay 10 'second-pane'
+xdotool key --window "${window_id}" Return
+for _ in $(seq 1 100); do
+    grep -Fxq 'zentty-linux: title-pane=pane-2 value=focus:second-pane' "${log}" && break
+    sleep 0.05
+done
+grep -Fxq 'zentty-linux: title-pane=pane-2 value=focus:second-pane' "${log}" ||
+    fail "the contextual split did not leave input focused in its new real PTY"
+
+# The source arrange-panes icon is not decorative. Open its real popover and
+# drive the first layout command through the pointer into a third Ghostty PTY.
+xdotool mousemove --window "${window_id}" 52 18 click 1
+for _ in $(seq 1 100); do
+    grep -Fxq 'zentty-linux: chrome-popover=arrange-panes state=open' "${log}" && break
+    sleep 0.05
+done
+grep -Fxq 'zentty-linux: chrome-popover=arrange-panes state=open' "${log}" ||
+    fail "the real arrange-panes icon did not open its popover"
+xdotool mousemove --window "${window_id}" 100 80 click 1
+for _ in $(seq 1 100); do
+    grep -Fxq 'zentty-linux: terminal-ready-pane=pane-3' "${log}" && break
+    sleep 0.05
+done
+grep -Fxq 'zentty-linux: terminal-ready-pane=pane-3' "${log}" ||
+    fail "the real arrange-panes popover did not create a third terminal"
+for _ in $(seq 1 100); do
+    [[ "$(grep -Fxc 'zentty-linux: chrome-popover=arrange-panes state=closed' "${log}" || true)" -ge 1 ]] && break
+    sleep 0.05
+done
+[[ "$(grep -Fxc 'zentty-linux: chrome-popover=arrange-panes state=closed' "${log}" || true)" -ge 1 ]] ||
+    fail "the arrange-panes popover retained keyboard input after activation"
+xdotool type --window "${window_id}" --delay 10 'arranged-pane'
+xdotool key --window "${window_id}" Return
+for _ in $(seq 1 100); do
+    grep -Fxq 'zentty-linux: title-pane=pane-3 value=focus:arranged-pane' "${log}" && break
+    sleep 0.05
+done
+grep -Fxq 'zentty-linux: title-pane=pane-3 value=focus:arranged-pane' "${log}" ||
+    fail "keyboard input did not reach the arranged real Ghostty PTY"
 
 set +e
 timeout --foreground --kill-after=2s 12s tail --pid="${product_pid}" -f /dev/null
@@ -110,14 +188,16 @@ product_pid=""
 
 grep -Fxq 'zentty-linux: action=split-pane-right pane=pane-2' "${log}" ||
     fail "the contextual New Pane Right item did not activate its product action"
-[[ "$(grep -Fxc 'zentty-linux: terminal-ready' "${log}" || true)" -eq 2 ]] ||
-    fail "the pointer-driven split did not initialize a second real Ghostty terminal"
-[[ "$(grep -Fxc 'zentty-linux: child-exited' "${log}" || true)" -eq 2 ]] ||
-    fail "both real PTY children did not exit through the product"
-[[ "$(grep -Fc 'info(io_exec): started subcommand' "${log}" || true)" -eq 2 ]] ||
+grep -Fxq 'zentty-linux: action=split-pane-right pane=pane-3' "${log}" ||
+    fail "the arrange-panes icon did not activate its real split action"
+[[ "$(grep -Fxc 'zentty-linux: terminal-ready' "${log}" || true)" -eq 3 ]] ||
+    fail "the pointer-driven controls did not initialize three real Ghostty terminals"
+[[ "$(grep -Fxc 'zentty-linux: child-exited' "${log}" || true)" -eq 3 ]] ||
+    fail "all three real PTY children did not exit through the product"
+[[ "$(grep -Fc 'info(io_exec): started subcommand' "${log}" || true)" -eq 3 ]] ||
     fail "the scenario did not retain exactly one child process per real pane"
 if grep -Eq 'panicked at|thread caused non-unwinding panic|RefCell already borrowed|CRITICAL: Gtk|has a parent GtkBox' "${log}"; then
     fail "the contextual action reported a panic or GTK lifecycle critical"
 fi
 
-echo "Rust source UX passed: x11, external-pointer=context-menu, split=real-ghostty-pty"
+echo "Rust source UX passed: x11, leading-chrome=real-pointer, focus=real-pty, contextual-and-arrange-splits=real"
