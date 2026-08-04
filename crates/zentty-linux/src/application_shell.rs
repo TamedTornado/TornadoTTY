@@ -7,8 +7,8 @@ use gtk::gio;
 use gtk::glib::{self, variant::ToVariant};
 use gtk::prelude::*;
 use zentty_core::{
-    ClosePaneOutcome, ColumnRecipe, PaneRecipe, WindowRecipe, WorklaneColor, WorklaneRecipe,
-    WorkspaceState,
+    ClosePaneOutcome, ColumnRecipe, PaneRecipe, SidebarWidthPreference, WindowRecipe,
+    WorklaneColor, WorklaneRecipe, WorkspaceState,
 };
 use zentty_ghostty::{GhosttyRuntime, GhosttySurface, SurfaceConfig};
 
@@ -34,6 +34,7 @@ const ACTION_SELECT_PANE: &str = "select-pane";
 pub(crate) struct ApplicationShell {
     window: gtk::Window,
     chrome: WindowChrome,
+    body: gtk::Paned,
     sidebar: gtk::Box,
     sidebar_scroll: gtk::ScrolledWindow,
     pane_box: gtk::Box,
@@ -49,6 +50,8 @@ pub(crate) struct ApplicationShell {
     next_pane_number: usize,
     window_template: WindowRecipe,
     shutting_down: bool,
+    preferred_sidebar_width: Rc<Cell<i32>>,
+    adjusting_sidebar_width: Rc<Cell<bool>>,
 }
 
 impl ApplicationShell {
@@ -66,7 +69,7 @@ impl ApplicationShell {
         sidebar::install_styles();
 
         let body = gtk::Paned::new(gtk::Orientation::Horizontal);
-        body.set_position(250);
+        body.set_position(SidebarWidthPreference::DEFAULT);
         body.set_resize_start_child(false);
         body.set_shrink_start_child(true);
         let sidebar = gtk::Box::new(gtk::Orientation::Vertical, 6);
@@ -118,9 +121,12 @@ impl ApplicationShell {
             .flat_map(|column| &column.panes)
             .map(|pane| pane.id.clone())
             .collect::<Vec<_>>();
+        let preferred_sidebar_width = Rc::new(Cell::new(SidebarWidthPreference::DEFAULT));
+        let adjusting_sidebar_width = Rc::new(Cell::new(false));
         let shell = Rc::new(RefCell::new(Self {
             window,
             chrome,
+            body: body.clone(),
             sidebar,
             sidebar_scroll,
             pane_box,
@@ -136,7 +142,11 @@ impl ApplicationShell {
             next_pane_number,
             window_template,
             shutting_down: false,
+            preferred_sidebar_width: Rc::clone(&preferred_sidebar_width),
+            adjusting_sidebar_width: Rc::clone(&adjusting_sidebar_width),
         }));
+
+        install_sidebar_width_tracking(&body, preferred_sidebar_width, adjusting_sidebar_width);
 
         Self::install_actions(&shell);
         for pane_id in initial_pane_ids {
@@ -156,6 +166,20 @@ impl ApplicationShell {
 
     pub(crate) fn sidebar_container(&self) -> &gtk::ScrolledWindow {
         &self.sidebar_scroll
+    }
+
+    pub(crate) fn reconcile_sidebar_width(&self) {
+        let available_width = self.body.width();
+        if available_width <= 0 {
+            return;
+        }
+        let target =
+            SidebarWidthPreference::clamped(self.preferred_sidebar_width.get(), available_width);
+        if self.body.position() != target {
+            self.adjusting_sidebar_width.set(true);
+            self.body.set_position(target);
+            self.adjusting_sidebar_width.set(false);
+        }
     }
 
     pub(crate) fn live_children(&self) -> usize {
@@ -854,6 +878,27 @@ impl ApplicationShell {
             .collect::<Vec<_>>()
             .join("|")
     }
+}
+
+fn install_sidebar_width_tracking(
+    body: &gtk::Paned,
+    preferred_width: Rc<Cell<i32>>,
+    adjusting_width: Rc<Cell<bool>>,
+) {
+    body.connect_position_notify(move |body| {
+        if adjusting_width.get() || body.width() <= 0 {
+            return;
+        }
+        let position = body.position();
+        let clamped = SidebarWidthPreference::clamped(position, body.width());
+        preferred_width.set(clamped);
+        if position != clamped {
+            adjusting_width.set(true);
+            body.set_position(clamped);
+            adjusting_width.set(false);
+        }
+        eprintln!("zentty-linux: sidebar-preferred-width={clamped}");
+    });
 }
 
 fn clear_pane_columns(container: &gtk::Box) {

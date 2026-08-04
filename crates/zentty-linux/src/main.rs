@@ -153,11 +153,15 @@ fn run_lifecycle_cycle(
     let tick_loop = main_loop.clone();
     let observed_window = shell.borrow().window().clone();
     let observed_sidebar = shell.borrow().sidebar_container().clone();
+    let ticking_shell = Rc::downgrade(&shell);
     let last_window_size = Rc::new(Cell::new((0, 0)));
     let ticking_window_size = Rc::clone(&last_window_size);
     let last_sidebar_width = Rc::new(Cell::new(0));
     let ticking_sidebar_width = Rc::clone(&last_sidebar_width);
     let tick_source = glib::timeout_add_local(Duration::from_millis(10), move || {
+        if let Some(shell) = ticking_shell.upgrade() {
+            shell.borrow().reconcile_sidebar_width();
+        }
         let window_size = (observed_window.width(), observed_window.height());
         if window_size != ticking_window_size.get() && window_size.0 > 0 && window_size.1 > 0 {
             eprintln!(

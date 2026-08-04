@@ -74,14 +74,49 @@ done
 grep -Fxq 'zentty-linux: title-pane=pane-1 value=zentty-title-two' "${log}" ||
     fail "the real terminal did not deliver both title changes"
 
-# The controlled Xvfb profile fixes scale and starts at 1000x700. Widen the
-# real window first: the sidebar must remain at the slice's tactical 250px
-# width rather than consuming terminal space from its natural label width.
+# The controlled Xvfb profile fixes scale and starts at 1000x700. Exercise the
+# source width contract through real external resizes: default 280px, narrowed
+# to one third of a 600px window, then restored to the preferred width when the
+# window widens again.
 xdotool windowsize --sync "${window_id}" 1200 700
 sleep 0.2
 latest_sidebar_width="$(grep -F 'zentty-linux: sidebar-width=' "${log}" | tail -1)"
-[[ "${latest_sidebar_width}" == 'zentty-linux: sidebar-width=250' ]] ||
-    fail "the sidebar did not retain its intended width after external resize"
+[[ "${latest_sidebar_width}" == 'zentty-linux: sidebar-width=280' ]] ||
+    fail "the sidebar did not use Zentty's preferred width in a wide window"
+xdotool windowsize --sync "${window_id}" 600 700
+sleep 0.2
+latest_sidebar_width="$(grep -F 'zentty-linux: sidebar-width=' "${log}" | tail -1)"
+[[ "${latest_sidebar_width}" == 'zentty-linux: sidebar-width=198' ]] ||
+    fail "the sidebar did not clamp to one third of a narrow window"
+xdotool windowsize --sync "${window_id}" 1200 700
+sleep 0.2
+latest_sidebar_width="$(grep -F 'zentty-linux: sidebar-width=' "${log}" | tail -1)"
+[[ "${latest_sidebar_width}" == 'zentty-linux: sidebar-width=280' ]] ||
+    fail "the preferred sidebar width was lost after temporary window clamping"
+
+# Drag the real GTK divider rather than calling a model setter. The allocation
+# must follow the pointer and the preferred width must survive returning the
+# divider to its source default before the remaining coordinate-driven flow.
+xdotool mousemove --window "${window_id}" 282 350 mousedown 1
+xdotool mousemove --sync --window "${window_id}" 360 350 mouseup 1
+sleep 0.2
+dragged_sidebar_width="$(
+    grep -F 'zentty-linux: sidebar-width=' "${log}" | tail -1 | cut -d= -f2
+)"
+[[ "${dragged_sidebar_width}" =~ ^[0-9]+$ ]] ||
+    fail "the divider drag produced no sidebar allocation receipt"
+(( dragged_sidebar_width >= 350 && dragged_sidebar_width <= 365 )) ||
+    fail "the real divider drag did not resize the sidebar"
+xdotool mousemove --window "${window_id}" "$((dragged_sidebar_width + 2))" 350 mousedown 1
+xdotool mousemove --sync --window "${window_id}" 288 350 mouseup 1
+sleep 0.2
+restored_sidebar_width="$(
+    grep -F 'zentty-linux: sidebar-width=' "${log}" | tail -1 | cut -d= -f2
+)"
+[[ "${restored_sidebar_width}" =~ ^[0-9]+$ ]] ||
+    fail "the restored divider produced no sidebar allocation receipt"
+(( restored_sidebar_width >= 278 && restored_sidebar_width <= 282 )) ||
+    fail "the real divider did not return to Zentty's preferred width"
 [[ "$(grep -Fc 'info(opengl): loaded OpenGL' "${log}" || true)" -eq 1 ]] ||
     fail "title/sidebar updates reattached the Ghostty widget and reloaded its GL presentation"
 [[ "$(grep -Fc 'info(io_exec): started subcommand' "${log}" || true)" -eq 1 ]] ||
@@ -122,9 +157,9 @@ grep -Fxq 'zentty-linux: title-pane=pane-1 value=focus:retained-focus' "${log}" 
 # Drive the pane-row overflow icon and its first contextual item through the
 # real X11 pointer. Direct model/action activation would not prove that the
 # replacement UX remains reachable at the expected sidebar geometry.
-xdotool mousemove --window "${window_id}" 220 170 click 1
+xdotool mousemove --window "${window_id}" 250 170 click 1
 sleep 0.2
-xdotool mousemove --window "${window_id}" 220 233 click 1
+xdotool mousemove --window "${window_id}" 250 233 click 1
 
 for _ in $(seq 1 100); do
     grep -Fxq 'zentty-linux: terminal-ready-pane=pane-2' "${log}" && break

@@ -4938,6 +4938,39 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   slice lands, the static stripe is only a temporary identity-color rendering
   and must not be described as source-accurate selection UX.
 
+### DOGFOOD-2026-08-04-SIDEBAR-WIDTH-POLICY: a width request is not a preference model
+
+- **Source correction:** `SidebarWidthPreference.swift` defines a 280-point
+  default, 180 minimum, 420 maximum, a one-third available-width ceiling, and a
+  200-point minimum content guard. The earlier 250-pixel Linux value fixed the
+  half-window allocation defect but was tactical, not source parity.
+- **Test-first failure:** The real-X11 source-UX scenario required 280 pixels in
+  a 1200-pixel window, 198 pixels after external narrowing to 600, restoration
+  to the preferred 280 after widening, and actual divider manipulation. The
+  staged product failed first at 250 pixels exactly as expected.
+- **Implementation:** A platform-neutral `SidebarWidthPreference` now owns the
+  source constants and clamping. GTK tracks preferred width separately from
+  effective allocation, clamps divider input immediately, and reconciles the
+  effective width as the outer window changes. Temporary window narrowing no
+  longer overwrites the preferred value, and sidebar hide/show does not detach
+  the preference or terminal presentation.
+- **Harness failure:** The first divider-return assertion assumed X11 pointer X
+  equaled the GTK child allocation. The Paned handle contributes an offset, so
+  dragging the pointer to 282 produced a measured 274-pixel child. The test now
+  uses the measured handle offset and continues to assert the allocation
+  receipt; this was a harness geometry error, not a product failure.
+- **Static-analysis failure:** The first direct transcription used floating
+  point multiplication followed by an `i32` cast. Workspace pedantic Clippy
+  rejected the possible truncation before broader regressions ran. Positive
+  pixel widths now use overflow-safe integer `33 / 100` floor arithmetic, which
+  expresses the source one-third policy without a lossy cast. The next Clippy
+  pass then rejected the now-101-line composition constructor; divider tracking
+  was extracted into a focused installer rather than suppressing the limit.
+- **Persistence boundary:** macOS persists the preferred width through app
+  settings. Linux persistence remains intentionally open until issue #20 owns
+  the XDG/TOML settings format; this slice does not create a competing JSON or
+  state-directory preference file merely to turn an acceptance checkbox green.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were

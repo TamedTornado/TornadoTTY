@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 mod session_restore_store;
+mod sidebar_width;
 mod workspace_recipe;
 mod workspace_state;
 
@@ -8,6 +9,7 @@ pub use session_restore_store::{
     LaunchDecision, LaunchReason, PersistenceRequest, SessionRestoreStore,
     SessionRestoreStoreError, SnapshotPersistence,
 };
+pub use sidebar_width::SidebarWidthPreference;
 pub use workspace_recipe::{
     AgentLaunchSnapshot, ColumnRecipe, PaneRecipe, PaneRestoreDraft, RestoreDraftKind, SaveReason,
     SessionRestoreDraftWindow, SessionRestoreEnvelope, WindowFrame, WindowRecipe, WorklaneRecipe,
