@@ -175,6 +175,11 @@ fn arrange_panes_popover() -> gtk::Popover {
             "split-pane-right",
         ),
         (
+            source_ui::ADD_PANE_RIGHT,
+            "application-add-symbolic",
+            "add-pane-right",
+        ),
+        (
             source_ui::NEW_PANE_BELOW,
             "go-down-symbolic",
             "split-pane-below",

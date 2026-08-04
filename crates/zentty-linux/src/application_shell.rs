@@ -7,8 +7,8 @@ use gtk::gio;
 use gtk::glib::{self, variant::ToVariant};
 use gtk::prelude::*;
 use zentty_core::{
-    ClosePaneOutcome, ColumnRecipe, PaneRecipe, SidebarWidthPreference, WindowRecipe,
-    WorklaneColor, WorklaneRecipe, WorkspaceState,
+    ClosePaneOutcome, ColumnRecipe, PaneLayoutPolicy, PaneRecipe, SidebarWidthPreference,
+    WindowRecipe, WorklaneColor, WorklaneRecipe, WorkspaceState,
 };
 use zentty_ghostty::{GhosttyRuntime, GhosttySurface, SurfaceConfig};
 
@@ -22,6 +22,7 @@ const ACTION_TOGGLE_SIDEBAR: &str = "toggle-sidebar";
 const ACTION_NEW_WORKLANE: &str = "new-worklane";
 const ACTION_SELECT_WORKLANE: &str = "select-worklane";
 const ACTION_SPLIT_PANE_RIGHT: &str = "split-pane-right";
+const ACTION_ADD_PANE_RIGHT: &str = "add-pane-right";
 const ACTION_SPLIT_PANE_BELOW: &str = "split-pane-below";
 const ACTION_CLOSE_PANE: &str = "close-pane";
 const ACTION_RENAME_WORKLANE: &str = "rename-worklane";
@@ -47,6 +48,7 @@ pub(crate) struct ApplicationShell {
     body: gtk::Paned,
     sidebar: gtk::Box,
     sidebar_scroll: gtk::ScrolledWindow,
+    pane_scroll: gtk::ScrolledWindow,
     pane_box: gtk::Box,
     state: WorkspaceState,
     surfaces: BTreeMap<String, GhosttySurface>,
@@ -94,10 +96,15 @@ impl ApplicationShell {
         content.set_vexpand(true);
 
         let pane_box = gtk::Box::new(gtk::Orientation::Horizontal, 1);
-        pane_box.set_homogeneous(true);
+        pane_box.set_homogeneous(false);
         pane_box.set_hexpand(true);
         pane_box.set_vexpand(true);
-        content.append(&pane_box);
+        let pane_scroll = gtk::ScrolledWindow::new();
+        pane_scroll.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Never);
+        pane_scroll.set_hexpand(true);
+        pane_scroll.set_vexpand(true);
+        pane_scroll.set_child(Some(&pane_box));
+        content.append(&pane_scroll);
         body.set_start_child(Some(&sidebar_scroll));
         body.set_end_child(Some(&content));
 
@@ -141,6 +148,7 @@ impl ApplicationShell {
             body: body.clone(),
             sidebar,
             sidebar_scroll,
+            pane_scroll,
             pane_box,
             state,
             surfaces: BTreeMap::new(),
@@ -193,6 +201,7 @@ impl ApplicationShell {
             self.body.set_position(target);
             self.adjusting_sidebar_width.set(false);
         }
+        self.refresh_right_insertion_behavior();
     }
 
     pub(crate) fn live_children(&self) -> usize {
@@ -365,6 +374,24 @@ impl ApplicationShell {
         });
         group.add_action(&select_worklane);
 
+        Self::install_pane_creation_actions(shell, &group);
+
+        Self::add_simple_action(shell, &group, ACTION_NAVIGATE_BACK, |shell| {
+            shell.navigate_history(true);
+        });
+        Self::add_simple_action(shell, &group, ACTION_NAVIGATE_FORWARD, |shell| {
+            shell.navigate_history(false);
+        });
+
+        Self::install_edit_actions(shell, &group);
+
+        shell
+            .borrow()
+            .window
+            .insert_action_group("workspace", Some(&group));
+    }
+
+    fn install_pane_creation_actions(shell: &Rc<RefCell<Self>>, group: &gio::SimpleActionGroup) {
         let split_pane = gio::SimpleAction::new(ACTION_SPLIT_PANE_RIGHT, None);
         let weak = Rc::downgrade(shell);
         split_pane.connect_activate(move |_, _| {
@@ -376,6 +403,18 @@ impl ApplicationShell {
             }
         });
         group.add_action(&split_pane);
+
+        let add_pane = gio::SimpleAction::new(ACTION_ADD_PANE_RIGHT, None);
+        let weak = Rc::downgrade(shell);
+        add_pane.connect_activate(move |_, _| {
+            let Some(shell) = weak.upgrade() else {
+                return;
+            };
+            if let Err(error) = Self::add_focused_pane_right(&shell) {
+                Self::report_action_error(&shell, ACTION_ADD_PANE_RIGHT, &error);
+            }
+        });
+        group.add_action(&add_pane);
 
         let split_pane = gio::SimpleAction::new(ACTION_SPLIT_PANE_BELOW, None);
         let weak = Rc::downgrade(shell);
@@ -398,20 +437,6 @@ impl ApplicationShell {
             Self::close_focused_pane(&shell);
         });
         group.add_action(&close_pane);
-
-        Self::add_simple_action(shell, &group, ACTION_NAVIGATE_BACK, |shell| {
-            shell.navigate_history(true);
-        });
-        Self::add_simple_action(shell, &group, ACTION_NAVIGATE_FORWARD, |shell| {
-            shell.navigate_history(false);
-        });
-
-        Self::install_edit_actions(shell, &group);
-
-        shell
-            .borrow()
-            .window
-            .insert_action_group("workspace", Some(&group));
     }
 
     fn install_edit_actions(shell: &Rc<RefCell<Self>>, group: &gio::SimpleActionGroup) {
@@ -732,9 +757,23 @@ impl ApplicationShell {
     }
 
     fn split_focused_pane_right(shell: &Rc<RefCell<Self>>) -> Result<(), String> {
-        Self::split_focused_pane(shell, ACTION_SPLIT_PANE_RIGHT, |state, pane_id| {
-            state.split_focused_pane_right(pane_id)
-        })
+        let width = f64::from(PaneLayoutPolicy::visible_split_width(
+            shell.borrow().pane_viewport_width(),
+        ));
+        Self::split_focused_pane(shell, ACTION_SPLIT_PANE_RIGHT, move |state, pane_id| {
+            state.split_focused_pane_right_visibly(pane_id, width)
+        })?;
+        Self::scroll_panes_to_end(shell);
+        Ok(())
+    }
+
+    fn add_focused_pane_right(shell: &Rc<RefCell<Self>>) -> Result<(), String> {
+        let width = shell.borrow().focused_column_render_width();
+        Self::split_focused_pane(shell, ACTION_ADD_PANE_RIGHT, move |state, pane_id| {
+            state.add_pane_right_without_resizing(pane_id, f64::from(width))
+        })?;
+        Self::scroll_panes_to_end(shell);
+        Ok(())
     }
 
     fn split_focused_pane_below(shell: &Rc<RefCell<Self>>) -> Result<(), String> {
@@ -774,6 +813,21 @@ impl ApplicationShell {
         }
     }
 
+    fn scroll_panes_to_end(shell: &Rc<RefCell<Self>>) {
+        let weak = Rc::downgrade(shell);
+        glib::timeout_add_local_once(Duration::from_millis(50), move || {
+            if let Some(shell) = weak.upgrade() {
+                let adjustment = shell.borrow().pane_scroll.hadjustment();
+                let maximum = (adjustment.upper() - adjustment.page_size()).max(0.0);
+                adjustment.set_value(maximum);
+                eprintln!(
+                    "zentty-linux: pane-scroll value={:.0} maximum={maximum:.0}",
+                    adjustment.value()
+                );
+            }
+        });
+    }
+
     fn activate_pane_control(shell: &Rc<RefCell<Self>>, pane_id: &str, action: PaneControlAction) {
         {
             let mut shell_ref = shell.borrow_mut();
@@ -790,6 +844,11 @@ impl ApplicationShell {
             PaneControlAction::SplitRight => {
                 if let Err(error) = Self::split_focused_pane_right(shell) {
                     Self::report_action_error(shell, ACTION_SPLIT_PANE_RIGHT, &error);
+                }
+            }
+            PaneControlAction::AddPaneRight => {
+                if let Err(error) = Self::add_focused_pane_right(shell) {
+                    Self::report_action_error(shell, ACTION_ADD_PANE_RIGHT, &error);
                 }
             }
             PaneControlAction::NewPaneBelow => {
@@ -1065,10 +1124,35 @@ impl ApplicationShell {
         self.render_sidebar();
         self.refresh_pane_presentation();
 
-        for column in self.state.active_columns() {
+        let column_widths = self.resolved_column_widths();
+        let single_column = column_widths.len() == 1;
+        let content_width = column_widths
+            .iter()
+            .copied()
+            .fold(0_i32, i32::saturating_add)
+            .saturating_add(
+                i32::try_from(column_widths.len().saturating_sub(1)).unwrap_or(i32::MAX),
+            )
+            .max(self.pane_viewport_width());
+        self.pane_box.set_width_request(content_width);
+        eprintln!(
+            "zentty-linux: pane-layout viewport={} content={} columns={}",
+            self.pane_viewport_width(),
+            content_width,
+            self.state
+                .active_columns()
+                .iter()
+                .zip(&column_widths)
+                .map(|(column, width)| format!("{}:{width}", column.id))
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+
+        for (column, width) in self.state.active_columns().iter().zip(column_widths) {
             let column_box = gtk::Box::new(gtk::Orientation::Vertical, 1);
             column_box.set_homogeneous(true);
-            column_box.set_hexpand(true);
+            column_box.set_width_request(width);
+            column_box.set_hexpand(single_column);
             column_box.set_vexpand(true);
             for pane in &column.panes {
                 if let Some(frame) = self.pane_frames.get(&pane.id) {
@@ -1079,6 +1163,48 @@ impl ApplicationShell {
         }
         eprintln!("zentty-linux: topology={}", self.topology_receipt());
         eprintln!("zentty-linux: geometry={}", self.geometry_receipt());
+    }
+
+    fn pane_viewport_width(&self) -> i32 {
+        let allocated = self.pane_scroll.width();
+        if allocated > 1 {
+            return allocated;
+        }
+        self.window
+            .default_width()
+            .saturating_sub(SidebarWidthPreference::DEFAULT)
+            .max(200)
+    }
+
+    fn resolved_column_widths(&self) -> Vec<i32> {
+        let columns = self.state.active_columns();
+        let viewport_width = self.pane_viewport_width();
+        let fallback = viewport_width
+            .saturating_sub(i32::try_from(columns.len().saturating_sub(1)).unwrap_or(i32::MAX))
+            .checked_div(i32::try_from(columns.len()).unwrap_or(i32::MAX).max(1))
+            .unwrap_or(viewport_width)
+            .max(1);
+        columns
+            .iter()
+            .map(|column| {
+                if columns.len() == 1 || column.width <= 1.0 {
+                    fallback
+                } else {
+                    model_width_to_pixels(column.width)
+                }
+            })
+            .collect()
+    }
+
+    fn focused_column_render_width(&self) -> i32 {
+        let worklane = self.state.active_worklane();
+        let widths = self.resolved_column_widths();
+        worklane
+            .columns
+            .iter()
+            .position(|column| column.id == worklane.focused_column_id)
+            .and_then(|index| widths.get(index).copied())
+            .unwrap_or_else(|| self.pane_viewport_width())
     }
 
     fn render_sidebar(&self) {
@@ -1145,6 +1271,16 @@ impl ApplicationShell {
                     focused: Some(pane_id) == focused_pane_id,
                     worklane_color,
                 });
+            }
+        }
+        self.refresh_right_insertion_behavior();
+    }
+
+    fn refresh_right_insertion_behavior(&self) {
+        let behavior = PaneLayoutPolicy::adaptive_right_behavior(self.pane_viewport_width());
+        for pane_id in self.state.active_pane_ids() {
+            if let Some(frame) = self.pane_frames.get(pane_id) {
+                frame.set_right_behavior(behavior);
             }
         }
     }
@@ -1245,6 +1381,15 @@ fn clear_pane_columns(container: &gtk::Box) {
             }
         }
         container.remove(&column_widget);
+    }
+}
+
+fn model_width_to_pixels(width: f64) -> i32 {
+    let rounded = width.round().clamp(1.0, f64::from(i32::MAX));
+    // The value is finite and clamped to the complete positive i32 range.
+    #[allow(clippy::cast_possible_truncation)]
+    {
+        rounded as i32
     }
 }
 

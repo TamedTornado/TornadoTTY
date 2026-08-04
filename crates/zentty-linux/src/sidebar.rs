@@ -11,11 +11,16 @@ struct PaneActionSpec {
     action: &'static str,
 }
 
-const PANE_ACTIONS: [PaneActionSpec; 7] = [
+const PANE_ACTIONS: [PaneActionSpec; 8] = [
     PaneActionSpec {
         label: source_ui::SPLIT_RIGHT,
         icon: "go-next-symbolic",
         action: "split-pane-right",
+    },
+    PaneActionSpec {
+        label: source_ui::ADD_PANE_RIGHT,
+        icon: "application-add-symbolic",
+        action: "add-pane-right",
     },
     PaneActionSpec {
         label: source_ui::NEW_PANE_BELOW,
@@ -722,6 +727,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             [
                 (source_ui::SPLIT_RIGHT, "split-pane-right"),
+                (source_ui::ADD_PANE_RIGHT, "add-pane-right"),
                 (source_ui::NEW_PANE_BELOW, "split-pane-below"),
                 (source_ui::MOVE_PANE_LEFT, "move-pane-left"),
                 (source_ui::MOVE_PANE_RIGHT, "move-pane-right"),

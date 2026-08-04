@@ -18,6 +18,7 @@ pub(crate) const WORKLANE_COLOR: &str = "Worklane Color";
 
 pub(crate) const RENAME_PANE: &str = "Rename Pane…";
 pub(crate) const SPLIT_RIGHT: &str = "Split Right";
+pub(crate) const ADD_PANE_RIGHT: &str = "Add Pane Right";
 pub(crate) const NEW_PANE_BELOW: &str = "New Pane Below";
 pub(crate) const MOVE_PANE_LEFT: &str = "Move Pane Left";
 pub(crate) const MOVE_PANE_RIGHT: &str = "Move Pane Right";
@@ -73,6 +74,7 @@ mod tests {
         assert_eq!(RENAME_PANE, "Rename Pane…");
         assert_eq!(RENAME_WORKLANE, "Rename Worklane…");
         assert!(LAYOUT_SOURCE.contains(SPLIT_RIGHT));
+        assert!(LAYOUT_SOURCE.contains(ADD_PANE_RIGHT));
         assert!(SIDEBAR_TOGGLE_SOURCE.contains(TOGGLE_SIDEBAR));
         assert!(CHROME_SOURCE.contains(ARRANGE_PANES));
         assert!(CREATE_WORKLANE_SOURCE.contains(NEW_WORKLANE));

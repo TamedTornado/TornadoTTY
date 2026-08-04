@@ -624,9 +624,31 @@ impl WorkspaceState {
     /// Panics only if an internal state transition has violated active-lane or
     /// focused-pane invariants.
     pub fn split_focused_pane_right(&mut self, pane_id: impl Into<String>) -> bool {
-        let previous = self.current_pane_reference();
         let pane_id = pane_id.into();
-        if self.contains_pane(&pane_id) {
+        self.insert_focused_pane_right(&pane_id, None)
+    }
+
+    pub fn split_focused_pane_right_visibly(
+        &mut self,
+        pane_id: impl Into<String>,
+        column_width: f64,
+    ) -> bool {
+        let pane_id = pane_id.into();
+        self.insert_focused_pane_right(&pane_id, Some(sanitize_dimension(column_width)))
+    }
+
+    pub fn add_pane_right_without_resizing(
+        &mut self,
+        pane_id: impl Into<String>,
+        column_width: f64,
+    ) -> bool {
+        let pane_id = pane_id.into();
+        self.insert_focused_pane_right(&pane_id, Some(sanitize_dimension(column_width)))
+    }
+
+    fn insert_focused_pane_right(&mut self, pane_id: &str, width: Option<f64>) -> bool {
+        let previous = self.current_pane_reference();
+        if self.contains_pane(pane_id) {
             return false;
         }
         let worklane = self.active_worklane_mut();
@@ -635,16 +657,19 @@ impl WorkspaceState {
             .iter()
             .position(|column| column.id == worklane.focused_column_id)
             .expect("workspace invariant: focused column exists");
-        let width = worklane.columns[focused_index].width;
+        let width = width.unwrap_or(worklane.columns[focused_index].width);
+        if width.is_finite() && width > 0.0 {
+            worklane.columns[focused_index].width = width;
+        }
         worklane.columns.insert(
             focused_index + 1,
             PaneColumnState {
                 id: format!("column-{pane_id}"),
                 width,
-                panes: vec![PaneState::new(pane_id.clone())],
+                panes: vec![PaneState::new(pane_id.to_owned())],
                 pane_heights: vec![1.0],
-                focused_pane_id: pane_id.clone(),
-                last_focused_pane_id: pane_id.clone(),
+                focused_pane_id: pane_id.to_owned(),
+                last_focused_pane_id: pane_id.to_owned(),
             },
         );
         worklane.focused_column_id = format!("column-{pane_id}");

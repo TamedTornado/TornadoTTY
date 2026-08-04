@@ -298,6 +298,27 @@ fn pane_navigation_history_crosses_worklanes_and_preserves_browser_semantics() {
 }
 
 #[test]
+fn right_insertion_commands_preserve_their_distinct_width_contracts() {
+    let mut added = WorkspaceState::new("lane-1", "pane-1");
+    assert!(added.add_pane_right_without_resizing("pane-2", 719.0));
+    assert!(
+        added
+            .active_columns()
+            .iter()
+            .all(|column| (column.width - 719.0).abs() < f64::EPSILON)
+    );
+
+    let mut split = WorkspaceState::new("lane-1", "pane-1");
+    assert!(split.split_focused_pane_right_visibly("pane-2", 359.0));
+    assert!(
+        split
+            .active_columns()
+            .iter()
+            .all(|column| (column.width - 359.0).abs() < f64::EPSILON)
+    );
+}
+
+#[test]
 fn multi_column_recipe_round_trip_preserves_source_topology() {
     let envelope = SessionRestoreEnvelope::from_json(V3_ENVELOPE).unwrap();
     let mut window = envelope.workspace.windows[0].clone();

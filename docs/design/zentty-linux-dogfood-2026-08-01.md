@@ -5264,6 +5264,58 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   Wayland pointer-injection route remain issue #16 work. This slice does not
   claim those adjacent navigation features.
 
+### DOGFOOD-2026-08-04-RIGHT-INSERTION-SEMANTICS: the source verbs are different operations
+
+- **Observed gap:** Linux exposed `Split Right` as though it also implemented
+  the source's `Add Pane Right`. That changed more than wording: the source
+  resizes the focused and inserted columns into a viewport-sized visible pair,
+  while a worklane add keeps the focused column's width and extends the
+  horizontally scrollable canvas.
+- **Source contract:** The checked-in layout preferences define distinct
+  `visibleSplit` and `worklaneAdd` behaviors, select between them adaptively at
+  a 1920px pane viewport by default, and use the exact `Add Pane Right` label.
+  The platform-neutral Rust policy and vocabulary tests are pinned to those
+  source declarations.
+- **Implementation:** `Split Right` gives both the focused and inserted columns
+  half of the available viewport, exactly as the source's
+  `visibleSplitColumnWidth` does. `Add Pane Right` preserves the focused
+  column's rendered width. Both grow the real horizontal scroller when earlier
+  columns make that necessary and scroll the newly created pane into view. The
+  pane-local primary control changes action, icon, tooltip, accessible label,
+  and machine receipt as the viewport crosses the source threshold. Explicit
+  contextual and Arrange routes continue to expose both verbs.
+- **First harness discovery:** The controlled X11 display was only 1280px
+  wide, so a request for a 2300px application window was clamped and the
+  adaptive boundary could not be exercised. The private Xvfb display is now
+  2560px wide while each scenario still controls its own window size; absence
+  of enough display space is no longer mistaken for product failure or pass.
+- **First product failure:** The initial post-render idle scroll ran before GTK
+  updated its adjustment. The receipt remained at zero and the next real
+  pointer click closed pane 2 instead of the new pane 4. The repair performs a
+  bounded post-layout scroll, records its value and maximum, and the test
+  requires a nonzero value exactly at the new maximum.
+- **Second product failure and review correction:** A multi-column Arrange
+  split overflowed the viewport, left the inserted pane offscreen, and caused
+  the real Close control to target the wrong neighbor. An initial repair
+  incorrectly halved the owning column to avoid overflow. Diff review against
+  `WorklaneStore.insertNewPaneRightVisibly` caught that semantic deviation:
+  Zentty deliberately gives both columns half the *available viewport*. The
+  model was restored to that contract and the actual missing behavior—scrolling
+  the new visible split into view—was repaired instead.
+- **Real-system evidence:** The controlled-X11 source scenario crosses the
+  adaptive boundary in both directions, invokes the real pane-local Add
+  control, checks rendered widths and overflow receipts, requires successful
+  auto-scroll, sends input through five real Ghostty PTYs, and closes their
+  exact pane-local targets with the real pointer. The staged workspace action,
+  persistence, and lifecycle scenario also passes with five real PTYs under a
+  controlled Wayland compositor. Rust unit tests cover the policy boundary,
+  distinct model width contracts, and the source viewport-width calculation.
+- **Remaining boundary:** User-configurable `alwaysSplit`, `alwaysAdd`, and
+  threshold preferences, touchpad/mouse horizontal navigation, divider-driven
+  column resizing, durable width restoration, Wayland pointer injection, and
+  reviewed screenshots remain issue #16/#20 work. The current focus border is
+  still the explicitly accepted placeholder from the preceding dogfood record.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were

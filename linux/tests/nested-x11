@@ -89,11 +89,14 @@ if [[ "${1:-}" == "--private-x11-supervisor" ]]; then
     [[ "${ZENTTY_NESTED_X11_WRAPPER_SHA256:-}" == "${wrapper_sha256}" ]] ||
         fail "wrapper identity changed before private-session supervision"
     verify_approved_session_membership "${run_root}" true
+    # Keep the controlled display large enough to exercise Zentty's
+    # source-pinned 1920px adaptive pane-layout boundary. Individual
+    # scenarios still choose their own application-window dimensions.
     exec xvfb-run \
         -a \
         -f "${run_root}/Xauthority" \
         -e "${run_root}/xvfb.log" \
-        -s "-screen 0 1280x1024x24 -nolisten tcp" \
+        -s "-screen 0 2560x1440x24 -nolisten tcp" \
         env ZENTTY_NESTED_X11_RUN_ROOT="${run_root}" \
         "${wrapper_path}" --private-x11-inner "$@"
 fi

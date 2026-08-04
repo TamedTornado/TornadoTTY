@@ -1,12 +1,14 @@
 #![forbid(unsafe_code)]
 
 mod pane_focus_history;
+mod pane_layout;
 mod session_restore_store;
 mod sidebar_width;
 mod workspace_recipe;
 mod workspace_state;
 
 pub use pane_focus_history::PaneReference;
+pub use pane_layout::{PaneLayoutPolicy, PaneRightInsertionBehavior};
 pub use session_restore_store::{
     LaunchDecision, LaunchReason, PersistenceRequest, SessionRestoreStore,
     SessionRestoreStoreError, SnapshotPersistence,

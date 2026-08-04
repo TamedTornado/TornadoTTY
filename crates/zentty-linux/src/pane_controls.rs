@@ -3,23 +3,31 @@ use std::rc::Rc;
 
 use gtk::gdk;
 use gtk::prelude::*;
-use zentty_core::WorklaneColor;
+use zentty_core::{PaneRightInsertionBehavior, WorklaneColor};
 
 use crate::source_ui;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum PaneControlAction {
     SplitRight,
+    AddPaneRight,
     NewPaneBelow,
     ClosePane,
 }
 
 impl PaneControlAction {
-    const ALL: [Self; 3] = [Self::SplitRight, Self::NewPaneBelow, Self::ClosePane];
+    #[cfg(test)]
+    const ALL: [Self; 4] = [
+        Self::SplitRight,
+        Self::AddPaneRight,
+        Self::NewPaneBelow,
+        Self::ClosePane,
+    ];
 
     pub(crate) const fn id(self) -> &'static str {
         match self {
             Self::SplitRight => "split-right",
+            Self::AddPaneRight => "add-pane-right",
             Self::NewPaneBelow => "new-pane-below",
             Self::ClosePane => "close-pane",
         }
@@ -28,6 +36,7 @@ impl PaneControlAction {
     const fn label(self) -> &'static str {
         match self {
             Self::SplitRight => source_ui::SPLIT_RIGHT,
+            Self::AddPaneRight => source_ui::ADD_PANE_RIGHT,
             Self::NewPaneBelow => source_ui::NEW_PANE_BELOW,
             Self::ClosePane => source_ui::CLOSE_PANE,
         }
@@ -36,6 +45,7 @@ impl PaneControlAction {
     const fn icon(self) -> &'static str {
         match self {
             Self::SplitRight => "go-next-symbolic",
+            Self::AddPaneRight => "application-add-symbolic",
             Self::NewPaneBelow => "go-down-symbolic",
             Self::ClosePane => "window-close-symbolic",
         }
@@ -44,6 +54,9 @@ impl PaneControlAction {
 
 pub(crate) struct PaneFrame {
     root: gtk::Overlay,
+    pane_id: String,
+    right_button: gtk::Button,
+    right_action: Rc<Cell<PaneControlAction>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -85,14 +98,19 @@ impl PaneFrame {
         controls.set_opacity(0.0);
 
         let on_action: Rc<dyn Fn(PaneControlAction)> = Rc::new(on_action);
-        for action in PaneControlAction::ALL {
+        let right_action = Rc::new(Cell::new(PaneControlAction::SplitRight));
+        let right_button = pane_control_button(PaneControlAction::SplitRight, pane_id);
+        let clicked_action = Rc::clone(&right_action);
+        let clicked_callback = Rc::clone(&on_action);
+        right_button.connect_clicked(move |_| clicked_callback(clicked_action.get()));
+        controls.append(&right_button);
+
+        for action in [
+            PaneControlAction::NewPaneBelow,
+            PaneControlAction::ClosePane,
+        ] {
             let button = gtk::Button::new();
-            button.add_css_class("zentty-pane-control");
-            button.set_icon_name(action.icon());
-            button.set_tooltip_text(Some(action.label()));
-            button.set_accessible_role(gtk::AccessibleRole::Button);
-            button.update_property(&[gtk::accessible::Property::Label(action.label())]);
-            button.set_widget_name(&format!("pane-control-{}-{pane_id}", action.id()));
+            configure_pane_control_button(&button, action, pane_id);
             let on_action = Rc::clone(&on_action);
             button.connect_clicked(move |_| on_action(action));
             controls.append(&button);
@@ -150,7 +168,12 @@ impl PaneFrame {
         root.add_controller(motion);
         controls.add_controller(focus);
 
-        Self { root }
+        Self {
+            root,
+            pane_id: pane_id.to_owned(),
+            right_button,
+            right_action,
+        }
     }
 
     pub(crate) fn widget(&self) -> &gtk::Overlay {
@@ -176,9 +199,39 @@ impl PaneFrame {
         self.root.set_opacity(PanePresentation::SURFACE_OPACITY);
     }
 
+    pub(crate) fn set_right_behavior(&self, behavior: PaneRightInsertionBehavior) {
+        let action = match behavior {
+            PaneRightInsertionBehavior::VisibleSplit => PaneControlAction::SplitRight,
+            PaneRightInsertionBehavior::WorklaneAdd => PaneControlAction::AddPaneRight,
+        };
+        if self.right_action.replace(action) != action {
+            configure_pane_control_button(&self.right_button, action, &self.pane_id);
+            eprintln!(
+                "zentty-linux: pane-right-control pane={} action={}",
+                self.pane_id,
+                action.id()
+            );
+        }
+    }
+
     pub(crate) fn detach_terminal(&self) {
         self.root.set_child(gtk::Widget::NONE);
     }
+}
+
+fn pane_control_button(action: PaneControlAction, pane_id: &str) -> gtk::Button {
+    let button = gtk::Button::new();
+    configure_pane_control_button(&button, action, pane_id);
+    button
+}
+
+fn configure_pane_control_button(button: &gtk::Button, action: PaneControlAction, pane_id: &str) {
+    button.add_css_class("zentty-pane-control");
+    button.set_icon_name(action.icon());
+    button.set_tooltip_text(Some(action.label()));
+    button.set_accessible_role(gtk::AccessibleRole::Button);
+    button.update_property(&[gtk::accessible::Property::Label(action.label())]);
+    button.set_widget_name(&format!("pane-control-{}-{pane_id}", action.id()));
 }
 
 fn set_revealed(controls: &gtk::Box, revealed: &Cell<bool>, pane_id: &str, value: bool) {
@@ -254,6 +307,7 @@ mod tests {
             PaneControlAction::ALL.map(|action| (action.id(), action.label())),
             [
                 ("split-right", source_ui::SPLIT_RIGHT),
+                ("add-pane-right", source_ui::ADD_PANE_RIGHT),
                 ("new-pane-below", source_ui::NEW_PANE_BELOW),
                 ("close-pane", source_ui::CLOSE_PANE),
             ]
