@@ -73,6 +73,16 @@ grep -Fxq 'zentty-linux: pane-layout-action-scenario verified panes=["pane-2", "
     fail "final source topology and golden layout were not verified in product"
 grep -Fxq 'zentty-linux: pane-layout-action-scenario complete' "${log}" ||
     fail "pane-layout scenario did not complete"
+for receipt in \
+    'zentty-linux: pane-layout-action-scenario golden-availability width=false height=false' \
+    'zentty-linux: pane-layout-action-scenario golden-availability width=true height=true' \
+    'zentty-linux: pane-layout-action-scenario golden-availability width=true height=false'; do
+    grep -Fxq "${receipt}" "${log}" || fail "missing contextual action-state receipt: ${receipt}"
+done
+[[ "$(grep -Fc 'zentty-linux: pane-layout-action-scenario rendered-golden-height ' "${log}" || true)" -eq 2 ]] ||
+    fail "the GTK pane allocations did not retain golden height across a real compositor resize"
+[[ "$(grep -Fc 'zentty-linux: pane-layout-action-scenario rendered-golden-width ' "${log}" || true)" -eq 2 ]] ||
+    fail "the GTK pane allocations did not render both golden width variants"
 grep -Fq 'zentty-linux: geometry=worklane-1:column-pane-2[pane-2],column-pane-3[pane-3],column-pane-4[pane-4],column-pane-1[pane-1]' "${log}" ||
     fail "rendered GTK topology did not follow the four-column reflow"
 grep -Fq 'zentty-linux: pane-scroll-focused value=' "${log}" ||

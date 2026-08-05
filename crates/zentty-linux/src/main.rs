@@ -203,7 +203,9 @@ fn run_lifecycle_cycle(
     let ticking_sidebar_width = Rc::clone(&last_sidebar_width);
     let tick_source = glib::timeout_add_local(Duration::from_millis(10), move || {
         if let Some(shell) = ticking_shell.upgrade() {
-            shell.borrow().reconcile_sidebar_width();
+            let shell = shell.borrow();
+            shell.reconcile_sidebar_width();
+            shell.reconcile_pane_heights();
         }
         let window_size = (observed_window.width(), observed_window.height());
         if window_size != ticking_window_size.get() && window_size.0 > 0 && window_size.1 > 0 {

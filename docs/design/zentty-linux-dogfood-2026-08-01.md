@@ -5968,13 +5968,13 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   `NOT_IMPLEMENTED=53`; the implemented local suite and product boundary pass,
   while release and full Linux qualification correctly remain false. The
   machine summary SHA-256 is
-  `b92559d48dc26cc393c664d4cb6212e39d68da1c1c804b63377fe3e75f0f6bf2`.
+  `95d68462f49cc22eaf7ddd114ba303f658c585719e6d3300bbf18b688ec08e2e`.
   Debug Valgrind is **PASS with reviewed suppressions**: its preserved raw
   receipt SHA-256
-  `17a879294e9a46c5871386efd886b071c25821a1d73a9318c724b5c69e6ca828`
-  reports 427 errors/contexts, 6,080 definite bytes, and 41,394 indirect
+  `420961faab2f3b63d6fc589d70466cf0284052883ffe8a7b3e7834561ab6ba6f`
+  reports 427 errors/contexts, 6,240 definite bytes, and 41,461 indirect
   bytes. The paired suppressed receipt SHA-256
-  `f6bca09283df8c1a808d737520a65b773980408032c661d00ba134613b151e3b`
+  `2923a4fb6b698826dff73887dfc42ceda594d83a09fdf858ea2de17f3e16a010`
   reports zero post-suppression errors/contexts/definite/indirect bytes and 427
   reviewed suppressed errors/contexts. ReleaseSafe Valgrind remains the
   declared XFAIL; no rule was broadened for this batch.
@@ -5984,6 +5984,45 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   `2bad789644f192fb221ca4741fff41db5197dfc5`; immediate correction comments on
   issues #4, #7, and #16 preserve the original publication mistake and the
   authoritative repair rather than silently editing evidence.
+- **Operator-discovered golden-layout qualification escape:** Manual validation
+  found that every golden action appeared to do nothing. Live receipts proved
+  the actions and model mutations ran, but code review found the GTK renderer
+  forced every vertical column to `homogeneous=true` and never consumed
+  `pane_heights`. Horizontal golden actions also remained enabled with only one
+  column, and vertical golden actions remained enabled with no vertical
+  neighbor. The previous product scenario asserted model state, persistence,
+  topology, real PTYs, and relative width—but not rendered pane allocations;
+  its claim of rendered golden geometry was therefore incorrect.
+- **Tests-first reproduction and test repair:** The first allocation assertion
+  was itself too weak: incidental GTK rounding produced 324px versus 323px, so
+  a simple greater-than check passed despite an actual ratio of 0.501. The
+  strengthened real X11 test measured the source golden target and failed in
+  controlled session
+  `4fc4539e9241e5446cbcd3dac225ecfa8a7db93f08bffae5f634c1932d7dc5d8`
+  with `actual=0.501 expected=0.618`. It now requires both golden height and
+  width allocations within two percentage points, repeats height validation
+  after a real compositor resize, and verifies disabled/enabled action states
+  for missing and present neighbors.
+- **Rendered repair:** GTK columns are no longer homogeneous. The renderer
+  normalizes persisted model weights into pixel requests after subtracting
+  inter-pane spacing, assigns the final remainder deterministically, and
+  reconciles those requests when the real viewport height changes without
+  reparenting or restarting Ghostty. Invalid weights fall back to equal shares.
+  Contextual `GSimpleAction` state disables golden width without two columns
+  and golden height without two panes in the focused column, so the popover no
+  longer offers silent no-ops. Focused allocation tests cover golden, equal,
+  invalid, empty, and rounding behavior.
+- **Real repair evidence:** The strengthened four-real-PTY scenario passed on
+  controlled X11 session
+  `da40044786bfc729848bc85b072f160e484d795a8c553bf06f3791ddbe5dda8a`
+  and controlled Wayland session
+  `fa0041c008286f7022b9479a1d9fda4c1b8edcd9abb286542b15fdec401c7660`.
+  The full physical source-UX regression passed session
+  `afd442f14e39d5425bcd886f009523c97995cad4fe41a342c1ec14dbf1bcee26`,
+  nine-worklane sidebar regression passed
+  `66a787fd2df3f41bd2118932c9fcaa9c0865530217c85606ac8d0861cea72620`,
+  and Wayland workspace/persistence passed
+  `503efde6b7b12d09eda53d414dd4bc7f0474a59f31b1263b77cabeb31f2d2935`.
 - **Remaining limitation:** This does not claim complete pane-layout parity.
   Direct draggable dividers, Resize Pane Left/Right/Up/Down, cell-based minimum
   sizes, cross-window moves, and source top/bottom cross-worklane focus remain

@@ -118,6 +118,8 @@ pub(crate) struct ApplicationShell {
     peek_tab_down: bool,
     peek_view: WorklanePeekView,
     command_palette: CommandPaletteView,
+    last_pane_viewport_height: Cell<i32>,
+    workspace_actions: Option<gio::SimpleActionGroup>,
 }
 
 struct ShellWidgets {
@@ -215,6 +217,8 @@ impl ApplicationShell {
             peek_tab_down: false,
             peek_view,
             command_palette,
+            last_pane_viewport_height: Cell::new(0),
+            workspace_actions: None,
         }));
 
         install_sidebar_width_tracking(
@@ -267,6 +271,10 @@ impl ApplicationShell {
             self.adjusting_sidebar_width.set(false);
         }
         self.refresh_right_insertion_behavior();
+    }
+
+    pub(crate) fn reconcile_pane_heights(&self) {
+        self.apply_pane_height_requests(false);
     }
 
     pub(crate) fn live_children(&self) -> usize {
@@ -446,23 +454,33 @@ impl ApplicationShell {
             };
             let window = shell.borrow().window.clone();
             let result = match step.get() {
-                0 => window.activate_action("workspace.add-pane-left", None),
-                1 => window.activate_action("workspace.split-pane-right", None),
-                2 => window.activate_action("workspace.split-pane-below", None),
-                3 => window.activate_action("workspace.focus-pane-up", None),
-                4 => window.activate_action("workspace.focus-pane-left", None),
-                5 => window.activate_action("workspace.focus-pane-right", None),
-                6 => window.activate_action("workspace.focus-pane-down", None),
-                7 => window.activate_action("workspace.arrange-width-thirds", None),
-                8 => window.activate_action("workspace.arrange-height-two", None),
-                9 => window.activate_action("workspace.arrange-width-half", None),
-                10 => window.activate_action("workspace.arrange-golden-tall", None),
-                11 => window.activate_action("workspace.arrange-golden-wide", None),
-                12 => window.activate_action("workspace.reset-pane-layout", None),
-                13 => window.activate_action("workspace.arrange-height-full", None),
-                14 => window.activate_action("workspace.arrange-width-quarters", None),
-                15 => window.activate_action("workspace.arrange-golden-narrow", None),
-                16 => require_pane_layout_scenario_state(&shell),
+                0 => require_golden_action_availability(&shell, false, false),
+                1 => window.activate_action("workspace.add-pane-left", None),
+                2 => window.activate_action("workspace.split-pane-right", None),
+                3 => window.activate_action("workspace.split-pane-below", None),
+                4 => window.activate_action("workspace.focus-pane-up", None),
+                5 => window.activate_action("workspace.focus-pane-left", None),
+                6 => window.activate_action("workspace.focus-pane-right", None),
+                7 => window.activate_action("workspace.focus-pane-down", None),
+                8 => window.activate_action("workspace.arrange-width-thirds", None),
+                9 => window.activate_action("workspace.arrange-height-two", None),
+                10 => require_golden_action_availability(&shell, true, true),
+                11 => window.activate_action("workspace.arrange-width-half", None),
+                12 => window.activate_action("workspace.arrange-golden-tall", None),
+                13 | 15 => require_rendered_golden_height(&shell, "pane-4", "pane-1", true),
+                14 => {
+                    window.set_default_size(1000, 820);
+                    Ok(())
+                }
+                16 => window.activate_action("workspace.arrange-golden-wide", None),
+                17 => require_rendered_golden_width(&shell, "pane-4", "pane-2", true),
+                18 => window.activate_action("workspace.reset-pane-layout", None),
+                19 => window.activate_action("workspace.arrange-height-full", None),
+                20 => require_golden_action_availability(&shell, true, false),
+                21 => window.activate_action("workspace.arrange-width-quarters", None),
+                22 => window.activate_action("workspace.arrange-golden-narrow", None),
+                23 => require_rendered_golden_width(&shell, "pane-4", "pane-1", false),
+                24 => require_pane_layout_scenario_state(&shell),
                 _ => {
                     eprintln!("zentty-linux: pane-layout-action-scenario complete");
                     if quit_when_complete {
@@ -582,6 +600,7 @@ impl ApplicationShell {
             .borrow()
             .window
             .insert_action_group("workspace", Some(&group));
+        shell.borrow_mut().workspace_actions = Some(group);
     }
 
     fn install_search_actions(shell: &Rc<RefCell<Self>>, group: &gio::SimpleActionGroup) {
@@ -2453,7 +2472,7 @@ impl ApplicationShell {
 
         for (column, width) in self.state.active_columns().iter().zip(column_widths) {
             let column_box = gtk::Box::new(gtk::Orientation::Vertical, 1);
-            column_box.set_homogeneous(true);
+            column_box.set_homogeneous(false);
             column_box.set_width_request(width);
             column_box.set_hexpand(single_column);
             column_box.set_vexpand(true);
@@ -2464,6 +2483,8 @@ impl ApplicationShell {
             }
             self.pane_box.append(&column_box);
         }
+        self.apply_pane_height_requests(true);
+        self.refresh_pane_layout_action_availability();
         eprintln!("zentty-linux: topology={}", self.topology_receipt());
         eprintln!("zentty-linux: geometry={}", self.geometry_receipt());
     }
@@ -2477,6 +2498,80 @@ impl ApplicationShell {
             .default_width()
             .saturating_sub(SidebarWidthPreference::DEFAULT)
             .max(200)
+    }
+
+    fn pane_viewport_height(&self) -> i32 {
+        let allocated = self.pane_box.height();
+        if allocated > 1 {
+            return allocated;
+        }
+        self.window.default_height().saturating_sub(52).max(200)
+    }
+
+    fn apply_pane_height_requests(&self, force: bool) {
+        let viewport_height = self.pane_viewport_height();
+        if !force && self.last_pane_viewport_height.get() == viewport_height {
+            return;
+        }
+        self.last_pane_viewport_height.set(viewport_height);
+        for column in self.state.active_columns() {
+            let pane_count = column.panes.len();
+            if pane_count == 1 {
+                if let Some(frame) = self.pane_frames.get(&column.panes[0].id) {
+                    frame.widget().set_height_request(-1);
+                    frame.widget().set_vexpand(true);
+                }
+                continue;
+            }
+            let heights = model_heights_to_pixels(&column.pane_heights, viewport_height);
+            for (pane, height) in column.panes.iter().zip(heights) {
+                if let Some(frame) = self.pane_frames.get(&pane.id) {
+                    frame.widget().set_height_request(height);
+                    frame.widget().set_vexpand(false);
+                }
+            }
+            eprintln!(
+                "zentty-linux: pane-height-layout column={} viewport={viewport_height} panes={}",
+                column.id,
+                column
+                    .panes
+                    .iter()
+                    .filter_map(|pane| self.pane_frames.get(&pane.id).map(|frame| {
+                        format!("{}:{}", pane.id, frame.widget().height_request())
+                    }))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            );
+        }
+    }
+
+    fn refresh_pane_layout_action_availability(&self) {
+        let columns = self.state.active_columns();
+        let width_available = columns.len() >= 2;
+        let focused_column = self.state.active_worklane().focused_column_id.as_str();
+        let height_available = columns
+            .iter()
+            .find(|column| column.id == focused_column)
+            .is_some_and(|column| column.panes.len() >= 2);
+        for name in [ACTION_ARRANGE_GOLDEN_WIDE, ACTION_ARRANGE_GOLDEN_NARROW] {
+            self.set_workspace_action_enabled(name, width_available);
+        }
+        for name in [ACTION_ARRANGE_GOLDEN_TALL, ACTION_ARRANGE_GOLDEN_SHORT] {
+            self.set_workspace_action_enabled(name, height_available);
+        }
+    }
+
+    fn set_workspace_action_enabled(&self, name: &str, enabled: bool) {
+        let Some(group) = &self.workspace_actions else {
+            return;
+        };
+        let Some(action) = group
+            .lookup_action(name)
+            .and_then(|action| action.downcast::<gio::SimpleAction>().ok())
+        else {
+            return;
+        };
+        action.set_enabled(enabled);
     }
 
     fn resolved_column_widths(&self) -> Vec<i32> {
@@ -2533,6 +2628,7 @@ impl ApplicationShell {
         );
         self.schedule_active_worklane_reveal();
         self.refresh_pane_presentation();
+        self.refresh_pane_layout_action_availability();
     }
 
     fn schedule_active_worklane_reveal(&self) {
@@ -2980,6 +3076,126 @@ fn require_pane_layout_scenario_state(
     Ok(())
 }
 
+fn require_golden_action_availability(
+    shell: &Rc<RefCell<ApplicationShell>>,
+    width_expected: bool,
+    height_expected: bool,
+) -> Result<(), glib::BoolError> {
+    let shell = shell.borrow();
+    let group = shell
+        .workspace_actions
+        .as_ref()
+        .ok_or_else(|| glib::bool_error!("workspace action group is missing"))?;
+    for (name, expected) in [
+        (ACTION_ARRANGE_GOLDEN_WIDE, width_expected),
+        (ACTION_ARRANGE_GOLDEN_NARROW, width_expected),
+        (ACTION_ARRANGE_GOLDEN_TALL, height_expected),
+        (ACTION_ARRANGE_GOLDEN_SHORT, height_expected),
+    ] {
+        let action = group
+            .lookup_action(name)
+            .ok_or_else(|| glib::bool_error!("layout action is missing: {name}"))?;
+        if action.is_enabled() != expected {
+            return Err(glib::bool_error!(
+                "layout action availability mismatch: {name} actual={} expected={expected}",
+                action.is_enabled()
+            ));
+        }
+    }
+    eprintln!(
+        "zentty-linux: pane-layout-action-scenario golden-availability width={width_expected} height={height_expected}"
+    );
+    Ok(())
+}
+
+fn require_rendered_golden_height(
+    shell: &Rc<RefCell<ApplicationShell>>,
+    focused_pane_id: &str,
+    neighbor_pane_id: &str,
+    focus_tall: bool,
+) -> Result<(), glib::BoolError> {
+    let shell = shell.borrow();
+    let focused = shell
+        .pane_frames
+        .get(focused_pane_id)
+        .ok_or_else(|| glib::bool_error!("missing focused pane frame"))?;
+    let neighbor = shell
+        .pane_frames
+        .get(neighbor_pane_id)
+        .ok_or_else(|| glib::bool_error!("missing neighboring pane frame"))?;
+    let focused_height = focused.widget().height();
+    let neighbor_height = neighbor.widget().height();
+    let actual_ratio = f64::from(focused_height) / f64::from(focused_height + neighbor_height);
+    let golden_major = (1.0 + 5.0_f64.sqrt()) / (3.0 + 5.0_f64.sqrt());
+    let expected_ratio = if focus_tall {
+        golden_major
+    } else {
+        1.0 - golden_major
+    };
+    let ordered = if focus_tall {
+        focused_height > neighbor_height
+    } else {
+        focused_height < neighbor_height
+    };
+    if focused_height <= 0
+        || neighbor_height <= 0
+        || !ordered
+        || (actual_ratio - expected_ratio).abs() > 0.02
+    {
+        return Err(glib::bool_error!(
+            "rendered golden height missing: focus={focused_pane_id}:{focused_height} neighbor={neighbor_pane_id}:{neighbor_height} ratio={actual_ratio:.3} expected={expected_ratio:.3} tall={focus_tall}"
+        ));
+    }
+    eprintln!(
+        "zentty-linux: pane-layout-action-scenario rendered-golden-height focus={focused_pane_id}:{focused_height} neighbor={neighbor_pane_id}:{neighbor_height} ratio={actual_ratio:.3} tall={focus_tall}"
+    );
+    Ok(())
+}
+
+fn require_rendered_golden_width(
+    shell: &Rc<RefCell<ApplicationShell>>,
+    focused_pane_id: &str,
+    neighbor_pane_id: &str,
+    focus_wide: bool,
+) -> Result<(), glib::BoolError> {
+    let shell = shell.borrow();
+    let focused = shell
+        .pane_frames
+        .get(focused_pane_id)
+        .ok_or_else(|| glib::bool_error!("missing focused pane frame"))?;
+    let neighbor = shell
+        .pane_frames
+        .get(neighbor_pane_id)
+        .ok_or_else(|| glib::bool_error!("missing neighboring pane frame"))?;
+    let focused_width = focused.widget().width();
+    let neighbor_width = neighbor.widget().width();
+    let actual_ratio = f64::from(focused_width) / f64::from(focused_width + neighbor_width);
+    let golden_major = (1.0 + 5.0_f64.sqrt()) / (3.0 + 5.0_f64.sqrt());
+    let expected_ratio = if focus_wide {
+        golden_major
+    } else {
+        1.0 - golden_major
+    };
+    let ordered = if focus_wide {
+        focused_width > neighbor_width
+    } else {
+        focused_width < neighbor_width
+    };
+    if focused_width <= 0
+        || neighbor_width <= 0
+        || !ordered
+        || (actual_ratio - expected_ratio).abs() > 0.02
+    {
+        return Err(glib::bool_error!(
+            "rendered golden width missing: focus={focused_pane_id}:{focused_width} neighbor={neighbor_pane_id}:{neighbor_width} ratio={actual_ratio:.3} expected={expected_ratio:.3} wide={focus_wide}"
+        ));
+    }
+    eprintln!(
+        "zentty-linux: pane-layout-action-scenario rendered-golden-width focus={focused_pane_id}:{focused_width} neighbor={neighbor_pane_id}:{neighbor_width} ratio={actual_ratio:.3} wide={focus_wide}"
+    );
+    Ok(())
+}
+
 fn install_sidebar_width_tracking(
     body: &gtk::Paned,
     sidebar: &gtk::ScrolledWindow,
@@ -3110,6 +3326,46 @@ fn model_width_to_pixels(width: f64) -> i32 {
     }
 }
 
+fn model_heights_to_pixels(weights: &[f64], viewport_height: i32) -> Vec<i32> {
+    if weights.is_empty() {
+        return Vec::new();
+    }
+    let total_weight = weights.iter().sum::<f64>();
+    let valid = total_weight.is_finite()
+        && total_weight > 0.0
+        && weights
+            .iter()
+            .all(|weight| weight.is_finite() && *weight > 0.0);
+    let resolved_total = if valid {
+        total_weight
+    } else {
+        small_count_as_f64(weights.len())
+    };
+    let spacing = i32::try_from(weights.len().saturating_sub(1)).unwrap_or(i32::MAX);
+    let usable_height = viewport_height.saturating_sub(spacing).max(1);
+    let mut assigned = 0_i32;
+    weights
+        .iter()
+        .enumerate()
+        .map(|(index, weight)| {
+            let remaining = usable_height.saturating_sub(assigned).max(1);
+            let height = if index + 1 == weights.len() {
+                remaining
+            } else {
+                let resolved_weight = if valid { *weight } else { 1.0 };
+                let share = f64::from(usable_height) * (resolved_weight / resolved_total);
+                model_width_to_pixels(share).min(remaining)
+            };
+            assigned = assigned.saturating_add(height);
+            height
+        })
+        .collect()
+}
+
+fn small_count_as_f64(count: usize) -> f64 {
+    f64::from(u32::try_from(count).unwrap_or(u32::MAX))
+}
+
 fn next_numeric_identity<'a>(ids: impl Iterator<Item = &'a str>, prefix: &str) -> usize {
     ids.filter_map(|id| id.strip_prefix(prefix)?.parse::<usize>().ok())
         .max()
@@ -3145,5 +3401,25 @@ fn default_window_recipe() -> WindowRecipe {
             bookmark_origin_id: None,
         }],
         active_worklane_id: Some("worklane-1".to_owned()),
+    }
+}
+
+#[cfg(test)]
+mod allocation_tests {
+    use super::model_heights_to_pixels;
+
+    #[test]
+    fn pane_height_pixels_preserve_ratios_spacing_and_invalid_weight_fallback() {
+        let golden = model_heights_to_pixels(&[0.618_033_988_75, 0.381_966_011_25], 648);
+        let golden_content = golden.iter().sum::<i32>();
+        assert_eq!(golden_content + 1, 648);
+        assert!((f64::from(golden[0]) / f64::from(golden_content) - 0.618).abs() < 0.002);
+
+        let equal = model_heights_to_pixels(&[1.0, 1.0, 1.0], 648);
+        assert_eq!(equal.iter().sum::<i32>() + 2, 648);
+        assert!(equal.windows(2).all(|pair| (pair[0] - pair[1]).abs() <= 1));
+
+        assert_eq!(model_heights_to_pixels(&[0.0, f64::NAN], 101), [50, 50]);
+        assert!(model_heights_to_pixels(&[], 648).is_empty());
     }
 }
