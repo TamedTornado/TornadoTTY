@@ -5978,6 +5978,12 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   reports zero post-suppression errors/contexts/definite/indirect bytes and 427
   reviewed suppressed errors/contexts. ReleaseSafe Valgrind remains the
   declared XFAIL; no rule was broadened for this batch.
+- **Public evidence hash correction:** The first issue comments correctly named
+  abbreviated commit `2bad789` but manually expanded it to a nonexistent hash.
+  Repository verification returned the exact commit
+  `2bad789644f192fb221ca4741fff41db5197dfc5`; immediate correction comments on
+  issues #4, #7, and #16 preserve the original publication mistake and the
+  authoritative repair rather than silently editing evidence.
 - **Remaining limitation:** This does not claim complete pane-layout parity.
   Direct draggable dividers, Resize Pane Left/Right/Up/Down, cell-based minimum
   sizes, cross-window moves, and source top/bottom cross-worklane focus remain
