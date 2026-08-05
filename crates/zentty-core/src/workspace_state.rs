@@ -62,6 +62,8 @@ pub struct PaneState {
     pub id: String,
     pub custom_title: Option<String>,
     pub live_title: String,
+    pub working_directory: Option<String>,
+    pub last_run_command: Option<String>,
 }
 
 impl PaneState {
@@ -70,6 +72,8 @@ impl PaneState {
             id,
             custom_title: None,
             live_title: "shell".to_owned(),
+            working_directory: None,
+            last_run_command: None,
         }
     }
 
@@ -92,6 +96,8 @@ impl PaneState {
                 .or(recipe.title_seed.as_deref())
                 .unwrap_or("shell")
                 .to_owned(),
+            working_directory: recipe.working_directory.clone(),
+            last_run_command: recipe.last_run_command.clone(),
         }
     }
 }
@@ -142,7 +148,31 @@ pub struct WorkspaceState {
     active_worklane_id: String,
     focus_history: PaneFocusHistory,
     is_navigating_history: bool,
+    closed_panes: Vec<ClosedPaneEntry>,
 }
+
+#[derive(Clone, Debug, PartialEq)]
+struct ClosedPaneEntry {
+    closed_at: u64,
+    pane: PaneState,
+    worklane_id: String,
+    column_id: String,
+    column_index: usize,
+    pane_index: usize,
+    column_width: f64,
+    pane_height: Option<f64>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RestoredPane {
+    pub pane_id: String,
+    pub worklane_id: String,
+    pub working_directory: Option<String>,
+    pub prefill_text: Option<String>,
+}
+
+const CLOSED_PANE_CAPACITY: usize = 10;
+const CLOSED_PANE_EXPIRY_SECONDS: u64 = 60 * 60;
 
 impl WorkspaceState {
     #[must_use]
@@ -167,6 +197,7 @@ impl WorkspaceState {
             active_worklane_id: worklane_id,
             focus_history: PaneFocusHistory::default(),
             is_navigating_history: false,
+            closed_panes: Vec::new(),
         }
     }
 
@@ -267,6 +298,7 @@ impl WorkspaceState {
             active_worklane_id,
             focus_history: PaneFocusHistory::default(),
             is_navigating_history: false,
+            closed_panes: Vec::new(),
         })
     }
 
@@ -303,9 +335,9 @@ impl WorkspaceState {
                                         id: pane.id.clone(),
                                         custom_title: pane.custom_title.clone(),
                                         title_seed: Some(pane.live_title.clone()),
-                                        working_directory: None,
+                                        working_directory: pane.working_directory.clone(),
                                         last_activity_title: None,
-                                        last_run_command: None,
+                                        last_run_command: pane.last_run_command.clone(),
                                     },
                                     |recipe| (*recipe).clone(),
                                 );
@@ -313,6 +345,8 @@ impl WorkspaceState {
                                 if pane.live_title != "shell" {
                                     recipe.last_activity_title = Some(pane.live_title.clone());
                                 }
+                                recipe.working_directory.clone_from(&pane.working_directory);
+                                recipe.last_run_command.clone_from(&pane.last_run_command);
                                 recipe
                             })
                             .collect();
@@ -392,6 +426,15 @@ impl WorkspaceState {
             .flat_map(|column| &column.panes)
             .map(|pane| pane.id.as_str())
             .collect()
+    }
+
+    #[must_use]
+    pub fn pane(&self, pane_id: &str) -> Option<&PaneState> {
+        self.worklanes
+            .iter()
+            .flat_map(|worklane| &worklane.columns)
+            .flat_map(|column| &column.panes)
+            .find(|pane| pane.id == pane_id)
     }
 
     #[must_use]
@@ -1360,6 +1403,30 @@ impl WorkspaceState {
     /// exited. The last pane in the last worklane requests window closure and
     /// remains in the model, matching the source confirmation boundary.
     pub fn close_pane(&mut self, pane_id: &str) -> ClosePaneOutcome {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_secs());
+        self.close_pane_at(pane_id, now)
+    }
+
+    /// Closes a pane using an explicit clock value for deterministic expiry
+    /// tests. Product callers should use [`Self::close_pane`].
+    pub fn close_pane_at(&mut self, pane_id: &str, now: u64) -> ClosePaneOutcome {
+        self.close_pane_at_with_capture(pane_id, now, true)
+    }
+
+    /// Removes a pane because its child exited naturally. Source behavior does
+    /// not put non-user closures on the Undo Close Pane stack.
+    pub fn close_pane_after_child_exit(&mut self, pane_id: &str) -> ClosePaneOutcome {
+        self.close_pane_at_with_capture(pane_id, 0, false)
+    }
+
+    fn close_pane_at_with_capture(
+        &mut self,
+        pane_id: &str,
+        now: u64,
+        capture: bool,
+    ) -> ClosePaneOutcome {
         let Some((worklane_index, column_index, pane_index)) = self
             .worklanes
             .iter()
@@ -1390,6 +1457,9 @@ impl WorkspaceState {
             if self.worklanes.len() == 1 {
                 return ClosePaneOutcome::CloseWindow;
             }
+            if capture {
+                self.capture_closed_pane(worklane_index, column_index, pane_index, now);
+            }
             let removed_active = self.worklanes[worklane_index].id == self.active_worklane_id;
             self.worklanes.remove(worklane_index);
             if removed_active {
@@ -1401,6 +1471,9 @@ impl WorkspaceState {
             return ClosePaneOutcome::Closed;
         }
 
+        if capture {
+            self.capture_closed_pane(worklane_index, column_index, pane_index, now);
+        }
         let worklane = &mut self.worklanes[worklane_index];
         if worklane.columns[column_index].panes.len() == 1 {
             let removed_focused_column =
@@ -1433,6 +1506,117 @@ impl WorkspaceState {
             }
         }
         ClosePaneOutcome::Closed
+    }
+
+    /// Restores the most recently user-closed local pane using source LIFO and
+    /// one-hour expiry semantics. A restored terminal receives a new identity.
+    pub fn restore_closed_pane(&mut self, new_pane_id: impl Into<String>) -> Option<RestoredPane> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_secs());
+        self.restore_closed_pane_at(new_pane_id, now)
+    }
+
+    /// Deterministic-clock form of [`Self::restore_closed_pane`].
+    pub fn restore_closed_pane_at(
+        &mut self,
+        new_pane_id: impl Into<String>,
+        now: u64,
+    ) -> Option<RestoredPane> {
+        let new_pane_id = new_pane_id.into();
+        if self.pane(&new_pane_id).is_some() {
+            return None;
+        }
+        self.prune_closed_panes(now);
+        let entry = self.closed_panes.pop()?;
+        let target_worklane_index = self
+            .worklanes
+            .iter()
+            .position(|worklane| worklane.id == entry.worklane_id)
+            .or_else(|| self.active_worklane_index())?;
+        let target_worklane_id = self.worklanes[target_worklane_index].id.clone();
+        let mut pane = entry.pane;
+        pane.id.clone_from(&new_pane_id);
+
+        let existing_column_index = self.worklanes[target_worklane_index]
+            .columns
+            .iter()
+            .position(|column| column.id == entry.column_id);
+        if let Some(column_index) = existing_column_index {
+            let column = &mut self.worklanes[target_worklane_index].columns[column_index];
+            let pane_index = entry.pane_index.min(column.panes.len());
+            column.panes.insert(pane_index, pane);
+            column.pane_heights.fill(1.0);
+            column.pane_heights.insert(
+                pane_index,
+                entry
+                    .pane_height
+                    .filter(|height| *height > 0.0)
+                    .unwrap_or(1.0),
+            );
+            column.focused_pane_id.clone_from(&new_pane_id);
+            column.last_focused_pane_id.clone_from(&new_pane_id);
+            self.worklanes[target_worklane_index]
+                .focused_column_id
+                .clone_from(&entry.column_id);
+        } else {
+            let column_id = self.unique_column_id(&new_pane_id);
+            let column_index = entry
+                .column_index
+                .min(self.worklanes[target_worklane_index].columns.len());
+            self.worklanes[target_worklane_index].columns.insert(
+                column_index,
+                PaneColumnState {
+                    id: column_id.clone(),
+                    width: entry.column_width,
+                    panes: vec![pane],
+                    pane_heights: vec![1.0],
+                    focused_pane_id: new_pane_id.clone(),
+                    last_focused_pane_id: new_pane_id.clone(),
+                },
+            );
+            self.worklanes[target_worklane_index].focused_column_id = column_id;
+        }
+        self.active_worklane_id.clone_from(&target_worklane_id);
+        let pane = self.pane(&new_pane_id)?;
+        let restored = RestoredPane {
+            pane_id: new_pane_id,
+            worklane_id: target_worklane_id,
+            working_directory: pane.working_directory.clone(),
+            prefill_text: trimmed_owned(pane.last_run_command.as_deref()),
+        };
+        self.record_focus_transition(None);
+        Some(restored)
+    }
+
+    fn capture_closed_pane(
+        &mut self,
+        worklane_index: usize,
+        column_index: usize,
+        pane_index: usize,
+        now: u64,
+    ) {
+        self.prune_closed_panes(now);
+        let worklane = &self.worklanes[worklane_index];
+        let column = &worklane.columns[column_index];
+        self.closed_panes.push(ClosedPaneEntry {
+            closed_at: now,
+            pane: column.panes[pane_index].clone(),
+            worklane_id: worklane.id.clone(),
+            column_id: column.id.clone(),
+            column_index,
+            pane_index,
+            column_width: column.width,
+            pane_height: (column.panes.len() > 1).then(|| column.pane_heights[pane_index]),
+        });
+        if self.closed_panes.len() > CLOSED_PANE_CAPACITY {
+            self.closed_panes.remove(0);
+        }
+    }
+
+    fn prune_closed_panes(&mut self, now: u64) {
+        self.closed_panes
+            .retain(|entry| now.saturating_sub(entry.closed_at) <= CLOSED_PANE_EXPIRY_SECONDS);
     }
 
     fn move_focused_pane_vertically(&mut self, direction: isize) -> bool {
@@ -1573,6 +1757,13 @@ fn sanitize_dimension(value: f64) -> f64 {
     } else {
         1.0
     }
+}
+
+fn trimmed_owned(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
 }
 
 fn small_count_as_f64(count: usize) -> f64 {

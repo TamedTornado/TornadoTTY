@@ -42,6 +42,7 @@ enum Scenario {
     WorkspaceActions,
     PaneSearch,
     PaneLayoutActions,
+    ClosedPaneRestore,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -51,6 +52,7 @@ enum ExitPolicy {
     WorkspaceActions,
     PaneSearch,
     PaneLayoutActions,
+    ClosedPaneRestore,
 }
 
 impl Default for Options {
@@ -100,6 +102,9 @@ fn parse_options() -> Result<Options, String> {
             "--exercise-pane-layout-actions" => {
                 options.scenario = Some(Scenario::PaneLayoutActions);
             }
+            "--exercise-closed-pane-restore" => {
+                options.scenario = Some(Scenario::ClosedPaneRestore);
+            }
             "--quit-after-workspace-actions" => {
                 options.exit_policy = ExitPolicy::WorkspaceActions;
             }
@@ -108,6 +113,9 @@ fn parse_options() -> Result<Options, String> {
             }
             "--quit-after-pane-layout-actions" => {
                 options.exit_policy = ExitPolicy::PaneLayoutActions;
+            }
+            "--quit-after-closed-pane-restore" => {
+                options.exit_policy = ExitPolicy::ClosedPaneRestore;
             }
             "--state-directory" => {
                 options.state_directory =
@@ -149,6 +157,11 @@ fn parse_options() -> Result<Options, String> {
             _ => return Err(format!("unknown argument: {argument}")),
         }
     }
+    validate_scenario_exit_policy(&options)?;
+    Ok(options)
+}
+
+fn validate_scenario_exit_policy(options: &Options) -> Result<(), String> {
     if options.exit_policy == ExitPolicy::WorkspaceActions
         && options.scenario != Some(Scenario::WorkspaceActions)
     {
@@ -168,7 +181,14 @@ fn parse_options() -> Result<Options, String> {
             "--quit-after-pane-layout-actions requires --exercise-pane-layout-actions".to_owned(),
         );
     }
-    Ok(options)
+    if options.exit_policy == ExitPolicy::ClosedPaneRestore
+        && options.scenario != Some(Scenario::ClosedPaneRestore)
+    {
+        return Err(
+            "--quit-after-closed-pane-restore requires --exercise-closed-pane-restore".to_owned(),
+        );
+    }
+    Ok(())
 }
 
 fn run_lifecycle_cycle(
@@ -246,6 +266,10 @@ fn run_lifecycle_cycle(
         Some(Scenario::PaneLayoutActions) => ApplicationShell::schedule_pane_layout_actions(
             &shell,
             options.exit_policy == ExitPolicy::PaneLayoutActions,
+        ),
+        Some(Scenario::ClosedPaneRestore) => ApplicationShell::schedule_closed_pane_restore(
+            &shell,
+            options.exit_policy == ExitPolicy::ClosedPaneRestore,
         ),
         None => {}
     }

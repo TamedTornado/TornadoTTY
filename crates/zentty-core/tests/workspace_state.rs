@@ -85,6 +85,61 @@ fn closing_an_unfocused_pane_does_not_steal_focus() {
 }
 
 #[test]
+fn closed_pane_restore_is_lifo_expiring_and_preserves_source_launch_context() {
+    const SOURCE_STACK: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../Zentty/Restore/ClosedPaneStack.swift"
+    ));
+    const SOURCE_RESTORE: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../Zentty/AppState/WorklaneStore+Restore.swift"
+    ));
+    let envelope = SessionRestoreEnvelope::from_json(V3_ENVELOPE).unwrap();
+    let mut state = WorkspaceState::from_window_recipe(&envelope.workspace.windows[0]).unwrap();
+
+    assert_eq!(
+        state.close_pane_at("pane-agent", 1_000),
+        ClosePaneOutcome::Closed
+    );
+    let restored = state
+        .restore_closed_pane_at("pane-restored", 1_001)
+        .expect("recent local pane should restore");
+    assert_eq!(restored.pane_id, "pane-restored");
+    assert_eq!(restored.worklane_id, "worklane-main");
+    assert_eq!(restored.working_directory.as_deref(), Some("/tmp/project"));
+    assert_eq!(restored.prefill_text.as_deref(), Some("cargo test"));
+    assert_eq!(state.active_pane_ids(), ["pane-restored", "pane-shell"]);
+    assert_eq!(state.focused_pane_id(), Some("pane-restored"));
+    assert_eq!(state.active_columns()[0].pane_heights, [420.0, 1.0]);
+    assert_eq!(
+        state.pane("pane-restored").unwrap().custom_title.as_deref(),
+        Some("Agent")
+    );
+
+    assert_eq!(
+        state.close_pane_at("pane-restored", 2_000),
+        ClosePaneOutcome::Closed
+    );
+    assert!(
+        state
+            .restore_closed_pane_at("pane-expired", 2_000 + 60 * 60 + 1)
+            .is_none()
+    );
+    assert!(SOURCE_STACK.contains("defaultCapacity: Int = 10"));
+    assert!(SOURCE_STACK.contains("defaultExpiry: TimeInterval = 60 * 60"));
+    assert!(SOURCE_RESTORE.contains("prefillText: composition.prefillText"));
+    assert!(SOURCE_RESTORE.contains("let newPaneID = runtimeIdentity.makePaneID()"));
+
+    let mut natural_exit = WorkspaceState::new("lane", "pane-a");
+    assert!(natural_exit.split_focused_pane_right("pane-b"));
+    assert_eq!(
+        natural_exit.close_pane_after_child_exit("pane-b"),
+        ClosePaneOutcome::Closed
+    );
+    assert!(natural_exit.restore_closed_pane_at("pane-c", 1).is_none());
+}
+
+#[test]
 fn vertical_pane_commands_preserve_column_identity_and_geometry() {
     let mut state = WorkspaceState::new("worklane-a", "pane-a");
 

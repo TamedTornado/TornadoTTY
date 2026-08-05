@@ -185,10 +185,6 @@ jq -e '
             "matrix_async_backend": {"default": "default", "epoll": "epoll", "io-uring": "io_uring"},
             "terminals": ["single", "multi"]
         },
-        "status": "NOT_IMPLEMENTED",
-        "tier": "release",
-        "tracking": "GH-5",
-        "defect": "The delivered Rust/GTK product and safe Ghostty adapter do not yet provide the product-owned pane/terminal lifecycle harness on this matrix axis.",
         "expected_cell_count": 24,
         "authoritative": false
     }] and
@@ -341,11 +337,7 @@ jq -e --slurpfile matrix "${authoritative_matrix}" '
         $cell.display == $expected_cell.display and
         $cell.optimize == $expected_cell.optimize and
         $cell.async_backend == $expected_cell.async_backend and
-        $cell.terminals == $expected_cell.terminals and
-        $cell.status == $family.status and
-        $cell.tier == $family.tier and
-        $cell.tracking == $family.tracking and
-        $cell.defect == $family.defect)) and
+        $cell.terminals == $expected_cell.terminals)) and
     ([ $matrix[0].cells[] | select(.capability == $family.capability) | .id ] | sort) ==
       ($expected | map(.id) | sort)
 ' "${contract}" >/dev/null || fail "pane-terminal qualification family differs from authoritative matrix"

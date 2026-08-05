@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
+ghostty_root="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
+backend="${GDK_BACKEND:-}"
+fixture="${repo_root}/crates/zentty-core/tests/fixtures/session-restore-v3.json"
+
+fail() {
+    echo "rust-closed-pane-restore: error: $*" >&2
+    exit 1
+}
+
+[[ "${backend}" == wayland || "${backend}" == x11 ]] || fail "GDK_BACKEND must be wayland or x11"
+if [[ "${backend}" == wayland ]]; then
+    [[ "${ZENTTY_NESTED_WAYLAND_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] || fail "Wayland run is not controlled"
+else
+    [[ "${ZENTTY_NESTED_X11_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] || fail "X11 run is not controlled"
+fi
+for dependency in jq readelf timeout mktemp grep sed; do
+    command -v "${dependency}" >/dev/null || fail "${dependency} is required"
+done
+[[ -x "${product}" ]] || fail "delivered Rust product is not built: ${product}"
+
+layer_runpath="$(
+    readelf -d "${ghostty_root}/zig-out/lib/libghostty-gtk-embed.so" |
+        sed -n 's/.*Library runpath: \[\([^]]*\)\].*/\1/p' |
+        cut -d: -f1
+)"
+[[ "${layer_runpath}" == .zig-cache/* ]] || fail "Ghostty layer-shell runpath is missing"
+layer_directory="${ghostty_root}/${layer_runpath}"
+
+state_dir="$(mktemp -d)"
+working_dir="$(mktemp -d)"
+log="$(mktemp)"
+trap 'rm -rf -- "${state_dir}" "${working_dir}"; rm -f -- "${log}"' EXIT
+jq --arg cwd "${working_dir}" '
+    .workspace.windows[0].worklanes[0].columns[0].panes[].workingDirectory = $cwd
+' "${fixture}" >"${state_dir}/restore-snapshot.json"
+
+set +e
+timeout --foreground --kill-after=2s 20s \
+    env LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+    "${product}" \
+    --state-directory "${state_dir}" \
+    --command 'printf "\033]0;CWD:%s\007" "$PWD"; sleep 30' \
+    --exercise-closed-pane-restore \
+    --quit-after-closed-pane-restore >"${log}" 2>&1
+status=$?
+set -e
+if (( status != 0 )); then
+    cat "${log}" >&2
+    fail "product restore run exited ${status}"
+fi
+
+grep -Fq 'zentty-linux: action=close-pane pane=pane-agent' "${log}" || fail "source pane was not closed through the product action"
+action_line="$(grep -F 'zentty-linux: action=restore-closed-pane pane=' "${log}" | tail -1)"
+[[ "${action_line}" == *" cwd=${working_dir} prefill=cargo test" ]] || fail "restore action lost CWD or command prefill: ${action_line}"
+restored_pane="$(sed -n 's/.*pane=\([^ ]*\) worklane=.*/\1/p' <<<"${action_line}")"
+[[ -n "${restored_pane}" && "${restored_pane}" != pane-agent ]] || fail "restore did not allocate a fresh pane identity"
+grep -Fq "zentty-linux: restore-prefill pane=${restored_pane} text=cargo test" "${log}" || fail "command was not prefilled through the real terminal input path"
+grep -Fq "zentty-linux: title-pane=${restored_pane} value=CWD:${working_dir}" "${log}" || fail "restored real PTY did not start in the captured working directory"
+grep -Fq "zentty-linux: closed-pane-restore-scenario verified pane=${restored_pane} cwd=${working_dir} surfaces=2 children=2" "${log}" || fail "one-model/one-surface/one-child ownership was not verified"
+grep -Fq 'zentty-linux: closed-pane-restore-scenario complete' "${log}" || fail "restore scenario did not complete"
+[[ "$(grep -Fc 'started subcommand path=/bin/sh pid=' "${log}" || true)" -eq 3 ]] || fail "expected two original real PTYs plus one restored PTY"
+
+jq -e --arg pane "${restored_pane}" --arg cwd "${working_dir}" '
+    .reason == "cleanExit" and
+    (.workspace.windows[0].worklanes[0].columns[0].panes[0].id == $pane) and
+    (.workspace.windows[0].worklanes[0].columns[0].panes[0].workingDirectory == $cwd) and
+    (.workspace.windows[0].worklanes[0].columns[0].panes[0].lastRunCommand == "cargo test") and
+    (.workspace.windows[0].worklanes[0].columns[0].paneHeights == [420, 1])
+' "${state_dir}/restore-snapshot.json" >/dev/null || fail "restored identity, launch context, or geometry was not persisted"
+
+echo "Rust closed-pane restore passed: ${backend}, pane=${restored_pane}, cwd=real, prefill=real, ownership=real"

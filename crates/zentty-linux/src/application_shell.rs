@@ -82,6 +82,7 @@ const ACTION_ARRANGE_GOLDEN_NARROW: &str = "arrange-golden-narrow";
 const ACTION_ARRANGE_GOLDEN_TALL: &str = "arrange-golden-tall";
 const ACTION_ARRANGE_GOLDEN_SHORT: &str = "arrange-golden-short";
 const ACTION_RESET_PANE_LAYOUT: &str = "reset-pane-layout";
+const ACTION_RESTORE_CLOSED_PANE: &str = "restore-closed-pane";
 const PRIMARY_RIGHT_BEHAVIOR: PaneRightInsertionBehavior = PaneRightInsertionBehavior::VisibleSplit;
 const WORKLANE_PEEK_TAB_HOLD_THRESHOLD: Duration = Duration::from_millis(200);
 
@@ -120,6 +121,7 @@ pub(crate) struct ApplicationShell {
     command_palette: CommandPaletteView,
     last_pane_viewport_height: Cell<i32>,
     workspace_actions: Option<gio::SimpleActionGroup>,
+    pending_prefills: BTreeMap<String, String>,
 }
 
 struct ShellWidgets {
@@ -219,6 +221,7 @@ impl ApplicationShell {
             command_palette,
             last_pane_viewport_height: Cell::new(0),
             workspace_actions: None,
+            pending_prefills: BTreeMap::new(),
         }));
 
         install_sidebar_width_tracking(
@@ -499,6 +502,44 @@ impl ApplicationShell {
         });
     }
 
+    pub(crate) fn schedule_closed_pane_restore(
+        shell: &Rc<RefCell<Self>>,
+        quit_when_complete: bool,
+    ) {
+        let weak = Rc::downgrade(shell);
+        let step = Rc::new(Cell::new(0_u8));
+        glib::timeout_add_local(Duration::from_millis(180), move || {
+            let Some(shell) = weak.upgrade() else {
+                return glib::ControlFlow::Break;
+            };
+            let result = match step.get() {
+                0 => {
+                    Self::close_focused_pane(&shell);
+                    Ok(())
+                }
+                1 => {
+                    let window = shell.borrow().window.clone();
+                    window.activate_action("workspace.restore-closed-pane", None)
+                }
+                2 => require_closed_pane_restore_state(&shell),
+                _ => {
+                    eprintln!("zentty-linux: closed-pane-restore-scenario complete");
+                    if quit_when_complete {
+                        shell.borrow().main_loop.quit();
+                    }
+                    return glib::ControlFlow::Break;
+                }
+            };
+            if let Err(error) = result {
+                eprintln!("zentty-linux: closed-pane-restore-scenario failed: {error}");
+                shell.borrow().main_loop.quit();
+                return glib::ControlFlow::Break;
+            }
+            step.set(step.get() + 1);
+            glib::ControlFlow::Continue
+        });
+    }
+
     fn install_actions(shell: &Rc<RefCell<Self>>) {
         let group = gio::SimpleActionGroup::new();
 
@@ -574,6 +615,8 @@ impl ApplicationShell {
         Self::install_pane_creation_actions(shell, &group);
         Self::install_pane_layout_actions(shell, &group);
 
+        Self::install_restore_closed_pane_action(shell, &group);
+
         Self::add_simple_action(shell, &group, ACTION_NAVIGATE_BACK, |shell| {
             shell.navigate_history(true);
         });
@@ -601,6 +644,23 @@ impl ApplicationShell {
             .window
             .insert_action_group("workspace", Some(&group));
         shell.borrow_mut().workspace_actions = Some(group);
+    }
+
+    fn install_restore_closed_pane_action(
+        shell: &Rc<RefCell<Self>>,
+        group: &gio::SimpleActionGroup,
+    ) {
+        let action = gio::SimpleAction::new(ACTION_RESTORE_CLOSED_PANE, None);
+        let weak = Rc::downgrade(shell);
+        action.connect_activate(move |_, _| {
+            let Some(shell) = weak.upgrade() else {
+                return;
+            };
+            if let Err(error) = Self::restore_closed_pane(&shell) {
+                Self::report_action_error(&shell, ACTION_RESTORE_CLOSED_PANE, &error);
+            }
+        });
+        group.add_action(&action);
     }
 
     fn install_search_actions(shell: &Rc<RefCell<Self>>, group: &gio::SimpleActionGroup) {
@@ -838,6 +898,12 @@ impl ApplicationShell {
                 return glib::Propagation::Proceed;
             };
             if !shell.borrow().peek_phase.is_active()
+                && is_restore_closed_pane_shortcut(key, modifiers)
+            {
+                Self::activate_restore_closed_pane_shortcut(&shell);
+                return glib::Propagation::Stop;
+            }
+            if !shell.borrow().peek_phase.is_active()
                 && modifiers.contains(gdk::ModifierType::CONTROL_MASK)
                 && modifiers.contains(gdk::ModifierType::SUPER_MASK)
                 && (key == gdk::Key::Up || key == gdk::Key::Down)
@@ -925,6 +991,13 @@ impl ApplicationShell {
             }
         });
         shell.borrow().window.add_controller(controller);
+    }
+
+    fn activate_restore_closed_pane_shortcut(shell: &Rc<RefCell<Self>>) {
+        let window = shell.borrow().window.clone();
+        if let Err(error) = window.activate_action("workspace.restore-closed-pane", None) {
+            eprintln!("zentty-linux: restore shortcut failed: {error}");
+        }
     }
 
     fn handle_peek_tab(shell: &Rc<RefCell<Self>>, direction: PeekDirection) {
@@ -2244,17 +2317,49 @@ impl ApplicationShell {
         }
     }
 
-    fn create_surface(shell: &Rc<RefCell<Self>>, pane_id: &str) -> Result<(), String> {
-        let (runtime, command) = {
-            let shell = shell.borrow();
-            (shell.runtime.clone(), shell.command.clone())
+    fn restore_closed_pane(shell: &Rc<RefCell<Self>>) -> Result<(), String> {
+        let restored = {
+            let mut shell = shell.borrow_mut();
+            let pane_id = shell.take_pane_id();
+            shell.state.restore_closed_pane(pane_id)
         };
-        let surface = runtime
-            .create_surface(&SurfaceConfig {
-                command,
-                title: zentty_core::PRODUCT_NAME.to_owned(),
-            })
-            .map_err(|error| error.to_string())?;
+        let Some(restored) = restored else {
+            eprintln!("zentty-linux: action=restore-closed-pane available=false");
+            return Ok(());
+        };
+        if let Some(prefill) = &restored.prefill_text {
+            shell
+                .borrow_mut()
+                .pending_prefills
+                .insert(restored.pane_id.clone(), prefill.clone());
+        }
+        if let Err(error) = Self::create_surface(shell, &restored.pane_id) {
+            let mut shell = shell.borrow_mut();
+            shell.pending_prefills.remove(&restored.pane_id);
+            let _ = shell.state.close_pane_after_child_exit(&restored.pane_id);
+            return Err(error);
+        }
+        let shell_ref = shell.borrow();
+        eprintln!(
+            "zentty-linux: action=restore-closed-pane pane={} worklane={} cwd={} prefill={}",
+            restored.pane_id,
+            restored.worklane_id,
+            restored.working_directory.as_deref().unwrap_or("none"),
+            restored.prefill_text.as_deref().unwrap_or("none")
+        );
+        shell_ref.render();
+        shell_ref.focus_selected_surface();
+        Ok(())
+    }
+
+    fn create_surface(shell: &Rc<RefCell<Self>>, pane_id: &str) -> Result<(), String> {
+        let surface = {
+            let shell = shell.borrow();
+            shell
+                .runtime
+                .create_surface(&shell.surface_config(pane_id))
+                .map_err(|error| error.to_string())?
+        };
 
         let ready_id = pane_id.to_owned();
         let weak = Rc::downgrade(shell);
@@ -2267,6 +2372,7 @@ impl ApplicationShell {
                 let Some(shell) = weak.upgrade() else {
                     return;
                 };
+                Self::apply_pending_restore_prefill(&shell, &ready_id);
                 let shell = shell.borrow();
                 if shell.shutting_down {
                     return;
@@ -2354,6 +2460,33 @@ impl ApplicationShell {
         Ok(())
     }
 
+    fn surface_config(&self, pane_id: &str) -> SurfaceConfig {
+        SurfaceConfig {
+            command: self.command.clone(),
+            title: zentty_core::PRODUCT_NAME.to_owned(),
+            working_directory: self
+                .state
+                .pane(pane_id)
+                .and_then(|pane| pane.working_directory.clone()),
+        }
+    }
+
+    fn apply_pending_restore_prefill(shell: &Rc<RefCell<Self>>, pane_id: &str) {
+        let prefill = shell.borrow_mut().pending_prefills.remove(pane_id);
+        let Some(prefill) = prefill else {
+            return;
+        };
+        let shell = shell.borrow();
+        let Some(surface) = shell.surfaces.get(pane_id) else {
+            return;
+        };
+        if let Err(error) = surface.send_text(&prefill) {
+            eprintln!("zentty-linux: restore-prefill pane={pane_id} failed={error}");
+        } else {
+            eprintln!("zentty-linux: restore-prefill pane={pane_id} text={prefill}");
+        }
+    }
+
     fn create_pane_frame(
         shell: &Rc<RefCell<Self>>,
         pane_id: &str,
@@ -2380,7 +2513,7 @@ impl ApplicationShell {
             return;
         }
         if shell_ref.quit_after_last_terminal_exit {
-            let outcome = shell_ref.state.close_pane(pane_id);
+            let outcome = shell_ref.state.close_pane_after_child_exit(pane_id);
             if let Err(error) = shell_ref.remove_surface(pane_id) {
                 eprintln!("zentty-linux: child-exit cleanup failed: {error}");
                 shell_ref.main_loop.quit();
@@ -2395,8 +2528,20 @@ impl ApplicationShell {
                 shell_ref.main_loop.quit();
             }
         } else {
-            drop(shell_ref);
-            Self::close_pane(shell, pane_id);
+            let outcome = shell_ref.state.close_pane_after_child_exit(pane_id);
+            if let Err(error) = shell_ref.remove_surface(pane_id) {
+                eprintln!("zentty-linux: child-exit cleanup failed: {error}");
+                shell_ref.main_loop.quit();
+                return;
+            }
+            match outcome {
+                ClosePaneOutcome::Closed => {
+                    shell_ref.render();
+                    shell_ref.focus_selected_surface();
+                }
+                ClosePaneOutcome::CloseWindow => shell_ref.main_loop.quit(),
+                ClosePaneOutcome::NotFound => {}
+            }
         }
     }
 
@@ -3072,6 +3217,45 @@ fn require_pane_layout_scenario_state(
     eprintln!(
         "zentty-linux: pane-layout-action-scenario verified panes={pane_ids:?} columns={} focus=pane-4 golden=narrow",
         columns.len()
+    );
+    Ok(())
+}
+
+fn is_restore_closed_pane_shortcut(key: gdk::Key, modifiers: gdk::ModifierType) -> bool {
+    key == gdk::Key::t
+        && modifiers.contains(gdk::ModifierType::CONTROL_MASK)
+        && modifiers.contains(gdk::ModifierType::SHIFT_MASK)
+        && !modifiers.intersects(gdk::ModifierType::ALT_MASK | gdk::ModifierType::SUPER_MASK)
+}
+
+fn require_closed_pane_restore_state(
+    shell: &Rc<RefCell<ApplicationShell>>,
+) -> Result<(), glib::BoolError> {
+    let shell = shell.borrow();
+    let focused = shell
+        .state
+        .focused_pane_id()
+        .ok_or_else(|| glib::bool_error!("restored pane is not focused"))?;
+    let pane = shell
+        .state
+        .pane(focused)
+        .ok_or_else(|| glib::bool_error!("restored pane model is missing"))?;
+    if focused == "pane-agent"
+        || pane.working_directory.as_deref().is_none_or(str::is_empty)
+        || shell.state.active_pane_ids().len() != 2
+        || shell.surfaces.len() != 2
+        || shell.live_children.get() != 2
+        || shell.pending_prefills.contains_key(focused)
+    {
+        return Err(glib::bool_error!(
+            "closed-pane restore did not replace one model/surface/child and consume its prefill"
+        ));
+    }
+    eprintln!(
+        "zentty-linux: closed-pane-restore-scenario verified pane={focused} cwd={} surfaces={} children={}",
+        pane.working_directory.as_deref().unwrap_or("none"),
+        shell.surfaces.len(),
+        shell.live_children.get()
     );
     Ok(())
 }

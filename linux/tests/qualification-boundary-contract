@@ -28,7 +28,8 @@ done < <(jq -r '.cells[] | select((.command // "") != "") | [.id,.command] | @ts
 
 while IFS=$'\t' read -r id command; do
     [[ -n "${id}" ]] || continue
-    [[ "${command}" == *"build/linux/bin/zentty-linux"* ]] ||
+    [[ "${command}" == *"build/linux/bin/zentty-linux"* ||
+        "${command}" == *"linux/tests/rust-closed-pane-restore"* ]] ||
         fail "executable product cell ${id} does not launch the delivered Rust product"
     [[ "${command}" != *"fixture"* && "${command}" != *"self-test"* ]] ||
         fail "executable product cell ${id} is owned by a fixture or self-test"
@@ -44,6 +45,9 @@ done < <(jq -r '
     ) |
     [.id,.command] | @tsv
 ' "${matrix}")
+
+grep -F 'build/linux/bin/zentty-linux' "${repo_root}/linux/tests/rust-closed-pane-restore" >/dev/null ||
+    fail "closed-pane restore integration test does not default to the delivered Rust product"
 
 while IFS=$'\t' read -r id command; do
     [[ -n "${id}" ]] || continue

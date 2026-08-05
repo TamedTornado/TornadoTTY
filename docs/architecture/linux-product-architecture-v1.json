@@ -308,10 +308,6 @@
         "matrix_async_backend": {"default": "default", "epoll": "epoll", "io-uring": "io_uring"},
         "terminals": ["single", "multi"]
       },
-      "status": "NOT_IMPLEMENTED",
-      "tier": "release",
-      "tracking": "GH-5",
-      "defect": "The delivered Rust/GTK product and safe Ghostty adapter do not yet provide the product-owned pane/terminal lifecycle harness on this matrix axis.",
       "expected_cell_count": 24,
       "authoritative": false
     }

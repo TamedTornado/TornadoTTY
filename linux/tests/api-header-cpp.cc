@@ -13,10 +13,19 @@ using SurfaceConstructor = GtkWidget *(*) (
     const char *,
     const char *
 );
+using SurfaceOptionsConstructor = GtkWidget *(*) (
+    ghostty_gtk_embed_runtime_t *,
+    const ghostty_gtk_embed_surface_options_t *
+);
 
 static_assert(std::is_same_v<
     decltype(&ghostty_gtk_embed_runtime_new),
     RuntimeConstructor
+>);
+static_assert(std::is_standard_layout_v<ghostty_gtk_embed_surface_options_t>);
+static_assert(std::is_same_v<
+    decltype(&ghostty_gtk_embed_surface_new_with_options),
+    SurfaceOptionsConstructor
 >);
 static_assert(std::is_same_v<
     decltype(&ghostty_gtk_embed_surface_new),

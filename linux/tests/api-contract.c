@@ -15,6 +15,7 @@ static int reject_null_and_foreign_handles(void) {
     if (ghostty_gtk_embed_runtime_tick(NULL) ||
         ghostty_gtk_embed_runtime_tick(foreign_runtime) ||
         ghostty_gtk_embed_surface_new(NULL, NULL, NULL) != NULL ||
+        ghostty_gtk_embed_surface_new_with_options(NULL, NULL) != NULL ||
         ghostty_gtk_embed_surface_new(foreign_runtime, NULL, NULL) != NULL) {
         fputs("api-contract: null or foreign runtime accepted\n", stderr);
         return 1;
@@ -54,6 +55,38 @@ static int enforce_runtime_lifecycle(
         fputs("api-contract: active runtime tick rejected\n", stderr);
         return 1;
     }
+
+    ghostty_gtk_embed_surface_options_t truncated = {
+        .struct_size = offsetof(
+            ghostty_gtk_embed_surface_options_t,
+            working_directory
+        ),
+        .working_directory = "/tmp",
+    };
+    if (ghostty_gtk_embed_surface_new_with_options(runtime, NULL) != NULL ||
+        ghostty_gtk_embed_surface_new_with_options(runtime, &truncated) != NULL) {
+        fputs("api-contract: invalid surface options accepted\n", stderr);
+        return 1;
+    }
+
+    ghostty_gtk_embed_surface_options_t options = {
+        .struct_size = sizeof(options),
+        .command = "exit 0",
+        .title = "API options contract",
+        .working_directory = "/tmp",
+    };
+    GtkWidget *options_surface =
+        ghostty_gtk_embed_surface_new_with_options(runtime, &options);
+    if (options_surface == NULL) {
+        fputs("api-contract: valid surface options rejected\n", stderr);
+        return 1;
+    }
+    g_object_ref_sink(options_surface);
+    if (!ghostty_gtk_embed_surface_close(options_surface)) {
+        fputs("api-contract: options surface close rejected\n", stderr);
+        return 1;
+    }
+    g_object_unref(options_surface);
 
     GtkWidget *surface = ghostty_gtk_embed_surface_new(
         runtime,

@@ -6036,6 +6036,99 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   unimplemented, so keyboard resizing must not guess terminal cell metrics and
   masquerade as parity.
 
+### 2026-08-05 — Undo Close Pane prerequisite for agent-aware worklanes
+
+- **Tests-first model failure:** A source-pinned Rust test required the macOS
+  `ClosedPaneStack` contract—ten-entry LIFO, one-hour expiry, fresh restored
+  pane identity, original slot/weight, durable title, CWD, command prefill, and
+  focused selection. It initially failed to compile because Linux exposed only
+  destructive `close_pane`; there was no capture or restore API. The repaired
+  model also distinguishes user closure from natural child exit, which the
+  source deliberately excludes from Undo Close Pane.
+- **Ghostty boundary discovery:** The safe adapter could supply only a shell
+  command and title. Starting a restored PTY in its captured directory by
+  synthesizing `cd` shell text would have been shell-dependent, visibly late,
+  and contrary to the existing architecture decision requiring typed launch
+  context. The minimal Ghostty change therefore adds a C-compatible,
+  size-versioned surface-options structure with copied nullable command,
+  title, and working-directory fields. Product policy and restoration remain
+  entirely in Zentty. The isolated Ghostty commit is
+  `07cfc9f3dc9295ec91ac63c89b2c7a937f9dcf5d`.
+- **Ghostty test-harness failures and repair:** The first focused Zig test run
+  could not use the shared read-only cache and lacked the checkout-time
+  Blueprint/layer-shell environment. This was not treated as a pass. An
+  isolated writable Zig cache plus the repository-pinned compiler/tool paths
+  built the library; the focused ABI-size test then passed. A hardened C17
+  contract rejects null/truncated options, accepts the current structure, and
+  passed against the real Debug library in isolated X11. The exact API audit,
+  ELF allowlist, C++ signature/layout assertion, Rust raw-layout test, and
+  human audit document now enumerate 11 exports and three Ghostty-owned public
+  types rather than silently retaining stale counts.
+- **Real product repair:** `Ctrl+Shift+T` and named action
+  `restore-closed-pane` now restore only recent user-closed local panes. The
+  new surface is created directly in the captured CWD, receives the prior
+  command as editable terminal prefill rather than automatic execution, owns a
+  fresh pane identity, restores focus and geometry, and follows the existing
+  one-model/one-surface/one-child teardown path. Creation failure removes the
+  provisional model without manufacturing another undo entry.
+- **Controlled evidence:** Two-original-PTY → user close → fresh restored PTY
+  passed in nested X11 session
+  `98529356b52c5d3c5db90e9e98fdea04a248a23d5ec69e039e63d25c40aa45aa`
+  and nested Wayland session
+  `da39a4bf0e8e57b999a54cb062c671aa2022180b20289a6c2a8212512c63b90d`.
+  Each test observes the restored PTY's OSC title proving its real CWD, the
+  command entering the real Ghostty input path without Enter, fresh identity,
+  focused model state, two live surfaces/two live children, and persisted
+  source envelope. The two ReleaseSafe/default/multi product-lifecycle matrix
+  cells are now executable PASS cells; other backend/Debug/single variants
+  remain explicit `NOT_IMPLEMENTED` entries.
+- **Qualification-runner misuse:** An unelevated direct invocation of the
+  aggregate matrix runner could not retain controlled compositor evidence and
+  correctly reported missing/unsafe environment receipts plus a failed build
+  cell. It was not accepted as product evidence. Focused matrix and boundary
+  runner self-tests passed separately; the complete elevated qualification is
+  still required before this Zentty slice may be committed or pushed.
+- **Qualification contract failure and repair:** The first complete elevated
+  rerun reached every executable product cell but correctly failed
+  `architecture-contract-v1`. Its non-authoritative architecture family still
+  required all 24 pane-lifecycle cells to have the family's original
+  `NOT_IMPLEMENTED` status, so the two newly executable PASS cells made the
+  architecture mirror contradict the authoritative matrix. This was a stale
+  policy assertion, not a product failure, and it was not waived. The family
+  now owns only the required cell topology (axes, IDs, capability, and order);
+  the qualification matrix remains the sole owner of each cell's explicit
+  status, command, tracking issue, prerequisite, and defect. The architecture
+  validator and its negative missing-cell test pass after the repair. A new
+  complete elevated rerun remained mandatory at that point.
+- **Final rerun evidence:** The complete elevated rerun then executed every
+  presently executable cell and passed the implemented local suite and product
+  boundary. The authoritative totals are `PASS=50`, `FAIL=0`, `BLOCKED=5`,
+  `XFAIL=1`, and `NOT_IMPLEMENTED=51`; therefore release and full Linux
+  qualification remain correctly not passed. The machine-readable summary
+  SHA-256 is
+  `a1d8e860f1a546d8eadf751ade28685d6fa22f3297bd6c9ad4d6b23c87f3658f`.
+  Debug Valgrind is **PASS with reviewed suppressions**: raw receipt SHA-256
+  `2c4d01e0edf8f17119b8f9a4fd0655888304dd9f7089679357b3dca5ee39a4ec`
+  reports 427 errors/contexts, 6,240 definite bytes, and 41,461 indirect bytes;
+  suppressed receipt SHA-256
+  `8dd14dbfbe1513358e04de7eafcafedee02ff0ef0b71d4f18a8889eb90d2dee1`
+  reports zero post-suppression errors/contexts/definite/indirect bytes and 427
+  reviewed suppressed errors/contexts. ReleaseSafe Valgrind remains XFAIL and
+  no suppression was broadened.
+- **Static-review repairs:** Pedantic Clippy first rejected the raw C-options
+  call for an implicit reference-to-pointer conversion, then rejected four
+  functions that crossed the 100-line policy after the new action/shortcut/
+  initialization logic was added. The FFI now uses an explicit raw const
+  pointer, and option validation, action installation, shortcut activation,
+  surface configuration, and prefill delivery are focused helpers rather than
+  suppressing either lint. The final all-target Clippy run passes with warnings
+  denied.
+- **Remaining limitations:** Missing-CWD ancestor/home fallback, scrollback
+  archive presentation, agent-specific resume composition, exited/active/
+  inactive close combinations, and the rest of the Debug/backend matrix remain
+  open. Typed argv and environment construction are still absent from the
+  Ghostty API and are not implied by this CWD-only proof.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were

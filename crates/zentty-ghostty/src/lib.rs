@@ -168,17 +168,33 @@ impl GhosttyRuntime {
             field: "title",
             source,
         })?;
+        let working_directory = config
+            .working_directory
+            .as_deref()
+            .map(CString::new)
+            .transpose()
+            .map_err(|source| Error::InteriorNul {
+                field: "working_directory",
+                source,
+            })?;
+        let options = sys::GhosttyGtkEmbedSurfaceOptions {
+            struct_size: std::mem::size_of::<sys::GhosttyGtkEmbedSurfaceOptions>(),
+            command: command
+                .as_ref()
+                .map_or(std::ptr::null(), |value| value.as_ptr()),
+            title: title.as_ptr(),
+            working_directory: working_directory
+                .as_ref()
+                .map_or(std::ptr::null(), |value| value.as_ptr()),
+        };
 
         // SAFETY: Runtime validity is held by `inner`; `CString` pointers remain
         // valid for this call and Ghostty documents that both strings are
         // copied. A successful return transfers one full GObject reference.
         let raw = unsafe {
-            sys::ghostty_gtk_embed_surface_new(
+            sys::ghostty_gtk_embed_surface_new_with_options(
                 self.inner.raw.as_ptr(),
-                command
-                    .as_ref()
-                    .map_or(std::ptr::null(), |value| value.as_ptr()),
-                title.as_ptr(),
+                &raw const options,
             )
         };
         let raw = NonNull::new(raw).ok_or(Error::SurfaceConstructorFailed)?;
@@ -225,6 +241,7 @@ impl GhosttyRuntime {
 pub struct SurfaceConfig {
     pub command: Option<String>,
     pub title: String,
+    pub working_directory: Option<String>,
 }
 
 impl Default for SurfaceConfig {
@@ -232,6 +249,7 @@ impl Default for SurfaceConfig {
         Self {
             command: None,
             title: "Zentty".to_owned(),
+            working_directory: None,
         }
     }
 }

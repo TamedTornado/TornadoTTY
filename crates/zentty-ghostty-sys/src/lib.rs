@@ -9,6 +9,14 @@ pub struct GhosttyGtkEmbedRuntime {
 
 pub type GtkWidget = c_void;
 
+#[repr(C)]
+pub struct GhosttyGtkEmbedSurfaceOptions {
+    pub struct_size: usize,
+    pub command: *const c_char,
+    pub title: *const c_char,
+    pub working_directory: *const c_char,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(i32)]
 pub enum GhosttyGtkEmbedAsyncBackend {
@@ -29,6 +37,10 @@ unsafe extern "C" {
         command: *const c_char,
         title: *const c_char,
     ) -> *mut GtkWidget;
+    pub fn ghostty_gtk_embed_surface_new_with_options(
+        runtime: *mut GhosttyGtkEmbedRuntime,
+        options: *const GhosttyGtkEmbedSurfaceOptions,
+    ) -> *mut GtkWidget;
     pub fn ghostty_gtk_embed_surface_grab_focus(surface: *mut GtkWidget);
     pub fn ghostty_gtk_embed_surface_close(surface: *mut GtkWidget) -> bool;
     pub fn ghostty_gtk_embed_surface_send_text(
@@ -45,7 +57,7 @@ unsafe extern "C" {
 
 #[cfg(test)]
 mod tests {
-    use super::GhosttyGtkEmbedAsyncBackend;
+    use super::{GhosttyGtkEmbedAsyncBackend, GhosttyGtkEmbedSurfaceOptions};
 
     #[test]
     fn async_backend_is_fixed_width_and_matches_c_int_values() {
@@ -53,5 +65,17 @@ mod tests {
         assert_eq!(GhosttyGtkEmbedAsyncBackend::Default as i32, 0);
         assert_eq!(GhosttyGtkEmbedAsyncBackend::Epoll as i32, 1);
         assert_eq!(GhosttyGtkEmbedAsyncBackend::IoUring as i32, 2);
+    }
+
+    #[test]
+    fn surface_options_layout_is_c_compatible_and_versioned_by_size() {
+        assert_eq!(
+            size_of::<GhosttyGtkEmbedSurfaceOptions>(),
+            size_of::<usize>() + 3 * size_of::<*const core::ffi::c_char>()
+        );
+        assert_eq!(
+            align_of::<GhosttyGtkEmbedSurfaceOptions>(),
+            align_of::<usize>()
+        );
     }
 }
