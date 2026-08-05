@@ -31,56 +31,29 @@ use zentty_ghostty::{AsyncBackend, GhosttyRuntime};
 #[derive(Debug)]
 struct Options {
     command: Option<String>,
-    exit_policy: ExitPolicy,
-    terminal_count: usize,
-    lifecycle_cycles: usize,
     async_backend: AsyncBackend,
-    scenario: Option<Scenario>,
     state_directory: Option<PathBuf>,
     restore_enabled: bool,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum Scenario {
-    WorkspaceActions,
-    AgentRestore,
-    PaneSearch,
-    PaneLayoutActions,
-    ClosedPaneRestore,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ExitPolicy {
-    Manual,
-    LastTerminal,
-    WorkspaceActions,
-    AgentRestore,
-    PaneSearch,
-    PaneLayoutActions,
-    ClosedPaneRestore,
 }
 
 impl Default for Options {
     fn default() -> Self {
         Self {
             command: None,
-            exit_policy: ExitPolicy::Manual,
-            terminal_count: 1,
-            lifecycle_cycles: 1,
             async_backend: AsyncBackend::Default,
-            scenario: None,
             state_directory: None,
             restore_enabled: true,
         }
     }
 }
 
-fn parse_positive_count(name: &str, value: &str) -> Result<usize, String> {
-    value
-        .parse::<usize>()
-        .ok()
-        .filter(|count| *count > 0 && *count <= 16)
-        .ok_or_else(|| format!("{name} must be an integer from 1 through 16"))
+fn required_argument(
+    arguments: &mut impl Iterator<Item = String>,
+    name: &str,
+) -> Result<String, String> {
+    arguments
+        .next()
+        .ok_or_else(|| format!("{name} requires a value"))
 }
 
 fn parse_options() -> Result<Options, String> {
@@ -89,65 +62,16 @@ fn parse_options() -> Result<Options, String> {
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
             "--command" => {
-                options.command = Some(
-                    arguments
-                        .next()
-                        .ok_or_else(|| "--command requires a value".to_owned())?,
-                );
-            }
-            "--quit-after-last-terminal-exit" => {
-                options.exit_policy = ExitPolicy::LastTerminal;
-            }
-            "--exercise-workspace-actions" => {
-                options.scenario = Some(Scenario::WorkspaceActions);
-            }
-            "--exercise-agent-restore" => {
-                options.scenario = Some(Scenario::AgentRestore);
-            }
-            "--exercise-pane-search" => {
-                options.scenario = Some(Scenario::PaneSearch);
-            }
-            "--exercise-pane-layout-actions" => {
-                options.scenario = Some(Scenario::PaneLayoutActions);
-            }
-            "--exercise-closed-pane-restore" => {
-                options.scenario = Some(Scenario::ClosedPaneRestore);
-            }
-            "--quit-after-workspace-actions" => {
-                options.exit_policy = ExitPolicy::WorkspaceActions;
-            }
-            "--quit-after-agent-restore" => {
-                options.exit_policy = ExitPolicy::AgentRestore;
-            }
-            "--quit-after-pane-search" => {
-                options.exit_policy = ExitPolicy::PaneSearch;
-            }
-            "--quit-after-pane-layout-actions" => {
-                options.exit_policy = ExitPolicy::PaneLayoutActions;
-            }
-            "--quit-after-closed-pane-restore" => {
-                options.exit_policy = ExitPolicy::ClosedPaneRestore;
+                options.command = Some(required_argument(&mut arguments, "--command")?);
             }
             "--state-directory" => {
-                options.state_directory =
-                    Some(PathBuf::from(arguments.next().ok_or_else(|| {
-                        "--state-directory requires a value".to_owned()
-                    })?));
+                options.state_directory = Some(PathBuf::from(required_argument(
+                    &mut arguments,
+                    "--state-directory",
+                )?));
             }
             "--no-session-restore" => {
                 options.restore_enabled = false;
-            }
-            "--terminal-count" => {
-                let value = arguments
-                    .next()
-                    .ok_or_else(|| "--terminal-count requires a value".to_owned())?;
-                options.terminal_count = parse_positive_count("--terminal-count", &value)?;
-            }
-            "--lifecycle-cycles" => {
-                let value = arguments
-                    .next()
-                    .ok_or_else(|| "--lifecycle-cycles requires a value".to_owned())?;
-                options.lifecycle_cycles = parse_positive_count("--lifecycle-cycles", &value)?;
             }
             "--async-backend" => {
                 options.async_backend = match arguments
@@ -168,49 +92,12 @@ fn parse_options() -> Result<Options, String> {
             _ => return Err(format!("unknown argument: {argument}")),
         }
     }
-    validate_scenario_exit_policy(&options)?;
     Ok(options)
-}
-
-fn validate_scenario_exit_policy(options: &Options) -> Result<(), String> {
-    if options.exit_policy == ExitPolicy::WorkspaceActions
-        && options.scenario != Some(Scenario::WorkspaceActions)
-    {
-        return Err(
-            "--quit-after-workspace-actions requires --exercise-workspace-actions".to_owned(),
-        );
-    }
-    if options.exit_policy == ExitPolicy::AgentRestore
-        && options.scenario != Some(Scenario::AgentRestore)
-    {
-        return Err("--quit-after-agent-restore requires --exercise-agent-restore".to_owned());
-    }
-    if options.exit_policy == ExitPolicy::PaneSearch
-        && options.scenario != Some(Scenario::PaneSearch)
-    {
-        return Err("--quit-after-pane-search requires --exercise-pane-search".to_owned());
-    }
-    if options.exit_policy == ExitPolicy::PaneLayoutActions
-        && options.scenario != Some(Scenario::PaneLayoutActions)
-    {
-        return Err(
-            "--quit-after-pane-layout-actions requires --exercise-pane-layout-actions".to_owned(),
-        );
-    }
-    if options.exit_policy == ExitPolicy::ClosedPaneRestore
-        && options.scenario != Some(Scenario::ClosedPaneRestore)
-    {
-        return Err(
-            "--quit-after-closed-pane-restore requires --exercise-closed-pane-restore".to_owned(),
-        );
-    }
-    Ok(())
 }
 
 fn run_lifecycle_cycle(
     runtime: &GhosttyRuntime,
     options: &Options,
-    cycle: usize,
     restored_window: Option<WindowRecipe>,
     restored_drafts: Vec<PaneRestoreDraft>,
 ) -> Result<(WindowRecipe, Vec<PaneRestoreDraft>), String> {
@@ -218,8 +105,6 @@ fn run_lifecycle_cycle(
     let shell = ApplicationShell::new(
         runtime,
         options.command.clone(),
-        options.terminal_count,
-        options.exit_policy == ExitPolicy::LastTerminal,
         &main_loop,
         restored_window,
         restored_drafts,
@@ -273,30 +158,6 @@ fn run_lifecycle_cycle(
     });
 
     shell.borrow().present();
-    match options.scenario {
-        Some(Scenario::WorkspaceActions) => ApplicationShell::schedule_workspace_actions(
-            &shell,
-            options.exit_policy == ExitPolicy::WorkspaceActions,
-            options.exit_policy == ExitPolicy::LastTerminal,
-        ),
-        Some(Scenario::AgentRestore) => ApplicationShell::schedule_agent_restore(
-            &shell,
-            options.exit_policy == ExitPolicy::AgentRestore,
-        ),
-        Some(Scenario::PaneSearch) => ApplicationShell::schedule_pane_search_actions(
-            &shell,
-            options.exit_policy == ExitPolicy::PaneSearch,
-        ),
-        Some(Scenario::PaneLayoutActions) => ApplicationShell::schedule_pane_layout_actions(
-            &shell,
-            options.exit_policy == ExitPolicy::PaneLayoutActions,
-        ),
-        Some(Scenario::ClosedPaneRestore) => ApplicationShell::schedule_closed_pane_restore(
-            &shell,
-            options.exit_policy == ExitPolicy::ClosedPaneRestore,
-        ),
-        None => {}
-    }
     main_loop.run();
 
     tick_source.remove();
@@ -309,13 +170,13 @@ fn run_lifecycle_cycle(
     while glib::MainContext::default().pending() {
         glib::MainContext::default().iteration(false);
     }
-    if options.exit_policy == ExitPolicy::LastTerminal && shell.borrow().live_children() != 0 {
+    if shell.borrow().live_children() != 0 {
         return Err(format!(
-            "lifecycle cycle {cycle} ended with {} live children",
+            "application ended with {} live children",
             shell.borrow().live_children()
         ));
     }
-    eprintln!("zentty-linux: lifecycle-cycle={cycle} complete");
+    eprintln!("zentty-linux: lifecycle complete");
     Ok((window_recipe, agent_restore_drafts))
 }
 
@@ -368,12 +229,10 @@ fn run() -> Result<(), String> {
     let runtime = GhosttyRuntime::new(options.async_backend).map_err(|error| error.to_string())?;
     gtk::init().map_err(|error| format!("GTK initialization failed: {error}"))?;
 
-    for cycle in 1..=options.lifecycle_cycles {
-        let (window, drafts) =
-            run_lifecycle_cycle(&runtime, &options, cycle, restored_window, restored_drafts)?;
-        restored_window = Some(window);
-        restored_drafts = drafts;
-    }
+    let (window, drafts) =
+        run_lifecycle_cycle(&runtime, &options, restored_window, restored_drafts)?;
+    restored_window = Some(window);
+    restored_drafts = drafts;
     drop(runtime);
     let window = restored_window.expect("positive lifecycle cycle count");
     let window_id = window.id.clone();
@@ -453,14 +312,14 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_positive_count;
+    use super::required_argument;
 
     #[test]
-    fn positive_counts_enforce_product_bounds() {
-        assert_eq!(parse_positive_count("count", "1"), Ok(1));
-        assert_eq!(parse_positive_count("count", "16"), Ok(16));
-        assert!(parse_positive_count("count", "0").is_err());
-        assert!(parse_positive_count("count", "17").is_err());
-        assert!(parse_positive_count("count", "not-a-number").is_err());
+    fn required_arguments_reject_missing_values() {
+        let mut missing = Vec::<String>::new().into_iter();
+        assert_eq!(
+            required_argument(&mut missing, "--command"),
+            Err("--command requires a value".to_owned())
+        );
     }
 }

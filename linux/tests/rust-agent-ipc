@@ -8,6 +8,7 @@ log=""
 state_directory=""
 product_pid=""
 fake_bin=""
+actor="${repo_root}/linux/tests/fixtures/controlled-agent"
 
 fail() {
     [[ -z "${log}" || ! -f "${log}" ]] || cat "${log}" >&2
@@ -32,8 +33,10 @@ case "${backend}" in
             fail "X11 agent IPC must run through linux/tests/nested-x11"
         ;;
     wayland)
-        [[ "${ZENTTY_NESTED_WAYLAND_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
-            fail "Wayland agent IPC must run through linux/tests/nested-wayland"
+        if [[ ! "${ZENTTY_NESTED_WAYLAND_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ &&
+            ! "${ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]]; then
+            fail "Wayland agent IPC must run through a controlled Wayland harness"
+        fi
         ;;
     *) fail "GDK_BACKEND must be x11 or wayland" ;;
 esac
@@ -41,6 +44,7 @@ for dependency in grep mktemp sed sleep stat; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
 [[ -x "${product}" ]] || fail "staged product is not built: ${product}"
+[[ -x "${actor}" ]] || fail "controlled agent actor is missing: ${actor}"
 helper="$(dirname "${product}")/zentty"
 [[ -x "${helper}" ]] || fail "staged agent helper is not built: ${helper}"
 wrapper_root="$(cd "$(dirname "${product}")/.." && pwd)/libexec/zentty/agent-wrappers"
@@ -48,56 +52,24 @@ wrapper_root="$(cd "$(dirname "${product}")/.." && pwd)/libexec/zentty/agent-wra
 [[ -x "${wrapper_root}/claude/claude" ]] || fail "staged Claude wrapper is missing"
 
 fake_bin="$(mktemp -d)"
-cat >"${fake_bin}/codex" <<'SCRIPT'
-#!/usr/bin/env bash
-set -euo pipefail
-has_hook=false
-has_state=false
-for argument in "$@"; do
-    [[ "${argument}" == hooks.PermissionRequest=* ]] && has_hook=true
-    [[ "${argument}" == hooks.state=* ]] && has_state=true
-done
-${has_hook} && ${has_state} || {
-    echo "fake-codex: ephemeral hook arguments are missing" >&2
-    exit 64
-}
-printf '%s' '{"hook_event_name":"PermissionRequest","session_id":"codex-e2e","message":"Run integration tests?"}' |
-    "$ZENTTY_CLI_BIN" ipc agent-event --adapter=codex
-sleep 2
-SCRIPT
-cat >"${fake_bin}/claude" <<'SCRIPT'
-#!/usr/bin/env bash
-set -euo pipefail
-settings=""
-previous=""
-for argument in "$@"; do
-    [[ "${previous}" == --settings ]] && settings="${argument}"
-    previous="${argument}"
-done
-[[ "${settings}" == *'"PermissionRequest"'* && "${settings}" == *'agent-event --adapter=claude'* ]] || {
-    echo "fake-claude: ephemeral hook settings are missing" >&2
-    exit 64
-}
-printf '%s' '{"session_id":"claude-e2e","tool_name":"AskUserQuestion","tool_input":{"questions":[{"question":"Deploy now?"}]}}' |
-    "$ZENTTY_CLI_BIN" ipc agent-event --adapter=claude PreToolUse
-sleep 2
-SCRIPT
-chmod 700 "${fake_bin}/codex" "${fake_bin}/claude"
+ln -s "${actor}" "${fake_bin}/codex"
+ln -s "${actor}" "${fake_bin}/claude"
 
 run_adapter() {
     local name="$1"
     local command="$2"
-    local expected="$3"
+    local profile="$3"
+    local expected="$4"
     local socket=""
 
     log="$(mktemp)"
     state_directory="$(mktemp -d)"
     PATH="${fake_bin}:${PATH}" GDK_SCALE=1 GDK_DPI_SCALE=1 \
+        ZENTTY_CONTROLLED_AGENT_PROFILE="${profile}" \
         "${product}" \
         --command "${command}" \
         --state-directory "${state_directory}" \
-        --no-session-restore \
-        --quit-after-last-terminal-exit >"${log}" 2>&1 &
+        --no-session-restore >"${log}" 2>&1 &
     product_pid=$!
 
     for _ in {1..200}; do
@@ -136,10 +108,12 @@ run_adapter() {
 run_adapter \
     codex \
     'codex' \
+    codex-permission \
     'zentty-linux: sidebar-agent-status pane=pane-1 text="Codex · Needs input: Run integration tests?" attention=true'
 run_adapter \
     claude \
     'claude' \
+    claude-question \
     'zentty-linux: sidebar-agent-status pane=pane-1 text="Claude Code · Needs input: Deploy now?" attention=true'
 
 echo "Rust agent launch passed: ${backend}, wrapper=real-process, child=real-pty, helper=real-process, transport=real-unix-socket, adapters=codex+claude"

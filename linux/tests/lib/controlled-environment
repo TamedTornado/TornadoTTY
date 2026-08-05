@@ -139,18 +139,32 @@ zentty_controlled_environment_validate_report() {
                 "backend","endpoint","height","name","protocols","scale",
                 "version","wayland_info_sha256","width"
             ] and
-            .server.name == "Weston" and
             (.server.version | type == "string" and length > 0) and
-            .server.backend == "headless" and
-            (.server.endpoint | type == "string" and test("^wayland-z-[0-9a-f]{16}$")) and
-            .server.width == 1280 and .server.height == 1024 and .server.scale == 1 and
+            (if .server.name == "Weston" then
+                .server.backend == "headless" and
+                (.server.endpoint | type == "string" and test("^wayland-z-[0-9a-f]{16}$")) and
+                .server.width == 1280 and .server.height == 1024 and .server.scale == 1
+             elif .server.name == "Cage" then
+                .server.backend == "x11-nested" and
+                (.server.endpoint | type == "string" and test("^wayland-[0-9]+$")) and
+                (.server.width | type == "number" and . > 0 and floor == .) and
+                (.server.height | type == "number" and . > 0 and floor == .) and
+                (.server.scale | type == "number" and . > 0 and floor == .)
+             else false end) and
             (.server.protocols | type == "array" and length >= 4 and
                 all(.[]; type == "string" and length > 0) and
                 length == (unique | length)) and
             all(["wl_compositor","wl_output","wl_shm","xdg_wm_base"][];
                 . as $protocol | $environment.server.protocols | index($protocol) != null) and
+            (if .server.name == "Cage" then
+                .server.protocols | index("zwp_virtual_keyboard_manager_v1") != null
+             else true end) and
             (.server.wayland_info_sha256 | type == "string" and test("^[0-9a-f]{64}$")) and
-            .renderer == {software:true,name:"Pixman",proof:"Using Pixman renderer"} and
+            (if .server.name == "Cage" then
+                .renderer == {software:true,name:"Pixman",proof:"WLR_RENDERER=pixman"}
+             else
+                .renderer == {software:true,name:"Pixman",proof:"Using Pixman renderer"}
+             end) and
             (.isolation | keys | sort) == [
                 "ambient_dbus_sanitized","ambient_display_sanitized",
                 "display_unreachable_after","process_group",
@@ -198,12 +212,12 @@ zentty_controlled_environment_revalidate_identity() {
     path="$(jq -r '.path' <<<"${identity}")"
     expected_sha256="$(jq -r '.sha256' <<<"${identity}")"
     expected_captured_at_epoch="$(jq -r '.captured_at_epoch' <<<"${identity}")"
-    [[ -f "${path}" && ! -L "${path}" && -s "${path}" ]] &&
-        [[ "$(sha256sum -- "${path}" | awk '{print $1}')" == "${expected_sha256}" ]] &&
-        [[ "$(stat -c %Y -- "${path}")" == "${expected_captured_at_epoch}" ]] || {
+    if [[ ! -f "${path}" || -L "${path}" || ! -s "${path}" ]] ||
+        [[ "$(sha256sum -- "${path}" | awk '{print $1}')" != "${expected_sha256}" ]] ||
+        [[ "$(stat -c %Y -- "${path}")" != "${expected_captured_at_epoch}" ]]; then
         echo "controlled-environment: error: evidence identity changed: ${path}" >&2
         return 1
-    }
+    fi
 }
 
 zentty_controlled_environment_harness_json() {

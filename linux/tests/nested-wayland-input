@@ -1,0 +1,226 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly ready_marker="nested-wayland-input: READY private-cage-x11-nested backend=wayland software-renderer=1 virtual-keyboard=1"
+wrapper_path="$(readlink -f -- "${BASH_SOURCE[0]}")"
+readonly wrapper_path
+wrapper_sha256="$(sha256sum "${wrapper_path}" | awk '{print $1}')"
+readonly wrapper_sha256
+
+fail() {
+    echo "nested-wayland-input: error: $*" >&2
+    exit 1
+}
+
+pid_is_running() {
+    local pid="$1"
+    local state
+    kill -0 "${pid}" 2>/dev/null || return 1
+    state="$(ps -o stat= -p "${pid}" 2>/dev/null || true)"
+    [[ -n "${state}" && "${state}" != Z* ]]
+}
+
+terminate_process_group() {
+    local leader="$1"
+    kill -TERM -- "-${leader}" 2>/dev/null || true
+    for _ in {1..40}; do
+        ps -eo pgid= | awk -v expected="${leader}" '$1 == expected {found=1} END {exit !found}' || break
+        sleep 0.05
+    done
+    kill -KILL -- "-${leader}" 2>/dev/null || true
+    wait "${leader}" 2>/dev/null || true
+}
+
+if [[ "${1:-}" == --private-wayland-input-inner ]]; then
+    shift
+    (( $# > 0 )) || fail "missing command"
+    run_root="${ZENTTY_NESTED_WAYLAND_INPUT_RUN_ROOT:?}"
+    cage_log="${run_root}/cage.log"
+    cage_app_pid_file="${run_root}/cage-app.pid"
+    info_log="${run_root}/wayland-info.log"
+    cage_pid=""
+    cleanup_inner() {
+        trap - EXIT HUP INT TERM
+        if [[ -n "${cage_pid}" ]]; then
+            if [[ -s "${cage_app_pid_file}" ]]; then
+                read -r cage_app_pid <"${cage_app_pid_file}"
+                if [[ "${cage_app_pid}" =~ ^[1-9][0-9]*$ ]]; then
+                    kill -TERM "${cage_app_pid}" 2>/dev/null || true
+                fi
+                for _ in {1..40}; do
+                    pid_is_running "${cage_pid}" || break
+                    sleep 0.05
+                done
+            fi
+            if pid_is_running "${cage_pid}"; then
+                terminate_process_group "${cage_pid}"
+            else
+                wait "${cage_pid}" 2>/dev/null || true
+            fi
+        fi
+    }
+    trap cleanup_inner EXIT
+    trap 'exit 129' HUP
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+
+    [[ "${ZENTTY_NESTED_WAYLAND_INPUT_WRAPPER_SHA256:-}" == "${wrapper_sha256}" ]] ||
+        fail "wrapper identity changed before private-session startup"
+    [[ "${DISPLAY:-}" =~ ^:[0-9]+([.][0-9]+)?$ &&
+        "${ZENTTY_NESTED_X11_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+        fail "Cage is not attached to the wrapper-owned Xvfb transport"
+    [[ -z "${WAYLAND_DISPLAY:-}" && -z "${MIR_SOCKET:-}" ]] ||
+        fail "an ambient Wayland display escaped sanitation"
+    [[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" && -z "${AT_SPI_BUS_ADDRESS:-}" &&
+        -z "${IBUS_ADDRESS:-}" ]] || fail "an ambient desktop endpoint escaped sanitation"
+
+    # The child shell, not this wrapper, expands its PID and target path.
+    # shellcheck disable=SC2016
+    setsid env \
+        WLR_BACKENDS=x11 \
+        WLR_RENDERER=pixman \
+        WLR_LOG=1 \
+        ZENTTY_CAGE_APP_PID="${cage_app_pid_file}" \
+        cage -s -- sh -c 'printf "%s\n" "$$" >"${ZENTTY_CAGE_APP_PID}"; exec sleep 86400' \
+        >"${cage_log}" 2>&1 &
+    cage_pid=$!
+
+    socket_path=""
+    for _ in {1..300}; do
+        socket_path="$(find "${XDG_RUNTIME_DIR}" -maxdepth 1 -type s -name 'wayland-*' -print -quit)"
+        [[ -n "${socket_path}" ]] && break
+        pid_is_running "${cage_pid}" || fail "Cage exited before creating its private socket"
+        sleep 0.02
+    done
+    [[ -n "${socket_path}" && -S "${socket_path}" && ! -L "${socket_path}" ]] ||
+        fail "Cage did not create a safe private socket"
+    socket_name="$(basename "${socket_path}")"
+    export WAYLAND_DISPLAY="${socket_name}"
+
+    timeout --foreground --kill-after=1s 3s wayland-info >"${info_log}" 2>&1 ||
+        fail "Cage protocol inventory was unavailable"
+    protocols="$(sed -n "s/^interface: '\([^']*\)'.*/\1/p" "${info_log}" | LC_ALL=C sort -u)"
+    for protocol in \
+        wl_compositor wl_output wl_shm xdg_wm_base zwp_virtual_keyboard_manager_v1; do
+        grep -Fx "${protocol}" <<<"${protocols}" >/dev/null ||
+            fail "Cage lacks required protocol ${protocol}"
+    done
+    width="$(sed -n 's/.*width: \([0-9][0-9]*\) px, height:.*/\1/p' "${info_log}" | head -1)"
+    height="$(sed -n 's/.*width: [0-9][0-9]* px, height: \([0-9][0-9]*\) px.*/\1/p' "${info_log}" | head -1)"
+    scale="$(sed -n 's/.*scale: \([0-9][0-9]*\),.*/\1/p' "${info_log}" | head -1)"
+    [[ "${width}" =~ ^[1-9][0-9]*$ && "${height}" =~ ^[1-9][0-9]*$ &&
+        "${scale}" =~ ^[1-9][0-9]*$ ]] || fail "Cage output facts were incomplete"
+    protocols_json="$(jq -Rn '[inputs | select(length > 0)] | sort' <<<"${protocols}")"
+    jq -n \
+        --arg endpoint "${socket_name}" \
+        --arg version "${ZENTTY_NESTED_WAYLAND_INPUT_CAGE_VERSION:?}" \
+        --argjson width "${width}" \
+        --argjson height "${height}" \
+        --argjson scale "${scale}" \
+        --argjson protocols "${protocols_json}" \
+        --arg info_sha "$(sha256sum "${info_log}" | awk '{print $1}')" \
+        '{endpoint:$endpoint,version:$version,width:$width,height:$height,scale:$scale,protocols:$protocols,wayland_info_sha256:$info_sha}' \
+        >"${run_root}/session-facts.json"
+
+    printf '%s\n' "${ready_marker}"
+    printf 'nested-wayland-input: SESSION %s\n' "${ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID}"
+    set +e
+    "$@"
+    status=$?
+    set -e
+    cleanup_inner
+    cage_pid=""
+    exit "${status}"
+fi
+
+(( $# > 0 )) || {
+    echo "usage: nested-wayland-input COMMAND [ARG ...]" >&2
+    exit 64
+}
+for dependency in cage wayland-info wtype jq grep sed awk sort sha256sum readlink \
+    date setsid ps kill sleep timeout mktemp mkdir chmod rm env find basename stat; do
+    command -v "${dependency}" >/dev/null || {
+        echo "nested-wayland-input: SKIP missing runtime dependency: ${dependency}" >&2
+        exit 77
+    }
+done
+
+report="${ZENTTY_NESTED_WAYLAND_INPUT_REPORT:-}"
+[[ -z "${report}" || "${report}" == /* ]] || report="$(pwd)/${report}"
+[[ -z "${report}" || ! -L "${report}" ]] || fail "environment report may not be a symlink"
+[[ -z "${report}" || -d "$(dirname "${report}")" ]] || fail "report parent does not exist"
+[[ -z "${report}" ]] || rm -f -- "${report}"
+
+# Keep enough SUN_LEN budget for the product's per-instance agent socket under
+# this isolated TMPDIR; descriptive long roots make real IPC startup fail.
+run_root="$(mktemp -d /tmp/zwi.XXXXXX)"
+started_at_epoch="$(date +%s)"
+session_id="$(printf '%s\n' "${run_root}" "${started_at_epoch}" "$$" | sha256sum | awk '{print $1}')"
+cage_version="$(cage -v 2>&1 | sed -n 's/^Cage version //p')"
+[[ -n "${cage_version}" ]] || fail "Cage version could not be identified"
+session_pid=""
+# ShellCheck cannot see that this function is invoked by the EXIT/signal traps.
+# shellcheck disable=SC2317
+cleanup() {
+    trap - EXIT HUP INT TERM
+    if [[ "${session_pid}" =~ ^[1-9][0-9]*$ ]]; then
+        kill -TERM "${session_pid}" 2>/dev/null || true
+        wait "${session_pid}" 2>/dev/null || true
+    fi
+    rm -rf -- "${run_root}"
+}
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+export ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID="${session_id}"
+export ZENTTY_NESTED_WAYLAND_INPUT_WRAPPER_SHA256="${wrapper_sha256}"
+
+set +e
+"$(dirname "${wrapper_path}")/nested-x11" env \
+    ZENTTY_NESTED_WAYLAND_INPUT_RUN_ROOT="${run_root}" \
+    ZENTTY_NESTED_WAYLAND_INPUT_CAGE_VERSION="${cage_version}" \
+    "${wrapper_path}" --private-wayland-input-inner "$@" &
+session_pid=$!
+wait "${session_pid}"
+status=$?
+set -e
+
+facts=""
+[[ ! -f "${run_root}/session-facts.json" ]] || facts="$(jq -c . "${run_root}/session-facts.json")"
+[[ "$(sha256sum "${wrapper_path}" | awk '{print $1}')" == "${wrapper_sha256}" ]] ||
+    fail "wrapper identity changed during execution"
+
+if [[ -n "${report}" && -n "${facts}" ]]; then
+    finished_at_epoch="$(date +%s)"
+    command_json="$(printf '%s\0' "$@" | jq -Rs 'split("\u0000")[:-1]')"
+    jq -n \
+        --arg session_id "${session_id}" \
+        --arg wrapper_path "${wrapper_path}" \
+        --arg wrapper_sha256 "${wrapper_sha256}" \
+        --argjson process_group "${session_pid}" \
+        --argjson started_at_epoch "${started_at_epoch}" \
+        --argjson finished_at_epoch "${finished_at_epoch}" \
+        --argjson command "${command_json}" \
+        --argjson command_exit_code "${status}" \
+        --argjson facts "${facts}" '
+        {
+          schema_version:1,session_id:$session_id,backend:"wayland",
+          wrapper:{path:$wrapper_path,sha256:$wrapper_sha256},
+          started_at_epoch:$started_at_epoch,finished_at_epoch:$finished_at_epoch,
+          command:$command,command_exit_code:$command_exit_code,
+          server:{name:"Cage",version:$facts.version,backend:"x11-nested",
+            endpoint:$facts.endpoint,width:$facts.width,height:$facts.height,
+            scale:$facts.scale,protocols:$facts.protocols,
+            wayland_info_sha256:$facts.wayland_info_sha256},
+          renderer:{software:true,name:"Pixman",proof:"WLR_RENDERER=pixman"},
+          isolation:{ambient_display_sanitized:true,ambient_dbus_sanitized:true,
+            process_group:$process_group,run_root_removed:true,
+            display_unreachable_after:true,remaining_processes:[]}
+        }' >"${report}"
+fi
+
+rm -rf -- "${run_root}"
+trap - EXIT HUP INT TERM
+exit "${status}"

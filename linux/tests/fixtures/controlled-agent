@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+profile="${ZENTTY_CONTROLLED_AGENT_PROFILE:-}"
+helper="${ZENTTY_CLI_BIN:-}"
+sleep_seconds="${ZENTTY_CONTROLLED_AGENT_SLEEP_SECONDS:-2}"
+start_delay_seconds="${ZENTTY_CONTROLLED_AGENT_START_DELAY_SECONDS:-0}"
+
+fail() {
+    echo "controlled-agent: $*" >&2
+    exit 64
+}
+
+[[ -n "${profile}" ]] || fail "ZENTTY_CONTROLLED_AGENT_PROFILE is required"
+[[ -x "${helper}" ]] || fail "ZENTTY_CLI_BIN must name the staged executable helper"
+[[ "${sleep_seconds}" =~ ^[0-9]+([.][0-9]+)?$ ]] ||
+    fail "ZENTTY_CONTROLLED_AGENT_SLEEP_SECONDS must be a non-negative number"
+[[ "${start_delay_seconds}" =~ ^[0-9]+([.][0-9]+)?$ ]] ||
+    fail "ZENTTY_CONTROLLED_AGENT_START_DELAY_SECONDS must be a non-negative number"
+
+if [[ -n "${ZENTTY_CONTROLLED_AGENT_START_RECEIPT:-}" ]]; then
+    printf 'started pid:%s profile:%s\n' "$$" "${profile}" >>"${ZENTTY_CONTROLLED_AGENT_START_RECEIPT}"
+fi
+sleep "${start_delay_seconds}"
+
+codex_has_hook() {
+    local hook="$1"
+    local argument
+    for argument in "${@:2}"; do
+        [[ "${argument}" == "hooks.${hook}="* ]] && return 0
+    done
+    return 1
+}
+
+case "${profile}" in
+    codex-permission)
+        codex_has_hook PermissionRequest "$@" || fail "Codex PermissionRequest hook is missing"
+        codex_has_hook state "$@" || fail "Codex hook state is missing"
+        printf '%s' \
+            '{"hook_event_name":"PermissionRequest","session_id":"codex-e2e","message":"Run integration tests?"}' |
+            "${helper}" ipc agent-event --adapter=codex
+        ;;
+    claude-question)
+        settings=""
+        previous=""
+        for argument in "$@"; do
+            [[ "${previous}" == --settings ]] && settings="${argument}"
+            previous="${argument}"
+        done
+        [[ "${settings}" == *'"PermissionRequest"'* &&
+            "${settings}" == *'agent-event --adapter=claude'* ]] ||
+            fail "Claude ephemeral hook settings are missing"
+        printf '%s' \
+            '{"session_id":"claude-e2e","tool_name":"AskUserQuestion","tool_input":{"questions":[{"question":"Deploy now?"}]}}' |
+            "${helper}" ipc agent-event --adapter=claude PreToolUse
+        ;;
+    codex-restore)
+        codex_has_hook SessionStart "$@" || fail "Codex SessionStart hook is missing"
+        arguments=("$@")
+        resume_seen=false
+        for argument in "${arguments[@]}"; do
+            [[ "${argument}" == resume ]] && resume_seen=true
+        done
+        "${resume_seen}" || fail "Codex resume verb is missing"
+        session_id="${arguments[${#arguments[@]} - 1]}"
+        case ",${ZENTTY_CONTROLLED_AGENT_SESSIONS:-}," in
+            *",${session_id},"*) ;;
+            *) fail "unexpected Codex restore session: ${session_id}" ;;
+        esac
+        [[ -n "${ZENTTY_CONTROLLED_AGENT_RECEIPT:-}" ]] ||
+            fail "ZENTTY_CONTROLLED_AGENT_RECEIPT is required"
+        printf 'resume:%s pid:%s\n' "${session_id}" "$$" >>"${ZENTTY_CONTROLLED_AGENT_RECEIPT}"
+        printf '{"hook_event_name":"SessionStart","session_id":"%s"}' "${session_id}" |
+            "${helper}" ipc agent-event --adapter=codex session-start
+        # Emit terminal evidence only after the real helper has authenticated the
+        # restored session. This makes the marker prove both IPC completion and
+        # subsequent PTY scrollback continuity rather than racing surface setup.
+        printf 'zentty-agent-resume-marker\n'
+        ;;
+    *) fail "unknown profile: ${profile}" ;;
+esac
+
+sleep "${sleep_seconds}"

@@ -5,6 +5,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
 backend="${GDK_BACKEND:-}"
 ghostty_root="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
+fixture="${repo_root}/crates/zentty-core/tests/fixtures/session-restore-v3.json"
 scenario="${ZENTTY_RUST_SCENARIO:-single}"
 terminal_count="${ZENTTY_RUST_TERMINALS:-1}"
 lifecycle_cycles="${ZENTTY_RUST_CYCLES:-1}"
@@ -41,6 +42,7 @@ layer_directory="${ghostty_root}/${layer_runpath}"
 
 log="$(mktemp)"
 barrier="$(mktemp -d)"
+state_directory=""
 product_pid=""
 cleanup() {
     if [[ "${product_pid}" =~ ^[1-9][0-9]*$ ]]; then
@@ -49,6 +51,7 @@ cleanup() {
     fi
     rm -f -- "${log}"
     rm -rf -- "${barrier}"
+    [[ -z "${state_directory}" ]] || rm -rf -- "${state_directory}"
 }
 trap cleanup EXIT
 
@@ -56,22 +59,34 @@ if [[ "${scenario}" == lifecycle ]]; then
     child_command="touch '${barrier}'/\$\$; while [ \"\$(find '${barrier}' -type f | wc -l)\" -lt '${terminal_count}' ]; do sleep 0.01; done; printf '\\033]2;zentty-rust-smoke-${backend}\\a'; sleep 0.1"
 elif [[ "${backend}" == x11 ]]; then
     command -v xdotool >/dev/null || fail "xdotool is required for real X11 input and resize"
+    # The single quotes intentionally defer child-shell expansion.
+    # shellcheck disable=SC2016
     child_command='IFS= read -r value; [ "$value" = zentty-rust-input ] || exit 44; printf '\''\033]2;zentty-rust-smoke-x11\a'\''; sleep 0.1'
 else
     child_command="printf '\\033]2;zentty-rust-smoke-wayland\\a'; sleep 0.1"
 fi
 
-set +e
-LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
-"${product}" \
-    --command "${child_command}" \
-    --terminal-count "${terminal_count}" \
-    --lifecycle-cycles "${lifecycle_cycles}" \
-    --async-backend "${async_backend}" \
-    --quit-after-last-terminal-exit >"${log}" 2>&1 &
-product_pid=$!
-set -e
+run_cycle() {
+    local product_args
+    state_directory="$(mktemp -d)"
+    if ((terminal_count > 1)); then
+        jq '.restoreDraftWindows = []' "${fixture}" >"${state_directory}/restore-snapshot.json"
+    fi
+    find "${barrier}" -type f -delete
+    product_args=(
+        --command "${child_command}"
+        --state-directory "${state_directory}"
+        --async-backend "${async_backend}"
+    )
+    ((terminal_count > 1)) || product_args+=(--no-session-restore)
+    set +e
+    LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+    "${product}" "${product_args[@]}" >>"${log}" 2>&1 &
+    product_pid=$!
+    set -e
+}
 
+run_cycle
 if [[ "${backend}" == x11 && "${scenario}" == single ]]; then
     window_id=""
     for _ in $(seq 1 200); do
@@ -92,16 +107,25 @@ if [[ "${backend}" == x11 && "${scenario}" == single ]]; then
     xdotool key --window "${window_id}" Return
 fi
 
-set +e
-wait "${product_pid}"
-status=$?
-set -e
-product_pid=""
-
-[[ "${status}" -eq 0 ]] || {
-    cat "${log}" >&2
-    fail "product exited ${status} before terminal lifecycle completed"
+wait_for_cycle() {
+    set +e
+    wait "${product_pid}"
+    status=$?
+    set -e
+    product_pid=""
+    [[ "${status}" -eq 0 ]] || {
+        cat "${log}" >&2
+        fail "product exited ${status} before terminal lifecycle completed"
+    }
+    rm -rf -- "${state_directory}"
+    state_directory=""
 }
+
+wait_for_cycle
+for ((cycle = 2; cycle <= lifecycle_cycles; cycle++)); do
+    run_cycle
+    wait_for_cycle
+done
 expected_events=$((terminal_count * lifecycle_cycles))
 [[ "$(grep -Fxc 'zentty-linux: terminal-ready' "${log}" || true)" -eq "${expected_events}" ]] ||
     fail "product did not acknowledge every real Ghostty terminal"
@@ -109,7 +133,7 @@ expected_events=$((terminal_count * lifecycle_cycles))
     fail "PTY output did not reach every real Ghostty title property"
 [[ "$(grep -Fxc 'zentty-linux: child-exited' "${log}" || true)" -eq "${expected_events}" ]] ||
     fail "product did not acknowledge every child exit"
-[[ "$(grep -Ec '^zentty-linux: lifecycle-cycle=[0-9]+ complete$' "${log}" || true)" -eq "${lifecycle_cycles}" ]] ||
+[[ "$(grep -Fxc 'zentty-linux: lifecycle complete' "${log}" || true)" -eq "${lifecycle_cycles}" ]] ||
     fail "product did not complete every lifecycle cycle"
 if [[ "${backend}" == x11 && "${scenario}" == single ]]; then
     grep -Fx 'zentty-linux: window-size=820x640' "${log}" >/dev/null || {

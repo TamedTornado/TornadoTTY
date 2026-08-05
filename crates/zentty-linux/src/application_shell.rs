@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use gtk::glib::{self, variant::ToVariant};
+use gtk::glib;
 use gtk::prelude::*;
 use gtk::{gdk, gio};
 use zentty_core::{
@@ -25,6 +25,7 @@ use crate::{
     },
     sidebar,
     sidebar_visibility::{Event as SidebarVisibilityEvent, Mode as SidebarVisibilityMode},
+    source_ui,
     window_chrome::WindowChrome,
     worklane_peek::{
         self, Direction as PeekDirection, PanePreview, Phase as PeekPhase,
@@ -45,6 +46,7 @@ const ACTION_RENAME_PANE: &str = "rename-pane";
 const ACTION_CYCLE_WORKLANE_COLOR: &str = "cycle-worklane-color";
 const ACTION_SET_WORKLANE_COLOR: &str = "set-worklane-color";
 const ACTION_CLOSE_WORKLANE: &str = "close-worklane";
+const ACTION_CLOSE_ACTIVE_WORKLANE: &str = "close-active-worklane";
 const ACTION_MOVE_WORKLANE: &str = "move-worklane";
 const ACTION_REORDER_WORKLANE: &str = "reorder-worklane";
 const ACTION_MOVE_WORKLANE_UP: &str = "move-worklane-up";
@@ -97,6 +99,7 @@ pub(crate) struct ApplicationShell {
     sidebar_scroll: gtk::ScrolledWindow,
     pane_scroll: gtk::ScrolledWindow,
     pane_box: gtk::Box,
+    background_agent_host: gtk::Box,
     state: WorkspaceState,
     surfaces: BTreeMap<String, GhosttySurface>,
     pane_frames: BTreeMap<String, PaneFrame>,
@@ -106,7 +109,6 @@ pub(crate) struct ApplicationShell {
     restored_pane_commands: BTreeMap<String, String>,
     main_loop: glib::MainLoop,
     live_children: Rc<Cell<usize>>,
-    quit_after_last_terminal_exit: bool,
     next_worklane_number: usize,
     next_pane_number: usize,
     window_template: WindowRecipe,
@@ -137,6 +139,7 @@ struct ShellWidgets {
     sidebar_hover_rail: gtk::Box,
     pane_scroll: gtk::ScrolledWindow,
     pane_box: gtk::Box,
+    background_agent_host: gtk::Box,
     peek_view: WorklanePeekView,
     command_palette: CommandPaletteView,
 }
@@ -145,8 +148,6 @@ impl ApplicationShell {
     pub(crate) fn new(
         runtime: &GhosttyRuntime,
         command: Option<String>,
-        terminal_count: usize,
-        quit_after_last_terminal_exit: bool,
         main_loop: &glib::MainLoop,
         restored_window: Option<WindowRecipe>,
         restored_drafts: Vec<PaneRestoreDraft>,
@@ -163,6 +164,7 @@ impl ApplicationShell {
             sidebar_hover_rail,
             pane_scroll,
             pane_box,
+            background_agent_host,
             peek_view,
             command_palette,
         } = build_shell_widgets();
@@ -192,6 +194,7 @@ impl ApplicationShell {
             sidebar_scroll,
             pane_scroll,
             pane_box,
+            background_agent_host,
             state,
             surfaces: BTreeMap::new(),
             pane_frames: BTreeMap::new(),
@@ -201,7 +204,6 @@ impl ApplicationShell {
             restored_pane_commands,
             main_loop: main_loop.clone(),
             live_children: Rc::new(Cell::new(0)),
-            quit_after_last_terminal_exit,
             next_worklane_number,
             next_pane_number,
             window_template,
@@ -239,16 +241,26 @@ impl ApplicationShell {
         for pane_id in initial_pane_ids {
             Self::create_surface(&shell, &pane_id)?;
         }
-        let active_terminal_count = shell.borrow().state.active_pane_ids().len();
-        for _ in active_terminal_count..terminal_count {
-            Self::split_focused_pane_right(&shell)?;
-        }
+        shell.borrow().mount_background_restored_agents();
         shell.borrow().render();
         Ok(shell)
     }
 
     pub(crate) fn window(&self) -> &gtk::Window {
         &self.window
+    }
+
+    fn mount_background_restored_agents(&self) {
+        let active_panes = self.state.active_pane_ids();
+        for pane_id in self.restored_pane_commands.keys() {
+            if active_panes.iter().any(|active| active == pane_id) {
+                continue;
+            }
+            if let Some(frame) = self.pane_frames.get(pane_id) {
+                self.background_agent_host.append(frame.widget());
+                eprintln!("zentty-linux: background-agent-host pane={pane_id}");
+            }
+        }
     }
 
     pub(crate) fn sidebar_container(&self) -> &gtk::ScrolledWindow {
@@ -309,6 +321,7 @@ impl ApplicationShell {
             }
         }
         clear_pane_columns(&self.pane_box);
+        clear_box_children(&self.background_agent_host);
         for frame in self.pane_frames.values() {
             frame.detach_terminal();
         }
@@ -324,252 +337,14 @@ impl ApplicationShell {
     pub(crate) fn release_surfaces(&mut self) -> Result<(), String> {
         for (_, surface) in std::mem::take(&mut self.surfaces) {
             surface.dispose().map_err(|error| error.to_string())?;
+            // Explicit disposal disconnects the child-exited callback before
+            // closing the native surface, so the ordinary asynchronous exit
+            // path cannot decrement this ownership count. Account for the
+            // successfully disposed child here instead.
+            self.live_children
+                .set(self.live_children.get().saturating_sub(1));
         }
         Ok(())
-    }
-
-    pub(crate) fn schedule_workspace_actions(
-        shell: &Rc<RefCell<Self>>,
-        quit_when_complete: bool,
-        close_worklane_when_complete: bool,
-    ) {
-        let weak = Rc::downgrade(shell);
-        let step = Rc::new(Cell::new(0_u8));
-        glib::timeout_add_local(Duration::from_millis(100), move || {
-            let Some(shell) = weak.upgrade() else {
-                return glib::ControlFlow::Break;
-            };
-            let window = shell.borrow().window.clone();
-            let result = match step.get() {
-                0 => window.activate_action("workspace.new-worklane", None),
-                1 | 3 => window.activate_action("workspace.split-pane-right", None),
-                2 => window.activate_action(
-                    "workspace.select-worklane",
-                    Some(&"worklane-1".to_variant()),
-                ),
-                4 | 5 => window.activate_action("workspace.navigate-back", None),
-                6 | 7 => window.activate_action("workspace.navigate-forward", None),
-                8 => window.activate_action(
-                    "workspace.rename-worklane",
-                    Some(&("worklane-1", "  Frontend  ").to_variant()),
-                ),
-                9 => window.activate_action(
-                    "workspace.rename-pane",
-                    Some(&("pane-4", "  Review Shell  ").to_variant()),
-                ),
-                10 => window.activate_action(
-                    "workspace.set-worklane-color",
-                    Some(&("worklane-1", "red").to_variant()),
-                ),
-                11 => window.activate_action(
-                    "workspace.move-worklane",
-                    Some(&("worklane-1", "down").to_variant()),
-                ),
-                12 => window.activate_action("workspace.move-pane-left", None),
-                13 => window.activate_action("workspace.split-pane-below", None),
-                14 => window.activate_action("workspace.move-pane-up", None),
-                15 => window.activate_action("workspace.move-pane-down", None),
-                16 => window.activate_action(
-                    "workspace.move-pane-to-worklane",
-                    Some(&"worklane-2".to_variant()),
-                ),
-                17 => window.activate_action("workspace.next-pane", None),
-                18 => window.activate_action("workspace.previous-pane", None),
-                19 => window.activate_action("workspace.next-worklane", None),
-                20 => window.activate_action("workspace.previous-worklane", None),
-                21 if close_worklane_when_complete => window
-                    .activate_action("workspace.close-worklane", Some(&"worklane-1".to_variant())),
-                _ => {
-                    eprintln!("zentty-linux: workspace-action-scenario complete");
-                    if quit_when_complete {
-                        shell.borrow().main_loop.quit();
-                    }
-                    return glib::ControlFlow::Break;
-                }
-            };
-            if let Err(error) = result {
-                eprintln!("zentty-linux: workspace-action-scenario failed: {error}");
-                shell.borrow().main_loop.quit();
-                return glib::ControlFlow::Break;
-            }
-            step.set(step.get() + 1);
-            glib::ControlFlow::Continue
-        });
-    }
-
-    pub(crate) fn schedule_agent_restore(shell: &Rc<RefCell<Self>>, quit_when_ready: bool) {
-        let weak = Rc::downgrade(shell);
-        let attempts = Rc::new(Cell::new(0_u16));
-        glib::timeout_add_local(Duration::from_millis(20), move || {
-            let Some(shell) = weak.upgrade() else {
-                return glib::ControlFlow::Break;
-            };
-            let drafts = shell.borrow().agent_restore_drafts();
-            if !drafts.is_empty() {
-                eprintln!(
-                    "zentty-linux: agent-restore-scenario verified drafts={}",
-                    drafts.len()
-                );
-                if quit_when_ready {
-                    shell.borrow().main_loop.quit();
-                }
-                return glib::ControlFlow::Break;
-            }
-            attempts.set(attempts.get() + 1);
-            if attempts.get() >= 250 {
-                eprintln!("zentty-linux: agent-restore-scenario failed=no-authenticated-session");
-                if quit_when_ready {
-                    shell.borrow().main_loop.quit();
-                }
-                return glib::ControlFlow::Break;
-            }
-            glib::ControlFlow::Continue
-        });
-    }
-
-    pub(crate) fn schedule_pane_search_actions(
-        shell: &Rc<RefCell<Self>>,
-        quit_when_complete: bool,
-    ) {
-        let weak = Rc::downgrade(shell);
-        let step = Rc::new(Cell::new(0_u8));
-        glib::timeout_add_local(Duration::from_millis(120), move || {
-            let Some(shell) = weak.upgrade() else {
-                return glib::ControlFlow::Break;
-            };
-            let window = shell.borrow().window.clone();
-            let result = match step.get() {
-                0 => require_invalid_binding_action_rejected(&shell),
-                1 => window.activate_action("workspace.find", None),
-                2 => {
-                    shell.borrow().perform_focused_binding_action(
-                        "search-scenario-query",
-                        "search:selectable",
-                    );
-                    Ok(())
-                }
-                3 => require_focused_search_state(&shell, true, Some(3), None),
-                4 => window.activate_action("workspace.find-next", None),
-                5 => require_focused_search_state(&shell, true, Some(3), Some(true)),
-                6 => window.activate_action("workspace.find-previous", None),
-                7 => {
-                    shell
-                        .borrow()
-                        .perform_focused_binding_action("search-scenario-end", "end_search");
-                    Ok(())
-                }
-                8 => require_focused_search_state(&shell, false, None, Some(false)),
-                _ => {
-                    eprintln!("zentty-linux: pane-search-action-scenario complete");
-                    if quit_when_complete {
-                        shell.borrow().main_loop.quit();
-                    }
-                    return glib::ControlFlow::Break;
-                }
-            };
-            if let Err(error) = result {
-                eprintln!("zentty-linux: pane-search-action-scenario failed: {error}");
-                shell.borrow().main_loop.quit();
-                return glib::ControlFlow::Break;
-            }
-            step.set(step.get() + 1);
-            glib::ControlFlow::Continue
-        });
-    }
-
-    pub(crate) fn schedule_pane_layout_actions(
-        shell: &Rc<RefCell<Self>>,
-        quit_when_complete: bool,
-    ) {
-        let weak = Rc::downgrade(shell);
-        let step = Rc::new(Cell::new(0_u8));
-        glib::timeout_add_local(Duration::from_millis(100), move || {
-            let Some(shell) = weak.upgrade() else {
-                return glib::ControlFlow::Break;
-            };
-            let window = shell.borrow().window.clone();
-            let result = match step.get() {
-                0 => require_golden_action_availability(&shell, false, false),
-                1 => window.activate_action("workspace.add-pane-left", None),
-                2 => window.activate_action("workspace.split-pane-right", None),
-                3 => window.activate_action("workspace.split-pane-below", None),
-                4 => window.activate_action("workspace.focus-pane-up", None),
-                5 => window.activate_action("workspace.focus-pane-left", None),
-                6 => window.activate_action("workspace.focus-pane-right", None),
-                7 => window.activate_action("workspace.focus-pane-down", None),
-                8 => window.activate_action("workspace.arrange-width-thirds", None),
-                9 => window.activate_action("workspace.arrange-height-two", None),
-                10 => require_golden_action_availability(&shell, true, true),
-                11 => window.activate_action("workspace.arrange-width-half", None),
-                12 => window.activate_action("workspace.arrange-golden-tall", None),
-                13 | 15 => require_rendered_golden_height(&shell, "pane-4", "pane-1", true),
-                14 => {
-                    window.set_default_size(1000, 820);
-                    Ok(())
-                }
-                16 => window.activate_action("workspace.arrange-golden-wide", None),
-                17 => require_rendered_golden_width(&shell, "pane-4", "pane-2", true),
-                18 => window.activate_action("workspace.reset-pane-layout", None),
-                19 => window.activate_action("workspace.arrange-height-full", None),
-                20 => require_golden_action_availability(&shell, true, false),
-                21 => window.activate_action("workspace.arrange-width-quarters", None),
-                22 => window.activate_action("workspace.arrange-golden-narrow", None),
-                23 => require_rendered_golden_width(&shell, "pane-4", "pane-1", false),
-                24 => require_pane_layout_scenario_state(&shell),
-                _ => {
-                    eprintln!("zentty-linux: pane-layout-action-scenario complete");
-                    if quit_when_complete {
-                        shell.borrow().main_loop.quit();
-                    }
-                    return glib::ControlFlow::Break;
-                }
-            };
-            if let Err(error) = result {
-                eprintln!("zentty-linux: pane-layout-action-scenario failed: {error}");
-                shell.borrow().main_loop.quit();
-                return glib::ControlFlow::Break;
-            }
-            step.set(step.get() + 1);
-            glib::ControlFlow::Continue
-        });
-    }
-
-    pub(crate) fn schedule_closed_pane_restore(
-        shell: &Rc<RefCell<Self>>,
-        quit_when_complete: bool,
-    ) {
-        let weak = Rc::downgrade(shell);
-        let step = Rc::new(Cell::new(0_u8));
-        glib::timeout_add_local(Duration::from_millis(180), move || {
-            let Some(shell) = weak.upgrade() else {
-                return glib::ControlFlow::Break;
-            };
-            let result = match step.get() {
-                0 => {
-                    Self::close_focused_pane(&shell);
-                    Ok(())
-                }
-                1 => {
-                    let window = shell.borrow().window.clone();
-                    window.activate_action("workspace.restore-closed-pane", None)
-                }
-                2 => require_closed_pane_restore_state(&shell),
-                _ => {
-                    eprintln!("zentty-linux: closed-pane-restore-scenario complete");
-                    if quit_when_complete {
-                        shell.borrow().main_loop.quit();
-                    }
-                    return glib::ControlFlow::Break;
-                }
-            };
-            if let Err(error) = result {
-                eprintln!("zentty-linux: closed-pane-restore-scenario failed: {error}");
-                shell.borrow().main_loop.quit();
-                return glib::ControlFlow::Break;
-            }
-            step.set(step.get() + 1);
-            glib::ControlFlow::Continue
-        });
     }
 
     fn install_actions(shell: &Rc<RefCell<Self>>) {
@@ -929,10 +704,7 @@ impl ApplicationShell {
             let Some(shell) = weak.upgrade() else {
                 return glib::Propagation::Proceed;
             };
-            if !shell.borrow().peek_phase.is_active()
-                && is_restore_closed_pane_shortcut(key, modifiers)
-            {
-                Self::activate_restore_closed_pane_shortcut(&shell);
+            if Self::handle_lifecycle_shortcut(&shell, key, modifiers) {
                 return glib::Propagation::Stop;
             }
             if !shell.borrow().peek_phase.is_active()
@@ -1023,6 +795,25 @@ impl ApplicationShell {
             }
         });
         shell.borrow().window.add_controller(controller);
+    }
+
+    fn handle_lifecycle_shortcut(
+        shell: &Rc<RefCell<Self>>,
+        key: gdk::Key,
+        modifiers: gdk::ModifierType,
+    ) -> bool {
+        if is_close_window_shortcut(key, modifiers) {
+            eprintln!("zentty-linux: action=close-window shortcut=Ctrl+Q");
+            let window = shell.borrow().window.clone();
+            window.close();
+            return true;
+        }
+        if !shell.borrow().peek_phase.is_active() && is_restore_closed_pane_shortcut(key, modifiers)
+        {
+            Self::activate_restore_closed_pane_shortcut(shell);
+            return true;
+        }
+        false
     }
 
     fn activate_restore_closed_pane_shortcut(shell: &Rc<RefCell<Self>>) {
@@ -1438,10 +1229,22 @@ impl ApplicationShell {
                 ACTION_TOGGLE_SIDEBAR,
             ),
             CommandPaletteItem::action(
+                source_ui::CLOSE_WORKLANE,
+                "Close the active worklane and all of its panes",
+                "workspace lane remove",
+                ACTION_CLOSE_ACTIVE_WORKLANE,
+            ),
+            CommandPaletteItem::action(
                 "Close Pane",
                 "Close the focused pane",
                 "terminal",
                 ACTION_CLOSE_PANE,
+            ),
+            CommandPaletteItem::action(
+                source_ui::UNDO_CLOSE_PANE,
+                "Reopen the most recently closed pane",
+                "terminal restore reopen",
+                ACTION_RESTORE_CLOSED_PANE,
             ),
             CommandPaletteItem::action(
                 "Navigate Back",
@@ -1961,6 +1764,17 @@ impl ApplicationShell {
             Self::close_worklane(&shell, worklane_id);
         });
         group.add_action(&close_worklane);
+
+        let close_active_worklane = gio::SimpleAction::new(ACTION_CLOSE_ACTIVE_WORKLANE, None);
+        let weak = Rc::downgrade(shell);
+        close_active_worklane.connect_activate(move |_, _| {
+            let Some(shell) = weak.upgrade() else {
+                return;
+            };
+            let worklane_id = shell.borrow().state.active_worklane_id().to_owned();
+            Self::close_worklane(&shell, &worklane_id);
+        });
+        group.add_action(&close_active_worklane);
 
         Self::install_worklane_move_actions(shell, group, string_pair);
     }
@@ -2580,36 +2394,19 @@ impl ApplicationShell {
         if shell_ref.shutting_down {
             return;
         }
-        if shell_ref.quit_after_last_terminal_exit {
-            let outcome = shell_ref.state.close_pane_after_child_exit(pane_id);
-            if let Err(error) = shell_ref.remove_surface(pane_id) {
-                eprintln!("zentty-linux: child-exit cleanup failed: {error}");
-                shell_ref.main_loop.quit();
-                return;
+        let outcome = shell_ref.state.close_pane_after_child_exit(pane_id);
+        if let Err(error) = shell_ref.remove_surface(pane_id) {
+            eprintln!("zentty-linux: child-exit cleanup failed: {error}");
+            shell_ref.main_loop.quit();
+            return;
+        }
+        match outcome {
+            ClosePaneOutcome::Closed => {
+                shell_ref.render();
+                shell_ref.focus_selected_surface();
             }
-            match outcome {
-                ClosePaneOutcome::Closed => shell_ref.render(),
-                ClosePaneOutcome::CloseWindow => clear_pane_columns(&shell_ref.pane_box),
-                ClosePaneOutcome::NotFound => {}
-            }
-            if remaining == 0 {
-                shell_ref.main_loop.quit();
-            }
-        } else {
-            let outcome = shell_ref.state.close_pane_after_child_exit(pane_id);
-            if let Err(error) = shell_ref.remove_surface(pane_id) {
-                eprintln!("zentty-linux: child-exit cleanup failed: {error}");
-                shell_ref.main_loop.quit();
-                return;
-            }
-            match outcome {
-                ClosePaneOutcome::Closed => {
-                    shell_ref.render();
-                    shell_ref.focus_selected_surface();
-                }
-                ClosePaneOutcome::CloseWindow => shell_ref.main_loop.quit(),
-                ClosePaneOutcome::NotFound => {}
-            }
+            ClosePaneOutcome::CloseWindow => shell_ref.main_loop.quit(),
+            ClosePaneOutcome::NotFound => {}
         }
     }
 
@@ -2733,6 +2530,7 @@ impl ApplicationShell {
             column_box.set_vexpand(true);
             for pane in &column.panes {
                 if let Some(frame) = self.pane_frames.get(&pane.id) {
+                    remove_frame_from_box_parent(frame.widget());
                     column_box.append(frame.widget());
                 }
             }
@@ -3233,104 +3031,6 @@ fn log_ghostty_search_state(overlay: &gtk::Widget, pane_id: &str) {
     );
 }
 
-fn require_focused_search_state(
-    shell: &Rc<RefCell<ApplicationShell>>,
-    expected_active: bool,
-    expected_total: Option<u64>,
-    expected_selection_presence: Option<bool>,
-) -> Result<(), glib::BoolError> {
-    let shell = shell.borrow();
-    let pane_id = shell
-        .state
-        .focused_pane_id()
-        .ok_or_else(|| glib::bool_error!("no focused pane"))?;
-    let surface = shell
-        .surfaces
-        .get(pane_id)
-        .ok_or_else(|| glib::bool_error!("focused pane has no live surface"))?;
-    let overlay = find_ghostty_search_overlay(surface.widget())
-        .ok_or_else(|| glib::bool_error!("Ghostty search overlay is missing"))?;
-    let active = overlay.property::<bool>("active");
-    let total = overlay
-        .property::<bool>("has-search-total")
-        .then(|| overlay.property::<u64>("search-total"));
-    let has_selection = overlay.property::<bool>("has-search-selected");
-    if active != expected_active
-        || total != expected_total
-        || expected_selection_presence.is_some_and(|expected| expected != has_selection)
-    {
-        return Err(glib::bool_error!(
-            "unexpected search state: active={active} total={total:?} selected={has_selection}"
-        ));
-    }
-    eprintln!(
-        "zentty-linux: pane-search-action-scenario verified active={active} total={total:?} selected={has_selection}"
-    );
-    Ok(())
-}
-
-fn require_invalid_binding_action_rejected(
-    shell: &Rc<RefCell<ApplicationShell>>,
-) -> Result<(), glib::BoolError> {
-    let shell = shell.borrow();
-    let pane_id = shell
-        .state
-        .focused_pane_id()
-        .ok_or_else(|| glib::bool_error!("no focused pane"))?;
-    let surface = shell
-        .surfaces
-        .get(pane_id)
-        .ok_or_else(|| glib::bool_error!("focused pane has no live surface"))?;
-    if surface
-        .perform_binding_action("zentty_invalid_binding_action")
-        .is_ok()
-    {
-        return Err(glib::bool_error!(
-            "Ghostty accepted an invalid embedding binding action"
-        ));
-    }
-    eprintln!("zentty-linux: pane-search-action-scenario invalid-binding=rejected");
-    Ok(())
-}
-
-fn require_pane_layout_scenario_state(
-    shell: &Rc<RefCell<ApplicationShell>>,
-) -> Result<(), glib::BoolError> {
-    let shell = shell.borrow();
-    let columns = shell.state.active_columns();
-    let pane_ids = shell.state.active_pane_ids();
-    if pane_ids != ["pane-2", "pane-3", "pane-4", "pane-1"]
-        || columns.len() != 4
-        || columns.iter().any(|column| column.panes.len() != 1)
-        || shell.state.focused_pane_id() != Some("pane-4")
-        || columns[2].width.partial_cmp(&columns[3].width) != Some(std::cmp::Ordering::Less)
-    {
-        return Err(glib::bool_error!(
-            "unexpected pane-layout scenario: panes={pane_ids:?} columns={} focus={:?} widths={:?}",
-            columns.len(),
-            shell.state.focused_pane_id(),
-            columns
-                .iter()
-                .map(|column| column.width)
-                .collect::<Vec<_>>()
-        ));
-    }
-    if shell.surfaces.len() != 4
-        || pane_ids
-            .iter()
-            .any(|pane_id| !shell.surfaces.contains_key(*pane_id))
-    {
-        return Err(glib::bool_error!(
-            "pane-layout scenario detached a real Ghostty surface"
-        ));
-    }
-    eprintln!(
-        "zentty-linux: pane-layout-action-scenario verified panes={pane_ids:?} columns={} focus=pane-4 golden=narrow",
-        columns.len()
-    );
-    Ok(())
-}
-
 fn is_restore_closed_pane_shortcut(key: gdk::Key, modifiers: gdk::ModifierType) -> bool {
     key == gdk::Key::t
         && modifiers.contains(gdk::ModifierType::CONTROL_MASK)
@@ -3338,156 +3038,14 @@ fn is_restore_closed_pane_shortcut(key: gdk::Key, modifiers: gdk::ModifierType) 
         && !modifiers.intersects(gdk::ModifierType::ALT_MASK | gdk::ModifierType::SUPER_MASK)
 }
 
-fn require_closed_pane_restore_state(
-    shell: &Rc<RefCell<ApplicationShell>>,
-) -> Result<(), glib::BoolError> {
-    let shell = shell.borrow();
-    let focused = shell
-        .state
-        .focused_pane_id()
-        .ok_or_else(|| glib::bool_error!("restored pane is not focused"))?;
-    let pane = shell
-        .state
-        .pane(focused)
-        .ok_or_else(|| glib::bool_error!("restored pane model is missing"))?;
-    if focused == "pane-agent"
-        || pane.working_directory.as_deref().is_none_or(str::is_empty)
-        || shell.state.active_pane_ids().len() != 2
-        || shell.surfaces.len() != 2
-        || shell.live_children.get() != 2
-        || shell.pending_prefills.contains_key(focused)
-    {
-        return Err(glib::bool_error!(
-            "closed-pane restore did not replace one model/surface/child and consume its prefill"
-        ));
-    }
-    eprintln!(
-        "zentty-linux: closed-pane-restore-scenario verified pane={focused} cwd={} surfaces={} children={}",
-        pane.working_directory.as_deref().unwrap_or("none"),
-        shell.surfaces.len(),
-        shell.live_children.get()
-    );
-    Ok(())
-}
-
-fn require_golden_action_availability(
-    shell: &Rc<RefCell<ApplicationShell>>,
-    width_expected: bool,
-    height_expected: bool,
-) -> Result<(), glib::BoolError> {
-    let shell = shell.borrow();
-    let group = shell
-        .workspace_actions
-        .as_ref()
-        .ok_or_else(|| glib::bool_error!("workspace action group is missing"))?;
-    for (name, expected) in [
-        (ACTION_ARRANGE_GOLDEN_WIDE, width_expected),
-        (ACTION_ARRANGE_GOLDEN_NARROW, width_expected),
-        (ACTION_ARRANGE_GOLDEN_TALL, height_expected),
-        (ACTION_ARRANGE_GOLDEN_SHORT, height_expected),
-    ] {
-        let action = group
-            .lookup_action(name)
-            .ok_or_else(|| glib::bool_error!("layout action is missing: {name}"))?;
-        if action.is_enabled() != expected {
-            return Err(glib::bool_error!(
-                "layout action availability mismatch: {name} actual={} expected={expected}",
-                action.is_enabled()
-            ));
-        }
-    }
-    eprintln!(
-        "zentty-linux: pane-layout-action-scenario golden-availability width={width_expected} height={height_expected}"
-    );
-    Ok(())
-}
-
-fn require_rendered_golden_height(
-    shell: &Rc<RefCell<ApplicationShell>>,
-    focused_pane_id: &str,
-    neighbor_pane_id: &str,
-    focus_tall: bool,
-) -> Result<(), glib::BoolError> {
-    let shell = shell.borrow();
-    let focused = shell
-        .pane_frames
-        .get(focused_pane_id)
-        .ok_or_else(|| glib::bool_error!("missing focused pane frame"))?;
-    let neighbor = shell
-        .pane_frames
-        .get(neighbor_pane_id)
-        .ok_or_else(|| glib::bool_error!("missing neighboring pane frame"))?;
-    let focused_height = focused.widget().height();
-    let neighbor_height = neighbor.widget().height();
-    let actual_ratio = f64::from(focused_height) / f64::from(focused_height + neighbor_height);
-    let golden_major = (1.0 + 5.0_f64.sqrt()) / (3.0 + 5.0_f64.sqrt());
-    let expected_ratio = if focus_tall {
-        golden_major
-    } else {
-        1.0 - golden_major
-    };
-    let ordered = if focus_tall {
-        focused_height > neighbor_height
-    } else {
-        focused_height < neighbor_height
-    };
-    if focused_height <= 0
-        || neighbor_height <= 0
-        || !ordered
-        || (actual_ratio - expected_ratio).abs() > 0.02
-    {
-        return Err(glib::bool_error!(
-            "rendered golden height missing: focus={focused_pane_id}:{focused_height} neighbor={neighbor_pane_id}:{neighbor_height} ratio={actual_ratio:.3} expected={expected_ratio:.3} tall={focus_tall}"
-        ));
-    }
-    eprintln!(
-        "zentty-linux: pane-layout-action-scenario rendered-golden-height focus={focused_pane_id}:{focused_height} neighbor={neighbor_pane_id}:{neighbor_height} ratio={actual_ratio:.3} tall={focus_tall}"
-    );
-    Ok(())
-}
-
-fn require_rendered_golden_width(
-    shell: &Rc<RefCell<ApplicationShell>>,
-    focused_pane_id: &str,
-    neighbor_pane_id: &str,
-    focus_wide: bool,
-) -> Result<(), glib::BoolError> {
-    let shell = shell.borrow();
-    let focused = shell
-        .pane_frames
-        .get(focused_pane_id)
-        .ok_or_else(|| glib::bool_error!("missing focused pane frame"))?;
-    let neighbor = shell
-        .pane_frames
-        .get(neighbor_pane_id)
-        .ok_or_else(|| glib::bool_error!("missing neighboring pane frame"))?;
-    let focused_width = focused.widget().width();
-    let neighbor_width = neighbor.widget().width();
-    let actual_ratio = f64::from(focused_width) / f64::from(focused_width + neighbor_width);
-    let golden_major = (1.0 + 5.0_f64.sqrt()) / (3.0 + 5.0_f64.sqrt());
-    let expected_ratio = if focus_wide {
-        golden_major
-    } else {
-        1.0 - golden_major
-    };
-    let ordered = if focus_wide {
-        focused_width > neighbor_width
-    } else {
-        focused_width < neighbor_width
-    };
-    if focused_width <= 0
-        || neighbor_width <= 0
-        || !ordered
-        || (actual_ratio - expected_ratio).abs() > 0.02
-    {
-        return Err(glib::bool_error!(
-            "rendered golden width missing: focus={focused_pane_id}:{focused_width} neighbor={neighbor_pane_id}:{neighbor_width} ratio={actual_ratio:.3} expected={expected_ratio:.3} wide={focus_wide}"
-        ));
-    }
-    eprintln!(
-        "zentty-linux: pane-layout-action-scenario rendered-golden-width focus={focused_pane_id}:{focused_width} neighbor={neighbor_pane_id}:{neighbor_width} ratio={actual_ratio:.3} wide={focus_wide}"
-    );
-    Ok(())
+fn is_close_window_shortcut(key: gdk::Key, modifiers: gdk::ModifierType) -> bool {
+    key == gdk::Key::q
+        && modifiers.contains(gdk::ModifierType::CONTROL_MASK)
+        && !modifiers.intersects(
+            gdk::ModifierType::ALT_MASK
+                | gdk::ModifierType::SHIFT_MASK
+                | gdk::ModifierType::SUPER_MASK,
+        )
 }
 
 fn install_sidebar_width_tracking(
@@ -3537,7 +3095,19 @@ fn build_shell_widgets() -> ShellWidgets {
     pane_scroll.set_hexpand(true);
     pane_scroll.set_vexpand(true);
     pane_scroll.set_child(Some(&pane_box));
-    content.append(&pane_scroll);
+    let terminal_overlay = gtk::Overlay::new();
+    terminal_overlay.set_hexpand(true);
+    terminal_overlay.set_vexpand(true);
+    let background_agent_host = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    background_agent_host.set_hexpand(true);
+    background_agent_host.set_vexpand(true);
+    background_agent_host.set_can_target(false);
+    // Root and map restored background agents behind the active pane tree.
+    // The active pane is an opaque, full-allocation overlay, so the compositor
+    // never exposes the startup surface and no synthetic focus is required.
+    terminal_overlay.set_child(Some(&background_agent_host));
+    terminal_overlay.add_overlay(&pane_scroll);
+    content.append(&terminal_overlay);
     let sidebar_reservation = gtk::Box::new(gtk::Orientation::Vertical, 0);
     sidebar_reservation.set_width_request(SidebarWidthPreference::DEFAULT);
     body.set_start_child(Some(&sidebar_reservation));
@@ -3556,6 +3126,7 @@ fn build_shell_widgets() -> ShellWidgets {
         sidebar_hover_rail,
         pane_scroll,
         pane_box,
+        background_agent_host,
         peek_view,
         command_palette,
     }
@@ -3655,6 +3226,22 @@ fn clear_pane_columns(container: &gtk::Box) {
     }
 }
 
+fn clear_box_children(container: &gtk::Box) {
+    while let Some(child) = container.first_child() {
+        container.remove(&child);
+    }
+}
+
+fn remove_frame_from_box_parent(frame: &impl IsA<gtk::Widget>) {
+    if let Some(parent) = frame
+        .as_ref()
+        .parent()
+        .and_then(|parent| parent.downcast::<gtk::Box>().ok())
+    {
+        parent.remove(frame);
+    }
+}
+
 fn model_width_to_pixels(width: f64) -> i32 {
     let rounded = width.round().clamp(1.0, f64::from(i32::MAX));
     // The value is finite and clamped to the complete positive i32 range.
@@ -3744,7 +3331,8 @@ fn default_window_recipe() -> WindowRecipe {
 
 #[cfg(test)]
 mod allocation_tests {
-    use super::model_heights_to_pixels;
+    use super::{is_close_window_shortcut, model_heights_to_pixels};
+    use gtk::gdk;
 
     #[test]
     fn pane_height_pixels_preserve_ratios_spacing_and_invalid_weight_fallback() {
@@ -3759,5 +3347,21 @@ mod allocation_tests {
 
         assert_eq!(model_heights_to_pixels(&[0.0, f64::NAN], 101), [50, 50]);
         assert!(model_heights_to_pixels(&[], 648).is_empty());
+    }
+
+    #[test]
+    fn close_window_shortcut_is_exact_linux_ctrl_q() {
+        assert!(is_close_window_shortcut(
+            gdk::Key::q,
+            gdk::ModifierType::CONTROL_MASK
+        ));
+        assert!(!is_close_window_shortcut(
+            gdk::Key::q,
+            gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::SHIFT_MASK
+        ));
+        assert!(!is_close_window_shortcut(
+            gdk::Key::w,
+            gdk::ModifierType::CONTROL_MASK
+        ));
     }
 }

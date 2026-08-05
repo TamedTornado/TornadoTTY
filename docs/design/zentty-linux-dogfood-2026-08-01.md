@@ -6566,6 +6566,301 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   `cc4e27369fbd53767ee6334029cfcf17cbc7bb562342f2222a9904ca30c9f079`.
   ReleaseSafe Valgrind remains XFAIL and no suppression was broadened.
 
+### 2026-08-05 — Inactive-worklane agent startup, first real slice
+
+- **Planned owner:** Work resumed against issue #24 rather than an ad-hoc
+  feature. Its required behavior is background startup of restored supported
+  agents without selecting their worklane, stealing focus, starting ordinary
+  inactive shells, or creating a second terminal when the user later visits.
+- **Test-first real-system failure:** New focused scenario
+  `linux/tests/rust-inactive-agent-restore` restores an inactive agent lane and
+  an active ordinary-shell lane under the staged product. GTK, Ghostty, the
+  PTY, wrapper, helper, authenticated Unix socket, reducer, sidebar, and
+  compositor are real; only the Codex model/agent response is deterministic.
+  The first controlled X11 receipt
+  `684382d9ee8f355a6a387d07e78d69cbf12899da4b7160fd31d11e1a9e3b260b`
+  failed exactly as issue #24 predicted: only the active shell emitted
+  `terminal-ready`; the inactive agent never started.
+- **Rejected hidden-widget attempts:** Parenting the agent frame under a 1x1
+  transparent overlay did not cause Ghostty's GLArea to realize. Raising the
+  opacity above zero and then giving the transparent host a full allocation
+  still failed in X11 sessions
+  `f99bb0a84cd8f78c4add6e86ca71672bb39ae99bf24c7965cd0db7cc1b16d252`
+  and `9f077eecf0f53c2be7b623b8c75fb9fc3300e13a4661e721e5be63bae5a53010`.
+  Those approaches would also have been poor UX policy, so no opacity trick is
+  retained.
+- **Working compositor structure:** The restored agent frame is now the normal,
+  mapped child behind the active pane tree; the active pane tree is an opaque,
+  full-allocation overlay and remains the sole input target. This lets Ghostty
+  realize and start the background child without a synthetic worklane switch,
+  temporary window, focus request, or Ghostty patch. Only panes with accepted
+  restore drafts enter the background host; ordinary inactive shells remain
+  unrooted and unstarted.
+- **Harness repair:** The deterministic Codex parser initially assumed the
+  session ID immediately followed `resume`; current subcommand-scoped `-c`
+  options validly occur between them. The repaired stand-in requires the real
+  resume verb, injected hook, and final exact session ID. The next run reached
+  the reducer and correctly showed canonical `Codex · Starting`, exposing an
+  over-specific `Running` assertion rather than a product failure.
+- **Existing harness regression caught:** The active-pane restore test's fake
+  Codex also assumed the session ID immediately followed `resume`; once rebuilt
+  against the repaired real-Codex argument scope, controlled X11 session
+  `b5768edafad0bd0b62bc2f8ef008b1b0abc55b10af7474ddae06adb5a9c8ec1e`
+  correctly failed. The shared parser repair restored the existing real
+  active-pane relaunch in X11 session
+  `3090664a3d756d4a572cb0fc4d5b1386ce5b3dcd5a82748f1923e1290740eecd`
+  and Wayland session
+  `afcf41094640b94a6bd9ca527fc370e8db800f9a08780207fd240726186d98d3`.
+- **Expanded real-system coverage:** The focused scenario now restores two
+  inactive Codex sessions in separate worklanes and waits for two independently
+  authenticated pane targets. It deliberately visits the first lane, proves
+  its GLArea initialized only once and its child launch receipt remained
+  singular, returns to the originally active shell lane before clean shutdown,
+  and repeats the entire two-agent startup after a clean relaunch. Ordinary
+  inactive shells remain unstarted until the deliberate visit, when normal
+  source behavior starts them.
+- **Cancellation evidence:** A third run closes the inactive agent worklane
+  before the window is presented. The accepted surface is unparented, disposed,
+  and unregistered without any terminal-ready callback, fake-child receipt, or
+  authenticated event; the surviving active shell topology remains unchanged.
+  This is absence checked inside a bounded real compositor run, not an
+  environmental skip converted to success.
+- **Current passing evidence:** Complete controlled X11 session
+  `eb34178dbcb747ef141b6d45e2db03572cb245e31bf91a82acba01ba7f31b735`
+  and controlled Wayland session
+  `6edd0a97268611d4593c73a48fc36363605a442f61a61595aeca7b4aa60a2fbb`
+  passed the two-agent startup, independent authentication, focus stability,
+  deliberate reveal/reuse, active-worklane return, clean relaunch, ordinary
+  inactive-shell exclusion, and pre-start cancellation contract. The final
+  expanded reruns after cancellation remained green in X11 session
+  `838bc7ecee900b9ef7acdb95568b12774ae765db5157f7bef3111b318a453105`
+  and Wayland session
+  `0145e2df25ed9c0c153c362566e687bacbf5ddc4d33908fe5a38839584d69b6c`;
+  the later clean-relaunch extension passed in X11
+  `eb34178dbcb747ef141b6d45e2db03572cb245e31bf91a82acba01ba7f31b735`
+  and Wayland
+  `6edd0a97268611d4593c73a48fc36363605a442f61a61595aeca7b4aa60a2fbb`.
+- **Exact scrollback continuity:** Child-identity and surface-identity receipts
+  were necessary but did not directly prove retained terminal contents. The
+  deterministic Codex process now writes one exact marker to the real PTY before
+  sending its hook. After the deliberate visit, the product's scenario driver
+  uses Ghostty's real scrollback search and requires exactly one match before it
+  returns to the original worklane. The first strengthened X11 run correctly
+  failed because the harness also required a selected-match receipt; Ghostty
+  had already reported the exact one-match total while selection was still
+  absent. Selection is unrelated to content retention, so the assertion was
+  narrowed rather than delaying the search result or weakening the content
+  check. The corrected complete scenario passed under controlled X11 session
+  `b5c828b68f7ad67f5bf4671f8332a6a5e83764b513f9fd086353eea499d0370b`
+  and controlled Wayland session
+  `2e7183f40207536bedf55cbeacae0d44fc5127006ac450c27daebbe5d5666630`.
+- **Static and validator discoveries:** The expanded constructor and scenario
+  driver crossed the repository's strict `clippy::too_many_lines` threshold.
+  Background mounting, option parsing, and pre-presentation cancellation were
+  extracted into focused helpers; strict workspace Clippy then passed without
+  lint exemptions. The full feature-inventory runner test also exposed stale
+  expected summary totals left by earlier inventory status changes: the
+  authoritative inventory had 21 `PARTIAL` and 37 `NOT_IMPLEMENTED` entries,
+  while its self-test still expected 17 and 41. The self-test is now reconciled
+  with the machine-readable source rather than silently omitted from QA.
+- **Qualification orchestration mistake:** Invoking
+  `linux/tests/qualification-matrix` as if it were only a validator started a
+  full evidence-producing run. A subsequent `qualify-local` invocation
+  correctly refused the same evidence lock instead of allowing concurrent
+  writers. The original run was left to finish cleanly; final qualification is
+  rerun through the documented `qualify-local` entrypoint after lock release.
+- **Remaining qualification work:** The authoritative agent cells now include
+  this scenario, but final matrix and suppression receipts are recorded only
+  after the clean `qualify-local` rerun. The installed real Codex path is
+  covered separately in the same X11 agent cell. A real installed Claude
+  background-resume path remains a distinct coverage opportunity; the shared
+  launch, wrapper, adapter, and lifecycle contracts are exercised, but absence
+  of that binary-specific scenario is not represented as an unsuppressed or
+  exhaustive pass.
+
+### 2026-08-05 — Restore-test accretion audit and corrective freeze
+
+- **Operator concern:** Repairing the older deterministic restore harness after
+  changing Codex launch arguments exposed an accretive-programming risk. The
+  operator stopped feature work and required an inventory of parallel systems
+  before accepting more issue #24 work.
+- **Production inventory:** There is one persisted session-restore path:
+  `SessionRestoreEnvelope`, `SessionRestoreStore`, one launch-decision path,
+  one pane-draft conversion, and one application persistence flow. No second
+  store, schema, backup-file convention, Wayland implementation, or X11
+  implementation was found. Closed-pane restore is a separate transient undo
+  feature rather than another application-restart mechanism.
+- **Test-control inventory:** The product nevertheless accumulated three
+  overlapping agent/session-restore journeys, four agent integration scripts,
+  two inline fake-Codex parsers, and five `schedule_*` scenario state machines
+  compiled into `zentty-linux`. Paired `Scenario`/`ExitPolicy` enums and the
+  issue #24 expected-count, synthetic-reveal, and pre-presentation-close flags
+  expanded that parallel test control plane. This is excessive even though the
+  journeys call the same production restore implementation.
+- **Authoritative failure:** The clean `qualify-local` run completed its
+  support gates, ReleaseSafe/Debug builds, Ghostty regression suite, controlled
+  backend cells, packaging, and reviewed-suppression Valgrind work. Both
+  `agent-integration-wayland` and `agent-integration-x11` then failed. The new
+  cancellation driver activated the close-worklane GTK action before
+  presentation and triggered a non-unwinding panic through the action callback
+  in both compositors. Implemented-local, release, and full-Linux qualification
+  correctly reported not passed. No commit or push was made.
+- **Corrective decision:** Feature work is frozen. The ratified
+  [`linux-test-orchestration-consolidation-plan.md`](linux-test-orchestration-consolidation-plan.md)
+  requires anti-accretion tests first, one deterministic agent actor, minimal
+  shared launch primitives, removal of all application-embedded scenario
+  schedulers and test-only transition flags, consolidation of deterministic
+  restore coverage into one Wayland/X11 journey, retention of one separate
+  installed-Codex compatibility journey, real UI-driven visit/cancellation,
+  and one final aggregate qualification run. The uncommitted issue #24 code may
+  be discarded rather than preserved if that is the cleanest migration.
+- **Stop conditions:** A new daemon, schema, RPC control plane, product test
+  flag, embedded scheduler, generalized GUI framework, extra journey, or
+  Ghostty patch requires an explicit plan amendment and operator approval. No
+  implementation begins until the corrective plan and this baseline record
+  are present in the worktree.
+
+### DOGFOOD-2026-08-05-ORCHESTRATION-CONSOLIDATION: external journeys replaced embedded scenario systems
+
+- **Implemented boundary:** The application no longer parses any
+  `--exercise-*`, scenario-specific quit, expected-count, reveal, pre-present
+  close, terminal-count, or lifecycle-cycle options. It no longer owns
+  `Scenario`, `ExitPolicy`, or exported `schedule_*` integration drivers. The
+  executable CLI is contract-tested against the four reviewed product/dev
+  options: async backend, command, session-restore opt-out, and state directory.
+- **Single actor:** `linux/tests/fixtures/controlled-agent` is now the only
+  deterministic Codex/Claude actor. Its focused self-test covers permission,
+  question, and restore profiles; integration scripts no longer generate
+  private copies of agent parsers.
+- **Consolidated restore:** `rust-session-restore` now owns one real product
+  journey across controlled X11 and input-capable Wayland: two inactive agents,
+  independent authenticated events, no focus theft, ordinary inactive-shell
+  exclusion, physical worklane visit, same PID/surface, exact Ghostty
+  scrollback search, clean persistence/relaunch, and delayed-agent cancellation
+  through the source-named command palette. The superseded
+  `rust-inactive-agent-restore` was deleted only after both backends passed.
+- **Retired duplicates:** The embedded-driver-only `rust-workspace-actions`,
+  `rust-pane-layout-actions`, and `rust-pane-search-wayland` scripts were
+  removed. Feature inventory references now point to the real physical source
+  UX, sidebar, search, smoke, agent, and consolidated restore journeys, or to
+  no product scenario where the product feature remains partial.
+
+### DOGFOOD-2026-08-05-EXTERNAL-JOURNEY-FAILURES: real control exposed lifecycle and synchronization defects
+
+- **Shell correctness:** `assert_background_start` originally ended with a
+  negative `grep` under `set -e`, so the successful absence of focus theft
+  became a silent function failure. It now uses an explicit conditional.
+- **Focus synchronization:** A restored pane could open Ghostty search before
+  its asynchronous GTK focus callback settled. Physical query text then went
+  to the PTY while the visible search field remained empty. The journey now
+  waits for the real focus receipt before search. Close-pane and post-close
+  restore paths likewise synchronize the surviving surface before the next
+  interaction.
+- **Real lifecycle bug and repair:** Physical Ctrl+Q initially ended with
+  `application ended with 5 live children`. Explicit `GhosttySurface::dispose`
+  disconnects child-exit callbacks, but `release_surfaces` still expected those
+  callbacks to decrement ownership. Successful explicit disposal now accounts
+  for each owned child exactly once. ReleaseSafe X11 and Wayland restore
+  journeys subsequently close with status zero.
+- **X11 close semantics:** The private Xvfb environment has no window manager;
+  `xdotool windowclose` destroys the drawable and provoked GDK `BadDrawable`
+  rather than a clean close request. Zentty now exposes ordinary Linux Ctrl+Q,
+  and the external driver sends that real shortcut. Xdotool's expected
+  post-destruction `BadWindow` on synthetic key release is ignored only while
+  product action, exit status, persistence, and cleanup remain authoritative.
+- **Context-menu uncertainty:** Repeated reviewed-coordinate X11 attempts did
+  not activate the worklane menu in the cancellation fixture, although the
+  separate source-UX pane-menu journey passes. No unproven menu repair was
+  retained. Cancellation instead uses the real command palette and the exact
+  source label `Close Worklane`; this is a product interaction, not an internal
+  action hook. Menu-pointer behavior remains a separate UX concern.
+
+### DOGFOOD-2026-08-05-WAYLAND-INPUT: Weston evidence was not misrepresented as physical input
+
+- **Weston finding:** Weston 13 headless does not advertise
+  `zwp_virtual_keyboard_manager_v1`; `wtype` fails explicitly. The established
+  Weston/Pixman environment remains the renderer, lifecycle, Valgrind, and
+  suppression-governance authority and is not called input-capable.
+- **First Cage finding:** Cage/wlroots headless advertised the virtual-keyboard
+  manager, and `wtype` connected, but `wl_seat` had no keyboard capability;
+  GTK received no keys. Protocol presence alone was therefore rejected as
+  proof of usable input.
+- **Controlled repair:** `nested-wayland-input-v1` runs Cage/Pixman on the
+  existing private Xvfb transport. Its real Wayland seat reports pointer,
+  keyboard, and touch; the wrapper proves the required protocol inventory,
+  records a Cage receipt, isolates runtime state, and identifies the X11
+  transport rather than calling it native Wayland. This host required the
+  operator-authorized `cage` package; `wlrctl` was also evaluated but is not a
+  repository prerequisite.
+- **SUN_LEN finding:** The first descriptive runtime root made Zentty's nested
+  agent socket exceed Unix `SUN_LEN`. The controlled wrapper now uses a short
+  `/tmp/zwi.*` root while preserving machine-readable identity and cleanup.
+- **Passing evidence:** Consolidated restore and physical closed-pane restore
+  pass in both private Xvfb/X11 and Cage/Wayland. The latter uses real `wtype`
+  keyboard events, real GTK/GDK, real Ghostty surfaces/PTYS, real product
+  persistence, and no application test-control API.
+
+### DOGFOOD-2026-08-05-SOURCE-COMMANDS: palette consolidation restored exact vocabulary
+
+- Adding cancellation revealed that `Close Worklane` was absent from the
+  palette even though the source owns that exact menu verb. A contextual
+  active-worklane action now exposes it without weakening the parameterized
+  menu action.
+- The source command registry names pane restoration `Undo Close Pane`, not a
+  guessed `Restore Closed Pane`. That exact source label is now in the Linux
+  palette and drives the external close/restore integration journey.
+- The installed Codex journey now starts the real pinned CLI, waits for its
+  authenticated SessionStart and sidebar state, physically closes, validates
+  the exact persisted UUID/resume command, relaunches the real Codex TUI, waits
+  for `Ready | zentty`, and physically closes again. No timeout is treated as
+  success and no embedded agent scenario remains.
+
+### DOGFOOD-2026-08-05-CONSOLIDATED-AGENT-CELL: exact Wayland cell passes before aggregate qualification
+
+- The exact input-capable Wayland agent-cell command now runs only the shared
+  agent-event journey followed by the consolidated restore journey. It passed
+  under controlled Cage session
+  `e0b04c146e013d0108153dc87c24ee9ff94b024f39bf2a448fc5548384ce7cc6`
+  on private Xvfb transport session
+  `310c13357d6e6f8c8d36e9918ec218c2ac6fa54bc94bf1817921e8bc949d023e`.
+  Both journeys used real Wayland clients, real GTK/Ghostty/PTYs and physical
+  `wtype` input; the controlled actor remained the only substituted external
+  model boundary. This focused receipt is not a full-qualification claim.
+
+### DOGFOOD-2026-08-05-CONSOLIDATION-QUALIFICATION: one aggregate run passed every executable cell
+
+- After focused X11/Wayland journeys, workspace tests, strict Clippy,
+  formatting, ShellCheck, architecture/inventory/matrix contracts, actor and
+  controlled-environment self-tests all passed, the documented
+  `linux/tests/qualify-local` entrypoint was run exactly once. It passed all 52
+  declared executable cells with no unexpected skip or failed command.
+- The authoritative totals are **PASS=52, FAIL=0, BLOCKED=5, XFAIL=1,
+  NOT_IMPLEMENTED=51**. Implemented-local and product-boundary claims pass;
+  release and full-Linux qualification correctly remain false. Machine-summary
+  SHA-256: `a0d0f0016b0bcc053149e01bca67094390dfe7f636368bf2017e198626ef35c1`.
+  The authoritative agent cells passed in controlled Wayland session
+  `e2aed31f0d9f33470931d6725426678136700e67b439020ad5ac162bef2a5d71`
+  and controlled X11 session
+  `efc35f6f0d0be4e043d3a7c6045e5c10960ba50bed405450098e7ebae45706dc`.
+- Debug IBus focus is **PASS with reviewed suppressions**, not an unsuppressed
+  clean result. Its raw receipt reports 427 errors/contexts, 6,080 direct
+  definite bytes, and 41,395 indirect definite bytes. Post-suppression totals
+  are zero errors/contexts/definite bytes with 427 suppressed errors/contexts.
+  Reviewed report SHA-256:
+  `a68716b7f0574b700860694d6fa450f9b04eaf800d92e54ea48464a0c409dae8`;
+  raw receipt SHA-256:
+  `ad3244b9a44803ac6133fc13977ae7cef82cb4599c32fd666fa321334dd0d1bf`;
+  suppressed receipt SHA-256:
+  `e0256e109809e677be7de98a053ad68b0317ae6831bc01ad0c5ab225fcc3f3a0`.
+- **ReleaseSafe status reconciliation:** Older entries saying ReleaseSafe
+  Valgrind “remains XFAIL” describe the retired C qualification host. The
+  matrix's two current Rust-product ReleaseSafe Valgrind cells are explicitly
+  `NOT_IMPLEMENTED`, because inheriting those C-host receipts would be false
+  evidence. The matrix's sole current XFAIL is the tracked Ghostty async-enum
+  ABI representation defect. No suppression was broadened. This is a declared
+  release-qualification gap, not a pass and not a claim that the underlying
+  ReleaseSafe defect disappeared.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were

@@ -44,14 +44,15 @@ layer_directory="${ghostty_root}/${layer_runpath}"
 log="$(mktemp)"
 state_directory="$(mktemp -d)"
 trap 'rm -rf -- "${state_directory}"; cleanup' EXIT
+# The single quotes intentionally defer PTY-child expansion.
+# shellcheck disable=SC2016
 GDK_SCALE=1 \
 GDK_DPI_SCALE=1 \
 LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
     "${product}" \
     --command 'printf "\033]2;zentty-title-one\a"; sleep 0.2; printf "\033]2;zentty-title-two\a"; while IFS= read -r line; do printf "\033]2;focus:%s\a" "$line"; done' \
     --state-directory "${state_directory}" \
-    --no-session-restore \
-    --quit-after-last-terminal-exit >"${log}" 2>&1 &
+    --no-session-restore >"${log}" 2>&1 &
 product_pid=$!
 
 window_id=""

@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+linux_main="${repo_root}/crates/zentty-linux/src/main.rs"
+application_shell="${repo_root}/crates/zentty-linux/src/application_shell.rs"
+matrix="${repo_root}/linux/qualification-matrix.json"
+architecture="${repo_root}/docs/architecture/linux-product-architecture-v1.json"
+actor="${repo_root}/linux/tests/fixtures/controlled-agent"
+wayland_input_harness="${repo_root}/linux/tests/nested-wayland-input"
+failures=0
+
+reject() {
+    local message="$1"
+    shift
+    if "$@"; then
+        echo "test-orchestration-contract: ${message}" >&2
+        failures=$((failures + 1))
+    fi
+}
+
+require() {
+    local message="$1"
+    shift
+    if ! "$@" >/dev/null; then
+        echo "test-orchestration-contract: ${message}" >&2
+        failures=$((failures + 1))
+    fi
+}
+
+for dependency in grep jq sed sort comm mktemp; do
+    command -v "${dependency}" >/dev/null || {
+        echo "test-orchestration-contract: ${dependency} is required" >&2
+        exit 1
+    }
+done
+
+reject "application shell still exports embedded schedule_* test scenarios" \
+    grep -Eq 'pub\(crate\)[[:space:]]+fn schedule_[[:alnum:]_]+[[:space:]]*\(' "${application_shell}"
+reject "application composition root still contains a test Scenario enum" \
+    grep -Eq '^enum Scenario[[:space:]]*\{' "${linux_main}"
+reject "application composition root still contains a scenario ExitPolicy" \
+    grep -Eq '^enum ExitPolicy[[:space:]]*\{' "${linux_main}"
+
+actual_options="$(mktemp)"
+expected_options="$(mktemp)"
+trap 'rm -f -- "${actual_options}" "${expected_options}"' EXIT
+grep -Eo '"--[a-z0-9-]+"' "${linux_main}" | tr -d '"' | sort -u >"${actual_options}"
+cat >"${expected_options}" <<'OPTIONS'
+--async-backend
+--command
+--no-session-restore
+--state-directory
+OPTIONS
+if ! diff="$(comm -3 "${expected_options}" "${actual_options}")"; then
+    echo "test-orchestration-contract: product CLI differs from the reviewed non-test allowlist:" >&2
+    printf '%s\n' "${diff}" >&2
+    failures=$((failures + 1))
+fi
+
+require "the single reviewed deterministic agent actor is missing or not executable" \
+    test -x "${actor}"
+require "the controlled input-capable Wayland harness is missing or not executable" \
+    test -x "${wayland_input_harness}"
+inline_actor_files="$({
+    grep -RIl --include='*' -E 'cat[[:space:]]*>.*[/}]codex|cat[[:space:]]*>.*[/}]claude' \
+        "${repo_root}/linux/tests" || true
+} | grep -vFx "${actor}" || true)"
+if [[ -n "${inline_actor_files}" ]]; then
+    echo "test-orchestration-contract: integration tests still generate inline agent programs:" >&2
+    printf '%s\n' "${inline_actor_files}" >&2
+    failures=$((failures + 1))
+fi
+
+require "Wayland agent qualification does not name exactly the event and consolidated restore journeys" \
+    jq -e '
+        .cells[] | select(.id == "agent-integration-wayland") |
+        .environment_profile == "nested-wayland-input-v1" and
+        .command == "GDK_BACKEND=wayland linux/tests/rust-agent-ipc && GDK_BACKEND=wayland linux/tests/rust-session-restore"
+    ' "${matrix}"
+require "X11 agent qualification does not add installed Codex to the consolidated journeys" \
+    jq -e '
+        .cells[] | select(.id == "agent-integration-x11") |
+        .command == "GDK_BACKEND=x11 linux/tests/rust-agent-ipc && GDK_BACKEND=x11 linux/tests/installed-codex-integration && GDK_BACKEND=x11 linux/tests/rust-session-restore"
+    ' "${matrix}"
+reject "superseded inactive-agent journey remains authoritative" \
+    grep -Fq 'linux/tests/rust-inactive-agent-restore' "${matrix}"
+reject "architecture contract still references the superseded inactive-agent journey" \
+    grep -Fq 'linux/tests/rust-inactive-agent-restore' "${architecture}"
+
+((failures == 0)) || {
+    echo "test-orchestration-contract: FAIL failures=${failures}" >&2
+    exit 1
+}
+echo "Test orchestration contract passed: one actor, external control, consolidated journeys"

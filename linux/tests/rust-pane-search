@@ -82,12 +82,13 @@ wait_for_fixed() {
 
 log="$(mktemp)"
 state_directory="$(mktemp -d)"
+# The single quotes intentionally defer PTY-child expansion.
+# shellcheck disable=SC2016
 GDK_SCALE=1 GDK_DPI_SCALE=1 \
     "${product}" \
     --command 'printf "selectable alpha\nnoise\nselectable beta\nselectable gamma\n"; while IFS= read -r line; do printf "\033]2;focus:%s\a" "$line"; done' \
     --state-directory "${state_directory}" \
-    --no-session-restore \
-    --quit-after-last-terminal-exit >"${log}" 2>&1 &
+    --no-session-restore >"${log}" 2>&1 &
 product_pid=$!
 
 wait_for_fixed 'zentty-linux: terminal-ready-pane=pane-1' \

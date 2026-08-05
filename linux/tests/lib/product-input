@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+
+zentty_product_wait_for_log() {
+    local log="$1"
+    local pattern="$2"
+    local message="$3"
+    local attempts="${4:-200}"
+    local index
+    for ((index = 0; index < attempts; index++)); do
+        grep -Fq "${pattern}" "${log}" && return 0
+        sleep 0.05
+    done
+    echo "product-input: ${message}" >&2
+    return 1
+}
+
+zentty_product_prepare_input() {
+    local backend="$1"
+    local log="$2"
+    case "${backend}" in
+        x11)
+            command -v xdotool >/dev/null || {
+                echo "product-input: xdotool is required" >&2
+                return 1
+            }
+            ZENTTY_PRODUCT_WINDOW_ID=""
+            for _ in {1..200}; do
+                ZENTTY_PRODUCT_WINDOW_ID="$(xdotool search --name '^Zentty$' 2>/dev/null | head -1 || true)"
+                [[ "${ZENTTY_PRODUCT_WINDOW_ID}" =~ ^[1-9][0-9]*$ ]] && break
+                sleep 0.05
+            done
+            [[ "${ZENTTY_PRODUCT_WINDOW_ID}" =~ ^[1-9][0-9]*$ ]] || {
+                echo "product-input: real X11 Zentty window did not appear" >&2
+                return 1
+            }
+            xdotool windowfocus --sync "${ZENTTY_PRODUCT_WINDOW_ID}"
+            ;;
+        wayland)
+            if ! command -v wtype >/dev/null; then
+                echo "product-input: wtype is required" >&2
+                return 1
+            fi
+            [[ "${ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] || {
+                echo "product-input: Wayland input is not in the private input-capable session" >&2
+                return 1
+            }
+            zentty_product_wait_for_log "${log}" 'zentty-linux: window-size=' \
+                "Wayland product window did not report presentation readiness"
+            ZENTTY_PRODUCT_WINDOW_ID=""
+            ;;
+        *)
+            echo "product-input: unsupported backend: ${backend}" >&2
+            return 1
+            ;;
+    esac
+    export ZENTTY_PRODUCT_WINDOW_ID
+}
+
+zentty_product_key() {
+    local backend="$1"
+    local key="$2"
+    if [[ "${backend}" == x11 ]]; then
+        xdotool key --window "${ZENTTY_PRODUCT_WINDOW_ID}" "${key}"
+    else
+        wtype -k "${key}"
+    fi
+}
+
+zentty_product_ctrl_key() {
+    local backend="$1"
+    local key="$2"
+    if [[ "${backend}" == x11 ]]; then
+        xdotool key --window "${ZENTTY_PRODUCT_WINDOW_ID}" "ctrl+${key}"
+    else
+        wtype -M ctrl -k "${key}" -m ctrl
+    fi
+}
+
+zentty_product_ctrl_shift_key() {
+    local backend="$1"
+    local key="$2"
+    if [[ "${backend}" == x11 ]]; then
+        xdotool key --window "${ZENTTY_PRODUCT_WINDOW_ID}" "ctrl+shift+${key}"
+    else
+        wtype -M ctrl -M shift -k "${key}" -m shift -m ctrl
+    fi
+}
+
+zentty_product_alt_key() {
+    local backend="$1"
+    local key="$2"
+    if [[ "${backend}" == x11 ]]; then
+        xdotool key --window "${ZENTTY_PRODUCT_WINDOW_ID}" "alt+${key}"
+    else
+        wtype -M alt -k "${key}" -m alt
+    fi
+}
+
+zentty_product_close_window() {
+    local backend="$1"
+    # Ctrl+Q is Zentty's ordinary Linux close-window shortcut. Driving it
+    # through the compositor avoids a test-only lifecycle API and works in the
+    # deliberately window-manager-free X11 qualification session.
+    if [[ "${backend}" == x11 ]]; then
+        # Closing on key-down destroys the target before Xdotool can deliver
+        # every synthetic release. The product log and process-exit assertions,
+        # not Xdotool's expected asynchronous BadWindow status, prove success.
+        xdotool key --window "${ZENTTY_PRODUCT_WINDOW_ID}" ctrl+q 2>/dev/null || true
+        sleep 0.1
+        xdotool key --window "${ZENTTY_PRODUCT_WINDOW_ID}" ctrl+q 2>/dev/null || true
+    else
+        wtype -M ctrl -k q -m ctrl
+    fi
+}
+
+zentty_product_type() {
+    local backend="$1"
+    local value="$2"
+    if [[ "${backend}" == x11 ]]; then
+        xdotool type --window "${ZENTTY_PRODUCT_WINDOW_ID}" --delay 5 "${value}"
+    else
+        wtype "${value}"
+    fi
+}

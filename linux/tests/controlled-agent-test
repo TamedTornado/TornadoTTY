@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+actor="${repo_root}/linux/tests/fixtures/controlled-agent"
+temp_dir="$(mktemp -d)"
+helper="${temp_dir}/zentty"
+calls="${temp_dir}/calls"
+payloads="${temp_dir}/payloads"
+receipt="${temp_dir}/receipt"
+trap 'rm -rf -- "${temp_dir}"' EXIT
+
+fail() {
+    echo "controlled-agent-test: $*" >&2
+    exit 1
+}
+
+cat >"${helper}" <<'HELPER'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >>"${CONTROLLED_HELPER_CALLS}"
+cat >>"${CONTROLLED_HELPER_PAYLOADS}"
+printf '\n' >>"${CONTROLLED_HELPER_PAYLOADS}"
+HELPER
+chmod 700 "${helper}"
+
+run_actor() {
+    env \
+        CONTROLLED_HELPER_CALLS="${calls}" \
+        CONTROLLED_HELPER_PAYLOADS="${payloads}" \
+        ZENTTY_CLI_BIN="${helper}" \
+        ZENTTY_CONTROLLED_AGENT_SLEEP_SECONDS=0 \
+        "$@"
+}
+
+run_actor ZENTTY_CONTROLLED_AGENT_PROFILE=codex-permission "${actor}" \
+    -c 'hooks.PermissionRequest=["command"]' -c 'hooks.state={"key":"value"}'
+grep -Fxq 'ipc agent-event --adapter=codex' "${calls}" ||
+    fail "Codex permission profile did not call the real helper contract"
+grep -Fq '"hook_event_name":"PermissionRequest"' "${payloads}" ||
+    fail "Codex permission profile emitted the wrong payload"
+
+run_actor ZENTTY_CONTROLLED_AGENT_PROFILE=claude-question "${actor}" \
+    --settings '{"hooks":{"PermissionRequest":"zentty ipc agent-event --adapter=claude"}}'
+grep -Fxq 'ipc agent-event --adapter=claude PreToolUse' "${calls}" ||
+    fail "Claude question profile did not call the real helper contract"
+grep -Fq '"tool_name":"AskUserQuestion"' "${payloads}" ||
+    fail "Claude question profile emitted the wrong payload"
+
+run_actor \
+    ZENTTY_CONTROLLED_AGENT_PROFILE=codex-restore \
+    ZENTTY_CONTROLLED_AGENT_SESSIONS=session-one \
+    ZENTTY_CONTROLLED_AGENT_RECEIPT="${receipt}" \
+    "${actor}" resume -c 'hooks.SessionStart=["command"]' session-one >/dev/null
+grep -Eq '^resume:session-one pid:[0-9]+$' "${receipt}" ||
+    fail "Codex restore profile did not preserve the exact final session argument"
+grep -Fxq 'ipc agent-event --adapter=codex session-start' "${calls}" ||
+    fail "Codex restore profile did not send SessionStart"
+
+if run_actor ZENTTY_CONTROLLED_AGENT_PROFILE=codex-permission "${actor}" >/dev/null 2>&1; then
+    fail "Codex permission profile accepted missing ephemeral hooks"
+fi
+if run_actor \
+    ZENTTY_CONTROLLED_AGENT_PROFILE=codex-restore \
+    ZENTTY_CONTROLLED_AGENT_SESSIONS=session-one \
+    ZENTTY_CONTROLLED_AGENT_RECEIPT="${receipt}" \
+    "${actor}" resume -c 'hooks.SessionStart=["command"]' wrong-session >/dev/null 2>&1; then
+    fail "Codex restore profile accepted an undeclared session"
+fi
+
+echo "Controlled agent tests passed: codex-permission, claude-question, codex-restore"

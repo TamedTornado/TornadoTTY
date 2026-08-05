@@ -274,7 +274,7 @@ jq -e '
         if .capability == "agent_integration"
         then (.display == "wayland" or .display == "x11") and
              .optimize == "ReleaseSafe" and .async_backend == "default" and
-             .terminals == "single"
+             .terminals == "multi"
         elif (.capability == "product_boundary" or .capability == "workspace_restore" or
             .capability == "product_worklanes" or .capability == "platform_clipboard")
         then (.display == "wayland" or .display == "x11") and

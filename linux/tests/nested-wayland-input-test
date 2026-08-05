@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+harness="${repo_root}/linux/tests/nested-wayland-input"
+report="$(mktemp)"
+output="$(mktemp)"
+trap 'rm -f -- "${report}" "${output}"' EXIT
+
+fail() {
+    cat "${output}" >&2 2>/dev/null || true
+    echo "nested-wayland-input-test: error: $*" >&2
+    exit 1
+}
+
+for dependency in jq sha256sum stat date; do
+    command -v "${dependency}" >/dev/null || fail "${dependency} is required"
+done
+[[ -x "${harness}" ]] || fail "input-capable Wayland harness is missing"
+
+# shellcheck disable=SC1091
+source "${repo_root}/linux/tests/lib/controlled-environment"
+
+before_roots="$(find /tmp -maxdepth 1 -type d -name 'zwi.*' -printf '%f\n' | sort)"
+started_at="$(date +%s)"
+# The controlled child, not this support test, expands the sanitized values.
+# shellcheck disable=SC2016
+child='test -z "${DBUS_SESSION_BUS_ADDRESS:-}" && test -z "${AT_SPI_BUS_ADDRESS:-}" && test -n "${ZENTTY_NESTED_X11_SESSION_ID:-}" && wayland-info | grep -F zwp_virtual_keyboard_manager_v1 >/dev/null && wtype test'
+DISPLAY=:poison WAYLAND_DISPLAY=poison DBUS_SESSION_BUS_ADDRESS=poison \
+    AT_SPI_BUS_ADDRESS=poison IBUS_ADDRESS=poison \
+    ZENTTY_NESTED_WAYLAND_INPUT_REPORT="${report}" \
+    "${harness}" bash -c "${child}" >"${output}" 2>&1 ||
+    fail "real Cage/Wayland input environment failed"
+
+grep -Fxq \
+    'nested-wayland-input: READY private-cage-x11-nested backend=wayland software-renderer=1 virtual-keyboard=1' \
+    "${output}" || fail "readiness receipt is missing"
+grep -Eq '^nested-wayland-input: SESSION [0-9a-f]{64}$' "${output}" ||
+    fail "session identity is missing"
+expected_command="$(jq -cn --arg child "${child}" '["bash","-c",$child]')"
+zentty_controlled_environment_validate_report \
+    "${report}" "${harness}" wayland 0 "${expected_command}" "${started_at}" 900 \
+    >/dev/null || fail "machine-readable Cage receipt was rejected"
+jq -e '
+    .server.name == "Cage" and .server.backend == "x11-nested" and
+    (.server.protocols | index("zwp_virtual_keyboard_manager_v1") != null) and
+    .renderer == {software:true,name:"Pixman",proof:"WLR_RENDERER=pixman"} and
+    .isolation.run_root_removed == true and
+    .isolation.remaining_processes == []
+' "${report}" >/dev/null || fail "Cage capability or cleanup proof is incomplete"
+after_roots="$(find /tmp -maxdepth 1 -type d -name 'zwi.*' -printf '%f\n' | sort)"
+[[ "${after_roots}" == "${before_roots}" ]] || fail "controlled runtime root leaked"
+
+echo "Nested Wayland input tests passed: Cage, Xvfb transport, Pixman, virtual keyboard, isolation, cleanup"

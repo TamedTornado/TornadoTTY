@@ -4,21 +4,45 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
 ghostty_root="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
-backend="${GDK_BACKEND:-}"
 fixture="${repo_root}/crates/zentty-core/tests/fixtures/session-restore-v3.json"
+backend="${GDK_BACKEND:-}"
+state_dir=""
+working_dir=""
+log=""
+product_pid=""
+
+# shellcheck disable=SC1091
+source "${repo_root}/linux/tests/lib/product-input"
 
 fail() {
+    [[ -z "${log}" || ! -f "${log}" ]] || cat "${log}" >&2
     echo "rust-closed-pane-restore: error: $*" >&2
     exit 1
 }
 
-[[ "${backend}" == wayland || "${backend}" == x11 ]] || fail "GDK_BACKEND must be wayland or x11"
-if [[ "${backend}" == wayland ]]; then
-    [[ "${ZENTTY_NESTED_WAYLAND_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] || fail "Wayland run is not controlled"
-else
-    [[ "${ZENTTY_NESTED_X11_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] || fail "X11 run is not controlled"
-fi
-for dependency in jq readelf timeout mktemp grep sed; do
+cleanup() {
+    if [[ "${product_pid}" =~ ^[1-9][0-9]*$ ]]; then
+        kill -TERM "${product_pid}" 2>/dev/null || true
+        wait "${product_pid}" 2>/dev/null || true
+    fi
+    [[ -z "${state_dir}" ]] || rm -rf -- "${state_dir}"
+    [[ -z "${working_dir}" ]] || rm -rf -- "${working_dir}"
+    [[ -z "${log}" ]] || rm -f -- "${log}"
+}
+trap cleanup EXIT
+
+case "${backend}" in
+    x11)
+        [[ "${ZENTTY_NESTED_X11_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+            fail "X11 run is not controlled"
+        ;;
+    wayland)
+        [[ "${ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+            fail "Wayland run is not input-capable and controlled"
+        ;;
+    *) fail "GDK_BACKEND must be wayland or x11" ;;
+esac
+for dependency in jq readelf mktemp grep sed; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
 [[ -x "${product}" ]] || fail "delivered Rust product is not built: ${product}"
@@ -34,43 +58,84 @@ layer_directory="${ghostty_root}/${layer_runpath}"
 state_dir="$(mktemp -d)"
 working_dir="$(mktemp -d)"
 log="$(mktemp)"
-trap 'rm -rf -- "${state_dir}" "${working_dir}"; rm -f -- "${log}"' EXIT
 jq --arg cwd "${working_dir}" '
-    .workspace.windows[0].worklanes[0].columns[0].panes[].workingDirectory = $cwd
+    .workspace.windows[0].worklanes[0].columns[0].panes[].workingDirectory = $cwd |
+    .restoreDraftWindows[0].paneDrafts = []
 ' "${fixture}" >"${state_dir}/restore-snapshot.json"
 
-set +e
-timeout --foreground --kill-after=2s 20s \
-    env LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+# The single quotes intentionally defer expansion to each real PTY child.
+# shellcheck disable=SC2016
+env LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
     "${product}" \
     --state-directory "${state_dir}" \
-    --command 'printf "\033]0;CWD:%s\007" "$PWD"; sleep 30' \
-    --exercise-closed-pane-restore \
-    --quit-after-closed-pane-restore >"${log}" 2>&1
+    --command 'printf "\033]0;CWD:%s\007" "$PWD"; sleep 30' >"${log}" 2>&1 &
+product_pid=$!
+
+zentty_product_wait_for_log "${log}" 'zentty-linux: terminal-ready-pane=pane-agent' \
+    "source pane did not initialize" || fail "source surface missing"
+zentty_product_prepare_input "${backend}" "${log}" || fail "physical input was unavailable"
+zentty_product_key "${backend}" Shift_L
+zentty_product_wait_for_log "${log}" 'zentty-linux: focus-pane pane=pane-agent' \
+    "source pane focus did not settle" || fail "source focus missing"
+zentty_product_ctrl_shift_key "${backend}" p
+zentty_product_wait_for_log "${log}" 'zentty-linux: command-palette=shown' \
+    "command palette did not open" || fail "Close Pane palette missing"
+zentty_product_type "${backend}" 'Close the focused pane'
+zentty_product_wait_for_log "${log}" \
+    'zentty-linux: command-palette=query value="Close the focused pane" results=1' \
+    "Close Pane was not uniquely discoverable" || fail "Close Pane query failed"
+zentty_product_key "${backend}" Down
+zentty_product_key "${backend}" Return
+zentty_product_wait_for_log "${log}" 'zentty-linux: action=close-pane pane=pane-agent' \
+    "real palette did not close the source pane" || fail "source pane close missing"
+zentty_product_wait_for_log "${log}" 'zentty-linux: focus-pane pane=pane-shell' \
+    "surviving pane focus did not settle after close" || fail "post-close focus missing"
+
+zentty_product_ctrl_shift_key "${backend}" p
+zentty_product_wait_for_log "${log}" 'zentty-linux: command-palette=shown' \
+    "restore command palette did not open" || fail "Undo Close Pane palette missing"
+zentty_product_type "${backend}" 'Undo Close Pane'
+zentty_product_wait_for_log "${log}" \
+    'zentty-linux: command-palette=query value="Undo Close Pane" results=1' \
+    "source Undo Close Pane was not uniquely discoverable" || fail "restore query failed"
+zentty_product_key "${backend}" Down
+zentty_product_key "${backend}" Return
+zentty_product_wait_for_log "${log}" 'zentty-linux: action=restore-closed-pane pane=' \
+    "real palette did not restore the pane" || fail "restore action missing"
+action_line="$(grep -F 'zentty-linux: action=restore-closed-pane pane=' "${log}" | tail -1)"
+[[ "${action_line}" == *" cwd=${working_dir} prefill=cargo test" ]] ||
+    fail "restore action lost CWD or command prefill: ${action_line}"
+restored_pane="$(sed -n 's/.*pane=\([^ ]*\) worklane=.*/\1/p' <<<"${action_line}")"
+[[ -n "${restored_pane}" && "${restored_pane}" != pane-agent ]] ||
+    fail "restore did not allocate a fresh pane identity"
+zentty_product_wait_for_log "${log}" \
+    "zentty-linux: restore-prefill pane=${restored_pane} text=cargo test" \
+    "restored command was not sent through the PTY" || fail "real prefill missing"
+zentty_product_wait_for_log "${log}" \
+    "zentty-linux: title-pane=${restored_pane} value=CWD:${working_dir}" \
+    "restored PTY did not start in captured CWD" || fail "restored CWD title missing"
+
+zentty_product_close_window "${backend}"
+for _ in {1..240}; do
+    kill -0 "${product_pid}" 2>/dev/null || break
+    sleep 0.05
+done
+kill -0 "${product_pid}" 2>/dev/null && fail "product did not close physically"
+set +e
+wait "${product_pid}"
 status=$?
 set -e
-if (( status != 0 )); then
-    cat "${log}" >&2
-    fail "product restore run exited ${status}"
-fi
+product_pid=""
+((status == 0)) || fail "product restore run exited ${status}"
 
-grep -Fq 'zentty-linux: action=close-pane pane=pane-agent' "${log}" || fail "source pane was not closed through the product action"
-action_line="$(grep -F 'zentty-linux: action=restore-closed-pane pane=' "${log}" | tail -1)"
-[[ "${action_line}" == *" cwd=${working_dir} prefill=cargo test" ]] || fail "restore action lost CWD or command prefill: ${action_line}"
-restored_pane="$(sed -n 's/.*pane=\([^ ]*\) worklane=.*/\1/p' <<<"${action_line}")"
-[[ -n "${restored_pane}" && "${restored_pane}" != pane-agent ]] || fail "restore did not allocate a fresh pane identity"
-grep -Fq "zentty-linux: restore-prefill pane=${restored_pane} text=cargo test" "${log}" || fail "command was not prefilled through the real terminal input path"
-grep -Fq "zentty-linux: title-pane=${restored_pane} value=CWD:${working_dir}" "${log}" || fail "restored real PTY did not start in the captured working directory"
-grep -Fq "zentty-linux: closed-pane-restore-scenario verified pane=${restored_pane} cwd=${working_dir} surfaces=2 children=2" "${log}" || fail "one-model/one-surface/one-child ownership was not verified"
-grep -Fq 'zentty-linux: closed-pane-restore-scenario complete' "${log}" || fail "restore scenario did not complete"
-[[ "$(grep -Fc 'started subcommand path=/bin/sh pid=' "${log}" || true)" -eq 3 ]] || fail "expected two original real PTYs plus one restored PTY"
-
+[[ "$(grep -Fc 'started subcommand path=/bin/sh pid=' "${log}" || true)" -eq 3 ]] ||
+    fail "expected two original real PTYs plus one restored PTY"
 jq -e --arg pane "${restored_pane}" --arg cwd "${working_dir}" '
     .reason == "cleanExit" and
     (.workspace.windows[0].worklanes[0].columns[0].panes[0].id == $pane) and
     (.workspace.windows[0].worklanes[0].columns[0].panes[0].workingDirectory == $cwd) and
-    (.workspace.windows[0].worklanes[0].columns[0].panes[0].lastRunCommand == "cargo test") and
-    (.workspace.windows[0].worklanes[0].columns[0].paneHeights == [420, 1])
-' "${state_dir}/restore-snapshot.json" >/dev/null || fail "restored identity, launch context, or geometry was not persisted"
+    (.workspace.windows[0].worklanes[0].columns[0].panes[0].lastRunCommand == "cargo test")
+' "${state_dir}/restore-snapshot.json" >/dev/null ||
+    fail "restored identity or launch context was not persisted"
 
-echo "Rust closed-pane restore passed: ${backend}, pane=${restored_pane}, cwd=real, prefill=real, ownership=real"
+echo "Rust closed-pane restore passed: ${backend}, pane=${restored_pane}, cwd=real, prefill=real, ownership=real, input=physical"

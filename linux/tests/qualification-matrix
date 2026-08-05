@@ -152,6 +152,8 @@ invalid_environment_profiles="$(jq -r '
             (.display == "x11" and (has_valgrind | not)) | not
          elif .environment_profile == "nested-wayland-v1" then
             (.display == "wayland" and (has_valgrind | not)) | not
+         elif .environment_profile == "nested-wayland-input-v1" then
+            (.display == "wayland" and (has_valgrind | not)) | not
          elif .environment_profile == "phase-managed-wayland-v1" then
             (.display == "wayland" and has_valgrind) | not
          elif .environment_profile == "phase-managed-x11-v1" then
@@ -330,6 +332,10 @@ matrix_runner_environment_json() {
         nested-wayland-v1)
             backend=wayland
             harness="linux/tests/nested-wayland"
+            ;;
+        nested-wayland-input-v1)
+            backend=wayland
+            harness="linux/tests/nested-wayland-input"
             ;;
         *) return 1 ;;
     esac
@@ -524,6 +530,7 @@ while IFS= read -r cell; do
             -u ZENTTY_ISOLATED_SESSION_REPORT
             -u ZENTTY_NESTED_X11_REPORT
             -u ZENTTY_NESTED_WAYLAND_REPORT
+            -u ZENTTY_NESTED_WAYLAND_INPUT_REPORT
         )
         case "${environment_profile}" in
             isolated-none-v1)
@@ -547,6 +554,14 @@ while IFS= read -r cell; do
                     "${sanitized_environment[@]}"
                     "ZENTTY_NESTED_WAYLAND_REPORT=${environment_report}"
                     "${repo_root}/linux/tests/nested-wayland"
+                    "${shell_command[@]}"
+                )
+                ;;
+            nested-wayland-input-v1)
+                cell_command=(
+                    "${sanitized_environment[@]}"
+                    "ZENTTY_NESTED_WAYLAND_INPUT_REPORT=${environment_report}"
+                    "${repo_root}/linux/tests/nested-wayland-input"
                     "${shell_command[@]}"
                 )
                 ;;
@@ -679,7 +694,7 @@ while IFS= read -r cell; do
             fi
         elif [[ -z "${valgrind_report}" ]]; then
             case "${environment_profile}" in
-                isolated-none-v1 | nested-x11-v1 | nested-wayland-v1)
+                isolated-none-v1 | nested-x11-v1 | nested-wayland-v1 | nested-wayland-input-v1)
                     if ! environment="$(matrix_runner_environment_json \
                         "${environment_profile}" "${environment_report}" \
                         "${exit_code}" "${command}" "${cell_started_at_epoch}" \
@@ -730,6 +745,7 @@ jq -e '
       (.environment.profile == "isolated-none-v1" or
        .environment.profile == "nested-x11-v1" or
        .environment.profile == "nested-wayland-v1" or
+       .environment.profile == "nested-wayland-input-v1" or
        .environment.profile == "phase-managed-x11-v1" or
        .environment.profile == "phase-managed-wayland-v1") and
       (.environment.owner == "matrix-runner" or

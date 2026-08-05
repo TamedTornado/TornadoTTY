@@ -34,11 +34,13 @@ source-backed worklane shell slice: compound worklane cards with nested pane
 rows and contextual rename, plus named GTK actions for worklane
 creation/selection/rename/reorder/color and horizontal/vertical pane
 split/close/four-direction movement, with one real Ghostty surface/PTY per
-pane. The focused `rust-workspace-actions` scenario drives those same actions
-in the staged binary and proves two worklanes, five distinct PTY children,
-column topology, and selection under private Weston/Wayland and Xvfb/X11.
-Those focused scenarios must be launched through `linux/tests/nested-wayland`
-or `linux/tests/nested-x11`; they reject an ambient desktop. Exact divider
+pane. Real action coverage is divided by behavior rather than repeated in an
+application-embedded scenario: `rust-source-ux-x11` and
+`rust-sidebar-management-x11` drive physical sidebar, palette, pane, history,
+and reorder interactions, while `rust-session-restore` proves controlled X11
+and input-capable Cage/Wayland persistence, background agents, physical visits,
+clean relaunch, and cancellation. These scenarios reject an ambient desktop.
+Exact divider
 sizing, the source contextual cross-worklane move affordance, and the remaining
 rich sidebar states are not implemented, so the broad product-worklane
 qualification cells remain `NOT_IMPLEMENTED`. The underlying same-window move
@@ -113,8 +115,10 @@ paired, reviewed, public, or qualification evidence and do not authorize a
 suppression.
 `tests/suppression-governance` rejects untracked, stale, out-of-scenario, or
 expanded or over-ceiling suppression usage; its negative self-test is
-`tests/suppression-governance-test`. ReleaseSafe Valgrind remains an XFAIL and
-is not made green by expanding suppressions.
+`tests/suppression-governance-test`. The historical C-host ReleaseSafe
+Valgrind XFAIL receipts were not transferred to the Rust product. The two
+Rust-product ReleaseSafe cells are therefore explicit `NOT_IMPLEMENTED` gaps
+and are not made green by expanding suppressions.
 
 Validate matrix structure without executing product tests:
 
@@ -147,6 +151,11 @@ cell declares exactly one closed environment profile:
   `tests/nested-x11`.
 - `nested-wayland-v1` uses a fresh Weston headless compositor and Pixman
   renderer through `tests/nested-wayland`.
+- `nested-wayland-input-v1` uses Cage/wlroots with Pixman nested on the private
+  Xvfb transport through `tests/nested-wayland-input`. It proves a real
+  keyboard-capable Wayland seat and `zwp_virtual_keyboard_manager_v1`; it is
+  reserved for physical Wayland-input cells and is not described as native
+  Wayland or as the Weston Valgrind environment.
 - `phase-managed-x11-v1` and `phase-managed-wayland-v1` are reserved for tests
   such as Valgrind whose raw and suppression-enabled phases must own distinct
   controlled sessions. Controlled input/resize tests that already own Xvfb use

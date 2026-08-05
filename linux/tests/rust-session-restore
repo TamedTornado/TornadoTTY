@@ -4,35 +4,56 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
 ghostty_root="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
-backend="${GDK_BACKEND:-}"
 fixture="${repo_root}/crates/zentty-core/tests/fixtures/session-restore-v3.json"
+actor="${repo_root}/linux/tests/fixtures/controlled-agent"
+backend="${GDK_BACKEND:-}"
+state_dir=""
+fake_bin=""
+log=""
+agent_receipt=""
+product_pid=""
+agent_start_delay=0
+agent_start_receipt=""
+
+# shellcheck source=linux/tests/lib/product-input
+source "${repo_root}/linux/tests/lib/product-input"
 
 fail() {
-    [[ -z "${first_log:-}" || ! -f "${first_log}" ]] || cat "${first_log}" >&2
-    [[ -z "${second_log:-}" || ! -f "${second_log}" ]] || cat "${second_log}" >&2
-    [[ -z "${agent_receipt:-}" || ! -f "${agent_receipt}" ]] || {
-        echo "rust-session-restore: agent receipt:" >&2
-        cat "${agent_receipt}" >&2
-    }
+    [[ -z "${log}" || ! -f "${log}" ]] || cat "${log}" >&2
+    [[ -z "${agent_receipt}" || ! -f "${agent_receipt}" ]] || cat "${agent_receipt}" >&2
     echo "rust-session-restore: error: $*" >&2
     exit 1
 }
 
-[[ "${backend}" == wayland || "${backend}" == x11 ]] ||
-    fail "GDK_BACKEND must be wayland or x11"
-if [[ "${backend}" == wayland ]]; then
-    [[ "${ZENTTY_NESTED_WAYLAND_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
-        fail "Wayland restore must run through linux/tests/nested-wayland"
-else
-    [[ "${ZENTTY_NESTED_X11_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
-        fail "X11 restore must run through linux/tests/nested-x11"
-fi
-for dependency in jq readelf timeout mktemp grep; do
+cleanup() {
+    if [[ "${product_pid}" =~ ^[1-9][0-9]*$ ]]; then
+        kill -TERM "${product_pid}" 2>/dev/null || true
+        wait "${product_pid}" 2>/dev/null || true
+    fi
+    [[ -z "${state_dir}" ]] || rm -rf -- "${state_dir}"
+    [[ -z "${fake_bin}" ]] || rm -rf -- "${fake_bin}"
+    [[ -z "${log}" ]] || rm -f -- "${log}"
+    [[ -z "${agent_receipt}" ]] || rm -f -- "${agent_receipt}"
+    [[ -z "${agent_start_receipt}" ]] || rm -f -- "${agent_start_receipt}"
+}
+trap cleanup EXIT
+
+case "${backend}" in
+    x11)
+        [[ "${ZENTTY_NESTED_X11_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+            fail "X11 restore must run through linux/tests/nested-x11"
+        ;;
+    wayland)
+        [[ "${ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+            fail "Wayland restore must run through linux/tests/nested-wayland-input"
+        ;;
+    *) fail "GDK_BACKEND must be x11 or wayland" ;;
+esac
+for dependency in jq readelf timeout mktemp grep sed; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
-[[ -x "${product}" ]] || fail "delivered Rust product is not built: ${product}"
-[[ -f "${ghostty_root}/zig-out/lib/libghostty-gtk-embed.so" ]] ||
-    fail "pinned Ghostty library is not built"
+[[ -x "${product}" ]] || fail "staged product is not built: ${product}"
+[[ -x "${actor}" ]] || fail "controlled agent actor is missing: ${actor}"
 
 layer_runpath="$(
     readelf -d "${ghostty_root}/zig-out/lib/libghostty-gtk-embed.so" |
@@ -43,116 +64,257 @@ layer_runpath="$(
 layer_directory="${ghostty_root}/${layer_runpath}"
 
 state_dir="$(mktemp -d)"
-first_log="$(mktemp)"
-second_log="$(mktemp)"
 fake_bin="$(mktemp -d)"
+log="$(mktemp)"
 agent_receipt="$(mktemp)"
-trap 'rm -rf -- "${state_dir}" "${fake_bin}"; rm -f -- "${first_log}" "${second_log}" "${agent_receipt}"' EXIT
-cat >"${fake_bin}/codex" <<'SCRIPT'
-#!/usr/bin/env bash
-set -euo pipefail
-has_hook=false
-resume_session=""
-arguments=("$@")
-for ((index = 0; index < ${#arguments[@]}; index++)); do
-    [[ "${arguments[index]}" == hooks.SessionStart=* ]] && has_hook=true
-    if [[ "${arguments[index]}" == resume && $((index + 1)) -lt ${#arguments[@]} ]]; then
-        resume_session="${arguments[index + 1]}"
-    fi
-done
-${has_hook} || { echo "fake-codex: ephemeral SessionStart hook missing" >&2; exit 64; }
-[[ "${resume_session}" == session-codex ]] || {
-    echo "fake-codex: expected resume session-codex, got ${resume_session:-none}" >&2
-    exit 64
-}
-printf 'resume:%s\n' "${resume_session}" >>"${ZENTTY_RESTORE_AGENT_RECEIPT}"
-printf '%s' '{"hook_event_name":"SessionStart","session_id":"session-codex"}' |
-    "${ZENTTY_CLI_BIN}" ipc agent-event --adapter=codex session-start
-sleep 30
-SCRIPT
-chmod 700 "${fake_bin}/codex"
+ln -s "${actor}" "${fake_bin}/codex"
+
 jq '
-    .workspace.windows[0].worklanes[0].nextPaneNumber = 4 |
-    .workspace.windows[0].worklanes[0].columns += [{
-        "id": "column-right",
-        "width": 320,
-        "focusedPaneID": "pane-review",
-        "lastFocusedPaneID": "pane-review",
-        "paneHeights": [700],
-        "panes": [{
-            "id": "pane-review",
-            "customTitle": "Review",
-            "workingDirectory": "/tmp/project"
+    .workspace.windows[0].worklanes[0].columns[0].panes += [{
+        "id": "pane-ordinary-inactive",
+        "workingDirectory": "/tmp"
+    }] |
+    .workspace.windows[0].worklanes[0].columns[0].paneHeights = [350, 175, 175] |
+    .workspace.windows[0].worklanes += [{
+        "id": "worklane-second-agent",
+        "title": "Second agent",
+        "nextPaneNumber": 2,
+        "focusedColumnID": "column-second-agent",
+        "columns": [{
+            "id": "column-second-agent",
+            "width": 720,
+            "focusedPaneID": "pane-agent-two",
+            "lastFocusedPaneID": "pane-agent-two",
+            "paneHeights": [700],
+            "panes": [{
+                "id": "pane-agent-two",
+                "workingDirectory": "/tmp",
+                "titleSeed": "Codex"
+            }]
         }]
+    }, {
+        "id": "worklane-active",
+        "title": "Active shell",
+        "nextPaneNumber": 2,
+        "focusedColumnID": "column-active",
+        "columns": [{
+            "id": "column-active",
+            "width": 720,
+            "focusedPaneID": "pane-shell-active",
+            "lastFocusedPaneID": "pane-shell-active",
+            "paneHeights": [700],
+            "panes": [{
+                "id": "pane-shell-active",
+                "workingDirectory": "/tmp"
+            }]
+        }]
+    }] |
+    .workspace.windows[0].activeWorklaneID = "worklane-active" |
+    .restoreDraftWindows[0].paneDrafts += [{
+        "paneID": "pane-agent-two",
+        "kind": "agentResume",
+        "toolName": "Codex",
+        "sessionID": "session-two",
+        "workingDirectory": "/tmp",
+        "trackedPID": 5252,
+        "agentLaunchSnapshot": {
+            "arguments": ["codex", "resume", "session-two"]
+        }
     }]
 ' "${fixture}" >"${state_dir}/restore-snapshot.json"
 
-run_product() {
-    local receipt="$1"
-    set +e
-    timeout --foreground --kill-after=2s 20s \
-        env PATH="${fake_bin}:${PATH}" \
-        ZENTTY_RESTORE_AGENT_RECEIPT="${agent_receipt}" \
+start_product() {
+    : >"${log}"
+    env \
+        PATH="${fake_bin}:${PATH}" \
+        ZENTTY_CONTROLLED_AGENT_PROFILE=codex-restore \
+        ZENTTY_CONTROLLED_AGENT_SESSIONS=session-codex,session-two \
+        ZENTTY_CONTROLLED_AGENT_RECEIPT="${agent_receipt}" \
+        ZENTTY_CONTROLLED_AGENT_START_DELAY_SECONDS="${agent_start_delay}" \
+        ZENTTY_CONTROLLED_AGENT_START_RECEIPT="${agent_start_receipt}" \
+        ZENTTY_CONTROLLED_AGENT_SLEEP_SECONDS=30 \
         LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
-        "${product}" \
-        --state-directory "${state_dir}" \
-        --exercise-agent-restore \
-        --quit-after-agent-restore >"${receipt}" 2>&1
+        "${product}" --state-directory "${state_dir}" >"${log}" 2>&1 &
+    product_pid=$!
+}
+
+wait_for_agent_count() {
+    local expected="$1"
+    for _ in {1..240}; do
+        [[ "$(grep -Ec '^resume:session-(codex|two) pid:[0-9]+$' "${agent_receipt}" || true)" -ge "${expected}" ]] && return
+        kill -0 "${product_pid}" 2>/dev/null || fail "product exited before ${expected} agent launches"
+        sleep 0.05
+    done
+    fail "timed out waiting for ${expected} controlled agent launches"
+}
+
+wait_for_product_exit() {
+    for _ in {1..240}; do
+        kill -0 "${product_pid}" 2>/dev/null || break
+        sleep 0.05
+    done
+    if kill -0 "${product_pid}" 2>/dev/null; then
+        fail "product did not exit after the real window close"
+    fi
+    set +e
+    wait "${product_pid}"
     local status=$?
     set -e
-    if (( status != 0 )); then
-        cat "${receipt}" >&2
-        fail "product restore run exited ${status}"
+    product_pid=""
+    ((status == 0)) || fail "product window close exited ${status}"
+}
+
+assert_background_start() {
+    local cumulative_count="$1"
+    wait_for_agent_count "${cumulative_count}"
+    zentty_product_wait_for_log "${log}" \
+        'zentty-linux: agent-event pane=pane-agent worklane=worklane-main' \
+        "first inactive agent did not authenticate" || fail "first inactive agent event missing"
+    zentty_product_wait_for_log "${log}" \
+        'zentty-linux: agent-event pane=pane-agent-two worklane=worklane-second-agent' \
+        "second inactive agent did not authenticate" || fail "second inactive agent event missing"
+    grep -Fq '|worklane-active[title=Active shell,color=none]:pane-shell-active*' "${log}" ||
+        fail "background startup changed the active worklane"
+    [[ "$(grep -Fxc 'zentty-linux: terminal-ready-pane=pane-agent' "${log}" || true)" -eq 1 ]] ||
+        fail "first inactive agent surface did not initialize exactly once"
+    [[ "$(grep -Fxc 'zentty-linux: terminal-ready-pane=pane-agent-two' "${log}" || true)" -eq 1 ]] ||
+        fail "second inactive agent surface did not initialize exactly once"
+    grep -Fq 'zentty-linux: terminal-ready-pane=pane-ordinary-inactive' "${log}" &&
+        fail "ordinary inactive shell started before a real visit"
+    if grep -Fq 'zentty-linux: focus-pane pane=pane-agent' "${log}"; then
+        fail "inactive agent stole keyboard focus"
     fi
 }
 
-run_product "${first_log}"
-[[ "$(grep -Fc 'resume:session-codex' "${agent_receipt}" || true)" -eq 1 ]] ||
-    fail "first launch did not execute exactly one restored Codex session"
-grep -F 'zentty-linux: agent-resume-launch pane=pane-agent command=codex resume session-codex' \
-    "${first_log}" >/dev/null || fail "first launch did not route the resume command to its saved pane"
+start_product
+assert_background_start 2
+zentty_product_prepare_input "${backend}" "${log}" || fail "could not prepare physical input"
+zentty_product_ctrl_key "${backend}" Page_Up
+zentty_product_ctrl_key "${backend}" Page_Up
+zentty_product_wait_for_log "${log}" \
+    'zentty-linux: topology=worklane-main[title=Nimbu API,color=blue]:pane-agent,pane-shell,pane-ordinary-inactive*' \
+    "physical worklane traversal did not reveal the first agent" || fail "agent worklane was not revealed"
+zentty_product_wait_for_log "${log}" 'zentty-linux: focus-pane pane=pane-agent' \
+    "restored agent surface did not receive focus after traversal" || fail "agent focus did not settle"
+
+while IFS= read -r pid; do
+    kill -0 "${pid}" 2>/dev/null || fail "restored agent PID ${pid} died during worklane reveal"
+done < <(sed -n 's/^resume:session-[^ ]* pid:\([0-9][0-9]*\)$/\1/p' "${agent_receipt}")
+zentty_product_ctrl_shift_key "${backend}" f
+zentty_product_wait_for_log "${log}" \
+    'zentty-linux: search-state pane=pane-agent active=true' \
+    "physical Find did not activate the restored pane's Ghostty search entry" ||
+    fail "search entry readiness missing"
+zentty_product_type "${backend}" zentty-agent-resume-marker
+zentty_product_wait_for_log "${log}" \
+    'zentty-linux: search-state pane=pane-agent active=true total=Some(1)' \
+    "restored exact scrollback marker was missing" || fail "scrollback continuity failed"
+zentty_product_key "${backend}" Escape
+zentty_product_ctrl_key "${backend}" Page_Down
+zentty_product_ctrl_key "${backend}" Page_Down
+zentty_product_wait_for_log "${log}" 'zentty-linux: focus-pane pane=pane-shell-active' \
+    "active shell did not regain focus before clean close" || fail "return focus did not settle"
+zentty_product_close_window "${backend}"
+wait_for_product_exit
 
 snapshot="${state_dir}/restore-snapshot.json"
 lifecycle="${state_dir}/restore-lifecycle.json"
-[[ -f "${snapshot}" && -f "${lifecycle}" ]] || fail "clean shutdown did not publish both state files"
 jq -e '
     .reason == "cleanExit" and
     .workspace.schemaVersion == 3 and
     .workspace.activeWindowID == "window-main" and
-    (.workspace.windows | length == 1) and
-    (.workspace.windows[0].frame.width == 1720) and
+    .workspace.windows[0].activeWorklaneID == "worklane-active" and
     (.workspace.windows[0].worklanes[] | select(.id == "worklane-main") |
         .bookmarkOriginID == "bookmark-main" and
-        (.columns | length) == 2 and
-        .columns[0].paneHeights == [420, 280] and
-        .columns[0].panes[0].lastRunCommand == "cargo test" and
-        .columns[1].id == "column-right" and
-        .columns[1].width == 320 and
-        .columns[1].paneHeights == [700] and
-        .columns[1].panes[0].id == "pane-review") and
-    (.restoreDraftWindows[0].paneDrafts[0].sessionID == "session-codex")
-' "${snapshot}" >/dev/null || fail "persisted source envelope lost metadata or product mutations"
+        .columns[0].paneHeights == [350, 175, 175] and
+        .columns[0].panes[0].lastRunCommand == "cargo test") and
+    ([.restoreDraftWindows[0].paneDrafts[].sessionID] | sort) == ["session-codex", "session-two"]
+' "${snapshot}" >/dev/null || fail "clean snapshot lost source metadata, active lane, or agent drafts"
 jq -e '.cleanExit == true' "${lifecycle}" >/dev/null || fail "clean lifecycle marker was not written"
 
-run_product "${second_log}"
-resume_count="$(grep -Fc 'resume:session-codex' "${agent_receipt}" || true)"
-[[ "${resume_count}" -eq 2 ]] ||
-    fail "relaunch did not execute exactly one fresh restored Codex session (cumulative count=${resume_count})"
-grep -F 'zentty-linux: agent-resume-launch pane=pane-agent command=codex resume session-codex' \
-    "${second_log}" >/dev/null || fail "relaunch did not route the resume command to its saved pane"
-grep -F 'zentty-linux: topology=worklane-main[title=Nimbu API,color=blue]:pane-agent,pane-shell,pane-review' \
-    "${second_log}" >/dev/null || {
-    cat "${second_log}" >&2
-    fail "relaunch did not render the exact saved worklane and pane identities before mutation"
-}
-grep -F 'zentty-linux: geometry=worklane-main:column-left[pane-agent,pane-shell],column-right[pane-review]' \
-    "${second_log}" >/dev/null || {
-    cat "${second_log}" >&2
-    fail "relaunch did not render the exact saved horizontal and vertical pane geometry"
-}
-grep -F 'zentty-linux: sidebar-card id=worklane-main panes=3 active=true title=Some("Nimbu API")' \
-    "${second_log}" >/dev/null || fail "relaunch did not render restored source sidebar metadata"
-grep -F 'zentty-linux: agent-restore-scenario verified drafts=1' \
-    "${second_log}" >/dev/null || fail "relaunch did not authenticate the resumed agent session"
+start_product
+assert_background_start 4
+zentty_product_prepare_input "${backend}" "${log}" || fail "could not prepare relaunch input"
+sleep 0.2
+zentty_product_close_window "${backend}"
+wait_for_product_exit
+[[ "$(grep -Fc 'resume:session-codex' "${agent_receipt}" || true)" -eq 2 ]] ||
+    fail "clean relaunch did not start session-codex exactly once more"
+[[ "$(grep -Fc 'resume:session-two' "${agent_receipt}" || true)" -eq 2 ]] ||
+    fail "clean relaunch did not start session-two exactly once more"
 
-echo "Rust session restore passed: ${backend}, source-envelope=preserved, agent-resume=real-process, relaunch=real"
+# Real cancellation journey: delay the controlled actor, then close the
+# restored worklane through the rendered command palette before the actor can
+# authenticate. This proves UI-driven cancellation rather than pre-launch
+# fixture rewriting or an application-embedded test hook.
+rm -rf -- "${state_dir}"
+rm -f -- "${log}" "${agent_receipt}"
+state_dir="$(mktemp -d)"
+log="$(mktemp)"
+agent_receipt="$(mktemp)"
+agent_start_receipt="$(mktemp)"
+jq '
+    .workspace.windows[0].worklanes += [{
+        "id": "worklane-active",
+        "title": "Active shell",
+        "nextPaneNumber": 2,
+        "focusedColumnID": "column-active",
+        "columns": [{
+            "id": "column-active",
+            "width": 720,
+            "focusedPaneID": "pane-shell-active",
+            "lastFocusedPaneID": "pane-shell-active",
+            "paneHeights": [700],
+            "panes": [{"id": "pane-shell-active", "workingDirectory": "/tmp"}]
+        }]
+    }] |
+    .workspace.windows[0].activeWorklaneID = "worklane-active"
+' "${fixture}" >"${state_dir}/restore-snapshot.json"
+agent_start_delay=5
+start_product
+zentty_product_wait_for_log "${agent_start_receipt}" 'started pid:' \
+    "delayed controlled actor did not start" || fail "cancellation child start receipt missing"
+zentty_product_wait_for_log "${log}" 'zentty-linux: window-size=' \
+    "cancellation window did not become ready" || fail "cancellation window readiness missing"
+zentty_product_prepare_input "${backend}" "${log}" || fail "could not prepare cancellation input"
+# Select the delayed agent's lane through ordinary navigation before closing
+# it. The child is already a real background restore; no embedded scenario can
+# remove it before product presentation.
+zentty_product_ctrl_key "${backend}" Page_Up
+zentty_product_wait_for_log "${log}" \
+    'zentty-linux: topology=worklane-main[title=Nimbu API,color=blue]:pane-agent,pane-shell*|worklane-active[title=Active shell,color=none]:pane-shell-active' \
+    "cancellation navigation did not select the delayed agent lane" ||
+    fail "cancellation target lane was not selected"
+zentty_product_ctrl_shift_key "${backend}" p
+zentty_product_wait_for_log "${log}" 'zentty-linux: command-palette=shown' \
+    "cancellation command palette did not open" || fail "cancellation palette missing"
+zentty_product_type "${backend}" 'Close Worklane'
+zentty_product_wait_for_log "${log}" \
+    'zentty-linux: command-palette=query value="Close Worklane" results=1' \
+    "Close Worklane did not resolve uniquely in the real palette" ||
+    fail "cancellation command was not discoverable"
+zentty_product_key "${backend}" Down
+zentty_product_key "${backend}" Return
+zentty_product_wait_for_log "${log}" 'zentty-linux: action=close-worklane id=worklane-main' \
+    "real command palette did not close the delayed agent worklane" ||
+    fail "inactive agent cancellation action missing"
+[[ ! -s "${agent_receipt}" ]] || fail "cancelled delayed actor authenticated before worklane close"
+cancelled_pid="$(sed -n 's/^started pid:\([0-9][0-9]*\) profile:codex-restore$/\1/p' \
+    "${agent_start_receipt}")"
+[[ "${cancelled_pid}" =~ ^[1-9][0-9]*$ ]] || fail "cancellation child PID receipt is malformed"
+for _ in {1..120}; do
+    kill -0 "${cancelled_pid}" 2>/dev/null || break
+    sleep 0.05
+done
+kill -0 "${cancelled_pid}" 2>/dev/null && fail "closed worklane retained its delayed agent child"
+grep -Fq 'zentty-linux: agent-event pane=pane-agent' "${log}" &&
+    fail "cancelled pane remained registered for authenticated events"
+zentty_product_close_window "${backend}"
+wait_for_product_exit
+jq -e '
+    ([.workspace.windows[0].worklanes[].id] == ["worklane-active"]) and
+    ([.restoreDraftWindows[0].paneDrafts[]?.paneID] | index("pane-agent") | not)
+' "${state_dir}/restore-snapshot.json" >/dev/null ||
+    fail "clean cancellation snapshot retained the closed worklane or agent draft"
+
+echo "Rust session restore passed: ${backend}, journey=one-consolidated, agents=two-background, input=physical, scrollback=exact, relaunch=clean, cancellation=command-palette"

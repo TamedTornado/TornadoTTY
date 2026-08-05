@@ -44,8 +44,7 @@ LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH
     "${product}" \
     --command 'sleep 6' \
     --state-directory "${state_directory}" \
-    --no-session-restore \
-    --quit-after-last-terminal-exit >"${log}" 2>&1 &
+        --no-session-restore >"${log}" 2>&1 &
 product_pid=$!
 
 window_id=""

@@ -5,10 +5,13 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 support_tests=(
     linux/tests/qualification-matrix-test
+    linux/tests/test-orchestration-contract
+    linux/tests/controlled-agent-test
     linux/tests/lib/controlled-environment-test
     linux/tests/isolated-session-test
     linux/tests/nested-x11-test
     linux/tests/nested-wayland-test
+    linux/tests/nested-wayland-input-test
     linux/tests/controlled-ibus-x11-test
     linux/tests/ghostty-async-backend-abi-test
     linux/tests/suppression-governance-test
