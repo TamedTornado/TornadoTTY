@@ -1,5 +1,9 @@
 #![forbid(unsafe_code)]
 
+mod launch;
+
+pub use launch::{LaunchError, launch_agent, resolve_real_binary};
+
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::fs;

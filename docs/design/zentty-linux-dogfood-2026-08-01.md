@@ -6285,6 +6285,93 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   the same 52/0/5/1/51 declared totals and qualification claims; the hashes in
   the preceding entries identify that final receipt.
 
+### 2026-08-05 — Automatic ephemeral Codex and Claude launch integration
+
+- **QA boundary correction:** The authenticated-event slice was initially
+  handed to the operator with a request to paste manufactured JSON into a
+  terminal. That is developer verification, not user-level QA. Protocol event
+  injection remains automated; an operator handoff is now prohibited until a
+  normal `codex` or `claude` invocation naturally crosses the wrapper, launch
+  plan, hook, socket, reducer, and rendered-sidebar path.
+- **Source-derived launch behavior:** Linux now ports the source's ephemeral
+  launch plans for the two initial agents. Claude receives per-process
+  `--settings` hooks, a fresh session UUID unless resuming, source matchers and
+  timeouts, nested `CLAUDECODE` removal, and non-destructive color defaults.
+  Codex receives all eight source hook groups, canonical SHA-256 trust-state
+  entries, OSC9 notification policy, and terminal-title configuration through
+  command-line `-c` values. Neither path writes the user's Claude or Codex
+  configuration. Explicit disable flags and Claude management subcommands
+  remain direct passthroughs.
+- **Real wrapper discovery:** The relocated product now carries separate
+  `claude` and `codex` wrapper directories plus its sibling CLI. A wrapper is
+  prepended to a pane's `PATH` only when an executable real tool is already
+  discoverable on the inherited path; therefore Zentty does not falsely make
+  an uninstalled agent appear installed. The launcher excludes every wrapper
+  directory while resolving the real executable, validates explicit paths,
+  and replaces the wrapper process with the real agent so PID and terminal
+  ownership remain natural.
+- **Test failures and repairs:** The first focused Rust test failed to compile
+  because a parsed JSON value shadowed its settings-array index; the variable
+  was renamed rather than weakening the assertion. Strict Clippy then rejected
+  undocumented public `Result` APIs, three identically prefixed hook-spec
+  fields, and a test module placed before `Drop`; documentation, names, and
+  module order were corrected. A manual feature-inventory patch initially
+  matched four earlier generic `NOT_IMPLEMENTED` blocks instead of the intended
+  agent entries. The diff review caught the unrelated pane-drag, SSH-upload,
+  bookmark, and global-search changes; they were restored before the four
+  source-identified agent entries were updated with anchored context.
+- **Integration evidence:** Real subprocess tests prove that the compiled CLI
+  `exec`s deterministic local Codex/Claude stand-ins with the expected source
+  hook settings, environment, and original arguments. Controlled X11 session
+  `47dd1ae7bf3219d53c4e985b012a234e7f3bac28675ff059e781e9eaa4a4af3f`
+  and Wayland session
+  `fad355b255d10dc5cfb490761f733bb83bfed185bcd23f5243899ceaaa2c7055`
+  passed the normal shell command -> staged wrapper -> CLI `exec` -> agent
+  hook -> authenticated socket -> reducer -> GTK sidebar path. Relocated staged
+  bundles passed the same workflow in X11 session
+  `e5edfcfaae7d493ff9b1338933c4e4b069077a9e3d5a3d25d01fa0d638efb0b0`
+  and Wayland session
+  `21642cbf70ada2ddbb3330885a6dd4a5625f1c04083e8523e465828e74f37f54`.
+  Finally, the generated arguments were accepted without an agent call by the
+  actually installed `codex-cli 0.146.0` and `Claude Code 2.1.201` binaries.
+- **Remaining uncertainty:** The deterministic agent stand-ins control the
+  remote-agent response but retain every local process, wrapper, PTY, socket,
+  and UI boundary. A live remote model call has not been spent merely to prove
+  launch syntax. Codex notify/transcript enrichment, Claude stop-race/session
+  correlation, resume UI, settings toggles, failure presentation, and full
+  progress/idle scenarios remain partial and must not be presented as complete
+  Codex or Claude parity.
+- **Authoritative rerun:** Every presently executable matrix cell passed after
+  the wrapper and launch changes. Declared totals remain **PASS=52, FAIL=0,
+  BLOCKED=5, XFAIL=1, NOT_IMPLEMENTED=51**; implemented-local and product
+  boundary claims passed while release and full-Linux claims correctly did
+  not. The machine summary SHA-256 is
+  `658e3e40c87f22b97fcc53804283f8049d3fced163ee2b6e8e87875d700eeba1`.
+  Debug IBus-focus remains **PASS with reviewed suppressions**: raw 427
+  errors/contexts, 6,160 direct and 41,428 indirect definite bytes; reviewed
+  post-suppression zero errors/contexts and definite bytes, with 427 suppressed
+  errors/contexts. The report SHA-256 is
+  `4e859f24a29f9be778031886ada4467fdd73ca3ec861535f49048a4ff7a7534d`.
+  ReleaseSafe Valgrind remains the tracked XFAIL and no suppression was
+  broadened.
+- **Post-rerun review repair:** Review found two smaller source-parity edges.
+  Color-environment presence was initially treated as byte-empty rather than
+  source-style whitespace-blank, and wrapper discovery could mistake the
+  current staged wrapper itself for an installed real agent when Zentty was
+  launched from inside another Zentty pane. Blank values now use trimmed
+  semantics, and discovery excludes the current wrapper root; a regression
+  proves wrapper-only `PATH` input enables nothing. Because this code changed
+  after the receipt above, the executable matrix must be rerun once more before
+  publication.
+- **Final post-review receipt:** The complete runner passed again after those
+  repairs with unchanged declared totals and claims. Final machine-summary
+  SHA-256: `46f77e2bf5960d78830f6b32b47143085775b41f9d601dae6c91fd1a1aa4222c`.
+  Debug IBus-focus is **PASS with reviewed suppressions**: raw 427
+  errors/contexts, 6,240 direct and 41,461 indirect definite bytes; reviewed
+  post-suppression zero errors/contexts and definite bytes, with 427 suppressed
+  errors/contexts. Final report SHA-256:
+  `086e2b549275102478efed5ebcc853d6b3992cb5264beaaa4d01b1012c60cece`.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were

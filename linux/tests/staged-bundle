@@ -7,11 +7,13 @@ build_dir="${repo_root}/build/linux"
 stage_dir="${build_dir}/staged-bundle-${backend}"
 
 rm -rf "${stage_dir}"
-mkdir -p "${stage_dir}/bin" "${stage_dir}/lib"
+mkdir -p "${stage_dir}/bin" "${stage_dir}/lib" "${stage_dir}/libexec/zentty"
 cp "${build_dir}/bin/zentty-linux" "${stage_dir}/bin/"
 cp "${build_dir}/bin/zentty" "${stage_dir}/bin/"
 cp "${build_dir}/lib/libghostty-gtk-embed.so" "${stage_dir}/lib/"
 cp "${build_dir}/lib/libgtk4-layer-shell.so" "${stage_dir}/lib/"
+cp -a "${build_dir}/libexec/zentty/agent-wrappers" \
+    "${stage_dir}/libexec/zentty/"
 
 dependencies="$(ldd "${stage_dir}/bin/zentty-linux")"
 if grep -F "not found" <<<"${dependencies}" >/dev/null; then

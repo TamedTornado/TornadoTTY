@@ -96,6 +96,13 @@ Current Linux pane navigation uses the duration of the **Tab key itself**:
 - Hold Tab in either chord for 200ms: open Worklane Peek. Release Control to
   commit the preview or press `Escape` to cancel.
 
+When `codex` or `claude` is already installed on the inherited `PATH`, new
+Linux panes automatically select Zentty's staged wrapper for that command. The
+wrapper executes the real installed agent with per-launch status hooks; it does
+not modify the user's Codex or Claude configuration. Set
+`ZENTTY_CODEX_HOOKS_DISABLED=1` or `ZENTTY_CLAUDE_HOOKS_DISABLED=1` before
+starting Zentty to bypass the corresponding integration.
+
 This is currently a development build, not a supported Linux package. The
 public feature inventory and remaining parity work live in issues #1 and
 #16–#23.

@@ -2,6 +2,7 @@
 
 mod agent_adapters;
 mod agent_consent;
+mod agent_launch;
 mod agent_protocol;
 mod agent_status;
 mod command_palette;
@@ -15,6 +16,9 @@ mod workspace_state;
 
 pub use agent_consent::{
     AgentIntegrationClass, AgentIntegrationGate, AgentIntegrationState, resolve_integration_gate,
+};
+pub use agent_launch::{
+    AgentLaunchError, AgentLaunchPlan, AgentLaunchTool, build_agent_launch_plan,
 };
 pub use agent_protocol::{AgentEvent, AgentInteractionKind, AgentProtocolError};
 pub use agent_status::{AgentPhase, AgentProgress, AgentStatusStore, PaneAgentStatus};

@@ -21,6 +21,7 @@
         "workspace-model",
         "worklane-and-pane-commands",
         "persistence-schema-and-migrations",
+        "ephemeral-agent-launch-plans",
         "agent-state-projection",
         "platform-service-traits"
       ],
@@ -40,7 +41,8 @@
       "responsibilities": [
         "private-unix-socket-server",
         "pane-capability-authentication",
-        "codex-and-claude-hook-helper"
+        "codex-and-claude-hook-helper",
+        "agent-wrapper-exec-and-real-binary-resolution"
       ],
       "workspace_dependencies": [
         "zentty-core"

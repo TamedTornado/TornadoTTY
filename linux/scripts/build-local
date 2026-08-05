@@ -127,6 +127,15 @@ cp "${repo_root}/target/${cargo_profile}/zentty-linux" \
     "${output_dir}/bin/zentty-linux"
 cp "${repo_root}/target/${cargo_profile}/zentty" \
     "${output_dir}/bin/zentty"
+wrapper_root="${output_dir}/libexec/zentty/agent-wrappers"
+rm -rf "${wrapper_root}"
+mkdir -p "${wrapper_root}/shared"
+cp "${output_dir}/bin/zentty" "${wrapper_root}/shared/zentty"
+for tool in claude codex; do
+    mkdir -p "${wrapper_root}/${tool}"
+    cp "${repo_root}/ZenttyResources/bin/shared/zentty-agent-wrapper" \
+        "${wrapper_root}/${tool}/${tool}"
+done
 
 cc \
     "${c_probe_flags[@]}" \

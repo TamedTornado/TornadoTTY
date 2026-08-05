@@ -3,7 +3,7 @@
 use serde_json::Value;
 use std::io::Read;
 use std::process::ExitCode;
-use zentty_agent_ipc::AgentIpcClient;
+use zentty_agent_ipc::{AgentIpcClient, launch_agent};
 use zentty_core::{AgentEvent, adapt_claude_hook, adapt_codex_hook};
 
 fn main() -> ExitCode {
@@ -18,9 +18,15 @@ fn main() -> ExitCode {
 
 fn run() -> Result<(), String> {
     let mut arguments = std::env::args().skip(1);
-    if arguments.next().as_deref() != Some("ipc")
-        || arguments.next().as_deref() != Some("agent-event")
-    {
+    let command = arguments.next();
+    if command.as_deref() == Some("launch") {
+        let tool = arguments
+            .next()
+            .ok_or_else(|| "usage: zentty launch <claude|codex> [arguments...]".to_owned())?;
+        return launch_agent(&tool, &arguments.collect::<Vec<_>>())
+            .map_err(|error| error.to_string());
+    }
+    if command.as_deref() != Some("ipc") || arguments.next().as_deref() != Some("agent-event") {
         return Err("usage: zentty ipc agent-event [--adapter=codex|claude] [event]".to_owned());
     }
     let remaining = arguments.collect::<Vec<_>>();

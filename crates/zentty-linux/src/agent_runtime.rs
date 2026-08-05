@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, mpsc};
 use zentty_agent_ipc::{AgentIpcServer, generate_pane_token};
@@ -13,6 +14,7 @@ pub(crate) struct AgentRuntime {
     runtime_directory: PathBuf,
     socket_path: PathBuf,
     cli_path: PathBuf,
+    wrapper_directories: Vec<PathBuf>,
     window_id: String,
 }
 
@@ -37,6 +39,13 @@ impl AgentRuntime {
         let cli_path = std::env::current_exe()
             .map_err(|error| format!("could not resolve Zentty executable: {error}"))?
             .with_file_name("zentty");
+        let wrapper_root = cli_path
+            .parent()
+            .and_then(std::path::Path::parent)
+            .map(|root| root.join("libexec/zentty/agent-wrappers"));
+        let wrapper_directories = wrapper_root
+            .map(|root| enabled_wrapper_directories(&root, &current_path()))
+            .unwrap_or_default();
         Ok(Self {
             server: Some(server),
             registry,
@@ -46,6 +55,7 @@ impl AgentRuntime {
             runtime_directory,
             socket_path,
             cli_path,
+            wrapper_directories,
             window_id,
         })
     }
@@ -77,7 +87,7 @@ impl AgentRuntime {
         self.worklane_by_pane
             .insert(pane_id.to_owned(), worklane_id.to_owned());
         let cli = self.cli_path.to_string_lossy().into_owned();
-        Ok(vec![
+        let mut environment = vec![
             ("ZENTTY_CLI_BIN".to_owned(), cli.clone()),
             (
                 "ZENTTY_AGENT_EVENT_COMMAND".to_owned(),
@@ -91,7 +101,25 @@ impl AgentRuntime {
             ("ZENTTY_WINDOW_ID".to_owned(), self.window_id.clone()),
             ("ZENTTY_WORKLANE_ID".to_owned(), worklane_id.to_owned()),
             ("ZENTTY_PANE_ID".to_owned(), pane_id.to_owned()),
-        ])
+        ];
+        if !self.wrapper_directories.is_empty() {
+            let wrappers = std::env::join_paths(&self.wrapper_directories)
+                .map_err(|error| format!("agent wrapper path is invalid: {error}"))?
+                .to_string_lossy()
+                .into_owned();
+            let path = std::env::join_paths(
+                self.wrapper_directories
+                    .iter()
+                    .cloned()
+                    .chain(std::env::split_paths(&current_path())),
+            )
+            .map_err(|error| format!("agent PATH is invalid: {error}"))?
+            .to_string_lossy()
+            .into_owned();
+            environment.push(("ZENTTY_ALL_WRAPPER_BIN_DIRS".to_owned(), wrappers));
+            environment.push(("PATH".to_owned(), path));
+        }
+        Ok(environment)
     }
 
     pub(crate) fn unregister_pane(&mut self, pane_id: &str) {
@@ -134,11 +162,75 @@ impl AgentRuntime {
     }
 }
 
+fn current_path() -> std::ffi::OsString {
+    std::env::var_os("PATH").unwrap_or_else(|| "/usr/bin:/bin".into())
+}
+
+fn enabled_wrapper_directories(
+    wrapper_root: &std::path::Path,
+    path: &std::ffi::OsStr,
+) -> Vec<PathBuf> {
+    ["claude", "codex"]
+        .into_iter()
+        .filter_map(|tool| {
+            let wrapper_directory = wrapper_root.join(tool);
+            if !is_executable(&wrapper_directory.join(tool)) {
+                return None;
+            }
+            std::env::split_paths(path)
+                .any(|directory| {
+                    !directory.starts_with(wrapper_root) && is_executable(&directory.join(tool))
+                })
+                .then_some(wrapper_directory)
+        })
+        .collect()
+}
+
+fn is_executable(path: &std::path::Path) -> bool {
+    std::fs::metadata(path)
+        .is_ok_and(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
+}
+
 impl Drop for AgentRuntime {
     fn drop(&mut self) {
         if let Some(server) = self.server.take() {
             let _ = server.shutdown();
         }
         let _ = std::fs::remove_dir(&self.runtime_directory);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::enabled_wrapper_directories;
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn wrappers_are_enabled_only_for_installed_real_tools() {
+        let root =
+            std::env::temp_dir().join(format!("zentty-wrapper-selection-{}", std::process::id()));
+        let wrappers = root.join("wrappers");
+        let real = root.join("real");
+        let _ = fs::remove_dir_all(&root);
+        for tool in ["claude", "codex"] {
+            fs::create_dir_all(wrappers.join(tool)).unwrap();
+            let wrapper = wrappers.join(tool).join(tool);
+            fs::write(&wrapper, "wrapper").unwrap();
+            fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        fs::create_dir_all(&real).unwrap();
+        let codex = real.join("codex");
+        fs::write(&codex, "real").unwrap();
+        fs::set_permissions(&codex, fs::Permissions::from_mode(0o700)).unwrap();
+
+        assert_eq!(
+            enabled_wrapper_directories(&wrappers, real.as_os_str()),
+            [wrappers.join("codex")]
+        );
+        assert!(
+            enabled_wrapper_directories(&wrappers, wrappers.join("codex").as_os_str()).is_empty()
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 }
