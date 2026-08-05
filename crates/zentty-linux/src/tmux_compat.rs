@@ -8,6 +8,7 @@ use zentty_tmux_compat::{
 const DEFAULT_LIST_PANES: &str = "#{pane_id} #{pane_index} #{pane_title} #{?pane_active,*,-}";
 const DEFAULT_LIST_WINDOWS: &str = "#{window_id} #{window_index} #{window_name}";
 const DEFAULT_DISPLAY_MESSAGE: &str = "#{pane_id}";
+const DEFAULT_SPLIT_PRINT: &str = "#{pane_id}";
 
 #[derive(Default)]
 pub(crate) struct TmuxCompatProduct {
@@ -20,7 +21,124 @@ pub(crate) enum TmuxProductAction {
     SendText { pane_id: String, text: String },
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SplitDisposition {
+    RightGolden,
+    StackBelow,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) struct SplitPlan {
+    pub worklane_id: String,
+    pub leader_pane_id: String,
+    pub insertion_pane_id: String,
+    pub disposition: SplitDisposition,
+    pub detached: bool,
+    pub print_format: Option<String>,
+}
+
 impl TmuxCompatProduct {
+    pub(crate) fn prepare_split(
+        &self,
+        state: &WorkspaceState,
+        target: &AgentTarget,
+        request: &TmuxCompatRequest,
+    ) -> Result<SplitPlan, (&'static str, String)> {
+        let worklane = target_worklane(state, target)?;
+        let pane_ids = pane_entries(worklane)
+            .into_iter()
+            .map(|(_, pane, _)| pane.id.clone())
+            .collect::<Vec<_>>();
+        let parsed = parsed(
+            request.arguments(),
+            &["-F", "-c", "-l", "-t"],
+            &["-P", "-b", "-d", "-h", "-v"],
+        );
+        validate_explicit_pane_target(parsed.value("-t"), &pane_ids)?;
+        validate_explicit_pane_target(Some(&target.pane_id), &pane_ids)?;
+        let (leader_pane_id, insertion_pane_id, disposition) =
+            self.store.anchor(&target.worklane_id).map_or_else(
+                || {
+                    (
+                        target.pane_id.clone(),
+                        target.pane_id.clone(),
+                        SplitDisposition::RightGolden,
+                    )
+                },
+                |anchor| {
+                    (
+                        anchor.leader_pane_id.clone(),
+                        anchor
+                            .column_pane_ids
+                            .last()
+                            .cloned()
+                            .unwrap_or_else(|| anchor.leader_pane_id.clone()),
+                        SplitDisposition::StackBelow,
+                    )
+                },
+            );
+        Ok(SplitPlan {
+            worklane_id: target.worklane_id.clone(),
+            leader_pane_id,
+            insertion_pane_id,
+            disposition,
+            detached: parsed.has_flag("-d"),
+            print_format: parsed
+                .has_flag("-P")
+                .then(|| parsed.value("-F").unwrap_or(DEFAULT_SPLIT_PRINT).to_owned()),
+        })
+    }
+
+    pub(crate) fn record_split(
+        &mut self,
+        plan: &SplitPlan,
+        new_pane_id: &str,
+        pre_team_leader_width: Option<u32>,
+    ) {
+        let _ = self.store.record_split(
+            &plan.worklane_id,
+            &plan.leader_pane_id,
+            new_pane_id,
+            plan.detached,
+            pre_team_leader_width,
+        );
+    }
+
+    pub(crate) fn split_reply(
+        &self,
+        state: &WorkspaceState,
+        plan: &SplitPlan,
+        new_pane_id: &str,
+    ) -> TmuxCompatReply {
+        let Some(template) = plan.print_format.as_deref() else {
+            return TmuxCompatReply::success(String::new())
+                .expect("empty compatibility output fits protocol limits");
+        };
+        let Some(worklane) = state
+            .worklanes()
+            .iter()
+            .find(|worklane| worklane.id == plan.worklane_id)
+        else {
+            return failure("target_not_found", "split worklane disappeared");
+        };
+        let Some((index, pane, focused)) = pane_entries(worklane)
+            .into_iter()
+            .find(|(_, pane, _)| pane.id == new_pane_id)
+        else {
+            return failure("target_not_found", "new split pane disappeared");
+        };
+        let context = pane_context(
+            pane,
+            index,
+            focused,
+            self.store.active_pane(&plan.worklane_id),
+            worklane,
+            worklane_index(state, &plan.worklane_id),
+        );
+        TmuxCompatReply::success(format!("{}\n", FormatRenderer::render(template, &context)))
+            .unwrap_or_else(|_| failure("output_limit", "tmux compatibility output limit exceeded"))
+    }
+
     pub(crate) fn prepare_send_keys(
         state: &WorkspaceState,
         target: &AgentTarget,
@@ -32,15 +150,7 @@ impl TmuxCompatProduct {
             .map(|(_, pane, _)| pane.id.clone())
             .collect::<Vec<_>>();
         let parsed = parsed(request.arguments(), &["-N", "-T", "-t"], &["-R", "-l"]);
-        if let Some(selector) = parsed.value("-t") {
-            let candidate = selector.strip_prefix('%').unwrap_or(selector);
-            if !pane_ids.iter().any(|pane_id| pane_id == candidate) {
-                return Err((
-                    "target_not_found",
-                    format!("pane {selector} is unavailable in the routed worklane"),
-                ));
-            }
-        }
+        validate_explicit_pane_target(parsed.value("-t"), &pane_ids)?;
         let pane_id = PaneTarget::resolve(parsed.value("-t"), &pane_ids, &target.pane_id);
         let text = SendKeys::translate(request.arguments(), request.standard_input());
         if text.is_empty() {
@@ -224,6 +334,22 @@ fn parsed(arguments: &[String], values: &[&str], flags: &[&str]) -> ParsedArgume
     ParsedArguments::parse(arguments, &strings(values), &strings(flags))
 }
 
+fn validate_explicit_pane_target(
+    selector: Option<&str>,
+    pane_ids: &[String],
+) -> Result<(), (&'static str, String)> {
+    if let Some(selector) = selector {
+        let candidate = selector.strip_prefix('%').unwrap_or(selector);
+        if !pane_ids.iter().any(|pane_id| pane_id == candidate) {
+            return Err((
+                "target_not_found",
+                format!("pane {selector} is unavailable in the routed worklane"),
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn strings(values: &[&str]) -> Vec<String> {
     values.iter().map(|value| (*value).to_owned()).collect()
 }
@@ -315,7 +441,7 @@ fn failure(code: &'static str, message: impl Into<String>) -> TmuxCompatReply {
 
 #[cfg(test)]
 mod tests {
-    use super::{TmuxCompatProduct, TmuxProductAction};
+    use super::{SplitDisposition, TmuxCompatProduct, TmuxProductAction};
     use zentty_core::AgentTarget;
     use zentty_core::WorkspaceState;
     use zentty_tmux_compat::TmuxCompatRequest;
@@ -529,6 +655,57 @@ mod tests {
             &state,
             &target("pane-1"),
             &request("send-keys", &["-t", "%pane-other", "unsafe"]),
+        );
+        assert_eq!(missing.unwrap_err().0, "target_not_found");
+    }
+
+    #[test]
+    fn split_plans_first_right_column_then_stacks_below_the_last_teammate() {
+        let mut product = TmuxCompatProduct::default();
+        let state = workspace();
+        let first = product
+            .prepare_split(
+                &state,
+                &target("pane-1"),
+                &request(
+                    "split-window",
+                    &["-h", "-t", "%pane-2", "-P", "-F", "#{pane_id}"],
+                ),
+            )
+            .unwrap();
+        assert_eq!(first.leader_pane_id, "pane-1");
+        assert_eq!(first.insertion_pane_id, "pane-1");
+        assert_eq!(first.disposition, SplitDisposition::RightGolden);
+        assert!(!first.detached);
+        assert_eq!(first.print_format.as_deref(), Some("#{pane_id}"));
+
+        let mut rendered_state = state.clone();
+        assert!(rendered_state.split_focused_pane_right("pane-team-1"));
+        assert!(rendered_state.select_worklane_and_pane("lane-1", "pane-1"));
+        product.record_split(&first, "pane-team-1", Some(720));
+        assert_eq!(
+            product
+                .split_reply(&rendered_state, &first, "pane-team-1")
+                .stdout(),
+            Some("%pane-team-1\n")
+        );
+        let second = product
+            .prepare_split(
+                &state,
+                &target("pane-1"),
+                &request("split-window", &["-v", "-d"]),
+            )
+            .unwrap();
+        assert_eq!(second.leader_pane_id, "pane-1");
+        assert_eq!(second.insertion_pane_id, "pane-team-1");
+        assert_eq!(second.disposition, SplitDisposition::StackBelow);
+        assert!(second.detached);
+        assert_eq!(second.print_format, None);
+
+        let missing = product.prepare_split(
+            &state,
+            &target("pane-1"),
+            &request("split-window", &["-t", "%outside"]),
         );
         assert_eq!(missing.unwrap_err().0, "target_not_found");
     }

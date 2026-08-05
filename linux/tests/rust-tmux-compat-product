@@ -27,10 +27,29 @@ cat >"${child}" <<'CHILD'
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ "${ZENTTY_PANE_ID}" != pane-1 ]]; then
+    IFS= read -r value
+    [[ "${value}" == team-ready ]]
+    printf '\033]2;zentty-tmux-team-%s\a' "${ZENTTY_PANE_ID}"
+    sleep 0.1
+    exit 0
+fi
+
 pane="$(${ZENTTY_CLI_BIN} __tmux-compat display-message -p '#{pane_id}')"
 [[ "${pane}" == "%${ZENTTY_PANE_ID}" ]]
 listed="$(${ZENTTY_CLI_BIN} __tmux-compat list-panes -F '#{pane_id}')"
 [[ "${listed}" == "%${ZENTTY_PANE_ID}" ]]
+first="$(${ZENTTY_CLI_BIN} __tmux-compat split-window -h -P -F '#{pane_id}')"
+second="$(${ZENTTY_CLI_BIN} __tmux-compat split-window -v -d -P -F '#{pane_id}')"
+first_id="${first#%}"
+second_id="${second#%}"
+[[ "${first_id}" != "${first}" && "${second_id}" != "${second}" ]]
+[[ "${first_id}" != "${second_id}" ]]
+listed="$(${ZENTTY_CLI_BIN} __tmux-compat list-panes -F '#{pane_id}')"
+[[ "${listed}" == $'%pane-1\n%'"${first_id}"$'\n%'"${second_id}" ]]
+sleep 0.2
+${ZENTTY_CLI_BIN} __tmux-compat send-keys -t "%${first_id}" team-ready Enter
+${ZENTTY_CLI_BIN} __tmux-compat send-keys -t "%${second_id}" team-ready Enter
 ${ZENTTY_CLI_BIN} __tmux-compat send-keys \
     -t "%${ZENTTY_PANE_ID}" agent-real-input Enter
 IFS= read -r value
@@ -56,18 +75,58 @@ fi
     cat "${log}" >&2
     fail "real display-message did not cross the product handler"
 }
-[[ "$(grep -Fxc 'zentty-linux: tmux-command pane=pane-1 worklane=worklane-1 command=ListPanes' "${log}" || true)" -eq 1 ]] || {
+[[ "$(grep -Fxc 'zentty-linux: tmux-command pane=pane-1 worklane=worklane-1 command=ListPanes' "${log}" || true)" -eq 2 ]] || {
     cat "${log}" >&2
     fail "real list-panes did not cross the product handler"
 }
-[[ "$(grep -Fxc 'zentty-linux: tmux-command pane=pane-1 worklane=worklane-1 command=SendKeys' "${log}" || true)" -eq 1 ]] || {
+[[ "$(grep -Fxc 'zentty-linux: tmux-command pane=pane-1 worklane=worklane-1 command=SendKeys' "${log}" || true)" -eq 3 ]] || {
     cat "${log}" >&2
     fail "real send-keys did not cross the product handler"
 }
+[[ "$(grep -Fxc 'zentty-linux: tmux-command pane=pane-1 worklane=worklane-1 command=SplitWindow' "${log}" || true)" -eq 2 ]] || {
+    cat "${log}" >&2
+    fail "two real split-window commands did not cross the product handler"
+}
+grep -Fq 'zentty-linux: geometry=worklane-1:column-worklane-1[pane-1],column-pane-2[pane-2,pane-3]' "${log}" || {
+    cat "${log}" >&2
+    fail "team topology was not one right column with stacked teammates"
+}
+layout="$(grep -E 'zentty-linux: pane-layout .*columns=column-worklane-1:[0-9]+,column-pane-2:[0-9]+' "${log}" | tail -1)"
+if [[ ! "${layout}" =~ column-worklane-1:([0-9]+),column-pane-2:([0-9]+) ]]; then
+    cat "${log}" >&2
+    fail "team column widths were not observable"
+fi
+leader_width="${BASH_REMATCH[1]}"
+team_width="${BASH_REMATCH[2]}"
+leader_percent=$((100 * leader_width / (leader_width + team_width)))
+((leader_percent >= 61 && leader_percent <= 62)) || {
+    cat "${log}" >&2
+    fail "leader column is not golden-wide: ${leader_percent}%"
+}
+heights="$(grep -E 'zentty-linux: pane-height-layout column=column-pane-2 .*panes=pane-2:[0-9]+,pane-3:[0-9]+' "${log}" | tail -1)"
+if [[ ! "${heights}" =~ pane-2:([0-9]+),pane-3:([0-9]+) ]]; then
+    cat "${log}" >&2
+    fail "stacked teammate heights were not observable"
+fi
+height_difference=$((BASH_REMATCH[1] - BASH_REMATCH[2]))
+((height_difference >= -1 && height_difference <= 1)) || {
+    cat "${log}" >&2
+    fail "stacked teammate heights are not equal"
+}
+if grep -Eq 'zentty-linux: focus-pane pane=pane-[23]$' "${log}"; then
+    cat "${log}" >&2
+    fail "team split stole terminal focus from the leader"
+fi
 grep -Fxq 'zentty-linux: title=zentty-tmux-compat-real' "${log}" || {
     cat "${log}" >&2
     fail "send-keys text did not cross the Ghostty surface and PTY"
 }
+for teammate in pane-2 pane-3; do
+    grep -Fxq "zentty-linux: title=zentty-tmux-team-${teammate}" "${log}" || {
+        cat "${log}" >&2
+        fail "${teammate} did not receive real terminal input"
+    }
+done
 grep -Fxq 'zentty-linux: child-exited' "${log}" || {
     cat "${log}" >&2
     fail "real terminal child did not exit cleanly"

@@ -12,7 +12,7 @@ use zentty_core::{
     WindowRecipe, WorklaneColor, WorklaneRecipe, WorkspaceState,
 };
 use zentty_ghostty::{GhosttyRuntime, GhosttySurface, SurfaceConfig};
-use zentty_tmux_compat::{Command as TmuxCommand, TmuxCompatReply};
+use zentty_tmux_compat::Command as TmuxCommand;
 
 use crate::{
     agent_runtime::AgentRuntime,
@@ -27,13 +27,14 @@ use crate::{
     sidebar,
     sidebar_visibility::{Event as SidebarVisibilityEvent, Mode as SidebarVisibilityMode},
     source_ui,
-    tmux_compat::TmuxProductAction,
     window_chrome::WindowChrome,
     worklane_peek::{
         self, Direction as PeekDirection, PanePreview, Phase as PeekPhase,
         SpatialDirection as PeekSpatialDirection, WorklanePeekView,
     },
 };
+
+mod tmux_runtime;
 
 const ACTION_TOGGLE_SIDEBAR: &str = "toggle-sidebar";
 const ACTION_NEW_WORKLANE: &str = "new-worklane";
@@ -2442,58 +2443,18 @@ impl ApplicationShell {
         Ok(())
     }
 
-    pub(crate) fn drain_agent_events(&mut self) {
-        let tmux_commands = self.agent_runtime.drain_tmux();
+    pub(crate) fn drain_agent_events(shell: &Rc<RefCell<Self>>) {
+        let tmux_commands = shell.borrow().agent_runtime.drain_tmux();
         let mut tmux_changed_product_state = false;
         for command in tmux_commands {
-            eprintln!(
-                "zentty-linux: tmux-command pane={} worklane={} command={:?}",
-                command.target.pane_id,
-                command.target.worklane_id,
-                command.request.command()
-            );
-            let reply = if command.request.command() == TmuxCommand::SendKeys {
-                match crate::tmux_compat::TmuxCompatProduct::prepare_send_keys(
-                    &self.state,
-                    &command.target,
-                    &command.request,
-                ) {
-                    Ok(TmuxProductAction::Noop) => TmuxCompatReply::success(String::new())
-                        .expect("empty compatibility output fits protocol limits"),
-                    Ok(TmuxProductAction::SendText { pane_id, text }) => self
-                        .surfaces
-                        .get(&pane_id)
-                        .ok_or_else(|| format!("pane {pane_id} has no live terminal surface"))
-                        .and_then(|surface| {
-                            surface.send_text(&text).map_err(|error| error.to_string())
-                        })
-                        .map_or_else(
-                            |message| {
-                                TmuxCompatReply::failure("delivery_failed", message)
-                                    .expect("bounded product diagnostic fits protocol limits")
-                            },
-                            |()| {
-                                TmuxCompatReply::success(String::new())
-                                    .expect("empty compatibility output fits protocol limits")
-                            },
-                        ),
-                    Err((code, message)) => TmuxCompatReply::failure(code, message)
-                        .expect("bounded product diagnostic fits protocol limits"),
-                }
-            } else {
-                self.tmux_compat
-                    .handle(&mut self.state, &command.target, &command.request)
-            };
-            tmux_changed_product_state |=
-                matches!(command.request.command(), TmuxCommand::SelectPane);
-            if let Err(error) = command.respond(reply) {
-                eprintln!("zentty-linux: tmux-response failed={error}");
-            }
+            let changes_state = matches!(command.request.command(), TmuxCommand::SelectPane);
+            Self::execute_tmux_command(shell, command);
+            tmux_changed_product_state |= changes_state;
         }
         if tmux_changed_product_state {
-            self.render();
+            shell.borrow().render();
         }
-        let events = self.agent_runtime.drain();
+        let events = shell.borrow().agent_runtime.drain();
         if events.is_empty() {
             return;
         }
@@ -2505,9 +2466,9 @@ impl ApplicationShell {
                 "zentty-linux: agent-event pane={} worklane={}",
                 event.target.pane_id, event.target.worklane_id
             );
-            self.state.apply_agent_event(event, now);
+            shell.borrow_mut().state.apply_agent_event(event, now);
         }
-        self.render_sidebar();
+        shell.borrow().render_sidebar();
     }
 
     pub(crate) fn sync_agent_targets(&mut self) {

@@ -127,9 +127,9 @@ fn run_lifecycle_cycle(
     let ticking_sidebar_width = Rc::clone(&last_sidebar_width);
     let tick_source = glib::timeout_add_local(Duration::from_millis(10), move || {
         if let Some(shell) = ticking_shell.upgrade() {
-            let mut shell = shell.borrow_mut();
-            shell.sync_agent_targets();
-            shell.drain_agent_events();
+            shell.borrow_mut().sync_agent_targets();
+            ApplicationShell::drain_agent_events(&shell);
+            let shell = shell.borrow_mut();
             shell.reconcile_sidebar_width();
             shell.reconcile_pane_heights();
         }

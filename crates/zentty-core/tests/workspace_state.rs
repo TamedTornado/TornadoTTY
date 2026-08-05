@@ -199,6 +199,26 @@ fn vertical_pane_commands_preserve_column_identity_and_geometry() {
 }
 
 #[test]
+fn team_column_equalization_targets_only_the_column_containing_the_teammate() {
+    let mut state = WorkspaceState::new("lane-1", "leader");
+    assert!(state.split_focused_pane_right("teammate-1"));
+    assert!(state.split_focused_pane_below("teammate-2"));
+    assert!(state.split_focused_pane_below("teammate-3"));
+    assert_eq!(
+        state.active_worklane().columns[1].pane_heights,
+        vec![0.5, 0.25, 0.25]
+    );
+
+    assert!(state.equalize_pane_heights_in_column("teammate-1"));
+    assert_eq!(state.active_worklane().columns[0].pane_heights, vec![1.0]);
+    assert_eq!(
+        state.active_worklane().columns[1].pane_heights,
+        vec![1.0 / 3.0; 3]
+    );
+    assert!(!state.equalize_pane_heights_in_column("teammate-1"));
+}
+
+#[test]
 fn duplicate_ids_and_invalid_reorders_are_rejected_without_mutation() {
     let mut state = WorkspaceState::new("worklane-a", "pane-a");
     assert!(!state.create_worklane("worklane-a", "pane-b"));

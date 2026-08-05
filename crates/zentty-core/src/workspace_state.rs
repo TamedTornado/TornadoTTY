@@ -1137,6 +1137,24 @@ impl WorkspaceState {
         changed
     }
 
+    pub fn equalize_pane_heights_in_column(&mut self, pane_id: &str) -> bool {
+        let Some(column) = self.worklanes.iter_mut().find_map(|worklane| {
+            worklane
+                .columns
+                .iter_mut()
+                .find(|column| column.panes.iter().any(|pane| pane.id == pane_id))
+        }) else {
+            return false;
+        };
+        let height = 1.0 / small_count_as_f64(column.panes.len());
+        let mut changed = false;
+        for pane_height in &mut column.pane_heights {
+            changed |= pane_height.to_bits() != height.to_bits();
+            *pane_height = height;
+        }
+        changed
+    }
+
     pub fn reset_active_layout(&mut self, default_column_width: f64) -> bool {
         let width = sanitize_dimension(default_column_width);
         let mut changed = false;

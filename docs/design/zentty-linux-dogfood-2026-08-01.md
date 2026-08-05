@@ -7251,6 +7251,166 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   as unviable, zero were missed, and zero timed out. Its `outcomes.json`
   SHA-256 is
   `1b5d5e2dc9db434c5814517e634b15f2c070af52bcf3ae5ac19581c043d4bb02`.
+- **Team topology began with a red source-transition test:** The first focused
+  test failed to compile because split planning, its right-versus-stacked
+  disposition, and store commit method did not exist. The new pure plan uses
+  the server-canonical worklane, rejects explicit cross-scope targets, chooses
+  a golden right column before an anchor exists, and chooses the last recorded
+  teammate for later vertical stacking. Product surface creation is not
+  recorded in the store until the application reports success.
+- **Repeated vertical splits do not naturally stay equal:** A red core test
+  showed that splitting below the most recent teammate produces
+  `[0.5, 0.25, 0.25]`, while the source team contract requires equal stacked
+  heights. `equalize_pane_heights_in_column` now targets the column containing
+  a stable pane ID and leaves the leader column unchanged; application wiring
+  can repair only the team column after each successful later split.
+- **First application split compile found overlapping field borrows:** The
+  refactored command dispatcher initially borrowed `tmux_compat` and
+  `state` through the same `RefMut` expression, which Rust correctly rejected,
+  and the tick loop retained an unnecessary mutable binding. Destructuring the
+  two disjoint fields makes simultaneous mutable access explicit; no interior
+  mutability or lint exception was introduced.
+- **First expanded X11 journey proved the product but found a receipt typo:**
+  Both real split commands succeeded: logs showed leader/team widths 444/274,
+  equal teammate heights 328/327, the intended two-column topology, three
+  independent PTYs consuming delivered input, and no teammate focus event.
+  The harness nevertheless failed because its expected geometry separated
+  columns with `|`, while the product's established receipt uses commas within
+  a worklane and reserves `|` for worklanes. The assertion now uses the real
+  receipt grammar and also calculates the 61–62% golden leader range and
+  one-pixel height tolerance rather than relying on topology alone.
+- **cargo-mutants `--in-diff` expects a patch file, not a Git revision:** The
+  first core-only invocation passed `HEAD` and failed immediately trying to
+  open it as a file; no baseline or mutants ran. The retry writes the narrow
+  reviewed `zentty-core` diff to a temporary patch and supplies that path,
+  retaining focused mutation without scanning the entire mature workspace
+  state module.
+- **Focused equalization mutation found an unobserved idempotence contract:**
+  Eight of 11 mutations were caught; three comparison/arithmetic survivors all
+  made an already-equal column incorrectly report another change even though
+  its final heights remained equal. The core regression now calls the
+  operation twice and requires the second result to be `false`, observing the
+  render-churn contract as well as geometry.
+- **Epsilon boundary mutant was behaviorally equivalent for deterministic
+  assignment:** The repaired run caught ten of 11 mutations. Replacing `>`
+  with `>=` at `abs(delta) > f64::EPSILON` survived because both the computed
+  target and every stored equalized value come from the exact same division;
+  the delta is either zero or materially nonzero, never epsilon. The change
+  predicate now states the real exact-assignment contract with `!=`, removing
+  a fictional tolerance boundary rather than accepting an unexplained
+  survivor.
+- **Team-split mutation repairs verified:** The pre-authority-review product
+  handler campaign ran
+  49 mutations: 38 caught, 11 compiler-rejected as unviable, zero missed, and
+  zero timed out; its superseded `outcomes.json` SHA-256 was
+  `e91cb0e61200d22b5a938b08baec34fdbb61081bb66a8b818a3de936b8f08d`.
+  The pre-Clippy core diff campaign ran seven mutations and caught all seven;
+  its superseded `outcomes.json` SHA-256 was
+  `4c6189335caef9af3fb7c59833d58430f618a922804a721281d3f27b7363d31f`.
+- **Final real topology journeys pass both controlled compositors:** The
+  expanded staged ReleaseSafe journey passed private nested X11 session
+  `56cde5d63bdc334da323defe58c35c5ac7925d7f0c6699e774013928500fb9ec`
+  and private Weston/Wayland session
+  `b39808f1156cd36c885e8b7c6ab74a2c10b79c6ae160344aa354f4a589b627e8`.
+  Each run created two real additional Ghostty surfaces and PTYs through the
+  CLI/socket path, proved the 61–62% leader width, equal stacked teammate
+  heights, leader-focus preservation, list output, input delivery, titles,
+  child exits, and clean application lifecycle.
+- **Exact post-mutation ReleaseSafe rebuild reconfirmed:** After the final core
+  predicate repair, the product was rebuilt and the unchanged complete journey
+  passed again under X11 session
+  `21223e3fa869de8328b2596f399d4ff3dd4d5eb69a29fbeeeb30c541d47d310b`
+  and Wayland session
+  `25cf4ddd414981d8128b072dabee0e0a45b8ca73877f0f713025b914e844b95f`.
+  The earlier successful sessions remain discovery evidence; these two bind
+  the exact candidate source.
+- **Strict Clippy rejected direct floating-point equality:** The post-journey
+  full gate correctly rejected the exact `f64` comparison used to eliminate
+  the equivalent epsilon mutant. Since equalized heights are deterministic
+  assignments of the same computed value, the predicate now compares their
+  IEEE bit representations. This states exact idempotence without a broad
+  `float_cmp` suppression; mutation and staged product journeys must be rerun
+  against this final expression.
+- **Bit-exact idempotence mutation reconfirmed:** The final core diff campaign
+  again ran seven mutations and caught all seven, with zero unviable, missed,
+  or timed-out cases. Its `outcomes.json` SHA-256 is
+  `a1a78de2c23cc49040f749866d28a47107dfe48f29770cb74c41a39384cad73e`.
+- **Exact final ReleaseSafe compositor journeys pass:** The post-Clippy
+  candidate passed the complete real topology/input/lifecycle journey in X11
+  session
+  `567c9a54fcd70cea616f771191c97ee3053b6721eb0fc21a7b230362e5bfa4ef`
+  and Wayland session
+  `4c644f2b15cf69aa83a8c7c3074d50f470fb304a734d0ecfacab798b0fe54942`.
+- **Final diff review rejected more command machinery in the shell catch-all:**
+  Although the code was green, the split dispatcher added roughly 150 lines to
+  the already large `application_shell.rs`. The runtime operations now live in
+  the focused descendant module `application_shell/tmux_runtime.rs`; Rust's
+  module privacy retains access to shell-owned surfaces without making fields
+  public or inventing another product abstraction. The event drain remains in
+  the shell, while tmux execution has a single focused home.
+- **Module extraction left one stale import:** The first strict compile after
+  extraction rejected `TmuxCompatReply` in the parent shell module because the
+  focused child now owns it. The import was removed; warnings remain errors.
+- **Cargo-only mutation cannot observe compositor-owned runtime orchestration:**
+  A deliberate 17-mutant probe of `application_shell/tmux_runtime.rs` produced
+  three compiler-rejected mutations and 14 survivors, including deletion of
+  the entire dispatcher and both command arms. This is expected but not called
+  clean: `cargo test` does not launch GTK, a compositor, Ghostty surfaces, or
+  PTYs, whereas every one of those mutations is killed by the checked real
+  X11/Wayland product journey. Adding fake surfaces or a test-only application
+  route solely to satisfy cargo-mutants would weaken the test boundary; making
+  cargo-mutants rebuild and restage Ghostty for every GUI mutant would recreate
+  the rejected slow orchestration architecture. Mutation qualification remains
+  on the pure planner/store/core decisions (zero survivors); the thin real-
+  component executor is qualified by both compositor journeys. No skip
+  attribute hides this probe.
+- **Extracted final candidate passes both real environments:** After rebuilding
+  ReleaseSafe from the focused-module layout, the complete journey passed X11
+  session
+  `ac88f538e600d6fcf9c48fd6e1676a1d24fc399e7c792859613c008a3040e0f6`
+  and Wayland session
+  `df25f7fe4b9f340fc5dccb090ebd258aba689cfd37e894a48d743ebf66b437bc`.
+- **Final source audit corrected first-split authority:** Swift parses `-t` but
+  creates the first team column from the authenticated IPC target pane, not the
+  client option. The initial Linux plan used an in-scope `-t` pane as leader.
+  It now validates `-t` against the canonical worklane to reject cross-scope
+  input but deliberately anchors on the server-canonical token target. The
+  model test passes `-t %pane-2` while requiring pane-1 as leader, preventing
+  routing authority from drifting back to client arguments.
+- **Canonical-target handler mutation reconfirmed:** The final handler campaign
+  again ran 49 mutations: 38 caught, 11 compiler-rejected as unviable, zero
+  missed, and zero timed out. Its `outcomes.json` SHA-256 is
+  `815f603c84bc5aa462c2ce79c5b932e2f3ef0fa4676b6965eeed0b47056ca894`.
+- **Canonical-target final build passes both compositors:** The exact
+  ReleaseSafe candidate passed X11 session
+  `665599ac1191e8274efb8ea6bb5a7f44a88bb8a44b30db2e0b038a4bb2595523`
+  and Wayland session
+  `5582aeda3b5efd34251a73d08ac12b45827c99bbe5aca34ac6f768097001bdfc`.
+- **Final executor review removed two silent failure assumptions:** The first
+  draft substituted width `1` if a rendered leader width could not convert to
+  `u32`, and ignored failure to reselect a stale team leader after inserting a
+  model pane. Width capture is now honestly optional, matching the source
+  store, while missing-leader or duplicate-ID failures roll back the inserted
+  model pane and restore the original selection before returning a diagnostic.
+- **Rollback-hardened candidate passes both controlled compositors:** After the
+  final failure-path and optional-width corrections, the staged ReleaseSafe
+  product journey passed private X11 session
+  `8a22c0697ca54e86cceb4691774204ec2206ecb6cca9b60abe5449928349e42c`
+  and private Weston/Wayland session
+  `8413b64b10332163369f9720ba4124451ce7fb9b7ab50f3868c547b777d52d2c`.
+  These receipts bind the final reviewed executor, including real socket
+  routing, Ghostty surfaces, PTYs, team geometry, input, focus, and lifecycle.
+- **Final workspace gate requires host Unix-socket permission:** The first
+  sandboxed `cargo test --locked --workspace` attempt was stopped by
+  `Operation not permitted` in the three real helper/server IPC process tests;
+  the missing-environment case passed. This is an execution-environment denial,
+  not a product skip or pass, so the complete gate is rerun with socket access
+  rather than weakening or faking those integration tests.
+- **Final repository gates pass without exclusions:** With real local socket
+  access, `cargo test --locked --workspace`, strict all-target Clippy, formatting,
+  the product-journey ShellCheck, qualification-matrix validation, architecture
+  contracts, orchestration contracts, and `git diff --check` all passed. No
+  test, lint, or contract exception was added for this slice.
 
 ## AI disclosure
 
