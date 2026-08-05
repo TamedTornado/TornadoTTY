@@ -6023,6 +6023,12 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   `66a787fd2df3f41bd2118932c9fcaa9c0865530217c85606ac8d0861cea72620`,
   and Wayland workspace/persistence passed
   `503efde6b7b12d09eda53d414dd4bc7f0474a59f31b1263b77cabeb31f2d2935`.
+- **Public receipt correction:** Issue comments on #4 and #16 correctly named
+  abbreviated commit `412001b` but accidentally attached an invented expanded
+  hash. Immediate follow-up comments preserve the publication mistake and give
+  the authoritative commit
+  `412001b03aded98e850937cae38817025a2862bc`; no evidence or issue history was
+  silently rewritten.
 - **Remaining limitation:** This does not claim complete pane-layout parity.
   Direct draggable dividers, Resize Pane Left/Right/Up/Down, cell-based minimum
   sizes, cross-window moves, and source top/bottom cross-worklane focus remain
