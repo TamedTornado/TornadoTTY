@@ -1,9 +1,53 @@
 use zentty_core::{
-    ClosePaneOutcome, PaneRecipe, SessionRestoreEnvelope, WorklaneColor, WorkspaceState,
-    WorkspaceStateImportError,
+    AgentEvent, AgentTarget, AuthenticatedAgentEvent, ClosePaneOutcome, PaneRecipe,
+    SessionRestoreEnvelope, WorklaneColor, WorkspaceState, WorkspaceStateImportError,
 };
 
 const V3_ENVELOPE: &[u8] = include_bytes!("fixtures/session-restore-v3.json");
+
+#[test]
+fn active_supported_agents_produce_restorable_per_pane_drafts() {
+    let envelope = SessionRestoreEnvelope::from_json(V3_ENVELOPE).unwrap();
+    let mut state = WorkspaceState::from_window_recipe(&envelope.workspace.windows[0]).unwrap();
+    let event = |pane_id: &str, payload: &[u8]| AuthenticatedAgentEvent {
+        target: AgentTarget::new("window-main", "worklane-main", pane_id),
+        pane_token: format!("token-{pane_id}"),
+        event: AgentEvent::parse(payload).unwrap(),
+    };
+    state.apply_agent_event(
+        event(
+            "pane-agent",
+            br#"{"version":1,"event":"session.start","agent":{"name":"Codex","pid":4242},"session":{"id":"session-codex"}}"#,
+        ),
+        10,
+    );
+    state.apply_agent_event(
+        event(
+            "pane-shell",
+            br#"{"version":1,"event":"session.start","agent":{"name":"Claude Code","pid":4343},"session":{"id":"123e4567-e89b-12d3-a456-426614174000"}}"#,
+        ),
+        11,
+    );
+
+    let drafts = state.agent_restore_drafts();
+    assert_eq!(drafts.len(), 2);
+    assert_eq!(drafts[0].pane_id, "pane-agent");
+    assert_eq!(
+        drafts[0].resume_command().as_deref(),
+        Some("codex resume session-codex")
+    );
+    assert_eq!(drafts[0].tracked_pid, 4242);
+    assert_eq!(drafts[0].working_directory.as_deref(), Some("/tmp/project"));
+    assert_eq!(
+        drafts[0].agent_launch_snapshot.as_ref().unwrap().arguments,
+        ["codex", "resume", "session-codex"]
+    );
+    assert_eq!(drafts[1].pane_id, "pane-shell");
+    assert_eq!(
+        drafts[1].resume_command().as_deref(),
+        Some("claude --resume 123e4567-e89b-12d3-a456-426614174000")
+    );
+}
 
 #[test]
 fn worklane_commands_preserve_order_selection_and_source_title_semantics() {

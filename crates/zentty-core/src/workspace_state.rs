@@ -1444,6 +1444,52 @@ impl WorkspaceState {
         self.agent_statuses.apply(event, now);
     }
 
+    /// Captures source-compatible restore drafts for active supported agents.
+    ///
+    /// Invalid or unsupported sessions are excluded rather than persisted as
+    /// shell commands. Pane traversal order makes the snapshot deterministic.
+    #[must_use]
+    pub fn agent_restore_drafts(&self) -> Vec<PaneRestoreDraft> {
+        self.worklanes
+            .iter()
+            .flat_map(|worklane| &worklane.columns)
+            .flat_map(|column| &column.panes)
+            .filter_map(|pane| {
+                let status = self.agent_statuses.status_for_pane(&pane.id)?;
+                let arguments = if status.agent_name.eq_ignore_ascii_case("codex") {
+                    vec![
+                        "codex".to_owned(),
+                        "resume".to_owned(),
+                        status.session_id.clone(),
+                    ]
+                } else if status.agent_name.eq_ignore_ascii_case("claude")
+                    || status.agent_name.eq_ignore_ascii_case("claude code")
+                {
+                    vec![
+                        "claude".to_owned(),
+                        "--resume".to_owned(),
+                        status.session_id.clone(),
+                    ]
+                } else {
+                    return None;
+                };
+                let draft = PaneRestoreDraft {
+                    pane_id: pane.id.clone(),
+                    kind: RestoreDraftKind::AgentResume,
+                    tool_name: status.agent_name.clone(),
+                    session_id: status.session_id.clone(),
+                    working_directory: pane.working_directory.clone(),
+                    tracked_pid: status.tracked_pid.unwrap_or_default(),
+                    agent_launch_snapshot: Some(AgentLaunchSnapshot {
+                        arguments,
+                        environment: None,
+                    }),
+                };
+                draft.resume_command().is_some().then_some(draft)
+            })
+            .collect()
+    }
+
     fn close_pane_at_with_capture(
         &mut self,
         pane_id: &str,
@@ -1830,6 +1876,7 @@ use std::error::Error;
 use std::fmt;
 
 use crate::{
-    AgentStatusStore, AuthenticatedAgentEvent, ColumnRecipe, PaneAgentStatus, PaneRecipe,
-    PaneReference, WindowRecipe, WorklaneRecipe, pane_focus_history::PaneFocusHistory,
+    AgentLaunchSnapshot, AgentStatusStore, AuthenticatedAgentEvent, ColumnRecipe, PaneAgentStatus,
+    PaneRecipe, PaneReference, PaneRestoreDraft, RestoreDraftKind, WindowRecipe, WorklaneRecipe,
+    pane_focus_history::PaneFocusHistory,
 };

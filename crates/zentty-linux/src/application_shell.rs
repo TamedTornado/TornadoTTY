@@ -8,8 +8,8 @@ use gtk::prelude::*;
 use gtk::{gdk, gio};
 use zentty_core::{
     ClosePaneOutcome, ColumnRecipe, CommandPaletteItem, PaneLayoutPolicy, PaneRecipe,
-    PaneReference, PaneRightInsertionBehavior, SidebarWidthPreference, WindowRecipe, WorklaneColor,
-    WorklaneRecipe, WorkspaceState,
+    PaneReference, PaneRestoreDraft, PaneRightInsertionBehavior, SidebarWidthPreference,
+    WindowRecipe, WorklaneColor, WorklaneRecipe, WorkspaceState,
 };
 use zentty_ghostty::{GhosttyRuntime, GhosttySurface, SurfaceConfig};
 
@@ -103,6 +103,7 @@ pub(crate) struct ApplicationShell {
     focus_controllers: BTreeMap<String, gtk::EventControllerFocus>,
     runtime: GhosttyRuntime,
     command: Option<String>,
+    restored_pane_commands: BTreeMap<String, String>,
     main_loop: glib::MainLoop,
     live_children: Rc<Cell<usize>>,
     quit_after_last_terminal_exit: bool,
@@ -148,6 +149,7 @@ impl ApplicationShell {
         quit_after_last_terminal_exit: bool,
         main_loop: &glib::MainLoop,
         restored_window: Option<WindowRecipe>,
+        restored_drafts: Vec<PaneRestoreDraft>,
     ) -> Result<Rc<RefCell<Self>>, String> {
         sidebar::install_styles();
         pane_controls::install_styles();
@@ -166,25 +168,16 @@ impl ApplicationShell {
         } = build_shell_widgets();
 
         let window_template = restored_window.unwrap_or_else(default_window_recipe);
+        let requested_restore_drafts = restored_drafts.len();
+        let restored_pane_commands = restored_pane_commands(&window_template, restored_drafts);
+        eprintln!(
+            "zentty-linux: agent-restore-drafts requested={requested_restore_drafts} accepted={}",
+            restored_pane_commands.len()
+        );
         let state = WorkspaceState::from_window_recipe(&window_template)
             .map_err(|error| format!("workspace restore failed: {error}"))?;
         let agent_runtime = AgentRuntime::start(window_template.id.clone())?;
-        let next_worklane_number = next_numeric_identity(
-            state
-                .worklanes()
-                .iter()
-                .map(|worklane| worklane.id.as_str()),
-            "worklane-",
-        );
-        let next_pane_number = next_numeric_identity(
-            state
-                .worklanes()
-                .iter()
-                .flat_map(|worklane| &worklane.columns)
-                .flat_map(|column| &column.panes)
-                .map(|pane| pane.id.as_str()),
-            "pane-",
-        );
+        let (next_worklane_number, next_pane_number) = next_workspace_identities(&state);
         let initial_pane_ids = workspace_pane_ids(&state);
         let preferred_sidebar_width = Rc::new(Cell::new(SidebarWidthPreference::DEFAULT));
         let adjusting_sidebar_width = Rc::new(Cell::new(false));
@@ -205,6 +198,7 @@ impl ApplicationShell {
             focus_controllers: BTreeMap::new(),
             runtime: runtime.clone(),
             command,
+            restored_pane_commands,
             main_loop: main_loop.clone(),
             live_children: Rc::new(Cell::new(0)),
             quit_after_last_terminal_exit,
@@ -290,6 +284,10 @@ impl ApplicationShell {
 
     pub(crate) fn window_recipe(&self) -> WindowRecipe {
         self.state.to_window_recipe(&self.window_template)
+    }
+
+    pub(crate) fn agent_restore_drafts(&self) -> Vec<PaneRestoreDraft> {
+        self.state.agent_restore_drafts()
     }
 
     pub(crate) fn present(&self) {
@@ -395,6 +393,36 @@ impl ApplicationShell {
                 return glib::ControlFlow::Break;
             }
             step.set(step.get() + 1);
+            glib::ControlFlow::Continue
+        });
+    }
+
+    pub(crate) fn schedule_agent_restore(shell: &Rc<RefCell<Self>>, quit_when_ready: bool) {
+        let weak = Rc::downgrade(shell);
+        let attempts = Rc::new(Cell::new(0_u16));
+        glib::timeout_add_local(Duration::from_millis(20), move || {
+            let Some(shell) = weak.upgrade() else {
+                return glib::ControlFlow::Break;
+            };
+            let drafts = shell.borrow().agent_restore_drafts();
+            if !drafts.is_empty() {
+                eprintln!(
+                    "zentty-linux: agent-restore-scenario verified drafts={}",
+                    drafts.len()
+                );
+                if quit_when_ready {
+                    shell.borrow().main_loop.quit();
+                }
+                return glib::ControlFlow::Break;
+            }
+            attempts.set(attempts.get() + 1);
+            if attempts.get() >= 250 {
+                eprintln!("zentty-linux: agent-restore-scenario failed=no-authenticated-session");
+                if quit_when_ready {
+                    shell.borrow().main_loop.quit();
+                }
+                return glib::ControlFlow::Break;
+            }
             glib::ControlFlow::Continue
         });
     }
@@ -2494,8 +2522,14 @@ impl ApplicationShell {
         let environment = self
             .agent_runtime
             .environment_for_pane(&worklane_id, pane_id)?;
+        let restored_command = self.restored_pane_commands.get(pane_id).cloned();
+        if self.command.is_none()
+            && let Some(command) = &restored_command
+        {
+            eprintln!("zentty-linux: agent-resume-launch pane={pane_id} command={command}");
+        }
         Ok(SurfaceConfig {
-            command: self.command.clone(),
+            command: self.command.clone().or(restored_command),
             title: zentty_core::PRODUCT_NAME.to_owned(),
             working_directory: self
                 .state
@@ -3563,6 +3597,50 @@ fn workspace_pane_ids(state: &WorkspaceState) -> Vec<String> {
         .flat_map(|worklane| &worklane.columns)
         .flat_map(|column| &column.panes)
         .map(|pane| pane.id.clone())
+        .collect()
+}
+
+fn next_workspace_identities(state: &WorkspaceState) -> (usize, usize) {
+    let next_worklane = next_numeric_identity(
+        state
+            .worklanes()
+            .iter()
+            .map(|worklane| worklane.id.as_str()),
+        "worklane-",
+    );
+    let next_pane = next_numeric_identity(
+        state
+            .worklanes()
+            .iter()
+            .flat_map(|worklane| &worklane.columns)
+            .flat_map(|column| &column.panes)
+            .map(|pane| pane.id.as_str()),
+        "pane-",
+    );
+    (next_worklane, next_pane)
+}
+
+fn window_contains_pane(window: &WindowRecipe, pane_id: &str) -> bool {
+    window
+        .worklanes
+        .iter()
+        .flat_map(|worklane| &worklane.columns)
+        .flat_map(|column| &column.panes)
+        .any(|pane| pane.id == pane_id)
+}
+
+fn restored_pane_commands(
+    window: &WindowRecipe,
+    drafts: Vec<PaneRestoreDraft>,
+) -> BTreeMap<String, String> {
+    drafts
+        .into_iter()
+        .filter_map(|draft| {
+            draft
+                .resume_command()
+                .map(|command| (draft.pane_id, command))
+        })
+        .filter(|(pane_id, _)| window_contains_pane(window, pane_id))
         .collect()
 }
 

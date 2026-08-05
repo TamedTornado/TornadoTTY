@@ -8,6 +8,12 @@ backend="${GDK_BACKEND:-}"
 fixture="${repo_root}/crates/zentty-core/tests/fixtures/session-restore-v3.json"
 
 fail() {
+    [[ -z "${first_log:-}" || ! -f "${first_log}" ]] || cat "${first_log}" >&2
+    [[ -z "${second_log:-}" || ! -f "${second_log}" ]] || cat "${second_log}" >&2
+    [[ -z "${agent_receipt:-}" || ! -f "${agent_receipt}" ]] || {
+        echo "rust-session-restore: agent receipt:" >&2
+        cat "${agent_receipt}" >&2
+    }
     echo "rust-session-restore: error: $*" >&2
     exit 1
 }
@@ -39,7 +45,32 @@ layer_directory="${ghostty_root}/${layer_runpath}"
 state_dir="$(mktemp -d)"
 first_log="$(mktemp)"
 second_log="$(mktemp)"
-trap 'rm -rf -- "${state_dir}"; rm -f -- "${first_log}" "${second_log}"' EXIT
+fake_bin="$(mktemp -d)"
+agent_receipt="$(mktemp)"
+trap 'rm -rf -- "${state_dir}" "${fake_bin}"; rm -f -- "${first_log}" "${second_log}" "${agent_receipt}"' EXIT
+cat >"${fake_bin}/codex" <<'SCRIPT'
+#!/usr/bin/env bash
+set -euo pipefail
+has_hook=false
+resume_session=""
+arguments=("$@")
+for ((index = 0; index < ${#arguments[@]}; index++)); do
+    [[ "${arguments[index]}" == hooks.SessionStart=* ]] && has_hook=true
+    if [[ "${arguments[index]}" == resume && $((index + 1)) -lt ${#arguments[@]} ]]; then
+        resume_session="${arguments[index + 1]}"
+    fi
+done
+${has_hook} || { echo "fake-codex: ephemeral SessionStart hook missing" >&2; exit 64; }
+[[ "${resume_session}" == session-codex ]] || {
+    echo "fake-codex: expected resume session-codex, got ${resume_session:-none}" >&2
+    exit 64
+}
+printf 'resume:%s\n' "${resume_session}" >>"${ZENTTY_RESTORE_AGENT_RECEIPT}"
+printf '%s' '{"hook_event_name":"SessionStart","session_id":"session-codex"}' |
+    "${ZENTTY_CLI_BIN}" ipc agent-event --adapter=codex session-start
+sleep 30
+SCRIPT
+chmod 700 "${fake_bin}/codex"
 jq '
     .workspace.windows[0].worklanes[0].nextPaneNumber = 4 |
     .workspace.windows[0].worklanes[0].columns += [{
@@ -60,12 +91,13 @@ run_product() {
     local receipt="$1"
     set +e
     timeout --foreground --kill-after=2s 20s \
-        env LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+        env PATH="${fake_bin}:${PATH}" \
+        ZENTTY_RESTORE_AGENT_RECEIPT="${agent_receipt}" \
+        LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
         "${product}" \
         --state-directory "${state_dir}" \
-        --command 'sleep 30' \
-        --exercise-workspace-actions \
-        --quit-after-workspace-actions >"${receipt}" 2>&1
+        --exercise-agent-restore \
+        --quit-after-agent-restore >"${receipt}" 2>&1
     local status=$?
     set -e
     if (( status != 0 )); then
@@ -75,6 +107,10 @@ run_product() {
 }
 
 run_product "${first_log}"
+[[ "$(grep -Fc 'resume:session-codex' "${agent_receipt}" || true)" -eq 1 ]] ||
+    fail "first launch did not execute exactly one restored Codex session"
+grep -F 'zentty-linux: agent-resume-launch pane=pane-agent command=codex resume session-codex' \
+    "${first_log}" >/dev/null || fail "first launch did not route the resume command to its saved pane"
 
 snapshot="${state_dir}/restore-snapshot.json"
 lifecycle="${state_dir}/restore-lifecycle.json"
@@ -94,28 +130,29 @@ jq -e '
         .columns[1].width == 320 and
         .columns[1].paneHeights == [700] and
         .columns[1].panes[0].id == "pane-review") and
-    (.workspace.windows[0].worklanes[] | select(.id == "worklane-1") |
-        .title == "Frontend" and .color == "red") and
     (.restoreDraftWindows[0].paneDrafts[0].sessionID == "session-codex")
 ' "${snapshot}" >/dev/null || fail "persisted source envelope lost metadata or product mutations"
 jq -e '.cleanExit == true' "${lifecycle}" >/dev/null || fail "clean lifecycle marker was not written"
 
 run_product "${second_log}"
-grep -F 'zentty-linux: topology=worklane-main[title=Nimbu API,color=blue]:pane-agent,pane-shell,pane-review|worklane-1[title=Frontend,color=red]:' \
+resume_count="$(grep -Fc 'resume:session-codex' "${agent_receipt}" || true)"
+[[ "${resume_count}" -eq 2 ]] ||
+    fail "relaunch did not execute exactly one fresh restored Codex session (cumulative count=${resume_count})"
+grep -F 'zentty-linux: agent-resume-launch pane=pane-agent command=codex resume session-codex' \
+    "${second_log}" >/dev/null || fail "relaunch did not route the resume command to its saved pane"
+grep -F 'zentty-linux: topology=worklane-main[title=Nimbu API,color=blue]:pane-agent,pane-shell,pane-review' \
     "${second_log}" >/dev/null || {
     cat "${second_log}" >&2
     fail "relaunch did not render the exact saved worklane and pane identities before mutation"
 }
-grep -F 'zentty-linux: geometry=worklane-main:column-left[pane-agent,pane-shell],column-right[pane-review]|worklane-1:' \
+grep -F 'zentty-linux: geometry=worklane-main:column-left[pane-agent,pane-shell],column-right[pane-review]' \
     "${second_log}" >/dev/null || {
     cat "${second_log}" >&2
     fail "relaunch did not render the exact saved horizontal and vertical pane geometry"
 }
-grep -F 'zentty-linux: sidebar-card id=worklane-main panes=3 active=false title=Some("Nimbu API")' \
+grep -F 'zentty-linux: sidebar-card id=worklane-main panes=3 active=true title=Some("Nimbu API")' \
     "${second_log}" >/dev/null || fail "relaunch did not render restored source sidebar metadata"
-grep -F 'zentty-linux: worklane-visual id=worklane-main selection=inactive tint=blue-inactive' \
-    "${second_log}" >/dev/null || fail "inactive worklane identity color was not visually subdued"
-grep -F 'zentty-linux: worklane-visual id=worklane-1 selection=active tint=red-active' \
-    "${second_log}" >/dev/null || fail "active worklane selection did not strengthen its identity tint"
+grep -F 'zentty-linux: agent-restore-scenario verified drafts=1' \
+    "${second_log}" >/dev/null || fail "relaunch did not authenticate the resumed agent session"
 
-echo "Rust session restore passed: ${backend}, source-envelope=preserved, relaunch=real"
+echo "Rust session restore passed: ${backend}, source-envelope=preserved, agent-resume=real-process, relaunch=real"

@@ -265,6 +265,30 @@ pub struct PaneRestoreDraft {
     pub agent_launch_snapshot: Option<AgentLaunchSnapshot>,
 }
 
+impl PaneRestoreDraft {
+    /// Builds the source-compatible resume command for an implemented agent.
+    ///
+    /// Session identifiers are validated before they enter a command string;
+    /// unsupported tools and malformed identifiers are intentionally ignored.
+    #[must_use]
+    pub fn resume_command(&self) -> Option<String> {
+        if self.kind != RestoreDraftKind::AgentResume {
+            return None;
+        }
+        if self.tool_name.eq_ignore_ascii_case("codex") {
+            let session_id = validated_codex_session_id(&self.session_id)?;
+            return Some(format!("codex resume {session_id}"));
+        }
+        if self.tool_name.eq_ignore_ascii_case("claude")
+            || self.tool_name.eq_ignore_ascii_case("claude code")
+        {
+            let session_id = validated_uuid(&self.session_id)?;
+            return Some(format!("claude --resume {session_id}"));
+        }
+        None
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum RestoreDraftKind {
@@ -277,6 +301,34 @@ pub struct AgentLaunchSnapshot {
     pub arguments: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub environment: Option<BTreeMap<String, String>>,
+}
+
+fn validated_codex_session_id(value: &str) -> Option<String> {
+    let mut characters = value.chars();
+    if !characters.next()?.is_ascii_alphanumeric()
+        || !characters.all(|character| {
+            character.is_ascii_alphanumeric() || character == '_' || character == '-'
+        })
+    {
+        return None;
+    }
+    Some(value.to_owned())
+}
+
+fn validated_uuid(value: &str) -> Option<String> {
+    let bytes = value.as_bytes();
+    if bytes.len() != 36
+        || [8, 13, 18, 23]
+            .into_iter()
+            .any(|index| bytes[index] != b'-')
+        || bytes
+            .iter()
+            .enumerate()
+            .any(|(index, byte)| ![8, 13, 18, 23].contains(&index) && !byte.is_ascii_hexdigit())
+    {
+        return None;
+    }
+    Some(value.to_ascii_lowercase())
 }
 
 fn meaningful_legacy_title(raw_title: Option<String>) -> Option<String> {

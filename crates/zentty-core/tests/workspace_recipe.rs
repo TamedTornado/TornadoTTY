@@ -43,6 +43,34 @@ fn source_compatible_v3_envelope_preserves_recipe_and_separate_agent_drafts() {
 }
 
 #[test]
+fn supported_agent_restore_commands_are_source_compatible_and_injection_safe() {
+    let mut envelope = SessionRestoreEnvelope::from_json(V3_ENVELOPE).unwrap();
+    let draft = &mut envelope.restore_draft_windows[0].pane_drafts[0];
+
+    assert_eq!(
+        draft.resume_command().as_deref(),
+        Some("codex resume session-codex")
+    );
+
+    draft.tool_name = "Claude Code".to_owned();
+    draft.session_id = "123E4567-E89B-12D3-A456-426614174000".to_owned();
+    assert_eq!(
+        draft.resume_command().as_deref(),
+        Some("claude --resume 123e4567-e89b-12d3-a456-426614174000")
+    );
+
+    draft.session_id = "$(touch /tmp/zentty-must-not-run)".to_owned();
+    assert_eq!(draft.resume_command(), None);
+    draft.tool_name = "Codex".to_owned();
+    assert_eq!(draft.resume_command(), None);
+    draft.session_id = "-starts-with-option".to_owned();
+    assert_eq!(draft.resume_command(), None);
+    draft.tool_name = "Unsupported Agent".to_owned();
+    draft.session_id = "safe-session".to_owned();
+    assert_eq!(draft.resume_command(), None);
+}
+
+#[test]
 fn unversioned_migration_only_sanitizes_legacy_generated_titles() {
     let recipe = WorkspaceRecipe::from_json(UNVERSIONED_RECIPE).unwrap();
     assert_eq!(recipe.schema_version, None);

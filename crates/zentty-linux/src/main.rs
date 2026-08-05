@@ -23,7 +23,8 @@ use std::process::ExitCode;
 use std::rc::Rc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use zentty_core::{
-    SaveReason, SessionRestoreEnvelope, SessionRestoreStore, WindowRecipe, WorkspaceRecipe,
+    PaneRestoreDraft, SaveReason, SessionRestoreDraftWindow, SessionRestoreEnvelope,
+    SessionRestoreStore, WindowRecipe, WorkspaceRecipe,
 };
 use zentty_ghostty::{AsyncBackend, GhosttyRuntime};
 
@@ -42,6 +43,7 @@ struct Options {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Scenario {
     WorkspaceActions,
+    AgentRestore,
     PaneSearch,
     PaneLayoutActions,
     ClosedPaneRestore,
@@ -52,6 +54,7 @@ enum ExitPolicy {
     Manual,
     LastTerminal,
     WorkspaceActions,
+    AgentRestore,
     PaneSearch,
     PaneLayoutActions,
     ClosedPaneRestore,
@@ -98,6 +101,9 @@ fn parse_options() -> Result<Options, String> {
             "--exercise-workspace-actions" => {
                 options.scenario = Some(Scenario::WorkspaceActions);
             }
+            "--exercise-agent-restore" => {
+                options.scenario = Some(Scenario::AgentRestore);
+            }
             "--exercise-pane-search" => {
                 options.scenario = Some(Scenario::PaneSearch);
             }
@@ -109,6 +115,9 @@ fn parse_options() -> Result<Options, String> {
             }
             "--quit-after-workspace-actions" => {
                 options.exit_policy = ExitPolicy::WorkspaceActions;
+            }
+            "--quit-after-agent-restore" => {
+                options.exit_policy = ExitPolicy::AgentRestore;
             }
             "--quit-after-pane-search" => {
                 options.exit_policy = ExitPolicy::PaneSearch;
@@ -171,6 +180,11 @@ fn validate_scenario_exit_policy(options: &Options) -> Result<(), String> {
             "--quit-after-workspace-actions requires --exercise-workspace-actions".to_owned(),
         );
     }
+    if options.exit_policy == ExitPolicy::AgentRestore
+        && options.scenario != Some(Scenario::AgentRestore)
+    {
+        return Err("--quit-after-agent-restore requires --exercise-agent-restore".to_owned());
+    }
     if options.exit_policy == ExitPolicy::PaneSearch
         && options.scenario != Some(Scenario::PaneSearch)
     {
@@ -198,7 +212,8 @@ fn run_lifecycle_cycle(
     options: &Options,
     cycle: usize,
     restored_window: Option<WindowRecipe>,
-) -> Result<WindowRecipe, String> {
+    restored_drafts: Vec<PaneRestoreDraft>,
+) -> Result<(WindowRecipe, Vec<PaneRestoreDraft>), String> {
     let main_loop = glib::MainLoop::new(None, false);
     let shell = ApplicationShell::new(
         runtime,
@@ -207,6 +222,7 @@ fn run_lifecycle_cycle(
         options.exit_policy == ExitPolicy::LastTerminal,
         &main_loop,
         restored_window,
+        restored_drafts,
     )?;
     let close_loop = main_loop.clone();
     shell.borrow().window().connect_close_request(move |_| {
@@ -263,6 +279,10 @@ fn run_lifecycle_cycle(
             options.exit_policy == ExitPolicy::WorkspaceActions,
             options.exit_policy == ExitPolicy::LastTerminal,
         ),
+        Some(Scenario::AgentRestore) => ApplicationShell::schedule_agent_restore(
+            &shell,
+            options.exit_policy == ExitPolicy::AgentRestore,
+        ),
         Some(Scenario::PaneSearch) => ApplicationShell::schedule_pane_search_actions(
             &shell,
             options.exit_policy == ExitPolicy::PaneSearch,
@@ -281,6 +301,7 @@ fn run_lifecycle_cycle(
 
     tick_source.remove();
     let window_recipe = shell.borrow().window_recipe();
+    let agent_restore_drafts = shell.borrow().agent_restore_drafts();
     shell.borrow_mut().detach_and_close();
     settle_gtk_teardown();
     shell.borrow_mut().release_surfaces()?;
@@ -295,7 +316,7 @@ fn run_lifecycle_cycle(
         ));
     }
     eprintln!("zentty-linux: lifecycle-cycle={cycle} complete");
-    Ok(window_recipe)
+    Ok((window_recipe, agent_restore_drafts))
 }
 
 fn settle_gtk_teardown() {
@@ -323,13 +344,22 @@ fn run() -> Result<(), String> {
     let launch_decision = store
         .prepare_for_launch(options.restore_enabled)
         .map_err(|error| error.to_string())?;
-    let restored_drafts = launch_decision.as_ref().map_or_else(Vec::new, |decision| {
-        decision.envelope.restore_draft_windows.clone()
-    });
     let mut restored_window = launch_decision
         .as_ref()
         .map(|decision| select_restored_window(&decision.envelope.workspace))
         .transpose()?;
+    let mut restored_drafts = restored_window.as_ref().map_or_else(Vec::new, |window| {
+        launch_decision
+            .as_ref()
+            .and_then(|decision| {
+                decision
+                    .envelope
+                    .restore_draft_windows
+                    .iter()
+                    .find(|drafts| drafts.window_id == window.id)
+            })
+            .map_or_else(Vec::new, |drafts| drafts.pane_drafts.clone())
+    });
     store
         .mark_launch_started(reference_timestamp())
         .map_err(|error| error.to_string())?;
@@ -339,19 +369,26 @@ fn run() -> Result<(), String> {
     gtk::init().map_err(|error| format!("GTK initialization failed: {error}"))?;
 
     for cycle in 1..=options.lifecycle_cycles {
-        restored_window = Some(run_lifecycle_cycle(
-            &runtime,
-            &options,
-            cycle,
-            restored_window,
-        )?);
+        let (window, drafts) =
+            run_lifecycle_cycle(&runtime, &options, cycle, restored_window, restored_drafts)?;
+        restored_window = Some(window);
+        restored_drafts = drafts;
     }
     drop(runtime);
     let window = restored_window.expect("positive lifecycle cycle count");
+    let window_id = window.id.clone();
     let workspace = WorkspaceRecipe {
         schema_version: Some(WorkspaceRecipe::CURRENT_SCHEMA_VERSION),
         active_window_id: Some(window.id.clone()),
         windows: vec![window],
+    };
+    let restore_draft_windows = if restored_drafts.is_empty() {
+        Vec::new()
+    } else {
+        vec![SessionRestoreDraftWindow {
+            window_id,
+            pane_drafts: restored_drafts,
+        }]
     };
     store
         .save_snapshot(&SessionRestoreEnvelope {
@@ -359,7 +396,7 @@ fn run() -> Result<(), String> {
             saved_at: reference_timestamp(),
             reason: SaveReason::CleanExit,
             workspace,
-            restore_draft_windows: restored_drafts,
+            restore_draft_windows,
         })
         .map_err(|error| error.to_string())?;
     store

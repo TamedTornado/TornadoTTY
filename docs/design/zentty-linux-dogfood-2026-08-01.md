@@ -6372,6 +6372,94 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   errors/contexts. Final report SHA-256:
   `086e2b549275102478efed5ebcc853d6b3992cb5264beaaa4d01b1012c60cece`.
 
+### 2026-08-05 — Agent session resume and restore
+
+- **Discovery:** Linux decoded and preserved the source `restoreDraftWindows`
+  schema but never consumed a pane draft when creating a terminal. It also
+  copied the old draft list back on clean shutdown rather than deriving fresh
+  drafts from authenticated live agent state. The existing restore test only
+  asserted JSON preservation while a global `sleep 30` command silently
+  replaced every pane command, so it could not detect either missing product
+  behavior.
+- **Test-first contract:** Focused tests now require source-compatible Codex
+  and Claude resume verbs, UUID normalization for Claude, source-compatible
+  Codex opaque session identifiers, and rejection of option/injection-shaped
+  or unsupported inputs. A workspace-state contract requires authenticated
+  active agent sessions to produce deterministic per-pane drafts containing
+  session, PID, CWD, and launch arguments. These tests were written before the
+  product wiring and passed after the minimal core implementation.
+- **Real-product test repair:** The controlled session-restore scenario is
+  being changed to remove the global command override. A deterministic Codex
+  stand-in will be reached through the staged wrapper and real PTY, assert the
+  injected ephemeral hooks and exact `resume session-codex` arguments, emit a
+  real authenticated session-start event, and remain alive while GTK exits.
+  The scenario must prove exactly one pane-scoped resume on both the initial
+  restore and the next relaunch; JSON preservation alone is no longer accepted
+  as evidence of agent restoration.
+- **Current limitation:** Only the already implemented initial agent tools,
+  Codex and Claude Code, are eligible. The broader source agent catalog remains
+  separately inventoried and unimplemented. No qualification claim or pass is
+  recorded until the real product scenario and all presently executable cells
+  have been rerun.
+- **Compile failure and repair:** The first full workspace test compile caught
+  that the composition root moved the final window recipe into the workspace
+  before reusing its ID for the draft window. The ID is now captured before
+  that ownership transfer; no cloning of the full recipe or relaxation of the
+  test was used.
+- **Environment and lint failures:** The first full suite attempt inside the
+  filesystem sandbox was denied real Unix-socket creation with `EPERM`; the
+  same socket tests passed outside that restriction, so environmental absence
+  was not converted into a pass. Strict Clippy then rejected the enlarged GTK
+  constructor at 109 lines. Resume-command selection was extracted into a
+  focused pure helper instead of adding a lint suppression; a second 101-line
+  result led to extracting existing identity derivation as well. The staged
+  build then reached its pinned Ghostty provenance check but sandbox DNS could
+  not resolve GitHub, so the build must be rerun with network access rather
+  than recording an environmental pass.
+- **First X11 product failure:** The strengthened scenario proved the initial
+  resume but its relaunch receipt count was not the expected two. The original
+  harness deleted both product logs before showing them, obscuring whether the
+  second result was missing or duplicated. Failure handling now emits both
+  logs and the agent receipt before cleanup; the scenario remains failed until
+  the product cause is identified and repaired.
+- **Failure diagnosis and scope correction:** Both restores accepted the saved
+  pane command, but the second run restored a different worklane as active.
+  GTK did not realize the inactive pane's Ghostty widget before the generic
+  workspace-mutation scenario exited, so its child process never started. This
+  exposed a real remaining parity gap: a never-visited inactive restored lane
+  does not yet eagerly start its background agent. It also showed that the
+  generic workspace-actions scenario was the wrong acceptance harness for
+  agent restoration and produced thousands of unrelated UI events.
+- **Harness repair and passing evidence:** A bounded agent-restore scenario now
+  waits for a real authenticated resumed session and exits without mutating
+  source workspace state. The staged wrapper, real shell/PTY, deterministic
+  Codex process, real helper, private Unix socket, reducer, persistence store,
+  clean relaunch, and second resume all execute. Controlled X11 session
+  `322a2ba9f3267a3e2b5a9179c19deb707961a1c75a3b597d00976c33d5ca9680`
+  first exposed the inactive-lane problem; the corrected focused scenario
+  passed in X11 session
+  `dc4daa3190449f9524c12c2ec056029e23c5b122a581ad2af8b85d33a88434cc`
+  and Wayland session
+  `a3ae2818c592f92a865dd674b913396a2210c94f2bcf04924c8406deecdd95db`.
+- **Remaining limitation:** Active-pane Codex restore is implemented and the
+  Claude command/validation path is contract-tested. Eager background startup
+  for agent panes in restored inactive worklanes remains unimplemented and
+  prevents any claim of sustained multi-worklane agent parity. A dedicated
+  product fix and scenario are required rather than weakening this limitation.
+- **Final qualification receipt:** After diff review, focused inventory and
+  architecture validation, the complete authoritative runner passed every
+  presently executable cell. Declared totals remain **PASS=52, FAIL=0,
+  BLOCKED=5, XFAIL=1, NOT_IMPLEMENTED=51**. Implemented-local, product-boundary,
+  and qualification-host-retired claims passed; release and full-Linux claims
+  correctly did not. Machine-summary SHA-256:
+  `d4673bdb2b3c0d14b6e664ecb5702428aa7514fcbe5d044f891ce1f7f90d76ef`.
+  Debug IBus-focus is **PASS with reviewed suppressions**, not unsuppressed
+  clean: raw 427 errors/contexts with 6,240 direct and 41,461 indirect definite
+  bytes; post-suppression zero errors/contexts/definite bytes with 427
+  suppressed errors/contexts. Reviewed report SHA-256:
+  `ffba6efcd826edc120889fb566d510e1e0e0fc1c22eb10724d71ccdbf050ee65`.
+  ReleaseSafe Valgrind remains XFAIL and no suppression was broadened.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were
