@@ -215,14 +215,24 @@ fn claude_reuses_session(arguments: &[String]) -> bool {
 }
 
 fn codex_plan(executable_path: String, arguments: &[String], cli_path: &str) -> AgentLaunchPlan {
-    let mut planned = codex_hook_config_arguments(cli_path);
-    planned.extend([
+    let mut session_config = codex_hook_config_arguments(cli_path);
+    session_config.extend([
         "-c".to_owned(),
         "tui.notification_method=osc9".to_owned(),
         "-c".to_owned(),
         r#"tui.terminal_title=["status","spinner","project","task-progress"]"#.to_owned(),
     ]);
-    planned.extend_from_slice(arguments);
+    let mut planned = arguments.to_vec();
+    if let Some(index) = planned
+        .iter()
+        .position(|argument| matches!(argument.as_str(), "exec" | "fork" | "resume" | "review"))
+    {
+        for (offset, argument) in session_config.into_iter().enumerate() {
+            planned.insert(index + 1 + offset, argument);
+        }
+    } else {
+        planned.splice(0..0, session_config);
+    }
     AgentLaunchPlan {
         executable_path,
         arguments: planned,
@@ -285,7 +295,7 @@ fn codex_hook_config_arguments(cli_path: &str) -> Vec<String> {
     let mut states = Vec::new();
     for spec in CODEX_HOOKS {
         let command = format!(
-            "\"{}\" ipc agent-event --adapter=codex {} || echo '{{}}'",
+            "\"{}\" ipc agent-event --adapter=codex {} || true; echo '{{}}'",
             shell_escape_double_quoted(cli_path),
             spec.argument
         );

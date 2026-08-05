@@ -80,6 +80,15 @@ fn codex_plan_injects_all_source_hook_events_and_trust_state() {
                 .iter()
                 .any(|value| value.starts_with(&format!("hooks.{event}=")))
         );
+        let hook = plan
+            .arguments
+            .iter()
+            .find(|value| value.starts_with(&format!("hooks.{event}=")))
+            .unwrap();
+        assert!(
+            hook.contains("|| true; echo '{}'"),
+            "Codex requires every successful hook to return a JSON object: {hook}"
+        );
     }
     let state = plan
         .arguments
@@ -93,6 +102,28 @@ fn codex_plan_injects_all_source_hook_events_and_trust_state() {
             .any(|value| value == "features.hooks=true")
     );
     assert_eq!(plan.arguments.last().unwrap(), "--help");
+}
+
+#[test]
+fn codex_subcommands_receive_session_config_in_their_own_argument_scope() {
+    for arguments in [
+        vec!["exec".to_owned(), "prompt".to_owned()],
+        vec!["resume".to_owned(), "session-a".to_owned()],
+    ] {
+        let plan = build_agent_launch_plan(
+            AgentLaunchTool::Codex,
+            "/real/codex",
+            &arguments,
+            "/stage/bin/zentty",
+            "unused",
+            &BTreeMap::new(),
+        )
+        .unwrap();
+        assert_eq!(plan.arguments[0], arguments[0]);
+        assert_eq!(plan.arguments[1], "-c");
+        assert_eq!(plan.arguments[2], "features.hooks=true");
+        assert_eq!(plan.arguments.last(), arguments.last());
+    }
 }
 
 #[test]

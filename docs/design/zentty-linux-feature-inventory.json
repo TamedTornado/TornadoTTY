@@ -654,7 +654,7 @@
       "linux_owner_issue": 7,
       "implementation_status": "PARTIAL",
       "focused_tests": ["crates/zentty-core/tests/agent_consent.rs", "crates/zentty-core/tests/agent_launch.rs", "crates/zentty-agent-ipc/tests/launch_cli.rs"],
-      "product_scenarios": ["linux/tests/rust-agent-ipc", "linux/tests/rust-session-restore", "linux/tests/staged-bundle"],
+      "product_scenarios": ["linux/tests/rust-agent-ipc", "linux/tests/installed-codex-integration", "linux/tests/rust-session-restore", "linux/tests/staged-bundle"],
       "test_plan": "Use real agent binaries or deterministic local stand-ins, real shell wrappers and files, and control only the external model response.",
       "alternative_or_blocker": null
     },
@@ -670,7 +670,7 @@
       "linux_owner_issue": 7,
       "implementation_status": "PARTIAL",
       "focused_tests": ["crates/zentty-core/tests/agent_status.rs", "crates/zentty-core/tests/pane_token_registry.rs", "crates/zentty-agent-ipc/tests/helper_cli.rs", "crates/zentty-agent-ipc/tests/unix_transport.rs"],
-      "product_scenarios": ["linux/tests/rust-agent-ipc", "linux/tests/rust-session-restore"],
+      "product_scenarios": ["linux/tests/rust-agent-ipc", "linux/tests/installed-codex-integration", "linux/tests/rust-session-restore"],
       "test_plan": "Run a real terminal child, wrapper or hook, Unix socket, protocol adapter, reducer, and sidebar; control only the external agent response.",
       "alternative_or_blocker": null
     },
@@ -686,7 +686,7 @@
       "linux_owner_issue": 7,
       "implementation_status": "PARTIAL",
       "focused_tests": ["crates/zentty-core/tests/agent_adapters.rs", "crates/zentty-core/tests/agent_launch.rs", "crates/zentty-agent-ipc/tests/launch_cli.rs"],
-      "product_scenarios": ["linux/tests/rust-agent-ipc", "linux/tests/rust-session-restore"],
+      "product_scenarios": ["linux/tests/rust-agent-ipc", "linux/tests/installed-codex-integration", "linux/tests/rust-session-restore"],
       "test_plan": "Use the real Codex CLI, PTY, notify or transcript files, IPC, reducer, and UI while replacing only the model call when determinism requires it.",
       "alternative_or_blocker": null
     },

@@ -6460,6 +6460,112 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   `ffba6efcd826edc120889fb566d510e1e0e0fc1c22eb10724d71ccdbf050ee65`.
   ReleaseSafe Valgrind remains XFAIL and no suppression was broadened.
 
+### 2026-08-05 — Installed Codex integration gap and hook-output repair
+
+- **Operator-visible failure:** A manual relaunch did not show Codex in any
+  pane. The product logged `agent-restore-drafts requested=0 accepted=0`, so
+  that run had no saved authenticated Codex session to restore. Asking the
+  operator to infer integration correctness from that state was not a valid QA
+  handoff; natural agent launch and session capture must be exercised by the
+  automated product harness first.
+- **Insufficient prior evidence:** The deterministic Codex stand-in verified
+  injected arguments and then emitted its own event. The installed-binary check
+  exercised `--version`. Neither ran the installed Codex hook engine, so both
+  could pass while the real CLI integration failed.
+- **Real-CLI reproduction:** Installed Codex `0.146.0` was launched through the
+  staged wrapper, real Ghostty PTY, real GTK product, and controlled X11. A
+  no-auth custom provider pointed exclusively at loopback so no agent/model call
+  was made. The real Codex process received all generated hook and trust-state
+  arguments and created a session, but Zentty received no authenticated event.
+  Controlled X11 sessions
+  `3410e11916270942a51c5289eb1ab8f6742fa9060e9d6050492048e9c266b2db`
+  and `f07bc82a9805abced700d4182217db72d0191e5b36953ce2f7280c431af1065d`
+  reproduced the failure.
+- **Eliminated hypotheses:** Codex `hooks/list` reported the generated
+  session-flag key and SHA-256 as `trusted`; the key/hash implementation had not
+  drifted. A separately captured current `SessionStart` payload contained the
+  expected `hook_event_name`, UUID `session_id`, CWD, transcript path, model,
+  permission mode, and startup source. Presence-only evidence also proved the
+  hook child inherited the pane socket and token variables. No secret values
+  were recorded.
+- **First diagnosis and insufficient repair:** Codex command hooks require a
+  JSON object on standard output even when the command succeeds. Zentty's
+  helper printed nothing on success and emitted `{}` only after failure. A
+  focused contract test first failed on that exact command. Making every hook
+  emit `{}` repaired that protocol violation, but controlled X11 session
+  `2010ffc8d931e4aa40cb210ef4d9c26b10ece0dae24b8ec111b946367c6472e4`
+  still received no event. The failed real-product rerun prevented an
+  output-only explanation from being recorded as the final diagnosis.
+- **Root cause and second test-first repair:** Current Codex scoped the `-c`
+  overrides for the reproduced non-interactive `exec` session to that
+  subcommand. Zentty prepended hook configuration before `exec`, where the
+  process could receive the arguments but the subcommand's session did not
+  discover them.
+  An otherwise identical `SessionStart` override placed after `exec` delivered
+  the real event in controlled X11 sessions
+  `44d5981e2f515fed8bc65eb395d123bb376f136697e8c74c2c767fa524dac7ae`
+  and `b961648548955862f31355c942872f182a877c269e29fcca5405df91cd880ce4`.
+  A new focused test first failed with `-c` at argument zero. Codex's documented
+  agent-starting subcommand forms now receive Zentty's session config in their
+  subcommand option scope; ordinary interactive launches continue to receive it
+  at the front. The trusted hash remains derived from the exact repaired
+  command.
+- **The first real-binary test was still too shallow:** The first passing
+  installed-Codex scenario authenticated a real `codex exec` startup and
+  persisted its UUID, but stopped before relaunching the draft. Strengthening
+  it to perform the clean relaunch immediately exposed that a non-interactive
+  `exec` session is not the user-facing TUI session type restored by top-level
+  `codex resume`. Treating that receipt as proof that the operator's visible
+  Codex TUI had restarted would have repeated the original QA mistake.
+- **Controlled first-run prerequisite:** An isolated `CODEX_HOME` initially
+  stopped at Codex's project-trust prompt, so no session hook could fire. The
+  scenario now trusts only the checked-out test project in its disposable
+  config. It does not weaken the user's real trust policy or use a hook-trust
+  bypass. Capturing the same launch in an isolated tmux PTY proved the prompt,
+  rather than GTK, Ghostty, or IPC, was the blocker.
+- **Real interactive restore evidence:** The final scenario starts installed
+  Codex `0.146.0` as an actual interactive TUI with a prompt, authenticates its
+  real `SessionStart` through the staged wrapper/helper/socket, persists the
+  exact UUID-scoped `codex resume` draft, shuts Zentty down cleanly, starts the
+  staged product again, and observes both the exact resume launch and Codex's
+  `Ready | zentty` terminal title. The second process remains interactive until
+  the harness's bounded shutdown; it does not merely execute `--version` or a
+  fake agent. Controlled X11 session
+  `198354ab45b8c899b2a27ad3bc059139017b0f5e9602d1be01c97a2596f4b0a5`
+  passed standalone, and authoritative matrix session
+  `436862e99949aa7c75cad06297f655f877c47413c11daccf39567dc45af8de4e`
+  passed the combined Rust-agent and installed-Codex cell.
+- **Current Codex lifecycle uncertainty:** An idle resumed Codex TUI rendered
+  the saved conversation and `Ready` state but did not emit another
+  authenticated `SessionStart` within Zentty's five-second agent-event wait.
+  The harness therefore proves the restored TUI directly instead of converting
+  absence of that event into a pass. Whether current Codex intentionally defers
+  the resume hook until the next user turn remains uncertain; the preserved
+  draft prevents that missing idle event from deleting the session at clean
+  shutdown.
+- **Static-analysis repair:** Strict Clippy rejected the first insertion
+  implementation's empty `index + 1..index + 1` range under
+  `clippy::range_plus_one`. The repaired loop performs explicit ordered
+  insertion, remains small and readable, and the strict workspace gate passes.
+- **Final qualification receipt:** The rebuilt staged product, complete Rust
+  workspace suite, strict Clippy, architecture/inventory validators, matrix
+  runner tests, every presently executable matrix cell, and the suppression
+  audit pass. Declared totals remain **PASS=52, FAIL=0, BLOCKED=5, XFAIL=1,
+  NOT_IMPLEMENTED=51**. Implemented-local, product-boundary, and retired-host
+  claims pass; release and full-Linux qualification correctly remain false.
+  Machine-summary SHA-256:
+  `e8617669981245d1d6cf518476fc96c29521f90f8a270f12cb4dc9401086062b`.
+  Debug IBus-focus is **PASS with reviewed suppressions**, not unsuppressed
+  clean: raw 427 errors/contexts with 6,240 direct and 41,461 indirect definite
+  bytes; post-suppression zero errors/contexts/definite bytes with 427
+  suppressed errors/contexts. Reviewed report SHA-256:
+  `395d094a2581ed076ede1c241718f61cb6600782829a5eb6900fe5e208561584`;
+  raw receipt SHA-256:
+  `f1bbf0d9538f792d017403a1a883cad3ea0917b1ecfb0f31cd2593939c3d4378`;
+  suppressed receipt SHA-256:
+  `cc4e27369fbd53767ee6334029cfcf17cbc7bb562342f2222a9904ca30c9f079`.
+  ReleaseSafe Valgrind remains XFAIL and no suppression was broadened.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were

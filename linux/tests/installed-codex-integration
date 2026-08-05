@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
+backend="${GDK_BACKEND:-}"
+state_directory=""
+codex_home_directory=""
+first_log=""
+second_log=""
+
+fail() {
+    [[ -z "${first_log}" || ! -f "${first_log}" ]] || cat "${first_log}" >&2
+    [[ -z "${second_log}" || ! -f "${second_log}" ]] || cat "${second_log}" >&2
+    echo "installed-codex-integration: error: $*" >&2
+    exit 1
+}
+
+cleanup() {
+    [[ -z "${first_log}" ]] || rm -f -- "${first_log}"
+    [[ -z "${second_log}" ]] || rm -f -- "${second_log}"
+    [[ -z "${state_directory}" ]] || rm -rf -- "${state_directory}"
+    [[ -z "${codex_home_directory}" ]] || rm -rf -- "${codex_home_directory}"
+}
+trap cleanup EXIT
+
+[[ "${backend}" == x11 ]] || fail "GDK_BACKEND must be x11"
+[[ "${ZENTTY_NESTED_X11_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+    fail "installed Codex integration must run through linux/tests/nested-x11"
+for dependency in codex grep jq mktemp; do
+    command -v "${dependency}" >/dev/null || fail "${dependency} is required"
+done
+[[ -x "${product}" ]] || fail "staged product is not built: ${product}"
+
+codex_version="$(codex --version 2>/dev/null)"
+[[ "${codex_version}" == "codex-cli 0.146.0" ]] ||
+    fail "review the installed Codex contract before accepting version: ${codex_version}"
+
+state_directory="$(mktemp -d)"
+codex_home_directory="$(mktemp -d)"
+first_log="$(mktemp)"
+second_log="$(mktemp)"
+model_base_url="http://127.0.0.1:1/v1"
+cat >"${codex_home_directory}/config.toml" <<EOF
+model_provider = "zentty-test"
+model = "gpt-5.6-sol"
+
+[model_providers.zentty-test]
+name = "Zentty Test"
+base_url = "${model_base_url}"
+env_key = "ZENTTY_TEST_MODEL_KEY"
+wire_api = "responses"
+
+[projects."${repo_root}"]
+trust_level = "trusted"
+EOF
+command="codex 'Zentty installed Codex integration probe'"
+
+run_product() {
+    local receipt="$1"
+    shift
+    set +e
+    timeout --foreground --kill-after=2s 20s \
+        env CODEX_HOME="${codex_home_directory}" ZENTTY_TEST_MODEL_KEY=not-a-real-key \
+        "${product}" \
+        --state-directory "${state_directory}" \
+        --exercise-agent-restore \
+        --quit-after-agent-restore \
+        "$@" >"${receipt}" 2>&1
+    local status=$?
+    set -e
+    ((status == 0)) || fail "staged product exited ${status}"
+}
+
+run_product "${first_log}" --command "${command}" --no-session-restore
+
+grep -F 'zentty-linux: agent-restore-scenario verified drafts=1' "${first_log}" >/dev/null ||
+    fail "real Codex did not deliver an authenticated SessionStart event"
+grep -F 'zentty-linux: sidebar-agent-status pane=pane-1 text="Codex · Running" attention=false' \
+    "${first_log}" >/dev/null || fail "real Codex events were not reduced into the product sidebar"
+session_id="$(jq -er '
+    .restoreDraftWindows[0].paneDrafts[0] as $draft |
+    select(
+        ($draft.toolName == "Codex") and
+        ($draft.sessionID | test("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")) and
+        ($draft.agentLaunchSnapshot.arguments == ["codex", "resume", $draft.sessionID])
+    ) |
+    $draft.sessionID
+' "${state_directory}/restore-snapshot.json")" ||
+    fail "real Codex session was not persisted as an exact pane-scoped resume draft"
+
+set +e
+timeout --foreground --kill-after=2s 8s \
+    env CODEX_HOME="${codex_home_directory}" ZENTTY_TEST_MODEL_KEY=not-a-real-key \
+    "${product}" --state-directory "${state_directory}" >"${second_log}" 2>&1
+second_status=$?
+set -e
+((second_status == 124)) || fail "resumed product did not remain interactive until the bounded test shutdown (status=${second_status})"
+grep -F "zentty-linux: agent-resume-launch pane=pane-1 command=codex resume ${session_id}" \
+    "${second_log}" >/dev/null || fail "relaunch did not route the real Codex resume command to its saved pane"
+grep -F 'zentty-linux: title=Ready | zentty' "${second_log}" >/dev/null ||
+    fail "the restored Codex TUI did not render its ready state in the real terminal"
+
+echo "Installed Codex integration passed: ${backend}, version=${codex_version#codex-cli }, model-endpoint=controlled-loopback-no-response, wrapper=staged, pty=real, hook=real, ipc=real, relaunch=real-resume-tui"

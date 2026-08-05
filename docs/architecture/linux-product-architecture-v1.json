@@ -574,7 +574,7 @@
       "async_backend": "default",
       "terminals": "single",
       "environment_profile": "nested-x11-v1",
-      "command": "GDK_BACKEND=x11 linux/tests/rust-agent-ipc",
+      "command": "GDK_BACKEND=x11 linux/tests/rust-agent-ipc && GDK_BACKEND=x11 linux/tests/installed-codex-integration",
       "authoritative": false
     },
     {
