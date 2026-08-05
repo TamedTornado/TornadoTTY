@@ -7023,6 +7023,37 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   75 mutations in 21 seconds: 71 caught, four compiler-rejected as unviable,
   zero missed, and zero timed out. Its `outcomes.json` SHA-256 is
   `a1199c601b9b28366717c4833327037dda1481b07c7388a5d8e70b855e04c5b7`.
+- **Versioned tmux payloads began test-first:** The new protocol contract first
+  failed to compile because `TmuxCompatRequest`, `TmuxCompatReply`, and
+  `ProtocolError` did not exist. The implementation now canonicalizes source
+  commands and bounds argument count, per-argument and aggregate bytes,
+  optional stdin, stdout, and failure diagnostics before Phase 2 can expose
+  them through the existing socket. Exact ceilings and one-over failures are
+  independently observed, and successful/failed replies map only to the
+  source CLI's exit statuses zero and one.
+- **Strict Clippy caught verbose exit mapping:** The first warning-denied gate
+  rejected an `if` expression used to convert reply success into exit status.
+  It was replaced with the direct `u8::from(!is_ok)` conversion before the
+  protocol slice continued; no lint was allowed or disabled.
+- **First payload mutation run exposed nine observations:** Of 44 viable
+  protocol mutations, 35 were caught and nine survived: four arithmetic
+  changes to byte-limit constants, two exact-ceiling comparisons for error
+  fields, two version accessors that could only return the already-required
+  version one, and the diagnostic formatter. Tests now pin every public byte
+  ceiling, accept exact-size diagnostics, and observe all error text. The
+  redundant stored version fields/accessors were removed rather than retaining
+  state that cannot vary after construction; the version remains an explicit
+  public protocol constant and incoming versions remain validated. The first
+  compile after that refactor found one remaining test call to the removed
+  reply accessor; it was changed to assert the public version constant like the
+  other payload assertions.
+- **Payload mutation repair verified:** The safe wrapper rerun exercised 46
+  protocol mutations in 13 seconds: 40 caught, six compiler-rejected as
+  unviable, zero missed, and zero timed out. The `outcomes.json` SHA-256 is
+  `858117a6f00fb77c34aeefb78552acb1f312b1e240ac1c91081c2f3d1eeef6d0`.
+  With invocation, options, commands, targets, keys, formats, state transitions,
+  bounded request data, and bounded result/exit mapping now covered, the pure
+  Phase 1 boundary is complete. No socket or product handler is claimed yet.
 
 ## AI disclosure
 

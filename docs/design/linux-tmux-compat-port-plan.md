@@ -1,6 +1,6 @@
 # Linux tmux-compatibility facade port plan
 
-- **Status:** Phase 0 complete; Phase 1 pure Rust core in progress
+- **Status:** Phases 0–1 complete; Phase 2 authenticated IPC next
 - **Date:** 2026-08-05
 - **Owner:** [#14 — Linux tmux compatibility and agent-team IPC](https://github.com/TamedTornado/zentty/issues/14)
 - **Parent:** [#1 — production-quality Zentty Linux port](https://github.com/TamedTornado/zentty/issues/1)
@@ -63,6 +63,8 @@ without reading the Rust implementation. The validator must fail when a source
 command disappears.
 
 ### Phase 1 — Pure Rust compatibility core, tests first
+
+**Completed 2026-08-05.**
 
 Create a focused `zentty-tmux-compat` library crate. It owns only pure logic:
 
