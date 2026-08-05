@@ -6861,6 +6861,89 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   release-qualification gap, not a pass and not a claim that the underlying
   ReleaseSafe defect disappeared.
 
+### DOGFOOD-2026-08-05-TMUX-COMPAT-PLAN: source contract precedes the Rust port
+
+- Issue #24 was closed only after its checklist was reconciled with commit
+  `b083182dff9f289cfa61afb2b43d55c825b48188` and the authoritative X11,
+  Wayland, and qualification receipts were posted.
+- The next roadmap owner is issue #14. Source inspection confirms Zentty does
+  not contain a background tmux daemon or second PTY multiplexer: the bundled
+  `tmux` script re-execs the Zentty CLI, which sends an authenticated request
+  to the running application and translates a bounded tmux vocabulary into
+  existing worklane, pane, terminal-input, capture, and layout operations.
+- The Swift handler currently recognizes 23 canonical command groups with
+  aliases, including explicit `popup` failure, several intentional no-ops,
+  and a default path that silently succeeds for unknown commands. Those
+  dispositions must be frozen before Rust implementation so unsupported
+  behavior cannot disappear or broaden accidentally.
+- The source store uses only an in-process `NSLock` around an atomic file write,
+  and source `wait-for` uses signal files directly in `/tmp`. Those mechanisms
+  are insufficient for separate Linux CLI/application processes and private
+  runtime ownership. The port plan classifies cross-process locking, private
+  runtime paths, substitution/symlink defense, stale cleanup, and bounded input
+  as Linux security necessities rather than new product features.
+- The implementation order is now fixed in
+  [`linux-tmux-compat-port-plan.md`](linux-tmux-compat-port-plan.md):
+  machine-readable source contract and failing validators first, pure Rust
+  parser/renderer/store tests second, extension of the existing authenticated
+  Agent IPC transport third, ordinary product action handlers fourth, and real
+  staged/installed X11 and Wayland agent-team journeys last. No code
+  implementation began before this record and plan were present.
+- **Validator failure and repair:** The first negative fixture test correctly
+  showed that using `comm -3`'s exit status cannot detect a nonempty
+  difference: `comm` returns success after reporting differences. Both the
+  source-vocabulary and fixture-reference checks now assert that `comm` output
+  is empty. The previously escaping untracked fixture is retained as a
+  mandatory negative regression case.
+- **Test-first Rust boundary:** The new pure compatibility crate was first
+  introduced with fixture-driven public API tests and no implementation. The
+  locked run initially stopped because the workspace lockfile did not yet name
+  the new local package; the offline unlocked run then failed at compile time
+  on every intentionally absent compatibility API. Only after that red receipt
+  were command canonicalization, invocation parsing, send-key translation,
+  format rendering, pane-target scoping, and team-store transitions added.
+- **First mutation run stopped, not normalized:** Pinned `cargo-mutants 27.1.0`
+  generated 142 mutations. The initial run exposed missing assertions for
+  error text, most named keys, eight of nine short format tokens, nested
+  branches, and parser boundaries. Several index-arithmetic mutations also
+  converted the renderer into an infinite loop, consuming the full per-mutant
+  timeout. The run was interrupted rather than accepting timeouts as useful
+  coverage. The renderer now follows the source's finite iterator structure,
+  and the missing source cases are explicit golden fixtures/tests before the
+  mutation gate is rerun.
+- **Static-analysis correction:** Strict Clippy rejected separate end-of-input
+  and doubled-hash renderer arms because both append one literal hash. The
+  cases are now a single explicit pattern without a lint exemption.
+- **Second mutation receipt:** After the finite renderer refactor, 116 mutants
+  completed in 45 seconds rather than expanding into repeated 30-second hangs:
+  105 were killed, five were unviable, four survived, and two index-loop
+  mutations timed out. The surviving changes identified missing nested-comma
+  formatting and intermediate team-removal assertions. Invocation parsing is
+  now iterator-based so arithmetic mutations cannot create a zero-progress
+  loop; nested conditional commas and post-removal active/column state are
+  asserted before the next run.
+- **Third mutation receipt:** The iterator-based run completed 104 mutants in
+  76 seconds with 98 killed, five unviable, no timeout, and one survivor. The
+  survivor changed nested-brace depth while still producing the chosen branch
+  because the fixture ended at the outer brace. A suffix was added after the
+  nested conditional so consuming past the correct outer boundary is now
+  observable; no production code was weakened or excluded.
+- **Final focused mutation gate:** The repaired suite killed all 99 viable
+  mutants; the remaining five generated changes did not compile. There were
+  zero survivors and zero timeouts across 104 candidates. The run completed in
+  four minutes without hidden retry or aggregate qualification. Generated
+  scratch logs are ignored rather than committed; the ephemeral
+  `outcomes.json` SHA-256 was
+  `73b73796563f1aa85936aa368a16e758ec510c3b32bd0edbd74aa9913ffa4181`.
+- **Workspace gate environment:** The first complete workspace run inside the
+  filesystem sandbox failed three existing helper CLI tests at real Unix-socket
+  bind with `Operation not permitted`. The identical full workspace suite run
+  outside that sandbox passed, including real helper subprocess/socket tests.
+  Strict all-target Clippy, formatting, the architecture contract, the source
+  contract and all negative mutations, ShellCheck, and diff hygiene also pass.
+  This was an execution-environment restriction, not converted into a product
+  pass or repaired with a fake transport.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were

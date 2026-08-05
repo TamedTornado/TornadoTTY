@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+contract="${ZENTTY_TMUX_CONTRACT:-${repo_root}/docs/design/zentty-tmux-compat-source-contract-v1.json}"
+fixtures="${ZENTTY_TMUX_FIXTURES:-${repo_root}/linux/tests/fixtures/tmux-compat-source-v1.json}"
+swift_handler="${repo_root}/Zentty/AppState/Agent/TmuxCompatIPCHandler.swift"
+
+fail() {
+    echo "tmux-compat-source-contract: $*" >&2
+    exit 1
+}
+
+for dependency in jq git sed grep sort comm mktemp; do
+    command -v "${dependency}" >/dev/null || fail "missing dependency: ${dependency}"
+done
+[[ -f "${contract}" && ! -L "${contract}" ]] || fail "contract is missing or unsafe"
+[[ -f "${fixtures}" && ! -L "${fixtures}" ]] || fail "fixture file is missing or unsafe"
+jq -e . "${contract}" >/dev/null || fail "contract is not valid JSON"
+jq -e . "${fixtures}" >/dev/null || fail "fixture file is not valid JSON"
+
+jq -e '
+    (keys | sort) == [
+      "cli","commands","dispositions","fixture_file","format","schema_version",
+      "scope","shim","source_files","store","unknown_command"
+    ] and
+    .schema_version == 1 and
+    (.scope | type == "string" and length > 0) and
+    .dispositions == ["handled","intentional_noop","explicit_failure","silent_unknown_success"] and
+    (.source_files | type == "array" and length >= 10) and
+    all(.source_files[];
+      (keys | sort) == ["git_blob","path"] and
+      (.path | type == "string" and length > 0) and
+      (.git_blob | test("^[0-9a-f]{40}$"))) and
+    (.commands | type == "array" and length == 23) and
+    all(.commands[];
+      (keys | sort) == [
+        "aliases","boolean_options","disposition","effect","fixture_ids","name",
+        "source","stdin","target_scope","value_options"
+      ] and
+      (.name | test("^[a-z][a-z0-9-]*$")) and
+      (.aliases | type == "array" and all(.[]; test("^[a-z][a-z0-9-]*$"))) and
+      (.disposition == "handled" or .disposition == "intentional_noop" or
+       .disposition == "explicit_failure") and
+      (.value_options | type == "array" and length == (unique | length)) and
+      (.boolean_options | type == "array" and length == (unique | length)) and
+      ((.value_options + .boolean_options) | length == (unique | length)) and
+      (.stdin | type == "boolean") and
+      (.target_scope == "instance" or .target_scope == "window" or
+       .target_scope == "worklane" or .target_scope == "pane") and
+      (.effect | type == "string" and length > 0) and
+      (.fixture_ids | type == "array" and length == (unique | length)) and
+      (.source | type == "string" and length > 0)) and
+    .unknown_command.disposition == "silent_unknown_success" and
+    (.unknown_command.linux_decision | test("Linux must fail unknown commands")) and
+    .fixture_file == "linux/tests/fixtures/tmux-compat-source-v1.json"
+' "${contract}" >/dev/null || fail "contract structure or enumerations are invalid"
+
+jq -e '
+    .schema_version == 1 and
+    (.fixtures | type == "array" and length >= 20) and
+    all(.fixtures[];
+      (.id | type == "string" and test("^[a-z][a-z0-9.-]*$")) and
+      (.kind == "invocation" or .kind == "send_keys" or .kind == "target" or
+       .kind == "scope" or .kind == "format" or .kind == "store_transition" or
+       .kind == "layout" or .kind == "output" or .kind == "buffer" or
+       .kind == "capture" or .kind == "wait" or .kind == "failure")) and
+    ([.fixtures[].id] | length == (unique | length))
+' "${fixtures}" >/dev/null || fail "fixture structure, kind, or identity is invalid"
+
+while IFS=$'\t' read -r path expected_blob; do
+    [[ "${path}" != /* && "${path}" != *".."* ]] || fail "unsafe source path: ${path}"
+    full_path="${repo_root}/${path}"
+    [[ -f "${full_path}" && ! -L "${full_path}" ]] || fail "missing source evidence: ${path}"
+    actual_blob="$(git -C "${repo_root}" hash-object -- "${path}")"
+    [[ "${actual_blob}" == "${expected_blob}" ]] ||
+        fail "source evidence changed without contract review: ${path}"
+done < <(jq -r '.source_files[] | [.path,.git_blob] | @tsv' "${contract}")
+
+contract_sources="$(mktemp)"
+contract_words="$(mktemp)"
+source_words="$(mktemp)"
+referenced_fixtures="$(mktemp)"
+fixture_ids="$(mktemp)"
+trap 'rm -f -- "${contract_sources}" "${contract_words}" "${source_words}" "${referenced_fixtures}" "${fixture_ids}"' EXIT
+
+jq -r '.source_files[].path' "${contract}" | sort -u >"${contract_sources}"
+while IFS= read -r source; do
+    grep -Fx "${source}" "${contract_sources}" >/dev/null ||
+        fail "command references untracked source evidence: ${source}"
+done < <(jq -r '.commands[].source, .unknown_command.source, .format.source, .store.source, .cli.source, .shim.source' "${contract}" | sort -u)
+
+jq -r '.commands[] | .name, .aliases[]' "${contract}" | sort >"${contract_words}"
+[[ "$(wc -l <"${contract_words}")" -eq "$(sort -u "${contract_words}" | wc -l)" ]] ||
+    fail "canonical command or alias collision"
+sed -n '/switch subcommand {/,/default:/p' "${swift_handler}" |
+    sed -n 's/^[[:space:]]*case \(.*\):$/\1/p' |
+    grep -o '"[^"]*"' | tr -d '"' | sort >"${source_words}"
+diff="$(comm -3 "${source_words}" "${contract_words}")"
+if [[ -n "${diff}" ]]; then
+    printf 'tmux-compat-source-contract: source command vocabulary drifted:\n%s\n' "${diff}" >&2
+    exit 1
+fi
+
+{
+    jq -r '.commands[].fixture_ids[], .unknown_command.fixture_ids[], .format.fixture_ids[]' "${contract}"
+} | sort -u >"${referenced_fixtures}"
+jq -r '.fixtures[].id' "${fixtures}" | sort -u >"${fixture_ids}"
+diff="$(comm -3 "${referenced_fixtures}" "${fixture_ids}")"
+if [[ -n "${diff}" ]]; then
+    printf 'tmux-compat-source-contract: fixture references are incomplete or untracked:\n%s\n' "${diff}" >&2
+    exit 1
+fi
+
+echo "Tmux compatibility source contract passed: commands=23 fixtures=$(wc -l <"${fixture_ids}") source-files=$(wc -l <"${contract_sources}")"

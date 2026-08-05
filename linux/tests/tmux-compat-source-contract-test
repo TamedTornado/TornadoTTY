@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+validator="${repo_root}/linux/tests/tmux-compat-source-contract"
+source_contract="${repo_root}/docs/design/zentty-tmux-compat-source-contract-v1.json"
+source_fixtures="${repo_root}/linux/tests/fixtures/tmux-compat-source-v1.json"
+temp_dir="$(mktemp -d)"
+trap 'rm -rf -- "${temp_dir}"' EXIT
+
+expect_failure() {
+    local name="$1"
+    local contract="$2"
+    local fixtures="$3"
+    if ZENTTY_TMUX_CONTRACT="${contract}" ZENTTY_TMUX_FIXTURES="${fixtures}" \
+        "${validator}" >"${temp_dir}/${name}.log" 2>&1; then
+        echo "tmux-compat-source-contract-test: ${name} unexpectedly passed" >&2
+        exit 1
+    fi
+}
+
+"${validator}" >/dev/null
+
+jq '(.commands[] | select(.name == "send-keys") | .aliases) += ["splitw"]' \
+    "${source_contract}" >"${temp_dir}/duplicate-alias.json"
+expect_failure duplicate-alias "${temp_dir}/duplicate-alias.json" "${source_fixtures}"
+
+jq '(.commands[] | select(.name == "send-keys") | .disposition) = "probably"' \
+    "${source_contract}" >"${temp_dir}/unknown-disposition.json"
+expect_failure unknown-disposition "${temp_dir}/unknown-disposition.json" "${source_fixtures}"
+
+jq 'del(.commands[] | select(.name == "capture-pane"))' \
+    "${source_contract}" >"${temp_dir}/missing-command.json"
+expect_failure missing-command "${temp_dir}/missing-command.json" "${source_fixtures}"
+
+jq '(.source_files[] | select(.path == "ZenttyCLI/TmuxCompatCommand.swift") | .git_blob) = ("0" * 40)' \
+    "${source_contract}" >"${temp_dir}/stale-source.json"
+expect_failure stale-source "${temp_dir}/stale-source.json" "${source_fixtures}"
+
+jq '.fixtures += [{id:"untracked.fixture",kind:"failure"}]' \
+    "${source_fixtures}" >"${temp_dir}/untracked-fixture.json"
+expect_failure untracked-fixture "${source_contract}" "${temp_dir}/untracked-fixture.json"
+
+jq '(.commands[] | select(.name == "split-window") | .value_options) += ["-P"]' \
+    "${source_contract}" >"${temp_dir}/option-kind-collision.json"
+expect_failure option-kind-collision "${temp_dir}/option-kind-collision.json" "${source_fixtures}"
+
+echo "Tmux compatibility source contract negative tests passed"

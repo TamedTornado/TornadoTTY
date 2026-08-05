@@ -44,6 +44,7 @@ jq -e '
     ([.workspace_crates[].name] | sort) == ([
         "zentty-core",
         "zentty-agent-ipc",
+        "zentty-tmux-compat",
         "zentty-ghostty-sys",
         "zentty-ghostty",
         "zentty-linux",
@@ -63,6 +64,11 @@ jq -e '
     ) and
     (.workspace_crates[] | select(.name == "zentty-agent-ipc") |
         .workspace_dependencies == ["zentty-core"] and .unsafe_policy == "forbid") and
+    (.workspace_crates[] | select(.name == "zentty-tmux-compat") | . as $crate |
+        $crate.workspace_dependencies == [] and
+        $crate.unsafe_policy == "forbid" and
+        all("gtk", "ghostty-ffi", "socket-transport", "product-ui-state", "pty-ownership";
+            . as $item | $crate.forbidden_dependency_classes | index($item) != null)) and
     (.workspace_crates[] | select(.name == "zentty-ghostty-sys") |
         .workspace_dependencies == [] and .unsafe_policy == "ffi-declarations-only") and
     (.workspace_crates[] | select(.name == "zentty-ghostty") |

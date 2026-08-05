@@ -807,3 +807,11 @@ dependencies = [
  "zentty-core",
  "zentty-ghostty",
 ]
+
+[[package]]
+name = "zentty-tmux-compat"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]

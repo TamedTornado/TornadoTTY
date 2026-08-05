@@ -55,6 +55,27 @@
       "unsafe_policy": "forbid"
     },
     {
+      "name": "zentty-tmux-compat",
+      "kind": "pure-library",
+      "shipped": true,
+      "responsibilities": [
+        "tmux-command-and-alias-canonicalization",
+        "tmux-invocation-and-send-key-parsing",
+        "tmux-format-rendering",
+        "pane-target-scoping",
+        "agent-team-store-transitions"
+      ],
+      "workspace_dependencies": [],
+      "forbidden_dependency_classes": [
+        "gtk",
+        "ghostty-ffi",
+        "socket-transport",
+        "product-ui-state",
+        "pty-ownership"
+      ],
+      "unsafe_policy": "forbid"
+    },
+    {
       "name": "zentty-ghostty-sys",
       "kind": "raw-ffi-library",
       "shipped": true,

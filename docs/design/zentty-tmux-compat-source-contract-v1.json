@@ -1,0 +1,92 @@
+{
+  "schema_version": 1,
+  "scope": "Source-derived tmux compatibility facade used by Claude Code agent teams; not a general tmux implementation.",
+  "source_files": [
+    {"path":"ZenttyResources/bin/tmux-shim/tmux","git_blob":"58f18d88dd7871a04fcdc050b00d48e2fbe9831e"},
+    {"path":"ZenttyCLI/TmuxCompatCommand.swift","git_blob":"a3a539a46b81d77936caad5257e5ff69b25f2728"},
+    {"path":"Zentty/AppState/Agent/TmuxCompatArguments.swift","git_blob":"629500d32a9b9cfb842b2052ed02df0583440c22"},
+    {"path":"Zentty/AppState/Agent/TmuxCompatIPCHandler.swift","git_blob":"27976cd666da78195c71ea26ff8e89fe46c40442"},
+    {"path":"Zentty/AppState/Agent/TmuxFormatRenderer.swift","git_blob":"41722412497bdd43c8b1cce0fc311e991a4afcc6"},
+    {"path":"Zentty/AppState/Agent/TmuxCompatStore.swift","git_blob":"937110ba9bcf48cd486c1eb677ea38299601fd21"},
+    {"path":"Zentty/AppState/Agent/AgentIPCProtocol.swift","git_blob":"031c86c28cde12d0454de6c4f43ece248112fd52"},
+    {"path":"Zentty/AppState/Agent/AgentIPC.swift","git_blob":"b81da4058b5b6dcd23cc487e84031cf2c3937fd7"},
+    {"path":"Zentty/AppState/WorklaneSessionEnvironment.swift","git_blob":"091516ff1a3a395dbaff660f71be20a0462e5254"},
+    {"path":"ZenttyLogicTests/TmuxCompatArgumentsTests.swift","git_blob":"e62af4e7cb58b7a5505f0d4caf4c9e2fe7afedfa"},
+    {"path":"ZenttyLogicTests/TmuxCompatPaneContextTests.swift","git_blob":"70ecfa281bdc2c9c15113faba998018048ed51fa"},
+    {"path":"ZenttyLogicTests/TmuxCompatStoreTests.swift","git_blob":"2efb15eb4feea6b6ca74b25a420311fec42a2309"},
+    {"path":"ZenttyLogicTests/TmuxFormatRendererTests.swift","git_blob":"c585972bfe8e419f32f30afa79359aa5aa592735"}
+  ],
+  "shim": {
+    "executable_name": "tmux",
+    "exec_contract": "${ZENTTY_CLI_BIN:-zentty} __tmux-compat \"$@\"",
+    "enabled_when": "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1, bundled shim is executable, and TMUX is unset",
+    "source": "ZenttyResources/bin/tmux-shim/tmux"
+  },
+  "cli": {
+    "hidden_subcommand": "__tmux-compat",
+    "global_value_options": ["-L", "-S", "-T", "-c", "-f"],
+    "global_boolean_options": ["-2", "-C", "-CC", "-D", "-N", "-P", "-U", "-V", "-d", "-l", "-q", "-u", "-v"],
+    "stdin_limit_bytes": 262144,
+    "required_environment": ["ZENTTY_INSTANCE_SOCKET", "ZENTTY_WINDOW_ID", "ZENTTY_WORKLANE_ID", "ZENTTY_PANE_ID", "ZENTTY_PANE_TOKEN", "ZENTTY_INSTANCE_ID"],
+    "forwarded_environment": ["ZENTTY_INSTANCE_ID", "ZENTTY_PANE_ID", "ZENTTY_PANE_TOKEN", "ZENTTY_TMUX_COMPAT_TRACE_PATH", "ZENTTY_WINDOW_ID", "ZENTTY_WORKLANE_ID"],
+    "forbidden_forwarded_environment": ["TMUX", "TMUX_PANE"],
+    "local_commands": ["wait", "wait-for"],
+    "source": "ZenttyCLI/TmuxCompatCommand.swift"
+  },
+  "dispositions": ["handled", "intentional_noop", "explicit_failure", "silent_unknown_success"],
+  "commands": [
+    {"name":"split-window","aliases":["splitw"],"disposition":"handled","value_options":["-F","-c","-l","-t"],"boolean_options":["-P","-b","-d","-h","-v"],"stdin":false,"target_scope":"pane","effect":"First team split creates a golden-ratio column after the leader; later splits stack equally below the last teammate while preserving leader focus. Optional -P output is rendered from -F.","fixture_ids":["parse.split-window-global-socket","transition.first-team-split","transition.second-team-split"],"source":"Zentty/AppState/Agent/TmuxCompatIPCHandler.swift"},
+    {"name":"send-keys","aliases":["send"],"disposition":"handled","value_options":["-N","-T","-t"],"boolean_options":["-R","-l"],"stdin":false,"target_scope":"pane","effect":"Resolve a pane target, translate named keys unless -l is present, launch a deferred pane when a single submitted command is recognized, otherwise send text to the existing terminal. The handler has a stdin fallback, but the source CLI does not read stdin for this subcommand.","fixture_ids":["send.named-keys","send.literal","target.explicit-pane"],"source":"Zentty/AppState/Agent/TmuxCompatIPCHandler.swift"},
+    {"name":"select-pane","aliases":["selectp"],"disposition":"handled","value_options":["-T","-t"],"boolean_options":["-P"],"stdin":false,"target_scope":"pane","effect":"Record the active compatibility pane and optionally set its title.","fixture_ids":["target.explicit-pane"],"source":"Zentty/AppState/Agent/TmuxCompatIPCHandler.swift"},
+    {"name":"select-window","aliases":["selectw"],"disposition":"intentional_noop","value_options":["-t"],"boolean_options":[],"stdin":false,"target_scope":"worklane","effect":"Routing has already selected the worklane; return success without another mutation.","fixture_ids":[],"source":"Zentty/AppState/Agent/TmuxCompatIPCHandler.swift"},
+    {"name":"kill-pane","aliases":["killp"],"disposition":"handled","value_options":["-t"],"boolean_options":[],"stdin":false,"target_scope":"pane","effect":"Close the resolved pane, prune team membership, and restore the recorded leader width when the final teammate is removed.","fixture_ids":["transition.kill-final-teammate"],"source":"Zentty/AppState/Agent/TmuxCompatIPCHandler.swift"},
+    {"name":"kill-window","aliases":["killw"],"disposition":"handled","value_options":["-t"],"boolean_options":[],"stdin":false,"target_scope":"worklane","effect":"Close the leader/target pane through ordinary product teardown and clear compatibility selection state.","fixture_ids":[],"source":"Zentty/AppState/Agent/TmuxCompatIPCHandler.swift"},
+    {"name":"list-panes","aliases":["lsp"],"disposition":"handled","value_options":["-F","-t"],"boolean_options":[],"stdin":false,"target_scope":"worklane","effect":"List only panes in the routed worklane using the requested or default tmux format.","fixture_ids":["format.pane-list","target.worklane-isolation"],"source":"Zentty/AppState/Agent/TmuxCompatIPCHandler.swift"},
+    {"name":"list-windows","aliases":["lsw"],"disposition":"handled","value_options":["-F","-t"],"boolean_options":[],"stdin":false,"target_scope":"window","effect":"List worklanes in only the routed Zentty window using the requested or default format.","fixture_ids":["format.window-list","target.window-isolation"],"source":"Zentty/AppState/Agent/TmuxCompatIPCHandler.swift"},
+    {"name":"display-message","aliases":["display"],"disposition":"handled","value_options":["-F","-t"],"boolean_options":["-p"],"stdin":false,"target_scope":"pane","effect":"Render a tmux format for the explicit, compatibility-active, routed, focused, or first pane in that order.","fixture_ids":["format.conditional","target.explicit-pane"],"source":"Zentty/AppState/Agent/TmuxCompatIPCHandler.swift"},
+    {"name":"rename-window","aliases":["renamew"],"disposition":"intentional_noop","value_options":["-t"],"boolean_options":[],"stdin":false,"target_scope":"worklane","effect":"Return success without changing the worklane title.","fixture_ids":[],"source":"Zentty/AppState/Agent/TmuxCompatIPCHandler.swift"},
+    {"name":"select-layout","aliases":["selectl"],"disposition":"handled","value_options":["-t"],"boolean_options":[],"stdin":false,"target_scope":"worklane","effect":"For main-vertical or even-vertical, equalize teammate heights; main-vertical also preserves the golden leader width. Other presets return success without mutation.","fixture_ids":["transition.main-vertical"],"source":"Zentty/AppState/Agent/TmuxCompatIPCHandler.swift"},
+    {"name":"resize-pane","aliases":["resizep"],"disposition":"handled","value_options":["-t","-x","-y"],"boolean_options":["-D","-L","-R","-U"],"stdin":false,"target_scope":"pane","effect":"When -x is a percentage and a team anchor exists, preserve the golden leader width instead of Claude's exact tmux width hint; other forms return success without mutation.","fixture_ids":["transition.resize-team-column"],"source":"Zentty/AppState/Agent/TmuxCompatIPCHandler.swift"},
+    {"name":"new-session","aliases":["new"],"disposition":"handled","value_options":[],"boolean_options":["-A"],"stdin":false,"target_scope":"worklane","effect":"Return the routed worklane as a tmux-style window ID; -A is diagnosed but does not fail. Other arguments are not parsed by the source handler.","fixture_ids":["output.new-session"],"source":"Zentty/AppState/Agent/TmuxCompatIPCHandler.swift"},
+    {"name":"new-window","aliases":["neww"],"disposition":"intentional_noop","value_options":[],"boolean_options":[],"stdin":false,"target_scope":"window","effect":"Return success without parsing arguments or creating a window or worklane.","fixture_ids":[],"source":"Zentty/AppState/Agent/TmuxCompatIPCHandler.swift"},
+    {"name":"wait-for","aliases":["wait"],"disposition":"handled","value_options":["--timeout"],"boolean_options":["--signal","-S"],"stdin":false,"target_scope":"instance","effect":"Signal or consume a named, instance-scoped synchronization event with a default 30-second timeout; the source CLI handles this locally through a /tmp file.","fixture_ids":["wait.signal","wait.timeout"],"source":"ZenttyCLI/TmuxCompatCommand.swift"},
+    {"name":"show-options","aliases":["show","show-option","showw","show-window-options"],"disposition":"handled","value_options":["-t"],"boolean_options":["-A","-g","-v","-w"],"stdin":false,"target_scope":"instance","effect":"Report focus-events, mouse, and synchronize-panes as off; unknown options render an empty value.","fixture_ids":["output.show-option-value"],"source":"Zentty/AppState/Agent/TmuxCompatIPCHandler.swift"},
+    {"name":"last-pane","aliases":["lastp"],"disposition":"intentional_noop","value_options":[],"boolean_options":[],"stdin":false,"target_scope":"worklane","effect":"Return success without parsing arguments or changing selection.","fixture_ids":[],"source":"Zentty/AppState/Agent/TmuxCompatIPCHandler.swift"},
+    {"name":"save-buffer","aliases":["saveb"],"disposition":"handled","value_options":["-b"],"boolean_options":[],"stdin":false,"target_scope":"instance","effect":"Return the named buffer, or the first sorted buffer when no name is provided.","fixture_ids":["store.named-buffer"],"source":"Zentty/AppState/Agent/TmuxCompatIPCHandler.swift"},
+    {"name":"show-buffer","aliases":["showb"],"disposition":"handled","value_options":["-b"],"boolean_options":[],"stdin":false,"target_scope":"instance","effect":"Return buffer content using save-buffer selection semantics.","fixture_ids":["store.named-buffer"],"source":"Zentty/AppState/Agent/TmuxCompatIPCHandler.swift"},
+    {"name":"set-buffer","aliases":["setb"],"disposition":"handled","value_options":["-b"],"boolean_options":[],"stdin":true,"target_scope":"instance","effect":"Store stdin in the named or default compatibility buffer.","fixture_ids":["store.named-buffer"],"source":"Zentty/AppState/Agent/TmuxCompatIPCHandler.swift"},
+    {"name":"load-buffer","aliases":["loadb"],"disposition":"handled","value_options":["-b"],"boolean_options":[],"stdin":true,"target_scope":"instance","effect":"Store stdin using set-buffer semantics; source path operands are not read.","fixture_ids":["store.named-buffer"],"source":"Zentty/AppState/Agent/TmuxCompatIPCHandler.swift"},
+    {"name":"capture-pane","aliases":["capturep"],"disposition":"handled","value_options":["-E","-S","-t"],"boolean_options":["-J","-N","-p"],"stdin":false,"target_scope":"pane","effect":"Read real terminal text including scrollback; -S with a negative integer limits trailing lines, -p prints, otherwise content replaces the default buffer.","fixture_ids":["capture.trailing-lines","store.capture-default-buffer"],"source":"Zentty/AppState/Agent/TmuxCompatIPCHandler.swift"},
+    {"name":"popup","aliases":[],"disposition":"explicit_failure","value_options":[],"boolean_options":[],"stdin":false,"target_scope":"pane","effect":"Return an unsupported-subcommand error without parsing arguments.","fixture_ids":["failure.popup"],"source":"Zentty/AppState/Agent/TmuxCompatIPCHandler.swift"}
+  ],
+  "unknown_command": {
+    "disposition": "silent_unknown_success",
+    "effect": "The Swift default logs at debug level and returns an empty successful result.",
+    "linux_decision": "Do not preserve without an explicit command-level inventory entry; Linux must fail unknown commands diagnostically.",
+    "fixture_ids": ["failure.unknown-command"],
+    "source": "Zentty/AppState/Agent/TmuxCompatIPCHandler.swift"
+  },
+  "format": {
+    "long_variable": "#{name}",
+    "conditional": "#{?name,whenTrue,whenFalse}",
+    "literal_hash": "##",
+    "short_tokens": {"D":"pane_id","F":"window_flags","H":"host_short","I":"window_index","P":"pane_index","S":"session_name","T":"pane_title","W":"window_name","h":"host"},
+    "unknown_long": "empty",
+    "unknown_short": "verbatim",
+    "unsupported": ["expressions", "loops", "modifiers"],
+    "fixture_ids": ["format.all-short-tokens", "format.conditional", "format.false-conditional", "format.literal-hash", "format.lone-hash", "format.nested-branch", "format.nested-conditional-commas", "format.pane-list", "format.unknown-short", "format.unterminated-brace", "format.window-list"],
+    "source": "Zentty/AppState/Agent/TmuxFormatRenderer.swift"
+  },
+  "store": {
+    "schema_version": 1,
+    "source_path": "~/.config/zentty/tmux-compat-store.json",
+    "fields": ["activePaneIDs", "anchors", "buffers", "version"],
+    "anchor_fields": ["columnPaneIDs", "leaderPaneID", "preTeamLeaderColumnWidth"],
+    "source_locking": "in_process_only",
+    "source_write": "atomic_replace",
+    "source_corruption": "log_and_empty",
+    "linux_required_corrections": ["cross_process_locking", "private_permissions", "safe_symlink_handling", "stale_state_cleanup", "explicit_version_policy", "bounded_fields"],
+    "source": "Zentty/AppState/Agent/TmuxCompatStore.swift"
+  },
+  "fixture_file": "linux/tests/fixtures/tmux-compat-source-v1.json"
+}

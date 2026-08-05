@@ -12,6 +12,7 @@ tmp/
 .opencode
 build/
 target/
+mutants.out*/
 .agent-bench-runs/
 .sessions/
 .clawpatch/
