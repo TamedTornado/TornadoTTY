@@ -90,17 +90,29 @@ impl PaneTokenRegistry {
         token: &str,
         event: AgentEvent,
     ) -> Result<AuthenticatedAgentEvent, PaneTokenError> {
-        let target = self
-            .entries
-            .iter()
-            .find(|(candidate, _)| constant_time_eq(candidate.as_bytes(), token.as_bytes()))
-            .map(|(_, target)| target.clone())
-            .ok_or(PaneTokenError::InvalidToken)?;
+        let target = self.authenticate_target(token)?;
         Ok(AuthenticatedAgentEvent {
             target,
             pane_token: token.to_owned(),
             event,
         })
+    }
+
+    /// Resolves a pane capability to its server-canonical target.
+    ///
+    /// This is the common authentication primitive for event and command
+    /// protocols; forwarded window, worklane, and pane identifiers are never
+    /// consulted.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the token is not registered.
+    pub fn authenticate_target(&self, token: &str) -> Result<AgentTarget, PaneTokenError> {
+        self.entries
+            .iter()
+            .find(|(candidate, _)| constant_time_eq(candidate.as_bytes(), token.as_bytes()))
+            .map(|(_, target)| target.clone())
+            .ok_or(PaneTokenError::InvalidToken)
     }
 
     /// Changes the canonical target owned by an already registered token.

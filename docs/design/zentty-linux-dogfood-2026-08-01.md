@@ -7054,6 +7054,67 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   With invocation, options, commands, targets, keys, formats, state transitions,
   bounded request data, and bounded result/exit mapping now covered, the pure
   Phase 1 boundary is complete. No socket or product handler is claimed yet.
+- **Phase 2 authentication reuse began test-first:** The core registry test
+  first failed to compile because it had no command-neutral way to resolve a
+  capability token. `authenticate_target` now exposes the same constant-time
+  lookup already used for agent events, and event authentication delegates to
+  it. This lets tmux requests reuse one token authority without manufacturing
+  an agent event, trusting forwarded routing IDs, or creating a second token
+  registry.
+- **Tmux socket route began test-first:** Adding the path dependency made the
+  first `--locked` invocation stop because Cargo correctly refused to update
+  the lockfile. An offline lock update then reached the intended compile-red
+  state: `start_with_tmux` and `send_tmux` did not exist. The first implemented
+  run compiled, but both real socket tests failed at Unix bind with the
+  filesystem sandbox's known `Operation not permitted`; they are rerun outside
+  that sandbox rather than replacing the transport with a fake.
+- **Authentication rejection was initially returned as a product failure:**
+  Outside the sandbox the happy real-socket route passed, but the wrong-token
+  assertion failed because `send_tmux` converted every non-OK wire response
+  into a valid exit-one compatibility result. Server/authentication failures
+  are not command results. The client now treats the transport-owned
+  `request_rejected` code as `AgentIpcError::Rejected`, while handler-owned
+  command failures remain source-compatible exit-one replies.
+- **Existing sequential accept loop blocked independent traffic:** A real
+  socket test held one authenticated tmux request open awaiting its product
+  reply, then sent an ordinary authenticated agent event. The event was not
+  delivered within 500 ms because the single accept thread was blocked; the
+  test failed before repair. The same socket now uses four bounded workers and
+  a 32-connection bounded queue. The held tmux command and independent event
+  cross separate real connections, and the event is delivered before the tmux
+  reply is released. This repairs the shared transport rather than adding a
+  second tmux socket or an unbounded thread-per-connection model.
+- **Frame ceiling separated from payload ceilings:** A 256-KiB stdin or stdout
+  value cannot fit inside a 128-KiB JSON frame. Keeping that old agent-event
+  transport ceiling would have made the newly documented payload limits
+  fictional. The shared frame bound is now 384 KiB—large enough for one
+  maximum compatibility payload plus its authenticated envelope, still bounded
+  before decode. A real socket test sends exactly 262,144 stdin bytes through
+  the handler and returns exactly 262,144 stdout bytes. One-over payloads remain
+  rejected by the pure protocol before transport.
+- **Command failures preserve the source boundary:** A real handler returned
+  `unsupported/popup is unsupported` through the shared socket. The client
+  received a valid bounded compatibility reply with exit status one and the
+  exact code/message, while wrong-token and malformed-envelope failures remain
+  transport errors. This prevents command-level unsupported behavior from
+  being conflated with authentication or IPC failure.
+- **First focused IPC mutation pass found ten gaps:** The disk-safe, real-socket
+  campaign caught 15 of 25 viable mutations and left ten survivors. Nine were
+  missing exact observations for client/server frame comparisons and read
+  caps, plus the response-required envelope check. A checked-in
+  `MAX_FRAME_READ_BYTES` constant, exact/one-over raw client and raw server
+  journeys, and an `expectsResponse=false` rejection killed those branches.
+  The remaining survivor changed the accept-loop error guard so every accept
+  error was treated like nonblocking `WouldBlock`. Since a private listener
+  should remain available until explicit shutdown, the server now deliberately
+  retries all accept errors at the existing bounded 5-ms interval instead of
+  silently terminating on an uncommon transient error. This removes the
+  untestable distinction without introducing a hot retry loop.
+- **Focused IPC mutation repair verified:** The final safe-wrapper campaign ran
+  21 mutations against the new shared transport decisions with the real socket
+  suite: 18 caught, three compiler-rejected as unviable, zero missed, and zero
+  timed out. Its `outcomes.json` SHA-256 is
+  `e67d6fc58c54894400956d13afddbe96c8ae1253c2b33f175cbbdc396dd700e6`.
 
 ## AI disclosure
 

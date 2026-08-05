@@ -767,6 +767,7 @@ dependencies = [
  "serde",
  "serde_json",
  "zentty-core",
+ "zentty-tmux-compat",
 ]
 
 [[package]]

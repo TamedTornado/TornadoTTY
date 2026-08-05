@@ -9,6 +9,10 @@ fn token_authentication_uses_the_registered_target_not_client_claims() {
     let target = AgentTarget::new("window-real", "lane-real", "pane-real");
     let mut registry = PaneTokenRegistry::default();
     registry.register("secret-token", target.clone()).unwrap();
+    assert_eq!(
+        registry.authenticate_target("secret-token").unwrap(),
+        target
+    );
     let authenticated = registry.authenticate("secret-token", idle_event()).unwrap();
     assert_eq!(authenticated.target, target);
     assert_eq!(authenticated.pane_token, "secret-token");
@@ -50,6 +54,10 @@ fn duplicate_unknown_and_unregistered_tokens_are_rejected() {
     ));
     assert!(matches!(
         registry.authenticate("wrong", idle_event()),
+        Err(PaneTokenError::InvalidToken)
+    ));
+    assert!(matches!(
+        registry.authenticate_target("wrong"),
         Err(PaneTokenError::InvalidToken)
     ));
     assert!(registry.unregister("token"));
