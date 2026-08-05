@@ -1155,6 +1155,27 @@ impl WorkspaceState {
         changed
     }
 
+    /// Restores an absolute source column width without changing selection or
+    /// resizing neighboring columns.
+    pub fn restore_column_width(&mut self, pane_id: &str, width: f64) -> bool {
+        if !width.is_finite() || width <= 0.0 {
+            return false;
+        }
+        let Some(column) = self.worklanes.iter_mut().find_map(|worklane| {
+            worklane
+                .columns
+                .iter_mut()
+                .find(|column| column.panes.iter().any(|pane| pane.id == pane_id))
+        }) else {
+            return false;
+        };
+        if column.width.to_bits() == width.to_bits() {
+            return false;
+        }
+        column.width = width;
+        true
+    }
+
     pub fn reset_active_layout(&mut self, default_column_width: f64) -> bool {
         let width = sanitize_dimension(default_column_width);
         let mut changed = false;

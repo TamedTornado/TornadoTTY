@@ -219,6 +219,21 @@ fn team_column_equalization_targets_only_the_column_containing_the_teammate() {
 }
 
 #[test]
+fn team_width_restoration_targets_the_leader_without_changing_focus() {
+    let mut state = WorkspaceState::new("lane-1", "leader");
+    assert!(state.split_focused_pane_right("teammate"));
+    assert!(state.arrange_golden_width(true, 1000.0));
+    assert!(state.select_worklane_and_pane("lane-1", "teammate"));
+
+    assert!(state.restore_column_width("leader", 777.0));
+    assert!((state.active_columns()[0].width - 777.0).abs() < f64::EPSILON);
+    assert_eq!(state.focused_pane_id(), Some("teammate"));
+    assert!(!state.restore_column_width("leader", 777.0));
+    assert!(!state.restore_column_width("missing", 500.0));
+    assert!(!state.restore_column_width("leader", f64::NAN));
+}
+
+#[test]
 fn duplicate_ids_and_invalid_reorders_are_rejected_without_mutation() {
     let mut state = WorkspaceState::new("worklane-a", "pane-a");
     assert!(!state.create_worklane("worklane-a", "pane-b"));

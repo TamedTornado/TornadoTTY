@@ -31,8 +31,8 @@ if [[ "${ZENTTY_PANE_ID}" != pane-1 ]]; then
     IFS= read -r value
     [[ "${value}" == team-ready ]]
     printf '\033]2;zentty-tmux-team-%s\a' "${ZENTTY_PANE_ID}"
-    sleep 0.1
-    exit 0
+    sleep 30
+    exit 1
 fi
 
 pane="$(${ZENTTY_CLI_BIN} __tmux-compat display-message -p '#{pane_id}')"
@@ -67,7 +67,17 @@ printf named-buffer-real | ${ZENTTY_CLI_BIN} __tmux-compat set-buffer -b agent
 [[ "$(${ZENTTY_CLI_BIN} __tmux-compat save-buffer -b agent)" == named-buffer-real ]]
 printf loaded-buffer-real | ${ZENTTY_CLI_BIN} __tmux-compat load-buffer -b loaded
 [[ "$(${ZENTTY_CLI_BIN} __tmux-compat show-buffer -b loaded)" == loaded-buffer-real ]]
-sleep 0.1
+${ZENTTY_CLI_BIN} __tmux-compat kill-pane -t "%${first_id}"
+listed="$(${ZENTTY_CLI_BIN} __tmux-compat list-panes -F '#{pane_id}')"
+[[ "${listed}" == $'%pane-1\n%'"${second_id}" ]]
+${ZENTTY_CLI_BIN} __tmux-compat kill-pane -t "%${second_id}"
+listed="$(${ZENTTY_CLI_BIN} __tmux-compat list-panes -F '#{pane_id}')"
+[[ "${listed}" == '%pane-1' ]]
+${ZENTTY_CLI_BIN} __tmux-compat split-window -h
+${ZENTTY_CLI_BIN} __tmux-compat split-window -v -d
+${ZENTTY_CLI_BIN} __tmux-compat kill-window
+sleep 30
+exit 1
 CHILD
 chmod +x "${child}"
 
@@ -87,17 +97,25 @@ fi
     cat "${log}" >&2
     fail "real display-message did not cross the product handler"
 }
-[[ "$(grep -Fxc 'zentty-linux: tmux-command pane=pane-1 worklane=worklane-1 command=ListPanes' "${log}" || true)" -eq 2 ]] || {
+[[ "$(grep -Fxc 'zentty-linux: tmux-command pane=pane-1 worklane=worklane-1 command=ListPanes' "${log}" || true)" -eq 4 ]] || {
     cat "${log}" >&2
     fail "real list-panes did not cross the product handler"
+}
+[[ "$(grep -Fxc 'zentty-linux: tmux-command pane=pane-1 worklane=worklane-1 command=KillPane' "${log}" || true)" -eq 2 ]] || {
+    cat "${log}" >&2
+    fail "two real kill-pane commands did not cross the product handler"
 }
 [[ "$(grep -Fxc 'zentty-linux: tmux-command pane=pane-1 worklane=worklane-1 command=SendKeys' "${log}" || true)" -eq 3 ]] || {
     cat "${log}" >&2
     fail "real send-keys did not cross the product handler"
 }
-[[ "$(grep -Fxc 'zentty-linux: tmux-command pane=pane-1 worklane=worklane-1 command=SplitWindow' "${log}" || true)" -eq 2 ]] || {
+[[ "$(grep -Fxc 'zentty-linux: tmux-command pane=pane-1 worklane=worklane-1 command=SplitWindow' "${log}" || true)" -eq 4 ]] || {
     cat "${log}" >&2
-    fail "two real split-window commands did not cross the product handler"
+    fail "four real split-window commands did not cross the product handler"
+}
+[[ "$(grep -Fxc 'zentty-linux: tmux-command pane=pane-1 worklane=worklane-1 command=KillWindow' "${log}" || true)" -eq 1 ]] || {
+    cat "${log}" >&2
+    fail "real kill-window did not cross the product handler"
 }
 [[ "$(grep -Fxc 'zentty-linux: tmux-command pane=pane-1 worklane=worklane-1 command=CapturePane' "${log}" || true)" -eq 2 ]] || {
     cat "${log}" >&2
@@ -149,9 +167,22 @@ for teammate in pane-2 pane-3; do
         fail "${teammate} did not receive real terminal input"
     }
 done
-grep -Fxq 'zentty-linux: child-exited' "${log}" || {
+final_layout="$(grep -E 'zentty-linux: pane-layout .*columns=column-worklane-1:[0-9]+$' "${log}" | tail -1)"
+if [[ ! "${final_layout}" =~ column-worklane-1:([0-9]+)$ ]]; then
     cat "${log}" >&2
-    fail "real terminal child did not exit cleanly"
+    fail "dissolved-team leader width was not observable"
+fi
+final_leader_width="${BASH_REMATCH[1]}"
+pre_team_width=$((leader_width + team_width + 1))
+[[ "${final_leader_width}" -eq "${pre_team_width}" ]] || {
+    cat "${log}" >&2
+    fail "team dissolution did not restore leader width: ${pre_team_width} -> ${final_leader_width}"
 }
+for pane in pane-1 pane-2 pane-3 pane-4 pane-5; do
+    grep -Fxq "zentty-linux: tmux-close pane=${pane}" "${log}" || {
+        cat "${log}" >&2
+        fail "${pane} did not cross real tmux-owned terminal teardown"
+    }
+done
 
 printf 'Rust tmux compatibility product journey passed: %s\n' "${backend}"

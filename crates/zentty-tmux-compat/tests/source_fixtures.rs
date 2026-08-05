@@ -219,6 +219,12 @@ fn source_team_store_transitions_preserve_anchor_and_restore_width() {
     assert_eq!(store.remove_pane("lane-1", "pane-3"), Some(800));
     assert!(store.anchor("lane-1").is_none());
     assert_eq!(store.active_pane("lane-1"), None);
+
+    let _ = store.record_split("lane-1", "pane-1", "pane-2", false, Some(800));
+    assert_eq!(store.active_pane("lane-1"), Some("pane-2"));
+    assert_eq!(store.remove_pane("lane-1", "pane-1"), None);
+    assert!(store.anchor("lane-1").is_none());
+    assert_eq!(store.active_pane("lane-1"), None);
 }
 
 #[test]

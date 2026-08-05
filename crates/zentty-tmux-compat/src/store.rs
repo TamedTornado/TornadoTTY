@@ -149,6 +149,7 @@ impl TeamStore {
         let anchor = self.anchors.get_mut(worklane_id)?;
         if anchor.leader_pane_id == pane_id {
             self.anchors.remove(worklane_id);
+            self.active_pane_ids.remove(worklane_id);
             return None;
         }
         anchor.column_pane_ids.retain(|member| member != pane_id);

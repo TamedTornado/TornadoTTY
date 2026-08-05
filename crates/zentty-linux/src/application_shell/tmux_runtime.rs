@@ -1,8 +1,9 @@
 use super::ApplicationShell;
-use crate::tmux_compat::{SplitDisposition, SplitPlan, TmuxProductAction};
+use crate::tmux_compat::{KillPlan, SplitDisposition, SplitPlan, TmuxProductAction};
 use std::cell::RefCell;
 use std::rc::Rc;
 use zentty_agent_ipc::AuthenticatedTmuxRequest;
+use zentty_core::ClosePaneOutcome;
 use zentty_ghostty::TextExtent;
 use zentty_tmux_compat::{Command as TmuxCommand, TmuxCompatReply};
 
@@ -21,6 +22,9 @@ impl ApplicationShell {
             TmuxCommand::SendKeys => Self::execute_tmux_send_keys(shell, &command),
             TmuxCommand::SplitWindow => Self::execute_tmux_split(shell, &command),
             TmuxCommand::CapturePane => Self::execute_tmux_capture(shell, &command),
+            TmuxCommand::KillPane | TmuxCommand::KillWindow => {
+                Self::execute_tmux_kill(shell, &command)
+            }
             _ => {
                 let mut shell = shell.borrow_mut();
                 let Self {
@@ -140,6 +144,56 @@ impl ApplicationShell {
             Err(message) => TmuxCompatReply::failure("capture_failed", message)
                 .expect("bounded product diagnostic fits protocol limits"),
         }
+    }
+
+    fn execute_tmux_kill(
+        shell: &Rc<RefCell<Self>>,
+        command: &AuthenticatedTmuxRequest,
+    ) -> TmuxCompatReply {
+        let plan = {
+            let shell = shell.borrow();
+            shell
+                .tmux_compat
+                .prepare_kill(&shell.state, &command.target, &command.request)
+        };
+        let plan = match plan {
+            Ok(plan) => plan,
+            Err((code, message)) => {
+                return TmuxCompatReply::failure(code, message)
+                    .expect("bounded product diagnostic fits protocol limits");
+            }
+        };
+        match Self::close_tmux_panes(shell, &plan) {
+            Ok(()) => TmuxCompatReply::success(String::new())
+                .expect("empty compatibility output fits protocol limits"),
+            Err(message) => TmuxCompatReply::failure("close_failed", message)
+                .expect("bounded product diagnostic fits protocol limits"),
+        }
+    }
+
+    fn close_tmux_panes(shell: &Rc<RefCell<Self>>, plan: &KillPlan) -> Result<(), String> {
+        let mut shell = shell.borrow_mut();
+        let mut close_window = false;
+        for pane_id in &plan.pane_ids {
+            match shell.state.close_pane(pane_id) {
+                ClosePaneOutcome::Closed => {}
+                ClosePaneOutcome::CloseWindow => close_window = true,
+                ClosePaneOutcome::NotFound => continue,
+            }
+            shell.remove_live_surface(pane_id)?;
+            eprintln!("zentty-linux: tmux-close pane={pane_id}");
+        }
+        if let Some(restoration) = shell.tmux_compat.complete_kill(plan) {
+            let _ = shell
+                .state
+                .restore_column_width(&restoration.leader_pane_id, f64::from(restoration.width));
+        }
+        shell.render();
+        shell.focus_selected_surface();
+        if close_window {
+            shell.main_loop.quit();
+        }
+        Ok(())
     }
 
     fn create_tmux_split_surface(

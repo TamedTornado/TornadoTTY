@@ -7562,6 +7562,60 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   workspace tests, strict all-target Clippy, formatting, ShellCheck, audit
   self-test, qualification schema, orchestration contract, JSON parse, and
   diff checks all pass after reconciliation.
+- **Kill/dissolve was ported from the source verbs, not inferred behavior:**
+  The next ordered Phase 3 slice implements the inventoried `kill-pane` and
+  `kill-window` handlers. A scoped explicit pane kill removes only that live
+  pane; removing the final teammate drops the team anchor and restores the
+  recorded leader width. Closing a recorded leader cascades the real teammate
+  surfaces before the leader, while a worklane without an anchor closes only
+  its canonically routed target, matching the Swift handler rather than
+  inventing whole-worklane semantics. Compatibility selection is cleared when
+  the leader closes.
+- **The first width-restoration assertion compared the wrong lifecycle
+  instant:** The real X11 journey restored the leader to 719 pixels, but the
+  first assertion compared it with a 720-pixel layout logged before GTK's
+  final window allocation. The split correctly snapshotted the post-allocation
+  719-pixel viewport. The repaired assertion derives the pre-team width from
+  the two rendered team columns plus their real divider, and then requires the
+  dissolved single column to equal it exactly. The environmental one-pixel
+  allocation transition was not hidden as a product tolerance.
+- **User-owned close and natural child exit are distinct lifecycle evidence:**
+  The first expanded `kill-window` journey expected the ordinary
+  `child-exited` line used when a shell terminates itself. Deliberately
+  disposing a live Ghostty surface unregisters it before its PTY exit callback,
+  so that assertion was semantically wrong even though all three real surfaces
+  closed and the application completed shutdown. Product-owned `tmux-close`
+  receipts now name every removed pane. The journey requires both individual
+  teammate teardown and the later leader cascade to close panes 1 through 5;
+  it does not accept a fake model-only removal or a natural-exit substitute.
+- **Kill/dissolve decision mutation is clean:** The safe mutation wrapper ran
+  24 focused mutations across scoped kill planning/completion, team-store
+  removal, and absolute width restoration: 19 were caught and five were
+  compiler-unviable, with zero missed or timed out. The campaign retained
+  `gitignore=true` and `copy_target=false`; its `outcomes.json` SHA-256 is
+  `9391d4617f8b34d08b537058a17077ad39ad31875314f461f7afe979e9faade9`.
+  This is the reconfirmation receipt from the exact epsilon-repaired test
+  source; the preceding campaign produced the same 19/5/0 outcome but is not
+  presented as final evidence.
+- **The exact kill/dissolve candidate passes both controlled compositors:**
+  With no tolerated CLI failure and the staged ReleaseSafe product, the full
+  split/input/capture/buffer/individual-kill/width-restore/re-split/leader-
+  cascade journey passed X11 session
+  `7b1191dae21dd270c728ff6898ee460c1c6dd43b19f3e06a0a72858fa9efd7ce`
+  and Wayland session
+  `11f3dc762a15e655eb1f4846f14b4429c75c88e419d43e1c85b6266acc409ea5`.
+- **Strict Clippy rejected an exact floating-point test comparison:** The
+  width-restoration unit test first used `assert_eq!` even though the model
+  represents layout dimensions as `f64`. Strict all-target Clippy rejected the
+  test under `float_cmp`; it now observes the exact source-sized result through
+  the repository's epsilon comparison convention. No lint allowance was
+  added.
+- **Final kill/dissolve repository gates pass:** Complete workspace tests,
+  strict all-target Clippy, formatting, the changed journey's ShellCheck,
+  qualification schema validation, architecture and negative self-tests,
+  safe mutation-copy policy, orchestration contract, and diff checks all pass
+  after the repair. This is a Phase 3 slice result, not a claim that release or
+  full Linux qualification has passed.
 
 ## AI disclosure
 

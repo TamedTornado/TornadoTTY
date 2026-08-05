@@ -44,7 +44,68 @@ pub(crate) struct CapturePlan {
     pub line_limit: Option<usize>,
 }
 
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) struct KillPlan {
+    pub worklane_id: String,
+    pub target_pane_id: String,
+    pub pane_ids: Vec<String>,
+    pub leader_pane_id: Option<String>,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) struct KillRestoration {
+    pub leader_pane_id: String,
+    pub width: u32,
+}
+
 impl TmuxCompatProduct {
+    pub(crate) fn prepare_kill(
+        &self,
+        state: &WorkspaceState,
+        target: &AgentTarget,
+        request: &TmuxCompatRequest,
+    ) -> Result<KillPlan, (&'static str, String)> {
+        let worklane = target_worklane(state, target)?;
+        let pane_ids = pane_entries(worklane)
+            .into_iter()
+            .map(|(_, pane, _)| pane.id.clone())
+            .collect::<Vec<_>>();
+        let target_pane_id = if request.command() == Command::KillWindow {
+            validate_explicit_pane_target(Some(&target.pane_id), &pane_ids)?;
+            self.store.anchor(&target.worklane_id).map_or_else(
+                || target.pane_id.clone(),
+                |anchor| anchor.leader_pane_id.clone(),
+            )
+        } else {
+            let parsed = parsed(request.arguments(), &["-t"], &[]);
+            validate_explicit_pane_target(parsed.value("-t"), &pane_ids)?;
+            PaneTarget::resolve(parsed.value("-t"), &pane_ids, &target.pane_id)
+        };
+        let anchor = self.store.anchor(&target.worklane_id);
+        let leader_pane_id = anchor.map(|anchor| anchor.leader_pane_id.clone());
+        let mut panes_to_close = anchor
+            .filter(|anchor| anchor.leader_pane_id == target_pane_id)
+            .map_or_else(Vec::new, |anchor| anchor.column_pane_ids.clone());
+        panes_to_close.retain(|pane_id| pane_ids.contains(pane_id));
+        panes_to_close.push(target_pane_id.clone());
+        Ok(KillPlan {
+            worklane_id: target.worklane_id.clone(),
+            target_pane_id,
+            pane_ids: panes_to_close,
+            leader_pane_id,
+        })
+    }
+
+    pub(crate) fn complete_kill(&mut self, plan: &KillPlan) -> Option<KillRestoration> {
+        let width = self
+            .store
+            .remove_pane(&plan.worklane_id, &plan.target_pane_id)?;
+        Some(KillRestoration {
+            leader_pane_id: plan.leader_pane_id.clone()?,
+            width,
+        })
+    }
+
     pub(crate) fn prepare_capture(
         state: &WorkspaceState,
         target: &AgentTarget,
@@ -538,7 +599,7 @@ fn failure(code: &'static str, message: impl Into<String>) -> TmuxCompatReply {
 
 #[cfg(test)]
 mod tests {
-    use super::{SplitDisposition, TmuxCompatProduct, TmuxProductAction};
+    use super::{KillRestoration, SplitDisposition, TmuxCompatProduct, TmuxProductAction};
     use zentty_core::AgentTarget;
     use zentty_core::WorkspaceState;
     use zentty_tmux_compat::TmuxCompatRequest;
@@ -715,8 +776,6 @@ mod tests {
         for command in [
             "split-window",
             "send-keys",
-            "kill-pane",
-            "kill-window",
             "select-layout",
             "resize-pane",
             "wait-for",
@@ -727,6 +786,67 @@ mod tests {
             assert_eq!(error.code(), "not_implemented", "{command}");
             assert!(error.message().contains("not implemented"), "{command}");
         }
+    }
+
+    #[test]
+    fn kill_plans_cascade_leaders_and_restore_only_the_final_teammate() {
+        let mut state = WorkspaceState::new("lane-1", "leader");
+        assert!(state.split_focused_pane_right("teammate-1"));
+        assert!(state.split_focused_pane_below("teammate-2"));
+        assert!(state.select_worklane_and_pane("lane-1", "leader"));
+        let mut product = TmuxCompatProduct::default();
+        let _ = product
+            .store
+            .record_split("lane-1", "leader", "teammate-1", false, Some(777));
+        let _ = product
+            .store
+            .record_split("lane-1", "leader", "teammate-2", true, None);
+
+        let first = product
+            .prepare_kill(
+                &state,
+                &target("leader"),
+                &request("kill-pane", &["-t", "%teammate-1"]),
+            )
+            .unwrap();
+        assert_eq!(first.pane_ids, ["teammate-1"]);
+        assert_eq!(product.complete_kill(&first), None);
+
+        let final_teammate = product
+            .prepare_kill(
+                &state,
+                &target("leader"),
+                &request("kill-pane", &["-t", "%teammate-2"]),
+            )
+            .unwrap();
+        assert_eq!(
+            product.complete_kill(&final_teammate),
+            Some(KillRestoration {
+                leader_pane_id: "leader".to_owned(),
+                width: 777,
+            })
+        );
+
+        let _ = product
+            .store
+            .record_split("lane-1", "leader", "teammate-1", false, Some(777));
+        let _ = product
+            .store
+            .record_split("lane-1", "leader", "teammate-2", true, None);
+        let leader = product
+            .prepare_kill(&state, &target("leader"), &request("kill-window", &[]))
+            .unwrap();
+        assert_eq!(leader.target_pane_id, "leader");
+        assert_eq!(leader.pane_ids, ["teammate-1", "teammate-2", "leader"]);
+        assert_eq!(product.complete_kill(&leader), None);
+        assert!(product.store.anchor("lane-1").is_none());
+
+        let missing = product.prepare_kill(
+            &state,
+            &target("leader"),
+            &request("kill-pane", &["-t", "%outside"]),
+        );
+        assert_eq!(missing.unwrap_err().0, "target_not_found");
     }
 
     #[test]
