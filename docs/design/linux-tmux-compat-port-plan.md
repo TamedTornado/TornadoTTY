@@ -1,8 +1,8 @@
 # Linux tmux-compatibility facade port plan
 
 - **Status:** Phases 0–1 complete; Phase 2 authenticated IPC in progress; Phase
-  3 discovery/select/send and team-split vertical slices complete, remaining
-  handlers in progress
+  3 discovery/select/send, capture/buffers, and team-split vertical slices
+  complete, remaining handlers in progress
 - **Date:** 2026-08-05
 - **Owner:** [#14 — Linux tmux compatibility and agent-team IPC](https://github.com/TamedTornado/zentty/issues/14)
 - **Parent:** [#1 — production-quality Zentty Linux port](https://github.com/TamedTornado/zentty/issues/1)

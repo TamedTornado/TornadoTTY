@@ -5,6 +5,19 @@
 #include <stdlib.h>
 #include <string.h>
 
+static void count_text_callbacks(
+    const char *text,
+    size_t text_len,
+    void *userdata
+) {
+    (void) text;
+    (void) text_len;
+    if (userdata != NULL) {
+        int *count = userdata;
+        *count += 1;
+    }
+}
+
 static int reject_null_and_foreign_handles(void) {
     ghostty_gtk_embed_runtime_t *foreign_runtime =
         (ghostty_gtk_embed_runtime_t *) gtk_button_new();
@@ -23,6 +36,7 @@ static int reject_null_and_foreign_handles(void) {
 
     ghostty_gtk_embed_surface_grab_focus(NULL);
     ghostty_gtk_embed_surface_grab_focus(foreign_surface);
+    int text_callbacks = 0;
     if (ghostty_gtk_embed_surface_close(NULL) ||
         ghostty_gtk_embed_surface_close(foreign_surface) ||
         ghostty_gtk_embed_surface_binding_action(NULL, "start_search", 12) ||
@@ -33,9 +47,25 @@ static int reject_null_and_foreign_handles(void) {
         ) ||
         ghostty_gtk_embed_surface_send_text(NULL, "text") ||
         ghostty_gtk_embed_surface_send_text(foreign_surface, "text") ||
+        ghostty_gtk_embed_surface_read_text(
+            NULL,
+            GHOSTTY_GTK_EMBED_TEXT_SCREEN,
+            count_text_callbacks,
+            &text_callbacks
+        ) ||
+        ghostty_gtk_embed_surface_read_text(
+            foreign_surface,
+            GHOSTTY_GTK_EMBED_TEXT_SCREEN,
+            count_text_callbacks,
+            &text_callbacks
+        ) ||
         ghostty_gtk_embed_surface_request_paste(NULL) ||
         ghostty_gtk_embed_surface_request_paste(foreign_surface)) {
         fputs("api-contract: null or foreign surface accepted\n", stderr);
+        return 1;
+    }
+    if (text_callbacks != 0) {
+        fputs("api-contract: rejected text read invoked callback\n", stderr);
         return 1;
     }
 
@@ -166,6 +196,24 @@ static int enforce_runtime_lifecycle(
     if (ghostty_gtk_embed_surface_send_text(surface, NULL) ||
         ghostty_gtk_embed_surface_send_text(surface, "before-init") ||
         ghostty_gtk_embed_surface_binding_action(surface, "start_search", 12) ||
+        ghostty_gtk_embed_surface_read_text(
+            surface,
+            GHOSTTY_GTK_EMBED_TEXT_SCREEN,
+            count_text_callbacks,
+            NULL
+        ) ||
+        ghostty_gtk_embed_surface_read_text(
+            surface,
+            (ghostty_gtk_embed_text_extent_t) 999,
+            count_text_callbacks,
+            NULL
+        ) ||
+        ghostty_gtk_embed_surface_read_text(
+            surface,
+            GHOSTTY_GTK_EMBED_TEXT_SCREEN,
+            NULL,
+            NULL
+        ) ||
         ghostty_gtk_embed_surface_request_paste(surface)) {
         fputs("api-contract: uninitialized surface operation accepted\n", stderr);
         return 1;

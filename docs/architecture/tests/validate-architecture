@@ -5,6 +5,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 architecture_dir="${repo_root}/docs/architecture"
 contract="${ZENTTY_ARCHITECTURE_CONTRACT:-${architecture_dir}/linux-product-architecture-v1.json}"
 authoritative_matrix="${ZENTTY_QUALIFICATION_MATRIX:-${repo_root}/linux/qualification-matrix.json}"
+ghostty_lock="${repo_root}/linux/ghostty.lock"
 v3_fixture="${repo_root}/crates/zentty-core/tests/fixtures/session-restore-v3.json"
 unversioned_fixture="${repo_root}/crates/zentty-core/tests/fixtures/workspace-recipe-unversioned.json"
 future_fixture="${repo_root}/crates/zentty-core/tests/fixtures/workspace-recipe-future.json"
@@ -26,8 +27,12 @@ for json_file in \
     jq empty "${json_file}" >/dev/null 2>&1 || fail "invalid JSON: ${json_file}"
 done
 [[ -r "${rust_recipe_contract}" ]] || fail "Rust workspace recipe contract is not readable"
+[[ -r "${ghostty_lock}" ]] || fail "Ghostty lock is not readable"
+ghostty_revision="$(sed -n 's/^revision=//p' "${ghostty_lock}")"
+[[ "${ghostty_revision}" =~ ^[0-9a-f]{40}$ ]] ||
+    fail "Ghostty lock must contain exactly one full SHA-1 revision"
 
-jq -e '
+jq -e --arg ghostty_revision "${ghostty_revision}" '
     .schema_version == 1 and
     .contract_id == "zentty-linux-product-architecture" and
     .decision == "rust-gtk4-rs" and
@@ -40,7 +45,7 @@ jq -e '
         "legacy_sources_removed": true,
         "legacy_matrix_cells_removed": true
     } and
-    .ghostty_revision == "9e127e7493cb7fd9811f00971f1b99dd1f02af5b" and
+    .ghostty_revision == $ghostty_revision and
     ([.workspace_crates[].name] | sort) == ([
         "zentty-core",
         "zentty-agent-ipc",

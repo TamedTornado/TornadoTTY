@@ -55,6 +55,18 @@ ${ZENTTY_CLI_BIN} __tmux-compat send-keys \
 IFS= read -r value
 [[ "${value}" == agent-real-input ]]
 printf '\033]2;zentty-tmux-compat-real\a'
+printf 'zentty-capture-real-one\nzentty-capture-real-two\n'
+sleep 0.2
+captured="$(${ZENTTY_CLI_BIN} __tmux-compat capture-pane -p -t "%${ZENTTY_PANE_ID}")"
+[[ "${captured}" == *zentty-capture-real-one* ]]
+[[ "${captured}" == *zentty-capture-real-two* ]]
+${ZENTTY_CLI_BIN} __tmux-compat capture-pane -t "%${ZENTTY_PANE_ID}"
+buffered="$(${ZENTTY_CLI_BIN} __tmux-compat show-buffer -b default)"
+[[ "${buffered}" == *zentty-capture-real-two* ]]
+printf named-buffer-real | ${ZENTTY_CLI_BIN} __tmux-compat set-buffer -b agent
+[[ "$(${ZENTTY_CLI_BIN} __tmux-compat save-buffer -b agent)" == named-buffer-real ]]
+printf loaded-buffer-real | ${ZENTTY_CLI_BIN} __tmux-compat load-buffer -b loaded
+[[ "$(${ZENTTY_CLI_BIN} __tmux-compat show-buffer -b loaded)" == loaded-buffer-real ]]
 sleep 0.1
 CHILD
 chmod +x "${child}"
@@ -87,6 +99,16 @@ fi
     cat "${log}" >&2
     fail "two real split-window commands did not cross the product handler"
 }
+[[ "$(grep -Fxc 'zentty-linux: tmux-command pane=pane-1 worklane=worklane-1 command=CapturePane' "${log}" || true)" -eq 2 ]] || {
+    cat "${log}" >&2
+    fail "real capture-pane did not read both printed and buffered terminal text"
+}
+for command in SetBuffer SaveBuffer LoadBuffer ShowBuffer; do
+    grep -Fxq "zentty-linux: tmux-command pane=pane-1 worklane=worklane-1 command=${command}" "${log}" || {
+        cat "${log}" >&2
+        fail "real ${command} did not cross the product handler"
+    }
+done
 grep -Fq 'zentty-linux: geometry=worklane-1:column-worklane-1[pane-1],column-pane-2[pane-2,pane-3]' "${log}" || {
     cat "${log}" >&2
     fail "team topology was not one right column with stacked teammates"

@@ -27,6 +27,16 @@ pub enum GhosttyGtkEmbedAsyncBackend {
     IoUring = 2,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u32)]
+pub enum GhosttyGtkEmbedTextExtent {
+    Viewport = 0,
+    Screen = 1,
+}
+
+pub type GhosttyGtkEmbedTextCallback =
+    unsafe extern "C" fn(text: *const c_char, text_len: usize, userdata: *mut c_void);
+
 unsafe extern "C" {
     pub fn ghostty_gtk_embed_runtime_new() -> *mut GhosttyGtkEmbedRuntime;
     pub fn ghostty_gtk_embed_runtime_new_with_async_backend(
@@ -54,12 +64,20 @@ unsafe extern "C" {
         action: *const c_char,
         action_len: usize,
     ) -> bool;
+    pub fn ghostty_gtk_embed_surface_read_text(
+        surface: *mut GtkWidget,
+        extent: GhosttyGtkEmbedTextExtent,
+        callback: Option<GhosttyGtkEmbedTextCallback>,
+        userdata: *mut c_void,
+    ) -> bool;
     pub fn ghostty_gtk_embed_surface_request_paste(surface: *mut GtkWidget) -> bool;
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{GhosttyGtkEmbedAsyncBackend, GhosttyGtkEmbedSurfaceOptions};
+    use super::{
+        GhosttyGtkEmbedAsyncBackend, GhosttyGtkEmbedSurfaceOptions, GhosttyGtkEmbedTextExtent,
+    };
 
     #[test]
     fn async_backend_is_fixed_width_and_matches_c_int_values() {
@@ -79,5 +97,12 @@ mod tests {
             align_of::<GhosttyGtkEmbedSurfaceOptions>(),
             align_of::<usize>()
         );
+    }
+
+    #[test]
+    fn text_extent_is_fixed_width_and_matches_c_int_values() {
+        assert_eq!(size_of::<GhosttyGtkEmbedTextExtent>(), size_of::<u32>());
+        assert_eq!(GhosttyGtkEmbedTextExtent::Viewport as u32, 0);
+        assert_eq!(GhosttyGtkEmbedTextExtent::Screen as u32, 1);
     }
 }

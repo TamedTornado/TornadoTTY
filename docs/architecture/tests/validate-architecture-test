@@ -59,6 +59,12 @@ jq '.lifecycle.shutdown_order[4:7] |= reverse' \
 run_expect_failure invalid-shutdown-order "architecture contract invariants failed" \
     "ZENTTY_ARCHITECTURE_CONTRACT=${invalid_shutdown_order}"
 
+stale_ghostty_revision="${temp_dir}/stale-ghostty-revision.json"
+jq '.ghostty_revision = "0000000000000000000000000000000000000000"' \
+    "${source_contract}" >"${stale_ghostty_revision}"
+run_expect_failure stale-ghostty-revision "architecture contract invariants failed" \
+    "ZENTTY_ARCHITECTURE_CONTRACT=${stale_ghostty_revision}"
+
 blocking_runtime_free="${temp_dir}/blocking-runtime-free.json"
 jq '.ffi_contract.runtime_free_gate = "block-until-weak-ref-callback"' \
     "${source_contract}" >"${blocking_runtime_free}"

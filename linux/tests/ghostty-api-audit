@@ -70,14 +70,15 @@ jq -e '
     (.diff_identity.normalization | length) == 21 and
     (.ranges | length) == 2 and
     (.files | length) == 16 and
-    (.abi.exported_function_count == 11) and
+    (.abi.exported_function_count == 12) and
     (.abi.operations | length) == .abi.exported_function_count and
-    (.abi.ghostty_owned_public_type_count == 3) and
+    (.abi.ghostty_owned_public_type_count == 5) and
     (.abi.ghostty_owned_public_types | length) == .abi.ghostty_owned_public_type_count and
     (.abi.external_public_type_dependencies | length) == 1 and
     (.abi.external_public_type_dependencies[0].name == "GtkWidget") and
-        (.abi.external_public_type_dependencies[0].roles | length) == 7 and
+        (.abi.external_public_type_dependencies[0].roles | length) == 8 and
     (.abi.public_enum_values | length) == 3 and
+    (.abi.public_text_extent_values | length) == 2 and
     (.abi.prerequisites | any(.id == "runtime-before-gtk-init")) and
     (.abi.abi_defects | any(
         .id == "async-backend-enum-representation" and
@@ -281,14 +282,25 @@ actual_enum_values="$(
 )"
 [[ "${actual_enum_values}" == "${expected_enum_values}" ]] || fail "public async enum differs from inventory"
 
+expected_text_extent_values="$(jq -r '.abi.public_text_extent_values[] | "\(.name)=\(.value)"' "${inventory}")"
+actual_text_extent_values="$(
+    sed -n -E 's/^#define[[:space:]]+(GHOSTTY_GTK_EMBED_TEXT_[A-Z_]+)[[:space:]]+\(\(ghostty_gtk_embed_text_extent_t\)[[:space:]]+([0-9]+)\)/\1=\2/p' \
+        "${ghostty_source}/include/ghostty/gtk.h"
+)"
+[[ "${actual_text_extent_values}" == "${expected_text_extent_values}" ]] ||
+    fail "public text-extent values differ from inventory"
+grep -Fx 'typedef uint32_t ghostty_gtk_embed_text_extent_t;' \
+    "${ghostty_source}/include/ghostty/gtk.h" >/dev/null ||
+    fail "public text-extent representation differs from inventory"
+
 grep -Fx 'typedef struct _GtkWidget GtkWidget;' "${ghostty_source}/include/ghostty/gtk.h" >/dev/null ||
     fail "GtkWidget forward declaration differs from inventory"
 [[ "$(grep -Ec '^GtkWidget \*ghostty_gtk_embed_surface_new\(' "${ghostty_source}/include/ghostty/gtk.h")" == 1 ]] ||
     fail "GtkWidget surface-constructor return role differs from inventory"
-[[ "$(grep -Eoc 'GtkWidget \*surface' "${ghostty_source}/include/ghostty/gtk.h")" == 5 ]] ||
+[[ "$(grep -Eoc 'GtkWidget \*surface' "${ghostty_source}/include/ghostty/gtk.h")" == 6 ]] ||
     fail "GtkWidget surface-operation parameter roles differ from inventory"
 
-pass_message="Ghostty API audit inventory passed: 16 files, 52 hunks, 11 allowlisted function exports, 3 Ghostty-owned public types, 1 external GtkWidget dependency"
+pass_message="Ghostty API audit inventory passed: 16 files, 52 hunks, 12 allowlisted function exports, 5 Ghostty-owned public types, 1 external GtkWidget dependency"
 echo "${pass_message}"
 
 if [[ "${mode}" == "--self-test" ]]; then

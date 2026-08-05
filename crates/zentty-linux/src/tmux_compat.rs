@@ -37,7 +37,65 @@ pub(crate) struct SplitPlan {
     pub print_format: Option<String>,
 }
 
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) struct CapturePlan {
+    pub pane_id: String,
+    pub print: bool,
+    pub line_limit: Option<usize>,
+}
+
 impl TmuxCompatProduct {
+    pub(crate) fn prepare_capture(
+        state: &WorkspaceState,
+        target: &AgentTarget,
+        request: &TmuxCompatRequest,
+    ) -> Result<CapturePlan, (&'static str, String)> {
+        let worklane = target_worklane(state, target)?;
+        let pane_ids = pane_entries(worklane)
+            .into_iter()
+            .map(|(_, pane, _)| pane.id.clone())
+            .collect::<Vec<_>>();
+        let parsed = parsed(
+            request.arguments(),
+            &["-E", "-S", "-t"],
+            &["-J", "-N", "-p"],
+        );
+        validate_explicit_pane_target(parsed.value("-t"), &pane_ids)?;
+        let line_limit = parsed
+            .value("-S")
+            .and_then(|value| value.strip_prefix('-'))
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|limit| *limit > 0);
+        Ok(CapturePlan {
+            pane_id: PaneTarget::resolve(parsed.value("-t"), &pane_ids, &target.pane_id),
+            print: parsed.has_flag("-p"),
+            line_limit,
+        })
+    }
+
+    pub(crate) fn complete_capture(&mut self, plan: &CapturePlan, text: &str) -> TmuxCompatReply {
+        let text = plan
+            .line_limit
+            .map_or_else(|| text.to_owned(), |limit| tail_terminal_lines(text, limit));
+        if plan.print {
+            let output = if text.ends_with('\n') {
+                text
+            } else {
+                format!("{text}\n")
+            };
+            return TmuxCompatReply::success(output).unwrap_or_else(|_| {
+                failure("output_limit", "tmux compatibility output limit exceeded")
+            });
+        }
+        self.store.set_buffer("default", &text).map_or_else(
+            |error| failure("store_limit", error.to_string()),
+            |()| {
+                TmuxCompatReply::success(String::new())
+                    .expect("empty compatibility output fits protocol limits")
+            },
+        )
+    }
+
     pub(crate) fn prepare_split(
         &self,
         state: &WorkspaceState,
@@ -172,6 +230,10 @@ impl TmuxCompatProduct {
             Command::DisplayMessage => self.display_message(state, target, request.arguments()),
             Command::SelectPane => self.select_pane(state, target, request.arguments()),
             Command::ShowOptions => Ok(Self::show_options(request.arguments())),
+            Command::SaveBuffer | Command::ShowBuffer => Ok(self.save_buffer(request.arguments())),
+            Command::SetBuffer | Command::LoadBuffer => {
+                self.set_buffer(request.arguments(), request.standard_input())
+            }
             Command::NewSession => Ok(format!("@{}\n", target.worklane_id)),
             Command::SelectWindow
             | Command::RenameWindow
@@ -328,6 +390,26 @@ impl TmuxCompatProduct {
             format!("{name} {value}\n")
         }
     }
+
+    fn save_buffer(&self, arguments: &[String]) -> String {
+        let parsed = parsed(arguments, &["-b"], &[]);
+        self.store.buffer(parsed.value("-b")).to_owned()
+    }
+
+    fn set_buffer(
+        &mut self,
+        arguments: &[String],
+        standard_input: Option<&str>,
+    ) -> Result<String, (&'static str, String)> {
+        let parsed = parsed(arguments, &["-b"], &[]);
+        self.store
+            .set_buffer(
+                parsed.value("-b").unwrap_or("default"),
+                standard_input.unwrap_or(""),
+            )
+            .map(|()| String::new())
+            .map_err(|error| ("store_limit", error.to_string()))
+    }
 }
 
 fn parsed(arguments: &[String], values: &[&str], flags: &[&str]) -> ParsedArguments {
@@ -435,6 +517,21 @@ fn lines_with_trailing_newline(lines: &[String]) -> String {
     }
 }
 
+fn tail_terminal_lines(text: &str, max_lines: usize) -> String {
+    let had_trailing_newline = text.ends_with('\n');
+    let mut lines = text.split('\n').collect::<Vec<_>>();
+    if had_trailing_newline {
+        debug_assert_eq!(lines.last(), Some(&""));
+        lines.pop();
+    }
+    let start = lines.len().saturating_sub(max_lines);
+    let mut output = lines[start..].join("\n");
+    if had_trailing_newline && !output.is_empty() {
+        output.push('\n');
+    }
+    output
+}
+
 fn failure(code: &'static str, message: impl Into<String>) -> TmuxCompatReply {
     TmuxCompatReply::failure(code, message).expect("static product diagnostic fits protocol limits")
 }
@@ -452,6 +549,16 @@ mod tests {
             command,
             arguments.iter().map(|value| (*value).to_owned()).collect(),
             None,
+        )
+        .unwrap()
+    }
+
+    fn request_with_input(command: &str, arguments: &[&str], input: &str) -> TmuxCompatRequest {
+        TmuxCompatRequest::new(
+            1,
+            command,
+            arguments.iter().map(|value| (*value).to_owned()).collect(),
+            Some(input.to_owned()),
         )
         .unwrap()
     }
@@ -613,10 +720,6 @@ mod tests {
             "select-layout",
             "resize-pane",
             "wait-for",
-            "save-buffer",
-            "show-buffer",
-            "set-buffer",
-            "load-buffer",
             "capture-pane",
         ] {
             let reply = product.handle(&mut state, &target("pane-1"), &request(command, &[]));
@@ -655,6 +758,133 @@ mod tests {
             &state,
             &target("pane-1"),
             &request("send-keys", &["-t", "%pane-other", "unsafe"]),
+        );
+        assert_eq!(missing.unwrap_err().0, "target_not_found");
+    }
+
+    #[test]
+    fn source_buffer_commands_preserve_named_sorted_and_stdin_semantics() {
+        let mut product = TmuxCompatProduct::default();
+        let mut state = workspace();
+        for (name, value) in [("z-last", "last"), ("a-first", "first")] {
+            let reply = product.handle(
+                &mut state,
+                &target("pane-1"),
+                &request_with_input("set-buffer", &["-b", name], value),
+            );
+            assert_eq!(reply.stdout(), Some(""));
+        }
+        let sorted = product.handle(&mut state, &target("pane-1"), &request("save-buffer", &[]));
+        assert_eq!(sorted.stdout(), Some("first"));
+        let named = product.handle(
+            &mut state,
+            &target("pane-1"),
+            &request("show-buffer", &["-b", "z-last"]),
+        );
+        assert_eq!(named.stdout(), Some("last"));
+        let loaded = product.handle(
+            &mut state,
+            &target("pane-1"),
+            &request_with_input("load-buffer", &[], "default-value"),
+        );
+        assert_eq!(loaded.stdout(), Some(""));
+        let default = product.handle(
+            &mut state,
+            &target("pane-1"),
+            &request("show-buffer", &["-b", "default"]),
+        );
+        assert_eq!(default.stdout(), Some("default-value"));
+    }
+
+    #[test]
+    fn capture_plan_scopes_targets_and_completion_prints_or_buffers_exact_text() {
+        let state = workspace();
+        let print = TmuxCompatProduct::prepare_capture(
+            &state,
+            &target("pane-1"),
+            &request("capture-pane", &["-p", "-J", "-S", "-2", "-t", "%pane-2"]),
+        )
+        .unwrap();
+        assert_eq!(print.pane_id, "pane-2");
+        assert!(print.print);
+        assert_eq!(print.line_limit, Some(2));
+
+        let mut product = TmuxCompatProduct::default();
+        let printed = product.complete_capture(&print, "one\ntwo\nthree\n");
+        assert_eq!(printed.stdout(), Some("two\nthree\n"));
+
+        let buffered = TmuxCompatProduct::prepare_capture(
+            &state,
+            &target("pane-1"),
+            &request("capture-pane", &["-S", "0"]),
+        )
+        .unwrap();
+        assert_eq!(buffered.line_limit, None);
+        assert_eq!(
+            product.complete_capture(&buffered, "buffered").stdout(),
+            Some("")
+        );
+        let mut state = state;
+        assert_eq!(
+            product
+                .handle(
+                    &mut state,
+                    &target("pane-1"),
+                    &request("show-buffer", &["-b", "default"]),
+                )
+                .stdout(),
+            Some("buffered")
+        );
+
+        let no_lines = TmuxCompatProduct::prepare_capture(
+            &state,
+            &target("pane-1"),
+            &request("capture-pane", &["-S", "-0"]),
+        )
+        .unwrap();
+        assert_eq!(no_lines.line_limit, None);
+
+        let tail = TmuxCompatProduct::prepare_capture(
+            &state,
+            &target("pane-1"),
+            &request("capture-pane", &["-S", "-2"]),
+        )
+        .unwrap();
+        assert_eq!(
+            product.complete_capture(&tail, "one\ntwo\nthree").stdout(),
+            Some("")
+        );
+        assert_eq!(
+            product
+                .handle(
+                    &mut state,
+                    &target("pane-1"),
+                    &request("show-buffer", &["-b", "default"]),
+                )
+                .stdout(),
+            Some("two\nthree")
+        );
+        assert_eq!(
+            product
+                .complete_capture(&tail, "one\ntwo\nthree\n")
+                .stdout(),
+            Some("")
+        );
+        assert_eq!(
+            product
+                .handle(
+                    &mut state,
+                    &target("pane-1"),
+                    &request("show-buffer", &["-b", "default"]),
+                )
+                .stdout(),
+            Some("two\nthree\n")
+        );
+
+        let missing = TmuxCompatProduct::prepare_capture(
+            &state,
+            &target("pane-1"),
+            &request("capture-pane", &["-t", "%outside"]),
         );
         assert_eq!(missing.unwrap_err().0, "target_not_found");
     }

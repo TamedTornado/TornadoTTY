@@ -174,6 +174,29 @@ impl TeamStore {
         self.active_pane_ids
             .insert(worklane_id.to_owned(), pane_id.to_owned());
     }
+
+    #[must_use]
+    pub fn buffer(&self, name: Option<&str>) -> &str {
+        let selected = name.or_else(|| self.buffers.keys().next().map(String::as_str));
+        selected
+            .and_then(|selected| self.buffers.get(selected))
+            .map_or("", String::as_str)
+    }
+
+    /// Replaces one compatibility buffer without leaving partially valid
+    /// state when a field or encoded-store limit would be exceeded.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::LimitExceeded`] when the name, value, collection,
+    /// or encoded store would exceed its documented bound.
+    pub fn set_buffer(&mut self, name: &str, value: &str) -> Result<(), StoreError> {
+        let mut candidate = self.clone();
+        candidate.buffers.insert(name.to_owned(), value.to_owned());
+        candidate.to_json()?;
+        *self = candidate;
+        Ok(())
+    }
 }
 
 fn validate_identifier(value: &str) -> Result<(), StoreError> {

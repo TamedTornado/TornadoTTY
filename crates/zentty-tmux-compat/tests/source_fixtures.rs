@@ -229,6 +229,25 @@ fn source_team_store_records_compatibility_selection_without_a_split() {
 }
 
 #[test]
+fn named_buffers_are_bounded_and_default_reads_use_sorted_source_order() {
+    let mut store = TeamStore::default();
+    store.set_buffer("z-last", "last").unwrap();
+    store.set_buffer("a-first", "first").unwrap();
+    assert_eq!(store.buffer(None), "first");
+    assert_eq!(store.buffer(Some("z-last")), "last");
+    assert_eq!(store.buffer(Some("missing")), "");
+
+    let before = store.clone();
+    assert_eq!(
+        store
+            .set_buffer("default", &"x".repeat(TeamStore::MAX_BUFFER_BYTES + 1))
+            .unwrap_err(),
+        StoreError::LimitExceeded
+    );
+    assert_eq!(store, before);
+}
+
+#[test]
 fn team_store_schema_is_versioned_bounded_and_source_named() {
     let store = TeamStore::default();
     let encoded = store.to_json().unwrap();

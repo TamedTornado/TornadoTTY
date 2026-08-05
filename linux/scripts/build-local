@@ -122,7 +122,7 @@ if [[ -z "${layer_shell_library}" || ! -f "${layer_shell_library}" ]]; then
 fi
 cp "${layer_shell_library}" "${output_dir}/lib/"
 
-cargo "${cargo_arguments[@]}"
+GHOSTTY_LIB_DIR="${ghostty_source}/zig-out/lib" cargo "${cargo_arguments[@]}"
 cp "${repo_root}/target/${cargo_profile}/zentty-linux" \
     "${output_dir}/bin/zentty-linux"
 cp "${repo_root}/target/${cargo_profile}/zentty" \
@@ -137,6 +137,8 @@ for tool in claude codex; do
         "${wrapper_root}/${tool}/${tool}"
 done
 
+# The linker must receive the literal loader token, not a shell expansion.
+# shellcheck disable=SC2016
 cc \
     "${c_probe_flags[@]}" \
     -I"${ghostty_source}/zig-out/include" \

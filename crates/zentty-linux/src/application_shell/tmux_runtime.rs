@@ -3,6 +3,7 @@ use crate::tmux_compat::{SplitDisposition, SplitPlan, TmuxProductAction};
 use std::cell::RefCell;
 use std::rc::Rc;
 use zentty_agent_ipc::AuthenticatedTmuxRequest;
+use zentty_ghostty::TextExtent;
 use zentty_tmux_compat::{Command as TmuxCommand, TmuxCompatReply};
 
 impl ApplicationShell {
@@ -19,6 +20,7 @@ impl ApplicationShell {
         let reply = match command.request.command() {
             TmuxCommand::SendKeys => Self::execute_tmux_send_keys(shell, &command),
             TmuxCommand::SplitWindow => Self::execute_tmux_split(shell, &command),
+            TmuxCommand::CapturePane => Self::execute_tmux_capture(shell, &command),
             _ => {
                 let mut shell = shell.borrow_mut();
                 let Self {
@@ -97,6 +99,45 @@ impl ApplicationShell {
                 reply
             }
             Err(message) => TmuxCompatReply::failure("split_failed", message)
+                .expect("bounded product diagnostic fits protocol limits"),
+        }
+    }
+
+    fn execute_tmux_capture(
+        shell: &Rc<RefCell<Self>>,
+        command: &AuthenticatedTmuxRequest,
+    ) -> TmuxCompatReply {
+        let plan = {
+            let shell = shell.borrow();
+            crate::tmux_compat::TmuxCompatProduct::prepare_capture(
+                &shell.state,
+                &command.target,
+                &command.request,
+            )
+        };
+        let plan = match plan {
+            Ok(plan) => plan,
+            Err((code, message)) => {
+                return TmuxCompatReply::failure(code, message)
+                    .expect("bounded product diagnostic fits protocol limits");
+            }
+        };
+        let text = shell
+            .borrow()
+            .surfaces
+            .get(&plan.pane_id)
+            .ok_or_else(|| format!("pane {} has no live terminal surface", plan.pane_id))
+            .and_then(|surface| {
+                surface
+                    .read_text(TextExtent::Screen)
+                    .map_err(|error| error.to_string())
+            });
+        match text {
+            Ok(text) => shell
+                .borrow_mut()
+                .tmux_compat
+                .complete_capture(&plan, &text),
+            Err(message) => TmuxCompatReply::failure("capture_failed", message)
                 .expect("bounded product diagnostic fits protocol limits"),
         }
     }

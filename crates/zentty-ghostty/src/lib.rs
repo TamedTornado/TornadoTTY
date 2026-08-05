@@ -7,6 +7,7 @@ use std::ffi::{CString, NulError};
 use std::fmt;
 use std::ptr::NonNull;
 use std::rc::Rc;
+use std::string::FromUtf8Error;
 use zentty_ghostty_sys as sys;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -15,6 +16,21 @@ pub enum AsyncBackend {
     Default,
     Epoll,
     IoUring,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TextExtent {
+    Viewport,
+    Screen,
+}
+
+impl From<TextExtent> for sys::GhosttyGtkEmbedTextExtent {
+    fn from(extent: TextExtent) -> Self {
+        match extent {
+            TextExtent::Viewport => Self::Viewport,
+            TextExtent::Screen => Self::Screen,
+        }
+    }
 }
 
 impl From<AsyncBackend> for sys::GhosttyGtkEmbedAsyncBackend {
@@ -43,6 +59,8 @@ pub enum Error {
     SurfaceCloseFailed,
     InputFailed,
     BindingActionFailed,
+    TextReadFailed,
+    InvalidText(FromUtf8Error),
     TickFailed,
 }
 
@@ -82,6 +100,10 @@ impl fmt::Display for Error {
             Self::BindingActionFailed => {
                 formatter.write_str("Ghostty terminal binding action failed")
             }
+            Self::TextReadFailed => formatter.write_str("Ghostty terminal text read failed"),
+            Self::InvalidText(_) => {
+                formatter.write_str("Ghostty terminal text was not valid UTF-8")
+            }
             Self::TickFailed => formatter.write_str("Ghostty runtime tick failed"),
         }
     }
@@ -91,6 +113,7 @@ impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::InteriorNul { source, .. } => Some(source),
+            Self::InvalidText(source) => Some(source),
             _ => None,
         }
     }
@@ -383,6 +406,49 @@ impl GhosttySurface {
             )
         };
         succeeded.then_some(()).ok_or(Error::BindingActionFailed)
+    }
+
+    /// Copies plain terminal text from the selected Ghostty extent.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::TextReadFailed`] when the native surface cannot read
+    /// the requested extent, or [`Error::InvalidText`] if the terminal breaks
+    /// its UTF-8 text contract.
+    pub fn read_text(&self, extent: TextExtent) -> Result<String, Error> {
+        unsafe extern "C" fn copy_text(
+            text: *const core::ffi::c_char,
+            text_len: usize,
+            userdata: *mut core::ffi::c_void,
+        ) {
+            // SAFETY: The native API invokes this synchronously with the
+            // `Vec<u8>` passed below and a readable byte range valid for the
+            // duration of this callback.
+            let output = unsafe { &mut *userdata.cast::<Vec<u8>>() };
+            // SAFETY: Ghostty's callback contract provides `text_len`
+            // readable bytes, including for text containing interior NULs.
+            if text_len > 0 {
+                let bytes = unsafe { std::slice::from_raw_parts(text.cast(), text_len) };
+                output.extend_from_slice(bytes);
+            }
+        }
+
+        let mut bytes = Vec::new();
+        // SAFETY: `widget` owns a live Ghostty surface. `bytes` remains live
+        // for the synchronous call, and `copy_text` does not retain either
+        // borrowed native text or its userdata pointer.
+        let succeeded = unsafe {
+            sys::ghostty_gtk_embed_surface_read_text(
+                self.widget.as_ptr().cast(),
+                extent.into(),
+                Some(copy_text),
+                (&raw mut bytes).cast(),
+            )
+        };
+        if !succeeded {
+            return Err(Error::TextReadFailed);
+        }
+        String::from_utf8(bytes).map_err(Error::InvalidText)
     }
 
     pub fn on_initialized(&self, callback: impl Fn() + 'static) {

@@ -7411,6 +7411,157 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   the product-journey ShellCheck, qualification-matrix validation, architecture
   contracts, orchestration contracts, and `git diff --check` all passed. No
   test, lint, or contract exception was added for this slice.
+- **Capture parity exposed one real Ghostty embedding gap:** Zentty's source
+  `capture-pane` reads the actual terminal text and scrollback; manufacturing
+  output from child logs or a parallel transcript would not test or reproduce
+  that feature. Current Ghostty already owns selection formatting and a text-
+  read primitive in its generic embedded core, but the downstream GTK widget
+  boundary did not expose it. The new Ghostty change is one language-neutral
+  synchronous `ghostty_gtk_embed_surface_read_text` operation with viewport
+  and full-screen extents. It invokes a borrowed callback only after releasing
+  the renderer mutex. Tmux printing, trailing-line selection, named buffers,
+  limits, and all Zentty policy remain outside Ghostty.
+- **The first standalone Ghostty build used incomplete dependency paths:** A
+  direct `zig build gtk-embed-lib` first failed because the system lacked
+  `gtk4-layer-shell` headers and the selected PATH did not contain the pinned
+  Blueprint compiler. Repeating the repository's documented build flags with
+  the pinned Blueprint tool and `-fno-sys=gtk4-layer-shell` reached the changed
+  Zig code. This was tooling discovery, not converted into a pass.
+- **Compiler feedback repaired two pointer/ownership mistakes:** The first
+  text-read build formed `**terminal.Screen` by taking an extra address of the
+  already-pointer active screen. After removing it, Zig rejected deinitializing
+  a const `Surface.Text`; the owned result is now mutable solely so its
+  allocator-matched `deinit` can run. The final Debug GTK embedding library and
+  focused embedding-options test target both compile cleanly.
+- **The first local lock update used an inferred, incorrect full SHA:** The
+  abbreviated `550f8e4ec` commit was initially expanded incorrectly, and
+  `build-local` rejected the checkout before compiling anything. The lock now
+  was then updated only from exact `git rev-parse HEAD` output; no shortened or
+  guessed object identity is accepted.
+- **`GHOSTTY_SOURCE_DIR` exposed split-brain linking in `build-local`:** The
+  script built and copied the explicitly selected Ghostty library, but Cargo's
+  sys crate still linked the default managed checkout. The first Rust link
+  therefore failed with undefined
+  `ghostty_gtk_embed_surface_read_text`. `build-local` now passes the selected
+  checkout's `zig-out/lib` as `GHOSTTY_LIB_DIR`, so one source selection governs
+  the Zig build, Rust link, staged copy, C contract, and metadata. The exact
+  retry built ReleaseSafe and both C/C++ header contracts successfully.
+- **Buffers are bounded transactional compatibility state, not another
+  terminal transcript:** `set-buffer` and `load-buffer` consume the already-
+  bounded IPC stdin; `save-buffer` and `show-buffer` preserve the source's
+  named or first-sorted selection. A candidate store is fully encoded and
+  validated before replacement, and a limit failure leaves the prior store
+  unchanged. `capture-pane` reads the real Ghostty surface, applies source
+  negative-`-S` trailing-line semantics in Zentty, and either prints with the
+  source newline rule or replaces only the default compatibility buffer.
+- **Strict gates caught documentation and raw-pointer style omissions:** The
+  first formatting check reported only canonical rustfmt changes. After those
+  were applied, all workspace tests passed, then strict Clippy rejected a
+  missing `# Errors` section on the bounded store mutation and an avoidable
+  borrowed raw pointer. The public error contract is now documented and the
+  safe adapter uses `&raw mut`; no lint suppression was added.
+- **API-audit rerun found that upstream tracking now exists:** The authoritative
+  inventory still said the `upstream` remote-tracking ref was unavailable,
+  while the clean direct-fork worktree now contains `upstream/main`. The
+  snapshot was corrected to `true`; all normalized range/file hashes, 19
+  commits, 12 exports, five public Ghostty-owned types, exact header/Zig/version
+  allowlists, and operation records now validate against the new locked head.
+- **Real capture and buffer journeys pass both display systems:** The staged
+  ReleaseSafe leader wrote unique text through its real PTY, invoked the real
+  shim/CLI/socket `capture-pane` path twice, verified printed and buffered
+  terminal content, and round-tripped named `set/load/save/show-buffer` stdin
+  through the product handler. That expanded journey retained real team
+  surfaces, topology, focus, input, and lifecycle checks and passed private X11
+  session `1ad4b2bae2caf67524dd5e42340137edaebe6e67dc9a854d099a4404e5e7bfeb`
+  and private Weston/Wayland session
+  `1ae779b2dbbace1cbe98d4479f58f212f07a089bd47b6038df7d08d9bcc58c7e`.
+- **First capture mutation run found four hidden boundary cases:** Of 15
+  mutants, nine were caught, two were compiler-unviable, and four survived:
+  negative `-0`, no-trailing-newline output, trailing-newline preservation,
+  and a condition whose alternative differed only for the empty string while
+  producing the same empty output. Tests now observe `-0` as no limit and
+  inspect buffered (not print-normalized) tail results with and without a
+  terminal newline. The equivalent empty-string branch was removed by using
+  the proven `ends_with('\n')` invariant directly rather than recording a
+  survivor.
+- **Repaired mutation campaigns are clean:** The capture/parser/buffer-handler
+  campaign ran 13 mutations: 11 caught and two compiler-unviable, with zero
+  missed or timed out; its `outcomes.json` SHA-256 is
+  `61076734bd70393b8ae8effb72f31990cb550ab1dd95f3b2884097d09b648765`.
+  The store-only campaign ran three mutations and caught all three; its
+  `outcomes.json` SHA-256 is
+  `a04523f2d5f3d5f973c52d7b486eb65c55faf047d0127d805f7b5c01d8db61da`.
+  Both used the checked safe-copy wrapper, including `gitignore=true` and
+  `copy_target=false`; no ignored build tree was duplicated.
+- **Pinned engine and public ABI regression gates pass:** The complete pinned
+  Ghostty Debug regression and focused embedding-options suite passed before
+  the final ABI-width review. The ReleaseSafe artifact exposes
+  exactly the 12 audited symbols. The C misuse/lifecycle contract passed in
+  private X11 session
+  `fc343b9b925030a1fca0e286f7aad101304dff4cf2698d0d810df91b6a82c01b`
+  and private Wayland session
+  `d5be1ea57b690fff77e4363b46979c5ad9e3411c1ecdc4ab9b4315cbc73c6186`;
+  rejected text reads never invoked their callback.
+- **Final ABI review refused to duplicate the known enum defect:** The first
+  text-extent draft used another public C enum even though the audit already
+  tracks C `-fshort-enums` versus Zig `c_int` as a high-severity defect for the
+  async backend. Before Zentty was committed, the unmerged Ghostty commit was
+  amended to define text extent as `uint32_t` plus typed constants and Zig/Rust
+  now use `u32`/`repr(u32)`. The public branch was replaced with
+  `c4849f2d87acd738e18562d436fc68245849b045`; the lock, normalized audit, C++
+  type assertion, and safe wrapper follow that exact fixed-width boundary.
+- **Changed build script exposed an intentional linker-token lint:** ShellCheck
+  correctly noted that `'$ORIGIN/../lib'` does not expand. That is precisely
+  the ELF runtime-loader contract: the shell must pass the literal `$ORIGIN`
+  token to the linker. A focused comment and `SC2016` directive now document
+  that single line; the selected-Ghostty linking change itself remains fully
+  checked, and no broad script exclusion was added.
+- **Final post-mutation candidate is fully reconfirmed:** Complete workspace
+  tests, strict all-target Clippy, formatting, changed-script ShellCheck, the
+  normalized API-audit self-test, matrix validation, architecture contracts,
+  orchestration contracts, and diff checks passed. After an exact ReleaseSafe
+  rebuild, the expanded real product journey passed X11 session
+  `339a756160a6fb6f075f44ad652ef1501f761250f6e9e272fa525ad70a746dd9`
+  and Wayland session
+  `4f665c8cc7fcf48aca79238bc869bfc1bf4a398179675b9001965b7cdc082e48`.
+  These receipts predate the fixed-width ABI amendment and are retained as
+  discovery evidence rather than presented as the final candidate receipts.
+- **The amended fixed-width Ghostty candidate passes its full regression:**
+  The complete pinned Ghostty regression suite, including the focused GTK
+  embedding tests, passed at exact Ghostty commit
+  `c4849f2d87acd738e18562d436fc68245849b045`. This is the same commit locked by
+  Zentty and reviewed by the normalized API inventory; the result is not being
+  inferred from the pre-amendment run.
+- **A sandboxed Xvfb attempt was rejected rather than treated as evidence:**
+  The first final X11 contract invocation could not create private X11 sockets
+  because the command sandbox supplied a non-root-owned `/tmp/.X11-unix`.
+  That environmental failure was recorded as a failure, not a pass or skip.
+  The exact command was rerun with permission to create its isolated server,
+  after which the real contract passed.
+- **The exact fixed-width ReleaseSafe candidate passes both real harnesses:**
+  After rebuilding against Ghostty
+  `c4849f2d87acd738e18562d436fc68245849b045`, the C misuse/lifecycle and text-
+  read contract passed controlled X11 session
+  `13619c1f37cfdf8ac50a4463af70b04f611496ad4f21898115c9d8d6cfe0ed8f`
+  and controlled Wayland session
+  `546f03f60ca3629c27d7945f38bc81981ac94889a4d5cdd8301466e2e344ed15`.
+  The expanded real Zentty product journey then passed controlled X11 session
+  `9a0c99fb36200f42d5e49545dc82f7738128869e82bbbd5bec194a865d013e1a`
+  and controlled Wayland session
+  `da9631643c9b08f23056df8ab1fc4def943fc0dcd1d1f80d14e12c9a40b59b59`.
+  The exact staged artifact also exposes only the 12 audited ABI symbols.
+- **Final reconciliation found and repaired one stale architecture pin:** A
+  repository-wide identity search found the product architecture contract and
+  its validator still pinned the preceding Ghostty revision even though the
+  build lock and API inventory selected the text-read commit. Because the
+  validator asserted the same stale literal, it could pass while disagreeing
+  with the build. The architecture contract now pins
+  `c4849f2d87acd738e18562d436fc68245849b045`, and its validator compares that
+  value directly with the single full SHA in `linux/ghostty.lock` instead of
+  maintaining another independent literal. The architecture contract,
+  workspace tests, strict all-target Clippy, formatting, ShellCheck, audit
+  self-test, qualification schema, orchestration contract, JSON parse, and
+  diff checks all pass after reconciliation.
 
 ## AI disclosure
 
