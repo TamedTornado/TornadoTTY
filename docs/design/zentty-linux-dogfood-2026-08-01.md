@@ -7198,6 +7198,59 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   terminal layout. The drain loop now rerenders only the currently implemented
   state-mutating `select-pane` route; read-only commands return without UI
   churn.
+- **Send-key product work began with a red scoped-action test:** A focused test
+  referenced the not-yet-existing `TmuxProductAction` and
+  `prepare_send_keys`; compilation failed with the expected missing type and
+  method errors. The implementation resolves only panes inside the
+  server-canonical worklane, translates the frozen source key vocabulary, and
+  represents empty input as an explicit no-op. Unlike the source fallback, an
+  explicit cross-scope/missing `-t` target fails diagnostically rather than
+  sending text to the routed fallback pane.
+- **Strict Clippy found the send-key planner did not use product store state:**
+  Its first implementation unnecessarily accepted `&self`. It is now an
+  associated pure planning function, making the lack of hidden mutable state
+  explicit instead of suppressing the lint.
+- **First real send-key product journey exposed an overlong XDG socket path:**
+  The staged ReleaseSafe product was launched in the controlled nested-X11
+  environment, but startup failed before creating a terminal with `path must
+  be shorter than SUN_LEN`. The private test environment deliberately uses a
+  long XDG runtime root; appending `zentty/instance-<pid>-<nonce>/instance.sock`
+  exceeded Linux's Unix-socket pathname limit. This is a real regression in
+  the new XDG preference, not a compositor or send-key failure. A red path
+  selection test now requires a bounded `/tmp` fallback when both the XDG and
+  supplied temporary roots would produce an unbindable socket path.
+- **Repaired real send-key journey crossed every intended boundary:** After
+  bounding the socket pathname and rebuilding the staged ReleaseSafe product,
+  controlled nested X11 session
+  `a28aa0ff28b65bafe35a712682f0d771eaa51b562c1469751e1d79af3bf2e71f`
+  launched the actual `zentty` CLI from the real Ghostty child. The command
+  crossed the authenticated Unix socket, server-canonical pane route, GTK
+  product handler, `GhosttySurface::send_text`, terminal input, line
+  discipline, and PTY child; the child consumed `agent-real-input` and emitted
+  the observed title `zentty-tmux-send-keys-real` before clean lifecycle exit.
+  This manual discovery is now a checked-in compositor-neutral product journey
+  that additionally executes real `display-message` and `list-panes`; it does
+  not use a test-only product route.
+- **Checked product journey passes both controlled compositors:** The committed
+  harness passed under private nested X11 session
+  `4384624a881f08eb7ac8e44fac4efc6c87159999b328aa04a89ac87e46b5b9e9`
+  and private Weston/Wayland session
+  `3c7a0565d846c1485dd864c3e669ffc4c87e547d1f707281efb03d5e7c428d04`.
+  The authoritative agent-integration cells now execute this journey rather
+  than leaving the new real boundary outside qualification. The overall tmux
+  facade remains `PARTIAL`: split, capture/buffers, kill/layout, persistence,
+  wait-for, shim staging, and full agent-team qualification are still pending.
+- **Architecture mirror correctly rejected a matrix-only orchestration edit:**
+  The first validation after adding the real journey failed because the
+  non-authoritative architecture mirror and the focused one-actor
+  orchestration contract still named the previous two/three-command agent
+  cells. Both reviewed mirrors now require the tmux journey explicitly; no
+  validator was bypassed and the failed validation did not start mutation.
+- **Send-key decision mutation is fully observed:** The expanded disk-safe
+  campaign generated 43 mutations: 34 were caught, nine were compiler-rejected
+  as unviable, zero were missed, and zero timed out. Its `outcomes.json`
+  SHA-256 is
+  `1b5d5e2dc9db434c5814517e634b15f2c070af52bcf3ae5ac19581c043d4bb02`.
 
 ## AI disclosure
 

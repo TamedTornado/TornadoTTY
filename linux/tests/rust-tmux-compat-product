@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
+backend="${GDK_BACKEND:-}"
+
+fail() {
+    printf 'rust-tmux-compat-product: error: %s\n' "$*" >&2
+    exit 1
+}
+
+[[ "${backend}" == x11 || "${backend}" == wayland ]] ||
+    fail "GDK_BACKEND must be x11 or wayland"
+[[ -x "${product}" ]] || fail "staged Zentty product is missing: ${product}"
+
+fixture_root="$(mktemp -d)"
+log="${fixture_root}/product.log"
+state_directory="${fixture_root}/state"
+child="${fixture_root}/child"
+cleanup() {
+    rm -rf -- "${fixture_root}"
+}
+trap cleanup EXIT
+
+cat >"${child}" <<'CHILD'
+#!/usr/bin/env bash
+set -euo pipefail
+
+pane="$(${ZENTTY_CLI_BIN} __tmux-compat display-message -p '#{pane_id}')"
+[[ "${pane}" == "%${ZENTTY_PANE_ID}" ]]
+listed="$(${ZENTTY_CLI_BIN} __tmux-compat list-panes -F '#{pane_id}')"
+[[ "${listed}" == "%${ZENTTY_PANE_ID}" ]]
+${ZENTTY_CLI_BIN} __tmux-compat send-keys \
+    -t "%${ZENTTY_PANE_ID}" agent-real-input Enter
+IFS= read -r value
+[[ "${value}" == agent-real-input ]]
+printf '\033]2;zentty-tmux-compat-real\a'
+sleep 0.1
+CHILD
+chmod +x "${child}"
+
+set +e
+timeout 20s "${product}" \
+    --command "${child}" \
+    --no-session-restore \
+    --state-directory "${state_directory}" >"${log}" 2>&1
+status=$?
+set -e
+if [[ "${status}" -ne 0 ]]; then
+    cat "${log}" >&2
+    fail "staged product exited ${status}"
+fi
+
+[[ "$(grep -Fxc 'zentty-linux: tmux-command pane=pane-1 worklane=worklane-1 command=DisplayMessage' "${log}" || true)" -eq 1 ]] || {
+    cat "${log}" >&2
+    fail "real display-message did not cross the product handler"
+}
+[[ "$(grep -Fxc 'zentty-linux: tmux-command pane=pane-1 worklane=worklane-1 command=ListPanes' "${log}" || true)" -eq 1 ]] || {
+    cat "${log}" >&2
+    fail "real list-panes did not cross the product handler"
+}
+[[ "$(grep -Fxc 'zentty-linux: tmux-command pane=pane-1 worklane=worklane-1 command=SendKeys' "${log}" || true)" -eq 1 ]] || {
+    cat "${log}" >&2
+    fail "real send-keys did not cross the product handler"
+}
+grep -Fxq 'zentty-linux: title=zentty-tmux-compat-real' "${log}" || {
+    cat "${log}" >&2
+    fail "send-keys text did not cross the Ghostty surface and PTY"
+}
+grep -Fxq 'zentty-linux: child-exited' "${log}" || {
+    cat "${log}" >&2
+    fail "real terminal child did not exit cleanly"
+}
+
+printf 'Rust tmux compatibility product journey passed: %s\n' "${backend}"

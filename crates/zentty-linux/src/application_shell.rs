@@ -12,7 +12,7 @@ use zentty_core::{
     WindowRecipe, WorklaneColor, WorklaneRecipe, WorkspaceState,
 };
 use zentty_ghostty::{GhosttyRuntime, GhosttySurface, SurfaceConfig};
-use zentty_tmux_compat::Command as TmuxCommand;
+use zentty_tmux_compat::{Command as TmuxCommand, TmuxCompatReply};
 
 use crate::{
     agent_runtime::AgentRuntime,
@@ -27,6 +27,7 @@ use crate::{
     sidebar,
     sidebar_visibility::{Event as SidebarVisibilityEvent, Mode as SidebarVisibilityMode},
     source_ui,
+    tmux_compat::TmuxProductAction,
     window_chrome::WindowChrome,
     worklane_peek::{
         self, Direction as PeekDirection, PanePreview, Phase as PeekPhase,
@@ -2451,9 +2452,38 @@ impl ApplicationShell {
                 command.target.worklane_id,
                 command.request.command()
             );
-            let reply = self
-                .tmux_compat
-                .handle(&mut self.state, &command.target, &command.request);
+            let reply = if command.request.command() == TmuxCommand::SendKeys {
+                match crate::tmux_compat::TmuxCompatProduct::prepare_send_keys(
+                    &self.state,
+                    &command.target,
+                    &command.request,
+                ) {
+                    Ok(TmuxProductAction::Noop) => TmuxCompatReply::success(String::new())
+                        .expect("empty compatibility output fits protocol limits"),
+                    Ok(TmuxProductAction::SendText { pane_id, text }) => self
+                        .surfaces
+                        .get(&pane_id)
+                        .ok_or_else(|| format!("pane {pane_id} has no live terminal surface"))
+                        .and_then(|surface| {
+                            surface.send_text(&text).map_err(|error| error.to_string())
+                        })
+                        .map_or_else(
+                            |message| {
+                                TmuxCompatReply::failure("delivery_failed", message)
+                                    .expect("bounded product diagnostic fits protocol limits")
+                            },
+                            |()| {
+                                TmuxCompatReply::success(String::new())
+                                    .expect("empty compatibility output fits protocol limits")
+                            },
+                        ),
+                    Err((code, message)) => TmuxCompatReply::failure(code, message)
+                        .expect("bounded product diagnostic fits protocol limits"),
+                }
+            } else {
+                self.tmux_compat
+                    .handle(&mut self.state, &command.target, &command.request)
+            };
             tmux_changed_product_state |=
                 matches!(command.request.command(), TmuxCommand::SelectPane);
             if let Err(error) = command.respond(reply) {

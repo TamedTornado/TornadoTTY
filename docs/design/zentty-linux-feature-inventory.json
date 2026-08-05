@@ -156,9 +156,9 @@
       "origin": "PORT_PARITY",
       "user_impact": "Initial Linux users can use named move actions, but lose direct spatial manipulation until this is ported.",
       "linux_owner_issue": 7,
-      "implementation_status": "NOT_IMPLEMENTED",
-      "focused_tests": [],
-      "product_scenarios": [],
+      "implementation_status": "PARTIAL",
+      "focused_tests": ["crates/zentty-tmux-compat/tests/source_fixtures.rs", "crates/zentty-tmux-compat/tests/protocol_contract.rs", "crates/zentty-agent-ipc/tests/tmux_transport.rs", "crates/zentty-agent-ipc/tests/tmux_cli.rs", "crates/zentty-linux/src/tmux_compat.rs"],
+      "product_scenarios": ["linux/tests/rust-tmux-compat-product"],
       "test_plan": "Port deterministic drop resolution before using real GTK pointer sequences against actual pane and sidebar widgets.",
       "alternative_or_blocker": null
     },

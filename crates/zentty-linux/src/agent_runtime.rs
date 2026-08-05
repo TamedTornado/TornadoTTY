@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, mpsc};
@@ -185,17 +186,28 @@ fn instance_runtime_directory(
     process_id: u32,
     nonce: &str,
 ) -> PathBuf {
-    xdg_runtime_directory
+    let xdg_candidate = xdg_runtime_directory
         .map(std::path::Path::new)
         .filter(|path| path.is_absolute())
-        .map_or_else(
-            || temporary_directory.join(format!("zentty-agent-{process_id}-{nonce}")),
-            |runtime| {
-                runtime
-                    .join("zentty")
-                    .join(format!("instance-{process_id}-{nonce}"))
-            },
-        )
+        .map(|runtime| {
+            runtime
+                .join("zentty")
+                .join(format!("instance-{process_id}-{nonce}"))
+        });
+    if let Some(candidate) = xdg_candidate.filter(|path| socket_path_fits(path)) {
+        return candidate;
+    }
+    let temporary_candidate =
+        temporary_directory.join(format!("zentty-agent-{process_id}-{nonce}"));
+    if socket_path_fits(&temporary_candidate) {
+        temporary_candidate
+    } else {
+        std::path::Path::new("/tmp").join(format!("zentty-agent-{process_id}-{nonce}"))
+    }
+}
+
+fn socket_path_fits(directory: &std::path::Path) -> bool {
+    directory.join("instance.sock").as_os_str().as_bytes().len() <= 107
 }
 
 fn enabled_wrapper_directories(
@@ -278,6 +290,16 @@ mod tests {
         );
         assert_eq!(
             instance_runtime_directory(None, "/tmp".as_ref(), 42, "abc"),
+            std::path::Path::new("/tmp/zentty-agent-42-abc")
+        );
+        let long_runtime = format!("/tmp/{}", "nested-runtime/".repeat(10));
+        assert_eq!(
+            instance_runtime_directory(
+                Some(long_runtime.as_ref()),
+                long_runtime.as_ref(),
+                42,
+                "abc"
+            ),
             std::path::Path::new("/tmp/zentty-agent-42-abc")
         );
     }

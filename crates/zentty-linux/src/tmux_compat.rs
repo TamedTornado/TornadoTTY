@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use zentty_core::{AgentTarget, PaneState, WorklaneState, WorkspaceState};
 use zentty_tmux_compat::{
-    Command, FormatRenderer, PaneTarget, ParsedArguments, TeamStore, TmuxCompatReply,
+    Command, FormatRenderer, PaneTarget, ParsedArguments, SendKeys, TeamStore, TmuxCompatReply,
     TmuxCompatRequest,
 };
 
@@ -14,7 +14,42 @@ pub(crate) struct TmuxCompatProduct {
     store: TeamStore,
 }
 
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) enum TmuxProductAction {
+    Noop,
+    SendText { pane_id: String, text: String },
+}
+
 impl TmuxCompatProduct {
+    pub(crate) fn prepare_send_keys(
+        state: &WorkspaceState,
+        target: &AgentTarget,
+        request: &TmuxCompatRequest,
+    ) -> Result<TmuxProductAction, (&'static str, String)> {
+        let worklane = target_worklane(state, target)?;
+        let pane_ids = pane_entries(worklane)
+            .into_iter()
+            .map(|(_, pane, _)| pane.id.clone())
+            .collect::<Vec<_>>();
+        let parsed = parsed(request.arguments(), &["-N", "-T", "-t"], &["-R", "-l"]);
+        if let Some(selector) = parsed.value("-t") {
+            let candidate = selector.strip_prefix('%').unwrap_or(selector);
+            if !pane_ids.iter().any(|pane_id| pane_id == candidate) {
+                return Err((
+                    "target_not_found",
+                    format!("pane {selector} is unavailable in the routed worklane"),
+                ));
+            }
+        }
+        let pane_id = PaneTarget::resolve(parsed.value("-t"), &pane_ids, &target.pane_id);
+        let text = SendKeys::translate(request.arguments(), request.standard_input());
+        if text.is_empty() {
+            Ok(TmuxProductAction::Noop)
+        } else {
+            Ok(TmuxProductAction::SendText { pane_id, text })
+        }
+    }
+
     pub(crate) fn handle(
         &mut self,
         state: &mut WorkspaceState,
@@ -280,7 +315,7 @@ fn failure(code: &'static str, message: impl Into<String>) -> TmuxCompatReply {
 
 #[cfg(test)]
 mod tests {
-    use super::TmuxCompatProduct;
+    use super::{TmuxCompatProduct, TmuxProductAction};
     use zentty_core::AgentTarget;
     use zentty_core::WorkspaceState;
     use zentty_tmux_compat::TmuxCompatRequest;
@@ -463,5 +498,38 @@ mod tests {
             assert_eq!(error.code(), "not_implemented", "{command}");
             assert!(error.message().contains("not implemented"), "{command}");
         }
+    }
+
+    #[test]
+    fn send_keys_prepares_source_text_for_only_a_scoped_live_pane() {
+        let state = workspace();
+        let action = TmuxCompatProduct::prepare_send_keys(
+            &state,
+            &target("pane-1"),
+            &request("send-keys", &["-t", "%pane-2", "echo", "ready", "Enter"]),
+        )
+        .unwrap();
+        assert_eq!(
+            action,
+            TmuxProductAction::SendText {
+                pane_id: "pane-2".to_owned(),
+                text: "echo ready\r".to_owned(),
+            }
+        );
+
+        let empty = TmuxCompatProduct::prepare_send_keys(
+            &state,
+            &target("pane-1"),
+            &request("send-keys", &["-t", "%pane-2"]),
+        )
+        .unwrap();
+        assert_eq!(empty, TmuxProductAction::Noop);
+
+        let missing = TmuxCompatProduct::prepare_send_keys(
+            &state,
+            &target("pane-1"),
+            &request("send-keys", &["-t", "%pane-other", "unsafe"]),
+        );
+        assert_eq!(missing.unwrap_err().0, "target_not_found");
     }
 }
