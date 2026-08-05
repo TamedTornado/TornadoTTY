@@ -1,3 +1,5 @@
+use crate::pane_layout::PaneLayoutPolicy;
+
 /// The source-defined set of user-selectable worklane colors.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum WorklaneColor {
@@ -715,6 +717,47 @@ impl WorkspaceState {
         self.insert_focused_pane_right(&pane_id, Some(sanitize_dimension(column_width)))
     }
 
+    /// Inserts and focuses a new single-pane column immediately to the left of
+    /// the focused column.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if an internal state transition has violated the focused-
+    /// column invariant.
+    pub fn insert_focused_pane_left(
+        &mut self,
+        pane_id: impl Into<String>,
+        column_width: f64,
+    ) -> bool {
+        let previous = self.current_pane_reference();
+        let pane_id = pane_id.into();
+        if self.contains_pane(&pane_id) {
+            return false;
+        }
+        let worklane = self.active_worklane_mut();
+        let focused_index = worklane
+            .columns
+            .iter()
+            .position(|column| column.id == worklane.focused_column_id)
+            .expect("workspace invariant: focused column exists");
+        let width = sanitize_dimension(column_width);
+        let column_id = format!("column-{pane_id}");
+        worklane.columns.insert(
+            focused_index,
+            PaneColumnState {
+                id: column_id.clone(),
+                width,
+                panes: vec![PaneState::new(pane_id.clone())],
+                pane_heights: vec![1.0],
+                focused_pane_id: pane_id.clone(),
+                last_focused_pane_id: pane_id,
+            },
+        );
+        worklane.focused_column_id = column_id;
+        self.record_focus_transition(previous);
+        true
+    }
+
     pub fn add_pane_right_without_resizing(
         &mut self,
         pane_id: impl Into<String>,
@@ -789,6 +832,261 @@ impl WorkspaceState {
         column.last_focused_pane_id = pane_id;
         self.record_focus_transition(previous);
         true
+    }
+
+    /// Inserts and focuses a pane immediately above the focused pane.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if an internal state transition has violated focused-column
+    /// or focused-pane invariants.
+    pub fn insert_focused_pane_above(&mut self, pane_id: impl Into<String>) -> bool {
+        let previous = self.current_pane_reference();
+        let pane_id = pane_id.into();
+        if self.contains_pane(&pane_id) {
+            return false;
+        }
+        let worklane = self.active_worklane_mut();
+        let column = worklane
+            .columns
+            .iter_mut()
+            .find(|column| column.id == worklane.focused_column_id)
+            .expect("workspace invariant: focused column exists");
+        let focused_index = column
+            .panes
+            .iter()
+            .position(|pane| pane.id == column.focused_pane_id)
+            .expect("workspace invariant: focused pane exists");
+        let height = column.pane_heights[focused_index];
+        column
+            .panes
+            .insert(focused_index, PaneState::new(pane_id.clone()));
+        column.pane_heights[focused_index] = height / 2.0;
+        column.pane_heights.insert(focused_index, height / 2.0);
+        column.focused_pane_id.clone_from(&pane_id);
+        column.last_focused_pane_id = pane_id;
+        self.record_focus_transition(previous);
+        true
+    }
+
+    pub fn focus_pane_left(&mut self) -> bool {
+        self.focus_adjacent_column(-1)
+    }
+
+    pub fn focus_pane_right(&mut self) -> bool {
+        self.focus_adjacent_column(1)
+    }
+
+    fn focus_adjacent_column(&mut self, offset: isize) -> bool {
+        let previous = self.current_pane_reference();
+        let worklane = self.active_worklane_mut();
+        let focused_index = worklane
+            .columns
+            .iter()
+            .position(|column| column.id == worklane.focused_column_id)
+            .expect("workspace invariant: focused column exists");
+        let Some(target_index) = focused_index.checked_add_signed(offset) else {
+            return false;
+        };
+        let Some(target) = worklane.columns.get_mut(target_index) else {
+            return false;
+        };
+        worklane.focused_column_id.clone_from(&target.id);
+        target
+            .focused_pane_id
+            .clone_from(&target.last_focused_pane_id);
+        self.record_focus_transition(previous);
+        true
+    }
+
+    pub fn focus_pane_up(&mut self) -> bool {
+        self.focus_pane_vertically(-1)
+    }
+
+    pub fn focus_pane_down(&mut self) -> bool {
+        self.focus_pane_vertically(1)
+    }
+
+    fn focus_pane_vertically(&mut self, offset: isize) -> bool {
+        let previous = self.current_pane_reference();
+        let worklane = self.active_worklane_mut();
+        let column = worklane
+            .columns
+            .iter_mut()
+            .find(|column| column.id == worklane.focused_column_id)
+            .expect("workspace invariant: focused column exists");
+        let focused_index = column
+            .panes
+            .iter()
+            .position(|pane| pane.id == column.focused_pane_id)
+            .expect("workspace invariant: focused pane exists");
+        let Some(target_index) = focused_index.checked_add_signed(offset) else {
+            return false;
+        };
+        let Some(target) = column.panes.get(target_index) else {
+            return false;
+        };
+        column.focused_pane_id.clone_from(&target.id);
+        column.last_focused_pane_id.clone_from(&target.id);
+        self.record_focus_transition(previous);
+        true
+    }
+
+    /// Sets every column to the source preset width: the readable viewport
+    /// divided by the requested number of simultaneously visible columns.
+    pub fn arrange_columns(&mut self, visible_column_count: usize, available_width: f64) -> bool {
+        if !(1..=4).contains(&visible_column_count) || !available_width.is_finite() {
+            return false;
+        }
+        let visible_count = small_count_as_f64(visible_column_count);
+        let total_spacing = f64::from(PaneLayoutPolicy::INTER_PANE_SPACING)
+            * small_count_as_f64(visible_column_count.saturating_sub(1));
+        let target = sanitize_dimension((available_width - total_spacing).max(1.0) / visible_count);
+        let mut changed = false;
+        for column in &mut self.active_worklane_mut().columns {
+            changed |= (column.width - target).abs() > f64::EPSILON;
+            column.width = target;
+        }
+        changed
+    }
+
+    /// Reflows panes in sidebar/reading order into columns containing the
+    /// requested number of panes while preserving stable pane identities and
+    /// the focused pane.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if an internal state transition has violated active-lane,
+    /// focused-pane, or nonempty-column invariants.
+    pub fn arrange_panes_per_column(&mut self, panes_per_column: usize) -> bool {
+        if !(1..=4).contains(&panes_per_column) {
+            return false;
+        }
+        let worklane = self.active_worklane_mut();
+        let before = worklane.columns.clone();
+        let focused_pane_id = before
+            .iter()
+            .find(|column| column.id == worklane.focused_column_id)
+            .map(|column| column.focused_pane_id.clone())
+            .expect("workspace invariant: focused pane exists");
+        let widths = before.iter().map(|column| column.width).collect::<Vec<_>>();
+        let panes = before
+            .iter()
+            .flat_map(|column| column.panes.iter().cloned())
+            .collect::<Vec<_>>();
+        let mut rebuilt = Vec::new();
+        for (index, chunk) in panes.chunks(panes_per_column).enumerate() {
+            let chunk = chunk.to_vec();
+            let first_id = chunk[0].id.clone();
+            let focused = if chunk.iter().any(|pane| pane.id == focused_pane_id) {
+                focused_pane_id.clone()
+            } else {
+                first_id.clone()
+            };
+            rebuilt.push(PaneColumnState {
+                id: before
+                    .get(index)
+                    .map_or_else(|| format!("column-{first_id}"), |column| column.id.clone()),
+                width: widths[index.min(widths.len() - 1)],
+                pane_heights: vec![1.0 / small_count_as_f64(chunk.len()); chunk.len()],
+                panes: chunk,
+                focused_pane_id: focused.clone(),
+                last_focused_pane_id: focused,
+            });
+        }
+        let focused_column_id = rebuilt
+            .iter()
+            .find(|column| column.panes.iter().any(|pane| pane.id == focused_pane_id))
+            .map(|column| column.id.clone())
+            .expect("workspace invariant: focused pane survives reflow");
+        if rebuilt == before {
+            return false;
+        }
+        worklane.columns = rebuilt;
+        worklane.focused_column_id = focused_column_id;
+        true
+    }
+
+    /// # Panics
+    ///
+    /// Panics only if an internal state transition has violated the focused-
+    /// column invariant.
+    pub fn arrange_golden_width(&mut self, focus_wide: bool, available_width: f64) -> bool {
+        let worklane = self.active_worklane_mut();
+        if worklane.columns.len() < 2 || !available_width.is_finite() {
+            return false;
+        }
+        let focused_index = worklane
+            .columns
+            .iter()
+            .position(|column| column.id == worklane.focused_column_id)
+            .expect("workspace invariant: focused column exists");
+        let neighbor_index = if focused_index + 1 < worklane.columns.len() {
+            focused_index + 1
+        } else {
+            focused_index - 1
+        };
+        let major = (1.0 + 5.0_f64.sqrt()) / (3.0 + 5.0_f64.sqrt());
+        let focused_ratio = if focus_wide { major } else { 1.0 - major };
+        let pair_width =
+            (available_width - f64::from(PaneLayoutPolicy::INTER_PANE_SPACING)).max(1.0);
+        let focused_width = pair_width * focused_ratio;
+        let neighbor_width = pair_width - focused_width;
+        let changed = (worklane.columns[focused_index].width - focused_width).abs() > f64::EPSILON
+            || (worklane.columns[neighbor_index].width - neighbor_width).abs() > f64::EPSILON;
+        worklane.columns[focused_index].width = focused_width;
+        worklane.columns[neighbor_index].width = neighbor_width;
+        changed
+    }
+
+    /// # Panics
+    ///
+    /// Panics only if an internal state transition has violated focused-column
+    /// or focused-pane invariants.
+    pub fn arrange_golden_height(&mut self, focus_tall: bool) -> bool {
+        let worklane = self.active_worklane_mut();
+        let column = worklane
+            .columns
+            .iter_mut()
+            .find(|column| column.id == worklane.focused_column_id)
+            .expect("workspace invariant: focused column exists");
+        if column.panes.len() < 2 {
+            return false;
+        }
+        let focused_index = column
+            .panes
+            .iter()
+            .position(|pane| pane.id == column.focused_pane_id)
+            .expect("workspace invariant: focused pane exists");
+        let neighbor_index = if focused_index + 1 < column.panes.len() {
+            focused_index + 1
+        } else {
+            focused_index - 1
+        };
+        let major = (1.0 + 5.0_f64.sqrt()) / (3.0 + 5.0_f64.sqrt());
+        let focused_ratio = if focus_tall { major } else { 1.0 - major };
+        let pair_total = column.pane_heights[focused_index] + column.pane_heights[neighbor_index];
+        let focused_height = pair_total * focused_ratio;
+        let neighbor_height = pair_total - focused_height;
+        let changed = (column.pane_heights[focused_index] - focused_height).abs() > f64::EPSILON;
+        column.pane_heights[focused_index] = focused_height;
+        column.pane_heights[neighbor_index] = neighbor_height;
+        changed
+    }
+
+    pub fn reset_active_layout(&mut self, default_column_width: f64) -> bool {
+        let width = sanitize_dimension(default_column_width);
+        let mut changed = false;
+        for column in &mut self.active_worklane_mut().columns {
+            changed |= (column.width - width).abs() > f64::EPSILON;
+            column.width = width;
+            let height = 1.0 / small_count_as_f64(column.panes.len());
+            for pane_height in &mut column.pane_heights {
+                changed |= (*pane_height - height).abs() > f64::EPSILON;
+                *pane_height = height;
+            }
+        }
+        changed
     }
 
     pub fn select_pane(&mut self, pane_id: &str) -> bool {
@@ -1275,6 +1573,10 @@ fn sanitize_dimension(value: f64) -> f64 {
     } else {
         1.0
     }
+}
+
+fn small_count_as_f64(count: usize) -> f64 {
+    f64::from(u32::try_from(count).unwrap_or(u32::MAX))
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

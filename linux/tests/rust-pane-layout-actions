@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
+backend="${GDK_BACKEND:-}"
+log=""
+state_directory=""
+
+fail() {
+    [[ -z "${log}" || ! -f "${log}" ]] || cat "${log}" >&2
+    echo "rust-pane-layout-actions: error: $*" >&2
+    exit 1
+}
+
+cleanup() {
+    [[ -z "${log}" ]] || rm -f -- "${log}"
+    [[ -z "${state_directory}" ]] || rm -rf -- "${state_directory}"
+}
+trap cleanup EXIT
+
+case "${backend}" in
+    x11)
+        [[ "${ZENTTY_NESTED_X11_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+            fail "X11 scenario must run through linux/tests/nested-x11"
+        ;;
+    wayland)
+        [[ "${ZENTTY_NESTED_WAYLAND_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+            fail "Wayland scenario must run through linux/tests/nested-wayland"
+        ;;
+    *) fail "GDK_BACKEND must be x11 or wayland" ;;
+esac
+for dependency in grep jq mktemp sed sort timeout wc; do
+    command -v "${dependency}" >/dev/null || fail "${dependency} is required"
+done
+[[ -x "${product}" ]] || fail "staged product is not built: ${product}"
+
+log="$(mktemp)"
+state_directory="$(mktemp -d)"
+set +e
+timeout --foreground --kill-after=2s 20s \
+    "${product}" \
+    --command 'printf "\033]2;layout-child-$$\a"; sleep 10' \
+    --state-directory "${state_directory}" \
+    --no-session-restore \
+    --exercise-pane-layout-actions \
+    --quit-after-pane-layout-actions >"${log}" 2>&1
+status=$?
+set -e
+(( status == 0 )) || fail "staged product scenario exited ${status}"
+
+for receipt in \
+    'zentty-linux: action=add-pane-left pane=pane-2' \
+    'zentty-linux: action=split-pane-right pane=pane-3' \
+    'zentty-linux: action=split-pane-below pane=pane-4' \
+    'zentty-linux: action=focus-pane-up pane=pane-3' \
+    'zentty-linux: action=focus-pane-left pane=pane-2' \
+    'zentty-linux: action=focus-pane-right pane=pane-3' \
+    'zentty-linux: action=focus-pane-down pane=pane-4' \
+    'zentty-linux: action=arrange-width-thirds pane=pane-4' \
+    'zentty-linux: action=arrange-height-two pane=pane-4' \
+    'zentty-linux: action=arrange-width-half pane=pane-4' \
+    'zentty-linux: action=arrange-golden-tall pane=pane-4' \
+    'zentty-linux: action=arrange-golden-wide pane=pane-4' \
+    'zentty-linux: action=reset-pane-layout pane=pane-4' \
+    'zentty-linux: action=arrange-height-full pane=pane-4' \
+    'zentty-linux: action=arrange-width-quarters pane=pane-4' \
+    'zentty-linux: action=arrange-golden-narrow pane=pane-4'; do
+    grep -Fxq "${receipt}" "${log}" || fail "missing named action receipt: ${receipt}"
+done
+
+grep -Fxq 'zentty-linux: pane-layout-action-scenario verified panes=["pane-2", "pane-3", "pane-4", "pane-1"] columns=4 focus=pane-4 golden=narrow' "${log}" ||
+    fail "final source topology and golden layout were not verified in product"
+grep -Fxq 'zentty-linux: pane-layout-action-scenario complete' "${log}" ||
+    fail "pane-layout scenario did not complete"
+grep -Fq 'zentty-linux: geometry=worklane-1:column-pane-2[pane-2],column-pane-3[pane-3],column-pane-4[pane-4],column-pane-1[pane-1]' "${log}" ||
+    fail "rendered GTK topology did not follow the four-column reflow"
+grep -Fq 'zentty-linux: pane-scroll-focused value=' "${log}" ||
+    fail "directional focus and layout actions did not reveal the focused column"
+[[ "$(grep -Fxc 'zentty-linux: terminal-ready' "${log}" || true)" -eq 4 ]] ||
+    fail "not every stable pane initialized a real Ghostty terminal"
+[[ "$(sed -n 's/^zentty-linux: title=layout-child-\([0-9][0-9]*\)$/\1/p' "${log}" | sort -u | wc -l)" -eq 4 ]] ||
+    fail "the layout retained fewer than four distinct real PTY children"
+
+snapshot="${state_directory}/restore-snapshot.json"
+jq -e '
+    .workspace.windows[0].worklanes[0] as $lane |
+    $lane.focusedColumnID == "column-pane-4" and
+    [$lane.columns[].panes[].id] == ["pane-2", "pane-3", "pane-4", "pane-1"] and
+    ($lane.columns | length) == 4 and
+    ($lane.columns | all(.panes | length == 1)) and
+    ($lane.columns[2].width < $lane.columns[3].width)
+' "${snapshot}" >/dev/null || fail "persisted pane arrangement differs from rendered state"
+
+if grep -Eq 'panicked at|thread caused non-unwinding panic|RefCell already borrowed|CRITICAL: Gtk|has a parent GtkBox' "${log}"; then
+    fail "pane-layout scenario reported a panic or GTK lifecycle critical"
+fi
+
+echo "Rust pane layout actions passed: ${backend}, features=directional-focus+before-insert+width-presets+height-reflow+golden+reset, terminals=4-real-pty"

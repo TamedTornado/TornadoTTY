@@ -5892,6 +5892,99 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   feature-inventory runner tests, real source-UX X11, real workspace Wayland,
   real pane-search X11, and real pane-search Wayland.
 
+### DOGFOOD-2026-08-05-PANE-MANAGEMENT-BATCH: source arrangements and spatial focus
+
+- **Scope correction:** The preceding request was for a large product batch,
+  but the delivered search slice contained only one visible feature despite
+  substantial integration and qualification work. Search itself required only
+  a 29-line GTK embedding adapter for the binding-action capability already
+  available to the original Zentty through Ghostty's general C embedding API;
+  describing that as deep Ghostty implementation work was inaccurate. This
+  batch corrects the planning mistake by delivering multiple source-backed
+  pane-management families together: Add Pane Left, four-way spatial focus,
+  four width presets, four panes-per-column reflows, four golden-focus
+  arrangements, reset layout, an expanded Arrange popover, palette routes,
+  contextual access, and persistence.
+- **Tests-first red state:** The new platform-neutral tests first failed on 13
+  deliberately absent model methods. After implementation, the first compile
+  exposed an invalid borrowed `Vec<&str>` test fixture across mutations; the
+  fixture now owns its expected strings. The first semantic run then exposed an
+  incorrect test expectation for insertion above the *focused lower pane*.
+  Product behavior was correct (`left, upper, lower`); the assertion was fixed
+  rather than changing the focused-slot contract.
+- **Vocabulary audit:** An initial draft exposed a user-facing `New Pane Above`
+  action by extrapolating from the internal source command
+  `splitVerticallyBefore`. The source does have `addPaneUp`, but does not expose
+  that invented title in its current menus or command registry. The Linux
+  action was removed before delivery. Add Pane Left uses the exact source menu
+  title. This prevents repeating the earlier mistake of inventing verbs from
+  internal mechanics.
+- **Real-system discovery:** Both first controlled compositor runs reached the
+  correct four-pane topology, retained four distinct real PTY children, and
+  passed the in-product state assertion, but the external script expected the
+  final reflow to preserve the original fourth column ID. Source reflow assigns
+  a stable generated `column-pane-1` identity when that new column is created.
+  The script now asserts that actual persisted/rendered identity. The failure
+  was an incorrect receipt, not waived product behavior.
+- **Real evidence:** Controlled X11 session
+  `3779cb9fb4877e6b4a79473a00712d71e06d6083a1b2ce5ae4f629caebd5e6c7`
+  and controlled Wayland session
+  `1ab0deb2cdc724b93f251d98fb1285a7e706393dd823b8aba63209d2f476deca`
+  each ran the staged ReleaseSafe GTK product with four real Ghostty surfaces,
+  four distinct shell children, real renderer reparenting, every named layout
+  route, focused-column reveal, final golden geometry, clean shutdown, and a
+  durable snapshot matching the rendered topology.
+- **Spacing fidelity repair:** Review against `PaneStripState.swift` found the
+  first preset implementation divided the full viewport without subtracting
+  the source's one-pixel gaps. Multiple columns therefore overran the requested
+  visible width by the number of dividers, and golden pairs did so by one pixel.
+  The model now subtracts the exact `PaneLayoutPolicy::INTER_PANE_SPACING`
+  budget before division. Tests assert both thirds and golden-pair totals.
+- **Regression discoveries and repairs:** Expanding Arrange from a short list
+  to a source-complete two-column grid invalidated the old physical X11 test's
+  first-column pointer coordinate; both the stale coordinate and an initial
+  guessed replacement created `pane-5` through Split Right instead of the
+  explicitly asserted Add Pane Right route. Inspection of the real separately
+  mapped 673-by-528 GTK popover located the second rendered column; no product
+  assertion was weakened. Controlled X11 session
+  `0c9079292bbbe3a74241c8ef0048e0023389bd0263b59755d1b916d344d2a4a5`
+  then passed the complete five-real-PTY physical UX scenario. The sidebar
+  regression independently exposed a race: it waited for terminal readiness
+  but asserted the later idle-scheduled reveal immediately. It now waits for
+  the actual reveal receipt rather than depending on scheduler timing;
+  controlled session
+  `dc76d11ed32ba9fedea961507edcf09e1fa4b3e0445c43592f5f7d19de78205b`
+  passed all nine-real-worklane overflow and drag contracts.
+- **Broader real regressions:** Workspace action/persistence scenarios passed
+  unchanged on X11 session
+  `62667329fe6cfbce78b7b037d7c12103dc841a1428dd8648311fd0f03e4fe8d0`
+  and Wayland session
+  `0529c46b02b27a3afb2be3f04cc78a9610696974f4b27fa3a18c56217a12831c`.
+  Workspace unit/integration tests, Clippy with warnings denied, source
+  vocabulary validation, and ReleaseSafe staging also passed on the same tree.
+- **Final authoritative rerun:** `linux/tests/qualify-local` reran every
+  presently executable cell after all code, test, and report repairs. Declared
+  totals are `PASS=48`, `FAIL=0`, `BLOCKED=5`, `XFAIL=1`, and
+  `NOT_IMPLEMENTED=53`; the implemented local suite and product boundary pass,
+  while release and full Linux qualification correctly remain false. The
+  machine summary SHA-256 is
+  `b92559d48dc26cc393c664d4cb6212e39d68da1c1c804b63377fe3e75f0f6bf2`.
+  Debug Valgrind is **PASS with reviewed suppressions**: its preserved raw
+  receipt SHA-256
+  `17a879294e9a46c5871386efd886b071c25821a1d73a9318c724b5c69e6ca828`
+  reports 427 errors/contexts, 6,080 definite bytes, and 41,394 indirect
+  bytes. The paired suppressed receipt SHA-256
+  `f6bca09283df8c1a808d737520a65b773980408032c661d00ba134613b151e3b`
+  reports zero post-suppression errors/contexts/definite/indirect bytes and 427
+  reviewed suppressed errors/contexts. ReleaseSafe Valgrind remains the
+  declared XFAIL; no rule was broadened for this batch.
+- **Remaining limitation:** This does not claim complete pane-layout parity.
+  Direct draggable dividers, Resize Pane Left/Right/Up/Down, cell-based minimum
+  sizes, cross-window moves, and source top/bottom cross-worklane focus remain
+  explicit. Ghostty currently logs its embedding `.cell_size` action as
+  unimplemented, so keyboard resizing must not guess terminal cell metrics and
+  masquerade as parity.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were

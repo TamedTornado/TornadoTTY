@@ -161,6 +161,103 @@ fn configure_menu_button(button: &gtk::MenuButton, spec: ChromeControlSpec) {
     button.set_sensitive(spec.enabled);
 }
 
+type ArrangeAction = (&'static str, &'static str, &'static str);
+
+const CREATE_ACTIONS: [ArrangeAction; 4] = [
+    (
+        source_ui::SPLIT_RIGHT,
+        "go-next-symbolic",
+        "split-pane-right",
+    ),
+    (
+        source_ui::ADD_PANE_RIGHT,
+        "application-add-symbolic",
+        "add-pane-right",
+    ),
+    (
+        source_ui::ADD_PANE_LEFT,
+        "go-previous-symbolic",
+        "add-pane-left",
+    ),
+    (
+        source_ui::NEW_PANE_BELOW,
+        "go-down-symbolic",
+        "split-pane-below",
+    ),
+];
+
+const WIDTH_ACTIONS: [ArrangeAction; 6] = [
+    (
+        source_ui::ARRANGE_WIDTH_FULL,
+        "view-fullscreen-symbolic",
+        "arrange-width-full",
+    ),
+    (
+        source_ui::ARRANGE_WIDTH_HALF,
+        "view-dual-symbolic",
+        "arrange-width-half",
+    ),
+    (
+        source_ui::ARRANGE_WIDTH_THIRDS,
+        "view-grid-symbolic",
+        "arrange-width-thirds",
+    ),
+    (
+        source_ui::ARRANGE_WIDTH_QUARTERS,
+        "view-grid-symbolic",
+        "arrange-width-quarters",
+    ),
+    (
+        source_ui::ARRANGE_GOLDEN_WIDE,
+        "zoom-in-symbolic",
+        "arrange-golden-wide",
+    ),
+    (
+        source_ui::ARRANGE_GOLDEN_NARROW,
+        "zoom-out-symbolic",
+        "arrange-golden-narrow",
+    ),
+];
+
+const HEIGHT_ACTIONS: [ArrangeAction; 6] = [
+    (
+        source_ui::ARRANGE_HEIGHT_FULL,
+        "view-fullscreen-symbolic",
+        "arrange-height-full",
+    ),
+    (
+        source_ui::ARRANGE_HEIGHT_TWO,
+        "view-list-symbolic",
+        "arrange-height-two",
+    ),
+    (
+        source_ui::ARRANGE_HEIGHT_THREE,
+        "view-list-symbolic",
+        "arrange-height-three",
+    ),
+    (
+        source_ui::ARRANGE_HEIGHT_FOUR,
+        "view-list-symbolic",
+        "arrange-height-four",
+    ),
+    (
+        source_ui::ARRANGE_GOLDEN_TALL,
+        "zoom-in-symbolic",
+        "arrange-golden-tall",
+    ),
+    (
+        source_ui::ARRANGE_GOLDEN_SHORT,
+        "zoom-out-symbolic",
+        "arrange-golden-short",
+    ),
+];
+
+const DEFAULT_ACTIONS: [ArrangeAction; 1] = [(
+    source_ui::RESET_PANE_LAYOUT,
+    "edit-undo-symbolic",
+    "reset-pane-layout",
+)];
+
 fn arrange_panes_popover() -> gtk::Popover {
     let popover = gtk::Popover::new();
     let menu = gtk::Box::new(gtk::Orientation::Vertical, 2);
@@ -168,38 +265,59 @@ fn arrange_panes_popover() -> gtk::Popover {
     menu.set_margin_bottom(6);
     menu.set_margin_start(6);
     menu.set_margin_end(6);
-    for (label, icon, action) in [
-        (
-            source_ui::SPLIT_RIGHT,
-            "go-next-symbolic",
-            "split-pane-right",
-        ),
-        (
-            source_ui::ADD_PANE_RIGHT,
-            "application-add-symbolic",
-            "add-pane-right",
-        ),
-        (
-            source_ui::NEW_PANE_BELOW,
-            "go-down-symbolic",
-            "split-pane-below",
-        ),
-    ] {
-        let button = gtk::Button::new();
-        let content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        content.append(&gtk::Image::from_icon_name(icon));
-        let text = gtk::Label::new(Some(label));
-        text.set_xalign(0.0);
-        text.set_hexpand(true);
-        content.append(&text);
-        button.set_child(Some(&content));
-        button.set_action_name(Some(&format!("workspace.{action}")));
-        let menu_popover = popover.clone();
-        button.connect_clicked(move |_| menu_popover.popdown());
-        menu.append(&button);
-    }
+    append_action_section(&menu, "Create", &CREATE_ACTIONS, &popover);
+    append_action_section(&menu, "Column width", &WIDTH_ACTIONS, &popover);
+    append_action_section(&menu, "Panes per column", &HEIGHT_ACTIONS, &popover);
+    append_action_section(&menu, "Defaults", &DEFAULT_ACTIONS, &popover);
     popover.set_child(Some(&menu));
     popover
+}
+
+fn append_action_section(
+    menu: &gtk::Box,
+    heading: &str,
+    actions: &[(&'static str, &'static str, &'static str)],
+    popover: &gtk::Popover,
+) {
+    let heading = gtk::Label::new(Some(heading));
+    heading.add_css_class("heading");
+    heading.set_xalign(0.0);
+    heading.set_margin_top(4);
+    heading.set_margin_start(4);
+    menu.append(&heading);
+    let grid = gtk::Grid::new();
+    grid.set_column_spacing(4);
+    grid.set_row_spacing(4);
+    for (index, (label, icon, action)) in actions.iter().copied().enumerate() {
+        let button = arrange_action_button(label, icon, action, popover);
+        let column = i32::try_from(index % 2).expect("two-column index fits i32");
+        let row = i32::try_from(index / 2).expect("small menu index fits i32");
+        grid.attach(&button, column, row, 1, 1);
+    }
+    menu.append(&grid);
+}
+
+fn arrange_action_button(
+    label: &'static str,
+    icon: &'static str,
+    action: &'static str,
+    popover: &gtk::Popover,
+) -> gtk::Button {
+    let button = gtk::Button::new();
+    button.set_hexpand(true);
+    button.set_tooltip_text(Some(label));
+    button.update_property(&[gtk::accessible::Property::Label(label)]);
+    let content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    content.append(&gtk::Image::from_icon_name(icon));
+    let text = gtk::Label::new(Some(label));
+    text.set_xalign(0.0);
+    text.set_hexpand(true);
+    content.append(&text);
+    button.set_child(Some(&content));
+    button.set_action_name(Some(&format!("workspace.{action}")));
+    let menu_popover = popover.clone();
+    button.connect_clicked(move |_| menu_popover.popdown());
+    button
 }
 
 #[cfg(test)]

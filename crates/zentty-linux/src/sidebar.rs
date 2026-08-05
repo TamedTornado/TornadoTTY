@@ -13,7 +13,7 @@ struct PaneActionSpec {
     action: &'static str,
 }
 
-const PANE_ACTIONS: [PaneActionSpec; 8] = [
+const PANE_ACTIONS: [PaneActionSpec; 9] = [
     PaneActionSpec {
         label: source_ui::SPLIT_RIGHT,
         icon: "go-next-symbolic",
@@ -23,6 +23,11 @@ const PANE_ACTIONS: [PaneActionSpec; 8] = [
         label: source_ui::ADD_PANE_RIGHT,
         icon: "application-add-symbolic",
         action: "add-pane-right",
+    },
+    PaneActionSpec {
+        label: source_ui::ADD_PANE_LEFT,
+        icon: "go-previous-symbolic",
+        action: "add-pane-left",
     },
     PaneActionSpec {
         label: source_ui::NEW_PANE_BELOW,
@@ -1082,6 +1087,7 @@ mod tests {
             [
                 (source_ui::SPLIT_RIGHT, "split-pane-right"),
                 (source_ui::ADD_PANE_RIGHT, "add-pane-right"),
+                (source_ui::ADD_PANE_LEFT, "add-pane-left"),
                 (source_ui::NEW_PANE_BELOW, "split-pane-below"),
                 (source_ui::MOVE_PANE_LEFT, "move-pane-left"),
                 (source_ui::MOVE_PANE_RIGHT, "move-pane-right"),

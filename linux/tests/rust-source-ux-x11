@@ -630,7 +630,9 @@ for _ in $(seq 1 100); do
 done
 grep -Fxq 'zentty-linux: chrome-popover=arrange-panes state=open' "${log}" ||
     fail "the real arrange-panes icon did not open its popover"
-xdotool mousemove --window "${window_id}" 100 114 click 1
+# The source-sized Arrange popover presents Create actions as a two-column
+# grid. Add Pane Right is the first row's second button.
+xdotool mousemove --window "${window_id}" 480 114 click 1
 for _ in $(seq 1 100); do
     grep -Fxq 'zentty-linux: terminal-ready-pane=pane-5' "${log}" && break
     sleep 0.05

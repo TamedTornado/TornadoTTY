@@ -68,6 +68,10 @@ for pane_number in $(seq 2 9); do
     grep -Fxq "zentty-linux: terminal-ready-pane=pane-${pane_number}" "${log}" ||
         fail "New worklane did not create real pane-${pane_number}"
 done
+for _ in $(seq 1 100); do
+    grep -Fq 'zentty-linux: sidebar-reveal worklane=worklane-9 value=' "${log}" && break
+    sleep 0.05
+done
 grep -Fq 'zentty-linux: sidebar-reveal worklane=worklane-9 value=' "${log}" ||
     fail "the active overflowing worklane was not automatically revealed"
 

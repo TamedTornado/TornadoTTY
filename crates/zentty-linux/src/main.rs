@@ -32,10 +32,16 @@ struct Options {
     terminal_count: usize,
     lifecycle_cycles: usize,
     async_backend: AsyncBackend,
-    exercise_workspace_actions: bool,
-    exercise_pane_search: bool,
+    scenario: Option<Scenario>,
     state_directory: Option<PathBuf>,
     restore_enabled: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Scenario {
+    WorkspaceActions,
+    PaneSearch,
+    PaneLayoutActions,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -44,6 +50,7 @@ enum ExitPolicy {
     LastTerminal,
     WorkspaceActions,
     PaneSearch,
+    PaneLayoutActions,
 }
 
 impl Default for Options {
@@ -54,8 +61,7 @@ impl Default for Options {
             terminal_count: 1,
             lifecycle_cycles: 1,
             async_backend: AsyncBackend::Default,
-            exercise_workspace_actions: false,
-            exercise_pane_search: false,
+            scenario: None,
             state_directory: None,
             restore_enabled: true,
         }
@@ -86,16 +92,22 @@ fn parse_options() -> Result<Options, String> {
                 options.exit_policy = ExitPolicy::LastTerminal;
             }
             "--exercise-workspace-actions" => {
-                options.exercise_workspace_actions = true;
+                options.scenario = Some(Scenario::WorkspaceActions);
             }
             "--exercise-pane-search" => {
-                options.exercise_pane_search = true;
+                options.scenario = Some(Scenario::PaneSearch);
+            }
+            "--exercise-pane-layout-actions" => {
+                options.scenario = Some(Scenario::PaneLayoutActions);
             }
             "--quit-after-workspace-actions" => {
                 options.exit_policy = ExitPolicy::WorkspaceActions;
             }
             "--quit-after-pane-search" => {
                 options.exit_policy = ExitPolicy::PaneSearch;
+            }
+            "--quit-after-pane-layout-actions" => {
+                options.exit_policy = ExitPolicy::PaneLayoutActions;
             }
             "--state-directory" => {
                 options.state_directory =
@@ -137,13 +149,24 @@ fn parse_options() -> Result<Options, String> {
             _ => return Err(format!("unknown argument: {argument}")),
         }
     }
-    if options.exit_policy == ExitPolicy::WorkspaceActions && !options.exercise_workspace_actions {
+    if options.exit_policy == ExitPolicy::WorkspaceActions
+        && options.scenario != Some(Scenario::WorkspaceActions)
+    {
         return Err(
             "--quit-after-workspace-actions requires --exercise-workspace-actions".to_owned(),
         );
     }
-    if options.exit_policy == ExitPolicy::PaneSearch && !options.exercise_pane_search {
+    if options.exit_policy == ExitPolicy::PaneSearch
+        && options.scenario != Some(Scenario::PaneSearch)
+    {
         return Err("--quit-after-pane-search requires --exercise-pane-search".to_owned());
+    }
+    if options.exit_policy == ExitPolicy::PaneLayoutActions
+        && options.scenario != Some(Scenario::PaneLayoutActions)
+    {
+        return Err(
+            "--quit-after-pane-layout-actions requires --exercise-pane-layout-actions".to_owned(),
+        );
     }
     Ok(options)
 }
@@ -208,18 +231,21 @@ fn run_lifecycle_cycle(
     });
 
     shell.borrow().present();
-    if options.exercise_workspace_actions {
-        ApplicationShell::schedule_workspace_actions(
+    match options.scenario {
+        Some(Scenario::WorkspaceActions) => ApplicationShell::schedule_workspace_actions(
             &shell,
             options.exit_policy == ExitPolicy::WorkspaceActions,
             options.exit_policy == ExitPolicy::LastTerminal,
-        );
-    }
-    if options.exercise_pane_search {
-        ApplicationShell::schedule_pane_search_actions(
+        ),
+        Some(Scenario::PaneSearch) => ApplicationShell::schedule_pane_search_actions(
             &shell,
             options.exit_policy == ExitPolicy::PaneSearch,
-        );
+        ),
+        Some(Scenario::PaneLayoutActions) => ApplicationShell::schedule_pane_layout_actions(
+            &shell,
+            options.exit_policy == ExitPolicy::PaneLayoutActions,
+        ),
+        None => {}
     }
     main_loop.run();
 

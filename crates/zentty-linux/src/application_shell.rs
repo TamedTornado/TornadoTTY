@@ -36,6 +36,7 @@ const ACTION_NEW_WORKLANE: &str = "new-worklane";
 const ACTION_SELECT_WORKLANE: &str = "select-worklane";
 const ACTION_SPLIT_PANE_RIGHT: &str = "split-pane-right";
 const ACTION_ADD_PANE_RIGHT: &str = "add-pane-right";
+const ACTION_ADD_PANE_LEFT: &str = "add-pane-left";
 const ACTION_SPLIT_PANE_BELOW: &str = "split-pane-below";
 const ACTION_CLOSE_PANE: &str = "close-pane";
 const ACTION_RENAME_WORKLANE: &str = "rename-worklane";
@@ -64,6 +65,23 @@ const ACTION_FIND: &str = "find";
 const ACTION_USE_SELECTION_FOR_FIND: &str = "use-selection-for-find";
 const ACTION_FIND_NEXT: &str = "find-next";
 const ACTION_FIND_PREVIOUS: &str = "find-previous";
+const ACTION_FOCUS_PANE_LEFT: &str = "focus-pane-left";
+const ACTION_FOCUS_PANE_RIGHT: &str = "focus-pane-right";
+const ACTION_FOCUS_PANE_UP: &str = "focus-pane-up";
+const ACTION_FOCUS_PANE_DOWN: &str = "focus-pane-down";
+const ACTION_ARRANGE_WIDTH_FULL: &str = "arrange-width-full";
+const ACTION_ARRANGE_WIDTH_HALF: &str = "arrange-width-half";
+const ACTION_ARRANGE_WIDTH_THIRDS: &str = "arrange-width-thirds";
+const ACTION_ARRANGE_WIDTH_QUARTERS: &str = "arrange-width-quarters";
+const ACTION_ARRANGE_HEIGHT_FULL: &str = "arrange-height-full";
+const ACTION_ARRANGE_HEIGHT_TWO: &str = "arrange-height-two";
+const ACTION_ARRANGE_HEIGHT_THREE: &str = "arrange-height-three";
+const ACTION_ARRANGE_HEIGHT_FOUR: &str = "arrange-height-four";
+const ACTION_ARRANGE_GOLDEN_WIDE: &str = "arrange-golden-wide";
+const ACTION_ARRANGE_GOLDEN_NARROW: &str = "arrange-golden-narrow";
+const ACTION_ARRANGE_GOLDEN_TALL: &str = "arrange-golden-tall";
+const ACTION_ARRANGE_GOLDEN_SHORT: &str = "arrange-golden-short";
+const ACTION_RESET_PANE_LAYOUT: &str = "reset-pane-layout";
 const PRIMARY_RIGHT_BEHAVIOR: PaneRightInsertionBehavior = PaneRightInsertionBehavior::VisibleSplit;
 const WORKLANE_PEEK_TAB_HOLD_THRESHOLD: Duration = Duration::from_millis(200);
 
@@ -416,6 +434,53 @@ impl ApplicationShell {
         });
     }
 
+    pub(crate) fn schedule_pane_layout_actions(
+        shell: &Rc<RefCell<Self>>,
+        quit_when_complete: bool,
+    ) {
+        let weak = Rc::downgrade(shell);
+        let step = Rc::new(Cell::new(0_u8));
+        glib::timeout_add_local(Duration::from_millis(100), move || {
+            let Some(shell) = weak.upgrade() else {
+                return glib::ControlFlow::Break;
+            };
+            let window = shell.borrow().window.clone();
+            let result = match step.get() {
+                0 => window.activate_action("workspace.add-pane-left", None),
+                1 => window.activate_action("workspace.split-pane-right", None),
+                2 => window.activate_action("workspace.split-pane-below", None),
+                3 => window.activate_action("workspace.focus-pane-up", None),
+                4 => window.activate_action("workspace.focus-pane-left", None),
+                5 => window.activate_action("workspace.focus-pane-right", None),
+                6 => window.activate_action("workspace.focus-pane-down", None),
+                7 => window.activate_action("workspace.arrange-width-thirds", None),
+                8 => window.activate_action("workspace.arrange-height-two", None),
+                9 => window.activate_action("workspace.arrange-width-half", None),
+                10 => window.activate_action("workspace.arrange-golden-tall", None),
+                11 => window.activate_action("workspace.arrange-golden-wide", None),
+                12 => window.activate_action("workspace.reset-pane-layout", None),
+                13 => window.activate_action("workspace.arrange-height-full", None),
+                14 => window.activate_action("workspace.arrange-width-quarters", None),
+                15 => window.activate_action("workspace.arrange-golden-narrow", None),
+                16 => require_pane_layout_scenario_state(&shell),
+                _ => {
+                    eprintln!("zentty-linux: pane-layout-action-scenario complete");
+                    if quit_when_complete {
+                        shell.borrow().main_loop.quit();
+                    }
+                    return glib::ControlFlow::Break;
+                }
+            };
+            if let Err(error) = result {
+                eprintln!("zentty-linux: pane-layout-action-scenario failed: {error}");
+                shell.borrow().main_loop.quit();
+                return glib::ControlFlow::Break;
+            }
+            step.set(step.get() + 1);
+            glib::ControlFlow::Continue
+        });
+    }
+
     fn install_actions(shell: &Rc<RefCell<Self>>) {
         let group = gio::SimpleActionGroup::new();
 
@@ -489,6 +554,7 @@ impl ApplicationShell {
         group.add_action(&select_worklane);
 
         Self::install_pane_creation_actions(shell, &group);
+        Self::install_pane_layout_actions(shell, &group);
 
         Self::add_simple_action(shell, &group, ACTION_NAVIGATE_BACK, |shell| {
             shell.navigate_history(true);
@@ -531,6 +597,86 @@ impl ApplicationShell {
         Self::add_simple_action(shell, group, ACTION_FIND_PREVIOUS, |shell| {
             shell.perform_focused_binding_action(ACTION_FIND_PREVIOUS, "navigate_search:previous");
         });
+    }
+
+    fn install_pane_layout_actions(shell: &Rc<RefCell<Self>>, group: &gio::SimpleActionGroup) {
+        for (name, update) in [
+            (
+                ACTION_FOCUS_PANE_LEFT,
+                WorkspaceState::focus_pane_left as fn(&mut WorkspaceState) -> bool,
+            ),
+            (ACTION_FOCUS_PANE_RIGHT, WorkspaceState::focus_pane_right),
+            (ACTION_FOCUS_PANE_UP, WorkspaceState::focus_pane_up),
+            (ACTION_FOCUS_PANE_DOWN, WorkspaceState::focus_pane_down),
+        ] {
+            Self::add_simple_action(shell, group, name, move |shell| {
+                if update(&mut shell.state) {
+                    shell.finish_pane_layout_action(name);
+                }
+            });
+        }
+        for (name, visible_columns) in [
+            (ACTION_ARRANGE_WIDTH_FULL, 1),
+            (ACTION_ARRANGE_WIDTH_HALF, 2),
+            (ACTION_ARRANGE_WIDTH_THIRDS, 3),
+            (ACTION_ARRANGE_WIDTH_QUARTERS, 4),
+        ] {
+            Self::add_simple_action(shell, group, name, move |shell| {
+                let width = f64::from(shell.pane_viewport_width());
+                if shell.state.arrange_columns(visible_columns, width) {
+                    shell.finish_pane_layout_action(name);
+                }
+            });
+        }
+        for (name, panes_per_column) in [
+            (ACTION_ARRANGE_HEIGHT_FULL, 1),
+            (ACTION_ARRANGE_HEIGHT_TWO, 2),
+            (ACTION_ARRANGE_HEIGHT_THREE, 3),
+            (ACTION_ARRANGE_HEIGHT_FOUR, 4),
+        ] {
+            Self::add_simple_action(shell, group, name, move |shell| {
+                if shell.state.arrange_panes_per_column(panes_per_column) {
+                    shell.finish_pane_layout_action(name);
+                }
+            });
+        }
+        for (name, focus_wide) in [
+            (ACTION_ARRANGE_GOLDEN_WIDE, true),
+            (ACTION_ARRANGE_GOLDEN_NARROW, false),
+        ] {
+            Self::add_simple_action(shell, group, name, move |shell| {
+                let width = f64::from(shell.pane_viewport_width());
+                if shell.state.arrange_golden_width(focus_wide, width) {
+                    shell.finish_pane_layout_action(name);
+                }
+            });
+        }
+        for (name, focus_tall) in [
+            (ACTION_ARRANGE_GOLDEN_TALL, true),
+            (ACTION_ARRANGE_GOLDEN_SHORT, false),
+        ] {
+            Self::add_simple_action(shell, group, name, move |shell| {
+                if shell.state.arrange_golden_height(focus_tall) {
+                    shell.finish_pane_layout_action(name);
+                }
+            });
+        }
+        Self::add_simple_action(shell, group, ACTION_RESET_PANE_LAYOUT, |shell| {
+            let width = f64::from(shell.pane_viewport_width());
+            if shell.state.reset_active_layout(width) {
+                shell.finish_pane_layout_action(ACTION_RESET_PANE_LAYOUT);
+            }
+        });
+    }
+
+    fn finish_pane_layout_action(&self, action: &str) {
+        eprintln!(
+            "zentty-linux: action={action} pane={}",
+            self.state.focused_pane_id().unwrap_or("none")
+        );
+        self.render();
+        self.focus_selected_surface();
+        self.scroll_panes_to_focused();
     }
 
     fn install_sidebar_visibility(shell: &Rc<RefCell<Self>>) {
@@ -1150,6 +1296,12 @@ impl ApplicationShell {
                 ACTION_ADD_PANE_RIGHT,
             ),
             CommandPaletteItem::action(
+                "Add Pane Left",
+                "Add a full-width pane to the left of the focused column",
+                "pane column canvas",
+                ACTION_ADD_PANE_LEFT,
+            ),
+            CommandPaletteItem::action(
                 "New Pane Below",
                 "Split the focused pane vertically",
                 "pane split down",
@@ -1238,6 +1390,108 @@ impl ApplicationShell {
                 "Move the focused pane downward in its column",
                 "reorder terminal split",
                 ACTION_MOVE_PANE_DOWN,
+            ),
+            CommandPaletteItem::action(
+                "Focus Left Pane",
+                "Focus the neighboring column to the left",
+                "navigation terminal column",
+                ACTION_FOCUS_PANE_LEFT,
+            ),
+            CommandPaletteItem::action(
+                "Focus Right Pane",
+                "Focus the neighboring column to the right",
+                "navigation terminal column",
+                ACTION_FOCUS_PANE_RIGHT,
+            ),
+            CommandPaletteItem::action(
+                "Focus Up In Column",
+                "Focus the pane above in the current column",
+                "navigation terminal split",
+                ACTION_FOCUS_PANE_UP,
+            ),
+            CommandPaletteItem::action(
+                "Focus Down In Column",
+                "Focus the pane below in the current column",
+                "navigation terminal split",
+                ACTION_FOCUS_PANE_DOWN,
+            ),
+            CommandPaletteItem::action(
+                "Arrange Width: Full Width",
+                "Make every column one viewport wide",
+                "layout pane columns",
+                ACTION_ARRANGE_WIDTH_FULL,
+            ),
+            CommandPaletteItem::action(
+                "Arrange Width: Half Width",
+                "Fit two equal columns in the viewport",
+                "layout pane columns",
+                ACTION_ARRANGE_WIDTH_HALF,
+            ),
+            CommandPaletteItem::action(
+                "Arrange Width: Thirds",
+                "Fit three equal columns in the viewport",
+                "layout pane columns",
+                ACTION_ARRANGE_WIDTH_THIRDS,
+            ),
+            CommandPaletteItem::action(
+                "Arrange Width: Quarters",
+                "Fit four equal columns in the viewport",
+                "layout pane columns",
+                ACTION_ARRANGE_WIDTH_QUARTERS,
+            ),
+            CommandPaletteItem::action(
+                "Arrange Height: Full Height",
+                "Place one pane in each column",
+                "layout pane rows",
+                ACTION_ARRANGE_HEIGHT_FULL,
+            ),
+            CommandPaletteItem::action(
+                "Arrange Height: 2 Per Column",
+                "Reflow panes two per column",
+                "layout pane rows",
+                ACTION_ARRANGE_HEIGHT_TWO,
+            ),
+            CommandPaletteItem::action(
+                "Arrange Height: 3 Per Column",
+                "Reflow panes three per column",
+                "layout pane rows",
+                ACTION_ARRANGE_HEIGHT_THREE,
+            ),
+            CommandPaletteItem::action(
+                "Arrange Height: 4 Per Column",
+                "Reflow panes four per column",
+                "layout pane rows",
+                ACTION_ARRANGE_HEIGHT_FOUR,
+            ),
+            CommandPaletteItem::action(
+                "Arrange Width: Golden — Focus Wide",
+                "Give the focused column the larger golden share",
+                "layout pane golden ratio",
+                ACTION_ARRANGE_GOLDEN_WIDE,
+            ),
+            CommandPaletteItem::action(
+                "Arrange Width: Golden — Focus Narrow",
+                "Give the focused column the smaller golden share",
+                "layout pane golden ratio",
+                ACTION_ARRANGE_GOLDEN_NARROW,
+            ),
+            CommandPaletteItem::action(
+                "Arrange Height: Golden — Focus Tall",
+                "Give the focused pane the larger golden share",
+                "layout pane golden ratio",
+                ACTION_ARRANGE_GOLDEN_TALL,
+            ),
+            CommandPaletteItem::action(
+                "Arrange Height: Golden — Focus Short",
+                "Give the focused pane the smaller golden share",
+                "layout pane golden ratio",
+                ACTION_ARRANGE_GOLDEN_SHORT,
+            ),
+            CommandPaletteItem::action(
+                "Reset Pane Layout",
+                "Restore default column widths and equal pane heights",
+                "layout pane reset",
+                ACTION_RESET_PANE_LAYOUT,
             ),
             CommandPaletteItem::action(
                 "Cycle Worklane Color",
@@ -1354,6 +1608,18 @@ impl ApplicationShell {
             };
             if let Err(error) = Self::add_focused_pane_right(&shell) {
                 Self::report_action_error(&shell, ACTION_ADD_PANE_RIGHT, &error);
+            }
+        });
+        group.add_action(&add_pane);
+
+        let add_pane = gio::SimpleAction::new(ACTION_ADD_PANE_LEFT, None);
+        let weak = Rc::downgrade(shell);
+        add_pane.connect_activate(move |_, _| {
+            let Some(shell) = weak.upgrade() else {
+                return;
+            };
+            if let Err(error) = Self::add_focused_pane_left(&shell) {
+                Self::report_action_error(&shell, ACTION_ADD_PANE_LEFT, &error);
             }
         });
         group.add_action(&add_pane);
@@ -1776,6 +2042,15 @@ impl ApplicationShell {
         Ok(())
     }
 
+    fn add_focused_pane_left(shell: &Rc<RefCell<Self>>) -> Result<(), String> {
+        let width = shell.borrow().focused_column_render_width();
+        Self::split_focused_pane(shell, ACTION_ADD_PANE_LEFT, move |state, pane_id| {
+            state.insert_focused_pane_left(pane_id, f64::from(width))
+        })?;
+        shell.borrow().scroll_panes_to_focused();
+        Ok(())
+    }
+
     fn split_focused_pane_below(shell: &Rc<RefCell<Self>>) -> Result<(), String> {
         Self::split_focused_pane(shell, ACTION_SPLIT_PANE_BELOW, |state, pane_id| {
             state.split_focused_pane_below(pane_id)
@@ -1825,6 +2100,31 @@ impl ApplicationShell {
                     adjustment.value()
                 );
             }
+        });
+    }
+
+    fn scroll_panes_to_focused(&self) {
+        let worklane = self.state.active_worklane();
+        let widths = self.resolved_column_widths();
+        let focused_index = worklane
+            .columns
+            .iter()
+            .position(|column| column.id == worklane.focused_column_id)
+            .unwrap_or(0);
+        let target = widths
+            .iter()
+            .take(focused_index)
+            .fold(0_i32, |total, width| {
+                total.saturating_add(*width + PaneLayoutPolicy::INTER_PANE_SPACING)
+            });
+        let adjustment = self.pane_scroll.hadjustment();
+        glib::timeout_add_local_once(Duration::from_millis(50), move || {
+            let maximum = (adjustment.upper() - adjustment.page_size()).max(0.0);
+            adjustment.set_value(f64::from(target).min(maximum));
+            eprintln!(
+                "zentty-linux: pane-scroll-focused value={:.0} maximum={maximum:.0}",
+                adjustment.value()
+            );
         });
     }
 
@@ -2639,6 +2939,44 @@ fn require_invalid_binding_action_rejected(
         ));
     }
     eprintln!("zentty-linux: pane-search-action-scenario invalid-binding=rejected");
+    Ok(())
+}
+
+fn require_pane_layout_scenario_state(
+    shell: &Rc<RefCell<ApplicationShell>>,
+) -> Result<(), glib::BoolError> {
+    let shell = shell.borrow();
+    let columns = shell.state.active_columns();
+    let pane_ids = shell.state.active_pane_ids();
+    if pane_ids != ["pane-2", "pane-3", "pane-4", "pane-1"]
+        || columns.len() != 4
+        || columns.iter().any(|column| column.panes.len() != 1)
+        || shell.state.focused_pane_id() != Some("pane-4")
+        || columns[2].width.partial_cmp(&columns[3].width) != Some(std::cmp::Ordering::Less)
+    {
+        return Err(glib::bool_error!(
+            "unexpected pane-layout scenario: panes={pane_ids:?} columns={} focus={:?} widths={:?}",
+            columns.len(),
+            shell.state.focused_pane_id(),
+            columns
+                .iter()
+                .map(|column| column.width)
+                .collect::<Vec<_>>()
+        ));
+    }
+    if shell.surfaces.len() != 4
+        || pane_ids
+            .iter()
+            .any(|pane_id| !shell.surfaces.contains_key(*pane_id))
+    {
+        return Err(glib::bool_error!(
+            "pane-layout scenario detached a real Ghostty surface"
+        ));
+    }
+    eprintln!(
+        "zentty-linux: pane-layout-action-scenario verified panes={pane_ids:?} columns={} focus=pane-4 golden=narrow",
+        columns.len()
+    );
     Ok(())
 }
 

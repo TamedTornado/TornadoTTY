@@ -464,3 +464,126 @@ fn duplicate_column_identity_is_rejected() {
         ))
     );
 }
+
+#[test]
+fn source_directional_focus_preserves_each_columns_last_focused_pane() {
+    const SOURCE: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../Zentty/Layout/PaneStripState.swift"
+    ));
+    let mut state = WorkspaceState::new("lane", "left-top");
+    assert!(state.split_focused_pane_below("left-bottom"));
+    assert!(state.select_pane("left-top"));
+    assert!(state.split_focused_pane_right("right-top"));
+    assert!(state.split_focused_pane_below("right-bottom"));
+
+    assert!(state.focus_pane_left());
+    assert_eq!(state.focused_pane_id(), Some("left-top"));
+    assert!(state.focus_pane_right());
+    assert_eq!(state.focused_pane_id(), Some("right-bottom"));
+    assert!(state.focus_pane_up());
+    assert_eq!(state.focused_pane_id(), Some("right-top"));
+    assert!(!state.focus_pane_up());
+    assert!(state.focus_pane_down());
+    assert_eq!(state.focused_pane_id(), Some("right-bottom"));
+    assert!(!state.focus_pane_down());
+
+    for source_contract in [
+        "mutating func moveFocusLeft()",
+        "mutating func moveFocusRight()",
+        "mutating func moveFocusUp()",
+        "mutating func moveFocusDown()",
+    ] {
+        assert!(SOURCE.contains(source_contract));
+    }
+}
+
+#[test]
+fn source_before_insertion_commands_target_the_focused_slot() {
+    let mut state = WorkspaceState::new("lane", "pane-a");
+    assert!(state.insert_focused_pane_left("pane-left", 320.0));
+    assert_eq!(state.active_pane_ids(), ["pane-left", "pane-a"]);
+    assert_eq!(state.focused_pane_id(), Some("pane-left"));
+    assert!(state.split_focused_pane_below("pane-lower"));
+    assert!(state.insert_focused_pane_above("pane-upper"));
+    assert_eq!(
+        state.active_pane_ids(),
+        ["pane-left", "pane-upper", "pane-lower", "pane-a"]
+    );
+    assert_eq!(state.focused_pane_id(), Some("pane-upper"));
+}
+
+#[test]
+fn source_arrangement_presets_reflow_stable_panes_and_preserve_focus() {
+    const SOURCE: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../Zentty/Input/PaneCommand.swift"
+    ));
+    let mut state = WorkspaceState::new("lane", "pane-1");
+    for pane in ["pane-2", "pane-3", "pane-4", "pane-5"] {
+        assert!(state.split_focused_pane_right(pane));
+    }
+    assert!(state.select_pane("pane-3"));
+
+    assert!(state.arrange_columns(3, 900.0));
+    assert!(
+        state
+            .active_columns()
+            .iter()
+            .all(|column| (column.width - (898.0 / 3.0)).abs() < f64::EPSILON)
+    );
+    assert!(state.arrange_panes_per_column(2));
+    assert_eq!(state.active_columns().len(), 3);
+    assert_eq!(state.active_columns()[0].panes.len(), 2);
+    assert_eq!(state.active_columns()[1].panes.len(), 2);
+    assert_eq!(state.active_columns()[2].panes.len(), 1);
+    assert_eq!(state.focused_pane_id(), Some("pane-3"));
+    assert_eq!(
+        state.active_pane_ids(),
+        ["pane-1", "pane-2", "pane-3", "pane-4", "pane-5"]
+    );
+
+    for source_contract in [
+        "case fullWidth = 1",
+        "case halfWidth = 2",
+        "case thirds = 3",
+        "case quarters = 4",
+        "case fullHeight = 1",
+        "case twoPerColumn = 2",
+        "case threePerColumn = 3",
+        "case fourPerColumn = 4",
+    ] {
+        assert!(SOURCE.contains(source_contract));
+    }
+}
+
+#[test]
+fn golden_and_reset_layout_presets_change_only_geometry() {
+    let mut state = WorkspaceState::new("lane", "pane-1");
+    assert!(state.split_focused_pane_right("pane-2"));
+    assert!(state.split_focused_pane_below("pane-3"));
+    let pane_order = state
+        .active_pane_ids()
+        .into_iter()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+
+    assert!(state.arrange_golden_width(true, 1000.0));
+    assert!(state.active_columns()[1].width > state.active_columns()[0].width);
+    assert!(
+        (state.active_columns()[0].width + state.active_columns()[1].width - 999.0).abs()
+            < f64::EPSILON
+    );
+    assert!(state.arrange_golden_height(false));
+    assert!(state.active_columns()[1].pane_heights[1] < state.active_columns()[1].pane_heights[0]);
+    assert!(state.reset_active_layout(480.0));
+    assert!(
+        state
+            .active_columns()
+            .iter()
+            .all(|column| (column.width - 480.0).abs() < f64::EPSILON)
+    );
+    assert_eq!(state.active_columns()[1].pane_heights, [0.5, 0.5]);
+    assert_eq!(state.active_pane_ids(), pane_order);
+    assert_eq!(state.focused_pane_id(), Some("pane-3"));
+}
