@@ -69,7 +69,7 @@ jq -e '
     (.diff_identity.locale == "C") and
     (.diff_identity.normalization | length) == 21 and
     (.ranges | length) == 2 and
-    (.files | length) == 15 and
+    (.files | length) == 16 and
     (.abi.exported_function_count == 11) and
     (.abi.operations | length) == .abi.exported_function_count and
     (.abi.ghostty_owned_public_type_count == 3) and
@@ -288,7 +288,7 @@ grep -Fx 'typedef struct _GtkWidget GtkWidget;' "${ghostty_source}/include/ghost
 [[ "$(grep -Eoc 'GtkWidget \*surface' "${ghostty_source}/include/ghostty/gtk.h")" == 5 ]] ||
     fail "GtkWidget surface-operation parameter roles differ from inventory"
 
-pass_message="Ghostty API audit inventory passed: 15 files, 46 hunks, 11 allowlisted function exports, 3 Ghostty-owned public types, 1 external GtkWidget dependency"
+pass_message="Ghostty API audit inventory passed: 16 files, 52 hunks, 11 allowlisted function exports, 3 Ghostty-owned public types, 1 external GtkWidget dependency"
 echo "${pass_message}"
 
 if [[ "${mode}" == "--self-test" ]]; then

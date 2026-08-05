@@ -684,6 +684,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "zentty-agent-ipc"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "zentty-core",
+]
+
+[[package]]
 name = "zentty-core"
 version = "0.1.0"
 dependencies = [
@@ -708,6 +717,7 @@ name = "zentty-linux"
 version = "0.1.0"
 dependencies = [
  "gtk4",
+ "zentty-agent-ipc",
  "zentty-core",
  "zentty-ghostty",
 ]

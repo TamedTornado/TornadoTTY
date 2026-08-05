@@ -6126,8 +6126,164 @@ test harness, preserve the legacy constructor, and be independently reviewable.
 - **Remaining limitations:** Missing-CWD ancestor/home fallback, scrollback
   archive presentation, agent-specific resume composition, exited/active/
   inactive close combinations, and the rest of the Debug/backend matrix remain
-  open. Typed argv and environment construction are still absent from the
-  Ghostty API and are not implied by this CWD-only proof.
+  open. Typed argv construction remains absent; the later agent slice adds only
+  the independently reviewed per-surface environment boundary described below.
+
+### 2026-08-05 — Authenticated agent status integration
+
+- **Source and security contract:** Linux now accepts versioned canonical agent
+  lifecycle/status events through a private Unix-domain socket. Each real pane
+  receives a distinct 256-bit `/dev/urandom` capability, and the server derives
+  window/worklane/pane routing solely from that registered token rather than
+  trusting client-supplied identifiers. The registry uses a length-obscuring
+  constant-time comparison, retargets the same capability after a pane moves
+  between worklanes, and unregisters it when the real surface is removed.
+  Parent-directory/socket modes are 0700/0600, transport and protocol frames
+  are bounded, malformed events and wrong tokens are rejected, and shutdown
+  removes the socket and private runtime directory.
+- **Minimal Ghostty prerequisite:** A terminal child needs its pane-specific
+  socket/token/helper variables at process construction time; process-global
+  mutation would route concurrent panes incorrectly. The generic Ghostty
+  options struct therefore appends only a copied, bounded array of `KEY=VALUE`
+  per-surface overrides. Old callers whose `struct_size` ends before the new
+  field continue to receive the old behavior. Null arrays/entries, malformed
+  entries, and counts above 128 are rejected. This is isolated in Ghostty
+  commit `b7ae0ced5d30a81a1d6e4d390b8193288361d7`; Zentty owns tokens, adapters,
+  helper protocol, status policy, and UI.
+- **Ghostty test discovery:** The first focused Zig invocation appeared to
+  pass instantly because `src/gtk_embed_lib.zig` was not imported by the
+  ordinary upstream test graph. Treating that as evidence would have been a
+  false pass. A dedicated opt-in `gtk-embed-lib-test` build step now compiles
+  the embedding implementation and its option-versioning/environment tests
+  without doubling every ordinary upstream test. Its first real compilation
+  exposed an unhandled `ValueRequired` error in config parsing; constructor
+  validation makes that state unreachable, and the explicit branch repaired
+  the compile failure. The focused suite, shared-library build, and full
+  upstream `zig build test` all passed before the Ghostty commit was published.
+- **Build-harness discovery:** `linux/scripts/build-local` and the Ghostty
+  regression runner incorrectly required `.git` to be a directory, rejecting
+  a clean Git worktree where `.git` is intentionally a file. Both now accept a
+  real checkout or worktree with `-e` while still checking exact revision and
+  cleanliness. The staged bundle now includes the Rust `zentty` helper beside
+  `zentty-linux`; the product resolves that sibling path rather than relying on
+  an ambient installation.
+- **Tests-first IPC evidence:** The real Unix-socket tests initially failed
+  with `EPERM` under the filesystem sandbox and were rerun elevated rather than
+  converted into mocks or passes. The helper subprocess test initially
+  asserted invented wording (`unknown pane token`) instead of the actual
+  stable contract (`pane token is invalid`); the receipt exposed and corrected
+  the assertion. The final suite launches the compiled helper as a real child,
+  writes real stdin, crosses the real socket, rejects bad tokens and missing
+  environment, proves spoofed target fields are ignored, and reduces Codex and
+  Claude payloads into canonical status.
+- **Real product race found by integration:** The first X11 product scenario
+  emitted Codex and Claude events in one PTY with a timed gap. GTK surface
+  startup delayed the first application drain long enough that both queued
+  events were reduced together, so the later Claude state correctly replaced
+  Codex before Codex had rendered. The test—not the reducer—was nondeterministic.
+  It was replaced with separate bounded product runs. Each run uses a real
+  Ghostty PTY child, the inherited per-surface environment, compiled helper
+  process, authenticated Unix socket, adapter, reducer, GTK sidebar label,
+  child exit, and application teardown. Controlled X11 session
+  `52a7c178abc9d2e5aed4f6d7b3f237cc4625c172579317b1d6c6141941a06d89`
+  and Wayland session
+  `d7f02b9c0e65580aabeea99d40522ae36efacdd749c7d712bd9806abad44ecce`
+  passed for both adapters; each also observed 0600/0700 modes while live and
+  complete runtime-directory cleanup afterward.
+- **ABI and UI proof:** The C17 contract now accepts both the legacy-sized and
+  current options structures and rejects every invalid environment shape. It
+  passed against the real ReleaseSafe library in private X11 session
+  `174d4d0a3622289d549a5636db84e245c9594daea974199526e1bc3688a78728`
+  and private Wayland session
+  `caafdaebd95a4cbfb16fd347c2712182bf8d58585c2216fcdaab4150ede103be`.
+  Rust layout/encoding/bounds tests and C++ field-order assertions cover the
+  caller side. Sidebar rows present agent name, phase, progress, and input
+  reason without washing terminal content; attention receives a distinct row
+  and text treatment and the accessible pane label includes the agent state.
+- **Moved-pane reducer bug found in review:** The first reducer keyed session
+  maps by the complete canonical target. After a token was correctly retargeted
+  to another worklane, a later `session.end` would address the new target and
+  could leave the old target's session visible forever. The store is scoped to
+  one window, where pane IDs are stable and unique, so it now keys sessions by
+  pane identity; a focused regression starts before a worklane move and ends
+  after it. Target authentication still records the current canonical
+  worklane on every received event.
+- **Relocation evidence:** The full staged directory—not the build-tree
+  binaries—passed product smoke plus real helper/PTY/socket integration in X11
+  session
+  `762d82eba1c9abb65ab4f093b01e895310f532a8d47a54c5261e2ef9a841ce6a`
+  and Wayland session
+  `c67f17435af7fe683b493c47c2beeb926415bce32ee8c7453fb92ea095c3d8a9`.
+- **Qualification and static-review discipline:** The authoritative matrix now
+  contains explicit controlled X11 and Wayland `agent_integration` PASS cells;
+  the architecture mirror and validator were updated together. An accidental
+  unelevated aggregate matrix invocation correctly failed network-isolated
+  builds and could not retain compositor reports; it is not qualification
+  evidence. Validate-only and negative runner suites pass. Strict Clippy then
+  rejected two functions for crossing the 100-line limit after integration;
+  callback installation, focus-controller construction, and pane metadata
+  refresh were extracted into focused helpers rather than suppressing policy.
+- **Remaining limitations:** The reducer and presentation cover progress,
+  running, idle, attention, and unresolved-stop states, but the real-product
+  scenarios currently qualify attention only. Persistent hook installation is
+  deliberately not enabled: consent policy exists and defaults to Ask, while
+  ephemeral adapters are on by default. Full Codex/Claude installation UX,
+  persistent consent UI, agent resume, richer failure controls, notification
+  behavior, and end-to-end progress/failure cells remain open; none is claimed
+  by this slice. The token prevents guessing and cross-user socket access, but
+  it is intentionally present in the agent child's environment; this is not a
+  security boundary against another hostile process already running as the
+  same Unix user and able to inspect that process.
+- **Qualification failure and test-target repair:** The first authoritative
+  matrix rerun did not pass. Its `ghostty-regression` cell discovered that the
+  new opt-in target rooted the entire `gtk_embed_lib.zig` implementation
+  without the generated `ghostty.h` import, so the target failed compilation.
+  Adding the header alone made the supposedly focused test compile Ghostty's
+  full GTK dependency graph and turned a small contract check into another
+  multi-minute product build. That was rejected as a test-architecture smell.
+  Ghostty commit `9e127e7493cb7fd9811f00971f1b99dd1f02af5b`
+  instead extracts only the pure size-versioned option validation into
+  `gtk_embed_options.zig`; the opt-in target now roots that module directly.
+  The focused test passed in seconds and the real ReleaseSafe shared-library
+  build passed afterward. The failed aggregate run is evidence of a repair,
+  not a qualification pass; the complete matrix must be rerun against this
+  exact locked commit before Zentty is published.
+- **Requalification result:** The complete authoritative local runner was then
+  rerun against locked Ghostty
+  `9e127e7493cb7fd9811f00971f1b99dd1f02af5b`. Every presently executable
+  cell passed, including the focused and full upstream Ghostty regression,
+  ReleaseSafe and Debug product builds, controlled Wayland/X11 terminal and
+  lifecycle cells, staged bundles, real agent IPC on both compositors, API
+  contracts, restore, physical-key and external-resize coverage, architecture
+  validation, and suppression governance. The one expected async-enum ABI
+  defect remained XFAIL rather than being hidden. Declared matrix totals are
+  **PASS=52, FAIL=0, BLOCKED=5, XFAIL=1, NOT_IMPLEMENTED=51**. The implemented
+  local suite and product boundary passed; release and full Linux
+  qualification correctly did not pass because declared gaps remain. The
+  machine summary SHA-256 is
+  `43ac66429082c6afa2b00dc3031b42245377907d6225bca90ed62055249fa938`
+  and matrix SHA-256 is
+  `8c9f2eb9021e4386554c9f0bd9112a04ccfd76dc5178e05f74617764fecca595`.
+- **Valgrind description:** Debug IBus-focus is **PASS with reviewed
+  suppressions**, never an unsuppressed-clean claim. The preserved raw receipt
+  reported 427 errors/contexts and 6,240 direct plus 41,461 indirect definite
+  bytes; the reviewed post-suppression receipt reported zero errors/contexts
+  and zero definite bytes, with 427 suppressed errors/contexts. Suppression
+  governance passed and the summary bound the accepted report by SHA-256
+  `5d0dfd7c3e19e34b81a125b635c65a485f14a634be40a813f3f1362a4aea3588`.
+  ReleaseSafe Valgrind remains explicitly XFAIL/not broadened, as required.
+- **Post-qualification review repair:** Manual review found that the bounded
+  IPC frame size did not bound connection duration: a same-user process could
+  connect and never close its write side, leaving the single server worker in
+  `read_to_end` and preventing later legitimate hook delivery. This was not a
+  remote or cross-user exposure, but it violated the promised bounded
+  transport behavior. Accepted sockets now have explicit 250 ms read/write
+  deadlines. A real Unix-socket regression holds one connection open past the
+  deadline and proves a subsequent authenticated event is still delivered.
+  Because this repair followed the first matrix receipt above, every executable
+  cell was rerun before publishing the Zentty commit. The final rerun retained
+  the same 52/0/5/1/51 declared totals and qualification claims; the hashes in
+  the preceding entries identify that final receipt.
 
 ## AI disclosure
 

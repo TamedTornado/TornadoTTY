@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
+backend="${GDK_BACKEND:-}"
+log=""
+state_directory=""
+product_pid=""
+
+fail() {
+    [[ -z "${log}" || ! -f "${log}" ]] || cat "${log}" >&2
+    echo "rust-agent-ipc: error: $*" >&2
+    exit 1
+}
+
+cleanup() {
+    if [[ "${product_pid}" =~ ^[1-9][0-9]*$ ]]; then
+        kill -TERM "${product_pid}" 2>/dev/null || true
+        wait "${product_pid}" 2>/dev/null || true
+    fi
+    [[ -z "${log}" ]] || rm -f -- "${log}"
+    [[ -z "${state_directory}" ]] || rm -rf -- "${state_directory}"
+}
+trap cleanup EXIT
+
+case "${backend}" in
+    x11)
+        [[ "${ZENTTY_NESTED_X11_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+            fail "X11 agent IPC must run through linux/tests/nested-x11"
+        ;;
+    wayland)
+        [[ "${ZENTTY_NESTED_WAYLAND_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+            fail "Wayland agent IPC must run through linux/tests/nested-wayland"
+        ;;
+    *) fail "GDK_BACKEND must be x11 or wayland" ;;
+esac
+for dependency in grep mktemp sed sleep stat; do
+    command -v "${dependency}" >/dev/null || fail "${dependency} is required"
+done
+[[ -x "${product}" ]] || fail "staged product is not built: ${product}"
+helper="$(dirname "${product}")/zentty"
+[[ -x "${helper}" ]] || fail "staged agent helper is not built: ${helper}"
+
+run_adapter() {
+    local name="$1"
+    local command="$2"
+    local expected="$3"
+    local socket=""
+
+    log="$(mktemp)"
+    state_directory="$(mktemp -d)"
+    GDK_SCALE=1 GDK_DPI_SCALE=1 \
+        "${product}" \
+        --command "${command}" \
+        --state-directory "${state_directory}" \
+        --no-session-restore \
+        --quit-after-last-terminal-exit >"${log}" 2>&1 &
+    product_pid=$!
+
+    for _ in {1..200}; do
+        grep -Fq "${expected}" "${log}" && break
+        sleep 0.05
+    done
+    grep -Fq 'zentty-linux: agent-event pane=pane-1 worklane=worklane-1' "${log}" ||
+        fail "${name} terminal child did not deliver an authenticated event"
+    grep -Fq "${expected}" "${log}" ||
+        fail "${name} event was not reduced and rendered as an attention state"
+
+    socket="$(sed -n 's/^zentty-linux: agent-runtime socket=//p' "${log}" | head -1)"
+    [[ -S "${socket}" ]] || fail "private product socket was not live during ${name}"
+    [[ "$(stat -c '%a' "${socket}")" == 600 ]] || fail "product socket mode was not 0600"
+    [[ "$(stat -c '%a' "$(dirname "${socket}")")" == 700 ]] ||
+        fail "product socket directory mode was not 0700"
+
+    for _ in {1..200}; do
+        if ! kill -0 "${product_pid}" 2>/dev/null; then
+            wait "${product_pid}" || fail "${name} product run failed"
+            product_pid=""
+            break
+        fi
+        sleep 0.05
+    done
+    [[ -z "${product_pid}" ]] || fail "${name} product did not exit after its real child"
+    [[ ! -e "${socket}" ]] || fail "${name} product left its agent socket behind"
+    [[ ! -e "$(dirname "${socket}")" ]] ||
+        fail "${name} product left its private runtime directory behind"
+    rm -f -- "${log}"
+    rm -rf -- "${state_directory}"
+    log=""
+    state_directory=""
+}
+
+run_adapter \
+    codex \
+    'printf '\''%s'\'' '\''{"hook_event_name":"PermissionRequest","session_id":"codex-e2e","message":"Run integration tests?"}'\'' | "$ZENTTY_CLI_BIN" ipc agent-event --adapter=codex; sleep 2' \
+    'zentty-linux: sidebar-agent-status pane=pane-1 text="Codex · Needs input: Run integration tests?" attention=true'
+run_adapter \
+    claude \
+    'printf '\''%s'\'' '\''{"session_id":"claude-e2e","tool_name":"AskUserQuestion","tool_input":{"questions":[{"question":"Deploy now?"}]}}'\'' | "$ZENTTY_CLI_BIN" ipc agent-event --adapter=claude PreToolUse; sleep 2' \
+    'zentty-linux: sidebar-agent-status pane=pane-1 text="Claude Code · Needs input: Deploy now?" attention=true'
+
+echo "Rust agent IPC passed: ${backend}, child=real-pty, helper=real-process, transport=real-unix-socket, adapters=codex+claude"

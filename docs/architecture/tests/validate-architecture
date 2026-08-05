@@ -40,9 +40,10 @@ jq -e '
         "legacy_sources_removed": true,
         "legacy_matrix_cells_removed": true
     } and
-    .ghostty_revision == "958d97ecdb659babdf530cb5562525134baec2a4" and
+    .ghostty_revision == "9e127e7493cb7fd9811f00971f1b99dd1f02af5b" and
     ([.workspace_crates[].name] | sort) == ([
         "zentty-core",
+        "zentty-agent-ipc",
         "zentty-ghostty-sys",
         "zentty-ghostty",
         "zentty-linux",
@@ -60,18 +61,21 @@ jq -e '
         all("gtk", "gobject", "linux-only", "ghostty-ffi"; . as $item |
             $crate.forbidden_dependency_classes | index($item) != null)
     ) and
+    (.workspace_crates[] | select(.name == "zentty-agent-ipc") |
+        .workspace_dependencies == ["zentty-core"] and .unsafe_policy == "forbid") and
     (.workspace_crates[] | select(.name == "zentty-ghostty-sys") |
         .workspace_dependencies == [] and .unsafe_policy == "ffi-declarations-only") and
     (.workspace_crates[] | select(.name == "zentty-ghostty") |
         .workspace_dependencies == ["zentty-ghostty-sys"] and
         .unsafe_policy == "private-reviewed-ffi-modules-only") and
     (.workspace_crates[] | select(.name == "zentty-linux") |
-        (.workspace_dependencies | sort) == (["zentty-core", "zentty-ghostty"] | sort) and
+        (.workspace_dependencies | sort) == (["zentty-agent-ipc", "zentty-core", "zentty-ghostty"] | sort) and
         .unsafe_policy == "forbid") and
     (.workspace_crates[] | select(.name == "zentty-test-support") |
         .shipped == false and .unsafe_policy == "forbid") and
     ([
         "ApplicationRuntimeOwner",
+        "AgentIpcServerOwner",
         "GhosttyRuntimeOwner",
         "PlatformServicesOwner",
         "PersistenceCoordinator",
@@ -92,6 +96,7 @@ jq -e '
         "create-ghostty-runtime",
         "initialize-gtk-and-create-gtk-application",
         "create-platform-services-and-load-validated-pane-records",
+        "start-private-agent-ipc-server-and-register-pane-capabilities",
         "create-windows-worklanes-and-transient-terminal-instances"
     ] and
     .lifecycle.shutdown_order == [
@@ -102,6 +107,7 @@ jq -e '
         "freeze-and-validate-final-pane-record-snapshot",
         "atomically-save-frozen-snapshot",
         "destroy-terminal-instances-without-pane-record-close-mutations",
+        "stop-agent-ipc-server-and-remove-private-runtime-directory",
         "destroy-gtk-windows-and-application",
         "free-ghostty-runtime-after-all-native-surface-references-finalize",
         "release-glib-main-context"
@@ -201,7 +207,8 @@ jq -e '
         "platform_notifications",
         "platform_clipboard",
         "platform_settings",
-        "platform_process_launch"
+        "platform_process_launch",
+        "agent_integration"
     ] | sort) and
     ([.proposed_qualification_capabilities[].cells[]] | length) ==
         ([.proposed_qualification_capabilities[].cells[]] | unique | length) and
@@ -255,11 +262,20 @@ jq -e '
             "requirement_id": "ZL-7-PLATFORM-SERVICES",
             "test_ids": ["TEST-PLATFORM-XDG", "TEST-PLATFORM-OPEN", "TEST-PLATFORM-NOTIFICATIONS", "TEST-PLATFORM-CLIPBOARD", "TEST-PLATFORM-SETTINGS", "TEST-PLATFORM-PROCESS"],
             "qualification_cell_ids": ["platform-xdg-paths-contract", "platform-open-url-file-contract", "platform-notification-portal-contract", "platform-clipboard-wayland", "platform-clipboard-x11", "platform-settings-contract", "platform-process-launch-contract"]
+        },
+        {
+            "requirement_id": "ZL-7-WORKFLOW-AGENT-PARITY",
+            "test_ids": ["TEST-AGENT-INTEGRATION"],
+            "qualification_cell_ids": ["agent-integration-wayland", "agent-integration-x11"]
         }
     ] and
     all(.proposed_qualification_cells[]; .tier == "release") and
     all(.proposed_qualification_cells[];
-        if (.capability == "product_boundary" or .capability == "workspace_restore" or
+        if .capability == "agent_integration"
+        then (.display == "wayland" or .display == "x11") and
+             .optimize == "ReleaseSafe" and .async_backend == "default" and
+             .terminals == "single"
+        elif (.capability == "product_boundary" or .capability == "workspace_restore" or
             .capability == "product_worklanes" or .capability == "platform_clipboard")
         then (.display == "wayland" or .display == "x11") and
              .optimize == "ReleaseSafe" and .async_backend == "default" and

@@ -4,6 +4,7 @@ members = [
     "crates/zentty-core",
     "crates/zentty-ghostty-sys",
     "crates/zentty-ghostty",
+    "crates/zentty-agent-ipc",
     "crates/zentty-linux",
     "crates/zentty-test-support",
 ]

@@ -36,6 +36,8 @@ pub enum Error {
         field: &'static str,
         source: NulError,
     },
+    InvalidEnvironmentName(String),
+    TooManyEnvironmentEntries(usize),
     SurfaceConstructorFailed,
     UnexpectedSurfaceTransfer,
     SurfaceCloseFailed,
@@ -59,6 +61,16 @@ impl fmt::Display for Error {
                     "Ghostty surface {field} contains an interior NUL"
                 )
             }
+            Self::InvalidEnvironmentName(name) => {
+                write!(
+                    formatter,
+                    "Ghostty surface environment name is invalid: {name:?}"
+                )
+            }
+            Self::TooManyEnvironmentEntries(count) => write!(
+                formatter,
+                "Ghostty surface environment has {count} entries; maximum is 128"
+            ),
             Self::SurfaceConstructorFailed => {
                 formatter.write_str("Ghostty surface construction failed")
             }
@@ -177,6 +189,11 @@ impl GhosttyRuntime {
                 field: "working_directory",
                 source,
             })?;
+        let environment = encode_environment(&config.environment)?;
+        let environment_pointers = environment
+            .iter()
+            .map(|value| value.as_ptr())
+            .collect::<Vec<_>>();
         let options = sys::GhosttyGtkEmbedSurfaceOptions {
             struct_size: std::mem::size_of::<sys::GhosttyGtkEmbedSurfaceOptions>(),
             command: command
@@ -186,6 +203,12 @@ impl GhosttyRuntime {
             working_directory: working_directory
                 .as_ref()
                 .map_or(std::ptr::null(), |value| value.as_ptr()),
+            environment: if environment_pointers.is_empty() {
+                std::ptr::null()
+            } else {
+                environment_pointers.as_ptr()
+            },
+            environment_count: environment_pointers.len(),
         };
 
         // SAFETY: Runtime validity is held by `inner`; `CString` pointers remain
@@ -237,11 +260,30 @@ impl GhosttyRuntime {
     }
 }
 
+fn encode_environment(environment: &[(String, String)]) -> Result<Vec<CString>, Error> {
+    if environment.len() > 128 {
+        return Err(Error::TooManyEnvironmentEntries(environment.len()));
+    }
+    environment
+        .iter()
+        .map(|(name, value)| {
+            if name.is_empty() || name.contains('=') {
+                return Err(Error::InvalidEnvironmentName(name.clone()));
+            }
+            CString::new(format!("{name}={value}")).map_err(|source| Error::InteriorNul {
+                field: "environment",
+                source,
+            })
+        })
+        .collect()
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SurfaceConfig {
     pub command: Option<String>,
     pub title: String,
     pub working_directory: Option<String>,
+    pub environment: Vec<(String, String)>,
 }
 
 impl Default for SurfaceConfig {
@@ -250,6 +292,7 @@ impl Default for SurfaceConfig {
             command: None,
             title: "Zentty".to_owned(),
             working_directory: None,
+            environment: Vec::new(),
         }
     }
 }
@@ -376,5 +419,39 @@ impl Drop for GhosttySurface {
         for handler in self.handlers.get_mut().drain(..) {
             self.widget.disconnect(handler);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Error, encode_environment};
+
+    #[test]
+    fn surface_environment_is_encoded_as_borrowed_key_value_entries() {
+        let encoded =
+            encode_environment(&[("ZENTTY_PANE_ID".to_owned(), "pane-1".to_owned())]).unwrap();
+        assert_eq!(encoded[0].to_str().unwrap(), "ZENTTY_PANE_ID=pane-1");
+    }
+
+    #[test]
+    fn surface_environment_rejects_invalid_names_nuls_and_excessive_counts() {
+        assert!(matches!(
+            encode_environment(&[("BAD=NAME".to_owned(), "value".to_owned())]),
+            Err(Error::InvalidEnvironmentName(_))
+        ));
+        assert!(matches!(
+            encode_environment(&[("GOOD".to_owned(), "bad\0value".to_owned())]),
+            Err(Error::InteriorNul {
+                field: "environment",
+                ..
+            })
+        ));
+        let too_many = (0..129)
+            .map(|index| (format!("KEY_{index}"), "value".to_owned()))
+            .collect::<Vec<_>>();
+        assert!(matches!(
+            encode_environment(&too_many),
+            Err(Error::TooManyEnvironmentEntries(129))
+        ));
     }
 }

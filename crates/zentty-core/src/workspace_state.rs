@@ -118,6 +118,7 @@ pub struct SidebarPaneSummary {
     pub primary_text: String,
     pub custom_title: Option<String>,
     pub is_focused: bool,
+    pub agent_status: Option<PaneAgentStatus>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -149,6 +150,7 @@ pub struct WorkspaceState {
     focus_history: PaneFocusHistory,
     is_navigating_history: bool,
     closed_panes: Vec<ClosedPaneEntry>,
+    agent_statuses: AgentStatusStore,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -198,6 +200,7 @@ impl WorkspaceState {
             focus_history: PaneFocusHistory::default(),
             is_navigating_history: false,
             closed_panes: Vec::new(),
+            agent_statuses: AgentStatusStore::default(),
         }
     }
 
@@ -299,6 +302,7 @@ impl WorkspaceState {
             focus_history: PaneFocusHistory::default(),
             is_navigating_history: false,
             closed_panes: Vec::new(),
+            agent_statuses: AgentStatusStore::default(),
         })
     }
 
@@ -438,6 +442,20 @@ impl WorkspaceState {
     }
 
     #[must_use]
+    pub fn worklane_id_for_pane(&self, pane_id: &str) -> Option<&str> {
+        self.worklanes
+            .iter()
+            .find(|worklane| {
+                worklane
+                    .columns
+                    .iter()
+                    .flat_map(|column| &column.panes)
+                    .any(|pane| pane.id == pane_id)
+            })
+            .map(|worklane| worklane.id.as_str())
+    }
+
+    #[must_use]
     pub fn active_columns(&self) -> &[PaneColumnState] {
         &self.active_worklane().columns
     }
@@ -556,6 +574,7 @@ impl WorkspaceState {
                             primary_text: pane.display_title().to_owned(),
                             custom_title: pane.custom_title.clone(),
                             is_focused: Some(pane.id.as_str()) == focused_pane_id,
+                            agent_status: self.agent_statuses.status_for_pane(&pane.id).cloned(),
                         })
                         .collect(),
                     is_active: worklane.id == self.active_worklane_id,
@@ -1421,6 +1440,10 @@ impl WorkspaceState {
         self.close_pane_at_with_capture(pane_id, 0, false)
     }
 
+    pub fn apply_agent_event(&mut self, event: AuthenticatedAgentEvent, now: u64) {
+        self.agent_statuses.apply(event, now);
+    }
+
     fn close_pane_at_with_capture(
         &mut self,
         pane_id: &str,
@@ -1447,7 +1470,6 @@ impl WorkspaceState {
         else {
             return ClosePaneOutcome::NotFound;
         };
-
         let pane_count: usize = self.worklanes[worklane_index]
             .columns
             .iter()
@@ -1460,6 +1482,7 @@ impl WorkspaceState {
             if capture {
                 self.capture_closed_pane(worklane_index, column_index, pane_index, now);
             }
+            self.agent_statuses.remove_pane(pane_id);
             let removed_active = self.worklanes[worklane_index].id == self.active_worklane_id;
             self.worklanes.remove(worklane_index);
             if removed_active {
@@ -1474,6 +1497,7 @@ impl WorkspaceState {
         if capture {
             self.capture_closed_pane(worklane_index, column_index, pane_index, now);
         }
+        self.agent_statuses.remove_pane(pane_id);
         let worklane = &mut self.worklanes[worklane_index];
         if worklane.columns[column_index].panes.len() == 1 {
             let removed_focused_column =
@@ -1806,6 +1830,6 @@ use std::error::Error;
 use std::fmt;
 
 use crate::{
-    ColumnRecipe, PaneRecipe, PaneReference, WindowRecipe, WorklaneRecipe,
-    pane_focus_history::PaneFocusHistory,
+    AgentStatusStore, AuthenticatedAgentEvent, ColumnRecipe, PaneAgentStatus, PaneRecipe,
+    PaneReference, WindowRecipe, WorklaneRecipe, pane_focus_history::PaneFocusHistory,
 };

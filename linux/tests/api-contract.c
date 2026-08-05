@@ -69,11 +69,39 @@ static int enforce_runtime_lifecycle(
         return 1;
     }
 
+    ghostty_gtk_embed_surface_options_t legacy_sized = {
+        .struct_size = offsetof(
+            ghostty_gtk_embed_surface_options_t,
+            environment
+        ),
+        .command = "exit 0",
+        .title = "legacy size contract",
+        .working_directory = "/tmp",
+        .environment = NULL,
+        .environment_count = 129,
+    };
+    GtkWidget *legacy_surface =
+        ghostty_gtk_embed_surface_new_with_options(runtime, &legacy_sized);
+    if (legacy_surface == NULL) {
+        fputs("api-contract: old-sized surface options rejected\n", stderr);
+        return 1;
+    }
+    g_object_ref_sink(legacy_surface);
+    if (!ghostty_gtk_embed_surface_close(legacy_surface)) {
+        fputs("api-contract: old-sized surface close rejected\n", stderr);
+        return 1;
+    }
+    g_object_unref(legacy_surface);
+
+    const char *environment[] = {"ZENTTY_API_ENV=present"};
+
     ghostty_gtk_embed_surface_options_t options = {
         .struct_size = sizeof(options),
         .command = "exit 0",
         .title = "API options contract",
         .working_directory = "/tmp",
+        .environment = environment,
+        .environment_count = 1,
     };
     GtkWidget *options_surface =
         ghostty_gtk_embed_surface_new_with_options(runtime, &options);
@@ -87,6 +115,43 @@ static int enforce_runtime_lifecycle(
         return 1;
     }
     g_object_unref(options_surface);
+
+    ghostty_gtk_embed_surface_options_t invalid_environment = options;
+    invalid_environment.environment = NULL;
+    if (ghostty_gtk_embed_surface_new_with_options(
+            runtime,
+            &invalid_environment
+        ) != NULL) {
+        fputs("api-contract: null environment array accepted\n", stderr);
+        return 1;
+    }
+    const char *null_environment[] = {NULL};
+    invalid_environment.environment = null_environment;
+    if (ghostty_gtk_embed_surface_new_with_options(
+            runtime,
+            &invalid_environment
+        ) != NULL) {
+        fputs("api-contract: null environment entry accepted\n", stderr);
+        return 1;
+    }
+    const char *malformed_environment[] = {"MISSING_EQUALS"};
+    invalid_environment.environment = malformed_environment;
+    if (ghostty_gtk_embed_surface_new_with_options(
+            runtime,
+            &invalid_environment
+        ) != NULL) {
+        fputs("api-contract: malformed environment entry accepted\n", stderr);
+        return 1;
+    }
+    invalid_environment.environment = environment;
+    invalid_environment.environment_count = 129;
+    if (ghostty_gtk_embed_surface_new_with_options(
+            runtime,
+            &invalid_environment
+        ) != NULL) {
+        fputs("api-contract: excessive environment count accepted\n", stderr);
+        return 1;
+    }
 
     GtkWidget *surface = ghostty_gtk_embed_surface_new(
         runtime,

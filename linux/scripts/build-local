@@ -73,7 +73,7 @@ if [[ -z "${GHOSTTY_SOURCE_DIR:-}" ]]; then
     fi
     git -C "${ghostty_source}" fetch origin "${ghostty_revision}"
     git -C "${ghostty_source}" checkout --detach "${ghostty_revision}"
-elif [[ ! -d "${ghostty_source}/.git" ]]; then
+elif [[ ! -e "${ghostty_source}/.git" ]]; then
     echo "error: GHOSTTY_SOURCE_DIR is not a Git checkout: ${ghostty_source}" >&2
     exit 1
 fi
@@ -125,6 +125,8 @@ cp "${layer_shell_library}" "${output_dir}/lib/"
 cargo "${cargo_arguments[@]}"
 cp "${repo_root}/target/${cargo_profile}/zentty-linux" \
     "${output_dir}/bin/zentty-linux"
+cp "${repo_root}/target/${cargo_profile}/zentty" \
+    "${output_dir}/bin/zentty"
 
 cc \
     "${c_probe_flags[@]}" \

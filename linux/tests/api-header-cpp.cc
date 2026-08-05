@@ -23,6 +23,14 @@ static_assert(std::is_same_v<
     RuntimeConstructor
 >);
 static_assert(std::is_standard_layout_v<ghostty_gtk_embed_surface_options_t>);
+static_assert(
+    offsetof(ghostty_gtk_embed_surface_options_t, environment) >
+    offsetof(ghostty_gtk_embed_surface_options_t, working_directory)
+);
+static_assert(
+    offsetof(ghostty_gtk_embed_surface_options_t, environment_count) >
+    offsetof(ghostty_gtk_embed_surface_options_t, environment)
+);
 static_assert(std::is_same_v<
     decltype(&ghostty_gtk_embed_surface_new_with_options),
     SurfaceOptionsConstructor

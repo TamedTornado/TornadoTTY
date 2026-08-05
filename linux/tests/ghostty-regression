@@ -14,7 +14,7 @@ if [[ ! -x "${zig}" ]]; then
     echo "error: Zig 0.16.0 not found at ${zig}" >&2
     exit 1
 fi
-if [[ ! -d "${ghostty_source}/.git" ]]; then
+if [[ ! -e "${ghostty_source}/.git" ]]; then
     echo "error: Ghostty checkout not found; run linux/scripts/build-local" >&2
     exit 1
 fi
@@ -35,6 +35,13 @@ mkdir -p "${zig_global_cache}" "${zig_local_cache}"
         ZIG_GLOBAL_CACHE_DIR="${zig_global_cache}" \
         ZIG_LOCAL_CACHE_DIR="${zig_local_cache}" \
         "${zig}" build test \
+        -Doptimize=Debug \
+        -Dcpu=baseline \
+        -fno-sys=gtk4-layer-shell
+    PATH="${blueprint_dir}:$(dirname "${zig}"):${PATH}" \
+        ZIG_GLOBAL_CACHE_DIR="${zig_global_cache}" \
+        ZIG_LOCAL_CACHE_DIR="${zig_local_cache}" \
+        "${zig}" build gtk-embed-lib-test \
         -Doptimize=Debug \
         -Dcpu=baseline \
         -fno-sys=gtk4-layer-shell

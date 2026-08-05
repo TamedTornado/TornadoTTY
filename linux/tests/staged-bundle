@@ -9,6 +9,7 @@ stage_dir="${build_dir}/staged-bundle-${backend}"
 rm -rf "${stage_dir}"
 mkdir -p "${stage_dir}/bin" "${stage_dir}/lib"
 cp "${build_dir}/bin/zentty-linux" "${stage_dir}/bin/"
+cp "${build_dir}/bin/zentty" "${stage_dir}/bin/"
 cp "${build_dir}/lib/libghostty-gtk-embed.so" "${stage_dir}/lib/"
 cp "${build_dir}/lib/libgtk4-layer-shell.so" "${stage_dir}/lib/"
 
@@ -25,5 +26,8 @@ grep -F "${stage_dir}/bin/../lib/libgtk4-layer-shell.so" \
 GDK_BACKEND="${backend}" \
 ZENTTY_LINUX_BINARY="${stage_dir}/bin/zentty-linux" \
     "${repo_root}/linux/tests/rust-product-smoke"
+GDK_BACKEND="${backend}" \
+ZENTTY_LINUX_BINARY="${stage_dir}/bin/zentty-linux" \
+    "${repo_root}/linux/tests/rust-agent-ipc"
 
 echo "Zentty Linux staged bundle passed (${backend})"

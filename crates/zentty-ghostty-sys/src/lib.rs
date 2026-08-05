@@ -15,6 +15,8 @@ pub struct GhosttyGtkEmbedSurfaceOptions {
     pub command: *const c_char,
     pub title: *const c_char,
     pub working_directory: *const c_char,
+    pub environment: *const *const c_char,
+    pub environment_count: usize,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -71,7 +73,7 @@ mod tests {
     fn surface_options_layout_is_c_compatible_and_versioned_by_size() {
         assert_eq!(
             size_of::<GhosttyGtkEmbedSurfaceOptions>(),
-            size_of::<usize>() + 3 * size_of::<*const core::ffi::c_char>()
+            2 * size_of::<usize>() + 4 * size_of::<*const core::ffi::c_char>()
         );
         assert_eq!(
             align_of::<GhosttyGtkEmbedSurfaceOptions>(),

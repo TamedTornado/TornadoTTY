@@ -4,7 +4,7 @@ use std::cell::Cell;
 use std::rc::Rc;
 use zentty_core::SidebarWorklaneSummary;
 
-use crate::source_ui;
+use crate::{agent_status_view, source_ui};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct PaneActionSpec {
@@ -159,8 +159,11 @@ pub(crate) fn install_styles() {
          .worklane-context { color: #a7adb8; font-size: 12px; }\n\
          .pane-row { color: #e7e9ed; border-radius: 6px; padding: 5px 7px; }\n\
          .pane-row-focused { background: #343943; }\n\
+         .pane-row-agent-attention { background: rgba(214, 158, 46, 0.16); }\n\
          .pane-marker { color: #727a86; }\n\
          .worklane-card-active .pane-marker { color: #69db7c; }\n\
+         .pane-agent-status { color: #a7adb8; font-size: 11px; }\n\
+         .pane-agent-status-attention { color: #f6c453; font-weight: 700; }\n\
          .sidebar-create-worklane { color: #d8dbe1; border-radius: 7px; padding: 5px 8px; }\n\
          .sidebar-pane-actions { color: #c7cbd2; min-width: 26px; min-height: 26px; padding: 2px; }\n\
          .pane-context-action { padding: 5px 8px; }\n\
@@ -592,6 +595,13 @@ fn make_pane_row(
     if pane.is_focused {
         row.add_css_class("pane-row-focused");
     }
+    if pane
+        .agent_status
+        .as_ref()
+        .is_some_and(zentty_core::PaneAgentStatus::requires_attention)
+    {
+        row.add_css_class("pane-row-agent-attention");
+    }
     let select = gtk::Button::new();
     select.set_has_frame(false);
     select.set_hexpand(true);
@@ -600,19 +610,30 @@ fn make_pane_row(
         &(summary.worklane_id.as_str(), pane.pane_id.as_str()).to_variant(),
     ));
     select.set_accessible_role(gtk::AccessibleRole::Button);
-    select.update_property(&[gtk::accessible::Property::Label(pane.primary_text.as_str())]);
+    select.update_property(&[gtk::accessible::Property::Label(&pane_accessible_label(
+        pane,
+    ))]);
     select.update_state(&[gtk::accessible::State::Selected(Some(pane.is_focused))]);
     let pane_content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     let marker = gtk::Label::new(Some(if pane.is_focused { "●" } else { "○" }));
     marker.set_widget_name(&widget_name("pane-marker", &pane.pane_id));
     marker.add_css_class("pane-marker");
+    let labels = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    labels.set_hexpand(true);
     let pane_title = gtk::Label::new(Some(&pane.primary_text));
     pane_title.set_widget_name(&widget_name("pane-title", &pane.pane_id));
     pane_title.set_xalign(0.0);
-    pane_title.set_hexpand(true);
     pane_title.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    let agent_status = gtk::Label::new(None);
+    agent_status.set_widget_name(&widget_name("pane-agent-status", &pane.pane_id));
+    agent_status.add_css_class("pane-agent-status");
+    agent_status.set_xalign(0.0);
+    agent_status.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    update_agent_status_label(&agent_status, pane.agent_status.as_ref());
+    labels.append(&pane_title);
+    labels.append(&agent_status);
     pane_content.append(&marker);
-    pane_content.append(&pane_title);
+    pane_content.append(&labels);
     select.set_child(Some(&pane_content));
     row.append(&select);
 
@@ -694,48 +715,109 @@ pub(crate) fn update_metadata(sidebar: &gtk::Box, summaries: &[SidebarWorklaneSu
         move_down.set_sensitive(index + 1 < summaries.len());
 
         for pane in &summary.pane_rows {
-            let Some(row) = find_named_widget(
-                sidebar.upcast_ref(),
-                &widget_name("pane-row", &pane.pane_id),
-            ) else {
+            if !update_pane_metadata(sidebar, pane) {
                 return false;
-            };
-            if pane.is_focused {
-                row.add_css_class("pane-row-focused");
-            } else {
-                row.remove_css_class("pane-row-focused");
             }
-            let Some(marker) = find_named_label(
-                sidebar.upcast_ref(),
-                &widget_name("pane-marker", &pane.pane_id),
-            ) else {
-                return false;
-            };
-            marker.set_text(if pane.is_focused { "●" } else { "○" });
-            let Some(title) = find_named_label(
-                sidebar.upcast_ref(),
-                &widget_name("pane-title", &pane.pane_id),
-            ) else {
-                return false;
-            };
-            title.set_text(&pane.primary_text);
-            eprintln!(
-                "zentty-linux: pane-display id={} label={:?} custom={}",
-                pane.pane_id,
-                pane.primary_text,
-                pane.custom_title.is_some()
-            );
-            let Some(select) = row
-                .first_child()
-                .and_then(|child| child.downcast::<gtk::Button>().ok())
-            else {
-                return false;
-            };
-            select.update_property(&[gtk::accessible::Property::Label(pane.primary_text.as_str())]);
-            select.update_state(&[gtk::accessible::State::Selected(Some(pane.is_focused))]);
         }
     }
     true
+}
+
+fn update_pane_metadata(sidebar: &gtk::Box, pane: &zentty_core::SidebarPaneSummary) -> bool {
+    let Some(row) = find_named_widget(
+        sidebar.upcast_ref(),
+        &widget_name("pane-row", &pane.pane_id),
+    ) else {
+        return false;
+    };
+    if pane.is_focused {
+        row.add_css_class("pane-row-focused");
+    } else {
+        row.remove_css_class("pane-row-focused");
+    }
+    if pane
+        .agent_status
+        .as_ref()
+        .is_some_and(zentty_core::PaneAgentStatus::requires_attention)
+    {
+        row.add_css_class("pane-row-agent-attention");
+    } else {
+        row.remove_css_class("pane-row-agent-attention");
+    }
+    let Some(marker) = find_named_label(
+        sidebar.upcast_ref(),
+        &widget_name("pane-marker", &pane.pane_id),
+    ) else {
+        return false;
+    };
+    marker.set_text(if pane.is_focused { "●" } else { "○" });
+    let Some(title) = find_named_label(
+        sidebar.upcast_ref(),
+        &widget_name("pane-title", &pane.pane_id),
+    ) else {
+        return false;
+    };
+    title.set_text(&pane.primary_text);
+    let Some(agent_status) = find_named_label(
+        sidebar.upcast_ref(),
+        &widget_name("pane-agent-status", &pane.pane_id),
+    ) else {
+        return false;
+    };
+    update_agent_status_label(&agent_status, pane.agent_status.as_ref());
+    if let Some(status) = &pane.agent_status {
+        eprintln!(
+            "zentty-linux: sidebar-agent-status pane={} text={:?} attention={}",
+            pane.pane_id,
+            agent_status_view::present(status).text,
+            status.requires_attention()
+        );
+    }
+    eprintln!(
+        "zentty-linux: pane-display id={} label={:?} custom={}",
+        pane.pane_id,
+        pane.primary_text,
+        pane.custom_title.is_some()
+    );
+    let Some(select) = row
+        .first_child()
+        .and_then(|child| child.downcast::<gtk::Button>().ok())
+    else {
+        return false;
+    };
+    select.update_property(&[gtk::accessible::Property::Label(&pane_accessible_label(
+        pane,
+    ))]);
+    select.update_state(&[gtk::accessible::State::Selected(Some(pane.is_focused))]);
+    true
+}
+
+fn update_agent_status_label(label: &gtk::Label, status: Option<&zentty_core::PaneAgentStatus>) {
+    label.remove_css_class("pane-agent-status-attention");
+    let Some(status) = status else {
+        label.set_visible(false);
+        label.set_text("");
+        return;
+    };
+    let presentation = agent_status_view::present(status);
+    label.set_text(&presentation.text);
+    label.set_visible(true);
+    if presentation.requires_attention {
+        label.add_css_class("pane-agent-status-attention");
+    }
+}
+
+fn pane_accessible_label(pane: &zentty_core::SidebarPaneSummary) -> String {
+    pane.agent_status.as_ref().map_or_else(
+        || pane.primary_text.clone(),
+        |status| {
+            format!(
+                "{}, {}",
+                pane.primary_text,
+                agent_status_view::present(status).text
+            )
+        },
+    )
 }
 
 fn apply_worklane_visual_state(card: &gtk::Widget, summary: &SidebarWorklaneSummary) {

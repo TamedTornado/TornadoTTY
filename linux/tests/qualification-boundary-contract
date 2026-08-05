@@ -29,7 +29,8 @@ done < <(jq -r '.cells[] | select((.command // "") != "") | [.id,.command] | @ts
 while IFS=$'\t' read -r id command; do
     [[ -n "${id}" ]] || continue
     [[ "${command}" == *"build/linux/bin/zentty-linux"* ||
-        "${command}" == *"linux/tests/rust-closed-pane-restore"* ]] ||
+        "${command}" == *"linux/tests/rust-closed-pane-restore"* ||
+        "${command}" == *"linux/tests/rust-agent-ipc"* ]] ||
         fail "executable product cell ${id} does not launch the delivered Rust product"
     [[ "${command}" != *"fixture"* && "${command}" != *"self-test"* ]] ||
         fail "executable product cell ${id} is owned by a fixture or self-test"
@@ -40,6 +41,7 @@ done < <(jq -r '
         (.capability == "product_boundary" or
          .capability == "product_worklanes" or
          .capability == "product_pane_terminal_lifecycle" or
+         .capability == "agent_integration" or
          .capability == "workspace_restore" or
          .capability == "platform_clipboard")
     ) |

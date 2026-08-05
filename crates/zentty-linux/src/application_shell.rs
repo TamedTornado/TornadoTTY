@@ -1,7 +1,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 use std::rc::Rc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use gtk::glib::{self, variant::ToVariant};
 use gtk::prelude::*;
@@ -14,6 +14,7 @@ use zentty_core::{
 use zentty_ghostty::{GhosttyRuntime, GhosttySurface, SurfaceConfig};
 
 use crate::{
+    agent_runtime::AgentRuntime,
     command_palette::CommandPaletteView,
     pane_controls::{self, PaneControlAction, PaneFrame, PanePresentation},
     pane_scroll_switch::{PaneScrollSwitch, ScrollSwitchResult, ScrollUnit},
@@ -122,6 +123,7 @@ pub(crate) struct ApplicationShell {
     last_pane_viewport_height: Cell<i32>,
     workspace_actions: Option<gio::SimpleActionGroup>,
     pending_prefills: BTreeMap<String, String>,
+    agent_runtime: AgentRuntime,
 }
 
 struct ShellWidgets {
@@ -166,6 +168,7 @@ impl ApplicationShell {
         let window_template = restored_window.unwrap_or_else(default_window_recipe);
         let state = WorkspaceState::from_window_recipe(&window_template)
             .map_err(|error| format!("workspace restore failed: {error}"))?;
+        let agent_runtime = AgentRuntime::start(window_template.id.clone())?;
         let next_worklane_number = next_numeric_identity(
             state
                 .worklanes()
@@ -222,6 +225,7 @@ impl ApplicationShell {
             last_pane_viewport_height: Cell::new(0),
             workspace_actions: None,
             pending_prefills: BTreeMap::new(),
+            agent_runtime,
         }));
 
         install_sidebar_width_tracking(
@@ -2353,14 +2357,41 @@ impl ApplicationShell {
     }
 
     fn create_surface(shell: &Rc<RefCell<Self>>, pane_id: &str) -> Result<(), String> {
-        let surface = {
-            let shell = shell.borrow();
-            shell
-                .runtime
-                .create_surface(&shell.surface_config(pane_id))
-                .map_err(|error| error.to_string())?
+        let (runtime, config) = {
+            let mut shell = shell.borrow_mut();
+            let runtime = shell.runtime.clone();
+            let config = shell.surface_config(pane_id)?;
+            (runtime, config)
+        };
+        let surface = match runtime.create_surface(&config) {
+            Ok(surface) => surface,
+            Err(error) => {
+                shell.borrow_mut().agent_runtime.unregister_pane(pane_id);
+                return Err(error.to_string());
+            }
         };
 
+        Self::connect_surface_callbacks(shell, pane_id, &surface);
+        let focus_controller = Self::make_surface_focus_controller(shell, pane_id);
+        surface.widget().add_controller(focus_controller.clone());
+
+        let frame = Self::create_pane_frame(shell, pane_id, surface.widget());
+
+        let mut shell = shell.borrow_mut();
+        shell.live_children.set(shell.live_children.get() + 1);
+        shell
+            .focus_controllers
+            .insert(pane_id.to_owned(), focus_controller);
+        shell.pane_frames.insert(pane_id.to_owned(), frame);
+        shell.surfaces.insert(pane_id.to_owned(), surface);
+        Ok(())
+    }
+
+    fn connect_surface_callbacks(
+        shell: &Rc<RefCell<Self>>,
+        pane_id: &str,
+        surface: &GhosttySurface,
+    ) {
         let ready_id = pane_id.to_owned();
         let weak = Rc::downgrade(shell);
         surface.on_initialized(move || {
@@ -2418,7 +2449,12 @@ impl ApplicationShell {
                 }
             });
         });
+    }
 
+    fn make_surface_focus_controller(
+        shell: &Rc<RefCell<Self>>,
+        pane_id: &str,
+    ) -> gtk::EventControllerFocus {
         let focus_controller = gtk::EventControllerFocus::new();
         let weak = Rc::downgrade(shell);
         let focus_id = pane_id.to_owned();
@@ -2446,29 +2482,27 @@ impl ApplicationShell {
                 }
             });
         });
-        surface.widget().add_controller(focus_controller.clone());
-
-        let frame = Self::create_pane_frame(shell, pane_id, surface.widget());
-
-        let mut shell = shell.borrow_mut();
-        shell.live_children.set(shell.live_children.get() + 1);
-        shell
-            .focus_controllers
-            .insert(pane_id.to_owned(), focus_controller);
-        shell.pane_frames.insert(pane_id.to_owned(), frame);
-        shell.surfaces.insert(pane_id.to_owned(), surface);
-        Ok(())
+        focus_controller
     }
 
-    fn surface_config(&self, pane_id: &str) -> SurfaceConfig {
-        SurfaceConfig {
+    fn surface_config(&mut self, pane_id: &str) -> Result<SurfaceConfig, String> {
+        let worklane_id = self
+            .state
+            .worklane_id_for_pane(pane_id)
+            .ok_or_else(|| format!("pane {pane_id} has no worklane"))?
+            .to_owned();
+        let environment = self
+            .agent_runtime
+            .environment_for_pane(&worklane_id, pane_id)?;
+        Ok(SurfaceConfig {
             command: self.command.clone(),
             title: zentty_core::PRODUCT_NAME.to_owned(),
             working_directory: self
                 .state
                 .pane(pane_id)
                 .and_then(|pane| pane.working_directory.clone()),
-        }
+            environment,
+        })
     }
 
     fn apply_pending_restore_prefill(shell: &Rc<RefCell<Self>>, pane_id: &str) {
@@ -2551,6 +2585,7 @@ impl ApplicationShell {
     }
 
     fn remove_surface(&mut self, pane_id: &str) -> Result<(), String> {
+        self.agent_runtime.unregister_pane(pane_id);
         if let Some(controller) = self.focus_controllers.remove(pane_id)
             && let Some(surface) = self.surfaces.get(pane_id)
         {
@@ -2570,6 +2605,47 @@ impl ApplicationShell {
             surface.dispose().map_err(|error| error.to_string())?;
         }
         Ok(())
+    }
+
+    pub(crate) fn drain_agent_events(&mut self) {
+        let events = self.agent_runtime.drain();
+        if events.is_empty() {
+            return;
+        }
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_secs());
+        for event in events {
+            eprintln!(
+                "zentty-linux: agent-event pane={} worklane={}",
+                event.target.pane_id, event.target.worklane_id
+            );
+            self.state.apply_agent_event(event, now);
+        }
+        self.render_sidebar();
+    }
+
+    pub(crate) fn sync_agent_targets(&mut self) {
+        let topology = self
+            .state
+            .worklanes()
+            .iter()
+            .flat_map(|worklane| {
+                worklane.columns.iter().flat_map(move |column| {
+                    column
+                        .panes
+                        .iter()
+                        .map(move |pane| (worklane.id.clone(), pane.id.clone()))
+                })
+            })
+            .collect::<Vec<_>>();
+        if let Err(error) = self.agent_runtime.retarget_registered_panes(
+            topology
+                .iter()
+                .map(|(worklane_id, pane_id)| (worklane_id.as_str(), pane_id.as_str())),
+        ) {
+            eprintln!("zentty-linux: agent-target-sync failed={error}");
+        }
     }
 
     fn remove_live_surface(&mut self, pane_id: &str) -> Result<(), String> {

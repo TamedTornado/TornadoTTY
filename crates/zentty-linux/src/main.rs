@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 
+mod agent_runtime;
+mod agent_status_view;
 mod application_shell;
 mod command_palette;
 mod pane_controls;
@@ -223,7 +225,9 @@ fn run_lifecycle_cycle(
     let ticking_sidebar_width = Rc::clone(&last_sidebar_width);
     let tick_source = glib::timeout_add_local(Duration::from_millis(10), move || {
         if let Some(shell) = ticking_shell.upgrade() {
-            let shell = shell.borrow();
+            let mut shell = shell.borrow_mut();
+            shell.sync_agent_targets();
+            shell.drain_agent_events();
             shell.reconcile_sidebar_width();
             shell.reconcile_pane_heights();
         }
