@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+config="${repo_root}/.cargo/mutants.toml"
+expected_config=$'gitignore = true\ncopy_target = false'
+
+if [[ ! -f "${config}" ]] || [[ "$(cat "${config}")" != "${expected_config}" ]]; then
+    printf 'error: safe cargo-mutants copy policy is missing from %s\n' "${config}" >&2
+    exit 2
+fi
+
+if [[ "${1:-}" == "--check-config" ]]; then
+    printf 'Safe cargo-mutants copy policy passed\n'
+    exit 0
+fi
+
+cd "${repo_root}"
+exec cargo mutants "$@"

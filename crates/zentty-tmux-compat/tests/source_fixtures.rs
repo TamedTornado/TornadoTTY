@@ -1,6 +1,7 @@
 use serde_json::Value;
 use zentty_tmux_compat::{
-    Command, FormatRenderer, Invocation, PaneTarget, SendKeys, TeamStore, TeamTransition,
+    Command, FormatRenderer, Invocation, PaneTarget, ParsedArguments, SendKeys, StoreError,
+    TeamStore, TeamTransition,
 };
 
 fn fixtures() -> Vec<Value> {
@@ -12,6 +13,40 @@ fn fixtures() -> Vec<Value> {
         .as_array()
         .expect("fixtures must be an array")
         .clone()
+}
+
+#[test]
+fn source_argument_parser_fixtures_cover_clusters_values_and_positionals() {
+    for case in fixtures()
+        .into_iter()
+        .filter(|case| case["kind"] == "arguments")
+    {
+        let parsed = ParsedArguments::parse(
+            &string_array(&case["arguments"]),
+            &string_array(&case["value_options"]),
+            &string_array(&case["boolean_options"]),
+        );
+        let expected = &case["expected"];
+        let expected_values = expected["values"]
+            .as_object()
+            .unwrap()
+            .iter()
+            .map(|(key, value)| (key.clone(), value.as_str().unwrap().to_owned()))
+            .collect();
+        assert_eq!(parsed.values(), &expected_values, "{}", case["id"]);
+        assert_eq!(
+            parsed.flags(),
+            string_array(&expected["flags"]),
+            "{}",
+            case["id"]
+        );
+        assert_eq!(
+            parsed.positionals(),
+            string_array(&expected["positionals"]),
+            "{}",
+            case["id"]
+        );
+    }
 }
 
 fn fixture(id: &str) -> Value {
@@ -184,6 +219,32 @@ fn source_team_store_transitions_preserve_anchor_and_restore_width() {
     assert_eq!(store.remove_pane("lane-1", "pane-3"), Some(800));
     assert!(store.anchor("lane-1").is_none());
     assert_eq!(store.active_pane("lane-1"), None);
+}
+
+#[test]
+fn team_store_schema_is_versioned_bounded_and_source_named() {
+    let store = TeamStore::default();
+    let encoded = store.to_json().unwrap();
+    let value: Value = serde_json::from_slice(&encoded).unwrap();
+    assert_eq!(value["version"], 1);
+    assert!(value.get("activePaneIDs").is_some());
+    assert!(value.get("active_pane_ids").is_none());
+    assert_eq!(TeamStore::from_json(&encoded).unwrap(), store);
+
+    let future = br#"{"version":2,"buffers":{},"anchors":{},"activePaneIDs":{}}"#;
+    assert_eq!(
+        TeamStore::from_json(future).unwrap_err(),
+        StoreError::UnsupportedVersion(2)
+    );
+
+    let oversized = format!(
+        "{{\"version\":1,\"buffers\":{{\"default\":\"{}\"}},\"anchors\":{{}},\"activePaneIDs\":{{}}}}",
+        "x".repeat(TeamStore::MAX_BUFFER_BYTES + 1)
+    );
+    assert_eq!(
+        TeamStore::from_json(oversized.as_bytes()).unwrap_err(),
+        StoreError::LimitExceeded
+    );
 }
 
 #[test]

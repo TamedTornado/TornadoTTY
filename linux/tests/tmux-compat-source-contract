@@ -61,7 +61,7 @@ jq -e '
     (.fixtures | type == "array" and length >= 20) and
     all(.fixtures[];
       (.id | type == "string" and test("^[a-z][a-z0-9.-]*$")) and
-      (.kind == "invocation" or .kind == "send_keys" or .kind == "target" or
+      (.kind == "invocation" or .kind == "arguments" or .kind == "send_keys" or .kind == "target" or
        .kind == "scope" or .kind == "format" or .kind == "store_transition" or
        .kind == "layout" or .kind == "output" or .kind == "buffer" or
        .kind == "capture" or .kind == "wait" or .kind == "failure")) and

@@ -6943,6 +6943,86 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   contract and all negative mutations, ShellCheck, and diff hygiene also pass.
   This was an execution-environment restriction, not converted into a product
   pass or repaired with a fake transport.
+- **Schema acronym mismatch caught test-first:** Serde's generic camel-case
+  conversion emitted `activePaneIds`, while the source store spells the field
+  `activePaneIDs` (and likewise uses `leaderPaneID`/`columnPaneIDs`). The new
+  exact-schema test failed before persistence was exposed. Those acronym-bearing
+  names now use explicit serialization attributes; generic naming remains only
+  where it is byte-for-byte source compatible.
+- **Fixture-kind validator remained closed:** Adding source argument-parser
+  fixtures initially failed the authoritative fixture schema because
+  `arguments` was not an allowed kind. The allowlist now names that single
+  reviewed kind; unknown kinds remain rejected by the negative contract gate.
+- **Store/parser mutation gaps:** The first expanded-core mutation run killed
+  126 of 156 viable mutants but left 30 survivors. They were all missing
+  boundary observations: parser accessor results, strings that must not be
+  interpreted as short-option clusters, exact/over-limit store bytes, each
+  independent map/column count, identifier length/emptiness, buffer size, and
+  diagnostic error text. Dedicated security-contract tests now exercise exact
+  ceilings and one-over rejection independently; no limit was relaxed to make
+  a mutant disappear.
+- **Store/parser mutation repair verified:** The focused rerun exercised 72
+  mutations with cargo-mutants 27.1.0: 68 were caught, four were compiler-
+  rejected as unviable, and none were missed or timed out. The immutable
+  `outcomes.json` receipt hash before removing generated scratch output was
+  `964e5367ca820ed398fdfd2eecf0cad6a122e4549cc470d8a3cd1ab2afec31ba`.
+  This closes the observed parser/store boundary gaps; it does not claim that
+  Phase 1 or Linux qualification is complete.
+- **Post-mutation gate command typo:** The first combined verification command
+  named the negative contract harness `tmux-compat-source-contract-self-test`,
+  but its checked-in name is `tmux-compat-source-contract-test`. The focused
+  crate tests, strict Clippy, formatting, and positive source-contract gate had
+  already passed before Bash stopped at the nonexistent path. The corrected
+  checked-in negative harness was then run explicitly; no product or harness
+  failure was hidden.
+- **Encoded store bound missing during diff review:** The decoder rejected an
+  input over one MiB and individual buffer values over 256 KiB, but a valid
+  in-memory store containing many individually valid buffers could still
+  serialize past the one-MiB store ceiling. A test built a compact payload
+  below the ceiling whose pretty-printed persisted form crosses it; it failed
+  before the encoder checked its final byte length. `to_json` now rejects that
+  output rather than producing an oversized compatibility store. This was
+  found in the pre-commit diff review after the first green mutation receipt,
+  so the affected focused mutation scope and all gates are rerun below.
+- **Encoded-boundary fixture calibrated, not weakened:** The first 256-buffer
+  payload used 4,070-byte values; both its compact input and pretty output were
+  still below one MiB, so the red test correctly reported that serialization
+  succeeded. Raising each individually valid value to 4,080 bytes keeps the
+  compact input admissible while making the persisted representation cross the
+  ceiling. The corrected test now isolates the encoder-side bound and passes
+  only with the final-length check.
+- **Cargo-mutants copied ignored staged builds:** Operator disk inspection
+  found each cargo-mutants scratch source tree was about 16 GiB, roughly 14 GiB
+  of it the ignored `build/linux-deps` tree, while the Rust `target` directory
+  was only about 116 MiB. cargo-mutants 27.1.0 does not honor `.gitignore` by
+  default. The prior four-worker command omitted `--gitignore=true`, causing
+  about 64 GiB of avoidable copying; compiler caching cannot intercept source-
+  tree copies. `.cargo/mutants.toml` now permanently sets `gitignore = true`
+  and `copy_target = false`, and `linux/tests/mutate-rust` verifies that policy
+  before every supported mutation invocation. The active
+  unsafe-style run had already completed when cancellation was attempted; its
+  temporary worker copies were gone and only a 2.5 MiB results directory
+  remained. Future mutation work uses the wrapper, never a bare command.
+- **Cargo-mutants safe-option CLI conflict:** The first wrapper repeated both
+  safe configuration values as CLI flags. cargo-mutants rejects `--gitignore`
+  and `--copy-target` together, even though both values are valid in its TOML
+  configuration. The wrapper's dry-run failed before copying or mutation. It
+  now fail-closed validates both permanent settings and invokes cargo-mutants
+  without conflicting command-line overrides; the subsequent list-only check
+  confirms the configuration is accepted.
+- **Abandoned mutation trees reclaimed:** Four 16-GiB scratch directories from
+  the earlier unsafe invocations were still present under `/tmp`; they were
+  identified by their 19:01 timestamps and removed without touching the four
+  active policy-correct workers created at 19:37. The corrected workers ranged
+  from 63 to 181 MiB while active and were automatically removed on completion.
+- **Exact encoder ceiling killed the last survivor:** The first post-review
+  store/parser run found one survivor out of 71 viable mutations: replacing the
+  final encoded-length `>` comparison with `>=`. A deterministic fixture now
+  constructs a valid store whose pretty JSON is exactly 1,048,576 bytes and
+  proves the ceiling is accepted. The policy-correct wrapper rerun then tested
+  75 mutations in 21 seconds: 71 caught, four compiler-rejected as unviable,
+  zero missed, and zero timed out. Its `outcomes.json` SHA-256 is
+  `a1199c601b9b28366717c4833327037dda1481b07c7388a5d8e70b855e04c5b7`.
 
 ## AI disclosure
 

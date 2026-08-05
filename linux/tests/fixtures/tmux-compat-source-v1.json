@@ -2,6 +2,9 @@
   "schema_version": 1,
   "fixtures": [
     {"id":"parse.split-window-global-socket","kind":"invocation","argv":["-S","/tmp/claude.sock","split-window","-h","-P","-F","#{pane_id}","-c","/repo"],"expected":{"subcommand":"split-window","arguments":["-h","-P","-F","#{pane_id}","-c","/repo"]}},
+    {"id":"parse.clustered-bools","kind":"arguments","arguments":["-dPh","-F","#{pane_id}"],"value_options":["-F"],"boolean_options":["-d","-P","-h"],"expected":{"values":{"-F":"#{pane_id}"},"flags":["-P","-d","-h"],"positionals":[]}},
+    {"id":"parse.clustered-value","kind":"arguments","arguments":["-l70%","-P"],"value_options":["-l"],"boolean_options":["-P"],"expected":{"values":{"-l":"70%"},"flags":["-P"],"positionals":[]}},
+    {"id":"parse.display-template","kind":"arguments","arguments":["-t","%pane-1","-p","#{session_name}:#{window_index}"],"value_options":["-F","-t"],"boolean_options":["-p"],"expected":{"values":{"-t":"%pane-1"},"flags":["-p"],"positionals":["#{session_name}:#{window_index}"]}},
     {"id":"send.named-keys","kind":"send_keys","arguments":["-t","%pane-2","claude","Enter","C-c"],"standard_input":null,"expected_text":"claude\r\u0003"},
     {"id":"send.literal","kind":"send_keys","arguments":["-l","-t","%pane-2","claude","Enter"],"standard_input":null,"expected_text":"claude Enter"},
     {"id":"target.explicit-pane","kind":"target","selector":"%pane-2","available":["pane-1","pane-2"],"fallback":"pane-1","expected":"pane-2"},

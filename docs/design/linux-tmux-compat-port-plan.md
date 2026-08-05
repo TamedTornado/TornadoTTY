@@ -79,6 +79,12 @@ renderer, target, and transition code receives mutation testing. Unknown,
 missing, duplicate, malformed, oversized, invalid UTF-8, and cross-scope input
 must fail explicitly where the Linux security contract requires it.
 
+All Rust mutation runs use `linux/tests/mutate-rust`. The checked-in
+`.cargo/mutants.toml` and wrapper both require `gitignore = true` and
+`copy_target = false`; this prevents cargo-mutants from copying ignored staged
+Ghostty/build artifacts into every worker and avoids duplicating target trees.
+Direct `cargo mutants` invocations are not a supported project workflow.
+
 **Exit:** every frozen pure contract passes in Rust; deliberately changed
 source behavior is documented; mutation survivors are either killed or
 explicitly justified.
