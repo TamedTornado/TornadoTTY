@@ -1,10 +1,11 @@
 #![forbid(unsafe_code)]
 
 use serde_json::Value;
-use std::io::Read;
+use std::io::{IsTerminal, Read, Write};
 use std::process::ExitCode;
 use zentty_agent_ipc::{AgentIpcClient, launch_agent};
 use zentty_core::{AgentEvent, adapt_claude_hook, adapt_codex_hook};
+use zentty_tmux_compat::{Command, Invocation, TmuxCompatRequest};
 
 fn main() -> ExitCode {
     match run() {
@@ -25,6 +26,10 @@ fn run() -> Result<(), String> {
             .ok_or_else(|| "usage: zentty launch <claude|codex> [arguments...]".to_owned())?;
         return launch_agent(&tool, &arguments.collect::<Vec<_>>())
             .map_err(|error| error.to_string());
+    }
+    if command.as_deref() == Some("__tmux-compat") {
+        let arguments = arguments.collect::<Vec<_>>();
+        return run_tmux_compat(&arguments);
     }
     if command.as_deref() != Some("ipc") || arguments.next().as_deref() != Some("agent-event") {
         return Err("usage: zentty ipc agent-event [--adapter=codex|claude] [event]".to_owned());
@@ -58,6 +63,56 @@ fn run() -> Result<(), String> {
         let bytes = serde_json::to_vec(&event).map_err(|error| error.to_string())?;
         AgentIpcClient::send_event(&socket, &token, &bytes, claimed_target_from_environment())
             .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+fn run_tmux_compat(arguments: &[String]) -> Result<(), String> {
+    let invocation = Invocation::parse(arguments).map_err(|error| error.to_string())?;
+    let standard_input = if matches!(invocation.command, Command::SetBuffer | Command::LoadBuffer)
+        && !std::io::stdin().is_terminal()
+    {
+        let mut input = Vec::new();
+        std::io::stdin()
+            .take(
+                u64::try_from(TmuxCompatRequest::MAX_STANDARD_INPUT_BYTES + 1).unwrap_or(u64::MAX),
+            )
+            .read_to_end(&mut input)
+            .map_err(|error| format!("could not read tmux standard input: {error}"))?;
+        if input.len() > TmuxCompatRequest::MAX_STANDARD_INPUT_BYTES {
+            return Err("tmux standard input exceeds 256 KiB".to_owned());
+        }
+        Some(
+            String::from_utf8(input)
+                .map_err(|error| format!("tmux standard input is not UTF-8: {error}"))?,
+        )
+    } else {
+        None
+    };
+    let socket = std::env::var("ZENTTY_INSTANCE_SOCKET")
+        .map_err(|_| "ZENTTY_INSTANCE_SOCKET is missing".to_owned())?;
+    let token = std::env::var("ZENTTY_PANE_TOKEN")
+        .map_err(|_| "ZENTTY_PANE_TOKEN is missing".to_owned())?;
+    let reply = AgentIpcClient::send_tmux(
+        socket,
+        &token,
+        invocation.command.as_str(),
+        &invocation.arguments,
+        standard_input,
+        claimed_target_from_environment(),
+    )
+    .map_err(|error| error.to_string())?;
+    if let Some(stdout) = reply.stdout() {
+        std::io::stdout()
+            .write_all(stdout.as_bytes())
+            .map_err(|error| format!("could not write tmux output: {error}"))?;
+    }
+    if let Some(error) = reply.error() {
+        return Err(format!(
+            "tmux {}: {}",
+            invocation.command.as_str(),
+            error.message()
+        ));
     }
     Ok(())
 }

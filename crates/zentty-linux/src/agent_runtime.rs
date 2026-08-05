@@ -2,13 +2,14 @@ use std::collections::BTreeMap;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, mpsc};
-use zentty_agent_ipc::{AgentIpcServer, generate_pane_token};
+use zentty_agent_ipc::{AgentIpcServer, AuthenticatedTmuxRequest, generate_pane_token};
 use zentty_core::{AgentTarget, AuthenticatedAgentEvent, PaneTokenRegistry};
 
 pub(crate) struct AgentRuntime {
     server: Option<AgentIpcServer>,
     registry: Arc<Mutex<PaneTokenRegistry>>,
     receiver: mpsc::Receiver<AuthenticatedAgentEvent>,
+    tmux_receiver: mpsc::Receiver<AuthenticatedTmuxRequest>,
     tokens_by_pane: BTreeMap<String, String>,
     worklane_by_pane: BTreeMap<String, String>,
     runtime_directory: PathBuf,
@@ -22,16 +23,23 @@ impl AgentRuntime {
     pub(crate) fn start(window_id: impl Into<String>) -> Result<Self, String> {
         let window_id = window_id.into();
         let instance = generate_pane_token().map_err(|error| error.to_string())?;
-        let runtime_directory = std::env::temp_dir().join(format!(
-            "zentty-agent-{}-{}",
+        let runtime_directory = instance_runtime_directory(
+            std::env::var_os("XDG_RUNTIME_DIR").as_deref(),
+            &std::env::temp_dir(),
             std::process::id(),
-            &instance[..32]
-        ));
+            &instance[..32],
+        );
         let socket_path = runtime_directory.join("instance.sock");
         let registry = Arc::new(Mutex::new(PaneTokenRegistry::default()));
         let (sender, receiver) = mpsc::channel();
-        let server = AgentIpcServer::start(&socket_path, Arc::clone(&registry), sender)
-            .map_err(|error| error.to_string())?;
+        let (tmux_sender, tmux_receiver) = mpsc::channel();
+        let server = AgentIpcServer::start_with_tmux(
+            &socket_path,
+            Arc::clone(&registry),
+            sender,
+            tmux_sender,
+        )
+        .map_err(|error| error.to_string())?;
         eprintln!(
             "zentty-linux: agent-runtime socket={}",
             socket_path.display()
@@ -50,6 +58,7 @@ impl AgentRuntime {
             server: Some(server),
             registry,
             receiver,
+            tmux_receiver,
             tokens_by_pane: BTreeMap::new(),
             worklane_by_pane: BTreeMap::new(),
             runtime_directory,
@@ -160,10 +169,33 @@ impl AgentRuntime {
     pub(crate) fn drain(&self) -> Vec<AuthenticatedAgentEvent> {
         self.receiver.try_iter().collect()
     }
+
+    pub(crate) fn drain_tmux(&self) -> Vec<AuthenticatedTmuxRequest> {
+        self.tmux_receiver.try_iter().collect()
+    }
 }
 
 fn current_path() -> std::ffi::OsString {
     std::env::var_os("PATH").unwrap_or_else(|| "/usr/bin:/bin".into())
+}
+
+fn instance_runtime_directory(
+    xdg_runtime_directory: Option<&std::ffi::OsStr>,
+    temporary_directory: &std::path::Path,
+    process_id: u32,
+    nonce: &str,
+) -> PathBuf {
+    xdg_runtime_directory
+        .map(std::path::Path::new)
+        .filter(|path| path.is_absolute())
+        .map_or_else(
+            || temporary_directory.join(format!("zentty-agent-{process_id}-{nonce}")),
+            |runtime| {
+                runtime
+                    .join("zentty")
+                    .join(format!("instance-{process_id}-{nonce}"))
+            },
+        )
 }
 
 fn enabled_wrapper_directories(
@@ -202,7 +234,7 @@ impl Drop for AgentRuntime {
 
 #[cfg(test)]
 mod tests {
-    use super::enabled_wrapper_directories;
+    use super::{enabled_wrapper_directories, instance_runtime_directory};
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
 
@@ -232,5 +264,21 @@ mod tests {
             enabled_wrapper_directories(&wrappers, wrappers.join("codex").as_os_str()).is_empty()
         );
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn instance_socket_directory_prefers_absolute_xdg_runtime_paths() {
+        assert_eq!(
+            instance_runtime_directory(Some("/run/user/1000".as_ref()), "/tmp".as_ref(), 42, "abc"),
+            std::path::Path::new("/run/user/1000/zentty/instance-42-abc")
+        );
+        assert_eq!(
+            instance_runtime_directory(Some("relative".as_ref()), "/tmp".as_ref(), 42, "abc"),
+            std::path::Path::new("/tmp/zentty-agent-42-abc")
+        );
+        assert_eq!(
+            instance_runtime_directory(None, "/tmp".as_ref(), 42, "abc"),
+            std::path::Path::new("/tmp/zentty-agent-42-abc")
+        );
     }
 }

@@ -222,6 +222,13 @@ fn source_team_store_transitions_preserve_anchor_and_restore_width() {
 }
 
 #[test]
+fn source_team_store_records_compatibility_selection_without_a_split() {
+    let mut store = TeamStore::default();
+    store.record_active_pane("lane-1", "pane-2");
+    assert_eq!(store.active_pane("lane-1"), Some("pane-2"));
+}
+
+#[test]
 fn team_store_schema_is_versioned_bounded_and_source_named() {
     let store = TeamStore::default();
     let encoded = store.to_json().unwrap();
@@ -255,6 +262,7 @@ fn every_source_command_and_alias_canonicalizes() {
     .unwrap();
     for command in contract["commands"].as_array().unwrap() {
         let expected = Command::parse(command["name"].as_str().unwrap()).unwrap();
+        assert_eq!(expected.as_str(), command["name"].as_str().unwrap());
         for word in std::iter::once(&command["name"]).chain(command["aliases"].as_array().unwrap())
         {
             assert_eq!(Command::parse(word.as_str().unwrap()).unwrap(), expected);

@@ -1,5 +1,6 @@
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{FileTypeExt, symlink};
 use std::os::unix::net::UnixStream;
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
@@ -117,5 +118,72 @@ fn stalled_client_is_bounded_and_cannot_permanently_block_later_events() {
     );
 
     drop(stalled);
+    server.shutdown().unwrap();
+}
+
+#[test]
+fn socket_start_rejects_symlinked_parents_and_broken_endpoint_symlinks() {
+    let root = std::env::temp_dir().join(format!(
+        "zentty-agent-ipc-path-security-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    let real_parent = root.join("real");
+    let linked_parent = root.join("linked");
+    fs::create_dir_all(&real_parent).unwrap();
+    symlink(&real_parent, &linked_parent).unwrap();
+    let (sender, _receiver) = mpsc::channel();
+    assert!(
+        AgentIpcServer::start(
+            linked_parent.join("instance.sock"),
+            Arc::new(Mutex::new(PaneTokenRegistry::default())),
+            sender,
+        )
+        .is_err()
+    );
+    assert!(!real_parent.join("instance.sock").exists());
+
+    let endpoint = real_parent.join("instance.sock");
+    symlink(real_parent.join("missing"), &endpoint).unwrap();
+    let (sender, _receiver) = mpsc::channel();
+    assert!(
+        AgentIpcServer::start(
+            &endpoint,
+            Arc::new(Mutex::new(PaneTokenRegistry::default())),
+            sender,
+        )
+        .is_err()
+    );
+    assert!(
+        fs::symlink_metadata(&endpoint)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn socket_start_verifies_private_directory_and_socket_type() {
+    let (directory, socket) = temporary_socket();
+    fs::set_permissions(&directory, fs::Permissions::from_mode(0o755)).unwrap();
+    let (sender, _receiver) = mpsc::channel();
+    let server = AgentIpcServer::start(
+        &socket,
+        Arc::new(Mutex::new(PaneTokenRegistry::default())),
+        sender,
+    )
+    .unwrap();
+    assert_eq!(
+        fs::metadata(&directory).unwrap().permissions().mode() & 0o777,
+        0o700
+    );
+    assert!(
+        fs::symlink_metadata(&socket)
+            .unwrap()
+            .file_type()
+            .is_socket()
+    );
     server.shutdown().unwrap();
 }

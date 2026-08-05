@@ -15,5 +15,10 @@ if [[ "${1:-}" == "--check-config" ]]; then
     exit 0
 fi
 
+ghostty_lib_dir="${repo_root}/build/linux-deps/ghostty/zig-out/lib"
+if [[ -z "${GHOSTTY_LIB_DIR:-}" && -f "${ghostty_lib_dir}/libghostty-gtk-embed.so" ]]; then
+    export GHOSTTY_LIB_DIR="${ghostty_lib_dir}"
+fi
+
 cd "${repo_root}"
 exec cargo mutants "$@"

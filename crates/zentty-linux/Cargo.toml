@@ -11,6 +11,7 @@ gtk = { package = "gtk4", version = "=0.11.3", features = ["v4_14"] }
 zentty-agent-ipc = { path = "../zentty-agent-ipc" }
 zentty-core = { path = "../zentty-core" }
 zentty-ghostty = { path = "../zentty-ghostty" }
+zentty-tmux-compat = { path = "../zentty-tmux-compat" }
 
 [lints]
 workspace = true

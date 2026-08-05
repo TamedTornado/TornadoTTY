@@ -169,6 +169,11 @@ impl TeamStore {
     pub fn active_pane(&self, worklane_id: &str) -> Option<&str> {
         self.active_pane_ids.get(worklane_id).map(String::as_str)
     }
+
+    pub fn record_active_pane(&mut self, worklane_id: &str, pane_id: &str) {
+        self.active_pane_ids
+            .insert(worklane_id.to_owned(), pane_id.to_owned());
+    }
 }
 
 fn validate_identifier(value: &str) -> Result<(), StoreError> {

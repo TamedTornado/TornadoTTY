@@ -9,6 +9,7 @@ use std::fmt;
 use std::fs;
 use std::fs::File;
 use std::io::{Read, Write};
+use std::os::unix::fs::FileTypeExt;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
@@ -169,19 +170,53 @@ impl AgentIpcServer {
         tmux_sender: Option<mpsc::Sender<AuthenticatedTmuxRequest>>,
     ) -> Result<Self, AgentIpcError> {
         let socket_path = socket_path.as_ref().to_owned();
-        if socket_path.exists() {
-            return Err(AgentIpcError::Io(std::io::Error::new(
-                std::io::ErrorKind::AddrInUse,
-                "agent IPC socket path already exists",
-            )));
+        match fs::symlink_metadata(&socket_path) {
+            Ok(_) => {
+                return Err(AgentIpcError::Io(std::io::Error::new(
+                    std::io::ErrorKind::AddrInUse,
+                    "agent IPC socket path already exists",
+                )));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(AgentIpcError::Io(error)),
         }
         let parent = socket_path.parent().ok_or_else(|| {
             AgentIpcError::InvalidRequest("socket path has no parent directory".to_owned())
         })?;
-        fs::create_dir_all(parent)?;
+        match fs::symlink_metadata(parent) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(AgentIpcError::InvalidRequest(
+                    "socket parent must not be a symlink".to_owned(),
+                ));
+            }
+            Ok(metadata) if !metadata.is_dir() => {
+                return Err(AgentIpcError::InvalidRequest(
+                    "socket parent is not a directory".to_owned(),
+                ));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                fs::create_dir_all(parent)?;
+            }
+            Err(error) => return Err(AgentIpcError::Io(error)),
+        }
         fs::set_permissions(parent, fs::Permissions::from_mode(0o700))?;
+        if fs::symlink_metadata(parent)?.permissions().mode() & 0o777 != 0o700 {
+            return Err(AgentIpcError::InvalidRequest(
+                "socket parent permissions are not private".to_owned(),
+            ));
+        }
         let listener = UnixListener::bind(&socket_path)?;
         fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o600))?;
+        let socket_metadata = fs::symlink_metadata(&socket_path)?;
+        if !socket_metadata.file_type().is_socket()
+            || socket_metadata.permissions().mode() & 0o777 != 0o600
+        {
+            let _ = fs::remove_file(&socket_path);
+            return Err(AgentIpcError::InvalidRequest(
+                "bound IPC endpoint is not a private Unix socket".to_owned(),
+            ));
+        }
         listener.set_nonblocking(true)?;
 
         let running = Arc::new(AtomicBool::new(true));

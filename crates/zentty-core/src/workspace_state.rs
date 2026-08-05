@@ -77,7 +77,8 @@ impl PaneState {
         }
     }
 
-    fn display_title(&self) -> &str {
+    #[must_use]
+    pub fn display_title(&self) -> &str {
         self.custom_title.as_deref().unwrap_or(&self.live_title)
     }
 

@@ -11,6 +11,7 @@ mod peek_scroll_navigation;
 mod sidebar;
 mod sidebar_visibility;
 mod source_ui;
+mod tmux_compat;
 mod window_chrome;
 mod worklane_peek;
 

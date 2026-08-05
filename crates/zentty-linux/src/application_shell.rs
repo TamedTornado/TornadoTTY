@@ -12,6 +12,7 @@ use zentty_core::{
     WindowRecipe, WorklaneColor, WorklaneRecipe, WorkspaceState,
 };
 use zentty_ghostty::{GhosttyRuntime, GhosttySurface, SurfaceConfig};
+use zentty_tmux_compat::Command as TmuxCommand;
 
 use crate::{
     agent_runtime::AgentRuntime,
@@ -127,6 +128,7 @@ pub(crate) struct ApplicationShell {
     workspace_actions: Option<gio::SimpleActionGroup>,
     pending_prefills: BTreeMap<String, String>,
     agent_runtime: AgentRuntime,
+    tmux_compat: crate::tmux_compat::TmuxCompatProduct,
 }
 
 struct ShellWidgets {
@@ -222,6 +224,7 @@ impl ApplicationShell {
             workspace_actions: None,
             pending_prefills: BTreeMap::new(),
             agent_runtime,
+            tmux_compat: crate::tmux_compat::TmuxCompatProduct::default(),
         }));
 
         install_sidebar_width_tracking(
@@ -2439,6 +2442,27 @@ impl ApplicationShell {
     }
 
     pub(crate) fn drain_agent_events(&mut self) {
+        let tmux_commands = self.agent_runtime.drain_tmux();
+        let mut tmux_changed_product_state = false;
+        for command in tmux_commands {
+            eprintln!(
+                "zentty-linux: tmux-command pane={} worklane={} command={:?}",
+                command.target.pane_id,
+                command.target.worklane_id,
+                command.request.command()
+            );
+            let reply = self
+                .tmux_compat
+                .handle(&mut self.state, &command.target, &command.request);
+            tmux_changed_product_state |=
+                matches!(command.request.command(), TmuxCommand::SelectPane);
+            if let Err(error) = command.respond(reply) {
+                eprintln!("zentty-linux: tmux-response failed={error}");
+            }
+        }
+        if tmux_changed_product_state {
+            self.render();
+        }
         let events = self.agent_runtime.drain();
         if events.is_empty() {
             return;

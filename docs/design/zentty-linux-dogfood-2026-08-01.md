@@ -7115,6 +7115,89 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   suite: 18 caught, three compiler-rejected as unviable, zero missed, and zero
   timed out. Its `outcomes.json` SHA-256 is
   `e67d6fc58c54894400956d13afddbe96c8ae1253c2b33f175cbbdc396dd700e6`.
+- **Stable Rust has no peer-credential API yet:** A compile-only probe against
+  Rust 1.97.1 confirmed `UnixStream::peer_cred` remains behind the unstable
+  `peer_credentials_unix_socket` feature. The product continues to rely on its
+  private directory, mode-0600 socket, and 256-bit per-pane capability until a
+  reviewed safe syscall wrapper is selected; this is not recorded as a passed
+  peer-credential check.
+- **Symlink-parent endpoint attack reproduced:** A real test passed a symlink as
+  the socket's immediate parent. The prior server followed it, changed the real
+  directory's permissions, and successfully bound there; the test failed red.
+  Startup now uses `symlink_metadata`, rejects symlink/non-directory parents
+  and even broken endpoint symlinks, verifies 0700 parent permissions, and
+  verifies the resulting endpoint is a mode-0600 Unix socket. A small fixture
+  directory left by the intentional panic was removed before rerunning.
+- **XDG runtime path correction:** Linux agent sockets previously always lived
+  directly beneath the process temporary directory. Instance directories now
+  prefer an absolute `$XDG_RUNTIME_DIR/zentty/instance-<pid>-<nonce>` and retain
+  the private randomized temporary fallback only when XDG runtime state is
+  absent or relative. The first focused invocation used `--exact` without the
+  Rust module-qualified test name and therefore ran zero tests; strict Clippy
+  still passed, but no test pass was claimed until the correctly qualified
+  test was rerun.
+- **First product-handler compile exposed a missing pure store operation:** The
+  discovery/select handler tests were written before implementation and first
+  failed because `TmuxCompatProduct` did not exist. After the handler was added,
+  compilation reached a second real omission: `TeamStore` could update active
+  panes only as a side effect of splitting, while source `select-pane` records
+  compatibility selection independently. `record_active_pane` now owns that
+  exact pure transition with a focused regression test; the product did not
+  fake selection by manufacturing a split.
+- **Strict Clippy rejected the newly public pane-title accessor:** Product
+  formatting made `PaneState::display_title` public, but its first strict
+  Clippy run failed because the pure return value lacked `#[must_use]`. The
+  accessor now carries that contract rather than weakening the lint policy.
+- **Real CLI/socket tests require the host security boundary:** The first run
+  of the separate-process compatibility CLI tests failed at Unix socket bind
+  with `Operation not permitted` inside the command sandbox. This is an
+  environmental block, not a product pass or failure. The same unmodified
+  tests are rerun outside that sandbox; they are never skipped or replaced by
+  an in-process mock.
+- **Handler helpers initially overstated fallibility and ownership:** Once the
+  real CLI tests passed, strict Clippy rejected two formatting-only helpers
+  that returned `Result` despite having no failure path, and a newline helper
+  that consumed a vector unnecessarily. Their signatures now state the actual
+  contracts: infallible formatting and borrowed lines. No lint was suppressed.
+  The following strict CLI pass found the same ownership overstatement on the
+  hidden-command argument vector; it now borrows the collected argument slice.
+- **Safe mutation copies correctly excluded the staged Ghostty tree, then the
+  Linux baseline could not link:** The first handler mutation baseline proved
+  the disk fix was effective—the scratch tree no longer contained the 14-GB
+  ignored `build/linux-deps` directory—but `zentty-ghostty-sys` consequently
+  could not find its pinned shared library. The safe wrapper now exports the
+  existing absolute staged library directory when present. Mutant source trees
+  remain small and read the same pinned product dependency instead of copying
+  it per worker. The failed baseline tested zero mutants and is not counted as
+  mutation coverage.
+- **First product-handler mutation pass found four missing observations:** Of
+  40 generated mutations, 28 were caught and eight were compiler-rejected;
+  four survived because tests did not observe a nonzero worklane index or the
+  active-marker comparison after compatibility selection. Focused assertions
+  now list the second worklane with index one and list both panes after
+  selecting the second. The initial 28/4/8 result is retained as discovery,
+  not presented as the final mutation result.
+- **Installed cargo-mutants has no `--recheck` mode:** An attempted focused
+  survivor-only rerun failed immediately because cargo-mutants 27.1.0 does not
+  recognize that option. It ran no mutants. The repaired suite is therefore
+  rerun as the same complete 40-mutant campaign rather than relying on stale
+  prior outcomes or an unsupported shortcut.
+- **First mutation repair still did not distinguish constant-one indexing:**
+  The complete rerun improved to 31 caught, eight unviable, and one survivor:
+  returning worklane index one unconditionally still satisfied the new
+  second-worklane assertion. The first-worklane pane format now asserts index
+  zero in the same real product path before one final complete rerun.
+- **Product-handler mutation repair verified:** The final disk-safe campaign
+  ran the same 40 generated mutations: 32 were caught, eight were
+  compiler-rejected as unviable, zero were missed, and zero timed out. The
+  `outcomes.json` SHA-256 is
+  `7b2387a123e8ca676ef360e521d7115cca06e8134272104caf4e9b686a739dbc`.
+- **Diff review found read-only discovery caused unnecessary full renders:**
+  The first application wiring marked every compatibility request as a product
+  mutation, so polling `list-panes` or `display-message` would rerender the
+  terminal layout. The drain loop now rerenders only the currently implemented
+  state-mutating `select-pane` route; read-only commands return without UI
+  churn.
 
 ## AI disclosure
 

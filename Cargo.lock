@@ -799,6 +799,7 @@ dependencies = [
  "zentty-agent-ipc",
  "zentty-core",
  "zentty-ghostty",
+ "zentty-tmux-compat",
 ]
 
 [[package]]
