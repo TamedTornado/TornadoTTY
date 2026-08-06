@@ -34,7 +34,8 @@ run_actor() {
 }
 
 run_actor ZENTTY_CONTROLLED_AGENT_PROFILE=codex-permission "${actor}" \
-    -c 'hooks.PermissionRequest=["command"]' -c 'hooks.state={"key":"value"}'
+    -c 'hooks.PermissionRequest=["command"]' -c 'hooks.state={"key":"value"}' \
+    -c 'notify=["/stage/bin/zentty","codex-notify"]'
 grep -Fxq 'ipc agent-event --adapter=codex' "${calls}" ||
     fail "Codex permission profile did not call the real helper contract"
 grep -Fq '"hook_event_name":"PermissionRequest"' "${payloads}" ||
@@ -46,6 +47,12 @@ grep -Fxq 'ipc agent-event --adapter=claude PreToolUse' "${calls}" ||
     fail "Claude question profile did not call the real helper contract"
 grep -Fq '"tool_name":"AskUserQuestion"' "${payloads}" ||
     fail "Claude question profile emitted the wrong payload"
+
+run_actor \
+    ZENTTY_CONTROLLED_AGENT_PROFILE=codex-notify \
+    "${actor}" -c 'notify=["/stage/bin/zentty","codex-notify"]'
+grep -Fxq 'codex-notify {"type":"question","session_id":"codex-notify-e2e","message":"Choose execution mode?\n[Sandboxed] [Elevated]"}' "${calls}" ||
+    fail "Codex notify profile did not call the source-compatible helper command"
 
 gemini_settings="${temp_dir}/gemini-settings.json"
 cat >"${gemini_settings}" <<EOF
@@ -81,4 +88,4 @@ if run_actor \
     fail "Codex restore profile accepted an undeclared session"
 fi
 
-echo "Controlled agent tests passed: codex-permission, claude-question, gemini-permission, codex-restore"
+echo "Controlled agent tests passed: codex-permission, codex-notify, claude-question, gemini-permission, codex-restore"

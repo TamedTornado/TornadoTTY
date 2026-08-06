@@ -2,6 +2,7 @@ use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::fmt;
+use std::path::Path;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AgentLaunchTool {
@@ -97,7 +98,12 @@ pub fn build_agent_launch_plan(
             session_id,
             environment,
         ),
-        AgentLaunchTool::Codex => Ok(codex_plan(executable_path.into(), arguments, cli_path)),
+        AgentLaunchTool::Codex => Ok(codex_plan(
+            executable_path.into(),
+            arguments,
+            cli_path,
+            environment,
+        )),
         AgentLaunchTool::Gemini => Ok(gemini_plan(executable_path.into(), arguments, environment)),
     }
 }
@@ -318,8 +324,28 @@ fn claude_reuses_session(arguments: &[String]) -> bool {
     })
 }
 
-fn codex_plan(executable_path: String, arguments: &[String], cli_path: &str) -> AgentLaunchPlan {
+fn codex_plan(
+    executable_path: String,
+    arguments: &[String],
+    cli_path: &str,
+    environment: &BTreeMap<String, String>,
+) -> AgentLaunchPlan {
     let mut session_config = codex_hook_config_arguments(cli_path);
+    if environment
+        .get("ZENTTY_CODEX_NOTIFY_DISABLED")
+        .map(String::as_str)
+        != Some("1")
+        && !has_codex_notify_override(arguments)
+    {
+        session_config.extend([
+            "-c".to_owned(),
+            format!(
+                "notify=[{},{}]",
+                toml_string(cli_path),
+                toml_string("codex-notify")
+            ),
+        ]);
+    }
     session_config.extend([
         "-c".to_owned(),
         "tui.notification_method=osc9".to_owned(),
@@ -341,8 +367,45 @@ fn codex_plan(executable_path: String, arguments: &[String], cli_path: &str) -> 
         executable_path,
         arguments: planned,
         set_environment: BTreeMap::from([("ZENTTY_AGENT_TOOL".to_owned(), "codex".to_owned())]),
-        unset_environment: Vec::new(),
+        unset_environment: environment
+            .get("CODEX_HOME")
+            .filter(|path| is_linux_zentty_launch_path(path))
+            .map(|_| vec!["CODEX_HOME".to_owned()])
+            .unwrap_or_default(),
     }
+}
+
+fn has_codex_notify_override(arguments: &[String]) -> bool {
+    let mut arguments = arguments.iter();
+    while let Some(argument) = arguments.next() {
+        if matches!(argument.as_str(), "-c" | "--config") {
+            if arguments
+                .next()
+                .is_some_and(|value| value.starts_with("notify="))
+            {
+                return true;
+            }
+            continue;
+        }
+        if argument.starts_with("-cnotify=") || argument.starts_with("--config=notify=") {
+            return true;
+        }
+    }
+    false
+}
+
+fn is_linux_zentty_launch_path(path: &str) -> bool {
+    let components = Path::new(path)
+        .components()
+        .filter_map(|component| component.as_os_str().to_str())
+        .collect::<Vec<_>>();
+    components
+        .windows(2)
+        .any(|pair| pair == ["zentty", "launch"])
+        || components
+            .iter()
+            .any(|component| component.starts_with("zentty-runtime"))
+            && components.contains(&"launch")
 }
 
 struct CodexHookSpec {

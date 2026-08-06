@@ -102,6 +102,92 @@ fn codex_plan_injects_all_source_hook_events_and_trust_state() {
             .any(|value| value == "features.hooks=true")
     );
     assert_eq!(plan.arguments.last().unwrap(), "--help");
+    assert!(
+        plan.arguments
+            .iter()
+            .any(|value| value == r#"notify=["/stage/bin/zentty","codex-notify"]"#)
+    );
+}
+
+#[test]
+fn codex_notify_policy_preserves_user_overrides_and_only_unsets_managed_homes() {
+    for arguments in [
+        vec!["-c".to_owned(), "notify=[\"mine\"]".to_owned()],
+        vec!["--config".to_owned(), "notify=[\"mine\"]".to_owned()],
+        vec!["-cnotify=[\"mine\"]".to_owned()],
+        vec!["--config=notify=[\"mine\"]".to_owned()],
+    ] {
+        let overridden = build_agent_launch_plan(
+            AgentLaunchTool::Codex,
+            "/real/codex",
+            &arguments,
+            "/stage/bin/zentty",
+            "unused",
+            &BTreeMap::from([(
+                "CODEX_HOME".to_owned(),
+                "/tmp/zentty-runtime/launch/worklane/pane/codex/home".to_owned(),
+            )]),
+        )
+        .unwrap();
+        assert_eq!(
+            overridden
+                .arguments
+                .iter()
+                .filter(|value| value.starts_with("notify="))
+                .count(),
+            usize::from(arguments.len() == 2),
+            "{arguments:?}"
+        );
+        assert_eq!(overridden.unset_environment, ["CODEX_HOME"]);
+    }
+
+    let direct_runtime_home = build_agent_launch_plan(
+        AgentLaunchTool::Codex,
+        "/real/codex",
+        &["--help".to_owned()],
+        "/stage/bin/zentty",
+        "unused",
+        &BTreeMap::from([(
+            "CODEX_HOME".to_owned(),
+            "/run/user/1000/zentty/launch/lane/pane/codex/home".to_owned(),
+        )]),
+    )
+    .unwrap();
+    assert_eq!(direct_runtime_home.unset_environment, ["CODEX_HOME"]);
+
+    let disabled = build_agent_launch_plan(
+        AgentLaunchTool::Codex,
+        "/real/codex",
+        &["--help".to_owned()],
+        "/stage/bin/zentty",
+        "unused",
+        &BTreeMap::from([
+            ("ZENTTY_CODEX_NOTIFY_DISABLED".to_owned(), "1".to_owned()),
+            ("CODEX_HOME".to_owned(), "/home/user/.codex".to_owned()),
+        ]),
+    )
+    .unwrap();
+    assert!(
+        !disabled
+            .arguments
+            .iter()
+            .any(|value| value.starts_with("notify="))
+    );
+    assert!(disabled.unset_environment.is_empty());
+
+    let lookalike_home = build_agent_launch_plan(
+        AgentLaunchTool::Codex,
+        "/real/codex",
+        &["--help".to_owned()],
+        "/stage/bin/zentty",
+        "unused",
+        &BTreeMap::from([(
+            "CODEX_HOME".to_owned(),
+            "/tmp/zentty-runtime/not-a-launch/user-home".to_owned(),
+        )]),
+    )
+    .unwrap();
+    assert!(lookalike_home.unset_environment.is_empty());
 }
 
 #[test]

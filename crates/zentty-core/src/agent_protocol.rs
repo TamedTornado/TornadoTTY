@@ -11,6 +11,8 @@ pub enum AgentInteractionKind {
     Question,
     #[serde(rename = "generic-input")]
     GenericInput,
+    #[serde(rename = "auth")]
+    Auth,
     #[serde(skip)]
     None,
 }

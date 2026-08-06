@@ -116,6 +116,11 @@ run_adapter \
     codex-permission \
     'zentty-linux: sidebar-agent-status pane=pane-1 text="Codex · Needs input: Run integration tests?" attention=true'
 run_adapter \
+    codex-notify \
+    'codex' \
+    codex-notify \
+    'zentty-linux: sidebar-agent-status pane=pane-1 text="Codex · Needs input: Choose execution mode?\n[Sandboxed] [Elevated]" attention=true'
+run_adapter \
     claude \
     'claude' \
     claude-question \

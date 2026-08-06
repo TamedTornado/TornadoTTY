@@ -8193,6 +8193,93 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   whitespace validation also passed. This is recorded as a runner sandbox
   restriction rather than hidden or reclassified as product success.
 
+## 2026-08-06 — Codex parity resumed from the source
+
+- **Priority correction:** After completing Gemini, the next work was selected
+  from Codex's source-owned behavior because Codex is an operator-critical
+  workflow. `docs/design/linux-codex-parity-plan.md` records the ordered
+  acceptance criteria before implementation. No OpenCode product changes were
+  made.
+- **Gap audit:** Linux already proved a real installed Codex launch, hook,
+  authenticated socket, sidebar state, persisted session, and real resume TUI,
+  but was not close enough to source parity. `PreCompact` and `PostCompact`
+  were injected yet rejected by the adapter; question-shaped `PreToolUse`
+  events became ordinary running; the source `codex-notify` callback was not
+  injected or accepted by the Linux helper; and transcript-backed question
+  extraction, terminal-title reconciliation, interruption, and write-back
+  remained absent.
+- **Hook and notify repair:** The Rust adapter now accepts all eight configured
+  source hook events, maps compaction explicitly, recognizes normalized
+  question-tool aliases, formats question options, and accepts object or JSON
+  string input variants. Wrapped Codex launches inject the source-compatible
+  notify array unless disabled or user-overridden. The staged helper now has a
+  quiet best-effort `codex-notify` command and a direct adapter for turn
+  completion, approval, decision, generic input, and authentication while
+  filtering automatic approval-review chatter. Only a recognizably
+  Zentty-owned inherited Linux launch home is removed; a real user
+  `CODEX_HOME` is preserved.
+- **Transcript slice:** A focused module reads no more than the source-owned
+  256-KiB JSONL tail, discards a truncated first line, selects the newest
+  supported question function call, parses string or object arguments, and
+  formats option labels. Linux additionally rejects symlinks and non-regular
+  paths before opening. Hook fallback is wired to this real file reader rather
+  than a parallel status system.
+- **Test-driven failure and repair:** The first real nested-X11 notify product
+  run delivered the expected authenticated event and visibly rendered the
+  multiline question, but the harness expected a space where the product log
+  correctly JSON-escaped the label newline. The assertion was corrected to
+  the source-shaped multiline value; behavior was not flattened to satisfy the
+  test.
+- **Mutation testing found real omissions:** The first focused campaign was
+  deliberately stopped before an unnecessarily broad 226-mutant run could
+  become another long harness exercise. A 58-mutant Codex-only campaign then
+  exposed missing independent branch cases, an index-loop mutant timeout, and
+  an adapter payload-size hole: the CLI bounded its read, but adapter parsing
+  did not reject a 64-KiB-plus-one payload. Tests were strengthened for each
+  question alias, Stop, notify routing/debug behavior, auto-review phrases,
+  auth/question/option classification, config override spellings, managed-home
+  lookalikes, and exact transcript-tail boundaries. Adapter parsing now
+  enforces the canonical 64-KiB ceiling. The override scanner was rewritten as
+  an iterator so mutations cannot create a synthetic infinite loop. A final
+  focused campaign caught all 48 of 48 mutants with no misses or timeouts;
+  `outcomes.json` SHA-256 is
+  `5fe2a46aa1538219b145ead06c41f46cdc624e476824e2c1557138802fd48fdc`.
+- **Current evidence:** Strict Clippy, formatting, focused adapter/launch/
+  transcript/helper tests, ShellCheck, and the controlled actor contract pass.
+  The real Ghostty/PTY/helper/socket/sidebar journey passes on X11 session
+  `8650fef34c27b166fd5533fd3cd85d3306338da48c95e89377032b3c7dd81666`
+  and input-capable Wayland session
+  `e746b8328db4e716b0752b2445e7086cc3b1675dbe308459b1e32f078b9a9edc`
+  (outer X11 transport
+  `a4a5c5de40006442950c3c8cbad3fee8c76422d4157244db01e24fdd9712fac0`).
+  Installed Codex 0.146.1 also accepted the updated launch configuration and
+  passed its complete launch/hook/persistence/real-resume journey in X11
+  session
+  `c7217df7ba961472dcf99f7c7a29bc76f0ffe8896e6ce86bb5c75e17e93b9fca`.
+- **Honest boundary:** The installed-Codex test still uses a controlled
+  no-response endpoint, so it proves the real CLI accepts the notify config but
+  not that a real completed model turn invokes it. Bounded recent transcript
+  discovery, CWD association, and cache identity are not yet ported.
+  Terminal-title/progress reconciliation, interrupt suppression, shell-return
+  clearing, title promotion, and write-back also remain. `agent.codex`
+  therefore remains `PARTIAL`.
+- **Complete qualification after the Codex slice:** Every presently executable
+  cell was rerun after the implementation and suppression audit. The
+  authoritative summary SHA-256 is
+  `45244b586f594668c3be92ea8f81f4c8b846148711357e1fa0dde64b284a2ddb`.
+  Declared totals remain `PASS=52`, `FAIL=0`, `BLOCKED=5`, `XFAIL=1`, and
+  `NOT_IMPLEMENTED=51`. The implemented local suite and product-boundary
+  qualification passed; release and full Linux qualification did not pass.
+  Debug Valgrind is **PASS with reviewed suppressions**, not unsuppressed
+  clean: the preserved raw receipt reports 427 errors/contexts, 6,240
+  definite bytes, and 41,461 indirect bytes; the reviewed post-suppression
+  receipt reports zero errors/contexts and zero definite/indirect bytes, with
+  all 427 errors/contexts explicitly counted as suppressed. The Valgrind
+  report SHA-256 is
+  `d90631ae5e4bdbdd49abb37b01bb05ad9b4a0672f51b93dfde239b494142f95d`.
+  ReleaseSafe Valgrind remains XFAIL; no suppression or timeout was broadened
+  to promote it.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were

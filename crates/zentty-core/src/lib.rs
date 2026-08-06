@@ -5,6 +5,7 @@ mod agent_consent;
 mod agent_launch;
 mod agent_protocol;
 mod agent_status;
+mod codex_transcript;
 mod command_palette;
 mod pane_focus_history;
 mod pane_layout;
@@ -46,7 +47,11 @@ pub use workspace_state::{
 /// Stable product identity shared by platform composition roots.
 pub const PRODUCT_NAME: &str = "Zentty";
 pub use agent_adapters::{
-    AgentAdapterError, adapt_claude_hook, adapt_codex_hook, adapt_gemini_hook,
+    AgentAdapterError, adapt_claude_hook, adapt_codex_hook, adapt_codex_notify, adapt_gemini_hook,
+};
+pub use codex_transcript::{
+    CodexTranscriptQuestion, codex_question_from_transcript_path,
+    codex_question_from_transcript_text,
 };
 pub use command_palette::{
     CommandPaletteGroup, CommandPaletteItem, CommandPaletteTarget, resolve_command_palette,

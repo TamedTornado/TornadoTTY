@@ -169,6 +169,122 @@ fn real_cli_process_adapts_gemini_permission_and_returns_empty_hook_json() {
 }
 
 #[test]
+fn real_codex_notify_command_forwards_positional_payload_to_the_canonical_socket() {
+    let harness = Harness::start();
+    let output = harness
+        .command()
+        .arg("codex-notify")
+        .arg(
+            r#"{"type":"question","session_id":"codex-notify-real","message":"Continue?\n[Yes] [No]"}"#,
+        )
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stdout.is_empty());
+    let received = harness
+        .receiver
+        .recv_timeout(Duration::from_secs(2))
+        .unwrap();
+    let target = received.target.clone();
+    let mut statuses = AgentStatusStore::default();
+    statuses.apply(received, 1);
+    let status = statuses.status_for(&target).unwrap();
+    assert_eq!(status.phase, AgentPhase::NeedsInput);
+    assert_eq!(
+        status.interaction,
+        zentty_core::AgentInteractionKind::Decision
+    );
+    assert_eq!(status.text.as_deref(), Some("Continue?\n[Yes] [No]"));
+}
+
+#[test]
+fn codex_notify_without_pane_routing_is_a_quiet_best_effort_success() {
+    for missing in ["ZENTTY_INSTANCE_SOCKET", "ZENTTY_PANE_TOKEN"] {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_zentty"));
+        command
+            .arg("codex-notify")
+            .arg(r#"{"type":"agent-turn-complete"}"#)
+            .env("ZENTTY_INSTANCE_SOCKET", "/not/a/socket")
+            .env("ZENTTY_PANE_TOKEN", "token")
+            .env_remove(missing);
+        let output = command.output().unwrap();
+        assert!(output.status.success(), "{missing}");
+        assert!(output.stdout.is_empty());
+        assert!(output.stderr.is_empty());
+    }
+}
+
+#[test]
+fn codex_notify_accepts_stdin_and_only_surfaces_transport_failure_in_debug_mode() {
+    let harness = Harness::start();
+    let mut command = harness.command();
+    command.arg("codex-notify");
+    let output = run_with_input(
+        command,
+        br#"{"type":"agent-turn-complete","session_id":"codex-stdin"}"#,
+    );
+    assert!(output.status.success());
+    let received = harness
+        .receiver
+        .recv_timeout(Duration::from_secs(2))
+        .unwrap();
+    let target = received.target.clone();
+    let mut statuses = AgentStatusStore::default();
+    statuses.apply(received, 1);
+    assert_eq!(
+        statuses.status_for(&target).unwrap().phase,
+        AgentPhase::Idle
+    );
+
+    for debug in [false, true] {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_zentty"));
+        command
+            .arg("codex-notify")
+            .arg(r#"{"type":"agent-turn-complete"}"#)
+            .env("ZENTTY_INSTANCE_SOCKET", "/missing/zentty.sock")
+            .env("ZENTTY_PANE_TOKEN", "token");
+        if debug {
+            command.env("ZENTTY_CLI_DEBUG", "1");
+        } else {
+            command.env_remove("ZENTTY_CLI_DEBUG");
+        }
+        let output = command.output().unwrap();
+        assert_eq!(output.status.success(), !debug);
+        if debug {
+            assert!(String::from_utf8_lossy(&output.stderr).contains("codex-notify send failed"));
+        } else {
+            assert!(output.stderr.is_empty());
+        }
+    }
+}
+
+#[test]
+fn codex_notify_stdin_enforces_the_exact_canonical_wire_ceiling() {
+    let harness = Harness::start();
+    let prefix = r#"{"type":"notice","message":""#;
+    let suffix = r#""}"#;
+    let target_length = zentty_core::AgentEvent::MAX_WIRE_BYTES + 1;
+    let payload = format!(
+        "{prefix}{}{suffix}",
+        "x".repeat(target_length - prefix.len() - suffix.len())
+    );
+    assert_eq!(payload.len(), target_length);
+    let mut command = harness.command();
+    command.arg("codex-notify");
+    let output = run_with_input(command, payload.as_bytes());
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("exceeds 64 KiB"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn real_cli_process_rejects_bad_tokens_without_delivering_events() {
     let harness = Harness::start();
     let mut command = harness.command();

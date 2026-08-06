@@ -5,7 +5,9 @@ use std::io::{IsTerminal, Read, Write};
 use std::process::ExitCode;
 use std::time::Instant;
 use zentty_agent_ipc::{AgentIpcClient, launch_agent};
-use zentty_core::{AgentEvent, adapt_claude_hook, adapt_codex_hook, adapt_gemini_hook};
+use zentty_core::{
+    AgentEvent, adapt_claude_hook, adapt_codex_hook, adapt_codex_notify, adapt_gemini_hook,
+};
 use zentty_tmux_compat::{
     Command, Invocation, TmuxCompatRequest, WAIT_POLL_INTERVAL, WaitForAction,
 };
@@ -34,9 +36,13 @@ fn run() -> Result<(), String> {
         let arguments = arguments.collect::<Vec<_>>();
         return run_tmux_compat(&arguments);
     }
+    if command.as_deref() == Some("codex-notify") {
+        return run_codex_notify(arguments.next());
+    }
     if command.as_deref() != Some("ipc") || arguments.next().as_deref() != Some("agent-event") {
         return Err(
-            "usage: zentty ipc agent-event [--adapter=codex|claude|gemini] [event]".to_owned(),
+            "usage: zentty ipc agent-event [--adapter=codex|codex-notify|claude|gemini] [event]"
+                .to_owned(),
         );
     }
     let remaining = arguments.collect::<Vec<_>>();
@@ -55,6 +61,7 @@ fn run() -> Result<(), String> {
     let events = match adapter {
         Some("codex") => adapt_codex_hook(&input, environment_pid("ZENTTY_CODEX_PID"))
             .map_err(|error| error.to_string())?,
+        Some("codex-notify") => adapt_codex_notify(&input).map_err(|error| error.to_string())?,
         Some("claude") => adapt_claude_hook(&input, environment_pid("ZENTTY_CLAUDE_PID"))
             .map_err(|error| error.to_string())?,
         Some("gemini") => adapt_gemini_hook(&input, environment_pid("ZENTTY_GEMINI_PID"))
@@ -81,6 +88,44 @@ fn run() -> Result<(), String> {
     }
     if adapter == Some("gemini") {
         println!("{{}}");
+    }
+    Ok(())
+}
+
+fn run_codex_notify(payload: Option<String>) -> Result<(), String> {
+    if std::env::var_os("ZENTTY_INSTANCE_SOCKET").is_none()
+        || std::env::var_os("ZENTTY_PANE_TOKEN").is_none()
+    {
+        return Ok(());
+    }
+    let input = if let Some(payload) = payload {
+        payload.into_bytes()
+    } else {
+        let mut input = Vec::new();
+        std::io::stdin()
+            .take(u64::try_from(AgentEvent::MAX_WIRE_BYTES + 1).unwrap_or(u64::MAX))
+            .read_to_end(&mut input)
+            .map_err(|error| format!("could not read Codex notify payload: {error}"))?;
+        if input.is_empty() {
+            return Err("missing Codex notify payload".to_owned());
+        }
+        input
+    };
+    let events = adapt_codex_notify(&input).map_err(|error| error.to_string())?;
+    let socket = std::env::var("ZENTTY_INSTANCE_SOCKET")
+        .map_err(|_| "ZENTTY_INSTANCE_SOCKET is missing".to_owned())?;
+    let token = std::env::var("ZENTTY_PANE_TOKEN")
+        .map_err(|_| "ZENTTY_PANE_TOKEN is missing".to_owned())?;
+    for event in events {
+        let bytes = serde_json::to_vec(&event).map_err(|error| error.to_string())?;
+        if let Err(error) =
+            AgentIpcClient::send_event(&socket, &token, &bytes, claimed_target_from_environment())
+        {
+            if std::env::var("ZENTTY_CLI_DEBUG").as_deref() == Ok("1") {
+                return Err(format!("codex-notify send failed: {error}"));
+            }
+            return Ok(());
+        }
     }
     Ok(())
 }

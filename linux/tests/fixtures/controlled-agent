@@ -40,9 +40,16 @@ case "${profile}" in
         require_helper
         codex_has_hook PermissionRequest "$@" || fail "Codex PermissionRequest hook is missing"
         codex_has_hook state "$@" || fail "Codex hook state is missing"
+        printf '%s\n' "$@" | grep -Fq 'notify=[' || fail "Codex notify callback is missing"
         printf '%s' \
             '{"hook_event_name":"PermissionRequest","session_id":"codex-e2e","message":"Run integration tests?"}' |
             "${helper}" ipc agent-event --adapter=codex
+        ;;
+    codex-notify)
+        require_helper
+        printf '%s\n' "$@" | grep -Fq 'notify=[' || fail "Codex notify callback is missing"
+        "${helper}" codex-notify \
+            '{"type":"question","session_id":"codex-notify-e2e","message":"Choose execution mode?\n[Sandboxed] [Elevated]"}'
         ;;
     claude-question)
         require_helper

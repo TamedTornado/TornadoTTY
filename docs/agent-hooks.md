@@ -186,6 +186,8 @@ Zentty registers these Codex hook events:
 - `PreToolUse`
 - `PermissionRequest`
 - `PostToolUse`
+- `PreCompact`
+- `PostCompact`
 - `Stop`
 
 Each hook calls:
@@ -198,10 +200,26 @@ Each hook calls:
 
 - `SessionStart` -> PID attach + `starting`
 - `UserPromptSubmit` -> `running`
-- `PreToolUse` -> `running`
-- `PermissionRequest` -> `needs-input` with `approval`
+- `PreToolUse` -> `running`, or `needs-input` with the parsed question and
+  options for a user-question tool
+- `PermissionRequest` -> `needs-input` with `approval`, or the parsed user
+  question/decision
 - `PostToolUse` -> `running`
+- `PreCompact` -> `running` with `Compacting`
+- `PostCompact` -> `running`
 - `Stop` -> `idle`
+
+Unless disabled or explicitly overridden, wrapped launches also inject
+`notify=["$ZENTTY_CLI_BIN","codex-notify"]`. The callback supplies
+authoritative turn completion plus approval, question, decision, generic-input,
+and authentication attention signals. Automatic approval-review lifecycle
+messages are ignored. Notify transport is best effort unless
+`ZENTTY_CLI_DEBUG=1` is set.
+
+Question hooks accept the source key variants and JSON-string argument forms.
+When the hook contains only a transcript path, Zentty reads at most the newest
+256 KiB from a real regular, non-symlink JSONL file and extracts the latest
+Codex user-question function call.
 
 Codex 0.129's built-in AskUserQuestion UI does not emit a `PreToolUse` hook.
 When Codex switches the terminal title to `[ ! ] Action Required | ...`, Zentty
