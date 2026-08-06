@@ -219,7 +219,10 @@ messages are ignored. Notify transport is best effort unless
 Question hooks accept the source key variants and JSON-string argument forms.
 When the hook contains only a transcript path, Zentty reads at most the newest
 256 KiB from a real regular, non-symlink JSONL file and extracts the latest
-Codex user-question function call.
+Codex user-question function call. If Codex omits that path, Zentty searches at
+most 12 transcripts from the four newest session-day directories and accepts
+only a transcript whose newest recorded working directory matches the hook's
+normalized CWD and whose bounded tail contains a user question.
 
 Codex 0.129's built-in AskUserQuestion UI does not emit a `PreToolUse` hook.
 When Codex switches the terminal title to `[ ! ] Action Required | ...`, Zentty

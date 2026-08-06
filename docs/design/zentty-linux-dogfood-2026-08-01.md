@@ -8258,11 +8258,12 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   `c7217df7ba961472dcf99f7c7a29bc76f0ffe8896e6ce86bb5c75e17e93b9fca`.
 - **Honest boundary:** The installed-Codex test still uses a controlled
   no-response endpoint, so it proves the real CLI accepts the notify config but
-  not that a real completed model turn invokes it. Bounded recent transcript
-  discovery, CWD association, and cache identity are not yet ported.
+  not that a real completed model turn invokes it. At this qualification point,
+  bounded recent transcript discovery, CWD association, and cache identity had
+  not yet been ported; the following field entries record their implementation.
   Terminal-title/progress reconciliation, interrupt suppression, shell-return
-  clearing, title promotion, and write-back also remain. `agent.codex`
-  therefore remains `PARTIAL`.
+  clearing, title promotion, and write-back remain. `agent.codex` therefore
+  remains `PARTIAL`.
 - **Complete qualification after the Codex slice:** Every presently executable
   cell was rerun after the implementation and suppression audit. The
   authoritative summary SHA-256 is
@@ -8279,6 +8280,45 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   `d90631ae5e4bdbdd49abb37b01bb05ad9b4a0672f51b93dfde239b494142f95d`.
   ReleaseSafe Valgrind remains XFAIL; no suppression or timeout was broadened
   to promote it.
+- **Recent-transcript discovery completed from source bounds:** The next Codex
+  sub-slice began with failing tests for the Swift extractor's four newest
+  session-day directories, 12 newest JSONL candidates, normalized CWD match,
+  question-presence requirement, and size/mtime/path cache identity. The Rust
+  implementation rejects symlink directories, transcripts, and cache keys in
+  addition to the source bounds. A real helper subprocess with isolated
+  `CODEX_HOME` then proved recent-file recovery through the authenticated Unix
+  socket and canonical reducer when a question hook omitted
+  `transcript_path`.
+- **Environment failure was not treated as product evidence:** The first
+  combined helper/core run passed compilation but the filesystem sandbox
+  denied all eight real Unix-socket fixtures with `Operation not permitted`.
+  The identical focused command passed outside that restriction: 11 helper
+  subprocess/socket cases and five transcript cases. Strict workspace Clippy
+  and the focused adapter suite also passed.
+- **Bounded mutation evidence:** A Codex-transcript-only campaign used the
+  permanent ignored-tree/copy-target safeguards and completed in 28 seconds:
+  43 mutants were caught and four were unviable, with no missed mutants or
+  timeouts. `outcomes.json` SHA-256 is
+  `6293fcf75ab4a0501ffae4ba7c7d100846305f9ae56659a122319620123926a3`.
+- **Remaining transcript boundary:** Linux now owns recent discovery and cache
+  identity, but it does not yet have the source title-driven asynchronous
+  enrichment/retry/cache application path. That belongs in the canonical
+  title/lifecycle reconciliation slice rather than a parallel transcript
+  status system.
+- **Complete qualification after recent discovery:** Every presently
+  executable cell passed its expected outcome after the discovery slice. The
+  authoritative summary SHA-256 is
+  `3d1fce0bc602e046e669eb9d0943e8062ddb0e8c3e403a42c1357b90593b5342`.
+  Declared totals are `PASS=52`, `FAIL=0`, `BLOCKED=5`, `XFAIL=1`, and
+  `NOT_IMPLEMENTED=51`; the implemented local suite and product-boundary
+  qualification passed, while release and full Linux qualification did not.
+  Debug Valgrind is **PASS with reviewed suppressions**, not unsuppressed
+  clean: raw evidence reports 427 errors/contexts, 6,080 definite bytes, and
+  41,362 indirect bytes; reviewed post-suppression evidence reports zero for
+  all four values and explicitly counts all 427 errors/contexts as suppressed.
+  The Valgrind report SHA-256 is
+  `5ae046963dd355ff372bd12189dd4fb61a1b531ebe28eedba421f9522e55277e`.
+  ReleaseSafe Valgrind remains XFAIL.
 
 ## AI disclosure
 

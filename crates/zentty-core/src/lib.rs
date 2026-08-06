@@ -50,8 +50,9 @@ pub use agent_adapters::{
     AgentAdapterError, adapt_claude_hook, adapt_codex_hook, adapt_codex_notify, adapt_gemini_hook,
 };
 pub use codex_transcript::{
-    CodexTranscriptQuestion, codex_question_from_transcript_path,
-    codex_question_from_transcript_text,
+    CodexTranscriptCacheKey, CodexTranscriptQuestion, codex_question_from_transcript_path,
+    codex_question_from_transcript_text, codex_transcript_cache_key,
+    locate_recent_codex_transcript_path,
 };
 pub use command_palette::{
     CommandPaletteGroup, CommandPaletteItem, CommandPaletteTarget, resolve_command_palette,

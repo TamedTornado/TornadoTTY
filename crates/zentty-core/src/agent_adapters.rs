@@ -1,5 +1,8 @@
 use crate::codex_transcript::question_from_tool_input;
-use crate::{AgentEvent, AgentProtocolError, codex_question_from_transcript_path};
+use crate::{
+    AgentEvent, AgentProtocolError, codex_question_from_transcript_path,
+    locate_recent_codex_transcript_path,
+};
 use serde_json::{Value, json};
 use std::fmt;
 
@@ -365,11 +368,30 @@ fn codex_question_text(payload: &Value) -> Option<String> {
             .and_then(|encoded| serde_json::from_str::<Value>(encoded).ok())
             .and_then(|parsed| question_from_tool_input(&parsed))
     };
-    result.or_else(|| {
-        string_ref_at(payload, &["transcript_path", "transcriptPath"])
-            .and_then(|path| codex_question_from_transcript_path(std::path::Path::new(path)))
-            .map(|question| question.text)
-    })
+    result
+        .or_else(|| {
+            string_ref_at(payload, &["transcript_path", "transcriptPath"])
+                .and_then(|path| codex_question_from_transcript_path(std::path::Path::new(path)))
+                .map(|question| question.text)
+        })
+        .or_else(|| {
+            let cwd = string_ref_at(
+                payload,
+                &[
+                    "cwd",
+                    "current_working_directory",
+                    "currentWorkingDirectory",
+                ],
+            )?;
+            let codex_home = std::env::var_os("CODEX_HOME")
+                .map(std::path::PathBuf::from)
+                .or_else(|| {
+                    std::env::var_os("HOME")
+                        .map(|home| std::path::PathBuf::from(home).join(".codex"))
+                })?;
+            let transcript = locate_recent_codex_transcript_path(&codex_home, cwd)?;
+            codex_question_from_transcript_path(&transcript).map(|question| question.text)
+        })
 }
 
 fn is_codex_auto_approval_message(payload_type: &str, message: &str) -> bool {

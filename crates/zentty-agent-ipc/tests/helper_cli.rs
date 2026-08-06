@@ -102,6 +102,55 @@ fn real_cli_process_adapts_codex_and_server_uses_canonical_target() {
 }
 
 #[test]
+fn real_cli_process_recovers_a_codex_question_from_recent_session_files() {
+    let harness = Harness::start();
+    let codex_home = harness.directory.join("codex-home");
+    let project = harness.directory.join("project");
+    let sessions = codex_home.join("sessions/2026/08/06");
+    fs::create_dir_all(&project).unwrap();
+    fs::create_dir_all(&sessions).unwrap();
+    fs::write(
+        sessions.join("rollout.jsonl"),
+        format!(
+            "{{\"cwd\":{:?}}}\n{{\"type\":\"response_item\",\"payload\":{{\"type\":\"function_call\",\"name\":\"request_user_input\",\"arguments\":{{\"question\":\"Choose recovery?\",\"options\":[{{\"label\":\"Resume\"}},{{\"label\":\"Restart\"}}]}}}}}}\n",
+            project.to_string_lossy()
+        ),
+    )
+    .unwrap();
+    let payload = serde_json::json!({
+        "hook_event_name": "PreToolUse",
+        "session_id": "codex-recent-real",
+        "tool_name": "request_user_input",
+        "cwd": project,
+    });
+    let mut command = harness.command();
+    command
+        .arg("ipc")
+        .arg("agent-event")
+        .arg("--adapter=codex")
+        .env("CODEX_HOME", codex_home);
+    let output = run_with_input(command, payload.to_string().as_bytes());
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let received = harness
+        .receiver
+        .recv_timeout(Duration::from_secs(2))
+        .unwrap();
+    let target = received.target.clone();
+    let mut statuses = AgentStatusStore::default();
+    statuses.apply(received, 1);
+    let status = statuses.status_for(&target).unwrap();
+    assert_eq!(status.phase, AgentPhase::NeedsInput);
+    assert_eq!(
+        status.text.as_deref(),
+        Some("Choose recovery?\n[Resume] [Restart]")
+    );
+}
+
+#[test]
 fn real_cli_process_supplies_default_claude_hook_event() {
     let harness = Harness::start();
     let mut command = harness.command();
