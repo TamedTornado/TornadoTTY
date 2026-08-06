@@ -1,5 +1,8 @@
-use crate::{AgentInteractionKind, AgentTarget, AuthenticatedAgentEvent};
-use std::collections::HashMap;
+use crate::{
+    AgentInteractionKind, AgentTarget, AuthenticatedAgentEvent, CodexTitlePhase,
+    classify_codex_terminal_title,
+};
+use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AgentPhase {
@@ -39,6 +42,8 @@ impl PaneAgentStatus {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct AgentStatusStore {
     panes: HashMap<String, HashMap<String, PaneAgentStatus>>,
+    codex_title_inferred: HashSet<(String, String)>,
+    codex_idle_suppression_until: HashMap<(String, String), u64>,
 }
 
 impl AgentStatusStore {
@@ -50,6 +55,10 @@ impl AgentStatusStore {
         let sessions = self.panes.entry(pane_id.clone()).or_default();
         if event.kind() == "session.end" {
             sessions.remove(&session_id);
+            self.codex_title_inferred
+                .remove(&(pane_id.clone(), session_id.clone()));
+            self.codex_idle_suppression_until
+                .remove(&(pane_id.clone(), session_id.clone()));
             if sessions.is_empty() {
                 self.panes.remove(&pane_id);
             }
@@ -59,7 +68,7 @@ impl AgentStatusStore {
         let status = sessions
             .entry(session_id.clone())
             .or_insert_with(|| PaneAgentStatus {
-                session_id,
+                session_id: session_id.clone(),
                 parent_session_id: event.parent_session_id().map(str::to_owned),
                 agent_name: event.agent_name().unwrap_or("Agent").to_owned(),
                 phase: AgentPhase::Starting,
@@ -76,16 +85,30 @@ impl AgentStatusStore {
             status.tracked_pid = Some(pid);
         }
         match event.kind() {
-            "session.start" => status.phase = AgentPhase::Starting,
+            "session.start" => {
+                status.phase = AgentPhase::Starting;
+                self.codex_title_inferred
+                    .remove(&(pane_id.clone(), session_id.clone()));
+                self.codex_idle_suppression_until
+                    .remove(&(pane_id.clone(), session_id.clone()));
+            }
             "agent.running" | "agent.input-resolved" => {
                 status.phase = AgentPhase::Running;
                 status.interaction = AgentInteractionKind::None;
                 status.text = event.state_text().map(str::to_owned);
+                self.codex_title_inferred
+                    .remove(&(pane_id.clone(), session_id.clone()));
+                self.codex_idle_suppression_until
+                    .remove(&(pane_id.clone(), session_id.clone()));
             }
             "agent.idle" => {
                 status.phase = AgentPhase::Idle;
                 status.interaction = AgentInteractionKind::None;
                 status.text = None;
+                self.codex_title_inferred
+                    .remove(&(pane_id.clone(), session_id.clone()));
+                self.codex_idle_suppression_until
+                    .insert((pane_id.clone(), session_id.clone()), now.saturating_add(1));
             }
             "agent.needs-input" => {
                 status.phase = AgentPhase::NeedsInput;
@@ -94,16 +117,109 @@ impl AgentStatusStore {
                     .interaction_text()
                     .or_else(|| event.state_text())
                     .map(str::to_owned);
+                self.codex_title_inferred
+                    .remove(&(pane_id.clone(), session_id.clone()));
+                self.codex_idle_suppression_until
+                    .remove(&(pane_id.clone(), session_id.clone()));
             }
             "task.progress" => {
                 status.progress = event
                     .progress()
                     .map(|(done, total)| AgentProgress { done, total });
             }
-            "session.end" => unreachable!("handled before session creation"),
             _ => unreachable!("AgentEvent exposes only known protocol events"),
         }
         status.updated_at = now;
+    }
+
+    /// Reconciles one real Ghostty title callback into the canonical Codex
+    /// status store. Returns whether sidebar-visible status changed.
+    pub fn apply_codex_title(&mut self, pane_id: &str, title: &str, now: u64) -> bool {
+        let Some(signal) = classify_codex_terminal_title(title) else {
+            return false;
+        };
+        let Some(session_id) = self.panes.get(pane_id).and_then(|sessions| {
+            sessions
+                .values()
+                .filter(|status| status.agent_name.eq_ignore_ascii_case("codex"))
+                .max_by_key(|status| (status_priority(status), status.updated_at))
+                .map(|status| status.session_id.clone())
+        }) else {
+            return false;
+        };
+        let key = (pane_id.to_owned(), session_id.clone());
+        let title_inferred = self.codex_title_inferred.contains(&key);
+        let idle_suppressed = self
+            .codex_idle_suppression_until
+            .get(&key)
+            .is_some_and(|deadline| now < *deadline);
+        let Some(status) = self
+            .panes
+            .get_mut(pane_id)
+            .and_then(|sessions| sessions.get_mut(&session_id))
+        else {
+            return false;
+        };
+        let mut changed = false;
+        if status.progress != signal.progress && signal.progress.is_some() {
+            status.progress = signal.progress;
+            changed = true;
+        }
+        if signal.background_wait {
+            if changed {
+                status.updated_at = now;
+            }
+            return changed;
+        }
+
+        match signal.phase {
+            CodexTitlePhase::NeedsInput => {
+                if !status.requires_attention() {
+                    status.phase = AgentPhase::NeedsInput;
+                    status.interaction = signal.interaction;
+                    status.text = Some(title.trim().to_owned());
+                    self.codex_title_inferred.insert(key.clone());
+                    changed = true;
+                }
+            }
+            CodexTitlePhase::Running | CodexTitlePhase::Starting => {
+                if status.requires_attention() && !title_inferred {
+                    // A strong explicit question/decision owns the state until
+                    // an explicit event or user input resolves it.
+                } else if status.phase != AgentPhase::Idle || !idle_suppressed {
+                    let phase = if signal.phase == CodexTitlePhase::Running {
+                        AgentPhase::Running
+                    } else {
+                        AgentPhase::Starting
+                    };
+                    if status.phase != phase || status.text.is_some() {
+                        status.phase = phase;
+                        status.interaction = AgentInteractionKind::None;
+                        status.text = None;
+                        changed = true;
+                    }
+                    self.codex_title_inferred.remove(&key);
+                    self.codex_idle_suppression_until.remove(&key);
+                }
+            }
+            CodexTitlePhase::Idle => {
+                if !status.requires_attention() || title_inferred {
+                    if status.phase != AgentPhase::Idle {
+                        status.phase = AgentPhase::Idle;
+                        status.interaction = AgentInteractionKind::None;
+                        status.text = None;
+                        changed = true;
+                    }
+                    self.codex_title_inferred.remove(&key);
+                    self.codex_idle_suppression_until
+                        .insert(key, now.saturating_add(1));
+                }
+            }
+        }
+        if changed {
+            status.updated_at = now;
+        }
+        changed
     }
 
     #[must_use]
@@ -124,6 +240,10 @@ impl AgentStatusStore {
 
     pub fn remove_pane(&mut self, pane_id: &str) {
         self.panes.remove(pane_id);
+        self.codex_title_inferred
+            .retain(|(tracked_pane, _)| tracked_pane != pane_id);
+        self.codex_idle_suppression_until
+            .retain(|(tracked_pane, _), _| tracked_pane != pane_id);
     }
 }
 

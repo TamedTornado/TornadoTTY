@@ -1,9 +1,9 @@
 # Linux Codex workflow parity plan
 
-- **Status:** active; explicit hook/notify parity, bounded transcript reading,
-  recent CWD-scoped discovery, and file cache identity implemented;
-  title-driven enrichment/retry and terminal-title/lifecycle reconciliation
-  remain
+- **Status:** active; explicit hook/notify parity, bounded transcript recovery,
+  source terminal-title classification, task progress, and canonical
+  title-to-sidebar reconciliation implemented; title-driven enrichment/retry,
+  user input/interrupt, shell return, and title write-back remain
 - **Date:** 2026-08-06
 - **Owner:** [#7 — essential Zentty workflow parity](https://github.com/TamedTornado/zentty/issues/7)
 - **Inventory ID:** `agent.codex`

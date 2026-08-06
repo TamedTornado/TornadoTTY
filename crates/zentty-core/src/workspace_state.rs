@@ -1484,6 +1484,13 @@ impl WorkspaceState {
         self.agent_statuses.apply(event, now);
     }
 
+    /// Reconciles a real terminal-title callback into the canonical per-pane
+    /// agent store. Unknown panes, non-Codex sessions, and unrelated titles
+    /// are no-ops.
+    pub fn reconcile_terminal_title(&mut self, pane_id: &str, title: &str, now: u64) -> bool {
+        self.agent_statuses.apply_codex_title(pane_id, title, now)
+    }
+
     /// Captures source-compatible restore drafts for active supported agents.
     ///
     /// Invalid or unsupported sessions are excluded rather than persisted as

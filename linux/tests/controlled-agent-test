@@ -54,6 +54,11 @@ run_actor \
 grep -Fxq 'codex-notify {"type":"question","session_id":"codex-notify-e2e","message":"Choose execution mode?\n[Sandboxed] [Elevated]"}' "${calls}" ||
     fail "Codex notify profile did not call the source-compatible helper command"
 
+run_actor ZENTTY_CONTROLLED_AGENT_PROFILE=codex-title "${actor}" \
+    -c 'hooks.PreToolUse=["command"]'
+grep -Fxq 'ipc agent-event --adapter=codex' "${calls}" ||
+    fail "Codex title profile did not establish a canonical running session"
+
 gemini_settings="${temp_dir}/gemini-settings.json"
 cat >"${gemini_settings}" <<EOF
 {"general":{"enableNotifications": true},"hooks":{"Notification":[{"hooks":[{"command":"${helper} ipc agent-event --adapter=gemini"}]}]}}
@@ -88,4 +93,4 @@ if run_actor \
     fail "Codex restore profile accepted an undeclared session"
 fi
 
-echo "Controlled agent tests passed: codex-permission, codex-notify, claude-question, gemini-permission, codex-restore"
+echo "Controlled agent tests passed: codex-permission, codex-notify, codex-title, claude-question, gemini-permission, codex-restore"

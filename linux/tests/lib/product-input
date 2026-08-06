@@ -23,14 +23,30 @@ zentty_product_prepare_input() {
                 echo "product-input: xdotool is required" >&2
                 return 1
             }
+            [[ "${product_pid:-}" =~ ^[1-9][0-9]*$ ]] || {
+                echo "product-input: X11 input requires the real product PID" >&2
+                return 1
+            }
             ZENTTY_PRODUCT_WINDOW_ID=""
             for _ in {1..200}; do
-                ZENTTY_PRODUCT_WINDOW_ID="$(xdotool search --name '^Zentty$' 2>/dev/null | head -1 || true)"
+                # The qualification cell deliberately reuses one private X
+                # server for several complete product journeys. A name-only
+                # search can race a withdrawing window from the preceding
+                # journey and produce BadWindow on the first input event.
+                # Bind input to this caller's live process and mapped window.
+                ZENTTY_PRODUCT_WINDOW_ID="$(
+                    xdotool search --onlyvisible --pid "${product_pid}" --name '^Zentty$' \
+                        2>/dev/null | head -1 || true
+                )"
                 [[ "${ZENTTY_PRODUCT_WINDOW_ID}" =~ ^[1-9][0-9]*$ ]] && break
                 sleep 0.05
             done
             [[ "${ZENTTY_PRODUCT_WINDOW_ID}" =~ ^[1-9][0-9]*$ ]] || {
                 echo "product-input: real X11 Zentty window did not appear" >&2
+                return 1
+            }
+            [[ "$(xdotool getwindowpid "${ZENTTY_PRODUCT_WINDOW_ID}" 2>/dev/null || true)" == "${product_pid}" ]] || {
+                echo "product-input: discovered X11 window is not owned by the product" >&2
                 return 1
             }
             xdotool windowfocus --sync "${ZENTTY_PRODUCT_WINDOW_ID}"

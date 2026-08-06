@@ -8319,6 +8319,91 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   The Valgrind report SHA-256 is
   `5ae046963dd355ff372bd12189dd4fb61a1b531ebe28eedba421f9522e55277e`.
   ReleaseSafe Valgrind remains XFAIL.
+- **Codex title slice started from the real classifier:** Source-pinned failing
+  tests enumerate running/thinking/starting/ready, background versus human
+  `Waiting`, main/parent input, both Action Required badges, decision/auth/
+  approval markers, malformed lookalikes, and clamped trailing task progress.
+  A focused Rust classifier now reproduces those rules. The canonical agent
+  store—not a parallel UI status—owns title promotion, preserves explicit
+  decisions over weaker running/ready titles, clears inferred Action Required
+  on real activity, and suppresses the first stale running-title tail after
+  authoritative idle.
+- **Real title callback is wired and compositor-proved:** The existing Ghostty
+  `title` property callback now feeds the canonical workspace reducer before
+  rendering the sidebar. A controlled actor established a real Codex session,
+  emitted the actual OSC title through the real PTY, and the product rendered
+  source-shaped Action Required attention. The complete real
+  wrapper/child/PTY/helper/socket/Ghostty/sidebar journey passed under nested
+  X11 session
+  `fd0fcd0c957e3cfd775830dcfc051d1bcee364585d8e9b445bcc9092db907ebe`
+  and input-capable Wayland session
+  `a7927aa3d44d9b7abb3559574e5ab8997da668dbae5f76bbb3df33f456f4572a`
+  (outer X11 transport
+  `85ea197835e9e458cfd5311426f46b4afe3414f57e387f27961d663477ab7694`).
+- **Mutation testing tightened state invariants:** The first focused 95-mutant
+  title/status campaign reported 24 misses, including independent classifier
+  branches, decision-option detection, cleanup, attention priority, and
+  defensive transition conditions. Tests were expanded and unreachable or
+  invariant-equivalent conditions simplified rather than papering over the
+  result. The final 91-mutant campaign caught 83 and classified eight as
+  unviable, with zero misses/timeouts. `outcomes.json` SHA-256 is
+  `ee9fde870cf4be56a970fc649704d3f337de47ec21cd37a200a55721837382c7`.
+- **Remaining title/lifecycle boundary:** User-submit stabilization, Ctrl-C
+  interrupt suppression, shell-return cleanup, asynchronous transcript
+  enrichment/retry/cache application, OSC progress events beyond title task
+  counts, and stable custom-title write-back remain. The feature stays
+  `PARTIAL`.
+- **Complete qualification after title reconciliation:** Every presently
+  executable cell again produced its expected outcome. The authoritative
+  summary SHA-256 is
+  `4d5da7a8da5e2d12fa5924958d2c3315f770f584f010a894966e057625032a27`.
+  Declared totals remain `PASS=52`, `FAIL=0`, `BLOCKED=5`, `XFAIL=1`, and
+  `NOT_IMPLEMENTED=51`; implemented-local and product-boundary qualification
+  passed, while release and full Linux qualification did not. Debug Valgrind
+  is **PASS with reviewed suppressions**, not unsuppressed clean: raw evidence
+  reports 427 errors/contexts, 6,160 definite bytes, and 41,428 indirect
+  bytes; reviewed post-suppression evidence reports zero for all four values
+  and counts all 427 errors/contexts as suppressed. The Valgrind report
+  SHA-256 is
+  `1cb3ef7a56593243b764ac3b769c4ddd1bfb510e9fb8103650e134b03a5d95b6`.
+  ReleaseSafe Valgrind remains XFAIL.
+- **Boundary correction rerun exposed an X11 teardown race:** After correcting
+  the idle-suppression deadline from an inclusive two-tick interpretation to
+  the source's strict one-second boundary, the next complete qualification run
+  passed every earlier X11 agent journey but its final session-restore input
+  injection hit X11 `BadWindow` after the target had closed. The exact
+  session-restore cell immediately passed alone in controlled X11 session
+  `048bb8af51432ee74bd2618ff3603595d25e040c021544d585036921fcc4736f`.
+  No timeout, skip, or product assertion was weakened; a complete rerun is
+  required before commit.
+- **Repeated failure identified stale name-only X11 window selection:** A
+  second complete rerun failed at the identical boundary after all preceding
+  X11 agent scenarios passed, proving this was not a one-off. The shared
+  physical-input helper searched only by the `Zentty` window name while the
+  controlled X server was intentionally reused across complete journeys; it
+  could select a withdrawing window from the preceding process and send to a
+  destroyed resource. The repair requires every X11 caller's live product PID,
+  searches only mapped name-and-PID matches, and verifies `_NET_WM_PID` before
+  focus or input. Consecutive real agent and session-restore products then
+  passed in the same nested X11 session
+  `7501f84574955470c7fb25720b0b00ebdd15ae8afe5290d3672e1be2894b6c7a`.
+  This tightens real-system targeting; it does not retry a failed command,
+  suppress `BadWindow`, or turn environmental absence into a pass.
+- **Final qualification after the X11 targeting repair:** The complete matrix
+  passed every presently executable cell's expected outcome, including the
+  previously failing combined X11 agent cell. The authoritative summary
+  SHA-256 is
+  `842213d07942ba1cf7ffcd19ffa2ef2408146639fddcafd7be07672c7cce95b2`.
+  Declared totals are `PASS=52`, `FAIL=0`, `BLOCKED=5`, `XFAIL=1`, and
+  `NOT_IMPLEMENTED=51`; implemented-local and product-boundary qualification
+  passed, while release and full Linux qualification did not. Debug Valgrind
+  is **PASS with reviewed suppressions**, not unsuppressed clean: raw evidence
+  reports 427 errors/contexts, 6,240 definite bytes, and 41,461 indirect
+  bytes; reviewed post-suppression evidence reports zero for all four values
+  and counts all 427 errors/contexts as suppressed. The Valgrind report
+  SHA-256 is
+  `ecf8e848f6a0e2352d3510a13dd2ff3d59ffd06505ece236fdfcc030553b514b`.
+  ReleaseSafe Valgrind remains XFAIL.
 
 ## AI disclosure
 

@@ -224,6 +224,15 @@ most 12 transcripts from the four newest session-day directories and accepts
 only a transcript whose newest recorded working directory matches the hook's
 normalized CWD and whose bounded tail contains a user question.
 
+The real Ghostty title callback is also reconciled into that same canonical
+pane status. Source-shaped `Starting`, `Working`, `Thinking`, `Waiting`,
+`Ready`, `Main needs input`, and `[ ! ]`/`[ . ] Action Required` titles drive
+phase and attention without overriding an explicit question or decision.
+Trailing ` | Tasks done/total` values update bounded sidebar progress. A
+background `Waiting` title is not treated as human input, and a one-second
+idle suppression window rejects a stale running-title tail after authoritative
+completion.
+
 Codex 0.129's built-in AskUserQuestion UI does not emit a `PreToolUse` hook.
 When Codex switches the terminal title to `[ ! ] Action Required | ...`, Zentty
 treats that title as `needs-input` so the sidebar still reflects the blocked

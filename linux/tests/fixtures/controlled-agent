@@ -51,6 +51,15 @@ case "${profile}" in
         "${helper}" codex-notify \
             '{"type":"question","session_id":"codex-notify-e2e","message":"Choose execution mode?\n[Sandboxed] [Elevated]"}'
         ;;
+    codex-title)
+        require_helper
+        codex_has_hook PreToolUse "$@" || fail "Codex PreToolUse hook is missing"
+        printf '%s' \
+            '{"hook_event_name":"PreToolUse","session_id":"codex-title-e2e","tool_name":"shell"}' |
+            "${helper}" ipc agent-event --adapter=codex
+        sleep 0.2
+        printf '\033]0;[ ! ] Action Required | codex-title | Tasks 1/3\007'
+        ;;
     claude-question)
         require_helper
         settings=""

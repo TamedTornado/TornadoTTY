@@ -6,6 +6,34 @@ use zentty_core::{
 const V3_ENVELOPE: &[u8] = include_bytes!("fixtures/session-restore-v3.json");
 
 #[test]
+fn real_terminal_titles_reconcile_agent_state_used_by_sidebar_summaries() {
+    let mut state = WorkspaceState::new("worklane-a", "pane-a");
+    state.apply_agent_event(
+        AuthenticatedAgentEvent {
+            target: AgentTarget::new("window-a", "worklane-a", "pane-a"),
+            pane_token: "token-a".to_owned(),
+            event: AgentEvent::parse(
+                br#"{"version":1,"event":"agent.running","agent":{"name":"Codex"},"session":{"id":"codex-title"}}"#,
+            )
+            .unwrap(),
+        },
+        1,
+    );
+    assert!(state.reconcile_terminal_title(
+        "pane-a",
+        "[ ! ] Action Required | zentty | Tasks 1/3",
+        2
+    ));
+    let status = state.sidebar_summaries()[0].pane_rows[0]
+        .agent_status
+        .clone()
+        .unwrap();
+    assert_eq!(status.phase, zentty_core::AgentPhase::NeedsInput);
+    assert_eq!(status.progress.unwrap().done, 1);
+    assert!(status.requires_attention());
+}
+
+#[test]
 fn active_supported_agents_produce_restorable_per_pane_drafts() {
     let envelope = SessionRestoreEnvelope::from_json(V3_ENVELOPE).unwrap();
     let mut state = WorkspaceState::from_window_recipe(&envelope.workspace.windows[0]).unwrap();

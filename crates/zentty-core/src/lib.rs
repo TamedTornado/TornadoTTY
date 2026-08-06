@@ -5,6 +5,7 @@ mod agent_consent;
 mod agent_launch;
 mod agent_protocol;
 mod agent_status;
+mod codex_title;
 mod codex_transcript;
 mod command_palette;
 mod pane_focus_history;
@@ -49,6 +50,7 @@ pub const PRODUCT_NAME: &str = "Zentty";
 pub use agent_adapters::{
     AgentAdapterError, adapt_claude_hook, adapt_codex_hook, adapt_codex_notify, adapt_gemini_hook,
 };
+pub use codex_title::{CodexTitlePhase, CodexTitleSignal, classify_codex_terminal_title};
 pub use codex_transcript::{
     CodexTranscriptCacheKey, CodexTranscriptQuestion, codex_question_from_transcript_path,
     codex_question_from_transcript_text, codex_transcript_cache_key,

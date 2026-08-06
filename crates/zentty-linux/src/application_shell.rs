@@ -2296,7 +2296,12 @@ impl ApplicationShell {
                     if shell.shutting_down {
                         return;
                     }
-                    if shell.state.set_pane_title(&title_id, &title) {
+                    let now = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .map_or(0, |duration| duration.as_secs());
+                    let agent_changed =
+                        shell.state.reconcile_terminal_title(&title_id, &title, now);
+                    if shell.state.set_pane_title(&title_id, &title) || agent_changed {
                         shell.refresh_sidebar_metadata();
                     }
                 }
