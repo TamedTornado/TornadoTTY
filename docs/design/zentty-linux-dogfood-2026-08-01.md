@@ -7968,6 +7968,80 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   qualification while required matrix cells remain blocked, XFAIL, or not
   implemented.
 
+### Phase 5 adversarial lifecycle closes without another harness
+
+- **Harness governance is now explicit:** The orchestration plan ratifies one
+  non-shipping exception to its no-daemon rule: the bounded loopback
+  `controlled_anthropic` executable. The closed-world orchestration contract
+  requires that exact server, the single controlled actor, and consumption of
+  both by the installed-Claude journey; another listener or inline agent
+  program fails the repository gate.
+- **The endpoint's failure paths are directly tested:** Two additional tests
+  use real loopback TCP connections to reject wrong methods and routes,
+  HTTP/1.0, missing or invalid content lengths, a truncated body, headers over
+  64 KiB, and bodies over 16 MiB. A request carrying the same sentinel in its
+  authorization header and prompt body proves neither value enters the
+  sanitized receipt. The endpoint now has five focused tests rather than
+  relying on its own qualification consumer for parser correctness.
+- **Mutation testing tightened the endpoint rather than expanding the
+  framework:** The first 52-decision campaign caught 45 and classified two
+  compiler-unviable, but missed exact header/body ceilings and timed out after
+  an inverted EOF condition spun on repeated zero-byte reads. Exact-boundary
+  decisions moved into a pure helper; a 100 ms test socket timeout still could
+  not bound EOF because EOF returns immediately. Replacing the manual body
+  loop with `read_exact` removed that spin. The next campaign exposed six
+  unobserved body-completion arithmetic changes because ordinary loopback
+  writes delivered headers and body together. A valid deliberately split
+  header/body request now exercises the missing-body path. The exact final
+  safe-copy campaign tested 51 decisions: 49 caught, two compiler-unviable,
+  zero missed, and zero timed out. Its `outcomes.json` SHA-256 is
+  `5520e25a79b9360e1ef080b8013cf39448b78f5d8b10b4c75770cb1aec5ca470`;
+  the checked wrapper retained `gitignore=true` and `copy_target=false`.
+- **Restart and substitution use the existing product journey:** The first
+  staged product writes its private socket, pane capability, and staged CLI to
+  a mode-0600 temporary receipt, completes the real tmux topology journey, and
+  exits. The old socket must be absent and the old CLI environment must fail.
+  A second real product instance must use a different socket and capability;
+  its child attempts a mutating split with the stale capability against the
+  new socket, requires rejection before the handler, proves one-pane topology
+  with the fresh capability, and tears down through the real handler.
+- **Invalid respawn is non-destructive:** The real product journey now lists
+  all three panes immediately after a deliberately commandless
+  `respawn-pane` fails, before performing a valid replacement. Zentty can
+  validate failure before disposing the existing surface. A command that
+  starts and later exits is ordinary tmux child behavior, not a synchronous
+  `respawn-pane` transport failure.
+- **Model loss is now part of the installed journey:** Once the installed
+  Claude coordinator has created the real teammate and the teammate's request
+  is receipted, the controlled actor terminates the model endpoint. Zentty must
+  remain usable for real input and capture in leader and teammate PTYs, close
+  both through the staged facade, remove its authenticated socket, and leave
+  no endpoint or private-profile process.
+- **No persistent corruption fixture was invented:** The Linux `TeamStore`
+  and wait signals are bounded in-memory state and deserialize no compatibility
+  file. Existing malformed, oversized, unauthorized, stale, and substituted
+  request tests own corruption behavior. Adding a persisted tmux store solely
+  for a test would create the parallel system this refactor forbids.
+- **First controlled executions passed without a product repair:** The
+  restart/stale-capability X11 discovery session was
+  `4136e81fa77812b38dea251c1ebac7c86260f9b5495d98e854619cf1d1ad0111`.
+  The installed-Claude endpoint-loss X11 discovery session was
+  `ec37c97c3de4f37a2412d3381bf01e9e44dec34cef27f7f2e2367e71b5e4b242`.
+  These are discovery receipts; exact final X11 and Wayland sessions must
+  follow the final build and mutation gates.
+- **Exact adversarial compositor receipts pass:** After the final endpoint
+  mutation repair and ReleaseSafe rebuild, the restart, stale-capability, and
+  non-destructive-respawn product journey passed controlled X11 session
+  `642b4f313299f62817ed3eaec16bf0d2d6f5762e0c9c06907a297286e6166f08`
+  and controlled Wayland session
+  `7398e782d81e143d3324db3c51b138d9e933256b3c476cceb11c2a19f411927c`.
+  The installed-Claude endpoint-loss journey passed controlled X11 session
+  `85f8fb725f8a97715c36e9cef541299e2d02e6559acf1c430d1c2d8c1d3c8aaf`
+  and input-capable Wayland session
+  `ce803831c5a45fc069c00884a2621bec833fc405a5b7a30f0ec53eb4c00a61b2`;
+  the Wayland controller's intermediate X11 session was
+  `323013d189021be04ffacc349f2e3999d120828974630897f101d785382c5c9e`.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were

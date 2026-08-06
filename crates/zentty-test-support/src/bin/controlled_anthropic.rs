@@ -110,7 +110,7 @@ fn read_request(stream: &mut TcpStream) -> Result<HttpRequest, String> {
             return Err("controlled request ended before its headers".to_owned());
         }
         bytes.extend_from_slice(&chunk[..count]);
-        if bytes.len() > MAX_HEADER_BYTES {
+        if exceeds_limit(bytes.len(), MAX_HEADER_BYTES) {
             return Err("controlled request headers exceeded 64 KiB".to_owned());
         }
         if let Some(offset) = bytes.windows(4).position(|window| window == b"\r\n\r\n") {
@@ -150,23 +150,25 @@ fn read_request(stream: &mut TcpStream) -> Result<HttpRequest, String> {
         .ok_or_else(|| "controlled request is missing Content-Length".to_owned())?
         .parse::<usize>()
         .map_err(|_| "controlled request Content-Length is invalid".to_owned())?;
-    if content_length > MAX_BODY_BYTES {
+    if exceeds_limit(content_length, MAX_BODY_BYTES) {
         return Err("controlled request body exceeded 16 MiB".to_owned());
     }
-    while bytes.len() - header_end < content_length {
-        let count = stream
-            .read(&mut chunk)
-            .map_err(|error| format!("controlled request body read failed: {error}"))?;
-        if count == 0 {
-            return Err("controlled request ended before its body".to_owned());
-        }
-        bytes.extend_from_slice(&chunk[..count]);
-    }
+    let received_body_bytes = bytes.len() - header_end;
+    let missing_body_bytes = content_length.saturating_sub(received_body_bytes);
+    let body_end = bytes.len() + missing_body_bytes;
+    bytes.resize(body_end, 0);
+    stream
+        .read_exact(&mut bytes[body_end - missing_body_bytes..body_end])
+        .map_err(|error| format!("controlled request body read failed: {error}"))?;
     Ok(HttpRequest {
         method,
         path,
         body: bytes[header_end..header_end + content_length].to_vec(),
     })
+}
+
+fn exceeds_limit(actual: usize, maximum: usize) -> bool {
+    actual > maximum
 }
 
 fn classify_request(request: &HttpRequest) -> Result<RequestRole, String> {
@@ -381,10 +383,38 @@ fn write_model_response(
 #[cfg(test)]
 mod tests {
     use super::{
-        RequestRole, classify_request, message_shape, parse_receipt_path, summarize_tool_results,
+        MAX_BODY_BYTES, MAX_HEADER_BYTES, RequestRole, append_receipt, classify_request,
+        exceeds_limit, message_shape, parse_receipt_path, read_request, summarize_tool_results,
         value_contains,
     };
     use serde_json::json;
+    use std::io::Write;
+    use std::net::{Shutdown, TcpListener, TcpStream};
+
+    fn read_raw_request(bytes: Vec<u8>) -> Result<super::HttpRequest, String> {
+        read_raw_request_parts(vec![bytes])
+    }
+
+    fn read_raw_request_parts(parts: Vec<Vec<u8>>) -> Result<super::HttpRequest, String> {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let address = listener.local_addr().unwrap();
+        let writer = std::thread::spawn(move || {
+            let mut stream = TcpStream::connect(address).unwrap();
+            for part in parts {
+                stream.write_all(&part).unwrap();
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            stream.shutdown(Shutdown::Write).unwrap();
+        });
+        let (mut stream, peer) = listener.accept().unwrap();
+        assert!(peer.ip().is_loopback());
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_millis(100)))
+            .unwrap();
+        let result = read_request(&mut stream);
+        writer.join().unwrap();
+        result
+    }
 
     #[test]
     fn receipt_path_is_absolute_and_argument_shape_is_exact() {
@@ -500,5 +530,76 @@ mod tests {
                 .unwrap_err()
                 .contains("missing required tool: Agent")
         );
+    }
+
+    #[test]
+    fn http_parser_rejects_wrong_targets_lengths_versions_and_truncation() {
+        assert!(!exceeds_limit(MAX_HEADER_BYTES, MAX_HEADER_BYTES));
+        assert!(exceeds_limit(MAX_HEADER_BYTES + 1, MAX_HEADER_BYTES));
+        assert!(!exceeds_limit(MAX_BODY_BYTES, MAX_BODY_BYTES));
+        assert!(exceeds_limit(MAX_BODY_BYTES + 1, MAX_BODY_BYTES));
+        for request in [
+            b"GET / HTTP/1.1\r\n\r\n".to_vec(),
+            b"POST /wrong HTTP/1.1\r\nContent-Length: 0\r\n\r\n".to_vec(),
+            b"POST /v1/messages HTTP/1.0\r\nContent-Length: 0\r\n\r\n".to_vec(),
+            b"POST /v1/messages HTTP/1.1\r\n\r\n".to_vec(),
+            b"POST /v1/messages HTTP/1.1\r\nContent-Length: invalid\r\n\r\n".to_vec(),
+            b"POST /v1/messages HTTP/1.1\r\nContent-Length: 4\r\n\r\n{}".to_vec(),
+        ] {
+            assert!(read_raw_request(request).is_err());
+        }
+
+        let oversized_body = format!(
+            "POST /v1/messages HTTP/1.1\r\nContent-Length: {}\r\n\r\n",
+            MAX_BODY_BYTES + 1
+        );
+        assert!(read_raw_request(oversized_body.into_bytes()).is_err());
+
+        let mut oversized_headers = b"POST /v1/messages HTTP/1.1\r\nX-Fill: ".to_vec();
+        oversized_headers.extend(std::iter::repeat_n(b'x', MAX_HEADER_BYTES));
+        assert!(read_raw_request(oversized_headers).is_err());
+
+        let body = b"{}".to_vec();
+        let header = format!(
+            "POST /v1/messages HTTP/1.1\r\nContent-Length: {}\r\n\r\n",
+            body.len()
+        )
+        .into_bytes();
+        assert_eq!(
+            read_raw_request_parts(vec![header, body.clone()])
+                .unwrap()
+                .body,
+            body
+        );
+    }
+
+    #[test]
+    fn authorization_headers_and_prompt_bodies_never_enter_the_receipt() {
+        let secret = "controlled-header-and-prompt-secret";
+        let body = serde_json::to_vec(&json!({
+            "system": "ordinary leader",
+            "messages": [{"role": "user", "content": secret}],
+            "tools": [{"name": "Agent"}, {"name": "SendMessage"}]
+        }))
+        .unwrap();
+        let raw = format!(
+            "POST /v1/messages HTTP/1.1\r\nAuthorization: Bearer {secret}\r\nContent-Length: {}\r\n\r\n",
+            body.len()
+        )
+        .into_bytes()
+        .into_iter()
+        .chain(body)
+        .collect();
+        let request = read_raw_request(raw).unwrap();
+        let receipt = std::env::temp_dir().join(format!(
+            "zentty-controlled-anthropic-receipt-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        append_receipt(&receipt, 1, RequestRole::LeaderInitial, &request).unwrap();
+        let retained = std::fs::read_to_string(&receipt).unwrap();
+        std::fs::remove_file(receipt).unwrap();
+        assert!(!retained.contains(secret));
+        assert!(retained.contains("\"role\":\"leader_initial\""));
     }
 }

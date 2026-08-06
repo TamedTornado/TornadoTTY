@@ -18,6 +18,8 @@ fixture_root="$(mktemp -d)"
 log="${fixture_root}/product.log"
 state_directory="${fixture_root}/state"
 child="${fixture_root}/child"
+endpoint_receipt="${fixture_root}/endpoint.receipt"
+restart_log="${fixture_root}/restart.log"
 cleanup() {
     rm -rf -- "${fixture_root}"
 }
@@ -27,6 +29,25 @@ cat >"${child}" <<'CHILD'
 #!/usr/bin/env bash
 set -euo pipefail
 trap 'status=$?; printf "tmux-product-child: assertion failed line=%s status=%s\n" "${LINENO}" "${status}" | tee -a "${ZENTTY_TMUX_PRODUCT_PROBE}" >&2; exit "${status}"' ERR
+
+if [[ "${ZENTTY_PANE_ID}" == pane-1 && "${ZENTTY_TMUX_RESTART_PROBE:-}" == 1 ]]; then
+    [[ -n "${ZENTTY_TMUX_OLD_SOCKET:-}" && -n "${ZENTTY_TMUX_OLD_TOKEN:-}" ]]
+    [[ "${ZENTTY_INSTANCE_SOCKET}" != "${ZENTTY_TMUX_OLD_SOCKET}" ]]
+    [[ "${ZENTTY_PANE_TOKEN}" != "${ZENTTY_TMUX_OLD_TOKEN}" ]]
+    if env ZENTTY_PANE_TOKEN="${ZENTTY_TMUX_OLD_TOKEN}" \
+        "${ZENTTY_CLI_BIN}" __tmux-compat split-window -h; then
+        exit 1
+    fi
+    listed="$("${ZENTTY_CLI_BIN}" __tmux-compat list-panes -F '#{pane_id}')"
+    [[ "${listed}" == '%pane-1' ]]
+    umask 077
+    printf 'socket=%s\ntoken=%s\ncli=%s\n' \
+        "${ZENTTY_INSTANCE_SOCKET}" "${ZENTTY_PANE_TOKEN}" "${ZENTTY_CLI_BIN}" \
+        >"${ZENTTY_TMUX_ENDPOINT_RECEIPT}"
+    "${ZENTTY_CLI_BIN}" __tmux-compat kill-pane -t "%${ZENTTY_PANE_ID}"
+    sleep 30
+    exit 1
+fi
 
 if [[ "${ZENTTY_PANE_ID}" != pane-1 ]]; then
     if [[ "${ZENTTY_RESPAWN_PROBE:-}" == 1 ]]; then
@@ -52,6 +73,10 @@ instance_runtime="$(dirname -- "${ZENTTY_INSTANCE_SOCKET}")"
 [[ -f "${ZENTTY_SHELL_INTEGRATION_DIR}/fish/vendor_conf.d/zentty-shell-integration.fish" ]]
 [[ -f "${ZENTTY_SHELL_INTEGRATION_DIR}/nushell/vendor/autoload/zentty.nu" ]]
 [[ "${PROMPT_COMMAND}" == '. "$ZENTTY_SHELL_INTEGRATION_DIR/zentty-bash-integration.bash"' ]]
+umask 077
+printf 'socket=%s\ntoken=%s\ncli=%s\n' \
+    "${ZENTTY_INSTANCE_SOCKET}" "${ZENTTY_PANE_TOKEN}" "${ZENTTY_CLI_BIN}" \
+    >"${ZENTTY_TMUX_ENDPOINT_RECEIPT}"
 [[ ":${XDG_DATA_DIRS}:" == *":${ZENTTY_SHELL_INTEGRATION_DIR}:"* ]]
 has_system_data_directory=false
 IFS=: read -r -a data_directories <<<"${XDG_DATA_DIRS}"
@@ -95,6 +120,8 @@ second_id="${second#%}"
 if ${ZENTTY_CLI_BIN} __tmux-compat respawn-pane -k -t "%${first_id}"; then
     exit 1
 fi
+listed="$(${ZENTTY_CLI_BIN} __tmux-compat list-panes -F '#{pane_id}')"
+[[ "${listed}" == $'%pane-1\n%'"${first_id}"$'\n%'"${second_id}" ]]
 ${ZENTTY_CLI_BIN} __tmux-compat respawn-pane -k -t "%${first_id}" \
     -- "env ZENTTY_RESPAWN_PROBE=1 $0"
 listed="$(${ZENTTY_CLI_BIN} __tmux-compat list-panes -F '#{pane_id}')"
@@ -142,6 +169,7 @@ set +e
 env -u TMUX -u TMUX_PANE \
     CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 \
     ZENTTY_TMUX_PRODUCT_PROBE="${fixture_root}/child-probe.log" \
+    ZENTTY_TMUX_ENDPOINT_RECEIPT="${endpoint_receipt}" \
     timeout 20s "${product}" \
     --command "${child}" \
     --no-session-restore \
@@ -153,6 +181,53 @@ if [[ "${status}" -ne 0 ]]; then
     [[ ! -f "${fixture_root}/child-probe.log" ]] || cat "${fixture_root}/child-probe.log" >&2
     fail "staged product exited ${status}"
 fi
+
+old_socket="$(sed -n 's/^socket=//p' "${endpoint_receipt}")"
+old_token="$(sed -n 's/^token=//p' "${endpoint_receipt}")"
+staged_cli="$(sed -n 's/^cli=//p' "${endpoint_receipt}")"
+[[ "${old_socket}" == /* && "${old_token}" =~ ^[0-9a-f]{64}$ && -x "${staged_cli}" ]] ||
+    fail "first product instance did not publish a private endpoint receipt"
+[[ ! -e "${old_socket}" ]] || fail "first product instance left its socket behind"
+if env ZENTTY_INSTANCE_SOCKET="${old_socket}" ZENTTY_PANE_TOKEN="${old_token}" \
+    "${staged_cli}" __tmux-compat display-message -p '#{pane_id}' >/dev/null 2>&1; then
+    fail "stale CLI environment reached the stopped first product instance"
+fi
+
+set +e
+env -u TMUX -u TMUX_PANE \
+    CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 \
+    ZENTTY_TMUX_PRODUCT_PROBE="${fixture_root}/restart-child-probe.log" \
+    ZENTTY_TMUX_ENDPOINT_RECEIPT="${endpoint_receipt}" \
+    ZENTTY_TMUX_RESTART_PROBE=1 \
+    ZENTTY_TMUX_OLD_SOCKET="${old_socket}" \
+    ZENTTY_TMUX_OLD_TOKEN="${old_token}" \
+    timeout 10s "${product}" \
+    --command "${child}" \
+    --no-session-restore \
+    --state-directory "${fixture_root}/restart-state" >"${restart_log}" 2>&1
+restart_status=$?
+set -e
+if [[ "${restart_status}" -ne 0 ]]; then
+    cat "${restart_log}" >&2
+    [[ ! -f "${fixture_root}/restart-child-probe.log" ]] ||
+        cat "${fixture_root}/restart-child-probe.log" >&2
+    fail "restarted staged product exited ${restart_status}"
+fi
+fresh_socket="$(sed -n 's/^socket=//p' "${endpoint_receipt}")"
+fresh_token="$(sed -n 's/^token=//p' "${endpoint_receipt}")"
+[[ "${fresh_socket}" == /* && "${fresh_socket}" != "${old_socket}" ]] ||
+    fail "restarted product reused its first socket"
+[[ "${fresh_token}" =~ ^[0-9a-f]{64}$ && "${fresh_token}" != "${old_token}" ]] ||
+    fail "restarted product reused its first pane capability"
+[[ ! -e "${fresh_socket}" ]] || fail "restarted product left its socket behind"
+if grep -Fq 'command=SplitWindow' "${restart_log}"; then
+    cat "${restart_log}" >&2
+    fail "stale pane capability routed a mutating command after restart"
+fi
+grep -Fxq 'zentty-linux: tmux-command pane=pane-1 worklane=worklane-1 command=ListPanes' \
+    "${restart_log}" || fail "fresh capability did not route after restart"
+grep -Fxq 'zentty-linux: tmux-command pane=pane-1 worklane=worklane-1 command=KillPane' \
+    "${restart_log}" || fail "restarted product did not tear its real pane down"
 
 [[ "$(grep -Fxc 'zentty-linux: tmux-command pane=pane-1 worklane=worklane-1 command=DisplayMessage' "${log}" || true)" -eq 3 ]] || {
     cat "${log}" >&2
@@ -171,7 +246,7 @@ awk '
     cat "${log}" >&2
     fail "pending wait probe did not precede the independent display command"
 }
-[[ "$(grep -Fxc 'zentty-linux: tmux-command pane=pane-1 worklane=worklane-1 command=ListPanes' "${log}" || true)" -eq 4 ]] || {
+[[ "$(grep -Fxc 'zentty-linux: tmux-command pane=pane-1 worklane=worklane-1 command=ListPanes' "${log}" || true)" -eq 5 ]] || {
     cat "${log}" >&2
     fail "real list-panes did not cross the product handler"
 }

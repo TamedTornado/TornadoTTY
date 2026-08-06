@@ -63,10 +63,13 @@ case "${profile}" in
         fixture="${ZENTTY_CONTROLLED_CLAUDE_FIXTURE:-}"
         project="${ZENTTY_CONTROLLED_AGENT_PROJECT:-}"
         model_receipt="${ZENTTY_CONTROLLED_CLAUDE_RECEIPT:-}"
+        model_pid="${ZENTTY_CONTROLLED_MODEL_PID:-}"
         [[ -d "${fixture}" && -d "${project}" ]] ||
             fail "Claude team fixture and project directories are required"
         [[ "${model_receipt}" == "${fixture}/"* ]] ||
             fail "Claude model receipt must be inside the controlled fixture"
+        [[ "${model_pid}" =~ ^[1-9][0-9]*$ ]] ||
+            fail "Claude controlled-model PID is required"
         cd "${project}"
         printf 'claude=<%s> tmux=<%s> endpoint=<%s>\n' \
             "$(command -v claude || true)" "$(command -v tmux || true)" \
@@ -86,6 +89,8 @@ case "${profile}" in
             done
             grep -Fq '"role":"teammate"' "${model_receipt}"
             grep -Fq '@zentty-probe' "${fixture}/teammate.capture"
+            kill -TERM "${model_pid}"
+            printf 'model=stopped\n' >"${fixture}/model-stopped.receipt"
             tmux send-keys -t %pane-2 -l ZTTEAM42
             sleep 0.1
             tmux capture-pane -p -t %pane-2 >"${fixture}/teammate-after-input.capture"

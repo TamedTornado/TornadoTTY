@@ -103,6 +103,14 @@ sufficient reason.
 6. **No generalized framework expansion.** Shared support is limited to
    repeated staged-product/environment/actor operations proven by the baseline
    duplication. No new evidence schema, daemon, RPC control plane, or test DSL.
+   The one ratified exception is
+   `crates/zentty-test-support/src/bin/controlled_anthropic.rs`: a short-lived,
+   loopback-only Claude Messages endpoint used solely to control the external
+   model boundary while the installed Claude coordinator remains real. It is
+   not shipped, must remain the only controlled-model server, and must not grow
+   into a reusable daemon or test framework. Its protocol bounds, malformed
+   input, sanitized receipts, and installed-version drift are fail-closed test
+   contracts.
 7. **No hidden retries.** A race must be removed with an observable readiness
    boundary, not repeated until green.
 8. **No qualification claim from fixtures alone.** Focused model tests support

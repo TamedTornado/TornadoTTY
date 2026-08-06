@@ -220,6 +220,31 @@ server, socket, or private-profile process. It runs in controlled X11 and
 input-capable Wayland; missing Claude or controlled-model prerequisites are
 explicit prerequisites rather than passes.
 
+#### Phase 5 adversarial lifecycle slice acceptance
+
+The existing product journey—not a second harness—must stop one staged product
+instance, prove its socket is removed and its old CLI environment cannot
+connect, launch a second real instance, and prove both its socket path and pane
+capability are fresh. A mutating command authenticated with the first
+instance's capability against the second instance's socket must be rejected
+before reaching the product handler or changing topology; a command using the
+new capability must still succeed. Invalid `respawn-pane` arguments must leave
+the targeted real surface and complete topology intact before a subsequent
+valid replacement.
+
+The installed-Claude journey must terminate the controlled model endpoint only
+after the real teammate has started, then continue to capture and route input
+to both real PTYs and tear down every pane, socket, endpoint, and private
+profile process. Endpoint loss is therefore a product-liveness and cleanup
+test, not a simulated agent launch.
+
+`TeamStore` and wait signals are bounded in-memory state owned by the running
+adapter; they do not deserialize a persistent compatibility-store file.
+“Corrupt store” therefore means malformed, oversized, unauthorized, stale, or
+substituted protocol state at the authenticated socket/request boundary. This
+plan must not invent a persistent tmux store merely to create a corruption
+fixture.
+
 ## 4. Store and wait-for corrections requiring explicit decisions
 
 The source uses an in-process `NSLock` around load/modify/save, which does not

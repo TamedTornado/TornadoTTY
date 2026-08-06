@@ -12,7 +12,7 @@ server_pid=""
 
 fail() {
     if [[ -n "${fixture}" && -d "${fixture}" ]]; then
-        for evidence in product.log helper.log server.log model-receipt.jsonl leader.capture teammate.capture teammate-after-input.capture child-env; do
+        for evidence in product.log helper.log server.log model-receipt.jsonl model-stopped.receipt leader.capture teammate.capture teammate-after-input.capture child-env; do
             [[ ! -f "${fixture}/${evidence}" ]] || {
                 printf '%s\n' "--- ${evidence} ---" >&2
                 cat "${fixture}/${evidence}" >&2
@@ -96,6 +96,7 @@ dbus-run-session -- env \
     ZENTTY_CONTROLLED_AGENT_PROFILE=claude-team \
     ZENTTY_CONTROLLED_CLAUDE_FIXTURE="${fixture}" \
     ZENTTY_CONTROLLED_CLAUDE_RECEIPT="${fixture}/model-receipt.jsonl" \
+    ZENTTY_CONTROLLED_MODEL_PID="${server_pid}" \
     ZENTTY_CONTROLLED_AGENT_PROJECT="${fixture}/project" \
     timeout 25s "${product}" \
         --command "${actor}" \
@@ -106,6 +107,10 @@ status=$?
 set -e
 ((status == 0)) || fail "staged product exited ${status}"
 grep -Fxq 'helper=complete' "${fixture}/helper.log" || fail "real-pane actor did not finish"
+grep -Fxq 'model=stopped' "${fixture}/model-stopped.receipt" ||
+    fail "real-pane actor did not terminate the model endpoint mid-session"
+wait "${server_pid}" 2>/dev/null || true
+server_pid=""
 
 grep -Fq 'command=RespawnPane' "${fixture}/product.log" || fail "Claude did not use respawn-pane"
 grep -Fq 'zentty-linux: tmux-respawn pane=pane-2' "${fixture}/product.log" ||
@@ -135,9 +140,6 @@ if grep -RFq 'controlled-not-secret' \
     fail "authorization value escaped into retained evidence"
 fi
 
-kill -TERM "${server_pid}" 2>/dev/null || true
-wait "${server_pid}" 2>/dev/null || true
-server_pid=""
 survivors=""
 for _ in {1..100}; do
     survivors="$(grep -lF -- "${fixture}" /proc/[1-9]*/environ 2>/dev/null || true)"
