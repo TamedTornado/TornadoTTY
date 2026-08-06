@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::PermissionsExt;
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, mpsc};
 use zentty_agent_ipc::{AgentIpcServer, AuthenticatedTmuxRequest, generate_pane_token};
@@ -17,6 +18,9 @@ pub(crate) struct AgentRuntime {
     socket_path: PathBuf,
     cli_path: PathBuf,
     wrapper_directories: Vec<PathBuf>,
+    tmux_shim_directory: PathBuf,
+    shell_integration_directory: PathBuf,
+    instance_id: String,
     window_id: String,
 }
 
@@ -55,6 +59,16 @@ impl AgentRuntime {
         let wrapper_directories = wrapper_root
             .map(|root| enabled_wrapper_directories(&root, &current_path()))
             .unwrap_or_default();
+        let tmux_shim_directory = cli_path
+            .parent()
+            .and_then(Path::parent)
+            .map_or_else(PathBuf::new, |root| root.join("libexec/zentty/tmux-shim"));
+        let shell_integration_directory = cli_path
+            .parent()
+            .and_then(Path::parent)
+            .map_or_else(PathBuf::new, |root| {
+                root.join("share/zentty/shell-integration")
+            });
         Ok(Self {
             server: Some(server),
             registry,
@@ -66,6 +80,9 @@ impl AgentRuntime {
             socket_path,
             cli_path,
             wrapper_directories,
+            tmux_shim_directory,
+            shell_integration_directory,
+            instance_id: instance,
             window_id,
         })
     }
@@ -111,6 +128,7 @@ impl AgentRuntime {
             ("ZENTTY_WINDOW_ID".to_owned(), self.window_id.clone()),
             ("ZENTTY_WORKLANE_ID".to_owned(), worklane_id.to_owned()),
             ("ZENTTY_PANE_ID".to_owned(), pane_id.to_owned()),
+            ("ZENTTY_INSTANCE_ID".to_owned(), self.instance_id.clone()),
         ];
         if !self.wrapper_directories.is_empty() {
             let wrappers = std::env::join_paths(&self.wrapper_directories)
@@ -129,6 +147,22 @@ impl AgentRuntime {
             environment.push(("ZENTTY_ALL_WRAPPER_BIN_DIRS".to_owned(), wrappers));
             environment.push(("PATH".to_owned(), path));
         }
+        let pane_path = pane_path(&environment, &current_path());
+        environment.extend(agent_teams_environment(
+            &self.tmux_shim_directory,
+            &self.runtime_directory,
+            &self.instance_id,
+            pane_id,
+            std::env::var_os("CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS").as_deref(),
+            std::env::var_os("TMUX").as_deref(),
+            &pane_path,
+        )?);
+        environment.extend(shell_integration_environment(
+            &self.shell_integration_directory,
+            std::env::var_os("ZDOTDIR").as_deref(),
+            std::env::var_os("PROMPT_COMMAND").as_deref(),
+            std::env::var_os("XDG_DATA_DIRS").as_deref(),
+        ));
         Ok(environment)
     }
 
@@ -178,6 +212,123 @@ impl AgentRuntime {
 
 fn current_path() -> std::ffi::OsString {
     std::env::var_os("PATH").unwrap_or_else(|| "/usr/bin:/bin".into())
+}
+
+fn pane_path(environment: &[(String, String)], fallback: &std::ffi::OsStr) -> std::ffi::OsString {
+    environment
+        .iter()
+        .find_map(|(name, value)| (name == "PATH").then_some(value.as_str()))
+        .map_or_else(|| fallback.to_owned(), std::ffi::OsString::from)
+}
+
+fn agent_teams_environment(
+    shim_directory: &Path,
+    runtime_directory: &Path,
+    instance_id: &str,
+    pane_id: &str,
+    enabled: Option<&std::ffi::OsStr>,
+    ambient_tmux: Option<&std::ffi::OsStr>,
+    current_path: &std::ffi::OsStr,
+) -> Result<Vec<(String, String)>, String> {
+    if enabled != Some(std::ffi::OsStr::new("1"))
+        || ambient_tmux.is_some_and(|value| !value.is_empty())
+        || !is_executable(&shim_directory.join("tmux"))
+    {
+        return Ok(Vec::new());
+    }
+    let path = std::env::join_paths(
+        std::iter::once(shim_directory.to_path_buf())
+            .chain(std::env::split_paths(current_path).filter(|entry| entry != shim_directory)),
+    )
+    .map_err(|error| format!("tmux shim PATH is invalid: {error}"))?
+    .to_string_lossy()
+    .into_owned();
+    Ok(vec![
+        (
+            "ZENTTY_TMUX_SHIM_DIR".to_owned(),
+            shim_directory.to_string_lossy().into_owned(),
+        ),
+        ("PATH".to_owned(), path),
+        (
+            "TMUX".to_owned(),
+            format!("{}/tmux-compat,0,{pane_id}", runtime_directory.display()),
+        ),
+        ("TMUX_PANE".to_owned(), format!("%{pane_id}")),
+        (
+            "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS".to_owned(),
+            "1".to_owned(),
+        ),
+        ("ZENTTY_INSTANCE_ID".to_owned(), instance_id.to_owned()),
+    ])
+}
+
+fn shell_integration_environment(
+    integration_directory: &Path,
+    original_zdotdir: Option<&std::ffi::OsStr>,
+    original_prompt_command: Option<&std::ffi::OsStr>,
+    original_xdg_data_directories: Option<&std::ffi::OsStr>,
+) -> Vec<(String, String)> {
+    let required = [
+        ".zshenv",
+        "zentty-bash-integration.bash",
+        "zentty-zsh-integration.zsh",
+        "fish/vendor_conf.d/zentty-shell-integration.fish",
+        "nushell/vendor/autoload/zentty.nu",
+    ];
+    if required.iter().any(|relative| {
+        std::fs::symlink_metadata(integration_directory.join(relative))
+            .map_or(true, |metadata| !metadata.file_type().is_file())
+    }) {
+        return Vec::new();
+    }
+    let integration = integration_directory.to_string_lossy().into_owned();
+    let original_xdg = original_xdg_data_directories
+        .filter(|value| !value.is_empty())
+        .map_or_else(
+            || std::ffi::OsString::from("/usr/local/share:/usr/share"),
+            std::ffi::OsString::from,
+        );
+    let xdg_data_directories =
+        std::env::join_paths(std::iter::once(integration_directory.to_path_buf()).chain(
+            std::env::split_paths(&original_xdg).filter(|entry| entry != integration_directory),
+        ))
+        .map_or_else(
+            |_| format!("{integration}:/usr/local/share:/usr/share"),
+            |paths| paths.to_string_lossy().into_owned(),
+        );
+    let mut environment = vec![
+        (
+            "ZENTTY_SHELL_INTEGRATION_DIR".to_owned(),
+            integration.clone(),
+        ),
+        ("ZENTTY_SHELL_INTEGRATION".to_owned(), "1".to_owned()),
+        ("ZDOTDIR".to_owned(), integration.clone()),
+        (
+            "PROMPT_COMMAND".to_owned(),
+            ". \"$ZENTTY_SHELL_INTEGRATION_DIR/zentty-bash-integration.bash\"".to_owned(),
+        ),
+        ("ZENTTY_SHELL_INTEGRATION_XDG_DIR".to_owned(), integration),
+        ("XDG_DATA_DIRS".to_owned(), xdg_data_directories),
+    ];
+    if let Some(value) = original_zdotdir.filter(|value| !value.is_empty()) {
+        environment.push((
+            "ZENTTY_ORIGINAL_ZDOTDIR".to_owned(),
+            value.to_string_lossy().into_owned(),
+        ));
+    }
+    if let Some(value) = original_prompt_command.filter(|value| !value.is_empty()) {
+        environment.push((
+            "ZENTTY_BASH_ORIGINAL_PROMPT_COMMAND".to_owned(),
+            value.to_string_lossy().into_owned(),
+        ));
+    }
+    if let Some(value) = original_xdg_data_directories.filter(|value| !value.is_empty()) {
+        environment.push((
+            "ZENTTY_ORIGINAL_XDG_DATA_DIRS".to_owned(),
+            value.to_string_lossy().into_owned(),
+        ));
+    }
+    environment
 }
 
 fn instance_runtime_directory(
@@ -246,7 +397,11 @@ impl Drop for AgentRuntime {
 
 #[cfg(test)]
 mod tests {
-    use super::{enabled_wrapper_directories, instance_runtime_directory};
+    use super::{
+        agent_teams_environment, enabled_wrapper_directories, instance_runtime_directory,
+        pane_path, shell_integration_environment,
+    };
+    use std::collections::BTreeMap;
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
 
@@ -302,5 +457,180 @@ mod tests {
             ),
             std::path::Path::new("/tmp/zentty-agent-42-abc")
         );
+    }
+
+    #[test]
+    fn agent_teams_uses_only_an_executable_product_relative_shim_when_opted_in() {
+        let root =
+            std::env::temp_dir().join(format!("zentty-tmux-shim-selection-{}", std::process::id()));
+        let shim = root.join("libexec/zentty/tmux-shim");
+        let runtime = root.join("runtime/instance-private");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&shim).unwrap();
+        let executable = shim.join("tmux");
+        fs::write(&executable, "shim").unwrap();
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
+
+        let path =
+            std::env::join_paths(["/real/bin".as_ref(), shim.as_path(), "/usr/bin".as_ref()])
+                .unwrap();
+        let overrides = agent_teams_environment(
+            &shim,
+            &runtime,
+            "instance-secret",
+            "pane-7",
+            Some("1".as_ref()),
+            None,
+            &path,
+        )
+        .unwrap();
+        let values = overrides.into_iter().collect::<BTreeMap<_, _>>();
+        assert_eq!(values["ZENTTY_TMUX_SHIM_DIR"], shim.to_string_lossy());
+        assert_eq!(values["ZENTTY_INSTANCE_ID"], "instance-secret");
+        assert_eq!(
+            values["TMUX"],
+            format!("{}/tmux-compat,0,pane-7", runtime.display())
+        );
+        assert_eq!(values["TMUX_PANE"], "%pane-7");
+        assert_eq!(values["CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS"], "1");
+        assert_eq!(
+            std::env::split_paths(values["PATH"].as_str()).collect::<Vec<_>>(),
+            [shim.clone(), "/real/bin".into(), "/usr/bin".into()]
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn pane_path_prefers_the_composed_pane_override_and_has_an_exact_fallback() {
+        let environment = vec![
+            ("IGNORED".to_owned(), "/wrong".to_owned()),
+            ("PATH".to_owned(), "/wrappers:/usr/bin".to_owned()),
+        ];
+        assert_eq!(
+            pane_path(&environment, "/fallback".as_ref()),
+            "/wrappers:/usr/bin"
+        );
+        assert_eq!(pane_path(&[], "/fallback".as_ref()), "/fallback");
+    }
+
+    #[test]
+    fn agent_teams_preserves_disabled_active_tmux_and_missing_shim_cases() {
+        let root =
+            std::env::temp_dir().join(format!("zentty-tmux-shim-negative-{}", std::process::id()));
+        let shim = root.join("shim");
+        fs::create_dir_all(&shim).unwrap();
+        let executable = shim.join("tmux");
+        fs::write(&executable, "shim").unwrap();
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
+        let runtime = root.join("runtime");
+
+        assert!(
+            agent_teams_environment(
+                &shim,
+                &runtime,
+                "instance",
+                "pane",
+                None,
+                None,
+                "/usr/bin".as_ref(),
+            )
+            .unwrap()
+            .is_empty()
+        );
+        assert!(
+            agent_teams_environment(
+                &shim,
+                &runtime,
+                "instance",
+                "pane",
+                Some("1".as_ref()),
+                Some("/real/tmux,1,2".as_ref()),
+                "/usr/bin".as_ref(),
+            )
+            .unwrap()
+            .is_empty()
+        );
+        fs::remove_file(executable).unwrap();
+        assert!(
+            agent_teams_environment(
+                &shim,
+                &runtime,
+                "instance",
+                "pane",
+                Some("1".as_ref()),
+                None,
+                "/usr/bin".as_ref(),
+            )
+            .unwrap()
+            .is_empty()
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn complete_shell_tree_preserves_user_and_xdg_environment() {
+        let root = std::env::temp_dir().join(format!(
+            "zentty-shell-integration-environment-{}",
+            std::process::id()
+        ));
+        let integration = root.join("share/zentty/shell-integration");
+        let _ = fs::remove_dir_all(&root);
+        for relative in [
+            ".zshenv",
+            "zentty-bash-integration.bash",
+            "zentty-zsh-integration.zsh",
+            "fish/vendor_conf.d/zentty-shell-integration.fish",
+            "nushell/vendor/autoload/zentty.nu",
+        ] {
+            let path = integration.join(relative);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, "integration").unwrap();
+        }
+
+        let values = shell_integration_environment(
+            &integration,
+            Some("/user/zsh".as_ref()),
+            Some("user_prompt".as_ref()),
+            Some("/user/share:/usr/share".as_ref()),
+        )
+        .into_iter()
+        .collect::<BTreeMap<_, _>>();
+        assert_eq!(values["ZENTTY_SHELL_INTEGRATION"], "1");
+        assert_eq!(values["ZDOTDIR"], integration.to_string_lossy());
+        assert_eq!(values["ZENTTY_ORIGINAL_ZDOTDIR"], "/user/zsh");
+        assert_eq!(values["ZENTTY_BASH_ORIGINAL_PROMPT_COMMAND"], "user_prompt");
+        assert_eq!(
+            values["ZENTTY_ORIGINAL_XDG_DATA_DIRS"],
+            "/user/share:/usr/share"
+        );
+        assert_eq!(
+            std::env::split_paths(values["XDG_DATA_DIRS"].as_str()).collect::<Vec<_>>(),
+            [
+                integration.clone(),
+                "/user/share".into(),
+                "/usr/share".into()
+            ]
+        );
+        assert_eq!(
+            values["PROMPT_COMMAND"],
+            ". \"$ZENTTY_SHELL_INTEGRATION_DIR/zentty-bash-integration.bash\""
+        );
+        let fallback = shell_integration_environment(&integration, None, None, None)
+            .into_iter()
+            .collect::<BTreeMap<_, _>>();
+        assert_eq!(
+            std::env::split_paths(fallback["XDG_DATA_DIRS"].as_str()).collect::<Vec<_>>(),
+            [
+                integration.clone(),
+                "/usr/local/share".into(),
+                "/usr/share".into(),
+            ]
+        );
+        assert!(!fallback.contains_key("ZENTTY_ORIGINAL_XDG_DATA_DIRS"));
+
+        fs::remove_file(integration.join(".zshenv")).unwrap();
+        assert!(shell_integration_environment(&integration, None, None, None).is_empty());
+        fs::remove_dir_all(root).unwrap();
     }
 }

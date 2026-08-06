@@ -8,12 +8,31 @@ stage_dir="${build_dir}/staged-bundle-${backend}"
 
 rm -rf "${stage_dir}"
 mkdir -p "${stage_dir}/bin" "${stage_dir}/lib" "${stage_dir}/libexec/zentty"
+mkdir -p "${stage_dir}/share/zentty"
 cp "${build_dir}/bin/zentty-linux" "${stage_dir}/bin/"
 cp "${build_dir}/bin/zentty" "${stage_dir}/bin/"
 cp "${build_dir}/lib/libghostty-gtk-embed.so" "${stage_dir}/lib/"
 cp "${build_dir}/lib/libgtk4-layer-shell.so" "${stage_dir}/lib/"
-cp -a "${build_dir}/libexec/zentty/agent-wrappers" \
-    "${stage_dir}/libexec/zentty/"
+cp -a "${build_dir}/libexec/zentty/." "${stage_dir}/libexec/zentty/"
+cp -a "${build_dir}/share/zentty/." "${stage_dir}/share/zentty/"
+
+shim="${stage_dir}/libexec/zentty/tmux-shim/tmux"
+[[ -x "${shim}" ]] || {
+    echo "staged-bundle: executable tmux shim is missing" >&2
+    exit 1
+}
+shim_probe="${stage_dir}/shim-probe"
+cat >"${shim_probe}" <<'SHIM_PROBE'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '<%s>\n' "$@"
+SHIM_PROBE
+chmod 0700 "${shim_probe}"
+shim_output="$(ZENTTY_CLI_BIN="${shim_probe}" "${shim}" -S ignored list-panes -F '#{pane_id}')"
+[[ "${shim_output}" == $'<__tmux-compat>\n<-S>\n<ignored>\n<list-panes>\n<-F>\n<#{pane_id}>' ]] || {
+    echo "staged-bundle: tmux shim did not preserve exact CLI arguments" >&2
+    exit 1
+}
 
 dependencies="$(ldd "${stage_dir}/bin/zentty-linux")"
 if grep -F "not found" <<<"${dependencies}" >/dev/null; then
@@ -31,5 +50,8 @@ ZENTTY_LINUX_BINARY="${stage_dir}/bin/zentty-linux" \
 GDK_BACKEND="${backend}" \
 ZENTTY_LINUX_BINARY="${stage_dir}/bin/zentty-linux" \
     "${repo_root}/linux/tests/rust-agent-ipc"
+GDK_BACKEND="${backend}" \
+ZENTTY_LINUX_BINARY="${stage_dir}/bin/zentty-linux" \
+    "${repo_root}/linux/tests/rust-tmux-compat-product"
 
 echo "Zentty Linux staged bundle passed (${backend})"

@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+stage_root="${ZENTTY_STAGE_ROOT:-${repo_root}/build/linux}"
+integration="${stage_root}/share/zentty/shell-integration"
+shim="${stage_root}/libexec/zentty/tmux-shim"
+shell_name="${1:-}"
+
+fail() {
+    printf 'staged-shell-integration: error: %s\n' "$*" >&2
+    exit 1
+}
+
+[[ "${shell_name}" =~ ^(bash|zsh|fish|nu)$ ]] || {
+    echo "usage: staged-shell-integration bash|zsh|fish|nu" >&2
+    exit 64
+}
+command -v "${shell_name}" >/dev/null 2>&1 || {
+    printf 'staged-shell-integration: SKIP missing shell prerequisite: %s\n' "${shell_name}" >&2
+    exit 77
+}
+shell_binary="$(command -v "${shell_name}")"
+[[ -f "${integration}/.zshenv" ]] || fail "staged integration tree is missing"
+[[ -x "${shim}/tmux" ]] || fail "staged tmux shim is missing"
+
+fixture="$(mktemp -d)"
+trap 'rm -rf -- "${fixture}"' EXIT
+fake_cli="${fixture}/zentty"
+cat >"${fake_cli}" <<'FAKE_CLI'
+#!/usr/bin/env bash
+exit 0
+FAKE_CLI
+chmod 0700 "${fake_cli}"
+
+common_environment=(
+    env
+    "HOME=${fixture}/home"
+    "PATH=/usr/bin:/bin"
+    "ZENTTY_CLI_BIN=${fake_cli}"
+    "ZENTTY_AGENT_EVENT_COMMAND=${fake_cli} ipc agent-event"
+    "ZENTTY_SHELL_INTEGRATION=1"
+    "ZENTTY_SHELL_INTEGRATION_DIR=${integration}"
+    "ZENTTY_SHELL_INTEGRATION_XDG_DIR=${integration}"
+    "ZENTTY_TMUX_SHIM_DIR=${shim}"
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1"
+    "ZENTTY_WINDOW_ID=window"
+    "ZENTTY_WORKLANE_ID=worklane"
+    "ZENTTY_PANE_ID=pane"
+    "ZENTTY_PANE_TOKEN=token"
+    "ZENTTY_INSTANCE_ID=instance"
+    "ZENTTY_INSTANCE_SOCKET=${fixture}/instance.sock"
+)
+mkdir -p "${fixture}/home" "${fixture}/user-zdotdir"
+
+case "${shell_name}" in
+    bash)
+        # shellcheck disable=SC2016 # Expanded by the tested Bash process.
+        "${common_environment[@]}" \
+            ZENTTY_BASH_ORIGINAL_PROMPT_COMMAND='PATH=/usr/bin:/bin; export ZENTTY_USER_PROMPT_RAN=1' \
+            "${shell_binary}" --noprofile --norc -c '
+                source "$ZENTTY_SHELL_INTEGRATION_DIR/zentty-bash-integration.bash"
+                [[ "$ZENTTY_BASH_INTEGRATION_LOADED" == 1 ]]
+                [[ "$ZENTTY_USER_PROMPT_RAN" == 1 ]]
+                [[ "$(command -v tmux)" == "$ZENTTY_TMUX_SHIM_DIR/tmux" ]]
+            '
+        ;;
+    zsh)
+        cat >"${fixture}/user-zdotdir/.zshenv" <<'USER_ZSHENV'
+export ZENTTY_USER_ZSHENV_RAN=1
+USER_ZSHENV
+        # shellcheck disable=SC2016 # Expanded by the tested Zsh process.
+        "${common_environment[@]}" \
+            "ZDOTDIR=${integration}" \
+            "ZENTTY_ORIGINAL_ZDOTDIR=${fixture}/user-zdotdir" \
+            "${shell_binary}" -i -c '
+                [[ "$ZENTTY_USER_ZSHENV_RAN" == 1 ]]
+                [[ "$ZDOTDIR" == *"/user-zdotdir" ]]
+                [[ "$(command -v tmux)" == "$ZENTTY_TMUX_SHIM_DIR/tmux" ]]
+            '
+        ;;
+    fish)
+        fish_major="$("${shell_binary}" --version | sed -n 's/^fish, version \([0-9][0-9]*\).*/\1/p')"
+        [[ "${fish_major}" =~ ^[0-9]+$ && "${fish_major}" -ge 4 ]] || {
+            printf 'staged-shell-integration: SKIP fish 4 or later required\n' >&2
+            exit 77
+        }
+        fish_marker="${fixture}/fish-passed"
+        # shellcheck disable=SC2016 # Expanded by the tested Fish process.
+        if ! printf '%s\n' \
+            'not contains "$ZENTTY_SHELL_INTEGRATION_DIR" (string split : -- "$XDG_DATA_DIRS"); or exit 1' \
+            'contains /usr/local/share (string split : -- "$XDG_DATA_DIRS"); or exit 1' \
+            'contains /usr/share (string split : -- "$XDG_DATA_DIRS"); or exit 1' \
+            'test (command -v tmux) = "$ZENTTY_TMUX_SHIM_DIR/tmux"; or exit 1' \
+            "echo passed >${fish_marker}" \
+            exit | \
+            "${common_environment[@]}" \
+                "XDG_DATA_DIRS=${integration}:/usr/local/share:/usr/share" \
+                "ZENTTY_ORIGINAL_XDG_DATA_DIRS=/usr/local/share:/usr/share" \
+                script --quiet --return --command "${shell_binary} -i" /dev/null \
+                >"${fixture}/fish.log"; then
+            cat "${fixture}/fish.log" >&2
+            fail "Fish startup process failed"
+        fi
+        grep -Fxq passed "${fish_marker}" || fail "Fish startup assertions did not complete"
+        ;;
+    nu)
+        nu_marker="${fixture}/nu-passed"
+        nu_command="if (\$env.XDG_DATA_DIRS | str contains \$env.ZENTTY_SHELL_INTEGRATION_DIR) { exit 1 }; "
+        nu_command+="if not (\$env.XDG_DATA_DIRS | str contains '/usr/share') { exit 1 }; "
+        nu_command+="if (which tmux | get 0.path) != (\$env.ZENTTY_TMUX_SHIM_DIR | path join tmux) { exit 1 }; "
+        nu_command+="'passed' | save --force '${nu_marker}'; exit"
+        nu_wrapper="${fixture}/run-nu"
+        printf '#!/usr/bin/env bash\nexec %q -e %q\n' \
+            "${shell_binary}" "${nu_command}" >"${nu_wrapper}"
+        chmod 0700 "${nu_wrapper}"
+        if ! "${common_environment[@]}" \
+                "XDG_DATA_DIRS=${integration}:/usr/local/share:/usr/share" \
+                "ZENTTY_ORIGINAL_XDG_DATA_DIRS=/usr/local/share:/usr/share" \
+                script --quiet --return --command "${nu_wrapper}" /dev/null \
+                >"${fixture}/nu.log"; then
+            cat "${fixture}/nu.log" >&2
+            fail "Nushell startup process failed"
+        fi
+        grep -Fxq passed "${nu_marker}" || fail "Nushell startup assertions did not complete"
+        ;;
+esac
+
+printf 'Staged shell integration passed: %s\n' "${shell_name}"

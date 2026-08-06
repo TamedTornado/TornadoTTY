@@ -7752,6 +7752,111 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   self-tests, safe mutation-copy policy, orchestration contract, frozen tmux
   source-contract negative tests, and diff checks all pass on that source.
 
+### Phase 4 stages the compatibility shim and real shell startup hooks
+
+- **Product-relative discovery rather than another service:** The ReleaseSafe
+  bundle now stages the source-owned `tmux` shim at
+  `libexec/zentty/tmux-shim/tmux`. An opted-in pane prepends that exact
+  executable once, exports a synthetic `TMUX` endpoint inside the already
+  private application-instance runtime, and identifies the authenticated pane
+  with `TMUX_PANE`. Zentty does not inject the shim when agent teams are
+  disabled, when the staged executable is absent, or when the application was
+  itself launched inside a real tmux session. No second socket, daemon, or
+  compatibility store was added.
+- **The first Wayland assertion assumed too much about the private runtime:** A
+  preliminary product journey expected every instance socket below
+  `XDG_RUNTIME_DIR`. The real server correctly fell back to its private
+  `TMPDIR` hierarchy when the nested Wayland path plus socket name exceeded the
+  Unix-domain path limit. The test now derives the synthetic tmux endpoint from
+  the actual authenticated socket parent and still requires both paths to name
+  the same private instance. This records the fallback instead of weakening
+  endpoint isolation.
+- **The source shell integrations are staged rather than reimplemented:** The
+  product now discovers the complete source-owned Bash, Zsh, Fish, and Nushell
+  integration tree under `share/zentty/shell-integration`. Injection is
+  all-or-nothing: a missing or non-regular required file disables it. Bash's
+  prior prompt command, Zsh's prior `ZDOTDIR`, and the prior XDG data search
+  path are handed through explicitly; the standard XDG fallback is
+  `/usr/local/share:/usr/share`. The tmux shim remains first after the real
+  integration scripts repair `PATH`.
+- **Real-shell prerequisites and environmental discoveries:** Ubuntu Zsh 5.9
+  was installed for the startup journey. `apt update` also reported the
+  machine's pre-existing Unity Hub repository signature warning; installation
+  succeeded and the warning is not treated as product evidence. Portable Fish
+  4.8.1 was placed outside the repository for testing; its archive SHA-256 is
+  `39cab35242ab77bfdbce73b473000c3b045aaf2fe0951b042199bb7fdba3df78`,
+  but that GitHub release did not publish digest metadata, so provenance is a
+  remaining test-environment uncertainty. Portable Nushell 0.114.1 was also
+  placed outside the repository and its archive matched the release's official
+  `SHA256SUMS` entry
+  `8802b26edcdf1a64477567b5ce909fbae3d72d731c8f0847892ea16c6fa73c53`.
+- **Fish exposed a useful false assumption:** Real Fish 4 startup adds the
+  system's `/var/lib/snapd/desktop` data directory. The first test demanded an
+  exact three-entry XDG value and failed even though Zentty had removed only
+  its discovery entry, as designed. The repaired assertion requires the
+  injected entry to be absent and ordinary `/usr/local/share` and `/usr/share`
+  entries to remain; it does not mistake a desktop-provided extra path for a
+  product failure.
+- **Nushell required an actual PTY startup:** `nu -c` performs discovery but
+  does not execute vendor autoload hooks, while `nu -e` without a terminal
+  loaded Zentty's real hook and then correctly failed its `/dev/tty` work. A
+  piped interactive REPL was timing-sensitive and could hang in Reedline. The
+  final deterministic harness starts `nu -e` inside GNU `script`'s real PTY,
+  observes the autoloaded environment, exact shim discovery, XDG cleanup, and
+  an explicit completion marker. Environmental absence remains exit 77 rather
+  than a pass.
+- **Product testing caught path spelling, not path loss:** The first rebuilt
+  X11 product run reached the child but failed its `/usr/share` assertion
+  before any compatibility command. The inherited Ubuntu path is
+  `/usr/share/` with a trailing slash. The repaired real-product assertion
+  compares path entries after removing only a trailing slash and continues to
+  require the system data path. A line-numbered child failure receipt remains
+  in the journey so future early assertion failures are diagnosable instead of
+  appearing only as missing command totals.
+- **Mutation testing separated decisions from orchestration:** The first
+  diff-scoped safe campaign found 29 mutations: 22 caught, one
+  compiler-unviable, and six missed. Five survivors replaced the entire
+  `environment_for_pane` orchestration method, which the controlled product
+  journeys—not a fake unit runtime—exercise. The sixth inverted selection of
+  the already-composed pane `PATH`. That decision was extracted into a pure
+  helper with exact override and fallback tests. The final campaign explicitly
+  excludes only the integration-owned orchestration method and tests all 25
+  remaining Phase 4 decision mutations: 24 caught, one compiler-unviable, zero
+  missed, and zero timed out. The safe wrapper retained `gitignore=true` and
+  `copy_target=false`; the final `outcomes.json` SHA-256 is
+  `187dc22c179b385557e4862f2fd5eef23e7068d62f8b021af3961418b4feb26d`.
+- **Real-system evidence:** Standalone discovery runs first passed controlled
+  X11 sessions
+  `667013dc6ebe9586d27f26eb2c2365cb14fe1eda2ab7adcb2e71116d02ebb81b`
+  and `e0eb34e5363ee34a3eb8a7157af5a990d048f53697f6105a2c160ba82a1821b2`,
+  and controlled Wayland sessions
+  `338a4cc3a8a6c2e0e689e61e7683a984089eb83c5511390e20a6b26e2ec55f94`
+  and `56a97c78398623696b8e07e60b1263dd1f853116ed2e791b3a9b2ce132a9880d`.
+  The staged-bundle test was then tightened so the relocated product—not the
+  build-tree binary—must run the complete installed-shim, authenticated
+  CLI/socket/application handler, Ghostty surface, and PTY journey. That final
+  relocated bundle passed controlled X11 session
+  `39057b110b72c1230cb63f7c0d9d38fe650269b256726b62e2031791e48b8e10`
+  and controlled Wayland session
+  `3eafb89831a5e6188c8bd2a0e3d32d507331977c3d24e2b3855682ee6841eb44`.
+  Separate real Bash, Zsh, Fish, and Nushell processes also passed against each
+  relocated tree. After the mutation-driven pure PATH helper and complete
+  repository gates, the exact final ReleaseSafe rebuild repeated the full
+  relocated bundle plus all four real-shell startups under controlled X11
+  session
+  `ad3989a7466ab69d5685b85d0c112abb49727a36e23a0d29b8008f9b1cf423b5`
+  and controlled Wayland session
+  `a4c9459efdd760f3e078ba30b32182ec5db942df1cefd759b55a4376b0014004`.
+  This closes staging and discovery evidence only; it does not claim release
+  or full Linux qualification, and an installed real Claude agent-team
+  workflow remains Phase 5.
+- **Final Phase 4 slice gates pass:** Complete workspace tests, strict
+  all-target Clippy, formatting, changed-script ShellCheck, safe mutation-copy
+  policy, qualification schema validation, architecture and negative
+  self-tests, qualification-boundary rules, orchestration contracts, the
+  frozen tmux source contract and its negative tests, and diff checks all pass
+  on the exact candidate.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were

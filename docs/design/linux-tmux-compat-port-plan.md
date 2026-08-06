@@ -142,6 +142,43 @@ XDG paths and without modifying user configuration.
 **Exit:** the staged and installed products resolve the intended shim under the
 documented conditions and preserve a real tmux installation otherwise.
 
+#### Phase 4 shim slice acceptance
+
+The staged shim lives under the product-relative
+`libexec/zentty/tmux-shim/tmux`; neither runtime code nor tests may resolve it
+from the source tree. Linux currently uses the inherited
+`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` value as its explicit opt-in until the
+source settings surface is ported. When opted in, the application may prepend
+the executable staged shim only when the application itself was not launched
+inside a real tmux session. It exports the authenticated instance identity,
+synthetic source-compatible `TMUX`/`TMUX_PANE` routing values, and the shim
+directory to each pane. When disabled, when `TMUX` is already set, or when the
+staged shim is absent/non-executable, no compatibility PATH or tmux variables
+are injected.
+
+Tests must pin all three negative cases, duplicate-PATH behavior, private
+instance scoping, executable and product-relative staging, staged-bundle
+relocation, exact shim `exec` forwarding, and a real product journey whose
+child resolves and invokes the staged shim. Bash/Zsh/Fish/Nushell startup
+preservation is the following sub-slice and must not be inferred merely from a
+direct inherited PATH test.
+
+#### Phase 4 shell-startup slice acceptance
+
+The source shell-integration tree is staged under product-relative
+`share/zentty/shell-integration`. The pane environment may point `ZDOTDIR`,
+`PROMPT_COMMAND`, and `XDG_DATA_DIRS` at that staged tree only when the complete
+expected tree is present. Original `ZDOTDIR`, `PROMPT_COMMAND`, and
+`XDG_DATA_DIRS` values are preserved through the source-defined handoff
+variables, and the standard XDG fallback remains
+`/usr/local/share:/usr/share`; a missing tree injects nothing.
+
+Each available real shell must start as a separate process against the staged
+tree and prove that it restores the user's environment, retains ordinary XDG
+search paths, and preserves the enabled tmux shim at the front of `PATH`.
+Unavailable shells are explicit prerequisites, not passes. Static copying or
+sourcing a script with the wrong shell is not shell-startup evidence.
+
 ### Phase 5 — Real agent-team product qualification
 
 Run the same representative workflow under controlled X11 and input-capable

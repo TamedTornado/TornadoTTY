@@ -136,6 +136,17 @@ for tool in claude codex; do
     cp "${repo_root}/ZenttyResources/bin/shared/zentty-agent-wrapper" \
         "${wrapper_root}/${tool}/${tool}"
 done
+tmux_shim_root="${output_dir}/libexec/zentty/tmux-shim"
+rm -rf "${tmux_shim_root}"
+mkdir -p "${tmux_shim_root}"
+cp "${repo_root}/ZenttyResources/bin/tmux-shim/tmux" \
+    "${tmux_shim_root}/tmux"
+chmod 0755 "${tmux_shim_root}/tmux"
+shell_integration_root="${output_dir}/share/zentty/shell-integration"
+rm -rf "${shell_integration_root}"
+mkdir -p "${shell_integration_root}"
+cp -a "${repo_root}/ZenttyResources/shell-integration/." \
+    "${shell_integration_root}/"
 
 # The linker must receive the literal loader token, not a shell expansion.
 # shellcheck disable=SC2016

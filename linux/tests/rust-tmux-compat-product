@@ -26,6 +26,7 @@ trap cleanup EXIT
 cat >"${child}" <<'CHILD'
 #!/usr/bin/env bash
 set -euo pipefail
+trap 'status=$?; printf "tmux-product-child: assertion failed line=%s status=%s\n" "${LINENO}" "${status}" | tee -a "${ZENTTY_TMUX_PRODUCT_PROBE}" >&2; exit "${status}"' ERR
 
 if [[ "${ZENTTY_PANE_ID}" != pane-1 ]]; then
     IFS= read -r value
@@ -35,8 +36,33 @@ if [[ "${ZENTTY_PANE_ID}" != pane-1 ]]; then
     exit 1
 fi
 
+[[ "${CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS}" == 1 ]]
+[[ -n "${ZENTTY_INSTANCE_ID}" ]]
+[[ -x "${ZENTTY_TMUX_SHIM_DIR}/tmux" ]]
+[[ "$(readlink -f -- "$(command -v tmux)")" == "$(readlink -f -- "${ZENTTY_TMUX_SHIM_DIR}/tmux")" ]]
+instance_runtime="$(dirname -- "${ZENTTY_INSTANCE_SOCKET}")"
+[[ "${TMUX}" == "${instance_runtime}/tmux-compat,0,${ZENTTY_PANE_ID}" ]]
+[[ "${TMUX_PANE}" == "%${ZENTTY_PANE_ID}" ]]
+[[ "${ZDOTDIR}" == "${ZENTTY_SHELL_INTEGRATION_DIR}" ]]
+[[ -f "${ZENTTY_SHELL_INTEGRATION_DIR}/.zshenv" ]]
+[[ -f "${ZENTTY_SHELL_INTEGRATION_DIR}/zentty-bash-integration.bash" ]]
+[[ -f "${ZENTTY_SHELL_INTEGRATION_DIR}/fish/vendor_conf.d/zentty-shell-integration.fish" ]]
+[[ -f "${ZENTTY_SHELL_INTEGRATION_DIR}/nushell/vendor/autoload/zentty.nu" ]]
+[[ "${PROMPT_COMMAND}" == '. "$ZENTTY_SHELL_INTEGRATION_DIR/zentty-bash-integration.bash"' ]]
+[[ ":${XDG_DATA_DIRS}:" == *":${ZENTTY_SHELL_INTEGRATION_DIR}:"* ]]
+has_system_data_directory=false
+IFS=: read -r -a data_directories <<<"${XDG_DATA_DIRS}"
+for data_directory in "${data_directories[@]}"; do
+    if [[ "${data_directory%/}" == /usr/share ]]; then
+        has_system_data_directory=true
+        break
+    fi
+done
+[[ "${has_system_data_directory}" == true ]]
 pane="$(${ZENTTY_CLI_BIN} __tmux-compat display-message -p '#{pane_id}')"
 [[ "${pane}" == "%${ZENTTY_PANE_ID}" ]]
+shim_pane="$(tmux -S ignored display-message -p '#{pane_id}')"
+[[ "${shim_pane}" == "%${ZENTTY_PANE_ID}" ]]
 listed="$(${ZENTTY_CLI_BIN} __tmux-compat list-panes -F '#{pane_id}')"
 [[ "${listed}" == "%${ZENTTY_PANE_ID}" ]]
 ${ZENTTY_CLI_BIN} __tmux-compat wait-for --timeout 2 product-wait-ready &
@@ -105,7 +131,10 @@ CHILD
 chmod +x "${child}"
 
 set +e
-timeout 20s "${product}" \
+env -u TMUX -u TMUX_PANE \
+    CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 \
+    ZENTTY_TMUX_PRODUCT_PROBE="${fixture_root}/child-probe.log" \
+    timeout 20s "${product}" \
     --command "${child}" \
     --no-session-restore \
     --state-directory "${state_directory}" >"${log}" 2>&1
@@ -113,11 +142,13 @@ status=$?
 set -e
 if [[ "${status}" -ne 0 ]]; then
     cat "${log}" >&2
+    [[ ! -f "${fixture_root}/child-probe.log" ]] || cat "${fixture_root}/child-probe.log" >&2
     fail "staged product exited ${status}"
 fi
 
-[[ "$(grep -Fxc 'zentty-linux: tmux-command pane=pane-1 worklane=worklane-1 command=DisplayMessage' "${log}" || true)" -eq 2 ]] || {
+[[ "$(grep -Fxc 'zentty-linux: tmux-command pane=pane-1 worklane=worklane-1 command=DisplayMessage' "${log}" || true)" -eq 3 ]] || {
     cat "${log}" >&2
+    [[ ! -f "${fixture_root}/child-probe.log" ]] || cat "${fixture_root}/child-probe.log" >&2
     fail "real display-message did not cross the product handler"
 }
 [[ "$(grep -Fxc 'zentty-linux: tmux-command pane=pane-1 worklane=worklane-1 command=WaitFor' "${log}" || true)" -ge 7 ]] || {
@@ -126,8 +157,8 @@ fi
 }
 awk '
     /command=DisplayMessage$/ { displays += 1 }
-    displays == 1 && /command=WaitFor$/ { pending_before_independent_command = 1 }
-    END { exit !(displays == 2 && pending_before_independent_command == 1) }
+    displays == 2 && /command=WaitFor$/ { pending_before_independent_command = 1 }
+    END { exit !(displays == 3 && pending_before_independent_command == 1) }
 ' "${log}" || {
     cat "${log}" >&2
     fail "pending wait probe did not precede the independent display command"
