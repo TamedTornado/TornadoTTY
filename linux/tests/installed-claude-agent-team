@@ -49,7 +49,7 @@ case "${GDK_BACKEND:-}" in
         ;;
     *) fail "GDK_BACKEND must be x11 or wayland" ;;
 esac
-for dependency in claude dbus-run-session grep jq mktemp readlink tr; do
+for dependency in claude grep jq mktemp readlink tr; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
 [[ -x "${product}" ]] || fail "staged Zentty product is missing: ${product}"
@@ -86,7 +86,7 @@ endpoint="$(sed -n 's/^CONTROLLED_ANTHROPIC_READY=//p' "${fixture}/server.log")"
     fail "controlled endpoint did not publish a loopback address"
 
 set +e
-dbus-run-session -- env \
+env \
     HOME="${fixture}/home" \
     ANTHROPIC_AUTH_TOKEN=controlled-not-secret \
     ANTHROPIC_BASE_URL="${endpoint}" \

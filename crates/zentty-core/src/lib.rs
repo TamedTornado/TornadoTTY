@@ -19,6 +19,7 @@ pub use agent_consent::{
 };
 pub use agent_launch::{
     AgentLaunchError, AgentLaunchPlan, AgentLaunchTool, build_agent_launch_plan,
+    build_gemini_settings,
 };
 pub use agent_protocol::{AgentEvent, AgentInteractionKind, AgentProtocolError};
 pub use agent_status::{AgentPhase, AgentProgress, AgentStatusStore, PaneAgentStatus};
@@ -44,7 +45,9 @@ pub use workspace_state::{
 
 /// Stable product identity shared by platform composition roots.
 pub const PRODUCT_NAME: &str = "Zentty";
-pub use agent_adapters::{AgentAdapterError, adapt_claude_hook, adapt_codex_hook};
+pub use agent_adapters::{
+    AgentAdapterError, adapt_claude_hook, adapt_codex_hook, adapt_gemini_hook,
+};
 pub use command_palette::{
     CommandPaletteGroup, CommandPaletteItem, CommandPaletteTarget, resolve_command_palette,
 };

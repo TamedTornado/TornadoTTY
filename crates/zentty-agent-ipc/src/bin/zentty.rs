@@ -5,7 +5,7 @@ use std::io::{IsTerminal, Read, Write};
 use std::process::ExitCode;
 use std::time::Instant;
 use zentty_agent_ipc::{AgentIpcClient, launch_agent};
-use zentty_core::{AgentEvent, adapt_claude_hook, adapt_codex_hook};
+use zentty_core::{AgentEvent, adapt_claude_hook, adapt_codex_hook, adapt_gemini_hook};
 use zentty_tmux_compat::{
     Command, Invocation, TmuxCompatRequest, WAIT_POLL_INTERVAL, WaitForAction,
 };
@@ -24,9 +24,9 @@ fn run() -> Result<(), String> {
     let mut arguments = std::env::args().skip(1);
     let command = arguments.next();
     if command.as_deref() == Some("launch") {
-        let tool = arguments
-            .next()
-            .ok_or_else(|| "usage: zentty launch <claude|codex> [arguments...]".to_owned())?;
+        let tool = arguments.next().ok_or_else(|| {
+            "usage: zentty launch <claude|codex|gemini> [arguments...]".to_owned()
+        })?;
         return launch_agent(&tool, &arguments.collect::<Vec<_>>())
             .map_err(|error| error.to_string());
     }
@@ -35,7 +35,9 @@ fn run() -> Result<(), String> {
         return run_tmux_compat(&arguments);
     }
     if command.as_deref() != Some("ipc") || arguments.next().as_deref() != Some("agent-event") {
-        return Err("usage: zentty ipc agent-event [--adapter=codex|claude] [event]".to_owned());
+        return Err(
+            "usage: zentty ipc agent-event [--adapter=codex|claude|gemini] [event]".to_owned(),
+        );
     }
     let remaining = arguments.collect::<Vec<_>>();
     let adapter = remaining
@@ -55,9 +57,19 @@ fn run() -> Result<(), String> {
             .map_err(|error| error.to_string())?,
         Some("claude") => adapt_claude_hook(&input, environment_pid("ZENTTY_CLAUDE_PID"))
             .map_err(|error| error.to_string())?,
+        Some("gemini") => adapt_gemini_hook(&input, environment_pid("ZENTTY_GEMINI_PID"))
+            .map_err(|error| error.to_string())?,
         Some(value) => return Err(format!("unsupported agent adapter: {value}")),
         None => vec![AgentEvent::parse(&input).map_err(|error| error.to_string())?],
     };
+    if adapter == Some("gemini")
+        && (events.is_empty()
+            || std::env::var_os("ZENTTY_INSTANCE_SOCKET").is_none()
+            || std::env::var_os("ZENTTY_PANE_TOKEN").is_none())
+    {
+        println!("{{}}");
+        return Ok(());
+    }
     let socket = std::env::var("ZENTTY_INSTANCE_SOCKET")
         .map_err(|_| "ZENTTY_INSTANCE_SOCKET is missing".to_owned())?;
     let token = std::env::var("ZENTTY_PANE_TOKEN")
@@ -66,6 +78,9 @@ fn run() -> Result<(), String> {
         let bytes = serde_json::to_vec(&event).map_err(|error| error.to_string())?;
         AgentIpcClient::send_event(&socket, &token, &bytes, claimed_target_from_environment())
             .map_err(|error| error.to_string())?;
+    }
+    if adapter == Some("gemini") {
+        println!("{{}}");
     }
     Ok(())
 }

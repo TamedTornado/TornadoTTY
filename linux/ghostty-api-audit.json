@@ -6,7 +6,7 @@
     "local_fork_main_ref": "origin/main",
     "local_fork_main": "ac04fc276169c70d31aa6fcfc5b43fc160d6fe6e",
     "local_fork_main_merge_base": "ac04fc276169c70d31aa6fcfc5b43fc160d6fe6e",
-    "upstream_remote_tracking_ref_available": true,
+    "upstream_remote_tracking_ref_available": false,
     "embedding_series_base": "ac04fc276169c70d31aa6fcfc5b43fc160d6fe6e",
     "head": "c4849f2d87acd738e18562d436fc68245849b045"
   },

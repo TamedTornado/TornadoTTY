@@ -129,6 +129,46 @@ fn real_cli_process_supplies_default_claude_hook_event() {
 }
 
 #[test]
+fn real_cli_process_adapts_gemini_permission_and_returns_empty_hook_json() {
+    let harness = Harness::start();
+    let mut command = harness.command();
+    command
+        .arg("ipc")
+        .arg("agent-event")
+        .arg("--adapter=gemini")
+        .env("ZENTTY_GEMINI_PID", "7373");
+    let output = run_with_input(
+        command,
+        br#"{"hook_event_name":"Notification","notification_type":"ToolPermission","session_id":"gemini-real","details":{"tool_name":"write_file","path":"README.md"}}"#,
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(output.stdout, b"{}\n");
+    let received = harness
+        .receiver
+        .recv_timeout(Duration::from_secs(2))
+        .unwrap();
+    assert_eq!(
+        received.target,
+        AgentTarget::new("window-real", "lane-real", "pane-real")
+    );
+    let target = received.target.clone();
+    let mut statuses = AgentStatusStore::default();
+    statuses.apply(received, 1);
+    let status = statuses.status_for(&target).unwrap();
+    assert_eq!(status.agent_name, "Gemini");
+    assert_eq!(status.tracked_pid, Some(7373));
+    assert_eq!(
+        status.text.as_deref(),
+        Some("Allow write_file on README.md?")
+    );
+    assert!(status.requires_attention());
+}
+
+#[test]
 fn real_cli_process_rejects_bad_tokens_without_delivering_events() {
     let harness = Harness::start();
     let mut command = harness.command();
@@ -167,4 +207,25 @@ fn real_cli_process_reports_missing_socket_environment() {
     );
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("ZENTTY_INSTANCE_SOCKET is missing"));
+}
+
+#[test]
+fn gemini_hook_without_pane_routing_returns_empty_json_without_delivery() {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_zentty"));
+    command
+        .arg("ipc")
+        .arg("agent-event")
+        .arg("--adapter=gemini")
+        .env_remove("ZENTTY_INSTANCE_SOCKET")
+        .env_remove("ZENTTY_PANE_TOKEN")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let output = run_with_input(
+        command,
+        br#"{"hook_event_name":"SessionStart","session_id":"unrouted"}"#,
+    );
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"{}\n");
+    assert!(output.stderr.is_empty());
 }

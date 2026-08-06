@@ -131,7 +131,7 @@ wrapper_root="${output_dir}/libexec/zentty/agent-wrappers"
 rm -rf "${wrapper_root}"
 mkdir -p "${wrapper_root}/shared"
 cp "${output_dir}/bin/zentty" "${wrapper_root}/shared/zentty"
-for tool in claude codex; do
+for tool in claude codex gemini; do
     mkdir -p "${wrapper_root}/${tool}"
     cp "${repo_root}/ZenttyResources/bin/shared/zentty-agent-wrapper" \
         "${wrapper_root}/${tool}/${tool}"

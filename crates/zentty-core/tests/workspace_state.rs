@@ -47,6 +47,27 @@ fn active_supported_agents_produce_restorable_per_pane_drafts() {
         drafts[1].resume_command().as_deref(),
         Some("claude --resume 123e4567-e89b-12d3-a456-426614174000")
     );
+
+    let mut gemini_state =
+        WorkspaceState::from_window_recipe(&envelope.workspace.windows[0]).unwrap();
+    gemini_state.apply_agent_event(
+        event(
+            "pane-shell",
+            br#"{"version":1,"event":"session.start","agent":{"name":"Gemini","pid":4444},"session":{"id":"gemini-session"}}"#,
+        ),
+        12,
+    );
+    let gemini = gemini_state.agent_restore_drafts();
+    assert_eq!(gemini.len(), 1);
+    assert_eq!(gemini[0].pane_id, "pane-shell");
+    assert_eq!(
+        gemini[0].resume_command().as_deref(),
+        Some("gemini --resume")
+    );
+    assert_eq!(
+        gemini[0].agent_launch_snapshot.as_ref().unwrap().arguments,
+        ["gemini", "--resume"]
+    );
 }
 
 #[test]

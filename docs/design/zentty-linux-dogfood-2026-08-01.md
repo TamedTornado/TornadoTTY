@@ -8042,6 +8042,157 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   the Wayland controller's intermediate X11 session was
   `323013d189021be04ffacc349f2e3999d120828974630897f101d785382c5c9e`.
 
+### Gemini port begins from the source contract, not the generic agent path
+
+- **Scope decision:** The next product slice is the required-initial-release
+  `agent.gemini` inventory entry under issue #7. The implementation order and
+  real-system boundary are frozen in
+  `docs/design/linux-gemini-agent-port-plan.md` before production edits.
+- **Initial discovery:** The Rust agent path currently recognizes only Codex
+  and Claude in its launch enum, staged-wrapper selection, hook CLI adapter,
+  and PID environment routing. Reusing those generic pieces is appropriate,
+  but treating Gemini as only another name would miss its source-owned
+  per-pane settings overlay, notification no-op semantics, structured approval
+  text, and session-independent `gemini --resume` behavior.
+- **Test discipline:** Focused executable fixtures will prove exact exec,
+  argv, environment, and overlay contracts. They will not be presented as the
+  product integration result; final evidence must retain the installed Gemini
+  process, real Ghostty/PTY, staged helper, authenticated socket, reducer, and
+  sidebar under controlled X11 and Wayland.
+- **First real-product failure:** The first controlled X11 Gemini journey
+  crossed the staged wrapper, generated overlay, real Ghostty PTY, helper,
+  authenticated socket, reducer, and sidebar successfully, then failed its
+  cleanup assertion. The existing runtime destructor used `remove_dir`, which
+  only worked while Codex and Claude created no files below the instance
+  directory. Gemini correctly exposed that accreted assumption. The instance
+  owns a randomly named private runtime tree, so teardown now removes that
+  complete tree after shutting down the socket rather than leaving the
+  per-launch settings overlay behind. Discovery session:
+  `d8d1040a919063e4cadbbb3223624ccdc14fb9065d5f825bfca6833282b573fc`.
+- **Real-CLI harness discovery:** The first version-pinned Gemini CLI run
+  failed before Gemini loaded because the journey placed an extra symlink to
+  pnpm's executable shim in a temporary PATH directory. That shim resolves
+  its bundle relative to `$0`; executing it through the extra symlink changed
+  `$0` and produced a false missing-module failure. The repaired journey uses
+  the installed executable in its original directory and requires its
+  `gemini` basename. This was a harness-path defect, not a Zentty or Gemini
+  product defect. Failed diagnostic session:
+  `5b016dc97dc030fb6d418f74e938fffc006d34e84e2ebb386c938ccabb86b68c`.
+- **Focused-test isolation repair:** Adding a second Gemini exec test exposed
+  that `FakeTool` keyed temporary directories only by process ID and tool
+  name. Rust runs tests concurrently, so two Gemini cases deleted and
+  recreated the same overlay tree while the other was publishing it. The
+  fixture now includes a process-local atomic identity. This was a test
+  isolation race; the product uses a fresh cryptographic launch directory.
+- **First controlled product slice passes:** The staged product now selects
+  the Gemini wrapper only when a real `gemini` exists, generates a private
+  mode-0600 per-launch overlay without changing the source settings, forces
+  notifications, preserves existing fields/hooks, executes the complete
+  source hook mapping through the staged helper and authenticated socket, and
+  renders structured approval text in the sidebar. The same journey also runs
+  the reviewed Gemini CLI 0.53.0 binary in the real Ghostty PTY with no model
+  call and proves the source settings and instance runtime are clean afterward.
+  Final X11 session:
+  `5c4fcf7b489a9f808deef8dcd9dc48f9412eb507d06a4ca199675af4f7c9c30b`.
+  Final input-capable Wayland session:
+  `2fde2752289e8eeae8e8feeb5ddaa9aad38c5b805ed6b91be72d09d39c769d35`
+  (outer controlled X11 transport
+  `4d2b7acd6b7ae47ac524a25e2c1a56699f1ba18f07fba96171c92782083f5780`).
+- **Mutation receipt:** The first 34-decision safe-copy campaign caught 30,
+  classified three compiler-unviable, and missed the branch accepting a
+  string-valued Gemini permission detail. Adding that source-supported case
+  killed the survivor. The exact final campaign caught 31 of 34 and classified
+  three compiler-unviable, with zero misses or timeouts. Its `outcomes.json`
+  SHA-256 is
+  `d447e64d580b99f5302617ff54867294ff9f86727e682911b468d615c274b909`;
+  the checked `gitignore=true`, `copy_target=false` copy policy remained in
+  force.
+- **Qualification boundary:** `agent.gemini` advances to `PARTIAL`, not
+  implemented. Gemini's terminal-notification `Action required`/`Session
+  complete` enrichment, a controlled real model turn that causes the installed
+  CLI itself to emit hooks, and restored-Gemini product relaunch evidence remain
+  explicit in the inventory.
+- **Qualification exposed stale Ghostty provenance metadata:** The complete
+  post-Gemini run failed `ghostty-api-audit-inventory` because the JSON still
+  claimed an `upstream/*` remote-tracking ref exists. After the direct-parent
+  refork, the managed checkout intentionally has only the direct fork's
+  `origin`; the exact official base commit and ancestry remain locally
+  verified. The audit now records the ref as absent and explains that this is
+  not missing base evidence. Review also corrected a prose-only stale locked
+  head (`958d97ec`) to the machine-authoritative `c4849f2d8`.
+- **Installed Codex prerequisite moved:** The complete run correctly refused
+  to infer compatibility after the operator's installed CLI moved from
+  `codex-cli 0.146.0` to `0.146.1`. The exact pin now names 0.146.1; its real
+  interactive TUI, ephemeral hook configuration, authenticated event, PTY,
+  and cleanup journey must pass before the updated pin is accepted. This is
+  external-tool drift discovered by qualification, not a Gemini behavior
+  change.
+- **Drift repairs are independently green:** The corrected provenance audit
+  passed isolated session
+  `a59117f233fba25ebd9bf308fb9f71f9c8f317aaeaddc32c447d71eb8694998e`.
+  Installed Codex 0.146.1 passed its complete controlled X11 journey in
+  session
+  `b8ebfb41414991589067ccd602dda5128b0fd39e99bd45bb25a5a4e38cb133c8`.
+- **Claude timeout did not reproduce:** The first complete matrix run's
+  Wayland agent cell reached and passed the Gemini journey but timed out its
+  later installed-Claude product process with exit 124. The identical
+  installed-Claude scenario immediately passed alone under input-capable
+  Wayland session
+  `38e759bb0a0710e3784e705dd92006314def17e69b879d547153ae7e3076a3b3`
+  (outer X11 transport
+  `cd3954a7aad5d9dc2b9d0a077ca93538d281845170ab45505485ff313558f4db`).
+  No suppression or timeout broadening was applied; the complete matrix must
+  pass on rerun before publication.
+- **Combined-cell reproduction identified uncontrolled portal startup:** The
+  second complete run reproduced the Wayland timeout only after earlier agent
+  journeys in the same nested session. The Claude product log spent nearly
+  the entire 25-second bound autostarting the host GNOME portal, repeatedly
+  crashing its backend and failing a FUSE mount under the controlled runtime;
+  the agent workflow never received that time. This cell does not qualify
+  portal behavior. Setting `GTK_USE_PORTAL=0` did not prevent D-Bus service
+  activation and the exact combined X11 cell failed again, proving that the
+  first attempted isolation was ineffective. The repair removes the
+  unnecessary private `dbus-run-session` entirely: the enclosing nested
+  compositor already removes inherited D-Bus addresses, and this Claude
+  journey communicates through the real PTYs, Zentty Unix socket, and
+  controlled loopback model endpoint rather than D-Bus. Portal behavior
+  remains owned by its explicit matrix cells. The 25-second product bound was
+  not increased.
+- **Portal-isolation repair is green in both compositor cells:** The exact
+  combined X11 agent sequence passed in nested session
+  `636fec152dd5083b1b7c4636155ad19fb606bfbb78f95c76ed81e22b7af7a7c1`;
+  the exact Wayland sequence passed in input-capable nested session
+  `1b36a4f9a1c799989ca95535cdf62c290774892cbf9850a97828fe7aca33418f`
+  (outer X11 transport
+  `981e5c66fd7ce2d8c6f500724a7eb0623f988fbf3768220cc62eda731d5c2eec`).
+  Both included the real staged Gemini path, real tmux-compatibility journey,
+  real installed Claude journey, and consolidated session restore; X11 also
+  included real installed Codex. No external portal process or timeout was
+  converted into a pass.
+- **Final presently-executable qualification rerun:** After the D-Bus repair,
+  `linux/tests/qualify-local` completed successfully with the reviewed real
+  Gemini CLI 0.53.0 enabled. The authoritative summary SHA-256 is
+  `9d5e225f5f7edde7144b1f2c01fb9598933e1b05c5447d47be2721c890fe3416`.
+  Declared totals are `PASS=52`, `FAIL=0`, `BLOCKED=5`, `XFAIL=1`, and
+  `NOT_IMPLEMENTED=51`. The implemented local suite and product-boundary
+  qualification passed; release and full Linux qualification did not pass.
+  Debug Valgrind is **PASS with reviewed suppressions**, not unsuppressed
+  clean: the preserved raw receipt reports 427 errors/contexts, 6,240
+  definite bytes, and 41,460 indirect bytes; the reviewed post-suppression
+  receipt reports zero errors/contexts and zero definite/indirect bytes, with
+  all 427 errors/contexts explicitly counted as suppressed. The Valgrind
+  report SHA-256 is
+  `eae950aad7f4ae3e70a62ed57064f1b182fa7c88ebf5554a32c337665c927152`.
+  ReleaseSafe Valgrind remains XFAIL and was not broadened into a pass.
+- **Final workspace test environment check:** A post-qualification unprivileged
+  workspace rerun failed four real Unix-socket tests at socket creation with
+  `Operation not permitted`; no assertion or product behavior ran. Repeating
+  the identical `cargo test --workspace --all-targets` command outside the
+  filesystem sandbox passed every test, including all six helper CLI socket
+  cases. Strict Clippy, format, ShellCheck, inventory validation, and diff
+  whitespace validation also passed. This is recorded as a runner sandbox
+  restriction rather than hidden or reclassified as product success.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were

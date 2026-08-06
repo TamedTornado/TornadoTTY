@@ -8,6 +8,8 @@ log=""
 state_directory=""
 product_pid=""
 fake_bin=""
+real_gemini_bin=""
+private_home=""
 actor="${repo_root}/linux/tests/fixtures/controlled-agent"
 
 fail() {
@@ -24,6 +26,7 @@ cleanup() {
     [[ -z "${log}" ]] || rm -f -- "${log}"
     [[ -z "${state_directory}" ]] || rm -rf -- "${state_directory}"
     [[ -z "${fake_bin}" ]] || rm -rf -- "${fake_bin}"
+    [[ -z "${private_home}" ]] || rm -rf -- "${private_home}"
 }
 trap cleanup EXIT
 
@@ -50,10 +53,12 @@ helper="$(dirname "${product}")/zentty"
 wrapper_root="$(cd "$(dirname "${product}")/.." && pwd)/libexec/zentty/agent-wrappers"
 [[ -x "${wrapper_root}/codex/codex" ]] || fail "staged Codex wrapper is missing"
 [[ -x "${wrapper_root}/claude/claude" ]] || fail "staged Claude wrapper is missing"
+[[ -x "${wrapper_root}/gemini/gemini" ]] || fail "staged Gemini wrapper is missing"
 
 fake_bin="$(mktemp -d)"
 ln -s "${actor}" "${fake_bin}/codex"
 ln -s "${actor}" "${fake_bin}/claude"
+ln -s "${actor}" "${fake_bin}/gemini"
 
 run_adapter() {
     local name="$1"
@@ -115,5 +120,56 @@ run_adapter \
     'claude' \
     claude-question \
     'zentty-linux: sidebar-agent-status pane=pane-1 text="Claude Code · Needs input: Deploy now?" attention=true'
+run_adapter \
+    gemini \
+    'gemini' \
+    gemini-permission \
+    'zentty-linux: sidebar-agent-status pane=pane-1 text="Gemini · Needs input: Allow write_file on README.md?" attention=true'
 
-echo "Rust agent launch passed: ${backend}, wrapper=real-process, child=real-pty, helper=real-process, transport=real-unix-socket, adapters=codex+claude"
+if [[ -n "${ZENTTY_REAL_GEMINI_BIN:-}" ]]; then
+    [[ -x "${ZENTTY_REAL_GEMINI_BIN}" ]] || fail "real Gemini executable is not executable"
+    [[ "${ZENTTY_EXPECTED_GEMINI_VERSION:-}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
+        fail "ZENTTY_EXPECTED_GEMINI_VERSION must pin the reviewed real CLI version"
+    [[ "$(basename "${ZENTTY_REAL_GEMINI_BIN}")" == gemini ]] ||
+        fail "real Gemini executable must retain its installed basename"
+    real_gemini_bin="$(dirname "${ZENTTY_REAL_GEMINI_BIN}")"
+    state_directory="$(mktemp -d)"
+    private_home="$(mktemp -d)"
+    gemini_source="${private_home}/system-settings.json"
+    gemini_receipt="${private_home}/version.receipt"
+    printf '%s\n' '{"theme":"Dracula","general":{"enableNotifications":false}}' >"${gemini_source}"
+    source_sha="$(sha256sum "${gemini_source}" | awk '{print $1}')"
+    log="$(mktemp)"
+    PATH="${real_gemini_bin}:${PATH}" GDK_SCALE=1 GDK_DPI_SCALE=1 \
+        HOME="${private_home}" \
+        GEMINI_CLI_SYSTEM_SETTINGS_PATH="${gemini_source}" \
+        "${product}" \
+        --command "gemini --version >${gemini_receipt} 2>&1" \
+        --state-directory "${state_directory}" \
+        --no-session-restore >"${log}" 2>&1 &
+    product_pid=$!
+    for _ in {1..400}; do
+        [[ -s "${gemini_receipt}" ]] && ! kill -0 "${product_pid}" 2>/dev/null && break
+        sleep 0.05
+    done
+    wait "${product_pid}" || fail "real Gemini version run failed"
+    product_pid=""
+    gemini_output="$(tr -d '\r\n' <"${gemini_receipt}")"
+    [[ "${gemini_output}" == "${ZENTTY_EXPECTED_GEMINI_VERSION}" ]] ||
+        fail "real Gemini version receipt did not match the reviewed executable: ${gemini_output}"
+    [[ "$(sha256sum "${gemini_source}" | awk '{print $1}')" == "${source_sha}" ]] ||
+        fail "real Gemini launch modified the source system settings"
+    grep -Fq 'zentty-linux: child-exited-pane=pane-1' "${log}" ||
+        fail "real Gemini did not execute and exit through the Ghostty PTY"
+    socket="$(sed -n 's/^zentty-linux: agent-runtime socket=//p' "${log}" | head -1)"
+    [[ -n "${socket}" && ! -e "${socket}" && ! -e "$(dirname "${socket}")" ]] ||
+        fail "real Gemini run left its socket or overlay runtime behind"
+    rm -rf -- "${private_home}" "${state_directory}"
+    rm -f -- "${log}"
+    private_home=""
+    state_directory=""
+    real_gemini_bin=""
+    log=""
+fi
+
+echo "Rust agent launch passed: ${backend}, wrapper=real-process, child=real-pty, helper=real-process, transport=real-unix-socket, adapters=codex+claude+gemini, real-gemini=$([[ -n "${ZENTTY_REAL_GEMINI_BIN:-}" ]] && echo true || echo prerequisite-not-requested)"

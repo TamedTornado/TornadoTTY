@@ -44,6 +44,12 @@ downstream commits after that base. The unrelated inherited smooth-scroll
 series is not in this branch; it remains only on the explicitly archived
 pre-refork branch and is outside this audit.
 
+The managed checkout intentionally has only the direct fork's `origin`; it
+does not retain an `upstream/*` remote-tracking namespace. The exact official
+base commit is present and ancestry-checked locally, so the absence of that
+convenience ref is recorded as `false` in the machine audit rather than being
+mistaken for missing base evidence.
+
 | Range | Meaning | Commits | Files | Hunks | Lines | Patch SHA-256 |
 |---|---|---:|---:|---:|---:|---|
 | `ac04fc276..c4849f2d8` | GTK embedding series | 19 | 16 | 52 | +1255/-53 | `5384e073f7dc2699c36fb8a967414014eb76f50f11bfbfdb7e54474bb732c22a` |
@@ -282,7 +288,7 @@ matrix's compositor/IME/scaling/public-CI gaps remain unchanged.
    deprecation policy, or non-ELF visibility policy. C++ signature assertions
    cover only two of nine functions.
 8. **Future rebase:** this audit is exact for official base `ac04fc276` and
-   locked downstream head `958d97ec`; later official movement requires a new
+   locked downstream head `c4849f2d8`; later official movement requires a new
    normalized audit rather than silently reusing these identities.
 9. **Qualification gaps:** ReleaseSafe Valgrind, controlled native Wayland
    input/IME/resize/scaling, X11 IME/scaling, packaging, and public CI remain

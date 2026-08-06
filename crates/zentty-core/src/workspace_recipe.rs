@@ -285,6 +285,15 @@ impl PaneRestoreDraft {
             let session_id = validated_uuid(&self.session_id)?;
             return Some(format!("claude --resume {session_id}"));
         }
+        if self.tool_name.eq_ignore_ascii_case("gemini")
+            || self.tool_name.eq_ignore_ascii_case("gemini cli")
+        {
+            self.working_directory
+                .as_deref()
+                .map(str::trim)
+                .filter(|path| !path.is_empty())?;
+            return Some("gemini --resume".to_owned());
+        }
         None
     }
 }

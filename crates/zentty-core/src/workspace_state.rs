@@ -1510,6 +1510,10 @@ impl WorkspaceState {
                         "--resume".to_owned(),
                         status.session_id.clone(),
                     ]
+                } else if status.agent_name.eq_ignore_ascii_case("gemini")
+                    || status.agent_name.eq_ignore_ascii_case("gemini cli")
+                {
+                    vec!["gemini".to_owned(), "--resume".to_owned()]
                 } else {
                     return None;
                 };

@@ -365,7 +365,7 @@ fn enabled_wrapper_directories(
     wrapper_root: &std::path::Path,
     path: &std::ffi::OsStr,
 ) -> Vec<PathBuf> {
-    ["claude", "codex"]
+    ["claude", "codex", "gemini"]
         .into_iter()
         .filter_map(|tool| {
             let wrapper_directory = wrapper_root.join(tool);
@@ -391,7 +391,9 @@ impl Drop for AgentRuntime {
         if let Some(server) = self.server.take() {
             let _ = server.shutdown();
         }
-        let _ = std::fs::remove_dir(&self.runtime_directory);
+        // Per-launch agent overlays live under this instance-owned, randomly
+        // named private directory and must not outlive the socket/application.
+        let _ = std::fs::remove_dir_all(&self.runtime_directory);
     }
 }
 
@@ -412,7 +414,7 @@ mod tests {
         let wrappers = root.join("wrappers");
         let real = root.join("real");
         let _ = fs::remove_dir_all(&root);
-        for tool in ["claude", "codex"] {
+        for tool in ["claude", "codex", "gemini"] {
             fs::create_dir_all(wrappers.join(tool)).unwrap();
             let wrapper = wrappers.join(tool).join(tool);
             fs::write(&wrapper, "wrapper").unwrap();
@@ -422,10 +424,13 @@ mod tests {
         let codex = real.join("codex");
         fs::write(&codex, "real").unwrap();
         fs::set_permissions(&codex, fs::Permissions::from_mode(0o700)).unwrap();
+        let gemini = real.join("gemini");
+        fs::write(&gemini, "real").unwrap();
+        fs::set_permissions(&gemini, fs::Permissions::from_mode(0o700)).unwrap();
 
         assert_eq!(
             enabled_wrapper_directories(&wrappers, real.as_os_str()),
-            [wrappers.join("codex")]
+            [wrappers.join("codex"), wrappers.join("gemini")]
         );
         assert!(
             enabled_wrapper_directories(&wrappers, wrappers.join("codex").as_os_str()).is_empty()

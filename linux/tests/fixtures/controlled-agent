@@ -59,6 +59,18 @@ case "${profile}" in
             '{"session_id":"claude-e2e","tool_name":"AskUserQuestion","tool_input":{"questions":[{"question":"Deploy now?"}]}}' |
             "${helper}" ipc agent-event --adapter=claude PreToolUse
         ;;
+    gemini-permission)
+        require_helper
+        settings="${GEMINI_CLI_SYSTEM_SETTINGS_PATH:-}"
+        [[ -f "${settings}" ]] || fail "Gemini system-settings overlay is missing"
+        grep -Fq '"enableNotifications": true' "${settings}" ||
+            fail "Gemini terminal notifications were not enabled"
+        grep -Fq -- '--adapter=gemini' "${settings}" ||
+            fail "Gemini hook command is missing"
+        printf '%s' \
+            '{"hook_event_name":"Notification","session_id":"gemini-e2e","notification_type":"ToolPermission","message":"Action required","details":{"tool_name":"write_file","file_path":"README.md"}}' |
+            "${helper}" ipc agent-event --adapter=gemini >/dev/null
+        ;;
     claude-team)
         fixture="${ZENTTY_CONTROLLED_CLAUDE_FIXTURE:-}"
         project="${ZENTTY_CONTROLLED_AGENT_PROJECT:-}"

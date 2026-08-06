@@ -59,6 +59,15 @@ fn supported_agent_restore_commands_are_source_compatible_and_injection_safe() {
         Some("claude --resume 123e4567-e89b-12d3-a456-426614174000")
     );
 
+    draft.tool_name = "Gemini CLI".to_owned();
+    draft.session_id.clear();
+    draft.working_directory = Some("/tmp/project".to_owned());
+    assert_eq!(draft.resume_command().as_deref(), Some("gemini --resume"));
+    draft.working_directory = Some("  ".to_owned());
+    assert_eq!(draft.resume_command(), None);
+    draft.working_directory = Some("/tmp/project".to_owned());
+
+    draft.tool_name = "Claude Code".to_owned();
     draft.session_id = "$(touch /tmp/zentty-must-not-run)".to_owned();
     assert_eq!(draft.resume_command(), None);
     draft.tool_name = "Codex".to_owned();

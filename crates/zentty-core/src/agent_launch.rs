@@ -7,6 +7,7 @@ use std::fmt;
 pub enum AgentLaunchTool {
     Claude,
     Codex,
+    Gemini,
 }
 
 impl AgentLaunchTool {
@@ -19,6 +20,7 @@ impl AgentLaunchTool {
         match value {
             "claude" => Ok(Self::Claude),
             "codex" => Ok(Self::Codex),
+            "gemini" => Ok(Self::Gemini),
             _ => Err(AgentLaunchError::UnsupportedTool(value.to_owned())),
         }
     }
@@ -28,6 +30,7 @@ impl AgentLaunchTool {
         match self {
             Self::Claude => "claude",
             Self::Codex => "codex",
+            Self::Gemini => "gemini",
         }
     }
 }
@@ -95,6 +98,7 @@ pub fn build_agent_launch_plan(
             environment,
         ),
         AgentLaunchTool::Codex => Ok(codex_plan(executable_path.into(), arguments, cli_path)),
+        AgentLaunchTool::Gemini => Ok(gemini_plan(executable_path.into(), arguments, environment)),
     }
 }
 
@@ -119,7 +123,107 @@ fn integration_is_disabled(
                 .map(String::as_str)
                 == Some("1")
         }
+        AgentLaunchTool::Gemini => {
+            environment
+                .get("ZENTTY_GEMINI_HOOKS_DISABLED")
+                .map(String::as_str)
+                == Some("1")
+        }
     }
+}
+
+fn gemini_plan(
+    executable_path: String,
+    arguments: &[String],
+    environment: &BTreeMap<String, String>,
+) -> AgentLaunchPlan {
+    let mut set_environment =
+        BTreeMap::from([("ZENTTY_AGENT_TOOL".to_owned(), "gemini".to_owned())]);
+    if let Some(path) = environment.get("ZENTTY_GEMINI_SETTINGS_OVERLAY") {
+        set_environment.insert("GEMINI_CLI_SYSTEM_SETTINGS_PATH".to_owned(), path.clone());
+    }
+    AgentLaunchPlan {
+        executable_path,
+        arguments: arguments.to_vec(),
+        set_environment,
+        unset_environment: Vec::new(),
+    }
+}
+
+/// Merges Zentty's per-launch Gemini hooks into existing system settings.
+///
+/// Existing object fields and hook groups are retained, notifications are
+/// enabled for wrapped terminals, and the exact Zentty group is de-duplicated.
+///
+/// # Errors
+///
+/// Returns an error when existing settings are malformed, are not a JSON
+/// object, or when the merged value cannot be serialized.
+pub fn build_gemini_settings(
+    existing: Option<&[u8]>,
+    cli_path: &str,
+) -> Result<Vec<u8>, AgentLaunchError> {
+    let mut root = match existing {
+        Some(bytes) => serde_json::from_slice::<Value>(bytes)
+            .map_err(|error| AgentLaunchError::Serialization(error.to_string()))?,
+        None => json!({}),
+    };
+    let root = root.as_object_mut().ok_or_else(|| {
+        AgentLaunchError::Serialization("Gemini settings root must be an object".to_owned())
+    })?;
+    let general = root
+        .entry("general")
+        .or_insert_with(|| json!({}))
+        .as_object_mut()
+        .ok_or_else(|| {
+            AgentLaunchError::Serialization("Gemini general settings must be an object".to_owned())
+        })?;
+    general.insert("enableNotifications".to_owned(), Value::Bool(true));
+    let hooks = root
+        .entry("hooks")
+        .or_insert_with(|| json!({}))
+        .as_object_mut()
+        .ok_or_else(|| {
+            AgentLaunchError::Serialization("Gemini hooks settings must be an object".to_owned())
+        })?;
+    let command = format!(
+        "\"{}\" ipc agent-event --adapter=gemini || echo '{{}}'",
+        shell_escape_double_quoted(cli_path)
+    );
+    for (event, timeout) in [
+        ("SessionStart", 10_000_u64),
+        ("SessionEnd", 1_000),
+        ("BeforeAgent", 10_000),
+        ("AfterAgent", 10_000),
+        ("Notification", 10_000),
+        ("BeforeTool", 5_000),
+    ] {
+        let groups = hooks
+            .entry(event)
+            .or_insert_with(|| Value::Array(Vec::new()))
+            .as_array_mut()
+            .ok_or_else(|| {
+                AgentLaunchError::Serialization(format!(
+                    "Gemini {event} hook settings must be an array"
+                ))
+            })?;
+        groups.retain(|group| {
+            group
+                .get("hooks")
+                .and_then(Value::as_array)
+                .is_none_or(|entries| {
+                    !entries.iter().any(|entry| {
+                        entry.get("command").and_then(Value::as_str) == Some(command.as_str())
+                    })
+                })
+        });
+        groups.push(json!({
+            "matcher": "*",
+            "hooks": [{"type": "command", "command": command, "timeout": timeout}],
+        }));
+    }
+    serde_json::to_vec_pretty(&root)
+        .map_err(|error| AgentLaunchError::Serialization(error.to_string()))
 }
 
 fn claude_plan(

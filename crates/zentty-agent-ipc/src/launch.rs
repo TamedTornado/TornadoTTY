@@ -2,11 +2,14 @@ use crate::generate_pane_token;
 use std::collections::{BTreeMap, HashSet};
 use std::fmt;
 use std::fs;
+use std::fs::OpenOptions;
+use std::io::Write;
+use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use zentty_core::{AgentLaunchTool, build_agent_launch_plan};
+use zentty_core::{AgentLaunchTool, build_agent_launch_plan, build_gemini_settings};
 
 #[derive(Debug)]
 pub enum LaunchError {
@@ -42,7 +45,7 @@ impl std::error::Error for LaunchError {}
 pub fn launch_agent(tool: &str, arguments: &[String]) -> Result<(), LaunchError> {
     let tool =
         AgentLaunchTool::parse(tool).map_err(|_| LaunchError::UnsupportedTool(tool.to_owned()))?;
-    let environment = std::env::vars().collect::<BTreeMap<_, _>>();
+    let mut environment = std::env::vars().collect::<BTreeMap<_, _>>();
     let executable = resolve_real_binary(tool, &environment)?;
     let cli_path = environment
         .get("ZENTTY_CLI_BIN")
@@ -54,6 +57,18 @@ pub fn launch_agent(tool: &str, arguments: &[String]) -> Result<(), LaunchError>
         })
         .ok_or_else(|| LaunchError::Plan("Zentty CLI path is unavailable".to_owned()))?;
     let session_id = random_session_id().map_err(|error| LaunchError::Plan(error.to_string()))?;
+    if tool == AgentLaunchTool::Gemini
+        && environment
+            .get("ZENTTY_GEMINI_HOOKS_DISABLED")
+            .map(String::as_str)
+            != Some("1")
+    {
+        let overlay = prepare_gemini_overlay(&environment, &cli_path)?;
+        environment.insert(
+            "ZENTTY_GEMINI_SETTINGS_OVERLAY".to_owned(),
+            overlay.to_string_lossy().into_owned(),
+        );
+    }
     let plan = build_agent_launch_plan(
         tool,
         executable.to_string_lossy().into_owned(),
@@ -73,10 +88,87 @@ pub fn launch_agent(tool: &str, arguments: &[String]) -> Result<(), LaunchError>
         match tool {
             AgentLaunchTool::Claude => "ZENTTY_CLAUDE_PID",
             AgentLaunchTool::Codex => "ZENTTY_CODEX_PID",
+            AgentLaunchTool::Gemini => "ZENTTY_GEMINI_PID",
         },
         std::process::id().to_string(),
     );
     Err(LaunchError::Exec(command.exec()))
+}
+
+fn prepare_gemini_overlay(
+    environment: &BTreeMap<String, String>,
+    cli_path: &str,
+) -> Result<PathBuf, LaunchError> {
+    let socket = environment
+        .get("ZENTTY_INSTANCE_SOCKET")
+        .ok_or_else(|| LaunchError::Plan("ZENTTY_INSTANCE_SOCKET is missing".to_owned()))?;
+    let runtime = Path::new(socket)
+        .parent()
+        .ok_or_else(|| LaunchError::Plan("Zentty runtime directory is invalid".to_owned()))?;
+    let root = runtime.join("agent-overlays");
+    ensure_private_directory(&root)?;
+    let identifier = generate_pane_token().map_err(|error| LaunchError::Plan(error.to_string()))?;
+    let directory = root.join(format!("gemini-{}", &identifier[..32]));
+    fs::create_dir(&directory)
+        .map_err(|error| LaunchError::Plan(format!("could not create Gemini overlay: {error}")))?;
+    fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))
+        .map_err(|error| LaunchError::Plan(format!("could not protect Gemini overlay: {error}")))?;
+
+    let source = environment
+        .get("GEMINI_CLI_SYSTEM_SETTINGS_PATH")
+        .map(PathBuf::from);
+    let existing = source
+        .as_deref()
+        .filter(|path| path.is_file())
+        .map(fs::read)
+        .transpose()
+        .map_err(|error| {
+            LaunchError::Plan(format!("could not read existing Gemini settings: {error}"))
+        })?;
+    let settings = build_gemini_settings(existing.as_deref(), cli_path)
+        .map_err(|error| LaunchError::Plan(error.to_string()))?;
+    let temporary = directory.join("settings.json.tmp");
+    let destination = directory.join("settings.json");
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&temporary)
+        .map_err(|error| LaunchError::Plan(format!("could not create Gemini settings: {error}")))?;
+    file.write_all(&settings)
+        .and_then(|()| file.sync_all())
+        .map_err(|error| LaunchError::Plan(format!("could not write Gemini settings: {error}")))?;
+    fs::rename(&temporary, &destination).map_err(|error| {
+        LaunchError::Plan(format!("could not publish Gemini settings: {error}"))
+    })?;
+    Ok(destination)
+}
+
+fn ensure_private_directory(path: &Path) -> Result<(), LaunchError> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            if !metadata.file_type().is_dir() || metadata.permissions().mode() & 0o077 != 0 {
+                return Err(LaunchError::Plan(format!(
+                    "Gemini overlay root is not a private directory: {}",
+                    path.display()
+                )));
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            fs::create_dir(path).map_err(|error| {
+                LaunchError::Plan(format!("could not create Gemini overlay root: {error}"))
+            })?;
+            fs::set_permissions(path, fs::Permissions::from_mode(0o700)).map_err(|error| {
+                LaunchError::Plan(format!("could not protect Gemini overlay root: {error}"))
+            })?;
+        }
+        Err(error) => {
+            return Err(LaunchError::Plan(format!(
+                "could not inspect Gemini overlay root: {error}"
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// Finds the real agent executable while excluding Zentty's wrapper directories.

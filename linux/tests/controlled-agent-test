@@ -47,6 +47,19 @@ grep -Fxq 'ipc agent-event --adapter=claude PreToolUse' "${calls}" ||
 grep -Fq '"tool_name":"AskUserQuestion"' "${payloads}" ||
     fail "Claude question profile emitted the wrong payload"
 
+gemini_settings="${temp_dir}/gemini-settings.json"
+cat >"${gemini_settings}" <<EOF
+{"general":{"enableNotifications": true},"hooks":{"Notification":[{"hooks":[{"command":"${helper} ipc agent-event --adapter=gemini"}]}]}}
+EOF
+run_actor \
+    ZENTTY_CONTROLLED_AGENT_PROFILE=gemini-permission \
+    GEMINI_CLI_SYSTEM_SETTINGS_PATH="${gemini_settings}" \
+    "${actor}"
+grep -Fxq 'ipc agent-event --adapter=gemini' "${calls}" ||
+    fail "Gemini permission profile did not call the real helper contract"
+grep -Fq '"notification_type":"ToolPermission"' "${payloads}" ||
+    fail "Gemini permission profile emitted the wrong payload"
+
 run_actor \
     ZENTTY_CONTROLLED_AGENT_PROFILE=codex-restore \
     ZENTTY_CONTROLLED_AGENT_SESSIONS=session-one \
@@ -68,4 +81,4 @@ if run_actor \
     fail "Codex restore profile accepted an undeclared session"
 fi
 
-echo "Controlled agent tests passed: codex-permission, claude-question, codex-restore"
+echo "Controlled agent tests passed: codex-permission, claude-question, gemini-permission, codex-restore"
