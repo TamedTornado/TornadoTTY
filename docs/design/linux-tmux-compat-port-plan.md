@@ -123,7 +123,8 @@ Map typed commands onto the existing Linux workspace and `ApplicationShell`:
 5. later splits stacked vertically in that column while leader focus remains;
 6. kill/dissolve with leader-width restoration;
 7. layout/resize and worklane/window targeting; and
-8. the inventoried intentional no-ops and explicit unsupported results.
+8. bounded cross-process `wait-for` synchronization; and
+9. the inventoried intentional no-ops and explicit unsupported results.
 
 Product actions remain ordinary product actions. No application-embedded test
 scenario or test-only CLI option is allowed.
@@ -169,6 +170,36 @@ rejection, corruption quarantine or recovery, and cleanup.
 
 These are Linux security necessities, not invented user features. Their tests
 must be written before the store implementation.
+
+### Ratified `wait-for` design
+
+The running Zentty instance is the synchronization arbiter. `wait-for` uses
+the existing authenticated agent IPC socket and a bounded, in-memory set owned
+by the existing tmux product adapter; it does not create files, another socket,
+another daemon, or persistent session state. This still synchronizes separate
+CLI processes because every signal and consume operation crosses the one
+authenticated application boundary. Restart and shutdown deliberately discard
+unconsumed signals, matching Zentty's non-persistent compatibility-session
+scope.
+
+Waiting must not hold a GTK/GLib callback, IPC worker, response channel, or
+socket open. The CLI performs bounded 50 ms probes through ordinary short-lived
+requests until the source-compatible 30 second default (or explicit
+`--timeout`) expires. The product atomically consumes one named pending signal;
+signals with the same name collapse as they did with the source's single file.
+Names and the number of unconsumed signals are bounded. Invalid names,
+capacity exhaustion, timeouts, and shutdown are explicit failures rather than
+environmental passes.
+
+Acceptance evidence is test-first and includes signal-before-wait,
+wait-before-signal across separate real CLI processes, exactly-once consume,
+same-name signal collapse, independent names, invalid/oversized names, bounded
+capacity, deterministic timeout, instance isolation, and proof that a pending
+wait does not block another authenticated command or agent event. The Phase 3
+staged-product journey must cross the real CLI, authenticated socket,
+application handler, and product state on both controlled X11 and Wayland
+environments. Phase 4/5 qualification adds the installed shim boundary; a
+source-tree shim is not accepted as a substitute.
 
 ## 5. Drift controls
 

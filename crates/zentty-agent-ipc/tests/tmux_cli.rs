@@ -123,3 +123,123 @@ fn real_cli_process_forwards_piped_stdin_and_surfaces_product_failure() {
     handler.join().unwrap();
     server.shutdown().unwrap();
 }
+
+#[test]
+fn separate_cli_processes_wait_and_signal_without_holding_a_socket_worker() {
+    let (socket, server, receiver) = server();
+    let (first_probe_sender, first_probe_receiver) = mpsc::channel();
+    let handler = std::thread::spawn(move || {
+        let mut pending = false;
+        let mut first_probe = true;
+        loop {
+            let request = receiver.recv_timeout(Duration::from_secs(2)).unwrap();
+            assert_eq!(request.request.command(), TmuxCommand::WaitFor);
+            if request
+                .request
+                .arguments()
+                .iter()
+                .any(|value| value == "-S")
+            {
+                pending = true;
+                request
+                    .respond(TmuxCompatReply::success(String::new()).unwrap())
+                    .unwrap();
+            } else if pending {
+                request
+                    .respond(TmuxCompatReply::success(String::new()).unwrap())
+                    .unwrap();
+                break;
+            } else {
+                request
+                    .respond(
+                        TmuxCompatReply::failure("wait_pending", "signal is not pending").unwrap(),
+                    )
+                    .unwrap();
+                if first_probe {
+                    first_probe = false;
+                    first_probe_sender.send(()).unwrap();
+                }
+            }
+        }
+    });
+
+    let mut waiter = cli(&socket)
+        .args(["__tmux-compat", "wait-for", "--timeout", "1", "agent-ready"])
+        .spawn()
+        .unwrap();
+    first_probe_receiver
+        .recv_timeout(Duration::from_secs(1))
+        .unwrap();
+    let independent = cli(&socket)
+        .args(["__tmux-compat", "wait-for", "-S", "agent-ready"])
+        .output()
+        .unwrap();
+    assert!(independent.status.success());
+    assert!(waiter.wait().unwrap().success());
+    handler.join().unwrap();
+    server.shutdown().unwrap();
+}
+
+#[test]
+fn real_cli_reports_deterministic_wait_timeout() {
+    let (socket, server, receiver) = server();
+    let handler = std::thread::spawn(move || {
+        while let Ok(request) = receiver.recv_timeout(Duration::from_millis(250)) {
+            assert_eq!(request.request.command(), TmuxCommand::WaitFor);
+            request
+                .respond(TmuxCompatReply::failure("wait_pending", "signal is not pending").unwrap())
+                .unwrap();
+        }
+    });
+
+    let output = cli(&socket)
+        .args([
+            "__tmux-compat",
+            "wait-for",
+            "--timeout",
+            "0.06",
+            "never-ready",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        "zentty: tmux wait-for: timed out waiting for 'never-ready'\n"
+    );
+    handler.join().unwrap();
+    server.shutdown().unwrap();
+}
+
+#[test]
+fn waiting_cli_fails_promptly_when_the_instance_shuts_down() {
+    let (socket, server, receiver) = server();
+    let (probe_sender, probe_receiver) = mpsc::channel();
+    let handler = std::thread::spawn(move || {
+        let request = receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert_eq!(request.request.command(), TmuxCommand::WaitFor);
+        request
+            .respond(TmuxCompatReply::failure("wait_pending", "signal is not pending").unwrap())
+            .unwrap();
+        probe_sender.send(()).unwrap();
+    });
+
+    let waiter = cli(&socket)
+        .args(["__tmux-compat", "wait-for", "--timeout", "30", "shutdown"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    probe_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+    handler.join().unwrap();
+    server.shutdown().unwrap();
+    let output = waiter.wait_with_output().unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .starts_with("zentty: ")
+    );
+}

@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use zentty_core::{AgentTarget, PaneState, WorklaneState, WorkspaceState};
 use zentty_tmux_compat::{
     Command, FormatRenderer, PaneTarget, ParsedArguments, SendKeys, TeamStore, TmuxCompatReply,
-    TmuxCompatRequest,
+    TmuxCompatRequest, WaitForAction, WaitForSignals,
 };
 
 const DEFAULT_LIST_PANES: &str = "#{pane_id} #{pane_index} #{pane_title} #{?pane_active,*,-}";
@@ -13,6 +13,7 @@ const DEFAULT_SPLIT_PRINT: &str = "#{pane_id}";
 #[derive(Default)]
 pub(crate) struct TmuxCompatProduct {
     store: TeamStore,
+    wait_for: WaitForSignals,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -371,6 +372,7 @@ impl TmuxCompatProduct {
                 self.set_buffer(request.arguments(), request.standard_input())
             }
             Command::NewSession => Ok(format!("@{}\n", target.worklane_id)),
+            Command::WaitFor => self.wait_for(request.arguments()),
             Command::SelectWindow
             | Command::RenameWindow
             | Command::NewWindow
@@ -386,6 +388,23 @@ impl TmuxCompatProduct {
                 failure("output_limit", "tmux compatibility output limit exceeded")
             }),
             Err((code, message)) => failure(code, message),
+        }
+    }
+
+    fn wait_for(&mut self, arguments: &[String]) -> Result<String, (&'static str, String)> {
+        match WaitForAction::parse(arguments) {
+            Ok(WaitForAction::Signal(name)) => self
+                .wait_for
+                .signal(name)
+                .map(|()| String::new())
+                .map_err(|message| ("wait_capacity", message.to_owned())),
+            Ok(WaitForAction::Wait { name, .. }) if self.wait_for.consume(&name) => {
+                Ok(String::new())
+            }
+            Ok(WaitForAction::Wait { .. }) => {
+                Err(("wait_pending", "wait-for signal is not pending".to_owned()))
+            }
+            Err(message) => Err(("invalid_arguments", message.to_owned())),
         }
     }
 
@@ -784,6 +803,92 @@ mod tests {
     }
 
     #[test]
+    fn wait_for_signal_is_instance_scoped_and_consumed_once() {
+        let mut first = TmuxCompatProduct::default();
+        let mut second = TmuxCompatProduct::default();
+        let mut state = workspace();
+        let pending = first.handle(
+            &mut state,
+            &target("pane-1"),
+            &request("wait-for", &["agent-ready"]),
+        );
+        assert_eq!(pending.error().unwrap().code(), "wait_pending");
+
+        assert!(
+            first
+                .handle(
+                    &mut state,
+                    &target("pane-2"),
+                    &request("wait-for", &["-S", "agent-ready"]),
+                )
+                .is_ok()
+        );
+        assert!(
+            first
+                .handle(
+                    &mut state,
+                    &target("pane-1"),
+                    &request("wait-for", &["agent-ready"]),
+                )
+                .is_ok()
+        );
+        let consumed = first.handle(
+            &mut state,
+            &target("pane-1"),
+            &request("wait-for", &["agent-ready"]),
+        );
+        assert_eq!(consumed.error().unwrap().code(), "wait_pending");
+        let isolated = second.handle(
+            &mut state,
+            &target("pane-1"),
+            &request("wait-for", &["agent-ready"]),
+        );
+        assert_eq!(isolated.error().unwrap().code(), "wait_pending");
+    }
+
+    #[test]
+    fn wait_for_rejects_bad_names_and_preserves_independent_signals() {
+        let mut product = TmuxCompatProduct::default();
+        let mut state = workspace();
+        let invalid = product.handle(
+            &mut state,
+            &target("pane-1"),
+            &request("wait-for", &["line\nbreak"]),
+        );
+        assert_eq!(invalid.error().unwrap().code(), "invalid_arguments");
+
+        for name in ["first", "second"] {
+            assert!(
+                product
+                    .handle(
+                        &mut state,
+                        &target("pane-1"),
+                        &request("wait-for", &["-S", name]),
+                    )
+                    .is_ok()
+            );
+        }
+        assert!(
+            product
+                .handle(
+                    &mut state,
+                    &target("pane-1"),
+                    &request("wait-for", &["second"]),
+                )
+                .is_ok()
+        );
+        assert!(
+            product
+                .handle(
+                    &mut state,
+                    &target("pane-1"),
+                    &request("wait-for", &["first"]),
+                )
+                .is_ok()
+        );
+    }
+
+    #[test]
     fn source_formats_options_and_session_output_are_exact() {
         let mut product = TmuxCompatProduct::default();
         let mut state = workspace();
@@ -850,7 +955,7 @@ mod tests {
             let reply = product.handle(&mut state, &target("pane-1"), &request(command, &[]));
             assert_eq!(reply.stdout(), Some(""), "{command}");
         }
-        for command in ["split-window", "send-keys", "wait-for", "capture-pane"] {
+        for command in ["split-window", "send-keys", "capture-pane"] {
             let reply = product.handle(&mut state, &target("pane-1"), &request(command, &[]));
             let error = reply.error().unwrap();
             assert_eq!(error.code(), "not_implemented", "{command}");

@@ -12,6 +12,7 @@ mod protocol;
 mod send_keys;
 mod store;
 mod target;
+mod wait_for;
 
 pub use arguments::ParsedArguments;
 pub use command::{Command, CommandError};
@@ -21,3 +22,4 @@ pub use protocol::{ProtocolError, TmuxCompatReply, TmuxCompatReplyError, TmuxCom
 pub use send_keys::SendKeys;
 pub use store::{StoreError, TeamAnchor, TeamStore, TeamTransition};
 pub use target::PaneTarget;
+pub use wait_for::{DEFAULT_WAIT_TIMEOUT, WAIT_POLL_INTERVAL, WaitForAction, WaitForSignals};

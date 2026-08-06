@@ -3,9 +3,12 @@
 use serde_json::Value;
 use std::io::{IsTerminal, Read, Write};
 use std::process::ExitCode;
+use std::time::Instant;
 use zentty_agent_ipc::{AgentIpcClient, launch_agent};
 use zentty_core::{AgentEvent, adapt_claude_hook, adapt_codex_hook};
-use zentty_tmux_compat::{Command, Invocation, TmuxCompatRequest};
+use zentty_tmux_compat::{
+    Command, Invocation, TmuxCompatRequest, WAIT_POLL_INTERVAL, WaitForAction,
+};
 
 fn main() -> ExitCode {
     match run() {
@@ -93,26 +96,57 @@ fn run_tmux_compat(arguments: &[String]) -> Result<(), String> {
         .map_err(|_| "ZENTTY_INSTANCE_SOCKET is missing".to_owned())?;
     let token = std::env::var("ZENTTY_PANE_TOKEN")
         .map_err(|_| "ZENTTY_PANE_TOKEN is missing".to_owned())?;
-    let reply = AgentIpcClient::send_tmux(
-        socket,
-        &token,
-        invocation.command.as_str(),
-        &invocation.arguments,
-        standard_input,
-        claimed_target_from_environment(),
-    )
-    .map_err(|error| error.to_string())?;
-    if let Some(stdout) = reply.stdout() {
-        std::io::stdout()
-            .write_all(stdout.as_bytes())
-            .map_err(|error| format!("could not write tmux output: {error}"))?;
-    }
-    if let Some(error) = reply.error() {
-        return Err(format!(
-            "tmux {}: {}",
+    let wait = if invocation.command == Command::WaitFor {
+        match WaitForAction::parse(&invocation.arguments).map_err(str::to_owned)? {
+            WaitForAction::Wait { name, timeout } => Some((name, timeout)),
+            WaitForAction::Signal(_) => None,
+        }
+    } else {
+        None
+    };
+    let deadline = wait
+        .as_ref()
+        .map(|(_, timeout)| {
+            Instant::now()
+                .checked_add(*timeout)
+                .ok_or_else(|| "wait-for timeout is too large".to_owned())
+        })
+        .transpose()?;
+    loop {
+        let reply = AgentIpcClient::send_tmux(
+            &socket,
+            &token,
             invocation.command.as_str(),
-            error.message()
-        ));
+            &invocation.arguments,
+            standard_input.clone(),
+            claimed_target_from_environment(),
+        )
+        .map_err(|error| error.to_string())?;
+        if reply
+            .error()
+            .is_some_and(|error| error.code() == "wait_pending")
+            && let (Some((name, _)), Some(deadline)) = (&wait, deadline)
+        {
+            let now = Instant::now();
+            if now >= deadline {
+                return Err(format!("tmux wait-for: timed out waiting for '{name}'"));
+            }
+            std::thread::sleep(WAIT_POLL_INTERVAL.min(deadline.duration_since(now)));
+            continue;
+        }
+        if let Some(stdout) = reply.stdout() {
+            std::io::stdout()
+                .write_all(stdout.as_bytes())
+                .map_err(|error| format!("could not write tmux output: {error}"))?;
+        }
+        if let Some(error) = reply.error() {
+            return Err(format!(
+                "tmux {}: {}",
+                invocation.command.as_str(),
+                error.message()
+            ));
+        }
+        break;
     }
     Ok(())
 }

@@ -7673,6 +7673,85 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   it does not claim that the remaining compatibility commands, installed shim,
   or full Linux qualification are complete.
 
+### `wait-for` moved from unsafe files to the existing authenticated instance
+
+- **Source discovery:** Both macOS implementations special-case `wait-for` in
+  the CLI, poll every 50 ms, and represent one pending named signal with a file
+  directly under `/tmp`. The handler also contains a blocking file-backed
+  implementation. The file name sanitization can alias distinct source names,
+  the file is outside the instance's private runtime boundary, and its lock is
+  not a cross-process serialization primitive. Reproducing that implementation
+  on Linux would add security and lifecycle risk rather than preserve a user
+  feature.
+- **Ratified Linux correction:** The already-running Zentty application is the
+  only synchronization arbiter. Its existing `TmuxCompatProduct` owns a bounded
+  in-memory set of pending names. Every separate CLI process uses the existing
+  authenticated agent socket for a short signal or consume probe; no second
+  daemon, socket, PTY owner, filesystem store, or blocked GLib callback was
+  added. The CLI retains the source's 50 ms poll interval and 30 second default
+  timeout. Restart/shutdown discards pending signals because the compatibility
+  session itself is not persistent.
+- **Bounds and semantics:** Names are non-empty, control-free, and at most 128
+  UTF-8 bytes. At most 256 distinct unconsumed names exist per application
+  instance. Repeated same-name signals collapse, one successful waiter consumes
+  the signal, independent names do not interfere, invalid timeout values fail,
+  and capacity exhaustion is explicit. A pending probe returns the internal
+  `wait_pending` result only to the CLI loop; the eventual user-visible result
+  is success, deterministic timeout, or transport/shutdown failure.
+- **Test-first evidence:** Pure tests cover parsing, exact 125 ms timeout,
+  unsafe/oversized names, non-finite/negative/unrepresentable durations,
+  collapse, exactly-once consume, independent names, and the exact capacity
+  boundary. Product tests cover instance isolation and canonical cross-pane
+  signal/consume behavior. Separate-process CLI/socket tests cover
+  wait-before-signal, deterministic timeout, and prompt failure after server
+  shutdown. The pre-existing held-request transport test continues to prove an
+  authenticated agent event crosses while another tmux request is outstanding.
+- **Strict-lint repair:** The first all-target Clippy pass rejected the public
+  bounded-set `len` accessor without the corresponding `is_empty` contract.
+  The accessor was added and asserted before and after consumption; no lint
+  allowance was introduced.
+- **Mutation testing strengthened exact boundaries:** The first focused
+  29-mutant campaign caught 23, rejected three as compiler-unviable, and missed
+  three. Survivors showed that the tests did not distinguish the accepted
+  128-byte name boundary, did not observe non-empty state through `is_empty`,
+  and retained a redundant finite/sign pre-check already enforced by
+  `Duration::try_from_secs_f64`. Exact boundary assertions were added and the
+  redundant branch was removed. A subsequent campaign was externally
+  interrupted after 24 of 27 mutants and is not used as evidence. The complete
+  exact-source rerun tested 27 mutants: 24 caught, three compiler-unviable,
+  zero missed, and zero timed out. Its `outcomes.json` SHA-256 is
+  `0b5c1c4908fd5bd72c7b4cc9bfc95708edaad5b65939a4e847684af5c59520ca`;
+  the required `gitignore=true` and `copy_target=false` policy remained active.
+- **Harness discovery and repair:** The first expanded X11 journey invoked the
+  ambient `tmux` binary under the false assumption that Phase 4 shim staging was
+  already complete. No `WaitFor` request reached the product, the child exited,
+  and the log-count assertion correctly failed. The Phase 3 journey now invokes
+  the real staged Zentty CLI directly and does not claim the future installed
+  shim boundary. The plan explicitly assigns that boundary to Phase 4/5; a
+  source-tree shim is not accepted as evidence.
+- **Real-system result:** After that harness repair, the rebuilt ReleaseSafe
+  product passed the complete CLI/socket/application/product/Ghostty/PTY
+  journey, including wait-before-signal, signal-before-wait, deterministic
+  timeout, and an independent command during a pending wait. Controlled X11
+  session `7ee780e5dc2c55044f0627480a36310956b73ed1745e609fd471cd4d2fd35ee7`
+  and controlled Wayland session
+  `a499a6f3ac9255c89d27387ecf6b560f0a25ab1db1eba2e5eff8c1aef62b77ca`
+  passed. Installed shim discovery remains deliberately open; this is not a
+  release-qualification or full-Linux-qualification claim.
+- **Exact final candidate requalified:** After the mutation-driven boundary
+  repair and strict-lint cleanup, a fresh ReleaseSafe rebuild passed the same
+  complete journey. The harness was then tightened to require a pending probe
+  to appear in the product log before the independent display command, rather
+  than relying only on command totals, and the exact candidate passed
+  controlled X11 session
+  `e2fc815ac04227071561f3f9070a7312e431c64c2f10844cd2a5225b92dc5120`
+  and controlled Wayland session
+  `be0ea1a14e0b8b14d06c42cadb71553b460eca68d7f49d29691ef4493b9c998c`.
+  Complete workspace tests, strict all-target Clippy, formatting, changed-script
+  ShellCheck, qualification schema validation, architecture and negative
+  self-tests, safe mutation-copy policy, orchestration contract, frozen tmux
+  source-contract negative tests, and diff checks all pass on that source.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were
