@@ -2204,10 +2204,29 @@ impl ApplicationShell {
     }
 
     fn create_surface(shell: &Rc<RefCell<Self>>, pane_id: &str) -> Result<(), String> {
+        Self::create_surface_configured(shell, pane_id, None)
+    }
+
+    fn create_surface_with_command(
+        shell: &Rc<RefCell<Self>>,
+        pane_id: &str,
+        command: String,
+    ) -> Result<(), String> {
+        Self::create_surface_configured(shell, pane_id, Some(command))
+    }
+
+    fn create_surface_configured(
+        shell: &Rc<RefCell<Self>>,
+        pane_id: &str,
+        command: Option<String>,
+    ) -> Result<(), String> {
         let (runtime, config) = {
             let mut shell = shell.borrow_mut();
             let runtime = shell.runtime.clone();
-            let config = shell.surface_config(pane_id)?;
+            let mut config = shell.surface_config(pane_id)?;
+            if command.is_some() {
+                config.command = command;
+            }
             (runtime, config)
         };
         let surface = match runtime.create_surface(&config) {

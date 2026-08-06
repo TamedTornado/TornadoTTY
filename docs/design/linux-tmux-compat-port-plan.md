@@ -196,6 +196,30 @@ Only the external Claude/model response may be controlled. Receipts must prove
 the shim, CLI, socket, server, product action, Ghostty surface, PTY, and child
 process boundaries. Missing dependencies are not passes.
 
+#### Phase 5 installed-Claude slice acceptance
+
+The qualification actor is the installed, version-checked Claude Code binary
+running interactively in the real leader Ghostty PTY. It receives an isolated
+temporary Claude profile and workspace and must run with nonessential traffic
+and automatic updates disabled. Its only controlled component is a bounded
+loopback Anthropic Messages endpoint that returns a reviewed sequence of model
+content/tool blocks; the test must not replace Claude, its team coordinator,
+its process spawning, tmux discovery, the Zentty shim/CLI/socket, Ghostty, or
+any PTY with a fake.
+
+The controlled endpoint must discard authorization header values, reject
+non-loopback peers, bound headers, bodies, connections, and duration, validate
+the request path and required team tools, and write only a sanitized
+machine-readable receipt. Claude version or tool-schema drift is a hard failure
+requiring review, not an automatic fixture update. The test begins from a
+clean private profile, proves a named real teammate process is created through
+the relocated shim, observes its independent Ghostty terminal and API request,
+routes real input/capture to both leader and teammate, then tears the teammate
+down and proves exact leader-width restoration and no surviving Claude,
+server, socket, or private-profile process. It runs in controlled X11 and
+input-capable Wayland; missing Claude or controlled-model prerequisites are
+explicit prerequisites rather than passes.
+
 ## 4. Store and wait-for corrections requiring explicit decisions
 
 The source uses an in-process `NSLock` around load/modify/save, which does not

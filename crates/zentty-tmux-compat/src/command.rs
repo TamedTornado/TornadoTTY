@@ -3,6 +3,7 @@ use std::fmt;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Command {
     SplitWindow,
+    RespawnPane,
     SendKeys,
     SelectPane,
     SelectWindow,
@@ -32,6 +33,7 @@ impl Command {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::SplitWindow => "split-window",
+            Self::RespawnPane => "respawn-pane",
             Self::SendKeys => "send-keys",
             Self::SelectPane => "select-pane",
             Self::SelectWindow => "select-window",
@@ -66,6 +68,7 @@ impl Command {
     pub fn parse(value: &str) -> Result<Self, CommandError> {
         match value.to_ascii_lowercase().as_str() {
             "split-window" | "splitw" => Ok(Self::SplitWindow),
+            "respawn-pane" | "respawnp" => Ok(Self::RespawnPane),
             "send-keys" | "send" => Ok(Self::SendKeys),
             "select-pane" | "selectp" => Ok(Self::SelectPane),
             "select-window" | "selectw" => Ok(Self::SelectWindow),

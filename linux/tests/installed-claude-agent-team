@@ -1,0 +1,158 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
+endpoint_binary="${repo_root}/target/release-safe/controlled_anthropic"
+actor="${repo_root}/linux/tests/fixtures/controlled-agent"
+expected_version="2.1.201 (Claude Code)"
+fixture=""
+product_pid=""
+server_pid=""
+
+fail() {
+    if [[ -n "${fixture}" && -d "${fixture}" ]]; then
+        for evidence in product.log helper.log server.log model-receipt.jsonl leader.capture teammate.capture teammate-after-input.capture child-env; do
+            [[ ! -f "${fixture}/${evidence}" ]] || {
+                printf '%s\n' "--- ${evidence} ---" >&2
+                cat "${fixture}/${evidence}" >&2
+            }
+        done
+    fi
+    printf 'installed-claude-agent-team: error: %s\n' "$*" >&2
+    exit 1
+}
+
+cleanup() {
+    if [[ "${product_pid}" =~ ^[1-9][0-9]*$ ]]; then
+        kill -TERM "${product_pid}" 2>/dev/null || true
+        wait "${product_pid}" 2>/dev/null || true
+    fi
+    if [[ "${server_pid}" =~ ^[1-9][0-9]*$ ]]; then
+        kill -TERM "${server_pid}" 2>/dev/null || true
+        wait "${server_pid}" 2>/dev/null || true
+    fi
+    [[ -z "${fixture}" ]] || rm -rf -- "${fixture}"
+}
+trap cleanup EXIT
+
+case "${GDK_BACKEND:-}" in
+    x11)
+        [[ -z "${ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID:-}" ]] ||
+            fail "input-capable Wayland must force GDK_BACKEND=wayland"
+        [[ "${ZENTTY_NESTED_X11_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+            fail "X11 must run through linux/tests/nested-x11"
+        ;;
+    wayland)
+        [[ "${ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+            fail "Wayland must run through linux/tests/nested-wayland-input"
+        ;;
+    *) fail "GDK_BACKEND must be x11 or wayland" ;;
+esac
+for dependency in claude dbus-run-session grep jq mktemp readlink tr; do
+    command -v "${dependency}" >/dev/null || fail "${dependency} is required"
+done
+[[ -x "${product}" ]] || fail "staged Zentty product is missing: ${product}"
+[[ -x "${actor}" ]] || fail "controlled agent actor is missing: ${actor}"
+
+claude_version="$(claude --version 2>/dev/null)"
+[[ "${claude_version}" == "${expected_version}" ]] ||
+    fail "review the installed Claude contract before accepting version: ${claude_version}"
+claude_binary="$(readlink -f -- "$(command -v claude)")"
+[[ -x "${claude_binary}" ]] || fail "installed Claude target is not executable"
+[[ "${claude_binary}" == */versions/2.1.201 ]] ||
+    fail "review the installed Claude target before accepting: ${claude_binary}"
+
+[[ -x "${endpoint_binary}" ]] ||
+    fail "ReleaseSafe test endpoint is missing; run linux/scripts/build-local first"
+
+fixture="$(mktemp -d)"
+mkdir -p "${fixture}/home/.local/bin" "${fixture}/project"
+ln -s "${claude_binary}" "${fixture}/home/.local/bin/claude"
+cat >"${fixture}/home/.claude.json" <<JSON
+{"hasCompletedOnboarding":true,"lastOnboardingVersion":"2.1.201","theme":"dark","projects":{"${fixture}/project":{"hasTrustDialogAccepted":true,"projectOnboardingSeenCount":1}}}
+JSON
+
+"${endpoint_binary}" --receipt "${fixture}/model-receipt.jsonl" \
+    >"${fixture}/server.log" 2>&1 &
+server_pid=$!
+for _ in {1..200}; do
+    grep -q '^CONTROLLED_ANTHROPIC_READY=' "${fixture}/server.log" && break
+    kill -0 "${server_pid}" 2>/dev/null || fail "controlled endpoint exited before readiness"
+    sleep 0.01
+done
+endpoint="$(sed -n 's/^CONTROLLED_ANTHROPIC_READY=//p' "${fixture}/server.log")"
+[[ "${endpoint}" =~ ^http://127\.0\.0\.1:[1-9][0-9]*$ ]] ||
+    fail "controlled endpoint did not publish a loopback address"
+
+set +e
+dbus-run-session -- env \
+    HOME="${fixture}/home" \
+    ANTHROPIC_AUTH_TOKEN=controlled-not-secret \
+    ANTHROPIC_BASE_URL="${endpoint}" \
+    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 \
+    DISABLE_AUTOUPDATER=1 \
+    CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 \
+    ZENTTY_CONTROLLED_AGENT_PROFILE=claude-team \
+    ZENTTY_CONTROLLED_CLAUDE_FIXTURE="${fixture}" \
+    ZENTTY_CONTROLLED_CLAUDE_RECEIPT="${fixture}/model-receipt.jsonl" \
+    ZENTTY_CONTROLLED_AGENT_PROJECT="${fixture}/project" \
+    timeout 25s "${product}" \
+        --command "${actor}" \
+        --no-session-restore \
+        --state-directory "${fixture}/state" \
+        >"${fixture}/product.log" 2>&1
+status=$?
+set -e
+((status == 0)) || fail "staged product exited ${status}"
+grep -Fxq 'helper=complete' "${fixture}/helper.log" || fail "real-pane actor did not finish"
+
+grep -Fq 'command=RespawnPane' "${fixture}/product.log" || fail "Claude did not use respawn-pane"
+grep -Fq 'zentty-linux: tmux-respawn pane=pane-2' "${fixture}/product.log" ||
+    fail "Zentty did not replace the teammate PTY child"
+grep -Fq 'command=SendKeys' "${fixture}/product.log" || fail "real input did not cross the facade"
+grep -Fq 'zentty-linux: tmux-close pane=pane-2' "${fixture}/product.log" ||
+    fail "teammate pane did not close"
+grep -Fq 'zentty-linux: tmux-close pane=pane-1' "${fixture}/product.log" ||
+    fail "leader pane did not close"
+grep -Fq 'geometry=worklane-1:column-worklane-1[pane-1],column-pane-2[pane-2]' \
+    "${fixture}/product.log" || fail "real teammate geometry was not rendered"
+grep -Fq 'geometry=worklane-1:column-worklane-1[pane-1]' "${fixture}/product.log" ||
+    fail "leader geometry was not restored"
+instance_socket="$(sed -n 's/^zentty-linux: agent-runtime socket=//p' "${fixture}/product.log" | tail -n 1)"
+[[ "${instance_socket}" == /* && ! -e "${instance_socket}" ]] ||
+    fail "authenticated instance socket survived product teardown: ${instance_socket}"
+
+jq -e -s '
+    any(.[]; .role == "leader_initial" and .agentTool and .sendMessageTool) and
+    any(.[]; .role == "leader_followup" and .toolResultCount == 1 and .toolResultErrors == 0) and
+    any(.[]; .role == "teammate" and .agentTool and .sendMessageTool)
+' "${fixture}/model-receipt.jsonl" >/dev/null || fail "sanitized model receipt is incomplete"
+grep -Fxq "claude=<${product%/bin/zentty-linux}/libexec/zentty/agent-wrappers/claude/claude> tmux=<${product%/bin/zentty-linux}/libexec/zentty/tmux-shim/tmux> endpoint=<${endpoint}>" \
+    "${fixture}/child-env" || fail "child did not resolve the relocated staged wrappers"
+if grep -RFq 'controlled-not-secret' \
+    "${fixture}/model-receipt.jsonl" "${fixture}/server.log" "${fixture}/product.log"; then
+    fail "authorization value escaped into retained evidence"
+fi
+
+kill -TERM "${server_pid}" 2>/dev/null || true
+wait "${server_pid}" 2>/dev/null || true
+server_pid=""
+survivors=""
+for _ in {1..100}; do
+    survivors="$(grep -lF -- "${fixture}" /proc/[1-9]*/environ 2>/dev/null || true)"
+    [[ -z "${survivors}" ]] && break
+    sleep 0.05
+done
+if [[ -n "${survivors}" ]]; then
+    while IFS= read -r environment_path; do
+        process_path="${environment_path%/environ}"
+        printf 'survivor %s: ' "${process_path##*/}" >&2
+        tr '\0' ' ' <"${process_path}/cmdline" >&2 || true
+        printf '\n' >&2
+    done <<<"${survivors}"
+    fail "private-profile processes survived teardown: ${survivors}"
+fi
+
+printf 'Installed Claude agent-team integration passed: %s, version=2.1.201, model=controlled-loopback, claude=real, shim=staged, cli=real, socket=real, ghostty=real, ptys=real, teammate=real, input=real, teardown=real\n' \
+    "${GDK_BACKEND}"

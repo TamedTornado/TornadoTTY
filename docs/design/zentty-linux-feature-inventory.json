@@ -702,7 +702,7 @@
       "linux_owner_issue": 7,
       "implementation_status": "PARTIAL",
       "focused_tests": ["crates/zentty-core/tests/agent_adapters.rs", "crates/zentty-core/tests/agent_launch.rs", "crates/zentty-agent-ipc/tests/launch_cli.rs"],
-      "product_scenarios": ["linux/tests/rust-agent-ipc"],
+      "product_scenarios": ["linux/tests/rust-agent-ipc", "linux/tests/installed-claude-agent-team"],
       "test_plan": "Exercise the real Claude hook command, session store, Unix IPC, PTY, and sidebar with only the remote model response controlled.",
       "alternative_or_blocker": null
     },
@@ -716,9 +716,9 @@
       "origin": "PORT_PARITY",
       "user_impact": "Without the compatibility path, Claude Code agent teams cannot create and control their source-equivalent subordinate pane topology inside Zentty even when ordinary terminals and Claude hooks work.",
       "linux_owner_issue": 14,
-      "implementation_status": "NOT_IMPLEMENTED",
-      "focused_tests": [],
-      "product_scenarios": [],
+      "implementation_status": "PARTIAL",
+      "focused_tests": ["crates/zentty-tmux-compat/tests/protocol_contract.rs", "crates/zentty-linux/src/tmux_compat.rs", "crates/zentty-test-support/src/bin/controlled_anthropic.rs"],
+      "product_scenarios": ["linux/tests/rust-tmux-compat-product", "linux/tests/installed-claude-agent-team"],
       "test_plan": "Freeze the source command and alias contract, test Rust parsing/protocol/store logic and mutations, then drive the staged and installed tmux shim as a real subprocess through a private Unix socket into the real Zentty app, Ghostty surfaces, and PTYs. Cover first-split golden geometry, later vertical stacking, leader focus, send/list/capture/select/kill, width restoration, concurrent wait-for clients, restart, corrupt state, permissions, authentication, malformed input, and oversized requests; control only the remote model response.",
       "alternative_or_blocker": null
     },

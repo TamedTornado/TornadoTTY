@@ -1,5 +1,5 @@
 use super::ApplicationShell;
-use crate::tmux_compat::{KillPlan, SplitDisposition, SplitPlan, TmuxProductAction};
+use crate::tmux_compat::{KillPlan, RespawnPlan, SplitDisposition, SplitPlan, TmuxProductAction};
 use std::cell::RefCell;
 use std::rc::Rc;
 use zentty_agent_ipc::AuthenticatedTmuxRequest;
@@ -21,6 +21,7 @@ impl ApplicationShell {
         let reply = match command.request.command() {
             TmuxCommand::SendKeys => Self::execute_tmux_send_keys(shell, &command),
             TmuxCommand::SplitWindow => Self::execute_tmux_split(shell, &command),
+            TmuxCommand::RespawnPane => Self::execute_tmux_respawn(shell, &command),
             TmuxCommand::CapturePane => Self::execute_tmux_capture(shell, &command),
             TmuxCommand::KillPane | TmuxCommand::KillWindow => {
                 Self::execute_tmux_kill(shell, &command)
@@ -108,6 +109,43 @@ impl ApplicationShell {
             Err(message) => TmuxCompatReply::failure("split_failed", message)
                 .expect("bounded product diagnostic fits protocol limits"),
         }
+    }
+
+    fn execute_tmux_respawn(
+        shell: &Rc<RefCell<Self>>,
+        command: &AuthenticatedTmuxRequest,
+    ) -> TmuxCompatReply {
+        let plan = {
+            let shell = shell.borrow();
+            crate::tmux_compat::TmuxCompatProduct::prepare_respawn(
+                &shell.state,
+                &command.target,
+                &command.request,
+            )
+        };
+        let plan = match plan {
+            Ok(plan) => plan,
+            Err((code, message)) => {
+                return TmuxCompatReply::failure(code, message)
+                    .expect("bounded product diagnostic fits protocol limits");
+            }
+        };
+        match Self::respawn_tmux_surface(shell, &plan) {
+            Ok(()) => TmuxCompatReply::success(String::new())
+                .expect("empty compatibility output fits protocol limits"),
+            Err(message) => TmuxCompatReply::failure("respawn_failed", message)
+                .expect("bounded product diagnostic fits protocol limits"),
+        }
+    }
+
+    fn respawn_tmux_surface(shell: &Rc<RefCell<Self>>, plan: &RespawnPlan) -> Result<(), String> {
+        shell.borrow_mut().remove_live_surface(&plan.pane_id)?;
+        Self::create_surface_with_command(shell, &plan.pane_id, plan.command.clone())?;
+        let shell = shell.borrow();
+        eprintln!("zentty-linux: tmux-respawn pane={}", plan.pane_id);
+        shell.render();
+        shell.focus_selected_surface();
+        Ok(())
     }
 
     fn execute_tmux_capture(

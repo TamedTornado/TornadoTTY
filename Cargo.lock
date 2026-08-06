@@ -806,6 +806,7 @@ dependencies = [
 name = "zentty-test-support"
 version = "0.1.0"
 dependencies = [
+ "serde_json",
  "zentty-core",
  "zentty-ghostty",
 ]

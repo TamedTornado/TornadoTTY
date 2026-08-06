@@ -8,6 +8,7 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+serde_json = "=1.0.145"
 zentty-core = { path = "../zentty-core" }
 zentty-ghostty = { path = "../zentty-ghostty" }
 

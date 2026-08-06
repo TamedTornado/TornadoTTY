@@ -17,6 +17,16 @@ fn request_payload_canonicalizes_commands_and_preserves_bounded_input() {
     assert_eq!(request.command(), Command::SplitWindow);
     assert_eq!(request.arguments(), strings(&["-h", "-P"]));
     assert_eq!(request.standard_input(), Some("input"));
+
+    let respawn = TmuxCompatRequest::new(
+        1,
+        "respawnp",
+        strings(&["-k", "-t", "%pane-2", "exec claude"]),
+        None,
+    )
+    .unwrap();
+    assert_eq!(respawn.command(), Command::RespawnPane);
+    assert_eq!(respawn.command().as_str(), "respawn-pane");
 }
 
 #[test]

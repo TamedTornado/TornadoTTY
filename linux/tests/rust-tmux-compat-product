@@ -29,6 +29,9 @@ set -euo pipefail
 trap 'status=$?; printf "tmux-product-child: assertion failed line=%s status=%s\n" "${LINENO}" "${status}" | tee -a "${ZENTTY_TMUX_PRODUCT_PROBE}" >&2; exit "${status}"' ERR
 
 if [[ "${ZENTTY_PANE_ID}" != pane-1 ]]; then
+    if [[ "${ZENTTY_RESPAWN_PROBE:-}" == 1 ]]; then
+        printf 'respawned=%s\n' "${ZENTTY_PANE_ID}" >>"${ZENTTY_TMUX_PRODUCT_PROBE}"
+    fi
     IFS= read -r value
     [[ "${value}" == team-ready ]]
     printf '\033]2;zentty-tmux-team-%s\a' "${ZENTTY_PANE_ID}"
@@ -89,6 +92,11 @@ first_id="${first#%}"
 second_id="${second#%}"
 [[ "${first_id}" != "${first}" && "${second_id}" != "${second}" ]]
 [[ "${first_id}" != "${second_id}" ]]
+if ${ZENTTY_CLI_BIN} __tmux-compat respawn-pane -k -t "%${first_id}"; then
+    exit 1
+fi
+${ZENTTY_CLI_BIN} __tmux-compat respawn-pane -k -t "%${first_id}" \
+    -- "env ZENTTY_RESPAWN_PROBE=1 $0"
 listed="$(${ZENTTY_CLI_BIN} __tmux-compat list-panes -F '#{pane_id}')"
 [[ "${listed}" == $'%pane-1\n%'"${first_id}"$'\n%'"${second_id}" ]]
 ${ZENTTY_CLI_BIN} __tmux-compat select-layout -t @foreign main-vertical
@@ -186,6 +194,18 @@ awk '
 [[ "$(grep -Fxc 'zentty-linux: tmux-command pane=pane-1 worklane=worklane-1 command=SplitWindow' "${log}" || true)" -eq 4 ]] || {
     cat "${log}" >&2
     fail "four real split-window commands did not cross the product handler"
+}
+[[ "$(grep -Fxc 'zentty-linux: tmux-command pane=pane-1 worklane=worklane-1 command=RespawnPane' "${log}" || true)" -eq 2 ]] || {
+    cat "${log}" >&2
+    fail "valid and rejected real respawn-pane commands did not cross the product handler"
+}
+grep -Fxq 'zentty-linux: tmux-respawn pane=pane-2' "${log}" || {
+    cat "${log}" >&2
+    fail "real respawn-pane did not replace the targeted Ghostty PTY child"
+}
+grep -Fxq 'respawned=pane-2' "${fixture_root}/child-probe.log" || {
+    cat "${log}" >&2
+    fail "respawned command did not run in the targeted real pane"
 }
 [[ "$(grep -Fxc 'zentty-linux: tmux-command pane=pane-1 worklane=worklane-1 command=KillWindow' "${log}" || true)" -eq 1 ]] || {
     cat "${log}" >&2

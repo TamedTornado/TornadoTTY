@@ -12,11 +12,14 @@ fail() {
 }
 
 [[ -n "${profile}" ]] || fail "ZENTTY_CONTROLLED_AGENT_PROFILE is required"
-[[ -x "${helper}" ]] || fail "ZENTTY_CLI_BIN must name the staged executable helper"
 [[ "${sleep_seconds}" =~ ^[0-9]+([.][0-9]+)?$ ]] ||
     fail "ZENTTY_CONTROLLED_AGENT_SLEEP_SECONDS must be a non-negative number"
 [[ "${start_delay_seconds}" =~ ^[0-9]+([.][0-9]+)?$ ]] ||
     fail "ZENTTY_CONTROLLED_AGENT_START_DELAY_SECONDS must be a non-negative number"
+
+require_helper() {
+    [[ -x "${helper}" ]] || fail "ZENTTY_CLI_BIN must name the staged executable helper"
+}
 
 if [[ -n "${ZENTTY_CONTROLLED_AGENT_START_RECEIPT:-}" ]]; then
     printf 'started pid:%s profile:%s\n' "$$" "${profile}" >>"${ZENTTY_CONTROLLED_AGENT_START_RECEIPT}"
@@ -34,6 +37,7 @@ codex_has_hook() {
 
 case "${profile}" in
     codex-permission)
+        require_helper
         codex_has_hook PermissionRequest "$@" || fail "Codex PermissionRequest hook is missing"
         codex_has_hook state "$@" || fail "Codex hook state is missing"
         printf '%s' \
@@ -41,6 +45,7 @@ case "${profile}" in
             "${helper}" ipc agent-event --adapter=codex
         ;;
     claude-question)
+        require_helper
         settings=""
         previous=""
         for argument in "$@"; do
@@ -54,7 +59,57 @@ case "${profile}" in
             '{"session_id":"claude-e2e","tool_name":"AskUserQuestion","tool_input":{"questions":[{"question":"Deploy now?"}]}}' |
             "${helper}" ipc agent-event --adapter=claude PreToolUse
         ;;
+    claude-team)
+        fixture="${ZENTTY_CONTROLLED_CLAUDE_FIXTURE:-}"
+        project="${ZENTTY_CONTROLLED_AGENT_PROJECT:-}"
+        model_receipt="${ZENTTY_CONTROLLED_CLAUDE_RECEIPT:-}"
+        [[ -d "${fixture}" && -d "${project}" ]] ||
+            fail "Claude team fixture and project directories are required"
+        [[ "${model_receipt}" == "${fixture}/"* ]] ||
+            fail "Claude model receipt must be inside the controlled fixture"
+        cd "${project}"
+        printf 'claude=<%s> tmux=<%s> endpoint=<%s>\n' \
+            "$(command -v claude || true)" "$(command -v tmux || true)" \
+            "${ANTHROPIC_BASE_URL-}" >"${fixture}/child-env"
+        (
+            for _ in {1..100}; do
+                panes="$(tmux list-panes -F '#{pane_id}' 2>/dev/null || true)"
+                [[ "${panes}" == *%pane-2* ]] && break
+                sleep 0.1
+            done
+            [[ "${panes:-}" == *%pane-2* ]]
+            for _ in {1..100}; do
+                tmux capture-pane -p -t %pane-2 >"${fixture}/teammate.capture" \
+                    2>/dev/null || true
+                grep -Fq '"role":"teammate"' "${model_receipt}" && break
+                sleep 0.1
+            done
+            grep -Fq '"role":"teammate"' "${model_receipt}"
+            grep -Fq '@zentty-probe' "${fixture}/teammate.capture"
+            tmux send-keys -t %pane-2 -l ZTTEAM42
+            sleep 0.1
+            tmux capture-pane -p -t %pane-2 >"${fixture}/teammate-after-input.capture"
+            grep -Fq 'ZTTEAM42' "${fixture}/teammate-after-input.capture"
+            tmux send-keys -t %pane-1 Escape
+            tmux send-keys -t %pane-1 -l ZTLEAD42
+            sleep 0.1
+            tmux capture-pane -p -t %pane-1 >"${fixture}/leader.capture"
+            grep -Fq 'ZTLEAD42' "${fixture}/leader.capture"
+            tmux kill-pane -t %pane-2
+            for _ in {1..200}; do
+                panes="$(tmux list-panes -F '#{pane_id}' 2>/dev/null || true)"
+                [[ "${panes}" == '%pane-1' ]] && break
+                sleep 0.05
+            done
+            [[ "${panes}" == '%pane-1' ]]
+            printf 'helper=complete\n' >"${fixture}/helper.log"
+            tmux kill-pane -t %pane-1
+        ) >>"${fixture}/helper.log" 2>&1 &
+        exec claude 'Create one named teammate and wait for it to start.' \
+            --settings '{"teammateMode":"tmux"}' --permission-mode dontAsk
+        ;;
     codex-restore)
+        require_helper
         codex_has_hook SessionStart "$@" || fail "Codex SessionStart hook is missing"
         arguments=("$@")
         resume_seen=false

@@ -39,6 +39,12 @@ pub(crate) struct SplitPlan {
 }
 
 #[derive(Debug, Eq, PartialEq)]
+pub(crate) struct RespawnPlan {
+    pub pane_id: String,
+    pub command: String,
+}
+
+#[derive(Debug, Eq, PartialEq)]
 pub(crate) struct CapturePlan {
     pub pane_id: String,
     pub print: bool,
@@ -66,6 +72,70 @@ pub(crate) struct LayoutPlan {
 }
 
 impl TmuxCompatProduct {
+    pub(crate) fn prepare_respawn(
+        state: &WorkspaceState,
+        target: &AgentTarget,
+        request: &TmuxCompatRequest,
+    ) -> Result<RespawnPlan, (&'static str, String)> {
+        let worklane = target_worklane(state, target)?;
+        let pane_ids = pane_entries(worklane)
+            .into_iter()
+            .map(|(_, pane, _)| pane.id.clone())
+            .collect::<Vec<_>>();
+        let (option_arguments, delimited_command) = request
+            .arguments()
+            .iter()
+            .position(|argument| argument == "--")
+            .map_or((request.arguments(), None), |delimiter| {
+                (
+                    &request.arguments()[..delimiter],
+                    Some(&request.arguments()[delimiter + 1..]),
+                )
+            });
+        let parsed = parsed(option_arguments, &["-c", "-e", "-t"], &["-k"]);
+        if !parsed.has_flag("-k") {
+            return Err((
+                "invalid_arguments",
+                "respawn-pane requires -k while replacing a live pane".to_owned(),
+            ));
+        }
+        if parsed.value("-c").is_some() || parsed.value("-e").is_some() {
+            return Err((
+                "unsupported",
+                "respawn-pane -c and -e are not supported by Zentty".to_owned(),
+            ));
+        }
+        if delimited_command.is_some() && !parsed.positionals().is_empty() {
+            return Err((
+                "invalid_arguments",
+                "respawn-pane has unexpected arguments before --".to_owned(),
+            ));
+        }
+        validate_explicit_pane_target(parsed.value("-t"), &pane_ids)?;
+        let pane_id = PaneTarget::resolve(parsed.value("-t"), &pane_ids, &target.pane_id);
+        let command_arguments = delimited_command.unwrap_or(parsed.positionals());
+        if command_arguments.is_empty() {
+            return Err((
+                "invalid_arguments",
+                "respawn-pane requires a shell command".to_owned(),
+            ));
+        }
+        if command_arguments
+            .iter()
+            .any(|argument| argument.is_empty() || argument.contains('\0'))
+        {
+            return Err((
+                "invalid_arguments",
+                "respawn-pane command arguments must be nonempty and contain no NUL bytes"
+                    .to_owned(),
+            ));
+        }
+        Ok(RespawnPlan {
+            pane_id,
+            command: tmux_shell_command(command_arguments),
+        })
+    }
+
     pub(crate) fn prepare_layout(
         &self,
         state: &WorkspaceState,
@@ -569,6 +639,17 @@ impl TmuxCompatProduct {
 
 fn parsed(arguments: &[String], values: &[&str], flags: &[&str]) -> ParsedArguments {
     ParsedArguments::parse(arguments, &strings(values), &strings(flags))
+}
+
+fn tmux_shell_command(arguments: &[String]) -> String {
+    if let [command] = arguments {
+        return command.clone();
+    }
+    arguments
+        .iter()
+        .map(|argument| format!("'{}'", argument.replace('\'', "'\\''")))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn validate_explicit_pane_target(
@@ -1316,5 +1397,95 @@ mod tests {
             &request("split-window", &["-t", "%outside"]),
         );
         assert_eq!(missing.unwrap_err().0, "target_not_found");
+    }
+
+    #[test]
+    fn respawn_plan_resolves_one_existing_target_and_one_shell_command() {
+        let state = workspace();
+        let plan = TmuxCompatProduct::prepare_respawn(
+            &state,
+            &target("pane-1"),
+            &request(
+                "respawn-pane",
+                &["-k", "-t", "%pane-2", "exec claude --agent-id probe"],
+            ),
+        )
+        .unwrap();
+        assert_eq!(plan.pane_id, "pane-2");
+        assert_eq!(plan.command, "exec claude --agent-id probe");
+
+        let missing = TmuxCompatProduct::prepare_respawn(
+            &state,
+            &target("pane-1"),
+            &request("respawn-pane", &["-k", "-t", "%outside", "true"]),
+        );
+        assert_eq!(missing.unwrap_err().0, "target_not_found");
+
+        let live_without_kill = TmuxCompatProduct::prepare_respawn(
+            &state,
+            &target("pane-1"),
+            &request("respawn-pane", &["-t", "%pane-2", "true"]),
+        );
+        assert_eq!(live_without_kill.unwrap_err().0, "invalid_arguments");
+
+        for unsupported in ["-c", "-e"] {
+            let rejected = TmuxCompatProduct::prepare_respawn(
+                &state,
+                &target("pane-1"),
+                &request(
+                    "respawn-pane",
+                    &["-k", "-t", "%pane-2", unsupported, "value", "true"],
+                ),
+            );
+            assert_eq!(rejected.unwrap_err().0, "unsupported");
+        }
+
+        let direct = TmuxCompatProduct::prepare_respawn(
+            &state,
+            &target("pane-1"),
+            &request(
+                "respawn-pane",
+                &["-k", "-t", "%pane-2", "printf", "%s", "a'b", "$(false)"],
+            ),
+        )
+        .unwrap();
+        assert_eq!(direct.command, "'printf' '%s' 'a'\\''b' '$(false)'");
+
+        let delimited = TmuxCompatProduct::prepare_respawn(
+            &state,
+            &target("pane-1"),
+            &request(
+                "respawn-pane",
+                &["-k", "-t", "%pane-2", "--", "cd /tmp && exec claude"],
+            ),
+        )
+        .unwrap();
+        assert_eq!(delimited.command, "cd /tmp && exec claude");
+
+        let delimited_direct = TmuxCompatProduct::prepare_respawn(
+            &state,
+            &target("pane-1"),
+            &request(
+                "respawn-pane",
+                &["-k", "-t", "%pane-2", "--", "env", "-e", "value"],
+            ),
+        )
+        .unwrap();
+        assert_eq!(delimited_direct.command, "'env' '-e' 'value'");
+
+        for arguments in [
+            vec!["-k", "-t", "%pane-2"],
+            vec!["-k", "-t", "%pane-2", "--"],
+            vec!["-k", "-t", "%pane-2", ""],
+            vec!["-k", "-t", "%pane-2", "bad\0command"],
+            vec!["-k", "unexpected", "--", "true"],
+        ] {
+            let invalid = TmuxCompatProduct::prepare_respawn(
+                &state,
+                &target("pane-1"),
+                &request("respawn-pane", &arguments),
+            );
+            assert_eq!(invalid.unwrap_err().0, "invalid_arguments");
+        }
     }
 }

@@ -7857,6 +7857,117 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   frozen tmux source contract and its negative tests, and diff checks all pass
   on the exact candidate.
 
+### Phase 5 runs the installed Claude team coordinator through Zentty
+
+- **The installed contract had drifted:** Claude Code 2.1.201 advertises
+  `Agent` and `SendMessage`; a named `Agent` call creates the teammate and
+  `team_name` is deprecated. Print mode never exercised the tmux path, so it
+  was rejected as product evidence in favor of the real interactive TUI.
+- **A clean profile exposed setup prompts rather than product defects:** The
+  controlled journey now supplies only the minimum accepted onboarding and
+  project-trust state. `CLAUDE_CONFIG_DIR` moved the wrong state,
+  `ANTHROPIC_API_KEY` caused an approval prompt, and `bypassPermissions`
+  produced a warning. The final journey uses a private `HOME`,
+  `ANTHROPIC_AUTH_TOKEN`, and `dontAsk`, and checks the exact installed version
+  and resolved binary before running.
+- **Only the model boundary is controlled:** A bounded server listens on an
+  ephemeral loopback port for at most 32 non-health requests or 45 seconds,
+  limits headers to 64 KiB and bodies to 16 MiB, and applies two-second socket
+  timeouts. It accepts only the observed health and messages routes, validates
+  JSON plus the required tool inventory, and retains sanitized message-shape
+  receipts rather than authorization or prompt bodies. Duplicate title and
+  model calls proved that request role must be classified from content rather
+  than global arrival order.
+- **The real coordinator found a missing product command:** Current Claude
+  creates a pane and then executes `respawn-pane -k -t ... -- COMMAND` to start
+  its teammate. Zentty initially rejected the command, then incorrectly
+  required one positional, and then attempted to execute the literal `--`.
+  The repaired minimal compatibility subset requires replacement of a live
+  pane with `-k`, validates the target, explicitly rejects unsupported `-c`
+  and `-e`, strips the delimiter, rejects empty/NUL commands, preserves a
+  single shell command verbatim, and POSIX-quotes multi-argument direct exec.
+  The runtime disposes the old surface and starts the requested child in a new
+  real Ghostty surface and PTY.
+- **The final boundary is real except for the model:** The relocated staged
+  product launches the installed, version-pinned Claude coordinator in a real
+  Ghostty PTY. Claude resolves the staged tmux shim, crosses the authenticated
+  CLI/socket/application path, creates and respawns a second real surface and
+  PTY, and starts the exact installed Claude binary as the teammate. The
+  harness captures both terminals through the facade, sends literal text to
+  each, closes the teammate and leader through the facade, verifies restored
+  geometry, and rejects escaped authorization values or surviving processes.
+- **Text injection is not physical-key evidence:** `send-keys -l` is visible
+  through real capture. Sending Enter through the current Ghostty text API
+  produces multiline input in Claude rather than proving a GTK key event, so
+  this slice makes no physical-key claim. The dedicated physical GTK
+  translation matrix cells remain authoritative.
+- **Harness construction stayed outside compositor homes:** Building the test
+  endpoint from inside the private GUI `HOME` caused Rust tooling to bootstrap
+  another cache. The final script consumes the already-built ReleaseSafe
+  endpoint and fails if it is absent. A wrap-sensitive wait for terminal prose
+  was also replaced with the sanitized endpoint receipt.
+- **The orchestration contract prevented another parallel actor:** The first
+  passing journey generated a Claude-specific child script inline. The
+  repository's consolidation gate rejected it, so the behavior moved into the
+  single reviewed `controlled-agent` fixture under a `claude-team` profile.
+  Its first extracted run exited before Claude because it required the model
+  receipt to exist before the first request; the repaired actor validates that
+  the future receipt path stays inside the private fixture and waits for the
+  real endpoint to create it.
+- **Mutation testing found five receipt blind spots:** The first safe-copy
+  focused campaign tested 31 planner and controlled-model decisions: 24 were
+  caught, two were compiler-unviable, and five survived. Tests had not
+  distinguished a wrong health path, title words in a normal tool-bearing
+  request, a follow-up containing only `tool_result`, or error increments from
+  non-error results. The repaired 31-mutant run caught 28 and classified two
+  compiler-unviable, leaving one symmetric one-error/one-success case. Making
+  the receipt fixture asymmetric with two successes and one error killed that
+  final decision; the nine-mutant `summarize_tool_results` rerun caught all
+  nine. The repaired broad `outcomes.json` SHA-256 is
+  `ddcc4b976cc6b6da179f73e71f68c76811ba95340370be7fb9854d11d886f6f0`
+  and the final focused receipt SHA-256 is
+  `b25bfe38ed964968dbc3159eb86b1bafe074e540d2b97ddf22b4ab732fa855f0`.
+  Both used the checked `gitignore=true`, `copy_target=false` wrapper; no
+  ignored staged build was copied.
+- **Final delimiter review expanded the planner campaign:** The parser now
+  stops option interpretation at `--`, rejects stray pre-delimiter arguments,
+  and permits command arguments such as `-e` after the delimiter. The exact
+  final safe-copy campaign tested 36 planner and endpoint decisions: 34 were
+  caught, two were compiler-unviable, and none survived or timed out. Its
+  `outcomes.json` SHA-256 is
+  `f3e382231650cd26684d0ba30f80dc65809f819271a39ed07271be9e2c75848e`.
+- **The feature-inventory summary expectation was already one slice stale:**
+  `feature-inventory-test` still expected 21 partial and 37 not-implemented
+  entries while the checked-in inventory contained 22 and 36. Marking the
+  tmux facade partial correctly changed the authoritative totals to 23 and 35;
+  the closed-world summary assertion now matches those exact counts rather
+  than preserving either stale value.
+- **Teardown proof exposed an unscoped desktop session:** A strict `/proc`
+  scan after product exit found eight private-profile processes. Diagnostic
+  command lines proved they were D-Bus, XDG portal, and keyring services—not
+  Claude descendants—autolaunched because the controlled X11 environment had
+  no session bus. Waiting five seconds did not reap them; only the outer
+  compositor cleanup did. The repaired journey runs the product under a real
+  private `dbus-run-session`, closes and verifies the instance socket,
+  terminates and waits for the controlled endpoint, and still applies a
+  bounded five-second scan to every process carrying the private fixture.
+- **Qualification scope remains explicit:** The installed-Claude journey is
+  part of both controlled X11 and input-capable Wayland agent-integration
+  cells. After the exact ReleaseSafe rebuild, the tmux product journey passed
+  controlled X11 session
+  `aa8a425d7d263894ffab454159c6b656f0af3f60b1568bd5a0cc9863ae61cbeb`
+  and controlled Wayland session
+  `9b73ad41bb1b4d34c968ca179a04f96e85a1617d45bb63e5c18d21058458d7cf`.
+  The consolidated installed Claude journey then passed controlled X11 session
+  `56f7a9f7e46a0e7848f0cb99ce6f5925f4fb718f0fd7887bb835ed5611cdc767`
+  and input-capable Wayland session
+  `c94bdfee58c123f2b8045b080b56de6df407089e324d45537bfc3a8b32612862`;
+  the intermediate X11 session printed by the nested Wayland controller was
+  `d69773be6ea19518af1cb40555506b5cf8e3555c67b2c352dd4c7a1fcff81087`.
+  This closes this Phase 5 slice only; it does not claim release or full Linux
+  qualification while required matrix cells remain blocked, XFAIL, or not
+  implemented.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were
