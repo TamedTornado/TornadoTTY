@@ -25,6 +25,9 @@ impl ApplicationShell {
             TmuxCommand::KillPane | TmuxCommand::KillWindow => {
                 Self::execute_tmux_kill(shell, &command)
             }
+            TmuxCommand::SelectLayout | TmuxCommand::ResizePane => {
+                Self::execute_tmux_layout(shell, &command)
+            }
             _ => {
                 let mut shell = shell.borrow_mut();
                 let Self {
@@ -169,6 +172,48 @@ impl ApplicationShell {
             Err(message) => TmuxCompatReply::failure("close_failed", message)
                 .expect("bounded product diagnostic fits protocol limits"),
         }
+    }
+
+    fn execute_tmux_layout(
+        shell: &Rc<RefCell<Self>>,
+        command: &AuthenticatedTmuxRequest,
+    ) -> TmuxCompatReply {
+        let plan = {
+            let shell = shell.borrow();
+            shell
+                .tmux_compat
+                .prepare_layout(&shell.state, &command.target, &command.request)
+        };
+        let plan = match plan {
+            Ok(plan) => plan,
+            Err((code, message)) => {
+                return TmuxCompatReply::failure(code, message)
+                    .expect("bounded product diagnostic fits protocol limits");
+            }
+        };
+        let mut shell = shell.borrow_mut();
+        let mut changed = plan
+            .equalize_pane_id
+            .as_deref()
+            .is_some_and(|pane_id| shell.state.equalize_pane_heights_in_column(pane_id));
+        if let Some(leader_pane_id) = plan.golden_leader_pane_id.as_deref() {
+            let viewport_width = f64::from(shell.pane_viewport_width());
+            changed |=
+                shell
+                    .state
+                    .arrange_golden_width_for_pane(leader_pane_id, true, viewport_width);
+        }
+        eprintln!(
+            "zentty-linux: tmux-layout equalize={} golden={} changed={changed}",
+            plan.equalize_pane_id.as_deref().unwrap_or("none"),
+            plan.golden_leader_pane_id.as_deref().unwrap_or("none")
+        );
+        if changed {
+            shell.render();
+            shell.focus_selected_surface();
+        }
+        TmuxCompatReply::success(String::new())
+            .expect("empty compatibility output fits protocol limits")
     }
 
     fn close_tmux_panes(shell: &Rc<RefCell<Self>>, plan: &KillPlan) -> Result<(), String> {

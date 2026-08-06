@@ -721,3 +721,60 @@ fn golden_and_reset_layout_presets_change_only_geometry() {
     assert_eq!(state.active_pane_ids(), pane_order);
     assert_eq!(state.focused_pane_id(), Some("pane-3"));
 }
+
+#[test]
+fn targeted_golden_layout_does_not_activate_its_background_worklane() {
+    let mut state = WorkspaceState::new("lane-1", "leader");
+    assert!(state.split_focused_pane_right("teammate"));
+    assert!(state.create_worklane("lane-2", "foreground"));
+    let active_before = state.active_worklane_id().to_owned();
+    let focused_before = state.focused_pane_id().map(str::to_owned);
+    let major = (1.0 + 5.0_f64.sqrt()) / (3.0 + 5.0_f64.sqrt());
+    let pair_width = 999.0;
+
+    assert!(state.arrange_golden_width_for_pane("leader", true, 1000.0));
+    let lane = state
+        .worklanes()
+        .iter()
+        .find(|worklane| worklane.id == "lane-1")
+        .unwrap();
+    assert!((lane.columns[0].width - pair_width * major).abs() < f64::EPSILON);
+    assert!((lane.columns[1].width - pair_width * (1.0 - major)).abs() < f64::EPSILON);
+    assert_eq!(state.active_worklane_id(), active_before);
+    assert_eq!(state.focused_pane_id(), focused_before.as_deref());
+
+    assert!(state.restore_column_width("leader", 123.0));
+    assert!(state.arrange_golden_width_for_pane("leader", true, 1000.0));
+    assert!(state.restore_column_width("teammate", 123.0));
+    assert!(state.arrange_golden_width_for_pane("leader", true, 1000.0));
+    assert!(!state.arrange_golden_width_for_pane("leader", true, 1000.0));
+
+    assert!(state.arrange_golden_width_for_pane("leader", true, 1.0));
+    assert!(state.restore_column_width("leader", major + f64::EPSILON));
+    assert!(!state.arrange_golden_width_for_pane("leader", true, 1.0));
+    assert!(state.restore_column_width("teammate", 1.0 - major + f64::EPSILON));
+    assert!(!state.arrange_golden_width_for_pane("leader", true, 1.0));
+
+    assert!(state.arrange_golden_width_for_pane("teammate", true, 1000.0));
+    let lane = state
+        .worklanes()
+        .iter()
+        .find(|worklane| worklane.id == "lane-1")
+        .unwrap();
+    assert!((lane.columns[0].width - pair_width * (1.0 - major)).abs() < f64::EPSILON);
+    assert!((lane.columns[1].width - pair_width * major).abs() < f64::EPSILON);
+
+    assert!(state.arrange_golden_width_for_pane("teammate", false, 1000.0));
+    let lane = state
+        .worklanes()
+        .iter()
+        .find(|worklane| worklane.id == "lane-1")
+        .unwrap();
+    assert!((lane.columns[0].width - pair_width * major).abs() < f64::EPSILON);
+    assert!((lane.columns[1].width - pair_width * (1.0 - major)).abs() < f64::EPSILON);
+    assert!(!state.arrange_golden_width_for_pane("leader", true, f64::NAN));
+    assert!(!state.arrange_golden_width_for_pane("missing", true, 1000.0));
+
+    let mut single = WorkspaceState::new("single", "only");
+    assert!(!single.arrange_golden_width_for_pane("only", true, 1000.0));
+}

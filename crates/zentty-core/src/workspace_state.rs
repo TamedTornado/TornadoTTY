@@ -1076,30 +1076,30 @@ impl WorkspaceState {
     /// column invariant.
     pub fn arrange_golden_width(&mut self, focus_wide: bool, available_width: f64) -> bool {
         let worklane = self.active_worklane_mut();
-        if worklane.columns.len() < 2 || !available_width.is_finite() {
+        let focused_column_id = worklane.focused_column_id.clone();
+        arrange_golden_column_width(worklane, &focused_column_id, focus_wide, available_width)
+    }
+
+    /// Applies the source golden-width layout to the column containing a
+    /// specific pane without changing the active worklane or focused pane.
+    pub fn arrange_golden_width_for_pane(
+        &mut self,
+        pane_id: &str,
+        focus_wide: bool,
+        available_width: f64,
+    ) -> bool {
+        let Some((worklane, column_id)) = self.worklanes.iter_mut().find_map(|worklane| {
+            let column_id = worklane
+                .columns
+                .iter()
+                .find(|column| column.panes.iter().any(|pane| pane.id == pane_id))?
+                .id
+                .clone();
+            Some((worklane, column_id))
+        }) else {
             return false;
-        }
-        let focused_index = worklane
-            .columns
-            .iter()
-            .position(|column| column.id == worklane.focused_column_id)
-            .expect("workspace invariant: focused column exists");
-        let neighbor_index = if focused_index + 1 < worklane.columns.len() {
-            focused_index + 1
-        } else {
-            focused_index - 1
         };
-        let major = (1.0 + 5.0_f64.sqrt()) / (3.0 + 5.0_f64.sqrt());
-        let focused_ratio = if focus_wide { major } else { 1.0 - major };
-        let pair_width =
-            (available_width - f64::from(PaneLayoutPolicy::INTER_PANE_SPACING)).max(1.0);
-        let focused_width = pair_width * focused_ratio;
-        let neighbor_width = pair_width - focused_width;
-        let changed = (worklane.columns[focused_index].width - focused_width).abs() > f64::EPSILON
-            || (worklane.columns[neighbor_index].width - neighbor_width).abs() > f64::EPSILON;
-        worklane.columns[focused_index].width = focused_width;
-        worklane.columns[neighbor_index].width = neighbor_width;
-        changed
+        arrange_golden_column_width(worklane, &column_id, focus_wide, available_width)
     }
 
     /// # Panics
@@ -1840,6 +1840,39 @@ impl WorkspaceState {
             })
             .expect("workspace invariant: available generated column identity")
     }
+}
+
+fn arrange_golden_column_width(
+    worklane: &mut WorklaneState,
+    column_id: &str,
+    focus_wide: bool,
+    available_width: f64,
+) -> bool {
+    if worklane.columns.len() < 2 || !available_width.is_finite() {
+        return false;
+    }
+    let Some(focused_index) = worklane
+        .columns
+        .iter()
+        .position(|column| column.id == column_id)
+    else {
+        return false;
+    };
+    let neighbor_index = if focused_index + 1 < worklane.columns.len() {
+        focused_index + 1
+    } else {
+        focused_index - 1
+    };
+    let major = (1.0 + 5.0_f64.sqrt()) / (3.0 + 5.0_f64.sqrt());
+    let focused_ratio = if focus_wide { major } else { 1.0 - major };
+    let pair_width = (available_width - f64::from(PaneLayoutPolicy::INTER_PANE_SPACING)).max(1.0);
+    let focused_width = pair_width * focused_ratio;
+    let neighbor_width = pair_width - focused_width;
+    let changed = (worklane.columns[focused_index].width - focused_width).abs() > f64::EPSILON
+        || (worklane.columns[neighbor_index].width - neighbor_width).abs() > f64::EPSILON;
+    worklane.columns[focused_index].width = focused_width;
+    worklane.columns[neighbor_index].width = neighbor_width;
+    changed
 }
 
 fn remove_pane(column: &mut PaneColumnState, pane_id: &str) -> (PaneState, f64) {

@@ -58,7 +58,82 @@ pub(crate) struct KillRestoration {
     pub width: u32,
 }
 
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) struct LayoutPlan {
+    pub equalize_pane_id: Option<String>,
+    pub golden_leader_pane_id: Option<String>,
+}
+
 impl TmuxCompatProduct {
+    pub(crate) fn prepare_layout(
+        &self,
+        state: &WorkspaceState,
+        target: &AgentTarget,
+        request: &TmuxCompatRequest,
+    ) -> Result<LayoutPlan, (&'static str, String)> {
+        let worklane = target_worklane(state, target)?;
+        let pane_ids = pane_entries(worklane)
+            .into_iter()
+            .map(|(_, pane, _)| pane.id.clone())
+            .collect::<Vec<_>>();
+        validate_explicit_pane_target(Some(&target.pane_id), &pane_ids)?;
+        let anchor = self.store.anchor(&target.worklane_id);
+        match request.command() {
+            Command::SelectLayout => {
+                let parsed = parsed(request.arguments(), &["-t"], &[]);
+                let preset = parsed
+                    .positionals()
+                    .first()
+                    .map_or("main-vertical", String::as_str);
+                if !matches!(preset, "main-vertical" | "even-vertical") {
+                    return Ok(LayoutPlan {
+                        equalize_pane_id: None,
+                        golden_leader_pane_id: None,
+                    });
+                }
+                let equalize_pane_id = anchor
+                    .and_then(|anchor| {
+                        anchor
+                            .column_pane_ids
+                            .iter()
+                            .find(|pane_id| pane_ids.contains(pane_id))
+                            .cloned()
+                    })
+                    .unwrap_or_else(|| target.pane_id.clone());
+                let golden_leader_pane_id = (preset == "main-vertical")
+                    .then(|| anchor.map(|anchor| anchor.leader_pane_id.clone()))
+                    .flatten()
+                    .filter(|pane_id| pane_ids.contains(pane_id));
+                Ok(LayoutPlan {
+                    equalize_pane_id: Some(equalize_pane_id),
+                    golden_leader_pane_id,
+                })
+            }
+            Command::ResizePane => {
+                let parsed = parsed(
+                    request.arguments(),
+                    &["-t", "-x", "-y"],
+                    &["-D", "-L", "-R", "-U"],
+                );
+                validate_explicit_pane_target(parsed.value("-t"), &pane_ids)?;
+                let golden_leader_pane_id = parsed
+                    .value("-x")
+                    .filter(|width| width.ends_with('%'))
+                    .and(anchor)
+                    .map(|anchor| anchor.leader_pane_id.clone())
+                    .filter(|pane_id| pane_ids.contains(pane_id));
+                Ok(LayoutPlan {
+                    equalize_pane_id: None,
+                    golden_leader_pane_id,
+                })
+            }
+            _ => Err((
+                "unsupported",
+                "layout planner received a non-layout command".to_owned(),
+            )),
+        }
+    }
+
     pub(crate) fn prepare_kill(
         &self,
         state: &WorkspaceState,
@@ -599,7 +674,9 @@ fn failure(code: &'static str, message: impl Into<String>) -> TmuxCompatReply {
 
 #[cfg(test)]
 mod tests {
-    use super::{KillRestoration, SplitDisposition, TmuxCompatProduct, TmuxProductAction};
+    use super::{
+        KillRestoration, LayoutPlan, SplitDisposition, TmuxCompatProduct, TmuxProductAction,
+    };
     use zentty_core::AgentTarget;
     use zentty_core::WorkspaceState;
     use zentty_tmux_compat::TmuxCompatRequest;
@@ -773,19 +850,95 @@ mod tests {
             let reply = product.handle(&mut state, &target("pane-1"), &request(command, &[]));
             assert_eq!(reply.stdout(), Some(""), "{command}");
         }
-        for command in [
-            "split-window",
-            "send-keys",
-            "select-layout",
-            "resize-pane",
-            "wait-for",
-            "capture-pane",
-        ] {
+        for command in ["split-window", "send-keys", "wait-for", "capture-pane"] {
             let reply = product.handle(&mut state, &target("pane-1"), &request(command, &[]));
             let error = reply.error().unwrap();
             assert_eq!(error.code(), "not_implemented", "{command}");
             assert!(error.message().contains("not implemented"), "{command}");
         }
+    }
+
+    #[test]
+    fn layout_plans_target_the_team_without_trusting_ambient_focus() {
+        let mut state = WorkspaceState::new("lane-1", "leader");
+        assert!(state.split_focused_pane_right("teammate-1"));
+        assert!(state.split_focused_pane_below("teammate-2"));
+        assert!(state.select_worklane_and_pane("lane-1", "leader"));
+        assert!(state.create_worklane("lane-2", "foreground"));
+        assert_eq!(state.active_worklane_id(), "lane-2");
+        let mut product = TmuxCompatProduct::default();
+        let _ = product
+            .store
+            .record_split("lane-1", "leader", "teammate-1", false, Some(777));
+        let _ = product
+            .store
+            .record_split("lane-1", "leader", "teammate-2", true, None);
+
+        let main = product
+            .prepare_layout(
+                &state,
+                &target("leader"),
+                &request("select-layout", &["-t", "@foreign", "main-vertical"]),
+            )
+            .unwrap();
+        assert_eq!(
+            main,
+            LayoutPlan {
+                equalize_pane_id: Some("teammate-1".to_owned()),
+                golden_leader_pane_id: Some("leader".to_owned()),
+            }
+        );
+        let even = product
+            .prepare_layout(
+                &state,
+                &target("leader"),
+                &request("select-layout", &["even-vertical"]),
+            )
+            .unwrap();
+        assert_eq!(even.equalize_pane_id.as_deref(), Some("teammate-1"));
+        assert_eq!(even.golden_leader_pane_id, None);
+        let ignored = product
+            .prepare_layout(
+                &state,
+                &target("leader"),
+                &request("select-layout", &["tiled"]),
+            )
+            .unwrap();
+        assert_eq!(
+            ignored,
+            LayoutPlan {
+                equalize_pane_id: None,
+                golden_leader_pane_id: None,
+            }
+        );
+
+        let resized = product
+            .prepare_layout(
+                &state,
+                &target("leader"),
+                &request("resize-pane", &["-t", "%teammate-2", "-x", "30%"]),
+            )
+            .unwrap();
+        assert_eq!(resized.equalize_pane_id, None);
+        assert_eq!(resized.golden_leader_pane_id.as_deref(), Some("leader"));
+        let absolute = product
+            .prepare_layout(
+                &state,
+                &target("leader"),
+                &request("resize-pane", &["-x", "30"]),
+            )
+            .unwrap();
+        assert_eq!(absolute.golden_leader_pane_id, None);
+        let outside = product.prepare_layout(
+            &state,
+            &target("leader"),
+            &request("resize-pane", &["-t", "%outside", "-x", "30%"]),
+        );
+        assert_eq!(outside.unwrap_err().0, "target_not_found");
+        let wrong_command =
+            product.prepare_layout(&state, &target("leader"), &request("list-panes", &[]));
+        assert_eq!(wrong_command.unwrap_err().0, "unsupported");
+        assert_eq!(state.active_worklane_id(), "lane-2");
     }
 
     #[test]

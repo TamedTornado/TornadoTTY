@@ -7616,6 +7616,62 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   safe mutation-copy policy, orchestration contract, and diff checks all pass
   after the repair. This is a Phase 3 slice result, not a claim that release or
   full Linux qualification has passed.
+- **Layout commands now target authenticated topology rather than ambient
+  focus:** The source `select-layout` handler calls a focused-column action,
+  even though its contract says `main-vertical`/`even-vertical` redistribute
+  the teammate column. Linux resolves the routed worklane and recorded team
+  anchor, equalizes the real teammate column by stable pane identity, and
+  applies the golden width to the recorded leader without activating a
+  background worklane. `resize-pane -x <percent>` preserves that golden split;
+  absolute/directional forms and other source layout presets remain explicit
+  successful no-ops. A pane-scoped `resize-pane -t` outside the authenticated
+  worklane fails instead of falling back to ambient focus. The source-ignored
+  worklane `select-layout -t` remains non-authoritative and cannot retarget the
+  canonical server route.
+- **Real layout/resize commands pass both controlled compositors:** The staged
+  CLI and socket journey invokes `main-vertical`, `even-vertical`, a source
+  no-op preset, percentage resize, and absolute no-op resize against three
+  real Ghostty panes, then retains the golden leader width, equal teammate
+  heights, leader focus, capture/input behavior, and later teardown. It passed
+  The first successful receipts preceded the Clippy-only lookup cleanup and
+  are retained as discovery evidence. After an exact final ReleaseSafe rebuild,
+  the same journey passed X11 session
+  `9f5466260ad351c3e9a6d84f5d89888d08f1a68398e696a124500b3aa3b44cec`
+  and Wayland session
+  `7f58c359f241c0fac72838a674e67adc77a5160da12aefccfd0a6be771ebc363`.
+- **Mutation testing exposed weak geometry assertions, not a second layout
+  implementation:** The first 51-mutant campaign caught 29, rejected one as
+  compiler-unviable, and missed 21 arithmetic, invalid-input, neighbor, and
+  change-detection mutations because prior tests asserted only broad ordering
+  and total width. Exact golden fractions, both leader/teammate orientations,
+  background-worklane preservation, missing/single-column/non-finite cases,
+  one-column-at-a-time deltas, and unchanged results were added. A second run
+  reduced survivors to five, and a third to two strict `>` versus `>=`
+  boundary mutants. Exact epsilon-boundary cases killed those final mutants.
+  That pre-Clippy behavior-equivalent run caught 50 of 51 with one unviable.
+  After the invariant lookup was structurally simplified, the exact final
+  source generated 50 mutations: 49 caught, one compiler-unviable, zero
+  missed, and zero timed out. Its `outcomes.json` SHA-256 is
+  `350cbb056f75b61dcbf9343d155a241443d6fb5febd2fed50e8f009e2a64aee9`;
+  the safe wrapper retained `gitignore=true` and `copy_target=false`.
+- **Strict Clippy removed an unnecessary invariant panic:** The first targeted
+  golden-layout lookup found a pane-containing worklane and then repeated the
+  same search with `expect`, which made the public method technically panicable
+  and triggered the required `missing_panics_doc` lint. The lookup now returns
+  the mutable worklane and cloned column identity together through one
+  fallible search. Missing or stale pane identity remains an ordinary `false`
+  result; no lint suppression or invented panic contract was added.
+- **Strict Clippy also simplified optional anchor selection:** The percentage-
+  resize planner used a closure merely to return the already-borrowed optional
+  team anchor. It now uses direct `Option::and`, retaining the same scoped
+  semantics without a lint exception.
+- **Final layout/resize repository gates pass:** The exact final source passes
+  complete workspace tests, strict all-target Clippy, formatting, ShellCheck,
+  qualification schema validation, architecture and negative self-tests, safe
+  mutation-copy policy, orchestration contracts, diff checks, and both rebuilt
+  compositor journeys. This closes the planned layout/resize vertical slice;
+  it does not claim that the remaining compatibility commands, installed shim,
+  or full Linux qualification are complete.
 
 ## AI disclosure
 

@@ -47,6 +47,11 @@ second_id="${second#%}"
 [[ "${first_id}" != "${second_id}" ]]
 listed="$(${ZENTTY_CLI_BIN} __tmux-compat list-panes -F '#{pane_id}')"
 [[ "${listed}" == $'%pane-1\n%'"${first_id}"$'\n%'"${second_id}" ]]
+${ZENTTY_CLI_BIN} __tmux-compat select-layout -t @foreign main-vertical
+${ZENTTY_CLI_BIN} __tmux-compat select-layout even-vertical
+${ZENTTY_CLI_BIN} __tmux-compat select-layout tiled
+${ZENTTY_CLI_BIN} __tmux-compat resize-pane -t "%${second_id}" -x 30%
+${ZENTTY_CLI_BIN} __tmux-compat resize-pane -t "%${second_id}" -x 30
 sleep 0.2
 ${ZENTTY_CLI_BIN} __tmux-compat send-keys -t "%${first_id}" team-ready Enter
 ${ZENTTY_CLI_BIN} __tmux-compat send-keys -t "%${second_id}" team-ready Enter
@@ -105,6 +110,14 @@ fi
     cat "${log}" >&2
     fail "two real kill-pane commands did not cross the product handler"
 }
+[[ "$(grep -Fxc 'zentty-linux: tmux-command pane=pane-1 worklane=worklane-1 command=SelectLayout' "${log}" || true)" -eq 3 ]] || {
+    cat "${log}" >&2
+    fail "three real select-layout commands did not cross the product handler"
+}
+[[ "$(grep -Fxc 'zentty-linux: tmux-command pane=pane-1 worklane=worklane-1 command=ResizePane' "${log}" || true)" -eq 2 ]] || {
+    cat "${log}" >&2
+    fail "two real resize-pane commands did not cross the product handler"
+}
 [[ "$(grep -Fxc 'zentty-linux: tmux-command pane=pane-1 worklane=worklane-1 command=SendKeys' "${log}" || true)" -eq 3 ]] || {
     cat "${log}" >&2
     fail "real send-keys did not cross the product handler"
@@ -127,6 +140,22 @@ for command in SetBuffer SaveBuffer LoadBuffer ShowBuffer; do
         fail "real ${command} did not cross the product handler"
     }
 done
+grep -Fxq 'zentty-linux: tmux-layout equalize=pane-2 golden=pane-1 changed=false' "${log}" || {
+    cat "${log}" >&2
+    fail "main-vertical did not target the real teammate and leader columns"
+}
+grep -Fxq 'zentty-linux: tmux-layout equalize=pane-2 golden=none changed=false' "${log}" || {
+    cat "${log}" >&2
+    fail "even-vertical did not target the real teammate column"
+}
+[[ "$(grep -Fxc 'zentty-linux: tmux-layout equalize=none golden=none changed=false' "${log}" || true)" -eq 2 ]] || {
+    cat "${log}" >&2
+    fail "non-mutating layout and absolute resize were not explicit"
+}
+grep -Fxq 'zentty-linux: tmux-layout equalize=none golden=pane-1 changed=false' "${log}" || {
+    cat "${log}" >&2
+    fail "percentage resize did not preserve the real golden leader column"
+}
 grep -Fq 'zentty-linux: geometry=worklane-1:column-worklane-1[pane-1],column-pane-2[pane-2,pane-3]' "${log}" || {
     cat "${log}" >&2
     fail "team topology was not one right column with stacked teammates"
