@@ -601,3 +601,61 @@ fn known_shell_titles_clear_stale_codex_without_clearing_other_agents() {
     assert!(independent_panes.clear_codex_after_shell_return("pane-a", "zsh"));
     assert_other_pane_codex_tracking_was_preserved(&mut independent_panes);
 }
+
+#[test]
+fn claude_late_generic_notification_cannot_undo_an_explicit_stop() {
+    let event = |json: &[u8]| AuthenticatedAgentEvent {
+        target: target(),
+        pane_token: "token-a".to_owned(),
+        event: AgentEvent::parse(json).unwrap(),
+    };
+    let mut store = AgentStatusStore::default();
+    store.apply(
+        event(
+            br#"{"version":1,"event":"agent.running","agent":{"name":"Claude Code"},"session":{"id":"claude-race"}}"#,
+        ),
+        1_000,
+    );
+    store.apply(
+        event(
+            br#"{"version":1,"event":"agent.idle","agent":{"name":"Claude Code"},"session":{"id":"claude-race"}}"#,
+        ),
+        2_000,
+    );
+    store.apply(
+        event(
+            br#"{"version":1,"event":"agent.needs-input","agent":{"name":"Claude Code"},"session":{"id":"claude-race"},"state":{"text":"Claude is waiting for your input","interaction":{"kind":"generic-input","text":"Claude is waiting for your input"}}}"#,
+        ),
+        2_100,
+    );
+    assert_eq!(store.status_for(&target()).unwrap().phase, AgentPhase::Idle);
+
+    store.apply(
+        event(
+            br#"{"version":1,"event":"agent.needs-input","agent":{"name":"Claude Code"},"session":{"id":"claude-race"},"state":{"text":"Allow Bash?","interaction":{"kind":"approval","text":"Allow Bash?"}}}"#,
+        ),
+        2_200,
+    );
+    assert_eq!(
+        store.status_for(&target()).unwrap().phase,
+        AgentPhase::NeedsInput
+    );
+
+    let mut expired = AgentStatusStore::default();
+    expired.apply(
+        event(
+            br#"{"version":1,"event":"agent.idle","agent":{"name":"Claude Code"},"session":{"id":"claude-expired"}}"#,
+        ),
+        2_000,
+    );
+    expired.apply(
+        event(
+            br#"{"version":1,"event":"agent.needs-input","agent":{"name":"Claude Code"},"session":{"id":"claude-expired"},"state":{"interaction":{"kind":"generic-input"}}}"#,
+        ),
+        7_000,
+    );
+    assert_eq!(
+        expired.status_for(&target()).unwrap().phase,
+        AgentPhase::NeedsInput
+    );
+}

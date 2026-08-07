@@ -50,6 +50,17 @@ grep -Fxq 'ipc agent-event --adapter=claude PreToolUse' "${calls}" ||
 grep -Fq '"tool_name":"AskUserQuestion"' "${payloads}" ||
     fail "Claude question profile emitted the wrong payload"
 
+run_actor ZENTTY_CONTROLLED_AGENT_PROFILE=claude-lifecycle "${actor}" \
+    --settings '{"hooks":{"SessionStart":"zentty ipc agent-event --adapter=claude","PermissionRequest":"zentty ipc agent-event --adapter=claude"}}'
+grep -Fq '"hook_event_name":"Stop"' "${payloads}" ||
+    fail "Claude lifecycle profile did not emit Stop"
+grep -Fq '"message":"Claude is waiting for your input"' "${payloads}" ||
+    fail "Claude lifecycle profile did not emit the late generic notification"
+grep -Fq '"message":"Allow release command?"' "${payloads}" ||
+    fail "Claude lifecycle profile did not emit the explicit approval after the race"
+grep -Fq '"label":"Staging"' "${payloads}" ||
+    fail "Claude lifecycle profile did not preserve question options"
+
 run_actor \
     ZENTTY_CONTROLLED_AGENT_PROFILE=codex-notify \
     "${actor}" -c 'notify=["/stage/bin/zentty","codex-notify"]'
@@ -123,4 +134,4 @@ if run_actor \
     fail "Codex restore profile accepted an undeclared session"
 fi
 
-echo "Controlled agent tests passed: codex-permission, codex-notify, codex-title, codex-title-transcript, codex-progress, codex-lifecycle, claude-question, gemini-permission, codex-restore"
+echo "Controlled agent tests passed: codex-permission, codex-notify, codex-title, codex-title-transcript, codex-progress, codex-lifecycle, claude-question, claude-lifecycle, gemini-permission, codex-restore"

@@ -322,9 +322,126 @@ fn claude_hooks_map_questions_stop_and_session_end() {
 }
 
 #[test]
+fn claude_hooks_map_the_source_lifecycle_and_ignore_non_action_chatter() {
+    for hook in ["UserPromptSubmit", "SubagentStart", "PostCompact"] {
+        let running = reduce(
+            adapt_claude_hook(
+                format!(r#"{{"hook_event_name":"{hook}","session_id":"claude-life"}}"#).as_bytes(),
+                None,
+            )
+            .unwrap(),
+        );
+        assert_eq!(running.phase, AgentPhase::Running, "{hook}");
+        assert_eq!(running.text, None, "{hook}");
+    }
+
+    let compacting = reduce(
+        adapt_claude_hook(
+            br#"{"hook_event_name":"PreCompact","session_id":"claude-life"}"#,
+            None,
+        )
+        .unwrap(),
+    );
+    assert_eq!(compacting.phase, AgentPhase::Running);
+    assert_eq!(compacting.text.as_deref(), Some("Compacting"));
+
+    let subagent_stopped = reduce(
+        adapt_claude_hook(
+            br#"{"hook_event_name":"SubagentStop","session_id":"claude-life"}"#,
+            None,
+        )
+        .unwrap(),
+    );
+    assert_eq!(subagent_stopped.phase, AgentPhase::Idle);
+
+    let camel_idle = reduce(
+        adapt_claude_hook(
+            br#"{"hook_event_name":"Notification","notificationType":"idle_prompt","session_id":"claude-life"}"#,
+            None,
+        )
+        .unwrap(),
+    );
+    assert_eq!(camel_idle.phase, AgentPhase::Idle);
+
+    for message in ["Claude needs your attention", "Choose a target?"] {
+        let payload = serde_json::json!({
+            "hook_event_name": "Notification",
+            "session_id": "claude-life",
+            "message": message,
+        });
+        let waiting = reduce(adapt_claude_hook(payload.to_string().as_bytes(), None).unwrap());
+        assert_eq!(waiting.phase, AgentPhase::NeedsInput, "{message}");
+        assert_eq!(waiting.text.as_deref(), Some(message), "{message}");
+    }
+    let error_message = reduce(
+        adapt_claude_hook(
+            br#"{"hook_event_name":"Notification","session_id":"claude-life","error":"Login required"}"#,
+            None,
+        )
+        .unwrap(),
+    );
+    assert_eq!(error_message.phase, AgentPhase::NeedsInput);
+    assert_eq!(error_message.text.as_deref(), Some("Login required"));
+
+    let ended = adapt_claude_hook(
+        br#"{"hook_event_name":"SessionEnd","session_id":"claude-life"}"#,
+        None,
+    )
+    .unwrap();
+    assert_eq!(ended.len(), 1);
+    assert_eq!(
+        serde_json::to_value(&ended[0]).unwrap()["event"],
+        "session.end"
+    );
+
+    assert!(
+        adapt_claude_hook(
+            br#"{"hook_event_name":"Notification","session_id":"claude-life","message":"Build finished"}"#,
+            None,
+        )
+        .unwrap()
+        .is_empty()
+    );
+    assert!(
+        adapt_claude_hook(br#"{"hook_event_name":"FutureEvent"}"#, None)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn claude_questions_preserve_options_and_permission_fallbacks() {
+    let question = reduce(
+        adapt_claude_hook(
+            br#"{"hook_event_name":"PreToolUse","session_id":"claude-question","tool_name":"AskUserQuestion","tool_input":{"questions":[{"question":"Which database?","options":[{"label":"Postgres"},{"label":"SQLite"}]}]}}"#,
+            None,
+        )
+        .unwrap(),
+    );
+    assert_eq!(
+        question.text.as_deref(),
+        Some("Which database?\n[Postgres] [SQLite]")
+    );
+
+    let approval = reduce(
+        adapt_claude_hook(
+            br#"{"hook_event_name":"PermissionRequest","session_id":"claude-approval","tool_name":"Bash"}"#,
+            None,
+        )
+        .unwrap(),
+    );
+    assert_eq!(approval.text.as_deref(), Some("Claude needs your approval"));
+    assert_eq!(
+        approval.interaction,
+        zentty_core::AgentInteractionKind::Approval
+    );
+}
+
+#[test]
 fn adapters_reject_malformed_or_unsupported_hook_payloads() {
     assert!(adapt_codex_hook(b"not-json", None).is_err());
-    assert!(adapt_claude_hook(br#"{"hook_event_name":"FutureEvent"}"#, None).is_err());
+    assert!(adapt_claude_hook(b"not-json", None).is_err());
+    assert!(adapt_claude_hook(br"{}", None).is_err());
 }
 
 #[test]

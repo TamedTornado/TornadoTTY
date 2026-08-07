@@ -7,6 +7,7 @@ use std::collections::{HashMap, HashSet};
 const CODEX_TITLE_IDLE_SUPPRESSION_MS: u64 = 1_000;
 const CODEX_INPUT_SUBMIT_STABILIZATION_MS: u64 = 350;
 const CODEX_INTERRUPT_SUPPRESSION_MS: u64 = 3_000;
+const CLAUDE_POST_STOP_NEEDS_INPUT_GRACE_MS: u64 = 5_000;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct CodexInterruptSuppression {
@@ -259,6 +260,9 @@ impl AgentStatusStore {
                 updated_at: now,
             });
         update_status_identity(status, &event);
+        if should_suppress_claude_post_stop_notification(status, &event, now) {
+            return;
+        }
         match event.kind() {
             "session.start" => {
                 status.phase = AgentPhase::Starting;
@@ -530,6 +534,18 @@ impl AgentStatusStore {
             .retain(|(tracked_pane, _)| tracked_pane != pane_id);
         self.codex_interrupt_suppression.remove(pane_id);
     }
+}
+
+fn should_suppress_claude_post_stop_notification(
+    status: &PaneAgentStatus,
+    event: &crate::AgentEvent,
+    now: u64,
+) -> bool {
+    event.kind() == "agent.needs-input"
+        && status.agent_name.eq_ignore_ascii_case("claude code")
+        && status.phase == AgentPhase::Idle
+        && event.interaction() == AgentInteractionKind::GenericInput
+        && now.saturating_sub(status.updated_at) < CLAUDE_POST_STOP_NEEDS_INPUT_GRACE_MS
 }
 
 fn is_known_shell_name(value: &str) -> bool {

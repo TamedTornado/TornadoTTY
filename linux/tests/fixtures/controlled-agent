@@ -133,6 +133,30 @@ case "${profile}" in
             '{"session_id":"claude-e2e","tool_name":"AskUserQuestion","tool_input":{"questions":[{"question":"Deploy now?"}]}}' |
             "${helper}" ipc agent-event --adapter=claude PreToolUse
         ;;
+    claude-lifecycle)
+        require_helper
+        settings=""
+        previous=""
+        for argument in "$@"; do
+            [[ "${previous}" == --settings ]] && settings="${argument}"
+            previous="${argument}"
+        done
+        [[ "${settings}" == *'"SessionStart"'* &&
+            "${settings}" == *'"PermissionRequest"'* &&
+            "${settings}" == *'agent-event --adapter=claude'* ]] ||
+            fail "Claude lifecycle hook settings are missing"
+        for payload in \
+            '{"hook_event_name":"SessionStart","session_id":"claude-life-e2e"}' \
+            '{"hook_event_name":"UserPromptSubmit","session_id":"claude-life-e2e"}' \
+            '{"hook_event_name":"PreToolUse","session_id":"claude-life-e2e","tool_name":"AskUserQuestion","tool_input":{"questions":[{"question":"Choose deployment","options":[{"label":"Staging"},{"label":"Production"}]}]}}' \
+            '{"hook_event_name":"Stop","session_id":"claude-life-e2e"}' \
+            '{"hook_event_name":"Notification","session_id":"claude-life-e2e","message":"Claude is waiting for your input"}' \
+            '{"hook_event_name":"PermissionRequest","session_id":"claude-life-e2e","tool_name":"Bash","message":"Allow release command?"}'; do
+            printf '%s' "${payload}" |
+                "${helper}" ipc agent-event --adapter=claude
+            sleep 0.1
+        done
+        ;;
     gemini-permission)
         require_helper
         settings="${GEMINI_CLI_SYSTEM_SETTINGS_PATH:-}"

@@ -67,6 +67,7 @@ run_adapter() {
     local command="$2"
     local profile="$3"
     local expected="$4"
+    local forbidden="${5:-}"
     local socket=""
 
     log="$(mktemp)"
@@ -87,6 +88,9 @@ run_adapter() {
         fail "${name} terminal child did not deliver an authenticated event"
     grep -Fq "${expected}" "${log}" ||
         fail "${name} event was not reduced and rendered as an attention state"
+    if [[ -n "${forbidden}" ]] && grep -Fq "${forbidden}" "${log}"; then
+        fail "${name} rendered forbidden stale state: ${forbidden}"
+    fi
 
     socket="$(sed -n 's/^zentty-linux: agent-runtime socket=//p' "${log}" | head -1)"
     [[ -S "${socket}" ]] || fail "private product socket was not live during ${name}"
@@ -278,6 +282,12 @@ run_adapter \
     'claude' \
     claude-question \
     'zentty-linux: sidebar-agent-status pane=pane-1 text="Claude Code · Needs input: Deploy now?" attention=true'
+run_adapter \
+    claude-lifecycle \
+    'claude' \
+    claude-lifecycle \
+    'zentty-linux: sidebar-agent-status pane=pane-1 text="Claude Code · Needs input: Allow release command?" attention=true' \
+    'Claude Code · Needs input: Claude is waiting for your input'
 run_adapter \
     gemini \
     'gemini' \

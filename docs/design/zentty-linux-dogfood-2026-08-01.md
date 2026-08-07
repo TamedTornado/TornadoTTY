@@ -8817,6 +8817,93 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   partial. Aggregate counts could not detect the swap. Manual keyed diff review
   caught it before staging; the repair targets both explicit entry IDs, leaving
   workspace recipe partial and promoting only the completed Codex entry.
+- **DOGFOOD-2026-08-07-CLAUDE-SOURCE-GAP-RED:** Returning from qualification
+  reporting to product delivery exposed that Linux's Claude adapter still
+  rejected source-owned `SubagentStart`, `SubagentStop`, `PreCompact`, and
+  `PostCompact` hooks as unsupported, discarded `AskUserQuestion` option
+  labels, treated every informational Notification as human attention, and
+  supplied no PermissionRequest fallback. Source-pinned focused tests failed
+  on those exact behaviors before the adapter was changed.
+- **Claude Stop race was also absent from the canonical reducer:** A real Stop
+  followed by Claude's generic late “waiting for your input” Notification
+  changed an idle pane back to Needs input. The Linux reducer now mirrors the
+  source five-second guard for only Claude's weak generic-input signal. A real
+  approval bypasses the guard immediately, and a generic interaction at the
+  exact expiry boundary is accepted. This is reducer state, not a new hook
+  session database.
+- **First Claude repair remains deliberately partial:** Focused adapter and
+  reducer tests now pass for source lifecycle mapping, question options,
+  permission fallback, chatter filtering, unknown-event no-op behavior, and
+  Stop-race ordering. Task counters, durable session correlation, title
+  presentation, and an ordinary installed-Claude completed-turn/resume journey
+  remain before `agent.claude-code` can be promoted.
+- **Mutation rejected shallow Claude assertions:** The first focused campaign
+  caught 27 mutants, classified one unviable, and missed four. The misses
+  showed that the tests did not require a positive Notification, did not
+  inspect SessionEnd output, and did not independently exercise marker-based
+  versus question-mark human-input classification. Those assertions were
+  added rather than accepting the score. The final campaign caught all 31
+  viable mutants, classified one unviable, and missed or timed out none.
+  Its `outcomes.json` SHA-256 is
+  `a898a0078ff62f93218353720aed22eed3c2ec41ef1309f097d067aa13e2eb24`.
+- **Real product evidence crosses both compositors:** The consolidated
+  `rust-agent-ipc` journey now drives the staged Claude wrapper and helper from
+  a real Ghostty PTY through SessionStart, running, structured decision, Stop,
+  late generic Notification, and a subsequent explicit approval. It passed in
+  controlled X11 session
+  `840681682a88410b6ece1365fc2773b7fc1e6f91a27ba31c5488cef184bbe0c1`
+  and controlled Wayland session
+  `56b8a7aec8c12eefb27c388d2c7345fc22b6a9ab31ce46b8e8d123efb74f5cf5`.
+  This actor-backed journey proves the local product boundary; it does not
+  replace the still-required ordinary installed-Claude completed turn.
+- **Prior status reported the wrong expanded commit ID:** The Codex completion
+  commit actually resolves to
+  `fda63c64766b7ac2dbca6241fdb35d2f1465a731`; the earlier expanded value in
+  the conversational status was not a repository object. Future commit
+  reports must come from `git rev-parse`, never from remembered output.
+- **Complete qualification after the first Claude repair:** Every presently
+  executable cell passed. The authoritative summary SHA-256 is
+  `707fb73076412f681e88e5bbfa97cbf61dafe0754f585db0d6509a733cf614c4`.
+  Declared totals remain `PASS=52`, `FAIL=0`, `BLOCKED=5`, `XFAIL=1`, and
+  `NOT_IMPLEMENTED=51`; implemented-local and product-boundary qualification
+  passed, while release and full Linux qualification did not. Debug Valgrind
+  is **PASS with reviewed suppressions**, not unsuppressed clean: raw evidence
+  reports 427 errors/contexts, 6,240 definite bytes, and 41,397 indirect bytes;
+  reviewed post-suppression evidence reports zero for all four values and
+  counts all 427 errors/contexts as suppressed. The Valgrind report SHA-256 is
+  `19f7670ee2c2102fd4d2562b9613c246f3bfa457de1ec342d50019c39885c22d`.
+  ReleaseSafe Valgrind remains unimplemented/XFAIL work and no suppression was
+  broadened.
+- **Post-qualification diff review found two source aliases missing:** Claude's
+  parsed input accepts camel-case `notificationType` and the `error` message
+  key, while the first Rust repair only recognized `notification_type` and
+  omitted `error` from the shared message lookup. Focused tests failed before
+  both aliases were added. Because this changed executable code after the
+  qualification receipt, the focused mutation/static checks and presently
+  executable matrix must be rerun before commit; the earlier receipt remains
+  discovery evidence, not final evidence.
+- **Reviewed Claude mutation rerun:** After adding those aliases, the final
+  reviewed campaign caught all 37 viable mutants, classified one unviable,
+  and missed or timed out none. Its `outcomes.json` SHA-256 is
+  `6ce531f6793af2a8a7e23d0b8dc83fded1d2a0784da7a8095d1bef6066abffff`.
+- **Final qualification after the reviewed alias repair:** Every presently
+  executable cell passed again. The final authoritative summary SHA-256 is
+  `15e7ab149b3c68ca36d6c9a74717d0fb41b0cd471401dfefa457ab453cdbf1fb`.
+  Totals remain `PASS=52`, `FAIL=0`, `BLOCKED=5`, `XFAIL=1`, and
+  `NOT_IMPLEMENTED=51`; release and full Linux qualification remain false.
+  Debug Valgrind is **PASS with reviewed suppressions**: raw evidence reports
+  427 errors/contexts, 6,240 definite bytes, and 41,461 indirect bytes;
+  reviewed post-suppression evidence reports zero for each value and 427
+  suppressed errors/contexts. The final Valgrind report SHA-256 is
+  `686d754bc12197982f7faae62b28896cc47ec05c35f8123c0a5030fa56f538df`.
+- **The 51 NOT_IMPLEMENTED matrix total contains stale duplication as well as
+  real gaps:** Twenty-two rows claim the Rust product pane-lifecycle harness is
+  absent even though the same compositor/optimization/backend/count axes are
+  already PASS under the real `rust-product-smoke` and
+  `rust-product-lifecycle` product cells. Those rows must be reconciled after
+  the Claude slice without converting duplicate commands into pretend new
+  evidence. IME, Wayland external resize, packaging, platform services, and
+  recovery remain genuine missing qualification behavior.
 
 ## AI disclosure
 

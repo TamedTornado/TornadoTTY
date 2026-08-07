@@ -210,7 +210,7 @@ pub fn adapt_claude_hook(
             question_text(&payload).as_deref(),
             Some("decision"),
         )?,
-        "UserPromptSubmit" | "PreToolUse" => canonical(
+        "UserPromptSubmit" | "SubagentStart" | "PreToolUse" | "PostCompact" => canonical(
             "agent.running",
             "Claude Code",
             pid,
@@ -218,20 +218,26 @@ pub fn adapt_claude_hook(
             None,
             None,
         )?,
-        "PermissionRequest" => canonical(
-            "agent.needs-input",
-            "Claude Code",
-            pid,
-            session.as_deref(),
-            first_message(&payload).as_deref(),
-            Some(if is_question_tool(&payload) {
-                "decision"
+        "PermissionRequest" => {
+            let is_question = is_question_tool(&payload);
+            let text = if is_question {
+                question_text(&payload)
+                    .or_else(|| Some("Claude is waiting for your decision".to_owned()))
             } else {
-                "approval"
-            }),
-        )?,
+                first_message(&payload).or_else(|| Some("Claude needs your approval".to_owned()))
+            };
+            canonical(
+                "agent.needs-input",
+                "Claude Code",
+                pid,
+                session.as_deref(),
+                text.as_deref(),
+                Some(if is_question { "decision" } else { "approval" }),
+            )?
+        }
         "Notification"
-            if string_at(&payload, &["notification_type"]).as_deref() == Some("idle_prompt") =>
+            if string_at(&payload, &["notification_type", "notificationType"]).as_deref()
+                == Some("idle_prompt") =>
         {
             canonical(
                 "agent.idle",
@@ -242,15 +248,29 @@ pub fn adapt_claude_hook(
                 None,
             )?
         }
-        "Notification" => canonical(
-            "agent.needs-input",
+        "Notification" => {
+            let message = first_message(&payload);
+            if !message.as_deref().is_some_and(requires_human_input) {
+                return Ok(Vec::new());
+            }
+            canonical(
+                "agent.needs-input",
+                "Claude Code",
+                pid,
+                session.as_deref(),
+                message.as_deref(),
+                Some("generic-input"),
+            )?
+        }
+        "PreCompact" => canonical(
+            "agent.running",
             "Claude Code",
             pid,
             session.as_deref(),
-            first_message(&payload).as_deref(),
-            Some("generic-input"),
+            Some("Compacting"),
+            None,
         )?,
-        "Stop" => canonical(
+        "Stop" | "SubagentStop" => canonical(
             "agent.idle",
             "Claude Code",
             pid,
@@ -266,7 +286,7 @@ pub fn adapt_claude_hook(
             None,
             None,
         )?,
-        other => return Err(AgentAdapterError::UnsupportedEvent(other.to_owned())),
+        _ => return Ok(Vec::new()),
     };
     Ok(vec![event])
 }
@@ -485,21 +505,82 @@ fn codex_notify_has_options(message: &str) -> bool {
 }
 
 fn question_text(payload: &Value) -> Option<String> {
-    payload
+    let question = payload
         .get("tool_input")
         .and_then(|input| input.get("questions"))
         .and_then(Value::as_array)
         .and_then(|questions| questions.first())
-        .and_then(|question| question.get("question"))
-        .and_then(Value::as_str)
-        .map(str::to_owned)
-        .or_else(|| first_message(payload))
+        .and_then(Value::as_object);
+    if let Some(question) = question {
+        let mut lines = Vec::new();
+        if let Some(prompt) = ["question", "header"].into_iter().find_map(|key| {
+            question
+                .get(key)
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+        }) {
+            lines.push(prompt.to_owned());
+        }
+        let labels = question
+            .get("options")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|option| option.get("label").and_then(Value::as_str))
+            .map(str::trim)
+            .filter(|label| !label.is_empty())
+            .map(|label| format!("[{label}]"))
+            .collect::<Vec<_>>();
+        if !labels.is_empty() {
+            lines.push(labels.join(" "));
+        }
+        if !lines.is_empty() {
+            return Some(lines.join("\n"));
+        }
+    }
+    first_message(payload)
+}
+
+fn requires_human_input(message: &str) -> bool {
+    let normalized = message.trim().to_ascii_lowercase();
+    [
+        "waiting for your input",
+        "waiting for input",
+        "needs your input",
+        "needs input",
+        "needs your attention",
+        "action required",
+        "input-requested",
+        "input requested",
+        "approval-requested",
+        "approval requested",
+        "question requested",
+        "questions requested",
+        "plan-mode-prompt",
+        "plan mode prompt",
+        "permission",
+        "approve",
+        "approval",
+        "allow ",
+        "wants to edit",
+        "confirm",
+        "select ",
+        "choose ",
+        "grant access",
+        "press enter",
+        "log in",
+        "login",
+    ]
+    .iter()
+    .any(|marker| normalized.contains(marker))
+        || normalized.contains('?')
 }
 
 fn first_message(payload: &Value) -> Option<String> {
     string_at(
         payload,
-        &["message", "body", "text", "prompt", "description"],
+        &["message", "body", "text", "prompt", "error", "description"],
     )
     .or_else(|| question_text_without_fallback(payload))
 }
