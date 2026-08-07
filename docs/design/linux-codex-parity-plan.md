@@ -1,13 +1,12 @@
 # Linux Codex workflow parity plan
 
-- **Status:** active; explicit hook/notify parity, bounded transcript recovery,
+- **Status:** implemented; explicit hook/notify parity, bounded transcript recovery,
   source terminal-title classification, task progress, canonical
   title-to-sidebar reconciliation, physical user-submit stabilization, Ctrl-C
   interrupt suppression, shell-return cleanup, and title-driven asynchronous
   transcript enrichment/retry/cache application, OSC progress beyond title
-  task counts, and transactional resolver-state write-back implemented; a
-  controlled completed turn through the installed Codex notify callback
-  remains
+  task counts, transactional resolver-state write-back, and a controlled
+  completed turn through the installed Codex notify callback implemented
 - **Date:** 2026-08-06
 - **Owner:** [#7 — essential Zentty workflow parity](https://github.com/TamedTornado/zentty/issues/7)
 - **Inventory ID:** `agent.codex`
@@ -48,9 +47,9 @@ physical Return promotion, physical Ctrl-C suppression, shell-return cleanup,
 and delayed title-driven transcript question enrichment through the canonical
 reducer. The real Ghostty OSC 9;4 action now also reaches the canonical reducer,
 and skipped title transitions are proven not to write back partial state. It
-remains `PARTIAL` because the installed-Codex journey still uses a controlled
-no-response endpoint and therefore has not observed Codex itself invoke the
-notify callback after a completed model turn.
+The installed Codex 0.147.0 journey now completes a real Responses turn against
+a deterministic loopback endpoint and observes Codex itself invoke the notify
+callback before persisting and resuming the exact thread.
 
 ## Ordered delivery slices
 

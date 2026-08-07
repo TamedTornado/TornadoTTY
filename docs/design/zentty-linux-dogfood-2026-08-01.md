@@ -8722,6 +8722,101 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   Unix-socket contracts and passed in full, followed by strict Clippy,
   formatting, and diff checks, rather than weakening or mocking those
   contracts.
+- **DOGFOOD-2026-08-07-INSTALLED-CODEX-COMPLETION-RED:** The next Codex slice
+  first changed the existing installed-binary product journey to require a
+  controlled, completed Responses turn, an authenticated `agent.idle` event
+  from Codex's own configured notify command, and a sanitized model receipt.
+  The test failed before product startup because the required
+  `target/release-safe/controlled_openai_responses` endpoint did not exist.
+  This is the intended red state: no fake helper invocation or second product
+  journey can satisfy the missing installed-Codex boundary.
+- **Focused endpoint build-path repair:** The first standalone ReleaseSafe
+  endpoint build supplied `GHOSTTY_LIB_DIR` as a repository-relative path;
+  the dependency build script resolves it from the crate build context and
+  correctly rejected the apparently missing library. The rerun uses the
+  explicit absolute pinned-library path used by the product build contract.
+- **Completed-turn race exposed and repaired in the assertion:** The first
+  real installed-Codex run successfully produced `session.start`,
+  `agent.running`, and Codex-originated `agent.idle`, but the endpoint's
+  deterministic response completed quickly enough that the sidebar had
+  already rendered Idle before the old test polled for its transient Running
+  presentation. The journey now proves the ordered reducer events and final
+  Idle presentation instead of requiring observation of a timing-dependent
+  intermediate frame.
+- **Real installed callback exposed an adapter defect:** The completed-turn
+  run then failed restore-draft identity even though Codex invoked notify.
+  Codex 0.147.0's actual legacy payload names its session `thread-id`; the
+  Linux adapter only accepted synthetic `session_id`/`sessionId`, so it created
+  a second `pane-default` Codex session and selected that invalid identity for
+  restore. A focused source-shaped test failed with `pane-default` before the
+  adapter was repaired to accept Codex's hyphenated field (plus its ordinary
+  snake/camel aliases).
+- **Staged helper identity caught during focused rebuild:** The first rerun
+  after that repair still emitted `pane-default` because the fast local rebuild
+  copied the refreshed product and CLI binaries but not the separately staged
+  helper copy under `libexec/zentty/agent-wrappers/shared`. The normal build
+  script updates all three. The focused rerun now refreshes that exact staged
+  helper too; this was stale test setup, not evidence against the adapter fix.
+- **Installed Codex completion boundary passed:** Controlled X11 session
+  `2f9b0b7fd6c4ac5d29edda53b4bade6e93b7189cb339c99e9825021ab70b2b42`
+  ran installed Codex 0.147.0, the staged wrapper and helper, real Ghostty PTY,
+  a deterministic loopback Responses stream, Codex's own completed-turn notify
+  process, authenticated IPC, physical window teardown, persisted exact thread
+  identity, and real `codex resume`. The endpoint retains only a sanitized
+  request-shape receipt and never credentials or prompt text. `agent.codex` is
+  now `IMPLEMENTED`; this feature statement is not a claim of release or full
+  Linux qualification.
+- **Complete qualification after installed Codex completion:** Every presently
+  executable cell produced its expected outcome, including the completed-turn
+  installed-Codex journey in the authoritative X11 agent cell. The machine
+  summary SHA-256 is
+  `38d66d95dd3f60b380c5debaf1641a7bc9e173e4539b1b34172855ad099ebbf8`.
+  Declared totals remain `PASS=52`, `FAIL=0`, `BLOCKED=5`, `XFAIL=1`, and
+  `NOT_IMPLEMENTED=51`; implemented-local and product-boundary qualification
+  passed, while release and full Linux qualification did not. Debug Valgrind
+  is **PASS with reviewed suppressions**, not unsuppressed clean: raw evidence
+  reports 427 errors/contexts, 6,080 definite bytes, and 41,380 indirect bytes;
+  reviewed post-suppression evidence reports zero for all four values and
+  counts all 427 errors/contexts as suppressed. The Valgrind report SHA-256 is
+  `5cb50a5be7ae055f00cb98e49960990f8096ab9e06b0b4179eac9f3e9ab2b370`.
+  ReleaseSafe Valgrind remains XFAIL and no suppression was broadened.
+- **Endpoint mutation permission correction:** The first focused endpoint
+  campaign's unmutated package baseline built successfully but failed two
+  pre-existing controlled-Anthropic TCP tests because the restricted command
+  sandbox forbids listener creation. No mutant ran. The campaign is rerun with
+  the real loopback permissions required by both reviewed model-protocol
+  endpoints; the failure is retained here rather than misreported as mutation
+  evidence.
+- **Mutation gaps repaired, not accepted:** The first viable endpoint campaign
+  caught 16 mutants but missed 34 because its tests validated JSON helpers
+  without exercising the real bounded HTTP reader, writer, or process-facing
+  boundaries. Direct fragmented-loopback, malformed target/version/length,
+  exact size ceiling, truncated body, sanitized receipt, and complete SSE/HTTP
+  tests were added. A second focused run reduced the misses to six boundary
+  predicates; exact-at-limit, one-over-limit, independent method/path, and
+  missing-probe assertions closed them. The final endpoint campaign caught all
+  41 viable mutants and classified one as unviable, with zero misses/timeouts;
+  `outcomes.json` SHA-256 is
+  `0d813197963ffd6d5a2a8fc1b49e957b42e534bf6f19aef0f081b81933b1ec30`.
+  The 1.3-MiB scratch tree confirms ignored build dependencies were not copied.
+  The focused core adapter/session campaign caught 13 viable mutants and
+  classified two as unviable, also with zero misses/timeouts; its receipt
+  SHA-256 is
+  `e46ffb392c12ad758599fc1a0fc7529fc1b572b38b76f0ed806e5855317e15d6`.
+- **Notify observation had to exercise the real precedence rule:** Merely
+  placing the observer in `config.toml` did not create a receipt because
+  Zentty's intentionally injected command-line notify setting has higher
+  precedence. The completed model turn and canonical idle events still
+  occurred, proving the failure was observational. The journey now supplies
+  the observer as an explicit user `-c notify=...` override—the exact override
+  class the launch planner promises to preserve—and the observer immediately
+  execs the real staged helper after recording Codex's unmodified payload.
+- **Diff review caught an inventory-targeting error:** The first status edit
+  changed the first `implementation_status` occurrence in the JSON inventory,
+  incorrectly promoting `workspace.recipe-v3` while leaving `agent.codex`
+  partial. Aggregate counts could not detect the swap. Manual keyed diff review
+  caught it before staging; the repair targets both explicit entry IDs, leaving
+  workspace recipe partial and promoting only the completed Codex entry.
 
 ## AI disclosure
 

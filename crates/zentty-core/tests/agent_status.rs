@@ -420,6 +420,29 @@ fn codex_osc_progress_resumes_idle_without_overriding_attention_or_interrupts() 
 }
 
 #[test]
+fn sessionless_codex_completion_reconciles_the_existing_pane_session() {
+    let mut store = AgentStatusStore::default();
+    store.apply(
+        event_for(
+            "pane-a",
+            br#"{"version":1,"event":"agent.running","agent":{"name":"Codex"},"session":{"id":"codex-real-session"}}"#,
+        ),
+        10,
+    );
+    store.apply(
+        event_for(
+            "pane-a",
+            br#"{"version":1,"event":"agent.idle","agent":{"name":"Codex"}}"#,
+        ),
+        20,
+    );
+
+    let status = store.status_for(&target()).unwrap();
+    assert_eq!(status.session_id, "codex-real-session");
+    assert_eq!(status.phase, AgentPhase::Idle);
+}
+
+#[test]
 fn codex_user_submit_resumes_attention_only_after_the_source_stabilization_window() {
     let event = |json: &[u8]| AuthenticatedAgentEvent {
         target: target(),

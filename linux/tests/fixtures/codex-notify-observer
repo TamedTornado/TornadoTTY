@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+payload="${1:?Codex notify payload is required}"
+receipt="${ZENTTY_CODEX_NOTIFY_RECEIPT:?notify receipt path is required}"
+helper="${ZENTTY_CLI_BIN:?staged Zentty helper path is required}"
+
+printf '%s\n' "${payload}" >"${receipt}"
+exec "${helper}" codex-notify "${payload}"

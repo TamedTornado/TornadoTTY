@@ -7,7 +7,9 @@ application_shell="${repo_root}/crates/zentty-linux/src/application_shell.rs"
 matrix="${repo_root}/linux/qualification-matrix.json"
 architecture="${repo_root}/docs/architecture/linux-product-architecture-v1.json"
 actor="${repo_root}/linux/tests/fixtures/controlled-agent"
-controlled_model="${repo_root}/crates/zentty-test-support/src/bin/controlled_anthropic.rs"
+codex_notify_observer="${repo_root}/linux/tests/fixtures/codex-notify-observer"
+controlled_anthropic="${repo_root}/crates/zentty-test-support/src/bin/controlled_anthropic.rs"
+controlled_openai="${repo_root}/crates/zentty-test-support/src/bin/controlled_openai_responses.rs"
 wayland_input_harness="${repo_root}/linux/tests/nested-wayland-input"
 failures=0
 
@@ -61,8 +63,10 @@ fi
 
 require "the single reviewed deterministic agent actor is missing or not executable" \
     test -x "${actor}"
-require "the single reviewed controlled-model endpoint is missing" \
-    test -f "${controlled_model}"
+require "the installed-Codex notify observer is missing or not executable" \
+    test -x "${codex_notify_observer}"
+require "the reviewed Anthropic endpoint is missing" test -f "${controlled_anthropic}"
+require "the reviewed OpenAI Responses endpoint is missing" test -f "${controlled_openai}"
 require "the controlled input-capable Wayland harness is missing or not executable" \
     test -x "${wayland_input_harness}"
 inline_actor_files="$({
@@ -79,7 +83,8 @@ controlled_model_servers="$({
         -E 'CONTROLLED_[A-Z_]*READY=http://|TcpListener::bind\(\("127\.0\.0\.1"' \
         "${repo_root}/crates/zentty-test-support" "${repo_root}/linux/tests" || true
 } | sort -u)"
-if [[ "${controlled_model_servers}" != "${controlled_model}" ]]; then
+expected_model_servers="$(printf '%s\n%s\n' "${controlled_anthropic}" "${controlled_openai}" | sort -u)"
+if [[ "${controlled_model_servers}" != "${expected_model_servers}" ]]; then
     echo "test-orchestration-contract: controlled-model server allowlist differs:" >&2
     printf '%s\n' "${controlled_model_servers}" >&2
     failures=$((failures + 1))
@@ -87,6 +92,9 @@ fi
 require "installed Claude journey does not consume the reviewed endpoint" \
     grep -Fq 'target/release-safe/controlled_anthropic' \
     "${repo_root}/linux/tests/installed-claude-agent-team"
+require "installed Codex journey does not consume the reviewed Responses endpoint" \
+    grep -Fq 'target/release-safe/controlled_openai_responses' \
+    "${repo_root}/linux/tests/installed-codex-integration"
 require "installed Claude journey does not consume the single controlled actor" \
     grep -Fq 'linux/tests/fixtures/controlled-agent' \
     "${repo_root}/linux/tests/installed-claude-agent-team"
@@ -111,4 +119,4 @@ reject "architecture contract still references the superseded inactive-agent jou
     echo "test-orchestration-contract: FAIL failures=${failures}" >&2
     exit 1
 }
-echo "Test orchestration contract passed: one actor, external control, consolidated journeys"
+echo "Test orchestration contract passed: one actor, two protocol endpoints, external control, consolidated journeys"

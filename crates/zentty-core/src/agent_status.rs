@@ -194,11 +194,33 @@ impl AgentStatusStore {
         Some(true)
     }
 
+    fn resolve_session_id(&self, pane_id: &str, event: &crate::AgentEvent) -> String {
+        event
+            .session_id()
+            .map(str::to_owned)
+            .or_else(|| {
+                if !event
+                    .agent_name()
+                    .is_some_and(|name| name.eq_ignore_ascii_case("codex"))
+                {
+                    return None;
+                }
+                self.panes.get(pane_id).and_then(|sessions| {
+                    sessions
+                        .values()
+                        .filter(|status| status.agent_name.eq_ignore_ascii_case("codex"))
+                        .max_by_key(|status| (status_priority(status), status.updated_at))
+                        .map(|status| status.session_id.clone())
+                })
+            })
+            .unwrap_or_else(|| "pane-default".to_owned())
+    }
+
     pub fn apply(&mut self, authenticated: AuthenticatedAgentEvent, now: u64) {
         let target = authenticated.target;
         let event = authenticated.event;
-        let session_id = event.session_id().unwrap_or("pane-default").to_owned();
         let pane_id = target.pane_id;
+        let session_id = self.resolve_session_id(&pane_id, &event);
         let Some(event_is_codex) =
             self.suppress_interrupted_codex_event(&pane_id, &session_id, &event, now)
         else {

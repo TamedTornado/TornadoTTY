@@ -124,6 +124,17 @@ fn codex_notify_maps_turn_completion_and_human_interaction_without_auto_review_n
     );
     assert_eq!(idle.phase, AgentPhase::Idle);
 
+    let installed_payload = reduce(
+        adapt_codex_notify(
+            br#"{"type":"agent-turn-complete","thread-id":"b5f6c1c2-1111-2222-3333-444455556666","turn-id":"turn-1","last-assistant-message":"Done"}"#,
+        )
+        .unwrap(),
+    );
+    assert_eq!(
+        installed_payload.session_id,
+        "b5f6c1c2-1111-2222-3333-444455556666"
+    );
+
     for (payload, expected_kind, expected_text) in [
         (
             br#"{"type":"permission-requested","session_id":"codex-notify-a","message":"Allow editing src/main.rs?"}"#.as_slice(),

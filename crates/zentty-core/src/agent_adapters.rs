@@ -39,7 +39,16 @@ pub fn adapt_codex_hook(
 ) -> Result<Vec<AgentEvent>, AgentAdapterError> {
     let payload = parse_payload(bytes)?;
     let hook = event_name(&payload)?;
-    let session = string_at(&payload, &["session_id", "sessionId"]);
+    let session = string_at(
+        &payload,
+        &[
+            "session_id",
+            "sessionId",
+            "thread-id",
+            "thread_id",
+            "threadId",
+        ],
+    );
     let transcript_path = string_at(&payload, &["transcript_path", "transcriptPath"]);
     let event = match hook {
         "SessionStart" => canonical(
@@ -109,7 +118,16 @@ pub fn adapt_codex_notify(bytes: &[u8]) -> Result<Vec<AgentEvent>, AgentAdapterE
     let payload = parse_payload(bytes)?;
     let payload_type =
         string_at(&payload, &["type", "event_type", "eventType"]).unwrap_or_default();
-    let session = string_at(&payload, &["session_id", "sessionId"]);
+    let session = string_at(
+        &payload,
+        &[
+            "session_id",
+            "sessionId",
+            "thread-id",
+            "thread_id",
+            "threadId",
+        ],
+    );
     let transcript_path = string_at(&payload, &["transcript_path", "transcriptPath"]);
     if payload_type == "agent-turn-complete" {
         return Ok(vec![

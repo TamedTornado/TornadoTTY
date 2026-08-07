@@ -3,10 +3,15 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
+endpoint_binary="${repo_root}/target/release-safe/controlled_openai_responses"
+notify_observer="${repo_root}/linux/tests/fixtures/codex-notify-observer"
 state_directory=""
 codex_home_directory=""
 log=""
 product_pid=""
+server_pid=""
+model_receipt=""
+notify_receipt=""
 
 # shellcheck disable=SC1091
 source "${repo_root}/linux/tests/lib/product-input"
@@ -22,6 +27,10 @@ cleanup() {
         kill -TERM "${product_pid}" 2>/dev/null || true
         wait "${product_pid}" 2>/dev/null || true
     fi
+    if [[ "${server_pid}" =~ ^[1-9][0-9]*$ ]]; then
+        kill -TERM "${server_pid}" 2>/dev/null || true
+        wait "${server_pid}" 2>/dev/null || true
+    fi
     [[ -z "${log}" ]] || rm -f -- "${log}"
     [[ -z "${state_directory}" ]] || rm -rf -- "${state_directory}"
     [[ -z "${codex_home_directory}" ]] || rm -rf -- "${codex_home_directory}"
@@ -35,6 +44,9 @@ for dependency in codex grep jq mktemp; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
 [[ -x "${product}" ]] || fail "staged product is not built: ${product}"
+[[ -x "${endpoint_binary}" ]] ||
+    fail "controlled Responses endpoint is not built: ${endpoint_binary}"
+[[ -x "${notify_observer}" ]] || fail "Codex notify observer is not executable"
 
 codex_version="$(codex --version 2>/dev/null)"
 [[ "${codex_version}" == "codex-cli 0.147.0" ]] ||
@@ -43,13 +55,26 @@ codex_version="$(codex --version 2>/dev/null)"
 state_directory="$(mktemp -d)"
 codex_home_directory="$(mktemp -d)"
 log="$(mktemp)"
+model_receipt="${codex_home_directory}/model-receipt.jsonl"
+notify_receipt="${codex_home_directory}/notify-receipt.json"
+"${endpoint_binary}" --receipt "${model_receipt}" >"${codex_home_directory}/model.log" 2>&1 &
+server_pid=$!
+for _ in {1..200}; do
+    grep -q '^CONTROLLED_OPENAI_RESPONSES_READY=' "${codex_home_directory}/model.log" && break
+    kill -0 "${server_pid}" 2>/dev/null || fail "controlled Responses endpoint exited before readiness"
+    sleep 0.01
+done
+endpoint="$(sed -n 's/^CONTROLLED_OPENAI_RESPONSES_READY=//p' "${codex_home_directory}/model.log")"
+[[ "${endpoint}" =~ ^http://127\.0\.0\.1:[1-9][0-9]*$ ]] ||
+    fail "controlled Responses endpoint did not publish a loopback address"
+
 cat >"${codex_home_directory}/config.toml" <<EOF
 model_provider = "zentty-test"
 model = "gpt-5.6-sol"
 
 [model_providers.zentty-test]
 name = "Zentty Test"
-base_url = "http://127.0.0.1:1/v1"
+base_url = "${endpoint}/v1"
 env_key = "ZENTTY_TEST_MODEL_KEY"
 wire_api = "responses"
 
@@ -60,6 +85,7 @@ EOF
 start_product() {
     : >"${log}"
     env CODEX_HOME="${codex_home_directory}" ZENTTY_TEST_MODEL_KEY=not-a-real-key \
+        ZENTTY_CODEX_NOTIFY_RECEIPT="${notify_receipt}" \
         "${product}" "$@" >"${log}" 2>&1 &
     product_pid=$!
 }
@@ -82,13 +108,24 @@ close_product() {
 
 start_product \
     --state-directory "${state_directory}" \
-    --command "codex 'Zentty installed Codex integration probe'" \
+    --command "codex -c 'notify=[\"${notify_observer}\"]' 'Zentty installed Codex integration probe'" \
     --no-session-restore
 zentty_product_wait_for_log "${log}" 'zentty-linux: agent-event pane=pane-1 worklane=worklane-1' \
     "installed Codex did not deliver authenticated SessionStart" || fail "real Codex event missing"
 zentty_product_wait_for_log "${log}" \
-    'zentty-linux: sidebar-agent-status pane=pane-1 text="Codex · Running" attention=false' \
-    "installed Codex state did not reach the sidebar" || fail "real Codex reducer state missing"
+    'kind=agent.running session=' \
+    "installed Codex running hook did not reach the reducer" || fail "real Codex reducer state missing"
+for _ in {1..200}; do
+    [[ -s "${notify_receipt}" ]] && break
+    sleep 0.01
+done
+notify_session="$(jq -er 'select(.type == "agent-turn-complete") | .["thread-id"] | select(test("^[0-9a-f-]{36}$"))' "${notify_receipt}")" ||
+    fail "installed Codex did not invoke the configured notify observer"
+zentty_product_wait_for_log "${log}" "kind=agent.idle session=${notify_session}" \
+    "installed Codex did not invoke the notify callback after its completed turn" ||
+    fail "real Codex completion callback missing"
+grep -Fq '"path":"/v1/responses"' "${model_receipt}" ||
+    fail "controlled endpoint did not retain a sanitized Responses receipt"
 close_product
 
 session_id="$(jq -er '
@@ -100,6 +137,8 @@ session_id="$(jq -er '
     ) | $draft.sessionID
 ' "${state_directory}/restore-snapshot.json")" ||
     fail "real Codex session was not persisted as an exact pane-scoped resume draft"
+[[ "${session_id}" == "${notify_session}" ]] ||
+    fail "persisted Codex session differs from the observed notify thread"
 
 start_product --state-directory "${state_directory}"
 zentty_product_wait_for_log "${log}" \
@@ -109,4 +148,4 @@ zentty_product_wait_for_log "${log}" 'zentty-linux: title=Ready | zentty' \
     "restored Codex TUI did not render its ready state" 400 || fail "real resumed TUI missing"
 close_product
 
-echo "Installed Codex integration passed: x11, version=${codex_version#codex-cli }, model-endpoint=controlled-loopback-no-response, wrapper=staged, pty=real, hook=real, ipc=real, relaunch=real-resume-tui, lifecycle=physical"
+echo "Installed Codex integration passed: x11, version=${codex_version#codex-cli }, model-endpoint=controlled-loopback-completed-turn, wrapper=staged, pty=real, hook=real, notify=real, ipc=real, relaunch=real-resume-tui, lifecycle=physical"
