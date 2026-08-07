@@ -290,6 +290,9 @@ fn atomic_write_json(path: &Path, value: &impl Serialize) -> Result<(), SessionR
     drop(file);
     fs::rename(&temp_path, path).map_err(|source| io_error("replace JSON", path, source))?;
     cleanup.disarm();
+    File::open(parent)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|source| io_error("sync parent directory", parent, source))?;
     Ok(())
 }
 

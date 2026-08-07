@@ -106,6 +106,66 @@ fn snapshot_is_atomic_consumable_and_corruption_is_preserved() {
 }
 
 #[test]
+fn malformed_type_incompatible_and_future_snapshots_follow_source_contract() {
+    let directory = TestDirectory::new("decode-contract");
+    let store = store(&directory);
+
+    for invalid in [
+        b"{\"schemaVersion\":1,".as_slice(),
+        br#"{"schemaVersion":"one","savedAt":1,"reason":"liveSnapshot","workspace":{"windows":[]},"restoreDraftWindows":[]}"#
+            .as_slice(),
+    ] {
+        fs::write(store.snapshot_path(), invalid).unwrap();
+        let error = store.prepare_for_launch(true).unwrap_err();
+        assert!(matches!(error, zentty_core::SessionRestoreStoreError::Json { .. }));
+        assert_eq!(fs::read(store.snapshot_path()).unwrap(), invalid);
+    }
+
+    let mut future =
+        serde_json::to_value(envelope("window-future", SaveReason::LiveSnapshot)).unwrap();
+    future["schemaVersion"] = 99.into();
+    future["workspace"]["schemaVersion"] = 99.into();
+    future["futureEnvelopeField"] = "ignored".into();
+    future["workspace"]["futureWorkspaceField"] = true.into();
+    let future_bytes = serde_json::to_vec(&future).unwrap();
+    fs::write(store.snapshot_path(), &future_bytes).unwrap();
+
+    let decision = store.prepare_for_launch(true).unwrap().unwrap();
+    assert_eq!(decision.reason, LaunchReason::NormalRestore);
+    assert_eq!(decision.envelope.schema_version, 99);
+    assert_eq!(decision.envelope.workspace.schema_version, Some(99));
+    assert_eq!(fs::read(store.snapshot_path()).unwrap(), future_bytes);
+}
+
+#[test]
+fn atomic_rename_failure_preserves_destination_and_removes_temporary_file() {
+    let directory = TestDirectory::new("rename-failure");
+    let store = store(&directory);
+    fs::create_dir(store.snapshot_path()).unwrap();
+    let marker = store.snapshot_path().join("prior-state-marker");
+    fs::write(&marker, b"prior state remains").unwrap();
+
+    let error = store
+        .save_snapshot(&envelope("window-new", SaveReason::LiveSnapshot))
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        zentty_core::SessionRestoreStoreError::Io {
+            operation: "replace JSON",
+            ..
+        }
+    ));
+    assert_eq!(fs::read(marker).unwrap(), b"prior state remains");
+    assert!(fs::read_dir(&directory.0).unwrap().all(|entry| {
+        !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .contains(".tmp.")
+    }));
+}
+
+#[test]
 fn clean_exit_keeps_missing_live_restore_drafts_for_still_present_panes() {
     let directory = TestDirectory::new("merge-drafts");
     let store = store(&directory);

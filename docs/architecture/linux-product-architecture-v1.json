@@ -601,27 +601,27 @@
     {
       "id": "workspace-recovery-interrupted-write",
       "capability": "recovery",
-      "status": "NOT_IMPLEMENTED",
+      "status": "PASS",
       "tier": "release",
       "display": "none",
       "optimize": "Debug",
       "async_backend": "n/a",
       "terminals": "multi",
-      "tracking": "GH-6",
-      "defect": "No deterministic interrupted-write, fsync, rename, and prior-state recovery contract exists yet.",
+      "environment_profile": "isolated-none-v1",
+      "command": "cargo test --locked -p zentty-core --test session_restore_store atomic_rename_failure_preserves_destination_and_removes_temporary_file && linux/tests/workspace-recovery --self-test && linux/tests/workspace-recovery",
       "authoritative": false
     },
     {
       "id": "workspace-recovery-corrupt-state",
       "capability": "recovery",
-      "status": "NOT_IMPLEMENTED",
+      "status": "PASS",
       "tier": "release",
       "display": "none",
       "optimize": "Debug",
       "async_backend": "n/a",
       "terminals": "multi",
-      "tracking": "GH-6",
-      "defect": "No deterministic malformed/unsupported workspace state classification and recovery contract exists yet.",
+      "environment_profile": "isolated-none-v1",
+      "command": "cargo test --locked -p zentty-core --test session_restore_store malformed_type_incompatible_and_future_snapshots_follow_source_contract",
       "authoritative": false
     },
     {

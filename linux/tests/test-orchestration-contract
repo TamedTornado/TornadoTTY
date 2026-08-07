@@ -199,6 +199,21 @@ require "Ghostty old/new ABI mismatch remains prose-only or bypasses the real fi
             (.command | contains("--self-test")))
     ' "${matrix}"
 
+# shellcheck disable=SC2016
+require "workspace recovery cells remain prose-only or bypass the focused real-I/O runner" \
+    jq -e '
+        (.cells[] | select(.id == "workspace-recovery-interrupted-write") |
+            .status == "PASS" and .display == "none" and
+            .environment_profile == "isolated-none-v1" and
+            (.command | contains("cargo test --locked -p zentty-core --test session_restore_store")) and
+            (.command | contains("linux/tests/workspace-recovery")) and
+            (.command | contains("--self-test"))) and
+        (.cells[] | select(.id == "workspace-recovery-corrupt-state") |
+            .status == "PASS" and .display == "none" and
+            .environment_profile == "isolated-none-v1" and
+            .command == "cargo test --locked -p zentty-core --test session_restore_store malformed_type_incompatible_and_future_snapshots_follow_source_contract")
+    ' "${matrix}"
+
 ((failures == 0)) || {
     echo "test-orchestration-contract: FAIL failures=${failures}" >&2
     exit 1

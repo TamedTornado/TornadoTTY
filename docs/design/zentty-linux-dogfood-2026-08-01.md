@@ -9202,6 +9202,86 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   `7ac9918c01536f745b017f76eb9b51297470bddb8928a6307d05793e12d05421`.
   No suppression or suppression manifest changed in this slice.
 
+### 2026-08-07 — Workspace recovery qualification begins red
+
+- **The remaining recovery rows are not evidence yet:**
+  `workspace-recovery-interrupted-write` and
+  `workspace-recovery-corrupt-state` are still `NOT_IMPLEMENTED`. The
+  orchestration contract now requires both to use the existing Rust store test
+  target plus one focused real-I/O runner and its negative self-test. Its first
+  run failed exactly on those prose-only rows. The bounded acceptance plan is
+  `docs/design/linux-workspace-recovery-qualification-plan.md`.
+- **Source behavior rules out an invented backup system:** The original Swift
+  store uses atomic replacement, preserves a corrupt snapshot when decoding
+  throws, and accepts unknown fields through synthesized `Decodable`. Its app
+  reports restore preparation failures and proceeds with a new workspace. This
+  slice will harden and qualify the store boundary without adding `.bak`, a
+  journal, version history, or a strict future-version rejection policy.
+- **A real durability omission exists:** The Rust store syncs the temporary
+  file before rename but does not sync the containing directory afterward.
+  Atomic visibility and durable rename are different contracts. The repair
+  must add the directory sync and prove actual child-process interruption and
+  actual rename failure without a fake filesystem.
+- **The first focused isolated invocation exposed a toolchain boundary:** The
+  private HOME correctly prevented rustup from finding the operator-installed
+  1.97.1 toolchain and its offline caches, so rustup attempted a network sync
+  that the sandbox rejected. Qualification is therefore invoked with explicit
+  `RUSTUP_HOME` and `CARGO_HOME`, while HOME, every XDG directory, TMPDIR,
+  displays, and desktop buses remain private. This is build-tool availability,
+  not environmental evidence for the store behavior.
+- **The restricted tool sandbox cannot host the compositor fixtures:** The
+  first complete attempt reached the nested-Wayland wrapper self-test and the
+  sandbox denied its Unix display-socket bind. It was not recorded as a pass.
+  The complete qualification was restarted with the already-approved host
+  execution boundary used for real nested compositor tests.
+- **The first complete host run found a stale architecture mirror:** Both new
+  recovery cells themselves passed, but `architecture-contract-v1` rejected
+  the non-authoritative architecture JSON because it still mirrored their old
+  `NOT_IMPLEMENTED` declarations. The mirror now reproduces the exact PASS
+  commands and environment profiles. The focused architecture contract is
+  green; a complete matrix rerun remains mandatory.
+- **Atomic visibility now includes the durability handoff:** The store still
+  writes a same-directory mode-0600 temporary file, syncs it, and renames it,
+  but now also opens and syncs the parent directory after replacement. A real
+  helper child writes an 8 MiB envelope; the harness observes its actual
+  temporary file, sends `SIGKILL`, accepts only the complete prior or complete
+  new JSON document, and then proves a later real save replaces the state.
+  The runner self-test rejects missing interruption evidence, normal exit,
+  missing/partial/foreign publication, and a stale subsequent result.
+- **Rename and decode failures preserve evidence:** A real rename-over-directory
+  failure leaves the destination marker intact and removes the failed
+  writer's temporary file. Malformed and type-incompatible JSON returns the
+  store's bounded JSON error without changing the bytes. Conversely, future
+  envelope/recipe versions and unknown fields remain accepted, matching the
+  source rather than reviving the removed strict-version policy.
+- **Final complete qualification passed every executable cell:** Recovery
+  interruption session
+  `aae22202546933e172d57b05bcd668b09e949641120f799247d4880a36b3aced`
+  has log SHA-256
+  `f0d6ba00392e25941d0aa09ce358f1a95b5b10e7f746f746a78950cdd9716259`;
+  corrupt-state session
+  `891d0cafe85011124f29ad82bda3de7039ff9db4e2dc0d3939bbce6150b8a1e9`
+  has log SHA-256
+  `2f45f04057c855f41ac612abc312af7cc68f36053107bb3331ac45b7d1540dcf`.
+  Summary SHA-256 is
+  `20440b4a07c10465fd87059c5c12d042e0e300d4e27dc9efa5dfb76669fc835e`.
+  Totals are `PASS=83`, `FAIL=0`, `BLOCKED=5`, `XFAIL=1`, and
+  `NOT_IMPLEMENTED=21`. Implemented-local and the product boundary pass;
+  release and full Linux qualification correctly remain false.
+- **Valgrind remains PASS with reviewed suppressions:** The final raw receipt
+  contains 427 errors/contexts, 6,080 definite bytes, and 41,395 indirect
+  bytes. Post-suppression values are zero with all 427 contexts accounted for;
+  report SHA-256 is
+  `528a1827275959c1f91ce6d5d28fdbcba7a738feb4f0cce478bdb1902ff826e7`.
+  No suppression or suppression manifest changed in this slice.
+- **Focused mutation testing caught every generated store mutant:** With the
+  repository's mandatory `gitignore=true` and `copy_target=false` policy, the
+  `atomic_write_json` filter generated two mutations; both were caught after a
+  green unmutated baseline. The generator does not mutate the new side-effect
+  calls themselves, so the real interruption journey, exact operation errors,
+  parent-sync code review, and mode-0600 assertion remain necessary evidence
+  rather than being overstated as mutation coverage.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were

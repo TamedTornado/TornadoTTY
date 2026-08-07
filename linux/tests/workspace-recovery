@@ -1,0 +1,146 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+writer="${repo_root}/target/debug/examples/workspace_recovery_writer"
+state_directory=""
+writer_log=""
+writer_pid=""
+
+fail() {
+    echo "workspace-recovery: error: $*" >&2
+    exit 1
+}
+
+cleanup() {
+    if [[ "${writer_pid}" =~ ^[1-9][0-9]*$ ]]; then
+        kill -KILL "${writer_pid}" 2>/dev/null || true
+        wait "${writer_pid}" 2>/dev/null || true
+    fi
+    [[ -z "${state_directory}" ]] || rm -rf -- "${state_directory}"
+    [[ -z "${writer_log}" ]] || rm -f -- "${writer_log}"
+}
+trap cleanup EXIT
+
+require_interruption_evidence() {
+    [[ "$1" == true ]] || fail "writer interruption was not observed after temporary-file publication"
+    [[ "$2" -gt 128 ]] || fail "writer was not terminated by a signal: status=$2"
+    [[ ! -s "$3" ]] || fail "interrupted writer reached its completion marker"
+}
+
+require_private_temporary_file() {
+    [[ -f "$1" && ! -L "$1" ]] || fail "observed temporary path is not a regular file"
+    [[ "$(stat -c %a -- "$1")" == 600 ]] || fail "workspace temporary file is not mode 0600"
+}
+
+validate_publication() {
+    local snapshot="$1"
+    local interrupted_payload_bytes="$2"
+    jq -e --argjson interrupted_payload_bytes "${interrupted_payload_bytes}" '
+        .schemaVersion == 1 and
+        .reason == "liveSnapshot" and
+        .workspace.schemaVersion == 3 and
+        (.workspace.windows | length) == 1 and
+        (.workspace.windows[0].id as $id |
+            $id == "window-" or
+            ($id | length) == ($interrupted_payload_bytes + 7))
+    ' "${snapshot}" >/dev/null || fail "interruption published partial or foreign JSON"
+}
+
+validate_subsequent_save() {
+    local snapshot="$1"
+    local payload_bytes="$2"
+    jq -e --argjson payload_bytes "${payload_bytes}" '
+        .workspace.windows[0].id as $id |
+        ($id | startswith("window-")) and
+        ($id | length) == ($payload_bytes + 7)
+    ' "${snapshot}" >/dev/null || fail "subsequent save did not replace the interrupted state completely"
+}
+
+self_test() {
+    local fixture partial foreign valid
+    fixture="$(mktemp -d)"
+    partial="${fixture}/partial.json"
+    foreign="${fixture}/foreign.json"
+    valid="${fixture}/valid.json"
+    printf '{' >"${partial}"
+    printf '%s\n' '{"schemaVersion":1,"reason":"liveSnapshot","workspace":{"schemaVersion":3,"windows":[{"id":"foreign"}]}}' >"${foreign}"
+    printf '%s\n' '{"schemaVersion":1,"reason":"liveSnapshot","workspace":{"schemaVersion":3,"windows":[{"id":"window-"}]}}' >"${valid}"
+    chmod 644 "${partial}"
+
+    if (require_interruption_evidence false 137 /dev/null) 2>/dev/null; then
+        fail "self-test accepted missing interruption evidence"
+    fi
+    if (require_interruption_evidence true 0 /dev/null) 2>/dev/null; then
+        fail "self-test accepted a normally exited writer"
+    fi
+    if (require_private_temporary_file "${partial}") 2>/dev/null; then
+        fail "self-test accepted an over-permissive temporary file"
+    fi
+    chmod 600 "${partial}"
+    require_private_temporary_file "${partial}"
+    if (validate_publication "${fixture}/missing.json" 8) 2>/dev/null; then
+        fail "self-test accepted a missing publication"
+    fi
+    if (validate_publication "${partial}" 8) 2>/dev/null; then
+        fail "self-test accepted partial JSON"
+    fi
+    if (validate_publication "${foreign}" 8) 2>/dev/null; then
+        fail "self-test accepted a foreign complete document"
+    fi
+    validate_publication "${valid}" 8
+    if (validate_subsequent_save "${valid}" 64) 2>/dev/null; then
+        fail "self-test accepted a stale prior document as the subsequent save"
+    fi
+    rm -rf -- "${fixture}"
+    echo "Workspace recovery runner self-test passed: missing, normal-exit, mode, partial, foreign, stale"
+}
+
+if [[ "${1:-}" == --self-test ]]; then
+    (($# == 1)) || fail "--self-test takes no additional arguments"
+    self_test
+    exit 0
+fi
+(($# == 0)) || fail "usage: $0 [--self-test]"
+
+[[ "${ZENTTY_ISOLATED_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+    fail "journey must run through linux/tests/isolated-session"
+for dependency in cargo find jq mktemp stat; do
+    command -v "${dependency}" >/dev/null || fail "${dependency} is required"
+done
+
+cargo build --quiet --locked -p zentty-core --example workspace_recovery_writer
+[[ -x "${writer}" ]] || fail "workspace recovery writer was not built"
+state_directory="$(mktemp -d)"
+writer_log="$(mktemp)"
+
+"${writer}" "${state_directory}" 0 >"${writer_log}" 2>&1
+validate_publication "${state_directory}/restore-snapshot.json" 8388608
+: >"${writer_log}"
+
+"${writer}" "${state_directory}" 8388608 >"${writer_log}" 2>&1 &
+writer_pid=$!
+temporary_file=""
+for _ in {1..10000}; do
+    temporary_file="$(find "${state_directory}" -maxdepth 1 -type f -name '.restore-snapshot.json.tmp.*' -print -quit)"
+    [[ -z "${temporary_file}" ]] || break
+    kill -0 "${writer_pid}" 2>/dev/null || break
+done
+observed_temporary=false
+[[ -z "${temporary_file}" ]] || observed_temporary=true
+[[ "${observed_temporary}" == false ]] || require_private_temporary_file "${temporary_file}"
+kill -KILL "${writer_pid}" 2>/dev/null || true
+set +e
+wait "${writer_pid}"
+writer_status=$?
+set -e
+writer_pid=""
+require_interruption_evidence "${observed_temporary}" "${writer_status}" "${writer_log}"
+validate_publication "${state_directory}/restore-snapshot.json" 8388608
+
+"${writer}" "${state_directory}" 64 >"${writer_log}" 2>&1
+grep -Fx 'workspace-recovery-writer: COMPLETE payload_bytes=64' "${writer_log}" >/dev/null ||
+    fail "subsequent writer did not complete"
+validate_subsequent_save "${state_directory}/restore-snapshot.json" 64
+
+echo "Workspace recovery passed: real-child=SIGKILL, publication=prior-or-complete, subsequent-save=complete"
