@@ -71,6 +71,11 @@ grep -Fq '"session_id":"codex-title-transcript-e2e"' "${payloads}" ||
 grep -Fq '"question":"Choose the integration scope"' "${title_transcript}" ||
     fail "Codex title-transcript profile did not flush the delayed real transcript"
 
+run_actor ZENTTY_CONTROLLED_AGENT_PROFILE=codex-progress "${actor}" \
+    -c 'hooks.PreToolUse=["command"]' >/dev/null
+grep -Fq '"session_id":"codex-progress-e2e"' "${payloads}" ||
+    fail "Codex progress profile did not establish its canonical session"
+
 printf '\n' | run_actor \
     ZENTTY_CONTROLLED_AGENT_PROFILE=codex-lifecycle \
     ZENTTY_CONTROLLED_AGENT_LIFECYCLE_ONESHOT=true \
@@ -118,4 +123,4 @@ if run_actor \
     fail "Codex restore profile accepted an undeclared session"
 fi
 
-echo "Controlled agent tests passed: codex-permission, codex-notify, codex-title, codex-title-transcript, codex-lifecycle, claude-question, gemini-permission, codex-restore"
+echo "Controlled agent tests passed: codex-permission, codex-notify, codex-title, codex-title-transcript, codex-progress, codex-lifecycle, claude-question, gemini-permission, codex-restore"

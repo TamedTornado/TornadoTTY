@@ -193,6 +193,10 @@ static int enforce_runtime_lifecycle(
         return 1;
     }
     g_object_ref_sink(surface);
+    if (g_signal_lookup("progress-report", G_OBJECT_TYPE(surface)) == 0) {
+        fputs("api-contract: progress-report signal is missing\n", stderr);
+        return 1;
+    }
     if (ghostty_gtk_embed_surface_send_text(surface, NULL) ||
         ghostty_gtk_embed_surface_send_text(surface, "before-init") ||
         ghostty_gtk_embed_surface_binding_action(surface, "start_search", 12) ||

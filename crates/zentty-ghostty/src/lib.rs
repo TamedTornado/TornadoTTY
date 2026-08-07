@@ -24,6 +24,38 @@ pub enum TextExtent {
     Screen,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProgressState {
+    Remove,
+    Set,
+    Error,
+    Indeterminate,
+    Pause,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ProgressReport {
+    pub state: ProgressState,
+    pub progress: Option<u8>,
+}
+
+fn decode_progress_report(state: i32, progress: i32) -> Option<ProgressReport> {
+    let state = match state {
+        0 => ProgressState::Remove,
+        1 => ProgressState::Set,
+        2 => ProgressState::Error,
+        3 => ProgressState::Indeterminate,
+        4 => ProgressState::Pause,
+        _ => return None,
+    };
+    let progress = match progress {
+        -1 => None,
+        0..=100 => Some(u8::try_from(progress).ok()?),
+        _ => return None,
+    };
+    Some(ProgressReport { state, progress })
+}
+
 impl From<TextExtent> for sys::GhosttyGtkEmbedTextExtent {
     fn from(extent: TextExtent) -> Self {
         match extent {
@@ -468,6 +500,22 @@ impl GhosttySurface {
         self.handlers.borrow_mut().push(handler);
     }
 
+    pub fn on_progress_report(&self, callback: impl Fn(ProgressReport) + 'static) {
+        let handler = self
+            .widget
+            .connect_local("progress-report", false, move |values| {
+                let state = values.get(1).and_then(|value| value.get::<i32>().ok());
+                let progress = values.get(2).and_then(|value| value.get::<i32>().ok());
+                if let (Some(state), Some(progress)) = (state, progress)
+                    && let Some(report) = decode_progress_report(state, progress)
+                {
+                    callback(report);
+                }
+                None
+            });
+        self.handlers.borrow_mut().push(handler);
+    }
+
     pub fn on_child_exited(&self, callback: impl Fn() + 'static) {
         let handler = self
             .widget
@@ -490,7 +538,38 @@ impl Drop for GhosttySurface {
 
 #[cfg(test)]
 mod tests {
-    use super::{Error, encode_environment};
+    use super::{Error, ProgressReport, ProgressState, decode_progress_report, encode_environment};
+
+    #[test]
+    fn progress_report_signal_payload_is_validated_at_the_safe_boundary() {
+        for (raw, state) in [
+            (0, ProgressState::Remove),
+            (1, ProgressState::Set),
+            (2, ProgressState::Error),
+            (3, ProgressState::Indeterminate),
+            (4, ProgressState::Pause),
+        ] {
+            assert_eq!(
+                decode_progress_report(raw, -1),
+                Some(ProgressReport {
+                    state,
+                    progress: None,
+                })
+            );
+        }
+        assert_eq!(
+            decode_progress_report(1, 73),
+            Some(ProgressReport {
+                state: ProgressState::Set,
+                progress: Some(73),
+            })
+        );
+        assert_eq!(decode_progress_report(1, 0).unwrap().progress, Some(0));
+        assert_eq!(decode_progress_report(1, 100).unwrap().progress, Some(100));
+        assert!(decode_progress_report(5, -1).is_none());
+        assert!(decode_progress_report(1, 101).is_none());
+        assert!(decode_progress_report(1, -2).is_none());
+    }
 
     #[test]
     fn surface_environment_is_encoded_as_borrowed_key_value_entries() {

@@ -1501,6 +1501,18 @@ impl WorkspaceState {
             || self.agent_statuses.apply_codex_title(pane_id, title, now)
     }
 
+    /// Reconciles one real Ghostty OSC 9;4 progress report into the canonical
+    /// agent store. The report is runtime activity, not task completion.
+    pub fn reconcile_terminal_progress(
+        &mut self,
+        pane_id: &str,
+        state: crate::TerminalProgressState,
+        now: u64,
+    ) -> bool {
+        self.agent_statuses
+            .apply_terminal_progress(pane_id, state, now)
+    }
+
     /// Returns a source-eligible title-inferred Codex question request. File
     /// discovery and parsing deliberately remain outside the workspace store
     /// so product callers can perform them away from the GTK thread.

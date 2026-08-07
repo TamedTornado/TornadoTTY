@@ -300,7 +300,7 @@ grep -Fx 'typedef struct _GtkWidget GtkWidget;' "${ghostty_source}/include/ghost
 [[ "$(grep -Eoc 'GtkWidget \*surface' "${ghostty_source}/include/ghostty/gtk.h")" == 6 ]] ||
     fail "GtkWidget surface-operation parameter roles differ from inventory"
 
-pass_message="Ghostty API audit inventory passed: 16 files, 52 hunks, 12 allowlisted function exports, 5 Ghostty-owned public types, 1 external GtkWidget dependency"
+pass_message="Ghostty API audit inventory passed: 16 files, 55 hunks, 12 allowlisted function exports, 5 Ghostty-owned public types, 1 external GtkWidget dependency"
 echo "${pass_message}"
 
 if [[ "${mode}" == "--self-test" ]]; then

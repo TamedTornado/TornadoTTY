@@ -1,6 +1,6 @@
 use zentty_core::{
     AgentEvent, AgentInteractionKind, AgentPhase, AgentStatusStore, AgentTarget,
-    AuthenticatedAgentEvent, PaneAgentStatus, PaneTokenRegistry,
+    AuthenticatedAgentEvent, PaneAgentStatus, PaneTokenRegistry, TerminalProgressState,
 };
 
 fn target() -> AgentTarget {
@@ -330,6 +330,93 @@ fn recent_authoritative_idle_suppresses_one_stale_running_title_tick() {
         store.status_for(&target()).unwrap().phase,
         AgentPhase::Running
     );
+}
+
+#[test]
+fn skipped_codex_title_transitions_do_not_write_back_partial_state() {
+    let mut idle = AgentStatusStore::default();
+    idle.apply(
+        event_for(
+            "pane-a",
+            br#"{"version":1,"event":"agent.running","agent":{"name":"Codex"},"session":{"id":"codex-idle"}}"#,
+        ),
+        10,
+    );
+    idle.apply(
+        event_for(
+            "pane-a",
+            br#"{"version":1,"event":"agent.idle","session":{"id":"codex-idle"}}"#,
+        ),
+        20,
+    );
+    let idle_before = idle.clone();
+    assert!(!idle.apply_codex_title("pane-a", "Working ⠋ stale", 21));
+    assert_eq!(idle, idle_before);
+
+    let mut attention = AgentStatusStore::default();
+    attention.apply(
+        event_for(
+            "pane-a",
+            br#"{"version":1,"event":"agent.needs-input","agent":{"name":"Codex"},"session":{"id":"codex-attention"},"state":{"text":"Choose?","interaction":{"kind":"decision"}}}"#,
+        ),
+        30,
+    );
+    let attention_before = attention.clone();
+    assert!(!attention.apply_codex_title("pane-a", "Working ⠋ stale", 31));
+    assert_eq!(attention, attention_before);
+}
+
+#[test]
+fn codex_osc_progress_resumes_idle_without_overriding_attention_or_interrupts() {
+    assert!(!TerminalProgressState::Remove.indicates_activity());
+    for state in [
+        TerminalProgressState::Set,
+        TerminalProgressState::Error,
+        TerminalProgressState::Indeterminate,
+        TerminalProgressState::Pause,
+    ] {
+        assert!(state.indicates_activity());
+    }
+
+    let mut store = AgentStatusStore::default();
+    store.apply(
+        event_for(
+            "pane-a",
+            br#"{"version":1,"event":"agent.running","agent":{"name":"Codex"},"session":{"id":"codex-progress"}}"#,
+        ),
+        1_000,
+    );
+    store.apply(
+        event_for(
+            "pane-a",
+            br#"{"version":1,"event":"agent.idle","session":{"id":"codex-progress"}}"#,
+        ),
+        1_100,
+    );
+
+    assert!(store.apply_terminal_progress("pane-a", TerminalProgressState::Indeterminate, 1_101,));
+    assert_eq!(
+        store.status_for(&target()).unwrap().phase,
+        AgentPhase::Running
+    );
+
+    store.apply(
+        event_for(
+            "pane-a",
+            br#"{"version":1,"event":"agent.needs-input","session":{"id":"codex-progress"},"state":{"text":"Approve?","interaction":{"kind":"approval"}}}"#,
+        ),
+        1_200,
+    );
+    assert!(!store.apply_terminal_progress("pane-a", TerminalProgressState::Set, 1_201));
+    assert_eq!(
+        store.status_for(&target()).unwrap().phase,
+        AgentPhase::NeedsInput
+    );
+
+    assert!(store.apply_codex_user_interrupted("pane-a", 1_300));
+    assert!(!store.apply_terminal_progress("pane-a", TerminalProgressState::Pause, 1_301));
+    assert!(!store.apply_terminal_progress("pane-a", TerminalProgressState::Remove, 1_302));
+    assert!(store.status_for(&target()).is_none());
 }
 
 #[test]

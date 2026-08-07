@@ -9,9 +9,9 @@ use gtk::{gdk, gio};
 use zentty_core::{
     ClosePaneOutcome, ColumnRecipe, CommandPaletteItem, PaneLayoutPolicy, PaneRecipe,
     PaneReference, PaneRestoreDraft, PaneRightInsertionBehavior, SidebarWidthPreference,
-    WindowRecipe, WorklaneColor, WorklaneRecipe, WorkspaceState,
+    TerminalProgressState, WindowRecipe, WorklaneColor, WorklaneRecipe, WorkspaceState,
 };
-use zentty_ghostty::{GhosttyRuntime, GhosttySurface, SurfaceConfig};
+use zentty_ghostty::{GhosttyRuntime, GhosttySurface, ProgressState, SurfaceConfig};
 use zentty_tmux_compat::Command as TmuxCommand;
 
 use crate::{
@@ -2331,6 +2331,7 @@ impl ApplicationShell {
                 }
             });
         });
+        Self::connect_surface_progress_callback(shell, pane_id, surface);
         let weak = Rc::downgrade(shell);
         let exited_id = pane_id.to_owned();
         surface.on_child_exited(move || {
@@ -2341,6 +2342,56 @@ impl ApplicationShell {
             glib::idle_add_local_once(move || {
                 if let Some(shell) = weak.upgrade() {
                     Self::handle_child_exit(&shell, &exited_id);
+                }
+            });
+        });
+    }
+
+    fn connect_surface_progress_callback(
+        shell: &Rc<RefCell<Self>>,
+        pane_id: &str,
+        surface: &GhosttySurface,
+    ) {
+        let progress_id = pane_id.to_owned();
+        let weak = Rc::downgrade(shell);
+        surface.on_progress_report(move |report| {
+            let state = match report.state {
+                ProgressState::Remove => TerminalProgressState::Remove,
+                ProgressState::Set => TerminalProgressState::Set,
+                ProgressState::Error => TerminalProgressState::Error,
+                ProgressState::Indeterminate => TerminalProgressState::Indeterminate,
+                ProgressState::Pause => TerminalProgressState::Pause,
+            };
+            let state_name = match state {
+                TerminalProgressState::Remove => "remove",
+                TerminalProgressState::Set => "set",
+                TerminalProgressState::Error => "error",
+                TerminalProgressState::Indeterminate => "indeterminate",
+                TerminalProgressState::Pause => "pause",
+            };
+            eprintln!(
+                "zentty-linux: terminal-progress pane={} state={} progress={}",
+                progress_id,
+                state_name,
+                report
+                    .progress
+                    .map_or_else(|| "none".to_owned(), |value| value.to_string())
+            );
+            let weak = weak.clone();
+            let progress_id = progress_id.clone();
+            glib::idle_add_local_once(move || {
+                let Some(shell) = weak.upgrade() else {
+                    return;
+                };
+                let mut shell = shell.borrow_mut();
+                if shell.shutting_down {
+                    return;
+                }
+                if shell
+                    .state
+                    .reconcile_terminal_progress(&progress_id, state, unix_time_ms())
+                {
+                    shell.refresh_sidebar_metadata();
                 }
             });
         });

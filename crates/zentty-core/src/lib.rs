@@ -24,7 +24,9 @@ pub use agent_launch::{
     build_gemini_settings,
 };
 pub use agent_protocol::{AgentEvent, AgentInteractionKind, AgentProtocolError};
-pub use agent_status::{AgentPhase, AgentProgress, AgentStatusStore, PaneAgentStatus};
+pub use agent_status::{
+    AgentPhase, AgentProgress, AgentStatusStore, PaneAgentStatus, TerminalProgressState,
+};
 pub use pane_focus_history::PaneReference;
 pub use pane_layout::{PaneLayoutPolicy, PaneRightInsertionBehavior};
 pub use pane_token_registry::{

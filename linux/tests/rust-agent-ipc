@@ -215,6 +215,42 @@ run_codex_title_transcript_enrichment() {
     private_home=""
 }
 
+run_codex_osc_progress() {
+    log="$(mktemp)"
+    state_directory="$(mktemp -d)"
+    private_home="$(mktemp -d)"
+    PATH="${fake_bin}:${PATH}" GDK_SCALE=1 GDK_DPI_SCALE=1 \
+        HOME="${private_home}" \
+        ZENTTY_CONTROLLED_AGENT_PROFILE=codex-progress \
+        "${product}" \
+        --command codex \
+        --state-directory "${state_directory}" \
+        --no-session-restore >"${log}" 2>&1 &
+    product_pid=$!
+
+    zentty_product_wait_for_log "${log}" \
+        'kind=agent.idle session=codex-progress-e2e' \
+        "Codex progress profile did not establish idle state"
+    zentty_product_wait_for_log "${log}" \
+        'zentty-linux: terminal-progress pane=pane-1 state=indeterminate progress=none' \
+        "real OSC 9;4 progress did not cross the Ghostty embedding boundary"
+    zentty_product_wait_for_log "${log}" \
+        'Codex · Running' \
+        "OSC progress did not resume canonical Codex running state"
+
+    for _ in {1..200}; do
+        ! kill -0 "${product_pid}" 2>/dev/null && break
+        sleep 0.05
+    done
+    wait "${product_pid}" || fail "Codex OSC-progress product run failed"
+    product_pid=""
+    rm -f -- "${log}"
+    rm -rf -- "${state_directory}" "${private_home}"
+    log=""
+    state_directory=""
+    private_home=""
+}
+
 run_adapter \
     codex \
     'codex' \
@@ -231,6 +267,7 @@ run_adapter \
     codex-title \
     'zentty-linux: sidebar-agent-status pane=pane-1 text="Codex · Needs input: [ ! ] Action Required | codex-title | Tasks 1/3" attention=true'
 run_codex_title_transcript_enrichment
+run_codex_osc_progress
 case "${ZENTTY_RUN_CODEX_LIFECYCLE:-false}" in
     true) run_codex_lifecycle ;;
     false) ;;

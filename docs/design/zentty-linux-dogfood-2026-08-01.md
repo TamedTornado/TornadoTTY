@@ -8351,7 +8351,7 @@ test harness, preserve the legacy constructor, and be independently reviewable.
 - **Remaining title/lifecycle boundary:** User-submit stabilization, Ctrl-C
   interrupt suppression, shell-return cleanup, asynchronous transcript
   enrichment/retry/cache application, OSC progress events beyond title task
-  counts, and stable custom-title write-back remain. The feature stays
+  counts, and transactional resolver-state write-back remain. The feature stays
   `PARTIAL`.
 - **Complete qualification after title reconciliation:** Every presently
   executable cell again produced its expected outcome. The authoritative
@@ -8449,7 +8449,8 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   `6f8f0f0af5b8e33004330038aea0e23125cf0164b904e1cee7bc27f97ffdeb3d`.
 - **Remaining Codex boundary after lifecycle reconciliation:** Title-driven
   asynchronous transcript enrichment/retry/cache application, OSC progress
-  events beyond title task counts, and stable custom-title write-back remain.
+  events beyond title task counts, and transactional resolver-state write-back
+  remain.
   `agent.codex` stays `PARTIAL`; complete qualification for this slice is
   still pending and is recorded only after every presently executable cell is
   rerun.
@@ -8594,7 +8595,8 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   SHA-256 is
   `21846e70d3ce461d857713b98d787563b61f7cfc8314468f8778ff9e75685e02`.
 - **Remaining Codex boundary after transcript enrichment:** OSC progress events
-  beyond terminal-title task counts and stable custom-title write-back remain.
+  beyond terminal-title task counts and transactional resolver-state
+  write-back remain.
   `agent.codex` stays `PARTIAL`; this focused compositor evidence is not a
   release or full-Linux qualification claim.
 - **Complete qualification after asynchronous transcript enrichment:** Every
@@ -8612,6 +8614,114 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   SHA-256 is
   `8fe4c9a6f4c1418b05e06aac49ae2318728776751cb105da20bc51e0ce00d4d6`.
   ReleaseSafe Valgrind remains XFAIL and no suppression was broadened.
+- **DOGFOOD-2026-08-07-CODEX-WRITE-BACK-SCOPE-CORRECTION:** Before starting
+  the next Codex slice, a direct audit found that the plan's phrase "stable
+  custom-title write-back" was inaccurate and could have caused invented
+  product behavior. The authoritative source is
+  `ZenttyLogicTests/WorklaneStoreCodexWriteBackTests.swift`. Its write-back
+  contract is transactional resolver state: resolver methods mutate a local
+  copy, skipped title transitions discard that copy, and only real
+  transitions commit it to the worklane. It is not automatic pane renaming.
+  The Codex plan and machine-readable inventory now use the exact contract and
+  explicitly reject that mistaken interpretation.
+- **OSC progress ownership discovery:** The source receives Ghostty's OSC 9;4
+  progress action independently of terminal titles and uses it as a runtime
+  activity signal. Official Ghostty's GTK surface consumes that action to draw
+  its own progress overlay, but the current generic GTK embedding boundary
+  exposes no property, signal, or callback for the host to observe the report.
+  The next slice therefore requires a minimal, language-neutral Ghostty GTK
+  surface notification plus Zentty-side canonical reconciliation. Product
+  policy and test orchestration remain in Zentty; the Ghostty change must not
+  mention panes, worklanes, Codex, Rust, or Zentty.
+- **Tests were written before the OSC implementation:** The focused Rust
+  contract initially failed to compile because `TerminalProgressState` and
+  `AgentStatusStore.apply_terminal_progress` did not exist. The existing
+  controlled actor/product journey was extended with a real OSC 9;4 sequence
+  before the embedding signal and product callback existed. No synthetic
+  direct reducer call is used as product evidence.
+- **Minimal Ghostty change:** Ghostty commits
+  `9a4001c4cbe83f579f54e5f42b8ea2401944f3a0` and
+  `ff5703bf6892b66b0d48e5ba942d6b19a71c8fa1` add one generic
+  `GhosttySurface::progress-report` GObject signal and extend Ghostty's
+  existing alternate-host probe. The signal carries the already-public
+  progress state integer and -1-or-0-through-100 percentage, fires even when
+  Ghostty's visual progress overlay is disabled, and contains no Zentty,
+  Codex, pane, worklane, Rust, or product policy. Ghostty's own real
+  PTY/parser/action/signal probe passed on controlled X11 session
+  `85defb07fdb5a9df1e5a2767e1bbdf4497ac76b8c43f806d24005d4c04e84925`.
+- **Real product and alternate-host evidence:** The final staged Rust product
+  observed real OSC 9;4 input after a canonical Codex idle event, logged the
+  Ghostty signal payload, and promoted the same canonical session to Running
+  under controlled X11 session
+  `0fc8b713c51199df238e73b54aef26067d305eebb8547f376edb88e487ab31f1`
+  and controlled Wayland session
+  `60b1711bafb702c971a4d871fd9ef45690f23ff40583a5e6b736a7620a3f5ccf`.
+  The standalone C host verified the signal on controlled X11 session
+  `4630c3befb5822695cf7897654a74c5d86c2db107c33c95fa7704d081ef72110`.
+  Active progress does not erase explicit attention or bypass interrupt
+  suppression, and OSC percentages are not misrepresented as task counts.
+- **Transactional write-back is pinned directly:** Focused state tests clone
+  the entire canonical store before a fresh authoritative-idle/stale-running
+  skip and before an explicit-attention/stale-running skip, then require exact
+  equality afterward. This is the Linux equivalent of the source tests'
+  byte-identical reducer-state assertion; real transitions still mutate the
+  canonical store.
+- **Failures repaired rather than normalized:** The first strict Clippy run
+  rejected a potentially truncating signed progress conversion; the safe
+  boundary now uses checked conversion. The next run rejected growth of the
+  surface callback coordinator beyond the repository line limit; progress
+  hookup moved into one focused helper instead of adding an allow attribute.
+  A sandboxed full Ghostty test run made no progress and was interrupted; the
+  same pinned Debug plus embedding regression suite passed with the permissions
+  it requires under a 15-minute hard cap rather than being described as a pass
+  from the stalled attempt.
+- **Focused mutation evidence after the repairs:** The final package-scoped
+  core run caught all 8 generated mutants (zero missed or timed out) and its
+  `outcomes.json` SHA-256 is
+  `dd5b3df0522da6dfa2c472e51a8e619a702a382296a6a659195d5cf80d4f642b`.
+  The final Ghostty progress-decoder run caught 8 viable mutants, classified
+  1 generated mutant as unviable, and missed or timed out none; its
+  `outcomes.json` SHA-256 is
+  `fb186f6bf9ed626751b038ce28d7d8b6d8f1a8b7db19ef523d3bb23af3fbbd52`.
+  The isolated scratch trees were 420 KiB and 476 KiB, confirming the
+  permanent `gitignore = true` and `copy_target = false` controls prevented
+  another copy of the ignored Ghostty build tree.
+- **Architecture pin mirror repaired:** The first post-change architecture
+  gate failed because the authoritative Ghostty lock advanced while the
+  architecture contract's deliberately redundant revision mirror still named
+  the prior commit. The contract now names the exact tested
+  `ff5703bf6892b66b0d48e5ba942d6b19a71c8fa1` revision; the validator continues
+  to reject any future mismatch rather than allowing the two pins to drift.
+- **Remaining real-Codex limitation rediscovered from the machine inventory:**
+  The installed-Codex journey deliberately points at a controlled no-response
+  endpoint. It proves real launch, configuration, hook, persistence, and
+  resume, but cannot cause a completed turn and therefore cannot prove that
+  the installed binary invokes Zentty's notify callback. `agent.codex` remains
+  `PARTIAL` until that controlled completed-turn scenario passes; OSC progress
+  and resolver write-back are no longer the remaining gaps.
+- **Complete qualification after OSC reconciliation:** Every presently
+  executable cell passed against final Ghostty pin
+  `ff5703bf6892b66b0d48e5ba942d6b19a71c8fa1`. The authoritative summary
+  SHA-256 is
+  `77db99a0bfba734245400cdc6ade2ff209f5b2ba7a65fd599b6335cce807757d`.
+  Declared totals remain `PASS=52`, `FAIL=0`, `BLOCKED=5`, `XFAIL=1`, and
+  `NOT_IMPLEMENTED=51`; implemented-local and product-boundary qualification
+  passed, while release and full Linux qualification did not. Debug Valgrind
+  is **PASS with reviewed suppressions**, not unsuppressed clean: the preserved
+  raw receipt reports 427 errors/contexts, 6,160 definite bytes, and 41,427
+  indirect bytes; reviewed post-suppression evidence reports zero for all four
+  values and counts all 427 errors/contexts as suppressed. The Valgrind report
+  SHA-256 is
+  `8304fb4fab1261d17c264cde0ac846c257dc7135d1f436f54b026b3fcd95cbb0`.
+  ReleaseSafe Valgrind remains XFAIL and no suppression was broadened.
+- **Final workspace-test permission correction:** A redundant post-matrix
+  `cargo test --workspace --all-targets` run inside the restricted command
+  sandbox failed 8 helper CLI tests at Unix-socket creation with
+  `Operation not permitted`; no assertion or product behavior failed. The
+  suite was rerun with the same host permissions already required by its real
+  Unix-socket contracts and passed in full, followed by strict Clippy,
+  formatting, and diff checks, rather than weakening or mocking those
+  contracts.
 
 ## AI disclosure
 

@@ -76,6 +76,19 @@ case "${profile}" in
             '{"type":"function_call","name":"request_user_input","arguments":{"questions":[{"question":"Choose the integration scope","options":[{"label":"Minimal"},{"label":"Complete"}]}]}}' \
             >>"${ZENTTY_CONTROLLED_CODEX_TRANSCRIPT}"
         ;;
+    codex-progress)
+        require_helper
+        codex_has_hook PreToolUse "$@" || fail "Codex PreToolUse hook is missing"
+        printf '%s' \
+            '{"hook_event_name":"PreToolUse","session_id":"codex-progress-e2e","tool_name":"shell"}' |
+            "${helper}" ipc agent-event --adapter=codex
+        printf '%s' \
+            '{"type":"agent-turn-complete","session_id":"codex-progress-e2e"}' |
+            "${helper}" codex-notify
+        sleep 0.2
+        printf '\033]9;4;3\007'
+        sleep 0.2
+        ;;
     codex-lifecycle)
         require_helper
         printf '%s\n' "$@" | grep -Fq 'notify=[' || fail "Codex notify callback is missing"

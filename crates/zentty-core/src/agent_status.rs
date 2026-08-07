@@ -24,6 +24,22 @@ pub enum AgentPhase {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TerminalProgressState {
+    Remove,
+    Set,
+    Error,
+    Indeterminate,
+    Pause,
+}
+
+impl TerminalProgressState {
+    #[must_use]
+    pub fn indicates_activity(self) -> bool {
+        self != Self::Remove
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AgentProgress {
     pub done: u64,
     pub total: u64,
@@ -60,6 +76,41 @@ pub struct AgentStatusStore {
 }
 
 impl AgentStatusStore {
+    /// Reconciles Ghostty's OSC 9;4 activity report without treating its
+    /// optional percentage as task completion. Explicit attention remains
+    /// authoritative. An interrupted pane has no Codex status to promote, so
+    /// an unauthenticated progress report cannot recreate its session.
+    pub fn apply_terminal_progress(
+        &mut self,
+        pane_id: &str,
+        state: TerminalProgressState,
+        now: u64,
+    ) -> bool {
+        if !state.indicates_activity() {
+            return false;
+        }
+        let Some(status) = self.panes.get_mut(pane_id).and_then(|sessions| {
+            sessions
+                .values_mut()
+                .filter(|status| status.agent_name.eq_ignore_ascii_case("codex"))
+                .max_by_key(|status| (status_priority(status), status.updated_at))
+        }) else {
+            return false;
+        };
+        if status.requires_attention() || status.phase == AgentPhase::Running {
+            return false;
+        }
+        status.phase = AgentPhase::Running;
+        status.interaction = AgentInteractionKind::None;
+        status.text = None;
+        status.updated_at = now;
+        let key = (pane_id.to_owned(), status.session_id.clone());
+        self.codex_title_inferred.remove(&key);
+        self.codex_idle_suppression_until.remove(&key);
+        self.codex_observed_running.insert(key);
+        true
+    }
+
     pub(crate) fn codex_transcript_enrichment_context(
         &self,
         pane_id: &str,
