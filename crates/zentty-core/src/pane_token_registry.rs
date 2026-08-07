@@ -30,6 +30,20 @@ pub struct AuthenticatedAgentEvent {
     pub event: AgentEvent,
 }
 
+impl AuthenticatedAgentEvent {
+    /// Returns the canonical protocol event name after authentication.
+    #[must_use]
+    pub fn event_kind(&self) -> &'static str {
+        self.event.kind()
+    }
+
+    /// Returns the agent session identity carried by the authenticated event.
+    #[must_use]
+    pub fn session_id(&self) -> Option<&str> {
+        self.event.session_id()
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PaneTokenError {
     EmptyToken,

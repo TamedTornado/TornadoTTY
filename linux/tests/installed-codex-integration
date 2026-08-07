@@ -37,7 +37,7 @@ done
 [[ -x "${product}" ]] || fail "staged product is not built: ${product}"
 
 codex_version="$(codex --version 2>/dev/null)"
-[[ "${codex_version}" == "codex-cli 0.146.1" ]] ||
+[[ "${codex_version}" == "codex-cli 0.147.0" ]] ||
     fail "review the installed Codex contract before accepting version: ${codex_version}"
 
 state_directory="$(mktemp -d)"

@@ -19,7 +19,9 @@ cat >"${helper}" <<'HELPER'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >>"${CONTROLLED_HELPER_CALLS}"
-cat >>"${CONTROLLED_HELPER_PAYLOADS}"
+if [[ "${1:-}" == ipc ]]; then
+    cat >>"${CONTROLLED_HELPER_PAYLOADS}"
+fi
 printf '\n' >>"${CONTROLLED_HELPER_PAYLOADS}"
 HELPER
 chmod 700 "${helper}"
@@ -59,6 +61,19 @@ run_actor ZENTTY_CONTROLLED_AGENT_PROFILE=codex-title "${actor}" \
 grep -Fxq 'ipc agent-event --adapter=codex' "${calls}" ||
     fail "Codex title profile did not establish a canonical running session"
 
+printf '\n' | run_actor \
+    ZENTTY_CONTROLLED_AGENT_PROFILE=codex-lifecycle \
+    ZENTTY_CONTROLLED_AGENT_LIFECYCLE_ONESHOT=true \
+    "${actor}" -c 'notify=["/stage/bin/zentty","codex-notify"]'
+grep -Fq '"message":"Submit this answer?"' "${calls}" ||
+    fail "Codex lifecycle profile did not emit its pre-submit question"
+grep -Fq '"message":"Interrupt this run?"' "${calls}" ||
+    fail "Codex lifecycle profile did not emit its pre-interrupt question"
+grep -Fq '"type":"agent-turn-complete"' "${calls}" ||
+    fail "Codex lifecycle profile did not emit its stale idle signal"
+grep -Fq '"hook_event_name":"PreToolUse"' "${payloads}" ||
+    fail "Codex lifecycle profile did not emit recovery activity"
+
 gemini_settings="${temp_dir}/gemini-settings.json"
 cat >"${gemini_settings}" <<EOF
 {"general":{"enableNotifications": true},"hooks":{"Notification":[{"hooks":[{"command":"${helper} ipc agent-event --adapter=gemini"}]}]}}
@@ -93,4 +108,4 @@ if run_actor \
     fail "Codex restore profile accepted an undeclared session"
 fi
 
-echo "Controlled agent tests passed: codex-permission, codex-notify, codex-title, claude-question, gemini-permission, codex-restore"
+echo "Controlled agent tests passed: codex-permission, codex-notify, codex-title, codex-lifecycle, claude-question, gemini-permission, codex-restore"

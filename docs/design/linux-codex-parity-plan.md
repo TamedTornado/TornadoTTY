@@ -2,8 +2,10 @@
 
 - **Status:** active; explicit hook/notify parity, bounded transcript recovery,
   source terminal-title classification, task progress, and canonical
-  title-to-sidebar reconciliation implemented; title-driven enrichment/retry,
-  user input/interrupt, shell return, and title write-back remain
+  title-to-sidebar reconciliation, physical user-submit stabilization, Ctrl-C
+  interrupt suppression, and shell-return cleanup implemented; title-driven
+  enrichment/retry, OSC progress beyond title task counts, and title
+  write-back remain
 - **Date:** 2026-08-06
 - **Owner:** [#7 — essential Zentty workflow parity](https://github.com/TamedTornado/zentty/issues/7)
 - **Inventory ID:** `agent.codex`
@@ -36,20 +38,14 @@ The authoritative implementation is principally:
 - `Zentty/AppState/Agent/AgentLaunchBootstrap.swift`; and
 - `Zentty/Restore/SessionRestoreStore.swift`.
 
-The existing Linux implementation already proves real wrapped launch,
-SessionStart/running delivery, exact session persistence, and real
-`codex resume` relaunch. It remains `PARTIAL` because:
-
-1. `PreCompact` and `PostCompact` are configured but rejected by the Rust
-   adapter.
-2. `PreToolUse` question tools are incorrectly reduced to ordinary running.
-3. Codex's `notify` callback is not injected or adapted, losing authoritative
-   turn completion and several approval/question/auth signals.
-4. Transcript-tail question extraction and safe transcript discovery are not
-   present.
-5. Codex terminal-title progress/action-required reconciliation, interrupt
-   suppression, shell-return clearing, title promotion, and write-back are not
-   ported as one coherent state machine.
+The Linux implementation now proves real wrapped launch, all configured hooks,
+notify adaptation, bounded transcript discovery, exact session persistence,
+real `codex resume` relaunch, terminal-title status/task reconciliation,
+physical Return promotion, physical Ctrl-C suppression, and shell-return
+cleanup through the canonical reducer. It remains `PARTIAL` only because the
+title-driven asynchronous transcript enrichment/retry/cache application path,
+OSC progress events beyond title task counts, and stable custom-title
+write-back are not yet ported and product-tested.
 
 ## Ordered delivery slices
 

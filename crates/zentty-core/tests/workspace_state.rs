@@ -34,6 +34,47 @@ fn real_terminal_titles_reconcile_agent_state_used_by_sidebar_summaries() {
 }
 
 #[test]
+fn physical_terminal_lifecycle_events_reconcile_the_sidebar_status_store() {
+    let mut state = WorkspaceState::new("worklane-a", "pane-a");
+    let needs_input = || {
+        AuthenticatedAgentEvent {
+        target: AgentTarget::new("window-a", "worklane-a", "pane-a"),
+        pane_token: "token-a".to_owned(),
+        event: AgentEvent::parse(
+            br#"{"version":1,"event":"agent.needs-input","agent":{"name":"Codex"},"session":{"id":"codex-lifecycle"},"state":{"interaction":{"kind":"question","text":"Proceed?"}}}"#,
+        )
+        .unwrap(),
+    }
+    };
+    state.apply_agent_event(needs_input(), 1_000);
+    assert!(!state.record_terminal_input_submitted("pane-a", 1_349));
+    assert!(state.record_terminal_input_submitted("pane-a", 1_350));
+    assert_eq!(
+        state.sidebar_summaries()[0].pane_rows[0]
+            .agent_status
+            .as_ref()
+            .unwrap()
+            .phase,
+        zentty_core::AgentPhase::Running
+    );
+
+    assert!(state.record_terminal_interrupt("pane-a", 2_000));
+    assert!(
+        state.sidebar_summaries()[0].pane_rows[0]
+            .agent_status
+            .is_none()
+    );
+
+    state.apply_agent_event(needs_input(), 6_000);
+    assert!(state.reconcile_terminal_title("pane-a", "bash", 6_001));
+    assert!(
+        state.sidebar_summaries()[0].pane_rows[0]
+            .agent_status
+            .is_none()
+    );
+}
+
+#[test]
 fn active_supported_agents_produce_restorable_per_pane_drafts() {
     let envelope = SessionRestoreEnvelope::from_json(V3_ENVELOPE).unwrap();
     let mut state = WorkspaceState::from_window_recipe(&envelope.workspace.windows[0]).unwrap();

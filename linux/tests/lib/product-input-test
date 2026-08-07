@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+calls="$(mktemp)"
+trap 'rm -f -- "${calls}"' EXIT
+
+xdotool() {
+    printf '%s\n' "$*" >>"${calls}"
+}
+
+sleep() {
+    :
+}
+
+# shellcheck disable=SC1091
+source "${repo_root}/linux/tests/lib/product-input"
+
+ZENTTY_PRODUCT_WINDOW_ID=4242
+zentty_product_close_window x11
+
+expected=$'key --window 4242 ctrl+q\nkey --window 4242 ctrl+q\nkeyup Control_L Control_R q'
+[[ "$(cat "${calls}")" == "${expected}" ]] || {
+    echo "product-input-test: X11 close did not reset the complete synthetic chord" >&2
+    cat "${calls}" >&2
+    exit 1
+}
+
+echo "Product input helper tests passed: X11 close releases global synthetic keys"

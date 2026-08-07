@@ -11,6 +11,8 @@ fake_bin=""
 real_gemini_bin=""
 private_home=""
 actor="${repo_root}/linux/tests/fixtures/controlled-agent"
+# shellcheck disable=SC1091
+source "${repo_root}/linux/tests/lib/product-input"
 
 fail() {
     [[ -z "${log}" || ! -f "${log}" ]] || cat "${log}" >&2
@@ -110,6 +112,68 @@ run_adapter() {
     state_directory=""
 }
 
+run_codex_lifecycle() {
+    local socket=""
+
+    log="$(mktemp)"
+    state_directory="$(mktemp -d)"
+    PATH="${fake_bin}:${PATH}" GDK_SCALE=1 GDK_DPI_SCALE=1 \
+        ZENTTY_CONTROLLED_AGENT_PROFILE=codex-lifecycle \
+        "${product}" \
+        --command codex \
+        --state-directory "${state_directory}" \
+        --no-session-restore >"${log}" 2>&1 &
+    product_pid=$!
+
+    zentty_product_wait_for_log "${log}" \
+        'Codex · Needs input: Submit this answer?' \
+        "Codex lifecycle did not establish its first question"
+    zentty_product_prepare_input "${backend}" "${log}"
+    # Source behavior intentionally protects a newly arrived question for
+    # 350 ms from the Return that accepted an earlier terminal interaction.
+    sleep 0.4
+    zentty_product_key "${backend}" Return
+    zentty_product_wait_for_log "${log}" \
+        'zentty-linux: codex-terminal-gesture=InputSubmitted' \
+        "physical Return was not observed by the product"
+    zentty_product_wait_for_log "${log}" \
+        'Codex · Needs input: Interrupt this run?' \
+        "the real PTY child did not receive submitted input"
+
+    zentty_product_ctrl_key "${backend}" c
+    zentty_product_wait_for_log "${log}" \
+        'zentty-linux: codex-terminal-gesture=Interrupted' \
+        "physical Ctrl-C was not observed by the product"
+    zentty_product_wait_for_log "${log}" \
+        'kind=agent.idle session=codex-lifecycle-e2e' \
+        "controlled Codex did not deliver the late idle event"
+    if grep -Fq 'Codex · Idle' "${log}"; then
+        fail "late Codex idle escaped interrupt suppression"
+    fi
+    zentty_product_wait_for_log "${log}" \
+        'kind=agent.running session=codex-lifecycle-e2e' \
+        "controlled Codex did not deliver recovery activity"
+    zentty_product_wait_for_log "${log}" \
+        'sidebar-agent-status pane=pane-1 text="Codex · Running" attention=false' \
+        "new Codex activity did not clear interrupt suppression"
+
+    socket="$(sed -n 's/^zentty-linux: agent-runtime socket=//p' "${log}" | head -1)"
+    [[ -S "${socket}" ]] || fail "private product socket was not live during lifecycle"
+    zentty_product_close_window "${backend}"
+    for _ in {1..200}; do
+        ! kill -0 "${product_pid}" 2>/dev/null && break
+        sleep 0.05
+    done
+    wait "${product_pid}" || fail "Codex lifecycle product run failed"
+    product_pid=""
+    [[ ! -e "${socket}" && ! -e "$(dirname "${socket}")" ]] ||
+        fail "Codex lifecycle left its socket or runtime directory behind"
+    rm -f -- "${log}"
+    rm -rf -- "${state_directory}"
+    log=""
+    state_directory=""
+}
+
 run_adapter \
     codex \
     'codex' \
@@ -125,6 +189,11 @@ run_adapter \
     'codex' \
     codex-title \
     'zentty-linux: sidebar-agent-status pane=pane-1 text="Codex · Needs input: [ ! ] Action Required | codex-title | Tasks 1/3" attention=true'
+case "${ZENTTY_RUN_CODEX_LIFECYCLE:-false}" in
+    true) run_codex_lifecycle ;;
+    false) ;;
+    *) fail "ZENTTY_RUN_CODEX_LIFECYCLE must be true or false" ;;
+esac
 run_adapter \
     claude \
     'claude' \

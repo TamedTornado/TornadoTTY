@@ -784,6 +784,9 @@ impl ApplicationShell {
                 // press may leak into the still-focused Ghostty surface.
                 return glib::Propagation::Stop;
             }
+            if let Some(gesture) = codex_terminal_gesture(key, modifiers) {
+                Self::record_terminal_gesture(&shell, gesture);
+            }
             glib::Propagation::Proceed
         });
         let weak = Rc::downgrade(shell);
@@ -800,6 +803,28 @@ impl ApplicationShell {
             }
         });
         shell.borrow().window.add_controller(controller);
+    }
+
+    fn record_terminal_gesture(shell: &Rc<RefCell<Self>>, gesture: TerminalGesture) {
+        let changed = {
+            let mut shell = shell.borrow_mut();
+            let Some(pane_id) = shell.state.focused_pane_id().map(str::to_owned) else {
+                return;
+            };
+            let now = unix_time_ms();
+            match gesture {
+                TerminalGesture::InputSubmitted => {
+                    shell.state.record_terminal_input_submitted(&pane_id, now)
+                }
+                TerminalGesture::Interrupted => {
+                    shell.state.record_terminal_interrupt(&pane_id, now)
+                }
+            }
+        };
+        if changed {
+            eprintln!("zentty-linux: codex-terminal-gesture={gesture:?}");
+            shell.borrow().render_sidebar();
+        }
     }
 
     fn handle_lifecycle_shortcut(
@@ -2296,9 +2321,7 @@ impl ApplicationShell {
                     if shell.shutting_down {
                         return;
                     }
-                    let now = SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .map_or(0, |duration| duration.as_secs());
+                    let now = unix_time_ms();
                     let agent_changed =
                         shell.state.reconcile_terminal_title(&title_id, &title, now);
                     if shell.state.set_pane_title(&title_id, &title) || agent_changed {
@@ -2482,13 +2505,14 @@ impl ApplicationShell {
         if events.is_empty() {
             return;
         }
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |duration| duration.as_secs());
+        let now = unix_time_ms();
         for event in events {
             eprintln!(
-                "zentty-linux: agent-event pane={} worklane={}",
-                event.target.pane_id, event.target.worklane_id
+                "zentty-linux: agent-event pane={} worklane={} kind={} session={}",
+                event.target.pane_id,
+                event.target.worklane_id,
+                event.event_kind(),
+                event.session_id().unwrap_or("pane-default")
             );
             shell.borrow_mut().state.apply_agent_event(event, now);
         }
@@ -3077,6 +3101,37 @@ fn is_restore_closed_pane_shortcut(key: gdk::Key, modifiers: gdk::ModifierType) 
         && !modifiers.intersects(gdk::ModifierType::ALT_MASK | gdk::ModifierType::SUPER_MASK)
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TerminalGesture {
+    InputSubmitted,
+    Interrupted,
+}
+
+fn codex_terminal_gesture(key: gdk::Key, modifiers: gdk::ModifierType) -> Option<TerminalGesture> {
+    let command_modifiers = modifiers
+        & (gdk::ModifierType::CONTROL_MASK
+            | gdk::ModifierType::SHIFT_MASK
+            | gdk::ModifierType::ALT_MASK
+            | gdk::ModifierType::SUPER_MASK);
+    if (key == gdk::Key::Return || key == gdk::Key::KP_Enter) && command_modifiers.is_empty() {
+        return Some(TerminalGesture::InputSubmitted);
+    }
+    if (key == gdk::Key::c || key == gdk::Key::C)
+        && command_modifiers == gdk::ModifierType::CONTROL_MASK
+    {
+        return Some(TerminalGesture::Interrupted);
+    }
+    None
+}
+
+fn unix_time_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| {
+            u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
+        })
+}
+
 fn is_close_window_shortcut(key: gdk::Key, modifiers: gdk::ModifierType) -> bool {
     key == gdk::Key::q
         && modifiers.contains(gdk::ModifierType::CONTROL_MASK)
@@ -3370,7 +3425,9 @@ fn default_window_recipe() -> WindowRecipe {
 
 #[cfg(test)]
 mod allocation_tests {
-    use super::{is_close_window_shortcut, model_heights_to_pixels};
+    use super::{
+        TerminalGesture, codex_terminal_gesture, is_close_window_shortcut, model_heights_to_pixels,
+    };
     use gtk::gdk;
 
     #[test]
@@ -3402,5 +3459,36 @@ mod allocation_tests {
             gdk::Key::w,
             gdk::ModifierType::CONTROL_MASK
         ));
+    }
+
+    #[test]
+    fn terminal_lifecycle_gestures_require_the_source_exact_physical_chords() {
+        assert_eq!(
+            codex_terminal_gesture(gdk::Key::Return, gdk::ModifierType::empty()),
+            Some(TerminalGesture::InputSubmitted)
+        );
+        assert_eq!(
+            codex_terminal_gesture(gdk::Key::KP_Enter, gdk::ModifierType::LOCK_MASK),
+            Some(TerminalGesture::InputSubmitted)
+        );
+        assert_eq!(
+            codex_terminal_gesture(gdk::Key::Return, gdk::ModifierType::SHIFT_MASK),
+            None
+        );
+        assert_eq!(
+            codex_terminal_gesture(gdk::Key::c, gdk::ModifierType::CONTROL_MASK),
+            Some(TerminalGesture::Interrupted)
+        );
+        assert_eq!(
+            codex_terminal_gesture(
+                gdk::Key::C,
+                gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::SHIFT_MASK
+            ),
+            None
+        );
+        assert_eq!(
+            codex_terminal_gesture(gdk::Key::c, gdk::ModifierType::empty()),
+            None
+        );
     }
 }

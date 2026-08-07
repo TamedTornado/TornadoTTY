@@ -4,6 +4,16 @@ use crate::{
 };
 use std::collections::{HashMap, HashSet};
 
+const CODEX_TITLE_IDLE_SUPPRESSION_MS: u64 = 1_000;
+const CODEX_INPUT_SUBMIT_STABILIZATION_MS: u64 = 350;
+const CODEX_INTERRUPT_SUPPRESSION_MS: u64 = 3_000;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CodexInterruptSuppression {
+    until: u64,
+    session_ids: HashSet<String>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AgentPhase {
     Starting,
@@ -44,20 +54,63 @@ pub struct AgentStatusStore {
     panes: HashMap<String, HashMap<String, PaneAgentStatus>>,
     codex_title_inferred: HashSet<(String, String)>,
     codex_idle_suppression_until: HashMap<(String, String), u64>,
+    codex_observed_running: HashSet<(String, String)>,
+    codex_interrupt_suppression: HashMap<String, CodexInterruptSuppression>,
 }
 
 impl AgentStatusStore {
+    fn suppress_interrupted_codex_event(
+        &mut self,
+        pane_id: &str,
+        session_id: &str,
+        event: &crate::AgentEvent,
+        now: u64,
+    ) -> Option<bool> {
+        let event_is_codex = event
+            .agent_name()
+            .is_some_and(|name| name.eq_ignore_ascii_case("codex"))
+            || self
+                .codex_interrupt_suppression
+                .get(pane_id)
+                .is_some_and(|suppression| suppression.session_ids.contains(session_id));
+        if !event_is_codex {
+            return Some(false);
+        }
+        let active = self
+            .codex_interrupt_suppression
+            .get(pane_id)
+            .is_some_and(|suppression| now < suppression.until);
+        if event.kind() == "agent.idle" && active {
+            return None;
+        }
+        let new_activity = matches!(
+            event.kind(),
+            "session.start" | "agent.running" | "agent.input-resolved" | "agent.needs-input"
+        );
+        if new_activity || !active {
+            self.codex_interrupt_suppression.remove(pane_id);
+        }
+        Some(true)
+    }
+
     pub fn apply(&mut self, authenticated: AuthenticatedAgentEvent, now: u64) {
         let target = authenticated.target;
         let event = authenticated.event;
         let session_id = event.session_id().unwrap_or("pane-default").to_owned();
         let pane_id = target.pane_id;
+        let Some(event_is_codex) =
+            self.suppress_interrupted_codex_event(&pane_id, &session_id, &event, now)
+        else {
+            return;
+        };
         let sessions = self.panes.entry(pane_id.clone()).or_default();
         if event.kind() == "session.end" {
             sessions.remove(&session_id);
             self.codex_title_inferred
                 .remove(&(pane_id.clone(), session_id.clone()));
             self.codex_idle_suppression_until
+                .remove(&(pane_id.clone(), session_id.clone()));
+            self.codex_observed_running
                 .remove(&(pane_id.clone(), session_id.clone()));
             if sessions.is_empty() {
                 self.panes.remove(&pane_id);
@@ -70,7 +123,10 @@ impl AgentStatusStore {
             .or_insert_with(|| PaneAgentStatus {
                 session_id: session_id.clone(),
                 parent_session_id: event.parent_session_id().map(str::to_owned),
-                agent_name: event.agent_name().unwrap_or("Agent").to_owned(),
+                agent_name: event
+                    .agent_name()
+                    .unwrap_or(if event_is_codex { "Codex" } else { "Agent" })
+                    .to_owned(),
                 phase: AgentPhase::Starting,
                 text: None,
                 interaction: AgentInteractionKind::None,
@@ -100,6 +156,10 @@ impl AgentStatusStore {
                     .remove(&(pane_id.clone(), session_id.clone()));
                 self.codex_idle_suppression_until
                     .remove(&(pane_id.clone(), session_id.clone()));
+                if status.agent_name.eq_ignore_ascii_case("codex") {
+                    self.codex_observed_running
+                        .insert((pane_id.clone(), session_id.clone()));
+                }
             }
             "agent.idle" => {
                 status.phase = AgentPhase::Idle;
@@ -107,8 +167,10 @@ impl AgentStatusStore {
                 status.text = None;
                 self.codex_title_inferred
                     .remove(&(pane_id.clone(), session_id.clone()));
-                self.codex_idle_suppression_until
-                    .insert((pane_id.clone(), session_id.clone()), now.saturating_add(1));
+                self.codex_idle_suppression_until.insert(
+                    (pane_id.clone(), session_id.clone()),
+                    now.saturating_add(CODEX_TITLE_IDLE_SUPPRESSION_MS),
+                );
             }
             "agent.needs-input" => {
                 status.phase = AgentPhase::NeedsInput;
@@ -212,7 +274,7 @@ impl AgentStatusStore {
                     }
                     self.codex_title_inferred.remove(&key);
                     self.codex_idle_suppression_until
-                        .insert(key, now.saturating_add(1));
+                        .insert(key, now.saturating_add(CODEX_TITLE_IDLE_SUPPRESSION_MS));
                 }
             }
         }
@@ -220,6 +282,105 @@ impl AgentStatusStore {
             status.updated_at = now;
         }
         changed
+    }
+
+    /// Promotes an explicit Codex session after input is actually submitted to
+    /// the terminal. A question remains visible for 350 ms so the Return that
+    /// accepted the preceding terminal interaction cannot immediately erase a
+    /// newly delivered question.
+    pub fn apply_codex_user_submitted(&mut self, pane_id: &str, now: u64) -> bool {
+        self.codex_interrupt_suppression.remove(pane_id);
+        self.codex_idle_suppression_until
+            .retain(|(tracked_pane, _), _| tracked_pane != pane_id);
+        let observed_running = &self.codex_observed_running;
+        let Some(status) = self.panes.get_mut(pane_id).and_then(|sessions| {
+            sessions
+                .values_mut()
+                .filter(|status| status.agent_name.eq_ignore_ascii_case("codex"))
+                .filter(|status| match status.phase {
+                    AgentPhase::NeedsInput => {
+                        now.saturating_sub(status.updated_at) >= CODEX_INPUT_SUBMIT_STABILIZATION_MS
+                    }
+                    AgentPhase::Starting => true,
+                    AgentPhase::Idle => {
+                        observed_running.contains(&(pane_id.to_owned(), status.session_id.clone()))
+                    }
+                    AgentPhase::Running | AgentPhase::UnresolvedStop => false,
+                })
+                .max_by_key(|status| (status_priority(status), status.updated_at))
+        }) else {
+            return false;
+        };
+        status.phase = AgentPhase::Running;
+        status.interaction = AgentInteractionKind::None;
+        status.text = None;
+        status.updated_at = now;
+        true
+    }
+
+    /// Clears Codex state on an exact Ctrl-C terminal gesture and remembers
+    /// the interrupted sessions long enough to reject their late idle event.
+    pub fn apply_codex_user_interrupted(&mut self, pane_id: &str, now: u64) -> bool {
+        let Some(sessions) = self.panes.get_mut(pane_id) else {
+            return false;
+        };
+        let session_ids = sessions
+            .values()
+            .filter(|status| status.agent_name.eq_ignore_ascii_case("codex"))
+            .map(|status| status.session_id.clone())
+            .collect::<HashSet<_>>();
+        if session_ids.is_empty() {
+            return false;
+        }
+        sessions.retain(|_, status| !status.agent_name.eq_ignore_ascii_case("codex"));
+        if sessions.is_empty() {
+            self.panes.remove(pane_id);
+        }
+        self.codex_title_inferred
+            .retain(|(tracked_pane, _)| tracked_pane != pane_id);
+        self.codex_idle_suppression_until
+            .retain(|(tracked_pane, _), _| tracked_pane != pane_id);
+        self.codex_observed_running
+            .retain(|(tracked_pane, _)| tracked_pane != pane_id);
+        self.codex_interrupt_suppression.insert(
+            pane_id.to_owned(),
+            CodexInterruptSuppression {
+                until: now.saturating_add(CODEX_INTERRUPT_SUPPRESSION_MS),
+                session_ids,
+            },
+        );
+        true
+    }
+
+    /// Clears active Codex state only when terminal metadata is the basename
+    /// of a shell recognized by the source implementation.
+    pub fn clear_codex_after_shell_return(&mut self, pane_id: &str, title: &str) -> bool {
+        if !is_known_shell_name(title) {
+            return false;
+        }
+        let has_active_codex = self.panes.get(pane_id).is_some_and(|sessions| {
+            sessions.values().any(|status| {
+                status.agent_name.eq_ignore_ascii_case("codex")
+                    && (status.phase != AgentPhase::Idle || status.requires_attention())
+            })
+        }) || self.codex_interrupt_suppression.contains_key(pane_id);
+        if !has_active_codex {
+            return false;
+        }
+        if let Some(sessions) = self.panes.get_mut(pane_id) {
+            sessions.retain(|_, status| !status.agent_name.eq_ignore_ascii_case("codex"));
+            if sessions.is_empty() {
+                self.panes.remove(pane_id);
+            }
+        }
+        self.codex_title_inferred
+            .retain(|(tracked_pane, _)| tracked_pane != pane_id);
+        self.codex_idle_suppression_until
+            .retain(|(tracked_pane, _), _| tracked_pane != pane_id);
+        self.codex_observed_running
+            .retain(|(tracked_pane, _)| tracked_pane != pane_id);
+        self.codex_interrupt_suppression.remove(pane_id);
+        true
     }
 
     #[must_use]
@@ -244,7 +405,23 @@ impl AgentStatusStore {
             .retain(|(tracked_pane, _)| tracked_pane != pane_id);
         self.codex_idle_suppression_until
             .retain(|(tracked_pane, _), _| tracked_pane != pane_id);
+        self.codex_observed_running
+            .retain(|(tracked_pane, _)| tracked_pane != pane_id);
+        self.codex_interrupt_suppression.remove(pane_id);
     }
+}
+
+fn is_known_shell_name(value: &str) -> bool {
+    let basename = value
+        .trim()
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    matches!(
+        basename.as_str(),
+        "zsh" | "bash" | "fish" | "sh" | "pwsh" | "nu"
+    )
 }
 
 fn status_priority(status: &PaneAgentStatus) -> u8 {

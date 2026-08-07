@@ -8404,6 +8404,131 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   SHA-256 is
   `ecf8e848f6a0e2352d3510a13dd2ff3d59ffd06505ece236fdfcc030553b514b`.
   ReleaseSafe Valgrind remains XFAIL.
+- **Codex lifecycle slice started from source transitions, not key guesses:**
+  Failing reducer tests pinned the Swift 350-ms input-submit stabilization
+  boundary, exact three-second interrupt window, late-idle suppression,
+  preservation of non-Codex sessions, and known-shell basename cleanup. The
+  product clock used by agent events and title callbacks was migrated from
+  whole epoch seconds to epoch milliseconds so the 350-ms contract is
+  representable. Ordinary typing remains a no-op; only unmodified physical
+  Return/keypad Enter promotes submitted input, and only exact physical
+  Ctrl-C interrupts. Both gestures continue into Ghostty rather than being
+  consumed by the application controller.
+- **A build failure exposed an internal protocol-observability boundary:** The
+  first staged build rejected diagnostic calls to crate-private `AgentEvent`
+  methods. The repair did not expose mutable or unauthenticated protocol
+  state: `AuthenticatedAgentEvent` gained two read-only accessors for its
+  canonical event kind and session ID. The lifecycle journey uses those log
+  fields to prove that the late idle signal reached the real product rather
+  than merely assuming the controlled actor emitted it.
+- **Real compositor lifecycle evidence:** A controlled Codex actor now sends a
+  real question through the staged helper and authenticated socket, blocks on
+  its actual PTY, receives a compositor-driven Return, emits a second
+  question, receives compositor-driven Ctrl-C, then deliberately sends a late
+  idle followed by new running activity. The product keeps the idle from
+  resurfacing and accepts the new activity. The complete wrapper/child/PTY/
+  Ghostty/keyboard/helper/socket/reducer/sidebar journey passed under nested
+  X11 session
+  `01a4643368321ed6465e2dd0e709590930de8e62597447723f049ba123bc8ae4`
+  and input-capable Wayland session
+  `10821951caf982d53c4e53551963fb766f44a5d68e8426960661ed2b3a4f9d15`
+  (outer X11 transport
+  `b62d6baf4c17ce6ec4783528f6e43375782aa87ab480f9c76a792d6b7982ffb2`).
+- **Mutation testing found and repaired lifecycle blind spots:** The first
+  75-mutant campaign missed 15 boundary/independent-pane cases. In particular,
+  the tests could not distinguish a suppressed late Codex idle from a lower-
+  priority accidental generic Agent status, did not pin both sides of the
+  interrupt deadline, and did not prove that cleanup for one pane preserves
+  inferred-title, idle-suppression, and observed-running state for other
+  panes. The store now retains interrupted session identity so an accepted
+  post-window idle remains Codex rather than degrading to a generic agent, and
+  those independent invariants are explicit tests. After the state preflight
+  was factored to satisfy strict Clippy, the final campaign caught 75 mutants
+  and classified two as unviable, with zero misses or timeouts;
+  `outcomes.json` SHA-256 is
+  `6f8f0f0af5b8e33004330038aea0e23125cf0164b904e1cee7bc27f97ffdeb3d`.
+- **Remaining Codex boundary after lifecycle reconciliation:** Title-driven
+  asynchronous transcript enrichment/retry/cache application, OSC progress
+  events beyond title task counts, and stable custom-title write-back remain.
+  `agent.codex` stays `PARTIAL`; complete qualification for this slice is
+  still pending and is recorded only after every presently executable cell is
+  rerun.
+- **The first complete rerun rejected over-broad lifecycle orchestration:**
+  Both staged-package cells call the shared agent adapter journey, but the
+  ordinary headless-Wayland packaging environment intentionally has no
+  virtual keyboard. Adding physical lifecycle input unconditionally therefore
+  failed instead of silently treating environmental absence as a pass. The
+  repair makes lifecycle input an explicit `ZENTTY_RUN_CODEX_LIFECYCLE=true`
+  contract used only by the authoritative input-capable Wayland and X11 agent
+  cells; staged packaging still runs every non-input adapter journey. The same
+  run also found that the gitignored pinned Gemini 0.53.0 prerequisite under
+  `/tmp` had disappeared. It was reinstalled with pnpm under an explicit
+  `minimum-release-age=10080` policy rather than weakening the real-CLI cell.
+  Focused staged Wayland session
+  `f0c1bbfcaa81766c05cdcbd5f8dbbd6c6b8c4d94ed81d209353108135ffde2b7`,
+  staged X11 session
+  `2251041fbec81a147884bc8f5e75e5330aa7727358db0cde793b3a1405ad86ce`,
+  and corrected lifecycle Wayland session
+  `02761c0f964da9788fefdf38c2310b81f53245644475f75e46339c732a942c54`
+  (outer X11 transport
+  `fa1434589aaa1d4e760480fcb752bd50955daa223467f62c633efd8ccd53613f`)
+  all passed. A complete matrix rerun, not these focused repairs alone, remains
+  required before commit.
+- **The second complete rerun found two real orchestration defects:** The
+  authoritative matrix command was updated, but its deliberately
+  non-authoritative architecture mirror was not, so the architecture contract
+  correctly rejected the contradiction. After both were reconciled, the X11
+  agent cell still failed reproducibly only when the physical lifecycle
+  journey preceded the tmux journey in the same intentionally reused X
+  server. The tmux journey passed alone but twice lost delivery to its main
+  pane after lifecycle teardown. The cause was not tmux: closing Zentty on
+  synthetic Ctrl-Q destroys the target on key-down, so Xdotool can fail before
+  releasing the X server's global Control/Q key state. The next product then
+  inherited the stuck chord. The shared physical-input helper now explicitly
+  releases both Control keys and Q against the live root after close. A
+  focused helper test pins the exact release sequence, and the previously
+  failing lifecycle-then-tmux sequence passed in X11 session
+  `ca9d076e54199f2c18977f01c3c6ba64f04285a2db50cd192c1c3a195495b2b7`.
+  No tmux timeout, product assertion, or compositor prerequisite was weakened.
+  Complete qualification remains pending until the repaired full matrix is
+  rerun.
+- **The next full rerun stopped on an installed Codex upgrade rather than
+  silently accepting it:** The machine's real CLI changed from reviewed
+  0.146.1 to `codex-cli 0.147.0` while this slice was in progress. The exact
+  version gate rejected the agent cell. The official `rust-v0.147.0` tag is
+  commit `be6e8eac029b`; review of the official 0.146.1-to-0.147.0 comparison
+  covered CLI/config, hooks, terminal input/title, session persistence,
+  transcript/rollout, and resume changes, including the pre-tool-hook test
+  marker change and TUI key-release work. No change invalidated Zentty's
+  ephemeral config or notify contract. The pin is updated only to 0.147.0;
+  the installed-Codex journey must still prove that the real binary accepts
+  Zentty's generated hook/notify configuration, crosses the controlled model
+  endpoint, persists the exact session, and performs a real resume before the
+  version is accepted. Complete qualification is still pending.
+- **Installed Codex 0.147.0 contract accepted by the real journey:** The
+  reviewed binary passed under controlled X11 session
+  `0cc480fa8be334b7dee737d1e2f6d0a272ba7f02bb40b6e9e8b82138219fbf4a`.
+  It accepted the staged ephemeral hook and notify configuration, executed
+  through the real Ghostty PTY against the controlled loopback endpoint,
+  delivered the real hook through authenticated IPC, persisted the exact
+  session, and relaunched through the real resume TUI. This is a versioned
+  compatibility result, not an assumption that future Codex releases retain
+  the contract.
+- **Complete qualification after Codex lifecycle reconciliation:** Every
+  presently executable cell produced its expected outcome after the lifecycle,
+  orchestration, X11 teardown, architecture mirror, and installed-CLI repairs.
+  The authoritative summary SHA-256 is
+  `5e99376f2a1145602fe25c863ad7b90fe5ffb2d39f2cb2dc5cccf0cf6ffa3d61`.
+  Declared totals remain `PASS=52`, `FAIL=0`, `BLOCKED=5`, `XFAIL=1`, and
+  `NOT_IMPLEMENTED=51`; implemented-local and product-boundary qualification
+  passed, while release and full Linux qualification did not. Debug Valgrind
+  is **PASS with reviewed suppressions**, not unsuppressed clean: the preserved
+  raw receipt reports 427 errors/contexts, 6,240 definite bytes, and 41,461
+  indirect bytes; reviewed post-suppression evidence reports zero for all four
+  values and counts all 427 errors/contexts as suppressed. The Valgrind report
+  SHA-256 is
+  `ba448bea76858007b09865dc9fcb7f283f781ffb9974ed444092f0aea46341e4`.
+  ReleaseSafe Valgrind remains XFAIL and no suppression was broadened.
 
 ## AI disclosure
 

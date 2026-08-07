@@ -1488,7 +1488,22 @@ impl WorkspaceState {
     /// agent store. Unknown panes, non-Codex sessions, and unrelated titles
     /// are no-ops.
     pub fn reconcile_terminal_title(&mut self, pane_id: &str, title: &str, now: u64) -> bool {
-        self.agent_statuses.apply_codex_title(pane_id, title, now)
+        self.agent_statuses
+            .clear_codex_after_shell_return(pane_id, title)
+            || self.agent_statuses.apply_codex_title(pane_id, title, now)
+    }
+
+    /// Records a physical terminal input submission after the product has
+    /// allowed the key event to reach the embedded Ghostty surface.
+    pub fn record_terminal_input_submitted(&mut self, pane_id: &str, now: u64) -> bool {
+        self.agent_statuses.apply_codex_user_submitted(pane_id, now)
+    }
+
+    /// Records an exact Ctrl-C gesture after it has been forwarded to the
+    /// embedded terminal, clearing Codex state while suppressing late idle.
+    pub fn record_terminal_interrupt(&mut self, pane_id: &str, now: u64) -> bool {
+        self.agent_statuses
+            .apply_codex_user_interrupted(pane_id, now)
     }
 
     /// Captures source-compatible restore drafts for active supported agents.

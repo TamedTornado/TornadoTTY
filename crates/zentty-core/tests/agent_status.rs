@@ -7,6 +7,55 @@ fn target() -> AgentTarget {
     AgentTarget::new("window-a", "worklane-a", "pane-a")
 }
 
+fn event_for(pane_id: &str, json: &[u8]) -> AuthenticatedAgentEvent {
+    AuthenticatedAgentEvent {
+        target: AgentTarget::new("window-a", "worklane-a", pane_id),
+        pane_token: format!("token-{pane_id}"),
+        event: AgentEvent::parse(json).unwrap(),
+    }
+}
+
+fn seed_other_pane_codex_tracking(store: &mut AgentStatusStore) {
+    store.apply(
+        event_for(
+            "pane-inferred",
+            br#"{"version":1,"event":"agent.running","agent":{"name":"Codex"},"session":{"id":"inferred"}}"#,
+        ),
+        1_000,
+    );
+    assert!(store.apply_codex_title("pane-inferred", "[ ! ] Action Required | tracking", 1_100));
+
+    for (pane, session) in [
+        ("pane-suppressed", "suppressed"),
+        ("pane-observed", "observed"),
+    ] {
+        store.apply(
+            event_for(
+                pane,
+                format!(
+                    r#"{{"version":1,"event":"agent.running","agent":{{"name":"Codex"}},"session":{{"id":"{session}"}}}}"#
+                )
+                .as_bytes(),
+            ),
+            1_000,
+        );
+        store.apply(
+            event_for(
+                pane,
+                format!(r#"{{"version":1,"event":"agent.idle","session":{{"id":"{session}"}}}}"#)
+                    .as_bytes(),
+            ),
+            1_100,
+        );
+    }
+}
+
+fn assert_other_pane_codex_tracking_was_preserved(store: &mut AgentStatusStore) {
+    assert!(store.apply_codex_title("pane-inferred", "Working ⠋ tracking", 1_200));
+    assert!(!store.apply_codex_title("pane-suppressed", "Working ⠋ tracking", 1_200));
+    assert!(store.apply_codex_user_submitted("pane-observed", 2_000));
+}
+
 #[test]
 fn canonical_events_drive_attention_and_progress_without_trusting_payload_routing() {
     let mut tokens = PaneTokenRegistry::default();
@@ -274,9 +323,170 @@ fn recent_authoritative_idle_suppresses_one_stale_running_title_tick() {
     );
     assert!(!store.apply_codex_title("pane-a", "Working ⠋ codex-stale", 20));
     assert_eq!(store.status_for(&target()).unwrap().phase, AgentPhase::Idle);
-    assert!(store.apply_codex_title("pane-a", "Working ⠙ codex-stale", 21));
+    assert!(!store.apply_codex_title("pane-a", "Working ⠙ codex-stale", 1_019));
+    assert!(store.apply_codex_title("pane-a", "Working ⠙ codex-stale", 1_020));
     assert_eq!(
         store.status_for(&target()).unwrap().phase,
         AgentPhase::Running
     );
+}
+
+#[test]
+fn codex_user_submit_resumes_attention_only_after_the_source_stabilization_window() {
+    let event = |json: &[u8]| AuthenticatedAgentEvent {
+        target: target(),
+        pane_token: "token-a".to_owned(),
+        event: AgentEvent::parse(json).unwrap(),
+    };
+    let needs_input = br#"{"version":1,"event":"agent.needs-input","agent":{"name":"Codex"},"session":{"id":"codex-input"},"state":{"interaction":{"kind":"question","text":"Continue?"}}}"#;
+
+    let mut early = AgentStatusStore::default();
+    early.apply(event(needs_input), 1_000);
+    assert!(!early.apply_codex_user_submitted("pane-a", 1_349));
+    assert_eq!(
+        early.status_for(&target()).unwrap().phase,
+        AgentPhase::NeedsInput
+    );
+
+    let mut boundary = AgentStatusStore::default();
+    boundary.apply(event(needs_input), 1_000);
+    assert!(boundary.apply_codex_user_submitted("pane-a", 1_350));
+    let resumed = boundary.status_for(&target()).unwrap();
+    assert_eq!(resumed.phase, AgentPhase::Running);
+    assert_eq!(resumed.interaction, AgentInteractionKind::None);
+    assert_eq!(resumed.text, None);
+    assert_eq!(resumed.updated_at, 1_350);
+
+    let mut independent_panes = AgentStatusStore::default();
+    seed_other_pane_codex_tracking(&mut independent_panes);
+    independent_panes.apply(event(needs_input), 1_000);
+    assert!(independent_panes.apply_codex_user_submitted("pane-a", 1_350));
+    assert!(!independent_panes.apply_codex_title("pane-suppressed", "Working ⠋ tracking", 1_200));
+}
+
+#[test]
+fn codex_interrupt_clears_only_codex_and_suppresses_late_idle_until_real_activity() {
+    let event = |json: &[u8]| AuthenticatedAgentEvent {
+        target: target(),
+        pane_token: "token-a".to_owned(),
+        event: AgentEvent::parse(json).unwrap(),
+    };
+    let mut store = AgentStatusStore::default();
+    store.apply(
+        event(
+            br#"{"version":1,"event":"agent.running","agent":{"name":"Codex"},"session":{"id":"codex-interrupt"}}"#,
+        ),
+        1_000,
+    );
+    store.apply(
+        event(
+            br#"{"version":1,"event":"agent.running","agent":{"name":"Claude Code"},"session":{"id":"claude-survives"}}"#,
+        ),
+        1_001,
+    );
+
+    assert!(store.apply_codex_user_interrupted("pane-a", 2_000));
+    assert_eq!(
+        store.status_for(&target()).unwrap().session_id,
+        "claude-survives"
+    );
+
+    store.apply(
+        event(br#"{"version":1,"event":"agent.idle","session":{"id":"codex-interrupt"}}"#),
+        2_500,
+    );
+    assert_eq!(
+        store.status_for(&target()).unwrap().session_id,
+        "claude-survives"
+    );
+    assert!(!store.apply_codex_title("pane-a", "Working ⠋ zentty", 2_600));
+
+    store.apply(
+        event(
+            br#"{"version":1,"event":"agent.running","agent":{"name":"Codex"},"session":{"id":"codex-interrupt"}}"#,
+        ),
+        2_700,
+    );
+    assert_eq!(
+        store.status_for(&target()).unwrap().session_id,
+        "codex-interrupt"
+    );
+    assert_eq!(
+        store.status_for(&target()).unwrap().phase,
+        AgentPhase::Running
+    );
+
+    let mut exact_deadline = AgentStatusStore::default();
+    exact_deadline.apply(
+        event(
+            br#"{"version":1,"event":"agent.running","agent":{"name":"Codex"},"session":{"id":"deadline"}}"#,
+        ),
+        1_000,
+    );
+    assert!(exact_deadline.apply_codex_user_interrupted("pane-a", 2_000));
+    exact_deadline.apply(
+        event(br#"{"version":1,"event":"agent.idle","session":{"id":"deadline"}}"#),
+        4_999,
+    );
+    assert!(exact_deadline.status_for(&target()).is_none());
+    exact_deadline.apply(
+        event(br#"{"version":1,"event":"agent.idle","session":{"id":"deadline"}}"#),
+        5_000,
+    );
+    let expired = exact_deadline.status_for(&target()).unwrap();
+    assert_eq!(expired.agent_name, "Codex");
+    assert_eq!(expired.phase, AgentPhase::Idle);
+    assert!(!exact_deadline.clear_codex_after_shell_return("pane-a", "bash"));
+
+    let mut independent_panes = AgentStatusStore::default();
+    seed_other_pane_codex_tracking(&mut independent_panes);
+    independent_panes.apply(
+        event(
+            br#"{"version":1,"event":"agent.running","agent":{"name":"Codex"},"session":{"id":"interrupt-cleanup"}}"#,
+        ),
+        1_000,
+    );
+    assert!(independent_panes.apply_codex_user_interrupted("pane-a", 1_200));
+    assert_other_pane_codex_tracking_was_preserved(&mut independent_panes);
+}
+
+#[test]
+fn known_shell_titles_clear_stale_codex_without_clearing_other_agents() {
+    let event = |json: &[u8]| AuthenticatedAgentEvent {
+        target: target(),
+        pane_token: "token-a".to_owned(),
+        event: AgentEvent::parse(json).unwrap(),
+    };
+    let mut store = AgentStatusStore::default();
+    store.apply(
+        event(
+            br#"{"version":1,"event":"agent.running","agent":{"name":"Codex"},"session":{"id":"codex-shell"}}"#,
+        ),
+        1_000,
+    );
+    store.apply(
+        event(
+            br#"{"version":1,"event":"agent.running","agent":{"name":"Gemini"},"session":{"id":"gemini-survives"}}"#,
+        ),
+        1_001,
+    );
+
+    assert!(!store.clear_codex_after_shell_return("pane-a", "project shell"));
+    assert!(store.clear_codex_after_shell_return("pane-a", "/usr/bin/bash"));
+    assert_eq!(
+        store.status_for(&target()).unwrap().session_id,
+        "gemini-survives"
+    );
+    assert!(!store.clear_codex_after_shell_return("pane-a", "bash"));
+
+    let mut independent_panes = AgentStatusStore::default();
+    seed_other_pane_codex_tracking(&mut independent_panes);
+    independent_panes.apply(
+        event(
+            br#"{"version":1,"event":"agent.running","agent":{"name":"Codex"},"session":{"id":"shell-cleanup"}}"#,
+        ),
+        1_000,
+    );
+    assert!(independent_panes.clear_codex_after_shell_return("pane-a", "zsh"));
+    assert_other_pane_codex_tracking_was_preserved(&mut independent_panes);
 }

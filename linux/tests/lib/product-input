@@ -124,6 +124,11 @@ zentty_product_close_window() {
         xdotool key --window "${ZENTTY_PRODUCT_WINDOW_ID}" ctrl+q 2>/dev/null || true
         sleep 0.1
         xdotool key --window "${ZENTTY_PRODUCT_WINDOW_ID}" ctrl+q 2>/dev/null || true
+        # Closing on key-down can also prevent XTest from delivering the
+        # synthetic releases. Reset those global key states against the live
+        # root window so the next real product in this intentionally reused X
+        # server does not inherit a stuck Control/Q chord.
+        xdotool keyup Control_L Control_R q 2>/dev/null || true
     else
         wtype -M ctrl -k q -m ctrl
     fi
