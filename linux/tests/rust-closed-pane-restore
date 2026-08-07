@@ -79,7 +79,8 @@ jq --arg cwd "${working_dir}" '
 
 # The single quotes intentionally defer expansion to each real PTY child.
 # shellcheck disable=SC2016
-env LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+env GHOSTTY_LOG=false \
+    LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
     "${product}" \
     --state-directory "${state_dir}" \
     --async-backend "${async_backend}" \

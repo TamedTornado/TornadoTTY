@@ -9123,6 +9123,85 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   `dd0b8e4847b0aee447b74ecb16b5aaeefce356f3d63f121086dc86755778aadd`.
   No suppression rule or manifest changed.
 
+### 2026-08-07 — Real old/new Ghostty ABI mismatch qualification
+
+- **The row began red:** The orchestration contract first required the
+  `ghostty-abi-old-new-mismatch` row to become an isolated executable cell
+  owning both the real fixture builder and its negative self-test. It failed
+  while the authoritative row remained `NOT_IMPLEMENTED`. The bounded plan is
+  `docs/design/linux-ghostty-abi-mismatch-qualification-plan.md`.
+- **The fixture uses two real Ghostty revisions, not a fake `.so`:** The current
+  side is the pinned ReleaseSafe `977de1e93579b30f11b837b1f400c5bcdb56da8a`
+  artifact. The historical side is audited commit
+  `5c261e53539d61822754ea45de32aa798ff4bde9`, the last checkpoint before the
+  size-versioned surface constructor. Its real library exports ten audited
+  functions versus the current twelve. The machine inventory owns that exact
+  revision, export set, probe symbol, version node, and expected loader exit.
+- **The first local-clone attempt exposed a sequencing error:** `git clone
+  --no-checkout` correctly reports the entire worktree as deleted until its
+  first checkout, so checking cleanliness before detaching the historical
+  revision rejected a newly created valid clone. The clean-tree check moved
+  after checkout; no dirty state was ignored or normalized.
+- **Both compatibility controls and the incompatibility pass:** A current
+  consumer linked with immediate binding passes against the current library.
+  A consumer compiled from the historical header also passes against the
+  current library using a common API, proving forward loading is not rejected
+  indiscriminately. The untouched current consumer against the historical
+  library exits 127 in the dynamic loader before `main`; stdout is exactly
+  empty and stderr names
+  `ghostty_gtk_embed_surface_new_with_options@GHOSTTY_GTK_EMBED_1.0`.
+  The raw diagnostic SHA-256 is
+  `0243cc665264588c279c1fe361b4a1f90dc176c8a727814411ec3a66e95e1735`.
+- **Artifact identities are explicit:** The direct fixture recorded current
+  library SHA-256
+  `713a153cf7d937f24971e69350f8dd10f5c027fda0af1941b8b32d9502a8e898`
+  and historical library SHA-256
+  `da2b6c4374f2d2e0ce44e3fc091ab59e07217cda5d899be30ac18d74e670426c`.
+  The runner also verifies PIE, RELRO, immediate binding, non-executable stack,
+  literal relative RUNPATH, artifact hashes, revision metadata, and both exact
+  dynamic export sets.
+- **Negative runner cases are deterministic:** Self-tests reject missing
+  artifacts, revision drift, an accepted incompatible pair, any `main` marker
+  during the supposed loader failure, and a diagnostic for the wrong missing
+  symbol. Declared totals are now `PASS=81`, `FAIL=0`, `BLOCKED=5`, `XFAIL=1`,
+  and `NOT_IMPLEMENTED=23`; these remain declarations until the full executable
+  matrix reruns.
+- **The first complete rerun correctly failed suppression governance:** The
+  unrelated Debug GTK/IBus receipt reported two layout-cache roots but only
+  14,731 bytes, outside the reviewed 26,135–26,208 scenario range. Governance
+  rejected the cell rather than converting environmental absence or a stale
+  suppression into PASS. No suppression or manifest was broadened. A fresh
+  Debug rebuild and three consecutive real reruns produced 26,208, 26,208, and
+  26,176 bytes with the exact expected two roots; every governed rerun passed.
+  The anomalous receipt remains a documented uncertainty and the complete
+  matrix must rerun successfully before this slice can commit.
+- **The next complete rerun exposed combined-log corruption, not a missing
+  title:** The Debug Wayland/io_uring/multi lifecycle log contained the real
+  restored title callback, but a concurrent Ghostty renderer-debug write was
+  inserted between its pane ID and `value=` fields. The exact receipt matcher
+  therefore timed out while GTK entered a minimum-size allocation feedback
+  loop. Lifecycle qualification does not consume Ghostty debug chatter, so the
+  existing journey now launches its real product with documented
+  `GHOSTTY_LOG=false`; Zentty receipts, process failures, PTY behavior, and
+  compositor behavior remain real and observable without two runtimes writing
+  into the same logical evidence line.
+- **Final complete qualification passed:** The ABI mismatch cell passed in
+  isolated session
+  `b6bb780bda43292261065a24c04016b839e908847a88c55c8996b2d657f0bb39`;
+  its command log SHA-256 is
+  `28b6c83922ccd52934255729c9615a535da7dbf876c6322ba222451e2ce1ec92`.
+  The authoritative summary SHA-256 is
+  `58ab0304441ca0a36379abe551c725c5126b704b18141c9401564178e3700972`.
+  Totals are `PASS=81`, `FAIL=0`, `BLOCKED=5`, `XFAIL=1`, and
+  `NOT_IMPLEMENTED=23`; implemented-local passes while release and full Linux
+  qualification correctly remain false.
+- **Valgrind remained PASS with reviewed suppressions:** The final preserved
+  raw receipt has 427 errors/contexts, 6,160 definite bytes, and 41,396
+  indirect bytes. Post-suppression values are zero and all 427 contexts are
+  accounted for. Report SHA-256 is
+  `7ac9918c01536f745b017f76eb9b51297470bddb8928a6307d05793e12d05421`.
+  No suppression or suppression manifest changed in this slice.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were

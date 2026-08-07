@@ -81,6 +81,16 @@ jq -e '
         (.abi.external_public_type_dependencies[0].roles | length) == 8 and
     (.abi.public_enum_values | length) == 3 and
     (.abi.public_text_extent_values | length) == 2 and
+    (.abi.compatibility_fixture.historical_exported_function_count == 10) and
+    ((.abi.compatibility_fixture.historical_exports | length) == 10) and
+    (.abi.compatibility_fixture.historical_exports | length == (unique | length)) and
+    (.abi.compatibility_fixture.historical_revision as $revision |
+        any($inventory.commits[]; .id == $revision)) and
+    (.abi.compatibility_fixture.current_only_probe_symbol as $probe |
+        any($inventory.abi.operations[]; .symbol == $probe) and
+        ($inventory.abi.compatibility_fixture.historical_exports | index($probe) == null)) and
+    (.abi.compatibility_fixture.expected_version_node == .abi.symbol_version_node) and
+    (.abi.compatibility_fixture.expected_loader_exit == 127) and
     (.abi.prerequisites | any(.id == "runtime-before-gtk-init")) and
     (.abi.abi_defects | any(
         .id == "async-backend-enum-representation" and
@@ -148,7 +158,8 @@ jq -e '
         .status_proposal == "PASS") and
     any(.proposed_matrix_cells[];
         .id == "ghostty-abi-old-new-mismatch" and
-        .test_id == "TEST-GHOSTTY-ABI-MISMATCH") and
+        .test_id == "TEST-GHOSTTY-ABI-MISMATCH" and
+        .status_proposal == "PASS") and
     all(.proposed_matrix_cells[] | select(.id | startswith("rust-ghostty-"));
         .requirement_id == "ZL-13-RUST-GHOSTTY-ADAPTER") and
     all(.files[];
@@ -291,10 +302,22 @@ version_symbols="$(
     sed -n -E 's/^[[:space:]]+(ghostty_gtk_embed_[a-z_]+);/\1/p' "${ghostty_source}/src/gtk_embed_lib.version-script" |
         sort -u
 )"
+historical_revision="$(jq -r '.abi.compatibility_fixture.historical_revision' "${inventory}")"
+historical_symbols="$(
+    git -C "${ghostty_source}" show \
+        "${historical_revision}:src/gtk_embed_lib.version-script" |
+        sed -n -E 's/^[[:space:]]+(ghostty_gtk_embed_[a-z_]+);/\1/p' |
+        sort -u
+)"
+expected_historical_symbols="$(
+    jq -r '.abi.compatibility_fixture.historical_exports[]' "${inventory}" | sort
+)"
 
 [[ "${header_symbols}" == "${expected_symbols}" ]] || fail "header operations differ from inventory"
 [[ "${zig_symbols}" == "${expected_symbols}" ]] || fail "Zig exports differ from inventory"
 [[ "${version_symbols}" == "${expected_symbols}" ]] || fail "version-script allowlist differs from inventory"
+[[ "${historical_symbols}" == "${expected_historical_symbols}" ]] ||
+    fail "historical ABI mismatch fixture symbols differ from inventory"
 [[ "$(grep -c '^GHOSTTY_GTK_EMBED_1\.0 {' "${ghostty_source}/src/gtk_embed_lib.version-script")" == 1 ]] ||
     fail "symbol-version node differs"
 

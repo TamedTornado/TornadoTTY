@@ -295,8 +295,9 @@ gaps explicit.
    high-severity open representation defect, with no repaired C/C++/Rust
    real-library proof across default and `-fshort-enums` modes. There is also
    an exact version-node assertion but no compile-time/runtime ABI identity,
-   versioned SONAME, mismatch failure,
-   deprecation policy, or non-ELF visibility policy. C++ signature assertions
+   versioned SONAME, deprecation policy, non-ELF visibility policy, or general
+   compatibility policy. The exact historical mismatch fixture now proves
+   pre-main loader failure for one incompatible pair. C++ signature assertions
    cover only two of nine functions.
 8. **Future rebase:** this audit is exact for official base `ac04fc276` and
    locked downstream head `977de1e93`; later official movement requires a new
@@ -320,7 +321,7 @@ the matrix. They have since been reconciled into the authoritative
 | `rust-ghostty-api-product-usage` | `ZL-13-RUST-GHOSTTY-ADAPTER` / `TEST-RUST-GHOSTTY-PRODUCT-USAGE` | PASS | Closed-world nine-operation Rust ledger plus real close/restore, binding-action, and text-read journeys. |
 | `rust-ghostty-callback-drop-order` | `ZL-13-RUST-GHOSTTY-ADAPTER` / `TEST-RUST-GHOSTTY-CALLBACK-DROP` | PASS | Physical pane disposal rejects init/title/progress/child-exit callbacks after the close boundary. |
 | `rust-ghostty-config-construction` | `ZL-13-RUST-GHOSTTY-ADAPTER` / `TEST-RUST-GHOSTTY-CONFIG` | PASS | Prove exact source-native command, title, CWD, environment, and invalid-boundary encoding. |
-| `ghostty-abi-old-new-mismatch` | `ZL-11-GHOSTTY-ABI-COMPAT` / `TEST-GHOSTTY-ABI-MISMATCH` | NOT_IMPLEMENTED | Require incompatible staged header/library pairs to fail before use. |
+| `ghostty-abi-old-new-mismatch` | `ZL-11-GHOSTTY-ABI-COMPAT` / `TEST-GHOSTTY-ABI-MISMATCH` | PASS | A current-header consumer passes with the current library, a historical-header consumer passes forward against current, and the untouched current consumer fails in the loader before `main` with the real historical library. |
 
 The machine audit retains the field name `proposed_matrix_cells` because it is
 a byte-identified historical proposal snapshot. Its forward-looking

@@ -1,0 +1,151 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+inventory="${repo_root}/linux/ghostty-api-audit.json"
+fixture_root="${GHOSTTY_ABI_MISMATCH_ROOT:-${repo_root}/build/linux-abi-mismatch}"
+current_revision="$(sed -n 's/^revision=//p' "${repo_root}/linux/ghostty.lock")"
+historical_revision="$(jq -r '.abi.compatibility_fixture.historical_revision' "${inventory}")"
+probe_symbol="$(jq -r '.abi.compatibility_fixture.current_only_probe_symbol' "${inventory}")"
+version_node="$(jq -r '.abi.compatibility_fixture.expected_version_node' "${inventory}")"
+expected_exit="$(jq -r '.abi.compatibility_fixture.expected_loader_exit' "${inventory}")"
+
+fail() {
+    echo "ghostty-abi-mismatch: error: $*" >&2
+    exit 1
+}
+
+validate_metadata() {
+    local metadata="$1"
+    jq -e \
+        --arg current "${current_revision}" \
+        --arg historical "${historical_revision}" '
+        .schema_version == 1 and
+        .current_revision == $current and
+        .historical_revision == $historical and
+        (.current_library_sha256 | test("^[0-9a-f]{64}$")) and
+        (.historical_library_sha256 | test("^[0-9a-f]{64}$")) and
+        .current_library_sha256 != .historical_library_sha256
+    ' "${metadata}" >/dev/null
+}
+
+validate_mismatch_receipt() {
+    local status="$1"
+    local stdout_file="$2"
+    local stderr_file="$3"
+    [[ "${status}" == "${expected_exit}" ]] || return 1
+    [[ ! -s "${stdout_file}" ]] || return 1
+    grep -F "undefined symbol: ${probe_symbol}, version ${version_node}" \
+        "${stderr_file}" >/dev/null
+}
+
+dynamic_exports() {
+    readelf --dyn-syms -W "$1" |
+        awk '$4 == "FUNC" && $5 == "GLOBAL" && $8 ~ /^ghostty_gtk_embed_/ {
+            sub(/@.*/, "", $8); print $8
+        }' | sort -u
+}
+
+validate_fixture() {
+    local root="$1"
+    local metadata="${root}/metadata.json"
+    local current_lib="${root}/current/libghostty-gtk-embed.so"
+    local historical_lib="${root}/historical/libghostty-gtk-embed.so"
+    local binary actual expected
+
+    [[ -f "${metadata}" && -f "${current_lib}" && -f "${historical_lib}" ]] ||
+        return 1
+    [[ -x "${root}/bin/current-consumer" && -x "${root}/bin/historical-consumer" ]] ||
+        return 1
+    validate_metadata "${metadata}" || return 1
+    [[ "$(sha256sum "${current_lib}" | awk '{print $1}')" == \
+       "$(jq -r '.current_library_sha256' "${metadata}")" ]] || return 1
+    [[ "$(sha256sum "${historical_lib}" | awk '{print $1}')" == \
+       "$(jq -r '.historical_library_sha256' "${metadata}")" ]] || return 1
+
+    actual="$(dynamic_exports "${current_lib}")"
+    expected="$(jq -r '.abi.operations[].symbol' "${inventory}" | sort)"
+    [[ "${actual}" == "${expected}" ]] || return 1
+    actual="$(dynamic_exports "${historical_lib}")"
+    expected="$(jq -r '.abi.compatibility_fixture.historical_exports[]' \
+        "${inventory}" | sort)"
+    [[ "${actual}" == "${expected}" ]] || return 1
+
+    for binary in "${root}/bin/current-consumer" "${root}/bin/historical-consumer"; do
+        readelf -h "${binary}" | grep -F "DYN" >/dev/null || return 1
+        readelf -lW "${binary}" | grep -F "GNU_RELRO" >/dev/null || return 1
+        readelf -dW "${binary}" | grep -E "BIND_NOW|FLAGS_1.*NOW" >/dev/null || return 1
+        # The dynamic section must retain the literal loader token.
+        # shellcheck disable=SC2016
+        readelf -dW "${binary}" | grep -F "RUNPATH" | grep -F '$ORIGIN/../current' >/dev/null ||
+            return 1
+        readelf -lW "${binary}" | awk '/GNU_STACK/ {exit !($0 !~ /E/)}' || return 1
+    done
+}
+
+self_test() {
+    local temporary stdout_file stderr_file drifted
+    temporary="$(mktemp -d -t zentty-abi-mismatch-self-test.XXXXXX)"
+    trap 'rm -rf -- "${temporary}"' RETURN
+    stdout_file="${temporary}/stdout"
+    stderr_file="${temporary}/stderr"
+    : >"${stdout_file}"
+    printf 'loader: undefined symbol: %s, version %s\n' \
+        "${probe_symbol}" "${version_node}" >"${stderr_file}"
+    validate_mismatch_receipt "${expected_exit}" "${stdout_file}" "${stderr_file}" ||
+        return 1
+    ! validate_mismatch_receipt 0 "${stdout_file}" "${stderr_file}" || return 1
+    printf 'abi-mismatch-current-consumer: MAIN\n' >"${stdout_file}"
+    ! validate_mismatch_receipt "${expected_exit}" "${stdout_file}" "${stderr_file}" ||
+        return 1
+    : >"${stdout_file}"
+    printf 'loader: undefined symbol: ghostty_gtk_embed_wrong, version %s\n' \
+        "${version_node}" >"${stderr_file}"
+    ! validate_mismatch_receipt "${expected_exit}" "${stdout_file}" "${stderr_file}" ||
+        return 1
+    ! validate_fixture "${temporary}/missing" || return 1
+    validate_metadata "${fixture_root}/metadata.json" || return 1
+    drifted="${temporary}/drifted.json"
+    jq '.historical_revision = "0000000000000000000000000000000000000000"' \
+        "${fixture_root}/metadata.json" >"${drifted}"
+    ! validate_metadata "${drifted}" || return 1
+    echo "Ghostty ABI mismatch runner self-test passed"
+}
+
+run_real() {
+    local temporary status current_output historical_output
+    temporary="$(mktemp -d -t zentty-abi-mismatch.XXXXXX)"
+    trap 'rm -rf -- "${temporary}"' RETURN
+    validate_fixture "${fixture_root}" || fail "fixture identity or hardening is invalid"
+
+    current_output="$(LD_LIBRARY_PATH="${fixture_root}/current" \
+        "${fixture_root}/bin/current-consumer")" || fail "matching current pair failed"
+    [[ "${current_output}" == $'abi-mismatch-current-consumer: MAIN\nabi-mismatch-current-consumer: PASS' ]] ||
+        fail "matching current pair returned an unexpected receipt"
+    historical_output="$(LD_LIBRARY_PATH="${fixture_root}/current" \
+        "${fixture_root}/bin/historical-consumer")" ||
+        fail "historical-header/current-library compatible pair failed"
+    [[ "${historical_output}" == $'abi-mismatch-historical-consumer: MAIN\nabi-mismatch-historical-consumer: PASS' ]] ||
+        fail "compatible historical consumer returned an unexpected receipt"
+
+    set +e
+    LD_LIBRARY_PATH="${fixture_root}/historical:${fixture_root}/current" \
+        "${fixture_root}/bin/current-consumer" \
+        >"${temporary}/mismatch.stdout" 2>"${temporary}/mismatch.stderr"
+    status=$?
+    set -e
+    validate_mismatch_receipt "${status}" "${temporary}/mismatch.stdout" \
+        "${temporary}/mismatch.stderr" ||
+        fail "incompatible current-consumer/historical-library pair did not fail before main"
+    echo "Ghostty ABI mismatch passed: matching=current, historical-header=current-compatible, current-header=historical-rejected-before-main"
+}
+
+for command in awk grep jq mktemp readelf sed sha256sum sort; do
+    command -v "${command}" >/dev/null || fail "${command} is required"
+done
+
+case "${1:-}" in
+    "") run_real ;;
+    --self-test) self_test ;;
+    *) echo "usage: $0 [--self-test]" >&2; exit 64 ;;
+esac

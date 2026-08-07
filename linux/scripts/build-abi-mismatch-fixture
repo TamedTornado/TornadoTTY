@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+inventory="${repo_root}/linux/ghostty-api-audit.json"
+current_source="${repo_root}/build/linux-deps/ghostty"
+historical_source="${repo_root}/build/linux-deps/ghostty-abi-historical"
+fixture_root="${repo_root}/build/linux-abi-mismatch"
+current_revision="$(sed -n 's/^revision=//p' "${repo_root}/linux/ghostty.lock")"
+historical_revision="$(jq -r '.abi.compatibility_fixture.historical_revision' "${inventory}")"
+zig="${ZIG:-${repo_root}/../.tools/zig-x86_64-linux-0.16.0/zig}"
+blueprint_dir="${BLUEPRINT_COMPILER_DIR:-${repo_root}/../.tools/blueprint-compiler-0.16.0/bin}"
+
+fail() {
+    echo "build-abi-mismatch-fixture: error: $*" >&2
+    exit 1
+}
+
+for command in awk cc cp git jq mkdir readelf rm sha256sum; do
+    command -v "${command}" >/dev/null || fail "${command} is required"
+done
+[[ -x "${zig}" ]] || fail "pinned Zig is missing: ${zig}"
+[[ -d "${current_source}/.git" ]] || fail "managed Ghostty checkout is missing"
+[[ "$(git -C "${current_source}" rev-parse HEAD)" == "${current_revision}" ]] ||
+    fail "managed Ghostty checkout does not match the lock"
+[[ -z "$(git -C "${current_source}" status --porcelain)" ]] ||
+    fail "managed Ghostty checkout is dirty"
+[[ -f "${repo_root}/build/linux-profiles/release-safe/lib/libghostty-gtk-embed.so" ]] ||
+    fail "current ReleaseSafe staged library is missing"
+
+if [[ ! -d "${historical_source}/.git" ]]; then
+    git clone --shared --no-checkout "${current_source}" "${historical_source}"
+fi
+git -C "${historical_source}" checkout --detach "${historical_revision}"
+[[ "$(git -C "${historical_source}" rev-parse HEAD)" == "${historical_revision}" ]] ||
+    fail "historical Ghostty checkout does not match the inventory"
+[[ -z "$(git -C "${historical_source}" status --porcelain)" ]] ||
+    fail "historical Ghostty checkout is dirty"
+
+mkdir -p "${repo_root}/build/linux-deps/zig-global-cache" \
+    "${historical_source}/.zig-cache"
+(
+    cd "${historical_source}"
+    PATH="${blueprint_dir}:$(dirname "${zig}"):${PATH}" \
+        ZIG_GLOBAL_CACHE_DIR="${repo_root}/build/linux-deps/zig-global-cache" \
+        ZIG_LOCAL_CACHE_DIR="${historical_source}/.zig-cache" \
+        "${zig}" build gtk-embed-lib -Doptimize=ReleaseSafe -Dcpu=baseline \
+            -fno-sys=gtk4-layer-shell
+)
+
+rm -rf -- "${fixture_root}"
+mkdir -p "${fixture_root}/bin" "${fixture_root}/current" "${fixture_root}/historical"
+cp "${repo_root}/build/linux-profiles/release-safe/lib/libghostty-gtk-embed.so" \
+    "${fixture_root}/current/"
+cp "${repo_root}/build/linux-profiles/release-safe/lib/libgtk4-layer-shell.so" \
+    "${fixture_root}/current/"
+cp "${historical_source}/zig-out/lib/libghostty-gtk-embed.so" \
+    "${fixture_root}/historical/"
+
+c_flags=(
+    -std=c17 -O2 -g -DNDEBUG -D_FORTIFY_SOURCE=3
+    -Wall -Wextra -Werror -Wconversion -Wshadow -Wformat=2
+    -Wstrict-prototypes -Wmissing-prototypes -fanalyzer
+    -fstack-protector-strong -fPIE
+)
+# The loader token must remain literal in the generated executable.
+# shellcheck disable=SC2016
+link_flags=(
+    -pie
+    "-Wl,-z,relro"
+    "-Wl,-z,now"
+    "-Wl,-z,noexecstack"
+    '-Wl,-rpath,$ORIGIN/../current'
+    "-Wl,-rpath-link,${fixture_root}/current"
+)
+
+cc "${c_flags[@]}" \
+    -I"${current_source}/zig-out/include" \
+    "${repo_root}/linux/tests/abi-mismatch-current-consumer.c" \
+    -L"${fixture_root}/current" -lghostty-gtk-embed "${link_flags[@]}" \
+    -o "${fixture_root}/bin/current-consumer"
+cc "${c_flags[@]}" \
+    -I"${historical_source}/zig-out/include" \
+    "${repo_root}/linux/tests/abi-mismatch-historical-consumer.c" \
+    -L"${fixture_root}/current" -lghostty-gtk-embed "${link_flags[@]}" \
+    -o "${fixture_root}/bin/historical-consumer"
+
+jq -n \
+    --arg current_revision "${current_revision}" \
+    --arg historical_revision "${historical_revision}" \
+    --arg current_library_sha256 "$(sha256sum "${fixture_root}/current/libghostty-gtk-embed.so" | awk '{print $1}')" \
+    --arg historical_library_sha256 "$(sha256sum "${fixture_root}/historical/libghostty-gtk-embed.so" | awk '{print $1}')" \
+    '{schema_version:1,current_revision:$current_revision,
+      historical_revision:$historical_revision,
+      current_library_sha256:$current_library_sha256,
+      historical_library_sha256:$historical_library_sha256}' \
+    >"${fixture_root}/metadata.json"
+
+echo "Built real Ghostty ABI mismatch fixture: ${historical_revision} -> ${current_revision}"

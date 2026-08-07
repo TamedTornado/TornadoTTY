@@ -110,6 +110,25 @@
   "abi": {
     "exported_function_count": 12,
     "symbol_version_node": "GHOSTTY_GTK_EMBED_1.0",
+    "compatibility_fixture": {
+      "historical_revision": "5c261e53539d61822754ea45de32aa798ff4bde9",
+      "historical_exported_function_count": 10,
+      "historical_exports": [
+        "ghostty_gtk_embed_runtime_free",
+        "ghostty_gtk_embed_runtime_new",
+        "ghostty_gtk_embed_runtime_new_with_async_backend",
+        "ghostty_gtk_embed_runtime_tick",
+        "ghostty_gtk_embed_surface_binding_action",
+        "ghostty_gtk_embed_surface_close",
+        "ghostty_gtk_embed_surface_grab_focus",
+        "ghostty_gtk_embed_surface_new",
+        "ghostty_gtk_embed_surface_request_paste",
+        "ghostty_gtk_embed_surface_send_text"
+      ],
+      "current_only_probe_symbol": "ghostty_gtk_embed_surface_new_with_options",
+      "expected_version_node": "GHOSTTY_GTK_EMBED_1.0",
+      "expected_loader_exit": 127
+    },
     "ghostty_owned_public_type_count": 5,
     "ghostty_owned_public_types": [
       {"name":"ghostty_gtk_embed_runtime_t","kind":"opaque struct handle"},
@@ -438,6 +457,6 @@
     {"id":"rust-ghostty-api-product-usage","requirement_id":"ZL-13-RUST-GHOSTTY-ADAPTER","test_id":"TEST-RUST-GHOSTTY-PRODUCT-USAGE","integration_owner":"#13 adapter owner with #11/#5 review owners and #12 traceability owner.","purpose":"Trace every retained operation to a real zentty-ghostty safe-wrapper and zentty-linux caller.","status_proposal":"PASS"},
     {"id":"rust-ghostty-callback-drop-order","requirement_id":"ZL-13-RUST-GHOSTTY-ADAPTER","test_id":"TEST-RUST-GHOSTTY-CALLBACK-DROP","integration_owner":"#13 adapter owner registers the product-boundary cell through #12.","purpose":"Fault callback during teardown/child exit and prove no callback runs after Rust owner drop.","status_proposal":"PASS"},
     {"id":"rust-ghostty-config-construction","requirement_id":"ZL-13-RUST-GHOSTTY-ADAPTER","test_id":"TEST-RUST-GHOSTTY-CONFIG","integration_owner":"#13 adapter owner registers the product-boundary cell through #12.","purpose":"Prove source-compatible native command, CWD, environment, and approved config encoding without host shell interpolation.","status_proposal":"PASS"},
-    {"id":"ghostty-abi-old-new-mismatch","requirement_id":"ZL-11-GHOSTTY-ABI-COMPAT","test_id":"TEST-GHOSTTY-ABI-MISMATCH","integration_owner":"#11 ABI/package owner with #12 traceability owner.","purpose":"Stage deliberate incompatible header/library pairs and require pre-use diagnostic failure.","status_proposal":"NOT_IMPLEMENTED"}
+    {"id":"ghostty-abi-old-new-mismatch","requirement_id":"ZL-11-GHOSTTY-ABI-COMPAT","test_id":"TEST-GHOSTTY-ABI-MISMATCH","integration_owner":"#11 ABI/package owner with #12 traceability owner.","purpose":"Stage deliberate incompatible header/library pairs and require pre-use diagnostic failure.","status_proposal":"PASS"}
   ]
 }

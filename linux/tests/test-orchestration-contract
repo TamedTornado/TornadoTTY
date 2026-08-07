@@ -189,6 +189,16 @@ require "Ghostty runtime-order and version-node cells are not executable real-ar
             (.command | contains("linux/tests/abi-version-node")))
     ' "${matrix}"
 
+# shellcheck disable=SC2016
+require "Ghostty old/new ABI mismatch remains prose-only or bypasses the real fixture" \
+    jq -e '
+        (.cells[] | select(.id == "ghostty-abi-old-new-mismatch") |
+            .status == "PASS" and .display == "none" and
+            .environment_profile == "isolated-none-v1" and
+            (.command | contains("linux/tests/ghostty-abi-mismatch")) and
+            (.command | contains("--self-test")))
+    ' "${matrix}"
+
 ((failures == 0)) || {
     echo "test-orchestration-contract: FAIL failures=${failures}" >&2
     exit 1
