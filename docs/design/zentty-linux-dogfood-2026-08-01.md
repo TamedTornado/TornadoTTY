@@ -8529,6 +8529,89 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   SHA-256 is
   `ba448bea76858007b09865dc9fcb7f283f781ffb9974ed444092f0aea46341e4`.
   ReleaseSafe Valgrind remains XFAIL and no suppression was broadened.
+- **DOGFOOD-2026-08-07-CODEX-TITLE-TRANSCRIPT-ENRICHMENT:** The source audit
+  confirmed that a generic needs-input terminal title is not the final Codex
+  presentation. Zentty asynchronously finds the pane/session transcript,
+  retries at 0/100/200/400/600 ms while Codex flushes it, keys cached results
+  by path/size/modification time, and validates the still-current pane,
+  session, agent, and needs-input state before replacing the generic title
+  with the real question. The Linux port now follows that boundary without
+  reading transcript files on GTK's thread and without creating a second
+  agent-status store.
+- **The implementation reused the existing agent path:** A focused
+  `CodexTranscriptEnricher` is owned by the existing `AgentRuntime`; it does
+  only cancellable background file discovery, bounded reads, retries, and
+  caching. Results return to the existing GTK drain, and only
+  `WorkspaceState`/`AgentStatusStore` can accept them. Replaced pane requests
+  cancel their old worker, duplicate requests deduplicate, cached questions
+  remain readable when the unchanged source file cannot be reopened, and
+  late results are rejected after session replacement or input resolution.
+  This added no product integration runner, alternate session harness, or
+  duplicate reducer.
+- **Diff review caught an incomplete CWD-only design before qualification:**
+  The first product wiring could locate by a restored or inherited working
+  directory, but the current Linux pane model does not yet receive every
+  dynamic shell CWD change. Real Codex hooks already carry the authoritative
+  transcript path; discarding it in the canonical adapter would have made
+  enrichment fail after some `cd` workflows. The versioned agent event and
+  canonical pane status now preserve that authenticated optional path. The
+  worker prefers it and retains bounded CWD discovery only as the source
+  fallback. Focused adapter/state tests and the real actor journey pin this
+  route; user configuration is still not rewritten.
+- **Real delayed-flush product evidence:** The existing controlled agent actor
+  gained one source-specific profile. It starts a real Codex session through
+  the staged wrapper/helper/private socket, emits the real Action Required OSC
+  title through Ghostty and the PTY, delays, then flushes a real JSONL decision
+  into a private Codex home. The existing `rust-agent-ipc` journey observes the
+  generic title first and then the enriched decision in the real sidebar. It
+  passed under controlled X11 session
+  `17d5b7a8679dc382f65f8618e207335a4d85d936cd3ae5d8afd846912848e2f8`
+  and input-capable Wayland session
+  `1aa731b46ef77812b3378ffc598897fd3975d0bc1ac9bfaf0fe2cb5ebfec8852`
+  (outer X11 transport
+  `e497674bca9b2f88bf391a80a2b799cfdeb2e62aade29480bf0860e380a1ad32`).
+- **Sandbox failure was environmental rather than normalized into a pass:** An
+  unelevated workspace-wide Cargo run could not bind the real Unix sockets
+  used by eight `zentty-agent-ipc` tests and the unelevated compositor launches
+  could not bind their display sockets. The controlled X11 and Wayland runs
+  passed when executed with the required GUI/socket permissions. The failed
+  receipts remain discoveries; no assertion, socket boundary, or compositor
+  prerequisite was weakened. Complete elevated workspace and qualification
+  reruns remain required before commit.
+- **Mutation preflight exposed a stale eligibility marker:** Simplifying
+  defensive duplicate predicates revealed that physical Return promoted a
+  title-inferred question to running but did not clear the title-enrichment
+  eligibility marker. The old phase predicate happened to mask it. The
+  canonical submit transition now clears the marker itself, and the stale
+  asynchronous-result test proves that a transcript result arriving after
+  input resolution is rejected. Redundant predicates were removed rather than
+  preserved merely to satisfy mutation testing.
+- **Focused mutation result:** The final diff-scoped campaign used the
+  repository-enforced `gitignore=true` and `copy_target=false` settings and two
+  workers. It tested 40 mutants in two minutes: 33 caught, seven unviable, zero
+  missed, and zero timed out. The scratch source/build tree was 158 MiB rather
+  than copying the ignored 14-GiB Ghostty dependency tree. `outcomes.json`
+  SHA-256 is
+  `21846e70d3ce461d857713b98d787563b61f7cfc8314468f8778ff9e75685e02`.
+- **Remaining Codex boundary after transcript enrichment:** OSC progress events
+  beyond terminal-title task counts and stable custom-title write-back remain.
+  `agent.codex` stays `PARTIAL`; this focused compositor evidence is not a
+  release or full-Linux qualification claim.
+- **Complete qualification after asynchronous transcript enrichment:** Every
+  presently executable cell produced its expected outcome after the final
+  explicit-path/no-guessed-CWD correction. The authoritative summary SHA-256
+  is
+  `c895c49e7f42e17d1644453c9393c9e096765fc70229db11db0f42eb90d31d88`.
+  Declared totals remain `PASS=52`, `FAIL=0`, `BLOCKED=5`, `XFAIL=1`, and
+  `NOT_IMPLEMENTED=51`; implemented-local and product-boundary qualification
+  passed, while release and full Linux qualification did not. Debug Valgrind
+  is **PASS with reviewed suppressions**, not unsuppressed clean: the preserved
+  raw receipt reports 427 errors/contexts, 6,160 definite bytes, and 41,396
+  indirect bytes; reviewed post-suppression evidence reports zero for all four
+  values and counts all 427 errors/contexts as suppressed. The Valgrind report
+  SHA-256 is
+  `8fe4c9a6f4c1418b05e06aac49ae2318728776751cb105da20bc51e0ce00d4d6`.
+  ReleaseSafe Valgrind remains XFAIL and no suppression was broadened.
 
 ## AI disclosure
 

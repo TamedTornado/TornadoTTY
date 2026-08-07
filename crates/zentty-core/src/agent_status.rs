@@ -39,6 +39,7 @@ pub struct PaneAgentStatus {
     pub interaction: AgentInteractionKind,
     pub progress: Option<AgentProgress>,
     pub tracked_pid: Option<i32>,
+    pub transcript_path: Option<String>,
     pub updated_at: u64,
 }
 
@@ -59,6 +60,55 @@ pub struct AgentStatusStore {
 }
 
 impl AgentStatusStore {
+    pub(crate) fn codex_transcript_enrichment_context(
+        &self,
+        pane_id: &str,
+    ) -> Option<(&str, Option<&str>)> {
+        self.panes
+            .get(pane_id)?
+            .values()
+            // This marker is created only by a Codex needs-input title and is
+            // cleared by every phase/ownership transition. It is therefore
+            // the canonical eligibility invariant rather than a second set
+            // of status predicates that can drift from marker lifecycle.
+            .filter(|status| {
+                self.codex_title_inferred
+                    .contains(&(pane_id.to_owned(), status.session_id.clone()))
+            })
+            .max_by_key(|status| (status_priority(status), status.updated_at))
+            .map(|status| {
+                (
+                    status.session_id.as_str(),
+                    status.transcript_path.as_deref(),
+                )
+            })
+    }
+
+    pub(crate) fn apply_codex_transcript_enrichment(
+        &mut self,
+        pane_id: &str,
+        session_id: &str,
+        question: &crate::CodexTranscriptQuestion,
+        now: u64,
+    ) -> bool {
+        let key = (pane_id.to_owned(), session_id.to_owned());
+        if !self.codex_title_inferred.contains(&key) {
+            return false;
+        }
+        let Some(status) = self
+            .panes
+            .get_mut(pane_id)
+            .and_then(|sessions| sessions.get_mut(session_id))
+        else {
+            return false;
+        };
+        status.text = Some(question.text.clone());
+        status.interaction = question.interaction;
+        status.updated_at = now;
+        self.codex_title_inferred.remove(&key);
+        true
+    }
+
     fn suppress_interrupted_codex_event(
         &mut self,
         pane_id: &str,
@@ -132,14 +182,10 @@ impl AgentStatusStore {
                 interaction: AgentInteractionKind::None,
                 progress: None,
                 tracked_pid: None,
+                transcript_path: None,
                 updated_at: now,
             });
-        if let Some(name) = event.agent_name() {
-            name.clone_into(&mut status.agent_name);
-        }
-        if let Some(pid) = event.agent_pid() {
-            status.tracked_pid = Some(pid);
-        }
+        update_status_identity(status, &event);
         match event.kind() {
             "session.start" => {
                 status.phase = AgentPhase::Starting;
@@ -315,6 +361,8 @@ impl AgentStatusStore {
         status.interaction = AgentInteractionKind::None;
         status.text = None;
         status.updated_at = now;
+        self.codex_title_inferred
+            .remove(&(pane_id.to_owned(), status.session_id.clone()));
         true
     }
 
@@ -422,6 +470,18 @@ fn is_known_shell_name(value: &str) -> bool {
         basename.as_str(),
         "zsh" | "bash" | "fish" | "sh" | "pwsh" | "nu"
     )
+}
+
+fn update_status_identity(status: &mut PaneAgentStatus, event: &crate::AgentEvent) {
+    if let Some(name) = event.agent_name() {
+        name.clone_into(&mut status.agent_name);
+    }
+    if let Some(pid) = event.agent_pid() {
+        status.tracked_pid = Some(pid);
+    }
+    if let Some(path) = event.transcript_path() {
+        status.transcript_path = Some(path.to_owned());
+    }
 }
 
 fn status_priority(status: &PaneAgentStatus) -> u8 {

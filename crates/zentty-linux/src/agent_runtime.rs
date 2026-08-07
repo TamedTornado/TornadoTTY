@@ -1,3 +1,4 @@
+use crate::codex_enrichment::{CodexTranscriptEnricher, CodexTranscriptEnrichment};
 use std::collections::BTreeMap;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::PermissionsExt;
@@ -5,6 +6,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, mpsc};
 use zentty_agent_ipc::{AgentIpcServer, AuthenticatedTmuxRequest, generate_pane_token};
+use zentty_core::CodexTranscriptEnrichmentCandidate;
 use zentty_core::{AgentTarget, AuthenticatedAgentEvent, PaneTokenRegistry};
 
 pub(crate) struct AgentRuntime {
@@ -22,6 +24,7 @@ pub(crate) struct AgentRuntime {
     shell_integration_directory: PathBuf,
     instance_id: String,
     window_id: String,
+    codex_transcript_enricher: CodexTranscriptEnricher,
 }
 
 impl AgentRuntime {
@@ -69,6 +72,10 @@ impl AgentRuntime {
             .map_or_else(PathBuf::new, |root| {
                 root.join("share/zentty/shell-integration")
             });
+        let codex_home = std::env::var_os("CODEX_HOME")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".codex")))
+            .unwrap_or_else(|| runtime_directory.join("missing-codex-home"));
         Ok(Self {
             server: Some(server),
             registry,
@@ -84,6 +91,7 @@ impl AgentRuntime {
             shell_integration_directory,
             instance_id: instance,
             window_id,
+            codex_transcript_enricher: CodexTranscriptEnricher::new(codex_home),
         })
     }
 
@@ -203,6 +211,17 @@ impl AgentRuntime {
 
     pub(crate) fn drain(&self) -> Vec<AuthenticatedAgentEvent> {
         self.receiver.try_iter().collect()
+    }
+
+    pub(crate) fn schedule_codex_transcript_enrichment(
+        &mut self,
+        candidate: CodexTranscriptEnrichmentCandidate,
+    ) -> bool {
+        self.codex_transcript_enricher.schedule(candidate)
+    }
+
+    pub(crate) fn drain_codex_transcript_enrichments(&mut self) -> Vec<CodexTranscriptEnrichment> {
+        self.codex_transcript_enricher.drain()
     }
 
     pub(crate) fn drain_tmux(&self) -> Vec<AuthenticatedTmuxRequest> {

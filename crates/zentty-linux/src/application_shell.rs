@@ -2324,6 +2324,7 @@ impl ApplicationShell {
                     let now = unix_time_ms();
                     let agent_changed =
                         shell.state.reconcile_terminal_title(&title_id, &title, now);
+                    shell.schedule_codex_transcript_enrichment(&title_id);
                     if shell.state.set_pane_title(&title_id, &title) || agent_changed {
                         shell.refresh_sidebar_metadata();
                     }
@@ -2502,11 +2503,10 @@ impl ApplicationShell {
             shell.borrow().render();
         }
         let events = shell.borrow().agent_runtime.drain();
-        if events.is_empty() {
-            return;
-        }
         let now = unix_time_ms();
+        let mut sidebar_changed = false;
         for event in events {
+            let pane_id = event.target.pane_id.clone();
             eprintln!(
                 "zentty-linux: agent-event pane={} worklane={} kind={} session={}",
                 event.target.pane_id,
@@ -2514,9 +2514,53 @@ impl ApplicationShell {
                 event.event_kind(),
                 event.session_id().unwrap_or("pane-default")
             );
-            shell.borrow_mut().state.apply_agent_event(event, now);
+            let mut shell = shell.borrow_mut();
+            shell.state.apply_agent_event(event, now);
+            shell.schedule_codex_transcript_enrichment(&pane_id);
+            sidebar_changed = true;
         }
-        shell.borrow().render_sidebar();
+        let enrichments = shell
+            .borrow_mut()
+            .agent_runtime
+            .drain_codex_transcript_enrichments();
+        for enrichment in enrichments {
+            let mut shell = shell.borrow_mut();
+            if shell.state.apply_codex_transcript_enrichment(
+                &enrichment.candidate,
+                &enrichment.question,
+                now,
+            ) {
+                eprintln!(
+                    "zentty-linux: codex-transcript-enriched pane={} session={}",
+                    enrichment.candidate.pane_id, enrichment.candidate.session_id
+                );
+                sidebar_changed = true;
+            }
+        }
+        if sidebar_changed {
+            shell.borrow().render_sidebar();
+        }
+    }
+
+    fn schedule_codex_transcript_enrichment(&mut self, pane_id: &str) {
+        let fallback_working_directory = std::env::current_dir()
+            .ok()
+            .map(|path| path.to_string_lossy().into_owned());
+        let Some(candidate) = self
+            .state
+            .codex_transcript_enrichment_candidate(pane_id, fallback_working_directory.as_deref())
+        else {
+            return;
+        };
+        if self
+            .agent_runtime
+            .schedule_codex_transcript_enrichment(candidate.clone())
+        {
+            eprintln!(
+                "zentty-linux: codex-transcript-enrichment-scheduled pane={} session={}",
+                candidate.pane_id, candidate.session_id
+            );
+        }
     }
 
     pub(crate) fn sync_agent_targets(&mut self) {

@@ -41,6 +41,7 @@ mod tests {
             interaction: AgentInteractionKind::None,
             progress: None,
             tracked_pid: None,
+            transcript_path: None,
             updated_at: 1,
         }
     }

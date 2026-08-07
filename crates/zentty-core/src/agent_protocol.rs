@@ -76,6 +76,8 @@ pub struct AgentEvent {
     session: Option<SessionDescriptor>,
     state: Option<StateDescriptor>,
     progress: Option<ProgressDescriptor>,
+    #[serde(rename = "transcriptPath")]
+    transcript_path: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -141,6 +143,7 @@ impl AgentEvent {
             }),
             state: None,
             progress: None,
+            transcript_path: None,
         }
     }
 
@@ -191,5 +194,14 @@ impl AgentEvent {
     pub(crate) fn progress(&self) -> Option<(u64, u64)> {
         self.progress
             .map(|progress| (progress.done.min(progress.total), progress.total))
+    }
+
+    pub(crate) fn transcript_path(&self) -> Option<&str> {
+        self.transcript_path.as_deref()
+    }
+
+    pub(crate) fn with_transcript_path(mut self, path: Option<String>) -> Self {
+        self.transcript_path = path;
+        self
     }
 }

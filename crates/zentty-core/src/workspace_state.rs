@@ -174,6 +174,14 @@ pub struct RestoredPane {
     pub prefill_text: Option<String>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CodexTranscriptEnrichmentCandidate {
+    pub pane_id: String,
+    pub session_id: String,
+    pub working_directory: Option<String>,
+    pub transcript_path: Option<String>,
+}
+
 const CLOSED_PANE_CAPACITY: usize = 10;
 const CLOSED_PANE_EXPIRY_SECONDS: u64 = 60 * 60;
 
@@ -1491,6 +1499,51 @@ impl WorkspaceState {
         self.agent_statuses
             .clear_codex_after_shell_return(pane_id, title)
             || self.agent_statuses.apply_codex_title(pane_id, title, now)
+    }
+
+    /// Returns a source-eligible title-inferred Codex question request. File
+    /// discovery and parsing deliberately remain outside the workspace store
+    /// so product callers can perform them away from the GTK thread.
+    #[must_use]
+    pub fn codex_transcript_enrichment_candidate(
+        &self,
+        pane_id: &str,
+        fallback_working_directory: Option<&str>,
+    ) -> Option<CodexTranscriptEnrichmentCandidate> {
+        let (session_id, transcript_path) = self
+            .agent_statuses
+            .codex_transcript_enrichment_context(pane_id)?;
+        let pane = self.pane(pane_id)?;
+        let working_directory = pane
+            .working_directory
+            .as_deref()
+            .or(fallback_working_directory)
+            .map(str::to_owned);
+        if transcript_path.is_none() && working_directory.is_none() {
+            return None;
+        }
+        Some(CodexTranscriptEnrichmentCandidate {
+            pane_id: pane_id.to_owned(),
+            session_id: session_id.to_owned(),
+            working_directory,
+            transcript_path: transcript_path.map(str::to_owned),
+        })
+    }
+
+    /// Applies an asynchronous transcript result only while its exact
+    /// title-inferred Codex session still owns the needs-input state.
+    pub fn apply_codex_transcript_enrichment(
+        &mut self,
+        candidate: &CodexTranscriptEnrichmentCandidate,
+        question: &crate::CodexTranscriptQuestion,
+        now: u64,
+    ) -> bool {
+        self.agent_statuses.apply_codex_transcript_enrichment(
+            &candidate.pane_id,
+            &candidate.session_id,
+            question,
+            now,
+        )
     }
 
     /// Records a physical terminal input submission after the product has

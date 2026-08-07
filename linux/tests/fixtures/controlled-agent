@@ -60,6 +60,22 @@ case "${profile}" in
         sleep 0.2
         printf '\033]0;[ ! ] Action Required | codex-title | Tasks 1/3\007'
         ;;
+    codex-title-transcript)
+        require_helper
+        [[ -n "${ZENTTY_CONTROLLED_CODEX_TRANSCRIPT:-}" ]] ||
+            fail "ZENTTY_CONTROLLED_CODEX_TRANSCRIPT is required"
+        codex_has_hook PreToolUse "$@" || fail "Codex PreToolUse hook is missing"
+        printf '{"hook_event_name":"PreToolUse","session_id":"codex-title-transcript-e2e","tool_name":"shell","transcript_path":"%s"}' \
+            "${ZENTTY_CONTROLLED_CODEX_TRANSCRIPT}" |
+            "${helper}" ipc agent-event --adapter=codex
+        sleep 0.2
+        printf '\033]0;[ ! ] Action Required | plan-mode-prompt\007'
+        sleep 0.15
+        printf '{"cwd":"%s"}\n' "${PWD}" >"${ZENTTY_CONTROLLED_CODEX_TRANSCRIPT}"
+        printf '%s\n' \
+            '{"type":"function_call","name":"request_user_input","arguments":{"questions":[{"question":"Choose the integration scope","options":[{"label":"Minimal"},{"label":"Complete"}]}]}}' \
+            >>"${ZENTTY_CONTROLLED_CODEX_TRANSCRIPT}"
+        ;;
     codex-lifecycle)
         require_helper
         printf '%s\n' "$@" | grep -Fq 'notify=[' || fail "Codex notify callback is missing"

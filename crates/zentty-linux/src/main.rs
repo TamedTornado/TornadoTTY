@@ -3,6 +3,7 @@
 mod agent_runtime;
 mod agent_status_view;
 mod application_shell;
+mod codex_enrichment;
 mod command_palette;
 mod pane_controls;
 mod pane_scroll_switch;

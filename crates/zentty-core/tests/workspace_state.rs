@@ -1,6 +1,7 @@
 use zentty_core::{
-    AgentEvent, AgentTarget, AuthenticatedAgentEvent, ClosePaneOutcome, PaneRecipe,
-    SessionRestoreEnvelope, WorklaneColor, WorkspaceState, WorkspaceStateImportError,
+    AgentEvent, AgentInteractionKind, AgentTarget, AuthenticatedAgentEvent, ClosePaneOutcome,
+    CodexTranscriptQuestion, PaneRecipe, SessionRestoreEnvelope, WorklaneColor, WorkspaceState,
+    WorkspaceStateImportError,
 };
 
 const V3_ENVELOPE: &[u8] = include_bytes!("fixtures/session-restore-v3.json");
@@ -24,13 +25,132 @@ fn real_terminal_titles_reconcile_agent_state_used_by_sidebar_summaries() {
         "[ ! ] Action Required | zentty | Tasks 1/3",
         2
     ));
-    let status = state.sidebar_summaries()[0].pane_rows[0]
-        .agent_status
-        .clone()
-        .unwrap();
+    let summaries = state.sidebar_summaries();
+    let status = summaries[0].pane_rows[0].agent_status.clone().unwrap();
     assert_eq!(status.phase, zentty_core::AgentPhase::NeedsInput);
     assert_eq!(status.progress.unwrap().done, 1);
     assert!(status.requires_attention());
+}
+
+#[test]
+fn title_inferred_codex_questions_offer_and_validate_transcript_enrichment() {
+    let envelope = SessionRestoreEnvelope::from_json(V3_ENVELOPE).unwrap();
+    let mut state = WorkspaceState::from_window_recipe(&envelope.workspace.windows[0]).unwrap();
+    state.apply_agent_event(
+        AuthenticatedAgentEvent {
+            target: AgentTarget::new("window-main", "worklane-main", "pane-agent"),
+            pane_token: "token-pane-agent".to_owned(),
+            event: AgentEvent::parse(
+                br#"{"version":1,"event":"agent.running","agent":{"name":"Codex"},"session":{"id":"codex-enrichment"},"transcriptPath":"/tmp/explicit.jsonl"}"#,
+            )
+            .unwrap(),
+        },
+        1,
+    );
+    assert!(state.reconcile_terminal_title(
+        "pane-agent",
+        "[ ! ] Action Required | plan-mode-prompt",
+        2,
+    ));
+
+    let candidate = state
+        .codex_transcript_enrichment_candidate("pane-agent", None)
+        .expect("title-inferred attention should request transcript enrichment");
+    assert_eq!(candidate.pane_id, "pane-agent");
+    assert_eq!(candidate.session_id, "codex-enrichment");
+    assert_eq!(candidate.working_directory.as_deref(), Some("/tmp/project"));
+    assert_eq!(
+        candidate.transcript_path.as_deref(),
+        Some("/tmp/explicit.jsonl")
+    );
+
+    assert!(state.apply_codex_transcript_enrichment(
+        &candidate,
+        &CodexTranscriptQuestion {
+            text: "Which implementation?\n[Minimal] [Broad]".to_owned(),
+            interaction: AgentInteractionKind::Decision,
+        },
+        3,
+    ));
+    let summaries = state.sidebar_summaries();
+    let status = summaries[0].pane_rows[0].agent_status.as_ref().unwrap();
+    assert_eq!(
+        status.text.as_deref(),
+        Some("Which implementation?\n[Minimal] [Broad]")
+    );
+    assert_eq!(status.interaction, AgentInteractionKind::Decision);
+}
+
+#[test]
+fn transcript_enrichment_rejects_stale_session_and_resolved_status_results() {
+    let envelope = SessionRestoreEnvelope::from_json(V3_ENVELOPE).unwrap();
+    let seeded_state = || {
+        let mut state = WorkspaceState::from_window_recipe(&envelope.workspace.windows[0]).unwrap();
+        state.apply_agent_event(
+            AuthenticatedAgentEvent {
+                target: AgentTarget::new("window-main", "worklane-main", "pane-agent"),
+                pane_token: "token-pane-agent".to_owned(),
+                event: AgentEvent::parse(
+                    br#"{"version":1,"event":"agent.running","agent":{"name":"Codex"},"session":{"id":"codex-enrichment"}}"#,
+                )
+                .unwrap(),
+            },
+            1,
+        );
+        assert!(state.reconcile_terminal_title(
+            "pane-agent",
+            "[ ! ] Action Required | plan-mode-prompt",
+            2,
+        ));
+        state
+    };
+    let question = CodexTranscriptQuestion {
+        text: "Choose?\n[One] [Two]".to_owned(),
+        interaction: AgentInteractionKind::Decision,
+    };
+
+    let mut wrong_session = seeded_state();
+    let mut candidate = wrong_session
+        .codex_transcript_enrichment_candidate("pane-agent", None)
+        .unwrap();
+    candidate.session_id = "different-session".to_owned();
+    assert!(!wrong_session.apply_codex_transcript_enrichment(&candidate, &question, 3));
+
+    let mut resolved = seeded_state();
+    let candidate = resolved
+        .codex_transcript_enrichment_candidate("pane-agent", None)
+        .unwrap();
+    assert!(resolved.record_terminal_input_submitted("pane-agent", 500));
+    assert!(!resolved.apply_codex_transcript_enrichment(&candidate, &question, 501));
+}
+
+#[test]
+fn explicit_transcript_context_does_not_require_a_guessed_working_directory() {
+    let mut state = WorkspaceState::new("worklane-a", "pane-a");
+    state.apply_agent_event(
+        AuthenticatedAgentEvent {
+            target: AgentTarget::new("window-a", "worklane-a", "pane-a"),
+            pane_token: "token-pane-a".to_owned(),
+            event: AgentEvent::parse(
+                br#"{"version":1,"event":"agent.running","agent":{"name":"Codex"},"session":{"id":"codex-explicit"},"transcriptPath":"/tmp/explicit.jsonl"}"#,
+            )
+            .unwrap(),
+        },
+        1,
+    );
+    assert!(state.reconcile_terminal_title(
+        "pane-a",
+        "[ ! ] Action Required | plan-mode-prompt",
+        2,
+    ));
+    let candidate = state
+        .codex_transcript_enrichment_candidate("pane-a", None)
+        .unwrap();
+    assert_eq!(candidate.working_directory, None);
+    assert_eq!(
+        candidate.transcript_path.as_deref(),
+        Some("/tmp/explicit.jsonl")
+    );
 }
 
 #[test]

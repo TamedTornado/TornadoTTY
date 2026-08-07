@@ -687,7 +687,7 @@
       "implementation_status": "PARTIAL",
       "focused_tests": ["crates/zentty-core/tests/agent_adapters.rs", "crates/zentty-core/tests/agent_launch.rs", "crates/zentty-core/tests/agent_status.rs", "crates/zentty-core/tests/codex_title.rs", "crates/zentty-core/tests/codex_transcript.rs", "crates/zentty-agent-ipc/tests/helper_cli.rs", "crates/zentty-agent-ipc/tests/launch_cli.rs"],
       "product_scenarios": ["linux/tests/rust-agent-ipc", "linux/tests/installed-codex-integration", "linux/tests/rust-session-restore"],
-      "test_plan": "Preserve the delivered real Codex CLI/PTY/hook/IPC/resume journey, complete hook and notify adapter, and bounded real transcript question extraction including 12-candidate/four-day CWD-scoped discovery and cache identity. Add a controlled real model turn that makes installed Codex invoke the notify callback, then port and product-test source title-driven enrichment/retry, terminal-title/progress reconciliation, interrupt suppression, shell-return clearing, title promotion, and write-back before promotion from PARTIAL.",
+      "test_plan": "Preserve the delivered real Codex CLI/PTY/hook/IPC/resume journey, complete hook and notify adapter, bounded real transcript question extraction including 12-candidate/four-day CWD-scoped discovery and cache identity, and title-driven asynchronous retry/cache enrichment through the canonical reducer. Add a controlled real model turn that makes installed Codex invoke the notify callback, then port and product-test OSC progress beyond title task counts and stable custom-title write-back before promotion from PARTIAL.",
       "alternative_or_blocker": null
     },
     {

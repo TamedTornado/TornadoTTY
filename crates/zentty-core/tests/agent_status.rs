@@ -128,6 +128,7 @@ fn attention_requires_both_the_needs_input_phase_and_a_real_interaction() {
         interaction,
         progress: None,
         tracked_pid: None,
+        transcript_path: None,
         updated_at: 1,
     };
     assert!(!status(AgentPhase::Running, AgentInteractionKind::Approval).requires_attention());

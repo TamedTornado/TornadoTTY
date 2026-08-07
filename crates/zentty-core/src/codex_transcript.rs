@@ -1,3 +1,4 @@
+use crate::AgentInteractionKind;
 use serde_json::Value;
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom};
@@ -11,6 +12,7 @@ const MAX_SESSION_DAY_DIRECTORIES: usize = 4;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CodexTranscriptQuestion {
     pub text: String,
+    pub interaction: AgentInteractionKind,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -44,7 +46,14 @@ pub fn codex_question_from_transcript_text(text: &str) -> Option<CodexTranscript
         } else {
             arguments
         };
-        question_from_tool_input(input).map(|text| CodexTranscriptQuestion { text })
+        question_from_tool_input(input).map(|text| CodexTranscriptQuestion {
+            text,
+            interaction: if has_question_options(input) {
+                AgentInteractionKind::Decision
+            } else {
+                AgentInteractionKind::Question
+            },
+        })
     })
 }
 
@@ -148,6 +157,18 @@ pub(crate) fn question_from_tool_input(input: &Value) -> Option<String> {
         lines.push(labels.join(" "));
     }
     (!lines.is_empty()).then(|| lines.join("\n"))
+}
+
+fn has_question_options(input: &Value) -> bool {
+    let first = input
+        .get("questions")
+        .and_then(Value::as_array)
+        .and_then(|questions| questions.first())
+        .unwrap_or(input);
+    first
+        .get("options")
+        .and_then(Value::as_array)
+        .is_some_and(|options| !options.is_empty())
 }
 
 fn is_question_tool_name(value: Option<&str>) -> bool {

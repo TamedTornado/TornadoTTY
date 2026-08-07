@@ -1,11 +1,11 @@
 # Linux Codex workflow parity plan
 
 - **Status:** active; explicit hook/notify parity, bounded transcript recovery,
-  source terminal-title classification, task progress, and canonical
+  source terminal-title classification, task progress, canonical
   title-to-sidebar reconciliation, physical user-submit stabilization, Ctrl-C
-  interrupt suppression, and shell-return cleanup implemented; title-driven
-  enrichment/retry, OSC progress beyond title task counts, and title
-  write-back remain
+  interrupt suppression, shell-return cleanup, and title-driven asynchronous
+  transcript enrichment/retry/cache application implemented; OSC progress
+  beyond title task counts and stable title write-back remain
 - **Date:** 2026-08-06
 - **Owner:** [#7 — essential Zentty workflow parity](https://github.com/TamedTornado/zentty/issues/7)
 - **Inventory ID:** `agent.codex`
@@ -41,11 +41,11 @@ The authoritative implementation is principally:
 The Linux implementation now proves real wrapped launch, all configured hooks,
 notify adaptation, bounded transcript discovery, exact session persistence,
 real `codex resume` relaunch, terminal-title status/task reconciliation,
-physical Return promotion, physical Ctrl-C suppression, and shell-return
-cleanup through the canonical reducer. It remains `PARTIAL` only because the
-title-driven asynchronous transcript enrichment/retry/cache application path,
-OSC progress events beyond title task counts, and stable custom-title
-write-back are not yet ported and product-tested.
+physical Return promotion, physical Ctrl-C suppression, shell-return cleanup,
+and delayed title-driven transcript question enrichment through the canonical
+reducer. It remains `PARTIAL` only because OSC progress events beyond title
+task counts and stable custom-title write-back are not yet ported and
+product-tested.
 
 ## Ordered delivery slices
 

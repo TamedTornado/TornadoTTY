@@ -40,6 +40,7 @@ pub fn adapt_codex_hook(
     let payload = parse_payload(bytes)?;
     let hook = event_name(&payload)?;
     let session = string_at(&payload, &["session_id", "sessionId"]);
+    let transcript_path = string_at(&payload, &["transcript_path", "transcriptPath"]);
     let event = match hook {
         "SessionStart" => canonical(
             "session.start",
@@ -92,7 +93,7 @@ pub fn adapt_codex_hook(
         "Stop" => canonical("agent.idle", "Codex", pid, session.as_deref(), None, None)?,
         _ => return Ok(Vec::new()),
     };
-    Ok(vec![event])
+    Ok(vec![event.with_transcript_path(transcript_path)])
 }
 
 /// Converts a Codex `notify` callback payload into canonical version-1 events.
@@ -109,15 +110,12 @@ pub fn adapt_codex_notify(bytes: &[u8]) -> Result<Vec<AgentEvent>, AgentAdapterE
     let payload_type =
         string_at(&payload, &["type", "event_type", "eventType"]).unwrap_or_default();
     let session = string_at(&payload, &["session_id", "sessionId"]);
+    let transcript_path = string_at(&payload, &["transcript_path", "transcriptPath"]);
     if payload_type == "agent-turn-complete" {
-        return Ok(vec![canonical(
-            "agent.idle",
-            "Codex",
-            None,
-            session.as_deref(),
-            None,
-            None,
-        )?]);
+        return Ok(vec![
+            canonical("agent.idle", "Codex", None, session.as_deref(), None, None)?
+                .with_transcript_path(transcript_path),
+        ]);
     }
 
     let message = string_at(
@@ -151,14 +149,17 @@ pub fn adapt_codex_notify(bytes: &[u8]) -> Result<Vec<AgentEvent>, AgentAdapterE
     let Some(kind) = codex_notify_interaction_kind(&payload_type, &message) else {
         return Ok(Vec::new());
     };
-    Ok(vec![canonical(
-        "agent.needs-input",
-        "Codex",
-        None,
-        session.as_deref(),
-        Some(&message),
-        Some(kind),
-    )?])
+    Ok(vec![
+        canonical(
+            "agent.needs-input",
+            "Codex",
+            None,
+            session.as_deref(),
+            Some(&message),
+            Some(kind),
+        )?
+        .with_transcript_path(transcript_path),
+    ])
 }
 
 /// Converts a Claude Code hook payload into canonical version-1 status events.

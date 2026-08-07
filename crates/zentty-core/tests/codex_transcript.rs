@@ -3,7 +3,7 @@ use std::os::unix::fs::symlink;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use zentty_core::{
-    codex_question_from_transcript_path, codex_question_from_transcript_text,
+    AgentInteractionKind, codex_question_from_transcript_path, codex_question_from_transcript_text,
     codex_transcript_cache_key, locate_recent_codex_transcript_path,
 };
 
@@ -33,6 +33,12 @@ not-json
 "#;
     let question = codex_question_from_transcript_text(transcript).unwrap();
     assert_eq!(question.text, "Deployment target\n[Staging] [Production]");
+    assert_eq!(question.interaction, AgentInteractionKind::Decision);
+    let free_form = codex_question_from_transcript_text(
+        r#"{"type":"function_call","name":"request_user_input","arguments":{"question":"What should change?"}}"#,
+    )
+    .unwrap();
+    assert_eq!(free_form.interaction, AgentInteractionKind::Question);
     assert!(SOURCE.contains("maxTailBytes: UInt64 = 256 * 1024"));
     assert!(SOURCE.contains("response_item"));
 }

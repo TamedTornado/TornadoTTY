@@ -61,6 +61,16 @@ run_actor ZENTTY_CONTROLLED_AGENT_PROFILE=codex-title "${actor}" \
 grep -Fxq 'ipc agent-event --adapter=codex' "${calls}" ||
     fail "Codex title profile did not establish a canonical running session"
 
+title_transcript="${temp_dir}/title-transcript.jsonl"
+run_actor \
+    ZENTTY_CONTROLLED_AGENT_PROFILE=codex-title-transcript \
+    ZENTTY_CONTROLLED_CODEX_TRANSCRIPT="${title_transcript}" \
+    "${actor}" -c 'hooks.PreToolUse=["command"]' >/dev/null
+grep -Fq '"session_id":"codex-title-transcript-e2e"' "${payloads}" ||
+    fail "Codex title-transcript profile did not establish its canonical session"
+grep -Fq '"question":"Choose the integration scope"' "${title_transcript}" ||
+    fail "Codex title-transcript profile did not flush the delayed real transcript"
+
 printf '\n' | run_actor \
     ZENTTY_CONTROLLED_AGENT_PROFILE=codex-lifecycle \
     ZENTTY_CONTROLLED_AGENT_LIFECYCLE_ONESHOT=true \
@@ -108,4 +118,4 @@ if run_actor \
     fail "Codex restore profile accepted an undeclared session"
 fi
 
-echo "Controlled agent tests passed: codex-permission, codex-notify, codex-title, codex-lifecycle, claude-question, gemini-permission, codex-restore"
+echo "Controlled agent tests passed: codex-permission, codex-notify, codex-title, codex-title-transcript, codex-lifecycle, claude-question, gemini-permission, codex-restore"

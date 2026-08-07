@@ -277,6 +277,7 @@ fn codex_question_hook_falls_back_to_the_real_bounded_transcript_file() {
     let status = reduce(adapt_codex_hook(payload.to_string().as_bytes(), None).unwrap());
     assert_eq!(status.phase, AgentPhase::NeedsInput);
     assert_eq!(status.text.as_deref(), Some("Which migration strategy?"));
+    assert_eq!(status.transcript_path.as_deref(), path.to_str());
     std::fs::remove_file(path).unwrap();
 }
 

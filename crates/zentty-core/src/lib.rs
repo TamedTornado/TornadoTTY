@@ -41,8 +41,9 @@ pub use workspace_recipe::{
     WorkspaceRecipe,
 };
 pub use workspace_state::{
-    ClosePaneOutcome, PaneColumnState, PaneState, SidebarPaneSummary, SidebarWorklaneSummary,
-    WorklaneColor, WorklaneState, WorkspaceState, WorkspaceStateImportError,
+    ClosePaneOutcome, CodexTranscriptEnrichmentCandidate, PaneColumnState, PaneState,
+    SidebarPaneSummary, SidebarWorklaneSummary, WorklaneColor, WorklaneState, WorkspaceState,
+    WorkspaceStateImportError,
 };
 
 /// Stable product identity shared by platform composition roots.
