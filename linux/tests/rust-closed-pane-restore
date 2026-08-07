@@ -3,9 +3,12 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
-ghostty_root="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
+bundle_root="$(cd "$(dirname "${product}")/.." 2>/dev/null && pwd)" || bundle_root=""
+bundle_lib="${bundle_root}/lib"
+build_metadata="${bundle_root}/build-metadata"
 fixture="${repo_root}/crates/zentty-core/tests/fixtures/session-restore-v3.json"
 backend="${GDK_BACKEND:-}"
+async_backend="${ZENTTY_LINUX_ASYNC_BACKEND:-default}"
 state_dir=""
 working_dir=""
 log=""
@@ -46,14 +49,25 @@ for dependency in jq readelf mktemp grep sed; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
 [[ -x "${product}" ]] || fail "delivered Rust product is not built: ${product}"
+[[ "${async_backend}" == default || "${async_backend}" == epoll ||
+    "${async_backend}" == io_uring ]] || fail "invalid async backend"
+[[ -f "${bundle_lib}/libghostty-gtk-embed.so" ]] ||
+    fail "selected product bundle has no Ghostty library"
+[[ -f "${bundle_lib}/libgtk4-layer-shell.so" ]] ||
+    fail "selected product bundle has no GTK layer-shell library"
+if [[ -n "${ZENTTY_EXPECTED_PRODUCT_PROFILE:-}" ]]; then
+    [[ -f "${build_metadata}" ]] || fail "selected product bundle has no build metadata"
+    actual_profile="$(sed -n 's/^product_profile=//p' "${build_metadata}")"
+    [[ "${actual_profile}" == "${ZENTTY_EXPECTED_PRODUCT_PROFILE}" ]] ||
+        fail "selected product profile is ${actual_profile}; expected ${ZENTTY_EXPECTED_PRODUCT_PROFILE}"
+fi
 
 layer_runpath="$(
-    readelf -d "${ghostty_root}/zig-out/lib/libghostty-gtk-embed.so" |
+    readelf -d "${bundle_lib}/libghostty-gtk-embed.so" |
         sed -n 's/.*Library runpath: \[\([^]]*\)\].*/\1/p' |
         cut -d: -f1
 )"
 [[ "${layer_runpath}" == .zig-cache/* ]] || fail "Ghostty layer-shell runpath is missing"
-layer_directory="${ghostty_root}/${layer_runpath}"
 
 state_dir="$(mktemp -d)"
 working_dir="$(mktemp -d)"
@@ -65,9 +79,10 @@ jq --arg cwd "${working_dir}" '
 
 # The single quotes intentionally defer expansion to each real PTY child.
 # shellcheck disable=SC2016
-env LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+env LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
     "${product}" \
     --state-directory "${state_dir}" \
+    --async-backend "${async_backend}" \
     --command 'printf "\033]0;CWD:%s\007" "$PWD"; sleep 30' >"${log}" 2>&1 &
 product_pid=$!
 

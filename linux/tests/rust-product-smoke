@@ -4,7 +4,9 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
 backend="${GDK_BACKEND:-}"
-ghostty_root="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
+bundle_root="$(cd "$(dirname "${product}")/.." 2>/dev/null && pwd)" || bundle_root=""
+bundle_lib="${bundle_root}/lib"
+build_metadata="${bundle_root}/build-metadata"
 fixture="${repo_root}/crates/zentty-core/tests/fixtures/session-restore-v3.json"
 scenario="${ZENTTY_RUST_SCENARIO:-single}"
 terminal_count="${ZENTTY_RUST_TERMINALS:-1}"
@@ -26,19 +28,24 @@ fail() {
 [[ "${async_backend}" == default || "${async_backend}" == epoll ||
     "${async_backend}" == io_uring ]] || fail "invalid async backend"
 [[ -x "${product}" ]] || fail "delivered Rust product is not built: ${product}"
-[[ -f "${ghostty_root}/zig-out/lib/libghostty-gtk-embed.so" ]] ||
-    fail "pinned Ghostty library is not built"
+[[ -f "${bundle_lib}/libghostty-gtk-embed.so" ]] ||
+    fail "selected product bundle has no Ghostty library"
+[[ -f "${bundle_lib}/libgtk4-layer-shell.so" ]] ||
+    fail "selected product bundle has no GTK layer-shell library"
+if [[ -n "${ZENTTY_EXPECTED_PRODUCT_PROFILE:-}" ]]; then
+    [[ -f "${build_metadata}" ]] || fail "selected product bundle has no build metadata"
+    actual_profile="$(sed -n 's/^product_profile=//p' "${build_metadata}")"
+    [[ "${actual_profile}" == "${ZENTTY_EXPECTED_PRODUCT_PROFILE}" ]] ||
+        fail "selected product profile is ${actual_profile}; expected ${ZENTTY_EXPECTED_PRODUCT_PROFILE}"
+fi
 command -v readelf >/dev/null || fail "readelf is required"
 layer_runpath="$(
-    readelf -d "${ghostty_root}/zig-out/lib/libghostty-gtk-embed.so" |
+    readelf -d "${bundle_lib}/libghostty-gtk-embed.so" |
         sed -n 's/.*Library runpath: \[\([^]]*\)\].*/\1/p' |
         cut -d: -f1
 )"
 [[ "${layer_runpath}" == .zig-cache/* ]] ||
     fail "Ghostty library has no pinned relative layer-shell runpath"
-layer_directory="${ghostty_root}/${layer_runpath}"
-[[ -f "${layer_directory}/libgtk4-layer-shell.so" ]] ||
-    fail "Ghostty layer-shell dependency is missing"
 
 log="$(mktemp)"
 barrier="$(mktemp -d)"
@@ -80,7 +87,7 @@ run_cycle() {
     )
     ((terminal_count > 1)) || product_args+=(--no-session-restore)
     set +e
-    LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+    LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
     "${product}" "${product_args[@]}" >>"${log}" 2>&1 &
     product_pid=$!
     set -e

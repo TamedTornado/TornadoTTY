@@ -458,7 +458,7 @@ axes:
   `TEST-PANE-TERMINAL-LIFECYCLE`: capability
   `product_pane_terminal_lifecycle`, an explicit 24-cell family covering
   Debug/ReleaseSafe, Wayland/X11, default/epoll/io_uring, and single/multi
-  terminal behavior. Every row remains `NOT_IMPLEMENTED` under GH-5;
+  terminal behavior. The authoritative matrix owns each row's live status;
 - `ZL-6-RECOVERY` / `TEST-WORKSPACE-RECOVERY`: capability `recovery`, cells
   `workspace-recovery-interrupted-write` and
   `workspace-recovery-corrupt-state`;
@@ -471,9 +471,9 @@ axes:
   `TEST-RUST-GHOSTTY-CALLBACK-DROP`, and `TEST-RUST-GHOSTTY-CONFIG` is the
   cross-stream prerequisite/test vocabulary for the safe adapter.
 
-Issue #12 has now added and owns these cells. Only the two design-contract
-cells are `PASS` with executable commands; every implementation/product cell
-remains `NOT_IMPLEMENTED` and linked to its owning issue. The
+Issue #12 added and owns these cells. Their current executable status is read
+only from the authoritative matrix; this architecture record deliberately
+does not preserve a second, prose-only status snapshot. The
 `authoritative:false` flags in this architecture artifact mean that this mirror
 cannot override the matrix; they do not make the corresponding matrix rows
 non-authoritative. A cell with `display: both` does not claim that each backend

@@ -8896,14 +8896,82 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   reviewed post-suppression evidence reports zero for each value and 427
   suppressed errors/contexts. The final Valgrind report SHA-256 is
   `686d754bc12197982f7faae62b28896cc47ec05c35f8123c0a5030fa56f538df`.
-- **The 51 NOT_IMPLEMENTED matrix total contains stale duplication as well as
-  real gaps:** Twenty-two rows claim the Rust product pane-lifecycle harness is
+- **The 51-NOT_IMPLEMENTED snapshot contained stale duplication as well as
+  real gaps:** Twenty-two rows claimed the Rust product pane-lifecycle harness was
   absent even though the same compositor/optimization/backend/count axes are
   already PASS under the real `rust-product-smoke` and
   `rust-product-lifecycle` product cells. Those rows must be reconciled after
   the Claude slice without converting duplicate commands into pretend new
   evidence. IME, Wayland external resize, packaging, platform services, and
   recovery remain genuine missing qualification behavior.
+- **DOGFOOD-2026-08-07-PANE-LIFECYCLE-RED:** The first governance assertion
+  rejected the 24-cell pane-lifecycle family because 22 rows were still
+  `NOT_IMPLEMENTED` and no row pinned the binary to a durable Debug or
+  ReleaseSafe bundle. Reusing the mutable `build/linux` output would have let
+  every row silently test whichever profile was built last, so simply copying
+  the two existing PASS commands was not valid convergence.
+- **The apparent duplication concealed a useful lifecycle distinction:** The
+  single-terminal cells now require three fresh real Rust/GTK/Ghostty/PTY
+  process lifecycles. The multi-terminal cells reuse the real physical-input
+  close/restore journey and prove focus fallback, fresh pane identity, CWD,
+  command prefill, PTY ownership, persistence, and teardown. This uses the
+  existing product journeys and controlled compositor owners; no new actor,
+  session store, or test-runner layer was introduced.
+- **Profile evidence is now immutable for the duration of qualification:**
+  `build-local` snapshots complete `debug` and `release-safe` staged bundles,
+  including their matching Ghostty and GTK layer-shell libraries and build
+  metadata. Product journeys derive libraries from the selected binary's
+  bundle and reject a metadata mismatch. A deliberate Debug-binary/
+  ReleaseSafe-expectation run failed with status 1 before product startup.
+  The built binaries and Ghostty libraries also have different hashes across
+  profiles, proving these are not aliases of one mutable output.
+- **The post-reboot X11 failure was environmental, not converted to PASS:** A
+  sandboxed representative run failed before the product because Xvfb could
+  not create its Unix socket. `/tmp` and `/tmp/.X11-unix` had nonstandard
+  ownership after reboot; their standard root ownership and mode 1777 were
+  restored. The controlled compositor still requires an unsandboxed run, as
+  before. No matrix result was manufactured from the failed startup.
+- **Representative real lifecycle evidence passed before the full matrix:**
+  ReleaseSafe/io_uring single-terminal X11 passed in controlled session
+  `9a2dbadb20b910d9c24065033ad2e9894cad9c7796c04fbd134ab965a3392f2a`;
+  Debug/epoll single-terminal Wayland passed in
+  `1b7b8d257d463e79c2f34bf08afae87a4ee85b60931706bc61acba26b8ca9580`;
+  ReleaseSafe/epoll multi-terminal X11 passed in
+  `12be671e6dfcb617936553162a48730679a85a014f3c8ad0d4917659374b758e`;
+  and Debug/io_uring multi-terminal Wayland passed in
+  `14c4c052f9082c8752aa3c62f482654e70e1d809a95e8455e3da2e2908f7691e`.
+  These samples do not qualify the other axes; the full matrix must run before
+  the 24 PASS status changes may be committed.
+- **Full pane-lifecycle qualification passed:** All 24 profile-pinned family
+  cells passed under their controlled compositor owners: Debug and
+  ReleaseSafe, Wayland and X11, default/epoll/io_uring, and single/multi. The
+  complete authoritative runner also reran every other presently executable
+  cell. Its summary SHA-256 is
+  `2be29b912b1aa29eec0e686df8331b72f35a7bc5c23a3a11bbeca5bfa0e6c4f5`.
+  Declared totals are now `PASS=74`, `FAIL=0`, `BLOCKED=5`, `XFAIL=1`, and
+  `NOT_IMPLEMENTED=29`: this slice removed 22 real missing declarations rather
+  than hiding them. Implemented-local and product-boundary qualification pass;
+  release and full Linux qualification remain false because the remaining
+  gaps are still explicit.
+- **Valgrind wording and evidence remain unchanged in meaning:** Debug IBus
+  focus is **PASS with reviewed suppressions**, never described as an
+  unsuppressed clean run. Raw evidence has 427 errors/contexts, 6,160 definite
+  bytes, and 41,428 indirect bytes; reviewed post-suppression evidence has zero
+  for each and reports 427 suppressed errors/contexts. The reviewed report
+  SHA-256 is
+  `e4f7961e3f4eb8eb0a62fc6b819c3dbe668e7cb833a872a83c92afbbfb7b8933`.
+  The staged-product ReleaseSafe Valgrind rows remain `NOT_IMPLEMENTED`; their
+  historical retired-host XFAIL receipt cannot qualify the Rust product. No
+  suppression was broadened.
+- **Post-qualification static review retained real IPC permissions:** An
+  unelevated `cargo test --workspace --all-targets` run passed ordinary tests
+  but the restricted command sandbox rejected eight real Unix-listener tests
+  with `Operation not permitted`. They were not skipped or rewritten: the
+  same complete workspace command passed outside that network namespace.
+  Strict Clippy passed. ShellCheck then rejected the intentional literal jq
+  program in the new governance assertion; an adjacent narrow `SC2016`
+  annotation documents that it is not a shell template, and the full static
+  contract set passes with no ignored semantic finding.
 
 ## AI disclosure
 

@@ -115,6 +115,34 @@ reject "superseded inactive-agent journey remains authoritative" \
 reject "architecture contract still references the superseded inactive-agent journey" \
     grep -Fq 'linux/tests/rust-inactive-agent-restore' "${architecture}"
 
+# The jq program is intentionally a literal rather than a shell template.
+# shellcheck disable=SC2016
+require "pane lifecycle family is not fully profile-pinned to distinct real product journeys" \
+    jq -e '
+        [.cells[] | select(.capability == "product_pane_terminal_lifecycle")] as $cells |
+        ($cells | length) == 24 and
+        all($cells[]; .status == "PASS") and
+        all($cells[] | select(.optimize == "Debug");
+            .command | contains("ZENTTY_LINUX_BINARY=build/linux-profiles/debug/bin/zentty-linux") and
+            contains("ZENTTY_EXPECTED_PRODUCT_PROFILE=debug")) and
+        all($cells[] | select(.optimize == "ReleaseSafe");
+            .command | contains("ZENTTY_LINUX_BINARY=build/linux-profiles/release-safe/bin/zentty-linux") and
+            contains("ZENTTY_EXPECTED_PRODUCT_PROFILE=release-safe")) and
+        all($cells[] | select(.terminals == "single");
+            (.command | contains("ZENTTY_RUST_SCENARIO=lifecycle")) and
+            (.command | contains("ZENTTY_RUST_TERMINALS=1")) and
+            (.command | contains("ZENTTY_RUST_CYCLES=3")) and
+            (.command | contains("linux/tests/rust-product-smoke"))) and
+        all($cells[] | select(.terminals == "multi");
+            (.command | contains("linux/tests/rust-closed-pane-restore"))) and
+        all($cells[] | select(.display == "wayland" and .terminals == "multi");
+            .environment_profile == "nested-wayland-input-v1") and
+        all($cells[] | select(.display == "wayland" and .terminals == "single");
+            .environment_profile == "nested-wayland-v1") and
+        all($cells[] | select(.display == "x11");
+            .environment_profile == "nested-x11-v1")
+    ' "${matrix}"
+
 ((failures == 0)) || {
     echo "test-orchestration-contract: FAIL failures=${failures}" >&2
     exit 1

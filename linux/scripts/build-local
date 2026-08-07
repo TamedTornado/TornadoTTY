@@ -189,4 +189,11 @@ printf 'ghostty_source=%s\nghostty_revision=%s\nghostty_tree=%s\noptimize=%s\npr
     "$(sha256sum "${repo_root}/linux/tests/ibus-focus-reproducer.c" | awk '{print $1}')" \
     >"${output_dir}/build-metadata"
 
+profile_bundle="${repo_root}/build/linux-profiles/${cargo_profile}"
+rm -rf -- "${profile_bundle}"
+mkdir -p "${profile_bundle}"
+for entry in bin lib libexec share build-metadata; do
+    cp -a "${output_dir}/${entry}" "${profile_bundle}/${entry}"
+done
+
 echo "Built ${output_dir}/bin/zentty-linux"
