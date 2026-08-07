@@ -137,14 +137,15 @@ jq -e '
         .id == "ghostty-runtime-initialization-order" and
         .requirement_id == "ZL-11-GHOSTTY-API-AUDIT" and
         .test_id == "TEST-GHOSTTY-RUNTIME-INIT-ORDER" and
-        .status_proposal == "NOT_IMPLEMENTED") and
+        .status_proposal == "PASS") and
     any(.proposed_matrix_cells[];
         .id == "ghostty-api-audit-inventory" and
         .requirement_id == "ZL-11-GHOSTTY-API-AUDIT" and
         .test_id == "TEST-GHOSTTY-API-AUDIT") and
     any(.proposed_matrix_cells[];
         .id == "ghostty-abi-version-node" and
-        .test_id == "TEST-GHOSTTY-ABI-VERSION") and
+        .test_id == "TEST-GHOSTTY-ABI-VERSION" and
+        .status_proposal == "PASS") and
     any(.proposed_matrix_cells[];
         .id == "ghostty-abi-old-new-mismatch" and
         .test_id == "TEST-GHOSTTY-ABI-MISMATCH") and

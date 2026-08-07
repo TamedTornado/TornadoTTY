@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+probe="${ZENTTY_RUNTIME_INIT_PROBE:-${repo_root}/build/linux/bin/runtime-init-order}"
+temporary="$(mktemp -d -t zentty-runtime-init.XXXXXX)"
+trap 'rm -rf -- "${temporary}"' EXIT
+
+fail() {
+    echo "runtime-init-order: error: $*" >&2
+    exit 1
+}
+
+[[ -x "${probe}" ]] || fail "probe is missing; run linux/scripts/build-local"
+for command in grep mktemp timeout; do
+    command -v "${command}" >/dev/null || fail "${command} is required"
+done
+
+runtime_first="$(timeout 15s "${probe}" runtime-first 2>"${temporary}/runtime-first.stderr")" ||
+    fail "runtime-first fresh process failed"
+[[ "${runtime_first}" == "runtime-init-order: PASS runtime-first" ]] ||
+    fail "unexpected runtime-first receipt: ${runtime_first}"
+
+gtk_first="$(timeout 15s "${probe}" gtk-first 2>"${temporary}/gtk-first.stderr")" ||
+    fail "GTK-first fresh process did not reject safely"
+[[ "${gtk_first}" == "runtime-init-order: PASS gtk-first-rejected-gtk-usable" ]] ||
+    fail "unexpected GTK-first receipt: ${gtk_first}"
+grep -Fx "error: GTK embedding runtime must be created before GTK initialization" \
+    "${temporary}/gtk-first.stderr" >/dev/null ||
+    fail "GTK-first rejection did not emit the documented diagnostic"
+
+echo "runtime-init-order: PASS fresh-process accepted-order and rejected-order"

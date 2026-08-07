@@ -162,6 +162,22 @@ cc \
     "${c_probe_link_flags[@]}" \
     -o "${output_dir}/bin/api-contract"
 
+# This remains a separate executable because each initialization order must
+# start with untouched Ghostty/GTK process-global state.
+# The linker must receive the literal loader token, not a shell expansion.
+# shellcheck disable=SC2016
+cc \
+    "${c_probe_flags[@]}" \
+    -I"${ghostty_source}/zig-out/include" \
+    "${repo_root}/linux/tests/runtime-init-order.c" \
+    -L"${output_dir}/lib" \
+    -Wl,-rpath-link,"${output_dir}/lib" \
+    -Wl,--disable-new-dtags,-rpath,'$ORIGIN/../lib' \
+    -lghostty-gtk-embed \
+    "${gtk4_flags[@]}" \
+    "${c_probe_link_flags[@]}" \
+    -o "${output_dir}/bin/runtime-init-order"
+
 cc \
     "${c_probe_flags[@]}" \
     "${repo_root}/linux/tests/ibus-focus-reproducer.c" \

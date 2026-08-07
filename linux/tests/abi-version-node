@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+inventory="${repo_root}/linux/ghostty-api-audit.json"
+library="${GHOSTTY_ABI_LIBRARY:-${repo_root}/build/linux/lib/libghostty-gtk-embed.so}"
+expected_node="$(jq -r '.abi.symbol_version_node' "${inventory}")"
+expected_symbols="$(jq -r '.abi.operations[].symbol' "${inventory}" | sort)"
+
+audit_evidence() {
+    local dynamic_symbols="$1"
+    local version_info="$2"
+    local actual_symbols definitions expected_versioned
+
+    actual_symbols="$({
+        awk '$4 == "FUNC" && $5 == "GLOBAL" && $8 ~ /^ghostty_gtk_embed_/ {print $8}' \
+            "${dynamic_symbols}"
+    } | sort)"
+    expected_versioned="$(awk -v node="${expected_node}" '{print $0 "@@" node}' \
+        <<<"${expected_symbols}")"
+    [[ "${actual_symbols}" == "${expected_versioned}" ]] ||
+        return 1
+    definitions="$(awk -v node="${expected_node}" \
+        '$0 ~ /Name:/ && $0 ~ ("Name: " node "([[:space:]]|$)") {count++} END {print count + 0}' \
+        "${version_info}")"
+    [[ "${definitions}" == 1 ]]
+}
+
+audit_library() {
+    local artifact="$1"
+    local temporary dynamic_symbols version_info
+
+    [[ -f "${artifact}" ]] || return 1
+    temporary="$(mktemp -d -t zentty-abi-version.XXXXXX)"
+    dynamic_symbols="${temporary}/dynamic-symbols.txt"
+    version_info="${temporary}/version-info.txt"
+    if ! readelf --dyn-syms -W "${artifact}" >"${dynamic_symbols}" ||
+       ! readelf --version-info -W "${artifact}" >"${version_info}"; then
+        rm -rf -- "${temporary}"
+        return 1
+    fi
+    if audit_evidence "${dynamic_symbols}" "${version_info}"; then
+        rm -rf -- "${temporary}"
+        return 0
+    fi
+    rm -rf -- "${temporary}"
+    return 1
+}
+
+self_test() {
+    local temporary valid_symbols valid_versions malformed
+    temporary="$(mktemp -d -t zentty-abi-version-self-test.XXXXXX)"
+    trap 'rm -rf -- "${temporary}"' RETURN
+    valid_symbols="${temporary}/valid-symbols.txt"
+    valid_versions="${temporary}/valid-versions.txt"
+    while IFS= read -r symbol; do
+        printf '1: 0 1 FUNC GLOBAL DEFAULT 1 %s@@%s\n' "${symbol}" "${expected_node}"
+    done <<<"${expected_symbols}" >"${valid_symbols}"
+    printf '0x001c: Rev: 1 Flags: none Index: 2 Cnt: 1 Name: %s\n' \
+        "${expected_node}" >"${valid_versions}"
+    audit_evidence "${valid_symbols}" "${valid_versions}" || return 1
+    ! audit_library "${temporary}/missing.so" || return 1
+
+    malformed="${temporary}/unversioned.txt"
+    sed "1s/@@${expected_node}//" "${valid_symbols}" >"${malformed}"
+    ! audit_evidence "${malformed}" "${valid_versions}" || return 1
+
+    malformed="${temporary}/wrong-version.txt"
+    sed "1s/${expected_node}/GHOSTTY_GTK_EMBED_9.9/" "${valid_symbols}" >"${malformed}"
+    ! audit_evidence "${malformed}" "${valid_versions}" || return 1
+
+    malformed="${temporary}/untracked-symbol.txt"
+    cp "${valid_symbols}" "${malformed}"
+    printf '2: 0 1 FUNC GLOBAL DEFAULT 1 ghostty_gtk_embed_untracked@@%s\n' \
+        "${expected_node}" >>"${malformed}"
+    ! audit_evidence "${malformed}" "${valid_versions}" || return 1
+
+    malformed="${temporary}/missing-definition.txt"
+    : >"${malformed}"
+    ! audit_evidence "${valid_symbols}" "${malformed}" || return 1
+    echo "Ghostty ABI version-node self-test passed"
+}
+
+for command in awk jq mktemp readelf sed sort; do
+    command -v "${command}" >/dev/null || {
+        echo "abi-version-node: error: ${command} is required" >&2
+        exit 1
+    }
+done
+
+case "${1:-}" in
+    "")
+        audit_library "${library}" || {
+            echo "abi-version-node: error: exported functions are missing or not exactly versioned ${expected_node}" >&2
+            exit 1
+        }
+        echo "Ghostty GTK embedding ABI version node passed: 12 exports at ${expected_node}"
+        ;;
+    --self-test) self_test ;;
+    *) echo "usage: $0 [--self-test]" >&2; exit 64 ;;
+esac

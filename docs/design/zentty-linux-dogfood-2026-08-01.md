@@ -9048,6 +9048,81 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   those compile contracts before its real teardown journey, requiring one
   final complete matrix rerun before commit rather than relying on prose.
 
+### 2026-08-07 — Ghostty runtime order and ELF version nodes became real cells
+
+- **The slice began red:** The orchestration contract was first extended to
+  require controlled X11 and Wayland runtime-order journeys plus an isolated
+  real-artifact ELF version audit. It failed while both authoritative rows
+  were still `NOT_IMPLEMENTED`; the acceptance plan is
+  `docs/design/linux-ghostty-runtime-abi-qualification-plan.md`.
+- **The supposedly safe misuse contract actually aborted:** A new hardened C
+  consumer ran each initialization order in a fresh process against the real
+  Debug library. Runtime-before-GTK succeeded, but GTK-before-runtime reached
+  Ghostty's internal `setGtkEnv` assertion and panicked instead of returning
+  null. Controlled X11 session
+  `bdceca707fec7b26cb2fce613eceaa07986d01a24d8d3c3be6d5e24d89c783b7`
+  captured the native stack. This was a Ghostty embedding-boundary defect, not
+  an environmental skip or a test-harness failure.
+- **The Ghostty repair is deliberately five lines:** Commit
+  `977de1e93579b30f11b837b1f400c5bcdb56da8a` checks GTK initialization before
+  entering `Runtime.create`, logs an actionable error, and returns null. It
+  changes no public type, signature, symbol, or host policy. Ghostty's focused
+  `gtk-embed-lib-test` and Zig formatting passed before the commit was pushed;
+  Zentty now pins and machine-audits that exact commit.
+- **Both real compositor paths now pass:** The rebuilt pinned Debug bundle
+  passed two fresh processes per environment: the required order constructs
+  and tears down Ghostty, while the reversed order rejects and then constructs
+  another ordinary GTK widget to prove GTK remains usable. The direct X11
+  session was
+  `e5fc5fe16d925f43be7618710bfce3256bb0df21c2a9a1c14c0d66947af031d2`;
+  the direct Wayland session was
+  `a09fc91a459c2f7bcba4384c89dc4153fd559067260b9999d824ee5a7560d89a`.
+- **ELF versioning is now inspected, not inferred from source:** The new
+  focused audit reads the real staged ReleaseSafe dynamic symbol table and
+  version definitions. It requires exactly the twelve audited exports, each
+  at `GHOSTTY_GTK_EMBED_1.0`. Its self-test rejects a missing artifact, an
+  unversioned function, a wrong node, an untracked export, and a missing node
+  definition. The old/new header/library mismatch cell remains separate and
+  explicitly unimplemented.
+- **Declared convergence before the full rerun:** Splitting the compositor-
+  sensitive runtime requirement into explicit X11 and Wayland rows plus the
+  version-node row changes the declared matrix to `PASS=80`, `FAIL=0`,
+  `BLOCKED=5`, `XFAIL=1`, and `NOT_IMPLEMENTED=24`. These are declarations,
+  not final qualification results, until the complete presently executable
+  matrix reruns against the new Ghostty pin.
+- **Final complete requalification passed every executable cell:** The authoritative
+  X11 runtime-order session is
+  `cf57b68f109e87ae4482e58b05468e4f4ddd42d15ac794fb3f0b9421fed28c47`,
+  Wayland is
+  `27bd5aef4a99184b2cbd46071280b9d9757af75ab84305efea899e62e7bbeef1`,
+  and the isolated ELF audit is
+  `b7cdcf15b683d852fbf3b2f1face6c4ff230d882e9fdde84e2a63e483c6a4d71`.
+  Summary SHA-256 is
+  `16e0a8186c0ada691562ecb522baacb73b8d6b0b2ff70ef085e5e9a1a37f1087`.
+  Final totals are `PASS=80`, `FAIL=0`, `BLOCKED=5`, `XFAIL=1`, and
+  `NOT_IMPLEMENTED=24`. Implemented-local passes; release and full Linux
+  qualification correctly remain false.
+- **Final diff review caught an artifact-order dependency:** The first green
+  complete run evaluated the new rows before `build-debug`, which happened to
+  work because the deliberately persistent profile bundle existed from the
+  focused build. That would not be valid from a clean checkout. Both runtime
+  rows now sort immediately after `build-debug`, and the orchestration contract
+  pins that ordering. The second authoritative rerun passed from the corrected
+  order and supplies the final receipts above.
+- **The order assertion was initially attached to the wrong row:** A broad
+  textual patch added `order == 31` to the existing Rust product-usage check
+  instead of the first runtime-order check. The orchestration contract failed
+  immediately, so the mistake never reached qualification evidence. The
+  assertion was moved to the intended X11 runtime row; both runtime rows now
+  pin the post-Debug-build order.
+- **Suppression governance remained unchanged:** Debug IBus focus is **PASS
+  with reviewed suppressions**, never an unsuppressed-clean claim. Its raw
+  receipt contains 427 errors/contexts, 6,240 definite bytes, and 41,461
+  indirect bytes; post-suppression values are zero with all 427 contexts
+  accounted for. Report SHA-256 is
+  `dd0b8e4847b0aee447b74ecb16b5aaeefce356f3d63f121086dc86755778aadd`.
+  No suppression rule or manifest changed.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were

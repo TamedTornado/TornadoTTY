@@ -169,6 +169,26 @@ reject "Rust raw binding retains convenience constructors or speculative paste" 
     grep -Eq 'pub fn ghostty_gtk_embed_(runtime_new\(|surface_new\(|surface_request_paste\()' \
     "${repo_root}/crates/zentty-ghostty-sys/src/lib.rs"
 
+# shellcheck disable=SC2016
+require "Ghostty runtime-order and version-node cells are not executable real-artifact checks" \
+    jq -e '
+        (.cells[] | select(.id == "ghostty-runtime-initialization-order") |
+            .status == "PASS" and .order == 31 and .display == "x11" and
+            .environment_profile == "nested-x11-v1" and
+            (.command | contains("build/linux-profiles/debug/bin/runtime-init-order")) and
+            (.command | contains("linux/tests/runtime-init-order"))) and
+        (.cells[] | select(.id == "ghostty-runtime-initialization-order-wayland") |
+            .status == "PASS" and .order == 31 and .display == "wayland" and
+            .environment_profile == "nested-wayland-v1" and
+            (.command | contains("build/linux-profiles/debug/bin/runtime-init-order")) and
+            (.command | contains("linux/tests/runtime-init-order"))) and
+        (.cells[] | select(.id == "ghostty-abi-version-node") |
+            .status == "PASS" and .display == "none" and
+            .environment_profile == "isolated-none-v1" and
+            (.command | contains("build/linux-profiles/release-safe/lib/libghostty-gtk-embed.so")) and
+            (.command | contains("linux/tests/abi-version-node")))
+    ' "${matrix}"
+
 ((failures == 0)) || {
     echo "test-orchestration-contract: FAIL failures=${failures}" >&2
     exit 1
