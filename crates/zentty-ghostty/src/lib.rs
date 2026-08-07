@@ -222,40 +222,21 @@ impl GhosttyRuntime {
     ///
     /// Returns a contextual construction or string-conversion error.
     pub fn create_surface(&self, config: &SurfaceConfig) -> Result<GhosttySurface, Error> {
-        let command = config
-            .command
-            .as_deref()
-            .map(CString::new)
-            .transpose()
-            .map_err(|source| Error::InteriorNul {
-                field: "command",
-                source,
-            })?;
-        let title = CString::new(config.title.as_str()).map_err(|source| Error::InteriorNul {
-            field: "title",
-            source,
-        })?;
-        let working_directory = config
-            .working_directory
-            .as_deref()
-            .map(CString::new)
-            .transpose()
-            .map_err(|source| Error::InteriorNul {
-                field: "working_directory",
-                source,
-            })?;
-        let environment = encode_environment(&config.environment)?;
-        let environment_pointers = environment
+        let encoded = encode_surface_config(config)?;
+        let environment_pointers = encoded
+            .environment
             .iter()
             .map(|value| value.as_ptr())
             .collect::<Vec<_>>();
         let options = sys::GhosttyGtkEmbedSurfaceOptions {
             struct_size: std::mem::size_of::<sys::GhosttyGtkEmbedSurfaceOptions>(),
-            command: command
+            command: encoded
+                .command
                 .as_ref()
                 .map_or(std::ptr::null(), |value| value.as_ptr()),
-            title: title.as_ptr(),
-            working_directory: working_directory
+            title: encoded.title.as_ptr(),
+            working_directory: encoded
+                .working_directory
                 .as_ref()
                 .map_or(std::ptr::null(), |value| value.as_ptr()),
             environment: if environment_pointers.is_empty() {
@@ -313,6 +294,46 @@ impl GhosttyRuntime {
             _runtime: Rc::clone(&self.inner),
         })
     }
+}
+
+#[derive(Debug)]
+struct EncodedSurfaceConfig {
+    command: Option<CString>,
+    title: CString,
+    working_directory: Option<CString>,
+    environment: Vec<CString>,
+}
+
+fn encode_surface_config(config: &SurfaceConfig) -> Result<EncodedSurfaceConfig, Error> {
+    let command = config
+        .command
+        .as_deref()
+        .map(CString::new)
+        .transpose()
+        .map_err(|source| Error::InteriorNul {
+            field: "command",
+            source,
+        })?;
+    let title = CString::new(config.title.as_str()).map_err(|source| Error::InteriorNul {
+        field: "title",
+        source,
+    })?;
+    let working_directory = config
+        .working_directory
+        .as_deref()
+        .map(CString::new)
+        .transpose()
+        .map_err(|source| Error::InteriorNul {
+            field: "working_directory",
+            source,
+        })?;
+    let environment = encode_environment(&config.environment)?;
+    Ok(EncodedSurfaceConfig {
+        command,
+        title,
+        working_directory,
+        environment,
+    })
 }
 
 fn encode_environment(environment: &[(String, String)]) -> Result<Vec<CString>, Error> {
@@ -538,7 +559,10 @@ impl Drop for GhosttySurface {
 
 #[cfg(test)]
 mod tests {
-    use super::{Error, ProgressReport, ProgressState, decode_progress_report, encode_environment};
+    use super::{
+        Error, ProgressReport, ProgressState, SurfaceConfig, decode_progress_report,
+        encode_environment, encode_surface_config,
+    };
 
     #[test]
     fn progress_report_signal_payload_is_validated_at_the_safe_boundary() {
@@ -579,6 +603,79 @@ mod tests {
     }
 
     #[test]
+    fn surface_config_encodes_the_exact_product_owned_native_fields() {
+        let encoded = encode_surface_config(&SurfaceConfig {
+            command: Some("exec claude --resume session-1".to_owned()),
+            title: "Frontend".to_owned(),
+            working_directory: Some("/tmp/zentty project".to_owned()),
+            environment: vec![
+                ("ZENTTY_PANE_ID".to_owned(), "pane-1".to_owned()),
+                ("EMPTY".to_owned(), String::new()),
+            ],
+        })
+        .unwrap();
+
+        assert_eq!(
+            encoded.command.unwrap().to_str().unwrap(),
+            "exec claude --resume session-1"
+        );
+        assert_eq!(encoded.title.to_str().unwrap(), "Frontend");
+        assert_eq!(
+            encoded.working_directory.unwrap().to_str().unwrap(),
+            "/tmp/zentty project"
+        );
+        assert_eq!(
+            encoded
+                .environment
+                .iter()
+                .map(|entry| entry.to_str().unwrap())
+                .collect::<Vec<_>>(),
+            ["ZENTTY_PANE_ID=pane-1", "EMPTY="]
+        );
+
+        let defaults = encode_surface_config(&SurfaceConfig::default()).unwrap();
+        assert!(defaults.command.is_none());
+        assert!(defaults.working_directory.is_none());
+        assert!(defaults.environment.is_empty());
+        assert_eq!(defaults.title.to_str().unwrap(), "Zentty");
+    }
+
+    #[test]
+    fn surface_config_rejects_nuls_in_every_native_string_field() {
+        for (field, config) in [
+            (
+                "command",
+                SurfaceConfig {
+                    command: Some("bad\0command".to_owned()),
+                    ..SurfaceConfig::default()
+                },
+            ),
+            (
+                "title",
+                SurfaceConfig {
+                    title: "bad\0title".to_owned(),
+                    ..SurfaceConfig::default()
+                },
+            ),
+            (
+                "working_directory",
+                SurfaceConfig {
+                    working_directory: Some("bad\0directory".to_owned()),
+                    ..SurfaceConfig::default()
+                },
+            ),
+        ] {
+            assert!(matches!(
+                encode_surface_config(&config),
+                Err(Error::InteriorNul {
+                    field: actual_field,
+                    ..
+                }) if actual_field == field
+            ));
+        }
+    }
+
+    #[test]
     fn surface_environment_rejects_invalid_names_nuls_and_excessive_counts() {
         assert!(matches!(
             encode_environment(&[("BAD=NAME".to_owned(), "value".to_owned())]),
@@ -594,6 +691,7 @@ mod tests {
         let too_many = (0..129)
             .map(|index| (format!("KEY_{index}"), "value".to_owned()))
             .collect::<Vec<_>>();
+        assert_eq!(encode_environment(&too_many[..128]).unwrap().len(), 128);
         assert!(matches!(
             encode_environment(&too_many),
             Err(Error::TooManyEnvironmentEntries(129))

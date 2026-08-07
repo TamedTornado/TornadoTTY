@@ -3,6 +3,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 inventory="${repo_root}/linux/ghostty-api-audit.json"
+matrix="${repo_root}/linux/qualification-matrix.json"
 ghostty_source="${GHOSTTY_SOURCE_DIR:-}"
 mode="${1:-}"
 
@@ -59,6 +60,7 @@ normalized_patch() {
 }
 
 jq -e '
+    . as $inventory |
     .schema_version == 1 and
     (.snapshot.recorded_official_base | type) == "string" and
     (.snapshot.local_fork_main | type) == "string" and
@@ -89,6 +91,26 @@ jq -e '
         .matrix_cell_id == "ghostty-async-backend-abi-representation")) and
     ([.files[].path] | length == (unique | length)) and
     ([.abi.operations[].symbol] | length == (unique | length)) and
+    (.rust_binding.declared_function_count == 9) and
+    ((.rust_binding.operations | length) == .rust_binding.declared_function_count) and
+    (.rust_binding.excluded_exports | length == 3) and
+    ([.rust_binding.operations[].symbol] | length == (unique | length)) and
+    ([.rust_binding.excluded_exports[].symbol] | length == (unique | length)) and
+    (([.rust_binding.operations[].symbol] + [.rust_binding.excluded_exports[].symbol]) |
+        sort == ([$inventory.abi.operations[].symbol] | sort)) and
+    all(.rust_binding.operations[];
+        (.safe_owner.path | length) > 0 and
+        (.safe_owner.needle | length) > 0 and
+        (.product_callers | length) > 0 and
+        all(.product_callers[]; (.path | length) > 0 and (.needle | length) > 0) and
+        (.real_journeys | length) > 0) and
+    (.rust_binding.callback_owners | length) == 4 and
+    all(.rust_binding.callback_owners[];
+        (.safe_owner.path | length) > 0 and
+        (.safe_owner.needle | length) > 0 and
+        (.product_caller.path | length) > 0 and
+        (.product_caller.needle | length) > 0 and
+        (.real_journey | length) > 0) and
     ([.proposed_matrix_cells[].id] | length == (unique | length)) and
     all(.proposed_matrix_cells[];
         (.requirement_id | test("^ZL-[0-9]+-[A-Z0-9-]+$")) and
@@ -300,7 +322,46 @@ grep -Fx 'typedef struct _GtkWidget GtkWidget;' "${ghostty_source}/include/ghost
 [[ "$(grep -Eoc 'GtkWidget \*surface' "${ghostty_source}/include/ghostty/gtk.h")" == 6 ]] ||
     fail "GtkWidget surface-operation parameter roles differ from inventory"
 
-pass_message="Ghostty API audit inventory passed: 16 files, 55 hunks, 12 allowlisted function exports, 5 Ghostty-owned public types, 1 external GtkWidget dependency"
+expected_rust_symbols="$(jq -r '.rust_binding.operations[].symbol' "${inventory}" | sort)"
+actual_rust_symbols="$(
+    sed -n -E 's/^[[:space:]]+pub fn (ghostty_gtk_embed_[a-z_]+).*/\1/p' \
+        "${repo_root}/crates/zentty-ghostty-sys/src/lib.rs" | sort -u
+)"
+[[ "${actual_rust_symbols}" == "${expected_rust_symbols}" ]] ||
+    fail "raw Rust declarations differ from the product-owned binding ledger"
+
+while IFS=$'\t' read -r path needle; do
+    [[ -f "${repo_root}/${path}" ]] || fail "Rust binding ledger path is missing: ${path}"
+    grep -Fq -- "${needle}" "${repo_root}/${path}" ||
+        fail "Rust binding ledger callsite is missing: ${path}: ${needle}"
+done < <(
+    jq -r '
+        .rust_binding.operations[] |
+        .safe_owner, .product_callers[] |
+        [.path, .needle] | @tsv
+    ' "${inventory}"
+    jq -r '
+        .rust_binding.callback_owners[] |
+        .safe_owner, .product_caller |
+        [.path, .needle] | @tsv
+    ' "${inventory}"
+)
+
+while IFS= read -r journey; do
+    [[ -x "${repo_root}/${journey}" ]] || fail "Rust binding real journey is missing: ${journey}"
+    jq -e --arg journey "${journey}" '
+        any(.cells[]; .status == "PASS" and ((.command // "") | contains($journey)))
+    ' "${matrix}" >/dev/null ||
+        fail "Rust binding real journey has no PASS qualification cell: ${journey}"
+done < <(
+    jq -r '
+        ([.rust_binding.operations[].real_journeys[]] +
+         [.rust_binding.callback_owners[].real_journey]) |
+        unique[]
+    ' "${inventory}"
+)
+
+pass_message="Ghostty API audit inventory passed: 16 files, 55 hunks, 12 allowlisted function exports, 9 product-owned Rust declarations, 5 Ghostty-owned public types, 1 external GtkWidget dependency"
 echo "${pass_message}"
 
 if [[ "${mode}" == "--self-test" ]]; then

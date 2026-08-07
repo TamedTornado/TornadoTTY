@@ -143,6 +143,32 @@ require "pane lifecycle family is not fully profile-pinned to distinct real prod
             .environment_profile == "nested-x11-v1")
     ' "${matrix}"
 
+# The jq program is intentionally a literal rather than a shell template.
+# shellcheck disable=SC2016
+require "Rust/Ghostty adapter cells are not assigned to focused and real existing journeys" \
+    jq -e '
+        (.cells[] | select(.id == "rust-ghostty-api-product-usage") |
+            .status == "PASS" and .display == "x11" and
+            .environment_profile == "nested-x11-v1" and
+            (.command | contains("linux/tests/ghostty-api-audit")) and
+            (.command | contains("linux/tests/rust-closed-pane-restore")) and
+            (.command | contains("linux/tests/rust-pane-search")) and
+            (.command | contains("linux/tests/rust-tmux-compat-product"))) and
+        (.cells[] | select(.id == "rust-ghostty-callback-drop-order") |
+            .status == "PASS" and .display == "x11" and
+            .environment_profile == "nested-x11-v1" and
+            (.command | contains("cargo test -p zentty-ghostty --locked --doc")) and
+            (.command | contains("linux/tests/rust-closed-pane-restore"))) and
+        (.cells[] | select(.id == "rust-ghostty-config-construction") |
+            .status == "PASS" and .display == "none" and
+            .environment_profile == "isolated-none-v1" and
+            (.command | contains("cargo test -p zentty-ghostty")))
+    ' "${matrix}"
+
+reject "Rust raw binding retains convenience constructors or speculative paste" \
+    grep -Eq 'pub fn ghostty_gtk_embed_(runtime_new\(|surface_new\(|surface_request_paste\()' \
+    "${repo_root}/crates/zentty-ghostty-sys/src/lib.rs"
+
 ((failures == 0)) || {
     echo "test-orchestration-contract: FAIL failures=${failures}" >&2
     exit 1

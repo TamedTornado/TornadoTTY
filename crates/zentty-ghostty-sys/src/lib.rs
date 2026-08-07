@@ -38,17 +38,11 @@ pub type GhosttyGtkEmbedTextCallback =
     unsafe extern "C" fn(text: *const c_char, text_len: usize, userdata: *mut c_void);
 
 unsafe extern "C" {
-    pub fn ghostty_gtk_embed_runtime_new() -> *mut GhosttyGtkEmbedRuntime;
     pub fn ghostty_gtk_embed_runtime_new_with_async_backend(
         backend: GhosttyGtkEmbedAsyncBackend,
     ) -> *mut GhosttyGtkEmbedRuntime;
     pub fn ghostty_gtk_embed_runtime_free(runtime: *mut GhosttyGtkEmbedRuntime);
     pub fn ghostty_gtk_embed_runtime_tick(runtime: *mut GhosttyGtkEmbedRuntime) -> bool;
-    pub fn ghostty_gtk_embed_surface_new(
-        runtime: *mut GhosttyGtkEmbedRuntime,
-        command: *const c_char,
-        title: *const c_char,
-    ) -> *mut GtkWidget;
     pub fn ghostty_gtk_embed_surface_new_with_options(
         runtime: *mut GhosttyGtkEmbedRuntime,
         options: *const GhosttyGtkEmbedSurfaceOptions,
@@ -70,7 +64,6 @@ unsafe extern "C" {
         callback: Option<GhosttyGtkEmbedTextCallback>,
         userdata: *mut c_void,
     ) -> bool;
-    pub fn ghostty_gtk_embed_surface_request_paste(surface: *mut GtkWidget) -> bool;
 }
 
 #[cfg(test)]

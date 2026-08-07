@@ -182,17 +182,17 @@ check, but an arbitrary dangling pointer cannot be made safe by that check.
 | Export | Proven current need/caller | Predicted Rust product need | Recommendation |
 |---|---|---|---|
 | `ghostty_gtk_embed_runtime_new` | API misuse/signature tests only; the C host never uses it | Probably redundant because DEFAULT can be passed to the typed constructor | Remove/minimize unless another caller proves the convenience symbol. |
-| `ghostty_gtk_embed_runtime_new_with_async_backend` | C host plus API contract; drives all three backend cells | Likely capability; current enum/`c_int` representation is defective under `-fshort-enums` | Retain capability, but do not retain or bind this signature until repaired and cross-language-tested. |
-| `ghostty_gtk_embed_runtime_free` | C host/API teardown | Required as safe `Drop` or equivalent | Retain; prove drop races and error policy. |
-| `ghostty_gtk_embed_runtime_tick` | One-millisecond C-host GLib timer/API test | Likely under current implementation, but could become an internal GLib source | Defer public retention; investigate self-scheduling. |
-| `ghostty_gtk_embed_surface_new` | One/four C-host real terminals and API test | Construction is required, current shell-string signature is not acceptable for #13 | Retain capability; redesign for typed argv/CWD/environment/config. |
-| `ghostty_gtk_embed_surface_new_with_options` | Rust closed-pane restore, authenticated agent child environment, and C ABI contract | Product-proven CWD/environment today; possible typed argv later | Retain the size-versioned generic constructor; do not add unproven fields. |
+| `ghostty_gtk_embed_runtime_new_with_async_backend` | Safe Rust runtime plus all real product backend cells | Required capability; current enum/`c_int` representation is defective under `-fshort-enums` | Retain downstream while the separately tracked representation defect remains XFAIL. |
+| `ghostty_gtk_embed_runtime_free` | Safe Rust `Drop`, repeated product teardown, and API misuse | Required by the current safe owner | Retain; the adapter holds runtime leases through final GObject disposal. |
+| `ghostty_gtk_embed_runtime_tick` | Safe Rust GLib tick source and every real product journey | Required under the current implementation, but could become an internal GLib source | Retain downstream; revisit only with an engine-owned scheduling replacement. |
+| `ghostty_gtk_embed_surface_new` | Retired C host and API test only | None in the Rust product | Exclude from the Rust binding; leave ABI removal to a separately reviewed Ghostty decision. |
+| `ghostty_gtk_embed_surface_new_with_options` | Rust close/restore, source native-command launch, CWD, authenticated agent environment, and C ABI contract | Product-proven command/CWD/environment today; typed argv is not source-required | Retain the size-versioned generic constructor; do not add unproven fields. |
 | `ghostty_gtk_embed_surface_close` | Rust product pane and repeated lifecycle teardown | Required by the current safe wrapper unless closure becomes a documented GObject disposal contract | Retain current capability; prove callback/drop ordering before upstream proposal. |
-| `ghostty_gtk_embed_surface_grab_focus` | C host focus/physical-key paths and misuse test | Likely active-pane requirement under #5 | Likely retain after real product focus proof. |
+| `ghostty_gtk_embed_surface_grab_focus` | Real product pane focus plus physical-key paths and misuse test | Required active-pane behavior under #5 | Retain with the safe runtime lease. |
 | `ghostty_gtk_embed_surface_binding_action` | Rust product pane-search actions plus real X11/Wayland scrollback scenarios | Likely generic terminal-owned action bridge | Retain as one generic parser/dispatcher; keep shortcuts and product policy in Zentty. |
-| `ghostty_gtk_embed_surface_send_text` | C qualification control and misuse test only | Possible programmatic text action, not yet proven | Defer/remove if real product has no caller. |
+| `ghostty_gtk_embed_surface_send_text` | Real restore prefill and tmux send-keys product paths plus misuse test | Required programmatic text action | Retain through the safe wrapper. |
 | `ghostty_gtk_embed_surface_read_text` | Real staged `capture-pane` reads the displayed Ghostty surface and scrollback under X11 and Wayland | Generic synchronous plain-text boundary | Retain the borrowed callback; keep line limits, tmux output, and buffers in Zentty. |
-| `ghostty_gtk_embed_surface_request_paste` | C qualification clipboard relay and misuse test only | Possible product paste action; normal widget shortcuts may suffice | Defer/remove if real product has no caller. |
+| `ghostty_gtk_embed_surface_request_paste` | C qualification clipboard relay and misuse test only | None; product paste uses ordinary input/binding behavior | Exclude from the Rust binding; leave ABI removal to separate Ghostty review. |
 
 ### Per-operation contract consequences
 
@@ -256,34 +256,41 @@ At the pinned checkpoint, the authoritative matrix records:
 - Debug raw plus suppression-enabled candidate Valgrind evidence and unchanged
   full Ghostty Debug tests; suppression review remains a separate matrix gate.
 
-This evidence proves the C qualification host at the pinned revision. The
-private Zig spike supplies useful implementation history but is not an
-independent public-ABI consumer. ReleaseSafe Valgrind remains XFAIL and the
-matrix's compositor/IME/scaling/public-CI gaps remain unchanged.
+This historical evidence proved the retired C qualification host at the pinned
+revision. The current matrix additionally owns the safe Rust/product evidence.
+The private Zig spike supplies useful implementation history but is not an
+independent public-ABI consumer. The staged-product ReleaseSafe Valgrind rows
+remain unimplemented, and the matrix keeps its compositor/IME/scaling/public-CI
+gaps explicit.
 
 ## Missing proof before a final #11 decision
 
-1. **Real usage:** no Rust workspace, `zentty-ghostty-sys`, safe adapter, or
-   `zentty-linux` product caller exists. Every product-need statement above is
-   prediction, not proof.
-2. **Construction:** no typed argv/CWD/environment/config path and no proof
-   against shell interpolation; no actionable structured constructor error;
-   no negative fresh-process test for runtime construction after `gtk_init()`
-   or after constructing any GTK object.
-3. **Thread/ownership:** no off-main-thread, reentrant tick, live-surface
-   runtime-free, stale widget, callback-during-teardown, child-exit-during-drop,
-   or Rust unwind/drop-order test.
-4. **Callbacks:** no stable public declaration of the GObject signal/property
-   contract, disconnect token, userdata destroy notification, routing proof,
-   or after-drop exclusion.
-5. **Operations:** no product caller for any symbol; especially no non-test
-   caller for default constructor, `send_text`, or `request_paste`.
+1. **Ghostty ABI review:** three exports excluded from the product-owned Rust
+   binding remain in Ghostty's downstream C ABI pending separate compatibility
+   and maintainer review.
+2. **Construction:** the source-compatible native command, CWD, and environment
+   are proven; typed argv remains intentionally absent until product behavior
+   requires it. Structured native constructor diagnostics and the negative
+   fresh-process runtime-after-GTK test remain open.
+3. **Thread/ownership:** Rust types are main-thread-only and real teardown now
+   rejects callbacks after disposal. Off-main-thread native misuse, reentrant
+   tick, stale foreign pointers, and Rust-unwind behavior still need any final
+   public-ABI decision to define them.
+4. **Callbacks:** product routing and after-dispose exclusion are proven, but
+   the GObject signal/property contract still lacks a stable public declaration
+   or userdata destroy-notification API.
+5. **Operations:** all nine retained Rust declarations now have safe owners,
+   product callers, and real journeys. The default constructor, legacy surface
+   constructor, and `request_paste` intentionally remain excluded from the
+   Rust binding because the product does not call them; deciding whether to
+   remove those exports from Ghostty's C ABI remains open.
 6. **Errors/misuse:** no fault injection for allocation, Ghostty/GTK init,
    unavailable backends, core tick failure, clipboard denial, or invalid UTF-8;
    arbitrary dangling C pointers remain outside the possible guarantee.
 7. **ABI compatibility/evolution:** the async C enum versus Zig `c_int` is a
-   high-severity open representation defect, with no C/C++/Rust default and
-   `-fshort-enums` proof. There is also no version-node assertion,
+   high-severity open representation defect, with no repaired C/C++/Rust
+   real-library proof across default and `-fshort-enums` modes. There is also
+   no version-node assertion,
    compile-time/runtime ABI identity, versioned SONAME, mismatch failure,
    deprecation policy, or non-ELF visibility policy. C++ signature assertions
    cover only two of nine functions.
@@ -306,9 +313,9 @@ the matrix. They have since been reconciled into the authoritative
 | `ghostty-abi-version-node` | `ZL-11-GHOSTTY-ABI-COMPAT` / `TEST-GHOSTTY-ABI-VERSION` | NOT_IMPLEMENTED | Assert the twelve ELF exports carry the intended node. |
 | `ghostty-async-backend-abi-representation` | `ZL-11-GHOSTTY-ABI-COMPAT` / `TEST-GHOSTTY-ASYNC-BACKEND-ABI` | XFAIL, `DOGFOOD-2026-08-02-GHOSTTY-ASYNC-ENUM-ABI` | The deterministic C17/C++17 header probe exits 99 after reproducing 4-byte default versus 1-byte `-fshort-enums` representation. Full repaired C/C++/Rust size, alignment, and real-library call acceptance remains NOT_IMPLEMENTED. |
 | `ghostty-runtime-initialization-order` | `ZL-11-GHOSTTY-API-AUDIT` / `TEST-GHOSTTY-RUNTIME-INIT-ORDER` | NOT_IMPLEMENTED | Prove runtime-before-`gtk_init`/any GTK object and safe reversed-order failure. |
-| `rust-ghostty-api-product-usage` | `ZL-13-RUST-GHOSTTY-ADAPTER` / `TEST-RUST-GHOSTTY-PRODUCT-USAGE` | NOT_IMPLEMENTED | Trace every retained function to real safe-wrapper/product callers. |
-| `rust-ghostty-callback-drop-order` | `ZL-13-RUST-GHOSTTY-ADAPTER` / `TEST-RUST-GHOSTTY-CALLBACK-DROP` | NOT_IMPLEMENTED | Fault callback/child exit during teardown and exclude after-drop calls. |
-| `rust-ghostty-config-construction` | `ZL-13-RUST-GHOSTTY-ADAPTER` / `TEST-RUST-GHOSTTY-CONFIG` | NOT_IMPLEMENTED | Prove typed argv, CWD, environment, and approved config. |
+| `rust-ghostty-api-product-usage` | `ZL-13-RUST-GHOSTTY-ADAPTER` / `TEST-RUST-GHOSTTY-PRODUCT-USAGE` | PASS | Closed-world nine-operation Rust ledger plus real close/restore, binding-action, and text-read journeys. |
+| `rust-ghostty-callback-drop-order` | `ZL-13-RUST-GHOSTTY-ADAPTER` / `TEST-RUST-GHOSTTY-CALLBACK-DROP` | PASS | Physical pane disposal rejects init/title/progress/child-exit callbacks after the close boundary. |
+| `rust-ghostty-config-construction` | `ZL-13-RUST-GHOSTTY-ADAPTER` / `TEST-RUST-GHOSTTY-CONFIG` | PASS | Prove exact source-native command, title, CWD, environment, and invalid-boundary encoding. |
 | `ghostty-abi-old-new-mismatch` | `ZL-11-GHOSTTY-ABI-COMPAT` / `TEST-GHOSTTY-ABI-MISMATCH` | NOT_IMPLEMENTED | Require incompatible staged header/library pairs to fail before use. |
 
 The machine audit retains the field name `proposed_matrix_cells` because it is

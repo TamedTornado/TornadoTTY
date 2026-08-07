@@ -8972,6 +8972,81 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   program in the new governance assertion; an adjacent narrow `SC2016`
   annotation documents that it is not a shell template, and the full static
   contract set passes with no ignored semantic finding.
+- **DOGFOOD-2026-08-07-RUST-GHOSTTY-ADAPTER-RED:** After the lifecycle family
+  converged, three #13 rows still claimed that the Rust workspace, safe
+  adapter, and product callers did not exist. The first governance run failed
+  both because those rows were not executable and because the raw Rust sys
+  crate still declared the legacy runtime/surface convenience constructors and
+  speculative paste export despite having no safe or product caller.
+- **The Ghostty ABI was not churned to repair a Zentty binding ledger:** The
+  three unused declarations were removed only from `zentty-ghostty-sys`.
+  Ghostty's twelve language-neutral exports remain byte-identical for separate
+  compatibility/maintainer review. The existing machine API audit now owns a
+  closed-world split of nine product-bound Rust declarations and three
+  explicitly excluded exports, and validates every safe owner, product
+  callsite, and real PASS journey.
+- **Source review rejected speculative typed argv work:** Original Zentty
+  models startup text separately and gives libghostty an optional native
+  command string, CWD, and environment. Linux therefore did not invent a typed
+  argv feature. Its safe adapter now has a focused pure encoding boundary that
+  proves exact command/title/CWD/environment bytes, nullable defaults,
+  per-field NUL rejection, environment-name rejection, and the 128-entry
+  limit before any unsafe native call.
+- **Real callback teardown initially failed in the assertion, not the
+  product:** The first controlled X11 callback-order run completed its actual
+  close/restore behavior but the new awk receipt parser used a multiline
+  parenthesized condition unsupported by the host awk and exited 2. The parser
+  was reduced to portable independent predicates. The rerun passed in
+  controlled Debug X11 session
+  `fb730640c935aefa4df452ef98529053b28ac4de1cdffe7417e02e24e85e474b`,
+  explicitly finding no init/title/progress/child-exit callback for the source
+  pane after its physical close/dispose boundary.
+- **The complete product-owned API journey is real, not a source grep:** In
+  controlled ReleaseSafe X11 session
+  `28601783ea9bba43aecb2bf2a135ac92191cd415f4c93900c297a1c49033ec93`,
+  the canonical audit passed and the staged product then passed physical
+  close/restore, Ghostty binding-action pane search, and tmux send/read-text
+  journeys against real GTK widgets, Ghostty surfaces, PTYs, and product IPC.
+- **Mutation testing found the exact environment ceiling missing:** The first
+  seven-mutant focused campaign caught five, classified one unviable, and
+  missed `len > 128` to `len >= 128` because tests asserted 129 rejected but
+  not 128 accepted. The exact acceptance assertion was added. The final run
+  caught all six viable mutants, classified one unviable, and missed/timed out
+  none; `outcomes.json` SHA-256 is
+  `e595e35944e53d281b91794f6e73109d07a60af47ccaceaad6bbbb89b2da536d`.
+  The initial mutation baseline also proved why `build/` must remain excluded:
+  with the safe copy policy active, the copied build script needs an explicit
+  absolute `GHOSTTY_LIB_DIR`; the corrected campaign supplied it rather than
+  copying the multi-gigabyte dependency tree.
+- **Full adapter requalification passed:** All three new authoritative cells
+  passed again inside the complete matrix. Product usage ran in controlled X11
+  session
+  `9362c9b5a8ad2cfed7faec5c4e5e415c0323e6a94e50dd6e9c286f3f48ec3164`,
+  callback/drop order in Debug X11 session
+  `061c26730a8f0adc274974fd89d3d386f8cc6e5d1a8af67ecb0948ba8eedb9c4`,
+  and focused configuration in isolated session
+  `7be257c5b45bf17be4fc65d52034f3ff7d522275ae43ed5f88824a86bbc328ba`.
+  The authoritative summary SHA-256 is
+  `dcc0fee1a7d689422c2c38d8eb39096e80d34de5414a2f5190da54bc0b75707a`.
+  Totals are now `PASS=77`, `FAIL=0`, `BLOCKED=5`, `XFAIL=1`, and
+  `NOT_IMPLEMENTED=26`: 25 NOT_IMPLEMENTED declarations were retired across
+  the two consecutive convergence slices. Implemented-local and product
+  boundary pass; release and full Linux qualification correctly remain false.
+- **Valgrind evidence remained governed during adapter qualification:** Debug
+  IBus focus is **PASS with reviewed suppressions**, not an unsuppressed clean
+  result. Raw evidence has 427 errors/contexts, 6,160 definite bytes, and
+  41,428 indirect bytes; reviewed post-suppression evidence has zero for each
+  and 427 suppressed errors/contexts. The reviewed report SHA-256 is
+  `0872a261668b3961266ddb4d7fe903d2a88288346e826af5b1130673c67c7d74`.
+  No suppression changed, and the staged ReleaseSafe product rows remain
+  explicitly unimplemented.
+- **Final diff review caught that compile-fail type contracts were not matrix
+  evidence:** Workspace `--all-targets` tests do not run Rust doc tests, so the
+  existing `GhosttyRuntime` non-Send/non-Sync and `GhosttySurface` non-Send
+  examples had not been exercised by an authoritative cell. All three
+  compile-fail tests passed directly. The callback/ownership cell now runs
+  those compile contracts before its real teardown journey, requiring one
+  final complete matrix rerun before commit rather than relying on prose.
 
 ## AI disclosure
 

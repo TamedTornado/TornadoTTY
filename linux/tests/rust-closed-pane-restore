@@ -143,6 +143,18 @@ set -e
 product_pid=""
 ((status == 0)) || fail "product restore run exited ${status}"
 
+late_source_callback="$(
+    awk '
+        $0 == "zentty-linux: action=close-pane pane=pane-agent" { disposed = 1; next }
+        disposed && $0 == "zentty-linux: terminal-ready-pane=pane-agent" { print; exit }
+        disposed && index($0, "zentty-linux: title-pane=pane-agent ") == 1 { print; exit }
+        disposed && index($0, "zentty-linux: terminal-progress pane=pane-agent ") == 1 { print; exit }
+        disposed && $0 == "zentty-linux: child-exited-pane=pane-agent" { print; exit }
+    ' "${log}"
+)"
+[[ -z "${late_source_callback}" ]] ||
+    fail "disposed pane delivered a late callback: ${late_source_callback}"
+
 [[ "$(grep -Fc 'started subcommand path=/bin/sh pid=' "${log}" || true)" -eq 3 ]] ||
     fail "expected two original real PTYs plus one restored PTY"
 jq -e --arg pane "${restored_pane}" --arg cwd "${working_dir}" '
@@ -153,4 +165,4 @@ jq -e --arg pane "${restored_pane}" --arg cwd "${working_dir}" '
 ' "${state_dir}/restore-snapshot.json" >/dev/null ||
     fail "restored identity or launch context was not persisted"
 
-echo "Rust closed-pane restore passed: ${backend}, pane=${restored_pane}, cwd=real, prefill=real, ownership=real, input=physical"
+echo "Rust closed-pane restore passed: ${backend}, pane=${restored_pane}, cwd=real, prefill=real, ownership=real, callbacks=quiescent, input=physical"

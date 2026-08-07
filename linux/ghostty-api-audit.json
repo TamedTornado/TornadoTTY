@@ -254,9 +254,9 @@
         "teardown":"Widget must be destroyed/finalized and GLib drained before runtime_free.",
         "configuration":"Command is interpreted as a POSIX shell string; title is copied. No typed argv, CWD, environment, config object, or error detail.",
         "symbol_version":"GHOSTTY_GTK_EMBED_1.0",
-        "current_callers":["crates/zentty-ghostty/src/lib.rs create_surface","crates/zentty-linux/src/main.rs","linux/tests/api-contract.c"],
-        "proven_current_need":"Required by the staged Rust product for single and simultaneous terminal surfaces.",
-        "predicted_product_need":"Yes capability, no signature: #13 explicitly requires typed command/CWD/environment/config without shell interpolation.",
+        "current_callers":["retired C qualification host","linux/tests/api-contract.c"],
+        "proven_current_need":"ABI qualification only; the Rust binding excludes this legacy constructor and uses the options constructor.",
+        "predicted_product_need":"None; source-compatible command, CWD, and environment construction use the options constructor.",
         "evidence":{"positive":["Wayland/X11 Rust single/multi PTY/output/title/resize/exit","staged Rust bundle"],"negative":["null/foreign/stale runtime rejected"],"misuse":["uninitialized returned surface operations rejected"],"regression":["explicit non-default GtkApplication ownership in the Rust product"]},
         "missing_evidence":["Explicit transfer-none/container/full declaration and binding test","Typed argv/CWD/environment/config","constructor error identity","allocation failure","Rust ownership/drop under fault and memory instrumentation","live-surface/runtime misuse","public documentation of GObject type and signals"],
         "recommendation":"Retain the construction capability but rework/minimize the signature after real Rust product tests."
@@ -344,9 +344,9 @@
         "teardown":"Requires a live initialized core surface.",
         "configuration":"UTF-8 NUL-terminated input only; cannot represent embedded NUL or distinguish text from key/action semantics.",
         "symbol_version":"GHOSTTY_GTK_EMBED_1.0",
-        "current_callers":["crates/zentty-ghostty/src/lib.rs safe adapter","linux/tests/api-contract.c"],
-        "proven_current_need":"Qualification-host control only; controlled physical-key input bypasses it.",
-        "predicted_product_need":"Possible per #13 text boundary, but not proven by a real command/paste product action.",
+        "current_callers":["crates/zentty-ghostty/src/lib.rs send_text","crates/zentty-linux/src/application_shell.rs restore prefill","crates/zentty-linux/src/application_shell/tmux_runtime.rs send-keys","linux/tests/api-contract.c"],
+        "proven_current_need":"Required by real restore prefill and source-compatible tmux send-keys product paths.",
+        "predicted_product_need":"Current product need is proven; keep programmatic text distinct from physical key and IME behavior.",
         "evidence":{"positive":["Wayland/X11 interaction PTY acknowledgement"],"negative":["null/foreign/uninitialized/null text rejected"],"misuse":["pre-init text rejected"],"regression":["interaction repeated lifecycle"]},
         "missing_evidence":["Real product caller","invalid UTF-8/empty/large input","partial/backpressure behavior","stale pointer","distinction from physical key/IME path"],
         "recommendation":"Defer; remove if the Rust product does not need programmatic text injection."
@@ -380,7 +380,7 @@
         "teardown":"Surface must outlive the async request/callback; header does not define cancellation or callback-after-drop behavior.",
         "configuration":"Always the standard clipboard and paste action; no primary clipboard or policy parameter.",
         "symbol_version":"GHOSTTY_GTK_EMBED_1.0",
-        "current_callers":["crates/zentty-ghostty/src/lib.rs safe adapter","linux/tests/api-contract.c"],
+        "current_callers":["retired C qualification host","linux/tests/api-contract.c"],
         "proven_current_need":"Qualification-host control only.",
         "predicted_product_need":"Possible per #13 clipboard boundary, but ordinary widget shortcuts may already cover product paste.",
         "evidence":{"positive":["Wayland/X11 interaction clipboard round trip"],"negative":["null/foreign/uninitialized rejected"],"misuse":["pre-init request rejected"],"regression":["repeated interaction and Debug Valgrind cells"]},
@@ -404,14 +404,39 @@
       "The header and version script are Linux/ELF-oriented; visibility/version behavior on other GTK targets is unqualified."
     ]
   },
+  "rust_binding": {
+    "declared_function_count": 9,
+    "excluded_exports": [
+      {"symbol":"ghostty_gtk_embed_runtime_new","reason":"The product always selects an explicit typed async backend; only the retired C probe uses this convenience constructor."},
+      {"symbol":"ghostty_gtk_embed_surface_new","reason":"The product requires copied CWD and per-pane environment options; only the retired C probe uses the legacy constructor."},
+      {"symbol":"ghostty_gtk_embed_surface_request_paste","reason":"The product uses Ghostty binding actions and physical input; no safe wrapper or product caller needs the speculative paste export."}
+    ],
+    "operations": [
+      {"symbol":"ghostty_gtk_embed_runtime_new_with_async_backend","safe_owner":{"path":"crates/zentty-ghostty/src/lib.rs","needle":"sys::ghostty_gtk_embed_runtime_new_with_async_backend"},"product_callers":[{"path":"crates/zentty-linux/src/main.rs","needle":"GhosttyRuntime::new"}],"real_journeys":["linux/tests/rust-closed-pane-restore"]},
+      {"symbol":"ghostty_gtk_embed_runtime_free","safe_owner":{"path":"crates/zentty-ghostty/src/lib.rs","needle":"sys::ghostty_gtk_embed_runtime_free"},"product_callers":[{"path":"crates/zentty-linux/src/application_shell.rs","needle":"release_surfaces"}],"real_journeys":["linux/tests/rust-closed-pane-restore"]},
+      {"symbol":"ghostty_gtk_embed_runtime_tick","safe_owner":{"path":"crates/zentty-ghostty/src/lib.rs","needle":"sys::ghostty_gtk_embed_runtime_tick"},"product_callers":[{"path":"crates/zentty-linux/src/main.rs","needle":"ticking_runtime.tick()"}],"real_journeys":["linux/tests/rust-closed-pane-restore"]},
+      {"symbol":"ghostty_gtk_embed_surface_new_with_options","safe_owner":{"path":"crates/zentty-ghostty/src/lib.rs","needle":"sys::ghostty_gtk_embed_surface_new_with_options"},"product_callers":[{"path":"crates/zentty-linux/src/application_shell.rs","needle":"runtime.create_surface(&config)"}],"real_journeys":["linux/tests/rust-closed-pane-restore"]},
+      {"symbol":"ghostty_gtk_embed_surface_grab_focus","safe_owner":{"path":"crates/zentty-ghostty/src/lib.rs","needle":"sys::ghostty_gtk_embed_surface_grab_focus"},"product_callers":[{"path":"crates/zentty-linux/src/application_shell.rs","needle":"surface.grab_focus()"}],"real_journeys":["linux/tests/rust-closed-pane-restore"]},
+      {"symbol":"ghostty_gtk_embed_surface_close","safe_owner":{"path":"crates/zentty-ghostty/src/lib.rs","needle":"sys::ghostty_gtk_embed_surface_close"},"product_callers":[{"path":"crates/zentty-linux/src/application_shell.rs","needle":"surface.dispose()"}],"real_journeys":["linux/tests/rust-closed-pane-restore"]},
+      {"symbol":"ghostty_gtk_embed_surface_send_text","safe_owner":{"path":"crates/zentty-ghostty/src/lib.rs","needle":"sys::ghostty_gtk_embed_surface_send_text"},"product_callers":[{"path":"crates/zentty-linux/src/application_shell.rs","needle":"surface.send_text(&prefill)"},{"path":"crates/zentty-linux/src/application_shell/tmux_runtime.rs","needle":"surface.send_text(&text)"}],"real_journeys":["linux/tests/rust-closed-pane-restore","linux/tests/rust-tmux-compat-product"]},
+      {"symbol":"ghostty_gtk_embed_surface_binding_action","safe_owner":{"path":"crates/zentty-ghostty/src/lib.rs","needle":"sys::ghostty_gtk_embed_surface_binding_action"},"product_callers":[{"path":"crates/zentty-linux/src/application_shell.rs","needle":"surface.perform_binding_action(binding)"}],"real_journeys":["linux/tests/rust-pane-search"]},
+      {"symbol":"ghostty_gtk_embed_surface_read_text","safe_owner":{"path":"crates/zentty-ghostty/src/lib.rs","needle":"sys::ghostty_gtk_embed_surface_read_text"},"product_callers":[{"path":"crates/zentty-linux/src/application_shell/tmux_runtime.rs","needle":"read_text(TextExtent::Screen)"}],"real_journeys":["linux/tests/rust-tmux-compat-product"]}
+    ],
+    "callback_owners": [
+      {"safe_owner":{"path":"crates/zentty-ghostty/src/lib.rs","needle":"pub fn on_initialized"},"product_caller":{"path":"crates/zentty-linux/src/application_shell.rs","needle":"surface.on_initialized"},"real_journey":"linux/tests/rust-closed-pane-restore"},
+      {"safe_owner":{"path":"crates/zentty-ghostty/src/lib.rs","needle":"pub fn on_title_changed"},"product_caller":{"path":"crates/zentty-linux/src/application_shell.rs","needle":"surface.on_title_changed"},"real_journey":"linux/tests/rust-closed-pane-restore"},
+      {"safe_owner":{"path":"crates/zentty-ghostty/src/lib.rs","needle":"pub fn on_progress_report"},"product_caller":{"path":"crates/zentty-linux/src/application_shell.rs","needle":"surface.on_progress_report"},"real_journey":"linux/tests/rust-agent-ipc"},
+      {"safe_owner":{"path":"crates/zentty-ghostty/src/lib.rs","needle":"pub fn on_child_exited"},"product_caller":{"path":"crates/zentty-linux/src/application_shell.rs","needle":"surface.on_child_exited"},"real_journey":"linux/tests/rust-closed-pane-restore"}
+    ]
+  },
   "proposed_matrix_cells": [
     {"id":"ghostty-api-audit-inventory","requirement_id":"ZL-11-GHOSTTY-API-AUDIT","test_id":"TEST-GHOSTTY-API-AUDIT","integration_owner":"#11 implementation owner registers the mapping in #12 traceability before adding the matrix row.","purpose":"Validate exact bases/ranges, every normalized file patch hash/hunk count, and the header/Zig/version-script symbol allowlist.","status_proposal":"PASS","claim":"Static inventory identity only; no runtime, ABI compatibility, product, or qualification claim.","command":"GHOSTTY_SOURCE_DIR=/path/to/pinned/ghostty linux/tests/ghostty-api-audit --self-test"},
     {"id":"ghostty-abi-version-node","requirement_id":"ZL-11-GHOSTTY-ABI-COMPAT","test_id":"TEST-GHOSTTY-ABI-VERSION","integration_owner":"#11 ABI owner and #12 traceability/matrix owner.","purpose":"Assert all and only twelve public exports carry the intended version node.","status_proposal":"NOT_IMPLEMENTED"},
     {"id":"ghostty-async-backend-abi-representation","requirement_id":"ZL-11-GHOSTTY-ABI-COMPAT","test_id":"TEST-GHOSTTY-ASYNC-BACKEND-ABI","integration_owner":"#11 ABI owner supplies the fixed representation; #13 sys-binding owner supplies Rust proof; #12 owns the reconciled matrix row.","purpose":"Deterministically reject stale generated-header drift, then compile the pinned source header as C17 and C++17 with default flags and -fshort-enums and report the public enum size.","status_proposal":"XFAIL","tracking":"DOGFOOD-2026-08-02-GHOSTTY-ASYNC-ENUM-ABI","command":"linux/tests/ghostty-async-backend-abi-test && linux/tests/ghostty-async-backend-abi","expected_exit":99,"prerequisite_exit":77,"defect":"Current public C enum versus Zig c_int is representation-unsafe under -fshort-enums.","evidence_scope":"Reproduces the C/C++ header representation change only; it makes no real-library call, Rust-layout, or Rust-call claim.","repair_acceptance_status":"NOT_IMPLEMENTED","repair_acceptance":"After fixing the public representation, prove C17, C++17, and raw Rust size/alignment and real-library call behavior with default and -fshort-enums modes before converting this cell to PASS."},
     {"id":"ghostty-runtime-initialization-order","requirement_id":"ZL-11-GHOSTTY-API-AUDIT","test_id":"TEST-GHOSTTY-RUNTIME-INIT-ORDER","integration_owner":"#11 API-audit owner defines failure behavior; #13 safe-adapter owner encodes it; #12 owner maps the proposed test into its existing grammar.","purpose":"In fresh processes, prove the runtime is created before gtk_init/any GTK object and that reversed order fails safely and actionably.","status_proposal":"NOT_IMPLEMENTED"},
-    {"id":"rust-ghostty-api-product-usage","requirement_id":"ZL-13-RUST-GHOSTTY-ADAPTER","test_id":"TEST-RUST-GHOSTTY-PRODUCT-USAGE","integration_owner":"#13 adapter owner with #11/#5 review owners and #12 traceability owner.","purpose":"Trace every retained operation to a real zentty-ghostty safe-wrapper and zentty-linux caller.","status_proposal":"NOT_IMPLEMENTED"},
-    {"id":"rust-ghostty-callback-drop-order","requirement_id":"ZL-13-RUST-GHOSTTY-ADAPTER","test_id":"TEST-RUST-GHOSTTY-CALLBACK-DROP","integration_owner":"#13 adapter owner registers the product-boundary cell through #12.","purpose":"Fault callback during teardown/child exit and prove no callback runs after Rust owner drop.","status_proposal":"NOT_IMPLEMENTED"},
-    {"id":"rust-ghostty-config-construction","requirement_id":"ZL-13-RUST-GHOSTTY-ADAPTER","test_id":"TEST-RUST-GHOSTTY-CONFIG","integration_owner":"#13 adapter owner registers the product-boundary cell through #12.","purpose":"Prove typed argv, CWD, environment, and approved config without shell-string interpolation.","status_proposal":"NOT_IMPLEMENTED"},
+    {"id":"rust-ghostty-api-product-usage","requirement_id":"ZL-13-RUST-GHOSTTY-ADAPTER","test_id":"TEST-RUST-GHOSTTY-PRODUCT-USAGE","integration_owner":"#13 adapter owner with #11/#5 review owners and #12 traceability owner.","purpose":"Trace every retained operation to a real zentty-ghostty safe-wrapper and zentty-linux caller.","status_proposal":"PASS"},
+    {"id":"rust-ghostty-callback-drop-order","requirement_id":"ZL-13-RUST-GHOSTTY-ADAPTER","test_id":"TEST-RUST-GHOSTTY-CALLBACK-DROP","integration_owner":"#13 adapter owner registers the product-boundary cell through #12.","purpose":"Fault callback during teardown/child exit and prove no callback runs after Rust owner drop.","status_proposal":"PASS"},
+    {"id":"rust-ghostty-config-construction","requirement_id":"ZL-13-RUST-GHOSTTY-ADAPTER","test_id":"TEST-RUST-GHOSTTY-CONFIG","integration_owner":"#13 adapter owner registers the product-boundary cell through #12.","purpose":"Prove source-compatible native command, CWD, environment, and approved config encoding without host shell interpolation.","status_proposal":"PASS"},
     {"id":"ghostty-abi-old-new-mismatch","requirement_id":"ZL-11-GHOSTTY-ABI-COMPAT","test_id":"TEST-GHOSTTY-ABI-MISMATCH","integration_owner":"#11 ABI/package owner with #12 traceability owner.","purpose":"Stage deliberate incompatible header/library pairs and require pre-use diagnostic failure.","status_proposal":"NOT_IMPLEMENTED"}
   ]
 }
