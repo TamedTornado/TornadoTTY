@@ -32,6 +32,24 @@ ghostty_revision="$(sed -n 's/^revision=//p' "${ghostty_lock}")"
 [[ "${ghostty_revision}" =~ ^[0-9a-f]{40}$ ]] ||
     fail "Ghostty lock must contain exactly one full SHA-1 revision"
 
+contract_workspace_edges="$(jq -r '.allowed_workspace_edges | sort | .[]' "${contract}")"
+actual_workspace_edges="$(
+    cargo metadata --manifest-path "${repo_root}/Cargo.toml" --no-deps --locked --format-version 1 |
+        jq -r '
+            .workspace_members as $members |
+            [
+                .packages[] |
+                select(.id as $id | $members | index($id)) |
+                .name as $from |
+                .dependencies[] |
+                select(.path != null) |
+                "\($from)->\(.name)"
+            ] | sort | .[]
+        '
+)"
+[[ "${actual_workspace_edges}" == "${contract_workspace_edges}" ]] ||
+    fail "Cargo workspace dependency graph differs from architecture contract"
+
 jq -e --arg ghostty_revision "${ghostty_revision}" '
     .schema_version == 1 and
     .contract_id == "zentty-linux-product-architecture" and
@@ -68,7 +86,8 @@ jq -e --arg ghostty_revision "${ghostty_revision}" '
             $crate.forbidden_dependency_classes | index($item) != null)
     ) and
     (.workspace_crates[] | select(.name == "zentty-agent-ipc") |
-        .workspace_dependencies == ["zentty-core"] and .unsafe_policy == "forbid") and
+        (.workspace_dependencies | sort) == (["zentty-core", "zentty-tmux-compat"] | sort) and
+        .unsafe_policy == "forbid") and
     (.workspace_crates[] | select(.name == "zentty-tmux-compat") | . as $crate |
         $crate.workspace_dependencies == [] and
         $crate.unsafe_policy == "forbid" and
@@ -80,7 +99,7 @@ jq -e --arg ghostty_revision "${ghostty_revision}" '
         .workspace_dependencies == ["zentty-ghostty-sys"] and
         .unsafe_policy == "private-reviewed-ffi-modules-only") and
     (.workspace_crates[] | select(.name == "zentty-linux") |
-        (.workspace_dependencies | sort) == (["zentty-agent-ipc", "zentty-core", "zentty-ghostty"] | sort) and
+        (.workspace_dependencies | sort) == (["zentty-agent-ipc", "zentty-core", "zentty-ghostty", "zentty-tmux-compat"] | sort) and
         .unsafe_policy == "forbid") and
     (.workspace_crates[] | select(.name == "zentty-test-support") |
         .shipped == false and .unsafe_policy == "forbid") and

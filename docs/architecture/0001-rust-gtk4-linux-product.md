@@ -96,9 +96,11 @@ updated machine contract.
 | Crate | Responsibility | Allowed workspace dependencies | Forbidden |
 | --- | --- | --- | --- |
 | `zentty-core` | Workspace/worklane/pane state, typed commands, invariants, schema/migrations, agent-state projection, platform-service traits and pure request/result types | None | GTK, GLib/GObject, Ghostty FFI, Linux-only APIs, process/global environment reads |
+| `zentty-agent-ipc` | Private Unix-socket transport, capability authentication, hook adapters, helper CLI | `zentty-core`, `zentty-tmux-compat` | GTK, Ghostty FFI, product UI state |
+| `zentty-tmux-compat` | Pure tmux command/format/key parsing and bounded compatibility state | None | GTK, Ghostty FFI, socket transport, product UI state, PTY ownership |
 | `zentty-ghostty-sys` | Audited raw declarations matching Ghostty's pinned exported downstream header, opaque native types, constants, and native link metadata | None | Product types, gtk4-rs wrappers, policy, convenience behavior |
 | `zentty-ghostty` | Safe `GhosttyRuntime`/`GhosttySurface` API, GObject transfer, callbacks, thread-affinity, error mapping | `zentty-ghostty-sys` | Workspace state, commands, agent/worklane concepts |
-| `zentty-linux` | Shipped binary, GTK application/windows/views, composition root, Linux platform-service implementations and lifecycle orchestration | `zentty-core`, `zentty-ghostty` | Direct `zentty-ghostty-sys`, test-support, product behavior selected only by test environment variables |
+| `zentty-linux` | Shipped binary, GTK application/windows/views, composition root, Linux platform-service implementations and lifecycle orchestration | `zentty-core`, `zentty-agent-ipc`, `zentty-tmux-compat`, `zentty-ghostty` | Direct `zentty-ghostty-sys`, test-support, product behavior selected only by test environment variables |
 | `zentty-test-support` | Non-shipped controlled child programs, isolated XDG layouts, receipts, and external product drivers | `zentty-core`, `zentty-ghostty` | Direct raw FFI, production feature branches, being linked by shipped crates |
 
 The only allowed workspace edges are:
@@ -106,6 +108,10 @@ The only allowed workspace edges are:
 ```text
 zentty-linux ------------> zentty-core
       |                         (no workspace dependencies)
+      +------------------> zentty-agent-ipc --> zentty-tmux-compat
+      |                         |
+      |                         +-----------> zentty-core
+      +------------------> zentty-tmux-compat
       +------------------> zentty-ghostty --> zentty-ghostty-sys
 
 zentty-test-support -----> zentty-core

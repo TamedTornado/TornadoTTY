@@ -35,6 +35,16 @@ jq '(.workspace_crates[] | select(.name == "zentty-core") | .workspace_dependenc
 run_expect_failure invalid-edge "architecture contract invariants failed" \
     "ZENTTY_ARCHITECTURE_CONTRACT=${invalid_edge}"
 
+missing_real_edge="${temp_dir}/missing-real-edge.json"
+jq '
+    (.workspace_crates[] | select(.name == "zentty-agent-ipc") |
+        .workspace_dependencies) -= ["zentty-tmux-compat"] |
+    .allowed_workspace_edges -= ["zentty-agent-ipc->zentty-tmux-compat"]
+' "${source_contract}" >"${missing_real_edge}"
+run_expect_failure missing-real-edge \
+    "Cargo workspace dependency graph differs from architecture contract" \
+    "ZENTTY_ARCHITECTURE_CONTRACT=${missing_real_edge}"
+
 unsafe_core="${temp_dir}/unsafe-core.json"
 jq '(.workspace_crates[] | select(.name == "zentty-core") | .unsafe_policy) = "allow"' \
     "${source_contract}" >"${unsafe_core}"

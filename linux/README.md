@@ -40,9 +40,14 @@ application-embedded scenario: `rust-source-ux-x11` and
 and reorder interactions, while `rust-session-restore` proves controlled X11
 and input-capable Cage/Wayland persistence, background agents, physical visits,
 clean relaunch, and cancellation. These scenarios reject an ambient desktop.
-Exact divider
-sizing, the source contextual cross-worklane move affordance, and the remaining
-rich sidebar states are not implemented, so the broad product-worklane
+The two X11 feature journeys and each installed staged-shell journey are
+explicit authoritative matrix cells; the feature-inventory runner's negative
+self-tests are part of `qualify-local`. Maintained evidence therefore cannot
+remain prose-only or silently rot outside the gate. Missing Fish or Nushell is
+reported as `BLOCKED`, not converted into a passing shell-integration result.
+Exact divider sizing, the source contextual cross-worklane move affordance,
+and the remaining rich sidebar states are not implemented, so the broad
+product-worklane
 qualification cells remain `NOT_IMPLEMENTED`. The underlying same-window move
 model and parameterized GTK action are implemented and covered with a clean
 snapshot; no temporary text toolbar button was added for that action.

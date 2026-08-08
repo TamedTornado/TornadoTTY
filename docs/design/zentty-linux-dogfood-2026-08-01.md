@@ -9282,6 +9282,67 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   parent-sync code review, and mode-0600 assertion remain necessary evidence
   rather than being overstated as mutation coverage.
 
+### 2026-08-08 — Quality and architecture drift audit begins red
+
+- **The product has not accreted a second implementation:** The inventory found
+  one `WorkspaceState`, one persisted `SessionRestoreStore`/
+  `SnapshotPersistence` path, one agent IPC transport, one pure tmux
+  compatibility library, and one GTK/Ghostty composition root. Closed-pane
+  restore is deliberately transient undo state, not a competing restart store.
+  No C product host, Electron renderer, alternate test product, backup journal,
+  or application-embedded scenario mode remains.
+- **The architecture validator had a real blind spot:** The machine contract
+  named all seven crates but omitted the real
+  `zentty-agent-ipc -> zentty-tmux-compat` and
+  `zentty-linux -> zentty-tmux-compat` edges. It passed because it compared the
+  contract only with itself. The repair updates the ADR/contract and makes the
+  validator derive the actual local-path graph from locked Cargo metadata. A
+  new negative case removes an edge consistently from both contract fields;
+  that internally valid lie must still fail against Cargo.
+- **Four maintained test entry points were outside the authoritative gate:**
+  `feature-inventory-test`, `rust-source-ux-x11`,
+  `rust-sidebar-management-x11`, and `staged-shell-integration` could rot while
+  `qualify-local` stayed green. Runner self-testing is now attached to the
+  support phase. Real product and real shell-process journeys receive explicit
+  matrix cells rather than another aggregate runner. Fish 4+ and Nushell are
+  absent locally, so their implemented journeys are `BLOCKED`; absence is not
+  a pass.
+- **The orphaned journey had already drifted:** The private-Xvfb source UX
+  journey passed, but sidebar management failed before repair because its drag
+  began at a coordinate that no longer intersected the worklane header after a
+  deterministic 40px reveal scroll. There was no `worklane-drag=begin` receipt.
+  A disposable run using y=115 passed the real GTK DnD, reorder, stable-row,
+  focus, and teardown assertions. The checked-in repair changes only that
+  pickup coordinate and documents why.
+- **Static and focused evidence is otherwise healthy:** Formatting and
+  workspace Clippy passed. The unchanged workspace suite passed outside the
+  restricted tool sandbox; the sandbox-only run failed eight real Unix-socket
+  cases with `EPERM`, which was not treated as product evidence. Architecture,
+  orchestration, feature-inventory, Bash, Zsh, and source-UX focused checks
+  passed. The complete matrix has not yet rerun, so the new declared cells are
+  not final evidence.
+- **One structural risk remains:** `application_shell.rs` is 3,589 lines and
+  coordinates too many UI concerns. It is a single system rather than parallel
+  systems, but adding persistence scheduling or more platform services there
+  would create a god object. A separate bounded decomposition slice must retain
+  one model/store/terminal-owner authority; this governance repair will not
+  disguise a large production refactor. GH-25 now owns that work with explicit
+  characterization, lifecycle, mutation, architecture, and full-matrix gates.
+- **The repaired authority passed end to end:** The full `qualify-local` gate
+  ran all 87 executable PASS cells successfully, including the newly attached
+  feature-inventory negative suite, both real private-Xvfb product journeys,
+  and real Bash/Zsh startup processes. Declared totals are `PASS=87`,
+  `FAIL=0`, `BLOCKED=7`, `XFAIL=1`, and `NOT_IMPLEMENTED=21`. Implemented-local
+  and product-boundary qualification pass; release and full Linux
+  qualification correctly remain false. Summary SHA-256 is
+  `f30dffea266dd9f9aac7e04d96a9b884b0c18464280d4994bee1b905122d5bfa`.
+- **Valgrind remains PASS with reviewed suppressions:** The governed Debug IBus
+  receipt contains 427 raw errors/contexts, 6,240 definite bytes, and 41,461
+  indirect bytes. Post-suppression totals are zero with all 427 contexts
+  accounted for. Report SHA-256 is
+  `5929447a90d6f6be903dee61121e001ea61a9e56dcfef9457fc209a440459333`;
+  no suppression or suppression manifest changed.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were

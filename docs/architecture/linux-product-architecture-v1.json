@@ -45,7 +45,8 @@
         "agent-wrapper-exec-and-real-binary-resolution"
       ],
       "workspace_dependencies": [
-        "zentty-core"
+        "zentty-core",
+        "zentty-tmux-compat"
       ],
       "forbidden_dependency_classes": [
         "gtk",
@@ -126,7 +127,8 @@
       "workspace_dependencies": [
         "zentty-core",
         "zentty-agent-ipc",
-        "zentty-ghostty"
+        "zentty-ghostty",
+        "zentty-tmux-compat"
       ],
       "forbidden_dependency_classes": [
         "zentty-ghostty-sys-direct",
@@ -157,10 +159,12 @@
   ],
   "allowed_workspace_edges": [
     "zentty-agent-ipc->zentty-core",
+    "zentty-agent-ipc->zentty-tmux-compat",
     "zentty-ghostty->zentty-ghostty-sys",
     "zentty-linux->zentty-agent-ipc",
     "zentty-linux->zentty-core",
     "zentty-linux->zentty-ghostty",
+    "zentty-linux->zentty-tmux-compat",
     "zentty-test-support->zentty-core",
     "zentty-test-support->zentty-ghostty"
   ],

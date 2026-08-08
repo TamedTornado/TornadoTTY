@@ -103,7 +103,10 @@ grep -Fxq 'zentty-linux: action=next-worklane worklane=worklane-2 pane=pane-2' "
 
 # Drag worklane 1 between worklanes 2 and 3 through GTK DnD. The insertion slot is
 # calculated after excluding the dragged ID, exactly like the source model.
-xdotool mousemove --window "${window_id}" 120 128 mousedown 1
+# Worklane 2 selection scrolls the first card upward by the controlled 40px
+# reveal offset. Pick up worklane 1 through its still-visible header rather
+# than the old pre-scroll coordinate, which now lands outside the drag source.
+xdotool mousemove --window "${window_id}" 120 115 mousedown 1
 sleep 0.25
 for drag_y in 165 205 245 285 325 350; do
     xdotool mousemove --sync --window "${window_id}" 120 "${drag_y}"
