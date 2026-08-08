@@ -5,6 +5,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 validator="${repo_root}/docs/architecture/tests/validate-application-shell-ownership"
 contract="${repo_root}/docs/architecture/application-shell-responsibilities-v1.json"
 source_file="${repo_root}/crates/zentty-linux/src/application_shell.rs"
+pane_runtime_file="${repo_root}/crates/zentty-linux/src/application_shell/pane_runtime.rs"
 temp_dir="$(mktemp -d)"
 trap 'rm -rf -- "${temp_dir}"' EXIT
 
@@ -60,6 +61,16 @@ jq '(.owned_module_functions.action_router) |= map(select(. != "populate"))' \
     "${contract}" >"${temp_dir}/missing-router-function.json"
 expect_failure missing-router-function "action router function inventory differs" \
     "ZENTTY_APPLICATION_SHELL_OWNERSHIP_CONTRACT=${temp_dir}/missing-router-function.json"
+
+jq '(.owned_module_functions.pane_runtime_coordinator) |= map(select(. != "remove"))' \
+    "${contract}" >"${temp_dir}/missing-pane-runtime-function.json"
+expect_failure missing-pane-runtime-function "pane runtime function inventory differs" \
+    "ZENTTY_APPLICATION_SHELL_OWNERSHIP_CONTRACT=${temp_dir}/missing-pane-runtime-function.json"
+
+sed '/surfaces: BTreeMap<String, GhosttySurface>,/a\    shadow_surfaces: BTreeMap<String, GhosttySurface>,' \
+    "${pane_runtime_file}" >"${temp_dir}/shadow-pane-registry.rs"
+expect_failure shadow-pane-registry "pane runtime source hash" \
+    "ZENTTY_PANE_RUNTIME_SOURCE=${temp_dir}/shadow-pane-registry.rs"
 
 sed '/pub(super) const ACTION_TOGGLE_SIDEBAR/a\pub(super) const ACTION_UNTRACKED: &str = "untracked";' \
     "${repo_root}/crates/zentty-linux/src/application_shell/action_router.rs" \

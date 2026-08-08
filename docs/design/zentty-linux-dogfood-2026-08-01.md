@@ -9504,6 +9504,127 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   and `c1ebfc42f11451e1843912f44608998bc2546692b8039d1af40d544a315ce6b0`.
   No suppression or manifest changed.
 
+### 2026-08-08 — GH-28 pane and Ghostty lifecycle extraction
+
+- **The composition root had seven pieces of one implicit authority:** The
+  surface map, pane-frame map, focus-controller map, Ghostty runtime lease,
+  launch command, live-child counter, and pending restore prefills all lived
+  directly in `ApplicationShell`. tmux delivery and UI rendering also reached
+  those maps. They are now one `PaneRuntimeCoordinator`; the shell and tmux
+  bridge receive only narrow pane-ID lookups and lifecycle operations. No
+  second registry, alternate product, or test-only terminal was added.
+- **Lifecycle decisions were pinned before qualification:** Duplicate surface
+  admission fails, absent panes admit one registration, stale/repeated removal
+  is a no-op, active child exit closes the durable pane, stale callbacks are
+  ignored, and shutdown child exit disposes without a second workspace
+  mutation. Seven focused tests cover those branches. The coordinator owns
+  native construction, callback/controller registration, frame attachment,
+  disposal, prefill delivery, and live-child accounting.
+- **Review found a real restore-transaction defect:** If native/configuration
+  construction failed after `WorkspaceState` had restored a closed pane, the
+  old rollback path treated it as a natural child exit. That removed the new
+  pane without recapturing it, silently consuming Undo Close Pane history. A
+  dedicated core transition now rolls failed restoration back onto the closed
+  stack, and a deterministic test proves a second attempt succeeds with a new
+  pane identity.
+- **Shutdown accounting was made explicit:** A child-exit callback that lands
+  after shutdown starts now removes and disposes that registered surface
+  immediately. The later aggregate release therefore cannot account for the
+  same child twice. Surface disposal records its result but still completes
+  coordinator accounting before returning an error.
+- **The ownership validator moved with the authority:** The machine contract
+  now records `pane_runtime` as the one shell field, pins the coordinator
+  source hash and all 25 owned functions, and marks GH-28's owner existing.
+  Negative tests reject a missing coordinator function and any unreviewed
+  change that could introduce a shadow surface registry. ADR 0002 records the
+  construction, callback, teardown, and single-authority decisions.
+- **A direct mutation invocation failed for the documented reason:** I first
+  invoked `cargo mutants` directly. Its safe copy correctly omitted ignored
+  `build/`, so the scratch tree could not locate the pinned Ghostty library;
+  the baseline failed and no mutant ran. This was operator error, not a test or
+  product failure. The supported `linux/tests/mutate-rust` wrapper supplies the
+  external pinned library while retaining `gitignore=true` and
+  `copy_target=false`. Its first proper run made both enum-return mutants
+  unviable because the private decision enums lacked `Default`; safety-biased
+  defaults were added solely so mutation could make viable semantic changes.
+  That rerun caught both selected admission/removal mutants in 37 seconds; the
+  final campaign including shutdown child-exit disposition caught all four
+  selected mutants in 39 seconds.
+- **The first ad-hoc Wayland command was honestly rejected as X11 evidence:**
+  `nested-wayland-input` builds its Wayland compositor inside private Xvfb. I
+  omitted an explicit child `GDK_BACKEND=wayland`, so the real harness reported
+  the product journey as X11 rather than allowing it to masquerade as Wayland.
+  The corrected command produced a controlled Wayland receipt and passed.
+- **Focused real-system evidence is green:** Fresh ReleaseSafe X11 and Debug
+  Wayland journeys passed real close/restore/prefill, physical input, native
+  ownership, and callback-quiescence checks. Session IDs were respectively
+  `84c974b61be066e556247d041f734456ced7ebcf52d685c340fc2ad66f05fdbb`
+  and `7200c57e8ade6dace71ffd0a9d8fa5668cc23cb7da3bc9482741b2ed2ebb8b42`.
+  The partial-construction journey passed in private X11 session
+  `073e2c7dd4b0547e61c6f58f0f859a69ebe8a6b775e4d8a1b285db6a7ce0b94b`:
+  the first Ghostty surface was real, the second configuration failed at the
+  safe adapter boundary, and the partially built process owner tree leaked no
+  IPC root or clean-exit snapshot. All locked workspace tests and strict
+  all-target Clippy passed.
+- **Native forced-null remains an honest boundary:** The pinned Ghostty API has
+  no supported deterministic input that makes an otherwise valid surface
+  constructor return null. Resource exhaustion would not be controlled, and a
+  downstream fault-injection hook would contaminate the product boundary. The
+  safe adapter maps a native null to `SurfaceConstructorFailed`, but this slice
+  does not describe that branch as a real forced-native-failure integration
+  test. The real partial-construction test remains configuration rejection
+  after one live native surface.
+- **The first complete matrix correctly rejected stale evidence ownership:**
+  `ghostty-api-audit-inventory` and `rust-ghostty-api-product-usage` failed
+  because their binding ledger still named `application_shell.rs` as the
+  surface-constructor, disposer, prefill, and callback callsite. The code had
+  moved, but the machine-readable audit had not. The ledger now points those
+  operations to `application_shell/pane_runtime.rs`; it retains shell and tmux
+  callsites only where those operations genuinely remain. The audit
+  normalization self-test passed, and the repaired real product-usage journey
+  passed terminal close/restore, search, and tmux delivery in private X11
+  session `e63142ec1137f96550f474137d56939b1ec9e6d53c0da749e4d1eaf328a0d81c`.
+  No product assertion was weakened.
+- **The mandatory rerun exposed a real allocation feedback bug:** Debug
+  Wayland/epoll close-and-restore eventually assigned one pane roughly 1,470
+  pixels and the other 4 pixels in a nominal 768-pixel window, then missed the
+  restored PTY title. `pane_viewport_height` was reading the content box it
+  subsequently resized. Each GTK allocation therefore became the next larger
+  "viewport" and the layout diverged. The repair reads the scrolled viewport,
+  the actual external allocation authority. Five fresh controlled Wayland
+  close/restore journeys passed afterward; their final session IDs include
+  `56fa570bb9b30440495ea5fff370a55fb4c674e60cb27b0e2ba7c672be27c612`.
+- **The same rerun exposed a physical DnD synchronization hole:** The sidebar
+  journey sometimes pressed before proving the pointer was over the rendered
+  worklane header; sometimes selection-driven scrolling had moved that header
+  underneath an already stationary pointer, so merely moving within it could
+  not create a fresh enter event. The product now emits a general
+  `worklane-drag=pointer-target` receipt from a real GTK motion controller.
+  The external actor forces one leave, scans only to locate the rendered
+  header, waits for a fresh enter, and performs the drag once. It does not
+  retry the gesture or invoke an internal action. Five independent private-X11
+  repetitions then passed, ending with session
+  `416e048129f8f16ca02300de6418df9d922b6f4b7f96f9195fd04933feb4841e`.
+- **The first final matrix attempt was stopped cleanly for the host reboot:**
+  Qualification had not completed, so no commit or pass claim was made. After
+  reboot, the complete presently executable matrix was restarted from the
+  authoritative runner rather than resuming or substituting partial receipts.
+- **The post-reboot complete matrix passed every executable cell:** Declared
+  totals are `PASS=88`, `FAIL=0`, `BLOCKED=7`, `XFAIL=1`, and
+  `NOT_IMPLEMENTED=21`. Implemented-local and product-boundary qualification
+  pass; release and full Linux qualification remain false because the declared
+  non-PASS cells remain visible. The machine-summary SHA-256 is
+  `76bdc307c67c171eab5ab37f6b41825cc613cfa27e90c2d3bd8a67e52792ed55`.
+- **Valgrind remains PASS with reviewed suppressions, not unsuppressed clean:**
+  The unsuppressed receipt contains 427 errors/contexts, 6,160 definite bytes,
+  and 41,396 indirect bytes. The reviewed effective suppression set accounts
+  for all 427 contexts and the post-suppression totals are zero. The report,
+  raw-receipt, and suppressed-receipt SHA-256 values are respectively
+  `d378422264a4edf1788c59e48afeec9f4cc9bcaba05032ce1b3baa5116292046`,
+  `4ee0939385db8822e7dae42015ef07d8bfbaf3a0ed6de1e56c4a0c2fddbb6e80`,
+  and `1235d4eee582e864c63a8cf6a0ae401918e2326be3da39126a570fa8496bf078`.
+  No suppression or manifest was broadened for this slice.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were

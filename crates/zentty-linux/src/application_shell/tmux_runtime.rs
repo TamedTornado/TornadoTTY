@@ -59,8 +59,8 @@ impl ApplicationShell {
                 .expect("empty compatibility output fits protocol limits"),
             Ok(TmuxProductAction::SendText { pane_id, text }) => shell
                 .borrow()
-                .surfaces
-                .get(&pane_id)
+                .pane_runtime
+                .surface(&pane_id)
                 .ok_or_else(|| format!("pane {pane_id} has no live terminal surface"))
                 .and_then(|surface| surface.send_text(&text).map_err(|error| error.to_string()))
                 .map_or_else(
@@ -140,7 +140,11 @@ impl ApplicationShell {
 
     fn respawn_tmux_surface(shell: &Rc<RefCell<Self>>, plan: &RespawnPlan) -> Result<(), String> {
         shell.borrow_mut().remove_live_surface(&plan.pane_id)?;
-        Self::create_surface_with_command(shell, &plan.pane_id, plan.command.clone())?;
+        super::PaneRuntimeCoordinator::create_surface_with_command(
+            shell,
+            &plan.pane_id,
+            plan.command.clone(),
+        )?;
         let shell = shell.borrow();
         eprintln!("zentty-linux: tmux-respawn pane={}", plan.pane_id);
         shell.render();
@@ -169,8 +173,8 @@ impl ApplicationShell {
         };
         let text = shell
             .borrow()
-            .surfaces
-            .get(&plan.pane_id)
+            .pane_runtime
+            .surface(&plan.pane_id)
             .ok_or_else(|| format!("pane {} has no live terminal surface", plan.pane_id))
             .and_then(|surface| {
                 surface
@@ -338,7 +342,7 @@ impl ApplicationShell {
             }
             (pane_id, pre_team_leader_width)
         };
-        if let Err(error) = Self::create_surface(shell, &pane_id) {
+        if let Err(error) = super::PaneRuntimeCoordinator::create_surface(shell, &pane_id) {
             let mut shell = shell.borrow_mut();
             let _ = shell.state.close_pane_after_child_exit(&pane_id);
             if let Some(original) = original {

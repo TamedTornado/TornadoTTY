@@ -2,9 +2,10 @@
   "schema_version": 1,
   "contract_id": "zentty-application-shell-responsibilities",
   "source": "crates/zentty-linux/src/application_shell.rs",
-  "source_sha256": "fe0dddced013b36baa01a6ea4d157d47459bd864d02543d635172217fd993dd9",
+  "source_sha256": "065d77f44c8a8a6a8fa5e82753cdfe0bf57de50d31e725a0a5d165c5b60da74b",
   "owned_source_sha256": {
-    "crates/zentty-linux/src/application_shell/action_router.rs": "321a6e71c26effce00b51ccb3d505ce3e329a573246fe6345f57768c7e2138a8"
+    "crates/zentty-linux/src/application_shell/action_router.rs": "321a6e71c26effce00b51ccb3d505ce3e329a573246fe6345f57768c7e2138a8",
+    "crates/zentty-linux/src/application_shell/pane_runtime.rs": "abad651a4bad44f78050fcc215678a715cbaf8595d61c31530cec202f3dc3b81"
   },
   "tracking": "GH-26",
   "purpose": "Characterize every ApplicationShell field, method, action, authority, and lifecycle edge before extraction; this contract assigns ownership but does not create a second implementation.",
@@ -25,7 +26,7 @@
     },
     {
       "id": "pane_runtime_coordinator",
-      "status": "planned",
+      "status": "existing",
       "planned_module": "crates/zentty-linux/src/application_shell/pane_runtime.rs",
       "tracking": "GH-28",
       "responsibility": "The sole pane-to-Ghostty-surface projection, callback registrations, transactional construction, focus, child exit, and teardown."
@@ -74,10 +75,7 @@
     },
     {
       "owner": "pane_runtime_coordinator",
-      "fields": [
-        "surfaces", "pane_frames", "focus_controllers", "runtime", "command",
-        "live_children", "pending_prefills"
-      ]
+      "fields": ["pane_runtime"]
     },
     {
       "owner": "agent_event_coordinator",
@@ -127,11 +125,7 @@
         "live_children", "release_surfaces", "create_worklane", "split_focused_pane_right",
         "add_focused_pane_right", "add_focused_pane_left", "split_focused_pane_below",
         "split_focused_pane", "close_focused_pane", "close_worklane", "close_pane",
-        "restore_closed_pane", "create_surface", "create_surface_with_command",
-        "create_surface_configured", "connect_surface_callbacks",
-        "connect_surface_progress_callback", "make_surface_focus_controller", "surface_config",
-        "apply_pending_restore_prefill", "create_pane_frame", "handle_child_exit",
-        "remove_surface", "remove_live_surface", "focus_selected_surface"
+        "restore_closed_pane", "remove_live_surface", "focus_selected_surface"
       ]
     },
     {
@@ -171,6 +165,15 @@
       "install_pane_transfer_action", "install_pane_creation_actions",
       "install_restore_closed_pane_action", "install_search_actions",
       "install_pane_layout_actions", "add_simple_action", "validate_registered_group"
+    ],
+    "pane_runtime_coordinator": [
+      "new", "runtime", "command", "live_children", "surface", "frame", "contains",
+      "insert", "queue_prefill", "cancel_prefill", "take_prefill", "detach_widgets",
+      "remove", "note_child_exit", "release_all", "create_surface",
+      "create_surface_with_command", "create_surface_configured", "surface_config",
+      "connect_surface_callbacks", "connect_surface_progress_callback",
+      "make_surface_focus_controller", "apply_pending_restore_prefill", "create_pane_frame",
+      "handle_child_exit"
     ]
   },
   "action_contract": [

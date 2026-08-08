@@ -380,6 +380,13 @@ fn install_worklane_drag_source(
     summary: &SidebarWorklaneSummary,
     index: usize,
 ) {
+    let motion = gtk::EventControllerMotion::new();
+    let hover_id = summary.worklane_id.clone();
+    motion.connect_enter(move |_, _, _| {
+        eprintln!("zentty-linux: worklane-drag=pointer-target id={hover_id}");
+    });
+    header.add_controller(motion);
+
     let source = gtk::DragSource::new();
     source.set_actions(gtk::gdk::DragAction::MOVE);
     source.set_propagation_phase(gtk::PropagationPhase::Capture);

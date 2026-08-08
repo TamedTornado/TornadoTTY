@@ -1488,6 +1488,13 @@ impl WorkspaceState {
         self.close_pane_at_with_capture(pane_id, 0, false)
     }
 
+    /// Rolls back a pane that was inserted by restore but whose runtime
+    /// surface could not be constructed. Unlike a natural child exit, this
+    /// must put the pane back on the closed-pane stack so the user can retry.
+    pub fn rollback_restored_pane_at(&mut self, pane_id: &str, now: u64) -> ClosePaneOutcome {
+        self.close_pane_at_with_capture(pane_id, now, true)
+    }
+
     pub fn apply_agent_event(&mut self, event: AuthenticatedAgentEvent, now: u64) {
         self.agent_statuses.apply(event, now);
     }

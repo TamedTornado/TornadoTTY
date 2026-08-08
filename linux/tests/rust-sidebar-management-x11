@@ -115,7 +115,26 @@ grep -Fxq 'zentty-linux: action=next-worklane worklane=worklane-2 pane=pane-2' "
 # Worklane 2 selection scrolls the first card upward by the controlled 40px
 # reveal offset. Pick up worklane 1 through its still-visible header rather
 # than the old pre-scroll coordinate, which now lands outside the drag source.
-xdotool mousemove --window "${window_id}" 120 115 mousedown 1
+xdotool keyup ctrl shift alt super
+# Force a real leave before resolving the rendered header. Selection-driven
+# scrolling can move worklane 1 underneath an already stationary pointer; in
+# that case GTK has already emitted enter and moving only within the header
+# cannot produce a fresh synchronization receipt.
+xdotool mousemove --sync --window "${window_id}" 500 70
+sleep 0.05
+pointer_target_before="$(grep -Fxc 'zentty-linux: worklane-drag=pointer-target id=worklane-1' "${log}" || true)"
+pickup_y=""
+for candidate_y in 90 95 100 105 110 115 120 125 130 135 140 145 150; do
+    xdotool mousemove --sync --window "${window_id}" 120 "${candidate_y}"
+    sleep 0.03
+    pointer_target_after="$(grep -Fxc 'zentty-linux: worklane-drag=pointer-target id=worklane-1' "${log}" || true)"
+    if ((pointer_target_after > pointer_target_before)); then
+        pickup_y="${candidate_y}"
+        break
+    fi
+done
+[[ -n "${pickup_y}" ]] || fail "physical pointer did not enter the rendered worklane 1 drag header"
+xdotool mousedown 1
 sleep 0.25
 for drag_y in 165 205 245 285 325 350; do
     xdotool mousemove --sync --window "${window_id}" 120 "${drag_y}"

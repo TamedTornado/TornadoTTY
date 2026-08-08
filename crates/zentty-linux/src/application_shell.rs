@@ -9,15 +9,15 @@ use gtk::prelude::*;
 use zentty_core::{
     ClosePaneOutcome, ColumnRecipe, CommandPaletteItem, PaneLayoutPolicy, PaneRecipe,
     PaneReference, PaneRestoreDraft, PaneRightInsertionBehavior, SidebarWidthPreference,
-    TerminalProgressState, WindowRecipe, WorklaneColor, WorklaneRecipe, WorkspaceState,
+    WindowRecipe, WorklaneColor, WorklaneRecipe, WorkspaceState,
 };
-use zentty_ghostty::{GhosttyRuntime, GhosttySurface, ProgressState, SurfaceConfig};
+use zentty_ghostty::GhosttyRuntime;
 use zentty_tmux_compat::Command as TmuxCommand;
 
 use crate::{
     agent_runtime::AgentRuntime,
     command_palette::CommandPaletteView,
-    pane_controls::{self, PaneControlAction, PaneFrame, PanePresentation},
+    pane_controls::{self, PaneControlAction, PanePresentation},
     pane_scroll_switch::{PaneScrollSwitch, ScrollSwitchResult, ScrollUnit},
     pane_search::{SearchShortcut, resolve_shortcut},
     peek_scroll_navigation::{
@@ -35,6 +35,7 @@ use crate::{
 };
 
 mod action_router;
+mod pane_runtime;
 mod tmux_runtime;
 
 use action_router::{
@@ -52,6 +53,7 @@ use action_router::{
     ACTION_RESET_PANE_LAYOUT, ACTION_RESTORE_CLOSED_PANE, ACTION_SPLIT_PANE_BELOW,
     ACTION_SPLIT_PANE_RIGHT, ACTION_TOGGLE_SIDEBAR, ACTION_USE_SELECTION_FOR_FIND, ActionRouter,
 };
+use pane_runtime::PaneRuntimeCoordinator;
 const PRIMARY_RIGHT_BEHAVIOR: PaneRightInsertionBehavior = PaneRightInsertionBehavior::VisibleSplit;
 const WORKLANE_PEEK_TAB_HOLD_THRESHOLD: Duration = Duration::from_millis(200);
 
@@ -67,14 +69,9 @@ pub(crate) struct ApplicationShell {
     pane_box: gtk::Box,
     background_agent_host: gtk::Box,
     state: WorkspaceState,
-    surfaces: BTreeMap<String, GhosttySurface>,
-    pane_frames: BTreeMap<String, PaneFrame>,
-    focus_controllers: BTreeMap<String, gtk::EventControllerFocus>,
-    runtime: GhosttyRuntime,
-    command: Option<String>,
+    pane_runtime: PaneRuntimeCoordinator,
     restored_pane_commands: BTreeMap<String, String>,
     main_loop: glib::MainLoop,
-    live_children: Rc<Cell<usize>>,
     next_worklane_number: usize,
     next_pane_number: usize,
     window_template: WindowRecipe,
@@ -91,7 +88,6 @@ pub(crate) struct ApplicationShell {
     command_palette: CommandPaletteView,
     last_pane_viewport_height: Cell<i32>,
     action_router: Option<ActionRouter>,
-    pending_prefills: BTreeMap<String, String>,
     agent_runtime: AgentRuntime,
     tmux_compat: crate::tmux_compat::TmuxCompatProduct,
 }
@@ -163,14 +159,9 @@ impl ApplicationShell {
             pane_box,
             background_agent_host,
             state,
-            surfaces: BTreeMap::new(),
-            pane_frames: BTreeMap::new(),
-            focus_controllers: BTreeMap::new(),
-            runtime: runtime.clone(),
-            command,
+            pane_runtime: PaneRuntimeCoordinator::new(runtime, command),
             restored_pane_commands,
             main_loop: main_loop.clone(),
-            live_children: Rc::new(Cell::new(0)),
             next_worklane_number,
             next_pane_number,
             window_template,
@@ -187,7 +178,6 @@ impl ApplicationShell {
             command_palette,
             last_pane_viewport_height: Cell::new(0),
             action_router: None,
-            pending_prefills: BTreeMap::new(),
             agent_runtime,
             tmux_compat: crate::tmux_compat::TmuxCompatProduct::default(),
         }));
@@ -208,7 +198,7 @@ impl ApplicationShell {
         Self::install_command_palette_shortcut(&shell);
         Self::install_search_shortcuts(&shell);
         for pane_id in initial_pane_ids {
-            Self::create_surface(&shell, &pane_id)?;
+            PaneRuntimeCoordinator::create_surface(&shell, &pane_id)?;
         }
         shell.borrow().mount_background_restored_agents();
         shell.borrow().render();
@@ -225,7 +215,7 @@ impl ApplicationShell {
             if active_panes.iter().any(|active| active == pane_id) {
                 continue;
             }
-            if let Some(frame) = self.pane_frames.get(pane_id) {
+            if let Some(frame) = self.pane_runtime.frame(pane_id) {
                 self.background_agent_host.append(frame.widget());
                 eprintln!("zentty-linux: background-agent-host pane={pane_id}");
             }
@@ -260,7 +250,7 @@ impl ApplicationShell {
     }
 
     pub(crate) fn live_children(&self) -> usize {
-        self.live_children.get()
+        self.pane_runtime.live_children()
     }
 
     pub(crate) fn window_recipe(&self) -> WindowRecipe {
@@ -287,17 +277,9 @@ impl ApplicationShell {
         self.command_palette.hide();
         gtk::prelude::GtkWindowExt::set_focus(&self.window, gtk::Widget::NONE);
         self.window.set_default_widget(gtk::Widget::NONE);
-        for (pane_id, controller) in std::mem::take(&mut self.focus_controllers) {
-            if let Some(surface) = self.surfaces.get(&pane_id) {
-                surface.widget().remove_controller(&controller);
-            }
-        }
         clear_pane_columns(&self.pane_box);
         clear_box_children(&self.background_agent_host);
-        for frame in self.pane_frames.values() {
-            frame.detach_terminal();
-        }
-        self.pane_frames.clear();
+        self.pane_runtime.detach_widgets();
         // The shell retains `sidebar` after detaching the root widget. Clear
         // its cards explicitly so their menu popovers and window-capturing
         // callbacks are finalized before Ghostty's process-global teardown.
@@ -307,16 +289,7 @@ impl ApplicationShell {
     }
 
     pub(crate) fn release_surfaces(&mut self) -> Result<(), String> {
-        for (_, surface) in std::mem::take(&mut self.surfaces) {
-            surface.dispose().map_err(|error| error.to_string())?;
-            // Explicit disposal disconnects the child-exited callback before
-            // closing the native surface, so the ordinary asynchronous exit
-            // path cannot decrement this ownership count. Account for the
-            // successfully disposed child here instead.
-            self.live_children
-                .set(self.live_children.get().saturating_sub(1));
-        }
-        Ok(())
+        self.pane_runtime.release_all()
     }
 
     fn finish_pane_layout_action(&self, action: &str) {
@@ -905,7 +878,7 @@ impl ApplicationShell {
                     let Some(pane_id) = shell.state.focused_pane_id() else {
                         return glib::Propagation::Proceed;
                     };
-                    let Some(surface) = shell.surfaces.get(pane_id) else {
+                    let Some(surface) = shell.pane_runtime.surface(pane_id) else {
                         return glib::Propagation::Proceed;
                     };
                     let Some(overlay) = find_ghostty_search_overlay(surface.widget()) else {
@@ -1247,7 +1220,7 @@ impl ApplicationShell {
             eprintln!("zentty-linux: action={action} error=no-focused-pane");
             return;
         };
-        let Some(surface) = self.surfaces.get(pane_id) else {
+        let Some(surface) = self.pane_runtime.surface(pane_id) else {
             eprintln!("zentty-linux: action={action} pane={pane_id} error=no-live-surface");
             return;
         };
@@ -1351,7 +1324,7 @@ impl ApplicationShell {
             }
             (worklane_id, pane_id)
         };
-        if let Err(error) = Self::create_surface(shell, &pane_id) {
+        if let Err(error) = PaneRuntimeCoordinator::create_surface(shell, &pane_id) {
             shell.borrow_mut().state.close_active_worklane();
             return Err(error);
         }
@@ -1410,7 +1383,7 @@ impl ApplicationShell {
             }
             pane_id
         };
-        if let Err(error) = Self::create_surface(shell, &pane_id) {
+        if let Err(error) = PaneRuntimeCoordinator::create_surface(shell, &pane_id) {
             let _ = shell.borrow_mut().state.close_focused_pane();
             return Err(error);
         }
@@ -1578,13 +1551,18 @@ impl ApplicationShell {
         if let Some(prefill) = &restored.prefill_text {
             shell
                 .borrow_mut()
-                .pending_prefills
-                .insert(restored.pane_id.clone(), prefill.clone());
+                .pane_runtime
+                .queue_prefill(&restored.pane_id, prefill.clone());
         }
-        if let Err(error) = Self::create_surface(shell, &restored.pane_id) {
+        if let Err(error) = PaneRuntimeCoordinator::create_surface(shell, &restored.pane_id) {
             let mut shell = shell.borrow_mut();
-            shell.pending_prefills.remove(&restored.pane_id);
-            let _ = shell.state.close_pane_after_child_exit(&restored.pane_id);
+            shell.pane_runtime.cancel_prefill(&restored.pane_id);
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_or(0, |duration| duration.as_secs());
+            let _ = shell
+                .state
+                .rollback_restored_pane_at(&restored.pane_id, now);
             return Err(error);
         }
         let shell_ref = shell.borrow();
@@ -1600,322 +1578,9 @@ impl ApplicationShell {
         Ok(())
     }
 
-    fn create_surface(shell: &Rc<RefCell<Self>>, pane_id: &str) -> Result<(), String> {
-        Self::create_surface_configured(shell, pane_id, None)
-    }
-
-    fn create_surface_with_command(
-        shell: &Rc<RefCell<Self>>,
-        pane_id: &str,
-        command: String,
-    ) -> Result<(), String> {
-        Self::create_surface_configured(shell, pane_id, Some(command))
-    }
-
-    fn create_surface_configured(
-        shell: &Rc<RefCell<Self>>,
-        pane_id: &str,
-        command: Option<String>,
-    ) -> Result<(), String> {
-        let (runtime, config) = {
-            let mut shell = shell.borrow_mut();
-            let runtime = shell.runtime.clone();
-            let mut config = shell.surface_config(pane_id)?;
-            if command.is_some() {
-                config.command = command;
-            }
-            (runtime, config)
-        };
-        let surface = match runtime.create_surface(&config) {
-            Ok(surface) => surface,
-            Err(error) => {
-                shell.borrow_mut().agent_runtime.unregister_pane(pane_id);
-                return Err(error.to_string());
-            }
-        };
-
-        Self::connect_surface_callbacks(shell, pane_id, &surface);
-        let focus_controller = Self::make_surface_focus_controller(shell, pane_id);
-        surface.widget().add_controller(focus_controller.clone());
-
-        let frame = Self::create_pane_frame(shell, pane_id, surface.widget());
-
-        let mut shell = shell.borrow_mut();
-        shell.live_children.set(shell.live_children.get() + 1);
-        shell
-            .focus_controllers
-            .insert(pane_id.to_owned(), focus_controller);
-        shell.pane_frames.insert(pane_id.to_owned(), frame);
-        shell.surfaces.insert(pane_id.to_owned(), surface);
-        eprintln!(
-            "zentty-linux: surface-owned pane={pane_id} live={}",
-            shell.surfaces.len()
-        );
-        Ok(())
-    }
-
-    fn connect_surface_callbacks(
-        shell: &Rc<RefCell<Self>>,
-        pane_id: &str,
-        surface: &GhosttySurface,
-    ) {
-        let ready_id = pane_id.to_owned();
-        let weak = Rc::downgrade(shell);
-        surface.on_initialized(move || {
-            eprintln!("zentty-linux: terminal-ready");
-            eprintln!("zentty-linux: terminal-ready-pane={ready_id}");
-            let weak = weak.clone();
-            let ready_id = ready_id.clone();
-            glib::idle_add_local_once(move || {
-                let Some(shell) = weak.upgrade() else {
-                    return;
-                };
-                Self::apply_pending_restore_prefill(&shell, &ready_id);
-                let shell = shell.borrow();
-                if shell.shutting_down {
-                    return;
-                }
-                if let Some(surface) = shell.surfaces.get(&ready_id) {
-                    observe_ghostty_search_state(surface.widget(), &ready_id);
-                }
-                if shell.state.focused_pane_id() == Some(ready_id.as_str()) {
-                    shell.focus_selected_surface();
-                }
-            });
-        });
-        let title_id = pane_id.to_owned();
-        let weak = Rc::downgrade(shell);
-        surface.on_title_changed(move |title| {
-            eprintln!("zentty-linux: title={title}");
-            eprintln!("zentty-linux: title-pane={title_id} value={title}");
-            let weak = weak.clone();
-            let title_id = title_id.clone();
-            let title = title.clone();
-            glib::idle_add_local_once(move || {
-                if let Some(shell) = weak.upgrade() {
-                    let mut shell = shell.borrow_mut();
-                    if shell.shutting_down {
-                        return;
-                    }
-                    let now = unix_time_ms();
-                    let agent_changed =
-                        shell.state.reconcile_terminal_title(&title_id, &title, now);
-                    shell.schedule_codex_transcript_enrichment(&title_id);
-                    if shell.state.set_pane_title(&title_id, &title) || agent_changed {
-                        shell.refresh_sidebar_metadata();
-                    }
-                }
-            });
-        });
-        Self::connect_surface_progress_callback(shell, pane_id, surface);
-        let weak = Rc::downgrade(shell);
-        let exited_id = pane_id.to_owned();
-        surface.on_child_exited(move || {
-            eprintln!("zentty-linux: child-exited");
-            eprintln!("zentty-linux: child-exited-pane={exited_id}");
-            let weak = weak.clone();
-            let exited_id = exited_id.clone();
-            glib::idle_add_local_once(move || {
-                if let Some(shell) = weak.upgrade() {
-                    Self::handle_child_exit(&shell, &exited_id);
-                }
-            });
-        });
-    }
-
-    fn connect_surface_progress_callback(
-        shell: &Rc<RefCell<Self>>,
-        pane_id: &str,
-        surface: &GhosttySurface,
-    ) {
-        let progress_id = pane_id.to_owned();
-        let weak = Rc::downgrade(shell);
-        surface.on_progress_report(move |report| {
-            let state = match report.state {
-                ProgressState::Remove => TerminalProgressState::Remove,
-                ProgressState::Set => TerminalProgressState::Set,
-                ProgressState::Error => TerminalProgressState::Error,
-                ProgressState::Indeterminate => TerminalProgressState::Indeterminate,
-                ProgressState::Pause => TerminalProgressState::Pause,
-            };
-            let state_name = match state {
-                TerminalProgressState::Remove => "remove",
-                TerminalProgressState::Set => "set",
-                TerminalProgressState::Error => "error",
-                TerminalProgressState::Indeterminate => "indeterminate",
-                TerminalProgressState::Pause => "pause",
-            };
-            eprintln!(
-                "zentty-linux: terminal-progress pane={} state={} progress={}",
-                progress_id,
-                state_name,
-                report
-                    .progress
-                    .map_or_else(|| "none".to_owned(), |value| value.to_string())
-            );
-            let weak = weak.clone();
-            let progress_id = progress_id.clone();
-            glib::idle_add_local_once(move || {
-                let Some(shell) = weak.upgrade() else {
-                    return;
-                };
-                let mut shell = shell.borrow_mut();
-                if shell.shutting_down {
-                    return;
-                }
-                if shell
-                    .state
-                    .reconcile_terminal_progress(&progress_id, state, unix_time_ms())
-                {
-                    shell.refresh_sidebar_metadata();
-                }
-            });
-        });
-    }
-
-    fn make_surface_focus_controller(
-        shell: &Rc<RefCell<Self>>,
-        pane_id: &str,
-    ) -> gtk::EventControllerFocus {
-        let focus_controller = gtk::EventControllerFocus::new();
-        let weak = Rc::downgrade(shell);
-        let focus_id = pane_id.to_owned();
-        focus_controller.connect_enter(move |controller| {
-            let weak = weak.clone();
-            let focus_id = focus_id.clone();
-            let controller = controller.clone();
-            glib::idle_add_local_once(move || {
-                let Some(shell) = weak.upgrade() else {
-                    return;
-                };
-                if shell.borrow().shutting_down {
-                    return;
-                }
-                // Ghostty owns focusable descendants inside its embedding
-                // widget. Widget::has_focus only describes the wrapper itself,
-                // while EventControllerFocus::contains_focus covers the
-                // controller widget and its descendants.
-                if controller.contains_focus() {
-                    let changed = shell.borrow_mut().state.select_pane(&focus_id);
-                    if changed {
-                        eprintln!("zentty-linux: focus-pane pane={focus_id}");
-                        shell.borrow().refresh_sidebar_metadata();
-                    }
-                }
-            });
-        });
-        focus_controller
-    }
-
-    fn surface_config(&mut self, pane_id: &str) -> Result<SurfaceConfig, String> {
-        let worklane_id = self
-            .state
-            .worklane_id_for_pane(pane_id)
-            .ok_or_else(|| format!("pane {pane_id} has no worklane"))?
-            .to_owned();
-        let environment = self
-            .agent_runtime
-            .environment_for_pane(&worklane_id, pane_id)?;
-        let restored_command = self.restored_pane_commands.get(pane_id).cloned();
-        if self.command.is_none()
-            && let Some(command) = &restored_command
-        {
-            eprintln!("zentty-linux: agent-resume-launch pane={pane_id} command={command}");
-        }
-        Ok(SurfaceConfig {
-            command: self.command.clone().or(restored_command),
-            title: zentty_core::PRODUCT_NAME.to_owned(),
-            working_directory: self
-                .state
-                .pane(pane_id)
-                .and_then(|pane| pane.working_directory.clone()),
-            environment,
-        })
-    }
-
-    fn apply_pending_restore_prefill(shell: &Rc<RefCell<Self>>, pane_id: &str) {
-        let prefill = shell.borrow_mut().pending_prefills.remove(pane_id);
-        let Some(prefill) = prefill else {
-            return;
-        };
-        let shell = shell.borrow();
-        let Some(surface) = shell.surfaces.get(pane_id) else {
-            return;
-        };
-        if let Err(error) = surface.send_text(&prefill) {
-            eprintln!("zentty-linux: restore-prefill pane={pane_id} failed={error}");
-        } else {
-            eprintln!("zentty-linux: restore-prefill pane={pane_id} text={prefill}");
-        }
-    }
-
-    fn create_pane_frame(
-        shell: &Rc<RefCell<Self>>,
-        pane_id: &str,
-        terminal: &gtk::Widget,
-    ) -> PaneFrame {
-        let weak = Rc::downgrade(shell);
-        let control_pane_id = pane_id.to_owned();
-        PaneFrame::new(pane_id, terminal, move |action| {
-            if let Some(shell) = weak.upgrade() {
-                Self::activate_pane_control(&shell, &control_pane_id, action);
-            }
-        })
-    }
-
-    fn handle_child_exit(shell: &Rc<RefCell<Self>>, pane_id: &str) {
-        let mut shell_ref = shell.borrow_mut();
-        if !shell_ref.surfaces.contains_key(pane_id) {
-            eprintln!("zentty-linux: child-exit-after-dispose pane={pane_id} ignored");
-            return;
-        }
-        let remaining = shell_ref.live_children.get().saturating_sub(1);
-        shell_ref.live_children.set(remaining);
-        if shell_ref.shutting_down {
-            return;
-        }
-        let outcome = shell_ref.state.close_pane_after_child_exit(pane_id);
-        if let Err(error) = shell_ref.remove_surface(pane_id) {
-            eprintln!("zentty-linux: child-exit cleanup failed: {error}");
-            shell_ref.main_loop.quit();
-            return;
-        }
-        match outcome {
-            ClosePaneOutcome::Closed => {
-                shell_ref.render();
-                shell_ref.focus_selected_surface();
-            }
-            ClosePaneOutcome::CloseWindow => shell_ref.main_loop.quit(),
-            ClosePaneOutcome::NotFound => {}
-        }
-    }
-
     fn report_action_error(shell: &Rc<RefCell<Self>>, action: &str, error: &str) {
         eprintln!("zentty-linux: action={action} failed: {error}");
         shell.borrow().main_loop.quit();
-    }
-
-    fn remove_surface(&mut self, pane_id: &str) -> Result<(), String> {
-        self.agent_runtime.unregister_pane(pane_id);
-        if let Some(controller) = self.focus_controllers.remove(pane_id)
-            && let Some(surface) = self.surfaces.get(pane_id)
-        {
-            surface.widget().remove_controller(&controller);
-        }
-        if let Some(surface) = self.surfaces.remove(pane_id) {
-            if let Some(frame) = self.pane_frames.remove(pane_id) {
-                if let Some(parent) = frame
-                    .widget()
-                    .parent()
-                    .and_then(|parent| parent.downcast::<gtk::Box>().ok())
-                {
-                    parent.remove(frame.widget());
-                }
-                frame.detach_terminal();
-            }
-            surface.dispose().map_err(|error| error.to_string())?;
-        }
-        Ok(())
     }
 
     pub(crate) fn drain_agent_events(shell: &Rc<RefCell<Self>>) {
@@ -2014,11 +1679,8 @@ impl ApplicationShell {
     }
 
     fn remove_live_surface(&mut self, pane_id: &str) -> Result<(), String> {
-        if self.surfaces.contains_key(pane_id) {
-            self.live_children
-                .set(self.live_children.get().saturating_sub(1));
-        }
-        self.remove_surface(pane_id)
+        self.agent_runtime.unregister_pane(pane_id);
+        self.pane_runtime.remove(pane_id, false).map(|_| ())
     }
 
     fn take_pane_id(&mut self) -> String {
@@ -2063,7 +1725,7 @@ impl ApplicationShell {
             column_box.set_hexpand(single_column);
             column_box.set_vexpand(true);
             for pane in &column.panes {
-                if let Some(frame) = self.pane_frames.get(&pane.id) {
+                if let Some(frame) = self.pane_runtime.frame(&pane.id) {
                     remove_frame_from_box_parent(frame.widget());
                     column_box.append(frame.widget());
                 }
@@ -2088,7 +1750,11 @@ impl ApplicationShell {
     }
 
     fn pane_viewport_height(&self) -> i32 {
-        let allocated = self.pane_box.height();
+        // The scroll viewport is the allocation authority. Reading the
+        // content box here creates a positive feedback loop: applying a pane
+        // request grows the content, the next allocation treats that growth
+        // as a larger viewport, and multi-pane layouts expand indefinitely.
+        let allocated = self.pane_scroll.height();
         if allocated > 1 {
             return allocated;
         }
@@ -2104,7 +1770,7 @@ impl ApplicationShell {
         for column in self.state.active_columns() {
             let pane_count = column.panes.len();
             if pane_count == 1 {
-                if let Some(frame) = self.pane_frames.get(&column.panes[0].id) {
+                if let Some(frame) = self.pane_runtime.frame(&column.panes[0].id) {
                     frame.widget().set_height_request(-1);
                     frame.widget().set_vexpand(true);
                 }
@@ -2112,7 +1778,7 @@ impl ApplicationShell {
             }
             let heights = model_heights_to_pixels(&column.pane_heights, viewport_height);
             for (pane, height) in column.panes.iter().zip(heights) {
-                if let Some(frame) = self.pane_frames.get(&pane.id) {
+                if let Some(frame) = self.pane_runtime.frame(&pane.id) {
                     frame.widget().set_height_request(height);
                     frame.widget().set_vexpand(false);
                 }
@@ -2123,7 +1789,7 @@ impl ApplicationShell {
                 column
                     .panes
                     .iter()
-                    .filter_map(|pane| self.pane_frames.get(&pane.id).map(|frame| {
+                    .filter_map(|pane| self.pane_runtime.frame(&pane.id).map(|frame| {
                         format!("{}:{}", pane.id, frame.widget().height_request())
                     }))
                     .collect::<Vec<_>>()
@@ -2374,7 +2040,7 @@ impl ApplicationShell {
                 worklane.columns.iter().flat_map(move |column| {
                     let worklane_title = worklane_title.clone();
                     column.panes.iter().filter_map(move |pane| {
-                        let terminal = self.surfaces.get(&pane.id)?.widget().clone();
+                        let terminal = self.pane_runtime.surface(&pane.id)?.widget().clone();
                         Some(PanePreview {
                             reference: PaneReference::new(&worklane.id, &pane.id),
                             worklane_title: worklane_title.clone(),
@@ -2394,7 +2060,7 @@ impl ApplicationShell {
         let focused_pane_id = self.state.focused_pane_id();
         let worklane_color = self.state.active_worklane().color;
         for pane_id in self.state.active_pane_ids() {
-            if let Some(frame) = self.pane_frames.get(pane_id) {
+            if let Some(frame) = self.pane_runtime.frame(pane_id) {
                 frame.set_presentation(PanePresentation {
                     focused: Some(pane_id) == focused_pane_id,
                     worklane_color,
@@ -2406,7 +2072,7 @@ impl ApplicationShell {
 
     fn refresh_right_insertion_behavior(&self) {
         for pane_id in self.state.active_pane_ids() {
-            if let Some(frame) = self.pane_frames.get(pane_id) {
+            if let Some(frame) = self.pane_runtime.frame(pane_id) {
                 // Linux does not yet provide Zentty's horizontal gesture,
                 // Worklane Peek, and recent-pane management. Keep the
                 // pane-local primary action visible until that navigation
@@ -2418,7 +2084,7 @@ impl ApplicationShell {
 
     fn focus_selected_surface(&self) {
         if let Some(pane_id) = self.state.focused_pane_id()
-            && let Some(surface) = self.surfaces.get(pane_id)
+            && let Some(surface) = self.pane_runtime.surface(pane_id)
         {
             gtk::prelude::GtkWindowExt::set_focus(&self.window, Some(surface.widget()));
             surface.grab_focus();

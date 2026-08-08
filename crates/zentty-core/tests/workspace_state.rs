@@ -394,6 +394,32 @@ fn closed_pane_restore_is_lifo_expiring_and_preserves_source_launch_context() {
 }
 
 #[test]
+fn failed_runtime_restore_can_be_rolled_back_and_retried_without_losing_history() {
+    let mut state = WorkspaceState::new("lane", "pane-a");
+    assert!(state.split_focused_pane_right("pane-b"));
+    assert_eq!(
+        state.close_pane_at("pane-b", 1_000),
+        ClosePaneOutcome::Closed
+    );
+
+    let first_attempt = state
+        .restore_closed_pane_at("pane-runtime-failed", 1_001)
+        .expect("closed pane should be available for the first attempt");
+    assert_eq!(first_attempt.pane_id, "pane-runtime-failed");
+    assert_eq!(
+        state.rollback_restored_pane_at("pane-runtime-failed", 1_001),
+        ClosePaneOutcome::Closed
+    );
+    assert_eq!(state.active_pane_ids(), ["pane-a"]);
+
+    let retry = state
+        .restore_closed_pane_at("pane-retry", 1_002)
+        .expect("runtime failure must not consume closed-pane history");
+    assert_eq!(retry.pane_id, "pane-retry");
+    assert_eq!(state.active_pane_ids(), ["pane-a", "pane-retry"]);
+}
+
+#[test]
 fn vertical_pane_commands_preserve_column_identity_and_geometry() {
     let mut state = WorkspaceState::new("worklane-a", "pane-a");
 
