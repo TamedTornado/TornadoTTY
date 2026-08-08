@@ -9762,6 +9762,73 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   `1b7266dee4eee68401622232eb44d3c18e5b98f689c870212ea9c9582c039a4f`,
   and `332d52c433d3ef6f188a8662df9f2b1c77656cbf11824ad579933ba93fd2420f`.
 
+### 2026-08-08 — GH-30 session persistence lifecycle extraction
+
+- **The pre-extraction audit found one store but orchestration in `main`:**
+  `SessionRestoreStore` already owns decoding, lifecycle files, atomic
+  temporary writes, rename, file/directory sync, interrupted-write behavior,
+  and clean-exit draft merging. `SnapshotPersistence` already owns stale
+  generation refusal. Linux `main` nevertheless sequences prepare, launch
+  marking, one-window validation, draft selection, envelope construction,
+  snapshot save, and clean marking directly. The extraction will wrap those
+  existing authorities in one synchronous coordinator; it will not add a
+  timer, queue, worker, backup generation, journal, `.bak` file, or schema.
+- **The intended state machine is deliberately small:** startup either returns
+  the existing validated launch projection or an error; one clean-exit request
+  freezes one window plus agent drafts, persists it through
+  `SnapshotPersistence`, then marks the lifecycle clean. A duplicate request,
+  reentrant request while saving, or request after failure is rejected. Save
+  failure must never mark the lifecycle clean, so the next launch retains
+  crash-recovery semantics.
+- **The state-machine test was red before the owner existed:** The focused test
+  target failed to compile because `PersistencePhase`, `CleanExitDecision`, and
+  `clean_exit_decision` did not exist. After extraction, five focused tests
+  cover single-flight/terminal decisions, real startup projection and unclean
+  marking, exact clean save plus duplicate refusal, real filesystem save
+  failure without a false clean marker, and invalid frozen-workspace rejection
+  before snapshot publication. The first fixture include path was wrong and
+  failed at compile time; it was corrected to the existing checked-in core
+  fixture rather than copying another recipe fixture.
+- **`main` now composes rather than persists:** One synchronous
+  `PersistenceCoordinator` owns one `SnapshotPersistence`. It performs the
+  existing launch decision and one-window projection, then marks launch start.
+  Clean exit validates the frozen window through core, builds the unchanged
+  envelope, submits one generation, and marks clean only after publication.
+  `SessionRestoreStore` still exclusively owns decoding, atomic write/rename,
+  file and parent sync, lifecycle JSON, and draft merging.
+- **Mutation killed both selected new scheduling changes:** The safe wrapper
+  caught 2/2 mutants covering defaulted clean-exit decisions and bypass of the
+  complete save path in 69 seconds after a 34-second baseline.
+- **Real product restoration remains green:** The staged binary completed the
+  consolidated clean-save/relaunch journey with two background agent drafts,
+  real PTYs, physical input, exact scrollback, and command-palette cancellation
+  in private X11 session
+  `6bd75df25a67568262817fb2026f195ca1fc1189a4cb82e10224b266389e07ae`
+  and private Wayland session
+  `2bc2705894a43228362a9f88617ad26d494cab92e969e767c7cd63c31fce52c2`.
+- **The first manual recovery command correctly rejected ambient execution:**
+  Core filesystem tests and the runner self-test passed, but the real
+  interrupted-child journey refused to run outside `isolated-session`. Rerun
+  in the required private HOME/XDG/TMP/process group passed with a real writer
+  killed by `SIGKILL`, prior-or-complete publication, and a subsequent complete
+  save; session ID
+  `00fe3e2de3ee8a3c8242271903929749adb3e84a8bc57b4097894f502d7bb9a2`.
+- **The exact GH-30 candidate passed every presently executable matrix cell:**
+  Declared totals are `PASS=88`, `FAIL=0`, `BLOCKED=7`, `XFAIL=1`, and
+  `NOT_IMPLEMENTED=21`. Implemented-local and product-boundary qualification
+  pass; release and full Linux qualification correctly remain false. The
+  machine-summary SHA-256 is
+  `a2e9290837fda15ffaa46cc207c87a4fa718ed03fa1fc9fe5de3f8f27ce5e72e`.
+- **Valgrind remains PASS with reviewed suppressions:** Raw evidence contains
+  427 errors/contexts, 6,000 definite bytes, and 41,362 indirect bytes;
+  reviewed post-suppression totals are zero, with all 427 contexts accounted
+  for. The report, raw-receipt, and suppressed-receipt SHA-256 values are
+  respectively
+  `e4c2c8509f5b3970b2d23dde71a5034ce5eb980f0c991ec731bc92cd7dfa4e4d`,
+  `1737b8a753192ceff148d5c84488af03bc5de78c7d6354d6f35f737dc49098fe`,
+  and `a0b5ed7e14e64ed5f7ac8088abc60a0bd7cc71f4792fd30d97a0aa5dfb327237`.
+  No suppression or manifest changed in this slice.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were

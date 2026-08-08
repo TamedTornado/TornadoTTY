@@ -7,6 +7,7 @@ contract="${repo_root}/docs/architecture/application-shell-responsibilities-v1.j
 source_file="${repo_root}/crates/zentty-linux/src/application_shell.rs"
 agent_events_file="${repo_root}/crates/zentty-linux/src/application_shell/agent_events.rs"
 pane_runtime_file="${repo_root}/crates/zentty-linux/src/application_shell/pane_runtime.rs"
+persistence_file="${repo_root}/crates/zentty-linux/src/persistence_coordinator.rs"
 temp_dir="$(mktemp -d)"
 trap 'rm -rf -- "${temp_dir}"' EXIT
 
@@ -77,6 +78,16 @@ sed '/runtime: AgentRuntime,/a\    shadow_receiver: std::sync::mpsc::Receiver<ze
     "${agent_events_file}" >"${temp_dir}/shadow-agent-event-queue.rs"
 expect_failure shadow-agent-event-queue "agent events source hash" \
     "ZENTTY_AGENT_EVENTS_SOURCE=${temp_dir}/shadow-agent-event-queue.rs"
+
+jq '(.owned_module_functions.persistence_coordinator) |= map(select(. != "save_clean_exit"))' \
+    "${contract}" >"${temp_dir}/missing-persistence-function.json"
+expect_failure missing-persistence-function "persistence coordinator function inventory differs" \
+    "ZENTTY_APPLICATION_SHELL_OWNERSHIP_CONTRACT=${temp_dir}/missing-persistence-function.json"
+
+sed '/persistence: SnapshotPersistence,/a\    shadow_store: SessionRestoreStore,' \
+    "${persistence_file}" >"${temp_dir}/shadow-persistence-store.rs"
+expect_failure shadow-persistence-store "persistence coordinator source hash" \
+    "ZENTTY_PERSISTENCE_COORDINATOR_SOURCE=${temp_dir}/shadow-persistence-store.rs"
 
 sed '/surfaces: BTreeMap<String, GhosttySurface>,/a\    shadow_surfaces: BTreeMap<String, GhosttySurface>,' \
     "${pane_runtime_file}" >"${temp_dir}/shadow-pane-registry.rs"

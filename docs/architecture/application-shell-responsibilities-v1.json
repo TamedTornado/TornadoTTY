@@ -6,7 +6,8 @@
   "owned_source_sha256": {
     "crates/zentty-linux/src/application_shell/action_router.rs": "321a6e71c26effce00b51ccb3d505ce3e329a573246fe6345f57768c7e2138a8",
     "crates/zentty-linux/src/application_shell/agent_events.rs": "12da8738f9cc6902498d6dd836a79ba52025897bad596703d1d336d3ec805e0f",
-    "crates/zentty-linux/src/application_shell/pane_runtime.rs": "7fad1aee2a7810150d855399b2bced6d62c5b75c462449aa266a8aebb2656a3a"
+    "crates/zentty-linux/src/application_shell/pane_runtime.rs": "7fad1aee2a7810150d855399b2bced6d62c5b75c462449aa266a8aebb2656a3a",
+    "crates/zentty-linux/src/persistence_coordinator.rs": "7e76980242a0c25be6bb3a9df411ce9953918b1d94bc1737fe9144d0c3810035"
   },
   "tracking": "GH-26",
   "purpose": "Characterize every ApplicationShell field, method, action, authority, and lifecycle edge before extraction; this contract assigns ownership but does not create a second implementation.",
@@ -41,7 +42,7 @@
     },
     {
       "id": "persistence_coordinator",
-      "status": "planned",
+      "status": "existing",
       "planned_module": "crates/zentty-linux/src/persistence_coordinator.rs",
       "tracking": "GH-30",
       "responsibility": "One launch/shutdown snapshot lifecycle around the existing SessionRestoreStore and SnapshotPersistence implementation."
@@ -179,6 +180,10 @@
     "agent_event_coordinator": [
       "event_route_decision", "start", "environment_for_pane", "unregister_pane",
       "sync_targets", "schedule_for_pane", "shutdown", "drain"
+    ],
+    "persistence_coordinator": [
+      "clean_exit_decision", "start", "save_clean_exit", "select_restored_window",
+      "default_state_directory"
     ]
   },
   "action_contract": [
