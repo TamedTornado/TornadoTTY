@@ -130,7 +130,7 @@ run_codex_lifecycle() {
     product_pid=$!
 
     zentty_product_wait_for_log "${log}" \
-        'Codex · Needs input: Submit this answer?' \
+        'sidebar-agent-status pane=pane-1 phase=NeedsInput interaction=GenericInput attention=true' \
         "Codex lifecycle did not establish its first question"
     zentty_product_prepare_input "${backend}" "${log}"
     # Source behavior intentionally protects a newly arrived question for
@@ -140,9 +140,12 @@ run_codex_lifecycle() {
     zentty_product_wait_for_log "${log}" \
         'zentty-linux: codex-terminal-gesture=InputSubmitted' \
         "physical Return was not observed by the product"
-    zentty_product_wait_for_log "${log}" \
-        'Codex · Needs input: Interrupt this run?' \
-        "the real PTY child did not receive submitted input"
+    for _ in {1..200}; do
+        [[ "$(grep -Fc 'kind=agent.needs-input session=codex-lifecycle-e2e' "${log}")" -ge 2 ]] && break
+        sleep 0.05
+    done
+    [[ "$(grep -Fc 'kind=agent.needs-input session=codex-lifecycle-e2e' "${log}")" -ge 2 ]] ||
+        fail "the real PTY child did not receive submitted input"
 
     zentty_product_ctrl_key "${backend}" c
     zentty_product_wait_for_log "${log}" \
@@ -158,7 +161,7 @@ run_codex_lifecycle() {
         'kind=agent.running session=codex-lifecycle-e2e' \
         "controlled Codex did not deliver recovery activity"
     zentty_product_wait_for_log "${log}" \
-        'sidebar-agent-status pane=pane-1 text="Codex · Running" attention=false' \
+        'sidebar-agent-status pane=pane-1 phase=Running interaction=None attention=false' \
         "new Codex activity did not clear interrupt suppression"
 
     socket="$(sed -n 's/^zentty-linux: agent-runtime socket=//p' "${log}" | head -1)"
@@ -197,14 +200,19 @@ run_codex_title_transcript_enrichment() {
     product_pid=$!
 
     zentty_product_wait_for_log "${log}" \
-        'Codex · Needs input: [ ! ] Action Required | plan-mode-prompt' \
+        'sidebar-agent-status pane=pane-1 phase=NeedsInput interaction=GenericInput attention=true' \
         "Codex title did not establish generic title-inferred attention"
     zentty_product_wait_for_log "${log}" \
         'zentty-linux: codex-transcript-enriched pane=pane-1 session=codex-title-transcript-e2e' \
         "delayed Codex transcript was not enriched asynchronously"
     zentty_product_wait_for_log "${log}" \
-        'Codex · Needs input: Choose the integration scope\n[Minimal] [Complete]' \
+        'sidebar-agent-status pane=pane-1 phase=NeedsInput interaction=Decision attention=true' \
         "transcript question did not replace the generic title presentation"
+    if grep -Fq 'Choose the integration scope' "${log}" ||
+        grep -Fq '[Minimal] [Complete]' "${log}" ||
+        grep -Fq "${transcript}" "${log}"; then
+        fail "transcript body or path escaped into product receipts"
+    fi
 
     for _ in {1..200}; do
         ! kill -0 "${product_pid}" 2>/dev/null && break
@@ -212,6 +220,47 @@ run_codex_title_transcript_enrichment() {
     done
     wait "${product_pid}" || fail "Codex transcript-enrichment product run failed"
     product_pid=""
+    rm -f -- "${log}"
+    rm -rf -- "${state_directory}" "${private_home}"
+    log=""
+    state_directory=""
+    private_home=""
+}
+
+run_codex_enrichment_shutdown() {
+    local transcript=""
+
+    log="$(mktemp)"
+    state_directory="$(mktemp -d)"
+    private_home="$(mktemp -d)"
+    transcript="${private_home}/.codex/sessions/2026/08/07/never-created.jsonl"
+    PATH="${fake_bin}:${PATH}" GDK_SCALE=1 GDK_DPI_SCALE=1 \
+        HOME="${private_home}" CODEX_HOME="${private_home}/.codex" \
+        ZENTTY_CONTROLLED_AGENT_PROFILE=codex-title-transcript-pending \
+        ZENTTY_CONTROLLED_CODEX_TRANSCRIPT="${transcript}" \
+        "${product}" \
+        --command codex \
+        --state-directory "${state_directory}" \
+        --no-session-restore >"${log}" 2>&1 &
+    product_pid=$!
+
+    zentty_product_wait_for_log "${log}" \
+        'codex-transcript-enrichment-scheduled pane=pane-1 session=codex-title-transcript-pending-e2e' \
+        "pending transcript enrichment was not scheduled"
+    [[ ! -e "${transcript}" ]] || fail "pending transcript fixture unexpectedly existed"
+    zentty_product_prepare_input "${backend}" "${log}"
+    zentty_product_close_window "${backend}"
+    for _ in {1..40}; do
+        ! kill -0 "${product_pid}" 2>/dev/null && break
+        sleep 0.05
+    done
+    ! kill -0 "${product_pid}" 2>/dev/null ||
+        fail "window close did not bound in-flight transcript cancellation"
+    wait "${product_pid}" || fail "pending-enrichment shutdown product run failed"
+    product_pid=""
+    if grep -Fq 'codex-transcript-enriched' "${log}" || grep -Fq "${transcript}" "${log}"; then
+        fail "cancelled enrichment completed late or exposed its transcript path"
+    fi
     rm -f -- "${log}"
     rm -rf -- "${state_directory}" "${private_home}"
     log=""
@@ -239,7 +288,7 @@ run_codex_osc_progress() {
         'zentty-linux: terminal-progress pane=pane-1 state=indeterminate progress=none' \
         "real OSC 9;4 progress did not cross the Ghostty embedding boundary"
     zentty_product_wait_for_log "${log}" \
-        'Codex · Running' \
+        'sidebar-agent-status pane=pane-1 phase=Running interaction=None attention=false' \
         "OSC progress did not resume canonical Codex running state"
 
     for _ in {1..200}; do
@@ -259,21 +308,26 @@ run_adapter \
     codex \
     'codex' \
     codex-permission \
-    'zentty-linux: sidebar-agent-status pane=pane-1 text="Codex · Needs input: Run integration tests?" attention=true'
+    'zentty-linux: sidebar-agent-status pane=pane-1 phase=NeedsInput interaction=Approval attention=true' \
+    'Run integration tests?'
 run_adapter \
     codex-notify \
     'codex' \
     codex-notify \
-    'zentty-linux: sidebar-agent-status pane=pane-1 text="Codex · Needs input: Choose execution mode?\n[Sandboxed] [Elevated]" attention=true'
+    'zentty-linux: sidebar-agent-status pane=pane-1 phase=NeedsInput interaction=Decision attention=true' \
+    'Choose execution mode?'
 run_adapter \
     codex-title \
     'codex' \
     codex-title \
-    'zentty-linux: sidebar-agent-status pane=pane-1 text="Codex · Needs input: [ ! ] Action Required | codex-title | Tasks 1/3" attention=true'
+    'zentty-linux: sidebar-agent-status pane=pane-1 phase=NeedsInput interaction=GenericInput attention=true'
 run_codex_title_transcript_enrichment
 run_codex_osc_progress
 case "${ZENTTY_RUN_CODEX_LIFECYCLE:-false}" in
-    true) run_codex_lifecycle ;;
+    true)
+        run_codex_lifecycle
+        run_codex_enrichment_shutdown
+        ;;
     false) ;;
     *) fail "ZENTTY_RUN_CODEX_LIFECYCLE must be true or false" ;;
 esac
@@ -281,18 +335,20 @@ run_adapter \
     claude \
     'claude' \
     claude-question \
-    'zentty-linux: sidebar-agent-status pane=pane-1 text="Claude Code · Needs input: Deploy now?" attention=true'
+    'zentty-linux: sidebar-agent-status pane=pane-1 phase=NeedsInput interaction=Decision attention=true' \
+    'Deploy now?'
 run_adapter \
     claude-lifecycle \
     'claude' \
     claude-lifecycle \
-    'zentty-linux: sidebar-agent-status pane=pane-1 text="Claude Code · Needs input: Allow release command?" attention=true' \
-    'Claude Code · Needs input: Claude is waiting for your input'
+    'zentty-linux: sidebar-agent-status pane=pane-1 phase=NeedsInput interaction=Approval attention=true' \
+    'Allow release command?'
 run_adapter \
     gemini \
     'gemini' \
     gemini-permission \
-    'zentty-linux: sidebar-agent-status pane=pane-1 text="Gemini · Needs input: Allow write_file on README.md?" attention=true'
+    'zentty-linux: sidebar-agent-status pane=pane-1 phase=NeedsInput interaction=Approval attention=true' \
+    'Allow write_file on README.md?'
 
 if [[ -n "${ZENTTY_REAL_GEMINI_BIN:-}" ]]; then
     [[ -x "${ZENTTY_REAL_GEMINI_BIN}" ]] || fail "real Gemini executable is not executable"

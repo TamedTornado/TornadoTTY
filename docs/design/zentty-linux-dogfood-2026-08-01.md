@@ -9625,6 +9625,143 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   and `1235d4eee582e864c63a8cf6a0ae401918e2326be3da39126a570fa8496bf078`.
   No suppression or manifest was broadened for this slice.
 
+### 2026-08-08 — GH-29 agent-event projection extraction
+
+- **The pre-extraction ownership audit found one transport object doing two
+  jobs:** `AgentRuntime` correctly owns the sole authenticated Unix socket,
+  pane-token registry, helper environment, and tmux/event receivers, but it
+  also owns the transcript-enrichment worker manager. `ApplicationShell`
+  separately drains both result streams, creates enrichment candidates,
+  applies core reducer transitions, and refreshes GTK projection. The planned
+  repair is one UI-thread `AgentEventCoordinator` that owns the existing
+  `AgentRuntime` plus the existing `CodexTranscriptEnricher`; it will not add a
+  socket, queue, reducer, worker runtime, or test harness.
+- **Existing lower-boundary coverage is substantial and will be reused:** Real
+  Unix-socket tests already reject bad tokens, malformed payloads, and
+  oversized/stalled clients; `zentty-core` tests already cover event ordering,
+  pane transfer/removal, stale sessions, late idle/stop events, duplicate
+  lifecycle signals, transcript replacement, and persistence redaction. The
+  extraction therefore adds only missing coordinator-generation and shutdown
+  cancellation characterization rather than cloning those suites.
+- **The missing cancellation tests were red before extraction:** The focused
+  test target failed to compile because pane cancellation, shutdown, and
+  pending-work inspection did not exist. The existing enricher now gives each
+  request a generation, cancels replacement and removed-pane work, cancels all
+  work on shutdown, rejects scheduling after shutdown, and accepts completion
+  only for the exact current candidate/generation. Drop repeats shutdown
+  idempotently. Real workers remain bounded by the fixed retry schedule and can
+  outlive cancellation by at most the current 600 ms sleep; no join or second
+  runtime was added.
+- **The extracted boundary is one coordinator, not another agent system:**
+  `AgentEventCoordinator` owns the existing sole `AgentRuntime` and existing
+  `CodexTranscriptEnricher`. `AgentRuntime` now owns transport/token/helper
+  responsibilities only. The coordinator drains typed socket events and tmux
+  requests on GLib, schedules immutable filesystem work, and applies results
+  through the sole core reducer. Pane construction reaches it only for helper
+  environment; pane removal reaches it only for token/enrichment cancellation.
+- **Current identity is checked at the UI drain:** An authenticated event for a
+  removed pane is dropped. If its stable authenticated pane moved worklanes
+  after socket receipt but before GLib drain, the coordinator replaces only the
+  stale worklane projection with core's current worklane; it does not trust a
+  payload target or manufacture a new token. Pure tests pin apply, transfer,
+  and removed-pane decisions. Existing core tests retain stale-session and
+  late idle/stop authority.
+- **Strict Clippy caught an inefficient ownership expression:** The first
+  extraction assigned a freshly allocated worklane string directly into the
+  authenticated target. `clippy::assigning_clones` rejected it. The repaired
+  path captures the current worklane once and uses `clone_into`; all-target
+  strict Clippy then passed.
+- **The privacy acceptance criterion exposed a real receipt defect:** Sidebar
+  receipts logged the complete rendered agent question, including prompt and
+  transcript-enriched text. The product still renders that text in GTK, but
+  receipts now contain only pane identity, phase, interaction kind, and
+  attention state. The real agent harness asserts controlled prompt bodies,
+  option text, and transcript paths never appear in the product log. A core
+  persistence test also proves pane capability, session, transcript path, and
+  prompt body do not enter `WindowRecipe`.
+- **Redacted integration expectations initially described two reducer states
+  incorrectly:** The first X11 rerun showed Codex option notifications and
+  Claude `AskUserQuestion` as canonical `Decision`, not `Question`; the next
+  run showed plain Codex questions as `GenericInput`. These were harness
+  expectation defects exposed by the new structured receipt, not product
+  failures. Expectations now use the canonical reducer vocabulary without
+  reintroducing text. The complete real agent/PTY/socket journey then passed in
+  private X11 session
+  `336eb9043da80fb53f97f2f12e86cefd3bad29e2c37bf33b4cd845639d8b7087`
+  and private Wayland session
+  `7126fc1c9c4cdba0515230caa7c8103bfc0e485dc484631fd0b798fa9a9f4e1e`.
+- **Shutdown now crosses the real in-flight boundary:** A controlled Codex
+  helper establishes a real authenticated session and title-inferred
+  enrichment candidate whose transcript file intentionally never exists. The
+  harness waits for the worker-scheduled receipt, closes the real window with
+  physical compositor input, requires process exit within two seconds, and
+  rejects any late enrichment or transcript-path receipt. The expanded agent
+  suite passed in X11 session
+  `127ea347decd313bc539db00e8f681332668ab34829de3f0970906959effe185`
+  and Wayland session
+  `e59538ecf9cbfc729b521e9c1ffcbd581354b7d48c58052615e53416edf2081a`.
+- **The first full matrix caught incorrect scenario scoping, not an absent
+  compositor capability:** `staged-wayland` runs packaging discovery under
+  headless Weston and deliberately has no virtual-keyboard protocol. The new
+  physical-close shutdown journey initially ran in every agent invocation, so
+  the packaging cell correctly failed rather than converting absent input into
+  a pass. That journey is now selected by the existing
+  `ZENTTY_RUN_CODEX_LIFECYCLE=true` contract used by both input-capable agent
+  qualification cells; packaging retains its real socket/PTY smoke without
+  claiming physical input. The repaired staged-Wayland cell passed in session
+  `7912d6f9c9bbc75f415fd9c7bbba7d948022d2e51eec74afd17bda8743223718`.
+- **Adjacent real product paths remain green:** tmux compatibility plus the
+  consolidated two-background-agent session-restore journey passed together
+  in X11 session
+  `1e6b6ba24b1190692d65ec6f9d4fbae9dd8fe073b322f2ee1bc3fbeb1c1ab03b`
+  and Wayland session
+  `3ac62240c1697f42bc6b29b87bd3d09ab0906618c48e038d99713e054dc8020b`.
+  These use real Ghostty surfaces, PTYs, Unix sockets, helper processes, and
+  physical input; no alternate product or new harness was introduced.
+- **Mutation killed every selected coordinator decision change:** The safe
+  wrapper retained `gitignore=true` and `copy_target=false`; 10/10 mutations
+  across completion generation matching, shutdown/pane cancellation, and
+  event routing were caught in 74 seconds after a 36-second baseline.
+- **One local workspace command was invalid evidence under the restricted
+  sandbox:** Eight real Unix-socket helper tests failed at bind with
+  `Operation not permitted`. The same complete locked workspace command was
+  rerun with the required system permission and every test passed; no test or
+  socket assertion was weakened. This is recorded as an execution-environment
+  failure, not a product defect.
+- **The repaired complete executable matrix passed:** Declared totals remain
+  `PASS=88`, `FAIL=0`, `BLOCKED=7`, `XFAIL=1`, and
+  `NOT_IMPLEMENTED=21`. Implemented-local and product-boundary qualification
+  pass; release and full Linux qualification remain false. Summary SHA-256 is
+  `039589a0d8517e9e7e2395644cbf1a6dffa248d058914a33b6863f121ce52a34`.
+- **Valgrind remains PASS with reviewed suppressions:** Raw evidence contains
+  427 errors/contexts, 6,160 definite bytes, and 41,428 indirect bytes;
+  post-suppression totals are zero with all 427 contexts accounted for. The
+  report, raw-receipt, and suppressed-receipt SHA-256 values are respectively
+  `430d45a1f7a155d99c97dbe3a2d2ec8575407e9ed43664a115897bd4d81ad887`,
+  `b94accaf5d0a2c3f4b902d0a901acc357f853e0073d179b59982edb353315828`,
+  and `163d1bfcb27817f785b6c87590c4ae83deea37e78aafd29c2bec27012d8cb450`.
+  No suppression or manifest changed.
+- **Final diff review rejected a weaker no-HOME fallback before commit:** The
+  first coordinator constructor used a fixed temporary path when both
+  `CODEX_HOME` and `HOME` were absent, whereas the pre-extraction runtime used
+  its random private 0700 instance directory. The coordinator now constructs
+  the sole runtime first and obtains the missing-home path from that owned
+  directory. This preserves the prior isolation contract; the earlier matrix
+  receipt is retained as discovery evidence but is not the final candidate
+  qualification.
+- **The exact post-review candidate passed the complete matrix again:**
+  Declared totals remain `PASS=88`, `FAIL=0`, `BLOCKED=7`, `XFAIL=1`, and
+  `NOT_IMPLEMENTED=21`; implemented-local and product-boundary pass while
+  release/full Linux remain false. Final summary SHA-256 is
+  `ae3492ca989e02a2b3665655267e04bb3d1f3fd197b74990eeed678f01603cca`.
+  Valgrind is **PASS with reviewed suppressions**: raw evidence contains 427
+  errors/contexts, 6,080 definite bytes, and 41,395 indirect bytes; reviewed
+  post-suppression totals are zero. Final report, raw-receipt, and
+  suppressed-receipt SHA-256 values are respectively
+  `8c3f37096b9312fc7750297f45d5f022162d708254380e59d7deda7102fd9c24`,
+  `1b7266dee4eee68401622232eb44d3c18e5b98f689c870212ea9c9582c039a4f`,
+  and `332d52c433d3ef6f188a8662df9f2b1c77656cbf11824ad579933ba93fd2420f`.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were

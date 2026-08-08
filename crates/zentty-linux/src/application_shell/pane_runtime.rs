@@ -238,7 +238,7 @@ impl PaneRuntimeCoordinator {
         let surface = match runtime.create_surface(&config) {
             Ok(surface) => surface,
             Err(error) => {
-                shell.borrow_mut().agent_runtime.unregister_pane(pane_id);
+                shell.borrow_mut().agent_events.unregister_pane(pane_id);
                 return Err(error.to_string());
             }
         };
@@ -269,7 +269,7 @@ impl PaneRuntimeCoordinator {
             .ok_or_else(|| format!("pane {pane_id} has no worklane"))?
             .to_owned();
         let environment = shell
-            .agent_runtime
+            .agent_events
             .environment_for_pane(&worklane_id, pane_id)?;
         let restored_command = shell.restored_pane_commands.get(pane_id).cloned();
         if shell.pane_runtime.command().is_none()
@@ -483,7 +483,7 @@ impl PaneRuntimeCoordinator {
             }
             ChildExitDisposition::DisposeDuringShutdown => {
                 let _ = shell_ref.pane_runtime.note_child_exit(pane_id);
-                shell_ref.agent_runtime.unregister_pane(pane_id);
+                shell_ref.agent_events.unregister_pane(pane_id);
                 if let Err(error) = shell_ref.pane_runtime.remove(pane_id, true) {
                     eprintln!("zentty-linux: shutdown child-exit cleanup failed: {error}");
                     shell_ref.main_loop.quit();
@@ -495,7 +495,7 @@ impl PaneRuntimeCoordinator {
             }
         }
         let outcome = shell_ref.state.close_pane_after_child_exit(pane_id);
-        shell_ref.agent_runtime.unregister_pane(pane_id);
+        shell_ref.agent_events.unregister_pane(pane_id);
         if let Err(error) = shell_ref.pane_runtime.remove(pane_id, true) {
             eprintln!("zentty-linux: child-exit cleanup failed: {error}");
             shell_ref.main_loop.quit();

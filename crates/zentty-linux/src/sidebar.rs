@@ -774,9 +774,10 @@ fn update_pane_metadata(sidebar: &gtk::Box, pane: &zentty_core::SidebarPaneSumma
     update_agent_status_label(&agent_status, pane.agent_status.as_ref());
     if let Some(status) = &pane.agent_status {
         eprintln!(
-            "zentty-linux: sidebar-agent-status pane={} text={:?} attention={}",
+            "zentty-linux: sidebar-agent-status pane={} phase={:?} interaction={:?} attention={}",
             pane.pane_id,
-            agent_status_view::present(status).text,
+            status.phase,
+            status.interaction,
             status.requires_attention()
         );
     }

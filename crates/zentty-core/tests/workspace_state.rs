@@ -125,6 +125,37 @@ fn transcript_enrichment_rejects_stale_session_and_resolved_status_results() {
 }
 
 #[test]
+fn persisted_workspace_projection_excludes_agent_secrets_prompts_and_transcripts() {
+    let envelope = SessionRestoreEnvelope::from_json(V3_ENVELOPE).unwrap();
+    let template = &envelope.workspace.windows[0];
+    let mut state = WorkspaceState::from_window_recipe(template).unwrap();
+    state.apply_agent_event(
+        AuthenticatedAgentEvent {
+            target: AgentTarget::new("window-main", "worklane-main", "pane-agent"),
+            pane_token: "private-pane-capability".to_owned(),
+            event: AgentEvent::parse(
+                br#"{"version":1,"event":"agent.needs-input","agent":{"name":"Codex"},"session":{"id":"private-session"},"transcriptPath":"/private/transcript.jsonl","state":{"interaction":{"kind":"approval","text":"SECRET_PROMPT_BODY"}}}"#,
+            )
+            .unwrap(),
+        },
+        1,
+    );
+    let persisted = serde_json::to_string(&state.to_window_recipe(template)).unwrap();
+
+    for forbidden in [
+        "private-pane-capability",
+        "private-session",
+        "/private/transcript.jsonl",
+        "SECRET_PROMPT_BODY",
+    ] {
+        assert!(
+            !persisted.contains(forbidden),
+            "persisted workspace escaped agent-private value: {forbidden}"
+        );
+    }
+}
+
+#[test]
 fn explicit_transcript_context_does_not_require_a_guessed_working_directory() {
     let mut state = WorkspaceState::new("worklane-a", "pane-a");
     state.apply_agent_event(

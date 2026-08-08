@@ -26,8 +26,38 @@ pub(crate) struct CodexTranscriptEnrichment {
 #[derive(Debug)]
 struct WorkerResult {
     candidate: CodexTranscriptEnrichmentCandidate,
+    generation: u64,
     transcript_path: Option<PathBuf>,
     question: Option<CodexTranscriptQuestion>,
+}
+
+struct PendingWorker {
+    candidate: CodexTranscriptEnrichmentCandidate,
+    generation: u64,
+    cancellation: Arc<AtomicBool>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum CompletionDecision {
+    Apply,
+    #[default]
+    IgnoreStale,
+    IgnoreDuringShutdown,
+}
+
+fn completion_decision(
+    shutting_down: bool,
+    pending_generation: Option<u64>,
+    result_generation: u64,
+    candidate_matches: bool,
+) -> CompletionDecision {
+    if shutting_down {
+        CompletionDecision::IgnoreDuringShutdown
+    } else if pending_generation == Some(result_generation) && candidate_matches {
+        CompletionDecision::Apply
+    } else {
+        CompletionDecision::IgnoreStale
+    }
 }
 
 /// Owns only background transcript file discovery and parsing. Canonical
@@ -36,11 +66,13 @@ struct WorkerResult {
 pub(crate) struct CodexTranscriptEnricher {
     codex_home: PathBuf,
     delays: Vec<Duration>,
-    pending_by_pane: BTreeMap<String, (CodexTranscriptEnrichmentCandidate, Arc<AtomicBool>)>,
+    pending_by_pane: BTreeMap<String, PendingWorker>,
     transcript_by_session: BTreeMap<(String, String), PathBuf>,
     cache: Arc<Mutex<HashMap<CodexTranscriptCacheKey, CodexTranscriptQuestion>>>,
     sender: mpsc::Sender<WorkerResult>,
     receiver: mpsc::Receiver<WorkerResult>,
+    next_generation: u64,
+    shutting_down: bool,
 }
 
 impl CodexTranscriptEnricher {
@@ -58,20 +90,31 @@ impl CodexTranscriptEnricher {
             cache: Arc::new(Mutex::new(HashMap::new())),
             sender,
             receiver,
+            next_generation: 0,
+            shutting_down: false,
         }
     }
 
     pub(crate) fn schedule(&mut self, candidate: CodexTranscriptEnrichmentCandidate) -> bool {
-        if let Some((pending, cancellation)) = self.pending_by_pane.get(&candidate.pane_id) {
-            if pending == &candidate {
+        if self.shutting_down {
+            return false;
+        }
+        if let Some(pending) = self.pending_by_pane.get(&candidate.pane_id) {
+            if pending.candidate == candidate {
                 return false;
             }
-            cancellation.store(true, Ordering::Release);
+            pending.cancellation.store(true, Ordering::Release);
         }
+        self.next_generation = self.next_generation.wrapping_add(1);
+        let generation = self.next_generation;
         let cancellation = Arc::new(AtomicBool::new(false));
         self.pending_by_pane.insert(
             candidate.pane_id.clone(),
-            (candidate.clone(), Arc::clone(&cancellation)),
+            PendingWorker {
+                candidate: candidate.clone(),
+                generation,
+                cancellation: Arc::clone(&cancellation),
+            },
         );
         let preferred_path = candidate
             .transcript_path
@@ -100,6 +143,7 @@ impl CodexTranscriptEnricher {
                 );
                 let _ = sender.send(WorkerResult {
                     candidate,
+                    generation,
                     transcript_path,
                     question,
                 });
@@ -114,11 +158,13 @@ impl CodexTranscriptEnricher {
     pub(crate) fn drain(&mut self) -> Vec<CodexTranscriptEnrichment> {
         let mut enrichments = Vec::new();
         for result in self.receiver.try_iter() {
-            if self
-                .pending_by_pane
-                .get(&result.candidate.pane_id)
-                .map(|(candidate, _)| candidate)
-                != Some(&result.candidate)
+            let pending = self.pending_by_pane.get(&result.candidate.pane_id);
+            if completion_decision(
+                self.shutting_down,
+                pending.map(|pending| pending.generation),
+                result.generation,
+                pending.is_some_and(|pending| pending.candidate == result.candidate),
+            ) != CompletionDecision::Apply
             {
                 continue;
             }
@@ -139,6 +185,32 @@ impl CodexTranscriptEnricher {
             });
         }
         enrichments
+    }
+
+    pub(crate) fn cancel_pane(&mut self, pane_id: &str) -> bool {
+        let Some(pending) = self.pending_by_pane.remove(pane_id) else {
+            return false;
+        };
+        pending.cancellation.store(true, Ordering::Release);
+        true
+    }
+
+    pub(crate) fn shutdown(&mut self) {
+        self.shutting_down = true;
+        for (_, pending) in std::mem::take(&mut self.pending_by_pane) {
+            pending.cancellation.store(true, Ordering::Release);
+        }
+    }
+
+    #[cfg(test)]
+    fn pending_count(&self) -> usize {
+        self.pending_by_pane.len()
+    }
+}
+
+impl Drop for CodexTranscriptEnricher {
+    fn drop(&mut self) {
+        self.shutdown();
     }
 }
 
@@ -188,7 +260,7 @@ fn resolve_with_retries(
 
 #[cfg(test)]
 mod tests {
-    use super::CodexTranscriptEnricher;
+    use super::{CodexTranscriptEnricher, CompletionDecision, completion_decision};
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
@@ -223,6 +295,25 @@ mod tests {
             assert!(Instant::now() < deadline, "transcript enrichment timed out");
             std::thread::sleep(Duration::from_millis(2));
         }
+    }
+
+    #[test]
+    fn completion_requires_the_current_generation_candidate_and_live_coordinator() {
+        assert_eq!(
+            completion_decision(false, Some(7), 7, true),
+            CompletionDecision::Apply
+        );
+        for decision in [
+            completion_decision(false, None, 7, true),
+            completion_decision(false, Some(6), 7, true),
+            completion_decision(false, Some(7), 7, false),
+        ] {
+            assert_eq!(decision, CompletionDecision::IgnoreStale);
+        }
+        assert_eq!(
+            completion_decision(true, Some(7), 7, true),
+            CompletionDecision::IgnoreDuringShutdown
+        );
     }
 
     #[test]
@@ -299,6 +390,69 @@ mod tests {
         assert!(enricher.schedule(candidate("current")));
         let result = wait_for_result(&mut enricher);
         assert_eq!(result.candidate.session_id, "current");
+        std::thread::sleep(Duration::from_millis(30));
+        assert!(enricher.drain().is_empty());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn pane_removal_cancels_pending_enrichment_and_rejects_late_completion() {
+        let root = temporary_directory("pane-cancel");
+        let codex_home = root.join(".codex");
+        let project = root.join("project");
+        fs::create_dir_all(&project).unwrap();
+        let transcript = transcript_path(&codex_home);
+        fs::write(
+            transcript,
+            format!(
+                "{{\"cwd\":{project:?}}}\n{{\"type\":\"function_call\",\"name\":\"request_user_input\",\"arguments\":{{\"question\":\"Must not arrive\"}}}}\n"
+            ),
+        )
+        .unwrap();
+        let mut enricher =
+            CodexTranscriptEnricher::with_delays(codex_home, vec![Duration::from_millis(20)]);
+        let candidate = CodexTranscriptEnrichmentCandidate {
+            pane_id: "pane-a".to_owned(),
+            session_id: "session-a".to_owned(),
+            working_directory: Some(project.to_string_lossy().into_owned()),
+            transcript_path: None,
+        };
+
+        assert!(enricher.schedule(candidate));
+        assert_eq!(enricher.pending_count(), 1);
+        assert!(enricher.cancel_pane("pane-a"));
+        assert_eq!(enricher.pending_count(), 0);
+        std::thread::sleep(Duration::from_millis(30));
+        assert!(enricher.drain().is_empty());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn shutdown_cancels_every_generation_and_rejects_work_in_flight() {
+        let root = temporary_directory("shutdown");
+        let codex_home = root.join(".codex");
+        let project = root.join("project");
+        fs::create_dir_all(&project).unwrap();
+        let mut enricher =
+            CodexTranscriptEnricher::with_delays(codex_home, vec![Duration::from_millis(20)]);
+        for pane_id in ["pane-a", "pane-b"] {
+            assert!(enricher.schedule(CodexTranscriptEnrichmentCandidate {
+                pane_id: pane_id.to_owned(),
+                session_id: format!("session-{pane_id}"),
+                working_directory: Some(project.to_string_lossy().into_owned()),
+                transcript_path: None,
+            }));
+        }
+
+        assert_eq!(enricher.pending_count(), 2);
+        enricher.shutdown();
+        assert_eq!(enricher.pending_count(), 0);
+        assert!(!enricher.schedule(CodexTranscriptEnrichmentCandidate {
+            pane_id: "pane-c".to_owned(),
+            session_id: "session-c".to_owned(),
+            working_directory: None,
+            transcript_path: None,
+        }));
         std::thread::sleep(Duration::from_millis(30));
         assert!(enricher.drain().is_empty());
         fs::remove_dir_all(root).unwrap();

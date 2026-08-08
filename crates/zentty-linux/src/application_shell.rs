@@ -3,19 +3,7 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use gtk::gdk;
-use gtk::glib;
-use gtk::prelude::*;
-use zentty_core::{
-    ClosePaneOutcome, ColumnRecipe, CommandPaletteItem, PaneLayoutPolicy, PaneRecipe,
-    PaneReference, PaneRestoreDraft, PaneRightInsertionBehavior, SidebarWidthPreference,
-    WindowRecipe, WorklaneColor, WorklaneRecipe, WorkspaceState,
-};
-use zentty_ghostty::GhosttyRuntime;
-use zentty_tmux_compat::Command as TmuxCommand;
-
 use crate::{
-    agent_runtime::AgentRuntime,
     command_palette::CommandPaletteView,
     pane_controls::{self, PaneControlAction, PanePresentation},
     pane_scroll_switch::{PaneScrollSwitch, ScrollSwitchResult, ScrollUnit},
@@ -33,8 +21,18 @@ use crate::{
         SpatialDirection as PeekSpatialDirection, WorklanePeekView,
     },
 };
+use gtk::gdk;
+use gtk::glib;
+use gtk::prelude::*;
+use zentty_core::{
+    ClosePaneOutcome, ColumnRecipe, CommandPaletteItem, PaneLayoutPolicy, PaneRecipe,
+    PaneReference, PaneRestoreDraft, PaneRightInsertionBehavior, SidebarWidthPreference,
+    WindowRecipe, WorklaneColor, WorklaneRecipe, WorkspaceState,
+};
+use zentty_ghostty::GhosttyRuntime;
 
 mod action_router;
+mod agent_events;
 mod pane_runtime;
 mod tmux_runtime;
 
@@ -53,6 +51,7 @@ use action_router::{
     ACTION_RESET_PANE_LAYOUT, ACTION_RESTORE_CLOSED_PANE, ACTION_SPLIT_PANE_BELOW,
     ACTION_SPLIT_PANE_RIGHT, ACTION_TOGGLE_SIDEBAR, ACTION_USE_SELECTION_FOR_FIND, ActionRouter,
 };
+use agent_events::AgentEventCoordinator;
 use pane_runtime::PaneRuntimeCoordinator;
 const PRIMARY_RIGHT_BEHAVIOR: PaneRightInsertionBehavior = PaneRightInsertionBehavior::VisibleSplit;
 const WORKLANE_PEEK_TAB_HOLD_THRESHOLD: Duration = Duration::from_millis(200);
@@ -88,7 +87,7 @@ pub(crate) struct ApplicationShell {
     command_palette: CommandPaletteView,
     last_pane_viewport_height: Cell<i32>,
     action_router: Option<ActionRouter>,
-    agent_runtime: AgentRuntime,
+    agent_events: AgentEventCoordinator,
     tmux_compat: crate::tmux_compat::TmuxCompatProduct,
 }
 
@@ -141,7 +140,7 @@ impl ApplicationShell {
         );
         let state = WorkspaceState::from_window_recipe(&window_template)
             .map_err(|error| format!("workspace restore failed: {error}"))?;
-        let agent_runtime = AgentRuntime::start(window_template.id.clone())?;
+        let agent_events = AgentEventCoordinator::start(window_template.id.clone())?;
         let (next_worklane_number, next_pane_number) = next_workspace_identities(&state);
         let initial_pane_ids = workspace_pane_ids(&state);
         let preferred_sidebar_width = Rc::new(Cell::new(SidebarWidthPreference::DEFAULT));
@@ -178,7 +177,7 @@ impl ApplicationShell {
             command_palette,
             last_pane_viewport_height: Cell::new(0),
             action_router: None,
-            agent_runtime,
+            agent_events,
             tmux_compat: crate::tmux_compat::TmuxCompatProduct::default(),
         }));
 
@@ -268,6 +267,7 @@ impl ApplicationShell {
 
     pub(crate) fn detach_and_close(&mut self) {
         self.shutting_down = true;
+        self.agent_events.shutdown();
         if let Some(router) = self.action_router.take() {
             router.uninstall(&self.window);
         }
@@ -1584,102 +1584,21 @@ impl ApplicationShell {
     }
 
     pub(crate) fn drain_agent_events(shell: &Rc<RefCell<Self>>) {
-        let tmux_commands = shell.borrow().agent_runtime.drain_tmux();
-        let mut tmux_changed_product_state = false;
-        for command in tmux_commands {
-            let changes_state = matches!(command.request.command(), TmuxCommand::SelectPane);
-            Self::execute_tmux_command(shell, command);
-            tmux_changed_product_state |= changes_state;
-        }
-        if tmux_changed_product_state {
-            shell.borrow().render();
-        }
-        let events = shell.borrow().agent_runtime.drain();
-        let now = unix_time_ms();
-        let mut sidebar_changed = false;
-        for event in events {
-            let pane_id = event.target.pane_id.clone();
-            eprintln!(
-                "zentty-linux: agent-event pane={} worklane={} kind={} session={}",
-                event.target.pane_id,
-                event.target.worklane_id,
-                event.event_kind(),
-                event.session_id().unwrap_or("pane-default")
-            );
-            let mut shell = shell.borrow_mut();
-            shell.state.apply_agent_event(event, now);
-            shell.schedule_codex_transcript_enrichment(&pane_id);
-            sidebar_changed = true;
-        }
-        let enrichments = shell
-            .borrow_mut()
-            .agent_runtime
-            .drain_codex_transcript_enrichments();
-        for enrichment in enrichments {
-            let mut shell = shell.borrow_mut();
-            if shell.state.apply_codex_transcript_enrichment(
-                &enrichment.candidate,
-                &enrichment.question,
-                now,
-            ) {
-                eprintln!(
-                    "zentty-linux: codex-transcript-enriched pane={} session={}",
-                    enrichment.candidate.pane_id, enrichment.candidate.session_id
-                );
-                sidebar_changed = true;
-            }
-        }
-        if sidebar_changed {
-            shell.borrow().render_sidebar();
-        }
+        AgentEventCoordinator::drain(shell);
     }
 
     fn schedule_codex_transcript_enrichment(&mut self, pane_id: &str) {
-        let fallback_working_directory = std::env::current_dir()
-            .ok()
-            .map(|path| path.to_string_lossy().into_owned());
-        let Some(candidate) = self
-            .state
-            .codex_transcript_enrichment_candidate(pane_id, fallback_working_directory.as_deref())
-        else {
-            return;
-        };
-        if self
-            .agent_runtime
-            .schedule_codex_transcript_enrichment(candidate.clone())
-        {
-            eprintln!(
-                "zentty-linux: codex-transcript-enrichment-scheduled pane={} session={}",
-                candidate.pane_id, candidate.session_id
-            );
-        }
+        self.agent_events.schedule_for_pane(&self.state, pane_id);
     }
 
     pub(crate) fn sync_agent_targets(&mut self) {
-        let topology = self
-            .state
-            .worklanes()
-            .iter()
-            .flat_map(|worklane| {
-                worklane.columns.iter().flat_map(move |column| {
-                    column
-                        .panes
-                        .iter()
-                        .map(move |pane| (worklane.id.clone(), pane.id.clone()))
-                })
-            })
-            .collect::<Vec<_>>();
-        if let Err(error) = self.agent_runtime.retarget_registered_panes(
-            topology
-                .iter()
-                .map(|(worklane_id, pane_id)| (worklane_id.as_str(), pane_id.as_str())),
-        ) {
+        if let Err(error) = self.agent_events.sync_targets(&self.state) {
             eprintln!("zentty-linux: agent-target-sync failed={error}");
         }
     }
 
     fn remove_live_surface(&mut self, pane_id: &str) -> Result<(), String> {
-        self.agent_runtime.unregister_pane(pane_id);
+        self.agent_events.unregister_pane(pane_id);
         self.pane_runtime.remove(pane_id, false).map(|_| ())
     }
 

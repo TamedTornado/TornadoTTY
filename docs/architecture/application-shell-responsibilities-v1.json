@@ -2,10 +2,11 @@
   "schema_version": 1,
   "contract_id": "zentty-application-shell-responsibilities",
   "source": "crates/zentty-linux/src/application_shell.rs",
-  "source_sha256": "065d77f44c8a8a6a8fa5e82753cdfe0bf57de50d31e725a0a5d165c5b60da74b",
+  "source_sha256": "9407eaff47b81974021b64300da060e97bf0f256e8b9f10289d844ba804a6daa",
   "owned_source_sha256": {
     "crates/zentty-linux/src/application_shell/action_router.rs": "321a6e71c26effce00b51ccb3d505ce3e329a573246fe6345f57768c7e2138a8",
-    "crates/zentty-linux/src/application_shell/pane_runtime.rs": "abad651a4bad44f78050fcc215678a715cbaf8595d61c31530cec202f3dc3b81"
+    "crates/zentty-linux/src/application_shell/agent_events.rs": "12da8738f9cc6902498d6dd836a79ba52025897bad596703d1d336d3ec805e0f",
+    "crates/zentty-linux/src/application_shell/pane_runtime.rs": "7fad1aee2a7810150d855399b2bced6d62c5b75c462449aa266a8aebb2656a3a"
   },
   "tracking": "GH-26",
   "purpose": "Characterize every ApplicationShell field, method, action, authority, and lifecycle edge before extraction; this contract assigns ownership but does not create a second implementation.",
@@ -33,7 +34,7 @@
     },
     {
       "id": "agent_event_coordinator",
-      "status": "planned",
+      "status": "existing",
       "planned_module": "crates/zentty-linux/src/application_shell/agent_events.rs",
       "tracking": "GH-29",
       "responsibility": "The sole UI-thread drain of authenticated agent events, enrichment generations, cancellation, and projection through the core reducer."
@@ -79,7 +80,7 @@
     },
     {
       "owner": "agent_event_coordinator",
-      "fields": ["agent_runtime"]
+      "fields": ["agent_events"]
     },
     {
       "owner": "persistence_coordinator",
@@ -174,6 +175,10 @@
       "connect_surface_callbacks", "connect_surface_progress_callback",
       "make_surface_focus_controller", "apply_pending_restore_prefill", "create_pane_frame",
       "handle_child_exit"
+    ],
+    "agent_event_coordinator": [
+      "event_route_decision", "start", "environment_for_pane", "unregister_pane",
+      "sync_targets", "schedule_for_pane", "shutdown", "drain"
     ]
   },
   "action_contract": [
