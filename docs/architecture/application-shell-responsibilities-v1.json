@@ -1,0 +1,299 @@
+{
+  "schema_version": 1,
+  "contract_id": "zentty-application-shell-responsibilities",
+  "source": "crates/zentty-linux/src/application_shell.rs",
+  "source_sha256": "f790df03233e00e500b3f01b1c192bdbd16a12be1f22866fb5a751c2cd52da66",
+  "tracking": "GH-26",
+  "purpose": "Characterize every ApplicationShell field, method, action, authority, and lifecycle edge before extraction; this contract assigns ownership but does not create a second implementation.",
+  "owners": [
+    {
+      "id": "application_shell",
+      "status": "existing",
+      "planned_module": "crates/zentty-linux/src/application_shell.rs",
+      "tracking": "GH-25",
+      "responsibility": "Composition root, sole live WorkspaceState, top-level window ownership, and delegation between focused coordinators."
+    },
+    {
+      "id": "action_router",
+      "status": "planned",
+      "planned_module": "crates/zentty-linux/src/application_shell/action_router.rs",
+      "tracking": "GH-27",
+      "responsibility": "One GTK action registry, typed Variant decoding, command availability, shortcuts, and dispatch without product-state ownership."
+    },
+    {
+      "id": "pane_runtime_coordinator",
+      "status": "planned",
+      "planned_module": "crates/zentty-linux/src/application_shell/pane_runtime.rs",
+      "tracking": "GH-28",
+      "responsibility": "The sole pane-to-Ghostty-surface projection, callback registrations, transactional construction, focus, child exit, and teardown."
+    },
+    {
+      "id": "agent_event_coordinator",
+      "status": "planned",
+      "planned_module": "crates/zentty-linux/src/application_shell/agent_events.rs",
+      "tracking": "GH-29",
+      "responsibility": "The sole UI-thread drain of authenticated agent events, enrichment generations, cancellation, and projection through the core reducer."
+    },
+    {
+      "id": "persistence_coordinator",
+      "status": "planned",
+      "planned_module": "crates/zentty-linux/src/persistence_coordinator.rs",
+      "tracking": "GH-30",
+      "responsibility": "One launch/shutdown snapshot lifecycle around the existing SessionRestoreStore and SnapshotPersistence implementation."
+    },
+    {
+      "id": "existing_ui_projection",
+      "status": "existing",
+      "planned_module": "crates/zentty-linux/src/application_shell.rs",
+      "tracking": "GH-31",
+      "responsibility": "Window-local sidebar, pane-layout, peek, palette, search, navigation, rendering, and geometry projection pending final wiring review."
+    },
+    {
+      "id": "existing_tmux_coordinator",
+      "status": "existing",
+      "planned_module": "crates/zentty-linux/src/application_shell/tmux_runtime.rs",
+      "tracking": "GH-14",
+      "responsibility": "The already extracted bridge from the pure tmux compatibility model to the single product workspace and pane runtime."
+    }
+  ],
+  "field_assignments": [
+    {
+      "owner": "application_shell",
+      "fields": [
+        "window", "chrome", "body", "sidebar_reservation", "sidebar_hover_rail",
+        "sidebar", "sidebar_scroll", "pane_scroll", "pane_box", "background_agent_host",
+        "state", "main_loop", "next_worklane_number", "next_pane_number", "shutting_down"
+      ]
+    },
+    {
+      "owner": "action_router",
+      "fields": ["workspace_actions"]
+    },
+    {
+      "owner": "pane_runtime_coordinator",
+      "fields": [
+        "surfaces", "pane_frames", "focus_controllers", "runtime", "command",
+        "live_children", "pending_prefills"
+      ]
+    },
+    {
+      "owner": "agent_event_coordinator",
+      "fields": ["agent_runtime"]
+    },
+    {
+      "owner": "persistence_coordinator",
+      "fields": ["restored_pane_commands", "window_template"]
+    },
+    {
+      "owner": "existing_ui_projection",
+      "fields": [
+        "preferred_sidebar_width", "adjusting_sidebar_width", "sidebar_reveal_generation",
+        "sidebar_visibility", "sidebar_visibility_generation", "peek_phase", "peek_generation",
+        "peek_tab_down", "peek_view", "command_palette", "last_pane_viewport_height"
+      ]
+    },
+    {
+      "owner": "existing_tmux_coordinator",
+      "fields": ["tmux_compat"]
+    }
+  ],
+  "method_assignments": [
+    {
+      "owner": "application_shell",
+      "methods": [
+        "new", "window", "sidebar_container", "present", "detach_and_close",
+        "move_active_worklane", "move_worklane", "render", "take_pane_id",
+        "topology_receipt", "geometry_receipt"
+      ]
+    },
+    {
+      "owner": "action_router",
+      "methods": [
+        "install_actions", "install_restore_closed_pane_action", "install_search_actions",
+        "install_pane_layout_actions", "finish_pane_layout_action",
+        "install_pane_traversal_shortcuts", "record_terminal_gesture",
+        "handle_lifecycle_shortcut", "activate_restore_closed_pane_shortcut",
+        "install_command_palette_shortcut", "install_search_shortcuts",
+        "perform_focused_binding_action", "install_pane_creation_actions",
+        "install_edit_actions", "install_pane_rename_action", "install_worklane_edit_actions",
+        "install_worklane_move_actions", "install_pane_transfer_action", "add_simple_action",
+        "schedule_terminal_focus", "activate_pane_control", "report_action_error",
+        "refresh_pane_layout_action_availability", "set_workspace_action_enabled"
+      ]
+    },
+    {
+      "owner": "pane_runtime_coordinator",
+      "methods": [
+        "live_children", "release_surfaces", "create_worklane", "split_focused_pane_right",
+        "add_focused_pane_right", "add_focused_pane_left", "split_focused_pane_below",
+        "split_focused_pane", "close_focused_pane", "close_worklane", "close_pane",
+        "restore_closed_pane", "create_surface", "create_surface_with_command",
+        "create_surface_configured", "connect_surface_callbacks",
+        "connect_surface_progress_callback", "make_surface_focus_controller", "surface_config",
+        "apply_pending_restore_prefill", "create_pane_frame", "handle_child_exit",
+        "remove_surface", "remove_live_surface", "focus_selected_surface"
+      ]
+    },
+    {
+      "owner": "agent_event_coordinator",
+      "methods": [
+        "mount_background_restored_agents", "agent_restore_drafts", "drain_agent_events",
+        "schedule_codex_transcript_enrichment", "sync_agent_targets"
+      ]
+    },
+    {
+      "owner": "persistence_coordinator",
+      "methods": ["window_recipe"]
+    },
+    {
+      "owner": "existing_ui_projection",
+      "methods": [
+        "reconcile_sidebar_width", "reconcile_pane_heights", "install_sidebar_visibility",
+        "schedule_sidebar_dismissal", "apply_sidebar_visibility", "handle_peek_tab",
+        "handle_peek_tab_released", "open_peek_after_tab_hold", "open_peek", "commit_peek",
+        "cancel_peek", "spatially_navigate_peek", "preview_peek_selection",
+        "refresh_peek_view", "install_pane_scroll_switching", "command_palette_items",
+        "command_palette_action_items", "install_peek_scroll_navigation", "scroll_panes_to_end",
+        "scroll_panes_to_focused", "pane_viewport_width", "pane_viewport_height",
+        "apply_pane_height_requests", "resolved_column_widths", "focused_column_render_width",
+        "render_sidebar", "refresh_sidebar_metadata", "schedule_active_worklane_reveal",
+        "navigate_history", "select_adjacent_pane", "select_adjacent_worklane",
+        "pane_references_in_sidebar_order", "current_pane_reference", "select_pane_reference",
+        "peek_previews", "refresh_pane_presentation", "refresh_right_insertion_behavior"
+      ]
+    }
+  ],
+  "action_contract": [
+    {"name":"toggle-sidebar","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"new-worklane","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"select-worklane","parameter":"string","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"split-pane-right","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"add-pane-right","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"add-pane-left","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"split-pane-below","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"close-pane","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"rename-worklane","parameter":"string_pair","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"rename-pane","parameter":"string_pair","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"cycle-worklane-color","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"set-worklane-color","parameter":"string_pair","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"close-worklane","parameter":"string","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"close-active-worklane","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"move-worklane","parameter":"string_pair","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"reorder-worklane","parameter":"string_pair","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"move-worklane-up","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"move-worklane-down","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"move-pane-left","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"move-pane-right","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"move-pane-up","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"move-pane-down","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"move-pane-to-worklane","parameter":"string","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"select-pane","parameter":"string_pair","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"navigate-back","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"navigate-forward","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"next-pane","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"previous-pane","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"next-worklane","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"previous-worklane","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"dismiss-command-palette","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"find","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"use-selection-for-find","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"find-next","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"find-previous","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"focus-pane-left","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"focus-pane-right","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"focus-pane-up","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"focus-pane-down","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"arrange-width-full","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"arrange-width-half","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"arrange-width-thirds","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"arrange-width-quarters","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"arrange-height-full","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"arrange-height-two","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"arrange-height-three","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"arrange-height-four","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"arrange-golden-wide","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"arrange-golden-narrow","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"arrange-golden-tall","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"arrange-golden-short","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"reset-pane-layout","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"restore-closed-pane","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"}
+  ],
+  "single_authorities": {
+    "workspace_state": {"owner":"application_shell","maximum_instances_per_window":1},
+    "surface_registry": {"owner":"pane_runtime_coordinator","maximum_instances_per_window":1},
+    "session_store": {"owner":"persistence_coordinator","maximum_instances_per_process":1},
+    "agent_ipc_runtime": {"owner":"agent_event_coordinator","maximum_instances_per_window":1},
+    "tmux_compatibility_state": {"owner":"existing_tmux_coordinator","maximum_instances_per_window":1},
+    "ui_event_loop": {"owner":"application_shell","kind":"glib-main-context","maximum_instances_per_process":1}
+  },
+  "construction_order": [
+    "create-ghostty-runtime-before-gtk",
+    "initialize-gtk-and-build-shell-widgets",
+    "load-one-validated-workspace-state",
+    "start-one-agent-ipc-runtime",
+    "install-one-action-router",
+    "construct-pane-surfaces-transactionally",
+    "render-and-present"
+  ],
+  "shutdown_order": [
+    "mark-shutting-down-and-stop-user-actions",
+    "remove-glib-producers-and-cancel-agent-enrichment",
+    "freeze-one-workspace-and-agent-draft-snapshot",
+    "detach-pane-widgets-and-quiesce-callbacks",
+    "release-each-surface-once",
+    "settle-native-finalizers-without-blocking",
+    "save-through-one-session-store",
+    "release-ghostty-runtime-after-surface-finalization"
+  ],
+  "forbidden_parallel_authorities": [
+    "alternate-test-product",
+    "application-embedded-scenario-mode",
+    "second-agent-event-queue",
+    "second-agent-status-reducer",
+    "second-async-runtime",
+    "second-pane-or-surface-registry",
+    "second-session-store-or-backup-journal",
+    "second-workspace-state"
+  ],
+  "behavior_evidence": [
+    {
+      "requirement": "gtk-action-and-source-ux-characterization",
+      "boundary": "delivered ReleaseSafe product, real GTK actions and pointer/keyboard input, real Ghostty surfaces and PTYs, private Xvfb",
+      "cells": ["product-source-ux-x11", "product-sidebar-management-x11"]
+    },
+    {
+      "requirement": "pane-owner-cardinality-construction-and-teardown",
+      "boundary": "delivered Debug and ReleaseSafe products, real Ghostty/GObject lifecycle, private Wayland and X11 compositors",
+      "cells": [
+        "application-shell-construction-failure-x11",
+        "product-pane-lifecycle-debug-x11-default-multi",
+        "product-pane-lifecycle-debug-wayland-default-multi",
+        "product-pane-lifecycle-release-x11-default-multi",
+        "product-pane-lifecycle-release-wayland-default-multi",
+        "rust-ghostty-callback-drop-order"
+      ]
+    },
+    {
+      "requirement": "agent-event-routing-enrichment-and-shutdown",
+      "boundary": "delivered product, real Unix sockets and PTYs, installed Codex and Claude where declared, controlled external model endpoint only",
+      "cells": ["agent-integration-x11", "agent-integration-wayland"]
+    },
+    {
+      "requirement": "session-store-clean-exit-restore-and-failure",
+      "boundary": "existing SessionRestoreStore, real private filesystem, real interrupted child writer, delivered product relaunch",
+      "cells": [
+        "workspace-persistence-unit",
+        "workspace-recovery-corrupt-state",
+        "workspace-recovery-interrupted-write",
+        "agent-integration-x11",
+        "agent-integration-wayland"
+      ]
+    },
+    {
+      "requirement": "single-authority-architecture-and-test-orchestration",
+      "boundary": "locked Cargo metadata, source ownership contract, authoritative matrix, and negative runner suites",
+      "cells": ["architecture-contract-v1"]
+    }
+  ],
+  "extraction_order": ["GH-27", "GH-28", "GH-29", "GH-30", "GH-31"]
+}

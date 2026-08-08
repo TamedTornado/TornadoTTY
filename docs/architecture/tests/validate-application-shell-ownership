@@ -1,0 +1,161 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+contract="${ZENTTY_APPLICATION_SHELL_OWNERSHIP_CONTRACT:-${repo_root}/docs/architecture/application-shell-responsibilities-v1.json}"
+source_file="${ZENTTY_APPLICATION_SHELL_SOURCE:-${repo_root}/crates/zentty-linux/src/application_shell.rs}"
+matrix="${ZENTTY_QUALIFICATION_MATRIX:-${repo_root}/linux/qualification-matrix.json}"
+
+fail() {
+    echo "application-shell-ownership: error: $*" >&2
+    exit 1
+}
+
+for dependency in jq sed sort comm mktemp sha256sum; do
+    command -v "${dependency}" >/dev/null || fail "${dependency} is required"
+done
+[[ -r "${contract}" ]] || fail "ownership contract is missing: ${contract}"
+[[ -r "${source_file}" ]] || fail "application shell source is missing: ${source_file}"
+[[ -r "${matrix}" ]] || fail "qualification matrix is missing: ${matrix}"
+jq empty "${contract}" >/dev/null 2>&1 || fail "ownership contract is not valid JSON"
+jq empty "${matrix}" >/dev/null 2>&1 || fail "qualification matrix is not valid JSON"
+
+temp_dir="$(mktemp -d)"
+trap 'rm -rf -- "${temp_dir}"' EXIT
+
+sed -n '/^pub(crate) struct ApplicationShell {/,/^}/p' "${source_file}" |
+    sed -nE 's/^[[:space:]]+([a-zA-Z0-9_]+):.*/\1/p' |
+    sort >"${temp_dir}/actual-fields"
+jq -r '[.field_assignments[].fields[]] | sort | .[]' "${contract}" \
+    >"${temp_dir}/contract-fields"
+diff="$(comm -3 "${temp_dir}/actual-fields" "${temp_dir}/contract-fields")"
+if [[ -n "${diff}" ]]; then
+    printf '%s\n' "${diff}" >&2
+    fail "field responsibility inventory differs from ApplicationShell"
+fi
+
+sed -n '/^impl ApplicationShell {/,/^fn observe_ghostty_search_state/p' "${source_file}" |
+    sed '$d' |
+    sed -nE 's/^[[:space:]]*(pub\(crate\)[[:space:]]+)?fn[[:space:]]+([a-zA-Z0-9_]+).*/\2/p' |
+    sort >"${temp_dir}/actual-methods"
+jq -r '[.method_assignments[].methods[]] | sort | .[]' "${contract}" \
+    >"${temp_dir}/contract-methods"
+diff="$(comm -3 "${temp_dir}/actual-methods" "${temp_dir}/contract-methods")"
+if [[ -n "${diff}" ]]; then
+    printf '%s\n' "${diff}" >&2
+    fail "method responsibility inventory differs from ApplicationShell"
+fi
+
+sed -nE 's/^const ACTION_[A-Z0-9_]+: &str = "([^"]+)";/\1/p' "${source_file}" |
+    sort >"${temp_dir}/actual-actions"
+jq -r '.action_contract[].name' "${contract}" | sort >"${temp_dir}/contract-actions"
+diff="$(comm -3 "${temp_dir}/actual-actions" "${temp_dir}/contract-actions")"
+if [[ -n "${diff}" ]]; then
+    printf '%s\n' "${diff}" >&2
+    fail "action inventory differs from ApplicationShell constants"
+fi
+
+source_sha256="$(sha256sum "${source_file}" | awk '{print $1}')"
+jq -e --arg source_sha256 "${source_sha256}" '
+    .schema_version == 1 and
+    .contract_id == "zentty-application-shell-responsibilities" and
+    .source == "crates/zentty-linux/src/application_shell.rs" and
+    .source_sha256 == $source_sha256 and
+    .tracking == "GH-26" and
+    ([.owners[].id] | sort) == ([
+        "action_router",
+        "agent_event_coordinator",
+        "application_shell",
+        "existing_tmux_coordinator",
+        "existing_ui_projection",
+        "pane_runtime_coordinator",
+        "persistence_coordinator"
+    ] | sort) and
+    ([.owners[].id] | length) == ([.owners[].id] | unique | length) and
+    all(.owners[];
+        (.status == "existing" or .status == "planned") and
+        (.responsibility | type == "string" and length > 0) and
+        (.planned_module | type == "string" and length > 0) and
+        (.tracking | type == "string" and test("^GH-[0-9]+$"))) and
+    ([.field_assignments[].owner] - [.owners[].id] | length) == 0 and
+    ([.method_assignments[].owner] - [.owners[].id] | length) == 0 and
+    ([.field_assignments[].fields[]] | length) ==
+        ([.field_assignments[].fields[]] | unique | length) and
+    ([.method_assignments[].methods[]] | length) ==
+        ([.method_assignments[].methods[]] | unique | length) and
+    all(.field_assignments[]; .fields | length > 0) and
+    all(.method_assignments[]; .methods | length > 0) and
+    ([.action_contract[].name] | length) ==
+        ([.action_contract[].name] | unique | length) and
+    all(.action_contract[];
+        (.parameter == "none" or .parameter == "string" or
+         .parameter == "string_pair") and
+        (.owner == "action_router") and
+        (.invalid_parameter == "ignore-without-panic")) and
+    ([.action_contract[] | select(.parameter == "string") | .name] | sort) == ([
+        "close-worklane", "move-pane-to-worklane", "select-worklane"
+    ] | sort) and
+    ([.action_contract[] | select(.parameter == "string_pair") | .name] | sort) == ([
+        "move-worklane", "rename-pane", "rename-worklane", "reorder-worklane",
+        "select-pane", "set-worklane-color"
+    ] | sort) and
+    ([.action_contract[] | select(.parameter == "none")] | length) == 44 and
+    .single_authorities == {
+        "workspace_state": {"owner":"application_shell","maximum_instances_per_window":1},
+        "surface_registry": {"owner":"pane_runtime_coordinator","maximum_instances_per_window":1},
+        "session_store": {"owner":"persistence_coordinator","maximum_instances_per_process":1},
+        "agent_ipc_runtime": {"owner":"agent_event_coordinator","maximum_instances_per_window":1},
+        "tmux_compatibility_state": {"owner":"existing_tmux_coordinator","maximum_instances_per_window":1},
+        "ui_event_loop": {"owner":"application_shell","kind":"glib-main-context","maximum_instances_per_process":1}
+    } and
+    .construction_order == [
+        "create-ghostty-runtime-before-gtk",
+        "initialize-gtk-and-build-shell-widgets",
+        "load-one-validated-workspace-state",
+        "start-one-agent-ipc-runtime",
+        "install-one-action-router",
+        "construct-pane-surfaces-transactionally",
+        "render-and-present"
+    ] and
+    .shutdown_order == [
+        "mark-shutting-down-and-stop-user-actions",
+        "remove-glib-producers-and-cancel-agent-enrichment",
+        "freeze-one-workspace-and-agent-draft-snapshot",
+        "detach-pane-widgets-and-quiesce-callbacks",
+        "release-each-surface-once",
+        "settle-native-finalizers-without-blocking",
+        "save-through-one-session-store",
+        "release-ghostty-runtime-after-surface-finalization"
+    ] and
+    .forbidden_parallel_authorities == [
+        "alternate-test-product",
+        "application-embedded-scenario-mode",
+        "second-agent-event-queue",
+        "second-agent-status-reducer",
+        "second-async-runtime",
+        "second-pane-or-surface-registry",
+        "second-session-store-or-backup-journal",
+        "second-workspace-state"
+    ] and
+    ([.behavior_evidence[].requirement] | sort) == ([
+        "agent-event-routing-enrichment-and-shutdown",
+        "gtk-action-and-source-ux-characterization",
+        "pane-owner-cardinality-construction-and-teardown",
+        "session-store-clean-exit-restore-and-failure",
+        "single-authority-architecture-and-test-orchestration"
+    ] | sort) and
+    ([.behavior_evidence[].requirement] | length) ==
+        ([.behavior_evidence[].requirement] | unique | length) and
+    all(.behavior_evidence[];
+        (.boundary | type == "string" and length > 40) and
+        (.cells | type == "array" and length > 0)) and
+    ([.behavior_evidence[].cells[]] | length) > 0 and
+    .extraction_order == ["GH-27", "GH-28", "GH-29", "GH-30", "GH-31"]
+' "${contract}" >/dev/null || fail "ownership contract invariants failed"
+
+jq -e --slurpfile matrix "${matrix}" '
+    all(.behavior_evidence[].cells[]; . as $cell_id |
+        any($matrix[0].cells[]; .id == $cell_id and .status == "PASS"))
+' "${contract}" >/dev/null || fail "behavior evidence is absent or non-PASS in the matrix"
+
+echo "ApplicationShell ownership contract passed"

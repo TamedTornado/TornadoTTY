@@ -118,6 +118,14 @@ zentty-test-support -----> zentty-core
       +------------------> zentty-ghostty
 ```
 
+The window composition-root responsibilities and their ordered extraction are
+further constrained by the machine-readable
+[`application-shell-responsibilities-v1.json`](application-shell-responsibilities-v1.json).
+That contract inventories every current `ApplicationShell` field, method, and
+GTK action and binds its characterization to authoritative real-product matrix
+cells. It supplements this ADR; it does not authorize a second workspace,
+surface registry, persistence store, agent runtime, or event loop.
+
 Crate features MUST be additive capabilities. A test feature MUST NOT switch
 the shipped executable to another implementation. Integration tests launch the
 same `zentty-linux` artifact delivered to users.

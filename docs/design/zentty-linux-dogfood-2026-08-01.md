@@ -9343,6 +9343,87 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   `5929447a90d6f6be903dee61121e001ea61a9e56dcfef9457fc209a440459333`;
   no suppression or suppression manifest changed.
 
+### 2026-08-08 — GH-26 freezes ApplicationShell ownership before extraction
+
+- **The characterization contract began red as intended:** The new ownership
+  validator first failed because
+  `docs/architecture/application-shell-responsibilities-v1.json` did not
+  exist. Production ownership did not move to make the test green. The added
+  contract now assigns all 38 fields, 103 impl methods, and 53 GTK actions to
+  exactly one current or planned owner and pins the complete source SHA-256.
+- **The target is one system with smaller owners:** The checked-in plan retains
+  one `WorkspaceState`, one surface registry, one session store, one agent IPC
+  runtime, one tmux compatibility state, and one GLib main context. It records
+  construction/shutdown order and expressly forbids an alternate test product,
+  embedded scenario mode, second event queue/reducer/runtime, backup journal,
+  and shadow state. GH-27 through GH-31 are the only extraction order.
+- **A validator self-test exposed a bug in the new validator:** The first
+  missing-method negative case unexpectedly passed because `comm` reports
+  differences on stdout while still exiting zero. The validator originally
+  tested only its exit status. It now rejects non-empty `comm -3` output for
+  fields, methods, and actions. Negative tests cover a duplicate field, missing
+  method, unknown owner, second surface registry, reordered shutdown, a valid
+  but wrong action parameter type, and an unowned source field.
+- **Existing evidence is attached rather than copied:** The machine contract
+  names the authoritative real-product cells for GTK actions/source UX,
+  pane/Ghostty lifecycle, agent event routing, persistence/recovery, and
+  architecture/orchestration. The validator requires every referenced cell to
+  exist with declared `PASS`; no second aggregate runner or prose-only evidence
+  was introduced.
+- **The first partial-construction test was honestly red:** A restored window
+  with one valid pane and a second NUL-containing working directory rejected
+  the second configuration and cleaned its private IPC directory, but the test
+  incorrectly expected a PTY child receipt. Ghostty does not start the child
+  until the widget is realized, and the window is intentionally never rendered
+  after construction fails. Debug logging did not provide a stable surface
+  receipt. The product now emits one ordinary `surface-owned` receipt only
+  after a real native surface and all three registry entries are accepted.
+- **The repaired real failure journey passes:** Under private Xvfb, the staged
+  ReleaseSafe product creates and registers the first real Ghostty surface,
+  rejects the second pane at the safe adapter's interior-NUL boundary, exits
+  exactly 1 without claiming lifecycle completion, removes the one private
+  agent runtime root, leaves the snapshot byte-identical, and retains a
+  non-clean lifecycle marker. No fake terminal, injected constructor, test-only
+  product branch, or ambient desktop is used. Native forced-constructor
+  failure remains GH-28 scope; this test is specifically safe configuration
+  failure during a partially constructed real owner tree.
+- **Mutation scope is explicit:** This characterization slice adds no new pure
+  production decision. The only production change is a stable post-insertion
+  ownership receipt, so manufacturing mutants for logging would not provide
+  useful confidence. The validator has deterministic negative self-tests;
+  future extracted pure decoding/lifecycle decisions remain mutation-gated by
+  their child issues.
+- **The first workspace test invocation exposed sandbox confinement, not a
+  product failure:** Eight real agent-IPC CLI tests could not create their Unix
+  sockets and failed with `Operation not permitted` inside the restricted
+  filesystem/process sandbox. The identical locked workspace suite was rerun
+  with the required execution permission and passed completely. No assertion,
+  implementation, or harness was weakened to hide the confinement boundary.
+- **Focused real-product regression passed before the aggregate gate:** Fresh
+  private-Xvfb sessions passed source UX, sidebar management, the new partial
+  construction failure, and the consolidated session-restore journey against
+  the staged ReleaseSafe binary. The corresponding session IDs were
+  `742e32e3a672d51abde6470e107e4d8c268a6de52c81a563f403506dcde03f29`,
+  `81224d2151b6010d71395e59cd865ec421cf42e2a65e670ebccfcf40f5b1a0bc`,
+  `2c8abe7f954faeacbe9fc8b7fc4d7c259e1bdc3cd875febb6d4a26befa9bf97e`,
+  and `51d9289c632df9bee989c63594c25102b9a40c5fbda4cfe6d4f47ef8233119d5`.
+- **The complete presently executable matrix passed:** `qualify-local` ran
+  every executable cell after the suppression audit and reported
+  `PASS=88`, `FAIL=0`, `BLOCKED=7`, `XFAIL=1`, and
+  `NOT_IMPLEMENTED=21`. Implemented-local and product-boundary qualification
+  pass. Release and full Linux qualification correctly remain false because
+  required non-PASS cells remain. The machine summary SHA-256 is
+  `637bbfb74205881d2e31f8946d4bb48cf2e1bea9e45993d03167aa47d0a0808e`.
+- **Valgrind is PASS with reviewed suppressions, not unsuppressed clean:** The
+  governed Debug IBus run again recorded 427 raw errors/contexts, 6,240
+  definite bytes, and 41,461 indirect bytes. Post-suppression totals are zero,
+  with all 427 contexts accounted for. The report SHA-256 is
+  `7c3e8ae27430f4aded24f2771ba50880abb68f27e4a6590d6116a4957e918f12`;
+  the raw and suppressed receipt SHA-256 values are respectively
+  `fdc48e14c8bfbf6d46b341961babdc82364276a7eed4edf98b9f307cc09fecb9`
+  and `fbe0f7fcaca3c4b51734f12f5149815f939b17ee097cceb66882a2359751af75`.
+  No suppression rule or manifest changed in this slice.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were

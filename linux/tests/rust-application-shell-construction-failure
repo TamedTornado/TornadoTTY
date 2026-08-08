@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
+ghostty_root="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
+fixture="${repo_root}/crates/zentty-core/tests/fixtures/session-restore-v3.json"
+state_dir="$(mktemp -d)"
+log="$(mktemp)"
+product_pid=""
+
+fail() {
+    cat "${log}" >&2 || true
+    echo "rust-application-shell-construction-failure: error: $*" >&2
+    exit 1
+}
+
+cleanup() {
+    if [[ "${product_pid}" =~ ^[1-9][0-9]*$ ]]; then
+        kill -TERM "${product_pid}" 2>/dev/null || true
+        wait "${product_pid}" 2>/dev/null || true
+    fi
+    rm -rf -- "${state_dir}"
+    rm -f -- "${log}"
+}
+trap cleanup EXIT
+
+[[ "${GDK_BACKEND:-}" == x11 ]] || fail "GDK_BACKEND must be x11"
+[[ "${ZENTTY_NESTED_X11_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+    fail "construction failure must run through linux/tests/nested-x11"
+for dependency in grep jq mktemp readelf sed seq sha256sum sleep; do
+    command -v "${dependency}" >/dev/null || fail "${dependency} is required"
+done
+[[ -x "${product}" ]] || fail "staged product is missing: ${product}"
+
+layer_runpath="$(
+    readelf -d "${ghostty_root}/zig-out/lib/libghostty-gtk-embed.so" |
+        sed -n 's/.*Library runpath: \[\([^]]*\)\].*/\1/p' |
+        cut -d: -f1
+)"
+[[ "${layer_runpath}" == .zig-cache/* ]] || fail "Ghostty layer-shell runpath is missing"
+layer_directory="${ghostty_root}/${layer_runpath}"
+
+# The first pane constructs a real native Ghostty surface. The second pane
+# reaches the safe adapter with an interior NUL in its restored working
+# directory. Encoding must fail deterministically before that pane's native
+# constructor, causing ApplicationShell::new to unwind its partially created
+# owner tree without saving a clean snapshot or leaking its private IPC root.
+jq '
+    .workspace.windows[0].worklanes = [{
+        "id": "worklane-partial-construction",
+        "title": "Partial construction",
+        "nextPaneNumber": 3,
+        "focusedColumnID": "column-partial-construction",
+        "columns": [{
+            "id": "column-partial-construction",
+            "width": 1,
+            "focusedPaneID": "pane-invalid",
+            "lastFocusedPaneID": "pane-valid",
+            "paneHeights": [1, 1],
+            "panes": [
+                {"id": "pane-valid", "workingDirectory": "/tmp"},
+                {"id": "pane-invalid", "workingDirectory": "bad\u0000directory"}
+            ]
+        }]
+    }] |
+    .workspace.windows[0].activeWorklaneID = "worklane-partial-construction" |
+    .workspace.activeWindowID = .workspace.windows[0].id |
+    .restoreDraftWindows = []
+' "${fixture}" >"${state_dir}/restore-snapshot.json"
+snapshot_before="$(sha256sum "${state_dir}/restore-snapshot.json" | cut -d' ' -f1)"
+
+set +e
+GHOSTTY_LOG=false \
+LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+    "${product}" \
+    --command 'sleep 30' \
+    --state-directory "${state_dir}" >"${log}" 2>&1 &
+product_pid=$!
+for _ in $(seq 1 200); do
+    kill -0 "${product_pid}" 2>/dev/null || break
+    sleep 0.05
+done
+if kill -0 "${product_pid}" 2>/dev/null; then
+    set -e
+    fail "product did not reject the invalid second surface promptly"
+fi
+wait "${product_pid}"
+product_status=$?
+product_pid=""
+set -e
+
+((product_status == 1)) || fail "construction failure exited ${product_status}, expected 1"
+grep -Fq 'zentty-linux: agent-runtime socket=' "${log}" ||
+    fail "the one agent runtime did not start before surface construction"
+grep -Fxq 'zentty-linux: surface-owned pane=pane-valid live=1' "${log}" ||
+    fail "the first real Ghostty surface was not accepted by the sole registry"
+grep -Fq 'working_directory contains an interior NUL' "${log}" ||
+    fail "the second surface did not fail at the safe configuration boundary"
+grep -Fq 'zentty-linux: lifecycle complete' "${log}" &&
+    fail "partial construction was reported as a completed lifecycle"
+
+socket_path="$(sed -n 's/^zentty-linux: agent-runtime socket=//p' "${log}" | head -1)"
+[[ "${socket_path}" == /*/instance.sock ]] || fail "agent runtime receipt was malformed"
+[[ ! -e "${socket_path}" && ! -e "$(dirname "${socket_path}")" ]] ||
+    fail "partial construction leaked its private agent runtime directory"
+
+snapshot_after="$(sha256sum "${state_dir}/restore-snapshot.json" | cut -d' ' -f1)"
+[[ "${snapshot_after}" == "${snapshot_before}" ]] ||
+    fail "failed construction rewrote the existing snapshot"
+[[ -f "${state_dir}/restore-lifecycle.json" ]] ||
+    fail "launch-started lifecycle evidence was not retained"
+jq -e '.cleanExit == false' "${state_dir}/restore-lifecycle.json" >/dev/null ||
+    fail "failed construction was incorrectly marked as a clean exit"
+
+echo "ApplicationShell partial-construction failure passed: first-surface=real second-config=rejected rollback=process-owner-tree"

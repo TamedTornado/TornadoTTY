@@ -2275,6 +2275,10 @@ impl ApplicationShell {
             .insert(pane_id.to_owned(), focus_controller);
         shell.pane_frames.insert(pane_id.to_owned(), frame);
         shell.surfaces.insert(pane_id.to_owned(), surface);
+        eprintln!(
+            "zentty-linux: surface-owned pane={pane_id} live={}",
+            shell.surfaces.len()
+        );
         Ok(())
     }
 
