@@ -126,6 +126,13 @@ GTK action and binds its characterization to authoritative real-product matrix
 cells. It supplements this ADR; it does not authorize a second workspace,
 surface registry, persistence store, agent runtime, or event loop.
 
+GH-27 established `application_shell::action_router` as the sole owner of the
+`workspace` GTK action group. It owns the exact action/parameter schema,
+registration callbacks, topology-dependent availability, registry validation,
+and explicit group removal before window teardown. The router holds no
+`WorkspaceState`, pane identifiers, terminal surfaces, persistence state, or
+agent state; callbacks retain only weak access to the composition root.
+
 Crate features MUST be additive capabilities. A test feature MUST NOT switch
 the shipped executable to another implementation. Integration tests launch the
 same `zentty-linux` artifact delivered to users.

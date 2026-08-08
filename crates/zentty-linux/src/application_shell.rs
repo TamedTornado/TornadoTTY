@@ -3,9 +3,9 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use gtk::gdk;
 use gtk::glib;
 use gtk::prelude::*;
-use gtk::{gdk, gio};
 use zentty_core::{
     ClosePaneOutcome, ColumnRecipe, CommandPaletteItem, PaneLayoutPolicy, PaneRecipe,
     PaneReference, PaneRestoreDraft, PaneRightInsertionBehavior, SidebarWidthPreference,
@@ -34,61 +34,24 @@ use crate::{
     },
 };
 
+mod action_router;
 mod tmux_runtime;
 
-const ACTION_TOGGLE_SIDEBAR: &str = "toggle-sidebar";
-const ACTION_NEW_WORKLANE: &str = "new-worklane";
-const ACTION_SELECT_WORKLANE: &str = "select-worklane";
-const ACTION_SPLIT_PANE_RIGHT: &str = "split-pane-right";
-const ACTION_ADD_PANE_RIGHT: &str = "add-pane-right";
-const ACTION_ADD_PANE_LEFT: &str = "add-pane-left";
-const ACTION_SPLIT_PANE_BELOW: &str = "split-pane-below";
-const ACTION_CLOSE_PANE: &str = "close-pane";
-const ACTION_RENAME_WORKLANE: &str = "rename-worklane";
-const ACTION_RENAME_PANE: &str = "rename-pane";
-const ACTION_CYCLE_WORKLANE_COLOR: &str = "cycle-worklane-color";
-const ACTION_SET_WORKLANE_COLOR: &str = "set-worklane-color";
-const ACTION_CLOSE_WORKLANE: &str = "close-worklane";
-const ACTION_CLOSE_ACTIVE_WORKLANE: &str = "close-active-worklane";
-const ACTION_MOVE_WORKLANE: &str = "move-worklane";
-const ACTION_REORDER_WORKLANE: &str = "reorder-worklane";
-const ACTION_MOVE_WORKLANE_UP: &str = "move-worklane-up";
-const ACTION_MOVE_WORKLANE_DOWN: &str = "move-worklane-down";
-const ACTION_MOVE_PANE_LEFT: &str = "move-pane-left";
-const ACTION_MOVE_PANE_RIGHT: &str = "move-pane-right";
-const ACTION_MOVE_PANE_UP: &str = "move-pane-up";
-const ACTION_MOVE_PANE_DOWN: &str = "move-pane-down";
-const ACTION_MOVE_PANE_TO_WORKLANE: &str = "move-pane-to-worklane";
-const ACTION_SELECT_PANE: &str = "select-pane";
-const ACTION_NAVIGATE_BACK: &str = "navigate-back";
-const ACTION_NAVIGATE_FORWARD: &str = "navigate-forward";
-const ACTION_NEXT_PANE: &str = "next-pane";
-const ACTION_PREVIOUS_PANE: &str = "previous-pane";
-const ACTION_NEXT_WORKLANE: &str = "next-worklane";
-const ACTION_PREVIOUS_WORKLANE: &str = "previous-worklane";
-const ACTION_DISMISS_COMMAND_PALETTE: &str = "dismiss-command-palette";
-const ACTION_FIND: &str = "find";
-const ACTION_USE_SELECTION_FOR_FIND: &str = "use-selection-for-find";
-const ACTION_FIND_NEXT: &str = "find-next";
-const ACTION_FIND_PREVIOUS: &str = "find-previous";
-const ACTION_FOCUS_PANE_LEFT: &str = "focus-pane-left";
-const ACTION_FOCUS_PANE_RIGHT: &str = "focus-pane-right";
-const ACTION_FOCUS_PANE_UP: &str = "focus-pane-up";
-const ACTION_FOCUS_PANE_DOWN: &str = "focus-pane-down";
-const ACTION_ARRANGE_WIDTH_FULL: &str = "arrange-width-full";
-const ACTION_ARRANGE_WIDTH_HALF: &str = "arrange-width-half";
-const ACTION_ARRANGE_WIDTH_THIRDS: &str = "arrange-width-thirds";
-const ACTION_ARRANGE_WIDTH_QUARTERS: &str = "arrange-width-quarters";
-const ACTION_ARRANGE_HEIGHT_FULL: &str = "arrange-height-full";
-const ACTION_ARRANGE_HEIGHT_TWO: &str = "arrange-height-two";
-const ACTION_ARRANGE_HEIGHT_THREE: &str = "arrange-height-three";
-const ACTION_ARRANGE_HEIGHT_FOUR: &str = "arrange-height-four";
-const ACTION_ARRANGE_GOLDEN_WIDE: &str = "arrange-golden-wide";
-const ACTION_ARRANGE_GOLDEN_NARROW: &str = "arrange-golden-narrow";
-const ACTION_ARRANGE_GOLDEN_TALL: &str = "arrange-golden-tall";
-const ACTION_ARRANGE_GOLDEN_SHORT: &str = "arrange-golden-short";
-const ACTION_RESET_PANE_LAYOUT: &str = "reset-pane-layout";
-const ACTION_RESTORE_CLOSED_PANE: &str = "restore-closed-pane";
+use action_router::{
+    ACTION_ADD_PANE_LEFT, ACTION_ADD_PANE_RIGHT, ACTION_ARRANGE_GOLDEN_NARROW,
+    ACTION_ARRANGE_GOLDEN_SHORT, ACTION_ARRANGE_GOLDEN_TALL, ACTION_ARRANGE_GOLDEN_WIDE,
+    ACTION_ARRANGE_HEIGHT_FOUR, ACTION_ARRANGE_HEIGHT_FULL, ACTION_ARRANGE_HEIGHT_THREE,
+    ACTION_ARRANGE_HEIGHT_TWO, ACTION_ARRANGE_WIDTH_FULL, ACTION_ARRANGE_WIDTH_HALF,
+    ACTION_ARRANGE_WIDTH_QUARTERS, ACTION_ARRANGE_WIDTH_THIRDS, ACTION_CLOSE_ACTIVE_WORKLANE,
+    ACTION_CLOSE_PANE, ACTION_CLOSE_WORKLANE, ACTION_CYCLE_WORKLANE_COLOR, ACTION_FIND,
+    ACTION_FIND_NEXT, ACTION_FIND_PREVIOUS, ACTION_FOCUS_PANE_DOWN, ACTION_FOCUS_PANE_LEFT,
+    ACTION_FOCUS_PANE_RIGHT, ACTION_FOCUS_PANE_UP, ACTION_MOVE_PANE_DOWN, ACTION_MOVE_PANE_LEFT,
+    ACTION_MOVE_PANE_RIGHT, ACTION_MOVE_PANE_UP, ACTION_MOVE_WORKLANE_DOWN,
+    ACTION_MOVE_WORKLANE_UP, ACTION_NAVIGATE_BACK, ACTION_NAVIGATE_FORWARD, ACTION_NEW_WORKLANE,
+    ACTION_NEXT_PANE, ACTION_NEXT_WORKLANE, ACTION_PREVIOUS_PANE, ACTION_PREVIOUS_WORKLANE,
+    ACTION_RESET_PANE_LAYOUT, ACTION_RESTORE_CLOSED_PANE, ACTION_SPLIT_PANE_BELOW,
+    ACTION_SPLIT_PANE_RIGHT, ACTION_TOGGLE_SIDEBAR, ACTION_USE_SELECTION_FOR_FIND, ActionRouter,
+};
 const PRIMARY_RIGHT_BEHAVIOR: PaneRightInsertionBehavior = PaneRightInsertionBehavior::VisibleSplit;
 const WORKLANE_PEEK_TAB_HOLD_THRESHOLD: Duration = Duration::from_millis(200);
 
@@ -127,7 +90,7 @@ pub(crate) struct ApplicationShell {
     peek_view: WorklanePeekView,
     command_palette: CommandPaletteView,
     last_pane_viewport_height: Cell<i32>,
-    workspace_actions: Option<gio::SimpleActionGroup>,
+    action_router: Option<ActionRouter>,
     pending_prefills: BTreeMap<String, String>,
     agent_runtime: AgentRuntime,
     tmux_compat: crate::tmux_compat::TmuxCompatProduct,
@@ -223,7 +186,7 @@ impl ApplicationShell {
             peek_view,
             command_palette,
             last_pane_viewport_height: Cell::new(0),
-            workspace_actions: None,
+            action_router: None,
             pending_prefills: BTreeMap::new(),
             agent_runtime,
             tmux_compat: crate::tmux_compat::TmuxCompatProduct::default(),
@@ -236,7 +199,8 @@ impl ApplicationShell {
             adjusting_sidebar_width,
         );
 
-        Self::install_actions(&shell);
+        let action_router = ActionRouter::install(&shell)?;
+        shell.borrow_mut().action_router = Some(action_router);
         Self::install_sidebar_visibility(&shell);
         Self::install_pane_traversal_shortcuts(&shell);
         Self::install_peek_scroll_navigation(&shell);
@@ -314,6 +278,9 @@ impl ApplicationShell {
 
     pub(crate) fn detach_and_close(&mut self) {
         self.shutting_down = true;
+        if let Some(router) = self.action_router.take() {
+            router.uninstall(&self.window);
+        }
         self.peek_phase = PeekPhase::Idle;
         self.peek_tab_down = false;
         self.peek_view.hide();
@@ -350,214 +317,6 @@ impl ApplicationShell {
                 .set(self.live_children.get().saturating_sub(1));
         }
         Ok(())
-    }
-
-    fn install_actions(shell: &Rc<RefCell<Self>>) {
-        let group = gio::SimpleActionGroup::new();
-
-        let toggle_sidebar = gio::SimpleAction::new(ACTION_TOGGLE_SIDEBAR, None);
-        let weak = Rc::downgrade(shell);
-        toggle_sidebar.connect_activate(move |_, _| {
-            let Some(shell) = weak.upgrade() else {
-                return;
-            };
-            let visible = {
-                let mut shell = shell.borrow_mut();
-                shell
-                    .sidebar_visibility
-                    .handle(SidebarVisibilityEvent::TogglePressed);
-                shell.apply_sidebar_visibility();
-                shell.sidebar_visibility.mode() != SidebarVisibilityMode::Hidden
-            };
-            let weak = Rc::downgrade(&shell);
-            glib::idle_add_local_once(move || {
-                if let Some(shell) = weak.upgrade() {
-                    shell.borrow().focus_selected_surface();
-                }
-            });
-            eprintln!("zentty-linux: action=toggle-sidebar visible={visible}");
-        });
-        group.add_action(&toggle_sidebar);
-
-        let dismiss_palette = gio::SimpleAction::new(ACTION_DISMISS_COMMAND_PALETTE, None);
-        let weak = Rc::downgrade(shell);
-        dismiss_palette.connect_activate(move |_, _| {
-            let Some(shell) = weak.upgrade() else {
-                return;
-            };
-            shell.borrow().command_palette.hide();
-            shell.borrow().focus_selected_surface();
-        });
-        group.add_action(&dismiss_palette);
-
-        let new_worklane = gio::SimpleAction::new(ACTION_NEW_WORKLANE, None);
-        let weak = Rc::downgrade(shell);
-        new_worklane.connect_activate(move |_, _| {
-            let Some(shell) = weak.upgrade() else {
-                return;
-            };
-            if let Err(error) = Self::create_worklane(&shell) {
-                Self::report_action_error(&shell, ACTION_NEW_WORKLANE, &error);
-            }
-        });
-        group.add_action(&new_worklane);
-
-        let select_worklane =
-            gio::SimpleAction::new(ACTION_SELECT_WORKLANE, Some(glib::VariantTy::STRING));
-        let weak = Rc::downgrade(shell);
-        select_worklane.connect_activate(move |_, parameter| {
-            let (Some(shell), Some(id)) = (weak.upgrade(), parameter.and_then(glib::Variant::str))
-            else {
-                return;
-            };
-            let mut shell = shell.borrow_mut();
-            let changed = shell.state.active_worklane_id() != id;
-            if shell.state.select_worklane(id) {
-                eprintln!("zentty-linux: action=select-worklane id={id}");
-                if changed {
-                    shell.render();
-                } else {
-                    shell.refresh_sidebar_metadata();
-                }
-                shell.focus_selected_surface();
-            }
-        });
-        group.add_action(&select_worklane);
-
-        Self::install_pane_creation_actions(shell, &group);
-        Self::install_pane_layout_actions(shell, &group);
-
-        Self::install_restore_closed_pane_action(shell, &group);
-
-        Self::add_simple_action(shell, &group, ACTION_NAVIGATE_BACK, |shell| {
-            shell.navigate_history(true);
-        });
-        Self::add_simple_action(shell, &group, ACTION_NAVIGATE_FORWARD, |shell| {
-            shell.navigate_history(false);
-        });
-        Self::add_simple_action(shell, &group, ACTION_NEXT_PANE, |shell| {
-            shell.select_adjacent_pane(true);
-        });
-        Self::add_simple_action(shell, &group, ACTION_PREVIOUS_PANE, |shell| {
-            shell.select_adjacent_pane(false);
-        });
-        Self::add_simple_action(shell, &group, ACTION_NEXT_WORKLANE, |shell| {
-            shell.select_adjacent_worklane(true);
-        });
-        Self::add_simple_action(shell, &group, ACTION_PREVIOUS_WORKLANE, |shell| {
-            shell.select_adjacent_worklane(false);
-        });
-        Self::install_search_actions(shell, &group);
-
-        Self::install_edit_actions(shell, &group);
-
-        shell
-            .borrow()
-            .window
-            .insert_action_group("workspace", Some(&group));
-        shell.borrow_mut().workspace_actions = Some(group);
-    }
-
-    fn install_restore_closed_pane_action(
-        shell: &Rc<RefCell<Self>>,
-        group: &gio::SimpleActionGroup,
-    ) {
-        let action = gio::SimpleAction::new(ACTION_RESTORE_CLOSED_PANE, None);
-        let weak = Rc::downgrade(shell);
-        action.connect_activate(move |_, _| {
-            let Some(shell) = weak.upgrade() else {
-                return;
-            };
-            if let Err(error) = Self::restore_closed_pane(&shell) {
-                Self::report_action_error(&shell, ACTION_RESTORE_CLOSED_PANE, &error);
-            }
-        });
-        group.add_action(&action);
-    }
-
-    fn install_search_actions(shell: &Rc<RefCell<Self>>, group: &gio::SimpleActionGroup) {
-        Self::add_simple_action(shell, group, ACTION_FIND, |shell| {
-            shell.perform_focused_binding_action(ACTION_FIND, "start_search");
-        });
-        Self::add_simple_action(shell, group, ACTION_USE_SELECTION_FOR_FIND, |shell| {
-            shell.perform_focused_binding_action(ACTION_USE_SELECTION_FOR_FIND, "search_selection");
-        });
-        Self::add_simple_action(shell, group, ACTION_FIND_NEXT, |shell| {
-            shell.perform_focused_binding_action(ACTION_FIND_NEXT, "navigate_search:next");
-        });
-        Self::add_simple_action(shell, group, ACTION_FIND_PREVIOUS, |shell| {
-            shell.perform_focused_binding_action(ACTION_FIND_PREVIOUS, "navigate_search:previous");
-        });
-    }
-
-    fn install_pane_layout_actions(shell: &Rc<RefCell<Self>>, group: &gio::SimpleActionGroup) {
-        for (name, update) in [
-            (
-                ACTION_FOCUS_PANE_LEFT,
-                WorkspaceState::focus_pane_left as fn(&mut WorkspaceState) -> bool,
-            ),
-            (ACTION_FOCUS_PANE_RIGHT, WorkspaceState::focus_pane_right),
-            (ACTION_FOCUS_PANE_UP, WorkspaceState::focus_pane_up),
-            (ACTION_FOCUS_PANE_DOWN, WorkspaceState::focus_pane_down),
-        ] {
-            Self::add_simple_action(shell, group, name, move |shell| {
-                if update(&mut shell.state) {
-                    shell.finish_pane_layout_action(name);
-                }
-            });
-        }
-        for (name, visible_columns) in [
-            (ACTION_ARRANGE_WIDTH_FULL, 1),
-            (ACTION_ARRANGE_WIDTH_HALF, 2),
-            (ACTION_ARRANGE_WIDTH_THIRDS, 3),
-            (ACTION_ARRANGE_WIDTH_QUARTERS, 4),
-        ] {
-            Self::add_simple_action(shell, group, name, move |shell| {
-                let width = f64::from(shell.pane_viewport_width());
-                if shell.state.arrange_columns(visible_columns, width) {
-                    shell.finish_pane_layout_action(name);
-                }
-            });
-        }
-        for (name, panes_per_column) in [
-            (ACTION_ARRANGE_HEIGHT_FULL, 1),
-            (ACTION_ARRANGE_HEIGHT_TWO, 2),
-            (ACTION_ARRANGE_HEIGHT_THREE, 3),
-            (ACTION_ARRANGE_HEIGHT_FOUR, 4),
-        ] {
-            Self::add_simple_action(shell, group, name, move |shell| {
-                if shell.state.arrange_panes_per_column(panes_per_column) {
-                    shell.finish_pane_layout_action(name);
-                }
-            });
-        }
-        for (name, focus_wide) in [
-            (ACTION_ARRANGE_GOLDEN_WIDE, true),
-            (ACTION_ARRANGE_GOLDEN_NARROW, false),
-        ] {
-            Self::add_simple_action(shell, group, name, move |shell| {
-                let width = f64::from(shell.pane_viewport_width());
-                if shell.state.arrange_golden_width(focus_wide, width) {
-                    shell.finish_pane_layout_action(name);
-                }
-            });
-        }
-        for (name, focus_tall) in [
-            (ACTION_ARRANGE_GOLDEN_TALL, true),
-            (ACTION_ARRANGE_GOLDEN_SHORT, false),
-        ] {
-            Self::add_simple_action(shell, group, name, move |shell| {
-                if shell.state.arrange_golden_height(focus_tall) {
-                    shell.finish_pane_layout_action(name);
-                }
-            });
-        }
-        Self::add_simple_action(shell, group, ACTION_RESET_PANE_LAYOUT, |shell| {
-            let width = f64::from(shell.pane_viewport_width());
-            if shell.state.reset_active_layout(width) {
-                shell.finish_pane_layout_action(ACTION_RESET_PANE_LAYOUT);
-            }
-        });
     }
 
     fn finish_pane_layout_action(&self, action: &str) {
@@ -1544,393 +1303,6 @@ impl ApplicationShell {
         shell.borrow().peek_view.widget().add_controller(controller);
     }
 
-    fn install_pane_creation_actions(shell: &Rc<RefCell<Self>>, group: &gio::SimpleActionGroup) {
-        let split_pane = gio::SimpleAction::new(ACTION_SPLIT_PANE_RIGHT, None);
-        let weak = Rc::downgrade(shell);
-        split_pane.connect_activate(move |_, _| {
-            let Some(shell) = weak.upgrade() else {
-                return;
-            };
-            if let Err(error) = Self::split_focused_pane_right(&shell) {
-                Self::report_action_error(&shell, ACTION_SPLIT_PANE_RIGHT, &error);
-            }
-        });
-        group.add_action(&split_pane);
-
-        let add_pane = gio::SimpleAction::new(ACTION_ADD_PANE_RIGHT, None);
-        let weak = Rc::downgrade(shell);
-        add_pane.connect_activate(move |_, _| {
-            let Some(shell) = weak.upgrade() else {
-                return;
-            };
-            if let Err(error) = Self::add_focused_pane_right(&shell) {
-                Self::report_action_error(&shell, ACTION_ADD_PANE_RIGHT, &error);
-            }
-        });
-        group.add_action(&add_pane);
-
-        let add_pane = gio::SimpleAction::new(ACTION_ADD_PANE_LEFT, None);
-        let weak = Rc::downgrade(shell);
-        add_pane.connect_activate(move |_, _| {
-            let Some(shell) = weak.upgrade() else {
-                return;
-            };
-            if let Err(error) = Self::add_focused_pane_left(&shell) {
-                Self::report_action_error(&shell, ACTION_ADD_PANE_LEFT, &error);
-            }
-        });
-        group.add_action(&add_pane);
-
-        let split_pane = gio::SimpleAction::new(ACTION_SPLIT_PANE_BELOW, None);
-        let weak = Rc::downgrade(shell);
-        split_pane.connect_activate(move |_, _| {
-            let Some(shell) = weak.upgrade() else {
-                return;
-            };
-            if let Err(error) = Self::split_focused_pane_below(&shell) {
-                Self::report_action_error(&shell, ACTION_SPLIT_PANE_BELOW, &error);
-            }
-        });
-        group.add_action(&split_pane);
-
-        let close_pane = gio::SimpleAction::new(ACTION_CLOSE_PANE, None);
-        let weak = Rc::downgrade(shell);
-        close_pane.connect_activate(move |_, _| {
-            let Some(shell) = weak.upgrade() else {
-                return;
-            };
-            Self::close_focused_pane(&shell);
-        });
-        group.add_action(&close_pane);
-    }
-
-    fn install_edit_actions(shell: &Rc<RefCell<Self>>, group: &gio::SimpleActionGroup) {
-        let string_pair = glib::VariantTy::new("(ss)").expect("static action type is valid");
-        Self::install_worklane_edit_actions(shell, group, string_pair);
-        Self::install_pane_rename_action(shell, group, string_pair);
-
-        let select_pane = gio::SimpleAction::new(ACTION_SELECT_PANE, Some(string_pair));
-        let weak = Rc::downgrade(shell);
-        select_pane.connect_activate(move |_, parameter| {
-            let (Some(shell), Some((worklane_id, pane_id))) = (
-                weak.upgrade(),
-                parameter.and_then(glib::Variant::get::<(String, String)>),
-            ) else {
-                return;
-            };
-            let mut shell = shell.borrow_mut();
-            let worklane_changed = shell.state.active_worklane_id() != worklane_id;
-            if shell.state.select_worklane_and_pane(&worklane_id, &pane_id) {
-                eprintln!("zentty-linux: action=select-pane worklane={worklane_id} pane={pane_id}");
-                if worklane_changed {
-                    shell.render();
-                } else {
-                    shell.refresh_sidebar_metadata();
-                }
-                shell.focus_selected_surface();
-            }
-        });
-        group.add_action(&select_pane);
-
-        Self::install_pane_transfer_action(shell, group);
-
-        Self::add_simple_action(shell, group, ACTION_CYCLE_WORKLANE_COLOR, |shell| {
-            let active_id = shell.state.active_worklane_id().to_owned();
-            let current = shell.state.active_worklane().color;
-            let next = match current {
-                None => Some(WorklaneColor::Red),
-                Some(color) => WorklaneColor::ALL
-                    .iter()
-                    .position(|candidate| *candidate == color)
-                    .and_then(|index| WorklaneColor::ALL.get(index + 1).copied()),
-            };
-            if shell.state.set_worklane_color(&active_id, next) {
-                eprintln!(
-                    "zentty-linux: action=cycle-worklane-color id={active_id} color={}",
-                    next.map_or("none", WorklaneColor::as_str)
-                );
-                shell.refresh_sidebar_metadata();
-            }
-        });
-        Self::add_simple_action(shell, group, ACTION_MOVE_WORKLANE_UP, |shell| {
-            shell.move_active_worklane(-1);
-        });
-        Self::add_simple_action(shell, group, ACTION_MOVE_WORKLANE_DOWN, |shell| {
-            shell.move_active_worklane(1);
-        });
-        Self::add_simple_action(shell, group, ACTION_MOVE_PANE_LEFT, |shell| {
-            if shell.state.move_focused_pane_left() {
-                eprintln!("zentty-linux: action=move-pane-left");
-                shell.render();
-                shell.focus_selected_surface();
-            }
-        });
-        Self::add_simple_action(shell, group, ACTION_MOVE_PANE_RIGHT, |shell| {
-            if shell.state.move_focused_pane_right() {
-                eprintln!("zentty-linux: action=move-pane-right");
-                shell.render();
-                shell.focus_selected_surface();
-            }
-        });
-        Self::add_simple_action(shell, group, ACTION_MOVE_PANE_UP, |shell| {
-            if shell.state.move_focused_pane_up() {
-                eprintln!("zentty-linux: action=move-pane-up");
-                shell.render();
-                shell.focus_selected_surface();
-            }
-        });
-        Self::add_simple_action(shell, group, ACTION_MOVE_PANE_DOWN, |shell| {
-            if shell.state.move_focused_pane_down() {
-                eprintln!("zentty-linux: action=move-pane-down");
-                shell.render();
-                shell.focus_selected_surface();
-            }
-        });
-    }
-
-    fn install_pane_rename_action(
-        shell: &Rc<RefCell<Self>>,
-        group: &gio::SimpleActionGroup,
-        string_pair: &glib::VariantTy,
-    ) {
-        let rename_pane = gio::SimpleAction::new(ACTION_RENAME_PANE, Some(string_pair));
-        let weak = Rc::downgrade(shell);
-        rename_pane.connect_activate(move |_, parameter| {
-            let (Some(shell), Some((pane_id, title))) = (
-                weak.upgrade(),
-                parameter.and_then(glib::Variant::get::<(String, String)>),
-            ) else {
-                return;
-            };
-            let changed = {
-                let mut shell_ref = shell.borrow_mut();
-                let changed = shell_ref
-                    .state
-                    .set_pane_custom_title(&pane_id, Some(&title));
-                if changed {
-                    shell_ref.refresh_sidebar_metadata();
-                }
-                changed
-            };
-            if changed {
-                eprintln!("zentty-linux: action=rename-pane id={pane_id} title={title:?}");
-                Self::schedule_terminal_focus(&shell);
-            }
-        });
-        group.add_action(&rename_pane);
-    }
-
-    fn install_worklane_edit_actions(
-        shell: &Rc<RefCell<Self>>,
-        group: &gio::SimpleActionGroup,
-        string_pair: &glib::VariantTy,
-    ) {
-        let rename_worklane = gio::SimpleAction::new(ACTION_RENAME_WORKLANE, Some(string_pair));
-        let weak = Rc::downgrade(shell);
-        rename_worklane.connect_activate(move |_, parameter| {
-            let (Some(shell), Some((worklane_id, title))) = (
-                weak.upgrade(),
-                parameter.and_then(glib::Variant::get::<(String, String)>),
-            ) else {
-                return;
-            };
-            let changed = {
-                let mut shell_ref = shell.borrow_mut();
-                let changed = shell_ref
-                    .state
-                    .set_worklane_title(&worklane_id, Some(&title));
-                if changed {
-                    shell_ref.refresh_sidebar_metadata();
-                }
-                changed
-            };
-            if changed {
-                eprintln!("zentty-linux: action=rename-worklane id={worklane_id} title={title:?}");
-                Self::schedule_terminal_focus(&shell);
-            }
-        });
-        group.add_action(&rename_worklane);
-
-        let set_worklane_color =
-            gio::SimpleAction::new(ACTION_SET_WORKLANE_COLOR, Some(string_pair));
-        let weak = Rc::downgrade(shell);
-        set_worklane_color.connect_activate(move |_, parameter| {
-            let (Some(shell), Some((worklane_id, color_name))) = (
-                weak.upgrade(),
-                parameter.and_then(glib::Variant::get::<(String, String)>),
-            ) else {
-                return;
-            };
-            let color = if color_name.is_empty() {
-                None
-            } else if let Some(color) = WorklaneColor::named(&color_name) {
-                Some(color)
-            } else {
-                eprintln!(
-                    "zentty-linux: action=set-worklane-color rejected id={worklane_id} color={color_name}"
-                );
-                return;
-            };
-            let mut shell = shell.borrow_mut();
-            if shell.state.set_worklane_color(&worklane_id, color) {
-                eprintln!(
-                    "zentty-linux: action=set-worklane-color id={worklane_id} color={}",
-                    color.map_or("none", WorklaneColor::as_str)
-                );
-                shell.refresh_sidebar_metadata();
-            }
-        });
-        group.add_action(&set_worklane_color);
-
-        let close_worklane =
-            gio::SimpleAction::new(ACTION_CLOSE_WORKLANE, Some(glib::VariantTy::STRING));
-        let weak = Rc::downgrade(shell);
-        close_worklane.connect_activate(move |_, parameter| {
-            let (Some(shell), Some(worklane_id)) =
-                (weak.upgrade(), parameter.and_then(glib::Variant::str))
-            else {
-                return;
-            };
-            Self::close_worklane(&shell, worklane_id);
-        });
-        group.add_action(&close_worklane);
-
-        let close_active_worklane = gio::SimpleAction::new(ACTION_CLOSE_ACTIVE_WORKLANE, None);
-        let weak = Rc::downgrade(shell);
-        close_active_worklane.connect_activate(move |_, _| {
-            let Some(shell) = weak.upgrade() else {
-                return;
-            };
-            let worklane_id = shell.borrow().state.active_worklane_id().to_owned();
-            Self::close_worklane(&shell, &worklane_id);
-        });
-        group.add_action(&close_active_worklane);
-
-        Self::install_worklane_move_actions(shell, group, string_pair);
-    }
-
-    fn install_worklane_move_actions(
-        shell: &Rc<RefCell<Self>>,
-        group: &gio::SimpleActionGroup,
-        string_pair: &glib::VariantTy,
-    ) {
-        let move_worklane = gio::SimpleAction::new(ACTION_MOVE_WORKLANE, Some(string_pair));
-        let weak = Rc::downgrade(shell);
-        move_worklane.connect_activate(move |_, parameter| {
-            let (Some(shell), Some((worklane_id, direction))) = (
-                weak.upgrade(),
-                parameter.and_then(glib::Variant::get::<(String, String)>),
-            ) else {
-                return;
-            };
-            let delta = match direction.as_str() {
-                "up" => -1,
-                "down" => 1,
-                _ => return,
-            };
-            let mut shell = shell.borrow_mut();
-            if shell.move_worklane(&worklane_id, delta) {
-                eprintln!(
-                    "zentty-linux: action=move-worklane id={worklane_id} direction={direction}"
-                );
-            }
-        });
-        group.add_action(&move_worklane);
-
-        let reorder_worklane = gio::SimpleAction::new(ACTION_REORDER_WORKLANE, Some(string_pair));
-        let weak = Rc::downgrade(shell);
-        reorder_worklane.connect_activate(move |_, parameter| {
-            let (Some(shell), Some((worklane_id, placement))) = (
-                weak.upgrade(),
-                parameter.and_then(glib::Variant::get::<(String, String)>),
-            ) else {
-                return;
-            };
-            let Some((edge, target_id)) = placement.split_once(':') else {
-                return;
-            };
-            let mut shell = shell.borrow_mut();
-            let filtered = shell
-                .state
-                .worklanes()
-                .iter()
-                .filter(|worklane| worklane.id != worklane_id)
-                .map(|worklane| worklane.id.clone())
-                .collect::<Vec<_>>();
-            let Some(target_index) = filtered.iter().position(|id| id == target_id) else {
-                return;
-            };
-            let insertion_index = match edge {
-                "before" => target_index,
-                "after" => target_index + 1,
-                _ => return,
-            };
-            if shell
-                .state
-                .reorder_worklane(&worklane_id, insertion_index)
-            {
-                eprintln!(
-                    "zentty-linux: action=reorder-worklane id={worklane_id} insertion={insertion_index} order={} active={} pane={}",
-                    shell
-                        .state
-                        .worklanes()
-                        .iter()
-                        .map(|worklane| worklane.id.as_str())
-                        .collect::<Vec<_>>()
-                        .join(","),
-                    shell.state.active_worklane_id(),
-                    shell.state.focused_pane_id().unwrap_or("none")
-                );
-                shell.render_sidebar();
-                shell.focus_selected_surface();
-            }
-        });
-        group.add_action(&reorder_worklane);
-    }
-
-    fn install_pane_transfer_action(shell: &Rc<RefCell<Self>>, group: &gio::SimpleActionGroup) {
-        let move_pane =
-            gio::SimpleAction::new(ACTION_MOVE_PANE_TO_WORKLANE, Some(glib::VariantTy::STRING));
-        let weak = Rc::downgrade(shell);
-        move_pane.connect_activate(move |_, parameter| {
-            let (Some(shell), Some(target_worklane_id)) =
-                (weak.upgrade(), parameter.and_then(glib::Variant::str))
-            else {
-                return;
-            };
-            let mut shell = shell.borrow_mut();
-            let pane_id = shell.state.focused_pane_id().map(str::to_owned);
-            if shell
-                .state
-                .transfer_focused_pane_to_worklane(target_worklane_id)
-            {
-                eprintln!(
-                    "zentty-linux: action=move-pane-to-worklane pane={} target={target_worklane_id}",
-                    pane_id.as_deref().unwrap_or("unknown")
-                );
-                shell.render();
-                shell.focus_selected_surface();
-            }
-        });
-        group.add_action(&move_pane);
-    }
-
-    fn add_simple_action(
-        shell: &Rc<RefCell<Self>>,
-        group: &gio::SimpleActionGroup,
-        name: &'static str,
-        handler: impl Fn(&mut Self) + 'static,
-    ) {
-        let action = gio::SimpleAction::new(name, None);
-        let weak = Rc::downgrade(shell);
-        action.connect_activate(move |_, _| {
-            if let Some(shell) = weak.upgrade() {
-                handler(&mut shell.borrow_mut());
-            }
-        });
-        group.add_action(&action);
-    }
-
     fn schedule_terminal_focus(shell: &Rc<RefCell<Self>>) {
         let weak = Rc::downgrade(shell);
         glib::timeout_add_local_once(Duration::from_millis(50), move || {
@@ -2762,31 +2134,15 @@ impl ApplicationShell {
 
     fn refresh_pane_layout_action_availability(&self) {
         let columns = self.state.active_columns();
-        let width_available = columns.len() >= 2;
         let focused_column = self.state.active_worklane().focused_column_id.as_str();
-        let height_available = columns
+        let focused_column_panes = columns
             .iter()
             .find(|column| column.id == focused_column)
-            .is_some_and(|column| column.panes.len() >= 2);
-        for name in [ACTION_ARRANGE_GOLDEN_WIDE, ACTION_ARRANGE_GOLDEN_NARROW] {
-            self.set_workspace_action_enabled(name, width_available);
-        }
-        for name in [ACTION_ARRANGE_GOLDEN_TALL, ACTION_ARRANGE_GOLDEN_SHORT] {
-            self.set_workspace_action_enabled(name, height_available);
-        }
-    }
-
-    fn set_workspace_action_enabled(&self, name: &str, enabled: bool) {
-        let Some(group) = &self.workspace_actions else {
+            .map_or(0, |column| column.panes.len());
+        let Some(router) = &self.action_router else {
             return;
         };
-        let Some(action) = group
-            .lookup_action(name)
-            .and_then(|action| action.downcast::<gio::SimpleAction>().ok())
-        else {
-            return;
-        };
-        action.set_enabled(enabled);
+        router.refresh_availability(columns.len(), focused_column_panes);
     }
 
     fn resolved_column_widths(&self) -> Vec<i32> {

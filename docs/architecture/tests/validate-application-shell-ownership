@@ -4,6 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 contract="${ZENTTY_APPLICATION_SHELL_OWNERSHIP_CONTRACT:-${repo_root}/docs/architecture/application-shell-responsibilities-v1.json}"
 source_file="${ZENTTY_APPLICATION_SHELL_SOURCE:-${repo_root}/crates/zentty-linux/src/application_shell.rs}"
+action_router_file="${ZENTTY_ACTION_ROUTER_SOURCE:-${repo_root}/crates/zentty-linux/src/application_shell/action_router.rs}"
 matrix="${ZENTTY_QUALIFICATION_MATRIX:-${repo_root}/linux/qualification-matrix.json}"
 
 fail() {
@@ -16,6 +17,7 @@ for dependency in jq sed sort comm mktemp sha256sum; do
 done
 [[ -r "${contract}" ]] || fail "ownership contract is missing: ${contract}"
 [[ -r "${source_file}" ]] || fail "application shell source is missing: ${source_file}"
+[[ -r "${action_router_file}" ]] || fail "action router source is missing: ${action_router_file}"
 [[ -r "${matrix}" ]] || fail "qualification matrix is missing: ${matrix}"
 jq empty "${contract}" >/dev/null 2>&1 || fail "ownership contract is not valid JSON"
 jq empty "${matrix}" >/dev/null 2>&1 || fail "qualification matrix is not valid JSON"
@@ -46,7 +48,7 @@ if [[ -n "${diff}" ]]; then
     fail "method responsibility inventory differs from ApplicationShell"
 fi
 
-sed -nE 's/^const ACTION_[A-Z0-9_]+: &str = "([^"]+)";/\1/p' "${source_file}" |
+sed -nE 's/^pub\(super\) const ACTION_[A-Z0-9_]+: &str = "([^"]+)";/\1/p' "${action_router_file}" |
     sort >"${temp_dir}/actual-actions"
 jq -r '.action_contract[].name' "${contract}" | sort >"${temp_dir}/contract-actions"
 diff="$(comm -3 "${temp_dir}/actual-actions" "${temp_dir}/contract-actions")"
@@ -56,11 +58,27 @@ if [[ -n "${diff}" ]]; then
 fi
 
 source_sha256="$(sha256sum "${source_file}" | awk '{print $1}')"
-jq -e --arg source_sha256 "${source_sha256}" '
+action_router_sha256="$(sha256sum "${action_router_file}" | awk '{print $1}')"
+
+sed -n '1,/^#\[cfg(test)\]/p' "${action_router_file}" |
+    sed -nE 's/^[[:space:]]*(pub\(super\)[[:space:]]+)?(const[[:space:]]+)?fn[[:space:]]+([a-zA-Z0-9_]+).*/\3/p' |
+    sort >"${temp_dir}/actual-action-router-functions"
+jq -r '.owned_module_functions.action_router | sort | .[]' "${contract}" \
+    >"${temp_dir}/contract-action-router-functions"
+diff="$(comm -3 "${temp_dir}/actual-action-router-functions" "${temp_dir}/contract-action-router-functions")"
+if [[ -n "${diff}" ]]; then
+    printf '%s\n' "${diff}" >&2
+    fail "action router function inventory differs from its ownership contract"
+fi
+
+jq -e --arg source_sha256 "${source_sha256}" --arg action_router_sha256 "${action_router_sha256}" '
     .schema_version == 1 and
     .contract_id == "zentty-application-shell-responsibilities" and
     .source == "crates/zentty-linux/src/application_shell.rs" and
     .source_sha256 == $source_sha256 and
+    .owned_source_sha256 == {
+        "crates/zentty-linux/src/application_shell/action_router.rs":$action_router_sha256
+    } and
     .tracking == "GH-26" and
     ([.owners[].id] | sort) == ([
         "action_router",
@@ -83,6 +101,9 @@ jq -e --arg source_sha256 "${source_sha256}" '
         ([.field_assignments[].fields[]] | unique | length) and
     ([.method_assignments[].methods[]] | length) ==
         ([.method_assignments[].methods[]] | unique | length) and
+    (.owned_module_functions | keys) == ["action_router"] and
+    (.owned_module_functions.action_router | length) ==
+        (.owned_module_functions.action_router | unique | length) and
     all(.field_assignments[]; .fields | length > 0) and
     all(.method_assignments[]; .methods | length > 0) and
     ([.action_contract[].name] | length) ==
@@ -100,6 +121,11 @@ jq -e --arg source_sha256 "${source_sha256}" '
         "select-pane", "set-worklane-color"
     ] | sort) and
     ([.action_contract[] | select(.parameter == "none")] | length) == 44 and
+    .conditional_action_availability == {
+        "multiple_columns":["arrange-golden-wide","arrange-golden-narrow"],
+        "multiple_panes_in_focused_column":["arrange-golden-tall","arrange-golden-short"],
+        "all_other_actions":"always"
+    } and
     .single_authorities == {
         "workspace_state": {"owner":"application_shell","maximum_instances_per_window":1},
         "surface_registry": {"owner":"pane_runtime_coordinator","maximum_instances_per_window":1},

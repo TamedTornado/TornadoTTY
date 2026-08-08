@@ -105,7 +105,7 @@ fi
 
 [[ "${ZENTTY_ISOLATED_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
     fail "journey must run through linux/tests/isolated-session"
-for dependency in cargo find jq mktemp stat; do
+for dependency in cargo find jq mktemp ps stat; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
 
@@ -121,13 +121,26 @@ validate_publication "${state_directory}/restore-snapshot.json" 8388608
 "${writer}" "${state_directory}" 8388608 >"${writer_log}" 2>&1 &
 writer_pid=$!
 temporary_file=""
+writer_stopped=false
 for _ in {1..10000}; do
     temporary_file="$(find "${state_directory}" -maxdepth 1 -type f -name '.restore-snapshot.json.tmp.*' -print -quit)"
-    [[ -z "${temporary_file}" ]] || break
+    if [[ -n "${temporary_file}" ]]; then
+        # Freeze the real writer before inspecting its path. Without this,
+        # rename can legitimately win between find(1) and stat(1), turning
+        # successful atomic publication into a false harness failure.
+        kill -STOP "${writer_pid}" 2>/dev/null || break
+        for _ in {1..100}; do
+            [[ "$(ps -o stat= -p "${writer_pid}" 2>/dev/null)" == T* ]] && {
+                writer_stopped=true
+                break
+            }
+        done
+        break
+    fi
     kill -0 "${writer_pid}" 2>/dev/null || break
 done
 observed_temporary=false
-[[ -z "${temporary_file}" ]] || observed_temporary=true
+[[ -z "${temporary_file}" || "${writer_stopped}" == false ]] || observed_temporary=true
 [[ "${observed_temporary}" == false ]] || require_private_temporary_file "${temporary_file}"
 kill -KILL "${writer_pid}" 2>/dev/null || true
 set +e

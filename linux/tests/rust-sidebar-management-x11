@@ -39,10 +39,12 @@ layer_runpath="$(
 )"
 layer_directory="${ghostty_root}/${layer_runpath}"
 
+# Keep all nine real PTYs alive through the pointer journey even when the
+# qualification host is concurrently busy compiling other matrix cells.
 GDK_SCALE=1 GDK_DPI_SCALE=1 \
 LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
     "${product}" \
-    --command 'sleep 6' \
+    --command 'sleep 15' \
     --state-directory "${state_directory}" \
         --no-session-restore >"${log}" 2>&1 &
 product_pid=$!
@@ -93,13 +95,20 @@ grep -Fq 'zentty-linux: sidebar-active-visible worklane=worklane-1 value=' "${lo
 # Make worklane 2 active before picking up worklane 1. Dragging a navigation
 # item must select it once GTK crosses the drag threshold, like a browser/editor
 # tab strip; testing an already-active source would not prove that contract.
+worklane_2_visible_before="$(grep -Fc 'zentty-linux: sidebar-active-visible worklane=worklane-2 value=' "${log}" || true)"
 xdotool key --window "${window_id}" ctrl+Page_Down
 for _ in $(seq 1 100); do
-    grep -Fxq 'zentty-linux: action=next-worklane worklane=worklane-2 pane=pane-2' "${log}" && break
+    action_ready=false
+    grep -Fxq 'zentty-linux: action=next-worklane worklane=worklane-2 pane=pane-2' "${log}" &&
+        action_ready=true
+    visible_count="$(grep -Fc 'zentty-linux: sidebar-active-visible worklane=worklane-2 value=' "${log}" || true)"
+    [[ "${action_ready}" == true && "${visible_count}" -gt "${worklane_2_visible_before}" ]] && break
     sleep 0.05
 done
 grep -Fxq 'zentty-linux: action=next-worklane worklane=worklane-2 pane=pane-2' "${log}" ||
     fail "precondition did not make worklane 1 inactive before pointer drag"
+[[ "$(grep -Fc 'zentty-linux: sidebar-active-visible worklane=worklane-2 value=' "${log}" || true)" -gt "${worklane_2_visible_before}" ]] ||
+    fail "worklane 2 selection did not finish its real sidebar projection before pointer drag"
 
 # Drag worklane 1 between worklanes 2 and 3 through GTK DnD. The insertion slot is
 # calculated after excluding the dragged ID, exactly like the source model.
@@ -147,7 +156,7 @@ done
 # Let all nine real children exit naturally. This uses the product-owned
 # surface-disposal route; destroying the X window underneath live renderers is
 # separately tracked lifecycle work and is not part of sidebar acceptance.
-for _ in $(seq 1 240); do
+for _ in $(seq 1 400); do
     kill -0 "${product_pid}" 2>/dev/null || break
     sleep 0.05
 done

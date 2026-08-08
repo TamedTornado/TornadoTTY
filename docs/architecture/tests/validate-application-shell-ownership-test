@@ -31,7 +31,7 @@ jq '.field_assignments[0].fields += [.field_assignments[0].fields[0]]' \
 expect_failure duplicate-field "field responsibility inventory differs" \
     "ZENTTY_APPLICATION_SHELL_OWNERSHIP_CONTRACT=${temp_dir}/duplicate-field.json"
 
-jq '(.method_assignments[].methods) |= map(select(. != "install_actions"))' \
+jq '(.method_assignments[].methods) |= map(select(. != "finish_pane_layout_action"))' \
     "${contract}" >"${temp_dir}/missing-method.json"
 expect_failure missing-method "method responsibility inventory differs" \
     "ZENTTY_APPLICATION_SHELL_OWNERSHIP_CONTRACT=${temp_dir}/missing-method.json"
@@ -55,6 +55,17 @@ jq '(.action_contract[] | select(.name == "select-pane") | .parameter) = "string
     "${contract}" >"${temp_dir}/action-type.json"
 expect_failure action-type "ownership contract invariants failed" \
     "ZENTTY_APPLICATION_SHELL_OWNERSHIP_CONTRACT=${temp_dir}/action-type.json"
+
+jq '(.owned_module_functions.action_router) |= map(select(. != "populate"))' \
+    "${contract}" >"${temp_dir}/missing-router-function.json"
+expect_failure missing-router-function "action router function inventory differs" \
+    "ZENTTY_APPLICATION_SHELL_OWNERSHIP_CONTRACT=${temp_dir}/missing-router-function.json"
+
+sed '/pub(super) const ACTION_TOGGLE_SIDEBAR/a\pub(super) const ACTION_UNTRACKED: &str = "untracked";' \
+    "${repo_root}/crates/zentty-linux/src/application_shell/action_router.rs" \
+    >"${temp_dir}/untracked-action.rs"
+expect_failure untracked-action "action inventory differs" \
+    "ZENTTY_ACTION_ROUTER_SOURCE=${temp_dir}/untracked-action.rs"
 
 sed '/window: gtk::Window,/a\    shadow_state: WorkspaceState,' \
     "${source_file}" >"${temp_dir}/extra-field.rs"

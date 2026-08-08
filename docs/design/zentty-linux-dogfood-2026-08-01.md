@@ -9424,6 +9424,86 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   and `fbe0f7fcaca3c4b51734f12f5149815f939b17ee097cceb66882a2359751af75`.
   No suppression rule or manifest changed in this slice.
 
+### 2026-08-08 — GH-27 action routing extraction begins tests-first
+
+- **The first ownership move made the structural gate red:** Moving the 53
+  action names into the planned focused module caused the GH-26 validator to
+  reject the now-empty `ApplicationShell` action inventory. This is the
+  intended signal that the machine contract must be upgraded to cover both
+  authoritative source files only after the single router extraction is
+  complete; the validator has not been weakened mid-move.
+- **The initial schema macro did not compile:** Its first form tried to emit an
+  item-level `pub const` from an expression-position array macro. Rust rejected
+  every invocation. The repair keeps ordinary named constants for existing
+  call sites and a single typed schema checked against the constructed GTK
+  group at startup. This is an in-progress extraction, not a qualified or
+  committed artifact.
+- **Focused characterization is green:** Three Rust tests now pin all 53 unique
+  names, all nine parameterized action signatures, rejection of unknown and
+  wrong parameter shapes, and the two topology-dependent sensitivity rules.
+  The router now owns the one `SimpleActionGroup`, validates the populated
+  registry, detaches it before window destruction, and centralizes dynamic
+  availability. Registration families are being moved directly rather than
+  retained behind a second dispatch switch or forwarding facade.
+- **An arbitrary reporting boundary briefly left the tree transitional:** I
+  stopped after moving most registration families even though no human review
+  or technical blocker existed. Work resumed without committing that state.
+  The final extraction removes every `install_*action*` registration method
+  from `ApplicationShell`; no transitional forwarding method was retained.
+- **Clippy caught extraction residue:** The first post-move strict Clippy run
+  rejected the obsolete `gio` import, a test-only lookup helper visible in the
+  production build, an unused consuming `self`, and a wildcard router import.
+  The repair removed the import, moved the helper inside the test module,
+  explicitly consumes the owned action group during uninstall, and lists the
+  composition-root imports explicitly. The strict target then passed.
+- **The characterization contract moved with the authority:** It now pins both
+  source hashes, the `action_router` field replacing `workspace_actions`, all
+  17 owned module functions, the exact 53-action registry and nine parameter
+  signatures, and four conditional sensitivity rules. New negative cases
+  reject a missing router function and an untracked action constant.
+- **Focused mutation is complete:** The safe-copy cargo-mutants campaign
+  selected only the new pure parameter-schema and availability decisions. All
+  six mutants were caught in 71 seconds; no product callback or native
+  component was replaced for mutation testing.
+- **Real product behavior remained intact:** Fresh private-Xvfb sessions passed
+  source UX (`eaacb144465fb20598e6a36d8add02481ab8d88ebcba8b6d963ab19c1653782a`),
+  sidebar DnD (`9740a07686ca579bcede53799f9a4f30f6db8851c751c45211474fefc473fabe`),
+  closed-pane restoration (`b868b80f213b134686fb55805550cd3e6d57f04bb98fe05ec86a62c66e95ec69`),
+  and consolidated session restoration
+  (`c52483e88060ab0102918567d822c8201cf2dd9ed528a220a01d25bcc7b194a4`).
+  Controlled nested Wayland passed the same lifecycle and session journeys
+  (`a57b27e84233e45e6406a4a9f8b7e113fb86a2f2b6df259fd70e1d01e24e0faa`
+  and `d9c9e56c3895179851c9902d0c2c309f80d25f5205303cd0bfdf8b2382c8d23b`).
+- **A mandatory rerun exposed an interrupted-write harness race:** The real
+  writer successfully renamed its temporary snapshot between `find` and
+  `stat`, so the test falsely reported that a path it had just observed was not
+  mode 0600. The runner now sends `SIGSTOP` immediately after observing the
+  real temporary file, confirms the child is stopped, inspects it, and then
+  sends the intended `SIGKILL`. Five isolated repetitions passed. This did not
+  change the store, writer, or publication assertion.
+- **The next rerun exposed an independent DnD synchronization race:** The
+  sidebar test began its real pointer drag as soon as the worklane-selection
+  action receipt appeared, sometimes while GTK was still projecting the new
+  card state. In one run the original six-second PTYs also expired before the
+  drag. The test now waits for the post-selection
+  `sidebar-active-visible` receipt, keeps the nine real PTYs alive for 15
+  seconds, and retains natural child completion with a 20-second ceiling.
+  Five synchronized private-Xvfb repetitions then passed; there is no retry or
+  alternate input path inside the test.
+- **The final complete executable matrix passed:** Declared totals remain
+  `PASS=88`, `FAIL=0`, `BLOCKED=7`, `XFAIL=1`, and
+  `NOT_IMPLEMENTED=21`. Implemented-local and product-boundary qualification
+  pass; release and full Linux qualification remain false. Summary SHA-256 is
+  `d7cc3d828792a768d16b999a2737f9d5a867ebd0200688c0f0139215f07d2987`.
+- **Valgrind is again PASS with reviewed suppressions:** Raw evidence contains
+  427 errors/contexts, 6,240 definite bytes, and 41,461 indirect bytes;
+  post-suppression totals are zero with 427 contexts accounted for. Report,
+  raw-receipt, and suppressed-receipt SHA-256 values are respectively
+  `5fd033e0cda3f9106eca158099351479b0590def5a44b6843817a7552a7a579c`,
+  `1942086d583b8315a2f596451aed4b564744f56b0890ecf452591dafe9b62f99`,
+  and `c1ebfc42f11451e1843912f44608998bc2546692b8039d1af40d544a315ce6b0`.
+  No suppression or manifest changed.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were

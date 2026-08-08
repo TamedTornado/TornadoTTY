@@ -2,7 +2,10 @@
   "schema_version": 1,
   "contract_id": "zentty-application-shell-responsibilities",
   "source": "crates/zentty-linux/src/application_shell.rs",
-  "source_sha256": "f790df03233e00e500b3f01b1c192bdbd16a12be1f22866fb5a751c2cd52da66",
+  "source_sha256": "fe0dddced013b36baa01a6ea4d157d47459bd864d02543d635172217fd993dd9",
+  "owned_source_sha256": {
+    "crates/zentty-linux/src/application_shell/action_router.rs": "321a6e71c26effce00b51ccb3d505ce3e329a573246fe6345f57768c7e2138a8"
+  },
   "tracking": "GH-26",
   "purpose": "Characterize every ApplicationShell field, method, action, authority, and lifecycle edge before extraction; this contract assigns ownership but does not create a second implementation.",
   "owners": [
@@ -15,7 +18,7 @@
     },
     {
       "id": "action_router",
-      "status": "planned",
+      "status": "existing",
       "planned_module": "crates/zentty-linux/src/application_shell/action_router.rs",
       "tracking": "GH-27",
       "responsibility": "One GTK action registry, typed Variant decoding, command availability, shortcuts, and dispatch without product-state ownership."
@@ -67,7 +70,7 @@
     },
     {
       "owner": "action_router",
-      "fields": ["workspace_actions"]
+      "fields": ["action_router"]
     },
     {
       "owner": "pane_runtime_coordinator",
@@ -109,16 +112,13 @@
     {
       "owner": "action_router",
       "methods": [
-        "install_actions", "install_restore_closed_pane_action", "install_search_actions",
-        "install_pane_layout_actions", "finish_pane_layout_action",
+        "finish_pane_layout_action",
         "install_pane_traversal_shortcuts", "record_terminal_gesture",
         "handle_lifecycle_shortcut", "activate_restore_closed_pane_shortcut",
         "install_command_palette_shortcut", "install_search_shortcuts",
-        "perform_focused_binding_action", "install_pane_creation_actions",
-        "install_edit_actions", "install_pane_rename_action", "install_worklane_edit_actions",
-        "install_worklane_move_actions", "install_pane_transfer_action", "add_simple_action",
+        "perform_focused_binding_action",
         "schedule_terminal_focus", "activate_pane_control", "report_action_error",
-        "refresh_pane_layout_action_availability", "set_workspace_action_enabled"
+        "refresh_pane_layout_action_availability"
       ]
     },
     {
@@ -163,6 +163,16 @@
       ]
     }
   ],
+  "owned_module_functions": {
+    "action_router": [
+      "accepts", "enabled", "install", "uninstall", "refresh_availability",
+      "populate", "install_edit_actions", "install_worklane_edit_actions",
+      "install_worklane_move_actions", "install_pane_rename_action",
+      "install_pane_transfer_action", "install_pane_creation_actions",
+      "install_restore_closed_pane_action", "install_search_actions",
+      "install_pane_layout_actions", "add_simple_action", "validate_registered_group"
+    ]
+  },
   "action_contract": [
     {"name":"toggle-sidebar","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"new-worklane","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
@@ -218,6 +228,11 @@
     {"name":"reset-pane-layout","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"restore-closed-pane","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"}
   ],
+  "conditional_action_availability": {
+    "multiple_columns": ["arrange-golden-wide", "arrange-golden-narrow"],
+    "multiple_panes_in_focused_column": ["arrange-golden-tall", "arrange-golden-short"],
+    "all_other_actions": "always"
+  },
   "single_authorities": {
     "workspace_state": {"owner":"application_shell","maximum_instances_per_window":1},
     "surface_registry": {"owner":"pane_runtime_coordinator","maximum_instances_per_window":1},
