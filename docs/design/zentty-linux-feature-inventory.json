@@ -732,17 +732,18 @@
       "origin": "PORT_PARITY",
       "user_impact": "Gemini users otherwise receive no reliable approval or completion signal outside the terminal text.",
       "linux_owner_issue": 7,
-      "implementation_status": "PARTIAL",
+      "implementation_status": "IMPLEMENTED",
       "focused_tests": [
         "crates/zentty-core/tests/agent_adapters.rs",
         "crates/zentty-core/tests/agent_launch.rs",
         "crates/zentty-core/tests/workspace_recipe.rs",
         "crates/zentty-core/tests/workspace_state.rs",
+        "crates/zentty-test-support/src/bin/controlled_gemini.rs",
         "crates/zentty-agent-ipc/tests/helper_cli.rs",
         "crates/zentty-agent-ipc/tests/launch_cli.rs"
       ],
       "product_scenarios": ["linux/tests/rust-agent-ipc"],
-      "test_plan": "Preserve the delivered staged wrapper, private merged system-settings overlay, complete local hook mapping, authenticated sidebar approval state, source-compatible resume command, and real Gemini CLI acceptance under controlled X11 and Wayland. Add Gemini terminal-notification Action required/Session complete enrichment, a controlled real model turn that emits the installed hooks, and restored Gemini relaunch/sidebar evidence before promotion from PARTIAL.",
+      "test_plan": "Keep the staged wrapper, private merged system-settings overlay, complete hook mapping, authenticated sidebar approval state, Ghostty-decoded Action required/Session complete notifications, source-compatible resume command, controlled real model turn, and restored real Gemini TUI/sidebar evidence green under controlled X11 and input-capable Wayland.",
       "alternative_or_blocker": null
     },
     {

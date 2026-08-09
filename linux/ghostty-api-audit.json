@@ -8,7 +8,7 @@
     "local_fork_main_merge_base": "ac04fc276169c70d31aa6fcfc5b43fc160d6fe6e",
     "upstream_remote_tracking_ref_available": false,
     "embedding_series_base": "ac04fc276169c70d31aa6fcfc5b43fc160d6fe6e",
-    "head": "977de1e93579b30f11b837b1f400c5bcdb56da8a"
+    "head": "a8ccbd8c0f66a2df6cd59833d61c6064a8e0ddb1"
   },
   "diff_identity": {
     "git_object_format": "sha1",
@@ -43,25 +43,25 @@
     {
       "id": "gtk-embedding",
       "base": "ac04fc276169c70d31aa6fcfc5b43fc160d6fe6e",
-      "head": "977de1e93579b30f11b837b1f400c5bcdb56da8a",
-      "commit_count": 22,
+      "head": "a8ccbd8c0f66a2df6cd59833d61c6064a8e0ddb1",
+      "commit_count": 23,
       "file_count": 16,
-      "hunk_count": 55,
-      "additions": 1312,
+      "hunk_count": 57,
+      "additions": 1363,
       "deletions": 53,
-      "patch_sha256": "5c9d30f7ff97e70d7e9e2f0d7c8234e5015c129ab9073483a82d88bff0f08833",
+      "patch_sha256": "4c0558ec61631b2b4318cf911273326d93c096529e1a60077b41a6f8c3bad210",
       "classification": "Complete GTK embedding implementation, downstream policy, current-upstream port, and experimental test harness."
     },
     {
       "id": "all-downstream-from-recorded-official-base",
       "base": "ac04fc276169c70d31aa6fcfc5b43fc160d6fe6e",
-      "head": "977de1e93579b30f11b837b1f400c5bcdb56da8a",
-      "commit_count": 22,
+      "head": "a8ccbd8c0f66a2df6cd59833d61c6064a8e0ddb1",
+      "commit_count": 23,
       "file_count": 16,
-      "hunk_count": 55,
-      "additions": 1312,
+      "hunk_count": 57,
+      "additions": 1363,
       "deletions": 53,
-      "patch_sha256": "5c9d30f7ff97e70d7e9e2f0d7c8234e5015c129ab9073483a82d88bff0f08833",
+      "patch_sha256": "4c0558ec61631b2b4318cf911273326d93c096529e1a60077b41a6f8c3bad210",
       "classification": "Complete direct-fork downstream delta; identical to the GTK embedding range after obsolete inherited smooth-scroll history was removed."
     }
   ],
@@ -87,7 +87,8 @@
     {"id":"c4849f2d87acd738e18562d436fc68245849b045","subject":"Expose embedded terminal text reads","partition":"gtk-embedding"},
     {"id":"9a4001c4cbe83f579f54e5f42b8ea2401944f3a0","subject":"gtk: expose terminal progress reports","partition":"gtk-embedding"},
     {"id":"ff5703bf6892b66b0d48e5ba942d6b19a71c8fa1","subject":"test: cover embedded progress reports","partition":"gtk-embedding"},
-    {"id":"977de1e93579b30f11b837b1f400c5bcdb56da8a","subject":"Reject GTK-first embed runtime creation","partition":"gtk-embedding"}
+    {"id":"977de1e93579b30f11b837b1f400c5bcdb56da8a","subject":"Reject GTK-first embed runtime creation","partition":"gtk-embedding"},
+    {"id":"a8ccbd8c0f66a2df6cd59833d61c6064a8e0ddb1","subject":"gtk: expose desktop notification signal","partition":"gtk-embedding"}
   ],
   "files": [
     {"partition":"gtk-embedding","status":"M","path":"AGENTS.md","additions":24,"deletions":0,"hunks":1,"patch_sha256":"20b72948328b85597eaafc218b3fdc2133f1b34e935fff85e3979e00c55c15d6","purpose":"Zentty-only dogfood and qualification policy.","recommendation":"Retain downstream only; exclude from any generic patch."},
@@ -98,13 +99,13 @@
     {"partition":"gtk-embedding","status":"M","path":"src/apprt/gtk/Surface.zig","additions":1,"deletions":3,"hunks":2,"patch_sha256":"41430164420b3a3b7f4364ab4746bee4d4e27cb161b215bde20ac0b5c707ff52","purpose":"Route surface runtime access through its explicit owner instead of the default application.","recommendation":"Plausibly independent generic GTK foundation; retain for focused review."},
     {"partition":"gtk-embedding","status":"M","path":"src/apprt/gtk/class/application.zig","additions":1,"deletions":1,"hunks":1,"patch_sha256":"d2a10c8cfbbe55107991cfcd73cb779c710c71819bd11c2ce2b9d693e91a4600","purpose":"Carry the embedding application runtime through the current upstream GTK application class.","recommendation":"Retain only as current-upstream port plumbing for the embedding library."},
     {"partition":"gtk-embedding","status":"M","path":"src/apprt/gtk/class/global_shortcuts.zig","additions":13,"deletions":3,"hunks":5,"patch_sha256":"116e10b0a190b808e9f42d7a2172b2f8d900cfa6b47016d2471638db0841bcbd","purpose":"Make global-shortcut setup safe for the non-default embedding application owner.","recommendation":"Review as generic explicit-owner support, separate from Zentty policy."},
-    {"partition":"gtk-embedding","status":"M","path":"src/apprt/gtk/class/surface.zig","additions":127,"deletions":42,"hunks":33,"patch_sha256":"79dab68e5dce6be0d9661807f7e3ab9204fabeeb6c59b8c866edff9d69f243f9","purpose":"Store/ref/unref explicit application ownership, apply copied per-surface child environment overrides, replace default-application lookups, and emit language-neutral OSC 9;4 progress reports for embedding hosts independently of the built-in overlay.","recommendation":"Keep the progress signal as a small generic GTK surface contract with exact state/percentage documentation and engine-owned real-PTY coverage; keep host policy outside Ghostty."},
+    {"partition":"gtk-embedding","status":"M","path":"src/apprt/gtk/class/surface.zig","additions":152,"deletions":42,"hunks":35,"patch_sha256":"0f19e55fa8ded9d33de0d84f79f3b1a16bf79ebd695bcf1701bfb3a1ea99cf25","purpose":"Store/ref/unref explicit application ownership, apply copied per-surface child environment overrides, replace default-application lookups, and emit language-neutral OSC progress and decoded desktop-notification signals for embedding hosts.","recommendation":"Keep both signals as small generic GTK surface contracts with exact payload documentation and engine-owned real-PTY coverage; keep host policy outside Ghostty."},
     {"partition":"gtk-embedding","status":"M","path":"src/build/SharedDeps.zig","additions":4,"deletions":2,"hunks":1,"patch_sha256":"5c5f12e45d2c99e7fce5c1e4fd64def50a5689c14138ef738dce91ceccaa7071","purpose":"Link GTK application-runtime dependencies into GTK library artifacts.","recommendation":"Keep with library build plumbing, not explicit-owner foundation."},
     {"partition":"gtk-embedding","status":"A","path":"src/gtk_embed_lib.version-script","additions":17,"deletions":0,"hunks":1,"patch_sha256":"efbcdefc4d13a079639377d88c13217513ed877a47562c286bc91ca201b2156a","purpose":"Allowlist twelve exports under GHOSTTY_GTK_EMBED_1.0 and hide all other implementation symbols.","recommendation":"Retain if library remains; add tests for the version node, SONAME/mismatch behavior, and platform policy."},
     {"partition":"gtk-embedding","status":"A","path":"src/gtk_embed_lib.zig","additions":273,"deletions":0,"hunks":1,"patch_sha256":"063ced58e3219d6ac3be636866306e0291f32d24944fd22e9cd891ed70dff0c0","purpose":"Opaque runtime implementation plus twelve exported C functions, handle validation, copied construction options, deterministic GTK-first rejection, and mutex-safe plain terminal-text reads through the existing Ghostty screen formatter.","recommendation":"Keep the GTK-order guard and text boundary product-neutral; typed argv and explicit structured constructor errors remain unimplemented."},
     {"partition":"gtk-embedding","status":"A","path":"src/gtk_embed_options.zig","additions":68,"deletions":0,"hunks":1,"patch_sha256":"b05b8ca00c11cb6e081413373d338c3bbf1905124dc3def9ff49db4b7de04c1c","purpose":"Pure size-versioned surface-option validation and focused unit tests without compiling the full GTK embedding dependency graph.","recommendation":"Retain as narrow engine-owned contract coverage for the construction options."},
     {"partition":"gtk-embedding","status":"A","path":"src/gtk_embed_spike.valgrind.supp","additions":71,"deletions":0,"hunks":1,"patch_sha256":"78ec498786b543fc22d8e80013bb937445aac642b9bd6ad84db4971b68004e57","purpose":"Private spike suppressions for external GTK/fontconfig allocations.","recommendation":"Retain downstream test evidence only; do not mix with generic implementation."},
-    {"partition":"gtk-embedding","status":"A","path":"src/gtk_embed_spike.zig","additions":397,"deletions":0,"hunks":1,"patch_sha256":"6498534c481f80cc83864e36c1a8e8a5a85cb797b99d8985670cbabcc6f85d1f","purpose":"Private alternate-host probe using internal Zig APIs for lifecycle, PTY, signals, input, clipboard, OSC progress, focus, resize, and scale.","recommendation":"Retain the real PTY/parser/action/progress-signal assertion as engine-owned behavior; keep downstream orchestration and unrelated qualification policy out of a generic patch."},
+    {"partition":"gtk-embedding","status":"A","path":"src/gtk_embed_spike.zig","additions":423,"deletions":0,"hunks":1,"patch_sha256":"e5705302e7f1b622c9762ad79fea482f6b20b074e21bbd557a7af246cec1ae9c","purpose":"Private alternate-host probe using internal Zig APIs for lifecycle, PTY, signals, input, clipboard, OSC progress and desktop notifications, focus, resize, and scale.","recommendation":"Retain the real PTY/parser/action/progress and desktop-notification signal assertions as engine-owned behavior; keep downstream orchestration and unrelated qualification policy out of a generic patch."},
     {"partition":"gtk-embedding","status":"M","path":"src/termio/Exec.zig","additions":31,"deletions":1,"hunks":2,"patch_sha256":"47ba5b910e8de2fdbb6b998530b196573d4d5caa4adabf71649862fbd4c4188b","purpose":"Clone shell command text into subprocess ownership and add a freed-config regression test.","recommendation":"Plausibly independent generic bug fix; review separately."}
   ],
   "abi": {

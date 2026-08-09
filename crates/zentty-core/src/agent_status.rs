@@ -77,6 +77,30 @@ pub struct AgentStatusStore {
 }
 
 impl AgentStatusStore {
+    pub(crate) fn seed_restored_starting(
+        &mut self,
+        pane_id: &str,
+        session_id: &str,
+        agent_name: &str,
+        now: u64,
+    ) {
+        self.panes.entry(pane_id.to_owned()).or_default().insert(
+            session_id.to_owned(),
+            PaneAgentStatus {
+                session_id: session_id.to_owned(),
+                parent_session_id: None,
+                agent_name: agent_name.to_owned(),
+                phase: AgentPhase::Starting,
+                text: None,
+                interaction: AgentInteractionKind::None,
+                progress: None,
+                tracked_pid: None,
+                transcript_path: None,
+                updated_at: now,
+            },
+        );
+    }
+
     /// Reconciles Ghostty's OSC 9;4 activity report without treating its
     /// optional percentage as task completion. Explicit attention remains
     /// authoritative. An interrupted pane has no Codex status to promote, so
@@ -110,6 +134,81 @@ impl AgentStatusStore {
         self.codex_idle_suppression_until.remove(&key);
         self.codex_observed_running.insert(key);
         true
+    }
+
+    /// Reconciles the two Gemini desktop-notification phrases owned by the
+    /// source application. The terminal path is heuristic and deliberately
+    /// narrow: unrelated notifications, including the same completion copy
+    /// from a non-Gemini process, cannot create agent state.
+    pub fn apply_terminal_notification(
+        &mut self,
+        pane_id: &str,
+        title: Option<&str>,
+        body: Option<&str>,
+        now: u64,
+    ) -> bool {
+        let existing = self.status_for_pane(pane_id);
+        let recognized_gemini = existing.map_or_else(
+            || title.is_some_and(|value| value.trim().eq_ignore_ascii_case("gemini")),
+            |status| status.agent_name.eq_ignore_ascii_case("gemini"),
+        );
+        if !recognized_gemini {
+            return false;
+        }
+
+        let combined = [title, body]
+            .into_iter()
+            .flatten()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .collect::<Vec<_>>()
+            .join(": ")
+            .to_ascii_lowercase();
+        let phase = if combined.contains("session complete") {
+            AgentPhase::Idle
+        } else if combined.contains("action required") {
+            AgentPhase::NeedsInput
+        } else {
+            return false;
+        };
+        let session_id = existing.map_or_else(
+            || "terminal-gemini".to_owned(),
+            |status| status.session_id.clone(),
+        );
+        let status = self
+            .panes
+            .entry(pane_id.to_owned())
+            .or_default()
+            .entry(session_id.clone())
+            .or_insert_with(|| PaneAgentStatus {
+                session_id,
+                parent_session_id: None,
+                agent_name: "Gemini".to_owned(),
+                phase: AgentPhase::Starting,
+                text: None,
+                interaction: AgentInteractionKind::None,
+                progress: None,
+                tracked_pid: None,
+                transcript_path: None,
+                updated_at: now,
+            });
+
+        let text = (phase == AgentPhase::NeedsInput)
+            .then(|| body.map(str::trim).filter(|value| !value.is_empty()))
+            .flatten()
+            .map(str::to_owned);
+        let interaction = if phase == AgentPhase::NeedsInput {
+            AgentInteractionKind::Approval
+        } else {
+            AgentInteractionKind::None
+        };
+        let changed =
+            status.phase != phase || status.interaction != interaction || status.text != text;
+        status.phase = phase;
+        status.interaction = interaction;
+        status.text = text;
+        status.updated_at = now;
+        changed
     }
 
     pub(crate) fn codex_transcript_enrichment_context(

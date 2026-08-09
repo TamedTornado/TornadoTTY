@@ -112,7 +112,7 @@ impl ApplicationShell {
         command: Option<String>,
         main_loop: &glib::MainLoop,
         restored_window: Option<WindowRecipe>,
-        restored_drafts: Vec<PaneRestoreDraft>,
+        restored_drafts: &[PaneRestoreDraft],
     ) -> Result<Rc<RefCell<Self>>, String> {
         sidebar::install_styles();
         pane_controls::install_styles();
@@ -131,15 +131,26 @@ impl ApplicationShell {
             command_palette,
         } = build_shell_widgets();
 
-        let window_template = restored_window.unwrap_or_else(default_window_recipe);
+        let window_template = restored_window.unwrap_or_else(|| {
+            default_window_recipe(
+                std::env::current_dir()
+                    .ok()
+                    .and_then(|path| path.into_os_string().into_string().ok()),
+            )
+        });
         let requested_restore_drafts = restored_drafts.len();
         let restored_pane_commands = restored_pane_commands(&window_template, restored_drafts);
         eprintln!(
             "zentty-linux: agent-restore-drafts requested={requested_restore_drafts} accepted={}",
             restored_pane_commands.len()
         );
-        let state = WorkspaceState::from_window_recipe(&window_template)
+        let mut state = WorkspaceState::from_window_recipe(&window_template)
             .map_err(|error| format!("workspace restore failed: {error}"))?;
+        for draft in restored_drafts {
+            if restored_pane_commands.contains_key(&draft.pane_id) {
+                let _ = state.seed_restored_agent(draft, unix_time_ms());
+            }
+        }
         let agent_events = AgentEventCoordinator::start(window_template.id.clone())?;
         let (next_worklane_number, next_pane_number) = next_workspace_identities(&state);
         let initial_pane_ids = workspace_pane_ids(&state);
@@ -2337,14 +2348,14 @@ fn window_contains_pane(window: &WindowRecipe, pane_id: &str) -> bool {
 
 fn restored_pane_commands(
     window: &WindowRecipe,
-    drafts: Vec<PaneRestoreDraft>,
+    drafts: &[PaneRestoreDraft],
 ) -> BTreeMap<String, String> {
     drafts
-        .into_iter()
+        .iter()
         .filter_map(|draft| {
             draft
                 .resume_command()
-                .map(|command| (draft.pane_id, command))
+                .map(|command| (draft.pane_id.clone(), command))
         })
         .filter(|(pane_id, _)| window_contains_pane(window, pane_id))
         .collect()
@@ -2449,7 +2460,7 @@ fn next_numeric_identity<'a>(ids: impl Iterator<Item = &'a str>, prefix: &str) -
         .saturating_add(1)
 }
 
-fn default_window_recipe() -> WindowRecipe {
+fn default_window_recipe(working_directory: Option<String>) -> WindowRecipe {
     WindowRecipe {
         id: "window-1".to_owned(),
         frame: None,
@@ -2468,7 +2479,7 @@ fn default_window_recipe() -> WindowRecipe {
                     id: "pane-1".to_owned(),
                     custom_title: None,
                     title_seed: Some("shell".to_owned()),
-                    working_directory: None,
+                    working_directory,
                     last_activity_title: None,
                     last_run_command: None,
                 }],
@@ -2484,9 +2495,20 @@ fn default_window_recipe() -> WindowRecipe {
 mod allocation_tests {
     use super::{
         TerminalGesture, bounded_pane_viewport_height, codex_terminal_gesture,
-        is_close_window_shortcut, model_heights_to_pixels,
+        default_window_recipe, is_close_window_shortcut, model_heights_to_pixels,
     };
     use gtk::gdk;
+
+    #[test]
+    fn default_pane_records_the_directory_in_which_its_real_child_starts() {
+        let recipe = default_window_recipe(Some("/tmp/zentty-project".to_owned()));
+        assert_eq!(
+            recipe.worklanes[0].columns[0].panes[0]
+                .working_directory
+                .as_deref(),
+            Some("/tmp/zentty-project")
+        );
+    }
 
     #[test]
     fn pane_height_pixels_preserve_ratios_spacing_and_invalid_weight_fallback() {

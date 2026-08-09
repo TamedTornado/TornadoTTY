@@ -10258,6 +10258,212 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   pushed ID to `c963bbd3c58a28b5b8e19584ac0d1522bb11e9a7`; evidence totals and
   scope were unchanged.
 
+### DOGFOOD-2026-08-09-GEMINI-COMPLETION-AUDIT: source completion arrives through the terminal, not Gemini hooks
+
+- **Roadmap selection:** GH-14 is now waiting on the real multi-window
+  composition owned by GH-16. The next independently executable initial-release
+  slice is the remaining Gemini acceptance under GH-7; no synthetic second
+  window is being built to keep tmux work artificially active.
+- **Source discovery:** `GeminiEventAdapter` intentionally ignores every
+  `Notification` except `ToolPermission`. Source tests derive `Agent ready`
+  from a real terminal desktop notification whose pane is identified as Gemini
+  and whose body is `Session complete`. Treating this as another hook event
+  would be source-inaccurate and would duplicate the terminal-event path.
+- **Ghostty-owned gap:** Ghostty already parses OSC 9/777 notifications, rate
+  limits them, and dispatches their decoded title/body to GTK notification
+  presentation. Its embeddable GTK surface exposes progress reports but not the
+  decoded desktop-notification event to a non-Ghostty host. Zentty therefore
+  cannot implement source classification without scraping terminal bytes or
+  adding a fake hook.
+- **Repair boundary and test order:** First extend the existing Ghostty embed
+  spike so a real PTY emits OSC 777 and the plain GTK host must receive exact
+  title/body; this is red before the generic signal exists. The Ghostty change
+  is limited to that generic signal and regression. Zentty then consumes the
+  signal through its sole `PaneRuntimeCoordinator`, applies Gemini-only
+  completion policy in the existing reducer, and extends the existing agent
+  product journey. No daemon, terminal parser, event queue, status store, or
+  alternate harness is permitted.
+- **Pinned-tool invocation discovery:** The first red Ghostty command used the
+  ambient `zig` name and failed because Zig is intentionally not installed on
+  PATH. Zentty's build script already owns the pinned executable at
+  `../.tools/zig-x86_64-linux-0.16.0/zig`; rerunning with that toolchain
+  produced the intended compile failure: `Surface.signals` had no
+  `desktop-notification` member. No compiler was installed or substituted.
+- **Minimal Ghostty repair is independently real and pushed:** Ghostty commit
+  `a8ccbd8c0f66a2df6cd59833d61c6064a8e0ddb1` adds one generic GTK surface
+  signal carrying decoded title/body after core policy and rate limiting, plus
+  the existing real PTY/parser/embed-spike assertion. The spike passed on the
+  live Wayland desktop with four real surfaces and exact `Gemini` / `Session
+  complete` payload. Zentty now pins that commit; Gemini interpretation remains
+  outside Ghostty.
+- **First product notification failure preserved Ghostty policy:** The new
+  controlled actor emitted `Action required` and `Session complete` 300 ms
+  apart. Ghostty correctly admitted only the first because desktop
+  notifications are limited to one per second. The journey now waits 1.2
+  seconds and proves both accepted events instead of bypassing the limiter or
+  weakening production code. Exact notification-to-sidebar journeys pass on
+  controlled X11 and Wayland.
+- **Real installed model boundary:** A third reviewed loopback model endpoint
+  was added to the existing `zentty-test-support` package and orchestration
+  allowlist, not as another product or agent simulator. It accepts one bounded
+  real Gemini streaming request, verifies the probe in parsed JSON, stores only
+  a sanitized receipt, and returns one completed model turn. Gemini CLI 0.53.0
+  itself remains real and emits the installed SessionStart, BeforeAgent, and
+  AfterAgent hooks through the staged wrapper, real Ghostty PTY, helper,
+  authenticated socket, reducer, and sidebar. Only the remote model response
+  is controlled.
+- **Restore exposed missing truthful initial CWD:** The first completed real
+  model turn reached idle but produced no accepted restore draft. A fresh
+  command pane was modeled with no working directory even though its child
+  actually starts in Zentty's process directory, while Gemini restore correctly
+  refuses a draft without a valid CWD. New default panes now record that exact
+  real start directory; focused tests pin the value rather than inventing a
+  fallback during restore.
+- **Restored sidebar state no longer waits on an optional upstream hook:** The
+  real `gemini --resume` TUI rendered but Gemini CLI 0.53.0 did not emit
+  SessionStart merely from loading the latest session. Accepted restore drafts
+  now seed `Starting` in the existing canonical `AgentStatusStore` before the
+  real resumed child starts. Subsequent authenticated events reconcile through
+  the same store. No restore-only status model or fake event transport was
+  added.
+- **External native-loader cleanup was not hidden:** The pnpm installation
+  initially ignored `node-pty` and `@github/keytar` build scripts. Real TUI
+  shutdown then left a short-lived node-gyp header-cache writer racing the
+  nested compositor's private directory removal. Both reviewed native
+  dependencies are explicitly built in the isolated pinned toolchain, and the
+  journey supplies that Node installation's existing headers and rejects a
+  node-gyp process that remains alive. The true Wayland rerun then removed its
+  controlled environment cleanly rather than converting the cleanup failure
+  into a pass.
+- **True Wayland evidence:** Running the input-capable Cage harness without
+  removing the outer Xvfb `DISPLAY` selected X11, as its receipt honestly
+  reported. The accepted invocation removes the transport display only for the
+  product and sets `GDK_BACKEND=wayland`; clean real-Gemini session
+  `adeeb13f4e35b1ba18d73ef2fd7e82f1ba542490f8b35730bb19f617728a1b98`
+  (outer controlled X11 transport
+  `0e41c122a8366594c993c8f2f68f34e0e32dee54906540ea8ad789efa8c4efc6`)
+  passed model turn, hooks, notification enrichment, persistence, real resume
+  TUI, sidebar restore state, physical close, and cleanup.
+- **Qualification promotion is test-enforced:** Both authoritative agent cells
+  now require the reviewed installed Gemini version rather than treating its
+  absence as a passing optional branch. `agent.gemini` is promoted to
+  `IMPLEMENTED`; final mutation, X11 candidate, and full presently-executable
+  matrix reruns remain required before this candidate is committed or pushed.
+- **Focused mutation repaired three real assertion gaps:** The first governed
+  13-mutant campaign caught ten but missed the three independent terms in the
+  notification reducer's visible-change predicate. Tests previously proved a
+  transition where phase, interaction, and text all changed together, but not
+  phase-only, interaction-only, text-only, and exact-repeat receipts. Those
+  cases are now explicit. The rerun caught all 13 mutants with no misses or
+  timeouts; `outcomes.json` SHA-256 is
+  `ac8b074eb185ceb948cc0a1f71fda96c6448c62ee28feb81e8d8b95e7a47060d`.
+  The governed `gitignore=true`, `copy_target=false` policy remained active.
+- **Final X11 candidate and Node cache governance:** Node 24's performance-only
+  compile cache also briefly wrote below the compositor-owned TMPDIR after the
+  real CLI process acknowledged exit. The installed-CLI journey disables that
+  cache rather than waiting on or shipping it; model behavior and persisted
+  Gemini sessions are unchanged. The exact required-on-PATH X11 candidate then
+  passed session
+  `278c9f6776f3b61387ad12431d9092a8ec43b7574f88efe44ea3cd8fe73616b1`
+  with no surviving native build, compile cache, product, socket, or compositor
+  artifact.
+- **Final gate review found and repaired two stale assertions:** Pedantic Clippy
+  rejected an avoidable `Option::map(...).unwrap_or_else(...)`, uninlined log
+  arguments, and two restore vectors passed by value after the implementation
+  stopped consuming them. The code now passes slices and the ownership hashes
+  were regenerated; workspace Clippy is green. Promoting Gemini also changed
+  the authoritative inventory totals from one to two implemented entries, but
+  the inventory runner self-test still expected the old total. Its exact
+  machine-summary assertions now expect `IMPLEMENTED=2` and `PARTIAL=22`, and
+  the full negative runner suite passes.
+- **The final qualification rerun was deliberately parked for a host reboot:**
+  Support/preflight suites passed and the matrix had progressed through the
+  release build, every ReleaseSafe Wayland/X11 backend and terminal-count
+  combination, API/lifecycle cells, staging, Ghostty API audit, runtime init,
+  and the first seven Debug cells. The operator then requested a graceful
+  pause. The matrix runner received SIGTERM and exited 143; its interrupted
+  evidence is not a qualification receipt, and no final PASS claim or commit
+  is made from it. Restart from `linux/tests/qualify-local` after reboot so the
+  runner's normal evidence invalidation produces one complete, coherent run.
+- **The initial post-reboot candidate produced one coherent receipt:** The complete
+  `linux/tests/qualify-local` rerun executed every presently executable cell;
+  actual outcomes are `PASS=88`, `XFAIL=1`, `DECLARED_BLOCKED=7`, and
+  `DECLARED_NOT_IMPLEMENTED=21`, with no FAIL or unexpected skip. Implemented
+  local and product-boundary qualification pass. Release and full Linux
+  qualification remain false because the authoritative matrix still contains
+  declared blocked, XFAIL, and not-implemented scope. The machine-summary
+  SHA-256 is
+  `632a46c1ea88cf3d2ac050eea7a09d0c5503d7147a19ee1ea5f927205287abe3`.
+  This receipt predates the subsequent harness-prerequisite review and is
+  retained as historical evidence, not the final candidate receipt.
+- **Valgrind result is PASS with reviewed suppressions:** The preserved raw
+  receipt reports 427 errors/contexts, 6,160 definite bytes, and 41,428
+  indirect bytes. The post-suppression receipt reports zero errors/contexts
+  and zero definite/indirect bytes, with all 427 contexts accounted for by the
+  audited effective suppression set. Report, raw-receipt, and suppressed-
+  receipt SHA-256 values are respectively
+  `de50a40c92ce050070369646d154fa19d240ca2b5c5b53223429d2095c848fbf`,
+  `491c535f248efd617eac12f6e083c4dce5220fbb673bd0d33b01d29ece93e69d`,
+  and `fb162e31a3e1b952fde4d673092da164977f6053961250c41b41f68c67b47243`.
+  This is not an unsuppressed-clean claim; ReleaseSafe Valgrind remains XFAIL.
+- **Post-run diff review narrowed test prerequisites:** The consolidated agent
+  journey initially required `node`, `jq`, `pgrep`, and `readlink` even when
+  its optional installed-Gemini branch was not selected. Those tools are now
+  checked only at the real-Gemini boundary; the ordinary controlled actor and
+  terminal-notification journey retain only their actual dependencies. A
+  redundant failure wrapper around the canonical log-wait helper was also
+  removed. The authoritative X11 and Wayland agent cells are rerun after this
+  harness-only repair before commit.
+- **The required rerun exposed a real Claude/tmux race rather than being
+  retried away:** Both compositor agent cells then failed because the installed
+  Claude 2.1.201 team flow launches a short-lived bootstrap child and replaces
+  the same teammate pane with `respawn-pane -k`. Zentty eagerly removed the
+  durable pane when that child exited, so whether respawn succeeded depended
+  on callback/request ordering. Logs showed `SplitWindow`, child exit, then a
+  rejected `RespawnPane`; the controlled endpoint recorded the failed tool
+  result and both cells timed out. This invalidated that matrix receipt.
+- **The lifecycle repair is scoped to recorded teammates:** The canonical tmux
+  store now identifies only team-column panes that may be retained after child
+  exit. Their dead Ghostty surface and capability are removed, but durable
+  topology remains available for the source respawn request. Ordinary panes,
+  team leaders, shutdown, stale callbacks, and subsequent explicit kills keep
+  their existing paths. The real installed-Claude flow now records
+  `tmux-respawn pane=pane-2`, starts the real teammate TUI, crosses real input,
+  closes both panes, and passes on controlled X11 and Wayland.
+- **Mutation caught an initially incomplete lifecycle assertion:** The
+  disposition campaign caught both mutants. The first five-mutant team-
+  membership campaign caught four but showed that tests did not distinguish a
+  store-recorded teammate absent from live workspace topology. That case was
+  added explicitly; the rerun caught all five. The disposition and final
+  membership `outcomes.json` SHA-256 values are respectively
+  `c2d13e3a65064505c15aadd1d21884590c1fe03bbc64c45405055c7fca01f6a2`
+  and `36d627435d6769375efa5988792a7e8412444e8e75a87f648b11af939f14a0cb`.
+- **Controlled desktop services were made non-ambient:** The first repaired
+  X11 run completed all product assertions but GTK autolaunched a user D-Bus,
+  portal processes, and a keyring daemon after the wrapper had deliberately
+  removed the ambient bus address. The survivor check correctly failed. The
+  installed-Claude process now receives explicit fixture-local nonexistent
+  D-Bus and AT-SPI socket addresses, which makes desktop-service absence
+  deterministic instead of triggering host autolaunch. The escaped processes
+  were terminated and both compositor reruns completed with no survivors.
+- **The repaired candidate passed the complete executable matrix:** The final
+  clean `linux/tests/qualify-local` run produced actual outcomes `PASS=88`,
+  `XFAIL=1`, `DECLARED_BLOCKED=7`, and `DECLARED_NOT_IMPLEMENTED=21`, with no
+  FAIL or unexpected skip. Implemented-local and product-boundary
+  qualification pass. Release and full Linux qualification correctly remain
+  false while declared incomplete scope remains. The final machine-summary
+  SHA-256 is
+  `93ecdd756815ae7e645a93f6c8b9822810a41faf884c7b7e354757182961807d`.
+- **Final Valgrind is PASS with reviewed suppressions:** Its preserved raw
+  receipt reports 427 errors/contexts, 6,080 definite bytes, and 41,395
+  indirect bytes. Post-suppression totals are zero errors/contexts and zero
+  definite/indirect bytes, with all 427 contexts accounted for. Report, raw,
+  and suppressed SHA-256 values are respectively
+  `283d9951938de9b7ca262c714827eb15ba4d42a7b4ba714919196c9e608a264b`,
+  `b9836a0e0021492c9af30b8f967f6c74e177dc1fdc6ea2126016506d0f2b07a8`,
+  and `07b00363cd307bdfbf392a5d02ab71055ca09c0297d0716711a1fd8e9bf8f889`.
+  This is not an unsuppressed-clean result; ReleaseSafe Valgrind remains XFAIL.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were

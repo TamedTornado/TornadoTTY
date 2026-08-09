@@ -27,6 +27,7 @@ enum RemovalDecision {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 enum ChildExitDisposition {
     CloseWorkspacePane,
+    PreserveTmuxTeammate,
     DisposeDuringShutdown,
     #[default]
     IgnoreStale,
@@ -48,11 +49,17 @@ fn removal_decision(is_registered: bool) -> RemovalDecision {
     }
 }
 
-fn child_exit_disposition(is_registered: bool, shutting_down: bool) -> ChildExitDisposition {
+fn child_exit_disposition(
+    is_registered: bool,
+    shutting_down: bool,
+    preserve_tmux_teammate: bool,
+) -> ChildExitDisposition {
     if !is_registered {
         ChildExitDisposition::IgnoreStale
     } else if shutting_down {
         ChildExitDisposition::DisposeDuringShutdown
+    } else if preserve_tmux_teammate {
+        ChildExitDisposition::PreserveTmuxTeammate
     } else {
         ChildExitDisposition::CloseWorkspacePane
     }
@@ -368,6 +375,7 @@ impl PaneRuntimeCoordinator {
             });
         });
         Self::connect_surface_progress_callback(shell, pane_id, surface);
+        Self::connect_surface_notification_callback(shell, pane_id, surface);
         let weak = Rc::downgrade(shell);
         let exited_id = pane_id.to_owned();
         surface.on_child_exited(move || {
@@ -427,6 +435,39 @@ impl PaneRuntimeCoordinator {
                     .state
                     .reconcile_terminal_progress(&progress_id, state, unix_time_ms())
                 {
+                    shell.refresh_sidebar_metadata();
+                }
+            });
+        });
+    }
+
+    fn connect_surface_notification_callback(
+        shell: &Rc<RefCell<ApplicationShell>>,
+        pane_id: &str,
+        surface: &GhosttySurface,
+    ) {
+        let notification_id = pane_id.to_owned();
+        let weak = Rc::downgrade(shell);
+        surface.on_desktop_notification(move |title, body| {
+            eprintln!(
+                "zentty-linux: terminal-notification pane={notification_id} title={title:?} body={body:?}"
+            );
+            let weak = weak.clone();
+            let notification_id = notification_id.clone();
+            glib::idle_add_local_once(move || {
+                let Some(shell) = weak.upgrade() else {
+                    return;
+                };
+                let mut shell = shell.borrow_mut();
+                if shell.shutting_down {
+                    return;
+                }
+                if shell.state.reconcile_terminal_notification(
+                    &notification_id,
+                    Some(&title),
+                    Some(&body),
+                    unix_time_ms(),
+                ) {
                     shell.refresh_sidebar_metadata();
                 }
             });
@@ -498,6 +539,9 @@ impl PaneRuntimeCoordinator {
         match child_exit_disposition(
             shell_ref.pane_runtime.contains(pane_id),
             shell_ref.shutting_down,
+            shell_ref
+                .tmux_compat
+                .retains_exited_teammate(&shell_ref.state, pane_id),
         ) {
             ChildExitDisposition::IgnoreStale => {
                 eprintln!("zentty-linux: child-exit-after-dispose pane={pane_id} ignored");
@@ -509,6 +553,17 @@ impl PaneRuntimeCoordinator {
                 if let Err(error) = shell_ref.pane_runtime.remove(pane_id, true) {
                     eprintln!("zentty-linux: shutdown child-exit cleanup failed: {error}");
                     shell_ref.main_loop.quit();
+                }
+                return;
+            }
+            ChildExitDisposition::PreserveTmuxTeammate => {
+                let _ = shell_ref.pane_runtime.note_child_exit(pane_id);
+                shell_ref.agent_events.unregister_pane(pane_id);
+                if let Err(error) = shell_ref.pane_runtime.remove(pane_id, true) {
+                    eprintln!("zentty-linux: tmux teammate child-exit cleanup failed: {error}");
+                    shell_ref.main_loop.quit();
+                } else {
+                    eprintln!("zentty-linux: tmux-teammate-exited pane={pane_id} awaiting=respawn");
                 }
                 return;
             }
@@ -567,11 +622,11 @@ mod tests {
     #[test]
     fn callback_after_detach_is_ignored_as_stale() {
         assert_eq!(
-            child_exit_disposition(false, false),
+            child_exit_disposition(false, false, false),
             ChildExitDisposition::IgnoreStale
         );
         assert_eq!(
-            child_exit_disposition(false, true),
+            child_exit_disposition(false, true, true),
             ChildExitDisposition::IgnoreStale
         );
     }
@@ -579,7 +634,7 @@ mod tests {
     #[test]
     fn child_exit_during_shutdown_disposes_without_mutating_workspace() {
         assert_eq!(
-            child_exit_disposition(true, true),
+            child_exit_disposition(true, true, true),
             ChildExitDisposition::DisposeDuringShutdown
         );
     }
@@ -587,8 +642,16 @@ mod tests {
     #[test]
     fn active_child_exit_closes_the_workspace_pane() {
         assert_eq!(
-            child_exit_disposition(true, false),
+            child_exit_disposition(true, false, false),
             ChildExitDisposition::CloseWorkspacePane
+        );
+    }
+
+    #[test]
+    fn exited_tmux_teammate_is_preserved_for_source_respawn() {
+        assert_eq!(
+            child_exit_disposition(true, false, true),
+            ChildExitDisposition::PreserveTmuxTeammate
         );
     }
 }

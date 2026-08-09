@@ -7,6 +7,7 @@ backend="${GDK_BACKEND:-}"
 log=""
 state_directory=""
 product_pid=""
+server_pid=""
 fake_bin=""
 real_gemini_bin=""
 private_home=""
@@ -24,6 +25,10 @@ cleanup() {
     if [[ "${product_pid}" =~ ^[1-9][0-9]*$ ]]; then
         kill -TERM "${product_pid}" 2>/dev/null || true
         wait "${product_pid}" 2>/dev/null || true
+    fi
+    if [[ "${server_pid}" =~ ^[1-9][0-9]*$ ]]; then
+        kill -TERM "${server_pid}" 2>/dev/null || true
+        wait "${server_pid}" 2>/dev/null || true
     fi
     [[ -z "${log}" ]] || rm -f -- "${log}"
     [[ -z "${state_directory}" ]] || rm -rf -- "${state_directory}"
@@ -44,6 +49,19 @@ case "${backend}" in
         fi
         ;;
     *) fail "GDK_BACKEND must be x11 or wayland" ;;
+esac
+case "${ZENTTY_REQUIRE_REAL_GEMINI:-false}" in
+    true)
+        if [[ -z "${ZENTTY_REAL_GEMINI_BIN:-}" ]]; then
+            ZENTTY_REAL_GEMINI_BIN="$(command -v gemini || true)"
+            export ZENTTY_REAL_GEMINI_BIN
+        fi
+        [[ -n "${ZENTTY_EXPECTED_GEMINI_VERSION:-}" ]] ||
+            ZENTTY_EXPECTED_GEMINI_VERSION=0.53.0
+        export ZENTTY_EXPECTED_GEMINI_VERSION
+        ;;
+    false) ;;
+    *) fail "ZENTTY_REQUIRE_REAL_GEMINI must be true or false" ;;
 esac
 for dependency in grep mktemp sed sleep stat; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
@@ -304,6 +322,45 @@ run_codex_osc_progress() {
     private_home=""
 }
 
+run_gemini_terminal_notifications() {
+    log="$(mktemp)"
+    state_directory="$(mktemp -d)"
+    private_home="$(mktemp -d)"
+    PATH="${fake_bin}:${PATH}" GDK_SCALE=1 GDK_DPI_SCALE=1 \
+        HOME="${private_home}" \
+        ZENTTY_CONTROLLED_AGENT_PROFILE=gemini-notifications \
+        "${product}" \
+        --command gemini \
+        --state-directory "${state_directory}" \
+        --no-session-restore >"${log}" 2>&1 &
+    product_pid=$!
+
+    zentty_product_wait_for_log "${log}" \
+        'zentty-linux: terminal-notification pane=pane-1 title="Gemini" body="Action required"' \
+        "real Gemini action notification did not cross the Ghostty embedding boundary"
+    zentty_product_wait_for_log "${log}" \
+        'sidebar-agent-status pane=pane-1 phase=NeedsInput interaction=Approval attention=true' \
+        "Gemini action notification did not establish approval attention"
+    zentty_product_wait_for_log "${log}" \
+        'zentty-linux: terminal-notification pane=pane-1 title="Gemini" body="Session complete"' \
+        "real Gemini completion notification did not cross the Ghostty embedding boundary"
+    zentty_product_wait_for_log "${log}" \
+        'sidebar-agent-status pane=pane-1 phase=Idle interaction=None attention=false' \
+        "Gemini completion notification did not establish ready state"
+
+    for _ in {1..200}; do
+        ! kill -0 "${product_pid}" 2>/dev/null && break
+        sleep 0.05
+    done
+    wait "${product_pid}" || fail "Gemini terminal-notification product run failed"
+    product_pid=""
+    rm -f -- "${log}"
+    rm -rf -- "${state_directory}" "${private_home}"
+    log=""
+    state_directory=""
+    private_home=""
+}
+
 run_adapter \
     codex \
     'codex' \
@@ -349,23 +406,31 @@ run_adapter \
     gemini-permission \
     'zentty-linux: sidebar-agent-status pane=pane-1 phase=NeedsInput interaction=Approval attention=true' \
     'Allow write_file on README.md?'
+run_gemini_terminal_notifications
 
 if [[ -n "${ZENTTY_REAL_GEMINI_BIN:-}" ]]; then
+    for dependency in jq node pgrep readlink; do
+        command -v "${dependency}" >/dev/null ||
+            fail "${dependency} is required for the real Gemini journey"
+    done
     [[ -x "${ZENTTY_REAL_GEMINI_BIN}" ]] || fail "real Gemini executable is not executable"
     [[ "${ZENTTY_EXPECTED_GEMINI_VERSION:-}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
         fail "ZENTTY_EXPECTED_GEMINI_VERSION must pin the reviewed real CLI version"
     [[ "$(basename "${ZENTTY_REAL_GEMINI_BIN}")" == gemini ]] ||
         fail "real Gemini executable must retain its installed basename"
     real_gemini_bin="$(dirname "${ZENTTY_REAL_GEMINI_BIN}")"
+    node_installation="$(cd "$(dirname "$(readlink -f "$(command -v node)")")/.." && pwd)"
+    [[ -d "${node_installation}/include/node" ]] ||
+        fail "installed Node headers are required for the real Gemini native loader"
     state_directory="$(mktemp -d)"
     private_home="$(mktemp -d)"
     gemini_source="${private_home}/system-settings.json"
     gemini_receipt="${private_home}/version.receipt"
-    printf '%s\n' '{"theme":"Dracula","general":{"enableNotifications":false}}' >"${gemini_source}"
+    printf '%s\n' '{"theme":"Dracula","general":{"enableNotifications":false},"security":{"auth":{"selectedType":"gemini-api-key"}}}' >"${gemini_source}"
     source_sha="$(sha256sum "${gemini_source}" | awk '{print $1}')"
     log="$(mktemp)"
     PATH="${real_gemini_bin}:${PATH}" GDK_SCALE=1 GDK_DPI_SCALE=1 \
-        HOME="${private_home}" \
+        HOME="${private_home}" NODE_DISABLE_COMPILE_CACHE=1 \
         GEMINI_CLI_SYSTEM_SETTINGS_PATH="${gemini_source}" \
         "${product}" \
         --command "gemini --version >${gemini_receipt} 2>&1" \
@@ -388,6 +453,107 @@ if [[ -n "${ZENTTY_REAL_GEMINI_BIN:-}" ]]; then
     socket="$(sed -n 's/^zentty-linux: agent-runtime socket=//p' "${log}" | head -1)"
     [[ -n "${socket}" && ! -e "${socket}" && ! -e "$(dirname "${socket}")" ]] ||
         fail "real Gemini run left its socket or overlay runtime behind"
+
+    product_profile="$(sed -n 's/^product_profile=//p' "$(dirname "${product}")/../build-metadata")"
+    controlled_gemini="${repo_root}/target/${product_profile}/controlled_gemini"
+    [[ -x "${controlled_gemini}" ]] ||
+        fail "controlled Gemini endpoint is not built: ${controlled_gemini}"
+    model_receipt="${private_home}/model-receipt.jsonl"
+    model_log="${private_home}/model.log"
+    "${controlled_gemini}" --receipt "${model_receipt}" >"${model_log}" 2>&1 &
+    server_pid=$!
+    for _ in {1..200}; do
+        grep -q '^CONTROLLED_GEMINI_READY=' "${model_log}" && break
+        kill -0 "${server_pid}" 2>/dev/null ||
+            fail "controlled Gemini endpoint exited before readiness"
+        sleep 0.01
+    done
+    endpoint="$(sed -n 's/^CONTROLLED_GEMINI_READY=//p' "${model_log}")"
+    [[ "${endpoint}" =~ ^http://127\.0\.0\.1:[1-9][0-9]*$ ]] ||
+        fail "controlled Gemini endpoint did not publish a loopback address"
+
+    rm -rf -- "${state_directory}"
+    state_directory="$(mktemp -d)"
+    : >"${log}"
+    PATH="${real_gemini_bin}:${PATH}" GDK_SCALE=1 GDK_DPI_SCALE=1 \
+        HOME="${private_home}" GEMINI_API_KEY=zentty-controlled-key \
+        GOOGLE_GEMINI_BASE_URL="${endpoint}" \
+        NODE_DISABLE_COMPILE_CACHE=1 \
+        npm_config_nodedir="${node_installation}" \
+        GEMINI_CLI_SYSTEM_SETTINGS_PATH="${gemini_source}" \
+        "${product}" \
+        --command "gemini --skip-trust --model gemini-2.5-flash --prompt-interactive 'Zentty installed Gemini integration probe'" \
+        --state-directory "${state_directory}" >"${log}" 2>&1 &
+    product_pid=$!
+    zentty_product_wait_for_log "${log}" \
+        'kind=agent.running session=' \
+        "installed Gemini BeforeAgent hook did not reach the reducer"
+    zentty_product_wait_for_log "${log}" \
+        'kind=agent.idle session=' \
+        "installed Gemini AfterAgent hook did not reach the reducer"
+    grep -Fq '"containsProbe":true' "${model_receipt}" ||
+        fail "controlled endpoint did not retain a sanitized Gemini receipt"
+    wait "${server_pid}" || fail "controlled Gemini endpoint failed"
+    server_pid=""
+    zentty_product_prepare_input "${backend}" "${log}"
+    zentty_product_close_window "${backend}"
+    for _ in {1..240}; do
+        ! kill -0 "${product_pid}" 2>/dev/null && break
+        sleep 0.05
+    done
+    wait "${product_pid}" || fail "installed Gemini product turn failed"
+    product_pid=""
+    jq -e '
+        .restoreDraftWindows[0].paneDrafts[0] |
+        .toolName == "Gemini" and
+        .agentLaunchSnapshot.arguments == ["gemini", "--resume"]
+    ' "${state_directory}/restore-snapshot.json" >/dev/null ||
+        fail "installed Gemini turn was not persisted as a source-compatible resume draft"
+
+    : >"${log}"
+    PATH="${real_gemini_bin}:${PATH}" GDK_SCALE=1 GDK_DPI_SCALE=1 \
+        HOME="${private_home}" GEMINI_API_KEY=zentty-controlled-key \
+        GOOGLE_GEMINI_BASE_URL="${endpoint}" \
+        NODE_DISABLE_COMPILE_CACHE=1 \
+        npm_config_nodedir="${node_installation}" \
+        GEMINI_CLI_SYSTEM_SETTINGS_PATH="${gemini_source}" \
+        "${product}" --state-directory "${state_directory}" >"${log}" 2>&1 &
+    product_pid=$!
+    zentty_product_wait_for_log "${log}" \
+        'zentty-linux: agent-resume-launch pane=pane-1 command=gemini --resume' \
+        "installed Gemini relaunch did not use the source-compatible resume command"
+    zentty_product_wait_for_log "${log}" \
+        'sidebar-agent-status pane=pane-1 phase=Starting interaction=None attention=false' \
+        "persisted Gemini restore state did not reach the sidebar"
+    zentty_product_wait_for_log "${log}" 'zentty-linux: title=◇  Ready (zentty)' \
+        "resumed real Gemini TUI did not render"
+    zentty_product_prepare_input "${backend}" "${log}"
+    zentty_product_close_window "${backend}"
+    for _ in {1..240}; do
+        ! kill -0 "${product_pid}" 2>/dev/null && break
+        sleep 0.05
+    done
+    wait "${product_pid}" || fail "resumed installed Gemini product failed"
+    product_pid=""
+
+    # Gemini's native dependency loader may briefly finish a node-gyp header
+    # cache subprocess after the TUI has acknowledged termination. Do not let
+    # that external process race the controlled compositor's TMPDIR removal,
+    # and do not silently accept a process that remains alive.
+    if [[ -n "${TMPDIR:-}" ]]; then
+        for _ in {1..100}; do
+            ! pgrep -f -- "${TMPDIR}/node-gyp-tmp-" >/dev/null && break
+            sleep 0.05
+        done
+        ! pgrep -f -- "${TMPDIR}/node-gyp-tmp-" >/dev/null ||
+            fail "real Gemini left a node-gyp cache subprocess alive"
+        # The detached process can disappear from the process table just
+        # before its final filesystem writes become visible. Give those
+        # writes a bounded quiescence interval before the owning compositor
+        # removes its private TMPDIR.
+        sleep 1
+    fi
+
     rm -rf -- "${private_home}" "${state_directory}"
     rm -f -- "${log}"
     private_home=""

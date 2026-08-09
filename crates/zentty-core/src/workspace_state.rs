@@ -1522,6 +1522,22 @@ impl WorkspaceState {
         self.agent_statuses.apply(event, now);
     }
 
+    /// Seeds the canonical sidebar state for one accepted restore draft while
+    /// its real resumed process is starting. Subsequent authenticated hooks
+    /// replace this projection through the same status store.
+    pub fn seed_restored_agent(&mut self, draft: &crate::PaneRestoreDraft, now: u64) -> bool {
+        if self.pane(&draft.pane_id).is_none() || draft.resume_command().is_none() {
+            return false;
+        }
+        self.agent_statuses.seed_restored_starting(
+            &draft.pane_id,
+            &draft.session_id,
+            &draft.tool_name,
+            now,
+        );
+        true
+    }
+
     /// Reconciles a real terminal-title callback into the canonical per-pane
     /// agent store. Unknown panes, non-Codex sessions, and unrelated titles
     /// are no-ops.
@@ -1541,6 +1557,23 @@ impl WorkspaceState {
     ) -> bool {
         self.agent_statuses
             .apply_terminal_progress(pane_id, state, now)
+    }
+
+    /// Reconciles a desktop notification decoded by Ghostty. Agent-specific
+    /// interpretation remains in the canonical status store rather than the
+    /// GTK/Ghostty boundary.
+    pub fn reconcile_terminal_notification(
+        &mut self,
+        pane_id: &str,
+        title: Option<&str>,
+        body: Option<&str>,
+        now: u64,
+    ) -> bool {
+        if self.pane(pane_id).is_none() {
+            return false;
+        }
+        self.agent_statuses
+            .apply_terminal_notification(pane_id, title, body, now)
     }
 
     /// Returns a source-eligible title-inferred Codex question request. File

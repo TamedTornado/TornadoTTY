@@ -288,6 +288,15 @@ fn active_supported_agents_produce_restorable_per_pane_drafts() {
         gemini[0].agent_launch_snapshot.as_ref().unwrap().arguments,
         ["gemini", "--resume"]
     );
+
+    let mut relaunched =
+        WorkspaceState::from_window_recipe(&envelope.workspace.windows[0]).unwrap();
+    assert!(relaunched.seed_restored_agent(&gemini[0], 13));
+    let summaries = relaunched.sidebar_summaries();
+    let restored_status = summaries[0].pane_rows[1].agent_status.as_ref().unwrap();
+    assert_eq!(restored_status.agent_name, "Gemini");
+    assert_eq!(restored_status.phase, zentty_core::AgentPhase::Starting);
+    assert_eq!(restored_status.session_id, "gemini-session");
 }
 
 #[test]

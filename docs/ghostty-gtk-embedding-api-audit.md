@@ -32,7 +32,7 @@ conversion, C locale, and SHA-256 over the resulting bytes.
 
 The read-only Ghostty checkout inspected for this report was clean at:
 
-- head: `977de1e93579b30f11b837b1f400c5bcdb56da8a`
+- head: `a8ccbd8c0f66a2df6cd59833d61c6064a8e0ddb1`
 - branch/ref: the locked direct-fork GTK embedding branch
 - configured origin: `TamedTornado/ghostty`, whose GitHub parent/source is
   `ghostty-org/ghostty`
@@ -52,14 +52,14 @@ mistaken for missing base evidence.
 
 | Range | Meaning | Commits | Files | Hunks | Lines | Patch SHA-256 |
 |---|---|---:|---:|---:|---:|---|
-| `ac04fc276..977de1e93` | GTK embedding series | 22 | 16 | 55 | +1312/-53 | `5c9d30f7ff97e70d7e9e2f0d7c8234e5015c129ab9073483a82d88bff0f08833` |
-| `ac04fc276..977de1e93` | complete direct-fork downstream delta | 22 | 16 | 55 | +1312/-53 | `5c9d30f7ff97e70d7e9e2f0d7c8234e5015c129ab9073483a82d88bff0f08833` |
+| `ac04fc276..a8ccbd8c0` | GTK embedding series | 23 | 16 | 57 | +1363/-53 | `4c0558ec61631b2b4318cf911273326d93c096529e1a60077b41a6f8c3bad210` |
+| `ac04fc276..a8ccbd8c0` | complete direct-fork downstream delta | 23 | 16 | 57 | +1363/-53 | `4c0558ec61631b2b4318cf911273326d93c096529e1a60077b41a6f8c3bad210` |
 
 ## Complete downstream file/hunk ledger
 
 The hunk count and per-file patch identity are normative in the JSON. The
 table below provides the human classification of every changed file; no file
-in `ac04fc276..977de1e93` is omitted.
+in `ac04fc276..a8ccbd8c0` is omitted.
 
 ### GTK embedding partition
 
@@ -73,7 +73,7 @@ in `ac04fc276..977de1e93` is omitted.
 | `src/apprt/gtk/Surface.zig` | +1/-3 | 2 | Route through explicit surface owner; plausible generic foundation. |
 | `src/apprt/gtk/class/application.zig` | +1/-1 | 1 | Current-upstream explicit application runtime plumbing. |
 | `src/apprt/gtk/class/global_shortcuts.zig` | +13/-3 | 5 | Non-default application owner support for global shortcuts. |
-| `src/apprt/gtk/class/surface.zig` | +127/-42 | 33 | Store/ref/unref explicit `Application`, apply per-surface child environment overrides, emit product-neutral progress signals, and replace default-app lookups in construction, config, input, notifications, resize, clipboard, and finalization; plausible generic foundation needing focused tests. |
+| `src/apprt/gtk/class/surface.zig` | +152/-42 | 35 | Store/ref/unref explicit `Application`, apply per-surface child environment overrides, emit product-neutral progress and decoded desktop-notification signals, and replace default-app lookups in construction, config, input, notifications, resize, clipboard, and finalization; plausible generic foundation needing focused tests. |
 | `src/build/SharedDeps.zig` | +4/-2 | 1 | GTK library native dependencies; keep with library build plumbing. |
 | `src/gtk_embed_lib.version-script` | +17/-0 | 1 | Twelve-symbol ELF allowlist/version node; the staged artifact now has an exact executable node audit. |
 | `src/gtk_embed_lib.zig` | +273/-0 | 1 | Runtime and twelve exports, including product-proven copied construction, mutex-safe plain terminal-text reads, and deterministic GTK-first rejection; typed argv remains open. |
@@ -104,7 +104,8 @@ independently reviewable generic patch series:
   search. `07cfc9f3` adds a size-versioned surface-options constructor and
   copied working-directory override, driven by real closed-pane restoration.
 - `9a4001c4` and `ff5703bf` expose and exercise the product-neutral progress
-  signal. `977de1e9` is a focused five-line precondition guard that turns the
+  signal; `a8ccbd8c` does the same for decoded desktop notifications.
+  `977de1e9` is a focused five-line precondition guard that turns the
   documented GTK-first misuse from a native assertion abort into null/error.
   `b7ae0ced5` appends bounded per-surface child environment overrides plus an
   opt-in implementation test target, driven by authenticated concurrent-pane
@@ -300,7 +301,7 @@ gaps explicit.
    pre-main loader failure for one incompatible pair. C++ signature assertions
    cover only two of nine functions.
 8. **Future rebase:** this audit is exact for official base `ac04fc276` and
-   locked downstream head `977de1e93`; later official movement requires a new
+   locked downstream head `a8ccbd8c0`; later official movement requires a new
    normalized audit rather than silently reusing these identities.
 9. **Qualification gaps:** ReleaseSafe Valgrind, controlled native Wayland
    input/IME/resize/scaling, X11 IME/scaling, packaging, and public CI remain

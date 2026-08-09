@@ -183,6 +183,19 @@ case "${profile}" in
             '{"hook_event_name":"Notification","session_id":"gemini-e2e","notification_type":"ToolPermission","message":"Action required","details":{"tool_name":"write_file","file_path":"README.md"}}' |
             "${helper}" ipc agent-event --adapter=gemini >/dev/null
         ;;
+    gemini-notifications)
+        settings="${GEMINI_CLI_SYSTEM_SETTINGS_PATH:-}"
+        [[ -f "${settings}" ]] || fail "Gemini system-settings overlay is missing"
+        grep -Fq '"enableNotifications": true' "${settings}" ||
+            fail "Gemini terminal notifications were not enabled"
+        printf '\033]777;notify;Gemini;Action required\a'
+        # Ghostty intentionally admits at most one desktop notification per
+        # second. Exercise both accepted events rather than weakening or
+        # bypassing its product-owned rate limiter.
+        sleep 1.2
+        printf '\033]777;notify;Gemini;Session complete\a'
+        sleep 0.3
+        ;;
     claude-team)
         fixture="${ZENTTY_CONTROLLED_CLAUDE_FIXTURE:-}"
         project="${ZENTTY_CONTROLLED_AGENT_PROJECT:-}"

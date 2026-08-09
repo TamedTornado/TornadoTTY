@@ -385,7 +385,7 @@ done < <(
     ' "${inventory}"
 )
 
-pass_message="Ghostty API audit inventory passed: 16 files, 55 hunks, 12 allowlisted function exports, 9 product-owned Rust declarations, 5 Ghostty-owned public types, 1 external GtkWidget dependency"
+pass_message="Ghostty API audit inventory passed: 16 files, 57 hunks, 12 allowlisted function exports, 9 product-owned Rust declarations, 5 Ghostty-owned public types, 1 external GtkWidget dependency"
 echo "${pass_message}"
 
 if [[ "${mode}" == "--self-test" ]]; then

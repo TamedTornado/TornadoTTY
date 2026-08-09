@@ -537,6 +537,20 @@ impl GhosttySurface {
         self.handlers.borrow_mut().push(handler);
     }
 
+    pub fn on_desktop_notification(&self, callback: impl Fn(String, String) + 'static) {
+        let handler = self
+            .widget
+            .connect_local("desktop-notification", false, move |values| {
+                let title = values.get(1).and_then(|value| value.get::<String>().ok());
+                let body = values.get(2).and_then(|value| value.get::<String>().ok());
+                if let (Some(title), Some(body)) = (title, body) {
+                    callback(title, body);
+                }
+                None
+            });
+        self.handlers.borrow_mut().push(handler);
+    }
+
     pub fn on_child_exited(&self, callback: impl Fn() + 'static) {
         let handler = self
             .widget

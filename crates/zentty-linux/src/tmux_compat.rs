@@ -97,6 +97,24 @@ impl TmuxCompatProduct {
         Ok(())
     }
 
+    /// Claude's tmux integration may launch a short-lived bootstrap command
+    /// and then replace that same teammate pane with `respawn-pane -k`.
+    /// Preserve only panes recorded as team columns; an ordinary shell or the
+    /// team leader still follows Zentty's normal close-on-exit lifecycle.
+    pub(crate) fn retains_exited_teammate(&self, state: &WorkspaceState, pane_id: &str) -> bool {
+        state.worklanes().iter().any(|worklane| {
+            pane_entries(worklane)
+                .iter()
+                .any(|(_, pane, _)| pane.id == pane_id)
+                && self.store.anchor(&worklane.id).is_some_and(|anchor| {
+                    anchor
+                        .column_pane_ids
+                        .iter()
+                        .any(|candidate| candidate == pane_id)
+                })
+        })
+    }
+
     fn mutate_store<T>(
         &mut self,
         mutation: impl FnOnce(&mut TeamStore) -> Result<T, StoreError>,
@@ -1261,6 +1279,20 @@ mod tests {
     }
 
     #[test]
+    fn exited_teammate_retention_requires_live_workspace_and_team_membership() {
+        let mut product = TmuxCompatProduct::default();
+        let mut state = WorkspaceState::new("lane-1", "leader");
+        let _ = product
+            .store
+            .record_split("lane-1", "leader", "teammate", false, Some(720));
+
+        assert!(!product.retains_exited_teammate(&state, "teammate"));
+        assert!(state.split_focused_pane_right("teammate"));
+        assert!(product.retains_exited_teammate(&state, "teammate"));
+        assert!(!product.retains_exited_teammate(&state, "leader"));
+    }
+
+    #[test]
     fn kill_plans_cascade_leaders_and_restore_only_the_final_teammate() {
         let mut state = WorkspaceState::new("lane-1", "leader");
         assert!(state.split_focused_pane_right("teammate-1"));
@@ -1610,6 +1642,9 @@ mod tests {
         product
             .record_split(&first, "pane-team-1", Some(720))
             .unwrap();
+        assert!(product.retains_exited_teammate(&rendered_state, "pane-team-1"));
+        assert!(!product.retains_exited_teammate(&rendered_state, "pane-1"));
+        assert!(!product.retains_exited_teammate(&rendered_state, "pane-2"));
         assert_eq!(
             product
                 .split_reply(&rendered_state, &first, "pane-team-1")

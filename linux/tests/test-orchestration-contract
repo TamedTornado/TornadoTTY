@@ -10,6 +10,7 @@ actor="${repo_root}/linux/tests/fixtures/controlled-agent"
 codex_notify_observer="${repo_root}/linux/tests/fixtures/codex-notify-observer"
 controlled_anthropic="${repo_root}/crates/zentty-test-support/src/bin/controlled_anthropic.rs"
 controlled_openai="${repo_root}/crates/zentty-test-support/src/bin/controlled_openai_responses.rs"
+controlled_gemini="${repo_root}/crates/zentty-test-support/src/bin/controlled_gemini.rs"
 wayland_input_harness="${repo_root}/linux/tests/nested-wayland-input"
 failures=0
 
@@ -67,6 +68,7 @@ require "the installed-Codex notify observer is missing or not executable" \
     test -x "${codex_notify_observer}"
 require "the reviewed Anthropic endpoint is missing" test -f "${controlled_anthropic}"
 require "the reviewed OpenAI Responses endpoint is missing" test -f "${controlled_openai}"
+require "the reviewed Gemini endpoint is missing" test -f "${controlled_gemini}"
 require "the controlled input-capable Wayland harness is missing or not executable" \
     test -x "${wayland_input_harness}"
 inline_actor_files="$({
@@ -83,7 +85,7 @@ controlled_model_servers="$({
         -E 'CONTROLLED_[A-Z_]*READY=http://|TcpListener::bind\(\("127\.0\.0\.1"' \
         "${repo_root}/crates/zentty-test-support" "${repo_root}/linux/tests" || true
 } | sort -u)"
-expected_model_servers="$(printf '%s\n%s\n' "${controlled_anthropic}" "${controlled_openai}" | sort -u)"
+expected_model_servers="$(printf '%s\n%s\n%s\n' "${controlled_anthropic}" "${controlled_openai}" "${controlled_gemini}" | sort -u)"
 if [[ "${controlled_model_servers}" != "${expected_model_servers}" ]]; then
     echo "test-orchestration-contract: controlled-model server allowlist differs:" >&2
     printf '%s\n' "${controlled_model_servers}" >&2
@@ -95,6 +97,8 @@ require "installed Claude journey does not consume the reviewed endpoint" \
 require "installed Codex journey does not consume the reviewed Responses endpoint" \
     grep -Fq 'target/release-safe/controlled_openai_responses' \
     "${repo_root}/linux/tests/installed-codex-integration"
+require "installed Gemini journey does not consume the reviewed Gemini endpoint" \
+    grep -Fq 'controlled_gemini' "${repo_root}/linux/tests/rust-agent-ipc"
 require "installed Claude journey does not consume the single controlled actor" \
     grep -Fq 'linux/tests/fixtures/controlled-agent' \
     "${repo_root}/linux/tests/installed-claude-agent-team"
@@ -103,12 +107,12 @@ require "Wayland agent qualification does not name the event, tmux, installed Cl
     jq -e '
         .cells[] | select(.id == "agent-integration-wayland") |
         .environment_profile == "nested-wayland-input-v1" and
-        .command == "ZENTTY_RUN_CODEX_LIFECYCLE=true GDK_BACKEND=wayland linux/tests/rust-agent-ipc && GDK_BACKEND=wayland linux/tests/rust-tmux-compat-product && GDK_BACKEND=wayland linux/tests/installed-claude-agent-team && GDK_BACKEND=wayland linux/tests/rust-session-restore"
+        .command == "ZENTTY_REQUIRE_REAL_GEMINI=true ZENTTY_EXPECTED_GEMINI_VERSION=0.53.0 ZENTTY_RUN_CODEX_LIFECYCLE=true GDK_BACKEND=wayland linux/tests/rust-agent-ipc && GDK_BACKEND=wayland linux/tests/rust-tmux-compat-product && GDK_BACKEND=wayland linux/tests/installed-claude-agent-team && GDK_BACKEND=wayland linux/tests/rust-session-restore"
     ' "${matrix}"
 require "X11 agent qualification does not add installed Codex and Claude to the consolidated journeys" \
     jq -e '
         .cells[] | select(.id == "agent-integration-x11") |
-        .command == "ZENTTY_RUN_CODEX_LIFECYCLE=true GDK_BACKEND=x11 linux/tests/rust-agent-ipc && GDK_BACKEND=x11 linux/tests/rust-tmux-compat-product && GDK_BACKEND=x11 linux/tests/installed-codex-integration && GDK_BACKEND=x11 linux/tests/installed-claude-agent-team && GDK_BACKEND=x11 linux/tests/rust-session-restore"
+        .command == "ZENTTY_REQUIRE_REAL_GEMINI=true ZENTTY_EXPECTED_GEMINI_VERSION=0.53.0 ZENTTY_RUN_CODEX_LIFECYCLE=true GDK_BACKEND=x11 linux/tests/rust-agent-ipc && GDK_BACKEND=x11 linux/tests/rust-tmux-compat-product && GDK_BACKEND=x11 linux/tests/installed-codex-integration && GDK_BACKEND=x11 linux/tests/installed-claude-agent-team && GDK_BACKEND=x11 linux/tests/rust-session-restore"
     ' "${matrix}"
 reject "superseded inactive-agent journey remains authoritative" \
     grep -Fq 'linux/tests/rust-inactive-agent-restore' "${matrix}"
@@ -218,4 +222,4 @@ require "workspace recovery cells remain prose-only or bypass the focused real-I
     echo "test-orchestration-contract: FAIL failures=${failures}" >&2
     exit 1
 }
-echo "Test orchestration contract passed: one actor, two protocol endpoints, external control, consolidated journeys"
+echo "Test orchestration contract passed: one actor, three protocol endpoints, external control, consolidated journeys"

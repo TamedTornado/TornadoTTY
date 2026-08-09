@@ -1,7 +1,6 @@
 # Linux Gemini agent integration port plan
 
-- **Status:** first vertical slice implemented; terminal-notification and real
-  model-turn enrichment remain
+- **Status:** implemented and presently executable qualification complete
 - **Date:** 2026-08-06
 - **Owner:** [#7 — essential Zentty workflow parity](https://github.com/TamedTornado/zentty/issues/7)
 - **Inventory ID:** `agent.gemini`
@@ -39,8 +38,11 @@ available and does not require a session ID.
 - Keep the external Gemini CLI real in the final product journey. A fixture
   binary is acceptable only for focused exec/argv/environment contract tests;
   it is not agent integration evidence.
-- No Ghostty change is expected. If one becomes necessary, stop and document
-  the Ghostty-owned defect before changing the fork.
+- The completion-notification audit found one Ghostty-owned embedding gap:
+  Ghostty parses and dispatches OSC desktop notifications, but the GTK surface
+  does not expose the already-decoded title/body to an alternate host. Add only
+  a generic GTK surface signal plus its real parser/PTY regression in the
+  Ghostty fork. Classification and Gemini policy remain entirely in Zentty.
 
 ## Tests-first order
 
@@ -55,15 +57,28 @@ available and does not require a session ID.
    and explicit transport failures.
 4. Stage the Gemini wrapper and prove product-relative relocation and absence
    when no real Gemini executable exists.
-5. Add one focused real-product journey, reused on controlled X11 and
+5. Add a red Ghostty embed-spike assertion that a real PTY's OSC 777 desktop
+   notification reaches the generic GTK surface signal with exact title/body.
+6. Add one focused real-product journey, reused on controlled X11 and
    input-capable Wayland: launch Gemini in a real Ghostty PTY, consume the
    generated overlay, emit its real hook subprocesses through the staged CLI
    and private socket, observe sidebar state, restart with `--resume`, and
    prove cleanup. Only Gemini's remote model response may be controlled if a
    model turn is required.
-6. Run focused mutation testing for adapter and overlay decisions, then the
+7. Run focused mutation testing for adapter and overlay decisions, then the
    full workspace, strict Clippy/format, inventory, architecture, compositor,
    and presently executable qualification gates.
+
+## Qualification toolchain
+
+The two authoritative agent-integration cells require Gemini CLI `0.53.0` on
+`PATH`; absence is a failed prerequisite, not a pass. Local and public CI
+provision it outside the repository with pnpm, an exact dependency pin, and
+`.npmrc` containing `minimum-release-age=10080`. The reviewed `node-pty` and
+`@github/keytar` install scripts must be explicitly allowed and completed
+before entering a nested compositor so native compilation cannot escape the
+controlled session lifetime. No Gemini package or generated `node_modules`
+tree is shipped with Zentty.
 
 ## Exit criteria
 

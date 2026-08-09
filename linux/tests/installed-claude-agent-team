@@ -88,6 +88,8 @@ endpoint="$(sed -n 's/^CONTROLLED_ANTHROPIC_READY=//p' "${fixture}/server.log")"
 set +e
 env \
     HOME="${fixture}/home" \
+    DBUS_SESSION_BUS_ADDRESS="unix:path=${fixture}/absent-session-bus" \
+    AT_SPI_BUS_ADDRESS="unix:path=${fixture}/absent-at-spi-bus" \
     ANTHROPIC_AUTH_TOKEN=controlled-not-secret \
     ANTHROPIC_BASE_URL="${endpoint}" \
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 \

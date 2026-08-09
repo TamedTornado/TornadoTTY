@@ -101,7 +101,7 @@ fn run_lifecycle_cycle(
     runtime: &GhosttyRuntime,
     options: &Options,
     restored_window: Option<WindowRecipe>,
-    restored_drafts: Vec<PaneRestoreDraft>,
+    restored_drafts: &[PaneRestoreDraft],
 ) -> Result<(WindowRecipe, Vec<PaneRestoreDraft>), String> {
     let main_loop = glib::MainLoop::new(None, false);
     let shell = ApplicationShell::new(
@@ -214,7 +214,7 @@ fn run() -> Result<(), String> {
         &runtime,
         &options,
         launch.restored_window,
-        launch.restored_drafts,
+        &launch.restored_drafts,
     )?;
     drop(runtime);
     persistence.save_clean_exit(window, restored_drafts, reference_timestamp())?;

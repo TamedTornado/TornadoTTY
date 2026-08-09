@@ -57,6 +57,118 @@ fn assert_other_pane_codex_tracking_was_preserved(store: &mut AgentStatusStore) 
 }
 
 #[test]
+fn gemini_terminal_notifications_reconcile_only_source_owned_attention_and_completion() {
+    let mut store = AgentStatusStore::default();
+
+    assert!(store.apply_terminal_notification(
+        "pane-a",
+        Some("Gemini"),
+        Some("Action required"),
+        1_000,
+    ));
+    let status = store.status_for_pane("pane-a").unwrap();
+    assert_eq!(status.agent_name, "Gemini");
+    assert_eq!(status.phase, AgentPhase::NeedsInput);
+    assert_eq!(status.interaction, AgentInteractionKind::Approval);
+    assert_eq!(status.text.as_deref(), Some("Action required"));
+
+    assert!(store.apply_terminal_notification(
+        "pane-a",
+        Some("Gemini"),
+        Some("Session complete"),
+        1_001,
+    ));
+    let status = store.status_for_pane("pane-a").unwrap();
+    assert_eq!(status.phase, AgentPhase::Idle);
+    assert_eq!(status.interaction, AgentInteractionKind::None);
+    assert_eq!(status.text, None);
+
+    assert!(!store.apply_terminal_notification(
+        "pane-shell",
+        Some("Backup"),
+        Some("Session complete"),
+        1_002,
+    ));
+    assert!(store.status_for_pane("pane-shell").is_none());
+}
+
+#[test]
+fn gemini_terminal_completion_preserves_the_installed_hook_session_identity() {
+    let mut store = AgentStatusStore::default();
+    store.apply(
+        event_for(
+            "pane-a",
+            br#"{"version":1,"event":"agent.running","agent":{"name":"Gemini"},"session":{"id":"gemini-real"}}"#,
+        ),
+        1_000,
+    );
+
+    assert!(store.apply_terminal_notification(
+        "pane-a",
+        Some("Gemini"),
+        Some("Session complete"),
+        1_001,
+    ));
+    let status = store.status_for_pane("pane-a").unwrap();
+    assert_eq!(status.session_id, "gemini-real");
+    assert_eq!(status.phase, AgentPhase::Idle);
+}
+
+#[test]
+fn gemini_terminal_notification_change_receipt_tracks_each_visible_field() {
+    let mut phase_only = AgentStatusStore::default();
+    phase_only.apply(
+        event_for(
+            "pane-phase",
+            br#"{"version":1,"event":"session.start","agent":{"name":"Gemini"},"session":{"id":"phase"}}"#,
+        ),
+        1_000,
+    );
+    assert!(phase_only.apply_terminal_notification(
+        "pane-phase",
+        Some("Gemini"),
+        Some("Session complete"),
+        1_001,
+    ));
+
+    let mut interaction_only = AgentStatusStore::default();
+    interaction_only.apply(
+        event_for(
+            "pane-interaction",
+            br#"{"version":1,"event":"agent.needs-input","agent":{"name":"Gemini"},"session":{"id":"interaction"},"state":{"text":"Action required","interaction":{"kind":"generic-input","text":"Action required"}}}"#,
+        ),
+        1_000,
+    );
+    assert!(interaction_only.apply_terminal_notification(
+        "pane-interaction",
+        Some("Gemini"),
+        Some("Action required"),
+        1_001,
+    ));
+
+    let mut text_only = AgentStatusStore::default();
+    text_only.apply(
+        event_for(
+            "pane-text",
+            br#"{"version":1,"event":"agent.needs-input","agent":{"name":"Gemini"},"session":{"id":"text"},"state":{"text":"Old approval","interaction":{"kind":"approval","text":"Old approval"}}}"#,
+        ),
+        1_000,
+    );
+    assert!(text_only.apply_terminal_notification(
+        "pane-text",
+        Some("Gemini"),
+        Some("Action required"),
+        1_001,
+    ));
+    assert!(!text_only.apply_terminal_notification(
+        "pane-text",
+        Some("Gemini"),
+        Some("Action required"),
+        1_002,
+    ));
+}
+
+#[test]
 fn canonical_events_drive_attention_and_progress_without_trusting_payload_routing() {
     let mut tokens = PaneTokenRegistry::default();
     tokens.register("token-a", target()).unwrap();
