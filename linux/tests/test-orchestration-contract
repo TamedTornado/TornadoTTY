@@ -6,6 +6,7 @@ linux_main="${repo_root}/crates/zentty-linux/src/main.rs"
 application_shell="${repo_root}/crates/zentty-linux/src/application_shell.rs"
 matrix="${repo_root}/linux/qualification-matrix.json"
 architecture="${repo_root}/docs/architecture/linux-product-architecture-v1.json"
+window_placement_policy="${repo_root}/docs/architecture/linux-window-placement-policy.md"
 actor="${repo_root}/linux/tests/fixtures/controlled-agent"
 codex_notify_observer="${repo_root}/linux/tests/fixtures/codex-notify-observer"
 controlled_anthropic="${repo_root}/crates/zentty-test-support/src/bin/controlled_anthropic.rs"
@@ -74,6 +75,12 @@ require "the controlled input-capable Wayland harness is missing or not executab
     test -x "${wayland_input_harness}"
 require "the real multi-window product journey is missing or not executable" \
     test -x "${multi_window_harness}"
+require "the cross-compositor window placement policy is missing" \
+    test -f "${window_placement_policy}"
+require "the placement policy does not state Wayland compositor ownership" \
+    grep -Fq 'compositor; GTK4 also removed' "${window_placement_policy}"
+require "the placement policy does not reject an X11-only product path" \
+    grep -Fq 'X11-only move implementation' "${window_placement_policy}"
 inline_actor_files="$({
     grep -RIl --include='*' -E 'cat[[:space:]]*>.*[/}]codex|cat[[:space:]]*>.*[/}]claude' \
         "${repo_root}/linux/tests" || true

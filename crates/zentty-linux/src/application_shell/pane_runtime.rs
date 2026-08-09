@@ -264,6 +264,10 @@ impl PaneRuntimeCoordinator {
             }
             (runtime, config)
         };
+        eprintln!(
+            "zentty-linux: surface-config pane={pane_id} cwd={}",
+            config.working_directory.as_deref().unwrap_or("none")
+        );
         let surface = match runtime.create_surface(&config) {
             Ok(surface) => surface,
             Err(error) => {

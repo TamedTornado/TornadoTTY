@@ -71,6 +71,8 @@ agent_receipt="$(mktemp)"
 ln -s "${actor}" "${fake_bin}/codex"
 
 jq '
+    (.workspace.windows[0].worklanes[].columns[].panes[] | select(.id == "pane-agent").workingDirectory) = "/tmp" |
+    (.restoreDraftWindows[].paneDrafts[] | select(.paneID == "pane-agent").workingDirectory) = "/tmp" |
     .workspace.windows[0].worklanes[0].columns[0].panes += [{
         "id": "pane-ordinary-inactive",
         "workingDirectory": "/tmp"
@@ -180,6 +182,19 @@ assert_background_start() {
         fail "first inactive agent surface did not initialize exactly once"
     [[ "$(grep -Fxc 'zentty-linux: terminal-ready-pane=pane-agent-two' "${log}" || true)" -eq 1 ]] ||
         fail "second inactive agent surface did not initialize exactly once"
+    for pane_id in pane-agent pane-agent-two pane-shell-active; do
+        grep -Fq "zentty-linux: surface-config pane=${pane_id} cwd=/tmp" "${log}" ||
+            fail "restored pane ${pane_id} did not pass its stored CWD to the real Ghostty surface"
+    done
+    zentty_product_wait_for_log "${agent_receipt}" 'cwd:session-codex value:/tmp' \
+        "first restored agent child did not actually start in its stored CWD" ||
+        fail "first restored agent child CWD missing"
+    zentty_product_wait_for_log "${agent_receipt}" 'cwd:session-two value:/tmp' \
+        "second restored agent child did not actually start in its stored CWD" ||
+        fail "second restored agent child CWD missing"
+    zentty_product_wait_for_log "${log}" 'zentty-linux: title-pane=pane-shell-active value=/tmp' \
+        "restored ordinary shell did not report its stored CWD from the real PTY" ||
+        fail "restored ordinary shell CWD missing"
     grep -Fq 'zentty-linux: terminal-ready-pane=pane-ordinary-inactive' "${log}" &&
         fail "ordinary inactive shell started before a real visit"
     if grep -Fq 'zentty-linux: focus-pane pane=pane-agent' "${log}"; then

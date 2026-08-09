@@ -41,12 +41,13 @@ layer_runpath="$(
 [[ "${layer_runpath}" == .zig-cache/* ]] || fail "Ghostty layer-shell runpath is missing"
 layer_directory="${ghostty_root}/${layer_runpath}"
 
-# The first pane constructs a real native Ghostty surface. The second pane
-# reaches the safe adapter with an interior NUL in its restored working
-# directory. Encoding must fail deterministically before that pane's native
-# constructor, causing ApplicationShell::new to unwind its partially created
-# owner tree without saving a clean snapshot or leaking its private IPC root.
+# A complete first window constructs real native Ghostty surfaces. The second
+# window then accepts one real surface before its next pane reaches the safe
+# adapter with an interior NUL in its restored working directory. Encoding
+# must fail before that pane's native constructor and unwind both shells
+# without saving a clean snapshot or leaking either owner tree.
 jq '
+    .workspace.windows[0] as $validWindow |
     .workspace.windows[0].worklanes = [{
         "id": "worklane-partial-construction",
         "title": "Partial construction",
@@ -55,17 +56,19 @@ jq '
         "columns": [{
             "id": "column-partial-construction",
             "width": 1,
-            "focusedPaneID": "pane-invalid",
-            "lastFocusedPaneID": "pane-valid",
+            "focusedPaneID": "pane-invalid-window-rejected",
+            "lastFocusedPaneID": "pane-invalid-window-valid",
             "paneHeights": [1, 1],
             "panes": [
-                {"id": "pane-valid", "workingDirectory": "/tmp"},
-                {"id": "pane-invalid", "workingDirectory": "bad\u0000directory"}
+                {"id": "pane-invalid-window-valid", "workingDirectory": "/tmp"},
+                {"id": "pane-invalid-window-rejected", "workingDirectory": "bad\u0000directory"}
             ]
         }]
     }] |
+    .workspace.windows[0].id = "window-invalid" |
     .workspace.windows[0].activeWorklaneID = "worklane-partial-construction" |
-    .workspace.activeWindowID = .workspace.windows[0].id |
+    .workspace.windows = [$validWindow, .workspace.windows[0]] |
+    .workspace.activeWindowID = "window-invalid" |
     .restoreDraftWindows = []
 ' "${fixture}" >"${state_dir}/restore-snapshot.json"
 snapshot_before="$(sha256sum "${state_dir}/restore-snapshot.json" | cut -d' ' -f1)"
@@ -93,8 +96,10 @@ set -e
 ((product_status == 1)) || fail "construction failure exited ${product_status}, expected 1"
 grep -Fq 'zentty-linux: agent-runtime socket=' "${log}" ||
     fail "the one agent runtime did not start before surface construction"
-grep -Fxq 'zentty-linux: surface-owned pane=pane-valid live=1' "${log}" ||
-    fail "the first real Ghostty surface was not accepted by the sole registry"
+grep -Fq 'zentty-linux: surface-owned pane=pane-agent live=' "${log}" ||
+    fail "the first complete window did not construct a real Ghostty surface"
+grep -Fxq 'zentty-linux: surface-owned pane=pane-invalid-window-valid live=1' "${log}" ||
+    fail "the valid surface in the second window was not accepted by its sole registry"
 grep -Fq 'working_directory contains an interior NUL' "${log}" ||
     fail "the second surface did not fail at the safe configuration boundary"
 grep -Fq 'zentty-linux: lifecycle complete' "${log}" &&
@@ -113,4 +118,4 @@ snapshot_after="$(sha256sum "${state_dir}/restore-snapshot.json" | cut -d' ' -f1
 jq -e '.cleanExit == false' "${state_dir}/restore-lifecycle.json" >/dev/null ||
     fail "failed construction was incorrectly marked as a clean exit"
 
-echo "ApplicationShell partial-construction failure passed: first-surface=real second-config=rejected rollback=process-owner-tree"
+echo "ApplicationShell multi-window partial-construction failure passed: first-window=real second-config=rejected rollback=process-owner-tree"

@@ -222,6 +222,74 @@ The recording standard is unchanged:
   and `86997a58f410f967956122b0e1cd12e75e32404903b17e306e6b29e1e21052df`.
   ReleaseSafe Valgrind remains XFAIL and no suppression changed.
 
+## 2026-08-09 — Remaining housekeeping consolidated into one delivery
+
+- The prior cadence incorrectly committed crash recovery and window-size
+  qualification separately. Those were legitimate acceptance work but not
+  feature-sized user outcomes. The remaining non-feature tail is frozen as one
+  delivery: exact stored pane widths/heights after real relaunch, every
+  restored pane/draft CWD reaching its real child, invalid/partial multi-window
+  restore policy, explicit X11/Wayland coordinate limitations, two-window
+  accessibility/screenshot evidence, and remaining mutation/lifecycle cases.
+- Source and issue audit corrected the meaning of “complete CWD coverage.”
+  Issue #3 requires recipe round-trip and restored launch CWD fidelity; it does
+  not promise live tracking of arbitrary interactive `cd` changes. Ghostty's
+  current embedding ABI accepts an initial working directory but exposes no
+  dynamic CWD callback. The batch will test every stored launch CWD through
+  real PTYs and will not invent an unsupported live-CWD requirement.
+- The existing Linux renderer already consumes persisted `ColumnRecipe.width`
+  and `paneHeights`; the missing work is real externally observed
+  persist/relaunch evidence, not a second divider model. Tests will extend the
+  canonical restore/multi-window journeys rather than add another harness.
+- The first real X11 CWD assertion exposed a fixture defect rather than a
+  product pass: `pane-agent` requested nonexistent `/tmp/project`; Ghostty
+  correctly logged `cannot access cwd, ignoring` and the real child inherited
+  the repository directory. The journey now rewrites both that pane and its
+  matching restore draft to existing `/tmp`, then requires the real controlled
+  child itself—not merely the Rust configuration—to report `/tmp`. Invalid-CWD
+  fallback remains separate negative-policy coverage.
+- The repaired canonical restore journey passed under controlled X11 session
+  `ea21cc6a7bea564e7ea1f60c16b023fafb640623db80ae27b3d23b3af37ff61c`
+  and Wayland session
+  `3b8e1e82410f090f320b1117408bb4086075db2ed3b8ea7b696b692b10dcb23a`.
+  Both real controlled agent children reported `/tmp`, matching their stored
+  pane/draft CWDs, while the product also logged the per-pane configuration
+  passed across the safe Ghostty boundary.
+- Partial construction coverage previously failed only inside one window. The
+  existing construction-failure journey now builds a complete first window
+  with real Ghostty surfaces, begins a second window, accepts its first real
+  surface, then rejects an interior-NUL CWD on its second surface. Controlled
+  X11 session
+  `1d6453467570f1561e1e3600a1e9737e741ddc7aa08b0784ebd3ab004f4c0198`
+  proved application-wide rollback: no shell was presented, all surfaces and
+  the private agent runtime were released, the input snapshot remained byte
+  identical, lifecycle remained unclean, and exit status was 1.
+- The first placement-policy contract used full prose phrases that Markdown
+  wrapped across source lines, so literal `grep` correctly failed even though
+  the policy was present. The contract now pins shorter semantic phrases that
+  cannot be invalidated by ordinary paragraph wrapping; no policy assertion was
+  removed.
+- Final scope review prevents another category error: draggable pane dividers
+  are missing user interaction, and accessibility/visual parity changes what
+  users can operate and perceive. They are feature work owned by the next
+  source-UX delivery, not qualification housekeeping. This batch does not
+  erase those gaps or claim #32 complete; it closes the non-feature tail and
+  leaves the matrix NOT_IMPLEMENTED entry explicit for divider behavior.
+- The consolidated candidate passed every presently executable support and
+  matrix cell in 360.26 seconds. Declared totals remain `PASS=90`, `FAIL=0`,
+  `BLOCKED=7`, `XFAIL=1`, and `NOT_IMPLEMENTED=21`; implemented-local and
+  product-boundary qualification pass, while release and full Linux
+  qualification correctly remain false. The machine-summary SHA-256 is
+  `ba45e73dfceb95c67a8bc77138210485501e5718964e527a1adf65a41949d162`.
+- Debug Valgrind remains **PASS with reviewed suppressions**. Raw evidence has
+  427 errors/contexts, 6,160 definite bytes, and 41,428 indirect bytes;
+  post-suppression evidence has zero errors/contexts and zero definite/indirect
+  bytes. The report, raw receipt, and suppressed receipt SHA-256 values are
+  `1c2146b712851db2e0dd503ce17cb7cd363ddd60d355492d8a75f80c7664cbba`,
+  `2d9b2aa09ddccb5d35057c62f85d9cb5e7c3887c58ca4edcc355651e640d4cfe`,
+  and `1544c2aabeedbe5948203828452f3ccbeafb10a247aca86cb62433ae91cd43cf`.
+  ReleaseSafe Valgrind remains XFAIL; no suppression changed.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were

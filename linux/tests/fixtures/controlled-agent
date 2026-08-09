@@ -267,6 +267,7 @@ case "${profile}" in
         [[ -n "${ZENTTY_CONTROLLED_AGENT_RECEIPT:-}" ]] ||
             fail "ZENTTY_CONTROLLED_AGENT_RECEIPT is required"
         printf 'resume:%s pid:%s\n' "${session_id}" "$$" >>"${ZENTTY_CONTROLLED_AGENT_RECEIPT}"
+        printf 'cwd:%s value:%s\n' "${session_id}" "${PWD}" >>"${ZENTTY_CONTROLLED_AGENT_RECEIPT}"
         printf '{"hook_event_name":"SessionStart","session_id":"%s"}' "${session_id}" |
             "${helper}" ipc agent-event --adapter=codex session-start
         # Emit terminal evidence only after the real helper has authenticated the

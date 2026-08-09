@@ -11,7 +11,7 @@
     "crates/zentty-linux/src/codex_enrichment.rs": "fe87631c75c04b63962b7f89d311a778a25af8f27a1dcb4d5950b3efcbaa476e",
     "crates/zentty-linux/src/application_shell/action_router.rs": "3c7933e6055b23507e79218546155def5ef69216ec58a11d7f93ccf572ff2cce",
     "crates/zentty-linux/src/application_shell/agent_events.rs": "12da8738f9cc6902498d6dd836a79ba52025897bad596703d1d336d3ec805e0f",
-    "crates/zentty-linux/src/application_shell/pane_runtime.rs": "39de2da6d0cd790c4e66a3dbf8f5c98a2cccf614020661048ebbc3e79f31a012",
+    "crates/zentty-linux/src/application_shell/pane_runtime.rs": "b7e1a43c03b2c05e0585df806fb35346214393950f373d3a186def5c335ab7f2",
     "crates/zentty-linux/src/application_shell/tmux_runtime.rs": "b606ec1c2e8c93e1ab40dbac1e5080f28315352e83533d7c63ba7eefd95d0515",
     "crates/zentty-linux/src/persistence_coordinator.rs": "9c9b24a8516032e37377b6acfba3549781cfc830a65f53d7a311f0b2efaa72a4",
     "crates/zentty-linux/src/tmux_compat.rs": "9f3279e470c0cbb7c99fb93102d363bd28cf0c540a340df5c5b4bd009486190b",
