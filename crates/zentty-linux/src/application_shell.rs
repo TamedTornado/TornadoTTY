@@ -27,7 +27,7 @@ use gtk::prelude::*;
 use zentty_core::{
     ClosePaneOutcome, ColumnRecipe, CommandPaletteItem, PaneLayoutPolicy, PaneRecipe,
     PaneReference, PaneRestoreDraft, PaneRightInsertionBehavior, SidebarWidthPreference,
-    WindowRecipe, WorklaneColor, WorklaneRecipe, WorkspaceState,
+    WindowFrame, WindowRecipe, WorklaneColor, WorklaneRecipe, WorkspaceState,
 };
 use zentty_ghostty::GhosttyRuntime;
 
@@ -136,14 +136,8 @@ impl ApplicationShell {
             command_palette,
         } = build_shell_widgets();
 
-        let window_template = restored_window.unwrap_or_else(|| {
-            default_window_recipe(
-                fresh_window_id,
-                std::env::current_dir()
-                    .ok()
-                    .and_then(|path| path.into_os_string().into_string().ok()),
-            )
-        });
+        let window_template = restored_or_default_window(restored_window, fresh_window_id);
+        apply_restored_window_size(&window, &window_template);
         let requested_restore_drafts = restored_drafts.len();
         let restored_pane_commands = restored_pane_commands(&window_template, restored_drafts);
         eprintln!(
@@ -306,7 +300,13 @@ impl ApplicationShell {
     }
 
     pub(crate) fn window_recipe(&self) -> WindowRecipe {
-        self.state.to_window_recipe(&self.window_template)
+        let mut recipe = self.state.to_window_recipe(&self.window_template);
+        recipe.frame = snapshot_window_frame(
+            self.window.width(),
+            self.window.height(),
+            recipe.frame.as_ref(),
+        );
+        recipe
     }
 
     pub(crate) fn agent_restore_drafts(&self) -> Vec<PaneRestoreDraft> {
@@ -2546,6 +2546,72 @@ fn default_tmux_product() -> Result<crate::tmux_compat::TmuxCompatProduct, Strin
     ))
 }
 
+fn restored_or_default_window(
+    restored_window: Option<WindowRecipe>,
+    fresh_window_id: &str,
+) -> WindowRecipe {
+    restored_window.unwrap_or_else(|| {
+        default_window_recipe(
+            fresh_window_id,
+            std::env::current_dir()
+                .ok()
+                .and_then(|path| path.into_os_string().into_string().ok()),
+        )
+    })
+}
+
+fn apply_restored_window_size(window: &gtk::Window, template: &WindowRecipe) {
+    let Some((width, height)) = validated_window_size(template.frame.as_ref()) else {
+        return;
+    };
+    window.set_default_size(width, height);
+    eprintln!(
+        "zentty-linux: window-frame-restore-request id={} size={}x{} placement=compositor",
+        template.id, width, height
+    );
+}
+
+#[allow(clippy::cast_possible_truncation)] // Finite rounded values are range-checked below.
+fn validated_window_size(frame: Option<&WindowFrame>) -> Option<(i32, i32)> {
+    let frame = frame?;
+    let width = frame.width.round();
+    let height = frame.height.round();
+    if !frame.x.is_finite()
+        || !frame.y.is_finite()
+        || !width.is_finite()
+        || !height.is_finite()
+        || width < 320.0
+        || height < 240.0
+        || width > f64::from(i32::MAX)
+        || height > f64::from(i32::MAX)
+    {
+        return None;
+    }
+    Some((width as i32, height as i32))
+}
+
+fn snapshot_window_frame(
+    width: i32,
+    height: i32,
+    prior: Option<&WindowFrame>,
+) -> Option<WindowFrame> {
+    if width < 320 || height < 240 {
+        return prior
+            .filter(|frame| validated_window_size(Some(frame)).is_some())
+            .cloned();
+    }
+    Some(WindowFrame {
+        x: prior.map_or(0.0, |frame| frame.x),
+        y: prior.map_or(0.0, |frame| frame.y),
+        width: f64::from(width),
+        height: f64::from(height),
+        screen_x: prior.and_then(|frame| frame.screen_x),
+        screen_y: prior.and_then(|frame| frame.screen_y),
+        screen_width: prior.and_then(|frame| frame.screen_width),
+        screen_height: prior.and_then(|frame| frame.screen_height),
+    })
+}
+
 fn default_window_recipe(id: &str, working_directory: Option<String>) -> WindowRecipe {
     let (worklane_id, column_id, pane_id) = if id == "window-1" {
         (
@@ -2595,9 +2661,11 @@ mod allocation_tests {
     use super::{
         TerminalGesture, bounded_pane_viewport_height, codex_terminal_gesture,
         default_window_recipe, is_close_active_window_shortcut, is_close_window_shortcut,
-        is_new_window_shortcut, model_heights_to_pixels,
+        is_new_window_shortcut, model_heights_to_pixels, snapshot_window_frame,
+        validated_window_size,
     };
     use gtk::gdk;
+    use zentty_core::WindowFrame;
 
     #[test]
     fn default_pane_records_the_directory_in_which_its_real_child_starts() {
@@ -2619,6 +2687,115 @@ mod allocation_tests {
         assert_eq!(first.worklanes[0].columns[0].panes[0].id, "pane-1");
         assert_eq!(second.worklanes[0].id, "worklane-window-2");
         assert_eq!(second.worklanes[0].columns[0].panes[0].id, "pane-window-2");
+    }
+
+    #[test]
+    fn restored_window_size_requires_finite_source_minimums() {
+        let frame = WindowFrame {
+            x: 12.0,
+            y: 34.0,
+            width: 999.6,
+            height: 699.6,
+            screen_x: None,
+            screen_y: None,
+            screen_width: None,
+            screen_height: None,
+        };
+        assert_eq!(validated_window_size(Some(&frame)), Some((1000, 700)));
+        assert_eq!(
+            validated_window_size(Some(&WindowFrame {
+                width: 320.0,
+                height: 240.0,
+                ..frame.clone()
+            })),
+            Some((320, 240))
+        );
+
+        for invalid in [
+            WindowFrame {
+                width: 319.0,
+                ..frame.clone()
+            },
+            WindowFrame {
+                height: 239.0,
+                ..frame.clone()
+            },
+            WindowFrame {
+                x: f64::NAN,
+                ..frame.clone()
+            },
+            WindowFrame {
+                y: f64::NAN,
+                ..frame.clone()
+            },
+            WindowFrame {
+                width: f64::INFINITY,
+                ..frame.clone()
+            },
+            WindowFrame {
+                height: f64::INFINITY,
+                ..frame.clone()
+            },
+            WindowFrame {
+                height: f64::NAN,
+                ..frame.clone()
+            },
+            WindowFrame {
+                width: f64::from(i32::MAX) + 1.0,
+                ..frame.clone()
+            },
+            WindowFrame {
+                height: f64::from(i32::MAX) + 1.0,
+                ..frame.clone()
+            },
+        ] {
+            assert_eq!(validated_window_size(Some(&invalid)), None);
+        }
+        assert_eq!(validated_window_size(None), None);
+        assert_eq!(
+            validated_window_size(Some(&WindowFrame {
+                width: f64::from(i32::MAX),
+                height: 700.0,
+                ..frame.clone()
+            })),
+            Some((i32::MAX, 700))
+        );
+        assert_eq!(
+            validated_window_size(Some(&WindowFrame {
+                width: 1000.0,
+                height: f64::from(i32::MAX),
+                ..frame
+            })),
+            Some((1000, i32::MAX))
+        );
+    }
+
+    #[test]
+    fn window_snapshot_updates_size_without_inventing_or_discarding_position_metadata() {
+        let prior = WindowFrame {
+            x: 1721.0,
+            y: 48.0,
+            width: 1000.0,
+            height: 700.0,
+            screen_x: Some(1440.0),
+            screen_y: Some(0.0),
+            screen_width: Some(2560.0),
+            screen_height: Some(1440.0),
+        };
+
+        let resized = snapshot_window_frame(1110, 730, Some(&prior)).unwrap();
+        assert_eq!((resized.width, resized.height), (1110.0, 730.0));
+        assert_eq!((resized.x, resized.y), (1721.0, 48.0));
+        assert_eq!(resized.screen_width, Some(2560.0));
+
+        let fresh = snapshot_window_frame(1000, 700, None).unwrap();
+        assert_eq!((fresh.x, fresh.y), (0.0, 0.0));
+        assert_eq!((fresh.width, fresh.height), (1000.0, 700.0));
+        assert!(snapshot_window_frame(320, 240, None).is_some());
+        assert!(snapshot_window_frame(1, 1, None).is_none());
+        assert!(snapshot_window_frame(1, 700, None).is_none());
+        assert!(snapshot_window_frame(1000, 1, None).is_none());
+        assert_eq!(snapshot_window_frame(1, 1, Some(&prior)).unwrap(), prior);
     }
 
     #[test]

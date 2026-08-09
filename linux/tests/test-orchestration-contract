@@ -124,9 +124,9 @@ reject "architecture contract still references the superseded inactive-agent jou
 
 # The jq program is intentionally a literal rather than a shell template.
 # shellcheck disable=SC2016
-require "clean and crash multi-window restoration is not qualified on both real display stacks" \
+require "clean, crash, and size multi-window restoration is not qualified on both real display stacks" \
     jq -e '
-        [.cells[] | select(.id | startswith("product-multi-window-clean-crash-restore-"))] as $cells |
+        [.cells[] | select(.id | startswith("product-multi-window-clean-crash-size-restore-"))] as $cells |
         ($cells | length) == 2 and
         all($cells[]; .status == "PASS" and .capability == "workspace_restore" and
             .optimize == "ReleaseSafe" and .terminals == "multi" and

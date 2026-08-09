@@ -154,6 +154,25 @@ type_and_expect_title() {
         "input did not route to ${pane_id}" || fail "cross-window input routing failed"
 }
 
+resize_second_window_x11() {
+    [[ "${backend}" == x11 ]] || return 0
+    xdotool windowsize --sync "${ZENTTY_PRODUCT_WINDOW_ID}" 1110 730
+    zentty_product_wait_for_log "${log}" 'zentty-linux: window-size=1110x730' \
+        "externally resized second X11 window did not report its actual allocation" ||
+        fail "second X11 window resize missing"
+}
+
+wait_for_frame_restore_requests() {
+    local first_size="$1"
+    local second_size="$2"
+    zentty_product_wait_for_log "${log}" \
+        "zentty-linux: window-frame-restore-request id=window-1 size=${first_size} placement=compositor" \
+        "first restored window did not request its persisted size" || fail "first frame request missing"
+    zentty_product_wait_for_log "${log}" \
+        "zentty-linux: window-frame-restore-request id=window-2 size=${second_size} placement=compositor" \
+        "second restored window did not request its persisted size" || fail "second frame request missing"
+}
+
 close_active_window() {
     if [[ "${backend}" == x11 ]]; then
         # The target is destroyed on key-down, before XTest can deliver every
@@ -172,28 +191,35 @@ close_active_window() {
 start_product
 create_second_window
 type_and_expect_title "second-window-marker" "pane-window-2"
+resize_second_window_x11
 for _ in {1..240}; do
     [[ -f "${state_dir}/restore-snapshot.json" ]] &&
         jq -e '
             (.workspace.windows | map(.id)) == ["window-1", "window-2"] and
-            .workspace.activeWindowID == "window-2"
+            .workspace.activeWindowID == "window-2" and
+            all(.workspace.windows[]; .frame.width >= 320 and .frame.height >= 240)
         ' "${state_dir}/restore-snapshot.json" >/dev/null 2>&1 && break
     sleep 0.05
 done
 jq -e '
     (.workspace.windows | map(.id)) == ["window-1", "window-2"] and
     .workspace.activeWindowID == "window-2" and
+    all(.workspace.windows[]; .frame.width >= 320 and .frame.height >= 240) and
     (.restoreDraftWindows | length) == 0
 ' "${state_dir}/restore-snapshot.json" >/dev/null || fail "live snapshot lost multi-window order or active identity"
+first_frame_size="$(jq -r '.workspace.windows[0].frame | "\(.width | round)x\(.height | round)"' "${state_dir}/restore-snapshot.json")"
+second_frame_size="$(jq -r '.workspace.windows[1].frame | "\(.width | round)x\(.height | round)"' "${state_dir}/restore-snapshot.json")"
 zentty_product_close_window "${backend}"
 wait_for_exit
 jq -e '
     .reason == "cleanExit" and
     (.workspace.windows | map(.id)) == ["window-1", "window-2"] and
-    .workspace.activeWindowID == "window-2"
+    .workspace.activeWindowID == "window-2" and
+    all(.workspace.windows[]; .frame.width >= 320 and .frame.height >= 240)
 ' "${state_dir}/restore-snapshot.json" >/dev/null || fail "clean exit did not preserve both windows"
 
 start_product
+wait_for_frame_restore_requests "${first_frame_size}" "${second_frame_size}"
 zentty_product_wait_for_log "${log}" 'zentty-linux: window-opened id=window-2' \
     "clean relaunch did not restore the second GTK window" || fail "second restore window missing"
 zentty_product_wait_for_log "${log}" 'zentty-linux: terminal-ready-pane=pane-window-2' \
@@ -201,6 +227,13 @@ zentty_product_wait_for_log "${log}" 'zentty-linux: terminal-ready-pane=pane-win
 zentty_product_wait_for_log "${log}" 'zentty-linux: focus-pane pane=pane-window-2' \
     "clean relaunch did not settle focus in the restored active window" || fail "restored active focus missing"
 target_second_window
+if [[ "${backend}" == x11 ]]; then
+    restored_geometry="$(xdotool getwindowgeometry --shell "${ZENTTY_PRODUCT_WINDOW_ID}")"
+    restored_width="$(sed -n 's/^WIDTH=//p' <<<"${restored_geometry}")"
+    restored_height="$(sed -n 's/^HEIGHT=//p' <<<"${restored_geometry}")"
+    [[ "${restored_width}x${restored_height}" == "${second_frame_size}" ]] ||
+        fail "restored X11 window is ${restored_width}x${restored_height}, expected ${second_frame_size}"
+fi
 type_and_expect_title "restored-second-marker" "pane-window-2"
 zentty_product_close_window "${backend}"
 wait_for_exit
@@ -286,4 +319,4 @@ wait_for_exit
 jq -e '.cleanExit == true' "${lifecycle}" >/dev/null ||
     fail "recovered multi-window clean exit did not mark the lifecycle clean"
 
-echo "Rust multi-window passed: backend=${backend}, real-windows=2, restore=clean+SIGKILL, non-final-close=survived"
+echo "Rust multi-window passed: backend=${backend}, real-windows=2, restore=clean+SIGKILL+size, non-final-close=survived"

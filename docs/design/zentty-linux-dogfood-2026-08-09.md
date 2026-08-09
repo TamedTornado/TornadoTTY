@@ -141,6 +141,87 @@ The recording standard is unchanged:
   and `8ad67b787896e02729385ec86336aed1adf739dd85484ddd31b38feee5ee81e5`.
   ReleaseSafe Valgrind remains XFAIL; no suppression changed.
 
+## 2026-08-09 — Planned per-window frame-size slice (#32)
+
+- The source exports every real `NSWindow.frame`, rejects non-finite frames or
+  frames smaller than 320×240 during restore, and uses the validated frame as
+  the initial layout seed. GTK4 intentionally exposes no portable application
+  API for authoritative toplevel coordinates: Wayland compositors own
+  placement, and GTK4 also removed the old cross-backend move API. Linux will
+  therefore preserve any imported source coordinate/screen metadata but claim
+  only truthful client-size persistence and restore requests.
+- Focused pure tests will first pin validation boundaries and snapshot
+  projection. Production wiring will then record each mapped GTK window's
+  actual allocated width/height in its existing `WindowRecipe.frame`, and apply
+  validated width/height before presenting a restored shell. No second state
+  store, persistence path, or integration runner will be added.
+- The existing real multi-window journey will inspect both persisted frames
+  and exact per-window restore-request receipts on X11 and Wayland. X11 will
+  additionally resize a real product toplevel externally and verify its
+  restored actual geometry. Wayland will verify the client request and report
+  compositor-owned placement/negotiation rather than pretending coordinates
+  are controllable.
+- The first focused Cargo invocation supplied two positional test filters;
+  Cargo accepts only one and rejected the command before compiling or running
+  tests. The corrected module-level filter is used below. This is an operator
+  invocation error, not a test or product failure.
+- The corrected focused tests passed, then strict Clippy rejected two review
+  issues before product testing: adding frame setup pushed the existing shell
+  constructor to 107 lines, and the validated floating-point-to-integer size
+  conversion lacked an explicit truncation-safety annotation. Frame setup is
+  extracted into a focused helper, and the conversion receives a local lint
+  allowance documenting the preceding finite/range/rounding proof rather than
+  weakening crate-wide lint policy.
+- The first extraction left the constructor at 101 lines, so Clippy continued
+  to fail rather than accepting a threshold dodge. Default/restored recipe
+  selection is now extracted as its own existing concern as well; no
+  `too_many_lines` allowance is added.
+- The first staged build could not resolve GitHub from the restricted network
+  namespace while verifying the pinned Ghostty dependency. It failed before
+  compilation and is rerun through the approved network-capable build path;
+  dependency verification is not bypassed and the failure is not a product
+  result.
+- The first governed focused mutation run tested 42 mutants: 37 were caught,
+  one was compiler-unviable, and four survived. The missing boundaries were a
+  NaN height paired with a valid width, exact `i32::MAX` width/height, and only
+  one undersized allocation dimension. Tests are expanded for those precise
+  cases before rerunning; no production predicate is retained merely to make a
+  mutant distinguishable.
+- The strengthened rerun caught all 41 viable focused mutants; one remained
+  compiler-unviable. The repository-governed mutation wrapper preserved
+  `gitignore=true` and `copy_target=false`, so the ignored Ghostty build tree
+  was not copied into scratch workers.
+- Controlled X11 session
+  `8093d11f71e60b63e10f972d12ea6ba43c7ff363057ed53784413992073da526`
+  passed after externally resizing the real second GTK toplevel to 1110×730.
+  The aggregate live and clean recipes stored both actual window sizes; clean
+  relaunch emitted exact per-ID restore requests and the second mapped X11
+  window's actual geometry was again 1110×730. Controlled Wayland session
+  `7581d5e4bc03083ee957050b59bf929fa979e947e736f2b3510274ac5d2434b3`
+  passed the same persisted-size and exact per-ID client-request assertions in
+  nested Cage. It does not claim application control of Wayland coordinates or
+  final compositor placement.
+- The existing two multi-window cells are renamed to state their expanded
+  clean, SIGKILL, and size contract without duplicating the same real journey.
+  Broader workspace restoration remains NOT_IMPLEMENTED for exact pane-divider
+  persistence, cross-compositor coordinate policy, and complete CWD coverage.
+- Every presently executable support and matrix cell passed in 361.16 seconds.
+  The expanded multi-window cells passed in 10,730 ms on Wayland and 19,320 ms
+  on X11. Declared totals remain `PASS=90`, `FAIL=0`, `BLOCKED=7`, `XFAIL=1`,
+  and `NOT_IMPLEMENTED=21`; implemented-local and product-boundary
+  qualification pass, while release and full Linux qualification correctly
+  remain false. The machine-summary SHA-256 is
+  `c01ab3c5a62a82c006162f4fda6e9e0723ecfcda9d14dded2cc73a40e787c95f`.
+- Debug Valgrind remains **PASS with reviewed suppressions**, not an
+  unsuppressed-clean result. Raw evidence contains 427 errors/contexts, 6,240
+  definite bytes, and 41,461 indirect bytes; reviewed post-suppression evidence
+  contains zero errors/contexts and zero definite/indirect bytes. The report,
+  raw receipt, and suppressed receipt SHA-256 values are respectively
+  `7e1900bec05bc083a2cdd691d448eaf275c42d28a4d080d5d198b1ee2f5c90d7`,
+  `07d56666ff65da0c41d8eb5fc12c2fad8fe43efbdcc12aacf256e54afee3484e`,
+  and `86997a58f410f967956122b0e1cd12e75e32404903b17e306e6b29e1e21052df`.
+  ReleaseSafe Valgrind remains XFAIL and no suppression changed.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were

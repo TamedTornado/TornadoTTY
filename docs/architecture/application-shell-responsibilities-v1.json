@@ -2,7 +2,7 @@
   "schema_version": 1,
   "contract_id": "zentty-application-shell-responsibilities",
   "source": "crates/zentty-linux/src/application_shell.rs",
-  "source_sha256": "f6effdef6726c41de433e6c7bc512c091cbf49c1205501d022d490e44a94fcc1",
+  "source_sha256": "3fe38d4aa0bc18a022b7934a919c7b7912adb4258280f69c69a0c29d32c9969a",
   "owned_source_sha256": {
     "crates/zentty-linux/src/main.rs": "666411596238755127dbb97a8e98cad993247fabfcd3cfb3f4453e983ff8f5b5",
     "crates/zentty-linux/src/application.rs": "6f197bffb2e94258044df812ff0fa20e2963f207c5d3b64d970e6c5847fa01d4",
