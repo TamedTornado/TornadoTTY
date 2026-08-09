@@ -12,6 +12,7 @@ source_file="${ZENTTY_APPLICATION_SHELL_SOURCE:-${repo_root}/crates/zentty-linux
 action_router_file="${ZENTTY_ACTION_ROUTER_SOURCE:-${repo_root}/crates/zentty-linux/src/application_shell/action_router.rs}"
 agent_events_file="${ZENTTY_AGENT_EVENTS_SOURCE:-${repo_root}/crates/zentty-linux/src/application_shell/agent_events.rs}"
 pane_runtime_file="${ZENTTY_PANE_RUNTIME_SOURCE:-${repo_root}/crates/zentty-linux/src/application_shell/pane_runtime.rs}"
+pane_dividers_file="${ZENTTY_PANE_DIVIDERS_SOURCE:-${repo_root}/crates/zentty-linux/src/pane_dividers.rs}"
 tmux_runtime_file="${ZENTTY_TMUX_RUNTIME_SOURCE:-${repo_root}/crates/zentty-linux/src/application_shell/tmux_runtime.rs}"
 persistence_file="${ZENTTY_PERSISTENCE_COORDINATOR_SOURCE:-${repo_root}/crates/zentty-linux/src/persistence_coordinator.rs}"
 tmux_compat_file="${ZENTTY_TMUX_COMPAT_SOURCE:-${repo_root}/crates/zentty-linux/src/tmux_compat.rs}"
@@ -36,6 +37,7 @@ done
 [[ -r "${action_router_file}" ]] || fail "action router source is missing: ${action_router_file}"
 [[ -r "${agent_events_file}" ]] || fail "agent events source is missing: ${agent_events_file}"
 [[ -r "${pane_runtime_file}" ]] || fail "pane runtime source is missing: ${pane_runtime_file}"
+[[ -r "${pane_dividers_file}" ]] || fail "pane divider source is missing: ${pane_dividers_file}"
 [[ -r "${tmux_runtime_file}" ]] || fail "tmux runtime source is missing: ${tmux_runtime_file}"
 [[ -r "${persistence_file}" ]] || fail "persistence coordinator source is missing: ${persistence_file}"
 [[ -r "${tmux_compat_file}" ]] || fail "tmux compatibility source is missing: ${tmux_compat_file}"
@@ -88,6 +90,7 @@ source_sha256="$(sha256sum "${source_file}" | awk '{print $1}')"
 action_router_sha256="$(sha256sum "${action_router_file}" | awk '{print $1}')"
 agent_events_sha256="$(sha256sum "${agent_events_file}" | awk '{print $1}')"
 pane_runtime_sha256="$(sha256sum "${pane_runtime_file}" | awk '{print $1}')"
+pane_dividers_sha256="$(sha256sum "${pane_dividers_file}" | awk '{print $1}')"
 tmux_runtime_sha256="$(sha256sum "${tmux_runtime_file}" | awk '{print $1}')"
 persistence_sha256="$(sha256sum "${persistence_file}" | awk '{print $1}')"
 tmux_compat_sha256="$(sha256sum "${tmux_compat_file}" | awk '{print $1}')"
@@ -110,6 +113,9 @@ jq -e --arg codex_enrichment_sha256 "${codex_enrichment_sha256}" \
 jq -e --arg pane_runtime_sha256 "${pane_runtime_sha256}" \
     '.owned_source_sha256["crates/zentty-linux/src/application_shell/pane_runtime.rs"] == $pane_runtime_sha256' \
     "${contract}" >/dev/null || fail "pane runtime source hash differs from its ownership contract"
+jq -e --arg pane_dividers_sha256 "${pane_dividers_sha256}" \
+    '.owned_source_sha256["crates/zentty-linux/src/pane_dividers.rs"] == $pane_dividers_sha256' \
+    "${contract}" >/dev/null || fail "pane divider source hash differs from its ownership contract"
 jq -e --arg agent_events_sha256 "${agent_events_sha256}" \
     '.owned_source_sha256["crates/zentty-linux/src/application_shell/agent_events.rs"] == $agent_events_sha256' \
     "${contract}" >/dev/null || fail "agent events source hash differs from its ownership contract"
@@ -147,6 +153,17 @@ diff="$(comm -3 "${temp_dir}/actual-pane-runtime-functions" "${temp_dir}/contrac
 if [[ -n "${diff}" ]]; then
     printf '%s\n' "${diff}" >&2
     fail "pane runtime function inventory differs from its ownership contract"
+fi
+
+sed -n '1,/^#\[cfg(test)\]/p' "${pane_dividers_file}" |
+    sed -nE 's/^[[:space:]]*(pub\(crate\)[[:space:]]+)?(const[[:space:]]+)?fn[[:space:]]+([a-zA-Z0-9_]+).*/\3/p' |
+    sort >"${temp_dir}/actual-pane-divider-functions"
+jq -r '.owned_module_functions.pane_dividers | sort | .[]' "${contract}" \
+    >"${temp_dir}/contract-pane-divider-functions"
+diff="$(comm -3 "${temp_dir}/actual-pane-divider-functions" "${temp_dir}/contract-pane-divider-functions")"
+if [[ -n "${diff}" ]]; then
+    printf '%s\n' "${diff}" >&2
+    fail "pane divider function inventory differs from its ownership contract"
 fi
 
 sed -n '1,/^#\[cfg(test)\]/p' "${agent_events_file}" |
@@ -202,6 +219,7 @@ jq -e --arg main_sha256 "${main_sha256}" \
     --arg action_router_sha256 "${action_router_sha256}" \
     --arg agent_events_sha256 "${agent_events_sha256}" \
     --arg pane_runtime_sha256 "${pane_runtime_sha256}" \
+    --arg pane_dividers_sha256 "${pane_dividers_sha256}" \
     --arg tmux_runtime_sha256 "${tmux_runtime_sha256}" \
     --arg persistence_sha256 "${persistence_sha256}" \
     --arg tmux_compat_sha256 "${tmux_compat_sha256}" \
@@ -220,6 +238,7 @@ jq -e --arg main_sha256 "${main_sha256}" \
         "crates/zentty-linux/src/application_shell/agent_events.rs":$agent_events_sha256,
         "crates/zentty-linux/src/application_shell/pane_runtime.rs":$pane_runtime_sha256,
         "crates/zentty-linux/src/application_shell/tmux_runtime.rs":$tmux_runtime_sha256,
+        "crates/zentty-linux/src/pane_dividers.rs":$pane_dividers_sha256,
         "crates/zentty-linux/src/persistence_coordinator.rs":$persistence_sha256,
         "crates/zentty-linux/src/tmux_compat.rs":$tmux_compat_sha256,
         "crates/zentty-linux/src/tmux_store.rs":$tmux_store_sha256
@@ -247,11 +266,13 @@ jq -e --arg main_sha256 "${main_sha256}" \
         ([.field_assignments[].fields[]] | unique | length) and
     ([.method_assignments[].methods[]] | length) ==
         ([.method_assignments[].methods[]] | unique | length) and
-    (.owned_module_functions | keys | sort) == (["action_router", "agent_event_coordinator", "pane_runtime_coordinator", "persistence_coordinator", "tmux_runtime_coordinator", "tmux_store_policy"] | sort) and
+    (.owned_module_functions | keys | sort) == (["action_router", "agent_event_coordinator", "pane_dividers", "pane_runtime_coordinator", "persistence_coordinator", "tmux_runtime_coordinator", "tmux_store_policy"] | sort) and
     (.owned_module_functions.action_router | length) ==
         (.owned_module_functions.action_router | unique | length) and
     (.owned_module_functions.pane_runtime_coordinator | length) ==
         (.owned_module_functions.pane_runtime_coordinator | unique | length) and
+    (.owned_module_functions.pane_dividers | length) ==
+        (.owned_module_functions.pane_dividers | unique | length) and
     (.owned_module_functions.agent_event_coordinator | length) ==
         (.owned_module_functions.agent_event_coordinator | unique | length) and
     (.owned_module_functions.persistence_coordinator | length) ==

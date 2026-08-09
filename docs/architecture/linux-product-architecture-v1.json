@@ -534,7 +534,7 @@
       "async_backend": "default",
       "terminals": "multi",
       "tracking": "GH-3",
-      "defect": "Real two-window clean/SIGKILL relaunch, per-window client sizes, and stored CWD launch fidelity now pass under controlled Wayland. Full qualification still lacks the user-facing draggable pane-divider implementation and its exact persisted geometry; Wayland coordinates remain compositor-owned by documented policy.",
+      "defect": "Real two-window clean/SIGKILL relaunch, per-window client sizes, stored CWD launch fidelity, and the divider overlay lifecycle pass under controlled Wayland. Full qualification still lacks controlled Wayland pointer injection, physical double-click equalization, and an end-to-end relaunch starting from physically dragged divider geometry; window coordinates remain compositor-owned by documented policy.",
       "authoritative": false
     },
     {
@@ -547,7 +547,7 @@
       "async_backend": "default",
       "terminals": "multi",
       "tracking": "GH-3",
-      "defect": "Real two-window clean/SIGKILL relaunch, externally driven window-size persistence, and stored CWD launch fidelity now pass under controlled X11. Full qualification still lacks the user-facing draggable pane-divider implementation and its exact persisted geometry; GTK4 exposes no supported cross-backend toplevel coordinate placement API.",
+      "defect": "Real two-window clean/SIGKILL relaunch, externally driven window-size persistence, stored CWD launch fidelity, physical horizontal/vertical divider drags, and exact divider recipe round-trip now pass under controlled X11. Full qualification still lacks deterministic physical double-click equalization and one end-to-end relaunch starting from physically dragged divider geometry; GTK4 exposes no supported cross-backend toplevel coordinate placement API.",
       "authoritative": false
     },
     {
@@ -560,7 +560,7 @@
       "async_backend": "default",
       "terminals": "multi",
       "tracking": "GH-4",
-      "defect": "A real compound-card worklane slice owns creation, selection, rename, reorder, color, ordered columns, vertical and horizontal pane splits, same-window cross-worklane transfer, focus, close, teardown, and authenticated agent-attention presentation under controlled Wayland, but exact divider sizing, the source contextual move affordance, end-to-end progress/failure states, and the full accessibility audit remain.",
+      "defect": "A real compound-card worklane slice owns creation, selection, rename, reorder, color, ordered columns, vertical and horizontal pane splits, same-window cross-worklane transfer, focus, close, teardown, authenticated agent-attention presentation, and divider geometry lifecycle under controlled Wayland, but controlled divider pointer input, the source contextual move affordance, end-to-end progress/failure states, and the full accessibility audit remain.",
       "authoritative": false
     },
     {
@@ -573,7 +573,7 @@
       "async_backend": "default",
       "terminals": "multi",
       "tracking": "GH-4",
-      "defect": "A real compound-card worklane slice owns creation, selection, rename, reorder, color, ordered columns, vertical and horizontal pane splits, same-window cross-worklane transfer, focus, close, teardown, and authenticated agent-attention presentation under controlled X11, but exact divider sizing, the source contextual move affordance, end-to-end progress/failure states, and the full accessibility audit remain.",
+      "defect": "A real compound-card worklane slice owns creation, selection, rename, reorder, color, ordered columns, vertical and horizontal pane splits, same-window cross-worklane transfer, focus, close, teardown, authenticated agent-attention presentation, and physical divider drags under controlled X11, but deterministic physical double-click equalization, the source contextual move affordance, end-to-end progress/failure states, and the full accessibility audit remain.",
       "authoritative": false
     },
     {

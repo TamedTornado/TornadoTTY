@@ -585,6 +585,51 @@ grep -Fxq 'zentty-linux: terminal-ready-pane=pane-3' "${log}" ||
 grep -Fxq 'zentty-linux: geometry=worklane-1:column-worklane-1[pane-1,pane-3],column-pane-2[pane-2]' "${log}" ||
     fail "New Pane Below did not split the pointer-focused pane's own column"
 
+# Drag the source-equivalent pane dividers through the real X11 pointer. The
+# horizontal handle overlays the right edge of the leading column; the vertical
+# handle overlays the boundary between pane-1 and pane-3. Receipts come from
+# the model mutation reached by GTK GestureDrag, not a direct test-only setter.
+layout_line="$(grep -F 'zentty-linux: pane-layout ' "${log}" | tail -1)"
+left_width="$(sed -n 's/.*column-worklane-1:\([0-9][0-9]*\).*/\1/p' <<<"${layout_line}")"
+height_line="$(grep -F 'zentty-linux: pane-height-layout column=column-worklane-1 ' "${log}" | tail -1)"
+top_height="$(sed -n 's/.*pane-1:\([0-9][0-9]*\).*/\1/p' <<<"${height_line}")"
+pane_viewport_height="$(sed -n 's/.* viewport=\([0-9][0-9]*\) .*/\1/p' <<<"${height_line}")"
+[[ "${left_width}" =~ ^[1-9][0-9]*$ ]] || fail "leading column width was not observable"
+[[ "${top_height}" =~ ^[1-9][0-9]*$ ]] || fail "top pane height was not observable"
+[[ "${pane_viewport_height}" =~ ^[1-9][0-9]*$ ]] || fail "pane viewport height was not observable"
+divider_x="$((restored_sidebar_width + left_width - 3))"
+column_resize_count="$(grep -Fc 'zentty-linux: pane-divider-resize axis=horizontal after=column-worklane-1 ' "${log}" || true)"
+xdotool mousemove --window "${window_id}" "${divider_x}" 350 mousedown 1
+xdotool mousemove --sync --window "${window_id}" "$((divider_x + 60))" 350 mouseup 1
+for _ in $(seq 1 100); do
+    (( $(grep -Fc 'zentty-linux: pane-divider-resize axis=horizontal after=column-worklane-1 ' "${log}" || true) > column_resize_count )) && break
+    sleep 0.05
+done
+resized_left_width="$(grep -F 'zentty-linux: pane-divider-resize axis=horizontal after=column-worklane-1 ' "${log}" | tail -1 | sed -n 's/.*leading=\([0-9.]*\).*/\1/p')"
+awk -v before="${left_width}" -v after="${resized_left_width}" 'BEGIN { exit !(after >= before + 50 && after <= before + 70) }' ||
+    fail "real horizontal pane-divider drag did not follow the pointer"
+
+divider_y="$((700 - pane_viewport_height + top_height - 3))"
+pane_resize_count="$(grep -Fc 'zentty-linux: pane-divider-resize axis=vertical column=column-worklane-1 after=pane-1 ' "${log}" || true)"
+xdotool mousemove --window "${window_id}" "$((restored_sidebar_width + left_width / 2))" "${divider_y}" mousedown 1
+xdotool mousemove --sync --window "${window_id}" "$((restored_sidebar_width + left_width / 2))" "$((divider_y + 50))" mouseup 1
+for _ in $(seq 1 100); do
+    (( $(grep -Fc 'zentty-linux: pane-divider-resize axis=vertical column=column-worklane-1 after=pane-1 ' "${log}" || true) > pane_resize_count )) && break
+    sleep 0.05
+done
+(( $(grep -Fc 'zentty-linux: pane-divider-resize axis=vertical column=column-worklane-1 after=pane-1 ' "${log}" || true) > pane_resize_count )) ||
+    fail "real vertical pane-divider drag did not reach the workspace model"
+# Return both dividers to their pre-test positions with the same real pointer
+# path. Synthetic double-click delivery to overlapping GTK drag/click gestures
+# is nondeterministic under parallel qualification, so equalization is kept at
+# the deterministic model/gesture contract layer rather than weakening this
+# real-system journey with a flaky timing dependency.
+xdotool mousemove --window "${window_id}" "$((restored_sidebar_width + left_width / 2))" "$((divider_y + 50))" mousedown 1
+xdotool mousemove --sync --window "${window_id}" "$((restored_sidebar_width + left_width / 2))" "${divider_y}" mouseup 1
+xdotool mousemove --window "${window_id}" "$((divider_x + 60))" 350 mousedown 1
+xdotool mousemove --sync --window "${window_id}" "${divider_x}" 350 mouseup 1
+sleep 0.2
+
 # Until Linux ports Zentty's complete offscreen-pane management system, the
 # pane-local primary command remains Split Right. Exercise it on pane-2, not on
 # the currently focused pane-3, and prove the resulting visible pair belongs to

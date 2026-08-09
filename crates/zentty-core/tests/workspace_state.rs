@@ -989,6 +989,90 @@ fn source_arrangement_presets_reflow_stable_panes_and_preserve_focus() {
 }
 
 #[test]
+fn divider_resize_updates_only_adjacent_columns_and_clamps_to_source_minimums() {
+    let mut state = WorkspaceState::new("lane", "pane-left");
+    assert!(state.split_focused_pane_right("pane-middle"));
+    assert!(state.split_focused_pane_right("pane-right"));
+    for (pane_id, width) in [
+        ("pane-left", 400.0),
+        ("pane-middle", 350.0),
+        ("pane-right", 250.0),
+    ] {
+        assert!(state.restore_column_width(pane_id, width));
+    }
+
+    let left_column = state.active_columns()[0].id.clone();
+    assert!(state.resize_column_divider(&left_column, 75.0, 160.0));
+    assert!((state.active_columns()[0].width - 475.0).abs() < f64::EPSILON);
+    assert!((state.active_columns()[1].width - 275.0).abs() < f64::EPSILON);
+    assert!((state.active_columns()[2].width - 250.0).abs() < f64::EPSILON);
+
+    assert!(state.resize_column_divider(&left_column, 1_000.0, 160.0));
+    assert!((state.active_columns()[0].width - 590.0).abs() < f64::EPSILON);
+    assert!((state.active_columns()[1].width - 160.0).abs() < f64::EPSILON);
+    assert!(!state.resize_column_divider(&left_column, 1.0, 160.0));
+    assert!(state.equalize_column_divider(&left_column, 160.0));
+    assert!((state.active_columns()[0].width - 375.0).abs() < f64::EPSILON);
+    assert!((state.active_columns()[1].width - 375.0).abs() < f64::EPSILON);
+}
+
+#[test]
+fn divider_resize_updates_only_adjacent_panes_and_preserves_total_weight() {
+    let mut state = WorkspaceState::new("lane", "pane-top");
+    assert!(state.split_focused_pane_below("pane-middle"));
+    assert!(state.split_focused_pane_below("pane-bottom"));
+    let column_id = state.active_columns()[0].id.clone();
+    let before = state.active_columns()[0].pane_heights.clone();
+
+    assert!(state.resize_pane_divider(&column_id, "pane-top", 30.0, 600.0, 80.0,));
+    let heights = &state.active_columns()[0].pane_heights;
+    assert!((heights.iter().sum::<f64>() - 1.0).abs() < f64::EPSILON);
+    assert!((heights[0] - (before[0] + 0.05)).abs() < f64::EPSILON);
+    assert!((heights[1] - (before[1] - 0.05)).abs() < f64::EPSILON);
+    assert!((heights[2] - before[2]).abs() < f64::EPSILON);
+
+    assert!(state.resize_pane_divider(&column_id, "pane-top", 1_000.0, 600.0, 80.0,));
+    let heights = &state.active_columns()[0].pane_heights;
+    assert!((heights[1] - (80.0 / 600.0)).abs() < f64::EPSILON);
+    assert!(!state.resize_pane_divider(&column_id, "pane-top", 1.0, 600.0, 80.0,));
+    assert!(state.equalize_pane_divider(&column_id, "pane-top"));
+    let heights = &state.active_columns()[0].pane_heights;
+    assert!((heights[0] - heights[1]).abs() < f64::EPSILON);
+    assert!((heights[2] - before[2]).abs() < f64::EPSILON);
+}
+
+#[test]
+fn divider_geometry_round_trips_exactly_through_the_workspace_recipe() {
+    let envelope = SessionRestoreEnvelope::from_json(V3_ENVELOPE).unwrap();
+    let mut window = envelope.workspace.windows[0].clone();
+    window.worklanes[0].columns.push(zentty_core::ColumnRecipe {
+        id: "column-right".to_owned(),
+        width: 360.0,
+        focused_pane_id: Some("pane-review".to_owned()),
+        last_focused_pane_id: Some("pane-review".to_owned()),
+        pane_heights: vec![1.0],
+        panes: vec![PaneRecipe {
+            id: "pane-review".to_owned(),
+            custom_title: None,
+            title_seed: None,
+            working_directory: Some("/tmp".to_owned()),
+            last_activity_title: None,
+            last_run_command: None,
+        }],
+    });
+    let left_column_id = window.worklanes[0].columns[0].id.clone();
+    let top_pane_id = window.worklanes[0].columns[0].panes[0].id.clone();
+    let mut state = WorkspaceState::from_window_recipe(&window).unwrap();
+
+    assert!(state.resize_column_divider(&left_column_id, 47.25, 160.0));
+    assert!(state.resize_pane_divider(&left_column_id, &top_pane_id, -33.5, 700.0, 80.0,));
+    let projected = state.to_window_recipe(&window);
+    let restored = WorkspaceState::from_window_recipe(&projected).unwrap();
+
+    assert_eq!(restored.active_columns(), state.active_columns());
+}
+
+#[test]
 fn golden_and_reset_layout_presets_change_only_geometry() {
     let mut state = WorkspaceState::new("lane", "pane-1");
     assert!(state.split_focused_pane_right("pane-2"));

@@ -1,11 +1,12 @@
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::{
     command_palette::CommandPaletteView,
     pane_controls::{self, PaneControlAction, PanePresentation},
+    pane_dividers::{self, PaneDivider},
     pane_scroll_switch::{PaneScrollSwitch, ScrollSwitchResult, ScrollUnit},
     pane_search::{SearchShortcut, resolve_shortcut},
     peek_scroll_navigation::{
@@ -25,9 +26,10 @@ use gtk::gdk;
 use gtk::glib;
 use gtk::prelude::*;
 use zentty_core::{
-    ClosePaneOutcome, ColumnRecipe, CommandPaletteItem, PaneLayoutPolicy, PaneRecipe,
-    PaneReference, PaneRestoreDraft, PaneRightInsertionBehavior, SidebarWidthPreference,
-    WindowFrame, WindowRecipe, WorklaneColor, WorklaneRecipe, WorkspaceState,
+    ClosePaneOutcome, ColumnRecipe, CommandPaletteItem, PaneColumnState, PaneLayoutPolicy,
+    PaneRecipe, PaneReference, PaneRestoreDraft, PaneRightInsertionBehavior,
+    SidebarWidthPreference, WindowFrame, WindowRecipe, WorklaneColor, WorklaneRecipe,
+    WorkspaceState,
 };
 use zentty_ghostty::GhosttyRuntime;
 
@@ -67,6 +69,7 @@ pub(crate) struct ApplicationShell {
     sidebar_scroll: gtk::ScrolledWindow,
     pane_scroll: gtk::ScrolledWindow,
     pane_box: gtk::Box,
+    rendered_columns: RefCell<BTreeMap<String, gtk::Overlay>>,
     background_agent_host: gtk::Box,
     state: WorkspaceState,
     pane_runtime: PaneRuntimeCoordinator,
@@ -93,6 +96,7 @@ pub(crate) struct ApplicationShell {
     new_window_handler: Option<Rc<dyn Fn()>>,
     close_window_handler: Option<Rc<dyn Fn()>>,
     quit_handler: Option<Rc<dyn Fn()>>,
+    self_handle: RefCell<Weak<RefCell<Self>>>,
 }
 
 struct ShellWidgets {
@@ -121,6 +125,7 @@ impl ApplicationShell {
     ) -> Result<Rc<RefCell<Self>>, String> {
         sidebar::install_styles();
         pane_controls::install_styles();
+        pane_dividers::install_styles();
         let ShellWidgets {
             window,
             chrome,
@@ -167,6 +172,7 @@ impl ApplicationShell {
             sidebar_scroll,
             pane_scroll,
             pane_box,
+            rendered_columns: RefCell::new(BTreeMap::new()),
             background_agent_host,
             state,
             pane_runtime: PaneRuntimeCoordinator::new(runtime, command),
@@ -193,7 +199,9 @@ impl ApplicationShell {
             new_window_handler: None,
             close_window_handler: None,
             quit_handler: None,
+            self_handle: RefCell::new(Weak::new()),
         }));
+        shell.borrow().self_handle.replace(Rc::downgrade(&shell));
 
         install_sidebar_width_tracking(
             &body,
@@ -1684,6 +1692,7 @@ impl ApplicationShell {
 
     fn render(&self) {
         clear_pane_columns(&self.pane_box);
+        self.rendered_columns.borrow_mut().clear();
         self.render_sidebar();
         self.refresh_pane_presentation();
 
@@ -1711,24 +1720,133 @@ impl ApplicationShell {
                 .join(",")
         );
 
-        for (column, width) in self.state.active_columns().iter().zip(column_widths) {
-            let column_box = gtk::Box::new(gtk::Orientation::Vertical, 1);
-            column_box.set_homogeneous(false);
-            column_box.set_width_request(width);
-            column_box.set_hexpand(single_column);
-            column_box.set_vexpand(true);
-            for pane in &column.panes {
-                if let Some(frame) = self.pane_runtime.frame(&pane.id) {
-                    remove_frame_from_box_parent(frame.widget());
-                    column_box.append(frame.widget());
-                }
-            }
-            self.pane_box.append(&column_box);
+        let columns = self.state.active_columns();
+        let viewport_height = self.pane_viewport_height();
+        for (column_index, (column, width)) in columns.iter().zip(column_widths).enumerate() {
+            let column_overlay = self.build_column_overlay(
+                column,
+                width,
+                single_column,
+                viewport_height,
+                column_index + 1 < columns.len(),
+            );
+            self.pane_box.append(&column_overlay);
+            self.rendered_columns
+                .borrow_mut()
+                .insert(column.id.clone(), column_overlay);
         }
         self.apply_pane_height_requests(true);
         self.refresh_pane_layout_action_availability();
         eprintln!("zentty-linux: topology={}", self.topology_receipt());
         eprintln!("zentty-linux: geometry={}", self.geometry_receipt());
+    }
+
+    fn build_column_overlay(
+        &self,
+        column: &PaneColumnState,
+        width: i32,
+        single_column: bool,
+        viewport_height: i32,
+        has_trailing_column: bool,
+    ) -> gtk::Overlay {
+        let column_box = gtk::Box::new(gtk::Orientation::Vertical, 1);
+        column_box.set_homogeneous(false);
+        column_box.set_width_request(width);
+        column_box.set_hexpand(single_column);
+        column_box.set_vexpand(true);
+        for pane in &column.panes {
+            if let Some(frame) = self.pane_runtime.frame(&pane.id) {
+                remove_frame_from_box_parent(frame.widget());
+                column_box.append(frame.widget());
+            }
+        }
+        let overlay = gtk::Overlay::new();
+        overlay.set_width_request(width);
+        overlay.set_hexpand(single_column);
+        overlay.set_vexpand(true);
+        overlay.set_child(Some(&column_box));
+
+        let heights = model_heights_to_pixels(&column.pane_heights, viewport_height);
+        let mut boundary = 0_i32;
+        for (index, (pane, height)) in column.panes.iter().zip(heights).enumerate() {
+            boundary = boundary.saturating_add(height);
+            if index + 1 < column.panes.len() {
+                let handle = self.new_pane_divider_handle(&column.id, &pane.id);
+                handle.set_margin_top(boundary.saturating_sub(4));
+                overlay.add_overlay(&handle);
+                boundary = boundary.saturating_add(1);
+            }
+        }
+        if has_trailing_column {
+            overlay.add_overlay(&self.new_column_divider_handle(&column.id));
+        }
+        overlay
+    }
+
+    fn new_pane_divider_handle(&self, column_id: &str, pane_id: &str) -> gtk::Box {
+        let divider = PaneDivider::Pane {
+            column_id: column_id.to_owned(),
+            after_pane_id: pane_id.to_owned(),
+        };
+        let delta_handle = self.self_handle.borrow().clone();
+        let delta_column_id = column_id.to_owned();
+        let delta_pane_id = pane_id.to_owned();
+        let equalize_handle = self.self_handle.borrow().clone();
+        let equalize_column_id = column_id.to_owned();
+        let equalize_pane_id = pane_id.to_owned();
+        pane_dividers::new_handle(
+            &divider,
+            move |delta| {
+                if let Some(shell) = delta_handle.upgrade()
+                    && let Ok(mut shell) = shell.try_borrow_mut()
+                {
+                    return shell.resize_pane_divider_interactively(
+                        &delta_column_id,
+                        &delta_pane_id,
+                        delta,
+                    );
+                }
+                0.0
+            },
+            move || {
+                if let Some(shell) = equalize_handle.upgrade()
+                    && let Ok(mut shell) = shell.try_borrow_mut()
+                {
+                    shell.equalize_pane_divider_interactively(
+                        &equalize_column_id,
+                        &equalize_pane_id,
+                    );
+                }
+            },
+        )
+    }
+
+    fn new_column_divider_handle(&self, column_id: &str) -> gtk::Box {
+        let divider = PaneDivider::Column {
+            after_column_id: column_id.to_owned(),
+        };
+        let delta_handle = self.self_handle.borrow().clone();
+        let delta_column_id = column_id.to_owned();
+        let equalize_handle = self.self_handle.borrow().clone();
+        let equalize_column_id = column_id.to_owned();
+        pane_dividers::new_handle(
+            &divider,
+            move |delta| {
+                if let Some(shell) = delta_handle.upgrade()
+                    && let Ok(mut shell) = shell.try_borrow_mut()
+                {
+                    return shell.resize_column_divider_interactively(&delta_column_id, delta);
+                }
+                0.0
+            },
+            move || {
+                if let Some(shell) = equalize_handle.upgrade()
+                    && let Ok(mut shell) = shell.try_borrow_mut()
+                {
+                    shell.equalize_column_divider_interactively(&equalize_column_id);
+                }
+            },
+        )
     }
 
     fn pane_viewport_width(&self) -> i32 {
@@ -1786,6 +1904,148 @@ impl ApplicationShell {
                     .join(",")
             );
         }
+    }
+
+    fn materialize_active_column_widths(&mut self) {
+        let widths = self.resolved_column_widths();
+        let pane_widths = self
+            .state
+            .active_columns()
+            .iter()
+            .zip(widths)
+            .filter_map(|(column, width)| {
+                column
+                    .panes
+                    .first()
+                    .map(|pane| (pane.id.clone(), f64::from(width)))
+            })
+            .collect::<Vec<_>>();
+        for (pane_id, width) in pane_widths {
+            let _ = self.state.restore_column_width(&pane_id, width);
+        }
+    }
+
+    fn apply_column_width_requests(&self) {
+        for (column, width) in self
+            .state
+            .active_columns()
+            .iter()
+            .zip(self.resolved_column_widths())
+        {
+            if let Some(overlay) = self.rendered_columns.borrow().get(&column.id) {
+                overlay.set_width_request(width);
+                if let Some(child) = overlay.child() {
+                    child.set_width_request(width);
+                }
+            }
+        }
+    }
+
+    fn resize_column_divider_interactively(&mut self, column_id: &str, delta: f64) -> f64 {
+        self.materialize_active_column_widths();
+        let before = self
+            .state
+            .active_columns()
+            .iter()
+            .find(|column| column.id == column_id)
+            .map_or(0.0, |column| column.width);
+        if !self.state.resize_column_divider(column_id, delta, 160.0) {
+            return 0.0;
+        }
+        let after = self
+            .state
+            .active_columns()
+            .iter()
+            .find(|column| column.id == column_id)
+            .map_or(before, |column| column.width);
+        self.apply_column_width_requests();
+        eprintln!(
+            "zentty-linux: pane-divider-resize axis=horizontal after={column_id} leading={after:.3}"
+        );
+        after - before
+    }
+
+    fn resize_pane_divider_interactively(
+        &mut self,
+        column_id: &str,
+        pane_id: &str,
+        delta: f64,
+    ) -> f64 {
+        let viewport_height = f64::from(self.pane_viewport_height());
+        let before = self
+            .state
+            .active_columns()
+            .iter()
+            .find(|column| column.id == column_id)
+            .and_then(|column| {
+                column
+                    .panes
+                    .iter()
+                    .position(|pane| pane.id == pane_id)
+                    .map(|index| {
+                        (
+                            column.pane_heights[index],
+                            column.pane_heights.iter().sum::<f64>(),
+                        )
+                    })
+            });
+        let Some((before_weight, total_weight)) = before else {
+            return 0.0;
+        };
+        if !self
+            .state
+            .resize_pane_divider(column_id, pane_id, delta, viewport_height, 80.0)
+        {
+            return 0.0;
+        }
+        let after_weight = self
+            .state
+            .active_columns()
+            .iter()
+            .find(|column| column.id == column_id)
+            .and_then(|column| {
+                column
+                    .panes
+                    .iter()
+                    .position(|pane| pane.id == pane_id)
+                    .map(|index| column.pane_heights[index])
+            })
+            .unwrap_or(before_weight);
+        self.apply_pane_height_requests(true);
+        eprintln!(
+            "zentty-linux: pane-divider-resize axis=vertical column={column_id} after={pane_id} leading={after_weight:.6}"
+        );
+        (after_weight - before_weight) / total_weight * viewport_height
+    }
+
+    fn equalize_column_divider_interactively(&mut self, column_id: &str) {
+        self.materialize_active_column_widths();
+        if self.state.equalize_column_divider(column_id, 160.0) {
+            self.apply_column_width_requests();
+            eprintln!("zentty-linux: pane-divider-equalize axis=horizontal after={column_id}");
+            self.schedule_layout_render();
+        }
+    }
+
+    fn equalize_pane_divider_interactively(&mut self, column_id: &str, pane_id: &str) {
+        if self.state.equalize_pane_divider(column_id, pane_id) {
+            self.apply_pane_height_requests(true);
+            eprintln!(
+                "zentty-linux: pane-divider-equalize axis=vertical column={column_id} after={pane_id}"
+            );
+            self.schedule_layout_render();
+        }
+    }
+
+    fn schedule_layout_render(&self) {
+        let shell = self.self_handle.borrow().clone();
+        glib::idle_add_local_once(move || {
+            if let Some(shell) = shell.upgrade()
+                && let Ok(shell) = shell.try_borrow()
+            {
+                shell.render();
+            }
+        });
     }
 
     fn refresh_pane_layout_action_availability(&self) {

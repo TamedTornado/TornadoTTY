@@ -290,6 +290,98 @@ The recording standard is unchanged:
   and `1544c2aabeedbe5948203828452f3ccbeafb10a247aca86cb62433ae91cd43cf`.
   ReleaseSafe Valgrind remains XFAIL; no suppression changed.
 
+## 2026-08-09 — Source pane dividers become a real product feature
+
+- The source audit confirmed that Zentty owns two direct divider classes:
+  adjacent columns resize horizontally and adjacent panes in one column resize
+  vertically. Dragging preserves the pair's combined extent, clamps both sides
+  to terminal minimums, and double-click equalizes the adjacent pair. Linux's
+  prior static `GtkBox` layout only consumed stored geometry; users could not
+  create that geometry.
+- Test-first core cases initially failed because `WorkspaceState` exposed no
+  divider transition. The repaired model now changes only the adjacent pair,
+  preserves total width/height weight, clamps at 160×80 fallback minimums, and
+  round-trips fractional dragged geometry exactly through `WindowRecipe`.
+- The GTK feature is one overlay handle implementation, not a second layout
+  system. Stable, focusable accessibility separators overlay the existing
+  column/pane boundaries; pointer drags and focused arrow keys reach the same
+  canonical `WorkspaceState` operations. Existing Ghostty frames remain
+  mounted while their width/height requests change.
+- The first physical vertical-drag assertion used the old assumed 38-pixel
+  chrome height and missed the actual handle. The harness now derives the
+  content origin from the product's observed viewport height instead of
+  encoding a theme-dependent chrome size.
+- The next run proved both real drags, but later fixed-coordinate controls
+  failed because the test had intentionally left the leading column 60 pixels
+  wider. That was test contamination, not a product regression. The journey
+  now returns both dividers to their original positions before continuing its
+  established pane-management assertions.
+- An attempted live-snapshot assertion also established that
+  `--no-session-restore` deliberately does not publish a restore snapshot. The
+  assertion was removed rather than treating absence as a pass; exact geometry
+  serialization is covered at the canonical recipe boundary, while the
+  existing restore journey remains responsible for process relaunch.
+- Controlled X11 session
+  `28457230981a59c195e33120c8567ea435212f845ff565565d6e06ff8f2ee2b7`
+  passed the complete source-UX journey after dragging both real GTK handles,
+  observing model receipts, double-click equalizing both adjacent pairs back
+  to their baselines, and completing all later real Ghostty/PTY pane actions.
+  The prior drag-only baseline pass was
+  `19bc56a2c3582436292328c204d74dc719f646b53dc0ddd7f57e5a8b100903e2`.
+  Earlier diagnostic sessions were
+  `2f1e409b5d9702f67ae67f79fcbb937befd8edb8c10337f36857ded5df2d2c22`
+  (vertical coordinate defect),
+  `5bfc4a043fa54202463de1129ffdc0a20b86c1275ba9093c4a7f9981c31b9295`
+  (downstream geometry contamination), and
+  `fb57eba77324f670f00b07781d8fc2084f212b2fcca21ac7326c3adab3a48fdd`
+  (invalid no-restore snapshot assumption).
+- A later parallel qualification run disproved synthetic double-click as a
+  reliable real-system receipt: the vertical equalize event was delivered in
+  the standalone X11 journey but disappeared under qualification load. The
+  same run also failed to discover one Debug X11 window, while the isolated
+  cell passed immediately afterward in session
+  `d35f99a762af05c052e87e58bfc7dd397bcb55de138ddbebebdd09c4292d122c`.
+  Neither environmental failure was converted to a pass. Equalization remains
+  covered at the deterministic model layer and the compiled GTK route; the
+  missing deterministic physical multi-click receipt is explicit in the
+  NOT_IMPLEMENTED matrix cells. The canonical physical-pointer journey now
+  restores its coordinates by dragging
+  both handles back instead of depending on synthetic multi-click timing.
+  Two consecutive repaired end-to-end runs passed in sessions
+  `85df5cead1b8d86f538d64e205586c2ae40f745002fe5be7361f2cf0bf76f31d`
+  and
+  `8dad2e49145b59e25831abc7c97f2550b63573181d3d025de22892ade42f07f5`.
+- The first attempted Wayland regression put `GDK_BACKEND=wayland` on the
+  outer nested compositor wrapper. Its X11 bootstrap correctly replaced that
+  value, so session
+  `87ffc24d4c1d686f02027c82e2643782a9e66b06dda79b45041776c92d383ee7`
+  was an additional X11 pass, not Wayland evidence. Passing the backend inside
+  the wrapper command produced controlled Wayland input session
+  `b000d028577604960e8bb66382e977a69f8b09a917b023e72ecee27d994e21a0`,
+  where the complete real restore/relaunch/crash journey passed with the new
+  overlay layout.
+- A workspace-wide Rust test run inside the filesystem sandbox failed eight
+  helper CLI cases at private Unix-socket creation with `EPERM`; unrelated
+  non-socket cases passed. The exact same locked workspace gate passed outside
+  that sandbox (all unit, integration, CLI subprocess, transport, and doctest
+  targets). This was recorded as an execution-environment restriction, not a
+  product failure or a skipped pass.
+- After those failures and repairs, the completed feature candidate passed
+  every presently executable support and matrix cell in 359.40 seconds.
+  Totals remain `PASS=90`, `FAIL=0`,
+  `BLOCKED=7`, `XFAIL=1`, and `NOT_IMPLEMENTED=21`; implemented-local and
+  product-boundary qualification pass, while release and full Linux
+  qualification correctly remain false. The machine-summary SHA-256 is
+  `2388de97a5f8b909d3bf4a9981224e650b3e0923aa25097155512007012200a1`.
+- Debug Valgrind remains **PASS with reviewed suppressions**: raw evidence has
+  427 errors/contexts, 6,240 definite bytes, and 41,429 indirect bytes;
+  post-suppression evidence has zero errors/contexts and zero definite/indirect
+  bytes. The report, raw receipt, and suppressed receipt SHA-256 values are
+  `052f479c2ca3f0944b56fc1b5b33e7dd29a2653ae3a3ae6b7fd06092a40bf95f`,
+  `6228d414875f00ee710fe4cfb53b1e30d7fceb37e68848cd8674458b658ed35f`,
+  and `03d9733aab6304a97e2e6895b179195095857a41b24e3630899eaa81e4d1c944`.
+  ReleaseSafe Valgrind remains XFAIL and no suppression changed.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were

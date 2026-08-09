@@ -1163,6 +1163,125 @@ impl WorkspaceState {
         changed
     }
 
+    /// Moves the divider after `column_id` while preserving the combined
+    /// width of the two adjacent columns.
+    pub fn resize_column_divider(
+        &mut self,
+        column_id: &str,
+        delta: f64,
+        minimum_width: f64,
+    ) -> bool {
+        if !delta.is_finite() || !minimum_width.is_finite() || minimum_width <= 0.0 {
+            return false;
+        }
+        let columns = &mut self.active_worklane_mut().columns;
+        let Some(index) = columns.iter().position(|column| column.id == column_id) else {
+            return false;
+        };
+        if index + 1 >= columns.len() {
+            return false;
+        }
+        let combined = columns[index].width + columns[index + 1].width;
+        if !combined.is_finite() || combined < minimum_width * 2.0 {
+            return false;
+        }
+        let leading = (columns[index].width + delta).clamp(minimum_width, combined - minimum_width);
+        if (leading - columns[index].width).abs() <= f64::EPSILON {
+            return false;
+        }
+        columns[index].width = leading;
+        columns[index + 1].width = combined - leading;
+        true
+    }
+
+    pub fn equalize_column_divider(&mut self, column_id: &str, minimum_width: f64) -> bool {
+        let columns = &self.active_worklane().columns;
+        let Some(index) = columns.iter().position(|column| column.id == column_id) else {
+            return false;
+        };
+        let Some(trailing) = columns.get(index + 1) else {
+            return false;
+        };
+        let delta = (trailing.width - columns[index].width) / 2.0;
+        self.resize_column_divider(column_id, delta, minimum_width)
+    }
+
+    /// Moves the divider after `pane_id` while preserving the combined model
+    /// weight of the two adjacent panes.
+    pub fn resize_pane_divider(
+        &mut self,
+        column_id: &str,
+        pane_id: &str,
+        delta_pixels: f64,
+        available_height: f64,
+        minimum_height: f64,
+    ) -> bool {
+        if !delta_pixels.is_finite()
+            || !available_height.is_finite()
+            || available_height <= 0.0
+            || !minimum_height.is_finite()
+            || minimum_height <= 0.0
+        {
+            return false;
+        }
+        let Some(column) = self
+            .active_worklane_mut()
+            .columns
+            .iter_mut()
+            .find(|column| column.id == column_id)
+        else {
+            return false;
+        };
+        let Some(index) = column.panes.iter().position(|pane| pane.id == pane_id) else {
+            return false;
+        };
+        if index + 1 >= column.panes.len() {
+            return false;
+        }
+        let total_weight = column.pane_heights.iter().sum::<f64>();
+        if !total_weight.is_finite() || total_weight <= 0.0 {
+            return false;
+        }
+        let lower_bound = minimum_height / available_height * total_weight;
+        let combined = column.pane_heights[index] + column.pane_heights[index + 1];
+        if combined < lower_bound * 2.0 {
+            return false;
+        }
+        let leading = (column.pane_heights[index] + delta_pixels / available_height * total_weight)
+            .clamp(lower_bound, combined - lower_bound);
+        if (leading - column.pane_heights[index]).abs() <= f64::EPSILON {
+            return false;
+        }
+        column.pane_heights[index] = leading;
+        column.pane_heights[index + 1] = combined - leading;
+        true
+    }
+
+    pub fn equalize_pane_divider(&mut self, column_id: &str, pane_id: &str) -> bool {
+        let Some(column) = self
+            .active_worklane_mut()
+            .columns
+            .iter_mut()
+            .find(|column| column.id == column_id)
+        else {
+            return false;
+        };
+        let Some(index) = column.panes.iter().position(|pane| pane.id == pane_id) else {
+            return false;
+        };
+        if index + 1 >= column.panes.len() {
+            return false;
+        }
+        let combined = column.pane_heights[index] + column.pane_heights[index + 1];
+        let equal = combined / 2.0;
+        if (column.pane_heights[index] - equal).abs() <= f64::EPSILON {
+            return false;
+        }
+        column.pane_heights[index] = equal;
+        column.pane_heights[index + 1] = equal;
+        true
+    }
+
     /// Restores an absolute source column width without changing selection or
     /// resizing neighboring columns.
     pub fn restore_column_width(&mut self, pane_id: &str, width: f64) -> bool {

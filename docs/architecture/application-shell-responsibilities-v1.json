@@ -2,9 +2,9 @@
   "schema_version": 1,
   "contract_id": "zentty-application-shell-responsibilities",
   "source": "crates/zentty-linux/src/application_shell.rs",
-  "source_sha256": "3fe38d4aa0bc18a022b7934a919c7b7912adb4258280f69c69a0c29d32c9969a",
+  "source_sha256": "514c40a8a192647c0d84bf152c73ac6ae69ba772ce7ea022f868ecc53c9c192a",
   "owned_source_sha256": {
-    "crates/zentty-linux/src/main.rs": "666411596238755127dbb97a8e98cad993247fabfcd3cfb3f4453e983ff8f5b5",
+    "crates/zentty-linux/src/main.rs": "5f5d7143cec7b51412624cdc10fe16a5000a2d7605e93151d2a0f29c3b339780",
     "crates/zentty-linux/src/application.rs": "6f197bffb2e94258044df812ff0fa20e2963f207c5d3b64d970e6c5847fa01d4",
     "crates/zentty-linux/src/window_set.rs": "501d595889c11a41a4261ef8282465d76dd9ed8ccd1d004406b558579b0bf58e",
     "crates/zentty-linux/src/agent_runtime.rs": "36f1e38a84955f15ff86f63a24dd50ca07235d288307c3ad6e277890db3afbcc",
@@ -13,6 +13,7 @@
     "crates/zentty-linux/src/application_shell/agent_events.rs": "12da8738f9cc6902498d6dd836a79ba52025897bad596703d1d336d3ec805e0f",
     "crates/zentty-linux/src/application_shell/pane_runtime.rs": "b7e1a43c03b2c05e0585df806fb35346214393950f373d3a186def5c335ab7f2",
     "crates/zentty-linux/src/application_shell/tmux_runtime.rs": "b606ec1c2e8c93e1ab40dbac1e5080f28315352e83533d7c63ba7eefd95d0515",
+    "crates/zentty-linux/src/pane_dividers.rs": "dc86023846057e7d3338f142c13d52f4dfde9e3057c33055d527587b7e638d7d",
     "crates/zentty-linux/src/persistence_coordinator.rs": "9c9b24a8516032e37377b6acfba3549781cfc830a65f53d7a311f0b2efaa72a4",
     "crates/zentty-linux/src/tmux_compat.rs": "9f3279e470c0cbb7c99fb93102d363bd28cf0c540a340df5c5b4bd009486190b",
     "crates/zentty-linux/src/tmux_store.rs": "8447751028f8a8874c222055b7ee1bc369d23f25df5f8bdc7ffcf418e06dac40"
@@ -65,9 +66,9 @@
     {
       "id": "existing_ui_projection",
       "status": "existing",
-      "planned_module": "crates/zentty-linux/src/application_shell.rs",
+      "planned_module": "crates/zentty-linux/src/application_shell.rs and crates/zentty-linux/src/pane_dividers.rs",
       "tracking": "GH-31",
-      "responsibility": "Window-local sidebar, pane-layout, peek, palette, search, navigation, rendering, and geometry projection pending final wiring review."
+      "responsibility": "Window-local sidebar, pane-layout, accessible divider handles, peek, palette, search, navigation, rendering, and geometry projection pending final wiring review."
     },
     {
       "id": "existing_tmux_coordinator",
@@ -111,7 +112,8 @@
       "fields": [
         "preferred_sidebar_width", "adjusting_sidebar_width", "sidebar_reveal_generation",
         "sidebar_visibility", "sidebar_visibility_generation", "peek_phase", "peek_generation",
-        "peek_tab_down", "peek_view", "command_palette", "last_pane_viewport_height"
+        "peek_tab_down", "peek_view", "command_palette", "last_pane_viewport_height",
+        "rendered_columns", "self_handle"
       ]
     },
     {
@@ -179,6 +181,11 @@
         "command_palette_action_items", "install_peek_scroll_navigation", "scroll_panes_to_end",
         "scroll_panes_to_focused", "pane_viewport_width", "pane_viewport_height",
         "apply_pane_height_requests", "resolved_column_widths", "focused_column_render_width",
+        "build_column_overlay", "new_pane_divider_handle", "new_column_divider_handle",
+        "materialize_active_column_widths", "apply_column_width_requests",
+        "resize_column_divider_interactively", "resize_pane_divider_interactively",
+        "equalize_column_divider_interactively", "equalize_pane_divider_interactively",
+        "schedule_layout_render",
         "render_sidebar", "refresh_sidebar_metadata", "schedule_active_worklane_reveal",
         "navigate_history", "select_adjacent_pane", "select_adjacent_worklane",
         "pane_references_in_sidebar_order", "current_pane_reference", "select_pane_reference",
@@ -187,6 +194,7 @@
     }
   ],
   "owned_module_functions": {
+    "pane_dividers": ["axis", "name", "label", "install_styles", "new_handle", "adjusted_margin"],
     "action_router": [
       "accepts", "enabled", "install", "uninstall", "refresh_availability",
       "populate", "install_application_actions", "install_edit_actions", "install_worklane_edit_actions",
