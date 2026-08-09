@@ -10247,6 +10247,16 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   `20542292fb75c5c2fb71916e067ba7f2e35ff68b2742934240a72d94b17dc19f`,
   and `3fddd3e8fb0e3476f012ede2318ff7df42d3f2dd8e523f931656b02a3f18aca1`.
   This is not an unsuppressed-clean claim; ReleaseSafe Valgrind remains XFAIL.
+- **The plan now distinguishes completion from prerequisite honestly:** The
+  durable-store criterion is complete; multi-window isolation is not. Linux
+  still composes one real `ApplicationShell` per process, while source routes
+  tmux requests through the target window controller. The remaining GH-14
+  criterion therefore depends on issue #16's real live multi-window lifecycle;
+  a tmux-only second shell would be an alternate test product and was not
+  invented. A public GH-14 evidence comment also expanded the observed short
+  commit ID incorrectly. A follow-up comment immediately corrected the exact
+  pushed ID to `c963bbd3c58a28b5b8e19584ac0d1522bb11e9a7`; evidence totals and
+  scope were unchanged.
 
 ## AI disclosure
 

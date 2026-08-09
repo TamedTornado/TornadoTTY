@@ -2,9 +2,10 @@
 
 - **Status:** Phases 0–2 and the installed Phase 4/5 boundaries are complete.
   Phase 3 implements the inventoried command vocabulary and its deferred-pane
-  lifecycle is repaired and qualified. It remains incomplete on the separately
-  explicit multi-window isolation and compatibility-store lifetime criteria;
-  neither is inferred from the single-window product journey.
+  lifecycle and file-backed compatibility-store lifetime are repaired and
+  qualified. It remains incomplete on the separately explicit multi-window
+  isolation criterion; that behavior cannot be inferred from the current
+  single-window product journey.
 - **Date:** 2026-08-05
 - **Owner:** [#14 — Linux tmux compatibility and agent-team IPC](https://github.com/TamedTornado/zentty/issues/14)
 - **Parent:** [#1 — production-quality Zentty Linux port](https://github.com/TamedTornado/zentty/issues/1)
@@ -165,7 +166,16 @@ staged-product journey on X11 and Wayland, and the installed Claude 2.1.201
 journey on X11 and Wayland prove the commandless split, absent PTY, submitted
 launch, direct split command/CWD, current `respawn-pane`, real terminal input,
 capture, focus, teardown, and private-session boundaries. Phase 3 remains open
-only for the separately named multi-window and state-lifetime decisions.
+only for the separately named multi-window decision. The state-lifetime
+decision is implemented by the ratified compatibility-store design below and
+its controlled-compositor restart/corruption evidence.
+
+Multi-window qualification depends on the live multi-window application
+composition and handoff owned by issue #16. Linux currently constructs one
+`ApplicationShell` per process, so manufacturing a second shell only inside a
+tmux test would create the forbidden alternate-product behavior. GH-14 remains
+open and the feature inventory remains `PARTIAL` until #16 supplies the real
+window lifecycle and the existing tmux journey can exercise two actual windows.
 
 ### Phase 4 — Staging, discovery, and shell integration
 
