@@ -14,6 +14,7 @@ mod sidebar;
 mod sidebar_visibility;
 mod source_ui;
 mod tmux_compat;
+mod tmux_store;
 mod window_chrome;
 mod worklane_peek;
 

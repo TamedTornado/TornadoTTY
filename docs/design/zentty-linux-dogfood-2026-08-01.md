@@ -10120,6 +10120,134 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   and `b8197e667bf78d03eb4d5da303f1c49d3d44a7fc4bcc34972e26f1fa1d626dbf`.
   This is not an unsuppressed-clean claim; ReleaseSafe Valgrind remains XFAIL.
 
+### DOGFOOD-2026-08-09-TMUX-STORE-AUDIT: the ratified plan incorrectly made source state ephemeral
+
+- **Source correction:** `TmuxCompatStore.swift` is not merely a Codable model.
+  `TmuxCompatStoreIO` loads and atomically saves
+  `~/.config/zentty/tmux-compat-store.json`, and the handler reloads/mutates it
+  for anchors, active compatibility selection, buffers, capture, layout, and
+  team teardown. The Linux plan incorrectly grouped `TeamStore` with ephemeral
+  `wait-for` signals and explicitly prohibited the persistent store required by
+  both source and GH-14 acceptance criteria.
+- **Current consequence:** Linux preserves compatible JSON field names and
+  bounds in pure tests, but `TmuxCompatProduct::default()` discards all anchors,
+  active selections, and buffers on restart. Existing restart evidence proves
+  socket/capability freshness, not source state lifetime. That gap remains red
+  until the same real journey observes durable state across two product
+  processes.
+- **Repair boundary:** The corrected plan keeps only wait signals ephemeral.
+  It requires one XDG config file, a bounded adjacent cross-process lock,
+  private atomic replacement, malformed-file preservation, future-version
+  rejection, and reload-before-mutate behavior. Atomic file mechanics must be
+  a reusable core primitive rather than a second persistence system. No new
+  daemon, actor, socket, terminal owner, or alternate product is permitted.
+- **Test order:** Core file-boundary tests and `TeamStore` persistence tests are
+  red before product wiring. The existing staged tmux journey—not a new
+  harness—then proves XDG placement, buffer survival across restart, corrupt
+  recovery, real CLI/socket/Ghostty/PTY behavior, and teardown under both
+  controlled compositors.
+- **Red construction evidence was kept narrow:** The first focused compile
+  deliberately failed because the persistence types and methods did not exist.
+  The initial command also repeated Cargo's single name-filter argument and was
+  rejected before testing; the corrected package/module filters reached the
+  intended red tests. Follow-on compiler repairs were limited to current
+  `TryLockError`, explicit `Read::by_ref`, and lint-required conversions and
+  unit patterns; none changed the product boundary.
+- **One atomic-file mechanism now serves both stores:** The new core
+  `AtomicFileStore` owns bounded reads, a stable adjacent advisory lock,
+  same-directory create-new temporary files, file and directory sync, atomic
+  replacement, and exact corrupt-byte quarantine. `SessionRestoreStore` was
+  reduced to this primitive rather than leaving a parallel atomic writer.
+  Tests cover exact-size and oversize boundaries, preserved destinations,
+  lock timeout and callback exclusion, cleanup, private `0700`/`0600` modes,
+  malformed-byte quarantine, non-regular files, and immediate or higher
+  symlinked ancestors. Two simultaneous store writers also prove locked
+  reload/modify/replace preserves both independent mutations. The quarantine
+  destination uses an atomic hard-link
+  reservation instead of a racy existence-check followed by overwriting
+  rename. Final review also moved regular-file validation before permission
+  normalization so a rejected directory cannot be chmodded as if it were a
+  state file.
+- **The product policy matches the source lifetime without persisting runtime
+  authority:** Linux uses
+  `$XDG_CONFIG_HOME/zentty/tmux-compat-store.json`, with the documented HOME
+  fallback, reloads under the lock before each request/mutation, writes schema
+  v1 only after successful validation, quarantines malformed/type-invalid
+  bytes, and refuses to downgrade a future schema. Pane capabilities, instance
+  sockets, wait signals, prompts, credentials, and transcript fields are not
+  serialized. Tmux buffers remain user-requested terminal data by definition;
+  this is not a claim that arbitrary user buffer contents cannot themselves be
+  sensitive.
+- **Persistence failures remain transactional at the live-product edge:** A
+  failed split write removes the newly created real surface and pane. A failed
+  kill write occurs before closing the real pane, preventing durable state from
+  claiming a teardown that did not happen. No actor, daemon, socket, fake
+  terminal, alternate product, backup journal, or test orchestration layer was
+  added.
+- **Post-commit lock release is not reported as a failed mutation:** Review
+  caught that explicitly propagating an advisory `unlock` error after atomic
+  replacement could make the caller roll back a live pane even though durable
+  state had already committed. The stable lock file now releases by closing its
+  descriptor at scope end; every error returned from a mutating transaction is
+  therefore still pre-commit or commit-related and safe for product rollback.
+- **The first real X11 extension failed because the test confused two source
+  buffer names:** `set-buffer -b agent` contains `named-buffer-real`, while
+  `load-buffer -b loaded` contains `loaded-buffer-real`. The JSON assertion
+  incorrectly assigned the latter value to `agent`; it now checks both exact
+  names plus the captured default buffer. This was a test defect, not a product
+  repair.
+- **The second real X11 extension exposed masked child failure:** The restart
+  child repeated the same wrong buffer expectation, exited before publishing a
+  new endpoint receipt, and normal application shutdown returned success. The
+  outer journey consequently reported apparent socket reuse. The source
+  expectation was corrected and the existing journey now rejects any child
+  assertion receipt even when the GUI exits normally, preventing this class of
+  false positive from recurring.
+- **Controlled real-product evidence is green:** The unchanged staged product,
+  real authenticated CLI/socket, GTK window, Ghostty surfaces, and PTYs proved
+  XDG permissions, persisted buffers across a stopped/new process with a fresh
+  pane capability, stale-capability rejection, corrupt-byte quarantine, and
+  clean teardown under X11 session
+  `5e755c5f94b76438c6aeb3033cc4ca55f81da3ce3046c04079a9836f44cd62d7`
+  and Wayland session
+  `66d4361ebfb70e48fc84eb5be5bf72ca52b6553d8f1d011ea62e493140243176`.
+- **Architecture governance was extended rather than bypassed:** The ownership
+  contract now hashes and inventories `tmux_store.rs`, associates it with the
+  existing tmux coordinator, tracks the rollback helper, and has negative tests
+  for an untracked store function and a shadow store. The full positive and
+  negative architecture suite passes.
+- **Mutation review separated behavior gaps from syscall fault injection:** An
+  initial 55-mutant atomic-file campaign caught 26, left 18 missed, and found
+  11 compiler-unviable. Exact-bound, elapsed-deadline, display, and error-source
+  assertions improved the rerun to 35 caught, 9 missed, and 11 unviable. The
+  nine survivors are collision/error-kind branches requiring deterministic
+  filesystem fault injection plus the behaviorally equivalent removal of a
+  cleanup disarm after a successful rename; no fake filesystem was introduced
+  merely to make the score green. The six-mutant store-policy campaign caught
+  three, left only the environment-reading `default_path` wrapper missed, and
+  had two unviable; that wrapper is exercised by both real compositor journeys.
+  The six-mutant persistent-product campaign initially missed construction and
+  refresh, so a real-file two-reader unit test was added; the focused rerun
+  caught both remaining mutants. Cargo-mutants used the governed
+  `gitignore=true`, `copy_target=false` wrapper throughout.
+- **The exact store candidate passed every presently executable matrix cell:**
+  Implemented-local and product-boundary qualification pass; release and full
+  Linux qualification correctly remain false. Declared/actual outcomes are
+  `PASS=88`, `FAIL=0`, `BLOCKED=7`, `XFAIL=1`, and
+  `NOT_IMPLEMENTED=21`. The machine-summary SHA-256 is
+  `83cc43467d22dcb4c87a285fcfd1ba04b2bae05550abc447a1f7027b9fa57bc3`.
+  This store slice did not reclassify any environment-dependent or unimplemented
+  scope.
+- **Valgrind is PASS with reviewed suppressions:** The preserved raw receipt
+  contains 427 errors/contexts, 6,240 definite bytes, and 41,397 indirect
+  bytes. The reviewed post-suppression receipt contains zero errors/contexts
+  and zero definite/indirect bytes, with all 427 contexts accounted for. The
+  report, raw receipt, and suppressed receipt SHA-256 values are respectively
+  `11d462fbaaea4dd5b19257f0b3a7fe505f605fa8c520c3d679a396a54ab27907`,
+  `20542292fb75c5c2fb71916e067ba7f2e35ff68b2742934240a72d94b17dc19f`,
+  and `3fddd3e8fb0e3476f012ede2318ff7df42d3f2dd8e523f931656b02a3f18aca1`.
+  This is not an unsuppressed-clean claim; ReleaseSafe Valgrind remains XFAIL.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were

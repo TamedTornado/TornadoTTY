@@ -18,6 +18,14 @@ impl ApplicationShell {
             command.target.worklane_id,
             command.request.command()
         );
+        if let Err(message) = shell.borrow_mut().tmux_compat.refresh() {
+            let reply = TmuxCompatReply::failure("store_failed", message)
+                .expect("bounded product diagnostic fits protocol limits");
+            if let Err(error) = command.respond(reply) {
+                eprintln!("zentty-linux: tmux-response failed={error}");
+            }
+            return;
+        }
         let reply = match command.request.command() {
             TmuxCommand::SendKeys => Self::execute_tmux_send_keys(shell, &command),
             TmuxCommand::SplitWindow => Self::execute_tmux_split(shell, &command),
@@ -181,13 +189,22 @@ impl ApplicationShell {
         };
         match Self::create_tmux_split_surface(shell, &plan) {
             Ok((pane_id, pre_team_leader_width)) => {
-                let mut shell = shell.borrow_mut();
-                shell
+                let mut borrowed = shell.borrow_mut();
+                if let Err(message) =
+                    borrowed
+                        .tmux_compat
+                        .record_split(&plan, &pane_id, pre_team_leader_width)
+                {
+                    drop(borrowed);
+                    let _ = Self::rollback_tmux_split_surface(shell, &pane_id);
+                    return TmuxCompatReply::failure("store_failed", message)
+                        .expect("bounded product diagnostic fits protocol limits");
+                }
+                let reply = borrowed
                     .tmux_compat
-                    .record_split(&plan, &pane_id, pre_team_leader_width);
-                let reply = shell.tmux_compat.split_reply(&shell.state, &plan, &pane_id);
-                shell.render();
-                shell.focus_selected_surface();
+                    .split_reply(&borrowed.state, &plan, &pane_id);
+                borrowed.render();
+                borrowed.focus_selected_surface();
                 reply
             }
             Err(message) => TmuxCompatReply::failure("split_failed", message)
@@ -344,6 +361,7 @@ impl ApplicationShell {
 
     fn close_tmux_panes(shell: &Rc<RefCell<Self>>, plan: &KillPlan) -> Result<(), String> {
         let mut shell = shell.borrow_mut();
+        let restoration = shell.tmux_compat.complete_kill(plan)?;
         let mut close_window = false;
         for pane_id in &plan.pane_ids {
             match shell.state.close_pane(pane_id) {
@@ -354,7 +372,7 @@ impl ApplicationShell {
             shell.remove_live_surface(pane_id)?;
             eprintln!("zentty-linux: tmux-close pane={pane_id}");
         }
-        if let Some(restoration) = shell.tmux_compat.complete_kill(plan) {
+        if let Some(restoration) = restoration {
             let _ = shell
                 .state
                 .restore_column_width(&restoration.leader_pane_id, f64::from(restoration.width));
@@ -364,6 +382,15 @@ impl ApplicationShell {
         if close_window {
             shell.main_loop.quit();
         }
+        Ok(())
+    }
+
+    fn rollback_tmux_split_surface(shell: &Rc<RefCell<Self>>, pane_id: &str) -> Result<(), String> {
+        let mut shell = shell.borrow_mut();
+        let _ = shell.state.close_pane_after_child_exit(pane_id);
+        shell.remove_live_surface(pane_id)?;
+        shell.render();
+        shell.focus_selected_surface();
         Ok(())
     }
 

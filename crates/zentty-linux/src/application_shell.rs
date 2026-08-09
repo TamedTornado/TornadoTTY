@@ -178,7 +178,11 @@ impl ApplicationShell {
             last_pane_viewport_height: Cell::new(0),
             action_router: None,
             agent_events,
-            tmux_compat: crate::tmux_compat::TmuxCompatProduct::default(),
+            tmux_compat: crate::tmux_compat::TmuxCompatProduct::persistent(
+                crate::tmux_store::TmuxStoreFile::new(
+                    crate::tmux_store::TmuxStoreFile::default_path()?,
+                ),
+            )?,
         }));
 
         install_sidebar_width_tracking(

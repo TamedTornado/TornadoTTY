@@ -19,7 +19,7 @@ pub enum TeamTransition {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(default, rename_all = "camelCase")]
 pub struct TeamStore {
     version: u32,
     anchors: BTreeMap<String, TeamAnchor>,

@@ -273,12 +273,13 @@ to both real PTYs and tear down every pane, socket, endpoint, and private
 profile process. Endpoint loss is therefore a product-liveness and cleanup
 test, not a simulated agent launch.
 
-`TeamStore` and wait signals are bounded in-memory state owned by the running
-adapter; they do not deserialize a persistent compatibility-store file.
-“Corrupt store” therefore means malformed, oversized, unauthorized, stale, or
-substituted protocol state at the authenticated socket/request boundary. This
-plan must not invent a persistent tmux store merely to create a corruption
-fixture.
+Wait signals are bounded in-memory state owned by the running adapter and are
+discarded on restart. That rule does **not** apply to `TeamStore`. The source
+`TmuxCompatStoreIO` is explicitly file-backed and reloads its versioned JSON
+for each compatibility operation. Treating both stores as ephemeral was a
+source-audit error. Linux must persist team anchors, active-pane compatibility
+selection, and named buffers; corrupt-store evidence therefore exercises the
+real file as well as malformed protocol state.
 
 ## 4. Store and wait-for corrections requiring explicit decisions
 
@@ -291,6 +292,50 @@ rejection, corruption quarantine or recovery, and cleanup.
 
 These are Linux security necessities, not invented user features. Their tests
 must be written before the store implementation.
+
+### Ratified compatibility-store design
+
+The canonical Linux path is
+`$XDG_CONFIG_HOME/zentty/tmux-compat-store.json`, falling back to
+`$HOME/.config/zentty/tmux-compat-store.json`. The product fails explicitly if
+neither root exists or if the selected root, lock, data file, or temporary-file
+boundary is substituted by a symlink. Files are private, bounded, and written
+by same-directory temporary-file replacement followed by file and directory
+sync. One stable adjacent lock file serializes load/modify/save across process
+boundaries with a bounded acquisition deadline; a wedged or hostile writer
+cannot block GTK indefinitely.
+
+The existing `TeamStore` v1 schema remains the only compatibility model. The
+Linux product reloads it while holding the file lock before each operation,
+applies one validated mutation, atomically replaces the file, and updates its
+in-memory read projection only after the durable write succeeds. Missing state
+means v1 empty state. Malformed JSON is preserved under a unique adjacent
+`.corrupt` name before a clean v1 store is created and a diagnostic receipt is
+emitted. A supported JSON shape with an unknown schema version is preserved
+and rejected rather than downgraded or quarantined. Limits are checked before
+allocation and before replacement. No credentials, pane capabilities, socket
+paths, prompts, or transcripts are schema fields.
+
+Atomic file replacement and locking are one reusable core primitive shared
+with persistence policy; the tmux adapter must not grow an unrelated second
+atomic-write implementation. Ordinary CLI clients never access the file. The
+running application remains the compatibility authority, while the file lock
+defines safe behavior for restart, accidental concurrent instances, and
+future multi-window composition.
+
+Construction order is test-first:
+
+1. red core tests for missing/read/replace, maximum size, lock contention,
+   static symlink substitution, atomic-failure preservation, private modes,
+   and corrupt-file preservation;
+2. red `TeamStore` file tests for v1 load, future-version rejection, malformed
+   quarantine, concurrent mutation, bounds, and secret-free serialization;
+3. wire the existing `TmuxCompatProduct` to that one store without adding a
+   daemon, socket, model, actor, or test product;
+4. extend the existing real staged journey to prove the XDG file, buffer
+   survival across a stopped/restarted product, corrupt recovery, fresh socket
+   identity, real Ghostty/PTY behavior, and teardown on X11 and Wayland;
+5. run focused mutation, workspace/static checks, and the authoritative matrix.
 
 ### Ratified `wait-for` design
 

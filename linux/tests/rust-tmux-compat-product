@@ -10,6 +10,16 @@ fail() {
     exit 1
 }
 
+assert_no_child_assertion() {
+    local receipt="$1"
+    local product_log="$2"
+    if [[ -f "${receipt}" ]] && grep -Fq 'tmux-product-child: assertion failed' "${receipt}"; then
+        cat "${product_log}" >&2
+        cat "${receipt}" >&2
+        fail "real product child assertion was masked by normal application shutdown"
+    fi
+}
+
 [[ "${backend}" == x11 || "${backend}" == wayland ]] ||
     fail "GDK_BACKEND must be x11 or wayland"
 [[ -x "${product}" ]] || fail "staged Zentty product is missing: ${product}"
@@ -21,6 +31,8 @@ child="${fixture_root}/child"
 endpoint_receipt="${fixture_root}/endpoint.receipt"
 split_cwd="${fixture_root}/split-cwd"
 restart_log="${fixture_root}/restart.log"
+recovery_log="${fixture_root}/recovery.log"
+tmux_store="${XDG_CONFIG_HOME}/zentty/tmux-compat-store.json"
 mkdir -p -- "${split_cwd}"
 cleanup() {
     rm -rf -- "${fixture_root}"
@@ -42,10 +54,20 @@ if [[ "${ZENTTY_PANE_ID}" == pane-1 && "${ZENTTY_TMUX_RESTART_PROBE:-}" == 1 ]];
     fi
     listed="$("${ZENTTY_CLI_BIN}" __tmux-compat list-panes -F '#{pane_id}')"
     [[ "${listed}" == '%pane-1' ]]
+    [[ "$("${ZENTTY_CLI_BIN}" __tmux-compat show-buffer -b agent)" == named-buffer-real ]]
     umask 077
     printf 'socket=%s\ntoken=%s\ncli=%s\n' \
         "${ZENTTY_INSTANCE_SOCKET}" "${ZENTTY_PANE_TOKEN}" "${ZENTTY_CLI_BIN}" \
         >"${ZENTTY_TMUX_ENDPOINT_RECEIPT}"
+    "${ZENTTY_CLI_BIN}" __tmux-compat kill-pane -t "%${ZENTTY_PANE_ID}"
+    sleep 30
+    exit 1
+fi
+
+if [[ "${ZENTTY_PANE_ID}" == pane-1 && "${ZENTTY_TMUX_RECOVERY_PROBE:-}" == 1 ]]; then
+    [[ -z "$("${ZENTTY_CLI_BIN}" __tmux-compat show-buffer -b agent)" ]]
+    printf recovered-buffer | "${ZENTTY_CLI_BIN}" __tmux-compat set-buffer -b recovered
+    [[ "$("${ZENTTY_CLI_BIN}" __tmux-compat show-buffer -b recovered)" == recovered-buffer ]]
     "${ZENTTY_CLI_BIN}" __tmux-compat kill-pane -t "%${ZENTTY_PANE_ID}"
     sleep 30
     exit 1
@@ -214,6 +236,7 @@ if [[ "${status}" -ne 0 ]]; then
     [[ ! -f "${fixture_root}/child-probe.log" ]] || cat "${fixture_root}/child-probe.log" >&2
     fail "staged product exited ${status}"
 fi
+assert_no_child_assertion "${fixture_root}/child-probe.log" "${log}"
 
 old_socket="$(sed -n 's/^socket=//p' "${endpoint_receipt}")"
 old_token="$(sed -n 's/^token=//p' "${endpoint_receipt}")"
@@ -225,6 +248,24 @@ if env ZENTTY_INSTANCE_SOCKET="${old_socket}" ZENTTY_PANE_TOKEN="${old_token}" \
     "${staged_cli}" __tmux-compat display-message -p '#{pane_id}' >/dev/null 2>&1; then
     fail "stale CLI environment reached the stopped first product instance"
 fi
+[[ -f "${tmux_store}" ]] || fail "first product instance did not publish its XDG compatibility store"
+[[ "$(stat -c %a "${tmux_store}")" == 600 ]] || fail "compatibility store is not private"
+jq -e '
+    .version == 1 and
+    .anchors == {} and
+    .activePaneIDs == {} and
+    .buffers.agent == "named-buffer-real" and
+    .buffers.loaded == "loaded-buffer-real" and
+    (.buffers.default | contains("zentty-capture-real-two"))
+' "${tmux_store}" >/dev/null || fail "first product compatibility store is incomplete"
+if grep -Fq "${old_token}" "${tmux_store}" || grep -Fq "${old_socket}" "${tmux_store}"; then
+    fail "pane capability or instance socket escaped into the compatibility store"
+fi
+for forbidden in credential prompt transcript; do
+    if grep -Fiq "${forbidden}" "${tmux_store}"; then
+        fail "forbidden ${forbidden} field escaped into the compatibility store"
+    fi
+done
 
 set +e
 env -u TMUX -u TMUX_PANE \
@@ -246,6 +287,7 @@ if [[ "${restart_status}" -ne 0 ]]; then
         cat "${fixture_root}/restart-child-probe.log" >&2
     fail "restarted staged product exited ${restart_status}"
 fi
+assert_no_child_assertion "${fixture_root}/restart-child-probe.log" "${restart_log}"
 fresh_socket="$(sed -n 's/^socket=//p' "${endpoint_receipt}")"
 fresh_token="$(sed -n 's/^token=//p' "${endpoint_receipt}")"
 [[ "${fresh_socket}" == /* && "${fresh_socket}" != "${old_socket}" ]] ||
@@ -261,6 +303,33 @@ grep -Fxq 'zentty-linux: tmux-command pane=pane-1 worklane=worklane-1 command=Li
     "${restart_log}" || fail "fresh capability did not route after restart"
 grep -Fxq 'zentty-linux: tmux-command pane=pane-1 worklane=worklane-1 command=KillPane' \
     "${restart_log}" || fail "restarted product did not tear its real pane down"
+
+printf 'not valid tmux JSON\n' >"${tmux_store}"
+set +e
+env -u TMUX -u TMUX_PANE \
+    CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 \
+    ZENTTY_TMUX_PRODUCT_PROBE="${fixture_root}/recovery-child-probe.log" \
+    ZENTTY_TMUX_RECOVERY_PROBE=1 \
+    timeout 10s "${product}" \
+    --command "${child}" \
+    --no-session-restore \
+    --state-directory "${fixture_root}/recovery-state" >"${recovery_log}" 2>&1
+recovery_status=$?
+set -e
+if [[ "${recovery_status}" -ne 0 ]]; then
+    cat "${recovery_log}" >&2
+    fail "corrupt-store recovery product exited ${recovery_status}"
+fi
+assert_no_child_assertion "${fixture_root}/recovery-child-probe.log" "${recovery_log}"
+grep -Fq 'zentty-linux: tmux-store-recovered quarantine=' "${recovery_log}" ||
+    fail "corrupt compatibility store was not quarantined"
+mapfile -t quarantines < <(find "$(dirname "${tmux_store}")" -maxdepth 1 -type f \
+    -name 'tmux-compat-store.json.corrupt.*' -print)
+[[ "${#quarantines[@]}" -eq 1 ]] || fail "corrupt compatibility store receipt count is not exact"
+grep -Fxq 'not valid tmux JSON' "${quarantines[0]}" ||
+    fail "quarantined compatibility store did not preserve exact bytes"
+jq -e '.version == 1 and .buffers.recovered == "recovered-buffer"' \
+    "${tmux_store}" >/dev/null || fail "recovered compatibility store is not valid v1 state"
 
 [[ "$(grep -Fxc 'zentty-linux: tmux-command pane=pane-1 worklane=worklane-1 command=DisplayMessage' "${log}" || true)" -eq 3 ]] || {
     cat "${log}" >&2

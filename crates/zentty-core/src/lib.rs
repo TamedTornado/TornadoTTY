@@ -5,6 +5,7 @@ mod agent_consent;
 mod agent_launch;
 mod agent_protocol;
 mod agent_status;
+mod atomic_file_store;
 mod codex_title;
 mod codex_transcript;
 mod command_palette;
@@ -27,6 +28,7 @@ pub use agent_protocol::{AgentEvent, AgentInteractionKind, AgentProtocolError};
 pub use agent_status::{
     AgentPhase, AgentProgress, AgentStatusStore, PaneAgentStatus, TerminalProgressState,
 };
+pub use atomic_file_store::{AtomicFileAction, AtomicFileStore, AtomicFileStoreError};
 pub use pane_focus_history::PaneReference;
 pub use pane_layout::{PaneLayoutPolicy, PaneRightInsertionBehavior};
 pub use pane_token_registry::{

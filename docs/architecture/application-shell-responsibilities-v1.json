@@ -2,17 +2,18 @@
   "schema_version": 1,
   "contract_id": "zentty-application-shell-responsibilities",
   "source": "crates/zentty-linux/src/application_shell.rs",
-  "source_sha256": "e3e3a63da5800134b9d0a1517bba9fbc57d774cd39b87d93d8c8bee3501d2452",
+  "source_sha256": "f683dc03c81d6f8501f236d240f30718d3c26e4e7f07defe029d65a954b1aa32",
   "owned_source_sha256": {
-    "crates/zentty-linux/src/main.rs": "ead147dfc377ccae13401c5ffa34cef990fea0f40f2c9ee5ad93083c515d2e92",
+    "crates/zentty-linux/src/main.rs": "2ad318b2040c87ddd17ac995468af0614898efe57a7c6479a692fbdcf9605847",
     "crates/zentty-linux/src/agent_runtime.rs": "36f1e38a84955f15ff86f63a24dd50ca07235d288307c3ad6e277890db3afbcc",
     "crates/zentty-linux/src/codex_enrichment.rs": "fe87631c75c04b63962b7f89d311a778a25af8f27a1dcb4d5950b3efcbaa476e",
     "crates/zentty-linux/src/application_shell/action_router.rs": "321a6e71c26effce00b51ccb3d505ce3e329a573246fe6345f57768c7e2138a8",
     "crates/zentty-linux/src/application_shell/agent_events.rs": "12da8738f9cc6902498d6dd836a79ba52025897bad596703d1d336d3ec805e0f",
     "crates/zentty-linux/src/application_shell/pane_runtime.rs": "ceba4e092c567b5d33f72cd4af3ded814e7f2d9490ad0de2a34cccc824a2cc31",
-    "crates/zentty-linux/src/application_shell/tmux_runtime.rs": "edf186209fa86da36fe43579bbb1c79a2c4e5b85105e657968bacbf2645fe54d",
+    "crates/zentty-linux/src/application_shell/tmux_runtime.rs": "b606ec1c2e8c93e1ab40dbac1e5080f28315352e83533d7c63ba7eefd95d0515",
     "crates/zentty-linux/src/persistence_coordinator.rs": "7e76980242a0c25be6bb3a9df411ce9953918b1d94bc1737fe9144d0c3810035",
-    "crates/zentty-linux/src/tmux_compat.rs": "60776f211a0d599aafad1ab6b1cd4c0598a813e14d0514fa523c9ed963ab46f7"
+    "crates/zentty-linux/src/tmux_compat.rs": "471de716c9edcd76a35528e9b17d0d87962b43293c15498f4628346e2efc07aa",
+    "crates/zentty-linux/src/tmux_store.rs": "8447751028f8a8874c222055b7ee1bc369d23f25df5f8bdc7ffcf418e06dac40"
   },
   "tracking": "GH-26",
   "purpose": "Characterize every ApplicationShell field, method, action, authority, and lifecycle edge before extraction; this contract assigns ownership but does not create a second implementation.",
@@ -69,9 +70,9 @@
     {
       "id": "existing_tmux_coordinator",
       "status": "existing",
-      "planned_module": "crates/zentty-linux/src/application_shell/tmux_runtime.rs",
+      "planned_module": "crates/zentty-linux/src/application_shell/tmux_runtime.rs and crates/zentty-linux/src/tmux_store.rs",
       "tracking": "GH-14",
-      "responsibility": "The already extracted bridge from the pure tmux compatibility model to the single product workspace and pane runtime."
+      "responsibility": "The already extracted bridge from the pure tmux compatibility model to the single product workspace and pane runtime, plus the one locked XDG file policy for source-compatible durable tmux state."
     }
   ],
   "field_assignments": [
@@ -202,7 +203,10 @@
       "execute_tmux_command", "execute_tmux_send_keys", "launch_tmux_deferred_pane", "execute_tmux_split",
       "execute_tmux_respawn", "respawn_tmux_surface", "execute_tmux_capture",
       "execute_tmux_kill", "execute_tmux_layout", "close_tmux_panes",
-      "create_tmux_split_surface"
+      "create_tmux_split_surface", "rollback_tmux_split_surface"
+    ],
+    "tmux_store_policy": [
+      "new", "default_path", "path", "load", "mutate", "default_path_from", "decode_store"
     ]
   },
   "action_contract": [

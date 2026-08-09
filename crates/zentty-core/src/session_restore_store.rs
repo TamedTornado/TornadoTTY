@@ -1,17 +1,15 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
-use std::fs::{self, File, OpenOptions};
-use std::io::{self, Write};
+use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
+use crate::atomic_file_store::{AtomicFileStore, AtomicFileStoreError};
 use crate::{SaveReason, SessionRestoreDraftWindow, SessionRestoreEnvelope, WorkspaceRecipe};
-
-static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SessionRestoreStore {
@@ -269,90 +267,27 @@ fn load_json<T: DeserializeOwned>(path: &Path) -> Result<Option<T>, SessionResto
 fn atomic_write_json(path: &Path, value: &impl Serialize) -> Result<(), SessionRestoreStoreError> {
     let bytes =
         serde_json::to_vec(value).map_err(|source| json_error("encode JSON", path, source))?;
-    let parent = path
-        .parent()
-        .filter(|candidate| !candidate.as_os_str().is_empty())
-        .ok_or_else(|| {
-            io_error(
-                "resolve parent",
-                path,
-                io::Error::from(io::ErrorKind::InvalidInput),
-            )
-        })?;
-    fs::create_dir_all(parent)
-        .map_err(|source| io_error("create parent directory", parent, source))?;
-    let (mut file, temp_path) = create_temp(path)?;
-    let mut cleanup = TempCleanup(Some(temp_path.clone()));
-    file.write_all(&bytes)
-        .map_err(|source| io_error("write temporary JSON", &temp_path, source))?;
-    file.sync_all()
-        .map_err(|source| io_error("sync temporary JSON", &temp_path, source))?;
-    drop(file);
-    fs::rename(&temp_path, path).map_err(|source| io_error("replace JSON", path, source))?;
-    cleanup.disarm();
-    File::open(parent)
-        .and_then(|directory| directory.sync_all())
-        .map_err(|source| io_error("sync parent directory", parent, source))?;
-    Ok(())
+    AtomicFileStore::new(path, usize::MAX)
+        .replace_bytes(&bytes)
+        .map_err(|error| atomic_store_error(path, error))
 }
 
-fn create_temp(path: &Path) -> Result<(File, PathBuf), SessionRestoreStoreError> {
-    let parent = path.parent().ok_or_else(|| {
-        io_error(
-            "resolve parent",
-            path,
-            io::Error::from(io::ErrorKind::InvalidInput),
-        )
-    })?;
-    let file_name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| {
-            io_error(
-                "resolve filename",
-                path,
-                io::Error::from(io::ErrorKind::InvalidInput),
-            )
-        })?;
-    for _ in 0..100 {
-        let sequence = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-        let temp_path = parent.join(format!(
-            ".{file_name}.tmp.{}.{sequence}",
-            std::process::id()
-        ));
-        let mut options = OpenOptions::new();
-        options.create_new(true).write(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        match options.open(&temp_path) {
-            Ok(file) => return Ok((file, temp_path)),
-            Err(source) if source.kind() == io::ErrorKind::AlreadyExists => {}
-            Err(source) => return Err(io_error("create temporary JSON", &temp_path, source)),
-        }
-    }
-    Err(io_error(
-        "create temporary JSON",
-        path,
-        io::Error::from(io::ErrorKind::AlreadyExists),
-    ))
-}
-
-struct TempCleanup(Option<PathBuf>);
-
-impl TempCleanup {
-    fn disarm(&mut self) {
-        self.0 = None;
-    }
-}
-
-impl Drop for TempCleanup {
-    fn drop(&mut self) {
-        if let Some(path) = self.0.take() {
-            let _ = fs::remove_file(path);
-        }
+fn atomic_store_error(path: &Path, error: AtomicFileStoreError) -> SessionRestoreStoreError {
+    match error {
+        AtomicFileStoreError::Io {
+            operation,
+            path: error_path,
+            source,
+        } => io_error(
+            if operation == "replace file" {
+                "replace JSON"
+            } else {
+                "persist JSON"
+            },
+            &error_path,
+            source,
+        ),
+        error => io_error("persist JSON", path, io::Error::other(error)),
     }
 }
 

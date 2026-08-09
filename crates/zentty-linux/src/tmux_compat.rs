@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 use zentty_core::{AgentTarget, PaneState, WorklaneState, WorkspaceState};
 use zentty_tmux_compat::{
-    Command, FormatRenderer, PaneTarget, ParsedArguments, SendKeys, TeamStore, TmuxCompatReply,
-    TmuxCompatRequest, WaitForAction, WaitForSignals,
+    Command, FormatRenderer, PaneTarget, ParsedArguments, SendKeys, StoreError, TeamStore,
+    TmuxCompatReply, TmuxCompatRequest, WaitForAction, WaitForSignals,
 };
 
 const DEFAULT_LIST_PANES: &str = "#{pane_id} #{pane_index} #{pane_title} #{?pane_active,*,-}";
@@ -13,6 +13,7 @@ const DEFAULT_SPLIT_PRINT: &str = "#{pane_id}";
 #[derive(Default)]
 pub(crate) struct TmuxCompatProduct {
     store: TeamStore,
+    persistence: Option<crate::tmux_store::TmuxStoreFile>,
     wait_for: WaitForSignals,
 }
 
@@ -78,6 +79,37 @@ pub(crate) struct LayoutPlan {
 }
 
 impl TmuxCompatProduct {
+    pub(crate) fn persistent(
+        persistence: crate::tmux_store::TmuxStoreFile,
+    ) -> Result<Self, String> {
+        let store = persistence.load()?;
+        Ok(Self {
+            store,
+            persistence: Some(persistence),
+            wait_for: WaitForSignals::default(),
+        })
+    }
+
+    pub(crate) fn refresh(&mut self) -> Result<(), String> {
+        if let Some(persistence) = &self.persistence {
+            self.store = persistence.load()?;
+        }
+        Ok(())
+    }
+
+    fn mutate_store<T>(
+        &mut self,
+        mutation: impl FnOnce(&mut TeamStore) -> Result<T, StoreError>,
+    ) -> Result<T, String> {
+        if let Some(persistence) = &self.persistence {
+            let (store, value) = persistence.mutate(mutation)?;
+            self.store = store;
+            Ok(value)
+        } else {
+            mutation(&mut self.store).map_err(|error| error.to_string())
+        }
+    }
+
     pub(crate) fn prepare_respawn(
         state: &WorkspaceState,
         target: &AgentTarget,
@@ -248,14 +280,18 @@ impl TmuxCompatProduct {
         })
     }
 
-    pub(crate) fn complete_kill(&mut self, plan: &KillPlan) -> Option<KillRestoration> {
+    pub(crate) fn complete_kill(
+        &mut self,
+        plan: &KillPlan,
+    ) -> Result<Option<KillRestoration>, String> {
         let width = self
-            .store
-            .remove_pane(&plan.worklane_id, &plan.target_pane_id)?;
-        Some(KillRestoration {
-            leader_pane_id: plan.leader_pane_id.clone()?,
-            width,
-        })
+            .mutate_store(|store| Ok(store.remove_pane(&plan.worklane_id, &plan.target_pane_id)))?;
+        Ok(width.and_then(|width| {
+            Some(KillRestoration {
+                leader_pane_id: plan.leader_pane_id.clone()?,
+                width,
+            })
+        }))
     }
 
     pub(crate) fn prepare_capture(
@@ -300,13 +336,14 @@ impl TmuxCompatProduct {
                 failure("output_limit", "tmux compatibility output limit exceeded")
             });
         }
-        self.store.set_buffer("default", &text).map_or_else(
-            |error| failure("store_limit", error.to_string()),
-            |()| {
-                TmuxCompatReply::success(String::new())
-                    .expect("empty compatibility output fits protocol limits")
-            },
-        )
+        self.mutate_store(|store| store.set_buffer("default", &text))
+            .map_or_else(
+                |error| failure("store_failed", error),
+                |()| {
+                    TmuxCompatReply::success(String::new())
+                        .expect("empty compatibility output fits protocol limits")
+                },
+            )
     }
 
     pub(crate) fn prepare_split(
@@ -382,14 +419,17 @@ impl TmuxCompatProduct {
         plan: &SplitPlan,
         new_pane_id: &str,
         pre_team_leader_width: Option<u32>,
-    ) {
-        let _ = self.store.record_split(
-            &plan.worklane_id,
-            &plan.leader_pane_id,
-            new_pane_id,
-            plan.detached,
-            pre_team_leader_width,
-        );
+    ) -> Result<(), String> {
+        self.mutate_store(|store| {
+            let _ = store.record_split(
+                &plan.worklane_id,
+                &plan.leader_pane_id,
+                new_pane_id,
+                plan.detached,
+                pre_team_leader_width,
+            );
+            Ok(())
+        })
     }
 
     pub(crate) fn split_reply(
@@ -587,7 +627,11 @@ impl TmuxCompatProduct {
             .collect::<Vec<_>>();
         let parsed = parsed(arguments, &["-t", "-T"], &["-P"]);
         let pane_id = PaneTarget::resolve(parsed.value("-t"), &pane_ids, &target.pane_id);
-        self.store.record_active_pane(&target.worklane_id, &pane_id);
+        self.mutate_store(|store| {
+            store.record_active_pane(&target.worklane_id, &pane_id);
+            Ok(())
+        })
+        .map_err(|error| ("store_failed", error))?;
         if let Some(title) = parsed
             .value("-T")
             .map(str::trim)
@@ -655,13 +699,14 @@ impl TmuxCompatProduct {
         standard_input: Option<&str>,
     ) -> Result<String, (&'static str, String)> {
         let parsed = parsed(arguments, &["-b"], &[]);
-        self.store
-            .set_buffer(
+        self.mutate_store(|store| {
+            store.set_buffer(
                 parsed.value("-b").unwrap_or("default"),
                 standard_input.unwrap_or(""),
             )
-            .map(|()| String::new())
-            .map_err(|error| ("store_limit", error.to_string()))
+        })
+        .map(|()| String::new())
+        .map_err(|error| ("store_failed", error))
     }
 }
 
@@ -843,6 +888,31 @@ mod tests {
     use zentty_core::AgentTarget;
     use zentty_core::WorkspaceState;
     use zentty_tmux_compat::TmuxCompatRequest;
+
+    struct PersistentStoreFixture(std::path::PathBuf);
+
+    impl PersistentStoreFixture {
+        fn new() -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "zentty-tmux-product-persistence-{}-{:?}",
+                std::process::id(),
+                std::thread::current().id()
+            ));
+            let _ = std::fs::remove_dir_all(&path);
+            std::fs::create_dir(&path).unwrap();
+            Self(path)
+        }
+
+        fn store(&self) -> crate::tmux_store::TmuxStoreFile {
+            crate::tmux_store::TmuxStoreFile::new(self.0.join("store.json"))
+        }
+    }
+
+    impl Drop for PersistentStoreFixture {
+        fn drop(&mut self) {
+            std::fs::remove_dir_all(&self.0).unwrap();
+        }
+    }
 
     fn request(command: &str, arguments: &[&str]) -> TmuxCompatRequest {
         TmuxCompatRequest::new(
@@ -1212,7 +1282,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(first.pane_ids, ["teammate-1"]);
-        assert_eq!(product.complete_kill(&first), None);
+        assert_eq!(product.complete_kill(&first), Ok(None));
 
         let final_teammate = product
             .prepare_kill(
@@ -1223,10 +1293,10 @@ mod tests {
             .unwrap();
         assert_eq!(
             product.complete_kill(&final_teammate),
-            Some(KillRestoration {
+            Ok(Some(KillRestoration {
                 leader_pane_id: "leader".to_owned(),
                 width: 777,
-            })
+            }))
         );
 
         let _ = product
@@ -1240,7 +1310,7 @@ mod tests {
             .unwrap();
         assert_eq!(leader.target_pane_id, "leader");
         assert_eq!(leader.pane_ids, ["teammate-1", "teammate-2", "leader"]);
-        assert_eq!(product.complete_kill(&leader), None);
+        assert_eq!(product.complete_kill(&leader), Ok(None));
         assert!(product.store.anchor("lane-1").is_none());
 
         let missing = product.prepare_kill(
@@ -1366,6 +1436,41 @@ mod tests {
             &request("show-buffer", &["-b", "default"]),
         );
         assert_eq!(default.stdout(), Some("default-value"));
+    }
+
+    #[test]
+    fn persistent_product_loads_on_construction_and_refreshes_external_mutations() {
+        let fixture = PersistentStoreFixture::new();
+        let mut first = TmuxCompatProduct::persistent(fixture.store()).unwrap();
+        let mut state = workspace();
+        let set = first.handle(
+            &mut state,
+            &target("pane-1"),
+            &request_with_input("set-buffer", &["-b", "agent"], "first"),
+        );
+        assert_eq!(set.stdout(), Some(""));
+
+        let mut second = TmuxCompatProduct::persistent(fixture.store()).unwrap();
+        let loaded = second.handle(
+            &mut state,
+            &target("pane-1"),
+            &request("show-buffer", &["-b", "agent"]),
+        );
+        assert_eq!(loaded.stdout(), Some("first"));
+        let changed = second.handle(
+            &mut state,
+            &target("pane-1"),
+            &request_with_input("set-buffer", &["-b", "agent"], "second"),
+        );
+        assert_eq!(changed.stdout(), Some(""));
+
+        first.refresh().unwrap();
+        let refreshed = first.handle(
+            &mut state,
+            &target("pane-1"),
+            &request("show-buffer", &["-b", "agent"]),
+        );
+        assert_eq!(refreshed.stdout(), Some("second"));
     }
 
     #[test]
@@ -1502,7 +1607,9 @@ mod tests {
         let mut rendered_state = state.clone();
         assert!(rendered_state.split_focused_pane_right("pane-team-1"));
         assert!(rendered_state.select_worklane_and_pane("lane-1", "pane-1"));
-        product.record_split(&first, "pane-team-1", Some(720));
+        product
+            .record_split(&first, "pane-team-1", Some(720))
+            .unwrap();
         assert_eq!(
             product
                 .split_reply(&rendered_state, &first, "pane-team-1")
