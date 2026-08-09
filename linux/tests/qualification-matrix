@@ -11,7 +11,10 @@ source "${repo_root}/linux/tests/lib/valgrind-report"
 source "${repo_root}/linux/tests/lib/controlled-environment"
 # shellcheck source=linux/tests/lib/qualification-outcome
 source "${repo_root}/linux/tests/lib/qualification-outcome"
+# shellcheck source=linux/tests/lib/bounded-batch
+source "${repo_root}/linux/tests/lib/bounded-batch"
 validate_only=false
+qualification_jobs="${ZENTTY_QUALIFICATION_JOBS:-4}"
 
 allowed_tiers='["local","release","full"]'
 allowed_displays='["none","wayland","x11","both"]'
@@ -30,6 +33,11 @@ fail() {
     echo "qualification-matrix: error: $*" >&2
     exit 1
 }
+
+[[ "${qualification_jobs}" =~ ^[1-9][0-9]*$ ]] ||
+    fail "ZENTTY_QUALIFICATION_JOBS must be a positive integer"
+(( qualification_jobs <= 32 )) ||
+    fail "ZENTTY_QUALIFICATION_JOBS must not exceed 32"
 
 if ! "${validate_only}"; then
     command -v flock >/dev/null || fail "flock is required"
@@ -134,6 +142,18 @@ invalid_explanations="$(jq -r '.cells[] | select((.status == "BLOCKED" and ((.pr
 
 invalid_commands="$(jq -r '.cells[] | select((.status == "PASS" or .status == "XFAIL") and ((.command // "") | length) == 0) | .id' "${matrix}")"
 [[ -z "${invalid_commands}" ]] || fail "executable cells without commands: ${invalid_commands}"
+
+invalid_execution="$(jq -r '.cells[] | select((.execution // "parallel") != "parallel" and (.execution // "parallel") != "serial") | .id + "=" + (.execution | tostring)' "${matrix}")"
+[[ -z "${invalid_execution}" ]] || fail "cells with unknown execution policy: ${invalid_execution}"
+unsafe_parallel_cells="$(jq -r '.cells[] | select(
+    (.status == "PASS" or .status == "XFAIL") and
+    ((has("valgrind_report") or (.suppression_review_governance // false) or
+      ((.command // "") | contains("linux/scripts/build-local")) or
+      ((.command // "") | contains("linux/scripts/build-abi-mismatch-fixture"))) and
+     (.execution // "parallel") != "serial")
+) | .id' "${matrix}")"
+[[ -z "${unsafe_parallel_cells}" ]] ||
+    fail "resource-mutating cells must declare serial execution: ${unsafe_parallel_cells}"
 
 invalid_environment_profiles="$(jq -r '
     def executable: .status == "PASS" or .status == "XFAIL";
@@ -469,10 +489,17 @@ matrix_ibus_environment_json() {
     ' "${report}"
 }
 
-results='[]'
-run_failed=false
-retained_valgrind_evidence_lock_fd=""
-while IFS= read -r cell; do
+run_qualification_cell() {
+    local cell="$1"
+    local result_path="$2"
+    local id status command expected_exit_code valgrind_report environment_profile
+    local cell_optimize cell_display expected_valgrind_scenario is_suppression_governance
+    local outcome exit_code valgrind environment log_identity valgrind_report_identity
+    local cell_evidence_lock_fd cell_evidence_lock_acquired retain_cell_evidence_lock
+    local environment_capture_span_seconds log environment_report cell_started_at_epoch
+    local code expected_raw_receipt expected_suppressed_receipt result
+    local -a shell_command sanitized_environment cell_command
+
     id="$(jq -r '.id' <<<"${cell}")"
     status="$(jq -r '.status' <<<"${cell}")"
     command="$(jq -r '.command // empty' <<<"${cell}")"
@@ -720,7 +747,6 @@ while IFS= read -r cell; do
                 exec {cell_evidence_lock_fd}>&-
             fi
         fi
-        printf '%-62s %s\n' "${id}" "${outcome}"
     fi
 
     result="$(jq -cn \
@@ -739,8 +765,101 @@ while IFS= read -r cell; do
         if $environment == null then {} else {environment: $environment} end +
         if $valgrind == null then {} else {valgrind: $valgrind, valgrind_report: $valgrind_report} end
     ')"
+    printf '%s\n' "${result}" >"${result_path}"
+}
+
+run_qualification_worker() {
+    local cell="$1"
+    local id result_path worker_code worker_log worker_log_identity
+    id="$(jq -r '.id' <<<"${cell}")"
+    result_path="${cell_results_directory}/${id}.json"
+    set +e
+    (run_qualification_cell "${cell}" "${result_path}")
+    worker_code=$?
+    set -e
+    if (( worker_code == 0 )); then
+        return 0
+    fi
+
+    worker_log="${logs_dir}/${id}.log"
+    printf 'qualification-matrix: cell worker exited unexpectedly: %s\n' \
+        "${worker_code}" >>"${worker_log}"
+    worker_log_identity="$(jq -cn \
+        --arg path "${worker_log}" \
+        --arg sha256 "$(sha256sum "${worker_log}" | awk '{print $1}')" \
+        '{path:$path,sha256:$sha256}')"
+    jq -cn \
+        --arg id "${id}" \
+        --arg declared "$(jq -r '.status' <<<"${cell}")" \
+        --argjson exit_code "${worker_code}" \
+        --argjson log "${worker_log_identity}" \
+        '{id:$id,declared_status:$declared,outcome:"FAIL",exit_code:$exit_code,log:$log}' \
+        >"${result_path}"
+    return 0
+}
+
+results='[]'
+run_failed=false
+retained_valgrind_evidence_lock_fd=""
+cell_results_directory="$(mktemp -d "${logs_dir}/.cell-results.XXXXXX")"
+trap 'rm -rf -- "${cell_results_directory}"' EXIT
+
+append_cell_result() {
+    local result_path="$1"
+    local result id outcome
+    result="$(jq -ce . "${result_path}")" ||
+        fail "qualification worker did not publish a valid result: ${result_path}"
+    id="$(jq -r '.id' <<<"${result}")"
+    outcome="$(jq -r '.outcome' <<<"${result}")"
+    if jq -e 'has("log")' <<<"${result}" >/dev/null; then
+        printf '%-62s %s\n' "${id}" "${outcome}"
+    fi
+    if zentty_qualification_outcome_failed "${outcome}"; then
+        run_failed=true
+    fi
     results="$(jq -cn --argjson results "${results}" --argjson result "${result}" '$results + [$result]')"
-done < <(jq -c '.cells | sort_by(.order, .id)[]' "${matrix}")
+}
+
+while IFS= read -r order; do
+    mapfile -t order_cells < <(jq -c --argjson order "${order}" \
+        '.cells | map(select(.order == $order)) | sort_by(.id)[]' "${matrix}")
+
+    # Artifact producers and governed evidence cells execute in the parent so
+    # the Valgrind governance lease can remain open through summary publication.
+    for cell in "${order_cells[@]}"; do
+        if [[ "$(jq -r '.execution // "parallel"' <<<"${cell}")" != "serial" ]]; then
+            continue
+        fi
+        id="$(jq -r '.id' <<<"${cell}")"
+        result_path="${cell_results_directory}/${id}.json"
+        run_qualification_cell "${cell}" "${result_path}"
+        append_cell_result "${result_path}"
+    done
+
+    parallel_cells=()
+    for cell in "${order_cells[@]}"; do
+        if [[ "$(jq -r '.execution // "parallel"' <<<"${cell}")" == "parallel" ]]; then
+            parallel_cells+=("${cell}")
+        fi
+    done
+    if ! zentty_run_bounded_batch "${qualification_jobs}" \
+        run_qualification_worker "${parallel_cells[@]}"; then
+        run_failed=true
+    fi
+    for cell in "${parallel_cells[@]}"; do
+        id="$(jq -r '.id' <<<"${cell}")"
+        append_cell_result "${cell_results_directory}/${id}.json"
+    done
+done < <(jq -r '[.cells[].order] | unique | sort[]' "${matrix}")
+
+results="$(jq -cn --argjson matrix "$(jq -c . "${matrix}")" --argjson results "${results}" '
+    $matrix.cells as $cells |
+    $results | sort_by(. as $result |
+      ($cells | map(select(.id == $result.id))[0].order), $result.id)
+')"
+
+rm -rf -- "${cell_results_directory}"
+trap - EXIT
 
 jq -e '
     all(.[] | select(has("environment"));

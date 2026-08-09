@@ -366,6 +366,36 @@ final diff has been reviewed; dogfood
 contains final hashes and totals; only then may the slice be committed and
 pushed.
 
+## 5.1 2026-08-09 bounded qualification-runtime follow-up
+
+The authoritative matrix remains one runner and one result schema, but its
+current implementation executes every cell serially. That is not required by
+the evidence model and makes the real-system milestone gate needlessly slow.
+
+The bounded repair is an order-barrier scheduler inside
+`linux/tests/qualification-matrix`:
+
+1. Matrix `order` remains the dependency barrier. No cell at a later order may
+   start until every executable cell at the current order has finished.
+2. Independent non-Valgrind cells at one order may run concurrently, with a
+   default maximum of four workers and an explicit positive-integer
+   `ZENTTY_QUALIFICATION_JOBS` override.
+3. Artifact-mutating build cells, Valgrind producers, and suppression
+   governance remain serial. Governance retains its evidence lease through
+   summary publication exactly as before.
+4. Each cell continues to own one log and one controlled-environment receipt.
+   Worker completion order must not affect human output, result ordering,
+   evidence hashes, totals, or qualification claims.
+5. A failed worker must become that cell's ordinary machine-readable failure;
+   it must not abort collection of sibling results or create a partial passing
+   summary.
+6. The existing runner is refactored, not duplicated. No second matrix,
+   compositor wrapper, product actor, retry layer, or cached-pass mechanism is
+   allowed.
+7. Runner tests must cover invalid job counts, bounded concurrency, order
+   barriers, deterministic result order, worker failure propagation, and
+   serial resource classes before the optimized entrypoint is accepted.
+
 ## 6. Acceptance criteria
 
 ### Architecture

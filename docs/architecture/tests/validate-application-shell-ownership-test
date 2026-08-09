@@ -100,7 +100,7 @@ jq '(.owned_module_functions.persistence_coordinator) |= map(select(. != "save_c
 expect_failure missing-persistence-function "persistence coordinator function inventory differs" \
     "ZENTTY_APPLICATION_SHELL_OWNERSHIP_CONTRACT=${temp_dir}/missing-persistence-function.json"
 
-sed '/persistence: SnapshotPersistence,/a\    shadow_store: SessionRestoreStore,' \
+sed '/worker: PersistenceWorker,/a\    shadow_store: SessionRestoreStore,' \
     "${persistence_file}" >"${temp_dir}/shadow-persistence-store.rs"
 expect_failure shadow-persistence-store "persistence coordinator source hash" \
     "ZENTTY_PERSISTENCE_COORDINATOR_SOURCE=${temp_dir}/shadow-persistence-store.rs"

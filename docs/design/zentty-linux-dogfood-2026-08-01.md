@@ -10469,6 +10469,243 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   `24cda193c1f0493bc961fc4de368ae02a798cb77`; Ghostty identity, qualification
   receipts, totals, and decisions were unchanged.
 
+### DOGFOOD-2026-08-09-DEVELOPER-PREVIEW-CONVERGENCE: recovery is the next product blocker
+
+- **Manager-facing roadmap correction:** The current branch is a usable
+  developer-preview candidate, not a parity-complete release. The authoritative
+  initial-release inventory still contains two implemented, eighteen partial,
+  two model-only, and twelve not-implemented entries. Qualification contains
+  twenty-one `NOT_IMPLEMENTED` cells; those are test-environment/product
+  capability cells rather than a second feature count.
+- **Decomposition reconciliation:** GH-26, GH-27, GH-29, GH-30, and GH-31 are
+  closed with pushed evidence. GH-25 and GH-28 remain open for one deliberately
+  unclaimed native-constructor-null test boundary. No further architecture
+  extraction is justified by the developer-preview milestone; the gap must
+  remain explicit rather than causing another speculative test system.
+- **Next source-backed slice:** GH-3/GH-6 restart and crash recovery is the
+  highest-value daily-driver blocker. Linux currently writes a synchronous
+  clean-exit snapshot and marks launch dirty, but does not write the source's
+  debounced live snapshot, does not consume a successfully prepared restore,
+  and terminates on an unreadable snapshot instead of reporting it and opening
+  a fresh workspace. A crash after topology changes therefore has no current
+  recovery artifact.
+- **Test-first boundary:** Add focused deterministic scheduler/store tests and
+  extend the existing real staged-product restoration journey. The product
+  journey must mutate topology through real GTK input, wait for the real 350 ms
+  debounce, kill the delivered process, relaunch it through the controlled
+  compositor, and assert the recovered real Ghostty/PTTY topology. No embedded
+  exercise mode, fake terminal, second persistence implementation, retry, or
+  ambient desktop dependency is permitted.
+- **Qualification cadence:** Development uses the affected core, coordinator,
+  architecture, and real-product cells. The complete executable matrix is a
+  milestone gate after the coherent recovery batch, not an inner edit loop.
+- **The focused tests began red:** New coordinator tests failed to compile
+  because there was no launch-completion consumption, launch warning, live
+  observation, or debounce flush API. That red boundary preceded production
+  changes. Ten final coordinator tests cover exact 349/350 ms boundaries,
+  deadline reset, unchanged observations, successful consumption, corrupt
+  preparation, meaningfulness/normal-restore deletion, asynchronous error return,
+  clean-save ordering, validation failure, and terminal save failure.
+- **Live writes do not block GTK:** The first working draft called the atomic
+  store from the GLib timeout. Review rejected that as a daily-driver latency
+  risk even though the files are small. The sole `PersistenceCoordinator` now
+  owns one named ordered worker around the existing sole
+  `SnapshotPersistence`; the GLib owner only snapshots serializable model
+  state and enqueues after 350 ms of quiet. Clean exit is an ordered
+  synchronous barrier behind pending live work. No second store, schema,
+  serializer, async runtime, backup, or journal was introduced.
+- **Source lifecycle semantics are now present:** A successful prepared restore
+  is consumed after the real shell presents and before its replacement live
+  save. Unreadable input is reported without aborting GTK startup; the fresh
+  model's next live request replaces or deletes the bad bytes. Live and clean
+  requests share source-compatible meaningfulness/normal-restore filtering and
+  monotonically accepted generations. Launch is marked unclean before Ghostty
+  or GTK initialization, and only an accepted clean snapshot/delete can mark
+  it clean.
+- **The reboot exposed an external X socket prerequisite:** The sandbox view
+  presented `/tmp/.X11-unix` as `nobody:nogroup`, so the first nested-X11
+  attempt honestly failed before product startup. The standard root ownership
+  was restored and the GUI journey was run outside the filesystem sandbox;
+  environmental absence was not converted to PASS or repaired in product
+  code.
+- **Two new journey assertions were wrong, not the product:** Restored optional
+  worklane titles are logged as `title=none`, not their display fallback, so
+  the first crash relaunch already had exact topology while the assertion
+  expected `Worklane 1/2`. Separately, a fresh shell promptly acquires a live
+  terminal title, making that workspace meaningful; the corrupt-state repair
+  correctly replaced bad bytes with a valid live envelope rather than deleting
+  the file. Both assertions now test the actual source model contract.
+- **Real crash recovery passes on both compositors:** The consolidated existing
+  restoration journey creates worklane 2 through the visible command palette,
+  waits for the real asynchronous live envelope, verifies the dirty marker,
+  records the real PTY children, kills the delivered process with `SIGKILL`,
+  rejects surviving children, and relaunches with normal restoration disabled.
+  Exact two-lane/two-pane topology and both real Ghostty PTYs recover; clean
+  shutdown then marks the lifecycle clean. X11 session is
+  `602813278a0ec54cc33497b5af65f6f626a2975781bbaa405c3e07cbaf7c1c3f`.
+  Wayland input session is
+  `bc1bafcfbad83723d22bcf7c21fd47e5499cef2345a82fd57cea45e5094fe870`
+  over controlled X11 transport
+  `dda91c2388a521c09399ad1c762cc7d170d10dddb03d8ffbaa85aa769e962d04`.
+- **The pre-gate focused mutation campaign completed under the safe-copy policy:** An initial
+  multi-job run lost its coordinator before final receipt publication and is
+  not evidence. The complete single-job rerun used the governed
+  `gitignore=true`, `copy_target=false` wrapper and tested all sixteen selected
+  debounce/observation/consumption/request mutants: fifteen caught, one
+  compiler-unviable, zero missed or timed out. `outcomes.json` SHA-256 is
+  `b70dd8e3a494851a0f37fa7ef82aaa34e62c80fed2bf45294f5ac2bc567ec523`.
+  That final selected rerun skipped cargo-mutants' redundant baseline only
+  after the unchanged focused baseline had passed; the complete workspace
+  gate passed again afterward.
+- **Final code review removed a production-only panic path:** The debounce
+  flush had used `expect` after inspecting the pending snapshot by reference.
+  Although the single-threaded coordinator made the condition invariant, the
+  panic added no value at a persistence boundary. It now handles an absent
+  pending value as the same explicit no-op result as the initial check.
+- **The governance rerun found one stale negative fixture:** The ownership
+  self-test still inserted a shadow store after the coordinator's removed
+  synchronous `persistence` field, so its `sed` mutation became a no-op and
+  unexpectedly passed. It now inserts the forbidden store beside the real
+  worker field and again proves the validator rejects the duplicate authority.
+  The first workspace-test invocation also failed exactly where expected in
+  the restricted network namespace because real Unix sockets cannot bind
+  there; the same unchanged suite passed outside that namespace. Neither
+  environmental failure was retried into a PASS without diagnosis.
+- **Inventory promotion is narrow:** `workspace.crash-recovery` moves from
+  `MODEL_ONLY` to `IMPLEMENTED`; all-scope totals are now `IMPLEMENTED=3`,
+  `PARTIAL=22`, `MODEL_ONLY=1`, and `NOT_IMPLEMENTED=34`. The broader workspace
+  qualification cells remain `NOT_IMPLEMENTED` because multiple windows,
+  divider/resize persistence, and complete CWD launch coverage are still real
+  gaps. No matrix total or release/full qualification claim is promoted by
+  this focused slice.
+- **The milestone gate rejected an ambient tool upgrade:** The first complete
+  rerun passed the recovery and product cells but correctly failed both agent
+  integration cells before their journeys because ambient `gemini` was 0.54.4
+  while the reviewed real-CLI contract pins 0.53.0. This was not converted to
+  a pass and the product was not changed. The exact 0.53.0 prerequisite was
+  reprovisioned in gitignored `build/linux-deps` with pnpm, an npmrc
+  `minimum-release-age=10080`, and explicit approval of only the reviewed
+  `node-pty` and `@github/keytar` build scripts. The matrix is rerun with that
+  executable first on `PATH`; ambient latest-version drift remains forbidden.
+- **The second gate found a real cross-feature persistence regression:** With
+  the correct Gemini prerequisite, Wayland passed and X11 reached the installed
+  Codex journey, where a clean launch made with `--no-session-restore` failed
+  to publish its pane-scoped Codex resume draft. The new common filter had
+  treated the launch-only normal-workspace restore switch as authority to
+  delete every snapshot. That contradicted the existing real Codex contract:
+  agent resume drafts remain durable even when ordinary workspace restoration
+  is skipped. The common request builder now deletes a disabled or pristine
+  workspace only when it has no agent restore drafts. Unit coverage pins both
+  sides, and the repaired real Codex/PTTY/hook/socket/relaunch journey passed
+  in nested X11 session
+  `c192517b6496ba7bf651fb13f6c325e0c417f056d47e6703446c9616bea0fce1`.
+- **The persistence repair was mutation-tested again, not grandfathered:** A
+  first rerun incorrectly classified all nineteen mutants unviable because the
+  safe scratch copy intentionally omitted `build/` and the command omitted the
+  required absolute `GHOSTTY_LIB_DIR`; that receipt is rejected. With the
+  pinned library supplied externally, the final campaign caught eighteen
+  mutants, classified one compiler-unviable, and missed or timed out none.
+  The final `outcomes.json` SHA-256 is
+  `541fdd1d93c1d4bd28a7116e2700c60c33757cfd178fabf13271a2eb0fed5429`.
+- **The repaired serial milestone gate passed, but its runtime is a defect:**
+  The third complete run passed every executable cell (`PASS=88`, `FAIL=0`,
+  `BLOCKED=7`, `XFAIL=1`, `NOT_IMPLEMENTED=21`) and accepted the reviewed
+  suppression set. It also confirmed that the runner spends roughly twenty
+  minutes serializing independent controlled sessions. The operator rejected
+  that architecture. A bounded order-barrier scheduler is documented in the
+  consolidation plan: four independent cells may execute concurrently, while
+  builds, Valgrind, and governance remain serialized. It must preserve one
+  matrix, deterministic receipts, exact failure reporting, and every real
+  system boundary; this is a runtime repair, not reduced qualification.
+- **The first parallel receipt was correct but not good enough:** The
+  four-worker order-barrier implementation preserved all 88 passing executable
+  cells, the one expected XFAIL, deterministic evidence, and accepted
+  suppression governance, but still took 968 seconds. Review found two wasted
+  serialization points: fixed-size batches waited for their slowest member
+  before refilling an idle slot, and the independent support validators still
+  ran one at a time. The shared bounded primitive is now work-conserving while
+  retaining the matrix-order barrier. `qualify-local` uses the same primitive
+  for independent support validators and keeps the Ghostty ABI checkout probe
+  serial. Focused tests prove the worker limit, immediate refill, complete
+  sibling reaping after failure, invalid job-count rejection, deterministic
+  resource policy, and serial classification of build/Valgrind/governance
+  cells. No product journey or assertion was removed.
+- **The work-conserving authoritative rerun passed:** The optimized
+  `qualify-local` completed in 854 seconds versus 968 seconds for the first
+  fixed-batch implementation, while retaining actual outcomes `PASS=88`,
+  `FAIL=0`, `BLOCKED=7`, `XFAIL=1`, and `NOT_IMPLEMENTED=21`. Implemented-local,
+  product-boundary, and qualification-host-retirement claims pass; release and
+  full qualification correctly remain false because declared gaps remain. The
+  machine-summary SHA-256 is
+  `45cc11e1002e63f3949b4b9c91b21cad85c0aa41a76d6ad205b9c531d205fc56`.
+  Agent integration passed in controlled Wayland session
+  `45d02d0671758381cda77f7079ea60e277867cf2d3ffde3a5aa053e8999e81e4`
+  and X11 session
+  `1421ffef799ac1d6a1d08f7a19a60f9dfc6839a7ab048e5f7a8a886d0ce314b4`.
+- **The remaining critical path is explicit:** Parallelism cannot hide the
+  complete pinned Ghostty regression cell, which alone consumed 333 seconds,
+  and builds plus the governed Valgrind producer remain deliberately serial.
+  Removing or caching those real checks would weaken the milestone gate, so
+  this slice does neither. Further material reduction requires a separately
+  reviewed local-versus-release cadence or an isolated concurrent Ghostty
+  build lane, not more opportunistic shell backgrounding.
+- **Final Valgrind remains PASS with reviewed suppressions:** Preserved raw
+  evidence reports 427 errors/contexts, 6,160 definite bytes, and 41,396
+  indirect bytes. Post-suppression evidence reports zero errors/contexts and
+  zero definite/indirect bytes, with all 427 contexts accounted for by the
+  governed set. Report, raw, and suppressed SHA-256 values are respectively
+  `f5eb78aad43b62aeb4f66bd6d413b903b8702807b7c24ece8a53ce49531b7ed7`,
+  `f4e0fe6ae7df64d44c5b80392860d1e5dbbe0cc7a5f9d0c68f8f3bd575bcc68e`,
+  and `149c9400ff13f180f4a4745dcb44b8adce961098a9c6f1eb9596ef69a983c1bf`.
+  This is not an unsuppressed-clean claim.
+- **The post-matrix formatting gate caught one final drift:** Rustfmt required
+  the new compound restore-filter condition on one line. The full Rust tests
+  and strict Clippy had already passed, but publication stopped rather than
+  exempting the formatting failure. The formatting-only repair updates the
+  governed ownership hash and triggers the final authoritative rerun; the
+  prior summary remains historical evidence, not the publication receipt.
+- **Governance rejected real Pango-root byte variance after formatting:** The
+  formatting-only rerun preserved exactly two layout-cache root contexts and
+  the separately governed 31 child allocations/992 bytes, but the root total
+  was 25,723 bytes instead of the previously observed 26,135–26,208 range.
+  Raw Valgrind still reported 427 contexts and the same reviewed stacks; no
+  suppression rule, match count, scenario, library, or child relationship
+  changed. This is indirect cache-root byte variance, not a new finding or a
+  stale rule. The manifest minimum now includes the newly preserved receipt
+  while retaining the existing maximum and exact context count. Governance
+  still fails on any count increase, bytes above the reviewed maximum, use in
+  another scenario, stale match, or untracked rule. The suppression itself was
+  not broadened.
+- **The next governed check exposed the paired child variant:** The same low
+  layout-root receipt contained two metrics-cache string contexts/4,506 bytes
+  instead of the previously reviewed four/4,618. A fresh controlled producer
+  run immediately returned the high variant: layout root 26,208 bytes and
+  metrics strings four/4,618, while both runs retained two metrics roots,
+  one node graph/8,256 bytes, 32 child nodes/1,024 bytes, and identical IBus
+  contexts. The non-Ghostty GTK/IBus semantic reproducer passed in that same
+  producer. Governance now names exactly the two observed string variants
+  (2–4 contexts, 4,506–4,618 bytes), keeps the prior maximum, requires the
+  metrics root, and still rejects zero matches as stale. This changes only the
+  reviewed manifest range; no Valgrind suppression expression changed.
+- **Final publication receipt:** The exact formatted tree and reviewed
+  suppression manifest completed `qualify-local` in 858 seconds with actual
+  outcomes `PASS=88`, `FAIL=0`, `BLOCKED=7`, `XFAIL=1`, and
+  `NOT_IMPLEMENTED=21`; implemented-local, product-boundary, and host-
+  retirement claims pass, while release and full qualification correctly do
+  not. The authoritative summary SHA-256 is
+  `e21fd71e91c0eb0de6633cfa76c4b048e51fd621e6265e1434d7754d1f1a7b17`.
+  Controlled agent sessions were Wayland
+  `6db0d5585b82ed34cc9d180a1751d4aca051f38fb542da7cae8337ab2f2999e5`
+  and X11
+  `ad8148e868c42d294b1e5170bd4cd3e4e3141b7d72ec2f24418b2c480ab08b8f`.
+  Valgrind is **PASS with reviewed suppressions**, not unsuppressed clean: raw
+  totals are 427 errors/contexts, 5,920 definite bytes, and 41,329 indirect
+  bytes; post-suppression totals are zero with all 427 contexts accounted for.
+  Report, raw, and suppressed SHA-256 values are respectively
+  `9a0aecc01e7fb8c28457e1256250427f1a5e32ac220e4b30db34f5b554b81b8f`,
+  `c983dd5f6164c8b25a6ec92896ccae41cf15f7ec0494d3db8b627c6868bf74e9`,
+  and `a900e9448fae6a4af0e67d1290814b9e1b8bdd4a62bfdcffaab98e9488f16ed3`.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were

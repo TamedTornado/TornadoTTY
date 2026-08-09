@@ -44,10 +44,10 @@
       "origin": "PORT_PARITY",
       "user_impact": "A crash would lose all current worklanes or repeatedly relaunch a corrupt snapshot.",
       "linux_owner_issue": 6,
-      "implementation_status": "MODEL_ONLY",
+      "implementation_status": "IMPLEMENTED",
       "focused_tests": ["crates/zentty-core/tests/session_restore_store.rs"],
-      "product_scenarios": [],
-      "test_plan": "Kill the installed product after a persisted mutation, relaunch it, assert exact restored topology, and distinguish corrupt-snapshot failure from success.",
+      "product_scenarios": ["linux/tests/rust-session-restore"],
+      "test_plan": "The staged product mutates topology through real GTK input, waits for the asynchronous 350 ms live snapshot, dies by SIGKILL, relaunches on both controlled X11 and Wayland with normal restoration disabled, restores exact real Ghostty/PTTY topology, consumes the prepared snapshot, and replaces corrupt bytes after reporting a fresh-workspace fallback.",
       "alternative_or_blocker": null
     },
     {

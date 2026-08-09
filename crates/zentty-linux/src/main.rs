@@ -22,11 +22,11 @@ use application_shell::ApplicationShell;
 use gtk::glib;
 use gtk::prelude::*;
 use persistence_coordinator::{PersistenceCoordinator, default_state_directory};
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::rc::Rc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use zentty_core::{PaneRestoreDraft, WindowRecipe};
 use zentty_ghostty::{AsyncBackend, GhosttyRuntime};
 
@@ -102,6 +102,8 @@ fn run_lifecycle_cycle(
     options: &Options,
     restored_window: Option<WindowRecipe>,
     restored_drafts: &[PaneRestoreDraft],
+    persistence: &Rc<RefCell<PersistenceCoordinator>>,
+    default_working_directory: &str,
 ) -> Result<(WindowRecipe, Vec<PaneRestoreDraft>), String> {
     let main_loop = glib::MainLoop::new(None, false);
     let shell = ApplicationShell::new(
@@ -159,10 +161,17 @@ fn run_lifecycle_cycle(
         }
     });
 
+    let persistence_source =
+        install_live_snapshot_source(&shell, persistence, default_working_directory.to_owned());
+
     shell.borrow().present();
+    if let Err(error) = persistence.borrow_mut().complete_launch() {
+        eprintln!("zentty-linux: Failed to consume restore snapshot after launch: {error}");
+    }
     main_loop.run();
 
     tick_source.remove();
+    persistence_source.remove();
     let window_recipe = shell.borrow().window_recipe();
     let agent_restore_drafts = shell.borrow().agent_restore_drafts();
     shell.borrow_mut().detach_and_close();
@@ -180,6 +189,35 @@ fn run_lifecycle_cycle(
     }
     eprintln!("zentty-linux: lifecycle complete");
     Ok((window_recipe, agent_restore_drafts))
+}
+
+fn install_live_snapshot_source(
+    shell: &Rc<RefCell<ApplicationShell>>,
+    persistence: &Rc<RefCell<PersistenceCoordinator>>,
+    default_working_directory: String,
+) -> glib::SourceId {
+    let shell = Rc::downgrade(shell);
+    let persistence = Rc::clone(persistence);
+    let epoch = Instant::now();
+    glib::timeout_add_local(Duration::from_millis(50), move || {
+        let Some(shell) = shell.upgrade() else {
+            return glib::ControlFlow::Break;
+        };
+        let (window, drafts) = {
+            let shell = shell.borrow();
+            (shell.window_recipe(), shell.agent_restore_drafts())
+        };
+        let now = epoch.elapsed();
+        let mut persistence = persistence.borrow_mut();
+        persistence.observe_live_snapshot(window, drafts, &default_working_directory, now);
+        if let Err(error) = persistence.flush_live_snapshot_if_due(now, reference_timestamp()) {
+            eprintln!("zentty-linux: Failed to persist live restore snapshot: {error}");
+        }
+        for error in persistence.drain_live_snapshot_errors() {
+            eprintln!("zentty-linux: Failed to persist live restore snapshot: {error}");
+        }
+        glib::ControlFlow::Continue
+    })
 }
 
 fn settle_gtk_teardown() {
@@ -200,11 +238,18 @@ fn run() -> Result<(), String> {
         Some(path) => path.clone(),
         None => default_state_directory()?,
     };
-    let (mut persistence, launch) = PersistenceCoordinator::start(
+    let (persistence, launch) = PersistenceCoordinator::start(
         &state_directory,
         options.restore_enabled,
         reference_timestamp(),
     )?;
+    if let Some(warning) = launch.warning.as_deref() {
+        eprintln!("zentty-linux: {warning}");
+    }
+    let persistence = Rc::new(RefCell::new(persistence));
+    let default_working_directory = std::env::current_dir()
+        .map_err(|error| format!("could not determine the launch working directory: {error}"))?;
+    let default_working_directory = default_working_directory.to_string_lossy();
 
     // Ghostty owns process-global initialization that must precede GTK.
     let runtime = GhosttyRuntime::new(options.async_backend).map_err(|error| error.to_string())?;
@@ -215,9 +260,16 @@ fn run() -> Result<(), String> {
         &options,
         launch.restored_window,
         &launch.restored_drafts,
+        &persistence,
+        &default_working_directory,
     )?;
     drop(runtime);
-    persistence.save_clean_exit(window, restored_drafts, reference_timestamp())?;
+    persistence.borrow_mut().save_clean_exit(
+        window,
+        restored_drafts,
+        &default_working_directory,
+        reference_timestamp(),
+    )?;
     Ok(())
 }
 

@@ -24,6 +24,22 @@ expect_validation_failure() {
 "${runner}" --validate-only >/dev/null
 "${repo_root}/linux/tests/qualification-boundary-contract-test" >/dev/null
 "${repo_root}/linux/tests/lib/qualification-outcome-test" >/dev/null
+"${repo_root}/linux/tests/lib/bounded-batch-test" >/dev/null
+
+if ZENTTY_QUALIFICATION_JOBS=0 "${runner}" --validate-only \
+    >"${temp_dir}/stdout" 2>"${temp_dir}/stderr"; then
+    echo "qualification-matrix-test: zero parallel jobs were accepted" >&2
+    exit 1
+fi
+grep -F 'ZENTTY_QUALIFICATION_JOBS must be a positive integer' \
+    "${temp_dir}/stderr" >/dev/null
+if ZENTTY_QUALIFICATION_JOBS=33 "${runner}" --validate-only \
+    >"${temp_dir}/stdout" 2>"${temp_dir}/stderr"; then
+    echo "qualification-matrix-test: unsafe parallel job count was accepted" >&2
+    exit 1
+fi
+grep -F 'ZENTTY_QUALIFICATION_JOBS must not exceed 32' \
+    "${temp_dir}/stderr" >/dev/null
 
 # The IBus harness deliberately emits process/random-token markers, while the
 # common matrix summary schema requires opaque 64-hex session identities.
@@ -46,6 +62,17 @@ expect_validation_failure 'missing terminal cell: Debug/wayland/epoll/single'
 jq '(.cells[] | select(.id == "install-uninstall")).status = "SKIPPED"' \
     "${source_matrix}" >"${temp_dir}/matrix.json"
 expect_validation_failure 'unknown statuses: install-uninstall=SKIPPED'
+
+# Resource-mutating commands may never silently join the parallel pool.
+jq 'del(.cells[] | select(.id == "build-release").execution)' \
+    "${source_matrix}" >"${temp_dir}/matrix.json"
+expect_validation_failure \
+    'resource-mutating cells must declare serial execution: build-release'
+
+jq '(.cells[] | select(.id == "release-x11-default-single")).execution = "unbounded"' \
+    "${source_matrix}" >"${temp_dir}/matrix.json"
+expect_validation_failure \
+    'cells with unknown execution policy: release-x11-default-single=unbounded'
 
 # Full qualification cannot be asserted while any explicit gap remains.
 jq '.claims.full_linux_qualification_passed = true' \

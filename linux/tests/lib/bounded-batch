@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+
+# Runs opaque work items through a bounded, work-conserving pool. The callback
+# receives one work item; failures are returned only after every item has been
+# reaped. Dependency barriers remain the caller's responsibility.
+zentty_run_bounded_batch() {
+    local jobs="$1"
+    local callback="$2"
+    shift 2
+    local item pid completed_pid failed=false
+    local -A active=()
+
+    [[ "${jobs}" =~ ^[1-9][0-9]*$ ]] || return 64
+    for item in "$@"; do
+        while (( ${#active[@]} >= jobs )); do
+            completed_pid=""
+            if ! wait -n -p completed_pid; then
+                failed=true
+            fi
+            [[ -n "${completed_pid}" ]] || return 70
+            unset 'active['"${completed_pid}"']'
+        done
+        "${callback}" "${item}" &
+        active["$!"]=1
+    done
+    for pid in "${!active[@]}"; do
+        wait "${pid}" || failed=true
+    done
+    ! "${failed}"
+}

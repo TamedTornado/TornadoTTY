@@ -2,6 +2,9 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=linux/tests/lib/bounded-batch
+source "${repo_root}/linux/tests/lib/bounded-batch"
+qualification_jobs="${ZENTTY_QUALIFICATION_JOBS:-4}"
 
 support_tests=(
     linux/tests/qualification-matrix-test
@@ -20,10 +23,53 @@ support_tests=(
     linux/tests/suppression-governance-test
 )
 
+support_results="$(mktemp -d)"
+trap 'rm -rf -- "${support_results}"' EXIT
+
+run_support_test() {
+    local test_path="$1"
+    local test_name="${test_path//\//__}"
+    local status
+    set +e
+    "${repo_root}/${test_path}" >"${support_results}/${test_name}.log" 2>&1
+    status=$?
+    set -e
+    printf '%s\n' "${status}" >"${support_results}/${test_name}.status"
+    return "${status}"
+}
+
+parallel_support_tests=()
+serial_support_tests=()
 for test_path in "${support_tests[@]}"; do
-    echo "support: ${test_path}"
-    "${repo_root}/${test_path}"
+    if [[ "${test_path}" == linux/tests/ghostty-async-backend-abi-test ]]; then
+        serial_support_tests+=("${test_path}")
+    else
+        parallel_support_tests+=("${test_path}")
+    fi
 done
+
+support_failed=false
+if ! zentty_run_bounded_batch "${qualification_jobs}" \
+    run_support_test "${parallel_support_tests[@]}"; then
+    support_failed=true
+fi
+for test_path in "${serial_support_tests[@]}"; do
+    run_support_test "${test_path}" || support_failed=true
+done
+
+for test_path in "${support_tests[@]}"; do
+    test_name="${test_path//\//__}"
+    echo "support: ${test_path}"
+    cat "${support_results}/${test_name}.log"
+    [[ "$(cat "${support_results}/${test_name}.status")" == 0 ]] || support_failed=true
+done
+if "${support_failed}"; then
+    echo "qualify-local: support qualification failed" >&2
+    exit 1
+fi
+
+rm -rf -- "${support_results}"
+trap - EXIT
 
 echo "product/dependency matrix: linux/tests/qualification-matrix"
 exec "${repo_root}/linux/tests/qualification-matrix"

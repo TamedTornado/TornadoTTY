@@ -146,7 +146,7 @@ and negative validators.
 | Pane-to-surface/PTY projection and callbacks | `PaneRuntimeCoordinator` | Exactly one transient surface registry per window |
 | Agent IPC transport, event queue drain, enrichment, and core projection | `AgentEventCoordinator` around one `AgentRuntime` | One authenticated transport/receiver per window; no second reducer |
 | tmux compatibility product state and bridge | `TmuxCompatProduct` plus `application_shell::tmux_runtime` | One bounded compatibility state per window; pure parsing/model remains in `zentty-tmux-compat` |
-| Session snapshot and lifecycle sequencing | `PersistenceCoordinator` around `SnapshotPersistence`/`SessionRestoreStore` | One synchronous process store; no journal, backup generations, queue, timer, or worker |
+| Session snapshot and lifecycle sequencing | `PersistenceCoordinator` around `SnapshotPersistence`/`SessionRestoreStore` | One ordered persistence worker, one 350 ms GLib debounce source, and synchronous clean-exit handoff; no journal, backup generations, second queue, or second serializer |
 
 `ApplicationShell` retains the high-level transactions that must coordinate
 the sole workspace with more than one projection—for example closing a model
@@ -399,9 +399,11 @@ rather than an invented blanket schema rule.
 6. Debounced live and synchronous clean-exit saves use monotonically accepted
    request generations so an older queued request cannot overwrite a newer
    accepted request.
-7. A corrupt snapshot produces an error and remains untouched. Successful
-   restore consumes the snapshot; source-defined unusable restore handling is
-   owned by the application shell.
+7. A corrupt snapshot produces an error without preventing a fresh workspace.
+   The store itself does not mutate the bad bytes while decoding them; the
+   fresh workspace's next debounced persistence request may replace or delete
+   them so the following launch cannot loop. Successful restore consumes the
+   prepared snapshot before the first replacement live save.
 
 Any intentional departure from these source semantics requires a separate
 operator-approved compatibility decision. Generic backup/versioning and

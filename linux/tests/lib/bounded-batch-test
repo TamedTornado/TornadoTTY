@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+# shellcheck source=linux/tests/lib/bounded-batch
+source "${repo_root}/linux/tests/lib/bounded-batch"
+temp_dir="$(mktemp -d)"
+trap 'rm -rf -- "${temp_dir}"' EXIT
+
+run_item() {
+    local item="$1"
+    local active maximum delay result=0
+    exec 9>"${temp_dir}/counter.lock"
+    flock 9
+    active="$(cat "${temp_dir}/active")"
+    maximum="$(cat "${temp_dir}/maximum")"
+    active=$((active + 1))
+    (( active > maximum )) && maximum="${active}"
+    printf '%s\n' "${active}" >"${temp_dir}/active"
+    printf '%s\n' "${maximum}" >"${temp_dir}/maximum"
+    printf 'start:%s\n' "${item}" >>"${temp_dir}/events"
+    flock -u 9
+
+    case "${item}" in
+        slow) delay=0.20 ;;
+        fast | third) delay=0.03 ;;
+        fail)
+            delay=0.03
+            result=1
+            ;;
+        *) return 2 ;;
+    esac
+    sleep "${delay}"
+
+    flock 9
+    active="$(cat "${temp_dir}/active")"
+    printf '%s\n' "$((active - 1))" >"${temp_dir}/active"
+    printf 'finish:%s\n' "${item}" >>"${temp_dir}/events"
+    flock -u 9
+    return "${result}"
+}
+
+printf '0\n' >"${temp_dir}/active"
+printf '0\n' >"${temp_dir}/maximum"
+: >"${temp_dir}/events"
+if zentty_run_bounded_batch 2 run_item slow fast third fail; then
+    echo "bounded-batch-test: callback failure was lost" >&2
+    exit 1
+fi
+[[ "$(cat "${temp_dir}/maximum")" == 2 ]] || {
+    echo "bounded-batch-test: concurrency was not bounded at two" >&2
+    exit 1
+}
+third_start="$(grep -n '^start:third$' "${temp_dir}/events" | cut -d: -f1)"
+fast_finish="$(grep -n '^finish:fast$' "${temp_dir}/events" | cut -d: -f1)"
+slow_finish="$(grep -n '^finish:slow$' "${temp_dir}/events" | cut -d: -f1)"
+(( third_start > fast_finish && third_start < slow_finish )) || {
+    echo "bounded-batch-test: pool was not work-conserving" >&2
+    exit 1
+}
+if zentty_run_bounded_batch 0 run_item invalid >/dev/null 2>&1; then
+    echo "bounded-batch-test: invalid job count was accepted" >&2
+    exit 1
+fi
+
+echo "Bounded qualification batch tests passed: limit, refill, sibling reap, failure"

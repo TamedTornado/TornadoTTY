@@ -14,6 +14,7 @@ agent_receipt=""
 product_pid=""
 agent_start_delay=0
 agent_start_receipt=""
+product_args=()
 
 # shellcheck source=linux/tests/lib/product-input
 source "${repo_root}/linux/tests/lib/product-input"
@@ -49,7 +50,7 @@ case "${backend}" in
         ;;
     *) fail "GDK_BACKEND must be x11 or wayland" ;;
 esac
-for dependency in jq readelf timeout mktemp grep sed; do
+for dependency in jq readelf timeout mktemp grep sed pgrep; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
 [[ -x "${product}" ]] || fail "staged product is not built: ${product}"
@@ -134,7 +135,7 @@ start_product() {
         ZENTTY_CONTROLLED_AGENT_START_RECEIPT="${agent_start_receipt}" \
         ZENTTY_CONTROLLED_AGENT_SLEEP_SECONDS=30 \
         LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
-        "${product}" --state-directory "${state_dir}" >"${log}" 2>&1 &
+        "${product}" --state-directory "${state_dir}" "${product_args[@]}" >"${log}" 2>&1 &
     product_pid=$!
 }
 
@@ -317,4 +318,131 @@ jq -e '
 ' "${state_dir}/restore-snapshot.json" >/dev/null ||
     fail "clean cancellation snapshot retained the closed worklane or agent draft"
 
-echo "Rust session restore passed: ${backend}, journey=one-consolidated, agents=two-background, input=physical, scrollback=exact, relaunch=clean, cancellation=command-palette"
+# Crash recovery is part of this same canonical persistence journey rather
+# than a second product or aggregate runner. Create meaningful topology through
+# the visible command palette, wait for the real debounce, kill the delivered
+# process, and relaunch with normal restoration disabled. The unclean marker
+# must override that preference exactly once.
+rm -rf -- "${state_dir}"
+rm -f -- "${log}" "${agent_receipt}" "${agent_start_receipt}"
+state_dir="$(mktemp -d)"
+log="$(mktemp)"
+agent_receipt="$(mktemp)"
+agent_start_receipt=""
+agent_start_delay=0
+product_args=()
+start_product
+zentty_product_wait_for_log "${log}" 'zentty-linux: window-size=' \
+    "crash-recovery window did not become ready" || fail "crash-recovery readiness missing"
+zentty_product_prepare_input "${backend}" "${log}" || fail "could not prepare crash input"
+zentty_product_ctrl_shift_key "${backend}" p
+zentty_product_wait_for_log "${log}" 'zentty-linux: command-palette=shown' \
+    "crash command palette did not open" || fail "crash command palette missing"
+zentty_product_type "${backend}" 'New Worklane'
+zentty_product_wait_for_log "${log}" \
+    'zentty-linux: command-palette=query value="New Worklane" results=1' \
+    "New Worklane did not resolve uniquely" || fail "crash mutation command missing"
+zentty_product_key "${backend}" Down
+zentty_product_key "${backend}" Return
+zentty_product_wait_for_log "${log}" \
+    'zentty-linux: action=new-worklane id=worklane-2 pane=pane-2' \
+    "real command palette did not create the crash-recovery lane" ||
+    fail "crash topology mutation missing"
+snapshot="${state_dir}/restore-snapshot.json"
+lifecycle="${state_dir}/restore-lifecycle.json"
+for _ in {1..200}; do
+    if [[ -f "${snapshot}" ]] && jq -e '
+        .reason == "liveSnapshot" and
+        [.workspace.windows[0].worklanes[].id] == ["worklane-1", "worklane-2"] and
+        .workspace.windows[0].activeWorklaneID == "worklane-2" and
+        ([.workspace.windows[0].worklanes[].columns[].panes[].id] | sort) == ["pane-1", "pane-2"]
+    ' "${snapshot}" >/dev/null 2>&1; then
+        break
+    fi
+    kill -0 "${product_pid}" 2>/dev/null || fail "product exited before the live snapshot"
+    sleep 0.05
+done
+jq -e '
+    .reason == "liveSnapshot" and
+    [.workspace.windows[0].worklanes[].id] == ["worklane-1", "worklane-2"] and
+    .workspace.windows[0].activeWorklaneID == "worklane-2" and
+    ([.workspace.windows[0].worklanes[].columns[].panes[].id] | sort) == ["pane-1", "pane-2"]
+' "${snapshot}" >/dev/null || fail "debounced live snapshot did not preserve the real mutation"
+jq -e '.cleanExit == false' "${lifecycle}" >/dev/null ||
+    fail "running product was not marked unclean before the crash"
+
+crashed_pid="${product_pid}"
+mapfile -t crashed_children < <(pgrep -P "${crashed_pid}" || true)
+kill -KILL "${crashed_pid}"
+set +e
+wait "${crashed_pid}"
+crash_status=$?
+set -e
+product_pid=""
+((crash_status == 137)) || fail "SIGKILL crash exited with unexpected status ${crash_status}"
+for child in "${crashed_children[@]}"; do
+    for _ in {1..100}; do
+        kill -0 "${child}" 2>/dev/null || break
+        sleep 0.05
+    done
+    kill -0 "${child}" 2>/dev/null && fail "crashed product left PTY child ${child} alive"
+done
+jq -e '.cleanExit == false' "${lifecycle}" >/dev/null ||
+    fail "abnormal termination incorrectly marked the lifecycle clean"
+
+: >"${log}"
+product_args=(--no-session-restore)
+start_product
+zentty_product_wait_for_log "${log}" \
+    'zentty-linux: topology=worklane-1[title=none,color=none]:pane-1|worklane-2[title=none,color=none]:pane-2*' \
+    "crash relaunch did not restore exact topology with normal restore disabled" ||
+    fail "crash recovery topology missing"
+zentty_product_wait_for_log "${log}" 'zentty-linux: terminal-ready-pane=pane-2' \
+    "crash relaunch did not create the second real Ghostty PTY" ||
+    fail "crash recovery second PTY missing"
+zentty_product_prepare_input "${backend}" "${log}" || fail "could not prepare recovered input"
+zentty_product_ctrl_key "${backend}" Page_Down
+zentty_product_wait_for_log "${log}" 'zentty-linux: terminal-ready-pane=pane-1' \
+    "visiting the recovered first worklane did not create its real Ghostty PTY" ||
+    fail "crash recovery first PTY missing"
+zentty_product_close_window "${backend}"
+wait_for_product_exit
+[[ ! -e "${snapshot}" ]] ||
+    fail "disabled normal restoration retained a snapshot after the recovered clean exit"
+jq -e '.cleanExit == true' "${lifecycle}" >/dev/null ||
+    fail "recovered clean exit did not mark the lifecycle clean"
+
+# An unreadable snapshot is reported, but it must not prevent the real product
+# from presenting a fresh terminal. The first debounced observation replaces
+# the unusable bytes with a valid live envelope, preventing a relaunch loop.
+printf 'not valid JSON' >"${snapshot}"
+product_args=()
+start_product
+zentty_product_wait_for_log "${log}" 'zentty-linux: Failed to prepare restore launch:' \
+    "corrupt restore failure was not reported" || fail "corrupt restore diagnostic missing"
+zentty_product_wait_for_log "${log}" 'zentty-linux: terminal-ready-pane=pane-1' \
+    "corrupt restore did not fall back to a fresh real terminal" ||
+    fail "corrupt restore fallback missing"
+for _ in {1..100}; do
+    if jq -e '
+        .reason == "liveSnapshot" and
+        [.workspace.windows[0].worklanes[].id] == ["worklane-1"] and
+        [.workspace.windows[0].worklanes[].columns[].panes[].id] == ["pane-1"]
+    ' "${snapshot}" >/dev/null 2>&1; then
+        break
+    fi
+    kill -0 "${product_pid}" 2>/dev/null || fail "corrupt-state fallback exited early"
+    sleep 0.05
+done
+jq -e '
+    .reason == "liveSnapshot" and
+    [.workspace.windows[0].worklanes[].id] == ["worklane-1"] and
+    [.workspace.windows[0].worklanes[].columns[].panes[].id] == ["pane-1"]
+' "${snapshot}" >/dev/null || fail "unusable snapshot survived the live debounce"
+zentty_product_prepare_input "${backend}" "${log}" || fail "could not prepare corrupt fallback input"
+zentty_product_close_window "${backend}"
+wait_for_product_exit
+jq -e '.reason == "cleanExit" and .workspace.windows[0].worklanes[0].columns[0].panes[0].id == "pane-1"' \
+    "${snapshot}" >/dev/null || fail "corrupt-state fallback did not publish a valid clean snapshot"
+
+echo "Rust session restore passed: ${backend}, journey=one-consolidated, agents=two-background, input=physical, scrollback=exact, relaunch=clean, cancellation=command-palette, live-debounce=real, crash=SIGKILL, corrupt=fresh-workspace"
