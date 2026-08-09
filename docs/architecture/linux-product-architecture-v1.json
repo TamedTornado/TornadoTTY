@@ -534,7 +534,7 @@
       "async_backend": "default",
       "terminals": "multi",
       "tracking": "GH-3",
-      "defect": "A real single-window multi-column/vertical-pane restore-persist-relaunch slice now passes under controlled Wayland with asynchronous live debounce, SIGKILL recovery, prepared-snapshot consumption, and corrupt-state fallback, but full qualification still lacks multiple windows, exact divider sizing and resize persistence, and complete CWD launch coverage.",
+      "defect": "Real single-window crash recovery and real two-window clean save/relaunch now pass under controlled Wayland, but full qualification still lacks multi-window crash recovery, exact divider sizing and resize persistence, window-frame restoration, and complete CWD launch coverage.",
       "authoritative": false
     },
     {
@@ -547,7 +547,7 @@
       "async_backend": "default",
       "terminals": "multi",
       "tracking": "GH-3",
-      "defect": "A real single-window multi-column/vertical-pane restore-persist-relaunch slice now passes under controlled X11 with asynchronous live debounce, SIGKILL recovery, prepared-snapshot consumption, and corrupt-state fallback, but full qualification still lacks multiple windows, exact divider sizing and resize persistence, and complete CWD launch coverage.",
+      "defect": "Real single-window crash recovery and real two-window clean save/relaunch now pass under controlled X11, but full qualification still lacks multi-window crash recovery, exact divider sizing and resize persistence, window-frame restoration, and complete CWD launch coverage.",
       "authoritative": false
     },
     {

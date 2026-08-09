@@ -345,9 +345,6 @@ impl PaneRuntimeCoordinator {
                 if let Some(surface) = shell.pane_runtime.surface(&ready_id) {
                     observe_ghostty_search_state(surface.widget(), &ready_id);
                 }
-                if shell.state.focused_pane_id() == Some(ready_id.as_str()) {
-                    shell.focus_selected_surface();
-                }
             });
         });
         let title_id = pane_id.to_owned();

@@ -130,7 +130,7 @@ zentty_product_alt_key() {
 
 zentty_product_close_window() {
     local backend="$1"
-    # Ctrl+Q is Zentty's ordinary Linux close-window shortcut. Driving it
+    # Ctrl+Q is Zentty's ordinary Linux quit-application shortcut. Driving it
     # through the compositor avoids a test-only lifecycle API and works in the
     # deliberately window-manager-free X11 qualification session.
     if [[ "${backend}" == x11 ]]; then

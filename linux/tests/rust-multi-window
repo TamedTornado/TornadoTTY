@@ -1,0 +1,221 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
+backend="${GDK_BACKEND:-}"
+bundle_root="$(cd "$(dirname "${product}")/.." 2>/dev/null && pwd)" || bundle_root=""
+bundle_lib="${bundle_root}/lib"
+state_dir=""
+log=""
+product_pid=""
+route_probe_index=0
+
+# shellcheck source=linux/tests/lib/product-input
+source "${repo_root}/linux/tests/lib/product-input"
+
+fail() {
+    [[ -z "${log}" || ! -f "${log}" ]] || cat "${log}" >&2
+    echo "rust-multi-window: error: $*" >&2
+    exit 1
+}
+
+cleanup() {
+    if [[ "${product_pid}" =~ ^[1-9][0-9]*$ ]]; then
+        kill -TERM "${product_pid}" 2>/dev/null || true
+        wait "${product_pid}" 2>/dev/null || true
+    fi
+    [[ -z "${state_dir}" ]] || rm -rf -- "${state_dir}"
+    [[ -z "${log}" ]] || rm -f -- "${log}"
+}
+trap cleanup EXIT
+
+case "${backend}" in
+    x11)
+        [[ "${ZENTTY_NESTED_X11_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+            fail "X11 journey must run through linux/tests/nested-x11"
+        ;;
+    wayland)
+        [[ "${ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+            fail "Wayland journey must run through linux/tests/nested-wayland-input"
+        ;;
+    *) fail "GDK_BACKEND must be x11 or wayland" ;;
+esac
+for dependency in jq readelf timeout mktemp grep; do
+    command -v "${dependency}" >/dev/null || fail "${dependency} is required"
+done
+[[ -x "${product}" ]] || fail "staged product is not built: ${product}"
+[[ -f "${bundle_lib}/libghostty-gtk-embed.so" ]] ||
+    fail "selected product bundle has no Ghostty library"
+[[ -f "${bundle_lib}/libgtk4-layer-shell.so" ]] ||
+    fail "selected product bundle has no GTK layer-shell library"
+
+layer_runpath="$(
+    readelf -d "${bundle_lib}/libghostty-gtk-embed.so" |
+        sed -n 's/.*Library runpath: \[\([^]]*\)\].*/\1/p' |
+        cut -d: -f1
+)"
+[[ "${layer_runpath}" == .zig-cache/* ]] || fail "Ghostty layer-shell runpath is missing"
+
+state_dir="$(mktemp -d)"
+log="$(mktemp)"
+child_command='while IFS= read -r value; do printf '\''\033]2;%s\a'\'' "$value"; done'
+
+start_product() {
+    : >"${log}"
+    LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+        "${product}" \
+        --command "${child_command}" \
+        --state-directory "${state_dir}" \
+        --async-backend default >"${log}" 2>&1 &
+    product_pid=$!
+    zentty_product_wait_for_log "${log}" 'zentty-linux: window-opened id=window-1' \
+        "first real product window did not open" || fail "first window missing"
+    zentty_product_wait_for_log "${log}" 'zentty-linux: terminal-ready-pane=pane-1' \
+        "first real Ghostty surface did not become ready" || fail "first terminal missing"
+    zentty_product_prepare_input "${backend}" "${log}" || fail "could not prepare physical input"
+}
+
+wait_for_exit() {
+    for _ in {1..240}; do
+        kill -0 "${product_pid}" 2>/dev/null || break
+        sleep 0.05
+    done
+    kill -0 "${product_pid}" 2>/dev/null && fail "product did not exit after physical quit"
+    set +e
+    wait "${product_pid}"
+    status=$?
+    set -e
+    product_pid=""
+    [[ "${status}" -eq 0 ]] || fail "product exited ${status}"
+}
+
+target_second_window() {
+    if [[ "${backend}" == x11 ]]; then
+        mapfile -t candidate_ids < <(
+            xdotool search --onlyvisible --pid "${product_pid}" --name '^Zentty$' 2>/dev/null
+        )
+        [[ "${#candidate_ids[@]}" -eq 2 ]] ||
+            fail "X11 did not expose exactly two product window identities"
+        route_probe_index=$((route_probe_index + 1))
+        for candidate_id in "${candidate_ids[@]}"; do
+            [[ "$(xdotool getwindowpid "${candidate_id}" 2>/dev/null || true)" == "${product_pid}" ]] ||
+                fail "X11 candidate window is not owned by the product"
+            probe="zentty-window-route-probe-${route_probe_index}-${candidate_id}"
+            xdotool windowfocus --sync "${candidate_id}"
+            xdotool type --delay 5 "${probe}"
+            xdotool key Return
+            for _ in {1..40}; do
+                if grep -Fq "zentty-linux: title-pane=pane-window-2 value=${probe}" "${log}"; then
+                    ZENTTY_PRODUCT_WINDOW_ID="${candidate_id}"
+                    export ZENTTY_PRODUCT_WINDOW_ID
+                    return
+                fi
+                sleep 0.05
+            done
+        done
+        fail "physical route probes could not identify pane-window-2's X11 toplevel"
+    fi
+}
+
+create_second_window() {
+    zentty_product_ctrl_shift_key "${backend}" n
+    zentty_product_wait_for_log "${log}" 'zentty-linux: window-opened id=window-2' \
+        "physical New Window did not create the second GTK window" || fail "second window missing"
+    zentty_product_wait_for_log "${log}" 'zentty-linux: terminal-ready-pane=pane-window-2' \
+        "second window did not own a distinct real Ghostty surface" || fail "second terminal missing"
+    zentty_product_wait_for_log "${log}" 'zentty-linux: focus-pane pane=pane-window-2' \
+        "second window did not settle real terminal focus" || fail "second terminal focus missing"
+    if [[ "${backend}" == x11 ]]; then
+        visible_count="$(xdotool search --onlyvisible --pid "${product_pid}" --name '^Zentty$' 2>/dev/null | wc -l)"
+        [[ "${visible_count}" -eq 2 ]] || fail "X11 exposed ${visible_count} product windows instead of two"
+    fi
+    target_second_window
+}
+
+type_and_expect_title() {
+    local value="$1"
+    local pane_id="$2"
+    if [[ "${backend}" == x11 ]]; then
+        # Use XTest against the explicitly focused product window. Xdotool's
+        # per-window synthetic-event mode can restore an earlier focus between
+        # the text and Return calls when two mapped windows share one PID.
+        xdotool windowfocus --sync "${ZENTTY_PRODUCT_WINDOW_ID}"
+        xdotool type --delay 5 "${value}"
+        xdotool key Return
+    else
+        zentty_product_type "${backend}" "${value}"
+        zentty_product_key "${backend}" Return
+    fi
+    zentty_product_wait_for_log "${log}" \
+        "zentty-linux: title-pane=${pane_id} value=${value}" \
+        "input did not route to ${pane_id}" || fail "cross-window input routing failed"
+}
+
+close_active_window() {
+    if [[ "${backend}" == x11 ]]; then
+        # The target is destroyed on key-down, before XTest can deliver every
+        # synthetic release to that XID. Product logs and survivor input prove
+        # the close; reset global key state against the live root window.
+        xdotool key --window "${ZENTTY_PRODUCT_WINDOW_ID}" ctrl+shift+w 2>/dev/null || true
+        xdotool keyup Control_L Control_R Shift_L Shift_R w 2>/dev/null || true
+    else
+        zentty_product_ctrl_shift_key "${backend}" w
+    fi
+}
+
+# Journey 1: create two windows through the real shortcut, prove the active
+# second PTY receives input, save both through the one real persistence path,
+# and relaunch the exact two-window recipe.
+start_product
+create_second_window
+type_and_expect_title "second-window-marker" "pane-window-2"
+for _ in {1..240}; do
+    [[ -f "${state_dir}/restore-snapshot.json" ]] &&
+        jq -e '
+            (.workspace.windows | map(.id)) == ["window-1", "window-2"] and
+            .workspace.activeWindowID == "window-2"
+        ' "${state_dir}/restore-snapshot.json" >/dev/null 2>&1 && break
+    sleep 0.05
+done
+jq -e '
+    (.workspace.windows | map(.id)) == ["window-1", "window-2"] and
+    .workspace.activeWindowID == "window-2" and
+    (.restoreDraftWindows | length) == 0
+' "${state_dir}/restore-snapshot.json" >/dev/null || fail "live snapshot lost multi-window order or active identity"
+zentty_product_close_window "${backend}"
+wait_for_exit
+jq -e '
+    .reason == "cleanExit" and
+    (.workspace.windows | map(.id)) == ["window-1", "window-2"] and
+    .workspace.activeWindowID == "window-2"
+' "${state_dir}/restore-snapshot.json" >/dev/null || fail "clean exit did not preserve both windows"
+
+start_product
+zentty_product_wait_for_log "${log}" 'zentty-linux: window-opened id=window-2' \
+    "clean relaunch did not restore the second GTK window" || fail "second restore window missing"
+zentty_product_wait_for_log "${log}" 'zentty-linux: terminal-ready-pane=pane-window-2' \
+    "clean relaunch did not restore the second Ghostty surface" || fail "second restore terminal missing"
+zentty_product_wait_for_log "${log}" 'zentty-linux: focus-pane pane=pane-window-2' \
+    "clean relaunch did not settle focus in the restored active window" || fail "restored active focus missing"
+target_second_window
+type_and_expect_title "restored-second-marker" "pane-window-2"
+zentty_product_close_window "${backend}"
+wait_for_exit
+
+# Journey 2: close only the active second window, then prove the surviving
+# first window's real PTY remains independently responsive before final quit.
+rm -rf -- "${state_dir}"
+state_dir="$(mktemp -d)"
+start_product
+create_second_window
+close_active_window
+zentty_product_wait_for_log "${log}" 'zentty-linux: window-closed id=window-2 remaining=1' \
+    "Close Window did not remove only the active second window" || fail "non-final close failed"
+kill -0 "${product_pid}" 2>/dev/null || fail "closing the second window terminated the application"
+zentty_product_prepare_input "${backend}" "${log}" || fail "could not retarget the surviving window"
+type_and_expect_title "surviving-first-marker" "pane-1"
+zentty_product_close_window "${backend}"
+wait_for_exit
+
+echo "Rust multi-window passed: backend=${backend}, real-windows=2, restore=clean, non-final-close=survived"

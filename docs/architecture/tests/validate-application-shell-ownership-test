@@ -5,6 +5,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 validator="${repo_root}/docs/architecture/tests/validate-application-shell-ownership"
 contract="${repo_root}/docs/architecture/application-shell-responsibilities-v1.json"
 main_file="${repo_root}/crates/zentty-linux/src/main.rs"
+application_file="${repo_root}/crates/zentty-linux/src/application.rs"
 agent_runtime_file="${repo_root}/crates/zentty-linux/src/agent_runtime.rs"
 codex_enrichment_file="${repo_root}/crates/zentty-linux/src/codex_enrichment.rs"
 source_file="${repo_root}/crates/zentty-linux/src/application_shell.rs"
@@ -124,6 +125,11 @@ sed '/let main_loop = glib::MainLoop::new/a\    let shadow_main_loop = glib::Mai
     "${main_file}" >"${temp_dir}/shadow-main-loop.rs"
 expect_failure shadow-main-loop "application runtime source hash" \
     "ZENTTY_APPLICATION_RUNTIME_SOURCE=${temp_dir}/shadow-main-loop.rs"
+
+sed '/runtime: GhosttyRuntime,/a\    shadow_runtime: GhosttyRuntime,' \
+    "${application_file}" >"${temp_dir}/shadow-application-runtime.rs"
+expect_failure shadow-application-runtime "application coordinator source hash" \
+    "ZENTTY_APPLICATION_COORDINATOR_SOURCE=${temp_dir}/shadow-application-runtime.rs"
 
 sed '/receiver: mpsc::Receiver<AuthenticatedAgentEvent>,/a\    shadow_receiver: mpsc::Receiver<AuthenticatedAgentEvent>,' \
     "${agent_runtime_file}" >"${temp_dir}/shadow-agent-transport.rs"

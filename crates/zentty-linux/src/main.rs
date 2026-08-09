@@ -2,6 +2,7 @@
 
 mod agent_runtime;
 mod agent_status_view;
+mod application;
 mod application_shell;
 mod codex_enrichment;
 mod command_palette;
@@ -16,18 +17,17 @@ mod source_ui;
 mod tmux_compat;
 mod tmux_store;
 mod window_chrome;
+mod window_set;
 mod worklane_peek;
 
-use application_shell::ApplicationShell;
+use application::ApplicationCoordinator;
 use gtk::glib;
-use gtk::prelude::*;
-use persistence_coordinator::{PersistenceCoordinator, default_state_directory};
+use persistence_coordinator::{PersistenceCoordinator, WindowSnapshot, default_state_directory};
 use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::rc::Rc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use zentty_core::{PaneRestoreDraft, WindowRecipe};
 use zentty_ghostty::{AsyncBackend, GhosttyRuntime};
 
 #[derive(Debug)]
@@ -100,71 +100,47 @@ fn parse_options() -> Result<Options, String> {
 fn run_lifecycle_cycle(
     runtime: &GhosttyRuntime,
     options: &Options,
-    restored_window: Option<WindowRecipe>,
-    restored_drafts: &[PaneRestoreDraft],
+    restored_windows: Vec<WindowSnapshot>,
+    active_window_id: Option<&str>,
     persistence: &Rc<RefCell<PersistenceCoordinator>>,
     default_working_directory: &str,
-) -> Result<(WindowRecipe, Vec<PaneRestoreDraft>), String> {
+) -> Result<application::ApplicationCycleResult, String> {
     let main_loop = glib::MainLoop::new(None, false);
-    let shell = ApplicationShell::new(
+    let application = ApplicationCoordinator::start(
         runtime,
         options.command.clone(),
         &main_loop,
-        restored_window,
-        restored_drafts,
+        restored_windows,
+        active_window_id,
     )?;
-    let close_loop = main_loop.clone();
-    shell.borrow().window().connect_close_request(move |_| {
-        close_loop.quit();
-        glib::Propagation::Proceed
-    });
+    let teardown_active = application.borrow().teardown_flag();
 
-    let ticking_runtime = runtime.clone();
     let tick_loop = main_loop.clone();
-    let observed_window = shell.borrow().window().clone();
-    let observed_sidebar = shell.borrow().sidebar_container().clone();
-    let ticking_shell = Rc::downgrade(&shell);
-    let last_window_size = Rc::new(Cell::new((0, 0)));
-    let ticking_window_size = Rc::clone(&last_window_size);
-    let last_sidebar_width = Rc::new(Cell::new(0));
-    let ticking_sidebar_width = Rc::clone(&last_sidebar_width);
+    let ticking_application = Rc::downgrade(&application);
+    let tick_teardown_active = Rc::clone(&teardown_active);
     let tick_source = glib::timeout_add_local(Duration::from_millis(10), move || {
-        if let Some(shell) = ticking_shell.upgrade() {
-            shell.borrow_mut().sync_agent_targets();
-            ApplicationShell::drain_agent_events(&shell);
-            let shell = shell.borrow_mut();
-            shell.reconcile_sidebar_width();
-            shell.reconcile_pane_heights();
+        if tick_teardown_active.get() {
+            return glib::ControlFlow::Continue;
         }
-        let window_size = (observed_window.width(), observed_window.height());
-        if window_size != ticking_window_size.get() && window_size.0 > 0 && window_size.1 > 0 {
-            eprintln!(
-                "zentty-linux: window-size={}x{}",
-                window_size.0, window_size.1
-            );
-            ticking_window_size.set(window_size);
-        }
-        let sidebar_width = observed_sidebar.width();
-        if sidebar_width != ticking_sidebar_width.get() && sidebar_width > 0 {
-            eprintln!("zentty-linux: sidebar-width={sidebar_width}");
-            ticking_sidebar_width.set(sidebar_width);
-        }
-        if let Err(error) = ticking_runtime.tick() {
+        let Some(application) = ticking_application.upgrade() else {
+            return glib::ControlFlow::Break;
+        };
+        let tick_result = application.borrow_mut().tick();
+        if let Err(error) = tick_result {
             eprintln!("zentty-linux: {error}");
+            application.borrow_mut().record_terminal_error(error);
             tick_loop.quit();
-            // Keep ownership of the source until the composition root removes
-            // it after `MainLoop::run`; this preserves one teardown path for
-            // both ordinary exit and tick failure.
-            glib::ControlFlow::Continue
-        } else {
-            glib::ControlFlow::Continue
         }
+        glib::ControlFlow::Continue
     });
 
-    let persistence_source =
-        install_live_snapshot_source(&shell, persistence, default_working_directory.to_owned());
+    let persistence_source = install_live_snapshot_source(
+        &application,
+        persistence,
+        default_working_directory.to_owned(),
+        teardown_active,
+    );
 
-    shell.borrow().present();
     if let Err(error) = persistence.borrow_mut().complete_launch() {
         eprintln!("zentty-linux: Failed to consume restore snapshot after launch: {error}");
     }
@@ -172,44 +148,37 @@ fn run_lifecycle_cycle(
 
     tick_source.remove();
     persistence_source.remove();
-    let window_recipe = shell.borrow().window_recipe();
-    let agent_restore_drafts = shell.borrow().agent_restore_drafts();
-    shell.borrow_mut().detach_and_close();
-    settle_gtk_teardown();
-    shell.borrow_mut().release_surfaces()?;
-    settle_gtk_teardown();
-    while glib::MainContext::default().pending() {
-        glib::MainContext::default().iteration(false);
-    }
-    if shell.borrow().live_children() != 0 {
-        return Err(format!(
-            "application ended with {} live children",
-            shell.borrow().live_children()
-        ));
-    }
-    eprintln!("zentty-linux: lifecycle complete");
-    Ok((window_recipe, agent_restore_drafts))
+    application.borrow_mut().finish()
 }
 
 fn install_live_snapshot_source(
-    shell: &Rc<RefCell<ApplicationShell>>,
+    application: &Rc<RefCell<ApplicationCoordinator>>,
     persistence: &Rc<RefCell<PersistenceCoordinator>>,
     default_working_directory: String,
+    teardown_active: Rc<Cell<bool>>,
 ) -> glib::SourceId {
-    let shell = Rc::downgrade(shell);
+    let application = Rc::downgrade(application);
     let persistence = Rc::clone(persistence);
     let epoch = Instant::now();
     glib::timeout_add_local(Duration::from_millis(50), move || {
-        let Some(shell) = shell.upgrade() else {
+        if teardown_active.get() {
+            return glib::ControlFlow::Continue;
+        }
+        let Some(application) = application.upgrade() else {
             return glib::ControlFlow::Break;
         };
-        let (window, drafts) = {
-            let shell = shell.borrow();
-            (shell.window_recipe(), shell.agent_restore_drafts())
-        };
+        let snapshot = application.borrow().snapshot();
+        if snapshot.windows.is_empty() {
+            return glib::ControlFlow::Continue;
+        }
         let now = epoch.elapsed();
         let mut persistence = persistence.borrow_mut();
-        persistence.observe_live_snapshot(window, drafts, &default_working_directory, now);
+        persistence.observe_live_snapshot(
+            snapshot.windows,
+            snapshot.active_window_id,
+            &default_working_directory,
+            now,
+        );
         if let Err(error) = persistence.flush_live_snapshot_if_due(now, reference_timestamp()) {
             eprintln!("zentty-linux: Failed to persist live restore snapshot: {error}");
         }
@@ -218,17 +187,6 @@ fn install_live_snapshot_source(
         }
         glib::ControlFlow::Continue
     })
-}
-
-fn settle_gtk_teardown() {
-    // GSK can retain GL-area widgets until the next frame after their window
-    // is unmapped. Keep Ghostty's surface wrappers alive across that frame,
-    // then give finalizers the same bounded opportunity after releasing the
-    // wrappers. No ApplicationShell borrow is held while callbacks run.
-    let settle_loop = glib::MainLoop::new(None, false);
-    let quit_loop = settle_loop.clone();
-    glib::timeout_add_local_once(Duration::from_millis(50), move || quit_loop.quit());
-    settle_loop.run();
 }
 
 fn run() -> Result<(), String> {
@@ -255,18 +213,19 @@ fn run() -> Result<(), String> {
     let runtime = GhosttyRuntime::new(options.async_backend).map_err(|error| error.to_string())?;
     gtk::init().map_err(|error| format!("GTK initialization failed: {error}"))?;
 
-    let (window, restored_drafts) = run_lifecycle_cycle(
+    let active_window_id = launch.active_window_id.clone();
+    let result = run_lifecycle_cycle(
         &runtime,
         &options,
-        launch.restored_window,
-        &launch.restored_drafts,
+        launch.windows,
+        active_window_id.as_deref(),
         &persistence,
         &default_working_directory,
     )?;
     drop(runtime);
     persistence.borrow_mut().save_clean_exit(
-        window,
-        restored_drafts,
+        result.windows,
+        result.active_window_id,
         &default_working_directory,
         reference_timestamp(),
     )?;

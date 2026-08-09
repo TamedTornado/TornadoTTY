@@ -42,14 +42,15 @@ use action_router::{
     ACTION_ARRANGE_HEIGHT_FOUR, ACTION_ARRANGE_HEIGHT_FULL, ACTION_ARRANGE_HEIGHT_THREE,
     ACTION_ARRANGE_HEIGHT_TWO, ACTION_ARRANGE_WIDTH_FULL, ACTION_ARRANGE_WIDTH_HALF,
     ACTION_ARRANGE_WIDTH_QUARTERS, ACTION_ARRANGE_WIDTH_THIRDS, ACTION_CLOSE_ACTIVE_WORKLANE,
-    ACTION_CLOSE_PANE, ACTION_CLOSE_WORKLANE, ACTION_CYCLE_WORKLANE_COLOR, ACTION_FIND,
-    ACTION_FIND_NEXT, ACTION_FIND_PREVIOUS, ACTION_FOCUS_PANE_DOWN, ACTION_FOCUS_PANE_LEFT,
-    ACTION_FOCUS_PANE_RIGHT, ACTION_FOCUS_PANE_UP, ACTION_MOVE_PANE_DOWN, ACTION_MOVE_PANE_LEFT,
-    ACTION_MOVE_PANE_RIGHT, ACTION_MOVE_PANE_UP, ACTION_MOVE_WORKLANE_DOWN,
-    ACTION_MOVE_WORKLANE_UP, ACTION_NAVIGATE_BACK, ACTION_NAVIGATE_FORWARD, ACTION_NEW_WORKLANE,
-    ACTION_NEXT_PANE, ACTION_NEXT_WORKLANE, ACTION_PREVIOUS_PANE, ACTION_PREVIOUS_WORKLANE,
-    ACTION_RESET_PANE_LAYOUT, ACTION_RESTORE_CLOSED_PANE, ACTION_SPLIT_PANE_BELOW,
-    ACTION_SPLIT_PANE_RIGHT, ACTION_TOGGLE_SIDEBAR, ACTION_USE_SELECTION_FOR_FIND, ActionRouter,
+    ACTION_CLOSE_PANE, ACTION_CLOSE_WINDOW, ACTION_CLOSE_WORKLANE, ACTION_CYCLE_WORKLANE_COLOR,
+    ACTION_FIND, ACTION_FIND_NEXT, ACTION_FIND_PREVIOUS, ACTION_FOCUS_PANE_DOWN,
+    ACTION_FOCUS_PANE_LEFT, ACTION_FOCUS_PANE_RIGHT, ACTION_FOCUS_PANE_UP, ACTION_MOVE_PANE_DOWN,
+    ACTION_MOVE_PANE_LEFT, ACTION_MOVE_PANE_RIGHT, ACTION_MOVE_PANE_UP, ACTION_MOVE_WORKLANE_DOWN,
+    ACTION_MOVE_WORKLANE_UP, ACTION_NAVIGATE_BACK, ACTION_NAVIGATE_FORWARD, ACTION_NEW_WINDOW,
+    ACTION_NEW_WORKLANE, ACTION_NEXT_PANE, ACTION_NEXT_WORKLANE, ACTION_PREVIOUS_PANE,
+    ACTION_PREVIOUS_WORKLANE, ACTION_RESET_PANE_LAYOUT, ACTION_RESTORE_CLOSED_PANE,
+    ACTION_SPLIT_PANE_BELOW, ACTION_SPLIT_PANE_RIGHT, ACTION_TOGGLE_SIDEBAR,
+    ACTION_USE_SELECTION_FOR_FIND, ActionRouter,
 };
 use agent_events::AgentEventCoordinator;
 use pane_runtime::PaneRuntimeCoordinator;
@@ -89,6 +90,9 @@ pub(crate) struct ApplicationShell {
     action_router: Option<ActionRouter>,
     agent_events: AgentEventCoordinator,
     tmux_compat: crate::tmux_compat::TmuxCompatProduct,
+    new_window_handler: Option<Rc<dyn Fn()>>,
+    close_window_handler: Option<Rc<dyn Fn()>>,
+    quit_handler: Option<Rc<dyn Fn()>>,
 }
 
 struct ShellWidgets {
@@ -113,6 +117,7 @@ impl ApplicationShell {
         main_loop: &glib::MainLoop,
         restored_window: Option<WindowRecipe>,
         restored_drafts: &[PaneRestoreDraft],
+        fresh_window_id: &str,
     ) -> Result<Rc<RefCell<Self>>, String> {
         sidebar::install_styles();
         pane_controls::install_styles();
@@ -133,6 +138,7 @@ impl ApplicationShell {
 
         let window_template = restored_window.unwrap_or_else(|| {
             default_window_recipe(
+                fresh_window_id,
                 std::env::current_dir()
                     .ok()
                     .and_then(|path| path.into_os_string().into_string().ok()),
@@ -189,11 +195,10 @@ impl ApplicationShell {
             last_pane_viewport_height: Cell::new(0),
             action_router: None,
             agent_events,
-            tmux_compat: crate::tmux_compat::TmuxCompatProduct::persistent(
-                crate::tmux_store::TmuxStoreFile::new(
-                    crate::tmux_store::TmuxStoreFile::default_path()?,
-                ),
-            )?,
+            tmux_compat: default_tmux_product()?,
+            new_window_handler: None,
+            close_window_handler: None,
+            quit_handler: None,
         }));
 
         install_sidebar_width_tracking(
@@ -221,6 +226,39 @@ impl ApplicationShell {
 
     pub(crate) fn window(&self) -> &gtk::Window {
         &self.window
+    }
+
+    pub(crate) fn set_application_handlers(
+        &mut self,
+        new_window_handler: Rc<dyn Fn()>,
+        close_window_handler: Rc<dyn Fn()>,
+        quit_handler: Rc<dyn Fn()>,
+    ) {
+        self.new_window_handler = Some(new_window_handler);
+        self.close_window_handler = Some(close_window_handler);
+        self.quit_handler = Some(quit_handler);
+    }
+
+    fn request_new_window(&self) {
+        if let Some(handler) = self.new_window_handler.clone() {
+            handler();
+        }
+    }
+
+    fn request_quit(&self) {
+        if let Some(handler) = self.quit_handler.clone() {
+            handler();
+        } else {
+            self.window.close();
+        }
+    }
+
+    fn request_close_window(&self) {
+        if let Some(handler) = self.close_window_handler.clone() {
+            handler();
+        } else {
+            self.window.close();
+        }
     }
 
     fn mount_background_restored_agents(&self) {
@@ -277,7 +315,7 @@ impl ApplicationShell {
 
     pub(crate) fn present(&self) {
         self.window.present();
-        self.focus_selected_surface();
+        self.focus_selected_surface_unchecked();
     }
 
     pub(crate) fn detach_and_close(&mut self) {
@@ -579,10 +617,19 @@ impl ApplicationShell {
         key: gdk::Key,
         modifiers: gdk::ModifierType,
     ) -> bool {
+        if is_close_active_window_shortcut(key, modifiers) {
+            eprintln!("zentty-linux: action=close-window shortcut=Ctrl+Shift+W");
+            shell.borrow().request_close_window();
+            return true;
+        }
+        if is_new_window_shortcut(key, modifiers) {
+            eprintln!("zentty-linux: action=new-window shortcut=Ctrl+Shift+N");
+            shell.borrow().request_new_window();
+            return true;
+        }
         if is_close_window_shortcut(key, modifiers) {
-            eprintln!("zentty-linux: action=close-window shortcut=Ctrl+Q");
-            let window = shell.borrow().window.clone();
-            window.close();
+            eprintln!("zentty-linux: action=quit shortcut=Ctrl+Q");
+            shell.borrow().request_quit();
             return true;
         }
         if !shell.borrow().peek_phase.is_active() && is_restore_closed_pane_shortcut(key, modifiers)
@@ -970,6 +1017,18 @@ impl ApplicationShell {
     fn command_palette_action_items() -> Vec<CommandPaletteItem> {
         vec![
             CommandPaletteItem::action(
+                "New Window",
+                "Create another Zentty window",
+                "application window",
+                ACTION_NEW_WINDOW,
+            ),
+            CommandPaletteItem::action(
+                "Close Window",
+                "Close this Zentty window",
+                "application window",
+                ACTION_CLOSE_WINDOW,
+            ),
+            CommandPaletteItem::action(
                 "New Worklane",
                 "Create another worklane",
                 "workspace lane",
@@ -1291,7 +1350,7 @@ impl ApplicationShell {
         shell.borrow().peek_view.widget().add_controller(controller);
     }
 
-    fn schedule_terminal_focus(shell: &Rc<RefCell<Self>>) {
+    pub(crate) fn focus_terminal_after_present(shell: &Rc<RefCell<Self>>) {
         let weak = Rc::downgrade(shell);
         glib::timeout_add_local_once(Duration::from_millis(50), move || {
             if let Some(shell) = weak.upgrade() {
@@ -2014,6 +2073,13 @@ impl ApplicationShell {
     }
 
     fn focus_selected_surface(&self) {
+        if !self.window.is_active() {
+            return;
+        }
+        self.focus_selected_surface_unchecked();
+    }
+
+    fn focus_selected_surface_unchecked(&self) {
         if let Some(pane_id) = self.state.focused_pane_id()
             && let Some(surface) = self.pane_runtime.surface(pane_id)
         {
@@ -2192,6 +2258,20 @@ fn is_close_window_shortcut(key: gdk::Key, modifiers: gdk::ModifierType) -> bool
                 | gdk::ModifierType::SHIFT_MASK
                 | gdk::ModifierType::SUPER_MASK,
         )
+}
+
+fn is_new_window_shortcut(key: gdk::Key, modifiers: gdk::ModifierType) -> bool {
+    let required = gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::SHIFT_MASK;
+    matches!(key, gdk::Key::n | gdk::Key::N)
+        && modifiers.contains(required)
+        && !modifiers.intersects(gdk::ModifierType::ALT_MASK | gdk::ModifierType::SUPER_MASK)
+}
+
+fn is_close_active_window_shortcut(key: gdk::Key, modifiers: gdk::ModifierType) -> bool {
+    let required = gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::SHIFT_MASK;
+    matches!(key, gdk::Key::w | gdk::Key::W)
+        && modifiers.contains(required)
+        && !modifiers.intersects(gdk::ModifierType::ALT_MASK | gdk::ModifierType::SUPER_MASK)
 }
 
 fn install_sidebar_width_tracking(
@@ -2460,23 +2540,42 @@ fn next_numeric_identity<'a>(ids: impl Iterator<Item = &'a str>, prefix: &str) -
         .saturating_add(1)
 }
 
-fn default_window_recipe(working_directory: Option<String>) -> WindowRecipe {
+fn default_tmux_product() -> Result<crate::tmux_compat::TmuxCompatProduct, String> {
+    crate::tmux_compat::TmuxCompatProduct::persistent(crate::tmux_store::TmuxStoreFile::new(
+        crate::tmux_store::TmuxStoreFile::default_path()?,
+    ))
+}
+
+fn default_window_recipe(id: &str, working_directory: Option<String>) -> WindowRecipe {
+    let (worklane_id, column_id, pane_id) = if id == "window-1" {
+        (
+            "worklane-1".to_owned(),
+            "column-worklane-1".to_owned(),
+            "pane-1".to_owned(),
+        )
+    } else {
+        (
+            format!("worklane-{id}"),
+            format!("column-{id}"),
+            format!("pane-{id}"),
+        )
+    };
     WindowRecipe {
-        id: "window-1".to_owned(),
+        id: id.to_owned(),
         frame: None,
         worklanes: vec![WorklaneRecipe {
-            id: "worklane-1".to_owned(),
+            id: worklane_id.clone(),
             title: None,
             next_pane_number: 2,
-            focused_column_id: Some("column-worklane-1".to_owned()),
+            focused_column_id: Some(column_id.clone()),
             columns: vec![ColumnRecipe {
-                id: "column-worklane-1".to_owned(),
+                id: column_id,
                 width: 1.0,
-                focused_pane_id: Some("pane-1".to_owned()),
-                last_focused_pane_id: Some("pane-1".to_owned()),
+                focused_pane_id: Some(pane_id.clone()),
+                last_focused_pane_id: Some(pane_id.clone()),
                 pane_heights: vec![1.0],
                 panes: vec![PaneRecipe {
-                    id: "pane-1".to_owned(),
+                    id: pane_id,
                     custom_title: None,
                     title_seed: Some("shell".to_owned()),
                     working_directory,
@@ -2487,7 +2586,7 @@ fn default_window_recipe(working_directory: Option<String>) -> WindowRecipe {
             color: None,
             bookmark_origin_id: None,
         }],
-        active_worklane_id: Some("worklane-1".to_owned()),
+        active_worklane_id: Some(worklane_id),
     }
 }
 
@@ -2495,19 +2594,31 @@ fn default_window_recipe(working_directory: Option<String>) -> WindowRecipe {
 mod allocation_tests {
     use super::{
         TerminalGesture, bounded_pane_viewport_height, codex_terminal_gesture,
-        default_window_recipe, is_close_window_shortcut, model_heights_to_pixels,
+        default_window_recipe, is_close_active_window_shortcut, is_close_window_shortcut,
+        is_new_window_shortcut, model_heights_to_pixels,
     };
     use gtk::gdk;
 
     #[test]
     fn default_pane_records_the_directory_in_which_its_real_child_starts() {
-        let recipe = default_window_recipe(Some("/tmp/zentty-project".to_owned()));
+        let recipe = default_window_recipe("window-test", Some("/tmp/zentty-project".to_owned()));
         assert_eq!(
             recipe.worklanes[0].columns[0].panes[0]
                 .working_directory
                 .as_deref(),
             Some("/tmp/zentty-project")
         );
+    }
+
+    #[test]
+    fn fresh_windows_namespace_workspace_and_pane_identities() {
+        let first = default_window_recipe("window-1", Some("/tmp".to_owned()));
+        let second = default_window_recipe("window-2", Some("/tmp".to_owned()));
+
+        assert_eq!(first.worklanes[0].id, "worklane-1");
+        assert_eq!(first.worklanes[0].columns[0].panes[0].id, "pane-1");
+        assert_eq!(second.worklanes[0].id, "worklane-window-2");
+        assert_eq!(second.worklanes[0].columns[0].panes[0].id, "pane-window-2");
     }
 
     #[test]
@@ -2549,6 +2660,42 @@ mod allocation_tests {
         assert!(!is_close_window_shortcut(
             gdk::Key::w,
             gdk::ModifierType::CONTROL_MASK
+        ));
+    }
+
+    #[test]
+    fn new_window_shortcut_is_exact_linux_ctrl_shift_n() {
+        assert!(is_new_window_shortcut(
+            gdk::Key::n,
+            gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::SHIFT_MASK,
+        ));
+        assert!(!is_new_window_shortcut(
+            gdk::Key::n,
+            gdk::ModifierType::CONTROL_MASK,
+        ));
+        assert!(!is_new_window_shortcut(
+            gdk::Key::n,
+            gdk::ModifierType::CONTROL_MASK
+                | gdk::ModifierType::SHIFT_MASK
+                | gdk::ModifierType::SUPER_MASK,
+        ));
+    }
+
+    #[test]
+    fn close_active_window_shortcut_is_exact_linux_ctrl_shift_w() {
+        assert!(is_close_active_window_shortcut(
+            gdk::Key::w,
+            gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::SHIFT_MASK,
+        ));
+        assert!(!is_close_active_window_shortcut(
+            gdk::Key::w,
+            gdk::ModifierType::CONTROL_MASK,
+        ));
+        assert!(!is_close_active_window_shortcut(
+            gdk::Key::w,
+            gdk::ModifierType::CONTROL_MASK
+                | gdk::ModifierType::SHIFT_MASK
+                | gdk::ModifierType::ALT_MASK,
         ));
     }
 

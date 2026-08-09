@@ -4,6 +4,8 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 contract="${ZENTTY_APPLICATION_SHELL_OWNERSHIP_CONTRACT:-${repo_root}/docs/architecture/application-shell-responsibilities-v1.json}"
 main_file="${ZENTTY_APPLICATION_RUNTIME_SOURCE:-${repo_root}/crates/zentty-linux/src/main.rs}"
+application_file="${ZENTTY_APPLICATION_COORDINATOR_SOURCE:-${repo_root}/crates/zentty-linux/src/application.rs}"
+window_set_file="${ZENTTY_WINDOW_SET_SOURCE:-${repo_root}/crates/zentty-linux/src/window_set.rs}"
 agent_runtime_file="${ZENTTY_AGENT_RUNTIME_SOURCE:-${repo_root}/crates/zentty-linux/src/agent_runtime.rs}"
 codex_enrichment_file="${ZENTTY_CODEX_ENRICHMENT_SOURCE:-${repo_root}/crates/zentty-linux/src/codex_enrichment.rs}"
 source_file="${ZENTTY_APPLICATION_SHELL_SOURCE:-${repo_root}/crates/zentty-linux/src/application_shell.rs}"
@@ -26,6 +28,8 @@ for dependency in jq sed sort comm mktemp sha256sum; do
 done
 [[ -r "${contract}" ]] || fail "ownership contract is missing: ${contract}"
 [[ -r "${main_file}" ]] || fail "application runtime source is missing: ${main_file}"
+[[ -r "${application_file}" ]] || fail "application coordinator source is missing: ${application_file}"
+[[ -r "${window_set_file}" ]] || fail "window-set source is missing: ${window_set_file}"
 [[ -r "${agent_runtime_file}" ]] || fail "agent runtime source is missing: ${agent_runtime_file}"
 [[ -r "${codex_enrichment_file}" ]] || fail "Codex enrichment source is missing: ${codex_enrichment_file}"
 [[ -r "${source_file}" ]] || fail "application shell source is missing: ${source_file}"
@@ -76,6 +80,8 @@ if [[ -n "${diff}" ]]; then
 fi
 
 main_sha256="$(sha256sum "${main_file}" | awk '{print $1}')"
+application_sha256="$(sha256sum "${application_file}" | awk '{print $1}')"
+window_set_sha256="$(sha256sum "${window_set_file}" | awk '{print $1}')"
 agent_runtime_sha256="$(sha256sum "${agent_runtime_file}" | awk '{print $1}')"
 codex_enrichment_sha256="$(sha256sum "${codex_enrichment_file}" | awk '{print $1}')"
 source_sha256="$(sha256sum "${source_file}" | awk '{print $1}')"
@@ -89,6 +95,12 @@ tmux_store_sha256="$(sha256sum "${tmux_store_file}" | awk '{print $1}')"
 jq -e --arg main_sha256 "${main_sha256}" \
     '.owned_source_sha256["crates/zentty-linux/src/main.rs"] == $main_sha256' \
     "${contract}" >/dev/null || fail "application runtime source hash differs from its ownership contract"
+jq -e --arg application_sha256 "${application_sha256}" \
+    '.owned_source_sha256["crates/zentty-linux/src/application.rs"] == $application_sha256' \
+    "${contract}" >/dev/null || fail "application coordinator source hash differs from its ownership contract"
+jq -e --arg window_set_sha256 "${window_set_sha256}" \
+    '.owned_source_sha256["crates/zentty-linux/src/window_set.rs"] == $window_set_sha256' \
+    "${contract}" >/dev/null || fail "window-set source hash differs from its ownership contract"
 jq -e --arg agent_runtime_sha256 "${agent_runtime_sha256}" \
     '.owned_source_sha256["crates/zentty-linux/src/agent_runtime.rs"] == $agent_runtime_sha256' \
     "${contract}" >/dev/null || fail "agent runtime source hash differs from its ownership contract"
@@ -182,6 +194,8 @@ if [[ -n "${diff}" ]]; then
 fi
 
 jq -e --arg main_sha256 "${main_sha256}" \
+    --arg application_sha256 "${application_sha256}" \
+    --arg window_set_sha256 "${window_set_sha256}" \
     --arg agent_runtime_sha256 "${agent_runtime_sha256}" \
     --arg codex_enrichment_sha256 "${codex_enrichment_sha256}" \
     --arg source_sha256 "${source_sha256}" \
@@ -198,6 +212,8 @@ jq -e --arg main_sha256 "${main_sha256}" \
     .source_sha256 == $source_sha256 and
     .owned_source_sha256 == {
         "crates/zentty-linux/src/main.rs":$main_sha256,
+        "crates/zentty-linux/src/application.rs":$application_sha256,
+        "crates/zentty-linux/src/window_set.rs":$window_set_sha256,
         "crates/zentty-linux/src/agent_runtime.rs":$agent_runtime_sha256,
         "crates/zentty-linux/src/codex_enrichment.rs":$codex_enrichment_sha256,
         "crates/zentty-linux/src/application_shell/action_router.rs":$action_router_sha256,
@@ -260,7 +276,7 @@ jq -e --arg main_sha256 "${main_sha256}" \
         "move-worklane", "rename-pane", "rename-worklane", "reorder-worklane",
         "select-pane", "set-worklane-color"
     ] | sort) and
-    ([.action_contract[] | select(.parameter == "none")] | length) == 44 and
+    ([.action_contract[] | select(.parameter == "none")] | length) == 46 and
     .conditional_action_availability == {
         "multiple_columns":["arrange-golden-wide","arrange-golden-narrow"],
         "multiple_panes_in_focused_column":["arrange-golden-tall","arrange-golden-short"],

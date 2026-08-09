@@ -2,16 +2,18 @@
   "schema_version": 1,
   "contract_id": "zentty-application-shell-responsibilities",
   "source": "crates/zentty-linux/src/application_shell.rs",
-  "source_sha256": "642a2c55a87840fea812a873f6ab89a3b26453e38762e20eaa655adac8b94b66",
+  "source_sha256": "f6effdef6726c41de433e6c7bc512c091cbf49c1205501d022d490e44a94fcc1",
   "owned_source_sha256": {
-    "crates/zentty-linux/src/main.rs": "710cbf3598ca6b422d33083066034840302f561341603f3784998f2a18fe34fd",
+    "crates/zentty-linux/src/main.rs": "666411596238755127dbb97a8e98cad993247fabfcd3cfb3f4453e983ff8f5b5",
+    "crates/zentty-linux/src/application.rs": "6f197bffb2e94258044df812ff0fa20e2963f207c5d3b64d970e6c5847fa01d4",
+    "crates/zentty-linux/src/window_set.rs": "501d595889c11a41a4261ef8282465d76dd9ed8ccd1d004406b558579b0bf58e",
     "crates/zentty-linux/src/agent_runtime.rs": "36f1e38a84955f15ff86f63a24dd50ca07235d288307c3ad6e277890db3afbcc",
     "crates/zentty-linux/src/codex_enrichment.rs": "fe87631c75c04b63962b7f89d311a778a25af8f27a1dcb4d5950b3efcbaa476e",
-    "crates/zentty-linux/src/application_shell/action_router.rs": "321a6e71c26effce00b51ccb3d505ce3e329a573246fe6345f57768c7e2138a8",
+    "crates/zentty-linux/src/application_shell/action_router.rs": "3c7933e6055b23507e79218546155def5ef69216ec58a11d7f93ccf572ff2cce",
     "crates/zentty-linux/src/application_shell/agent_events.rs": "12da8738f9cc6902498d6dd836a79ba52025897bad596703d1d336d3ec805e0f",
-    "crates/zentty-linux/src/application_shell/pane_runtime.rs": "a84dac23c934abaecd845073156f9d8cb031d26711e2ab52f17cdab46a887522",
+    "crates/zentty-linux/src/application_shell/pane_runtime.rs": "39de2da6d0cd790c4e66a3dbf8f5c98a2cccf614020661048ebbc3e79f31a012",
     "crates/zentty-linux/src/application_shell/tmux_runtime.rs": "b606ec1c2e8c93e1ab40dbac1e5080f28315352e83533d7c63ba7eefd95d0515",
-    "crates/zentty-linux/src/persistence_coordinator.rs": "0256711dfa101c65fd80507ae690f8d78ed94003421968b19df452dd09a15cb2",
+    "crates/zentty-linux/src/persistence_coordinator.rs": "9c9b24a8516032e37377b6acfba3549781cfc830a65f53d7a311f0b2efaa72a4",
     "crates/zentty-linux/src/tmux_compat.rs": "9f3279e470c0cbb7c99fb93102d363bd28cf0c540a340df5c5b4bd009486190b",
     "crates/zentty-linux/src/tmux_store.rs": "8447751028f8a8874c222055b7ee1bc369d23f25df5f8bdc7ffcf418e06dac40"
   },
@@ -21,7 +23,7 @@
     {
       "id": "application_runtime",
       "status": "existing",
-      "planned_module": "crates/zentty-linux/src/main.rs",
+      "planned_module": "crates/zentty-linux/src/main.rs and crates/zentty-linux/src/application.rs",
       "tracking": "GH-31",
       "responsibility": "Process composition root and sole default GLib main-context/main-loop scheduling authority; owns startup and shutdown ordering around each window shell."
     },
@@ -77,6 +79,10 @@
   ],
   "field_assignments": [
     {
+      "owner": "application_runtime",
+      "fields": ["new_window_handler", "close_window_handler", "quit_handler"]
+    },
+    {
       "owner": "application_shell",
       "fields": [
         "window", "chrome", "body", "sidebar_reservation", "sidebar_hover_rail",
@@ -115,11 +121,18 @@
   ],
   "method_assignments": [
     {
+      "owner": "application_runtime",
+      "methods": [
+        "set_application_handlers", "request_new_window",
+        "request_close_window", "request_quit"
+      ]
+    },
+    {
       "owner": "application_shell",
       "methods": [
         "new", "window", "sidebar_container", "present", "detach_and_close",
         "move_active_worklane", "move_worklane", "render", "take_pane_id",
-        "topology_receipt", "geometry_receipt"
+        "topology_receipt", "geometry_receipt", "focus_terminal_after_present"
       ]
     },
     {
@@ -130,7 +143,7 @@
         "handle_lifecycle_shortcut", "activate_restore_closed_pane_shortcut",
         "install_command_palette_shortcut", "install_search_shortcuts",
         "perform_focused_binding_action",
-        "schedule_terminal_focus", "activate_pane_control", "report_action_error",
+        "activate_pane_control", "report_action_error",
         "refresh_pane_layout_action_availability"
       ]
     },
@@ -140,7 +153,8 @@
         "live_children", "release_surfaces", "create_worklane", "split_focused_pane_right",
         "add_focused_pane_right", "add_focused_pane_left", "split_focused_pane_below",
         "split_focused_pane", "close_focused_pane", "close_worklane", "close_pane",
-        "restore_closed_pane", "remove_live_surface", "focus_selected_surface"
+        "restore_closed_pane", "remove_live_surface", "focus_selected_surface",
+        "focus_selected_surface_unchecked"
       ]
     },
     {
@@ -175,7 +189,7 @@
   "owned_module_functions": {
     "action_router": [
       "accepts", "enabled", "install", "uninstall", "refresh_availability",
-      "populate", "install_edit_actions", "install_worklane_edit_actions",
+      "populate", "install_application_actions", "install_edit_actions", "install_worklane_edit_actions",
       "install_worklane_move_actions", "install_pane_rename_action",
       "install_pane_transfer_action", "install_pane_creation_actions",
       "install_restore_closed_pane_action", "install_search_actions",
@@ -200,7 +214,8 @@
       "clean_exit_decision", "complete_launch", "default_state_directory", "drain_errors",
       "drain_live_snapshot_errors", "drop", "flush_live_snapshot_if_due",
       "observe_live_snapshot", "persist", "persist_synchronously", "save_clean_exit",
-      "select_restored_window", "snapshot_request", "spawn", "start", "synchronize"
+      "project_restored_workspace", "snapshot_request", "spawn", "start", "synchronize",
+      "validate_window_snapshots", "window_contains_pane"
     ],
     "tmux_runtime_coordinator": [
       "execute_tmux_command", "execute_tmux_send_keys", "launch_tmux_deferred_pane", "execute_tmux_split",
@@ -213,6 +228,8 @@
     ]
   },
   "action_contract": [
+    {"name":"new-window","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"close-window","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"toggle-sidebar","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"new-worklane","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"select-worklane","parameter":"string","owner":"action_router","invalid_parameter":"ignore-without-panic"},

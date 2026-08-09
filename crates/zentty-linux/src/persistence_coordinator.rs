@@ -37,15 +37,21 @@ fn clean_exit_decision(phase: PersistencePhase) -> CleanExitDecision {
 }
 
 pub(crate) struct LaunchProjection {
-    pub(crate) restored_window: Option<WindowRecipe>,
-    pub(crate) restored_drafts: Vec<PaneRestoreDraft>,
+    pub(crate) windows: Vec<WindowSnapshot>,
+    pub(crate) active_window_id: Option<String>,
     pub(crate) warning: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub(crate) struct WindowSnapshot {
+    pub(crate) window: WindowRecipe,
+    pub(crate) restored_drafts: Vec<PaneRestoreDraft>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 struct LiveSnapshotContent {
-    window: WindowRecipe,
-    restored_drafts: Vec<PaneRestoreDraft>,
+    windows: Vec<WindowSnapshot>,
+    active_window_id: Option<String>,
     default_working_directory: String,
 }
 
@@ -218,9 +224,9 @@ impl PersistenceCoordinator {
                 Some(format!("Failed to prepare restore launch: {error}")),
             ),
         };
-        let restored_window = match launch_decision.as_ref() {
-            Some(decision) => match select_restored_window(&decision.envelope.workspace) {
-                Ok(window) => Some(window),
+        let restored_workspace = match launch_decision.as_ref() {
+            Some(decision) => match project_restored_workspace(&decision.envelope) {
+                Ok(workspace) => Some(workspace),
                 Err(error) => {
                     store.consume_snapshot().map_err(|delete_error| {
                         format!(
@@ -235,18 +241,7 @@ impl PersistenceCoordinator {
             },
             None => None,
         };
-        let restored_drafts = restored_window.as_ref().map_or_else(Vec::new, |window| {
-            launch_decision
-                .as_ref()
-                .and_then(|decision| {
-                    decision
-                        .envelope
-                        .restore_draft_windows
-                        .iter()
-                        .find(|drafts| drafts.window_id == window.id)
-                })
-                .map_or_else(Vec::new, |drafts| drafts.pane_drafts.clone())
-        });
+        let (windows, active_window_id) = restored_workspace.unwrap_or_else(|| (Vec::new(), None));
         store
             .mark_launch_started(now)
             .map_err(|error| error.to_string())?;
@@ -256,13 +251,13 @@ impl PersistenceCoordinator {
                 next_generation: 0,
                 phase: PersistencePhase::Running,
                 normal_restore_enabled: restore_enabled,
-                prepared_restore: restored_window.is_some(),
+                prepared_restore: !windows.is_empty(),
                 last_observed_live_snapshot: None,
                 pending_live_snapshot: None,
             },
             LaunchProjection {
-                restored_window,
-                restored_drafts,
+                windows,
+                active_window_id,
                 warning,
             },
         ))
@@ -287,14 +282,14 @@ impl PersistenceCoordinator {
 
     pub(crate) fn observe_live_snapshot(
         &mut self,
-        window: WindowRecipe,
-        restored_drafts: Vec<PaneRestoreDraft>,
+        windows: Vec<WindowSnapshot>,
+        active_window_id: Option<String>,
         default_working_directory: &str,
         observed_at: Duration,
     ) -> bool {
         let content = LiveSnapshotContent {
-            window,
-            restored_drafts,
+            windows,
+            active_window_id,
             default_working_directory: default_working_directory.to_owned(),
         };
         if self.last_observed_live_snapshot.as_ref() == Some(&content) {
@@ -339,8 +334,8 @@ impl PersistenceCoordinator {
 
     pub(crate) fn save_clean_exit(
         &mut self,
-        window: WindowRecipe,
-        restored_drafts: Vec<PaneRestoreDraft>,
+        windows: Vec<WindowSnapshot>,
+        active_window_id: Option<String>,
         default_working_directory: &str,
         now: f64,
     ) -> Result<(), String> {
@@ -348,14 +343,14 @@ impl PersistenceCoordinator {
             CleanExitDecision::Begin => self.phase = PersistencePhase::Saving,
             decision => return Err(format!("clean-exit persistence rejected: {decision:?}")),
         }
-        if let Err(error) = WorkspaceState::from_window_recipe(&window) {
+        if let Err(error) = validate_window_snapshots(&windows) {
             self.phase = PersistencePhase::Failed;
             return Err(format!("clean-exit workspace validation failed: {error}"));
         }
         let request = snapshot_request(
             LiveSnapshotContent {
-                window,
-                restored_drafts,
+                windows,
+                active_window_id,
                 default_working_directory: default_working_directory.to_owned(),
             },
             self.normal_restore_enabled,
@@ -390,26 +385,34 @@ fn snapshot_request(
     saved_at: f64,
     reason: SaveReason,
 ) -> PersistenceRequest {
-    let has_restore_drafts = !content.restored_drafts.is_empty();
-    let window_id = content.window.id.clone();
+    let has_restore_drafts = content
+        .windows
+        .iter()
+        .any(|window| !window.restored_drafts.is_empty());
     let workspace = WorkspaceRecipe {
         schema_version: Some(WorkspaceRecipe::CURRENT_SCHEMA_VERSION),
-        active_window_id: Some(window_id.clone()),
-        windows: vec![content.window],
+        active_window_id: content.active_window_id,
+        windows: content
+            .windows
+            .iter()
+            .map(|window| window.window.clone())
+            .collect(),
     };
     if !has_restore_drafts
         && (!normal_restore_enabled || !workspace.is_meaningful(&content.default_working_directory))
     {
         return PersistenceRequest::DeleteSnapshot;
     }
-    let restore_draft_windows = if content.restored_drafts.is_empty() {
-        Vec::new()
-    } else {
-        vec![SessionRestoreDraftWindow {
-            window_id,
-            pane_drafts: content.restored_drafts,
-        }]
-    };
+    let restore_draft_windows = content
+        .windows
+        .into_iter()
+        .filter_map(|window| {
+            (!window.restored_drafts.is_empty()).then_some(SessionRestoreDraftWindow {
+                window_id: window.window.id,
+                pane_drafts: window.restored_drafts,
+            })
+        })
+        .collect();
     PersistenceRequest::SaveSnapshot(SessionRestoreEnvelope {
         schema_version: 1,
         saved_at,
@@ -419,22 +422,71 @@ fn snapshot_request(
     })
 }
 
-fn select_restored_window(workspace: &WorkspaceRecipe) -> Result<WindowRecipe, String> {
-    if workspace.windows.len() != 1 {
-        return Err(format!(
-            "workspace restore has {} windows; Linux currently requires exactly one",
-            workspace.windows.len()
-        ));
-    }
-    let window = &workspace.windows[0];
-    if workspace
+fn project_restored_workspace(
+    envelope: &SessionRestoreEnvelope,
+) -> Result<(Vec<WindowSnapshot>, Option<String>), String> {
+    let workspace = &envelope.workspace;
+    let windows = workspace
+        .windows
+        .iter()
+        .cloned()
+        .map(|window| WindowSnapshot {
+            restored_drafts: envelope
+                .restore_draft_windows
+                .iter()
+                .find(|drafts| drafts.window_id == window.id)
+                .map_or_else(Vec::new, |drafts| drafts.pane_drafts.clone()),
+            window,
+        })
+        .collect::<Vec<_>>();
+    validate_window_snapshots(&windows)?;
+    let active_window_id = workspace
         .active_window_id
         .as_deref()
-        .is_some_and(|id| id != window.id)
-    {
-        return Err("workspace active window does not exist".to_owned());
+        .filter(|active| windows.iter().any(|window| window.window.id == *active))
+        .map(str::to_owned)
+        .or_else(|| windows.first().map(|window| window.window.id.clone()));
+    Ok((windows, active_window_id))
+}
+
+fn validate_window_snapshots(windows: &[WindowSnapshot]) -> Result<(), String> {
+    if windows.is_empty() {
+        return Err("workspace restore has no windows".to_owned());
     }
-    Ok(window.clone())
+    let mut ids = std::collections::BTreeSet::new();
+    for snapshot in windows {
+        if snapshot.window.id.is_empty() {
+            return Err("workspace window ID is empty".to_owned());
+        }
+        if !ids.insert(snapshot.window.id.as_str()) {
+            return Err(format!(
+                "workspace contains duplicate window ID {:?}",
+                snapshot.window.id
+            ));
+        }
+        WorkspaceState::from_window_recipe(&snapshot.window)
+            .map_err(|error| format!("window {:?} is invalid: {error}", snapshot.window.id))?;
+        if snapshot
+            .restored_drafts
+            .iter()
+            .any(|draft| !window_contains_pane(&snapshot.window, &draft.pane_id))
+        {
+            return Err(format!(
+                "window {:?} has a restore draft for an unknown pane",
+                snapshot.window.id
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn window_contains_pane(window: &WindowRecipe, pane_id: &str) -> bool {
+    window.worklanes.iter().any(|worklane| {
+        worklane
+            .columns
+            .iter()
+            .any(|column| column.panes.iter().any(|pane| pane.id == pane_id))
+    })
 }
 
 pub(crate) fn default_state_directory() -> Result<PathBuf, String> {
@@ -450,7 +502,7 @@ pub(crate) fn default_state_directory() -> Result<PathBuf, String> {
 mod tests {
     use super::{
         CleanExitDecision, LiveSnapshotContent, PersistenceCoordinator, PersistencePhase,
-        clean_exit_decision, snapshot_request,
+        WindowSnapshot, clean_exit_decision, snapshot_request,
     };
     use std::fs;
     use std::path::PathBuf;
@@ -499,6 +551,29 @@ mod tests {
         SessionRestoreEnvelope::from_json(V3_ENVELOPE).unwrap()
     }
 
+    fn snapshot(
+        window: zentty_core::WindowRecipe,
+        restored_drafts: Vec<zentty_core::PaneRestoreDraft>,
+    ) -> WindowSnapshot {
+        WindowSnapshot {
+            window,
+            restored_drafts,
+        }
+    }
+
+    fn single_window_content(
+        window: zentty_core::WindowRecipe,
+        restored_drafts: Vec<zentty_core::PaneRestoreDraft>,
+        default_working_directory: &str,
+    ) -> LiveSnapshotContent {
+        let active_window_id = Some(window.id.clone());
+        LiveSnapshotContent {
+            windows: vec![snapshot(window, restored_drafts)],
+            active_window_id,
+            default_working_directory: default_working_directory.to_owned(),
+        }
+    }
+
     #[test]
     fn clean_exit_is_single_flight_and_terminal_after_success_or_failure() {
         assert_eq!(
@@ -529,13 +604,94 @@ mod tests {
         let (mut coordinator, launch) =
             PersistenceCoordinator::start(&directory.0, true, 2.0).unwrap();
         assert_eq!(coordinator.phase, PersistencePhase::Running);
-        assert_eq!(launch.restored_window.unwrap().id, "window-main");
-        assert_eq!(launch.restored_drafts.len(), 1);
+        assert_eq!(launch.windows[0].window.id, "window-main");
+        assert_eq!(launch.windows[0].restored_drafts.len(), 1);
+        assert_eq!(launch.active_window_id.as_deref(), Some("window-main"));
         assert!(launch.warning.is_none());
         assert!(store.snapshot_path().is_file());
         coordinator.complete_launch().unwrap();
         assert!(!store.snapshot_path().exists());
         assert_eq!(store.prepare_for_launch(false).unwrap(), None,);
+    }
+
+    #[test]
+    fn startup_projects_ordered_windows_and_per_window_drafts() {
+        let directory = TestDirectory::new("startup-multi-window");
+        let store = directory.store();
+        let mut source = envelope();
+        let mut second = source.workspace.windows[0].clone();
+        second.id = "window-second".to_owned();
+        second.worklanes[0].id = "worklane-second".to_owned();
+        second.worklanes[0].columns[0].id = "column-second".to_owned();
+        second.worklanes[0].columns[0].panes[0].id = "pane-second".to_owned();
+        second.worklanes[0].columns[0].focused_pane_id = Some("pane-second".to_owned());
+        second.worklanes[0].columns[0].last_focused_pane_id = Some("pane-second".to_owned());
+        second.worklanes[0].focused_column_id = Some("column-second".to_owned());
+        second.active_worklane_id = Some("worklane-second".to_owned());
+        source.workspace.windows.push(second);
+        source.workspace.active_window_id = Some("window-second".to_owned());
+        source
+            .restore_draft_windows
+            .push(zentty_core::SessionRestoreDraftWindow {
+                window_id: "window-second".to_owned(),
+                pane_drafts: Vec::new(),
+            });
+        store.save_snapshot(&source).unwrap();
+        store.mark_clean_exit(1.0).unwrap();
+
+        let (_, launch) = PersistenceCoordinator::start(&directory.0, true, 2.0).unwrap();
+
+        assert_eq!(
+            launch
+                .windows
+                .iter()
+                .map(|snapshot| snapshot.window.id.as_str())
+                .collect::<Vec<_>>(),
+            ["window-main", "window-second"]
+        );
+        assert_eq!(launch.windows[0].restored_drafts.len(), 1);
+        assert!(launch.windows[1].restored_drafts.is_empty());
+        assert_eq!(launch.active_window_id.as_deref(), Some("window-second"));
+    }
+
+    #[test]
+    fn startup_falls_back_to_first_window_for_stale_active_identity() {
+        let directory = TestDirectory::new("startup-stale-active");
+        let store = directory.store();
+        let mut source = envelope();
+        source.workspace.active_window_id = Some("window-missing".to_owned());
+        store.save_snapshot(&source).unwrap();
+        store.mark_clean_exit(1.0).unwrap();
+
+        let (_, launch) = PersistenceCoordinator::start(&directory.0, true, 2.0).unwrap();
+
+        assert_eq!(launch.active_window_id.as_deref(), Some("window-main"));
+        assert!(launch.warning.is_none());
+    }
+
+    #[test]
+    fn duplicate_window_identity_rejects_and_consumes_unusable_restore() {
+        let directory = TestDirectory::new("startup-duplicate-window");
+        let store = directory.store();
+        let mut source = envelope();
+        source
+            .workspace
+            .windows
+            .push(source.workspace.windows[0].clone());
+        store.save_snapshot(&source).unwrap();
+        store.mark_clean_exit(1.0).unwrap();
+
+        let (_, launch) = PersistenceCoordinator::start(&directory.0, true, 2.0).unwrap();
+
+        assert!(launch.windows.is_empty());
+        assert!(launch.active_window_id.is_none());
+        assert!(
+            launch
+                .warning
+                .as_deref()
+                .is_some_and(|warning| warning.contains("duplicate window ID"))
+        );
+        assert!(!store.snapshot_path().exists());
     }
 
     #[test]
@@ -546,8 +702,8 @@ mod tests {
 
         let (coordinator, launch) = PersistenceCoordinator::start(&directory.0, true, 2.0).unwrap();
 
-        assert!(launch.restored_window.is_none());
-        assert!(launch.restored_drafts.is_empty());
+        assert!(launch.windows.is_empty());
+        assert!(launch.active_window_id.is_none());
         assert!(
             launch
                 .warning
@@ -569,8 +725,8 @@ mod tests {
         let drafts = source.restore_draft_windows[0].pane_drafts.clone();
 
         assert!(coordinator.observe_live_snapshot(
-            window.clone(),
-            drafts.clone(),
+            vec![snapshot(window.clone(), drafts.clone())],
+            Some(window.id.clone()),
             "/tmp",
             Duration::ZERO,
         ));
@@ -581,8 +737,8 @@ mod tests {
         );
         window.worklanes[0].title = Some("Changed during debounce".to_owned());
         assert!(coordinator.observe_live_snapshot(
-            window,
-            drafts,
+            vec![snapshot(window.clone(), drafts)],
+            Some(window.id),
             "/tmp",
             Duration::from_millis(300),
         ));
@@ -621,14 +777,14 @@ mod tests {
         let drafts = source.restore_draft_windows[0].pane_drafts.clone();
 
         assert!(coordinator.observe_live_snapshot(
-            window.clone(),
-            drafts.clone(),
+            vec![snapshot(window.clone(), drafts.clone())],
+            Some(window.id.clone()),
             "/tmp",
             Duration::ZERO,
         ));
         assert!(!coordinator.observe_live_snapshot(
-            window,
-            drafts,
+            vec![snapshot(window.clone(), drafts)],
+            Some(window.id),
             "/tmp",
             Duration::from_millis(300),
         ));
@@ -646,13 +802,68 @@ mod tests {
     }
 
     #[test]
+    fn live_snapshot_preserves_window_order_active_identity_and_draft_ownership() {
+        let directory = TestDirectory::new("live-multi-window");
+        let (mut coordinator, _) = PersistenceCoordinator::start(&directory.0, true, 1.0).unwrap();
+        let source = envelope();
+        let first = snapshot(
+            source.workspace.windows[0].clone(),
+            source.restore_draft_windows[0].pane_drafts.clone(),
+        );
+        let mut second_window = source.workspace.windows[0].clone();
+        second_window.id = "window-second".to_owned();
+        let second = snapshot(second_window, Vec::new());
+
+        assert!(coordinator.observe_live_snapshot(
+            vec![first, second],
+            Some("window-second".to_owned()),
+            "/tmp",
+            Duration::ZERO,
+        ));
+        assert!(
+            coordinator
+                .flush_live_snapshot_if_due(Duration::from_millis(350), 2.0)
+                .unwrap()
+        );
+        coordinator.worker.synchronize();
+
+        let restored = directory
+            .store()
+            .prepare_for_launch(false)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            restored
+                .envelope
+                .workspace
+                .windows
+                .iter()
+                .map(|window| window.id.as_str())
+                .collect::<Vec<_>>(),
+            ["window-main", "window-second"]
+        );
+        assert_eq!(
+            restored.envelope.workspace.active_window_id.as_deref(),
+            Some("window-second")
+        );
+        assert_eq!(restored.envelope.restore_draft_windows.len(), 1);
+        assert_eq!(
+            restored.envelope.restore_draft_windows[0].window_id,
+            "window-main"
+        );
+    }
+
+    #[test]
     fn asynchronous_live_snapshot_failure_is_reported_back_to_the_ui_owner() {
         let directory = TestDirectory::new("live-failure");
         let (mut coordinator, _) = PersistenceCoordinator::start(&directory.0, true, 1.0).unwrap();
         let source = envelope();
         assert!(coordinator.observe_live_snapshot(
-            source.workspace.windows[0].clone(),
-            source.restore_draft_windows[0].pane_drafts.clone(),
+            vec![snapshot(
+                source.workspace.windows[0].clone(),
+                source.restore_draft_windows[0].pane_drafts.clone(),
+            )],
+            source.workspace.active_window_id.clone(),
             "/tmp",
             Duration::ZERO,
         ));
@@ -694,11 +905,7 @@ mod tests {
         pane.working_directory = Some("/tmp".to_owned());
         pane.last_activity_title = None;
         pane.last_run_command = None;
-        let content = LiveSnapshotContent {
-            window: window.clone(),
-            restored_drafts: Vec::new(),
-            default_working_directory: "/tmp".to_owned(),
-        };
+        let content = single_window_content(window.clone(), Vec::new(), "/tmp");
 
         assert_eq!(
             snapshot_request(content.clone(), true, 1.0, SaveReason::CleanExit),
@@ -707,8 +914,11 @@ mod tests {
         assert!(matches!(
             snapshot_request(
                 LiveSnapshotContent {
-                    restored_drafts: source.restore_draft_windows[0].pane_drafts.clone(),
-                    ..content
+                    windows: vec![snapshot(
+                        window.clone(),
+                        source.restore_draft_windows[0].pane_drafts.clone(),
+                    )],
+                    ..content.clone()
                 },
                 true,
                 1.5,
@@ -718,11 +928,11 @@ mod tests {
         ));
         assert!(matches!(
             snapshot_request(
-                LiveSnapshotContent {
-                    window: window.clone(),
-                    restored_drafts: source.restore_draft_windows[0].pane_drafts.clone(),
-                    default_working_directory: "/tmp".to_owned(),
-                },
+                single_window_content(
+                    window.clone(),
+                    source.restore_draft_windows[0].pane_drafts.clone(),
+                    "/tmp",
+                ),
                 false,
                 1.75,
                 SaveReason::CleanExit,
@@ -732,11 +942,7 @@ mod tests {
         window.worklanes.push(window.worklanes[0].clone());
         assert!(matches!(
             snapshot_request(
-                LiveSnapshotContent {
-                    window,
-                    restored_drafts: Vec::new(),
-                    default_working_directory: "/tmp".to_owned(),
-                },
+                single_window_content(window, Vec::new(), "/tmp"),
                 false,
                 2.0,
                 SaveReason::CleanExit,
@@ -750,18 +956,28 @@ mod tests {
         let directory = TestDirectory::new("clean");
         let (mut coordinator, launch) =
             PersistenceCoordinator::start(&directory.0, true, 1.0).unwrap();
-        assert!(launch.restored_window.is_none());
+        assert!(launch.windows.is_empty());
         let source = envelope();
         let window = source.workspace.windows[0].clone();
         let drafts = source.restore_draft_windows[0].pane_drafts.clone();
 
         coordinator
-            .save_clean_exit(window, drafts, "/tmp", 2.0)
+            .save_clean_exit(
+                vec![snapshot(window.clone(), drafts)],
+                Some(window.id),
+                "/tmp",
+                2.0,
+            )
             .unwrap();
         assert_eq!(coordinator.phase, PersistencePhase::Complete);
         assert!(
             coordinator
-                .save_clean_exit(source.workspace.windows[0].clone(), Vec::new(), "/tmp", 3.0,)
+                .save_clean_exit(
+                    vec![snapshot(source.workspace.windows[0].clone(), Vec::new(),)],
+                    source.workspace.active_window_id.clone(),
+                    "/tmp",
+                    3.0,
+                )
                 .is_err()
         );
         let store = directory.store();
@@ -781,13 +997,23 @@ mod tests {
 
         assert!(
             coordinator
-                .save_clean_exit(window.clone(), Vec::new(), "/tmp", 2.0)
+                .save_clean_exit(
+                    vec![snapshot(window.clone(), Vec::new())],
+                    Some(window.id.clone()),
+                    "/tmp",
+                    2.0,
+                )
                 .is_err()
         );
         assert_eq!(coordinator.phase, PersistencePhase::Failed);
         assert!(
             coordinator
-                .save_clean_exit(window, Vec::new(), "/tmp", 3.0)
+                .save_clean_exit(
+                    vec![snapshot(window.clone(), Vec::new())],
+                    Some(window.id),
+                    "/tmp",
+                    3.0,
+                )
                 .is_err()
         );
     }
@@ -801,7 +1027,12 @@ mod tests {
 
         assert!(
             coordinator
-                .save_clean_exit(window, Vec::new(), "/tmp", 2.0)
+                .save_clean_exit(
+                    vec![snapshot(window.clone(), Vec::new())],
+                    Some(window.id),
+                    "/tmp",
+                    2.0,
+                )
                 .is_err()
         );
         assert_eq!(coordinator.phase, PersistencePhase::Failed);

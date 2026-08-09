@@ -10248,8 +10248,10 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   and `3fddd3e8fb0e3476f012ede2318ff7df42d3f2dd8e523f931656b02a3f18aca1`.
   This is not an unsuppressed-clean claim; ReleaseSafe Valgrind remains XFAIL.
 - **The plan now distinguishes completion from prerequisite honestly:** The
-  durable-store criterion is complete; multi-window isolation is not. Linux
-  still composes one real `ApplicationShell` per process, while source routes
+  durable-store criterion is complete; multi-window isolation is not. At this
+  historical checkpoint Linux still composed one real `ApplicationShell` per
+  process (superseded by the real multi-window #32 entry below), while source
+  routes
   tmux requests through the target window controller. The remaining GH-14
   criterion therefore depends on issue #16's real live multi-window lifecycle;
   a tmux-only second shell would be an alternate test product and was not
@@ -10835,6 +10837,242 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   `ae8257de79eba192f07b54e241bf3812c98c7f560d5509d3d2c14e84912108b0`,
   and
   `21725ee1f3646a3e1491fe149364814882c9c46418a9478a17d3932759745128`.
+
+### 2026-08-09 — Real multi-window composition begins (#32)
+
+- **The source-derived boundary is now explicit:** Public issue #32 narrows
+  the remaining multi-window portions of #3, #6, #14, and #16 into five
+  test-first delivery slices. `AppDelegate.swift` remains authoritative for
+  one application-level window collection, key/last-key selection, ordered
+  export, and restore. The GTK port may not create a second persistence worker,
+  Ghostty tick loop, dispatcher, or product integration harness.
+- **The first implementation slice found the expected single-window seams:**
+  the Rust workspace recipe already represented ordered windows, but launch
+  rejected every snapshot whose window count was not exactly one; live and
+  clean-exit persistence rebuilt an envelope around one `WindowRecipe`; and
+  `main.rs` owned one `ApplicationShell`. A new pure `WindowSet` now defines
+  ordering, unique identity, active-window fallback, and last-window shutdown
+  decisions. The existing persistence coordinator now accepts the complete
+  ordered window set and preserves per-window restore drafts. This is one
+  generalized path, not a parallel multi-window store.
+- **Focused pre-product evidence passed:** 98 Rust application tests passed,
+  including new duplicate/stale-active/ordered-draft persistence cases and
+  eight window-set state transitions. `cargo clippy --locked -p zentty-linux
+  --all-targets -- -D warnings` passed, and the real ReleaseSafe staged product
+  rebuilt against pinned Ghostty `a8ccbd8c0f66a2df6cd59833d61c6064a8e0ddb1`.
+- **The first real X11 regression correctly failed the new teardown:** The
+  controlled session
+  `91d8b67ee1376611c4da04ecbe8ce52244bc2e318f800068760667c3ee733e96`
+  created a real GTK window, Ghostty surface, PTY child, physical resize, title
+  update, child exit, and compositor close. During final teardown,
+  `ApplicationCoordinator::finish` held its mutable coordinator borrow while
+  `gtk_window_close` synchronously re-entered the close-request callback; that
+  callback attempted to borrow the same coordinator and aborted at
+  `application.rs:178`. Unit tests did not expose this GTK signal reentrancy.
+  The repair uses a per-window independent `Cell<bool>` close flag that the
+  synchronous callback can inspect without borrowing either the coordinator or
+  shell. The X11 and Wayland real-product reruns remain required before this
+  repair is complete.
+- **The first two-window X11 journey exposed a harness targeting error, not a
+  product routing failure:** Session
+  `69602db9b1b40d43791c54f22d2099ad647c43d8814e84644c137a277efd67e5`
+  physically created `window-2`, activated it, and initialized its distinct
+  `pane-window-2` Ghostty surface and PTY. The shared input helper intentionally
+  retained the initially discovered X11 window ID, however, so the marker was
+  sent back to `window-1` while the new test expected it in window 2. The
+  multi-window runner now obtains X11's real active window after creation,
+  verifies that window belongs to the product PID, and retargets subsequent
+  input. After a non-final close it runs the existing discovery path again to
+  target the surviving window. No product dispatch code was changed for this
+  harness defect.
+- **Window-manager-free X11 has no `_NET_ACTIVE_WINDOW` authority:** Session
+  `6d34258bdcb3a52c0b125bd175d41c1c18499edd1ba24d1730c25e4e941f5421`
+  exposed both mapped product windows and the product reported `window-2` as
+  active, but `xdotool getactivewindow` could not return an EWMH active window
+  because the controlled Xvfb environment deliberately has no window manager.
+  The harness now selects the second mapped product-owned XID by set difference
+  from the first, verifies its PID, and focuses it through XTest before typing.
+  This preserves real physical routing without assuming an absent desktop
+  service.
+- **Two-window quit exposed a second, distinct nested-loop reentrancy:** Session
+  `3ae53196d3314b47559a2b468e19cdb808500c97e74a4e163519aff9e73a2782`
+  proved physical input reached only `pane-window-2`, then Ctrl+Q began orderly
+  aggregate shutdown. The existing 50 ms GTK/GSK teardown settle runs a nested
+  GLib loop; with the new application coordinator still mutably borrowed, the
+  ordinary 10 ms tick source re-entered and attempted another coordinator
+  borrow at `main.rs:123`. The former single-shell root did not have this
+  application-level borrow. A coordinator-owned independent teardown flag now
+  suppresses both tick and live-persistence callbacks during those bounded
+  nested settle frames. It does not suppress GTK finalization, and it is reset
+  before normal event processing resumes.
+- **The repaired X11 run reached clean two-window restoration:** Session
+  `093ca89d3ffbf7c7400b21ecd178a79cc45b5af1dbc4b2367cf5bbdf94c37db8`
+  completed physical creation, distinct second-pane input, aggregate live and
+  clean save, and relaunch of both real GTK/Ghostty windows. The runner then
+  reused the shared input helper, which correctly focused the first discovered
+  window during readiness, but failed to retarget the restored second window
+  before its second-pane assertion. The reusable runner helper now targets the
+  second product-owned XID after either creation or restore. Product startup
+  also explicitly presents the recorded active shell after constructing every
+  restored window, rather than relying on restoration order to make the last
+  window active.
+- **The full X11 journey then reached the intended non-final close:** Session
+  `fc7290c77221e1fb785e3712e6f30c78bcafe187cf0a8ac201f64ed956053bef`
+  passed both two-window save/restore launches and reached physical
+  Ctrl+Shift+W. As with the established Ctrl+Q helper, destroying the target
+  window on key-down caused XTest to report `BadWindow` while delivering the
+  remaining synthetic releases. `set -e` stopped the runner before it could
+  inspect the product's close and survivor evidence. The new close helper now
+  tolerates only that asynchronous XTest status, resets the global modifier/key
+  state against the live root window, and continues to require the exact
+  product close log plus real surviving-PTY input.
+- **The next runner exit was the same known XTest condition on application
+  quit:** Session
+  `6b84f86618a725f31d55a14937859e1fb04e2d8fea8cb80c14d83ca2eaecc610`
+  used the guarded non-final close but still called the generic Ctrl+Q sender
+  for its application quits. Since multi-window Ctrl+Q destroys the target on
+  key-down too, XTest again returned `BadWindow` before the runner reached its
+  assertions. All quit points now use the pre-existing
+  `zentty_product_close_window` helper, which already owns this exact physical
+  close-and-key-reset contract.
+- **The established double-send close helper exposed duplicate quit
+  reentrancy:** Session
+  `98697f187fbb6043146111affcbe1f7fe498c1a80f1899808c46e60a5908ebad`
+  passed creation, aggregate save, relaunch, and restored second-window input.
+  The first Ctrl+Q began aggregate teardown; the helper's deliberate second
+  Ctrl+Q then scheduled another quit callback, which ran inside the nested GTK
+  settle loop and attempted to borrow the coordinator already performing the
+  first quit. Application quit requests now have an independent idempotence
+  flag set before scheduling any coordinator work. Repeated physical quit
+  input is ignored while shutdown is pending/in progress; a failed shutdown
+  resets the flag so the user can retry.
+- **X11 then passed the complete real journey:** Session
+  `f7358535319943c2ae6c19e2243bfaa91c8ba227d8e242f643c9d35e2421c0d9`
+  passed two physical GTK windows, distinct Ghostty surfaces and PTYs,
+  second-window input isolation, aggregate live/clean persistence, exact clean
+  relaunch, restored active-window routing, non-final close, surviving first-
+  window PTY input, and final teardown.
+- **Wayland correctly routed the first marker but exposed a focus-readiness
+  race:** Controlled Wayland session
+  `adb89617e3c511fb0e7f0a3dfeeed44ae9b007532d324a0e1cfe38bc043434a3`
+  created and activated `window-2`; the marker reached only
+  `pane-window-2`, proving routing, but its title was `arker` because Wtype
+  began immediately after terminal creation and before GTK logged settled
+  terminal focus. Window presentation now schedules the existing bounded
+  terminal-focus choreography for every fresh/restored shell, and the real
+  runner requires the pane-specific focus receipt before typing. Environmental
+  absence or truncated input is not accepted as PASS.
+- **The first focus-readiness repair exposed competing restore focus timers:**
+  Controlled Wayland session
+  `a1e0f7b21288c52e15351ba1034dd577975353ec876f4fe471ab9e5c4c5ad0db`
+  restored both real windows and their distinct Ghostty surfaces, but the
+  focus timer installed while constructing `window-1` ran after `window-2`
+  had been presented as the recorded active window. Cage consequently
+  activated `window-1`, and the runner correctly refused to treat the mere
+  existence of the second window as restored active routing. Restore now
+  presents every shell without independently scheduling focus, then schedules
+  exactly one bounded focus operation for the recorded active shell. A newly
+  created window still receives that operation immediately.
+- **A second Wayland rerun isolated the remaining focus theft to terminal
+  initialization:** Session
+  `8eeb64f20e41f30f6d69f26af0cda3ac26b9736b6a8e8b9dbac3fa04e9e09869`
+  still activated `window-1` after both windows were restored. The later-ready
+  first-window Ghostty surface was unconditionally focusing its selected pane
+  from the shared terminal-initialized callback, even though that GTK window
+  was not the requested active window. Initialization now focuses a selected
+  surface only when its owning GTK window is active. This preserves readiness
+  work for every real surface without allowing a background window to steal
+  compositor focus.
+- **Wayland session
+  `dd42541176c343157dd8f018f257c042185041eb740994279e2f93aa162b7a05`
+  proved the compositor policy occurs before terminal initialization:** The
+  background-focus guard was active, but Cage still chose the first window
+  presented during restore and therefore correctly reported that window as
+  active. Unlike X11, Wayland does not let an application arbitrarily focus an
+  already mapped toplevel without compositor authorization. Restore now builds
+  the complete ordered application model first, presents the recorded active
+  window first so the compositor can grant its initial activation normally,
+  then maps the remaining windows without changing the authoritative recipe
+  order. This avoids inventing or bypassing Wayland activation tokens.
+- **That presentation order passed restoration and reached a new teardown
+  signal edge:** Session
+  `e0536114c654aa8f9158d3b2da177acb8d6592647b5af50b7269cfd8c5806974`
+  restored `window-2` as active and routed real input to its PTY. In the later
+  non-final-close journey, Cage emitted `is-active` while the coordinator held
+  its teardown borrow across the bounded GTK settle loop; the notification
+  callback attempted another mutable coordinator borrow. Active-window
+  notifications now consult the same independent teardown flag as tick and
+  persistence callbacks before touching coordinator state. Compositor signals
+  still update active identity during ordinary operation.
+- **The final X11 rerun found a two-call XTest focus restoration race in the
+  runner:** Session
+  `032d320213ff924da32b10d864499536f9cff8b2dcc735413ba22614a208d4d7`
+  explicitly focused the restored `window-2`, but Xdotool's per-window event
+  mode restored the earlier focus between the separate text and Return calls;
+  the submitted marker consequently reached `pane-1`. The X11 journey now
+  focuses the verified product-owned XID once and sends both text and Return
+  through ordinary XTest input without per-event window retargeting. This is
+  closer to real user input and keeps pane routing, not `XSendEvent`, under
+  test.
+- **Session
+  `c33ae6e3ac7edb3cd4640e82fa3a64b6bef7dbe224793d71ff05bbf4c91c57a2`
+  disproved that runner-only diagnosis:** Even continuous XTest input was
+  redirected to `pane-1`. The terminal-initialized callback was still allowed
+  to make its own focus decision after the application coordinator had focused
+  restored `window-2`; in the window-manager-free X11 environment, GTK's
+  per-window active property was not a single application-wide authority.
+  Terminal initialization now performs readiness, restore-prefill, and search
+  observation only. Window/pane focus remains owned by the existing explicit
+  presentation and action choreography, eliminating the second competing
+  focus system rather than adding another timing workaround.
+- **X11 session
+  `716adb7ad962df6d285328cfa40dfdbe996771e6e6ff42a855fb7473fb8fa8f4`
+  showed the remaining focus call was a delayed sidebar callback:** Removing
+  initialization focus did not change the theft because each shell still had
+  UI timers (notably hover dismissal) that called the shared focus helper
+  without asking whether their window was active. The focus helper now refuses
+  background-window requests by default. Only explicit window presentation
+  uses an unchecked helper, because presenting a fresh/restored window is the
+  application-level operation intended to request focus. This consolidates all
+  incidental UI callbacks behind one policy instead of auditing dozens of
+  call sites independently.
+- **Instrumented X11 session
+  `61a7a163d7f5d361fbf9e3a8ceb1683215427ab9d7f026c7abdbcdb059279d35`
+  showed no guarded focus helper accepted a request during the theft, and
+  session
+  `5801c2e1def84c223a10d4bf724796fa5d39c3fff4242eb76bc8ee2631968c35`
+  reproduced it with the instrumentation removed:** The source was delayed
+  realization of the later-mapped background X11 window, not a pane callback.
+  The recorded active window must still be presented first for Wayland's
+  activation policy, but its bounded re-presentation is now scheduled only
+  after every background window has been mapped. That makes the final explicit
+  application-level request occur after all compositor mapping work on both
+  backends.
+- **Sessions
+  `716adb7ad962df6d285328cfa40dfdbe996771e6e6ff42a855fb7473fb8fa8f4`
+  and `cf3393ced4e371724a4ff3a5bf0dc05ce0aa83e525e187f825b6ce4e97c244af`
+  exposed a false XID assumption after restore presentation changed:** X11
+  showed the expected active-window transitions, but the runner still defined
+  “second window” as “the XID other than whichever mapped XID search happened
+  to return first.” Constructor order and mapping order now intentionally
+  differ, so that heuristic can select `window-1`. The controlled X11 runner
+  now identifies the real pane-to-toplevel relationship by sending a unique
+  physical route probe to each of exactly two product-owned mapped XIDs and
+  accepting only the XID whose real PTY reports the marker through
+  `pane-window-2`. It then uses that proven identity for the user journey.
+- **Both final controlled journeys pass:** X11 session
+  `9c6ded7d4d94e79b2b414471cbec358b5487d9d39882bc9a58e7008f52b3309a`
+  and Wayland session
+  `7d3b0ded144159293d01b2f4ee1ab4805de67842671e88eca1fb59ba0e1032d2`
+  each passed real physical New Window, two mapped GTK toplevels, two distinct
+  Ghostty surfaces and PTYs, pane-specific input routing, aggregate live and
+  clean persistence, exact ordered two-window relaunch, active-window routing,
+  non-final Close Window, surviving first-window input, and final aggregate
+  teardown. The runner uses the staged ReleaseSafe binary and libraries. The
+  authoritative matrix now contains two explicit PASS cells for this bounded
+  clean multi-window slice; broader workspace-restore cells remain
+  NOT_IMPLEMENTED for multi-window crash recovery, frame/divider persistence,
+  and complete CWD coverage rather than silently treating those gaps as done.
 
 ## AI disclosure
 

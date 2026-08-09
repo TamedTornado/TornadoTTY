@@ -12,6 +12,7 @@ controlled_anthropic="${repo_root}/crates/zentty-test-support/src/bin/controlled
 controlled_openai="${repo_root}/crates/zentty-test-support/src/bin/controlled_openai_responses.rs"
 controlled_gemini="${repo_root}/crates/zentty-test-support/src/bin/controlled_gemini.rs"
 wayland_input_harness="${repo_root}/linux/tests/nested-wayland-input"
+multi_window_harness="${repo_root}/linux/tests/rust-multi-window"
 failures=0
 
 reject() {
@@ -71,6 +72,8 @@ require "the reviewed OpenAI Responses endpoint is missing" test -f "${controlle
 require "the reviewed Gemini endpoint is missing" test -f "${controlled_gemini}"
 require "the controlled input-capable Wayland harness is missing or not executable" \
     test -x "${wayland_input_harness}"
+require "the real multi-window product journey is missing or not executable" \
+    test -x "${multi_window_harness}"
 inline_actor_files="$({
     grep -RIl --include='*' -E 'cat[[:space:]]*>.*[/}]codex|cat[[:space:]]*>.*[/}]claude' \
         "${repo_root}/linux/tests" || true
@@ -118,6 +121,22 @@ reject "superseded inactive-agent journey remains authoritative" \
     grep -Fq 'linux/tests/rust-inactive-agent-restore' "${matrix}"
 reject "architecture contract still references the superseded inactive-agent journey" \
     grep -Fq 'linux/tests/rust-inactive-agent-restore' "${architecture}"
+
+# The jq program is intentionally a literal rather than a shell template.
+# shellcheck disable=SC2016
+require "clean multi-window restoration is not qualified on both real display stacks" \
+    jq -e '
+        [.cells[] | select(.id | startswith("product-multi-window-clean-restore-"))] as $cells |
+        ($cells | length) == 2 and
+        all($cells[]; .status == "PASS" and .capability == "workspace_restore" and
+            .optimize == "ReleaseSafe" and .terminals == "multi" and
+            (.command | contains("build/linux-profiles/release-safe/bin/zentty-linux")) and
+            (.command | contains("linux/tests/rust-multi-window"))) and
+        any($cells[]; .display == "wayland" and
+            .environment_profile == "nested-wayland-input-v1") and
+        any($cells[]; .display == "x11" and
+            .environment_profile == "nested-x11-v1")
+    ' "${matrix}"
 
 # The jq program is intentionally a literal rather than a shell template.
 # shellcheck disable=SC2016

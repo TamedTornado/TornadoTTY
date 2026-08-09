@@ -31,6 +31,7 @@ while IFS=$'\t' read -r id command; do
     [[ "${command}" == *"build/linux/bin/zentty-linux"* ||
         "${command}" == *"linux/tests/rust-closed-pane-restore"* ||
         "${command}" == *"linux/tests/rust-agent-ipc"* ||
+        "${command}" == *"linux/tests/rust-multi-window"* ||
         "${command}" == *"linux/tests/rust-product-smoke"* ]] ||
         fail "executable product cell ${id} does not launch the delivered Rust product"
     [[ "${command}" != *"fixture"* && "${command}" != *"self-test"* ]] ||
@@ -51,6 +52,8 @@ done < <(jq -r '
 
 grep -F 'build/linux/bin/zentty-linux' "${repo_root}/linux/tests/rust-closed-pane-restore" >/dev/null ||
     fail "closed-pane restore integration test does not default to the delivered Rust product"
+grep -F 'build/linux/bin/zentty-linux' "${repo_root}/linux/tests/rust-multi-window" >/dev/null ||
+    fail "multi-window integration test does not default to the delivered Rust product"
 
 while IFS=$'\t' read -r id command; do
     [[ -n "${id}" ]] || continue

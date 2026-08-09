@@ -69,6 +69,8 @@ macro_rules! action {
 }
 
 pub(super) const ACTION_TOGGLE_SIDEBAR: &str = "toggle-sidebar";
+pub(super) const ACTION_NEW_WINDOW: &str = "new-window";
+pub(super) const ACTION_CLOSE_WINDOW: &str = "close-window";
 pub(super) const ACTION_NEW_WORKLANE: &str = "new-worklane";
 pub(super) const ACTION_SELECT_WORKLANE: &str = "select-worklane";
 pub(super) const ACTION_SPLIT_PANE_RIGHT: &str = "split-pane-right";
@@ -123,6 +125,8 @@ pub(super) const ACTION_RESET_PANE_LAYOUT: &str = "reset-pane-layout";
 pub(super) const ACTION_RESTORE_CLOSED_PANE: &str = "restore-closed-pane";
 
 pub(super) const ACTION_SPECS: &[ActionSpec] = &[
+    action!(ACTION_NEW_WINDOW, "new-window", None),
+    action!(ACTION_CLOSE_WINDOW, "close-window", None),
     action!(ACTION_TOGGLE_SIDEBAR, "toggle-sidebar", None),
     action!(ACTION_NEW_WORKLANE, "new-worklane", None),
     action!(ACTION_SELECT_WORKLANE, "select-worklane", String),
@@ -251,6 +255,8 @@ impl ActionRouter {
 }
 
 fn populate(shell: &Rc<RefCell<ApplicationShell>>, group: &gio::SimpleActionGroup) {
+    install_application_actions(shell, group);
+
     let toggle_sidebar = gio::SimpleAction::new(ACTION_TOGGLE_SIDEBAR, None);
     let weak = Rc::downgrade(shell);
     toggle_sidebar.connect_activate(move |_, _| {
@@ -344,6 +350,29 @@ fn populate(shell: &Rc<RefCell<ApplicationShell>>, group: &gio::SimpleActionGrou
     });
     install_search_actions(shell, group);
     install_edit_actions(shell, group);
+}
+
+fn install_application_actions(
+    shell: &Rc<RefCell<ApplicationShell>>,
+    group: &gio::SimpleActionGroup,
+) {
+    let new_window = gio::SimpleAction::new(ACTION_NEW_WINDOW, None);
+    let weak = Rc::downgrade(shell);
+    new_window.connect_activate(move |_, _| {
+        if let Some(shell) = weak.upgrade() {
+            shell.borrow().request_new_window();
+        }
+    });
+    group.add_action(&new_window);
+
+    let close_window = gio::SimpleAction::new(ACTION_CLOSE_WINDOW, None);
+    let weak = Rc::downgrade(shell);
+    close_window.connect_activate(move |_, _| {
+        if let Some(shell) = weak.upgrade() {
+            shell.borrow().request_close_window();
+        }
+    });
+    group.add_action(&close_window);
 }
 
 fn install_edit_actions(shell: &Rc<RefCell<ApplicationShell>>, group: &gio::SimpleActionGroup) {
@@ -456,7 +485,7 @@ fn install_worklane_edit_actions(
         };
         if changed {
             eprintln!("zentty-linux: action=rename-worklane id={worklane_id} title={title:?}");
-            ApplicationShell::schedule_terminal_focus(&shell);
+            ApplicationShell::focus_terminal_after_present(&shell);
         }
     });
     group.add_action(&rename_worklane);
@@ -621,7 +650,7 @@ fn install_pane_rename_action(
         };
         if changed {
             eprintln!("zentty-linux: action=rename-pane id={pane_id} title={title:?}");
-            ApplicationShell::schedule_terminal_focus(&shell);
+            ApplicationShell::focus_terminal_after_present(&shell);
         }
     });
     group.add_action(&rename_pane);
@@ -894,7 +923,7 @@ mod tests {
 
     #[test]
     fn registry_is_unique_complete_and_typed() {
-        assert_eq!(ACTION_SPECS.len(), 53);
+        assert_eq!(ACTION_SPECS.len(), 55);
         assert_eq!(
             ACTION_SPECS
                 .iter()
