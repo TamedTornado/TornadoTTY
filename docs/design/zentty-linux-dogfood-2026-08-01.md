@@ -9972,6 +9972,154 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   This is not an unsuppressed-clean claim, and ReleaseSafe Valgrind remains
   non-green exactly as declared.
 
+### DOGFOOD-2026-08-09-TMUX-DEFERRED-PANE-AUDIT: real boundaries did not prove source lifecycle parity
+
+- **Resume point:** GH-31 was committed and pushed as `fea727b`, its exact
+  qualification evidence was posted, and the issue was closed. Parent GH-25
+  remains open because GH-28 still names the unsupported deterministic native
+  constructor-null trigger rather than silently converting it into a pass.
+- **Roadmap selection:** The next source-owned product issue is GH-14, not a
+  new architecture or qualification project. Its existing source contract,
+  Rust compatibility crate, authenticated socket, staged shim, shell startup,
+  real Ghostty/PTY product journey, and installed Claude journey are retained.
+- **Completion-audit discovery:** The frozen source contract says a commandless
+  `split-window` creates a launch-deferred pane and the first single-line
+  submitted `send-keys` command materializes its terminal. Linux always created
+  a shell surface during split and then sent text into it. The existing journey
+  crossed the real CLI, socket, GTK, Ghostty, and PTY boundaries, but its
+  command counts and terminal titles could not distinguish the wrong lifecycle.
+- **Why GH-14 remains open:** Multi-window scope and the source file-backed
+  compatibility-store lifetime also remain explicit audit cells. The ratified
+  Linux plan currently uses instance-scoped in-memory state; that departure
+  must be reconciled against the issue's XDG persistence criterion rather than
+  being treated as complete because the single-window journey passes.
+- **Repair constraint:** Red pure planning tests and a red extension to the
+  existing product journey precede the deferred-pane fix. The repair may add
+  no actor, socket, pane model, fake terminal, test product, or orchestration
+  layer.
+- **Red evidence:** Focused Rust compilation failed on the intentionally absent
+  split CWD/launch plan fields and deferred launch candidate. The first test
+  command also supplied two Cargo test filters, which Cargo rejects; the
+  corrected module filter reached all nine intended compile errors. No test was
+  weakened to hide either failure.
+- **Minimal repair:** `TmuxCompatProduct` now extracts source `-c`, positional
+  launch commands, and exactly one submitted single-line command. Durable CWD
+  and last-command context stays in `WorkspaceState`; the sole
+  `PaneRuntimeCoordinator` now distinguishes live and launch-deferred panes.
+  A commandless split records topology without a Ghostty surface or PTY. A
+  valid submitted command creates the real surface transactionally, while
+  direct split commands and current Claude `respawn-pane` use the same existing
+  coordinator. Empty/NUL launch paths and arguments fail before construction.
+- **Privacy review:** The first repair logged the submitted launch command in a
+  local diagnostic receipt. That could expose user commands or paths and was
+  unnecessary for lifecycle proof. The log now records only the stable pane ID;
+  the real child receipt proves the executed command and CWD inside its private
+  fixture.
+- **Real journey caught a source inheritance assumption:** The first X11 run
+  correctly kept pane 3 deferred and launched it through `send-keys`, but the
+  fixture expected the application CWD. Ghostty inherited the team-column
+  target's `/split-cwd`, matching source split behavior. That assertion killed
+  the leader child and timed out the product; the repaired assertion pins the
+  observed inherited team CWD. The exact real product journey then passed X11
+  session `e047658077f365272517738e48a9a841ce6ccc99c2789b750663e4944e2c83de`
+  and Wayland session
+  `af7ace05b8806c63f3df59335ca6511dccbf88370d4e6905e615e3912501de5e`.
+- **Backend invocation correction:** An initial nested-Wayland invocation did
+  not set `GDK_BACKEND=wayland`, so the scenario honestly reported an X11 pass
+  and was not retained as Wayland evidence. The rerun used the exact matrix
+  backend environment and produced the Wayland receipt above.
+- **Mutation evidence:** The safe wrapper retained `gitignore=true` and
+  `copy_target=false`. The split/send/submit/shell campaign tested 15 mutants:
+  13 caught, two compiler-unviable, zero missed or timed out; its
+  `outcomes.json` SHA-256 was
+  `6e407d366a75f4039282af64513e0f86c2198c96c6bb6298f1bf663bbd41b038`.
+  The durable launch-context campaign caught 3/3 mutants; its SHA-256 was
+  `f68e52c4ec59dd786851def373402433cc3b36f9a5c3e440db2b6484db9c9a24`.
+- **A focused harness diagnosis initially regressed established isolation:**
+  An incorrectly invoked focused installed-Claude X11 journey completed the
+  real team workflow but found eight host D-Bus, portal, and keyring processes
+  carrying the private `HOME`. Review noticed only that the executable script
+  lacked `dbus-run-session` and reintroduced it. Two focused runs then passed
+  X11 session
+  `a4d86623ee30e4dbe6c13fd3872c4f1e8cc5fca64110126f8720e11fa112d53f`
+  and Wayland session
+  `91a32de0b0cb1b7ac6f9398f6401ce2bb2b439b4314680a4ade3b6fefa855623`,
+  with the real Claude 2.1.201 binary, staged shim/CLI, authenticated socket,
+  Ghostty surfaces, independent PTYs, model-endpoint loss, and teardown, but
+  that was not sufficient combined-cell evidence.
+- **An accidental matrix producer was stopped rather than hidden:** A direct
+  invocation of `linux/tests/qualification-matrix` escaped its calling shell
+  and retained `build/linux/matrix-logs.lock`. Two subsequent authoritative
+  `qualify-local` attempts correctly refused to overlap it. Process inspection
+  identified the producer rooted at PID 3421377; only that owned process group
+  was terminated before qualification resumed. This was operator error, not a
+  product or environmental pass, and none of the interrupted runs is candidate
+  evidence.
+- **The first complete GH-14 run failed seven declared-PASS cells:** The common
+  staged and agent-integration failure was in the newly strengthened tmux
+  journey, not in seven independent product paths. Its chronology assertion
+  searched for a space after the exact terminal line
+  `tmux-deferred-launch pane=pane-3`, so it could never observe the launch even
+  though the same log proved `deferred` at line 75, `surface-owned` at line
+  128, and `deferred-launch` at line 129. The assertion now anchors the exact
+  line ending. The real staged X11 bundle subsequently passed in private
+  session `9417e43b1750b5d534590690782a85799b64ee0688e111269f56114bec1c6357`.
+- **The API inventory rejected formatting drift as designed:** Extracting the
+  tmux bridge moved `surface.send_text(&text)` across lines, so the exact old
+  callsite needle disappeared while the safe-wrapper call remained. The
+  ledger now uses the still-specific `.send_text(&text)` call in the sole tmux
+  runtime module. The 16-file/55-hunk inventory then passed without expanding
+  the ABI or product-caller set. The corresponding real staged Wayland bundle
+  also passed in private session
+  `89c25bbaa91bedf9bab8b05be768ab23bb25bf2d02715b7f83ea6277c7a5c804`.
+- **Suppression governance rejected an unexplained lower Fontconfig root:** The
+  matrix's standalone non-Ghostty GTK/IBus receipt recorded the two already
+  reviewed Pango layout roots as 21,240 bytes rather than the governed
+  26,135–26,208-byte interval. Governance failed instead of treating a lower
+  count as clean or silently widening policy. An immediate fresh raw and
+  suppressed two-phase run, with the same package versions, reproducer,
+  controlled protocol, and suppression files, returned to 26,208 bytes and
+  zero post-suppression errors; its raw totals were 427 errors/contexts, 6,160
+  definite bytes, and 41,396 indirect bytes. The suppression rule and manifest
+  remain unchanged. The one lower receipt remains an uncertainty to monitor in
+  the full rerun, not evidence for broadening a reviewed range.
+- **The complete matrix caught the D-Bus regression already documented by the
+  project:** The combined Wayland agent cell spent its 25-second product bound
+  repeatedly autostarting and crashing the host GNOME portal under the newly
+  private bus, then failed exit 124 before the Claude workflow ran. Reading the
+  earlier combined-cell dogfood entry and Git history showed that commit
+  `984339c` had deliberately removed `dbus-run-session` after proving both that
+  `GTK_USE_PORTAL=0` was ineffective and that the enclosing nested compositor
+  already removes inherited bus addresses. The harness is restored to that
+  reviewed design. This was accretive test drift introduced during this slice;
+  the matrix, rather than the two misleading focused passes, exposed it.
+- **The restored combined cells are green without a timeout increase:** The
+  exact X11 sequence—real agent IPC, tmux compatibility, installed Codex,
+  installed Claude, and consolidated restore—passed session
+  `a460a3865d9c43ea3cba746cbd20b7c17197585aecc2a61fd4fefb4dbd3660cf`.
+  The exact input-capable Wayland sequence passed session
+  `e33b58b116ea94c6870894f43e90746350071eaa2d31b1cc3e1454ea889ced3f`
+  over controlled outer-X11 session
+  `26fc0b62f82a7574bc018d94902cde74933477d4fcccdcea1a4180b3d9069acc`.
+  Neither run activated a desktop portal or added a harness layer.
+- **The exact repaired candidate passed every presently executable cell:** The
+  authoritative summary reports implemented-local and product-boundary
+  qualification passed; release and full Linux qualification correctly remain
+  false while declared non-green scope exists. Declared/actual outcomes are
+  `PASS=88`, `FAIL=0`, `BLOCKED=7`, `XFAIL=1`, and
+  `NOT_IMPLEMENTED=21`; the summary SHA-256 is
+  `fd2fc4982a48f1386d559d8ec3ca28662bf898c8143222c58d33943c88379414`.
+  Terminal suppression governance passed after all artifact producers.
+- **Valgrind is PASS with reviewed suppressions:** The preserved raw receipt
+  contains 427 errors/contexts, 6,160 definite bytes, and 41,428 indirect
+  bytes. The reviewed post-suppression receipt contains zero errors/contexts
+  and zero definite/indirect bytes, with all 427 contexts accounted for. The
+  report, raw receipt, and suppressed receipt SHA-256 values are respectively
+  `cd6df3a2585f5cf24c176a3bcc1c14c79940d6534b6ae7b9e1688e5b88b61f22`,
+  `c8e830e883ff37ba156ddcff3bb6ce4c19a8cf991539b139ac341b3024860b06`,
+  and `b8197e667bf78d03eb4d5da303f1c49d3d44a7fc4bcc34972e26f1fa1d626dbf`.
+  This is not an unsuppressed-clean claim; ReleaseSafe Valgrind remains XFAIL.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were

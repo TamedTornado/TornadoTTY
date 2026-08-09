@@ -1242,6 +1242,29 @@ impl WorkspaceState {
         true
     }
 
+    /// Records the source launch context on one durable pane without changing
+    /// focus or topology. Transient terminal creation remains owned by the
+    /// platform runtime coordinator.
+    pub fn configure_pane_launch(
+        &mut self,
+        pane_id: &str,
+        working_directory: Option<String>,
+        last_run_command: Option<String>,
+    ) -> bool {
+        let Some(pane) = self
+            .worklanes
+            .iter_mut()
+            .flat_map(|worklane| &mut worklane.columns)
+            .flat_map(|column| &mut column.panes)
+            .find(|pane| pane.id == pane_id)
+        else {
+            return false;
+        };
+        pane.working_directory = working_directory;
+        pane.last_run_command = last_run_command;
+        true
+    }
+
     pub fn set_pane_custom_title(&mut self, pane_id: &str, title: Option<&str>) -> bool {
         let Some(pane) = self
             .worklanes

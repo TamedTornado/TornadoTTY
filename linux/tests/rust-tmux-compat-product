@@ -19,7 +19,9 @@ log="${fixture_root}/product.log"
 state_directory="${fixture_root}/state"
 child="${fixture_root}/child"
 endpoint_receipt="${fixture_root}/endpoint.receipt"
+split_cwd="${fixture_root}/split-cwd"
 restart_log="${fixture_root}/restart.log"
+mkdir -p -- "${split_cwd}"
 cleanup() {
     rm -rf -- "${fixture_root}"
 }
@@ -50,6 +52,17 @@ if [[ "${ZENTTY_PANE_ID}" == pane-1 && "${ZENTTY_TMUX_RESTART_PROBE:-}" == 1 ]];
 fi
 
 if [[ "${ZENTTY_PANE_ID}" != pane-1 ]]; then
+    if [[ "${ZENTTY_SPLIT_PROBE:-}" == 1 ]]; then
+        printf 'split-started=%s cwd=%s\n' "${ZENTTY_PANE_ID}" "${PWD}" \
+            >>"${ZENTTY_TMUX_PRODUCT_PROBE}"
+    fi
+    if [[ "${ZENTTY_DEFERRED_PROBE:-}" == 1 ]]; then
+        printf 'deferred-started=%s cwd=%s\n' "${ZENTTY_PANE_ID}" "${PWD}" \
+            >>"${ZENTTY_TMUX_PRODUCT_PROBE}"
+        printf '\033]2;zentty-tmux-team-%s\a' "${ZENTTY_PANE_ID}"
+        sleep 30
+        exit 1
+    fi
     if [[ "${ZENTTY_RESPAWN_PROBE:-}" == 1 ]]; then
         printf 'respawned=%s\n' "${ZENTTY_PANE_ID}" >>"${ZENTTY_TMUX_PRODUCT_PROBE}"
     fi
@@ -111,12 +124,23 @@ fi
 grep -Fxq "zentty: tmux wait-for: timed out waiting for 'product-never-signalled'" \
     "${TMPDIR:-/tmp}/zentty-wait-timeout.$$"
 rm -f -- "${TMPDIR:-/tmp}/zentty-wait-timeout.$$"
-first="$(${ZENTTY_CLI_BIN} __tmux-compat split-window -h -P -F '#{pane_id}')"
+first="$(${ZENTTY_CLI_BIN} __tmux-compat split-window -h -c "${ZENTTY_TMUX_SPLIT_CWD}" \
+    -P -F '#{pane_id}' "env ZENTTY_SPLIT_PROBE=1 $0")"
 second="$(${ZENTTY_CLI_BIN} __tmux-compat split-window -v -d -P -F '#{pane_id}')"
 first_id="${first#%}"
 second_id="${second#%}"
 [[ "${first_id}" != "${first}" && "${second_id}" != "${second}" ]]
 [[ "${first_id}" != "${second_id}" ]]
+for _ in {1..100}; do
+    grep -Fxq "split-started=${first_id} cwd=${ZENTTY_TMUX_SPLIT_CWD}" \
+        "${ZENTTY_TMUX_PRODUCT_PROBE}" 2>/dev/null && break
+    sleep 0.02
+done
+grep -Fxq "split-started=${first_id} cwd=${ZENTTY_TMUX_SPLIT_CWD}" \
+    "${ZENTTY_TMUX_PRODUCT_PROBE}"
+if ${ZENTTY_CLI_BIN} __tmux-compat capture-pane -p -t "%${second_id}"; then
+    exit 1
+fi
 if ${ZENTTY_CLI_BIN} __tmux-compat respawn-pane -k -t "%${first_id}"; then
     exit 1
 fi
@@ -133,7 +157,15 @@ ${ZENTTY_CLI_BIN} __tmux-compat resize-pane -t "%${second_id}" -x 30%
 ${ZENTTY_CLI_BIN} __tmux-compat resize-pane -t "%${second_id}" -x 30
 sleep 0.2
 ${ZENTTY_CLI_BIN} __tmux-compat send-keys -t "%${first_id}" team-ready Enter
-${ZENTTY_CLI_BIN} __tmux-compat send-keys -t "%${second_id}" team-ready Enter
+${ZENTTY_CLI_BIN} __tmux-compat send-keys -t "%${second_id}" \
+    "env ZENTTY_DEFERRED_PROBE=1 $0" Enter
+for _ in {1..100}; do
+    grep -Fxq "deferred-started=${second_id} cwd=${ZENTTY_TMUX_SPLIT_CWD}" \
+        "${ZENTTY_TMUX_PRODUCT_PROBE}" 2>/dev/null && break
+    sleep 0.02
+done
+grep -Fxq "deferred-started=${second_id} cwd=${ZENTTY_TMUX_SPLIT_CWD}" \
+    "${ZENTTY_TMUX_PRODUCT_PROBE}"
 ${ZENTTY_CLI_BIN} __tmux-compat send-keys \
     -t "%${ZENTTY_PANE_ID}" agent-real-input Enter
 IFS= read -r value
@@ -169,6 +201,7 @@ set +e
 env -u TMUX -u TMUX_PANE \
     CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 \
     ZENTTY_TMUX_PRODUCT_PROBE="${fixture_root}/child-probe.log" \
+    ZENTTY_TMUX_SPLIT_CWD="${split_cwd}" \
     ZENTTY_TMUX_ENDPOINT_RECEIPT="${endpoint_receipt}" \
     timeout 20s "${product}" \
     --command "${child}" \
@@ -278,6 +311,23 @@ grep -Fxq 'zentty-linux: tmux-respawn pane=pane-2' "${log}" || {
     cat "${log}" >&2
     fail "real respawn-pane did not replace the targeted Ghostty PTY child"
 }
+grep -Fxq 'zentty-linux: tmux-deferred pane=pane-3' "${log}" || {
+    cat "${log}" >&2
+    fail "commandless split did not remain launch-deferred"
+}
+grep -Fxq 'zentty-linux: tmux-deferred-launch pane=pane-3' "${log}" || {
+    cat "${log}" >&2
+    fail "submitted send-keys command did not launch the deferred pane"
+}
+awk '
+    /zentty-linux: tmux-deferred pane=pane-3$/ { deferred = NR }
+    /zentty-linux: surface-owned pane=pane-3 / { surface = NR }
+    /zentty-linux: tmux-deferred-launch pane=pane-3$/ { launched = NR }
+    END { exit !(deferred > 0 && surface > deferred && launched >= surface) }
+' "${log}" || {
+    cat "${log}" >&2
+    fail "deferred pane acquired a surface before its submitted launch command"
+}
 grep -Fxq 'respawned=pane-2' "${fixture_root}/child-probe.log" || {
     cat "${log}" >&2
     fail "respawned command did not run in the targeted real pane"
@@ -286,9 +336,9 @@ grep -Fxq 'respawned=pane-2' "${fixture_root}/child-probe.log" || {
     cat "${log}" >&2
     fail "real kill-window did not cross the product handler"
 }
-[[ "$(grep -Fxc 'zentty-linux: tmux-command pane=pane-1 worklane=worklane-1 command=CapturePane' "${log}" || true)" -eq 2 ]] || {
+[[ "$(grep -Fxc 'zentty-linux: tmux-command pane=pane-1 worklane=worklane-1 command=CapturePane' "${log}" || true)" -eq 3 ]] || {
     cat "${log}" >&2
-    fail "real capture-pane did not read both printed and buffered terminal text"
+    fail "real capture-pane did not reject deferred text then read printed and buffered terminal text"
 }
 for command in SetBuffer SaveBuffer LoadBuffer ShowBuffer; do
     grep -Fxq "zentty-linux: tmux-command pane=pane-1 worklane=worklane-1 command=${command}" "${log}" || {

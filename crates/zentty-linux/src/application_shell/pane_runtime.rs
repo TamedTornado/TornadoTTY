@@ -1,5 +1,5 @@
 use std::cell::{Cell, RefCell};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
 use gtk::{glib, prelude::*};
@@ -67,6 +67,7 @@ pub(super) struct PaneRuntimeCoordinator {
     surfaces: BTreeMap<String, GhosttySurface>,
     frames: BTreeMap<String, PaneFrame>,
     focus_controllers: BTreeMap<String, gtk::EventControllerFocus>,
+    deferred_panes: BTreeSet<String>,
     live_children: Cell<usize>,
     pending_prefills: BTreeMap<String, String>,
 }
@@ -79,6 +80,7 @@ impl PaneRuntimeCoordinator {
             surfaces: BTreeMap::new(),
             frames: BTreeMap::new(),
             focus_controllers: BTreeMap::new(),
+            deferred_panes: BTreeSet::new(),
             live_children: Cell::new(0),
             pending_prefills: BTreeMap::new(),
         }
@@ -108,6 +110,20 @@ impl PaneRuntimeCoordinator {
         self.surfaces.contains_key(pane_id)
     }
 
+    pub(super) fn is_deferred(&self, pane_id: &str) -> bool {
+        self.deferred_panes.contains(pane_id)
+    }
+
+    pub(super) fn mark_deferred(&mut self, pane_id: &str) -> Result<(), String> {
+        if self.contains(pane_id) {
+            return Err(format!("pane {pane_id} already has a live surface"));
+        }
+        if !self.deferred_panes.insert(pane_id.to_owned()) {
+            return Err(format!("pane {pane_id} is already launch-deferred"));
+        }
+        Ok(())
+    }
+
     pub(super) fn insert(
         &mut self,
         pane_id: &str,
@@ -122,6 +138,7 @@ impl PaneRuntimeCoordinator {
             .insert(pane_id.to_owned(), focus_controller);
         self.frames.insert(pane_id.to_owned(), frame);
         self.surfaces.insert(pane_id.to_owned(), surface);
+        self.deferred_panes.remove(pane_id);
         self.live_children.set(self.live_children.get() + 1);
         Ok(())
     }
@@ -155,6 +172,10 @@ impl PaneRuntimeCoordinator {
         pane_id: &str,
         child_already_exited: bool,
     ) -> Result<bool, String> {
+        if self.deferred_panes.remove(pane_id) {
+            self.pending_prefills.remove(pane_id);
+            return Ok(true);
+        }
         if removal_decision(self.contains(pane_id)) == RemovalDecision::IgnoreStale {
             return Ok(false);
         }
@@ -196,6 +217,7 @@ impl PaneRuntimeCoordinator {
     }
 
     pub(super) fn release_all(&mut self) -> Result<(), String> {
+        self.deferred_panes.clear();
         let pane_ids = self.surfaces.keys().cloned().collect::<Vec<_>>();
         for pane_id in pane_ids {
             self.remove(&pane_id, false)?;

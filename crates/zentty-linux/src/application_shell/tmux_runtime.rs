@@ -57,25 +57,109 @@ impl ApplicationShell {
         match action {
             Ok(TmuxProductAction::Noop) => TmuxCompatReply::success(String::new())
                 .expect("empty compatibility output fits protocol limits"),
-            Ok(TmuxProductAction::SendText { pane_id, text }) => shell
-                .borrow()
-                .pane_runtime
-                .surface(&pane_id)
-                .ok_or_else(|| format!("pane {pane_id} has no live terminal surface"))
-                .and_then(|surface| surface.send_text(&text).map_err(|error| error.to_string()))
-                .map_or_else(
-                    |message| {
-                        TmuxCompatReply::failure("delivery_failed", message)
+            Ok(TmuxProductAction::SendText {
+                pane_id,
+                text,
+                deferred_launch_command,
+            }) => {
+                if shell.borrow().pane_runtime.contains(&pane_id) {
+                    shell
+                        .borrow()
+                        .pane_runtime
+                        .surface(&pane_id)
+                        .expect("coordinator contains exactly its live surfaces")
+                        .send_text(&text)
+                        .map_err(|error| error.to_string())
+                        .map_or_else(
+                            |message| {
+                                TmuxCompatReply::failure("delivery_failed", message)
+                                    .expect("bounded product diagnostic fits protocol limits")
+                            },
+                            |()| {
+                                TmuxCompatReply::success(String::new())
+                                    .expect("empty compatibility output fits protocol limits")
+                            },
+                        )
+                } else if shell.borrow().pane_runtime.is_deferred(&pane_id) {
+                    deferred_launch_command.map_or_else(
+                        || {
+                            TmuxCompatReply::failure(
+                                "delivery_failed",
+                                format!(
+                                    "pane {pane_id} is launch-deferred and requires one submitted command"
+                                ),
+                            )
                             .expect("bounded product diagnostic fits protocol limits")
-                    },
-                    |()| {
-                        TmuxCompatReply::success(String::new())
-                            .expect("empty compatibility output fits protocol limits")
-                    },
-                ),
+                        },
+                        |launch_command| {
+                            Self::launch_tmux_deferred_pane(shell, &pane_id, &launch_command)
+                                .map_or_else(
+                                    |message| {
+                                        TmuxCompatReply::failure("delivery_failed", message).expect(
+                                            "bounded product diagnostic fits protocol limits",
+                                        )
+                                    },
+                                    |()| {
+                                        TmuxCompatReply::success(String::new()).expect(
+                                            "empty compatibility output fits protocol limits",
+                                        )
+                                    },
+                                )
+                        },
+                    )
+                } else {
+                    TmuxCompatReply::failure(
+                        "delivery_failed",
+                        format!("pane {pane_id} has no live or deferred terminal surface"),
+                    )
+                    .expect("bounded product diagnostic fits protocol limits")
+                }
+            }
             Err((code, message)) => TmuxCompatReply::failure(code, message)
                 .expect("bounded product diagnostic fits protocol limits"),
         }
+    }
+
+    fn launch_tmux_deferred_pane(
+        shell: &Rc<RefCell<Self>>,
+        pane_id: &str,
+        launch_command: &str,
+    ) -> Result<(), String> {
+        let previous = {
+            let mut shell = shell.borrow_mut();
+            let pane = shell
+                .state
+                .pane(pane_id)
+                .cloned()
+                .ok_or_else(|| format!("pane {pane_id} is unavailable"))?;
+            if !shell.state.configure_pane_launch(
+                pane_id,
+                pane.working_directory.clone(),
+                Some(launch_command.to_owned()),
+            ) {
+                return Err(format!("pane {pane_id} is unavailable"));
+            }
+            pane
+        };
+        let command = crate::tmux_compat::shell_wrapped_command(
+            launch_command,
+            std::env::var("SHELL").ok().as_deref(),
+        );
+        if let Err(error) =
+            super::PaneRuntimeCoordinator::create_surface_with_command(shell, pane_id, command)
+        {
+            let _ = shell.borrow_mut().state.configure_pane_launch(
+                pane_id,
+                previous.working_directory,
+                previous.last_run_command,
+            );
+            return Err(error);
+        }
+        let shell = shell.borrow();
+        eprintln!("zentty-linux: tmux-deferred-launch pane={pane_id}");
+        shell.render();
+        shell.focus_selected_surface();
+        Ok(())
     }
 
     fn execute_tmux_split(
@@ -316,6 +400,19 @@ impl ApplicationShell {
                 }
                 return Err("generated duplicate pane identity".to_owned());
             }
+            if !shell.state.configure_pane_launch(
+                &pane_id,
+                plan.working_directory.clone(),
+                plan.launch_command.clone(),
+            ) {
+                let _ = shell.state.close_pane_after_child_exit(&pane_id);
+                if let Some(original) = &original {
+                    let _ = shell
+                        .state
+                        .select_worklane_and_pane(&original.worklane_id, &original.pane_id);
+                }
+                return Err("new team pane disappeared before launch configuration".to_owned());
+            }
             if plan.disposition == SplitDisposition::StackBelow {
                 let _ = shell.state.equalize_pane_heights_in_column(&pane_id);
             }
@@ -342,7 +439,21 @@ impl ApplicationShell {
             }
             (pane_id, pre_team_leader_width)
         };
-        if let Err(error) = super::PaneRuntimeCoordinator::create_surface(shell, &pane_id) {
+        let launch_result = plan.launch_command.as_deref().map_or_else(
+            || {
+                shell.borrow_mut().pane_runtime.mark_deferred(&pane_id)?;
+                eprintln!("zentty-linux: tmux-deferred pane={pane_id}");
+                Ok(())
+            },
+            |launch_command| {
+                let command = crate::tmux_compat::shell_wrapped_command(
+                    launch_command,
+                    std::env::var("SHELL").ok().as_deref(),
+                );
+                super::PaneRuntimeCoordinator::create_surface_with_command(shell, &pane_id, command)
+            },
+        );
+        if let Err(error) = launch_result {
             let mut shell = shell.borrow_mut();
             let _ = shell.state.close_pane_after_child_exit(&pane_id);
             if let Some(original) = original {

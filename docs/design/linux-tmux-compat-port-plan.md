@@ -1,9 +1,10 @@
 # Linux tmux-compatibility facade port plan
 
-- **Status:** Phases 0–1 complete; Phase 2 authenticated IPC in progress; Phase
-  3 discovery/select/send, capture/buffers, team split, kill/dissolve, and
-  layout/resize vertical slices complete; remaining command classifications
-  are in progress
+- **Status:** Phases 0–2 and the installed Phase 4/5 boundaries are complete.
+  Phase 3 implements the inventoried command vocabulary and its deferred-pane
+  lifecycle is repaired and qualified. It remains incomplete on the separately
+  explicit multi-window isolation and compatibility-store lifetime criteria;
+  neither is inferred from the single-window product journey.
 - **Date:** 2026-08-05
 - **Owner:** [#14 — Linux tmux compatibility and agent-team IPC](https://github.com/TamedTornado/zentty/issues/14)
 - **Parent:** [#1 — production-quality Zentty Linux port](https://github.com/TamedTornado/zentty/issues/1)
@@ -131,6 +132,40 @@ scenario or test-only CLI option is allowed.
 
 **Exit:** focused model tests and physical product journeys prove topology,
 focus, terminal input, capture, teardown, and scope isolation.
+
+#### 2026-08-09 Phase 3 completion audit and repair order
+
+The decomposition work made the one tmux authority mechanically reviewable and
+exposed a parity gap that earlier command-count coverage did not detect. The
+Swift source creates a deferred pane when `split-window` has no launch command;
+the first single-line `send-keys ... Enter` materializes that pane with the
+source shell-wrapped command. Linux instead eagerly created a shell surface and
+sent the text into it. That crossed real boundaries but did not preserve the
+source lifecycle.
+
+The repair remains inside the existing `TmuxCompatProduct`,
+`PaneRuntimeCoordinator`, product journey, and authenticated IPC transport:
+
+1. add red pure-plan tests for split `-c`/positional command extraction and
+   single-line submitted-command recognition;
+2. add a red real product assertion that a split pane has no PTY child until
+   the staged CLI sends its launch command, then prove the resulting command,
+   CWD, Ghostty surface, PTY, capture, focus, and teardown;
+3. implement the smallest typed split/send actions and coordinator operations;
+4. rerun focused mutation and both existing controlled-compositor journeys;
+5. separately resolve the still-explicit multi-window scope and durable-store
+   lifetime criteria. Do not use the deferred-pane repair to declare all of
+   issue #14 complete.
+
+No new actor, socket, pane model, test product, or orchestration layer is
+permitted for this repair.
+
+The repair is complete. Focused pure tests and mutation, the extended real
+staged-product journey on X11 and Wayland, and the installed Claude 2.1.201
+journey on X11 and Wayland prove the commandless split, absent PTY, submitted
+launch, direct split command/CWD, current `respawn-pane`, real terminal input,
+capture, focus, teardown, and private-session boundaries. Phase 3 remains open
+only for the separately named multi-window and state-lifetime decisions.
 
 ### Phase 4 — Staging, discovery, and shell integration
 

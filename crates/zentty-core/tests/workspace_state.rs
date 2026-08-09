@@ -675,6 +675,27 @@ fn pane_custom_identity_survives_runtime_titles_and_clears_to_live_fallback() {
 }
 
 #[test]
+fn pane_launch_context_updates_without_changing_identity_or_focus() {
+    let mut state = WorkspaceState::new("lane-1", "pane-1");
+    assert!(state.split_focused_pane_right("pane-2"));
+    assert!(state.select_pane("pane-1"));
+
+    assert!(state.configure_pane_launch(
+        "pane-2",
+        Some("/repo/team".to_owned()),
+        Some("claude --agent-id worker".to_owned()),
+    ));
+    assert_eq!(state.focused_pane_id(), Some("pane-1"));
+    let pane = state.pane("pane-2").unwrap();
+    assert_eq!(pane.working_directory.as_deref(), Some("/repo/team"));
+    assert_eq!(
+        pane.last_run_command.as_deref(),
+        Some("claude --agent-id worker")
+    );
+    assert!(!state.configure_pane_launch("missing", None, None));
+}
+
+#[test]
 fn pane_navigation_history_crosses_worklanes_and_preserves_browser_semantics() {
     let mut state = WorkspaceState::new("lane-1", "pane-1");
     assert!(state.split_focused_pane_right("pane-2"));

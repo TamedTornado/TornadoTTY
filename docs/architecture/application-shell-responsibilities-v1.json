@@ -9,10 +9,10 @@
     "crates/zentty-linux/src/codex_enrichment.rs": "fe87631c75c04b63962b7f89d311a778a25af8f27a1dcb4d5950b3efcbaa476e",
     "crates/zentty-linux/src/application_shell/action_router.rs": "321a6e71c26effce00b51ccb3d505ce3e329a573246fe6345f57768c7e2138a8",
     "crates/zentty-linux/src/application_shell/agent_events.rs": "12da8738f9cc6902498d6dd836a79ba52025897bad596703d1d336d3ec805e0f",
-    "crates/zentty-linux/src/application_shell/pane_runtime.rs": "7fad1aee2a7810150d855399b2bced6d62c5b75c462449aa266a8aebb2656a3a",
-    "crates/zentty-linux/src/application_shell/tmux_runtime.rs": "63a08d3165783c3a9f8e9f6782fc26e06c432ceb0566cb3e40e993d89cca4aba",
+    "crates/zentty-linux/src/application_shell/pane_runtime.rs": "ceba4e092c567b5d33f72cd4af3ded814e7f2d9490ad0de2a34cccc824a2cc31",
+    "crates/zentty-linux/src/application_shell/tmux_runtime.rs": "edf186209fa86da36fe43579bbb1c79a2c4e5b85105e657968bacbf2645fe54d",
     "crates/zentty-linux/src/persistence_coordinator.rs": "7e76980242a0c25be6bb3a9df411ce9953918b1d94bc1737fe9144d0c3810035",
-    "crates/zentty-linux/src/tmux_compat.rs": "21744690c1026a2ff15a065b024734dfe7097134697baf0922dfbe34d41dc952"
+    "crates/zentty-linux/src/tmux_compat.rs": "60776f211a0d599aafad1ab6b1cd4c0598a813e14d0514fa523c9ed963ab46f7"
   },
   "tracking": "GH-26",
   "purpose": "Characterize every ApplicationShell field, method, action, authority, and lifecycle edge before extraction; this contract assigns ownership but does not create a second implementation.",
@@ -43,7 +43,7 @@
       "status": "existing",
       "planned_module": "crates/zentty-linux/src/application_shell/pane_runtime.rs",
       "tracking": "GH-28",
-      "responsibility": "The sole pane-to-Ghostty-surface projection, callback registrations, transactional construction, focus, child exit, and teardown."
+      "responsibility": "The sole pane-to-Ghostty-surface projection, including launch-deferred pane identity, callback registrations, transactional construction, focus, child exit, and teardown."
     },
     {
       "id": "agent_event_coordinator",
@@ -182,6 +182,7 @@
     ],
     "pane_runtime_coordinator": [
       "new", "runtime", "command", "live_children", "surface", "frame", "contains",
+      "is_deferred", "mark_deferred",
       "insert", "queue_prefill", "cancel_prefill", "take_prefill", "detach_widgets",
       "remove", "note_child_exit", "release_all", "create_surface",
       "create_surface_with_command", "create_surface_configured", "surface_config",
@@ -198,7 +199,7 @@
       "default_state_directory"
     ],
     "tmux_runtime_coordinator": [
-      "execute_tmux_command", "execute_tmux_send_keys", "execute_tmux_split",
+      "execute_tmux_command", "execute_tmux_send_keys", "launch_tmux_deferred_pane", "execute_tmux_split",
       "execute_tmux_respawn", "respawn_tmux_surface", "execute_tmux_capture",
       "execute_tmux_kill", "execute_tmux_layout", "close_tmux_panes",
       "create_tmux_split_surface"

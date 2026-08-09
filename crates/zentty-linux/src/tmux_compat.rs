@@ -19,7 +19,11 @@ pub(crate) struct TmuxCompatProduct {
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) enum TmuxProductAction {
     Noop,
-    SendText { pane_id: String, text: String },
+    SendText {
+        pane_id: String,
+        text: String,
+        deferred_launch_command: Option<String>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -36,6 +40,8 @@ pub(crate) struct SplitPlan {
     pub disposition: SplitDisposition,
     pub detached: bool,
     pub print_format: Option<String>,
+    pub working_directory: Option<String>,
+    pub launch_command: Option<String>,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -321,6 +327,20 @@ impl TmuxCompatProduct {
         );
         validate_explicit_pane_target(parsed.value("-t"), &pane_ids)?;
         validate_explicit_pane_target(Some(&target.pane_id), &pane_ids)?;
+        if parsed
+            .value("-c")
+            .is_some_and(|path| path.is_empty() || path.contains('\0'))
+            || parsed
+                .positionals()
+                .iter()
+                .any(|argument| argument.is_empty() || argument.contains('\0'))
+        {
+            return Err((
+                "invalid_arguments",
+                "split-window launch paths and arguments must be nonempty and contain no NUL bytes"
+                    .to_owned(),
+            ));
+        }
         let (leader_pane_id, insertion_pane_id, disposition) =
             self.store.anchor(&target.worklane_id).map_or_else(
                 || {
@@ -351,6 +371,9 @@ impl TmuxCompatProduct {
             print_format: parsed
                 .has_flag("-P")
                 .then(|| parsed.value("-F").unwrap_or(DEFAULT_SPLIT_PRINT).to_owned()),
+            working_directory: parsed.value("-c").map(str::to_owned),
+            launch_command: (!parsed.positionals().is_empty())
+                .then(|| tmux_shell_command(parsed.positionals())),
         })
     }
 
@@ -421,7 +444,12 @@ impl TmuxCompatProduct {
         if text.is_empty() {
             Ok(TmuxProductAction::Noop)
         } else {
-            Ok(TmuxProductAction::SendText { pane_id, text })
+            let deferred_launch_command = submitted_launch_command(&text);
+            Ok(TmuxProductAction::SendText {
+                pane_id,
+                text,
+                deferred_launch_command,
+            })
         }
     }
 
@@ -647,9 +675,43 @@ fn tmux_shell_command(arguments: &[String]) -> String {
     }
     arguments
         .iter()
-        .map(|argument| format!("'{}'", argument.replace('\'', "'\\''")))
+        .map(|argument| shell_quote(argument))
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+pub(crate) fn shell_wrapped_command(command: &str, login_shell_path: Option<&str>) -> String {
+    let shell = login_shell_path
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .filter(|path| {
+            std::path::Path::new(path)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| matches!(name, "bash" | "fish" | "zsh"))
+        });
+    shell.map_or_else(
+        || format!("sh -c {}", shell_quote(command.trim())),
+        |shell| {
+            format!(
+                "{} -lic {}",
+                shell_quote(shell),
+                shell_quote(command.trim())
+            )
+        },
+    )
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+fn submitted_launch_command(text: &str) -> Option<String> {
+    let without_submit = text
+        .strip_suffix('\r')
+        .or_else(|| text.strip_suffix('\n'))?;
+    let command = without_submit.trim();
+    (!command.is_empty() && !command.contains(['\r', '\n'])).then(|| command.to_owned())
 }
 
 fn validate_explicit_pane_target(
@@ -776,6 +838,7 @@ fn failure(code: &'static str, message: impl Into<String>) -> TmuxCompatReply {
 mod tests {
     use super::{
         KillRestoration, LayoutPlan, SplitDisposition, TmuxCompatProduct, TmuxProductAction,
+        shell_wrapped_command,
     };
     use zentty_core::AgentTarget;
     use zentty_core::WorkspaceState;
@@ -1189,7 +1252,7 @@ mod tests {
     }
 
     #[test]
-    fn send_keys_prepares_source_text_for_only_a_scoped_live_pane() {
+    fn send_keys_preserves_text_and_recognizes_only_one_submitted_launch_command() {
         let state = workspace();
         let action = TmuxCompatProduct::prepare_send_keys(
             &state,
@@ -1202,6 +1265,40 @@ mod tests {
             TmuxProductAction::SendText {
                 pane_id: "pane-2".to_owned(),
                 text: "echo ready\r".to_owned(),
+                deferred_launch_command: Some("echo ready".to_owned()),
+            }
+        );
+
+        let incomplete = TmuxCompatProduct::prepare_send_keys(
+            &state,
+            &target("pane-1"),
+            &request("send-keys", &["-t", "%pane-2", "echo", "ready"]),
+        )
+        .unwrap();
+        assert_eq!(
+            incomplete,
+            TmuxProductAction::SendText {
+                pane_id: "pane-2".to_owned(),
+                text: "echo ready".to_owned(),
+                deferred_launch_command: None,
+            }
+        );
+
+        let multiline = TmuxCompatProduct::prepare_send_keys(
+            &state,
+            &target("pane-1"),
+            &request(
+                "send-keys",
+                &["-t", "%pane-2", "one", "Enter", "two", "Enter"],
+            ),
+        )
+        .unwrap();
+        assert_eq!(
+            multiline,
+            TmuxProductAction::SendText {
+                pane_id: "pane-2".to_owned(),
+                text: "one\rtwo\r".to_owned(),
+                deferred_launch_command: None,
             }
         );
 
@@ -1219,6 +1316,22 @@ mod tests {
             &request("send-keys", &["-t", "%pane-other", "unsafe"]),
         );
         assert_eq!(missing.unwrap_err().0, "target_not_found");
+    }
+
+    #[test]
+    fn deferred_launch_uses_supported_login_shells_and_safe_fallback_quoting() {
+        assert_eq!(
+            shell_wrapped_command("printf '%s' ready", Some("/bin/bash")),
+            "'/bin/bash' -lic 'printf '\\''%s'\\'' ready'"
+        );
+        assert_eq!(
+            shell_wrapped_command("echo $HOME", Some("/usr/bin/nu")),
+            "sh -c 'echo $HOME'"
+        );
+        assert_eq!(
+            shell_wrapped_command("echo ready", Some("  ")),
+            "sh -c 'echo ready'"
+        );
     }
 
     #[test]
@@ -1367,6 +1480,24 @@ mod tests {
         assert_eq!(first.disposition, SplitDisposition::RightGolden);
         assert!(!first.detached);
         assert_eq!(first.print_format.as_deref(), Some("#{pane_id}"));
+        assert_eq!(first.working_directory, None);
+        assert_eq!(first.launch_command, None);
+
+        let launched = product
+            .prepare_split(
+                &state,
+                &target("pane-1"),
+                &request(
+                    "split-window",
+                    &["-h", "-c", "/repo", "printf", "%s", "team ready"],
+                ),
+            )
+            .unwrap();
+        assert_eq!(launched.working_directory.as_deref(), Some("/repo"));
+        assert_eq!(
+            launched.launch_command.as_deref(),
+            Some("'printf' '%s' 'team ready'")
+        );
 
         let mut rendered_state = state.clone();
         assert!(rendered_state.split_focused_pane_right("pane-team-1"));
@@ -1390,6 +1521,8 @@ mod tests {
         assert_eq!(second.disposition, SplitDisposition::StackBelow);
         assert!(second.detached);
         assert_eq!(second.print_format, None);
+        assert_eq!(second.working_directory, None);
+        assert_eq!(second.launch_command, None);
 
         let missing = product.prepare_split(
             &state,
@@ -1397,6 +1530,20 @@ mod tests {
             &request("split-window", &["-t", "%outside"]),
         );
         assert_eq!(missing.unwrap_err().0, "target_not_found");
+
+        for arguments in [
+            vec!["-c", ""],
+            vec!["-c", "bad\0cwd"],
+            vec![""],
+            vec!["printf", "bad\0argument"],
+        ] {
+            let invalid = product.prepare_split(
+                &state,
+                &target("pane-1"),
+                &request("split-window", &arguments),
+            );
+            assert_eq!(invalid.unwrap_err().0, "invalid_arguments");
+        }
     }
 
     #[test]
