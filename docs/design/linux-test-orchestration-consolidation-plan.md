@@ -368,6 +368,10 @@ pushed.
 
 ## 5.1 2026-08-09 bounded qualification-runtime follow-up
 
+> Historical first optimization, superseded by the dependency/resource graph
+> in section 5.2. Numeric `order` is now stable report order only and is not an
+> execution barrier.
+
 The authoritative matrix remains one runner and one result schema, but its
 current implementation executes every cell serially. That is not required by
 the evidence model and makes the real-system milestone gate needlessly slow.
@@ -395,6 +399,47 @@ The bounded repair is an order-barrier scheduler inside
 7. Runner tests must cover invalid job counts, bounded concurrency, order
    barriers, deterministic result order, worker failure propagation, and
    serial resource classes before the optimized entrypoint is accepted.
+
+## 5.2 2026-08-09 critical-path qualification repair
+
+The 858-second result proves that bounded workers alone are insufficient. The
+333-second pinned Ghostty regression is the unavoidable warm-run floor, but
+the runner currently adds unrelated phases to that floor because numeric
+`order` is both presentation order and a global execution barrier. Tests are
+not inherently serial; only commands that mutate the same checkout/output or
+the governed Valgrind evidence set need exclusion.
+
+This follow-up therefore has these acceptance criteria:
+
+1. Every executed cell records monotonic start, finish, and duration fields in
+   the authoritative JSON summary. The human report names total wall time and
+   its longest cells; performance decisions may not rely on anecdotes.
+2. The authoritative matrix declares prerequisites separately from stable
+   report order. A ready cell may start as soon as its prerequisites pass;
+   unrelated earlier report rows do not block it.
+3. Resource exclusion names the actual shared resource. Ghostty build/cache
+   producers exclude one another; Valgrind evidence producers and governance
+   exclude one another. A `serial` label may not imply a global stop-the-world
+   barrier without a named resource.
+4. ReleaseSafe remains the default developer bundle. Debug writes only its
+   immutable profile bundle, so it cannot replace ReleaseSafe merely to create
+   Debug evidence. The redundant `restore-release` build is removed.
+5. Both profile builds finish before the long Ghostty regression begins. Once
+   it begins, compositor, product, agent, packaging, ABI, and governed
+   Valgrind lanes run alongside it whenever their real prerequisites and
+   resources permit.
+6. Support-runner checks overlap the matrix rather than delaying its first
+   build, except for a check with a demonstrated shared-resource conflict.
+7. Tests prove missing/cyclic prerequisites, dependency failure propagation,
+   work-conserving scheduling, named-resource exclusion, deterministic result
+   order, complete worker reaping, timing schema, and truthful claims.
+8. No cell is removed, cached, shortened, replaced with a fake, or counted as
+   passing from old evidence. Unexpected absence remains a failure.
+
+The warm target is the longest real lane plus bounded scheduling overhead,
+not the sum of lanes. On the current host that means approaching the pinned
+Ghostty regression's roughly 333 seconds; cold dependency compilation may be
+longer and must be reported separately rather than hidden.
 
 ## 6. Acceptance criteria
 

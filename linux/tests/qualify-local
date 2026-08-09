@@ -4,7 +4,20 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=linux/tests/lib/bounded-batch
 source "${repo_root}/linux/tests/lib/bounded-batch"
-qualification_jobs="${ZENTTY_QUALIFICATION_JOBS:-4}"
+support_jobs="${ZENTTY_QUALIFICATION_SUPPORT_JOBS:-2}"
+pinned_gemini_bin="${repo_root}/build/linux-deps/gemini-cli-0.53.0/node_modules/.bin/gemini"
+[[ "${support_jobs}" =~ ^[1-9][0-9]*$ ]] || {
+    echo "qualify-local: ZENTTY_QUALIFICATION_SUPPORT_JOBS must be a positive integer" >&2
+    exit 64
+}
+(( support_jobs <= 8 )) || {
+    echo "qualify-local: ZENTTY_QUALIFICATION_SUPPORT_JOBS must not exceed 8" >&2
+    exit 64
+}
+[[ -x "${pinned_gemini_bin}" ]] || {
+    echo "qualify-local: reviewed Gemini CLI 0.53.0 prerequisite is missing: ${pinned_gemini_bin}" >&2
+    exit 77
+}
 
 support_tests=(
     linux/tests/qualification-matrix-test
@@ -49,13 +62,35 @@ for test_path in "${support_tests[@]}"; do
 done
 
 support_failed=false
-if ! zentty_run_bounded_batch "${qualification_jobs}" \
-    run_support_test "${parallel_support_tests[@]}"; then
-    support_failed=true
-fi
 for test_path in "${serial_support_tests[@]}"; do
     run_support_test "${test_path}" || support_failed=true
 done
+if "${support_failed}"; then
+    for test_path in "${serial_support_tests[@]}"; do
+        test_name="${test_path//\//__}"
+        echo "support: ${test_path}"
+        cat "${support_results}/${test_name}.log"
+    done
+    echo "qualify-local: prerequisite support qualification failed" >&2
+    exit 1
+fi
+
+matrix_output="${support_results}/qualification-matrix.log"
+set +e
+PATH="$(dirname "${pinned_gemini_bin}"):${PATH}" \
+    "${repo_root}/linux/tests/qualification-matrix" >"${matrix_output}" 2>&1 &
+matrix_pid=$!
+set -e
+
+if ! zentty_run_bounded_batch "${support_jobs}" \
+    run_support_test "${parallel_support_tests[@]}"; then
+    support_failed=true
+fi
+
+set +e
+wait "${matrix_pid}"
+matrix_status=$?
+set -e
 
 for test_path in "${support_tests[@]}"; do
     test_name="${test_path//\//__}"
@@ -65,11 +100,18 @@ for test_path in "${support_tests[@]}"; do
 done
 if "${support_failed}"; then
     echo "qualify-local: support qualification failed" >&2
+fi
+
+echo "product/dependency matrix: linux/tests/qualification-matrix"
+cat "${matrix_output}"
+if (( matrix_status != 0 )); then
+    echo "qualify-local: product/dependency matrix failed" >&2
+fi
+if "${support_failed}" || (( matrix_status != 0 )); then
     exit 1
 fi
 
 rm -rf -- "${support_results}"
 trap - EXIT
 
-echo "product/dependency matrix: linux/tests/qualification-matrix"
-exec "${repo_root}/linux/tests/qualification-matrix"
+echo "qualify-local: all presently executable support and matrix cells passed"

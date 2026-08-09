@@ -2,7 +2,10 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-build_dir="${repo_root}/build/linux"
+build_dir="${ZENTTY_BUILD_DIR:-${repo_root}/build/linux}"
+if [[ "${build_dir}" != /* ]]; then
+    build_dir="${repo_root}/${build_dir}"
+fi
 executables=(
     "${build_dir}/bin/zentty-linux"
     "${build_dir}/bin/api-contract"

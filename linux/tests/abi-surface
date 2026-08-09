@@ -2,7 +2,11 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-library="${repo_root}/build/linux/lib/libghostty-gtk-embed.so"
+build_dir="${ZENTTY_BUILD_DIR:-${repo_root}/build/linux}"
+if [[ "${build_dir}" != /* ]]; then
+    build_dir="${repo_root}/${build_dir}"
+fi
+library="${build_dir}/lib/libghostty-gtk-embed.so"
 
 if [[ ! -f "${library}" ]]; then
     echo "error: ${library} does not exist; run linux/scripts/build-local" >&2

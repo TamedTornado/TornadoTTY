@@ -10706,6 +10706,136 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   `c983dd5f6164c8b25a6ec92896ccae41cf15f7ec0494d3db8b627c6868bf74e9`,
   and `a900e9448fae6a4af0e67d1290814b9e1b8bdd4a62bfdcffaab98e9488f16ed3`.
 
+### 2026-08-09 — Qualification critical-path correction begins
+
+- **The prior serialization explanation was too broad:** Tests are not
+  inherently serial. Inspection found concrete contention only in the shared
+  Ghostty checkout/Zig cache and `zig-out`, the mutable `build/linux` staging
+  tree, the ABI mismatch fixture, and the governed Valgrind evidence set.
+  Numeric matrix order also creates global barriers without corresponding
+  resource conflicts.
+- **The 333-second Ghostty regression is now the warm-run floor and target:**
+  The 858-second gate adds roughly 525 seconds outside that longest known lane.
+  The accepted repair is to model prerequisites and named resources, retain
+  every real cell, add per-cell timing evidence, eliminate the redundant
+  ReleaseSafe restoration build, and overlap all independent work with the
+  unchanged pinned Ghostty regression. No cached or historical PASS is
+  permitted.
+- **Implementation is deliberately gated by a written contract:** Section 5.2
+  of the orchestration consolidation plan records the scheduler, artifact,
+  evidence, test, and truthfulness acceptance criteria before code changes.
+  The current 858-second receipt remains authoritative until a complete run of
+  the repaired tree passes.
+- **The first optimized run was invalidated by the execution sandbox, but
+  exposed a failure-reporting defect:** The unelevated run could not resolve
+  GitHub during the managed Ghostty fetch or `static.rust-lang.org` after the
+  controlled HOME caused rustup to verify the pinned toolchain. Nested display
+  support checks also received host socket permission failures. These are
+  prerequisite failures, not product results, and no PASS is claimed. More
+  importantly, the failed build correctly blocked dependents but also blocked
+  suppression governance, so the runner refused to publish its failure
+  summary. Governance is now the sole `always_run` cell: it waits for every
+  producer, runs even when a producer failed, retains the evidence lease, and
+  permits an honest machine-readable failed summary. The authoritative rerun
+  must use the same elevated host context as prior real compositor gates.
+- **The first valid timing receipt cut the gate nearly in half:** In the
+  required elevated host context, every support harness passed and the matrix
+  completed in 463,880 ms (466.27 seconds including `qualify-local`) versus
+  the prior 858 seconds. The unchanged Ghostty regression took 343,840 ms.
+  ReleaseSafe and Debug builds took 63,410 and 50,200 ms respectively; because
+  they still exclude the regression on the shared Ghostty output, those two
+  builds explain almost the entire remaining difference from the regression
+  floor. The scheduler overlapped the remaining real compositor, product,
+  agent, ABI, packaging, Rust, and governed Valgrind work with that lane.
+- **The timing run did not pass product qualification:** Both agent cells
+  rejected ambient Gemini 0.54.4 before their controlled model journey. The
+  reviewed gitignored 0.53.0 prerequisite still exists, but the prior manual
+  PATH prefix was not encoded in `qualify-local`. The entrypoint now prepends
+  that exact provisioned executable and fails explicitly if it is absent.
+  This is prerequisite selection, not a relaxed version assertion; the real
+  agent harness still verifies 0.53.0 itself.
+- **Isolated Ghostty install outputs reached the intended floor:** Source
+  preparation is now one locked 710 ms cell. ReleaseSafe, Debug, and the
+  unchanged regression then use distinct install prefixes while sharing Zig's
+  concurrency-safe content-addressed caches. The complete elevated gate passed
+  in 373,720 ms for the matrix and 375.97 seconds end to end. Ghostty itself
+  took 350,320 ms, so the full real-system gate is now only 23.4 seconds
+  longer than its floor. ReleaseSafe (63,980 ms) and Debug (59,380 ms) began
+  20 ms apart and overlapped the regression; all support checks and both real
+  agent/compositor cells passed. Declared totals returned to `PASS=88`,
+  `FAIL=0`, `BLOCKED=7`, `XFAIL=1`, and `NOT_IMPLEMENTED=21` after replacing
+  the redundant restoration build with the real source-preparation cell.
+- **The timing evidence exposed avoidable scheduler CPU overhead:** Although
+  all three long lanes overlapped, the regression began roughly 14 seconds
+  after the profile builds because the ready-loop repeatedly launched `jq` to
+  rediscover dependencies and resources for every pending candidate. The
+  runner now computes its stable order and metadata maps once, then performs
+  readiness/resource checks in Bash. This changes no dependency, cell,
+  command, worker limit, or evidence rule. A final exact-tree gate is required
+  before publication.
+- **Metadata caching was not the main 13-second launch delay:** The next exact
+  run passed in 370,700 ms (372.71 seconds end to end), but timing showed the
+  two builds began together immediately after source preparation while the
+  regression still began 12,970 ms later. Diagnosis: before the 750 ms source
+  prerequisite completed, the work-conserving scheduler correctly filled its
+  other three slots with low-priority dependency-free checks. Those real
+  checks then occupied the slots needed by the newly unlocked critical lanes.
+  This also revealed a semantic omission: cells could qualify source-derived
+  contracts before the locked source identity was prepared. The execution
+  graph now names `prepare-ghostty` as its root prerequisite. Every other cell
+  waits for that subsecond identity gate, after which the two isolated profile
+  builds and Ghostty regression receive the first three slots together. This
+  is a dependency truth, not a claim that unrelated tests contend for a global
+  resource.
+- **The root dependency reduced the matrix to 358,770 ms:** The complete gate
+  passed in 360.86 seconds end to end while the unchanged Ghostty regression
+  took 351,540 ms. That is 9.32 seconds of total orchestration and tail work
+  beyond the real Ghostty floor, and a 58% reduction from the 858-second
+  baseline. All 88 PASS cells, the expected XFAIL, both agent/compositor
+  journeys, and suppression governance succeeded.
+- **Timing is now qualification evidence, not merely reporting:** Each result
+  carries its resolved dependencies, named exclusive resources, and monotonic
+  interval. Before summary publication the runner fails closed unless every
+  interval is internally consistent, every dependency finishes before its
+  dependent begins, equal named resources never overlap, and observed
+  concurrency never exceeds the configured worker bound. This exact-tree
+  validation must be rerun because the assertions themselves are part of the
+  runner under qualification.
+- **The first invariant-enabled pass exposed one path-normalization omission:**
+  The regression prefix supplied by the matrix was repository-relative but
+  the regression script changes into the Ghostty checkout before invoking
+  Zig. Tests do not install their test steps, so the pass was genuine, but the
+  intended isolated prefix resolved beneath the wrong working directory. The
+  script now resolves a relative override against the Zentty repository just
+  like `build-local`; prerequisite-cell and always-run-governance validation
+  were also made explicit before the final rerun.
+- **Final exact-tree receipt:** Every presently executable support and matrix
+  cell passed in 358,090 ms for the matrix and 360.14 seconds end to end. The
+  unchanged pinned Ghostty regression took 350,800 ms, leaving 7.29 seconds
+  beyond the floor. Source preparation finished first; ReleaseSafe and Debug
+  both began at monotonic millisecond `20843810`, and Ghostty regression began
+  10 ms later at `20843820`, proving the intended overlap rather than
+  inferring it from total time.
+  Declared totals are `PASS=88`, `FAIL=0`, `BLOCKED=7`, `XFAIL=1`, and
+  `NOT_IMPLEMENTED=21`. Implemented-local, product-boundary, and retired-host
+  claims pass; release and full Linux qualification remain false.
+- **Real agent and memory evidence remained intact:** The controlled Wayland
+  and X11 agent sessions are respectively
+  `92138dc76e5696491a4e715a9e2b09e52f05733095ebc6e6eacc5c2720cefb97`
+  and
+  `f4ca34ea726a0ec36616702a7955fb6af77e5c718205a3a1c1a0908c7b7649b3`.
+  Debug Valgrind is **PASS with reviewed suppressions**, not unsuppressed
+  clean: raw evidence reports 427 errors/contexts, 6,240 definite bytes, and
+  41,461 indirect bytes; post-suppression evidence reports zero errors,
+  definite bytes, and indirect bytes, with 427 governed suppression contexts
+  used. The summary, report, raw-receipt, and suppressed-receipt SHA-256 values
+  are respectively
+  `4171e7d724d09a09aaf007757db67bb4a56d1c1af92d890b16896ca38f38daf3`,
+  `dadf3da55a2450e2052ac54775da8be6271ac5a1f9b5dc07fa6c2e3e904d782d`,
+  `ae8257de79eba192f07b54e241bf3812c98c7f560d5509d3d2c14e84912108b0`,
+  and
+  `21725ee1f3646a3e1491fe149364814882c9c46418a9478a17d3932759745128`.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were

@@ -63,28 +63,63 @@ jq '(.cells[] | select(.id == "install-uninstall")).status = "SKIPPED"' \
     "${source_matrix}" >"${temp_dir}/matrix.json"
 expect_validation_failure 'unknown statuses: install-uninstall=SKIPPED'
 
-# Resource-mutating commands may never silently join the parallel pool.
-jq 'del(.cells[] | select(.id == "build-release").execution)' \
+# Resource-mutating commands must name the resource they actually contend for.
+jq 'del(.cells[] | select(.id == "debug-valgrind-ibus-focus-x11").resources)' \
     "${source_matrix}" >"${temp_dir}/matrix.json"
 expect_validation_failure \
-    'resource-mutating cells must declare serial execution: build-release'
+    'resource-mutating cells lack their named resource: debug-valgrind-ibus-focus-x11'
 
-jq '(.cells[] | select(.id == "release-x11-default-single")).execution = "unbounded"' \
+jq '(.cells[] | select(.id == "release-x11-default-single")).resources = ["desktop"]' \
     "${source_matrix}" >"${temp_dir}/matrix.json"
 expect_validation_failure \
-    'cells with unknown execution policy: release-x11-default-single=unbounded'
+    'cells with malformed, unknown, or duplicate resources: release-x11-default-single'
+
+jq '(.cells[] | select(.id == "ghostty-api-audit-inventory")).depends_on = ["missing-cell"]' \
+    "${source_matrix}" >"${temp_dir}/matrix.json"
+expect_validation_failure \
+    'cells with malformed or unknown dependencies: ghostty-api-audit-inventory'
+
+jq 'del(.cells[] | select(.id == "prepare-ghostty"))' \
+    "${source_matrix}" >"${temp_dir}/matrix.json"
+expect_validation_failure 'execution graph prerequisite cells are missing or malformed'
+
+jq '(.cells[] | select(.id == "prepare-ghostty")).depends_on = ["build-release"]' \
+    "${source_matrix}" >"${temp_dir}/matrix.json"
+expect_validation_failure 'matrix dependency graph contains a cycle'
 
 # Full qualification cannot be asserted while any explicit gap remains.
 jq '.claims.full_linux_qualification_passed = true' \
     "${source_matrix}" >"${temp_dir}/matrix.json"
 expect_validation_failure 'matrix incorrectly claims full Linux qualification'
 
-# Suppression review must remain valid after every build that can replace the
-# governed reproducer executable, not merely at the instant the report exists.
-jq '(.cells[] | select(.id == "valgrind-suppression-governance")).order = 49' \
+# Suppression review must depend on every evidence producer, not merely sort
+# after it in the human report.
+jq '(.cells[] | select(.id == "valgrind-suppression-governance")).depends_on = ["ghostty-abi-old-new-mismatch"]' \
     "${source_matrix}" >"${temp_dir}/matrix.json"
 expect_validation_failure \
     'suppression-governance cell must execute after every Valgrind report and artifact-mutating build cell'
+
+# Presentation order is not an execution barrier, profile builds are immutable,
+# and the obsolete third build may not return.
+if grep -F 'while IFS= read -r order' "${runner}" >/dev/null; then
+    echo "qualification-matrix-test: global order barrier returned" >&2
+    exit 1
+fi
+grep -F 'sort_by(.schedule_priority // .order, .order, .id)' "${runner}" >/dev/null
+grep -F 'duration_ms' "${runner}" >/dev/null
+if jq -e '.cells[] | select(.id == "restore-release")' "${source_matrix}" >/dev/null; then
+    echo "qualification-matrix-test: redundant ReleaseSafe rebuild returned" >&2
+    exit 1
+fi
+jq -e '
+    (.cells[] | select(.id == "build-debug") |
+      (.resources // []) == [] and
+      (.command | contains("ZENTTY_BUILD_OUTPUT_DIR=build/linux-profiles/debug")) and
+      (.command | contains("ZENTTY_GHOSTTY_INSTALL_DIR=build/linux-deps/ghostty-install/debug"))) and
+    (.cells[] | select(.id == "ghostty-regression") |
+      (.resources // []) == [] and .schedule_priority == 12 and
+      .skip_profile_prerequisite == true)
+' "${source_matrix}" >/dev/null
 
 # The production runner must use the focused classifier tested above.
 # The grep intentionally matches the literal source line.

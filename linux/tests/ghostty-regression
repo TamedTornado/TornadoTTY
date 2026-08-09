@@ -8,6 +8,10 @@ blueprint_dir="${BLUEPRINT_COMPILER_DIR:-${repo_root}/../.tools/blueprint-compil
 zig_global_cache="${repo_root}/build/linux-deps/zig-global-cache"
 zig_local_cache="${ghostty_source}/.zig-cache"
 receipt="${repo_root}/build/linux/ghostty-regression.log"
+install_dir="${ZENTTY_GHOSTTY_REGRESSION_INSTALL_DIR:-${repo_root}/build/linux-deps/ghostty-regression-out}"
+if [[ "${install_dir}" != /* ]]; then
+    install_dir="${repo_root}/${install_dir}"
+fi
 expected_revision="$(sed -n 's/^revision=//p' "${repo_root}/linux/ghostty.lock")"
 
 if [[ ! -x "${zig}" ]]; then
@@ -35,6 +39,7 @@ mkdir -p "${zig_global_cache}" "${zig_local_cache}"
         ZIG_GLOBAL_CACHE_DIR="${zig_global_cache}" \
         ZIG_LOCAL_CACHE_DIR="${zig_local_cache}" \
         "${zig}" build test \
+        --prefix "${install_dir}" \
         -Doptimize=Debug \
         -Dcpu=baseline \
         -fno-sys=gtk4-layer-shell
@@ -42,6 +47,7 @@ mkdir -p "${zig_global_cache}" "${zig_local_cache}"
         ZIG_GLOBAL_CACHE_DIR="${zig_global_cache}" \
         ZIG_LOCAL_CACHE_DIR="${zig_local_cache}" \
         "${zig}" build gtk-embed-lib-test \
+        --prefix "${install_dir}" \
         -Doptimize=Debug \
         -Dcpu=baseline \
         -fno-sys=gtk4-layer-shell

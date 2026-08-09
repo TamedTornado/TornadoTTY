@@ -10,7 +10,14 @@ zig="${ZIG:-${repo_root}/../.tools/zig-x86_64-linux-0.16.0/zig}"
 blueprint_dir="${BLUEPRINT_COMPILER_DIR:-${repo_root}/../.tools/blueprint-compiler-0.16.0/bin}"
 zig_global_cache="${repo_root}/build/linux-deps/zig-global-cache"
 zig_local_cache="${ghostty_source}/.zig-cache"
-output_dir="${repo_root}/build/linux"
+output_dir="${ZENTTY_BUILD_OUTPUT_DIR:-${repo_root}/build/linux}"
+if [[ "${output_dir}" != /* ]]; then
+    output_dir="${repo_root}/${output_dir}"
+fi
+ghostty_install_dir="${ZENTTY_GHOSTTY_INSTALL_DIR:-${ghostty_source}/zig-out}"
+if [[ "${ghostty_install_dir}" != /* ]]; then
+    ghostty_install_dir="${repo_root}/${ghostty_install_dir}"
+fi
 optimize="${GHOSTTY_OPTIMIZE:-ReleaseSafe}"
 c_probe_flags=(
     -std=c17
@@ -55,30 +62,19 @@ if [[ ! "${ghostty_repo}" =~ ^https://github\.com/[^/]+/[^/]+\.git$ ]] ||
     echo "error: invalid Ghostty lock file: ${lock_file}" >&2
     exit 1
 fi
-if [[ -z "${GHOSTTY_SOURCE_DIR:-}" ]]; then
-    if [[ ! -d "${ghostty_source}/.git" ]]; then
-        mkdir -p "$(dirname "${ghostty_source}")"
-        # The API-audit qualification cell recomputes normalized historical
-        # patches and therefore requires real blobs, not a lazy promisor clone.
-        git clone --no-checkout "${ghostty_repo}" "${ghostty_source}"
+if [[ "${ZENTTY_GHOSTTY_PREPARED:-false}" != "true" ]]; then
+    if [[ -n "${GHOSTTY_SOURCE_DIR:-}" ]]; then
+        GHOSTTY_SOURCE_DIR="${ghostty_source}" \
+            "${repo_root}/linux/scripts/prepare-ghostty-source"
+    else
+        "${repo_root}/linux/scripts/prepare-ghostty-source"
     fi
-    if [[ -n "$(git -C "${ghostty_source}" status --porcelain)" ]]; then
-        echo "error: managed Ghostty checkout is dirty: ${ghostty_source}" >&2
-        exit 1
-    fi
-    actual_origin="$(git -C "${ghostty_source}" remote get-url origin)"
-    if [[ "${actual_origin}" != "${ghostty_repo}" ]]; then
-        echo "error: managed Ghostty origin is ${actual_origin}; expected ${ghostty_repo}" >&2
-        exit 1
-    fi
-    git -C "${ghostty_source}" fetch origin "${ghostty_revision}"
-    git -C "${ghostty_source}" checkout --detach "${ghostty_revision}"
 elif [[ ! -e "${ghostty_source}/.git" ]]; then
-    echo "error: GHOSTTY_SOURCE_DIR is not a Git checkout: ${ghostty_source}" >&2
+    echo "error: prepared Ghostty source is not a Git checkout: ${ghostty_source}" >&2
     exit 1
 fi
 
-mkdir -p "${zig_global_cache}" "${zig_local_cache}"
+mkdir -p "${zig_global_cache}" "${zig_local_cache}" "${ghostty_install_dir}"
 
 actual_revision="$(git -C "${ghostty_source}" rev-parse HEAD)"
 if [[ "${actual_revision}" != "${ghostty_revision}" ]]; then
@@ -97,20 +93,21 @@ fi
         ZIG_LOCAL_CACHE_DIR="${zig_local_cache}" \
         "${zig}" build \
         gtk-embed-lib \
+        --prefix "${ghostty_install_dir}" \
         -Doptimize="${optimize}" \
         -Dcpu=baseline \
         -fno-sys=gtk4-layer-shell
 )
 
 mkdir -p "${output_dir}/bin" "${output_dir}/lib"
-cp "${ghostty_source}/zig-out/lib/libghostty-gtk-embed.so" "${output_dir}/lib/"
+cp "${ghostty_install_dir}/lib/libghostty-gtk-embed.so" "${output_dir}/lib/"
 layer_shell_library="$(
-    ldd "${ghostty_source}/zig-out/lib/libghostty-gtk-embed.so" |
+    ldd "${ghostty_install_dir}/lib/libghostty-gtk-embed.so" |
         awk '/libgtk4-layer-shell\.so => \/.*/ { print $3; exit }'
 )"
 if [[ -z "${layer_shell_library}" || ! -f "${layer_shell_library}" ]]; then
     layer_shell_runpath="$(
-        readelf -d "${ghostty_source}/zig-out/lib/libghostty-gtk-embed.so" |
+        readelf -d "${ghostty_install_dir}/lib/libghostty-gtk-embed.so" |
             awk -F'[][]' '/RUNPATH/ { print $2; exit }' |
             cut -d: -f1
     )"
@@ -122,7 +119,7 @@ if [[ -z "${layer_shell_library}" || ! -f "${layer_shell_library}" ]]; then
 fi
 cp "${layer_shell_library}" "${output_dir}/lib/"
 
-GHOSTTY_LIB_DIR="${ghostty_source}/zig-out/lib" cargo "${cargo_arguments[@]}"
+GHOSTTY_LIB_DIR="${ghostty_install_dir}/lib" cargo "${cargo_arguments[@]}"
 cp "${repo_root}/target/${cargo_profile}/zentty-linux" \
     "${output_dir}/bin/zentty-linux"
 cp "${repo_root}/target/${cargo_profile}/zentty" \
@@ -152,7 +149,7 @@ cp -a "${repo_root}/ZenttyResources/shell-integration/." \
 # shellcheck disable=SC2016
 cc \
     "${c_probe_flags[@]}" \
-    -I"${ghostty_source}/zig-out/include" \
+    -I"${ghostty_install_dir}/include" \
     "${repo_root}/linux/tests/api-contract.c" \
     -L"${output_dir}/lib" \
     -Wl,-rpath-link,"${output_dir}/lib" \
@@ -168,7 +165,7 @@ cc \
 # shellcheck disable=SC2016
 cc \
     "${c_probe_flags[@]}" \
-    -I"${ghostty_source}/zig-out/include" \
+    -I"${ghostty_install_dir}/include" \
     "${repo_root}/linux/tests/runtime-init-order.c" \
     -L"${output_dir}/lib" \
     -Wl,-rpath-link,"${output_dir}/lib" \
@@ -192,7 +189,7 @@ c++ \
     -Werror \
     -Wpedantic \
     -fsyntax-only \
-    -I"${ghostty_source}/zig-out/include" \
+    -I"${ghostty_install_dir}/include" \
     "${repo_root}/linux/tests/api-header-cpp.cc"
 
 printf 'ghostty_source=%s\nghostty_revision=%s\nghostty_tree=%s\noptimize=%s\nproduct_profile=%s\nprobe_profile=%s\nibus_focus_reproducer_sha256=%s\n' \
@@ -206,10 +203,12 @@ printf 'ghostty_source=%s\nghostty_revision=%s\nghostty_tree=%s\noptimize=%s\npr
     >"${output_dir}/build-metadata"
 
 profile_bundle="${repo_root}/build/linux-profiles/${cargo_profile}"
-rm -rf -- "${profile_bundle}"
-mkdir -p "${profile_bundle}"
-for entry in bin lib libexec share build-metadata; do
-    cp -a "${output_dir}/${entry}" "${profile_bundle}/${entry}"
-done
+if [[ "$(readlink -m -- "${output_dir}")" != "$(readlink -m -- "${profile_bundle}")" ]]; then
+    rm -rf -- "${profile_bundle}"
+    mkdir -p "${profile_bundle}"
+    for entry in bin lib libexec share build-metadata; do
+        cp -a "${output_dir}/${entry}" "${profile_bundle}/${entry}"
+    done
+fi
 
 echo "Built ${output_dir}/bin/zentty-linux"

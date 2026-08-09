@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+lock_file="${repo_root}/linux/ghostty.lock"
+ghostty_repo="$(sed -n 's/^repo=//p' "${lock_file}")"
+ghostty_revision="$(sed -n 's/^revision=//p' "${lock_file}")"
+ghostty_source="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
+source_lock="${repo_root}/build/linux-deps/.ghostty-source.lock"
+
+if [[ ! "${ghostty_repo}" =~ ^https://github\.com/[^/]+/[^/]+\.git$ ]] ||
+    [[ ! "${ghostty_revision}" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "error: invalid Ghostty lock file: ${lock_file}" >&2
+    exit 1
+fi
+
+mkdir -p "$(dirname "${ghostty_source}")" "$(dirname "${source_lock}")"
+exec 9>"${source_lock}"
+flock 9
+
+if [[ -n "${GHOSTTY_SOURCE_DIR:-}" ]]; then
+    [[ -e "${ghostty_source}/.git" ]] || {
+        echo "error: GHOSTTY_SOURCE_DIR is not a Git checkout: ${ghostty_source}" >&2
+        exit 1
+    }
+else
+    if [[ ! -d "${ghostty_source}/.git" ]]; then
+        # The API audit needs the real historical blobs, not a promisor clone.
+        git clone --no-checkout "${ghostty_repo}" "${ghostty_source}"
+    fi
+    [[ -z "$(git -C "${ghostty_source}" status --porcelain)" ]] || {
+        echo "error: managed Ghostty checkout is dirty: ${ghostty_source}" >&2
+        exit 1
+    }
+    actual_origin="$(git -C "${ghostty_source}" remote get-url origin)"
+    [[ "${actual_origin}" == "${ghostty_repo}" ]] || {
+        echo "error: managed Ghostty origin is ${actual_origin}; expected ${ghostty_repo}" >&2
+        exit 1
+    }
+    git -C "${ghostty_source}" fetch origin "${ghostty_revision}"
+    git -C "${ghostty_source}" checkout --detach "${ghostty_revision}"
+fi
+
+actual_revision="$(git -C "${ghostty_source}" rev-parse HEAD)"
+[[ "${actual_revision}" == "${ghostty_revision}" ]] || {
+    echo "error: Ghostty checkout is ${actual_revision}; expected ${ghostty_revision}" >&2
+    exit 1
+}
+[[ -z "$(git -C "${ghostty_source}" status --porcelain)" ]] || {
+    echo "error: Ghostty checkout is dirty: ${ghostty_source}" >&2
+    exit 1
+}
+
+echo "Prepared Ghostty ${ghostty_revision}"

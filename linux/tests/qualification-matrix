@@ -11,8 +11,6 @@ source "${repo_root}/linux/tests/lib/valgrind-report"
 source "${repo_root}/linux/tests/lib/controlled-environment"
 # shellcheck source=linux/tests/lib/qualification-outcome
 source "${repo_root}/linux/tests/lib/qualification-outcome"
-# shellcheck source=linux/tests/lib/bounded-batch
-source "${repo_root}/linux/tests/lib/bounded-batch"
 validate_only=false
 qualification_jobs="${ZENTTY_QUALIFICATION_JOBS:-4}"
 
@@ -32,6 +30,10 @@ fi
 fail() {
     echo "qualification-matrix: error: $*" >&2
     exit 1
+}
+
+monotonic_milliseconds() {
+    awk '{ printf "%.0f\n", $1 * 1000 }' /proc/uptime
 }
 
 [[ "${qualification_jobs}" =~ ^[1-9][0-9]*$ ]] ||
@@ -80,7 +82,7 @@ jq -e '.schema_version == 1 and (.cells | type == "array")' \
     "${matrix}" >/dev/null || fail "invalid matrix schema"
 
 jq -e '
-    (keys | sort) == ["axes","cells","claims","required_capabilities","schema_version"] and
+    (keys | sort) == ["axes","cells","claims","execution_graph","required_capabilities","schema_version"] and
     (.axes | keys | sort) == ["async_backend","display","optimize","status","terminals","tier"] and
     (.claims | keys | sort) == [
         "full_linux_qualification_passed",
@@ -89,7 +91,15 @@ jq -e '
         "qualification_host_retired",
         "release_qualification_passed"
     ] and
-    all(.claims[]; type == "boolean")
+    all(.claims[]; type == "boolean") and
+    (.execution_graph | keys | sort) == ["profile_prerequisites","resources","root_prerequisite"] and
+    (.execution_graph.root_prerequisite == "prepare-ghostty") and
+    (.execution_graph.profile_prerequisites == {
+      "Debug":"build-debug","ReleaseSafe":"build-release"
+    }) and
+    (.execution_graph.resources == [
+      "abi-mismatch-fixture","ghostty-source","valgrind-evidence"
+    ])
 ' "${matrix}" >/dev/null || fail "matrix root, axes, or claims are not closed-world"
 
 jq -e '
@@ -108,6 +118,19 @@ jq -e '
 
 duplicate_ids="$(jq -r '[.cells[].id] | group_by(.)[] | select(length > 1) | .[0]' "${matrix}")"
 [[ -z "${duplicate_ids}" ]] || fail "duplicate cell IDs: ${duplicate_ids}"
+if ! jq -e '
+    . as $matrix |
+    ([.execution_graph.root_prerequisite] +
+     [.execution_graph.profile_prerequisites[]]) as $prerequisites |
+    all($prerequisites[]; . as $id | any($matrix.cells[]; .id == $id)) and
+    (.execution_graph.root_prerequisite as $root |
+      first(.cells[] | select(.id == $root)) |
+      .status == "PASS" and
+      .resources == ["ghostty-source"] and
+      (.command | contains("linux/scripts/prepare-ghostty-source")))
+' "${matrix}" >/dev/null; then
+    fail "execution graph prerequisite cells are missing or malformed"
+fi
 
 unknown_status="$(jq -r '.cells[] | select(.status != "PASS" and .status != "FAIL" and .status != "BLOCKED" and .status != "XFAIL" and .status != "NOT_IMPLEMENTED") | .id + "=" + (.status | tostring)' "${matrix}")"
 [[ -z "${unknown_status}" ]] || fail "unknown statuses: ${unknown_status}"
@@ -117,6 +140,13 @@ missing_fields="$(jq -r '.cells[] | select((.id | type) != "string" or (.order |
 
 invalid_orders="$(jq -r '.cells[] | select((.order | type) != "number" or .order < 0 or (.order | floor) != .order) | .id // "<missing-id>"' "${matrix}")"
 [[ -z "${invalid_orders}" ]] || fail "cells with invalid order: ${invalid_orders}"
+invalid_schedule_priorities="$(jq -r '.cells[] | select(
+    (.schedule_priority? | type) != "null" and
+    ((.schedule_priority | type) != "number" or .schedule_priority < 0 or
+     (.schedule_priority | floor) != .schedule_priority)
+) | .id' "${matrix}")"
+[[ -z "${invalid_schedule_priorities}" ]] ||
+    fail "cells with invalid schedule priority: ${invalid_schedule_priorities}"
 
 unknown_tiers="$(jq -r --argjson allowed "${allowed_tiers}" '.cells[] | select(.tier as $value | $allowed | index($value) == null) | .id + "=" + (.tier | tostring)' "${matrix}")"
 [[ -z "${unknown_tiers}" ]] || fail "unknown tiers: ${unknown_tiers}"
@@ -142,18 +172,96 @@ invalid_explanations="$(jq -r '.cells[] | select((.status == "BLOCKED" and ((.pr
 
 invalid_commands="$(jq -r '.cells[] | select((.status == "PASS" or .status == "XFAIL") and ((.command // "") | length) == 0) | .id' "${matrix}")"
 [[ -z "${invalid_commands}" ]] || fail "executable cells without commands: ${invalid_commands}"
-
-invalid_execution="$(jq -r '.cells[] | select((.execution // "parallel") != "parallel" and (.execution // "parallel") != "serial") | .id + "=" + (.execution | tostring)' "${matrix}")"
-[[ -z "${invalid_execution}" ]] || fail "cells with unknown execution policy: ${invalid_execution}"
-unsafe_parallel_cells="$(jq -r '.cells[] | select(
-    (.status == "PASS" or .status == "XFAIL") and
-    ((has("valgrind_report") or (.suppression_review_governance // false) or
-      ((.command // "") | contains("linux/scripts/build-local")) or
-      ((.command // "") | contains("linux/scripts/build-abi-mismatch-fixture"))) and
-     (.execution // "parallel") != "serial")
+invalid_always_run="$(jq -r '.cells[] | select(
+    (.always_run? != null) and
+    (.always_run != true or .suppression_review_governance != true)
 ) | .id' "${matrix}")"
-[[ -z "${unsafe_parallel_cells}" ]] ||
-    fail "resource-mutating cells must declare serial execution: ${unsafe_parallel_cells}"
+[[ -z "${invalid_always_run}" ]] ||
+    fail "only suppression governance may be an always-run cell: ${invalid_always_run}"
+invalid_profile_prerequisite_skips="$(jq -r '.cells[] | select(
+    (.skip_profile_prerequisite? != null) and
+    (.skip_profile_prerequisite != true or .id != "ghostty-regression" or
+     ((.depends_on // []) | index("prepare-ghostty") == null))
+) | .id' "${matrix}")"
+[[ -z "${invalid_profile_prerequisite_skips}" ]] ||
+    fail "invalid profile-prerequisite bypass: ${invalid_profile_prerequisite_skips}"
+
+invalid_dependencies="$(jq -r '
+    . as $matrix | .cells[] |
+    select(
+      ((.depends_on? | type) != "null" and (.depends_on | type) != "array") or
+      ((.depends_on? | type) == "array" and any(.depends_on[];
+        (type != "string") or (. as $id | $matrix.cells | any(.id == $id) | not)))
+    ) | .id
+' "${matrix}")"
+[[ -z "${invalid_dependencies}" ]] ||
+    fail "cells with malformed or unknown dependencies: ${invalid_dependencies}"
+duplicate_dependencies="$(jq -r '.cells[] | select(
+    ((.depends_on // []) | length) != ((.depends_on // []) | unique | length)
+) | .id' "${matrix}")"
+[[ -z "${duplicate_dependencies}" ]] ||
+    fail "cells with duplicate dependencies: ${duplicate_dependencies}"
+self_dependencies="$(jq -r '.cells[] | select(.id as $id | (.depends_on // []) | index($id)) | .id' "${matrix}")"
+[[ -z "${self_dependencies}" ]] || fail "self-dependent cells: ${self_dependencies}"
+
+invalid_resources="$(jq -r '
+    . as $matrix | .cells[] |
+    select(
+      ((.resources? | type) != "null" and (.resources | type) != "array") or
+      ((.resources? | type) == "array" and any(.resources[];
+        (type != "string") or (. as $resource |
+          $matrix.execution_graph.resources | index($resource) == null))) or
+      ((.resources // []) | length) != ((.resources // []) | unique | length)
+    ) | .id
+' "${matrix}")"
+[[ -z "${invalid_resources}" ]] ||
+    fail "cells with malformed, unknown, or duplicate resources: ${invalid_resources}"
+unsafe_resource_cells="$(jq -r '.cells[] | select(
+    (.status == "PASS" or .status == "XFAIL") and
+    (if has("valgrind_report") or (.suppression_review_governance // false) then
+       ((.resources // []) | index("valgrind-evidence") == null)
+     elif ((.command // "") | contains("linux/scripts/prepare-ghostty-source")) then
+       ((.resources // []) | index("ghostty-source") == null)
+     elif ((.command // "") | contains("linux/scripts/build-abi-mismatch-fixture")) then
+       ((.resources // []) | index("abi-mismatch-fixture") == null)
+     else false end)
+) | .id' "${matrix}")"
+[[ -z "${unsafe_resource_cells}" ]] ||
+    fail "resource-mutating cells lack their named resource: ${unsafe_resource_cells}"
+unsafe_ghostty_builds="$(jq -r '.cells[] | select(
+    (((.command // "") | contains("linux/scripts/build-local")) and
+      (((.command | contains("ZENTTY_GHOSTTY_PREPARED=true")) and
+        (.command | contains("ZENTTY_GHOSTTY_INSTALL_DIR="))) | not)) or
+    (.id == "ghostty-regression" and
+      ((.command | contains("ZENTTY_GHOSTTY_REGRESSION_INSTALL_DIR=")) | not))
+) | .id' "${matrix}")"
+[[ -z "${unsafe_ghostty_builds}" ]] ||
+    fail "Ghostty builds do not own isolated install output: ${unsafe_ghostty_builds}"
+
+if ! jq -e '
+    . as $matrix |
+    def cell($id): first($matrix.cells[] | select(.id == $id));
+    def deps($id):
+      cell($id) as $cell |
+      (
+        (if $matrix.execution_graph.root_prerequisite != $id
+         then $matrix.execution_graph.root_prerequisite else empty end),
+        (if ($cell.depends_on? | type) == "array" then $cell.depends_on[]
+         elif ($cell.skip_profile_prerequisite // false) != true and
+              $matrix.execution_graph.profile_prerequisites[$cell.optimize]? != null and
+              $matrix.execution_graph.profile_prerequisites[$cell.optimize] != $id
+         then $matrix.execution_graph.profile_prerequisites[$cell.optimize]
+         else empty end)
+      );
+    def reaches($from; $target; $seen):
+      if ($seen | index($from)) != null then false
+      elif $from == $target then true
+      else any(deps($from); reaches(.; $target; $seen + [$from])) end;
+    [.cells[].id] as $ids |
+    all($ids[]; . as $id | [deps($id)] | all(.[]; reaches(.; $id; []) | not))
+' "${matrix}" >/dev/null; then
+    fail "matrix dependency graph contains a cycle"
+fi
 
 invalid_environment_profiles="$(jq -r '
     def executable: .status == "PASS" or .status == "XFAIL";
@@ -267,17 +375,34 @@ governance_cell_count="$(jq '[.cells[] | select(.suppression_review_governance =
     fail "matrix must declare exactly one suppression-governance cell"
 governance_cell_id="$(jq -r '.cells[] | select(.suppression_review_governance == true) | .id' "${matrix}")"
 jq -e '
+    . as $matrix |
+    def cell($id): first($matrix.cells[] | select(.id == $id));
+    def deps($id):
+      cell($id) as $cell |
+      (
+        (if $matrix.execution_graph.root_prerequisite != $id
+         then $matrix.execution_graph.root_prerequisite else empty end),
+        (if ($cell.depends_on? | type) == "array" then $cell.depends_on[]
+         elif ($cell.skip_profile_prerequisite // false) != true and
+              $matrix.execution_graph.profile_prerequisites[$cell.optimize]? != null and
+              $matrix.execution_graph.profile_prerequisites[$cell.optimize] != $id
+         then $matrix.execution_graph.profile_prerequisites[$cell.optimize]
+         else empty end)
+      );
+    def reaches($from; $target; $seen):
+      if $from == $target then true
+      elif ($seen | index($from)) != null then false
+      else any(deps($from); reaches(.; $target; $seen + [$from])) end;
     [.cells[] | select(.suppression_review_governance == true)] as $governance |
     ($governance | length) == 1 and
     $governance[0].status == "PASS" and
+    $governance[0].always_run == true and
     ($governance[0].command | type == "string" and length > 0) and
     all(.cells[] | select(((.valgrind_report // "") | length) > 0);
-        .order < $governance[0].order or
-        (.order == $governance[0].order and .id < $governance[0].id)
+        reaches($governance[0].id; .id; [])
     ) and
     all(.cells[] | select((.command // "") | contains("linux/scripts/build-local"));
-        .order < $governance[0].order or
-        (.order == $governance[0].order and .id < $governance[0].id)
+        reaches($governance[0].id; .id; [])
     )
 ' "${matrix}" >/dev/null ||
     fail "suppression-governance cell must execute after every Valgrind report and artifact-mutating build cell"
@@ -498,6 +623,7 @@ run_qualification_cell() {
     local cell_evidence_lock_fd cell_evidence_lock_acquired retain_cell_evidence_lock
     local environment_capture_span_seconds log environment_report cell_started_at_epoch
     local code expected_raw_receipt expected_suppressed_receipt result
+    local started_monotonic_ms finished_monotonic_ms duration_ms timing
     local -a shell_command sanitized_environment cell_command
 
     id="$(jq -r '.id' <<<"${cell}")"
@@ -516,6 +642,7 @@ run_qualification_cell() {
     environment=null
     log_identity=null
     valgrind_report_identity=null
+    timing=null
     cell_evidence_lock_fd=""
     cell_evidence_lock_acquired=false
     retain_cell_evidence_lock=false
@@ -525,6 +652,7 @@ run_qualification_cell() {
         outcome="FAIL"
         run_failed=true
     elif [[ "${status}" == "PASS" || "${status}" == "XFAIL" ]]; then
+        started_monotonic_ms="$(monotonic_milliseconds)"
         log="${logs_dir}/${id}.log"
         if [[ -n "${valgrind_report}" ]]; then
             if [[ "${valgrind_report}" != /* ]]; then
@@ -747,6 +875,16 @@ run_qualification_cell() {
                 exec {cell_evidence_lock_fd}>&-
             fi
         fi
+        finished_monotonic_ms="$(monotonic_milliseconds)"
+        duration_ms=$((finished_monotonic_ms - started_monotonic_ms))
+        (( duration_ms >= 0 )) || fail "monotonic clock moved backwards for ${id}"
+        timing="$(jq -cn \
+            --argjson started_monotonic_ms "${started_monotonic_ms}" \
+            --argjson finished_monotonic_ms "${finished_monotonic_ms}" \
+            --argjson duration_ms "${duration_ms}" \
+            '{started_monotonic_ms:$started_monotonic_ms,
+              finished_monotonic_ms:$finished_monotonic_ms,
+              duration_ms:$duration_ms}')"
     fi
 
     result="$(jq -cn \
@@ -758,12 +896,14 @@ run_qualification_cell() {
         --argjson log "${log_identity}" \
         --argjson environment "${environment}" \
         --argjson valgrind "${valgrind}" \
-        --argjson valgrind_report "${valgrind_report_identity}" '
+        --argjson valgrind_report "${valgrind_report_identity}" \
+        --argjson timing "${timing}" '
         {id: $id, declared_status: $declared, outcome: $outcome, exit_code: $exit_code} +
         if $expected_exit_code == null then {} else {expected_exit_code: $expected_exit_code} end +
         if $log == null then {} else {log: $log} end +
         if $environment == null then {} else {environment: $environment} end +
-        if $valgrind == null then {} else {valgrind: $valgrind, valgrind_report: $valgrind_report} end
+        if $valgrind == null then {} else {valgrind: $valgrind, valgrind_report: $valgrind_report} end +
+        if $timing == null then {} else {timing: $timing} end
     ')"
     printf '%s\n' "${result}" >"${result_path}"
 }
@@ -803,6 +943,7 @@ run_failed=false
 retained_valgrind_evidence_lock_fd=""
 cell_results_directory="$(mktemp -d "${logs_dir}/.cell-results.XXXXXX")"
 trap 'rm -rf -- "${cell_results_directory}"' EXIT
+qualification_started_monotonic_ms="$(monotonic_milliseconds)"
 
 append_cell_result() {
     local result_path="$1"
@@ -811,52 +952,255 @@ append_cell_result() {
         fail "qualification worker did not publish a valid result: ${result_path}"
     id="$(jq -r '.id' <<<"${result}")"
     outcome="$(jq -r '.outcome' <<<"${result}")"
-    if jq -e 'has("log")' <<<"${result}" >/dev/null; then
-        printf '%-62s %s\n' "${id}" "${outcome}"
-    fi
     if zentty_qualification_outcome_failed "${outcome}"; then
         run_failed=true
     fi
     results="$(jq -cn --argjson results "${results}" --argjson result "${result}" '$results + [$result]')"
 }
 
-while IFS= read -r order; do
-    mapfile -t order_cells < <(jq -c --argjson order "${order}" \
-        '.cells | map(select(.order == $order)) | sort_by(.id)[]' "${matrix}")
+declare -A pending_cells=()
+declare -A completed_outcomes=()
+declare -A active_pid_ids=()
+declare -A active_resource_owners=()
+declare -A cell_dependency_ids=()
+declare -A cell_resource_ids=()
+declare -A cell_statuses=()
+declare -A cell_governance=()
+mapfile -t scheduled_ids < <(jq -r \
+    '.cells | sort_by(.schedule_priority // .order, .order, .id)[] | .id' \
+    "${matrix}")
+while IFS= read -r cell; do
+    pending_cells["$(jq -r '.id' <<<"${cell}")"]="${cell}"
+done < <(jq -c '.cells[]' "${matrix}")
+while IFS='|' read -r metadata_id metadata_dependencies metadata_resources metadata_status metadata_governance; do
+    cell_dependency_ids["${metadata_id}"]="${metadata_dependencies}"
+    cell_resource_ids["${metadata_id}"]="${metadata_resources}"
+    cell_statuses["${metadata_id}"]="${metadata_status}"
+    cell_governance["${metadata_id}"]="${metadata_governance}"
+done < <(jq -r '
+    . as $matrix | .cells[] | . as $cell |
+    (
+      (if $matrix.execution_graph.root_prerequisite != $cell.id
+       then [$matrix.execution_graph.root_prerequisite] else [] end) +
+      ($cell.depends_on // []) +
+       (if ($cell.skip_profile_prerequisite // false) != true and
+           $matrix.execution_graph.profile_prerequisites[$cell.optimize]? != null and
+           $matrix.execution_graph.profile_prerequisites[$cell.optimize] != $cell.id
+        then [$matrix.execution_graph.profile_prerequisites[$cell.optimize]]
+        else [] end) | unique | join(" ")
+    ) as $dependencies |
+    [$cell.id, $dependencies, (($cell.resources // []) | join(" ")),
+     $cell.status, (($cell.suppression_review_governance // false) | tostring)] |
+    join("|")
+' "${matrix}")
 
-    # Artifact producers and governed evidence cells execute in the parent so
-    # the Valgrind governance lease can remain open through summary publication.
-    for cell in "${order_cells[@]}"; do
-        if [[ "$(jq -r '.execution // "parallel"' <<<"${cell}")" != "serial" ]]; then
+dependencies_state() {
+    local id="$1"
+    local dependency dependency_outcome
+    local always_run
+    always_run="${cell_governance[${id}]}"
+    for dependency in ${cell_dependency_ids[${id}]}; do
+        if [[ ! -v completed_outcomes["${dependency}"] ]]; then
+            return 1
+        fi
+        dependency_outcome="${completed_outcomes[${dependency}]}"
+        if [[ "${always_run}" != "true" ]] &&
+            zentty_qualification_outcome_failed "${dependency_outcome}"; then
+            return 2
+        fi
+    done
+    return 0
+}
+
+resources_available() {
+    local id="$1"
+    local resource
+    for resource in ${cell_resource_ids[${id}]}; do
+        [[ ! -v active_resource_owners["${resource}"] ]] || return 1
+    done
+}
+
+claim_resources() {
+    local id="$1"
+    local resource
+    for resource in ${cell_resource_ids[${id}]}; do
+        active_resource_owners["${resource}"]="${id}"
+    done
+}
+
+release_resources() {
+    local id="$1"
+    local resource
+    for resource in ${cell_resource_ids[${id}]}; do
+        unset 'active_resource_owners['"${resource}"']'
+    done
+}
+
+publish_dependency_failure() {
+    local cell="$1"
+    local id result_path failed_dependencies
+    id="$(jq -r '.id' <<<"${cell}")"
+    result_path="${cell_results_directory}/${id}.json"
+    failed_dependencies="$(for dependency in ${cell_dependency_ids[${id}]}; do
+        if [[ -v completed_outcomes["${dependency}"] ]] &&
+            zentty_qualification_outcome_failed "${completed_outcomes[${dependency}]}"; then
+            printf '%s\n' "${dependency}"
+        fi
+    done | jq -Rsc 'split("\n") | map(select(length > 0))')"
+    jq -cn \
+        --arg id "${id}" \
+        --arg declared "$(jq -r '.status' <<<"${cell}")" \
+        --argjson failed_dependencies "${failed_dependencies}" \
+        '{id:$id,declared_status:$declared,
+          outcome:"BLOCKED_BY_FAILED_DEPENDENCY",exit_code:null,
+          failed_dependencies:$failed_dependencies}' >"${result_path}"
+    append_cell_result "${result_path}"
+    completed_outcomes["${id}"]="BLOCKED_BY_FAILED_DEPENDENCY"
+    unset 'pending_cells['"${id}"']'
+}
+
+while (( ${#pending_cells[@]} > 0 || ${#active_pid_ids[@]} > 0 )); do
+    scheduler_progress=false
+    while (( ${#active_pid_ids[@]} < qualification_jobs )); do
+        selected_cell=""
+        for candidate_id in "${scheduled_ids[@]}"; do
+            [[ -v pending_cells["${candidate_id}"] ]] || continue
+            candidate_cell="${pending_cells[${candidate_id}]}"
+            set +e
+            dependencies_state "${candidate_id}"
+            dependency_state=$?
+            set -e
+            if (( dependency_state == 2 )); then
+                publish_dependency_failure "${candidate_cell}"
+                scheduler_progress=true
+                continue
+            elif (( dependency_state != 0 )); then
+                continue
+            fi
+            resources_available "${candidate_id}" || continue
+            selected_cell="${candidate_cell}"
+            break
+        done
+
+        [[ -n "${selected_cell}" ]] || break
+        id="$(jq -r '.id' <<<"${selected_cell}")"
+        result_path="${cell_results_directory}/${id}.json"
+        unset 'pending_cells['"${id}"']'
+
+        if [[ "${cell_statuses[${id}]}" != "PASS" &&
+              "${cell_statuses[${id}]}" != "XFAIL" ]]; then
+            run_qualification_cell "${selected_cell}" "${result_path}"
+            append_cell_result "${result_path}"
+            completed_outcomes["${id}"]="$(jq -r '.outcome' "${result_path}")"
+            scheduler_progress=true
             continue
         fi
-        id="$(jq -r '.id' <<<"${cell}")"
-        result_path="${cell_results_directory}/${id}.json"
-        run_qualification_cell "${cell}" "${result_path}"
-        append_cell_result "${result_path}"
+
+        # Governance executes in the parent so its evidence lease remains held
+        # until the immutable summary has been published.
+        if [[ "${cell_governance[${id}]}" == "true" ]]; then
+            if (( ${#active_pid_ids[@]} > 0 )); then
+                pending_cells["${id}"]="${selected_cell}"
+                break
+            fi
+            claim_resources "${id}"
+            run_qualification_cell "${selected_cell}" "${result_path}"
+            release_resources "${id}"
+            append_cell_result "${result_path}"
+            completed_outcomes["${id}"]="$(jq -r '.outcome' "${result_path}")"
+            scheduler_progress=true
+            continue
+        fi
+
+        claim_resources "${id}"
+        run_qualification_worker "${selected_cell}" &
+        worker_pid=$!
+        active_pid_ids["${worker_pid}"]="${id}"
+        scheduler_progress=true
     done
 
-    parallel_cells=()
-    for cell in "${order_cells[@]}"; do
-        if [[ "$(jq -r '.execution // "parallel"' <<<"${cell}")" == "parallel" ]]; then
-            parallel_cells+=("${cell}")
+    if (( ${#active_pid_ids[@]} > 0 )); then
+        completed_pid=""
+        set +e
+        wait -n -p completed_pid
+        worker_status=$?
+        set -e
+        [[ -n "${completed_pid}" && -v active_pid_ids["${completed_pid}"] ]] ||
+            fail "qualification scheduler could not identify a completed worker"
+        completed_id="${active_pid_ids[${completed_pid}]}"
+        release_resources "${completed_id}"
+        unset 'active_pid_ids['"${completed_pid}"']'
+        if (( worker_status != 0 )); then
+            run_failed=true
         fi
-    done
-    if ! zentty_run_bounded_batch "${qualification_jobs}" \
-        run_qualification_worker "${parallel_cells[@]}"; then
-        run_failed=true
+        append_cell_result "${cell_results_directory}/${completed_id}.json"
+        completed_outcomes["${completed_id}"]="$(jq -r '.outcome' "${cell_results_directory}/${completed_id}.json")"
+        scheduler_progress=true
+    elif ! "${scheduler_progress}"; then
+        fail "qualification dependency scheduler made no progress"
     fi
-    for cell in "${parallel_cells[@]}"; do
-        id="$(jq -r '.id' <<<"${cell}")"
-        append_cell_result "${cell_results_directory}/${id}.json"
-    done
-done < <(jq -r '[.cells[].order] | unique | sort[]' "${matrix}")
+done
 
 results="$(jq -cn --argjson matrix "$(jq -c . "${matrix}")" --argjson results "${results}" '
+    def dependencies($cell):
+      (
+        (if $matrix.execution_graph.root_prerequisite != $cell.id
+         then [$matrix.execution_graph.root_prerequisite] else [] end) +
+        ($cell.depends_on // []) +
+        (if ($cell.skip_profile_prerequisite // false) != true and
+            $matrix.execution_graph.profile_prerequisites[$cell.optimize]? != null and
+            $matrix.execution_graph.profile_prerequisites[$cell.optimize] != $cell.id
+         then [$matrix.execution_graph.profile_prerequisites[$cell.optimize]]
+         else [] end)
+      ) | unique;
     $matrix.cells as $cells |
-    $results | sort_by(. as $result |
+    $results |
+    map(. as $result | ($cells | map(select(.id == $result.id))[0]) as $cell |
+      . + {schedule:{dependencies:dependencies($cell),resources:($cell.resources // [])}}) |
+    sort_by(. as $result |
       ($cells | map(select(.id == $result.id))[0].order), $result.id)
 ')"
+
+jq -e --argjson jobs "${qualification_jobs}" '
+    . as $results |
+    all(.[] | select(.timing? != null);
+      (.timing | keys | sort) ==
+        ["duration_ms","finished_monotonic_ms","started_monotonic_ms"] and
+      (.timing.started_monotonic_ms | type == "number" and floor == .) and
+      (.timing.finished_monotonic_ms | type == "number" and floor == .) and
+      (.timing.duration_ms | type == "number" and floor == . and . >= 0) and
+      .timing.finished_monotonic_ms - .timing.started_monotonic_ms ==
+        .timing.duration_ms) and
+    all(.[] | select(.timing? != null) as $cell |
+      all($cell.schedule.dependencies[];
+        . as $dependency |
+        first($results[] | select(.id == $dependency)) as $prerequisite |
+        ($prerequisite.timing? == null or
+         $prerequisite.timing.finished_monotonic_ms <=
+           $cell.timing.started_monotonic_ms))) and
+    all(.[] | select(.timing? != null) as $left |
+      all($results[] | select(.timing? != null and .id > $left.id) as $right |
+        (($left.schedule.resources -
+          ($left.schedule.resources - $right.schedule.resources)) | length) == 0 or
+        $left.timing.finished_monotonic_ms <=
+          $right.timing.started_monotonic_ms or
+        $right.timing.finished_monotonic_ms <=
+          $left.timing.started_monotonic_ms)) and
+    all([.[] | select(.timing? != null) | .timing.started_monotonic_ms][] as $instant |
+      ([.[] | select(.timing? != null and
+        .timing.started_monotonic_ms <= $instant and
+        .timing.finished_monotonic_ms > $instant)] | length) <= $jobs)
+' <<<"${results}" >/dev/null ||
+    fail "qualification timing, dependency, resource, or worker-limit evidence is invalid"
+
+while IFS= read -r result; do
+    if jq -e 'has("log")' <<<"${result}" >/dev/null; then
+        printf '%-62s %s (%sms)\n' \
+            "$(jq -r '.id' <<<"${result}")" \
+            "$(jq -r '.outcome' <<<"${result}")" \
+            "$(jq -r '.timing.duration_ms // "n/a"' <<<"${result}")"
+    fi
+done < <(jq -c '.[]' <<<"${results}")
 
 rm -rf -- "${cell_results_directory}"
 trap - EXIT
@@ -1017,6 +1361,24 @@ if "${implemented_local}" && "${product_boundary}" &&
     qualification_host_retired=true
 fi
 
+qualification_finished_monotonic_ms="$(monotonic_milliseconds)"
+qualification_duration_ms=$((qualification_finished_monotonic_ms - qualification_started_monotonic_ms))
+(( qualification_duration_ms >= 0 )) || fail "qualification monotonic clock moved backwards"
+qualification_timing="$(jq -cn \
+    --argjson started_monotonic_ms "${qualification_started_monotonic_ms}" \
+    --argjson finished_monotonic_ms "${qualification_finished_monotonic_ms}" \
+    --argjson duration_ms "${qualification_duration_ms}" \
+    --argjson longest_cells "$(jq -c '
+      [.[] | select(.timing? != null) |
+       {id, duration_ms:.timing.duration_ms}] |
+      sort_by(-.duration_ms, .id) | .[:5]
+    ' <<<"${results}")" '
+    {started_monotonic_ms:$started_monotonic_ms,
+     finished_monotonic_ms:$finished_monotonic_ms,
+     duration_ms:$duration_ms,
+     longest_cells:$longest_cells}
+')"
+
 summary_temp="$(mktemp "${summary}.tmp.XXXXXX")"
 trap 'rm -f -- "${summary_temp}"' EXIT
 jq -n \
@@ -1033,10 +1395,12 @@ jq -n \
     --argjson qualification_host_retired "${qualification_host_retired}" \
     --argjson release "${release}" \
     --argjson full "${full}" \
+    --argjson qualification_timing "${qualification_timing}" \
     '{
       schema_version: 1,
       totals_by_declared_status: $totals,
       logs_directory: $logs_directory,
+      qualification_timing: $qualification_timing,
       results: $results,
       suppression_review: {
         governance_cell_id: $governance_cell_id,
@@ -1093,6 +1457,10 @@ printf '\nImplemented local suite: %s\n' "$("${implemented_local}" && echo PASSE
 printf 'Release qualification:    %s\n' "$("${release}" && echo PASSED || echo NOT_PASSED)"
 printf 'Full Linux qualification: %s\n' "$("${full}" && echo PASSED || echo NOT_PASSED)"
 printf 'Suppression review:        %s\n' "$("${suppression_reviewed}" && echo ACCEPTED || echo NOT_ACCEPTED)"
+printf 'Qualification wall time:   %sms\n' "${qualification_duration_ms}"
+printf 'Longest cells:             %s\n' "$(jq -r '
+    .longest_cells | map(.id + "=" + (.duration_ms | tostring) + "ms") | join(", ")
+' <<<"${qualification_timing}")"
 printf 'Declared totals: PASS=%s FAIL=%s BLOCKED=%s XFAIL=%s NOT_IMPLEMENTED=%s\n' \
     "$(jq -r '.PASS' <<<"${totals}")" \
     "$(jq -r '.FAIL' <<<"${totals}")" \
