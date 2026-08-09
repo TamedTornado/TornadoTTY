@@ -10463,6 +10463,11 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   `b9836a0e0021492c9af30b8f967f6c74e177dc1fdc6ea2126016506d0f2b07a8`,
   and `07b00363cd307bdfbf392a5d02ab71055ca09c0297d0716711a1fd8e9bf8f889`.
   This is not an unsuppressed-clean result; ReleaseSafe Valgrind remains XFAIL.
+- **The public evidence comment required an immediate identity correction:**
+  Its short Zentty ID `24cda19` was correct, but the manually typed expanded
+  suffix was not. A follow-up comment records the exact pushed commit as
+  `24cda193c1f0493bc961fc4de368ae02a798cb77`; Ghostty identity, qualification
+  receipts, totals, and decisions were unchanged.
 
 ## AI disclosure
 
