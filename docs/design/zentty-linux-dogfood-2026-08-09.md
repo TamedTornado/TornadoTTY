@@ -78,6 +78,69 @@ The recording standard is unchanged:
   ReleaseSafe Valgrind remains the expected XFAIL; no suppression was widened
   for this slice.
 
+## 2026-08-09 — Planned multi-window crash-recovery slice (#32)
+
+- The next bounded acceptance slice extends the existing
+  `linux/tests/rust-multi-window` journey rather than creating another product
+  runner. It will create two real GTK/Ghostty windows through physical input,
+  wait for the aggregate debounced `liveSnapshot`, verify the lifecycle is
+  marked unclean, SIGKILL the staged product, and prove its real PTY children
+  terminate.
+- Relaunch will explicitly disable normal restoration. The unclean lifecycle
+  must nevertheless restore both ordered windows and route physical input to
+  the recorded active window, proving crash-recovery classification rather
+  than ordinary preference-driven restore. A subsequent clean quit must mark
+  the lifecycle clean and consume the now-disabled snapshot.
+- Only that narrow X11/Wayland contract may become PASS. Exact frame/divider
+  restoration and complete CWD coverage remain visible in the broader
+  NOT_IMPLEMENTED workspace cells.
+- The first focused X11 attempt did not reach the product. Xvfb rejected
+  `/tmp/.X11-unix` because the rebooted development environment had left the
+  standard socket directory owned by `nobody:nogroup` rather than `root:root`.
+  The directory already had the required `1777` mode; restoring only its
+  standard host ownership repaired the controlled-environment prerequisite.
+  A second sandboxed attempt still saw the sandbox namespace's deliberately
+  remapped `nobody:nogroup` directory; running the controlled display harness
+  through its approved elevated path used the repaired host socket directory.
+  Neither environmental failure is counted as product PASS or FAIL.
+- Controlled X11 session
+  `0e1bbadb17d44d4be2a4e174449dd081a9e494f72b64736ebc1245b2add9ec72`
+  and controlled Wayland session
+  `d44b943db09adb1ed239264256513732b7ea6880c70c0a154de6fb97b464684a`
+  passed the expanded journey. Each confirmed the ordered aggregate live
+  snapshot and unclean lifecycle, SIGKILLed the real staged process, observed
+  its PTY children terminate, relaunched with normal restoration disabled,
+  restored both GTK/Ghostty windows because crash recovery overrides that
+  preference, routed physical input to `pane-window-2`, then completed a clean
+  quit that marked the lifecycle clean and consumed the disabled snapshot.
+- The two existing narrow matrix cells are renamed to make both clean and
+  SIGKILL restoration explicit without executing the same expensive real
+  journey twice. The broader workspace cells remain NOT_IMPLEMENTED only for
+  exact divider/resize persistence, window-frame restoration, and complete CWD
+  coverage; multi-window crash recovery is no longer listed as a gap.
+- The first focused contract command used the nonexistent spelling
+  `qualification-matrix --validate`; the runner correctly rejected it and
+  printed its `--validate-only` interface without executing any cells. This was
+  an operator invocation error, not a product or runner failure; the corrected
+  contract run follows below.
+- The corrected matrix validator, matrix negative tests, orchestration
+  contract, architecture contract, and ownership negative tests all passed.
+  The subsequent all-presently-executable qualification run passed in 360.44
+  seconds. The expanded multi-window cells passed in 10,740 ms on controlled
+  Wayland and 19,120 ms on controlled X11. Declared totals remain `PASS=90`,
+  `FAIL=0`, `BLOCKED=7`, `XFAIL=1`, and `NOT_IMPLEMENTED=21`; implemented-local
+  and product-boundary qualification pass, while release and full Linux
+  qualification correctly remain false. The machine-summary SHA-256 is
+  `63aa37c82a95098abcfb58711b20b78afd36eefcfe05148cb701563f255a637b`.
+- Debug Valgrind remains **PASS with reviewed suppressions**. The rerun again
+  recorded 427 raw errors/contexts, 6,160 definite bytes, and 41,428 indirect
+  bytes; post-suppression totals are zero, with all 427 contexts governed. The
+  report, raw receipt, and suppressed receipt SHA-256 values are respectively
+  `556df63269fbd7c03c28654063c17569b99b912d25c6cd55429b96685c5d7da3`,
+  `73a5c8c4f1db7b9a67641d7ef3e6b1e15853b37c1827d33e915d5a40b52c3d8c`,
+  and `8ad67b787896e02729385ec86336aed1adf739dd85484ddd31b38feee5ee81e5`.
+  ReleaseSafe Valgrind remains XFAIL; no suppression changed.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were

@@ -534,7 +534,7 @@
       "async_backend": "default",
       "terminals": "multi",
       "tracking": "GH-3",
-      "defect": "Real single-window crash recovery and real two-window clean save/relaunch now pass under controlled Wayland, but full qualification still lacks multi-window crash recovery, exact divider sizing and resize persistence, window-frame restoration, and complete CWD launch coverage.",
+      "defect": "Real two-window clean and confirmed-live-snapshot SIGKILL relaunch now pass under controlled Wayland, but full qualification still lacks exact divider sizing and resize persistence, window-frame restoration, and complete CWD launch coverage.",
       "authoritative": false
     },
     {
@@ -547,7 +547,7 @@
       "async_backend": "default",
       "terminals": "multi",
       "tracking": "GH-3",
-      "defect": "Real single-window crash recovery and real two-window clean save/relaunch now pass under controlled X11, but full qualification still lacks multi-window crash recovery, exact divider sizing and resize persistence, window-frame restoration, and complete CWD launch coverage.",
+      "defect": "Real two-window clean and confirmed-live-snapshot SIGKILL relaunch now pass under controlled X11, but full qualification still lacks exact divider sizing and resize persistence, window-frame restoration, and complete CWD launch coverage.",
       "authoritative": false
     },
     {

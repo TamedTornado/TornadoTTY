@@ -10,6 +10,7 @@ state_dir=""
 log=""
 product_pid=""
 route_probe_index=0
+product_args=()
 
 # shellcheck source=linux/tests/lib/product-input
 source "${repo_root}/linux/tests/lib/product-input"
@@ -67,7 +68,8 @@ start_product() {
         "${product}" \
         --command "${child_command}" \
         --state-directory "${state_dir}" \
-        --async-backend default >"${log}" 2>&1 &
+        --async-backend default \
+        "${product_args[@]}" >"${log}" 2>&1 &
     product_pid=$!
     zentty_product_wait_for_log "${log}" 'zentty-linux: window-opened id=window-1' \
         "first real product window did not open" || fail "first window missing"
@@ -218,4 +220,70 @@ type_and_expect_title "surviving-first-marker" "pane-1"
 zentty_product_close_window "${backend}"
 wait_for_exit
 
-echo "Rust multi-window passed: backend=${backend}, real-windows=2, restore=clean, non-final-close=survived"
+# Journey 3: prove the same aggregate live snapshot is authoritative crash
+# recovery, not merely normal restore. Explicitly disable normal restoration
+# on relaunch: the unclean lifecycle must override that preference once.
+rm -rf -- "${state_dir}"
+state_dir="$(mktemp -d)"
+product_args=()
+start_product
+create_second_window
+type_and_expect_title "crash-second-marker" "pane-window-2"
+snapshot="${state_dir}/restore-snapshot.json"
+lifecycle="${state_dir}/restore-lifecycle.json"
+for _ in {1..240}; do
+    if [[ -f "${snapshot}" ]] && jq -e '
+        .reason == "liveSnapshot" and
+        (.workspace.windows | map(.id)) == ["window-1", "window-2"] and
+        .workspace.activeWindowID == "window-2"
+    ' "${snapshot}" >/dev/null 2>&1; then
+        break
+    fi
+    kill -0 "${product_pid}" 2>/dev/null || fail "product exited before the aggregate live snapshot"
+    sleep 0.05
+done
+jq -e '
+    .reason == "liveSnapshot" and
+    (.workspace.windows | map(.id)) == ["window-1", "window-2"] and
+    .workspace.activeWindowID == "window-2" and
+    (.restoreDraftWindows | length) == 0
+' "${snapshot}" >/dev/null || fail "crash candidate lost aggregate live state"
+jq -e '.cleanExit == false' "${lifecycle}" >/dev/null ||
+    fail "running multi-window product was not marked unclean"
+
+crashed_pid="${product_pid}"
+mapfile -t crashed_children < <(pgrep -P "${crashed_pid}" || true)
+kill -KILL "${crashed_pid}"
+set +e
+wait "${crashed_pid}"
+crash_status=$?
+set -e
+product_pid=""
+((crash_status == 137)) || fail "SIGKILL crash exited with unexpected status ${crash_status}"
+for child in "${crashed_children[@]}"; do
+    for _ in {1..100}; do
+        kill -0 "${child}" 2>/dev/null || break
+        sleep 0.05
+    done
+    kill -0 "${child}" 2>/dev/null && fail "crashed product left PTY child ${child} alive"
+done
+jq -e '.cleanExit == false' "${lifecycle}" >/dev/null ||
+    fail "abnormal multi-window termination was marked clean"
+
+product_args=(--no-session-restore)
+start_product
+zentty_product_wait_for_log "${log}" 'zentty-linux: window-opened id=window-2' \
+    "crash relaunch did not restore the second GTK window" || fail "second crash window missing"
+zentty_product_wait_for_log "${log}" 'zentty-linux: terminal-ready-pane=pane-window-2' \
+    "crash relaunch did not restore the second Ghostty PTY" || fail "second crash terminal missing"
+zentty_product_wait_for_log "${log}" 'zentty-linux: focus-pane pane=pane-window-2' \
+    "crash relaunch did not settle the recorded active window" || fail "crash active focus missing"
+target_second_window
+type_and_expect_title "recovered-second-marker" "pane-window-2"
+zentty_product_close_window "${backend}"
+wait_for_exit
+[[ ! -e "${snapshot}" ]] || fail "disabled normal restoration retained the recovered snapshot"
+jq -e '.cleanExit == true' "${lifecycle}" >/dev/null ||
+    fail "recovered multi-window clean exit did not mark the lifecycle clean"
+
+echo "Rust multi-window passed: backend=${backend}, real-windows=2, restore=clean+SIGKILL, non-final-close=survived"
