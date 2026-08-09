@@ -240,6 +240,9 @@ final class SidebarView: NSView {
     private let globalSearchRowView = SidebarGlobalSearchRowView()
     private let bookmarksButton = SidebarBookmarksButton()
     private let shimmerCoordinator = SidebarShimmerCoordinator()
+    var sharedShimmerCoordinator: SidebarShimmerCoordinator {
+        shimmerCoordinator
+    }
     private let activeWorklaneAutoScroller = SidebarActiveWorklaneAutoScroller()
     private let windowRenderabilityResolver: (NSWindow?) -> Bool
     private lazy var chrome = SidebarViewChrome(

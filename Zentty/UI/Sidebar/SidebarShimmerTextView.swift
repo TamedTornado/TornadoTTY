@@ -141,6 +141,8 @@ final class SidebarShimmerTextView: NSView {
         }
     }
 
+    var ignoresHitTesting = false
+
     weak var shimmerCoordinator: SidebarShimmerCoordinator? {
         didSet {
             guard oldValue !== shimmerCoordinator else {
@@ -169,6 +171,10 @@ final class SidebarShimmerTextView: NSView {
 
     override var allowsVibrancy: Bool {
         false
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        ignoresHitTesting ? nil : super.hitTest(point)
     }
 
     override var intrinsicContentSize: NSSize {

@@ -14,6 +14,7 @@ enum WorklaneHeaderSummaryBuilder {
         return WorklaneChromeSummary(
             worklaneTitle: worklane.title,
             focusedLabel: focusedLabel,
+            focusedPaneIsWorking: presentation?.isWorking ?? false,
             remoteContextLabel: remoteContextLabel,
             cwdPath: visibleLocalCwdPath(from: presentation),
             branch: branch,

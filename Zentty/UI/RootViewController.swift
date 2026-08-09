@@ -337,6 +337,7 @@ final class RootViewController: NSViewController {
             reviewStateResolver: reviewStateResolver
         )
         super.init(nibName: nil, bundle: nil)
+        windowChromeView.setShimmerCoordinator(sidebarView.sharedShimmerCoordinator)
         toasts = WindowToastPresenter(
             hostViewProvider: { [weak self] in self?.appCanvasView },
             themeProvider: { [weak self] in self?.currentTheme ?? ZenttyTheme.fallback(for: nil) }

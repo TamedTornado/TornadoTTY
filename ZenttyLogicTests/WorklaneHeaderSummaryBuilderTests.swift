@@ -312,6 +312,7 @@ final class WorklaneHeaderSummaryBuilderTests: XCTestCase {
         let summary = WorklaneHeaderSummaryBuilder.summary(for: worklane)
 
         XCTAssertEqual(summary.focusedLabel, "Thinking ✳ Investigate pane title updates")
+        XCTAssertTrue(summary.focusedPaneIsWorking)
     }
 
     func test_summary_omits_compacted_metadata_branch_when_review_state_is_unavailable() {
