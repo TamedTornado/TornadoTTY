@@ -254,9 +254,13 @@ jq -e '
     all(.cells[] | select(((.valgrind_report // "") | length) > 0);
         .order < $governance[0].order or
         (.order == $governance[0].order and .id < $governance[0].id)
+    ) and
+    all(.cells[] | select((.command // "") | contains("linux/scripts/build-local"));
+        .order < $governance[0].order or
+        (.order == $governance[0].order and .id < $governance[0].id)
     )
 ' "${matrix}" >/dev/null ||
-    fail "suppression-governance cell must execute after every Valgrind report cell"
+    fail "suppression-governance cell must execute after every Valgrind report and artifact-mutating build cell"
 
 untracked_xfails="$(jq -r '.cells[] | select(.status == "XFAIL" and ((.tracking // "") | length) == 0) | .id' "${matrix}")"
 [[ -z "${untracked_xfails}" ]] || fail "XFAIL cells without tracking IDs: ${untracked_xfails}"

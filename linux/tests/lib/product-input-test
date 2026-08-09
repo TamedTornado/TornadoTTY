@@ -16,6 +16,17 @@ sleep() {
 # shellcheck disable=SC1091
 source "${repo_root}/linux/tests/lib/product-input"
 
+receipt_log="$(mktemp)"
+trap 'rm -f -- "${calls}" "${receipt_log}"' EXIT
+printf '%s\n%s\n' ready ready >"${receipt_log}"
+zentty_product_wait_for_log_count "${receipt_log}" ready 2 \
+    "existing receipt count was not recognized"
+if zentty_product_wait_for_log_count "${receipt_log}" ready 3 \
+    "missing receipt count was not rejected" 1 2>/dev/null; then
+    echo "product-input-test: missing receipt count unexpectedly passed" >&2
+    exit 1
+fi
+
 ZENTTY_PRODUCT_WINDOW_ID=4242
 zentty_product_close_window x11
 
@@ -26,4 +37,4 @@ expected=$'key --window 4242 ctrl+q\nkey --window 4242 ctrl+q\nkeyup Control_L C
     exit 1
 }
 
-echo "Product input helper tests passed: X11 close releases global synthetic keys"
+echo "Product input helper tests passed: counted synchronization and X11 key release"

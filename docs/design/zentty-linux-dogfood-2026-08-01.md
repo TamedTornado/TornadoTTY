@@ -9829,6 +9829,149 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   and `a0b5ed7e14e64ed5f7ac8088abc60a0bd7cc71f4792fd30d97a0aa5dfb327237`.
   No suppression or manifest changed in this slice.
 
+### 2026-08-09 — GH-31 final wiring and duplicate-authority audit
+
+- **The final audit starts from the pushed extracted system, not another
+  rewrite:** Commits `3541a48`, `f88001f`, and `6977e56` established the pane,
+  agent-event, and persistence coordinators after the action router. This slice
+  will first make the final authority map mechanically complete, then search
+  for old selectable routes and delete only genuinely superseded wiring. It
+  will not split UI projection merely to reduce line count or introduce
+  forwarding facades, another product, event loop, queue, registry, or store.
+- **The initial machine-map review found two governance gaps:** The contract
+  named the default GLib main context as owned by `ApplicationShell`, although
+  process composition and the main loop live in `main.rs`; and it did not hash
+  or inventory the existing `tmux_runtime.rs` bridge. The single-authority map
+  also combined agent transport and projection and omitted the GTK action
+  registry as a named authority. These are documentation/mechanical-proof
+  defects, not evidence of duplicate runtime instances.
+- **The source search found one implementation for each stateful authority:**
+  one `WorkspaceState` field, one `ActionRouter` field, one pane surface map,
+  one `AgentRuntime`/event receiver, one `TmuxCompatProduct` field, and one
+  `SnapshotPersistence` wrapping one `SessionRestoreStore`. Core examples and
+  tests construct stores as test subjects; they are not a second shipped
+  product route. GLib timers and the Ghostty tick all target the same default
+  GLib context; no Tokio or second async runtime is present.
+- **The new final-authority negative test was red first:** Deleting the not-yet
+  modeled GTK action authority left the old validator green, so its negative
+  self-test failed with `missing-action-authority unexpectedly passed`. The
+  contract and validator now separately name action registration, agent IPC
+  transport, agent projection, tmux compatibility state, persistence, pane
+  projection, workspace state, and default-GLib-context scheduling. A second
+  negative case rejects moving GLib authority back into the window shell.
+- **The audit widened source governance instead of trusting filenames:** The
+  contract now hashes `main.rs`, `agent_runtime.rs`, `codex_enrichment.rs`, and
+  `tmux_compat.rs` in addition to the shell and extracted modules, and it
+  inventories all tmux bridge functions. Negative fixtures introduce a shadow
+  main loop, agent receiver, enrichment generation, tmux state, and bridge
+  route and prove the validator rejects each unreviewed authority change.
+- **The before/after inventory proves old routes were actually removed:**
+  Relative to the GH-26 characterization, `ApplicationShell` no longer has
+  direct `workspace_actions`, `runtime`, `command`, `surfaces`, `pane_frames`,
+  `focus_controllers`, `pending_prefills`, `live_children`, or `agent_runtime`
+  fields. Twenty-two old registration/native-construction callback helpers
+  are absent; the shell retains only high-level operations that coordinate the
+  workspace with more than one focused owner. No additional deletion was
+  manufactured merely to lower the 2,534-line UI-projection file.
+- **Governance correctly rejected a stale pre-audit receipt:** Architecture,
+  orchestration, matrix, boundary, feature-inventory, and controlled-
+  environment positive/negative suites passed, but suppression governance
+  stopped at `protocol executable identity drifted` after the locked workspace
+  build refreshed the local IBus reproducer identity. This is not converted to
+  PASS and the manifest is not weakened; the complete matrix must regenerate
+  the raw/suppressed receipt set for the exact candidate before suppression
+  governance is rerun. The permanent cargo-mutants copy-policy check remains
+  green (`gitignore=true`, `copy_target=false`).
+- **The first complete GH-31 matrix found a real receipt race, not a product
+  focus failure:** `rust-ghostty-callback-drop-order` failed waiting for the
+  literal `focus-pane pane=pane-shell` line after a physical palette close.
+  The raw log proves the product selected `pane-shell`, rendered the one-pane
+  topology, focused it, and accepted subsequent input, but Ghostty's renderer
+  thread wrote into the same combined stdout/stderr stream mid-`eprintln!` and
+  split the focus receipt across another log line. The matrix correctly
+  reported the declared-PASS cell as FAIL; no retry or environmental PASS was
+  used.
+- **The repair synchronizes on counted real UI progress instead of a fragile
+  concurrent log line:** The journey records the pre-close count of the
+  existing `sidebar-active-visible` receipt, requires the unique post-close
+  `pane-shell*` topology, then requires one new visibility receipt emitted by
+  the GLib callback after focus was requested. The next physical
+  Ctrl+Shift+P/type/Return sequence still proves the live window accepts real
+  input. The shared helper has positive and missing-count negative tests. The
+  exact formerly failing Debug/X11/Ghostty/real-PTY journey then passed in
+  private session
+  `8ee67121c7916c268cf1c324704e21be2f4a25bccba9d6a54ede5aedea98b4bf`.
+- **The repaired matrix then exposed a suppression-ordering architecture
+  defect:** Every cell passed, and the in-matrix suppression review passed at
+  order 44, but a deliberate post-run audit failed with `protocol executable
+  identity drifted`. `restore-release` ran later at order 50 and rebuilt the
+  mutable staged IBus reproducer, so the summary's accepted review no longer
+  described the artifact left by the same matrix. This invalidates that run as
+  final suppression evidence even though its product cells were green.
+- **Suppression review is now terminal with respect to artifact mutation:** A
+  red negative matrix test first proved that placing governance at order 49
+  (after the Valgrind report but before `restore-release`) still passed the old
+  validator. The authoritative matrix now runs review at order 90, after every
+  current cell, and validation requires it to follow both all Valgrind report
+  producers and every command that invokes the artifact-mutating
+  `linux/scripts/build-local`. The negative suite now prevents this temporal
+  drift from returning; no suppression, manifest ceiling, or finding was
+  broadened.
+- **The first reordered run found two independent defects and remains failed
+  evidence:** The callback-drop journey again failed, this time because its
+  restored CWD title receipt was split by concurrent Ghostty logging. The same
+  log also exposed a real allocation bug: after restoring a vertically stacked
+  pane, `pane_scroll.height()` grew from 656 to 1,475 as pane height requests
+  fed back into the next 10 ms reconciliation. Separately, terminal suppression
+  review still rejected the reproducer because moving review later correctly
+  exposed that it was bound to the mutable root staging path.
+- **Real PTY CWD evidence no longer depends on a shared text stream:** Each
+  actual PTY child now appends its own `$PWD` to a private receipt path through
+  the ordinary `--command` environment. The journey requires three exact
+  entries—both original terminals plus the restored terminal—while retaining
+  the OSC title, real prefill, native callback, persistence, and physical-input
+  assertions. No terminal or filesystem component is faked.
+- **The pane-height feedback loop is repaired at the allocation boundary:** A
+  pure bound now takes the lesser of the scroll allocation and top-level window
+  content height. Content requests therefore cannot manufacture a viewport
+  larger than the real window, while an external window resize still changes
+  the bound. Boundary tests cover initial allocation, content-driven 1,475 px
+  growth, a legitimate 1,300 px window, and GTK's 0/1 unallocated sentinels.
+  The exact Debug/X11 closed-pane product journey passed in private session
+  `5cdc790af5bdfa98584e061c930738c0c4a94f1965c60a0aaff1fde51eec93d3`.
+- **Mutation found and closed two boundary holes:** The first focused campaign
+  caught seven of nine mutations but missed changing each `> 1` allocation
+  sentinel to `>= 1`. Explicit scroll-height and window-height boundary cases
+  were added; the final safe-wrapper campaign caught all 9/9 mutants in 69
+  seconds after a 34-second baseline.
+- **IBus evidence now binds the immutable Debug profile artifact:** Both the
+  producer and governance use
+  `build/linux-profiles/debug/bin/ibus-focus-reproducer` and its adjacent
+  metadata, rather than the mutable root staging bundle. Fresh raw/suppressed
+  evidence passed governance, a subsequent complete ReleaseSafe rebuild
+  replaced the root bundle, and the same Debug evidence still passed
+  governance. Negative producer/governance fixtures were moved to the same
+  profile layout and retain their stale-source rejection. No suppression rule
+  changed.
+- **The exact repaired GH-31 candidate passed every presently executable
+  authoritative cell:** Declared totals are `PASS=88`, `FAIL=0`, `BLOCKED=7`,
+  `XFAIL=1`, and `NOT_IMPLEMENTED=21`. Implemented-local and product-boundary
+  qualification pass; release and full Linux qualification correctly remain
+  false. The final machine-summary SHA-256 is
+  `68a839d6c4b18d4d24d24bd50d6fb25c08e82223cc1d9bee3b3363d89926751e`.
+  A separate suppression-governance invocation after the complete run also
+  passed, proving the terminal review still describes the artifact set left by
+  the matrix.
+- **Valgrind is PASS with reviewed suppressions:** Raw evidence contains 427
+  errors/contexts, 6,160 definite bytes, and 41,428 indirect bytes; reviewed
+  post-suppression totals are zero with all 427 contexts accounted for. The
+  report, raw-receipt, and suppressed-receipt SHA-256 values are respectively
+  `5d3551f4ad097880c13af6cce4d03d4930d35e4327fc6a99af7942b5f3122e93`,
+  `31fc850daeaf8dff272818b078e1e3e6f99dad4f7653bb6d01cd5c82e104ab7b`,
+  and `f3ec84e33f2638a8aaa54e41590d4fcc3dbe1b0e94e6d6d8b2e87f6c9ebb992a`.
+  This is not an unsuppressed-clean claim, and ReleaseSafe Valgrind remains
+  non-green exactly as declared.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were

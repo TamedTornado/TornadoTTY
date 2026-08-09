@@ -11,6 +11,7 @@ backend="${GDK_BACKEND:-}"
 async_backend="${ZENTTY_LINUX_ASYNC_BACKEND:-default}"
 state_dir=""
 working_dir=""
+cwd_receipt=""
 log=""
 product_pid=""
 
@@ -71,6 +72,7 @@ layer_runpath="$(
 
 state_dir="$(mktemp -d)"
 working_dir="$(mktemp -d)"
+cwd_receipt="${working_dir}/pty-cwd-receipt"
 log="$(mktemp)"
 jq --arg cwd "${working_dir}" '
     .workspace.windows[0].worklanes[0].columns[0].panes[].workingDirectory = $cwd |
@@ -80,11 +82,12 @@ jq --arg cwd "${working_dir}" '
 # The single quotes intentionally defer expansion to each real PTY child.
 # shellcheck disable=SC2016
 env GHOSTTY_LOG=false \
+    ZENTTY_CWD_RECEIPT="${cwd_receipt}" \
     LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
     "${product}" \
     --state-directory "${state_dir}" \
     --async-backend "${async_backend}" \
-    --command 'printf "\033]0;CWD:%s\007" "$PWD"; sleep 30' >"${log}" 2>&1 &
+    --command 'printf "\033]0;CWD:%s\007" "$PWD"; printf "%s\n" "$PWD" >> "$ZENTTY_CWD_RECEIPT"; sleep 30' >"${log}" 2>&1 &
 product_pid=$!
 
 zentty_product_wait_for_log "${log}" 'zentty-linux: terminal-ready-pane=pane-agent' \
@@ -100,12 +103,18 @@ zentty_product_type "${backend}" 'Close the focused pane'
 zentty_product_wait_for_log "${log}" \
     'zentty-linux: command-palette=query value="Close the focused pane" results=1' \
     "Close Pane was not uniquely discoverable" || fail "Close Pane query failed"
+active_visible_before_close="$(grep -Fc 'zentty-linux: sidebar-active-visible worklane=worklane-main' "${log}" || true)"
 zentty_product_key "${backend}" Down
 zentty_product_key "${backend}" Return
 zentty_product_wait_for_log "${log}" 'zentty-linux: action=close-pane pane=pane-agent' \
     "real palette did not close the source pane" || fail "source pane close missing"
-zentty_product_wait_for_log "${log}" 'zentty-linux: focus-pane pane=pane-shell' \
-    "surviving pane focus did not settle after close" || fail "post-close focus missing"
+zentty_product_wait_for_log "${log}" \
+    'zentty-linux: topology=worklane-main[title=Nimbu API,color=blue]:pane-shell*' \
+    "surviving pane topology did not project after close" || fail "post-close topology missing"
+zentty_product_wait_for_log_count "${log}" \
+    'zentty-linux: sidebar-active-visible worklane=worklane-main' \
+    "$((active_visible_before_close + 1))" \
+    "post-close UI projection did not settle" || fail "post-close projection missing"
 
 zentty_product_ctrl_shift_key "${backend}" p
 zentty_product_wait_for_log "${log}" 'zentty-linux: command-palette=shown' \
@@ -127,9 +136,14 @@ restored_pane="$(sed -n 's/.*pane=\([^ ]*\) worklane=.*/\1/p' <<<"${action_line}
 zentty_product_wait_for_log "${log}" \
     "zentty-linux: restore-prefill pane=${restored_pane} text=cargo test" \
     "restored command was not sent through the PTY" || fail "real prefill missing"
-zentty_product_wait_for_log "${log}" \
-    "zentty-linux: title-pane=${restored_pane} value=CWD:${working_dir}" \
-    "restored PTY did not start in captured CWD" || fail "restored CWD title missing"
+for _ in {1..200}; do
+    [[ -f "${cwd_receipt}" ]] &&
+        [[ "$(grep -Fxc "${working_dir}" "${cwd_receipt}" || true)" -ge 3 ]] && break
+    sleep 0.05
+done
+[[ -f "${cwd_receipt}" ]] &&
+    [[ "$(grep -Fxc "${working_dir}" "${cwd_receipt}" || true)" -ge 3 ]] ||
+    fail "restored real PTY did not start in captured CWD"
 
 zentty_product_close_window "${backend}"
 for _ in {1..240}; do

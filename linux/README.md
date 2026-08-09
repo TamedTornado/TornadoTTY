@@ -19,6 +19,17 @@ as Zentty.
   exact staged executable and assert behavior across Rust, the C ABI, GTK,
   Ghostty, PTY, renderer, and compositor boundaries.
 
+The shipped runtime has one authority per stateful responsibility: `main.rs`
+owns the default GLib context/main loop and process ordering;
+`ApplicationShell` owns one window's `WorkspaceState` and GTK projection;
+`ActionRouter`, `PaneRuntimeCoordinator`, `AgentEventCoordinator`, the existing
+tmux bridge, and `PersistenceCoordinator` respectively own the single action
+registry, surface projection, authenticated agent transport/projection, tmux
+compatibility state, and session store lifecycle. The authoritative map,
+source hashes, and negative duplicate-owner tests are
+[`application-shell-responsibilities-v1.json`](../docs/architecture/application-shell-responsibilities-v1.json)
+and `docs/architecture/tests/validate-application-shell-ownership*`.
+
 The platform-neutral core mirrors ZenTTY's `WorkspaceRecipe` version 3,
 `SessionRestoreEnvelope`, atomic snapshot/lifecycle files, migration,
 meaningfulness filtering, restore-draft merging, and stale-generation rule.

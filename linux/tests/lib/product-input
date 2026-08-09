@@ -14,6 +14,22 @@ zentty_product_wait_for_log() {
     return 1
 }
 
+zentty_product_wait_for_log_count() {
+    local log="$1"
+    local pattern="$2"
+    local minimum="$3"
+    local message="$4"
+    local attempts="${5:-200}"
+    local index count
+    for ((index = 0; index < attempts; index++)); do
+        count="$(grep -Fc "${pattern}" "${log}" 2>/dev/null || true)"
+        [[ "${count}" -ge "${minimum}" ]] && return 0
+        sleep 0.05
+    done
+    echo "product-input: ${message}" >&2
+    return 1
+}
+
 zentty_product_prepare_input() {
     local backend="$1"
     local log="$2"

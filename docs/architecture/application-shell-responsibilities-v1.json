@@ -2,22 +2,34 @@
   "schema_version": 1,
   "contract_id": "zentty-application-shell-responsibilities",
   "source": "crates/zentty-linux/src/application_shell.rs",
-  "source_sha256": "9407eaff47b81974021b64300da060e97bf0f256e8b9f10289d844ba804a6daa",
+  "source_sha256": "e3e3a63da5800134b9d0a1517bba9fbc57d774cd39b87d93d8c8bee3501d2452",
   "owned_source_sha256": {
+    "crates/zentty-linux/src/main.rs": "ead147dfc377ccae13401c5ffa34cef990fea0f40f2c9ee5ad93083c515d2e92",
+    "crates/zentty-linux/src/agent_runtime.rs": "36f1e38a84955f15ff86f63a24dd50ca07235d288307c3ad6e277890db3afbcc",
+    "crates/zentty-linux/src/codex_enrichment.rs": "fe87631c75c04b63962b7f89d311a778a25af8f27a1dcb4d5950b3efcbaa476e",
     "crates/zentty-linux/src/application_shell/action_router.rs": "321a6e71c26effce00b51ccb3d505ce3e329a573246fe6345f57768c7e2138a8",
     "crates/zentty-linux/src/application_shell/agent_events.rs": "12da8738f9cc6902498d6dd836a79ba52025897bad596703d1d336d3ec805e0f",
     "crates/zentty-linux/src/application_shell/pane_runtime.rs": "7fad1aee2a7810150d855399b2bced6d62c5b75c462449aa266a8aebb2656a3a",
-    "crates/zentty-linux/src/persistence_coordinator.rs": "7e76980242a0c25be6bb3a9df411ce9953918b1d94bc1737fe9144d0c3810035"
+    "crates/zentty-linux/src/application_shell/tmux_runtime.rs": "63a08d3165783c3a9f8e9f6782fc26e06c432ceb0566cb3e40e993d89cca4aba",
+    "crates/zentty-linux/src/persistence_coordinator.rs": "7e76980242a0c25be6bb3a9df411ce9953918b1d94bc1737fe9144d0c3810035",
+    "crates/zentty-linux/src/tmux_compat.rs": "21744690c1026a2ff15a065b024734dfe7097134697baf0922dfbe34d41dc952"
   },
   "tracking": "GH-26",
   "purpose": "Characterize every ApplicationShell field, method, action, authority, and lifecycle edge before extraction; this contract assigns ownership but does not create a second implementation.",
   "owners": [
     {
+      "id": "application_runtime",
+      "status": "existing",
+      "planned_module": "crates/zentty-linux/src/main.rs",
+      "tracking": "GH-31",
+      "responsibility": "Process composition root and sole default GLib main-context/main-loop scheduling authority; owns startup and shutdown ordering around each window shell."
+    },
+    {
       "id": "application_shell",
       "status": "existing",
       "planned_module": "crates/zentty-linux/src/application_shell.rs",
       "tracking": "GH-25",
-      "responsibility": "Composition root, sole live WorkspaceState, top-level window ownership, and delegation between focused coordinators."
+      "responsibility": "Window composition root, sole live WorkspaceState, top-level GTK window ownership, UI projection, and delegation between focused coordinators."
     },
     {
       "id": "action_router",
@@ -184,6 +196,12 @@
     "persistence_coordinator": [
       "clean_exit_decision", "start", "save_clean_exit", "select_restored_window",
       "default_state_directory"
+    ],
+    "tmux_runtime_coordinator": [
+      "execute_tmux_command", "execute_tmux_send_keys", "execute_tmux_split",
+      "execute_tmux_respawn", "respawn_tmux_surface", "execute_tmux_capture",
+      "execute_tmux_kill", "execute_tmux_layout", "close_tmux_panes",
+      "create_tmux_split_surface"
     ]
   },
   "action_contract": [
@@ -248,11 +266,13 @@
   },
   "single_authorities": {
     "workspace_state": {"owner":"application_shell","maximum_instances_per_window":1},
+    "gtk_action_registry": {"owner":"action_router","maximum_instances_per_window":1},
     "surface_registry": {"owner":"pane_runtime_coordinator","maximum_instances_per_window":1},
     "session_store": {"owner":"persistence_coordinator","maximum_instances_per_process":1},
-    "agent_ipc_runtime": {"owner":"agent_event_coordinator","maximum_instances_per_window":1},
+    "agent_ipc_transport": {"owner":"agent_event_coordinator","maximum_instances_per_window":1},
+    "agent_event_projection": {"owner":"agent_event_coordinator","maximum_instances_per_window":1},
     "tmux_compatibility_state": {"owner":"existing_tmux_coordinator","maximum_instances_per_window":1},
-    "ui_event_loop": {"owner":"application_shell","kind":"glib-main-context","maximum_instances_per_process":1}
+    "glib_scheduling": {"owner":"application_runtime","kind":"default-glib-main-context","maximum_instances_per_process":1}
   },
   "construction_order": [
     "create-ghostty-runtime-before-gtk",

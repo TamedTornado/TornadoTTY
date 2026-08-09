@@ -1518,6 +1518,7 @@ mkdir -p \
     "${fake_bin}" \
     "${producer_fixture_root}/linux/tests/lib" \
     "${producer_fixture_root}/build/linux/bin" \
+    "${producer_fixture_root}/build/linux-profiles/debug/bin" \
     "${producer_fixture_root}/build/linux-deps/ghostty/src"
 cp -- "${repo_root}/linux/tests/memory-safety" \
     "${producer_fixture_root}/linux/tests/memory-safety"
@@ -1599,12 +1600,12 @@ chmod +x \
     "${producer_fixture_root}/linux/tests/nested-wayland" \
     "${producer_fixture_root}/build/linux/bin/zentty-linux" \
     "${producer_fixture_root}/build/linux/bin/api-contract"
-cat >"${producer_fixture_root}/build/linux/bin/ibus-focus-reproducer" <<'EOF'
+cat >"${producer_fixture_root}/build/linux-profiles/debug/bin/ibus-focus-reproducer" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 [[ "${1:-}" == "--self-test-context-paths" ]] || exit 0
 EOF
-chmod +x "${producer_fixture_root}/build/linux/bin/ibus-focus-reproducer"
+chmod +x "${producer_fixture_root}/build/linux-profiles/debug/bin/ibus-focus-reproducer"
 cat >"${fake_bin}/valgrind" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -1673,6 +1674,8 @@ expect_producer_rejection() {
         "${optimize}" \
         "$(sha256sum "${producer_fixture_root}/linux/tests/ibus-focus-reproducer.c" | awk '{print $1}')" \
         >"${producer_fixture_root}/build/linux/build-metadata"
+    cp -- "${producer_fixture_root}/build/linux/build-metadata" \
+        "${producer_fixture_root}/build/linux-profiles/debug/build-metadata"
     printf '{"stale":true}\n' >"${rejected_report}"
     set +e
     PATH="${fake_bin}:${PATH}" \
@@ -1713,6 +1716,8 @@ expect_producer_rejection ibus-status-publication \
 printf 'optimize=Debug\nproduct_profile=debug\nprobe_profile=debug\nibus_focus_reproducer_sha256=%s\n' \
     "$(sha256sum "${producer_fixture_root}/linux/tests/ibus-focus-reproducer.c" | awk '{print $1}')" \
     >"${producer_fixture_root}/build/linux/build-metadata"
+cp -- "${producer_fixture_root}/build/linux/build-metadata" \
+    "${producer_fixture_root}/build/linux-profiles/debug/build-metadata"
 PATH="${fake_bin}:${PATH}" \
 ZENTTY_FAKE_VALGRIND_KIND=ibus \
 ZENTTY_FAKE_SUPPRESSED_STATUS=0 \
@@ -1743,7 +1748,7 @@ jq -e '
 
 printf 'optimize=Debug\nproduct_profile=debug\nprobe_profile=debug\nibus_focus_reproducer_sha256=%s\n' \
     "$(printf stale | sha256sum | awk '{print $1}')" \
-    >"${producer_fixture_root}/build/linux/build-metadata"
+    >"${producer_fixture_root}/build/linux-profiles/debug/build-metadata"
 set +e
 PATH="${fake_bin}:${PATH}" \
 ZENTTY_FAKE_VALGRIND_KIND=ibus \

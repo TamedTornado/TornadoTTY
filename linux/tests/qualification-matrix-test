@@ -52,6 +52,13 @@ jq '.claims.full_linux_qualification_passed = true' \
     "${source_matrix}" >"${temp_dir}/matrix.json"
 expect_validation_failure 'matrix incorrectly claims full Linux qualification'
 
+# Suppression review must remain valid after every build that can replace the
+# governed reproducer executable, not merely at the instant the report exists.
+jq '(.cells[] | select(.id == "valgrind-suppression-governance")).order = 49' \
+    "${source_matrix}" >"${temp_dir}/matrix.json"
+expect_validation_failure \
+    'suppression-governance cell must execute after every Valgrind report and artifact-mutating build cell'
+
 # The production runner must use the focused classifier tested above.
 # The grep intentionally matches the literal source line.
 # shellcheck disable=SC2016

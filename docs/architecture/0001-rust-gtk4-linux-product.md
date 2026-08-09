@@ -133,6 +133,26 @@ and explicit group removal before window teardown. The router holds no
 `WorkspaceState`, pane identifiers, terminal surfaces, persistence state, or
 agent state; callbacks retain only weak access to the composition root.
 
+The completed GH-25 decomposition fixes the following one-owner runtime map.
+The machine-readable inventory and source hashes live in
+`application-shell-responsibilities-v1.json` and are checked by its positive
+and negative validators.
+
+| Stateful authority | Sole owner | Boundary |
+| --- | --- | --- |
+| Default GLib main context, main loop, and process lifecycle scheduling | `main.rs` application runtime | Process composition; no second async runtime |
+| Window workspace state and GTK/UI projection | `ApplicationShell` | Exactly one `WorkspaceState` per window |
+| GTK `workspace` action registry | `ActionRouter` | Registration, typed parameters, availability, and uninstall only |
+| Pane-to-surface/PTY projection and callbacks | `PaneRuntimeCoordinator` | Exactly one transient surface registry per window |
+| Agent IPC transport, event queue drain, enrichment, and core projection | `AgentEventCoordinator` around one `AgentRuntime` | One authenticated transport/receiver per window; no second reducer |
+| tmux compatibility product state and bridge | `TmuxCompatProduct` plus `application_shell::tmux_runtime` | One bounded compatibility state per window; pure parsing/model remains in `zentty-tmux-compat` |
+| Session snapshot and lifecycle sequencing | `PersistenceCoordinator` around `SnapshotPersistence`/`SessionRestoreStore` | One synchronous process store; no journal, backup generations, queue, timer, or worker |
+
+`ApplicationShell` retains the high-level transactions that must coordinate
+the sole workspace with more than one projection—for example closing a model
+pane and unregistering both its agent capability and terminal surface. Those
+are composition operations, not shadow stores or forwarding alternatives.
+
 Crate features MUST be additive capabilities. A test feature MUST NOT switch
 the shipped executable to another implementation. Integration tests launch the
 same `zentty-linux` artifact delivered to users.

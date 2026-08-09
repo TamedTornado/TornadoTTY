@@ -1669,15 +1669,12 @@ impl ApplicationShell {
     }
 
     fn pane_viewport_height(&self) -> i32 {
-        // The scroll viewport is the allocation authority. Reading the
-        // content box here creates a positive feedback loop: applying a pane
-        // request grows the content, the next allocation treats that growth
-        // as a larger viewport, and multi-pane layouts expand indefinitely.
-        let allocated = self.pane_scroll.height();
-        if allocated > 1 {
-            return allocated;
-        }
-        self.window.default_height().saturating_sub(52).max(200)
+        bounded_pane_viewport_height(
+            self.pane_scroll.height(),
+            self.window.height(),
+            self.chrome.widget().height(),
+            self.window.default_height(),
+        )
     }
 
     fn apply_pane_height_requests(&self, force: bool) {
@@ -2421,6 +2418,22 @@ fn model_heights_to_pixels(weights: &[f64], viewport_height: i32) -> Vec<i32> {
         .collect()
 }
 
+fn bounded_pane_viewport_height(
+    scroll_height: i32,
+    window_height: i32,
+    chrome_height: i32,
+    default_window_height: i32,
+) -> i32 {
+    let fallback = default_window_height.saturating_sub(52).max(200);
+    let window_content_height = window_height.saturating_sub(chrome_height).max(1);
+    match (scroll_height > 1, window_height > 1) {
+        (true, true) => scroll_height.min(window_content_height),
+        (true, false) => scroll_height,
+        (false, true) => window_content_height,
+        (false, false) => fallback,
+    }
+}
+
 fn small_count_as_f64(count: usize) -> f64 {
     f64::from(u32::try_from(count).unwrap_or(u32::MAX))
 }
@@ -2466,7 +2479,8 @@ fn default_window_recipe() -> WindowRecipe {
 #[cfg(test)]
 mod allocation_tests {
     use super::{
-        TerminalGesture, codex_terminal_gesture, is_close_window_shortcut, model_heights_to_pixels,
+        TerminalGesture, bounded_pane_viewport_height, codex_terminal_gesture,
+        is_close_window_shortcut, model_heights_to_pixels,
     };
     use gtk::gdk;
 
@@ -2483,6 +2497,17 @@ mod allocation_tests {
 
         assert_eq!(model_heights_to_pixels(&[0.0, f64::NAN], 101), [50, 50]);
         assert!(model_heights_to_pixels(&[], 648).is_empty());
+    }
+
+    #[test]
+    fn pane_viewport_is_bounded_by_the_real_window_when_content_requests_expand() {
+        assert_eq!(bounded_pane_viewport_height(656, 700, 38, 700), 656);
+        assert_eq!(bounded_pane_viewport_height(1_475, 700, 38, 700), 662);
+        assert_eq!(bounded_pane_viewport_height(1_200, 1_300, 38, 700), 1_200);
+        assert_eq!(bounded_pane_viewport_height(0, 900, 38, 700), 862);
+        assert_eq!(bounded_pane_viewport_height(1, 0, 0, 700), 648);
+        assert_eq!(bounded_pane_viewport_height(0, 1, 0, 700), 648);
+        assert_eq!(bounded_pane_viewport_height(0, 0, 0, 700), 648);
     }
 
     #[test]

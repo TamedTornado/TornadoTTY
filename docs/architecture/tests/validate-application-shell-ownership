@@ -3,11 +3,16 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 contract="${ZENTTY_APPLICATION_SHELL_OWNERSHIP_CONTRACT:-${repo_root}/docs/architecture/application-shell-responsibilities-v1.json}"
+main_file="${ZENTTY_APPLICATION_RUNTIME_SOURCE:-${repo_root}/crates/zentty-linux/src/main.rs}"
+agent_runtime_file="${ZENTTY_AGENT_RUNTIME_SOURCE:-${repo_root}/crates/zentty-linux/src/agent_runtime.rs}"
+codex_enrichment_file="${ZENTTY_CODEX_ENRICHMENT_SOURCE:-${repo_root}/crates/zentty-linux/src/codex_enrichment.rs}"
 source_file="${ZENTTY_APPLICATION_SHELL_SOURCE:-${repo_root}/crates/zentty-linux/src/application_shell.rs}"
 action_router_file="${ZENTTY_ACTION_ROUTER_SOURCE:-${repo_root}/crates/zentty-linux/src/application_shell/action_router.rs}"
 agent_events_file="${ZENTTY_AGENT_EVENTS_SOURCE:-${repo_root}/crates/zentty-linux/src/application_shell/agent_events.rs}"
 pane_runtime_file="${ZENTTY_PANE_RUNTIME_SOURCE:-${repo_root}/crates/zentty-linux/src/application_shell/pane_runtime.rs}"
+tmux_runtime_file="${ZENTTY_TMUX_RUNTIME_SOURCE:-${repo_root}/crates/zentty-linux/src/application_shell/tmux_runtime.rs}"
 persistence_file="${ZENTTY_PERSISTENCE_COORDINATOR_SOURCE:-${repo_root}/crates/zentty-linux/src/persistence_coordinator.rs}"
+tmux_compat_file="${ZENTTY_TMUX_COMPAT_SOURCE:-${repo_root}/crates/zentty-linux/src/tmux_compat.rs}"
 matrix="${ZENTTY_QUALIFICATION_MATRIX:-${repo_root}/linux/qualification-matrix.json}"
 
 fail() {
@@ -19,11 +24,16 @@ for dependency in jq sed sort comm mktemp sha256sum; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
 [[ -r "${contract}" ]] || fail "ownership contract is missing: ${contract}"
+[[ -r "${main_file}" ]] || fail "application runtime source is missing: ${main_file}"
+[[ -r "${agent_runtime_file}" ]] || fail "agent runtime source is missing: ${agent_runtime_file}"
+[[ -r "${codex_enrichment_file}" ]] || fail "Codex enrichment source is missing: ${codex_enrichment_file}"
 [[ -r "${source_file}" ]] || fail "application shell source is missing: ${source_file}"
 [[ -r "${action_router_file}" ]] || fail "action router source is missing: ${action_router_file}"
 [[ -r "${agent_events_file}" ]] || fail "agent events source is missing: ${agent_events_file}"
 [[ -r "${pane_runtime_file}" ]] || fail "pane runtime source is missing: ${pane_runtime_file}"
+[[ -r "${tmux_runtime_file}" ]] || fail "tmux runtime source is missing: ${tmux_runtime_file}"
 [[ -r "${persistence_file}" ]] || fail "persistence coordinator source is missing: ${persistence_file}"
+[[ -r "${tmux_compat_file}" ]] || fail "tmux compatibility source is missing: ${tmux_compat_file}"
 [[ -r "${matrix}" ]] || fail "qualification matrix is missing: ${matrix}"
 jq empty "${contract}" >/dev/null 2>&1 || fail "ownership contract is not valid JSON"
 jq empty "${matrix}" >/dev/null 2>&1 || fail "qualification matrix is not valid JSON"
@@ -63,11 +73,25 @@ if [[ -n "${diff}" ]]; then
     fail "action inventory differs from ApplicationShell constants"
 fi
 
+main_sha256="$(sha256sum "${main_file}" | awk '{print $1}')"
+agent_runtime_sha256="$(sha256sum "${agent_runtime_file}" | awk '{print $1}')"
+codex_enrichment_sha256="$(sha256sum "${codex_enrichment_file}" | awk '{print $1}')"
 source_sha256="$(sha256sum "${source_file}" | awk '{print $1}')"
 action_router_sha256="$(sha256sum "${action_router_file}" | awk '{print $1}')"
 agent_events_sha256="$(sha256sum "${agent_events_file}" | awk '{print $1}')"
 pane_runtime_sha256="$(sha256sum "${pane_runtime_file}" | awk '{print $1}')"
+tmux_runtime_sha256="$(sha256sum "${tmux_runtime_file}" | awk '{print $1}')"
 persistence_sha256="$(sha256sum "${persistence_file}" | awk '{print $1}')"
+tmux_compat_sha256="$(sha256sum "${tmux_compat_file}" | awk '{print $1}')"
+jq -e --arg main_sha256 "${main_sha256}" \
+    '.owned_source_sha256["crates/zentty-linux/src/main.rs"] == $main_sha256' \
+    "${contract}" >/dev/null || fail "application runtime source hash differs from its ownership contract"
+jq -e --arg agent_runtime_sha256 "${agent_runtime_sha256}" \
+    '.owned_source_sha256["crates/zentty-linux/src/agent_runtime.rs"] == $agent_runtime_sha256' \
+    "${contract}" >/dev/null || fail "agent runtime source hash differs from its ownership contract"
+jq -e --arg codex_enrichment_sha256 "${codex_enrichment_sha256}" \
+    '.owned_source_sha256["crates/zentty-linux/src/codex_enrichment.rs"] == $codex_enrichment_sha256' \
+    "${contract}" >/dev/null || fail "Codex enrichment source hash differs from its ownership contract"
 jq -e --arg pane_runtime_sha256 "${pane_runtime_sha256}" \
     '.owned_source_sha256["crates/zentty-linux/src/application_shell/pane_runtime.rs"] == $pane_runtime_sha256' \
     "${contract}" >/dev/null || fail "pane runtime source hash differs from its ownership contract"
@@ -77,6 +101,12 @@ jq -e --arg agent_events_sha256 "${agent_events_sha256}" \
 jq -e --arg persistence_sha256 "${persistence_sha256}" \
     '.owned_source_sha256["crates/zentty-linux/src/persistence_coordinator.rs"] == $persistence_sha256' \
     "${contract}" >/dev/null || fail "persistence coordinator source hash differs from its ownership contract"
+jq -e --arg tmux_runtime_sha256 "${tmux_runtime_sha256}" \
+    '.owned_source_sha256["crates/zentty-linux/src/application_shell/tmux_runtime.rs"] == $tmux_runtime_sha256' \
+    "${contract}" >/dev/null || fail "tmux runtime source hash differs from its ownership contract"
+jq -e --arg tmux_compat_sha256 "${tmux_compat_sha256}" \
+    '.owned_source_sha256["crates/zentty-linux/src/tmux_compat.rs"] == $tmux_compat_sha256' \
+    "${contract}" >/dev/null || fail "tmux compatibility source hash differs from its ownership contract"
 
 sed -n '1,/^#\[cfg(test)\]/p' "${action_router_file}" |
     sed -nE 's/^[[:space:]]*(pub\(super\)[[:space:]]+)?(const[[:space:]]+)?fn[[:space:]]+([a-zA-Z0-9_]+).*/\3/p' |
@@ -123,25 +153,47 @@ if [[ -n "${diff}" ]]; then
     fail "persistence coordinator function inventory differs from its ownership contract"
 fi
 
-jq -e --arg source_sha256 "${source_sha256}" \
+sed -n '/^impl ApplicationShell {/,/^}/p' "${tmux_runtime_file}" |
+    sed -nE 's/^[[:space:]]*(pub\(super\)[[:space:]]+)?(const[[:space:]]+)?fn[[:space:]]+([a-zA-Z0-9_]+).*/\3/p' |
+    sort >"${temp_dir}/actual-tmux-runtime-functions"
+jq -r '.owned_module_functions.tmux_runtime_coordinator | sort | .[]' "${contract}" \
+    >"${temp_dir}/contract-tmux-runtime-functions"
+diff="$(comm -3 "${temp_dir}/actual-tmux-runtime-functions" "${temp_dir}/contract-tmux-runtime-functions")"
+if [[ -n "${diff}" ]]; then
+    printf '%s\n' "${diff}" >&2
+    fail "tmux runtime function inventory differs from its ownership contract"
+fi
+
+jq -e --arg main_sha256 "${main_sha256}" \
+    --arg agent_runtime_sha256 "${agent_runtime_sha256}" \
+    --arg codex_enrichment_sha256 "${codex_enrichment_sha256}" \
+    --arg source_sha256 "${source_sha256}" \
     --arg action_router_sha256 "${action_router_sha256}" \
     --arg agent_events_sha256 "${agent_events_sha256}" \
     --arg pane_runtime_sha256 "${pane_runtime_sha256}" \
-    --arg persistence_sha256 "${persistence_sha256}" '
+    --arg tmux_runtime_sha256 "${tmux_runtime_sha256}" \
+    --arg persistence_sha256 "${persistence_sha256}" \
+    --arg tmux_compat_sha256 "${tmux_compat_sha256}" '
     .schema_version == 1 and
     .contract_id == "zentty-application-shell-responsibilities" and
     .source == "crates/zentty-linux/src/application_shell.rs" and
     .source_sha256 == $source_sha256 and
     .owned_source_sha256 == {
+        "crates/zentty-linux/src/main.rs":$main_sha256,
+        "crates/zentty-linux/src/agent_runtime.rs":$agent_runtime_sha256,
+        "crates/zentty-linux/src/codex_enrichment.rs":$codex_enrichment_sha256,
         "crates/zentty-linux/src/application_shell/action_router.rs":$action_router_sha256,
         "crates/zentty-linux/src/application_shell/agent_events.rs":$agent_events_sha256,
         "crates/zentty-linux/src/application_shell/pane_runtime.rs":$pane_runtime_sha256,
-        "crates/zentty-linux/src/persistence_coordinator.rs":$persistence_sha256
+        "crates/zentty-linux/src/application_shell/tmux_runtime.rs":$tmux_runtime_sha256,
+        "crates/zentty-linux/src/persistence_coordinator.rs":$persistence_sha256,
+        "crates/zentty-linux/src/tmux_compat.rs":$tmux_compat_sha256
     } and
     .tracking == "GH-26" and
     ([.owners[].id] | sort) == ([
         "action_router",
         "agent_event_coordinator",
+        "application_runtime",
         "application_shell",
         "existing_tmux_coordinator",
         "existing_ui_projection",
@@ -160,7 +212,7 @@ jq -e --arg source_sha256 "${source_sha256}" \
         ([.field_assignments[].fields[]] | unique | length) and
     ([.method_assignments[].methods[]] | length) ==
         ([.method_assignments[].methods[]] | unique | length) and
-    (.owned_module_functions | keys | sort) == (["action_router", "agent_event_coordinator", "pane_runtime_coordinator", "persistence_coordinator"] | sort) and
+    (.owned_module_functions | keys | sort) == (["action_router", "agent_event_coordinator", "pane_runtime_coordinator", "persistence_coordinator", "tmux_runtime_coordinator"] | sort) and
     (.owned_module_functions.action_router | length) ==
         (.owned_module_functions.action_router | unique | length) and
     (.owned_module_functions.pane_runtime_coordinator | length) ==
@@ -169,6 +221,8 @@ jq -e --arg source_sha256 "${source_sha256}" \
         (.owned_module_functions.agent_event_coordinator | unique | length) and
     (.owned_module_functions.persistence_coordinator | length) ==
         (.owned_module_functions.persistence_coordinator | unique | length) and
+    (.owned_module_functions.tmux_runtime_coordinator | length) ==
+        (.owned_module_functions.tmux_runtime_coordinator | unique | length) and
     all(.field_assignments[]; .fields | length > 0) and
     all(.method_assignments[]; .methods | length > 0) and
     ([.action_contract[].name] | length) ==
@@ -193,11 +247,13 @@ jq -e --arg source_sha256 "${source_sha256}" \
     } and
     .single_authorities == {
         "workspace_state": {"owner":"application_shell","maximum_instances_per_window":1},
+        "gtk_action_registry": {"owner":"action_router","maximum_instances_per_window":1},
         "surface_registry": {"owner":"pane_runtime_coordinator","maximum_instances_per_window":1},
         "session_store": {"owner":"persistence_coordinator","maximum_instances_per_process":1},
-        "agent_ipc_runtime": {"owner":"agent_event_coordinator","maximum_instances_per_window":1},
+        "agent_ipc_transport": {"owner":"agent_event_coordinator","maximum_instances_per_window":1},
+        "agent_event_projection": {"owner":"agent_event_coordinator","maximum_instances_per_window":1},
         "tmux_compatibility_state": {"owner":"existing_tmux_coordinator","maximum_instances_per_window":1},
-        "ui_event_loop": {"owner":"application_shell","kind":"glib-main-context","maximum_instances_per_process":1}
+        "glib_scheduling": {"owner":"application_runtime","kind":"default-glib-main-context","maximum_instances_per_process":1}
     } and
     .construction_order == [
         "create-ghostty-runtime-before-gtk",

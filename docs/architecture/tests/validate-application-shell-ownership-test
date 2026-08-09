@@ -4,9 +4,14 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 validator="${repo_root}/docs/architecture/tests/validate-application-shell-ownership"
 contract="${repo_root}/docs/architecture/application-shell-responsibilities-v1.json"
+main_file="${repo_root}/crates/zentty-linux/src/main.rs"
+agent_runtime_file="${repo_root}/crates/zentty-linux/src/agent_runtime.rs"
+codex_enrichment_file="${repo_root}/crates/zentty-linux/src/codex_enrichment.rs"
 source_file="${repo_root}/crates/zentty-linux/src/application_shell.rs"
 agent_events_file="${repo_root}/crates/zentty-linux/src/application_shell/agent_events.rs"
 pane_runtime_file="${repo_root}/crates/zentty-linux/src/application_shell/pane_runtime.rs"
+tmux_runtime_file="${repo_root}/crates/zentty-linux/src/application_shell/tmux_runtime.rs"
+tmux_compat_file="${repo_root}/crates/zentty-linux/src/tmux_compat.rs"
 persistence_file="${repo_root}/crates/zentty-linux/src/persistence_coordinator.rs"
 temp_dir="$(mktemp -d)"
 trap 'rm -rf -- "${temp_dir}"' EXIT
@@ -49,6 +54,16 @@ jq '.single_authorities.surface_registry.maximum_instances_per_window = 2' \
 expect_failure second-registry "ownership contract invariants failed" \
     "ZENTTY_APPLICATION_SHELL_OWNERSHIP_CONTRACT=${temp_dir}/second-registry.json"
 
+jq 'del(.single_authorities.gtk_action_registry)' \
+    "${contract}" >"${temp_dir}/missing-action-authority.json"
+expect_failure missing-action-authority "ownership contract invariants failed" \
+    "ZENTTY_APPLICATION_SHELL_OWNERSHIP_CONTRACT=${temp_dir}/missing-action-authority.json"
+
+jq '.single_authorities.glib_scheduling.owner = "application_shell"' \
+    "${contract}" >"${temp_dir}/split-glib-authority.json"
+expect_failure split-glib-authority "ownership contract invariants failed" \
+    "ZENTTY_APPLICATION_SHELL_OWNERSHIP_CONTRACT=${temp_dir}/split-glib-authority.json"
+
 jq '.shutdown_order[2:5] |= reverse' \
     "${contract}" >"${temp_dir}/shutdown-order.json"
 expect_failure shutdown-order "ownership contract invariants failed" \
@@ -88,6 +103,36 @@ sed '/persistence: SnapshotPersistence,/a\    shadow_store: SessionRestoreStore,
     "${persistence_file}" >"${temp_dir}/shadow-persistence-store.rs"
 expect_failure shadow-persistence-store "persistence coordinator source hash" \
     "ZENTTY_PERSISTENCE_COORDINATOR_SOURCE=${temp_dir}/shadow-persistence-store.rs"
+
+jq '(.owned_module_functions.tmux_runtime_coordinator) |= map(select(. != "execute_tmux_command"))' \
+    "${contract}" >"${temp_dir}/missing-tmux-function.json"
+expect_failure missing-tmux-function "tmux runtime function inventory differs" \
+    "ZENTTY_APPLICATION_SHELL_OWNERSHIP_CONTRACT=${temp_dir}/missing-tmux-function.json"
+
+sed '/tmux-command pane=/i\        let shadow_tmux_state = crate::tmux_compat::TmuxCompatProduct::default();' \
+    "${tmux_runtime_file}" >"${temp_dir}/shadow-tmux-runtime.rs"
+expect_failure shadow-tmux-runtime "tmux runtime source hash" \
+    "ZENTTY_TMUX_RUNTIME_SOURCE=${temp_dir}/shadow-tmux-runtime.rs"
+
+sed '/let main_loop = glib::MainLoop::new/a\    let shadow_main_loop = glib::MainLoop::new(None, false);' \
+    "${main_file}" >"${temp_dir}/shadow-main-loop.rs"
+expect_failure shadow-main-loop "application runtime source hash" \
+    "ZENTTY_APPLICATION_RUNTIME_SOURCE=${temp_dir}/shadow-main-loop.rs"
+
+sed '/receiver: mpsc::Receiver<AuthenticatedAgentEvent>,/a\    shadow_receiver: mpsc::Receiver<AuthenticatedAgentEvent>,' \
+    "${agent_runtime_file}" >"${temp_dir}/shadow-agent-transport.rs"
+expect_failure shadow-agent-transport "agent runtime source hash" \
+    "ZENTTY_AGENT_RUNTIME_SOURCE=${temp_dir}/shadow-agent-transport.rs"
+
+sed '/pending_generation: Option<u64>,/a\    shadow_generation: Option<u64>,' \
+    "${codex_enrichment_file}" >"${temp_dir}/shadow-enrichment-generation.rs"
+expect_failure shadow-enrichment-generation "Codex enrichment source hash" \
+    "ZENTTY_CODEX_ENRICHMENT_SOURCE=${temp_dir}/shadow-enrichment-generation.rs"
+
+sed '/pub(crate) struct TmuxCompatProduct {/a\    shadow: std::collections::BTreeMap<String, String>,' \
+    "${tmux_compat_file}" >"${temp_dir}/shadow-tmux-state.rs"
+expect_failure shadow-tmux-state "tmux compatibility source hash" \
+    "ZENTTY_TMUX_COMPAT_SOURCE=${temp_dir}/shadow-tmux-state.rs"
 
 sed '/surfaces: BTreeMap<String, GhosttySurface>,/a\    shadow_surfaces: BTreeMap<String, GhosttySurface>,' \
     "${pane_runtime_file}" >"${temp_dir}/shadow-pane-registry.rs"

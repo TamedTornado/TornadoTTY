@@ -34,7 +34,9 @@ field, method, or action therefore requires an intentional ownership decision.
   files, or a second serialization path.
 - Existing tmux compatibility stays in its already focused pure crate and
   product runtime bridge.
-- GLib remains the only UI/event-loop authority.
+- `main.rs` owns the one default GLib context/main loop and process scheduling;
+  window-local timers and sources target that authority rather than creating a
+  second executor.
 
 ## Construction and shutdown
 
@@ -66,3 +68,19 @@ a live surface outside the registry.
 
 No child issue may add an aggregate runner, fake terminal, alternate product
 mode, ambient-desktop dependency, hidden retry, or environmental pass.
+
+## Final GH-31 audit contract
+
+GH-31 hashes and inventories the process root, action router, pane runtime,
+agent-event coordinator, tmux bridge, persistence coordinator, and window
+shell together. Its machine map names workspace state, GTK action registry,
+surface registry, session store, agent IPC transport, agent projection, tmux
+compatibility state, and GLib scheduling separately and assigns exactly one
+owner to each. High-level operations may coordinate multiple owners, but they
+must not retain selectable legacy routes or duplicate the owned state.
+
+The final audit is complete only after locked Cargo metadata and dependency
+direction, structural negative tests, focused mutation campaigns from the
+extraction commits, real staged-product journeys, and every presently
+executable authoritative matrix cell pass. Required `BLOCKED`, `XFAIL`, and
+`NOT_IMPLEMENTED` cells continue to prevent release/full qualification claims.
