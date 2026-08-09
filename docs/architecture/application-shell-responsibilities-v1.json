@@ -2,14 +2,14 @@
   "schema_version": 1,
   "contract_id": "zentty-application-shell-responsibilities",
   "source": "crates/zentty-linux/src/application_shell.rs",
-  "source_sha256": "514c40a8a192647c0d84bf152c73ac6ae69ba772ce7ea022f868ecc53c9c192a",
+  "source_sha256": "a76814bda8f38dde37ee513a59b789fe20d056331cdf67c47e7b79c860b945c9",
   "owned_source_sha256": {
     "crates/zentty-linux/src/main.rs": "5f5d7143cec7b51412624cdc10fe16a5000a2d7605e93151d2a0f29c3b339780",
     "crates/zentty-linux/src/application.rs": "6f197bffb2e94258044df812ff0fa20e2963f207c5d3b64d970e6c5847fa01d4",
     "crates/zentty-linux/src/window_set.rs": "501d595889c11a41a4261ef8282465d76dd9ed8ccd1d004406b558579b0bf58e",
     "crates/zentty-linux/src/agent_runtime.rs": "36f1e38a84955f15ff86f63a24dd50ca07235d288307c3ad6e277890db3afbcc",
     "crates/zentty-linux/src/codex_enrichment.rs": "fe87631c75c04b63962b7f89d311a778a25af8f27a1dcb4d5950b3efcbaa476e",
-    "crates/zentty-linux/src/application_shell/action_router.rs": "3c7933e6055b23507e79218546155def5ef69216ec58a11d7f93ccf572ff2cce",
+    "crates/zentty-linux/src/application_shell/action_router.rs": "10475aa6dbabb842e7e8fdea6610b57a8158205d6e485ed9381f8c6834ca7fb8",
     "crates/zentty-linux/src/application_shell/agent_events.rs": "12da8738f9cc6902498d6dd836a79ba52025897bad596703d1d336d3ec805e0f",
     "crates/zentty-linux/src/application_shell/pane_runtime.rs": "b7e1a43c03b2c05e0585df806fb35346214393950f373d3a186def5c335ab7f2",
     "crates/zentty-linux/src/application_shell/tmux_runtime.rs": "b606ec1c2e8c93e1ab40dbac1e5080f28315352e83533d7c63ba7eefd95d0515",
@@ -113,7 +113,7 @@
         "preferred_sidebar_width", "adjusting_sidebar_width", "sidebar_reveal_generation",
         "sidebar_visibility", "sidebar_visibility_generation", "peek_phase", "peek_generation",
         "peek_tab_down", "peek_view", "command_palette", "last_pane_viewport_height",
-        "rendered_columns", "self_handle"
+        "rendered_columns", "last_vertical_divider", "self_handle"
       ]
     },
     {
@@ -141,7 +141,8 @@
       "owner": "action_router",
       "methods": [
         "finish_pane_layout_action",
-        "install_pane_traversal_shortcuts", "record_terminal_gesture",
+        "install_pane_traversal_shortcuts", "install_pane_traversal_key_release",
+        "handle_resize_shortcut", "handle_resize_key", "record_terminal_gesture",
         "handle_lifecycle_shortcut", "activate_restore_closed_pane_shortcut",
         "install_command_palette_shortcut", "install_search_shortcuts",
         "perform_focused_binding_action",
@@ -185,7 +186,8 @@
         "materialize_active_column_widths", "apply_column_width_requests",
         "resize_column_divider_interactively", "resize_pane_divider_interactively",
         "equalize_column_divider_interactively", "equalize_pane_divider_interactively",
-        "schedule_layout_render",
+        "schedule_layout_render", "pane_cell_size", "minimum_column_width",
+        "minimum_pane_pair_height", "resize_focused_pane_by_cell",
         "render_sidebar", "refresh_sidebar_metadata", "schedule_active_worklane_reveal",
         "navigate_history", "select_adjacent_pane", "select_adjacent_worklane",
         "pane_references_in_sidebar_order", "current_pane_reference", "select_pane_reference",
@@ -277,6 +279,10 @@
     {"name":"focus-pane-right","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"focus-pane-up","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"focus-pane-down","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"resize-pane-left","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"resize-pane-right","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"resize-pane-up","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"resize-pane-down","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"arrange-width-full","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"arrange-width-half","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"arrange-width-thirds","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
@@ -293,8 +299,8 @@
     {"name":"restore-closed-pane","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"}
   ],
   "conditional_action_availability": {
-    "multiple_columns": ["arrange-golden-wide", "arrange-golden-narrow"],
-    "multiple_panes_in_focused_column": ["arrange-golden-tall", "arrange-golden-short"],
+    "multiple_columns": ["resize-pane-left", "resize-pane-right", "arrange-golden-wide", "arrange-golden-narrow"],
+    "multiple_panes_in_focused_column": ["resize-pane-up", "resize-pane-down", "arrange-golden-tall", "arrange-golden-short"],
     "all_other_actions": "always"
   },
   "single_authorities": {

@@ -37,6 +37,7 @@ static int reject_null_and_foreign_handles(void) {
     ghostty_gtk_embed_surface_grab_focus(NULL);
     ghostty_gtk_embed_surface_grab_focus(foreign_surface);
     int text_callbacks = 0;
+    ghostty_gtk_embed_cell_size_t cell_size = {.width = 17.0, .height = 23.0};
     if (ghostty_gtk_embed_surface_close(NULL) ||
         ghostty_gtk_embed_surface_close(foreign_surface) ||
         ghostty_gtk_embed_surface_binding_action(NULL, "start_search", 12) ||
@@ -45,6 +46,8 @@ static int reject_null_and_foreign_handles(void) {
             "start_search",
             12
         ) ||
+        ghostty_gtk_embed_surface_cell_size(NULL, &cell_size) ||
+        ghostty_gtk_embed_surface_cell_size(foreign_surface, &cell_size) ||
         ghostty_gtk_embed_surface_send_text(NULL, "text") ||
         ghostty_gtk_embed_surface_send_text(foreign_surface, "text") ||
         ghostty_gtk_embed_surface_read_text(
@@ -66,6 +69,10 @@ static int reject_null_and_foreign_handles(void) {
     }
     if (text_callbacks != 0) {
         fputs("api-contract: rejected text read invoked callback\n", stderr);
+        return 1;
+    }
+    if (cell_size.width != 17.0 || cell_size.height != 23.0) {
+        fputs("api-contract: rejected cell-size call mutated output\n", stderr);
         return 1;
     }
 
@@ -193,6 +200,7 @@ static int enforce_runtime_lifecycle(
         return 1;
     }
     g_object_ref_sink(surface);
+    ghostty_gtk_embed_cell_size_t cell_size = {.width = 17.0, .height = 23.0};
     if (g_signal_lookup("progress-report", G_OBJECT_TYPE(surface)) == 0) {
         fputs("api-contract: progress-report signal is missing\n", stderr);
         return 1;
@@ -200,6 +208,8 @@ static int enforce_runtime_lifecycle(
     if (ghostty_gtk_embed_surface_send_text(surface, NULL) ||
         ghostty_gtk_embed_surface_send_text(surface, "before-init") ||
         ghostty_gtk_embed_surface_binding_action(surface, "start_search", 12) ||
+        ghostty_gtk_embed_surface_cell_size(surface, NULL) ||
+        ghostty_gtk_embed_surface_cell_size(surface, &cell_size) ||
         ghostty_gtk_embed_surface_read_text(
             surface,
             GHOSTTY_GTK_EMBED_TEXT_SCREEN,
@@ -220,6 +230,10 @@ static int enforce_runtime_lifecycle(
         ) ||
         ghostty_gtk_embed_surface_request_paste(surface)) {
         fputs("api-contract: uninitialized surface operation accepted\n", stderr);
+        return 1;
+    }
+    if (cell_size.width != 17.0 || cell_size.height != 23.0) {
+        fputs("api-contract: uninitialized cell-size call mutated output\n", stderr);
         return 1;
     }
     ghostty_gtk_embed_surface_grab_focus(surface);

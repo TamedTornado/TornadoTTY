@@ -27,7 +27,7 @@ use gtk::glib;
 use gtk::prelude::*;
 use zentty_core::{
     ClosePaneOutcome, ColumnRecipe, CommandPaletteItem, PaneColumnState, PaneLayoutPolicy,
-    PaneRecipe, PaneReference, PaneRestoreDraft, PaneRightInsertionBehavior,
+    PaneRecipe, PaneReference, PaneResizeDirection, PaneRestoreDraft, PaneRightInsertionBehavior,
     SidebarWidthPreference, WindowFrame, WindowRecipe, WorklaneColor, WorklaneRecipe,
     WorkspaceState,
 };
@@ -50,9 +50,10 @@ use action_router::{
     ACTION_MOVE_PANE_LEFT, ACTION_MOVE_PANE_RIGHT, ACTION_MOVE_PANE_UP, ACTION_MOVE_WORKLANE_DOWN,
     ACTION_MOVE_WORKLANE_UP, ACTION_NAVIGATE_BACK, ACTION_NAVIGATE_FORWARD, ACTION_NEW_WINDOW,
     ACTION_NEW_WORKLANE, ACTION_NEXT_PANE, ACTION_NEXT_WORKLANE, ACTION_PREVIOUS_PANE,
-    ACTION_PREVIOUS_WORKLANE, ACTION_RESET_PANE_LAYOUT, ACTION_RESTORE_CLOSED_PANE,
-    ACTION_SPLIT_PANE_BELOW, ACTION_SPLIT_PANE_RIGHT, ACTION_TOGGLE_SIDEBAR,
-    ACTION_USE_SELECTION_FOR_FIND, ActionRouter,
+    ACTION_PREVIOUS_WORKLANE, ACTION_RESET_PANE_LAYOUT, ACTION_RESIZE_PANE_DOWN,
+    ACTION_RESIZE_PANE_LEFT, ACTION_RESIZE_PANE_RIGHT, ACTION_RESIZE_PANE_UP,
+    ACTION_RESTORE_CLOSED_PANE, ACTION_SPLIT_PANE_BELOW, ACTION_SPLIT_PANE_RIGHT,
+    ACTION_TOGGLE_SIDEBAR, ACTION_USE_SELECTION_FOR_FIND, ActionRouter,
 };
 use agent_events::AgentEventCoordinator;
 use pane_runtime::PaneRuntimeCoordinator;
@@ -70,6 +71,7 @@ pub(crate) struct ApplicationShell {
     pane_scroll: gtk::ScrolledWindow,
     pane_box: gtk::Box,
     rendered_columns: RefCell<BTreeMap<String, gtk::Overlay>>,
+    last_vertical_divider: RefCell<Option<(String, String)>>,
     background_agent_host: gtk::Box,
     state: WorkspaceState,
     pane_runtime: PaneRuntimeCoordinator,
@@ -173,6 +175,7 @@ impl ApplicationShell {
             pane_scroll,
             pane_box,
             rendered_columns: RefCell::new(BTreeMap::new()),
+            last_vertical_divider: RefCell::new(None),
             background_agent_host,
             state,
             pane_runtime: PaneRuntimeCoordinator::new(runtime, command),
@@ -505,6 +508,9 @@ impl ApplicationShell {
             if Self::handle_lifecycle_shortcut(&shell, key, modifiers) {
                 return glib::Propagation::Stop;
             }
+            if Self::handle_resize_key(&shell, key, modifiers) {
+                return glib::Propagation::Stop;
+            }
             if !shell.borrow().peek_phase.is_active()
                 && modifiers.contains(gdk::ModifierType::CONTROL_MASK)
                 && modifiers.contains(gdk::ModifierType::SUPER_MASK)
@@ -582,6 +588,14 @@ impl ApplicationShell {
             }
             glib::Propagation::Proceed
         });
+        Self::install_pane_traversal_key_release(shell, &controller);
+        shell.borrow().window.add_controller(controller);
+    }
+
+    fn install_pane_traversal_key_release(
+        shell: &Rc<RefCell<Self>>,
+        controller: &gtk::EventControllerKey,
+    ) {
         let weak = Rc::downgrade(shell);
         controller.connect_key_released(move |_, key, _, _| {
             let Some(shell) = weak.upgrade() else {
@@ -595,7 +609,35 @@ impl ApplicationShell {
                 Self::commit_peek(&shell);
             }
         });
-        shell.borrow().window.add_controller(controller);
+    }
+
+    fn handle_resize_shortcut(shell: &Rc<RefCell<Self>>, direction: PaneResizeDirection) {
+        let mut shell = shell.borrow_mut();
+        if !shell.resize_focused_pane_by_cell(direction) {
+            return;
+        }
+        let action = match direction {
+            PaneResizeDirection::Left => ACTION_RESIZE_PANE_LEFT,
+            PaneResizeDirection::Right => ACTION_RESIZE_PANE_RIGHT,
+            PaneResizeDirection::Up => ACTION_RESIZE_PANE_UP,
+            PaneResizeDirection::Down => ACTION_RESIZE_PANE_DOWN,
+        };
+        shell.finish_pane_layout_action(action);
+    }
+
+    fn handle_resize_key(
+        shell: &Rc<RefCell<Self>>,
+        key: gdk::Key,
+        modifiers: gdk::ModifierType,
+    ) -> bool {
+        if shell.borrow().peek_phase.is_active() {
+            return false;
+        }
+        let Some(direction) = resize_shortcut_direction(key, modifiers) else {
+            return false;
+        };
+        Self::handle_resize_shortcut(shell, direction);
+        true
     }
 
     fn record_terminal_gesture(shell: &Rc<RefCell<Self>>, gesture: TerminalGesture) {
@@ -1185,6 +1227,30 @@ impl ApplicationShell {
                 "Focus the pane below in the current column",
                 "navigation terminal split",
                 ACTION_FOCUS_PANE_DOWN,
+            ),
+            CommandPaletteItem::action(
+                source_ui::RESIZE_PANE_LEFT,
+                "Move the focused pane's horizontal edge left by one terminal cell",
+                "layout pane resize keyboard",
+                ACTION_RESIZE_PANE_LEFT,
+            ),
+            CommandPaletteItem::action(
+                source_ui::RESIZE_PANE_RIGHT,
+                "Move the focused pane's horizontal edge right by one terminal cell",
+                "layout pane resize keyboard",
+                ACTION_RESIZE_PANE_RIGHT,
+            ),
+            CommandPaletteItem::action(
+                source_ui::RESIZE_PANE_UP,
+                "Move the preferred focused-pane divider up by one terminal cell",
+                "layout pane resize keyboard",
+                ACTION_RESIZE_PANE_UP,
+            ),
+            CommandPaletteItem::action(
+                source_ui::RESIZE_PANE_DOWN,
+                "Move the preferred focused-pane divider down by one terminal cell",
+                "layout pane resize keyboard",
+                ACTION_RESIZE_PANE_DOWN,
             ),
             CommandPaletteItem::action(
                 "Arrange Width: Full Width",
@@ -1949,7 +2015,11 @@ impl ApplicationShell {
             .iter()
             .find(|column| column.id == column_id)
             .map_or(0.0, |column| column.width);
-        if !self.state.resize_column_divider(column_id, delta, 160.0) {
+        let minimum_width = self.minimum_column_width(column_id);
+        if !self
+            .state
+            .resize_column_divider(column_id, delta, minimum_width)
+        {
             return 0.0;
         }
         let after = self
@@ -1992,12 +2062,18 @@ impl ApplicationShell {
         let Some((before_weight, total_weight)) = before else {
             return 0.0;
         };
-        if !self
-            .state
-            .resize_pane_divider(column_id, pane_id, delta, viewport_height, 80.0)
-        {
+        let minimum_height = self.minimum_pane_pair_height(column_id, pane_id);
+        if !self.state.resize_pane_divider(
+            column_id,
+            pane_id,
+            delta,
+            viewport_height,
+            minimum_height,
+        ) {
             return 0.0;
         }
+        self.last_vertical_divider
+            .replace(Some((column_id.to_owned(), pane_id.to_owned())));
         let after_weight = self
             .state
             .active_columns()
@@ -2020,7 +2096,8 @@ impl ApplicationShell {
 
     fn equalize_column_divider_interactively(&mut self, column_id: &str) {
         self.materialize_active_column_widths();
-        if self.state.equalize_column_divider(column_id, 160.0) {
+        let minimum_width = self.minimum_column_width(column_id);
+        if self.state.equalize_column_divider(column_id, minimum_width) {
             self.apply_column_width_requests();
             eprintln!("zentty-linux: pane-divider-equalize axis=horizontal after={column_id}");
             self.schedule_layout_render();
@@ -2029,6 +2106,8 @@ impl ApplicationShell {
 
     fn equalize_pane_divider_interactively(&mut self, column_id: &str, pane_id: &str) {
         if self.state.equalize_pane_divider(column_id, pane_id) {
+            self.last_vertical_divider
+                .replace(Some((column_id.to_owned(), pane_id.to_owned())));
             self.apply_pane_height_requests(true);
             eprintln!(
                 "zentty-linux: pane-divider-equalize axis=vertical column={column_id} after={pane_id}"
@@ -2046,6 +2125,100 @@ impl ApplicationShell {
                 shell.render();
             }
         });
+    }
+
+    fn pane_cell_size(&self, pane_id: &str) -> Option<zentty_ghostty::CellSize> {
+        self.pane_runtime.surface(pane_id)?.cell_size().ok()
+    }
+
+    fn minimum_column_width(&self, column_id: &str) -> f64 {
+        self.state
+            .active_columns()
+            .iter()
+            .find(|column| column.id == column_id)
+            .into_iter()
+            .flat_map(|column| &column.panes)
+            .filter_map(|pane| self.pane_cell_size(&pane.id))
+            .map(|cell| (cell.width * 5.0).max(120.0))
+            .fold(120.0, f64::max)
+    }
+
+    fn minimum_pane_pair_height(&self, column_id: &str, pane_id: &str) -> f64 {
+        let Some(column) = self
+            .state
+            .active_columns()
+            .iter()
+            .find(|column| column.id == column_id)
+        else {
+            return 120.0;
+        };
+        let Some(index) = column.panes.iter().position(|pane| pane.id == pane_id) else {
+            return 120.0;
+        };
+        column
+            .panes
+            .get(index..=index.saturating_add(1))
+            .into_iter()
+            .flatten()
+            .filter_map(|pane| self.pane_cell_size(&pane.id))
+            .map(|cell| (cell.height * 5.0).max(120.0))
+            .fold(120.0, f64::max)
+    }
+
+    fn resize_focused_pane_by_cell(&mut self, direction: PaneResizeDirection) -> bool {
+        let Some(pane_id) = self.state.focused_pane_id().map(str::to_owned) else {
+            return false;
+        };
+        let Some(cell) = self.pane_cell_size(&pane_id) else {
+            eprintln!(
+                "zentty-linux: pane-keyboard-resize unavailable pane={pane_id} reason=cell-size"
+            );
+            return false;
+        };
+        self.materialize_active_column_widths();
+        let changed = match direction {
+            PaneResizeDirection::Left | PaneResizeDirection::Right => {
+                let focused_column = self.state.active_worklane().focused_column_id.clone();
+                let minimum = self.minimum_column_width(&focused_column);
+                let step = (cell.width * 5.0).max(120.0) / 5.0;
+                self.state.resize_focused_column(
+                    direction,
+                    step,
+                    minimum,
+                    f64::from(self.pane_viewport_width()),
+                )
+            }
+            PaneResizeDirection::Up | PaneResizeDirection::Down => {
+                let preferred = self.last_vertical_divider.borrow().clone();
+                let preferred_pane = preferred
+                    .as_ref()
+                    .filter(|(column, _)| self.state.active_worklane().focused_column_id == *column)
+                    .map(|(_, pane)| pane.as_str());
+                let Some((column_id, divider_after)) = self
+                    .state
+                    .focused_vertical_divider_after(preferred_pane)
+                    .map(|(column, pane)| (column.to_owned(), pane.to_owned()))
+                else {
+                    return false;
+                };
+                let minimum = self.minimum_pane_pair_height(&column_id, &divider_after);
+                let step = (cell.height * 5.0).max(120.0) / 5.0;
+                self.state.resize_focused_pane_vertically(
+                    direction,
+                    step,
+                    f64::from(self.pane_viewport_height()),
+                    minimum,
+                    preferred_pane,
+                )
+            }
+        };
+        if changed {
+            eprintln!(
+                "zentty-linux: pane-keyboard-resize direction={direction:?} pane={pane_id} cell={:.3}x{:.3}",
+                cell.width, cell.height
+            );
+        }
+        changed
     }
 
     fn refresh_pane_layout_action_availability(&self) {
@@ -2477,6 +2650,30 @@ fn is_restore_closed_pane_shortcut(key: gdk::Key, modifiers: gdk::ModifierType) 
         && modifiers.contains(gdk::ModifierType::CONTROL_MASK)
         && modifiers.contains(gdk::ModifierType::SHIFT_MASK)
         && !modifiers.intersects(gdk::ModifierType::ALT_MASK | gdk::ModifierType::SUPER_MASK)
+}
+
+fn resize_shortcut_direction(
+    key: gdk::Key,
+    modifiers: gdk::ModifierType,
+) -> Option<PaneResizeDirection> {
+    let command_modifiers = modifiers
+        & (gdk::ModifierType::CONTROL_MASK
+            | gdk::ModifierType::SHIFT_MASK
+            | gdk::ModifierType::ALT_MASK
+            | gdk::ModifierType::SUPER_MASK);
+    let required = gdk::ModifierType::CONTROL_MASK
+        | gdk::ModifierType::SHIFT_MASK
+        | gdk::ModifierType::ALT_MASK;
+    if command_modifiers != required {
+        return None;
+    }
+    match key {
+        gdk::Key::Left => Some(PaneResizeDirection::Left),
+        gdk::Key::Right => Some(PaneResizeDirection::Right),
+        gdk::Key::Up => Some(PaneResizeDirection::Up),
+        gdk::Key::Down => Some(PaneResizeDirection::Down),
+        _ => None,
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2921,11 +3118,34 @@ mod allocation_tests {
     use super::{
         TerminalGesture, bounded_pane_viewport_height, codex_terminal_gesture,
         default_window_recipe, is_close_active_window_shortcut, is_close_window_shortcut,
-        is_new_window_shortcut, model_heights_to_pixels, snapshot_window_frame,
-        validated_window_size,
+        is_new_window_shortcut, model_heights_to_pixels, resize_shortcut_direction,
+        snapshot_window_frame, validated_window_size,
     };
     use gtk::gdk;
-    use zentty_core::WindowFrame;
+    use zentty_core::{PaneResizeDirection, WindowFrame};
+
+    #[test]
+    fn linux_resize_shortcuts_require_ctrl_alt_shift_and_physical_arrows() {
+        let required = gdk::ModifierType::CONTROL_MASK
+            | gdk::ModifierType::ALT_MASK
+            | gdk::ModifierType::SHIFT_MASK;
+        assert_eq!(
+            resize_shortcut_direction(gdk::Key::Left, required),
+            Some(PaneResizeDirection::Left)
+        );
+        assert_eq!(
+            resize_shortcut_direction(gdk::Key::Down, required),
+            Some(PaneResizeDirection::Down)
+        );
+        assert_eq!(
+            resize_shortcut_direction(gdk::Key::Left, gdk::ModifierType::CONTROL_MASK),
+            None
+        );
+        assert_eq!(
+            resize_shortcut_direction(gdk::Key::Left, required | gdk::ModifierType::SUPER_MASK),
+            None
+        );
+    }
 
     #[test]
     fn default_pane_records_the_directory_in_which_its_real_child_starts() {

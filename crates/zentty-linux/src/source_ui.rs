@@ -25,6 +25,10 @@ pub(crate) const MOVE_PANE_LEFT: &str = "Move Pane Left";
 pub(crate) const MOVE_PANE_RIGHT: &str = "Move Pane Right";
 pub(crate) const MOVE_PANE_UP: &str = "Move Pane Up";
 pub(crate) const MOVE_PANE_DOWN: &str = "Move Pane Down";
+pub(crate) const RESIZE_PANE_LEFT: &str = "Resize Pane Left";
+pub(crate) const RESIZE_PANE_RIGHT: &str = "Resize Pane Right";
+pub(crate) const RESIZE_PANE_UP: &str = "Resize Pane Up";
+pub(crate) const RESIZE_PANE_DOWN: &str = "Resize Pane Down";
 pub(crate) const CLOSE_PANE: &str = "Close Pane";
 pub(crate) const UNDO_CLOSE_PANE: &str = "Undo Close Pane";
 pub(crate) const ARRANGE_WIDTH_FULL: &str = "Arrange Width: Full Width";
@@ -71,6 +75,10 @@ mod tests {
             MOVE_PANE_RIGHT,
             MOVE_PANE_UP,
             MOVE_PANE_DOWN,
+            RESIZE_PANE_LEFT,
+            RESIZE_PANE_RIGHT,
+            RESIZE_PANE_UP,
+            RESIZE_PANE_DOWN,
             CLOSE_PANE,
             UNDO_CLOSE_PANE,
             ARRANGE_WIDTH_FULL,

@@ -1,7 +1,7 @@
 use zentty_core::{
     AgentEvent, AgentInteractionKind, AgentTarget, AuthenticatedAgentEvent, ClosePaneOutcome,
-    CodexTranscriptQuestion, PaneRecipe, SessionRestoreEnvelope, WorklaneColor, WorkspaceState,
-    WorkspaceStateImportError,
+    CodexTranscriptQuestion, PaneRecipe, PaneResizeDirection, SessionRestoreEnvelope,
+    WorklaneColor, WorkspaceState, WorkspaceStateImportError,
 };
 
 const V3_ENVELOPE: &[u8] = include_bytes!("fixtures/session-restore-v3.json");
@@ -1070,6 +1070,94 @@ fn divider_geometry_round_trips_exactly_through_the_workspace_recipe() {
     let restored = WorkspaceState::from_window_recipe(&projected).unwrap();
 
     assert_eq!(restored.active_columns(), state.active_columns());
+}
+
+#[test]
+fn keyboard_horizontal_resize_changes_only_the_focused_source_column() {
+    let mut state = WorkspaceState::new("lane", "left");
+    assert!(state.split_focused_pane_right("middle"));
+    assert!(state.split_focused_pane_right("right"));
+    assert!(state.focus_pane_left());
+    for (pane, width) in [("left", 400.0), ("middle", 500.0), ("right", 600.0)] {
+        assert!(state.restore_column_width(pane, width));
+    }
+
+    assert!(state.resize_focused_column(PaneResizeDirection::Left, 9.0, 160.0, 900.0));
+    assert!((state.active_columns()[0].width - 400.0).abs() < f64::EPSILON);
+    assert!((state.active_columns()[1].width - 509.0).abs() < f64::EPSILON);
+    assert!((state.active_columns()[2].width - 600.0).abs() < f64::EPSILON);
+    assert!(state.focus_pane_right());
+    assert!(state.resize_focused_column(PaneResizeDirection::Right, 9.0, 160.0, 900.0));
+    assert!((state.active_columns()[2].width - 591.0).abs() < f64::EPSILON);
+}
+
+#[test]
+fn keyboard_horizontal_resize_obeys_source_edge_and_bounds_policy() {
+    let mut state = WorkspaceState::new("lane", "left");
+    assert!(state.split_focused_pane_right("middle"));
+    assert!(state.split_focused_pane_right("right"));
+    assert!(state.focus_pane_left());
+    assert!(state.focus_pane_left());
+    for (pane, width) in [("left", 200.0), ("middle", 300.0), ("right", 400.0)] {
+        assert!(state.restore_column_width(pane, width));
+    }
+
+    assert!(state.resize_focused_column(PaneResizeDirection::Left, 50.0, 160.0, 500.0));
+    assert!((state.active_columns()[0].width - 160.0).abs() < f64::EPSILON);
+    assert!(!state.resize_focused_column(PaneResizeDirection::Left, 50.0, 160.0, 500.0));
+    assert!(state.resize_focused_column(PaneResizeDirection::Right, 50.0, 160.0, 500.0));
+    assert!((state.active_columns()[0].width - 210.0).abs() < f64::EPSILON);
+
+    assert!(state.focus_pane_right());
+    assert!(state.resize_focused_column(PaneResizeDirection::Right, 250.0, 160.0, 500.0));
+    assert!((state.active_columns()[1].width - 500.0).abs() < f64::EPSILON);
+    assert!(!state.resize_focused_column(PaneResizeDirection::Right, 1.0, 160.0, 500.0));
+
+    assert!(state.focus_pane_right());
+    assert!(state.resize_focused_column(PaneResizeDirection::Right, 300.0, 160.0, 500.0));
+    assert!((state.active_columns()[2].width - 160.0).abs() < f64::EPSILON);
+    assert!(!state.resize_focused_column(PaneResizeDirection::Up, 10.0, 160.0, 500.0));
+    assert!(!state.resize_focused_column(PaneResizeDirection::Left, f64::NAN, 160.0, 500.0));
+}
+
+#[test]
+fn keyboard_vertical_resize_uses_an_adjacent_last_interacted_divider() {
+    let mut state = WorkspaceState::new("lane", "top");
+    assert!(state.split_focused_pane_below("middle"));
+    assert!(state.split_focused_pane_below("bottom"));
+    assert!(state.focus_pane_up());
+    let before = state.active_columns()[0].pane_heights.clone();
+
+    assert!(state.resize_focused_pane_vertically(
+        PaneResizeDirection::Up,
+        20.0,
+        600.0,
+        80.0,
+        Some("top"),
+    ));
+    let heights = &state.active_columns()[0].pane_heights;
+    assert!(heights[0] < before[0]);
+    assert!(heights[1] > before[1]);
+    assert!((heights[2] - before[2]).abs() < f64::EPSILON);
+
+    assert!(state.resize_focused_pane_vertically(
+        PaneResizeDirection::Down,
+        20.0,
+        600.0,
+        80.0,
+        Some("top"),
+    ));
+    for (restored, original) in state.active_columns()[0].pane_heights.iter().zip(&before) {
+        assert!((restored - original).abs() < f64::EPSILON);
+    }
+
+    assert!(!state.resize_focused_pane_vertically(
+        PaneResizeDirection::Left,
+        20.0,
+        600.0,
+        80.0,
+        None,
+    ));
 }
 
 #[test]

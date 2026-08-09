@@ -24,6 +24,12 @@ pub enum TextExtent {
     Screen,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CellSize {
+    pub width: f64,
+    pub height: f64,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProgressState {
     Remove,
@@ -91,6 +97,7 @@ pub enum Error {
     SurfaceCloseFailed,
     InputFailed,
     BindingActionFailed,
+    CellSizeUnavailable,
     TextReadFailed,
     InvalidText(FromUtf8Error),
     TickFailed,
@@ -131,6 +138,9 @@ impl fmt::Display for Error {
             Self::InputFailed => formatter.write_str("Ghostty terminal input failed"),
             Self::BindingActionFailed => {
                 formatter.write_str("Ghostty terminal binding action failed")
+            }
+            Self::CellSizeUnavailable => {
+                formatter.write_str("Ghostty terminal cell size is unavailable")
             }
             Self::TextReadFailed => formatter.write_str("Ghostty terminal text read failed"),
             Self::InvalidText(_) => {
@@ -459,6 +469,31 @@ impl GhosttySurface {
             )
         };
         succeeded.then_some(()).ok_or(Error::BindingActionFailed)
+    }
+
+    /// Returns the active terminal cell dimensions in GTK logical pixels.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::CellSizeUnavailable`] before the native surface has
+    /// initialized its font metrics or if Ghostty rejects the surface handle.
+    pub fn cell_size(&self) -> Result<CellSize, Error> {
+        let mut native = sys::GhosttyGtkEmbedCellSize {
+            width: 0.0,
+            height: 0.0,
+        };
+        // SAFETY: `widget` owns a live Ghostty surface and `native` is a valid
+        // writable result for the duration of this synchronous main-thread call.
+        let succeeded = unsafe {
+            sys::ghostty_gtk_embed_surface_cell_size(self.widget.as_ptr().cast(), &raw mut native)
+        };
+        if !succeeded || native.width <= 0.0 || native.height <= 0.0 {
+            return Err(Error::CellSizeUnavailable);
+        }
+        Ok(CellSize {
+            width: native.width,
+            height: native.height,
+        })
     }
 
     /// Copies plain terminal text from the selected Ghostty extent.

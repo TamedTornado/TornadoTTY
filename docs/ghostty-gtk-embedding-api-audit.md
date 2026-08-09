@@ -32,14 +32,14 @@ conversion, C locale, and SHA-256 over the resulting bytes.
 
 The read-only Ghostty checkout inspected for this report was clean at:
 
-- head: `a8ccbd8c0f66a2df6cd59833d61c6064a8e0ddb1`
+- head: `b992c688a680067fae8b51112d1833611136fb57`
 - branch/ref: the locked direct-fork GTK embedding branch
 - configured origin: `TamedTornado/ghostty`, whose GitHub parent/source is
   `ghostty-org/ghostty`
 
 The direct fork was rebuilt after the earlier fork-provenance error. The
 audited `origin/main`, recorded official base, and embedding-series base are
-all `ac04fc276169c70d31aa6fcfc5b43fc160d6fe6e`. The branch contains 22
+all `ac04fc276169c70d31aa6fcfc5b43fc160d6fe6e`. The branch contains 24
 downstream commits after that base. The unrelated inherited smooth-scroll
 series is not in this branch; it remains only on the explicitly archived
 pre-refork branch and is outside this audit.
@@ -52,14 +52,14 @@ mistaken for missing base evidence.
 
 | Range | Meaning | Commits | Files | Hunks | Lines | Patch SHA-256 |
 |---|---|---:|---:|---:|---:|---|
-| `ac04fc276..a8ccbd8c0` | GTK embedding series | 23 | 16 | 57 | +1363/-53 | `4c0558ec61631b2b4318cf911273326d93c096529e1a60077b41a6f8c3bad210` |
-| `ac04fc276..a8ccbd8c0` | complete direct-fork downstream delta | 23 | 16 | 57 | +1363/-53 | `4c0558ec61631b2b4318cf911273326d93c096529e1a60077b41a6f8c3bad210` |
+| `ac04fc276..b992c688` | GTK embedding series | 24 | 16 | 57 | +1401/-53 | `e6086309762e9589cd1ab10b7c37e8b3ff4e1ba341bc18cfe855c7e4a10669ab` |
+| `ac04fc276..b992c688` | complete direct-fork downstream delta | 24 | 16 | 57 | +1401/-53 | `e6086309762e9589cd1ab10b7c37e8b3ff4e1ba341bc18cfe855c7e4a10669ab` |
 
 ## Complete downstream file/hunk ledger
 
 The hunk count and per-file patch identity are normative in the JSON. The
 table below provides the human classification of every changed file; no file
-in `ac04fc276..a8ccbd8c0` is omitted.
+in `ac04fc276..b992c688` is omitted.
 
 ### GTK embedding partition
 
@@ -67,7 +67,7 @@ in `ac04fc276..a8ccbd8c0` is omitted.
 |---|---:|---:|---|
 | `AGENTS.md` | +24/-0 | 1 | Zentty-only dogfood policy; downstream only. |
 | `build.zig` | +141/-0 | 2 | Shared library/header install, private spike steps, and an opt-in focused embedding-options test are combined; split generic build/testing from downstream orchestration. |
-| `include/ghostty/gtk.h` | +135/-0 | 1 | Experimental language-neutral ABI plus copied construction options and a synchronous borrowed terminal-text callback; retain only product-proven generic operations. |
+| `include/ghostty/gtk.h` | +149/-0 | 1 | Experimental language-neutral ABI plus copied construction options, synchronous borrowed terminal-text reads, and logical-pixel cell metrics; retain only product-proven generic operations. |
 | `pkg/gtk4-layer-shell/build.zig` | +5/-0 | 1 | Current-upstream shared-library dependency plumbing. |
 | `src/apprt.zig` | +4/-1 | 1 | Select GTK runtime for a GTK library; retain only with that product. |
 | `src/apprt/gtk/Surface.zig` | +1/-3 | 2 | Route through explicit surface owner; plausible generic foundation. |
@@ -75,11 +75,11 @@ in `ac04fc276..a8ccbd8c0` is omitted.
 | `src/apprt/gtk/class/global_shortcuts.zig` | +13/-3 | 5 | Non-default application owner support for global shortcuts. |
 | `src/apprt/gtk/class/surface.zig` | +152/-42 | 35 | Store/ref/unref explicit `Application`, apply per-surface child environment overrides, emit product-neutral progress and decoded desktop-notification signals, and replace default-app lookups in construction, config, input, notifications, resize, clipboard, and finalization; plausible generic foundation needing focused tests. |
 | `src/build/SharedDeps.zig` | +4/-2 | 1 | GTK library native dependencies; keep with library build plumbing. |
-| `src/gtk_embed_lib.version-script` | +17/-0 | 1 | Twelve-symbol ELF allowlist/version node; the staged artifact now has an exact executable node audit. |
-| `src/gtk_embed_lib.zig` | +273/-0 | 1 | Runtime and twelve exports, including product-proven copied construction, mutex-safe plain terminal-text reads, and deterministic GTK-first rejection; typed argv remains open. |
+| `src/gtk_embed_lib.version-script` | +18/-0 | 1 | Thirteen-symbol ELF allowlist/version node; the staged artifact now has an exact executable node audit. |
+| `src/gtk_embed_lib.zig` | +296/-0 | 1 | Runtime and thirteen exports, including product-proven copied construction, mutex-safe plain terminal-text reads, deterministic GTK-first rejection, and scale-correct logical cell metrics; typed argv remains open. |
 | `src/gtk_embed_options.zig` | +68/-0 | 1 | Pure size-versioned surface-option validation and focused tests, deliberately independent of the full GTK build graph. |
 | `src/gtk_embed_spike.valgrind.supp` | +71/-0 | 1 | Private external-library suppressions; downstream test evidence only. |
-| `src/gtk_embed_spike.zig` | +397/-0 | 1 | Private Zig alternate host reaching internal APIs; not proof of a public boundary. |
+| `src/gtk_embed_spike.zig` | +423/-0 | 1 | Private Zig alternate host reaching internal APIs; not proof of a public boundary. |
 | `src/termio/Exec.zig` | +31/-1 | 2 | Independent generic command-lifetime fix plus unit test; review separately. |
 
 ## Current patch partition quality
@@ -110,6 +110,9 @@ independently reviewable generic patch series:
   `b7ae0ced5` appends bounded per-surface child environment overrides plus an
   opt-in implementation test target, driven by authenticated concurrent-pane
   agent integration rather than process-global mutation.
+- `b992c688` adds one generic, read-only logical-cell-metric query. It converts
+  Ghostty's physical renderer cell dimensions through GTK's content scale;
+  pane geometry, shortcuts, step counts, and minimum policy remain in Zentty.
 
 A plausible future review partition—without predicting acceptance—is:
 
@@ -126,9 +129,9 @@ No patch or upstream communication was prepared.
 
 ## Exported ABI inventory
 
-The ELF version script has exactly **12 exported function symbols**, all under
+The ELF version script has exactly **13 exported function symbols**, all under
 `GHOSTTY_GTK_EMBED_1.0`; it hides every other implementation symbol. The
-header additionally defines five **Ghostty-owned** ABI types and five enum
+header additionally defines six **Ghostty-owned** ABI types and five enum
 values:
 
 - opaque `ghostty_gtk_embed_runtime_t`
@@ -137,6 +140,7 @@ values:
 - fixed-width `uint32_t` typedef `ghostty_gtk_embed_text_extent_t`
 - `GHOSTTY_GTK_EMBED_TEXT_VIEWPORT=0`, `SCREEN=1`
 - synchronous borrowed callback type `ghostty_gtk_embed_text_callback_t`
+- fixed-layout logical metric pair `ghostty_gtk_embed_cell_size_t`
 
 The enum is a **high-severity open ABI defect**, not a proven public type.
 C chooses an implementation-defined enum representation, and a valid consumer
@@ -159,13 +163,14 @@ It also has one explicit **external public type dependency**: GTK-owned
 `GtkWidget`, forward-declared as `typedef struct _GtkWidget GtkWidget;`.
 `surface_new` returns `GtkWidget *`; `surface_close`, `surface_grab_focus`,
 `surface_binding_action`, `surface_send_text`, `surface_read_text`, and
-`surface_request_paste` each accept it as their surface handle. Thus the
+`surface_request_paste` and `surface_cell_size` each accept it as their surface
+handle. Thus the
 boundary is language-neutral C but not GTK-neutral: consumers must bind GTK's
 GObject/widget type and lifetime rules. This dependency is distinct from the
-five Ghostty-owned types. Constructor transfer and callback borrowing remain
+six Ghostty-owned types. Constructor transfer and callback borrowing remain
 explicit safe-adapter contracts rather than implicit Rust assumptions.
 
-A non-authoritative observation of the existing built artifact found all twelve
+A non-authoritative observation of the existing built artifact found all thirteen
 names as default-versioned `@@GHOSTTY_GTK_EMBED_1.0` symbols. Its SONAME was
 the unversioned `libghostty-gtk-embed.so`; the static audit does not claim this
 as fresh build or runtime qualification.
@@ -194,6 +199,7 @@ check, but an arbitrary dangling pointer cannot be made safe by that check.
 | `ghostty_gtk_embed_surface_close` | Rust product pane and repeated lifecycle teardown | Required by the current safe wrapper unless closure becomes a documented GObject disposal contract | Retain current capability; prove callback/drop ordering before upstream proposal. |
 | `ghostty_gtk_embed_surface_grab_focus` | Real product pane focus plus physical-key paths and misuse test | Required active-pane behavior under #5 | Retain with the safe runtime lease. |
 | `ghostty_gtk_embed_surface_binding_action` | Rust product pane-search actions plus real X11/Wayland scrollback scenarios | Likely generic terminal-owned action bridge | Retain as one generic parser/dispatcher; keep shortcuts and product policy in Zentty. |
+| `ghostty_gtk_embed_surface_cell_size` | Rust product cell-based drag minimums and physical X11 pane-resize shortcuts | Required while Ghostty owns rendered cell metrics and Zentty owns pane geometry | Retain the scale-correct generic getter; keep all resize policy in Zentty. |
 | `ghostty_gtk_embed_surface_send_text` | Real restore prefill and tmux send-keys product paths plus misuse test | Required programmatic text action | Retain through the safe wrapper. |
 | `ghostty_gtk_embed_surface_read_text` | Real staged `capture-pane` reads the displayed Ghostty surface and scrollback under X11 and Wayland | Generic synchronous plain-text boundary | Retain the borrowed callback; keep line limits, tmux output, and buffers in Zentty. |
 | `ghostty_gtk_embed_surface_request_paste` | C qualification clipboard relay and misuse test only | None; product paste uses ordinary input/binding behavior | Exclude from the Rust binding; leave ABI removal to separate Ghostty review. |
@@ -284,7 +290,7 @@ gaps explicit.
 4. **Callbacks:** product routing and after-dispose exclusion are proven, but
    the GObject signal/property contract still lacks a stable public declaration
    or userdata destroy-notification API.
-5. **Operations:** all nine retained Rust declarations now have safe owners,
+5. **Operations:** all ten retained Rust declarations now have safe owners,
    product callers, and real journeys. The default constructor, legacy surface
    constructor, and `request_paste` intentionally remain excluded from the
    Rust binding because the product does not call them; deciding whether to
@@ -299,9 +305,9 @@ gaps explicit.
    versioned SONAME, deprecation policy, non-ELF visibility policy, or general
    compatibility policy. The exact historical mismatch fixture now proves
    pre-main loader failure for one incompatible pair. C++ signature assertions
-   cover only two of nine functions.
+   cover only two of ten functions.
 8. **Future rebase:** this audit is exact for official base `ac04fc276` and
-   locked downstream head `a8ccbd8c0`; later official movement requires a new
+   locked downstream head `b992c688`; later official movement requires a new
    normalized audit rather than silently reusing these identities.
 9. **Qualification gaps:** ReleaseSafe Valgrind, controlled native Wayland
    input/IME/resize/scaling, X11 IME/scaling, packaging, and public CI remain
@@ -316,7 +322,7 @@ the matrix. They have since been reconciled into the authoritative
 | Authoritative ID | Requirement / test ID | Current declared state | Purpose |
 |---|---|---|---|
 | `ghostty-api-audit-inventory` | `ZL-11-GHOSTTY-API-AUDIT` / `TEST-GHOSTTY-API-AUDIT` | PASS after validator/self-test | Static normalized commit/file/hunk/source allowlist identity only. |
-| `ghostty-abi-version-node` | `ZL-11-GHOSTTY-ABI-COMPAT` / `TEST-GHOSTTY-ABI-VERSION` | PASS | All twelve ELF exports carry exactly `GHOSTTY_GTK_EMBED_1.0`; malformed-evidence self-tests reject missing, wrong, and untracked symbols. |
+| `ghostty-abi-version-node` | `ZL-11-GHOSTTY-ABI-COMPAT` / `TEST-GHOSTTY-ABI-VERSION` | PASS | All thirteen ELF exports carry exactly `GHOSTTY_GTK_EMBED_1.0`; malformed-evidence self-tests reject missing, wrong, and untracked symbols. |
 | `ghostty-async-backend-abi-representation` | `ZL-11-GHOSTTY-ABI-COMPAT` / `TEST-GHOSTTY-ASYNC-BACKEND-ABI` | XFAIL, `DOGFOOD-2026-08-02-GHOSTTY-ASYNC-ENUM-ABI` | The deterministic C17/C++17 header probe exits 99 after reproducing 4-byte default versus 1-byte `-fshort-enums` representation. Full repaired C/C++/Rust size, alignment, and real-library call acceptance remains NOT_IMPLEMENTED. |
 | `ghostty-runtime-initialization-order` | `ZL-11-GHOSTTY-API-AUDIT` / `TEST-GHOSTTY-RUNTIME-INIT-ORDER` | PASS | Fresh processes under controlled X11 and Wayland prove runtime-first succeeds and GTK-first rejects without aborting or corrupting subsequent GTK object construction. |
 | `rust-ghostty-api-product-usage` | `ZL-13-RUST-GHOSTTY-ADAPTER` / `TEST-RUST-GHOSTTY-PRODUCT-USAGE` | PASS | Closed-world nine-operation Rust ledger plus real close/restore, binding-action, and text-read journeys. |

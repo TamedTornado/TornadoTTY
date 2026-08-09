@@ -19,6 +19,13 @@ pub struct GhosttyGtkEmbedSurfaceOptions {
     pub environment_count: usize,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[repr(C)]
+pub struct GhosttyGtkEmbedCellSize {
+    pub width: f64,
+    pub height: f64,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(i32)]
 pub enum GhosttyGtkEmbedAsyncBackend {
@@ -58,6 +65,10 @@ unsafe extern "C" {
         action: *const c_char,
         action_len: usize,
     ) -> bool;
+    pub fn ghostty_gtk_embed_surface_cell_size(
+        surface: *mut GtkWidget,
+        cell_size: *mut GhosttyGtkEmbedCellSize,
+    ) -> bool;
     pub fn ghostty_gtk_embed_surface_read_text(
         surface: *mut GtkWidget,
         extent: GhosttyGtkEmbedTextExtent,
@@ -69,7 +80,8 @@ unsafe extern "C" {
 #[cfg(test)]
 mod tests {
     use super::{
-        GhosttyGtkEmbedAsyncBackend, GhosttyGtkEmbedSurfaceOptions, GhosttyGtkEmbedTextExtent,
+        GhosttyGtkEmbedAsyncBackend, GhosttyGtkEmbedCellSize, GhosttyGtkEmbedSurfaceOptions,
+        GhosttyGtkEmbedTextExtent,
     };
 
     #[test]
@@ -90,6 +102,12 @@ mod tests {
             align_of::<GhosttyGtkEmbedSurfaceOptions>(),
             align_of::<usize>()
         );
+    }
+
+    #[test]
+    fn cell_size_layout_matches_two_c_doubles() {
+        assert_eq!(size_of::<GhosttyGtkEmbedCellSize>(), 2 * size_of::<f64>());
+        assert_eq!(align_of::<GhosttyGtkEmbedCellSize>(), align_of::<f64>());
     }
 
     #[test]

@@ -630,6 +630,60 @@ xdotool mousemove --window "${window_id}" "$((divider_x + 60))" 350 mousedown 1
 xdotool mousemove --sync --window "${window_id}" "${divider_x}" 350 mouseup 1
 sleep 0.2
 
+# Exercise all four source keyboard resize commands through the real GTK key
+# path. Assert the rendered allocation after each command, not merely action
+# dispatch, and use the paired reverse commands to restore established geometry.
+keyboard_layout_line="$(grep -F 'zentty-linux: pane-layout ' "${log}" | tail -1)"
+keyboard_width_before="$(sed -n 's/.*column-worklane-1:\([0-9][0-9]*\).*/\1/p' <<<"${keyboard_layout_line}")"
+keyboard_resize_count="$(grep -Fc 'zentty-linux: pane-keyboard-resize direction=' "${log}" || true)"
+xdotool key --window "${window_id}" ctrl+alt+shift+Right
+for _ in $(seq 1 100); do
+    (( $(grep -Fc 'zentty-linux: pane-keyboard-resize direction=' "${log}" || true) > keyboard_resize_count )) && break
+    sleep 0.05
+done
+keyboard_width_right="$(grep -F 'zentty-linux: pane-layout ' "${log}" | tail -1 | sed -n 's/.*column-worklane-1:\([0-9][0-9]*\).*/\1/p')"
+(( keyboard_width_right > keyboard_width_before )) ||
+    fail "Resize Pane Right did not widen the rendered focused source column"
+
+xdotool key --window "${window_id}" ctrl+alt+shift+Left
+for _ in $(seq 1 100); do
+    (( $(grep -Fc 'zentty-linux: pane-keyboard-resize direction=' "${log}" || true) >= keyboard_resize_count + 2 )) && break
+    sleep 0.05
+done
+keyboard_width_restored="$(grep -F 'zentty-linux: pane-layout ' "${log}" | tail -1 | sed -n 's/.*column-worklane-1:\([0-9][0-9]*\).*/\1/p')"
+(( keyboard_width_restored >= keyboard_width_before - 1 && keyboard_width_restored <= keyboard_width_before + 1 )) ||
+    fail "Resize Pane Left did not reverse the rendered horizontal cell step"
+
+keyboard_height_line="$(grep -F 'zentty-linux: pane-height-layout column=column-worklane-1 ' "${log}" | tail -1)"
+keyboard_height_before="$(sed -n 's/.*pane-1:\([0-9][0-9]*\).*/\1/p' <<<"${keyboard_height_line}")"
+keyboard_height_layout_count="$(grep -Fc 'zentty-linux: pane-height-layout column=column-worklane-1 ' "${log}" || true)"
+xdotool key --window "${window_id}" ctrl+alt+shift+Down
+for _ in $(seq 1 100); do
+    (( $(grep -Fc 'zentty-linux: pane-keyboard-resize direction=' "${log}" || true) >= keyboard_resize_count + 3 &&
+       $(grep -Fc 'zentty-linux: pane-height-layout column=column-worklane-1 ' "${log}" || true) > keyboard_height_layout_count )) && break
+    sleep 0.05
+done
+keyboard_height_down="$(grep -F 'zentty-linux: pane-height-layout column=column-worklane-1 ' "${log}" | tail -1 | sed -n 's/.*pane-1:\([0-9][0-9]*\).*/\1/p')"
+(( keyboard_height_down > keyboard_height_before )) ||
+    fail "Resize Pane Down did not move the rendered adjacent divider down"
+
+keyboard_height_layout_count="$(grep -Fc 'zentty-linux: pane-height-layout column=column-worklane-1 ' "${log}" || true)"
+xdotool key --window "${window_id}" ctrl+alt+shift+Up
+for _ in $(seq 1 100); do
+    (( $(grep -Fc 'zentty-linux: pane-keyboard-resize direction=' "${log}" || true) >= keyboard_resize_count + 4 &&
+       $(grep -Fc 'zentty-linux: pane-height-layout column=column-worklane-1 ' "${log}" || true) > keyboard_height_layout_count )) && break
+    sleep 0.05
+done
+keyboard_height_restored="$(grep -F 'zentty-linux: pane-height-layout column=column-worklane-1 ' "${log}" | tail -1 | sed -n 's/.*pane-1:\([0-9][0-9]*\).*/\1/p')"
+(( keyboard_height_restored >= keyboard_height_before - 1 && keyboard_height_restored <= keyboard_height_before + 1 )) ||
+    fail "Resize Pane Up did not reverse the rendered vertical cell step"
+
+for direction in Right Left Down Up; do
+    grep -Fq "zentty-linux: pane-keyboard-resize direction=${direction} pane=pane-3 cell=" "${log}" ||
+        fail "real ${direction} keyboard resize did not consume Ghostty cell metrics"
+done
+sleep 0.2
+
 # Until Linux ports Zentty's complete offscreen-pane management system, the
 # pane-local primary command remains Split Right. Exercise it on pane-2, not on
 # the currently focused pane-3, and prove the resulting visible pair belongs to

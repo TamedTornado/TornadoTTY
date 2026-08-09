@@ -20,6 +20,7 @@ expected="$({
         ghostty_gtk_embed_runtime_new_with_async_backend \
         ghostty_gtk_embed_runtime_tick \
         ghostty_gtk_embed_surface_binding_action \
+        ghostty_gtk_embed_surface_cell_size \
         ghostty_gtk_embed_surface_close \
         ghostty_gtk_embed_surface_grab_focus \
         ghostty_gtk_embed_surface_new \

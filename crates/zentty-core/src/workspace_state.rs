@@ -174,6 +174,14 @@ pub struct RestoredPane {
     pub prefill_text: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PaneResizeDirection {
+    Left,
+    Right,
+    Up,
+    Down,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CodexTranscriptEnrichmentCandidate {
     pub pane_id: String,
@@ -1280,6 +1288,120 @@ impl WorkspaceState {
         column.pane_heights[index] = equal;
         column.pane_heights[index + 1] = equal;
         true
+    }
+
+    /// Applies the source keyboard-resize policy to the focused column. Unlike
+    /// a dragged divider, this changes only the focused column because the
+    /// source pane strip is horizontally scrollable.
+    pub fn resize_focused_column(
+        &mut self,
+        direction: PaneResizeDirection,
+        step: f64,
+        minimum_width: f64,
+        maximum_width: f64,
+    ) -> bool {
+        if !step.is_finite()
+            || step <= 0.0
+            || !minimum_width.is_finite()
+            || minimum_width <= 0.0
+            || !maximum_width.is_finite()
+            || maximum_width < minimum_width
+        {
+            return false;
+        }
+        let worklane = self.active_worklane_mut();
+        let Some(index) = worklane
+            .columns
+            .iter()
+            .position(|column| column.id == worklane.focused_column_id)
+        else {
+            return false;
+        };
+        if worklane.columns.len() < 2 {
+            return false;
+        }
+        let signed_step = match direction {
+            PaneResizeDirection::Left if index == 0 => -step,
+            PaneResizeDirection::Right if index + 1 == worklane.columns.len() => -step,
+            PaneResizeDirection::Left | PaneResizeDirection::Right => step,
+            PaneResizeDirection::Up | PaneResizeDirection::Down => return false,
+        };
+        let before = worklane.columns[index].width;
+        let after = (before + signed_step).clamp(minimum_width, maximum_width);
+        if (after - before).abs() <= f64::EPSILON {
+            return false;
+        }
+        worklane.columns[index].width = after;
+        true
+    }
+
+    /// Resolves the divider that a vertical keyboard resize will move.
+    /// `preferred_after_pane_id` carries the source's transient
+    /// last-interacted-divider preference when it is still adjacent.
+    #[must_use]
+    pub fn focused_vertical_divider_after(
+        &self,
+        preferred_after_pane_id: Option<&str>,
+    ) -> Option<(&str, &str)> {
+        let worklane = self.active_worklane();
+        let column = worklane
+            .columns
+            .iter()
+            .find(|column| column.id == worklane.focused_column_id)?;
+        let focused_index = column
+            .panes
+            .iter()
+            .position(|pane| pane.id == column.focused_pane_id)?;
+        let preferred_index = preferred_after_pane_id
+            .and_then(|pane_id| column.panes.iter().position(|pane| pane.id == pane_id))
+            .filter(|index| *index + 1 < column.panes.len())
+            .filter(|index| focused_index == *index || focused_index == *index + 1);
+        let divider_index = preferred_index.or_else(|| {
+            if focused_index + 1 < column.panes.len() {
+                Some(focused_index)
+            } else {
+                focused_index.checked_sub(1)
+            }
+        })?;
+        Some((column.id.as_str(), column.panes[divider_index].id.as_str()))
+    }
+
+    /// Moves the preferred divider adjacent to the focused pane by one
+    /// terminal-cell step. `preferred_after_pane_id` carries the source's
+    /// transient last-interacted-divider preference when it is still adjacent.
+    pub fn resize_focused_pane_vertically(
+        &mut self,
+        direction: PaneResizeDirection,
+        step: f64,
+        available_height: f64,
+        minimum_height: f64,
+        preferred_after_pane_id: Option<&str>,
+    ) -> bool {
+        if !matches!(
+            direction,
+            PaneResizeDirection::Up | PaneResizeDirection::Down
+        ) {
+            return false;
+        }
+        let Some((column_id, pane_id)) =
+            self.focused_vertical_divider_after(preferred_after_pane_id)
+        else {
+            return false;
+        };
+        let column_id = column_id.to_owned();
+        let pane_id = pane_id.to_owned();
+        let delta = match direction {
+            PaneResizeDirection::Up => -step,
+            PaneResizeDirection::Down => step,
+            PaneResizeDirection::Left | PaneResizeDirection::Right => unreachable!(),
+        };
+        self.resize_pane_divider(
+            &column_id,
+            &pane_id,
+            delta,
+            available_height,
+            minimum_height,
+        )
     }
 
     /// Restores an absolute source column width without changing selection or

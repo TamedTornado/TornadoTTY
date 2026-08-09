@@ -382,6 +382,102 @@ The recording standard is unchanged:
   and `03d9733aab6304a97e2e6895b179195095857a41b24e3630899eaa81e4d1c944`.
   ReleaseSafe Valgrind remains XFAIL and no suppression changed.
 
+## 2026-08-09 — Keyboard pane resizing uses Ghostty's real cell metrics
+
+- A fresh source audit found four exact commands—`Resize Pane Left`, `Resize
+  Pane Right`, `Resize Pane Up`, and `Resize Pane Down`—whose step is five
+  terminal cells. The Linux substitution is `Ctrl+Alt+Shift+Arrow` for the
+  source macOS `Command+Option+Shift+Arrow`; command semantics and palette
+  titles remain source-exact while platform shortcut policy remains in
+  Zentty.
+- The preceding divider slice described 160×80 as the terminal minimum. That
+  was a Linux fallback, not a source-derived invariant. The implementation now
+  asks each live Ghostty surface for its rendered cell dimensions, derives the
+  five-cell step and drag minimum from those metrics, and retains only a
+  120-logical-pixel defensive floor when a metric is temporarily unavailable.
+- Ghostty's internal cell dimensions are physical renderer pixels. Returning
+  those values directly would make host geometry wrong under compositor
+  scaling, so the new generic getter divides by the surface's GTK content
+  scale and exposes logical pixels. It rejects null, foreign, uninitialized,
+  invalid-scale, and invalid-metric calls without modifying the caller's
+  output structure.
+- The Ghostty change is deliberately one product-neutral C query plus its
+  exported fixed-layout structure and version-script entry. Commit
+  `b992c688a680067fae8b51112d1833611136fb57` on
+  `zentty/gtk-embed-cell-size` passed the focused `gtk-embed-lib` and
+  `gtk-embed-lib-test` build with Zig 0.16. Initial attempts exposed three
+  environment mistakes rather than product defects: no default `zig` binary,
+  an incompatible Zig 0.15 invocation, and a Zig 0.16 run missing the pinned
+  Blueprint compiler plus `-fno-sys=gtk4-layer-shell`. The corrected pinned
+  tool environment passed; none of the failed attempts was relabeled as a
+  pass.
+- Zentty's unsafe declaration is wrapped by a safe `CellSize` result. C API
+  misuse coverage preserves sentinels for rejected calls. Core tests prove
+  that horizontal commands alter only the focused source column and vertical
+  commands alter only the selected adjacent pair, including the source's
+  transient last-interacted-divider preference and minimum clamps.
+- The first focused action-router run failed because its explicit registry
+  cardinality still expected 55 actions after the four resize commands were
+  registered. The assertion was repaired to 59; uniqueness, parameter schema,
+  registration, and topology sensitivity remain checked rather than weakening
+  the registry test.
+- Strict workspace Clippy then rejected the new pure divider-selection query
+  without `#[must_use]`. The API now makes accidental result disposal an
+  explicit compiler warning; no lint was suppressed.
+- Diff review found that the first real X11 keyboard journey proved physical
+  dispatch and real cell-metric consumption but did not independently assert
+  the resulting rendered allocations. It now observes each horizontal and
+  vertical allocation change and its reverse step. Additional model coverage
+  exercises first, interior, and last column edge behavior, minimum/maximum
+  clamps, invalid directions, and both vertical directions. Strict Clippy
+  rejected exact floating-point assertions in that new test; they were changed
+  to epsilon comparisons rather than suppressing the lint.
+- The first strengthened X11 run caught a harness race: the `Down` action
+  receipt had arrived, but the test sampled the preceding rendered height line
+  before `render()` emitted the new allocation. The journey now waits for both
+  the action receipt and a new pane-height allocation receipt. Controlled X11
+  session `506bbf3cc52b94e15ccb4a77be01cd33e87a115a0474aba6b3c3f520bf235f57`
+  then passed with all four physical commands, both rendered-axis changes, both
+  reverse steps, and the remainder of the established source-UX journey.
+- Controlled X11 session
+  `536ade4e10f38028691df37403d7d33456eca7d85bba890d95fc2528fa194285`
+  built the real staged product at the new Ghostty pin, physically delivered
+  all four keyboard chords through GTK/GDK, observed nonzero real cell
+  dimensions in the product receipts, reversed the changes, and completed the
+  established real Ghostty/PTY source-UX journey.
+- Remaining evidence is explicit: controlled Wayland physical delivery of
+  these four chords, font-change transitions, fractional-scale transitions,
+  off-main-thread misuse, and deliberately different per-pane font metrics
+  are not established by the X11 receipt. They are not converted into a full
+  Linux qualification claim.
+- The first authoritative matrix run stopped after its dependency floor:
+  Ghostty regression passed, but both product builds rejected the newly
+  exported symbol because the independent staged ELF allowlist still named 12
+  functions, and the architecture contract still pinned the preceding
+  Ghostty revision. These were closed-world ledgers doing their job, not
+  compiler or runtime failures. The allowlist now explicitly names
+  `ghostty_gtk_embed_surface_cell_size`, and the architecture contract pins
+  `b992c688`; neither validator was weakened. Because those build dependencies
+  failed, downstream cells were not executed and the run made no qualification
+  or suppression-review claim.
+- After repairing those ledgers and strengthening the rendered-allocation
+  checks, the final rerun of every presently executable support and matrix cell
+  passed in 355.96 seconds. Declared totals remain `PASS=90`, `FAIL=0`,
+  `BLOCKED=7`, `XFAIL=1`, and `NOT_IMPLEMENTED=21`; implemented-local and
+  product-boundary qualification pass, while release and full Linux
+  qualification correctly remain false. The machine-summary SHA-256 is
+  `3e46efc6713c61359e99b328f17a4733d115ebf688e3a582186d4af9b1f3a83c`.
+- Debug Valgrind is **PASS with reviewed suppressions**, not unsuppressed clean:
+  raw evidence contains 427 errors/contexts, 6,240 definite bytes, and 41,397
+  indirect bytes; post-suppression evidence contains zero errors/contexts and
+  zero definite/indirect bytes. The report, raw receipt, and suppressed receipt
+  SHA-256 values are
+  `fba131ba2a17c644265c2ea5d2ce668af32ec7d28207ffeece88cd4daaa64201`,
+  `4e5147dea99c7b092b589e5a3402ba7f2e2019d8bd4c4a1de2884da511a73ad4`,
+  and `c730ae84380dbbf5d5b4b9e9f8bc83a449c9e7c6a927c0b3d4921d43331eca0a`.
+  Suppression governance was accepted; ReleaseSafe Valgrind remains XFAIL and
+  no suppression was broadened.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were

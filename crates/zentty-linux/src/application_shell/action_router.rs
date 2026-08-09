@@ -109,6 +109,10 @@ pub(super) const ACTION_FOCUS_PANE_LEFT: &str = "focus-pane-left";
 pub(super) const ACTION_FOCUS_PANE_RIGHT: &str = "focus-pane-right";
 pub(super) const ACTION_FOCUS_PANE_UP: &str = "focus-pane-up";
 pub(super) const ACTION_FOCUS_PANE_DOWN: &str = "focus-pane-down";
+pub(super) const ACTION_RESIZE_PANE_LEFT: &str = "resize-pane-left";
+pub(super) const ACTION_RESIZE_PANE_RIGHT: &str = "resize-pane-right";
+pub(super) const ACTION_RESIZE_PANE_UP: &str = "resize-pane-up";
+pub(super) const ACTION_RESIZE_PANE_DOWN: &str = "resize-pane-down";
 pub(super) const ACTION_ARRANGE_WIDTH_FULL: &str = "arrange-width-full";
 pub(super) const ACTION_ARRANGE_WIDTH_HALF: &str = "arrange-width-half";
 pub(super) const ACTION_ARRANGE_WIDTH_THIRDS: &str = "arrange-width-thirds";
@@ -178,6 +182,30 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
     action!(ACTION_FOCUS_PANE_RIGHT, "focus-pane-right", None),
     action!(ACTION_FOCUS_PANE_UP, "focus-pane-up", None),
     action!(ACTION_FOCUS_PANE_DOWN, "focus-pane-down", None),
+    action!(
+        ACTION_RESIZE_PANE_LEFT,
+        "resize-pane-left",
+        None,
+        MultipleColumns
+    ),
+    action!(
+        ACTION_RESIZE_PANE_RIGHT,
+        "resize-pane-right",
+        None,
+        MultipleColumns
+    ),
+    action!(
+        ACTION_RESIZE_PANE_UP,
+        "resize-pane-up",
+        None,
+        MultiplePanesInFocusedColumn
+    ),
+    action!(
+        ACTION_RESIZE_PANE_DOWN,
+        "resize-pane-down",
+        None,
+        MultiplePanesInFocusedColumn
+    ),
     action!(ACTION_ARRANGE_WIDTH_FULL, "arrange-width-full", None),
     action!(ACTION_ARRANGE_WIDTH_HALF, "arrange-width-half", None),
     action!(ACTION_ARRANGE_WIDTH_THIRDS, "arrange-width-thirds", None),
@@ -800,6 +828,27 @@ fn install_pane_layout_actions(
             }
         });
     }
+    for (name, direction) in [
+        (
+            ACTION_RESIZE_PANE_LEFT,
+            zentty_core::PaneResizeDirection::Left,
+        ),
+        (
+            ACTION_RESIZE_PANE_RIGHT,
+            zentty_core::PaneResizeDirection::Right,
+        ),
+        (ACTION_RESIZE_PANE_UP, zentty_core::PaneResizeDirection::Up),
+        (
+            ACTION_RESIZE_PANE_DOWN,
+            zentty_core::PaneResizeDirection::Down,
+        ),
+    ] {
+        add_simple_action(shell, group, name, move |shell| {
+            if shell.resize_focused_pane_by_cell(direction) {
+                shell.finish_pane_layout_action(name);
+            }
+        });
+    }
     for (name, visible_columns) in [
         (ACTION_ARRANGE_WIDTH_FULL, 1),
         (ACTION_ARRANGE_WIDTH_HALF, 2),
@@ -923,7 +972,7 @@ mod tests {
 
     #[test]
     fn registry_is_unique_complete_and_typed() {
-        assert_eq!(ACTION_SPECS.len(), 55);
+        assert_eq!(ACTION_SPECS.len(), 59);
         assert_eq!(
             ACTION_SPECS
                 .iter()
@@ -991,6 +1040,13 @@ mod tests {
         assert_eq!(
             conditional,
             [
+                ("resize-pane-left", Availability::MultipleColumns),
+                ("resize-pane-right", Availability::MultipleColumns),
+                ("resize-pane-up", Availability::MultiplePanesInFocusedColumn),
+                (
+                    "resize-pane-down",
+                    Availability::MultiplePanesInFocusedColumn
+                ),
                 ("arrange-golden-wide", Availability::MultipleColumns),
                 ("arrange-golden-narrow", Availability::MultipleColumns),
                 (

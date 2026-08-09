@@ -106,12 +106,12 @@
       "swift_tests": ["ZenttyLogicTests/PaneStripStateTests.swift", "ZenttyLogicTests/PaneCommandExecutorTests.swift", "ZenttyLogicTests/MoveToWorklaneMenuBuilderTests.swift"],
       "classification": "REQUIRED_INITIAL_RELEASE",
       "origin": "PORT_PARITY",
-      "user_impact": "The structural port now provides Add Pane Left, directional focus, all source width/height arrangement presets, golden focus ratios, reset layout, stable reflow, contextual move UI, accessible pointer/arrow-key divider resizing, and persisted real-terminal geometry. Global keyboard resize commands and cross-window moves remain incomplete.",
+      "user_impact": "The structural port now provides Add Pane Left, directional focus, all source width/height arrangement presets, golden focus ratios, reset layout, stable reflow, contextual move UI, accessible pointer/arrow-key divider resizing, persisted real-terminal geometry, and all four source cell-based keyboard resize commands. Cross-window moves remain incomplete.",
       "linux_owner_issue": 4,
       "implementation_status": "PARTIAL",
       "focused_tests": ["crates/zentty-core/tests/workspace_state.rs"],
       "product_scenarios": ["linux/tests/rust-source-ux-x11", "linux/tests/rust-session-restore"],
-      "test_plan": "Complete the four global keyboard resize commands using real Ghostty cell metrics, then cover controlled Wayland pointer injection, direct-drag relaunch, cross-window moves, and source top/bottom cross-worklane focus behavior. Current controlled X11 coverage physically drags both divider axes while retaining real Ghostty PTYs; core tests prove minimum clamps and exact recipe round-trip, and the controlled Wayland restore journey covers the resulting overlay lifecycle.",
+      "test_plan": "Cover controlled Wayland physical keyboard/pointer injection, direct-drag relaunch, cross-window moves, and source top/bottom cross-worklane focus behavior. Current controlled X11 coverage physically drags both divider axes and sends all four Ctrl+Alt+Shift+Arrow cell-resize chords while retaining real Ghostty PTYs; core tests prove focused-only cell steps, adjacent-pair minimum clamps, and exact recipe round-trip, and the controlled Wayland restore journey covers the resulting overlay lifecycle.",
       "alternative_or_blocker": null
     },
     {
