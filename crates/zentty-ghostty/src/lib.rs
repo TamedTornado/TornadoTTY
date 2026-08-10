@@ -582,6 +582,17 @@ impl GhosttySurface {
         String::from_utf8(bytes).map_err(Error::InvalidText)
     }
 
+    /// Returns the process currently controlling the surface PTY.
+    #[must_use]
+    pub fn foreground_process_id(&self) -> Option<u64> {
+        // SAFETY: `self` owns a live native surface widget for the duration of
+        // this synchronous query. Zero is the native unavailable sentinel.
+        let process_id = unsafe {
+            sys::ghostty_gtk_embed_surface_foreground_process_id(self.widget.as_ptr().cast())
+        };
+        (process_id != 0).then_some(process_id)
+    }
+
     pub fn on_initialized(&self, callback: impl Fn() + 'static) {
         let handler = self.widget.connect_local("init", false, move |_| {
             callback();

@@ -8,7 +8,7 @@
     "local_fork_main_merge_base": "ac04fc276169c70d31aa6fcfc5b43fc160d6fe6e",
     "upstream_remote_tracking_ref_available": false,
     "embedding_series_base": "ac04fc276169c70d31aa6fcfc5b43fc160d6fe6e",
-    "head": "472ba70436a7f13006d24612eab7d04cce820cc9"
+    "head": "c92768fae16bff6fc849f53176c1c77813e6135a"
   },
   "diff_identity": {
     "git_object_format": "sha1",
@@ -43,25 +43,25 @@
     {
       "id": "gtk-embedding",
       "base": "ac04fc276169c70d31aa6fcfc5b43fc160d6fe6e",
-      "head": "472ba70436a7f13006d24612eab7d04cce820cc9",
-      "commit_count": 25,
+      "head": "c92768fae16bff6fc849f53176c1c77813e6135a",
+      "commit_count": 26,
       "file_count": 16,
       "hunk_count": 57,
-      "additions": 1426,
+      "additions": 1437,
       "deletions": 53,
-      "patch_sha256": "019e73bf96d65048eff8e71099ae9189b369b895280246e4eb49ee51dc6eaf51",
+      "patch_sha256": "05409461c9a620807db5c3f9cc8dbfd7972c233bedc4e3717cc9bca193609d69",
       "classification": "Complete GTK embedding implementation, downstream policy, current-upstream port, and experimental test harness."
     },
     {
       "id": "all-downstream-from-recorded-official-base",
       "base": "ac04fc276169c70d31aa6fcfc5b43fc160d6fe6e",
-      "head": "472ba70436a7f13006d24612eab7d04cce820cc9",
-      "commit_count": 25,
+      "head": "c92768fae16bff6fc849f53176c1c77813e6135a",
+      "commit_count": 26,
       "file_count": 16,
       "hunk_count": 57,
-      "additions": 1426,
+      "additions": 1437,
       "deletions": 53,
-      "patch_sha256": "019e73bf96d65048eff8e71099ae9189b369b895280246e4eb49ee51dc6eaf51",
+      "patch_sha256": "05409461c9a620807db5c3f9cc8dbfd7972c233bedc4e3717cc9bca193609d69",
       "classification": "Complete direct-fork downstream delta; identical to the GTK embedding range after obsolete inherited smooth-scroll history was removed."
     }
   ],
@@ -90,12 +90,13 @@
     {"id":"977de1e93579b30f11b837b1f400c5bcdb56da8a","subject":"Reject GTK-first embed runtime creation","partition":"gtk-embedding"},
     {"id":"a8ccbd8c0f66a2df6cd59833d61c6064a8e0ddb1","subject":"gtk: expose desktop notification signal","partition":"gtk-embedding"},
     {"id":"b992c688a680067fae8b51112d1833611136fb57","subject":"Expose embedded surface cell metrics","partition":"gtk-embedding"},
-    {"id":"472ba70436a7f13006d24612eab7d04cce820cc9","subject":"Expose embedded terminal selection reads","partition":"gtk-embedding"}
+    {"id":"472ba70436a7f13006d24612eab7d04cce820cc9","subject":"Expose embedded terminal selection reads","partition":"gtk-embedding"},
+    {"id":"c92768fae16bff6fc849f53176c1c77813e6135a","subject":"gtk: expose surface foreground process ID","partition":"gtk-embedding"}
   ],
   "files": [
     {"partition":"gtk-embedding","status":"M","path":"AGENTS.md","additions":24,"deletions":0,"hunks":1,"patch_sha256":"20b72948328b85597eaafc218b3fdc2133f1b34e935fff85e3979e00c55c15d6","purpose":"Zentty-only dogfood and qualification policy.","recommendation":"Retain downstream only; exclude from any generic patch."},
     {"partition":"gtk-embedding","status":"M","path":"build.zig","additions":141,"deletions":0,"hunks":2,"patch_sha256":"01d414d6084915685fd731b470db095f97335c1fa73774141a3e9b4f474123ab","purpose":"Build/install the shared library/header and private downstream test steps, including an opt-in focused embedding-options unit-test target.","recommendation":"Split library build/install and engine-owned embedding tests from downstream spike/Valgrind orchestration; defer final library shape."},
-    {"partition":"gtk-embedding","status":"A","path":"include/ghostty/gtk.h","additions":159,"deletions":0,"hunks":1,"patch_sha256":"309f52be8a9b1487e442b7b993c557013887dbc06a5385188aa54a94d441fd03","purpose":"Language-neutral experimental runtime/surface C ABI and contract comments, including size-versioned copied construction options, synchronous borrowed terminal-text and selection reads, and logical-pixel cell metrics.","recommendation":"Retain candidate operations only where real Rust product callers and public-boundary misuse tests prove them; keep Zentty clipboard and resize policy out of Ghostty."},
+    {"partition":"gtk-embedding","status":"A","path":"include/ghostty/gtk.h","additions":163,"deletions":0,"hunks":1,"patch_sha256":"786981d13df005add73d8cecb170b534d1332834056efa53c151a7f6e1d0e206","purpose":"Language-neutral experimental runtime/surface C ABI and contract comments, including size-versioned copied construction options, synchronous borrowed terminal-text and selection reads, logical-pixel cell metrics, and the generic PTY foreground process ID.","recommendation":"Retain candidate operations only where real Rust product callers and public-boundary misuse tests prove them; keep Zentty clipboard, SSH parsing, and resize policy out of Ghostty."},
     {"partition":"gtk-embedding","status":"M","path":"pkg/gtk4-layer-shell/build.zig","additions":5,"deletions":0,"hunks":1,"patch_sha256":"ae0bae4be85d700ebd7bb41f696aebae253ad71fba5510a785353f5a86e6e472","purpose":"Allow the pinned GTK layer-shell dependency to link in the current upstream shared-library build.","recommendation":"Retain as narrowly scoped current-upstream build plumbing while the embedding library is downstream."},
     {"partition":"gtk-embedding","status":"M","path":"src/apprt.zig","additions":4,"deletions":1,"hunks":1,"patch_sha256":"dd43eb8df1b1158adc55e7003ac73897726361c0eb482e0035b2897a13359dc3","purpose":"Select GTK app runtime for GTK library artifacts.","recommendation":"Retain only if the shared GTK embedding library remains."},
     {"partition":"gtk-embedding","status":"M","path":"src/apprt/gtk/Surface.zig","additions":1,"deletions":3,"hunks":2,"patch_sha256":"41430164420b3a3b7f4364ab4746bee4d4e27cb161b215bde20ac0b5c707ff52","purpose":"Route surface runtime access through its explicit owner instead of the default application.","recommendation":"Plausibly independent generic GTK foundation; retain for focused review."},
@@ -103,15 +104,15 @@
     {"partition":"gtk-embedding","status":"M","path":"src/apprt/gtk/class/global_shortcuts.zig","additions":13,"deletions":3,"hunks":5,"patch_sha256":"116e10b0a190b808e9f42d7a2172b2f8d900cfa6b47016d2471638db0841bcbd","purpose":"Make global-shortcut setup safe for the non-default embedding application owner.","recommendation":"Review as generic explicit-owner support, separate from Zentty policy."},
     {"partition":"gtk-embedding","status":"M","path":"src/apprt/gtk/class/surface.zig","additions":152,"deletions":42,"hunks":35,"patch_sha256":"0f19e55fa8ded9d33de0d84f79f3b1a16bf79ebd695bcf1701bfb3a1ea99cf25","purpose":"Store/ref/unref explicit application ownership, apply copied per-surface child environment overrides, replace default-application lookups, and emit language-neutral OSC progress and decoded desktop-notification signals for embedding hosts.","recommendation":"Keep both signals as small generic GTK surface contracts with exact payload documentation and engine-owned real-PTY coverage; keep host policy outside Ghostty."},
     {"partition":"gtk-embedding","status":"M","path":"src/build/SharedDeps.zig","additions":4,"deletions":2,"hunks":1,"patch_sha256":"5c5f12e45d2c99e7fce5c1e4fd64def50a5689c14138ef738dce91ceccaa7071","purpose":"Link GTK application-runtime dependencies into GTK library artifacts.","recommendation":"Keep with library build plumbing, not explicit-owner foundation."},
-    {"partition":"gtk-embedding","status":"A","path":"src/gtk_embed_lib.version-script","additions":19,"deletions":0,"hunks":1,"patch_sha256":"ff002618e53fe24217b13b62cf01031cb2c956e01a50a22a4a7529283f5d1c63","purpose":"Allowlist fourteen exports under GHOSTTY_GTK_EMBED_1.0 and hide all other implementation symbols.","recommendation":"Retain if library remains; add tests for the version node, SONAME/mismatch behavior, and platform policy."},
-    {"partition":"gtk-embedding","status":"A","path":"src/gtk_embed_lib.zig","additions":310,"deletions":0,"hunks":1,"patch_sha256":"9ab54c954b5b3ec788a6e5aeced1feb3125fbedaaa304fe179945cb8d6179fe0","purpose":"Opaque runtime implementation plus fourteen exported C functions, handle validation, copied construction options, deterministic GTK-first rejection, mutex-safe text and selection reads, and scale-correct logical cell metrics.","recommendation":"Keep terminal-owned selection and metrics product-neutral; typed argv and explicit structured constructor errors remain unimplemented."},
+    {"partition":"gtk-embedding","status":"A","path":"src/gtk_embed_lib.version-script","additions":20,"deletions":0,"hunks":1,"patch_sha256":"79fb02ecc45abdc7fcc943e68aa639f5b3e250f42c266a345faf91e292979a2e","purpose":"Allowlist fifteen exports under GHOSTTY_GTK_EMBED_1.0 and hide all other implementation symbols.","recommendation":"Retain if library remains; add tests for the version node, SONAME/mismatch behavior, and platform policy."},
+    {"partition":"gtk-embedding","status":"A","path":"src/gtk_embed_lib.zig","additions":316,"deletions":0,"hunks":1,"patch_sha256":"7cf194a8f0d5e7ddaebd968e2fa04335e39a6ba6152a09604df49ada04d7a8c9","purpose":"Opaque runtime implementation plus fifteen exported C functions, handle validation, copied construction options, deterministic GTK-first rejection, mutex-safe text and selection reads, scale-correct logical cell metrics, and a generic foreground-process query.","recommendation":"Keep terminal-owned selection, metrics, and process identity product-neutral; typed argv and explicit structured constructor errors remain unimplemented."},
     {"partition":"gtk-embedding","status":"A","path":"src/gtk_embed_options.zig","additions":68,"deletions":0,"hunks":1,"patch_sha256":"b05b8ca00c11cb6e081413373d338c3bbf1905124dc3def9ff49db4b7de04c1c","purpose":"Pure size-versioned surface-option validation and focused unit tests without compiling the full GTK embedding dependency graph.","recommendation":"Retain as narrow engine-owned contract coverage for the construction options."},
     {"partition":"gtk-embedding","status":"A","path":"src/gtk_embed_spike.valgrind.supp","additions":71,"deletions":0,"hunks":1,"patch_sha256":"78ec498786b543fc22d8e80013bb937445aac642b9bd6ad84db4971b68004e57","purpose":"Private spike suppressions for external GTK/fontconfig allocations.","recommendation":"Retain downstream test evidence only; do not mix with generic implementation."},
     {"partition":"gtk-embedding","status":"A","path":"src/gtk_embed_spike.zig","additions":423,"deletions":0,"hunks":1,"patch_sha256":"e5705302e7f1b622c9762ad79fea482f6b20b074e21bbd557a7af246cec1ae9c","purpose":"Private alternate-host probe using internal Zig APIs for lifecycle, PTY, signals, input, clipboard, OSC progress and desktop notifications, focus, resize, and scale.","recommendation":"Retain the real PTY/parser/action/progress and desktop-notification signal assertions as engine-owned behavior; keep downstream orchestration and unrelated qualification policy out of a generic patch."},
     {"partition":"gtk-embedding","status":"M","path":"src/termio/Exec.zig","additions":31,"deletions":1,"hunks":2,"patch_sha256":"47ba5b910e8de2fdbb6b998530b196573d4d5caa4adabf71649862fbd4c4188b","purpose":"Clone shell command text into subprocess ownership and add a freed-config regression test.","recommendation":"Plausibly independent generic bug fix; review separately."}
   ],
   "abi": {
-    "exported_function_count": 14,
+    "exported_function_count": 15,
     "symbol_version_node": "GHOSTTY_GTK_EMBED_1.0",
     "compatibility_fixture": {
       "historical_revision": "5c261e53539d61822754ea45de32aa798ff4bde9",
@@ -156,6 +157,7 @@
           "Surface handle parameter of ghostty_gtk_embed_surface_send_text.",
           "Surface handle parameter of ghostty_gtk_embed_surface_read_text.",
           "Surface handle parameter of ghostty_gtk_embed_surface_read_selection.",
+          "Surface handle parameter of ghostty_gtk_embed_surface_foreground_process_id.",
           "Surface handle parameter of ghostty_gtk_embed_surface_request_paste.",
           "Surface handle parameter of ghostty_gtk_embed_surface_cell_size."
         ],
@@ -432,6 +434,24 @@
         "recommendation":"Retain this single product-neutral primitive; keep clipboard and formatting policy in Zentty."
       },
       {
+        "symbol":"ghostty_gtk_embed_surface_foreground_process_id",
+        "operation":"read the process currently controlling the surface PTY",
+        "genericity":"Generic terminal-process fact from Ghostty's existing Termio foreground-process query; process-tree traversal, SSH recognition, destination parsing, polling, and presentation remain in Zentty.",
+        "thread":"GTK main thread only.",
+        "ownership":"Borrows the surface and returns a numeric PID value; no pointer or process handle crosses the boundary.",
+        "gobject_transfer":"Transfer none.",
+        "callbacks":"None.",
+        "teardown":"Null, foreign, uninitialized, or unavailable surfaces return the zero sentinel. Callers must treat a nonzero PID as transient and defend against PID reuse before consuming process metadata.",
+        "configuration":"No configuration; this is the same generic foreground PID already owned by Ghostty's terminal engine.",
+        "symbol_version":"GHOSTTY_GTK_EMBED_1.0",
+        "current_callers":["crates/zentty-ghostty/src/lib.rs foreground_process_id","crates/zentty-linux/src/application_shell/ssh_identity.rs","linux/tests/api-contract.c"],
+        "proven_current_need":"Allows Zentty to derive a live SSH destination from the process actually controlling the exact pane instead of trusting title text.",
+        "predicted_product_need":"Provides the terminal-owned identity prerequisite for explicit remote paste and transfer decisions without adding SSH policy to Ghostty.",
+        "evidence":{"positive":["real OpenSSH client transitions under controlled X11 and Wayland"],"negative":["SSH exit clears transient identity while retaining the same real pane and PTY"],"misuse":["null, foreign, and uninitialized C calls return zero"],"regression":["exact C/C++ signature, export allowlist, pinned build, and process-parser tests"]},
+        "missing_evidence":["off-main-thread call","PID namespace translation","process exit racing the native query","upstream acceptance of API shape"],
+        "recommendation":"Retain this one generic scalar query; keep process scanning, SSH semantics, reconnection, transfer, and logging policy in Zentty."
+      },
+      {
         "symbol":"ghostty_gtk_embed_surface_request_paste",
         "operation":"request standard GTK clipboard paste",
         "genericity":"Generic clipboard action, currently driven only by qualification orchestration.",
@@ -459,7 +479,7 @@
       {"name":"GtkWidget allocation/focus","current_use":"resize and active-surface observation","abi_status":"Generic GTK behavior on returned widget"}
     ],
     "version_policy_gaps": [
-      "The version script assigns all fourteen exports to GHOSTTY_GTK_EMBED_1.0, but linux/tests/abi-surface strips @version suffixes and therefore does not verify the node.",
+      "The version script assigns all fifteen exports to GHOSTTY_GTK_EMBED_1.0, but linux/tests/abi-surface strips @version suffixes and therefore does not verify the node.",
       "The SONAME is unversioned libghostty-gtk-embed.so.",
       "There is no compile-time ABI macro or runtime version/query symbol, so an old/new mismatch cannot be rejected before unsafe calls.",
       "No symbol-node evolution or deprecation policy is documented.",
@@ -467,7 +487,7 @@
     ]
   },
   "rust_binding": {
-    "declared_function_count": 11,
+    "declared_function_count": 12,
     "excluded_exports": [
       {"symbol":"ghostty_gtk_embed_runtime_new","reason":"The product always selects an explicit typed async backend; only the retired C probe uses this convenience constructor."},
       {"symbol":"ghostty_gtk_embed_surface_new","reason":"The product requires copied CWD and per-pane environment options; only the retired C probe uses the legacy constructor."},
@@ -485,6 +505,7 @@
       {"symbol":"ghostty_gtk_embed_surface_cell_size","safe_owner":{"path":"crates/zentty-ghostty/src/lib.rs","needle":"sys::ghostty_gtk_embed_surface_cell_size"},"product_callers":[{"path":"crates/zentty-linux/src/application_shell.rs","needle":".cell_size()"}],"real_journeys":["linux/tests/rust-source-ux-x11"]},
       {"symbol":"ghostty_gtk_embed_surface_read_text","safe_owner":{"path":"crates/zentty-ghostty/src/lib.rs","needle":"sys::ghostty_gtk_embed_surface_read_text"},"product_callers":[{"path":"crates/zentty-linux/src/application_shell/tmux_runtime.rs","needle":"read_text(TextExtent::Screen)"}],"real_journeys":["linux/tests/rust-tmux-compat-product"]}
       ,{"symbol":"ghostty_gtk_embed_surface_read_selection","safe_owner":{"path":"crates/zentty-ghostty/src/lib.rs","needle":"sys::ghostty_gtk_embed_surface_read_selection"},"product_callers":[{"path":"crates/zentty-linux/src/application_shell/clipboard_actions.rs","needle":"surface.read_selection()"}],"real_journeys":["linux/tests/rust-pane-search"]}
+      ,{"symbol":"ghostty_gtk_embed_surface_foreground_process_id","safe_owner":{"path":"crates/zentty-ghostty/src/lib.rs","needle":"sys::ghostty_gtk_embed_surface_foreground_process_id"},"product_callers":[{"path":"crates/zentty-linux/src/application_shell/ssh_identity.rs","needle":"zentty_ghostty::GhosttySurface::foreground_process_id"}],"real_journeys":["linux/tests/rust-session-restore"]}
     ],
     "callback_owners": [
       {"safe_owner":{"path":"crates/zentty-ghostty/src/lib.rs","needle":"pub fn on_initialized"},"product_caller":{"path":"crates/zentty-linux/src/application_shell/pane_runtime.rs","needle":"surface.on_initialized"},"real_journey":"linux/tests/rust-closed-pane-restore"},
@@ -495,7 +516,7 @@
   },
   "proposed_matrix_cells": [
     {"id":"ghostty-api-audit-inventory","requirement_id":"ZL-11-GHOSTTY-API-AUDIT","test_id":"TEST-GHOSTTY-API-AUDIT","integration_owner":"#11 implementation owner registers the mapping in #12 traceability before adding the matrix row.","purpose":"Validate exact bases/ranges, every normalized file patch hash/hunk count, and the header/Zig/version-script symbol allowlist.","status_proposal":"PASS","claim":"Static inventory identity only; no runtime, ABI compatibility, product, or qualification claim.","command":"GHOSTTY_SOURCE_DIR=/path/to/pinned/ghostty linux/tests/ghostty-api-audit --self-test"},
-    {"id":"ghostty-abi-version-node","requirement_id":"ZL-11-GHOSTTY-ABI-COMPAT","test_id":"TEST-GHOSTTY-ABI-VERSION","integration_owner":"#11 ABI owner and #12 traceability/matrix owner.","purpose":"Assert all and only fourteen public exports carry the intended version node.","status_proposal":"PASS"},
+    {"id":"ghostty-abi-version-node","requirement_id":"ZL-11-GHOSTTY-ABI-COMPAT","test_id":"TEST-GHOSTTY-ABI-VERSION","integration_owner":"#11 ABI owner and #12 traceability/matrix owner.","purpose":"Assert all and only fifteen public exports carry the intended version node.","status_proposal":"PASS"},
     {"id":"ghostty-async-backend-abi-representation","requirement_id":"ZL-11-GHOSTTY-ABI-COMPAT","test_id":"TEST-GHOSTTY-ASYNC-BACKEND-ABI","integration_owner":"#11 ABI owner supplies the fixed representation; #13 sys-binding owner supplies Rust proof; #12 owns the reconciled matrix row.","purpose":"Deterministically reject stale generated-header drift, then compile the pinned source header as C17 and C++17 with default flags and -fshort-enums and report the public enum size.","status_proposal":"XFAIL","tracking":"DOGFOOD-2026-08-02-GHOSTTY-ASYNC-ENUM-ABI","command":"linux/tests/ghostty-async-backend-abi-test && linux/tests/ghostty-async-backend-abi","expected_exit":99,"prerequisite_exit":77,"defect":"Current public C enum versus Zig c_int is representation-unsafe under -fshort-enums.","evidence_scope":"Reproduces the C/C++ header representation change only; it makes no real-library call, Rust-layout, or Rust-call claim.","repair_acceptance_status":"NOT_IMPLEMENTED","repair_acceptance":"After fixing the public representation, prove C17, C++17, and raw Rust size/alignment and real-library call behavior with default and -fshort-enums modes before converting this cell to PASS."},
     {"id":"ghostty-runtime-initialization-order","requirement_id":"ZL-11-GHOSTTY-API-AUDIT","test_id":"TEST-GHOSTTY-RUNTIME-INIT-ORDER","integration_owner":"#11 API-audit owner defines failure behavior; #13 safe-adapter owner encodes it; #12 owner maps the proposed test into its existing grammar.","purpose":"In fresh processes under X11 and Wayland, prove the runtime is created before gtk_init/any GTK object and that reversed order fails safely and actionably.","status_proposal":"PASS"},
     {"id":"rust-ghostty-api-product-usage","requirement_id":"ZL-13-RUST-GHOSTTY-ADAPTER","test_id":"TEST-RUST-GHOSTTY-PRODUCT-USAGE","integration_owner":"#13 adapter owner with #11/#5 review owners and #12 traceability owner.","purpose":"Trace every retained operation to a real zentty-ghostty safe-wrapper and zentty-linux caller.","status_proposal":"PASS"},

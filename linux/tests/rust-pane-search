@@ -511,7 +511,6 @@ wait_for_count_greater \
 # total=3 proves exclusion. Navigate back to searched pane 3, close it through
 # the real palette command, then require reconciliation to total=2 without
 # admitting pane 4.
-frozen_total_before="$(grep -Fc 'zentty-linux: global-find-state visible=true remembered=true selected=Some(0) total=3' "${log}" || true)"
 press_ctrl_shift p
 split_right_query_before="$(grep -Fc 'zentty-linux: command-palette=query value="Split Right" results=1' "${log}" || true)"
 type_text 'Split Right'
@@ -522,16 +521,12 @@ wait_for_count_greater \
 press_key Return
 wait_for_fixed 'zentty-linux: terminal-ready-pane=pane-4' \
     "creating a pane during Global Find did not produce a fourth real PTY"
-wait_for_count_greater \
-    'zentty-linux: global-find-state visible=true remembered=true selected=Some(0) total=3' \
-    "${frozen_total_before}" \
-    "a newly created pane changed the frozen Global Find total"
 selected_one_before="$(grep -Fc 'zentty-linux: global-find-state visible=true remembered=true selected=Some(1) total=3' "${log}" || true)"
 press_key Return
 wait_for_count_greater \
     'zentty-linux: global-find-state visible=true remembered=true selected=Some(1) total=3' \
     "${selected_one_before}" \
-    "Global Find did not return from the new pane to its searched selection anchor"
+    "Global Find admitted the new pane or did not return to its searched selection anchor"
 selected_two_before="$(grep -Fc 'zentty-linux: global-find-state visible=true remembered=true selected=Some(2) total=3' "${log}" || true)"
 press_key Return
 wait_for_count_greater \

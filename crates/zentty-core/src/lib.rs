@@ -16,6 +16,7 @@ mod pane_layout;
 mod pane_token_registry;
 mod session_restore_store;
 mod sidebar_width;
+mod ssh_identity;
 mod workspace_recipe;
 mod workspace_state;
 
@@ -41,6 +42,7 @@ pub use session_restore_store::{
     SessionRestoreStoreError, SnapshotPersistence,
 };
 pub use sidebar_width::SidebarWidthPreference;
+pub use ssh_identity::{SshDestination, parse_ssh_destination};
 pub use workspace_recipe::{
     AgentLaunchSnapshot, ColumnRecipe, PaneRecipe, PaneRestoreDraft, RestoreDraftKind, SaveReason,
     SessionRestoreDraftWindow, SessionRestoreEnvelope, WindowFrame, WindowRecipe, WorklaneRecipe,

@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+
+# One unprivileged, loopback-only OpenSSH server for real product journeys.
+# The caller owns its trap and must invoke zentty_disposable_sshd_stop.
+
+zentty_disposable_sshd_start() {
+    local username candidate
+    for dependency in ssh ssh-keygen sshd mktemp; do
+        command -v "${dependency}" >/dev/null || {
+            echo "disposable-sshd: ${dependency} is required" >&2
+            return 1
+        }
+    done
+    [[ -z "${ZENTTY_DISPOSABLE_SSHD_PID:-}" ]] || {
+        echo "disposable-sshd: server is already owned by this actor" >&2
+        return 1
+    }
+
+    username="$(id -un)"
+    [[ "${username}" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]] || {
+        echo "disposable-sshd: unsafe local username" >&2
+        return 1
+    }
+    ZENTTY_DISPOSABLE_SSHD_ROOT="$(mktemp -d)"
+    chmod 700 "${ZENTTY_DISPOSABLE_SSHD_ROOT}"
+    ssh-keygen -q -t ed25519 -N '' -f "${ZENTTY_DISPOSABLE_SSHD_ROOT}/host-key"
+    ssh-keygen -q -t ed25519 -N '' -f "${ZENTTY_DISPOSABLE_SSHD_ROOT}/client-key"
+    cp "${ZENTTY_DISPOSABLE_SSHD_ROOT}/client-key.pub" \
+        "${ZENTTY_DISPOSABLE_SSHD_ROOT}/authorized-keys"
+
+    candidate=$((30000 + $$ % 20000))
+    ZENTTY_DISPOSABLE_SSHD_PORT="${candidate}"
+
+    cat >"${ZENTTY_DISPOSABLE_SSHD_ROOT}/sshd-config" <<EOF
+Port ${ZENTTY_DISPOSABLE_SSHD_PORT}
+ListenAddress 127.0.0.1
+HostKey ${ZENTTY_DISPOSABLE_SSHD_ROOT}/host-key
+AuthorizedKeysFile ${ZENTTY_DISPOSABLE_SSHD_ROOT}/authorized-keys
+PidFile ${ZENTTY_DISPOSABLE_SSHD_ROOT}/pid
+StrictModes no
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+ChallengeResponseAuthentication no
+UsePAM no
+PermitRootLogin no
+AllowUsers ${username}
+AllowTcpForwarding no
+X11Forwarding no
+PermitTunnel no
+GatewayPorts no
+LogLevel VERBOSE
+EOF
+    cat >"${ZENTTY_DISPOSABLE_SSHD_ROOT}/remote-actor" <<'EOF'
+#!/bin/sh
+printf '\033]2;ssh-remote-ready\007'
+IFS= read -r _
+EOF
+    chmod 700 "${ZENTTY_DISPOSABLE_SSHD_ROOT}/remote-actor"
+
+    /usr/sbin/sshd -D -e -f "${ZENTTY_DISPOSABLE_SSHD_ROOT}/sshd-config" \
+        >"${ZENTTY_DISPOSABLE_SSHD_ROOT}/server.log" 2>&1 &
+    ZENTTY_DISPOSABLE_SSHD_PID=$!
+    ZENTTY_DISPOSABLE_SSH_TARGET="${username}@127.0.0.1"
+    ZENTTY_DISPOSABLE_SSH_OPTIONS=(
+        -F /dev/null
+        -o BatchMode=yes
+        -o ConnectTimeout=1
+        -o StrictHostKeyChecking=no
+        -o UserKnownHostsFile=/dev/null
+        -o IdentitiesOnly=yes
+        -i "${ZENTTY_DISPOSABLE_SSHD_ROOT}/client-key"
+        -p "${ZENTTY_DISPOSABLE_SSHD_PORT}"
+    )
+    local authenticated=false
+    for _ in {1..200}; do
+        if ssh "${ZENTTY_DISPOSABLE_SSH_OPTIONS[@]}" \
+            "${ZENTTY_DISPOSABLE_SSH_TARGET}" true \
+            >/dev/null 2>"${ZENTTY_DISPOSABLE_SSHD_ROOT}/client.log"; then
+            authenticated=true
+            break
+        fi
+        if ! kill -0 "${ZENTTY_DISPOSABLE_SSHD_PID}" 2>/dev/null; then
+            cat "${ZENTTY_DISPOSABLE_SSHD_ROOT}/server.log" >&2
+            echo "disposable-sshd: server exited before listening" >&2
+            return 1
+        fi
+        sleep 0.05
+    done
+    [[ "${authenticated}" == true ]] || {
+        cat "${ZENTTY_DISPOSABLE_SSHD_ROOT}/client.log" >&2
+        echo "disposable-sshd: key-authenticated loopback proof failed" >&2
+        return 1
+    }
+    ZENTTY_DISPOSABLE_SSH_LAUNCHER="${ZENTTY_DISPOSABLE_SSHD_ROOT}/connect"
+    cat >"${ZENTTY_DISPOSABLE_SSH_LAUNCHER}" <<EOF
+#!/bin/sh
+exec ssh -F /dev/null -o batchmode=yes -o connecttimeout=1 \
+    -o stricthostkeychecking=no -o userknownhostsfile=/dev/null \
+    -o identitiesonly=yes -i '${ZENTTY_DISPOSABLE_SSHD_ROOT}/client-key' \
+    -p '${ZENTTY_DISPOSABLE_SSHD_PORT}' '${ZENTTY_DISPOSABLE_SSH_TARGET}' \
+    '${ZENTTY_DISPOSABLE_SSHD_ROOT}/remote-actor'
+EOF
+    chmod 700 "${ZENTTY_DISPOSABLE_SSH_LAUNCHER}"
+    export ZENTTY_DISPOSABLE_SSHD_ROOT ZENTTY_DISPOSABLE_SSHD_PID
+    export ZENTTY_DISPOSABLE_SSHD_PORT ZENTTY_DISPOSABLE_SSH_TARGET
+    export ZENTTY_DISPOSABLE_SSH_LAUNCHER
+}
+
+zentty_disposable_sshd_stop() {
+    if [[ "${ZENTTY_DISPOSABLE_SSHD_PID:-}" =~ ^[1-9][0-9]*$ ]]; then
+        kill -TERM "${ZENTTY_DISPOSABLE_SSHD_PID}" 2>/dev/null || true
+        wait "${ZENTTY_DISPOSABLE_SSHD_PID}" 2>/dev/null || true
+    fi
+    [[ -z "${ZENTTY_DISPOSABLE_SSHD_ROOT:-}" ]] ||
+        rm -rf -- "${ZENTTY_DISPOSABLE_SSHD_ROOT}"
+    ZENTTY_DISPOSABLE_SSHD_PID=""
+    ZENTTY_DISPOSABLE_SSHD_ROOT=""
+}

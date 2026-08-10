@@ -200,7 +200,7 @@ for _ in $(seq 1 100); do
     grep -Fxq 'zentty-linux: title-pane=pane-1 value=focus:renamed-focus' "${log}" && break
     sleep 0.05
 done
-grep -Fxq 'zentty-linux: pane-display id=pane-1 label="Pointer Named" custom=true' "${log}" ||
+grep -Fxq 'zentty-linux: pane-display id=pane-1 label-present=true custom=true' "${log}" ||
     fail "a later real PTY title overwrote the durable pane identity"
 
 # Reopen the same real pane menu and activate Split Right, now correctly

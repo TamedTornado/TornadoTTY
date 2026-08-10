@@ -80,6 +80,7 @@ unsafe extern "C" {
         callback: Option<GhosttyGtkEmbedTextCallback>,
         userdata: *mut c_void,
     ) -> bool;
+    pub fn ghostty_gtk_embed_surface_foreground_process_id(surface: *mut GtkWidget) -> u64;
 }
 
 #[cfg(test)]

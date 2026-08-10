@@ -2,7 +2,7 @@
   "schema_version": 1,
   "contract_id": "zentty-application-shell-responsibilities",
   "source": "crates/zentty-linux/src/application_shell.rs",
-  "source_sha256": "4d2cec9784641e79fa7331ffc6b028202321a7d5bee91d9d9b3eea57c53160c7",
+  "source_sha256": "bd369afdec4ea9cd5c6f1a7472f29f075b41652a5cde1c38649504c64570a0ee",
   "owned_source_sha256": {
     "crates/zentty-linux/src/main.rs": "625521ffb056cc95ea5fe131464e4cfabf566595f2aa1ec10e4964e7fb6f60dd",
     "crates/zentty-linux/src/application.rs": "c107efc7c02b8ec34ba22695c89ac706b06ed701df520301cf2e12d6929d8b86",
@@ -14,6 +14,7 @@
     "crates/zentty-linux/src/application_shell/agent_events.rs": "56c45836a4e6a6a929dce61251a199c0b8dec7a62edbcda3c9b5dd594dbb6038",
     "crates/zentty-linux/src/application_shell/global_search.rs": "98a1963830af8616b31da2558ae6f27c4461342ef3085f6ef9cda0863a1ddc7c",
     "crates/zentty-linux/src/application_shell/pane_runtime.rs": "eeee12a63624210a88c96695e32a790a7663c2d139123502afd4717fe3c473e2",
+    "crates/zentty-linux/src/application_shell/ssh_identity.rs": "45c35067dceb742d2edca4988a14a56c63599e4a80a2ea820b18fc13cad2a167",
     "crates/zentty-linux/src/application_shell/tmux_runtime.rs": "b606ec1c2e8c93e1ab40dbac1e5080f28315352e83533d7c63ba7eefd95d0515",
     "crates/zentty-linux/src/pane_dividers.rs": "dc86023846057e7d3338f142c13d52f4dfde9e3057c33055d527587b7e638d7d",
     "crates/zentty-linux/src/persistence_coordinator.rs": "9c9b24a8516032e37377b6acfba3549781cfc830a65f53d7a311f0b2efaa72a4",
@@ -64,6 +65,13 @@
       "planned_module": "crates/zentty-linux/src/application_shell/global_search.rs",
       "tracking": "GH-34",
       "responsibility": "The sole window-local bridge from pure Global Find policy to existing Ghostty search sessions, GLib debounce, exact workspace selection, and numeric GTK projection."
+    },
+    {
+      "id": "ssh_identity_coordinator",
+      "status": "existing",
+      "planned_module": "crates/zentty-linux/src/application_shell/ssh_identity.rs",
+      "tracking": "GH-17",
+      "responsibility": "The sole window-local projection from each Ghostty surface foreground process through bounded Linux process-tree inspection to transient SSH identity; owns one cancellable GLib polling source, at most one GLib/GIO blocking-pool probe, and no persistence or reconnection policy."
     },
     {
       "id": "clipboard_coordinator",
@@ -122,6 +130,10 @@
     {
       "owner": "global_search_coordinator",
       "fields": ["global_search", "global_search_generation"]
+    },
+    {
+      "owner": "ssh_identity_coordinator",
+      "fields": ["ssh_probe_source", "ssh_probe_in_flight"]
     },
     {
       "owner": "persistence_coordinator",
@@ -249,6 +261,10 @@
       "update_global_find_query", "navigate_global_find", "handle_global_search_state",
       "render_global_search", "apply_global_search_effects"
     ],
+    "ssh_identity_coordinator": [
+      "install", "apply_observations", "probe_ssh_destination", "probe_ssh_destination_at",
+      "probe_process", "process_tree", "read_bounded", "read_start_time"
+    ],
     "clipboard_coordinator": ["copy_focused_selection"],
     "persistence_coordinator": [
       "clean_exit_decision", "complete_launch", "default_state_directory", "drain_errors",
@@ -352,6 +368,7 @@
     "agent_ipc_transport": {"owner":"application_runtime","maximum_instances_per_process":1},
     "agent_event_projection": {"owner":"agent_event_coordinator","maximum_instances_per_window":1},
     "global_search_state": {"owner":"global_search_coordinator","maximum_instances_per_window":1},
+    "ssh_identity_projection": {"owner":"ssh_identity_coordinator","maximum_instances_per_window":1},
     "standard_clipboard_projection": {"owner":"clipboard_coordinator","maximum_instances_per_window":1},
     "tmux_compatibility_state": {"owner":"existing_tmux_coordinator","maximum_instances_per_window":1},
     "glib_scheduling": {"owner":"application_runtime","kind":"default-glib-main-context","maximum_instances_per_process":1}

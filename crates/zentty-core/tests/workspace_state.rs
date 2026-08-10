@@ -7,6 +7,34 @@ use zentty_core::{
 const V3_ENVELOPE: &[u8] = include_bytes!("fixtures/session-restore-v3.json");
 
 #[test]
+fn live_ssh_identity_is_presentational_customizable_and_never_persisted() {
+    let mut state = WorkspaceState::new("worklane-a", "pane-a");
+    assert!(state.set_pane_ssh_connection_label("pane-a", Some(" deploy@example.test ")));
+    assert_eq!(
+        state.sidebar_summaries()[0].pane_rows[0].primary_text,
+        "deploy@example.test"
+    );
+    assert!(!state.set_pane_ssh_connection_label("pane-a", Some("deploy@example.test")));
+
+    assert!(state.set_pane_custom_title("pane-a", Some("Production")));
+    assert_eq!(
+        state.sidebar_summaries()[0].pane_rows[0].primary_text,
+        "Production"
+    );
+
+    let recipe = state.to_window_recipe(&WindowRecipe {
+        id: "window-a".to_owned(),
+        frame: None,
+        worklanes: Vec::new(),
+        active_worklane_id: None,
+    });
+    let restored = WorkspaceState::from_window_recipe(&recipe).expect("restore recipe");
+    assert_eq!(restored.pane("pane-a").unwrap().ssh_connection_label, None);
+    assert!(!state.set_pane_ssh_connection_label("missing", Some("host")));
+    assert!(state.set_pane_ssh_connection_label("pane-a", None));
+}
+
+#[test]
 fn real_terminal_titles_reconcile_agent_state_used_by_sidebar_summaries() {
     let mut state = WorkspaceState::new("worklane-a", "pane-a");
     state.apply_agent_event(

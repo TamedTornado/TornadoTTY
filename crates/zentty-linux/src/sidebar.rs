@@ -814,9 +814,9 @@ fn update_pane_metadata(sidebar: &gtk::Box, pane: &zentty_core::SidebarPaneSumma
         );
     }
     eprintln!(
-        "zentty-linux: pane-display id={} label={:?} custom={}",
+        "zentty-linux: pane-display id={} label-present={} custom={}",
         pane.pane_id,
-        pane.primary_text,
+        !pane.primary_text.is_empty(),
         pane.custom_title.is_some()
     );
     let Some(select) = row

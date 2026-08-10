@@ -32,6 +32,7 @@ using SurfaceSelectionReader = bool (*) (
     ghostty_gtk_embed_text_callback_t,
     void *
 );
+using SurfaceForegroundProcessReader = std::uint64_t (*)(GtkWidget *);
 
 static_assert(std::is_same_v<
     decltype(&ghostty_gtk_embed_runtime_new),
@@ -61,4 +62,8 @@ static_assert(std::is_same_v<
 static_assert(std::is_same_v<
     decltype(&ghostty_gtk_embed_surface_read_selection),
     SurfaceSelectionReader
+>);
+static_assert(std::is_same_v<
+    decltype(&ghostty_gtk_embed_surface_foreground_process_id),
+    SurfaceForegroundProcessReader
 >);

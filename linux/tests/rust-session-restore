@@ -18,6 +18,8 @@ product_args=()
 
 # shellcheck source=linux/tests/lib/product-input
 source "${repo_root}/linux/tests/lib/product-input"
+# shellcheck source=linux/tests/lib/disposable-sshd
+source "${repo_root}/linux/tests/lib/disposable-sshd"
 
 fail() {
     [[ -z "${log}" || ! -f "${log}" ]] || cat "${log}" >&2
@@ -31,6 +33,7 @@ cleanup() {
         kill -TERM "${product_pid}" 2>/dev/null || true
         wait "${product_pid}" 2>/dev/null || true
     fi
+    zentty_disposable_sshd_stop
     [[ -z "${state_dir}" ]] || rm -rf -- "${state_dir}"
     [[ -z "${fake_bin}" ]] || rm -rf -- "${fake_bin}"
     [[ -z "${log}" ]] || rm -f -- "${log}"
@@ -50,7 +53,7 @@ case "${backend}" in
         ;;
     *) fail "GDK_BACKEND must be x11 or wayland" ;;
 esac
-for dependency in jq readelf timeout mktemp grep sed pgrep; do
+for dependency in jq readelf timeout mktemp grep sed pgrep cut tail; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
 [[ -x "${product}" ]] || fail "staged product is not built: ${product}"
@@ -205,6 +208,48 @@ assert_background_start() {
 start_product
 assert_background_start 2
 zentty_product_prepare_input "${backend}" "${log}" || fail "could not prepare physical input"
+
+# The active restored pane opens a real OpenSSH client through the real PTY to
+# an independently authenticated, loopback-only daemon. The server fixture is
+# outside the product and the pane receives only physical compositor input.
+zentty_disposable_sshd_start || fail "could not start disposable loopback SSH server"
+ln -s "${ZENTTY_DISPOSABLE_SSH_LAUNCHER}" "${fake_bin}/zentty-ssh-fixture"
+ssh_remote_before="$(grep -Fc 'zentty-linux: ssh-identity pane=pane-shell-active state=remote' "${log}" || true)"
+zentty_product_type "${backend}" zentty-ssh-fixture
+zentty_product_key "${backend}" Return
+zentty_product_wait_for_log "${log}" \
+    'zentty-linux: title-pane=pane-shell-active value=ssh-remote-ready' \
+    "remote command did not execute through the real SSH session" ||
+    fail "remote SSH PTY evidence missing"
+zentty_product_wait_for_log_count "${log}" \
+    'zentty-linux: ssh-identity pane=pane-shell-active state=remote' \
+    "$((ssh_remote_before + 1))" \
+    "live foreground SSH process did not project remote identity" ||
+    fail "remote SSH identity receipt missing"
+remote_identity_line="$(grep -Fn 'zentty-linux: ssh-identity pane=pane-shell-active state=remote' "${log}" | tail -1 | cut -d: -f1)"
+[[ "${remote_identity_line}" =~ ^[1-9][0-9]*$ ]] || fail "remote SSH identity line is malformed"
+tail -n "+${remote_identity_line}" "${log}" |
+    grep -Fq 'zentty-linux: pane-display id=pane-shell-active label-present=true custom=false' ||
+    fail "remote SSH identity did not reach the rendered pane/sidebar presentation"
+terminal_ready_before="$(grep -Fc 'zentty-linux: terminal-ready-pane=pane-shell-active' "${log}" || true)"
+ssh_local_before="$(grep -Fc 'zentty-linux: ssh-identity pane=pane-shell-active state=local' "${log}" || true)"
+zentty_product_type "${backend}" leave
+zentty_product_key "${backend}" Return
+zentty_product_wait_for_log_count "${log}" \
+    'zentty-linux: ssh-identity pane=pane-shell-active state=local' \
+    "$((ssh_local_before + 1))" \
+    "SSH exit did not clear transient remote identity" ||
+    fail "local SSH identity receipt missing"
+zentty_product_type "${backend}" "printf '\\033]2;ssh-local-ready\\007'"
+zentty_product_key "${backend}" Return
+zentty_product_wait_for_log "${log}" \
+    'zentty-linux: title-pane=pane-shell-active value=ssh-local-ready' \
+    "the original local shell did not resume after SSH exit" ||
+    fail "local shell continuation evidence missing"
+[[ "$(grep -Fc 'zentty-linux: terminal-ready-pane=pane-shell-active' "${log}" || true)" -eq "${terminal_ready_before}" ]] ||
+    fail "SSH identity transition recreated the pane or PTY"
+zentty_disposable_sshd_stop
+
 zentty_product_ctrl_key "${backend}" Page_Up
 zentty_product_ctrl_key "${backend}" Page_Up
 zentty_product_wait_for_log "${log}" \
@@ -460,4 +505,4 @@ wait_for_product_exit
 jq -e '.reason == "cleanExit" and .workspace.windows[0].worklanes[0].columns[0].panes[0].id == "pane-1"' \
     "${snapshot}" >/dev/null || fail "corrupt-state fallback did not publish a valid clean snapshot"
 
-echo "Rust session restore passed: ${backend}, journey=one-consolidated, agents=two-background, input=physical, scrollback=exact, relaunch=clean, cancellation=command-palette, live-debounce=real, crash=SIGKILL, corrupt=fresh-workspace"
+echo "Rust session restore passed: ${backend}, journey=one-consolidated, ssh=real-loopback-transient, agents=two-background, input=physical, scrollback=exact, relaunch=clean, cancellation=command-palette, live-debounce=real, crash=SIGKILL, corrupt=fresh-workspace"

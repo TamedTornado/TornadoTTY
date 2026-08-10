@@ -64,6 +64,9 @@ pub struct PaneState {
     pub live_title: String,
     pub working_directory: Option<String>,
     pub last_run_command: Option<String>,
+    /// Live process-derived identity. This is deliberately excluded from the
+    /// workspace recipe and must be reprobed after restore.
+    pub ssh_connection_label: Option<String>,
 }
 
 impl PaneState {
@@ -74,12 +77,16 @@ impl PaneState {
             live_title: "shell".to_owned(),
             working_directory: None,
             last_run_command: None,
+            ssh_connection_label: None,
         }
     }
 
     #[must_use]
     pub fn display_title(&self) -> &str {
-        self.custom_title.as_deref().unwrap_or(&self.live_title)
+        self.custom_title
+            .as_deref()
+            .or(self.ssh_connection_label.as_deref())
+            .unwrap_or(&self.live_title)
     }
 
     fn from_recipe(recipe: &PaneRecipe) -> Self {
@@ -99,6 +106,7 @@ impl PaneState {
                 .to_owned(),
             working_directory: recipe.working_directory.clone(),
             last_run_command: recipe.last_run_command.clone(),
+            ssh_connection_label: None,
         }
     }
 }
@@ -1526,6 +1534,27 @@ impl WorkspaceState {
         true
     }
 
+    pub fn set_pane_ssh_connection_label(&mut self, pane_id: &str, label: Option<&str>) -> bool {
+        let Some(pane) = self
+            .worklanes
+            .iter_mut()
+            .flat_map(|worklane| &mut worklane.columns)
+            .flat_map(|column| &mut column.panes)
+            .find(|pane| pane.id == pane_id)
+        else {
+            return false;
+        };
+        let label = label
+            .map(str::trim)
+            .filter(|label| !label.is_empty())
+            .map(str::to_owned);
+        if pane.ssh_connection_label == label {
+            return false;
+        }
+        pane.ssh_connection_label = label;
+        true
+    }
+
     /// Records the source launch context on one durable pane without changing
     /// focus or topology. Transient terminal creation remains owned by the
     /// platform runtime coordinator.
@@ -2164,6 +2193,7 @@ impl WorkspaceState {
         let target_worklane_id = self.worklanes[target_worklane_index].id.clone();
         let mut pane = entry.pane;
         pane.id.clone_from(&new_pane_id);
+        pane.ssh_connection_label = None;
 
         let existing_column_index = self.worklanes[target_worklane_index]
             .columns

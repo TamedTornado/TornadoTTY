@@ -42,6 +42,7 @@ mod agent_events;
 mod clipboard_actions;
 mod global_search;
 mod pane_runtime;
+mod ssh_identity;
 mod tmux_runtime;
 
 use action_router::{
@@ -68,6 +69,21 @@ use pane_runtime::DetachedPaneRuntime;
 use pane_runtime::PaneRuntimeCoordinator;
 const PRIMARY_RIGHT_BEHAVIOR: PaneRightInsertionBehavior = PaneRightInsertionBehavior::VisibleSplit;
 const WORKLANE_PEEK_TAB_HOLD_THRESHOLD: Duration = Duration::from_millis(200);
+type SidebarTrackingState = (Rc<Cell<i32>>, Rc<Cell<bool>>, Rc<Cell<u64>>);
+
+fn install_shell_styles() {
+    sidebar::install_styles();
+    pane_controls::install_styles();
+    pane_dividers::install_styles();
+}
+
+fn sidebar_tracking_state() -> SidebarTrackingState {
+    (
+        Rc::new(Cell::new(SidebarWidthPreference::DEFAULT)),
+        Rc::new(Cell::new(false)),
+        Rc::new(Cell::new(0)),
+    )
+}
 
 pub(crate) struct ApplicationRuntimes {
     pub(crate) ghostty: GhosttyRuntime,
@@ -108,6 +124,8 @@ pub(crate) struct ApplicationShell {
     global_search_view: GlobalSearchView,
     global_search: GlobalSearchCoordinator,
     global_search_generation: u64,
+    ssh_probe_source: Option<glib::SourceId>,
+    ssh_probe_in_flight: bool,
     last_pane_viewport_height: Cell<i32>,
     action_router: Option<ActionRouter>,
     agent_events: AgentEventCoordinator,
@@ -151,9 +169,7 @@ impl ApplicationShell {
         fresh_window_id: &str,
         deferred_live_pane_id: Option<&str>,
     ) -> Result<Rc<RefCell<Self>>, String> {
-        sidebar::install_styles();
-        pane_controls::install_styles();
-        pane_dividers::install_styles();
+        install_shell_styles();
         let ShellWidgets {
             window,
             chrome,
@@ -178,9 +194,8 @@ impl ApplicationShell {
             AgentEventCoordinator::start(window_template.id.clone(), Rc::clone(&runtimes.agent));
         let (next_worklane_number, next_pane_number) = next_workspace_identities(&state);
         let initial_pane_ids = workspace_pane_ids(&state);
-        let preferred_sidebar_width = Rc::new(Cell::new(SidebarWidthPreference::DEFAULT));
-        let adjusting_sidebar_width = Rc::new(Cell::new(false));
-        let sidebar_reveal_generation = Rc::new(Cell::new(0));
+        let (preferred_sidebar_width, adjusting_sidebar_width, sidebar_reveal_generation) =
+            sidebar_tracking_state();
         let shell = Rc::new(RefCell::new(Self {
             window,
             chrome,
@@ -215,6 +230,8 @@ impl ApplicationShell {
             global_search_view,
             global_search: GlobalSearchCoordinator::default(),
             global_search_generation: 0,
+            ssh_probe_source: None,
+            ssh_probe_in_flight: false,
             last_pane_viewport_height: Cell::new(0),
             action_router: None,
             agent_events,
@@ -226,6 +243,7 @@ impl ApplicationShell {
             self_handle: RefCell::new(Weak::new()),
         }));
         shell.borrow().self_handle.replace(Rc::downgrade(&shell));
+        shell.borrow_mut().ssh_probe_source = Some(ssh_identity::install(&shell));
         install_sidebar_width_tracking(
             &body,
             &shell.borrow().sidebar_scroll,
@@ -444,6 +462,9 @@ impl ApplicationShell {
 
     pub(crate) fn detach_and_close(&mut self) {
         self.shutting_down = true;
+        if let Some(source) = self.ssh_probe_source.take() {
+            source.remove();
+        }
         // A deferred pane belongs to a cross-window transfer but is not yet
         // owned by this shell. Only revoke capabilities for live runtimes this
         // shell actually owns, or a failed adoption would strand the source

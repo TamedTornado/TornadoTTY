@@ -72,6 +72,8 @@ static int reject_null_and_foreign_handles(void) {
             count_text_callbacks,
             &text_callbacks
         ) ||
+        ghostty_gtk_embed_surface_foreground_process_id(NULL) != 0 ||
+        ghostty_gtk_embed_surface_foreground_process_id(foreign_surface) != 0 ||
         ghostty_gtk_embed_surface_request_paste(NULL) ||
         ghostty_gtk_embed_surface_request_paste(foreign_surface)) {
         fputs("api-contract: null or foreign surface accepted\n", stderr);
@@ -245,6 +247,7 @@ static int enforce_runtime_lifecycle(
             NULL,
             NULL
         ) ||
+        ghostty_gtk_embed_surface_foreground_process_id(surface) != 0 ||
         ghostty_gtk_embed_surface_request_paste(surface)) {
         fputs("api-contract: uninitialized surface operation accepted\n", stderr);
         return 1;

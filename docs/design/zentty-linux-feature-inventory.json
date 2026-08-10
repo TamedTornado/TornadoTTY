@@ -252,10 +252,10 @@
       "origin": "PORT_PARITY",
       "user_impact": "Remote users otherwise receive misleading local paths or lose Zentty's source workflow for moving images and files into an SSH session.",
       "linux_owner_issue": 17,
-      "implementation_status": "NOT_IMPLEMENTED",
-      "focused_tests": [],
-      "product_scenarios": [],
-      "test_plan": "Use a disposable real SSH server, real pasted/dropped files and clipboard images, checksum the upload, assert the escaped remote path reaches the PTY, and cover hostile names, cancellation, collision and partial failure.",
+      "implementation_status": "PARTIAL",
+      "focused_tests": ["crates/zentty-core/tests/ssh_identity.rs", "crates/zentty-linux/src/application_shell/ssh_identity.rs"],
+      "product_scenarios": ["linux/tests/rust-session-restore"],
+      "test_plan": "Identity now uses a disposable real SSH server under controlled X11 and Wayland and proves remote/local transitions on the same PTY. Remaining transfer work must use real pasted/dropped files and clipboard images, checksum the upload, assert the escaped remote path reaches the PTY, and cover hostile names, cancellation, collision and partial failure.",
       "alternative_or_blocker": null
     },
     {

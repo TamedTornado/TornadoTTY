@@ -12,6 +12,7 @@ source_file="${ZENTTY_APPLICATION_SHELL_SOURCE:-${repo_root}/crates/zentty-linux
 action_router_file="${ZENTTY_ACTION_ROUTER_SOURCE:-${repo_root}/crates/zentty-linux/src/application_shell/action_router.rs}"
 agent_events_file="${ZENTTY_AGENT_EVENTS_SOURCE:-${repo_root}/crates/zentty-linux/src/application_shell/agent_events.rs}"
 global_search_file="${ZENTTY_GLOBAL_SEARCH_SOURCE:-${repo_root}/crates/zentty-linux/src/application_shell/global_search.rs}"
+ssh_identity_file="${ZENTTY_SSH_IDENTITY_SOURCE:-${repo_root}/crates/zentty-linux/src/application_shell/ssh_identity.rs}"
 clipboard_actions_file="${ZENTTY_CLIPBOARD_ACTIONS_SOURCE:-${repo_root}/crates/zentty-linux/src/application_shell/clipboard_actions.rs}"
 pane_runtime_file="${ZENTTY_PANE_RUNTIME_SOURCE:-${repo_root}/crates/zentty-linux/src/application_shell/pane_runtime.rs}"
 pane_dividers_file="${ZENTTY_PANE_DIVIDERS_SOURCE:-${repo_root}/crates/zentty-linux/src/pane_dividers.rs}"
@@ -39,6 +40,7 @@ done
 [[ -r "${action_router_file}" ]] || fail "action router source is missing: ${action_router_file}"
 [[ -r "${agent_events_file}" ]] || fail "agent events source is missing: ${agent_events_file}"
 [[ -r "${global_search_file}" ]] || fail "global search source is missing: ${global_search_file}"
+[[ -r "${ssh_identity_file}" ]] || fail "SSH identity source is missing: ${ssh_identity_file}"
 [[ -r "${clipboard_actions_file}" ]] || fail "clipboard actions source is missing: ${clipboard_actions_file}"
 [[ -r "${pane_runtime_file}" ]] || fail "pane runtime source is missing: ${pane_runtime_file}"
 [[ -r "${pane_dividers_file}" ]] || fail "pane divider source is missing: ${pane_dividers_file}"
@@ -94,6 +96,7 @@ source_sha256="$(sha256sum "${source_file}" | awk '{print $1}')"
 action_router_sha256="$(sha256sum "${action_router_file}" | awk '{print $1}')"
 agent_events_sha256="$(sha256sum "${agent_events_file}" | awk '{print $1}')"
 global_search_sha256="$(sha256sum "${global_search_file}" | awk '{print $1}')"
+ssh_identity_sha256="$(sha256sum "${ssh_identity_file}" | awk '{print $1}')"
 clipboard_actions_sha256="$(sha256sum "${clipboard_actions_file}" | awk '{print $1}')"
 pane_runtime_sha256="$(sha256sum "${pane_runtime_file}" | awk '{print $1}')"
 pane_dividers_sha256="$(sha256sum "${pane_dividers_file}" | awk '{print $1}')"
@@ -128,6 +131,9 @@ jq -e --arg agent_events_sha256 "${agent_events_sha256}" \
 jq -e --arg global_search_sha256 "${global_search_sha256}" \
     '.owned_source_sha256["crates/zentty-linux/src/application_shell/global_search.rs"] == $global_search_sha256' \
     "${contract}" >/dev/null || fail "global search source hash differs from its ownership contract"
+jq -e --arg ssh_identity_sha256 "${ssh_identity_sha256}" \
+    '.owned_source_sha256["crates/zentty-linux/src/application_shell/ssh_identity.rs"] == $ssh_identity_sha256' \
+    "${contract}" >/dev/null || fail "SSH identity source hash differs from its ownership contract"
 jq -e --arg clipboard_actions_sha256 "${clipboard_actions_sha256}" \
     '.owned_source_sha256["crates/zentty-linux/src/application_shell/clipboard_actions.rs"] == $clipboard_actions_sha256' \
     "${contract}" >/dev/null || fail "clipboard actions source hash differs from its ownership contract"
@@ -199,6 +205,17 @@ if [[ -n "${diff}" ]]; then
     fail "global search function inventory differs from its ownership contract"
 fi
 
+sed -n '1,/^#\[cfg(test)\]/p' "${ssh_identity_file}" |
+    sed -nE 's/^[[:space:]]*(pub\(crate\)[[:space:]]+|pub\(super\)[[:space:]]+)?(const[[:space:]]+)?fn[[:space:]]+([a-zA-Z0-9_]+).*/\3/p' |
+    sort >"${temp_dir}/actual-ssh-identity-functions"
+jq -r '.owned_module_functions.ssh_identity_coordinator | sort | .[]' "${contract}" \
+    >"${temp_dir}/contract-ssh-identity-functions"
+diff="$(comm -3 "${temp_dir}/actual-ssh-identity-functions" "${temp_dir}/contract-ssh-identity-functions")"
+if [[ -n "${diff}" ]]; then
+    printf '%s\n' "${diff}" >&2
+    fail "SSH identity function inventory differs from its ownership contract"
+fi
+
 sed -n '/^impl ApplicationShell {/,/^}/p' "${clipboard_actions_file}" |
     sed -nE 's/^[[:space:]]*(pub\(super\)[[:space:]]+)?fn[[:space:]]+([a-zA-Z0-9_]+).*/\2/p' |
     sort >"${temp_dir}/actual-clipboard-action-functions"
@@ -252,6 +269,7 @@ jq -e --arg main_sha256 "${main_sha256}" \
     --arg action_router_sha256 "${action_router_sha256}" \
     --arg agent_events_sha256 "${agent_events_sha256}" \
     --arg global_search_sha256 "${global_search_sha256}" \
+    --arg ssh_identity_sha256 "${ssh_identity_sha256}" \
     --arg clipboard_actions_sha256 "${clipboard_actions_sha256}" \
     --arg pane_runtime_sha256 "${pane_runtime_sha256}" \
     --arg pane_dividers_sha256 "${pane_dividers_sha256}" \
@@ -272,6 +290,7 @@ jq -e --arg main_sha256 "${main_sha256}" \
         "crates/zentty-linux/src/application_shell/action_router.rs":$action_router_sha256,
         "crates/zentty-linux/src/application_shell/agent_events.rs":$agent_events_sha256,
         "crates/zentty-linux/src/application_shell/global_search.rs":$global_search_sha256,
+        "crates/zentty-linux/src/application_shell/ssh_identity.rs":$ssh_identity_sha256,
         "crates/zentty-linux/src/application_shell/clipboard_actions.rs":$clipboard_actions_sha256,
         "crates/zentty-linux/src/application_shell/pane_runtime.rs":$pane_runtime_sha256,
         "crates/zentty-linux/src/application_shell/tmux_runtime.rs":$tmux_runtime_sha256,
@@ -289,6 +308,7 @@ jq -e --arg main_sha256 "${main_sha256}" \
         "clipboard_coordinator",
         "existing_tmux_coordinator",
         "global_search_coordinator",
+        "ssh_identity_coordinator",
         "existing_ui_projection",
         "pane_runtime_coordinator",
         "persistence_coordinator"
@@ -305,7 +325,7 @@ jq -e --arg main_sha256 "${main_sha256}" \
         ([.field_assignments[].fields[]] | unique | length) and
     ([.method_assignments[].methods[]] | length) ==
         ([.method_assignments[].methods[]] | unique | length) and
-    (.owned_module_functions | keys | sort) == (["action_router", "agent_event_coordinator", "clipboard_coordinator", "global_search_coordinator", "pane_dividers", "pane_runtime_coordinator", "persistence_coordinator", "tmux_runtime_coordinator", "tmux_store_policy"] | sort) and
+    (.owned_module_functions | keys | sort) == (["action_router", "agent_event_coordinator", "clipboard_coordinator", "global_search_coordinator", "pane_dividers", "pane_runtime_coordinator", "persistence_coordinator", "ssh_identity_coordinator", "tmux_runtime_coordinator", "tmux_store_policy"] | sort) and
     (.owned_module_functions.action_router | length) ==
         (.owned_module_functions.action_router | unique | length) and
     (.owned_module_functions.pane_runtime_coordinator | length) ==
@@ -316,6 +336,8 @@ jq -e --arg main_sha256 "${main_sha256}" \
         (.owned_module_functions.agent_event_coordinator | unique | length) and
     (.owned_module_functions.global_search_coordinator | length) ==
         (.owned_module_functions.global_search_coordinator | unique | length) and
+    (.owned_module_functions.ssh_identity_coordinator | length) ==
+        (.owned_module_functions.ssh_identity_coordinator | unique | length) and
     (.owned_module_functions.clipboard_coordinator | length) ==
         (.owned_module_functions.clipboard_coordinator | unique | length) and
     (.owned_module_functions.persistence_coordinator | length) ==
@@ -355,6 +377,7 @@ jq -e --arg main_sha256 "${main_sha256}" \
         "agent_ipc_transport": {"owner":"application_runtime","maximum_instances_per_process":1},
         "agent_event_projection": {"owner":"agent_event_coordinator","maximum_instances_per_window":1},
         "global_search_state": {"owner":"global_search_coordinator","maximum_instances_per_window":1},
+        "ssh_identity_projection": {"owner":"ssh_identity_coordinator","maximum_instances_per_window":1},
         "standard_clipboard_projection": {"owner":"clipboard_coordinator","maximum_instances_per_window":1},
         "tmux_compatibility_state": {"owner":"existing_tmux_coordinator","maximum_instances_per_window":1},
         "glib_scheduling": {"owner":"application_runtime","kind":"default-glib-main-context","maximum_instances_per_process":1}

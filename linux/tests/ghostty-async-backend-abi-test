@@ -14,6 +14,9 @@ git -C "${source_checkout}" rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
 }
 git clone --quiet --no-hardlinks "${source_checkout}" "${temp_dir}/ghostty"
 git -C "${temp_dir}/ghostty" checkout --quiet --detach "${expected_revision}"
+mkdir -p "${temp_dir}/ghostty/zig-out/include/ghostty"
+cp "${temp_dir}/ghostty/include/ghostty/gtk.h" \
+    "${temp_dir}/ghostty/zig-out/include/ghostty/gtk.h"
 
 set +e
 GHOSTTY_SOURCE_DIR="${temp_dir}/ghostty" "${runner}" >"${temp_dir}/current.log" 2>&1
@@ -25,9 +28,6 @@ set -e
     exit 1
 }
 
-mkdir -p "${temp_dir}/ghostty/zig-out/include/ghostty"
-cp "${temp_dir}/ghostty/include/ghostty/gtk.h" \
-    "${temp_dir}/ghostty/zig-out/include/ghostty/gtk.h"
 printf '\n/* stale installed-header fixture */\n' \
     >>"${temp_dir}/ghostty/zig-out/include/ghostty/gtk.h"
 

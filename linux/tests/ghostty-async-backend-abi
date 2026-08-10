@@ -12,6 +12,10 @@ done
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 ghostty_source="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
+ghostty_install_dir="${GHOSTTY_INSTALL_DIR:-${ghostty_source}/zig-out}"
+if [[ "${ghostty_install_dir}" != /* ]]; then
+    ghostty_install_dir="${repo_root}/${ghostty_install_dir}"
+fi
 expected_revision="$(sed -n 's/^revision=//p' "${repo_root}/linux/ghostty.lock")"
 [[ -n "${expected_revision}" ]] || prerequisite_failure "linux/ghostty.lock has no revision"
 probe="${repo_root}/linux/tests/ghostty-async-backend-abi.c"
@@ -36,10 +40,10 @@ fi
 
 include_dir="${ghostty_source}/include"
 source_header="${include_dir}/ghostty/gtk.h"
-installed_header="${ghostty_source}/zig-out/include/ghostty/gtk.h"
+installed_header="${ghostty_install_dir}/include/ghostty/gtk.h"
 [[ -f "${source_header}" ]] || prerequisite_failure "public Ghostty GTK source header missing"
-if [[ -f "${installed_header}" ]] &&
-   [[ "$(sha256sum "${installed_header}" | awk '{print $1}')" != "$(sha256sum "${source_header}" | awk '{print $1}')" ]]; then
+[[ -f "${installed_header}" ]] || prerequisite_failure "public Ghostty GTK installed header missing"
+if [[ "$(sha256sum "${installed_header}" | awk '{print $1}')" != "$(sha256sum "${source_header}" | awk '{print $1}')" ]]; then
     prerequisite_failure "generated installed header differs from the pinned source header"
 fi
 
