@@ -99,9 +99,11 @@ jq -e --arg ghostty_revision "${ghostty_revision}" '
         .workspace_dependencies == ["zentty-ghostty-sys"] and
         .unsafe_policy == "private-reviewed-ffi-modules-only") and
     (.workspace_crates[] | select(.name == "zentty-linux") |
+        .kind == "product-package" and
         (.workspace_dependencies | sort) == (["zentty-agent-ipc", "zentty-core", "zentty-ghostty", "zentty-tmux-compat"] | sort) and
         .unsafe_policy == "forbid") and
     (.workspace_crates[] | select(.name == "zentty-test-support") |
+        (.workspace_dependencies | sort) == (["zentty-core", "zentty-ghostty", "zentty-linux"] | sort) and
         .shipped == false and .unsafe_policy == "forbid") and
     ([
         "ApplicationRuntimeOwner",

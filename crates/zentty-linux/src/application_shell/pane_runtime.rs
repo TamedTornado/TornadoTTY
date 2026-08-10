@@ -623,11 +623,13 @@ impl PaneRuntimeCoordinator {
     ) -> PaneFrame {
         let weak = Rc::downgrade(shell);
         let control_pane_id = pane_id.to_owned();
-        PaneFrame::new(pane_id, terminal, move |action| {
+        let frame = PaneFrame::new(pane_id, terminal, move |action| {
             if let Some(shell) = weak.upgrade() {
                 ApplicationShell::activate_pane_control(&shell, &control_pane_id, action);
             }
-        })
+        });
+        super::remote_paste::install(shell, pane_id, frame.widget().upcast_ref());
+        frame
     }
 
     fn handle_child_exit(shell: &Rc<RefCell<ApplicationShell>>, pane_id: &str) {

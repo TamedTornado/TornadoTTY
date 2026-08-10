@@ -40,8 +40,9 @@ pub use pane_token_registry::{
 };
 pub use remote_transfer::{
     MAX_REMOTE_FILE_BYTES, MAX_REMOTE_IMAGE_BYTES, RemoteTransferFailure, RemoteTransferMethod,
-    RemoteTransferPrerequisites, RemoteUploadPath, RemoteUploadPathError,
-    escape_remote_path_for_shell, scp_connection_arguments, ssh_connection_arguments,
+    RemoteTransferPrerequisites, RemoteUploadPath, RemoteUploadPathError, RemoteVerificationPlan,
+    RemoteVerificationPlanError, escape_remote_path_for_shell, scp_connection_arguments,
+    ssh_connection_arguments,
 };
 pub use session_restore_store::{
     LaunchDecision, LaunchReason, PersistenceRequest, SessionRestoreStore,

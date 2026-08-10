@@ -11,6 +11,7 @@ publish = false
 serde_json = "=1.0.145"
 zentty-core = { path = "../zentty-core" }
 zentty-ghostty = { path = "../zentty-ghostty" }
+zentty-linux = { path = "../zentty-linux" }
 
 [lints]
 workspace = true

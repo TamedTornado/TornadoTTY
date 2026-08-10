@@ -37,7 +37,7 @@
     "platform_notifications", "platform_clipboard", "platform_settings", "platform_process_launch",
     "ghostty_api_audit", "ghostty_runtime_initialization_order", "ghostty_abi_versioning", "ghostty_async_backend_abi_representation", "rust_ghostty_product_usage", "rust_global_find_product_usage",
     "rust_ghostty_callback_lifecycle", "rust_ghostty_config", "ghostty_abi_compatibility",
-    "agent_integration", "product_feature_regression", "shell_integration"
+    "agent_integration", "remote_transfer", "product_feature_regression", "shell_integration"
   ],
   "cells": [
     {"id":"prepare-ghostty","order":9,"capability":"build","display":"none","optimize":"n/a","async_backend":"n/a","terminals":"n/a","status":"PASS","tier":"local","resources":["ghostty-source"],"environment_profile":"isolated-none-v1","command":"linux/scripts/prepare-ghostty-source"},
@@ -67,6 +67,7 @@
     {"id":"staged-wayland","order":26,"capability":"staged_packaging","display":"wayland","optimize":"ReleaseSafe","async_backend":"default","terminals":"single","status":"PASS","tier":"release","environment_profile":"nested-wayland-v1","command":"GDK_BACKEND=wayland linux/tests/staged-bundle"},
     {"id":"staged-x11","order":26,"capability":"staged_packaging","display":"x11","optimize":"ReleaseSafe","async_backend":"default","terminals":"single","status":"PASS","tier":"release","environment_profile":"nested-x11-v1","command":"GDK_BACKEND=x11 linux/tests/staged-bundle"},
     {"id":"ghostty-regression","order":28,"schedule_priority":12,"capability":"lifecycle","display":"none","optimize":"Debug","async_backend":"all","terminals":"all","status":"PASS","tier":"local","depends_on":["prepare-ghostty"],"skip_profile_prerequisite":true,"environment_profile":"isolated-none-v1","command":"ZENTTY_GHOSTTY_REGRESSION_INSTALL_DIR=build/linux-deps/ghostty-install/regression linux/tests/ghostty-regression"},
+    {"id":"remote-transfer-transactional","order":29,"capability":"remote_transfer","display":"none","optimize":"ReleaseSafe","async_backend":"n/a","terminals":"n/a","status":"PASS","tier":"local","depends_on":["build-release"],"environment_profile":"isolated-none-v1","command":"linux/tests/remote-transfer"},
     {"id":"ghostty-api-audit-inventory","order":29,"capability":"ghostty_api_audit","display":"none","optimize":"n/a","async_backend":"n/a","terminals":"n/a","status":"PASS","tier":"local","depends_on":["build-release"],"environment_profile":"isolated-none-v1","command":"linux/tests/ghostty-api-audit"},
     {"id":"ghostty-runtime-initialization-order","order":31,"capability":"ghostty_runtime_initialization_order","display":"x11","optimize":"Debug","async_backend":"default","terminals":"n/a","status":"PASS","tier":"local","environment_profile":"nested-x11-v1","command":"ZENTTY_RUNTIME_INIT_PROBE=build/linux-profiles/debug/bin/runtime-init-order linux/tests/runtime-init-order"},
     {"id":"ghostty-runtime-initialization-order-wayland","order":31,"capability":"ghostty_runtime_initialization_order","display":"wayland","optimize":"Debug","async_backend":"default","terminals":"n/a","status":"PASS","tier":"local","environment_profile":"nested-wayland-v1","command":"ZENTTY_RUNTIME_INIT_PROBE=build/linux-profiles/debug/bin/runtime-init-order linux/tests/runtime-init-order"},

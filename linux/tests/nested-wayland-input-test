@@ -25,7 +25,7 @@ before_roots="$(find /tmp -maxdepth 1 -type d -name 'zwi.*' -printf '%f\n' | sor
 started_at="$(date +%s)"
 # The controlled child, not this support test, expands the sanitized values.
 # shellcheck disable=SC2016
-child='test -z "${DBUS_SESSION_BUS_ADDRESS:-}" && test -z "${AT_SPI_BUS_ADDRESS:-}" && test -n "${ZENTTY_NESTED_X11_SESSION_ID:-}" && wayland-info | grep -F zwp_virtual_keyboard_manager_v1 >/dev/null && wtype test'
+child='test "${GDK_BACKEND:-}" = wayland && test -z "${DBUS_SESSION_BUS_ADDRESS:-}" && test -z "${AT_SPI_BUS_ADDRESS:-}" && test -n "${ZENTTY_NESTED_X11_SESSION_ID:-}" && wayland-info | grep -F zwp_virtual_keyboard_manager_v1 >/dev/null && wtype test'
 DISPLAY=:poison WAYLAND_DISPLAY=poison DBUS_SESSION_BUS_ADDRESS=poison \
     AT_SPI_BUS_ADDRESS=poison IBUS_ADDRESS=poison \
     ZENTTY_NESTED_WAYLAND_INPUT_REPORT="${report}" \

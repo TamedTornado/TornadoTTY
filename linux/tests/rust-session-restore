@@ -53,7 +53,7 @@ case "${backend}" in
         ;;
     *) fail "GDK_BACKEND must be x11 or wayland" ;;
 esac
-for dependency in jq readelf timeout mktemp grep sed pgrep cut tail; do
+for dependency in jq readelf timeout mktemp grep sed pgrep cut tail sha256sum convert od; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
 [[ -x "${product}" ]] || fail "staged product is not built: ${product}"
@@ -233,7 +233,43 @@ tail -n "+${remote_identity_line}" "${log}" |
     fail "remote SSH identity did not reach the rendered pane/sidebar presentation"
 terminal_ready_before="$(grep -Fc 'zentty-linux: terminal-ready-pane=pane-shell-active' "${log}" || true)"
 ssh_local_before="$(grep -Fc 'zentty-linux: ssh-identity pane=pane-shell-active state=local' "${log}" || true)"
-zentty_product_type "${backend}" leave
+remote_upload_payload="${state_dir}/remote-upload-payload.txt"
+printf 'real product remote clipboard payload\n' >"${remote_upload_payload}"
+remote_upload_hash="$(sha256sum "${remote_upload_payload}" | cut -d' ' -f1)"
+zentty_product_set_file_clipboard "${backend}" "${remote_upload_payload}" ||
+    fail "could not publish the real desktop file clipboard"
+zentty_product_ctrl_shift_key "${backend}" v
+zentty_product_wait_for_log "${log}" \
+    'zentty-linux: remote-paste pane=pane-shell-active state=complete files=1 paths=' \
+    "remote clipboard file did not complete through the real product" ||
+    fail "remote clipboard completion receipt missing"
+remote_upload_path="$(
+    sed -n 's/^zentty-linux: remote-paste pane=pane-shell-active state=complete files=1 paths=//p' \
+        "${log}" | tail -1
+)"
+[[ "${remote_upload_path}" == /tmp/zentty-paste-* ]] ||
+    fail "remote clipboard receipt path is malformed"
+[[ "$(sha256sum "${remote_upload_path}" | cut -d' ' -f1)" == "${remote_upload_hash}" ]] ||
+    fail "remote clipboard bytes did not match the desktop source"
+image_upload_payload="${state_dir}/remote-upload-image.png"
+convert -size 2x2 xc:'#e8a52b' "${image_upload_payload}"
+remote_paste_complete_before="$(grep -Fc 'zentty-linux: remote-paste pane=pane-shell-active state=complete' "${log}" || true)"
+zentty_product_set_png_clipboard "${backend}" "${image_upload_payload}" ||
+    fail "could not publish the real desktop PNG clipboard"
+zentty_product_ctrl_shift_key "${backend}" v
+zentty_product_wait_for_log_count "${log}" \
+    'zentty-linux: remote-paste pane=pane-shell-active state=complete' \
+    "$(( remote_paste_complete_before + 1 ))" \
+    "remote clipboard image did not complete through the real product" ||
+    fail "remote image completion receipt missing"
+remote_image_path="$(
+    sed -n 's/^zentty-linux: remote-paste pane=pane-shell-active state=complete files=1 paths=//p' \
+        "${log}" | tail -1
+)"
+[[ "${remote_image_path}" == /tmp/zentty-paste-*.png ]] ||
+    fail "remote image receipt path is malformed"
+[[ "$(od -An -tx1 -N8 "${remote_image_path}" | tr -d ' \n')" == 89504e470d0a1a0a ]] ||
+    fail "remote image is not a real PNG"
 zentty_product_key "${backend}" Return
 zentty_product_wait_for_log_count "${log}" \
     'zentty-linux: ssh-identity pane=pane-shell-active state=local' \
@@ -248,6 +284,8 @@ zentty_product_wait_for_log "${log}" \
     fail "local shell continuation evidence missing"
 [[ "$(grep -Fc 'zentty-linux: terminal-ready-pane=pane-shell-active' "${log}" || true)" -eq "${terminal_ready_before}" ]] ||
     fail "SSH identity transition recreated the pane or PTY"
+rm -f -- "${remote_upload_path}"
+rm -f -- "${remote_image_path}"
 zentty_disposable_sshd_stop
 
 zentty_product_ctrl_key "${backend}" Page_Up
@@ -505,4 +543,4 @@ wait_for_product_exit
 jq -e '.reason == "cleanExit" and .workspace.windows[0].worklanes[0].columns[0].panes[0].id == "pane-1"' \
     "${snapshot}" >/dev/null || fail "corrupt-state fallback did not publish a valid clean snapshot"
 
-echo "Rust session restore passed: ${backend}, journey=one-consolidated, ssh=real-loopback-transient, agents=two-background, input=physical, scrollback=exact, relaunch=clean, cancellation=command-palette, live-debounce=real, crash=SIGKILL, corrupt=fresh-workspace"
+echo "Rust session restore passed: ${backend}, journey=one-consolidated, ssh=real-loopback-transient, remote-paste=file+png, agents=two-background, input=physical, scrollback=exact, relaunch=clean, cancellation=command-palette, live-debounce=real, crash=SIGKILL, corrupt=fresh-workspace"

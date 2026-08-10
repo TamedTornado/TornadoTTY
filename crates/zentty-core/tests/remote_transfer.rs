@@ -1,7 +1,7 @@
 use zentty_core::{
     MAX_REMOTE_FILE_BYTES, MAX_REMOTE_IMAGE_BYTES, RemoteTransferFailure, RemoteTransferMethod,
-    RemoteTransferPrerequisites, RemoteUploadPath, RemoteUploadPathError, SshDestination,
-    escape_remote_path_for_shell, parse_ssh_destination, scp_connection_arguments,
+    RemoteTransferPrerequisites, RemoteUploadPath, RemoteUploadPathError, RemoteVerificationPlan,
+    SshDestination, escape_remote_path_for_shell, parse_ssh_destination, scp_connection_arguments,
     ssh_connection_arguments,
 };
 
@@ -17,6 +17,58 @@ fn source_limits_and_path_shapes_are_exact() {
     assert_eq!(
         image.partial_path(),
         "/tmp/zentty-paste-1700000000-1234abcd.jpeg.partial-1234abcd"
+    );
+}
+
+#[test]
+fn transport_nonce_hardens_only_the_private_partial_path() {
+    let source_path = RemoteUploadPath::for_image("png", 1_700_000_000, "1234abcd").unwrap();
+    let hardened = source_path
+        .with_transport_nonce("0123456789abcdef0123456789abcdef")
+        .unwrap();
+    assert_eq!(hardened.final_path(), source_path.final_path());
+    assert_eq!(
+        hardened.partial_path(),
+        "/tmp/zentty-paste-1700000000-1234abcd.png.partial-0123456789abcdef0123456789abcdef"
+    );
+    assert!(source_path.with_transport_nonce("1234abcd").is_err());
+    assert!(
+        source_path
+            .with_transport_nonce("0123456789abcdef0123456789abcdeF")
+            .is_err()
+    );
+}
+
+#[test]
+fn verification_script_checks_integrity_before_atomic_no_clobber_publish() {
+    let path = RemoteUploadPath::for_file("report.txt", 1_700_000_000, "1234abcd").unwrap();
+    let plan = RemoteVerificationPlan::new(
+        path,
+        12,
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    )
+    .unwrap();
+
+    assert_eq!(plan.remote_exit_code_for_integrity_mismatch(), 70);
+    assert_eq!(plan.remote_exit_code_for_destination_collision(), 71);
+    assert_eq!(plan.remote_exit_code_for_missing_checksum_tool(), 72);
+    assert_eq!(
+        plan.script(),
+        "set -eu; p=/tmp/zentty-paste-1700000000-1234abcd-report.txt.partial-1234abcd; f=/tmp/zentty-paste-1700000000-1234abcd-report.txt; cleanup() { rm -f \"$p\"; }; trap cleanup EXIT HUP INT TERM; [ ! -L \"$p\" ] || exit 70; [ \"$(wc -c < \"$p\" | tr -d ' ')\" = 12 ] || exit 70; if command -v sha256sum >/dev/null 2>&1; then h=$(sha256sum -- \"$p\"); h=${h%% *}; elif command -v shasum >/dev/null 2>&1; then h=$(shasum -a 256 -- \"$p\"); h=${h%% *}; else exit 72; fi; [ \"$h\" = 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef ] || exit 70; [ ! -e \"$f\" ] && [ ! -L \"$f\" ] || exit 71; ln \"$p\" \"$f\" || exit 71; rm -f \"$p\"; trap - EXIT HUP INT TERM"
+    );
+}
+
+#[test]
+fn verification_plan_rejects_untrusted_digest_text() {
+    let path = RemoteUploadPath::for_file("report.txt", 1, "1234abcd").unwrap();
+    assert!(RemoteVerificationPlan::new(path.clone(), 1, "bad").is_err());
+    assert!(
+        RemoteVerificationPlan::new(
+            path,
+            1,
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdeg"
+        )
+        .is_err()
     );
 }
 

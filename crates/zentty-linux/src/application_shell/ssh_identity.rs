@@ -4,6 +4,7 @@ use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use gtk::{gio, glib};
@@ -16,6 +17,12 @@ const PROBE_INTERVAL: Duration = Duration::from_millis(500);
 
 use crate::application_shell::ApplicationShell;
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct PaneSshIdentity {
+    pub(super) foreground_process_id: u64,
+    pub(super) destination: SshDestination,
+}
+
 pub(crate) fn install(shell: &Rc<RefCell<ApplicationShell>>) -> glib::SourceId {
     let weak = Rc::downgrade(shell);
     glib::timeout_add_local(PROBE_INTERVAL, move || {
@@ -26,7 +33,7 @@ pub(crate) fn install(shell: &Rc<RefCell<ApplicationShell>>) -> glib::SourceId {
         if shell.shutting_down {
             return glib::ControlFlow::Break;
         }
-        if shell.ssh_probe_in_flight {
+        if shell.remote_panes.probe_in_flight {
             return glib::ControlFlow::Continue;
         }
         let sources = shell
@@ -41,7 +48,7 @@ pub(crate) fn install(shell: &Rc<RefCell<ApplicationShell>>) -> glib::SourceId {
                 (pane_id.clone(), process_id)
             })
             .collect::<Vec<_>>();
-        shell.ssh_probe_in_flight = true;
+        shell.remote_panes.probe_in_flight = true;
         drop(shell);
         let weak = weak.clone();
         glib::spawn_future_local(async move {
@@ -49,8 +56,15 @@ pub(crate) fn install(shell: &Rc<RefCell<ApplicationShell>>) -> glib::SourceId {
                 sources
                     .into_iter()
                     .map(|(pane_id, process_id)| {
-                        let destination = process_id.and_then(probe_ssh_destination);
-                        (pane_id, destination)
+                        let identity = process_id.and_then(|foreground_process_id| {
+                            probe_ssh_destination(foreground_process_id).map(|destination| {
+                                PaneSshIdentity {
+                                    foreground_process_id,
+                                    destination,
+                                }
+                            })
+                        });
+                        (pane_id, identity)
                     })
                     .collect::<Vec<_>>()
             })
@@ -59,7 +73,7 @@ pub(crate) fn install(shell: &Rc<RefCell<ApplicationShell>>) -> glib::SourceId {
                 return;
             };
             let mut shell = shell.borrow_mut();
-            shell.ssh_probe_in_flight = false;
+            shell.remote_panes.probe_in_flight = false;
             if shell.shutting_down {
                 return;
             }
@@ -74,23 +88,40 @@ pub(crate) fn install(shell: &Rc<RefCell<ApplicationShell>>) -> glib::SourceId {
 
 fn apply_observations(
     shell: &mut ApplicationShell,
-    observations: Vec<(String, Option<SshDestination>)>,
+    observations: Vec<(String, Option<PaneSshIdentity>)>,
 ) {
     let mut changed = false;
-    for (pane_id, destination) in observations {
-        let label = destination
+    for (pane_id, identity) in observations {
+        if shell
+            .remote_panes
+            .uploads
+            .get(&pane_id)
+            .is_some_and(|upload| Some(upload.identity()) != identity.as_ref())
+            && let Some(upload) = shell.remote_panes.uploads.get(&pane_id)
+        {
+            upload.cancellation().store(true, Ordering::Release);
+        }
+        let label = identity
             .as_ref()
-            .map(|destination| destination.target.as_str());
+            .map(|identity| identity.destination.target.as_str());
         if shell.state.set_pane_ssh_connection_label(&pane_id, label) {
             changed = true;
             eprintln!(
                 "zentty-linux: ssh-identity pane={pane_id} state={}",
-                if destination.is_some() {
+                if identity.is_some() {
                     "remote"
                 } else {
                     "local"
                 }
             );
+        }
+        match identity {
+            Some(identity) => {
+                shell.remote_panes.identities.insert(pane_id, identity);
+            }
+            None => {
+                shell.remote_panes.identities.remove(&pane_id);
+            }
         }
     }
     if changed {

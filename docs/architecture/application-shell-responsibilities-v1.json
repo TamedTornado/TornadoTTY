@@ -2,7 +2,7 @@
   "schema_version": 1,
   "contract_id": "zentty-application-shell-responsibilities",
   "source": "crates/zentty-linux/src/application_shell.rs",
-  "source_sha256": "bd369afdec4ea9cd5c6f1a7472f29f075b41652a5cde1c38649504c64570a0ee",
+  "source_sha256": "021a90af6a979c29d5576d19d3367a69e2e26150cfadebaa1a05ddd6d85a7662",
   "owned_source_sha256": {
     "crates/zentty-linux/src/main.rs": "625521ffb056cc95ea5fe131464e4cfabf566595f2aa1ec10e4964e7fb6f60dd",
     "crates/zentty-linux/src/application.rs": "c107efc7c02b8ec34ba22695c89ac706b06ed701df520301cf2e12d6929d8b86",
@@ -13,8 +13,9 @@
     "crates/zentty-linux/src/application_shell/clipboard_actions.rs": "6932bd759ad7bf9ed88f17dbd6047360940b47c9779545e9e2f140e33a05e5ed",
     "crates/zentty-linux/src/application_shell/agent_events.rs": "56c45836a4e6a6a929dce61251a199c0b8dec7a62edbcda3c9b5dd594dbb6038",
     "crates/zentty-linux/src/application_shell/global_search.rs": "98a1963830af8616b31da2558ae6f27c4461342ef3085f6ef9cda0863a1ddc7c",
-    "crates/zentty-linux/src/application_shell/pane_runtime.rs": "eeee12a63624210a88c96695e32a790a7663c2d139123502afd4717fe3c473e2",
-    "crates/zentty-linux/src/application_shell/ssh_identity.rs": "45c35067dceb742d2edca4988a14a56c63599e4a80a2ea820b18fc13cad2a167",
+    "crates/zentty-linux/src/application_shell/pane_runtime.rs": "12e8a7af2e8261e1d3a6178068e8db1e5b12f048c8c8c5886d0835b8127864c0",
+    "crates/zentty-linux/src/application_shell/remote_paste.rs": "972f709cd716b7e25e7225966176215c6b97e3ef9c664ed310a92da6f707cc60",
+    "crates/zentty-linux/src/application_shell/ssh_identity.rs": "e73a1f7d52ed1286ef7169ba24f7b5ce6d01c8c2e0a27337a59be3a321d1c8e2",
     "crates/zentty-linux/src/application_shell/tmux_runtime.rs": "b606ec1c2e8c93e1ab40dbac1e5080f28315352e83533d7c63ba7eefd95d0515",
     "crates/zentty-linux/src/pane_dividers.rs": "dc86023846057e7d3338f142c13d52f4dfde9e3057c33055d527587b7e638d7d",
     "crates/zentty-linux/src/persistence_coordinator.rs": "9c9b24a8516032e37377b6acfba3549781cfc830a65f53d7a311f0b2efaa72a4",
@@ -72,6 +73,13 @@
       "planned_module": "crates/zentty-linux/src/application_shell/ssh_identity.rs",
       "tracking": "GH-17",
       "responsibility": "The sole window-local projection from each Ghostty surface foreground process through bounded Linux process-tree inspection to transient SSH identity; owns one cancellable GLib polling source, at most one GLib/GIO blocking-pool probe, and no persistence or reconnection policy."
+    },
+    {
+      "id": "remote_paste_coordinator",
+      "status": "existing",
+      "planned_module": "crates/zentty-linux/src/application_shell/remote_paste.rs",
+      "tracking": "GH-17",
+      "responsibility": "The sole window-local bridge from real GTK file/image clipboard and drop gestures to transactional remote transfer, SSH identity revalidation, cancellation, progress projection, and verified path insertion."
     },
     {
       "id": "clipboard_coordinator",
@@ -132,8 +140,8 @@
       "fields": ["global_search", "global_search_generation"]
     },
     {
-      "owner": "ssh_identity_coordinator",
-      "fields": ["ssh_probe_source", "ssh_probe_in_flight"]
+      "owner": "remote_paste_coordinator",
+      "fields": ["remote_panes"]
     },
     {
       "owner": "persistence_coordinator",
@@ -265,6 +273,11 @@
       "install", "apply_observations", "probe_ssh_destination", "probe_ssh_destination_at",
       "probe_process", "process_tree", "read_bounded", "read_start_time"
     ],
+    "remote_paste_coordinator": [
+      "begin_upload", "cancel", "cancellation", "create", "drop", "execute",
+      "file_inputs", "finish_upload", "identity", "install", "long_nonce", "parse_uri_list", "read_file_list", "read_uri_list", "short_nonce",
+      "unix_timestamp", "upload_file", "upload_inputs", "upload_png"
+    ],
     "clipboard_coordinator": ["copy_focused_selection"],
     "persistence_coordinator": [
       "clean_exit_decision", "complete_launch", "default_state_directory", "drain_errors",
@@ -369,6 +382,7 @@
     "agent_event_projection": {"owner":"agent_event_coordinator","maximum_instances_per_window":1},
     "global_search_state": {"owner":"global_search_coordinator","maximum_instances_per_window":1},
     "ssh_identity_projection": {"owner":"ssh_identity_coordinator","maximum_instances_per_window":1},
+    "remote_paste_projection": {"owner":"remote_paste_coordinator","maximum_instances_per_window":1},
     "standard_clipboard_projection": {"owner":"clipboard_coordinator","maximum_instances_per_window":1},
     "tmux_compatibility_state": {"owner":"existing_tmux_coordinator","maximum_instances_per_window":1},
     "glib_scheduling": {"owner":"application_runtime","kind":"default-glib-main-context","maximum_instances_per_process":1}

@@ -118,6 +118,66 @@ zentty_product_ctrl_shift_key() {
     fi
 }
 
+zentty_product_set_file_clipboard() {
+    local backend="$1"
+    local path="$2"
+    [[ "${path}" == /* && -f "${path}" ]] || {
+        echo "product-input: file clipboard requires one absolute regular file" >&2
+        return 1
+    }
+    case "${backend}" in
+        x11)
+            command -v xclip >/dev/null || {
+                echo "product-input: xclip is required" >&2
+                return 1
+            }
+            printf 'file://%s\r\n' "${path}" |
+                xclip -selection clipboard -target text/uri-list -in
+            ;;
+        wayland)
+            command -v wl-copy >/dev/null || {
+                echo "product-input: wl-copy is required" >&2
+                return 1
+            }
+            printf 'file://%s\r\n' "${path}" |
+                wl-copy --type text/uri-list
+            ;;
+        *)
+            echo "product-input: unsupported backend: ${backend}" >&2
+            return 1
+            ;;
+    esac
+}
+
+zentty_product_set_png_clipboard() {
+    local backend="$1"
+    local path="$2"
+    [[ "${path}" == /* && -f "${path}" ]] || {
+        echo "product-input: image clipboard requires one absolute PNG file" >&2
+        return 1
+    }
+    case "${backend}" in
+        x11)
+            command -v xclip >/dev/null || {
+                echo "product-input: xclip is required" >&2
+                return 1
+            }
+            xclip -selection clipboard -target image/png -in <"${path}"
+            ;;
+        wayland)
+            command -v wl-copy >/dev/null || {
+                echo "product-input: wl-copy is required" >&2
+                return 1
+            }
+            wl-copy --type image/png <"${path}"
+            ;;
+        *)
+            echo "product-input: unsupported backend: ${backend}" >&2
+            return 1
+            ;;
+    esac
+}
+
 zentty_product_alt_key() {
     local backend="$1"
     local key="$2"

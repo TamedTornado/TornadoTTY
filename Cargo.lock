@@ -796,6 +796,7 @@ name = "zentty-linux"
 version = "0.1.0"
 dependencies = [
  "gtk4",
+ "libc",
  "sha2",
  "zentty-agent-ipc",
  "zentty-core",
@@ -810,6 +811,7 @@ dependencies = [
  "serde_json",
  "zentty-core",
  "zentty-ghostty",
+ "zentty-linux",
 ]
 
 [[package]]

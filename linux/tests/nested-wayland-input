@@ -96,6 +96,7 @@ if [[ "${1:-}" == --private-wayland-input-inner ]]; then
         fail "Cage did not create a safe private socket"
     socket_name="$(basename "${socket_path}")"
     export WAYLAND_DISPLAY="${socket_name}"
+    export GDK_BACKEND=wayland
 
     timeout --foreground --kill-after=1s 3s wayland-info >"${info_log}" 2>&1 ||
         fail "Cage protocol inventory was unavailable"

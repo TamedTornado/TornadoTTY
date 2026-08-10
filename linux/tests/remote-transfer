@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+actor="${ZENTTY_REMOTE_TRANSFER_ACTOR:-${repo_root}/target/release-safe/remote_transfer_actor}"
+scratch=""
+
+# shellcheck source=linux/tests/lib/disposable-sshd
+source "${repo_root}/linux/tests/lib/disposable-sshd"
+
+fail() {
+    echo "remote-transfer: error: $*" >&2
+    exit 1
+}
+
+cleanup() {
+    zentty_disposable_sshd_stop
+    [[ -z "${scratch}" ]] || rm -rf -- "${scratch}"
+}
+trap cleanup EXIT
+
+for dependency in jq sha256sum; do
+    command -v "${dependency}" >/dev/null || fail "${dependency} is required"
+done
+[[ -x "${actor}" ]] || fail "remote transfer actor is not built: ${actor}"
+
+scratch="$(mktemp -d)"
+payload="${scratch}/Quarterly Report.txt"
+printf 'real remote transfer payload\nsecond line\n' >"${payload}"
+expected_hash="$(sha256sum "${payload}" | cut -d' ' -f1)"
+nonce="$(printf '%08x' "$(( $$ % 4294967295 ))")"
+timestamp="$(( 2000000000 + $$ ))"
+
+run_transfer() {
+    "${actor}" \
+        --source "${payload}" \
+        --filename 'Quarterly Report.txt' \
+        --timestamp "${timestamp}" \
+        --nonce "${nonce}" \
+        --ssh-argv ssh "${ZENTTY_DISPOSABLE_SSH_OPTIONS[@]}" \
+        "${ZENTTY_DISPOSABLE_SSH_TARGET}"
+}
+
+export ZENTTY_DISPOSABLE_SSHD_SFTP=true
+zentty_disposable_sshd_start
+receipt="$(run_transfer)"
+remote_path="$(jq -er '.remotePath' <<<"${receipt}")"
+[[ "$(jq -er '.sha256' <<<"${receipt}")" == "${expected_hash}" ]] ||
+    fail "SCP receipt hash did not match"
+[[ "$(sha256sum "${remote_path}" | cut -d' ' -f1)" == "${expected_hash}" ]] ||
+    fail "SCP remote bytes did not match"
+
+printf 'collision sentinel\n' >"${remote_path}"
+if run_transfer >"${scratch}/collision.out" 2>"${scratch}/collision.err"; then
+    fail "existing final destination was overwritten"
+fi
+grep -q 'DestinationCollision' "${scratch}/collision.err" ||
+    fail "collision was not classified"
+grep -qx 'collision sentinel' "${remote_path}" ||
+    fail "collision changed the existing destination"
+rm -f -- "${remote_path}"
+zentty_disposable_sshd_stop
+
+timestamp="$(( timestamp + 1 ))"
+export ZENTTY_DISPOSABLE_SSHD_SFTP=false
+zentty_disposable_sshd_start
+receipt="$(run_transfer)"
+remote_path="$(jq -er '.remotePath' <<<"${receipt}")"
+[[ "$(sha256sum "${remote_path}" | cut -d' ' -f1)" == "${expected_hash}" ]] ||
+    fail "SSH stream fallback remote bytes did not match"
+rm -f -- "${remote_path}"
+zentty_disposable_sshd_stop
+
+timestamp="$(( timestamp + 1 ))"
+export ZENTTY_DISPOSABLE_SSHD_SFTP=true
+zentty_disposable_sshd_start
+ssh_only_bin="${scratch}/ssh-only-bin"
+mkdir "${ssh_only_bin}"
+ln -s "$(command -v ssh)" "${ssh_only_bin}/ssh"
+receipt="$(PATH="${ssh_only_bin}" run_transfer)"
+remote_path="$(jq -er '.remotePath' <<<"${receipt}")"
+[[ "$(sha256sum "${remote_path}" | cut -d' ' -f1)" == "${expected_hash}" ]] ||
+    fail "missing-local-SCP fallback remote bytes did not match"
+rm -f -- "${remote_path}"
+
+echo "remote-transfer: PASS (real OpenSSH SCP, collision rejection, no-SFTP fallback, and no-local-SCP fallback)"

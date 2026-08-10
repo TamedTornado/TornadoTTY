@@ -167,6 +167,28 @@ impl RemoteUploadPath {
         })
     }
 
+    /// Replaces the source-compatible short partial suffix with a
+    /// transport-strength 128-bit nonce while preserving the visible final
+    /// path.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RemoteUploadPathError::InvalidNonce`] unless `nonce` is
+    /// exactly 32 lowercase ASCII hexadecimal characters.
+    pub fn with_transport_nonce(&self, nonce: &str) -> Result<Self, RemoteUploadPathError> {
+        if nonce.len() != 32
+            || !nonce
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        {
+            return Err(RemoteUploadPathError::InvalidNonce);
+        }
+        Ok(Self {
+            final_path: self.final_path.clone(),
+            partial_path: format!("{}.partial-{nonce}", self.final_path),
+        })
+    }
+
     #[must_use]
     pub fn final_path(&self) -> &str {
         &self.final_path
@@ -187,6 +209,95 @@ pub fn escape_remote_path_for_shell(path: &str) -> String {
         return path.to_owned();
     }
     format!("'{}'", path.replace('\'', "'\\''"))
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RemoteVerificationPlanError {
+    InvalidSha256,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RemoteVerificationPlan {
+    upload_path: RemoteUploadPath,
+    expected_bytes: u64,
+    expected_sha256: String,
+}
+
+impl RemoteVerificationPlan {
+    const INTEGRITY_MISMATCH: u8 = 70;
+    const DESTINATION_COLLISION: u8 = 71;
+    const MISSING_CHECKSUM_TOOL: u8 = 72;
+
+    /// Creates the remote integrity and publication plan.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RemoteVerificationPlanError::InvalidSha256`] unless the
+    /// digest is exactly 64 lowercase ASCII hexadecimal characters. This
+    /// makes every interpolated script value structural data rather than
+    /// executable shell input.
+    pub fn new(
+        upload_path: RemoteUploadPath,
+        expected_bytes: u64,
+        expected_sha256: &str,
+    ) -> Result<Self, RemoteVerificationPlanError> {
+        if expected_sha256.len() != 64
+            || !expected_sha256
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        {
+            return Err(RemoteVerificationPlanError::InvalidSha256);
+        }
+        Ok(Self {
+            upload_path,
+            expected_bytes,
+            expected_sha256: expected_sha256.to_owned(),
+        })
+    }
+
+    #[must_use]
+    pub fn upload_path(&self) -> &RemoteUploadPath {
+        &self.upload_path
+    }
+
+    #[must_use]
+    pub const fn remote_exit_code_for_integrity_mismatch(&self) -> u8 {
+        Self::INTEGRITY_MISMATCH
+    }
+
+    #[must_use]
+    pub const fn remote_exit_code_for_destination_collision(&self) -> u8 {
+        Self::DESTINATION_COLLISION
+    }
+
+    #[must_use]
+    pub const fn remote_exit_code_for_missing_checksum_tool(&self) -> u8 {
+        Self::MISSING_CHECKSUM_TOOL
+    }
+
+    #[must_use]
+    pub fn script(&self) -> String {
+        let partial = escape_remote_path_for_shell(self.upload_path.partial_path());
+        let final_path = escape_remote_path_for_shell(self.upload_path.final_path());
+        format!(
+            "set -eu; p={partial}; f={final_path}; cleanup() {{ rm -f \"$p\"; }}; \
+             trap cleanup EXIT HUP INT TERM; [ ! -L \"$p\" ] || exit {}; \
+             [ \"$(wc -c < \"$p\" | tr -d ' ')\" = {} ] || exit {}; \
+             if command -v sha256sum >/dev/null 2>&1; then h=$(sha256sum -- \"$p\"); h=${{h%% *}}; \
+             elif command -v shasum >/dev/null 2>&1; then h=$(shasum -a 256 -- \"$p\"); h=${{h%% *}}; \
+             else exit {}; fi; [ \"$h\" = {} ] || exit {}; \
+             [ ! -e \"$f\" ] && [ ! -L \"$f\" ] || exit {}; \
+             ln \"$p\" \"$f\" || exit {}; rm -f \"$p\"; trap - EXIT HUP INT TERM",
+            Self::INTEGRITY_MISMATCH,
+            self.expected_bytes,
+            Self::INTEGRITY_MISMATCH,
+            Self::MISSING_CHECKSUM_TOOL,
+            self.expected_sha256,
+            Self::INTEGRITY_MISMATCH,
+            Self::DESTINATION_COLLISION,
+            Self::DESTINATION_COLLISION,
+        )
+    }
 }
 
 fn sanitized_filename(original: &str) -> String {

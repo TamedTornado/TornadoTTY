@@ -115,12 +115,13 @@
     },
     {
       "name": "zentty-linux",
-      "kind": "binary",
+      "kind": "product-package",
       "shipped": true,
       "responsibilities": [
         "gtk-application-shell",
         "window-worklane-pane-projection",
         "linux-platform-services",
+        "transactional-remote-transfer",
         "composition-root",
         "lifecycle-orchestration"
       ],
@@ -148,7 +149,8 @@
       ],
       "workspace_dependencies": [
         "zentty-core",
-        "zentty-ghostty"
+        "zentty-ghostty",
+        "zentty-linux"
       ],
       "forbidden_dependency_classes": [
         "zentty-ghostty-sys-direct",
@@ -166,7 +168,8 @@
     "zentty-linux->zentty-ghostty",
     "zentty-linux->zentty-tmux-compat",
     "zentty-test-support->zentty-core",
-    "zentty-test-support->zentty-ghostty"
+    "zentty-test-support->zentty-ghostty",
+    "zentty-test-support->zentty-linux"
   ],
   "long_lived_owners": [
     "ApplicationRuntimeOwner",

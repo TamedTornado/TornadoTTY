@@ -42,6 +42,7 @@ mod agent_events;
 mod clipboard_actions;
 mod global_search;
 mod pane_runtime;
+mod remote_paste;
 mod ssh_identity;
 mod tmux_runtime;
 
@@ -70,6 +71,14 @@ use pane_runtime::PaneRuntimeCoordinator;
 const PRIMARY_RIGHT_BEHAVIOR: PaneRightInsertionBehavior = PaneRightInsertionBehavior::VisibleSplit;
 const WORKLANE_PEEK_TAB_HOLD_THRESHOLD: Duration = Duration::from_millis(200);
 type SidebarTrackingState = (Rc<Cell<i32>>, Rc<Cell<bool>>, Rc<Cell<u64>>);
+
+#[derive(Default)]
+struct RemotePaneContext {
+    probe_source: Option<glib::SourceId>,
+    probe_in_flight: bool,
+    identities: BTreeMap<String, ssh_identity::PaneSshIdentity>,
+    uploads: BTreeMap<String, remote_paste::RemoteUploadActivity>,
+}
 
 fn install_shell_styles() {
     sidebar::install_styles();
@@ -124,8 +133,7 @@ pub(crate) struct ApplicationShell {
     global_search_view: GlobalSearchView,
     global_search: GlobalSearchCoordinator,
     global_search_generation: u64,
-    ssh_probe_source: Option<glib::SourceId>,
-    ssh_probe_in_flight: bool,
+    remote_panes: RemotePaneContext,
     last_pane_viewport_height: Cell<i32>,
     action_router: Option<ActionRouter>,
     agent_events: AgentEventCoordinator,
@@ -230,8 +238,7 @@ impl ApplicationShell {
             global_search_view,
             global_search: GlobalSearchCoordinator::default(),
             global_search_generation: 0,
-            ssh_probe_source: None,
-            ssh_probe_in_flight: false,
+            remote_panes: RemotePaneContext::default(),
             last_pane_viewport_height: Cell::new(0),
             action_router: None,
             agent_events,
@@ -243,7 +250,7 @@ impl ApplicationShell {
             self_handle: RefCell::new(Weak::new()),
         }));
         shell.borrow().self_handle.replace(Rc::downgrade(&shell));
-        shell.borrow_mut().ssh_probe_source = Some(ssh_identity::install(&shell));
+        shell.borrow_mut().remote_panes.probe_source = Some(ssh_identity::install(&shell));
         install_sidebar_width_tracking(
             &body,
             &shell.borrow().sidebar_scroll,
@@ -462,7 +469,10 @@ impl ApplicationShell {
 
     pub(crate) fn detach_and_close(&mut self) {
         self.shutting_down = true;
-        if let Some(source) = self.ssh_probe_source.take() {
+        for upload in self.remote_panes.uploads.values() {
+            upload.cancel();
+        }
+        if let Some(source) = self.remote_panes.probe_source.take() {
             source.remove();
         }
         // A deferred pane belongs to a cross-window transfer but is not yet

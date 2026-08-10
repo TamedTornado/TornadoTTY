@@ -50,6 +50,24 @@ PermitTunnel no
 GatewayPorts no
 LogLevel VERBOSE
 EOF
+    case "${ZENTTY_DISPOSABLE_SSHD_SFTP:-true}" in
+        true) printf 'Subsystem sftp internal-sftp\n' >>"${ZENTTY_DISPOSABLE_SSHD_ROOT}/sshd-config" ;;
+        false) ;;
+        failing)
+            cat >"${ZENTTY_DISPOSABLE_SSHD_ROOT}/failing-sftp" <<'EOF'
+#!/bin/sh
+echo 'controlled SFTP failure' >&2
+exit 1
+EOF
+            chmod 700 "${ZENTTY_DISPOSABLE_SSHD_ROOT}/failing-sftp"
+            printf 'Subsystem sftp %s\n' "${ZENTTY_DISPOSABLE_SSHD_ROOT}/failing-sftp" \
+                >>"${ZENTTY_DISPOSABLE_SSHD_ROOT}/sshd-config"
+            ;;
+        *)
+            echo "disposable-sshd: invalid SFTP mode" >&2
+            return 1
+            ;;
+    esac
     cat >"${ZENTTY_DISPOSABLE_SSHD_ROOT}/remote-actor" <<'EOF'
 #!/bin/sh
 printf '\033]2;ssh-remote-ready\007'
