@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use zentty_core::{
     DetectedServer, DetectedServerConfidence, DetectedServerSource, ServerPortRule, ServerRegistry,
     ServerRelevanceContext, ServerRelevanceReason, ServerRelevanceTier,
-    ServerTerminationObservation, authorize_server_termination, detect_server_urls,
+    ServerTerminationObservation, ServerUrlError, authorize_server_termination, detect_server_urls,
     normalize_server_url, rank_servers,
 };
 
@@ -37,6 +37,26 @@ fn source_url_normalization_preserves_local_paths_and_rejects_public_or_hostile_
     assert!(normalize_server_url("file://localhost:3000/tmp").is_err());
     assert!(normalize_server_url("0").is_err());
     assert!(normalize_server_url("65536").is_err());
+    assert_eq!(
+        normalize_server_url(":3000"),
+        Err(ServerUrlError::MissingPort)
+    );
+    assert_eq!(
+        normalize_server_url("localhost:"),
+        Err(ServerUrlError::MissingPort)
+    );
+
+    for accepted in [
+        "[fc00::1]:3000",
+        "[fdff::1]:3000",
+        "[fe80::1]:3000",
+        "[febf::1]:3000",
+    ] {
+        assert!(normalize_server_url(accepted).is_ok(), "{accepted}");
+    }
+    for rejected in ["[f800::1]:3000", "[fec0::1]:3000", "[ffff::1]:3000"] {
+        assert!(normalize_server_url(rejected).is_err(), "{rejected}");
+    }
 }
 
 #[test]
@@ -87,6 +107,67 @@ fn port_rules_normalize_merge_add_remove_and_split() {
     assert_eq!(rules, ["3000-3002"]);
     let rules = ServerPortRule::removing_port(3001, &["3000-3002"]);
     assert_eq!(rules, ["3000", "3002"]);
+    assert_eq!(
+        ServerPortRule::removing_port(3000, &["3000-3002"]),
+        ["3001-3002"]
+    );
+    assert_eq!(
+        ServerPortRule::removing_port(3002, &["3000-3002"]),
+        ["3000-3001"]
+    );
+}
+
+#[test]
+fn relevance_scores_every_source_confidence_focus_running_and_freshness_boundary() {
+    let mut manual = server("3000", DetectedServerSource::Manual, Some("pane-1"), 40_000);
+    manual.confidence = DetectedServerConfidence::Explicit;
+    let mut watch = server("3001", DetectedServerSource::Watch, Some("pane-2"), 39_999);
+    watch.confidence = DetectedServerConfidence::Pid;
+    let mut docker = server("3002", DetectedServerSource::Docker, None, 0);
+    docker.confidence = DetectedServerConfidence::Cwd;
+    let mut scanner = server("3003", DetectedServerSource::Scanner, None, 0);
+    scanner.confidence = DetectedServerConfidence::Worklane;
+    let ranked = rank_servers(
+        vec![scanner, docker, watch, manual],
+        &ServerRelevanceContext {
+            focused_pane_id: Some("pane-1".into()),
+            running_pane_ids: BTreeSet::from(["pane-1".into()]),
+            now_ms: 100_000,
+            ..ServerRelevanceContext::default()
+        },
+    );
+    let by_origin = ranked
+        .iter()
+        .map(|entry| (entry.server.origin.as_str(), entry))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let manual = by_origin["http://localhost:3000"];
+    assert_eq!(manual.score, 465);
+    assert!(manual.reasons.contains(&ServerRelevanceReason::FocusedPane));
+    assert!(manual.reasons.contains(&ServerRelevanceReason::RunningPane));
+    assert!(manual.reasons.contains(&ServerRelevanceReason::Manual));
+    assert!(manual.reasons.contains(&ServerRelevanceReason::Fresh));
+    assert_eq!(by_origin["http://localhost:3001"].score, 80);
+    assert_eq!(by_origin["http://localhost:3002"].score, 50);
+    assert_eq!(by_origin["http://localhost:3003"].score, 0);
+    assert!(
+        !by_origin["http://localhost:3003"]
+            .reasons
+            .contains(&ServerRelevanceReason::Manual)
+    );
+
+    let no_pane = rank_servers(
+        vec![server("4000", DetectedServerSource::Scanner, None, 0)],
+        &ServerRelevanceContext {
+            focused_pane_id: None,
+            now_ms: 100_000,
+            ..ServerRelevanceContext::default()
+        },
+    );
+    assert!(
+        !no_pane[0]
+            .reasons
+            .contains(&ServerRelevanceReason::FocusedPane)
+    );
 }
 
 #[test]
@@ -201,6 +282,44 @@ fn registry_merges_sources_by_precedence_and_preserves_first_seen_across_refresh
 }
 
 #[test]
+fn registry_clears_only_the_authenticated_pane_and_optional_source() {
+    let mut registry = ServerRegistry::default();
+    registry.upsert(server(
+        "3000",
+        DetectedServerSource::Manual,
+        Some("pane-1"),
+        1,
+    ));
+    registry.upsert(server(
+        "4000",
+        DetectedServerSource::Watch,
+        Some("pane-1"),
+        1,
+    ));
+    registry.upsert(server(
+        "5000",
+        DetectedServerSource::Manual,
+        Some("pane-2"),
+        1,
+    ));
+
+    registry.clear_pane("worklane-1", "pane-1", Some(DetectedServerSource::Watch));
+    let origins = registry
+        .servers_in("worklane-1")
+        .into_iter()
+        .map(|server| server.origin)
+        .collect::<Vec<_>>();
+    assert_eq!(origins, ["http://localhost:3000", "http://localhost:5000"]);
+
+    registry.clear_pane("worklane-1", "pane-1", None);
+    assert_eq!(registry.servers_in("worklane-1").len(), 1);
+    assert_eq!(
+        registry.servers_in("worklane-1")[0].pane_id.as_deref(),
+        Some("pane-2")
+    );
+}
+
+#[test]
 fn termination_requires_a_current_pid_owned_scanner_listener_below_the_pane_shell() {
     let scanner = server("5173", DetectedServerSource::Scanner, Some("pane-1"), 100);
     let observation = ServerTerminationObservation {
@@ -220,6 +339,7 @@ fn termination_requires_a_current_pid_owned_scanner_listener_below_the_pane_shel
     rejected = observation.clone();
     rejected.listener_pid = 1;
     assert!(authorize_server_termination(&scanner, "pane-1", 100, &rejected).is_none());
+    assert!(authorize_server_termination(&scanner, "pane-1", 1, &observation).is_none());
     rejected = observation.clone();
     rejected.port = 3000;
     assert!(authorize_server_termination(&scanner, "pane-1", 100, &rejected).is_none());

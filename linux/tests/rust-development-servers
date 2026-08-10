@@ -8,6 +8,9 @@ server_fixture="${repo_root}/target/release-safe/development_server"
 run_root="$(mktemp -d)"
 log="${run_root}/product.log"
 server_receipt="${run_root}/server.receipt"
+watch_receipt="${run_root}/watch-server.receipt"
+watch_list_receipt="${run_root}/watch-list.json"
+watch_open_receipt="${run_root}/watch-open.receipt"
 open_receipt="${run_root}/open.receipt"
 state_directory="${run_root}/state"
 product_pid=""
@@ -78,13 +81,42 @@ cat >"${run_root}/bin/xdg-open" <<EOF
 printf '%s\n' "\$@" >'${open_receipt}'
 EOF
 chmod 700 "${run_root}/bin/xdg-open"
+cat >"${run_root}/run-servers" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+watch_pid=""
+cleanup_watch() {
+    if [[ "\${watch_pid}" =~ ^[1-9][0-9]*$ ]]; then
+        kill -TERM "\${watch_pid}" 2>/dev/null || true
+        wait "\${watch_pid}" 2>/dev/null || true
+    fi
+}
+trap cleanup_watch EXIT
+"\${ZENTTY_CLI_BIN}" server watch -- '${server_fixture}' --receipt '${watch_receipt}' &
+watch_pid=\$!
+for _ in \$(seq 1 200); do
+    [[ -s '${watch_receipt}' ]] && break
+    sleep 0.01
+done
+"\${ZENTTY_CLI_BIN}" server list --json >'${watch_list_receipt}'
+watch_url=\$(sed -n 's/^url=//p' '${watch_receipt}')
+"\${ZENTTY_CLI_BIN}" server open "\${watch_url}"
+for _ in \$(seq 1 200); do
+    [[ -s '${open_receipt}' ]] && break
+    sleep 0.01
+done
+cp '${open_receipt}' '${watch_open_receipt}'
+rm -f '${open_receipt}'
+'${server_fixture}' --receipt '${server_receipt}'
+EOF
+chmod 700 "${run_root}/run-servers"
 
 GDK_SCALE=1 \
 GDK_DPI_SCALE=1 \
 PATH="${run_root}/bin:${PATH}" \
 LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
     "${product}" \
-    --command "exec '${server_fixture}' --receipt '${server_receipt}'" \
+    --command "exec '${run_root}/run-servers'" \
     --state-directory "${state_directory}" \
     --no-session-restore >"${log}" 2>&1 &
 product_pid=$!
@@ -96,7 +128,7 @@ for _ in $(seq 1 300); do
     else
         window_id=wayland-focused
     fi
-    if [[ -n "${window_id}" ]] && [[ -s "${server_receipt}" ]] &&
+    if [[ -n "${window_id}" ]] && [[ -s "${server_receipt}" ]] && [[ -s "${watch_receipt}" ]] &&
         grep -Fq 'zentty-linux: server-detected ' "${log}"; then
         break
     fi
@@ -104,10 +136,23 @@ for _ in $(seq 1 300); do
 done
 [[ -n "${window_id}" ]] || fail "real Zentty window did not appear"
 [[ -s "${server_receipt}" ]] || fail "real PTY server did not publish readiness"
+[[ -s "${watch_receipt}" ]] || fail "watched real server did not publish readiness"
 port="$(sed -n 's#^url=http://127\.0\.0\.1:\([0-9][0-9]*\)/fixture$#\1#p' "${server_receipt}")"
 server_pid="$(sed -n 's/^pid=\([0-9][0-9]*\)$/\1/p' "${server_receipt}")"
 [[ "${port}" =~ ^[1-9][0-9]*$ ]] || fail "server fixture receipt is malformed"
 [[ "${server_pid}" =~ ^[1-9][0-9]*$ ]] || fail "server PID receipt is malformed"
+watch_port="$(sed -n 's#^url=http://127\.0\.0\.1:\([0-9][0-9]*\)/fixture$#\1#p' "${watch_receipt}")"
+[[ "${watch_port}" =~ ^[1-9][0-9]*$ ]] || fail "watch server fixture receipt is malformed"
+for _ in $(seq 1 100); do
+    grep -Fq "origin=http://localhost:${watch_port} source=Watch confidence=Explicit" "${log}" && break
+    sleep 0.05
+done
+grep -Fq "origin=http://localhost:${watch_port} source=Watch confidence=Explicit" "${log}" ||
+    fail "authenticated watch output was not attributed to its real Ghostty pane"
+grep -Fq "http://localhost:${watch_port}/fixture" "${watch_list_receipt}" ||
+    fail "authenticated server list omitted the output-reported URL path"
+[[ "$(cat "${watch_open_receipt}")" == "http://localhost:${watch_port}/fixture" ]] ||
+    fail "authenticated server open discarded the output-reported URL path"
 grep -Fq "origin=http://localhost:${port} source=Scanner confidence=Pid" "${log}" ||
     fail "real listener was not PID-attributed to its Ghostty pane"
 if [[ -n "${container_id}" ]]; then
@@ -246,4 +291,4 @@ kill -0 "${server_pid}" 2>/dev/null && fail "owned real server survived the Stop
 grep -Fq "action=stop-server pid=${server_pid} signal=INT result=delivered" "${log}" ||
     fail "product did not receipt its graceful signal"
 
-echo "Rust development-server product journey passed: ${backend} real-pty real-listener exact-browser-argv persisted-ignore safe-stop"
+echo "Rust development-server product journey passed: ${backend} real-pty real-listener authenticated-watch exact-browser-argv persisted-ignore safe-stop"

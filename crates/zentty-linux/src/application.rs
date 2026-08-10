@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use gtk::prelude::*;
 use gtk::{gdk, glib};
+use zentty_agent_ipc::ServerIpcReply;
 use zentty_core::{AppConfig, WindowRecipe};
 use zentty_ghostty::GhosttyRuntime;
 use zentty_tmux_compat::TmuxCompatReply;
@@ -524,9 +525,13 @@ impl ApplicationCoordinator {
         for shell in self.shells.values() {
             shell.borrow_mut().sync_agent_targets();
         }
-        let (events, tmux_commands) = {
+        let (events, tmux_commands, server_commands) = {
             let runtime = self.agent_runtime.borrow();
-            (runtime.drain(), runtime.drain_tmux())
+            (
+                runtime.drain(),
+                runtime.drain_tmux(),
+                runtime.drain_servers(),
+            )
         };
         let mut events_by_window = BTreeMap::<String, Vec<_>>::new();
         for event in events {
@@ -557,6 +562,7 @@ impl ApplicationCoordinator {
                 }
             }
         }
+        let mut servers_by_window = self.route_server_commands(server_commands)?;
         let stale_window_ids = events_by_window
             .keys()
             .filter(|window_id| !self.shells.contains_key(*window_id))
@@ -571,6 +577,16 @@ impl ApplicationCoordinator {
             }
         }
         for (id, shell) in &self.shells {
+            for command in servers_by_window.remove(id).unwrap_or_default() {
+                let reply = crate::application_shell::server_runtime::handle_ipc(
+                    shell,
+                    &command.target,
+                    &command.request,
+                );
+                if let Err(error) = command.respond(reply) {
+                    eprintln!("zentty-linux: server-response window={id} error={error}");
+                }
+            }
             ApplicationShell::apply_agent_inputs(
                 shell,
                 tmux_by_window.remove(id).unwrap_or_default(),
@@ -597,6 +613,35 @@ impl ApplicationCoordinator {
             }
         }
         self.runtime.tick().map_err(|error| error.to_string())
+    }
+
+    fn route_server_commands(
+        &self,
+        commands: Vec<zentty_agent_ipc::AuthenticatedServerRequest>,
+    ) -> Result<BTreeMap<String, Vec<zentty_agent_ipc::AuthenticatedServerRequest>>, String> {
+        let mut by_window = BTreeMap::<String, Vec<_>>::new();
+        for command in commands {
+            if self.shells.contains_key(&command.target.window_id) {
+                by_window
+                    .entry(command.target.window_id.clone())
+                    .or_default()
+                    .push(command);
+                continue;
+            }
+            let target = command.target.clone();
+            let reply = ServerIpcReply::failure(
+                "stale_target",
+                format!("window {:?} is no longer available", target.window_id),
+            )
+            .map_err(|error| format!("could not create stale server reply: {error}"))?;
+            if let Err(error) = command.respond(reply) {
+                eprintln!(
+                    "zentty-linux: server-stale-target-response window={} pane={} error={error}",
+                    target.window_id, target.pane_id
+                );
+            }
+        }
+        Ok(by_window)
     }
 
     pub(crate) fn record_terminal_error(&mut self, error: String) {

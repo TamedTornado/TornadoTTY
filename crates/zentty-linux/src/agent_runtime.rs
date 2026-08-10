@@ -4,7 +4,9 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, mpsc};
-use zentty_agent_ipc::{AgentIpcServer, AuthenticatedTmuxRequest, generate_pane_token};
+use zentty_agent_ipc::{
+    AgentIpcServer, AuthenticatedServerRequest, AuthenticatedTmuxRequest, generate_pane_token,
+};
 use zentty_core::{AgentTarget, AuthenticatedAgentEvent, PaneTokenRegistry};
 
 pub(crate) struct AgentRuntime {
@@ -12,6 +14,7 @@ pub(crate) struct AgentRuntime {
     registry: Arc<Mutex<PaneTokenRegistry>>,
     receiver: mpsc::Receiver<AuthenticatedAgentEvent>,
     tmux_receiver: mpsc::Receiver<AuthenticatedTmuxRequest>,
+    server_receiver: mpsc::Receiver<AuthenticatedServerRequest>,
     tokens_by_pane: BTreeMap<String, String>,
     target_by_pane: BTreeMap<String, (String, String)>,
     runtime_directory: PathBuf,
@@ -36,11 +39,13 @@ impl AgentRuntime {
         let registry = Arc::new(Mutex::new(PaneTokenRegistry::default()));
         let (sender, receiver) = mpsc::channel();
         let (tmux_sender, tmux_receiver) = mpsc::channel();
-        let server = AgentIpcServer::start_with_tmux(
+        let (server_sender, server_receiver) = mpsc::channel();
+        let server = AgentIpcServer::start_with_product_routes(
             &socket_path,
             Arc::clone(&registry),
             sender,
             tmux_sender,
+            server_sender,
         )
         .map_err(|error| error.to_string())?;
         eprintln!(
@@ -72,6 +77,7 @@ impl AgentRuntime {
             registry,
             receiver,
             tmux_receiver,
+            server_receiver,
             tokens_by_pane: BTreeMap::new(),
             target_by_pane: BTreeMap::new(),
             runtime_directory,
@@ -216,6 +222,10 @@ impl AgentRuntime {
 
     pub(crate) fn drain_tmux(&self) -> Vec<AuthenticatedTmuxRequest> {
         self.tmux_receiver.try_iter().collect()
+    }
+
+    pub(crate) fn drain_servers(&self) -> Vec<AuthenticatedServerRequest> {
+        self.server_receiver.try_iter().collect()
     }
 }
 

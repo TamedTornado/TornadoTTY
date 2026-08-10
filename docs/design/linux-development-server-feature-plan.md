@@ -75,7 +75,25 @@ user-visible outcomes remain authoritative.
   expose or execute the documented bounded force escalation.
 - Open the normalized URL through the Linux browser launcher with exact argv.
 
-### D. Real product journeys
+### D. Authenticated CLI and output-reported servers
+
+- Extend the existing pane-token-authenticated IPC socket with one bounded
+  development-server request route. Do not create a feature socket, alternate
+  transport, or encode server commands as agent events.
+- Port `zentty server set/clear/list/open/watch/watch-set/watch-clear`, including
+  source argument names, strict parsing, pane routing derived from the token,
+  bounded replies, and deterministic stale-target failures.
+- `zentty server watch -- <argv...>` launches the real child without a shell,
+  preserves stdin, tees stdout and stderr unchanged, incrementally detects
+  normalized URLs across chunk boundaries, registers the newest output URL as
+  `.watch`, returns the child's exit status, and clears only that pane's watch
+  record on exit.
+- Construct these tests red-first at the protocol/parser boundary, then extend
+  the one staged-product development-server journey. The journey may replace
+  only the external browser; the CLI, authenticated socket, child process,
+  Ghostty PTY, GTK product, and HTTP listener remain real.
+
+### E. Real product journeys
 
 - In staged ReleaseSafe Zentty, launch separate real dynamic-port HTTP servers
   from real Ghostty PTYs in at least two panes/worklanes.
@@ -86,7 +104,7 @@ user-visible outcomes remain authoritative.
 - Exercise one real container-published server when the controlled host provides
   a supported runtime; preserve an explicit blocked prerequisite otherwise.
 
-### E. Qualification and completion
+### F. Qualification and completion
 
 - Extend the authoritative feature inventory, architecture ownership contract,
   and qualification matrix; do not silently remove Docker or platform-open
@@ -105,4 +123,3 @@ user-visible outcomes remain authoritative.
   implementation.
 - No control of listeners that cannot be proven descendants of the owning pane.
 - Task runners and Task Manager remain separate GH-19 feature slices.
-

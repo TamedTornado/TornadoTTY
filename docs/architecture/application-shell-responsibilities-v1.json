@@ -2,20 +2,20 @@
   "schema_version": 1,
   "contract_id": "zentty-application-shell-responsibilities",
   "source": "crates/zentty-linux/src/application_shell.rs",
-  "source_sha256": "df451a9c362e8c812a2d3f9b7b06b28b9b2e7ba2ba4abe8f859051cf92627d03",
+  "source_sha256": "0f3aa18172fc2e54910106034c5fac4cef2a6e9149b0a32dae68c6c7cd331f62",
   "owned_source_sha256": {
     "crates/zentty-linux/src/main.rs": "759fa5dcc6cd45ea364ab6c798cb1c4399fb070252b495b214041f9256ff7bd8",
-    "crates/zentty-linux/src/application.rs": "16126a0b9466adb7ae85a4dabe44c316930a1d118f4b1597d1e951728359612d",
+    "crates/zentty-linux/src/application.rs": "2713bac85b55babd79838e33426d2f044016742a37105d71c7bd0b7668df7534",
     "crates/zentty-linux/src/config_store.rs": "5b6c6c3831eac323770681a850eedea3a7720280db8223cfcc3f28bb28567ae7",
     "crates/zentty-linux/src/window_set.rs": "501d595889c11a41a4261ef8282465d76dd9ed8ccd1d004406b558579b0bf58e",
-    "crates/zentty-linux/src/agent_runtime.rs": "333aab1edbecc0029c47d2469cb0a5ceb1fcb90813d67b9e3751099a255e99ef",
+    "crates/zentty-linux/src/agent_runtime.rs": "48f30d38048ae5388ca59aee2021e1215cabdfc033e66755ed32c6f92dcb8671",
     "crates/zentty-linux/src/codex_enrichment.rs": "fe87631c75c04b63962b7f89d311a778a25af8f27a1dcb4d5950b3efcbaa476e",
     "crates/zentty-linux/src/application_shell/action_router.rs": "7b86422032bffa31b343e647ba4adbf17a7b33281b2f6dc5f2b8004fae80a885",
     "crates/zentty-linux/src/application_shell/clipboard_actions.rs": "1502a0353bc3e0d645d6c6bd81aae1ed1306f312838f92a635944d402cd441b0",
     "crates/zentty-linux/src/application_shell/agent_events.rs": "56c45836a4e6a6a929dce61251a199c0b8dec7a62edbcda3c9b5dd594dbb6038",
     "crates/zentty-linux/src/application_shell/global_search.rs": "98a1963830af8616b31da2558ae6f27c4461342ef3085f6ef9cda0863a1ddc7c",
     "crates/zentty-linux/src/application_shell/pane_runtime.rs": "1c5fa3c3ec679e4fabff94a782396340fe01fd423a2ab02b0c795816ffbf1e6c",
-    "crates/zentty-linux/src/application_shell/server_runtime.rs": "403c1c42bd5a9532379a637517c58133fbc81df02182f3a9796e5473cdc7295f",
+    "crates/zentty-linux/src/application_shell/server_runtime.rs": "cd39ebc1f95f7eb3c063058036fabbecc90cf367457a1538f2f6c8e657a0b919",
     "crates/zentty-linux/src/docker_discovery.rs": "1836046bf3159c0a207ed999dc44a2ef8d9aa6276d79275031e2dbbd6cdd6c6d",
     "crates/zentty-linux/src/server_discovery.rs": "0d398d53a68bd34afa15208e4b2c6c5d3a9739502f1c7b86b40e615ec73d87a8",
     "crates/zentty-linux/src/application_shell/remote_paste.rs": "dfa26112e2dfe15a2291d5df843d26f74579607b06f9e4d1efd0931312835ead",
@@ -302,9 +302,10 @@
     ],
     "clipboard_coordinator": ["copy_focused_selection"],
     "server_runtime_coordinator": [
-      "install", "refresh_servers", "set_port_ignored", "request_probe", "probe",
-      "apply_servers", "open_server", "stop_server", "pane_probe_source", "stop_owned_server",
-      "signal_process"
+      "install", "refresh_servers", "handle_ipc", "register_ipc_server", "clear_ipc_servers",
+      "open_ipc_server", "server_state_json", "ipc_failure", "now_ms", "refresh_registry_projection",
+      "set_port_ignored", "request_probe", "probe", "apply_servers", "open_server", "launch_url",
+      "stop_server", "pane_probe_source", "stop_owned_server", "signal_process"
     ],
     "server_listener_discovery": [
       "scan_listeners_at", "read_bounded", "parse_socket_table", "decode_ipv4", "decode_ipv6",

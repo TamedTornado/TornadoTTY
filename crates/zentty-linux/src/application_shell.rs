@@ -43,7 +43,7 @@ mod clipboard_actions;
 mod global_search;
 mod pane_runtime;
 mod remote_paste;
-mod server_runtime;
+pub(crate) mod server_runtime;
 mod ssh_identity;
 mod tmux_runtime;
 

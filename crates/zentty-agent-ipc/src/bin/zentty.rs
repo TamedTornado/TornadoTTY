@@ -1,12 +1,14 @@
 #![forbid(unsafe_code)]
 
 use serde_json::Value;
-use std::io::{IsTerminal, Read, Write};
+use std::io::{BufReader, IsTerminal, Read, Write};
 use std::process::ExitCode;
+use std::process::{Command as ProcessCommand, Stdio};
 use std::time::Instant;
-use zentty_agent_ipc::{AgentIpcClient, launch_agent};
+use zentty_agent_ipc::{AgentIpcClient, ServerCommand, launch_agent};
 use zentty_core::{
     AgentEvent, adapt_claude_hook, adapt_codex_hook, adapt_codex_notify, adapt_gemini_hook,
+    detect_server_urls,
 };
 use zentty_tmux_compat::{
     Command, Invocation, TmuxCompatRequest, WAIT_POLL_INTERVAL, WaitForAction,
@@ -38,6 +40,9 @@ fn run() -> Result<(), String> {
     }
     if command.as_deref() == Some("codex-notify") {
         return run_codex_notify(arguments.next());
+    }
+    if command.as_deref() == Some("server") {
+        return run_server(&arguments.collect::<Vec<_>>());
     }
     if command.as_deref() != Some("ipc") || arguments.next().as_deref() != Some("agent-event") {
         return Err(
@@ -88,6 +93,134 @@ fn run() -> Result<(), String> {
     }
     if adapter == Some("gemini") {
         println!("{{}}");
+    }
+    Ok(())
+}
+
+fn run_server(arguments: &[String]) -> Result<(), String> {
+    let command = ServerCommand::parse(arguments).map_err(|error| error.to_string())?;
+    if let ServerCommand::Watch { command } = command {
+        return run_server_watch(&command);
+    }
+    send_server_command(&command)
+}
+
+fn send_server_command(command: &ServerCommand) -> Result<(), String> {
+    let socket = std::env::var("ZENTTY_INSTANCE_SOCKET")
+        .map_err(|_| "zentty server commands must run inside a Zentty pane".to_owned())?;
+    let token = std::env::var("ZENTTY_PANE_TOKEN")
+        .map_err(|_| "zentty server commands must run inside a Zentty pane".to_owned())?;
+    let route = command
+        .route()
+        .ok_or_else(|| "server watch must be handled by the watch runner".to_owned())?;
+    let reply = AgentIpcClient::send_server(
+        socket,
+        &token,
+        route,
+        &command.ipc_arguments(),
+        claimed_target_from_environment(),
+    )
+    .map_err(|error| error.to_string())?;
+    if let Some(error) = reply.error() {
+        return Err(format!("{}: {}", error.code(), error.message()));
+    }
+    if command.json()
+        && let Some(stdout) = reply.stdout()
+    {
+        std::io::stdout()
+            .write_all(stdout.as_bytes())
+            .and_then(|()| std::io::stdout().write_all(b"\n"))
+            .map_err(|error| format!("could not write server response: {error}"))?;
+    }
+    Ok(())
+}
+
+fn run_server_watch(command: &[String]) -> Result<(), String> {
+    let executable = command
+        .first()
+        .ok_or_else(|| "missing command after zentty server watch --".to_owned())?;
+    let _ = send_server_command(&ServerCommand::WatchClear { json: false });
+    let mut child = ProcessCommand::new(executable)
+        .args(&command[1..])
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("could not launch watched command {executable:?}: {error}"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "watched command stdout was unavailable".to_owned())?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| "watched command stderr was unavailable".to_owned())?;
+    let forwarded = std::thread::scope(|scope| {
+        let stdout_worker = scope.spawn(|| forward_watched_output(stdout, std::io::stdout()));
+        let stderr_worker = scope.spawn(|| forward_watched_output(stderr, std::io::stderr()));
+        let status = child
+            .wait()
+            .map_err(|error| format!("could not wait for watched command: {error}"));
+        let stdout_result = stdout_worker
+            .join()
+            .map_err(|_| "watched stdout worker panicked".to_owned())?;
+        let stderr_result = stderr_worker
+            .join()
+            .map_err(|_| "watched stderr worker panicked".to_owned())?;
+        stdout_result?;
+        stderr_result?;
+        status
+    });
+    let _ = send_server_command(&ServerCommand::WatchClear { json: false });
+    let status = forwarded?;
+    if status.success() {
+        Ok(())
+    } else if let Some(code) = status.code() {
+        std::process::exit(code);
+    } else {
+        Err(format!("watched command exited with {status}"))
+    }
+}
+
+fn forward_watched_output(input: impl Read, mut output: impl Write) -> Result<(), String> {
+    const CHUNK_BYTES: usize = 4096;
+    const DETECTION_TAIL_BYTES: usize = 8192;
+    let mut input = BufReader::new(input);
+    let mut chunk = [0_u8; CHUNK_BYTES];
+    let mut tail = String::new();
+    let mut reported = std::collections::BTreeSet::new();
+    loop {
+        let count = input
+            .read(&mut chunk)
+            .map_err(|error| format!("could not read watched output: {error}"))?;
+        if count == 0 {
+            break;
+        }
+        output
+            .write_all(&chunk[..count])
+            .and_then(|()| output.flush())
+            .map_err(|error| format!("could not forward watched output: {error}"))?;
+        let text = String::from_utf8_lossy(&chunk[..count]);
+        tail.push_str(&text);
+        for candidate in detect_server_urls(&tail) {
+            if reported.len() >= 128 || !reported.insert(candidate.url.clone()) {
+                continue;
+            }
+            let _ = send_server_command(&ServerCommand::WatchSet {
+                raw_url: candidate.url,
+                pid: None,
+                json: false,
+            });
+        }
+        if tail.len() > DETECTION_TAIL_BYTES {
+            let boundary = tail
+                .char_indices()
+                .find_map(|(index, _)| {
+                    (tail.len() - index <= DETECTION_TAIL_BYTES).then_some(index)
+                })
+                .unwrap_or(0);
+            tail.drain(..boundary);
+        }
     }
     Ok(())
 }

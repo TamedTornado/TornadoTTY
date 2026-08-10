@@ -94,3 +94,55 @@ difference, and remaining limitation is recorded here as the feature is built.
   unrelated project and a database while retaining the matching web service.
   Scanner and Docker records merge through the one `ServerRegistry`; there is
   no second product/process registry.
+- The source audit after passive discovery exposed a material remaining path:
+  output-reported URLs are delivered by `zentty server watch`, not inferred
+  from the listener alone. The CLI has source commands `set`, `clear`, `list`,
+  `open`, and `watch`, plus internal `watch-set`/`watch-clear`. This was added to
+  the feature plan before implementation rather than silently promoting the
+  passive subset to feature parity.
+- The authenticated route was added to the existing pane-token Unix socket and
+  existing process `AgentRuntime`. It has its own bounded server request/reply
+  contract and receiver but no second socket, listener thread, token registry,
+  workspace registry, or GLib scheduler. A real-socket test proves a spoofed
+  client target loses to the token's canonical window/worklane/pane.
+- Final diff review found the first server-route extraction retained the pane
+  token registry lock while waiting for the GTK product reply. It did not
+  deadlock the current tick order, but it could unnecessarily delay independent
+  authentication. The route now authenticates, drops the lock, and only then
+  waits. A real concurrent-socket test holds a server reply pending while a
+  separate authenticated agent event is accepted and delivered.
+- The first complete workspace run of the new registry-clear test failed only
+  because the assertion assumed reverse lexical ordering. The registry's
+  deterministic origin ordering was correct; the fixture expectation was
+  repaired and the rerun passed 8/8. No product behavior changed to satisfy the
+  mistaken assertion.
+- The staged X11 journey now starts two real HTTP listeners beneath the real
+  Ghostty pane. One is wrapped by the staged `zentty server watch` CLI, which
+  tees its real stdout, detects the `/fixture` URL, registers through the
+  authenticated socket, and appears as `Watch`/`Explicit`. A real `server list
+  --json` receipt retains that path, and `server open` crosses the controlled
+  `xdg-open` boundary with the exact same path. The independent scanner-owned
+  listener still exercises safe SIGINT stop, so watch coverage did not replace
+  the original ownership journey.
+- Watch launches exact argv through `Command`, inherits stdin, concurrently
+  forwards stdout/stderr, bounds its incremental detection tail, deduplicates
+  reported URLs, clears only its pane's watch records on entry/exit, and
+  preserves ordinary child exit codes. The browser is the only substituted
+  external component in the product journey.
+- The first copy-safe, file-scoped core mutation run tested 131 mutants and
+  found 21 survivors. They exposed missing boundary assertions for empty host/
+  port errors, IPv6 unique-local/link-local masks, range-edge removal, init PID
+  rejection, and each relevance-score contribution. After adding those tests,
+  one survivor remained because the test asserted only failure rather than the
+  source-specific `MissingPort` result. Pinning that diagnostic produced the
+  final receipt: **131 tested, 117 caught, 14 unviable, 0 missed**. Every run
+  used `.cargo/mutants.toml` with `gitignore = true` and `copy_target = false`;
+  the ignored multi-gigabyte build tree was never copied.
+
+## Remaining limitation
+
+- Linux currently implements the source's system-default browser target via
+  exact `xdg-open URL` argv. The source's multi-browser catalog/Open With UI is
+  not yet ported; non-system `--browser` values fail explicitly instead of
+  silently falling back. This remains product scope and must not be described
+  as full browser-target parity.

@@ -362,6 +362,19 @@ impl ServerRegistry {
         }
     }
 
+    pub fn clear_pane(
+        &mut self,
+        worklane_id: &str,
+        pane_id: &str,
+        source: Option<DetectedServerSource>,
+    ) {
+        self.records.retain(|key, _| {
+            key.worklane_id != worklane_id
+                || key.pane_id.as_deref() != Some(pane_id)
+                || source.is_some_and(|source| key.source != source)
+        });
+    }
+
     #[must_use]
     pub fn servers_in(&self, worklane_id: &str) -> Vec<DetectedServer> {
         let mut grouped: BTreeMap<&str, Vec<&DetectedServer>> = BTreeMap::new();

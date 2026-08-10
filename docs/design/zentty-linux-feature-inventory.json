@@ -409,17 +409,17 @@
       "id": "utilities.dev-servers",
       "category": "project_utilities",
       "behavior": "Detect and attribute passive, output-reported and container-published development servers to panes/projects, normalize and rank URLs, ignore noisy ports, open the selected server, refresh, and safely stop an owned server process.",
-      "source": ["Zentty/Servers/PassiveServerDetection.swift", "Zentty/Servers/DockerServerDiscovery.swift", "Zentty/Servers/ServerListenerScanner.swift", "Zentty/Servers/ServerRegistry.swift", "Zentty/Servers/ServerProcessTerminator.swift"],
-      "swift_tests": ["ZenttyLogicTests/PassiveServerDetectionTests.swift", "ZenttyLogicTests/DockerServerDiscoveryTests.swift", "ZenttyLogicTests/ServerListenerScannerTests.swift", "ZenttyLogicTests/ServerRegistryTests.swift", "ZenttyLogicTests/ServerProcessTerminatorTests.swift"],
+      "source": ["Zentty/Servers/PassiveServerDetection.swift", "Zentty/Servers/DockerServerDiscovery.swift", "Zentty/Servers/ServerListenerScanner.swift", "Zentty/Servers/ServerRegistry.swift", "Zentty/Servers/ServerOutputURLDetector.swift", "Zentty/Servers/ServerIPCCommands.swift", "Zentty/Servers/ServerWatchRunner.swift", "Zentty/Servers/ServerBrowserCatalog.swift", "Zentty/Servers/ServerProcessTerminator.swift"],
+      "swift_tests": ["ZenttyLogicTests/PassiveServerDetectionTests.swift", "ZenttyLogicTests/DockerServerDiscoveryTests.swift", "ZenttyLogicTests/ServerListenerScannerTests.swift", "ZenttyLogicTests/ServerRegistryTests.swift", "ZenttyLogicTests/ServerOutputURLDetectorTests.swift", "ZenttyLogicTests/ServerIPCCommandTests.swift", "ZenttyLogicTests/ServerBrowserCatalogTests.swift", "ZenttyLogicTests/ServerProcessTerminatorTests.swift"],
       "classification": "REQUIRED_INITIAL_RELEASE",
       "origin": "PORT_PARITY",
       "user_impact": "Agents commonly run alongside servers; Zentty advertises detection/open/control so users can act without hunting ports and process owners.",
       "linux_owner_issue": 19,
-      "implementation_status": "NOT_IMPLEMENTED",
-      "focused_tests": [],
-      "product_scenarios": [],
+      "implementation_status": "PARTIAL",
+      "focused_tests": ["crates/zentty-core/tests/dev_server.rs", "crates/zentty-agent-ipc/tests/server_transport.rs", "crates/zentty-linux/src/server_discovery.rs", "crates/zentty-linux/src/docker_discovery.rs"],
+      "product_scenarios": ["linux/tests/rust-development-servers"],
       "test_plan": "Launch real HTTP listeners from distinct PTYs plus a disposable container, verify attribution/ranking/open/ignore/refresh/stop through the staged product, and cover IPv6, PID reuse, hostile URLs and unrelated processes.",
-      "alternative_or_blocker": null
+      "alternative_or_blocker": "Passive, output-watch, Docker, system-browser open, ignore/refresh, and safe stop are implemented. Linux multi-browser catalog/Open With remains required before COMPLETE."
     },
     {
       "id": "utilities.task-runners",

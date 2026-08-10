@@ -203,7 +203,7 @@ if [[ -n "${diff}" ]]; then
     fail "pane runtime function inventory differs from its ownership contract"
 fi
 
-sed -nE 's/^[[:space:]]*(pub\(super\)[[:space:]]+)?fn[[:space:]]+([a-zA-Z0-9_]+).*/\2/p' "${server_runtime_file}" |
+sed -nE 's/^[[:space:]]*(pub\((super|crate)\)[[:space:]]+)?fn[[:space:]]+([a-zA-Z0-9_]+).*/\3/p' "${server_runtime_file}" |
     grep -v '^repository_root$' | sort >"${temp_dir}/actual-server-runtime-functions"
 jq -r '.owned_module_functions.server_runtime_coordinator | sort | .[]' "${contract}" \
     >"${temp_dir}/contract-server-runtime-functions"

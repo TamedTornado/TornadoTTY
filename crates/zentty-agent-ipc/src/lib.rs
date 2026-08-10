@@ -1,8 +1,12 @@
 #![forbid(unsafe_code)]
 
 mod launch;
+mod server;
 
 pub use launch::{LaunchError, launch_agent, resolve_real_binary};
+pub use server::{
+    ServerCommand, ServerIpcError, ServerIpcReply, ServerIpcReplyError, ServerIpcRequest,
+};
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -106,6 +110,25 @@ pub struct AuthenticatedTmuxRequest {
     responder: mpsc::SyncSender<TmuxCompatReply>,
 }
 
+pub struct AuthenticatedServerRequest {
+    pub target: AgentTarget,
+    pub request: ServerIpcRequest,
+    responder: mpsc::SyncSender<ServerIpcReply>,
+}
+
+impl AuthenticatedServerRequest {
+    /// Returns the product result to the blocked server-command client.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the client has disconnected or timed out.
+    pub fn respond(self, reply: ServerIpcReply) -> Result<(), AgentIpcError> {
+        self.responder.send(reply).map_err(|_| {
+            AgentIpcError::Rejected("development-server client disconnected".to_owned())
+        })
+    }
+}
+
 impl AuthenticatedTmuxRequest {
     /// Returns a product result to the blocked compatibility client.
     ///
@@ -144,7 +167,7 @@ impl AgentIpcServer {
         registry: Arc<Mutex<PaneTokenRegistry>>,
         sender: mpsc::Sender<AuthenticatedAgentEvent>,
     ) -> Result<Self, AgentIpcError> {
-        Self::start_inner(socket_path, registry, sender, None)
+        Self::start_inner(socket_path, registry, sender, None, None)
     }
 
     /// Starts the existing event server with a tmux-compat product-command
@@ -160,7 +183,28 @@ impl AgentIpcServer {
         sender: mpsc::Sender<AuthenticatedAgentEvent>,
         tmux_sender: mpsc::Sender<AuthenticatedTmuxRequest>,
     ) -> Result<Self, AgentIpcError> {
-        Self::start_inner(socket_path, registry, sender, Some(tmux_sender))
+        Self::start_inner(socket_path, registry, sender, Some(tmux_sender), None)
+    }
+
+    /// Starts the one authenticated socket with both product command routes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the private endpoint cannot be created.
+    pub fn start_with_product_routes(
+        socket_path: impl AsRef<Path>,
+        registry: Arc<Mutex<PaneTokenRegistry>>,
+        sender: mpsc::Sender<AuthenticatedAgentEvent>,
+        tmux_sender: mpsc::Sender<AuthenticatedTmuxRequest>,
+        server_sender: mpsc::Sender<AuthenticatedServerRequest>,
+    ) -> Result<Self, AgentIpcError> {
+        Self::start_inner(
+            socket_path,
+            registry,
+            sender,
+            Some(tmux_sender),
+            Some(server_sender),
+        )
     }
 
     fn start_inner(
@@ -168,6 +212,7 @@ impl AgentIpcServer {
         registry: Arc<Mutex<PaneTokenRegistry>>,
         sender: mpsc::Sender<AuthenticatedAgentEvent>,
         tmux_sender: Option<mpsc::Sender<AuthenticatedTmuxRequest>>,
+        server_sender: Option<mpsc::Sender<AuthenticatedServerRequest>>,
     ) -> Result<Self, AgentIpcError> {
         let socket_path = socket_path.as_ref().to_owned();
         match fs::symlink_metadata(&socket_path) {
@@ -230,6 +275,7 @@ impl AgentIpcServer {
                     &registry,
                     &sender,
                     tmux_sender.as_ref(),
+                    server_sender.as_ref(),
                 );
             })?;
         Ok(Self {
@@ -377,6 +423,64 @@ impl AgentIpcClient {
         }
     }
 
+    /// Sends one bounded development-server command through the pane's
+    /// authenticated product socket.
+    ///
+    /// # Errors
+    ///
+    /// Rejects invalid payloads, transport/authentication failures, malformed
+    /// responses, and replies outside the server protocol bounds.
+    pub fn send_server(
+        socket_path: impl AsRef<Path>,
+        pane_token: &str,
+        subcommand: &str,
+        arguments: &[String],
+        claimed_target: Option<AgentTarget>,
+    ) -> Result<ServerIpcReply, AgentIpcError> {
+        ServerIpcRequest::new(subcommand, arguments.to_vec())
+            .map_err(|error| AgentIpcError::InvalidRequest(error.to_string()))?;
+        let mut environment = std::collections::BTreeMap::from([(
+            "ZENTTY_PANE_TOKEN".to_owned(),
+            pane_token.to_owned(),
+        )]);
+        if let Some(target) = claimed_target {
+            environment.insert("ZENTTY_WINDOW_ID".to_owned(), target.window_id);
+            environment.insert("ZENTTY_WORKLANE_ID".to_owned(), target.worklane_id);
+            environment.insert("ZENTTY_PANE_ID".to_owned(), target.pane_id);
+        }
+        let request = WireRequest {
+            version: 1,
+            id: request_id(),
+            kind: "server".to_owned(),
+            arguments: arguments.to_vec(),
+            standard_input: None,
+            environment,
+            expects_response: true,
+            subcommand: Some(subcommand.to_owned()),
+        };
+        let frame = serde_json::to_vec(&request)
+            .map_err(|error| AgentIpcError::InvalidRequest(error.to_string()))?;
+        let response = Self::exchange_raw_frame(socket_path, &frame)?;
+        if response.ok {
+            ServerIpcReply::success(
+                response
+                    .result
+                    .and_then(|result| result.stdout)
+                    .unwrap_or_default(),
+            )
+            .map_err(|error| AgentIpcError::InvalidRequest(error.to_string()))
+        } else {
+            let error = response.error.ok_or_else(|| {
+                AgentIpcError::InvalidRequest("failed response omitted its error".to_owned())
+            })?;
+            if error.code == "request_rejected" {
+                return Err(AgentIpcError::Rejected(error.message));
+            }
+            ServerIpcReply::failure(error.code, error.message)
+                .map_err(|error| AgentIpcError::InvalidRequest(error.to_string()))
+        }
+    }
+
     /// Sends an already encoded frame, primarily for negative transport tests.
     ///
     /// # Errors
@@ -434,6 +538,7 @@ fn serve(
     registry: &Mutex<PaneTokenRegistry>,
     sender: &mpsc::Sender<AuthenticatedAgentEvent>,
     tmux_sender: Option<&mpsc::Sender<AuthenticatedTmuxRequest>>,
+    server_sender: Option<&mpsc::Sender<AuthenticatedServerRequest>>,
 ) {
     let (connections, receiver) = mpsc::sync_channel(AgentIpcServer::MAX_PENDING_CONNECTIONS);
     let receiver = Arc::new(Mutex::new(receiver));
@@ -448,7 +553,7 @@ fn serve(
                         .and_then(|receiver| receiver.recv_timeout(Duration::from_millis(5)));
                     match stream {
                         Ok(stream) => {
-                            handle_connection(stream, registry, sender, tmux_sender);
+                            handle_connection(stream, registry, sender, tmux_sender, server_sender);
                         }
                         Err(mpsc::RecvTimeoutError::Timeout) => {}
                         Err(mpsc::RecvTimeoutError::Disconnected) => break,
@@ -473,10 +578,11 @@ fn handle_connection(
     registry: &Mutex<PaneTokenRegistry>,
     sender: &mpsc::Sender<AuthenticatedAgentEvent>,
     tmux_sender: Option<&mpsc::Sender<AuthenticatedTmuxRequest>>,
+    server_sender: Option<&mpsc::Sender<AuthenticatedServerRequest>>,
 ) {
     let _ = stream.set_read_timeout(Some(AgentIpcServer::CONNECTION_TIMEOUT));
     let _ = stream.set_write_timeout(Some(AgentIpcServer::CONNECTION_TIMEOUT));
-    let result = receive_request(&mut stream, registry, sender, tmux_sender);
+    let result = receive_request(&mut stream, registry, sender, tmux_sender, server_sender);
     let response = match result {
         Ok(ReceivedResponse { id, reply: None }) => WireResponse {
             version: 1,
@@ -488,27 +594,27 @@ fn handle_connection(
         Ok(ReceivedResponse {
             id,
             reply: Some(reply),
-        }) if reply.is_ok() => WireResponse {
+        }) if reply.error.is_none() => WireResponse {
             version: 1,
             id,
             ok: true,
             result: Some(WireResponseResult {
-                stdout: reply.stdout().map(str::to_owned),
+                stdout: reply.stdout,
             }),
             error: None,
         },
         Ok(ReceivedResponse {
             id,
             reply: Some(reply),
-        }) => match reply.error() {
+        }) => match reply.error {
             Some(error) => WireResponse {
                 version: 1,
                 id,
                 ok: false,
                 result: None,
                 error: Some(WireResponseError {
-                    code: error.code().to_owned(),
-                    message: error.message().to_owned(),
+                    code: error.code,
+                    message: error.message,
                 }),
             },
             None => WireResponse {
@@ -540,7 +646,41 @@ fn handle_connection(
 
 struct ReceivedResponse {
     id: String,
-    reply: Option<TmuxCompatReply>,
+    reply: Option<ProductReply>,
+}
+
+struct ProductReply {
+    stdout: Option<String>,
+    error: Option<ProductReplyError>,
+}
+
+struct ProductReplyError {
+    code: String,
+    message: String,
+}
+
+impl From<TmuxCompatReply> for ProductReply {
+    fn from(reply: TmuxCompatReply) -> Self {
+        Self {
+            stdout: reply.stdout().map(str::to_owned),
+            error: reply.error().map(|error| ProductReplyError {
+                code: error.code().to_owned(),
+                message: error.message().to_owned(),
+            }),
+        }
+    }
+}
+
+impl From<ServerIpcReply> for ProductReply {
+    fn from(reply: ServerIpcReply) -> Self {
+        Self {
+            stdout: reply.stdout().map(str::to_owned),
+            error: reply.error().map(|error| ProductReplyError {
+                code: error.code().to_owned(),
+                message: error.message().to_owned(),
+            }),
+        }
+    }
 }
 
 fn receive_request(
@@ -548,6 +688,7 @@ fn receive_request(
     registry: &Mutex<PaneTokenRegistry>,
     sender: &mpsc::Sender<AuthenticatedAgentEvent>,
     tmux_sender: Option<&mpsc::Sender<AuthenticatedTmuxRequest>>,
+    server_sender: Option<&mpsc::Sender<AuthenticatedServerRequest>>,
 ) -> Result<ReceivedResponse, AgentIpcError> {
     let mut frame = Vec::new();
     stream
@@ -564,19 +705,20 @@ fn receive_request(
     let token = request
         .environment
         .get("ZENTTY_PANE_TOKEN")
-        .ok_or_else(|| AgentIpcError::Rejected("missing pane token".to_owned()))?;
+        .ok_or_else(|| AgentIpcError::Rejected("missing pane token".to_owned()))?
+        .clone();
     let registry = registry
         .lock()
         .map_err(|_| AgentIpcError::Rejected("pane registry unavailable".to_owned()))?;
-    match (request.kind.as_str(), request.subcommand.as_deref()) {
-        ("ipc", Some("agent-event")) => {
+    match (request.kind.as_str(), request.subcommand.clone()) {
+        ("ipc", Some(subcommand)) if subcommand == "agent-event" => {
             let standard_input = request.standard_input.ok_or_else(|| {
                 AgentIpcError::Rejected("agent event omitted standard input".to_owned())
             })?;
             let event = AgentEvent::parse(standard_input.as_bytes())
                 .map_err(|error| AgentIpcError::Rejected(error.to_string()))?;
             let authenticated = registry
-                .authenticate(token, event)
+                .authenticate(&token, event)
                 .map_err(pane_token_rejection)?;
             drop(registry);
             sender.send(authenticated).map_err(|_| {
@@ -589,12 +731,12 @@ fn receive_request(
         }
         ("tmux_compat", Some(subcommand)) => {
             let target = registry
-                .authenticate_target(token)
+                .authenticate_target(&token)
                 .map_err(pane_token_rejection)?;
             drop(registry);
             let payload = TmuxCompatRequest::new(
                 request.version,
-                subcommand,
+                &subcommand,
                 request.arguments,
                 request.standard_input,
             )
@@ -621,11 +763,48 @@ fn receive_request(
                 })?;
             Ok(ReceivedResponse {
                 id: request.id,
-                reply: Some(reply),
+                reply: Some(reply.into()),
             })
+        }
+        ("server", Some(subcommand)) => {
+            let target = registry
+                .authenticate_target(&token)
+                .map_err(pane_token_rejection)?;
+            drop(registry);
+            receive_server_request(request, target, &subcommand, server_sender)
         }
         _ => Err(AgentIpcError::Rejected("unsupported IPC route".to_owned())),
     }
+}
+
+fn receive_server_request(
+    request: WireRequest,
+    target: AgentTarget,
+    subcommand: &str,
+    server_sender: Option<&mpsc::Sender<AuthenticatedServerRequest>>,
+) -> Result<ReceivedResponse, AgentIpcError> {
+    let payload = ServerIpcRequest::new(subcommand, request.arguments)
+        .map_err(|error| AgentIpcError::Rejected(error.to_string()))?;
+    let server_sender = server_sender.ok_or_else(|| {
+        AgentIpcError::Rejected("development-server handler unavailable".to_owned())
+    })?;
+    let (responder, response) = mpsc::sync_channel(1);
+    server_sender
+        .send(AuthenticatedServerRequest {
+            target,
+            request: payload,
+            responder,
+        })
+        .map_err(|_| {
+            AgentIpcError::Rejected("development-server product receiver unavailable".to_owned())
+        })?;
+    let reply = response
+        .recv_timeout(AgentIpcServer::TMUX_REPLY_TIMEOUT)
+        .map_err(|_| AgentIpcError::Rejected("development-server response timed out".to_owned()))?;
+    Ok(ReceivedResponse {
+        id: request.id,
+        reply: Some(reply.into()),
+    })
 }
 
 fn validate_envelope(request: &WireRequest) -> Result<(), AgentIpcError> {

@@ -5,6 +5,7 @@ use std::rc::Rc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use gtk::{gio, glib};
+use zentty_agent_ipc::{ServerCommand, ServerIpcReply, ServerIpcRequest};
 use zentty_core::{
     DetectedServer, DetectedServerConfidence, DetectedServerSource, ServerPortRule, ServerRegistry,
     ServerTerminationObservation, authorize_server_termination, normalize_server_url,
@@ -65,6 +66,220 @@ pub(super) fn install(shell: &Rc<RefCell<ApplicationShell>>) -> Option<glib::Sou
 pub(super) fn refresh_servers(shell: &Rc<RefCell<ApplicationShell>>) {
     eprintln!("zentty-linux: action=refresh-servers result=requested");
     request_probe(shell);
+}
+
+pub(crate) fn handle_ipc(
+    shell: &Rc<RefCell<ApplicationShell>>,
+    target: &zentty_core::AgentTarget,
+    request: &ServerIpcRequest,
+) -> ServerIpcReply {
+    let command_name = request.subcommand().trim_start_matches("server-");
+    let mut arguments = vec![command_name.to_owned()];
+    arguments.extend(request.arguments().iter().cloned());
+    let command = match ServerCommand::parse(&arguments) {
+        Ok(command) => command,
+        Err(error) => return ipc_failure("invalid_command", error.to_string()),
+    };
+    if !shell.borrow().has_worklane(&target.worklane_id)
+        || shell.borrow().state.pane(&target.pane_id).is_none()
+    {
+        return ipc_failure("stale_target", "pane is no longer available".to_owned());
+    }
+    let operation = match command {
+        ServerCommand::Set { raw_url, pid, .. } => {
+            register_ipc_server(shell, target, &raw_url, pid, DetectedServerSource::Manual)
+        }
+        ServerCommand::WatchSet { raw_url, pid, .. } => {
+            register_ipc_server(shell, target, &raw_url, pid, DetectedServerSource::Watch)
+        }
+        ServerCommand::Clear { .. } => {
+            clear_ipc_servers(shell, target, None);
+            Ok(())
+        }
+        ServerCommand::WatchClear { .. } => {
+            clear_ipc_servers(shell, target, Some(DetectedServerSource::Watch));
+            Ok(())
+        }
+        ServerCommand::List { .. } => Ok(()),
+        ServerCommand::Open {
+            raw_url, browser, ..
+        } => open_ipc_server(
+            shell,
+            &target.worklane_id,
+            raw_url.as_deref(),
+            browser.as_deref(),
+        ),
+        ServerCommand::Watch { .. } => Err("watch must run in the CLI".to_owned()),
+    };
+    if let Err(error) = operation {
+        return ipc_failure("server_command_failed", error);
+    }
+    match server_state_json(&shell.borrow(), &target.worklane_id) {
+        Ok(json) => ServerIpcReply::success(json)
+            .unwrap_or_else(|error| ipc_failure("response_too_large", error.to_string())),
+        Err(error) => ipc_failure("serialization_failed", error.to_string()),
+    }
+}
+
+fn register_ipc_server(
+    shell: &Rc<RefCell<ApplicationShell>>,
+    target: &zentty_core::AgentTarget,
+    raw_url: &str,
+    pid: Option<u32>,
+    source: DetectedServerSource,
+) -> Result<(), String> {
+    let candidate = normalize_server_url(raw_url).map_err(|error| format!("{error:?}"))?;
+    let now = now_ms()?;
+    let mut shell_state = shell.borrow_mut();
+    shell_state.server_runtime.registry.upsert(DetectedServer {
+        id: format!(
+            "{}|{}|{:?}|{}",
+            target.worklane_id, target.pane_id, source, candidate.origin
+        ),
+        origin: candidate.origin,
+        url: candidate.url,
+        display: candidate.display,
+        worklane_id: target.worklane_id.clone(),
+        pane_id: Some(target.pane_id.clone()),
+        source,
+        ports: vec![candidate.port],
+        confidence: if pid.is_some() {
+            DetectedServerConfidence::Pid
+        } else {
+            DetectedServerConfidence::Explicit
+        },
+        updated_at_ms: now,
+        first_seen_at_ms: now,
+    });
+    refresh_registry_projection(&mut shell_state);
+    drop(shell_state);
+    shell.borrow().render_sidebar();
+    Ok(())
+}
+
+fn clear_ipc_servers(
+    shell: &Rc<RefCell<ApplicationShell>>,
+    target: &zentty_core::AgentTarget,
+    source: Option<DetectedServerSource>,
+) {
+    let mut shell_state = shell.borrow_mut();
+    shell_state
+        .server_runtime
+        .registry
+        .clear_pane(&target.worklane_id, &target.pane_id, source);
+    refresh_registry_projection(&mut shell_state);
+    drop(shell_state);
+    shell.borrow().render_sidebar();
+}
+
+fn open_ipc_server(
+    shell: &Rc<RefCell<ApplicationShell>>,
+    worklane_id: &str,
+    raw_url: Option<&str>,
+    browser: Option<&str>,
+) -> Result<(), String> {
+    if browser.is_some_and(|browser| browser != "system" && browser != "system-default") {
+        return Err("Linux currently supports only the 'system' browser target".to_owned());
+    }
+    let normalized = raw_url
+        .map(normalize_server_url)
+        .transpose()
+        .map_err(|error| format!("{error:?}"))?;
+    let server = {
+        let shell = shell.borrow();
+        let ranked = shell
+            .ranked_servers()
+            .into_iter()
+            .filter(|ranked| ranked.server.worklane_id == worklane_id)
+            .collect::<Vec<_>>();
+        normalized
+            .as_ref()
+            .and_then(|candidate| {
+                ranked
+                    .iter()
+                    .find(|ranked| ranked.server.origin == candidate.origin)
+            })
+            .or_else(|| ranked.first())
+            .map(|ranked| ranked.server.clone())
+    }
+    .ok_or_else(|| "no matching development server".to_owned())?;
+    launch_url(server.url);
+    Ok(())
+}
+
+fn server_state_json(
+    shell: &ApplicationShell,
+    worklane_id: &str,
+) -> Result<String, serde_json::Error> {
+    let ranked = shell
+        .ranked_servers()
+        .into_iter()
+        .filter(|ranked| ranked.server.worklane_id == worklane_id)
+        .collect::<Vec<_>>();
+    let primary = ranked.first().map(|ranked| ranked.server.id.clone());
+    let servers = ranked
+        .into_iter()
+        .map(|ranked| {
+            serde_json::json!({
+                "id": ranked.server.id,
+                "origin": ranked.server.origin,
+                "url": ranked.server.url,
+                "display": ranked.server.display,
+                "worklaneID": ranked.server.worklane_id,
+                "paneID": ranked.server.pane_id,
+                "source": source_name(ranked.server.source),
+                "ports": ranked.server.ports,
+                "confidence": confidence_name(ranked.server.confidence),
+                "tier": format!("{:?}", ranked.tier).to_ascii_lowercase(),
+            })
+        })
+        .collect::<Vec<_>>();
+    serde_json::to_string(&serde_json::json!({
+        "version": 2,
+        "primaryServerID": primary,
+        "servers": servers,
+    }))
+}
+
+const fn source_name(source: DetectedServerSource) -> &'static str {
+    match source {
+        DetectedServerSource::Manual => "manual",
+        DetectedServerSource::Watch => "watch",
+        DetectedServerSource::Docker => "docker",
+        DetectedServerSource::Scanner => "scanner",
+    }
+}
+
+const fn confidence_name(confidence: DetectedServerConfidence) -> &'static str {
+    match confidence {
+        DetectedServerConfidence::Explicit => "explicit",
+        DetectedServerConfidence::Pid => "pid",
+        DetectedServerConfidence::Cwd => "cwd",
+        DetectedServerConfidence::Worklane => "worklane",
+    }
+}
+
+fn ipc_failure(code: &str, message: String) -> ServerIpcReply {
+    ServerIpcReply::failure(code, message).unwrap_or_else(|_| {
+        ServerIpcReply::failure("internal_error", "invalid server IPC failure").unwrap()
+    })
+}
+
+fn now_ms() -> Result<u64, String> {
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_millis();
+    u64::try_from(millis).map_err(|error| error.to_string())
+}
+
+fn refresh_registry_projection(shell: &mut ApplicationShell) {
+    shell.server_runtime.servers = shell
+        .state
+        .worklanes()
+        .iter()
+        .flat_map(|worklane| shell.server_runtime.registry.servers_in(&worklane.id))
+        .collect();
 }
 
 pub(super) fn set_port_ignored(shell: &Rc<RefCell<ApplicationShell>>, origin: &str, ignored: bool) {
@@ -341,6 +556,10 @@ pub(super) fn open_server(shell: &Rc<RefCell<ApplicationShell>>, origin: &str) {
         eprintln!("zentty-linux: action=open-server origin={origin} error=not-found");
         return;
     };
+    launch_url(url);
+}
+
+fn launch_url(url: String) {
     glib::spawn_future_local(async move {
         let launched_url = url.clone();
         let result = gio::spawn_blocking(move || {
