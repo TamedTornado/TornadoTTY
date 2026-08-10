@@ -42,7 +42,7 @@ case "${backend}" in
         ;;
     *) fail "GDK_BACKEND must be x11 or wayland" ;;
 esac
-for dependency in jq readelf timeout mktemp grep; do
+for dependency in cmp jq readelf timeout mktemp grep; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
 [[ -x "${product}" ]] || fail "staged product is not built: ${product}"
@@ -60,6 +60,8 @@ layer_runpath="$(
 
 state_dir="$(mktemp -d)"
 log="$(mktemp)"
+# Single quotes intentionally defer every expansion to the real PTY child.
+# shellcheck disable=SC2016
 child_command='while IFS= read -r value; do if [ "$value" = agent-running ]; then printf '\''%s'\'' '\''{"version":1,"event":"agent.running","agent":{"name":"Codex"},"session":{"id":"moved-live-pane"}}'\'' | "$ZENTTY_CLI_BIN" ipc agent-event; elif [ "$value" = tmux-route ]; then route="$(tmux display-message -p '\''#{pane_id}'\'')" && printf '\''\033]2;tmux:%s\a'\'' "$route"; elif [ "$value" = tmux-stale-claim ]; then route="$(ZENTTY_WINDOW_ID=window-1 ZENTTY_WORKLANE_ID=worklane-1 tmux display-message -p '\''#{pane_id}'\'')" && printf '\''\033]2;tmux-stale:%s\a'\'' "$route"; elif [ "$value" = capture-move ]; then tmux capture-pane -p | grep -Fq before-live-window-move && printf '\''\033]2;scrollback-preserved\a'\''; else printf '\''\033]2;%s\a'\'' "$value"; fi; done'
 
 start_product() {
@@ -370,6 +372,103 @@ zentty_product_close_window "${backend}"
 wait_for_exit
 product_args=()
 
+# Journey 0b: force destination construction to fail at its real persistent
+# tmux-store dependency after the live pane has been detached. The source must
+# roll the exact runtime, callbacks, capability route, model, and focus back
+# without constructing another terminal or changing the PTY child set.
+rm -rf -- "${state_dir}"
+state_dir="$(mktemp -d)"
+start_product
+mapfile -t rollback_children_before_split < <(pgrep -P "${product_pid}" | sort -n)
+[[ "${#rollback_children_before_split[@]}" -eq 1 ]] ||
+    fail "rollback journey did not begin with exactly one PTY child"
+execute_palette_action "Split the focused pane into a visible right column" "Split Right"
+zentty_product_wait_for_log "${log}" 'zentty-linux: terminal-ready-pane=pane-2' \
+    "rollback journey did not create pane-2's real Ghostty surface" ||
+    fail "rollback second pane missing"
+rollback_children_before=()
+for _ in {1..200}; do
+    mapfile -t rollback_children_before < <(pgrep -P "${product_pid}" | sort -n)
+    [[ "${#rollback_children_before[@]}" -eq 2 ]] && break
+    sleep 0.05
+done
+[[ "${#rollback_children_before[@]}" -eq 2 ]] ||
+    fail "rollback journey did not own exactly two PTY children"
+type_and_expect_title "before-failed-window-move" "pane-2"
+rollback_focus_before="$(grep -Fc 'zentty-linux: focus-pane pane=pane-2' "${log}" || true)"
+
+tmux_store="${XDG_CONFIG_HOME}/zentty/tmux-compat-store.json"
+mkdir -p -- "$(dirname "${tmux_store}")"
+tmux_store_backup="${state_dir}/tmux-store-before-transfer-fault"
+tmux_store_existed=false
+if [[ -f "${tmux_store}" ]]; then
+    cp -- "${tmux_store}" "${tmux_store_backup}"
+    tmux_store_existed=true
+fi
+printf '%s\n' '{"version":2}' >"${tmux_store}"
+execute_palette_action "Move Pane to New Window" "Move Pane to New Window"
+zentty_product_wait_for_log "${log}" \
+    'zentty-linux: action=move-pane-to-new-window pane=pane-2 error=unsupported tmux compatibility store version: 2' \
+    "real destination-construction failure did not reach the transaction rollback" ||
+    fail "destination-construction failure receipt missing"
+zentty_product_wait_for_log "${log}" \
+    'zentty-linux: topology=worklane-1[title=none,color=none]:pane-1,pane-2*' \
+    "failed destination construction did not restore the exact source topology" ||
+    fail "source topology rollback missing"
+zentty_product_wait_for_log_count "${log}" 'zentty-linux: focus-pane pane=pane-2' \
+    "$((rollback_focus_before + 1))" "failed move did not restore pane-2 focus" ||
+    fail "source focus rollback missing"
+! grep -Fq 'zentty-linux: window-opened id=window-2' "${log}" ||
+    fail "failed destination construction exposed a destination window"
+[[ "$(grep -Fc 'zentty-linux: terminal-ready-pane=pane-2' "${log}")" -eq 1 ]] ||
+    fail "failed destination construction recreated pane-2's Ghostty surface"
+mapfile -t rollback_children_after < <(pgrep -P "${product_pid}" | sort -n)
+[[ "${rollback_children_after[*]}" == "${rollback_children_before[*]}" ]] ||
+    fail "failed destination construction changed the real PTY child set"
+
+# Restore the exact dependency bytes that preceded the external fault, then
+# exercise the restored callbacks and authenticated routes through the same
+# running child. The fault itself must not become a second persistence policy.
+if [[ "${tmux_store_existed}" == true ]]; then
+    cp -- "${tmux_store_backup}" "${tmux_store}"
+    cmp -s -- "${tmux_store_backup}" "${tmux_store}" ||
+        fail "test fault did not restore the exact prior tmux-store bytes"
+else
+    rm -f -- "${tmux_store}"
+fi
+type_and_expect_title "after-failed-window-move" "pane-2"
+zentty_product_type "${backend}" "agent-running"
+zentty_product_key "${backend}" Return
+zentty_product_wait_for_log "${log}" \
+    'zentty-linux: agent-event pane=pane-2 worklane=worklane-1 kind=agent.running session=moved-live-pane' \
+    "failed move did not preserve the source authenticated agent route" ||
+    fail "source agent route rollback missing"
+zentty_product_type "${backend}" "tmux-route"
+zentty_product_key "${backend}" Return
+zentty_product_wait_for_log "${log}" \
+    'zentty-linux: tmux-command pane=pane-2 worklane=worklane-1 command=DisplayMessage' \
+    "failed move did not preserve the source tmux route" ||
+    fail "source tmux route rollback missing"
+zentty_product_wait_for_log "${log}" 'zentty-linux: title-pane=pane-2 value=tmux:%pane-2' \
+    "failed move did not return its tmux reply through the same PTY" ||
+    fail "source tmux response after rollback missing"
+for _ in {1..240}; do
+    [[ -f "${state_dir}/restore-snapshot.json" ]] && jq -e '
+        (.workspace.windows | map(.id)) == ["window-1"] and
+        [.workspace.windows[0].worklanes[].columns[].panes[].id] == ["pane-1", "pane-2"] and
+        .workspace.activeWindowID == "window-1"
+    ' "${state_dir}/restore-snapshot.json" >/dev/null 2>&1 && break
+    sleep 0.05
+done
+jq -e '
+    (.workspace.windows | map(.id)) == ["window-1"] and
+    [.workspace.windows[0].worklanes[].columns[].panes[].id] == ["pane-1", "pane-2"] and
+    .workspace.activeWindowID == "window-1"
+' "${state_dir}/restore-snapshot.json" >/dev/null ||
+    fail "live snapshot published duplicate or missing ownership after rollback"
+zentty_product_close_window "${backend}"
+wait_for_exit
+
 # Journey 1: create two windows through the real shortcut, prove the active
 # second PTY receives input, save both through the one real persistence path,
 # and relaunch the exact two-window recipe.
@@ -506,4 +605,4 @@ wait_for_exit
 jq -e '.cleanExit == true' "${lifecycle}" >/dev/null ||
     fail "recovered multi-window clean exit did not mark the lifecycle clean"
 
-echo "Rust multi-window passed: backend=${backend}, real-windows=2, restore=clean+SIGKILL+size, non-final-close=survived"
+echo "Rust multi-window passed: backend=${backend}, real-windows=2, transfer=live+real-construction-rollback, restore=clean+SIGKILL+size, non-final-close=survived"

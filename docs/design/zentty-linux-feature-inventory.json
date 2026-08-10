@@ -291,7 +291,7 @@
       "product_scenarios": [
         "linux/tests/rust-multi-window"
       ],
-      "test_plan": "The new-window action is implemented and must keep passing controlled Wayland/X11 proof of unchanged PTY PID set, one Ghostty surface construction, retained scrollback, post-move physical input, canonical agent/tmux routing, aggregate persistence, and clean/crash relaunch. Keep this entry PARTIAL until transfer into an existing foreign worklane and cross-window drag/drop pass equivalent real-system journeys.",
+      "test_plan": "The new-window action is implemented and must keep passing controlled Wayland/X11 proof of unchanged PTY PID set, one Ghostty surface construction, retained scrollback, post-move physical input, canonical agent/tmux routing, real destination-construction rollback, aggregate persistence, and clean/crash relaunch. Keep this entry PARTIAL until transfer into an existing foreign worklane and cross-window drag/drop pass equivalent real-system journeys.",
       "alternative_or_blocker": null
     },
     {
