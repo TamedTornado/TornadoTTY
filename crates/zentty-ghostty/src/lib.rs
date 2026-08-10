@@ -539,6 +539,49 @@ impl GhosttySurface {
         String::from_utf8(bytes).map_err(Error::InvalidText)
     }
 
+    /// Copies the current user selection directly from the terminal core.
+    ///
+    /// This avoids observing a previous clipboard owner when the terminal has
+    /// no selection. The native callback is synchronous and does not retain
+    /// the output buffer.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::TextReadFailed`] when there is no selection or native
+    /// Ghostty cannot read it, and [`Error::InvalidText`] for invalid UTF-8.
+    pub fn read_selection(&self) -> Result<String, Error> {
+        unsafe extern "C" fn copy_text(
+            text: *const core::ffi::c_char,
+            text_len: usize,
+            userdata: *mut core::ffi::c_void,
+        ) {
+            // SAFETY: The callback is synchronous and `userdata` points to the
+            // live byte vector below for its entire invocation.
+            let output = unsafe { &mut *userdata.cast::<Vec<u8>>() };
+            if text_len > 0 {
+                // SAFETY: The native contract supplies exactly `text_len`
+                // readable bytes for the callback duration.
+                let bytes = unsafe { std::slice::from_raw_parts(text.cast(), text_len) };
+                output.extend_from_slice(bytes);
+            }
+        }
+
+        let mut bytes = Vec::new();
+        // SAFETY: The widget and output vector remain live for the synchronous
+        // native call; the callback retains neither pointer.
+        let succeeded = unsafe {
+            sys::ghostty_gtk_embed_surface_read_selection(
+                self.widget.as_ptr().cast(),
+                Some(copy_text),
+                (&raw mut bytes).cast(),
+            )
+        };
+        if !succeeded {
+            return Err(Error::TextReadFailed);
+        }
+        String::from_utf8(bytes).map_err(Error::InvalidText)
+    }
+
     pub fn on_initialized(&self, callback: impl Fn() + 'static) {
         let handler = self.widget.connect_local("init", false, move |_| {
             callback();

@@ -26,6 +26,7 @@ expected="$({
         ghostty_gtk_embed_surface_new \
         ghostty_gtk_embed_surface_new_with_options \
         ghostty_gtk_embed_surface_read_text \
+        ghostty_gtk_embed_surface_read_selection \
         ghostty_gtk_embed_surface_request_paste \
         ghostty_gtk_embed_surface_send_text
 } | sort)"

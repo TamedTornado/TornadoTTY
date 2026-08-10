@@ -6,6 +6,7 @@ mod agent_launch;
 mod agent_protocol;
 mod agent_status;
 mod atomic_file_store;
+mod clean_copy;
 mod codex_title;
 mod codex_transcript;
 mod command_palette;
@@ -55,6 +56,10 @@ pub use workspace_state::{
 pub const PRODUCT_NAME: &str = "Zentty";
 pub use agent_adapters::{
     AgentAdapterError, adapt_claude_hook, adapt_codex_hook, adapt_codex_notify, adapt_gemini_hook,
+};
+pub use clean_copy::{
+    CleanCopyOptions, CleanCopyResult, CommandFlattenAggressiveness, clean_copy,
+    is_likely_markdown, reformat_markdown,
 };
 pub use codex_title::{CodexTitlePhase, CodexTitleSignal, classify_codex_terminal_title};
 pub use codex_transcript::{

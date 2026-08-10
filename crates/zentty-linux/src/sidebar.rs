@@ -13,7 +13,7 @@ struct PaneActionSpec {
     action: &'static str,
 }
 
-const PANE_ACTIONS: [PaneActionSpec; 10] = [
+const PANE_ACTIONS: [PaneActionSpec; 14] = [
     PaneActionSpec {
         label: source_ui::SPLIT_RIGHT,
         icon: "go-next-symbolic",
@@ -58,6 +58,26 @@ const PANE_ACTIONS: [PaneActionSpec; 10] = [
         label: source_ui::MOVE_PANE_TO_NEW_WINDOW,
         icon: "window-new-symbolic",
         action: "move-pane-to-new-window",
+    },
+    PaneActionSpec {
+        label: source_ui::COPY,
+        icon: "edit-copy-symbolic",
+        action: "copy",
+    },
+    PaneActionSpec {
+        label: source_ui::CLEAN_COPY,
+        icon: "edit-copy-symbolic",
+        action: "clean-copy",
+    },
+    PaneActionSpec {
+        label: source_ui::COPY_RAW,
+        icon: "edit-copy-symbolic",
+        action: "copy-raw",
+    },
+    PaneActionSpec {
+        label: source_ui::COPY_AS_MARKDOWN,
+        icon: "text-x-generic-symbolic",
+        action: "copy-as-markdown",
     },
     PaneActionSpec {
         label: source_ui::CLOSE_PANE,
@@ -1199,6 +1219,10 @@ mod tests {
                     source_ui::MOVE_PANE_TO_NEW_WINDOW,
                     "move-pane-to-new-window"
                 ),
+                (source_ui::COPY, "copy"),
+                (source_ui::CLEAN_COPY, "clean-copy"),
+                (source_ui::COPY_RAW, "copy-raw"),
+                (source_ui::COPY_AS_MARKDOWN, "copy-as-markdown"),
                 (source_ui::CLOSE_PANE, "close-pane"),
             ]
         );

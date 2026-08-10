@@ -72,13 +72,13 @@ jq -e '
     (.diff_identity.normalization | length) == 21 and
     (.ranges | length) == 2 and
     (.files | length) == 16 and
-    (.abi.exported_function_count == 13) and
+    (.abi.exported_function_count == 14) and
     (.abi.operations | length) == .abi.exported_function_count and
     (.abi.ghostty_owned_public_type_count == 6) and
     (.abi.ghostty_owned_public_types | length) == .abi.ghostty_owned_public_type_count and
     (.abi.external_public_type_dependencies | length) == 1 and
     (.abi.external_public_type_dependencies[0].name == "GtkWidget") and
-        (.abi.external_public_type_dependencies[0].roles | length) == 9 and
+        (.abi.external_public_type_dependencies[0].roles | length) == 10 and
     (.abi.public_enum_values | length) == 3 and
     (.abi.public_text_extent_values | length) == 2 and
     (.abi.compatibility_fixture.historical_exported_function_count == 10) and
@@ -101,7 +101,7 @@ jq -e '
         .matrix_cell_id == "ghostty-async-backend-abi-representation")) and
     ([.files[].path] | length == (unique | length)) and
     ([.abi.operations[].symbol] | length == (unique | length)) and
-    (.rust_binding.declared_function_count == 10) and
+    (.rust_binding.declared_function_count == 11) and
     ((.rust_binding.operations | length) == .rust_binding.declared_function_count) and
     (.rust_binding.excluded_exports | length == 3) and
     ([.rust_binding.operations[].symbol] | length == (unique | length)) and
@@ -343,7 +343,7 @@ grep -Fx 'typedef struct _GtkWidget GtkWidget;' "${ghostty_source}/include/ghost
     fail "GtkWidget forward declaration differs from inventory"
 [[ "$(grep -Ec '^GtkWidget \*ghostty_gtk_embed_surface_new\(' "${ghostty_source}/include/ghostty/gtk.h")" == 1 ]] ||
     fail "GtkWidget surface-constructor return role differs from inventory"
-[[ "$(grep -Eoc 'GtkWidget \*surface' "${ghostty_source}/include/ghostty/gtk.h")" == 7 ]] ||
+[[ "$(grep -Eoc 'GtkWidget \*surface' "${ghostty_source}/include/ghostty/gtk.h")" == 8 ]] ||
     fail "GtkWidget surface-operation parameter roles differ from inventory"
 
 expected_rust_symbols="$(jq -r '.rust_binding.operations[].symbol' "${inventory}" | sort)"
@@ -385,7 +385,7 @@ done < <(
     ' "${inventory}"
 )
 
-pass_message="Ghostty API audit inventory passed: 16 files, 57 hunks, 13 allowlisted function exports, 10 product-owned Rust declarations, 6 Ghostty-owned public types, 1 external GtkWidget dependency"
+pass_message="Ghostty API audit inventory passed: 16 files, 57 hunks, 14 allowlisted function exports, 11 product-owned Rust declarations, 6 Ghostty-owned public types, 1 external GtkWidget dependency"
 echo "${pass_message}"
 
 if [[ "${mode}" == "--self-test" ]]; then

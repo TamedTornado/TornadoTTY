@@ -8,6 +8,8 @@ log=""
 state_directory=""
 product_pid=""
 window_id=""
+clipboard_actual=""
+clipboard_expected=""
 
 fail() {
     [[ -z "${log}" || ! -f "${log}" ]] || cat "${log}" >&2
@@ -22,6 +24,8 @@ cleanup() {
     fi
     [[ -z "${log}" ]] || rm -f -- "${log}"
     [[ -z "${state_directory}" ]] || rm -rf -- "${state_directory}"
+    [[ -z "${clipboard_actual}" ]] || rm -f -- "${clipboard_actual}"
+    [[ -z "${clipboard_expected}" ]] || rm -f -- "${clipboard_expected}"
 }
 trap cleanup EXIT
 
@@ -30,15 +34,18 @@ case "${backend}" in
         [[ "${ZENTTY_NESTED_X11_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
             fail "X11 search must run through linux/tests/nested-x11"
         command -v xdotool >/dev/null || fail "xdotool is required for X11 search"
+        command -v xclip >/dev/null || fail "xclip is required for X11 clipboard proof"
         ;;
     wayland)
         [[ "${ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
             fail "Wayland search must run through linux/tests/nested-wayland-input"
         command -v wtype >/dev/null || fail "wtype is required for Wayland search"
+        command -v wl-paste >/dev/null || fail "wl-paste is required for Wayland clipboard proof"
+        command -v wl-copy >/dev/null || fail "wl-copy is required for Wayland clipboard proof"
         ;;
     *) fail "GDK_BACKEND must be x11 or wayland" ;;
 esac
-for dependency in grep mktemp seq sleep; do
+for dependency in awk cmp grep mktemp seq sha256sum sleep tail wc; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
 [[ -x "${product}" ]] || fail "staged product is not built: ${product}"
@@ -47,6 +54,7 @@ press_ctrl_shift() {
     local key="$1"
     if [[ "${backend}" == x11 ]]; then
         xdotool key --window "${window_id}" "ctrl+shift+${key}"
+        xdotool keyup Control_L Control_R Shift_L Shift_R "${key}" 2>/dev/null || true
     else
         wtype -M ctrl -M shift -k "${key}" -m shift -m ctrl
     fi
@@ -121,13 +129,61 @@ wait_for_count_greater() {
     fail "${message}"
 }
 
+run_palette_action() {
+    local query="$1"
+    local action_receipt="$2"
+    local expected_results="${3:-1}"
+    local query_before action_before
+    query_before="$(grep -Fc "zentty-linux: command-palette=query value=\"${query}\" results=${expected_results}" "${log}" || true)"
+    action_before="$(grep -Fc "${action_receipt}" "${log}" || true)"
+    press_ctrl_shift p
+    type_text "${query}"
+    wait_for_count_greater \
+        "zentty-linux: command-palette=query value=\"${query}\" results=${expected_results}" \
+        "${query_before}" \
+        "command palette did not resolve ${query}"
+    press_key Return
+    wait_for_count_greater "${action_receipt}" "${action_before}" \
+        "command palette did not execute ${query}"
+}
+
+assert_standard_clipboard() {
+    local expected="$1"
+    printf '%s' "${expected}" >"${clipboard_expected}"
+    if [[ "${backend}" == x11 ]]; then
+        xclip -selection clipboard -out >"${clipboard_actual}"
+    else
+        wl-paste --no-newline >"${clipboard_actual}"
+    fi
+    cmp -s "${clipboard_expected}" "${clipboard_actual}" || {
+        printf 'expected clipboard sha256=%s bytes=%s\n' \
+            "$(sha256sum "${clipboard_expected}" | awk '{print $1}')" \
+            "$(wc -c <"${clipboard_expected}")" >&2
+        printf 'actual clipboard sha256=%s bytes=%s\n' \
+            "$(sha256sum "${clipboard_actual}" | awk '{print $1}')" \
+            "$(wc -c <"${clipboard_actual}")" >&2
+        fail "external ${backend} standard clipboard bytes differed"
+    }
+}
+
+set_standard_clipboard() {
+    local value="$1"
+    if [[ "${backend}" == x11 ]]; then
+        printf '%s' "${value}" | xclip -selection clipboard -in
+    else
+        printf '%s' "${value}" | wl-copy
+    fi
+}
+
 log="$(mktemp)"
 state_directory="$(mktemp -d)"
+clipboard_actual="$(mktemp)"
+clipboard_expected="$(mktemp)"
 # The single quotes intentionally defer PTY-child expansion.
 # shellcheck disable=SC2016
 GDK_SCALE=1 GDK_DPI_SCALE=1 \
     "${product}" \
-    --command 'printf "selectable alpha\nnoise\nselectable beta\nselectable gamma\n"; while IFS= read -r line; do printf "\033]2;focus:%s\a" "$line"; done' \
+    --command 'printf "https://example.com/reset?token=noisegamma&utm_source=mail"; while IFS= read -r line; do case "$line" in markdown) printf "\033[2J\033[3J\033[H## Clipboard Notes\n\nOne wrapped\nparagraph"; printf "\033]2;focus:markdown-ready\a" ;; search-corpus) printf "\033[2J\033[3J\033[Hselectable alpha\nnoise\nselectable beta\nselectable gamma\n"; printf "\033]2;focus:search-ready\a" ;; *) printf "\033]2;focus:%s\a" "$line" ;; esac; done' \
     --state-directory "${state_directory}" \
     --no-session-restore >"${log}" 2>&1 &
 product_pid=$!
@@ -154,6 +210,53 @@ else
     # when its first real terminal reports ready.
     sleep 0.2
 fi
+
+# Use the source Select All command to create a real Ghostty selection, then
+# drive every source copy action through the command palette. The assertion is
+# made by an independent compositor client, not an in-process GTK receipt.
+set_standard_clipboard 'sentinel-existing-owner'
+run_palette_action 'Clean Copy' \
+    'zentty-linux: action=clean-copy pane=pane-1 error=selection-unavailable'
+assert_standard_clipboard 'sentinel-existing-owner'
+run_palette_action 'Select All' \
+    'zentty-linux: action=select-all pane=pane-1 binding="select_all"'
+run_palette_action 'Copy' 'zentty-linux: action=copy pane=pane-1' 4
+assert_standard_clipboard 'https://example.com/reset?token=noisegamma&utm_source=mail'
+run_palette_action 'Clean Copy' 'zentty-linux: action=clean-copy pane=pane-1 bytes='
+grep -F 'zentty-linux: action=clean-copy pane=pane-1 bytes=' "${log}" | tail -1 |
+    grep -Fq 'modified=true' || fail "Clean Copy did not transform the selected tracking URL"
+assert_standard_clipboard 'https://example.com/reset?token=noisegamma'
+
+run_palette_action 'Copy Raw' 'zentty-linux: action=copy-raw pane=pane-1'
+assert_standard_clipboard 'https://example.com/reset?token=noisegamma&utm_source=mail'
+
+# Copy the same live selection cleanly again, then use Ghostty's ordinary
+# physical paste binding to deliver the externally verified compositor bytes
+# back through the real PTY. The child title is the round-trip acknowledgement.
+run_palette_action 'Clean Copy' 'zentty-linux: action=clean-copy pane=pane-1 bytes='
+assert_standard_clipboard 'https://example.com/reset?token=noisegamma'
+press_ctrl_shift v
+press_key Return
+wait_for_fixed \
+    'zentty-linux: title-pane=pane-1 value=focus:https://example.com/reset?token=noisegamma' \
+    "cleaned compositor clipboard bytes did not paste back through the real PTY"
+
+type_text markdown
+press_key Return
+wait_for_fixed 'zentty-linux: title-pane=pane-1 value=focus:markdown-ready' \
+    "the real PTY did not present the Markdown fixture"
+run_palette_action 'Select All' \
+    'zentty-linux: action=select-all pane=pane-1 binding="select_all"'
+run_palette_action 'Copy as Markdown' \
+    'zentty-linux: action=copy-as-markdown pane=pane-1 bytes='
+grep -F 'zentty-linux: action=copy-as-markdown pane=pane-1 bytes=' "${log}" | tail -1 |
+    grep -Fq 'modified=true' || fail "Copy as Markdown did not reflow selected Markdown"
+assert_standard_clipboard $'## Clipboard Notes\n\nOne wrapped paragraph'
+
+type_text search-corpus
+press_key Return
+wait_for_fixed 'zentty-linux: title-pane=pane-1 value=focus:search-ready' \
+    "the real PTY did not restore the search corpus after clipboard proof"
 
 # Physical Linux shortcut -> named Zentty action -> generic Ghostty binding
 # parser -> real scrollback search -> Ghostty-owned draggable HUD and counts.
@@ -266,6 +369,10 @@ wait_for_fixed 'zentty-linux: command-palette=query value="Split Right" results=
 press_key Return
 wait_for_fixed 'zentty-linux: terminal-ready-pane=pane-2' \
     "command-palette Split Right did not create the second real search pane"
+type_text search-corpus
+press_key Return
+wait_for_fixed 'zentty-linux: title-pane=pane-2 value=focus:search-ready' \
+    "the second real PTY did not receive its search corpus"
 press_ctrl_shift p
 type_text 'New Worklane'
 wait_for_fixed 'zentty-linux: command-palette=query value="New Worklane" results=1' \
@@ -273,6 +380,10 @@ wait_for_fixed 'zentty-linux: command-palette=query value="New Worklane" results
 press_key Return
 wait_for_fixed 'zentty-linux: terminal-ready-pane=pane-3' \
     "command-palette New Worklane did not create the hidden-worklane search pane"
+type_text search-corpus
+press_key Return
+wait_for_fixed 'zentty-linux: title-pane=pane-3 value=focus:search-ready' \
+    "the hidden-worklane PTY did not receive its search corpus"
 
 # Source Global Find uses every live pane's real Ghostty search rather than a
 # copied scrollback index. The Linux-native chord is Ctrl+Alt+Shift+F because
@@ -356,6 +467,10 @@ for _ in $(seq 1 160); do
 done
 grep -Fq 'zentty-linux: focus-pane pane=pane-window-2' "${log}" ||
     fail "physical window targeting did not focus window 2's real terminal"
+type_text search-corpus
+press_key Return
+wait_for_fixed 'zentty-linux: title-pane=pane-window-2 value=focus:search-ready' \
+    "window 2's real PTY did not receive its independent search corpus"
 press_ctrl_alt_shift f
 for _ in $(seq 1 160); do
     [[ "$(grep -Fc 'zentty-linux: global-find shown targets=1' "${log}" || true)" -gt "${single_target_before}" ]] && break

@@ -113,6 +113,11 @@ pub(super) const ACTION_FIND: &str = "find";
 pub(super) const ACTION_USE_SELECTION_FOR_FIND: &str = "use-selection-for-find";
 pub(super) const ACTION_FIND_NEXT: &str = "find-next";
 pub(super) const ACTION_FIND_PREVIOUS: &str = "find-previous";
+pub(super) const ACTION_CLEAN_COPY: &str = "clean-copy";
+pub(super) const ACTION_COPY: &str = "copy";
+pub(super) const ACTION_COPY_RAW: &str = "copy-raw";
+pub(super) const ACTION_COPY_AS_MARKDOWN: &str = "copy-as-markdown";
+pub(super) const ACTION_SELECT_ALL: &str = "select-all";
 pub(super) const ACTION_GLOBAL_FIND: &str = "global-find";
 pub(super) const ACTION_CLEAR_GLOBAL_FIND: &str = "clear-global-find";
 pub(super) const ACTION_GLOBAL_FIND_NEXT: &str = "global-find-next";
@@ -196,6 +201,11 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
     ),
     action!(ACTION_FIND_NEXT, "find-next", None),
     action!(ACTION_FIND_PREVIOUS, "find-previous", None),
+    action!(ACTION_COPY, "copy", None),
+    action!(ACTION_CLEAN_COPY, "clean-copy", None),
+    action!(ACTION_COPY_RAW, "copy-raw", None),
+    action!(ACTION_COPY_AS_MARKDOWN, "copy-as-markdown", None),
+    action!(ACTION_SELECT_ALL, "select-all", None),
     action!(ACTION_GLOBAL_FIND, "global-find", None),
     action!(ACTION_CLEAR_GLOBAL_FIND, "clear-global-find", None),
     action!(ACTION_GLOBAL_FIND_NEXT, "global-find-next", None),
@@ -406,7 +416,42 @@ fn populate(shell: &Rc<RefCell<ApplicationShell>>, group: &gio::SimpleActionGrou
         shell.select_adjacent_worklane(false);
     });
     install_search_actions(shell, group);
+    install_clipboard_actions(shell, group);
     install_edit_actions(shell, group);
+}
+
+fn install_clipboard_actions(
+    shell: &Rc<RefCell<ApplicationShell>>,
+    group: &gio::SimpleActionGroup,
+) {
+    for (name, style) in [
+        (ACTION_COPY, super::clipboard_actions::CopyStyle::Default),
+        (
+            ACTION_CLEAN_COPY,
+            super::clipboard_actions::CopyStyle::Clean,
+        ),
+        (ACTION_COPY_RAW, super::clipboard_actions::CopyStyle::Raw),
+        (
+            ACTION_COPY_AS_MARKDOWN,
+            super::clipboard_actions::CopyStyle::Markdown,
+        ),
+    ] {
+        let action = gio::SimpleAction::new(name, None);
+        let weak = Rc::downgrade(shell);
+        action.connect_activate(move |_, parameter| {
+            if !ParameterSchema::None.accepts(parameter) {
+                eprintln!("zentty-linux: action={name} rejected parameter-schema");
+                return;
+            }
+            if let Some(shell) = weak.upgrade() {
+                ApplicationShell::copy_focused_selection(&shell, style);
+            }
+        });
+        group.add_action(&action);
+    }
+    add_simple_action(shell, group, ACTION_SELECT_ALL, |shell| {
+        shell.perform_focused_binding_action(ACTION_SELECT_ALL, "select_all");
+    });
 }
 
 fn install_application_actions(
@@ -1023,7 +1068,7 @@ mod tests {
 
     #[test]
     fn registry_is_unique_complete_and_typed() {
-        assert_eq!(ACTION_SPECS.len(), 64);
+        assert_eq!(ACTION_SPECS.len(), 69);
         assert_eq!(
             ACTION_SPECS
                 .iter()

@@ -62,6 +62,16 @@ static int reject_null_and_foreign_handles(void) {
             count_text_callbacks,
             &text_callbacks
         ) ||
+        ghostty_gtk_embed_surface_read_selection(
+            NULL,
+            count_text_callbacks,
+            &text_callbacks
+        ) ||
+        ghostty_gtk_embed_surface_read_selection(
+            foreign_surface,
+            count_text_callbacks,
+            &text_callbacks
+        ) ||
         ghostty_gtk_embed_surface_request_paste(NULL) ||
         ghostty_gtk_embed_surface_request_paste(foreign_surface)) {
         fputs("api-contract: null or foreign surface accepted\n", stderr);
@@ -200,6 +210,7 @@ static int enforce_runtime_lifecycle(
         return 1;
     }
     g_object_ref_sink(surface);
+    int text_callbacks = 0;
     ghostty_gtk_embed_cell_size_t cell_size = {.width = 17.0, .height = 23.0};
     if (g_signal_lookup("progress-report", G_OBJECT_TYPE(surface)) == 0) {
         fputs("api-contract: progress-report signal is missing\n", stderr);
@@ -216,6 +227,12 @@ static int enforce_runtime_lifecycle(
             count_text_callbacks,
             NULL
         ) ||
+        ghostty_gtk_embed_surface_read_selection(
+            surface,
+            count_text_callbacks,
+            &text_callbacks
+        ) ||
+        ghostty_gtk_embed_surface_read_selection(surface, NULL, NULL) ||
         ghostty_gtk_embed_surface_read_text(
             surface,
             (ghostty_gtk_embed_text_extent_t) 999,
@@ -234,6 +251,10 @@ static int enforce_runtime_lifecycle(
     }
     if (cell_size.width != 17.0 || cell_size.height != 23.0) {
         fputs("api-contract: uninitialized cell-size call mutated output\n", stderr);
+        return 1;
+    }
+    if (text_callbacks != 0) {
+        fputs("api-contract: uninitialized selection read invoked callback\n", stderr);
         return 1;
     }
     ghostty_gtk_embed_surface_grab_focus(surface);

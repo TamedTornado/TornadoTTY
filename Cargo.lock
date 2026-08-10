@@ -796,6 +796,7 @@ name = "zentty-linux"
 version = "0.1.0"
 dependencies = [
  "gtk4",
+ "sha2",
  "zentty-agent-ipc",
  "zentty-core",
  "zentty-ghostty",

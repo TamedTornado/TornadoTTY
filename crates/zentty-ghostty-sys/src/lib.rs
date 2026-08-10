@@ -75,6 +75,11 @@ unsafe extern "C" {
         callback: Option<GhosttyGtkEmbedTextCallback>,
         userdata: *mut c_void,
     ) -> bool;
+    pub fn ghostty_gtk_embed_surface_read_selection(
+        surface: *mut GtkWidget,
+        callback: Option<GhosttyGtkEmbedTextCallback>,
+        userdata: *mut c_void,
+    ) -> bool;
 }
 
 #[cfg(test)]

@@ -368,11 +368,10 @@
       "origin": "PORT_PARITY",
       "user_impact": "Clean Copy is a named public Zentty feature; corruption or omission forces users back to manually repairing terminal output.",
       "linux_owner_issue": 17,
-      "implementation_status": "NOT_IMPLEMENTED",
-      "focused_tests": [],
-      "product_scenarios": [],
-      "test_plan": "Maintain source regression/golden corpora and mutation tests, then select output in real terminals, invoke each real UI/action path, and assert exact desktop clipboard bytes and settings behavior.",
-      "alternative_or_blocker": null
+      "implementation_status": "PARTIAL",
+      "focused_tests": ["crates/zentty-core/tests/clean_copy.rs", "crates/zentty-linux/src/application_shell/clipboard_actions.rs", "crates/zentty-linux/src/application_shell/action_router.rs", "crates/zentty-linux/src/sidebar.rs"],
+      "product_scenarios": ["linux/tests/rust-pane-search"],
+      "test_plan": "Preserve source-derived cleanup and bailout goldens plus mutation coverage; in controlled X11 and Wayland, select real Ghostty text through Select All, invoke Clean Copy, Copy Raw and Copy as Markdown through the real command palette, read exact bytes from an independent compositor client, and paste cleaned bytes back through the real PTY. Explicit actions are implemented under GH-35. Automatic clean-copy configuration remains dependent on the single settings owner tracked by GH-20; no interim settings path is permitted. Primary-selection semantics remain separately unqualified in the platform clipboard matrix cells."
     },
     {
       "id": "project.git-review-icons",

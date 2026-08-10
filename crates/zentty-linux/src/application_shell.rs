@@ -39,6 +39,7 @@ use crate::agent_runtime::AgentRuntime;
 
 mod action_router;
 mod agent_events;
+mod clipboard_actions;
 mod global_search;
 mod pane_runtime;
 mod tmux_runtime;
@@ -48,8 +49,9 @@ use action_router::{
     ACTION_ARRANGE_GOLDEN_SHORT, ACTION_ARRANGE_GOLDEN_TALL, ACTION_ARRANGE_GOLDEN_WIDE,
     ACTION_ARRANGE_HEIGHT_FOUR, ACTION_ARRANGE_HEIGHT_FULL, ACTION_ARRANGE_HEIGHT_THREE,
     ACTION_ARRANGE_HEIGHT_TWO, ACTION_ARRANGE_WIDTH_FULL, ACTION_ARRANGE_WIDTH_HALF,
-    ACTION_ARRANGE_WIDTH_QUARTERS, ACTION_ARRANGE_WIDTH_THIRDS, ACTION_CLOSE_ACTIVE_WORKLANE,
-    ACTION_CLOSE_PANE, ACTION_CLOSE_WINDOW, ACTION_CLOSE_WORKLANE, ACTION_CYCLE_WORKLANE_COLOR,
+    ACTION_ARRANGE_WIDTH_QUARTERS, ACTION_ARRANGE_WIDTH_THIRDS, ACTION_CLEAN_COPY,
+    ACTION_CLOSE_ACTIVE_WORKLANE, ACTION_CLOSE_PANE, ACTION_CLOSE_WINDOW, ACTION_CLOSE_WORKLANE,
+    ACTION_COPY, ACTION_COPY_AS_MARKDOWN, ACTION_COPY_RAW, ACTION_CYCLE_WORKLANE_COLOR,
     ACTION_FIND, ACTION_FIND_NEXT, ACTION_FIND_PREVIOUS, ACTION_FOCUS_PANE_DOWN,
     ACTION_FOCUS_PANE_LEFT, ACTION_FOCUS_PANE_RIGHT, ACTION_FOCUS_PANE_UP, ACTION_GLOBAL_FIND,
     ACTION_MOVE_PANE_DOWN, ACTION_MOVE_PANE_LEFT, ACTION_MOVE_PANE_RIGHT,
@@ -58,8 +60,8 @@ use action_router::{
     ACTION_NEW_WORKLANE, ACTION_NEXT_PANE, ACTION_NEXT_WORKLANE, ACTION_PREVIOUS_PANE,
     ACTION_PREVIOUS_WORKLANE, ACTION_RESET_PANE_LAYOUT, ACTION_RESIZE_PANE_DOWN,
     ACTION_RESIZE_PANE_LEFT, ACTION_RESIZE_PANE_RIGHT, ACTION_RESIZE_PANE_UP,
-    ACTION_RESTORE_CLOSED_PANE, ACTION_SPLIT_PANE_BELOW, ACTION_SPLIT_PANE_RIGHT,
-    ACTION_TOGGLE_SIDEBAR, ACTION_USE_SELECTION_FOR_FIND, ActionRouter,
+    ACTION_RESTORE_CLOSED_PANE, ACTION_SELECT_ALL, ACTION_SPLIT_PANE_BELOW,
+    ACTION_SPLIT_PANE_RIGHT, ACTION_TOGGLE_SIDEBAR, ACTION_USE_SELECTION_FOR_FIND, ActionRouter,
 };
 use agent_events::AgentEventCoordinator;
 use pane_runtime::DetachedPaneRuntime;
@@ -166,10 +168,8 @@ impl ApplicationShell {
             peek_view,
             command_palette,
         } = build_shell_widgets();
-
         sidebar::render(&sidebar, &window, &[]);
         let global_search_view = GlobalSearchView::attach(&sidebar);
-
         let window_template = restored_or_default_window(restored_window, fresh_window_id);
         apply_restored_window_size(&window, &window_template);
         let (state, restored_pane_commands) =
@@ -226,7 +226,6 @@ impl ApplicationShell {
             self_handle: RefCell::new(Weak::new()),
         }));
         shell.borrow().self_handle.replace(Rc::downgrade(&shell));
-
         install_sidebar_width_tracking(
             &body,
             &shell.borrow().sidebar_scroll,
@@ -1510,6 +1509,36 @@ impl ApplicationShell {
                 "Select the previous terminal search match",
                 "search pane navigation",
                 ACTION_FIND_PREVIOUS,
+            ),
+            CommandPaletteItem::action(
+                source_ui::COPY,
+                "Copy the focused terminal selection",
+                "clipboard selection default",
+                ACTION_COPY,
+            ),
+            CommandPaletteItem::action(
+                "Clean Copy",
+                "Copy the selection after conservative terminal-text cleanup",
+                "clipboard selection format ansi prompt url path",
+                ACTION_CLEAN_COPY,
+            ),
+            CommandPaletteItem::action(
+                "Copy Raw",
+                "Copy the selection without Zentty transformations",
+                "clipboard selection original escape hatch",
+                ACTION_COPY_RAW,
+            ),
+            CommandPaletteItem::action(
+                "Copy as Markdown",
+                "Reflow a Markdown selection while preserving its structure",
+                "clipboard selection markdown format",
+                ACTION_COPY_AS_MARKDOWN,
+            ),
+            CommandPaletteItem::action(
+                source_ui::SELECT_ALL,
+                "Select all text in the focused terminal",
+                "terminal selection clipboard",
+                ACTION_SELECT_ALL,
             ),
         ]
     }

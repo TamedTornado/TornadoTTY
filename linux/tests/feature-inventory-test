@@ -45,8 +45,8 @@ jq -e '
     .entry_count == 60 and
     .classifications.REQUIRED_INITIAL_RELEASE == 34 and
     .implementation_statuses.IMPLEMENTED == 4 and
-    .implementation_statuses.PARTIAL == 22 and
-    .implementation_statuses.NOT_IMPLEMENTED == 33 and
+    .implementation_statuses.PARTIAL == 23 and
+    .implementation_statuses.NOT_IMPLEMENTED == 32 and
     .evidence.app_commands == 70 and
     .evidence.pane_commands == 33 and
     .evidence.settings_sections == 9 and

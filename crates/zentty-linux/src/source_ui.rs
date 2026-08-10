@@ -17,6 +17,11 @@ pub(crate) const MOVE_WORKLANE_DOWN: &str = "Move Worklane Down";
 pub(crate) const WORKLANE_COLOR: &str = "Worklane Color";
 
 pub(crate) const RENAME_PANE: &str = "Rename Pane…";
+pub(crate) const COPY: &str = "Copy";
+pub(crate) const CLEAN_COPY: &str = "Clean Copy";
+pub(crate) const COPY_RAW: &str = "Copy Raw";
+pub(crate) const COPY_AS_MARKDOWN: &str = "Copy as Markdown";
+pub(crate) const SELECT_ALL: &str = "Select All";
 pub(crate) const SPLIT_RIGHT: &str = "Split Right";
 pub(crate) const ADD_PANE_RIGHT: &str = "Add Pane Right";
 pub(crate) const ADD_PANE_LEFT: &str = "Add Pane Left";
@@ -96,12 +101,16 @@ mod tests {
             ARRANGE_GOLDEN_TALL,
             ARRANGE_GOLDEN_SHORT,
             RESET_PANE_LAYOUT,
+            CLEAN_COPY,
+            COPY_RAW,
+            COPY_AS_MARKDOWN,
         ] {
             assert!(
                 SHORTCUT_SOURCE.contains(label),
                 "missing source command {label:?}"
             );
         }
+        assert!(include_str!("../../../Zentty/AppMenuBuilder.swift").contains(SELECT_ALL));
         for label in [CLOSE_WORKLANE, WORKLANE_COLOR] {
             assert!(
                 SIDEBAR_SOURCE.contains(label),

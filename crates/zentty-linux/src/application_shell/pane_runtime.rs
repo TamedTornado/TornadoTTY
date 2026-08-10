@@ -585,9 +585,7 @@ impl PaneRuntimeCoordinator {
                 let Some(shell) = weak.upgrade() else {
                     return;
                 };
-                if shell.borrow().shutting_down
-                    || shell.borrow().global_search.state().visible
-                {
+                if shell.borrow().shutting_down || shell.borrow().global_search.state().visible {
                     return;
                 }
                 if controller.contains_focus() {
