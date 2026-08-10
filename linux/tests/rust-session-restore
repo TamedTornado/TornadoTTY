@@ -75,7 +75,7 @@ done
 [[ -x "${product}" ]] || fail "staged product is not built: ${product}"
 [[ -x "${actor}" ]] || fail "controlled agent actor is missing: ${actor}"
 drag_source="${repo_root}/target/release-safe/file_drag_source"
-if [[ "${backend}" == x11 ]]; then
+if [[ "${backend}" == x11 || "${ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT:-}" == 1 ]]; then
     [[ -x "${drag_source}" ]] || fail "real GTK file drag source is missing: ${drag_source}"
 fi
 
@@ -239,6 +239,47 @@ assert_background_start() {
     fi
 }
 
+verify_remote_file_drop() {
+    local drop_backend="$1"
+    drag_receipt="${state_dir}/file-drag-source.ready"
+    remote_paste_complete_before="$(grep -Fc 'zentty-linux: remote-paste pane=pane-shell-active state=complete' "${log}" || true)"
+    "${drag_source}" "${remote_upload_payload}" "${drag_receipt}" >>"${log}" 2>&1 &
+    drag_source_pid=$!
+    for _ in {1..250}; do
+        [[ -s "${drag_receipt}" ]] && break
+        kill -0 "${drag_source_pid}" 2>/dev/null ||
+            fail "real GTK file drag source exited before readiness"
+        sleep 0.02
+    done
+    [[ -s "${drag_receipt}" ]] || fail "real GTK file drag source did not become ready"
+    if [[ "${drop_backend}" == x11 ]]; then
+        zentty_product_drag_from_x11_window 'Zentty File Drag Source' "${drag_receipt}" ||
+            fail "physical X11 file drag could not be completed"
+    else
+        zentty_product_drag_in_nested_wayland "${drag_receipt}" ||
+            fail "physical nested-Wayland file drag could not be completed"
+    fi
+    grep -Fq 'drag-begin:' "${drag_receipt}" || fail "GTK drag source never began a real drag"
+    zentty_product_wait_for_log_count "${log}" \
+        'zentty-linux: remote-paste pane=pane-shell-active state=complete' \
+        "$((remote_paste_complete_before + 1))" \
+        "remote file drop did not complete through the real product" ||
+        fail "remote file-drop completion receipt missing"
+    remote_drag_path="$(
+        sed -n 's/^zentty-linux: remote-paste pane=pane-shell-active state=complete files=1 paths=//p' \
+            "${log}" | tail -1
+    )"
+    [[ "${remote_drag_path}" == /tmp/zentty-paste-* ]] ||
+        fail "remote file-drop receipt path is malformed"
+    [[ "$(sha256sum "${remote_drag_path}" | cut -d' ' -f1)" == "${remote_upload_hash}" ]] ||
+        fail "remote file-drop bytes did not match the desktop source"
+    kill -TERM "${drag_source_pid}" 2>/dev/null || true
+    wait "${drag_source_pid}" 2>/dev/null || true
+    drag_source_pid=""
+    xdotool windowfocus --sync "${ZENTTY_PRODUCT_WINDOW_ID}"
+    sleep 0.1
+}
+
 start_product
 assert_background_start 2
 zentty_product_prepare_input "${backend}" "${log}" || fail "could not prepare physical input"
@@ -270,6 +311,12 @@ ssh_local_before="$(grep -Fc 'zentty-linux: ssh-identity pane=pane-shell-active 
 remote_upload_payload="${state_dir}/remote-upload-payload.txt"
 printf 'real product remote clipboard payload\n' >"${remote_upload_payload}"
 remote_upload_hash="$(sha256sum "${remote_upload_payload}" | cut -d' ' -f1)"
+remote_drag_path=""
+if [[ "${ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT:-}" == 1 ]]; then
+    verify_remote_file_drop "${backend}"
+    printf 'rust-session-restore: PASS remote-drop-only compositor=Weston transport=outer-X11\n'
+    exit 0
+fi
 zentty_product_set_file_clipboard "${backend}" "${remote_upload_payload}" ||
     fail "could not publish the real desktop file clipboard"
 zentty_product_ctrl_shift_key "${backend}" v
@@ -304,39 +351,8 @@ remote_image_path="$(
     fail "remote image receipt path is malformed"
 [[ "$(od -An -tx1 -N8 "${remote_image_path}" | tr -d ' \n')" == 89504e470d0a1a0a ]] ||
     fail "remote image is not a real PNG"
-remote_drag_path=""
 if [[ "${backend}" == x11 ]]; then
-    drag_receipt="${state_dir}/file-drag-source.ready"
-    remote_paste_complete_before="$(grep -Fc 'zentty-linux: remote-paste pane=pane-shell-active state=complete' "${log}" || true)"
-    "${drag_source}" "${remote_upload_payload}" "${drag_receipt}" >>"${log}" 2>&1 &
-    drag_source_pid=$!
-    for _ in {1..250}; do
-        [[ -s "${drag_receipt}" ]] && break
-        kill -0 "${drag_source_pid}" 2>/dev/null || fail "real GTK file drag source exited before readiness"
-        sleep 0.02
-    done
-    [[ -s "${drag_receipt}" ]] || fail "real GTK file drag source did not become ready"
-    zentty_product_drag_from_x11_window 'Zentty File Drag Source' "${drag_receipt}" ||
-        fail "physical X11 file drag could not be completed"
-    grep -Fq 'drag-begin:' "${drag_receipt}" || fail "GTK drag source never began a real drag"
-    zentty_product_wait_for_log_count "${log}" \
-        'zentty-linux: remote-paste pane=pane-shell-active state=complete' \
-        "$(( remote_paste_complete_before + 1 ))" \
-        "remote file drop did not complete through the real product" ||
-        fail "remote file-drop completion receipt missing"
-    remote_drag_path="$(
-        sed -n 's/^zentty-linux: remote-paste pane=pane-shell-active state=complete files=1 paths=//p' \
-            "${log}" | tail -1
-    )"
-    [[ "${remote_drag_path}" == /tmp/zentty-paste-* ]] ||
-        fail "remote file-drop receipt path is malformed"
-    [[ "$(sha256sum "${remote_drag_path}" | cut -d' ' -f1)" == "${remote_upload_hash}" ]] ||
-        fail "remote file-drop bytes did not match the desktop source"
-    kill -TERM "${drag_source_pid}" 2>/dev/null || true
-    wait "${drag_source_pid}" 2>/dev/null || true
-    drag_source_pid=""
-    xdotool windowfocus --sync "${ZENTTY_PRODUCT_WINDOW_ID}"
-    sleep 0.1
+    verify_remote_file_drop "${backend}"
     remote_paste_evidence="file+png+physical-drop+batch-rollback"
 fi
 zentty_product_key "${backend}" Return

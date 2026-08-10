@@ -119,6 +119,14 @@ require "Wayland agent qualification does not name the event, tmux, installed Cl
         .environment_profile == "nested-wayland-input-v1" and
         .command == "ZENTTY_REQUIRE_REAL_GEMINI=true ZENTTY_EXPECTED_GEMINI_VERSION=0.53.0 ZENTTY_RUN_CODEX_LIFECYCLE=true GDK_BACKEND=wayland linux/tests/rust-agent-ipc && GDK_BACKEND=wayland linux/tests/rust-tmux-compat-product && GDK_BACKEND=wayland linux/tests/installed-claude-agent-team && GDK_BACKEND=wayland linux/tests/rust-session-restore"
     ' "${matrix}"
+require "controlled multi-window Wayland remote drop is not an explicit real-product cell" \
+    jq -e '
+        .cells[] | select(.id == "remote-file-drop-wayland") |
+        .status == "PASS" and .capability == "remote_transfer" and
+        .display == "wayland" and .optimize == "ReleaseSafe" and
+        .environment_profile == "nested-wayland-multiwindow-v1" and
+        .command == "ZENTTY_LINUX_BINARY=build/linux-profiles/release-safe/bin/zentty-linux GDK_BACKEND=wayland linux/tests/rust-session-restore"
+    ' "${matrix}"
 require "X11 agent qualification does not add installed Codex and Claude to the consolidated journeys" \
     jq -e '
         .cells[] | select(.id == "agent-integration-x11") |

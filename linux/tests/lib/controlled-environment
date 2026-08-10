@@ -141,8 +141,10 @@ zentty_controlled_environment_validate_report() {
             ] and
             (.server.version | type == "string" and length > 0) and
             (if .server.name == "Weston" then
-                .server.backend == "headless" and
-                (.server.endpoint | type == "string" and test("^wayland-z-[0-9a-f]{16}$")) and
+                ((.server.backend == "headless" and
+                  (.server.endpoint | type == "string" and test("^wayland-z-[0-9a-f]{16}$"))) or
+                 (.server.backend == "x11-nested" and
+                  .server.endpoint == "wayland-zentty-input")) and
                 .server.width == 1280 and .server.height == 1024 and .server.scale == 1
              elif .server.name == "Cage" then
                 .server.backend == "x11-nested" and

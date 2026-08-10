@@ -30,6 +30,19 @@ zentty_product_wait_for_log_count() {
     return 1
 }
 
+zentty_product_uses_xdotool() {
+    [[ "$1" == x11 || "${ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT:-}" == 1 ]]
+}
+
+zentty_product_xdotool_key() {
+    if [[ "${ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT:-}" == 1 ]]; then
+        xdotool windowfocus --sync "${ZENTTY_PRODUCT_WINDOW_ID}"
+        xdotool key "$@"
+    else
+        xdotool key --window "${ZENTTY_PRODUCT_WINDOW_ID}" "$@"
+    fi
+}
+
 zentty_product_prepare_input() {
     local backend="$1"
     local log="$2"
@@ -68,17 +81,38 @@ zentty_product_prepare_input() {
             xdotool windowfocus --sync "${ZENTTY_PRODUCT_WINDOW_ID}"
             ;;
         wayland)
-            if ! command -v wtype >/dev/null; then
-                echo "product-input: wtype is required" >&2
-                return 1
-            fi
             [[ "${ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] || {
                 echo "product-input: Wayland input is not in the private input-capable session" >&2
                 return 1
             }
             zentty_product_wait_for_log "${log}" 'zentty-linux: window-size=' \
                 "Wayland product window did not report presentation readiness"
-            ZENTTY_PRODUCT_WINDOW_ID=""
+            if [[ "${ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT:-}" == 1 ]]; then
+                command -v xdotool >/dev/null || {
+                    echo "product-input: xdotool is required for outer-X11 Wayland input" >&2
+                    return 1
+                }
+                ZENTTY_PRODUCT_WINDOW_ID=""
+                for _ in {1..200}; do
+                    ZENTTY_PRODUCT_WINDOW_ID="$(
+                        xdotool search --onlyvisible --class '^Weston Compositor$' \
+                            2>/dev/null | head -1 || true
+                    )"
+                    [[ "${ZENTTY_PRODUCT_WINDOW_ID}" =~ ^[1-9][0-9]*$ ]] && break
+                    sleep 0.05
+                done
+                [[ "${ZENTTY_PRODUCT_WINDOW_ID}" =~ ^[1-9][0-9]*$ ]] || {
+                    echo "product-input: outer Weston window did not appear" >&2
+                    return 1
+                }
+                xdotool windowfocus --sync "${ZENTTY_PRODUCT_WINDOW_ID}"
+            else
+                command -v wtype >/dev/null || {
+                    echo "product-input: wtype is required" >&2
+                    return 1
+                }
+                ZENTTY_PRODUCT_WINDOW_ID=""
+            fi
             ;;
         *)
             echo "product-input: unsupported backend: ${backend}" >&2
@@ -91,8 +125,8 @@ zentty_product_prepare_input() {
 zentty_product_key() {
     local backend="$1"
     local key="$2"
-    if [[ "${backend}" == x11 ]]; then
-        xdotool key --window "${ZENTTY_PRODUCT_WINDOW_ID}" "${key}"
+    if zentty_product_uses_xdotool "${backend}"; then
+        zentty_product_xdotool_key "${key}"
     else
         wtype -k "${key}"
     fi
@@ -101,8 +135,8 @@ zentty_product_key() {
 zentty_product_ctrl_key() {
     local backend="$1"
     local key="$2"
-    if [[ "${backend}" == x11 ]]; then
-        xdotool key --window "${ZENTTY_PRODUCT_WINDOW_ID}" "ctrl+${key}"
+    if zentty_product_uses_xdotool "${backend}"; then
+        zentty_product_xdotool_key "ctrl+${key}"
     else
         wtype -M ctrl -k "${key}" -m ctrl
     fi
@@ -111,8 +145,8 @@ zentty_product_ctrl_key() {
 zentty_product_ctrl_shift_key() {
     local backend="$1"
     local key="$2"
-    if [[ "${backend}" == x11 ]]; then
-        xdotool key --window "${ZENTTY_PRODUCT_WINDOW_ID}" "ctrl+shift+${key}"
+    if zentty_product_uses_xdotool "${backend}"; then
+        zentty_product_xdotool_key "ctrl+shift+${key}"
     else
         wtype -M ctrl -M shift -k "${key}" -m shift -m ctrl
     fi
@@ -242,11 +276,65 @@ zentty_product_drag_from_x11_window() {
     xdotool mouseup 1
 }
 
+zentty_product_drag_in_nested_wayland() {
+    local source_receipt="$1"
+    local pointer_before pickup_x pickup_y candidate_x candidate_y target_x target_y
+    [[ "${ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT:-}" == 1 ]] || {
+        echo "product-input: nested Wayland drag lacks outer-X11 input" >&2
+        return 1
+    }
+    [[ "${ZENTTY_PRODUCT_WINDOW_ID:-}" =~ ^[1-9][0-9]*$ ]] || {
+        echo "product-input: outer Weston window is not initialized" >&2
+        return 1
+    }
+
+    pointer_before="$(grep -Fxc pointer-target "${source_receipt}" || true)"
+    pickup_x=""
+    pickup_y=""
+    for candidate_y in 80 140 200 260 320 380 440 500 560 620 680 740 800 860 920; do
+        for candidate_x in 80 160 240 320 400 480 560 640 720 800 880 960 1040 1120 1200; do
+            xdotool mousemove --sync --window "${ZENTTY_PRODUCT_WINDOW_ID}" \
+                "${candidate_x}" "${candidate_y}"
+            sleep 0.01
+            if (( $(grep -Fxc pointer-target "${source_receipt}" || true) > pointer_before )); then
+                pickup_x="${candidate_x}"
+                pickup_y="${candidate_y}"
+                break 2
+            fi
+        done
+    done
+    [[ -n "${pickup_x}" ]] || {
+        echo "product-input: pointer did not enter nested Wayland drag source" >&2
+        return 1
+    }
+    if (( pickup_x < 640 )); then target_x=1050; else target_x=230; fi
+    if (( pickup_y < 512 )); then target_y=760; else target_y=260; fi
+    xdotool mousedown 1
+    sleep 0.25
+    xdotool mousemove_relative --sync -- 30 30
+    for _ in {1..100}; do
+        grep -Fq 'drag-begin:' "${source_receipt}" && break
+        sleep 0.02
+    done
+    grep -Fq 'drag-begin:' "${source_receipt}" || {
+        xdotool mouseup 1
+        echo "product-input: nested Wayland GTK drag did not begin" >&2
+        return 1
+    }
+    for fraction in 1 2 3 4 5 6 7 8; do
+        xdotool mousemove --sync --window "${ZENTTY_PRODUCT_WINDOW_ID}" \
+            "$((pickup_x + (target_x - pickup_x) * fraction / 8))" \
+            "$((pickup_y + (target_y - pickup_y) * fraction / 8))"
+        sleep 0.1
+    done
+    xdotool mouseup 1
+}
+
 zentty_product_alt_key() {
     local backend="$1"
     local key="$2"
-    if [[ "${backend}" == x11 ]]; then
-        xdotool key --window "${ZENTTY_PRODUCT_WINDOW_ID}" "alt+${key}"
+    if zentty_product_uses_xdotool "${backend}"; then
+        zentty_product_xdotool_key "alt+${key}"
     else
         wtype -M alt -k "${key}" -m alt
     fi
@@ -257,13 +345,13 @@ zentty_product_close_window() {
     # Ctrl+Q is Zentty's ordinary Linux quit-application shortcut. Driving it
     # through the compositor avoids a test-only lifecycle API and works in the
     # deliberately window-manager-free X11 qualification session.
-    if [[ "${backend}" == x11 ]]; then
+    if zentty_product_uses_xdotool "${backend}"; then
         # Closing on key-down destroys the target before Xdotool can deliver
         # every synthetic release. The product log and process-exit assertions,
         # not Xdotool's expected asynchronous BadWindow status, prove success.
-        xdotool key --window "${ZENTTY_PRODUCT_WINDOW_ID}" ctrl+q 2>/dev/null || true
+        zentty_product_xdotool_key ctrl+q 2>/dev/null || true
         sleep 0.1
-        xdotool key --window "${ZENTTY_PRODUCT_WINDOW_ID}" ctrl+q 2>/dev/null || true
+        zentty_product_xdotool_key ctrl+q 2>/dev/null || true
         # Closing on key-down can also prevent XTest from delivering the
         # synthetic releases. Reset those global key states against the live
         # root window so the next real product in this intentionally reused X
@@ -277,8 +365,13 @@ zentty_product_close_window() {
 zentty_product_type() {
     local backend="$1"
     local value="$2"
-    if [[ "${backend}" == x11 ]]; then
-        xdotool type --window "${ZENTTY_PRODUCT_WINDOW_ID}" --delay 5 "${value}"
+    if zentty_product_uses_xdotool "${backend}"; then
+        if [[ "${ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT:-}" == 1 ]]; then
+            xdotool windowfocus --sync "${ZENTTY_PRODUCT_WINDOW_ID}"
+            xdotool type --delay 5 "${value}"
+        else
+            xdotool type --window "${ZENTTY_PRODUCT_WINDOW_ID}" --delay 5 "${value}"
+        fi
     else
         wtype "${value}"
     fi

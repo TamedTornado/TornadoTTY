@@ -48,7 +48,29 @@ jq -e '
     .isolation.run_root_removed == true and
     .isolation.remaining_processes == []
 ' "${report}" >/dev/null || fail "Cage capability or cleanup proof is incomplete"
+
+started_at="$(date +%s)"
+# The controlled child, not this support test, expands the sanitized values.
+# shellcheck disable=SC2016
+weston_child='test "${GDK_BACKEND:-}" = wayland && test "${ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT:-}" = 1 && wayland-info | grep -F wl_data_device_manager >/dev/null && xdotool search --onlyvisible --class "^Weston Compositor$" >/dev/null'
+ZENTTY_NESTED_WAYLAND_INPUT_COMPOSITOR=weston \
+    ZENTTY_NESTED_WAYLAND_INPUT_REPORT="${report}" \
+    "${harness}" bash -c "${weston_child}" >"${output}" 2>&1 ||
+    fail "real Weston multi-window input environment failed"
+grep -Fxq \
+    'nested-wayland-input: READY private-weston-x11-nested backend=wayland software-renderer=1 outer-x11-input=1' \
+    "${output}" || fail "Weston readiness receipt is missing"
+expected_command="$(jq -cn --arg child "${weston_child}" '["bash","-c",$child]')"
+zentty_controlled_environment_validate_report \
+    "${report}" "${harness}" wayland 0 "${expected_command}" "${started_at}" 900 \
+    >/dev/null || fail "machine-readable Weston receipt was rejected"
+jq -e '
+    .server.name == "Weston" and .server.backend == "x11-nested" and
+    (.server.protocols | index("wl_data_device_manager") != null) and
+    (.server.protocols | index("wl_seat") != null) and
+    .renderer == {software:true,name:"Pixman",proof:"Using Pixman renderer"}
+' "${report}" >/dev/null || fail "Weston capability proof is incomplete"
 after_roots="$(find /tmp -maxdepth 1 -type d -name 'zwi.*' -printf '%f\n' | sort)"
 [[ "${after_roots}" == "${before_roots}" ]] || fail "controlled runtime root leaked"
 
-echo "Nested Wayland input tests passed: Cage, Xvfb transport, Pixman, virtual keyboard, isolation, cleanup"
+echo "Nested Wayland input tests passed: Cage/Weston, Xvfb transport, Pixman, virtual keyboard/outer input, isolation, cleanup"

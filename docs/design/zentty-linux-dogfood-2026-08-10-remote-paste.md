@@ -262,3 +262,76 @@ Tracking: GH-17
   implemented local suite is passed and Valgrind remains **PASS with reviewed
   suppressions**. Release/full qualification remain not passed at the unchanged
   declared totals PASS=92, FAIL=0, BLOCKED=7, XFAIL=1, NOT_IMPLEMENTED=21.
+
+## Controlled multi-window Wayland file drop
+
+- Cage remains the correct small compositor for deterministic virtual-keyboard
+  journeys, but its kiosk shell cannot expose a source and destination window
+  simultaneously. Treating that limitation as a successful Wayland drag test
+  would have been false evidence. Weston 13 was already installed and its X11
+  backend exposes a real multi-window Wayland desktop plus `wl_seat` and
+  `wl_data_device_manager`; the existing private-Xvfb transport can inject
+  pointer and keyboard events at the compositor boundary.
+- Rather than accrete a second compositor wrapper, `nested-wayland-input` now
+  has two explicit, closed-world modes. Cage remains the default and proves its
+  virtual-keyboard protocol. The Weston mode proves Pixman, X11 nesting,
+  multi-window data-device protocols, and an outer-X11 input marker in the same
+  machine-readable environment receipt. Its self-test launches and validates
+  both real compositors and proves cleanup of the shared private runtime model.
+- The first product attempt searched the outer Weston window by its title. Once
+  the product was mapped, that name was not stable enough for discovery. The
+  driver now binds to Weston's stable X11 window class and refuses to proceed
+  without the wrapper-owned outer-input marker.
+- Real unmodified typing traversed XTest, Weston, Wayland, GTK, Ghostty, and the
+  PTY and opened the disposable SSH session. `wl-copy`, however, cannot use the
+  wlroots data-control protocol in Weston and the clipboard shortcut did not
+  complete. That absence was not converted into a pass: the established Cage
+  journey remains authoritative for Wayland file-list/PNG clipboard,
+  cancellation, and batch rollback. The Weston mode runs only the distinct
+  multi-window physical-drop claim in the same canonical session harness.
+- The final focused journey starts the delivered ReleaseSafe product and a
+  separate real GTK URI-list source in Weston, finds the source by physical
+  pointer entry rather than internal widget coordinates, begins a GTK drag,
+  crosses the compositor into the real Ghostty widget, uploads through the
+  disposable authenticated OpenSSH server, and compares the remote SHA-256.
+  It passed with the receipt `remote-drop-only compositor=Weston
+  transport=outer-X11`.
+- Qualification now has an explicit `remote-file-drop-wayland` PASS cell using
+  the `nested-wayland-multiwindow-v1` profile. The profile is implemented by the
+  existing wrapper, not a parallel harness. The terminal remote-transfer
+  inventory entry is now IMPLEMENTED; release and full qualification remain
+  unclaimed until the authoritative matrix gate is rerun, and unrelated
+  BLOCKED/XFAIL/NOT_IMPLEMENTED cells remain unchanged.
+- The first authoritative rerun executed the new real Wayland drop cell
+  successfully but failed `architecture-contract-v1`. Adding the new behavior
+  evidence to the ownership contract had correctly violated that validator's
+  closed-world requirement list; the contract test was doing its job. The
+  validator now explicitly recognizes the transactional remote-transfer/drop
+  requirement, its negative suite still passes, and the architecture cell
+  passes again. That failed qualification summary remains failed evidence and
+  is not being rewritten as a pass.
+- The second authoritative `qualify-local` run passed every presently
+  executable support and matrix cell in 367,750 ms, including the new
+  `remote-file-drop-wayland` cell in 8,350 ms and the repaired architecture
+  cell. The implemented local suite is PASSED and Valgrind is described only as
+  **PASS with reviewed suppressions**. The new declared totals are PASS=93,
+  FAIL=0, BLOCKED=7, XFAIL=1, NOT_IMPLEMENTED=21. Release and full Linux
+  qualification remain explicitly NOT_PASSED; this is not an exhaustive-QA
+  claim.
+- A later final rerun exposed an unrelated, intermittent
+  `product-source-ux-x11` failure at vertical keyboard resize. The product had
+  emitted the resize action, but the test used the action receipt alone as its
+  horizontal-render barrier. GTK could deliver the preceding Left action's
+  delayed height-allocation receipt after the Down key was sent, satisfying
+  the Down test's count-based wait with stale evidence. The journey now waits
+  for both pane-layout and pane-height-layout receipts after the reverse Left
+  action before recording the vertical baseline. An isolated real X11 rerun
+  passed before this repair; the tightened synchronization prevents that
+  accidental pass/fail race rather than retrying the product action.
+  Three consecutive isolated real-X11 journeys passed after the barrier was
+  tightened.
+- The final post-repair authoritative gate passed all presently executable
+  support and matrix cells in 366,450 ms. `product-source-ux-x11` passed in
+  14,030 ms and `remote-file-drop-wayland` passed in 8,330 ms. Declared totals
+  remain PASS=93, FAIL=0, BLOCKED=7, XFAIL=1, NOT_IMPLEMENTED=21; implemented
+  local is PASSED, while release and full remain NOT_PASSED.

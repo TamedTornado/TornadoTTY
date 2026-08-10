@@ -439,7 +439,8 @@ jq -e --arg main_sha256 "${main_sha256}" \
         "gtk-action-and-source-ux-characterization",
         "pane-owner-cardinality-construction-and-teardown",
         "session-store-clean-exit-restore-and-failure",
-        "single-authority-architecture-and-test-orchestration"
+        "single-authority-architecture-and-test-orchestration",
+        "transactional-remote-transfer-and-desktop-drop"
     ] | sort) and
     ([.behavior_evidence[].requirement] | length) ==
         ([.behavior_evidence[].requirement] | unique | length) and

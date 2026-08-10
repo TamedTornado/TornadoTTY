@@ -9,7 +9,8 @@ xdotool() {
     printf '%s\n' "$*" >>"${calls}"
     if [[ "${1:-}" == search ]]; then
         printf '5151\n'
-    elif [[ "${1:-}" == mousemove && "$*" == *'--window 5151'* ]]; then
+    elif [[ "${1:-}" == mousemove &&
+        ("$*" == *'--window 5151'* || "${mock_wayland_drag:-}" == true) ]]; then
         printf 'pointer-target\n' >>"${mock_drag_receipt}"
     elif [[ "${1:-}" == mousemove_relative ]]; then
         printf 'drag-begin:text/uri-list\n' >>"${mock_drag_receipt}"
@@ -56,4 +57,19 @@ expected=$'search --onlyvisible --name ^Zentty File Drag Source$\nwindowmove 515
     exit 1
 }
 
-echo "Product input helper tests passed: counted synchronization, X11 key release, and physical drag"
+: >"${calls}"
+mock_drag_receipt="$(mktemp)"
+printf 'ready\n' >"${mock_drag_receipt}"
+mock_wayland_drag=true
+ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT=1
+zentty_product_drag_in_nested_wayland "${mock_drag_receipt}"
+unset mock_wayland_drag ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT
+rm -f -- "${mock_drag_receipt}"
+expected=$'mousemove --sync --window 4242 80 80\nmousedown 1\nmousemove_relative --sync -- 30 30\nmousemove --sync --window 4242 201 165\nmousemove --sync --window 4242 322 250\nmousemove --sync --window 4242 443 335\nmousemove --sync --window 4242 565 420\nmousemove --sync --window 4242 686 505\nmousemove --sync --window 4242 807 590\nmousemove --sync --window 4242 928 675\nmousemove --sync --window 4242 1050 760\nmouseup 1'
+[[ "$(cat "${calls}")" == "${expected}" ]] || {
+    echo "product-input-test: nested Wayland physical file drag sequence changed" >&2
+    cat "${calls}" >&2
+    exit 1
+}
+
+echo "Product input helper tests passed: counted synchronization, X11 key release, and physical X11/Wayland drag"

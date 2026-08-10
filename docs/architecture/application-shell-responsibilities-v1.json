@@ -435,6 +435,16 @@
       ]
     },
     {
+      "requirement": "transactional-remote-transfer-and-desktop-drop",
+      "boundary": "real GTK clipboard and cross-process drag source, real Ghostty PTY, disposable authenticated OpenSSH, private controlled X11 and multi-window Wayland compositors",
+      "cells": [
+        "remote-transfer-transactional",
+        "remote-file-drop-wayland",
+        "agent-integration-x11",
+        "agent-integration-wayland"
+      ]
+    },
+    {
       "requirement": "agent-event-routing-enrichment-and-shutdown",
       "boundary": "delivered product, real Unix sockets and PTYs, installed Codex and Claude where declared, controlled external model endpoint only",
       "cells": ["agent-integration-x11", "agent-integration-wayland"]

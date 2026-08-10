@@ -140,6 +140,25 @@ expect_failure cage-missing-virtual-keyboard \
     "${repo_root}/linux/tests/nested-wayland-input" wayland 0 \
     "${command_json}" "$((started - 1))" 900
 
+weston_x11_report="${temp_dir}/wayland-multiwindow.environment.json"
+jq '
+    .server.backend = "x11-nested" |
+    .server.endpoint = "wayland-zentty-input"
+' "${temp_dir}/wayland.environment.json" >"${weston_x11_report}"
+touch -d "@${now}" "${weston_x11_report}"
+zentty_controlled_environment_validate_report \
+    "${weston_x11_report}" "${repo_root}/linux/tests/nested-wayland" wayland 0 \
+    "${command_json}" "$((started - 1))" 900 >/dev/null ||
+    fail "valid multi-window Weston report was rejected"
+jq '.server.endpoint = "wayland-zentty-input"' \
+    "${temp_dir}/wayland.environment.json" >"${temp_dir}/weston-mismatched-backend.json"
+touch -d "@${now}" "${temp_dir}/weston-mismatched-backend.json"
+expect_failure weston-mismatched-backend \
+    zentty_controlled_environment_validate_report \
+    "${temp_dir}/weston-mismatched-backend.json" \
+    "${repo_root}/linux/tests/nested-wayland" wayland 0 \
+    "${command_json}" "$((started - 1))" 900
+
 expect_failure missing-report \
     zentty_controlled_environment_validate_report \
     "${temp_dir}/missing.json" "${repo_root}/linux/tests/nested-x11" x11 0 \

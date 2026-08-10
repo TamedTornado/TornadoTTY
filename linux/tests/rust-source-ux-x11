@@ -636,18 +636,24 @@ sleep 0.2
 keyboard_layout_line="$(grep -F 'zentty-linux: pane-layout ' "${log}" | tail -1)"
 keyboard_width_before="$(sed -n 's/.*column-worklane-1:\([0-9][0-9]*\).*/\1/p' <<<"${keyboard_layout_line}")"
 keyboard_resize_count="$(grep -Fc 'zentty-linux: pane-keyboard-resize direction=' "${log}" || true)"
+keyboard_layout_count="$(grep -Fc 'zentty-linux: pane-layout ' "${log}" || true)"
 xdotool key --window "${window_id}" ctrl+alt+shift+Right
 for _ in $(seq 1 100); do
-    (( $(grep -Fc 'zentty-linux: pane-keyboard-resize direction=' "${log}" || true) > keyboard_resize_count )) && break
+    (( $(grep -Fc 'zentty-linux: pane-keyboard-resize direction=' "${log}" || true) > keyboard_resize_count &&
+       $(grep -Fc 'zentty-linux: pane-layout ' "${log}" || true) > keyboard_layout_count )) && break
     sleep 0.05
 done
 keyboard_width_right="$(grep -F 'zentty-linux: pane-layout ' "${log}" | tail -1 | sed -n 's/.*column-worklane-1:\([0-9][0-9]*\).*/\1/p')"
 (( keyboard_width_right > keyboard_width_before )) ||
     fail "Resize Pane Right did not widen the rendered focused source column"
 
+keyboard_layout_count="$(grep -Fc 'zentty-linux: pane-layout ' "${log}" || true)"
+keyboard_height_layout_count="$(grep -Fc 'zentty-linux: pane-height-layout column=column-worklane-1 ' "${log}" || true)"
 xdotool key --window "${window_id}" ctrl+alt+shift+Left
 for _ in $(seq 1 100); do
-    (( $(grep -Fc 'zentty-linux: pane-keyboard-resize direction=' "${log}" || true) >= keyboard_resize_count + 2 )) && break
+    (( $(grep -Fc 'zentty-linux: pane-keyboard-resize direction=' "${log}" || true) >= keyboard_resize_count + 2 &&
+       $(grep -Fc 'zentty-linux: pane-layout ' "${log}" || true) > keyboard_layout_count &&
+       $(grep -Fc 'zentty-linux: pane-height-layout column=column-worklane-1 ' "${log}" || true) > keyboard_height_layout_count )) && break
     sleep 0.05
 done
 keyboard_width_restored="$(grep -F 'zentty-linux: pane-layout ' "${log}" | tail -1 | sed -n 's/.*column-worklane-1:\([0-9][0-9]*\).*/\1/p')"
