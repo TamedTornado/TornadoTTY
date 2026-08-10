@@ -87,3 +87,9 @@ kept the feature open: real destination-failure rollback.
   and `7783c6994b8094b5f3757c2656e29aa352bdbf93dc0eaadbf579e8837c95227e`.
   Suppression governance passed, ReleaseSafe Valgrind remains XFAIL, and this
   acceptance closure added or broadened no suppression.
+- Implementation commit `299888f` and rollback-qualification commit `053fc74`
+  are public on `linux/port`. The exact receipts were posted at
+  `https://github.com/TamedTornado/zentty/issues/33#issuecomment-5238079227`,
+  and issue #33 was closed as completed. The umbrella inventory remains
+  `PARTIAL` only for separately scoped existing-window transfer and direct
+  cross-window drag/drop behavior.
