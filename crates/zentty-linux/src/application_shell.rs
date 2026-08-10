@@ -30,8 +30,8 @@ use zentty_core::{
     AppConfig, ClosePaneOutcome, ColumnRecipe, CommandPaletteItem, GlobalSearchCoordinator,
     GlobalSearchDirection, PaneColumnState, PaneLayoutPolicy, PaneRecipe, PaneReference,
     PaneResizeDirection, PaneRestoreDraft, PaneRightInsertionBehavior, PaneWindowTransfer,
-    SidebarWidthPreference, WindowFrame, WindowRecipe, WorklaneColor, WorklaneRecipe,
-    WorkspaceState,
+    ServerPortRule, ServerRelevanceContext, SidebarWidthPreference, WindowFrame, WindowRecipe,
+    WorklaneColor, WorklaneRecipe, WorkspaceState, rank_servers,
 };
 use zentty_ghostty::GhosttyRuntime;
 
@@ -43,6 +43,7 @@ mod clipboard_actions;
 mod global_search;
 mod pane_runtime;
 mod remote_paste;
+mod server_runtime;
 mod ssh_identity;
 mod tmux_runtime;
 
@@ -56,14 +57,16 @@ use action_router::{
     ACTION_COPY, ACTION_COPY_AS_MARKDOWN, ACTION_COPY_RAW, ACTION_CYCLE_WORKLANE_COLOR,
     ACTION_FIND, ACTION_FIND_NEXT, ACTION_FIND_PREVIOUS, ACTION_FOCUS_PANE_DOWN,
     ACTION_FOCUS_PANE_LEFT, ACTION_FOCUS_PANE_RIGHT, ACTION_FOCUS_PANE_UP, ACTION_GLOBAL_FIND,
-    ACTION_MOVE_PANE_DOWN, ACTION_MOVE_PANE_LEFT, ACTION_MOVE_PANE_RIGHT,
-    ACTION_MOVE_PANE_TO_NEW_WINDOW, ACTION_MOVE_PANE_UP, ACTION_MOVE_WORKLANE_DOWN,
-    ACTION_MOVE_WORKLANE_UP, ACTION_NAVIGATE_BACK, ACTION_NAVIGATE_FORWARD, ACTION_NEW_WINDOW,
-    ACTION_NEW_WORKLANE, ACTION_NEXT_PANE, ACTION_NEXT_WORKLANE, ACTION_PREVIOUS_PANE,
-    ACTION_PREVIOUS_WORKLANE, ACTION_RESET_PANE_LAYOUT, ACTION_RESIZE_PANE_DOWN,
+    ACTION_IGNORE_SERVER_PORT, ACTION_MOVE_PANE_DOWN, ACTION_MOVE_PANE_LEFT,
+    ACTION_MOVE_PANE_RIGHT, ACTION_MOVE_PANE_TO_NEW_WINDOW, ACTION_MOVE_PANE_UP,
+    ACTION_MOVE_WORKLANE_DOWN, ACTION_MOVE_WORKLANE_UP, ACTION_NAVIGATE_BACK,
+    ACTION_NAVIGATE_FORWARD, ACTION_NEW_WINDOW, ACTION_NEW_WORKLANE, ACTION_NEXT_PANE,
+    ACTION_NEXT_WORKLANE, ACTION_OPEN_SERVER, ACTION_PREVIOUS_PANE, ACTION_PREVIOUS_WORKLANE,
+    ACTION_REFRESH_SERVERS, ACTION_RESET_PANE_LAYOUT, ACTION_RESIZE_PANE_DOWN,
     ACTION_RESIZE_PANE_LEFT, ACTION_RESIZE_PANE_RIGHT, ACTION_RESIZE_PANE_UP,
     ACTION_RESTORE_CLOSED_PANE, ACTION_SELECT_ALL, ACTION_SPLIT_PANE_BELOW,
-    ACTION_SPLIT_PANE_RIGHT, ACTION_TOGGLE_SIDEBAR, ACTION_USE_SELECTION_FOR_FIND, ActionRouter,
+    ACTION_SPLIT_PANE_RIGHT, ACTION_STOP_IGNORING_SERVER_PORT, ACTION_STOP_SERVER,
+    ACTION_TOGGLE_SIDEBAR, ACTION_USE_SELECTION_FOR_FIND, ActionRouter,
 };
 use agent_events::AgentEventCoordinator;
 use pane_runtime::DetachedPaneRuntime;
@@ -136,6 +139,7 @@ pub(crate) struct ApplicationShell {
     global_search: GlobalSearchCoordinator,
     global_search_generation: u64,
     remote_panes: RemotePaneContext,
+    server_runtime: server_runtime::ServerRuntime,
     last_pane_viewport_height: Cell<i32>,
     action_router: Option<ActionRouter>,
     agent_events: AgentEventCoordinator,
@@ -206,7 +210,7 @@ impl ApplicationShell {
             peek_view,
             command_palette,
         } = build_shell_widgets();
-        sidebar::render(&sidebar, &window, &[], runtimes.config.clipboard);
+        sidebar::render(&sidebar, &window, &[], runtimes.config.clipboard, &[]);
         let global_search_view = GlobalSearchView::attach(&sidebar);
         let window_template = restored_or_default_window(restored_window, fresh_window_id);
         apply_restored_window_size(&window, &window_template);
@@ -233,7 +237,7 @@ impl ApplicationShell {
             background_agent_host,
             state,
             pane_runtime: PaneRuntimeCoordinator::new(&runtimes.ghostty, command),
-            config: runtimes.config,
+            config: runtimes.config.clone(),
             restored_pane_commands,
             main_loop: main_loop.clone(),
             next_worklane_number,
@@ -254,6 +258,7 @@ impl ApplicationShell {
             global_search: GlobalSearchCoordinator::default(),
             global_search_generation: 0,
             remote_panes: RemotePaneContext::default(),
+            server_runtime: server_runtime::ServerRuntime::default(),
             last_pane_viewport_height: Cell::new(0),
             action_router: None,
             agent_events,
@@ -264,8 +269,7 @@ impl ApplicationShell {
             quit_handler: None,
             self_handle: RefCell::new(Weak::new()),
         }));
-        shell.borrow().self_handle.replace(Rc::downgrade(&shell));
-        shell.borrow_mut().remote_panes.probe_source = Some(ssh_identity::install(&shell));
+        initialize_shell_coordinators(&shell);
         install_sidebar_width_tracking(
             &body,
             &shell.borrow().sidebar_scroll,
@@ -488,6 +492,9 @@ impl ApplicationShell {
             upload.cancel();
         }
         if let Some(source) = self.remote_panes.probe_source.take() {
+            source.remove();
+        }
+        if let Some(source) = self.server_runtime.probe_source.take() {
             source.remove();
         }
         // A deferred pane belongs to a cross-window transfer but is not yet
@@ -1243,13 +1250,76 @@ impl ApplicationShell {
                 })
             })
             .collect::<Vec<_>>();
+        items.extend(self.command_palette_server_items());
         items.extend(Self::command_palette_action_items());
         (items, current)
+    }
+
+    fn command_palette_server_items(&self) -> Vec<CommandPaletteItem> {
+        self.ranked_servers()
+            .into_iter()
+            .flat_map(|server| {
+                let lane = self
+                    .state
+                    .worklanes()
+                    .iter()
+                    .find(|worklane| worklane.id == server.server.worklane_id)
+                    .and_then(|worklane| worklane.title.as_deref())
+                    .unwrap_or("Worklane");
+                if server.tier == zentty_core::ServerRelevanceTier::Hidden {
+                    return server.server.ports.first().map_or_else(Vec::new, |port| {
+                        vec![CommandPaletteItem::parameterized_action(
+                            format!("Stop Ignoring Port {port}"),
+                            format!("Development server · {lane}"),
+                            "unignore show server port",
+                            ACTION_STOP_IGNORING_SERVER_PORT,
+                            server.server.origin,
+                        )]
+                    });
+                }
+                let mut actions = vec![CommandPaletteItem::parameterized_action(
+                    format!("Open {}", server.server.display),
+                    format!("Development server · {lane}"),
+                    "browser localhost server URL",
+                    ACTION_OPEN_SERVER,
+                    server.server.origin.clone(),
+                )];
+                if server.server.source != zentty_core::DetectedServerSource::Manual
+                    && let Some(port) = server.server.ports.first()
+                {
+                    actions.push(CommandPaletteItem::parameterized_action(
+                        format!("Ignore Port {port}"),
+                        format!("Hide this development server · {lane}"),
+                        "server noisy port suppress",
+                        ACTION_IGNORE_SERVER_PORT,
+                        server.server.origin.clone(),
+                    ));
+                }
+                if server.server.source == zentty_core::DetectedServerSource::Scanner
+                    && server.server.confidence == zentty_core::DetectedServerConfidence::Pid
+                {
+                    actions.push(CommandPaletteItem::parameterized_action(
+                        format!("Stop {}", server.server.display),
+                        format!("Owned development server · {lane}"),
+                        "terminate interrupt server process",
+                        ACTION_STOP_SERVER,
+                        server.server.origin,
+                    ));
+                }
+                actions
+            })
+            .collect()
     }
 
     #[allow(clippy::too_many_lines)] // Interim until the source command registry is ported.
     fn command_palette_action_items() -> Vec<CommandPaletteItem> {
         vec![
+            CommandPaletteItem::action(
+                "Refresh Development Servers",
+                "Rescan real listening processes now",
+                "server browser port listener",
+                ACTION_REFRESH_SERVERS,
+            ),
             CommandPaletteItem::action(
                 "New Window",
                 "Create another Zentty window",
@@ -2510,11 +2580,13 @@ impl ApplicationShell {
 
     fn render_sidebar(&self) {
         let summaries = self.state.sidebar_summaries();
+        let servers = self.ranked_servers();
         sidebar::render(
             &self.sidebar,
             &self.window,
             &summaries,
             self.config.clipboard,
+            &servers,
         );
         self.chrome.render(
             &summaries,
@@ -2526,12 +2598,14 @@ impl ApplicationShell {
 
     fn refresh_sidebar_metadata(&self) {
         let summaries = self.state.sidebar_summaries();
+        let servers = self.ranked_servers();
         if !sidebar::update_metadata(&self.sidebar, &summaries) {
             sidebar::render(
                 &self.sidebar,
                 &self.window,
                 &summaries,
                 self.config.clipboard,
+                &servers,
             );
         }
         self.chrome.render(
@@ -2542,6 +2616,38 @@ impl ApplicationShell {
         self.schedule_active_worklane_reveal();
         self.refresh_pane_presentation();
         self.refresh_pane_layout_action_availability();
+    }
+
+    fn ranked_servers(&self) -> Vec<zentty_core::RankedServer> {
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .ok()
+            .and_then(|duration| u64::try_from(duration.as_millis()).ok())
+            .unwrap_or_default();
+        let focused_pane_id = self.state.focused_pane_id().map(str::to_owned);
+        let running_pane_ids: std::collections::BTreeSet<String> =
+            self.pane_runtime.live_pane_ids().iter().cloned().collect();
+        let ignored_port_rules =
+            ServerPortRule::normalize(&self.config.server_detection.ignored_port_rules);
+        let mut ranked = Vec::new();
+        for worklane in self.state.worklanes() {
+            ranked.extend(rank_servers(
+                self.server_runtime
+                    .servers
+                    .iter()
+                    .filter(|server| server.worklane_id == worklane.id)
+                    .cloned()
+                    .collect(),
+                &ServerRelevanceContext {
+                    focused_pane_id: focused_pane_id.clone(),
+                    running_pane_ids: running_pane_ids.clone(),
+                    ignored_port_rules: ignored_port_rules.clone(),
+                    selected_origin: None,
+                    now_ms,
+                },
+            ));
+        }
+        ranked
     }
 
     fn schedule_active_worklane_reveal(&self) {
@@ -2839,6 +2945,12 @@ impl ApplicationShell {
             .collect::<Vec<_>>()
             .join("|")
     }
+}
+
+fn initialize_shell_coordinators(shell: &Rc<RefCell<ApplicationShell>>) {
+    shell.borrow().self_handle.replace(Rc::downgrade(shell));
+    shell.borrow_mut().remote_panes.probe_source = Some(ssh_identity::install(shell));
+    shell.borrow_mut().server_runtime.probe_source = server_runtime::install(shell);
 }
 
 fn observe_ghostty_search_state(

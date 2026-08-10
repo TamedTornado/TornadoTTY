@@ -694,6 +694,7 @@ dependencies = [
  "indexmap",
  "toml_datetime",
  "toml_parser",
+ "toml_writer",
  "winnow",
 ]
 
@@ -798,7 +799,9 @@ version = "0.1.0"
 dependencies = [
  "gtk4",
  "libc",
+ "serde_json",
  "sha2",
+ "toml_edit",
  "zentty-agent-ipc",
  "zentty-core",
  "zentty-ghostty",

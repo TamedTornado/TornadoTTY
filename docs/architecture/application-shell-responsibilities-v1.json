@@ -2,19 +2,22 @@
   "schema_version": 1,
   "contract_id": "zentty-application-shell-responsibilities",
   "source": "crates/zentty-linux/src/application_shell.rs",
-  "source_sha256": "aad6716477a143203027a36dfdc26549a01457039e519445366d4c2d0c32856f",
+  "source_sha256": "df451a9c362e8c812a2d3f9b7b06b28b9b2e7ba2ba4abe8f859051cf92627d03",
   "owned_source_sha256": {
-    "crates/zentty-linux/src/main.rs": "54265599f6952c7c0bd7a9b88758b3be2ece49627a5c068999c0accd9365536f",
-    "crates/zentty-linux/src/application.rs": "57e3d9ac19196b694a3a4e190bc87fd7881cf0fb13c17b3c7d094a005f5d2a57",
-    "crates/zentty-linux/src/config_store.rs": "909a8909d869c8872d7a5b006ba8452465463b0595b25fe26ce68b0a42190b12",
+    "crates/zentty-linux/src/main.rs": "759fa5dcc6cd45ea364ab6c798cb1c4399fb070252b495b214041f9256ff7bd8",
+    "crates/zentty-linux/src/application.rs": "16126a0b9466adb7ae85a4dabe44c316930a1d118f4b1597d1e951728359612d",
+    "crates/zentty-linux/src/config_store.rs": "5b6c6c3831eac323770681a850eedea3a7720280db8223cfcc3f28bb28567ae7",
     "crates/zentty-linux/src/window_set.rs": "501d595889c11a41a4261ef8282465d76dd9ed8ccd1d004406b558579b0bf58e",
     "crates/zentty-linux/src/agent_runtime.rs": "333aab1edbecc0029c47d2469cb0a5ceb1fcb90813d67b9e3751099a255e99ef",
     "crates/zentty-linux/src/codex_enrichment.rs": "fe87631c75c04b63962b7f89d311a778a25af8f27a1dcb4d5950b3efcbaa476e",
-    "crates/zentty-linux/src/application_shell/action_router.rs": "6f78d811f14c7e97505d41e511e0ee42f8a2c1e885bb27bc016bb85e07b6b385",
+    "crates/zentty-linux/src/application_shell/action_router.rs": "7b86422032bffa31b343e647ba4adbf17a7b33281b2f6dc5f2b8004fae80a885",
     "crates/zentty-linux/src/application_shell/clipboard_actions.rs": "1502a0353bc3e0d645d6c6bd81aae1ed1306f312838f92a635944d402cd441b0",
     "crates/zentty-linux/src/application_shell/agent_events.rs": "56c45836a4e6a6a929dce61251a199c0b8dec7a62edbcda3c9b5dd594dbb6038",
     "crates/zentty-linux/src/application_shell/global_search.rs": "98a1963830af8616b31da2558ae6f27c4461342ef3085f6ef9cda0863a1ddc7c",
     "crates/zentty-linux/src/application_shell/pane_runtime.rs": "1c5fa3c3ec679e4fabff94a782396340fe01fd423a2ab02b0c795816ffbf1e6c",
+    "crates/zentty-linux/src/application_shell/server_runtime.rs": "403c1c42bd5a9532379a637517c58133fbc81df02182f3a9796e5473cdc7295f",
+    "crates/zentty-linux/src/docker_discovery.rs": "1836046bf3159c0a207ed999dc44a2ef8d9aa6276d79275031e2dbbd6cdd6c6d",
+    "crates/zentty-linux/src/server_discovery.rs": "0d398d53a68bd34afa15208e4b2c6c5d3a9739502f1c7b86b40e615ec73d87a8",
     "crates/zentty-linux/src/application_shell/remote_paste.rs": "dfa26112e2dfe15a2291d5df843d26f74579607b06f9e4d1efd0931312835ead",
     "crates/zentty-linux/src/application_shell/ssh_identity.rs": "e73a1f7d52ed1286ef7169ba24f7b5ce6d01c8c2e0a27337a59be3a321d1c8e2",
     "crates/zentty-linux/src/application_shell/tmux_runtime.rs": "b606ec1c2e8c93e1ab40dbac1e5080f28315352e83533d7c63ba7eefd95d0515",
@@ -116,6 +119,13 @@
       "planned_module": "crates/zentty-linux/src/application_shell/tmux_runtime.rs and crates/zentty-linux/src/tmux_store.rs",
       "tracking": "GH-14",
       "responsibility": "The already extracted bridge from the pure tmux compatibility model to the single product workspace and pane runtime, plus the one locked XDG file policy for source-compatible durable tmux state."
+    },
+    {
+      "id": "server_runtime_coordinator",
+      "status": "existing",
+      "planned_module": "crates/zentty-linux/src/application_shell/server_runtime.rs, crates/zentty-linux/src/server_discovery.rs, and crates/zentty-linux/src/docker_discovery.rs",
+      "tracking": "GH-19",
+      "responsibility": "The sole window-local development-server registry and bounded Linux listener/container observer; projects source-ranked servers into existing sidebar/actions and revalidates ownership before signaling."
     }
   ],
   "field_assignments": [
@@ -138,6 +148,10 @@
     {
       "owner": "pane_runtime_coordinator",
       "fields": ["pane_runtime"]
+    },
+    {
+      "owner": "server_runtime_coordinator",
+      "fields": ["server_runtime"]
     },
     {
       "owner": "agent_event_coordinator",
@@ -180,7 +194,7 @@
     {
       "owner": "application_shell",
       "methods": [
-        "new", "window", "sidebar_container", "present", "detach_and_close",
+        "new", "initialize_shell_coordinators", "window", "sidebar_container", "present", "detach_and_close",
         "has_worklane", "extract_live_pane_to_new_window",
         "rollback_live_pane_window_transfer", "adopt_live_pane_window_transfer",
         "move_active_worklane", "move_worklane", "render", "take_pane_id",
@@ -229,7 +243,7 @@
         "handle_peek_tab_released", "open_peek_after_tab_hold", "open_peek", "commit_peek",
         "cancel_peek", "spatially_navigate_peek", "preview_peek_selection",
         "refresh_peek_view", "install_pane_scroll_switching", "command_palette_items",
-        "command_palette_action_items", "install_peek_scroll_navigation", "scroll_panes_to_end",
+        "command_palette_server_items", "command_palette_action_items", "install_peek_scroll_navigation", "scroll_panes_to_end",
         "scroll_panes_to_focused", "pane_viewport_width", "pane_viewport_height",
         "apply_pane_height_requests", "resolved_column_widths", "focused_column_render_width",
         "build_column_overlay", "new_pane_divider_handle", "new_column_divider_handle",
@@ -238,7 +252,7 @@
         "equalize_column_divider_interactively", "equalize_pane_divider_interactively",
         "schedule_layout_render", "pane_cell_size", "minimum_column_width",
         "minimum_pane_pair_height", "resize_focused_pane_by_cell",
-        "render_sidebar", "refresh_sidebar_metadata", "schedule_active_worklane_reveal",
+        "render_sidebar", "refresh_sidebar_metadata", "ranked_servers", "schedule_active_worklane_reveal",
         "navigate_history", "select_adjacent_pane", "select_adjacent_worklane",
         "pane_references_in_sidebar_order", "current_pane_reference", "select_pane_reference",
         "peek_previews", "refresh_pane_presentation", "refresh_right_insertion_behavior"
@@ -252,7 +266,7 @@
       "populate", "install_application_actions", "install_edit_actions", "install_worklane_edit_actions",
       "install_worklane_move_actions", "install_pane_rename_action",
       "install_pane_transfer_action", "install_pane_creation_actions",
-      "install_restore_closed_pane_action", "install_clipboard_actions", "install_search_actions",
+      "install_restore_closed_pane_action", "install_clipboard_actions", "install_search_actions", "install_server_actions",
       "install_pane_layout_actions", "add_simple_action", "validate_registered_group"
     ],
     "pane_runtime_coordinator": [
@@ -287,7 +301,19 @@
       "unix_timestamp", "upload_file", "upload_inputs", "upload_png"
     ],
     "clipboard_coordinator": ["copy_focused_selection"],
-    "config_store": ["load_default", "load", "read_bounded", "invalid_snapshot", "default_config_file_from", "nonempty_path"],
+    "server_runtime_coordinator": [
+      "install", "refresh_servers", "set_port_ignored", "request_probe", "probe",
+      "apply_servers", "open_server", "stop_server", "pane_probe_source", "stop_owned_server",
+      "signal_process"
+    ],
+    "server_listener_discovery": [
+      "scan_listeners_at", "read_bounded", "parse_socket_table", "decode_ipv4", "decode_ipv6",
+      "parse_process_info", "process_start_time", "unique_cwd_pane", "socket_inode", "is_descendant"
+    ],
+    "server_container_discovery": [
+      "discover", "run_docker", "parse_inspect_json", "deepest_matching_pane", "is_web_like"
+    ],
+    "config_store": ["load_default", "load", "update_default_ignored_port_rules", "update_ignored_port_rules", "resolve_config_target", "atomic_replace", "read_bounded", "invalid_snapshot", "default_config_file_from", "nonempty_path"],
     "persistence_coordinator": [
       "clean_exit_decision", "complete_launch", "default_state_directory", "drain_errors",
       "drain_live_snapshot_errors", "drop", "flush_live_snapshot_if_due",
@@ -374,7 +400,12 @@
     {"name":"arrange-golden-tall","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"arrange-golden-short","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"reset-pane-layout","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
-    {"name":"restore-closed-pane","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"}
+    {"name":"restore-closed-pane","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"open-server","parameter":"string","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"ignore-server-port","parameter":"string","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"refresh-servers","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"stop-ignoring-server-port","parameter":"string","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"stop-server","parameter":"string","owner":"action_router","invalid_parameter":"ignore-without-panic"}
   ],
   "conditional_action_availability": {
     "multiple_columns": ["resize-pane-left", "resize-pane-right", "arrange-golden-wide", "arrange-golden-narrow"],
@@ -394,6 +425,7 @@
     "remote_paste_projection": {"owner":"remote_paste_coordinator","maximum_instances_per_window":1},
     "standard_clipboard_projection": {"owner":"clipboard_coordinator","maximum_instances_per_window":1},
     "application_config_snapshot": {"owner":"config_store","maximum_instances_per_process":1},
+    "development_server_registry": {"owner":"server_runtime_coordinator","maximum_instances_per_window":1},
     "tmux_compatibility_state": {"owner":"existing_tmux_coordinator","maximum_instances_per_window":1},
     "glib_scheduling": {"owner":"application_runtime","kind":"default-glib-main-context","maximum_instances_per_process":1}
   },

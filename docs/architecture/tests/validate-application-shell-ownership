@@ -17,6 +17,9 @@ ssh_identity_file="${ZENTTY_SSH_IDENTITY_SOURCE:-${repo_root}/crates/zentty-linu
 remote_paste_file="${ZENTTY_REMOTE_PASTE_SOURCE:-${repo_root}/crates/zentty-linux/src/application_shell/remote_paste.rs}"
 clipboard_actions_file="${ZENTTY_CLIPBOARD_ACTIONS_SOURCE:-${repo_root}/crates/zentty-linux/src/application_shell/clipboard_actions.rs}"
 pane_runtime_file="${ZENTTY_PANE_RUNTIME_SOURCE:-${repo_root}/crates/zentty-linux/src/application_shell/pane_runtime.rs}"
+server_runtime_file="${ZENTTY_SERVER_RUNTIME_SOURCE:-${repo_root}/crates/zentty-linux/src/application_shell/server_runtime.rs}"
+server_discovery_file="${ZENTTY_SERVER_DISCOVERY_SOURCE:-${repo_root}/crates/zentty-linux/src/server_discovery.rs}"
+docker_discovery_file="${ZENTTY_DOCKER_DISCOVERY_SOURCE:-${repo_root}/crates/zentty-linux/src/docker_discovery.rs}"
 pane_dividers_file="${ZENTTY_PANE_DIVIDERS_SOURCE:-${repo_root}/crates/zentty-linux/src/pane_dividers.rs}"
 tmux_runtime_file="${ZENTTY_TMUX_RUNTIME_SOURCE:-${repo_root}/crates/zentty-linux/src/application_shell/tmux_runtime.rs}"
 persistence_file="${ZENTTY_PERSISTENCE_COORDINATOR_SOURCE:-${repo_root}/crates/zentty-linux/src/persistence_coordinator.rs}"
@@ -47,6 +50,9 @@ done
 [[ -r "${remote_paste_file}" ]] || fail "remote paste source is missing: ${remote_paste_file}"
 [[ -r "${clipboard_actions_file}" ]] || fail "clipboard actions source is missing: ${clipboard_actions_file}"
 [[ -r "${pane_runtime_file}" ]] || fail "pane runtime source is missing: ${pane_runtime_file}"
+[[ -r "${server_runtime_file}" ]] || fail "server runtime source is missing: ${server_runtime_file}"
+[[ -r "${server_discovery_file}" ]] || fail "server listener discovery source is missing: ${server_discovery_file}"
+[[ -r "${docker_discovery_file}" ]] || fail "server container discovery source is missing: ${docker_discovery_file}"
 [[ -r "${pane_dividers_file}" ]] || fail "pane divider source is missing: ${pane_dividers_file}"
 [[ -r "${tmux_runtime_file}" ]] || fail "tmux runtime source is missing: ${tmux_runtime_file}"
 [[ -r "${persistence_file}" ]] || fail "persistence coordinator source is missing: ${persistence_file}"
@@ -105,6 +111,9 @@ ssh_identity_sha256="$(sha256sum "${ssh_identity_file}" | awk '{print $1}')"
 remote_paste_sha256="$(sha256sum "${remote_paste_file}" | awk '{print $1}')"
 clipboard_actions_sha256="$(sha256sum "${clipboard_actions_file}" | awk '{print $1}')"
 pane_runtime_sha256="$(sha256sum "${pane_runtime_file}" | awk '{print $1}')"
+server_runtime_sha256="$(sha256sum "${server_runtime_file}" | awk '{print $1}')"
+server_discovery_sha256="$(sha256sum "${server_discovery_file}" | awk '{print $1}')"
+docker_discovery_sha256="$(sha256sum "${docker_discovery_file}" | awk '{print $1}')"
 pane_dividers_sha256="$(sha256sum "${pane_dividers_file}" | awk '{print $1}')"
 tmux_runtime_sha256="$(sha256sum "${tmux_runtime_file}" | awk '{print $1}')"
 persistence_sha256="$(sha256sum "${persistence_file}" | awk '{print $1}')"
@@ -131,6 +140,15 @@ jq -e --arg codex_enrichment_sha256 "${codex_enrichment_sha256}" \
 jq -e --arg pane_runtime_sha256 "${pane_runtime_sha256}" \
     '.owned_source_sha256["crates/zentty-linux/src/application_shell/pane_runtime.rs"] == $pane_runtime_sha256' \
     "${contract}" >/dev/null || fail "pane runtime source hash differs from its ownership contract"
+jq -e --arg server_runtime_sha256 "${server_runtime_sha256}" \
+    '.owned_source_sha256["crates/zentty-linux/src/application_shell/server_runtime.rs"] == $server_runtime_sha256' \
+    "${contract}" >/dev/null || fail "server runtime source hash differs from its ownership contract"
+jq -e --arg server_discovery_sha256 "${server_discovery_sha256}" \
+    '.owned_source_sha256["crates/zentty-linux/src/server_discovery.rs"] == $server_discovery_sha256' \
+    "${contract}" >/dev/null || fail "server listener discovery source hash differs from its ownership contract"
+jq -e --arg docker_discovery_sha256 "${docker_discovery_sha256}" \
+    '.owned_source_sha256["crates/zentty-linux/src/docker_discovery.rs"] == $docker_discovery_sha256' \
+    "${contract}" >/dev/null || fail "server container discovery source hash differs from its ownership contract"
 jq -e --arg pane_dividers_sha256 "${pane_dividers_sha256}" \
     '.owned_source_sha256["crates/zentty-linux/src/pane_dividers.rs"] == $pane_dividers_sha256' \
     "${contract}" >/dev/null || fail "pane divider source hash differs from its ownership contract"
@@ -183,6 +201,38 @@ diff="$(comm -3 "${temp_dir}/actual-pane-runtime-functions" "${temp_dir}/contrac
 if [[ -n "${diff}" ]]; then
     printf '%s\n' "${diff}" >&2
     fail "pane runtime function inventory differs from its ownership contract"
+fi
+
+sed -nE 's/^[[:space:]]*(pub\(super\)[[:space:]]+)?fn[[:space:]]+([a-zA-Z0-9_]+).*/\2/p' "${server_runtime_file}" |
+    grep -v '^repository_root$' | sort >"${temp_dir}/actual-server-runtime-functions"
+jq -r '.owned_module_functions.server_runtime_coordinator | sort | .[]' "${contract}" \
+    >"${temp_dir}/contract-server-runtime-functions"
+diff="$(comm -3 "${temp_dir}/actual-server-runtime-functions" "${temp_dir}/contract-server-runtime-functions")"
+if [[ -n "${diff}" ]]; then
+    printf '%s\n' "${diff}" >&2
+    fail "server runtime function inventory differs from its ownership contract"
+fi
+
+sed -n '1,/^#\[cfg(test)\]/p' "${server_discovery_file}" |
+    sed -nE 's/^[[:space:]]*(pub\(crate\)[[:space:]]+)?fn[[:space:]]+([a-zA-Z0-9_]+).*/\2/p' |
+    grep -v '^fmt$' | sort >"${temp_dir}/actual-server-listener-functions"
+jq -r '.owned_module_functions.server_listener_discovery | sort | .[]' "${contract}" \
+    >"${temp_dir}/contract-server-listener-functions"
+diff="$(comm -3 "${temp_dir}/actual-server-listener-functions" "${temp_dir}/contract-server-listener-functions")"
+if [[ -n "${diff}" ]]; then
+    printf '%s\n' "${diff}" >&2
+    fail "server listener function inventory differs from its ownership contract"
+fi
+
+sed -n '1,/^#\[cfg(test)\]/p' "${docker_discovery_file}" |
+    sed -nE 's/^[[:space:]]*(pub\(crate\)[[:space:]]+)?fn[[:space:]]+([a-zA-Z0-9_]+).*/\2/p' |
+    sort >"${temp_dir}/actual-server-container-functions"
+jq -r '.owned_module_functions.server_container_discovery | sort | .[]' "${contract}" \
+    >"${temp_dir}/contract-server-container-functions"
+diff="$(comm -3 "${temp_dir}/actual-server-container-functions" "${temp_dir}/contract-server-container-functions")"
+if [[ -n "${diff}" ]]; then
+    printf '%s\n' "${diff}" >&2
+    fail "server container function inventory differs from its ownership contract"
 fi
 
 sed -n '1,/^#\[cfg(test)\]/p' "${pane_dividers_file}" |
@@ -308,6 +358,9 @@ jq -e --arg main_sha256 "${main_sha256}" \
     --arg remote_paste_sha256 "${remote_paste_sha256}" \
     --arg clipboard_actions_sha256 "${clipboard_actions_sha256}" \
     --arg pane_runtime_sha256 "${pane_runtime_sha256}" \
+    --arg server_runtime_sha256 "${server_runtime_sha256}" \
+    --arg server_discovery_sha256 "${server_discovery_sha256}" \
+    --arg docker_discovery_sha256 "${docker_discovery_sha256}" \
     --arg pane_dividers_sha256 "${pane_dividers_sha256}" \
     --arg tmux_runtime_sha256 "${tmux_runtime_sha256}" \
     --arg persistence_sha256 "${persistence_sha256}" \
@@ -331,6 +384,9 @@ jq -e --arg main_sha256 "${main_sha256}" \
         "crates/zentty-linux/src/application_shell/remote_paste.rs":$remote_paste_sha256,
         "crates/zentty-linux/src/application_shell/clipboard_actions.rs":$clipboard_actions_sha256,
         "crates/zentty-linux/src/application_shell/pane_runtime.rs":$pane_runtime_sha256,
+        "crates/zentty-linux/src/application_shell/server_runtime.rs":$server_runtime_sha256,
+        "crates/zentty-linux/src/server_discovery.rs":$server_discovery_sha256,
+        "crates/zentty-linux/src/docker_discovery.rs":$docker_discovery_sha256,
         "crates/zentty-linux/src/application_shell/tmux_runtime.rs":$tmux_runtime_sha256,
         "crates/zentty-linux/src/pane_dividers.rs":$pane_dividers_sha256,
         "crates/zentty-linux/src/persistence_coordinator.rs":$persistence_sha256,
@@ -349,6 +405,7 @@ jq -e --arg main_sha256 "${main_sha256}" \
         "global_search_coordinator",
         "ssh_identity_coordinator",
         "remote_paste_coordinator",
+        "server_runtime_coordinator",
         "existing_ui_projection",
         "pane_runtime_coordinator",
         "persistence_coordinator"
@@ -365,7 +422,7 @@ jq -e --arg main_sha256 "${main_sha256}" \
         ([.field_assignments[].fields[]] | unique | length) and
     ([.method_assignments[].methods[]] | length) ==
         ([.method_assignments[].methods[]] | unique | length) and
-    (.owned_module_functions | keys | sort) == (["action_router", "agent_event_coordinator", "clipboard_coordinator", "config_store", "global_search_coordinator", "pane_dividers", "pane_runtime_coordinator", "persistence_coordinator", "remote_paste_coordinator", "ssh_identity_coordinator", "tmux_runtime_coordinator", "tmux_store_policy"] | sort) and
+    (.owned_module_functions | keys | sort) == (["action_router", "agent_event_coordinator", "clipboard_coordinator", "config_store", "global_search_coordinator", "pane_dividers", "pane_runtime_coordinator", "persistence_coordinator", "remote_paste_coordinator", "server_runtime_coordinator", "server_listener_discovery", "server_container_discovery", "ssh_identity_coordinator", "tmux_runtime_coordinator", "tmux_store_policy"] | sort) and
     (.owned_module_functions.action_router | length) ==
         (.owned_module_functions.action_router | unique | length) and
     (.owned_module_functions.pane_runtime_coordinator | length) ==
@@ -382,6 +439,12 @@ jq -e --arg main_sha256 "${main_sha256}" \
         (.owned_module_functions.remote_paste_coordinator | unique | length) and
     (.owned_module_functions.clipboard_coordinator | length) ==
         (.owned_module_functions.clipboard_coordinator | unique | length) and
+    (.owned_module_functions.server_runtime_coordinator | length) ==
+        (.owned_module_functions.server_runtime_coordinator | unique | length) and
+    (.owned_module_functions.server_listener_discovery | length) ==
+        (.owned_module_functions.server_listener_discovery | unique | length) and
+    (.owned_module_functions.server_container_discovery | length) ==
+        (.owned_module_functions.server_container_discovery | unique | length) and
     (.owned_module_functions.config_store | length) ==
         (.owned_module_functions.config_store | unique | length) and
     (.owned_module_functions.persistence_coordinator | length) ==
@@ -400,13 +463,14 @@ jq -e --arg main_sha256 "${main_sha256}" \
         (.owner == "action_router") and
         (.invalid_parameter == "ignore-without-panic")) and
     ([.action_contract[] | select(.parameter == "string") | .name] | sort) == ([
-        "close-worklane", "move-pane-to-worklane", "select-worklane"
+        "close-worklane", "ignore-server-port", "move-pane-to-worklane", "open-server",
+        "select-worklane", "stop-ignoring-server-port", "stop-server"
     ] | sort) and
     ([.action_contract[] | select(.parameter == "string_pair") | .name] | sort) == ([
         "move-worklane", "rename-pane", "rename-worklane", "reorder-worklane",
         "select-pane", "set-worklane-color"
     ] | sort) and
-    ([.action_contract[] | select(.parameter == "none")] | length) == 60 and
+    ([.action_contract[] | select(.parameter == "none")] | length) == 61 and
     .conditional_action_availability == {
         "multiple_columns":["resize-pane-left","resize-pane-right","arrange-golden-wide","arrange-golden-narrow"],
         "multiple_panes_in_focused_column":["resize-pane-up","resize-pane-down","arrange-golden-tall","arrange-golden-short"],
@@ -425,6 +489,7 @@ jq -e --arg main_sha256 "${main_sha256}" \
         "remote_paste_projection": {"owner":"remote_paste_coordinator","maximum_instances_per_window":1},
         "standard_clipboard_projection": {"owner":"clipboard_coordinator","maximum_instances_per_window":1},
         "application_config_snapshot": {"owner":"config_store","maximum_instances_per_process":1},
+        "development_server_registry": {"owner":"server_runtime_coordinator","maximum_instances_per_window":1},
         "tmux_compatibility_state": {"owner":"existing_tmux_coordinator","maximum_instances_per_window":1},
         "glib_scheduling": {"owner":"application_runtime","kind":"default-glib-main-context","maximum_instances_per_process":1}
     } and

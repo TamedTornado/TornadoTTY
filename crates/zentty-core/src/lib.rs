@@ -11,6 +11,7 @@ mod clean_copy;
 mod codex_title;
 mod codex_transcript;
 mod command_palette;
+mod dev_server;
 mod global_search;
 mod pane_focus_history;
 mod pane_layout;
@@ -33,7 +34,7 @@ pub use agent_protocol::{AgentEvent, AgentInteractionKind, AgentProtocolError};
 pub use agent_status::{
     AgentPhase, AgentProgress, AgentStatusStore, PaneAgentStatus, TerminalProgressState,
 };
-pub use app_config::{AppConfig, ClipboardConfig};
+pub use app_config::{AppConfig, ClipboardConfig, ServerDetectionConfig};
 pub use atomic_file_store::{AtomicFileAction, AtomicFileStore, AtomicFileStoreError};
 pub use pane_focus_history::PaneReference;
 pub use pane_layout::{PaneLayoutPolicy, PaneRightInsertionBehavior};
@@ -80,6 +81,12 @@ pub use codex_transcript::{
 };
 pub use command_palette::{
     CommandPaletteGroup, CommandPaletteItem, CommandPaletteTarget, resolve_command_palette,
+};
+pub use dev_server::{
+    DetectedServer, DetectedServerConfidence, DetectedServerSource, RankedServer, ServerPortRule,
+    ServerRegistry, ServerRelevanceContext, ServerRelevanceReason, ServerRelevanceTier,
+    ServerTerminationObservation, ServerTerminationTarget, ServerUrlCandidate, ServerUrlError,
+    authorize_server_termination, detect_server_urls, normalize_server_url, rank_servers,
 };
 pub use global_search::{
     GlobalSearchCoordinator, GlobalSearchDirection, GlobalSearchEffect, GlobalSearchState,

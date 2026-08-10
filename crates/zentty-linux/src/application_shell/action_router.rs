@@ -144,6 +144,11 @@ pub(super) const ACTION_ARRANGE_GOLDEN_TALL: &str = "arrange-golden-tall";
 pub(super) const ACTION_ARRANGE_GOLDEN_SHORT: &str = "arrange-golden-short";
 pub(super) const ACTION_RESET_PANE_LAYOUT: &str = "reset-pane-layout";
 pub(super) const ACTION_RESTORE_CLOSED_PANE: &str = "restore-closed-pane";
+pub(super) const ACTION_OPEN_SERVER: &str = "open-server";
+pub(super) const ACTION_IGNORE_SERVER_PORT: &str = "ignore-server-port";
+pub(super) const ACTION_REFRESH_SERVERS: &str = "refresh-servers";
+pub(super) const ACTION_STOP_IGNORING_SERVER_PORT: &str = "stop-ignoring-server-port";
+pub(super) const ACTION_STOP_SERVER: &str = "stop-server";
 
 pub(super) const ACTION_SPECS: &[ActionSpec] = &[
     action!(ACTION_NEW_WINDOW, "new-window", None),
@@ -276,6 +281,15 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
     ),
     action!(ACTION_RESET_PANE_LAYOUT, "reset-pane-layout", None),
     action!(ACTION_RESTORE_CLOSED_PANE, "restore-closed-pane", None),
+    action!(ACTION_OPEN_SERVER, "open-server", String),
+    action!(ACTION_IGNORE_SERVER_PORT, "ignore-server-port", String),
+    action!(ACTION_REFRESH_SERVERS, "refresh-servers", None),
+    action!(
+        ACTION_STOP_IGNORING_SERVER_PORT,
+        "stop-ignoring-server-port",
+        String
+    ),
+    action!(ACTION_STOP_SERVER, "stop-server", String),
 ];
 
 pub(super) struct ActionRouter {
@@ -417,7 +431,58 @@ fn populate(shell: &Rc<RefCell<ApplicationShell>>, group: &gio::SimpleActionGrou
     });
     install_search_actions(shell, group);
     install_clipboard_actions(shell, group);
+    install_server_actions(shell, group);
     install_edit_actions(shell, group);
+}
+
+fn install_server_actions(shell: &Rc<RefCell<ApplicationShell>>, group: &gio::SimpleActionGroup) {
+    let action = gio::SimpleAction::new(ACTION_OPEN_SERVER, Some(glib::VariantTy::STRING));
+    let weak = Rc::downgrade(shell);
+    action.connect_activate(move |_, parameter| {
+        let (Some(shell), Some(origin)) = (weak.upgrade(), parameter.and_then(glib::Variant::str))
+        else {
+            return;
+        };
+        super::server_runtime::open_server(&shell, origin);
+    });
+    group.add_action(&action);
+
+    for (name, ignored) in [
+        (ACTION_IGNORE_SERVER_PORT, true),
+        (ACTION_STOP_IGNORING_SERVER_PORT, false),
+    ] {
+        let action = gio::SimpleAction::new(name, Some(glib::VariantTy::STRING));
+        let weak = Rc::downgrade(shell);
+        action.connect_activate(move |_, parameter| {
+            let (Some(shell), Some(origin)) =
+                (weak.upgrade(), parameter.and_then(glib::Variant::str))
+            else {
+                return;
+            };
+            super::server_runtime::set_port_ignored(&shell, origin, ignored);
+        });
+        group.add_action(&action);
+    }
+
+    let action = gio::SimpleAction::new(ACTION_REFRESH_SERVERS, None);
+    let weak = Rc::downgrade(shell);
+    action.connect_activate(move |_, _| {
+        if let Some(shell) = weak.upgrade() {
+            super::server_runtime::refresh_servers(&shell);
+        }
+    });
+    group.add_action(&action);
+
+    let action = gio::SimpleAction::new(ACTION_STOP_SERVER, Some(glib::VariantTy::STRING));
+    let weak = Rc::downgrade(shell);
+    action.connect_activate(move |_, parameter| {
+        let (Some(shell), Some(origin)) = (weak.upgrade(), parameter.and_then(glib::Variant::str))
+        else {
+            return;
+        };
+        super::server_runtime::stop_server(&shell, origin);
+    });
+    group.add_action(&action);
 }
 
 fn install_clipboard_actions(
@@ -1068,7 +1133,7 @@ mod tests {
 
     #[test]
     fn registry_is_unique_complete_and_typed() {
-        assert_eq!(ACTION_SPECS.len(), 69);
+        assert_eq!(ACTION_SPECS.len(), 74);
         assert_eq!(
             ACTION_SPECS
                 .iter()
@@ -1083,7 +1148,15 @@ mod tests {
                 .filter(|action| action.parameter == ParameterSchema::String)
                 .map(|action| action.name)
                 .collect::<Vec<_>>(),
-            ["select-worklane", "close-worklane", "move-pane-to-worklane"]
+            [
+                "select-worklane",
+                "close-worklane",
+                "move-pane-to-worklane",
+                "open-server",
+                "ignore-server-port",
+                "stop-ignoring-server-port",
+                "stop-server"
+            ]
         );
         assert_eq!(
             ACTION_SPECS

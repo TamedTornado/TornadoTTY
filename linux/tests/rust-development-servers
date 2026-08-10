@@ -1,0 +1,249 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
+ghostty_root="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
+server_fixture="${repo_root}/target/release-safe/development_server"
+run_root="$(mktemp -d)"
+log="${run_root}/product.log"
+server_receipt="${run_root}/server.receipt"
+open_receipt="${run_root}/open.receipt"
+state_directory="${run_root}/state"
+product_pid=""
+backend="${GDK_BACKEND:-}"
+container_id=""
+docker_port=""
+
+fail() {
+    [[ ! -f "${log}" ]] || cat "${log}" >&2
+    echo "rust-development-servers-x11: error: $*" >&2
+    exit 1
+}
+
+cleanup() {
+    if [[ "${product_pid}" =~ ^[1-9][0-9]*$ ]]; then
+        kill -TERM "${product_pid}" 2>/dev/null || true
+        wait "${product_pid}" 2>/dev/null || true
+    fi
+    if [[ -n "${container_id}" ]]; then
+        docker rm -f "${container_id}" >/dev/null 2>&1 || true
+    fi
+    rm -rf -- "${run_root}"
+}
+trap cleanup EXIT
+
+case "${backend}" in
+    x11)
+        [[ "${ZENTTY_NESTED_X11_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+            fail "X11 scenario must run through linux/tests/nested-x11"
+        command -v xdotool >/dev/null || fail "xdotool is required"
+        ;;
+    wayland)
+        [[ "${ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+            fail "Wayland scenario must run through linux/tests/nested-wayland-input"
+        command -v wtype >/dev/null || fail "wtype is required"
+        ;;
+    *) fail "GDK_BACKEND must be x11 or wayland" ;;
+esac
+for dependency in grep head mktemp readelf sed seq sleep; do
+    command -v "${dependency}" >/dev/null || fail "${dependency} is required"
+done
+[[ -x "${product}" ]] || fail "staged product is missing: ${product}"
+[[ -x "${server_fixture}" ]] || fail "real server fixture is missing: ${server_fixture}"
+
+if [[ "${ZENTTY_TEST_DOCKER:-false}" == true ]]; then
+    command -v docker >/dev/null || fail "docker is required for the container cell"
+    container_id="$(
+        docker run -d --rm --pull=never \
+            --label "com.docker.compose.project.working_dir=${repo_root}" \
+            --label 'com.docker.compose.service=web' \
+            -p 127.0.0.1::8000 \
+            busybox:latest httpd -f -p 8000
+    )" || fail "real disposable web container did not start"
+    docker_port="$(docker port "${container_id}" 8000/tcp | sed -n 's/^127\.0\.0\.1:\([0-9][0-9]*\)$/\1/p')"
+    [[ "${docker_port}" =~ ^[1-9][0-9]*$ ]] || fail "Docker did not publish a dynamic host port"
+fi
+
+layer_runpath="$(
+    readelf -d "${ghostty_root}/zig-out/lib/libghostty-gtk-embed.so" |
+        sed -n 's/.*Library runpath: \[\([^]]*\)\].*/\1/p' |
+        cut -d: -f1
+)"
+[[ "${layer_runpath}" == .zig-cache/* ]] || fail "Ghostty runpath is not pinned"
+layer_directory="${ghostty_root}/${layer_runpath}"
+mkdir -p "${run_root}/bin" "${state_directory}"
+cat >"${run_root}/bin/xdg-open" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$@" >'${open_receipt}'
+EOF
+chmod 700 "${run_root}/bin/xdg-open"
+
+GDK_SCALE=1 \
+GDK_DPI_SCALE=1 \
+PATH="${run_root}/bin:${PATH}" \
+LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+    "${product}" \
+    --command "exec '${server_fixture}' --receipt '${server_receipt}'" \
+    --state-directory "${state_directory}" \
+    --no-session-restore >"${log}" 2>&1 &
+product_pid=$!
+
+window_id=""
+for _ in $(seq 1 300); do
+    if [[ "${backend}" == x11 ]]; then
+        window_id="$(xdotool search --name '^Zentty$' 2>/dev/null | head -1 || true)"
+    else
+        window_id=wayland-focused
+    fi
+    if [[ -n "${window_id}" ]] && [[ -s "${server_receipt}" ]] &&
+        grep -Fq 'zentty-linux: server-detected ' "${log}"; then
+        break
+    fi
+    sleep 0.05
+done
+[[ -n "${window_id}" ]] || fail "real Zentty window did not appear"
+[[ -s "${server_receipt}" ]] || fail "real PTY server did not publish readiness"
+port="$(sed -n 's#^url=http://127\.0\.0\.1:\([0-9][0-9]*\)/fixture$#\1#p' "${server_receipt}")"
+server_pid="$(sed -n 's/^pid=\([0-9][0-9]*\)$/\1/p' "${server_receipt}")"
+[[ "${port}" =~ ^[1-9][0-9]*$ ]] || fail "server fixture receipt is malformed"
+[[ "${server_pid}" =~ ^[1-9][0-9]*$ ]] || fail "server PID receipt is malformed"
+grep -Fq "origin=http://localhost:${port} source=Scanner confidence=Pid" "${log}" ||
+    fail "real listener was not PID-attributed to its Ghostty pane"
+if [[ -n "${container_id}" ]]; then
+    for _ in $(seq 1 160); do
+        grep -Fq "origin=http://localhost:${docker_port} source=Docker confidence=Cwd" "${log}" && break
+        sleep 0.05
+    done
+    grep -Fq "origin=http://localhost:${docker_port} source=Docker confidence=Cwd" "${log}" ||
+        fail "real container-published web port was not attributed to the matching project"
+fi
+
+if [[ "${backend}" == x11 ]]; then
+    xdotool windowfocus --sync "${window_id}"
+    xdotool key --window "${window_id}" ctrl+shift+p
+else
+    wtype -M ctrl -M shift -k p -m shift -m ctrl
+fi
+for _ in $(seq 1 100); do
+    grep -Fxq 'zentty-linux: command-palette=shown' "${log}" && break
+    sleep 0.05
+done
+if [[ "${backend}" == x11 ]]; then
+    xdotool type --window "${window_id}" --delay 10 "Open localhost:${port}"
+else
+    wtype "Open localhost:${port}"
+fi
+for _ in $(seq 1 100); do
+    grep -Fq "command-palette=query value=\"Open localhost:${port}\" results=1" "${log}" && break
+    sleep 0.05
+done
+grep -Fq "command-palette=query value=\"Open localhost:${port}\" results=1" "${log}" ||
+    fail "dynamic server action was absent from the real command palette"
+if [[ "${backend}" == x11 ]]; then
+    xdotool key --window "${window_id}" Down Return
+else
+    wtype -k Down -k Return
+fi
+for _ in $(seq 1 100); do
+    [[ -s "${open_receipt}" ]] && break
+    sleep 0.05
+done
+[[ -s "${open_receipt}" ]] || fail "server action did not cross the browser launcher boundary"
+[[ "$(cat "${open_receipt}")" == "http://localhost:${port}/" ]] ||
+    fail "browser launcher received the wrong normalized URL"
+grep -Fq "action=open-server url=http://localhost:${port}/ result=opened" "${log}" ||
+    fail "product did not report successful browser launch"
+
+if [[ "${backend}" == x11 ]]; then
+    xdotool key --window "${window_id}" ctrl+shift+p
+else
+    wtype -M ctrl -M shift -k p -m shift -m ctrl
+fi
+if [[ "${backend}" == x11 ]]; then
+    xdotool type --window "${window_id}" --delay 10 "Ignore Port ${port}"
+else
+    wtype "Ignore Port ${port}"
+fi
+for _ in $(seq 1 100); do
+    grep -Fq "command-palette=query value=\"Ignore Port ${port}\" results=1" "${log}" && break
+    sleep 0.05
+done
+grep -Fq "command-palette=query value=\"Ignore Port ${port}\" results=1" "${log}" ||
+    fail "Ignore Port action was absent from the real command palette"
+if [[ "${backend}" == x11 ]]; then
+    xdotool key --window "${window_id}" Down Return
+else
+    wtype -k Down -k Return
+fi
+for _ in $(seq 1 100); do
+    grep -Fq "action=server-port-policy port=${port} ignored=true " "${log}" && break
+    sleep 0.05
+done
+grep -Fq "action=server-port-policy port=${port} ignored=true " "${log}" ||
+    fail "Ignore Port did not persist through the product config authority"
+config_file="${XDG_CONFIG_HOME}/zentty/config.toml"
+grep -Fq "\"${port}\"" "${config_file}" || fail "persisted config omitted the ignored port"
+
+if [[ "${backend}" == x11 ]]; then
+    xdotool key --window "${window_id}" ctrl+shift+p
+    xdotool type --window "${window_id}" --delay 10 "Stop Ignoring Port ${port}"
+else
+    wtype -M ctrl -M shift -k p -m shift -m ctrl
+    wtype "Stop Ignoring Port ${port}"
+fi
+for _ in $(seq 1 100); do
+    grep -Fq "command-palette=query value=\"Stop Ignoring Port ${port}\" results=1" "${log}" && break
+    sleep 0.05
+done
+grep -Fq "command-palette=query value=\"Stop Ignoring Port ${port}\" results=1" "${log}" ||
+    fail "Stop Ignoring Port was absent after the real server became hidden"
+if [[ "${backend}" == x11 ]]; then
+    xdotool key --window "${window_id}" Down Return
+else
+    wtype -k Down -k Return
+fi
+for _ in $(seq 1 100); do
+    grep -Fq "action=server-port-policy port=${port} ignored=false " "${log}" && break
+    sleep 0.05
+done
+grep -Fq "action=server-port-policy port=${port} ignored=false " "${log}" ||
+    fail "Stop Ignoring Port did not persist through the product config authority"
+grep -Fq "\"${port}\"" "${config_file}" && fail "unignore left the port persisted"
+
+if [[ "${backend}" == x11 ]]; then
+    xdotool key --window "${window_id}" ctrl+shift+p
+else
+    wtype -M ctrl -M shift -k p -m shift -m ctrl
+fi
+for _ in $(seq 1 100); do
+    [[ "$(grep -Fc 'zentty-linux: command-palette=shown' "${log}" || true)" -ge 2 ]] && break
+    sleep 0.05
+done
+if [[ "${backend}" == x11 ]]; then
+    xdotool type --window "${window_id}" --delay 10 "Stop localhost:${port}"
+else
+    wtype "Stop localhost:${port}"
+fi
+for _ in $(seq 1 100); do
+    grep -Fq "command-palette=query value=\"Stop localhost:${port}\" results=1" "${log}" && break
+    sleep 0.05
+done
+grep -Fq "command-palette=query value=\"Stop localhost:${port}\" results=1" "${log}" ||
+    fail "owned server stop action was absent from the real command palette"
+if [[ "${backend}" == x11 ]]; then
+    xdotool key --window "${window_id}" Down Return
+else
+    wtype -k Down -k Return
+fi
+for _ in $(seq 1 100); do
+    if ! kill -0 "${server_pid}" 2>/dev/null; then
+        break
+    fi
+    sleep 0.05
+done
+kill -0 "${server_pid}" 2>/dev/null && fail "owned real server survived the Stop Server action"
+grep -Fq "action=stop-server pid=${server_pid} signal=INT result=delivered" "${log}" ||
+    fail "product did not receipt its graceful signal"
+
+echo "Rust development-server product journey passed: ${backend} real-pty real-listener exact-browser-argv persisted-ignore safe-stop"

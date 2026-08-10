@@ -10,6 +10,10 @@ pub enum CommandPaletteGroup {
 pub enum CommandPaletteTarget {
     Pane(PaneReference),
     Action(&'static str),
+    ParameterizedAction {
+        action: &'static str,
+        parameter: String,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -54,6 +58,28 @@ impl CommandPaletteItem {
             subtitle,
             group: CommandPaletteGroup::Action,
             target: CommandPaletteTarget::Action(action),
+        }
+    }
+
+    #[must_use]
+    pub fn parameterized_action(
+        title: impl Into<String>,
+        subtitle: impl Into<String>,
+        keywords: &str,
+        action: &'static str,
+        parameter: impl Into<String>,
+    ) -> Self {
+        let title = title.into();
+        let subtitle = subtitle.into();
+        Self {
+            search_text: normalize(&format!("{title} {subtitle} {keywords}")),
+            title,
+            subtitle,
+            group: CommandPaletteGroup::Action,
+            target: CommandPaletteTarget::ParameterizedAction {
+                action,
+                parameter: parameter.into(),
+            },
         }
     }
 }
@@ -203,5 +229,23 @@ mod tests {
         ));
         assert!(source.contains("Recent Panes"));
         assert!(source.contains("promotedMatch == .exact"));
+    }
+
+    #[test]
+    fn parameterized_action_keeps_opaque_parameter_out_of_the_action_name() {
+        let item = CommandPaletteItem::parameterized_action(
+            "Open localhost:5173",
+            "Development server",
+            "browser server",
+            "open-server",
+            "http://localhost:5173",
+        );
+        assert_eq!(
+            item.target,
+            CommandPaletteTarget::ParameterizedAction {
+                action: "open-server",
+                parameter: "http://localhost:5173".into(),
+            }
+        );
     }
 }

@@ -81,3 +81,32 @@ fn parser_accepts_crlf_unicode_comments_and_is_deterministic() {
         AppConfig::parse_toml(source).unwrap()
     );
 }
+
+#[test]
+fn source_server_detection_defaults_and_owned_keys_are_preserved() {
+    let defaults = AppConfig::parse_toml("").unwrap().server_detection;
+    assert!(defaults.passive_detection_enabled);
+    assert_eq!(defaults.preferred_browser_id, "system-default");
+    assert!(defaults.enabled_browser_target_ids.is_empty());
+    assert!(defaults.ignored_port_rules.is_empty());
+
+    let configured = AppConfig::parse_toml(
+        r#"
+        [server_detection]
+        passive_detection_enabled = false
+        preferred_browser_id = "firefox"
+        enabled_browser_target_ids = ["firefox", "custom:work"]
+        ignored_port_rules = ["9229", "24678-24680"]
+        future_server_option = true
+        "#,
+    )
+    .unwrap()
+    .server_detection;
+    assert!(!configured.passive_detection_enabled);
+    assert_eq!(configured.preferred_browser_id, "firefox");
+    assert_eq!(
+        configured.enabled_browser_target_ids,
+        ["firefox", "custom:work"]
+    );
+    assert_eq!(configured.ignored_port_rules, ["9229", "24678-24680"]);
+}

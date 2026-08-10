@@ -193,6 +193,10 @@ impl CommandPaletteView {
                 CommandPaletteTarget::Action(action) => {
                     button.set_action_name(Some(&format!("workspace.{action}")));
                 }
+                CommandPaletteTarget::ParameterizedAction { action, parameter } => {
+                    button.set_action_name(Some(&format!("workspace.{action}")));
+                    button.set_action_target_value(Some(&parameter.to_variant()));
+                }
             }
             let hidden = self.clone();
             let target = item.target.clone();

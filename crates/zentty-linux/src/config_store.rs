@@ -1,7 +1,9 @@
 use std::ffi::OsString;
-use std::fs::File;
-use std::io::{ErrorKind, Read};
-use std::path::PathBuf;
+use std::fs::{self, File, OpenOptions};
+use std::io::{ErrorKind, Read, Write};
+use std::os::unix::fs::OpenOptionsExt;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use zentty_core::AppConfig;
 
@@ -15,6 +17,7 @@ pub(crate) struct ConfigSnapshot {
 pub(crate) struct ConfigStore;
 
 const MAX_CONFIG_BYTES: u64 = 1_048_576;
+static TEMP_NONCE: AtomicU64 = AtomicU64::new(0);
 
 impl ConfigStore {
     pub(crate) fn load_default() -> Result<ConfigSnapshot, String> {
@@ -75,6 +78,88 @@ impl ConfigStore {
             Err(_) => Ok(invalid_snapshot(path)),
         }
     }
+
+    pub(crate) fn update_default_ignored_port_rules(rules: &[String]) -> Result<PathBuf, String> {
+        let path = default_config_file_from(
+            std::env::var_os("XDG_CONFIG_HOME"),
+            std::env::var_os("HOME"),
+        )?;
+        Self::update_ignored_port_rules(&path, rules)?;
+        Ok(path)
+    }
+
+    fn update_ignored_port_rules(path: &Path, rules: &[String]) -> Result<(), String> {
+        let target = resolve_config_target(path)?;
+        let source = match fs::read_to_string(&target) {
+            Ok(source) => source,
+            Err(error) if error.kind() == ErrorKind::NotFound => String::new(),
+            Err(error) => return Err(format!("could not read {}: {error}", target.display())),
+        };
+        if source.len() as u64 > MAX_CONFIG_BYTES {
+            return Err(format!("configuration exceeds {MAX_CONFIG_BYTES} bytes"));
+        }
+        let mut document = source
+            .parse::<toml_edit::DocumentMut>()
+            .map_err(|error| format!("could not edit invalid configuration: {error}"))?;
+        let mut array = toml_edit::Array::new();
+        for rule in rules {
+            array.push(rule.as_str());
+        }
+        document["server_detection"]["ignored_port_rules"] = toml_edit::value(array);
+        atomic_replace(&target, document.to_string().as_bytes())
+    }
+}
+
+fn resolve_config_target(path: &Path) -> Result<PathBuf, String> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            let target = fs::read_link(path)
+                .map_err(|error| format!("could not resolve {}: {error}", path.display()))?;
+            Ok(if target.is_absolute() {
+                target
+            } else {
+                path.parent().unwrap_or_else(|| Path::new(".")).join(target)
+            })
+        }
+        Ok(metadata) if metadata.is_file() => Ok(path.to_owned()),
+        Ok(_) => Err(format!(
+            "configuration is not a regular file: {}",
+            path.display()
+        )),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(path.to_owned()),
+        Err(error) => Err(format!("could not inspect {}: {error}", path.display())),
+    }
+}
+
+fn atomic_replace(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    if bytes.len() as u64 > MAX_CONFIG_BYTES {
+        return Err(format!("configuration exceeds {MAX_CONFIG_BYTES} bytes"));
+    }
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("configuration has no parent: {}", path.display()))?;
+    fs::create_dir_all(parent)
+        .map_err(|error| format!("could not create {}: {error}", parent.display()))?;
+    let nonce = TEMP_NONCE.fetch_add(1, Ordering::Relaxed);
+    let temporary = parent.join(format!(".zentty-config-{}-{nonce}.tmp", std::process::id()));
+    let result = (|| {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&temporary)
+            .map_err(|error| format!("could not create {}: {error}", temporary.display()))?;
+        file.write_all(bytes)
+            .and_then(|()| file.sync_all())
+            .map_err(|error| format!("could not write {}: {error}", temporary.display()))?;
+        fs::rename(&temporary, path)
+            .map_err(|error| format!("could not replace {}: {error}", path.display()))?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
 }
 
 #[derive(Debug)]
@@ -173,6 +258,40 @@ mod tests {
         let snapshot = ConfigStore::load(path).unwrap();
         assert!(snapshot.config.clipboard.always_clean_copies);
         assert_eq!(snapshot.warning, None);
+        remove(&root);
+    }
+
+    #[test]
+    fn ignored_port_update_preserves_comments_unknown_keys_and_a_config_symlink() {
+        let root = private_root("ignored-ports");
+        let target = root.join("shared/settings.toml");
+        let path = root.join("zentty/config.toml");
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            &target,
+            "# keep me\nunknown = \"value\"\n\n[server_detection]\npreferred_browser_id = \"system-default\"\n",
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(&target, &path).unwrap();
+
+        ConfigStore::update_ignored_port_rules(&path, &["3000-3002".into(), "5173".into()])
+            .unwrap();
+
+        assert_eq!(fs::read_link(&path).unwrap(), target);
+        let source = fs::read_to_string(&path).unwrap();
+        assert!(source.contains("# keep me"));
+        assert!(source.contains("unknown = \"value\""));
+        assert!(source.contains("preferred_browser_id = \"system-default\""));
+        assert!(source.contains("ignored_port_rules = [\"3000-3002\", \"5173\"]"));
+        assert_eq!(
+            ConfigStore::load(path)
+                .unwrap()
+                .config
+                .server_detection
+                .ignored_port_rules,
+            ["3000-3002", "5173"]
+        );
         remove(&root);
     }
 

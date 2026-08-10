@@ -12,6 +12,7 @@ codex_notify_observer="${repo_root}/linux/tests/fixtures/codex-notify-observer"
 controlled_anthropic="${repo_root}/crates/zentty-test-support/src/bin/controlled_anthropic.rs"
 controlled_openai="${repo_root}/crates/zentty-test-support/src/bin/controlled_openai_responses.rs"
 controlled_gemini="${repo_root}/crates/zentty-test-support/src/bin/controlled_gemini.rs"
+development_server="${repo_root}/crates/zentty-test-support/src/bin/development_server.rs"
 wayland_input_harness="${repo_root}/linux/tests/nested-wayland-input"
 multi_window_harness="${repo_root}/linux/tests/rust-multi-window"
 failures=0
@@ -71,6 +72,7 @@ require "the installed-Codex notify observer is missing or not executable" \
 require "the reviewed Anthropic endpoint is missing" test -f "${controlled_anthropic}"
 require "the reviewed OpenAI Responses endpoint is missing" test -f "${controlled_openai}"
 require "the reviewed Gemini endpoint is missing" test -f "${controlled_gemini}"
+require "the reviewed real development-server fixture is missing" test -f "${development_server}"
 require "the controlled input-capable Wayland harness is missing or not executable" \
     test -x "${wayland_input_harness}"
 require "the real multi-window product journey is missing or not executable" \
@@ -94,7 +96,7 @@ controlled_model_servers="$({
     grep -RIl --include='*.rs' --include='*' \
         -E 'CONTROLLED_[A-Z_]*READY=http://|TcpListener::bind\(\("127\.0\.0\.1"' \
         "${repo_root}/crates/zentty-test-support" "${repo_root}/linux/tests" || true
-} | sort -u)"
+} | grep -vFx "${development_server}" | sort -u)"
 expected_model_servers="$(printf '%s\n%s\n%s\n' "${controlled_anthropic}" "${controlled_openai}" "${controlled_gemini}" | sort -u)"
 if [[ "${controlled_model_servers}" != "${expected_model_servers}" ]]; then
     echo "test-orchestration-contract: controlled-model server allowlist differs:" >&2

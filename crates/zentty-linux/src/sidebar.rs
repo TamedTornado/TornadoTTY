@@ -2,7 +2,7 @@ use gtk::glib::variant::ToVariant;
 use gtk::prelude::*;
 use std::cell::Cell;
 use std::rc::Rc;
-use zentty_core::{ClipboardConfig, SidebarWorklaneSummary};
+use zentty_core::{ClipboardConfig, RankedServer, ServerRelevanceTier, SidebarWorklaneSummary};
 
 use crate::{agent_status_view, global_search_view, source_ui};
 
@@ -193,6 +193,8 @@ pub(crate) fn install_styles() {
          .worklane-card-active .pane-marker { color: #69db7c; }\n\
          .pane-agent-status { color: #a7adb8; font-size: 11px; }\n\
          .pane-agent-status-attention { color: #f6c453; font-weight: 700; }\n\
+         .server-row { color: #9bd1ff; border-radius: 6px; padding: 3px 7px; }\n\
+         .server-row-primary { background: rgba(64, 130, 190, 0.18); font-weight: 600; }\n\
          .sidebar-create-worklane { color: #d8dbe1; border-radius: 7px; padding: 5px 8px; }\n\
          .sidebar-global-search { background: #242830; border: 1px solid #3a414d; border-radius: 10px; padding: 4px 6px; }\n\
          .sidebar-global-search entry { background: transparent; color: #eef1f5; border: none; box-shadow: none; }\n\
@@ -224,6 +226,7 @@ pub(crate) fn render(
     window: &gtk::Window,
     summaries: &[SidebarWorklaneSummary],
     clipboard: ClipboardConfig,
+    servers: &[RankedServer],
 ) {
     sidebar.add_css_class("zentty-sidebar");
     let header = ensure_header(sidebar);
@@ -248,12 +251,13 @@ pub(crate) fn render(
     for (index, summary) in summaries.iter().enumerate() {
         let name = widget_name("worklane-card", &summary.worklane_id);
         let card = find_named_widget(sidebar.upcast_ref(), &name)
-            .filter(|card| card_is_compatible(card, summary))
+            .filter(|card| card_is_compatible(card, summary, servers))
             .unwrap_or_else(|| {
                 if let Some(stale) = find_named_widget(sidebar.upcast_ref(), &name) {
                     sidebar.remove(&stale);
                 }
-                let card = make_worklane_card(window, summary, index, summaries.len(), clipboard);
+                let card =
+                    make_worklane_card(window, summary, index, summaries.len(), clipboard, servers);
                 sidebar.append(&card);
                 card.upcast()
             });
@@ -300,6 +304,7 @@ fn make_worklane_card(
     index: usize,
     worklane_count: usize,
     clipboard: ClipboardConfig,
+    servers: &[RankedServer],
 ) -> gtk::Box {
     let card = gtk::Box::new(gtk::Orientation::Vertical, 4);
     card.set_widget_name(&widget_name("worklane-card", &summary.worklane_id));
@@ -312,6 +317,14 @@ fn make_worklane_card(
     custom_title.set_widget_name(&widget_name("worklane-custom-title", &summary.worklane_id));
     custom_title.set_visible(false);
     card.append(&custom_title);
+    let server_fingerprint =
+        gtk::Label::new(Some(&server_fingerprint(&summary.worklane_id, servers)));
+    server_fingerprint.set_widget_name(&widget_name(
+        "worklane-server-fingerprint",
+        &summary.worklane_id,
+    ));
+    server_fingerprint.set_visible(false);
+    card.append(&server_fingerprint);
 
     let header = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     let select = gtk::Button::new();
@@ -364,6 +377,12 @@ fn make_worklane_card(
     for pane in &summary.pane_rows {
         card.append(&make_pane_row(window, summary, pane, clipboard));
     }
+    for server in servers.iter().filter(|server| {
+        server.server.worklane_id == summary.worklane_id
+            && server.tier != ServerRelevanceTier::Hidden
+    }) {
+        card.append(&make_server_row(server));
+    }
 
     eprintln!(
         "zentty-linux: sidebar-card id={} panes={} active={} title={:?}",
@@ -375,7 +394,11 @@ fn make_worklane_card(
     card
 }
 
-fn card_is_compatible(card: &gtk::Widget, summary: &SidebarWorklaneSummary) -> bool {
+fn card_is_compatible(
+    card: &gtk::Widget,
+    summary: &SidebarWorklaneSummary,
+    servers: &[RankedServer],
+) -> bool {
     let custom_title = find_named_label(
         card,
         &widget_name("worklane-custom-title", &summary.worklane_id),
@@ -390,6 +413,15 @@ fn card_is_compatible(card: &gtk::Widget, summary: &SidebarWorklaneSummary) -> b
     if current_color != summary.color {
         return false;
     }
+    let expected_servers = server_fingerprint(&summary.worklane_id, servers);
+    let current_servers = find_named_label(
+        card,
+        &widget_name("worklane-server-fingerprint", &summary.worklane_id),
+    )
+    .map(|label| label.text().to_string());
+    if current_servers.as_deref() != Some(expected_servers.as_str()) {
+        return false;
+    }
     let mut pane_ids = Vec::new();
     collect_named_ids(card, "zentty-pane-row-", &mut pane_ids);
     pane_ids
@@ -398,6 +430,48 @@ fn card_is_compatible(card: &gtk::Widget, summary: &SidebarWorklaneSummary) -> b
             .iter()
             .map(|pane| pane.pane_id.clone())
             .collect::<Vec<_>>()
+}
+
+fn server_fingerprint(worklane_id: &str, servers: &[RankedServer]) -> String {
+    servers
+        .iter()
+        .filter(|server| server.server.worklane_id == worklane_id)
+        .map(|server| format!("{}:{:?}", server.server.id, server.tier))
+        .collect::<Vec<_>>()
+        .join("|")
+}
+
+fn make_server_row(server: &RankedServer) -> gtk::Button {
+    let button = gtk::Button::new();
+    button.set_widget_name(&widget_name(
+        "server-row",
+        &format!(
+            "{}-{}",
+            server.server.worklane_id,
+            server.server.ports.first().copied().unwrap_or_default()
+        ),
+    ));
+    button.set_has_frame(false);
+    button.add_css_class("server-row");
+    if server.tier == ServerRelevanceTier::Primary {
+        button.add_css_class("server-row-primary");
+    }
+    button.set_action_name(Some("workspace.open-server"));
+    button.set_action_target_value(Some(&server.server.origin.to_variant()));
+    button.set_tooltip_text(Some(&format!("Open {}", server.server.url)));
+    button.set_accessible_role(gtk::AccessibleRole::Button);
+    button.update_property(&[gtk::accessible::Property::Label(&format!(
+        "Open development server {}",
+        server.server.display
+    ))]);
+    let content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    content.append(&gtk::Image::from_icon_name("network-server-symbolic"));
+    let label = gtk::Label::new(Some(&server.server.display));
+    label.set_xalign(0.0);
+    label.set_hexpand(true);
+    content.append(&label);
+    button.set_child(Some(&content));
+    button
 }
 
 fn collect_named_ids(widget: &gtk::Widget, prefix: &str, ids: &mut Vec<String>) {

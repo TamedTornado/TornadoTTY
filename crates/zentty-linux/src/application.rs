@@ -162,7 +162,7 @@ impl ApplicationCoordinator {
                 coordinator.runtime.clone(),
                 Rc::clone(&coordinator.agent_runtime),
                 coordinator.command.clone(),
-                coordinator.config,
+                coordinator.config.clone(),
                 coordinator.main_loop.clone(),
             )
         };

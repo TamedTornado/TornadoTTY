@@ -19,9 +19,10 @@ impl Default for ClipboardConfig {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct AppConfig {
     pub clipboard: ClipboardConfig,
+    pub server_detection: ServerDetectionConfig,
 }
 
 impl AppConfig {
@@ -35,6 +36,7 @@ impl AppConfig {
             .map_err(|error| format!("invalid Zentty configuration: {error}"))?;
         Ok(Self {
             clipboard: document.clipboard.into_config(),
+            server_detection: document.server_detection.into_config(),
         })
     }
 }
@@ -43,6 +45,55 @@ impl AppConfig {
 #[serde(default)]
 struct Document {
     clipboard: ClipboardDocument,
+    server_detection: ServerDetectionDocument,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ServerDetectionConfig {
+    pub passive_detection_enabled: bool,
+    pub preferred_browser_id: String,
+    pub enabled_browser_target_ids: Vec<String>,
+    pub ignored_port_rules: Vec<String>,
+}
+
+impl Default for ServerDetectionConfig {
+    fn default() -> Self {
+        Self {
+            passive_detection_enabled: true,
+            preferred_browser_id: "system-default".into(),
+            enabled_browser_target_ids: Vec::new(),
+            ignored_port_rules: Vec::new(),
+        }
+    }
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct ServerDetectionDocument {
+    passive_detection_enabled: Option<bool>,
+    preferred_browser_id: Option<String>,
+    enabled_browser_target_ids: Option<Vec<String>>,
+    ignored_port_rules: Option<Vec<String>>,
+}
+
+impl ServerDetectionDocument {
+    fn into_config(self) -> ServerDetectionConfig {
+        let defaults = ServerDetectionConfig::default();
+        ServerDetectionConfig {
+            passive_detection_enabled: self
+                .passive_detection_enabled
+                .unwrap_or(defaults.passive_detection_enabled),
+            preferred_browser_id: self
+                .preferred_browser_id
+                .unwrap_or(defaults.preferred_browser_id),
+            enabled_browser_target_ids: self
+                .enabled_browser_target_ids
+                .unwrap_or(defaults.enabled_browser_target_ids),
+            ignored_port_rules: self
+                .ignored_port_rules
+                .unwrap_or(defaults.ignored_port_rules),
+        }
+    }
 }
 
 #[derive(Deserialize, Default)]
