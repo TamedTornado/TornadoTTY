@@ -293,7 +293,7 @@ jq -e --arg ghostty_revision "${ghostty_revision}" '
         {
             "requirement_id": "ZL-7-PLATFORM-SERVICES",
             "test_ids": ["TEST-PLATFORM-XDG", "TEST-PLATFORM-OPEN", "TEST-PLATFORM-NOTIFICATIONS", "TEST-PLATFORM-CLIPBOARD", "TEST-PLATFORM-SETTINGS", "TEST-PLATFORM-PROCESS"],
-            "qualification_cell_ids": ["platform-xdg-paths-contract", "platform-open-url-file-contract", "platform-notification-portal-contract", "platform-clipboard-wayland", "platform-clipboard-x11", "platform-settings-contract", "platform-process-launch-contract"]
+            "qualification_cell_ids": ["platform-xdg-paths-contract", "platform-open-url-file-contract", "platform-notification-portal-contract", "platform-clipboard-wayland", "platform-clipboard-x11", "clipboard-settings-subset", "platform-settings-contract", "platform-process-launch-contract"]
         },
         {
             "requirement_id": "ZL-7-WORKFLOW-AGENT-PARITY",

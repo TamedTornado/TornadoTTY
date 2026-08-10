@@ -2,7 +2,7 @@ use gtk::glib::variant::ToVariant;
 use gtk::prelude::*;
 use std::cell::Cell;
 use std::rc::Rc;
-use zentty_core::SidebarWorklaneSummary;
+use zentty_core::{ClipboardConfig, SidebarWorklaneSummary};
 
 use crate::{agent_status_view, global_search_view, source_ui};
 
@@ -86,8 +86,12 @@ const PANE_ACTIONS: [PaneActionSpec; 14] = [
     },
 ];
 
-fn pane_action_specs() -> &'static [PaneActionSpec] {
-    &PANE_ACTIONS
+fn pane_action_specs(clipboard: ClipboardConfig) -> impl Iterator<Item = &'static PaneActionSpec> {
+    PANE_ACTIONS.iter().filter(move |action| {
+        (action.action != "clean-copy" || !clipboard.always_clean_copies)
+            && (action.action != "copy-raw" || clipboard.always_clean_copies)
+            && (action.action != "copy-as-markdown" || clipboard.show_copy_markdown_command)
+    })
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -219,6 +223,7 @@ pub(crate) fn render(
     sidebar: &gtk::Box,
     window: &gtk::Window,
     summaries: &[SidebarWorklaneSummary],
+    clipboard: ClipboardConfig,
 ) {
     sidebar.add_css_class("zentty-sidebar");
     let header = ensure_header(sidebar);
@@ -248,7 +253,7 @@ pub(crate) fn render(
                 if let Some(stale) = find_named_widget(sidebar.upcast_ref(), &name) {
                     sidebar.remove(&stale);
                 }
-                let card = make_worklane_card(window, summary, index, summaries.len());
+                let card = make_worklane_card(window, summary, index, summaries.len(), clipboard);
                 sidebar.append(&card);
                 card.upcast()
             });
@@ -294,6 +299,7 @@ fn make_worklane_card(
     summary: &SidebarWorklaneSummary,
     index: usize,
     worklane_count: usize,
+    clipboard: ClipboardConfig,
 ) -> gtk::Box {
     let card = gtk::Box::new(gtk::Orientation::Vertical, 4);
     card.set_widget_name(&widget_name("worklane-card", &summary.worklane_id));
@@ -356,7 +362,7 @@ fn make_worklane_card(
     card.append(&header);
 
     for pane in &summary.pane_rows {
-        card.append(&make_pane_row(window, summary, pane));
+        card.append(&make_pane_row(window, summary, pane, clipboard));
     }
 
     eprintln!(
@@ -627,6 +633,7 @@ fn make_pane_row(
     window: &gtk::Window,
     summary: &SidebarWorklaneSummary,
     pane: &zentty_core::SidebarPaneSummary,
+    clipboard: ClipboardConfig,
 ) -> gtk::Box {
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 2);
     row.set_widget_name(&widget_name("pane-row", &pane.pane_id));
@@ -687,6 +694,7 @@ fn make_pane_row(
         &summary.worklane_id,
         pane,
         summary.pane_rows.len() > 1,
+        clipboard,
     )));
     row.append(&pane_menu);
     row
@@ -925,6 +933,7 @@ fn make_pane_context_menu(
     worklane_id: &str,
     pane: &zentty_core::SidebarPaneSummary,
     can_close: bool,
+    clipboard: ClipboardConfig,
 ) -> gtk::Popover {
     let popover = gtk::Popover::new();
     let menu = gtk::Box::new(gtk::Orientation::Vertical, 2);
@@ -950,7 +959,7 @@ fn make_pane_context_menu(
     });
     menu.append(&rename);
 
-    for action in pane_action_specs() {
+    for action in pane_action_specs(clipboard) {
         if action.action == "close-pane" && !can_close {
             continue;
         }
@@ -1197,10 +1206,11 @@ mod tests {
         WorklaneDropEdge, WorklaneSelectionState, pane_action_specs, reveal_range, selection_state,
     };
     use crate::source_ui;
+    use zentty_core::ClipboardConfig;
 
     #[test]
     fn pane_actions_are_contextual_and_source_named() {
-        let actions = pane_action_specs();
+        let actions = pane_action_specs(ClipboardConfig::default()).collect::<Vec<_>>();
         assert_eq!(
             actions
                 .iter()
@@ -1221,12 +1231,27 @@ mod tests {
                 ),
                 (source_ui::COPY, "copy"),
                 (source_ui::CLEAN_COPY, "clean-copy"),
-                (source_ui::COPY_RAW, "copy-raw"),
                 (source_ui::COPY_AS_MARKDOWN, "copy-as-markdown"),
                 (source_ui::CLOSE_PANE, "close-pane"),
             ]
         );
         assert!(actions.iter().all(|action| !action.icon.is_empty()));
+    }
+
+    #[test]
+    fn automatic_clean_copy_substitutes_the_contextual_raw_escape_hatch() {
+        let mut clipboard = ClipboardConfig {
+            always_clean_copies: true,
+            ..ClipboardConfig::default()
+        };
+        let actions = pane_action_specs(clipboard)
+            .map(|action| (action.label, action.action))
+            .collect::<Vec<_>>();
+        assert!(actions.contains(&(source_ui::COPY_RAW, "copy-raw")));
+        assert!(!actions.contains(&(source_ui::CLEAN_COPY, "clean-copy")));
+
+        clipboard.show_copy_markdown_command = false;
+        assert!(pane_action_specs(clipboard).all(|action| action.action != "copy-as-markdown"));
     }
 
     #[test]

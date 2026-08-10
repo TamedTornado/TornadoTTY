@@ -2,15 +2,16 @@
   "schema_version": 1,
   "contract_id": "zentty-application-shell-responsibilities",
   "source": "crates/zentty-linux/src/application_shell.rs",
-  "source_sha256": "021a90af6a979c29d5576d19d3367a69e2e26150cfadebaa1a05ddd6d85a7662",
+  "source_sha256": "aad6716477a143203027a36dfdc26549a01457039e519445366d4c2d0c32856f",
   "owned_source_sha256": {
-    "crates/zentty-linux/src/main.rs": "625521ffb056cc95ea5fe131464e4cfabf566595f2aa1ec10e4964e7fb6f60dd",
-    "crates/zentty-linux/src/application.rs": "c107efc7c02b8ec34ba22695c89ac706b06ed701df520301cf2e12d6929d8b86",
+    "crates/zentty-linux/src/main.rs": "54265599f6952c7c0bd7a9b88758b3be2ece49627a5c068999c0accd9365536f",
+    "crates/zentty-linux/src/application.rs": "57e3d9ac19196b694a3a4e190bc87fd7881cf0fb13c17b3c7d094a005f5d2a57",
+    "crates/zentty-linux/src/config_store.rs": "909a8909d869c8872d7a5b006ba8452465463b0595b25fe26ce68b0a42190b12",
     "crates/zentty-linux/src/window_set.rs": "501d595889c11a41a4261ef8282465d76dd9ed8ccd1d004406b558579b0bf58e",
     "crates/zentty-linux/src/agent_runtime.rs": "333aab1edbecc0029c47d2469cb0a5ceb1fcb90813d67b9e3751099a255e99ef",
     "crates/zentty-linux/src/codex_enrichment.rs": "fe87631c75c04b63962b7f89d311a778a25af8f27a1dcb4d5950b3efcbaa476e",
     "crates/zentty-linux/src/application_shell/action_router.rs": "6f78d811f14c7e97505d41e511e0ee42f8a2c1e885bb27bc016bb85e07b6b385",
-    "crates/zentty-linux/src/application_shell/clipboard_actions.rs": "6932bd759ad7bf9ed88f17dbd6047360940b47c9779545e9e2f140e33a05e5ed",
+    "crates/zentty-linux/src/application_shell/clipboard_actions.rs": "1502a0353bc3e0d645d6c6bd81aae1ed1306f312838f92a635944d402cd441b0",
     "crates/zentty-linux/src/application_shell/agent_events.rs": "56c45836a4e6a6a929dce61251a199c0b8dec7a62edbcda3c9b5dd594dbb6038",
     "crates/zentty-linux/src/application_shell/global_search.rs": "98a1963830af8616b31da2558ae6f27c4461342ef3085f6ef9cda0863a1ddc7c",
     "crates/zentty-linux/src/application_shell/pane_runtime.rs": "1c5fa3c3ec679e4fabff94a782396340fe01fd423a2ab02b0c795816ffbf1e6c",
@@ -38,6 +39,13 @@
       "planned_module": "crates/zentty-linux/src/application_shell.rs",
       "tracking": "GH-25",
       "responsibility": "Window composition root, sole live WorkspaceState, top-level GTK window ownership, UI projection, and delegation between focused coordinators."
+    },
+    {
+      "id": "config_store",
+      "status": "existing",
+      "planned_module": "crates/zentty-linux/src/config_store.rs",
+      "tracking": "GH-20",
+      "responsibility": "The sole process configuration loader: resolves the XDG path, performs bounded validation without logging contents, and supplies one immutable snapshot to application composition."
     },
     {
       "id": "action_router",
@@ -120,7 +128,7 @@
       "fields": [
         "window", "chrome", "body", "sidebar_reservation", "sidebar_hover_rail",
         "sidebar", "sidebar_scroll", "pane_scroll", "pane_box", "background_agent_host",
-        "state", "main_loop", "next_worklane_number", "next_pane_number", "shutting_down"
+        "state", "config", "main_loop", "next_worklane_number", "next_pane_number", "shutting_down"
       ]
     },
     {
@@ -279,6 +287,7 @@
       "unix_timestamp", "upload_file", "upload_inputs", "upload_png"
     ],
     "clipboard_coordinator": ["copy_focused_selection"],
+    "config_store": ["load_default", "load", "read_bounded", "invalid_snapshot", "default_config_file_from", "nonempty_path"],
     "persistence_coordinator": [
       "clean_exit_decision", "complete_launch", "default_state_directory", "drain_errors",
       "drain_live_snapshot_errors", "drop", "flush_live_snapshot_if_due",
@@ -384,10 +393,12 @@
     "ssh_identity_projection": {"owner":"ssh_identity_coordinator","maximum_instances_per_window":1},
     "remote_paste_projection": {"owner":"remote_paste_coordinator","maximum_instances_per_window":1},
     "standard_clipboard_projection": {"owner":"clipboard_coordinator","maximum_instances_per_window":1},
+    "application_config_snapshot": {"owner":"config_store","maximum_instances_per_process":1},
     "tmux_compatibility_state": {"owner":"existing_tmux_coordinator","maximum_instances_per_window":1},
     "glib_scheduling": {"owner":"application_runtime","kind":"default-glib-main-context","maximum_instances_per_process":1}
   },
   "construction_order": [
+    "load-one-validated-xdg-config-snapshot",
     "create-ghostty-runtime-before-gtk",
     "start-one-process-agent-ipc-runtime",
     "initialize-gtk-and-build-shell-widgets",

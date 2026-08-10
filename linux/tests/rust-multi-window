@@ -11,6 +11,7 @@ log=""
 product_pid=""
 route_probe_index=0
 product_args=()
+config_file=""
 
 # shellcheck source=linux/tests/lib/product-input
 source "${repo_root}/linux/tests/lib/product-input"
@@ -28,6 +29,7 @@ cleanup() {
     fi
     [[ -z "${state_dir}" ]] || rm -rf -- "${state_dir}"
     [[ -z "${log}" ]] || rm -f -- "${log}"
+    [[ -z "${config_file}" ]] || rm -f -- "${config_file}"
 }
 trap cleanup EXIT
 
@@ -42,7 +44,7 @@ case "${backend}" in
         ;;
     *) fail "GDK_BACKEND must be x11 or wayland" ;;
 esac
-for dependency in cmp jq readelf timeout mktemp grep; do
+for dependency in cmp dirname jq mkdir readelf timeout mktemp grep; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
 [[ -x "${product}" ]] || fail "staged product is not built: ${product}"
@@ -60,6 +62,12 @@ layer_runpath="$(
 
 state_dir="$(mktemp -d)"
 log="$(mktemp)"
+config_file="${XDG_CONFIG_HOME:?}/zentty/config.toml"
+mkdir -p "$(dirname "${config_file}")"
+cat >"${config_file}" <<'EOF'
+[clipboard]
+always_clean_copies = true
+EOF
 # Single quotes intentionally defer every expansion to the real PTY child.
 # shellcheck disable=SC2016
 child_command='while IFS= read -r value; do if [ "$value" = agent-running ]; then printf '\''%s'\'' '\''{"version":1,"event":"agent.running","agent":{"name":"Codex"},"session":{"id":"moved-live-pane"}}'\'' | "$ZENTTY_CLI_BIN" ipc agent-event; elif [ "$value" = tmux-route ]; then route="$(tmux display-message -p '\''#{pane_id}'\'')" && printf '\''\033]2;tmux:%s\a'\'' "$route"; elif [ "$value" = tmux-stale-claim ]; then route="$(ZENTTY_WINDOW_ID=window-1 ZENTTY_WORKLANE_ID=worklane-1 tmux display-message -p '\''#{pane_id}'\'')" && printf '\''\033]2;tmux-stale:%s\a'\'' "$route"; elif [ "$value" = capture-move ]; then tmux capture-pane -p | grep -Fq before-live-window-move && printf '\''\033]2;scrollback-preserved\a'\''; else printf '\''\033]2;%s\a'\'' "$value"; fi; done'
@@ -78,6 +86,11 @@ start_product() {
         "first real product window did not open" || fail "first window missing"
     zentty_product_wait_for_log "${log}" 'zentty-linux: terminal-ready-pane=pane-1' \
         "first real Ghostty surface did not become ready" || fail "first terminal missing"
+    zentty_product_wait_for_log "${log}" \
+        'zentty-linux: config-projected window=window-1 automatic-clean-copy=true' \
+        "first window did not receive the process clipboard config" || fail "first config projection missing"
+    [[ "$(grep -Fc 'zentty-linux: config-loaded ' "${log}" || true)" -eq 1 ]] ||
+        fail "one process loaded the config more than once"
     zentty_product_prepare_input "${backend}" "${log}" || fail "could not prepare physical input"
 }
 
@@ -146,6 +159,9 @@ create_second_window() {
         "second window did not own a distinct real Ghostty surface" || fail "second terminal missing"
     zentty_product_wait_for_log "${log}" 'zentty-linux: focus-pane pane=pane-window-2' \
         "second window did not settle real terminal focus" || fail "second terminal focus missing"
+    zentty_product_wait_for_log "${log}" \
+        'zentty-linux: config-projected window=window-2 automatic-clean-copy=true' \
+        "second window did not receive the process clipboard config" || fail "second config projection missing"
     if [[ "${backend}" == x11 ]]; then
         visible_count="$(xdotool search --onlyvisible --pid "${product_pid}" --name '^Zentty$' 2>/dev/null | wc -l)"
         [[ "${visible_count}" -eq 2 ]] || fail "X11 exposed ${visible_count} product windows instead of two"

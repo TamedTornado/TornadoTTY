@@ -27,7 +27,7 @@ use gtk::gdk;
 use gtk::glib;
 use gtk::prelude::*;
 use zentty_core::{
-    ClosePaneOutcome, ColumnRecipe, CommandPaletteItem, GlobalSearchCoordinator,
+    AppConfig, ClosePaneOutcome, ColumnRecipe, CommandPaletteItem, GlobalSearchCoordinator,
     GlobalSearchDirection, PaneColumnState, PaneLayoutPolicy, PaneRecipe, PaneReference,
     PaneResizeDirection, PaneRestoreDraft, PaneRightInsertionBehavior, PaneWindowTransfer,
     SidebarWidthPreference, WindowFrame, WindowRecipe, WorklaneColor, WorklaneRecipe,
@@ -97,6 +97,7 @@ fn sidebar_tracking_state() -> SidebarTrackingState {
 pub(crate) struct ApplicationRuntimes {
     pub(crate) ghostty: GhosttyRuntime,
     pub(crate) agent: Rc<RefCell<AgentRuntime>>,
+    pub(crate) config: AppConfig,
 }
 
 pub(crate) struct ApplicationShell {
@@ -114,6 +115,7 @@ pub(crate) struct ApplicationShell {
     background_agent_host: gtk::Box,
     state: WorkspaceState,
     pane_runtime: PaneRuntimeCoordinator,
+    config: AppConfig,
     restored_pane_commands: BTreeMap<String, String>,
     main_loop: glib::MainLoop,
     next_worklane_number: usize,
@@ -167,6 +169,18 @@ struct ShellWidgets {
     command_palette: CommandPaletteView,
 }
 
+fn report_config_projection(shell: &ApplicationShell) {
+    eprintln!(
+        "zentty-linux: config-projected window={} automatic-clean-copy={}",
+        shell.window_template.id, shell.config.clipboard.always_clean_copies
+    );
+}
+
+fn finish_initial_render(shell: &Rc<RefCell<ApplicationShell>>) {
+    shell.borrow().render();
+    report_config_projection(&shell.borrow());
+}
+
 impl ApplicationShell {
     pub(crate) fn new(
         runtimes: &ApplicationRuntimes,
@@ -192,7 +206,7 @@ impl ApplicationShell {
             peek_view,
             command_palette,
         } = build_shell_widgets();
-        sidebar::render(&sidebar, &window, &[]);
+        sidebar::render(&sidebar, &window, &[], runtimes.config.clipboard);
         let global_search_view = GlobalSearchView::attach(&sidebar);
         let window_template = restored_or_default_window(restored_window, fresh_window_id);
         apply_restored_window_size(&window, &window_template);
@@ -219,6 +233,7 @@ impl ApplicationShell {
             background_agent_host,
             state,
             pane_runtime: PaneRuntimeCoordinator::new(&runtimes.ghostty, command),
+            config: runtimes.config,
             restored_pane_commands,
             main_loop: main_loop.clone(),
             next_worklane_number,
@@ -275,7 +290,7 @@ impl ApplicationShell {
             }
         }
         shell.borrow().mount_background_restored_agents();
-        shell.borrow().render();
+        finish_initial_render(&shell);
         Ok(shell)
     }
 
@@ -2495,7 +2510,12 @@ impl ApplicationShell {
 
     fn render_sidebar(&self) {
         let summaries = self.state.sidebar_summaries();
-        sidebar::render(&self.sidebar, &self.window, &summaries);
+        sidebar::render(
+            &self.sidebar,
+            &self.window,
+            &summaries,
+            self.config.clipboard,
+        );
         self.chrome.render(
             &summaries,
             self.state.can_navigate_back(),
@@ -2507,7 +2527,12 @@ impl ApplicationShell {
     fn refresh_sidebar_metadata(&self) {
         let summaries = self.state.sidebar_summaries();
         if !sidebar::update_metadata(&self.sidebar, &summaries) {
-            sidebar::render(&self.sidebar, &self.window, &summaries);
+            sidebar::render(
+                &self.sidebar,
+                &self.window,
+                &summaries,
+                self.config.clipboard,
+            );
         }
         self.chrome.render(
             &summaries,

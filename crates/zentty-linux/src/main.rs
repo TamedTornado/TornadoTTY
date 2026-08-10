@@ -6,6 +6,7 @@ mod application;
 mod application_shell;
 mod codex_enrichment;
 mod command_palette;
+mod config_store;
 mod global_search_view;
 mod pane_controls;
 mod pane_dividers;
@@ -23,6 +24,7 @@ mod window_set;
 mod worklane_peek;
 
 use application::ApplicationCoordinator;
+use config_store::ConfigStore;
 use gtk::glib;
 use persistence_coordinator::{PersistenceCoordinator, WindowSnapshot, default_state_directory};
 use std::cell::{Cell, RefCell};
@@ -106,6 +108,7 @@ fn run_lifecycle_cycle(
     active_window_id: Option<&str>,
     persistence: &Rc<RefCell<PersistenceCoordinator>>,
     default_working_directory: &str,
+    config: zentty_core::AppConfig,
 ) -> Result<application::ApplicationCycleResult, String> {
     let main_loop = glib::MainLoop::new(None, false);
     let application = ApplicationCoordinator::start(
@@ -114,6 +117,7 @@ fn run_lifecycle_cycle(
         &main_loop,
         restored_windows,
         active_window_id,
+        config,
     )?;
     let teardown_active = application.borrow().teardown_flag();
 
@@ -193,6 +197,15 @@ fn install_live_snapshot_source(
 
 fn run() -> Result<(), String> {
     let options = parse_options()?;
+    let config = ConfigStore::load_default()?;
+    if let Some(warning) = config.warning.as_deref() {
+        eprintln!("zentty-linux: {warning}");
+    }
+    eprintln!(
+        "zentty-linux: config-loaded path={} automatic-clean-copy={}",
+        config.path.display(),
+        config.config.clipboard.always_clean_copies
+    );
 
     let state_directory = match &options.state_directory {
         Some(path) => path.clone(),
@@ -223,6 +236,7 @@ fn run() -> Result<(), String> {
         active_window_id.as_deref(),
         &persistence,
         &default_working_directory,
+        config.config,
     )?;
     drop(runtime);
     persistence.borrow_mut().save_clean_exit(

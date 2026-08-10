@@ -371,7 +371,7 @@
       "implementation_status": "PARTIAL",
       "focused_tests": ["crates/zentty-core/tests/clean_copy.rs", "crates/zentty-linux/src/application_shell/clipboard_actions.rs", "crates/zentty-linux/src/application_shell/action_router.rs", "crates/zentty-linux/src/sidebar.rs"],
       "product_scenarios": ["linux/tests/rust-pane-search"],
-      "test_plan": "Preserve source-derived cleanup and bailout goldens plus mutation coverage; in controlled X11 and Wayland, select real Ghostty text through Select All, invoke Clean Copy, Copy Raw and Copy as Markdown through the real command palette, read exact bytes from an independent compositor client, and paste cleaned bytes back through the real PTY. Explicit actions are implemented under GH-35. Automatic clean-copy configuration remains dependent on the single settings owner tracked by GH-20; no interim settings path is permitted. Primary-selection semantics remain separately unqualified in the platform clipboard matrix cells."
+      "test_plan": "Preserve source-derived cleanup and bailout goldens plus mutation coverage; in controlled X11 and Wayland, select real Ghostty text through Select All, invoke automatic Copy, Copy Raw and Copy as Markdown through the real command palette, read exact bytes from an independent compositor client, and paste cleaned bytes back through the real PTY. The process-level clipboard config snapshot and automatic clean-copy substitution are implemented through the single GH-20 settings owner. Primary-selection and non-text clipboard semantics remain separately unqualified in the platform clipboard matrix cells."
     },
     {
       "id": "project.git-review-icons",
@@ -463,10 +463,10 @@
       "origin": "PORT_PARITY",
       "user_impact": "Users need source settings and safe dotfile-friendly persistence; hard-coded behavior or destructive rewrites make the port untrustworthy.",
       "linux_owner_issue": 20,
-      "implementation_status": "NOT_IMPLEMENTED",
-      "focused_tests": [],
-      "product_scenarios": [],
-      "test_plan": "Drive all settings sections through the staged UI, externally edit the real config during runtime, restart and inspect normalized state; cover partial/invalid/concurrent/symlink/permission/crash cases and mutate validators/migrations.",
+      "implementation_status": "PARTIAL",
+      "focused_tests": ["crates/zentty-core/tests/app_config.rs", "crates/zentty-linux/src/config_store.rs"],
+      "product_scenarios": ["linux/tests/rust-pane-search", "linux/tests/rust-multi-window"],
+      "test_plan": "Preserve the one bounded XDG config snapshot, source clipboard defaults/validation, content-free invalid-input warning, and identical projection to every real window. Complete every remaining settings section, searchable staged UI, external partial reload and last-good retention, comment/unknown-key preserving writes, symlink-safe atomic persistence, permission/concurrency/crash cases, and validator/migration mutation coverage before promotion from PARTIAL.",
       "alternative_or_blocker": null
     },
     {

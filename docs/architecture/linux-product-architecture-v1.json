@@ -344,7 +344,7 @@
     {
       "requirement_id": "ZL-7-PLATFORM-SERVICES",
       "test_ids": ["TEST-PLATFORM-XDG", "TEST-PLATFORM-OPEN", "TEST-PLATFORM-NOTIFICATIONS", "TEST-PLATFORM-CLIPBOARD", "TEST-PLATFORM-SETTINGS", "TEST-PLATFORM-PROCESS"],
-      "qualification_cell_ids": ["platform-xdg-paths-contract", "platform-open-url-file-contract", "platform-notification-portal-contract", "platform-clipboard-wayland", "platform-clipboard-x11", "platform-settings-contract", "platform-process-launch-contract"]
+      "qualification_cell_ids": ["platform-xdg-paths-contract", "platform-open-url-file-contract", "platform-notification-portal-contract", "platform-clipboard-wayland", "platform-clipboard-x11", "clipboard-settings-subset", "platform-settings-contract", "platform-process-launch-contract"]
     },
     {
       "requirement_id": "ZL-7-WORKFLOW-AGENT-PARITY",
@@ -455,6 +455,7 @@
     {
       "id": "platform_settings",
       "cells": [
+        "clipboard-settings-subset",
         "platform-settings-contract"
       ]
     },
@@ -697,6 +698,18 @@
       "authoritative": false
     },
     {
+      "id": "clipboard-settings-subset",
+      "capability": "platform_settings",
+      "status": "PASS",
+      "tier": "release",
+      "display": "none",
+      "optimize": "Debug",
+      "async_backend": "n/a",
+      "terminals": "n/a",
+      "command": "cargo test -p zentty-core --locked --test app_config && cargo test -p zentty-linux --locked config_store",
+      "authoritative": false
+    },
+    {
       "id": "platform-settings-contract",
       "capability": "platform_settings",
       "status": "NOT_IMPLEMENTED",
@@ -706,7 +719,7 @@
       "async_backend": "n/a",
       "terminals": "n/a",
       "tracking": "GH-7",
-      "defect": "The Linux settings interface, schema/default behavior, persistence boundary, and failure contract test do not exist yet.",
+      "defect": "Only the bounded source-compatible clipboard config subset exists. The complete settings interface, remaining schema, live reload/last-good behavior, and write-side persistence/failure contract remain unimplemented under GH-20.",
       "authoritative": false
     },
     {

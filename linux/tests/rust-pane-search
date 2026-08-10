@@ -10,6 +10,7 @@ product_pid=""
 window_id=""
 clipboard_actual=""
 clipboard_expected=""
+config_file=""
 
 fail() {
     [[ -z "${log}" || ! -f "${log}" ]] || cat "${log}" >&2
@@ -26,6 +27,7 @@ cleanup() {
     [[ -z "${state_directory}" ]] || rm -rf -- "${state_directory}"
     [[ -z "${clipboard_actual}" ]] || rm -f -- "${clipboard_actual}"
     [[ -z "${clipboard_expected}" ]] || rm -f -- "${clipboard_expected}"
+    [[ -z "${config_file}" ]] || rm -f -- "${config_file}"
 }
 trap cleanup EXIT
 
@@ -45,7 +47,7 @@ case "${backend}" in
         ;;
     *) fail "GDK_BACKEND must be x11 or wayland" ;;
 esac
-for dependency in awk cmp grep mktemp seq sha256sum sleep tail wc; do
+for dependency in awk cmp dirname grep mkdir mktemp seq sha256sum sleep tail wc; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
 [[ -x "${product}" ]] || fail "staged product is not built: ${product}"
@@ -179,6 +181,12 @@ log="$(mktemp)"
 state_directory="$(mktemp -d)"
 clipboard_actual="$(mktemp)"
 clipboard_expected="$(mktemp)"
+config_file="${XDG_CONFIG_HOME:?}/zentty/config.toml"
+mkdir -p "$(dirname "${config_file}")"
+cat >"${config_file}" <<'EOF'
+[clipboard]
+always_clean_copies = true
+EOF
 # The single quotes intentionally defer PTY-child expansion.
 # shellcheck disable=SC2016
 GDK_SCALE=1 GDK_DPI_SCALE=1 \
@@ -190,6 +198,9 @@ product_pid=$!
 
 wait_for_fixed 'zentty-linux: terminal-ready-pane=pane-1' \
     "real Ghostty search surface did not initialize"
+wait_for_fixed \
+    "zentty-linux: config-loaded path=${config_file} automatic-clean-copy=true" \
+    "the single process config owner did not load automatic Clean Copy"
 for _ in $(seq 1 160); do
     grep -Fq 'zentty-linux: search-state pane=pane-1 active=false total=None selected=None' "${log}" && break
     sleep 0.05
@@ -221,7 +232,9 @@ assert_standard_clipboard 'sentinel-existing-owner'
 run_palette_action 'Select All' \
     'zentty-linux: action=select-all pane=pane-1 binding="select_all"'
 run_palette_action 'Copy' 'zentty-linux: action=copy pane=pane-1' 4
-assert_standard_clipboard 'https://example.com/reset?token=noisegamma&utm_source=mail'
+grep -F 'zentty-linux: action=copy pane=pane-1 bytes=' "${log}" | tail -1 |
+    grep -Fq 'modified=true' || fail "automatic Copy did not run the configured clean pipeline"
+assert_standard_clipboard 'https://example.com/reset?token=noisegamma'
 run_palette_action 'Clean Copy' 'zentty-linux: action=clean-copy pane=pane-1 bytes='
 grep -F 'zentty-linux: action=clean-copy pane=pane-1 bytes=' "${log}" | tail -1 |
     grep -Fq 'modified=true' || fail "Clean Copy did not transform the selected tracking URL"

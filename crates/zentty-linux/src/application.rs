@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use gtk::prelude::*;
 use gtk::{gdk, glib};
-use zentty_core::WindowRecipe;
+use zentty_core::{AppConfig, WindowRecipe};
 use zentty_ghostty::GhosttyRuntime;
 use zentty_tmux_compat::TmuxCompatReply;
 
@@ -23,6 +23,7 @@ pub(crate) struct ApplicationCoordinator {
     runtime: GhosttyRuntime,
     agent_runtime: Rc<RefCell<AgentRuntime>>,
     command: Option<String>,
+    config: AppConfig,
     main_loop: glib::MainLoop,
     window_set: WindowSet,
     shells: BTreeMap<String, Rc<RefCell<ApplicationShell>>>,
@@ -44,6 +45,7 @@ impl ApplicationCoordinator {
         main_loop: &glib::MainLoop,
         restored_windows: Vec<WindowSnapshot>,
         active_window_id: Option<&str>,
+        config: AppConfig,
     ) -> Result<Rc<RefCell<Self>>, String> {
         let ids = restored_windows
             .iter()
@@ -56,6 +58,7 @@ impl ApplicationCoordinator {
             runtime: runtime.clone(),
             agent_runtime,
             command,
+            config,
             main_loop: main_loop.clone(),
             window_set,
             shells: BTreeMap::new(),
@@ -153,18 +156,20 @@ impl ApplicationCoordinator {
     ) -> Result<Rc<RefCell<ApplicationShell>>, String> {
         let id = snapshot.window.id.clone();
         let restored_window = (!snapshot.window.worklanes.is_empty()).then_some(snapshot.window);
-        let (runtime, agent_runtime, command, main_loop) = {
+        let (runtime, agent_runtime, command, config, main_loop) = {
             let coordinator = coordinator.borrow();
             (
                 coordinator.runtime.clone(),
                 Rc::clone(&coordinator.agent_runtime),
                 coordinator.command.clone(),
+                coordinator.config,
                 coordinator.main_loop.clone(),
             )
         };
         let runtimes = ApplicationRuntimes {
             ghostty: runtime,
             agent: agent_runtime,
+            config,
         };
         let shell = ApplicationShell::new(
             &runtimes,
