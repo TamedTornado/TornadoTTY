@@ -478,6 +478,153 @@ The recording standard is unchanged:
   Suppression governance was accepted; ReleaseSafe Valgrind remains XFAIL and
   no suppression was broadened.
 
+## 2026-08-09 — Next feature is source live-pane window transfer
+
+- Direct source review corrected the prior broad phrase “cross-window moves.”
+  Zentty has a specific, named **Move Pane to New Window** transaction in
+  `AppDelegate`, `WorklaneStore+DragDrop`, `MainWindowController`, pane/sidebar
+  context menus, and the command registry. It preserves the live runtime rather
+  than serializing and recreating a terminal.
+- Source behavior distinguishes two cases: one pane extracted from a
+  multi-pane worklane receives a new destination worklane that inherits title,
+  color, next-pane numbering, and auxiliary state; the sole pane of one
+  worklane in a multi-worklane window moves that entire worklane identity. The
+  only pane of the only worklane is explicitly ineligible.
+- The source detaches the runtime before model extraction, adopts it into the
+  destination registry before coalesced observers run, and restores it if
+  extraction fails. This makes single live-surface ownership and transactional
+  rollback acceptance requirements, not optional implementation polish.
+- A Linux-specific risk is now explicit: the running PTY's inherited source
+  window/worklane variables cannot be mutated. Post-move authorization must use
+  the host's capability registry and canonical pane identity; inherited child
+  environment is historical metadata, not routing authority.
+- Public issue #33 and
+  `docs/design/linux-live-pane-window-transfer-plan.md` freeze source authority,
+  ownership, red-test order, real X11/Wayland PID/scrollback/input evidence,
+  failure rollback, persistence, and claim limits before production code.
+  Existing application, persistence, agent, and integration actors must be
+  extended; a parallel transfer harness or recreated terminal is forbidden.
+- Model tests were added before implementation and failed to compile because
+  `WorkspaceState::split_pane_to_new_window` and its result did not exist. The
+  first red test also used the wrong remembered launch-context method name;
+  source inspection corrected it to the existing `configure_pane_launch`
+  rather than adding an alias.
+- The first pure transaction now passes focused tests for multi-pane extraction,
+  complete single-pane-worklane transfer, forbidden final-pane transfer, stale/
+  empty/colliding identity rejection without mutation, normalized destination
+  geometry, exact title/color/CWD/command/custom-title preservation, active
+  source fallback, and moving canonical agent status to the destination. Strict
+  Clippy initially rejected an internal `expect` as an undocumented panic; the
+  lookup is now completed before mutation and propagates `None`, with no lint
+  suppression. This is model evidence only and makes no live PTY-transfer claim.
+
+## 2026-08-10 — Live pane-to-window transfer implementation and real-system evidence
+
+- The initial window-local agent-transport design could not preserve a moved
+  pane's inherited capability: a running child cannot change its socket path or
+  token, and closing the source window would destroy that transport. The repair
+  is one process-wide `AgentRuntime` owned by `ApplicationCoordinator`; each
+  window retains only transcript enrichment and UI projection. This replaced
+  the prior transport placement rather than adding another IPC path.
+- Capability routing originally keyed only by worklane and pane. That is
+  ambiguous when separate windows use the same worklane identity. The registry
+  now records canonical `(window, worklane, pane)` ownership and retargets the
+  unchanged token after transfer. Real stale source-window/worklane claims are
+  ignored in favor of that authenticated canonical target.
+- The live transaction now extracts the source model, detaches the exact
+  Ghostty surface and its focus/callback/frame ownership, builds a destination
+  shell with that pane launch-deferred, adopts the detached runtime exactly
+  once, retargets IPC, presents/focuses the destination, and publishes through
+  the existing aggregate persistence path. No replacement terminal, second
+  shell implementation, or transfer-only snapshot path was introduced.
+- Initial compilation found two implementation errors: the tmux failure reply
+  is fallible, and the attempted map extraction API did not match Rust's actual
+  signature. Strict Clippy then rejected an unbounded stale-reply iterator,
+  excessive transaction arguments, and an oversized function. The repair used
+  a bounded loop, the existing runtime bundle, and focused helpers; no lint was
+  suppressed.
+- The complete workspace test initially could not create eight private Unix
+  sockets inside the filesystem sandbox (`EPERM`). The unchanged suite passed
+  outside that restriction: all workspace targets, 105 Linux unit tests, and
+  every real socket/CLI/transport test passed. This is recorded as a sandbox
+  limitation, not a product pass from the failed invocation.
+- The expanded controlled journey first raced the new split child's creation:
+  Ghostty's terminal-ready receipt can precede the shell child becoming visible
+  to `pgrep`. A bounded wait for exactly two real children replaced the
+  instantaneous assumption; absence still fails. Wayland also accepted only a
+  suffix of the first post-move physical input because the new toplevel had not
+  settled focus. The journey now requires a fresh pane-focus receipt before
+  typing rather than sleeping or accepting partial input.
+- One manual Wayland invocation accidentally placed `GDK_BACKEND=wayland`
+  outside the nested input wrapper. Its X11 bootstrap replaced the variable, so
+  that receipt was rejected as Wayland evidence. Correct evidence always runs
+  `nested-wayland-input env GDK_BACKEND=wayland ...`.
+- The larger restore journey exposed a real compositor-specific product bug.
+  X11 must present inactive restored windows first and the persisted active
+  window last. Wayland focus-stealing policy requires the persisted active
+  toplevel to map first because a later `present()` cannot take activation.
+  Startup now selects ordering from the actual GDK display type. A delayed
+  focus callback also ran after an immediately closed window and emitted GTK's
+  “window shown after destroyed” warning; it now checks shell shutdown before
+  presenting/focusing.
+- Diff review found a rollback defect not exercised by the successful journey:
+  tearing down a launch-deferred destination after failed adoption would revoke
+  the moved pane's shared capability even though the destination never owned
+  its runtime. Shell shutdown now unregisters only pane IDs backed by live
+  runtimes in that shell. Deferred identities are not falsely treated as
+  capability owners, so source rollback retains the running child's token.
+- Pure tests cover multi-pane extraction, whole-worklane extraction, invalid
+  and final-pane rejection without mutation, source focus fallback, agent state
+  movement, destination geometry, CWD/command/title/color, next-pane numbering,
+  and bookmark metadata for both extraction shapes. Action-router tests cover
+  topology-sensitive availability; pane/sidebar tests pin the source command
+  name and contextual control.
+- After the rollback ownership repair, controlled X11 session
+  `56b61a58475cec6cc75ac330abb369a2a35e4c92dbdffa88dca8a4356d5485e1`
+  and controlled Wayland session
+  `6fae17821119dd8cc426fa7f208885bce6daf81f0258ab4f409a27c87723ebae`
+  passed the expanded real-product journey. It proves the PTY child set is
+  unchanged across the move, pane 2 has exactly one terminal construction,
+  pre-move scrollback survives, physical post-move input works, agent and tmux
+  traffic route to the destination despite stale child claims, exact source and
+  destination topology is projected, aggregate live/clean snapshots agree,
+  clean and confirmed-live crash relaunch restore ownership, and closing the
+  restored destination leaves the source PTY responsive.
+- The feature inventory remains `PARTIAL`: **Move Pane to New Window** is now
+  implemented, while move into an existing foreign worklane and cross-window
+  drag/drop still require equivalent live-runtime evidence. A real forced
+  destination-construction/adoption failure journey is also not yet present;
+  successful-path evidence is not relabeled as rollback evidence.
+- The first complete matrix run correctly refused qualification on three
+  cells. Two API-audit cells found that the corrected direct Ghostty checkout
+  now retains `upstream/main` although the provenance snapshot and prose still
+  described that ref as absent. Both official and fork main resolve to the
+  recorded `ac04fc276` base; the machine fact is now `true`, and the unchanged
+  16-file/57-hunk/13-export audit plus normalization self-test pass.
+- The source-UX journey exposed harness drift caused by the new fourth
+  pane-local button: its former fixed Split Right coordinate now correctly hit
+  **Move Pane to New Window**, changing real product state and failing the old
+  expectation. No product behavior was weakened. The journey now clicks the
+  leading control's reviewed coordinate and controlled X11 session
+  `89256a5f227dee7f22adab2ee71bf01088a7b15c44f291a157921d0bd23a1749`
+  passes the complete real pointer/PTY/source-UX path.
+- After those repairs, every presently executable support and authoritative
+  matrix cell passed in 357.44 seconds. Declared totals remain `PASS=90`,
+  `FAIL=0`, `BLOCKED=7`, `XFAIL=1`, and `NOT_IMPLEMENTED=21`; implemented-local
+  and product-boundary qualification pass, while release and full Linux
+  qualification correctly remain false. The machine-summary SHA-256 is
+  `8fd0dd5b5a901e75cb2cfbf3f5537fdc9830ffc2e20c9b0609420eb50849a0d7`.
+- Debug Valgrind is **PASS with reviewed suppressions**, not unsuppressed clean:
+  raw evidence contains 427 errors/contexts, 6,240 definite bytes, and 41,429
+  indirect bytes; post-suppression evidence contains zero errors/contexts and
+  zero definite/indirect bytes. The report, raw receipt, and suppressed receipt
+  SHA-256 values are
+  `61436226207caf00d23d865213c8548407471ba3bd9e16ffc9a0ee839bc53789`,
+  `c3f4ea94a5923b7366def2216965d1854eaa44763d7e1f012d19d5502edcb78f`,
+  and `b0eabbde73916a7739efca02d7d8b94b4e09f353b0e81d9a0f1d1685d832df68`.
+  Suppression governance passed; ReleaseSafe Valgrind remains XFAIL and no
+  suppression was added or broadened for this feature.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were

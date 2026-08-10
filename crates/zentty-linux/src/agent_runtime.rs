@@ -13,7 +13,7 @@ pub(crate) struct AgentRuntime {
     receiver: mpsc::Receiver<AuthenticatedAgentEvent>,
     tmux_receiver: mpsc::Receiver<AuthenticatedTmuxRequest>,
     tokens_by_pane: BTreeMap<String, String>,
-    worklane_by_pane: BTreeMap<String, String>,
+    target_by_pane: BTreeMap<String, (String, String)>,
     runtime_directory: PathBuf,
     socket_path: PathBuf,
     cli_path: PathBuf,
@@ -21,12 +21,10 @@ pub(crate) struct AgentRuntime {
     tmux_shim_directory: PathBuf,
     shell_integration_directory: PathBuf,
     instance_id: String,
-    window_id: String,
 }
 
 impl AgentRuntime {
-    pub(crate) fn start(window_id: impl Into<String>) -> Result<Self, String> {
-        let window_id = window_id.into();
+    pub(crate) fn start() -> Result<Self, String> {
         let instance = generate_pane_token().map_err(|error| error.to_string())?;
         let runtime_directory = instance_runtime_directory(
             std::env::var_os("XDG_RUNTIME_DIR").as_deref(),
@@ -75,7 +73,7 @@ impl AgentRuntime {
             receiver,
             tmux_receiver,
             tokens_by_pane: BTreeMap::new(),
-            worklane_by_pane: BTreeMap::new(),
+            target_by_pane: BTreeMap::new(),
             runtime_directory,
             socket_path,
             cli_path,
@@ -83,16 +81,16 @@ impl AgentRuntime {
             tmux_shim_directory,
             shell_integration_directory,
             instance_id: instance,
-            window_id,
         })
     }
 
     pub(crate) fn environment_for_pane(
         &mut self,
+        window_id: &str,
         worklane_id: &str,
         pane_id: &str,
     ) -> Result<Vec<(String, String)>, String> {
-        let target = AgentTarget::new(&self.window_id, worklane_id, pane_id);
+        let target = AgentTarget::new(window_id, worklane_id, pane_id);
         let token = if let Some(token) = self.tokens_by_pane.get(pane_id) {
             self.registry
                 .lock()
@@ -111,8 +109,10 @@ impl AgentRuntime {
                 .insert(pane_id.to_owned(), token.clone());
             token
         };
-        self.worklane_by_pane
-            .insert(pane_id.to_owned(), worklane_id.to_owned());
+        self.target_by_pane.insert(
+            pane_id.to_owned(),
+            (window_id.to_owned(), worklane_id.to_owned()),
+        );
         let cli = self.cli_path.to_string_lossy().into_owned();
         let mut environment = vec![
             ("ZENTTY_CLI_BIN".to_owned(), cli.clone()),
@@ -125,7 +125,7 @@ impl AgentRuntime {
                 self.socket_path.to_string_lossy().into_owned(),
             ),
             ("ZENTTY_PANE_TOKEN".to_owned(), token),
-            ("ZENTTY_WINDOW_ID".to_owned(), self.window_id.clone()),
+            ("ZENTTY_WINDOW_ID".to_owned(), window_id.to_owned()),
             ("ZENTTY_WORKLANE_ID".to_owned(), worklane_id.to_owned()),
             ("ZENTTY_PANE_ID".to_owned(), pane_id.to_owned()),
             ("ZENTTY_INSTANCE_ID".to_owned(), self.instance_id.clone()),
@@ -171,7 +171,7 @@ impl AgentRuntime {
     }
 
     pub(crate) fn unregister_pane(&mut self, pane_id: &str) {
-        self.worklane_by_pane.remove(pane_id);
+        self.target_by_pane.remove(pane_id);
         let Some(token) = self.tokens_by_pane.remove(pane_id) else {
             return;
         };
@@ -182,10 +182,16 @@ impl AgentRuntime {
 
     pub(crate) fn retarget_registered_panes<'a>(
         &mut self,
-        panes: impl IntoIterator<Item = (&'a str, &'a str)>,
+        panes: impl IntoIterator<Item = (&'a str, &'a str, &'a str)>,
     ) -> Result<(), String> {
-        for (worklane_id, pane_id) in panes {
-            if self.worklane_by_pane.get(pane_id).map(String::as_str) == Some(worklane_id) {
+        for (window_id, worklane_id, pane_id) in panes {
+            let requested_target = (window_id, worklane_id);
+            if self
+                .target_by_pane
+                .get(pane_id)
+                .map(|(window, worklane)| (window.as_str(), worklane.as_str()))
+                == Some(requested_target)
+            {
                 continue;
             }
             let Some(token) = self.tokens_by_pane.get(pane_id) else {
@@ -194,13 +200,12 @@ impl AgentRuntime {
             self.registry
                 .lock()
                 .map_err(|_| "agent pane registry is unavailable".to_owned())?
-                .retarget(
-                    token,
-                    AgentTarget::new(&self.window_id, worklane_id, pane_id),
-                )
+                .retarget(token, AgentTarget::new(window_id, worklane_id, pane_id))
                 .map_err(|error| error.to_string())?;
-            self.worklane_by_pane
-                .insert(pane_id.to_owned(), worklane_id.to_owned());
+            self.target_by_pane.insert(
+                pane_id.to_owned(),
+                (window_id.to_owned(), worklane_id.to_owned()),
+            );
         }
         Ok(())
     }

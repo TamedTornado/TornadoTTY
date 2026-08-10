@@ -107,6 +107,13 @@ This is currently a development build, not a supported Linux package. The
 public feature inventory and remaining parity work live in issues #1 and
 #16–#23.
 
+The development build supports the source-named **Move Pane to New Window**
+command without recreating the live Ghostty surface or PTY. Agent and tmux IPC
+use one process-wide authenticated transport; each GTK window owns only its
+window-local event projection, so a moved pane keeps its capability while its
+canonical window/worklane route changes. Moving into an existing window and
+cross-window drag/drop remain tracked parity work rather than implied support.
+
 ### macOS
 
 Zentty requires a local `GhosttyKit.xcframework` before the app can build normally.

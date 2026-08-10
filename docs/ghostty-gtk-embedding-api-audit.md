@@ -44,11 +44,11 @@ downstream commits after that base. The unrelated inherited smooth-scroll
 series is not in this branch; it remains only on the explicitly archived
 pre-refork branch and is outside this audit.
 
-The managed checkout intentionally has only the direct fork's `origin`; it
-does not retain an `upstream/*` remote-tracking namespace. The exact official
-base commit is present and ancestry-checked locally, so the absence of that
-convenience ref is recorded as `false` in the machine audit rather than being
-mistaken for missing base evidence.
+The managed checkout now retains `upstream/main` in addition to the direct
+fork's `origin`, and both resolve to the recorded official base. The exact
+official base commit is also present and ancestry-checked locally; the
+machine audit records the upstream remote-tracking namespace as available so
+checkout provenance changes cannot pass silently.
 
 | Range | Meaning | Commits | Files | Hunks | Lines | Patch SHA-256 |
 |---|---|---:|---:|---:|---:|---|

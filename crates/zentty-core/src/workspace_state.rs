@@ -174,6 +174,49 @@ pub struct RestoredPane {
     pub prefill_text: Option<String>,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct PaneWindowTransfer {
+    pub destination: WorkspaceState,
+    pub moved_pane_id: String,
+    pub source_window_should_close: bool,
+}
+
+impl PaneWindowTransfer {
+    /// Projects the destination while retaining source recipe metadata that is
+    /// not part of live topology state, including next-pane numbering and a
+    /// bookmark origin. The resulting frame is intentionally compositor-owned.
+    #[must_use]
+    pub fn destination_window_recipe(
+        &self,
+        source: &WindowRecipe,
+        destination_window_id: &str,
+    ) -> Option<WindowRecipe> {
+        if destination_window_id.is_empty() {
+            return None;
+        }
+        let destination_worklane_id = self.destination.active_worklane_id();
+        let mut source_worklane = source
+            .worklanes
+            .iter()
+            .find(|worklane| {
+                worklane
+                    .columns
+                    .iter()
+                    .flat_map(|column| &column.panes)
+                    .any(|pane| pane.id == self.moved_pane_id)
+            })?
+            .clone();
+        destination_worklane_id.clone_into(&mut source_worklane.id);
+        let template = WindowRecipe {
+            id: destination_window_id.to_owned(),
+            frame: None,
+            worklanes: vec![source_worklane],
+            active_worklane_id: Some(destination_worklane_id.to_owned()),
+        };
+        Some(self.destination.to_window_recipe(&template))
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PaneResizeDirection {
     Left,
@@ -1714,6 +1757,85 @@ impl WorkspaceState {
         self.worklanes[target_index].focused_column_id = column_id;
         target_worklane_id.clone_into(&mut self.active_worklane_id);
         true
+    }
+
+    /// Extracts one live-pane model into the source-defined new-window state.
+    /// Runtime/widget ownership is intentionally left to the platform
+    /// coordinator so it can transact the model and live surface together.
+    pub fn split_pane_to_new_window(
+        &mut self,
+        pane_id: &str,
+        destination_worklane_id: &str,
+    ) -> Option<PaneWindowTransfer> {
+        if destination_worklane_id.is_empty() || self.contains_worklane(destination_worklane_id) {
+            return None;
+        }
+        let source_worklane_index = self.worklanes.iter().position(|worklane| {
+            worklane
+                .columns
+                .iter()
+                .any(|column| column.panes.iter().any(|pane| pane.id == pane_id))
+        })?;
+        let source_pane_count = self.worklanes[source_worklane_index]
+            .columns
+            .iter()
+            .map(|column| column.panes.len())
+            .sum::<usize>();
+        let source_column_index = self.worklanes[source_worklane_index]
+            .columns
+            .iter()
+            .position(|column| column.panes.iter().any(|pane| pane.id == pane_id))?;
+        if self.worklanes.len() == 1 && source_pane_count == 1 {
+            return None;
+        }
+
+        let agent_statuses = self.agent_statuses.take_pane(pane_id);
+        let destination_worklane = if source_pane_count == 1 {
+            let moved = self.worklanes.remove(source_worklane_index);
+            if self.active_worklane_id == moved.id {
+                let replacement_index = source_worklane_index.min(self.worklanes.len() - 1);
+                self.active_worklane_id = self.worklanes[replacement_index].id.clone();
+            }
+            moved
+        } else {
+            let source = &mut self.worklanes[source_worklane_index];
+            let source_title = source.title.clone();
+            let source_color = source.color;
+            let (pane, _) = remove_pane(&mut source.columns[source_column_index], pane_id);
+            if source.columns[source_column_index].panes.is_empty() {
+                source.columns.remove(source_column_index);
+                let replacement_index = source_column_index.min(source.columns.len() - 1);
+                source.focused_column_id = source.columns[replacement_index].id.clone();
+            }
+            WorklaneState {
+                id: destination_worklane_id.to_owned(),
+                title: source_title,
+                color: source_color,
+                columns: vec![PaneColumnState {
+                    id: format!("column-{pane_id}"),
+                    width: 1.0,
+                    panes: vec![pane],
+                    pane_heights: vec![1.0],
+                    focused_pane_id: pane_id.to_owned(),
+                    last_focused_pane_id: pane_id.to_owned(),
+                }],
+                focused_column_id: format!("column-{pane_id}"),
+            }
+        };
+        let destination_id = destination_worklane.id.clone();
+        let destination = WorkspaceState {
+            worklanes: vec![destination_worklane],
+            active_worklane_id: destination_id,
+            focus_history: PaneFocusHistory::default(),
+            is_navigating_history: false,
+            closed_panes: Vec::new(),
+            agent_statuses,
+        };
+        Some(PaneWindowTransfer {
+            destination,
+            moved_pane_id: pane_id.to_owned(),
+            source_window_should_close: self.worklanes.is_empty(),
+        })
     }
 
     /// Closes the focused pane or requests window closure for the last pane.

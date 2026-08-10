@@ -2,16 +2,16 @@
   "schema_version": 1,
   "contract_id": "zentty-application-shell-responsibilities",
   "source": "crates/zentty-linux/src/application_shell.rs",
-  "source_sha256": "a76814bda8f38dde37ee513a59b789fe20d056331cdf67c47e7b79c860b945c9",
+  "source_sha256": "9f9f79942b8e35f3d777a434bb6b8ce897d57a0e7ccbf67d6e21c1b18c0d015e",
   "owned_source_sha256": {
     "crates/zentty-linux/src/main.rs": "5f5d7143cec7b51412624cdc10fe16a5000a2d7605e93151d2a0f29c3b339780",
-    "crates/zentty-linux/src/application.rs": "6f197bffb2e94258044df812ff0fa20e2963f207c5d3b64d970e6c5847fa01d4",
+    "crates/zentty-linux/src/application.rs": "c107efc7c02b8ec34ba22695c89ac706b06ed701df520301cf2e12d6929d8b86",
     "crates/zentty-linux/src/window_set.rs": "501d595889c11a41a4261ef8282465d76dd9ed8ccd1d004406b558579b0bf58e",
-    "crates/zentty-linux/src/agent_runtime.rs": "36f1e38a84955f15ff86f63a24dd50ca07235d288307c3ad6e277890db3afbcc",
+    "crates/zentty-linux/src/agent_runtime.rs": "333aab1edbecc0029c47d2469cb0a5ceb1fcb90813d67b9e3751099a255e99ef",
     "crates/zentty-linux/src/codex_enrichment.rs": "fe87631c75c04b63962b7f89d311a778a25af8f27a1dcb4d5950b3efcbaa476e",
-    "crates/zentty-linux/src/application_shell/action_router.rs": "10475aa6dbabb842e7e8fdea6610b57a8158205d6e485ed9381f8c6834ca7fb8",
-    "crates/zentty-linux/src/application_shell/agent_events.rs": "12da8738f9cc6902498d6dd836a79ba52025897bad596703d1d336d3ec805e0f",
-    "crates/zentty-linux/src/application_shell/pane_runtime.rs": "b7e1a43c03b2c05e0585df806fb35346214393950f373d3a186def5c335ab7f2",
+    "crates/zentty-linux/src/application_shell/action_router.rs": "8e7946ee0106cb8c3ee429196958190960710d8c15d8ee51824bf665b524c17e",
+    "crates/zentty-linux/src/application_shell/agent_events.rs": "56c45836a4e6a6a929dce61251a199c0b8dec7a62edbcda3c9b5dd594dbb6038",
+    "crates/zentty-linux/src/application_shell/pane_runtime.rs": "e4d2a5805a8cc91e6c8e6970646b5a946dc23818a3144139b44d400a5a52e238",
     "crates/zentty-linux/src/application_shell/tmux_runtime.rs": "b606ec1c2e8c93e1ab40dbac1e5080f28315352e83533d7c63ba7eefd95d0515",
     "crates/zentty-linux/src/pane_dividers.rs": "dc86023846057e7d3338f142c13d52f4dfde9e3057c33055d527587b7e638d7d",
     "crates/zentty-linux/src/persistence_coordinator.rs": "9c9b24a8516032e37377b6acfba3549781cfc830a65f53d7a311f0b2efaa72a4",
@@ -26,7 +26,7 @@
       "status": "existing",
       "planned_module": "crates/zentty-linux/src/main.rs and crates/zentty-linux/src/application.rs",
       "tracking": "GH-31",
-      "responsibility": "Process composition root and sole default GLib main-context/main-loop scheduling authority; owns startup and shutdown ordering around each window shell."
+      "responsibility": "Process composition root and sole default GLib main-context/main-loop scheduling authority; owns the single process-wide authenticated Agent IPC transport plus startup, cross-window routing, transfer, and shutdown ordering around each window shell."
     },
     {
       "id": "application_shell",
@@ -81,7 +81,7 @@
   "field_assignments": [
     {
       "owner": "application_runtime",
-      "fields": ["new_window_handler", "close_window_handler", "quit_handler"]
+      "fields": ["new_window_handler", "move_pane_to_new_window_handler", "close_window_handler", "quit_handler"]
     },
     {
       "owner": "application_shell",
@@ -126,13 +126,15 @@
       "owner": "application_runtime",
       "methods": [
         "set_application_handlers", "request_new_window",
-        "request_close_window", "request_quit"
+        "request_move_pane_to_new_window", "request_close_window", "request_quit"
       ]
     },
     {
       "owner": "application_shell",
       "methods": [
         "new", "window", "sidebar_container", "present", "detach_and_close",
+        "has_worklane", "extract_live_pane_to_new_window",
+        "rollback_live_pane_window_transfer", "adopt_live_pane_window_transfer",
         "move_active_worklane", "move_worklane", "render", "take_pane_id",
         "topology_receipt", "geometry_receipt", "focus_terminal_after_present"
       ]
@@ -163,7 +165,7 @@
     {
       "owner": "agent_event_coordinator",
       "methods": [
-        "mount_background_restored_agents", "agent_restore_drafts", "drain_agent_events",
+        "mount_background_restored_agents", "agent_restore_drafts", "apply_agent_inputs",
         "schedule_codex_transcript_enrichment", "sync_agent_targets"
       ]
     },
@@ -207,8 +209,10 @@
     ],
     "pane_runtime_coordinator": [
       "new", "runtime", "command", "live_children", "surface", "frame", "contains",
+      "live_pane_ids",
       "is_deferred", "mark_deferred",
       "insert", "queue_prefill", "cancel_prefill", "take_prefill", "detach_widgets",
+      "detach_for_window_transfer", "adopt_window_transfer",
       "remove", "note_child_exit", "release_all", "create_surface",
       "create_surface_with_command", "create_surface_configured", "surface_config",
       "connect_surface_callbacks", "connect_surface_progress_callback",
@@ -218,7 +222,7 @@
     ],
     "agent_event_coordinator": [
       "event_route_decision", "start", "environment_for_pane", "unregister_pane",
-      "sync_targets", "schedule_for_pane", "shutdown", "drain"
+      "sync_targets", "schedule_for_pane", "shutdown", "apply_inputs"
     ],
     "persistence_coordinator": [
       "clean_exit_decision", "complete_launch", "default_state_directory", "drain_errors",
@@ -263,6 +267,7 @@
     {"name":"move-pane-up","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"move-pane-down","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"move-pane-to-worklane","parameter":"string","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"move-pane-to-new-window","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"select-pane","parameter":"string_pair","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"navigate-back","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"navigate-forward","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
@@ -301,6 +306,7 @@
   "conditional_action_availability": {
     "multiple_columns": ["resize-pane-left", "resize-pane-right", "arrange-golden-wide", "arrange-golden-narrow"],
     "multiple_panes_in_focused_column": ["resize-pane-up", "resize-pane-down", "arrange-golden-tall", "arrange-golden-short"],
+    "multiple_workspace_panes": ["move-pane-to-new-window"],
     "all_other_actions": "always"
   },
   "single_authorities": {
@@ -308,16 +314,16 @@
     "gtk_action_registry": {"owner":"action_router","maximum_instances_per_window":1},
     "surface_registry": {"owner":"pane_runtime_coordinator","maximum_instances_per_window":1},
     "session_store": {"owner":"persistence_coordinator","maximum_instances_per_process":1},
-    "agent_ipc_transport": {"owner":"agent_event_coordinator","maximum_instances_per_window":1},
+    "agent_ipc_transport": {"owner":"application_runtime","maximum_instances_per_process":1},
     "agent_event_projection": {"owner":"agent_event_coordinator","maximum_instances_per_window":1},
     "tmux_compatibility_state": {"owner":"existing_tmux_coordinator","maximum_instances_per_window":1},
     "glib_scheduling": {"owner":"application_runtime","kind":"default-glib-main-context","maximum_instances_per_process":1}
   },
   "construction_order": [
     "create-ghostty-runtime-before-gtk",
+    "start-one-process-agent-ipc-runtime",
     "initialize-gtk-and-build-shell-widgets",
     "load-one-validated-workspace-state",
-    "start-one-agent-ipc-runtime",
     "install-one-action-router",
     "construct-pane-surfaces-transactionally",
     "render-and-present"

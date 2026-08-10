@@ -285,9 +285,13 @@
       "user_impact": "Source workflows reorganize live long-running agents and shells across windows; replacement sessions would destroy the state being organized.",
       "linux_owner_issue": 16,
       "implementation_status": "PARTIAL",
-      "focused_tests": [],
-      "product_scenarios": [],
-      "test_plan": "Move a real live PTY process and terminal surface through mouse/action routes between lanes and windows under Wayland/X11, prove PID/surface/scrollback identity, then restart and verify the persisted ownership.",
+      "focused_tests": [
+        "crates/zentty-core/tests/workspace_state.rs"
+      ],
+      "product_scenarios": [
+        "linux/tests/rust-multi-window"
+      ],
+      "test_plan": "The new-window action is implemented and must keep passing controlled Wayland/X11 proof of unchanged PTY PID set, one Ghostty surface construction, retained scrollback, post-move physical input, canonical agent/tmux routing, aggregate persistence, and clean/crash relaunch. Keep this entry PARTIAL until transfer into an existing foreign worklane and cross-window drag/drop pass equivalent real-system journeys.",
       "alternative_or_blocker": null
     },
     {

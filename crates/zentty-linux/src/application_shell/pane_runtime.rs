@@ -79,6 +79,11 @@ pub(super) struct PaneRuntimeCoordinator {
     pending_prefills: BTreeMap<String, String>,
 }
 
+pub(crate) struct DetachedPaneRuntime {
+    surface: GhosttySurface,
+    pending_prefill: Option<String>,
+}
+
 impl PaneRuntimeCoordinator {
     pub(super) fn new(runtime: &GhosttyRuntime, command: Option<String>) -> Self {
         Self {
@@ -115,6 +120,10 @@ impl PaneRuntimeCoordinator {
 
     pub(super) fn contains(&self, pane_id: &str) -> bool {
         self.surfaces.contains_key(pane_id)
+    }
+
+    pub(super) fn live_pane_ids(&self) -> Vec<String> {
+        self.surfaces.keys().cloned().collect()
     }
 
     pub(super) fn is_deferred(&self, pane_id: &str) -> bool {
@@ -172,6 +181,88 @@ impl PaneRuntimeCoordinator {
             frame.detach_terminal();
         }
         self.frames.clear();
+    }
+
+    pub(super) fn detach_for_window_transfer(
+        &mut self,
+        pane_id: &str,
+    ) -> Result<DetachedPaneRuntime, String> {
+        if self.deferred_panes.contains(pane_id) {
+            return Err(format!("pane {pane_id} is launch-deferred"));
+        }
+        if !self.surfaces.contains_key(pane_id)
+            || !self.frames.contains_key(pane_id)
+            || !self.focus_controllers.contains_key(pane_id)
+        {
+            return Err(format!("pane {pane_id} has no complete live runtime"));
+        }
+        let controller = self
+            .focus_controllers
+            .remove(pane_id)
+            .ok_or_else(|| format!("pane {pane_id} lost its focus controller"))?;
+        let surface = self
+            .surfaces
+            .remove(pane_id)
+            .ok_or_else(|| format!("pane {pane_id} lost its live surface"))?;
+        surface.widget().remove_controller(&controller);
+        let frame = self
+            .frames
+            .remove(pane_id)
+            .ok_or_else(|| format!("pane {pane_id} lost its terminal frame"))?;
+        if let Some(parent) = frame
+            .widget()
+            .parent()
+            .and_then(|parent| parent.downcast::<gtk::Box>().ok())
+        {
+            parent.remove(frame.widget());
+        }
+        frame.detach_terminal();
+        surface.disconnect_callbacks();
+        self.live_children
+            .set(self.live_children.get().saturating_sub(1));
+        Ok(DetachedPaneRuntime {
+            surface,
+            pending_prefill: self.pending_prefills.remove(pane_id),
+        })
+    }
+
+    pub(super) fn adopt_window_transfer(
+        shell: &Rc<RefCell<ApplicationShell>>,
+        pane_id: &str,
+        transfer: DetachedPaneRuntime,
+    ) -> Result<(), (String, DetachedPaneRuntime)> {
+        if shell.borrow().pane_runtime.contains(pane_id) {
+            return Err((
+                format!("pane {pane_id} already has a live surface"),
+                transfer,
+            ));
+        }
+        Self::connect_surface_callbacks(shell, pane_id, &transfer.surface);
+        let focus_controller = Self::make_surface_focus_controller(shell, pane_id);
+        transfer
+            .surface
+            .widget()
+            .add_controller(focus_controller.clone());
+        let frame = Self::create_pane_frame(shell, pane_id, transfer.surface.widget());
+        let mut shell = shell.borrow_mut();
+        if let Some(prefill) = transfer.pending_prefill {
+            shell.pane_runtime.queue_prefill(pane_id, prefill);
+        }
+        shell
+            .pane_runtime
+            .focus_controllers
+            .insert(pane_id.to_owned(), focus_controller);
+        shell.pane_runtime.frames.insert(pane_id.to_owned(), frame);
+        shell
+            .pane_runtime
+            .surfaces
+            .insert(pane_id.to_owned(), transfer.surface);
+        shell.pane_runtime.deferred_panes.remove(pane_id);
+        shell
+            .pane_runtime
+            .live_children
+            .set(shell.pane_runtime.live_children.get() + 1);
+        Ok(())
     }
 
     pub(super) fn remove(

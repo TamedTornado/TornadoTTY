@@ -1,6 +1,6 @@
 use zentty_core::{
     AgentEvent, AgentInteractionKind, AgentTarget, AuthenticatedAgentEvent, ClosePaneOutcome,
-    CodexTranscriptQuestion, PaneRecipe, PaneResizeDirection, SessionRestoreEnvelope,
+    CodexTranscriptQuestion, PaneRecipe, PaneResizeDirection, SessionRestoreEnvelope, WindowRecipe,
     WorklaneColor, WorkspaceState, WorkspaceStateImportError,
 };
 
@@ -1158,6 +1158,166 @@ fn keyboard_vertical_resize_uses_an_adjacent_last_interacted_divider() {
         80.0,
         None,
     ));
+}
+
+#[test]
+fn split_out_pane_to_new_window_preserves_source_metadata_and_normalizes_destination() {
+    let mut state = WorkspaceState::new("build", "shell");
+    assert!(state.set_worklane_title("build", Some("Build")));
+    assert!(state.set_worklane_color("build", Some(WorklaneColor::Teal)));
+    assert!(state.split_focused_pane_below("agent"));
+    assert!(state.set_pane_custom_title("agent", Some("Reviewer")));
+    assert!(state.configure_pane_launch(
+        "agent",
+        Some("/tmp/project".to_owned()),
+        Some("codex resume abc".to_owned()),
+    ));
+    state.apply_agent_event(
+        AuthenticatedAgentEvent {
+            target: AgentTarget::new("source-window", "build", "agent"),
+            pane_token: "token-agent".to_owned(),
+            event: AgentEvent::parse(
+                br#"{"version":1,"event":"agent.running","agent":{"name":"Codex"},"session":{"id":"session-agent"}}"#,
+            )
+            .unwrap(),
+        },
+        1,
+    );
+    let mut source_recipe = state.to_window_recipe(&WindowRecipe {
+        id: "source-window".to_owned(),
+        frame: None,
+        worklanes: Vec::new(),
+        active_worklane_id: None,
+    });
+    source_recipe.worklanes[0].next_pane_number = 42;
+    source_recipe.worklanes[0].bookmark_origin_id = Some("bookmark-build".to_owned());
+
+    let transfer = state
+        .split_pane_to_new_window("agent", "destination-lane")
+        .expect("a pane in a multi-pane worklane can move to a new window");
+
+    assert_eq!(transfer.moved_pane_id, "agent");
+    assert!(!transfer.source_window_should_close);
+    assert_eq!(state.active_pane_ids(), ["shell"]);
+    assert_eq!(state.active_worklane().title.as_deref(), Some("Build"));
+    assert_eq!(state.active_worklane().color, Some(WorklaneColor::Teal));
+    assert_eq!(transfer.destination.worklane_ids(), ["destination-lane"]);
+    let destination = transfer.destination.active_worklane();
+    assert_eq!(destination.title.as_deref(), Some("Build"));
+    assert_eq!(destination.color, Some(WorklaneColor::Teal));
+    assert_eq!(destination.columns.len(), 1);
+    assert!((destination.columns[0].width - 1.0).abs() < f64::EPSILON);
+    assert_eq!(destination.columns[0].pane_heights, [1.0]);
+    let moved = transfer.destination.pane("agent").unwrap();
+    assert_eq!(moved.custom_title.as_deref(), Some("Reviewer"));
+    assert_eq!(moved.working_directory.as_deref(), Some("/tmp/project"));
+    assert_eq!(moved.last_run_command.as_deref(), Some("codex resume abc"));
+    assert!(
+        state.sidebar_summaries()[0].pane_rows[0]
+            .agent_status
+            .is_none()
+    );
+    assert_eq!(
+        transfer.destination.sidebar_summaries()[0].pane_rows[0]
+            .agent_status
+            .as_ref()
+            .map(|status| status.session_id.as_str()),
+        Some("session-agent")
+    );
+    let destination_recipe = transfer
+        .destination_window_recipe(&source_recipe, "destination-window")
+        .expect("source metadata can project the destination recipe");
+    assert_eq!(destination_recipe.id, "destination-window");
+    assert_eq!(destination_recipe.frame, None);
+    assert_eq!(destination_recipe.worklanes[0].id, "destination-lane");
+    assert_eq!(destination_recipe.worklanes[0].next_pane_number, 42);
+    assert_eq!(
+        destination_recipe.worklanes[0]
+            .bookmark_origin_id
+            .as_deref(),
+        Some("bookmark-build")
+    );
+    assert_eq!(
+        destination_recipe.worklanes[0].columns[0].panes[0]
+            .working_directory
+            .as_deref(),
+        Some("/tmp/project")
+    );
+}
+
+#[test]
+fn split_out_only_pane_transfers_complete_worklane_and_rejects_final_pane() {
+    let mut state = WorkspaceState::new("main", "main-pane");
+    assert!(state.create_worklane("review", "review-pane"));
+    assert!(state.set_worklane_title("review", Some("Review")));
+    assert!(state.set_worklane_color("review", Some(WorklaneColor::Purple)));
+    let mut source_recipe = state.to_window_recipe(&WindowRecipe {
+        id: "source-window".to_owned(),
+        frame: None,
+        worklanes: Vec::new(),
+        active_worklane_id: None,
+    });
+    let review_recipe = source_recipe
+        .worklanes
+        .iter_mut()
+        .find(|worklane| worklane.id == "review")
+        .unwrap();
+    review_recipe.next_pane_number = 17;
+    review_recipe.bookmark_origin_id = Some("bookmark-review".to_owned());
+
+    let transfer = state
+        .split_pane_to_new_window("review-pane", "unused-generated-id")
+        .expect("a complete worklane can leave a multi-worklane window");
+
+    assert_eq!(state.worklane_ids(), ["main"]);
+    assert_eq!(state.active_worklane_id(), "main");
+    assert_eq!(transfer.destination.worklane_ids(), ["review"]);
+    assert_eq!(transfer.destination.active_worklane_id(), "review");
+    assert_eq!(
+        transfer.destination.active_worklane().title.as_deref(),
+        Some("Review")
+    );
+    assert_eq!(
+        transfer.destination.active_worklane().color,
+        Some(WorklaneColor::Purple)
+    );
+    let destination_recipe = transfer
+        .destination_window_recipe(&source_recipe, "destination-window")
+        .expect("complete worklane metadata can project the destination recipe");
+    assert_eq!(destination_recipe.worklanes[0].id, "review");
+    assert_eq!(destination_recipe.worklanes[0].next_pane_number, 17);
+    assert_eq!(
+        destination_recipe.worklanes[0]
+            .bookmark_origin_id
+            .as_deref(),
+        Some("bookmark-review")
+    );
+
+    assert!(
+        state
+            .split_pane_to_new_window("main-pane", "destination")
+            .is_none()
+    );
+    assert_eq!(state.worklane_ids(), ["main"]);
+    assert_eq!(state.active_pane_ids(), ["main-pane"]);
+}
+
+#[test]
+fn split_out_rejects_stale_or_colliding_identity_without_mutation() {
+    let mut state = WorkspaceState::new("main", "left");
+    assert!(state.split_focused_pane_right("right"));
+    let before = state.clone();
+
+    assert!(
+        state
+            .split_pane_to_new_window("missing", "destination")
+            .is_none()
+    );
+    assert_eq!(state, before);
+    assert!(state.split_pane_to_new_window("right", "").is_none());
+    assert_eq!(state, before);
+    assert!(state.split_pane_to_new_window("right", "main").is_none());
+    assert_eq!(state, before);
 }
 
 #[test]

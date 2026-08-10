@@ -297,10 +297,11 @@ jq -e --arg main_sha256 "${main_sha256}" \
         "move-worklane", "rename-pane", "rename-worklane", "reorder-worklane",
         "select-pane", "set-worklane-color"
     ] | sort) and
-    ([.action_contract[] | select(.parameter == "none")] | length) == 50 and
+    ([.action_contract[] | select(.parameter == "none")] | length) == 51 and
     .conditional_action_availability == {
         "multiple_columns":["resize-pane-left","resize-pane-right","arrange-golden-wide","arrange-golden-narrow"],
         "multiple_panes_in_focused_column":["resize-pane-up","resize-pane-down","arrange-golden-tall","arrange-golden-short"],
+        "multiple_workspace_panes":["move-pane-to-new-window"],
         "all_other_actions":"always"
     } and
     .single_authorities == {
@@ -308,16 +309,16 @@ jq -e --arg main_sha256 "${main_sha256}" \
         "gtk_action_registry": {"owner":"action_router","maximum_instances_per_window":1},
         "surface_registry": {"owner":"pane_runtime_coordinator","maximum_instances_per_window":1},
         "session_store": {"owner":"persistence_coordinator","maximum_instances_per_process":1},
-        "agent_ipc_transport": {"owner":"agent_event_coordinator","maximum_instances_per_window":1},
+        "agent_ipc_transport": {"owner":"application_runtime","maximum_instances_per_process":1},
         "agent_event_projection": {"owner":"agent_event_coordinator","maximum_instances_per_window":1},
         "tmux_compatibility_state": {"owner":"existing_tmux_coordinator","maximum_instances_per_window":1},
         "glib_scheduling": {"owner":"application_runtime","kind":"default-glib-main-context","maximum_instances_per_process":1}
     } and
     .construction_order == [
         "create-ghostty-runtime-before-gtk",
+        "start-one-process-agent-ipc-runtime",
         "initialize-gtk-and-build-shell-widgets",
         "load-one-validated-workspace-state",
-        "start-one-agent-ipc-runtime",
         "install-one-action-router",
         "construct-pane-surfaces-transactionally",
         "render-and-present"

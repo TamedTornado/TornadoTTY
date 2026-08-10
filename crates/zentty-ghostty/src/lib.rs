@@ -596,13 +596,20 @@ impl GhosttySurface {
             });
         self.handlers.borrow_mut().push(handler);
     }
+
+    /// Disconnects every host callback currently registered through this safe
+    /// wrapper while keeping the native surface and PTY alive. This is used
+    /// when a GTK host reparents a live surface to a different owner.
+    pub fn disconnect_callbacks(&self) {
+        for handler in self.handlers.borrow_mut().drain(..) {
+            self.widget.disconnect(handler);
+        }
+    }
 }
 
 impl Drop for GhosttySurface {
     fn drop(&mut self) {
-        for handler in self.handlers.get_mut().drain(..) {
-            self.widget.disconnect(handler);
-        }
+        self.disconnect_callbacks();
     }
 }
 

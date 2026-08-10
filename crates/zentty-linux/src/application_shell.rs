@@ -28,10 +28,12 @@ use gtk::prelude::*;
 use zentty_core::{
     ClosePaneOutcome, ColumnRecipe, CommandPaletteItem, PaneColumnState, PaneLayoutPolicy,
     PaneRecipe, PaneReference, PaneResizeDirection, PaneRestoreDraft, PaneRightInsertionBehavior,
-    SidebarWidthPreference, WindowFrame, WindowRecipe, WorklaneColor, WorklaneRecipe,
-    WorkspaceState,
+    PaneWindowTransfer, SidebarWidthPreference, WindowFrame, WindowRecipe, WorklaneColor,
+    WorklaneRecipe, WorkspaceState,
 };
 use zentty_ghostty::GhosttyRuntime;
+
+use crate::agent_runtime::AgentRuntime;
 
 mod action_router;
 mod agent_events;
@@ -47,18 +49,24 @@ use action_router::{
     ACTION_CLOSE_PANE, ACTION_CLOSE_WINDOW, ACTION_CLOSE_WORKLANE, ACTION_CYCLE_WORKLANE_COLOR,
     ACTION_FIND, ACTION_FIND_NEXT, ACTION_FIND_PREVIOUS, ACTION_FOCUS_PANE_DOWN,
     ACTION_FOCUS_PANE_LEFT, ACTION_FOCUS_PANE_RIGHT, ACTION_FOCUS_PANE_UP, ACTION_MOVE_PANE_DOWN,
-    ACTION_MOVE_PANE_LEFT, ACTION_MOVE_PANE_RIGHT, ACTION_MOVE_PANE_UP, ACTION_MOVE_WORKLANE_DOWN,
-    ACTION_MOVE_WORKLANE_UP, ACTION_NAVIGATE_BACK, ACTION_NAVIGATE_FORWARD, ACTION_NEW_WINDOW,
-    ACTION_NEW_WORKLANE, ACTION_NEXT_PANE, ACTION_NEXT_WORKLANE, ACTION_PREVIOUS_PANE,
-    ACTION_PREVIOUS_WORKLANE, ACTION_RESET_PANE_LAYOUT, ACTION_RESIZE_PANE_DOWN,
-    ACTION_RESIZE_PANE_LEFT, ACTION_RESIZE_PANE_RIGHT, ACTION_RESIZE_PANE_UP,
-    ACTION_RESTORE_CLOSED_PANE, ACTION_SPLIT_PANE_BELOW, ACTION_SPLIT_PANE_RIGHT,
-    ACTION_TOGGLE_SIDEBAR, ACTION_USE_SELECTION_FOR_FIND, ActionRouter,
+    ACTION_MOVE_PANE_LEFT, ACTION_MOVE_PANE_RIGHT, ACTION_MOVE_PANE_TO_NEW_WINDOW,
+    ACTION_MOVE_PANE_UP, ACTION_MOVE_WORKLANE_DOWN, ACTION_MOVE_WORKLANE_UP, ACTION_NAVIGATE_BACK,
+    ACTION_NAVIGATE_FORWARD, ACTION_NEW_WINDOW, ACTION_NEW_WORKLANE, ACTION_NEXT_PANE,
+    ACTION_NEXT_WORKLANE, ACTION_PREVIOUS_PANE, ACTION_PREVIOUS_WORKLANE, ACTION_RESET_PANE_LAYOUT,
+    ACTION_RESIZE_PANE_DOWN, ACTION_RESIZE_PANE_LEFT, ACTION_RESIZE_PANE_RIGHT,
+    ACTION_RESIZE_PANE_UP, ACTION_RESTORE_CLOSED_PANE, ACTION_SPLIT_PANE_BELOW,
+    ACTION_SPLIT_PANE_RIGHT, ACTION_TOGGLE_SIDEBAR, ACTION_USE_SELECTION_FOR_FIND, ActionRouter,
 };
 use agent_events::AgentEventCoordinator;
+use pane_runtime::DetachedPaneRuntime;
 use pane_runtime::PaneRuntimeCoordinator;
 const PRIMARY_RIGHT_BEHAVIOR: PaneRightInsertionBehavior = PaneRightInsertionBehavior::VisibleSplit;
 const WORKLANE_PEEK_TAB_HOLD_THRESHOLD: Duration = Duration::from_millis(200);
+
+pub(crate) struct ApplicationRuntimes {
+    pub(crate) ghostty: GhosttyRuntime,
+    pub(crate) agent: Rc<RefCell<AgentRuntime>>,
+}
 
 pub(crate) struct ApplicationShell {
     window: gtk::Window,
@@ -96,9 +104,17 @@ pub(crate) struct ApplicationShell {
     agent_events: AgentEventCoordinator,
     tmux_compat: crate::tmux_compat::TmuxCompatProduct,
     new_window_handler: Option<Rc<dyn Fn()>>,
+    move_pane_to_new_window_handler: Option<Rc<dyn Fn(String)>>,
     close_window_handler: Option<Rc<dyn Fn()>>,
     quit_handler: Option<Rc<dyn Fn()>>,
     self_handle: RefCell<Weak<RefCell<Self>>>,
+}
+
+pub(crate) struct ExtractedWindowPane {
+    pub(crate) model: PaneWindowTransfer,
+    pub(crate) destination_recipe: WindowRecipe,
+    pub(crate) runtime: DetachedPaneRuntime,
+    pub(crate) source_before: WorkspaceState,
 }
 
 struct ShellWidgets {
@@ -118,12 +134,13 @@ struct ShellWidgets {
 
 impl ApplicationShell {
     pub(crate) fn new(
-        runtime: &GhosttyRuntime,
+        runtimes: &ApplicationRuntimes,
         command: Option<String>,
         main_loop: &glib::MainLoop,
         restored_window: Option<WindowRecipe>,
         restored_drafts: &[PaneRestoreDraft],
         fresh_window_id: &str,
+        deferred_live_pane_id: Option<&str>,
     ) -> Result<Rc<RefCell<Self>>, String> {
         sidebar::install_styles();
         pane_controls::install_styles();
@@ -145,20 +162,10 @@ impl ApplicationShell {
 
         let window_template = restored_or_default_window(restored_window, fresh_window_id);
         apply_restored_window_size(&window, &window_template);
-        let requested_restore_drafts = restored_drafts.len();
-        let restored_pane_commands = restored_pane_commands(&window_template, restored_drafts);
-        eprintln!(
-            "zentty-linux: agent-restore-drafts requested={requested_restore_drafts} accepted={}",
-            restored_pane_commands.len()
-        );
-        let mut state = WorkspaceState::from_window_recipe(&window_template)
-            .map_err(|error| format!("workspace restore failed: {error}"))?;
-        for draft in restored_drafts {
-            if restored_pane_commands.contains_key(&draft.pane_id) {
-                let _ = state.seed_restored_agent(draft, unix_time_ms());
-            }
-        }
-        let agent_events = AgentEventCoordinator::start(window_template.id.clone())?;
+        let (state, restored_pane_commands) =
+            restore_workspace_state(&window_template, restored_drafts)?;
+        let agent_events =
+            AgentEventCoordinator::start(window_template.id.clone(), Rc::clone(&runtimes.agent));
         let (next_worklane_number, next_pane_number) = next_workspace_identities(&state);
         let initial_pane_ids = workspace_pane_ids(&state);
         let preferred_sidebar_width = Rc::new(Cell::new(SidebarWidthPreference::DEFAULT));
@@ -178,7 +185,7 @@ impl ApplicationShell {
             last_vertical_divider: RefCell::new(None),
             background_agent_host,
             state,
-            pane_runtime: PaneRuntimeCoordinator::new(runtime, command),
+            pane_runtime: PaneRuntimeCoordinator::new(&runtimes.ghostty, command),
             restored_pane_commands,
             main_loop: main_loop.clone(),
             next_worklane_number,
@@ -200,6 +207,7 @@ impl ApplicationShell {
             agent_events,
             tmux_compat: default_tmux_product()?,
             new_window_handler: None,
+            move_pane_to_new_window_handler: None,
             close_window_handler: None,
             quit_handler: None,
             self_handle: RefCell::new(Weak::new()),
@@ -222,7 +230,11 @@ impl ApplicationShell {
         Self::install_command_palette_shortcut(&shell);
         Self::install_search_shortcuts(&shell);
         for pane_id in initial_pane_ids {
-            PaneRuntimeCoordinator::create_surface(&shell, &pane_id)?;
+            if deferred_live_pane_id == Some(pane_id.as_str()) {
+                shell.borrow_mut().pane_runtime.mark_deferred(&pane_id)?;
+            } else {
+                PaneRuntimeCoordinator::create_surface(&shell, &pane_id)?;
+            }
         }
         shell.borrow().mount_background_restored_agents();
         shell.borrow().render();
@@ -236,17 +248,105 @@ impl ApplicationShell {
     pub(crate) fn set_application_handlers(
         &mut self,
         new_window_handler: Rc<dyn Fn()>,
+        move_pane_to_new_window_handler: Rc<dyn Fn(String)>,
         close_window_handler: Rc<dyn Fn()>,
         quit_handler: Rc<dyn Fn()>,
     ) {
         self.new_window_handler = Some(new_window_handler);
+        self.move_pane_to_new_window_handler = Some(move_pane_to_new_window_handler);
         self.close_window_handler = Some(close_window_handler);
         self.quit_handler = Some(quit_handler);
+    }
+
+    pub(crate) fn extract_live_pane_to_new_window(
+        &mut self,
+        pane_id: &str,
+        destination_worklane_id: &str,
+    ) -> Result<ExtractedWindowPane, String> {
+        let source_before = self.state.clone();
+        let source_recipe = self.window_recipe();
+        let model = self
+            .state
+            .split_pane_to_new_window(pane_id, destination_worklane_id)
+            .ok_or_else(|| format!("pane {pane_id} cannot move to a new window"))?;
+        let Some(destination_recipe) =
+            model.destination_window_recipe(&source_recipe, "pending-window-transfer")
+        else {
+            self.state = source_before;
+            return Err(format!(
+                "pane {pane_id} has no source recipe metadata for window transfer"
+            ));
+        };
+        let runtime = match self.pane_runtime.detach_for_window_transfer(pane_id) {
+            Ok(runtime) => runtime,
+            Err(error) => {
+                self.state = source_before;
+                return Err(error);
+            }
+        };
+        self.render();
+        self.focus_selected_surface();
+        Ok(ExtractedWindowPane {
+            model,
+            destination_recipe,
+            runtime,
+            source_before,
+        })
+    }
+
+    pub(crate) fn has_worklane(&self, worklane_id: &str) -> bool {
+        self.state.worklane_ids().contains(&worklane_id)
+    }
+
+    pub(crate) fn rollback_live_pane_window_transfer(
+        shell: &Rc<RefCell<Self>>,
+        transfer: ExtractedWindowPane,
+    ) -> Result<(), String> {
+        let pane_id = transfer.model.moved_pane_id.clone();
+        shell.borrow_mut().state = transfer.source_before;
+        PaneRuntimeCoordinator::adopt_window_transfer(shell, &pane_id, transfer.runtime)
+            .map_err(|(error, _)| error)?;
+        let shell_ref = shell.borrow();
+        shell_ref.render();
+        shell_ref.focus_selected_surface();
+        Ok(())
+    }
+
+    pub(crate) fn adopt_live_pane_window_transfer(
+        shell: &Rc<RefCell<Self>>,
+        pane_id: &str,
+        runtime: DetachedPaneRuntime,
+    ) -> Result<(), (String, DetachedPaneRuntime)> {
+        PaneRuntimeCoordinator::adopt_window_transfer(shell, pane_id, runtime)?;
+        let shell_ref = shell.borrow();
+        shell_ref.render();
+        shell_ref.focus_selected_surface();
+        Ok(())
     }
 
     fn request_new_window(&self) {
         if let Some(handler) = self.new_window_handler.clone() {
             handler();
+        }
+    }
+
+    fn request_move_pane_to_new_window(&self) {
+        let pane_count = self
+            .state
+            .worklanes()
+            .iter()
+            .flat_map(|worklane| &worklane.columns)
+            .map(|column| column.panes.len())
+            .sum::<usize>();
+        if pane_count < 2 {
+            eprintln!("zentty-linux: action=move-pane-to-new-window available=false");
+            return;
+        }
+        let Some(pane_id) = self.state.focused_pane_id() else {
+            return;
+        };
+        if let Some(handler) = self.move_pane_to_new_window_handler.clone() {
+            handler(pane_id.to_owned());
         }
     }
 
@@ -331,7 +431,12 @@ impl ApplicationShell {
 
     pub(crate) fn detach_and_close(&mut self) {
         self.shutting_down = true;
-        self.agent_events.shutdown();
+        // A deferred pane belongs to a cross-window transfer but is not yet
+        // owned by this shell. Only revoke capabilities for live runtimes this
+        // shell actually owns, or a failed adoption would strand the source
+        // pane after rollback.
+        let owned_live_pane_ids = self.pane_runtime.live_pane_ids();
+        self.agent_events.shutdown(&owned_live_pane_ids);
         if let Some(router) = self.action_router.take() {
             router.uninstall(&self.window);
         }
@@ -1205,6 +1310,12 @@ impl ApplicationShell {
                 ACTION_MOVE_PANE_DOWN,
             ),
             CommandPaletteItem::action(
+                source_ui::MOVE_PANE_TO_NEW_WINDOW,
+                "Move the focused live terminal into a new Zentty window",
+                "pane terminal window detach",
+                ACTION_MOVE_PANE_TO_NEW_WINDOW,
+            ),
+            CommandPaletteItem::action(
                 "Focus Left Pane",
                 "Focus the neighboring column to the left",
                 "navigation terminal column",
@@ -1428,7 +1539,10 @@ impl ApplicationShell {
         let weak = Rc::downgrade(shell);
         glib::timeout_add_local_once(Duration::from_millis(50), move || {
             if let Some(shell) = weak.upgrade() {
-                shell.borrow().present();
+                let shell = shell.borrow();
+                if !shell.shutting_down {
+                    shell.present();
+                }
             }
         });
     }
@@ -1617,6 +1731,9 @@ impl ApplicationShell {
                     Self::report_action_error(shell, ACTION_SPLIT_PANE_BELOW, &error);
                 }
             }
+            PaneControlAction::MoveToNewWindow => {
+                shell.borrow().request_move_pane_to_new_window();
+            }
             PaneControlAction::ClosePane => Self::close_pane(shell, pane_id),
         }
     }
@@ -1731,8 +1848,12 @@ impl ApplicationShell {
         shell.borrow().main_loop.quit();
     }
 
-    pub(crate) fn drain_agent_events(shell: &Rc<RefCell<Self>>) {
-        AgentEventCoordinator::drain(shell);
+    pub(crate) fn apply_agent_inputs(
+        shell: &Rc<RefCell<Self>>,
+        tmux_commands: Vec<zentty_agent_ipc::AuthenticatedTmuxRequest>,
+        events: Vec<zentty_core::AuthenticatedAgentEvent>,
+    ) {
+        AgentEventCoordinator::apply_inputs(shell, tmux_commands, events);
     }
 
     fn schedule_codex_transcript_enrichment(&mut self, pane_id: &str) {
@@ -2231,7 +2352,14 @@ impl ApplicationShell {
         let Some(router) = &self.action_router else {
             return;
         };
-        router.refresh_availability(columns.len(), focused_column_panes);
+        let workspace_panes = self
+            .state
+            .worklanes()
+            .iter()
+            .flat_map(|worklane| &worklane.columns)
+            .map(|column| column.panes.len())
+            .sum();
+        router.refresh_availability(columns.len(), focused_column_panes, workspace_panes);
     }
 
     fn resolved_column_widths(&self) -> Vec<i32> {
@@ -2482,12 +2610,21 @@ impl ApplicationShell {
     fn refresh_pane_presentation(&self) {
         let focused_pane_id = self.state.focused_pane_id();
         let worklane_color = self.state.active_worklane().color;
+        let window_transfer_available = self
+            .state
+            .worklanes()
+            .iter()
+            .flat_map(|worklane| &worklane.columns)
+            .map(|column| column.panes.len())
+            .sum::<usize>()
+            >= 2;
         for pane_id in self.state.active_pane_ids() {
             if let Some(frame) = self.pane_runtime.frame(pane_id) {
                 frame.set_presentation(PanePresentation {
                     focused: Some(pane_id) == focused_pane_id,
                     worklane_color,
                 });
+                frame.set_window_transfer_available(window_transfer_available);
             }
         }
         self.refresh_right_insertion_behavior();
@@ -2896,6 +3033,26 @@ fn restored_pane_commands(
         })
         .filter(|(pane_id, _)| window_contains_pane(window, pane_id))
         .collect()
+}
+
+fn restore_workspace_state(
+    window: &WindowRecipe,
+    drafts: &[PaneRestoreDraft],
+) -> Result<(WorkspaceState, BTreeMap<String, String>), String> {
+    let commands = restored_pane_commands(window, drafts);
+    eprintln!(
+        "zentty-linux: agent-restore-drafts requested={} accepted={}",
+        drafts.len(),
+        commands.len()
+    );
+    let mut state = WorkspaceState::from_window_recipe(window)
+        .map_err(|error| format!("workspace restore failed: {error}"))?;
+    for draft in drafts {
+        if commands.contains_key(&draft.pane_id) {
+            let _ = state.seed_restored_agent(draft, unix_time_ms());
+        }
+    }
+    Ok((state, commands))
 }
 
 fn clear_pane_columns(container: &gtk::Box) {

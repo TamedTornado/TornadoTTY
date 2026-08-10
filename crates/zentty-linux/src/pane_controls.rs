@@ -12,15 +12,17 @@ pub(crate) enum PaneControlAction {
     SplitRight,
     AddPaneRight,
     NewPaneBelow,
+    MoveToNewWindow,
     ClosePane,
 }
 
 impl PaneControlAction {
     #[cfg(test)]
-    const ALL: [Self; 4] = [
+    const ALL: [Self; 5] = [
         Self::SplitRight,
         Self::AddPaneRight,
         Self::NewPaneBelow,
+        Self::MoveToNewWindow,
         Self::ClosePane,
     ];
 
@@ -29,6 +31,7 @@ impl PaneControlAction {
             Self::SplitRight => "split-right",
             Self::AddPaneRight => "add-pane-right",
             Self::NewPaneBelow => "new-pane-below",
+            Self::MoveToNewWindow => "move-pane-to-new-window",
             Self::ClosePane => "close-pane",
         }
     }
@@ -38,6 +41,7 @@ impl PaneControlAction {
             Self::SplitRight => source_ui::SPLIT_RIGHT,
             Self::AddPaneRight => source_ui::ADD_PANE_RIGHT,
             Self::NewPaneBelow => source_ui::NEW_PANE_BELOW,
+            Self::MoveToNewWindow => source_ui::MOVE_PANE_TO_NEW_WINDOW,
             Self::ClosePane => source_ui::CLOSE_PANE,
         }
     }
@@ -46,6 +50,7 @@ impl PaneControlAction {
         match self {
             Self::SplitRight | Self::AddPaneRight => "go-next-symbolic",
             Self::NewPaneBelow => "go-down-symbolic",
+            Self::MoveToNewWindow => "window-new-symbolic",
             Self::ClosePane => "window-close-symbolic",
         }
     }
@@ -55,6 +60,7 @@ pub(crate) struct PaneFrame {
     root: gtk::Overlay,
     pane_id: String,
     right_button: gtk::Button,
+    move_to_window_button: gtk::Button,
     right_action: Rc<Cell<PaneControlAction>>,
 }
 
@@ -103,6 +109,13 @@ impl PaneFrame {
         let clicked_callback = Rc::clone(&on_action);
         right_button.connect_clicked(move |_| clicked_callback(clicked_action.get()));
         controls.append(&right_button);
+
+        let move_to_window_button =
+            pane_control_button(PaneControlAction::MoveToNewWindow, pane_id);
+        let move_callback = Rc::clone(&on_action);
+        move_to_window_button
+            .connect_clicked(move |_| move_callback(PaneControlAction::MoveToNewWindow));
+        controls.append(&move_to_window_button);
 
         for action in [
             PaneControlAction::NewPaneBelow,
@@ -171,6 +184,7 @@ impl PaneFrame {
             root,
             pane_id: pane_id.to_owned(),
             right_button,
+            move_to_window_button,
             right_action,
         }
     }
@@ -211,6 +225,10 @@ impl PaneFrame {
                 action.id()
             );
         }
+    }
+
+    pub(crate) fn set_window_transfer_available(&self, available: bool) {
+        self.move_to_window_button.set_sensitive(available);
     }
 
     pub(crate) fn detach_terminal(&self) {
@@ -340,6 +358,10 @@ mod tests {
                 ("split-right", source_ui::SPLIT_RIGHT),
                 ("add-pane-right", source_ui::ADD_PANE_RIGHT),
                 ("new-pane-below", source_ui::NEW_PANE_BELOW),
+                (
+                    "move-pane-to-new-window",
+                    source_ui::MOVE_PANE_TO_NEW_WINDOW
+                ),
                 ("close-pane", source_ui::CLOSE_PANE),
             ]
         );

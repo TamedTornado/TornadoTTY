@@ -2,7 +2,8 @@ use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use zentty_core::WorkspaceState;
+use zentty_agent_ipc::AuthenticatedTmuxRequest;
+use zentty_core::{AuthenticatedAgentEvent, WorkspaceState};
 use zentty_tmux_compat::Command as TmuxCommand;
 
 use crate::agent_runtime::AgentRuntime;
@@ -35,21 +36,23 @@ fn event_route_decision(
 /// for one application window. `AgentRuntime` remains the sole transport and
 /// token authority; `WorkspaceState` remains the sole status reducer.
 pub(super) struct AgentEventCoordinator {
-    runtime: AgentRuntime,
+    runtime: Rc<RefCell<AgentRuntime>>,
+    window_id: String,
     transcript_enricher: CodexTranscriptEnricher,
 }
 
 impl AgentEventCoordinator {
-    pub(super) fn start(window_id: impl Into<String>) -> Result<Self, String> {
-        let runtime = AgentRuntime::start(window_id)?;
+    pub(super) fn start(window_id: impl Into<String>, runtime: Rc<RefCell<AgentRuntime>>) -> Self {
+        let window_id = window_id.into();
         let codex_home = std::env::var_os("CODEX_HOME")
             .map(PathBuf::from)
             .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".codex")))
-            .unwrap_or_else(|| runtime.missing_codex_home());
-        Ok(Self {
+            .unwrap_or_else(|| runtime.borrow().missing_codex_home());
+        Self {
             runtime,
+            window_id,
             transcript_enricher: CodexTranscriptEnricher::new(codex_home),
-        })
+        }
     }
 
     pub(super) fn environment_for_pane(
@@ -57,12 +60,14 @@ impl AgentEventCoordinator {
         worklane_id: &str,
         pane_id: &str,
     ) -> Result<Vec<(String, String)>, String> {
-        self.runtime.environment_for_pane(worklane_id, pane_id)
+        self.runtime
+            .borrow_mut()
+            .environment_for_pane(&self.window_id, worklane_id, pane_id)
     }
 
     pub(super) fn unregister_pane(&mut self, pane_id: &str) {
         self.transcript_enricher.cancel_pane(pane_id);
-        self.runtime.unregister_pane(pane_id);
+        self.runtime.borrow_mut().unregister_pane(pane_id);
     }
 
     pub(super) fn sync_targets(&mut self, state: &WorkspaceState) -> Result<(), String> {
@@ -78,11 +83,15 @@ impl AgentEventCoordinator {
                 })
             })
             .collect::<Vec<_>>();
-        self.runtime.retarget_registered_panes(
-            topology
-                .iter()
-                .map(|(worklane_id, pane_id)| (worklane_id.as_str(), pane_id.as_str())),
-        )
+        self.runtime
+            .borrow_mut()
+            .retarget_registered_panes(topology.iter().map(|(worklane_id, pane_id)| {
+                (
+                    self.window_id.as_str(),
+                    worklane_id.as_str(),
+                    pane_id.as_str(),
+                )
+            }))
     }
 
     pub(super) fn schedule_for_pane(&mut self, state: &WorkspaceState, pane_id: &str) {
@@ -102,12 +111,18 @@ impl AgentEventCoordinator {
         }
     }
 
-    pub(super) fn shutdown(&mut self) {
+    pub(super) fn shutdown(&mut self, owned_live_pane_ids: &[String]) {
+        for pane_id in owned_live_pane_ids {
+            self.runtime.borrow_mut().unregister_pane(pane_id);
+        }
         self.transcript_enricher.shutdown();
     }
 
-    pub(super) fn drain(shell: &Rc<RefCell<ApplicationShell>>) {
-        let tmux_commands = shell.borrow().agent_events.runtime.drain_tmux();
+    pub(super) fn apply_inputs(
+        shell: &Rc<RefCell<ApplicationShell>>,
+        tmux_commands: Vec<AuthenticatedTmuxRequest>,
+        events: Vec<AuthenticatedAgentEvent>,
+    ) {
         let mut tmux_changed_product_state = false;
         for command in tmux_commands {
             let changes_state = matches!(command.request.command(), TmuxCommand::SelectPane);
@@ -118,7 +133,6 @@ impl AgentEventCoordinator {
             shell.borrow().render();
         }
 
-        let events = shell.borrow().agent_events.runtime.drain();
         let now = unix_time_ms();
         let mut sidebar_changed = false;
         for mut event in events {

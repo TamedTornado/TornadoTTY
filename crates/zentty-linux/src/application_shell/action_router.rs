@@ -32,14 +32,21 @@ pub(super) enum Availability {
     Always,
     MultipleColumns,
     MultiplePanesInFocusedColumn,
+    MultipleWorkspacePanes,
 }
 
 impl Availability {
-    pub(super) const fn enabled(self, columns: usize, focused_column_panes: usize) -> bool {
+    pub(super) const fn enabled(
+        self,
+        columns: usize,
+        focused_column_panes: usize,
+        workspace_panes: usize,
+    ) -> bool {
         match self {
             Self::Always => true,
             Self::MultipleColumns => columns >= 2,
             Self::MultiplePanesInFocusedColumn => focused_column_panes >= 2,
+            Self::MultipleWorkspacePanes => workspace_panes >= 2,
         }
     }
 }
@@ -93,6 +100,7 @@ pub(super) const ACTION_MOVE_PANE_RIGHT: &str = "move-pane-right";
 pub(super) const ACTION_MOVE_PANE_UP: &str = "move-pane-up";
 pub(super) const ACTION_MOVE_PANE_DOWN: &str = "move-pane-down";
 pub(super) const ACTION_MOVE_PANE_TO_WORKLANE: &str = "move-pane-to-worklane";
+pub(super) const ACTION_MOVE_PANE_TO_NEW_WINDOW: &str = "move-pane-to-new-window";
 pub(super) const ACTION_SELECT_PANE: &str = "select-pane";
 pub(super) const ACTION_NAVIGATE_BACK: &str = "navigate-back";
 pub(super) const ACTION_NAVIGATE_FORWARD: &str = "navigate-forward";
@@ -157,6 +165,12 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
         ACTION_MOVE_PANE_TO_WORKLANE,
         "move-pane-to-worklane",
         String
+    ),
+    action!(
+        ACTION_MOVE_PANE_TO_NEW_WINDOW,
+        "move-pane-to-new-window",
+        None,
+        MultipleWorkspacePanes
     ),
     action!(ACTION_SELECT_PANE, "select-pane", StringPair),
     action!(ACTION_NAVIGATE_BACK, "navigate-back", None),
@@ -267,9 +281,16 @@ impl ActionRouter {
         drop(self.group);
     }
 
-    pub(super) fn refresh_availability(&self, columns: usize, focused_column_panes: usize) {
+    pub(super) fn refresh_availability(
+        &self,
+        columns: usize,
+        focused_column_panes: usize,
+        workspace_panes: usize,
+    ) {
         for spec in ACTION_SPECS {
-            let enabled = spec.availability.enabled(columns, focused_column_panes);
+            let enabled = spec
+                .availability
+                .enabled(columns, focused_column_panes, workspace_panes);
             let Some(action) = self
                 .group
                 .lookup_action(spec.name)
@@ -401,6 +422,15 @@ fn install_application_actions(
         }
     });
     group.add_action(&close_window);
+
+    let move_pane = gio::SimpleAction::new(ACTION_MOVE_PANE_TO_NEW_WINDOW, None);
+    let weak = Rc::downgrade(shell);
+    move_pane.connect_activate(move |_, _| {
+        if let Some(shell) = weak.upgrade() {
+            shell.borrow().request_move_pane_to_new_window();
+        }
+    });
+    group.add_action(&move_pane);
 }
 
 fn install_edit_actions(shell: &Rc<RefCell<ApplicationShell>>, group: &gio::SimpleActionGroup) {
@@ -972,7 +1002,7 @@ mod tests {
 
     #[test]
     fn registry_is_unique_complete_and_typed() {
-        assert_eq!(ACTION_SPECS.len(), 59);
+        assert_eq!(ACTION_SPECS.len(), 60);
         assert_eq!(
             ACTION_SPECS
                 .iter()
@@ -1026,11 +1056,13 @@ mod tests {
 
     #[test]
     fn sensitivity_rules_cover_both_topology_dimensions() {
-        assert!(Availability::Always.enabled(0, 0));
-        assert!(!Availability::MultipleColumns.enabled(1, 4));
-        assert!(Availability::MultipleColumns.enabled(2, 1));
-        assert!(!Availability::MultiplePanesInFocusedColumn.enabled(4, 1));
-        assert!(Availability::MultiplePanesInFocusedColumn.enabled(1, 2));
+        assert!(Availability::Always.enabled(0, 0, 0));
+        assert!(!Availability::MultipleColumns.enabled(1, 4, 4));
+        assert!(Availability::MultipleColumns.enabled(2, 1, 2));
+        assert!(!Availability::MultiplePanesInFocusedColumn.enabled(4, 1, 4));
+        assert!(Availability::MultiplePanesInFocusedColumn.enabled(1, 2, 2));
+        assert!(!Availability::MultipleWorkspacePanes.enabled(1, 1, 1));
+        assert!(Availability::MultipleWorkspacePanes.enabled(1, 1, 2));
 
         let conditional = ACTION_SPECS
             .iter()
@@ -1040,6 +1072,10 @@ mod tests {
         assert_eq!(
             conditional,
             [
+                (
+                    "move-pane-to-new-window",
+                    Availability::MultipleWorkspacePanes
+                ),
                 ("resize-pane-left", Availability::MultipleColumns),
                 ("resize-pane-right", Availability::MultipleColumns),
                 ("resize-pane-up", Availability::MultiplePanesInFocusedColumn),

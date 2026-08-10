@@ -60,11 +60,12 @@ layer_runpath="$(
 
 state_dir="$(mktemp -d)"
 log="$(mktemp)"
-child_command='while IFS= read -r value; do printf '\''\033]2;%s\a'\'' "$value"; done'
+child_command='while IFS= read -r value; do if [ "$value" = agent-running ]; then printf '\''%s'\'' '\''{"version":1,"event":"agent.running","agent":{"name":"Codex"},"session":{"id":"moved-live-pane"}}'\'' | "$ZENTTY_CLI_BIN" ipc agent-event; elif [ "$value" = tmux-route ]; then route="$(tmux display-message -p '\''#{pane_id}'\'')" && printf '\''\033]2;tmux:%s\a'\'' "$route"; elif [ "$value" = tmux-stale-claim ]; then route="$(ZENTTY_WINDOW_ID=window-1 ZENTTY_WORKLANE_ID=worklane-1 tmux display-message -p '\''#{pane_id}'\'')" && printf '\''\033]2;tmux-stale:%s\a'\'' "$route"; elif [ "$value" = capture-move ]; then tmux capture-pane -p | grep -Fq before-live-window-move && printf '\''\033]2;scrollback-preserved\a'\''; else printf '\''\033]2;%s\a'\'' "$value"; fi; done'
 
 start_product() {
     : >"${log}"
-    LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+    CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 \
+        LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
         "${product}" \
         --command "${child_command}" \
         --state-directory "${state_dir}" \
@@ -93,6 +94,7 @@ wait_for_exit() {
 }
 
 target_second_window() {
+    local pane_id="${1:-pane-window-2}"
     if [[ "${backend}" == x11 ]]; then
         mapfile -t candidate_ids < <(
             xdotool search --onlyvisible --pid "${product_pid}" --name '^Zentty$' 2>/dev/null
@@ -108,7 +110,7 @@ target_second_window() {
             xdotool type --delay 5 "${probe}"
             xdotool key Return
             for _ in {1..40}; do
-                if grep -Fq "zentty-linux: title-pane=pane-window-2 value=${probe}" "${log}"; then
+                if grep -Fq "zentty-linux: title-pane=${pane_id} value=${probe}" "${log}"; then
                     ZENTTY_PRODUCT_WINDOW_ID="${candidate_id}"
                     export ZENTTY_PRODUCT_WINDOW_ID
                     return
@@ -116,8 +118,22 @@ target_second_window() {
                 sleep 0.05
             done
         done
-        fail "physical route probes could not identify pane-window-2's X11 toplevel"
+        fail "physical route probes could not identify ${pane_id}'s X11 toplevel"
     fi
+}
+
+execute_palette_action() {
+    local query="$1"
+    local action="$2"
+    zentty_product_ctrl_shift_key "${backend}" p
+    zentty_product_wait_for_log "${log}" 'zentty-linux: command-palette=shown' \
+        "command palette did not open for ${action}" || fail "${action} palette missing"
+    zentty_product_type "${backend}" "${query}"
+    zentty_product_wait_for_log "${log}" \
+        "zentty-linux: command-palette=query value=\"${query}\" results=1" \
+        "${action} did not resolve uniquely" || fail "${action} palette query failed"
+    zentty_product_key "${backend}" Down
+    zentty_product_key "${backend}" Return
 }
 
 create_second_window() {
@@ -185,9 +201,180 @@ close_active_window() {
     fi
 }
 
+# Journey 0: split a second real pane, then invoke the source-named window move
+# through the real command palette. The exact PTY child set, terminal-ready
+# count, post-move physical input, and authenticated event route prove this is
+# a live reparent rather than a reconstructed terminal or model-only move.
+start_product
+mapfile -t children_before_split < <(pgrep -P "${product_pid}" | sort -n)
+[[ "${#children_before_split[@]}" -eq 1 ]] || fail "fresh window did not own exactly one PTY child"
+original_child="${children_before_split[0]}"
+execute_palette_action "Split the focused pane into a visible right column" "Split Right"
+zentty_product_wait_for_log "${log}" 'zentty-linux: terminal-ready-pane=pane-2' \
+    "Split Right did not create pane-2's real Ghostty surface" || fail "second pane missing"
+children_after_split=()
+for _ in {1..200}; do
+    mapfile -t children_after_split < <(pgrep -P "${product_pid}" | sort -n)
+    [[ "${#children_after_split[@]}" -eq 2 ]] && break
+    sleep 0.05
+done
+[[ "${#children_after_split[@]}" -eq 2 ]] || fail "split did not produce exactly two PTY children"
+printf '%s\n' "${children_after_split[@]}" | grep -Fxq "${original_child}" ||
+    fail "split replaced the original PTY child"
+type_and_expect_title "before-live-window-move" "pane-2"
+focus_count_before_move="$(grep -Fc 'zentty-linux: focus-pane pane=pane-2' "${log}" || true)"
+execute_palette_action "Move Pane to New Window" "Move Pane to New Window"
+zentty_product_wait_for_log "${log}" \
+    'zentty-linux: action=move-pane-to-new-window pane=pane-2 source=window-1 destination=window-2' \
+    "live pane move did not complete" || fail "pane-to-window transaction missing"
+zentty_product_wait_for_log "${log}" 'zentty-linux: window-opened id=window-2' \
+    "live pane move did not present its destination window" || fail "move destination missing"
+zentty_product_wait_for_log "${log}" \
+    'zentty-linux: topology=worklane-1[title=none,color=none]:pane-1*' \
+    "live pane move did not leave the source topology authoritative" ||
+    fail "move source topology missing"
+zentty_product_wait_for_log "${log}" \
+    'zentty-linux: topology=window-2-worklane-1[title=none,color=none]:pane-2*' \
+    "live pane move did not project the destination topology" ||
+    fail "move destination topology missing"
+zentty_product_wait_for_log_count "${log}" 'zentty-linux: focus-pane pane=pane-2' \
+    "$((focus_count_before_move + 1))" "moved pane did not settle compositor focus" ||
+    fail "move destination focus missing"
+[[ "$(grep -Fc 'zentty-linux: terminal-ready-pane=pane-2' "${log}")" -eq 1 ]] ||
+    fail "live pane move recreated pane-2's Ghostty surface"
+children_after_move=()
+for _ in {1..40}; do
+    mapfile -t children_after_move < <(pgrep -P "${product_pid}" | sort -n)
+    [[ "${children_after_move[*]}" == "${children_after_split[*]}" ]] && break
+    sleep 0.05
+done
+[[ "${children_after_move[*]}" == "${children_after_split[*]}" ]] ||
+    fail "live pane move changed the real PTY child set"
+target_second_window "pane-2"
+type_and_expect_title "after-live-window-move" "pane-2"
+zentty_product_type "${backend}" "agent-running"
+zentty_product_key "${backend}" Return
+zentty_product_wait_for_log "${log}" \
+    'zentty-linux: agent-event pane=pane-2 worklane=window-2-worklane-1 kind=agent.running session=moved-live-pane' \
+    "moved pane capability did not retarget through the shared real socket" ||
+    fail "post-move authenticated agent route missing"
+zentty_product_type "${backend}" "tmux-route"
+zentty_product_key "${backend}" Return
+zentty_product_wait_for_log "${log}" \
+    'zentty-linux: tmux-command pane=pane-2 worklane=window-2-worklane-1 command=DisplayMessage' \
+    "moved pane tmux command did not reach the destination workspace" ||
+    fail "post-move tmux destination route missing"
+zentty_product_wait_for_log "${log}" 'zentty-linux: title-pane=pane-2 value=tmux:%pane-2' \
+    "moved pane did not receive its real tmux response" || fail "post-move tmux response missing"
+tmux_destination_count="$(grep -Fc 'zentty-linux: tmux-command pane=pane-2 worklane=window-2-worklane-1 command=DisplayMessage' "${log}" || true)"
+zentty_product_type "${backend}" "tmux-stale-claim"
+zentty_product_key "${backend}" Return
+zentty_product_wait_for_log_count "${log}" \
+    'zentty-linux: tmux-command pane=pane-2 worklane=window-2-worklane-1 command=DisplayMessage' \
+    "$((tmux_destination_count + 1))" "stale source claim did not remain canonicalized to the destination" ||
+    fail "stale source tmux claim escaped canonical routing"
+zentty_product_wait_for_log "${log}" 'zentty-linux: title-pane=pane-2 value=tmux-stale:%pane-2' \
+    "stale source claim did not return through the moved pane" || fail "stale-claim tmux response missing"
+! grep -Fq 'zentty-linux: tmux-command pane=pane-2 worklane=worklane-1' "${log}" ||
+    fail "tmux accepted stale source worklane targeting after the move"
+zentty_product_type "${backend}" "capture-move"
+zentty_product_key "${backend}" Return
+zentty_product_wait_for_log "${log}" 'zentty-linux: title-pane=pane-2 value=scrollback-preserved' \
+    "real Ghostty capture lost pre-move terminal contents" || fail "pre-move scrollback was not preserved"
+for _ in {1..240}; do
+    [[ -f "${state_dir}/restore-snapshot.json" ]] && jq -e '
+        (.workspace.windows | map(.id)) == ["window-1", "window-2"] and
+        [.workspace.windows[0].worklanes[].columns[].panes[].id] == ["pane-1"] and
+        [.workspace.windows[1].worklanes[].columns[].panes[].id] == ["pane-2"] and
+        .workspace.activeWindowID == "window-2"
+    ' "${state_dir}/restore-snapshot.json" >/dev/null 2>&1 && break
+    sleep 0.05
+done
+jq -e '
+    (.workspace.windows | map(.id)) == ["window-1", "window-2"] and
+    [.workspace.windows[0].worklanes[].columns[].panes[].id] == ["pane-1"] and
+    [.workspace.windows[1].worklanes[].columns[].panes[].id] == ["pane-2"] and
+    .workspace.activeWindowID == "window-2"
+' "${state_dir}/restore-snapshot.json" >/dev/null || fail "live snapshot lost transferred pane ownership"
+zentty_product_close_window "${backend}"
+wait_for_exit
+jq -e '
+    .reason == "cleanExit" and
+    (.workspace.windows | map(.id)) == ["window-1", "window-2"] and
+    [.workspace.windows[0].worklanes[].columns[].panes[].id] == ["pane-1"] and
+    [.workspace.windows[1].worklanes[].columns[].panes[].id] == ["pane-2"] and
+    .workspace.activeWindowID == "window-2"
+' "${state_dir}/restore-snapshot.json" >/dev/null || fail "clean exit lost transferred pane ownership"
+
+start_product
+zentty_product_wait_for_log "${log}" 'zentty-linux: window-opened id=window-2' \
+    "clean relaunch did not restore the transfer destination" || fail "clean transfer restore window missing"
+zentty_product_wait_for_log "${log}" 'zentty-linux: terminal-ready-pane=pane-2' \
+    "clean relaunch did not restore the transferred pane" || fail "clean transfer restore pane missing"
+zentty_product_wait_for_log "${log}" 'zentty-linux: focus-pane pane=pane-2' \
+    "clean relaunch did not focus the transfer destination" || fail "clean transfer restore focus missing"
+target_second_window "pane-2"
+type_and_expect_title "clean-restored-live-window-move" "pane-2"
+for _ in {1..240}; do
+    jq -e '
+        .reason == "liveSnapshot" and
+        (.workspace.windows | map(.id)) == ["window-1", "window-2"] and
+        [.workspace.windows[0].worklanes[].columns[].panes[].id] == ["pane-1"] and
+        [.workspace.windows[1].worklanes[].columns[].panes[].id] == ["pane-2"] and
+        .workspace.activeWindowID == "window-2"
+    ' "${state_dir}/restore-snapshot.json" >/dev/null 2>&1 && break
+    sleep 0.05
+done
+jq -e '
+    .reason == "liveSnapshot" and
+    (.workspace.windows | map(.id)) == ["window-1", "window-2"] and
+    [.workspace.windows[0].worklanes[].columns[].panes[].id] == ["pane-1"] and
+    [.workspace.windows[1].worklanes[].columns[].panes[].id] == ["pane-2"] and
+    .workspace.activeWindowID == "window-2"
+' "${state_dir}/restore-snapshot.json" >/dev/null || fail "confirmed-live transfer snapshot was not authoritative"
+
+crashed_transfer_pid="${product_pid}"
+mapfile -t crashed_transfer_children < <(pgrep -P "${crashed_transfer_pid}" || true)
+kill -KILL "${crashed_transfer_pid}"
+set +e
+wait "${crashed_transfer_pid}"
+crashed_transfer_status=$?
+set -e
+product_pid=""
+((crashed_transfer_status == 137)) || fail "transfer crash exited with unexpected status ${crashed_transfer_status}"
+for child in "${crashed_transfer_children[@]}"; do
+    for _ in {1..100}; do
+        kill -0 "${child}" 2>/dev/null || break
+        sleep 0.05
+    done
+    kill -0 "${child}" 2>/dev/null && fail "transfer crash left PTY child ${child} alive"
+done
+
+product_args=(--no-session-restore)
+start_product
+zentty_product_wait_for_log "${log}" 'zentty-linux: window-opened id=window-2' \
+    "crash relaunch did not restore the transfer destination" || fail "crash transfer restore window missing"
+zentty_product_wait_for_log "${log}" 'zentty-linux: terminal-ready-pane=pane-2' \
+    "crash relaunch did not restore the transferred pane" || fail "crash transfer restore pane missing"
+zentty_product_wait_for_log "${log}" 'zentty-linux: focus-pane pane=pane-2' \
+    "crash relaunch did not focus the transfer destination" || fail "crash transfer restore focus missing"
+target_second_window "pane-2"
+type_and_expect_title "crash-restored-live-window-move" "pane-2"
+close_active_window
+zentty_product_wait_for_log "${log}" 'zentty-linux: window-closed id=window-2 remaining=1' \
+    "closing the restored transfer destination did not preserve its source" ||
+    fail "restored transfer destination close failed"
+zentty_product_prepare_input "${backend}" "${log}" || fail "could not focus the surviving transfer source"
+type_and_expect_title "surviving-transfer-source" "pane-1"
+zentty_product_close_window "${backend}"
+wait_for_exit
+product_args=()
+
 # Journey 1: create two windows through the real shortcut, prove the active
 # second PTY receives input, save both through the one real persistence path,
 # and relaunch the exact two-window recipe.
+rm -rf -- "${state_dir}"
+state_dir="$(mktemp -d)"
 start_product
 create_second_window
 type_and_expect_title "second-window-marker" "pane-window-2"

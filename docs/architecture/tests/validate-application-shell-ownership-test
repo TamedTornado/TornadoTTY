@@ -86,12 +86,12 @@ jq '(.owned_module_functions.pane_runtime_coordinator) |= map(select(. != "remov
 expect_failure missing-pane-runtime-function "pane runtime function inventory differs" \
     "ZENTTY_APPLICATION_SHELL_OWNERSHIP_CONTRACT=${temp_dir}/missing-pane-runtime-function.json"
 
-jq '(.owned_module_functions.agent_event_coordinator) |= map(select(. != "drain"))' \
+jq '(.owned_module_functions.agent_event_coordinator) |= map(select(. != "apply_inputs"))' \
     "${contract}" >"${temp_dir}/missing-agent-event-function.json"
 expect_failure missing-agent-event-function "agent event coordinator function inventory differs" \
     "ZENTTY_APPLICATION_SHELL_OWNERSHIP_CONTRACT=${temp_dir}/missing-agent-event-function.json"
 
-sed '/runtime: AgentRuntime,/a\    shadow_receiver: std::sync::mpsc::Receiver<zentty_core::AuthenticatedAgentEvent>,' \
+sed '/runtime: Rc<RefCell<AgentRuntime>>,/a\    shadow_receiver: std::sync::mpsc::Receiver<zentty_core::AuthenticatedAgentEvent>,' \
     "${agent_events_file}" >"${temp_dir}/shadow-agent-event-queue.rs"
 expect_failure shadow-agent-event-queue "agent events source hash" \
     "ZENTTY_AGENT_EVENTS_SOURCE=${temp_dir}/shadow-agent-event-queue.rs"

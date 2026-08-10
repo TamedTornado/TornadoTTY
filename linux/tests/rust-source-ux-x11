@@ -689,7 +689,10 @@ sleep 0.2
 # the currently focused pane-3, and prove the resulting visible pair belongs to
 # pane-2. Close that exact transient pane through its own control.
 xdotool mousemove --window "${window_id}" 1000 350
-xdotool mousemove --window "${window_id}" 1118 60 click 1
+# Four source actions occupy the pane's trailing control strip. Click the
+# leading Split Right icon; the prior three-control coordinate now correctly
+# belongs to Move Pane to New Window.
+xdotool mousemove --window "${window_id}" 1080 60 click 1
 for _ in $(seq 1 100); do
     grep -Fxq 'zentty-linux: pane-control action=split-right target=pane-2' "${log}" && break
     sleep 0.05

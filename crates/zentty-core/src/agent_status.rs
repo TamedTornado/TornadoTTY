@@ -633,6 +633,43 @@ impl AgentStatusStore {
             .retain(|(tracked_pane, _)| tracked_pane != pane_id);
         self.codex_interrupt_suppression.remove(pane_id);
     }
+
+    pub(crate) fn take_pane(&mut self, pane_id: &str) -> Self {
+        let mut taken = Self::default();
+        if let Some(statuses) = self.panes.remove(pane_id) {
+            taken.panes.insert(pane_id.to_owned(), statuses);
+        }
+        taken.codex_title_inferred = self
+            .codex_title_inferred
+            .iter()
+            .filter(|(tracked_pane, _)| tracked_pane == pane_id)
+            .cloned()
+            .collect();
+        self.codex_title_inferred
+            .retain(|(tracked_pane, _)| tracked_pane != pane_id);
+        taken.codex_idle_suppression_until = self
+            .codex_idle_suppression_until
+            .iter()
+            .filter(|((tracked_pane, _), _)| tracked_pane == pane_id)
+            .map(|(key, value)| (key.clone(), *value))
+            .collect();
+        self.codex_idle_suppression_until
+            .retain(|(tracked_pane, _), _| tracked_pane != pane_id);
+        taken.codex_observed_running = self
+            .codex_observed_running
+            .iter()
+            .filter(|(tracked_pane, _)| tracked_pane == pane_id)
+            .cloned()
+            .collect();
+        self.codex_observed_running
+            .retain(|(tracked_pane, _)| tracked_pane != pane_id);
+        if let Some(suppression) = self.codex_interrupt_suppression.remove(pane_id) {
+            taken
+                .codex_interrupt_suppression
+                .insert(pane_id.to_owned(), suppression);
+        }
+        taken
+    }
 }
 
 fn should_suppress_claude_post_stop_notification(
