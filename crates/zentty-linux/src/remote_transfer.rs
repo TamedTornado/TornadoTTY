@@ -46,9 +46,26 @@ impl PreparedLocalUpload {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RemoteTransferReceipt {
-    pub remote_path: String,
-    pub byte_count: u64,
-    pub sha256: String,
+    remote_path: String,
+    byte_count: u64,
+    sha256: String,
+}
+
+impl RemoteTransferReceipt {
+    #[must_use]
+    pub fn remote_path(&self) -> &str {
+        &self.remote_path
+    }
+
+    #[must_use]
+    pub const fn byte_count(&self) -> u64 {
+        self.byte_count
+    }
+
+    #[must_use]
+    pub fn sha256(&self) -> &str {
+        &self.sha256
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -261,6 +278,37 @@ pub fn execute_remote_transfer(
         return Err(error);
     }
     Ok(receipt(&plan, &upload.prepared))
+}
+
+/// Removes final paths published by earlier successful transfers in a product
+/// batch that subsequently failed. Only receipts returned by this module can
+/// identify deletion targets.
+///
+/// # Errors
+///
+/// Returns a classified SSH error if the bounded rollback cannot remove every
+/// supplied final path.
+pub fn rollback_remote_transfers(
+    destination: &SshDestination,
+    receipts: &[RemoteTransferReceipt],
+) -> Result<(), RemoteTransferError> {
+    if receipts.is_empty() {
+        return Ok(());
+    }
+    let paths = receipts
+        .iter()
+        .map(|receipt| zentty_core::escape_remote_path_for_shell(receipt.remote_path()))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let script = format!("rm -f {paths}");
+    let never_cancelled = AtomicBool::new(false);
+    run_ssh_script(
+        destination,
+        &script,
+        None,
+        &never_cancelled,
+        Instant::now() + Duration::from_secs(10),
+    )
 }
 
 fn receipt(plan: &RemoteVerificationPlan, prepared: &PreparedLocalUpload) -> RemoteTransferReceipt {

@@ -42,9 +42,9 @@ fn main() -> Result<(), String> {
     println!(
         "{}",
         json!({
-            "remotePath": receipt.remote_path,
-            "byteCount": receipt.byte_count,
-            "sha256": receipt.sha256,
+            "remotePath": receipt.remote_path(),
+            "byteCount": receipt.byte_count(),
+            "sha256": receipt.sha256(),
         })
     );
     Ok(())

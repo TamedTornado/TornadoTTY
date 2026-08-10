@@ -14,7 +14,9 @@ use zentty_core::{
     MAX_REMOTE_FILE_BYTES, MAX_REMOTE_IMAGE_BYTES, RemoteUploadPath, SshDestination,
     escape_remote_path_for_shell,
 };
-use zentty_linux::remote_transfer::{RemoteTransferRequest, execute_remote_transfer};
+use zentty_linux::remote_transfer::{
+    RemoteTransferRequest, execute_remote_transfer, rollback_remote_transfers,
+};
 
 use super::ssh_identity::{self, PaneSshIdentity};
 use super::{ApplicationShell, unix_time_ms};
@@ -43,7 +45,12 @@ impl RemoteUploadActivity {
     }
 }
 
-pub(super) fn install(shell: &Rc<RefCell<ApplicationShell>>, pane_id: &str, frame: &gtk::Widget) {
+pub(super) fn install(
+    shell: &Rc<RefCell<ApplicationShell>>,
+    pane_id: &str,
+    frame: &gtk::Widget,
+    terminal: &gtk::Widget,
+) {
     let keys = gtk::EventControllerKey::new();
     keys.set_propagation_phase(gtk::PropagationPhase::Capture);
     let weak = Rc::downgrade(shell);
@@ -114,29 +121,65 @@ pub(super) fn install(shell: &Rc<RefCell<ApplicationShell>>, pane_id: &str, fram
     });
     frame.add_controller(keys);
 
-    let drop_target = gtk::DropTarget::new(gdk::FileList::static_type(), gdk::DragAction::COPY);
+    install_drop_targets(shell, pane_id, terminal);
+}
+
+fn install_drop_targets(
+    shell: &Rc<RefCell<ApplicationShell>>,
+    pane_id: &str,
+    terminal: &gtk::Widget,
+) {
+    let uri_target = gtk::DropTargetAsync::new(
+        Some(gdk::ContentFormats::new(&["text/uri-list"])),
+        gdk::DragAction::COPY,
+    );
+    uri_target.set_propagation_phase(gtk::PropagationPhase::Capture);
     let weak = Rc::downgrade(shell);
-    let drop_pane_id = pane_id.to_owned();
-    drop_target.connect_drop(move |_, value, _, _| {
-        let Ok(files) = value.get::<gdk::FileList>() else {
-            return false;
-        };
-        let Some(shell) = weak.upgrade() else {
-            return false;
-        };
-        if !shell
-            .borrow()
-            .remote_panes
-            .identities
-            .contains_key(&drop_pane_id)
-        {
-            return false;
-        }
-        let weak = Rc::downgrade(&shell);
-        begin_upload(&weak, &drop_pane_id, file_inputs(&files));
+    let accept_pane_id = pane_id.to_owned();
+    uri_target.connect_accept(move |_, _| {
+        weak.upgrade().is_some_and(|shell| {
+            shell
+                .borrow()
+                .remote_panes
+                .identities
+                .contains_key(&accept_pane_id)
+        })
+    });
+    let enter_pane_id = pane_id.to_owned();
+    uri_target.connect_drag_enter(move |_, _, _, _| {
+        eprintln!("zentty-linux: remote-paste pane={enter_pane_id} drop=uri-enter");
+        gdk::DragAction::COPY
+    });
+    let weak = Rc::downgrade(shell);
+    let uri_pane_id = pane_id.to_owned();
+    uri_target.connect_drop(move |_, drop, _, _| {
+        let drop = drop.clone();
+        let weak = weak.clone();
+        let pane_id = uri_pane_id.clone();
+        gtk::glib::spawn_future_local(async move {
+            let inputs = read_uri_drop(&drop).await;
+            let accepted = match inputs {
+                Ok(inputs) if weak.upgrade().is_some() => {
+                    begin_upload(&weak, &pane_id, inputs);
+                    true
+                }
+                Ok(_) => false,
+                Err(error) => {
+                    eprintln!(
+                        "zentty-linux: remote-paste pane={pane_id} drop=read-failed detail={error}"
+                    );
+                    false
+                }
+            };
+            drop.finish(if accepted {
+                gdk::DragAction::COPY
+            } else {
+                gdk::DragAction::empty()
+            });
+        });
         true
     });
-    frame.add_controller(drop_target);
+    terminal.add_controller(uri_target);
 }
 
 async fn read_file_list(clipboard: &gdk::Clipboard) -> Result<gdk::FileList, String> {
@@ -167,7 +210,6 @@ async fn read_file_list(clipboard: &gdk::Clipboard) -> Result<gdk::FileList, Str
 }
 
 async fn read_uri_list(clipboard: &gdk::Clipboard) -> Result<Vec<UploadInput>, String> {
-    const MAX_URI_LIST_BYTES: usize = 64 * 1024;
     let (stream, mime_type) = clipboard
         .read_future(&["text/uri-list"], gtk::glib::Priority::DEFAULT)
         .await
@@ -177,6 +219,22 @@ async fn read_uri_list(clipboard: &gdk::Clipboard) -> Result<Vec<UploadInput>, S
             "clipboard returned unexpected MIME type {mime_type}"
         ));
     }
+    read_uri_stream(&stream).await
+}
+
+async fn read_uri_drop(drop: &gdk::Drop) -> Result<Vec<UploadInput>, String> {
+    let (stream, mime_type) = drop
+        .read_future(&["text/uri-list"], gtk::glib::Priority::DEFAULT)
+        .await
+        .map_err(|error| format!("could not open URI-list drop: {error}"))?;
+    if mime_type != "text/uri-list" {
+        return Err(format!("drop returned unexpected MIME type {mime_type}"));
+    }
+    read_uri_stream(&stream).await
+}
+
+async fn read_uri_stream(stream: &gtk::gio::InputStream) -> Result<Vec<UploadInput>, String> {
+    const MAX_URI_LIST_BYTES: usize = 64 * 1024;
     let mut payload = Vec::new();
     loop {
         let bytes = stream
@@ -290,21 +348,45 @@ fn upload_inputs(
     inputs: &[UploadInput],
     cancellation: &AtomicBool,
 ) -> Result<(Vec<String>, Option<SshDestination>), String> {
-    let mut remote_paths = Vec::with_capacity(inputs.len());
+    let mut receipts = Vec::with_capacity(inputs.len());
     for input in inputs {
         if cancellation.load(Ordering::Acquire) {
-            return Err("upload cancelled after SSH identity changed".to_owned());
+            return rollback_batch(
+                identity,
+                &receipts,
+                "upload cancelled after SSH identity changed".to_owned(),
+            );
         }
-        let receipt = match input {
-            UploadInput::File(path) => upload_file(identity, path, cancellation)?,
-            UploadInput::PngImage(bytes) => upload_png(identity, bytes, cancellation)?,
+        let result = match input {
+            UploadInput::File(path) => upload_file(identity, path, cancellation),
+            UploadInput::PngImage(bytes) => upload_png(identity, bytes, cancellation),
         };
-        remote_paths.push(receipt.remote_path);
+        match result {
+            Ok(receipt) => receipts.push(receipt),
+            Err(error) => return rollback_batch(identity, &receipts, error),
+        }
     }
     Ok((
-        remote_paths,
+        receipts
+            .iter()
+            .map(|receipt| receipt.remote_path().to_owned())
+            .collect(),
         ssh_identity::probe_ssh_destination(identity.foreground_process_id),
     ))
+}
+
+fn rollback_batch(
+    identity: &PaneSshIdentity,
+    receipts: &[zentty_linux::remote_transfer::RemoteTransferReceipt],
+    error: String,
+) -> Result<(Vec<String>, Option<SshDestination>), String> {
+    match rollback_remote_transfers(&identity.destination, receipts) {
+        Ok(()) => Err(error),
+        Err(rollback) => Err(format!(
+            "{error}; rollback failed: {:?}: {}",
+            rollback.failure, rollback.detail
+        )),
+    }
 }
 
 fn upload_file(

@@ -13,8 +13,8 @@
     "crates/zentty-linux/src/application_shell/clipboard_actions.rs": "6932bd759ad7bf9ed88f17dbd6047360940b47c9779545e9e2f140e33a05e5ed",
     "crates/zentty-linux/src/application_shell/agent_events.rs": "56c45836a4e6a6a929dce61251a199c0b8dec7a62edbcda3c9b5dd594dbb6038",
     "crates/zentty-linux/src/application_shell/global_search.rs": "98a1963830af8616b31da2558ae6f27c4461342ef3085f6ef9cda0863a1ddc7c",
-    "crates/zentty-linux/src/application_shell/pane_runtime.rs": "12e8a7af2e8261e1d3a6178068e8db1e5b12f048c8c8c5886d0835b8127864c0",
-    "crates/zentty-linux/src/application_shell/remote_paste.rs": "972f709cd716b7e25e7225966176215c6b97e3ef9c664ed310a92da6f707cc60",
+    "crates/zentty-linux/src/application_shell/pane_runtime.rs": "1c5fa3c3ec679e4fabff94a782396340fe01fd423a2ab02b0c795816ffbf1e6c",
+    "crates/zentty-linux/src/application_shell/remote_paste.rs": "dfa26112e2dfe15a2291d5df843d26f74579607b06f9e4d1efd0931312835ead",
     "crates/zentty-linux/src/application_shell/ssh_identity.rs": "e73a1f7d52ed1286ef7169ba24f7b5ce6d01c8c2e0a27337a59be3a321d1c8e2",
     "crates/zentty-linux/src/application_shell/tmux_runtime.rs": "b606ec1c2e8c93e1ab40dbac1e5080f28315352e83533d7c63ba7eefd95d0515",
     "crates/zentty-linux/src/pane_dividers.rs": "dc86023846057e7d3338f142c13d52f4dfde9e3057c33055d527587b7e638d7d",
@@ -275,7 +275,7 @@
     ],
     "remote_paste_coordinator": [
       "begin_upload", "cancel", "cancellation", "create", "drop", "execute",
-      "file_inputs", "finish_upload", "identity", "install", "long_nonce", "parse_uri_list", "read_file_list", "read_uri_list", "short_nonce",
+      "file_inputs", "finish_upload", "identity", "install", "install_drop_targets", "long_nonce", "parse_uri_list", "read_file_list", "read_uri_drop", "read_uri_list", "read_uri_stream", "rollback_batch", "short_nonce",
       "unix_timestamp", "upload_file", "upload_inputs", "upload_png"
     ],
     "clipboard_coordinator": ["copy_focused_selection"],

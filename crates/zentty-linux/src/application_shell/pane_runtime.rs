@@ -628,7 +628,7 @@ impl PaneRuntimeCoordinator {
                 ApplicationShell::activate_pane_control(&shell, &control_pane_id, action);
             }
         });
-        super::remote_paste::install(shell, pane_id, frame.widget().upcast_ref());
+        super::remote_paste::install(shell, pane_id, frame.widget().upcast_ref(), terminal);
         frame
     }
 

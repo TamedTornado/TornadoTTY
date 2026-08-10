@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use zentty_core::{RemoteTransferFailure, RemoteUploadPath, SshDestination};
 use zentty_linux::remote_transfer::{
-    RemoteTransferRequest, execute_remote_transfer, prepare_local_upload,
+    RemoteTransferRequest, execute_remote_transfer, prepare_local_upload, rollback_remote_transfers,
 };
 
 struct ScratchDirectory(PathBuf);
@@ -142,6 +142,7 @@ fn production_executor_publishes_verified_bytes_through_real_openssh() {
     let scratch = ScratchDirectory::new("real-ssh");
     let source = scratch.0.join("payload");
     fs::write(&source, b"mutation-visible real SSH payload\n").unwrap();
+    let expected = prepare_local_upload(&source, 1_024).unwrap();
     let upload_path = RemoteUploadPath::for_file(
         "payload",
         1_900_000_000 + u64::from(std::process::id()),
@@ -160,7 +161,9 @@ fn production_executor_publishes_verified_bytes_through_real_openssh() {
         &AtomicBool::new(false),
     )
     .unwrap();
-    assert_eq!(receipt.remote_path, final_path.to_str().unwrap());
+    assert_eq!(receipt.remote_path(), final_path.to_str().unwrap());
+    assert_eq!(receipt.byte_count(), expected.byte_count());
+    assert_eq!(receipt.sha256(), expected.sha256());
     assert_eq!(
         fs::read(&final_path).unwrap(),
         b"mutation-visible real SSH payload\n"
@@ -173,7 +176,8 @@ fn production_executor_publishes_verified_bytes_through_real_openssh() {
             .to_string_lossy()
             .starts_with(&local_staging_prefix)
     }));
-    fs::remove_file(final_path).unwrap();
+    rollback_remote_transfers(&server.destination(), &[receipt]).unwrap();
+    assert!(!final_path.exists());
 }
 
 #[test]

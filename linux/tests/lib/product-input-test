@@ -7,6 +7,13 @@ trap 'rm -f -- "${calls}"' EXIT
 
 xdotool() {
     printf '%s\n' "$*" >>"${calls}"
+    if [[ "${1:-}" == search ]]; then
+        printf '5151\n'
+    elif [[ "${1:-}" == mousemove && "$*" == *'--window 5151'* ]]; then
+        printf 'pointer-target\n' >>"${mock_drag_receipt}"
+    elif [[ "${1:-}" == mousemove_relative ]]; then
+        printf 'drag-begin:text/uri-list\n' >>"${mock_drag_receipt}"
+    fi
 }
 
 sleep() {
@@ -37,4 +44,16 @@ expected=$'key --window 4242 ctrl+q\nkey --window 4242 ctrl+q\nkeyup Control_L C
     exit 1
 }
 
-echo "Product input helper tests passed: counted synchronization and X11 key release"
+: >"${calls}"
+mock_drag_receipt="$(mktemp)"
+printf 'ready\n' >"${mock_drag_receipt}"
+zentty_product_drag_from_x11_window 'Zentty File Drag Source' "${mock_drag_receipt}"
+rm -f -- "${mock_drag_receipt}"
+expected=$'search --onlyvisible --name ^Zentty File Drag Source$\nwindowmove 5151 1040 100\nwindowsize 5151 220 100\nmousemove --sync --window 4242 700 350\nmousemove --sync --window 5151 110 35\nmousedown 1\nmousemove_relative --sync -- 30 30\nmousemove --sync --window 4242 1000 350\nmousemove --sync --window 4242 950 350\nmousemove --sync --window 4242 900 350\nmousemove --sync --window 4242 850 350\nmousemove --sync --window 4242 800 350\nmousemove --sync --window 4242 750 350\nmousemove --sync --window 4242 700 350\nmouseup 1'
+[[ "$(cat "${calls}")" == "${expected}" ]] || {
+    echo "product-input-test: X11 physical file drag sequence changed" >&2
+    cat "${calls}" >&2
+    exit 1
+}
+
+echo "Product input helper tests passed: counted synchronization, X11 key release, and physical drag"

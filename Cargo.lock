@@ -808,6 +808,7 @@ dependencies = [
 name = "zentty-test-support"
 version = "0.1.0"
 dependencies = [
+ "gtk4",
  "serde_json",
  "zentty-core",
  "zentty-ghostty",

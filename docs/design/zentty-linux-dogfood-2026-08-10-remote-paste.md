@@ -181,3 +181,84 @@ Tracking: GH-17
   seven BLOCKED, one XFAIL, and 21 NOT_IMPLEMENTED cells. Declared totals are
   PASS=92, FAIL=0, BLOCKED=7, XFAIL=1, and NOT_IMPLEMENTED=21; no exhaustive-QA
   claim is made.
+
+## Physical file-drop qualification
+
+- The first real X11 drag-source actor exited before mapping. `gio::Application`
+  had consumed the actor's positional FILE and RECEIPT arguments as desktop
+  files and rejected them because the application did not implement `open`.
+  Argument validation already occurs before GTK startup, so the actor now runs
+  GApplication with a synthetic argv containing only its program name. The
+  product and drop implementation were not changed to fit this harness failure.
+- A typed `GdkFileList` content provider advertised only the in-process
+  `GdkFileList` GType across X11; the product never saw a cross-process target.
+  The actor now behaves like a real file manager and advertises the standard
+  `text/uri-list` MIME payload. This is not a fake product component: a separate
+  real GTK process owns the source window and drag, while XTest drives the
+  physical pointer/button sequence.
+- The next attempts proved the source drag began but selected no action. The
+  drop controller had been attached to the pane overlay rather than the actual
+  Ghostty terminal under the pointer, and a synchronous typed target could not
+  negotiate the cross-process MIME payload. Linux now installs one
+  capture-phase `DropTargetAsync` for bounded URI-list data directly on the
+  terminal widget. Capture phase is required because Ghostty also owns ordinary
+  terminal drop behavior; without it the target reported enter/COPY but never
+  received drop.
+- The first successful remote drop still left keyboard focus in the external
+  drag-source window, so the test's subsequent Enter did not exit the SSH actor.
+  The real journey now closes the source and explicitly restores focus to the
+  product before continuing. This is test-driver responsibility, not a product
+  focus workaround.
+- The final controlled X11 journey proves pointer entry, a real GTK drag begin
+  offering `text/uri-list`, COPY negotiation, asynchronous drop delivery,
+  production upload, remote SHA-256 equality, remote-path insertion, source
+  shutdown, product refocus, SSH exit, and original-PTY continuation. Wayland
+  physical cross-window drag remains unclaimed because the current
+  input-capable Cage harness is a kiosk compositor; clipboard file and PNG
+  paths remain real on both compositors.
+- Mid-transfer cancellation initially took the full artificial delay and
+  produced no completion receipt. The controlled SCP wrapper had spawned
+  `sleep`; production correctly SIGKILLed the wrapper, but its orphan child
+  retained the captured stderr pipe, reproducing the same process-tree test
+  smell found earlier. The delay now uses Bash's builtin timed `read` on a
+  private FIFO, so there is no child process or inherited pipe to outlive the
+  process actually under test.
+- The next cleanup assertion found a zero-byte partial from that already
+  aborted diagnostic run, not from the current cancellation (its timestamp
+  predated the run). Cancellation filenames now carry the current product PID,
+  assertions and cleanup are scoped to that exact run, and environmental
+  leftovers cannot create a false current failure. After recording its exact
+  timestamp, name, cause, and zero-byte size here, the stale diagnostic partial
+  was explicitly removed; it was never counted as a pass.
+- Final X11 and corrected Wayland journeys now start a second real SSH process,
+  wait until production has allocated the remote partial and invoked real SCP,
+  exit the SSH foreground process through physical Enter, observe the exact
+  identity transition, receive `Cancelled: remote upload was cancelled`, prove
+  no complete/path-insertion receipt, prove no run-scoped final or partial, and
+  continue in the original local PTY. X11 additionally retains the physical
+  external GTK file-drop proof.
+- Multi-file paste previously returned the first failure and discarded its
+  earlier successful receipts, leaving a published remote final that was never
+  inserted. Transfer receipts now have private fields plus read-only accessors,
+  so only production transport can construct rollback authority. If any later
+  member fails, the product asks that transport to remove every prior final
+  through one bounded, shell-escaped real SSH command before surfacing the
+  original failure; a rollback failure is retained in the diagnostic rather
+  than hidden.
+- Both compositor journeys now publish a real two-file URI list whose first
+  regular file transfers successfully and whose second symlink is rejected by
+  secure `O_NOFOLLOW` preparation. They prove one failure receipt, no completion
+  or insertion, deletion of the first remote final, an empty command reaching
+  the SSH actor, and continuation in the same local PTY. This closes the known
+  partial-batch orphan rather than documenting it as acceptable residual risk.
+- The first post-rollback transport mutation run missed four trivial receipt
+  accessor mutations because the real SSH test asserted only the remote path
+  and bytes on disk. It now compares receipt byte count and digest against the
+  independently prepared local values. The final focused campaign tested 59
+  mutants in about two minutes: 48 caught, 11 compiler-unviable, zero missed,
+  and zero timed out.
+- The authoritative post-drag/rollback/cancellation `qualify-local` gate passed
+  every presently executable support and matrix cell in 368,490 ms. The
+  implemented local suite is passed and Valgrind remains **PASS with reviewed
+  suppressions**. Release/full qualification remain not passed at the unchanged
+  declared totals PASS=92, FAIL=0, BLOCKED=7, XFAIL=1, NOT_IMPLEMENTED=21.

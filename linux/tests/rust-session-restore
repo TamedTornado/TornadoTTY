@@ -14,6 +14,11 @@ agent_receipt=""
 product_pid=""
 agent_start_delay=0
 agent_start_receipt=""
+drag_source_pid=""
+drag_receipt=""
+remote_paste_evidence="file+png+batch-rollback"
+cancel_remote_pattern=""
+batch_remote_pattern=""
 product_args=()
 
 # shellcheck source=linux/tests/lib/product-input
@@ -24,6 +29,7 @@ source "${repo_root}/linux/tests/lib/disposable-sshd"
 fail() {
     [[ -z "${log}" || ! -f "${log}" ]] || cat "${log}" >&2
     [[ -z "${agent_receipt}" || ! -f "${agent_receipt}" ]] || cat "${agent_receipt}" >&2
+    [[ -z "${drag_receipt}" || ! -f "${drag_receipt}" ]] || cat "${drag_receipt}" >&2
     echo "rust-session-restore: error: $*" >&2
     exit 1
 }
@@ -33,12 +39,22 @@ cleanup() {
         kill -TERM "${product_pid}" 2>/dev/null || true
         wait "${product_pid}" 2>/dev/null || true
     fi
+    if [[ "${drag_source_pid}" =~ ^[1-9][0-9]*$ ]]; then
+        kill -TERM "${drag_source_pid}" 2>/dev/null || true
+        wait "${drag_source_pid}" 2>/dev/null || true
+    fi
     zentty_disposable_sshd_stop
     [[ -z "${state_dir}" ]] || rm -rf -- "${state_dir}"
     [[ -z "${fake_bin}" ]] || rm -rf -- "${fake_bin}"
     [[ -z "${log}" ]] || rm -f -- "${log}"
     [[ -z "${agent_receipt}" ]] || rm -f -- "${agent_receipt}"
     [[ -z "${agent_start_receipt}" ]] || rm -f -- "${agent_start_receipt}"
+    if [[ -n "${cancel_remote_pattern}" ]]; then
+        find /tmp -maxdepth 1 -name "${cancel_remote_pattern}" -delete
+    fi
+    if [[ -n "${batch_remote_pattern}" ]]; then
+        find /tmp -maxdepth 1 -name "${batch_remote_pattern}" -delete
+    fi
 }
 trap cleanup EXIT
 
@@ -58,6 +74,10 @@ for dependency in jq readelf timeout mktemp grep sed pgrep cut tail sha256sum co
 done
 [[ -x "${product}" ]] || fail "staged product is not built: ${product}"
 [[ -x "${actor}" ]] || fail "controlled agent actor is missing: ${actor}"
+drag_source="${repo_root}/target/release-safe/file_drag_source"
+if [[ "${backend}" == x11 ]]; then
+    [[ -x "${drag_source}" ]] || fail "real GTK file drag source is missing: ${drag_source}"
+fi
 
 layer_runpath="$(
     readelf -d "${ghostty_root}/zig-out/lib/libghostty-gtk-embed.so" |
@@ -72,6 +92,20 @@ fake_bin="$(mktemp -d)"
 log="$(mktemp)"
 agent_receipt="$(mktemp)"
 ln -s "${actor}" "${fake_bin}/codex"
+real_scp="$(command -v scp)"
+cat >"${fake_bin}/scp" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ -f "${state_dir}/delay-scp" ]]; then
+    printf 'started\n' >"${state_dir}/scp-started"
+    exec 3<>"${state_dir}/scp-delay-fifo"
+    IFS= read -r -t 30 _ <&3 || true
+    exec 3>&-
+fi
+exec "${real_scp}" "\$@"
+EOF
+chmod 700 "${fake_bin}/scp"
+mkfifo "${state_dir}/scp-delay-fifo"
 
 jq '
     (.workspace.windows[0].worklanes[].columns[].panes[] | select(.id == "pane-agent").workingDirectory) = "/tmp" |
@@ -270,6 +304,41 @@ remote_image_path="$(
     fail "remote image receipt path is malformed"
 [[ "$(od -An -tx1 -N8 "${remote_image_path}" | tr -d ' \n')" == 89504e470d0a1a0a ]] ||
     fail "remote image is not a real PNG"
+remote_drag_path=""
+if [[ "${backend}" == x11 ]]; then
+    drag_receipt="${state_dir}/file-drag-source.ready"
+    remote_paste_complete_before="$(grep -Fc 'zentty-linux: remote-paste pane=pane-shell-active state=complete' "${log}" || true)"
+    "${drag_source}" "${remote_upload_payload}" "${drag_receipt}" >>"${log}" 2>&1 &
+    drag_source_pid=$!
+    for _ in {1..250}; do
+        [[ -s "${drag_receipt}" ]] && break
+        kill -0 "${drag_source_pid}" 2>/dev/null || fail "real GTK file drag source exited before readiness"
+        sleep 0.02
+    done
+    [[ -s "${drag_receipt}" ]] || fail "real GTK file drag source did not become ready"
+    zentty_product_drag_from_x11_window 'Zentty File Drag Source' "${drag_receipt}" ||
+        fail "physical X11 file drag could not be completed"
+    grep -Fq 'drag-begin:' "${drag_receipt}" || fail "GTK drag source never began a real drag"
+    zentty_product_wait_for_log_count "${log}" \
+        'zentty-linux: remote-paste pane=pane-shell-active state=complete' \
+        "$(( remote_paste_complete_before + 1 ))" \
+        "remote file drop did not complete through the real product" ||
+        fail "remote file-drop completion receipt missing"
+    remote_drag_path="$(
+        sed -n 's/^zentty-linux: remote-paste pane=pane-shell-active state=complete files=1 paths=//p' \
+            "${log}" | tail -1
+    )"
+    [[ "${remote_drag_path}" == /tmp/zentty-paste-* ]] ||
+        fail "remote file-drop receipt path is malformed"
+    [[ "$(sha256sum "${remote_drag_path}" | cut -d' ' -f1)" == "${remote_upload_hash}" ]] ||
+        fail "remote file-drop bytes did not match the desktop source"
+    kill -TERM "${drag_source_pid}" 2>/dev/null || true
+    wait "${drag_source_pid}" 2>/dev/null || true
+    drag_source_pid=""
+    xdotool windowfocus --sync "${ZENTTY_PRODUCT_WINDOW_ID}"
+    sleep 0.1
+    remote_paste_evidence="file+png+physical-drop+batch-rollback"
+fi
 zentty_product_key "${backend}" Return
 zentty_product_wait_for_log_count "${log}" \
     'zentty-linux: ssh-identity pane=pane-shell-active state=local' \
@@ -284,8 +353,98 @@ zentty_product_wait_for_log "${log}" \
     fail "local shell continuation evidence missing"
 [[ "$(grep -Fc 'zentty-linux: terminal-ready-pane=pane-shell-active' "${log}" || true)" -eq "${terminal_ready_before}" ]] ||
     fail "SSH identity transition recreated the pane or PTY"
+
+# A two-file desktop paste publishes the first transfer, then deliberately
+# fails secure local preparation of a symlink. Product batch policy must roll
+# the first final path back and insert neither path.
+batch_payload="${state_dir}/batch-rollback-${product_pid}.txt"
+batch_rejected="${state_dir}/batch-rejected-${product_pid}.txt"
+printf 'first batch member must be rolled back\n' >"${batch_payload}"
+ln -s "${batch_payload}" "${batch_rejected}"
+batch_remote_pattern="*batch-rollback-${product_pid}.txt*"
+batch_remote_before="$(grep -Fc 'zentty-linux: ssh-identity pane=pane-shell-active state=remote' "${log}" || true)"
+batch_local_before="$(grep -Fc 'zentty-linux: ssh-identity pane=pane-shell-active state=local' "${log}" || true)"
+batch_complete_before="$(grep -Fc 'zentty-linux: remote-paste pane=pane-shell-active state=complete' "${log}" || true)"
+batch_failed_before="$(grep -Fc 'zentty-linux: remote-paste pane=pane-shell-active state=failed' "${log}" || true)"
+zentty_product_type "${backend}" zentty-ssh-fixture
+zentty_product_key "${backend}" Return
+zentty_product_wait_for_log_count "${log}" \
+    'zentty-linux: ssh-identity pane=pane-shell-active state=remote' \
+    "$(( batch_remote_before + 1 ))" \
+    "batch rollback SSH process did not project remote identity" ||
+    fail "batch rollback SSH identity receipt missing"
+zentty_product_set_file_clipboard "${backend}" "${batch_payload}" "${batch_rejected}" ||
+    fail "could not publish two-file rollback clipboard"
+zentty_product_ctrl_shift_key "${backend}" v
+zentty_product_wait_for_log_count "${log}" \
+    'zentty-linux: remote-paste pane=pane-shell-active state=failed' \
+    "$(( batch_failed_before + 1 ))" \
+    "multi-file partial failure did not reach product policy" ||
+    fail "multi-file rollback failure receipt missing"
+[[ "$(grep -Fc 'zentty-linux: remote-paste pane=pane-shell-active state=complete' "${log}" || true)" -eq "${batch_complete_before}" ]] ||
+    fail "partially failed batch inserted a remote path"
+if find /tmp -maxdepth 1 -name "${batch_remote_pattern}" -print -quit | grep -q .; then
+    fail "partially failed batch left its successful first final path"
+fi
+zentty_product_key "${backend}" Return
+zentty_product_wait_for_log_count "${log}" \
+    'zentty-linux: ssh-identity pane=pane-shell-active state=local' \
+    "$(( batch_local_before + 1 ))" \
+    "batch rollback SSH actor did not exit on an empty command" ||
+    fail "batch rollback inserted misleading terminal input"
+
+# Start another real SSH foreground process and hold its real SCP invocation
+# after remote partial allocation. Exiting that SSH process changes the exact
+# foreground identity and must cancel transfer, clean the partial, and insert
+# no path.
+cancel_payload="${state_dir}/cancel-upload-${product_pid}.txt"
+cancel_remote_pattern="*cancel-upload-${product_pid}.txt*"
+printf 'cancelled remote transfer must never be inserted\n' >"${cancel_payload}"
+rm -f -- "${state_dir}/scp-started"
+touch "${state_dir}/delay-scp"
+cancel_remote_before="$(grep -Fc 'zentty-linux: ssh-identity pane=pane-shell-active state=remote' "${log}" || true)"
+cancel_local_before="$(grep -Fc 'zentty-linux: ssh-identity pane=pane-shell-active state=local' "${log}" || true)"
+cancel_complete_before="$(grep -Fc 'zentty-linux: remote-paste pane=pane-shell-active state=complete' "${log}" || true)"
+zentty_product_type "${backend}" zentty-ssh-fixture
+zentty_product_key "${backend}" Return
+zentty_product_wait_for_log_count "${log}" \
+    'zentty-linux: ssh-identity pane=pane-shell-active state=remote' \
+    "$(( cancel_remote_before + 1 ))" \
+    "second SSH process did not project remote identity" ||
+    fail "cancellation SSH identity receipt missing"
+zentty_product_set_file_clipboard "${backend}" "${cancel_payload}" ||
+    fail "could not publish cancellation file clipboard"
+zentty_product_ctrl_shift_key "${backend}" v
+for _ in {1..500}; do
+    [[ -s "${state_dir}/scp-started" ]] && break
+    sleep 0.02
+done
+[[ -s "${state_dir}/scp-started" ]] || fail "controlled real SCP delay was never reached"
+zentty_product_key "${backend}" Return
+zentty_product_wait_for_log_count "${log}" \
+    'zentty-linux: ssh-identity pane=pane-shell-active state=local' \
+    "$(( cancel_local_before + 1 ))" \
+    "SSH identity change did not cancel the active transfer" ||
+    fail "cancellation local identity receipt missing"
+zentty_product_wait_for_log "${log}" \
+    'zentty-linux: remote-paste pane=pane-shell-active state=failed detail=Cancelled: remote upload was cancelled' \
+    "cancelled transfer did not report its exact failure" ||
+    fail "remote transfer cancellation receipt missing"
+rm -f -- "${state_dir}/delay-scp"
+[[ "$(grep -Fc 'zentty-linux: remote-paste pane=pane-shell-active state=complete' "${log}" || true)" -eq "${cancel_complete_before}" ]] ||
+    fail "cancelled transfer published or inserted a remote path"
+if find /tmp -maxdepth 1 -name "${cancel_remote_pattern}" -print -quit | grep -q .; then
+    fail "cancelled transfer left a remote final or partial path"
+fi
+zentty_product_type "${backend}" "printf '\\033]2;ssh-cancel-local-ready\\007'"
+zentty_product_key "${backend}" Return
+zentty_product_wait_for_log "${log}" \
+    'zentty-linux: title-pane=pane-shell-active value=ssh-cancel-local-ready' \
+    "local PTY did not resume after cancellation" ||
+    fail "cancellation local PTY continuation missing"
 rm -f -- "${remote_upload_path}"
 rm -f -- "${remote_image_path}"
+[[ -z "${remote_drag_path}" ]] || rm -f -- "${remote_drag_path}"
 zentty_disposable_sshd_stop
 
 zentty_product_ctrl_key "${backend}" Page_Up
@@ -543,4 +702,4 @@ wait_for_product_exit
 jq -e '.reason == "cleanExit" and .workspace.windows[0].worklanes[0].columns[0].panes[0].id == "pane-1"' \
     "${snapshot}" >/dev/null || fail "corrupt-state fallback did not publish a valid clean snapshot"
 
-echo "Rust session restore passed: ${backend}, journey=one-consolidated, ssh=real-loopback-transient, remote-paste=file+png, agents=two-background, input=physical, scrollback=exact, relaunch=clean, cancellation=command-palette, live-debounce=real, crash=SIGKILL, corrupt=fresh-workspace"
+echo "Rust session restore passed: ${backend}, journey=one-consolidated, ssh=real-loopback-transient, remote-paste=${remote_paste_evidence}+identity-cancel, agents=two-background, input=physical, scrollback=exact, relaunch=clean, cancellation=command-palette, live-debounce=real, crash=SIGKILL, corrupt=fresh-workspace"
