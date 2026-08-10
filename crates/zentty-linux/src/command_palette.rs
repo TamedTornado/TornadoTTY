@@ -119,20 +119,37 @@ impl CommandPaletteView {
         });
         self.root.add_controller(outside);
         let key = gtk::EventControllerKey::new();
+        key.set_propagation_phase(gtk::PropagationPhase::Capture);
         let keyed = self.clone();
-        key.connect_key_pressed(move |_, key, _, _| match key {
-            gtk::gdk::Key::Escape => {
-                keyed.hide();
-                glib::Propagation::Stop
-            }
-            gtk::gdk::Key::Down => {
-                if let Some(row) = keyed.list.row_at_index(0) {
-                    keyed.list.select_row(Some(&row));
-                    row.grab_focus();
+        key.connect_key_pressed(move |_, key, _, _| {
+            match key {
+                gtk::gdk::Key::Escape => {
+                    keyed.hide();
+                    glib::Propagation::Stop
                 }
-                glib::Propagation::Stop
+                gtk::gdk::Key::Down => {
+                    if let Some(row) = keyed.list.row_at_index(0) {
+                        keyed.list.select_row(Some(&row));
+                        row.grab_focus();
+                    }
+                    glib::Propagation::Stop
+                }
+                gtk::gdk::Key::Return | gtk::gdk::Key::KP_Enter => {
+                    // Filtering replaces every row. GTK can briefly retain a
+                    // detached selected-row handle, so Enter must resolve the
+                    // first currently rendered result rather than execute a
+                    // stale pre-filter selection.
+                    let row = keyed.list.row_at_index(0);
+                    if let Some(button) = row
+                        .and_then(|row| row.child())
+                        .and_then(|child| child.downcast::<gtk::Button>().ok())
+                    {
+                        button.emit_clicked();
+                    }
+                    glib::Propagation::Stop
+                }
+                _ => glib::Propagation::Proceed,
             }
-            _ => glib::Propagation::Proceed,
         });
         self.entry.add_controller(key);
     }

@@ -2,6 +2,7 @@ use gtk::gdk;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum SearchShortcut {
+    GlobalFind,
     Find,
     UseSelection,
     Next,
@@ -20,12 +21,20 @@ pub(crate) fn resolve_shortcut(
             | gdk::ModifierType::META_MASK
             | gdk::ModifierType::HYPER_MASK);
     match (key, shortcut_modifiers) {
-        (gdk::Key::F, value)
+        (gdk::Key::F | gdk::Key::f, value)
+            if value
+                == (gdk::ModifierType::CONTROL_MASK
+                    | gdk::ModifierType::SHIFT_MASK
+                    | gdk::ModifierType::ALT_MASK) =>
+        {
+            Some(SearchShortcut::GlobalFind)
+        }
+        (gdk::Key::F | gdk::Key::f, value)
             if value == (gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::SHIFT_MASK) =>
         {
             Some(SearchShortcut::Find)
         }
-        (gdk::Key::E, value)
+        (gdk::Key::E | gdk::Key::e, value)
             if value == (gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::SHIFT_MASK) =>
         {
             Some(SearchShortcut::UseSelection)
@@ -47,8 +56,17 @@ mod tests {
     fn linux_search_shortcuts_preserve_shell_control_keys_and_source_commands() {
         let control_shift = gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::SHIFT_MASK;
         assert_eq!(
+            resolve_shortcut(gdk::Key::F, control_shift | gdk::ModifierType::ALT_MASK),
+            Some(SearchShortcut::GlobalFind)
+        );
+        assert_eq!(
             resolve_shortcut(gdk::Key::F, control_shift),
             Some(SearchShortcut::Find)
+        );
+        assert_eq!(
+            resolve_shortcut(gdk::Key::f, control_shift),
+            Some(SearchShortcut::Find),
+            "Wayland may preserve the physical lowercase keysym with Shift in modifiers"
         );
         assert_eq!(
             resolve_shortcut(gdk::Key::E, control_shift),
@@ -68,7 +86,7 @@ mod tests {
             "Ctrl+F must remain terminal input on Linux"
         );
         assert_eq!(
-            resolve_shortcut(gdk::Key::F, control_shift | gdk::ModifierType::ALT_MASK),
+            resolve_shortcut(gdk::Key::F, control_shift | gdk::ModifierType::SUPER_MASK),
             None,
             "extra modifiers must not steal a terminal chord"
         );
@@ -78,6 +96,7 @@ mod tests {
             "modified F3 must remain terminal input"
         );
         for source_command in [
+            "title: \"Global Find\"",
             "title: \"Find\"",
             "title: \"Use Selection for Find\"",
             "title: \"Find Next\"",

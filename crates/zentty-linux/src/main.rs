@@ -6,6 +6,7 @@ mod application;
 mod application_shell;
 mod codex_enrichment;
 mod command_palette;
+mod global_search_view;
 mod pane_controls;
 mod pane_dividers;
 mod pane_scroll_switch;

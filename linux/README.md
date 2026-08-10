@@ -67,6 +67,16 @@ The compound cards are not yet full ZenTTY sidebar parity. Agent status and
 attention, progress, server/remote details, bookmarks, drag gestures, complete
 context menus, and accessibility qualification remain active work.
 
+The source Global Find flow is implemented without a second scrollback index:
+the window-local Rust coordinator fans one query into each live Ghostty search
+session, aggregates totals in source sidebar order, and reveals the exact pane
+or inactive worklane while the sidebar field retains focus. The existing
+`rust-pane-search` actor proves pane-local search plus three real PTYs across
+two worklanes, cross-worklane result navigation, independent concurrent window
+queries, teardown, and PTY focus restoration in controlled X11 and
+input-capable Wayland. Linux uses `Ctrl+Alt+Shift+F` for Global Find so
+`Ctrl+Shift+F` remains pane-local Find.
+
 ## Qualification
 
 `linux/qualification-matrix.json` is the single authoritative qualification

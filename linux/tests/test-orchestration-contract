@@ -189,6 +189,11 @@ require "Rust/Ghostty adapter cells are not assigned to focused and real existin
             .environment_profile == "nested-x11-v1" and
             (.command | contains("cargo test -p zentty-ghostty --locked --doc")) and
             (.command | contains("linux/tests/rust-closed-pane-restore"))) and
+        (.cells[] | select(.id == "rust-global-find-product-usage-wayland") |
+            .status == "PASS" and .display == "wayland" and
+            .environment_profile == "nested-wayland-input-v1" and
+            (.command | contains("ZENTTY_EXPECTED_PRODUCT_PROFILE=release-safe")) and
+            (.command | contains("linux/tests/rust-pane-search"))) and
         (.cells[] | select(.id == "rust-ghostty-config-construction") |
             .status == "PASS" and .display == "none" and
             .environment_profile == "isolated-none-v1" and

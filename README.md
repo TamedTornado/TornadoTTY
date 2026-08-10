@@ -96,6 +96,12 @@ Current Linux pane navigation uses the duration of the **Tab key itself**:
 - Hold Tab in either chord for 200ms: open Worklane Peek. Release Control to
   commit the preview or press `Escape` to cancel.
 
+Linux Global Find uses `Ctrl+Alt+Shift+F`; `Ctrl+Shift+F` remains Find in the
+focused pane. The sidebar search aggregates Ghostty's real matches across all
+panes and worklanes in the current window. `Enter` / `Shift+Enter` move to the
+next / previous match, the clear button ends the query without closing the
+sidebar row, and `Escape` closes Global Find and returns focus to the terminal.
+
 When `codex` or `claude` is already installed on the inherited `PATH`, new
 Linux panes automatically select Zentty's staged wrapper for that command. The
 wrapper executes the real installed agent with per-launch status hooks; it does

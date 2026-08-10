@@ -345,17 +345,17 @@
     {
       "id": "search.window-global",
       "category": "search_clipboard",
-      "behavior": "Search pane-local scrollback or globally across every pane and agent state in the current window, present global results in the sidebar, and navigate the exact visible or hidden match without losing terminal context.",
+      "behavior": "Search pane-local scrollback or globally across every pane in the current window, present aggregate global results in the sidebar, and navigate the exact visible or hidden match without losing terminal context.",
       "source": ["Zentty/UI/PaneStrip/PaneSearchHUDView.swift", "Zentty/UI/Search/GlobalSearchCoordinator.swift", "Zentty/UI/Search/GlobalSearchFocusChoreographer.swift", "Zentty/UI/Sidebar/SidebarGlobalSearchRowView.swift"],
       "swift_tests": ["ZenttyLogicTests/GlobalSearchCoordinatorTests.swift", "ZenttyLogicTests/GlobalSearchFocusChoreographerTests.swift"],
       "classification": "REQUIRED_INITIAL_RELEASE",
       "origin": "PORT_PARITY",
-      "user_impact": "Searching a single pane cannot replace Zentty's advertised ability to find output and agent state across a busy window.",
+      "user_impact": "Searching a single pane cannot replace Zentty's advertised ability to find terminal output across a busy window.",
       "linux_owner_issue": 17,
-      "implementation_status": "NOT_IMPLEMENTED",
-      "focused_tests": [],
-      "product_scenarios": [],
-      "test_plan": "Generate unique output in real PTYs across visible and hidden panes, drive pane/global find controls and next/previous, and assert result order, reveal, selection and exact focus in both compositors.",
+      "implementation_status": "IMPLEMENTED",
+      "focused_tests": ["crates/zentty-core/tests/global_search.rs", "crates/zentty-linux/src/pane_search.rs"],
+      "product_scenarios": ["linux/tests/rust-pane-search"],
+      "test_plan": "Preserve the controlled X11 and input-capable Wayland journey: three real PTYs across two worklanes, source-ordered aggregate totals and cross-worklane navigation, a concurrent second-window query proving coordinator isolation, clear/end focus restoration, pane-local search interoperability, and the pure debounce/frozen-target/stale-target contracts.",
       "alternative_or_blocker": null
     },
     {

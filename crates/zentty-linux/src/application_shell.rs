@@ -5,6 +5,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::{
     command_palette::CommandPaletteView,
+    global_search_view::GlobalSearchView,
     pane_controls::{self, PaneControlAction, PanePresentation},
     pane_dividers::{self, PaneDivider},
     pane_scroll_switch::{PaneScrollSwitch, ScrollSwitchResult, ScrollUnit},
@@ -26,10 +27,11 @@ use gtk::gdk;
 use gtk::glib;
 use gtk::prelude::*;
 use zentty_core::{
-    ClosePaneOutcome, ColumnRecipe, CommandPaletteItem, PaneColumnState, PaneLayoutPolicy,
-    PaneRecipe, PaneReference, PaneResizeDirection, PaneRestoreDraft, PaneRightInsertionBehavior,
-    PaneWindowTransfer, SidebarWidthPreference, WindowFrame, WindowRecipe, WorklaneColor,
-    WorklaneRecipe, WorkspaceState,
+    ClosePaneOutcome, ColumnRecipe, CommandPaletteItem, GlobalSearchCoordinator,
+    GlobalSearchDirection, PaneColumnState, PaneLayoutPolicy, PaneRecipe, PaneReference,
+    PaneResizeDirection, PaneRestoreDraft, PaneRightInsertionBehavior, PaneWindowTransfer,
+    SidebarWidthPreference, WindowFrame, WindowRecipe, WorklaneColor, WorklaneRecipe,
+    WorkspaceState,
 };
 use zentty_ghostty::GhosttyRuntime;
 
@@ -37,6 +39,7 @@ use crate::agent_runtime::AgentRuntime;
 
 mod action_router;
 mod agent_events;
+mod global_search;
 mod pane_runtime;
 mod tmux_runtime;
 
@@ -48,14 +51,15 @@ use action_router::{
     ACTION_ARRANGE_WIDTH_QUARTERS, ACTION_ARRANGE_WIDTH_THIRDS, ACTION_CLOSE_ACTIVE_WORKLANE,
     ACTION_CLOSE_PANE, ACTION_CLOSE_WINDOW, ACTION_CLOSE_WORKLANE, ACTION_CYCLE_WORKLANE_COLOR,
     ACTION_FIND, ACTION_FIND_NEXT, ACTION_FIND_PREVIOUS, ACTION_FOCUS_PANE_DOWN,
-    ACTION_FOCUS_PANE_LEFT, ACTION_FOCUS_PANE_RIGHT, ACTION_FOCUS_PANE_UP, ACTION_MOVE_PANE_DOWN,
-    ACTION_MOVE_PANE_LEFT, ACTION_MOVE_PANE_RIGHT, ACTION_MOVE_PANE_TO_NEW_WINDOW,
-    ACTION_MOVE_PANE_UP, ACTION_MOVE_WORKLANE_DOWN, ACTION_MOVE_WORKLANE_UP, ACTION_NAVIGATE_BACK,
-    ACTION_NAVIGATE_FORWARD, ACTION_NEW_WINDOW, ACTION_NEW_WORKLANE, ACTION_NEXT_PANE,
-    ACTION_NEXT_WORKLANE, ACTION_PREVIOUS_PANE, ACTION_PREVIOUS_WORKLANE, ACTION_RESET_PANE_LAYOUT,
-    ACTION_RESIZE_PANE_DOWN, ACTION_RESIZE_PANE_LEFT, ACTION_RESIZE_PANE_RIGHT,
-    ACTION_RESIZE_PANE_UP, ACTION_RESTORE_CLOSED_PANE, ACTION_SPLIT_PANE_BELOW,
-    ACTION_SPLIT_PANE_RIGHT, ACTION_TOGGLE_SIDEBAR, ACTION_USE_SELECTION_FOR_FIND, ActionRouter,
+    ACTION_FOCUS_PANE_LEFT, ACTION_FOCUS_PANE_RIGHT, ACTION_FOCUS_PANE_UP, ACTION_GLOBAL_FIND,
+    ACTION_MOVE_PANE_DOWN, ACTION_MOVE_PANE_LEFT, ACTION_MOVE_PANE_RIGHT,
+    ACTION_MOVE_PANE_TO_NEW_WINDOW, ACTION_MOVE_PANE_UP, ACTION_MOVE_WORKLANE_DOWN,
+    ACTION_MOVE_WORKLANE_UP, ACTION_NAVIGATE_BACK, ACTION_NAVIGATE_FORWARD, ACTION_NEW_WINDOW,
+    ACTION_NEW_WORKLANE, ACTION_NEXT_PANE, ACTION_NEXT_WORKLANE, ACTION_PREVIOUS_PANE,
+    ACTION_PREVIOUS_WORKLANE, ACTION_RESET_PANE_LAYOUT, ACTION_RESIZE_PANE_DOWN,
+    ACTION_RESIZE_PANE_LEFT, ACTION_RESIZE_PANE_RIGHT, ACTION_RESIZE_PANE_UP,
+    ACTION_RESTORE_CLOSED_PANE, ACTION_SPLIT_PANE_BELOW, ACTION_SPLIT_PANE_RIGHT,
+    ACTION_TOGGLE_SIDEBAR, ACTION_USE_SELECTION_FOR_FIND, ActionRouter,
 };
 use agent_events::AgentEventCoordinator;
 use pane_runtime::DetachedPaneRuntime;
@@ -99,6 +103,9 @@ pub(crate) struct ApplicationShell {
     peek_tab_down: bool,
     peek_view: WorklanePeekView,
     command_palette: CommandPaletteView,
+    global_search_view: GlobalSearchView,
+    global_search: GlobalSearchCoordinator,
+    global_search_generation: u64,
     last_pane_viewport_height: Cell<i32>,
     action_router: Option<ActionRouter>,
     agent_events: AgentEventCoordinator,
@@ -160,6 +167,9 @@ impl ApplicationShell {
             command_palette,
         } = build_shell_widgets();
 
+        sidebar::render(&sidebar, &window, &[]);
+        let global_search_view = GlobalSearchView::attach(&sidebar);
+
         let window_template = restored_or_default_window(restored_window, fresh_window_id);
         apply_restored_window_size(&window, &window_template);
         let (state, restored_pane_commands) =
@@ -202,6 +212,9 @@ impl ApplicationShell {
             peek_tab_down: false,
             peek_view,
             command_palette,
+            global_search_view,
+            global_search: GlobalSearchCoordinator::default(),
+            global_search_generation: 0,
             last_pane_viewport_height: Cell::new(0),
             action_router: None,
             agent_events,
@@ -223,6 +236,7 @@ impl ApplicationShell {
 
         let action_router = ActionRouter::install(&shell)?;
         shell.borrow_mut().action_router = Some(action_router);
+        Self::install_global_search_callbacks(&shell);
         Self::install_sidebar_visibility(&shell);
         Self::install_pane_traversal_shortcuts(&shell);
         Self::install_peek_scroll_navigation(&shell);
@@ -1089,7 +1103,26 @@ impl ApplicationShell {
             {
                 return glib::Propagation::Proceed;
             }
+            if shell.borrow().global_search.state().visible
+                && matches!(key, gdk::Key::Return | gdk::Key::KP_Enter)
+            {
+                let direction = if modifiers.contains(gdk::ModifierType::SHIFT_MASK) {
+                    GlobalSearchDirection::Previous
+                } else {
+                    GlobalSearchDirection::Next
+                };
+                shell.borrow_mut().navigate_global_find(direction);
+                return glib::Propagation::Stop;
+            }
             if key == gdk::Key::Escape {
+                if shell.borrow().global_search.state().visible {
+                    let mut shell = shell.borrow_mut();
+                    let effects = shell.global_search.end();
+                    shell.apply_global_search_effects(effects);
+                    shell.render_global_search();
+                    shell.focus_selected_surface();
+                    return glib::Propagation::Stop;
+                }
                 let hidden = {
                     let shell = shell.borrow();
                     let Some(pane_id) = shell.state.focused_pane_id() else {
@@ -1121,6 +1154,7 @@ impl ApplicationShell {
                 return glib::Propagation::Proceed;
             };
             let action = match shortcut {
+                SearchShortcut::GlobalFind => ACTION_GLOBAL_FIND,
                 SearchShortcut::Find => ACTION_FIND,
                 SearchShortcut::UseSelection => ACTION_USE_SELECTION_FOR_FIND,
                 SearchShortcut::Next => ACTION_FIND_NEXT,
@@ -1446,6 +1480,12 @@ impl ApplicationShell {
                 "Choose the next worklane identity color",
                 "appearance workspace lane",
                 ACTION_CYCLE_WORKLANE_COLOR,
+            ),
+            CommandPaletteItem::action(
+                "Global Find",
+                "Search across every live pane in this window",
+                "search all panes worklanes",
+                ACTION_GLOBAL_FIND,
             ),
             CommandPaletteItem::action(
                 "Find",
@@ -2716,7 +2756,11 @@ impl ApplicationShell {
     }
 }
 
-fn observe_ghostty_search_state(root: &gtk::Widget, pane_id: &str) {
+fn observe_ghostty_search_state(
+    root: &gtk::Widget,
+    pane_id: &str,
+    shell: Weak<RefCell<ApplicationShell>>,
+) {
     let Some(overlay) = find_ghostty_search_overlay(root) else {
         eprintln!("zentty-linux: search-overlay pane={pane_id} error=not-found");
         return;
@@ -2735,6 +2779,28 @@ fn observe_ghostty_search_state(root: &gtk::Widget, pane_id: &str) {
                 | "valign-target"
         ) {
             log_ghostty_search_state(overlay, &pane_id);
+            if matches!(
+                property.name(),
+                "search-total" | "has-search-total" | "search-selected" | "has-search-selected"
+            ) {
+                let total = overlay
+                    .property::<bool>("has-search-total")
+                    .then(|| usize::try_from(overlay.property::<u64>("search-total")).ok())
+                    .flatten();
+                let selected = overlay
+                    .property::<bool>("has-search-selected")
+                    .then(|| usize::try_from(overlay.property::<u64>("search-selected")).ok())
+                    .flatten();
+                let pane_id = pane_id.clone();
+                let shell = shell.clone();
+                glib::idle_add_local_once(move || {
+                    if let Some(shell) = shell.upgrade() {
+                        shell
+                            .borrow_mut()
+                            .handle_global_search_state(&pane_id, total, selected);
+                    }
+                });
+            }
         }
     });
 }

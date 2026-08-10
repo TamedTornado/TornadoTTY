@@ -9,6 +9,7 @@ mod atomic_file_store;
 mod codex_title;
 mod codex_transcript;
 mod command_palette;
+mod global_search;
 mod pane_focus_history;
 mod pane_layout;
 mod pane_token_registry;
@@ -63,4 +64,8 @@ pub use codex_transcript::{
 };
 pub use command_palette::{
     CommandPaletteGroup, CommandPaletteItem, CommandPaletteTarget, resolve_command_palette,
+};
+pub use global_search::{
+    GlobalSearchCoordinator, GlobalSearchDirection, GlobalSearchEffect, GlobalSearchState,
+    GlobalSearchTarget,
 };

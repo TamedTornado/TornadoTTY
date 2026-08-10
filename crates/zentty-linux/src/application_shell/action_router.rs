@@ -113,6 +113,10 @@ pub(super) const ACTION_FIND: &str = "find";
 pub(super) const ACTION_USE_SELECTION_FOR_FIND: &str = "use-selection-for-find";
 pub(super) const ACTION_FIND_NEXT: &str = "find-next";
 pub(super) const ACTION_FIND_PREVIOUS: &str = "find-previous";
+pub(super) const ACTION_GLOBAL_FIND: &str = "global-find";
+pub(super) const ACTION_CLEAR_GLOBAL_FIND: &str = "clear-global-find";
+pub(super) const ACTION_GLOBAL_FIND_NEXT: &str = "global-find-next";
+pub(super) const ACTION_GLOBAL_FIND_PREVIOUS: &str = "global-find-previous";
 pub(super) const ACTION_FOCUS_PANE_LEFT: &str = "focus-pane-left";
 pub(super) const ACTION_FOCUS_PANE_RIGHT: &str = "focus-pane-right";
 pub(super) const ACTION_FOCUS_PANE_UP: &str = "focus-pane-up";
@@ -192,6 +196,10 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
     ),
     action!(ACTION_FIND_NEXT, "find-next", None),
     action!(ACTION_FIND_PREVIOUS, "find-previous", None),
+    action!(ACTION_GLOBAL_FIND, "global-find", None),
+    action!(ACTION_CLEAR_GLOBAL_FIND, "clear-global-find", None),
+    action!(ACTION_GLOBAL_FIND_NEXT, "global-find-next", None),
+    action!(ACTION_GLOBAL_FIND_PREVIOUS, "global-find-previous", None),
     action!(ACTION_FOCUS_PANE_LEFT, "focus-pane-left", None),
     action!(ACTION_FOCUS_PANE_RIGHT, "focus-pane-right", None),
     action!(ACTION_FOCUS_PANE_UP, "focus-pane-up", None),
@@ -825,6 +833,19 @@ fn install_restore_closed_pane_action(
 }
 
 fn install_search_actions(shell: &Rc<RefCell<ApplicationShell>>, group: &gio::SimpleActionGroup) {
+    add_simple_action(shell, group, ACTION_GLOBAL_FIND, |shell| {
+        shell.toggle_global_find();
+    });
+    add_simple_action(shell, group, ACTION_CLEAR_GLOBAL_FIND, |shell| {
+        shell.update_global_find_query("");
+        shell.global_search_view.focus(false);
+    });
+    add_simple_action(shell, group, ACTION_GLOBAL_FIND_NEXT, |shell| {
+        shell.navigate_global_find(zentty_core::GlobalSearchDirection::Next);
+    });
+    add_simple_action(shell, group, ACTION_GLOBAL_FIND_PREVIOUS, |shell| {
+        shell.navigate_global_find(zentty_core::GlobalSearchDirection::Previous);
+    });
     add_simple_action(shell, group, ACTION_FIND, |shell| {
         shell.perform_focused_binding_action(ACTION_FIND, "start_search");
     });
@@ -1002,7 +1023,7 @@ mod tests {
 
     #[test]
     fn registry_is_unique_complete_and_typed() {
-        assert_eq!(ACTION_SPECS.len(), 60);
+        assert_eq!(ACTION_SPECS.len(), 64);
         assert_eq!(
             ACTION_SPECS
                 .iter()

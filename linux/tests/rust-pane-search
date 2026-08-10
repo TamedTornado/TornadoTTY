@@ -32,8 +32,8 @@ case "${backend}" in
         command -v xdotool >/dev/null || fail "xdotool is required for X11 search"
         ;;
     wayland)
-        [[ "${ZENTTY_NESTED_WAYLAND_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
-            fail "Wayland search must run through linux/tests/nested-wayland"
+        [[ "${ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+            fail "Wayland search must run through linux/tests/nested-wayland-input"
         command -v wtype >/dev/null || fail "wtype is required for Wayland search"
         ;;
     *) fail "GDK_BACKEND must be x11 or wayland" ;;
@@ -49,6 +49,16 @@ press_ctrl_shift() {
         xdotool key --window "${window_id}" "ctrl+shift+${key}"
     else
         wtype -M ctrl -M shift -k "${key}" -m shift -m ctrl
+    fi
+}
+
+press_ctrl_alt_shift() {
+    local key="$1"
+    if [[ "${backend}" == x11 ]]; then
+        xdotool key --window "${window_id}" "ctrl+alt+shift+${key}"
+        xdotool keyup Control_L Control_R Alt_L Alt_R Shift_L Shift_R "${key}" 2>/dev/null || true
+    else
+        wtype -M ctrl -M alt -M shift -k "${key}" -m shift -m alt -m ctrl
     fi
 }
 
@@ -70,11 +80,42 @@ type_text() {
     fi
 }
 
+clear_text() {
+    if [[ "${backend}" == x11 ]]; then
+        xdotool key --window "${window_id}" ctrl+a BackSpace
+        xdotool keyup Control_L Control_R a BackSpace 2>/dev/null || true
+    else
+        wtype -M ctrl -k a -m ctrl -k BackSpace
+    fi
+}
+
+clear_global_find() {
+    local cleared_before
+    cleared_before="$(grep -Fc 'zentty-linux: global-find-state visible=true remembered=false selected=None total=0' "${log}" || true)"
+    clear_text
+    for _ in $(seq 1 160); do
+        [[ "$(grep -Fc 'zentty-linux: global-find-state visible=true remembered=false selected=None total=0' "${log}" || true)" -gt "${cleared_before}" ]] && return
+        sleep 0.05
+    done
+    fail "clearing Global Find did not publish a fresh cleared-state receipt"
+}
+
 wait_for_fixed() {
     local receipt="$1"
     local message="$2"
     for _ in $(seq 1 160); do
         grep -Fxq "${receipt}" "${log}" && return
+        sleep 0.05
+    done
+    fail "${message}"
+}
+
+wait_for_count_greater() {
+    local receipt="$1"
+    local baseline="$2"
+    local message="$3"
+    for _ in $(seq 1 160); do
+        [[ "$(grep -Fc "${receipt}" "${log}" || true)" -gt "${baseline}" ]] && return
         sleep 0.05
     done
     fail "${message}"
@@ -135,8 +176,12 @@ grep -Fq 'zentty-linux: search-state pane=pane-1 active=true total=Some(3)' "${l
 
 selected_receipts="$(grep -Ec 'zentty-linux: search-state pane=pane-1 active=true total=Some\(3\) selected=Some\([0-9]+\)' "${log}" || true)"
 press_key F3
-wait_for_fixed 'zentty-linux: action=find-next pane=pane-1 binding="navigate_search:next"' \
-    "F3 did not invoke Find Next"
+for _ in $(seq 1 160); do
+    grep -Fq 'zentty-linux: action=find-next pane=' "${log}" && break
+    sleep 0.05
+done
+grep -Fq 'zentty-linux: action=find-next pane=' "${log}" ||
+    fail "F3 did not invoke Find Next"
 for _ in $(seq 1 160); do
     [[ "$(grep -Ec 'zentty-linux: search-state pane=pane-1 active=true total=Some\(3\) selected=Some\([0-9]+\)' "${log}" || true)" -gt "${selected_receipts}" ]] && break
     sleep 0.05
@@ -149,8 +194,12 @@ if [[ "${backend}" == x11 ]]; then
 else
     wtype -M shift -k F3 -m shift
 fi
-wait_for_fixed 'zentty-linux: action=find-previous pane=pane-1 binding="navigate_search:previous"' \
-    "Shift+F3 did not invoke Find Previous"
+for _ in $(seq 1 160); do
+    grep -Fq 'zentty-linux: action=find-previous pane=' "${log}" && break
+    sleep 0.05
+done
+grep -Fq 'zentty-linux: action=find-previous pane=' "${log}" ||
+    fail "Shift+F3 did not invoke Find Previous"
 
 hidden_receipts="$(grep -Fc 'zentty-linux: action=hide-search pane=pane-1' "${log}" || true)"
 press_key Escape
@@ -207,4 +256,200 @@ if [[ "${backend}" == x11 ]]; then
     press_key Escape
 fi
 
-echo "Rust pane search passed: ${backend}, scrollback=real-ghostty, navigation=physical, focus=real-pty"
+# Create a second real Ghostty surface through the user-facing command palette,
+# not a model fixture or test API, so Global Find must aggregate and navigate
+# across two independently running PTYs on both compositors.
+press_ctrl_shift p
+type_text 'Split Right'
+wait_for_fixed 'zentty-linux: command-palette=query value="Split Right" results=1' \
+    "command palette did not resolve Split Right before activation"
+press_key Return
+wait_for_fixed 'zentty-linux: terminal-ready-pane=pane-2' \
+    "command-palette Split Right did not create the second real search pane"
+press_ctrl_shift p
+type_text 'New Worklane'
+wait_for_fixed 'zentty-linux: command-palette=query value="New Worklane" results=1' \
+    "command palette did not resolve New Worklane before activation"
+press_key Return
+wait_for_fixed 'zentty-linux: terminal-ready-pane=pane-3' \
+    "command-palette New Worklane did not create the hidden-worklane search pane"
+
+# Source Global Find uses every live pane's real Ghostty search rather than a
+# copied scrollback index. The Linux-native chord is Ctrl+Alt+Shift+F because
+# Ctrl+Shift+F remains the pane-local Find command above.
+if [[ "${backend}" == x11 ]]; then
+    # Exercise the real sidebar Global Find icon as a pointer surface in the
+    # controlled X11 window. Wayland uses the same action through the physical
+    # chord because its compositor deliberately exposes no global coordinates.
+    xdotool mousemove --window "${window_id}" 257 65 click 1
+else
+    press_ctrl_alt_shift f
+fi
+wait_for_fixed 'zentty-linux: global-find shown targets=3' \
+    "physical Global Find shortcut did not present the window search"
+# A two-character query must remain pending until explicit navigation flushes
+# it. Enter is sent immediately, without waiting for a timer receipt, and the
+# actor then requires all three real Ghostty totals plus the selected match.
+type_text ga
+for _ in $(seq 1 160); do
+    grep -Fq 'zentty-linux: global-find-state visible=true remembered=true selected=None total=0' "${log}" && break
+    sleep 0.01
+done
+grep -Fq 'zentty-linux: global-find-state visible=true remembered=true selected=None total=0' "${log}" ||
+    fail "the real Global Find field did not publish its pending short query before debounce"
+press_key Return
+for _ in $(seq 1 200); do
+    grep -Fq 'zentty-linux: global-find-state visible=true remembered=true selected=Some(0) total=3' "${log}" && break
+    sleep 0.05
+done
+grep -Fq 'zentty-linux: global-find-state visible=true remembered=true selected=Some(0) total=3' "${log}" ||
+    fail "Global Find navigation did not flush the short query and wait for all real totals"
+press_key Return
+for _ in $(seq 1 160); do
+    grep -Fq 'zentty-linux: global-find-state visible=true remembered=true selected=Some(1) total=3' "${log}" && break
+    sleep 0.05
+done
+grep -Fq 'zentty-linux: global-find navigate pane=pane-2 selected=0' "${log}" ||
+    fail "Global Find did not cross from pane 1 into pane 2"
+grep -Fq 'zentty-linux: global-find-state visible=true remembered=true selected=Some(1) total=3' "${log}" ||
+    fail "Global Find did not report pane 2's aggregate ordinal"
+press_key Return
+for _ in $(seq 1 160); do
+    grep -Fq 'zentty-linux: global-find navigate pane=pane-3 selected=0' "${log}" &&
+        grep -Fq 'zentty-linux: global-find-state visible=true remembered=true selected=Some(2) total=3' "${log}" && break
+    sleep 0.05
+done
+grep -Fq 'zentty-linux: global-find navigate pane=pane-3 selected=0' "${log}" ||
+    fail "Global Find did not cross into the inactive worklane"
+grep -Fq 'zentty-linux: global-find-state visible=true remembered=true selected=Some(2) total=3' "${log}" ||
+    fail "Global Find did not report the inactive worklane's aggregate ordinal"
+
+# Keep window 1's three-result search live while creating a real second window.
+# Its fresh coordinator must not inherit the first window's query, target set,
+# totals, or selection; returning to window 1 must resume the original search.
+single_target_before="$(grep -Fc 'zentty-linux: global-find shown targets=1' "${log}" || true)"
+first_window_id="${window_id}"
+press_ctrl_shift n
+wait_for_fixed 'zentty-linux: terminal-ready-pane=pane-window-2' \
+    "New Window did not initialize its independent real Ghostty surface"
+if [[ "${backend}" == x11 ]]; then
+    second_window_id=""
+    for _ in $(seq 1 160); do
+        while IFS= read -r candidate; do
+            if [[ "${candidate}" =~ ^[1-9][0-9]*$ && "${candidate}" != "${first_window_id}" ]]; then
+                second_window_id="${candidate}"
+                break
+            fi
+        done < <(xdotool search --onlyvisible --pid "${product_pid}" --name '^Zentty$' 2>/dev/null || true)
+        [[ "${second_window_id}" =~ ^[1-9][0-9]*$ ]] && break
+        sleep 0.05
+    done
+    [[ "${second_window_id}" =~ ^[1-9][0-9]*$ ]] || fail "second X11 window identity was unavailable"
+    window_id="${second_window_id}"
+    xdotool windowfocus --sync "${window_id}"
+else
+    wtype -M alt -k Tab -m alt
+fi
+for _ in $(seq 1 160); do
+    grep -Fq 'zentty-linux: focus-pane pane=pane-window-2' "${log}" && break
+    sleep 0.05
+done
+grep -Fq 'zentty-linux: focus-pane pane=pane-window-2' "${log}" ||
+    fail "physical window targeting did not focus window 2's real terminal"
+press_ctrl_alt_shift f
+for _ in $(seq 1 160); do
+    [[ "$(grep -Fc 'zentty-linux: global-find shown targets=1' "${log}" || true)" -gt "${single_target_before}" ]] && break
+    sleep 0.05
+done
+[[ "$(grep -Fc 'zentty-linux: global-find shown targets=1' "${log}" || true)" -gt "${single_target_before}" ]] ||
+    fail "window 2 Global Find did not start with its independent target set"
+window_two_total_before="$(grep -Fc 'zentty-linux: global-find-state visible=true remembered=true selected=None total=1' "${log}" || true)"
+type_text noise
+wait_for_count_greater \
+    'zentty-linux: global-find-state visible=true remembered=true selected=None total=1' \
+    "${window_two_total_before}" \
+    "window 2 Global Find inherited or contaminated window 1's totals"
+# Close window 2 while its search remains active. This exercises the real
+# window teardown contract rather than requiring the HUD to be dismissed first.
+if [[ "${backend}" == x11 ]]; then
+    xdotool windowfocus --sync "${window_id}"
+    xdotool key ctrl+shift+w 2>/dev/null || true
+    xdotool keyup Control_L Control_R Shift_L Shift_R w 2>/dev/null || true
+else
+    press_ctrl_shift w
+fi
+wait_for_fixed 'zentty-linux: window-closed id=window-2 remaining=1' \
+    "the independent search window did not close"
+if [[ "${backend}" == x11 ]]; then
+    window_id="${first_window_id}"
+    xdotool windowfocus --sync "${window_id}"
+fi
+window_one_wrap_before="$(grep -Fc 'zentty-linux: global-find-state visible=true remembered=true selected=Some(0) total=3' "${log}" || true)"
+press_key Return
+wait_for_count_greater \
+    'zentty-linux: global-find-state visible=true remembered=true selected=Some(0) total=3' \
+    "${window_one_wrap_before}" \
+    "window 1 Global Find did not retain its independent query and selection"
+
+# Create pane 4 while the query's target set is frozen. It runs the same real
+# command and would contribute one match if silently admitted, so retaining
+# total=3 proves exclusion. Navigate back to searched pane 3, close it through
+# the real palette command, then require reconciliation to total=2 without
+# admitting pane 4.
+frozen_total_before="$(grep -Fc 'zentty-linux: global-find-state visible=true remembered=true selected=Some(0) total=3' "${log}" || true)"
+press_ctrl_shift p
+split_right_query_before="$(grep -Fc 'zentty-linux: command-palette=query value="Split Right" results=1' "${log}" || true)"
+type_text 'Split Right'
+wait_for_count_greater \
+    'zentty-linux: command-palette=query value="Split Right" results=1' \
+    "${split_right_query_before}" \
+    "command palette did not resolve Split Right during Global Find"
+press_key Return
+wait_for_fixed 'zentty-linux: terminal-ready-pane=pane-4' \
+    "creating a pane during Global Find did not produce a fourth real PTY"
+wait_for_count_greater \
+    'zentty-linux: global-find-state visible=true remembered=true selected=Some(0) total=3' \
+    "${frozen_total_before}" \
+    "a newly created pane changed the frozen Global Find total"
+selected_one_before="$(grep -Fc 'zentty-linux: global-find-state visible=true remembered=true selected=Some(1) total=3' "${log}" || true)"
+press_key Return
+wait_for_count_greater \
+    'zentty-linux: global-find-state visible=true remembered=true selected=Some(1) total=3' \
+    "${selected_one_before}" \
+    "Global Find did not return from the new pane to its searched selection anchor"
+selected_two_before="$(grep -Fc 'zentty-linux: global-find-state visible=true remembered=true selected=Some(2) total=3' "${log}" || true)"
+press_key Return
+wait_for_count_greater \
+    'zentty-linux: global-find-state visible=true remembered=true selected=Some(2) total=3' \
+    "${selected_two_before}" \
+    "Global Find did not navigate back to searched pane 3"
+press_ctrl_shift p
+type_text 'Close Pane'
+wait_for_fixed 'zentty-linux: command-palette=query value="Close Pane" results=2' \
+    "command palette did not resolve Close Pane during Global Find"
+press_key Return
+wait_for_fixed 'zentty-linux: action=close-pane pane=pane-3' \
+    "closing a searched pane did not complete through the real product action"
+press_key Return
+for _ in $(seq 1 200); do
+    grep -Fq 'zentty-linux: global-find-state visible=true remembered=true selected=Some(0) total=2' "${log}" && break
+    sleep 0.05
+done
+grep -Fq 'zentty-linux: global-find-state visible=true remembered=true selected=Some(0) total=2' "${log}" ||
+    fail "Global Find did not reconcile the closed searched pane without admitting pane 4"
+clear_global_find
+hidden_before="$(grep -Fc 'zentty-linux: global-find-state visible=false remembered=false selected=None total=0' "${log}" || true)"
+press_key Escape
+wait_for_count_greater \
+    'zentty-linux: global-find-state visible=false remembered=false selected=None total=0' \
+    "${hidden_before}" \
+    "Escape did not close Global Find"
+focus_title_before="$(grep -Fc 'zentty-linux: title-pane=pane-1 value=focus:global-search-focus' "${log}" || true)"
+type_text global-search-focus
+press_key Return
+wait_for_count_greater \
+    'zentty-linux: title-pane=pane-1 value=focus:global-search-focus' \
+    "${focus_title_before}" \
+    "closing Global Find did not restore the real terminal focus"
+
+echo "Rust pane search passed: ${backend}, pane-and-global=real-ghostty, navigation=physical, focus=real-pty"

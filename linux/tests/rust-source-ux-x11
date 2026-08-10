@@ -658,7 +658,7 @@ keyboard_height_line="$(grep -F 'zentty-linux: pane-height-layout column=column-
 keyboard_height_before="$(sed -n 's/.*pane-1:\([0-9][0-9]*\).*/\1/p' <<<"${keyboard_height_line}")"
 keyboard_height_layout_count="$(grep -Fc 'zentty-linux: pane-height-layout column=column-worklane-1 ' "${log}" || true)"
 xdotool key --window "${window_id}" ctrl+alt+shift+Down
-for _ in $(seq 1 100); do
+for _ in $(seq 1 300); do
     (( $(grep -Fc 'zentty-linux: pane-keyboard-resize direction=' "${log}" || true) >= keyboard_resize_count + 3 &&
        $(grep -Fc 'zentty-linux: pane-height-layout column=column-worklane-1 ' "${log}" || true) > keyboard_height_layout_count )) && break
     sleep 0.05
@@ -669,7 +669,7 @@ keyboard_height_down="$(grep -F 'zentty-linux: pane-height-layout column=column-
 
 keyboard_height_layout_count="$(grep -Fc 'zentty-linux: pane-height-layout column=column-worklane-1 ' "${log}" || true)"
 xdotool key --window "${window_id}" ctrl+alt+shift+Up
-for _ in $(seq 1 100); do
+for _ in $(seq 1 300); do
     (( $(grep -Fc 'zentty-linux: pane-keyboard-resize direction=' "${log}" || true) >= keyboard_resize_count + 4 &&
        $(grep -Fc 'zentty-linux: pane-height-layout column=column-worklane-1 ' "${log}" || true) > keyboard_height_layout_count )) && break
     sleep 0.05

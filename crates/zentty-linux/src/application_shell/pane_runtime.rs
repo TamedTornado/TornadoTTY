@@ -438,7 +438,11 @@ impl PaneRuntimeCoordinator {
                     return;
                 }
                 if let Some(surface) = shell.pane_runtime.surface(&ready_id) {
-                    observe_ghostty_search_state(surface.widget(), &ready_id);
+                    observe_ghostty_search_state(
+                        surface.widget(),
+                        &ready_id,
+                        shell.self_handle.borrow().clone(),
+                    );
                 }
             });
         });
@@ -581,7 +585,9 @@ impl PaneRuntimeCoordinator {
                 let Some(shell) = weak.upgrade() else {
                     return;
                 };
-                if shell.borrow().shutting_down {
+                if shell.borrow().shutting_down
+                    || shell.borrow().global_search.state().visible
+                {
                     return;
                 }
                 if controller.contains_focus() {

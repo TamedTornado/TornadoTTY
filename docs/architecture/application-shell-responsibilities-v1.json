@@ -2,16 +2,17 @@
   "schema_version": 1,
   "contract_id": "zentty-application-shell-responsibilities",
   "source": "crates/zentty-linux/src/application_shell.rs",
-  "source_sha256": "9f9f79942b8e35f3d777a434bb6b8ce897d57a0e7ccbf67d6e21c1b18c0d015e",
+  "source_sha256": "5be33d5e1bb61a896c9e4695ea52b827ffd7747ac6a6d0a347edada53157084b",
   "owned_source_sha256": {
-    "crates/zentty-linux/src/main.rs": "5f5d7143cec7b51412624cdc10fe16a5000a2d7605e93151d2a0f29c3b339780",
+    "crates/zentty-linux/src/main.rs": "625521ffb056cc95ea5fe131464e4cfabf566595f2aa1ec10e4964e7fb6f60dd",
     "crates/zentty-linux/src/application.rs": "c107efc7c02b8ec34ba22695c89ac706b06ed701df520301cf2e12d6929d8b86",
     "crates/zentty-linux/src/window_set.rs": "501d595889c11a41a4261ef8282465d76dd9ed8ccd1d004406b558579b0bf58e",
     "crates/zentty-linux/src/agent_runtime.rs": "333aab1edbecc0029c47d2469cb0a5ceb1fcb90813d67b9e3751099a255e99ef",
     "crates/zentty-linux/src/codex_enrichment.rs": "fe87631c75c04b63962b7f89d311a778a25af8f27a1dcb4d5950b3efcbaa476e",
-    "crates/zentty-linux/src/application_shell/action_router.rs": "8e7946ee0106cb8c3ee429196958190960710d8c15d8ee51824bf665b524c17e",
+    "crates/zentty-linux/src/application_shell/action_router.rs": "2e0d32a18146e3beca292db324fe8b764ad89d3ed6fe4bc0dec4249b701acf42",
     "crates/zentty-linux/src/application_shell/agent_events.rs": "56c45836a4e6a6a929dce61251a199c0b8dec7a62edbcda3c9b5dd594dbb6038",
-    "crates/zentty-linux/src/application_shell/pane_runtime.rs": "e4d2a5805a8cc91e6c8e6970646b5a946dc23818a3144139b44d400a5a52e238",
+    "crates/zentty-linux/src/application_shell/global_search.rs": "98a1963830af8616b31da2558ae6f27c4461342ef3085f6ef9cda0863a1ddc7c",
+    "crates/zentty-linux/src/application_shell/pane_runtime.rs": "da705eb1b81eea7f26aa670e7ac3fb929e4419fcbbe73b6065f8afd4bdfa509f",
     "crates/zentty-linux/src/application_shell/tmux_runtime.rs": "b606ec1c2e8c93e1ab40dbac1e5080f28315352e83533d7c63ba7eefd95d0515",
     "crates/zentty-linux/src/pane_dividers.rs": "dc86023846057e7d3338f142c13d52f4dfde9e3057c33055d527587b7e638d7d",
     "crates/zentty-linux/src/persistence_coordinator.rs": "9c9b24a8516032e37377b6acfba3549781cfc830a65f53d7a311f0b2efaa72a4",
@@ -55,6 +56,13 @@
       "planned_module": "crates/zentty-linux/src/application_shell/agent_events.rs",
       "tracking": "GH-29",
       "responsibility": "The sole UI-thread drain of authenticated agent events, enrichment generations, cancellation, and projection through the core reducer."
+    },
+    {
+      "id": "global_search_coordinator",
+      "status": "existing",
+      "planned_module": "crates/zentty-linux/src/application_shell/global_search.rs",
+      "tracking": "GH-34",
+      "responsibility": "The sole window-local bridge from pure Global Find policy to existing Ghostty search sessions, GLib debounce, exact workspace selection, and numeric GTK projection."
     },
     {
       "id": "persistence_coordinator",
@@ -104,6 +112,10 @@
       "fields": ["agent_events"]
     },
     {
+      "owner": "global_search_coordinator",
+      "fields": ["global_search", "global_search_generation"]
+    },
+    {
       "owner": "persistence_coordinator",
       "fields": ["restored_pane_commands", "window_template"]
     },
@@ -112,7 +124,7 @@
       "fields": [
         "preferred_sidebar_width", "adjusting_sidebar_width", "sidebar_reveal_generation",
         "sidebar_visibility", "sidebar_visibility_generation", "peek_phase", "peek_generation",
-        "peek_tab_down", "peek_view", "command_palette", "last_pane_viewport_height",
+        "peek_tab_down", "peek_view", "command_palette", "global_search_view", "last_pane_viewport_height",
         "rendered_columns", "last_vertical_divider", "self_handle"
       ]
     },
@@ -224,6 +236,11 @@
       "event_route_decision", "start", "environment_for_pane", "unregister_pane",
       "sync_targets", "schedule_for_pane", "shutdown", "apply_inputs"
     ],
+    "global_search_coordinator": [
+      "install_global_search_callbacks", "global_search_targets", "toggle_global_find",
+      "update_global_find_query", "navigate_global_find", "handle_global_search_state",
+      "render_global_search", "apply_global_search_effects"
+    ],
     "persistence_coordinator": [
       "clean_exit_decision", "complete_launch", "default_state_directory", "drain_errors",
       "drain_live_snapshot_errors", "drop", "flush_live_snapshot_if_due",
@@ -280,6 +297,10 @@
     {"name":"use-selection-for-find","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"find-next","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"find-previous","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"global-find","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"clear-global-find","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"global-find-next","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"global-find-previous","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"focus-pane-left","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"focus-pane-right","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"focus-pane-up","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
@@ -316,6 +337,7 @@
     "session_store": {"owner":"persistence_coordinator","maximum_instances_per_process":1},
     "agent_ipc_transport": {"owner":"application_runtime","maximum_instances_per_process":1},
     "agent_event_projection": {"owner":"agent_event_coordinator","maximum_instances_per_window":1},
+    "global_search_state": {"owner":"global_search_coordinator","maximum_instances_per_window":1},
     "tmux_compatibility_state": {"owner":"existing_tmux_coordinator","maximum_instances_per_window":1},
     "glib_scheduling": {"owner":"application_runtime","kind":"default-glib-main-context","maximum_instances_per_process":1}
   },

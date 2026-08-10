@@ -4,7 +4,7 @@ use std::cell::Cell;
 use std::rc::Rc;
 use zentty_core::SidebarWorklaneSummary;
 
-use crate::{agent_status_view, source_ui};
+use crate::{agent_status_view, global_search_view, source_ui};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct PaneActionSpec {
@@ -170,6 +170,10 @@ pub(crate) fn install_styles() {
          .pane-agent-status { color: #a7adb8; font-size: 11px; }\n\
          .pane-agent-status-attention { color: #f6c453; font-weight: 700; }\n\
          .sidebar-create-worklane { color: #d8dbe1; border-radius: 7px; padding: 5px 8px; }\n\
+         .sidebar-global-search { background: #242830; border: 1px solid #3a414d; border-radius: 10px; padding: 4px 6px; }\n\
+         .sidebar-global-search entry { background: transparent; color: #eef1f5; border: none; box-shadow: none; }\n\
+         .sidebar-global-search-count { color: #a7adb8; font-family: monospace; }\n\
+         .sidebar-global-search-button { min-width: 24px; min-height: 24px; padding: 0; }\n\
          .sidebar-pane-actions { color: #c7cbd2; min-width: 26px; min-height: 26px; padding: 2px; }\n\
          .pane-context-action { padding: 5px 8px; }\n\
          .worklane-context-action { padding: 5px 8px; }\n\
@@ -205,14 +209,17 @@ pub(crate) fn render(
     let mut child = header.next_sibling();
     while let Some(widget) = child {
         child = widget.next_sibling();
-        let keep = expected_ids
-            .iter()
-            .any(|id| widget.widget_name() == widget_name("worklane-card", id));
+        let keep = widget.widget_name() == global_search_view::ROW_NAME
+            || expected_ids
+                .iter()
+                .any(|id| widget.widget_name() == widget_name("worklane-card", id));
         if !keep {
             sidebar.remove(&widget);
         }
     }
-    let mut previous: gtk::Widget = header.upcast();
+    let mut previous: gtk::Widget =
+        find_named_widget(sidebar.upcast_ref(), global_search_view::ROW_NAME)
+            .unwrap_or_else(|| header.upcast());
     for (index, summary) in summaries.iter().enumerate() {
         let name = widget_name("worklane-card", &summary.worklane_id);
         let card = find_named_widget(sidebar.upcast_ref(), &name)
