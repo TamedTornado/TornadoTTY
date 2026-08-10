@@ -14,6 +14,7 @@ mod global_search;
 mod pane_focus_history;
 mod pane_layout;
 mod pane_token_registry;
+mod remote_transfer;
 mod session_restore_store;
 mod sidebar_width;
 mod ssh_identity;
@@ -37,12 +38,17 @@ pub use pane_layout::{PaneLayoutPolicy, PaneRightInsertionBehavior};
 pub use pane_token_registry::{
     AgentTarget, AuthenticatedAgentEvent, PaneTokenError, PaneTokenRegistry,
 };
+pub use remote_transfer::{
+    MAX_REMOTE_FILE_BYTES, MAX_REMOTE_IMAGE_BYTES, RemoteTransferFailure, RemoteTransferMethod,
+    RemoteTransferPrerequisites, RemoteUploadPath, RemoteUploadPathError,
+    escape_remote_path_for_shell, scp_connection_arguments, ssh_connection_arguments,
+};
 pub use session_restore_store::{
     LaunchDecision, LaunchReason, PersistenceRequest, SessionRestoreStore,
     SessionRestoreStoreError, SnapshotPersistence,
 };
 pub use sidebar_width::SidebarWidthPreference;
-pub use ssh_identity::{SshDestination, parse_ssh_destination};
+pub use ssh_identity::{SshConnectionOption, SshDestination, parse_ssh_destination};
 pub use workspace_recipe::{
     AgentLaunchSnapshot, ColumnRecipe, PaneRecipe, PaneRestoreDraft, RestoreDraftKind, SaveReason,
     SessionRestoreDraftWindow, SessionRestoreEnvelope, WindowFrame, WindowRecipe, WorklaneRecipe,

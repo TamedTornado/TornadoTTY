@@ -1,4 +1,4 @@
-use zentty_core::{SshDestination, parse_ssh_destination};
+use zentty_core::{SshConnectionOption, SshDestination, parse_ssh_destination};
 
 #[test]
 fn parses_source_supported_ssh_destination_forms() {
@@ -20,10 +20,6 @@ fn parses_source_supported_ssh_destination_forms() {
             SshDestination::new("user@host", Some("user"), "host", None),
         ),
         (
-            vec!["ssh", "-i", "/key", "-o", "ProxyJump=b", "host"],
-            SshDestination::new("host", None, "host", None),
-        ),
-        (
             vec!["ssh", "-v", "host"],
             SshDestination::new("host", None, "host", None),
         ),
@@ -43,6 +39,38 @@ fn parses_source_supported_ssh_destination_forms() {
     ] {
         assert_eq!(parse_ssh_destination(&argv), Some(expected), "{argv:?}");
     }
+}
+
+#[test]
+fn retains_only_reusable_connection_options_as_opaque_argv() {
+    let destination = parse_ssh_destination(&[
+        "ssh",
+        "-4",
+        "-i",
+        "/key with spaces",
+        "-o",
+        "ProxyJump=bastion",
+        "-o",
+        "RemoteCommand=touch /tmp/wrong",
+        "-L",
+        "8080:localhost:80",
+        "host",
+    ])
+    .unwrap();
+    assert_eq!(
+        destination.connection_options(),
+        &[
+            SshConnectionOption::Flag("-4".to_owned()),
+            SshConnectionOption::Value {
+                flag: "-i".to_owned(),
+                value: "/key with spaces".to_owned(),
+            },
+            SshConnectionOption::Value {
+                flag: "-o".to_owned(),
+                value: "ProxyJump=bastion".to_owned(),
+            },
+        ]
+    );
 }
 
 #[test]
