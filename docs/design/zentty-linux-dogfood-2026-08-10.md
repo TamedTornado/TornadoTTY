@@ -307,6 +307,11 @@ cells.
   and `8776e57ce9f3ada84524f7a4aa014df5ca09c1477821bef6f1a0e054229a278a`.
   Suppression governance passed, ReleaseSafe Valgrind remains XFAIL, and this
   feature neither added nor broadened a suppression.
+- The first public close command used a nonexistent GitHub CLI
+  `issue close --comment-file` option and failed before mutating the issue. The
+  receipt was then posted with the supported `issue comment --body-file`
+  command and issue #34 was closed separately as completed. This kept the long
+  public qualification receipt file-backed without shell interpolation.
 
 ## AI disclosure
 
