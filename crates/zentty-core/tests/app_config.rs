@@ -110,3 +110,142 @@ fn source_server_detection_defaults_and_owned_keys_are_preserved() {
     );
     assert_eq!(configured.ignored_port_rules, ["9229", "24678-24680"]);
 }
+
+#[test]
+fn source_open_with_defaults_preserve_linux_target_order() {
+    let open_with = AppConfig::parse_toml("").unwrap().open_with;
+    assert_eq!(open_with.primary_target_id, "system-file-manager");
+    assert_eq!(
+        open_with.enabled_target_ids,
+        ["system-file-manager", "vscode", "cursor", "system-terminal"]
+    );
+    assert!(open_with.custom_apps.is_empty());
+}
+
+#[test]
+fn source_open_with_keys_and_custom_apps_are_preserved() {
+    let open_with = AppConfig::parse_toml(
+        r#"
+        [open_with]
+        primary_target_id = "custom:zed"
+        enabled_target_ids = ["custom:zed", "system-file-manager"]
+
+        [[open_with.custom_apps]]
+        id = "custom:zed"
+        name = "Zed Preview"
+        path = "/opt/zed preview/bin/zed"
+        "#,
+    )
+    .unwrap()
+    .open_with;
+
+    assert_eq!(open_with.primary_target_id, "custom:zed");
+    assert_eq!(
+        open_with.enabled_target_ids,
+        ["custom:zed", "system-file-manager"]
+    );
+    assert_eq!(open_with.custom_apps.len(), 1);
+    assert_eq!(open_with.custom_apps[0].id, "custom:zed");
+    assert_eq!(open_with.custom_apps[0].name, "Zed Preview");
+    assert_eq!(open_with.custom_apps[0].path, "/opt/zed preview/bin/zed");
+}
+
+#[test]
+fn malformed_known_open_with_values_reject_the_snapshot() {
+    for source in [
+        "[open_with]\nenabled_target_ids = \"vscode\"\n",
+        "[open_with]\nprimary_target_id = 42\n",
+        "[[open_with.custom_apps]]\nid = \"custom:x\"\nname = \"X\"\n",
+    ] {
+        assert!(
+            AppConfig::parse_toml(source).is_err(),
+            "accepted {source:?}"
+        );
+    }
+}
+
+#[test]
+fn open_with_normalization_matches_source_duplicate_and_fallback_policy() {
+    let open_with = AppConfig::parse_toml(
+        r#"
+        [open_with]
+        primary_target_id = "custom:duplicate"
+        enabled_target_ids = ["missing", "custom:duplicate", "vscode", "vscode"]
+
+        [[open_with.custom_apps]]
+        id = "custom:first"
+        name = "First"
+        path = "/opt/shared"
+
+        [[open_with.custom_apps]]
+        id = "custom:duplicate"
+        name = "Duplicate Path"
+        path = "/opt/shared"
+
+        [[open_with.custom_apps]]
+        id = "vscode"
+        name = "Reserved ID"
+        path = "/opt/reserved"
+
+        [[open_with.custom_apps]]
+        id = ""
+        name = "Malformed"
+        path = "/opt/malformed"
+        "#,
+    )
+    .unwrap()
+    .open_with;
+
+    assert_eq!(open_with.custom_apps.len(), 1);
+    assert_eq!(open_with.custom_apps[0].id, "custom:first");
+    assert_eq!(open_with.enabled_target_ids, ["custom:first", "vscode"]);
+    assert_eq!(open_with.primary_target_id, "custom:first");
+}
+
+#[test]
+fn open_with_normalization_rejects_each_independently_empty_custom_field() {
+    let open_with = AppConfig::parse_toml(
+        r#"
+        [open_with]
+        primary_target_id = "vscode"
+        enabled_target_ids = ["vscode"]
+
+        [[open_with.custom_apps]]
+        id = ""
+        name = "Name"
+        path = "/opt/id-empty"
+
+        [[open_with.custom_apps]]
+        id = "custom:name-empty"
+        name = ""
+        path = "/opt/name-empty"
+
+        [[open_with.custom_apps]]
+        id = "custom:path-empty"
+        name = "Path Empty"
+        path = ""
+        "#,
+    )
+    .unwrap()
+    .open_with;
+    assert!(open_with.custom_apps.is_empty());
+}
+
+#[test]
+fn valid_custom_primary_does_not_fall_back_to_first_enabled_builtin() {
+    let open_with = AppConfig::parse_toml(
+        r#"
+        [open_with]
+        primary_target_id = "custom:primary"
+        enabled_target_ids = ["vscode", "custom:primary"]
+
+        [[open_with.custom_apps]]
+        id = "custom:primary"
+        name = "Primary"
+        path = "/opt/primary"
+        "#,
+    )
+    .unwrap()
+    .open_with;
+    assert_eq!(open_with.primary_target_id, "custom:primary");
+}

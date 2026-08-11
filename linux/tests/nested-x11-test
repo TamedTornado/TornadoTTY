@@ -77,7 +77,7 @@ display_number=""
 while (( $# > 0 )); do
     case "$1" in
         -n)
-            [[ "$2" =~ ^[2-9][0-9][0-9][0-9]+$ ]] || exit 105
+            [[ "$2" =~ ^[0-9]+$ ]] && ((10#$2 >= 2000 && 10#$2 <= 11999)) || exit 105
             display_number="$2"
             shift 2
             ;;
@@ -123,7 +123,8 @@ EOF
 cat >"${fake_bin}/xdpyinfo" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-[[ "${DISPLAY:-}" =~ ^:[2-9][0-9][0-9][0-9]+$ ]]
+[[ "${DISPLAY:-}" =~ ^:([0-9]+)$ ]]
+((10#${BASH_REMATCH[1]} >= 2000 && 10#${BASH_REMATCH[1]} <= 11999))
 [[ -f "${XAUTHORITY:-}" ]]
 [[ -f "${ZENTTY_FAKE_X11_CAPTURE}/display-active" ]]
 printf 'name of display: %s\n' "${DISPLAY}"
@@ -137,7 +138,8 @@ EOF
 cat >"${fake_bin}/glxinfo" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-[[ "${DISPLAY:-}" =~ ^:[2-9][0-9][0-9][0-9]+$ ]]
+[[ "${DISPLAY:-}" =~ ^:([0-9]+)$ ]]
+((10#${BASH_REMATCH[1]} >= 2000 && 10#${BASH_REMATCH[1]} <= 11999))
 [[ "${LIBGL_ALWAYS_SOFTWARE:-}" == 1 ]]
 printf '    Accelerated: no\nOpenGL renderer string: llvmpipe (fixture)\n'
 printf 'OpenGL vendor string: Mesa/X.org\nOpenGL version string: 4.5 fixture\n'
@@ -147,7 +149,8 @@ cat >"${fake_bin}/session-probe" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
-[[ "${DISPLAY:-}" =~ ^:[2-9][0-9][0-9][0-9]+$ ]] || exit 51
+[[ "${DISPLAY:-}" =~ ^:([0-9]+)$ ]] || exit 51
+((10#${BASH_REMATCH[1]} >= 2000 && 10#${BASH_REMATCH[1]} <= 11999)) || exit 51
 [[ -z "${WAYLAND_DISPLAY:-}" ]] || exit 52
 [[ "${XAUTHORITY:-}" == /tmp/zentty-nested-x11.*/Xauthority ]] || exit 53
 [[ "${GDK_BACKEND:-}" == x11 ]] || exit 54

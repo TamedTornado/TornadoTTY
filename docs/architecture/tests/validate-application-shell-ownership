@@ -20,6 +20,7 @@ pane_runtime_file="${ZENTTY_PANE_RUNTIME_SOURCE:-${repo_root}/crates/zentty-linu
 server_runtime_file="${ZENTTY_SERVER_RUNTIME_SOURCE:-${repo_root}/crates/zentty-linux/src/application_shell/server_runtime.rs}"
 task_runner_runtime_file="${ZENTTY_TASK_RUNNER_RUNTIME_SOURCE:-${repo_root}/crates/zentty-linux/src/application_shell/task_runner_runtime.rs}"
 project_context_runtime_file="${ZENTTY_PROJECT_CONTEXT_RUNTIME_SOURCE:-${repo_root}/crates/zentty-linux/src/application_shell/project_context_runtime.rs}"
+open_with_runtime_file="${ZENTTY_OPEN_WITH_RUNTIME_SOURCE:-${repo_root}/crates/zentty-linux/src/application_shell/open_with_runtime.rs}"
 server_discovery_file="${ZENTTY_SERVER_DISCOVERY_SOURCE:-${repo_root}/crates/zentty-linux/src/server_discovery.rs}"
 docker_discovery_file="${ZENTTY_DOCKER_DISCOVERY_SOURCE:-${repo_root}/crates/zentty-linux/src/docker_discovery.rs}"
 pane_dividers_file="${ZENTTY_PANE_DIVIDERS_SOURCE:-${repo_root}/crates/zentty-linux/src/pane_dividers.rs}"
@@ -55,6 +56,7 @@ done
 [[ -r "${server_runtime_file}" ]] || fail "server runtime source is missing: ${server_runtime_file}"
 [[ -r "${task_runner_runtime_file}" ]] || fail "task runner runtime source is missing: ${task_runner_runtime_file}"
 [[ -r "${project_context_runtime_file}" ]] || fail "project context runtime source is missing: ${project_context_runtime_file}"
+[[ -r "${open_with_runtime_file}" ]] || fail "Open With runtime source is missing: ${open_with_runtime_file}"
 [[ -r "${server_discovery_file}" ]] || fail "server listener discovery source is missing: ${server_discovery_file}"
 [[ -r "${docker_discovery_file}" ]] || fail "server container discovery source is missing: ${docker_discovery_file}"
 [[ -r "${pane_dividers_file}" ]] || fail "pane divider source is missing: ${pane_dividers_file}"
@@ -118,6 +120,7 @@ pane_runtime_sha256="$(sha256sum "${pane_runtime_file}" | awk '{print $1}')"
 server_runtime_sha256="$(sha256sum "${server_runtime_file}" | awk '{print $1}')"
 task_runner_runtime_sha256="$(sha256sum "${task_runner_runtime_file}" | awk '{print $1}')"
 project_context_runtime_sha256="$(sha256sum "${project_context_runtime_file}" | awk '{print $1}')"
+open_with_runtime_sha256="$(sha256sum "${open_with_runtime_file}" | awk '{print $1}')"
 server_discovery_sha256="$(sha256sum "${server_discovery_file}" | awk '{print $1}')"
 docker_discovery_sha256="$(sha256sum "${docker_discovery_file}" | awk '{print $1}')"
 pane_dividers_sha256="$(sha256sum "${pane_dividers_file}" | awk '{print $1}')"
@@ -155,6 +158,9 @@ jq -e --arg task_runner_runtime_sha256 "${task_runner_runtime_sha256}" \
 jq -e --arg project_context_runtime_sha256 "${project_context_runtime_sha256}" \
     '.owned_source_sha256["crates/zentty-linux/src/application_shell/project_context_runtime.rs"] == $project_context_runtime_sha256' \
     "${contract}" >/dev/null || fail "project context runtime source hash differs from its ownership contract"
+jq -e --arg open_with_runtime_sha256 "${open_with_runtime_sha256}" \
+    '.owned_source_sha256["crates/zentty-linux/src/application_shell/open_with_runtime.rs"] == $open_with_runtime_sha256' \
+    "${contract}" >/dev/null || fail "Open With runtime source hash differs from its ownership contract"
 jq -e --arg server_discovery_sha256 "${server_discovery_sha256}" \
     '.owned_source_sha256["crates/zentty-linux/src/server_discovery.rs"] == $server_discovery_sha256' \
     "${contract}" >/dev/null || fail "server listener discovery source hash differs from its ownership contract"
@@ -244,6 +250,17 @@ diff="$(comm -3 "${temp_dir}/actual-project-context-runtime-functions" "${temp_d
 if [[ -n "${diff}" ]]; then
     printf '%s\n' "${diff}" >&2
     fail "project context runtime function inventory differs from its ownership contract"
+fi
+
+sed -n '1,/^#\[cfg(test)\]/p' "${open_with_runtime_file}" |
+    sed -nE 's/^[[:space:]]*(pub\(super\)[[:space:]]+)?fn[[:space:]]+([a-zA-Z0-9_]+).*/\2/p' |
+    sort >"${temp_dir}/actual-open-with-runtime-functions"
+jq -r '.owned_module_functions.open_with_coordinator | sort | .[]' "${contract}" \
+    >"${temp_dir}/contract-open-with-runtime-functions"
+diff="$(comm -3 "${temp_dir}/actual-open-with-runtime-functions" "${temp_dir}/contract-open-with-runtime-functions")"
+if [[ -n "${diff}" ]]; then
+    printf '%s\n' "${diff}" >&2
+    fail "Open With runtime function inventory differs from its ownership contract"
 fi
 
 sed -n '1,/^#\[cfg(test)\]/p' "${server_discovery_file}" |
@@ -394,6 +411,7 @@ jq -e --arg main_sha256 "${main_sha256}" \
     --arg server_runtime_sha256 "${server_runtime_sha256}" \
     --arg task_runner_runtime_sha256 "${task_runner_runtime_sha256}" \
     --arg project_context_runtime_sha256 "${project_context_runtime_sha256}" \
+    --arg open_with_runtime_sha256 "${open_with_runtime_sha256}" \
     --arg server_discovery_sha256 "${server_discovery_sha256}" \
     --arg docker_discovery_sha256 "${docker_discovery_sha256}" \
     --arg pane_dividers_sha256 "${pane_dividers_sha256}" \
@@ -422,6 +440,7 @@ jq -e --arg main_sha256 "${main_sha256}" \
         "crates/zentty-linux/src/application_shell/server_runtime.rs":$server_runtime_sha256,
         "crates/zentty-linux/src/application_shell/task_runner_runtime.rs":$task_runner_runtime_sha256,
         "crates/zentty-linux/src/application_shell/project_context_runtime.rs":$project_context_runtime_sha256,
+        "crates/zentty-linux/src/application_shell/open_with_runtime.rs":$open_with_runtime_sha256,
         "crates/zentty-linux/src/server_discovery.rs":$server_discovery_sha256,
         "crates/zentty-linux/src/docker_discovery.rs":$docker_discovery_sha256,
         "crates/zentty-linux/src/application_shell/tmux_runtime.rs":$tmux_runtime_sha256,
@@ -447,6 +466,7 @@ jq -e --arg main_sha256 "${main_sha256}" \
         "existing_ui_projection",
         "pane_runtime_coordinator",
         "project_context_coordinator",
+        "open_with_coordinator",
         "persistence_coordinator"
     ] | sort) and
     ([.owners[].id] | length) == ([.owners[].id] | unique | length) and
@@ -461,7 +481,7 @@ jq -e --arg main_sha256 "${main_sha256}" \
         ([.field_assignments[].fields[]] | unique | length) and
     ([.method_assignments[].methods[]] | length) ==
         ([.method_assignments[].methods[]] | unique | length) and
-    (.owned_module_functions | keys | sort) == (["action_router", "agent_event_coordinator", "clipboard_coordinator", "config_store", "global_search_coordinator", "pane_dividers", "pane_runtime_coordinator", "persistence_coordinator", "project_context_coordinator", "remote_paste_coordinator", "server_runtime_coordinator", "task_runner_coordinator", "server_listener_discovery", "server_container_discovery", "ssh_identity_coordinator", "tmux_runtime_coordinator", "tmux_store_policy"] | sort) and
+    (.owned_module_functions | keys | sort) == (["action_router", "agent_event_coordinator", "clipboard_coordinator", "config_store", "global_search_coordinator", "open_with_coordinator", "pane_dividers", "pane_runtime_coordinator", "persistence_coordinator", "project_context_coordinator", "remote_paste_coordinator", "server_runtime_coordinator", "task_runner_coordinator", "server_listener_discovery", "server_container_discovery", "ssh_identity_coordinator", "tmux_runtime_coordinator", "tmux_store_policy"] | sort) and
     (.owned_module_functions.action_router | length) ==
         (.owned_module_functions.action_router | unique | length) and
     (.owned_module_functions.pane_runtime_coordinator | length) ==
@@ -484,6 +504,8 @@ jq -e --arg main_sha256 "${main_sha256}" \
         (.owned_module_functions.task_runner_coordinator | unique | length) and
     (.owned_module_functions.project_context_coordinator | length) ==
         (.owned_module_functions.project_context_coordinator | unique | length) and
+    (.owned_module_functions.open_with_coordinator | length) ==
+        (.owned_module_functions.open_with_coordinator | unique | length) and
     (.owned_module_functions.server_listener_discovery | length) ==
         (.owned_module_functions.server_listener_discovery | unique | length) and
     (.owned_module_functions.server_container_discovery | length) ==
@@ -507,13 +529,13 @@ jq -e --arg main_sha256 "${main_sha256}" \
         (.invalid_parameter == "ignore-without-panic")) and
     ([.action_contract[] | select(.parameter == "string") | .name] | sort) == ([
         "close-worklane", "ignore-server-port", "move-pane-to-worklane", "open-server",
-        "run-task", "select-worklane", "stop-ignoring-server-port", "stop-server"
+        "open-with-target", "run-task", "select-worklane", "stop-ignoring-server-port", "stop-server"
     ] | sort) and
     ([.action_contract[] | select(.parameter == "string_pair") | .name] | sort) == ([
         "move-worklane", "rename-pane", "rename-worklane", "reorder-worklane",
         "select-pane", "set-worklane-color"
     ] | sort) and
-    ([.action_contract[] | select(.parameter == "none")] | length) == 65 and
+    ([.action_contract[] | select(.parameter == "none")] | length) == 66 and
     .conditional_action_availability == {
         "multiple_columns":["resize-pane-left","resize-pane-right","arrange-golden-wide","arrange-golden-narrow"],
         "multiple_panes_in_focused_column":["resize-pane-up","resize-pane-down","arrange-golden-tall","arrange-golden-short"],
@@ -535,6 +557,7 @@ jq -e --arg main_sha256 "${main_sha256}" \
         "development_server_registry": {"owner":"server_runtime_coordinator","maximum_instances_per_window":1},
         "task_runner_snapshot": {"owner":"task_runner_coordinator","maximum_instances_per_window":1},
         "project_context_projection": {"owner":"project_context_coordinator","maximum_instances_per_window":1},
+        "open_with_catalog": {"owner":"open_with_coordinator","maximum_instances_per_window":1},
         "tmux_compatibility_state": {"owner":"existing_tmux_coordinator","maximum_instances_per_window":1},
         "glib_scheduling": {"owner":"application_runtime","kind":"default-glib-main-context","maximum_instances_per_process":1}
     } and

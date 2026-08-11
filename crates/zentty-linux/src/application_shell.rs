@@ -42,6 +42,7 @@ mod action_router;
 mod agent_events;
 mod clipboard_actions;
 mod global_search;
+mod open_with_runtime;
 mod pane_runtime;
 mod project_context_runtime;
 mod remote_paste;
@@ -65,12 +66,13 @@ use action_router::{
     ACTION_MOVE_WORKLANE_DOWN, ACTION_MOVE_WORKLANE_UP, ACTION_NAVIGATE_BACK,
     ACTION_NAVIGATE_FORWARD, ACTION_NEW_WINDOW, ACTION_NEW_WORKLANE, ACTION_NEXT_PANE,
     ACTION_NEXT_WORKLANE, ACTION_OPEN_BRANCH_REMOTE, ACTION_OPEN_PULL_REQUEST, ACTION_OPEN_SERVER,
-    ACTION_PREVIOUS_PANE, ACTION_PREVIOUS_WORKLANE, ACTION_REFRESH_REVIEW_STATUS,
-    ACTION_REFRESH_SERVERS, ACTION_RESET_PANE_LAYOUT, ACTION_RESIZE_PANE_DOWN,
-    ACTION_RESIZE_PANE_LEFT, ACTION_RESIZE_PANE_RIGHT, ACTION_RESIZE_PANE_UP,
-    ACTION_RESTORE_CLOSED_PANE, ACTION_SELECT_ALL, ACTION_SHOW_TASK_MANAGER,
-    ACTION_SPLIT_PANE_BELOW, ACTION_SPLIT_PANE_RIGHT, ACTION_STOP_IGNORING_SERVER_PORT,
-    ACTION_STOP_SERVER, ACTION_TOGGLE_SIDEBAR, ACTION_USE_SELECTION_FOR_FIND, ActionRouter,
+    ACTION_OPEN_WITH_PRIMARY, ACTION_OPEN_WITH_TARGET, ACTION_PREVIOUS_PANE,
+    ACTION_PREVIOUS_WORKLANE, ACTION_REFRESH_REVIEW_STATUS, ACTION_REFRESH_SERVERS,
+    ACTION_RESET_PANE_LAYOUT, ACTION_RESIZE_PANE_DOWN, ACTION_RESIZE_PANE_LEFT,
+    ACTION_RESIZE_PANE_RIGHT, ACTION_RESIZE_PANE_UP, ACTION_RESTORE_CLOSED_PANE, ACTION_SELECT_ALL,
+    ACTION_SHOW_TASK_MANAGER, ACTION_SPLIT_PANE_BELOW, ACTION_SPLIT_PANE_RIGHT,
+    ACTION_STOP_IGNORING_SERVER_PORT, ACTION_STOP_SERVER, ACTION_TOGGLE_SIDEBAR,
+    ACTION_USE_SELECTION_FOR_FIND, ActionRouter,
 };
 use agent_events::AgentEventCoordinator;
 use pane_runtime::DetachedPaneRuntime;
@@ -145,6 +147,7 @@ pub(crate) struct ApplicationShell {
     remote_panes: RemotePaneContext,
     server_runtime: server_runtime::ServerRuntime,
     project_context_runtime: project_context_runtime::ProjectContextRuntime,
+    open_with_runtime: open_with_runtime::OpenWithRuntime,
     task_runner_actions: BTreeMap<String, TaskRunnerAction>,
     last_pane_viewport_height: Cell<i32>,
     action_router: Option<ActionRouter>,
@@ -190,6 +193,15 @@ fn report_config_projection(shell: &ApplicationShell) {
 fn finish_initial_render(shell: &Rc<RefCell<ApplicationShell>>) {
     shell.borrow().render();
     report_config_projection(&shell.borrow());
+}
+
+fn initialize_open_with(
+    chrome: &WindowChrome,
+    config: &zentty_core::OpenWithConfig,
+) -> open_with_runtime::OpenWithRuntime {
+    let runtime = open_with_runtime::OpenWithRuntime::discover(config);
+    chrome.configure_open_with(&runtime.catalog);
+    runtime
 }
 
 fn create_initial_pane_surfaces(
@@ -240,6 +252,7 @@ impl ApplicationShell {
             restore_workspace_state(&window_template, restored_drafts)?;
         let agent_events =
             AgentEventCoordinator::start(window_template.id.clone(), Rc::clone(&runtimes.agent));
+        let open_with_runtime = initialize_open_with(&chrome, &runtimes.config.open_with);
         let (next_worklane_number, next_pane_number) = next_workspace_identities(&state);
         let initial_pane_ids = workspace_pane_ids(&state);
         let (preferred_sidebar_width, adjusting_sidebar_width, sidebar_reveal_generation) =
@@ -282,6 +295,7 @@ impl ApplicationShell {
             remote_panes: RemotePaneContext::default(),
             server_runtime: server_runtime::ServerRuntime::default(),
             project_context_runtime: project_context_runtime::ProjectContextRuntime::default(),
+            open_with_runtime,
             task_runner_actions: BTreeMap::new(),
             last_pane_viewport_height: Cell::new(0),
             action_router: None,
@@ -959,6 +973,13 @@ impl ApplicationShell {
             shell.borrow().request_new_window();
             return true;
         }
+        if is_new_worklane_shortcut(key, modifiers) {
+            let window = shell.borrow().window.clone();
+            if let Err(error) = window.activate_action("workspace.new-worklane", None) {
+                eprintln!("zentty-linux: new-worklane shortcut failed: {error}");
+            }
+            return true;
+        }
         if is_close_window_shortcut(key, modifiers) {
             eprintln!("zentty-linux: action=quit shortcut=Ctrl+Q");
             shell.borrow().request_quit();
@@ -1367,8 +1388,35 @@ impl ApplicationShell {
             .collect::<Vec<_>>();
         items.extend(self.command_palette_server_items());
         items.extend(self.command_palette_task_items());
+        items.extend(self.command_palette_open_with_items());
         items.extend(Self::command_palette_action_items());
         (items, current)
+    }
+
+    fn command_palette_open_with_items(&self) -> Vec<CommandPaletteItem> {
+        let context_available = open_with_runtime::focused_context_is_available(self);
+        let mut items = Vec::new();
+        if let Some(primary) = &self.open_with_runtime.catalog.primary {
+            let mut item = CommandPaletteItem::action(
+                format!("Open focused pane in {}", primary.name),
+                "Open With · Primary application",
+                "editor file manager terminal directory project",
+                ACTION_OPEN_WITH_PRIMARY,
+            );
+            item.enabled = context_available;
+            items.push(item);
+        }
+        items.extend(self.open_with_runtime.catalog.enabled.iter().map(|target| {
+            CommandPaletteItem::parameterized_action_with_enabled(
+                format!("Open With: {}", target.name),
+                "Open the focused pane directory",
+                "editor file manager terminal directory project",
+                ACTION_OPEN_WITH_TARGET,
+                target.id.clone(),
+                context_available,
+            )
+        }));
+        items
     }
 
     fn command_palette_task_items(&mut self) -> Vec<CommandPaletteItem> {
@@ -2772,11 +2820,7 @@ impl ApplicationShell {
             self.config.clipboard,
             &servers,
         );
-        self.chrome.render(
-            &summaries,
-            self.state.can_navigate_back(),
-            self.state.can_navigate_forward(),
-        );
+        self.render_chrome(&summaries);
         self.schedule_active_worklane_reveal();
     }
 
@@ -2792,11 +2836,7 @@ impl ApplicationShell {
                 &servers,
             );
         }
-        self.chrome.render(
-            &summaries,
-            self.state.can_navigate_back(),
-            self.state.can_navigate_forward(),
-        );
+        self.render_chrome(&summaries);
         self.schedule_active_worklane_reveal();
         self.refresh_pane_presentation();
         self.refresh_pane_layout_action_availability();
@@ -2811,11 +2851,17 @@ impl ApplicationShell {
         }
         let summaries = self.sidebar_summaries();
         sidebar::update_project_context_metadata(&self.sidebar, &summaries);
+        self.render_chrome(&summaries);
+    }
+
+    fn render_chrome(&self, summaries: &[zentty_core::SidebarWorklaneSummary]) {
         self.chrome.render(
-            &summaries,
+            summaries,
             self.state.can_navigate_back(),
             self.state.can_navigate_forward(),
         );
+        self.chrome
+            .set_open_with_context_available(open_with_runtime::focused_context_is_available(self));
     }
 
     fn sidebar_summaries(&self) -> Vec<zentty_core::SidebarWorklaneSummary> {
@@ -3341,6 +3387,16 @@ fn is_new_window_shortcut(key: gdk::Key, modifiers: gdk::ModifierType) -> bool {
         && !modifiers.intersects(gdk::ModifierType::ALT_MASK | gdk::ModifierType::SUPER_MASK)
 }
 
+fn is_new_worklane_shortcut(key: gdk::Key, modifiers: gdk::ModifierType) -> bool {
+    matches!(key, gdk::Key::n | gdk::Key::N)
+        && modifiers.contains(gdk::ModifierType::CONTROL_MASK)
+        && !modifiers.intersects(
+            gdk::ModifierType::ALT_MASK
+                | gdk::ModifierType::SHIFT_MASK
+                | gdk::ModifierType::SUPER_MASK,
+        )
+}
+
 fn is_close_active_window_shortcut(key: gdk::Key, modifiers: gdk::ModifierType) -> bool {
     let required = gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::SHIFT_MASK;
     matches!(key, gdk::Key::w | gdk::Key::W)
@@ -3755,8 +3811,8 @@ mod allocation_tests {
     use super::{
         TerminalGesture, bounded_pane_viewport_height, codex_terminal_gesture,
         default_window_recipe, is_close_active_window_shortcut, is_close_window_shortcut,
-        is_new_window_shortcut, model_heights_to_pixels, resize_shortcut_direction,
-        snapshot_window_frame, validated_window_size,
+        is_new_window_shortcut, is_new_worklane_shortcut, model_heights_to_pixels,
+        resize_shortcut_direction, snapshot_window_frame, validated_window_size,
     };
     use gtk::gdk;
     use zentty_core::{PaneResizeDirection, WindowFrame};
@@ -3972,6 +4028,22 @@ mod allocation_tests {
             gdk::ModifierType::CONTROL_MASK
                 | gdk::ModifierType::SHIFT_MASK
                 | gdk::ModifierType::SUPER_MASK,
+        ));
+    }
+
+    #[test]
+    fn new_worklane_shortcut_is_exact_linux_ctrl_n() {
+        assert!(is_new_worklane_shortcut(
+            gdk::Key::n,
+            gdk::ModifierType::CONTROL_MASK,
+        ));
+        assert!(!is_new_worklane_shortcut(
+            gdk::Key::n,
+            gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::SHIFT_MASK,
+        ));
+        assert!(!is_new_worklane_shortcut(
+            gdk::Key::n,
+            gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::SUPER_MASK,
         ));
     }
 

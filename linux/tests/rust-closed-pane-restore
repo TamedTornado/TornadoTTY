@@ -91,7 +91,7 @@ env GHOSTTY_LOG=false \
 product_pid=$!
 
 zentty_product_wait_for_log "${log}" 'zentty-linux: terminal-ready-pane=pane-agent' \
-    "source pane did not initialize" || fail "source surface missing"
+    "source pane did not initialize" 400 || fail "source surface missing"
 zentty_product_prepare_input "${backend}" "${log}" || fail "physical input was unavailable"
 zentty_product_key "${backend}" Shift_L
 zentty_product_wait_for_log "${log}" 'zentty-linux: focus-pane pane=pane-agent' \
@@ -141,9 +141,10 @@ for _ in {1..200}; do
         [[ "$(grep -Fxc "${working_dir}" "${cwd_receipt}" || true)" -ge 3 ]] && break
     sleep 0.05
 done
-[[ -f "${cwd_receipt}" ]] &&
-    [[ "$(grep -Fxc "${working_dir}" "${cwd_receipt}" || true)" -ge 3 ]] ||
+if [[ ! -f "${cwd_receipt}" ]] ||
+    [[ "$(grep -Fxc "${working_dir}" "${cwd_receipt}" || true)" -lt 3 ]]; then
     fail "restored real PTY did not start in captured CWD"
+fi
 
 zentty_product_close_window "${backend}"
 for _ in {1..240}; do

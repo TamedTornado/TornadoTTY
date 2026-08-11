@@ -1,5 +1,6 @@
+use gtk::glib::variant::ToVariant;
 use gtk::prelude::*;
-use zentty_core::SidebarWorklaneSummary;
+use zentty_core::{OpenWithCatalog, OpenWithTargetKind, SidebarWorklaneSummary};
 
 use crate::source_ui;
 
@@ -53,6 +54,8 @@ pub(crate) struct WindowChrome {
     refresh_review: gtk::Button,
     back: gtk::Button,
     forward: gtk::Button,
+    open_with_primary: gtk::Button,
+    open_with_menu: gtk::MenuButton,
 }
 
 impl WindowChrome {
@@ -124,8 +127,27 @@ impl WindowChrome {
         project.set_visible(false);
         center.append(&project);
 
+        let trailing = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        trailing.add_css_class("open-with-control");
+        let open_with_primary = gtk::Button::new();
+        open_with_primary.add_css_class("open-with-primary");
+        open_with_primary.set_icon_name("folder-open-symbolic");
+        open_with_primary.set_action_name(Some("workspace.open-with-primary"));
+        open_with_primary.set_sensitive(false);
+        let open_with_menu = gtk::MenuButton::new();
+        open_with_menu.add_css_class("open-with-menu");
+        open_with_menu.set_icon_name("pan-down-symbolic");
+        open_with_menu.set_tooltip_text(Some(source_ui::SHOW_OPEN_WITH_MENU));
+        open_with_menu.update_property(&[gtk::accessible::Property::Label(
+            source_ui::SHOW_OPEN_WITH_MENU,
+        )]);
+        open_with_menu.set_sensitive(false);
+        trailing.append(&open_with_primary);
+        trailing.append(&open_with_menu);
+
         root.set_start_widget(Some(&leading));
         root.set_center_widget(Some(&center));
+        root.set_end_widget(Some(&trailing));
         eprintln!(
             "zentty-linux: chrome-controls={}",
             CHROME_CONTROLS
@@ -143,11 +165,66 @@ impl WindowChrome {
             refresh_review,
             back,
             forward,
+            open_with_primary,
+            open_with_menu,
         }
     }
 
     pub(crate) fn widget(&self) -> &gtk::CenterBox {
         &self.root
+    }
+
+    pub(crate) fn configure_open_with(&self, catalog: &OpenWithCatalog) {
+        if let Some(primary) = &catalog.primary {
+            self.open_with_primary
+                .set_icon_name(open_with_icon(primary.kind));
+            let label = format!("Open focused pane in {}", primary.name);
+            self.open_with_primary.set_tooltip_text(Some(&label));
+            self.open_with_primary
+                .update_property(&[gtk::accessible::Property::Label(&label)]);
+        } else {
+            self.open_with_primary
+                .set_tooltip_text(Some("Open With unavailable"));
+        }
+        let popover = gtk::Popover::new();
+        let list = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        list.set_margin_top(6);
+        list.set_margin_bottom(6);
+        list.set_margin_start(6);
+        list.set_margin_end(6);
+        let heading = gtk::Label::new(Some(source_ui::OPEN_WITH));
+        heading.add_css_class("heading");
+        heading.set_xalign(0.0);
+        heading.set_margin_start(6);
+        list.append(&heading);
+        for target in &catalog.enabled {
+            let button = gtk::Button::new();
+            let content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+            let icon = gtk::Image::from_icon_name(open_with_icon(target.kind));
+            let label = gtk::Label::new(Some(&target.name));
+            label.set_xalign(0.0);
+            label.set_hexpand(true);
+            content.append(&icon);
+            content.append(&label);
+            button.set_child(Some(&content));
+            button.set_halign(gtk::Align::Fill);
+            button.set_action_name(Some("workspace.open-with-target"));
+            button.set_action_target_value(Some(&target.id.to_variant()));
+            let menu = popover.clone();
+            button.connect_clicked(move |_| menu.popdown());
+            list.append(&button);
+        }
+        popover.set_child(Some(&list));
+        self.open_with_menu.set_popover(Some(&popover));
+        self.open_with_primary
+            .set_sensitive(catalog.primary.is_some());
+        self.open_with_menu
+            .set_sensitive(!catalog.enabled.is_empty());
+    }
+
+    pub(crate) fn set_open_with_context_available(&self, available: bool) {
+        self.open_with_primary.set_sensitive(available);
+        self.open_with_menu.set_sensitive(available);
     }
 
     pub(crate) fn render(
@@ -215,6 +292,14 @@ impl WindowChrome {
         }
         self.back.set_sensitive(can_navigate_back);
         self.forward.set_sensitive(can_navigate_forward);
+    }
+}
+
+fn open_with_icon(kind: OpenWithTargetKind) -> &'static str {
+    match kind {
+        OpenWithTargetKind::Editor => "accessories-text-editor-symbolic",
+        OpenWithTargetKind::FileManager => "folder-open-symbolic",
+        OpenWithTargetKind::Terminal => "utilities-terminal-symbolic",
     }
 }
 

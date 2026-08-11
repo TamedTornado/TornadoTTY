@@ -222,7 +222,10 @@ pub(crate) fn install_styles() {
          .worklane-color-purple { color: #9f7aea; } .worklane-color-pink { color: #ed64a6; }\n\
          .zentty-window-chrome { background: #15171a; min-height: 38px; padding: 3px 10px; }\n\
          .zentty-window-context { color: #aeb4be; font-weight: 600; }\n\
-         .zentty-chrome-icon { color: #d5d9df; min-width: 28px; min-height: 28px; padding: 0; border-radius: 7px; }",
+         .zentty-chrome-icon { color: #d5d9df; min-width: 28px; min-height: 28px; padding: 0; border-radius: 7px; }\n\
+         .open-with-control { background: #252a31; border: 1px solid #4a515d; border-radius: 15px; }\n\
+         .open-with-primary { color: #dfe4eb; min-width: 38px; min-height: 28px; padding: 0; border: 0; border-radius: 14px 0 0 14px; box-shadow: none; }\n\
+         .open-with-menu { color: #bdc4cf; min-width: 24px; min-height: 28px; padding: 0; border: 0; border-left: 1px solid #4a515d; border-radius: 0 14px 14px 0; box-shadow: none; }",
     );
     gtk::style_context_add_provider_for_display(
         &display,

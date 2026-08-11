@@ -392,18 +392,18 @@
     {
       "id": "project.open-with",
       "category": "project_context",
-      "behavior": "Discover ordered built-in and custom Open With targets, resolve the focused pane directory or project file, launch the configured primary or selected Linux file manager/editor/tool, and skip missing targets diagnostically.",
+      "behavior": "Discover source-catalog-ordered built-in and custom Open With targets, resolve the focused local pane directory, launch the configured primary or selected Linux file manager/editor/tool, and skip missing targets diagnostically. Source project-file substitution is Xcode-only and therefore has no available Linux target.",
       "source": ["Zentty/OpenWith/OpenWithCatalog.swift", "Zentty/OpenWith/OpenWithService.swift", "Zentty/OpenWith/ProjectFileResolver.swift", "Zentty/UI/Chrome/WindowChromeView.swift"],
       "swift_tests": ["ZenttyLogicTests/OpenWithCatalogTests.swift", "ZenttyLogicTests/WorklaneStoreOpenWithTests.swift"],
       "classification": "PLATFORM_ALTERNATIVE",
       "origin": "PORT_PARITY",
       "user_impact": "Opening the active project in an external editor or file manager is a documented daily workflow even though Finder and AppKit launch APIs are macOS-specific.",
       "linux_owner_issue": 18,
-      "implementation_status": "NOT_IMPLEMENTED",
-      "focused_tests": [],
-      "product_scenarios": [],
-      "test_plan": "Discover real installed `.desktop` applications plus controlled custom launchers, drive chrome/palette actions, and verify the exact canonical path/URI and missing/hostile-target behavior.",
-      "alternative_or_blocker": "Use XDG desktop application discovery and the desktop portal or explicit executable launch; supply Linux file-manager/editor defaults instead of Finder/Xcode-specific targets."
+      "implementation_status": "IMPLEMENTED",
+      "focused_tests": ["crates/zentty-core/src/open_with.rs", "crates/zentty-core/tests/app_config.rs", "crates/zentty-linux/src/application_shell/open_with_runtime.rs"],
+      "product_scenarios": ["linux/tests/rust-open-with"],
+      "test_plan": "Discover a real controlled `.desktop` directory handler plus a direct custom executable, drive primary and selected actions with physical X11 and Wayland input against the staged product, assert one exact canonical local target, and pin URI encoding, catalog order, primary fallback, config normalization, missing targets, executable validation, duplicate rejection, and no-shell argv in focused Rust tests and mutation testing.",
+      "alternative_or_blocker": "Implemented with GIO desktop application discovery and direct executable argv; Linux system file-manager and terminal targets replace Finder while macOS-only Xcode project-file substitution remains unavailable by definition."
     },
     {
       "id": "utilities.dev-servers",

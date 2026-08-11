@@ -1,0 +1,278 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=linux/tests/lib/disposable-sshd
+source "${repo_root}/linux/tests/lib/disposable-sshd"
+product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
+ghostty_root="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
+run_root="$(mktemp -d)"
+project="${run_root}/project path # controlled"
+state_directory="${run_root}/state"
+config_home="${run_root}/config"
+data_home="${run_root}/data"
+fixture_bin="${run_root}/bin"
+desktop_receipt="${run_root}/desktop.receipt"
+custom_receipt="${run_root}/custom.receipt"
+terminal_receipt="${run_root}/terminal.receipt"
+log="${run_root}/product.log"
+local_log="${log}"
+product_pid=""
+backend="${GDK_BACKEND:-}"
+
+fail() {
+    [[ ! -f "${log}" ]] || tail -120 "${log}" >&2
+    echo "rust-open-with: error: $*" >&2
+    exit 1
+}
+
+cleanup() {
+    if [[ "${product_pid}" =~ ^[1-9][0-9]*$ ]]; then
+        kill -TERM "${product_pid}" 2>/dev/null || true
+        wait "${product_pid}" 2>/dev/null || true
+    fi
+    zentty_disposable_sshd_stop
+    rm -rf -- "${run_root}"
+}
+trap cleanup EXIT
+
+case "${backend}" in
+    x11)
+        [[ "${ZENTTY_NESTED_X11_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+            fail "X11 scenario must run through linux/tests/nested-x11"
+        command -v xdotool >/dev/null || fail "xdotool is required"
+        ;;
+    wayland)
+        [[ "${ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+            fail "Wayland scenario must run through linux/tests/nested-wayland-input"
+        command -v wtype >/dev/null || fail "wtype is required"
+        ;;
+    *) fail "GDK_BACKEND must be x11 or wayland" ;;
+esac
+for dependency in desktop-file-validate grep head mktemp readelf readlink sed seq sleep update-desktop-database xdg-mime; do
+    command -v "${dependency}" >/dev/null || fail "${dependency} is required"
+done
+[[ -x "${product}" ]] || fail "staged product is missing: ${product}"
+product="$(readlink -f -- "${product}")"
+
+layer_runpath="$(
+    readelf -d "${ghostty_root}/zig-out/lib/libghostty-gtk-embed.so" |
+        sed -n 's/.*Library runpath: \[\([^]]*\)\].*/\1/p' |
+        cut -d: -f1
+)"
+[[ "${layer_runpath}" == .zig-cache/* ]] || fail "Ghostty runpath is not pinned"
+layer_directory="${ghostty_root}/${layer_runpath}"
+
+mkdir -p \
+    "${project}" \
+    "${state_directory}" \
+    "${config_home}/zentty" \
+    "${data_home}/applications" \
+    "${fixture_bin}"
+canonical_project="$(readlink -f -- "${project}")"
+
+cat >"${fixture_bin}/desktop-open" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'argc=%s\narg1=%s\n' "$#" "${1:-}" >"${ZENTTY_DESKTOP_RECEIPT}"
+EOF
+cat >"${fixture_bin}/custom-open" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'argc=%s\narg1=%s\n' "$#" "${1:-}" >"${ZENTTY_CUSTOM_RECEIPT}"
+EOF
+cat >"${fixture_bin}/xdg-terminal-exec" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'argc=%s\narg1=%s\n' "$#" "${1:-}" >"${ZENTTY_TERMINAL_RECEIPT}"
+EOF
+chmod 700 "${fixture_bin}/desktop-open" "${fixture_bin}/custom-open" \
+    "${fixture_bin}/xdg-terminal-exec"
+zentty_disposable_sshd_start || fail "could not start disposable loopback SSH server"
+ln -s "${ZENTTY_DISPOSABLE_SSH_LAUNCHER}" "${fixture_bin}/zentty-ssh-fixture"
+
+cat >"${data_home}/applications/zentty-controlled-files.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Controlled Files
+Exec=${fixture_bin}/desktop-open %u
+MimeType=inode/directory;
+NoDisplay=true
+EOF
+desktop-file-validate "${data_home}/applications/zentty-controlled-files.desktop"
+XDG_DATA_HOME="${data_home}" XDG_CONFIG_HOME="${config_home}" \
+    update-desktop-database "${data_home}/applications"
+XDG_DATA_HOME="${data_home}" XDG_CONFIG_HOME="${config_home}" \
+    xdg-mime default zentty-controlled-files.desktop inode/directory
+[[ "$(XDG_DATA_HOME="${data_home}" XDG_CONFIG_HOME="${config_home}" xdg-mime query default inode/directory)" == \
+    zentty-controlled-files.desktop ]] || fail "controlled desktop application is not the default directory handler"
+
+cat >"${config_home}/zentty/config.toml" <<EOF
+[open_with]
+primary_target_id = "system-file-manager"
+enabled_target_ids = ["system-file-manager", "system-terminal", "custom:controlled", "xcode"]
+
+[[open_with.custom_apps]]
+id = "custom:controlled"
+name = "Controlled Editor"
+path = "${fixture_bin}/custom-open"
+EOF
+
+start_product() {
+    local output_log="$1"
+    shift
+    (
+        cd "${project}"
+        exec env \
+            XDG_CONFIG_HOME="${config_home}" \
+            XDG_DATA_HOME="${data_home}" \
+            PATH="${fixture_bin}:${PATH}" \
+            ZENTTY_DESKTOP_RECEIPT="${desktop_receipt}" \
+            ZENTTY_CUSTOM_RECEIPT="${custom_receipt}" \
+            ZENTTY_TERMINAL_RECEIPT="${terminal_receipt}" \
+            GDK_SCALE=1 \
+            GDK_DPI_SCALE=1 \
+            LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+            "${product}" "$@" --state-directory "${state_directory}" --no-session-restore
+    ) >"${output_log}" 2>&1 &
+    product_pid=$!
+}
+
+wait_for_product() {
+    window_id=""
+    for _ in $(seq 1 300); do
+        if [[ "${backend}" == x11 ]]; then
+            window_id="$(xdotool search --onlyvisible --pid "${product_pid}" --name '^Zentty$' 2>/dev/null | head -1 || true)"
+        else
+            window_id=wayland-focused
+        fi
+        [[ -n "${window_id}" ]] && grep -Fxq 'zentty-linux: terminal-ready' "${log}" && break
+        sleep 0.05
+    done
+    [[ -n "${window_id}" ]] || fail "real Zentty window did not appear"
+    if [[ "${backend}" == wayland ]]; then
+        for _ in $(seq 1 100); do
+            grep -Fq 'zentty-linux: focus-pane pane=pane-1' "${log}" && break
+            sleep 0.05
+        done
+        grep -Fq 'zentty-linux: focus-pane pane=pane-1' "${log}" ||
+            fail "Wayland compositor had not focused the real terminal"
+    fi
+}
+
+start_product "${log}"
+wait_for_product
+grep -Fq 'open-with-discovery available=3 primary=system-file-manager unavailable=xcode' "${log}" ||
+    fail "controlled desktop/terminal/custom discovery and missing-target diagnostics differed"
+
+open_palette() {
+    local shown_before
+    shown_before="$(grep -Fxc 'zentty-linux: command-palette=shown' "${log}" || true)"
+    if [[ "${backend}" == x11 ]]; then
+        xdotool windowfocus --sync "${window_id}"
+        xdotool key --window "${window_id}" ctrl+shift+p
+    else
+        wtype -M ctrl -M shift -k p -m shift -m ctrl
+    fi
+    for _ in $(seq 1 100); do
+        (( $(grep -Fxc 'zentty-linux: command-palette=shown' "${log}" || true) > shown_before )) && break
+        sleep 0.05
+    done
+    (( $(grep -Fxc 'zentty-linux: command-palette=shown' "${log}" || true) > shown_before )) ||
+        fail "physical shortcut did not show the command palette"
+}
+
+type_text() {
+    if [[ "${backend}" == x11 ]]; then
+        xdotool type --clearmodifiers --window "${window_id}" --delay 4 -- "$1"
+    else
+        wtype -- "$1"
+    fi
+}
+
+activate_first() {
+    if [[ "${backend}" == x11 ]]; then
+        xdotool key --window "${window_id}" Down Return
+    else
+        wtype -k Down -k Return
+    fi
+}
+
+activate_palette_action() {
+    local query="$1"
+    open_palette
+    type_text "${query}"
+    for _ in $(seq 1 100); do
+        grep -Fq "command-palette=query value=\"${query}\" results=1" "${log}" && break
+        sleep 0.05
+    done
+    grep -Fq "command-palette=query value=\"${query}\" results=1" "${log}" ||
+        fail "palette action was absent or ambiguous: ${query}"
+    activate_first
+}
+
+activate_palette_action 'Open focused pane in Controlled Files'
+for _ in $(seq 1 100); do
+    [[ -s "${desktop_receipt}" ]] && break
+    sleep 0.05
+done
+grep -Fxq 'argc=1' "${desktop_receipt}" || fail "desktop application did not receive exactly one URI"
+grep -Fxq "arg1=${canonical_project}" "${desktop_receipt}" ||
+    fail "desktop application received the wrong canonical local target: expected=${canonical_project} actual=$(sed -n 's/^arg1=//p' "${desktop_receipt}")"
+
+activate_palette_action 'Open With: Controlled Editor'
+for _ in $(seq 1 100); do
+    [[ -s "${custom_receipt}" ]] && break
+    sleep 0.05
+done
+grep -Fxq 'argc=1' "${custom_receipt}" || fail "custom application did not receive exactly one argv"
+grep -Fxq "arg1=${canonical_project}" "${custom_receipt}" || fail "custom application received the wrong canonical path"
+
+activate_palette_action 'Open With: System Terminal'
+for _ in $(seq 1 100); do
+    [[ -s "${terminal_receipt}" ]] && break
+    sleep 0.05
+done
+grep -Fxq 'argc=1' "${terminal_receipt}" ||
+    fail "terminal launcher did not receive exactly one option"
+grep -Fxq "arg1=--dir=${canonical_project}" "${terminal_receipt}" ||
+    fail "terminal launcher did not receive the exact monolithic XDG directory option"
+
+# A real foreground OpenSSH client must make the same action unavailable. This
+# exercises the synchronous probe too, so the result cannot depend on the
+# sidebar's asynchronous remote-identity cache winning a race.
+printf 'remote-action-must-not-launch\n' >"${desktop_receipt}"
+kill -TERM "${product_pid}"
+wait "${product_pid}" 2>/dev/null || true
+product_pid=""
+log="${run_root}/remote-product.log"
+start_product "${log}" --command "${ZENTTY_DISPOSABLE_SSH_LAUNCHER}"
+wait_for_product
+for _ in $(seq 1 200); do
+    grep -Fq 'zentty-linux: title-pane=pane-1 value=ssh-remote-ready' "${log}" && break
+    sleep 0.05
+done
+grep -Fq 'zentty-linux: title-pane=pane-1 value=ssh-remote-ready' "${log}" ||
+    fail "real foreground SSH process did not reach the controlled remote actor"
+remote_rejections_before="$(grep -Fc 'action=open-with-target id=system-file-manager unavailable=remote-pane' "${log}" || true)"
+activate_palette_action 'Open focused pane in Controlled Files'
+for _ in $(seq 1 100); do
+    (( $(grep -Fc 'action=open-with-target id=system-file-manager unavailable=remote-pane' "${log}" || true) > remote_rejections_before )) && break
+    sleep 0.05
+done
+(( $(grep -Fc 'action=open-with-target id=system-file-manager unavailable=remote-pane' "${log}" || true) > remote_rejections_before )) ||
+    fail "Open With did not reject a real remote pane"
+grep -Fxq 'remote-action-must-not-launch' "${desktop_receipt}" ||
+    fail "remote Open With unexpectedly invoked the desktop application"
+
+grep -Fq 'action=open-with-target id=system-file-manager result=launched' "${local_log}" ||
+    fail "primary desktop launch was not recorded"
+grep -Fq 'action=open-with-target id=custom:controlled result=launched' "${local_log}" ||
+    fail "selected custom launch was not recorded"
+grep -Fq 'action=open-with-target id=system-terminal result=launched' "${local_log}" ||
+    fail "system terminal launch was not recorded"
+if grep -Eq 'panicked at|thread caused non-unwinding panic|RefCell already borrowed|CRITICAL: Gtk' "${local_log}" "${log}"; then
+    fail "Open With journey reported a Rust or GTK lifecycle failure"
+fi
+
+echo "rust-open-with-${backend}: PASS desktop-app=real custom-executable=real xdg-terminal-contract=exact ssh=real physical-input=real canonical-target=exact missing=diagnostic remote=rejected"

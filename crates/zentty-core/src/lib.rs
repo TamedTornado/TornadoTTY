@@ -14,6 +14,7 @@ mod command_palette;
 mod dev_server;
 mod git_review_context;
 mod global_search;
+mod open_with;
 mod pane_focus_history;
 mod pane_layout;
 mod pane_token_registry;
@@ -36,7 +37,9 @@ pub use agent_protocol::{AgentEvent, AgentInteractionKind, AgentProtocolError};
 pub use agent_status::{
     AgentPhase, AgentProgress, AgentStatusStore, PaneAgentStatus, TerminalProgressState,
 };
-pub use app_config::{AppConfig, ClipboardConfig, ServerDetectionConfig};
+pub use app_config::{
+    AppConfig, ClipboardConfig, OpenWithConfig, OpenWithCustomApp, ServerDetectionConfig,
+};
 pub use atomic_file_store::{AtomicFileAction, AtomicFileStore, AtomicFileStoreError};
 pub use pane_focus_history::PaneReference;
 pub use pane_layout::{PaneLayoutPolicy, PaneRightInsertionBehavior};
@@ -102,4 +105,9 @@ pub use git_review_context::{
 pub use global_search::{
     GlobalSearchCoordinator, GlobalSearchDirection, GlobalSearchEffect, GlobalSearchState,
     GlobalSearchTarget,
+};
+pub use open_with::{
+    LINUX_OPEN_WITH_BUILTIN_IDS, OpenWithCatalog, OpenWithLaunchError, OpenWithLaunchPlan,
+    OpenWithLauncher, OpenWithTarget, OpenWithTargetKind, SYSTEM_FILE_MANAGER_ID,
+    SYSTEM_TERMINAL_ID,
 };

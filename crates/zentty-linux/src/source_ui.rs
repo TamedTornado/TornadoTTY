@@ -8,6 +8,8 @@ pub(crate) const ARRANGE_PANES: &str = "Arrange panes";
 pub(crate) const NAVIGATE_BACK: &str = "Navigate Back";
 pub(crate) const NAVIGATE_FORWARD: &str = "Navigate Forward";
 pub(crate) const NOTIFICATIONS: &str = "Notifications";
+pub(crate) const OPEN_WITH: &str = "Open With";
+pub(crate) const SHOW_OPEN_WITH_MENU: &str = "Show Open With menu";
 
 pub(crate) const NEW_WORKLANE: &str = "New worklane";
 pub(crate) const RENAME_WORKLANE: &str = "Rename Worklane…";
@@ -129,6 +131,9 @@ mod tests {
         assert!(CHROME_SOURCE.contains(ARRANGE_PANES));
         assert!(CREATE_WORKLANE_SOURCE.contains(NEW_WORKLANE));
         assert!(SHORTCUT_SOURCE.contains(NOTIFICATIONS));
+        let open_with_source = include_str!("../../../Zentty/UI/Chrome/WindowChromeView.swift");
+        assert!(open_with_source.contains("Open focused pane in"));
+        assert!(open_with_source.contains(SHOW_OPEN_WITH_MENU));
     }
 
     #[test]

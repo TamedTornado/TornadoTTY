@@ -154,6 +154,8 @@ pub(super) const ACTION_SHOW_TASK_MANAGER: &str = "show-task-manager";
 pub(super) const ACTION_REFRESH_REVIEW_STATUS: &str = "refresh-review-status";
 pub(super) const ACTION_OPEN_BRANCH_REMOTE: &str = "open-branch-remote";
 pub(super) const ACTION_OPEN_PULL_REQUEST: &str = "open-pull-request";
+pub(super) const ACTION_OPEN_WITH_PRIMARY: &str = "open-with-primary";
+pub(super) const ACTION_OPEN_WITH_TARGET: &str = "open-with-target";
 
 pub(super) const ACTION_SPECS: &[ActionSpec] = &[
     action!(ACTION_NEW_WINDOW, "new-window", None),
@@ -300,6 +302,8 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
     action!(ACTION_REFRESH_REVIEW_STATUS, "refresh-review-status", None),
     action!(ACTION_OPEN_BRANCH_REMOTE, "open-branch-remote", None),
     action!(ACTION_OPEN_PULL_REQUEST, "open-pull-request", None),
+    action!(ACTION_OPEN_WITH_PRIMARY, "open-with-primary", None),
+    action!(ACTION_OPEN_WITH_TARGET, "open-with-target", String),
 ];
 
 pub(super) struct ActionRouter {
@@ -447,7 +451,38 @@ fn populate(shell: &Rc<RefCell<ApplicationShell>>, group: &gio::SimpleActionGrou
         shell.request_show_task_manager();
     });
     install_project_context_actions(shell, group);
+    install_open_with_actions(shell, group);
     install_edit_actions(shell, group);
+}
+
+fn install_open_with_actions(
+    shell: &Rc<RefCell<ApplicationShell>>,
+    group: &gio::SimpleActionGroup,
+) {
+    let primary = gio::SimpleAction::new(ACTION_OPEN_WITH_PRIMARY, None);
+    let weak = Rc::downgrade(shell);
+    primary.connect_activate(move |_, parameter| {
+        if !ParameterSchema::None.accepts(parameter) {
+            eprintln!("zentty-linux: action=open-with-primary rejected parameter-schema");
+            return;
+        }
+        if let Some(shell) = weak.upgrade() {
+            super::open_with_runtime::open_primary(&shell.borrow());
+        }
+    });
+    group.add_action(&primary);
+
+    let target = gio::SimpleAction::new(ACTION_OPEN_WITH_TARGET, Some(glib::VariantTy::STRING));
+    let weak = Rc::downgrade(shell);
+    target.connect_activate(move |_, parameter| {
+        let (Some(shell), Some(target_id)) =
+            (weak.upgrade(), parameter.and_then(glib::Variant::str))
+        else {
+            return;
+        };
+        super::open_with_runtime::open_target(&shell.borrow(), target_id);
+    });
+    group.add_action(&target);
 }
 
 fn install_project_context_actions(
@@ -1197,7 +1232,7 @@ mod tests {
 
     #[test]
     fn registry_is_unique_complete_and_typed() {
-        assert_eq!(ACTION_SPECS.len(), 79);
+        assert_eq!(ACTION_SPECS.len(), 81);
         assert_eq!(
             ACTION_SPECS
                 .iter()
@@ -1220,7 +1255,8 @@ mod tests {
                 "ignore-server-port",
                 "stop-ignoring-server-port",
                 "stop-server",
-                "run-task"
+                "run-task",
+                "open-with-target"
             ]
         );
         assert_eq!(

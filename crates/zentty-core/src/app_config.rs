@@ -1,6 +1,6 @@
 use serde::Deserialize;
 
-use crate::{CleanCopyOptions, CommandFlattenAggressiveness};
+use crate::{CleanCopyOptions, CommandFlattenAggressiveness, LINUX_OPEN_WITH_BUILTIN_IDS};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ClipboardConfig {
@@ -22,6 +22,7 @@ impl Default for ClipboardConfig {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct AppConfig {
     pub clipboard: ClipboardConfig,
+    pub open_with: OpenWithConfig,
     pub server_detection: ServerDetectionConfig,
 }
 
@@ -36,6 +37,7 @@ impl AppConfig {
             .map_err(|error| format!("invalid Zentty configuration: {error}"))?;
         Ok(Self {
             clipboard: document.clipboard.into_config(),
+            open_with: document.open_with.into_config().normalized(),
             server_detection: document.server_detection.into_config(),
         })
     }
@@ -45,7 +47,140 @@ impl AppConfig {
 #[serde(default)]
 struct Document {
     clipboard: ClipboardDocument,
+    open_with: OpenWithDocument,
     server_detection: ServerDetectionDocument,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OpenWithCustomApp {
+    pub id: String,
+    pub name: String,
+    pub path: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OpenWithConfig {
+    pub primary_target_id: String,
+    pub enabled_target_ids: Vec<String>,
+    pub custom_apps: Vec<OpenWithCustomApp>,
+}
+
+impl Default for OpenWithConfig {
+    fn default() -> Self {
+        Self {
+            primary_target_id: "system-file-manager".into(),
+            enabled_target_ids: vec![
+                "system-file-manager".into(),
+                "vscode".into(),
+                "cursor".into(),
+                "system-terminal".into(),
+            ],
+            custom_apps: Vec::new(),
+        }
+    }
+}
+
+impl OpenWithConfig {
+    #[must_use]
+    pub fn normalized(self) -> Self {
+        use std::collections::{HashMap, HashSet};
+
+        let built_in_ids = LINUX_OPEN_WITH_BUILTIN_IDS
+            .iter()
+            .copied()
+            .collect::<HashSet<_>>();
+        let mut custom_apps = Vec::new();
+        let mut custom_ids = HashSet::new();
+        let mut duplicate_ids = HashMap::new();
+        for app in self.custom_apps {
+            if app.id.is_empty() || app.name.is_empty() || app.path.is_empty() {
+                continue;
+            }
+            if let Some(existing) = custom_apps
+                .iter()
+                .find(|existing: &&OpenWithCustomApp| existing.path == app.path)
+            {
+                duplicate_ids.insert(app.id, existing.id.clone());
+                continue;
+            }
+            if built_in_ids.contains(app.id.as_str()) || !custom_ids.insert(app.id.clone()) {
+                continue;
+            }
+            custom_apps.push(app);
+        }
+
+        let valid_custom_ids = custom_apps
+            .iter()
+            .map(|app| app.id.as_str())
+            .collect::<HashSet<_>>();
+        let mut seen_enabled = HashSet::new();
+        let enabled_target_ids = self
+            .enabled_target_ids
+            .into_iter()
+            .map(|id| duplicate_ids.get(&id).cloned().unwrap_or(id))
+            .filter(|id| {
+                (built_in_ids.contains(id.as_str()) || valid_custom_ids.contains(id.as_str()))
+                    && seen_enabled.insert(id.clone())
+            })
+            .collect::<Vec<_>>();
+        let requested_primary = duplicate_ids
+            .get(&self.primary_target_id)
+            .cloned()
+            .unwrap_or(self.primary_target_id);
+        let primary_target_id = if built_in_ids.contains(requested_primary.as_str())
+            || valid_custom_ids.contains(requested_primary.as_str())
+        {
+            requested_primary
+        } else {
+            enabled_target_ids
+                .first()
+                .cloned()
+                .unwrap_or_else(|| Self::default().primary_target_id)
+        };
+
+        Self {
+            primary_target_id,
+            enabled_target_ids,
+            custom_apps,
+        }
+    }
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct OpenWithDocument {
+    primary_target_id: Option<String>,
+    enabled_target_ids: Option<Vec<String>>,
+    custom_apps: Option<Vec<OpenWithCustomAppDocument>>,
+}
+
+#[derive(Deserialize)]
+struct OpenWithCustomAppDocument {
+    id: String,
+    name: String,
+    path: String,
+}
+
+impl OpenWithDocument {
+    fn into_config(self) -> OpenWithConfig {
+        let defaults = OpenWithConfig::default();
+        OpenWithConfig {
+            primary_target_id: self.primary_target_id.unwrap_or(defaults.primary_target_id),
+            enabled_target_ids: self
+                .enabled_target_ids
+                .unwrap_or(defaults.enabled_target_ids),
+            custom_apps: self
+                .custom_apps
+                .unwrap_or_default()
+                .into_iter()
+                .map(|app| OpenWithCustomApp {
+                    id: app.id,
+                    name: app.name,
+                    path: app.path,
+                })
+                .collect(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
