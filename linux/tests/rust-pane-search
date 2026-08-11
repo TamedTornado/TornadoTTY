@@ -47,10 +47,11 @@ case "${backend}" in
         ;;
     *) fail "GDK_BACKEND must be x11 or wayland" ;;
 esac
-for dependency in awk cmp dirname grep mkdir mktemp seq sha256sum sleep tail wc; do
+for dependency in awk cmp dirname grep mkdir mktemp readlink seq sha256sum sleep tail wc; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
 [[ -x "${product}" ]] || fail "staged product is not built: ${product}"
+product="$(readlink -f -- "${product}")"
 
 press_ctrl_shift() {
     local key="$1"
@@ -179,6 +180,7 @@ set_standard_clipboard() {
 
 log="$(mktemp)"
 state_directory="$(mktemp -d)"
+mkdir -p "${state_directory}/working-directory"
 clipboard_actual="$(mktemp)"
 clipboard_expected="$(mktemp)"
 config_file="${XDG_CONFIG_HOME:?}/zentty/config.toml"
@@ -189,11 +191,14 @@ always_clean_copies = true
 EOF
 # The single quotes intentionally defer PTY-child expansion.
 # shellcheck disable=SC2016
-GDK_SCALE=1 GDK_DPI_SCALE=1 \
+(
+    cd "${state_directory}/working-directory"
+    exec env GDK_SCALE=1 GDK_DPI_SCALE=1 \
     "${product}" \
     --command 'printf "https://example.com/reset?token=noisegamma&utm_source=mail"; while IFS= read -r line; do case "$line" in markdown) printf "\033[2J\033[3J\033[H## Clipboard Notes\n\nOne wrapped\nparagraph"; printf "\033]2;focus:markdown-ready\a" ;; search-corpus) printf "\033[2J\033[3J\033[Hselectable alpha\nnoise\nselectable beta\nselectable gamma\n"; printf "\033]2;focus:search-ready\a" ;; *) printf "\033]2;focus:%s\a" "$line" ;; esac; done' \
     --state-directory "${state_directory}" \
-    --no-session-restore >"${log}" 2>&1 &
+    --no-session-restore
+) >"${log}" 2>&1 &
 product_pid=$!
 
 wait_for_fixed 'zentty-linux: terminal-ready-pane=pane-1' \

@@ -135,8 +135,10 @@ impl AgentEventCoordinator {
 
         let now = unix_time_ms();
         let mut sidebar_changed = false;
+        let mut review_refresh_panes = Vec::new();
         for mut event in events {
             let pane_id = event.target.pane_id.clone();
+            let refresh_review = matches!(event.event_kind(), "agent.idle" | "session.end");
             let current_worklane_id = {
                 let shell = shell.borrow();
                 shell
@@ -168,6 +170,9 @@ impl AgentEventCoordinator {
             );
             let mut shell = shell.borrow_mut();
             shell.state.apply_agent_event(event, now);
+            if refresh_review {
+                review_refresh_panes.push(pane_id.clone());
+            }
             let ApplicationShell {
                 state,
                 agent_events,
@@ -175,6 +180,16 @@ impl AgentEventCoordinator {
             } = &mut *shell;
             agent_events.schedule_for_pane(state, &pane_id);
             sidebar_changed = true;
+        }
+
+        if !review_refresh_panes.is_empty() {
+            let mut shell = shell.borrow_mut();
+            for pane_id in review_refresh_panes {
+                super::project_context_runtime::mark_pane_for_refresh(&mut shell, &pane_id);
+                eprintln!(
+                    "zentty-linux: project-context pane={pane_id} refresh=agent-completion-requested"
+                );
+            }
         }
 
         let enrichments = shell.borrow_mut().agent_events.transcript_enricher.drain();

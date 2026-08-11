@@ -43,6 +43,7 @@ mod agent_events;
 mod clipboard_actions;
 mod global_search;
 mod pane_runtime;
+mod project_context_runtime;
 mod remote_paste;
 pub(crate) mod server_runtime;
 mod ssh_identity;
@@ -63,7 +64,8 @@ use action_router::{
     ACTION_MOVE_PANE_RIGHT, ACTION_MOVE_PANE_TO_NEW_WINDOW, ACTION_MOVE_PANE_UP,
     ACTION_MOVE_WORKLANE_DOWN, ACTION_MOVE_WORKLANE_UP, ACTION_NAVIGATE_BACK,
     ACTION_NAVIGATE_FORWARD, ACTION_NEW_WINDOW, ACTION_NEW_WORKLANE, ACTION_NEXT_PANE,
-    ACTION_NEXT_WORKLANE, ACTION_OPEN_SERVER, ACTION_PREVIOUS_PANE, ACTION_PREVIOUS_WORKLANE,
+    ACTION_NEXT_WORKLANE, ACTION_OPEN_BRANCH_REMOTE, ACTION_OPEN_PULL_REQUEST, ACTION_OPEN_SERVER,
+    ACTION_PREVIOUS_PANE, ACTION_PREVIOUS_WORKLANE, ACTION_REFRESH_REVIEW_STATUS,
     ACTION_REFRESH_SERVERS, ACTION_RESET_PANE_LAYOUT, ACTION_RESIZE_PANE_DOWN,
     ACTION_RESIZE_PANE_LEFT, ACTION_RESIZE_PANE_RIGHT, ACTION_RESIZE_PANE_UP,
     ACTION_RESTORE_CLOSED_PANE, ACTION_SELECT_ALL, ACTION_SHOW_TASK_MANAGER,
@@ -142,6 +144,7 @@ pub(crate) struct ApplicationShell {
     global_search_generation: u64,
     remote_panes: RemotePaneContext,
     server_runtime: server_runtime::ServerRuntime,
+    project_context_runtime: project_context_runtime::ProjectContextRuntime,
     task_runner_actions: BTreeMap<String, TaskRunnerAction>,
     last_pane_viewport_height: Cell<i32>,
     action_router: Option<ActionRouter>,
@@ -278,6 +281,7 @@ impl ApplicationShell {
             global_search_generation: 0,
             remote_panes: RemotePaneContext::default(),
             server_runtime: server_runtime::ServerRuntime::default(),
+            project_context_runtime: project_context_runtime::ProjectContextRuntime::default(),
             task_runner_actions: BTreeMap::new(),
             last_pane_viewport_height: Cell::new(0),
             action_router: None,
@@ -1481,6 +1485,24 @@ impl ApplicationShell {
                 "Rescan real listening processes now",
                 "server browser port listener",
                 ACTION_REFRESH_SERVERS,
+            ),
+            CommandPaletteItem::action(
+                "Refresh Git and Review Status",
+                "Refresh repository, branch, dirty tree, and pull-request state",
+                "git github pull request ci approval conflict",
+                ACTION_REFRESH_REVIEW_STATUS,
+            ),
+            CommandPaletteItem::action(
+                "Open Branch on Remote",
+                "Open the focused branch on its configured Git remote",
+                "git github gitlab bitbucket browser",
+                ACTION_OPEN_BRANCH_REMOTE,
+            ),
+            CommandPaletteItem::action(
+                "Open Pull Request",
+                "Open the pull request associated with the focused branch",
+                "git github review browser pr",
+                ACTION_OPEN_PULL_REQUEST,
             ),
             CommandPaletteItem::action(
                 "New Window",
@@ -2741,7 +2763,7 @@ impl ApplicationShell {
     }
 
     fn render_sidebar(&self) {
-        let summaries = self.state.sidebar_summaries();
+        let summaries = self.sidebar_summaries();
         let servers = self.ranked_servers();
         sidebar::render(
             &self.sidebar,
@@ -2759,7 +2781,7 @@ impl ApplicationShell {
     }
 
     fn refresh_sidebar_metadata(&self) {
-        let summaries = self.state.sidebar_summaries();
+        let summaries = self.sidebar_summaries();
         let servers = self.ranked_servers();
         if !sidebar::update_metadata(&self.sidebar, &summaries) {
             sidebar::render(
@@ -2778,6 +2800,37 @@ impl ApplicationShell {
         self.schedule_active_worklane_reveal();
         self.refresh_pane_presentation();
         self.refresh_pane_layout_action_availability();
+    }
+
+    fn refresh_project_context_presentation(&self) {
+        if self.command_palette.is_visible()
+            || self.global_search_view.root.is_visible()
+            || sidebar::has_worklane_reorder_preview(&self.sidebar)
+        {
+            return;
+        }
+        let summaries = self.sidebar_summaries();
+        sidebar::update_project_context_metadata(&self.sidebar, &summaries);
+        self.chrome.render(
+            &summaries,
+            self.state.can_navigate_back(),
+            self.state.can_navigate_forward(),
+        );
+    }
+
+    fn sidebar_summaries(&self) -> Vec<zentty_core::SidebarWorklaneSummary> {
+        let mut summaries = self.state.sidebar_summaries();
+        for pane in summaries
+            .iter_mut()
+            .flat_map(|worklane| &mut worklane.pane_rows)
+        {
+            pane.project_context = self
+                .project_context_runtime
+                .contexts
+                .get(&pane.pane_id)
+                .cloned();
+        }
+        summaries
     }
 
     fn ranked_servers(&self) -> Vec<zentty_core::RankedServer> {
@@ -3113,6 +3166,8 @@ fn initialize_shell_coordinators(shell: &Rc<RefCell<ApplicationShell>>) {
     shell.borrow().self_handle.replace(Rc::downgrade(shell));
     shell.borrow_mut().remote_panes.probe_source = Some(ssh_identity::install(shell));
     shell.borrow_mut().server_runtime.probe_source = server_runtime::install(shell);
+    shell.borrow_mut().project_context_runtime.probe_source =
+        Some(project_context_runtime::install(shell));
 }
 
 fn observe_ghostty_search_state(

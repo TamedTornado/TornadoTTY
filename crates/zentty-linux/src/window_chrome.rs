@@ -47,6 +47,10 @@ const CHROME_CONTROLS: [ChromeControlSpec; 5] = [
 pub(crate) struct WindowChrome {
     root: gtk::CenterBox,
     context: gtk::Label,
+    project: gtk::Box,
+    branch: gtk::Button,
+    pull_request: gtk::Button,
+    refresh_review: gtk::Button,
     back: gtk::Button,
     forward: gtk::Button,
 }
@@ -88,8 +92,40 @@ impl WindowChrome {
         context.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
         context.set_max_width_chars(64);
 
+        let center = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        center.set_halign(gtk::Align::Center);
+        center.append(&context);
+        let project = gtk::Box::new(gtk::Orientation::Horizontal, 5);
+        project.set_halign(gtk::Align::Center);
+        project.set_widget_name("zentty-project-context");
+        let branch = gtk::Button::new();
+        branch.set_has_frame(false);
+        branch.add_css_class("project-context-branch");
+        branch.set_action_name(Some("workspace.open-branch-remote"));
+        branch.set_tooltip_text(Some("Open branch on remote"));
+        let pull_request = gtk::Button::new();
+        pull_request.set_has_frame(false);
+        pull_request.add_css_class("review-chip");
+        pull_request.add_css_class("review-chip-info");
+        pull_request.set_action_name(Some("workspace.open-pull-request"));
+        pull_request.set_tooltip_text(Some("Open pull request"));
+        let refresh_review = gtk::Button::new();
+        refresh_review.set_has_frame(false);
+        refresh_review.set_icon_name("view-refresh-symbolic");
+        refresh_review.set_action_name(Some("workspace.refresh-review-status"));
+        refresh_review.set_tooltip_text(Some("Refresh Git and pull-request status"));
+        refresh_review.set_accessible_role(gtk::AccessibleRole::Button);
+        refresh_review.update_property(&[gtk::accessible::Property::Label(
+            "Refresh Git and pull-request status",
+        )]);
+        project.append(&branch);
+        project.append(&pull_request);
+        project.append(&refresh_review);
+        project.set_visible(false);
+        center.append(&project);
+
         root.set_start_widget(Some(&leading));
-        root.set_center_widget(Some(&context));
+        root.set_center_widget(Some(&center));
         eprintln!(
             "zentty-linux: chrome-controls={}",
             CHROME_CONTROLS
@@ -101,6 +137,10 @@ impl WindowChrome {
         Self {
             root,
             context,
+            project,
+            branch,
+            pull_request,
+            refresh_review,
             back,
             forward,
         }
@@ -136,6 +176,43 @@ impl WindowChrome {
         self.context.set_text(&text);
         self.context
             .update_property(&[gtk::accessible::Property::Label(text.as_str())]);
+        let project_context = summaries
+            .iter()
+            .find(|summary| summary.is_active)
+            .and_then(|summary| summary.pane_rows.iter().find(|pane| pane.is_focused))
+            .and_then(|pane| pane.project_context.as_ref());
+        if let Some(project_context) = project_context {
+            let reference = project_context.reference.display();
+            self.branch.set_label(&if project_context.dirty {
+                format!("{reference}  ●")
+            } else {
+                reference
+            });
+            let branch_enabled =
+                project_context.reference.branch().is_some() && project_context.remote.is_some();
+            self.branch.set_sensitive(branch_enabled);
+            self.branch
+                .update_property(&[gtk::accessible::Property::Label(&format!(
+                    "{} branch {} on remote",
+                    if branch_enabled { "Open" } else { "View" },
+                    project_context.reference.display()
+                ))]);
+            if let Some(review) = &project_context.review {
+                self.pull_request
+                    .set_label(&format!("PR #{}", review.pull_request.number));
+                self.pull_request
+                    .set_sensitive(review.pull_request.url.is_some());
+                self.pull_request.set_visible(true);
+            } else {
+                self.pull_request.set_visible(false);
+            }
+            self.project
+                .set_tooltip_text(project_context.review_error.as_deref());
+            self.project.set_visible(true);
+            self.refresh_review.set_sensitive(true);
+        } else {
+            self.project.set_visible(false);
+        }
         self.back.set_sensitive(can_navigate_back);
         self.forward.set_sensitive(can_navigate_forward);
     }

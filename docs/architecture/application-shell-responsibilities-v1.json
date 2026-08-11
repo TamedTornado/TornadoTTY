@@ -2,7 +2,7 @@
   "schema_version": 1,
   "contract_id": "zentty-application-shell-responsibilities",
   "source": "crates/zentty-linux/src/application_shell.rs",
-  "source_sha256": "b49b66bc87ef93b9c790b2368db3c6e63b7699fdfd3f42708acef09b15aa6967",
+  "source_sha256": "890ff0a3938c718a01dcfbe4f4df7941a47129caf593181fa523416c14da5a2c",
   "owned_source_sha256": {
     "crates/zentty-linux/src/main.rs": "4effe28db2295ddd039ca432051ba5d0878ad4ac4e2acea2fef99f82a6fe2163",
     "crates/zentty-linux/src/application.rs": "6f14dc9e6c60d46f3713faa997501782e5c9750f0e00b40e27472431cede6c7d",
@@ -10,9 +10,10 @@
     "crates/zentty-linux/src/window_set.rs": "501d595889c11a41a4261ef8282465d76dd9ed8ccd1d004406b558579b0bf58e",
     "crates/zentty-linux/src/agent_runtime.rs": "48f30d38048ae5388ca59aee2021e1215cabdfc033e66755ed32c6f92dcb8671",
     "crates/zentty-linux/src/codex_enrichment.rs": "fe87631c75c04b63962b7f89d311a778a25af8f27a1dcb4d5950b3efcbaa476e",
-    "crates/zentty-linux/src/application_shell/action_router.rs": "c230ae56fd5e6676a115a7983015d24bbba58795b6a601ad3eab9b36878ee075",
+    "crates/zentty-linux/src/application_shell/action_router.rs": "69b1b04c10c74adf05b9d69672411264b70d9711b18a509588be9fe4d4e06884",
     "crates/zentty-linux/src/application_shell/clipboard_actions.rs": "1502a0353bc3e0d645d6c6bd81aae1ed1306f312838f92a635944d402cd441b0",
-    "crates/zentty-linux/src/application_shell/agent_events.rs": "56c45836a4e6a6a929dce61251a199c0b8dec7a62edbcda3c9b5dd594dbb6038",
+    "crates/zentty-linux/src/application_shell/agent_events.rs": "3b6dc220ad2434b15213a34c6c225f5dad868880437b3b54365ba77e42b2d0a4",
+    "crates/zentty-linux/src/application_shell/project_context_runtime.rs": "21b8440353f6dbc2bec666019601a6bb35c2fde077549d4397e5de125a7fe9b9",
     "crates/zentty-linux/src/application_shell/global_search.rs": "98a1963830af8616b31da2558ae6f27c4461342ef3085f6ef9cda0863a1ddc7c",
     "crates/zentty-linux/src/application_shell/pane_runtime.rs": "6952173990c2da3c9f0156c0a2722301bace71403d04c237fc63542d052aed3f",
     "crates/zentty-linux/src/application_shell/server_runtime.rs": "cd39ebc1f95f7eb3c063058036fabbecc90cf367457a1538f2f6c8e657a0b919",
@@ -134,6 +135,13 @@
       "planned_module": "crates/zentty-linux/src/application_shell/task_runner_runtime.rs and crates/zentty-core/src/task_runner.rs",
       "tracking": "GH-19",
       "responsibility": "The sole window-local task snapshot and launch bridge; discovers bounded source tasks for the focused pane, projects them into the existing command palette, revalidates activation, and transactionally launches through the existing workspace and Ghostty runtime."
+    },
+    {
+      "id": "project_context_coordinator",
+      "status": "existing",
+      "planned_module": "crates/zentty-linux/src/application_shell/project_context_runtime.rs and crates/zentty-core/src/git_review_context.rs",
+      "tracking": "GH-18",
+      "responsibility": "The sole window-local Git and pull-request context projection; resolves bounded real repository state for pane working directories, applies adaptive refresh without overlapping probes, preserves same-reference stale review evidence on transient failure, and launches only validated remote URLs."
     }
   ],
   "field_assignments": [
@@ -164,6 +172,10 @@
     {
       "owner": "task_runner_coordinator",
       "fields": ["task_runner_actions"]
+    },
+    {
+      "owner": "project_context_coordinator",
+      "fields": ["project_context_runtime"]
     },
     {
       "owner": "agent_event_coordinator",
@@ -212,7 +224,7 @@
         "has_worklane", "extract_live_pane_to_new_window",
         "rollback_live_pane_window_transfer", "adopt_live_pane_window_transfer",
         "move_active_worklane", "move_worklane", "render", "take_pane_id",
-        "topology_receipt", "geometry_receipt", "focus_terminal_after_present"
+        "topology_receipt", "geometry_receipt", "focus_terminal_after_present", "sidebar_summaries"
       ]
     },
     {
@@ -270,7 +282,7 @@
         "equalize_column_divider_interactively", "equalize_pane_divider_interactively",
         "schedule_layout_render", "pane_cell_size", "minimum_column_width",
         "minimum_pane_pair_height", "resize_focused_pane_by_cell",
-        "render_sidebar", "refresh_sidebar_metadata", "ranked_servers", "schedule_active_worklane_reveal",
+        "render_sidebar", "refresh_sidebar_metadata", "refresh_project_context_presentation", "ranked_servers", "schedule_active_worklane_reveal",
         "navigate_history", "select_adjacent_pane", "select_adjacent_worklane",
         "pane_references_in_sidebar_order", "current_pane_reference", "select_pane_reference",
         "peek_previews", "refresh_pane_presentation", "refresh_right_insertion_behavior"
@@ -284,7 +296,7 @@
       "populate", "install_application_actions", "install_edit_actions", "install_worklane_edit_actions",
       "install_worklane_move_actions", "install_pane_rename_action",
       "install_pane_transfer_action", "install_pane_creation_actions",
-      "install_restore_closed_pane_action", "install_clipboard_actions", "install_search_actions", "install_server_actions", "install_task_runner_action",
+      "install_restore_closed_pane_action", "install_clipboard_actions", "install_search_actions", "install_server_actions", "install_task_runner_action", "install_project_context_actions",
       "install_pane_layout_actions", "add_simple_action", "validate_registered_group"
     ],
     "pane_runtime_coordinator": [
@@ -326,6 +338,12 @@
       "stop_server", "pane_probe_source", "stop_owned_server", "signal_process"
     ],
     "task_runner_coordinator": ["run_task", "launch_in_new_pane"],
+    "project_context_coordinator": [
+      "adaptive_refresh_interval", "apply_results", "focused_context", "install",
+      "launch_validated_url", "mark_pane_for_refresh", "open_focused_branch",
+      "open_focused_pull_request", "preserve_review_on_refresh_failure", "probe",
+      "process_working_directory", "refresh_focused", "request_probe", "safe_http_url"
+    ],
     "server_listener_discovery": [
       "scan_listeners_at", "read_bounded", "parse_socket_table", "decode_ipv4", "decode_ipv6",
       "parse_process_info", "process_start_time", "unique_cwd_pane", "socket_inode", "is_descendant"
@@ -427,6 +445,9 @@
     {"name":"stop-ignoring-server-port","parameter":"string","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"stop-server","parameter":"string","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"run-task","parameter":"string","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"refresh-review-status","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"open-branch-remote","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"open-pull-request","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"show-task-manager","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"}
   ],
   "conditional_action_availability": {
@@ -449,6 +470,7 @@
     "application_config_snapshot": {"owner":"config_store","maximum_instances_per_process":1},
     "development_server_registry": {"owner":"server_runtime_coordinator","maximum_instances_per_window":1},
     "task_runner_snapshot": {"owner":"task_runner_coordinator","maximum_instances_per_window":1},
+    "project_context_projection": {"owner":"project_context_coordinator","maximum_instances_per_window":1},
     "tmux_compatibility_state": {"owner":"existing_tmux_coordinator","maximum_instances_per_window":1},
     "glib_scheduling": {"owner":"application_runtime","kind":"default-glib-main-context","maximum_instances_per_process":1}
   },

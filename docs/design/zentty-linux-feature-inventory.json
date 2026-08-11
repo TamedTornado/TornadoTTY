@@ -383,10 +383,10 @@
       "origin": "PORT_PARITY",
       "user_impact": "Branch, project and review context are how users distinguish similar agent panes and understand whether work is ready without switching terminals.",
       "linux_owner_issue": 18,
-      "implementation_status": "NOT_IMPLEMENTED",
-      "focused_tests": [],
-      "product_scenarios": [],
-      "test_plan": "Use real temporary repositories/remotes and a controlled forge/gh-compatible fixture, drive refresh/open actions, and assert source-priority badges, icons, URLs, large-repo bounds and error states; mutation-test precedence and parsing.",
+      "implementation_status": "PARTIAL",
+      "focused_tests": ["crates/zentty-core/src/git_review_context.rs", "crates/zentty-core/tests/git_review_context.rs", "crates/zentty-linux/src/application_shell/project_context_runtime.rs"],
+      "product_scenarios": ["linux/tests/rust-git-review-context"],
+      "test_plan": "Preserve real temporary repositories, branches, detached HEADs, nested CWDs, worktrees and remotes plus the controlled local HTTP forge behind the real gh-compatible subprocess boundary. Drive real X11 and Wayland palette refresh/open actions, assert source-priority badges and validated URLs, and mutation-test precedence/parsing. Project icons and agent-completion/filesystem-trigger refinements remain required before IMPLEMENTED parity.",
       "alternative_or_blocker": null
     },
     {

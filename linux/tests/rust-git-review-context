@@ -1,0 +1,191 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
+if [[ "${product}" != /* ]]; then
+    product="${repo_root}/${product}"
+fi
+forge="${repo_root}/target/release-safe/development_server"
+ghostty_root="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
+run_root="$(mktemp -d)"
+project="${run_root}/project"
+state_directory="${run_root}/state"
+fixture_bin="${run_root}/bin"
+forge_receipt="${run_root}/forge.receipt"
+forge_body="${run_root}/forge.body"
+open_receipt="${run_root}/open.receipt"
+gh_receipt="${run_root}/gh.receipt"
+log="${run_root}/product.log"
+product_pid=""
+forge_pid=""
+backend="${GDK_BACKEND:-}"
+
+fail() {
+    [[ ! -f "${log}" ]] || cat "${log}" >&2
+    echo "rust-git-review-context: error: $*" >&2
+    exit 1
+}
+
+cleanup() {
+    for pid in "${product_pid}" "${forge_pid}"; do
+        if [[ "${pid}" =~ ^[1-9][0-9]*$ ]]; then
+            kill -TERM "${pid}" 2>/dev/null || true
+            wait "${pid}" 2>/dev/null || true
+        fi
+    done
+    rm -rf -- "${run_root}"
+}
+trap cleanup EXIT
+
+case "${backend}" in
+    x11)
+        [[ "${ZENTTY_NESTED_X11_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+            fail "X11 scenario must run through linux/tests/nested-x11"
+        command -v xdotool >/dev/null || fail "xdotool is required"
+        ;;
+    wayland)
+        [[ "${ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+            fail "Wayland scenario must run through linux/tests/nested-wayland-input"
+        command -v wtype >/dev/null || fail "wtype is required"
+        ;;
+    *) fail "GDK_BACKEND must be x11 or wayland" ;;
+esac
+for dependency in curl git grep head mktemp readelf sed seq sleep; do
+    command -v "${dependency}" >/dev/null || fail "${dependency} is required"
+done
+[[ -x "${product}" ]] || fail "staged product is missing: ${product}"
+[[ -x "${forge}" ]] || fail "controlled HTTP forge fixture is missing: ${forge}"
+
+layer_runpath="$(
+    readelf -d "${ghostty_root}/zig-out/lib/libghostty-gtk-embed.so" |
+        sed -n 's/.*Library runpath: \[\([^]]*\)\].*/\1/p' |
+        cut -d: -f1
+)"
+[[ "${layer_runpath}" == .zig-cache/* ]] || fail "Ghostty runpath is not pinned"
+layer_directory="${ghostty_root}/${layer_runpath}"
+
+mkdir -p "${project}/nested/deep" "${state_directory}" "${fixture_bin}"
+git -C "${project}" init -b feature/review-context >/dev/null
+git -C "${project}" config user.email test@zentty.invalid
+git -C "${project}" config user.name 'Zentty Integration'
+printf 'fixture\n' >"${project}/README.md"
+git -C "${project}" add README.md
+git -C "${project}" commit -m fixture >/dev/null
+git -C "${project}" remote add origin git@github.com:acme/rocket.git
+printf 'dirty\n' >"${project}/dirty.txt"
+
+"${forge}" --receipt "${forge_receipt}" >"${run_root}/forge.log" 2>&1 &
+forge_pid=$!
+for _ in $(seq 1 100); do
+    [[ -s "${forge_receipt}" ]] && break
+    sleep 0.05
+done
+[[ -s "${forge_receipt}" ]] || fail "controlled HTTP forge did not start"
+forge_url="$(sed -n 's/^url=//p' "${forge_receipt}")"
+[[ "${forge_url}" == http://127.0.0.1:*'/fixture' ]] || fail "forge published unsafe URL"
+
+cat >"${fixture_bin}/gh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >"${ZENTTY_GH_RECEIPT}"
+curl --fail --silent --show-error "${ZENTTY_FORGE_URL}" >"${ZENTTY_FORGE_BODY}"
+printf '%s\n' '{"number":42,"url":"http://127.0.0.1:41777/acme/rocket/pull/42","isDraft":false,"state":"OPEN","reviewDecision":"APPROVED","mergeable":"CONFLICTING","statusCheckRollup":[{"status":"IN_PROGRESS"},{"status":"COMPLETED","conclusion":"FAILURE"}]}'
+EOF
+cat >"${fixture_bin}/xdg-open" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "$#" == 1 ]]
+printf '%s\n' "$1" >>"${ZENTTY_OPEN_RECEIPT}"
+EOF
+chmod 700 "${fixture_bin}/gh" "${fixture_bin}/xdg-open"
+
+(
+    cd "${project}/nested/deep"
+    exec env \
+        PATH="${fixture_bin}:${PATH}" \
+        ZENTTY_FORGE_URL="${forge_url}" \
+        ZENTTY_FORGE_BODY="${forge_body}" \
+        ZENTTY_GH_RECEIPT="${gh_receipt}" \
+        ZENTTY_OPEN_RECEIPT="${open_receipt}" \
+        GDK_SCALE=1 \
+        GDK_DPI_SCALE=1 \
+        LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+        "${product}" --state-directory "${state_directory}" --no-session-restore
+) >"${log}" 2>&1 &
+product_pid=$!
+
+window_id=""
+for _ in $(seq 1 300); do
+    if [[ "${backend}" == x11 ]]; then
+        window_id="$(xdotool search --name '^Zentty$' 2>/dev/null | head -1 || true)"
+    else
+        window_id=wayland-focused
+    fi
+    if [[ -n "${window_id}" ]] && grep -Fq 'project-context pane=pane-1' "${log}"; then
+        break
+    fi
+    sleep 0.05
+done
+[[ -n "${window_id}" ]] || fail "real Zentty window did not appear"
+grep -Fq 'reference=feature/review-context dirty=true pr=42 refresh=fresh' "${log}" ||
+    fail "real Git/gh context was not projected"
+grep -Fxq 'ok' "${forge_body}" || fail "gh boundary did not call the controlled HTTP forge"
+grep -Fq 'pr view feature/review-context --repo acme/rocket --json' "${gh_receipt}" ||
+    fail "product did not invoke the source-compatible gh command"
+
+open_palette() {
+    if [[ "${backend}" == x11 ]]; then
+        xdotool windowfocus --sync "${window_id}"
+        xdotool key --window "${window_id}" ctrl+shift+p
+    else
+        wtype -M ctrl -M shift -k p -m shift -m ctrl
+    fi
+}
+type_text() {
+    if [[ "${backend}" == x11 ]]; then
+        xdotool type --window "${window_id}" --delay 4 -- "$1"
+    else
+        wtype -- "$1"
+    fi
+}
+activate_first() {
+    if [[ "${backend}" == x11 ]]; then
+        xdotool key --window "${window_id}" Down Return
+    else
+        wtype -k Down -k Return
+    fi
+}
+activate_palette_action() {
+    local query="$1"
+    open_palette
+    type_text "${query}"
+    for _ in $(seq 1 100); do
+        grep -Fq "command-palette=query value=\"${query}\" results=1" "${log}" && break
+        sleep 0.05
+    done
+    grep -Fq "command-palette=query value=\"${query}\" results=1" "${log}" ||
+        fail "palette action was absent: ${query}"
+    activate_first
+}
+
+activate_palette_action 'Refresh Git and Review Status'
+for _ in $(seq 1 160); do
+    [[ "$(grep -Fc 'reference=feature/review-context dirty=true pr=42 refresh=fresh' "${log}" || true)" -ge 2 ]] && break
+    sleep 0.05
+done
+[[ "$(grep -Fc 'reference=feature/review-context dirty=true pr=42 refresh=fresh' "${log}" || true)" -ge 2 ]] ||
+    fail "manual refresh did not traverse the real resolver"
+
+activate_palette_action 'Open Branch on Remote'
+activate_palette_action 'Open Pull Request'
+for _ in $(seq 1 100); do
+    [[ "$(wc -l <"${open_receipt}" 2>/dev/null || true)" -ge 2 ]] && break
+    sleep 0.05
+done
+grep -Fxq 'https://github.com/acme/rocket/tree/feature/review-context' "${open_receipt}" ||
+    fail "branch open did not receive the validated remote URL"
+grep -Fxq 'http://127.0.0.1:41777/acme/rocket/pull/42' "${open_receipt}" ||
+    fail "pull-request open did not receive the controlled validated URL"
+
+echo "rust-git-review-context-${backend}: PASS real-git real-gh-http-forge nested-cwd dirty branch pr precedence manual-refresh safe-open"

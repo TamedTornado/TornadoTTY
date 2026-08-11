@@ -128,6 +128,9 @@ pub struct SidebarPaneSummary {
     pub custom_title: Option<String>,
     pub is_focused: bool,
     pub agent_status: Option<PaneAgentStatus>,
+    /// Ephemeral repository/review context supplied by the platform resolver.
+    /// It is deliberately absent from workspace persistence.
+    pub project_context: Option<crate::ProjectContext>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -643,6 +646,7 @@ impl WorkspaceState {
                             custom_title: pane.custom_title.clone(),
                             is_focused: Some(pane.id.as_str()) == focused_pane_id,
                             agent_status: self.agent_statuses.status_for_pane(&pane.id).cloned(),
+                            project_context: None,
                         })
                         .collect(),
                     is_active: worklane.id == self.active_worklane_id,

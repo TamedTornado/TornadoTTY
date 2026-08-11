@@ -186,6 +186,16 @@ pub(crate) fn install_styles() {
          .worklane-title { color: #b8bec8; font-weight: 700; }\n\
          .worklane-card-active .worklane-title { color: #ffffff; }\n\
          .worklane-context { color: #a7adb8; font-size: 12px; }\n\
+         .project-context-row { color: #c9ced7; padding: 1px 7px 3px 7px; }\n\
+         .project-context-branch { color: #8fc7ff; font-size: 11px; font-weight: 600; }\n\
+         .project-context-dirty { color: #f6c453; font-size: 11px; }\n\
+         .review-chip { border-radius: 8px; padding: 1px 5px; font-size: 10px; font-weight: 700; }\n\
+         .review-chip-neutral { color: #c4c9d1; background: rgba(130, 138, 151, 0.20); }\n\
+         .review-chip-success { color: #8ee6a3; background: rgba(46, 160, 67, 0.24); }\n\
+         .review-chip-warning { color: #f6c453; background: rgba(210, 153, 34, 0.22); }\n\
+         .review-chip-danger { color: #ff9b9b; background: rgba(218, 54, 51, 0.24); }\n\
+         .review-chip-info { color: #a8c7fa; background: rgba(77, 128, 191, 0.24); }\n\
+         .review-context-stale { opacity: 0.62; }\n\
          .pane-row { color: #e7e9ed; border-radius: 6px; padding: 5px 7px; }\n\
          .pane-row-focused { background: #343943; }\n\
          .pane-row-agent-attention { background: rgba(214, 158, 46, 0.16); }\n\
@@ -325,6 +335,13 @@ fn make_worklane_card(
     ));
     server_fingerprint.set_visible(false);
     card.append(&server_fingerprint);
+    let project_fingerprint = gtk::Label::new(Some(&project_fingerprint(summary)));
+    project_fingerprint.set_widget_name(&widget_name(
+        "worklane-project-fingerprint",
+        &summary.worklane_id,
+    ));
+    project_fingerprint.set_visible(false);
+    card.append(&project_fingerprint);
 
     let header = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     let select = gtk::Button::new();
@@ -373,6 +390,10 @@ fn make_worklane_card(
     install_worklane_drag_source(&header, &card, summary, index);
     install_worklane_drop_target(&card, &summary.worklane_id);
     card.append(&header);
+
+    if let Some(project_row) = make_project_context_row(summary) {
+        card.append(&project_row);
+    }
 
     for pane in &summary.pane_rows {
         card.append(&make_pane_row(window, summary, pane, clipboard));
@@ -430,6 +451,120 @@ fn card_is_compatible(
             .iter()
             .map(|pane| pane.pane_id.clone())
             .collect::<Vec<_>>()
+}
+
+fn focused_project_context(
+    summary: &SidebarWorklaneSummary,
+) -> Option<&zentty_core::ProjectContext> {
+    summary
+        .pane_rows
+        .iter()
+        .find(|pane| pane.is_focused)
+        .and_then(|pane| pane.project_context.as_ref())
+}
+
+fn project_fingerprint(summary: &SidebarWorklaneSummary) -> String {
+    focused_project_context(summary).map_or_else(String::new, |context| {
+        format!(
+            "{}|{}|{}|{}|{}",
+            context.repository_root.display(),
+            context.reference.display(),
+            context.dirty,
+            context
+                .review
+                .as_ref()
+                .map_or(0, |review| review.pull_request.number),
+            context.review_error.as_deref().unwrap_or_default()
+        )
+    })
+}
+
+fn make_project_context_row(summary: &SidebarWorklaneSummary) -> Option<gtk::Box> {
+    let context = focused_project_context(summary)?;
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 5);
+    row.set_widget_name(&widget_name("project-context", &summary.worklane_id));
+    row.add_css_class("project-context-row");
+    if context.review_error.is_some() {
+        row.add_css_class("review-context-stale");
+    }
+    row.append(&gtk::Image::from_icon_name("vcs-branch-symbolic"));
+    let reference = gtk::Label::new(Some(&context.reference.display()));
+    reference.add_css_class("project-context-branch");
+    reference.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+    reference.set_hexpand(true);
+    reference.set_xalign(0.0);
+    row.append(&reference);
+    if context.dirty {
+        let dirty = gtk::Label::new(Some("● dirty"));
+        dirty.add_css_class("project-context-dirty");
+        row.append(&dirty);
+    }
+    if let Some(review) = &context.review {
+        let pull_request = gtk::Label::new(Some(&format!("PR #{}", review.pull_request.number)));
+        pull_request.add_css_class("review-chip");
+        pull_request.add_css_class(match review.pull_request.state {
+            zentty_core::PullRequestState::Open => "review-chip-success",
+            zentty_core::PullRequestState::Draft => "review-chip-neutral",
+            zentty_core::PullRequestState::Merged => "review-chip-info",
+            zentty_core::PullRequestState::Closed => "review-chip-danger",
+        });
+        row.append(&pull_request);
+        for chip in &review.chips {
+            let label = gtk::Label::new(Some(&chip.text));
+            label.add_css_class("review-chip");
+            label.add_css_class(match chip.style {
+                zentty_core::ReviewChipStyle::Neutral => "review-chip-neutral",
+                zentty_core::ReviewChipStyle::Success => "review-chip-success",
+                zentty_core::ReviewChipStyle::Warning => "review-chip-warning",
+                zentty_core::ReviewChipStyle::Danger => "review-chip-danger",
+                zentty_core::ReviewChipStyle::Info => "review-chip-info",
+            });
+            row.append(&label);
+        }
+    }
+    if context.review_error.is_some() {
+        let stale = gtk::Label::new(Some("stale"));
+        stale.add_css_class("review-chip");
+        stale.add_css_class("review-chip-warning");
+        row.append(&stale);
+    }
+    let review_age = context.review.as_ref().map(|review| {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_secs());
+        format!("\nReview status updated {}", review.age_label(now))
+    });
+    let tooltip = if let Some(error) = &context.review_error {
+        format!(
+            "{}{}\nLast review refresh failed: {error}",
+            context.repository_root.display(),
+            review_age.as_deref().unwrap_or_default()
+        )
+    } else {
+        format!(
+            "{}{}",
+            context.repository_root.display(),
+            review_age.as_deref().unwrap_or_default()
+        )
+    };
+    row.set_tooltip_text(Some(&tooltip));
+    row.update_property(&[gtk::accessible::Property::Label(&format!(
+        "Git {}, {}{}",
+        context.reference.display(),
+        if context.dirty {
+            "dirty working tree"
+        } else {
+            "clean working tree"
+        },
+        context
+            .review
+            .as_ref()
+            .map_or_else(String::new, |review| format!(
+                ", pull request {}",
+                review.pull_request.number
+            ))
+    ))]);
+    Some(row)
 }
 
 fn server_fingerprint(worklane_id: &str, servers: &[RankedServer]) -> String {
@@ -590,6 +725,10 @@ fn install_worklane_drop_target(card: &gtk::Box, target_id: &str) {
 }
 
 const WORKLANE_REORDER_PREVIEW_NAME: &str = "zentty-worklane-reorder-preview";
+
+pub(crate) fn has_worklane_reorder_preview(sidebar: &gtk::Box) -> bool {
+    find_named_widget(sidebar.upcast_ref(), WORKLANE_REORDER_PREVIEW_NAME).is_some()
+}
 
 fn sidebar_for_card(card: &gtk::Box) -> Option<gtk::Box> {
     card.parent()
@@ -882,11 +1021,60 @@ pub(crate) fn update_metadata(sidebar: &gtk::Box, summaries: &[SidebarWorklaneSu
         };
         move_down.set_sensitive(index + 1 < summaries.len());
 
+        if !update_project_context_row(&card, summary) {
+            return false;
+        }
+
         for pane in &summary.pane_rows {
             if !update_pane_metadata(sidebar, pane) {
                 return false;
             }
         }
+    }
+    true
+}
+
+pub(crate) fn update_project_context_metadata(
+    sidebar: &gtk::Box,
+    summaries: &[SidebarWorklaneSummary],
+) {
+    for summary in summaries {
+        let Some(card) = find_named_widget(
+            sidebar.upcast_ref(),
+            &widget_name("worklane-card", &summary.worklane_id),
+        ) else {
+            continue;
+        };
+        let _ = update_project_context_row(&card, summary);
+    }
+}
+
+fn update_project_context_row(card: &gtk::Widget, summary: &SidebarWorklaneSummary) -> bool {
+    let Some(card_box) = card.downcast_ref::<gtk::Box>() else {
+        return false;
+    };
+    let fingerprint_name = widget_name("worklane-project-fingerprint", &summary.worklane_id);
+    let Some(fingerprint) = find_named_label(card, &fingerprint_name) else {
+        return false;
+    };
+    let expected = project_fingerprint(summary);
+    if fingerprint.text() == expected {
+        return true;
+    }
+    fingerprint.set_text(&expected);
+    if let Some(current) =
+        find_named_widget(card, &widget_name("project-context", &summary.worklane_id))
+    {
+        card_box.remove(&current);
+    }
+    if let Some(project_row) = make_project_context_row(summary) {
+        let Some(header) =
+            find_named_widget(card, &widget_name("worklane-select", &summary.worklane_id))
+                .and_then(|select| select.parent())
+        else {
+            return false;
+        };
+        card_box.insert_child_after(&project_row, Some(&header));
     }
     true
 }

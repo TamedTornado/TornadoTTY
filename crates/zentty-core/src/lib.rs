@@ -12,6 +12,7 @@ mod codex_title;
 mod codex_transcript;
 mod command_palette;
 mod dev_server;
+mod git_review_context;
 mod global_search;
 mod pane_focus_history;
 mod pane_layout;
@@ -92,6 +93,11 @@ pub use dev_server::{
     ServerRegistry, ServerRelevanceContext, ServerRelevanceReason, ServerRelevanceTier,
     ServerTerminationObservation, ServerTerminationTarget, ServerUrlCandidate, ServerUrlError,
     authorize_server_termination, detect_server_urls, normalize_server_url, rank_servers,
+};
+pub use git_review_context::{
+    ChecksState, GitHostKind, GitReference, GitRemote, ProjectContext, ProjectContextError,
+    PullRequestState, PullRequestSummary, ReviewChip, ReviewChipStyle, ReviewContext,
+    SystemProjectContextResolver, parse_git_remote,
 };
 pub use global_search::{
     GlobalSearchCoordinator, GlobalSearchDirection, GlobalSearchEffect, GlobalSearchState,

@@ -151,6 +151,9 @@ pub(super) const ACTION_STOP_IGNORING_SERVER_PORT: &str = "stop-ignoring-server-
 pub(super) const ACTION_STOP_SERVER: &str = "stop-server";
 pub(super) const ACTION_RUN_TASK: &str = "run-task";
 pub(super) const ACTION_SHOW_TASK_MANAGER: &str = "show-task-manager";
+pub(super) const ACTION_REFRESH_REVIEW_STATUS: &str = "refresh-review-status";
+pub(super) const ACTION_OPEN_BRANCH_REMOTE: &str = "open-branch-remote";
+pub(super) const ACTION_OPEN_PULL_REQUEST: &str = "open-pull-request";
 
 pub(super) const ACTION_SPECS: &[ActionSpec] = &[
     action!(ACTION_NEW_WINDOW, "new-window", None),
@@ -294,6 +297,9 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
     action!(ACTION_STOP_SERVER, "stop-server", String),
     action!(ACTION_RUN_TASK, "run-task", String),
     action!(ACTION_SHOW_TASK_MANAGER, "show-task-manager", None),
+    action!(ACTION_REFRESH_REVIEW_STATUS, "refresh-review-status", None),
+    action!(ACTION_OPEN_BRANCH_REMOTE, "open-branch-remote", None),
+    action!(ACTION_OPEN_PULL_REQUEST, "open-pull-request", None),
 ];
 
 pub(super) struct ActionRouter {
@@ -440,7 +446,41 @@ fn populate(shell: &Rc<RefCell<ApplicationShell>>, group: &gio::SimpleActionGrou
     add_simple_action(shell, group, ACTION_SHOW_TASK_MANAGER, |shell| {
         shell.request_show_task_manager();
     });
+    install_project_context_actions(shell, group);
     install_edit_actions(shell, group);
+}
+
+fn install_project_context_actions(
+    shell: &Rc<RefCell<ApplicationShell>>,
+    group: &gio::SimpleActionGroup,
+) {
+    for (name, handler) in [
+        (
+            ACTION_REFRESH_REVIEW_STATUS,
+            super::project_context_runtime::refresh_focused as fn(&Rc<RefCell<ApplicationShell>>),
+        ),
+        (
+            ACTION_OPEN_BRANCH_REMOTE,
+            super::project_context_runtime::open_focused_branch,
+        ),
+        (
+            ACTION_OPEN_PULL_REQUEST,
+            super::project_context_runtime::open_focused_pull_request,
+        ),
+    ] {
+        let action = gio::SimpleAction::new(name, None);
+        let weak = Rc::downgrade(shell);
+        action.connect_activate(move |_, parameter| {
+            if !ParameterSchema::None.accepts(parameter) {
+                eprintln!("zentty-linux: action={name} rejected parameter-schema");
+                return;
+            }
+            if let Some(shell) = weak.upgrade() {
+                handler(&shell);
+            }
+        });
+        group.add_action(&action);
+    }
 }
 
 fn install_task_runner_action(
@@ -1157,7 +1197,7 @@ mod tests {
 
     #[test]
     fn registry_is_unique_complete_and_typed() {
-        assert_eq!(ACTION_SPECS.len(), 76);
+        assert_eq!(ACTION_SPECS.len(), 79);
         assert_eq!(
             ACTION_SPECS
                 .iter()
