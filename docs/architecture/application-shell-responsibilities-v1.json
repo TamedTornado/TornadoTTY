@@ -2,7 +2,7 @@
   "schema_version": 1,
   "contract_id": "zentty-application-shell-responsibilities",
   "source": "crates/zentty-linux/src/application_shell.rs",
-  "source_sha256": "0f3aa18172fc2e54910106034c5fac4cef2a6e9149b0a32dae68c6c7cd331f62",
+  "source_sha256": "6bd21c0821450577e8fb25bb995d48e42295744a2e1e7282895e32514142ca41",
   "owned_source_sha256": {
     "crates/zentty-linux/src/main.rs": "759fa5dcc6cd45ea364ab6c798cb1c4399fb070252b495b214041f9256ff7bd8",
     "crates/zentty-linux/src/application.rs": "2713bac85b55babd79838e33426d2f044016742a37105d71c7bd0b7668df7534",
@@ -10,12 +10,13 @@
     "crates/zentty-linux/src/window_set.rs": "501d595889c11a41a4261ef8282465d76dd9ed8ccd1d004406b558579b0bf58e",
     "crates/zentty-linux/src/agent_runtime.rs": "48f30d38048ae5388ca59aee2021e1215cabdfc033e66755ed32c6f92dcb8671",
     "crates/zentty-linux/src/codex_enrichment.rs": "fe87631c75c04b63962b7f89d311a778a25af8f27a1dcb4d5950b3efcbaa476e",
-    "crates/zentty-linux/src/application_shell/action_router.rs": "7b86422032bffa31b343e647ba4adbf17a7b33281b2f6dc5f2b8004fae80a885",
+    "crates/zentty-linux/src/application_shell/action_router.rs": "868382c305ee2555add64bcb59421745472abb71716ec964f1dcb2f015318550",
     "crates/zentty-linux/src/application_shell/clipboard_actions.rs": "1502a0353bc3e0d645d6c6bd81aae1ed1306f312838f92a635944d402cd441b0",
     "crates/zentty-linux/src/application_shell/agent_events.rs": "56c45836a4e6a6a929dce61251a199c0b8dec7a62edbcda3c9b5dd594dbb6038",
     "crates/zentty-linux/src/application_shell/global_search.rs": "98a1963830af8616b31da2558ae6f27c4461342ef3085f6ef9cda0863a1ddc7c",
-    "crates/zentty-linux/src/application_shell/pane_runtime.rs": "1c5fa3c3ec679e4fabff94a782396340fe01fd423a2ab02b0c795816ffbf1e6c",
+    "crates/zentty-linux/src/application_shell/pane_runtime.rs": "6952173990c2da3c9f0156c0a2722301bace71403d04c237fc63542d052aed3f",
     "crates/zentty-linux/src/application_shell/server_runtime.rs": "cd39ebc1f95f7eb3c063058036fabbecc90cf367457a1538f2f6c8e657a0b919",
+    "crates/zentty-linux/src/application_shell/task_runner_runtime.rs": "ec752b328170a8b1363a87ebce06d58220f717237f97d16bd32b4aca31cb7ddb",
     "crates/zentty-linux/src/docker_discovery.rs": "1836046bf3159c0a207ed999dc44a2ef8d9aa6276d79275031e2dbbd6cdd6c6d",
     "crates/zentty-linux/src/server_discovery.rs": "0d398d53a68bd34afa15208e4b2c6c5d3a9739502f1c7b86b40e615ec73d87a8",
     "crates/zentty-linux/src/application_shell/remote_paste.rs": "dfa26112e2dfe15a2291d5df843d26f74579607b06f9e4d1efd0931312835ead",
@@ -126,6 +127,13 @@
       "planned_module": "crates/zentty-linux/src/application_shell/server_runtime.rs, crates/zentty-linux/src/server_discovery.rs, and crates/zentty-linux/src/docker_discovery.rs",
       "tracking": "GH-19",
       "responsibility": "The sole window-local development-server registry and bounded Linux listener/container observer; projects source-ranked servers into existing sidebar/actions and revalidates ownership before signaling."
+    },
+    {
+      "id": "task_runner_coordinator",
+      "status": "existing",
+      "planned_module": "crates/zentty-linux/src/application_shell/task_runner_runtime.rs and crates/zentty-core/src/task_runner.rs",
+      "tracking": "GH-19",
+      "responsibility": "The sole window-local task snapshot and launch bridge; discovers bounded source tasks for the focused pane, projects them into the existing command palette, revalidates activation, and transactionally launches through the existing workspace and Ghostty runtime."
     }
   ],
   "field_assignments": [
@@ -152,6 +160,10 @@
     {
       "owner": "server_runtime_coordinator",
       "fields": ["server_runtime"]
+    },
+    {
+      "owner": "task_runner_coordinator",
+      "fields": ["task_runner_actions"]
     },
     {
       "owner": "agent_event_coordinator",
@@ -236,6 +248,10 @@
       "methods": ["window_recipe"]
     },
     {
+      "owner": "task_runner_coordinator",
+      "methods": ["command_palette_task_items"]
+    },
+    {
       "owner": "existing_ui_projection",
       "methods": [
         "reconcile_sidebar_width", "reconcile_pane_heights", "install_sidebar_visibility",
@@ -266,14 +282,14 @@
       "populate", "install_application_actions", "install_edit_actions", "install_worklane_edit_actions",
       "install_worklane_move_actions", "install_pane_rename_action",
       "install_pane_transfer_action", "install_pane_creation_actions",
-      "install_restore_closed_pane_action", "install_clipboard_actions", "install_search_actions", "install_server_actions",
+      "install_restore_closed_pane_action", "install_clipboard_actions", "install_search_actions", "install_server_actions", "install_task_runner_action",
       "install_pane_layout_actions", "add_simple_action", "validate_registered_group"
     ],
     "pane_runtime_coordinator": [
       "new", "runtime", "command", "live_children", "surface", "frame", "contains",
       "live_pane_ids",
       "is_deferred", "mark_deferred",
-      "insert", "queue_prefill", "cancel_prefill", "take_prefill", "detach_widgets",
+      "insert", "queue_prefill", "cancel_prefill", "take_prefill", "queue_launch", "cancel_launch", "take_launch", "detach_widgets",
       "detach_for_window_transfer", "adopt_window_transfer",
       "remove", "note_child_exit", "release_all", "create_surface",
       "create_surface_with_command", "create_surface_configured", "surface_config",
@@ -307,6 +323,7 @@
       "set_port_ignored", "request_probe", "probe", "apply_servers", "open_server", "launch_url",
       "stop_server", "pane_probe_source", "stop_owned_server", "signal_process"
     ],
+    "task_runner_coordinator": ["run_task", "launch_in_new_pane"],
     "server_listener_discovery": [
       "scan_listeners_at", "read_bounded", "parse_socket_table", "decode_ipv4", "decode_ipv6",
       "parse_process_info", "process_start_time", "unique_cwd_pane", "socket_inode", "is_descendant"
@@ -406,7 +423,8 @@
     {"name":"ignore-server-port","parameter":"string","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"refresh-servers","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"stop-ignoring-server-port","parameter":"string","owner":"action_router","invalid_parameter":"ignore-without-panic"},
-    {"name":"stop-server","parameter":"string","owner":"action_router","invalid_parameter":"ignore-without-panic"}
+    {"name":"stop-server","parameter":"string","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"run-task","parameter":"string","owner":"action_router","invalid_parameter":"ignore-without-panic"}
   ],
   "conditional_action_availability": {
     "multiple_columns": ["resize-pane-left", "resize-pane-right", "arrange-golden-wide", "arrange-golden-narrow"],
@@ -427,6 +445,7 @@
     "standard_clipboard_projection": {"owner":"clipboard_coordinator","maximum_instances_per_window":1},
     "application_config_snapshot": {"owner":"config_store","maximum_instances_per_process":1},
     "development_server_registry": {"owner":"server_runtime_coordinator","maximum_instances_per_window":1},
+    "task_runner_snapshot": {"owner":"task_runner_coordinator","maximum_instances_per_window":1},
     "tmux_compatibility_state": {"owner":"existing_tmux_coordinator","maximum_instances_per_window":1},
     "glib_scheduling": {"owner":"application_runtime","kind":"default-glib-main-context","maximum_instances_per_process":1}
   },

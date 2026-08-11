@@ -23,6 +23,7 @@ pub struct CommandPaletteItem {
     pub search_text: String,
     pub group: CommandPaletteGroup,
     pub target: CommandPaletteTarget,
+    pub enabled: bool,
 }
 
 impl CommandPaletteItem {
@@ -40,6 +41,7 @@ impl CommandPaletteItem {
             subtitle,
             group: CommandPaletteGroup::Pane,
             target: CommandPaletteTarget::Pane(target),
+            enabled: true,
         }
     }
 
@@ -58,6 +60,7 @@ impl CommandPaletteItem {
             subtitle,
             group: CommandPaletteGroup::Action,
             target: CommandPaletteTarget::Action(action),
+            enabled: true,
         }
     }
 
@@ -80,7 +83,22 @@ impl CommandPaletteItem {
                 action,
                 parameter: parameter.into(),
             },
+            enabled: true,
         }
+    }
+
+    #[must_use]
+    pub fn parameterized_action_with_enabled(
+        title: impl Into<String>,
+        subtitle: impl Into<String>,
+        keywords: &str,
+        action: &'static str,
+        parameter: impl Into<String>,
+        enabled: bool,
+    ) -> Self {
+        let mut item = Self::parameterized_action(title, subtitle, keywords, action, parameter);
+        item.enabled = enabled;
+        item
     }
 }
 

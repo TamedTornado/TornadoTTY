@@ -77,6 +77,12 @@ pub(super) struct PaneRuntimeCoordinator {
     deferred_panes: BTreeSet<String>,
     live_children: Cell<usize>,
     pending_prefills: BTreeMap<String, String>,
+    pending_launches: BTreeMap<String, PendingPaneLaunch>,
+}
+
+pub(super) struct PendingPaneLaunch {
+    pub(super) command: String,
+    pub(super) environment: Vec<(String, String)>,
 }
 
 pub(crate) struct DetachedPaneRuntime {
@@ -95,6 +101,7 @@ impl PaneRuntimeCoordinator {
             deferred_panes: BTreeSet::new(),
             live_children: Cell::new(0),
             pending_prefills: BTreeMap::new(),
+            pending_launches: BTreeMap::new(),
         }
     }
 
@@ -169,6 +176,29 @@ impl PaneRuntimeCoordinator {
 
     pub(super) fn take_prefill(&mut self, pane_id: &str) -> Option<String> {
         self.pending_prefills.remove(pane_id)
+    }
+
+    pub(super) fn queue_launch(
+        &mut self,
+        pane_id: &str,
+        command: String,
+        environment: Vec<(String, String)>,
+    ) {
+        self.pending_launches.insert(
+            pane_id.to_owned(),
+            PendingPaneLaunch {
+                command,
+                environment,
+            },
+        );
+    }
+
+    pub(super) fn cancel_launch(&mut self, pane_id: &str) {
+        self.pending_launches.remove(pane_id);
+    }
+
+    pub(super) fn take_launch(&mut self, pane_id: &str) -> Option<PendingPaneLaunch> {
+        self.pending_launches.remove(pane_id)
     }
 
     pub(super) fn detach_widgets(&mut self) {
@@ -392,9 +422,19 @@ impl PaneRuntimeCoordinator {
             .worklane_id_for_pane(pane_id)
             .ok_or_else(|| format!("pane {pane_id} has no worklane"))?
             .to_owned();
-        let environment = shell
+        let mut environment = shell
             .agent_events
             .environment_for_pane(&worklane_id, pane_id)?;
+        let pending_launch = shell.pane_runtime.take_launch(pane_id);
+        if let Some(launch) = &pending_launch {
+            for (key, value) in &launch.environment {
+                if let Some(existing) = environment.iter_mut().find(|(name, _)| name == key) {
+                    existing.1.clone_from(value);
+                } else {
+                    environment.push((key.clone(), value.clone()));
+                }
+            }
+        }
         let restored_command = shell.restored_pane_commands.get(pane_id).cloned();
         if shell.pane_runtime.command().is_none()
             && let Some(command) = &restored_command
@@ -406,6 +446,7 @@ impl PaneRuntimeCoordinator {
                 .pane_runtime
                 .command()
                 .map(str::to_owned)
+                .or_else(|| pending_launch.map(|launch| launch.command))
                 .or(restored_command),
             title: zentty_core::PRODUCT_NAME.to_owned(),
             working_directory: shell

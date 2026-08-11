@@ -645,12 +645,59 @@ fn clear_worklane_drag_feedback(card: &gtk::Box) {
     }
 }
 
+fn adjacent_worklane_id(mut widget: Option<gtk::Widget>, forward: bool) -> Option<String> {
+    while let Some(current) = widget {
+        if !current.has_css_class("worklane-dragged")
+            && let Some(id) = current.widget_name().strip_prefix("zentty-worklane-card-")
+        {
+            return Some(id.to_owned());
+        }
+        widget = if forward {
+            current.next_sibling()
+        } else {
+            current.prev_sibling()
+        };
+    }
+    None
+}
+
+fn install_worklane_preview_drop_target(preview: &gtk::Box) {
+    let target = gtk::DropTarget::new(String::static_type(), gtk::gdk::DragAction::MOVE);
+    target.connect_enter(|_, _, _| gtk::gdk::DragAction::MOVE);
+    let drop_preview = preview.clone();
+    target.connect_drop(move |_, value, _, _| {
+        let Ok(dragged_id) = value.get::<String>() else {
+            return false;
+        };
+        let placement = adjacent_worklane_id(drop_preview.prev_sibling(), false)
+            .map(|id| format!("after:{id}"))
+            .or_else(|| {
+                adjacent_worklane_id(drop_preview.next_sibling(), true)
+                    .map(|id| format!("before:{id}"))
+            });
+        let Some(placement) = placement else {
+            return false;
+        };
+        let accepted = drop_preview
+            .activate_action(
+                "workspace.reorder-worklane",
+                Some(&(dragged_id.as_str(), placement.as_str()).to_variant()),
+            )
+            .is_ok();
+        eprintln!(
+            "zentty-linux: worklane-drag=preview-drop id={dragged_id} placement={placement} accepted={accepted}"
+        );
+        accepted
+    });
+    preview.add_controller(target);
+}
+
 fn make_worklane_drag_preview_card(summary: &SidebarWorklaneSummary, index: usize) -> gtk::Box {
     let preview = gtk::Box::new(gtk::Orientation::Vertical, 4);
     preview.set_widget_name(WORKLANE_REORDER_PREVIEW_NAME);
     preview.add_css_class("worklane-card");
     preview.add_css_class("worklane-drag-preview");
-    preview.set_can_target(false);
+    install_worklane_preview_drop_target(&preview);
     if let Some(color) = summary.color {
         preview.add_css_class(&format!("worklane-card-{}", color.as_str()));
     }

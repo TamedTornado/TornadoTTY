@@ -1,0 +1,204 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
+if [[ "${product}" != /* ]]; then
+    product="${repo_root}/${product}"
+fi
+ghostty_root="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
+run_root="$(mktemp -d)"
+project="${run_root}/project"
+state_directory="${run_root}/state"
+receipt="${run_root}/task.receipt"
+log="${run_root}/product.log"
+product_pid=""
+backend="${GDK_BACKEND:-}"
+
+fail() {
+    [[ ! -f "${log}" ]] || cat "${log}" >&2
+    echo "rust-task-runners: error: $*" >&2
+    exit 1
+}
+
+cleanup() {
+    if [[ "${product_pid}" =~ ^[1-9][0-9]*$ ]]; then
+        kill -TERM "${product_pid}" 2>/dev/null || true
+        wait "${product_pid}" 2>/dev/null || true
+    fi
+    rm -rf -- "${run_root}"
+}
+trap cleanup EXIT
+
+case "${backend}" in
+    x11)
+        [[ "${ZENTTY_NESTED_X11_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+            fail "X11 scenario must run through linux/tests/nested-x11"
+        command -v xdotool >/dev/null || fail "xdotool is required"
+        ;;
+    wayland)
+        [[ "${ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+            fail "Wayland scenario must run through linux/tests/nested-wayland-input"
+        command -v wtype >/dev/null || fail "wtype is required"
+        ;;
+    *) fail "GDK_BACKEND must be x11 or wayland" ;;
+esac
+for dependency in grep head mktemp pnpm readelf sed seq sleep; do
+    command -v "${dependency}" >/dev/null || fail "${dependency} is required"
+done
+[[ -x "${product}" ]] || fail "staged product is missing: ${product}"
+
+layer_runpath="$(
+    readelf -d "${ghostty_root}/zig-out/lib/libghostty-gtk-embed.so" |
+        sed -n 's/.*Library runpath: \[\([^]]*\)\].*/\1/p' |
+        cut -d: -f1
+)"
+[[ "${layer_runpath}" == .zig-cache/* ]] || fail "Ghostty runpath is not pinned"
+layer_directory="${ghostty_root}/${layer_runpath}"
+
+mkdir -p "${project}/.git" "${project}/.vscode" "${state_directory}"
+cat >"${project}/package.json" <<'EOF'
+{
+  "packageManager": "pnpm@10.32.1",
+  "scripts": {
+    "package-visible": "printf package-task"
+  }
+}
+EOF
+cat >"${project}/.vscode/tasks.json" <<'EOF'
+{
+  // The physical product journey proves JSONC and Linux overrides.
+  "tasks": [
+    {
+      "label": "vscode-integration",
+      "command": "ignored-on-linux",
+      "linux": {
+        "command": "./task-fixture",
+        "args": ["exact argument"]
+      },
+      "options": {
+        "env": { "ZENTTY_TASK_ENV": "from-vscode" }
+      }
+    },
+    {
+      "label": "disabled-parameter",
+      "command": "printf ${file}"
+    },
+  ],
+}
+EOF
+cat >"${project}/task-fixture" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+{
+    printf 'cwd=%s\n' "\${PWD}"
+    printf 'environment=%s\n' "\${ZENTTY_TASK_ENV:-missing}"
+    printf 'argument=%s\n' "\${1:-missing}"
+} >'${receipt}'
+EOF
+chmod 700 "${project}/task-fixture"
+
+(
+    cd "${project}"
+    exec env \
+        GDK_SCALE=1 \
+        GDK_DPI_SCALE=1 \
+        LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+        "${product}" \
+        --state-directory "${state_directory}" \
+        --no-session-restore
+) >"${log}" 2>&1 &
+product_pid=$!
+
+window_id=""
+for _ in $(seq 1 300); do
+    if [[ "${backend}" == x11 ]]; then
+        window_id="$(xdotool search --name '^Zentty$' 2>/dev/null | head -1 || true)"
+    else
+        window_id=wayland-focused
+    fi
+    if [[ -n "${window_id}" ]] && grep -Fxq 'zentty-linux: terminal-ready' "${log}"; then
+        break
+    fi
+    sleep 0.05
+done
+[[ -n "${window_id}" ]] || fail "real Zentty window did not appear"
+if [[ "${backend}" == wayland ]]; then
+    for _ in $(seq 1 100); do
+        grep -Fq 'zentty-linux: focus-pane pane=pane-1' "${log}" && break
+        sleep 0.05
+    done
+    grep -Fq 'zentty-linux: focus-pane pane=pane-1' "${log}" ||
+        fail "Wayland compositor had not focused the real terminal"
+fi
+
+open_palette() {
+    if [[ "${backend}" == x11 ]]; then
+        xdotool windowfocus --sync "${window_id}"
+        xdotool key --window "${window_id}" ctrl+shift+p
+    else
+        wtype -M ctrl -M shift -k p -m shift -m ctrl
+    fi
+}
+
+type_text() {
+    if [[ "${backend}" == x11 ]]; then
+        xdotool type --window "${window_id}" --delay 5 -- "$1"
+    else
+        wtype -- "$1"
+    fi
+}
+
+activate_first() {
+    if [[ "${backend}" == x11 ]]; then
+        xdotool key --window "${window_id}" Down Return
+    else
+        wtype -k Down -k Return
+    fi
+}
+
+query='Run task: vscode-integration'
+open_palette
+type_text "${query}"
+for _ in $(seq 1 100); do
+    grep -Fq "command-palette=query value=\"${query}\" results=1" "${log}" && break
+    sleep 0.05
+done
+grep -Fq "command-palette=query value=\"${query}\" results=1" "${log}" ||
+    fail "VS Code task was absent from the real command palette"
+
+# Change the source after discovery but before activation. The opaque GTK
+# parameter still identifies the old snapshot, which must not execute.
+printf '\n' >>"${project}/.vscode/tasks.json"
+activate_first
+for _ in $(seq 1 100); do
+    grep -Fq 'action=run-task rejected=stale' "${log}" && break
+    sleep 0.05
+done
+grep -Fq 'action=run-task rejected=stale' "${log}" ||
+    fail "changed task source was not rejected at activation"
+[[ ! -e "${receipt}" ]] || fail "stale task unexpectedly executed"
+
+# A fresh palette snapshot may launch the real project task in a real Ghostty
+# terminal with its source directory, environment, and quoted argument.
+open_palette
+type_text "${query}"
+for _ in $(seq 1 100); do
+    [[ "$(grep -Fc "command-palette=query value=\"${query}\" results=1" "${log}" || true)" -ge 2 ]] && break
+    sleep 0.05
+done
+activate_first
+for _ in $(seq 1 200); do
+    [[ -s "${receipt}" ]] && break
+    sleep 0.05
+done
+[[ -s "${receipt}" ]] || fail "fresh task did not execute in the real Ghostty PTY"
+grep -Fxq "cwd=${project}" "${receipt}" || fail "task used the wrong working directory"
+grep -Fxq 'environment=from-vscode' "${receipt}" || fail "task environment was not projected"
+grep -Fxq 'argument=exact argument' "${receipt}" || fail "task argv was not shell-quoted"
+grep -Fq 'zentty-linux: action=run-task pane=' "${log}" || fail "product emitted no task launch receipt"
+grep -Fq 'command="./task-fixture '\''exact argument'\''"' "${log}" ||
+    fail "product launched a command different from the discovered task"
+grep -Fq 'cwd='"${project}" "${log}" || fail "new task pane did not retain its project CWD"
+
+echo "rust-task-runners-${backend}: PASS real-palette real-ghostty-pty stale-revalidation cwd environment quoted-argv"

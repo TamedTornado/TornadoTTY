@@ -138,6 +138,15 @@ difference, and remaining limitation is recorded here as the feature is built.
   final receipt: **131 tested, 117 caught, 14 unviable, 0 missed**. Every run
   used `.cargo/mutants.toml` with `gitignore = true` and `copy_target = false`;
   the ignored multi-gigabyte build tree was never copied.
+- The 2026-08-11 full qualification run exposed a load-sensitive assertion in
+  the controlled Wayland journey. The first scanner pass correctly published
+  the listener with CWD confidence, while the test immediately demanded the
+  later PID-attributed observation after waiting only for the independent
+  authenticated watch record. A standalone rerun passed, confirming a
+  synchronization race rather than environmental absence or a product waiver.
+  The journey now waits, with a bounded ten-second deadline, for the exact
+  listener port to reach `Scanner`/`Pid` confidence before asserting it. It
+  does not accept the weaker CWD observation as a pass.
 
 ## Remaining limitation
 

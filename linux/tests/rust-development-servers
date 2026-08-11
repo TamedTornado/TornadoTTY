@@ -153,6 +153,10 @@ grep -Fq "http://localhost:${watch_port}/fixture" "${watch_list_receipt}" ||
     fail "authenticated server list omitted the output-reported URL path"
 [[ "$(cat "${watch_open_receipt}")" == "http://localhost:${watch_port}/fixture" ]] ||
     fail "authenticated server open discarded the output-reported URL path"
+for _ in $(seq 1 200); do
+    grep -Fq "origin=http://localhost:${port} source=Scanner confidence=Pid" "${log}" && break
+    sleep 0.05
+done
 grep -Fq "origin=http://localhost:${port} source=Scanner confidence=Pid" "${log}" ||
     fail "real listener was not PID-attributed to its Ghostty pane"
 if [[ -n "${container_id}" ]]; then

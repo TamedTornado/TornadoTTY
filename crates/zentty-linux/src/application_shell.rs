@@ -30,8 +30,9 @@ use zentty_core::{
     AppConfig, ClosePaneOutcome, ColumnRecipe, CommandPaletteItem, GlobalSearchCoordinator,
     GlobalSearchDirection, PaneColumnState, PaneLayoutPolicy, PaneRecipe, PaneReference,
     PaneResizeDirection, PaneRestoreDraft, PaneRightInsertionBehavior, PaneWindowTransfer,
-    ServerPortRule, ServerRelevanceContext, SidebarWidthPreference, WindowFrame, WindowRecipe,
-    WorklaneColor, WorklaneRecipe, WorkspaceState, rank_servers,
+    ServerPortRule, ServerRelevanceContext, SidebarWidthPreference, TaskRunnerAction, WindowFrame,
+    WindowRecipe, WorklaneColor, WorklaneRecipe, WorkspaceState, discover_task_runners,
+    rank_servers,
 };
 use zentty_ghostty::GhosttyRuntime;
 
@@ -45,6 +46,7 @@ mod pane_runtime;
 mod remote_paste;
 pub(crate) mod server_runtime;
 mod ssh_identity;
+mod task_runner_runtime;
 mod tmux_runtime;
 
 use action_router::{
@@ -140,6 +142,7 @@ pub(crate) struct ApplicationShell {
     global_search_generation: u64,
     remote_panes: RemotePaneContext,
     server_runtime: server_runtime::ServerRuntime,
+    task_runner_actions: BTreeMap<String, TaskRunnerAction>,
     last_pane_viewport_height: Cell<i32>,
     action_router: Option<ActionRouter>,
     agent_events: AgentEventCoordinator,
@@ -183,6 +186,21 @@ fn report_config_projection(shell: &ApplicationShell) {
 fn finish_initial_render(shell: &Rc<RefCell<ApplicationShell>>) {
     shell.borrow().render();
     report_config_projection(&shell.borrow());
+}
+
+fn create_initial_pane_surfaces(
+    shell: &Rc<RefCell<ApplicationShell>>,
+    pane_ids: Vec<String>,
+    deferred_live_pane_id: Option<&str>,
+) -> Result<(), String> {
+    for pane_id in pane_ids {
+        if deferred_live_pane_id == Some(pane_id.as_str()) {
+            shell.borrow_mut().pane_runtime.mark_deferred(&pane_id)?;
+        } else {
+            PaneRuntimeCoordinator::create_surface(shell, &pane_id)?;
+        }
+    }
+    Ok(())
 }
 
 impl ApplicationShell {
@@ -259,6 +277,7 @@ impl ApplicationShell {
             global_search_generation: 0,
             remote_panes: RemotePaneContext::default(),
             server_runtime: server_runtime::ServerRuntime::default(),
+            task_runner_actions: BTreeMap::new(),
             last_pane_viewport_height: Cell::new(0),
             action_router: None,
             agent_events,
@@ -286,13 +305,7 @@ impl ApplicationShell {
         Self::install_pane_scroll_switching(&shell);
         Self::install_command_palette_shortcut(&shell);
         Self::install_search_shortcuts(&shell);
-        for pane_id in initial_pane_ids {
-            if deferred_live_pane_id == Some(pane_id.as_str()) {
-                shell.borrow_mut().pane_runtime.mark_deferred(&pane_id)?;
-            } else {
-                PaneRuntimeCoordinator::create_surface(&shell, &pane_id)?;
-            }
-        }
+        create_initial_pane_surfaces(&shell, initial_pane_ids, deferred_live_pane_id)?;
         shell.borrow().mount_background_restored_agents();
         finish_initial_render(&shell);
         Ok(shell)
@@ -1126,17 +1139,21 @@ impl ApplicationShell {
             {
                 return glib::Propagation::Proceed;
             }
-            let shell_ref = shell.borrow();
-            if shell_ref.command_palette.is_visible() {
-                shell_ref.command_palette.hide();
-                shell_ref.focus_selected_surface();
+            if shell.borrow().command_palette.is_visible() {
+                shell.borrow().command_palette.hide();
+                shell.borrow().focus_selected_surface();
             } else {
-                let (items, current) = shell_ref.command_palette_items();
-                shell_ref.command_palette.show(
-                    items,
-                    shell_ref.state.recent_pane_references(),
-                    current,
-                );
+                let (palette, items, recent, current) = {
+                    let mut shell_ref = shell.borrow_mut();
+                    let (items, current) = shell_ref.command_palette_items();
+                    (
+                        shell_ref.command_palette.clone(),
+                        items,
+                        shell_ref.state.recent_pane_references(),
+                        current,
+                    )
+                };
+                palette.show(items, recent, current);
             }
             glib::Propagation::Stop
         });
@@ -1221,7 +1238,7 @@ impl ApplicationShell {
         shell.borrow().window.add_controller(controller);
     }
 
-    fn command_palette_items(&self) -> (Vec<CommandPaletteItem>, Option<PaneReference>) {
+    fn command_palette_items(&mut self) -> (Vec<CommandPaletteItem>, Option<PaneReference>) {
         let current = self
             .state
             .focused_pane_id()
@@ -1251,8 +1268,53 @@ impl ApplicationShell {
             })
             .collect::<Vec<_>>();
         items.extend(self.command_palette_server_items());
+        items.extend(self.command_palette_task_items());
         items.extend(Self::command_palette_action_items());
         (items, current)
+    }
+
+    fn command_palette_task_items(&mut self) -> Vec<CommandPaletteItem> {
+        self.task_runner_actions.clear();
+        let Some(focused_directory) = self
+            .state
+            .focused_pane_id()
+            .and_then(|pane_id| self.state.pane(pane_id))
+            .and_then(|pane| pane.working_directory.as_deref())
+        else {
+            return Vec::new();
+        };
+        let actions = match discover_task_runners(std::path::Path::new(focused_directory)) {
+            Ok(actions) => actions,
+            Err(error) => {
+                eprintln!("zentty-linux: task-discovery error={error}");
+                return Vec::new();
+            }
+        };
+        actions
+            .into_iter()
+            .map(|action| {
+                let enabled = action.is_enabled();
+                let id = action.id.clone();
+                let keywords = format!(
+                    "run task task runner {} {}",
+                    action.execution_command,
+                    action
+                        .disabled_reason
+                        .as_ref()
+                        .map_or("", zentty_core::TaskRunnerDisabledReason::display_text)
+                );
+                let item = CommandPaletteItem::parameterized_action_with_enabled(
+                    format!("Run task: {}", action.title),
+                    action.subtitle(),
+                    &keywords,
+                    action_router::ACTION_RUN_TASK,
+                    id.clone(),
+                    enabled,
+                );
+                self.task_runner_actions.insert(id, action);
+                item
+            })
+            .collect()
     }
 
     fn command_palette_server_items(&self) -> Vec<CommandPaletteItem> {

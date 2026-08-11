@@ -179,6 +179,7 @@ impl CommandPaletteView {
             content.append(&title);
             content.append(&subtitle);
             button.set_child(Some(&content));
+            button.set_sensitive(item.enabled);
             button.update_property(&[gtk::accessible::Property::Label(&format!(
                 "{}, {}",
                 item.title, item.subtitle

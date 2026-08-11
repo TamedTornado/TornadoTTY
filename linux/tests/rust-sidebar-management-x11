@@ -57,6 +57,12 @@ for _ in $(seq 1 200); do
 done
 [[ "${window_id}" =~ ^[1-9][0-9]*$ ]] || fail "real Zentty window did not appear"
 xdotool windowsize --sync "${window_id}" 1000 700
+for _ in $(seq 1 100); do
+    grep -Fxq 'zentty-linux: window-size=1000x700' "${log}" && break
+    sleep 0.05
+done
+grep -Fxq 'zentty-linux: window-size=1000x700' "${log}" ||
+    fail "GTK did not finish the controlled window allocation before sidebar input"
 
 # Nine real worklanes overflow the controlled 700px sidebar. Every creation is
 # driven through the visible New worklane button and owns a real Ghostty PTY.
@@ -124,22 +130,41 @@ xdotool mousemove --sync --window "${window_id}" 500 70
 sleep 0.05
 pointer_target_before="$(grep -Fxc 'zentty-linux: worklane-drag=pointer-target id=worklane-1' "${log}" || true)"
 pickup_y=""
-for candidate_y in 90 95 100 105 110 115 120 125 130 135 140 145 150; do
-    xdotool mousemove --sync --window "${window_id}" 120 "${candidate_y}"
-    sleep 0.03
-    pointer_target_after="$(grep -Fxc 'zentty-linux: worklane-drag=pointer-target id=worklane-1' "${log}" || true)"
-    if ((pointer_target_after > pointer_target_before)); then
-        pickup_y="${candidate_y}"
-        break
-    fi
+for _ in $(seq 1 8); do
+    for candidate_y in 90 100 110 120 130 140 150 160 170 180 190 200 210 220 230 240 250 260 270 280 290 300; do
+        xdotool mousemove --sync --window "${window_id}" 120 "${candidate_y}"
+        sleep 0.02
+        pointer_target_after="$(grep -Fxc 'zentty-linux: worklane-drag=pointer-target id=worklane-1' "${log}" || true)"
+        if ((pointer_target_after > pointer_target_before)); then
+            pickup_y="${candidate_y}"
+            break 2
+        fi
+    done
+    # Selection-driven reveal may place the inactive first card just above the
+    # viewport. Scroll the real sidebar upward and resolve its rendered header
+    # again instead of assuming a fixed developer-desktop allocation.
+    xdotool mousemove --sync --window "${window_id}" 120 180 click 4 click 4
+    sleep 0.08
 done
 [[ -n "${pickup_y}" ]] || fail "physical pointer did not enter the rendered worklane 1 drag header"
 xdotool mousedown 1
 sleep 0.25
-for drag_y in 165 205 245 285 325 350; do
+after_slot_before="$(grep -Fxc 'zentty-linux: worklane-drag=preview-slot target=worklane-2 edge=after reflow=live' "${log}" || true)"
+after_slot_ready=false
+for drag_offset in 40 80 120 160 200 240; do
+    drag_y=$((pickup_y + drag_offset))
     xdotool mousemove --sync --window "${window_id}" 120 "${drag_y}"
-    sleep 0.12
+    for _ in $(seq 1 40); do
+        after_slot_count="$(grep -Fxc 'zentty-linux: worklane-drag=preview-slot target=worklane-2 edge=after reflow=live' "${log}" || true)"
+        if ((after_slot_count > after_slot_before)); then
+            after_slot_ready=true
+            break 2
+        fi
+        sleep 0.05
+    done
 done
+[[ "${after_slot_ready}" == true ]] ||
+    fail "physical drag did not reach the reviewed worklane 2 after-slot"
 xdotool mouseup 1
 for _ in $(seq 1 120); do
     grep -Fxq 'zentty-linux: action=reorder-worklane id=worklane-1 insertion=1 order=worklane-2,worklane-1,worklane-3,worklane-4,worklane-5,worklane-6,worklane-7,worklane-8,worklane-9 active=worklane-1 pane=pane-1' "${log}" && break

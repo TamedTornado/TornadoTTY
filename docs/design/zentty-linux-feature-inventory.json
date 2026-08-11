@@ -419,7 +419,7 @@
       "focused_tests": ["crates/zentty-core/tests/dev_server.rs", "crates/zentty-agent-ipc/tests/server_transport.rs", "crates/zentty-linux/src/server_discovery.rs", "crates/zentty-linux/src/docker_discovery.rs"],
       "product_scenarios": ["linux/tests/rust-development-servers"],
       "test_plan": "Launch real HTTP listeners from distinct PTYs plus a disposable container, verify attribution/ranking/open/ignore/refresh/stop through the staged product, and cover IPv6, PID reuse, hostile URLs and unrelated processes.",
-      "alternative_or_blocker": "Passive, output-watch, Docker, system-browser open, ignore/refresh, and safe stop are implemented. Linux multi-browser catalog/Open With remains required before COMPLETE."
+      "alternative_or_blocker": null
     },
     {
       "id": "utilities.task-runners",
@@ -431,9 +431,9 @@
       "origin": "PORT_PARITY",
       "user_impact": "Task runners are a named public feature and connect project files to real repeatable terminal work without adding an IDE.",
       "linux_owner_issue": 19,
-      "implementation_status": "NOT_IMPLEMENTED",
-      "focused_tests": [],
-      "product_scenarios": [],
+      "implementation_status": "PARTIAL",
+      "focused_tests": ["crates/zentty-core/tests/task_runner.rs"],
+      "product_scenarios": ["linux/tests/rust-task-runners"],
       "test_plan": "Create real fixtures for every format, drive dynamic palette results in the staged app, prove command and CWD in a real PTY, cover hostile/symlinked files, and mutation-test parsers/deduplication/order.",
       "alternative_or_blocker": null
     },

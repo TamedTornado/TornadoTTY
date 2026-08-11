@@ -149,6 +149,7 @@ pub(super) const ACTION_IGNORE_SERVER_PORT: &str = "ignore-server-port";
 pub(super) const ACTION_REFRESH_SERVERS: &str = "refresh-servers";
 pub(super) const ACTION_STOP_IGNORING_SERVER_PORT: &str = "stop-ignoring-server-port";
 pub(super) const ACTION_STOP_SERVER: &str = "stop-server";
+pub(super) const ACTION_RUN_TASK: &str = "run-task";
 
 pub(super) const ACTION_SPECS: &[ActionSpec] = &[
     action!(ACTION_NEW_WINDOW, "new-window", None),
@@ -290,6 +291,7 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
         String
     ),
     action!(ACTION_STOP_SERVER, "stop-server", String),
+    action!(ACTION_RUN_TASK, "run-task", String),
 ];
 
 pub(super) struct ActionRouter {
@@ -432,7 +434,24 @@ fn populate(shell: &Rc<RefCell<ApplicationShell>>, group: &gio::SimpleActionGrou
     install_search_actions(shell, group);
     install_clipboard_actions(shell, group);
     install_server_actions(shell, group);
+    install_task_runner_action(shell, group);
     install_edit_actions(shell, group);
+}
+
+fn install_task_runner_action(
+    shell: &Rc<RefCell<ApplicationShell>>,
+    group: &gio::SimpleActionGroup,
+) {
+    let action = gio::SimpleAction::new(ACTION_RUN_TASK, Some(glib::VariantTy::STRING));
+    let weak = Rc::downgrade(shell);
+    action.connect_activate(move |_, parameter| {
+        let (Some(shell), Some(id)) = (weak.upgrade(), parameter.and_then(glib::Variant::str))
+        else {
+            return;
+        };
+        super::task_runner_runtime::run_task(&shell, id);
+    });
+    group.add_action(&action);
 }
 
 fn install_server_actions(shell: &Rc<RefCell<ApplicationShell>>, group: &gio::SimpleActionGroup) {
@@ -1133,7 +1152,7 @@ mod tests {
 
     #[test]
     fn registry_is_unique_complete_and_typed() {
-        assert_eq!(ACTION_SPECS.len(), 74);
+        assert_eq!(ACTION_SPECS.len(), 75);
         assert_eq!(
             ACTION_SPECS
                 .iter()
@@ -1155,7 +1174,8 @@ mod tests {
                 "open-server",
                 "ignore-server-port",
                 "stop-ignoring-server-port",
-                "stop-server"
+                "stop-server",
+                "run-task"
             ]
         );
         assert_eq!(
