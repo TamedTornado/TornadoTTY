@@ -679,6 +679,22 @@ fn source_window_round_trip_preserves_metadata_while_applying_product_state() {
 }
 
 #[test]
+fn explicit_bookmark_unlink_overrides_preserved_recipe_metadata() {
+    let original = WorkspaceState::new("linked", "pane");
+    let mut recipe = original.to_window_recipe(&WindowRecipe {
+        id: "window-bookmark".to_owned(),
+        frame: None,
+        worklanes: Vec::new(),
+        active_worklane_id: None,
+    });
+    recipe.worklanes[0].bookmark_origin_id = Some("template-1".to_owned());
+    let mut state = WorkspaceState::from_window_recipe(&recipe).unwrap();
+    assert!(state.set_bookmark_origin("linked", None));
+    recipe = state.to_window_recipe(&recipe);
+    assert_eq!(recipe.worklanes[0].bookmark_origin_id, None);
+}
+
+#[test]
 fn pane_custom_identity_survives_runtime_titles_and_clears_to_live_fallback() {
     let envelope = SessionRestoreEnvelope::from_json(V3_ENVELOPE).unwrap();
     let template = &envelope.workspace.windows[0];

@@ -1,0 +1,247 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=linux/tests/lib/product-input
+source "${repo_root}/linux/tests/lib/product-input"
+product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
+ghostty_root="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
+run_root="$(mktemp -d)"
+project="${run_root}/project"
+state_directory="${run_root}/state"
+first_log="${run_root}/save.log"
+restore_log="${run_root}/restore.log"
+fallback_log="${run_root}/fallback.log"
+bookmarks="${XDG_CONFIG_HOME:?}/zentty/bookmarks.json"
+product_pid=""
+backend="${GDK_BACKEND:-}"
+
+fail() {
+    for log in "${first_log}" "${restore_log}" "${fallback_log}"; do
+        [[ ! -f "${log}" ]] || tail -100 "${log}" >&2
+    done
+    echo "rust-bookmarks-presets: error: $*" >&2
+    exit 1
+}
+
+cleanup() {
+    if [[ "${product_pid}" =~ ^[1-9][0-9]*$ ]]; then
+        kill -TERM "${product_pid}" 2>/dev/null || true
+        wait "${product_pid}" 2>/dev/null || true
+    fi
+    rm -rf -- "${run_root}"
+}
+trap cleanup EXIT
+
+case "${backend}" in
+    x11)
+        [[ "${ZENTTY_NESTED_X11_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+            fail "X11 scenario must run through linux/tests/nested-x11"
+        ;;
+    wayland)
+        [[ "${ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+            fail "Wayland scenario must run through linux/tests/nested-wayland-input"
+        ;;
+    *) fail "GDK_BACKEND must be x11 or wayland" ;;
+esac
+for dependency in grep jq mktemp readelf readlink sed sleep stat xdotool; do
+    command -v "${dependency}" >/dev/null || fail "${dependency} is required"
+done
+[[ -x "${product}" ]] || fail "staged product is not built: ${product}"
+product="$(readlink -f -- "${product}")"
+mkdir -p "${project}" "${state_directory}"
+canonical_project="$(readlink -f -- "${project}")"
+
+layer_runpath="$({
+    readelf -d "${ghostty_root}/zig-out/lib/libghostty-gtk-embed.so" |
+        sed -n 's/.*Library runpath: \[\([^]]*\)\].*/\1/p' |
+        cut -d: -f1
+})"
+layer_directory="${ghostty_root}/${layer_runpath}"
+
+start_product() {
+    local log="$1"
+    (
+        cd "${project}"
+        exec env \
+            GDK_SCALE=1 \
+            GDK_DPI_SCALE=1 \
+            BOOKMARK_TEST_SECRET_DO_NOT_PERSIST='real-ambient-secret' \
+            LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+            "${product}" \
+            --state-directory "${state_directory}" \
+            --no-session-restore
+    ) >"${log}" 2>&1 &
+    product_pid=$!
+    for _ in {1..240}; do
+        grep -Fq 'zentty-linux: terminal-ready-pane=pane-1' "${log}" && break
+        sleep 0.05
+    done
+    grep -Fq 'zentty-linux: terminal-ready-pane=pane-1' "${log}" ||
+        fail "real staged product terminal did not become ready"
+    zentty_product_prepare_input "${backend}" "${log}" ||
+        fail "real staged product input could not be prepared"
+    if [[ "${backend}" == x11 ]]; then
+        xdotool windowsize --sync "${ZENTTY_PRODUCT_WINDOW_ID}" 1000 700
+        xdotool windowfocus --sync "${ZENTTY_PRODUCT_WINDOW_ID}"
+    fi
+    sleep 0.15
+}
+
+open_bookmarks() {
+    local log="$1"
+    local visible_before search_before
+    visible_before="$(grep -Fc 'zentty-linux: bookmarks-popover visible=true' "${log}" 2>/dev/null || true)"
+    search_before="$(grep -Fc 'zentty-linux: bookmarks-search-focused=true' "${log}" 2>/dev/null || true)"
+    if [[ "${backend}" == x11 ]]; then
+        xdotool keyup Control_L Control_R Shift_L Shift_R 2>/dev/null || true
+        xdotool windowfocus --sync "${ZENTTY_PRODUCT_WINDOW_ID}"
+        xdotool key ctrl+shift+b
+    else
+        zentty_product_ctrl_shift_key "${backend}" b
+    fi
+    zentty_product_wait_for_log_count "${log}" \
+        'zentty-linux: bookmarks-popover visible=true' "$((visible_before + 1))" \
+        'physical bookmark shortcut did not open the real GTK popover' ||
+        fail "bookmark popover did not open"
+    zentty_product_wait_for_log_count "${log}" \
+        'zentty-linux: bookmarks-search-focused=true' "$((search_before + 1))" \
+        'bookmark popover did not focus its real search field' ||
+        fail "bookmark search did not receive focus"
+}
+
+input_key() {
+    local key="$1"
+    if [[ "${backend}" == x11 ]]; then
+        xdotool key "${key}"
+    else
+        zentty_product_key "${backend}" "${key}"
+    fi
+}
+
+input_type() {
+    local value="$1"
+    if [[ "${backend}" == x11 ]]; then
+        xdotool type --delay 5 -- "${value}"
+    else
+        zentty_product_type "${backend}" "${value}"
+    fi
+}
+
+focus_bookmark_control() {
+    local log="$1"
+    local receipt="$2"
+    for _ in {1..12}; do
+        grep -Fq "zentty-linux: bookmarks-focus=${receipt}" "${log}" && return 0
+        input_key Tab
+        sleep 0.05
+    done
+    grep -Fq "zentty-linux: bookmarks-focus=${receipt}" "${log}" ||
+        fail "bookmark keyboard focus did not reach ${receipt}"
+}
+
+stop_product() {
+    kill -TERM "${product_pid}" 2>/dev/null || true
+    wait "${product_pid}" 2>/dev/null || true
+    product_pid=""
+}
+
+start_product "${first_log}"
+input_type 'sleep 30'
+input_key Return
+sleep 0.3
+open_bookmarks "${first_log}"
+sleep 0.3
+focus_bookmark_control "${first_log}" save-bookmark
+input_key Return
+zentty_product_wait_for_log "${first_log}" \
+    'zentty-linux: bookmark-name-focused=true' \
+    'bookmark name dialog did not receive physical keyboard focus' ||
+    fail "bookmark name dialog was not ready"
+input_type 'Controlled bookmark'
+input_key Return
+zentty_product_wait_for_log "${first_log}" 'zentty-linux: bookmark-saved id=' \
+    'save dialog did not persist the focused worklane' || fail "bookmark save did not complete"
+
+[[ -f "${bookmarks}" && ! -L "${bookmarks}" ]] || fail "bookmark store is absent or unsafe"
+[[ "$(stat -c '%a' "${bookmarks}")" == 600 ]] || fail "bookmark store is not private"
+! grep -Fq 'real-ambient-secret' "${bookmarks}" ||
+    fail "ambient process environment leaked into bookmark persistence"
+if ! jq -e --arg cwd "${canonical_project}" '
+    .schemaVersion == 1 and
+    (.templates | length) == 1 and
+    .templates[0].name == "Controlled bookmark" and
+    .templates[0].kind == "bookmark" and
+    .templates[0].projectRoot == $cwd and
+    .templates[0].columns[0].panes[0].workingDirectory == $cwd and
+    .templates[0].columns[0].panes[0].command == "sleep 30" and
+    ((.templates[0].columns[0].panes[0].environment // {}) | length) == 0
+' "${bookmarks}" >/dev/null; then
+    jq '{schemaVersion, count: (.templates | length), template: (.templates[0] | {
+        name, kind, projectRoot, workingDirectory: .columns[0].panes[0].workingDirectory,
+        command: .columns[0].panes[0].command,
+        environmentCount: ((.columns[0].panes[0].environment // {}) | length)
+    })}' "${bookmarks}" >&2
+    fail "saved bookmark JSON did not match the real pane"
+fi
+
+stop_product
+
+start_product "${restore_log}"
+open_bookmarks "${restore_log}"
+sleep 0.3
+input_type 'Controlled bookmark'
+focus_bookmark_control "${restore_log}" activate-template
+input_key Return
+zentty_product_wait_for_log "${restore_log}" \
+    'zentty-linux: bookmark-restored id=' \
+    'physical template activation did not restore a worklane' || fail "bookmark restore did not complete"
+zentty_product_wait_for_log "${restore_log}" \
+    'zentty-linux: terminal-ready-pane=pane-3' \
+    'restored worklane did not create its real Ghostty PTY' || fail "restored PTY did not initialize"
+grep -Fq "zentty-linux: surface-config pane=pane-3 cwd=${canonical_project}" "${restore_log}" ||
+    fail "restored real PTY did not use the bookmarked directory"
+grep -Eq 'zentty-linux: bookmark-restored id=.* panes=1 fallbacks=0 ' "${restore_log}" ||
+    fail "restore receipt did not prove one pane and no fallback"
+jq -e '.templates[0].lastUsedAt | type == "string" and length > 0' "${bookmarks}" >/dev/null ||
+    fail "template activation did not persist recency"
+stop_product
+
+# Exercise the real persisted-state boundary, not an in-process restore fixture:
+# make the template stale between two complete product launches, then activate
+# it through the same physical GTK route.
+missing_directory="${run_root}/directory-removed-before-restore"
+missing_command="zentty-command-removed-before-restore --controlled"
+jq --arg cwd "${missing_directory}" --arg command "${missing_command}" '
+    .templates[0].projectRoot = $cwd |
+    .templates[0].columns[0].panes[0].workingDirectory = $cwd |
+    .templates[0].columns[0].panes[0].command = $command
+' "${bookmarks}" >"${bookmarks}.updated"
+chmod 600 "${bookmarks}.updated"
+mv -f -- "${bookmarks}.updated" "${bookmarks}"
+
+start_product "${fallback_log}"
+open_bookmarks "${fallback_log}"
+sleep 0.3
+input_type 'Controlled bookmark'
+focus_bookmark_control "${fallback_log}" activate-template
+input_key Return
+zentty_product_wait_for_log "${fallback_log}" \
+    'zentty-linux: restore-notice visible=true fallbacks=2' \
+    'stale restore did not display its user-visible warning' || fail "fallback warning did not appear"
+zentty_product_wait_for_log "${fallback_log}" \
+    "zentty-linux: restore-prefill pane=pane-3 text=${missing_command}" \
+    'missing command was not inserted for user review' || fail "fallback command was not prefilled"
+grep -Fq "requested: \"${missing_directory}\"" "${fallback_log}" ||
+    fail "missing-directory fallback was not recorded"
+grep -Fq "command: \"${missing_command}\"" "${fallback_log}" ||
+    fail "missing-command fallback was not recorded"
+grep -Fq "zentty-linux: surface-config pane=pane-3 cwd=${canonical_project}" "${fallback_log}" ||
+    fail "stale directory did not fall back to the focused real local directory"
+
+if grep -Eq 'panicked at|RefCell already borrowed|CRITICAL: (Gtk|Gdk)|ambient-secret' \
+    "${first_log}" "${restore_log}" "${fallback_log}"; then
+    fail "bookmark journey reported a panic, GTK/GDK lifecycle critical, or secret"
+fi
+
+echo "Rust bookmarks/presets passed: ${backend}, save=physical, persistence=private, ambient-secret=absent, relaunch=real, restore-pty=real, stale-fallbacks=visible"

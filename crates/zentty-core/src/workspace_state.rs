@@ -148,6 +148,8 @@ pub struct WorklaneState {
     pub id: String,
     pub title: Option<String>,
     pub color: Option<WorklaneColor>,
+    pub bookmark_origin_id: Option<String>,
+    bookmark_origin_overridden: bool,
     pub columns: Vec<PaneColumnState>,
     pub focused_column_id: String,
 }
@@ -257,6 +259,8 @@ impl WorkspaceState {
                 id: worklane_id.clone(),
                 title: None,
                 color: None,
+                bookmark_origin_id: None,
+                bookmark_origin_overridden: false,
                 columns: vec![PaneColumnState {
                     id: format!("column-{pane_id}"),
                     width: 1.0,
@@ -357,6 +361,8 @@ impl WorkspaceState {
                 id: recipe.id.clone(),
                 title: recipe.title.clone(),
                 color: recipe.color.as_deref().and_then(WorklaneColor::named),
+                bookmark_origin_id: recipe.bookmark_origin_id.clone(),
+                bookmark_origin_overridden: false,
                 columns,
                 focused_column_id,
             });
@@ -448,8 +454,13 @@ impl WorkspaceState {
                     focused_column_id: Some(state.focused_column_id.clone()),
                     columns,
                     color: state.color.map(|color| color.as_str().to_owned()),
-                    bookmark_origin_id: existing
-                        .and_then(|worklane| worklane.bookmark_origin_id.clone()),
+                    bookmark_origin_id: if state.bookmark_origin_overridden {
+                        state.bookmark_origin_id.clone()
+                    } else {
+                        state.bookmark_origin_id.clone().or_else(|| {
+                            existing.and_then(|worklane| worklane.bookmark_origin_id.clone())
+                        })
+                    },
                 }
             })
             .collect();
@@ -676,6 +687,8 @@ impl WorkspaceState {
                 id: worklane_id.clone(),
                 title: None,
                 color: None,
+                bookmark_origin_id: None,
+                bookmark_origin_overridden: false,
                 columns: vec![PaneColumnState {
                     id: format!("column-{pane_id}"),
                     width: 1.0,
@@ -699,6 +712,75 @@ impl WorkspaceState {
         let previous = self.current_pane_reference();
         id.clone_into(&mut self.active_worklane_id);
         self.record_focus_transition(previous);
+        true
+    }
+
+    /// Inserts one source-shaped restored worklane after the active worklane
+    /// and makes it active without introducing a second live workspace model.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same structural and identity errors as full window import.
+    pub fn insert_worklane_recipe(
+        &mut self,
+        recipe: WorklaneRecipe,
+    ) -> Result<(), WorkspaceStateImportError> {
+        let window = WindowRecipe {
+            id: "template-import".to_owned(),
+            frame: None,
+            active_worklane_id: Some(recipe.id.clone()),
+            worklanes: vec![recipe],
+        };
+        let imported = Self::from_window_recipe(&window)?;
+        let worklane = imported
+            .worklanes
+            .into_iter()
+            .next()
+            .ok_or(WorkspaceStateImportError::EmptyWindow)?;
+        if self.contains_worklane(&worklane.id) {
+            return Err(WorkspaceStateImportError::DuplicateWorklane(worklane.id));
+        }
+        for column in &worklane.columns {
+            if self
+                .worklanes
+                .iter()
+                .flat_map(|worklane| &worklane.columns)
+                .any(|existing| existing.id == column.id)
+            {
+                return Err(WorkspaceStateImportError::DuplicateColumn(
+                    column.id.clone(),
+                ));
+            }
+            for pane in &column.panes {
+                if self.contains_pane(&pane.id) {
+                    return Err(WorkspaceStateImportError::DuplicatePane(pane.id.clone()));
+                }
+            }
+        }
+        let previous = self.current_pane_reference();
+        let insertion_index = self
+            .active_worklane_index()
+            .map_or(self.worklanes.len(), |index| index + 1);
+        worklane.id.clone_into(&mut self.active_worklane_id);
+        self.worklanes.insert(insertion_index, worklane);
+        self.record_focus_transition(previous);
+        Ok(())
+    }
+
+    pub fn set_bookmark_origin(&mut self, worklane_id: &str, origin_id: Option<&str>) -> bool {
+        let Some(worklane) = self
+            .worklanes
+            .iter_mut()
+            .find(|worklane| worklane.id == worklane_id)
+        else {
+            return false;
+        };
+        let origin_id = origin_id.map(str::to_owned);
+        if worklane.bookmark_origin_id == origin_id {
+            return false;
+        }
+        worklane.bookmark_origin_id = origin_id;
+        worklane.bookmark_origin_overridden = true;
         true
     }
 
@@ -1844,6 +1926,8 @@ impl WorkspaceState {
                 id: destination_worklane_id.to_owned(),
                 title: source_title,
                 color: source_color,
+                bookmark_origin_id: source.bookmark_origin_id.clone(),
+                bookmark_origin_overridden: source.bookmark_origin_overridden,
                 columns: vec![PaneColumnState {
                     id: format!("column-{pane_id}"),
                     width: 1.0,

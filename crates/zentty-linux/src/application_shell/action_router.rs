@@ -156,6 +156,18 @@ pub(super) const ACTION_OPEN_BRANCH_REMOTE: &str = "open-branch-remote";
 pub(super) const ACTION_OPEN_PULL_REQUEST: &str = "open-pull-request";
 pub(super) const ACTION_OPEN_WITH_PRIMARY: &str = "open-with-primary";
 pub(super) const ACTION_OPEN_WITH_TARGET: &str = "open-with-target";
+pub(super) const ACTION_SAVE_TEMPLATE: &str = "save-template";
+pub(super) const ACTION_ACTIVATE_TEMPLATE: &str = "activate-template";
+pub(super) const ACTION_RENAME_TEMPLATE: &str = "rename-template";
+pub(super) const ACTION_TOGGLE_TEMPLATE_PIN: &str = "toggle-template-pin";
+pub(super) const ACTION_DUPLICATE_TEMPLATE: &str = "duplicate-template";
+pub(super) const ACTION_CONVERT_TEMPLATE: &str = "convert-template";
+pub(super) const ACTION_DELETE_TEMPLATE: &str = "delete-template";
+pub(super) const ACTION_UPDATE_LINKED_TEMPLATE: &str = "update-linked-template";
+pub(super) const ACTION_UNLINK_TEMPLATE: &str = "unlink-template";
+pub(super) const ACTION_IMPORT_TEMPLATE: &str = "import-template";
+pub(super) const ACTION_EXPORT_TEMPLATE: &str = "export-template";
+pub(super) const ACTION_EDIT_TEMPLATE: &str = "edit-template";
 
 pub(super) const ACTION_SPECS: &[ActionSpec] = &[
     action!(ACTION_NEW_WINDOW, "new-window", None),
@@ -304,6 +316,22 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
     action!(ACTION_OPEN_PULL_REQUEST, "open-pull-request", None),
     action!(ACTION_OPEN_WITH_PRIMARY, "open-with-primary", None),
     action!(ACTION_OPEN_WITH_TARGET, "open-with-target", String),
+    action!(ACTION_SAVE_TEMPLATE, "save-template", StringPair),
+    action!(ACTION_ACTIVATE_TEMPLATE, "activate-template", String),
+    action!(ACTION_RENAME_TEMPLATE, "rename-template", StringPair),
+    action!(ACTION_TOGGLE_TEMPLATE_PIN, "toggle-template-pin", String),
+    action!(ACTION_DUPLICATE_TEMPLATE, "duplicate-template", String),
+    action!(ACTION_CONVERT_TEMPLATE, "convert-template", String),
+    action!(ACTION_DELETE_TEMPLATE, "delete-template", String),
+    action!(
+        ACTION_UPDATE_LINKED_TEMPLATE,
+        "update-linked-template",
+        None
+    ),
+    action!(ACTION_UNLINK_TEMPLATE, "unlink-template", None),
+    action!(ACTION_IMPORT_TEMPLATE, "import-template", None),
+    action!(ACTION_EXPORT_TEMPLATE, "export-template", String),
+    action!(ACTION_EDIT_TEMPLATE, "edit-template", StringPair),
 ];
 
 pub(super) struct ActionRouter {
@@ -452,7 +480,157 @@ fn populate(shell: &Rc<RefCell<ApplicationShell>>, group: &gio::SimpleActionGrou
     });
     install_project_context_actions(shell, group);
     install_open_with_actions(shell, group);
+    install_bookmark_actions(shell, group);
     install_edit_actions(shell, group);
+}
+
+fn install_bookmark_actions(shell: &Rc<RefCell<ApplicationShell>>, group: &gio::SimpleActionGroup) {
+    let pair = glib::VariantTy::new("(ss)").expect("static action type is valid");
+    install_bookmark_pair_actions(shell, group, pair);
+
+    for (name, handler) in [
+        (
+            ACTION_ACTIVATE_TEMPLATE,
+            super::bookmark_runtime::activate
+                as fn(&Rc<RefCell<ApplicationShell>>, &str) -> Result<(), String>,
+        ),
+        (
+            ACTION_TOGGLE_TEMPLATE_PIN,
+            super::bookmark_runtime::toggle_pin,
+        ),
+        (
+            ACTION_DUPLICATE_TEMPLATE,
+            super::bookmark_runtime::duplicate,
+        ),
+        (ACTION_CONVERT_TEMPLATE, super::bookmark_runtime::convert),
+        (ACTION_DELETE_TEMPLATE, super::bookmark_runtime::delete),
+    ] {
+        let action = gio::SimpleAction::new(name, Some(glib::VariantTy::STRING));
+        let weak = Rc::downgrade(shell);
+        action.connect_activate(move |_, parameter| {
+            let (Some(shell), Some(id)) = (weak.upgrade(), parameter.and_then(glib::Variant::str))
+            else {
+                return;
+            };
+            report_bookmark_result(name, handler(&shell, id));
+        });
+        group.add_action(&action);
+    }
+    for (name, handler) in [
+        (
+            ACTION_UPDATE_LINKED_TEMPLATE,
+            super::bookmark_runtime::update_linked
+                as fn(&Rc<RefCell<ApplicationShell>>) -> Result<(), String>,
+        ),
+        (ACTION_UNLINK_TEMPLATE, super::bookmark_runtime::unlink),
+    ] {
+        let action = gio::SimpleAction::new(name, None);
+        let weak = Rc::downgrade(shell);
+        action.connect_activate(move |_, parameter| {
+            if !ParameterSchema::None.accepts(parameter) {
+                return;
+            }
+            if let Some(shell) = weak.upgrade() {
+                report_bookmark_result(name, handler(&shell));
+            }
+        });
+        group.add_action(&action);
+    }
+    install_bookmark_file_actions(shell, group);
+}
+
+fn install_bookmark_pair_actions(
+    shell: &Rc<RefCell<ApplicationShell>>,
+    group: &gio::SimpleActionGroup,
+    pair: &glib::VariantTy,
+) {
+    let save = gio::SimpleAction::new(ACTION_SAVE_TEMPLATE, Some(pair));
+    let weak = Rc::downgrade(shell);
+    save.connect_activate(move |_, parameter| {
+        let (Some(shell), Some((kind, name))) = (
+            weak.upgrade(),
+            parameter.and_then(glib::Variant::get::<(String, String)>),
+        ) else {
+            return;
+        };
+        let kind = if kind == "Bookmark" {
+            zentty_core::TemplateKind::Bookmark
+        } else if kind == "Preset" {
+            zentty_core::TemplateKind::Preset
+        } else {
+            return;
+        };
+        report_bookmark_result(
+            ACTION_SAVE_TEMPLATE,
+            super::bookmark_runtime::save_active(&shell, &name, kind),
+        );
+    });
+    group.add_action(&save);
+
+    let rename = gio::SimpleAction::new(ACTION_RENAME_TEMPLATE, Some(pair));
+    let weak = Rc::downgrade(shell);
+    rename.connect_activate(move |_, parameter| {
+        let (Some(shell), Some((id, name))) = (
+            weak.upgrade(),
+            parameter.and_then(glib::Variant::get::<(String, String)>),
+        ) else {
+            return;
+        };
+        report_bookmark_result(
+            ACTION_RENAME_TEMPLATE,
+            super::bookmark_runtime::rename(&shell, &id, &name),
+        );
+    });
+    group.add_action(&rename);
+
+    let edit = gio::SimpleAction::new(ACTION_EDIT_TEMPLATE, Some(pair));
+    let weak = Rc::downgrade(shell);
+    edit.connect_activate(move |_, parameter| {
+        let (Some(shell), Some((id, json))) = (
+            weak.upgrade(),
+            parameter.and_then(glib::Variant::get::<(String, String)>),
+        ) else {
+            return;
+        };
+        report_bookmark_result(
+            ACTION_EDIT_TEMPLATE,
+            super::bookmark_runtime::edit(&shell, &id, &json),
+        );
+    });
+    group.add_action(&edit);
+}
+
+fn install_bookmark_file_actions(
+    shell: &Rc<RefCell<ApplicationShell>>,
+    group: &gio::SimpleActionGroup,
+) {
+    let export = gio::SimpleAction::new(ACTION_EXPORT_TEMPLATE, Some(glib::VariantTy::STRING));
+    let weak = Rc::downgrade(shell);
+    export.connect_activate(move |_, parameter| {
+        let (Some(shell), Some(id)) = (weak.upgrade(), parameter.and_then(glib::Variant::str))
+        else {
+            return;
+        };
+        super::bookmark_runtime::choose_export(&shell, id);
+    });
+    group.add_action(&export);
+
+    let import = gio::SimpleAction::new(ACTION_IMPORT_TEMPLATE, None);
+    let weak = Rc::downgrade(shell);
+    import.connect_activate(move |_, parameter| {
+        if ParameterSchema::None.accepts(parameter)
+            && let Some(shell) = weak.upgrade()
+        {
+            super::bookmark_runtime::choose_import(&shell);
+        }
+    });
+    group.add_action(&import);
+}
+
+fn report_bookmark_result(action: &str, result: Result<(), String>) {
+    if let Err(error) = result {
+        eprintln!("zentty-linux: action={action} failed: {error}");
+    }
 }
 
 fn install_open_with_actions(
@@ -1232,7 +1410,7 @@ mod tests {
 
     #[test]
     fn registry_is_unique_complete_and_typed() {
-        assert_eq!(ACTION_SPECS.len(), 81);
+        assert_eq!(ACTION_SPECS.len(), 93);
         assert_eq!(
             ACTION_SPECS
                 .iter()
@@ -1256,7 +1434,13 @@ mod tests {
                 "stop-ignoring-server-port",
                 "stop-server",
                 "run-task",
-                "open-with-target"
+                "open-with-target",
+                "activate-template",
+                "toggle-template-pin",
+                "duplicate-template",
+                "convert-template",
+                "delete-template",
+                "export-template"
             ]
         );
         assert_eq!(
@@ -1272,6 +1456,9 @@ mod tests {
                 "move-worklane",
                 "reorder-worklane",
                 "select-pane",
+                "save-template",
+                "rename-template",
+                "edit-template",
             ]
         );
     }

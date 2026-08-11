@@ -21,6 +21,10 @@ server_runtime_file="${ZENTTY_SERVER_RUNTIME_SOURCE:-${repo_root}/crates/zentty-
 task_runner_runtime_file="${ZENTTY_TASK_RUNNER_RUNTIME_SOURCE:-${repo_root}/crates/zentty-linux/src/application_shell/task_runner_runtime.rs}"
 project_context_runtime_file="${ZENTTY_PROJECT_CONTEXT_RUNTIME_SOURCE:-${repo_root}/crates/zentty-linux/src/application_shell/project_context_runtime.rs}"
 open_with_runtime_file="${ZENTTY_OPEN_WITH_RUNTIME_SOURCE:-${repo_root}/crates/zentty-linux/src/application_shell/open_with_runtime.rs}"
+bookmark_runtime_file="${ZENTTY_BOOKMARK_RUNTIME_SOURCE:-${repo_root}/crates/zentty-linux/src/application_shell/bookmark_runtime.rs}"
+bookmarks_view_file="${ZENTTY_BOOKMARKS_VIEW_SOURCE:-${repo_root}/crates/zentty-linux/src/bookmarks_view.rs}"
+restore_notice_file="${ZENTTY_RESTORE_NOTICE_SOURCE:-${repo_root}/crates/zentty-linux/src/restore_notice.rs}"
+sidebar_file="${ZENTTY_SIDEBAR_SOURCE:-${repo_root}/crates/zentty-linux/src/sidebar.rs}"
 server_discovery_file="${ZENTTY_SERVER_DISCOVERY_SOURCE:-${repo_root}/crates/zentty-linux/src/server_discovery.rs}"
 docker_discovery_file="${ZENTTY_DOCKER_DISCOVERY_SOURCE:-${repo_root}/crates/zentty-linux/src/docker_discovery.rs}"
 pane_dividers_file="${ZENTTY_PANE_DIVIDERS_SOURCE:-${repo_root}/crates/zentty-linux/src/pane_dividers.rs}"
@@ -57,6 +61,10 @@ done
 [[ -r "${task_runner_runtime_file}" ]] || fail "task runner runtime source is missing: ${task_runner_runtime_file}"
 [[ -r "${project_context_runtime_file}" ]] || fail "project context runtime source is missing: ${project_context_runtime_file}"
 [[ -r "${open_with_runtime_file}" ]] || fail "Open With runtime source is missing: ${open_with_runtime_file}"
+[[ -r "${bookmark_runtime_file}" ]] || fail "bookmark runtime source is missing: ${bookmark_runtime_file}"
+[[ -r "${bookmarks_view_file}" ]] || fail "bookmarks view source is missing: ${bookmarks_view_file}"
+[[ -r "${restore_notice_file}" ]] || fail "restore notice source is missing: ${restore_notice_file}"
+[[ -r "${sidebar_file}" ]] || fail "sidebar source is missing: ${sidebar_file}"
 [[ -r "${server_discovery_file}" ]] || fail "server listener discovery source is missing: ${server_discovery_file}"
 [[ -r "${docker_discovery_file}" ]] || fail "server container discovery source is missing: ${docker_discovery_file}"
 [[ -r "${pane_dividers_file}" ]] || fail "pane divider source is missing: ${pane_dividers_file}"
@@ -121,6 +129,10 @@ server_runtime_sha256="$(sha256sum "${server_runtime_file}" | awk '{print $1}')"
 task_runner_runtime_sha256="$(sha256sum "${task_runner_runtime_file}" | awk '{print $1}')"
 project_context_runtime_sha256="$(sha256sum "${project_context_runtime_file}" | awk '{print $1}')"
 open_with_runtime_sha256="$(sha256sum "${open_with_runtime_file}" | awk '{print $1}')"
+bookmark_runtime_sha256="$(sha256sum "${bookmark_runtime_file}" | awk '{print $1}')"
+bookmarks_view_sha256="$(sha256sum "${bookmarks_view_file}" | awk '{print $1}')"
+restore_notice_sha256="$(sha256sum "${restore_notice_file}" | awk '{print $1}')"
+sidebar_sha256="$(sha256sum "${sidebar_file}" | awk '{print $1}')"
 server_discovery_sha256="$(sha256sum "${server_discovery_file}" | awk '{print $1}')"
 docker_discovery_sha256="$(sha256sum "${docker_discovery_file}" | awk '{print $1}')"
 pane_dividers_sha256="$(sha256sum "${pane_dividers_file}" | awk '{print $1}')"
@@ -161,6 +173,18 @@ jq -e --arg project_context_runtime_sha256 "${project_context_runtime_sha256}" \
 jq -e --arg open_with_runtime_sha256 "${open_with_runtime_sha256}" \
     '.owned_source_sha256["crates/zentty-linux/src/application_shell/open_with_runtime.rs"] == $open_with_runtime_sha256' \
     "${contract}" >/dev/null || fail "Open With runtime source hash differs from its ownership contract"
+jq -e --arg bookmark_runtime_sha256 "${bookmark_runtime_sha256}" \
+    '.owned_source_sha256["crates/zentty-linux/src/application_shell/bookmark_runtime.rs"] == $bookmark_runtime_sha256' \
+    "${contract}" >/dev/null || fail "bookmark runtime source hash differs from its ownership contract"
+jq -e --arg bookmarks_view_sha256 "${bookmarks_view_sha256}" \
+    '.owned_source_sha256["crates/zentty-linux/src/bookmarks_view.rs"] == $bookmarks_view_sha256' \
+    "${contract}" >/dev/null || fail "bookmarks view source hash differs from its ownership contract"
+jq -e --arg restore_notice_sha256 "${restore_notice_sha256}" \
+    '.owned_source_sha256["crates/zentty-linux/src/restore_notice.rs"] == $restore_notice_sha256' \
+    "${contract}" >/dev/null || fail "restore notice source hash differs from its ownership contract"
+jq -e --arg sidebar_sha256 "${sidebar_sha256}" \
+    '.owned_source_sha256["crates/zentty-linux/src/sidebar.rs"] == $sidebar_sha256' \
+    "${contract}" >/dev/null || fail "sidebar source hash differs from its ownership contract"
 jq -e --arg server_discovery_sha256 "${server_discovery_sha256}" \
     '.owned_source_sha256["crates/zentty-linux/src/server_discovery.rs"] == $server_discovery_sha256' \
     "${contract}" >/dev/null || fail "server listener discovery source hash differs from its ownership contract"
@@ -261,6 +285,17 @@ diff="$(comm -3 "${temp_dir}/actual-open-with-runtime-functions" "${temp_dir}/co
 if [[ -n "${diff}" ]]; then
     printf '%s\n' "${diff}" >&2
     fail "Open With runtime function inventory differs from its ownership contract"
+fi
+
+sed -n '1,/^#\[cfg(test)\]/p' "${bookmark_runtime_file}" |
+    sed -nE 's/^[[:space:]]*(pub\(super\)[[:space:]]+)?fn[[:space:]]+([a-zA-Z0-9_]+).*/\2/p' |
+    sort -u >"${temp_dir}/actual-bookmark-runtime-functions"
+jq -r '.owned_module_functions.bookmark_coordinator | sort | .[]' "${contract}" \
+    >"${temp_dir}/contract-bookmark-runtime-functions"
+diff="$(comm -3 "${temp_dir}/actual-bookmark-runtime-functions" "${temp_dir}/contract-bookmark-runtime-functions")"
+if [[ -n "${diff}" ]]; then
+    printf '%s\n' "${diff}" >&2
+    fail "bookmark runtime function inventory differs from its ownership contract"
 fi
 
 sed -n '1,/^#\[cfg(test)\]/p' "${server_discovery_file}" |
@@ -412,6 +447,10 @@ jq -e --arg main_sha256 "${main_sha256}" \
     --arg task_runner_runtime_sha256 "${task_runner_runtime_sha256}" \
     --arg project_context_runtime_sha256 "${project_context_runtime_sha256}" \
     --arg open_with_runtime_sha256 "${open_with_runtime_sha256}" \
+    --arg bookmark_runtime_sha256 "${bookmark_runtime_sha256}" \
+    --arg bookmarks_view_sha256 "${bookmarks_view_sha256}" \
+    --arg restore_notice_sha256 "${restore_notice_sha256}" \
+    --arg sidebar_sha256 "${sidebar_sha256}" \
     --arg server_discovery_sha256 "${server_discovery_sha256}" \
     --arg docker_discovery_sha256 "${docker_discovery_sha256}" \
     --arg pane_dividers_sha256 "${pane_dividers_sha256}" \
@@ -441,6 +480,10 @@ jq -e --arg main_sha256 "${main_sha256}" \
         "crates/zentty-linux/src/application_shell/task_runner_runtime.rs":$task_runner_runtime_sha256,
         "crates/zentty-linux/src/application_shell/project_context_runtime.rs":$project_context_runtime_sha256,
         "crates/zentty-linux/src/application_shell/open_with_runtime.rs":$open_with_runtime_sha256,
+        "crates/zentty-linux/src/application_shell/bookmark_runtime.rs":$bookmark_runtime_sha256,
+        "crates/zentty-linux/src/bookmarks_view.rs":$bookmarks_view_sha256,
+        "crates/zentty-linux/src/restore_notice.rs":$restore_notice_sha256,
+        "crates/zentty-linux/src/sidebar.rs":$sidebar_sha256,
         "crates/zentty-linux/src/server_discovery.rs":$server_discovery_sha256,
         "crates/zentty-linux/src/docker_discovery.rs":$docker_discovery_sha256,
         "crates/zentty-linux/src/application_shell/tmux_runtime.rs":$tmux_runtime_sha256,
@@ -455,6 +498,7 @@ jq -e --arg main_sha256 "${main_sha256}" \
         "agent_event_coordinator",
         "application_runtime",
         "application_shell",
+        "bookmark_coordinator",
         "clipboard_coordinator",
         "config_store",
         "existing_tmux_coordinator",
@@ -481,7 +525,7 @@ jq -e --arg main_sha256 "${main_sha256}" \
         ([.field_assignments[].fields[]] | unique | length) and
     ([.method_assignments[].methods[]] | length) ==
         ([.method_assignments[].methods[]] | unique | length) and
-    (.owned_module_functions | keys | sort) == (["action_router", "agent_event_coordinator", "clipboard_coordinator", "config_store", "global_search_coordinator", "open_with_coordinator", "pane_dividers", "pane_runtime_coordinator", "persistence_coordinator", "project_context_coordinator", "remote_paste_coordinator", "server_runtime_coordinator", "task_runner_coordinator", "server_listener_discovery", "server_container_discovery", "ssh_identity_coordinator", "tmux_runtime_coordinator", "tmux_store_policy"] | sort) and
+    (.owned_module_functions | keys | sort) == (["action_router", "agent_event_coordinator", "bookmark_coordinator", "clipboard_coordinator", "config_store", "global_search_coordinator", "open_with_coordinator", "pane_dividers", "pane_runtime_coordinator", "persistence_coordinator", "project_context_coordinator", "remote_paste_coordinator", "server_runtime_coordinator", "task_runner_coordinator", "server_listener_discovery", "server_container_discovery", "ssh_identity_coordinator", "tmux_runtime_coordinator", "tmux_store_policy"] | sort) and
     (.owned_module_functions.action_router | length) ==
         (.owned_module_functions.action_router | unique | length) and
     (.owned_module_functions.pane_runtime_coordinator | length) ==
@@ -506,6 +550,8 @@ jq -e --arg main_sha256 "${main_sha256}" \
         (.owned_module_functions.project_context_coordinator | unique | length) and
     (.owned_module_functions.open_with_coordinator | length) ==
         (.owned_module_functions.open_with_coordinator | unique | length) and
+    (.owned_module_functions.bookmark_coordinator | length) ==
+        (.owned_module_functions.bookmark_coordinator | unique | length) and
     (.owned_module_functions.server_listener_discovery | length) ==
         (.owned_module_functions.server_listener_discovery | unique | length) and
     (.owned_module_functions.server_container_discovery | length) ==
@@ -529,13 +575,15 @@ jq -e --arg main_sha256 "${main_sha256}" \
         (.invalid_parameter == "ignore-without-panic")) and
     ([.action_contract[] | select(.parameter == "string") | .name] | sort) == ([
         "close-worklane", "ignore-server-port", "move-pane-to-worklane", "open-server",
-        "open-with-target", "run-task", "select-worklane", "stop-ignoring-server-port", "stop-server"
+        "activate-template", "convert-template", "delete-template", "duplicate-template",
+        "export-template", "open-with-target", "run-task", "select-worklane",
+        "stop-ignoring-server-port", "stop-server", "toggle-template-pin"
     ] | sort) and
     ([.action_contract[] | select(.parameter == "string_pair") | .name] | sort) == ([
         "move-worklane", "rename-pane", "rename-worklane", "reorder-worklane",
-        "select-pane", "set-worklane-color"
+        "select-pane", "set-worklane-color", "edit-template", "rename-template", "save-template"
     ] | sort) and
-    ([.action_contract[] | select(.parameter == "none")] | length) == 66 and
+    ([.action_contract[] | select(.parameter == "none")] | length) == 69 and
     .conditional_action_availability == {
         "multiple_columns":["resize-pane-left","resize-pane-right","arrange-golden-wide","arrange-golden-narrow"],
         "multiple_panes_in_focused_column":["resize-pane-up","resize-pane-down","arrange-golden-tall","arrange-golden-short"],
@@ -558,6 +606,7 @@ jq -e --arg main_sha256 "${main_sha256}" \
         "task_runner_snapshot": {"owner":"task_runner_coordinator","maximum_instances_per_window":1},
         "project_context_projection": {"owner":"project_context_coordinator","maximum_instances_per_window":1},
         "open_with_catalog": {"owner":"open_with_coordinator","maximum_instances_per_window":1},
+        "bookmark_store": {"owner":"bookmark_coordinator","maximum_instances_per_window":1},
         "tmux_compatibility_state": {"owner":"existing_tmux_coordinator","maximum_instances_per_window":1},
         "glib_scheduling": {"owner":"application_runtime","kind":"default-glib-main-context","maximum_instances_per_process":1}
     } and

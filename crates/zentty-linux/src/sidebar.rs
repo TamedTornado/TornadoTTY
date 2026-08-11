@@ -4,7 +4,7 @@ use std::cell::Cell;
 use std::rc::Rc;
 use zentty_core::{ClipboardConfig, RankedServer, ServerRelevanceTier, SidebarWorklaneSummary};
 
-use crate::{agent_status_view, global_search_view, source_ui};
+use crate::{agent_status_view, bookmarks_view, global_search_view, source_ui};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct PaneActionSpec {
@@ -206,6 +206,14 @@ pub(crate) fn install_styles() {
          .server-row { color: #9bd1ff; border-radius: 6px; padding: 3px 7px; }\n\
          .server-row-primary { background: rgba(64, 130, 190, 0.18); font-weight: 600; }\n\
          .sidebar-create-worklane { color: #d8dbe1; border-radius: 7px; padding: 5px 8px; }\n\
+         #zentty-bookmarks-button { color: #d8dbe1; min-width: 32px; min-height: 32px; padding: 0; border-radius: 7px; }\n\
+         .bookmark-row { background: #242830; border: 1px solid #373d47; border-radius: 7px; padding: 2px; }\n\
+         .bookmark-row:hover { border-color: #596474; background: #2b3039; }\n\
+         popover.bookmark-popover > contents { background: #1d2025; color: #edf0f4; border: 1px solid #48505c; border-radius: 10px; }\n\
+         popover.bookmark-popover entry { background: #292d34; color: #f1f3f5; border-color: #49515d; }\n\
+         popover.bookmark-popover button { background: #2b3038; color: #edf0f4; border-color: #424a56; }\n\
+         popover.bookmark-popover button:hover { background: #363d47; border-color: #647083; }\n\
+         .restore-notice { background: #392f1d; color: #ffe7ae; border: 1px solid #9a7431; border-radius: 9px; padding: 8px 10px; box-shadow: 0 6px 18px rgba(0,0,0,0.45); }\n\
          .sidebar-global-search { background: #242830; border: 1px solid #3a414d; border-radius: 10px; padding: 4px 6px; }\n\
          .sidebar-global-search entry { background: transparent; color: #eef1f5; border: none; box-shadow: none; }\n\
          .sidebar-global-search-count { color: #a7adb8; font-family: monospace; }\n\
@@ -240,9 +248,12 @@ pub(crate) fn render(
     summaries: &[SidebarWorklaneSummary],
     clipboard: ClipboardConfig,
     servers: &[RankedServer],
+    templates: &[zentty_core::WorkspaceTemplate],
+    active_origin_id: Option<&str>,
 ) {
     sidebar.add_css_class("zentty-sidebar");
     let header = ensure_header(sidebar);
+    bookmarks_view::configure_header(&header, window, templates, active_origin_id);
     let expected_ids = summaries
         .iter()
         .map(|summary| summary.worklane_id.as_str())
@@ -296,6 +307,7 @@ fn ensure_header(sidebar: &gtk::Box) -> gtk::Box {
     let add_label = gtk::Label::new(Some(source_ui::NEW_WORKLANE));
     add_label.set_xalign(0.0);
     add_label.set_hexpand(true);
+    add_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
     add_content.append(&add_label);
     add.set_child(Some(&add_content));
     add.set_tooltip_text(Some(source_ui::NEW_WORKLANE));

@@ -45,8 +45,8 @@ jq -e '
     .entry_count == 60 and
     .classifications.REQUIRED_INITIAL_RELEASE == 34 and
     .implementation_statuses.IMPLEMENTED == 6 and
-    .implementation_statuses.PARTIAL == 28 and
-    .implementation_statuses.NOT_IMPLEMENTED == 25 and
+    .implementation_statuses.PARTIAL == 29 and
+    .implementation_statuses.NOT_IMPLEMENTED == 24 and
     .evidence.app_commands == 70 and
     .evidence.pane_commands == 33 and
     .evidence.settings_sections == 9 and
@@ -87,7 +87,8 @@ jq '(.entries[] | select(.id == "workspace.recipe-v3") | .linux_owner_issue) = 4
     "${source_inventory}" >"${temp_dir}/owner-swap.json"
 expect_rejected owner-swap "feature owner assignment drifted from the reviewed issue ledger"
 
-jq '(.entries[] | select(.id == "workspace.bookmarks-presets") | .implementation_status) = "IMPLEMENTED"' \
+jq '(.entries[] | select(.id == "workspace.bookmarks-presets")) |=
+    (.implementation_status = "IMPLEMENTED" | .product_scenarios = [])' \
     "${source_inventory}" >"${temp_dir}/false-implemented-status.json"
 expect_rejected false-implemented-status "schema or enum contract failed"
 

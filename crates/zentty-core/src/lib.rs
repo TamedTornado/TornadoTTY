@@ -7,6 +7,7 @@ mod agent_protocol;
 mod agent_status;
 mod app_config;
 mod atomic_file_store;
+mod bookmark_store;
 mod clean_copy;
 mod codex_title;
 mod codex_transcript;
@@ -25,6 +26,7 @@ mod ssh_identity;
 mod task_runner;
 mod workspace_recipe;
 mod workspace_state;
+mod workspace_template;
 
 pub use agent_consent::{
     AgentIntegrationClass, AgentIntegrationGate, AgentIntegrationState, resolve_integration_gate,
@@ -41,6 +43,9 @@ pub use app_config::{
     AppConfig, ClipboardConfig, OpenWithConfig, OpenWithCustomApp, ServerDetectionConfig,
 };
 pub use atomic_file_store::{AtomicFileAction, AtomicFileStore, AtomicFileStoreError};
+pub use bookmark_store::{
+    BookmarkStore, BookmarkStoreError, BookmarkStoreSnapshot, WorkspaceTemplateExportEnvelope,
+};
 pub use pane_focus_history::PaneReference;
 pub use pane_layout::{PaneLayoutPolicy, PaneRightInsertionBehavior};
 pub use pane_token_registry::{
@@ -71,6 +76,11 @@ pub use workspace_state::{
     ClosePaneOutcome, CodexTranscriptEnrichmentCandidate, PaneColumnState, PaneResizeDirection,
     PaneState, PaneWindowTransfer, SidebarPaneSummary, SidebarWorklaneSummary, WorklaneColor,
     WorklaneState, WorkspaceState, WorkspaceStateImportError,
+};
+pub use workspace_template::{
+    TemplateKind, TemplateRestoreError, TemplateRestoreFallback, WorkspaceTemplate,
+    WorkspaceTemplateBundle, WorkspaceTemplateCaptureContext, WorkspaceTemplateColumn,
+    WorkspaceTemplatePane, WorkspaceTemplatePaneLaunch, WorkspaceTemplateRestore,
 };
 
 /// Stable product identity shared by platform composition roots.

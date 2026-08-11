@@ -14,6 +14,7 @@ use crate::{
         Direction as PeekScrollDirection, PeekScrollNavigation, Result as PeekScrollResult,
         ScrollUnit as PeekScrollUnit,
     },
+    restore_notice::RestoreNotice,
     sidebar,
     sidebar_visibility::{Event as SidebarVisibilityEvent, Mode as SidebarVisibilityMode},
     source_ui,
@@ -40,6 +41,7 @@ use crate::agent_runtime::AgentRuntime;
 
 mod action_router;
 mod agent_events;
+mod bookmark_runtime;
 mod clipboard_actions;
 mod global_search;
 mod open_with_runtime;
@@ -141,6 +143,7 @@ pub(crate) struct ApplicationShell {
     peek_tab_down: bool,
     peek_view: WorklanePeekView,
     command_palette: CommandPaletteView,
+    restore_notice: RestoreNotice,
     global_search_view: GlobalSearchView,
     global_search: GlobalSearchCoordinator,
     global_search_generation: u64,
@@ -148,6 +151,7 @@ pub(crate) struct ApplicationShell {
     server_runtime: server_runtime::ServerRuntime,
     project_context_runtime: project_context_runtime::ProjectContextRuntime,
     open_with_runtime: open_with_runtime::OpenWithRuntime,
+    bookmark_runtime: bookmark_runtime::BookmarkRuntime,
     task_runner_actions: BTreeMap<String, TaskRunnerAction>,
     last_pane_viewport_height: Cell<i32>,
     action_router: Option<ActionRouter>,
@@ -181,6 +185,7 @@ struct ShellWidgets {
     background_agent_host: gtk::Box,
     peek_view: WorklanePeekView,
     command_palette: CommandPaletteView,
+    restore_notice: RestoreNotice,
 }
 
 fn report_config_projection(shell: &ApplicationShell) {
@@ -204,6 +209,10 @@ fn initialize_open_with(
     runtime
 }
 
+fn initialize_bookmarks() -> Result<bookmark_runtime::BookmarkRuntime, String> {
+    bookmark_runtime::BookmarkRuntime::load_default()
+}
+
 fn create_initial_pane_surfaces(
     shell: &Rc<RefCell<ApplicationShell>>,
     pane_ids: Vec<String>,
@@ -216,6 +225,37 @@ fn create_initial_pane_surfaces(
             PaneRuntimeCoordinator::create_surface(shell, &pane_id)?;
         }
     }
+    Ok(())
+}
+
+fn finish_shell_setup(
+    shell: &Rc<RefCell<ApplicationShell>>,
+    body: &gtk::Paned,
+    preferred_sidebar_width: Rc<Cell<i32>>,
+    adjusting_sidebar_width: Rc<Cell<bool>>,
+    initial_pane_ids: Vec<String>,
+    deferred_live_pane_id: Option<&str>,
+) -> Result<(), String> {
+    initialize_shell_coordinators(shell);
+    install_sidebar_width_tracking(
+        body,
+        &shell.borrow().sidebar_scroll,
+        preferred_sidebar_width,
+        adjusting_sidebar_width,
+    );
+    let action_router = ActionRouter::install(shell)?;
+    shell.borrow_mut().action_router = Some(action_router);
+    ApplicationShell::install_global_search_callbacks(shell);
+    ApplicationShell::install_sidebar_visibility(shell);
+    ApplicationShell::install_pane_traversal_shortcuts(shell);
+    ApplicationShell::install_peek_scroll_navigation(shell);
+    ApplicationShell::install_pane_scroll_switching(shell);
+    ApplicationShell::install_command_palette_shortcut(shell);
+    ApplicationShell::install_bookmark_shortcut(shell);
+    ApplicationShell::install_search_shortcuts(shell);
+    create_initial_pane_surfaces(shell, initial_pane_ids, deferred_live_pane_id)?;
+    shell.borrow().mount_background_restored_agents();
+    finish_initial_render(shell);
     Ok(())
 }
 
@@ -243,8 +283,17 @@ impl ApplicationShell {
             background_agent_host,
             peek_view,
             command_palette,
+            restore_notice,
         } = build_shell_widgets();
-        sidebar::render(&sidebar, &window, &[], runtimes.config.clipboard, &[]);
+        sidebar::render(
+            &sidebar,
+            &window,
+            &[],
+            runtimes.config.clipboard,
+            &[],
+            &[],
+            None,
+        );
         let global_search_view = GlobalSearchView::attach(&sidebar);
         let window_template = restored_or_default_window(restored_window, fresh_window_id);
         apply_restored_window_size(&window, &window_template);
@@ -253,6 +302,7 @@ impl ApplicationShell {
         let agent_events =
             AgentEventCoordinator::start(window_template.id.clone(), Rc::clone(&runtimes.agent));
         let open_with_runtime = initialize_open_with(&chrome, &runtimes.config.open_with);
+        let bookmark_runtime = initialize_bookmarks()?;
         let (next_worklane_number, next_pane_number) = next_workspace_identities(&state);
         let initial_pane_ids = workspace_pane_ids(&state);
         let (preferred_sidebar_width, adjusting_sidebar_width, sidebar_reveal_generation) =
@@ -289,6 +339,7 @@ impl ApplicationShell {
             peek_tab_down: false,
             peek_view,
             command_palette,
+            restore_notice,
             global_search_view,
             global_search: GlobalSearchCoordinator::default(),
             global_search_generation: 0,
@@ -296,6 +347,7 @@ impl ApplicationShell {
             server_runtime: server_runtime::ServerRuntime::default(),
             project_context_runtime: project_context_runtime::ProjectContextRuntime::default(),
             open_with_runtime,
+            bookmark_runtime,
             task_runner_actions: BTreeMap::new(),
             last_pane_viewport_height: Cell::new(0),
             action_router: None,
@@ -308,26 +360,14 @@ impl ApplicationShell {
             quit_handler: None,
             self_handle: RefCell::new(Weak::new()),
         }));
-        initialize_shell_coordinators(&shell);
-        install_sidebar_width_tracking(
+        finish_shell_setup(
+            &shell,
             &body,
-            &shell.borrow().sidebar_scroll,
             preferred_sidebar_width,
             adjusting_sidebar_width,
-        );
-
-        let action_router = ActionRouter::install(&shell)?;
-        shell.borrow_mut().action_router = Some(action_router);
-        Self::install_global_search_callbacks(&shell);
-        Self::install_sidebar_visibility(&shell);
-        Self::install_pane_traversal_shortcuts(&shell);
-        Self::install_peek_scroll_navigation(&shell);
-        Self::install_pane_scroll_switching(&shell);
-        Self::install_command_palette_shortcut(&shell);
-        Self::install_search_shortcuts(&shell);
-        create_initial_pane_surfaces(&shell, initial_pane_ids, deferred_live_pane_id)?;
-        shell.borrow().mount_background_restored_agents();
-        finish_initial_render(&shell);
+            initial_pane_ids,
+            deferred_live_pane_id,
+        )?;
         Ok(shell)
     }
 
@@ -1275,6 +1315,26 @@ impl ApplicationShell {
                 palette.show(items, recent, current);
             }
             glib::Propagation::Stop
+        });
+        shell.borrow().window.add_controller(controller);
+    }
+
+    fn install_bookmark_shortcut(shell: &Rc<RefCell<Self>>) {
+        let controller = gtk::EventControllerKey::new();
+        controller.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let weak = Rc::downgrade(shell);
+        controller.connect_key_pressed(move |_, key, _, modifiers| {
+            if !crate::bookmarks_view::is_open_shortcut(key, modifiers) {
+                return glib::Propagation::Proceed;
+            }
+            let Some(shell) = weak.upgrade() else {
+                return glib::Propagation::Proceed;
+            };
+            if crate::bookmarks_view::open_from(shell.borrow().sidebar.upcast_ref()) {
+                glib::Propagation::Stop
+            } else {
+                glib::Propagation::Proceed
+            }
         });
         shell.borrow().window.add_controller(controller);
     }
@@ -2819,6 +2879,8 @@ impl ApplicationShell {
             &summaries,
             self.config.clipboard,
             &servers,
+            self.bookmark_runtime.templates(),
+            self.state.active_worklane().bookmark_origin_id.as_deref(),
         );
         self.render_chrome(&summaries);
         self.schedule_active_worklane_reveal();
@@ -2834,6 +2896,8 @@ impl ApplicationShell {
                 &summaries,
                 self.config.clipboard,
                 &servers,
+                self.bookmark_runtime.templates(),
+                self.state.active_worklane().bookmark_origin_id.as_deref(),
             );
         }
         self.render_chrome(&summaries);
@@ -3469,7 +3533,7 @@ fn build_shell_widgets() -> ShellWidgets {
     body.set_start_child(Some(&sidebar_reservation));
     body.set_end_child(Some(&content));
     let chrome = WindowChrome::new();
-    let (overlay, peek_view, command_palette, sidebar_hover_rail) =
+    let (overlay, peek_view, command_palette, restore_notice, sidebar_hover_rail) =
         build_root(&chrome, &body, &sidebar_scroll);
     window.set_child(Some(&overlay));
     ShellWidgets {
@@ -3485,6 +3549,7 @@ fn build_shell_widgets() -> ShellWidgets {
         background_agent_host,
         peek_view,
         command_palette,
+        restore_notice,
     }
 }
 
@@ -3492,7 +3557,13 @@ fn build_root(
     chrome: &WindowChrome,
     body: &gtk::Paned,
     sidebar: &gtk::ScrolledWindow,
-) -> (gtk::Overlay, WorklanePeekView, CommandPaletteView, gtk::Box) {
+) -> (
+    gtk::Overlay,
+    WorklanePeekView,
+    CommandPaletteView,
+    RestoreNotice,
+    gtk::Box,
+) {
     let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
     root.append(chrome.widget());
     root.append(body);
@@ -3514,7 +3585,15 @@ fn build_root(
     overlay.add_overlay(peek_view.widget());
     let command_palette = CommandPaletteView::new();
     overlay.add_overlay(command_palette.widget());
-    (overlay, peek_view, command_palette, hover_rail)
+    let restore_notice = RestoreNotice::new();
+    overlay.add_overlay(restore_notice.widget());
+    (
+        overlay,
+        peek_view,
+        command_palette,
+        restore_notice,
+        hover_rail,
+    )
 }
 
 fn workspace_pane_ids(state: &WorkspaceState) -> Vec<String> {

@@ -78,6 +78,7 @@ pub(super) struct PaneRuntimeCoordinator {
     live_children: Cell<usize>,
     pending_prefills: BTreeMap<String, String>,
     pending_launches: BTreeMap<String, PendingPaneLaunch>,
+    explicit_environments: BTreeMap<String, BTreeMap<String, String>>,
 }
 
 pub(super) struct PendingPaneLaunch {
@@ -88,6 +89,7 @@ pub(super) struct PendingPaneLaunch {
 pub(crate) struct DetachedPaneRuntime {
     surface: GhosttySurface,
     pending_prefill: Option<String>,
+    explicit_environment: Option<Rc<BTreeMap<String, String>>>,
 }
 
 impl PaneRuntimeCoordinator {
@@ -102,6 +104,7 @@ impl PaneRuntimeCoordinator {
             live_children: Cell::new(0),
             pending_prefills: BTreeMap::new(),
             pending_launches: BTreeMap::new(),
+            explicit_environments: BTreeMap::new(),
         }
     }
 
@@ -184,6 +187,8 @@ impl PaneRuntimeCoordinator {
         command: String,
         environment: Vec<(String, String)>,
     ) {
+        self.explicit_environments
+            .insert(pane_id.to_owned(), environment.iter().cloned().collect());
         self.pending_launches.insert(
             pane_id.to_owned(),
             PendingPaneLaunch {
@@ -195,10 +200,15 @@ impl PaneRuntimeCoordinator {
 
     pub(super) fn cancel_launch(&mut self, pane_id: &str) {
         self.pending_launches.remove(pane_id);
+        self.explicit_environments.remove(pane_id);
     }
 
     pub(super) fn take_launch(&mut self, pane_id: &str) -> Option<PendingPaneLaunch> {
         self.pending_launches.remove(pane_id)
+    }
+
+    pub(super) fn explicit_environment(&self, pane_id: &str) -> Option<&BTreeMap<String, String>> {
+        self.explicit_environments.get(pane_id)
     }
 
     pub(super) fn detach_widgets(&mut self) {
@@ -253,6 +263,7 @@ impl PaneRuntimeCoordinator {
         Ok(DetachedPaneRuntime {
             surface,
             pending_prefill: self.pending_prefills.remove(pane_id),
+            explicit_environment: self.explicit_environments.remove(pane_id).map(Rc::new),
         })
     }
 
@@ -278,6 +289,12 @@ impl PaneRuntimeCoordinator {
         if let Some(prefill) = transfer.pending_prefill {
             shell.pane_runtime.queue_prefill(pane_id, prefill);
         }
+        if let Some(environment) = transfer.explicit_environment {
+            shell
+                .pane_runtime
+                .explicit_environments
+                .insert(pane_id.to_owned(), (*environment).clone());
+        }
         shell
             .pane_runtime
             .focus_controllers
@@ -302,6 +319,8 @@ impl PaneRuntimeCoordinator {
     ) -> Result<bool, String> {
         if self.deferred_panes.remove(pane_id) {
             self.pending_prefills.remove(pane_id);
+            self.pending_launches.remove(pane_id);
+            self.explicit_environments.remove(pane_id);
             return Ok(true);
         }
         if removal_decision(self.contains(pane_id)) == RemovalDecision::IgnoreStale {
@@ -322,6 +341,9 @@ impl PaneRuntimeCoordinator {
             }
             frame.detach_terminal();
         }
+        self.pending_prefills.remove(pane_id);
+        self.pending_launches.remove(pane_id);
+        self.explicit_environments.remove(pane_id);
         let dispose_result = self
             .surfaces
             .remove(pane_id)

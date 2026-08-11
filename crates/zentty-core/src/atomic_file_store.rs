@@ -16,6 +16,7 @@ const LOCK_DEADLINE: Duration = Duration::from_millis(250);
 pub enum AtomicFileAction<T> {
     ReadOnly(T),
     Replace { bytes: Vec<u8>, value: T },
+    Quarantine(T),
     QuarantineAndReplace { bytes: Vec<u8>, value: T },
 }
 
@@ -73,6 +74,10 @@ impl AtomicFileStore {
             AtomicFileAction::Replace { bytes, value } => {
                 self.replace(&bytes)?;
                 (value, None)
+            }
+            AtomicFileAction::Quarantine(value) => {
+                let quarantine = self.quarantine()?;
+                (value, quarantine)
             }
             AtomicFileAction::QuarantineAndReplace { bytes, value } => {
                 let quarantine = self.quarantine()?;

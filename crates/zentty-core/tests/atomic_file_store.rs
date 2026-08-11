@@ -86,6 +86,23 @@ fn missing_read_and_private_atomic_replace_share_one_boundary() {
 }
 
 #[test]
+fn quarantine_without_replacement_preserves_invalid_bytes_and_leaves_source_absent() {
+    let directory = TestDirectory::new("quarantine-only");
+    let store = directory.store(64);
+    fs::write(store.path(), b"invalid").unwrap();
+    let (value, quarantine) = store
+        .transaction(|bytes| {
+            assert_eq!(bytes, Some(b"invalid".as_slice()));
+            Ok(AtomicFileAction::Quarantine("preserved"))
+        })
+        .unwrap();
+
+    assert_eq!(value, "preserved");
+    assert!(!store.path().exists());
+    assert_eq!(fs::read(quarantine.unwrap()).unwrap(), b"invalid");
+}
+
+#[test]
 fn bounds_reject_existing_and_replacement_bytes_without_mutation() {
     let directory = TestDirectory::new("bounds");
     let store = directory.store(4);

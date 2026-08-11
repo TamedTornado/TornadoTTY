@@ -2,21 +2,25 @@
   "schema_version": 1,
   "contract_id": "zentty-application-shell-responsibilities",
   "source": "crates/zentty-linux/src/application_shell.rs",
-  "source_sha256": "b64108d894b3a7633515fd1d0d4a77e4ce96c14c60721f45d85dc473a4f2c2b4",
+  "source_sha256": "36b7fafec06f96268c0b442b9ceea1479d231d7c999677312388e4b8733ecd71",
   "owned_source_sha256": {
-    "crates/zentty-linux/src/main.rs": "4effe28db2295ddd039ca432051ba5d0878ad4ac4e2acea2fef99f82a6fe2163",
+    "crates/zentty-linux/src/main.rs": "b94075363cca1e07b564fb2f5724ff2289736a7e7b0e71b60622669c688fd942",
     "crates/zentty-linux/src/application.rs": "6f14dc9e6c60d46f3713faa997501782e5c9750f0e00b40e27472431cede6c7d",
     "crates/zentty-linux/src/config_store.rs": "5b6c6c3831eac323770681a850eedea3a7720280db8223cfcc3f28bb28567ae7",
     "crates/zentty-linux/src/window_set.rs": "501d595889c11a41a4261ef8282465d76dd9ed8ccd1d004406b558579b0bf58e",
     "crates/zentty-linux/src/agent_runtime.rs": "48f30d38048ae5388ca59aee2021e1215cabdfc033e66755ed32c6f92dcb8671",
     "crates/zentty-linux/src/codex_enrichment.rs": "fe87631c75c04b63962b7f89d311a778a25af8f27a1dcb4d5950b3efcbaa476e",
-    "crates/zentty-linux/src/application_shell/action_router.rs": "b7310fe7a7dbe49d8e00d6915ae407c3ef000de36aa1b261519a5e938bb69a7c",
+    "crates/zentty-linux/src/application_shell/action_router.rs": "004daaf43c2962e56fe45e1f049c8a70d205b91dc4a20401c10ccb4e5b0caa53",
     "crates/zentty-linux/src/application_shell/clipboard_actions.rs": "1502a0353bc3e0d645d6c6bd81aae1ed1306f312838f92a635944d402cd441b0",
     "crates/zentty-linux/src/application_shell/agent_events.rs": "3b6dc220ad2434b15213a34c6c225f5dad868880437b3b54365ba77e42b2d0a4",
     "crates/zentty-linux/src/application_shell/project_context_runtime.rs": "21b8440353f6dbc2bec666019601a6bb35c2fde077549d4397e5de125a7fe9b9",
     "crates/zentty-linux/src/application_shell/open_with_runtime.rs": "80ec9ae6b16cadc132e763ca352fddfce6cc02725cbed0f7062bf6f231246aca",
+    "crates/zentty-linux/src/application_shell/bookmark_runtime.rs": "815dfe23319600c0b43f32fa20f4ca0646e7709afef92c0da99f94cb0550a5e5",
+    "crates/zentty-linux/src/bookmarks_view.rs": "81f6b2e29932e8014e69db6ceebd9b9dd57faef50896acfb62d743584d74e32b",
+    "crates/zentty-linux/src/restore_notice.rs": "02844f204871767d2aa4bc6076fff7c2145a52c493583246ef686f886a1db918",
+    "crates/zentty-linux/src/sidebar.rs": "91e76815803967c3ecb1ec61837f28c886a914fe1fe8ed026319c0a49cfcc7ff",
     "crates/zentty-linux/src/application_shell/global_search.rs": "98a1963830af8616b31da2558ae6f27c4461342ef3085f6ef9cda0863a1ddc7c",
-    "crates/zentty-linux/src/application_shell/pane_runtime.rs": "6952173990c2da3c9f0156c0a2722301bace71403d04c237fc63542d052aed3f",
+    "crates/zentty-linux/src/application_shell/pane_runtime.rs": "d71e434316ed1f89d0da48582fa07f782cab5a06453bcb779d79383f9f669116",
     "crates/zentty-linux/src/application_shell/server_runtime.rs": "cd39ebc1f95f7eb3c063058036fabbecc90cf367457a1538f2f6c8e657a0b919",
     "crates/zentty-linux/src/application_shell/task_runner_runtime.rs": "ec752b328170a8b1363a87ebce06d58220f717237f97d16bd32b4aca31cb7ddb",
     "crates/zentty-linux/src/docker_discovery.rs": "1836046bf3159c0a207ed999dc44a2ef8d9aa6276d79275031e2dbbd6cdd6c6d",
@@ -150,6 +154,13 @@
       "planned_module": "crates/zentty-linux/src/application_shell/open_with_runtime.rs and crates/zentty-core/src/open_with.rs",
       "tracking": "GH-18",
       "responsibility": "The sole window-local Open With catalog and launch boundary; discovers real Linux desktop applications and executable targets once, resolves only the focused canonical local directory, and launches through GIO or direct argv without a shell."
+    },
+    {
+      "id": "bookmark_coordinator",
+      "status": "existing",
+      "planned_module": "crates/zentty-linux/src/application_shell/bookmark_runtime.rs, crates/zentty-linux/src/bookmarks_view.rs, crates/zentty-core/src/workspace_template.rs, and crates/zentty-core/src/bookmark_store.rs",
+      "tracking": "GH-18",
+      "responsibility": "The sole window-local bookmark/preset bridge: captures the existing live WorkspaceState and Ghostty foreground process, persists one bounded XDG store, restores through the existing pane runtime with fresh identities, and owns the source GTK popover, editing, linkage, import/export, recency, and visible fallback diagnostics."
     }
   ],
   "field_assignments": [
@@ -190,6 +201,10 @@
       "fields": ["open_with_runtime"]
     },
     {
+      "owner": "bookmark_coordinator",
+      "fields": ["bookmark_runtime"]
+    },
+    {
       "owner": "agent_event_coordinator",
       "fields": ["agent_events"]
     },
@@ -210,7 +225,7 @@
       "fields": [
         "preferred_sidebar_width", "adjusting_sidebar_width", "sidebar_reveal_generation",
         "sidebar_visibility", "sidebar_visibility_generation", "peek_phase", "peek_generation",
-        "peek_tab_down", "peek_view", "command_palette", "global_search_view", "last_pane_viewport_height",
+        "peek_tab_down", "peek_view", "command_palette", "restore_notice", "global_search_view", "last_pane_viewport_height",
         "rendered_columns", "last_vertical_divider", "self_handle"
       ]
     },
@@ -246,7 +261,7 @@
         "install_pane_traversal_shortcuts", "install_pane_traversal_key_release",
         "handle_resize_shortcut", "handle_resize_key", "record_terminal_gesture",
         "handle_lifecycle_shortcut", "activate_restore_closed_pane_shortcut",
-        "install_command_palette_shortcut", "install_search_shortcuts",
+        "install_command_palette_shortcut", "install_bookmark_shortcut", "install_search_shortcuts",
         "perform_focused_binding_action",
         "activate_pane_control", "report_action_error",
         "refresh_pane_layout_action_availability"
@@ -313,11 +328,13 @@
       "install_worklane_move_actions", "install_pane_rename_action",
       "install_pane_transfer_action", "install_pane_creation_actions",
       "install_restore_closed_pane_action", "install_clipboard_actions", "install_search_actions", "install_server_actions", "install_task_runner_action", "install_project_context_actions",
-      "install_open_with_actions", "install_pane_layout_actions", "add_simple_action", "validate_registered_group"
+      "install_open_with_actions", "install_bookmark_actions", "install_bookmark_pair_actions",
+      "install_bookmark_file_actions", "report_bookmark_result", "install_pane_layout_actions",
+      "add_simple_action", "validate_registered_group"
     ],
     "pane_runtime_coordinator": [
       "new", "runtime", "command", "live_children", "surface", "frame", "contains",
-      "live_pane_ids",
+      "live_pane_ids", "explicit_environment",
       "is_deferred", "mark_deferred",
       "insert", "queue_prefill", "cancel_prefill", "take_prefill", "queue_launch", "cancel_launch", "take_launch", "detach_widgets",
       "detach_for_window_transfer", "adopt_window_transfer",
@@ -364,6 +381,14 @@
       "discover", "open_primary", "open_target", "focused_context_is_available",
       "focused_local_directory", "discover_available_targets", "resolve_executable",
       "canonical_executable", "launch"
+    ],
+    "bookmark_coordinator": [
+      "activate", "capture_active_template", "choose_export", "choose_import", "command_is_available",
+      "convert", "converted_name", "default_bookmark_path", "default_bookmark_path_from", "defer_sidebar_refresh",
+      "delete", "duplicate", "edit", "focused_fallback_directory", "live_capture_context", "load_default",
+      "mutate_and_refresh", "now_iso8601", "quote_proc_argument", "read_proc_command", "reload", "rename",
+      "report_async_result", "restore_warning", "safe_filename", "save_active", "templates", "toggle_pin",
+      "unlink", "update_linked"
     ],
     "server_listener_discovery": [
       "scan_listeners_at", "read_bounded", "parse_socket_table", "decode_ipv4", "decode_ipv6",
@@ -471,6 +496,18 @@
     {"name":"open-pull-request","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"open-with-primary","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"open-with-target","parameter":"string","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"save-template","parameter":"string_pair","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"activate-template","parameter":"string","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"rename-template","parameter":"string_pair","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"toggle-template-pin","parameter":"string","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"duplicate-template","parameter":"string","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"convert-template","parameter":"string","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"delete-template","parameter":"string","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"update-linked-template","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"unlink-template","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"import-template","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"export-template","parameter":"string","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"edit-template","parameter":"string_pair","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"show-task-manager","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"}
   ],
   "conditional_action_availability": {
@@ -495,6 +532,7 @@
     "task_runner_snapshot": {"owner":"task_runner_coordinator","maximum_instances_per_window":1},
     "project_context_projection": {"owner":"project_context_coordinator","maximum_instances_per_window":1},
     "open_with_catalog": {"owner":"open_with_coordinator","maximum_instances_per_window":1},
+    "bookmark_store": {"owner":"bookmark_coordinator","maximum_instances_per_window":1},
     "tmux_compatibility_state": {"owner":"existing_tmux_coordinator","maximum_instances_per_window":1},
     "glib_scheduling": {"owner":"application_runtime","kind":"default-glib-main-context","maximum_instances_per_process":1}
   },
