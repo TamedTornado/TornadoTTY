@@ -232,6 +232,16 @@ import/export `NOT_IMPLEMENTED` cells now prevent the gap from disappearing.
 The next slice must first establish an accessible, source-quality row-menu
 keyboard route and then drive the real chooser.
 
+### GH-18 closeout resumes with standard keyboard context menus
+
+The remaining work is not a new bookmark subsystem. It closes the four
+explicit matrix gaps using the existing store, action router, popover, and GTK
+file dialogs. The row action menu will expose the conventional Menu/Shift+F10
+route from the focused template row, with accessible focus receipts for robust
+physical input. The same staged-product journey will then exercise management
+mutations and real native chooser files under both controlled compositors. No
+coordinate guessing or application-only test action is permitted.
+
 ### A second source audit caught incorrect conversion semantics before commit
 
 The first Linux conversion action changed the selected record in place and, for
@@ -254,13 +264,86 @@ primary action is “Bookmark current worklane.” The Linux projection now foll
 that structure and wording. This was corrected before visual QA rather than
 leaving an acknowledged source-UX deviation to harden into product behavior.
 
+### The management journey found a real closed-dialog ownership cycle
+
+The first complete management journey physically exercised the standard Menu
+key route and caught two distinct defects instead of hiding them behind typed
+actions. Search text survived long enough that appending a new filter could
+leave a previously focused row selected; the harness now clears the real GTK
+entry and asserts the exact focused template name, not merely any activation
+row. The first edited command also exited immediately, invalidating the linked
+update lifecycle, so the controlled command is now `sleep 30` and the journey
+proves a live restored PTY before update and unlink.
+
+More importantly, both bookmark dialogs held a strong reference to themselves
+through their own button signal closures. Closing hid the window but retained
+the object graph and native surface. Those captures now use GTK weak references
+for both Cancel and successful Save. This is a product lifecycle repair, not a
+test accommodation. X11 now passes physical save, rename, duplicate, pin, edit,
+source-compatible conversion, duplicate deletion, real-PTY activation, linked
+update, and unlink in one bounded staged-product journey. The final X11 receipt
+is `Rust bookmark management passed: x11, context-menu=standard, ...` from the
+2026-08-11 controlled rerun.
+
+### Controlled Wayland exposed a compositor transient-input defect
+
+The identical Cage journey reliably saves the first bookmark, opens the
+standard keyboard context menu, presents the rename dialog, and reports GTK
+focus on its prefilled entry. Modifier release, one-client replacement input,
+modifier-free End/Backspace replacement, compositor-settle delays, weak dialog
+ownership, and fresh application processes were each tested rather than
+assumed. Cage still routes no replacement text to the second transient: the
+submit receipt remains `changed=false chars=7`, the action is a safe no-op, and
+the persisted store still contains `Managed`. Weston accepts input in the
+first transient but does not reliably restore keyboard focus to the parent or
+a replacement application surface in its nested X11 backend. This is now an
+explicit GH-18 XFAIL, not an environmental pass or prose-only omission.
+
+### Real chooser work requires both a portal and a focus-managing desktop
+
+`GtkFileDialog` did not fall back to an in-process chooser in the sanitized
+qualification session. With no session bus its future remained pending. A
+fresh `dbus-run-session` and isolated portal preference activate the real GTK
+portal backend. On X11, a controlled Openbox instance is also required; the
+WM-free Xvfb profile cannot transfer keyboard focus to the out-of-process
+chooser. With both present, the chooser maps as a distinct portal-owned window
+titled “Export Zentty preset,” but the synthetic keyboard path still cannot
+activate its Save control in the controlled session. The test therefore sees
+no exported bytes and exits 1. Under Cage, the GTK portal explicitly reports
+that it cannot associate its window with the Wayland parent, while the GNOME
+portal backend crashes without a GNOME session. Both chooser cells are tracked
+GH-18 XFAILs with real commands and expected failures; neither is claimed as a
+pass. Temporary diagnostic screenshots were kept outside the repository and
+all screenshot instrumentation was removed from the committed harness.
+
+The first full-matrix rerun then exposed an orchestration boundary rather than
+a product result: the X11 chooser XFAIL spent the entire 10-second generic
+success wait proving that no export arrived, and its nested wrapper missed the
+phase's evidence collection window before writing the environment receipt. The
+chooser-specific wait is now four seconds; a focused rerun exits 1 and writes a
+complete controlled-X11 report in eight seconds. The expected failure remains
+the same and was not converted to success.
+
+### Corrected qualification receipt
+
+The corrected full local qualifier passed every presently executable support
+and matrix cell in 418.35 seconds. The bookmark results are X11 management
+PASS, Wayland management XFAIL, and both portal chooser journeys XFAIL. Declared
+totals are PASS=110, FAIL=0, BLOCKED=7, XFAIL=4, and NOT_IMPLEMENTED=21. The
+machine-summary SHA-256 is
+`4371f94ca7019dab4f46d917be5e194539fa1d63014d6734af9a87c1c99e842a`.
+Implemented-local qualification passed; release and full Linux qualification
+correctly remain not passed. The Valgrind result remains PASS with reviewed
+suppressions, never an unsuppressed-clean claim.
+
 ## Remaining work and uncertainty
 
 - The GTK popover, save/edit/action surfaces, foreground-process capture,
   private XDG persistence, restart/restore, linkage, final-symlink policy, and
-  stale fallback journeys are implemented. A physical `.zenttypreset`
-  export/import round trip still remains before this
-  inventory entry can move from `PARTIAL` to `IMPLEMENTED`.
+  stale fallback journeys are implemented. Controlled X11 management passes.
+  Controlled Wayland transient input and physical `.zenttypreset` chooser
+  completion remain explicit XFAILs before this inventory entry can move from
+  `PARTIAL` to `IMPLEMENTED`.
 - The save sheet currently captures first and offers pane editing afterward;
   source UX presents command disclosure during save. The persisted behavior is
   present, but this interaction difference remains a polish/parity review item.

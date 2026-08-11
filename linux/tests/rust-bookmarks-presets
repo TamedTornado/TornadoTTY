@@ -12,14 +12,20 @@ state_directory="${run_root}/state"
 first_log="${run_root}/save.log"
 restore_log="${run_root}/restore.log"
 fallback_log="${run_root}/fallback.log"
+scenario="${ZENTTY_BOOKMARK_SCENARIO:-save-restore}"
 bookmarks="${XDG_CONFIG_HOME:?}/zentty/bookmarks.json"
 product_pid=""
+portal_wm_pid=""
 backend="${GDK_BACKEND:-}"
 
 fail() {
     for log in "${first_log}" "${restore_log}" "${fallback_log}"; do
         [[ ! -f "${log}" ]] || tail -100 "${log}" >&2
     done
+    if [[ -f "${bookmarks}" ]]; then
+        echo "rust-bookmarks-presets: persisted template identities at failure:" >&2
+        jq '{templates: [.templates[] | {id, name, kind, pinned}]}' "${bookmarks}" >&2 || true
+    fi
     echo "rust-bookmarks-presets: error: $*" >&2
     exit 1
 }
@@ -28,6 +34,10 @@ cleanup() {
     if [[ "${product_pid}" =~ ^[1-9][0-9]*$ ]]; then
         kill -TERM "${product_pid}" 2>/dev/null || true
         wait "${product_pid}" 2>/dev/null || true
+    fi
+    if [[ "${portal_wm_pid}" =~ ^[1-9][0-9]*$ ]]; then
+        kill -TERM "${portal_wm_pid}" 2>/dev/null || true
+        wait "${portal_wm_pid}" 2>/dev/null || true
     fi
     rm -rf -- "${run_root}"
 }
@@ -47,6 +57,11 @@ esac
 for dependency in grep jq mktemp readelf readlink sed sleep stat xdotool; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
+if [[ "${scenario}" == import-export && "${backend}" == x11 ]]; then
+    for dependency in openbox xprop; do
+        command -v "${dependency}" >/dev/null || fail "${dependency} is required for the real X11 chooser"
+    done
+fi
 [[ -x "${product}" ]] || fail "staged product is not built: ${product}"
 product="$(readlink -f -- "${product}")"
 mkdir -p "${project}" "${state_directory}"
@@ -128,10 +143,44 @@ input_type() {
     fi
 }
 
+input_ctrl_key() {
+    local key="$1"
+    if [[ "${backend}" == x11 ]]; then
+        xdotool key "ctrl+${key}"
+    else
+        zentty_product_ctrl_key "${backend}" "${key}"
+    fi
+}
+
+input_shift_key() {
+    local key="$1"
+    if [[ "${backend}" == x11 ]]; then
+        xdotool key "shift+${key}"
+    else
+        wtype -M shift -k "${key}" -m shift
+    fi
+}
+
+replace_text() {
+    local value="$1"
+    if zentty_product_uses_xdotool "${backend}"; then
+        input_ctrl_key a
+        input_type "${value}"
+    else
+        local clear=(-k End)
+        for _ in {1..128}; do
+            clear+=(-k BackSpace)
+        done
+        # Avoid compositor-specific selection shortcuts: clear the focused
+        # GTK entry and type its replacement through one real virtual keyboard.
+        wtype "${clear[@]}" -d 1 -- "${value}"
+    fi
+}
+
 focus_bookmark_control() {
     local log="$1"
     local receipt="$2"
-    for _ in {1..12}; do
+    for _ in {1..36}; do
         grep -Fq "zentty-linux: bookmarks-focus=${receipt}" "${log}" && return 0
         input_key Tab
         sleep 0.05
@@ -140,11 +189,295 @@ focus_bookmark_control() {
         fail "bookmark keyboard focus did not reach ${receipt}"
 }
 
+focus_bookmark_control_after() {
+    local log="$1"
+    local receipt="$2"
+    local before
+    before="$(grep -Fc "zentty-linux: bookmarks-focus=${receipt}" "${log}" 2>/dev/null || true)"
+    for _ in {1..16}; do
+        if (( $(grep -Fc "zentty-linux: bookmarks-focus=${receipt}" "${log}" 2>/dev/null || true) > before )); then
+            return 0
+        fi
+        input_key Tab
+        sleep 0.05
+    done
+    fail "bookmark keyboard focus did not newly reach ${receipt}"
+}
+
+save_named_bookmark() {
+    local log="$1"
+    local name="$2"
+    open_bookmarks "${log}"
+    focus_bookmark_control "${log}" save-bookmark
+    input_key Return
+    zentty_product_wait_for_log "${log}" 'zentty-linux: bookmark-name-focused=true' \
+        'bookmark name dialog did not receive focus' || fail "bookmark name dialog unavailable"
+    # GTK focus changes before the nested compositor has necessarily routed the
+    # keyboard to the newly mapped dialog surface.
+    sleep 0.15
+    input_type "${name}"
+    input_key Return
+    zentty_product_wait_for_log "${log}" 'zentty-linux: action=save-template result=ok' \
+        'bookmark save action did not succeed' || fail "bookmark save failed"
+}
+
+focus_filtered_template() {
+    local log="$1"
+    local name="$2"
+    local receipt="zentty-linux: bookmarks-focus=activate-template"
+    local before
+    open_bookmarks "${log}"
+    replace_text "${name}"
+    before="$(grep -F "${receipt}" "${log}" 2>/dev/null | grep -Fc "name=\"${name}\"" || true)"
+    for _ in {1..16}; do
+        if (( $(grep -F "${receipt}" "${log}" 2>/dev/null | grep -Fc "name=\"${name}\"" || true) > before )); then
+            return 0
+        fi
+        input_key Tab
+        sleep 0.05
+    done
+    fail "bookmark keyboard focus did not reach filtered template ${name}"
+}
+
+open_template_action() {
+    local log="$1"
+    local action="$2"
+    local shown_before
+    shown_before="$(grep -Fc 'zentty-linux: bookmarks-context-menu=shown keyboard=true' "${log}" 2>/dev/null || true)"
+    sleep 0.1
+    if [[ "${backend}" == x11 ]]; then
+        xdotool keyup Menu 2>/dev/null || true
+    fi
+    input_key Menu
+    if [[ "${backend}" == x11 ]]; then
+        xdotool keyup Menu 2>/dev/null || true
+    fi
+    for _ in {1..20}; do
+        if (( $(grep -Fc 'zentty-linux: bookmarks-context-menu=shown keyboard=true' "${log}" 2>/dev/null || true) > shown_before )); then
+            break
+        fi
+        sleep 0.05
+    done
+    if (( $(grep -Fc 'zentty-linux: bookmarks-context-menu=shown keyboard=true' "${log}" 2>/dev/null || true) <= shown_before )); then
+        input_shift_key F10
+    fi
+    zentty_product_wait_for_log_count "${log}" \
+        'zentty-linux: bookmarks-context-menu=shown keyboard=true' "$((shown_before + 1))" \
+        'standard keyboard context menu did not open' || fail "template context menu unavailable"
+    focus_bookmark_control_after "${log}" "${action}"
+    sleep 0.1
+    input_key space
+}
+
+wait_for_action_after() {
+    local log="$1"
+    local action="$2"
+    local before="$3"
+    local attempts="${4:-200}"
+    zentty_product_wait_for_log_count "${log}" \
+        "zentty-linux: action=${action} result=ok" "$((before + 1))" \
+        "${action} did not complete" "${attempts}" || fail "${action} failed"
+}
+
+action_count() {
+    grep -Fc "zentty-linux: action=$2 result=ok" "$1" 2>/dev/null || true
+}
+
+jq_wait() {
+    local expression="$1"
+    for _ in {1..200}; do
+        [[ -f "${bookmarks}" ]] && jq -e "${expression}" "${bookmarks}" >/dev/null 2>&1 && return 0
+        sleep 0.05
+    done
+    return 1
+}
+
 stop_product() {
     kill -TERM "${product_pid}" 2>/dev/null || true
     wait "${product_pid}" 2>/dev/null || true
     product_pid=""
 }
+
+run_management() {
+    start_product "${first_log}"
+    save_named_bookmark "${first_log}" 'Managed'
+
+    focus_filtered_template "${first_log}" 'Managed'
+    open_template_action "${first_log}" rename-template
+    zentty_product_wait_for_log "${first_log}" 'zentty-linux: bookmark-name-focused=true' \
+        'rename dialog did not focus its name entry' || fail "rename dialog unavailable"
+    sleep 0.15
+    replace_text 'Managed Renamed'
+    before="$(action_count "${first_log}" rename-template)"
+    input_key Return
+    wait_for_action_after "${first_log}" rename-template "${before}"
+    jq_wait 'any(.templates[]; .name == "Managed Renamed")' || fail "rename was not persisted"
+
+    focus_filtered_template "${first_log}" 'Managed Renamed'
+    before="$(action_count "${first_log}" duplicate-template)"
+    open_template_action "${first_log}" duplicate-template
+    wait_for_action_after "${first_log}" duplicate-template "${before}"
+    jq_wait '(.templates | length) == 2 and any(.templates[]; .name == "Managed Renamed copy")' ||
+        fail "duplicate was not uniquely persisted"
+
+    focus_filtered_template "${first_log}" 'Managed Renamed'
+    before="$(action_count "${first_log}" toggle-template-pin)"
+    open_template_action "${first_log}" toggle-template-pin
+    wait_for_action_after "${first_log}" toggle-template-pin "${before}"
+    jq_wait 'any(.templates[]; .name == "Managed Renamed" and .pinned == true)' || fail "pin was not persisted"
+
+    focus_filtered_template "${first_log}" 'Managed Renamed'
+    open_template_action "${first_log}" edit-template
+    zentty_product_wait_for_log "${first_log}" 'zentty-linux: bookmark-edit-command-focused=true' \
+        'edit dialog did not focus the first command' || fail "edit dialog unavailable"
+    sleep 0.15
+    replace_text 'sleep 30'
+    before="$(action_count "${first_log}" edit-template)"
+    input_key Return
+    wait_for_action_after "${first_log}" edit-template "${before}"
+    jq_wait 'any(.templates[]; .name == "Managed Renamed" and .columns[0].panes[0].command == "sleep 30")' ||
+        fail "edit was not persisted"
+
+    focus_filtered_template "${first_log}" 'Managed Renamed'
+    before="$(action_count "${first_log}" convert-template)"
+    open_template_action "${first_log}" convert-template
+    wait_for_action_after "${first_log}" convert-template "${before}"
+    jq_wait '(.templates | length) == 3 and any(.templates[]; .name == "Managed Renamed (preset)" and .kind == "preset")' ||
+        fail "bookmark-to-preset conversion did not create a portable copy"
+
+    focus_filtered_template "${first_log}" 'Managed Renamed copy'
+    before="$(action_count "${first_log}" delete-template)"
+    open_template_action "${first_log}" delete-template
+    wait_for_action_after "${first_log}" delete-template "${before}"
+    jq_wait '(.templates | length) == 2 and all(.templates[]; .name != "Managed Renamed copy")' ||
+        fail "delete was not persisted"
+
+    focus_filtered_template "${first_log}" 'Managed Renamed'
+    input_key Return
+    zentty_product_wait_for_log "${first_log}" 'zentty-linux: bookmark-restored id=' \
+        'managed bookmark did not activate' || fail "activation before linked update failed"
+    zentty_product_wait_for_log "${first_log}" 'zentty-linux: terminal-ready-pane=pane-3' \
+        'linked restore did not create a real PTY' || fail "linked restore PTY unavailable"
+
+    open_bookmarks "${first_log}"
+    focus_bookmark_control_after "${first_log}" update-linked-template
+    before="$(action_count "${first_log}" update-linked-template)"
+    input_key Return
+    wait_for_action_after "${first_log}" update-linked-template "${before}"
+    open_bookmarks "${first_log}"
+    focus_bookmark_control_after "${first_log}" unlink-template
+    before="$(action_count "${first_log}" unlink-template)"
+    input_key Return
+    wait_for_action_after "${first_log}" unlink-template "${before}"
+
+    stop_product
+    echo "Rust bookmark management passed: ${backend}, context-menu=standard, rename=physical, edit=physical, duplicate=physical, pin=physical, convert=physical, update=physical, unlink=physical, delete=physical"
+}
+
+chooser_path() {
+    local path="$1"
+    local mode="$2"
+    if [[ "${backend}" == x11 ]]; then
+        local chooser_window=""
+        for _ in {1..200}; do
+            chooser_window="$(
+                xdotool search --onlyvisible --name \
+                    '^(Export Zentty preset|Import Zentty preset|Save File|Open File)$' \
+                    2>/dev/null | tail -1 || true
+            )"
+            [[ "${chooser_window}" =~ ^[1-9][0-9]*$ ]] && break
+            sleep 0.05
+        done
+        [[ "${chooser_window}" =~ ^[1-9][0-9]*$ ]] || fail "real GTK file chooser did not map"
+        echo "rust-bookmarks-presets: chooser-window=$(xdotool getwindowname "${chooser_window}")"
+        if [[ "${mode}" == save ]]; then
+            xdotool windowactivate --sync "${chooser_window}" \
+                key ctrl+a \
+                type --delay 5 -- "${path##*/}" \
+                key alt+s
+        else
+            xdotool windowactivate --sync "${chooser_window}" \
+                key ctrl+l \
+                sleep 0.1 \
+                type --delay 5 -- "${path}" \
+                key Return
+        fi
+        return
+    else
+        sleep 0.4
+    fi
+    if [[ "${mode}" == save ]]; then
+        replace_text "${path##*/}"
+        input_key Return
+    else
+        input_ctrl_key l
+        sleep 0.1
+        input_type "${path}"
+        input_key Return
+    fi
+}
+
+run_import_export() {
+    local exported="${project}/Portable.zenttypreset"
+    [[ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ]] || fail "a private D-Bus session is required for the real GTK chooser"
+    mkdir -p "${XDG_CONFIG_HOME}/xdg-desktop-portal"
+    cat >"${XDG_CONFIG_HOME}/xdg-desktop-portal/portals.conf" <<'EOF'
+[preferred]
+default=gtk;
+EOF
+    if [[ "${backend}" == x11 ]]; then
+        openbox >"${run_root}/openbox.log" 2>&1 &
+        portal_wm_pid=$!
+        for _ in {1..200}; do
+            xprop -root _NET_SUPPORTING_WM_CHECK 2>/dev/null | grep -Fq 'window id #' && break
+            sleep 0.05
+        done
+        xprop -root _NET_SUPPORTING_WM_CHECK 2>/dev/null | grep -Fq 'window id #' ||
+            fail "controlled X11 window manager did not become ready"
+    fi
+    start_product "${first_log}"
+    save_named_bookmark "${first_log}" 'Portable'
+    focus_filtered_template "${first_log}" 'Portable'
+    before="$(action_count "${first_log}" export-template)"
+    open_template_action "${first_log}" export-template
+    chooser_path "${exported}" save
+    wait_for_action_after "${first_log}" export-template "${before}" 80
+    [[ -f "${exported}" && ! -L "${exported}" ]] || fail "real chooser did not create the export"
+    jq -e '.schemaVersion == 1 and .template.kind == "preset" and .template.projectRoot == null' \
+        "${exported}" >/dev/null || fail "exported envelope was not portable"
+
+    focus_filtered_template "${first_log}" 'Portable'
+    before="$(action_count "${first_log}" delete-template)"
+    open_template_action "${first_log}" delete-template
+    wait_for_action_after "${first_log}" delete-template "${before}"
+    jq_wait '(.templates | length) == 0' || fail "live bookmark was not deleted before import"
+
+    open_bookmarks "${first_log}"
+    focus_bookmark_control_after "${first_log}" create-menu
+    input_key Return
+    focus_bookmark_control_after "${first_log}" import-template
+    input_key Return
+    before="$(action_count "${first_log}" import-template)"
+    chooser_path "${exported}" open
+    wait_for_action_after "${first_log}" import-template "${before}" 80
+    jq_wait '(.templates | length) == 1 and .templates[0].kind == "preset" and .templates[0].projectRoot == null and all(.templates[0].columns[].panes[]; .workingDirectory == null)' ||
+        fail "real chooser import did not persist one portable preset"
+    stop_product
+    echo "Rust bookmark import/export passed: ${backend}, export-chooser=real, file=real, delete=physical, import-chooser=real, portable=persisted"
+}
+
+case "${scenario}" in
+    management)
+        run_management
+        exit 0
+        ;;
+    import-export)
+        run_import_export
+        exit 0
+        ;;
+    save-restore) ;;
+    *) fail "unsupported ZENTTY_BOOKMARK_SCENARIO=${scenario}" ;;
+esac
 
 start_product "${first_log}"
 input_type 'sleep 30'

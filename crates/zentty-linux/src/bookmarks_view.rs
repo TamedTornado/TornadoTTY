@@ -22,6 +22,11 @@ pub(crate) fn is_open_shortcut(key: gtk::gdk::Key, modifiers: gtk::gdk::Modifier
             .intersects(gtk::gdk::ModifierType::ALT_MASK | gtk::gdk::ModifierType::SUPER_MASK)
 }
 
+fn is_context_menu_shortcut(key: gtk::gdk::Key, modifiers: gtk::gdk::ModifierType) -> bool {
+    key == gtk::gdk::Key::Menu
+        || (key == gtk::gdk::Key::F10 && modifiers.contains(gtk::gdk::ModifierType::SHIFT_MASK))
+}
+
 pub(crate) fn configure_header(
     header: &gtk::Box,
     window: &gtk::Window,
@@ -102,8 +107,10 @@ fn make_popover(
         linked.set_homogeneous(true);
         let update = gtk::Button::with_label("Update linked bookmark");
         update.set_action_name(Some("workspace.update-linked-template"));
+        connect_action_focus(&update, "update-linked-template");
         let unlink = gtk::Button::with_label("Unlink worklane");
         unlink.set_action_name(Some("workspace.unlink-template"));
+        connect_action_focus(&unlink, "unlink-template");
         linked.append(&update);
         linked.append(&unlink);
         linked.set_tooltip_text(Some(&format!("Linked to {origin_id}")));
@@ -139,6 +146,12 @@ fn make_popover(
 
 fn create_menu(window: &gtk::Window, parent_popover: &gtk::Popover) -> gtk::MenuButton {
     let menu = gtk::MenuButton::new();
+    menu.set_widget_name("zentty-template-create-menu");
+    menu.connect_has_focus_notify(|button| {
+        if button.has_focus() {
+            eprintln!("zentty-linux: bookmarks-focus=create-menu");
+        }
+    });
     menu.set_icon_name("list-add-symbolic");
     menu.set_tooltip_text(Some("Create or import bookmark or preset"));
     let popover = gtk::Popover::new();
@@ -149,6 +162,8 @@ fn create_menu(window: &gtk::Window, parent_popover: &gtk::Popover) -> gtk::Menu
     actions.set_margin_end(6);
     let bookmark = gtk::Button::with_label("Bookmark Current Worklane…");
     let preset = gtk::Button::with_label("Save Current as Preset…");
+    connect_action_focus(&bookmark, "save-bookmark");
+    connect_action_focus(&preset, "save-preset");
     connect_save_button(&bookmark, window, parent_popover, TemplateKind::Bookmark);
     connect_save_button(&preset, window, parent_popover, TemplateKind::Preset);
     actions.append(&bookmark);
@@ -156,6 +171,7 @@ fn create_menu(window: &gtk::Window, parent_popover: &gtk::Popover) -> gtk::Menu
     actions.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
     let import = gtk::Button::with_label("Import Preset…");
     import.set_action_name(Some("workspace.import-template"));
+    connect_action_focus(&import, "import-template");
     actions.append(&import);
     popover.set_child(Some(&actions));
     menu.set_popover(Some(&popover));
@@ -254,9 +270,13 @@ fn template_row(
 
     let activate = gtk::Button::new();
     activate.set_widget_name("zentty-activate-template");
-    activate.connect_has_focus_notify(|button| {
+    let focus_id = template.id.clone();
+    let focus_name = template.name.clone();
+    activate.connect_has_focus_notify(move |button| {
         if button.has_focus() {
-            eprintln!("zentty-linux: bookmarks-focus=activate-template");
+            eprintln!(
+                "zentty-linux: bookmarks-focus=activate-template id={focus_id} name={focus_name:?}"
+            );
         }
     });
     activate.set_has_frame(false);
@@ -296,7 +316,26 @@ fn template_row(
     });
     menu.set_icon_name("view-more-symbolic");
     menu.set_tooltip_text(Some("Template actions"));
+    menu.update_property(&[gtk::accessible::Property::Label(&format!(
+        "Actions for {}",
+        template.name
+    ))]);
     menu.set_popover(Some(&template_actions(window, template)));
+    let context_menu = menu.clone();
+    let context_id = template.id.clone();
+    let context_name = template.name.clone();
+    let context_keys = gtk::EventControllerKey::new();
+    context_keys.connect_key_pressed(move |_, key, _, modifiers| {
+        if !is_context_menu_shortcut(key, modifiers) {
+            return gtk::glib::Propagation::Proceed;
+        }
+        context_menu.popup();
+        eprintln!(
+            "zentty-linux: bookmarks-context-menu=shown keyboard=true id={context_id} name={context_name:?}"
+        );
+        gtk::glib::Propagation::Stop
+    });
+    activate.add_controller(context_keys);
     row.append(&menu);
     row
 }
@@ -309,6 +348,7 @@ fn template_actions(window: &gtk::Window, template: &WorkspaceTemplate) -> gtk::
     actions.set_margin_start(6);
     actions.set_margin_end(6);
     let rename = gtk::Button::with_label("Rename…");
+    connect_action_focus(&rename, "rename-template");
     let name = template.name.clone();
     let id = template.id.clone();
     let kind = template.kind;
@@ -320,6 +360,7 @@ fn template_actions(window: &gtk::Window, template: &WorkspaceTemplate) -> gtk::
     });
     actions.append(&rename);
     let edit = gtk::Button::with_label("Edit…");
+    connect_action_focus(&edit, "edit-template");
     let editable = template.clone();
     let window_clone = window.clone();
     let popover_clone = popover.clone();
@@ -350,13 +391,9 @@ fn template_actions(window: &gtk::Window, template: &WorkspaceTemplate) -> gtk::
         ("Delete", "delete-template"),
     ] {
         let button = gtk::Button::with_label(label);
+        connect_action_focus(&button, action);
         if action == "export-template" {
             button.set_widget_name("zentty-export-template");
-            button.connect_has_focus_notify(|button| {
-                if button.has_focus() {
-                    eprintln!("zentty-linux: bookmarks-focus=export-template");
-                }
-            });
         }
         button.set_action_name(Some(&format!("workspace.{action}")));
         button.set_action_target_value(Some(&template.id.to_variant()));
@@ -364,6 +401,14 @@ fn template_actions(window: &gtk::Window, template: &WorkspaceTemplate) -> gtk::
     }
     popover.set_child(Some(&actions));
     popover
+}
+
+fn connect_action_focus(button: &gtk::Button, action: &'static str) {
+    button.connect_has_focus_notify(move |button| {
+        if button.has_focus() {
+            eprintln!("zentty-linux: bookmarks-focus={action}");
+        }
+    });
 }
 
 fn present_edit_dialog(window: &gtk::Window, template: WorkspaceTemplate) {
@@ -397,12 +442,14 @@ fn present_edit_dialog(window: &gtk::Window, template: WorkspaceTemplate) {
         let command = gtk::Entry::new();
         command.set_placeholder_text(Some("Command (leave empty for a shell)"));
         command.set_text(pane.command.as_deref().unwrap_or_default());
+        command.set_activates_default(true);
         card.append(&label);
         card.append(&command);
         let directory = (template.kind == TemplateKind::Bookmark).then(|| {
             let entry = gtk::Entry::new();
             entry.set_placeholder_text(Some("Working directory"));
             entry.set_text(pane.working_directory.as_deref().unwrap_or_default());
+            entry.set_activates_default(true);
             card.append(&entry);
             entry
         });
@@ -425,10 +472,19 @@ fn present_edit_dialog(window: &gtk::Window, template: WorkspaceTemplate) {
     root.append(&buttons);
     dialog.set_child(Some(&root));
     dialog.set_default_widget(Some(&save));
-    let cancel_dialog = dialog.clone();
-    cancel.connect_clicked(move |_| cancel_dialog.close());
+    if let Some((first_command, _)) = editors.first() {
+        let first_command = first_command.clone();
+        dialog.connect_map(move |_| {
+            let first_command = first_command.clone();
+            gtk::glib::idle_add_local_once(move || {
+                let focused = first_command.grab_focus();
+                eprintln!("zentty-linux: bookmark-edit-command-focused={focused}");
+            });
+        });
+    }
+    connect_dialog_cancel(&dialog, &cancel);
     let action_window = window.clone();
-    let action_dialog = dialog.clone();
+    let action_dialog = dialog.downgrade();
     save.connect_clicked(move |_| {
         let mut edited = template.clone();
         for (pane, (command, directory)) in edited.all_panes_mut().zip(&editors) {
@@ -447,8 +503,9 @@ fn present_edit_dialog(window: &gtk::Window, template: WorkspaceTemplate) {
                 Some(&(edited.id.as_str(), json.as_str()).to_variant()),
             )
             .is_ok()
+            && let Some(dialog) = action_dialog.upgrade()
         {
-            action_dialog.close();
+            dialog.close();
         }
     });
     dialog.present();
@@ -512,17 +569,22 @@ fn present_name_dialog(
             eprintln!("zentty-linux: bookmark-name-focused={focused}");
         });
     });
-    let cancel_dialog = dialog.clone();
-    cancel.connect_clicked(move |_| cancel_dialog.close());
+    connect_dialog_cancel(&dialog, &cancel);
     let action_window = window.clone();
-    let action_dialog = dialog.clone();
+    let action_dialog = dialog.downgrade();
     let action_entry = entry.clone();
     let existing_id = existing_id.map(str::to_owned);
+    let original_name = current_name.to_owned();
     save.connect_clicked(move |_| {
         let name = action_entry.text();
         if name.trim().is_empty() {
             return;
         }
+        eprintln!(
+            "zentty-linux: bookmark-name-submit changed={} chars={}",
+            name.as_str() != original_name,
+            name.chars().count()
+        );
         let activated = if let Some(id) = &existing_id {
             action_window.activate_action(
                 "workspace.rename-template",
@@ -534,11 +596,22 @@ fn present_name_dialog(
                 Some(&(kind_label(kind), name.as_str()).to_variant()),
             )
         };
-        if activated.is_ok() {
-            action_dialog.close();
+        if activated.is_ok()
+            && let Some(dialog) = action_dialog.upgrade()
+        {
+            dialog.close();
         }
     });
     dialog.present();
+}
+
+fn connect_dialog_cancel(dialog: &gtk::Window, cancel: &gtk::Button) {
+    let dialog = dialog.downgrade();
+    cancel.connect_clicked(move |_| {
+        if let Some(dialog) = dialog.upgrade() {
+            dialog.close();
+        }
+    });
 }
 
 fn kind_label(kind: TemplateKind) -> &'static str {
@@ -564,7 +637,7 @@ fn find_named_widget(root: &gtk::Widget, name: &str) -> Option<gtk::Widget> {
 
 #[cfg(test)]
 mod tests {
-    use super::is_open_shortcut;
+    use super::{is_context_menu_shortcut, is_open_shortcut};
     use gtk::gdk;
 
     #[test]
@@ -579,6 +652,22 @@ mod tests {
         assert!(!is_open_shortcut(
             gdk::Key::b,
             required | gdk::ModifierType::ALT_MASK
+        ));
+    }
+
+    #[test]
+    fn template_rows_expose_standard_keyboard_context_menu_shortcuts() {
+        assert!(is_context_menu_shortcut(
+            gdk::Key::Menu,
+            gdk::ModifierType::empty()
+        ));
+        assert!(is_context_menu_shortcut(
+            gdk::Key::F10,
+            gdk::ModifierType::SHIFT_MASK
+        ));
+        assert!(!is_context_menu_shortcut(
+            gdk::Key::F10,
+            gdk::ModifierType::empty()
         ));
     }
 }

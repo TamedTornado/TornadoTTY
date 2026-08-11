@@ -628,8 +628,9 @@ fn install_bookmark_file_actions(
 }
 
 fn report_bookmark_result(action: &str, result: Result<(), String>) {
-    if let Err(error) = result {
-        eprintln!("zentty-linux: action={action} failed: {error}");
+    match result {
+        Ok(()) => eprintln!("zentty-linux: action={action} result=ok"),
+        Err(error) => eprintln!("zentty-linux: action={action} failed: {error}"),
     }
 }
 

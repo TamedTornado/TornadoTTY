@@ -405,6 +405,7 @@ pub(super) fn unlink(shell: &Rc<RefCell<ApplicationShell>>) -> Result<(), String
 }
 
 pub(super) fn choose_import(shell: &Rc<RefCell<ApplicationShell>>) {
+    eprintln!("zentty-linux: bookmark-import-chooser-requested=true");
     let dialog = gtk::FileDialog::builder()
         .title("Import Zentty preset")
         .modal(true)
@@ -444,6 +445,7 @@ pub(super) fn choose_import(shell: &Rc<RefCell<ApplicationShell>>) {
 }
 
 pub(super) fn choose_export(shell: &Rc<RefCell<ApplicationShell>>, template_id: &str) {
+    eprintln!("zentty-linux: bookmark-export-chooser-requested=true");
     let prepared = (|| {
         let shell_ref = shell.borrow();
         let template = shell_ref
