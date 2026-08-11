@@ -326,6 +326,7 @@ impl ApplicationShell {
             .filter_map(|pane| pane.agent_status.map(|status| (pane.pane_id, status)))
             .collect::<BTreeMap<_, _>>();
         let mut sources = Vec::new();
+        let active_worklane_id = self.state.active_worklane_id().to_owned();
         for (worklane_index, worklane) in self.state.worklanes().iter().enumerate() {
             for column in &worklane.columns {
                 for pane in &column.panes {
@@ -360,6 +361,7 @@ impl ApplicationShell {
                             .and_then(|pid| u32::try_from(pid).ok()),
                         is_remote: pane.ssh_connection_label.is_some()
                             || self.remote_panes.identities.contains_key(&pane.id),
+                        is_worklane_active: worklane.id == active_worklane_id,
                         working_directory: pane
                             .working_directory
                             .as_deref()

@@ -15,6 +15,7 @@ pub(crate) struct PaneSource {
     pub(crate) status_text: Option<String>,
     pub(crate) root_pid: Option<u32>,
     pub(crate) is_remote: bool,
+    pub(crate) is_worklane_active: bool,
     pub(crate) working_directory: Option<PathBuf>,
 }
 
@@ -73,7 +74,12 @@ impl PaneRow {
             return Self::unavailable(source, "Remote pane", previous);
         }
         if source.root_pid.is_none() {
-            return Self::unavailable(source, "Waiting for shell PID", previous);
+            let reason = if source.is_worklane_active {
+                "Waiting for shell PID"
+            } else {
+                "Inactive — shell not started"
+            };
+            return Self::unavailable(source, reason, previous);
         }
         let Some(tree) = tree.filter(|tree| !tree.processes.is_empty()) else {
             return Self::unavailable(source, "Metrics unavailable", previous);
@@ -200,6 +206,23 @@ pub(crate) fn stable_hot_sort(rows: &mut [PaneRow], previous_order: &[String]) {
     });
 }
 
+pub(crate) fn stable_hot_sort_within_worklanes(rows: &mut [PaneRow], previous_order: &[String]) {
+    let mut start = 0;
+    while start < rows.len() {
+        let window_id = rows[start].source.window_id.clone();
+        let worklane_id = rows[start].source.worklane_id.clone();
+        let mut end = start + 1;
+        while end < rows.len()
+            && rows[end].source.window_id == window_id
+            && rows[end].source.worklane_id == worklane_id
+        {
+            end += 1;
+        }
+        stable_hot_sort(&mut rows[start..end], previous_order);
+        start = end;
+    }
+}
+
 pub(crate) fn format_cpu(value: Option<f64>) -> String {
     value.map_or_else(|| "-".to_owned(), |value| format!("{value:.1}%"))
 }
@@ -241,6 +264,7 @@ mod tests {
             status_text: Some("Running".to_owned()),
             root_pid: pid,
             is_remote: false,
+            is_worklane_active: true,
             working_directory: Some(PathBuf::from("/repo/api")),
         }
     }
@@ -302,6 +326,12 @@ mod tests {
             Availability::Unavailable("Waiting for shell PID".to_owned())
         );
         assert_eq!(missing.peak_cpu_percent, Some(20.0));
+        let mut inactive = source("inactive", None);
+        inactive.is_worklane_active = false;
+        assert_eq!(
+            PaneRow::project(inactive, None, None).status_text(),
+            "Inactive — shell not started"
+        );
         let mut remote = source("remote", Some(200));
         remote.is_remote = true;
         assert_eq!(
@@ -409,6 +439,51 @@ mod tests {
         unavailable_on_right[1].cpu_percent = None;
         stable_hot_sort(&mut unavailable_on_right, &[]);
         assert_eq!(unavailable_on_right[0].source.pane_id, "hot");
+    }
+
+    #[test]
+    fn worklane_group_order_is_preserved_while_panes_sort_hot() {
+        let mut first_cool = PaneRow::project(
+            source("first-cool", Some(10)),
+            Some(ProcessTree {
+                root_pid: 10,
+                processes: vec![process(10, 1.0, 100, "cool")],
+            }),
+            None,
+        );
+        first_cool.source.worklane_id = "first".to_owned();
+        let mut first_hot = PaneRow::project(
+            source("first-hot", Some(11)),
+            Some(ProcessTree {
+                root_pid: 11,
+                processes: vec![process(11, 80.0, 100, "hot")],
+            }),
+            None,
+        );
+        first_hot.source.worklane_id = "first".to_owned();
+        let mut second = PaneRow::project(
+            source("second", Some(12)),
+            Some(ProcessTree {
+                root_pid: 12,
+                processes: vec![process(12, 200.0, 100, "hottest")],
+            }),
+            None,
+        );
+        second.source.worklane_id = "second".to_owned();
+        let mut rows = vec![first_cool, first_hot, second];
+
+        stable_hot_sort_within_worklanes(&mut rows, &[]);
+
+        assert_eq!(
+            rows.iter()
+                .map(|row| (row.source.worklane_id.as_str(), row.source.pane_id.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("first", "first-hot"),
+                ("first", "first-cool"),
+                ("second", "second")
+            ]
+        );
     }
 
     #[test]

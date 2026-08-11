@@ -5,7 +5,9 @@ use std::time::Duration;
 
 use gtk::{gio, glib};
 
-use super::model::{PaneRow, PaneSource, format_cpu, format_memory, stable_hot_sort};
+use super::model::{
+    PaneRow, PaneSource, format_cpu, format_memory, stable_hot_sort_within_worklanes,
+};
 use super::{ProcSampler, TaskManagerView};
 
 type SourcesProvider = Rc<dyn Fn() -> Vec<PaneSource>>;
@@ -123,7 +125,7 @@ impl TaskManagerController {
                 PaneRow::project(source, tree, previous.get(&stable_id))
             })
             .collect::<Vec<_>>();
-        stable_hot_sort(&mut rows, &self.previous_order.borrow());
+        stable_hot_sort_within_worklanes(&mut rows, &self.previous_order.borrow());
         *self.previous_order.borrow_mut() = rows.iter().map(|row| row.source.stable_id()).collect();
         for row in &rows {
             eprintln!(

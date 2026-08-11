@@ -169,3 +169,82 @@ uncertainty from the slice.
   427 error contexts as suppressed. Suppression governance accepted the full
   inherited-plus-project effective set; this is not an unsuppressed-clean
   claim. ReleaseSafe Valgrind remains XFAIL.
+
+## Post-promotion visual dogfood repair
+
+- Manual inspection of the promoted Task Manager found that populated pane
+  rows were technically present and accessible but rendered with the desktop
+  theme's dark label foreground on Zentty's dark table background. The real
+  CPU, memory, process, and PID values were therefore nearly invisible. The
+  behavioral product journeys did not catch this presentation failure, and the
+  slice should not have been described as visually reviewed before a real
+  screenshot was inspected.
+- Task Manager CSS now assigns explicit high-contrast foreground colors to
+  ordinary pane rows, expanded process rows, and selected rows instead of
+  assuming GTK label color inheritance from the containing row. The rebuilt
+  staged product was visually dogfooded and accepted before commit.
+- The next visual pass exposed that the header and each ListBox row used an
+  independent GTK grid. They therefore looked like a table but had no shared
+  column-sizing contract: headings collided and process values drifted under
+  the wrong headings. All header and row cells now participate in one
+  horizontal `SizeGroup` per column, use identical spacing, preserve fixed
+  indentation allocation, and align numeric columns consistently.
+- Source macOS presents one globally hot-sorted pane outline with process
+  children; it retains worklane identity only for search and action routing.
+  Dogfood found that indistinguishable shell titles made that source behavior
+  confusing. The reviewed Linux adaptation groups in workspace order as
+  Worklane → Pane → Process, aggregates worklane CPU/memory/hottest process,
+  and sorts hot panes only within their group. Singleton shell trees have no
+  disclosure control because expanding a pane merely to repeat the same shell
+  row adds no information.
+- The first controlled X11 journey after grouping correctly failed: collapsing
+  a worklane rebuilt the list and dropped keyboard focus, so the test's bare
+  Return did not reopen it; a subsequent search also honored the collapsed
+  state and concealed the matching pane. The real keyboard journey now
+  reacquires the list through the documented search route, and non-empty search
+  queries temporarily reveal matching rows without discarding the user's
+  collapsed preference. Corrected controlled X11 and Wayland journeys both
+  pass worklane collapse/restore, real process search/expansion, clipboard,
+  focus, and close.
+- A restored pane in an inactive worklane has a real pane model but may not yet
+  have a mapped Ghostty shell PID. It now reports `Inactive — shell not
+  started`; `Waiting for shell PID` is reserved for an active worklane still
+  starting its shell.
+- The post-dogfood full qualification passed both grouped Task Manager cells
+  but found two unrelated gates. The application-shell ownership hash was
+  correctly stale after adding active-worklane state and was updated without
+  relaxing its invariants. The installed-Claude X11 journey reached valid
+  model/team protocol progress but its product was killed by a 25-second
+  safety timeout while competing with the full parallel matrix. Its bounded
+  safety deadline is now 45 seconds with a five-second forced-cleanup bound;
+  successful focused runs remain far below that ceiling.
+- The first timeout edit placed an explanatory comment inside a backslash-
+  continued `env` command. Bash consequently ran `env` without the intended
+  product command, printed inherited process environment values into the
+  failed receipt, and then launched the product without the controlled
+  variables. This was a serious test-harness and secret-handling failure. The
+  comment was moved outside the command, and the journey now starts Zentty
+  through `env -i` with an explicit display/XDG/runtime/tool allowlist. A
+  synthetic ambient-secret sentinel must remain absent from the product,
+  model, server, and real PTY child receipts. Controlled installed-Claude X11
+  and Wayland journeys pass with that allowlist. Any real credentials present
+  in the operator environment at the time of the failed diagnostic must be
+  treated as exposed and rotated; no credential values are retained in this
+  repository record.
+- The next full run passed both agent cells, architecture, and both Task
+  Manager cells, then exposed an older development-server journey race under
+  Wayland. Its PTY waited for the watched server process to publish a readiness
+  file, queried authenticated server state once before Zentty had ingested that
+  watch event, and later compared the permanently stale receipt even though
+  the product log proved correct attribution. The real PTY now polls the
+  authenticated list within the existing two-second bound until the exact URL
+  appears. The focused controlled Wayland journey passes; no product behavior
+  or expectation was weakened.
+- The final authoritative rerun passed every presently executable support and
+  matrix cell in 402,440 ms, including both grouped Task Manager journeys, both
+  installed-agent cells with the secret-denying environment, both synchronized
+  development-server journeys, architecture ownership, packaging, Ghostty
+  regression, and suppression governance. Declared totals remain PASS=101,
+  FAIL=0, BLOCKED=7, XFAIL=1, and NOT_IMPLEMENTED=21. The implemented local
+  suite is PASSED; release and full Linux qualification remain NOT_PASSED by
+  policy.

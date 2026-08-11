@@ -208,9 +208,10 @@ case "${profile}" in
         [[ "${model_pid}" =~ ^[1-9][0-9]*$ ]] ||
             fail "Claude controlled-model PID is required"
         cd "${project}"
-        printf 'claude=<%s> tmux=<%s> endpoint=<%s>\n' \
+        printf 'claude=<%s> tmux=<%s> endpoint=<%s> ambient-secret=<%s>\n' \
             "$(command -v claude || true)" "$(command -v tmux || true)" \
-            "${ANTHROPIC_BASE_URL-}" >"${fixture}/child-env"
+            "${ANTHROPIC_BASE_URL-}" \
+            "${ZENTTY_AMBIENT_SECRET_SENTINEL-unset}" >"${fixture}/child-env"
         (
             for _ in {1..100}; do
                 panes="$(tmux list-panes -F '#{pane_id}' 2>/dev/null || true)"

@@ -9,6 +9,7 @@ use super::model::{NetworkState, PaneRow, ProcessMetric, format_cpu, format_memo
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 enum NodeId {
+    Worklane(String, String),
     Pane(String),
     Process(String, u32),
 }
@@ -37,6 +38,8 @@ struct ViewState {
     rows: RefCell<Vec<PaneRow>>,
     widgets: RefCell<BTreeMap<NodeId, RowWidgets>>,
     order: RefCell<Vec<NodeId>>,
+    column_groups: Vec<gtk::SizeGroup>,
+    collapsed_worklanes: RefCell<BTreeSet<(String, String)>>,
     expanded: RefCell<BTreeSet<String>>,
     selected: RefCell<Option<NodeId>>,
     focus_pane: PaneAction,
@@ -83,7 +86,10 @@ impl TaskManagerView {
 
         let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
         content.add_css_class("task-manager-table");
-        content.append(&header());
+        let column_groups = (0..7)
+            .map(|_| gtk::SizeGroup::new(gtk::SizeGroupMode::Horizontal))
+            .collect::<Vec<_>>();
+        content.append(&header(&column_groups));
         let list = gtk::ListBox::new();
         list.set_selection_mode(gtk::SelectionMode::Single);
         list.add_css_class("task-manager-list");
@@ -108,6 +114,8 @@ impl TaskManagerView {
                 rows: RefCell::new(Vec::new()),
                 widgets: RefCell::new(BTreeMap::new()),
                 order: RefCell::new(Vec::new()),
+                column_groups,
+                collapsed_worklanes: RefCell::new(BTreeSet::new()),
                 expanded: RefCell::new(BTreeSet::new()),
                 selected: RefCell::new(None),
                 focus_pane,
@@ -173,14 +181,25 @@ impl TaskManagerView {
         });
         let view = self.clone();
         self.state.list.connect_row_activated(move |_, row| {
-            let Some(NodeId::Pane(pane_id)) = usize::try_from(row.index())
+            let Some(node) = usize::try_from(row.index())
                 .ok()
                 .and_then(|index| view.state.order.borrow().get(index).cloned())
             else {
                 return;
             };
-            if !view.state.expanded.borrow_mut().remove(&pane_id) {
-                view.state.expanded.borrow_mut().insert(pane_id);
+            match node {
+                NodeId::Worklane(window_id, worklane_id) => {
+                    let key = (window_id, worklane_id);
+                    if !view.state.collapsed_worklanes.borrow_mut().remove(&key) {
+                        view.state.collapsed_worklanes.borrow_mut().insert(key);
+                    }
+                }
+                NodeId::Pane(pane_id) => {
+                    if !view.state.expanded.borrow_mut().remove(&pane_id) {
+                        view.state.expanded.borrow_mut().insert(pane_id);
+                    }
+                }
+                NodeId::Process(_, _) => return,
             }
             view.render();
         });
@@ -270,12 +289,26 @@ impl TaskManagerView {
             .filter(|row| row.matches(&query))
             .cloned()
             .collect::<Vec<_>>();
+        let searching = !query.trim().is_empty();
         let expanded = self.state.expanded.borrow().clone();
+        let collapsed_worklanes = self.state.collapsed_worklanes.borrow().clone();
         let mut order = Vec::new();
+        let mut previous_worklane = None;
         for row in &rows {
+            let worklane_key = (row.source.window_id.clone(), row.source.worklane_id.clone());
+            if previous_worklane.as_ref() != Some(&worklane_key) {
+                order.push(NodeId::Worklane(
+                    worklane_key.0.clone(),
+                    worklane_key.1.clone(),
+                ));
+                previous_worklane = Some(worklane_key.clone());
+            }
+            if !searching && collapsed_worklanes.contains(&worklane_key) {
+                continue;
+            }
             let stable_id = row.source.stable_id();
             order.push(NodeId::Pane(stable_id.clone()));
-            if expanded.contains(&stable_id) {
+            if row.processes.len() > 1 && expanded.contains(&stable_id) {
                 order.extend(
                     row.processes
                         .iter()
@@ -289,23 +322,17 @@ impl TaskManagerView {
         }
         {
             let mut widgets = self.state.widgets.borrow_mut();
-            let valid = rows
-                .iter()
-                .flat_map(|row| {
-                    let stable_id = row.source.stable_id();
-                    std::iter::once(NodeId::Pane(stable_id.clone())).chain(
-                        row.processes
-                            .iter()
-                            .map(move |process| NodeId::Process(stable_id.clone(), process.pid)),
-                    )
-                })
-                .collect::<BTreeSet<_>>();
+            let valid = order.iter().cloned().collect::<BTreeSet<_>>();
             widgets.retain(|id, _| valid.contains(id));
             for (index, id) in order.iter().enumerate() {
-                let row_widgets = widgets
-                    .entry(id.clone())
-                    .or_insert_with(|| make_row(Rc::downgrade(&self.state), id.clone()));
-                update_row(row_widgets, id, &rows, &expanded);
+                let row_widgets = widgets.entry(id.clone()).or_insert_with(|| {
+                    make_row(
+                        Rc::downgrade(&self.state),
+                        id.clone(),
+                        &self.state.column_groups,
+                    )
+                });
+                update_row(row_widgets, id, &rows, &expanded, &collapsed_worklanes);
                 self.state.list.insert(
                     &row_widgets.row,
                     i32::try_from(index).expect("bounded task-manager row count fits i32"),
@@ -324,9 +351,14 @@ impl TaskManagerView {
             self.state.list.select_row(Some(&row));
         }
         self.update_buttons();
+        let visible_worklanes = order
+            .iter()
+            .filter(|node| matches!(node, NodeId::Worklane(_, _)))
+            .count();
         eprintln!(
-            "zentty-linux: task-manager rows={} visible={} query={:?}",
+            "zentty-linux: task-manager rows={} worklanes={} visible={} query={:?}",
             self.state.rows.borrow().len(),
+            visible_worklanes,
             order.len(),
             query.as_str()
         );
@@ -335,6 +367,7 @@ impl TaskManagerView {
     fn selected_pane(&self) -> Option<PaneRow> {
         let pane_id = match self.state.selected.borrow().as_ref()? {
             NodeId::Pane(pane_id) | NodeId::Process(pane_id, _) => pane_id.clone(),
+            NodeId::Worklane(_, _) => return None,
         };
         self.state
             .rows
@@ -346,6 +379,7 @@ impl TaskManagerView {
 
     fn selected_pid(&self) -> Option<u32> {
         match self.state.selected.borrow().as_ref()? {
+            NodeId::Worklane(_, _) => None,
             NodeId::Pane(pane_id) => self
                 .state
                 .rows
@@ -370,9 +404,10 @@ impl TaskManagerView {
     }
 }
 
-fn header() -> gtk::Grid {
+fn header(column_groups: &[gtk::SizeGroup]) -> gtk::Grid {
     let grid = gtk::Grid::new();
     grid.add_css_class("task-manager-header");
+    grid.set_column_spacing(12);
     for (column, title) in [
         "Pane",
         "Status",
@@ -392,6 +427,7 @@ fn header() -> gtk::Grid {
             0.0
         });
         label.set_width_chars(column_width(column));
+        column_groups[column].add_widget(&label);
         grid.attach(
             &label,
             i32::try_from(column).expect("task-manager has seven columns"),
@@ -403,18 +439,21 @@ fn header() -> gtk::Grid {
     grid
 }
 
-fn make_row(state: Weak<ViewState>, id: NodeId) -> RowWidgets {
+fn make_row(state: Weak<ViewState>, id: NodeId, column_groups: &[gtk::SizeGroup]) -> RowWidgets {
     let row = gtk::ListBoxRow::new();
     let grid = gtk::Grid::new();
-    grid.set_column_spacing(8);
+    grid.set_column_spacing(12);
+    grid.set_hexpand(true);
     let expander = gtk::Button::new();
     expander.add_css_class("task-manager-expander");
     let pane_box = gtk::Box::new(gtk::Orientation::Horizontal, 4);
     pane_box.append(&expander);
     let pane = gtk::Label::new(None);
     pane.set_xalign(0.0);
+    pane.set_width_chars(column_width(0));
     pane.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
     pane_box.append(&pane);
+    column_groups[0].add_widget(&pane_box);
     grid.attach(&pane_box, 0, 0, 1, 1);
     let labels = (1..7)
         .map(|column| {
@@ -426,6 +465,7 @@ fn make_row(state: Weak<ViewState>, id: NodeId) -> RowWidgets {
             });
             label.set_width_chars(column_width(column));
             label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            column_groups[column].add_widget(&label);
             grid.attach(
                 &label,
                 i32::try_from(column).expect("task-manager has seven columns"),
@@ -437,11 +477,22 @@ fn make_row(state: Weak<ViewState>, id: NodeId) -> RowWidgets {
         })
         .collect::<Vec<_>>();
     row.set_child(Some(&grid));
-    if let NodeId::Pane(pane_id) = id {
+    if matches!(&id, NodeId::Pane(_) | NodeId::Worklane(_, _)) {
         expander.connect_clicked(move |_| {
             let Some(state) = state.upgrade() else { return };
-            if !state.expanded.borrow_mut().remove(&pane_id) {
-                state.expanded.borrow_mut().insert(pane_id.clone());
+            match &id {
+                NodeId::Worklane(window_id, worklane_id) => {
+                    let key = (window_id.clone(), worklane_id.clone());
+                    if !state.collapsed_worklanes.borrow_mut().remove(&key) {
+                        state.collapsed_worklanes.borrow_mut().insert(key);
+                    }
+                }
+                NodeId::Pane(pane_id) => {
+                    if !state.expanded.borrow_mut().remove(pane_id) {
+                        state.expanded.borrow_mut().insert(pane_id.clone());
+                    }
+                }
+                NodeId::Process(_, _) => {}
             }
             TaskManagerView { state }.render();
         });
@@ -459,48 +510,19 @@ fn make_row(state: Weak<ViewState>, id: NodeId) -> RowWidgets {
     }
 }
 
-fn update_row(widgets: &RowWidgets, id: &NodeId, rows: &[PaneRow], expanded: &BTreeSet<String>) {
+fn update_row(
+    widgets: &RowWidgets,
+    id: &NodeId,
+    rows: &[PaneRow],
+    expanded: &BTreeSet<String>,
+    collapsed_worklanes: &BTreeSet<(String, String)>,
+) {
     match id {
+        NodeId::Worklane(window_id, worklane_id) => {
+            update_worklane_row(widgets, rows, window_id, worklane_id, collapsed_worklanes);
+        }
         NodeId::Pane(pane_id) => {
-            let Some(row) = rows.iter().find(|row| &row.source.stable_id() == pane_id) else {
-                return;
-            };
-            widgets.row.remove_css_class("task-manager-process-row");
-            widgets.expander.set_visible(!row.processes.is_empty());
-            widgets.expander.set_label(if expanded.contains(pane_id) {
-                "▾"
-            } else {
-                "▸"
-            });
-            widgets.pane.set_text(&row.source.pane_title);
-            widgets.status.set_text(row.status_text());
-            widgets.cpu.set_text(&format_cpu(row.cpu_percent));
-            widgets.memory.set_text(&format_memory(row.memory_bytes));
-            widgets.network.set_text(match &row.network_state {
-                NetworkState::Unavailable(_) => "-",
-            });
-            widgets.hottest.set_text(
-                row.hottest_process
-                    .as_ref()
-                    .map_or("", |process| &process.name),
-            );
-            widgets.root_pid.set_text(
-                &row.source
-                    .root_pid
-                    .map_or_else(|| "-".to_owned(), |pid| pid.to_string()),
-            );
-            widgets
-                .row
-                .update_property(&[gtk::accessible::Property::Label(&format!(
-                    "Pane {}, status {}, CPU {}, memory {}, root PID {}",
-                    row.source.pane_title,
-                    row.status_text(),
-                    format_cpu(row.cpu_percent),
-                    format_memory(row.memory_bytes),
-                    row.source
-                        .root_pid
-                        .map_or_else(|| "unavailable".to_owned(), |pid| pid.to_string())
-                ))]);
+            update_pane_row(widgets, rows, pane_id, expanded);
         }
         NodeId::Process(pane_id, pid) => {
             let Some(process) = rows
@@ -515,9 +537,121 @@ fn update_row(widgets: &RowWidgets, id: &NodeId, rows: &[PaneRow], expanded: &BT
     }
 }
 
+fn update_worklane_row(
+    widgets: &RowWidgets,
+    rows: &[PaneRow],
+    window_id: &str,
+    worklane_id: &str,
+    collapsed_worklanes: &BTreeSet<(String, String)>,
+) {
+    let grouped = rows
+        .iter()
+        .filter(|row| row.source.window_id == window_id && row.source.worklane_id == worklane_id)
+        .collect::<Vec<_>>();
+    let Some(first) = grouped.first() else { return };
+    let cpu = grouped
+        .iter()
+        .filter_map(|row| row.cpu_percent)
+        .sum::<f64>();
+    let memory = grouped
+        .iter()
+        .filter_map(|row| row.memory_bytes)
+        .sum::<u64>();
+    let hottest = grouped
+        .iter()
+        .filter_map(|row| row.hottest_process.as_ref())
+        .max_by(|left, right| left.cpu_percent.total_cmp(&right.cpu_percent));
+    widgets.row.remove_css_class("task-manager-process-row");
+    widgets.row.add_css_class("task-manager-worklane-row");
+    widgets.pane.set_margin_start(0);
+    configure_expander(
+        &widgets.expander,
+        Some(
+            if collapsed_worklanes.contains(&(window_id.to_owned(), worklane_id.to_owned())) {
+                "▸"
+            } else {
+                "▾"
+            },
+        ),
+    );
+    widgets.pane.set_text(&first.source.worklane_title);
+    widgets.status.set_text(&format!("{} panes", grouped.len()));
+    widgets.cpu.set_text(&format_cpu(Some(cpu)));
+    widgets.memory.set_text(&format_memory(Some(memory)));
+    widgets.network.set_text("-");
+    widgets
+        .hottest
+        .set_text(hottest.map_or("", |process| &process.name));
+    widgets.root_pid.set_text("");
+    widgets
+        .row
+        .update_property(&[gtk::accessible::Property::Label(&format!(
+            "Worklane {}, {} panes, CPU {}, memory {}",
+            first.source.worklane_title,
+            grouped.len(),
+            format_cpu(Some(cpu)),
+            format_memory(Some(memory))
+        ))]);
+}
+
+fn update_pane_row(
+    widgets: &RowWidgets,
+    rows: &[PaneRow],
+    pane_id: &str,
+    expanded: &BTreeSet<String>,
+) {
+    let Some(row) = rows.iter().find(|row| row.source.stable_id() == pane_id) else {
+        return;
+    };
+    widgets.row.remove_css_class("task-manager-worklane-row");
+    widgets.row.remove_css_class("task-manager-process-row");
+    widgets.pane.set_margin_start(16);
+    configure_expander(
+        &widgets.expander,
+        (row.processes.len() > 1).then(|| {
+            if expanded.contains(pane_id) {
+                "▾"
+            } else {
+                "▸"
+            }
+        }),
+    );
+    widgets.pane.set_text(&row.source.pane_title);
+    widgets.status.set_text(row.status_text());
+    widgets.cpu.set_text(&format_cpu(row.cpu_percent));
+    widgets.memory.set_text(&format_memory(row.memory_bytes));
+    widgets.network.set_text(match &row.network_state {
+        NetworkState::Unavailable(_) => "-",
+    });
+    widgets.hottest.set_text(
+        row.hottest_process
+            .as_ref()
+            .map_or("", |process| &process.name),
+    );
+    widgets.root_pid.set_text(
+        &row.source
+            .root_pid
+            .map_or_else(|| "-".to_owned(), |pid| pid.to_string()),
+    );
+    widgets
+        .row
+        .update_property(&[gtk::accessible::Property::Label(&format!(
+            "Pane {}, status {}, CPU {}, memory {}, root PID {}",
+            row.source.pane_title,
+            row.status_text(),
+            format_cpu(row.cpu_percent),
+            format_memory(row.memory_bytes),
+            row.source
+                .root_pid
+                .map_or_else(|| "unavailable".to_owned(), |pid| pid.to_string())
+        ))]);
+}
+
 fn update_process_row(widgets: &RowWidgets, process: &ProcessMetric) {
+    widgets.row.remove_css_class("task-manager-worklane-row");
     widgets.row.add_css_class("task-manager-process-row");
-    widgets.expander.set_visible(false);
+    widgets.pane.set_margin_start(32);
+    configure_expander(&widgets.expander, None);
     widgets.pane.set_text(&process.name);
     widgets.status.set_text(&format!("PID {}", process.pid));
     widgets.cpu.set_text(&format_cpu(Some(process.cpu_percent)));
@@ -536,6 +670,14 @@ fn update_process_row(widgets: &RowWidgets, process: &ProcessMetric) {
             format_cpu(Some(process.cpu_percent)),
             format_memory(Some(process.memory_bytes))
         ))]);
+}
+
+fn configure_expander(button: &gtk::Button, label: Option<&str>) {
+    button.set_visible(true);
+    button.set_label(label.unwrap_or("▸"));
+    button.set_opacity(if label.is_some() { 1.0 } else { 0.0 });
+    button.set_can_target(label.is_some());
+    button.set_focusable(label.is_some());
 }
 
 const fn column_width(column: usize) -> i32 {
@@ -560,8 +702,13 @@ fn install_styles() {
          .task-manager-header { background: #292e36; border-bottom: 1px solid #48505d; padding: 8px; font-weight: 700; }\n\
          .task-manager-list { background: #20242b; }\n\
          .task-manager-list row { padding: 6px 8px; border-bottom: 1px solid #303640; }\n\
-         .task-manager-list row:selected { background: #094771; color: #ffffff; }\n\
-         .task-manager-process-row { background: #1c2026; color: #c5cad3; }\n\
+         .task-manager-list row label { color: #e7e9ee; }\n\
+         .task-manager-list row:selected { background: #094771; }\n\
+         .task-manager-list row:selected label { color: #ffffff; }\n\
+         .task-manager-worklane-row { background: #303640; border-top: 1px solid #596373; }\n\
+         .task-manager-worklane-row label { color: #ffffff; font-weight: 700; }\n\
+         .task-manager-process-row { background: #1c2026; }\n\
+         .task-manager-process-row label { color: #c5cad3; }\n\
          .task-manager-expander { min-width: 22px; min-height: 20px; padding: 0; background: transparent; border: 0; box-shadow: none; }",
     );
     gtk::style_context_add_provider_for_display(

@@ -49,7 +49,7 @@ case "${GDK_BACKEND:-}" in
         ;;
     *) fail "GDK_BACKEND must be x11 or wayland" ;;
 esac
-for dependency in claude grep jq mktemp readlink tr; do
+for dependency in claude grep jq mktemp readlink timeout tr; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
 [[ -x "${product}" ]] || fail "staged Zentty product is missing: ${product}"
@@ -85,9 +85,35 @@ endpoint="$(sed -n 's/^CONTROLLED_ANTHROPIC_READY=//p' "${fixture}/server.log")"
 [[ "${endpoint}" =~ ^http://127\.0\.0\.1:[1-9][0-9]*$ ]] ||
     fail "controlled endpoint did not publish a loopback address"
 
+# This real Claude/team journey shares the qualification host with the Ghostty
+# regression and debug builds. Twenty-five seconds proved to be a
+# scheduler-contention deadline rather than a product deadline: the model
+# protocol was still making valid progress when timeout killed Zentty.
+export ZENTTY_AMBIENT_SECRET_SENTINEL=must-not-cross-product-boundary
 set +e
-env \
+env -i \
+    PATH="${fixture}/home/.local/bin:/usr/local/bin:/usr/bin:/bin" \
     HOME="${fixture}/home" \
+    SHELL=/bin/bash \
+    TERM=xterm-256color \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    DISPLAY="${DISPLAY:-}" \
+    WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-}" \
+    XAUTHORITY="${XAUTHORITY:-}" \
+    GDK_BACKEND="${GDK_BACKEND}" \
+    XDG_SESSION_TYPE="${XDG_SESSION_TYPE:-}" \
+    XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-}" \
+    XDG_CACHE_HOME="${XDG_CACHE_HOME:-}" \
+    XDG_DATA_HOME="${XDG_DATA_HOME:-}" \
+    XDG_STATE_HOME="${XDG_STATE_HOME:-}" \
+    XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-}" \
+    TMPDIR="${TMPDIR:-/tmp}" \
+    LIBGL_ALWAYS_SOFTWARE="${LIBGL_ALWAYS_SOFTWARE:-1}" \
+    GSETTINGS_BACKEND="${GSETTINGS_BACKEND:-memory}" \
+    GIO_USE_VFS="${GIO_USE_VFS:-local}" \
+    NO_AT_BRIDGE=1 \
+    GTK_A11Y=none \
     DBUS_SESSION_BUS_ADDRESS="unix:path=${fixture}/absent-session-bus" \
     AT_SPI_BUS_ADDRESS="unix:path=${fixture}/absent-at-spi-bus" \
     ANTHROPIC_AUTH_TOKEN=controlled-not-secret \
@@ -100,7 +126,7 @@ env \
     ZENTTY_CONTROLLED_CLAUDE_RECEIPT="${fixture}/model-receipt.jsonl" \
     ZENTTY_CONTROLLED_MODEL_PID="${server_pid}" \
     ZENTTY_CONTROLLED_AGENT_PROJECT="${fixture}/project" \
-    timeout 25s "${product}" \
+    timeout --kill-after=5s 45s "${product}" \
         --command "${actor}" \
         --no-session-restore \
         --state-directory "${fixture}/state" \
@@ -135,8 +161,12 @@ jq -e -s '
     any(.[]; .role == "leader_followup" and .toolResultCount == 1 and .toolResultErrors == 0) and
     any(.[]; .role == "teammate" and .agentTool and .sendMessageTool)
 ' "${fixture}/model-receipt.jsonl" >/dev/null || fail "sanitized model receipt is incomplete"
-grep -Fxq "claude=<${product%/bin/zentty-linux}/libexec/zentty/agent-wrappers/claude/claude> tmux=<${product%/bin/zentty-linux}/libexec/zentty/tmux-shim/tmux> endpoint=<${endpoint}>" \
+grep -Fxq "claude=<${product%/bin/zentty-linux}/libexec/zentty/agent-wrappers/claude/claude> tmux=<${product%/bin/zentty-linux}/libexec/zentty/tmux-shim/tmux> endpoint=<${endpoint}> ambient-secret=<unset>" \
     "${fixture}/child-env" || fail "child did not resolve the relocated staged wrappers"
+if grep -RFq -- "${ZENTTY_AMBIENT_SECRET_SENTINEL}" \
+    "${fixture}/model-receipt.jsonl" "${fixture}/server.log" "${fixture}/product.log"; then
+    fail "ambient secret sentinel crossed the product environment boundary"
+fi
 if grep -RFq 'controlled-not-secret' \
     "${fixture}/model-receipt.jsonl" "${fixture}/server.log" "${fixture}/product.log"; then
     fail "authorization value escaped into retained evidence"

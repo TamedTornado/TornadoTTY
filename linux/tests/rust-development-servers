@@ -98,8 +98,12 @@ for _ in \$(seq 1 200); do
     [[ -s '${watch_receipt}' ]] && break
     sleep 0.01
 done
-"\${ZENTTY_CLI_BIN}" server list --json >'${watch_list_receipt}'
 watch_url=\$(sed -n 's/^url=//p' '${watch_receipt}')
+for _ in \$(seq 1 200); do
+    "\${ZENTTY_CLI_BIN}" server list --json >'${watch_list_receipt}'
+    grep -Fq "\${watch_url}" '${watch_list_receipt}' && break
+    sleep 0.01
+done
 "\${ZENTTY_CLI_BIN}" server open "\${watch_url}"
 for _ in \$(seq 1 200); do
     [[ -s '${open_receipt}' ]] && break

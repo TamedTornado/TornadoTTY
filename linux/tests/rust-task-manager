@@ -134,12 +134,12 @@ for _ in $(seq 1 300); do
     else
         task_window=wayland-focused
     fi
-    grep -Fq 'task-manager rows=2 visible=2 query=""' "${log}" && [[ -n "${task_window}" ]] && break
+    grep -Fq 'task-manager rows=2 worklanes=1 visible=3 query=""' "${log}" && [[ -n "${task_window}" ]] && break
     sleep 0.05
 done
 [[ -n "${task_window}" ]] || fail "real Task Manager window did not appear"
-grep -Fq 'task-manager rows=2 visible=2 query=""' "${log}" ||
-    fail "Task Manager did not aggregate both real panes"
+grep -Fq 'task-manager rows=2 worklanes=1 visible=3 query=""' "${log}" ||
+    fail "Task Manager did not group both real panes under their worklane"
 
 # The first sample intentionally has no CPU delta. Wait for the next real kernel
 # sample and require both the parent/child tree and nonzero CPU/memory metrics.
@@ -193,21 +193,39 @@ task_type() {
     fi
 }
 
-# Search the live child PID, traverse to the real list, expand it, then invoke
-# Copy PID and Focus Pane through the actual GTK keyboard focus chain.
-task_type "${child_pid}"
-for _ in $(seq 1 100); do
-    grep -Fq "task-manager rows=2 visible=1 query=\"${child_pid}\"" "${log}" && break
-    sleep 0.05
-done
-grep -Fq "task-manager rows=2 visible=1 query=\"${child_pid}\"" "${log}" ||
-    fail "Task Manager search did not resolve the real child PID"
+# Collapse and restore the real worklane group before searching. This proves
+# grouping is an interactive hierarchy rather than a decorative label.
 task_key Down Return
 for _ in $(seq 1 100); do
-    grep -Fq "task-manager rows=2 visible=3 query=\"${child_pid}\"" "${log}" && break
+    grep -Fq 'task-manager rows=2 worklanes=1 visible=1 query=""' "${log}" && break
     sleep 0.05
 done
-grep -Fq "task-manager rows=2 visible=3 query=\"${child_pid}\"" "${log}" ||
+grep -Fq 'task-manager rows=2 worklanes=1 visible=1 query=""' "${log}" ||
+    fail "Task Manager worklane group did not collapse"
+task_key ctrl+f Down Return
+for _ in $(seq 1 100); do
+    grep -Fq 'task-manager rows=2 worklanes=1 visible=3 query=""' "${log}" && break
+    sleep 0.05
+done
+grep -Fq 'task-manager rows=2 worklanes=1 visible=3 query=""' "${log}" ||
+    fail "Task Manager worklane group did not restore its pane rows"
+
+# Search the live child PID, traverse past the containing worklane to the real
+# pane row, expand it, then invoke Copy PID and Focus Pane through GTK focus.
+task_key ctrl+f
+task_type "${child_pid}"
+for _ in $(seq 1 100); do
+    grep -Fq "task-manager rows=2 worklanes=1 visible=2 query=\"${child_pid}\"" "${log}" && break
+    sleep 0.05
+done
+grep -Fq "task-manager rows=2 worklanes=1 visible=2 query=\"${child_pid}\"" "${log}" ||
+    fail "Task Manager search did not resolve the real child PID"
+task_key Down Down Return
+for _ in $(seq 1 100); do
+    grep -Fq "task-manager rows=2 worklanes=1 visible=4 query=\"${child_pid}\"" "${log}" && break
+    sleep 0.05
+done
+grep -Fq "task-manager rows=2 worklanes=1 visible=4 query=\"${child_pid}\"" "${log}" ||
     fail "Task Manager did not expand the real process tree"
 task_key ctrl+shift+c
 for _ in $(seq 1 100); do
@@ -234,7 +252,7 @@ grep -Fq 'task-manager focus-pane window=' "${log}" || fail "Focus Pane did not 
 activate_palette_query 'Task Manager'
 task_key ctrl+f ctrl+a
 task_type "${root_pid}"
-task_key Down Delete
+task_key Down Down Delete
 for _ in $(seq 1 200); do
     grep -Fq 'zentty-linux: action=close-pane pane=' "${log}" && break
     sleep 0.05
@@ -242,4 +260,4 @@ done
 grep -Fq 'zentty-linux: action=close-pane pane=' "${log}" ||
     fail "End Task did not use the existing pane close lifecycle"
 
-echo "rust-task-manager-${backend}: PASS real-proc real-ghostty-pty multi-pane search expand clipboard focus close network-explicitly-unavailable"
+echo "rust-task-manager-${backend}: PASS real-proc real-ghostty-pty worklane-group multi-pane search expand clipboard focus close network-explicitly-unavailable"
