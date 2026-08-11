@@ -5,7 +5,10 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use gtk::{gio, glib};
-use zentty_core::{ChecksState, ProjectContext, PullRequestState, SystemProjectContextResolver};
+use zentty_core::{
+    ChecksState, ProjectContext, ProjectIconCache, ProjectIconLookup, PullRequestState,
+    SystemProjectContextResolver,
+};
 
 use super::ApplicationShell;
 
@@ -21,6 +24,9 @@ pub(super) struct ProjectContextRuntime {
     last_active_pane: Option<String>,
     last_refresh: BTreeMap<String, Instant>,
     pub(super) contexts: BTreeMap<String, ProjectContext>,
+    icon_cache: ProjectIconCache,
+    icon_invalidations: BTreeSet<PathBuf>,
+    pub(super) icons: BTreeMap<String, PathBuf>,
 }
 
 #[derive(Clone, Debug)]
@@ -48,11 +54,36 @@ pub(super) fn install(shell: &Rc<RefCell<ApplicationShell>>) -> glib::SourceId {
 pub(super) fn refresh_focused(shell: &Rc<RefCell<ApplicationShell>>) {
     let pane_id = shell.borrow().state.focused_pane_id().map(str::to_owned);
     if let Some(pane_id) = pane_id {
-        shell
-            .borrow_mut()
+        let mut shell_ref = shell.borrow_mut();
+        let icon_root = shell_ref
+            .project_context_runtime
+            .contexts
+            .get(&pane_id)
+            .map(|context| context.repository_root.clone())
+            .or_else(|| {
+                shell_ref
+                    .state
+                    .pane(&pane_id)
+                    .and_then(|pane| pane.working_directory.as_deref())
+                    .map(PathBuf::from)
+            });
+        if let Some(icon_root) = icon_root {
+            if shell_ref.project_context_runtime.probe_in_flight {
+                shell_ref
+                    .project_context_runtime
+                    .icon_invalidations
+                    .insert(icon_root.clone());
+            }
+            shell_ref
+                .project_context_runtime
+                .icon_cache
+                .invalidate(&icon_root);
+        }
+        shell_ref
             .project_context_runtime
             .force_panes
             .insert(pane_id);
+        drop(shell_ref);
         request_probe(shell);
     }
 }
@@ -62,6 +93,17 @@ pub(super) fn mark_pane_for_refresh(shell: &mut ApplicationShell, pane_id: &str)
         .project_context_runtime
         .force_panes
         .insert(pane_id.to_owned());
+}
+
+pub(super) fn forget_pane(shell: &mut ApplicationShell, pane_id: &str) {
+    let runtime = &mut shell.project_context_runtime;
+    runtime.force_panes.remove(pane_id);
+    runtime.last_refresh.remove(pane_id);
+    runtime.contexts.remove(pane_id);
+    runtime.icons.remove(pane_id);
+    if runtime.last_active_pane.as_deref() == Some(pane_id) {
+        runtime.last_active_pane = None;
+    }
 }
 
 pub(super) fn open_focused_branch(shell: &Rc<RefCell<ApplicationShell>>) {
@@ -214,9 +256,10 @@ fn request_probe(shell: &Rc<RefCell<ApplicationShell>>) {
         sources
     };
 
+    let icon_cache = shell.borrow().project_context_runtime.icon_cache.clone();
     let weak = Rc::downgrade(shell);
     glib::spawn_future_local(async move {
-        let result = gio::spawn_blocking(move || probe(sources)).await;
+        let result = gio::spawn_blocking(move || probe(sources, icon_cache)).await;
         let Some(shell) = weak.upgrade() else {
             return;
         };
@@ -226,10 +269,27 @@ fn request_probe(shell: &Rc<RefCell<ApplicationShell>>) {
             return;
         }
         match result {
-            Ok(results) => apply_results(&mut shell, results),
+            Ok((icon_cache, results)) => {
+                let icon_cache = apply_icon_invalidations(
+                    icon_cache,
+                    std::mem::take(&mut shell.project_context_runtime.icon_invalidations),
+                );
+                shell.project_context_runtime.icon_cache = icon_cache;
+                apply_results(&mut shell, results);
+            }
             Err(_) => eprintln!("zentty-linux: project-context error=worker-panic"),
         }
     });
+}
+
+fn apply_icon_invalidations(
+    mut cache: ProjectIconCache,
+    invalidations: BTreeSet<PathBuf>,
+) -> ProjectIconCache {
+    for root in invalidations {
+        cache.invalidate(&root);
+    }
+    cache
 }
 
 fn adaptive_refresh_interval(context: &ProjectContext) -> Duration {
@@ -251,83 +311,185 @@ fn process_working_directory(pid: u64) -> std::io::Result<PathBuf> {
     std::fs::read_link(Path::new("/proc").join(pid.to_string()).join("cwd"))
 }
 
-fn probe(sources: Vec<ProbeSource>) -> Vec<(ProbeSource, Result<Option<ProjectContext>, String>)> {
-    let resolver = SystemProjectContextResolver::default();
-    sources
-        .into_iter()
-        .map(|source| {
-            let result = resolver
-                .resolve(&source.working_directory)
-                .map_err(|error| error.to_string());
-            (source, result)
-        })
-        .collect()
+struct ProbeResult {
+    source: ProbeSource,
+    context: Result<Option<ProjectContext>, String>,
+    icon: Result<ProjectIconLookup, String>,
 }
 
-fn apply_results(
-    shell: &mut ApplicationShell,
-    results: Vec<(ProbeSource, Result<Option<ProjectContext>, String>)>,
-) {
+fn probe(
+    sources: Vec<ProbeSource>,
+    mut icon_cache: ProjectIconCache,
+) -> (ProjectIconCache, Vec<ProbeResult>) {
+    let resolver = SystemProjectContextResolver::default();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs());
+    let results = sources
+        .into_iter()
+        .map(|source| {
+            let context = resolver
+                .resolve(&source.working_directory)
+                .map_err(|error| error.to_string());
+            let icon_root = context
+                .as_ref()
+                .ok()
+                .and_then(|context| context.as_ref())
+                .map_or(source.working_directory.as_path(), |context| {
+                    context.repository_root.as_path()
+                });
+            let icon = icon_cache.resolve_at(icon_root, now);
+            ProbeResult {
+                source,
+                context,
+                icon,
+            }
+        })
+        .collect();
+    (icon_cache, results)
+}
+
+fn apply_results(shell: &mut ApplicationShell, results: Vec<ProbeResult>) {
     let now = Instant::now();
     let mut changed = false;
-    for (source, result) in results {
+    for ProbeResult {
+        source,
+        context,
+        icon,
+    } in results
+    {
+        if !observation_is_current(shell, &source) {
+            shell
+                .project_context_runtime
+                .force_panes
+                .insert(source.pane_id);
+            continue;
+        }
         shell
             .project_context_runtime
             .last_refresh
             .insert(source.pane_id.clone(), now);
-        match result {
-            Ok(Some(mut context)) => {
-                if let Some(previous) = shell.project_context_runtime.contexts.get(&source.pane_id)
-                {
-                    preserve_review_on_refresh_failure(previous, &mut context);
-                }
-                changed |=
-                    shell.project_context_runtime.contexts.get(&source.pane_id) != Some(&context);
-                eprintln!(
-                    "zentty-linux: project-context pane={} root={} reference={} dirty={} pr={} refresh={} active={} forced={}",
-                    source.pane_id,
-                    context.repository_root.display(),
-                    context.reference.display(),
-                    context.dirty,
-                    context.review.as_ref().map_or_else(
-                        || "none".to_owned(),
-                        |review| review.pull_request.number.to_string()
-                    ),
-                    if context.review_error.is_some() {
-                        "stale-error"
-                    } else {
-                        "fresh"
-                    },
-                    source.active,
-                    source.forced
-                );
-                shell
-                    .project_context_runtime
-                    .contexts
-                    .insert(source.pane_id, context);
-            }
-            Ok(None) => {
-                changed |= shell
-                    .project_context_runtime
-                    .contexts
-                    .remove(&source.pane_id)
-                    .is_some();
-                eprintln!(
-                    "zentty-linux: project-context pane={} repository=none",
-                    source.pane_id
-                );
-            }
-            Err(error) => {
-                eprintln!(
-                    "zentty-linux: project-context pane={} error={error}",
-                    source.pane_id
-                );
-            }
-        }
+        changed |= apply_icon_result(shell, &source.pane_id, icon);
+        changed |= apply_context_result(shell, &source, context);
     }
     if changed {
         shell.refresh_project_context_presentation();
     }
+}
+
+fn apply_icon_result(
+    shell: &mut ApplicationShell,
+    pane_id: &str,
+    icon: Result<ProjectIconLookup, String>,
+) -> bool {
+    match icon {
+        Ok(ProjectIconLookup::Hit(path)) => {
+            let changed = shell.project_context_runtime.icons.get(pane_id) != Some(&path);
+            eprintln!(
+                "zentty-linux: project-icon pane={pane_id} path={} result=resolved",
+                path.display()
+            );
+            shell
+                .project_context_runtime
+                .icons
+                .insert(pane_id.to_owned(), path);
+            changed
+        }
+        Ok(ProjectIconLookup::Miss) => {
+            let changed = shell
+                .project_context_runtime
+                .icons
+                .remove(pane_id)
+                .is_some();
+            eprintln!("zentty-linux: project-icon pane={pane_id} result=missing");
+            changed
+        }
+        Err(error) => {
+            eprintln!("zentty-linux: project-icon pane={pane_id} error={error}");
+            false
+        }
+    }
+}
+
+fn apply_context_result(
+    shell: &mut ApplicationShell,
+    source: &ProbeSource,
+    context: Result<Option<ProjectContext>, String>,
+) -> bool {
+    match context {
+        Ok(Some(mut context)) => {
+            if let Some(previous) = shell.project_context_runtime.contexts.get(&source.pane_id) {
+                preserve_review_on_refresh_failure(previous, &mut context);
+            }
+            let changed =
+                shell.project_context_runtime.contexts.get(&source.pane_id) != Some(&context);
+            eprintln!(
+                "zentty-linux: project-context pane={} root={} reference={} dirty={} pr={} refresh={} active={} forced={}",
+                source.pane_id,
+                context.repository_root.display(),
+                context.reference.display(),
+                context.dirty,
+                context.review.as_ref().map_or_else(
+                    || "none".to_owned(),
+                    |review| review.pull_request.number.to_string()
+                ),
+                if context.review_error.is_some() {
+                    "stale-error"
+                } else {
+                    "fresh"
+                },
+                source.active,
+                source.forced
+            );
+            shell
+                .project_context_runtime
+                .contexts
+                .insert(source.pane_id.clone(), context);
+            changed
+        }
+        Ok(None) => {
+            let changed = shell
+                .project_context_runtime
+                .contexts
+                .remove(&source.pane_id)
+                .is_some();
+            eprintln!(
+                "zentty-linux: project-context pane={} repository=none",
+                source.pane_id
+            );
+            changed
+        }
+        Err(error) => {
+            eprintln!(
+                "zentty-linux: project-context pane={} error={error}",
+                source.pane_id
+            );
+            false
+        }
+    }
+}
+
+fn observation_is_current(shell: &ApplicationShell, source: &ProbeSource) -> bool {
+    let Some(pane) = shell.state.pane(&source.pane_id) else {
+        return false;
+    };
+    let current = shell
+        .pane_runtime
+        .surface(&pane.id)
+        .and_then(zentty_ghostty::GhosttySurface::foreground_process_id)
+        .and_then(|pid| process_working_directory(pid).ok())
+        .or_else(|| pane.working_directory.as_deref().map(PathBuf::from));
+    current.is_some_and(|current| canonical_directories_match(&current, &source.working_directory))
+}
+
+fn canonical_directories_match(current: &Path, observed: &Path) -> bool {
+    matches!(
+        (
+            std::fs::canonicalize(current),
+            std::fs::canonicalize(observed)
+        ),
+        (Ok(current), Ok(observed)) if current == observed
+    )
 }
 
 fn preserve_review_on_refresh_failure(previous: &ProjectContext, next: &mut ProjectContext) {
@@ -342,15 +504,61 @@ fn preserve_review_on_refresh_failure(previous: &ProjectContext, next: &mut Proj
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::Duration;
 
     use zentty_core::{
-        ChecksState, GitReference, ProjectContext, PullRequestState, PullRequestSummary,
-        ReviewContext,
+        ChecksState, GitReference, ProjectContext, ProjectIconCache, ProjectIconLookup,
+        PullRequestState, PullRequestSummary, ReviewContext,
     };
 
-    use super::{adaptive_refresh_interval, preserve_review_on_refresh_failure, safe_http_url};
+    use super::{
+        adaptive_refresh_interval, apply_icon_invalidations, canonical_directories_match,
+        preserve_review_on_refresh_failure, safe_http_url,
+    };
+
+    static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(1);
+
+    #[test]
+    fn invalidation_during_a_probe_is_applied_to_the_returned_cache() {
+        let root = std::env::temp_dir().join(format!(
+            "zentty-project-cache-{}-{}",
+            std::process::id(),
+            NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&root).expect("project directory");
+        let mut worker_cache = ProjectIconCache::default();
+        assert_eq!(
+            worker_cache.resolve_at(&root, 0).expect("initial miss"),
+            ProjectIconLookup::Miss
+        );
+        fs::write(root.join("favicon.svg"), b"<svg></svg>").expect("new icon");
+        let mut cache = apply_icon_invalidations(worker_cache, [root.clone()].into());
+        assert!(matches!(
+            cache.resolve_at(&root, 1),
+            Ok(ProjectIconLookup::Hit(_))
+        ));
+        fs::remove_dir_all(&root).expect("remove fixture");
+    }
+
+    #[test]
+    fn stale_directory_observations_require_two_live_canonical_paths() {
+        let root = std::env::temp_dir().join(format!(
+            "zentty-project-observation-{}-{}",
+            std::process::id(),
+            NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed)
+        ));
+        let current = root.join("current");
+        let other = root.join("other");
+        fs::create_dir_all(&current).expect("current directory");
+        fs::create_dir_all(&other).expect("other directory");
+        assert!(canonical_directories_match(&current, &current));
+        assert!(!canonical_directories_match(&current, &other));
+        fs::remove_dir_all(&root).expect("remove fixture");
+        assert!(!canonical_directories_match(&current, &current));
+    }
 
     #[test]
     fn launcher_boundary_rejects_non_web_and_credential_urls() {

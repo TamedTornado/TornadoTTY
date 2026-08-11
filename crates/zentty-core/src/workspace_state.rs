@@ -131,6 +131,9 @@ pub struct SidebarPaneSummary {
     /// Ephemeral repository/review context supplied by the platform resolver.
     /// It is deliberately absent from workspace persistence.
     pub project_context: Option<crate::ProjectContext>,
+    /// Ephemeral, canonical project icon supplied by the platform resolver.
+    /// It is never persisted as workspace state.
+    pub project_icon_path: Option<std::path::PathBuf>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -658,6 +661,7 @@ impl WorkspaceState {
                             is_focused: Some(pane.id.as_str()) == focused_pane_id,
                             agent_status: self.agent_statuses.status_for_pane(&pane.id).cloned(),
                             project_context: None,
+                            project_icon_path: None,
                         })
                         .collect(),
                     is_active: worklane.id == self.active_worklane_id,

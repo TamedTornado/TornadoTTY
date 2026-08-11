@@ -19,6 +19,18 @@ fn missing_clipboard_section_uses_source_defaults() {
 }
 
 #[test]
+fn project_icons_default_on_and_preserve_the_source_panes_key() {
+    assert!(AppConfig::parse_toml("").unwrap().panes.show_project_icons);
+    assert!(
+        !AppConfig::parse_toml("[panes]\nshow_project_icons = false\n")
+            .unwrap()
+            .panes
+            .show_project_icons
+    );
+    assert!(AppConfig::parse_toml("[panes]\nshow_project_icons = \"yes\"\n").is_err());
+}
+
+#[test]
 fn source_clipboard_keys_map_to_clean_copy_policy() {
     let config = AppConfig::parse_toml(
         r#"

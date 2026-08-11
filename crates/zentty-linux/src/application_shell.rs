@@ -2345,6 +2345,7 @@ impl ApplicationShell {
 
     fn remove_live_surface(&mut self, pane_id: &str) -> Result<(), String> {
         self.agent_events.unregister_pane(pane_id);
+        project_context_runtime::forget_pane(self, pane_id);
         self.pane_runtime.remove(pane_id, false).map(|_| ())
     }
 
@@ -2915,6 +2916,7 @@ impl ApplicationShell {
         }
         let summaries = self.sidebar_summaries();
         sidebar::update_project_context_metadata(&self.sidebar, &summaries);
+        sidebar::update_project_icon_metadata(&self.sidebar, &summaries);
         self.render_chrome(&summaries);
     }
 
@@ -2939,6 +2941,17 @@ impl ApplicationShell {
                 .contexts
                 .get(&pane.pane_id)
                 .cloned();
+            pane.project_icon_path = self
+                .config
+                .panes
+                .show_project_icons
+                .then(|| {
+                    self.project_context_runtime
+                        .icons
+                        .get(&pane.pane_id)
+                        .cloned()
+                })
+                .flatten();
         }
         summaries
     }
@@ -3156,6 +3169,12 @@ impl ApplicationShell {
                                 .clone()
                                 .unwrap_or_else(|| pane.live_title.clone()),
                             terminal,
+                            project_icon_path: self
+                                .config
+                                .panes
+                                .show_project_icons
+                                .then(|| self.project_context_runtime.icons.get(&pane.id).cloned())
+                                .flatten(),
                         })
                     })
                 })

@@ -48,6 +48,7 @@ const CHROME_CONTROLS: [ChromeControlSpec; 5] = [
 pub(crate) struct WindowChrome {
     root: gtk::CenterBox,
     context: gtk::Label,
+    project_icon: gtk::Picture,
     project: gtk::Box,
     branch: gtk::Button,
     pull_request: gtk::Button,
@@ -97,7 +98,12 @@ impl WindowChrome {
 
         let center = gtk::Box::new(gtk::Orientation::Vertical, 0);
         center.set_halign(gtk::Align::Center);
-        center.append(&context);
+        let context_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        context_row.set_halign(gtk::Align::Center);
+        let project_icon = crate::project_icon_view::picture("zentty-chrome-project-icon", 18);
+        context_row.append(&project_icon);
+        context_row.append(&context);
+        center.append(&context_row);
         let project = gtk::Box::new(gtk::Orientation::Horizontal, 5);
         project.set_halign(gtk::Align::Center);
         project.set_widget_name("zentty-project-context");
@@ -148,17 +154,11 @@ impl WindowChrome {
         root.set_start_widget(Some(&leading));
         root.set_center_widget(Some(&center));
         root.set_end_widget(Some(&trailing));
-        eprintln!(
-            "zentty-linux: chrome-controls={}",
-            CHROME_CONTROLS
-                .iter()
-                .map(|control| control.id)
-                .collect::<Vec<_>>()
-                .join(",")
-        );
+        log_chrome_controls();
         Self {
             root,
             context,
+            project_icon,
             project,
             branch,
             pull_request,
@@ -253,11 +253,16 @@ impl WindowChrome {
         self.context.set_text(&text);
         self.context
             .update_property(&[gtk::accessible::Property::Label(text.as_str())]);
-        let project_context = summaries
+        let focused_pane = summaries
             .iter()
             .find(|summary| summary.is_active)
-            .and_then(|summary| summary.pane_rows.iter().find(|pane| pane.is_focused))
-            .and_then(|pane| pane.project_context.as_ref());
+            .and_then(|summary| summary.pane_rows.iter().find(|pane| pane.is_focused));
+        crate::project_icon_view::configure(
+            &self.project_icon,
+            focused_pane.and_then(|pane| pane.project_icon_path.as_deref()),
+            "window-chrome",
+        );
+        let project_context = focused_pane.and_then(|pane| pane.project_context.as_ref());
         if let Some(project_context) = project_context {
             let reference = project_context.reference.display();
             self.branch.set_label(&if project_context.dirty {
@@ -293,6 +298,17 @@ impl WindowChrome {
         self.back.set_sensitive(can_navigate_back);
         self.forward.set_sensitive(can_navigate_forward);
     }
+}
+
+fn log_chrome_controls() {
+    eprintln!(
+        "zentty-linux: chrome-controls={}",
+        CHROME_CONTROLS
+            .iter()
+            .map(|control| control.id)
+            .collect::<Vec<_>>()
+            .join(",")
+    );
 }
 
 fn open_with_icon(kind: OpenWithTargetKind) -> &'static str {

@@ -1,0 +1,161 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=linux/tests/lib/product-input
+source "${repo_root}/linux/tests/lib/product-input"
+product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
+[[ "${product}" == /* ]] || product="${repo_root}/${product}"
+ghostty_root="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
+run_root="$(mktemp -d)"
+project="${run_root}/project"
+outside="${run_root}/outside"
+state_directory="${run_root}/state"
+enabled_log="${run_root}/enabled.log"
+disabled_log="${run_root}/disabled.log"
+product_pid=""
+backend="${GDK_BACKEND:-}"
+
+fail() {
+    [[ ! -f "${enabled_log}" ]] || tail -160 "${enabled_log}" >&2
+    [[ ! -f "${disabled_log}" ]] || tail -100 "${disabled_log}" >&2
+    echo "rust-project-icons: error: $*" >&2
+    exit 1
+}
+
+cleanup() {
+    if [[ "${product_pid}" =~ ^[1-9][0-9]*$ ]]; then
+        kill -TERM "${product_pid}" 2>/dev/null || true
+        wait "${product_pid}" 2>/dev/null || true
+    fi
+    rm -rf -- "${run_root}"
+}
+trap cleanup EXIT
+
+case "${backend}" in
+    x11)
+        [[ "${ZENTTY_NESTED_X11_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+            fail "X11 scenario must run through linux/tests/nested-x11"
+        ;;
+    wayland)
+        [[ "${ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+            fail "Wayland scenario must run through linux/tests/nested-wayland-input"
+        ;;
+    *) fail "GDK_BACKEND must be x11 or wayland" ;;
+esac
+for dependency in grep mktemp readelf readlink sed sleep xdotool; do
+    command -v "${dependency}" >/dev/null || fail "${dependency} is required"
+done
+[[ -x "${product}" ]] || fail "staged product is missing: ${product}"
+
+layer_runpath="$({
+    readelf -d "${ghostty_root}/zig-out/lib/libghostty-gtk-embed.so" |
+        sed -n 's/.*Library runpath: \[\([^]]*\)\].*/\1/p' |
+        cut -d: -f1
+})"
+layer_directory="${ghostty_root}/${layer_runpath}"
+mkdir -p "${project}" "${outside}" "${state_directory}"
+cat >"${outside}/favicon.svg" <<'SVG'
+<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18">
+  <rect width="18" height="18" fill="#ff0055"/>
+</svg>
+SVG
+ln -s -- "${outside}/favicon.svg" "${project}/favicon.svg"
+
+start_product() {
+    local log="$1"
+    (
+        cd "${project}"
+        exec env \
+            GDK_SCALE=1 \
+            GDK_DPI_SCALE=1 \
+            LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+            "${product}" --state-directory "${state_directory}" --no-session-restore
+    ) >"${log}" 2>&1 &
+    product_pid=$!
+    zentty_product_wait_for_log "${log}" 'zentty-linux: terminal-ready-pane=pane-1' \
+        'staged product terminal did not become ready' || fail "terminal did not start"
+    zentty_product_prepare_input "${backend}" "${log}" || fail "input could not be prepared"
+}
+
+stop_product() {
+    kill -TERM "${product_pid}" 2>/dev/null || true
+    wait "${product_pid}" 2>/dev/null || true
+    product_pid=""
+}
+
+activate_palette_action() {
+    local log="$1"
+    local query="$2"
+    zentty_product_ctrl_shift_key "${backend}" p
+    zentty_product_wait_for_log "${log}" 'zentty-linux: command-palette=shown' \
+        'command palette did not open' || fail "command palette unavailable"
+    zentty_product_type "${backend}" "${query}"
+    zentty_product_wait_for_log "${log}" \
+        "zentty-linux: command-palette=query value=\"${query}\" results=1" \
+        'command palette did not resolve project refresh' || fail "refresh action absent"
+    zentty_product_key "${backend}" Down
+    zentty_product_key "${backend}" Return
+}
+
+start_product "${enabled_log}"
+zentty_product_wait_for_log "${enabled_log}" \
+    'zentty-linux: project-icon pane=pane-1 result=missing' \
+    'escaping symlink was not resolved as a miss' || fail "escaping icon symlink was accepted"
+! grep -Fq 'project-icon-projected owner=' "${enabled_log}" ||
+    fail "escaping icon was projected"
+
+rm -- "${project}/favicon.svg"
+cat >"${project}/favicon.svg" <<'SVG'
+<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18">
+  <rect width="18" height="18" fill="#15d16f"/>
+</svg>
+SVG
+canonical_icon="$(readlink -f -- "${project}/favicon.svg")"
+activate_palette_action "${enabled_log}" 'Refresh Git and Review Status'
+zentty_product_wait_for_log "${enabled_log}" \
+    "zentty-linux: project-icon pane=pane-1 path=${canonical_icon} result=resolved" \
+    'manual refresh did not invalidate the negative icon cache' || fail "icon did not resolve"
+zentty_product_wait_for_log "${enabled_log}" \
+    "zentty-linux: project-icon-projected owner=sidebar:pane-1 path=${canonical_icon} decoded=true" \
+    'sidebar did not decode the real SVG' || fail "sidebar icon absent"
+zentty_product_wait_for_log "${enabled_log}" \
+    "zentty-linux: project-icon-projected owner=window-chrome path=${canonical_icon} decoded=true" \
+    'window chrome did not decode the real SVG' || fail "chrome icon absent"
+
+if zentty_product_uses_xdotool "${backend}"; then
+    if [[ "${ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT:-}" == 1 ]]; then
+        xdotool windowfocus --sync "${ZENTTY_PRODUCT_WINDOW_ID}"
+        xdotool keydown ctrl
+        xdotool keydown Tab
+    else
+        xdotool keydown --window "${ZENTTY_PRODUCT_WINDOW_ID}" ctrl
+        xdotool keydown --window "${ZENTTY_PRODUCT_WINDOW_ID}" Tab
+    fi
+    sleep 0.3
+    xdotool keyup Tab
+else
+    wtype -M ctrl -P Tab -s 300 -p Tab -s 100 -m ctrl
+fi
+zentty_product_wait_for_log "${enabled_log}" \
+    "zentty-linux: project-icon-projected owner=worklane-peek:pane-1 path=${canonical_icon} decoded=true" \
+    'Worklane Peek did not decode the real SVG' || fail "peek icon absent"
+if zentty_product_uses_xdotool "${backend}"; then
+    xdotool keyup ctrl
+fi
+stop_product
+
+mkdir -p "${XDG_CONFIG_HOME:?}/zentty"
+cat >"${XDG_CONFIG_HOME}/zentty/config.toml" <<'TOML'
+[panes]
+show_project_icons = false
+TOML
+start_product "${disabled_log}"
+zentty_product_wait_for_log "${disabled_log}" \
+    "zentty-linux: project-icon pane=pane-1 path=${canonical_icon} result=resolved" \
+    'opt-out launch did not exercise discovery' || fail "disabled discovery boundary absent"
+sleep 0.3
+! grep -Fq 'project-icon-projected owner=' "${disabled_log}" ||
+    fail "show_project_icons=false still projected an icon"
+
+echo "Rust project icons passed: ${backend}, containment=real, invalidation=physical, decode=real, sidebar=visible, chrome=visible, peek=visible, opt-out=hidden"

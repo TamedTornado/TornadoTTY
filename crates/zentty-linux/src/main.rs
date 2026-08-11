@@ -16,6 +16,7 @@ mod pane_scroll_switch;
 mod pane_search;
 mod peek_scroll_navigation;
 mod persistence_coordinator;
+mod project_icon_view;
 mod restore_notice;
 mod server_discovery;
 mod sidebar;

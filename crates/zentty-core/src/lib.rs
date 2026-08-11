@@ -19,6 +19,7 @@ mod open_with;
 mod pane_focus_history;
 mod pane_layout;
 mod pane_token_registry;
+mod project_icon;
 mod remote_transfer;
 mod session_restore_store;
 mod sidebar_width;
@@ -40,7 +41,8 @@ pub use agent_status::{
     AgentPhase, AgentProgress, AgentStatusStore, PaneAgentStatus, TerminalProgressState,
 };
 pub use app_config::{
-    AppConfig, ClipboardConfig, OpenWithConfig, OpenWithCustomApp, ServerDetectionConfig,
+    AppConfig, ClipboardConfig, OpenWithConfig, OpenWithCustomApp, PaneConfig,
+    ServerDetectionConfig,
 };
 pub use atomic_file_store::{AtomicFileAction, AtomicFileStore, AtomicFileStoreError};
 pub use bookmark_store::{
@@ -51,6 +53,7 @@ pub use pane_layout::{PaneLayoutPolicy, PaneRightInsertionBehavior};
 pub use pane_token_registry::{
     AgentTarget, AuthenticatedAgentEvent, PaneTokenError, PaneTokenRegistry,
 };
+pub use project_icon::{ProjectIconCache, ProjectIconLookup};
 pub use remote_transfer::{
     MAX_REMOTE_FILE_BYTES, MAX_REMOTE_IMAGE_BYTES, RemoteTransferFailure, RemoteTransferMethod,
     RemoteTransferPrerequisites, RemoteUploadPath, RemoteUploadPathError, RemoteVerificationPlan,

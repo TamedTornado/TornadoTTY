@@ -2,9 +2,9 @@
   "schema_version": 1,
   "contract_id": "zentty-application-shell-responsibilities",
   "source": "crates/zentty-linux/src/application_shell.rs",
-  "source_sha256": "36b7fafec06f96268c0b442b9ceea1479d231d7c999677312388e4b8733ecd71",
+  "source_sha256": "37416eba09629f60b1128af352720953af75b480172119378fbb933b8c07b749",
   "owned_source_sha256": {
-    "crates/zentty-linux/src/main.rs": "b94075363cca1e07b564fb2f5724ff2289736a7e7b0e71b60622669c688fd942",
+    "crates/zentty-linux/src/main.rs": "f7ee77f349f32eaba5b8953676b541e0dfd0cf65ecd3d0f847a6b952b4264e14",
     "crates/zentty-linux/src/application.rs": "6f14dc9e6c60d46f3713faa997501782e5c9750f0e00b40e27472431cede6c7d",
     "crates/zentty-linux/src/config_store.rs": "5b6c6c3831eac323770681a850eedea3a7720280db8223cfcc3f28bb28567ae7",
     "crates/zentty-linux/src/window_set.rs": "501d595889c11a41a4261ef8282465d76dd9ed8ccd1d004406b558579b0bf58e",
@@ -13,12 +13,12 @@
     "crates/zentty-linux/src/application_shell/action_router.rs": "004daaf43c2962e56fe45e1f049c8a70d205b91dc4a20401c10ccb4e5b0caa53",
     "crates/zentty-linux/src/application_shell/clipboard_actions.rs": "1502a0353bc3e0d645d6c6bd81aae1ed1306f312838f92a635944d402cd441b0",
     "crates/zentty-linux/src/application_shell/agent_events.rs": "3b6dc220ad2434b15213a34c6c225f5dad868880437b3b54365ba77e42b2d0a4",
-    "crates/zentty-linux/src/application_shell/project_context_runtime.rs": "21b8440353f6dbc2bec666019601a6bb35c2fde077549d4397e5de125a7fe9b9",
+    "crates/zentty-linux/src/application_shell/project_context_runtime.rs": "caf1c7fd03ac39211d65c81d7eba55f4dccb570ffc19ba4be5449098c2dcaded",
     "crates/zentty-linux/src/application_shell/open_with_runtime.rs": "80ec9ae6b16cadc132e763ca352fddfce6cc02725cbed0f7062bf6f231246aca",
     "crates/zentty-linux/src/application_shell/bookmark_runtime.rs": "815dfe23319600c0b43f32fa20f4ca0646e7709afef92c0da99f94cb0550a5e5",
     "crates/zentty-linux/src/bookmarks_view.rs": "81f6b2e29932e8014e69db6ceebd9b9dd57faef50896acfb62d743584d74e32b",
     "crates/zentty-linux/src/restore_notice.rs": "02844f204871767d2aa4bc6076fff7c2145a52c493583246ef686f886a1db918",
-    "crates/zentty-linux/src/sidebar.rs": "91e76815803967c3ecb1ec61837f28c886a914fe1fe8ed026319c0a49cfcc7ff",
+    "crates/zentty-linux/src/sidebar.rs": "9869e8a9e45afea37279491471e85d5e341477b76fb8219eaad1fd029a1a502f",
     "crates/zentty-linux/src/application_shell/global_search.rs": "98a1963830af8616b31da2558ae6f27c4461342ef3085f6ef9cda0863a1ddc7c",
     "crates/zentty-linux/src/application_shell/pane_runtime.rs": "d71e434316ed1f89d0da48582fa07f782cab5a06453bcb779d79383f9f669116",
     "crates/zentty-linux/src/application_shell/server_runtime.rs": "cd39ebc1f95f7eb3c063058036fabbecc90cf367457a1538f2f6c8e657a0b919",
@@ -146,7 +146,7 @@
       "status": "existing",
       "planned_module": "crates/zentty-linux/src/application_shell/project_context_runtime.rs and crates/zentty-core/src/git_review_context.rs",
       "tracking": "GH-18",
-      "responsibility": "The sole window-local Git and pull-request context projection; resolves bounded real repository state for pane working directories, applies adaptive refresh without overlapping probes, preserves same-reference stale review evidence on transient failure, and launches only validated remote URLs."
+      "responsibility": "The sole window-local Git, pull-request, and project-icon context projection; resolves bounded real repository state and canonically contained project icons for pane working directories, applies adaptive refresh without overlapping probes, rejects stale observations, preserves same-reference stale review evidence on transient failure, and launches only validated remote URLs."
     },
     {
       "id": "open_with_coordinator",
@@ -372,10 +372,10 @@
     ],
     "task_runner_coordinator": ["run_task", "launch_in_new_pane"],
     "project_context_coordinator": [
-      "adaptive_refresh_interval", "apply_results", "focused_context", "install",
+      "adaptive_refresh_interval", "apply_context_result", "apply_icon_invalidations", "apply_icon_result", "apply_results", "canonical_directories_match", "focused_context", "forget_pane", "install",
       "launch_validated_url", "mark_pane_for_refresh", "open_focused_branch",
       "open_focused_pull_request", "preserve_review_on_refresh_failure", "probe",
-      "process_working_directory", "refresh_focused", "request_probe", "safe_http_url"
+      "observation_is_current", "process_working_directory", "refresh_focused", "request_probe", "safe_http_url"
     ],
     "open_with_coordinator": [
       "discover", "open_primary", "open_target", "focused_context_is_available",

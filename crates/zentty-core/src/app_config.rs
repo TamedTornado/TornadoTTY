@@ -24,6 +24,7 @@ pub struct AppConfig {
     pub clipboard: ClipboardConfig,
     pub open_with: OpenWithConfig,
     pub server_detection: ServerDetectionConfig,
+    pub panes: PaneConfig,
 }
 
 impl AppConfig {
@@ -39,6 +40,7 @@ impl AppConfig {
             clipboard: document.clipboard.into_config(),
             open_with: document.open_with.into_config().normalized(),
             server_detection: document.server_detection.into_config(),
+            panes: document.panes.into_config(),
         })
     }
 }
@@ -49,6 +51,34 @@ struct Document {
     clipboard: ClipboardDocument,
     open_with: OpenWithDocument,
     server_detection: ServerDetectionDocument,
+    panes: PaneDocument,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PaneConfig {
+    pub show_project_icons: bool,
+}
+
+impl Default for PaneConfig {
+    fn default() -> Self {
+        Self {
+            show_project_icons: true,
+        }
+    }
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct PaneDocument {
+    show_project_icons: Option<bool>,
+}
+
+impl PaneDocument {
+    fn into_config(self) -> PaneConfig {
+        PaneConfig {
+            show_project_icons: self.show_project_icons.unwrap_or(true),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -135,6 +135,7 @@ pub(crate) struct PanePreview {
     pub(crate) worklane_title: String,
     pub(crate) pane_title: String,
     pub(crate) terminal: gtk::Widget,
+    pub(crate) project_icon_path: Option<std::path::PathBuf>,
 }
 
 pub(crate) struct WorklanePeekView {
@@ -228,10 +229,23 @@ impl WorklanePeekView {
             picture.set_can_shrink(true);
             picture.set_content_fit(gtk::ContentFit::Contain);
             card.append(&picture);
+            let title_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+            title_row.set_halign(gtk::Align::Center);
+            let project_icon = crate::project_icon_view::picture(
+                &format!("zentty-peek-project-icon-{}", preview.reference.pane_id),
+                18,
+            );
+            crate::project_icon_view::configure(
+                &project_icon,
+                preview.project_icon_path.as_deref(),
+                &format!("worklane-peek:{}", preview.reference.pane_id),
+            );
+            title_row.append(&project_icon);
             let title = gtk::Label::new(Some(&preview.pane_title));
             title.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
             title.set_max_width_chars(28);
-            card.append(&title);
+            title_row.append(&title);
+            card.append(&title_row);
             button.set_child(Some(&card));
 
             let reference = preview.reference;
