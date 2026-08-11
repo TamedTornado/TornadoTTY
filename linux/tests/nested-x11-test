@@ -73,10 +73,13 @@ printf '%s\n' "${BASHPID}" >"${ZENTTY_FAKE_X11_CAPTURE}/session-supervisor-pid"
 authority=""
 error_log=""
 server_args=""
+display_number=""
 while (( $# > 0 )); do
     case "$1" in
-        -a)
-            shift
+        -n)
+            [[ "$2" =~ ^[2-9][0-9][0-9][0-9]+$ ]] || exit 105
+            display_number="$2"
+            shift 2
             ;;
         -f)
             authority="$2"
@@ -96,16 +99,17 @@ while (( $# > 0 )); do
     esac
 done
 
-[[ -n "${authority}" && -n "${error_log}" ]] || exit 88
+[[ -n "${display_number}" && -n "${authority}" && -n "${error_log}" ]] || exit 88
 [[ "${server_args}" == "-screen 0 2560x1440x24 -nolisten tcp" ]] || exit 89
 printf '%s\n' "${authority%/Xauthority}" >"${ZENTTY_FAKE_X11_CAPTURE}/run-root"
+printf '%s\n' "${display_number}" >"${ZENTTY_FAKE_X11_CAPTURE}/display-number"
 : >"${authority}"
 : >"${error_log}"
 if [[ "${ZENTTY_FAKE_XVFB_STATUS:-0}" -ne 0 ]]; then
     exit "${ZENTTY_FAKE_XVFB_STATUS}"
 fi
 
-export DISPLAY=:9753
+export DISPLAY=":${display_number}"
 export XAUTHORITY="${authority}"
 touch "${ZENTTY_FAKE_X11_CAPTURE}/display-active"
 set +e
@@ -119,7 +123,7 @@ EOF
 cat >"${fake_bin}/xdpyinfo" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-[[ "${DISPLAY:-}" == :9753 ]]
+[[ "${DISPLAY:-}" =~ ^:[2-9][0-9][0-9][0-9]+$ ]]
 [[ -f "${XAUTHORITY:-}" ]]
 [[ -f "${ZENTTY_FAKE_X11_CAPTURE}/display-active" ]]
 printf 'name of display: %s\n' "${DISPLAY}"
@@ -133,7 +137,7 @@ EOF
 cat >"${fake_bin}/glxinfo" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-[[ "${DISPLAY:-}" == :9753 ]]
+[[ "${DISPLAY:-}" =~ ^:[2-9][0-9][0-9][0-9]+$ ]]
 [[ "${LIBGL_ALWAYS_SOFTWARE:-}" == 1 ]]
 printf '    Accelerated: no\nOpenGL renderer string: llvmpipe (fixture)\n'
 printf 'OpenGL vendor string: Mesa/X.org\nOpenGL version string: 4.5 fixture\n'
@@ -143,7 +147,7 @@ cat >"${fake_bin}/session-probe" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
-[[ "${DISPLAY:-}" == :9753 ]] || exit 51
+[[ "${DISPLAY:-}" =~ ^:[2-9][0-9][0-9][0-9]+$ ]] || exit 51
 [[ -z "${WAYLAND_DISPLAY:-}" ]] || exit 52
 [[ "${XAUTHORITY:-}" == /tmp/zentty-nested-x11.*/Xauthority ]] || exit 53
 [[ "${GDK_BACKEND:-}" == x11 ]] || exit 54
@@ -267,6 +271,35 @@ jq -e \
     (.finished_at_epoch | type == "number") and
     .started_at_epoch <= .finished_at_epoch
 ' "${success_report}" >/dev/null || fail "private-session report is incomplete"
+
+# Prove concurrent qualification workers receive distinct reservations. This
+# specifically guards against xvfb-run -a's check-then-create race, which can
+# otherwise make an unrelated product cell fail when two workers choose the
+# same display.
+concurrent_root="${temp_dir}/concurrent"
+mkdir -p "${concurrent_root}"
+concurrent_pids=()
+for worker in 1 2 3 4 5 6; do
+    worker_capture="${concurrent_root}/${worker}"
+    mkdir -p "${worker_capture}"
+    ZENTTY_FAKE_X11_CAPTURE="${worker_capture}" \
+        "${wrapper}" session-probe >"${worker_capture}/session.log" 2>&1 &
+    concurrent_pids+=("$!")
+done
+for worker_pid in "${concurrent_pids[@]}"; do
+    wait "${worker_pid}" || fail "concurrent private X11 session failed"
+done
+mapfile -t concurrent_displays < <(
+    cat "${concurrent_root}"/*/display-number | sort -n
+)
+[[ "${#concurrent_displays[@]}" -eq 6 ]] ||
+    fail "concurrent sessions did not all publish display reservations"
+[[ "$(printf '%s\n' "${concurrent_displays[@]}" | uniq | wc -l)" -eq 6 ]] ||
+    fail "concurrent sessions reused a display reservation"
+for display_number in "${concurrent_displays[@]}"; do
+    [[ ! -e "/tmp/zentty-xvfb-display-claims-${UID}/${display_number}" ]] ||
+        fail "display reservation ${display_number} survived session cleanup"
+done
 
 set +e
 failure_report="${temp_dir}/child-failure.environment.json"

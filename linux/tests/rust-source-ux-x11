@@ -27,10 +27,12 @@ trap cleanup EXIT
 [[ "${GDK_BACKEND:-}" == x11 ]] || fail "GDK_BACKEND must be x11"
 [[ "${ZENTTY_NESTED_X11_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
     fail "the source UX scenario must run through linux/tests/nested-x11"
-for dependency in cut grep head mktemp readelf sed seq sleep tail timeout xdotool; do
+for dependency in cut grep head mktemp readelf readlink sed seq sleep tail timeout xdotool; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
 [[ -x "${product}" ]] || fail "delivered Rust product is not built: ${product}"
+product="$(readlink -f -- "${product}")"
+ghostty_root="$(readlink -f -- "${ghostty_root}")"
 
 layer_runpath="$(
     readelf -d "${ghostty_root}/zig-out/lib/libghostty-gtk-embed.so" |
@@ -46,13 +48,21 @@ state_directory="$(mktemp -d)"
 trap 'rm -rf -- "${state_directory}"; cleanup' EXIT
 # The single quotes intentionally defer PTY-child expansion.
 # shellcheck disable=SC2016
-GDK_SCALE=1 \
-GDK_DPI_SCALE=1 \
-LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
-    "${product}" \
-    --command 'printf "\033]2;zentty-title-one\a"; sleep 0.2; printf "\033]2;zentty-title-two\a"; while IFS= read -r line; do printf "\033]2;focus:%s\a" "$line"; done' \
-    --state-directory "${state_directory}" \
-    --no-session-restore >"${log}" 2>&1 &
+(
+    # This source-UX journey is not a development-server scenario. Give its
+    # real PTY a private CWD so ambient listeners from the repository cannot
+    # legitimately trigger a server-card rebuild during the metadata identity
+    # assertion below.
+    cd "${state_directory}"
+    exec env \
+        GDK_SCALE=1 \
+        GDK_DPI_SCALE=1 \
+        LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+        "${product}" \
+        --command 'printf "\033]2;zentty-title-one\a"; sleep 0.2; printf "\033]2;zentty-title-two\a"; while IFS= read -r line; do printf "\033]2;focus:%s\a" "$line"; done' \
+        --state-directory "${state_directory}" \
+        --no-session-restore
+) >"${log}" 2>&1 &
 product_pid=$!
 
 window_id=""

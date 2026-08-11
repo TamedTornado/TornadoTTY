@@ -13,6 +13,7 @@ use zentty_tmux_compat::TmuxCompatReply;
 use crate::agent_runtime::AgentRuntime;
 use crate::application_shell::{ApplicationRuntimes, ApplicationShell};
 use crate::persistence_coordinator::WindowSnapshot;
+use crate::task_manager::TaskManagerController;
 use crate::window_set::{CloseWindowDecision, WindowSet};
 
 pub(crate) struct ApplicationCycleResult {
@@ -28,6 +29,7 @@ pub(crate) struct ApplicationCoordinator {
     main_loop: glib::MainLoop,
     window_set: WindowSet,
     shells: BTreeMap<String, Rc<RefCell<ApplicationShell>>>,
+    task_manager: Option<Rc<TaskManagerController>>,
     closing_ids: BTreeSet<String>,
     close_flags: BTreeMap<String, Rc<Cell<bool>>>,
     last_window_sizes: BTreeMap<String, (i32, i32)>,
@@ -63,6 +65,7 @@ impl ApplicationCoordinator {
             main_loop: main_loop.clone(),
             window_set,
             shells: BTreeMap::new(),
+            task_manager: None,
             closing_ids: BTreeSet::new(),
             close_flags: BTreeMap::new(),
             last_window_sizes: BTreeMap::new(),
@@ -230,6 +233,7 @@ impl ApplicationCoordinator {
             });
         });
         let move_pane_to_new_window_handler = Self::move_pane_handler(coordinator, id);
+        let show_task_manager_handler = Self::task_manager_handler(coordinator, shell);
         let weak = Rc::downgrade(coordinator);
         let close_id = id.to_owned();
         let close_window_handler: Rc<dyn Fn()> = Rc::new(move || {
@@ -263,6 +267,7 @@ impl ApplicationCoordinator {
         shell.borrow_mut().set_application_handlers(
             new_window_handler,
             move_pane_to_new_window_handler,
+            show_task_manager_handler,
             close_window_handler,
             quit_handler,
         );
@@ -333,6 +338,75 @@ impl ApplicationCoordinator {
                 }
             });
         })
+    }
+
+    fn task_manager_handler(
+        coordinator: &Rc<RefCell<Self>>,
+        shell: &Rc<RefCell<ApplicationShell>>,
+    ) -> Rc<dyn Fn()> {
+        let weak = Rc::downgrade(coordinator);
+        let parent = shell.borrow().window().clone();
+        Rc::new(move || {
+            let weak = weak.clone();
+            let parent = parent.clone();
+            glib::idle_add_local_once(move || {
+                let Some(coordinator) = weak.upgrade() else {
+                    return;
+                };
+                if let Err(error) = Self::show_task_manager(&coordinator, Some(&parent)) {
+                    eprintln!("zentty-linux: action=show-task-manager error={error}");
+                }
+            });
+        })
+    }
+
+    fn show_task_manager(
+        coordinator: &Rc<RefCell<Self>>,
+        parent: Option<&gtk::Window>,
+    ) -> Result<(), String> {
+        let existing = coordinator.borrow().task_manager.clone();
+        let controller = if let Some(existing) = existing {
+            existing
+        } else {
+            let weak = Rc::downgrade(coordinator);
+            let sources = Rc::new(move || {
+                weak.upgrade().map_or_else(Vec::new, |coordinator| {
+                    coordinator
+                        .borrow()
+                        .window_set
+                        .ordered_ids()
+                        .iter()
+                        .filter_map(|id| coordinator.borrow().shells.get(id).cloned())
+                        .flat_map(|shell| shell.borrow().task_manager_pane_sources())
+                        .collect()
+                })
+            });
+            let weak = Rc::downgrade(coordinator);
+            let focus = Rc::new(move |window_id: &str, worklane_id: &str, pane_id: &str| {
+                let Some(coordinator) = weak.upgrade() else {
+                    return;
+                };
+                let shell = coordinator.borrow().shells.get(window_id).cloned();
+                if let Some(shell) = shell {
+                    ApplicationShell::focus_task_manager_pane(&shell, worklane_id, pane_id);
+                }
+            });
+            let weak = Rc::downgrade(coordinator);
+            let close = Rc::new(move |window_id: &str, _worklane_id: &str, pane_id: &str| {
+                let Some(coordinator) = weak.upgrade() else {
+                    return;
+                };
+                let shell = coordinator.borrow().shells.get(window_id).cloned();
+                if let Some(shell) = shell {
+                    ApplicationShell::close_task_manager_pane(&shell, pane_id);
+                }
+            });
+            let controller = TaskManagerController::new(sources, focus, close)?;
+            coordinator.borrow_mut().task_manager = Some(Rc::clone(&controller));
+            controller
+        };
+        TaskManagerController::show(&controller, parent);
+        Ok(())
     }
 
     fn move_pane_to_new_window(
@@ -504,6 +578,9 @@ impl ApplicationCoordinator {
     }
 
     fn shutdown_all(&mut self) -> Result<(), String> {
+        if let Some(task_manager) = self.task_manager.take() {
+            task_manager.shutdown();
+        }
         let ids = self.window_set.ordered_ids().to_vec();
         let mut first_error = None;
         for id in ids {

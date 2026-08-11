@@ -1,0 +1,245 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
+fixture="${repo_root}/target/release-safe/task_manager_fixture"
+ghostty_root="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
+run_root="$(mktemp -d)"
+state_directory="${run_root}/state"
+receipt="${run_root}/fixture.receipt"
+log="${run_root}/product.log"
+product_pid=""
+backend="${GDK_BACKEND:-}"
+
+# shellcheck disable=SC1091
+source "${repo_root}/linux/tests/lib/product-input"
+
+fail() {
+    [[ ! -f "${log}" ]] || cat "${log}" >&2
+    echo "rust-task-manager: error: $*" >&2
+    exit 1
+}
+
+cleanup() {
+    if [[ "${product_pid}" =~ ^[1-9][0-9]*$ ]]; then
+        kill -TERM "${product_pid}" 2>/dev/null || true
+        wait "${product_pid}" 2>/dev/null || true
+    fi
+    if [[ -f "${receipt}" ]]; then
+        sed -n 's/^[a-z]*=\([1-9][0-9]*\)$/\1/p' "${receipt}" |
+            while read -r pid; do kill -KILL "${pid}" 2>/dev/null || true; done
+    fi
+    rm -rf -- "${run_root}"
+}
+trap cleanup EXIT
+
+case "${backend}" in
+    x11)
+        [[ "${ZENTTY_NESTED_X11_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+            fail "X11 scenario must run through linux/tests/nested-x11"
+        command -v xdotool >/dev/null || fail "xdotool is required"
+        command -v xclip >/dev/null || fail "xclip is required"
+        ;;
+    wayland)
+        [[ "${ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+            fail "Wayland scenario must run through linux/tests/nested-wayland-input"
+        command -v wtype >/dev/null || fail "wtype is required"
+        command -v wl-paste >/dev/null || fail "wl-paste is required"
+        ;;
+    *) fail "GDK_BACKEND must be x11 or wayland" ;;
+esac
+for dependency in grep head mktemp readelf sed seq sleep; do
+    command -v "${dependency}" >/dev/null || fail "${dependency} is required"
+done
+[[ -x "${product}" ]] || fail "staged product is missing: ${product}"
+[[ -x "${fixture}" ]] || fail "real task-manager fixture is missing: ${fixture}"
+
+layer_runpath="$(
+    readelf -d "${ghostty_root}/zig-out/lib/libghostty-gtk-embed.so" |
+        sed -n 's/.*Library runpath: \[\([^]]*\)\].*/\1/p' |
+        cut -d: -f1
+)"
+[[ "${layer_runpath}" == .zig-cache/* ]] || fail "Ghostty runpath is not pinned"
+layer_directory="${ghostty_root}/${layer_runpath}"
+mkdir -p "${state_directory}"
+
+GDK_SCALE=1 \
+GDK_DPI_SCALE=1 \
+LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+    "${product}" \
+    --command "exec '${fixture}' --receipt '${receipt}'" \
+    --state-directory "${state_directory}" \
+    --no-session-restore >"${log}" 2>&1 &
+product_pid=$!
+
+for _ in $(seq 1 300); do
+    [[ "$(grep -c '^root=' "${receipt}" 2>/dev/null || true)" -ge 1 ]] && break
+    sleep 0.05
+done
+zentty_product_prepare_input "${backend}" "${log}" || fail "physical product input was unavailable"
+window_id="${ZENTTY_PRODUCT_WINDOW_ID:-wayland-focused}"
+
+zentty_key() {
+    local key
+    for key in "$@"; do
+        case "${key}" in
+            ctrl+shift+*) zentty_product_ctrl_shift_key "${backend}" "${key#ctrl+shift+}" ;;
+            ctrl+*) zentty_product_ctrl_key "${backend}" "${key#ctrl+}" ;;
+            *) zentty_product_key "${backend}" "${key}" ;;
+        esac
+    done
+}
+
+zentty_type() {
+    if [[ "${backend}" == x11 ]]; then
+        xdotool type --window "${window_id}" --delay 5 -- "$1"
+    else
+        wtype -- "$1"
+    fi
+}
+
+open_palette() {
+    zentty_key ctrl+shift+p
+}
+
+activate_palette_query() {
+    local query="$1"
+    open_palette
+    zentty_type "${query}"
+    for _ in $(seq 1 100); do
+        grep -Fq "command-palette=query value=\"${query}\" results=1" "${log}" && break
+        sleep 0.05
+    done
+    grep -Fq "command-palette=query value=\"${query}\" results=1" "${log}" ||
+        fail "palette query ${query@Q} did not resolve uniquely"
+    zentty_key Down Return
+}
+
+# A second real Ghostty pane proves the Task Manager aggregates live pane trees,
+# not merely the focused surface.
+activate_palette_query 'Add Pane Right'
+for _ in $(seq 1 300); do
+    [[ "$(grep -c '^root=' "${receipt}" 2>/dev/null || true)" -ge 2 ]] && break
+    sleep 0.05
+done
+[[ "$(grep -c '^root=' "${receipt}" 2>/dev/null || true)" -ge 2 ]] ||
+    fail "second real pane process tree did not start"
+
+activate_palette_query 'Task Manager'
+task_window=""
+for _ in $(seq 1 300); do
+    if [[ "${backend}" == x11 ]]; then
+        task_window="$(xdotool search --name '^Task Manager$' 2>/dev/null | head -1 || true)"
+    else
+        task_window=wayland-focused
+    fi
+    grep -Fq 'task-manager rows=2 visible=2 query=""' "${log}" && [[ -n "${task_window}" ]] && break
+    sleep 0.05
+done
+[[ -n "${task_window}" ]] || fail "real Task Manager window did not appear"
+grep -Fq 'task-manager rows=2 visible=2 query=""' "${log}" ||
+    fail "Task Manager did not aggregate both real panes"
+
+# The first sample intentionally has no CPU delta. Wait for the next real kernel
+# sample and require both the parent/child tree and nonzero CPU/memory metrics.
+for _ in $(seq 1 200); do
+    grep -Eq 'task-manager-sample .* processes=2 cpu=([1-9][0-9]*\.[0-9]|[0-9]+\.[1-9])% memory=[1-9][0-9]*\.[0-9] MiB network=unavailable' "${log}" && break
+    sleep 0.05
+done
+grep -Eq 'task-manager-sample .* processes=2 cpu=([1-9][0-9]*\.[0-9]|[0-9]+\.[1-9])% memory=[1-9][0-9]*\.[0-9] MiB network=unavailable' "${log}" ||
+    fail "Task Manager did not report real nonzero process-tree metrics"
+
+root_pid="$(sed -n 's/^root=//p' "${receipt}" | head -1)"
+child_pid="$(sed -n 's/^child=//p' "${receipt}" | head -1)"
+[[ "${root_pid}" =~ ^[1-9][0-9]*$ && "${child_pid}" =~ ^[1-9][0-9]*$ ]] ||
+    fail "fixture PID receipt is malformed"
+
+task_key() {
+    if [[ "${backend}" == x11 ]]; then
+        xdotool windowfocus --sync "${task_window}"
+        for key in "$@"; do
+            case "${key}" in
+                alt+*)
+                    # Send the chord through the focused X server keyboard,
+                    # rather than independent synthetic events addressed to a
+                    # window. GTK derives modifier state from the former.
+                    xdotool keydown alt
+                    xdotool key "${key#alt+}"
+                    xdotool keyup alt
+                    ;;
+                *) xdotool key --window "${task_window}" "${key}" ;;
+            esac
+        done
+    else
+        for key in "$@"; do
+            case "${key}" in
+                alt+*) wtype -M alt -k "${key#alt+}" -m alt ;;
+                ctrl+shift+*)
+                    wtype -M ctrl -M shift -k "${key#ctrl+shift+}" -m shift -m ctrl
+                    ;;
+                ctrl+*) wtype -M ctrl -k "${key#ctrl+}" -m ctrl ;;
+                *) wtype -k "${key}" ;;
+            esac
+        done
+    fi
+}
+
+task_type() {
+    if [[ "${backend}" == x11 ]]; then
+        xdotool type --window "${task_window}" --delay 5 -- "$1"
+    else
+        wtype -- "$1"
+    fi
+}
+
+# Search the live child PID, traverse to the real list, expand it, then invoke
+# Copy PID and Focus Pane through the actual GTK keyboard focus chain.
+task_type "${child_pid}"
+for _ in $(seq 1 100); do
+    grep -Fq "task-manager rows=2 visible=1 query=\"${child_pid}\"" "${log}" && break
+    sleep 0.05
+done
+grep -Fq "task-manager rows=2 visible=1 query=\"${child_pid}\"" "${log}" ||
+    fail "Task Manager search did not resolve the real child PID"
+task_key Down Return
+for _ in $(seq 1 100); do
+    grep -Fq "task-manager rows=2 visible=3 query=\"${child_pid}\"" "${log}" && break
+    sleep 0.05
+done
+grep -Fq "task-manager rows=2 visible=3 query=\"${child_pid}\"" "${log}" ||
+    fail "Task Manager did not expand the real process tree"
+task_key ctrl+shift+c
+for _ in $(seq 1 100); do
+    grep -Fq "task-manager copy-pid=${root_pid}" "${log}" && break
+    sleep 0.05
+done
+grep -Fq "task-manager copy-pid=${root_pid}" "${log}" ||
+    fail "Copy PID did not select the pane root PID"
+if [[ "${backend}" == x11 ]]; then
+    clipboard="$(xclip -selection clipboard -o)"
+else
+    clipboard="$(wl-paste --no-newline)"
+fi
+[[ "${clipboard}" == "${root_pid}" ]] || fail "compositor clipboard received the wrong PID"
+task_key ctrl+Return
+for _ in $(seq 1 100); do
+    grep -Fq 'task-manager focus-pane window=' "${log}" && break
+    sleep 0.05
+done
+grep -Fq 'task-manager focus-pane window=' "${log}" || fail "Focus Pane did not route to the owning pane"
+
+# Re-present the single application-level window, select the same pane, and use
+# End Task. The existing pane lifecycle—not an arbitrary signal—must close it.
+activate_palette_query 'Task Manager'
+task_key ctrl+f ctrl+a
+task_type "${root_pid}"
+task_key Down Delete
+for _ in $(seq 1 200); do
+    grep -Fq 'zentty-linux: action=close-pane pane=' "${log}" && break
+    sleep 0.05
+done
+grep -Fq 'zentty-linux: action=close-pane pane=' "${log}" ||
+    fail "End Task did not use the existing pane close lifecycle"
+
+echo "rust-task-manager-${backend}: PASS real-proc real-ghostty-pty multi-pane search expand clipboard focus close network-explicitly-unavailable"

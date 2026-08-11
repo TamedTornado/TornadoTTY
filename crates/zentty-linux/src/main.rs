@@ -19,6 +19,7 @@ mod server_discovery;
 mod sidebar;
 mod sidebar_visibility;
 mod source_ui;
+mod task_manager;
 mod tmux_compat;
 mod tmux_store;
 mod window_chrome;

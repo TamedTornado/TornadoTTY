@@ -150,6 +150,7 @@ pub(super) const ACTION_REFRESH_SERVERS: &str = "refresh-servers";
 pub(super) const ACTION_STOP_IGNORING_SERVER_PORT: &str = "stop-ignoring-server-port";
 pub(super) const ACTION_STOP_SERVER: &str = "stop-server";
 pub(super) const ACTION_RUN_TASK: &str = "run-task";
+pub(super) const ACTION_SHOW_TASK_MANAGER: &str = "show-task-manager";
 
 pub(super) const ACTION_SPECS: &[ActionSpec] = &[
     action!(ACTION_NEW_WINDOW, "new-window", None),
@@ -292,6 +293,7 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
     ),
     action!(ACTION_STOP_SERVER, "stop-server", String),
     action!(ACTION_RUN_TASK, "run-task", String),
+    action!(ACTION_SHOW_TASK_MANAGER, "show-task-manager", None),
 ];
 
 pub(super) struct ActionRouter {
@@ -435,6 +437,9 @@ fn populate(shell: &Rc<RefCell<ApplicationShell>>, group: &gio::SimpleActionGrou
     install_clipboard_actions(shell, group);
     install_server_actions(shell, group);
     install_task_runner_action(shell, group);
+    add_simple_action(shell, group, ACTION_SHOW_TASK_MANAGER, |shell| {
+        shell.request_show_task_manager();
+    });
     install_edit_actions(shell, group);
 }
 
@@ -1152,7 +1157,7 @@ mod tests {
 
     #[test]
     fn registry_is_unique_complete_and_typed() {
-        assert_eq!(ACTION_SPECS.len(), 75);
+        assert_eq!(ACTION_SPECS.len(), 76);
         assert_eq!(
             ACTION_SPECS
                 .iter()

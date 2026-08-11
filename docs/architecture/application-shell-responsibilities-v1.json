@@ -2,15 +2,15 @@
   "schema_version": 1,
   "contract_id": "zentty-application-shell-responsibilities",
   "source": "crates/zentty-linux/src/application_shell.rs",
-  "source_sha256": "6bd21c0821450577e8fb25bb995d48e42295744a2e1e7282895e32514142ca41",
+  "source_sha256": "527964323dc0e1814a702743ae453cab5e305fd95831c544de8db16a85168fe3",
   "owned_source_sha256": {
-    "crates/zentty-linux/src/main.rs": "759fa5dcc6cd45ea364ab6c798cb1c4399fb070252b495b214041f9256ff7bd8",
-    "crates/zentty-linux/src/application.rs": "2713bac85b55babd79838e33426d2f044016742a37105d71c7bd0b7668df7534",
+    "crates/zentty-linux/src/main.rs": "4effe28db2295ddd039ca432051ba5d0878ad4ac4e2acea2fef99f82a6fe2163",
+    "crates/zentty-linux/src/application.rs": "6f14dc9e6c60d46f3713faa997501782e5c9750f0e00b40e27472431cede6c7d",
     "crates/zentty-linux/src/config_store.rs": "5b6c6c3831eac323770681a850eedea3a7720280db8223cfcc3f28bb28567ae7",
     "crates/zentty-linux/src/window_set.rs": "501d595889c11a41a4261ef8282465d76dd9ed8ccd1d004406b558579b0bf58e",
     "crates/zentty-linux/src/agent_runtime.rs": "48f30d38048ae5388ca59aee2021e1215cabdfc033e66755ed32c6f92dcb8671",
     "crates/zentty-linux/src/codex_enrichment.rs": "fe87631c75c04b63962b7f89d311a778a25af8f27a1dcb4d5950b3efcbaa476e",
-    "crates/zentty-linux/src/application_shell/action_router.rs": "868382c305ee2555add64bcb59421745472abb71716ec964f1dcb2f015318550",
+    "crates/zentty-linux/src/application_shell/action_router.rs": "c230ae56fd5e6676a115a7983015d24bbba58795b6a601ad3eab9b36878ee075",
     "crates/zentty-linux/src/application_shell/clipboard_actions.rs": "1502a0353bc3e0d645d6c6bd81aae1ed1306f312838f92a635944d402cd441b0",
     "crates/zentty-linux/src/application_shell/agent_events.rs": "56c45836a4e6a6a929dce61251a199c0b8dec7a62edbcda3c9b5dd594dbb6038",
     "crates/zentty-linux/src/application_shell/global_search.rs": "98a1963830af8616b31da2558ae6f27c4461342ef3085f6ef9cda0863a1ddc7c",
@@ -139,7 +139,7 @@
   "field_assignments": [
     {
       "owner": "application_runtime",
-      "fields": ["new_window_handler", "move_pane_to_new_window_handler", "close_window_handler", "quit_handler"]
+      "fields": ["new_window_handler", "move_pane_to_new_window_handler", "close_window_handler", "quit_handler", "show_task_manager_handler"]
     },
     {
       "owner": "application_shell",
@@ -200,7 +200,9 @@
       "owner": "application_runtime",
       "methods": [
         "set_application_handlers", "request_new_window",
-        "request_move_pane_to_new_window", "request_close_window", "request_quit"
+        "request_move_pane_to_new_window", "request_close_window", "request_quit",
+        "request_show_task_manager", "task_manager_pane_sources",
+        "focus_task_manager_pane", "close_task_manager_pane"
       ]
     },
     {
@@ -424,7 +426,8 @@
     {"name":"refresh-servers","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"stop-ignoring-server-port","parameter":"string","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"stop-server","parameter":"string","owner":"action_router","invalid_parameter":"ignore-without-panic"},
-    {"name":"run-task","parameter":"string","owner":"action_router","invalid_parameter":"ignore-without-panic"}
+    {"name":"run-task","parameter":"string","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"show-task-manager","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"}
   ],
   "conditional_action_availability": {
     "multiple_columns": ["resize-pane-left", "resize-pane-right", "arrange-golden-wide", "arrange-golden-narrow"],

@@ -447,10 +447,10 @@
       "origin": "PORT_PARITY",
       "user_impact": "The Task Manager lets users identify expensive or stuck work by pane without leaving Zentty or guessing from process titles.",
       "linux_owner_issue": 19,
-      "implementation_status": "NOT_IMPLEMENTED",
-      "focused_tests": [],
-      "product_scenarios": [],
-      "test_plan": "Run distinct CPU/memory/network process trees in real PTYs, compare bounded samples to kernel/cgroup data, exercise exit/PID reuse/multiwindow cases through the real window, and mutation-test aggregation/root selection.",
+      "implementation_status": "PARTIAL",
+      "focused_tests": ["crates/zentty-linux/src/task_manager/model.rs", "crates/zentty-linux/src/task_manager/proc_sampler.rs"],
+      "product_scenarios": ["linux/tests/rust-task-manager"],
+      "test_plan": "Keep the controlled X11/Wayland real-PTY journey for CPU, memory, search, expansion, clipboard, focus, close, and PID churn; add multiwindow, cgroup/container and trustworthy per-pane network accounting evidence before declaring parity. The source macOS sampler itself reports network metrics as unavailable, and Linux reports that limitation honestly rather than substituting aggregate interface counters or socket-queue bytes for per-pane throughput.",
       "alternative_or_blocker": null
     },
     {

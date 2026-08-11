@@ -27,12 +27,12 @@ use gtk::gdk;
 use gtk::glib;
 use gtk::prelude::*;
 use zentty_core::{
-    AppConfig, ClosePaneOutcome, ColumnRecipe, CommandPaletteItem, GlobalSearchCoordinator,
-    GlobalSearchDirection, PaneColumnState, PaneLayoutPolicy, PaneRecipe, PaneReference,
-    PaneResizeDirection, PaneRestoreDraft, PaneRightInsertionBehavior, PaneWindowTransfer,
-    ServerPortRule, ServerRelevanceContext, SidebarWidthPreference, TaskRunnerAction, WindowFrame,
-    WindowRecipe, WorklaneColor, WorklaneRecipe, WorkspaceState, discover_task_runners,
-    rank_servers,
+    AgentPhase, AppConfig, ClosePaneOutcome, ColumnRecipe, CommandPaletteItem,
+    GlobalSearchCoordinator, GlobalSearchDirection, PaneColumnState, PaneLayoutPolicy, PaneRecipe,
+    PaneReference, PaneResizeDirection, PaneRestoreDraft, PaneRightInsertionBehavior,
+    PaneWindowTransfer, ServerPortRule, ServerRelevanceContext, SidebarWidthPreference,
+    TaskRunnerAction, WindowFrame, WindowRecipe, WorklaneColor, WorklaneRecipe, WorkspaceState,
+    discover_task_runners, rank_servers,
 };
 use zentty_ghostty::GhosttyRuntime;
 
@@ -66,9 +66,9 @@ use action_router::{
     ACTION_NEXT_WORKLANE, ACTION_OPEN_SERVER, ACTION_PREVIOUS_PANE, ACTION_PREVIOUS_WORKLANE,
     ACTION_REFRESH_SERVERS, ACTION_RESET_PANE_LAYOUT, ACTION_RESIZE_PANE_DOWN,
     ACTION_RESIZE_PANE_LEFT, ACTION_RESIZE_PANE_RIGHT, ACTION_RESIZE_PANE_UP,
-    ACTION_RESTORE_CLOSED_PANE, ACTION_SELECT_ALL, ACTION_SPLIT_PANE_BELOW,
-    ACTION_SPLIT_PANE_RIGHT, ACTION_STOP_IGNORING_SERVER_PORT, ACTION_STOP_SERVER,
-    ACTION_TOGGLE_SIDEBAR, ACTION_USE_SELECTION_FOR_FIND, ActionRouter,
+    ACTION_RESTORE_CLOSED_PANE, ACTION_SELECT_ALL, ACTION_SHOW_TASK_MANAGER,
+    ACTION_SPLIT_PANE_BELOW, ACTION_SPLIT_PANE_RIGHT, ACTION_STOP_IGNORING_SERVER_PORT,
+    ACTION_STOP_SERVER, ACTION_TOGGLE_SIDEBAR, ACTION_USE_SELECTION_FOR_FIND, ActionRouter,
 };
 use agent_events::AgentEventCoordinator;
 use pane_runtime::DetachedPaneRuntime;
@@ -149,6 +149,7 @@ pub(crate) struct ApplicationShell {
     tmux_compat: crate::tmux_compat::TmuxCompatProduct,
     new_window_handler: Option<Rc<dyn Fn()>>,
     move_pane_to_new_window_handler: Option<Rc<dyn Fn(String)>>,
+    show_task_manager_handler: Option<Rc<dyn Fn()>>,
     close_window_handler: Option<Rc<dyn Fn()>>,
     quit_handler: Option<Rc<dyn Fn()>>,
     self_handle: RefCell<Weak<RefCell<Self>>>,
@@ -284,6 +285,7 @@ impl ApplicationShell {
             tmux_compat: default_tmux_product()?,
             new_window_handler: None,
             move_pane_to_new_window_handler: None,
+            show_task_manager_handler: None,
             close_window_handler: None,
             quit_handler: None,
             self_handle: RefCell::new(Weak::new()),
@@ -315,15 +317,99 @@ impl ApplicationShell {
         &self.window
     }
 
+    pub(crate) fn task_manager_pane_sources(&self) -> Vec<crate::task_manager::PaneSource> {
+        let status_by_pane = self
+            .state
+            .sidebar_summaries()
+            .into_iter()
+            .flat_map(|worklane| worklane.pane_rows)
+            .filter_map(|pane| pane.agent_status.map(|status| (pane.pane_id, status)))
+            .collect::<BTreeMap<_, _>>();
+        let mut sources = Vec::new();
+        for (worklane_index, worklane) in self.state.worklanes().iter().enumerate() {
+            for column in &worklane.columns {
+                for pane in &column.panes {
+                    let status_text = status_by_pane.get(&pane.id).map(|status| {
+                        let phase = match status.phase {
+                            AgentPhase::Starting => "starting",
+                            AgentPhase::Running => "running",
+                            AgentPhase::NeedsInput => "needs input",
+                            AgentPhase::Idle => "idle",
+                            AgentPhase::UnresolvedStop => "stopped",
+                        };
+                        format!("{} {phase}", status.agent_name)
+                    });
+                    sources.push(crate::task_manager::PaneSource {
+                        window_id: self.window_template.id.clone(),
+                        window_title: self
+                            .window
+                            .title()
+                            .map_or_else(|| "Zentty".to_owned(), |title| title.to_string()),
+                        worklane_id: worklane.id.clone(),
+                        worklane_title: worklane
+                            .title
+                            .clone()
+                            .unwrap_or_else(|| format!("Worklane {}", worklane_index + 1)),
+                        pane_id: pane.id.clone(),
+                        pane_title: pane.display_title().to_owned(),
+                        status_text,
+                        root_pid: self
+                            .pane_runtime
+                            .surface(&pane.id)
+                            .and_then(zentty_ghostty::GhosttySurface::foreground_process_id)
+                            .and_then(|pid| u32::try_from(pid).ok()),
+                        is_remote: pane.ssh_connection_label.is_some()
+                            || self.remote_panes.identities.contains_key(&pane.id),
+                        working_directory: pane
+                            .working_directory
+                            .as_deref()
+                            .map(std::path::PathBuf::from),
+                    });
+                }
+            }
+        }
+        sources
+    }
+
+    pub(crate) fn focus_task_manager_pane(
+        shell: &Rc<RefCell<Self>>,
+        worklane_id: &str,
+        pane_id: &str,
+    ) -> bool {
+        let mut shell = shell.borrow_mut();
+        let worklane_changed = shell.state.active_worklane_id() != worklane_id;
+        if !shell.state.select_worklane_and_pane(worklane_id, pane_id) {
+            return false;
+        }
+        if worklane_changed {
+            shell.render();
+        } else {
+            shell.refresh_sidebar_metadata();
+        }
+        shell.window.present();
+        shell.focus_selected_surface();
+        eprintln!(
+            "zentty-linux: task-manager focus-pane window={} worklane={worklane_id} pane={pane_id}",
+            shell.window_template.id
+        );
+        true
+    }
+
+    pub(crate) fn close_task_manager_pane(shell: &Rc<RefCell<Self>>, pane_id: &str) {
+        Self::close_pane(shell, pane_id);
+    }
+
     pub(crate) fn set_application_handlers(
         &mut self,
         new_window_handler: Rc<dyn Fn()>,
         move_pane_to_new_window_handler: Rc<dyn Fn(String)>,
+        show_task_manager_handler: Rc<dyn Fn()>,
         close_window_handler: Rc<dyn Fn()>,
         quit_handler: Rc<dyn Fn()>,
     ) {
         self.new_window_handler = Some(new_window_handler);
         self.move_pane_to_new_window_handler = Some(move_pane_to_new_window_handler);
+        self.show_task_manager_handler = Some(show_task_manager_handler);
         self.close_window_handler = Some(close_window_handler);
         self.quit_handler = Some(quit_handler);
     }
@@ -396,6 +482,12 @@ impl ApplicationShell {
 
     fn request_new_window(&self) {
         if let Some(handler) = self.new_window_handler.clone() {
+            handler();
+        }
+    }
+
+    fn request_show_task_manager(&self) {
+        if let Some(handler) = self.show_task_manager_handler.clone() {
             handler();
         }
     }
@@ -1376,6 +1468,12 @@ impl ApplicationShell {
     #[allow(clippy::too_many_lines)] // Interim until the source command registry is ported.
     fn command_palette_action_items() -> Vec<CommandPaletteItem> {
         vec![
+            CommandPaletteItem::action(
+                "Task Manager",
+                "Inspect CPU, memory, and process trees for every pane",
+                "diagnostics processes performance",
+                ACTION_SHOW_TASK_MANAGER,
+            ),
             CommandPaletteItem::action(
                 "Refresh Development Servers",
                 "Rescan real listening processes now",

@@ -93,7 +93,7 @@ if [[ "${1:-}" == "--private-x11-supervisor" ]]; then
     # source-pinned 1920px adaptive pane-layout boundary. Individual
     # scenarios still choose their own application-window dimensions.
     exec xvfb-run \
-        -a \
+        -n "${ZENTTY_NESTED_X11_DISPLAY_NUMBER:?}" \
         -f "${run_root}/Xauthority" \
         -e "${run_root}/xvfb.log" \
         -s "-screen 0 2560x1440x24 -nolisten tcp" \
@@ -167,7 +167,7 @@ fi
 
 for dependency in \
     xvfb-run Xvfb xauth xdpyinfo glxinfo grep jq sha256sum awk sed head \
-    readlink date setsid ps kill sleep mktemp mkdir chmod rm env; do
+    readlink date setsid ps kill sleep mktemp mkdir rmdir chmod rm env; do
     if ! command -v "${dependency}" >/dev/null 2>&1; then
         echo "nested-x11: SKIP missing runtime dependency: ${dependency}" >&2
         exit 77
@@ -190,6 +190,9 @@ fi
 run_root="$(mktemp -d /tmp/zentty-nested-x11.XXXXXX)"
 started_at_epoch="$(date +%s)"
 session_id="$(printf '%s\n' "${run_root}" "${started_at_epoch}" "$$" | sha256sum | awk '{print $1}')"
+display_claim_root=""
+display_claim=""
+display_number=""
 mkdir -p \
     "${run_root}/home" \
     "${run_root}/config" \
@@ -225,6 +228,7 @@ cleanup() {
         rm -f -- "${report_temp}"
     fi
     rm -rf -- "${run_root}"
+    [[ -z "${display_claim}" ]] || rmdir -- "${display_claim}" 2>/dev/null || true
 }
 signal_exit() {
     local status="$1"
@@ -234,6 +238,33 @@ trap cleanup EXIT
 trap 'signal_exit 129' HUP
 trap 'signal_exit 130' INT
 trap 'signal_exit 143' TERM
+
+# xvfb-run's automatic allocator is a check-then-create operation. Two
+# qualification workers can therefore choose the same display before either
+# Xvfb has created its lock. Reserve a high-numbered display atomically before
+# starting the private supervisor; the EXIT trap owns the reservation cleanup.
+display_claim_root="/tmp/zentty-xvfb-display-claims-${UID}"
+if [[ -e "${display_claim_root}" ]]; then
+    [[ -d "${display_claim_root}" && ! -L "${display_claim_root}" && -O "${display_claim_root}" ]] ||
+        fail "private display claim root is not safely owned"
+else
+    mkdir -- "${display_claim_root}"
+fi
+chmod 700 "${display_claim_root}"
+for offset in {0..9999}; do
+    candidate="$((2000 + (($$ + offset) % 10000)))"
+    candidate_claim="${display_claim_root}/${candidate}"
+    if mkdir -- "${candidate_claim}" 2>/dev/null; then
+        if [[ ! -e "/tmp/.X${candidate}-lock" && ! -S "/tmp/.X11-unix/X${candidate}" ]]; then
+            display_claim="${candidate_claim}"
+            display_number="${candidate}"
+            break
+        fi
+        rmdir -- "${candidate_claim}"
+    fi
+done
+[[ -n "${display_number}" ]] || fail "no private X11 display number was available"
+export ZENTTY_NESTED_X11_DISPLAY_NUMBER="${display_number}"
 
 unset \
     DISPLAY WAYLAND_DISPLAY WAYLAND_SOCKET MIR_SOCKET \
@@ -304,6 +335,7 @@ else
 fi
 
 rm -rf -- "${run_root}"
+[[ -z "${display_claim}" ]] || rmdir -- "${display_claim}" 2>/dev/null || true
 trap - EXIT HUP INT TERM
 
 if [[ -n "${report}" && -n "${facts}" ]]; then
