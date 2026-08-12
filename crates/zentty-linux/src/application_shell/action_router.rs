@@ -78,6 +78,7 @@ macro_rules! action {
 pub(super) const ACTION_TOGGLE_SIDEBAR: &str = "toggle-sidebar";
 pub(super) const ACTION_SHOW_COMMAND_PALETTE: &str = "show-command-palette";
 pub(super) const ACTION_OPEN_SETTINGS: &str = "open-settings";
+pub(super) const ACTION_OPEN_SETTINGS_SECTION: &str = "open-settings-section";
 pub(super) const ACTION_RELOAD_CONFIG: &str = "reload-config";
 pub(super) const ACTION_TOGGLE_LIGHT_DARK_THEME: &str = "toggle-light-dark-theme";
 pub(super) const ACTION_USE_DARK_THEME: &str = "use-dark-theme";
@@ -189,6 +190,11 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
     action!(ACTION_TOGGLE_SIDEBAR, "toggle-sidebar", None),
     action!(ACTION_SHOW_COMMAND_PALETTE, "show-command-palette", None),
     action!(ACTION_OPEN_SETTINGS, "open-settings", None),
+    action!(
+        ACTION_OPEN_SETTINGS_SECTION,
+        "open-settings-section",
+        String
+    ),
     action!(ACTION_RELOAD_CONFIG, "reload-config", None),
     action!(
         ACTION_TOGGLE_LIGHT_DARK_THEME,
@@ -596,6 +602,32 @@ fn install_settings_shortcut_actions(
         });
     });
     group.add_action(&open_settings);
+    let open_settings_section = gio::SimpleAction::new(
+        ACTION_OPEN_SETTINGS_SECTION,
+        Some(&String::static_variant_type()),
+    );
+    let weak = Rc::downgrade(shell);
+    open_settings_section.connect_activate(move |_, parameter| {
+        let Some(value) = parameter.and_then(glib::Variant::str) else {
+            eprintln!(
+                "zentty-linux: action={ACTION_OPEN_SETTINGS_SECTION} rejected parameter-schema"
+            );
+            return;
+        };
+        let Some(section) = crate::settings_navigation::SettingsSection::parse(value) else {
+            eprintln!(
+                "zentty-linux: action={ACTION_OPEN_SETTINGS_SECTION} rejected section={value:?}"
+            );
+            return;
+        };
+        let weak = weak.clone();
+        glib::idle_add_local_once(move || {
+            if let Some(shell) = weak.upgrade() {
+                shell.borrow_mut().request_show_settings(section);
+            }
+        });
+    });
+    group.add_action(&open_settings_section);
     add_simple_action(shell, group, ACTION_RENAME_CURRENT_WORKLANE, |shell| {
         shell.request_rename_current_worklane();
     });
@@ -1559,7 +1591,7 @@ mod tests {
 
     #[test]
     fn registry_is_unique_complete_and_typed() {
-        assert_eq!(ACTION_SPECS.len(), 107);
+        assert_eq!(ACTION_SPECS.len(), 108);
         assert_eq!(
             ACTION_SPECS
                 .iter()
@@ -1575,6 +1607,7 @@ mod tests {
                 .map(|action| action.name)
                 .collect::<Vec<_>>(),
             [
+                "open-settings-section",
                 "select-worklane",
                 "close-worklane",
                 "move-pane-to-worklane",

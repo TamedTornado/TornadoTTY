@@ -90,6 +90,26 @@ shipping its default:
    `copy_target=false`.
 6. Full presently executable qualification only after focused failures are fixed.
 
+## Source settings navigation slice
+
+After the real Appearance and Shortcuts pages, port the source settings shell as
+a feature rather than growing unrelated standalone dialogs:
+
+1. Preserve the source's nine section identities, titles, subtitles, grouping,
+   ordering, search vocabulary, and General default destination.
+2. Give command-palette entries stable section deep links. Reusing an open
+   settings window must navigate that same window; it must not create a second
+   settings or persistence authority.
+3. Preserve browser-style Back/Forward semantics and route `Ctrl+F` to the active
+   page's local search where one exists, otherwise to section search.
+4. Leave every section whose controls are not yet ported visibly and explicitly
+   incomplete. Navigation is not evidence that those settings are implemented,
+   and issue #20 remains open until their actual controls and effects pass.
+5. Prove the pure navigation policy with unit and focused mutation tests, then
+   drive the staged GTK product with physical keys through private X11 and nested
+   Wayland for default selection, keyword search, section navigation, palette
+   deep links, history, and the existing real Appearance persistence/reload path.
+
 ## Acceptance boundary
 
 This slice is complete only when the Ghostty change is independently reviewable,

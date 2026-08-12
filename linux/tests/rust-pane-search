@@ -246,7 +246,7 @@ run_palette_action 'Clean Copy' \
 assert_standard_clipboard 'sentinel-existing-owner'
 run_palette_action 'Select All' \
     'zentty-linux: action=select-all pane=pane-1 binding="select_all"'
-run_palette_action 'Copy' 'zentty-linux: action=copy pane=pane-1' 4
+run_palette_action 'Copy' 'zentty-linux: action=copy pane=pane-1' 5
 grep -F 'zentty-linux: action=copy pane=pane-1 bytes=' "${log}" | tail -1 |
     grep -Fq 'modified=true' || fail "automatic Copy did not run the configured clean pipeline"
 assert_standard_clipboard 'https://example.com/reset?token=noisegamma'

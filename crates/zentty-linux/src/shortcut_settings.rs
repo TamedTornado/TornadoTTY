@@ -12,6 +12,7 @@ use zentty_core::{
 };
 
 use crate::appearance_settings::ApplyAppearance;
+use crate::settings_navigation::SettingsSection;
 
 use crate::application_shell::shortcut_registry::{
     COMMANDS, ShortcutCategory, ShortcutCommandSpec, definitions,
@@ -50,6 +51,7 @@ pub(crate) fn show(
     appearance: AppearanceConfig,
     apply_appearance: ApplyAppearance,
     restore_parent_focus: &Rc<dyn Fn()>,
+    initial_section: SettingsSection,
 ) -> gtk::Window {
     install_styles();
     crate::appearance_settings::install_styles();
@@ -186,8 +188,10 @@ pub(crate) fn show(
         &appearance_search,
         &root.clone().upcast(),
         &search,
+        initial_section,
     );
-    window.set_child(Some(&settings));
+    window.insert_action_group("settings", Some(&settings.actions));
+    window.set_child(Some(&settings.widget));
 
     let state = Rc::new(RefCell::new(ViewState {
         selected: COMMANDS[0].command_id.into(),

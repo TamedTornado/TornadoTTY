@@ -69,14 +69,14 @@ use action_router::{
     ACTION_MOVE_WORKLANE_DOWN, ACTION_MOVE_WORKLANE_UP, ACTION_NAVIGATE_BACK,
     ACTION_NAVIGATE_FORWARD, ACTION_NEW_WINDOW, ACTION_NEW_WORKLANE, ACTION_NEXT_PANE,
     ACTION_NEXT_WORKLANE, ACTION_OPEN_BRANCH_REMOTE, ACTION_OPEN_PULL_REQUEST, ACTION_OPEN_SERVER,
-    ACTION_OPEN_SERVER_BROWSER, ACTION_OPEN_SETTINGS, ACTION_OPEN_WITH_PRIMARY,
-    ACTION_OPEN_WITH_TARGET, ACTION_PREVIOUS_PANE, ACTION_PREVIOUS_WORKLANE,
-    ACTION_REFRESH_REVIEW_STATUS, ACTION_REFRESH_SERVERS, ACTION_RESET_PANE_LAYOUT,
-    ACTION_RESIZE_PANE_DOWN, ACTION_RESIZE_PANE_LEFT, ACTION_RESIZE_PANE_RIGHT,
-    ACTION_RESIZE_PANE_UP, ACTION_RESTORE_CLOSED_PANE, ACTION_SELECT_ALL, ACTION_SHOW_TASK_MANAGER,
-    ACTION_SPLIT_PANE_BELOW, ACTION_SPLIT_PANE_RIGHT, ACTION_STOP_IGNORING_SERVER_PORT,
-    ACTION_STOP_SERVER, ACTION_TOGGLE_LIGHT_DARK_THEME, ACTION_TOGGLE_SIDEBAR,
-    ACTION_USE_AUTO_THEME, ACTION_USE_DARK_THEME, ACTION_USE_LIGHT_THEME,
+    ACTION_OPEN_SERVER_BROWSER, ACTION_OPEN_SETTINGS, ACTION_OPEN_SETTINGS_SECTION,
+    ACTION_OPEN_WITH_PRIMARY, ACTION_OPEN_WITH_TARGET, ACTION_PREVIOUS_PANE,
+    ACTION_PREVIOUS_WORKLANE, ACTION_REFRESH_REVIEW_STATUS, ACTION_REFRESH_SERVERS,
+    ACTION_RESET_PANE_LAYOUT, ACTION_RESIZE_PANE_DOWN, ACTION_RESIZE_PANE_LEFT,
+    ACTION_RESIZE_PANE_RIGHT, ACTION_RESIZE_PANE_UP, ACTION_RESTORE_CLOSED_PANE, ACTION_SELECT_ALL,
+    ACTION_SHOW_TASK_MANAGER, ACTION_SPLIT_PANE_BELOW, ACTION_SPLIT_PANE_RIGHT,
+    ACTION_STOP_IGNORING_SERVER_PORT, ACTION_STOP_SERVER, ACTION_TOGGLE_LIGHT_DARK_THEME,
+    ACTION_TOGGLE_SIDEBAR, ACTION_USE_AUTO_THEME, ACTION_USE_DARK_THEME, ACTION_USE_LIGHT_THEME,
     ACTION_USE_SELECTION_FOR_FIND, ActionRouter,
 };
 use agent_events::AgentEventCoordinator;
@@ -1209,7 +1209,15 @@ impl ApplicationShell {
     }
 
     fn request_show_shortcut_settings(&mut self) {
+        self.request_show_settings(crate::settings_navigation::SettingsSection::General);
+    }
+
+    fn request_show_settings(&mut self, section: crate::settings_navigation::SettingsSection) {
         if let Some(window) = self.shortcut_settings_window.as_ref() {
+            let _ = window.activate_action(
+                "settings.select-section",
+                Some(&crate::settings_shell::section_target(section)),
+            );
             window.present();
             return;
         }
@@ -1256,6 +1264,7 @@ impl ApplicationShell {
                 shell.borrow_mut().apply_appearance(appearance, false)
             }),
             &restore_parent_focus,
+            section,
         );
         self.shortcut_settings_window = Some(window);
     }
@@ -1644,11 +1653,23 @@ impl ApplicationShell {
 
     #[allow(clippy::too_many_lines)] // Interim until the source command registry is ported.
     fn command_palette_action_items() -> Vec<CommandPaletteItem> {
-        vec![
+        let mut items = crate::settings_navigation::SettingsSection::ALL
+            .into_iter()
+            .map(|section| {
+                CommandPaletteItem::parameterized_action(
+                    format!("{} Settings", section.title()),
+                    format!("Jump to {}", section.subtitle()),
+                    section.search_keywords(),
+                    ACTION_OPEN_SETTINGS_SECTION,
+                    section.id(),
+                )
+            })
+            .collect::<Vec<_>>();
+        items.extend([
             CommandPaletteItem::action(
                 "Settings",
-                "Configure application keyboard shortcuts",
-                "preferences shortcuts bindings presets",
+                "Open Zentty settings",
+                "preferences configuration general",
                 ACTION_OPEN_SETTINGS,
             ),
             CommandPaletteItem::action(
@@ -2041,7 +2062,8 @@ impl ApplicationShell {
                 "terminal selection clipboard",
                 ACTION_SELECT_ALL,
             ),
-        ]
+        ]);
+        items
     }
 
     fn perform_focused_binding_action(&self, action: &str, binding: &str) {

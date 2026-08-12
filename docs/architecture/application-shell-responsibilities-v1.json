@@ -2,20 +2,21 @@
   "schema_version": 1,
   "contract_id": "zentty-application-shell-responsibilities",
   "source": "crates/zentty-linux/src/application_shell.rs",
-  "source_sha256": "b85e27666d30a24fbaf65c62d5054bafbf7080777820ab4d58090451e6d78996",
+  "source_sha256": "ccba40b3137643e55fc674e7ed76b0638ab0dfadc308e396e362179e6d6407ae",
   "owned_source_sha256": {
-    "crates/zentty-linux/src/main.rs": "2cee0efbababba4246c013e75cf9a2bbe92dacfca72d8d3c48c5564bb9f265e7",
+    "crates/zentty-linux/src/main.rs": "66ae628f3e92cad2abaae8b39689cd9744a8a734863dcd796974209a89ddd4c6",
     "crates/zentty-linux/src/application.rs": "6f14dc9e6c60d46f3713faa997501782e5c9750f0e00b40e27472431cede6c7d",
     "crates/zentty-linux/src/config_store.rs": "00125a6e2591ddf227ca01dd1ce17273baffbdc04e9f3a81a6932b8c3fcad95a",
     "crates/zentty-linux/src/window_set.rs": "501d595889c11a41a4261ef8282465d76dd9ed8ccd1d004406b558579b0bf58e",
     "crates/zentty-linux/src/agent_runtime.rs": "48f30d38048ae5388ca59aee2021e1215cabdfc033e66755ed32c6f92dcb8671",
     "crates/zentty-linux/src/codex_enrichment.rs": "fe87631c75c04b63962b7f89d311a778a25af8f27a1dcb4d5950b3efcbaa476e",
-    "crates/zentty-linux/src/application_shell/action_router.rs": "6f4b56ca55bd71a8782a09c03efecb732ebf6b76e59b8c98c585a9bb35aaaad3",
+    "crates/zentty-linux/src/application_shell/action_router.rs": "862282fa3a6f15f8ec1dd7f0eddf480c5ee2f8722d1711ba426cf477bc9b9c94",
     "crates/zentty-linux/src/application_shell/shortcut_registry.rs": "404a10edec7274e49fc3914f3c519f9b0a0d59a7e1f20fddc8cd28643866b1c8",
     "crates/zentty-linux/src/application_shell/shortcut_runtime.rs": "8b5b0230608324360ee62045c7eb726fc18cae30a5fdeaf86259286610a41d60",
-    "crates/zentty-linux/src/shortcut_settings.rs": "79f74d03dc7742ae3b3e4adc96d4da467ccdcef20f894c255f34176f2b2bb90c",
+    "crates/zentty-linux/src/shortcut_settings.rs": "329f34628ea11a2b0a869cd271c0b43d8bd269f85e51f79328a68589730adaa0",
     "crates/zentty-linux/src/appearance_settings.rs": "7a6aaf6f2ed3636c526e5ff8c8cba214785b541f068eb43c408a8ae1d3be9b22",
-    "crates/zentty-linux/src/settings_shell.rs": "9485156f5875b21e5138434c9c666dd8758cc16f1fc23eb8708baf610b575123",
+    "crates/zentty-linux/src/settings_shell.rs": "71c7b5a2b93efa3b86f897afdae0c4aaff51d9c552555c260cd7afe0d3fff849",
+    "crates/zentty-linux/src/settings_navigation.rs": "4c58ea6a0347a60f9f28c5bd790a02c6c3bb94765df587f4b2340e31bbbf2cd4",
     "crates/zentty-linux/src/theme_catalog.rs": "e944b9378d77d20c68b7020b71275c4482490819575cc657d23a00d7a22af6d4",
     "crates/zentty-linux/src/application_shell/clipboard_actions.rs": "1502a0353bc3e0d645d6c6bd81aae1ed1306f312838f92a635944d402cd441b0",
     "crates/zentty-linux/src/application_shell/agent_events.rs": "3b6dc220ad2434b15213a34c6c225f5dad868880437b3b54365ba77e42b2d0a4",
@@ -80,9 +81,9 @@
     {
       "id": "settings_coordinator",
       "status": "existing",
-      "planned_module": "crates/zentty-linux/src/settings_shell.rs, crates/zentty-linux/src/appearance_settings.rs, and crates/zentty-linux/src/theme_catalog.rs",
+      "planned_module": "crates/zentty-linux/src/settings_shell.rs, crates/zentty-linux/src/settings_navigation.rs, crates/zentty-linux/src/appearance_settings.rs, and crates/zentty-linux/src/theme_catalog.rs",
       "tracking": "GH-20",
-      "responsibility": "The sole nonmodal GTK settings shell and Appearance projection. Theme discovery is a bounded, read-only projection; all durable appearance writes and native reload authority remain in ConfigStore and ApplicationShell."
+      "responsibility": "The sole nonmodal GTK settings shell, source-section navigation/history policy, and Appearance projection. Theme discovery is a bounded, read-only projection; all durable appearance writes and native reload authority remain in ConfigStore and ApplicationShell."
     },
     {
       "id": "pane_runtime_coordinator",
@@ -331,7 +332,7 @@
     },
     {
       "owner": "settings_coordinator",
-      "methods": ["apply_appearance", "reload_ghostty_config_with_focus"]
+      "methods": ["apply_appearance", "reload_ghostty_config_with_focus", "request_show_settings"]
     },
     {
       "owner": "existing_ui_projection",
@@ -438,7 +439,8 @@
     ],
     "config_store": ["load_default", "load", "install_default_fallback_theme_if_referenced", "install_fallback_theme_if_referenced", "fallback_theme_publication_error", "update_default_appearance", "update_default_ghostty_theme", "update_default_ghostty_value", "update_default_ignored_port_rules", "update_default_preferred_browser", "update_default_shortcuts", "update_appearance", "update_ghostty_value", "update_ignored_port_rules", "update_preferred_browser", "update_shortcuts", "with_config_lock", "set_optional_appearance_string", "resolve_config_target", "atomic_replace", "read_bounded", "invalid_snapshot", "default_config_file_from", "default_fallback_theme_path", "default_ghostty_config_file_from", "default_theme_resource_path", "nonempty_path"],
     "appearance_settings": ["build", "section_title", "refresh_catalog", "preview_summary", "log_theme_selection", "apply_state", "install_styles"],
-    "settings_shell": ["build"],
+    "settings_shell": ["apply_selection", "build", "build_widgets", "connect_navigation", "key_controller", "navigate_back", "navigate_forward", "navigation_actions", "pending_section", "section_target"],
+    "settings_navigation": ["back", "can_back", "can_forward", "current", "forward", "matches", "new", "parse", "record"],
     "theme_catalog": ["parse", "hex", "is_dark", "rgb", "repeated_hex", "matches", "discover_themes", "load_directory", "is_eligible_theme_file", "parse_theme", "is_ignored_theme_line", "default_theme_directories"],
     "persistence_coordinator": [
       "clean_exit_decision", "complete_launch", "default_state_directory", "drain_errors",
@@ -463,6 +465,7 @@
     {"name":"toggle-sidebar","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"show-command-palette","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"open-settings","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"open-settings-section","parameter":"string","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"open-bookmarks","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"jump-latest-attention","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"new-worklane","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},

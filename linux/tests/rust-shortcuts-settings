@@ -110,7 +110,7 @@ main_type() {
         # The nested compositor shares CPU with real Ghostty builds and product
         # journeys during the full matrix. Preserve every physical key event
         # under that load rather than accepting a partial query as readiness.
-        wtype -d 20 -- "$1"
+        wtype -d 50 -- "$1"
     fi
 }
 
@@ -180,6 +180,15 @@ zentty_product_wait_for_log "${log}" 'zentty-linux: shortcut-settings visible co
 prepare_settings_input
 zentty_product_wait_for_log "${log}" 'zentty-linux: shortcut-settings active' \
     "settings toplevel did not receive compositor activation" || fail "settings was not activated"
+zentty_product_wait_for_log "${log}" 'zentty-linux: settings-section selected=general' \
+    "Settings did not open the source default General section" || fail "settings default section failed"
+settings_key ctrl+f
+settings_type crash
+zentty_product_wait_for_log "${log}" 'zentty-linux: settings-search query="crash" results=1' \
+    "settings search did not find Updates & Privacy by source keyword" || fail "settings search failed"
+settings_key ctrl+2
+zentty_product_wait_for_log "${log}" 'zentty-linux: settings-section selected=shortcuts' \
+    "keyboard navigation did not open Shortcuts" || fail "settings shortcut navigation failed"
 
 settings_key ctrl+f
 settings_type 'Toggle Sidebar'
@@ -322,24 +331,29 @@ zentty_product_wait_for_log "${log}" 'zentty-linux: shortcut=command+option+z ac
 # look like an application shortcut regression. The feature itself remains real:
 # catalog search, persistence, native reload metrics, and the live PTY are all
 # observed before the process exits.
-if [[ "${backend}" == wayland ]]; then
-    main_key ctrl+shift+p
-    main_type 'Settings'
-    zentty_product_wait_for_log "${log}" 'command-palette=query value="Settings" results=1' \
-        "Settings did not resolve for Appearance" || fail "appearance settings palette route failed"
-    main_key Down
-    main_key Return
-else
-    main_key ctrl+comma
-fi
+main_key ctrl+shift+p
+main_type 'Appearance Settings'
+zentty_product_wait_for_log "${log}" 'command-palette=query value="Appearance Settings" results=1' \
+    "Appearance Settings did not resolve uniquely" || fail "appearance settings palette route failed"
+main_key Down
+main_key Return
 zentty_product_wait_for_log "${log}" 'zentty-linux: shortcut-settings visible commands=' \
     "Appearance did not open the real settings window" || fail "appearance settings did not open"
 prepare_settings_input
 zentty_product_wait_for_log "${log}" 'zentty-linux: shortcut-settings active' \
     "Appearance settings did not receive compositor activation" || fail "appearance settings was not activated"
-settings_key ctrl+1
 zentty_product_wait_for_log "${log}" 'zentty-linux: settings-section selected=appearance' \
-    "settings did not navigate to Appearance" || fail "appearance navigation failed"
+    "palette did not deep-link to Appearance" || fail "appearance deep-link failed"
+settings_key ctrl+2
+zentty_product_wait_for_log "${log}" 'zentty-linux: settings-section selected=shortcuts' \
+    "settings did not record a forward navigation" || fail "settings navigation history setup failed"
+settings_key ctrl+bracketleft
+zentty_product_wait_for_log_count "${log}" 'zentty-linux: settings-section selected=appearance' 2 \
+    "settings history did not navigate back" || fail "settings back navigation failed"
+settings_key ctrl+bracketright
+zentty_product_wait_for_log_count "${log}" 'zentty-linux: settings-section selected=shortcuts' 2 \
+    "settings history did not navigate forward" || fail "settings forward navigation failed"
+settings_key ctrl+bracketleft
 settings_key ctrl+f
 settings_type 'TokyoNight Moon'
 zentty_product_wait_for_log "${log}" 'zentty-linux: appearance-catalog query="TokyoNight Moon" results=1' \

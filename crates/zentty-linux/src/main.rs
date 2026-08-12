@@ -19,6 +19,7 @@ mod persistence_coordinator;
 mod project_icon_view;
 mod restore_notice;
 mod server_discovery;
+mod settings_navigation;
 mod settings_shell;
 mod shortcut_settings;
 mod sidebar;
