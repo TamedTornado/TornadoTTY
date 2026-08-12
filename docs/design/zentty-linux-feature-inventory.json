@@ -431,10 +431,10 @@
       "origin": "PORT_PARITY",
       "user_impact": "Task runners are a named public feature and connect project files to real repeatable terminal work without adding an IDE.",
       "linux_owner_issue": 19,
-      "implementation_status": "PARTIAL",
+      "implementation_status": "IMPLEMENTED",
       "focused_tests": ["crates/zentty-core/tests/task_runner.rs"],
       "product_scenarios": ["linux/tests/rust-task-runners"],
-      "test_plan": "Create real fixtures for every format, drive dynamic palette results in the staged app, prove command and CWD in a real PTY, cover hostile/symlinked files, and mutation-test parsers/deduplication/order.",
+      "test_plan": "Controlled X11 and Wayland materialize every advertised source format in one real project, discover each through the physical command palette, reject a stale snapshot, open a disabled task's exact source through the configured Open With target, and launch VS Code plus make tasks in real Ghostty PTYs with exact CWD/environment/argv receipts. Focused tests and governed mutation cover parsers, quoting, ordering, revalidation, bounded/symlink safety, and local file launch policy.",
       "alternative_or_blocker": null
     },
     {

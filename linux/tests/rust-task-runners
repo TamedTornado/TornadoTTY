@@ -11,6 +11,10 @@ run_root="$(mktemp -d)"
 project="${run_root}/project"
 state_directory="${run_root}/state"
 receipt="${run_root}/task.receipt"
+make_receipt="${run_root}/make.receipt"
+source_receipt="${run_root}/source.receipt"
+config_home="${run_root}/config"
+fixture_bin="${run_root}/bin"
 log="${run_root}/product.log"
 product_pid=""
 backend="${GDK_BACKEND:-}"
@@ -56,7 +60,24 @@ layer_runpath="$(
 [[ "${layer_runpath}" == .zig-cache/* ]] || fail "Ghostty runpath is not pinned"
 layer_directory="${ghostty_root}/${layer_runpath}"
 
-mkdir -p "${project}/.git" "${project}/.vscode" "${state_directory}"
+mkdir -p "${project}/.git" "${project}/.vscode" "${project}/tasks" \
+    "${state_directory}" "${config_home}/zentty" "${fixture_bin}"
+cat >"${fixture_bin}/source-open" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'argc=%s\narg1=%s\n' "$#" "${1:-}" >"${ZENTTY_TASK_SOURCE_RECEIPT}"
+EOF
+chmod 700 "${fixture_bin}/source-open"
+cat >"${config_home}/zentty/config.toml" <<EOF
+[open_with]
+primary_target_id = "custom:task-source"
+enabled_target_ids = ["custom:task-source"]
+
+[[open_with.custom_apps]]
+id = "custom:task-source"
+name = "Controlled Task Source"
+path = "${fixture_bin}/source-open"
+EOF
 cat >"${project}/package.json" <<'EOF'
 {
   "packageManager": "pnpm@10.32.1",
@@ -64,6 +85,33 @@ cat >"${project}/package.json" <<'EOF'
     "package-visible": "printf package-task"
   }
 }
+EOF
+cat >"${project}/Taskfile.yml" <<'EOF'
+version: '3'
+includes:
+  api: ./tasks/api.yml
+tasks:
+  taskfile-visible:
+    desc: Source Taskfile task
+EOF
+cat >"${project}/tasks/api.yml" <<'EOF'
+version: '3'
+tasks:
+  included-visible:
+EOF
+cat >"${project}/justfile" <<'EOF'
+just-visible:
+  printf just-task
+EOF
+cat >"${project}/Makefile" <<EOF
+.PHONY: make-integration
+make-integration:
+	@printf 'cwd=%s\ncommand=make-integration\n' "\$\$(pwd)" >'${make_receipt}'
+EOF
+cat >"${project}/mise.toml" <<'EOF'
+[tasks.mise-visible]
+description = "Source mise task"
+run = "printf mise-task"
 EOF
 cat >"${project}/.vscode/tasks.json" <<'EOF'
 {
@@ -100,7 +148,10 @@ chmod 700 "${project}/task-fixture"
 
 (
     cd "${project}"
-    exec env \
+        exec env \
+            XDG_CONFIG_HOME="${config_home}" \
+            PATH="${fixture_bin}:${PATH}" \
+            ZENTTY_TASK_SOURCE_RECEIPT="${source_receipt}" \
         GDK_SCALE=1 \
         GDK_DPI_SCALE=1 \
         LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
@@ -179,8 +230,55 @@ grep -Fq 'action=run-task rejected=stale' "${log}" ||
     fail "changed task source was not rejected at activation"
 [[ ! -e "${receipt}" ]] || fail "stale task unexpectedly executed"
 
+# Every source-advertised format must cross the real product discovery path;
+# parser-only coverage is not sufficient product evidence.
+for format_query in \
+    'Run task: package-visible' \
+    'Run task: taskfile-visible' \
+    'Run task: api:included-visible' \
+    'Run task: just-visible' \
+    'Run task: make-integration' \
+    'Run task: mise-visible'; do
+    open_palette
+    type_text "${format_query}"
+    for _ in $(seq 1 100); do
+        grep -Fq "command-palette=query value=\"${format_query}\" results=1" "${log}" && break
+        sleep 0.05
+    done
+    grep -Fq "command-palette=query value=\"${format_query}\" results=1" "${log}" ||
+        fail "advertised task format was absent from the real palette: ${format_query}"
+    if [[ "${backend}" == x11 ]]; then
+        xdotool key --window "${window_id}" Escape
+    else
+        wtype -k Escape
+    fi
+done
+
+# Source Zentty opens a disabled task's discovered source file. It must not
+# execute or guess the unsupported variable.
+disabled_query='Run task: disabled-parameter'
+open_palette
+type_text "${disabled_query}"
+for _ in $(seq 1 100); do
+    grep -Fq "command-palette=query value=\"${disabled_query}\" results=1" "${log}" && break
+    sleep 0.05
+done
+grep -Fq "command-palette=query value=\"${disabled_query}\" results=1" "${log}" ||
+    fail "disabled task source action was absent from the real palette"
+activate_first
+for _ in $(seq 1 100); do
+    [[ -s "${source_receipt}" ]] && break
+    sleep 0.05
+done
+[[ -s "${source_receipt}" ]] || fail "disabled task did not launch its source opener"
+grep -Fxq 'argc=1' "${source_receipt}" || fail "disabled task source opener received the wrong argv count"
+grep -Fxq "arg1=${project}/.vscode/tasks.json" "${source_receipt}" ||
+    fail "disabled task did not open its exact canonical source file"
+[[ ! -e "${receipt}" ]] || fail "disabled task unexpectedly executed"
+
 # A fresh palette snapshot may launch the real project task in a real Ghostty
 # terminal with its source directory, environment, and quoted argument.
+focus_before_task="$(grep -Fc 'zentty-linux: focus-pane pane=pane-1' "${log}" || true)"
 open_palette
 type_text "${query}"
 for _ in $(seq 1 100); do
@@ -201,4 +299,38 @@ grep -Fq 'command="./task-fixture '\''exact argument'\''"' "${log}" ||
     fail "product launched a command different from the discovered task"
 grep -Fq 'cwd='"${project}" "${log}" || fail "new task pane did not retain its project CWD"
 
-echo "rust-task-runners-${backend}: PASS real-palette real-ghostty-pty stale-revalidation cwd environment quoted-argv"
+# The short task pane exits after writing its receipt. Wait for the real pane
+# lifecycle to return focus before opening another palette; otherwise input can
+# correctly land on the surface being removed rather than the new popover.
+for _ in $(seq 1 200); do
+    if grep -Fq 'zentty-linux: child-exited-pane=pane-2' "${log}" &&
+        (( $(grep -Fc 'zentty-linux: focus-pane pane=pane-1' "${log}" || true) > focus_before_task )); then
+        break
+    fi
+    sleep 0.05
+done
+grep -Fq 'zentty-linux: child-exited-pane=pane-2' "${log}" || fail "completed task pane did not exit"
+(( $(grep -Fc 'zentty-linux: focus-pane pane=pane-1' "${log}" || true) > focus_before_task )) ||
+    fail "focus did not return after the completed task pane exited"
+
+# Launch one non-VS-Code source through the same real palette and Ghostty pane.
+make_query='Run task: make-integration'
+make_query_before="$(grep -Fc "command-palette=query value=\"${make_query}\" results=1" "${log}" || true)"
+open_palette
+type_text "${make_query}"
+for _ in $(seq 1 100); do
+    (( $(grep -Fc "command-palette=query value=\"${make_query}\" results=1" "${log}" || true) > make_query_before )) && break
+    sleep 0.05
+done
+(( $(grep -Fc "command-palette=query value=\"${make_query}\" results=1" "${log}" || true) > make_query_before )) ||
+    fail "make task was absent from the fresh real palette snapshot"
+activate_first
+for _ in $(seq 1 200); do
+    [[ -s "${make_receipt}" ]] && break
+    sleep 0.05
+done
+grep -Fxq "cwd=${project}" "${make_receipt}" || fail "make task used the wrong source directory"
+grep -Fxq 'command=make-integration' "${make_receipt}" || fail "make task did not execute the named source target"
+grep -Fq 'command="make make-integration"' "${log}" || fail "product launched the wrong make command"
+
+echo "rust-task-runners-${backend}: PASS all-formats disabled-source-open real-palette real-ghostty-pty stale-revalidation cwd environment quoted-argv"

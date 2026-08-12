@@ -148,6 +148,36 @@ pub(super) fn open_primary(shell: &ApplicationShell) {
     open_target(shell, &target.id);
 }
 
+pub(super) fn open_local_path_primary(shell: &ApplicationShell, path: &Path, context: &str) {
+    let Some(target) = shell.open_with_runtime.catalog.primary.clone() else {
+        eprintln!("zentty-linux: action=open-{context} unavailable=no-primary-target");
+        return;
+    };
+    let plan = match target.launch_local_path_plan(path) {
+        Ok(plan) => plan,
+        Err(error) => {
+            eprintln!(
+                "zentty-linux: action=open-{context} id={} error={error:?} path={}",
+                target.id,
+                path.display()
+            );
+            return;
+        }
+    };
+    match launch(plan) {
+        Ok(()) => eprintln!(
+            "zentty-linux: action=open-{context} id={} result=launched path={}",
+            target.id,
+            path.display()
+        ),
+        Err(error) => eprintln!(
+            "zentty-linux: action=open-{context} id={} error={error} path={}",
+            target.id,
+            path.display()
+        ),
+    }
+}
+
 pub(super) fn open_target(shell: &ApplicationShell, target_id: &str) {
     let Some(target) = shell
         .open_with_runtime

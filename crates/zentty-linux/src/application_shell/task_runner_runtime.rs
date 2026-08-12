@@ -14,10 +14,6 @@ pub(super) fn run_task(shell: &Rc<RefCell<ApplicationShell>>, id: &str) {
         };
         action.clone()
     };
-    if !action.is_enabled() {
-        eprintln!("zentty-linux: action=run-task rejected=disabled id={id:?}");
-        return;
-    }
     let action = match revalidate_task_runner(&action) {
         Ok(action) => action,
         Err(error) => {
@@ -25,6 +21,14 @@ pub(super) fn run_task(shell: &Rc<RefCell<ApplicationShell>>, id: &str) {
             return;
         }
     };
+    if !action.is_enabled() {
+        super::open_with_runtime::open_local_path_primary(
+            &shell.borrow(),
+            &action.source_path,
+            "task-source",
+        );
+        return;
+    }
     if let Err(error) = launch_in_new_pane(shell, &action) {
         ApplicationShell::report_action_error(shell, super::action_router::ACTION_RUN_TASK, &error);
     }

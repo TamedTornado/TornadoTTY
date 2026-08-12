@@ -138,8 +138,35 @@ impl OpenWithTarget {
         if !metadata.is_dir() {
             return Err(OpenWithLaunchError::NotDirectory);
         }
+        self.launch_canonical_path(directory, true)
+    }
+
+    /// Builds a launch request from a real local file or directory without
+    /// invoking a shell. Directory-option launchers remain directory-only.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the path is missing, is not a regular file or
+    /// directory, cannot be canonicalized, or is a file for a directory-only
+    /// launcher.
+    pub fn launch_local_path_plan(
+        &self,
+        path: &Path,
+    ) -> Result<OpenWithLaunchPlan, OpenWithLaunchError> {
+        let metadata = fs::metadata(path).map_err(|_| OpenWithLaunchError::MissingPath)?;
+        if !metadata.is_dir() && !metadata.is_file() {
+            return Err(OpenWithLaunchError::MissingPath);
+        }
+        self.launch_canonical_path(path, metadata.is_dir())
+    }
+
+    fn launch_canonical_path(
+        &self,
+        path: &Path,
+        is_directory: bool,
+    ) -> Result<OpenWithLaunchPlan, OpenWithLaunchError> {
         let canonical =
-            fs::canonicalize(directory).map_err(|_| OpenWithLaunchError::CannotCanonicalize)?;
+            fs::canonicalize(path).map_err(|_| OpenWithLaunchError::CannotCanonicalize)?;
         match &self.launcher {
             OpenWithLauncher::DesktopApplication { application_id } => {
                 Ok(OpenWithLaunchPlan::DesktopApplication {
@@ -159,6 +186,9 @@ impl OpenWithTarget {
                 path,
                 option_prefix,
             } => {
+                if !is_directory {
+                    return Err(OpenWithLaunchError::NotDirectory);
+                }
                 let mut directory_option = OsString::from(option_prefix);
                 directory_option.push(canonical.as_os_str());
                 Ok(OpenWithLaunchPlan::Executable {
@@ -385,6 +415,66 @@ mod tests {
             target.launch_plan(&file),
             Err(OpenWithLaunchError::NotDirectory)
         );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn local_path_plan_opens_regular_files_without_weakening_directory_only_targets() {
+        let directory = fixture_directory("source-file");
+        let source = directory.join("Taskfile.yml");
+        fs::write(&source, "tasks:\n  build:\n").unwrap();
+        let canonical = fs::canonicalize(&source).unwrap();
+
+        assert_eq!(
+            target("editor").launch_local_path_plan(&source).unwrap(),
+            OpenWithLaunchPlan::Executable {
+                executable: "/bin/editor".into(),
+                arguments: vec![canonical.clone().into_os_string()],
+            }
+        );
+        let desktop = OpenWithTarget {
+            id: "desktop".into(),
+            name: "Desktop editor".into(),
+            kind: OpenWithTargetKind::Editor,
+            launcher: OpenWithLauncher::DesktopApplication {
+                application_id: "org.example.Editor".into(),
+            },
+        };
+        assert_eq!(
+            desktop.launch_local_path_plan(&source).unwrap(),
+            OpenWithLaunchPlan::DesktopApplication {
+                application_id: "org.example.Editor".into(),
+                canonical_uri: path_to_file_uri(&canonical),
+            }
+        );
+        let terminal = OpenWithTarget {
+            id: "terminal".into(),
+            name: "Terminal".into(),
+            kind: OpenWithTargetKind::Terminal,
+            launcher: OpenWithLauncher::ExecutableDirectoryOption {
+                path: "/bin/terminal".into(),
+                option_prefix: "--working-directory=".into(),
+            },
+        };
+        assert_eq!(
+            terminal.launch_local_path_plan(&source),
+            Err(OpenWithLaunchError::NotDirectory)
+        );
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn local_path_plan_rejects_non_file_non_directory_nodes() {
+        let directory = fixture_directory("source-socket");
+        let socket = directory.join("not-a-task-source.sock");
+        let _listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+
+        assert_eq!(
+            target("editor").launch_local_path_plan(&socket),
+            Err(OpenWithLaunchError::MissingPath)
+        );
+
         fs::remove_dir_all(directory).unwrap();
     }
 }

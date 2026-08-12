@@ -1499,7 +1499,6 @@ impl ApplicationShell {
         actions
             .into_iter()
             .map(|action| {
-                let enabled = action.is_enabled();
                 let id = action.id.clone();
                 let keywords = format!(
                     "run task task runner {} {}",
@@ -1509,13 +1508,12 @@ impl ApplicationShell {
                         .as_ref()
                         .map_or("", zentty_core::TaskRunnerDisabledReason::display_text)
                 );
-                let item = CommandPaletteItem::parameterized_action_with_enabled(
+                let item = CommandPaletteItem::parameterized_action(
                     format!("Run task: {}", action.title),
                     action.subtitle(),
                     &keywords,
                     action_router::ACTION_RUN_TASK,
                     id.clone(),
-                    enabled,
                 );
                 self.task_runner_actions.insert(id, action);
                 item

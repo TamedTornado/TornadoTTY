@@ -2,7 +2,7 @@
   "schema_version": 1,
   "contract_id": "zentty-application-shell-responsibilities",
   "source": "crates/zentty-linux/src/application_shell.rs",
-  "source_sha256": "37416eba09629f60b1128af352720953af75b480172119378fbb933b8c07b749",
+  "source_sha256": "95d55c695ea0a4aab21249bed176367e96708db1e803c74f6446bc63e1fa0bd2",
   "owned_source_sha256": {
     "crates/zentty-linux/src/main.rs": "f7ee77f349f32eaba5b8953676b541e0dfd0cf65ecd3d0f847a6b952b4264e14",
     "crates/zentty-linux/src/application.rs": "6f14dc9e6c60d46f3713faa997501782e5c9750f0e00b40e27472431cede6c7d",
@@ -14,7 +14,7 @@
     "crates/zentty-linux/src/application_shell/clipboard_actions.rs": "1502a0353bc3e0d645d6c6bd81aae1ed1306f312838f92a635944d402cd441b0",
     "crates/zentty-linux/src/application_shell/agent_events.rs": "3b6dc220ad2434b15213a34c6c225f5dad868880437b3b54365ba77e42b2d0a4",
     "crates/zentty-linux/src/application_shell/project_context_runtime.rs": "a6168d658c98ab6407f3d0f1f1ab624d3e3f91e10de39fd4b5b28dd22ce19e7f",
-    "crates/zentty-linux/src/application_shell/open_with_runtime.rs": "80ec9ae6b16cadc132e763ca352fddfce6cc02725cbed0f7062bf6f231246aca",
+    "crates/zentty-linux/src/application_shell/open_with_runtime.rs": "f90d383fac4d4f9ef1fa571f2354167af4efc9a333da9085b476641e34f880a2",
     "crates/zentty-linux/src/application_shell/bookmark_runtime.rs": "6fe9ce520f69bb5be975a0f17e5fec8b7f4392159695afb019ff6ca9f3c883dc",
     "crates/zentty-linux/src/bookmarks_view.rs": "e2166e336a40e6f4d12bc28726dd23f97f1edbcc04155dd937f4dce9a054ccf5",
     "crates/zentty-linux/src/restore_notice.rs": "02844f204871767d2aa4bc6076fff7c2145a52c493583246ef686f886a1db918",
@@ -22,7 +22,7 @@
     "crates/zentty-linux/src/application_shell/global_search.rs": "98a1963830af8616b31da2558ae6f27c4461342ef3085f6ef9cda0863a1ddc7c",
     "crates/zentty-linux/src/application_shell/pane_runtime.rs": "45f238c8949e12786d26c94c77275d42696edfe391f5c96d36db93ca7cbac2f6",
     "crates/zentty-linux/src/application_shell/server_runtime.rs": "cd39ebc1f95f7eb3c063058036fabbecc90cf367457a1538f2f6c8e657a0b919",
-    "crates/zentty-linux/src/application_shell/task_runner_runtime.rs": "ec752b328170a8b1363a87ebce06d58220f717237f97d16bd32b4aca31cb7ddb",
+    "crates/zentty-linux/src/application_shell/task_runner_runtime.rs": "42fe7c62e7876b3f5132a381ac7f8e53f45e820d3d94bf9a519c8d6ed26deded",
     "crates/zentty-linux/src/docker_discovery.rs": "1836046bf3159c0a207ed999dc44a2ef8d9aa6276d79275031e2dbbd6cdd6c6d",
     "crates/zentty-linux/src/server_discovery.rs": "0d398d53a68bd34afa15208e4b2c6c5d3a9739502f1c7b86b40e615ec73d87a8",
     "crates/zentty-linux/src/application_shell/remote_paste.rs": "dfa26112e2dfe15a2291d5df843d26f74579607b06f9e4d1efd0931312835ead",
@@ -153,7 +153,7 @@
       "status": "existing",
       "planned_module": "crates/zentty-linux/src/application_shell/open_with_runtime.rs and crates/zentty-core/src/open_with.rs",
       "tracking": "GH-18",
-      "responsibility": "The sole window-local Open With catalog and launch boundary; discovers real Linux desktop applications and executable targets once, resolves only the focused canonical local directory, and launches through GIO or direct argv without a shell."
+      "responsibility": "The sole window-local Open With catalog and launch boundary; discovers real Linux desktop applications and executable targets once, resolves the focused canonical local directory or a revalidated product-owned source file, and launches through GIO or direct argv without a shell."
     },
     {
       "id": "bookmark_coordinator",
@@ -378,7 +378,7 @@
       "observation_is_current", "process_working_directory", "refresh_focused", "request_probe", "safe_http_url", "sync_watches", "watch_targets"
     ],
     "open_with_coordinator": [
-      "discover", "open_primary", "open_target", "focused_context_is_available",
+      "discover", "open_primary", "open_local_path_primary", "open_target", "focused_context_is_available",
       "focused_local_directory", "discover_available_targets", "resolve_executable",
       "canonical_executable", "launch"
     ],

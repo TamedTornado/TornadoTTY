@@ -167,3 +167,55 @@ limitation belongs here while this feature is built.
   parser coverage for every advertised source format. The closeout expands
   that same journey so product evidence cannot silently rely on parser-only
   tests for Taskfile, just, make, mise, or package scripts.
+
+## Closeout discoveries and focused evidence
+
+- A regular task source could not use the existing Open With plan because that
+  policy intentionally accepted directories only. The shared core now exposes
+  a local-path plan for regular files and directories. Desktop applications
+  receive a canonical file URI, executable editors receive one canonical path,
+  and directory-option terminal launchers still reject files. Missing and
+  non-regular nodes remain rejected.
+- The first governed mutation run caught 11 of 15 mutants and rejected three as
+  unviable, but missed deletion of the non-file/non-directory check. A real
+  Unix-socket fixture closed that gap. The final repository-safe campaign
+  (`gitignore=true`, `copy_target=false`) tested all 15: 12 caught, 3 unviable,
+  0 missed.
+- Disabled palette items are now activatable exactly as in source Zentty. The
+  existing opaque task snapshot is revalidated first; only then does the one
+  Open With runtime launch the action's discovered source path. No GTK path,
+  disabled command text, guessed parameter, or feature-local launcher crosses
+  the boundary.
+- The expanded journey initially failed its disabled-source assertion because
+  it activated before the new query receipt arrived. Count-based palette
+  synchronization repaired the harness rather than adding a product delay.
+  The next run reached the later make task but reused an older matching query
+  receipt, exposing the same harness flaw there; the second launch now also
+  waits for a strictly newer receipt.
+- Controlled X11 and Cage/Wayland now pass one consolidated journey that
+  discovers package.json, Taskfile plus include, VS Code JSONC, just, make, and
+  mise; opens the disabled VS Code task's exact canonical source in the
+  configured controlled editor without executing it; rejects a changed source;
+  and launches both VS Code and make tasks in real Ghostty panes with exact CWD,
+  environment, quoted argument, and command receipts.
+- The first complete promotion run passed the expanded Wayland cell but failed
+  X11 at the second, make-backed launch. The product had correctly opened the
+  palette on the short-lived VS Code task pane just as that task exited; its
+  physical query input then had no stable focused target. The harness now waits
+  for the real `child-exited-pane=pane-2` lifecycle receipt and a strictly newer
+  focus return to pane 1 before opening the next palette. Focused X11 and
+  Wayland reruns pass. This is lifecycle synchronization in the existing real
+  journey, not a delay, alternate action route, or retained task pane.
+- The corrected full local qualification completed in 451.540 seconds. Every
+  presently executable cell passed: PASS=113, FAIL=0, BLOCKED=7, XFAIL=1,
+  NOT_IMPLEMENTED=21. The machine-readable receipt has SHA-256
+  `835026ed51feb8fd9c7559b04bca35fab3c5754b40bec9983c24a345f8dd86a7`.
+  It establishes the implemented-local-suite and product-boundary claims only;
+  release and full-Linux qualification remain false because the matrix still
+  contains explicit non-PASS cells.
+- Debug Valgrind is **PASS with reviewed suppressions**, not an unsuppressed
+  clean result. Its preserved raw receipt reports 427 errors in 427 contexts,
+  6,080 definite bytes, and 41,395 indirect bytes. The reviewed suppression
+  run reports zero post-suppression errors, contexts, and leak bytes, with all
+  427 errors/contexts explicitly suppressed. Suppression governance passed;
+  ReleaseSafe Valgrind remains the tracked XFAIL.

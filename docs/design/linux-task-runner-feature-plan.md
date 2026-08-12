@@ -125,11 +125,11 @@ Construction order:
 
 Acceptance criteria:
 
-- [ ] Disabled task selection opens its exact canonical source in the primary
+- [x] Disabled task selection opens its exact canonical source in the primary
       configured application and cannot execute task text.
-- [ ] Every source-advertised format is represented in the staged-product
+- [x] Every source-advertised format is represented in the staged-product
       fixture and discoverable through the real command palette.
-- [ ] Representative enabled tasks from non-VS-Code formats launch with their
+- [x] Representative enabled tasks from non-VS-Code formats launch with their
       exact source CWD and runner command in real Ghostty panes.
-- [ ] X11 and Wayland journeys, strict Clippy, workspace tests, governed
+- [x] X11 and Wayland journeys, strict Clippy, workspace tests, governed
       mutation evidence, and every presently executable matrix cell pass.
