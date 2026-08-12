@@ -23,6 +23,7 @@ mod project_icon;
 mod remote_transfer;
 mod server_browser;
 mod session_restore_store;
+mod shortcut;
 mod sidebar_width;
 mod ssh_identity;
 mod task_runner;
@@ -68,6 +69,10 @@ pub use server_browser::{
 pub use session_restore_store::{
     LaunchDecision, LaunchReason, PersistenceRequest, SessionRestoreStore,
     SessionRestoreStoreError, SnapshotPersistence,
+};
+pub use shortcut::{
+    KeyboardShortcut, ShortcutBinding, ShortcutConflict, ShortcutDefinition, ShortcutKey,
+    ShortcutManager, ShortcutModifier,
 };
 pub use sidebar_width::SidebarWidthPreference;
 pub use ssh_identity::{SshConnectionOption, SshDestination, parse_ssh_destination};

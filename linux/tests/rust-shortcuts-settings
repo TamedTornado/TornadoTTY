@@ -1,0 +1,207 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
+ghostty_root="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
+run_root="$(mktemp -d)"
+state_directory="${run_root}/state"
+ready="${run_root}/terminal.ready"
+bytes="${run_root}/terminal.bytes"
+log="${run_root}/product.log"
+product_pid=""
+backend="${GDK_BACKEND:-}"
+
+# shellcheck disable=SC1091
+source "${repo_root}/linux/tests/lib/product-input"
+
+fail() {
+    [[ ! -f "${log}" ]] || cat "${log}" >&2
+    echo "rust-shortcuts-settings: error: $*" >&2
+    exit 1
+}
+
+cleanup_product() {
+    if [[ "${product_pid}" =~ ^[1-9][0-9]*$ ]]; then
+        kill -TERM "${product_pid}" 2>/dev/null || true
+        wait "${product_pid}" 2>/dev/null || true
+        product_pid=""
+    fi
+}
+
+cleanup() {
+    cleanup_product
+    rm -rf -- "${run_root}"
+}
+trap cleanup EXIT
+
+case "${backend}" in
+    x11)
+        [[ "${ZENTTY_NESTED_X11_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+            fail "X11 scenario must run through linux/tests/nested-x11"
+        command -v xdotool >/dev/null || fail "xdotool is required"
+        ;;
+    wayland)
+        [[ "${ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+            fail "Wayland scenario must run through linux/tests/nested-wayland-input"
+        command -v wtype >/dev/null || fail "wtype is required"
+        ;;
+    *) fail "GDK_BACKEND must be x11 or wayland" ;;
+esac
+for dependency in grep mktemp od readelf sed sleep stty tr; do
+    command -v "${dependency}" >/dev/null || fail "${dependency} is required"
+done
+[[ -x "${product}" ]] || fail "staged product is missing: ${product}"
+
+layer_runpath="$(
+    readelf -d "${ghostty_root}/zig-out/lib/libghostty-gtk-embed.so" |
+        sed -n 's/.*Library runpath: \[\([^]]*\)\].*/\1/p' |
+        cut -d: -f1
+)"
+[[ "${layer_runpath}" == .zig-cache/* ]] || fail "Ghostty runpath is not pinned"
+layer_directory="${ghostty_root}/${layer_runpath}"
+mkdir -p "${state_directory}"
+
+start_product() {
+    local command="$1"
+    : >"${log}"
+    GDK_SCALE=1 \
+    GDK_DPI_SCALE=1 \
+    LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+        "${product}" \
+        --command "${command}" \
+        --state-directory "${state_directory}" \
+        --no-session-restore >"${log}" 2>&1 &
+    product_pid=$!
+    zentty_product_prepare_input "${backend}" "${log}" || fail "physical product input was unavailable"
+}
+
+main_key() {
+    local chord="$1"
+    case "${chord}" in
+        ctrl+alt+*)
+            if zentty_product_uses_xdotool "${backend}"; then
+                zentty_product_xdotool_key "${chord}"
+            else
+                wtype -M ctrl -M alt -k "${chord#ctrl+alt+}" -m alt -m ctrl
+            fi
+            ;;
+        ctrl+shift+*) zentty_product_ctrl_shift_key "${backend}" "${chord#ctrl+shift+}" ;;
+        ctrl+*) zentty_product_ctrl_key "${backend}" "${chord#ctrl+}" ;;
+        *) zentty_product_key "${backend}" "${chord}" ;;
+    esac
+}
+
+main_type() {
+    if [[ "${backend}" == x11 ]]; then
+        xdotool type --delay 5 -- "$1"
+    else
+        wtype -- "$1"
+    fi
+}
+
+settings_window=""
+prepare_settings_input() {
+    if [[ "${backend}" == x11 ]]; then
+        settings_window=""
+        for _ in {1..200}; do
+            settings_window="$(xdotool search --onlyvisible --name '^Zentty Settings — Shortcuts$' 2>/dev/null | tail -1 || true)"
+            [[ "${settings_window}" =~ ^[1-9][0-9]*$ ]] && break
+            sleep 0.05
+        done
+        [[ "${settings_window}" =~ ^[1-9][0-9]*$ ]] || fail "shortcut settings window did not appear"
+        xdotool windowfocus --sync "${settings_window}"
+    elif [[ "${ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT:-}" == 1 ]]; then
+        xdotool mousemove --sync --window "${ZENTTY_PRODUCT_WINDOW_ID}" 180 34
+        xdotool click 1
+    fi
+}
+
+settings_key() {
+    local chord="$1"
+    if [[ "${backend}" == x11 ]]; then
+        xdotool windowfocus --sync "${settings_window}"
+        xdotool key "${chord}"
+    else
+        case "${chord}" in
+            ctrl+alt+*) wtype -M ctrl -M alt -k "${chord#ctrl+alt+}" -m alt -m ctrl ;;
+            ctrl+*) wtype -M ctrl -k "${chord#ctrl+}" -m ctrl ;;
+            alt+*) wtype -M alt -k "${chord#alt+}" -m alt ;;
+            *) wtype -k "${chord}" ;;
+        esac
+    fi
+}
+
+settings_type() {
+    if [[ "${backend}" == x11 ]]; then
+        xdotool windowfocus --sync "${settings_window}"
+        xdotool type --delay 5 -- "$1"
+    else
+        wtype -- "$1"
+    fi
+}
+
+# The real child PTY enters raw mode so delivery of the old Ctrl+S binding is
+# observable as byte 0x13. A bound app shortcut must not satisfy this read.
+start_product "printf ready >'${ready}'; stty raw -echo -ixon; dd bs=1 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n' >'${bytes}'; sleep 30"
+for _ in {1..200}; do [[ -s "${ready}" ]] && break; sleep 0.05; done
+[[ -s "${ready}" ]] || fail "real child PTY did not enter raw input mode"
+
+if [[ "${backend}" == wayland ]]; then
+    # Cage returns focus to the originating surface when a transient is opened
+    # synchronously by that surface's key event. Activation through the real
+    # command palette closes its overlay before presenting the secondary window,
+    # matching the already-qualified Task Manager multi-window journey.
+    main_key ctrl+shift+p
+    main_type 'Settings'
+    zentty_product_wait_for_log "${log}" 'command-palette=query value="Settings" results=1' \
+        "Settings did not resolve uniquely in the command palette" || fail "settings palette route failed"
+    main_key Down
+    main_key Return
+else
+    main_key ctrl+comma
+fi
+zentty_product_wait_for_log "${log}" 'zentty-linux: shortcut-settings visible commands=' \
+    "settings action did not open the real shortcut window" || fail "settings did not open"
+prepare_settings_input
+zentty_product_wait_for_log "${log}" 'zentty-linux: shortcut-settings active' \
+    "settings toplevel did not receive compositor activation" || fail "settings was not activated"
+settings_key ctrl+f
+settings_type 'Toggle Sidebar'
+settings_key Return
+zentty_product_wait_for_log "${log}" 'zentty-linux: shortcut-settings selected=sidebar.toggle' \
+    "search did not select Toggle Sidebar" || fail "settings search failed"
+settings_key Return
+settings_key ctrl+alt+z
+zentty_product_wait_for_log "${log}" 'zentty-linux: shortcut-settings saved command=sidebar.toggle value=command+option+z' \
+    "physical recorder did not persist the replacement" || fail "shortcut recording failed"
+[[ ! -s "${bytes}" ]] || fail "bound application shortcut leaked bytes into the real PTY"
+
+settings_key Escape
+zentty_product_wait_for_log "${log}" 'shortcut-settings hidden parent-presented=true' \
+    "closing settings did not present its parent window" || fail "main focus restoration failed"
+zentty_product_prepare_input "${backend}" "${log}" || fail "main window could not regain focus"
+main_key ctrl+alt+z
+zentty_product_wait_for_log "${log}" 'zentty-linux: shortcut=command+option+z action=toggle-sidebar' \
+    "new shortcut did not activate the existing action router" || fail "runtime binding failed"
+[[ ! -s "${bytes}" ]] || fail "bound runtime shortcut leaked into the terminal"
+main_key ctrl+s
+for _ in {1..200}; do [[ -s "${bytes}" ]] && break; sleep 0.05; done
+[[ "$(cat "${bytes}" 2>/dev/null || true)" == 13 ]] ||
+    fail "displaced shortcut did not reach the real child PTY as byte 0x13"
+
+config="${XDG_CONFIG_HOME}/zentty/config.toml"
+grep -Fq 'command_id = "sidebar.toggle"' "${config}" || fail "binding was not written to XDG config"
+grep -Fq 'shortcut = "command+option+z"' "${config}" || fail "stored shortcut is not source-compatible"
+
+# A fresh product process must load exactly the same binding.
+cleanup_product
+rm -f -- "${ready}" "${bytes}"
+start_product "printf ready >'${ready}'; stty raw -echo -ixon; dd bs=1 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n' >'${bytes}'; sleep 30"
+for _ in {1..200}; do [[ -s "${ready}" ]] && break; sleep 0.05; done
+main_key ctrl+alt+z
+zentty_product_wait_for_log "${log}" 'zentty-linux: shortcut=command+option+z action=toggle-sidebar' \
+    "persisted shortcut was not active after restart" || fail "restart persistence failed"
+[[ ! -s "${bytes}" ]] || fail "restarted bound shortcut leaked into the real PTY"
+
+echo "rust-shortcuts-settings-${backend}: PASS real-gtk-settings physical-recorder real-ghostty-pty bound-action unbound-byte persistence-restart"

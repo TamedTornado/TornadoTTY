@@ -1504,7 +1504,7 @@ fn color_button(
     button
 }
 
-fn present_rename_dialog(
+pub(crate) fn present_rename_dialog(
     window: &gtk::Window,
     title: &str,
     action_name: &str,

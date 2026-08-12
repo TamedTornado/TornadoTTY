@@ -1,6 +1,9 @@
 use serde::Deserialize;
 
-use crate::{CleanCopyOptions, CommandFlattenAggressiveness, LINUX_OPEN_WITH_BUILTIN_IDS};
+use crate::shortcut::ShortcutDocument;
+use crate::{
+    CleanCopyOptions, CommandFlattenAggressiveness, LINUX_OPEN_WITH_BUILTIN_IDS, ShortcutBinding,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ClipboardConfig {
@@ -25,6 +28,7 @@ pub struct AppConfig {
     pub open_with: OpenWithConfig,
     pub server_detection: ServerDetectionConfig,
     pub panes: PaneConfig,
+    pub shortcuts: Vec<ShortcutBinding>,
 }
 
 impl AppConfig {
@@ -41,6 +45,7 @@ impl AppConfig {
             open_with: document.open_with.into_config().normalized(),
             server_detection: document.server_detection.into_config().normalized(),
             panes: document.panes.into_config(),
+            shortcuts: document.shortcuts.into_bindings()?,
         })
     }
 }
@@ -52,6 +57,7 @@ struct Document {
     open_with: OpenWithDocument,
     server_detection: ServerDetectionDocument,
     panes: PaneDocument,
+    shortcuts: ShortcutDocument,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -424,5 +430,49 @@ impl From<Aggressiveness> for CommandFlattenAggressiveness {
             Aggressiveness::Normal => Self::Normal,
             Aggressiveness::High => Self::High,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AppConfig;
+
+    #[test]
+    fn source_shortcut_toml_parses_bindings_and_explicit_unbinds() {
+        let config = AppConfig::parse_toml(
+            r#"
+                [[shortcuts.bindings]]
+                command_id = "sidebar.toggle"
+                shortcut = "command+option+s"
+
+                [[shortcuts.bindings]]
+                command_id = "pane.close_focused"
+                shortcut = ""
+            "#,
+        )
+        .unwrap();
+        assert_eq!(config.shortcuts.len(), 2);
+        assert_eq!(
+            config.shortcuts[0]
+                .shortcut
+                .as_ref()
+                .unwrap()
+                .storage_string(),
+            "command+option+s"
+        );
+        assert!(config.shortcuts[1].shortcut.is_none());
+    }
+
+    #[test]
+    fn malformed_shortcut_toml_is_not_silently_defaulted() {
+        let error = AppConfig::parse_toml(
+            r#"
+                [[shortcuts.bindings]]
+                command_id = "sidebar.toggle"
+                shortcut = "hyper+s"
+            "#,
+        )
+        .unwrap_err();
+        assert!(error.contains("invalid shortcut for sidebar.toggle"));
     }
 }

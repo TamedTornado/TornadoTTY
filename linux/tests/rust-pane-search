@@ -63,6 +63,16 @@ press_ctrl_shift() {
     fi
 }
 
+press_ctrl() {
+    local key="$1"
+    if [[ "${backend}" == x11 ]]; then
+        xdotool key --window "${window_id}" "ctrl+${key}"
+        xdotool keyup Control_L Control_R "${key}" 2>/dev/null || true
+    else
+        wtype -M ctrl -k "${key}" -m ctrl
+    fi
+}
+
 press_ctrl_alt_shift() {
     local key="$1"
     if [[ "${backend}" == x11 ]]; then
@@ -278,9 +288,9 @@ wait_for_fixed 'zentty-linux: title-pane=pane-1 value=focus:search-ready' \
 
 # Physical Linux shortcut -> named Zentty action -> generic Ghostty binding
 # parser -> real scrollback search -> Ghostty-owned draggable HUD and counts.
-press_ctrl_shift f
+press_ctrl f
 wait_for_fixed 'zentty-linux: action=find pane=pane-1 binding="start_search"' \
-    "Ctrl+Shift+F did not route through the focused real surface"
+    "Ctrl+F did not route through the focused real surface"
 for _ in $(seq 1 160); do
     grep -Fq 'zentty-linux: search-state pane=pane-1 active=true' "${log}" && break
     sleep 0.05
@@ -296,13 +306,13 @@ grep -Fq 'zentty-linux: search-state pane=pane-1 active=true total=Some(3)' "${l
     fail "real Ghostty scrollback did not report all three matches"
 
 selected_receipts="$(grep -Ec 'zentty-linux: search-state pane=pane-1 active=true total=Some\(3\) selected=Some\([0-9]+\)' "${log}" || true)"
-press_key F3
+press_ctrl g
 for _ in $(seq 1 160); do
     grep -Fq 'zentty-linux: action=find-next pane=' "${log}" && break
     sleep 0.05
 done
 grep -Fq 'zentty-linux: action=find-next pane=' "${log}" ||
-    fail "F3 did not invoke Find Next"
+    fail "Ctrl+G did not invoke Find Next"
 for _ in $(seq 1 160); do
     [[ "$(grep -Ec 'zentty-linux: search-state pane=pane-1 active=true total=Some\(3\) selected=Some\([0-9]+\)' "${log}" || true)" -gt "${selected_receipts}" ]] && break
     sleep 0.05
@@ -310,17 +320,13 @@ done
 [[ "$(grep -Ec 'zentty-linux: search-state pane=pane-1 active=true total=Some\(3\) selected=Some\([0-9]+\)' "${log}" || true)" -gt "${selected_receipts}" ]] ||
     fail "Find Next did not move the real Ghostty match"
 
-if [[ "${backend}" == x11 ]]; then
-    xdotool key --window "${window_id}" shift+F3
-else
-    wtype -M shift -k F3 -m shift
-fi
+press_ctrl_shift g
 for _ in $(seq 1 160); do
     grep -Fq 'zentty-linux: action=find-previous pane=' "${log}" && break
     sleep 0.05
 done
 grep -Fq 'zentty-linux: action=find-previous pane=' "${log}" ||
-    fail "Shift+F3 did not invoke Find Previous"
+    fail "Ctrl+Shift+G did not invoke Find Previous"
 
 hidden_receipts="$(grep -Fc 'zentty-linux: action=hide-search pane=pane-1' "${log}" || true)"
 press_key Escape
@@ -340,9 +346,9 @@ wait_for_fixed 'zentty-linux: title-pane=pane-1 value=focus:search-focus' \
 
 if [[ "${backend}" == x11 ]]; then
     # Select the first rendered word with a real pointer gesture, then route
-    # Ctrl+Shift+E through Ghostty's own selection-to-search implementation.
+    # Ctrl+E through Ghostty's own selection-to-search implementation.
     xdotool mousemove --window "${window_id}" 330 50 click --repeat 2 --delay 80 1
-    press_ctrl_shift e
+    press_ctrl e
     wait_for_fixed 'zentty-linux: action=use-selection-for-find pane=pane-1 binding="search_selection"' \
         "physical selection-to-find did not route to Ghostty"
     for _ in $(seq 1 200); do
@@ -365,7 +371,7 @@ if [[ "${backend}" == x11 ]]; then
         fail "dragged search HUD did not snap to the opposite pane corner"
     press_key Escape
     active_receipts="$(grep -Fc 'zentty-linux: search-state pane=pane-1 active=true' "${log}" || true)"
-    press_ctrl_shift f
+    press_ctrl f
     for _ in $(seq 1 160); do
         [[ "$(grep -Fc 'zentty-linux: search-state pane=pane-1 active=true' "${log}" || true)" -gt "${active_receipts}" ]] && break
         sleep 0.05
@@ -404,15 +410,15 @@ wait_for_fixed 'zentty-linux: title-pane=pane-3 value=focus:search-ready' \
     "the hidden-worklane PTY did not receive its search corpus"
 
 # Source Global Find uses every live pane's real Ghostty search rather than a
-# copied scrollback index. The Linux-native chord is Ctrl+Alt+Shift+F because
-# Ctrl+Shift+F remains the pane-local Find command above.
+# copied scrollback index. Source Command maps to Linux Control, so the source
+# Command+Shift+F chord is Ctrl+Shift+F.
 if [[ "${backend}" == x11 ]]; then
     # Exercise the real sidebar Global Find icon as a pointer surface in the
     # controlled X11 window. Wayland uses the same action through the physical
     # chord because its compositor deliberately exposes no global coordinates.
     xdotool mousemove --window "${window_id}" 257 65 click 1
 else
-    press_ctrl_alt_shift f
+    press_ctrl_shift f
 fi
 wait_for_fixed 'zentty-linux: global-find shown targets=3' \
     "physical Global Find shortcut did not present the window search"
@@ -489,7 +495,7 @@ type_text search-corpus
 press_key Return
 wait_for_fixed 'zentty-linux: title-pane=pane-window-2 value=focus:search-ready' \
     "window 2's real PTY did not receive its independent search corpus"
-press_ctrl_alt_shift f
+press_ctrl_shift f
 for _ in $(seq 1 160); do
     [[ "$(grep -Fc 'zentty-linux: global-find shown targets=1' "${log}" || true)" -gt "${single_target_before}" ]] && break
     sleep 0.05

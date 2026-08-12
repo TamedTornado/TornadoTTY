@@ -124,7 +124,9 @@ impl CommandPaletteView {
         key.connect_key_pressed(move |_, key, _, _| {
             match key {
                 gtk::gdk::Key::Escape => {
-                    keyed.hide();
+                    let _ = keyed
+                        .root
+                        .activate_action("workspace.dismiss-command-palette", None);
                     glib::Propagation::Stop
                 }
                 gtk::gdk::Key::Down => {

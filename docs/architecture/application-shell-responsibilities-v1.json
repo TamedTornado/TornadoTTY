@@ -2,23 +2,26 @@
   "schema_version": 1,
   "contract_id": "zentty-application-shell-responsibilities",
   "source": "crates/zentty-linux/src/application_shell.rs",
-  "source_sha256": "88f3c5c41e1801ba8f3bcbab6faa4b735f96f4bf7f07c1108f607e610f9b0527",
+  "source_sha256": "b937148aa02a835c646317639a8fdc7f2000a168f204f28ac56c9158df2b77a6",
   "owned_source_sha256": {
-    "crates/zentty-linux/src/main.rs": "f7ee77f349f32eaba5b8953676b541e0dfd0cf65ecd3d0f847a6b952b4264e14",
+    "crates/zentty-linux/src/main.rs": "6bf0a27fe6c3c543ecce3b376d2ec907150d02d788048ffe104023a4aab9062f",
     "crates/zentty-linux/src/application.rs": "6f14dc9e6c60d46f3713faa997501782e5c9750f0e00b40e27472431cede6c7d",
-    "crates/zentty-linux/src/config_store.rs": "efaef74a12ff9db372f8eacb8321d6683239be7c9060869a5f24e67ac79d7a51",
+    "crates/zentty-linux/src/config_store.rs": "a448409be000a1b03de8939b3623f8fd39ac385ac2f236ab4678bde8958ab060",
     "crates/zentty-linux/src/window_set.rs": "501d595889c11a41a4261ef8282465d76dd9ed8ccd1d004406b558579b0bf58e",
     "crates/zentty-linux/src/agent_runtime.rs": "48f30d38048ae5388ca59aee2021e1215cabdfc033e66755ed32c6f92dcb8671",
     "crates/zentty-linux/src/codex_enrichment.rs": "fe87631c75c04b63962b7f89d311a778a25af8f27a1dcb4d5950b3efcbaa476e",
-    "crates/zentty-linux/src/application_shell/action_router.rs": "973faeddb5edcd0886da35deb8e8c422de5b449aa75e75fde7efdd9bc459b8ef",
+    "crates/zentty-linux/src/application_shell/action_router.rs": "8ece34c0c3cbdae99ce60ef3c8d84d217daa7e467ee99013a7945abdf5218904",
+    "crates/zentty-linux/src/application_shell/shortcut_registry.rs": "47984eecf6ac2956d3ec061c25189677041fb0eb316354ace9ea4bdff0d463fb",
+    "crates/zentty-linux/src/application_shell/shortcut_runtime.rs": "8b5b0230608324360ee62045c7eb726fc18cae30a5fdeaf86259286610a41d60",
+    "crates/zentty-linux/src/shortcut_settings.rs": "42e869ded69fbdb5de92b781d9806353d28b179da965c127026cae9f3038ff70",
     "crates/zentty-linux/src/application_shell/clipboard_actions.rs": "1502a0353bc3e0d645d6c6bd81aae1ed1306f312838f92a635944d402cd441b0",
     "crates/zentty-linux/src/application_shell/agent_events.rs": "3b6dc220ad2434b15213a34c6c225f5dad868880437b3b54365ba77e42b2d0a4",
     "crates/zentty-linux/src/application_shell/project_context_runtime.rs": "a6168d658c98ab6407f3d0f1f1ab624d3e3f91e10de39fd4b5b28dd22ce19e7f",
     "crates/zentty-linux/src/application_shell/open_with_runtime.rs": "1e9b197340bf84a3b5f94d8a526b372e3b7e9c90574ce653f40b948e58eb4199",
     "crates/zentty-linux/src/application_shell/bookmark_runtime.rs": "6fe9ce520f69bb5be975a0f17e5fec8b7f4392159695afb019ff6ca9f3c883dc",
-    "crates/zentty-linux/src/bookmarks_view.rs": "e2166e336a40e6f4d12bc28726dd23f97f1edbcc04155dd937f4dce9a054ccf5",
+    "crates/zentty-linux/src/bookmarks_view.rs": "bef44bf6bbd3c1e3a018eb18781f37e2b8a575d5cdc4e936e43c9a33db1e6649",
     "crates/zentty-linux/src/restore_notice.rs": "02844f204871767d2aa4bc6076fff7c2145a52c493583246ef686f886a1db918",
-    "crates/zentty-linux/src/sidebar.rs": "9869e8a9e45afea37279491471e85d5e341477b76fb8219eaad1fd029a1a502f",
+    "crates/zentty-linux/src/sidebar.rs": "34ca061940cbcb26f7547ed5bc33245ba9cf8a3538e9cf18a5c59dbc8b1beb00",
     "crates/zentty-linux/src/application_shell/global_search.rs": "98a1963830af8616b31da2558ae6f27c4461342ef3085f6ef9cda0863a1ddc7c",
     "crates/zentty-linux/src/application_shell/pane_runtime.rs": "45f238c8949e12786d26c94c77275d42696edfe391f5c96d36db93ca7cbac2f6",
     "crates/zentty-linux/src/application_shell/server_runtime.rs": "e4aada25021e36c199498aa5b02e83d4976121641c592805d3afbbf331cb5611",
@@ -63,6 +66,13 @@
       "planned_module": "crates/zentty-linux/src/application_shell/action_router.rs",
       "tracking": "GH-27",
       "responsibility": "One GTK action registry, typed Variant decoding, command availability, shortcuts, and dispatch without product-state ownership."
+    },
+    {
+      "id": "shortcut_coordinator",
+      "status": "existing",
+      "planned_module": "crates/zentty-linux/src/application_shell/shortcut_registry.rs, crates/zentty-linux/src/application_shell/shortcut_runtime.rs, and crates/zentty-linux/src/shortcut_settings.rs",
+      "tracking": "GH-20",
+      "responsibility": "The sole window-local shortcut registry and capture-phase dispatcher, plus the retained nonmodal GTK settings projection; source command IDs and persisted overrides remain owned by the core shortcut model and ConfigStore."
     },
     {
       "id": "pane_runtime_coordinator",
@@ -181,6 +191,10 @@
       "fields": ["action_router"]
     },
     {
+      "owner": "shortcut_coordinator",
+      "fields": ["shortcut_controller", "shortcut_manager", "shortcut_settings_window"]
+    },
+    {
       "owner": "pane_runtime_coordinator",
       "fields": ["pane_runtime"]
     },
@@ -259,12 +273,17 @@
       "methods": [
         "finish_pane_layout_action",
         "install_pane_traversal_shortcuts", "install_pane_traversal_key_release",
-        "handle_resize_shortcut", "handle_resize_key", "record_terminal_gesture",
-        "handle_lifecycle_shortcut", "activate_restore_closed_pane_shortcut",
-        "install_command_palette_shortcut", "install_bookmark_shortcut", "install_search_shortcuts",
+        "record_terminal_gesture", "install_search_shortcuts",
         "perform_focused_binding_action",
         "activate_pane_control", "report_action_error",
         "refresh_pane_layout_action_availability"
+      ]
+    },
+    {
+      "owner": "shortcut_coordinator",
+      "methods": [
+        "toggle_command_palette", "request_show_shortcut_settings",
+        "request_rename_current_worklane", "request_rename_current_pane"
       ]
     },
     {
@@ -274,7 +293,7 @@
         "add_focused_pane_right", "add_focused_pane_left", "split_focused_pane_below",
         "split_focused_pane", "close_focused_pane", "close_worklane", "close_pane",
         "restore_closed_pane", "remove_live_surface", "focus_selected_surface",
-        "focus_selected_surface_unchecked"
+        "focus_selected_surface_unchecked", "duplicate_focused_pane"
       ]
     },
     {
@@ -295,6 +314,10 @@
     {
       "owner": "open_with_coordinator",
       "methods": ["command_palette_open_with_items"]
+    },
+    {
+      "owner": "clipboard_coordinator",
+      "methods": ["copy_focused_pane_path"]
     },
     {
       "owner": "existing_ui_projection",
@@ -325,6 +348,7 @@
     "action_router": [
       "accepts", "enabled", "install", "uninstall", "refresh_availability",
       "populate", "install_application_actions", "install_edit_actions", "install_worklane_edit_actions",
+      "install_primary_ui_actions", "install_settings_shortcut_actions",
       "install_worklane_move_actions", "install_pane_rename_action",
       "install_pane_transfer_action", "install_pane_creation_actions",
       "install_restore_closed_pane_action", "install_clipboard_actions", "install_search_actions", "install_server_actions", "install_task_runner_action", "install_project_context_actions",
@@ -397,7 +421,7 @@
     "server_container_discovery": [
       "discover", "run_docker", "parse_inspect_json", "deepest_matching_pane", "is_web_like"
     ],
-    "config_store": ["load_default", "load", "update_default_ignored_port_rules", "update_default_preferred_browser", "update_ignored_port_rules", "update_preferred_browser", "resolve_config_target", "atomic_replace", "read_bounded", "invalid_snapshot", "default_config_file_from", "nonempty_path"],
+    "config_store": ["load_default", "load", "update_default_ignored_port_rules", "update_default_preferred_browser", "update_default_shortcuts", "update_ignored_port_rules", "update_preferred_browser", "update_shortcuts", "resolve_config_target", "atomic_replace", "read_bounded", "invalid_snapshot", "default_config_file_from", "nonempty_path"],
     "persistence_coordinator": [
       "clean_exit_decision", "complete_launch", "default_state_directory", "drain_errors",
       "drain_live_snapshot_errors", "drop", "flush_live_snapshot_if_due",
@@ -419,6 +443,10 @@
     {"name":"new-window","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"close-window","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"toggle-sidebar","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"show-command-palette","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"open-settings","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"open-bookmarks","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"jump-latest-attention","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"new-worklane","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"select-worklane","parameter":"string","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"split-pane-right","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
@@ -428,6 +456,10 @@
     {"name":"close-pane","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"rename-worklane","parameter":"string_pair","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"rename-pane","parameter":"string_pair","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"rename-current-worklane","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"rename-current-pane","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"copy-pane-path","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"duplicate-pane","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"cycle-worklane-color","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"set-worklane-color","parameter":"string_pair","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"close-worklane","parameter":"string","owner":"action_router","invalid_parameter":"ignore-without-panic"},

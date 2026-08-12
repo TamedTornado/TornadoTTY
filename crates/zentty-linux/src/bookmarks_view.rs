@@ -14,14 +14,6 @@ pub(crate) fn open_from(root: &gtk::Widget) -> bool {
     true
 }
 
-pub(crate) fn is_open_shortcut(key: gtk::gdk::Key, modifiers: gtk::gdk::ModifierType) -> bool {
-    let required = gtk::gdk::ModifierType::CONTROL_MASK | gtk::gdk::ModifierType::SHIFT_MASK;
-    matches!(key, gtk::gdk::Key::b | gtk::gdk::Key::B)
-        && modifiers.contains(required)
-        && !modifiers
-            .intersects(gtk::gdk::ModifierType::ALT_MASK | gtk::gdk::ModifierType::SUPER_MASK)
-}
-
 fn is_context_menu_shortcut(key: gtk::gdk::Key, modifiers: gtk::gdk::ModifierType) -> bool {
     key == gtk::gdk::Key::Menu
         || (key == gtk::gdk::Key::F10 && modifiers.contains(gtk::gdk::ModifierType::SHIFT_MASK))
@@ -669,23 +661,8 @@ fn find_named_widget(root: &gtk::Widget, name: &str) -> Option<gtk::Widget> {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_context_menu_shortcut, is_open_shortcut};
+    use super::is_context_menu_shortcut;
     use gtk::gdk;
-
-    #[test]
-    fn source_bookmark_shortcut_maps_command_to_linux_control_exactly() {
-        let required = gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::SHIFT_MASK;
-        assert!(is_open_shortcut(gdk::Key::b, required));
-        assert!(is_open_shortcut(gdk::Key::B, required));
-        assert!(!is_open_shortcut(
-            gdk::Key::b,
-            gdk::ModifierType::CONTROL_MASK
-        ));
-        assert!(!is_open_shortcut(
-            gdk::Key::b,
-            required | gdk::ModifierType::ALT_MASK
-        ));
-    }
 
     #[test]
     fn template_rows_expose_standard_keyboard_context_menu_shortcuts() {

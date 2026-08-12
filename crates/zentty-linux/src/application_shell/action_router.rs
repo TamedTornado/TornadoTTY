@@ -76,6 +76,10 @@ macro_rules! action {
 }
 
 pub(super) const ACTION_TOGGLE_SIDEBAR: &str = "toggle-sidebar";
+pub(super) const ACTION_SHOW_COMMAND_PALETTE: &str = "show-command-palette";
+pub(super) const ACTION_OPEN_SETTINGS: &str = "open-settings";
+pub(super) const ACTION_OPEN_BOOKMARKS: &str = "open-bookmarks";
+pub(super) const ACTION_JUMP_LATEST_ATTENTION: &str = "jump-latest-attention";
 pub(super) const ACTION_NEW_WINDOW: &str = "new-window";
 pub(super) const ACTION_CLOSE_WINDOW: &str = "close-window";
 pub(super) const ACTION_NEW_WORKLANE: &str = "new-worklane";
@@ -87,6 +91,10 @@ pub(super) const ACTION_SPLIT_PANE_BELOW: &str = "split-pane-below";
 pub(super) const ACTION_CLOSE_PANE: &str = "close-pane";
 pub(super) const ACTION_RENAME_WORKLANE: &str = "rename-worklane";
 pub(super) const ACTION_RENAME_PANE: &str = "rename-pane";
+pub(super) const ACTION_RENAME_CURRENT_WORKLANE: &str = "rename-current-worklane";
+pub(super) const ACTION_RENAME_CURRENT_PANE: &str = "rename-current-pane";
+pub(super) const ACTION_COPY_PANE_PATH: &str = "copy-pane-path";
+pub(super) const ACTION_DUPLICATE_PANE: &str = "duplicate-pane";
 pub(super) const ACTION_CYCLE_WORKLANE_COLOR: &str = "cycle-worklane-color";
 pub(super) const ACTION_SET_WORKLANE_COLOR: &str = "set-worklane-color";
 pub(super) const ACTION_CLOSE_WORKLANE: &str = "close-worklane";
@@ -174,6 +182,10 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
     action!(ACTION_NEW_WINDOW, "new-window", None),
     action!(ACTION_CLOSE_WINDOW, "close-window", None),
     action!(ACTION_TOGGLE_SIDEBAR, "toggle-sidebar", None),
+    action!(ACTION_SHOW_COMMAND_PALETTE, "show-command-palette", None),
+    action!(ACTION_OPEN_SETTINGS, "open-settings", None),
+    action!(ACTION_OPEN_BOOKMARKS, "open-bookmarks", None),
+    action!(ACTION_JUMP_LATEST_ATTENTION, "jump-latest-attention", None),
     action!(ACTION_NEW_WORKLANE, "new-worklane", None),
     action!(ACTION_SELECT_WORKLANE, "select-worklane", String),
     action!(ACTION_SPLIT_PANE_RIGHT, "split-pane-right", None),
@@ -183,6 +195,14 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
     action!(ACTION_CLOSE_PANE, "close-pane", None),
     action!(ACTION_RENAME_WORKLANE, "rename-worklane", StringPair),
     action!(ACTION_RENAME_PANE, "rename-pane", StringPair),
+    action!(
+        ACTION_RENAME_CURRENT_WORKLANE,
+        "rename-current-worklane",
+        None
+    ),
+    action!(ACTION_RENAME_CURRENT_PANE, "rename-current-pane", None),
+    action!(ACTION_COPY_PANE_PATH, "copy-pane-path", None),
+    action!(ACTION_DUPLICATE_PANE, "duplicate-pane", None),
     action!(ACTION_CYCLE_WORKLANE_COLOR, "cycle-worklane-color", None),
     action!(ACTION_SET_WORKLANE_COLOR, "set-worklane-color", StringPair),
     action!(ACTION_CLOSE_WORKLANE, "close-worklane", String),
@@ -381,30 +401,7 @@ impl ActionRouter {
 
 fn populate(shell: &Rc<RefCell<ApplicationShell>>, group: &gio::SimpleActionGroup) {
     install_application_actions(shell, group);
-
-    let toggle_sidebar = gio::SimpleAction::new(ACTION_TOGGLE_SIDEBAR, None);
-    let weak = Rc::downgrade(shell);
-    toggle_sidebar.connect_activate(move |_, _| {
-        let Some(shell) = weak.upgrade() else {
-            return;
-        };
-        let visible = {
-            let mut shell = shell.borrow_mut();
-            shell
-                .sidebar_visibility
-                .handle(super::SidebarVisibilityEvent::TogglePressed);
-            shell.apply_sidebar_visibility();
-            shell.sidebar_visibility.mode() != super::SidebarVisibilityMode::Hidden
-        };
-        let weak = Rc::downgrade(&shell);
-        glib::idle_add_local_once(move || {
-            if let Some(shell) = weak.upgrade() {
-                shell.borrow().focus_selected_surface();
-            }
-        });
-        eprintln!("zentty-linux: action=toggle-sidebar visible={visible}");
-    });
-    group.add_action(&toggle_sidebar);
+    install_primary_ui_actions(shell, group);
 
     let dismiss_palette = gio::SimpleAction::new(ACTION_DISMISS_COMMAND_PALETTE, None);
     let weak = Rc::downgrade(shell);
@@ -484,6 +481,114 @@ fn populate(shell: &Rc<RefCell<ApplicationShell>>, group: &gio::SimpleActionGrou
     install_open_with_actions(shell, group);
     install_bookmark_actions(shell, group);
     install_edit_actions(shell, group);
+}
+
+fn install_primary_ui_actions(
+    shell: &Rc<RefCell<ApplicationShell>>,
+    group: &gio::SimpleActionGroup,
+) {
+    let toggle_sidebar = gio::SimpleAction::new(ACTION_TOGGLE_SIDEBAR, None);
+    let weak = Rc::downgrade(shell);
+    toggle_sidebar.connect_activate(move |_, _| {
+        let Some(shell) = weak.upgrade() else { return };
+        let visible = {
+            let mut shell = shell.borrow_mut();
+            shell
+                .sidebar_visibility
+                .handle(super::SidebarVisibilityEvent::TogglePressed);
+            shell.apply_sidebar_visibility();
+            shell.sidebar_visibility.mode() != super::SidebarVisibilityMode::Hidden
+        };
+        let weak = Rc::downgrade(&shell);
+        glib::idle_add_local_once(move || {
+            if let Some(shell) = weak.upgrade() {
+                shell.borrow().focus_selected_surface();
+            }
+        });
+        eprintln!("zentty-linux: action=toggle-sidebar visible={visible}");
+    });
+    group.add_action(&toggle_sidebar);
+    install_settings_shortcut_actions(shell, group);
+    add_simple_action(shell, group, ACTION_OPEN_BOOKMARKS, |shell| {
+        if !crate::bookmarks_view::open_from(shell.sidebar.upcast_ref()) {
+            eprintln!("zentty-linux: action=open-bookmarks unavailable");
+        }
+    });
+    add_simple_action(shell, group, ACTION_JUMP_LATEST_ATTENTION, |shell| {
+        let target = shell
+            .state
+            .sidebar_summaries()
+            .into_iter()
+            .flat_map(|worklane| {
+                worklane.pane_rows.into_iter().filter_map(move |pane| {
+                    pane.agent_status
+                        .filter(zentty_core::PaneAgentStatus::requires_attention)
+                        .map(|status| {
+                            (
+                                status.updated_at,
+                                worklane.worklane_id.clone(),
+                                pane.pane_id,
+                            )
+                        })
+                })
+            })
+            .max_by_key(|(updated_at, _, _)| *updated_at);
+        if let Some((_, worklane_id, pane_id)) = target
+            && shell.state.select_worklane_and_pane(&worklane_id, &pane_id)
+        {
+            shell.render();
+            shell.focus_selected_surface();
+            eprintln!("zentty-linux: action=jump-latest-attention pane={pane_id}");
+        }
+    });
+}
+
+fn install_settings_shortcut_actions(
+    shell: &Rc<RefCell<ApplicationShell>>,
+    group: &gio::SimpleActionGroup,
+) {
+    add_simple_action(shell, group, ACTION_SHOW_COMMAND_PALETTE, |shell| {
+        shell.toggle_command_palette();
+    });
+    let open_settings = gio::SimpleAction::new(ACTION_OPEN_SETTINGS, None);
+    let weak = Rc::downgrade(shell);
+    open_settings.connect_activate(move |_, parameter| {
+        if !ParameterSchema::None.accepts(parameter) {
+            eprintln!("zentty-linux: action={ACTION_OPEN_SETTINGS} rejected parameter-schema");
+            return;
+        }
+        // Defer secondary-Wayland-toplevel presentation beyond the originating
+        // physical key event so the compositor can transfer activation.
+        let weak = weak.clone();
+        glib::idle_add_local_once(move || {
+            if let Some(shell) = weak.upgrade() {
+                shell.borrow_mut().request_show_shortcut_settings();
+            }
+        });
+    });
+    group.add_action(&open_settings);
+    add_simple_action(shell, group, ACTION_RENAME_CURRENT_WORKLANE, |shell| {
+        shell.request_rename_current_worklane();
+    });
+    add_simple_action(shell, group, ACTION_RENAME_CURRENT_PANE, |shell| {
+        shell.request_rename_current_pane();
+    });
+    add_simple_action(shell, group, ACTION_COPY_PANE_PATH, |shell| {
+        shell.copy_focused_pane_path();
+    });
+    let duplicate_pane = gio::SimpleAction::new(ACTION_DUPLICATE_PANE, None);
+    let weak = Rc::downgrade(shell);
+    duplicate_pane.connect_activate(move |_, parameter| {
+        if !ParameterSchema::None.accepts(parameter) {
+            eprintln!("zentty-linux: action={ACTION_DUPLICATE_PANE} rejected parameter-schema");
+            return;
+        }
+        let Some(shell) = weak.upgrade() else { return };
+        if let Err(error) = ApplicationShell::duplicate_focused_pane(&shell) {
+            ApplicationShell::report_action_error(&shell, ACTION_DUPLICATE_PANE, &error);
+        }
+    });
+    group.add_action(&duplicate_pane);
 }
 
 fn install_bookmark_actions(shell: &Rc<RefCell<ApplicationShell>>, group: &gio::SimpleActionGroup) {
@@ -1425,7 +1530,7 @@ mod tests {
 
     #[test]
     fn registry_is_unique_complete_and_typed() {
-        assert_eq!(ACTION_SPECS.len(), 94);
+        assert_eq!(ACTION_SPECS.len(), 102);
         assert_eq!(
             ACTION_SPECS
                 .iter()

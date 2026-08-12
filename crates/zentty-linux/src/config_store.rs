@@ -5,7 +5,7 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use zentty_core::AppConfig;
+use zentty_core::{AppConfig, ShortcutBinding};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ConfigSnapshot {
@@ -97,6 +97,17 @@ impl ConfigStore {
         Ok(path)
     }
 
+    pub(crate) fn update_default_shortcuts(
+        bindings: &[ShortcutBinding],
+    ) -> Result<PathBuf, String> {
+        let path = default_config_file_from(
+            std::env::var_os("XDG_CONFIG_HOME"),
+            std::env::var_os("HOME"),
+        )?;
+        Self::update_shortcuts(&path, bindings)?;
+        Ok(path)
+    }
+
     fn update_ignored_port_rules(path: &Path, rules: &[String]) -> Result<(), String> {
         let target = resolve_config_target(path)?;
         let source = match fs::read_to_string(&target) {
@@ -132,6 +143,40 @@ impl ConfigStore {
             .parse::<toml_edit::DocumentMut>()
             .map_err(|error| format!("could not edit invalid configuration: {error}"))?;
         document["server_detection"]["preferred_browser_id"] = toml_edit::value(browser_id);
+        atomic_replace(&target, document.to_string().as_bytes())
+    }
+
+    fn update_shortcuts(path: &Path, bindings: &[ShortcutBinding]) -> Result<(), String> {
+        let target = resolve_config_target(path)?;
+        let source = match fs::read_to_string(&target) {
+            Ok(source) => source,
+            Err(error) if error.kind() == ErrorKind::NotFound => String::new(),
+            Err(error) => return Err(format!("could not read {}: {error}", target.display())),
+        };
+        if source.len() as u64 > MAX_CONFIG_BYTES {
+            return Err(format!("configuration exceeds {MAX_CONFIG_BYTES} bytes"));
+        }
+        let mut document = source
+            .parse::<toml_edit::DocumentMut>()
+            .map_err(|error| format!("could not edit invalid configuration: {error}"))?;
+        let mut tables = toml_edit::ArrayOfTables::new();
+        for binding in bindings {
+            let mut table = toml_edit::Table::new();
+            table["command_id"] = toml_edit::value(&binding.command_id);
+            table["shortcut"] = toml_edit::value(
+                binding
+                    .shortcut
+                    .as_ref()
+                    .map_or_else(String::new, zentty_core::KeyboardShortcut::storage_string),
+            );
+            tables.push(table);
+        }
+        let shortcuts = document
+            .entry("shortcuts")
+            .or_insert_with(|| toml_edit::Item::Table(toml_edit::Table::new()))
+            .as_table_mut()
+            .ok_or_else(|| "shortcuts configuration is not a table".to_owned())?;
+        shortcuts["bindings"] = toml_edit::Item::ArrayOfTables(tables);
         atomic_replace(&target, document.to_string().as_bytes())
     }
 }
@@ -346,6 +391,45 @@ mod tests {
                 .preferred_browser_id,
             "firefox"
         );
+        remove(&root);
+    }
+
+    #[test]
+    fn shortcut_update_preserves_comments_unknown_keys_and_symlink() {
+        let root = private_root("shortcuts");
+        let target = root.join("shared/settings.toml");
+        let path = root.join("zentty/config.toml");
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&target, "# keep me\nunknown = \"value\"\n").unwrap();
+        std::os::unix::fs::symlink(&target, &path).unwrap();
+
+        ConfigStore::update_shortcuts(
+            &path,
+            &[
+                zentty_core::ShortcutBinding {
+                    command_id: "sidebar.toggle".into(),
+                    shortcut: zentty_core::KeyboardShortcut::parse("command+option+s"),
+                },
+                zentty_core::ShortcutBinding {
+                    command_id: "pane.close_focused".into(),
+                    shortcut: None,
+                },
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(fs::read_link(&path).unwrap(), target);
+        let source = fs::read_to_string(&path).unwrap();
+        assert!(source.contains("# keep me"));
+        assert!(source.contains("unknown = \"value\""));
+        let loaded = ConfigStore::load(path).unwrap().config.shortcuts;
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(
+            loaded[0].shortcut.as_ref().unwrap().storage_string(),
+            "command+option+s"
+        );
+        assert!(loaded[1].shortcut.is_none());
         remove(&root);
     }
 

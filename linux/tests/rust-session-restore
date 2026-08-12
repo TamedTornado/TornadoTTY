@@ -463,8 +463,7 @@ rm -f -- "${remote_image_path}"
 [[ -z "${remote_drag_path}" ]] || rm -f -- "${remote_drag_path}"
 zentty_disposable_sshd_stop
 
-zentty_product_ctrl_key "${backend}" Page_Up
-zentty_product_ctrl_key "${backend}" Page_Up
+zentty_product_ctrl_key "${backend}" Tab
 zentty_product_wait_for_log "${log}" \
     'zentty-linux: topology=worklane-main[title=Nimbu API,color=blue]:pane-agent,pane-shell,pane-ordinary-inactive*' \
     "physical worklane traversal did not reveal the first agent" || fail "agent worklane was not revealed"
@@ -474,7 +473,7 @@ zentty_product_wait_for_log "${log}" 'zentty-linux: focus-pane pane=pane-agent' 
 while IFS= read -r pid; do
     kill -0 "${pid}" 2>/dev/null || fail "restored agent PID ${pid} died during worklane reveal"
 done < <(sed -n 's/^resume:session-[^ ]* pid:\([0-9][0-9]*\)$/\1/p' "${agent_receipt}")
-zentty_product_ctrl_shift_key "${backend}" f
+zentty_product_ctrl_key "${backend}" f
 zentty_product_wait_for_log "${log}" \
     'zentty-linux: search-state pane=pane-agent active=true' \
     "physical Find did not activate the restored pane's Ghostty search entry" ||
@@ -484,8 +483,7 @@ zentty_product_wait_for_log "${log}" \
     'zentty-linux: search-state pane=pane-agent active=true total=Some(1)' \
     "restored exact scrollback marker was missing" || fail "scrollback continuity failed"
 zentty_product_key "${backend}" Escape
-zentty_product_ctrl_key "${backend}" Page_Down
-zentty_product_ctrl_key "${backend}" Page_Down
+zentty_product_ctrl_shift_key "${backend}" Tab
 zentty_product_wait_for_log "${log}" 'zentty-linux: focus-pane pane=pane-shell-active' \
     "active shell did not regain focus before clean close" || fail "return focus did not settle"
 zentty_product_close_window "${backend}"
@@ -554,7 +552,7 @@ zentty_product_prepare_input "${backend}" "${log}" || fail "could not prepare ca
 # Select the delayed agent's lane through ordinary navigation before closing
 # it. The child is already a real background restore; no embedded scenario can
 # remove it before product presentation.
-zentty_product_ctrl_key "${backend}" Page_Up
+zentty_product_ctrl_shift_key "${backend}" Tab
 zentty_product_wait_for_log "${log}" \
     'zentty-linux: topology=worklane-main[title=Nimbu API,color=blue]:pane-agent,pane-shell*|worklane-active[title=Active shell,color=none]:pane-shell-active' \
     "cancellation navigation did not select the delayed agent lane" ||
@@ -674,7 +672,7 @@ zentty_product_wait_for_log "${log}" 'zentty-linux: terminal-ready-pane=pane-2' 
     "crash relaunch did not create the second real Ghostty PTY" ||
     fail "crash recovery second PTY missing"
 zentty_product_prepare_input "${backend}" "${log}" || fail "could not prepare recovered input"
-zentty_product_ctrl_key "${backend}" Page_Down
+zentty_product_ctrl_key "${backend}" Tab
 zentty_product_wait_for_log "${log}" 'zentty-linux: terminal-ready-pane=pane-1' \
     "visiting the recovered first worklane did not create its real Ghostty PTY" ||
     fail "crash recovery first PTY missing"

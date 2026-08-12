@@ -11,6 +11,9 @@ agent_runtime_file="${ZENTTY_AGENT_RUNTIME_SOURCE:-${repo_root}/crates/zentty-li
 codex_enrichment_file="${ZENTTY_CODEX_ENRICHMENT_SOURCE:-${repo_root}/crates/zentty-linux/src/codex_enrichment.rs}"
 source_file="${ZENTTY_APPLICATION_SHELL_SOURCE:-${repo_root}/crates/zentty-linux/src/application_shell.rs}"
 action_router_file="${ZENTTY_ACTION_ROUTER_SOURCE:-${repo_root}/crates/zentty-linux/src/application_shell/action_router.rs}"
+shortcut_registry_file="${ZENTTY_SHORTCUT_REGISTRY_SOURCE:-${repo_root}/crates/zentty-linux/src/application_shell/shortcut_registry.rs}"
+shortcut_runtime_file="${ZENTTY_SHORTCUT_RUNTIME_SOURCE:-${repo_root}/crates/zentty-linux/src/application_shell/shortcut_runtime.rs}"
+shortcut_settings_file="${ZENTTY_SHORTCUT_SETTINGS_SOURCE:-${repo_root}/crates/zentty-linux/src/shortcut_settings.rs}"
 agent_events_file="${ZENTTY_AGENT_EVENTS_SOURCE:-${repo_root}/crates/zentty-linux/src/application_shell/agent_events.rs}"
 global_search_file="${ZENTTY_GLOBAL_SEARCH_SOURCE:-${repo_root}/crates/zentty-linux/src/application_shell/global_search.rs}"
 ssh_identity_file="${ZENTTY_SSH_IDENTITY_SOURCE:-${repo_root}/crates/zentty-linux/src/application_shell/ssh_identity.rs}"
@@ -51,6 +54,9 @@ done
 [[ -r "${codex_enrichment_file}" ]] || fail "Codex enrichment source is missing: ${codex_enrichment_file}"
 [[ -r "${source_file}" ]] || fail "application shell source is missing: ${source_file}"
 [[ -r "${action_router_file}" ]] || fail "action router source is missing: ${action_router_file}"
+[[ -r "${shortcut_registry_file}" ]] || fail "shortcut registry source is missing: ${shortcut_registry_file}"
+[[ -r "${shortcut_runtime_file}" ]] || fail "shortcut runtime source is missing: ${shortcut_runtime_file}"
+[[ -r "${shortcut_settings_file}" ]] || fail "shortcut settings source is missing: ${shortcut_settings_file}"
 [[ -r "${agent_events_file}" ]] || fail "agent events source is missing: ${agent_events_file}"
 [[ -r "${global_search_file}" ]] || fail "global search source is missing: ${global_search_file}"
 [[ -r "${ssh_identity_file}" ]] || fail "SSH identity source is missing: ${ssh_identity_file}"
@@ -119,6 +125,9 @@ agent_runtime_sha256="$(sha256sum "${agent_runtime_file}" | awk '{print $1}')"
 codex_enrichment_sha256="$(sha256sum "${codex_enrichment_file}" | awk '{print $1}')"
 source_sha256="$(sha256sum "${source_file}" | awk '{print $1}')"
 action_router_sha256="$(sha256sum "${action_router_file}" | awk '{print $1}')"
+shortcut_registry_sha256="$(sha256sum "${shortcut_registry_file}" | awk '{print $1}')"
+shortcut_runtime_sha256="$(sha256sum "${shortcut_runtime_file}" | awk '{print $1}')"
+shortcut_settings_sha256="$(sha256sum "${shortcut_settings_file}" | awk '{print $1}')"
 agent_events_sha256="$(sha256sum "${agent_events_file}" | awk '{print $1}')"
 global_search_sha256="$(sha256sum "${global_search_file}" | awk '{print $1}')"
 ssh_identity_sha256="$(sha256sum "${ssh_identity_file}" | awk '{print $1}')"
@@ -158,6 +167,15 @@ jq -e --arg agent_runtime_sha256 "${agent_runtime_sha256}" \
 jq -e --arg codex_enrichment_sha256 "${codex_enrichment_sha256}" \
     '.owned_source_sha256["crates/zentty-linux/src/codex_enrichment.rs"] == $codex_enrichment_sha256' \
     "${contract}" >/dev/null || fail "Codex enrichment source hash differs from its ownership contract"
+jq -e --arg shortcut_registry_sha256 "${shortcut_registry_sha256}" \
+    '.owned_source_sha256["crates/zentty-linux/src/application_shell/shortcut_registry.rs"] == $shortcut_registry_sha256' \
+    "${contract}" >/dev/null || fail "shortcut registry source hash differs from its ownership contract"
+jq -e --arg shortcut_runtime_sha256 "${shortcut_runtime_sha256}" \
+    '.owned_source_sha256["crates/zentty-linux/src/application_shell/shortcut_runtime.rs"] == $shortcut_runtime_sha256' \
+    "${contract}" >/dev/null || fail "shortcut runtime source hash differs from its ownership contract"
+jq -e --arg shortcut_settings_sha256 "${shortcut_settings_sha256}" \
+    '.owned_source_sha256["crates/zentty-linux/src/shortcut_settings.rs"] == $shortcut_settings_sha256' \
+    "${contract}" >/dev/null || fail "shortcut settings source hash differs from its ownership contract"
 jq -e --arg pane_runtime_sha256 "${pane_runtime_sha256}" \
     '.owned_source_sha256["crates/zentty-linux/src/application_shell/pane_runtime.rs"] == $pane_runtime_sha256' \
     "${contract}" >/dev/null || fail "pane runtime source hash differs from its ownership contract"
@@ -437,6 +455,9 @@ jq -e --arg main_sha256 "${main_sha256}" \
     --arg codex_enrichment_sha256 "${codex_enrichment_sha256}" \
     --arg source_sha256 "${source_sha256}" \
     --arg action_router_sha256 "${action_router_sha256}" \
+    --arg shortcut_registry_sha256 "${shortcut_registry_sha256}" \
+    --arg shortcut_runtime_sha256 "${shortcut_runtime_sha256}" \
+    --arg shortcut_settings_sha256 "${shortcut_settings_sha256}" \
     --arg agent_events_sha256 "${agent_events_sha256}" \
     --arg global_search_sha256 "${global_search_sha256}" \
     --arg ssh_identity_sha256 "${ssh_identity_sha256}" \
@@ -470,6 +491,9 @@ jq -e --arg main_sha256 "${main_sha256}" \
         "crates/zentty-linux/src/agent_runtime.rs":$agent_runtime_sha256,
         "crates/zentty-linux/src/codex_enrichment.rs":$codex_enrichment_sha256,
         "crates/zentty-linux/src/application_shell/action_router.rs":$action_router_sha256,
+        "crates/zentty-linux/src/application_shell/shortcut_registry.rs":$shortcut_registry_sha256,
+        "crates/zentty-linux/src/application_shell/shortcut_runtime.rs":$shortcut_runtime_sha256,
+        "crates/zentty-linux/src/shortcut_settings.rs":$shortcut_settings_sha256,
         "crates/zentty-linux/src/application_shell/agent_events.rs":$agent_events_sha256,
         "crates/zentty-linux/src/application_shell/global_search.rs":$global_search_sha256,
         "crates/zentty-linux/src/application_shell/ssh_identity.rs":$ssh_identity_sha256,
@@ -506,6 +530,7 @@ jq -e --arg main_sha256 "${main_sha256}" \
         "ssh_identity_coordinator",
         "remote_paste_coordinator",
         "server_runtime_coordinator",
+        "shortcut_coordinator",
         "task_runner_coordinator",
         "existing_ui_projection",
         "pane_runtime_coordinator",
@@ -584,7 +609,7 @@ jq -e --arg main_sha256 "${main_sha256}" \
         "move-worklane", "rename-pane", "rename-worklane", "reorder-worklane",
         "select-pane", "set-worklane-color", "edit-template", "rename-template", "save-template"
     ] | sort) and
-    ([.action_contract[] | select(.parameter == "none")] | length) == 69 and
+    ([.action_contract[] | select(.parameter == "none")] | length) == 77 and
     .conditional_action_availability == {
         "multiple_columns":["resize-pane-left","resize-pane-right","arrange-golden-wide","arrange-golden-narrow"],
         "multiple_panes_in_focused_column":["resize-pane-up","resize-pane-down","arrange-golden-tall","arrange-golden-short"],

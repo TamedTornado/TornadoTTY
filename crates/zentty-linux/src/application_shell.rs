@@ -9,7 +9,6 @@ use crate::{
     pane_controls::{self, PaneControlAction, PanePresentation},
     pane_dividers::{self, PaneDivider},
     pane_scroll_switch::{PaneScrollSwitch, ScrollSwitchResult, ScrollUnit},
-    pane_search::{SearchShortcut, resolve_shortcut},
     peek_scroll_navigation::{
         Direction as PeekScrollDirection, PeekScrollNavigation, Result as PeekScrollResult,
         ScrollUnit as PeekScrollUnit,
@@ -49,6 +48,8 @@ mod pane_runtime;
 mod project_context_runtime;
 mod remote_paste;
 pub(crate) mod server_runtime;
+pub(crate) mod shortcut_registry;
+pub(crate) mod shortcut_runtime;
 mod ssh_identity;
 mod task_runner_runtime;
 mod tmux_runtime;
@@ -61,18 +62,18 @@ use action_router::{
     ACTION_ARRANGE_WIDTH_QUARTERS, ACTION_ARRANGE_WIDTH_THIRDS, ACTION_CLEAN_COPY,
     ACTION_CLOSE_ACTIVE_WORKLANE, ACTION_CLOSE_PANE, ACTION_CLOSE_WINDOW, ACTION_CLOSE_WORKLANE,
     ACTION_COPY, ACTION_COPY_AS_MARKDOWN, ACTION_COPY_RAW, ACTION_CYCLE_WORKLANE_COLOR,
-    ACTION_FIND, ACTION_FIND_NEXT, ACTION_FIND_PREVIOUS, ACTION_FOCUS_PANE_DOWN,
-    ACTION_FOCUS_PANE_LEFT, ACTION_FOCUS_PANE_RIGHT, ACTION_FOCUS_PANE_UP, ACTION_GLOBAL_FIND,
-    ACTION_IGNORE_SERVER_PORT, ACTION_MOVE_PANE_DOWN, ACTION_MOVE_PANE_LEFT,
+    ACTION_DUPLICATE_PANE, ACTION_FIND, ACTION_FIND_NEXT, ACTION_FIND_PREVIOUS,
+    ACTION_FOCUS_PANE_DOWN, ACTION_FOCUS_PANE_LEFT, ACTION_FOCUS_PANE_RIGHT, ACTION_FOCUS_PANE_UP,
+    ACTION_GLOBAL_FIND, ACTION_IGNORE_SERVER_PORT, ACTION_MOVE_PANE_DOWN, ACTION_MOVE_PANE_LEFT,
     ACTION_MOVE_PANE_RIGHT, ACTION_MOVE_PANE_TO_NEW_WINDOW, ACTION_MOVE_PANE_UP,
     ACTION_MOVE_WORKLANE_DOWN, ACTION_MOVE_WORKLANE_UP, ACTION_NAVIGATE_BACK,
     ACTION_NAVIGATE_FORWARD, ACTION_NEW_WINDOW, ACTION_NEW_WORKLANE, ACTION_NEXT_PANE,
     ACTION_NEXT_WORKLANE, ACTION_OPEN_BRANCH_REMOTE, ACTION_OPEN_PULL_REQUEST, ACTION_OPEN_SERVER,
-    ACTION_OPEN_SERVER_BROWSER, ACTION_OPEN_WITH_PRIMARY, ACTION_OPEN_WITH_TARGET,
-    ACTION_PREVIOUS_PANE, ACTION_PREVIOUS_WORKLANE, ACTION_REFRESH_REVIEW_STATUS,
-    ACTION_REFRESH_SERVERS, ACTION_RESET_PANE_LAYOUT, ACTION_RESIZE_PANE_DOWN,
-    ACTION_RESIZE_PANE_LEFT, ACTION_RESIZE_PANE_RIGHT, ACTION_RESIZE_PANE_UP,
-    ACTION_RESTORE_CLOSED_PANE, ACTION_SELECT_ALL, ACTION_SHOW_TASK_MANAGER,
+    ACTION_OPEN_SERVER_BROWSER, ACTION_OPEN_SETTINGS, ACTION_OPEN_WITH_PRIMARY,
+    ACTION_OPEN_WITH_TARGET, ACTION_PREVIOUS_PANE, ACTION_PREVIOUS_WORKLANE,
+    ACTION_REFRESH_REVIEW_STATUS, ACTION_REFRESH_SERVERS, ACTION_RESET_PANE_LAYOUT,
+    ACTION_RESIZE_PANE_DOWN, ACTION_RESIZE_PANE_LEFT, ACTION_RESIZE_PANE_RIGHT,
+    ACTION_RESIZE_PANE_UP, ACTION_RESTORE_CLOSED_PANE, ACTION_SELECT_ALL, ACTION_SHOW_TASK_MANAGER,
     ACTION_SPLIT_PANE_BELOW, ACTION_SPLIT_PANE_RIGHT, ACTION_STOP_IGNORING_SERVER_PORT,
     ACTION_STOP_SERVER, ACTION_TOGGLE_SIDEBAR, ACTION_USE_SELECTION_FOR_FIND, ActionRouter,
 };
@@ -155,6 +156,9 @@ pub(crate) struct ApplicationShell {
     task_runner_actions: BTreeMap<String, TaskRunnerAction>,
     last_pane_viewport_height: Cell<i32>,
     action_router: Option<ActionRouter>,
+    shortcut_manager: Rc<RefCell<zentty_core::ShortcutManager>>,
+    shortcut_controller: Option<gtk::EventControllerKey>,
+    shortcut_settings_window: Option<gtk::Window>,
     agent_events: AgentEventCoordinator,
     tmux_compat: crate::tmux_compat::TmuxCompatProduct,
     new_window_handler: Option<Rc<dyn Fn()>>,
@@ -245,13 +249,17 @@ fn finish_shell_setup(
     );
     let action_router = ActionRouter::install(shell)?;
     shell.borrow_mut().action_router = Some(action_router);
+    shortcut_registry::validate()?;
+    let shortcut_controller = shortcut_runtime::install(
+        &shell.borrow().window,
+        Rc::clone(&shell.borrow().shortcut_manager),
+    );
+    shell.borrow_mut().shortcut_controller = Some(shortcut_controller);
     ApplicationShell::install_global_search_callbacks(shell);
     ApplicationShell::install_sidebar_visibility(shell);
     ApplicationShell::install_pane_traversal_shortcuts(shell);
     ApplicationShell::install_peek_scroll_navigation(shell);
     ApplicationShell::install_pane_scroll_switching(shell);
-    ApplicationShell::install_command_palette_shortcut(shell);
-    ApplicationShell::install_bookmark_shortcut(shell);
     ApplicationShell::install_search_shortcuts(shell);
     create_initial_pane_surfaces(shell, initial_pane_ids, deferred_live_pane_id)?;
     shell.borrow().mount_background_restored_agents();
@@ -353,6 +361,12 @@ impl ApplicationShell {
             task_runner_actions: BTreeMap::new(),
             last_pane_viewport_height: Cell::new(0),
             action_router: None,
+            shortcut_manager: Rc::new(RefCell::new(zentty_core::ShortcutManager::new(
+                &shortcut_registry::definitions(),
+                &runtimes.config.shortcuts,
+            )?)),
+            shortcut_controller: None,
+            shortcut_settings_window: None,
             agent_events,
             tmux_compat: default_tmux_product()?,
             new_window_handler: None,
@@ -843,36 +857,8 @@ impl ApplicationShell {
             let Some(shell) = weak.upgrade() else {
                 return glib::Propagation::Proceed;
             };
-            if Self::handle_lifecycle_shortcut(&shell, key, modifiers) {
-                return glib::Propagation::Stop;
-            }
-            if Self::handle_resize_key(&shell, key, modifiers) {
-                return glib::Propagation::Stop;
-            }
-            if !shell.borrow().peek_phase.is_active()
-                && modifiers.contains(gdk::ModifierType::CONTROL_MASK)
-                && modifiers.contains(gdk::ModifierType::SUPER_MASK)
-                && (key == gdk::Key::Up || key == gdk::Key::Down)
-            {
-                shell
-                    .borrow_mut()
-                    .move_active_worklane(if key == gdk::Key::Up { -1 } else { 1 });
-                return glib::Propagation::Stop;
-            }
-            if !shell.borrow().peek_phase.is_active()
-                && modifiers.contains(gdk::ModifierType::CONTROL_MASK)
-                && (key == gdk::Key::Page_Down || key == gdk::Key::Page_Up)
-            {
-                shell
-                    .borrow_mut()
-                    .select_adjacent_worklane(key == gdk::Key::Page_Down);
-                return glib::Propagation::Stop;
-            }
-            if !shell.borrow().peek_phase.is_active()
-                && modifiers.contains(gdk::ModifierType::ALT_MASK)
-                && (key == gdk::Key::Left || key == gdk::Key::Right)
-            {
-                shell.borrow_mut().navigate_history(key == gdk::Key::Left);
+            if is_close_window_shortcut(key, modifiers) {
+                shell.borrow().request_quit();
                 return glib::Propagation::Stop;
             }
             if is_tab && modifiers.contains(gdk::ModifierType::CONTROL_MASK) {
@@ -949,35 +935,6 @@ impl ApplicationShell {
         });
     }
 
-    fn handle_resize_shortcut(shell: &Rc<RefCell<Self>>, direction: PaneResizeDirection) {
-        let mut shell = shell.borrow_mut();
-        if !shell.resize_focused_pane_by_cell(direction) {
-            return;
-        }
-        let action = match direction {
-            PaneResizeDirection::Left => ACTION_RESIZE_PANE_LEFT,
-            PaneResizeDirection::Right => ACTION_RESIZE_PANE_RIGHT,
-            PaneResizeDirection::Up => ACTION_RESIZE_PANE_UP,
-            PaneResizeDirection::Down => ACTION_RESIZE_PANE_DOWN,
-        };
-        shell.finish_pane_layout_action(action);
-    }
-
-    fn handle_resize_key(
-        shell: &Rc<RefCell<Self>>,
-        key: gdk::Key,
-        modifiers: gdk::ModifierType,
-    ) -> bool {
-        if shell.borrow().peek_phase.is_active() {
-            return false;
-        }
-        let Some(direction) = resize_shortcut_direction(key, modifiers) else {
-            return false;
-        };
-        Self::handle_resize_shortcut(shell, direction);
-        true
-    }
-
     fn record_terminal_gesture(shell: &Rc<RefCell<Self>>, gesture: TerminalGesture) {
         let changed = {
             let mut shell = shell.borrow_mut();
@@ -997,48 +954,6 @@ impl ApplicationShell {
         if changed {
             eprintln!("zentty-linux: codex-terminal-gesture={gesture:?}");
             shell.borrow().render_sidebar();
-        }
-    }
-
-    fn handle_lifecycle_shortcut(
-        shell: &Rc<RefCell<Self>>,
-        key: gdk::Key,
-        modifiers: gdk::ModifierType,
-    ) -> bool {
-        if is_close_active_window_shortcut(key, modifiers) {
-            eprintln!("zentty-linux: action=close-window shortcut=Ctrl+Shift+W");
-            shell.borrow().request_close_window();
-            return true;
-        }
-        if is_new_window_shortcut(key, modifiers) {
-            eprintln!("zentty-linux: action=new-window shortcut=Ctrl+Shift+N");
-            shell.borrow().request_new_window();
-            return true;
-        }
-        if is_new_worklane_shortcut(key, modifiers) {
-            let window = shell.borrow().window.clone();
-            if let Err(error) = window.activate_action("workspace.new-worklane", None) {
-                eprintln!("zentty-linux: new-worklane shortcut failed: {error}");
-            }
-            return true;
-        }
-        if is_close_window_shortcut(key, modifiers) {
-            eprintln!("zentty-linux: action=quit shortcut=Ctrl+Q");
-            shell.borrow().request_quit();
-            return true;
-        }
-        if !shell.borrow().peek_phase.is_active() && is_restore_closed_pane_shortcut(key, modifiers)
-        {
-            Self::activate_restore_closed_pane_shortcut(shell);
-            return true;
-        }
-        false
-    }
-
-    fn activate_restore_closed_pane_shortcut(shell: &Rc<RefCell<Self>>) {
-        let window = shell.borrow().window.clone();
-        if let Err(error) = window.activate_action("workspace.restore-closed-pane", None) {
-            eprintln!("zentty-linux: restore shortcut failed: {error}");
         }
     }
 
@@ -1280,65 +1195,95 @@ impl ApplicationShell {
         shell.borrow().pane_scroll.add_controller(controller);
     }
 
-    fn install_command_palette_shortcut(shell: &Rc<RefCell<Self>>) {
-        let controller = gtk::EventControllerKey::new();
-        controller.set_propagation_phase(gtk::PropagationPhase::Capture);
-        let weak = Rc::downgrade(shell);
-        controller.connect_key_pressed(move |_, key, _, modifiers| {
-            let Some(shell) = weak.upgrade() else {
-                return glib::Propagation::Proceed;
-            };
-            if shell.borrow().command_palette.is_visible() && key == gdk::Key::Escape {
-                shell.borrow().command_palette.hide();
-                shell.borrow().focus_selected_surface();
-                return glib::Propagation::Stop;
-            }
-            let required = gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::SHIFT_MASK;
-            if !matches!(key, gdk::Key::p | gdk::Key::P)
-                || !modifiers.contains(required)
-                || modifiers.intersects(gdk::ModifierType::ALT_MASK | gdk::ModifierType::SUPER_MASK)
-            {
-                return glib::Propagation::Proceed;
-            }
-            if shell.borrow().command_palette.is_visible() {
-                shell.borrow().command_palette.hide();
-                shell.borrow().focus_selected_surface();
-            } else {
-                let (palette, items, recent, current) = {
-                    let mut shell_ref = shell.borrow_mut();
-                    let (items, current) = shell_ref.command_palette_items();
-                    (
-                        shell_ref.command_palette.clone(),
-                        items,
-                        shell_ref.state.recent_pane_references(),
-                        current,
-                    )
-                };
-                palette.show(items, recent, current);
-            }
-            glib::Propagation::Stop
-        });
-        shell.borrow().window.add_controller(controller);
+    fn toggle_command_palette(&mut self) {
+        if self.command_palette.is_visible() {
+            self.command_palette.hide();
+            self.focus_selected_surface();
+            return;
+        }
+        let (items, current) = self.command_palette_items();
+        self.command_palette
+            .show(items, self.state.recent_pane_references(), current);
     }
 
-    fn install_bookmark_shortcut(shell: &Rc<RefCell<Self>>) {
-        let controller = gtk::EventControllerKey::new();
-        controller.set_propagation_phase(gtk::PropagationPhase::Capture);
-        let weak = Rc::downgrade(shell);
-        controller.connect_key_pressed(move |_, key, _, modifiers| {
-            if !crate::bookmarks_view::is_open_shortcut(key, modifiers) {
-                return glib::Propagation::Proceed;
-            }
-            let Some(shell) = weak.upgrade() else {
-                return glib::Propagation::Proceed;
-            };
-            if crate::bookmarks_view::open_from(shell.borrow().sidebar.upcast_ref()) {
-                glib::Propagation::Stop
-            } else {
-                glib::Propagation::Proceed
-            }
-        });
-        shell.borrow().window.add_controller(controller);
+    fn request_show_shortcut_settings(&mut self) {
+        if let Some(window) = self.shortcut_settings_window.as_ref() {
+            window.present();
+            return;
+        }
+        let weak = self.self_handle.borrow().clone();
+        let window = crate::shortcut_settings::show(
+            &self.window,
+            Rc::clone(&self.shortcut_manager),
+            Rc::new(move |bindings| {
+                let manager = match zentty_core::ShortcutManager::new(
+                    &shortcut_registry::definitions(),
+                    &bindings,
+                ) {
+                    Ok(manager) => manager,
+                    Err(error) => {
+                        eprintln!("zentty-linux: shortcuts rejected: {error}");
+                        return Err(error);
+                    }
+                };
+                crate::config_store::ConfigStore::update_default_shortcuts(&bindings)?;
+                if let Some(shell) = weak.upgrade() {
+                    let mut shell = shell.borrow_mut();
+                    shell.config.shortcuts = bindings;
+                    *shell.shortcut_manager.borrow_mut() = manager;
+                }
+                Ok(())
+            }),
+        );
+        self.shortcut_settings_window = Some(window);
+    }
+
+    fn request_rename_current_worklane(&self) {
+        let worklane = self.state.active_worklane();
+        crate::sidebar::present_rename_dialog(
+            &self.window,
+            "Rename Worklane",
+            "workspace.rename-worklane",
+            &worklane.id,
+            worklane.title.as_deref().unwrap_or_default(),
+        );
+    }
+
+    fn request_rename_current_pane(&self) {
+        let Some(pane) = self
+            .state
+            .focused_pane_id()
+            .and_then(|pane_id| self.state.pane(pane_id))
+        else {
+            return;
+        };
+        crate::sidebar::present_rename_dialog(
+            &self.window,
+            "Rename Pane",
+            "workspace.rename-pane",
+            &pane.id,
+            pane.custom_title.as_deref().unwrap_or_default(),
+        );
+    }
+
+    fn copy_focused_pane_path(&self) {
+        let Some((pane_id, path)) = self
+            .state
+            .focused_pane_id()
+            .and_then(|pane_id| self.state.pane(pane_id).map(|pane| (pane_id, pane)))
+            .and_then(|(pane_id, pane)| {
+                pane.working_directory
+                    .as_deref()
+                    .map(|path| (pane_id, path))
+            })
+        else {
+            eprintln!("zentty-linux: action=copy-pane-path unavailable=no-working-directory");
+            return;
+        };
+        gtk::prelude::WidgetExt::display(&self.window)
+            .clipboard()
+            .set_text(path);
+        eprintln!("zentty-linux: action=copy-pane-path pane={pane_id}");
     }
 
     fn install_search_shortcuts(shell: &Rc<RefCell<Self>>) {
@@ -1400,21 +1345,7 @@ impl ApplicationShell {
                     return glib::Propagation::Stop;
                 }
             }
-            let Some(shortcut) = resolve_shortcut(key, modifiers) else {
-                return glib::Propagation::Proceed;
-            };
-            let action = match shortcut {
-                SearchShortcut::GlobalFind => ACTION_GLOBAL_FIND,
-                SearchShortcut::Find => ACTION_FIND,
-                SearchShortcut::UseSelection => ACTION_USE_SELECTION_FOR_FIND,
-                SearchShortcut::Next => ACTION_FIND_NEXT,
-                SearchShortcut::Previous => ACTION_FIND_PREVIOUS,
-            };
-            // Action activation is synchronous. Clone the GTK handle before
-            // dispatch so the action callback can mutably borrow the shell.
-            let window = shell.borrow().window.clone();
-            let _ = window.activate_action(&format!("workspace.{action}"), None);
-            glib::Propagation::Stop
+            glib::Propagation::Proceed
         });
         shell.borrow().window.add_controller(controller);
     }
@@ -1600,6 +1531,12 @@ impl ApplicationShell {
     #[allow(clippy::too_many_lines)] // Interim until the source command registry is ported.
     fn command_palette_action_items() -> Vec<CommandPaletteItem> {
         vec![
+            CommandPaletteItem::action(
+                "Settings",
+                "Configure application keyboard shortcuts",
+                "preferences shortcuts bindings presets",
+                ACTION_OPEN_SETTINGS,
+            ),
             CommandPaletteItem::action(
                 "Task Manager",
                 "Inspect CPU, memory, and process trees for every pane",
@@ -2118,6 +2055,27 @@ impl ApplicationShell {
             state.insert_focused_pane_left(pane_id, f64::from(width))
         })?;
         shell.borrow().scroll_panes_to_focused();
+        Ok(())
+    }
+
+    fn duplicate_focused_pane(shell: &Rc<RefCell<Self>>) -> Result<(), String> {
+        let (width, working_directory) = {
+            let shell = shell.borrow();
+            let pane = shell
+                .state
+                .focused_pane_id()
+                .and_then(|pane_id| shell.state.pane(pane_id))
+                .ok_or_else(|| "there is no focused pane to duplicate".to_owned())?;
+            (
+                shell.focused_column_render_width(),
+                pane.working_directory.clone(),
+            )
+        };
+        Self::split_focused_pane(shell, ACTION_DUPLICATE_PANE, move |state, pane_id| {
+            let inserted = state.add_pane_right_without_resizing(pane_id.clone(), f64::from(width));
+            inserted && state.configure_pane_launch(&pane_id, working_directory, None)
+        })?;
+        Self::scroll_panes_to_end(shell);
         Ok(())
     }
 
@@ -3409,37 +3367,6 @@ fn log_ghostty_search_state(overlay: &gtk::Widget, pane_id: &str) {
     );
 }
 
-fn is_restore_closed_pane_shortcut(key: gdk::Key, modifiers: gdk::ModifierType) -> bool {
-    key == gdk::Key::t
-        && modifiers.contains(gdk::ModifierType::CONTROL_MASK)
-        && modifiers.contains(gdk::ModifierType::SHIFT_MASK)
-        && !modifiers.intersects(gdk::ModifierType::ALT_MASK | gdk::ModifierType::SUPER_MASK)
-}
-
-fn resize_shortcut_direction(
-    key: gdk::Key,
-    modifiers: gdk::ModifierType,
-) -> Option<PaneResizeDirection> {
-    let command_modifiers = modifiers
-        & (gdk::ModifierType::CONTROL_MASK
-            | gdk::ModifierType::SHIFT_MASK
-            | gdk::ModifierType::ALT_MASK
-            | gdk::ModifierType::SUPER_MASK);
-    let required = gdk::ModifierType::CONTROL_MASK
-        | gdk::ModifierType::SHIFT_MASK
-        | gdk::ModifierType::ALT_MASK;
-    if command_modifiers != required {
-        return None;
-    }
-    match key {
-        gdk::Key::Left => Some(PaneResizeDirection::Left),
-        gdk::Key::Right => Some(PaneResizeDirection::Right),
-        gdk::Key::Up => Some(PaneResizeDirection::Up),
-        gdk::Key::Down => Some(PaneResizeDirection::Down),
-        _ => None,
-    }
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum TerminalGesture {
     InputSubmitted,
@@ -3479,30 +3406,6 @@ fn is_close_window_shortcut(key: gdk::Key, modifiers: gdk::ModifierType) -> bool
                 | gdk::ModifierType::SHIFT_MASK
                 | gdk::ModifierType::SUPER_MASK,
         )
-}
-
-fn is_new_window_shortcut(key: gdk::Key, modifiers: gdk::ModifierType) -> bool {
-    let required = gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::SHIFT_MASK;
-    matches!(key, gdk::Key::n | gdk::Key::N)
-        && modifiers.contains(required)
-        && !modifiers.intersects(gdk::ModifierType::ALT_MASK | gdk::ModifierType::SUPER_MASK)
-}
-
-fn is_new_worklane_shortcut(key: gdk::Key, modifiers: gdk::ModifierType) -> bool {
-    matches!(key, gdk::Key::n | gdk::Key::N)
-        && modifiers.contains(gdk::ModifierType::CONTROL_MASK)
-        && !modifiers.intersects(
-            gdk::ModifierType::ALT_MASK
-                | gdk::ModifierType::SHIFT_MASK
-                | gdk::ModifierType::SUPER_MASK,
-        )
-}
-
-fn is_close_active_window_shortcut(key: gdk::Key, modifiers: gdk::ModifierType) -> bool {
-    let required = gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::SHIFT_MASK;
-    matches!(key, gdk::Key::w | gdk::Key::W)
-        && modifiers.contains(required)
-        && !modifiers.intersects(gdk::ModifierType::ALT_MASK | gdk::ModifierType::SUPER_MASK)
 }
 
 fn install_sidebar_width_tracking(
@@ -3926,35 +3829,11 @@ fn default_window_recipe(id: &str, working_directory: Option<String>) -> WindowR
 mod allocation_tests {
     use super::{
         TerminalGesture, bounded_pane_viewport_height, codex_terminal_gesture,
-        default_window_recipe, is_close_active_window_shortcut, is_close_window_shortcut,
-        is_new_window_shortcut, is_new_worklane_shortcut, model_heights_to_pixels,
-        resize_shortcut_direction, snapshot_window_frame, validated_window_size,
+        default_window_recipe, is_close_window_shortcut, model_heights_to_pixels,
+        snapshot_window_frame, validated_window_size,
     };
     use gtk::gdk;
-    use zentty_core::{PaneResizeDirection, WindowFrame};
-
-    #[test]
-    fn linux_resize_shortcuts_require_ctrl_alt_shift_and_physical_arrows() {
-        let required = gdk::ModifierType::CONTROL_MASK
-            | gdk::ModifierType::ALT_MASK
-            | gdk::ModifierType::SHIFT_MASK;
-        assert_eq!(
-            resize_shortcut_direction(gdk::Key::Left, required),
-            Some(PaneResizeDirection::Left)
-        );
-        assert_eq!(
-            resize_shortcut_direction(gdk::Key::Down, required),
-            Some(PaneResizeDirection::Down)
-        );
-        assert_eq!(
-            resize_shortcut_direction(gdk::Key::Left, gdk::ModifierType::CONTROL_MASK),
-            None
-        );
-        assert_eq!(
-            resize_shortcut_direction(gdk::Key::Left, required | gdk::ModifierType::SUPER_MASK),
-            None
-        );
-    }
+    use zentty_core::WindowFrame;
 
     #[test]
     fn default_pane_records_the_directory_in_which_its_real_child_starts() {
@@ -4126,58 +4005,6 @@ mod allocation_tests {
         assert!(!is_close_window_shortcut(
             gdk::Key::w,
             gdk::ModifierType::CONTROL_MASK
-        ));
-    }
-
-    #[test]
-    fn new_window_shortcut_is_exact_linux_ctrl_shift_n() {
-        assert!(is_new_window_shortcut(
-            gdk::Key::n,
-            gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::SHIFT_MASK,
-        ));
-        assert!(!is_new_window_shortcut(
-            gdk::Key::n,
-            gdk::ModifierType::CONTROL_MASK,
-        ));
-        assert!(!is_new_window_shortcut(
-            gdk::Key::n,
-            gdk::ModifierType::CONTROL_MASK
-                | gdk::ModifierType::SHIFT_MASK
-                | gdk::ModifierType::SUPER_MASK,
-        ));
-    }
-
-    #[test]
-    fn new_worklane_shortcut_is_exact_linux_ctrl_n() {
-        assert!(is_new_worklane_shortcut(
-            gdk::Key::n,
-            gdk::ModifierType::CONTROL_MASK,
-        ));
-        assert!(!is_new_worklane_shortcut(
-            gdk::Key::n,
-            gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::SHIFT_MASK,
-        ));
-        assert!(!is_new_worklane_shortcut(
-            gdk::Key::n,
-            gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::SUPER_MASK,
-        ));
-    }
-
-    #[test]
-    fn close_active_window_shortcut_is_exact_linux_ctrl_shift_w() {
-        assert!(is_close_active_window_shortcut(
-            gdk::Key::w,
-            gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::SHIFT_MASK,
-        ));
-        assert!(!is_close_active_window_shortcut(
-            gdk::Key::w,
-            gdk::ModifierType::CONTROL_MASK,
-        ));
-        assert!(!is_close_active_window_shortcut(
-            gdk::Key::w,
-            gdk::ModifierType::CONTROL_MASK
-                | gdk::ModifierType::SHIFT_MASK
-                | gdk::ModifierType::ALT_MASK,
         ));
     }
 
