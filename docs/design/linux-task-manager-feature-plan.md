@@ -25,10 +25,12 @@ The port follows:
   `TaskManagerRootPIDTests`, and `TaskManagerWindowControllerTests`.
 
 The source currently models network throughput but its Darwin sampler always
-returns it as unavailable. Linux must preserve that honest state in this slice;
-it must not relabel disk I/O, network-namespace totals, or socket queue depth as
-per-pane network throughput. Real attributable network accounting remains a
-named GH-19 limitation rather than guessed telemetry.
+returns it as unavailable. That establishes the parity floor, not the Linux
+product ceiling. Until Linux has a trustworthy active telemetry backend, the UI
+must hide the Network column rather than advertise a permanently empty feature.
+It must not relabel disk I/O, network-namespace totals, or socket queue depth as
+per-pane throughput. Real attributable network accounting remains a named
+GH-19 feature and is required before Task Manager leaves `PARTIAL`.
 
 ## Architecture constraints
 
@@ -105,20 +107,19 @@ This slice is complete when the source-visible Task Manager behavior above is
 implemented and its real CPU/memory/process journeys pass. GH-19 remains open
 and `utilities.task-manager` remains `PARTIAL` until trustworthy per-pane
 network throughput and the remaining container/cgroup qualification cases are
-implemented. The UI must say “Unavailable”; qualification must not count that
-gap as passing network telemetry.
+implemented. With no telemetry backend, the Network column must be absent and
+qualification must not count that gap as passing network telemetry.
 
 ## Parity closeout — multiwindow and Linux isolation semantics
 
-The implemented sampler and UI already match the source-visible Task Manager:
-one application window, worklane/pane/process grouping, stable refresh, CPU,
-memory, explicit unavailable network state, search, expansion, clipboard,
-focus, and End Task. Source audit confirms macOS constructs every
-`TaskManagerProcessTree` with `networkBytesPerSecond: nil`; an invented Linux
-throughput estimator would be less accurate than the source and is not a parity
-requirement. The remaining closeout is therefore real multiwindow evidence and
-explicit Linux cgroup/namespace behavior—not relabeling aggregate counters as
-per-pane network throughput.
+The implemented sampler and UI already cover one application window,
+worklane/pane/process grouping, stable refresh, CPU, memory, search, expansion,
+clipboard, focus, and End Task. Source audit confirms macOS constructs every
+`TaskManagerProcessTree` with `networkBytesPerSecond: nil`, but that does not
+justify excluding a sound Linux implementation. The remaining closeout is real
+multiwindow evidence, explicit Linux cgroup/namespace behavior, and a tested
+Linux network-accounting backend. Aggregate counters must still never be
+presented as attributable pane throughput.
 
 Construction order:
 
@@ -140,10 +141,21 @@ Construction order:
    namespace without weakening isolation, prove its label against real `/proc`.
    If the host prerequisite is unavailable, retain an explicit matrix status;
    environmental absence is not a pass.
-5. Preserve `network=Unavailable` in UI and receipts, with the source sampler as
-   the authoritative rationale. Run focused mutation, strict Clippy, workspace
-   tests, both compositor journeys, and every presently executable matrix cell
-   before promotion.
+5. Keep the Network column capability-driven and hidden while no trustworthy
+   backend is active. The no-backend X11 and Wayland journeys must prove its
+   absence rather than accepting a dead column filled with dashes.
+6. Evaluate per-pane cgroup plus cgroup-attached eBPF ingress/egress accounting
+   as the authoritative backend. Document kernel, privilege, systemd, sandbox,
+   and container prerequisites; environmental absence is not a pass.
+7. Test the candidate with real TCP and UDP traffic from two real pane process
+   trees plus an unrelated process. Prove byte attribution, process exit and
+   PID/socket reuse, descendants, namespace/container boundaries, refresh
+   overhead, and that traffic is neither missed nor double-counted.
+8. Any lower-privilege socket-diagnostics fallback must be explicitly labeled
+   best effort and pass its own accuracy contract. Namespace-wide counters and
+   socket queue depths are not throughput backends.
+9. Run focused mutation, strict Clippy, workspace tests, both compositor
+   journeys, and every presently executable matrix cell before promotion.
 
 Acceptance criteria:
 
@@ -151,7 +163,11 @@ Acceptance criteria:
       windows under X11 and Wayland without row/controller identity churn.
 - [ ] Linux cgroup/namespace parsing is bounded, PID-safe, honest, and cannot
       claim ownership or throughput not proven by the kernel evidence.
-- [ ] Network remains explicitly unavailable exactly as in source Zentty; no
-      aggregate interface, socket queue, or guessed per-process metric is shown.
+- [ ] Without an active telemetry backend, no Network heading or cells are
+      rendered; the product and journey receipts state that the column is
+      hidden because the backend is absent.
+- [ ] With an active backend, real TCP/UDP traffic is attributed to the correct
+      pane tree under documented privilege, cgroup, namespace, and container
+      conditions; unsupported environments remain explicit qualification gaps.
 - [ ] Strict Clippy, workspace tests, governed mutation, and every presently
       executable matrix cell pass before inventory promotion.

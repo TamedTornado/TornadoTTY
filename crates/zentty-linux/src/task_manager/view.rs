@@ -5,7 +5,16 @@ use std::rc::{Rc, Weak};
 use gtk::gdk;
 use gtk::prelude::*;
 
-use super::model::{NetworkState, PaneRow, ProcessMetric, format_cpu, format_memory};
+use super::model::{PaneRow, ProcessMetric, format_cpu, format_memory};
+
+const COLUMN_TITLES: [&str; 6] = [
+    "Pane",
+    "Status",
+    "CPU",
+    "Memory",
+    "Hottest Process",
+    "Root PID",
+];
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 enum NodeId {
@@ -21,7 +30,6 @@ struct RowWidgets {
     status: gtk::Label,
     cpu: gtk::Label,
     memory: gtk::Label,
-    network: gtk::Label,
     hottest: gtk::Label,
     root_pid: gtk::Label,
 }
@@ -86,7 +94,7 @@ impl TaskManagerView {
 
         let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
         content.add_css_class("task-manager-table");
-        let column_groups = (0..7)
+        let column_groups = (0..6)
             .map(|_| gtk::SizeGroup::new(gtk::SizeGroupMode::Horizontal))
             .collect::<Vec<_>>();
         content.append(&header(&column_groups));
@@ -102,6 +110,10 @@ impl TaskManagerView {
         root.append(&toolbar);
         root.append(&scroll);
         window.set_child(Some(&root));
+        let rendered_columns = rendered_column_receipt();
+        eprintln!(
+            "zentty-linux: task-manager-columns={rendered_columns} network=hidden backend=none"
+        );
 
         let view = Self {
             state: Rc::new(ViewState {
@@ -404,24 +416,17 @@ impl TaskManagerView {
     }
 }
 
+fn rendered_column_receipt() -> String {
+    COLUMN_TITLES.join(",").replace(' ', "")
+}
+
 fn header(column_groups: &[gtk::SizeGroup]) -> gtk::Grid {
     let grid = gtk::Grid::new();
     grid.add_css_class("task-manager-header");
     grid.set_column_spacing(12);
-    for (column, title) in [
-        "Pane",
-        "Status",
-        "CPU",
-        "Memory",
-        "Network",
-        "Hottest Process",
-        "Root PID",
-    ]
-    .into_iter()
-    .enumerate()
-    {
+    for (column, title) in COLUMN_TITLES.into_iter().enumerate() {
         let label = gtk::Label::new(Some(title));
-        label.set_xalign(if (2..=4).contains(&column) || column == 6 {
+        label.set_xalign(if matches!(column, 2 | 3 | 5) {
             1.0
         } else {
             0.0
@@ -430,7 +435,7 @@ fn header(column_groups: &[gtk::SizeGroup]) -> gtk::Grid {
         column_groups[column].add_widget(&label);
         grid.attach(
             &label,
-            i32::try_from(column).expect("task-manager has seven columns"),
+            i32::try_from(column).expect("task-manager has six columns"),
             0,
             1,
             1,
@@ -455,10 +460,10 @@ fn make_row(state: Weak<ViewState>, id: NodeId, column_groups: &[gtk::SizeGroup]
     pane_box.append(&pane);
     column_groups[0].add_widget(&pane_box);
     grid.attach(&pane_box, 0, 0, 1, 1);
-    let labels = (1..7)
+    let labels = (1..6)
         .map(|column| {
             let label = gtk::Label::new(None);
-            label.set_xalign(if (2..=4).contains(&column) || column == 6 {
+            label.set_xalign(if matches!(column, 2 | 3 | 5) {
                 1.0
             } else {
                 0.0
@@ -468,7 +473,7 @@ fn make_row(state: Weak<ViewState>, id: NodeId, column_groups: &[gtk::SizeGroup]
             column_groups[column].add_widget(&label);
             grid.attach(
                 &label,
-                i32::try_from(column).expect("task-manager has seven columns"),
+                i32::try_from(column).expect("task-manager has six columns"),
                 0,
                 1,
                 1,
@@ -504,9 +509,8 @@ fn make_row(state: Weak<ViewState>, id: NodeId, column_groups: &[gtk::SizeGroup]
         status: labels[0].clone(),
         cpu: labels[1].clone(),
         memory: labels[2].clone(),
-        network: labels[3].clone(),
-        hottest: labels[4].clone(),
-        root_pid: labels[5].clone(),
+        hottest: labels[3].clone(),
+        root_pid: labels[4].clone(),
     }
 }
 
@@ -578,7 +582,6 @@ fn update_worklane_row(
     widgets.status.set_text(&format!("{} panes", grouped.len()));
     widgets.cpu.set_text(&format_cpu(Some(cpu)));
     widgets.memory.set_text(&format_memory(Some(memory)));
-    widgets.network.set_text("-");
     widgets
         .hottest
         .set_text(hottest.map_or("", |process| &process.name));
@@ -620,9 +623,6 @@ fn update_pane_row(
     widgets.status.set_text(row.status_text());
     widgets.cpu.set_text(&format_cpu(row.cpu_percent));
     widgets.memory.set_text(&format_memory(row.memory_bytes));
-    widgets.network.set_text(match &row.network_state {
-        NetworkState::Unavailable(_) => "-",
-    });
     widgets.hottest.set_text(
         row.hottest_process
             .as_ref()
@@ -658,7 +658,6 @@ fn update_process_row(widgets: &RowWidgets, process: &ProcessMetric) {
     widgets
         .memory
         .set_text(&format_memory(Some(process.memory_bytes)));
-    widgets.network.set_text("-");
     widgets.hottest.set_text("");
     widgets.root_pid.set_text(&process.pid.to_string());
     widgets
@@ -685,8 +684,7 @@ const fn column_width(column: usize) -> i32 {
         0 => 24,
         1 => 15,
         3 => 12,
-        4 => 10,
-        5 => 18,
+        4 => 18,
         _ => 9,
     }
 }
@@ -698,7 +696,7 @@ fn install_styles() {
     let provider = gtk::CssProvider::new();
     provider.load_from_string(
         ".task-manager { background: #17191d; color: #e7e9ee; }\n\
-         .task-manager-table { background: #20242b; border: 1px solid #48505d; border-radius: 7px; min-width: 980px; }\n\
+         .task-manager-table { background: #20242b; border: 1px solid #48505d; border-radius: 7px; min-width: 850px; }\n\
          .task-manager-header { background: #292e36; border-bottom: 1px solid #48505d; padding: 8px; font-weight: 700; }\n\
          .task-manager-list { background: #20242b; }\n\
          .task-manager-list row { padding: 6px 8px; border-bottom: 1px solid #303640; }\n\
@@ -716,4 +714,18 @@ fn install_styles() {
         &provider,
         gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn no_backend_column_contract_does_not_advertise_network_telemetry() {
+        assert_eq!(
+            rendered_column_receipt(),
+            "Pane,Status,CPU,Memory,HottestProcess,RootPID"
+        );
+        assert!(!COLUMN_TITLES.contains(&"Network"));
+    }
 }

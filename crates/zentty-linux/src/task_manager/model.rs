@@ -46,11 +46,6 @@ pub(crate) enum Availability {
     Unavailable(String),
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum NetworkState {
-    Unavailable(String),
-}
-
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct PaneRow {
     pub(crate) source: PaneSource,
@@ -59,7 +54,6 @@ pub(crate) struct PaneRow {
     pub(crate) peak_cpu_percent: Option<f64>,
     pub(crate) memory_bytes: Option<u64>,
     pub(crate) peak_memory_bytes: Option<u64>,
-    pub(crate) network_state: NetworkState,
     pub(crate) hottest_process: Option<ProcessMetric>,
     pub(crate) processes: Vec<ProcessMetric>,
 }
@@ -104,7 +98,6 @@ impl PaneRow {
                     .and_then(|row| row.peak_memory_bytes)
                     .map_or(memory_bytes, |peak| peak.max(memory_bytes)),
             ),
-            network_state: NetworkState::Unavailable("Unavailable".to_owned()),
             hottest_process,
             processes,
         }
@@ -118,7 +111,6 @@ impl PaneRow {
             peak_cpu_percent: previous.and_then(|row| row.peak_cpu_percent),
             memory_bytes: None,
             peak_memory_bytes: previous.and_then(|row| row.peak_memory_bytes),
-            network_state: NetworkState::Unavailable("Unavailable".to_owned()),
             hottest_process: None,
             processes: Vec::new(),
         }

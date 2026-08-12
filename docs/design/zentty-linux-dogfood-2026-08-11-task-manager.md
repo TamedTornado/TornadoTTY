@@ -17,10 +17,10 @@ uncertainty from the slice.
   in `Application`, aggregates the existing application shells, and routes
   focus/close back through the shell that owns the stable pane identity.
 - Source models network activity but its Darwin sampler currently returns
-  unavailable. Linux does the same honestly. Interface counters, network
-  namespace totals, socket ownership, and queued socket bytes do not prove
-  per-pane throughput and were rejected rather than presented as invented
-  parity.
+  unavailable. The initial Linux implementation copied that presentation.
+  Later product review rejected the resulting dead column; see “Parity closeout
+  resumed” below. Interface counters, network namespace totals, socket
+  ownership, and queued socket bytes still do not prove per-pane throughput.
 - The source uses shell-integration root identity. The Linux Ghostty embedding
   boundary now supplies the real foreground process ID of each PTY. Remote
   panes remain explicitly remote instead of sampling a misleading local SSH
@@ -44,8 +44,10 @@ uncertainty from the slice.
 - The real fixture creates two actual Ghostty PTY process trees. Each tree has a
   root plus CPU-busy child and touches bounded memory. The product journey
   requires two-process trees, nonzero kernel CPU deltas, roughly 59 MiB RSS,
-  and an explicit `network=unavailable` receipt; it does not mock `/proc`, GTK,
-  Ghostty, the clipboard, or pane lifecycle.
+  and originally required an explicit `network=unavailable` receipt. That
+  historical expectation was replaced by the no-backend column-absence
+  contract below. It does not mock `/proc`, GTK, Ghostty, the clipboard, or
+  pane lifecycle.
 - The first X11 journey proved sampling but failed process-tree expansion
   because its assumed Tab chain was not a GTK contract. The search field now
   gives physical Down a deterministic accessible route to the first result;
@@ -73,7 +75,7 @@ uncertainty from the slice.
   modifier state, then was removed. Narrow action and no-selection diagnostics
   remain useful product receipts.
 
-## Real product evidence
+## Historical real product evidence before the no-backend UI correction
 
 - Controlled X11: `rust-task-manager-x11: PASS real-proc real-ghostty-pty
   multi-pane search expand clipboard focus close
@@ -106,8 +108,8 @@ uncertainty from the slice.
 
 ## Remaining limitation
 
-- Feature status is **PARTIAL**, not implemented parity. Trustworthy per-pane
-  network accounting remains unavailable in both source behavior and this port.
+- Feature status is **PARTIAL**, not implemented parity. Source macOS does not
+  supply network accounting, and the Linux backend has not yet been built.
   Controlled multiwindow presentation/routing and cgroup/container attribution
   remain required under GH-19 even though the application architecture already
   aggregates multiple shells.
@@ -253,9 +255,21 @@ uncertainty from the slice.
 
 - A fresh source audit confirms the Darwin sampler always sets
   `networkBytesPerSecond: nil`; network is a modeled future field, not a working
-  macOS feature. Linux will retain the honest `Unavailable` presentation rather
-  than inventing a platform divergence from aggregate network-namespace
-  counters, socket queues, or privileged eBPF assumptions.
+  macOS feature. The initial conclusion treated that parity floor as a Linux
+  ceiling. That was wrong: Linux may provide a sound platform enhancement, and
+  the public GH-19 acceptance criteria already require network usage.
+- Manual product review also identified that a Network heading filled only
+  with dashes advertises functionality that does not exist. With no active
+  telemetry backend, the column is now omitted entirely. The controlled X11
+  and Wayland journey requires the explicit capability receipt
+  `network=hidden backend=none`; this is evidence of honest UI behavior, not a
+  pass for network telemetry.
+- Trustworthy Linux accounting remains required before Task Manager leaves
+  `PARTIAL`. The revised plan evaluates per-pane cgroups plus cgroup-attached
+  eBPF ingress/egress accounting against real TCP/UDP traffic, unrelated
+  processes, descendants, lifecycle/PID reuse, and namespace/container cases.
+  Privilege or environment absence remains a qualification gap. Aggregate
+  namespace counters and socket queues remain rejected as pane throughput.
 - The concrete remaining source-visible evidence gap is multiwindow behavior.
   Linux already uses one application-level controller and stable keys include
   `window_id`, but its controlled product journey creates only one real window.
@@ -265,3 +279,33 @@ uncertainty from the slice.
   labeling, but remain metadata. Process ancestry plus `(pid,start_time)` stays
   the sole pane-tree ownership authority, and environment absence cannot become
   proof of an isolated-container case.
+
+## No-backend column correction verification — 2026-08-12
+
+- The UI now derives its six rendered headings from one `COLUMN_TITLES`
+  authority: Pane, Status, CPU, Memory, Hottest Process, and Root PID. The
+  obsolete `NetworkState::Unavailable` model field and every dash-only network
+  cell were removed. The same heading authority generates the integration
+  receipt, preventing a passing receipt from silently diverging from the actual
+  rendered header.
+- The focused Rust suite passed 15 Task Manager tests, including the new
+  no-backend heading contract. Strict focused Clippy, ShellCheck, feature
+  inventory validation, and qualification-matrix runner tests passed.
+- The first full workspace test invocation was correctly blocked by the
+  execution sandbox when eight real Unix-socket tests attempted to bind. The
+  unchanged suite was rerun with the required network/listener permission and
+  passed in full; no test or product expectation was weakened.
+- Governed mutation used the repository's mandatory `gitignore=true` and
+  `copy_target=false` policy. Both mutants of the new rendered-column authority
+  were caught: 2 tested, 2 caught, 0 missed.
+- The rebuilt ReleaseSafe product passed the real Task Manager journey under
+  controlled X11 and controlled Wayland. Both journeys used real Ghostty PTYs,
+  `/proc`, physical compositor input, GTK, clipboard, focus, and close, and
+  required `unavailable-network-column-hidden`.
+- The final `linux/tests/qualify-local` run passed every presently executable
+  support and matrix cell in 458,920 ms. Declared totals are PASS=113, FAIL=0,
+  BLOCKED=7, XFAIL=1, and NOT_IMPLEMENTED=21. The machine summary SHA-256 is
+  `6cc7de40e0904e94afca1bfd597f41ee1123f7859d92271425207c6b3a82dc69`.
+  Implemented local suite is PASSED; release and full Linux qualification remain
+  NOT_PASSED by policy. Suppression review remains ACCEPTED, and this correction
+  makes no new unsuppressed-clean claim.

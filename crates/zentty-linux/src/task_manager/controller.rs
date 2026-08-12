@@ -129,7 +129,7 @@ impl TaskManagerController {
         *self.previous_order.borrow_mut() = rows.iter().map(|row| row.source.stable_id()).collect();
         for row in &rows {
             eprintln!(
-                "zentty-linux: task-manager-sample window={} worklane={} pane={} root={} processes={} cpu={} memory={} network=unavailable",
+                "zentty-linux: task-manager-sample window={} worklane={} pane={} root={} processes={} cpu={} memory={}",
                 row.source.window_id,
                 row.source.worklane_id,
                 row.source.pane_id,

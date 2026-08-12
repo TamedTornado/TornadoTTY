@@ -144,11 +144,13 @@ grep -Fq 'task-manager rows=2 worklanes=1 visible=3 query=""' "${log}" ||
 # The first sample intentionally has no CPU delta. Wait for the next real kernel
 # sample and require both the parent/child tree and nonzero CPU/memory metrics.
 for _ in $(seq 1 200); do
-    grep -Eq 'task-manager-sample .* processes=2 cpu=([1-9][0-9]*\.[0-9]|[0-9]+\.[1-9])% memory=[1-9][0-9]*\.[0-9] MiB network=unavailable' "${log}" && break
+    grep -Eq 'task-manager-sample .* processes=2 cpu=([1-9][0-9]*\.[0-9]|[0-9]+\.[1-9])% memory=[1-9][0-9]*\.[0-9] MiB' "${log}" && break
     sleep 0.05
 done
-grep -Eq 'task-manager-sample .* processes=2 cpu=([1-9][0-9]*\.[0-9]|[0-9]+\.[1-9])% memory=[1-9][0-9]*\.[0-9] MiB network=unavailable' "${log}" ||
+grep -Eq 'task-manager-sample .* processes=2 cpu=([1-9][0-9]*\.[0-9]|[0-9]+\.[1-9])% memory=[1-9][0-9]*\.[0-9] MiB' "${log}" ||
     fail "Task Manager did not report real nonzero process-tree metrics"
+grep -Fq 'task-manager-columns=Pane,Status,CPU,Memory,HottestProcess,RootPID network=hidden backend=none' "${log}" ||
+    fail "Task Manager advertised a network column without an active telemetry backend"
 
 root_pid="$(sed -n 's/^root=//p' "${receipt}" | head -1)"
 child_pid="$(sed -n 's/^child=//p' "${receipt}" | head -1)"
@@ -260,4 +262,4 @@ done
 grep -Fq 'zentty-linux: action=close-pane pane=' "${log}" ||
     fail "End Task did not use the existing pane close lifecycle"
 
-echo "rust-task-manager-${backend}: PASS real-proc real-ghostty-pty worklane-group multi-pane search expand clipboard focus close network-explicitly-unavailable"
+echo "rust-task-manager-${backend}: PASS real-proc real-ghostty-pty worklane-group multi-pane search expand clipboard focus close unavailable-network-column-hidden"
