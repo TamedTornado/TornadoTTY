@@ -1,14 +1,17 @@
 use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use gtk::gio::prelude::AppInfoExt;
 use gtk::{gio, glib};
 use zentty_agent_ipc::{ServerCommand, ServerIpcReply, ServerIpcRequest};
 use zentty_core::{
-    DetectedServer, DetectedServerConfidence, DetectedServerSource, ServerPortRule, ServerRegistry,
-    ServerTerminationObservation, authorize_server_termination, normalize_server_url,
+    DetectedServer, DetectedServerConfidence, DetectedServerSource, SYSTEM_DEFAULT_BROWSER_ID,
+    ServerBrowserCatalog, ServerBrowserLaunchPlan, ServerBrowserLauncher, ServerBrowserTarget,
+    ServerDetectionConfig, ServerPortRule, ServerRegistry, ServerTerminationObservation,
+    authorize_server_termination, normalize_server_url,
 };
 
 use super::ApplicationShell;
@@ -17,13 +20,119 @@ use crate::server_discovery::{PaneProcessContext, process_start_time, scan_liste
 
 const PROBE_INTERVAL: Duration = Duration::from_secs(2);
 
-#[derive(Default)]
 pub(super) struct ServerRuntime {
     pub(super) probe_source: Option<glib::SourceId>,
     probe_in_flight: bool,
     pub(super) servers: Vec<DetectedServer>,
     registry: ServerRegistry,
     docker_scan_tick: u8,
+    pub(super) browser_catalog: ServerBrowserCatalog,
+    pub(super) browser_actions: BTreeMap<String, (String, String)>,
+}
+
+impl ServerRuntime {
+    pub(super) fn discover(config: &ServerDetectionConfig) -> Self {
+        let browser_catalog = ServerBrowserCatalog::resolve(
+            config,
+            discover_browser_targets(config, std::env::var_os("PATH").as_deref()),
+        );
+        eprintln!(
+            "zentty-linux: server-browser-discovery available={} preferred={} unavailable={}",
+            browser_catalog.enabled.len(),
+            browser_catalog
+                .preferred
+                .as_ref()
+                .map_or("none", |target| target.id.as_str()),
+            browser_catalog.unavailable_ids.join(",")
+        );
+        Self {
+            probe_source: None,
+            probe_in_flight: false,
+            servers: Vec::new(),
+            registry: ServerRegistry::default(),
+            docker_scan_tick: 0,
+            browser_catalog,
+            browser_actions: BTreeMap::new(),
+        }
+    }
+}
+
+const BUILTIN_BROWSERS: &[(&str, &str, &[&str])] = &[
+    ("firefox", "Firefox", &["firefox"]),
+    (
+        "chrome",
+        "Google Chrome",
+        &["google-chrome", "google-chrome-stable"],
+    ),
+    ("chromium", "Chromium", &["chromium", "chromium-browser"]),
+    ("brave", "Brave", &["brave-browser"]),
+    (
+        "edge",
+        "Microsoft Edge",
+        &["microsoft-edge", "microsoft-edge-stable"],
+    ),
+    ("vivaldi", "Vivaldi", &["vivaldi", "vivaldi-stable"]),
+    ("opera", "Opera", &["opera"]),
+    ("zen", "Zen", &["zen-browser", "zen"]),
+    ("floorp", "Floorp", &["floorp"]),
+    ("tor-browser", "Tor Browser", &["tor-browser"]),
+];
+
+fn discover_browser_targets(
+    config: &ServerDetectionConfig,
+    path: Option<&std::ffi::OsStr>,
+) -> Vec<ServerBrowserTarget> {
+    let mut targets = vec![ServerBrowserTarget {
+        id: SYSTEM_DEFAULT_BROWSER_ID.into(),
+        name: "System Default".into(),
+        launcher: ServerBrowserLauncher::SystemDefault,
+    }];
+    targets.extend(
+        BUILTIN_BROWSERS
+            .iter()
+            .filter_map(|(id, name, candidates)| {
+                super::open_with_runtime::resolve_executable(candidates, path).map(|executable| {
+                    ServerBrowserTarget {
+                        id: (*id).into(),
+                        name: (*name).into(),
+                        launcher: ServerBrowserLauncher::Executable {
+                            path: executable.to_string_lossy().into_owned(),
+                        },
+                    }
+                })
+            }),
+    );
+
+    let mut known_desktop_ids = HashSet::new();
+    for app in gio::AppInfo::all_for_type("x-scheme-handler/http") {
+        let Some(application_id) = app.id().map(|id| id.to_string()) else {
+            continue;
+        };
+        if !known_desktop_ids.insert(application_id.clone()) {
+            continue;
+        }
+        targets.push(ServerBrowserTarget {
+            id: format!("desktop:{application_id}"),
+            name: app.display_name().to_string(),
+            launcher: ServerBrowserLauncher::DesktopApplication { application_id },
+        });
+    }
+
+    let mut custom_paths = HashSet::new();
+    targets.extend(config.custom_browsers.iter().filter_map(|browser| {
+        let executable = super::open_with_runtime::canonical_executable(Path::new(&browser.path))?;
+        if !custom_paths.insert(executable.clone()) {
+            return None;
+        }
+        Some(ServerBrowserTarget {
+            id: browser.id.clone(),
+            name: browser.name.clone(),
+            launcher: ServerBrowserLauncher::Executable {
+                path: executable.to_string_lossy().into_owned(),
+            },
+        })
+    }));
+    targets
 }
 
 #[derive(Clone)]
@@ -178,21 +287,18 @@ fn open_ipc_server(
     raw_url: Option<&str>,
     browser: Option<&str>,
 ) -> Result<(), String> {
-    if browser.is_some_and(|browser| browser != "system" && browser != "system-default") {
-        return Err("Linux currently supports only the 'system' browser target".to_owned());
-    }
     let normalized = raw_url
         .map(normalize_server_url)
         .transpose()
         .map_err(|error| format!("{error:?}"))?;
-    let server = {
+    let (server, target) = {
         let shell = shell.borrow();
         let ranked = shell
             .ranked_servers()
             .into_iter()
             .filter(|ranked| ranked.server.worklane_id == worklane_id)
             .collect::<Vec<_>>();
-        normalized
+        let server = normalized
             .as_ref()
             .and_then(|candidate| {
                 ranked
@@ -200,10 +306,12 @@ fn open_ipc_server(
                     .find(|ranked| ranked.server.origin == candidate.origin)
             })
             .or_else(|| ranked.first())
-            .map(|ranked| ranked.server.clone())
-    }
-    .ok_or_else(|| "no matching development server".to_owned())?;
-    launch_url(server.url);
+            .map(|ranked| ranked.server.clone());
+        let server = server.ok_or_else(|| "no matching development server".to_owned())?;
+        let target = select_browser(&shell.server_runtime.browser_catalog, browser)?;
+        (server, target)
+    };
+    launch_url(server.url, target)?;
     Ok(())
 }
 
@@ -545,43 +653,176 @@ fn apply_servers(shell: &mut ApplicationShell, result: ProbeResult) {
 }
 
 pub(super) fn open_server(shell: &Rc<RefCell<ApplicationShell>>, origin: &str) {
-    let url = shell
-        .borrow()
-        .server_runtime
-        .servers
-        .iter()
-        .find(|server| server.origin == origin)
-        .map(|server| server.url.clone());
-    let Some(url) = url else {
+    let request = {
+        let shell = shell.borrow();
+        shell
+            .server_runtime
+            .servers
+            .iter()
+            .find(|server| server.origin == origin)
+            .map(|server| server.url.clone())
+            .zip(shell.server_runtime.browser_catalog.preferred.clone())
+    };
+    let Some((url, target)) = request else {
         eprintln!("zentty-linux: action=open-server origin={origin} error=not-found");
         return;
     };
-    launch_url(url);
+    if let Err(error) = launch_url(url, target) {
+        eprintln!("zentty-linux: action=open-server origin={origin} error={error}");
+    }
 }
 
-fn launch_url(url: String) {
+pub(super) fn open_server_in_browser(shell: &Rc<RefCell<ApplicationShell>>, action_id: &str) {
+    let request = {
+        let shell = shell.borrow();
+        let Some((origin, browser_id)) = shell.server_runtime.browser_actions.get(action_id) else {
+            eprintln!(
+                "zentty-linux: action=open-server-browser id={action_id:?} error=stale-action"
+            );
+            return;
+        };
+        let Some(url) = shell
+            .server_runtime
+            .servers
+            .iter()
+            .find(|server| server.origin == *origin)
+            .map(|server| server.url.clone())
+        else {
+            eprintln!(
+                "zentty-linux: action=open-server-browser id={action_id:?} error=stale-server"
+            );
+            return;
+        };
+        let Some(target) = shell
+            .server_runtime
+            .browser_catalog
+            .target(browser_id)
+            .cloned()
+        else {
+            eprintln!(
+                "zentty-linux: action=open-server-browser id={action_id:?} error=stale-browser"
+            );
+            return;
+        };
+        (url, target)
+    };
+    let browser_id = request.1.id.clone();
+    if let Err(error) = launch_url(request.0, request.1.clone()) {
+        eprintln!("zentty-linux: action=open-server-browser id={action_id:?} error={error}");
+        return;
+    }
+    {
+        let mut shell = shell.borrow_mut();
+        shell
+            .config
+            .server_detection
+            .preferred_browser_id
+            .clone_from(&browser_id);
+        shell.server_runtime.browser_catalog.preferred = Some(request.1);
+    }
     glib::spawn_future_local(async move {
-        let launched_url = url.clone();
-        let result = gio::spawn_blocking(move || {
-            std::process::Command::new("xdg-open")
-                .arg(&launched_url)
-                .spawn()
-                .and_then(|mut child| child.wait())
-        })
-        .await;
-        match result {
-            Ok(Ok(status)) if status.success() => {
-                eprintln!("zentty-linux: action=open-server url={url} result=opened");
-            }
-            Ok(Ok(status)) => eprintln!(
-                "zentty-linux: action=open-server url={url} error=launcher-exit status={status}"
+        let saved_id = browser_id.clone();
+        match gio::spawn_blocking(move || ConfigStore::update_default_preferred_browser(&saved_id))
+            .await
+        {
+            Ok(Ok(path)) => eprintln!(
+                "zentty-linux: action=remember-server-browser id={browser_id} path={} result=persisted",
+                path.display()
             ),
-            Ok(Err(error)) => {
-                eprintln!("zentty-linux: action=open-server url={url} error={error}");
-            }
+            Ok(Err(error)) => eprintln!(
+                "zentty-linux: action=remember-server-browser id={browser_id} error={error}"
+            ),
+            Err(_) => eprintln!(
+                "zentty-linux: action=remember-server-browser id={browser_id} error=worker-panic"
+            ),
+        }
+    });
+}
+
+fn select_browser(
+    catalog: &ServerBrowserCatalog,
+    requested: Option<&str>,
+) -> Result<ServerBrowserTarget, String> {
+    let Some(requested) = requested else {
+        return catalog
+            .preferred
+            .clone()
+            .ok_or_else(|| "no development-server browser is available".to_owned());
+    };
+    let normalized = if requested == "system" {
+        SYSTEM_DEFAULT_BROWSER_ID
+    } else {
+        requested
+    };
+    catalog
+        .target(normalized)
+        .or_else(|| {
+            catalog.enabled.iter().find(|target| {
+                matches!(
+                    &target.launcher,
+                    ServerBrowserLauncher::DesktopApplication { application_id }
+                        if application_id == normalized
+                )
+            })
+        })
+        .cloned()
+        .ok_or_else(|| format!("unknown or unavailable browser target {requested:?}"))
+}
+
+fn launch_url(url: String, target: ServerBrowserTarget) -> Result<(), String> {
+    let plan = target
+        .launch_plan(&url)
+        .map_err(|error| format!("invalid server URL for browser launch: {error:?}"))?;
+    let target_id = target.id;
+    glib::spawn_future_local(async move {
+        let result = gio::spawn_blocking(move || launch_browser_plan(plan)).await;
+        match result {
+            Ok(Ok(())) => eprintln!(
+                "zentty-linux: action=open-server browser={target_id} url={url} result=opened"
+            ),
+            Ok(Err(error)) => eprintln!(
+                "zentty-linux: action=open-server browser={target_id} url={url} error={error}"
+            ),
             Err(_) => eprintln!("zentty-linux: action=open-server url={url} error=worker-panic"),
         }
     });
+    Ok(())
+}
+
+fn launch_browser_plan(plan: ServerBrowserLaunchPlan) -> Result<(), String> {
+    match plan {
+        ServerBrowserLaunchPlan::SystemDefault { url } => {
+            gio::AppInfo::launch_default_for_uri(&url, None::<&gio::AppLaunchContext>)
+                .map_err(|error| error.to_string())
+        }
+        ServerBrowserLaunchPlan::DesktopApplication {
+            application_id,
+            url,
+        } => {
+            let app = gio::AppInfo::all()
+                .into_iter()
+                .find(|app| app.id().as_deref() == Some(application_id.as_str()))
+                .ok_or_else(|| "desktop browser disappeared after discovery".to_owned())?;
+            app.launch_uris(&[url.as_str()], None::<&gio::AppLaunchContext>)
+                .map_err(|error| error.to_string())
+        }
+        ServerBrowserLaunchPlan::Executable {
+            executable,
+            arguments,
+        } => {
+            let mut child = std::process::Command::new(&executable)
+                .args(arguments)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .map_err(|error| format!("could not launch {executable}: {error}"))?;
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
+            Ok(())
+        }
+    }
 }
 
 pub(super) fn stop_server(shell: &Rc<RefCell<ApplicationShell>>, origin: &str) {

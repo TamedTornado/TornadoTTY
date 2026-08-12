@@ -415,10 +415,10 @@
       "origin": "PORT_PARITY",
       "user_impact": "Agents commonly run alongside servers; Zentty advertises detection/open/control so users can act without hunting ports and process owners.",
       "linux_owner_issue": 19,
-      "implementation_status": "PARTIAL",
+      "implementation_status": "IMPLEMENTED",
       "focused_tests": ["crates/zentty-core/tests/dev_server.rs", "crates/zentty-agent-ipc/tests/server_transport.rs", "crates/zentty-linux/src/server_discovery.rs", "crates/zentty-linux/src/docker_discovery.rs"],
       "product_scenarios": ["linux/tests/rust-development-servers"],
-      "test_plan": "Launch real HTTP listeners from distinct PTYs plus a disposable container, verify attribution/ranking/open/ignore/refresh/stop through the staged product, and cover IPv6, PID reuse, hostile URLs and unrelated processes.",
+      "test_plan": "Controlled X11 and Wayland use the staged product, real Ghostty PTY, dynamic listeners, authenticated set/list/open/watch IPC, exact preferred/custom/system browser launchers, forged-target rejection, durable ignore/unignore, and owned graceful stop; the controlled Docker cell adds a real dynamically published container. Focused and mutation tests cover URL normalization/output extraction, ranking, port rules, listener attribution, PID reuse, unrelated processes, termination authorization, browser catalog fallback/deduplication, and shell-free launch plans.",
       "alternative_or_blocker": null
     },
     {

@@ -2,26 +2,26 @@
   "schema_version": 1,
   "contract_id": "zentty-application-shell-responsibilities",
   "source": "crates/zentty-linux/src/application_shell.rs",
-  "source_sha256": "95d55c695ea0a4aab21249bed176367e96708db1e803c74f6446bc63e1fa0bd2",
+  "source_sha256": "88f3c5c41e1801ba8f3bcbab6faa4b735f96f4bf7f07c1108f607e610f9b0527",
   "owned_source_sha256": {
     "crates/zentty-linux/src/main.rs": "f7ee77f349f32eaba5b8953676b541e0dfd0cf65ecd3d0f847a6b952b4264e14",
     "crates/zentty-linux/src/application.rs": "6f14dc9e6c60d46f3713faa997501782e5c9750f0e00b40e27472431cede6c7d",
-    "crates/zentty-linux/src/config_store.rs": "5b6c6c3831eac323770681a850eedea3a7720280db8223cfcc3f28bb28567ae7",
+    "crates/zentty-linux/src/config_store.rs": "efaef74a12ff9db372f8eacb8321d6683239be7c9060869a5f24e67ac79d7a51",
     "crates/zentty-linux/src/window_set.rs": "501d595889c11a41a4261ef8282465d76dd9ed8ccd1d004406b558579b0bf58e",
     "crates/zentty-linux/src/agent_runtime.rs": "48f30d38048ae5388ca59aee2021e1215cabdfc033e66755ed32c6f92dcb8671",
     "crates/zentty-linux/src/codex_enrichment.rs": "fe87631c75c04b63962b7f89d311a778a25af8f27a1dcb4d5950b3efcbaa476e",
-    "crates/zentty-linux/src/application_shell/action_router.rs": "070101075f53cc453e08357b4b827f53bfb08f9f0b61922e1b1fecf6caa0437e",
+    "crates/zentty-linux/src/application_shell/action_router.rs": "973faeddb5edcd0886da35deb8e8c422de5b449aa75e75fde7efdd9bc459b8ef",
     "crates/zentty-linux/src/application_shell/clipboard_actions.rs": "1502a0353bc3e0d645d6c6bd81aae1ed1306f312838f92a635944d402cd441b0",
     "crates/zentty-linux/src/application_shell/agent_events.rs": "3b6dc220ad2434b15213a34c6c225f5dad868880437b3b54365ba77e42b2d0a4",
     "crates/zentty-linux/src/application_shell/project_context_runtime.rs": "a6168d658c98ab6407f3d0f1f1ab624d3e3f91e10de39fd4b5b28dd22ce19e7f",
-    "crates/zentty-linux/src/application_shell/open_with_runtime.rs": "f90d383fac4d4f9ef1fa571f2354167af4efc9a333da9085b476641e34f880a2",
+    "crates/zentty-linux/src/application_shell/open_with_runtime.rs": "1e9b197340bf84a3b5f94d8a526b372e3b7e9c90574ce653f40b948e58eb4199",
     "crates/zentty-linux/src/application_shell/bookmark_runtime.rs": "6fe9ce520f69bb5be975a0f17e5fec8b7f4392159695afb019ff6ca9f3c883dc",
     "crates/zentty-linux/src/bookmarks_view.rs": "e2166e336a40e6f4d12bc28726dd23f97f1edbcc04155dd937f4dce9a054ccf5",
     "crates/zentty-linux/src/restore_notice.rs": "02844f204871767d2aa4bc6076fff7c2145a52c493583246ef686f886a1db918",
     "crates/zentty-linux/src/sidebar.rs": "9869e8a9e45afea37279491471e85d5e341477b76fb8219eaad1fd029a1a502f",
     "crates/zentty-linux/src/application_shell/global_search.rs": "98a1963830af8616b31da2558ae6f27c4461342ef3085f6ef9cda0863a1ddc7c",
     "crates/zentty-linux/src/application_shell/pane_runtime.rs": "45f238c8949e12786d26c94c77275d42696edfe391f5c96d36db93ca7cbac2f6",
-    "crates/zentty-linux/src/application_shell/server_runtime.rs": "cd39ebc1f95f7eb3c063058036fabbecc90cf367457a1538f2f6c8e657a0b919",
+    "crates/zentty-linux/src/application_shell/server_runtime.rs": "e4aada25021e36c199498aa5b02e83d4976121641c592805d3afbbf331cb5611",
     "crates/zentty-linux/src/application_shell/task_runner_runtime.rs": "42fe7c62e7876b3f5132a381ac7f8e53f45e820d3d94bf9a519c8d6ed26deded",
     "crates/zentty-linux/src/docker_discovery.rs": "1836046bf3159c0a207ed999dc44a2ef8d9aa6276d79275031e2dbbd6cdd6c6d",
     "crates/zentty-linux/src/server_discovery.rs": "0d398d53a68bd34afa15208e4b2c6c5d3a9739502f1c7b86b40e615ec73d87a8",
@@ -132,7 +132,7 @@
       "status": "existing",
       "planned_module": "crates/zentty-linux/src/application_shell/server_runtime.rs, crates/zentty-linux/src/server_discovery.rs, and crates/zentty-linux/src/docker_discovery.rs",
       "tracking": "GH-19",
-      "responsibility": "The sole window-local development-server registry and bounded Linux listener/container observer; projects source-ranked servers into existing sidebar/actions and revalidates ownership before signaling."
+      "responsibility": "The sole window-local development-server registry, browser catalog, and bounded Linux listener/container observer; projects source-ranked servers and explicit browser targets into existing actions, launches normalized URLs without a shell, and revalidates ownership before signaling."
     },
     {
       "id": "task_runner_coordinator",
@@ -365,9 +365,9 @@
     ],
     "clipboard_coordinator": ["copy_focused_selection"],
     "server_runtime_coordinator": [
-      "install", "refresh_servers", "handle_ipc", "register_ipc_server", "clear_ipc_servers",
+      "discover", "discover_browser_targets", "install", "refresh_servers", "handle_ipc", "register_ipc_server", "clear_ipc_servers",
       "open_ipc_server", "server_state_json", "ipc_failure", "now_ms", "refresh_registry_projection",
-      "set_port_ignored", "request_probe", "probe", "apply_servers", "open_server", "launch_url",
+      "set_port_ignored", "request_probe", "probe", "apply_servers", "open_server", "open_server_in_browser", "select_browser", "launch_url", "launch_browser_plan",
       "stop_server", "pane_probe_source", "stop_owned_server", "signal_process"
     ],
     "task_runner_coordinator": ["run_task", "launch_in_new_pane"],
@@ -397,7 +397,7 @@
     "server_container_discovery": [
       "discover", "run_docker", "parse_inspect_json", "deepest_matching_pane", "is_web_like"
     ],
-    "config_store": ["load_default", "load", "update_default_ignored_port_rules", "update_ignored_port_rules", "resolve_config_target", "atomic_replace", "read_bounded", "invalid_snapshot", "default_config_file_from", "nonempty_path"],
+    "config_store": ["load_default", "load", "update_default_ignored_port_rules", "update_default_preferred_browser", "update_ignored_port_rules", "update_preferred_browser", "resolve_config_target", "atomic_replace", "read_bounded", "invalid_snapshot", "default_config_file_from", "nonempty_path"],
     "persistence_coordinator": [
       "clean_exit_decision", "complete_launch", "default_state_directory", "drain_errors",
       "drain_live_snapshot_errors", "drop", "flush_live_snapshot_if_due",
@@ -486,6 +486,7 @@
     {"name":"reset-pane-layout","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"restore-closed-pane","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"open-server","parameter":"string","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"open-server-browser","parameter":"string","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"ignore-server-port","parameter":"string","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"refresh-servers","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"stop-ignoring-server-port","parameter":"string","owner":"action_router","invalid_parameter":"ignore-without-panic"},

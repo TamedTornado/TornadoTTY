@@ -575,6 +575,7 @@ jq -e --arg main_sha256 "${main_sha256}" \
         (.invalid_parameter == "ignore-without-panic")) and
     ([.action_contract[] | select(.parameter == "string") | .name] | sort) == ([
         "close-worklane", "ignore-server-port", "move-pane-to-worklane", "open-server",
+        "open-server-browser",
         "activate-template", "convert-template", "delete-template", "duplicate-template",
         "export-template", "open-with-target", "run-task", "select-worklane",
         "stop-ignoring-server-port", "stop-server", "toggle-template-pin"

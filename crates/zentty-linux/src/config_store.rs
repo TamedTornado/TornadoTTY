@@ -88,6 +88,15 @@ impl ConfigStore {
         Ok(path)
     }
 
+    pub(crate) fn update_default_preferred_browser(browser_id: &str) -> Result<PathBuf, String> {
+        let path = default_config_file_from(
+            std::env::var_os("XDG_CONFIG_HOME"),
+            std::env::var_os("HOME"),
+        )?;
+        Self::update_preferred_browser(&path, browser_id)?;
+        Ok(path)
+    }
+
     fn update_ignored_port_rules(path: &Path, rules: &[String]) -> Result<(), String> {
         let target = resolve_config_target(path)?;
         let source = match fs::read_to_string(&target) {
@@ -106,6 +115,23 @@ impl ConfigStore {
             array.push(rule.as_str());
         }
         document["server_detection"]["ignored_port_rules"] = toml_edit::value(array);
+        atomic_replace(&target, document.to_string().as_bytes())
+    }
+
+    fn update_preferred_browser(path: &Path, browser_id: &str) -> Result<(), String> {
+        let target = resolve_config_target(path)?;
+        let source = match fs::read_to_string(&target) {
+            Ok(source) => source,
+            Err(error) if error.kind() == ErrorKind::NotFound => String::new(),
+            Err(error) => return Err(format!("could not read {}: {error}", target.display())),
+        };
+        if source.len() as u64 > MAX_CONFIG_BYTES {
+            return Err(format!("configuration exceeds {MAX_CONFIG_BYTES} bytes"));
+        }
+        let mut document = source
+            .parse::<toml_edit::DocumentMut>()
+            .map_err(|error| format!("could not edit invalid configuration: {error}"))?;
+        document["server_detection"]["preferred_browser_id"] = toml_edit::value(browser_id);
         atomic_replace(&target, document.to_string().as_bytes())
     }
 }
@@ -291,6 +317,34 @@ mod tests {
                 .server_detection
                 .ignored_port_rules,
             ["3000-3002", "5173"]
+        );
+        remove(&root);
+    }
+
+    #[test]
+    fn preferred_browser_update_preserves_unrelated_server_configuration() {
+        let root = private_root("preferred-browser");
+        let path = root.join("zentty/config.toml");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            &path,
+            "# keep me\n[server_detection]\nignored_port_rules = [\"5173\"]\n",
+        )
+        .unwrap();
+
+        ConfigStore::update_preferred_browser(&path, "firefox").unwrap();
+
+        let source = fs::read_to_string(&path).unwrap();
+        assert!(source.contains("# keep me"));
+        assert!(source.contains("ignored_port_rules = [\"5173\"]"));
+        assert!(source.contains("preferred_browser_id = \"firefox\""));
+        assert_eq!(
+            ConfigStore::load(path)
+                .unwrap()
+                .config
+                .server_detection
+                .preferred_browser_id,
+            "firefox"
         );
         remove(&root);
     }

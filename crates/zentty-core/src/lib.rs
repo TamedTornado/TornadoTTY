@@ -21,6 +21,7 @@ mod pane_layout;
 mod pane_token_registry;
 mod project_icon;
 mod remote_transfer;
+mod server_browser;
 mod session_restore_store;
 mod sidebar_width;
 mod ssh_identity;
@@ -42,7 +43,7 @@ pub use agent_status::{
 };
 pub use app_config::{
     AppConfig, ClipboardConfig, OpenWithConfig, OpenWithCustomApp, PaneConfig,
-    ServerDetectionConfig,
+    ServerBrowserCustomApp, ServerDetectionConfig,
 };
 pub use atomic_file_store::{AtomicFileAction, AtomicFileStore, AtomicFileStoreError};
 pub use bookmark_store::{
@@ -59,6 +60,10 @@ pub use remote_transfer::{
     RemoteTransferPrerequisites, RemoteUploadPath, RemoteUploadPathError, RemoteVerificationPlan,
     RemoteVerificationPlanError, escape_remote_path_for_shell, scp_connection_arguments,
     ssh_connection_arguments,
+};
+pub use server_browser::{
+    SYSTEM_DEFAULT_BROWSER_ID, ServerBrowserCatalog, ServerBrowserLaunchError,
+    ServerBrowserLaunchPlan, ServerBrowserLauncher, ServerBrowserTarget,
 };
 pub use session_restore_store::{
     LaunchDecision, LaunchReason, PersistenceRequest, SessionRestoreStore,

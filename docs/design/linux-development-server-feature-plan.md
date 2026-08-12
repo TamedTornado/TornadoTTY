@@ -166,11 +166,11 @@ Construction order:
 
 Acceptance criteria:
 
-- [ ] Browser discovery/configuration has one deterministic, source-compatible
+- [x] Browser discovery/configuration has one deterministic, source-compatible
       catalog with no shell launch or alternate preferences store.
-- [ ] UI, primary open, and authenticated CLI use the same selected target and
+- [x] UI, primary open, and authenticated CLI use the same selected target and
       reject forged/unavailable explicit browser IDs.
-- [ ] Real X11 and Wayland journeys prove exact target/URL behavior without
+- [x] Real X11 and Wayland journeys prove exact target/URL behavior without
       substituting Zentty, Ghostty, PTYs, sockets, or listeners.
-- [ ] Strict Clippy, workspace tests, governed mutation, and every presently
+- [x] Strict Clippy, workspace tests, governed mutation, and every presently
       executable matrix cell pass before inventory promotion.

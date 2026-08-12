@@ -100,6 +100,7 @@ fn source_server_detection_defaults_and_owned_keys_are_preserved() {
     assert!(defaults.passive_detection_enabled);
     assert_eq!(defaults.preferred_browser_id, "system-default");
     assert!(defaults.enabled_browser_target_ids.is_empty());
+    assert!(defaults.custom_browsers.is_empty());
     assert!(defaults.ignored_port_rules.is_empty());
 
     let configured = AppConfig::parse_toml(
@@ -110,6 +111,12 @@ fn source_server_detection_defaults_and_owned_keys_are_preserved() {
         enabled_browser_target_ids = ["firefox", "custom:work"]
         ignored_port_rules = ["9229", "24678-24680"]
         future_server_option = true
+
+        [[server_detection.custom_browsers]]
+        id = "custom:work"
+        name = "Work Browser"
+        path = "/opt/work-browser"
+        bundle_identifier = "org.example.WorkBrowser"
         "#,
     )
     .unwrap()
@@ -121,6 +128,50 @@ fn source_server_detection_defaults_and_owned_keys_are_preserved() {
         ["firefox", "custom:work"]
     );
     assert_eq!(configured.ignored_port_rules, ["9229", "24678-24680"]);
+    assert_eq!(configured.custom_browsers.len(), 1);
+    assert_eq!(configured.custom_browsers[0].id, "custom:work");
+    assert_eq!(configured.custom_browsers[0].name, "Work Browser");
+    assert_eq!(configured.custom_browsers[0].path, "/opt/work-browser");
+    assert_eq!(
+        configured.custom_browsers[0].bundle_identifier.as_deref(),
+        Some("org.example.WorkBrowser")
+    );
+}
+
+#[test]
+fn server_browser_config_deduplicates_custom_paths_and_rejects_reserved_rows() {
+    let configured = AppConfig::parse_toml(
+        r#"
+        [server_detection]
+        preferred_browser_id = "custom:duplicate"
+        enabled_browser_target_ids = ["custom:duplicate", "firefox", "firefox", ""]
+
+        [[server_detection.custom_browsers]]
+        id = "custom:primary"
+        name = "Primary"
+        path = "/opt/browser"
+
+        [[server_detection.custom_browsers]]
+        id = "custom:duplicate"
+        name = "Duplicate"
+        path = "/opt/browser"
+
+        [[server_detection.custom_browsers]]
+        id = "system-default"
+        name = "Reserved"
+        path = "/opt/reserved"
+        "#,
+    )
+    .unwrap()
+    .server_detection;
+
+    assert_eq!(configured.custom_browsers.len(), 1);
+    assert_eq!(configured.custom_browsers[0].id, "custom:primary");
+    assert_eq!(configured.preferred_browser_id, "custom:primary");
+    assert_eq!(
+        configured.enabled_browser_target_ids,
+        ["custom:primary", "firefox"]
+    );
 }
 
 #[test]

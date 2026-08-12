@@ -12,6 +12,11 @@ watch_receipt="${run_root}/watch-server.receipt"
 watch_list_receipt="${run_root}/watch-list.json"
 watch_open_receipt="${run_root}/watch-open.receipt"
 open_receipt="${run_root}/open.receipt"
+alternate_open_receipt="${run_root}/alternate-open.receipt"
+forged_browser_receipt="${run_root}/forged-browser.receipt"
+system_open_receipt="${run_root}/system-open.receipt"
+config_home="${run_root}/config"
+data_home="${run_root}/data"
 state_directory="${run_root}/state"
 product_pid=""
 backend="${GDK_BACKEND:-}"
@@ -75,12 +80,50 @@ layer_runpath="$(
 )"
 [[ "${layer_runpath}" == .zig-cache/* ]] || fail "Ghostty runpath is not pinned"
 layer_directory="${ghostty_root}/${layer_runpath}"
-mkdir -p "${run_root}/bin" "${state_directory}"
-cat >"${run_root}/bin/xdg-open" <<EOF
+mkdir -p "${run_root}/bin" "${state_directory}" "${config_home}/zentty" \
+    "${data_home}/applications"
+cat >"${run_root}/bin/preferred-browser" <<EOF
 #!/usr/bin/env bash
-printf '%s\n' "\$@" >'${open_receipt}'
+printf '%s\n' "\$@" >>'${open_receipt}'
 EOF
-chmod 700 "${run_root}/bin/xdg-open"
+cat >"${run_root}/bin/alternate-browser" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$@" >>'${alternate_open_receipt}'
+EOF
+cat >"${run_root}/bin/system-browser" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$@" >>'${system_open_receipt}'
+EOF
+chmod 700 "${run_root}/bin/preferred-browser" "${run_root}/bin/alternate-browser" \
+    "${run_root}/bin/system-browser"
+cat >"${data_home}/applications/zentty-system-browser.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Controlled System Browser
+Exec=${run_root}/bin/system-browser %u
+MimeType=x-scheme-handler/http;x-scheme-handler/https;
+NoDisplay=true
+EOF
+cat >"${config_home}/mimeapps.list" <<'EOF'
+[Default Applications]
+x-scheme-handler/http=zentty-system-browser.desktop;
+x-scheme-handler/https=zentty-system-browser.desktop;
+EOF
+cat >"${config_home}/zentty/config.toml" <<EOF
+[server_detection]
+preferred_browser_id = "custom:preferred"
+enabled_browser_target_ids = ["custom:preferred", "custom:alternate"]
+
+[[server_detection.custom_browsers]]
+id = "custom:preferred"
+name = "Preferred Browser"
+path = "${run_root}/bin/preferred-browser"
+
+[[server_detection.custom_browsers]]
+id = "custom:alternate"
+name = "Alternate Browser"
+path = "${run_root}/bin/alternate-browser"
+EOF
 cat >"${run_root}/run-servers" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
@@ -111,12 +154,29 @@ for _ in \$(seq 1 200); do
 done
 cp '${open_receipt}' '${watch_open_receipt}'
 rm -f '${open_receipt}'
+"\${ZENTTY_CLI_BIN}" server open "\${watch_url}" --browser custom:alternate
+for _ in \$(seq 1 200); do
+    [[ -s '${alternate_open_receipt}' ]] && break
+    sleep 0.01
+done
+"\${ZENTTY_CLI_BIN}" server open "\${watch_url}" --browser system-default
+for _ in \$(seq 1 200); do
+    [[ -s '${system_open_receipt}' ]] && break
+    sleep 0.01
+done
+if "\${ZENTTY_CLI_BIN}" server open "\${watch_url}" --browser forged-browser; then
+    exit 41
+else
+    printf 'rejected\n' >'${forged_browser_receipt}'
+fi
 '${server_fixture}' --receipt '${server_receipt}'
 EOF
 chmod 700 "${run_root}/run-servers"
 
 GDK_SCALE=1 \
 GDK_DPI_SCALE=1 \
+XDG_CONFIG_HOME="${config_home}" \
+XDG_DATA_HOME="${data_home}" \
 PATH="${run_root}/bin:${PATH}" \
 LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
     "${product}" \
@@ -157,6 +217,11 @@ grep -Fq "http://localhost:${watch_port}/fixture" "${watch_list_receipt}" ||
     fail "authenticated server list omitted the output-reported URL path"
 [[ "$(cat "${watch_open_receipt}")" == "http://localhost:${watch_port}/fixture" ]] ||
     fail "authenticated server open discarded the output-reported URL path"
+grep -Fxq "http://localhost:${watch_port}/fixture" "${alternate_open_receipt}" ||
+    fail "authenticated explicit browser selection used the wrong target or URL"
+grep -Fxq "http://localhost:${watch_port}/fixture" "${system_open_receipt}" ||
+    fail "authenticated system-default browser selection used the wrong handler or URL"
+[[ -s "${forged_browser_receipt}" ]] || fail "forged browser target was not rejected"
 for _ in $(seq 1 200); do
     grep -Fq "origin=http://localhost:${port} source=Scanner confidence=Pid" "${log}" && break
     sleep 0.05
@@ -188,11 +253,11 @@ else
     wtype "Open localhost:${port}"
 fi
 for _ in $(seq 1 100); do
-    grep -Fq "command-palette=query value=\"Open localhost:${port}\" results=1" "${log}" && break
+    grep -Fq "command-palette=query value=\"Open localhost:${port}\" results=4" "${log}" && break
     sleep 0.05
 done
-grep -Fq "command-palette=query value=\"Open localhost:${port}\" results=1" "${log}" ||
-    fail "dynamic server action was absent from the real command palette"
+grep -Fq "command-palette=query value=\"Open localhost:${port}\" results=4" "${log}" ||
+    fail "primary and per-browser server actions were absent from the real command palette"
 if [[ "${backend}" == x11 ]]; then
     xdotool key --window "${window_id}" Down Return
 else
@@ -205,8 +270,39 @@ done
 [[ -s "${open_receipt}" ]] || fail "server action did not cross the browser launcher boundary"
 [[ "$(cat "${open_receipt}")" == "http://localhost:${port}/" ]] ||
     fail "browser launcher received the wrong normalized URL"
-grep -Fq "action=open-server url=http://localhost:${port}/ result=opened" "${log}" ||
+grep -Fq "action=open-server browser=custom:preferred url=http://localhost:${port}/ result=opened" "${log}" ||
     fail "product did not report successful browser launch"
+
+if [[ "${backend}" == x11 ]]; then
+    xdotool key --window "${window_id}" ctrl+shift+p
+    xdotool type --window "${window_id}" --delay 10 "Open localhost:${port} in Alternate Browser"
+else
+    wtype -M ctrl -M shift -k p -m shift -m ctrl
+    wtype "Open localhost:${port} in Alternate Browser"
+fi
+for _ in $(seq 1 100); do
+    grep -Fq "command-palette=query value=\"Open localhost:${port} in Alternate Browser\" results=1" "${log}" && break
+    sleep 0.05
+done
+grep -Fq "command-palette=query value=\"Open localhost:${port} in Alternate Browser\" results=1" "${log}" ||
+    fail "explicit browser action was absent from the real command palette"
+if [[ "${backend}" == x11 ]]; then
+    xdotool key --window "${window_id}" Down Return
+else
+    wtype -k Down -k Return
+fi
+for _ in $(seq 1 100); do
+    [[ "$(grep -Fc "http://localhost:${port}/" "${alternate_open_receipt}" || true)" -ge 1 ]] && break
+    sleep 0.05
+done
+grep -Fxq "http://localhost:${port}/" "${alternate_open_receipt}" ||
+    fail "explicit product browser action received the wrong URL"
+for _ in $(seq 1 100); do
+    grep -Fq 'preferred_browser_id = "custom:alternate"' "${config_home}/zentty/config.toml" && break
+    sleep 0.05
+done
+grep -Fq 'preferred_browser_id = "custom:alternate"' "${config_home}/zentty/config.toml" ||
+    fail "explicit product browser selection was not persisted"
 
 if [[ "${backend}" == x11 ]]; then
     xdotool key --window "${window_id}" ctrl+shift+p
@@ -235,7 +331,7 @@ for _ in $(seq 1 100); do
 done
 grep -Fq "action=server-port-policy port=${port} ignored=true " "${log}" ||
     fail "Ignore Port did not persist through the product config authority"
-config_file="${XDG_CONFIG_HOME}/zentty/config.toml"
+config_file="${config_home}/zentty/config.toml"
 grep -Fq "\"${port}\"" "${config_file}" || fail "persisted config omitted the ignored port"
 
 if [[ "${backend}" == x11 ]]; then
@@ -299,4 +395,4 @@ kill -0 "${server_pid}" 2>/dev/null && fail "owned real server survived the Stop
 grep -Fq "action=stop-server pid=${server_pid} signal=INT result=delivered" "${log}" ||
     fail "product did not receipt its graceful signal"
 
-echo "Rust development-server product journey passed: ${backend} real-pty real-listener authenticated-watch exact-browser-argv persisted-ignore safe-stop"
+echo "Rust development-server product journey passed: ${backend} real-pty real-listener authenticated-watch preferred-explicit-and-system-browser exact-browser-argv forged-browser-rejection persisted-ignore safe-stop"

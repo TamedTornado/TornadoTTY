@@ -173,3 +173,65 @@ difference, and remaining limitation is recorded here as the feature is built.
 - The closeout extends `linux/tests/rust-development-servers`; it does not add a
   browser-only scenario or a second server registry. Only the controlled
   external browser executable may be substituted in the real-product journey.
+- The first controlled X11 run reached both authenticated preferred and
+  explicit browser launches, then correctly failed the older palette assertion
+  that a bare `Open localhost:<port>` query must return exactly one row. The
+  source-required per-browser actions make that query intentionally return the
+  primary action plus one action for each enabled target. The journey now pins
+  the complete four-row controlled catalog and still activates the first,
+  source-primary action; the later `in Alternate Browser` query remains an
+  exact one-result assertion.
+- The first governed browser-catalog mutation attempt ran inside the filesystem
+  sandbox and failed its unmutated baseline because the pre-existing Open With
+  non-regular-file regression creates a real Unix socket, which that sandbox
+  disallows. It was rerun with the test process elevated rather than deleting
+  the real node fixture. The valid campaign then found two survivors: replacing
+  exact catalog lookup with `None`, and inverting its ID comparison. A focused
+  exact-hit/unknown-miss assertion now observes both boundaries before rerun.
+- Linux now owns one separate server-browser catalog containing the system
+  default, enabled discovered HTTP desktop handlers, detected built-in browser
+  executables, and source-compatible custom browser records. The catalog
+  resolves one preferred target and explicitly reports configured-but-missing
+  IDs. Its launch plans rerun the development-server URL normalizer and produce
+  only GIO application launch or one exact executable argv; no shell or project
+  Open With target is involved.
+- The authenticated CLI accepts enabled stable IDs, the `system` alias, and a
+  discovered desktop application ID. An explicit unknown or unavailable ID is
+  a deterministic failure and never falls through to another browser. An
+  implicit missing preference uses the always-present system default. Product
+  palette browser actions contain opaque snapshot IDs; activation revalidates
+  both the live server origin and catalog target before launch.
+- Selecting an explicit browser in the product updates the one in-memory config
+  snapshot and atomically edits only `server_detection.preferred_browser_id` in
+  the existing XDG config store. Comments, unknown fields, custom browser rows,
+  and ignored ports remain intact. Authenticated CLI `--browser` is an explicit
+  one-shot choice and does not mutate the user's preference, matching source.
+- The final focused X11 and Cage/Wayland journeys pass preferred custom,
+  explicit alternate, and controlled real GIO system-default launches with the
+  exact normalized URL; forged CLI target rejection; persisted UI preference;
+  authenticated watch/list/open; real listener attribution; ignore/unignore;
+  and safe owned stop. Only the three external browser applications are
+  controlled substitutes. Zentty, GTK input, Ghostty, PTY, IPC socket, CLI,
+  listener, registry, configuration store, and compositor remain real.
+- The repaired browser mutation campaign tested 15 mutants: 13 caught, 2
+  unviable, 0 missed. Repository copy safety remained `gitignore=true` and
+  `copy_target=false`.
+- Strict workspace Clippy and the complete Rust workspace pass. The first
+  workspace invocation inside the filesystem sandbox failed eight existing
+  real Unix-socket IPC tests with `Operation not permitted`; the identical
+  elevated run passed every target (with only the two intentionally ignored
+  loopback OpenSSH tests, which retain their separate qualification cell).
+- Final authoritative local qualification passed every presently executable
+  support and matrix cell in 439.010 seconds, including controlled X11,
+  Cage/Wayland, and real Docker development-server journeys. Declared totals
+  remain PASS=113, FAIL=0, BLOCKED=7, XFAIL=1, NOT_IMPLEMENTED=21. The
+  machine-readable receipt SHA-256 is
+  `340910cdd3dd92707241df775b463b36418325bf28a74b12ef195bb9fa094b7e`.
+  This establishes implemented-local-suite and product-boundary claims only;
+  release and full-Linux qualification remain false while explicit non-PASS
+  cells exist.
+- Debug Valgrind is **PASS with reviewed suppressions**, never an unsuppressed
+  clean claim. Its preserved raw receipt reports 427 errors in 427 contexts,
+  6,160 definite bytes, and 41,427 indirect bytes. The reviewed run reports
+  zero post-suppression errors, contexts, or leak bytes and 427 suppressed
+  errors/contexts. Suppression governance passed; ReleaseSafe remains XFAIL.

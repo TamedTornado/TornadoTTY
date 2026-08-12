@@ -330,7 +330,10 @@ fn discover_available_targets(
     targets
 }
 
-fn resolve_executable(candidates: &[&str], path: Option<&std::ffi::OsStr>) -> Option<PathBuf> {
+pub(super) fn resolve_executable(
+    candidates: &[&str],
+    path: Option<&std::ffi::OsStr>,
+) -> Option<PathBuf> {
     let path = path?;
     for directory in std::env::split_paths(path) {
         for candidate in candidates {
@@ -342,7 +345,7 @@ fn resolve_executable(candidates: &[&str], path: Option<&std::ffi::OsStr>) -> Op
     None
 }
 
-fn canonical_executable(path: &Path) -> Option<PathBuf> {
+pub(super) fn canonical_executable(path: &Path) -> Option<PathBuf> {
     if !path.is_absolute() {
         return None;
     }

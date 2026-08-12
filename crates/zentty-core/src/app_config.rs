@@ -39,7 +39,7 @@ impl AppConfig {
         Ok(Self {
             clipboard: document.clipboard.into_config(),
             open_with: document.open_with.into_config().normalized(),
-            server_detection: document.server_detection.into_config(),
+            server_detection: document.server_detection.into_config().normalized(),
             panes: document.panes.into_config(),
         })
     }
@@ -218,7 +218,16 @@ pub struct ServerDetectionConfig {
     pub passive_detection_enabled: bool,
     pub preferred_browser_id: String,
     pub enabled_browser_target_ids: Vec<String>,
+    pub custom_browsers: Vec<ServerBrowserCustomApp>,
     pub ignored_port_rules: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ServerBrowserCustomApp {
+    pub id: String,
+    pub name: String,
+    pub path: String,
+    pub bundle_identifier: Option<String>,
 }
 
 impl Default for ServerDetectionConfig {
@@ -227,7 +236,71 @@ impl Default for ServerDetectionConfig {
             passive_detection_enabled: true,
             preferred_browser_id: "system-default".into(),
             enabled_browser_target_ids: Vec::new(),
+            custom_browsers: Vec::new(),
             ignored_port_rules: Vec::new(),
+        }
+    }
+}
+
+impl ServerDetectionConfig {
+    #[must_use]
+    pub fn normalized(self) -> Self {
+        use std::collections::{HashMap, HashSet};
+
+        let mut custom_browsers = Vec::new();
+        let mut custom_ids = HashSet::new();
+        let mut duplicate_ids = HashMap::new();
+        for browser in self.custom_browsers {
+            if browser.id.is_empty()
+                || browser.id == "system-default"
+                || browser.name.is_empty()
+                || browser.path.is_empty()
+            {
+                continue;
+            }
+            if let Some(existing) = custom_browsers
+                .iter()
+                .find(|existing: &&ServerBrowserCustomApp| existing.path == browser.path)
+            {
+                duplicate_ids.insert(browser.id, existing.id.clone());
+                continue;
+            }
+            if !custom_ids.insert(browser.id.clone()) {
+                continue;
+            }
+            custom_browsers.push(browser);
+        }
+
+        let mut seen_enabled = HashSet::new();
+        let enabled_browser_target_ids = self
+            .enabled_browser_target_ids
+            .into_iter()
+            .map(|id| duplicate_ids.get(&id).cloned().unwrap_or(id))
+            .filter(|id| !id.is_empty() && seen_enabled.insert(id.clone()))
+            .collect::<Vec<_>>();
+        let requested_preferred = duplicate_ids
+            .get(&self.preferred_browser_id)
+            .cloned()
+            .unwrap_or(self.preferred_browser_id);
+        let valid_custom_ids = custom_browsers
+            .iter()
+            .map(|browser| browser.id.as_str())
+            .collect::<HashSet<_>>();
+        let preferred_browser_id = if requested_preferred.is_empty()
+            || (requested_preferred.starts_with("custom:")
+                && !valid_custom_ids.contains(requested_preferred.as_str()))
+        {
+            "system-default".into()
+        } else {
+            requested_preferred
+        };
+
+        Self {
+            passive_detection_enabled: self.passive_detection_enabled,
+            preferred_browser_id,
+            enabled_browser_target_ids,
+            custom_browsers,
+            ignored_port_rules: self.ignored_port_rules,
         }
     }
 }
@@ -238,7 +311,16 @@ struct ServerDetectionDocument {
     passive_detection_enabled: Option<bool>,
     preferred_browser_id: Option<String>,
     enabled_browser_target_ids: Option<Vec<String>>,
+    custom_browsers: Option<Vec<ServerBrowserCustomAppDocument>>,
     ignored_port_rules: Option<Vec<String>>,
+}
+
+#[derive(Deserialize)]
+struct ServerBrowserCustomAppDocument {
+    id: String,
+    name: String,
+    path: String,
+    bundle_identifier: Option<String>,
 }
 
 impl ServerDetectionDocument {
@@ -254,6 +336,20 @@ impl ServerDetectionDocument {
             enabled_browser_target_ids: self
                 .enabled_browser_target_ids
                 .unwrap_or(defaults.enabled_browser_target_ids),
+            custom_browsers: self
+                .custom_browsers
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|browser| {
+                    !browser.id.is_empty() && !browser.name.is_empty() && !browser.path.is_empty()
+                })
+                .map(|browser| ServerBrowserCustomApp {
+                    id: browser.id,
+                    name: browser.name,
+                    path: browser.path,
+                    bundle_identifier: browser.bundle_identifier,
+                })
+                .collect(),
             ignored_port_rules: self
                 .ignored_port_rules
                 .unwrap_or(defaults.ignored_port_rules),

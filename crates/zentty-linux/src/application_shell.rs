@@ -68,13 +68,13 @@ use action_router::{
     ACTION_MOVE_WORKLANE_DOWN, ACTION_MOVE_WORKLANE_UP, ACTION_NAVIGATE_BACK,
     ACTION_NAVIGATE_FORWARD, ACTION_NEW_WINDOW, ACTION_NEW_WORKLANE, ACTION_NEXT_PANE,
     ACTION_NEXT_WORKLANE, ACTION_OPEN_BRANCH_REMOTE, ACTION_OPEN_PULL_REQUEST, ACTION_OPEN_SERVER,
-    ACTION_OPEN_WITH_PRIMARY, ACTION_OPEN_WITH_TARGET, ACTION_PREVIOUS_PANE,
-    ACTION_PREVIOUS_WORKLANE, ACTION_REFRESH_REVIEW_STATUS, ACTION_REFRESH_SERVERS,
-    ACTION_RESET_PANE_LAYOUT, ACTION_RESIZE_PANE_DOWN, ACTION_RESIZE_PANE_LEFT,
-    ACTION_RESIZE_PANE_RIGHT, ACTION_RESIZE_PANE_UP, ACTION_RESTORE_CLOSED_PANE, ACTION_SELECT_ALL,
-    ACTION_SHOW_TASK_MANAGER, ACTION_SPLIT_PANE_BELOW, ACTION_SPLIT_PANE_RIGHT,
-    ACTION_STOP_IGNORING_SERVER_PORT, ACTION_STOP_SERVER, ACTION_TOGGLE_SIDEBAR,
-    ACTION_USE_SELECTION_FOR_FIND, ActionRouter,
+    ACTION_OPEN_SERVER_BROWSER, ACTION_OPEN_WITH_PRIMARY, ACTION_OPEN_WITH_TARGET,
+    ACTION_PREVIOUS_PANE, ACTION_PREVIOUS_WORKLANE, ACTION_REFRESH_REVIEW_STATUS,
+    ACTION_REFRESH_SERVERS, ACTION_RESET_PANE_LAYOUT, ACTION_RESIZE_PANE_DOWN,
+    ACTION_RESIZE_PANE_LEFT, ACTION_RESIZE_PANE_RIGHT, ACTION_RESIZE_PANE_UP,
+    ACTION_RESTORE_CLOSED_PANE, ACTION_SELECT_ALL, ACTION_SHOW_TASK_MANAGER,
+    ACTION_SPLIT_PANE_BELOW, ACTION_SPLIT_PANE_RIGHT, ACTION_STOP_IGNORING_SERVER_PORT,
+    ACTION_STOP_SERVER, ACTION_TOGGLE_SIDEBAR, ACTION_USE_SELECTION_FOR_FIND, ActionRouter,
 };
 use agent_events::AgentEventCoordinator;
 use pane_runtime::DetachedPaneRuntime;
@@ -259,6 +259,14 @@ fn finish_shell_setup(
     Ok(())
 }
 
+fn render_empty_sidebar(
+    sidebar: &gtk::Box,
+    window: &gtk::Window,
+    clipboard: zentty_core::ClipboardConfig,
+) {
+    sidebar::render(sidebar, window, &[], clipboard, &[], &[], None);
+}
+
 impl ApplicationShell {
     pub(crate) fn new(
         runtimes: &ApplicationRuntimes,
@@ -285,15 +293,7 @@ impl ApplicationShell {
             command_palette,
             restore_notice,
         } = build_shell_widgets();
-        sidebar::render(
-            &sidebar,
-            &window,
-            &[],
-            runtimes.config.clipboard,
-            &[],
-            &[],
-            None,
-        );
+        render_empty_sidebar(&sidebar, &window, runtimes.config.clipboard);
         let global_search_view = GlobalSearchView::attach(&sidebar);
         let window_template = restored_or_default_window(restored_window, fresh_window_id);
         apply_restored_window_size(&window, &window_template);
@@ -344,7 +344,9 @@ impl ApplicationShell {
             global_search: GlobalSearchCoordinator::default(),
             global_search_generation: 0,
             remote_panes: RemotePaneContext::default(),
-            server_runtime: server_runtime::ServerRuntime::default(),
+            server_runtime: server_runtime::ServerRuntime::discover(
+                &runtimes.config.server_detection,
+            ),
             project_context_runtime: project_context_runtime::ProjectContextRuntime::default(),
             open_with_runtime,
             bookmark_runtime,
@@ -1521,7 +1523,10 @@ impl ApplicationShell {
             .collect()
     }
 
-    fn command_palette_server_items(&self) -> Vec<CommandPaletteItem> {
+    fn command_palette_server_items(&mut self) -> Vec<CommandPaletteItem> {
+        self.server_runtime.browser_actions.clear();
+        let browser_targets = self.server_runtime.browser_catalog.enabled.clone();
+        let mut next_browser_action = 0_u64;
         self.ranked_servers()
             .into_iter()
             .flat_map(|server| {
@@ -1550,6 +1555,21 @@ impl ApplicationShell {
                     ACTION_OPEN_SERVER,
                     server.server.origin.clone(),
                 )];
+                for target in &browser_targets {
+                    let action_id = format!("server-browser-{next_browser_action}");
+                    next_browser_action += 1;
+                    self.server_runtime.browser_actions.insert(
+                        action_id.clone(),
+                        (server.server.origin.clone(), target.id.clone()),
+                    );
+                    actions.push(CommandPaletteItem::parameterized_action(
+                        format!("Open {} in {}", server.server.display, target.name),
+                        format!("Development server browser · {lane}"),
+                        "browser target localhost server URL",
+                        ACTION_OPEN_SERVER_BROWSER,
+                        action_id,
+                    ));
+                }
                 if server.server.source != zentty_core::DetectedServerSource::Manual
                     && let Some(port) = server.server.ports.first()
                 {

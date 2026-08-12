@@ -145,6 +145,7 @@ pub(super) const ACTION_ARRANGE_GOLDEN_SHORT: &str = "arrange-golden-short";
 pub(super) const ACTION_RESET_PANE_LAYOUT: &str = "reset-pane-layout";
 pub(super) const ACTION_RESTORE_CLOSED_PANE: &str = "restore-closed-pane";
 pub(super) const ACTION_OPEN_SERVER: &str = "open-server";
+pub(super) const ACTION_OPEN_SERVER_BROWSER: &str = "open-server-browser";
 pub(super) const ACTION_IGNORE_SERVER_PORT: &str = "ignore-server-port";
 pub(super) const ACTION_REFRESH_SERVERS: &str = "refresh-servers";
 pub(super) const ACTION_STOP_IGNORING_SERVER_PORT: &str = "stop-ignoring-server-port";
@@ -301,6 +302,7 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
     action!(ACTION_RESET_PANE_LAYOUT, "reset-pane-layout", None),
     action!(ACTION_RESTORE_CLOSED_PANE, "restore-closed-pane", None),
     action!(ACTION_OPEN_SERVER, "open-server", String),
+    action!(ACTION_OPEN_SERVER_BROWSER, "open-server-browser", String),
     action!(ACTION_IGNORE_SERVER_PORT, "ignore-server-port", String),
     action!(ACTION_REFRESH_SERVERS, "refresh-servers", None),
     action!(
@@ -722,6 +724,18 @@ fn install_server_actions(shell: &Rc<RefCell<ApplicationShell>>, group: &gio::Si
             return;
         };
         super::server_runtime::open_server(&shell, origin);
+    });
+    group.add_action(&action);
+
+    let action = gio::SimpleAction::new(ACTION_OPEN_SERVER_BROWSER, Some(glib::VariantTy::STRING));
+    let weak = Rc::downgrade(shell);
+    action.connect_activate(move |_, parameter| {
+        let (Some(shell), Some(action_id)) =
+            (weak.upgrade(), parameter.and_then(glib::Variant::str))
+        else {
+            return;
+        };
+        super::server_runtime::open_server_in_browser(&shell, action_id);
     });
     group.add_action(&action);
 
@@ -1411,7 +1425,7 @@ mod tests {
 
     #[test]
     fn registry_is_unique_complete_and_typed() {
-        assert_eq!(ACTION_SPECS.len(), 93);
+        assert_eq!(ACTION_SPECS.len(), 94);
         assert_eq!(
             ACTION_SPECS
                 .iter()
@@ -1431,6 +1445,7 @@ mod tests {
                 "close-worklane",
                 "move-pane-to-worklane",
                 "open-server",
+                "open-server-browser",
                 "ignore-server-port",
                 "stop-ignoring-server-port",
                 "stop-server",
