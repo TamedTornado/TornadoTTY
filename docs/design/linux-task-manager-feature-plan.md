@@ -107,3 +107,51 @@ and `utilities.task-manager` remains `PARTIAL` until trustworthy per-pane
 network throughput and the remaining container/cgroup qualification cases are
 implemented. The UI must say “Unavailable”; qualification must not count that
 gap as passing network telemetry.
+
+## Parity closeout — multiwindow and Linux isolation semantics
+
+The implemented sampler and UI already match the source-visible Task Manager:
+one application window, worklane/pane/process grouping, stable refresh, CPU,
+memory, explicit unavailable network state, search, expansion, clipboard,
+focus, and End Task. Source audit confirms macOS constructs every
+`TaskManagerProcessTree` with `networkBytesPerSecond: nil`; an invented Linux
+throughput estimator would be less accurate than the source and is not a parity
+requirement. The remaining closeout is therefore real multiwindow evidence and
+explicit Linux cgroup/namespace behavior—not relabeling aggregate counters as
+per-pane network throughput.
+
+Construction order:
+
+1. Add red sampler tests for bounded `/proc/<pid>/cgroup` and namespace-link
+   reads, malformed/oversized data, v1/v2 paths, disappeared processes, and
+   stable identity. These observations are diagnostic isolation metadata only;
+   they must not replace process ancestry as pane ownership or invent resource
+   totals.
+2. Extend `PaneSource`/presentation with an explicit local isolation label only
+   when a sampled tree differs meaningfully from Zentty's own cgroup or network
+   namespace. Ordinary host panes remain uncluttered; remote and inaccessible
+   panes preserve their existing explicit unavailable state.
+3. Extend the one existing controlled Task Manager journey to create a second
+   real Zentty window and real PTY process tree, open the single application-
+   level Task Manager, prove both window identities and kernel-backed samples,
+   focus a pane in the non-parent window, and verify closing/reopening the
+   diagnostics window does not create a second controller or sampler.
+4. Where the controlled host can launch a process in a distinct cgroup or
+   namespace without weakening isolation, prove its label against real `/proc`.
+   If the host prerequisite is unavailable, retain an explicit matrix status;
+   environmental absence is not a pass.
+5. Preserve `network=Unavailable` in UI and receipts, with the source sampler as
+   the authoritative rationale. Run focused mutation, strict Clippy, workspace
+   tests, both compositor journeys, and every presently executable matrix cell
+   before promotion.
+
+Acceptance criteria:
+
+- [ ] One real Task Manager aggregates and routes panes across two real Zentty
+      windows under X11 and Wayland without row/controller identity churn.
+- [ ] Linux cgroup/namespace parsing is bounded, PID-safe, honest, and cannot
+      claim ownership or throughput not proven by the kernel evidence.
+- [ ] Network remains explicitly unavailable exactly as in source Zentty; no
+      aggregate interface, socket queue, or guessed per-process metric is shown.
+- [ ] Strict Clippy, workspace tests, governed mutation, and every presently
+      executable matrix cell pass before inventory promotion.

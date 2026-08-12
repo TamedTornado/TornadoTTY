@@ -248,3 +248,20 @@ uncertainty from the slice.
   FAIL=0, BLOCKED=7, XFAIL=1, and NOT_IMPLEMENTED=21. The implemented local
   suite is PASSED; release and full Linux qualification remain NOT_PASSED by
   policy.
+
+## Parity closeout resumed — 2026-08-12
+
+- A fresh source audit confirms the Darwin sampler always sets
+  `networkBytesPerSecond: nil`; network is a modeled future field, not a working
+  macOS feature. Linux will retain the honest `Unavailable` presentation rather
+  than inventing a platform divergence from aggregate network-namespace
+  counters, socket queues, or privileged eBPF assumptions.
+- The concrete remaining source-visible evidence gap is multiwindow behavior.
+  Linux already uses one application-level controller and stable keys include
+  `window_id`, but its controlled product journey creates only one real window.
+  The closeout must prove the actual cross-window aggregation, focus route, and
+  singleton diagnostics lifecycle through the existing journey.
+- Linux-specific cgroup and namespace observations may improve diagnostic
+  labeling, but remain metadata. Process ancestry plus `(pid,start_time)` stays
+  the sole pane-tree ownership authority, and environment absence cannot become
+  proof of an isolated-container case.
