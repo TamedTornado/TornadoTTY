@@ -9,7 +9,8 @@ use std::time::{Duration, Instant};
 
 use zentty_core::{
     AppConfig, AppearanceConfig, ClipboardConfig, ConfirmationsConfig, FALLBACK_DARK_THEME,
-    RestoreConfig, ShortcutBinding, ThemeMode, ThemeSpec, update_ghostty_value,
+    NotificationsConfig, RestoreConfig, ShortcutBinding, ThemeMode, ThemeSpec,
+    update_ghostty_value,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -145,6 +146,51 @@ impl ConfigStore {
         )?;
         Self::update_general(&path, confirmations, restore, clipboard)?;
         Ok(path)
+    }
+
+    pub(crate) fn update_default_notifications(
+        notifications: &NotificationsConfig,
+    ) -> Result<PathBuf, String> {
+        let path = default_config_file_from(
+            std::env::var_os("XDG_CONFIG_HOME"),
+            std::env::var_os("HOME"),
+        )?;
+        Self::update_notifications(&path, notifications)?;
+        Ok(path)
+    }
+
+    fn update_notifications(
+        path: &Path,
+        notifications: &NotificationsConfig,
+    ) -> Result<(), String> {
+        let target = resolve_config_target(path)?;
+        with_config_lock(&target, || {
+            let source = match fs::read_to_string(&target) {
+                Ok(source) => source,
+                Err(error) if error.kind() == ErrorKind::NotFound => String::new(),
+                Err(error) => return Err(format!("could not read {}: {error}", target.display())),
+            };
+            if source.len() as u64 > MAX_CONFIG_BYTES {
+                return Err(format!("configuration exceeds {MAX_CONFIG_BYTES} bytes"));
+            }
+            let mut document = source
+                .parse::<toml_edit::DocumentMut>()
+                .map_err(|error| format!("could not edit invalid configuration: {error}"))?;
+            document
+                .entry("notifications")
+                .or_insert_with(|| toml_edit::Item::Table(toml_edit::Table::new()));
+            if !document["notifications"].is_table() {
+                return Err("notifications configuration is not a table".to_owned());
+            }
+            document["notifications"]["sound_name"] = toml_edit::value(&notifications.sound_name);
+            if let Some(display_name) = &notifications.custom_sound_display_name {
+                document["notifications"]["custom_sound_display_name"] =
+                    toml_edit::value(display_name);
+            } else if let Some(table) = document["notifications"].as_table_mut() {
+                table.remove("custom_sound_display_name");
+            }
+            atomic_replace(&target, document.to_string().as_bytes())
+        })
     }
 
     fn update_general(
@@ -660,7 +706,7 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
     use zentty_core::{
         AppConfig, BackgroundOpacity, ClipboardConfig, CommandFlattenAggressiveness,
-        ConfirmationsConfig, RestoreConfig, ThemeMode, ThemeSpec,
+        ConfirmationsConfig, NotificationsConfig, RestoreConfig, ThemeMode, ThemeSpec,
     };
 
     fn private_root(name: &str) -> std::path::PathBuf {
@@ -755,6 +801,57 @@ mod tests {
         assert_eq!(parsed.confirmations, confirmations);
         assert_eq!(parsed.restore, restore);
         assert_eq!(parsed.clipboard, clipboard);
+        remove(&root);
+    }
+
+    #[test]
+    fn notification_update_preserves_symlink_comments_unknowns_and_mode() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+        let root = private_root("notification-update");
+        let target = root.join("shared/settings.toml");
+        let path = root.join("zentty/config.toml");
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            &target,
+            "# preserve\nfuture_root = 7\n[notifications]\nfuture = true\n[appearance]\ntheme_mode = \"light\"\n",
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(&target, &path).unwrap();
+        let symlink_inode = fs::symlink_metadata(&path).unwrap().ino();
+        let notifications = NotificationsConfig {
+            sound_name: "message-new-instant".into(),
+            custom_sound_display_name: Some("Custom alert.ogg".into()),
+        };
+
+        ConfigStore::update_notifications(&path, &notifications).unwrap();
+        assert_eq!(fs::symlink_metadata(&path).unwrap().ino(), symlink_inode);
+        assert_eq!(
+            fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        let source = fs::read_to_string(&target).unwrap();
+        assert!(source.contains("# preserve"));
+        assert!(source.contains("future_root = 7"));
+        assert!(source.contains("future = true"));
+        assert!(source.contains("[appearance]"));
+        assert_eq!(
+            AppConfig::parse_toml(&source).unwrap().notifications,
+            notifications
+        );
+
+        let without_custom = NotificationsConfig {
+            sound_name: String::new(),
+            custom_sound_display_name: None,
+        };
+        ConfigStore::update_notifications(&path, &without_custom).unwrap();
+        let source = fs::read_to_string(&target).unwrap();
+        assert!(!source.contains("custom_sound_display_name"));
+        assert_eq!(
+            AppConfig::parse_toml(&source).unwrap().notifications,
+            without_custom
+        );
         remove(&root);
     }
 

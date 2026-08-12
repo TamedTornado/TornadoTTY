@@ -224,15 +224,28 @@ terminate_session() {
 remove_run_root() {
     local portal_mount="${run_root}/runtime/doc"
 
-    if command -v mountpoint >/dev/null 2>&1 && mountpoint -q "${portal_mount}"; then
+    remove_portal_mount() {
+        mountpoint -q "${portal_mount}" || return 0
         command -v fusermount3 >/dev/null 2>&1 ||
             fail "private document-portal mount survived without fusermount3 cleanup"
         fusermount3 -u "${portal_mount}" ||
             fail "private document-portal mount could not be unmounted"
         mountpoint -q "${portal_mount}" &&
             fail "private document-portal mount survived unmount"
+    }
+
+    if command -v mountpoint >/dev/null 2>&1; then
+        remove_portal_mount
     fi
-    rm -rf -- "${run_root}"
+    if ! rm -rf -- "${run_root}" 2>/dev/null; then
+        # xdg-document-portal can finish publishing its private FUSE mount
+        # between the first mountpoint check and recursive removal. Recheck
+        # exactly that controlled mount and retry only after unmounting it.
+        command -v mountpoint >/dev/null 2>&1 ||
+            fail "private run root survived cleanup without mountpoint inspection"
+        remove_portal_mount
+        rm -rf -- "${run_root}" || fail "private X11 run root survived cleanup"
+    fi
 }
 cleanup() {
     trap - EXIT HUP INT TERM

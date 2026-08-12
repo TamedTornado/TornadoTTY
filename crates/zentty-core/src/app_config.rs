@@ -45,6 +45,14 @@ pub struct RestoreConfig {
     pub restore_workspace_on_launch: bool,
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct NotificationsConfig {
+    /// Empty selects the desktop environment's default notification sound.
+    pub sound_name: String,
+    /// Source-compatible metadata for a user-installed custom sound.
+    pub custom_sound_display_name: Option<String>,
+}
+
 impl Default for RestoreConfig {
     fn default() -> Self {
         Self {
@@ -59,6 +67,7 @@ pub struct AppConfig {
     pub confirmations: ConfirmationsConfig,
     pub restore: RestoreConfig,
     pub clipboard: ClipboardConfig,
+    pub notifications: NotificationsConfig,
     pub open_with: OpenWithConfig,
     pub server_detection: ServerDetectionConfig,
     pub panes: PaneConfig,
@@ -79,6 +88,7 @@ impl AppConfig {
             confirmations: document.confirmations.into_config(),
             restore: document.restore.into_config(),
             clipboard: document.clipboard.into_config(),
+            notifications: document.notifications.into_config(),
             open_with: document.open_with.into_config().normalized(),
             server_detection: document.server_detection.into_config().normalized(),
             panes: document.panes.into_config(),
@@ -94,10 +104,27 @@ struct Document {
     confirmations: ConfirmationsDocument,
     restore: RestoreDocument,
     clipboard: ClipboardDocument,
+    notifications: NotificationsDocument,
     open_with: OpenWithDocument,
     server_detection: ServerDetectionDocument,
     panes: PaneDocument,
     shortcuts: ShortcutDocument,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct NotificationsDocument {
+    sound_name: String,
+    custom_sound_display_name: Option<String>,
+}
+
+impl NotificationsDocument {
+    fn into_config(self) -> NotificationsConfig {
+        NotificationsConfig {
+            sound_name: self.sound_name,
+            custom_sound_display_name: self.custom_sound_display_name,
+        }
+    }
 }
 
 #[derive(Deserialize, Default)]

@@ -35,6 +35,7 @@ pub(crate) fn build(
     appearance_search: &gtk::SearchEntry,
     shortcuts: &gtk::Widget,
     shortcut_search: &gtk::SearchEntry,
+    notifications: &gtk::Widget,
     initial: SettingsSection,
 ) -> SettingsShell {
     let Widgets {
@@ -44,7 +45,7 @@ pub(crate) fn build(
         buttons,
         back,
         forward,
-    } = build_widgets(general, appearance, shortcuts);
+    } = build_widgets(general, appearance, shortcuts, notifications);
     let state = Rc::new(RefCell::new(State {
         section: initial,
         history: SettingsHistory::new(initial),
@@ -73,6 +74,7 @@ fn build_widgets(
     general: &gtk::Widget,
     appearance: &gtk::Widget,
     shortcuts: &gtk::Widget,
+    notifications: &gtk::Widget,
 ) -> Widgets {
     let root = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     let sidebar = gtk::Box::new(gtk::Orientation::Vertical, 6);
@@ -142,6 +144,7 @@ fn build_widgets(
             SettingsSection::General => general.clone(),
             SettingsSection::Appearance => appearance.clone(),
             SettingsSection::Shortcuts => shortcuts.clone(),
+            SettingsSection::Notifications => notifications.clone(),
             _ => pending_section(section),
         };
         stack.add_named(&page, Some(section.id()));

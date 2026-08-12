@@ -19,6 +19,8 @@ settings_shell_file="${ZENTTY_SETTINGS_SHELL_SOURCE:-${repo_root}/crates/zentty-
 settings_navigation_file="${ZENTTY_SETTINGS_NAVIGATION_SOURCE:-${repo_root}/crates/zentty-linux/src/settings_navigation.rs}"
 general_settings_file="${ZENTTY_GENERAL_SETTINGS_SOURCE:-${repo_root}/crates/zentty-linux/src/general_settings.rs}"
 theme_catalog_file="${ZENTTY_THEME_CATALOG_SOURCE:-${repo_root}/crates/zentty-linux/src/theme_catalog.rs}"
+notification_service_file="${ZENTTY_NOTIFICATION_SERVICE_SOURCE:-${repo_root}/crates/zentty-linux/src/notification_service.rs}"
+notifications_settings_file="${ZENTTY_NOTIFICATIONS_SETTINGS_SOURCE:-${repo_root}/crates/zentty-linux/src/notifications_settings.rs}"
 agent_events_file="${ZENTTY_AGENT_EVENTS_SOURCE:-${repo_root}/crates/zentty-linux/src/application_shell/agent_events.rs}"
 global_search_file="${ZENTTY_GLOBAL_SEARCH_SOURCE:-${repo_root}/crates/zentty-linux/src/application_shell/global_search.rs}"
 ssh_identity_file="${ZENTTY_SSH_IDENTITY_SOURCE:-${repo_root}/crates/zentty-linux/src/application_shell/ssh_identity.rs}"
@@ -67,6 +69,8 @@ done
 [[ -r "${settings_navigation_file}" ]] || fail "settings navigation source is missing: ${settings_navigation_file}"
 [[ -r "${general_settings_file}" ]] || fail "general settings source is missing: ${general_settings_file}"
 [[ -r "${theme_catalog_file}" ]] || fail "theme catalog source is missing: ${theme_catalog_file}"
+[[ -r "${notification_service_file}" ]] || fail "notification service source is missing: ${notification_service_file}"
+[[ -r "${notifications_settings_file}" ]] || fail "notification settings source is missing: ${notifications_settings_file}"
 [[ -r "${agent_events_file}" ]] || fail "agent events source is missing: ${agent_events_file}"
 [[ -r "${global_search_file}" ]] || fail "global search source is missing: ${global_search_file}"
 [[ -r "${ssh_identity_file}" ]] || fail "SSH identity source is missing: ${ssh_identity_file}"
@@ -143,6 +147,8 @@ settings_shell_sha256="$(sha256sum "${settings_shell_file}" | awk '{print $1}')"
 settings_navigation_sha256="$(sha256sum "${settings_navigation_file}" | awk '{print $1}')"
 general_settings_sha256="$(sha256sum "${general_settings_file}" | awk '{print $1}')"
 theme_catalog_sha256="$(sha256sum "${theme_catalog_file}" | awk '{print $1}')"
+notification_service_sha256="$(sha256sum "${notification_service_file}" | awk '{print $1}')"
+notifications_settings_sha256="$(sha256sum "${notifications_settings_file}" | awk '{print $1}')"
 agent_events_sha256="$(sha256sum "${agent_events_file}" | awk '{print $1}')"
 global_search_sha256="$(sha256sum "${global_search_file}" | awk '{print $1}')"
 ssh_identity_sha256="$(sha256sum "${ssh_identity_file}" | awk '{print $1}')"
@@ -206,6 +212,12 @@ jq -e --arg general_settings_sha256 "${general_settings_sha256}" \
 jq -e --arg theme_catalog_sha256 "${theme_catalog_sha256}" \
     '.owned_source_sha256["crates/zentty-linux/src/theme_catalog.rs"] == $theme_catalog_sha256' \
     "${contract}" >/dev/null || fail "theme catalog source hash differs from its ownership contract"
+jq -e --arg notification_service_sha256 "${notification_service_sha256}" \
+    '.owned_source_sha256["crates/zentty-linux/src/notification_service.rs"] == $notification_service_sha256' \
+    "${contract}" >/dev/null || fail "notification service source hash differs from its ownership contract"
+jq -e --arg notifications_settings_sha256 "${notifications_settings_sha256}" \
+    '.owned_source_sha256["crates/zentty-linux/src/notifications_settings.rs"] == $notifications_settings_sha256' \
+    "${contract}" >/dev/null || fail "notification settings source hash differs from its ownership contract"
 jq -e --arg pane_runtime_sha256 "${pane_runtime_sha256}" \
     '.owned_source_sha256["crates/zentty-linux/src/application_shell/pane_runtime.rs"] == $pane_runtime_sha256' \
     "${contract}" >/dev/null || fail "pane runtime source hash differs from its ownership contract"
@@ -455,13 +467,15 @@ if [[ -n "${diff}" ]]; then
     fail "config store function inventory differs from its ownership contract"
 fi
 
-for module in appearance_settings settings_shell settings_navigation general_settings theme_catalog; do
+for module in appearance_settings settings_shell settings_navigation general_settings theme_catalog notification_service notifications_settings; do
     case "${module}" in
         appearance_settings) module_file="${appearance_settings_file}" ;;
         settings_shell) module_file="${settings_shell_file}" ;;
         settings_navigation) module_file="${settings_navigation_file}" ;;
         general_settings) module_file="${general_settings_file}" ;;
         theme_catalog) module_file="${theme_catalog_file}" ;;
+        notification_service) module_file="${notification_service_file}" ;;
+        notifications_settings) module_file="${notifications_settings_file}" ;;
     esac
     sed -n '1,/^#\[cfg(test)\]/p' "${module_file}" |
         sed -nE 's/^[[:space:]]*(pub\(crate\)[[:space:]]+)?fn[[:space:]]+([a-zA-Z0-9_]+).*/\2/p' |
@@ -513,6 +527,8 @@ jq -e --arg main_sha256 "${main_sha256}" \
     --arg settings_navigation_sha256 "${settings_navigation_sha256}" \
     --arg general_settings_sha256 "${general_settings_sha256}" \
     --arg theme_catalog_sha256 "${theme_catalog_sha256}" \
+    --arg notification_service_sha256 "${notification_service_sha256}" \
+    --arg notifications_settings_sha256 "${notifications_settings_sha256}" \
     --arg agent_events_sha256 "${agent_events_sha256}" \
     --arg global_search_sha256 "${global_search_sha256}" \
     --arg ssh_identity_sha256 "${ssh_identity_sha256}" \
@@ -554,6 +570,8 @@ jq -e --arg main_sha256 "${main_sha256}" \
         "crates/zentty-linux/src/settings_navigation.rs":$settings_navigation_sha256,
         "crates/zentty-linux/src/general_settings.rs":$general_settings_sha256,
         "crates/zentty-linux/src/theme_catalog.rs":$theme_catalog_sha256,
+        "crates/zentty-linux/src/notification_service.rs":$notification_service_sha256,
+        "crates/zentty-linux/src/notifications_settings.rs":$notifications_settings_sha256,
         "crates/zentty-linux/src/application_shell/agent_events.rs":$agent_events_sha256,
         "crates/zentty-linux/src/application_shell/global_search.rs":$global_search_sha256,
         "crates/zentty-linux/src/application_shell/ssh_identity.rs":$ssh_identity_sha256,
@@ -611,7 +629,7 @@ jq -e --arg main_sha256 "${main_sha256}" \
         ([.field_assignments[].fields[]] | unique | length) and
     ([.method_assignments[].methods[]] | length) ==
         ([.method_assignments[].methods[]] | unique | length) and
-    (.owned_module_functions | keys | sort) == (["action_router", "agent_event_coordinator", "appearance_settings", "bookmark_coordinator", "clipboard_coordinator", "config_store", "general_settings", "global_search_coordinator", "open_with_coordinator", "pane_dividers", "pane_runtime_coordinator", "persistence_coordinator", "project_context_coordinator", "remote_paste_coordinator", "server_runtime_coordinator", "settings_shell", "settings_navigation", "task_runner_coordinator", "server_listener_discovery", "server_container_discovery", "ssh_identity_coordinator", "theme_catalog", "tmux_runtime_coordinator", "tmux_store_policy"] | sort) and
+    (.owned_module_functions | keys | sort) == (["action_router", "agent_event_coordinator", "appearance_settings", "bookmark_coordinator", "clipboard_coordinator", "config_store", "general_settings", "global_search_coordinator", "notification_service", "notifications_settings", "open_with_coordinator", "pane_dividers", "pane_runtime_coordinator", "persistence_coordinator", "project_context_coordinator", "remote_paste_coordinator", "server_runtime_coordinator", "settings_shell", "settings_navigation", "task_runner_coordinator", "server_listener_discovery", "server_container_discovery", "ssh_identity_coordinator", "theme_catalog", "tmux_runtime_coordinator", "tmux_store_policy"] | sort) and
     (.owned_module_functions.action_router | length) ==
         (.owned_module_functions.action_router | unique | length) and
     (.owned_module_functions.pane_runtime_coordinator | length) ==
@@ -654,6 +672,10 @@ jq -e --arg main_sha256 "${main_sha256}" \
         (.owned_module_functions.general_settings | unique | length) and
     (.owned_module_functions.theme_catalog | length) ==
         (.owned_module_functions.theme_catalog | unique | length) and
+    (.owned_module_functions.notification_service | length) ==
+        (.owned_module_functions.notification_service | unique | length) and
+    (.owned_module_functions.notifications_settings | length) ==
+        (.owned_module_functions.notifications_settings | unique | length) and
     (.owned_module_functions.persistence_coordinator | length) ==
         (.owned_module_functions.persistence_coordinator | unique | length) and
     (.owned_module_functions.tmux_runtime_coordinator | length) ==

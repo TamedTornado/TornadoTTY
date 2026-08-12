@@ -1361,10 +1361,11 @@ if "${implemented_local}" && jq -e '
     . as $matrix |
     ["product-boundary-wayland","product-boundary-x11"] as $required |
     all($required[]; . as $id | any($matrix.cells[]; .id == $id and .status == "PASS"))
-' "${matrix}" >/dev/null && jq -e --argjson results "${results}" '
+' "${matrix}" >/dev/null && jq -e '
+    . as $results |
     ["product-boundary-wayland","product-boundary-x11"] as $required |
     all($required[]; . as $id | any($results[]; .id == $id and .outcome == "PASS"))
-' <<<"{}" >/dev/null; then
+' <<<"${results}" >/dev/null; then
     product_boundary=true
 fi
 qualification_host_retired=false
@@ -1392,10 +1393,12 @@ qualification_timing="$(jq -cn \
 ')"
 
 summary_temp="$(mktemp "${summary}.tmp.XXXXXX")"
-trap 'rm -f -- "${summary_temp}"' EXIT
+summary_results_temp="$(mktemp "${summary}.results.XXXXXX")"
+printf '%s\n' "${results}" >"${summary_results_temp}"
+trap 'rm -f -- "${summary_temp}" "${summary_results_temp}"' EXIT
 jq -n \
     --argjson totals "${totals}" \
-    --argjson results "${results}" \
+    --slurpfile summary_results "${summary_results_temp}" \
     --arg logs_directory "${logs_dir}" \
     --arg governance_cell_id "${governance_cell_id}" \
     --argjson expected_valgrind_report_paths "${expected_valgrind_report_paths}" \
@@ -1408,7 +1411,7 @@ jq -n \
     --argjson release "${release}" \
     --argjson full "${full}" \
     --argjson qualification_timing "${qualification_timing}" \
-    '{
+    '$summary_results[0] as $results | {
       schema_version: 1,
       totals_by_declared_status: $totals,
       logs_directory: $logs_directory,
@@ -1460,6 +1463,8 @@ jq -n \
     >"${summary_temp}"
 mv -f -- "${summary_temp}" "${summary}"
 summary_temp=""
+rm -f -- "${summary_results_temp}"
+summary_results_temp=""
 trap - EXIT
 if [[ -n "${retained_valgrind_evidence_lock_fd}" ]]; then
     exec {retained_valgrind_evidence_lock_fd}>&-

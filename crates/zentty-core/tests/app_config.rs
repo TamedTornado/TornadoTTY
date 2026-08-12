@@ -92,6 +92,39 @@ fn lifecycle_settings_use_source_defaults_and_exact_toml_keys() {
 }
 
 #[test]
+fn notification_settings_use_source_defaults_and_exact_toml_keys() {
+    let defaults = AppConfig::parse_toml("").unwrap().notifications;
+    assert_eq!(defaults.sound_name, "");
+    assert_eq!(defaults.custom_sound_display_name, None);
+
+    let configured = AppConfig::parse_toml(
+        r#"
+        [notifications]
+        sound_name = "message-new-instant"
+        custom_sound_display_name = "My alert.ogg"
+        future_notification_setting = true
+        "#,
+    )
+    .unwrap()
+    .notifications;
+    assert_eq!(configured.sound_name, "message-new-instant");
+    assert_eq!(
+        configured.custom_sound_display_name.as_deref(),
+        Some("My alert.ogg")
+    );
+
+    for source in [
+        "[notifications]\nsound_name = true\n",
+        "[notifications]\ncustom_sound_display_name = 3\n",
+    ] {
+        assert!(
+            AppConfig::parse_toml(source).is_err(),
+            "accepted {source:?}"
+        );
+    }
+}
+
+#[test]
 fn missing_clipboard_section_uses_source_defaults() {
     let config = AppConfig::parse_toml("[future]\nenabled = true\n").unwrap();
     let clipboard = config.clipboard;

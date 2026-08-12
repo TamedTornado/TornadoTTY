@@ -12,6 +12,8 @@ mod config_store;
 mod docker_discovery;
 mod general_settings;
 mod global_search_view;
+mod notification_service;
+mod notifications_settings;
 mod pane_controls;
 mod pane_dividers;
 mod pane_scroll_switch;

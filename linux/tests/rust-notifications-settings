@@ -1,0 +1,186 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
+ghostty_root="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
+backend="${GDK_BACKEND:-}"
+run_root="$(mktemp -d)"
+state_directory="${run_root}/state"
+receipt="${run_root}/notifications.receipt"
+daemon_log="${run_root}/notification-daemon.log"
+log="${run_root}/product.log"
+product_pid=""
+daemon_pid=""
+monitor_pid=""
+
+# shellcheck disable=SC1091
+source "${repo_root}/linux/tests/lib/product-input"
+
+fail() {
+    [[ ! -f "${daemon_log}" ]] || cat "${daemon_log}" >&2
+    [[ ! -f "${log}" ]] || cat "${log}" >&2
+    echo "rust-notifications-settings: error: $*" >&2
+    exit 1
+}
+
+cleanup() {
+    [[ ! "${product_pid}" =~ ^[1-9][0-9]*$ ]] || kill -TERM "${product_pid}" 2>/dev/null || true
+    [[ ! "${monitor_pid}" =~ ^[1-9][0-9]*$ ]] || kill -TERM "${monitor_pid}" 2>/dev/null || true
+    [[ ! "${daemon_pid}" =~ ^[1-9][0-9]*$ ]] || kill -TERM "${daemon_pid}" 2>/dev/null || true
+    [[ ! "${product_pid}" =~ ^[1-9][0-9]*$ ]] || wait "${product_pid}" 2>/dev/null || true
+    [[ ! "${monitor_pid}" =~ ^[1-9][0-9]*$ ]] || wait "${monitor_pid}" 2>/dev/null || true
+    [[ ! "${daemon_pid}" =~ ^[1-9][0-9]*$ ]] || wait "${daemon_pid}" 2>/dev/null || true
+    rm -rf -- "${run_root}"
+}
+trap cleanup EXIT
+
+case "${backend}" in
+    x11)
+        [[ "${ZENTTY_NESTED_X11_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+            fail "X11 scenario must run through linux/tests/nested-x11"
+        ;;
+    wayland)
+        [[ "${ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+            fail "Wayland scenario must run through linux/tests/nested-wayland-input"
+        ;;
+    *) fail "GDK_BACKEND must be x11 or wayland" ;;
+esac
+[[ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ]] || fail "a private session bus is required"
+export GTK_USE_PORTAL=0
+export GIO_USE_VFS=local
+export XDG_CURRENT_DESKTOP=ZenttyQualification
+[[ -x "${product}" ]] || fail "staged product is missing: ${product}"
+[[ -x /usr/lib/notification-daemon/notification-daemon ]] ||
+    fail "Ubuntu notification-daemon is required"
+command -v dbus-monitor >/dev/null || fail "dbus-monitor is required"
+command -v gdbus >/dev/null || fail "gdbus is required"
+
+layer_runpath="$(
+    readelf -d "${ghostty_root}/zig-out/lib/libghostty-gtk-embed.so" |
+        sed -n 's/.*Library runpath: \[\([^]]*\)\].*/\1/p' |
+        cut -d: -f1
+)"
+[[ "${layer_runpath}" == .zig-cache/* ]] || fail "Ghostty runpath is not pinned"
+layer_directory="${ghostty_root}/${layer_runpath}"
+mkdir -p "${state_directory}" "${XDG_CONFIG_HOME}/zentty"
+config="${XDG_CONFIG_HOME}/zentty/config.toml"
+cat >"${config}" <<'EOF'
+# preserve notification settings comment
+future_root = 7
+[notifications]
+sound_name = ""
+future_notification = true
+EOF
+
+# notification-daemon 3.20 is an X11 notification server. Keep that real
+# service on the wrapper-owned Xvfb transport while the product itself uses
+# the requested GTK backend; D-Bus notification semantics are display-neutral.
+GDK_BACKEND=x11 /usr/lib/notification-daemon/notification-daemon >"${daemon_log}" 2>&1 &
+daemon_pid=$!
+for _ in {1..100}; do
+    has_owner="$(gdbus call --session --dest org.freedesktop.DBus \
+        --object-path /org/freedesktop/DBus \
+        --method org.freedesktop.DBus.NameHasOwner org.freedesktop.Notifications 2>/dev/null || true)"
+    [[ "${has_owner}" == '(true,)' ]] && break
+    kill -0 "${daemon_pid}" 2>/dev/null || fail "notification-daemon exited"
+    sleep 0.02
+done
+[[ "${has_owner:-}" == '(true,)' ]] || fail "notification-daemon did not own its bus name"
+dbus-monitor --session \
+    "type='method_call',interface='org.freedesktop.Notifications',member='Notify'" \
+    >"${receipt}" 2>&1 &
+monitor_pid=$!
+sleep 0.05
+
+GDK_SCALE=1 \
+GDK_DPI_SCALE=1 \
+LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+    "${product}" \
+    --command 'sleep 30' \
+    --state-directory "${state_directory}" \
+    --no-session-restore >"${log}" 2>&1 &
+product_pid=$!
+zentty_product_prepare_input "${backend}" "${log}" || fail "physical product input was unavailable"
+
+main_key() {
+    if zentty_product_uses_xdotool "${backend}"; then
+        zentty_product_xdotool_key "$1"
+    else
+        case "$1" in
+            ctrl+shift+*) wtype -M ctrl -M shift -k "${1#ctrl+shift+}" -m shift -m ctrl ;;
+            ctrl+*) wtype -M ctrl -k "${1#ctrl+}" -m ctrl ;;
+            alt+*) wtype -M alt -k "${1#alt+}" -m alt ;;
+            *) wtype -k "$1" ;;
+        esac
+    fi
+}
+
+settings_key() {
+    if [[ "${backend}" == x11 ]]; then
+        xdotool windowfocus --sync "${settings_window}"
+        xdotool key "$1"
+    else
+        case "$1" in
+            ctrl+shift+*) wtype -M ctrl -M shift -k "${1#ctrl+shift+}" -m shift -m ctrl ;;
+            ctrl+*) wtype -M ctrl -k "${1#ctrl+}" -m ctrl ;;
+            alt+*) wtype -M alt -k "${1#alt+}" -m alt ;;
+            *) wtype -k "$1" ;;
+        esac
+    fi
+}
+
+type_text() {
+    if zentty_product_uses_xdotool "${backend}"; then
+        xdotool type --delay 5 -- "$1"
+    else
+        wtype -d 5 -- "$1"
+    fi
+}
+
+main_key ctrl+shift+p
+type_text 'Notifications Settings'
+zentty_product_wait_for_log "${log}" 'command-palette=query value="Notifications Settings" results=1' \
+    "Notifications Settings did not resolve uniquely" || fail "notification palette route failed"
+main_key Down
+main_key Return
+zentty_product_wait_for_log "${log}" 'zentty-linux: settings-section selected=notifications' \
+    "palette did not deep-link to Notifications" || fail "notification deep-link failed"
+zentty_product_wait_for_log "${log}" 'zentty-linux: shortcut-settings active' \
+    "notification settings did not receive compositor activation" || fail "settings activation failed"
+settings_window=""
+if [[ "${backend}" == x11 ]]; then
+    for _ in {1..100}; do
+        settings_window="$(xdotool search --onlyvisible --name '^Zentty Settings$' 2>/dev/null | tail -1 || true)"
+        [[ "${settings_window}" =~ ^[1-9][0-9]*$ ]] && break
+        sleep 0.02
+    done
+    [[ "${settings_window}" =~ ^[1-9][0-9]*$ ]] || fail "settings window did not appear"
+    xdotool windowfocus --sync "${settings_window}"
+fi
+
+settings_key alt+t
+zentty_product_wait_for_log "${log}" 'notification-settings action=send-test result=sent id=1' \
+    "Send Test did not cross the freedesktop service boundary" || fail "test notification failed"
+for _ in {1..100}; do [[ -s "${receipt}" ]] && break; sleep 0.02; done
+grep -Fq 'string "Zentty"' "${receipt}" ||
+    fail "D-Bus monitor did not receive the source test payload"
+grep -Fq 'string "This is a test notification."' "${receipt}" ||
+    fail "D-Bus monitor did not receive the source test body"
+
+kill -TERM "${daemon_pid}"
+wait "${daemon_pid}" 2>/dev/null || true
+daemon_pid=""
+for _ in {1..100}; do
+    has_owner="$(gdbus call --session --dest org.freedesktop.DBus \
+        --object-path /org/freedesktop/DBus \
+        --method org.freedesktop.DBus.NameHasOwner org.freedesktop.Notifications 2>/dev/null || true)"
+    [[ "${has_owner}" == '(false,)' ]] && break
+    sleep 0.02
+done
+[[ "${has_owner:-}" == '(false,)' ]] || fail "notification service owner did not disappear"
+settings_key alt+t
+zentty_product_wait_for_log "${log}" 'notification-settings action=send-test result=error detail=no freedesktop notification service is available' \
+    "missing service was not reported as an error" || fail "notification absence became a pass"
+
+echo "rust-notifications-settings-${backend}: PASS real-gtk-settings physical-input private-dbus real-freedesktop-notify explicit-unavailable"

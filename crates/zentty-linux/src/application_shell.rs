@@ -1077,6 +1077,7 @@ impl ApplicationShell {
             shell
                 .borrow_mut()
                 .select_adjacent_pane(pending == PeekDirection::Forward);
+            Self::refocus_after_peek_key_release(shell);
             eprintln!("zentty-linux: worklane-peek=quick-tab-release");
         }
     }
@@ -1123,6 +1124,7 @@ impl ApplicationShell {
                 shell
                     .borrow_mut()
                     .select_adjacent_pane(pending == PeekDirection::Forward);
+                Self::refocus_after_peek_key_release(shell);
                 eprintln!("zentty-linux: worklane-peek=quick-modifier-release");
             }
             PeekPhase::Peeking { current, .. } => {
@@ -1145,6 +1147,21 @@ impl ApplicationShell {
             shell.borrow_mut().select_pane_reference(&original, true);
         }
         eprintln!("zentty-linux: worklane-peek=cancel");
+    }
+
+    fn refocus_after_peek_key_release(shell: &Rc<RefCell<Self>>) {
+        // GTK restores the widget that owned the key event after dispatching
+        // the release. Let the horizontal viewport reveal the selected column,
+        // then reassert the surface so Ctrl+Tab changes physical input focus.
+        let weak = Rc::downgrade(shell);
+        glib::timeout_add_local_once(Duration::from_millis(75), move || {
+            if let Some(shell) = weak.upgrade() {
+                let shell = shell.borrow();
+                if !shell.command_palette.is_visible() && !shell.global_search.state().visible {
+                    shell.focus_selected_surface_unchecked();
+                }
+            }
+        });
     }
 
     fn spatially_navigate_peek(shell: &Rc<RefCell<Self>>, direction: PeekSpatialDirection) {
@@ -1290,6 +1307,7 @@ impl ApplicationShell {
         let appearance = self.config.appearance.clone();
         let appearance_weak = self.self_handle.borrow().clone();
         let general_weak = self.self_handle.borrow().clone();
+        let notifications_weak = self.self_handle.borrow().clone();
         let focus_weak = self.self_handle.borrow().clone();
         let restore_parent_focus: Rc<dyn Fn()> = Rc::new(move || {
             if let Some(shell) = focus_weak.upgrade() {
@@ -1340,6 +1358,12 @@ impl ApplicationShell {
                         shell.borrow_mut().apply_general(general);
                     }
                 }),
+                notifications: self.config.notifications.clone(),
+                apply_notifications: Rc::new(move |notifications| {
+                    if let Some(shell) = notifications_weak.upgrade() {
+                        shell.borrow_mut().apply_notifications(notifications);
+                    }
+                }),
                 initial_section: section,
             },
             &restore_parent_focus,
@@ -1366,6 +1390,22 @@ impl ApplicationShell {
                 );
             }
             Err(error) => eprintln!("zentty-linux: general-settings result=error detail={error}"),
+        }
+    }
+
+    fn apply_notifications(&mut self, notifications: zentty_core::NotificationsConfig) {
+        match crate::config_store::ConfigStore::update_default_notifications(&notifications) {
+            Ok(path) => {
+                self.config.notifications = notifications;
+                eprintln!(
+                    "zentty-linux: notification-settings result=persisted path={} sound={:?}",
+                    path.display(),
+                    self.config.notifications.sound_name
+                );
+            }
+            Err(error) => {
+                eprintln!("zentty-linux: notification-settings result=error detail={error}");
+            }
         }
     }
 
@@ -2527,6 +2567,7 @@ impl ApplicationShell {
                 }
                 eprintln!("zentty-linux: action=close-pane pane={pane_id}");
                 shell_ref.render();
+                shell_ref.scroll_panes_to_focused();
                 shell_ref.focus_selected_surface();
             }
             ClosePaneOutcome::CloseWindow => {
@@ -3349,6 +3390,7 @@ impl ApplicationShell {
         } else {
             self.render();
         }
+        self.scroll_panes_to_focused();
         self.focus_selected_surface();
     }
 

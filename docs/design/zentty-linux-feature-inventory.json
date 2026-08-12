@@ -511,11 +511,11 @@
       "origin": "PORT_PARITY",
       "user_impact": "Surfacing and jumping to agents that need attention is Zentty's central value proposition and cannot stop at an in-pane badge.",
       "linux_owner_issue": 21,
-      "implementation_status": "NOT_IMPLEMENTED",
-      "focused_tests": [],
-      "product_scenarios": [],
-      "test_plan": "Emit real events from PTYs in multiple windows, inspect the staged UI and a controlled desktop notification/audio service, activate each route and prove exact PTY focus; cover stale/silent/custom-sound/failure cases and mutations.",
-      "alternative_or_blocker": "Use the Linux desktop notification portal/service and audio stack while retaining an in-window inbox fallback; Dock-specific badges map to in-app/tray attention where supported."
+      "implementation_status": "PARTIAL",
+      "focused_tests": ["crates/zentty-core/tests/app_config.rs", "crates/zentty-linux/src/config_store.rs", "crates/zentty-linux/src/notification_service.rs"],
+      "product_scenarios": ["linux/tests/rust-notifications-settings"],
+      "test_plan": "The settings/service boundary now uses a real controlled freedesktop notification service on X11 and Wayland. Remaining work must emit real attention events from PTYs in multiple windows, inspect the in-app inbox, exercise silent/custom-sound/failure behavior, and activate each route to prove exact PTY focus.",
+      "alternative_or_blocker": "The Linux freedesktop service and sound-theme alternative is implemented for settings and test delivery. Source-parity pane-attention reduction, active-pane suppression, inbox routing, action navigation, and custom sound import remain under issues 21 and 20; Dock-specific badges map to in-app/tray attention where supported."
     },
     {
       "id": "desktop.fleet-status",
