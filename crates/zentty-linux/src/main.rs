@@ -2,6 +2,7 @@
 
 mod agent_runtime;
 mod agent_status_view;
+mod appearance_settings;
 mod application;
 mod application_shell;
 mod bookmarks_view;
@@ -18,11 +19,13 @@ mod persistence_coordinator;
 mod project_icon_view;
 mod restore_notice;
 mod server_discovery;
+mod settings_shell;
 mod shortcut_settings;
 mod sidebar;
 mod sidebar_visibility;
 mod source_ui;
 mod task_manager;
+mod theme_catalog;
 mod tmux_compat;
 mod tmux_store;
 mod window_chrome;

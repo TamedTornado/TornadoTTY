@@ -2,18 +2,21 @@
   "schema_version": 1,
   "contract_id": "zentty-application-shell-responsibilities",
   "source": "crates/zentty-linux/src/application_shell.rs",
-  "source_sha256": "be9f0a5fd4ec47a13f9d5acbdd1dcdbc763918bb79cfc79fe5525758ec548991",
+  "source_sha256": "b85e27666d30a24fbaf65c62d5054bafbf7080777820ab4d58090451e6d78996",
   "owned_source_sha256": {
-    "crates/zentty-linux/src/main.rs": "6bf0a27fe6c3c543ecce3b376d2ec907150d02d788048ffe104023a4aab9062f",
+    "crates/zentty-linux/src/main.rs": "2cee0efbababba4246c013e75cf9a2bbe92dacfca72d8d3c48c5564bb9f265e7",
     "crates/zentty-linux/src/application.rs": "6f14dc9e6c60d46f3713faa997501782e5c9750f0e00b40e27472431cede6c7d",
-    "crates/zentty-linux/src/config_store.rs": "4eb768f6a6b261272a2d6107a812772178190ef934d95f5b8de89b4ab1e2c618",
+    "crates/zentty-linux/src/config_store.rs": "00125a6e2591ddf227ca01dd1ce17273baffbdc04e9f3a81a6932b8c3fcad95a",
     "crates/zentty-linux/src/window_set.rs": "501d595889c11a41a4261ef8282465d76dd9ed8ccd1d004406b558579b0bf58e",
     "crates/zentty-linux/src/agent_runtime.rs": "48f30d38048ae5388ca59aee2021e1215cabdfc033e66755ed32c6f92dcb8671",
     "crates/zentty-linux/src/codex_enrichment.rs": "fe87631c75c04b63962b7f89d311a778a25af8f27a1dcb4d5950b3efcbaa476e",
     "crates/zentty-linux/src/application_shell/action_router.rs": "6f4b56ca55bd71a8782a09c03efecb732ebf6b76e59b8c98c585a9bb35aaaad3",
     "crates/zentty-linux/src/application_shell/shortcut_registry.rs": "404a10edec7274e49fc3914f3c519f9b0a0d59a7e1f20fddc8cd28643866b1c8",
     "crates/zentty-linux/src/application_shell/shortcut_runtime.rs": "8b5b0230608324360ee62045c7eb726fc18cae30a5fdeaf86259286610a41d60",
-    "crates/zentty-linux/src/shortcut_settings.rs": "42e869ded69fbdb5de92b781d9806353d28b179da965c127026cae9f3038ff70",
+    "crates/zentty-linux/src/shortcut_settings.rs": "79f74d03dc7742ae3b3e4adc96d4da467ccdcef20f894c255f34176f2b2bb90c",
+    "crates/zentty-linux/src/appearance_settings.rs": "7a6aaf6f2ed3636c526e5ff8c8cba214785b541f068eb43c408a8ae1d3be9b22",
+    "crates/zentty-linux/src/settings_shell.rs": "9485156f5875b21e5138434c9c666dd8758cc16f1fc23eb8708baf610b575123",
+    "crates/zentty-linux/src/theme_catalog.rs": "e944b9378d77d20c68b7020b71275c4482490819575cc657d23a00d7a22af6d4",
     "crates/zentty-linux/src/application_shell/clipboard_actions.rs": "1502a0353bc3e0d645d6c6bd81aae1ed1306f312838f92a635944d402cd441b0",
     "crates/zentty-linux/src/application_shell/agent_events.rs": "3b6dc220ad2434b15213a34c6c225f5dad868880437b3b54365ba77e42b2d0a4",
     "crates/zentty-linux/src/application_shell/project_context_runtime.rs": "a6168d658c98ab6407f3d0f1f1ab624d3e3f91e10de39fd4b5b28dd22ce19e7f",
@@ -72,7 +75,14 @@
       "status": "existing",
       "planned_module": "crates/zentty-linux/src/application_shell/shortcut_registry.rs, crates/zentty-linux/src/application_shell/shortcut_runtime.rs, and crates/zentty-linux/src/shortcut_settings.rs",
       "tracking": "GH-20",
-      "responsibility": "The sole window-local shortcut registry and capture-phase dispatcher, plus the retained nonmodal GTK settings projection; source command IDs and persisted overrides remain owned by the core shortcut model and ConfigStore."
+      "responsibility": "The sole window-local shortcut registry and capture-phase dispatcher, plus its focused Shortcuts settings projection; source command IDs and persisted overrides remain owned by the core shortcut model and ConfigStore."
+    },
+    {
+      "id": "settings_coordinator",
+      "status": "existing",
+      "planned_module": "crates/zentty-linux/src/settings_shell.rs, crates/zentty-linux/src/appearance_settings.rs, and crates/zentty-linux/src/theme_catalog.rs",
+      "tracking": "GH-20",
+      "responsibility": "The sole nonmodal GTK settings shell and Appearance projection. Theme discovery is a bounded, read-only projection; all durable appearance writes and native reload authority remain in ConfigStore and ApplicationShell."
     },
     {
       "id": "pane_runtime_coordinator",
@@ -320,6 +330,10 @@
       "methods": ["copy_focused_pane_path"]
     },
     {
+      "owner": "settings_coordinator",
+      "methods": ["apply_appearance", "reload_ghostty_config_with_focus"]
+    },
+    {
       "owner": "existing_ui_projection",
       "methods": [
         "reconcile_sidebar_width", "reconcile_pane_heights", "install_sidebar_visibility",
@@ -423,6 +437,9 @@
       "discover", "run_docker", "parse_inspect_json", "deepest_matching_pane", "is_web_like"
     ],
     "config_store": ["load_default", "load", "install_default_fallback_theme_if_referenced", "install_fallback_theme_if_referenced", "fallback_theme_publication_error", "update_default_appearance", "update_default_ghostty_theme", "update_default_ghostty_value", "update_default_ignored_port_rules", "update_default_preferred_browser", "update_default_shortcuts", "update_appearance", "update_ghostty_value", "update_ignored_port_rules", "update_preferred_browser", "update_shortcuts", "with_config_lock", "set_optional_appearance_string", "resolve_config_target", "atomic_replace", "read_bounded", "invalid_snapshot", "default_config_file_from", "default_fallback_theme_path", "default_ghostty_config_file_from", "default_theme_resource_path", "nonempty_path"],
+    "appearance_settings": ["build", "section_title", "refresh_catalog", "preview_summary", "log_theme_selection", "apply_state", "install_styles"],
+    "settings_shell": ["build"],
+    "theme_catalog": ["parse", "hex", "is_dark", "rgb", "repeated_hex", "matches", "discover_themes", "load_directory", "is_eligible_theme_file", "parse_theme", "is_ignored_theme_line", "default_theme_directories"],
     "persistence_coordinator": [
       "clean_exit_decision", "complete_launch", "default_state_directory", "drain_errors",
       "drain_live_snapshot_errors", "drop", "flush_live_snapshot_if_due",

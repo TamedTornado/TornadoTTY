@@ -16,14 +16,14 @@ cp "${build_dir}/lib/libgtk4-layer-shell.so" "${stage_dir}/lib/"
 cp -a "${build_dir}/libexec/zentty/." "${stage_dir}/libexec/zentty/"
 cp -a "${build_dir}/share/zentty/." "${stage_dir}/share/zentty/"
 
-fallback_theme="${stage_dir}/share/zentty/ghostty/themes/GitHub-Dark-Personal"
-[[ -f "${fallback_theme}" ]] || {
+theme_source="${repo_root}/ZenttyResources/ghostty/themes"
+theme_stage="${stage_dir}/share/zentty/ghostty/themes"
+[[ -f "${theme_stage}/GitHub-Dark-Personal" ]] || {
     echo "staged-bundle: bundled fallback theme is missing" >&2
     exit 1
 }
-cmp "${repo_root}/ZenttyResources/ghostty/themes/GitHub-Dark-Personal" \
-    "${fallback_theme}" || {
-    echo "staged-bundle: bundled fallback theme bytes differ from source" >&2
+diff -qr --no-dereference "${theme_source}" "${theme_stage}" || {
+    echo "staged-bundle: bundled theme library differs from source" >&2
     exit 1
 }
 

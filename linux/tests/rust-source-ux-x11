@@ -76,6 +76,20 @@ for _ in $(seq 1 200); do
 done
 [[ "${window_id}" =~ ^[1-9][0-9]*$ ]] || fail "real Zentty X11 window did not appear"
 
+hover_pane_controls() {
+    local pane_id="$1"
+    local x="$2"
+    local y="$3"
+    local latest=""
+    xdotool mousemove --sync --window "${window_id}" "${x}" "${y}"
+    for _ in $(seq 1 100); do
+        latest="$(grep -F "zentty-linux: pane-controls pane=${pane_id} state=" "${log}" | tail -1 || true)"
+        [[ "${latest}" == "zentty-linux: pane-controls pane=${pane_id} state=shown" ]] && return 0
+        sleep 0.05
+    done
+    fail "pane controls did not become visible for ${pane_id}"
+}
+
 for _ in $(seq 1 100); do
     if grep -Fxq 'zentty-linux: title-pane=pane-1 value=zentty-title-two' "${log}"; then
         break
@@ -672,22 +686,24 @@ keyboard_width_restored="$(grep -F 'zentty-linux: pane-layout ' "${log}" | tail 
 
 keyboard_height_line="$(grep -F 'zentty-linux: pane-height-layout column=column-worklane-1 ' "${log}" | tail -1)"
 keyboard_height_before="$(sed -n 's/.*pane-1:\([0-9][0-9]*\).*/\1/p' <<<"${keyboard_height_line}")"
-keyboard_height_layout_count="$(grep -Fc 'zentty-linux: pane-height-layout column=column-worklane-1 ' "${log}" || true)"
 xdotool key --window "${window_id}" ctrl+alt+shift+Down
 for _ in $(seq 1 300); do
-    (( $(grep -Fc 'zentty-linux: pane-keyboard-resize direction=' "${log}" || true) >= keyboard_resize_count + 3 &&
-       $(grep -Fc 'zentty-linux: pane-height-layout column=column-worklane-1 ' "${log}" || true) > keyboard_height_layout_count )) && break
+    current_height="$(grep -F 'zentty-linux: pane-height-layout column=column-worklane-1 ' "${log}" | tail -1 | sed -n 's/.*pane-1:\([0-9][0-9]*\).*/\1/p')"
+    (( $(grep -Fc 'zentty-linux: pane-keyboard-resize direction=' "${log}" || true) >= keyboard_resize_count + 3 )) &&
+        [[ "${current_height}" =~ ^[0-9]+$ ]] &&
+        (( current_height > keyboard_height_before )) && break
     sleep 0.05
 done
 keyboard_height_down="$(grep -F 'zentty-linux: pane-height-layout column=column-worklane-1 ' "${log}" | tail -1 | sed -n 's/.*pane-1:\([0-9][0-9]*\).*/\1/p')"
 (( keyboard_height_down > keyboard_height_before )) ||
     fail "Resize Pane Down did not move the rendered adjacent divider down"
 
-keyboard_height_layout_count="$(grep -Fc 'zentty-linux: pane-height-layout column=column-worklane-1 ' "${log}" || true)"
 xdotool key --window "${window_id}" ctrl+alt+shift+Up
 for _ in $(seq 1 300); do
-    (( $(grep -Fc 'zentty-linux: pane-keyboard-resize direction=' "${log}" || true) >= keyboard_resize_count + 4 &&
-       $(grep -Fc 'zentty-linux: pane-height-layout column=column-worklane-1 ' "${log}" || true) > keyboard_height_layout_count )) && break
+    current_height="$(grep -F 'zentty-linux: pane-height-layout column=column-worklane-1 ' "${log}" | tail -1 | sed -n 's/.*pane-1:\([0-9][0-9]*\).*/\1/p')"
+    (( $(grep -Fc 'zentty-linux: pane-keyboard-resize direction=' "${log}" || true) >= keyboard_resize_count + 4 )) &&
+        [[ "${current_height}" =~ ^[0-9]+$ ]] &&
+        (( current_height >= keyboard_height_before - 1 && current_height <= keyboard_height_before + 1 )) && break
     sleep 0.05
 done
 keyboard_height_restored="$(grep -F 'zentty-linux: pane-height-layout column=column-worklane-1 ' "${log}" | tail -1 | sed -n 's/.*pane-1:\([0-9][0-9]*\).*/\1/p')"
@@ -773,7 +789,7 @@ grep -Fxq 'zentty-linux: title-pane=pane-5 value=focus:arranged-pane' "${log}" |
 # underneath its renderer.
 # Remove pane-5 first so the remaining three-pane geometry returns to the
 # already-qualified two-column layout and fixed controlled coordinates.
-xdotool mousemove --window "${window_id}" 1000 350
+hover_pane_controls pane-5 1000 350
 xdotool mousemove --window "${window_id}" 1178 60 click 1
 for _ in $(seq 1 100); do
     grep -Fxq 'zentty-linux: pane-control action=close-pane target=pane-5' "${log}" && break
@@ -781,7 +797,7 @@ for _ in $(seq 1 100); do
 done
 grep -Fxq 'zentty-linux: pane-control action=close-pane target=pane-5' "${log}" ||
     fail "the arranged pane's Close Pane control did not target pane-5"
-xdotool mousemove --window "${window_id}" 500 200
+hover_pane_controls pane-1 500 200
 xdotool mousemove --window "${window_id}" 718 60 click 1
 for _ in $(seq 1 100); do
     grep -Fxq 'zentty-linux: pane-control action=close-pane target=pane-1' "${log}" && break
@@ -789,7 +805,7 @@ for _ in $(seq 1 100); do
 done
 grep -Fxq 'zentty-linux: pane-control action=close-pane target=pane-1' "${log}" ||
     fail "the original pane's hover Close Pane control did not target pane-1"
-xdotool mousemove --window "${window_id}" 1000 350
+hover_pane_controls pane-2 1000 350
 xdotool mousemove --window "${window_id}" 1178 60 click 1
 for _ in $(seq 1 100); do
     grep -Fxq 'zentty-linux: pane-control action=close-pane target=pane-2' "${log}" && break
@@ -797,7 +813,7 @@ for _ in $(seq 1 100); do
 done
 grep -Fxq 'zentty-linux: pane-control action=close-pane target=pane-2' "${log}" ||
     fail "the right pane's hover Close Pane control did not target pane-2"
-xdotool mousemove --window "${window_id}" 700 350
+hover_pane_controls pane-3 700 350
 xdotool mousemove --window "${window_id}" 1178 60 click 1
 for _ in $(seq 1 100); do
     grep -Fxq 'zentty-linux: pane-control action=close-pane target=pane-3' "${log}" && break

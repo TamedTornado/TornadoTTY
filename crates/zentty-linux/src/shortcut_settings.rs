@@ -7,8 +7,11 @@ use gtk::gdk;
 use gtk::glib;
 use gtk::prelude::*;
 use zentty_core::{
-    KeyboardShortcut, ShortcutBinding, ShortcutKey, ShortcutManager, ShortcutModifier,
+    AppearanceConfig, KeyboardShortcut, ShortcutBinding, ShortcutKey, ShortcutManager,
+    ShortcutModifier,
 };
+
+use crate::appearance_settings::ApplyAppearance;
 
 use crate::application_shell::shortcut_registry::{
     COMMANDS, ShortcutCategory, ShortcutCommandSpec, definitions,
@@ -44,12 +47,16 @@ pub(crate) fn show(
     parent: &gtk::Window,
     manager: Rc<RefCell<ShortcutManager>>,
     apply: ApplyBindings,
+    appearance: AppearanceConfig,
+    apply_appearance: ApplyAppearance,
+    restore_parent_focus: &Rc<dyn Fn()>,
 ) -> gtk::Window {
     install_styles();
+    crate::appearance_settings::install_styles();
     let window = gtk::Window::builder()
-        .title("Zentty Settings — Shortcuts")
-        .default_width(920)
-        .default_height(640)
+        .title("Zentty Settings")
+        .default_width(1080)
+        .default_height(720)
         .modal(false)
         .build();
     window.set_hide_on_close(true);
@@ -172,7 +179,15 @@ pub(crate) fn show(
     detail.append(&physical);
     content.set_end_child(Some(&detail));
     root.append(&content);
-    window.set_child(Some(&root));
+    let (appearance_page, appearance_search) =
+        crate::appearance_settings::build(appearance, apply_appearance);
+    let settings = crate::settings_shell::build(
+        &appearance_page,
+        &appearance_search,
+        &root.clone().upcast(),
+        &search,
+    );
+    window.set_child(Some(&settings));
 
     let state = Rc::new(RefCell::new(ViewState {
         selected: COMMANDS[0].command_id.into(),
@@ -200,7 +215,7 @@ pub(crate) fn show(
     connect_detail_controls(&state);
     connect_preview(&keyboard, &state);
     connect_header(&header, &window, &state);
-    install_window_shortcuts(&window, parent, &search);
+    install_window_shortcuts(&window, parent, &search, Rc::clone(restore_parent_focus));
     install_recorder(&window, &state);
     let initial_search = search.clone();
     window.connect_map(move |window| {
@@ -238,24 +253,29 @@ pub(crate) fn show(
     let hide_window = window.clone();
     let parent_window = parent.clone();
     let keep_state = Rc::clone(&state);
+    let restore_focus = Rc::clone(restore_parent_focus);
     window.connect_close_request(move |_| {
         let _ = &keep_state;
         hide_window.set_visible(false);
         parent_window.present();
+        restore_focus();
         eprintln!("zentty-linux: shortcut-settings hidden parent-presented=true");
         glib::Propagation::Stop
     });
     window
 }
 
-fn install_window_shortcuts(window: &gtk::Window, parent: &gtk::Window, search: &gtk::SearchEntry) {
+fn install_window_shortcuts(
+    window: &gtk::Window,
+    parent: &gtk::Window,
+    _search: &gtk::SearchEntry,
+    restore_parent_focus: Rc<dyn Fn()>,
+) {
     let controller = gtk::EventControllerKey::new();
     controller.set_propagation_phase(gtk::PropagationPhase::Capture);
-    let search = search.clone();
     let settings = window.clone();
     let parent = parent.clone();
     controller.connect_key_pressed(move |_, key, _, modifiers| {
-        let required = gdk::ModifierType::CONTROL_MASK;
         let relevant = modifiers
             & (gdk::ModifierType::CONTROL_MASK
                 | gdk::ModifierType::ALT_MASK
@@ -264,11 +284,8 @@ fn install_window_shortcuts(window: &gtk::Window, parent: &gtk::Window, search: 
         if key == gdk::Key::Escape && relevant.is_empty() {
             settings.set_visible(false);
             parent.present();
+            restore_parent_focus();
             eprintln!("zentty-linux: shortcut-settings hidden parent-presented=true");
-            glib::Propagation::Stop
-        } else if matches!(key, gdk::Key::f | gdk::Key::F) && relevant == required {
-            search.grab_focus();
-            eprintln!("zentty-linux: shortcut-settings search-shortcut");
             glib::Propagation::Stop
         } else {
             glib::Propagation::Proceed

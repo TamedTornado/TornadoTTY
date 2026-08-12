@@ -200,3 +200,130 @@ suppressions**.
   41,394 indirect bytes; the reviewed post-suppression receipt reports zero
   errors, contexts, or leak bytes. Suppression governance was accepted. No
   environmental absence was converted into a pass.
+
+## Unified Appearance settings and complete theme catalog
+
+- **Source inventory and staging:** the source application ships a complete
+  Ghostty theme library rather than only the named dark fallback. The ReleaseSafe
+  staging path now copies the entire checked-in library. The staged-bundle cell
+  compares the source and installed directories recursively and exactly; a
+  missing, additional, changed, or symlink-substituted entry fails qualification.
+- **One settings system:** the retained Shortcuts page and the new Appearance page
+  now live under one nonmodal `Zentty Settings` shell. The focused
+  `settings_shell.rs`, `appearance_settings.rs`, and `theme_catalog.rs` modules
+  project UI and bounded catalog reads only. Existing `ConfigStore` remains the
+  sole writer and `ApplicationShell` remains the sole live-reload authority. The
+  architecture ownership contract now hashes and inventories all three modules,
+  so they cannot become an unreviewed parallel settings system.
+- **Catalog policy:** theme files are limited to regular, nonempty files no larger
+  than 64 KiB. Parsing accepts Ghostty background, foreground, and the first 16
+  palette indices, normalizes supported three-, six-, and eight-digit colors,
+  and never treats file contents as markup. Bundled themes load first and an
+  identically named user theme deterministically overrides them. Search and
+  dark/light classification operate on the resulting single catalog.
+- **Real user-precedence journey:** the controlled product journey creates a real
+  user-owned `TokyoNight Moon` theme with background `#010203` before application
+  startup. Appearance search must return exactly one row, selecting it must log
+  `source=user background=#010203`, and the existing writers must persist the
+  selected name into both real configuration paths before a native reload. This
+  proves precedence through the staged product rather than only through a unit
+  fixture.
+- **Input-routing failure and repair:** the first unified-shell build left the old
+  Shortcuts window-level `Ctrl+F` controller installed, so it captured search even
+  on Appearance. Search routing now belongs only to the settings shell and follows
+  the visible page. The original Shortcuts journey remains unchanged under
+  controlled X11 and Wayland input.
+- **Wayland focus failure and repair:** an Appearance-originated native reload
+  scheduled the main-window layout render and terminal focus restoration. Under
+  Cage, that work stole focus from the still-open settings window. Settings
+  reloads now preserve settings focus and avoid an unrelated main-layout render;
+  closing settings explicitly restores the terminal child after compositor
+  activation. Command-originated reload keeps its terminal-focus behavior.
+- **Controlled X11 ordering discovery:** after a native appearance reload, Xvfb's
+  direct-to-toplevel synthetic input could ambiguously target the main window
+  during the already-established Shortcuts journey. Appearance is therefore
+  exercised after, not inside, that journey. No missing event was accepted as a
+  pass, and the existing shortcut assertions were not weakened.
+- **Readiness and scale discoveries:** Wayland required the preceding dark-theme
+  reload to complete before reopening settings. With the full catalog, keyboard
+  traversal through hundreds of visible rows could not reasonably reach opacity;
+  the journey now narrows to one real theme before traversing controls. Rapid
+  opacity key changes also caused repeated synchronous reload work and dropped
+  physical events. Product opacity changes are now coalesced for 120 ms, and the
+  journey uses one deterministic `Home` event while still asserting the real
+  writer, native reload metric, and uninterrupted PTY.
+- **Mutation environment discovery:** the first focused mutation invocation was
+  attempted inside the restricted sandbox. Its unmutated baseline correctly
+  failed because an unrelated real kernel-listener test received `EPERM`; that is
+  not a product failure and was not converted into a passing receipt. The
+  campaign was rerun with the required host permissions through the repository
+  wrapper. Every run retained `gitignore=true`, `copy_target=false`, two workers,
+  and the bounded output directory, so the historical multi-gigabyte scratch-copy
+  failure cannot recur.
+- **Mutation repairs:** an early completed campaign exposed missing direct checks
+  for the catalog size boundary, BT.709 channel coefficients and exact luminance
+  boundary, RGB projection, ignored-line classification, palette index boundary,
+  and HOME fallback. The pure eligibility and ignored-line policies are now
+  directly observable, and the tests cover the maximum and over-maximum sizes
+  without depending on filesystem-parser side effects. The final mutation totals
+  are 95 tested in four minutes: 89 caught, six unviable, zero missed, and zero
+  timeouts. The unmutated baseline passed with real kernel-listener access.
+- **Focused compositor receipts:** after opacity coalescing and real user-theme
+  precedence were added, the complete consolidated settings journey passed under
+  both private Xvfb and nested Cage. Each receipt reports
+  `PASS unified-settings theme-catalog ... real-ghostty-reload preserved-pty`;
+  neither run used the developer desktop or a mocked terminal.
+- **Workspace-test environment receipt:** an unelevated all-workspace run failed
+  eight real Agent IPC CLI cases at Unix-socket creation with `EPERM`. This was
+  the same restricted-kernel condition seen by mutation baseline, not an ignored
+  test or application regression. The complete locked workspace suite was rerun
+  with host kernel access and passed, followed by strict all-target Clippy, Rust
+  formatting, and diff hygiene.
+- **First full-matrix failure:** the first complete rerun did not pass and is not
+  presented as one. Two older product journeys failed under the concurrent
+  matrix: Wayland bookmark import/export did not observe focus on its name dialog,
+  and X11 source UX did not observe the rendered divider move after Resize Pane
+  Down. Neither path is touched by this slice. The exact controlled commands then
+  passed in isolation, including real chooser/file persistence and real pointer/
+  keyboard divider behavior. That establishes contention-sensitive harness
+  timing, not permission to erase the failed receipt; a corrected complete rerun
+  remains required below.
+- **Second full-matrix failure and harness repair:** the complete rerun repaired
+  the bookmark cell but again found the X11 divider assertion and additionally
+  delivered only `Se` from the physical Wayland `Settings` query under load. The
+  divider harness had waited for any newer layout log, so unrelated deferred
+  layout work could satisfy its readiness predicate before the requested size was
+  rendered. It now waits for the observed numeric allocation to cross the exact
+  expected boundary, then for the reverse command to restore it. Wayland typing
+  retains real `wtype` input but uses a 20 ms inter-key cadence in this journey,
+  preventing load from dropping the tail of a physical query. Neither repair
+  adds a mock, retry-pass, or log-only product assertion.
+- **Third full-matrix failure and final pointer readiness repair:** numeric divider
+  readiness worked and the Wayland settings journey passed under load. The X11
+  source journey advanced to its final teardown, then clicked pane 2's Close
+  coordinate before the post-layout hover controls had actually become visible.
+  Each teardown click now first requires the target pane's real hover controller
+  to report `state=shown`; only then does `xdotool` click the pane-local control.
+  The click must still emit the exact target action and close the real surface.
+  This replaces an implicit compositor-speed assumption, not a product assertion.
+
+The remaining issue #20 scope is still explicit: additional source settings
+sections, external config/include watching, background images, OpenCode theme
+sync, and cross-window reload evidence are not claimed by this slice.
+
+### Final qualification receipt
+
+After the contention-sensitive product journeys were repaired and each exact
+failed cell passed directly, the complete presently executable matrix passed in
+511.16 seconds. All support-runner tests passed. The 146 declared cells remain
+`PASS=115`, `FAIL=0`, `BLOCKED=7`, `XFAIL=1`, and `NOT_IMPLEMENTED=23`.
+Implemented-local and product-boundary qualification passed; release and full
+Linux qualification correctly remain not passed.
+
+Debug Valgrind remains **PASS with reviewed suppressions**, not an unsuppressed
+clean claim. Its preserved raw receipt reports 427 errors/contexts, 6,160 direct
+bytes, and 41,428 indirect bytes. The reviewed post-suppression receipt reports
+zero errors, contexts, direct bytes, or indirect bytes and accounts for all 427
+suppressed contexts. Suppression governance passed and the machine summary binds
+both receipt hashes. ReleaseSafe Valgrind remains XFAIL and no suppression was
+broadened.

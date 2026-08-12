@@ -64,6 +64,14 @@ mkdir -p "${state_directory}"
 ghostty_config="${XDG_CONFIG_HOME}/ghostty/config"
 mkdir -p "$(dirname "${ghostty_config}")"
 printf 'font-size = 10\n' >"${ghostty_config}"
+user_theme="${XDG_CONFIG_HOME}/ghostty/themes/TokyoNight Moon"
+mkdir -p "$(dirname "${user_theme}")"
+cat >"${user_theme}" <<'EOF'
+background = #010203
+foreground = #fefefe
+palette = 0=#010203
+palette = 7=#fefefe
+EOF
 
 start_product() {
     local command="$1"
@@ -99,7 +107,10 @@ main_type() {
     if [[ "${backend}" == x11 ]]; then
         xdotool type --delay 5 -- "$1"
     else
-        wtype -d 5 -- "$1"
+        # The nested compositor shares CPU with real Ghostty builds and product
+        # journeys during the full matrix. Preserve every physical key event
+        # under that load rather than accepting a partial query as readiness.
+        wtype -d 20 -- "$1"
     fi
 }
 
@@ -108,7 +119,7 @@ prepare_settings_input() {
     if [[ "${backend}" == x11 ]]; then
         settings_window=""
         for _ in {1..200}; do
-            settings_window="$(xdotool search --onlyvisible --name '^Zentty Settings — Shortcuts$' 2>/dev/null | tail -1 || true)"
+            settings_window="$(xdotool search --onlyvisible --name '^Zentty Settings$' 2>/dev/null | tail -1 || true)"
             [[ "${settings_window}" =~ ^[1-9][0-9]*$ ]] && break
             sleep 0.05
         done
@@ -169,6 +180,7 @@ zentty_product_wait_for_log "${log}" 'zentty-linux: shortcut-settings visible co
 prepare_settings_input
 zentty_product_wait_for_log "${log}" 'zentty-linux: shortcut-settings active' \
     "settings toplevel did not receive compositor activation" || fail "settings was not activated"
+
 settings_key ctrl+f
 settings_type 'Toggle Sidebar'
 settings_key Return
@@ -193,10 +205,13 @@ settings_key ctrl+alt+r
 zentty_product_wait_for_log "${log}" 'zentty-linux: shortcut-settings saved command=app.reload_config value=command+option+r' \
     "physical recorder did not persist Reload Configuration" || fail "reload binding failed"
 
+focus_count="$(grep -Fc 'zentty-linux: focus-pane pane=pane-1' "${log}" 2>/dev/null || true)"
 settings_key Escape
 zentty_product_wait_for_log "${log}" 'shortcut-settings hidden parent-presented=true' \
     "closing settings did not present its parent window" || fail "main focus restoration failed"
 zentty_product_prepare_input "${backend}" "${log}" || fail "main window could not regain focus"
+zentty_product_wait_for_log_count "${log}" 'zentty-linux: focus-pane pane=pane-1' "$((focus_count + 1))" \
+    "terminal surface did not regain focus after settings" || fail "terminal focus restoration failed"
 main_key ctrl+alt+z
 zentty_product_wait_for_log "${log}" 'zentty-linux: shortcut=command+option+z action=toggle-sidebar' \
     "new shortcut did not activate the existing action router" || fail "runtime binding failed"
@@ -289,6 +304,9 @@ bundled_theme="$(dirname "${product}")/../share/zentty/ghostty/themes/GitHub-Dar
 cmp "${bundled_theme}" "${installed_theme}" || fail "installed fallback theme bytes differ"
 [[ "$(stat -c '%a' "${installed_theme}")" == 600 ]] || fail "installed fallback theme is not private"
 grep -Fq 'theme_mode = "dark"' "${config}" || fail "dark theme mode was not persisted"
+zentty_product_wait_for_log_count "${log}" \
+    'zentty-linux: reload-config-metric stage=after pane=pane-1' 1 \
+    "dark theme reload did not settle before subsequent input" || fail "dark theme reload readiness failed"
 
 # Finally prove the earlier user-recorded binding loaded in this fresh process.
 # Running this after the palette avoids allowing its sidebar re-render to race
@@ -298,4 +316,63 @@ zentty_product_wait_for_log "${log}" 'zentty-linux: shortcut=command+option+z ac
     "persisted shortcut was not active after restart" || fail "restart persistence failed"
 [[ ! -s "${bytes}" ]] || fail "restarted bound shortcut leaked into the real PTY"
 
-echo "rust-shortcuts-settings-${backend}: PASS real-gtk-settings physical-recorder source-theme-mode real-ghostty-reload preserved-pty bound-action unbound-byte persistence-restart"
+# Finally exercise the new Appearance page through the same real settings shell.
+# This runs after the established shortcut and command-palette journeys so a
+# native Ghostty reload cannot make Xvfb's direct-to-toplevel synthetic delivery
+# look like an application shortcut regression. The feature itself remains real:
+# catalog search, persistence, native reload metrics, and the live PTY are all
+# observed before the process exits.
+if [[ "${backend}" == wayland ]]; then
+    main_key ctrl+shift+p
+    main_type 'Settings'
+    zentty_product_wait_for_log "${log}" 'command-palette=query value="Settings" results=1' \
+        "Settings did not resolve for Appearance" || fail "appearance settings palette route failed"
+    main_key Down
+    main_key Return
+else
+    main_key ctrl+comma
+fi
+zentty_product_wait_for_log "${log}" 'zentty-linux: shortcut-settings visible commands=' \
+    "Appearance did not open the real settings window" || fail "appearance settings did not open"
+prepare_settings_input
+zentty_product_wait_for_log "${log}" 'zentty-linux: shortcut-settings active' \
+    "Appearance settings did not receive compositor activation" || fail "appearance settings was not activated"
+settings_key ctrl+1
+zentty_product_wait_for_log "${log}" 'zentty-linux: settings-section selected=appearance' \
+    "settings did not navigate to Appearance" || fail "appearance navigation failed"
+settings_key ctrl+f
+settings_type 'TokyoNight Moon'
+zentty_product_wait_for_log "${log}" 'zentty-linux: appearance-catalog query="TokyoNight Moon" results=1' \
+    "source theme was not searchable in the staged catalog" || fail "theme catalog search failed"
+for _ in {1..12}; do
+    settings_key Tab
+    grep -Fq 'zentty-linux: appearance-settings focus=background-opacity' "${log}" && break
+done
+grep -Fq 'zentty-linux: appearance-settings focus=background-opacity' "${log}" ||
+    fail "keyboard traversal did not reach the opacity control"
+settings_key Home
+zentty_product_wait_for_log "${log}" 'zentty-linux: appearance-settings action=background-opacity result=applied' \
+    "opacity control did not cross the live appearance boundary" || fail "appearance opacity failed"
+grep -Fq 'background-opacity = 0.20' "${ghostty_config}" ||
+    fail "opacity control did not update the real Ghostty config"
+grep -Fq 'local_background_opacity = 0.2' "${config}" ||
+    fail "opacity control did not persist normalized Zentty configuration"
+zentty_product_wait_for_log_count "${log}" \
+    'zentty-linux: reload-config-metric stage=after pane=pane-1' 2 \
+    "opacity reload did not settle" || fail "opacity reload readiness failed"
+settings_key ctrl+f
+settings_key Return
+zentty_product_wait_for_log "${log}" 'zentty-linux: appearance-settings action=theme-selection result=applied' \
+    "theme selection did not cross the live appearance boundary" || fail "theme selection failed"
+grep -Fq 'zentty-linux: appearance-theme selected="TokyoNight Moon" source=user background=#010203' "${log}" ||
+    fail "user theme did not override the identically named bundled theme"
+zentty_product_wait_for_log_count "${log}" \
+    'zentty-linux: reload-config-metric stage=after pane=pane-1' 3 \
+    "appearance selection did not finish native reload" || fail "appearance reload metrics missing"
+grep -Fq 'theme = TokyoNight Moon' "${ghostty_config}" ||
+    fail "theme selection did not update the real Ghostty config"
+grep -Fq 'preferred_dark_theme_name = "TokyoNight Moon"' "${config}" ||
+    fail "theme selection did not persist the dark slot"
+[[ ! -s "${bytes}" ]] || fail "appearance reload replaced or disturbed the real child PTY"
+
+echo "rust-shortcuts-settings-${backend}: PASS unified-settings theme-catalog real-gtk-settings physical-recorder source-theme-mode real-ghostty-reload preserved-pty bound-action unbound-byte persistence-restart"

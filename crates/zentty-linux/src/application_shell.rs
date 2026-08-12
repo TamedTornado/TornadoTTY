@@ -1214,6 +1214,18 @@ impl ApplicationShell {
             return;
         }
         let weak = self.self_handle.borrow().clone();
+        let appearance = self.config.appearance.clone();
+        let appearance_weak = self.self_handle.borrow().clone();
+        let focus_weak = self.self_handle.borrow().clone();
+        let restore_parent_focus: Rc<dyn Fn()> = Rc::new(move || {
+            if let Some(shell) = focus_weak.upgrade() {
+                // The parent is presented in the same event that withdraws the
+                // settings toplevel, before the window manager reports it active.
+                // Restore GTK's intended child focus now; compositor activation
+                // follows without leaving focus on a withdrawn settings entry.
+                shell.borrow().focus_selected_surface_unchecked();
+            }
+        });
         let window = crate::shortcut_settings::show(
             &self.window,
             Rc::clone(&self.shortcut_manager),
@@ -1236,16 +1248,30 @@ impl ApplicationShell {
                 }
                 Ok(())
             }),
+            appearance,
+            Rc::new(move |appearance| {
+                let shell = appearance_weak
+                    .upgrade()
+                    .ok_or_else(|| "Zentty window closed while applying appearance".to_owned())?;
+                shell.borrow_mut().apply_appearance(appearance, false)
+            }),
+            &restore_parent_focus,
         );
         self.shortcut_settings_window = Some(window);
     }
 
     fn reload_ghostty_config(&mut self) {
+        self.reload_ghostty_config_with_focus(true);
+    }
+
+    fn reload_ghostty_config_with_focus(&mut self, restore_terminal_focus: bool) {
         self.report_ghostty_reload_metrics("before");
         match self.pane_runtime.runtime().reload_config() {
             Ok(()) => {
-                self.schedule_layout_render();
-                self.focus_selected_surface();
+                if restore_terminal_focus {
+                    self.schedule_layout_render();
+                    self.focus_selected_surface();
+                }
                 eprintln!("zentty-linux: action=reload-config result=applied");
                 let weak = self.self_handle.borrow().clone();
                 glib::timeout_add_local_once(Duration::from_millis(250), move || {
@@ -1253,7 +1279,9 @@ impl ApplicationShell {
                         && let Ok(shell) = shell.try_borrow_mut()
                     {
                         shell.report_ghostty_reload_metrics("after");
-                        shell.focus_selected_surface();
+                        if restore_terminal_focus {
+                            shell.focus_selected_surface();
+                        }
                     }
                 });
             }
@@ -1275,28 +1303,34 @@ impl ApplicationShell {
             .is_some_and(|settings| settings.is_gtk_application_prefer_dark_theme());
         let mut appearance = current;
         appearance.theme_mode = command.resolve(appearance.theme_mode, desktop_is_dark);
-        let spec = appearance.theme_spec();
-        if let Err(error) =
-            crate::config_store::ConfigStore::install_default_fallback_theme_if_referenced(&spec)
-        {
+        if let Err(error) = self.apply_appearance(appearance, true) {
             eprintln!("zentty-linux: action=theme-mode result=failed detail={error}");
             return;
         }
-        if let Err(error) = crate::config_store::ConfigStore::update_default_ghostty_theme(&spec) {
-            eprintln!("zentty-linux: action=theme-mode result=failed detail={error}");
-            return;
-        }
-        if let Err(error) = crate::config_store::ConfigStore::update_default_appearance(&appearance)
-        {
-            eprintln!("zentty-linux: action=theme-mode result=failed detail={error}");
-            return;
-        }
-        self.config.appearance = appearance;
         eprintln!(
             "zentty-linux: action=theme-mode result=persisted mode={}",
             self.config.appearance.theme_mode.config_value()
         );
-        self.reload_ghostty_config();
+    }
+
+    fn apply_appearance(
+        &mut self,
+        appearance: zentty_core::AppearanceConfig,
+        restore_terminal_focus: bool,
+    ) -> Result<(), String> {
+        let spec = appearance.theme_spec();
+        crate::config_store::ConfigStore::install_default_fallback_theme_if_referenced(&spec)?;
+        crate::config_store::ConfigStore::update_default_ghostty_theme(&spec)?;
+        if let Some(opacity) = appearance.background_opacity {
+            crate::config_store::ConfigStore::update_default_ghostty_value(
+                "background-opacity",
+                &opacity.to_string(),
+            )?;
+        }
+        crate::config_store::ConfigStore::update_default_appearance(&appearance)?;
+        self.config.appearance = appearance;
+        self.reload_ghostty_config_with_focus(restore_terminal_focus);
+        Ok(())
     }
 
     fn report_ghostty_reload_metrics(&self, stage: &str) {

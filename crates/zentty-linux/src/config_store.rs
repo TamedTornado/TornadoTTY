@@ -193,7 +193,7 @@ impl ConfigStore {
         install_fallback_theme_if_referenced(spec, &resource, &target).map(|_| ())
     }
 
-    fn update_default_ghostty_value(key: &str, value: &str) -> Result<PathBuf, String> {
+    pub(crate) fn update_default_ghostty_value(key: &str, value: &str) -> Result<PathBuf, String> {
         let path = default_ghostty_config_file_from(
             std::env::var_os("XDG_CONFIG_HOME"),
             std::env::var_os("HOME"),

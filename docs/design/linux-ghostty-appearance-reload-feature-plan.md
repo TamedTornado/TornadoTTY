@@ -53,6 +53,28 @@ real distributable resource:
 5. Mutation-test the pure reference/resource policy, then rerun all presently
    executable qualification cells before committing.
 
+## Theme catalog and Appearance projection slice
+
+The next feature slice makes the source theme library usable rather than merely
+shipping its default:
+
+1. Stage the complete checked-in Ghostty theme library and make the staged-bundle
+   tests reject a missing, extra, or byte-different theme.
+2. Add one bounded theme-catalog owner that parses Ghostty theme files, applies
+   deterministic bundled/user precedence, exposes dark/light classification and
+   preview colors, and skips invalid entries without treating them as themes.
+3. Replace the shortcuts-only settings presentation with one settings shell and
+   distinct Appearance and Shortcuts pages. Appearance must expose source theme
+   mode, dark/light slots, searchable/filterable real themes, live selection,
+   and background opacity; it must use the existing `ConfigStore` and Ghostty
+   reload path rather than a second persistence system.
+4. Drive the real staged UI with physical input under controlled X11 and nested
+   Wayland. Assert search/filter, a user theme overriding a bundled name, theme
+   persistence and live reload, opacity persistence and live effect, process
+   continuity, settings navigation, and restart.
+5. Mutation-test catalog precedence/parsing/filtering and appearance application,
+   then rerun the complete presently executable matrix before committing.
+
 ## Test construction order
 
 1. Ghostty Zig contract tests and exported-symbol/old-new ABI mismatch tests.

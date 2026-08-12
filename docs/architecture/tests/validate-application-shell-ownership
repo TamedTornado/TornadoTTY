@@ -14,6 +14,9 @@ action_router_file="${ZENTTY_ACTION_ROUTER_SOURCE:-${repo_root}/crates/zentty-li
 shortcut_registry_file="${ZENTTY_SHORTCUT_REGISTRY_SOURCE:-${repo_root}/crates/zentty-linux/src/application_shell/shortcut_registry.rs}"
 shortcut_runtime_file="${ZENTTY_SHORTCUT_RUNTIME_SOURCE:-${repo_root}/crates/zentty-linux/src/application_shell/shortcut_runtime.rs}"
 shortcut_settings_file="${ZENTTY_SHORTCUT_SETTINGS_SOURCE:-${repo_root}/crates/zentty-linux/src/shortcut_settings.rs}"
+appearance_settings_file="${ZENTTY_APPEARANCE_SETTINGS_SOURCE:-${repo_root}/crates/zentty-linux/src/appearance_settings.rs}"
+settings_shell_file="${ZENTTY_SETTINGS_SHELL_SOURCE:-${repo_root}/crates/zentty-linux/src/settings_shell.rs}"
+theme_catalog_file="${ZENTTY_THEME_CATALOG_SOURCE:-${repo_root}/crates/zentty-linux/src/theme_catalog.rs}"
 agent_events_file="${ZENTTY_AGENT_EVENTS_SOURCE:-${repo_root}/crates/zentty-linux/src/application_shell/agent_events.rs}"
 global_search_file="${ZENTTY_GLOBAL_SEARCH_SOURCE:-${repo_root}/crates/zentty-linux/src/application_shell/global_search.rs}"
 ssh_identity_file="${ZENTTY_SSH_IDENTITY_SOURCE:-${repo_root}/crates/zentty-linux/src/application_shell/ssh_identity.rs}"
@@ -57,6 +60,9 @@ done
 [[ -r "${shortcut_registry_file}" ]] || fail "shortcut registry source is missing: ${shortcut_registry_file}"
 [[ -r "${shortcut_runtime_file}" ]] || fail "shortcut runtime source is missing: ${shortcut_runtime_file}"
 [[ -r "${shortcut_settings_file}" ]] || fail "shortcut settings source is missing: ${shortcut_settings_file}"
+[[ -r "${appearance_settings_file}" ]] || fail "appearance settings source is missing: ${appearance_settings_file}"
+[[ -r "${settings_shell_file}" ]] || fail "settings shell source is missing: ${settings_shell_file}"
+[[ -r "${theme_catalog_file}" ]] || fail "theme catalog source is missing: ${theme_catalog_file}"
 [[ -r "${agent_events_file}" ]] || fail "agent events source is missing: ${agent_events_file}"
 [[ -r "${global_search_file}" ]] || fail "global search source is missing: ${global_search_file}"
 [[ -r "${ssh_identity_file}" ]] || fail "SSH identity source is missing: ${ssh_identity_file}"
@@ -128,6 +134,9 @@ action_router_sha256="$(sha256sum "${action_router_file}" | awk '{print $1}')"
 shortcut_registry_sha256="$(sha256sum "${shortcut_registry_file}" | awk '{print $1}')"
 shortcut_runtime_sha256="$(sha256sum "${shortcut_runtime_file}" | awk '{print $1}')"
 shortcut_settings_sha256="$(sha256sum "${shortcut_settings_file}" | awk '{print $1}')"
+appearance_settings_sha256="$(sha256sum "${appearance_settings_file}" | awk '{print $1}')"
+settings_shell_sha256="$(sha256sum "${settings_shell_file}" | awk '{print $1}')"
+theme_catalog_sha256="$(sha256sum "${theme_catalog_file}" | awk '{print $1}')"
 agent_events_sha256="$(sha256sum "${agent_events_file}" | awk '{print $1}')"
 global_search_sha256="$(sha256sum "${global_search_file}" | awk '{print $1}')"
 ssh_identity_sha256="$(sha256sum "${ssh_identity_file}" | awk '{print $1}')"
@@ -176,6 +185,15 @@ jq -e --arg shortcut_runtime_sha256 "${shortcut_runtime_sha256}" \
 jq -e --arg shortcut_settings_sha256 "${shortcut_settings_sha256}" \
     '.owned_source_sha256["crates/zentty-linux/src/shortcut_settings.rs"] == $shortcut_settings_sha256' \
     "${contract}" >/dev/null || fail "shortcut settings source hash differs from its ownership contract"
+jq -e --arg appearance_settings_sha256 "${appearance_settings_sha256}" \
+    '.owned_source_sha256["crates/zentty-linux/src/appearance_settings.rs"] == $appearance_settings_sha256' \
+    "${contract}" >/dev/null || fail "appearance settings source hash differs from its ownership contract"
+jq -e --arg settings_shell_sha256 "${settings_shell_sha256}" \
+    '.owned_source_sha256["crates/zentty-linux/src/settings_shell.rs"] == $settings_shell_sha256' \
+    "${contract}" >/dev/null || fail "settings shell source hash differs from its ownership contract"
+jq -e --arg theme_catalog_sha256 "${theme_catalog_sha256}" \
+    '.owned_source_sha256["crates/zentty-linux/src/theme_catalog.rs"] == $theme_catalog_sha256' \
+    "${contract}" >/dev/null || fail "theme catalog source hash differs from its ownership contract"
 jq -e --arg pane_runtime_sha256 "${pane_runtime_sha256}" \
     '.owned_source_sha256["crates/zentty-linux/src/application_shell/pane_runtime.rs"] == $pane_runtime_sha256' \
     "${contract}" >/dev/null || fail "pane runtime source hash differs from its ownership contract"
@@ -425,6 +443,24 @@ if [[ -n "${diff}" ]]; then
     fail "config store function inventory differs from its ownership contract"
 fi
 
+for module in appearance_settings settings_shell theme_catalog; do
+    case "${module}" in
+        appearance_settings) module_file="${appearance_settings_file}" ;;
+        settings_shell) module_file="${settings_shell_file}" ;;
+        theme_catalog) module_file="${theme_catalog_file}" ;;
+    esac
+    sed -n '1,/^#\[cfg(test)\]/p' "${module_file}" |
+        sed -nE 's/^[[:space:]]*(pub\(crate\)[[:space:]]+)?fn[[:space:]]+([a-zA-Z0-9_]+).*/\2/p' |
+        sort >"${temp_dir}/actual-${module}-functions"
+    jq -r ".owned_module_functions.${module} | sort | .[]" "${contract}" \
+        >"${temp_dir}/contract-${module}-functions"
+    diff="$(comm -3 "${temp_dir}/actual-${module}-functions" "${temp_dir}/contract-${module}-functions")"
+    if [[ -n "${diff}" ]]; then
+        printf '%s\n' "${diff}" >&2
+        fail "${module} function inventory differs from its ownership contract"
+    fi
+done
+
 sed -n '/^impl ApplicationShell {/,/^}/p' "${tmux_runtime_file}" |
     sed -nE 's/^[[:space:]]*(pub\(super\)[[:space:]]+)?(const[[:space:]]+)?fn[[:space:]]+([a-zA-Z0-9_]+).*/\3/p' |
     sort >"${temp_dir}/actual-tmux-runtime-functions"
@@ -458,6 +494,9 @@ jq -e --arg main_sha256 "${main_sha256}" \
     --arg shortcut_registry_sha256 "${shortcut_registry_sha256}" \
     --arg shortcut_runtime_sha256 "${shortcut_runtime_sha256}" \
     --arg shortcut_settings_sha256 "${shortcut_settings_sha256}" \
+    --arg appearance_settings_sha256 "${appearance_settings_sha256}" \
+    --arg settings_shell_sha256 "${settings_shell_sha256}" \
+    --arg theme_catalog_sha256 "${theme_catalog_sha256}" \
     --arg agent_events_sha256 "${agent_events_sha256}" \
     --arg global_search_sha256 "${global_search_sha256}" \
     --arg ssh_identity_sha256 "${ssh_identity_sha256}" \
@@ -494,6 +533,9 @@ jq -e --arg main_sha256 "${main_sha256}" \
         "crates/zentty-linux/src/application_shell/shortcut_registry.rs":$shortcut_registry_sha256,
         "crates/zentty-linux/src/application_shell/shortcut_runtime.rs":$shortcut_runtime_sha256,
         "crates/zentty-linux/src/shortcut_settings.rs":$shortcut_settings_sha256,
+        "crates/zentty-linux/src/appearance_settings.rs":$appearance_settings_sha256,
+        "crates/zentty-linux/src/settings_shell.rs":$settings_shell_sha256,
+        "crates/zentty-linux/src/theme_catalog.rs":$theme_catalog_sha256,
         "crates/zentty-linux/src/application_shell/agent_events.rs":$agent_events_sha256,
         "crates/zentty-linux/src/application_shell/global_search.rs":$global_search_sha256,
         "crates/zentty-linux/src/application_shell/ssh_identity.rs":$ssh_identity_sha256,
@@ -530,6 +572,7 @@ jq -e --arg main_sha256 "${main_sha256}" \
         "ssh_identity_coordinator",
         "remote_paste_coordinator",
         "server_runtime_coordinator",
+        "settings_coordinator",
         "shortcut_coordinator",
         "task_runner_coordinator",
         "existing_ui_projection",
@@ -550,7 +593,7 @@ jq -e --arg main_sha256 "${main_sha256}" \
         ([.field_assignments[].fields[]] | unique | length) and
     ([.method_assignments[].methods[]] | length) ==
         ([.method_assignments[].methods[]] | unique | length) and
-    (.owned_module_functions | keys | sort) == (["action_router", "agent_event_coordinator", "bookmark_coordinator", "clipboard_coordinator", "config_store", "global_search_coordinator", "open_with_coordinator", "pane_dividers", "pane_runtime_coordinator", "persistence_coordinator", "project_context_coordinator", "remote_paste_coordinator", "server_runtime_coordinator", "task_runner_coordinator", "server_listener_discovery", "server_container_discovery", "ssh_identity_coordinator", "tmux_runtime_coordinator", "tmux_store_policy"] | sort) and
+    (.owned_module_functions | keys | sort) == (["action_router", "agent_event_coordinator", "appearance_settings", "bookmark_coordinator", "clipboard_coordinator", "config_store", "global_search_coordinator", "open_with_coordinator", "pane_dividers", "pane_runtime_coordinator", "persistence_coordinator", "project_context_coordinator", "remote_paste_coordinator", "server_runtime_coordinator", "settings_shell", "task_runner_coordinator", "server_listener_discovery", "server_container_discovery", "ssh_identity_coordinator", "theme_catalog", "tmux_runtime_coordinator", "tmux_store_policy"] | sort) and
     (.owned_module_functions.action_router | length) ==
         (.owned_module_functions.action_router | unique | length) and
     (.owned_module_functions.pane_runtime_coordinator | length) ==
@@ -583,6 +626,12 @@ jq -e --arg main_sha256 "${main_sha256}" \
         (.owned_module_functions.server_container_discovery | unique | length) and
     (.owned_module_functions.config_store | length) ==
         (.owned_module_functions.config_store | unique | length) and
+    (.owned_module_functions.appearance_settings | length) ==
+        (.owned_module_functions.appearance_settings | unique | length) and
+    (.owned_module_functions.settings_shell | length) ==
+        (.owned_module_functions.settings_shell | unique | length) and
+    (.owned_module_functions.theme_catalog | length) ==
+        (.owned_module_functions.theme_catalog | unique | length) and
     (.owned_module_functions.persistence_coordinator | length) ==
         (.owned_module_functions.persistence_coordinator | unique | length) and
     (.owned_module_functions.tmux_runtime_coordinator | length) ==
