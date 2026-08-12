@@ -1,11 +1,13 @@
 use std::ffi::OsString;
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::{ErrorKind, Read, Write};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::thread;
+use std::time::{Duration, Instant};
 
-use zentty_core::{AppConfig, ShortcutBinding};
+use zentty_core::{AppConfig, AppearanceConfig, ShortcutBinding, ThemeSpec, update_ghostty_value};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ConfigSnapshot {
@@ -17,6 +19,8 @@ pub(crate) struct ConfigSnapshot {
 pub(crate) struct ConfigStore;
 
 const MAX_CONFIG_BYTES: u64 = 1_048_576;
+const LOCK_DEADLINE: Duration = Duration::from_millis(250);
+const LOCK_RETRY_INTERVAL: Duration = Duration::from_millis(5);
 static TEMP_NONCE: AtomicU64 = AtomicU64::new(0);
 
 impl ConfigStore {
@@ -108,6 +112,91 @@ impl ConfigStore {
         Ok(path)
     }
 
+    pub(crate) fn update_default_appearance(
+        appearance: &AppearanceConfig,
+    ) -> Result<PathBuf, String> {
+        let path = default_config_file_from(
+            std::env::var_os("XDG_CONFIG_HOME"),
+            std::env::var_os("HOME"),
+        )?;
+        Self::update_appearance(&path, appearance)?;
+        Ok(path)
+    }
+
+    fn update_appearance(path: &Path, appearance: &AppearanceConfig) -> Result<(), String> {
+        let target = resolve_config_target(path)?;
+        with_config_lock(&target, || {
+            let source = match fs::read_to_string(&target) {
+                Ok(source) => source,
+                Err(error) if error.kind() == ErrorKind::NotFound => String::new(),
+                Err(error) => return Err(format!("could not read {}: {error}", target.display())),
+            };
+            if source.len() as u64 > MAX_CONFIG_BYTES {
+                return Err(format!("configuration exceeds {MAX_CONFIG_BYTES} bytes"));
+            }
+            let mut document = source
+                .parse::<toml_edit::DocumentMut>()
+                .map_err(|error| format!("could not edit invalid configuration: {error}"))?;
+            document
+                .entry("appearance")
+                .or_insert_with(|| toml_edit::Item::Table(toml_edit::Table::new()));
+            if !document["appearance"].is_table() {
+                return Err("appearance configuration is not a table".to_owned());
+            }
+            document["appearance"]["theme_mode"] =
+                toml_edit::value(appearance.theme_mode.config_value());
+            set_optional_appearance_string(
+                &mut document,
+                "preferred_dark_theme_name",
+                appearance.preferred_dark_theme_name.as_deref(),
+            )?;
+            set_optional_appearance_string(
+                &mut document,
+                "preferred_light_theme_name",
+                appearance.preferred_light_theme_name.as_deref(),
+            )?;
+            if let Some(opacity) = appearance.background_opacity {
+                document["appearance"]["local_background_opacity"] =
+                    toml_edit::value(f64::from(opacity.percent()) / 100.0);
+            } else if let Some(table) = document["appearance"].as_table_mut() {
+                table.remove("local_background_opacity");
+            }
+            document["appearance"]["sync_opencode_theme_with_terminal"] =
+                toml_edit::value(appearance.sync_opencode_theme_with_terminal);
+            atomic_replace(&target, document.to_string().as_bytes())
+        })
+    }
+
+    pub(crate) fn update_default_ghostty_theme(spec: &ThemeSpec) -> Result<PathBuf, String> {
+        Self::update_default_ghostty_value("theme", &spec.to_string())
+    }
+
+    fn update_default_ghostty_value(key: &str, value: &str) -> Result<PathBuf, String> {
+        let path = default_ghostty_config_file_from(
+            std::env::var_os("XDG_CONFIG_HOME"),
+            std::env::var_os("HOME"),
+        )?;
+        Self::update_ghostty_value(&path, key, value)?;
+        Ok(path)
+    }
+
+    fn update_ghostty_value(path: &Path, key: &str, value: &str) -> Result<(), String> {
+        let target = resolve_config_target(path)?;
+        with_config_lock(&target, || {
+            let source = match fs::read_to_string(&target) {
+                Ok(source) => source,
+                Err(error) if error.kind() == ErrorKind::NotFound => String::new(),
+                Err(error) => return Err(format!("could not read {}: {error}", target.display())),
+            };
+            if source.len() as u64 > MAX_CONFIG_BYTES {
+                return Err(format!("configuration exceeds {MAX_CONFIG_BYTES} bytes"));
+            }
+            let updated = update_ghostty_value(Some(&source), key, value)
+                .ok_or_else(|| format!("refused unsupported or unsafe Ghostty key: {key}"))?;
+            atomic_replace(&target, updated.as_bytes())
+        })
+    }
+
     fn update_ignored_port_rules(path: &Path, rules: &[String]) -> Result<(), String> {
         let target = resolve_config_target(path)?;
         let source = match fs::read_to_string(&target) {
@@ -179,6 +268,61 @@ impl ConfigStore {
         shortcuts["bindings"] = toml_edit::Item::ArrayOfTables(tables);
         atomic_replace(&target, document.to_string().as_bytes())
     }
+}
+
+fn set_optional_appearance_string(
+    document: &mut toml_edit::DocumentMut,
+    key: &str,
+    value: Option<&str>,
+) -> Result<(), String> {
+    if let Some(value) = value {
+        document["appearance"][key] = toml_edit::value(value);
+    } else {
+        document["appearance"]
+            .as_table_mut()
+            .ok_or_else(|| "appearance configuration is not a table".to_owned())?
+            .remove(key);
+    }
+    Ok(())
+}
+
+fn with_config_lock<T>(
+    path: &Path,
+    operation: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("configuration has no parent: {}", path.display()))?;
+    fs::create_dir_all(parent)
+        .map_err(|error| format!("could not create {}: {error}", parent.display()))?;
+    let lock_path = parent.join(".zentty-appearance.lock");
+    let lock = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .custom_flags(libc::O_NOFOLLOW)
+        .mode(0o600)
+        .open(&lock_path)
+        .map_err(|error| format!("could not open {}: {error}", lock_path.display()))?;
+    let deadline = Instant::now() + LOCK_DEADLINE;
+    loop {
+        match lock.try_lock() {
+            Ok(()) => break,
+            Err(TryLockError::WouldBlock) if Instant::now() < deadline => {
+                thread::sleep(LOCK_RETRY_INTERVAL);
+            }
+            Err(TryLockError::WouldBlock) => {
+                return Err(format!("timed out acquiring {}", lock_path.display()));
+            }
+            Err(TryLockError::Error(error)) => {
+                return Err(format!("could not lock {}: {error}", lock_path.display()));
+            }
+        }
+    }
+    let result = operation();
+    drop(lock);
+    result
 }
 
 fn resolve_config_target(path: &Path) -> Result<PathBuf, String> {
@@ -276,6 +420,20 @@ fn default_config_file_from(
         .ok_or_else(|| "could not resolve Zentty config: XDG_CONFIG_HOME and HOME are unset".into())
 }
 
+fn default_ghostty_config_file_from(
+    xdg_config_home: Option<OsString>,
+    home: Option<OsString>,
+) -> Result<PathBuf, String> {
+    if let Some(path) = nonempty_path(xdg_config_home) {
+        return Ok(path.join("ghostty/config"));
+    }
+    nonempty_path(home)
+        .map(|home| home.join(".config/ghostty/config"))
+        .ok_or_else(|| {
+            "could not resolve Ghostty config: XDG_CONFIG_HOME and HOME are unset".into()
+        })
+}
+
 fn nonempty_path(value: Option<OsString>) -> Option<PathBuf> {
     value.filter(|value| !value.is_empty()).map(PathBuf::from)
 }
@@ -283,14 +441,15 @@ fn nonempty_path(value: Option<OsString>) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::{
-        BoundedReadError, ConfigStore, MAX_CONFIG_BYTES, default_config_file_from, read_bounded,
+        BoundedReadError, ConfigStore, MAX_CONFIG_BYTES, default_config_file_from,
+        default_ghostty_config_file_from, read_bounded,
     };
     use std::ffi::OsString;
     use std::fs;
     use std::io::Read;
     use std::path::Path;
     use std::time::{SystemTime, UNIX_EPOCH};
-    use zentty_core::AppConfig;
+    use zentty_core::{AppConfig, BackgroundOpacity, ThemeMode, ThemeSpec};
 
     fn private_root(name: &str) -> std::path::PathBuf {
         let nonce = SystemTime::now()
@@ -513,6 +672,116 @@ mod tests {
             Path::new("/home/.config/zentty/config.toml")
         );
         assert!(default_config_file_from(None, None).is_err());
+        assert_eq!(
+            default_ghostty_config_file_from(
+                Some(OsString::from("/xdg")),
+                Some(OsString::from("/home"))
+            )
+            .unwrap(),
+            Path::new("/xdg/ghostty/config")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ghostty_appearance_update_preserves_symlink_comments_unknowns_and_permissions() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+
+        let root = private_root("ghostty-appearance-symlink");
+        let dotfiles = root.join("dotfiles");
+        let config_dir = root.join("xdg/ghostty");
+        fs::create_dir_all(&dotfiles).unwrap();
+        fs::create_dir_all(&config_dir).unwrap();
+        let target = dotfiles.join("ghostty.conf");
+        fs::write(
+            &target,
+            "# retained\nfont-size = 14\ntheme = Old\ntheme = Stale\n",
+        )
+        .unwrap();
+        let link = config_dir.join("config");
+        symlink("../../dotfiles/ghostty.conf", &link).unwrap();
+
+        let spec = ThemeSpec::new(
+            ThemeMode::Automatic,
+            Some("Catppuccin Frappe"),
+            Some("Catppuccin Latte"),
+        );
+        ConfigStore::update_ghostty_value(&link, "theme", &spec.to_string()).unwrap();
+
+        assert!(
+            fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(
+            fs::read_to_string(&target).unwrap(),
+            "# retained\nfont-size = 14\ntheme = dark:Catppuccin Frappe,light:Catppuccin Latte\n"
+        );
+        assert_eq!(
+            fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        remove(&root);
+    }
+
+    #[test]
+    fn concurrent_ghostty_updates_serialize_without_losing_distinct_owned_keys() {
+        let root = private_root("ghostty-appearance-concurrent");
+        let path = root.join("ghostty/config");
+        let theme_path = path.clone();
+        let opacity_path = path.clone();
+        let theme = std::thread::spawn(move || {
+            ConfigStore::update_ghostty_value(&theme_path, "theme", "TokyoNight")
+        });
+        let opacity = std::thread::spawn(move || {
+            ConfigStore::update_ghostty_value(&opacity_path, "background-opacity", "0.75")
+        });
+        theme.join().unwrap().unwrap();
+        opacity.join().unwrap().unwrap();
+        let contents = fs::read_to_string(&path).unwrap();
+        assert!(contents.contains("theme = TokyoNight\n"));
+        assert!(contents.contains("background-opacity = 0.75\n"));
+        remove(&root);
+    }
+
+    #[test]
+    fn ghostty_writer_rejects_unsupported_keys_and_normalizes_opacity() {
+        let root = private_root("ghostty-appearance-validation");
+        let path = root.join("ghostty/config");
+        assert!(ConfigStore::update_ghostty_value(&path, "font-size", "1").is_err());
+        let opacity = BackgroundOpacity::from_fraction(4.0).unwrap();
+        ConfigStore::update_ghostty_value(&path, "background-opacity", &opacity.to_string())
+            .unwrap();
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "background-opacity = 1.00\n"
+        );
+        remove(&root);
+    }
+
+    #[test]
+    fn appearance_update_round_trips_and_preserves_unrelated_zentty_configuration() {
+        let root = private_root("zentty-appearance-update");
+        let path = root.join("zentty/config.toml");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, "# retained\n[future]\nenabled = true\n").unwrap();
+        let appearance = zentty_core::AppearanceConfig {
+            theme_mode: ThemeMode::Automatic,
+            preferred_dark_theme_name: Some("Catppuccin Frappe".into()),
+            preferred_light_theme_name: Some("Catppuccin Latte".into()),
+            background_opacity: BackgroundOpacity::from_fraction(0.87),
+            sync_opencode_theme_with_terminal: false,
+        };
+        ConfigStore::update_appearance(&path, &appearance).unwrap();
+        let contents = fs::read_to_string(&path).unwrap();
+        assert!(contents.contains("# retained\n"));
+        assert!(contents.contains("[future]\nenabled = true\n"));
+        assert_eq!(
+            ConfigStore::load(path).unwrap().config.appearance,
+            appearance
+        );
+        remove(&root);
     }
 
     #[cfg(unix)]

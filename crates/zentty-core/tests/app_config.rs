@@ -1,4 +1,55 @@
-use zentty_core::{AppConfig, CommandFlattenAggressiveness};
+use zentty_core::{AppConfig, BackgroundOpacity, CommandFlattenAggressiveness, ThemeMode};
+
+#[test]
+fn appearance_defaults_and_source_compatible_values_are_explicit() {
+    let defaults = AppConfig::parse_toml("").unwrap().appearance;
+    assert_eq!(defaults.theme_mode, ThemeMode::Dark);
+    assert_eq!(defaults.background_opacity, None);
+    assert!(defaults.sync_opencode_theme_with_terminal);
+
+    let appearance = AppConfig::parse_toml(
+        r#"
+        [appearance]
+        theme_mode = "automatic"
+        preferred_dark_theme_name = "Catppuccin Frappe"
+        preferred_light_theme_name = "Catppuccin Latte"
+        local_background_opacity = 0.876
+        sync_opencode_theme_with_terminal = false
+        "#,
+    )
+    .unwrap()
+    .appearance;
+    assert_eq!(appearance.theme_mode, ThemeMode::Automatic);
+    assert_eq!(
+        appearance.theme_spec().to_string(),
+        "dark:Catppuccin Frappe,light:Catppuccin Latte"
+    );
+    assert_eq!(
+        appearance.background_opacity,
+        BackgroundOpacity::from_fraction(0.88)
+    );
+    assert!(!appearance.sync_opencode_theme_with_terminal);
+}
+
+#[test]
+fn appearance_accepts_source_mode_tokens_but_rejects_unknown_or_nonfinite_values() {
+    for (token, expected) in [
+        ("followMacOS", ThemeMode::Automatic),
+        ("alwaysDark", ThemeMode::Dark),
+        ("alwaysLight", ThemeMode::Light),
+    ] {
+        let source = format!("[appearance]\ntheme_mode = \"{token}\"\n");
+        assert_eq!(
+            AppConfig::parse_toml(&source)
+                .unwrap()
+                .appearance
+                .theme_mode,
+            expected
+        );
+    }
+    assert!(AppConfig::parse_toml("[appearance]\ntheme_mode = \"system\"\n").is_err());
+    assert!(AppConfig::parse_toml("[appearance]\nlocal_background_opacity = nan\n").is_err());
+}
 
 #[test]
 fn missing_clipboard_section_uses_source_defaults() {

@@ -2,16 +2,16 @@
   "schema_version": 1,
   "contract_id": "zentty-application-shell-responsibilities",
   "source": "crates/zentty-linux/src/application_shell.rs",
-  "source_sha256": "87ac0cbff6600c2a43fe832b2b35e33d539e053af4801b6b000918ea31a08a82",
+  "source_sha256": "02f7072b51f5b07f5dab1a89163bbe1d0dc6ebcea120c2ae7f858c6aace2d2eb",
   "owned_source_sha256": {
     "crates/zentty-linux/src/main.rs": "6bf0a27fe6c3c543ecce3b376d2ec907150d02d788048ffe104023a4aab9062f",
     "crates/zentty-linux/src/application.rs": "6f14dc9e6c60d46f3713faa997501782e5c9750f0e00b40e27472431cede6c7d",
-    "crates/zentty-linux/src/config_store.rs": "a448409be000a1b03de8939b3623f8fd39ac385ac2f236ab4678bde8958ab060",
+    "crates/zentty-linux/src/config_store.rs": "719e8fe9c6cf72af2e4496d7ad22b00936eb095dd5e550322ec42b0f24af8df4",
     "crates/zentty-linux/src/window_set.rs": "501d595889c11a41a4261ef8282465d76dd9ed8ccd1d004406b558579b0bf58e",
     "crates/zentty-linux/src/agent_runtime.rs": "48f30d38048ae5388ca59aee2021e1215cabdfc033e66755ed32c6f92dcb8671",
     "crates/zentty-linux/src/codex_enrichment.rs": "fe87631c75c04b63962b7f89d311a778a25af8f27a1dcb4d5950b3efcbaa476e",
-    "crates/zentty-linux/src/application_shell/action_router.rs": "bf35190997fc9a07427baa265e688be22bf315f3dbd16126597f4711610d811c",
-    "crates/zentty-linux/src/application_shell/shortcut_registry.rs": "1f178d4b4010be22387a64552996f8de4abb3afb41491a1069aa60384f478ab0",
+    "crates/zentty-linux/src/application_shell/action_router.rs": "6f4b56ca55bd71a8782a09c03efecb732ebf6b76e59b8c98c585a9bb35aaaad3",
+    "crates/zentty-linux/src/application_shell/shortcut_registry.rs": "404a10edec7274e49fc3914f3c519f9b0a0d59a7e1f20fddc8cd28643866b1c8",
     "crates/zentty-linux/src/application_shell/shortcut_runtime.rs": "8b5b0230608324360ee62045c7eb726fc18cae30a5fdeaf86259286610a41d60",
     "crates/zentty-linux/src/shortcut_settings.rs": "42e869ded69fbdb5de92b781d9806353d28b179da965c127026cae9f3038ff70",
     "crates/zentty-linux/src/application_shell/clipboard_actions.rs": "1502a0353bc3e0d645d6c6bd81aae1ed1306f312838f92a635944d402cd441b0",
@@ -340,7 +340,7 @@
         "navigate_history", "select_adjacent_pane", "select_adjacent_worklane",
         "pane_references_in_sidebar_order", "current_pane_reference", "select_pane_reference",
         "peek_previews", "refresh_pane_presentation", "refresh_right_insertion_behavior",
-        "reload_ghostty_config", "report_ghostty_reload_metrics"
+        "reload_ghostty_config", "report_ghostty_reload_metrics", "apply_theme_mode_command"
       ]
     }
   ],
@@ -422,7 +422,7 @@
     "server_container_discovery": [
       "discover", "run_docker", "parse_inspect_json", "deepest_matching_pane", "is_web_like"
     ],
-    "config_store": ["load_default", "load", "update_default_ignored_port_rules", "update_default_preferred_browser", "update_default_shortcuts", "update_ignored_port_rules", "update_preferred_browser", "update_shortcuts", "resolve_config_target", "atomic_replace", "read_bounded", "invalid_snapshot", "default_config_file_from", "nonempty_path"],
+    "config_store": ["load_default", "load", "update_default_appearance", "update_default_ghostty_theme", "update_default_ghostty_value", "update_default_ignored_port_rules", "update_default_preferred_browser", "update_default_shortcuts", "update_appearance", "update_ghostty_value", "update_ignored_port_rules", "update_preferred_browser", "update_shortcuts", "with_config_lock", "set_optional_appearance_string", "resolve_config_target", "atomic_replace", "read_bounded", "invalid_snapshot", "default_config_file_from", "default_ghostty_config_file_from", "nonempty_path"],
     "persistence_coordinator": [
       "clean_exit_decision", "complete_launch", "default_state_directory", "drain_errors",
       "drain_live_snapshot_errors", "drop", "flush_live_snapshot_if_due",
@@ -543,7 +543,11 @@
     {"name":"export-template","parameter":"string","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"edit-template","parameter":"string_pair","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"show-task-manager","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
-    {"name":"reload-config","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"}
+    {"name":"reload-config","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"toggle-light-dark-theme","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"use-dark-theme","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"use-light-theme","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"use-auto-theme","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"}
   ],
   "conditional_action_availability": {
     "multiple_columns": ["resize-pane-left", "resize-pane-right", "arrange-golden-wide", "arrange-golden-narrow"],

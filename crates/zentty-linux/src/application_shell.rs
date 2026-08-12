@@ -75,7 +75,9 @@ use action_router::{
     ACTION_RESIZE_PANE_DOWN, ACTION_RESIZE_PANE_LEFT, ACTION_RESIZE_PANE_RIGHT,
     ACTION_RESIZE_PANE_UP, ACTION_RESTORE_CLOSED_PANE, ACTION_SELECT_ALL, ACTION_SHOW_TASK_MANAGER,
     ACTION_SPLIT_PANE_BELOW, ACTION_SPLIT_PANE_RIGHT, ACTION_STOP_IGNORING_SERVER_PORT,
-    ACTION_STOP_SERVER, ACTION_TOGGLE_SIDEBAR, ACTION_USE_SELECTION_FOR_FIND, ActionRouter,
+    ACTION_STOP_SERVER, ACTION_TOGGLE_LIGHT_DARK_THEME, ACTION_TOGGLE_SIDEBAR,
+    ACTION_USE_AUTO_THEME, ACTION_USE_DARK_THEME, ACTION_USE_LIGHT_THEME,
+    ACTION_USE_SELECTION_FOR_FIND, ActionRouter,
 };
 use agent_events::AgentEventCoordinator;
 use pane_runtime::DetachedPaneRuntime;
@@ -1261,6 +1263,36 @@ impl ApplicationShell {
         }
     }
 
+    fn apply_theme_mode_command(&mut self, command: zentty_core::ThemeModeCommand) {
+        let current = match crate::config_store::ConfigStore::load_default() {
+            Ok(snapshot) => snapshot.config.appearance,
+            Err(error) => {
+                eprintln!("zentty-linux: action=theme-mode result=failed detail={error}");
+                return;
+            }
+        };
+        let desktop_is_dark = gtk::Settings::default()
+            .is_some_and(|settings| settings.is_gtk_application_prefer_dark_theme());
+        let mut appearance = current;
+        appearance.theme_mode = command.resolve(appearance.theme_mode, desktop_is_dark);
+        let spec = appearance.theme_spec();
+        if let Err(error) = crate::config_store::ConfigStore::update_default_ghostty_theme(&spec) {
+            eprintln!("zentty-linux: action=theme-mode result=failed detail={error}");
+            return;
+        }
+        if let Err(error) = crate::config_store::ConfigStore::update_default_appearance(&appearance)
+        {
+            eprintln!("zentty-linux: action=theme-mode result=failed detail={error}");
+            return;
+        }
+        self.config.appearance = appearance;
+        eprintln!(
+            "zentty-linux: action=theme-mode result=persisted mode={}",
+            self.config.appearance.theme_mode.config_value()
+        );
+        self.reload_ghostty_config();
+    }
+
     fn report_ghostty_reload_metrics(&self, stage: &str) {
         let mut pane_ids = self.pane_runtime.live_pane_ids();
         pane_ids.sort();
@@ -1578,6 +1610,30 @@ impl ApplicationShell {
                 "Configure application keyboard shortcuts",
                 "preferences shortcuts bindings presets",
                 ACTION_OPEN_SETTINGS,
+            ),
+            CommandPaletteItem::action(
+                "Toggle Light/Dark Theme",
+                "Switch between the remembered light and dark themes",
+                "appearance colors automatic",
+                ACTION_TOGGLE_LIGHT_DARK_THEME,
+            ),
+            CommandPaletteItem::action(
+                "Use Dark Theme",
+                "Use the remembered dark terminal theme",
+                "appearance colors",
+                ACTION_USE_DARK_THEME,
+            ),
+            CommandPaletteItem::action(
+                "Use Light Theme",
+                "Use the remembered light terminal theme",
+                "appearance colors",
+                ACTION_USE_LIGHT_THEME,
+            ),
+            CommandPaletteItem::action(
+                "Use Auto Theme",
+                "Follow the Linux desktop light or dark appearance",
+                "appearance colors automatic system",
+                ACTION_USE_AUTO_THEME,
             ),
             CommandPaletteItem::action(
                 "Task Manager",

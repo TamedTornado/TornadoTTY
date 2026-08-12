@@ -6,6 +6,7 @@ mod agent_launch;
 mod agent_protocol;
 mod agent_status;
 mod app_config;
+mod appearance;
 mod atomic_file_store;
 mod bookmark_store;
 mod clean_copy;
@@ -43,8 +44,12 @@ pub use agent_status::{
     AgentPhase, AgentProgress, AgentStatusStore, PaneAgentStatus, TerminalProgressState,
 };
 pub use app_config::{
-    AppConfig, ClipboardConfig, OpenWithConfig, OpenWithCustomApp, PaneConfig,
+    AppConfig, AppearanceConfig, ClipboardConfig, OpenWithConfig, OpenWithCustomApp, PaneConfig,
     ServerBrowserCustomApp, ServerDetectionConfig,
+};
+pub use appearance::{
+    BackgroundOpacity, FALLBACK_DARK_THEME, FALLBACK_LIGHT_THEME, ThemeMode, ThemeModeCommand,
+    ThemeSpec, update_ghostty_value,
 };
 pub use atomic_file_store::{AtomicFileAction, AtomicFileStore, AtomicFileStoreError};
 pub use bookmark_store::{

@@ -2,7 +2,8 @@ use serde::Deserialize;
 
 use crate::shortcut::ShortcutDocument;
 use crate::{
-    CleanCopyOptions, CommandFlattenAggressiveness, LINUX_OPEN_WITH_BUILTIN_IDS, ShortcutBinding,
+    BackgroundOpacity, CleanCopyOptions, CommandFlattenAggressiveness, LINUX_OPEN_WITH_BUILTIN_IDS,
+    ShortcutBinding, ThemeMode, ThemeSpec,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -24,6 +25,7 @@ impl Default for ClipboardConfig {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct AppConfig {
+    pub appearance: AppearanceConfig,
     pub clipboard: ClipboardConfig,
     pub open_with: OpenWithConfig,
     pub server_detection: ServerDetectionConfig,
@@ -41,6 +43,7 @@ impl AppConfig {
         let document = toml::from_str::<Document>(source)
             .map_err(|error| format!("invalid Zentty configuration: {error}"))?;
         Ok(Self {
+            appearance: document.appearance.into_config()?,
             clipboard: document.clipboard.into_config(),
             open_with: document.open_with.into_config().normalized(),
             server_detection: document.server_detection.into_config().normalized(),
@@ -53,11 +56,81 @@ impl AppConfig {
 #[derive(Deserialize, Default)]
 #[serde(default)]
 struct Document {
+    appearance: AppearanceDocument,
     clipboard: ClipboardDocument,
     open_with: OpenWithDocument,
     server_detection: ServerDetectionDocument,
     panes: PaneDocument,
     shortcuts: ShortcutDocument,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AppearanceConfig {
+    pub theme_mode: ThemeMode,
+    pub preferred_dark_theme_name: Option<String>,
+    pub preferred_light_theme_name: Option<String>,
+    pub background_opacity: Option<BackgroundOpacity>,
+    pub sync_opencode_theme_with_terminal: bool,
+}
+
+impl Default for AppearanceConfig {
+    fn default() -> Self {
+        Self {
+            theme_mode: ThemeMode::Dark,
+            preferred_dark_theme_name: None,
+            preferred_light_theme_name: None,
+            background_opacity: None,
+            sync_opencode_theme_with_terminal: true,
+        }
+    }
+}
+
+impl AppearanceConfig {
+    #[must_use]
+    pub fn theme_spec(&self) -> ThemeSpec {
+        ThemeSpec::new(
+            self.theme_mode,
+            self.preferred_dark_theme_name.as_deref(),
+            self.preferred_light_theme_name.as_deref(),
+        )
+    }
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct AppearanceDocument {
+    theme_mode: Option<String>,
+    preferred_dark_theme_name: Option<String>,
+    preferred_light_theme_name: Option<String>,
+    #[serde(alias = "background_opacity")]
+    local_background_opacity: Option<f64>,
+    sync_opencode_theme_with_terminal: Option<bool>,
+}
+
+impl AppearanceDocument {
+    fn into_config(self) -> Result<AppearanceConfig, String> {
+        let defaults = AppearanceConfig::default();
+        let theme_mode = self.theme_mode.map_or(Ok(defaults.theme_mode), |value| {
+            ThemeMode::parse_config_value(&value)
+                .ok_or_else(|| format!("invalid appearance.theme_mode: {value}"))
+        })?;
+        let background_opacity = match self.local_background_opacity {
+            Some(value) => Some(
+                BackgroundOpacity::from_fraction(value)
+                    .ok_or_else(|| "appearance.background_opacity must be finite".to_owned())?,
+            ),
+            None => None,
+        };
+        Ok(AppearanceConfig {
+            theme_mode,
+            preferred_dark_theme_name: self.preferred_dark_theme_name,
+            preferred_light_theme_name: self.preferred_light_theme_name,
+            background_opacity,
+            sync_opencode_theme_with_terminal: self
+                .sync_opencode_theme_with_terminal
+                .unwrap_or(defaults.sync_opencode_theme_with_terminal),
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

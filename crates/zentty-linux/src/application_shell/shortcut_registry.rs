@@ -91,6 +91,38 @@ pub(crate) const COMMANDS: &[ShortcutCommandSpec] = &[
         None
     ),
     command!(
+        "theme.toggle_light_dark",
+        "Toggle Light/Dark Theme",
+        "Switch between the remembered light and dark themes.",
+        General,
+        ACTION_TOGGLE_LIGHT_DARK_THEME,
+        None
+    ),
+    command!(
+        "theme.use_dark",
+        "Use Dark Theme",
+        "Use the remembered dark terminal theme.",
+        General,
+        ACTION_USE_DARK_THEME,
+        None
+    ),
+    command!(
+        "theme.use_light",
+        "Use Light Theme",
+        "Use the remembered light terminal theme.",
+        General,
+        ACTION_USE_LIGHT_THEME,
+        None
+    ),
+    command!(
+        "theme.use_auto",
+        "Use Auto Theme",
+        "Follow the Linux desktop light or dark appearance.",
+        General,
+        ACTION_USE_AUTO_THEME,
+        None
+    ),
+    command!(
         "bookmarks.openPopover",
         "Show Bookmarks & Presets",
         "Open the bookmarks and presets browser.",
