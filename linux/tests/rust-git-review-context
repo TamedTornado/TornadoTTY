@@ -122,7 +122,8 @@ for _ in $(seq 1 300); do
     else
         window_id=wayland-focused
     fi
-    if [[ -n "${window_id}" ]] && grep -Fq 'project-context pane=pane-1' "${log}"; then
+    if [[ -n "${window_id}" ]] &&
+        grep -Fq 'reference=feature/review-context dirty=true pr=42 refresh=fresh' "${log}"; then
         break
     fi
     sleep 0.05
@@ -169,12 +170,53 @@ activate_palette_action() {
     activate_first
 }
 
-activate_palette_action 'Refresh Git and Review Status'
-for _ in $(seq 1 160); do
-    [[ "$(grep -Fc 'reference=feature/review-context dirty=true pr=42 refresh=fresh' "${log}" || true)" -ge 2 ]] && break
+submit_terminal_command() {
+    local command="$1"
+    type_text "${command}"
+    if [[ "${backend}" == x11 ]]; then
+        xdotool key --window "${window_id}" Return
+    else
+        wtype -k Return
+    fi
+}
+
+submit_terminal_command 'git switch -c process-refresh'
+for _ in $(seq 1 200); do
+    grep -Fq 'reference=process-refresh dirty=true pr=42 refresh=fresh' "${log}" && break
     sleep 0.05
 done
-[[ "$(grep -Fc 'reference=feature/review-context dirty=true pr=42 refresh=fresh' "${log}" || true)" -ge 2 ]] ||
+grep -Fq 'reference=process-refresh dirty=true pr=42 refresh=fresh' "${log}" ||
+    fail "terminal process completion did not refresh changed Git context"
+
+git -C "${project}" switch -c filesystem-refresh >/dev/null
+for _ in $(seq 1 200); do
+    grep -Fq 'reference=filesystem-refresh dirty=true pr=42 refresh=fresh' "${log}" && break
+    sleep 0.05
+done
+grep -Fq 'reference=filesystem-refresh dirty=true pr=42 refresh=fresh' "${log}" ||
+    fail "real Git filesystem change did not refresh context"
+
+submit_terminal_command \
+    "printf '%s' '{\"version\":1,\"event\":\"agent.idle\",\"agent\":{\"name\":\"Codex\"},\"session\":{\"id\":\"git-review-agent-refresh\"}}' | \"\$ZENTTY_CLI_BIN\" ipc agent-event"
+for _ in $(seq 1 200); do
+    grep -Fq 'kind=agent.idle session=git-review-agent-refresh' "${log}" &&
+        grep -Fq 'pane=pane-1 refresh=agent-completion-requested' "${log}" && break
+    sleep 0.05
+done
+grep -Fq 'kind=agent.idle session=git-review-agent-refresh' "${log}" ||
+    fail "authenticated agent completion did not reach the real product reducer"
+grep -Fq 'pane=pane-1 refresh=agent-completion-requested' "${log}" ||
+    fail "agent completion did not request a Git/review context refresh"
+
+context_receipts_before_manual="$(
+    grep -Fc 'reference=filesystem-refresh dirty=true pr=42 refresh=fresh' "${log}" || true
+)"
+activate_palette_action 'Refresh Git and Review Status'
+for _ in $(seq 1 160); do
+    [[ "$(grep -Fc 'reference=filesystem-refresh dirty=true pr=42 refresh=fresh' "${log}" || true)" -gt "${context_receipts_before_manual}" ]] && break
+    sleep 0.05
+done
+[[ "$(grep -Fc 'reference=filesystem-refresh dirty=true pr=42 refresh=fresh' "${log}" || true)" -gt "${context_receipts_before_manual}" ]] ||
     fail "manual refresh did not traverse the real resolver"
 
 activate_palette_action 'Open Branch on Remote'
@@ -183,9 +225,9 @@ for _ in $(seq 1 100); do
     [[ "$(wc -l <"${open_receipt}" 2>/dev/null || true)" -ge 2 ]] && break
     sleep 0.05
 done
-grep -Fxq 'https://github.com/acme/rocket/tree/feature/review-context' "${open_receipt}" ||
+grep -Fxq 'https://github.com/acme/rocket/tree/filesystem-refresh' "${open_receipt}" ||
     fail "branch open did not receive the validated remote URL"
 grep -Fxq 'http://127.0.0.1:41777/acme/rocket/pull/42' "${open_receipt}" ||
     fail "pull-request open did not receive the controlled validated URL"
 
-echo "rust-git-review-context-${backend}: PASS real-git real-gh-http-forge nested-cwd dirty branch pr precedence manual-refresh safe-open"
+echo "rust-git-review-context-${backend}: PASS real-git real-gh-http-forge nested-cwd dirty branch pr precedence process-refresh filesystem-refresh agent-completion-refresh manual-refresh safe-open"

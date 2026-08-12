@@ -13,14 +13,14 @@
     "crates/zentty-linux/src/application_shell/action_router.rs": "070101075f53cc453e08357b4b827f53bfb08f9f0b61922e1b1fecf6caa0437e",
     "crates/zentty-linux/src/application_shell/clipboard_actions.rs": "1502a0353bc3e0d645d6c6bd81aae1ed1306f312838f92a635944d402cd441b0",
     "crates/zentty-linux/src/application_shell/agent_events.rs": "3b6dc220ad2434b15213a34c6c225f5dad868880437b3b54365ba77e42b2d0a4",
-    "crates/zentty-linux/src/application_shell/project_context_runtime.rs": "caf1c7fd03ac39211d65c81d7eba55f4dccb570ffc19ba4be5449098c2dcaded",
+    "crates/zentty-linux/src/application_shell/project_context_runtime.rs": "a6168d658c98ab6407f3d0f1f1ab624d3e3f91e10de39fd4b5b28dd22ce19e7f",
     "crates/zentty-linux/src/application_shell/open_with_runtime.rs": "80ec9ae6b16cadc132e763ca352fddfce6cc02725cbed0f7062bf6f231246aca",
     "crates/zentty-linux/src/application_shell/bookmark_runtime.rs": "ba45a8ab4e3c07da6233db903c5ceaf031cdf3a384c5ada7a960eaa7b746d0ba",
     "crates/zentty-linux/src/bookmarks_view.rs": "3eae840226aec0a131ab3085675d38b802f39d55950e437faa02c988848e8f92",
     "crates/zentty-linux/src/restore_notice.rs": "02844f204871767d2aa4bc6076fff7c2145a52c493583246ef686f886a1db918",
     "crates/zentty-linux/src/sidebar.rs": "9869e8a9e45afea37279491471e85d5e341477b76fb8219eaad1fd029a1a502f",
     "crates/zentty-linux/src/application_shell/global_search.rs": "98a1963830af8616b31da2558ae6f27c4461342ef3085f6ef9cda0863a1ddc7c",
-    "crates/zentty-linux/src/application_shell/pane_runtime.rs": "d71e434316ed1f89d0da48582fa07f782cab5a06453bcb779d79383f9f669116",
+    "crates/zentty-linux/src/application_shell/pane_runtime.rs": "45f238c8949e12786d26c94c77275d42696edfe391f5c96d36db93ca7cbac2f6",
     "crates/zentty-linux/src/application_shell/server_runtime.rs": "cd39ebc1f95f7eb3c063058036fabbecc90cf367457a1538f2f6c8e657a0b919",
     "crates/zentty-linux/src/application_shell/task_runner_runtime.rs": "ec752b328170a8b1363a87ebce06d58220f717237f97d16bd32b4aca31cb7ddb",
     "crates/zentty-linux/src/docker_discovery.rs": "1836046bf3159c0a207ed999dc44a2ef8d9aa6276d79275031e2dbbd6cdd6c6d",
@@ -372,10 +372,10 @@
     ],
     "task_runner_coordinator": ["run_task", "launch_in_new_pane"],
     "project_context_coordinator": [
-      "adaptive_refresh_interval", "apply_context_result", "apply_icon_invalidations", "apply_icon_result", "apply_results", "canonical_directories_match", "focused_context", "forget_pane", "install",
-      "launch_validated_url", "mark_pane_for_refresh", "open_focused_branch",
+      "adaptive_refresh_interval", "apply_context_result", "apply_icon_invalidations", "apply_icon_result", "apply_results", "cancel_watch", "canonical_directories_match", "collect_probe_sources", "focused_context", "forget_pane", "install",
+      "launch_validated_url", "mark_pane_for_process_refresh", "mark_pane_for_refresh", "open_focused_branch",
       "open_focused_pull_request", "preserve_review_on_refresh_failure", "probe",
-      "observation_is_current", "process_working_directory", "refresh_focused", "request_probe", "safe_http_url"
+      "observation_is_current", "process_working_directory", "refresh_focused", "request_probe", "safe_http_url", "sync_watches", "watch_targets"
     ],
     "open_with_coordinator": [
       "discover", "open_primary", "open_target", "focused_context_is_available",

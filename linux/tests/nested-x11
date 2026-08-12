@@ -221,13 +221,26 @@ terminate_session() {
         wait "${session_pid}" 2>/dev/null || true
     fi
 }
+remove_run_root() {
+    local portal_mount="${run_root}/runtime/doc"
+
+    if command -v mountpoint >/dev/null 2>&1 && mountpoint -q "${portal_mount}"; then
+        command -v fusermount3 >/dev/null 2>&1 ||
+            fail "private document-portal mount survived without fusermount3 cleanup"
+        fusermount3 -u "${portal_mount}" ||
+            fail "private document-portal mount could not be unmounted"
+        mountpoint -q "${portal_mount}" &&
+            fail "private document-portal mount survived unmount"
+    fi
+    rm -rf -- "${run_root}"
+}
 cleanup() {
     trap - EXIT HUP INT TERM
     terminate_session
     if [[ -n "${report_temp}" ]]; then
         rm -f -- "${report_temp}"
     fi
-    rm -rf -- "${run_root}"
+    remove_run_root
     [[ -z "${display_claim}" ]] || rmdir -- "${display_claim}" 2>/dev/null || true
 }
 signal_exit() {
@@ -334,7 +347,7 @@ else
     facts=""
 fi
 
-rm -rf -- "${run_root}"
+remove_run_root
 [[ -z "${display_claim}" ]] || rmdir -- "${display_claim}" 2>/dev/null || true
 trap - EXIT HUP INT TERM
 

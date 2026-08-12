@@ -527,6 +527,9 @@ impl PaneRuntimeCoordinator {
                     let agent_changed =
                         shell.state.reconcile_terminal_title(&title_id, &title, now);
                     shell.schedule_codex_transcript_enrichment(&title_id);
+                    super::project_context_runtime::mark_pane_for_process_refresh(
+                        &mut shell, &title_id,
+                    );
                     if shell.state.set_pane_title(&title_id, &title) || agent_changed {
                         shell.refresh_sidebar_metadata();
                     }

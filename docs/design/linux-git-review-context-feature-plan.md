@@ -45,6 +45,25 @@ diff, or become an editor.
    architecture contracts, Clippy, ShellCheck, and the presently executable
    qualification matrix run before promotion.
 
+## Event-driven refresh closeout
+
+The final GH-18 refresh slice extends the existing coordinator; it must not add
+another scanner or polling loop.
+
+1. Extend the existing real X11/Wayland product journey first. A command typed
+   into the real Ghostty PTY changes branch and must refresh after the ordinary
+   terminal process/title lifecycle. A second branch change made by an
+   independent real `git` process must refresh through bounded filesystem
+   observation without palette/manual input.
+2. Resolve the canonical Git metadata directory, including linked worktrees,
+   at the existing real-Git boundary. Watch only the active repository root and
+   relevant Git metadata paths; do not recursively scan source trees.
+3. Coalesce process, filesystem, focus, manual, timer, and authenticated agent
+   completion triggers through the existing `force_panes` set and single
+   `probe_in_flight` owner.
+4. Prove watcher teardown when panes disappear and reject stale observations
+   through the existing canonical-CWD check.
+
 ## Acceptance criteria
 
 - [x] Real nested repository and worktree roots resolve canonically.
@@ -62,6 +81,12 @@ diff, or become an editor.
       and no shell interpolation.
 - [x] X11 and Wayland journeys exercise the real product boundary.
 - [x] Dogfood records every discovery, failure, repair, and limitation.
+- [x] Real terminal process completion refreshes changed Git context without a
+      manual action in controlled X11 and Wayland.
+- [x] Relevant real Git filesystem changes refresh context without recursively
+      watching or polling unrelated repository contents.
+- [x] Focus, explicit command, authenticated agent completion, process, file,
+      and adaptive timer triggers share one bounded/coalesced probe owner.
 
 ## Qualification language
 

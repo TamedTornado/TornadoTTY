@@ -136,6 +136,7 @@ impl ReviewContext {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProjectContext {
     pub repository_root: PathBuf,
+    pub git_directory: PathBuf,
     pub reference: GitReference,
     pub dirty: bool,
     pub remote_name: Option<String>,
@@ -210,6 +211,23 @@ impl SystemProjectContextResolver {
         let repository_root = Path::new(raw_root)
             .canonicalize()
             .map_err(ProjectContextError::Io)?;
+        let git_directory_result = self.run(
+            "git",
+            &["rev-parse", "--absolute-git-dir"],
+            &repository_root,
+        )?;
+        if !git_directory_result.success {
+            return Err(ProjectContextError::InvalidOutput(
+                "git could not resolve its metadata directory".to_owned(),
+            ));
+        }
+        let raw_git_directory = required_line(
+            &git_directory_result.stdout,
+            "git returned an empty metadata directory",
+        )?;
+        let git_directory = Path::new(raw_git_directory)
+            .canonicalize()
+            .map_err(ProjectContextError::Io)?;
 
         let branch_result = self.run(
             "git",
@@ -253,6 +271,7 @@ impl SystemProjectContextResolver {
 
         Ok(Some(ProjectContext {
             repository_root,
+            git_directory,
             reference,
             dirty,
             remote_name,

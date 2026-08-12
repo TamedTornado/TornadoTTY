@@ -73,6 +73,10 @@ fn real_git_resolves_nested_root_branch_dirty_state_and_remote() {
         context.repository_root,
         fixture.root.canonicalize().unwrap()
     );
+    assert_eq!(
+        context.git_directory,
+        fixture.root.join(".git").canonicalize().unwrap()
+    );
     assert_eq!(context.reference, GitReference::Branch("main".to_owned()));
     assert!(context.dirty);
     assert_eq!(
@@ -173,6 +177,11 @@ fn real_git_resolves_a_linked_worktree_as_its_own_canonical_root() {
         .unwrap()
         .unwrap();
     assert_eq!(context.repository_root, worktree.canonicalize().unwrap());
+    assert_ne!(
+        context.git_directory,
+        worktree.join(".git").canonicalize().unwrap()
+    );
+    assert!(context.git_directory.is_dir());
     assert_eq!(
         context.reference,
         GitReference::Branch("feature/worktree".to_owned())

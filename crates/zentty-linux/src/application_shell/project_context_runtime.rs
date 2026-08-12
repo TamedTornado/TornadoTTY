@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use gtk::{gio, glib};
+use gtk::{gio, gio::prelude::*, glib};
 use zentty_core::{
     ChecksState, ProjectContext, ProjectIconCache, ProjectIconLookup, PullRequestState,
     SystemProjectContextResolver,
@@ -27,6 +27,12 @@ pub(super) struct ProjectContextRuntime {
     icon_cache: ProjectIconCache,
     icon_invalidations: BTreeSet<PathBuf>,
     pub(super) icons: BTreeMap<String, PathBuf>,
+    watches: BTreeMap<String, ProjectWatch>,
+}
+
+struct ProjectWatch {
+    targets: Vec<PathBuf>,
+    monitors: Vec<gio::FileMonitor>,
 }
 
 #[derive(Clone, Debug)]
@@ -95,12 +101,20 @@ pub(super) fn mark_pane_for_refresh(shell: &mut ApplicationShell, pane_id: &str)
         .insert(pane_id.to_owned());
 }
 
+pub(super) fn mark_pane_for_process_refresh(shell: &mut ApplicationShell, pane_id: &str) {
+    mark_pane_for_refresh(shell, pane_id);
+    eprintln!("zentty-linux: project-context pane={pane_id} refresh=process-event-requested");
+}
+
 pub(super) fn forget_pane(shell: &mut ApplicationShell, pane_id: &str) {
     let runtime = &mut shell.project_context_runtime;
     runtime.force_panes.remove(pane_id);
     runtime.last_refresh.remove(pane_id);
     runtime.contexts.remove(pane_id);
     runtime.icons.remove(pane_id);
+    if let Some(watch) = runtime.watches.remove(pane_id) {
+        cancel_watch(watch);
+    }
     if runtime.last_active_pane.as_deref() == Some(pane_id) {
         runtime.last_active_pane = None;
     }
@@ -184,68 +198,9 @@ fn request_probe(shell: &Rc<RefCell<ApplicationShell>>) {
         if shell.shutting_down || shell.project_context_runtime.probe_in_flight {
             return;
         }
-        let active_worklane = shell.state.active_worklane_id().to_owned();
-        let focused_pane = shell.state.focused_pane_id().map(str::to_owned);
-        if shell.project_context_runtime.last_active_pane != focused_pane {
-            if let Some(pane_id) = &focused_pane {
-                shell
-                    .project_context_runtime
-                    .force_panes
-                    .insert(pane_id.clone());
-            }
-            shell
-                .project_context_runtime
-                .last_active_pane
-                .clone_from(&focused_pane);
-        }
-        let now = Instant::now();
-        let mut sources = Vec::new();
-        for worklane in shell.state.worklanes() {
-            for pane in worklane.columns.iter().flat_map(|column| &column.panes) {
-                if sources.len() >= MAX_PANES_PER_PROBE || pane.ssh_connection_label.is_some() {
-                    continue;
-                }
-                let forced = shell.project_context_runtime.force_panes.contains(&pane.id);
-                let active =
-                    worklane.id == active_worklane && Some(&pane.id) == focused_pane.as_ref();
-                let interval = if active {
-                    shell
-                        .project_context_runtime
-                        .contexts
-                        .get(&pane.id)
-                        .map_or(Duration::ZERO, adaptive_refresh_interval)
-                } else {
-                    BACKGROUND_REFRESH_INTERVAL
-                };
-                if !forced
-                    && shell
-                        .project_context_runtime
-                        .last_refresh
-                        .get(&pane.id)
-                        .is_some_and(|last| now.duration_since(*last) < interval)
-                {
-                    continue;
-                }
-                let working_directory = shell
-                    .pane_runtime
-                    .surface(&pane.id)
-                    .and_then(zentty_ghostty::GhosttySurface::foreground_process_id)
-                    .and_then(|pid| process_working_directory(pid).ok())
-                    .or_else(|| pane.working_directory.as_deref().map(PathBuf::from))
-                    .or_else(|| std::env::current_dir().ok());
-                if let Some(working_directory) = working_directory {
-                    sources.push(ProbeSource {
-                        pane_id: pane.id.clone(),
-                        working_directory,
-                        active,
-                        forced,
-                    });
-                }
-            }
-        }
-        if sources.is_empty() {
+        let Some(sources) = collect_probe_sources(&mut shell) else {
             return;
-        }
+        };
         for source in &sources {
             shell
                 .project_context_runtime
@@ -263,23 +218,193 @@ fn request_probe(shell: &Rc<RefCell<ApplicationShell>>) {
         let Some(shell) = weak.upgrade() else {
             return;
         };
-        let mut shell = shell.borrow_mut();
-        shell.project_context_runtime.probe_in_flight = false;
-        if shell.shutting_down {
+        let mut shell_ref = shell.borrow_mut();
+        shell_ref.project_context_runtime.probe_in_flight = false;
+        if shell_ref.shutting_down {
             return;
         }
         match result {
             Ok((icon_cache, results)) => {
                 let icon_cache = apply_icon_invalidations(
                     icon_cache,
-                    std::mem::take(&mut shell.project_context_runtime.icon_invalidations),
+                    std::mem::take(&mut shell_ref.project_context_runtime.icon_invalidations),
                 );
-                shell.project_context_runtime.icon_cache = icon_cache;
-                apply_results(&mut shell, results);
+                shell_ref.project_context_runtime.icon_cache = icon_cache;
+                apply_results(&mut shell_ref, results);
+                drop(shell_ref);
+                sync_watches(&shell);
             }
             Err(_) => eprintln!("zentty-linux: project-context error=worker-panic"),
         }
     });
+}
+
+fn collect_probe_sources(shell: &mut ApplicationShell) -> Option<Vec<ProbeSource>> {
+    let active_worklane = shell.state.active_worklane_id().to_owned();
+    let focused_pane = shell.state.focused_pane_id().map(str::to_owned);
+    if shell.project_context_runtime.last_active_pane != focused_pane {
+        if let Some(pane_id) = &focused_pane {
+            shell
+                .project_context_runtime
+                .force_panes
+                .insert(pane_id.clone());
+        }
+        shell
+            .project_context_runtime
+            .last_active_pane
+            .clone_from(&focused_pane);
+    }
+    let now = Instant::now();
+    let mut sources = Vec::new();
+    for worklane in shell.state.worklanes() {
+        for pane in worklane.columns.iter().flat_map(|column| &column.panes) {
+            if sources.len() >= MAX_PANES_PER_PROBE || pane.ssh_connection_label.is_some() {
+                continue;
+            }
+            let forced = shell.project_context_runtime.force_panes.contains(&pane.id);
+            let active = worklane.id == active_worklane && Some(&pane.id) == focused_pane.as_ref();
+            let interval = if active {
+                shell
+                    .project_context_runtime
+                    .contexts
+                    .get(&pane.id)
+                    .map_or(Duration::ZERO, adaptive_refresh_interval)
+            } else {
+                BACKGROUND_REFRESH_INTERVAL
+            };
+            if !forced
+                && shell
+                    .project_context_runtime
+                    .last_refresh
+                    .get(&pane.id)
+                    .is_some_and(|last| now.duration_since(*last) < interval)
+            {
+                continue;
+            }
+            let working_directory = shell
+                .pane_runtime
+                .surface(&pane.id)
+                .and_then(zentty_ghostty::GhosttySurface::foreground_process_id)
+                .and_then(|pid| process_working_directory(pid).ok())
+                .or_else(|| pane.working_directory.as_deref().map(PathBuf::from))
+                .or_else(|| std::env::current_dir().ok());
+            if let Some(working_directory) = working_directory {
+                sources.push(ProbeSource {
+                    pane_id: pane.id.clone(),
+                    working_directory,
+                    active,
+                    forced,
+                });
+            }
+        }
+    }
+    (!sources.is_empty()).then_some(sources)
+}
+
+fn sync_watches(shell: &Rc<RefCell<ApplicationShell>>) {
+    let desired = {
+        let shell = shell.borrow();
+        shell
+            .project_context_runtime
+            .contexts
+            .iter()
+            .map(|(pane_id, context)| (pane_id.clone(), watch_targets(context)))
+            .collect::<BTreeMap<_, _>>()
+    };
+    let obsolete = {
+        let shell = shell.borrow();
+        shell
+            .project_context_runtime
+            .watches
+            .keys()
+            .filter(|pane_id| !desired.contains_key(*pane_id))
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    for pane_id in obsolete {
+        if let Some(watch) = shell
+            .borrow_mut()
+            .project_context_runtime
+            .watches
+            .remove(&pane_id)
+        {
+            cancel_watch(watch);
+        }
+    }
+    for (pane_id, targets) in desired {
+        let current = shell
+            .borrow()
+            .project_context_runtime
+            .watches
+            .get(&pane_id)
+            .is_some_and(|watch| watch.targets == targets);
+        if current {
+            continue;
+        }
+        if let Some(watch) = shell
+            .borrow_mut()
+            .project_context_runtime
+            .watches
+            .remove(&pane_id)
+        {
+            cancel_watch(watch);
+        }
+        let mut monitors = Vec::new();
+        for (index, target) in targets.iter().enumerate() {
+            let file = gio::File::for_path(target);
+            let monitor = if index == 0 {
+                file.monitor_directory(gio::FileMonitorFlags::NONE, gio::Cancellable::NONE)
+            } else {
+                file.monitor_file(gio::FileMonitorFlags::NONE, gio::Cancellable::NONE)
+            };
+            let Ok(monitor) = monitor else {
+                eprintln!(
+                    "zentty-linux: project-context pane={pane_id} watch={} result=unavailable",
+                    target.display()
+                );
+                continue;
+            };
+            let weak = Rc::downgrade(shell);
+            let event_pane_id = pane_id.clone();
+            monitor.connect_changed(move |_, _, _, _| {
+                let Some(shell) = weak.upgrade() else {
+                    return;
+                };
+                let mut shell = shell.borrow_mut();
+                if shell.shutting_down || shell.state.pane(&event_pane_id).is_none() {
+                    return;
+                }
+                mark_pane_for_refresh(&mut shell, &event_pane_id);
+                eprintln!(
+                    "zentty-linux: project-context pane={event_pane_id} refresh=filesystem-event-requested"
+                );
+            });
+            monitors.push(monitor);
+        }
+        shell
+            .borrow_mut()
+            .project_context_runtime
+            .watches
+            .insert(pane_id, ProjectWatch { targets, monitors });
+    }
+}
+
+fn cancel_watch(watch: ProjectWatch) {
+    for monitor in watch.monitors {
+        monitor.cancel();
+    }
+}
+
+fn watch_targets(context: &ProjectContext) -> Vec<PathBuf> {
+    [
+        context.repository_root.clone(),
+        context.git_directory.join("HEAD"),
+        context.git_directory.join("index"),
+        context.git_directory.join("packed-refs"),
+        context.git_directory.join("logs/HEAD"),
+    ]
+    .into_iter()
+    .collect()
 }
 
 fn apply_icon_invalidations(
@@ -509,14 +634,16 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::Duration;
 
+    use gtk::{gio, gio::prelude::*};
     use zentty_core::{
         ChecksState, GitReference, ProjectContext, ProjectIconCache, ProjectIconLookup,
         PullRequestState, PullRequestSummary, ReviewContext,
     };
 
     use super::{
-        adaptive_refresh_interval, apply_icon_invalidations, canonical_directories_match,
-        preserve_review_on_refresh_failure, safe_http_url,
+        ProjectWatch, adaptive_refresh_interval, apply_icon_invalidations, cancel_watch,
+        canonical_directories_match, preserve_review_on_refresh_failure, safe_http_url,
+        watch_targets,
     };
 
     static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(1);
@@ -576,6 +703,7 @@ mod tests {
     fn adaptive_refresh_matches_source_review_cadence() {
         let context = |state: Option<PullRequestState>, checks_state: ChecksState| ProjectContext {
             repository_root: PathBuf::from("/tmp/project"),
+            git_directory: PathBuf::from("/tmp/project/.git"),
             reference: GitReference::Branch("main".to_owned()),
             dirty: false,
             remote_name: None,
@@ -611,6 +739,51 @@ mod tests {
     }
 
     #[test]
+    fn filesystem_watch_targets_are_bounded_to_root_and_git_metadata() {
+        let context = ProjectContext {
+            repository_root: PathBuf::from("/work/project"),
+            git_directory: PathBuf::from("/git/worktrees/project"),
+            reference: GitReference::Branch("feature/nested".to_owned()),
+            dirty: false,
+            remote_name: None,
+            remote: None,
+            review: None,
+            review_error: None,
+        };
+        assert_eq!(
+            watch_targets(&context),
+            [
+                "/work/project",
+                "/git/worktrees/project/HEAD",
+                "/git/worktrees/project/index",
+                "/git/worktrees/project/packed-refs",
+                "/git/worktrees/project/logs/HEAD",
+            ]
+            .map(PathBuf::from)
+        );
+    }
+
+    #[test]
+    fn cancelled_project_watch_releases_every_monitor() {
+        let directory = std::env::temp_dir().join(format!(
+            "zentty-project-cancel-watch-{}-{}",
+            std::process::id(),
+            NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let monitor = gio::File::for_path(&directory)
+            .monitor_directory(gio::FileMonitorFlags::NONE, gio::Cancellable::NONE)
+            .unwrap();
+        let observed = monitor.clone();
+        cancel_watch(ProjectWatch {
+            targets: vec![directory.clone()],
+            monitors: vec![monitor],
+        });
+        assert!(observed.is_cancelled());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn failed_refresh_preserves_only_the_same_repository_and_reference() {
         let review = ReviewContext {
             pull_request: PullRequestSummary {
@@ -624,6 +797,7 @@ mod tests {
         };
         let previous = ProjectContext {
             repository_root: PathBuf::from("/tmp/a"),
+            git_directory: PathBuf::from("/tmp/a/.git"),
             reference: GitReference::Branch("main".to_owned()),
             dirty: false,
             remote_name: None,

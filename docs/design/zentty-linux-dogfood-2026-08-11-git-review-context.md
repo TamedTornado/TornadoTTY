@@ -132,3 +132,119 @@ This report is updated while the slice is built, not reconstructed afterward.
 - The Git/PR slice has implemented local evidence, but no full Linux QA claim is
   made while the authoritative qualification matrix still contains BLOCKED,
   XFAIL, and NOT_IMPLEMENTED cells.
+
+## 2026-08-12 event-driven refresh closeout
+
+The prior coordinator already had one two-second observation source, adaptive
+review intervals, focus/manual forcing, and authenticated agent-completion
+forcing. GH-18 still explicitly requires relevant filesystem and process-event
+refresh. This closeout will extend that one coordinator rather than introduce a
+second watcher/scanner. The existing real product journey is being expanded
+first: one branch transition is typed into the real PTY and one is performed by
+an independent real Git process. Neither transition may use the manual refresh
+action. Both must pass under controlled X11 and Wayland before the inventory is
+promoted.
+
+A source audit also corrected the remaining bookmark wording in the GH-18
+audit: source `WorkspaceTemplate` has no agent-context field and source
+`ZenttyCLI`/`PaneIPCHandler` exposes no bookmark command. Supported agent
+context is captured only through the source fields that actually exist—safe
+environment overrides, live launch command, title/CWD, and source linkage.
+Inventing a Linux-only bookmark CLI or opaque agent payload would be a parity
+regression, not acceptance work.
+
+The test-first X11 journey initially failed exactly at the new terminal-process
+cell: changing from `feature/review-context` to `process-refresh` in the real
+Ghostty PTY did not update projected context before the ten-second deadline.
+This was the intended RED result. It established that the existing adaptive
+timer, focus action, and manual action did not satisfy the source event contract.
+The readiness condition also had to be narrowed from the generic
+`project-context pane=pane-1` receipt to the complete initial branch/dirty/PR
+receipt; otherwise a process-request diagnostic could masquerade as resolved
+context.
+
+The implementation extends the existing `ProjectContextRuntime`, rather than
+adding another coordinator. The real resolver now asks Git for
+`--absolute-git-dir` and canonicalizes the result, which is necessary because a
+linked worktree's `.git` is a file pointing at metadata elsewhere. Each live
+pane owns a bounded GIO watch set: the repository root and exact `HEAD`,
+`index`, `packed-refs`, and `logs/HEAD` metadata paths. There is no recursive
+source-tree observer. Process-title, filesystem, focus, explicit command,
+authenticated agent completion, and the existing adaptive timer all mark the
+same pane-keyed `force_panes` set and feed the single `probe_in_flight` worker.
+Pane teardown cancels and drops every owned monitor; a focused GIO test proves
+the cancellation primitive, and stale async results still require matching
+live canonical CWDs before projection.
+
+The expanded journey uses three independent real boundaries: a branch switch
+typed into the actual PTY, a branch switch from an external `git -C` process,
+and an authenticated `agent.idle` event sent through the pane's real private
+socket and token by the staged Zentty CLI. The first agent assertion failed even
+though the raw log showed the correct event because the test expected the
+diagnostic fields in reverse order. The assertion was corrected to the product's
+stable `pane=... refresh=...` receipt; no product retry or timing allowance was
+changed. Both controlled X11 and input-capable nested Wayland then passed the
+complete process/filesystem/agent/manual/safe-open journey.
+
+A governed diff-scoped mutation run covered the new canonical Git-directory
+resolver branch with `.cargo/mutants.toml` and explicit
+`--gitignore=true`: three mutants were generated, two were caught, and one was
+compiler-unviable. The ignored multi-gigabyte `build/linux-deps` tree was not
+copied. The GIO callbacks remain qualified at the real staged-product boundary
+rather than represented as Cargo-unit mutation coverage.
+
+Strict workspace Clippy then rejected the existing `request_probe` function at
+102 lines after the event wiring crossed the project's 100-line limit. Rather
+than suppress the lint, source selection was extracted into the focused
+`collect_probe_sources` helper. The single in-flight owner and observable
+behavior are unchanged, and strict all-target Clippy passes.
+
+One local X11 invocation also failed before product startup because the command
+was attempted inside the filesystem sandbox, where the host-owned
+`/tmp/.X11-unix` appears mapped to `nobody`. Re-running the same controlled
+wrapper outside that namespace used the standard root-owned socket directory
+and passed. This was an execution-namespace limitation, not an environmental
+pass and not a product or harness relaxation.
+The first workspace-test invocation likewise reached the known sandbox
+boundary: eight real agent-IPC tests could not bind Unix sockets and failed
+with `Operation not permitted`. The complete unchanged workspace suite passed
+when rerun outside that namespace; the failure was not converted into a skip.
+
+With these cells passing, the inventory's bounded
+`project.git-review-icons` item is IMPLEMENTED. GH-18 itself remains open: its
+portal/compositor bookmark-management XFAILs and the authoritative Linux matrix
+still prevent release or full-Linux qualification claims.
+
+The final rebuilt ReleaseSafe product passed the expanded journey again under
+both controlled X11 and input-capable nested Wayland. The complete
+`linux/tests/qualify-local` run then passed every presently executable support
+test and matrix command in 431.58 seconds. Declared totals are **PASS=110,
+FAIL=0, BLOCKED=7, XFAIL=4, NOT_IMPLEMENTED=21**. Implemented-local and
+product-boundary qualification passed; release and full Linux qualification
+remain correctly NOT_PASSED. Summary SHA-256:
+`2593a322bb8aa53633d8b5d6048277f20c8b3948b6d6d33ade155a2cc4feb86c`.
+
+Debug Valgrind remains **PASS with reviewed suppressions**, never an
+unsuppressed-clean claim. Its preserved raw receipt reports 426 errors in 426
+contexts, 6,240 definite bytes, and 41,397 indirect bytes; the reviewed
+post-suppression receipt reports zero errors/contexts and zero definite/indirect
+bytes, with 427 suppressed contexts tracked. ReleaseSafe Valgrind remains XFAIL and no
+suppression was broadened in this slice.
+
+Reviewing the expanded journey after that pass found one harness-quality defect:
+the agent-completion refresh could increment the same context receipt count
+used by the later manual-refresh assertion. The assertion now snapshots the
+count immediately before the palette action and requires a strictly newer
+receipt. Qualification was rerun rather than relying on the earlier summary.
+
+That rerun exposed an unrelated but real controlled-environment cleanup race in
+the existing X11 bookmark portal XFAIL. `xdg-document-portal` left its private
+`XDG_RUNTIME_DIR/doc` FUSE mount behind after the owned process group exited;
+`rm -rf` then failed on the disconnected endpoint before `nested-x11` could
+publish its environment report. The matrix correctly rejected the XFAIL as
+`MISSING_OR_INVALID_ENVIRONMENT_REPORT` instead of accepting environmental
+absence. The wrapper now detects that exact private portal mount, requires
+`fusermount3` only when it exists, unmounts it, proves it is gone, and only then
+removes the run root. A direct rerun of the real D-Bus/portal/Openbox XFAIL
+returned its expected exit 1 and published a complete isolation report with
+`run_root_removed=true`; the blocker itself remains XFAIL.
