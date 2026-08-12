@@ -309,3 +309,54 @@ uncertainty from the slice.
   Implemented local suite is PASSED; release and full Linux qualification remain
   NOT_PASSED by policy. Suppression review remains ACCEPTED, and this correction
   makes no new unsuppressed-clean claim.
+
+## Multiwindow closeout and network feasibility — 2026-08-12
+
+- The controlled Task Manager journey previously created two panes in only one
+  product window. Its first test-first extension created a second window, then
+  failed under X11 because physical input still targeted the first toplevel;
+  under Wayland it opened the second window but raced before its terminal and
+  compositor focus had settled. These were journey defects, not product
+  waivers. The journey now waits for the second real Ghostty surface and focus,
+  then reacquires input through the existing `product-input` authority.
+- The corrected journey starts three real fixture trees across two real GTK
+  windows, opens the application-owned Task Manager from window 2, requires
+  `rows=3 worklanes=2`, searches a real child owned by window 1, and routes
+  Focus Pane back to exactly `window-1/worklane-1/pane-1`. Reopening from that
+  first window must leave the controller-construction receipt count at one.
+  Controlled X11 and Wayland both pass this exact cross-window and singleton
+  contract. No second harness or product path was added.
+- Network feasibility used real kernel and service-manager interfaces. This
+  Ubuntu host runs cgroup v2, but pane children currently share the launcher's
+  scope. Unprivileged BPF is disabled with value 2; Zentty has no `CAP_BPF`,
+  `CAP_NET_ADMIN`, or `/sys/fs/bpf` access. A disposable process was moved into
+  a real transient user-systemd scope with `IPAccounting=yes`; systemd warned
+  that its IP firewall was not running as root, and real HTTPS traffic still
+  produced `[no data]` for ingress/egress bytes and packets.
+- A separate real TCP socket inspection showed that same-user socket
+  diagnostics expose lifetime TCP byte counters. That path was rejected as the
+  advertised backend because it omits UDP and traffic from sockets that close
+  between samples, and it cannot prove complete cgroup/namespace lifecycle
+  attribution. This is useful diagnostic evidence, not permission to label an
+  estimate as pane throughput.
+- The safe architecture therefore needs a separately reviewed, narrowly
+  privileged accounting service/helper and per-pane cgroup lifecycle. The GUI
+  must stay unprivileged, and no setuid helper, GUI-wide file capability,
+  destination/payload capture, or silent privilege escalation is acceptable.
+  This security/packaging design remains unimplemented.
+- The qualification matrix previously had only broad Task Manager PASS cells,
+  allowing its network and isolation gaps to remain prose-only. It now has two
+  additional explicit `NOT_IMPLEMENTED` cells tracked by GH-19:
+  `task-manager-network-accounting` and
+  `task-manager-cgroup-container-isolation`. Environmental absence is not a
+  pass, and the feature inventory remains `PARTIAL`.
+- After the matrix correction, the final `linux/tests/qualify-local` run passed
+  every presently executable support and matrix cell in 434,800 ms, including
+  both expanded two-window Task Manager journeys. Declared totals are PASS=113,
+  FAIL=0, BLOCKED=7, XFAIL=1, and NOT_IMPLEMENTED=23. The increase from 21 to
+  23 is the deliberate exposure of the two previously prose-only Task Manager
+  gaps, not a product regression. The summary SHA-256 is
+  `ff65c816b12d3e88af1e0e5c44d37e7b455a5a0f79bc375ec08bffe6fa830337`.
+  Implemented local suite is PASSED; release and full Linux qualification remain
+  NOT_PASSED. Debug Valgrind remains PASS with reviewed suppressions only;
+  ReleaseSafe Valgrind remains XFAIL.

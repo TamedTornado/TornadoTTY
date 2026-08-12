@@ -159,7 +159,7 @@ Construction order:
 
 Acceptance criteria:
 
-- [ ] One real Task Manager aggregates and routes panes across two real Zentty
+- [x] One real Task Manager aggregates and routes panes across two real Zentty
       windows under X11 and Wayland without row/controller identity churn.
 - [ ] Linux cgroup/namespace parsing is bounded, PID-safe, honest, and cannot
       claim ownership or throughput not proven by the kernel evidence.
@@ -171,3 +171,33 @@ Acceptance criteria:
       conditions; unsupported environments remain explicit qualification gaps.
 - [ ] Strict Clippy, workspace tests, governed mutation, and every presently
       executable matrix cell pass before inventory promotion.
+
+## Network feasibility result — 2026-08-12
+
+The current desktop host cannot safely supply the authoritative backend:
+
+- cgroup v2 is active, but Zentty's panes share the launching terminal's user
+  scope and the product does not yet own per-pane cgroups;
+- unprivileged BPF is disabled (`kernel.unprivileged_bpf_disabled=2`), the
+  process has neither `CAP_BPF` nor `CAP_NET_ADMIN`, and `/sys/fs/bpf` is not
+  accessible;
+- a real transient user-systemd scope accepted `IPAccounting=yes`, but systemd
+  reported that its IP firewall was not running as root and every byte/packet
+  counter remained `[no data]` after real HTTPS traffic;
+- same-user socket diagnostics can expose TCP lifetime counters, but cannot
+  account UDP, closed sockets, or all migration/lifecycle cases. They therefore
+  remain unsuitable for an authoritative Network column.
+
+The implementation boundary is consequently a privileged systems component,
+not another `/proc` parser. It requires an explicit security and packaging
+decision: a narrowly privileged service/helper must create or observe per-pane
+cgroups, attach reviewed ingress/egress BPF programs, return only bounded
+counter records over an authenticated local protocol, and retain no packet
+payload or destination data. Zentty itself must remain unprivileged. No setuid
+binary, broad capability grant on the GUI, silent authorization prompt, or
+best-effort TCP-only column is acceptable.
+
+The authoritative matrix now contains separate `NOT_IMPLEMENTED` cells for
+network accounting and cgroup/container isolation. This deliberately increases
+the visible gap count rather than allowing the passing CPU/memory Task Manager
+journeys to imply completion.
