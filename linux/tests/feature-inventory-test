@@ -44,8 +44,8 @@ jq -e '
     .result == "PASS" and
     .entry_count == 60 and
     .classifications.REQUIRED_INITIAL_RELEASE == 34 and
-    .implementation_statuses.IMPLEMENTED == 7 and
-    .implementation_statuses.PARTIAL == 28 and
+    .implementation_statuses.IMPLEMENTED == 8 and
+    .implementation_statuses.PARTIAL == 27 and
     .implementation_statuses.NOT_IMPLEMENTED == 24 and
     .evidence.app_commands == 70 and
     .evidence.pane_commands == 33 and

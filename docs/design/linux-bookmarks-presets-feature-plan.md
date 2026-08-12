@@ -86,21 +86,20 @@ creating a second session-restore mechanism.
 - [x] A standard keyboard context-menu route physically proves rename, edit,
       duplicate, pin, convert, delete, linked update, and unlink against the
       staged product in controlled X11.
-- [ ] The identical management journey passes under controlled Wayland. Cage's
-      second-transient input defect is an explicit GH-18 XFAIL.
-- [ ] Real GTK chooser journeys export an actual `.zenttypreset`, delete the
+- [x] The identical management journey passes under controlled Wayland after
+      nested popovers release ownership before presenting each transient.
+- [x] Real GTK chooser journeys export an actual `.zenttypreset`, delete the
       live record, import the exported file, and prove the portable persisted
-      result in controlled X11 and Wayland. Both portal-backed journeys are
-      explicit GH-18 XFAILs rather than environmental passes.
+      result in controlled X11 and Wayland without relying on a desktop portal.
 - [x] One real staged-product journey crosses save, quit, restart, restore, and
       terminal readiness with no product-only fixture route.
 - [x] X11 and Wayland controlled journeys pass, focused policy mutation passes,
       and every presently executable matrix cell is rerun.
 
-The authoritative matrix promotes controlled X11 management to PASS and keeps
-the three reproducible compositor/portal defects executable as XFAILs. UI
-exposure alone is not end-to-end evidence, and GH-18 remains open until those
-tracked journeys pass.
+The authoritative matrix promotes controlled X11 and Wayland management plus
+both real chooser round trips to PASS. UI exposure alone is not end-to-end
+evidence; promotion follows staged-product journeys against real files, the
+real store, real Ghostty PTYs, and controlled compositors.
 
 ## Native GTK closeout — 2026-08-12
 

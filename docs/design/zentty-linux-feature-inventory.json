@@ -268,10 +268,10 @@
       "origin": "PORT_PARITY",
       "user_impact": "Bookmarks are the source feature for intentionally reusable setups; ordinary crash/session restore does not replace them.",
       "linux_owner_issue": 18,
-      "implementation_status": "PARTIAL",
+      "implementation_status": "IMPLEMENTED",
       "focused_tests": ["crates/zentty-core/tests/bookmark_store.rs", "crates/zentty-core/tests/workspace_template.rs", "crates/zentty-core/tests/workspace_state.rs", "crates/zentty-linux/src/application_shell/bookmark_runtime.rs", "crates/zentty-linux/src/bookmarks_view.rs"],
       "product_scenarios": ["linux/tests/rust-bookmarks-presets"],
-      "test_plan": "Controlled X11 and Wayland now physically save through the source shortcut, inspect the private XDG file and ambient-secret boundary, quit, restart, activate through the real GTK popover, assert a real Ghostty PTY/CWD/command and recency, then make the stored CWD/command stale and assert fallback CWD, prefilled command, and a visible warning. Remaining acceptance work is a physical import/export round trip plus focused mutation and final whole-matrix rerun.",
+      "test_plan": "Controlled X11 and Wayland physically save through the source shortcut, inspect the private XDG file and ambient-secret boundary, quit, restart, activate through the real GTK popover, assert a real Ghostty PTY/CWD/command and recency, then make the stored CWD/command stale and assert fallback CWD, prefilled command, and a visible warning. Both compositors also drive the complete management surface and a real in-process native chooser export/delete/import round trip, validating the portable file and persisted result.",
       "alternative_or_blocker": null
     },
     {

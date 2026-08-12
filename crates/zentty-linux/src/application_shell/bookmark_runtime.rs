@@ -404,19 +404,36 @@ pub(super) fn unlink(shell: &Rc<RefCell<ApplicationShell>>) -> Result<(), String
     Ok(())
 }
 
+// GTK deprecated its in-process chooser in favor of a portal-backed API in
+// 4.10. Zentty intentionally owns this transient chooser because isolated X11
+// and Wayland sessions cannot rely on a desktop-specific portal implementation.
+#[allow(deprecated)]
 pub(super) fn choose_import(shell: &Rc<RefCell<ApplicationShell>>) {
     eprintln!("zentty-linux: bookmark-import-chooser-requested=true");
-    let dialog = gtk::FileDialog::builder()
+    let window = shell.borrow().window.clone();
+    let dialog = gtk::FileChooserDialog::builder()
         .title("Import Zentty preset")
+        .action(gtk::FileChooserAction::Open)
+        .transient_for(&window)
         .modal(true)
         .build();
-    let window = shell.borrow().window.clone();
+    dialog.add_buttons(&[
+        ("_Cancel", gtk::ResponseType::Cancel),
+        ("_Open", gtk::ResponseType::Accept),
+    ]);
+    dialog.set_default_response(gtk::ResponseType::Accept);
     let weak = Rc::downgrade(shell);
     glib::MainContext::default().spawn_local(async move {
-        let Ok(file) = dialog.open_future(Some(&window)).await else {
+        let response = dialog.run_future().await;
+        if response != gtk::ResponseType::Accept {
+            dialog.destroy();
             return;
-        };
+        }
+        let file = dialog.file();
+        dialog.destroy();
+        window.present();
         let result = async {
+            let file = file.ok_or_else(|| "no imported preset was selected".to_owned())?;
             let (bytes, _) = file
                 .load_contents_future()
                 .await
@@ -444,6 +461,7 @@ pub(super) fn choose_import(shell: &Rc<RefCell<ApplicationShell>>) {
     });
 }
 
+#[allow(deprecated)]
 pub(super) fn choose_export(shell: &Rc<RefCell<ApplicationShell>>, template_id: &str) {
     eprintln!("zentty-linux: bookmark-export-chooser-requested=true");
     let prepared = (|| {
@@ -463,14 +481,36 @@ pub(super) fn choose_export(shell: &Rc<RefCell<ApplicationShell>>, template_id: 
         report_async_result("export-template", prepared.map(|_| ()));
         return;
     };
-    let dialog = gtk::FileDialog::builder()
+    let window = shell.borrow().window.clone();
+    let dialog = gtk::FileChooserDialog::builder()
         .title("Export Zentty preset")
-        .initial_name(format!("{}.zenttypreset", safe_filename(&name)))
+        .action(gtk::FileChooserAction::Save)
+        .transient_for(&window)
         .modal(true)
         .build();
-    let window = shell.borrow().window.clone();
+    dialog.add_buttons(&[
+        ("_Cancel", gtk::ResponseType::Cancel),
+        ("_Save", gtk::ResponseType::Accept),
+    ]);
+    dialog.set_default_response(gtk::ResponseType::Accept);
+    dialog.set_current_name(&format!("{}.zenttypreset", safe_filename(&name)));
+    if let Ok(directory) = std::env::current_dir() {
+        let _ = dialog.set_current_folder(Some(&gtk::gio::File::for_path(directory)));
+    }
     glib::MainContext::default().spawn_local(async move {
-        let Ok(file) = dialog.save_future(Some(&window)).await else {
+        let response = dialog.run_future().await;
+        if response != gtk::ResponseType::Accept {
+            dialog.destroy();
+            return;
+        }
+        let file = dialog.file();
+        dialog.destroy();
+        window.present();
+        let Some(file) = file else {
+            report_async_result(
+                "export-template",
+                Err("could not select exported preset destination".to_owned()),
+            );
             return;
         };
         let result = file

@@ -146,6 +146,7 @@ fn make_popover(
 
 fn create_menu(window: &gtk::Window, parent_popover: &gtk::Popover) -> gtk::MenuButton {
     let menu = gtk::MenuButton::new();
+    menu.set_focusable(true);
     menu.set_widget_name("zentty-template-create-menu");
     menu.connect_has_focus_notify(|button| {
         if button.has_focus() {
@@ -172,9 +173,26 @@ fn create_menu(window: &gtk::Window, parent_popover: &gtk::Popover) -> gtk::Menu
     let import = gtk::Button::with_label("Import Preset…");
     import.set_action_name(Some("workspace.import-template"));
     connect_action_focus(&import, "import-template");
+    let import_menu = popover.clone();
+    let import_parent = parent_popover.clone();
+    import.connect_clicked(move |_| {
+        import_menu.popdown();
+        import_parent.popdown();
+    });
     actions.append(&import);
     popover.set_child(Some(&actions));
     menu.set_popover(Some(&popover));
+    // GtkMenuButton delegates input to its internal toggle button. Keep that
+    // real focus target in the popover's keyboard traversal rather than only
+    // marking the non-interactive wrapper focusable.
+    if let Some(toggle) = menu.first_child() {
+        toggle.set_focusable(true);
+        toggle.connect_has_focus_notify(|toggle| {
+            if toggle.has_focus() {
+                eprintln!("zentty-linux: bookmarks-focus=create-menu");
+            }
+        });
+    }
     menu
 }
 
@@ -320,7 +338,7 @@ fn template_row(
         "Actions for {}",
         template.name
     ))]);
-    menu.set_popover(Some(&template_actions(window, template)));
+    menu.set_popover(Some(&template_actions(window, parent_popover, template)));
     let context_menu = menu.clone();
     let context_id = template.id.clone();
     let context_name = template.name.clone();
@@ -340,7 +358,11 @@ fn template_row(
     row
 }
 
-fn template_actions(window: &gtk::Window, template: &WorkspaceTemplate) -> gtk::Popover {
+fn template_actions(
+    window: &gtk::Window,
+    parent_popover: &gtk::Popover,
+    template: &WorkspaceTemplate,
+) -> gtk::Popover {
     let popover = gtk::Popover::new();
     let actions = gtk::Box::new(gtk::Orientation::Vertical, 4);
     actions.set_margin_top(6);
@@ -354,8 +376,10 @@ fn template_actions(window: &gtk::Window, template: &WorkspaceTemplate) -> gtk::
     let kind = template.kind;
     let window_clone = window.clone();
     let popover_clone = popover.clone();
+    let parent_clone = parent_popover.clone();
     rename.connect_clicked(move |_| {
         popover_clone.popdown();
+        parent_clone.popdown();
         present_name_dialog(&window_clone, "Rename template", kind, Some(&id), &name);
     });
     actions.append(&rename);
@@ -364,8 +388,10 @@ fn template_actions(window: &gtk::Window, template: &WorkspaceTemplate) -> gtk::
     let editable = template.clone();
     let window_clone = window.clone();
     let popover_clone = popover.clone();
+    let parent_clone = parent_popover.clone();
     edit.connect_clicked(move |_| {
         popover_clone.popdown();
+        parent_clone.popdown();
         present_edit_dialog(&window_clone, editable.clone());
     });
     actions.append(&edit);
@@ -395,6 +421,12 @@ fn template_actions(window: &gtk::Window, template: &WorkspaceTemplate) -> gtk::
         if action == "export-template" {
             button.set_widget_name("zentty-export-template");
         }
+        let action_menu = popover.clone();
+        let action_parent = parent_popover.clone();
+        button.connect_clicked(move |_| {
+            action_menu.popdown();
+            action_parent.popdown();
+        });
         button.set_action_name(Some(&format!("workspace.{action}")));
         button.set_action_target_value(Some(&template.id.to_variant()));
         actions.append(&button);

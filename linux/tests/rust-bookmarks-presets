@@ -109,8 +109,14 @@ open_bookmarks() {
     visible_before="$(grep -Fc 'zentty-linux: bookmarks-popover visible=true' "${log}" 2>/dev/null || true)"
     search_before="$(grep -Fc 'zentty-linux: bookmarks-search-focused=true' "${log}" 2>/dev/null || true)"
     if [[ "${backend}" == x11 ]]; then
-        xdotool keyup Control_L Control_R Shift_L Shift_R 2>/dev/null || true
-        xdotool windowfocus --sync "${ZENTTY_PRODUCT_WINDOW_ID}"
+        xdotool keyup Control_L Control_R Shift_L Shift_R Alt_L Alt_R 2>/dev/null || true
+        if [[ "${portal_wm_pid}" =~ ^[1-9][0-9]*$ ]]; then
+            xdotool windowactivate --sync "${ZENTTY_PRODUCT_WINDOW_ID}"
+        else
+            # The ordinary isolated X11 cells intentionally have no window
+            # manager, so _NET_ACTIVE_WINDOW is unavailable there.
+            xdotool windowfocus --sync "${ZENTTY_PRODUCT_WINDOW_ID}"
+        fi
         xdotool key ctrl+shift+b
     else
         zentty_product_ctrl_shift_key "${backend}" b
@@ -391,16 +397,20 @@ chooser_path() {
         [[ "${chooser_window}" =~ ^[1-9][0-9]*$ ]] || fail "real GTK file chooser did not map"
         echo "rust-bookmarks-presets: chooser-window=$(xdotool getwindowname "${chooser_window}")"
         if [[ "${mode}" == save ]]; then
-            xdotool windowactivate --sync "${chooser_window}" \
-                key ctrl+a \
-                type --delay 5 -- "${path##*/}" \
-                key alt+s
+            xdotool windowactivate --sync "${chooser_window}"
+            xdotool key --clearmodifiers ctrl+a
+            xdotool type --clearmodifiers --delay 5 -- "${path##*/}"
+            xdotool key --clearmodifiers alt+s
         else
-            xdotool windowactivate --sync "${chooser_window}" \
-                key ctrl+l \
-                sleep 0.1 \
-                type --delay 5 -- "${path}" \
-                key Return
+            xdotool windowactivate --sync "${chooser_window}"
+            xdotool key --clearmodifiers ctrl+l
+            sleep 0.1
+            xdotool type --clearmodifiers --delay 5 -- "${path}"
+            # The location entry filters the real file list but does not select
+            # its sole result. A physical double-click on that row both selects
+            # and accepts it, matching normal chooser use.
+            xdotool mousemove --window "${chooser_window}" 250 90
+            xdotool click --repeat 2 --delay 100 1
         fi
         return
     else
@@ -419,12 +429,6 @@ chooser_path() {
 
 run_import_export() {
     local exported="${project}/Portable.zenttypreset"
-    [[ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ]] || fail "a private D-Bus session is required for the real GTK chooser"
-    mkdir -p "${XDG_CONFIG_HOME}/xdg-desktop-portal"
-    cat >"${XDG_CONFIG_HOME}/xdg-desktop-portal/portals.conf" <<'EOF'
-[preferred]
-default=gtk;
-EOF
     if [[ "${backend}" == x11 ]]; then
         openbox >"${run_root}/openbox.log" 2>&1 &
         portal_wm_pid=$!
@@ -453,7 +457,12 @@ EOF
     jq_wait '(.templates | length) == 0' || fail "live bookmark was not deleted before import"
 
     open_bookmarks "${first_log}"
-    focus_bookmark_control_after "${first_log}" create-menu
+    before="$(grep -Fc 'zentty-linux: bookmarks-focus=create-menu' "${first_log}" 2>/dev/null || true)"
+    input_key Tab
+    zentty_product_wait_for_log_count "${first_log}" \
+        'zentty-linux: bookmarks-focus=create-menu' "$((before + 1))" \
+        'Tab from bookmark search did not reach the create/import menu' ||
+        fail "bookmark create/import menu was not keyboard reachable"
     input_key Return
     focus_bookmark_control_after "${first_log}" import-template
     input_key Return
