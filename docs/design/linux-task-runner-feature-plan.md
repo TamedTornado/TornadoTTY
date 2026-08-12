@@ -98,3 +98,38 @@ must not silently become runnable.
   arbitrary user-defined commands are separate features.
 - Zentty does not install npm/pnpm/yarn/bun/task/just/make/mise for the user.
 - The port does not execute disabled tasks by guessing missing parameters.
+
+## Parity closeout — disabled task sources and full-format product evidence
+
+GH-18 has now delivered the single Open With authority that the initial task
+runner slice depended on. The remaining task-runner parity work will therefore
+be completed without adding another launcher or palette route.
+
+Construction order:
+
+1. Add red Open With policy tests for a real regular file: desktop and editor
+   executable targets receive its canonical URI/path, while directory-only
+   terminal options reject it. Existing directory behavior must remain exact.
+2. Make a disabled task palette item activatable, revalidate its opaque task
+   snapshot, then open only its discovered source file through the configured
+   primary Open With target. It must never execute the disabled command, guess
+   parameters, or trust a GTK-supplied path.
+3. Expand the one existing staged-product journey—do not create a second
+   harness—to materialize package.json, Taskfile include, VS Code JSONC, just,
+   make, mise.toml, and mise script tasks. Drive representative enabled and
+   disabled entries through the real palette and prove exact file/CWD/command
+   boundaries with real compositor input and Ghostty PTYs.
+4. Preserve the existing changed/deleted/forged, symlink, hostile-text, bounded
+   file, ordering, and mutation evidence. Promote `utilities.task-runners` only
+   after both controlled compositor journeys and the complete matrix pass.
+
+Acceptance criteria:
+
+- [ ] Disabled task selection opens its exact canonical source in the primary
+      configured application and cannot execute task text.
+- [ ] Every source-advertised format is represented in the staged-product
+      fixture and discoverable through the real command palette.
+- [ ] Representative enabled tasks from non-VS-Code formats launch with their
+      exact source CWD and runner command in real Ghostty panes.
+- [ ] X11 and Wayland journeys, strict Clippy, workspace tests, governed
+      mutation evidence, and every presently executable matrix cell pass.

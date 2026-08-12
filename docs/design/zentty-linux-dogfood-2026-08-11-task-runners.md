@@ -151,3 +151,19 @@ limitation belongs here while this feature is built.
   idle prompt with no active progress. Linux does not yet own a trustworthy
   equivalent signal, so it conservatively opens a real new pane. It never
   injects a task into an unknown foreground program.
+
+## Parity closeout resumed — 2026-08-12
+
+- GH-18 is complete, so the earlier disabled-task source limitation no longer
+  has an external dependency. Source audit confirms that selecting a disabled
+  palette entry closes the palette and opens `action.sourcePath` using the
+  primary Open With target; it does not leave the row insensitive.
+- Linux currently marks the row insensitive and its runtime merely logs a
+  rejected disabled action. That is a real source-parity gap. The closeout plan
+  now requires the existing opaque snapshot to be revalidated and its own
+  discovered source path sent through the one Open With authority. No new file
+  launcher, command registry, watcher, or task execution path is permitted.
+- The existing controlled journey proves only a VS Code task despite core
+  parser coverage for every advertised source format. The closeout expands
+  that same journey so product evidence cannot silently rely on parser-only
+  tests for Taskfile, just, make, mise, or package scripts.
