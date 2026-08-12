@@ -123,3 +123,54 @@ user-visible outcomes remain authoritative.
   implementation.
 - No control of listeners that cannot be proven descendants of the owning pane.
 - Task runners and Task Manager remain separate GH-19 feature slices.
+
+## Browser-target parity closeout — 2026-08-12
+
+The passive, Docker, authenticated CLI/watch, ignore/unignore, refresh, and
+owned-stop paths are implemented and qualified. Source audit leaves one named
+gap: Linux still rejects every `zentty server open --browser` value except the
+system default and offers no preferred-browser selection in the product UI.
+GH-18 has now supplied a reviewed Linux application-discovery and direct-launch
+pattern, but server browsers remain a separate source-owned catalog rather than
+being folded into project Open With.
+
+Construction order:
+
+1. Add red core tests for a server-browser catalog containing the always-
+   available system default, enabled discovered desktop handlers, executable
+   custom browsers, deterministic IDs/order/deduplication, unavailable saved
+   preferences, and fallback to system default. A browser launch plan accepts
+   only a previously normalized HTTP(S) URL and produces GIO application launch
+   or exact executable argv without a shell.
+2. Parse the source-compatible `server_detection.custom_browsers` records and
+   normalize preferred/enabled IDs. Reject missing/duplicate/reserved IDs,
+   missing names/paths, and unavailable executables without weakening the
+   bounded configuration authority.
+3. Discover Linux HTTP(S) desktop handlers once into the existing
+   `ServerRuntime`. Add explicit per-browser command-palette actions for the
+   focused primary server, persist an explicit selection as the preference,
+   and route primary, palette, and authenticated CLI opens through the same
+   catalog and launcher. Unknown or unavailable explicit IDs must fail rather
+   than silently open in another browser; implicit preferred-browser absence
+   falls back to the system default as source Zentty does.
+4. Extend the one existing development-server product journey. Controlled
+   browser executables replace only the external browser application; the real
+   Zentty product, GTK input, authenticated CLI, Ghostty PTY, listener, registry,
+   ranking, and URL remain real. Prove preferred selection, explicit CLI
+   selection, exact URL argv, unavailable/forged rejection, and system fallback
+   under X11 and Wayland.
+5. Preserve Docker as an explicit environment-dependent cell and all existing
+   hostile URL, ownership, PID, stop, watch, and port-policy evidence. Run the
+   focused mutation gate and every presently executable qualification cell
+   before promoting `utilities.dev-servers`.
+
+Acceptance criteria:
+
+- [ ] Browser discovery/configuration has one deterministic, source-compatible
+      catalog with no shell launch or alternate preferences store.
+- [ ] UI, primary open, and authenticated CLI use the same selected target and
+      reject forged/unavailable explicit browser IDs.
+- [ ] Real X11 and Wayland journeys prove exact target/URL behavior without
+      substituting Zentty, Ghostty, PTYs, sockets, or listeners.
+- [ ] Strict Clippy, workspace tests, governed mutation, and every presently
+      executable matrix cell pass before inventory promotion.

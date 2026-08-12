@@ -155,3 +155,21 @@ difference, and remaining limitation is recorded here as the feature is built.
   not yet ported; non-system `--browser` values fail explicitly instead of
   silently falling back. This remains product scope and must not be described
   as full browser-target parity.
+
+## Browser-target parity resumed — 2026-08-12
+
+- The task-runner and project Open With closeouts triggered a fresh source
+  server audit rather than treating `xdg-open` as sufficient. Source Zentty has
+  a distinct `ServerBrowserCatalog`, preferred browser, enabled browser list,
+  custom browser records, menu selection, and explicit authenticated CLI
+  browser selection. Linux's single-target rejection is therefore the concrete
+  remaining development-server parity gap, not a merely cosmetic setting.
+- Server browsers will not be merged into project Open With. They accept a
+  normalized HTTP(S) URL rather than a canonical local path, have distinct
+  configuration and source verbs, and include the system-default handler.
+  Reusing the reviewed discovery/direct-argv pattern is appropriate; reusing
+  the project catalog would erase the source boundary and create surprising
+  editor/file-manager entries in a server menu.
+- The closeout extends `linux/tests/rust-development-servers`; it does not add a
+  browser-only scenario or a second server registry. Only the controlled
+  external browser executable may be substituted in the real-product journey.
