@@ -48,7 +48,7 @@ case "${backend}" in
         ;;
     *) fail "GDK_BACKEND must be x11 or wayland" ;;
 esac
-for dependency in awk grep mktemp od readelf sed sleep stty tr; do
+for dependency in awk cmp grep mktemp od readelf sed sleep stat stty tr; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
 [[ -x "${product}" ]] || fail "staged product is missing: ${product}"
@@ -99,7 +99,7 @@ main_type() {
     if [[ "${backend}" == x11 ]]; then
         xdotool type --delay 5 -- "$1"
     else
-        wtype -- "$1"
+        wtype -d 5 -- "$1"
     fi
 }
 
@@ -140,7 +140,7 @@ settings_type() {
         xdotool windowfocus --sync "${settings_window}"
         xdotool type --delay 5 -- "$1"
     else
-        wtype -- "$1"
+        wtype -d 5 -- "$1"
     fi
 }
 
@@ -208,15 +208,24 @@ main_key ctrl+d
 zentty_product_wait_for_log "${log}" 'zentty-linux: pane-display id=pane-2' \
     "second live pane did not appear" || fail "multi-surface reload setup failed"
 
+# Pane display projection precedes completion of native surface insertion. Use a
+# real no-change runtime reload as the readiness barrier instead of sleeping or
+# racing the later metric assertion.
+main_key ctrl+alt+r
+zentty_product_wait_for_log_count "${log}" \
+    'zentty-linux: reload-config-metric stage=after pane=pane-2' 1 \
+    "second native surface was not ready for runtime reload" || fail "multi-surface readiness failed"
+
 # Change the real Ghostty config and reload the one process-global runtime.
 # Cell metrics come from the native surface both before and after; the same
 # foreground PIDs prove that applying appearance did not recreate either PTY.
 printf 'font-size = 24\n' >"${ghostty_config}"
 main_key ctrl+alt+r
-zentty_product_wait_for_log "${log}" 'zentty-linux: action=reload-config result=applied' \
+zentty_product_wait_for_log_count "${log}" 'zentty-linux: action=reload-config result=applied' 2 \
     "Reload Configuration did not reach the Ghostty runtime" || fail "runtime reload failed"
 for pane_id in pane-1 pane-2; do
-    zentty_product_wait_for_log "${log}" "zentty-linux: reload-config-metric stage=after pane=${pane_id}" \
+    zentty_product_wait_for_log_count "${log}" \
+        "zentty-linux: reload-config-metric stage=after pane=${pane_id}" 2 \
         "Ghostty did not publish post-reload metrics for ${pane_id}" || fail "reload metrics missing"
     before_metric="$(grep -F "zentty-linux: reload-config-metric stage=before pane=${pane_id}" "${log}" | tail -1)"
     after_metric="$(grep -F "zentty-linux: reload-config-metric stage=after pane=${pane_id}" "${log}" | tail -1)"
@@ -260,6 +269,30 @@ cleanup_product
 rm -f -- "${ready}" "${bytes}"
 start_product "printf ready >'${ready}'; stty raw -echo -ixon; dd bs=1 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n' >'${bytes}'; sleep 30"
 for _ in {1..200}; do [[ -s "${ready}" ]] && break; sleep 0.05; done
+
+# The source dark fallback is a Zentty-owned resource rather than a Ghostty
+# built-in. Exercise it after the real restart so this also proves the persisted
+# light theme did not prevent a fresh process from selecting and installing it.
+main_key ctrl+shift+p
+main_type 'Use Dark Theme'
+zentty_product_wait_for_log "${log}" 'command-palette=query value="Use Dark Theme" results=1' \
+    "Use Dark Theme did not resolve uniquely" || fail "dark-theme palette route failed"
+main_key Down
+main_key Return
+zentty_product_wait_for_log "${log}" 'zentty-linux: action=theme-mode result=persisted mode=dark' \
+    "source dark-theme command did not persist" || fail "dark theme mode action failed"
+grep -Fq 'theme = GitHub-Dark-Personal' "${ghostty_config}" ||
+    fail "dark theme action did not update the real Ghostty config"
+installed_theme="${XDG_CONFIG_HOME}/ghostty/themes/GitHub-Dark-Personal"
+bundled_theme="$(dirname "${product}")/../share/zentty/ghostty/themes/GitHub-Dark-Personal"
+[[ -f "${installed_theme}" ]] || fail "source fallback theme was not installed"
+cmp "${bundled_theme}" "${installed_theme}" || fail "installed fallback theme bytes differ"
+[[ "$(stat -c '%a' "${installed_theme}")" == 600 ]] || fail "installed fallback theme is not private"
+grep -Fq 'theme_mode = "dark"' "${config}" || fail "dark theme mode was not persisted"
+
+# Finally prove the earlier user-recorded binding loaded in this fresh process.
+# Running this after the palette avoids allowing its sidebar re-render to race
+# focus from the subsequent overlay on fast qualification hosts.
 main_key ctrl+alt+z
 zentty_product_wait_for_log "${log}" 'zentty-linux: shortcut=command+option+z action=toggle-sidebar' \
     "persisted shortcut was not active after restart" || fail "restart persistence failed"

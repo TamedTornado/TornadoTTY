@@ -147,3 +147,56 @@ declared totals: `PASS=115`, `FAIL=0`, `BLOCKED=7`, `XFAIL=1`, and
 qualification correctly remain not passed. Suppression governance again reported
 accepted, so the Valgrind characterization remains **PASS with reviewed
 suppressions**.
+
+## Bundled source fallback theme
+
+- **Source audit:** `GitHub-Dark-Personal` is not a Ghostty built-in. The macOS
+  product bundles the exact file and, when a written theme specification refers
+  to it, installs a standalone copy into the user's Ghostty themes directory so
+  plain Ghostty can resolve the shared configuration.
+- **Packaging repair:** the ReleaseSafe build now stages that exact checked-in
+  resource at `share/zentty/ghostty/themes/GitHub-Dark-Personal`. Both staged
+  X11 and Wayland bundle journeys compare its bytes with the source resource
+  before launching the real packaged product.
+- **Safe install policy:** the existing `ConfigStore` owns fallback installation;
+  no second appearance persistence authority was introduced. It resolves the
+  installed resource relative to the executable, follows XDG config precedence,
+  publishes a private `0600` file without overwriting an existing regular file,
+  rejects a final symlink or non-file target, bounds resource size, and removes
+  its temporary file on every publication result.
+- **Harness defect exposed:** the multi-surface journey originally waited for the
+  second pane's GTK projection, then sometimes sampled reload metrics before its
+  native Ghostty surface and child PID were ready. A no-change real runtime reload
+  is now the readiness barrier; no timing sleep or mocked surface was added.
+- **Wayland input discovery:** zero-delay `wtype` could flood a newly presented
+  palette so only `Use` arrived before assertions. Matching the already-used X11
+  five-millisecond physical typing cadence made the real nested-Wayland input
+  deterministic rather than converting absence into a pass.
+- **Real receipts:** `Use Dark Theme` is exercised through the real command
+  palette after a complete product restart. Controlled X11 and nested Cage
+  Wayland both verify the exact installed resource bytes, `0600` mode, persisted
+  dark mode, real Ghostty config, live reload, and terminal input/process
+  continuity. Both staged bundle journeys also pass.
+- **Full-run failure and repair:** the first complete qualification rerun failed
+  only `shortcut-binding-runtime-x11`. On the loaded host, the fresh-process
+  persistence assertion toggled the sidebar immediately before opening the dark
+  theme palette; its deferred focus/render work overtook the overlay, so no query
+  was delivered. The journey now opens and completes the palette feature first,
+  then verifies the already-persisted shortcut. The exact failed matrix command
+  against `build/linux-profiles/release-safe` passes after that ordering repair.
+- **Mutation receipt:** the initial focused run found eight missed policy mutants.
+  Tests were strengthened for automatic-mode slots, file/symlink/directory
+  distinctions, exact and over-limit sizes, inspection and publication errors,
+  installed-resource resolution, and concurrent-publication diagnostics. The
+  final safe two-worker run tested 23 mutants in 85 seconds: 21 caught, two
+  unviable, zero missed, zero timeout.
+- **Corrected full qualification receipt:** after the failed X11 ordering cell was
+  repaired and rerun directly, the complete presently executable matrix passed
+  in 441.84 seconds. Its 146 declared cells report `PASS=115`, `FAIL=0`,
+  `BLOCKED=7`, `XFAIL=1`, and `NOT_IMPLEMENTED=23`. The implemented local and
+  product-boundary suites passed; release and full Linux qualification correctly
+  remain not passed. Debug Valgrind remains **PASS with reviewed suppressions**:
+  the preserved raw receipt reports 427 errors/contexts, 6,080 direct bytes, and
+  41,394 indirect bytes; the reviewed post-suppression receipt reports zero
+  errors, contexts, or leak bytes. Suppression governance was accepted. No
+  environmental absence was converted into a pass.

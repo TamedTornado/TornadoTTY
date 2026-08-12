@@ -2,11 +2,11 @@
   "schema_version": 1,
   "contract_id": "zentty-application-shell-responsibilities",
   "source": "crates/zentty-linux/src/application_shell.rs",
-  "source_sha256": "02f7072b51f5b07f5dab1a89163bbe1d0dc6ebcea120c2ae7f858c6aace2d2eb",
+  "source_sha256": "be9f0a5fd4ec47a13f9d5acbdd1dcdbc763918bb79cfc79fe5525758ec548991",
   "owned_source_sha256": {
     "crates/zentty-linux/src/main.rs": "6bf0a27fe6c3c543ecce3b376d2ec907150d02d788048ffe104023a4aab9062f",
     "crates/zentty-linux/src/application.rs": "6f14dc9e6c60d46f3713faa997501782e5c9750f0e00b40e27472431cede6c7d",
-    "crates/zentty-linux/src/config_store.rs": "719e8fe9c6cf72af2e4496d7ad22b00936eb095dd5e550322ec42b0f24af8df4",
+    "crates/zentty-linux/src/config_store.rs": "4eb768f6a6b261272a2d6107a812772178190ef934d95f5b8de89b4ab1e2c618",
     "crates/zentty-linux/src/window_set.rs": "501d595889c11a41a4261ef8282465d76dd9ed8ccd1d004406b558579b0bf58e",
     "crates/zentty-linux/src/agent_runtime.rs": "48f30d38048ae5388ca59aee2021e1215cabdfc033e66755ed32c6f92dcb8671",
     "crates/zentty-linux/src/codex_enrichment.rs": "fe87631c75c04b63962b7f89d311a778a25af8f27a1dcb4d5950b3efcbaa476e",
@@ -422,7 +422,7 @@
     "server_container_discovery": [
       "discover", "run_docker", "parse_inspect_json", "deepest_matching_pane", "is_web_like"
     ],
-    "config_store": ["load_default", "load", "update_default_appearance", "update_default_ghostty_theme", "update_default_ghostty_value", "update_default_ignored_port_rules", "update_default_preferred_browser", "update_default_shortcuts", "update_appearance", "update_ghostty_value", "update_ignored_port_rules", "update_preferred_browser", "update_shortcuts", "with_config_lock", "set_optional_appearance_string", "resolve_config_target", "atomic_replace", "read_bounded", "invalid_snapshot", "default_config_file_from", "default_ghostty_config_file_from", "nonempty_path"],
+    "config_store": ["load_default", "load", "install_default_fallback_theme_if_referenced", "install_fallback_theme_if_referenced", "fallback_theme_publication_error", "update_default_appearance", "update_default_ghostty_theme", "update_default_ghostty_value", "update_default_ignored_port_rules", "update_default_preferred_browser", "update_default_shortcuts", "update_appearance", "update_ghostty_value", "update_ignored_port_rules", "update_preferred_browser", "update_shortcuts", "with_config_lock", "set_optional_appearance_string", "resolve_config_target", "atomic_replace", "read_bounded", "invalid_snapshot", "default_config_file_from", "default_fallback_theme_path", "default_ghostty_config_file_from", "default_theme_resource_path", "nonempty_path"],
     "persistence_coordinator": [
       "clean_exit_decision", "complete_launch", "default_state_directory", "drain_errors",
       "drain_live_snapshot_errors", "drop", "flush_live_snapshot_if_due",

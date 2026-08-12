@@ -34,6 +34,25 @@ must remain an explicit later platform alternative.
    runtime boundary are proven. Theme catalog/gallery and background-image UI are
    later slices within issue #20, not invented in this slice.
 
+## Bundled fallback-theme slice
+
+Before the gallery can honestly advertise the source default, make that theme a
+real distributable resource:
+
+1. Stage the checked-in `GitHub-Dark-Personal` theme under Zentty's versioned
+   application data directory and require packaging/install tests to retain it.
+2. Resolve the resource relative to the delivered executable, not the repository
+   checkout or current working directory.
+3. When—and only when—a persisted Ghostty theme specification references the
+   source fallback, install an exact private copy into the user's XDG Ghostty
+   theme directory if absent. Never overwrite or follow an existing theme entry.
+4. Drive `Use Dark Theme` through the real staged command palette on controlled
+   X11 and Wayland, then assert the installed bytes, permissions, persisted theme,
+   native reload, and surviving PTYs. Plain Ghostty compatibility is part of the
+   feature: the copied theme must be discoverable without Zentty running.
+5. Mutation-test the pure reference/resource policy, then rerun all presently
+   executable qualification cells before committing.
+
 ## Test construction order
 
 1. Ghostty Zig contract tests and exported-symbol/old-new ABI mismatch tests.

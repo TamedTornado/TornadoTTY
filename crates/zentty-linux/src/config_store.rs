@@ -7,7 +7,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use zentty_core::{AppConfig, AppearanceConfig, ShortcutBinding, ThemeSpec, update_ghostty_value};
+use zentty_core::{
+    AppConfig, AppearanceConfig, FALLBACK_DARK_THEME, ShortcutBinding, ThemeMode, ThemeSpec,
+    update_ghostty_value,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ConfigSnapshot {
@@ -19,9 +22,17 @@ pub(crate) struct ConfigSnapshot {
 pub(crate) struct ConfigStore;
 
 const MAX_CONFIG_BYTES: u64 = 1_048_576;
+const MAX_THEME_BYTES: u64 = 64 * 1024;
 const LOCK_DEADLINE: Duration = Duration::from_millis(250);
 const LOCK_RETRY_INTERVAL: Duration = Duration::from_millis(5);
 static TEMP_NONCE: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ThemeInstallOutcome {
+    NotReferenced,
+    AlreadyPresent,
+    Installed,
+}
 
 impl ConfigStore {
     pub(crate) fn load_default() -> Result<ConfigSnapshot, String> {
@@ -171,6 +182,17 @@ impl ConfigStore {
         Self::update_default_ghostty_value("theme", &spec.to_string())
     }
 
+    pub(crate) fn install_default_fallback_theme_if_referenced(
+        spec: &ThemeSpec,
+    ) -> Result<(), String> {
+        let resource = default_theme_resource_path()?;
+        let target = default_fallback_theme_path(
+            std::env::var_os("XDG_CONFIG_HOME"),
+            std::env::var_os("HOME"),
+        )?;
+        install_fallback_theme_if_referenced(spec, &resource, &target).map(|_| ())
+    }
+
     fn update_default_ghostty_value(key: &str, value: &str) -> Result<PathBuf, String> {
         let path = default_ghostty_config_file_from(
             std::env::var_os("XDG_CONFIG_HOME"),
@@ -268,6 +290,120 @@ impl ConfigStore {
         shortcuts["bindings"] = toml_edit::Item::ArrayOfTables(tables);
         atomic_replace(&target, document.to_string().as_bytes())
     }
+}
+
+fn install_fallback_theme_if_referenced(
+    spec: &ThemeSpec,
+    resource: &Path,
+    target: &Path,
+) -> Result<ThemeInstallOutcome, String> {
+    let references_fallback = match spec.mode {
+        ThemeMode::Dark => spec.resolved_dark_theme_name() == FALLBACK_DARK_THEME,
+        ThemeMode::Light => spec.resolved_light_theme_name() == FALLBACK_DARK_THEME,
+        ThemeMode::Automatic => {
+            spec.resolved_dark_theme_name() == FALLBACK_DARK_THEME
+                || spec.resolved_light_theme_name() == FALLBACK_DARK_THEME
+        }
+    };
+    if !references_fallback {
+        return Ok(ThemeInstallOutcome::NotReferenced);
+    }
+    match fs::symlink_metadata(target) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            return Err(format!(
+                "refusing fallback theme symlink: {}",
+                target.display()
+            ));
+        }
+        Ok(metadata) if metadata.is_file() => return Ok(ThemeInstallOutcome::AlreadyPresent),
+        Ok(_) => {
+            return Err(format!(
+                "fallback theme path is not a regular file: {}",
+                target.display()
+            ));
+        }
+        Err(error) if error.kind() == ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("could not inspect {}: {error}", target.display())),
+    }
+
+    let bytes = fs::read(resource).map_err(|error| {
+        format!(
+            "could not read bundled theme {}: {error}",
+            resource.display()
+        )
+    })?;
+    if bytes.is_empty() || bytes.len() as u64 > MAX_THEME_BYTES {
+        return Err(format!(
+            "bundled fallback theme must contain 1..={MAX_THEME_BYTES} bytes"
+        ));
+    }
+    let parent = target
+        .parent()
+        .ok_or_else(|| format!("fallback theme has no parent: {}", target.display()))?;
+    fs::create_dir_all(parent)
+        .map_err(|error| format!("could not create {}: {error}", parent.display()))?;
+    let nonce = TEMP_NONCE.fetch_add(1, Ordering::Relaxed);
+    let temporary = parent.join(format!(
+        ".zentty-fallback-theme.{}.{}",
+        std::process::id(),
+        nonce
+    ));
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&temporary)
+        .map_err(|error| format!("could not create {}: {error}", temporary.display()))?;
+    let result = (|| {
+        file.write_all(&bytes)
+            .and_then(|()| file.sync_all())
+            .map_err(|error| format!("could not write {}: {error}", temporary.display()))?;
+        fs::hard_link(&temporary, target)
+            .map_err(|error| fallback_theme_publication_error(&error, target))?;
+        Ok(ThemeInstallOutcome::Installed)
+    })();
+    drop(file);
+    let _ = fs::remove_file(&temporary);
+    result
+}
+
+fn fallback_theme_publication_error(error: &std::io::Error, target: &Path) -> String {
+    if error.kind() == ErrorKind::AlreadyExists {
+        format!("fallback theme appeared concurrently: {}", target.display())
+    } else {
+        format!("could not publish {}: {error}", target.display())
+    }
+}
+
+fn default_theme_resource_path() -> Result<PathBuf, String> {
+    let executable = std::env::current_exe()
+        .map_err(|error| format!("could not locate Zentty executable: {error}"))?;
+    let prefix = executable.parent().and_then(Path::parent).ok_or_else(|| {
+        format!(
+            "Zentty executable has no install prefix: {}",
+            executable.display()
+        )
+    })?;
+    Ok(prefix
+        .join("share/zentty/ghostty/themes")
+        .join(FALLBACK_DARK_THEME))
+}
+
+fn default_fallback_theme_path(
+    xdg_config_home: Option<OsString>,
+    home: Option<OsString>,
+) -> Result<PathBuf, String> {
+    if let Some(path) = nonempty_path(xdg_config_home) {
+        return Ok(path.join("ghostty/themes").join(FALLBACK_DARK_THEME));
+    }
+    nonempty_path(home)
+        .map(|home| {
+            home.join(".config/ghostty/themes")
+                .join(FALLBACK_DARK_THEME)
+        })
+        .ok_or_else(|| {
+            "could not resolve Ghostty themes: XDG_CONFIG_HOME and HOME are unset".to_owned()
+        })
 }
 
 fn set_optional_appearance_string(
@@ -441,8 +577,10 @@ fn nonempty_path(value: Option<OsString>) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::{
-        BoundedReadError, ConfigStore, MAX_CONFIG_BYTES, default_config_file_from,
-        default_ghostty_config_file_from, read_bounded,
+        BoundedReadError, ConfigStore, MAX_CONFIG_BYTES, ThemeInstallOutcome,
+        default_config_file_from, default_fallback_theme_path, default_ghostty_config_file_from,
+        default_theme_resource_path, fallback_theme_publication_error,
+        install_fallback_theme_if_referenced, read_bounded,
     };
     use std::ffi::OsString;
     use std::fs;
@@ -782,6 +920,163 @@ mod tests {
             appearance
         );
         remove(&root);
+    }
+
+    #[test]
+    fn fallback_theme_installs_exact_private_bytes_once_and_only_when_referenced() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = private_root("fallback-theme-install");
+        let resource = root.join("resource");
+        let target = root.join("xdg/ghostty/themes/GitHub-Dark-Personal");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(&resource, b"background = #010203\n").unwrap();
+        let unrelated = ThemeSpec::new(
+            ThemeMode::Automatic,
+            Some("Other Dark"),
+            Some("Other Light"),
+        );
+        assert_eq!(
+            install_fallback_theme_if_referenced(&unrelated, &root.join("missing"), &target)
+                .unwrap(),
+            ThemeInstallOutcome::NotReferenced
+        );
+        let light = ThemeSpec::new(ThemeMode::Light, None, None);
+        assert_eq!(
+            install_fallback_theme_if_referenced(&light, &root.join("missing"), &target).unwrap(),
+            ThemeInstallOutcome::NotReferenced
+        );
+        for automatic in [
+            ThemeSpec::new(ThemeMode::Automatic, None, Some("Other Light")),
+            ThemeSpec::new(
+                ThemeMode::Automatic,
+                Some("Other Dark"),
+                Some("GitHub-Dark-Personal"),
+            ),
+        ] {
+            assert_eq!(
+                install_fallback_theme_if_referenced(&automatic, &resource, &target).unwrap(),
+                ThemeInstallOutcome::Installed
+            );
+            fs::remove_file(&target).unwrap();
+        }
+        let fallback = ThemeSpec::new(ThemeMode::Dark, None, None);
+        assert_eq!(
+            install_fallback_theme_if_referenced(&fallback, &resource, &target).unwrap(),
+            ThemeInstallOutcome::Installed
+        );
+        assert_eq!(fs::read(&target).unwrap(), b"background = #010203\n");
+        assert_eq!(
+            fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        fs::write(&resource, b"changed\n").unwrap();
+        assert_eq!(
+            install_fallback_theme_if_referenced(&fallback, &resource, &target).unwrap(),
+            ThemeInstallOutcome::AlreadyPresent
+        );
+        assert_eq!(fs::read(&target).unwrap(), b"background = #010203\n");
+        remove(&root);
+    }
+
+    #[test]
+    fn fallback_theme_refuses_symlink_and_invalid_resource() {
+        use std::os::unix::fs::symlink;
+
+        let root = private_root("fallback-theme-reject");
+        let resource = root.join("resource");
+        let target = root.join("themes/GitHub-Dark-Personal");
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        fs::write(&resource, b"").unwrap();
+        let fallback = ThemeSpec::new(ThemeMode::Dark, None, None);
+        assert!(
+            install_fallback_theme_if_referenced(&fallback, &resource, &target)
+                .unwrap_err()
+                .contains("must contain")
+        );
+        symlink(&resource, &target).unwrap();
+        assert!(
+            install_fallback_theme_if_referenced(&fallback, &resource, &target)
+                .unwrap_err()
+                .contains("symlink")
+        );
+        fs::remove_file(&target).unwrap();
+        fs::create_dir(&target).unwrap();
+        assert!(
+            install_fallback_theme_if_referenced(&fallback, &resource, &target)
+                .unwrap_err()
+                .contains("not a regular file")
+        );
+        remove(&root);
+    }
+
+    #[test]
+    fn fallback_theme_bounds_and_inspection_errors_are_distinct() {
+        let root = private_root("fallback-theme-bounds");
+        let resource = root.join("resource");
+        let fallback = ThemeSpec::new(ThemeMode::Dark, None, None);
+        let limit = usize::try_from(super::MAX_THEME_BYTES).unwrap();
+        fs::create_dir_all(&root).unwrap();
+        fs::write(&resource, vec![b'x'; limit]).unwrap();
+        let exact = root.join("exact/GitHub-Dark-Personal");
+        assert_eq!(
+            install_fallback_theme_if_referenced(&fallback, &resource, &exact).unwrap(),
+            ThemeInstallOutcome::Installed
+        );
+        fs::write(&resource, vec![b'x'; limit + 1]).unwrap();
+        assert!(
+            install_fallback_theme_if_referenced(
+                &fallback,
+                &resource,
+                &root.join("oversize/GitHub-Dark-Personal")
+            )
+            .unwrap_err()
+            .contains("must contain")
+        );
+        let non_directory = root.join("not-a-directory");
+        fs::write(&non_directory, b"file").unwrap();
+        assert!(
+            install_fallback_theme_if_referenced(
+                &fallback,
+                &resource,
+                &non_directory.join("GitHub-Dark-Personal")
+            )
+            .unwrap_err()
+            .contains("could not inspect")
+        );
+        remove(&root);
+    }
+
+    #[test]
+    fn fallback_theme_path_prefers_xdg_and_requires_a_configuration_root() {
+        assert_eq!(
+            default_fallback_theme_path(Some("/xdg".into()), Some("/home/user".into())).unwrap(),
+            Path::new("/xdg/ghostty/themes/GitHub-Dark-Personal")
+        );
+        assert_eq!(
+            default_fallback_theme_path(None, Some("/home/user".into())).unwrap(),
+            Path::new("/home/user/.config/ghostty/themes/GitHub-Dark-Personal")
+        );
+        assert!(default_fallback_theme_path(None, None).is_err());
+        assert!(
+            default_theme_resource_path()
+                .unwrap()
+                .ends_with("share/zentty/ghostty/themes/GitHub-Dark-Personal")
+        );
+        assert!(
+            fallback_theme_publication_error(
+                &std::io::Error::from(std::io::ErrorKind::AlreadyExists),
+                Path::new("/theme")
+            )
+            .contains("appeared concurrently")
+        );
+        assert!(
+            fallback_theme_publication_error(
+                &std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+                Path::new("/theme")
+            )
+            .contains("could not publish")
+        );
     }
 
     #[cfg(unix)]

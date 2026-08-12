@@ -1276,6 +1276,12 @@ impl ApplicationShell {
         let mut appearance = current;
         appearance.theme_mode = command.resolve(appearance.theme_mode, desktop_is_dark);
         let spec = appearance.theme_spec();
+        if let Err(error) =
+            crate::config_store::ConfigStore::install_default_fallback_theme_if_referenced(&spec)
+        {
+            eprintln!("zentty-linux: action=theme-mode result=failed detail={error}");
+            return;
+        }
         if let Err(error) = crate::config_store::ConfigStore::update_default_ghostty_theme(&spec) {
             eprintln!("zentty-linux: action=theme-mode result=failed detail={error}");
             return;
