@@ -219,6 +219,68 @@ close_active_window() {
     fi
 }
 
+reply_to_confirmation() {
+    local key="$1"
+    if zentty_product_uses_xdotool "${backend}"; then
+        xdotool key "${key}"
+    else
+        wtype -k "${key}"
+    fi
+}
+
+# Lifecycle confirmation journey: drive both cancellation and acceptance for
+# the source's window-close and application-quit contracts against real GTK
+# windows and real Ghostty PTYs. The rest of this already-large multi-window
+# qualification keeps confirmations disabled so its unrelated transaction and
+# restoration assertions remain independently diagnostic.
+start_product
+create_second_window
+close_active_window
+zentty_product_wait_for_log "${log}" 'zentty-linux: confirmation shown title="Close this window?"' \
+    "Close Window did not present its source confirmation" || fail "window confirmation missing"
+reply_to_confirmation Escape
+zentty_product_wait_for_log "${log}" 'zentty-linux: confirmation accepted=false' \
+    "Escape did not cancel Close Window" || fail "window confirmation cancellation missing"
+target_second_window
+type_and_expect_title "window-close-cancelled" "pane-window-2"
+accepted_before="$(grep -Fc 'zentty-linux: confirmation accepted=true' "${log}" || true)"
+close_active_window
+zentty_product_wait_for_log_count "${log}" 'zentty-linux: confirmation shown title="Close this window?"' 2 \
+    "second Close Window did not present confirmation" || fail "second window confirmation missing"
+reply_to_confirmation Return
+zentty_product_wait_for_log_count "${log}" 'zentty-linux: confirmation accepted=true' "$((accepted_before + 1))" \
+    "Return did not accept Close Window" || fail "window confirmation acceptance missing"
+zentty_product_wait_for_log "${log}" 'zentty-linux: window-closed id=window-2 remaining=1' \
+    "accepted Close Window did not close only its target" || fail "confirmed window close failed"
+zentty_product_prepare_input "${backend}" "${log}" || fail "could not retarget surviving confirmation window"
+type_and_expect_title "window-close-confirmed-survivor" "pane-1"
+zentty_product_close_window "${backend}"
+zentty_product_wait_for_log "${log}" 'zentty-linux: confirmation shown title="Quit Zentty?"' \
+    "Quit did not present its source confirmation" || fail "quit confirmation missing"
+reply_to_confirmation Escape
+zentty_product_wait_for_log_count "${log}" 'zentty-linux: confirmation accepted=false' 2 \
+    "Escape did not cancel Quit" || fail "quit confirmation cancellation missing"
+zentty_product_prepare_input "${backend}" "${log}" || fail "could not refocus after cancelled quit"
+type_and_expect_title "quit-cancelled" "pane-1"
+accepted_before="$(grep -Fc 'zentty-linux: confirmation accepted=true' "${log}" || true)"
+zentty_product_close_window "${backend}"
+zentty_product_wait_for_log_count "${log}" 'zentty-linux: confirmation shown title="Quit Zentty?"' 2 \
+    "second Quit did not present confirmation" || fail "second quit confirmation missing"
+reply_to_confirmation Return
+zentty_product_wait_for_log_count "${log}" 'zentty-linux: confirmation accepted=true' "$((accepted_before + 1))" \
+    "Return did not accept Quit" || fail "quit confirmation acceptance missing"
+wait_for_exit
+
+cat >"${config_file}" <<'EOF'
+[confirmations]
+confirm_before_closing_pane = false
+confirm_before_closing_window = false
+confirm_before_quitting = false
+
+[clipboard]
+always_clean_copies = true
+EOF
+
 # Journey 0: split a second real pane, then invoke the source-named window move
 # through the real command palette. The exact PTY child set, terminal-ready
 # count, post-move physical input, and authenticated event route prove this is

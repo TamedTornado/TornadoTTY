@@ -54,6 +54,7 @@ for dependency in grep head mktemp readelf sed seq sleep; do
 done
 [[ -x "${product}" ]] || fail "staged product is missing: ${product}"
 [[ -x "${fixture}" ]] || fail "real task-manager fixture is missing: ${fixture}"
+zentty_product_disable_lifecycle_confirmations
 
 layer_runpath="$(
     readelf -d "${ghostty_root}/zig-out/lib/libghostty-gtk-embed.so" |

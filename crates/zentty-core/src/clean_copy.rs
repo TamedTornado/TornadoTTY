@@ -6,6 +6,15 @@ pub enum CommandFlattenAggressiveness {
 }
 
 impl CommandFlattenAggressiveness {
+    #[must_use]
+    pub const fn config_value(self) -> &'static str {
+        match self {
+            Self::Low => "low",
+            Self::Normal => "normal",
+            Self::High => "high",
+        }
+    }
+
     const fn score_threshold(self) -> usize {
         match self {
             Self::Low => 3,

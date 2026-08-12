@@ -10,6 +10,7 @@ mod codex_enrichment;
 mod command_palette;
 mod config_store;
 mod docker_discovery;
+mod general_settings;
 mod global_search_view;
 mod pane_controls;
 mod pane_dividers;
@@ -223,7 +224,7 @@ fn run() -> Result<(), String> {
     };
     let (persistence, launch) = PersistenceCoordinator::start(
         &state_directory,
-        options.restore_enabled,
+        options.restore_enabled && config.config.restore.restore_workspace_on_launch,
         reference_timestamp(),
     )?;
     if let Some(warning) = launch.warning.as_deref() {

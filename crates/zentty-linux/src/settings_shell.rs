@@ -30,6 +30,7 @@ struct Widgets {
 }
 
 pub(crate) fn build(
+    general: &gtk::Widget,
     appearance: &gtk::Widget,
     appearance_search: &gtk::SearchEntry,
     shortcuts: &gtk::Widget,
@@ -43,7 +44,7 @@ pub(crate) fn build(
         buttons,
         back,
         forward,
-    } = build_widgets(appearance, shortcuts);
+    } = build_widgets(general, appearance, shortcuts);
     let state = Rc::new(RefCell::new(State {
         section: initial,
         history: SettingsHistory::new(initial),
@@ -68,7 +69,11 @@ pub(crate) fn build(
     }
 }
 
-fn build_widgets(appearance: &gtk::Widget, shortcuts: &gtk::Widget) -> Widgets {
+fn build_widgets(
+    general: &gtk::Widget,
+    appearance: &gtk::Widget,
+    shortcuts: &gtk::Widget,
+) -> Widgets {
     let root = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     let sidebar = gtk::Box::new(gtk::Orientation::Vertical, 6);
     sidebar.set_width_request(250);
@@ -134,6 +139,7 @@ fn build_widgets(appearance: &gtk::Widget, shortcuts: &gtk::Widget) -> Widgets {
         button.set_child(Some(&labels));
         sidebar.append(&button);
         let page = match section {
+            SettingsSection::General => general.clone(),
             SettingsSection::Appearance => appearance.clone(),
             SettingsSection::Shortcuts => shortcuts.clone(),
             _ => pending_section(section),

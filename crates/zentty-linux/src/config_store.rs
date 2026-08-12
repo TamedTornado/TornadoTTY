@@ -8,8 +8,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use zentty_core::{
-    AppConfig, AppearanceConfig, FALLBACK_DARK_THEME, ShortcutBinding, ThemeMode, ThemeSpec,
-    update_ghostty_value,
+    AppConfig, AppearanceConfig, ClipboardConfig, ConfirmationsConfig, FALLBACK_DARK_THEME,
+    RestoreConfig, ShortcutBinding, ThemeMode, ThemeSpec, update_ghostty_value,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -132,6 +132,77 @@ impl ConfigStore {
         )?;
         Self::update_appearance(&path, appearance)?;
         Ok(path)
+    }
+
+    pub(crate) fn update_default_general(
+        confirmations: ConfirmationsConfig,
+        restore: RestoreConfig,
+        clipboard: ClipboardConfig,
+    ) -> Result<PathBuf, String> {
+        let path = default_config_file_from(
+            std::env::var_os("XDG_CONFIG_HOME"),
+            std::env::var_os("HOME"),
+        )?;
+        Self::update_general(&path, confirmations, restore, clipboard)?;
+        Ok(path)
+    }
+
+    fn update_general(
+        path: &Path,
+        confirmations: ConfirmationsConfig,
+        restore: RestoreConfig,
+        clipboard: ClipboardConfig,
+    ) -> Result<(), String> {
+        let target = resolve_config_target(path)?;
+        with_config_lock(&target, || {
+            let source = match fs::read_to_string(&target) {
+                Ok(source) => source,
+                Err(error) if error.kind() == ErrorKind::NotFound => String::new(),
+                Err(error) => return Err(format!("could not read {}: {error}", target.display())),
+            };
+            if source.len() as u64 > MAX_CONFIG_BYTES {
+                return Err(format!("configuration exceeds {MAX_CONFIG_BYTES} bytes"));
+            }
+            let mut document = source
+                .parse::<toml_edit::DocumentMut>()
+                .map_err(|error| format!("could not edit invalid configuration: {error}"))?;
+            for section in ["confirmations", "restore", "clipboard"] {
+                document
+                    .entry(section)
+                    .or_insert_with(|| toml_edit::Item::Table(toml_edit::Table::new()));
+                if !document[section].is_table() {
+                    return Err(format!("{section} configuration is not a table"));
+                }
+            }
+            document["confirmations"]["confirm_before_closing_pane"] =
+                toml_edit::value(confirmations.confirm_before_closing_pane);
+            document["confirmations"]["confirm_before_closing_window"] =
+                toml_edit::value(confirmations.confirm_before_closing_window);
+            document["confirmations"]["confirm_before_quitting"] =
+                toml_edit::value(confirmations.confirm_before_quitting);
+            document["restore"]["restore_workspace_on_launch"] =
+                toml_edit::value(restore.restore_workspace_on_launch);
+            document["clipboard"]["always_clean_copies"] =
+                toml_edit::value(clipboard.always_clean_copies);
+            let options = clipboard.clean_options;
+            document["clipboard"]["flatten_multi_line_commands"] =
+                toml_edit::value(options.flatten_multi_line_commands);
+            document["clipboard"]["command_flatten_aggressiveness"] =
+                toml_edit::value(options.command_flatten_aggressiveness.config_value());
+            document["clipboard"]["preserve_blank_lines_when_flattening"] =
+                toml_edit::value(options.preserve_blank_lines_when_flattening);
+            document["clipboard"]["remove_box_drawing"] =
+                toml_edit::value(options.remove_box_drawing);
+            document["clipboard"]["flatten_slash_command_selections"] =
+                toml_edit::value(options.flatten_slash_command_selections);
+            document["clipboard"]["strip_url_tracking_parameters"] =
+                toml_edit::value(options.strip_url_tracking_parameters);
+            document["clipboard"]["quote_paths_with_spaces"] =
+                toml_edit::value(options.quote_paths_with_spaces);
+            document["clipboard"]["show_copy_markdown_command"] =
+                toml_edit::value(clipboard.show_copy_markdown_command);
+            atomic_replace(&target, document.to_string().as_bytes())
+        })
     }
 
     fn update_appearance(path: &Path, appearance: &AppearanceConfig) -> Result<(), String> {
@@ -587,7 +658,10 @@ mod tests {
     use std::io::Read;
     use std::path::Path;
     use std::time::{SystemTime, UNIX_EPOCH};
-    use zentty_core::{AppConfig, BackgroundOpacity, ThemeMode, ThemeSpec};
+    use zentty_core::{
+        AppConfig, BackgroundOpacity, ClipboardConfig, CommandFlattenAggressiveness,
+        ConfirmationsConfig, RestoreConfig, ThemeMode, ThemeSpec,
+    };
 
     fn private_root(name: &str) -> std::path::PathBuf {
         let nonce = SystemTime::now()
@@ -627,6 +701,164 @@ mod tests {
         assert!(snapshot.config.clipboard.always_clean_copies);
         assert_eq!(snapshot.warning, None);
         remove(&root);
+    }
+
+    #[test]
+    fn general_update_preserves_symlink_comments_unknowns_and_all_source_values() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+        let root = private_root("general-update");
+        let target = root.join("shared/settings.toml");
+        let path = root.join("zentty/config.toml");
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            &target,
+            "# preserve\nfuture_root = 7\n[clipboard]\nfuture_clipboard = true\n[appearance]\ntheme_mode = \"light\"\n",
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(&target, &path).unwrap();
+        let symlink_inode = fs::symlink_metadata(&path).unwrap().ino();
+        let confirmations = ConfirmationsConfig {
+            confirm_before_closing_pane: false,
+            confirm_before_closing_window: false,
+            confirm_before_quitting: false,
+        };
+        let restore = RestoreConfig {
+            restore_workspace_on_launch: false,
+        };
+        let mut clipboard = ClipboardConfig {
+            always_clean_copies: true,
+            ..ClipboardConfig::default()
+        };
+        clipboard.clean_options.flatten_multi_line_commands = false;
+        clipboard.clean_options.command_flatten_aggressiveness = CommandFlattenAggressiveness::High;
+        clipboard.clean_options.preserve_blank_lines_when_flattening = true;
+        clipboard.clean_options.remove_box_drawing = false;
+        clipboard.clean_options.flatten_slash_command_selections = false;
+        clipboard.clean_options.strip_url_tracking_parameters = false;
+        clipboard.clean_options.quote_paths_with_spaces = false;
+        clipboard.show_copy_markdown_command = false;
+
+        ConfigStore::update_general(&path, confirmations, restore, clipboard).unwrap();
+        assert_eq!(fs::symlink_metadata(&path).unwrap().ino(), symlink_inode);
+        assert_eq!(
+            fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        let source = fs::read_to_string(&target).unwrap();
+        assert!(source.contains("# preserve"));
+        assert!(source.contains("future_root = 7"));
+        assert!(source.contains("future_clipboard = true"));
+        assert!(source.contains("[appearance]"));
+        let parsed = AppConfig::parse_toml(&source).unwrap();
+        assert_eq!(parsed.confirmations, confirmations);
+        assert_eq!(parsed.restore, restore);
+        assert_eq!(parsed.clipboard, clipboard);
+        remove(&root);
+    }
+
+    #[test]
+    fn general_update_rejects_invalid_or_non_table_source_without_replacement() {
+        for (name, source) in [
+            ("malformed", "[clipboard\n"),
+            ("non-table", "clipboard = true\n"),
+        ] {
+            let root = private_root(name);
+            let path = root.join("zentty/config.toml");
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, source).unwrap();
+            assert!(
+                ConfigStore::update_general(
+                    &path,
+                    ConfirmationsConfig::default(),
+                    RestoreConfig::default(),
+                    ClipboardConfig::default(),
+                )
+                .is_err()
+            );
+            assert_eq!(fs::read_to_string(&path).unwrap(), source);
+            remove(&root);
+        }
+    }
+
+    #[test]
+    fn general_update_distinguishes_missing_files_from_other_read_failures() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = private_root("general-read-boundaries");
+        let missing = root.join("missing/config.toml");
+        ConfigStore::update_general(
+            &missing,
+            ConfirmationsConfig::default(),
+            RestoreConfig::default(),
+            ClipboardConfig::default(),
+        )
+        .unwrap();
+        assert!(
+            fs::read_to_string(&missing)
+                .unwrap()
+                .contains("confirm_before_closing_pane = true")
+        );
+
+        let unreadable = root.join("unreadable-config.toml");
+        fs::write(&unreadable, "# private").unwrap();
+        fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o000)).unwrap();
+        let error = ConfigStore::update_general(
+            &unreadable,
+            ConfirmationsConfig::default(),
+            RestoreConfig::default(),
+            ClipboardConfig::default(),
+        )
+        .unwrap_err();
+        assert!(error.contains("could not read"), "{error}");
+        fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(fs::read_to_string(&unreadable).unwrap(), "# private");
+        remove(&root);
+    }
+
+    #[test]
+    fn general_update_accepts_the_exact_size_limit_and_rejects_one_byte_more() {
+        let maximum = usize::try_from(MAX_CONFIG_BYTES).unwrap();
+        for (name, length, should_succeed) in
+            [("exact", maximum, true), ("over", maximum + 1, false)]
+        {
+            let root = private_root(name);
+            let path = root.join("zentty/config.toml");
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            let base = concat!(
+                "[confirmations]\n",
+                "confirm_before_closing_pane = true\n",
+                "confirm_before_closing_window = true\n",
+                "confirm_before_quitting = true\n",
+                "[restore]\n",
+                "restore_workspace_on_launch = true\n",
+                "[clipboard]\n",
+                "always_clean_copies = false\n",
+                "flatten_multi_line_commands = true\n",
+                "command_flatten_aggressiveness = \"normal\"\n",
+                "preserve_blank_lines_when_flattening = false\n",
+                "remove_box_drawing = true\n",
+                "flatten_slash_command_selections = true\n",
+                "strip_url_tracking_parameters = true\n",
+                "quote_paths_with_spaces = true\n",
+                "show_copy_markdown_command = true\n",
+            );
+            let source = format!("#{}\n{base}", "x".repeat(length - base.len() - 2));
+            assert_eq!(source.len(), length);
+            fs::write(&path, &source).unwrap();
+            let result = ConfigStore::update_general(
+                &path,
+                ConfirmationsConfig::default(),
+                RestoreConfig::default(),
+                ClipboardConfig::default(),
+            );
+            assert_eq!(result.is_ok(), should_succeed, "{result:?}");
+            if !should_succeed {
+                assert_eq!(fs::read_to_string(&path).unwrap(), source);
+            }
+            remove(&root);
+        }
     }
 
     #[test]

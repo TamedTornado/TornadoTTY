@@ -23,9 +23,41 @@ impl Default for ClipboardConfig {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ConfirmationsConfig {
+    pub confirm_before_closing_pane: bool,
+    pub confirm_before_closing_window: bool,
+    pub confirm_before_quitting: bool,
+}
+
+impl Default for ConfirmationsConfig {
+    fn default() -> Self {
+        Self {
+            confirm_before_closing_pane: true,
+            confirm_before_closing_window: true,
+            confirm_before_quitting: true,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RestoreConfig {
+    pub restore_workspace_on_launch: bool,
+}
+
+impl Default for RestoreConfig {
+    fn default() -> Self {
+        Self {
+            restore_workspace_on_launch: true,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct AppConfig {
     pub appearance: AppearanceConfig,
+    pub confirmations: ConfirmationsConfig,
+    pub restore: RestoreConfig,
     pub clipboard: ClipboardConfig,
     pub open_with: OpenWithConfig,
     pub server_detection: ServerDetectionConfig,
@@ -44,6 +76,8 @@ impl AppConfig {
             .map_err(|error| format!("invalid Zentty configuration: {error}"))?;
         Ok(Self {
             appearance: document.appearance.into_config()?,
+            confirmations: document.confirmations.into_config(),
+            restore: document.restore.into_config(),
             clipboard: document.clipboard.into_config(),
             open_with: document.open_with.into_config().normalized(),
             server_detection: document.server_detection.into_config().normalized(),
@@ -57,11 +91,55 @@ impl AppConfig {
 #[serde(default)]
 struct Document {
     appearance: AppearanceDocument,
+    confirmations: ConfirmationsDocument,
+    restore: RestoreDocument,
     clipboard: ClipboardDocument,
     open_with: OpenWithDocument,
     server_detection: ServerDetectionDocument,
     panes: PaneDocument,
     shortcuts: ShortcutDocument,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct ConfirmationsDocument {
+    #[serde(rename = "confirm_before_closing_pane")]
+    closing_pane: Option<bool>,
+    #[serde(rename = "confirm_before_closing_window")]
+    closing_window: Option<bool>,
+    #[serde(rename = "confirm_before_quitting")]
+    quitting: Option<bool>,
+}
+
+impl ConfirmationsDocument {
+    fn into_config(self) -> ConfirmationsConfig {
+        let defaults = ConfirmationsConfig::default();
+        ConfirmationsConfig {
+            confirm_before_closing_pane: self
+                .closing_pane
+                .unwrap_or(defaults.confirm_before_closing_pane),
+            confirm_before_closing_window: self
+                .closing_window
+                .unwrap_or(defaults.confirm_before_closing_window),
+            confirm_before_quitting: self.quitting.unwrap_or(defaults.confirm_before_quitting),
+        }
+    }
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct RestoreDocument {
+    restore_workspace_on_launch: Option<bool>,
+}
+
+impl RestoreDocument {
+    fn into_config(self) -> RestoreConfig {
+        RestoreConfig {
+            restore_workspace_on_launch: self
+                .restore_workspace_on_launch
+                .unwrap_or(RestoreConfig::default().restore_workspace_on_launch),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

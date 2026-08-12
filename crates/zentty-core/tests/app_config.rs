@@ -52,6 +52,46 @@ fn appearance_accepts_source_mode_tokens_but_rejects_unknown_or_nonfinite_values
 }
 
 #[test]
+fn lifecycle_settings_use_source_defaults_and_exact_toml_keys() {
+    let defaults = AppConfig::parse_toml("").unwrap();
+    assert!(defaults.confirmations.confirm_before_closing_pane);
+    assert!(defaults.confirmations.confirm_before_closing_window);
+    assert!(defaults.confirmations.confirm_before_quitting);
+    assert!(defaults.restore.restore_workspace_on_launch);
+
+    let configured = AppConfig::parse_toml(
+        r"
+        [confirmations]
+        confirm_before_closing_pane = false
+        confirm_before_closing_window = false
+        confirm_before_quitting = false
+        future_confirmation = true
+
+        [restore]
+        restore_workspace_on_launch = false
+        future_restore = true
+        ",
+    )
+    .unwrap();
+    assert!(!configured.confirmations.confirm_before_closing_pane);
+    assert!(!configured.confirmations.confirm_before_closing_window);
+    assert!(!configured.confirmations.confirm_before_quitting);
+    assert!(!configured.restore.restore_workspace_on_launch);
+
+    for source in [
+        "[confirmations]\nconfirm_before_closing_pane = \"yes\"\n",
+        "[confirmations]\nconfirm_before_closing_window = 1\n",
+        "[confirmations]\nconfirm_before_quitting = []\n",
+        "[restore]\nrestore_workspace_on_launch = \"no\"\n",
+    ] {
+        assert!(
+            AppConfig::parse_toml(source).is_err(),
+            "accepted {source:?}"
+        );
+    }
+}
+
+#[test]
 fn missing_clipboard_section_uses_source_defaults() {
     let config = AppConfig::parse_toml("[future]\nenabled = true\n").unwrap();
     let clipboard = config.clipboard;

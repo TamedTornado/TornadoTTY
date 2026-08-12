@@ -68,6 +68,7 @@ for dependency in grep mktemp sed sleep stat; do
 done
 [[ -x "${product}" ]] || fail "staged product is not built: ${product}"
 [[ -x "${actor}" ]] || fail "controlled agent actor is missing: ${actor}"
+zentty_product_disable_lifecycle_confirmations
 helper="$(dirname "${product}")/zentty"
 [[ -x "${helper}" ]] || fail "staged agent helper is not built: ${helper}"
 wrapper_root="$(cd "$(dirname "${product}")/.." && pwd)/libexec/zentty/agent-wrappers"

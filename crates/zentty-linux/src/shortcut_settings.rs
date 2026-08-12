@@ -12,6 +12,7 @@ use zentty_core::{
 };
 
 use crate::appearance_settings::ApplyAppearance;
+use crate::general_settings::{ApplyGeneral, GeneralSettings};
 use crate::settings_navigation::SettingsSection;
 
 use crate::application_shell::shortcut_registry::{
@@ -43,15 +44,21 @@ struct ViewState {
     modifier_buttons: Vec<(ShortcutModifier, gtk::ToggleButton)>,
 }
 
+pub(crate) struct SettingsContext {
+    pub(crate) appearance: AppearanceConfig,
+    pub(crate) apply_appearance: ApplyAppearance,
+    pub(crate) general: GeneralSettings,
+    pub(crate) apply_general: ApplyGeneral,
+    pub(crate) initial_section: SettingsSection,
+}
+
 #[allow(clippy::too_many_lines)] // Declarative construction of one focused settings view.
 pub(crate) fn show(
     parent: &gtk::Window,
     manager: Rc<RefCell<ShortcutManager>>,
     apply: ApplyBindings,
-    appearance: AppearanceConfig,
-    apply_appearance: ApplyAppearance,
+    settings_context: SettingsContext,
     restore_parent_focus: &Rc<dyn Fn()>,
-    initial_section: SettingsSection,
 ) -> gtk::Window {
     install_styles();
     crate::appearance_settings::install_styles();
@@ -181,14 +188,19 @@ pub(crate) fn show(
     detail.append(&physical);
     content.set_end_child(Some(&detail));
     root.append(&content);
-    let (appearance_page, appearance_search) =
-        crate::appearance_settings::build(appearance, apply_appearance);
+    let (appearance_page, appearance_search) = crate::appearance_settings::build(
+        settings_context.appearance,
+        settings_context.apply_appearance,
+    );
+    let general_page =
+        crate::general_settings::build(settings_context.general, &settings_context.apply_general);
     let settings = crate::settings_shell::build(
+        &general_page,
         &appearance_page,
         &appearance_search,
         &root.clone().upcast(),
         &search,
-        initial_section,
+        settings_context.initial_section,
     );
     window.insert_action_group("settings", Some(&settings.actions));
     window.set_child(Some(&settings.widget));

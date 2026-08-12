@@ -90,6 +90,24 @@ hover_pane_controls() {
     fail "pane controls did not become visible for ${pane_id}"
 }
 
+accept_latest_pane_confirmation() {
+    local before="$1"
+    local accepted_before
+    accepted_before="$(grep -Fc 'zentty-linux: confirmation accepted=true' "${log}" || true)"
+    for _ in $(seq 1 100); do
+        (( $(grep -Fc 'zentty-linux: confirmation shown title="Close this pane?"' "${log}" || true) > before )) && break
+        sleep 0.05
+    done
+    (( $(grep -Fc 'zentty-linux: confirmation shown title="Close this pane?"' "${log}" || true) > before )) ||
+        fail "pane close did not present the source confirmation"
+    xdotool key Return
+    for _ in $(seq 1 100); do
+        (( $(grep -Fc 'zentty-linux: confirmation accepted=true' "${log}" || true) > accepted_before )) && return 0
+        sleep 0.05
+    done
+    fail "pane close confirmation did not accept the physical Return key"
+}
+
 for _ in $(seq 1 100); do
     if grep -Fxq 'zentty-linux: title-pane=pane-1 value=zentty-title-two' "${log}"; then
         break
@@ -755,6 +773,37 @@ for _ in $(seq 1 100); do
 done
 grep -Fxq 'zentty-linux: pane-control action=close-pane target=pane-4' "${log}" ||
     fail "the transient right pane's Close Pane control did not target pane-4"
+for _ in $(seq 1 100); do
+    grep -Fxq 'zentty-linux: confirmation shown title="Close this pane?"' "${log}" && break
+    sleep 0.05
+done
+xdotool key Escape
+for _ in $(seq 1 100); do
+    grep -Fxq 'zentty-linux: confirmation accepted=false' "${log}" && break
+    sleep 0.05
+done
+# Prove cancellation preserved the live embedded terminal, rather than merely
+# matching a stale geometry receipt from before the dialog was shown.
+focus_before_cancel_probe="$(grep -Fc 'zentty-linux: focus-pane pane=pane-4' "${log}" || true)"
+xdotool mousemove --window "${window_id}" 1000 350 click 1
+for _ in $(seq 1 100); do
+    (( $(grep -Fc 'zentty-linux: focus-pane pane=pane-4' "${log}" || true) > focus_before_cancel_probe )) && break
+    sleep 0.05
+done
+(( $(grep -Fc 'zentty-linux: focus-pane pane=pane-4' "${log}" || true) > focus_before_cancel_probe )) ||
+    fail "cancelled pane did not regain terminal focus"
+xdotool type --delay 10 'confirmation-cancel-preserved'
+xdotool key Return
+for _ in $(seq 1 100); do
+    grep -Fxq 'zentty-linux: title-pane=pane-4 value=focus:confirmation-cancel-preserved' "${log}" && break
+    sleep 0.05
+done
+grep -Fxq 'zentty-linux: title-pane=pane-4 value=focus:confirmation-cancel-preserved' "${log}" ||
+    fail "cancelling pane confirmation did not preserve the real Ghostty PTY"
+hover_pane_controls pane-4 1000 350
+confirmation_count="$(grep -Fc 'zentty-linux: confirmation shown title="Close this pane?"' "${log}" || true)"
+xdotool mousemove --window "${window_id}" 1178 60 click 1
+accept_latest_pane_confirmation "${confirmation_count}"
 
 # Preserve explicit Add Pane Right coverage as a separate route. The second
 # Arrange item creates full-width pane-5 from the focused pane-2.
@@ -767,6 +816,7 @@ grep -Fxq 'zentty-linux: chrome-popover=arrange-panes state=open' "${log}" ||
     fail "the real arrange-panes icon did not open its popover"
 # The source-sized Arrange popover presents Create actions as a two-column
 # grid. Add Pane Right is the first row's second button.
+pane_scroll_before_arrange="$(grep -Fc 'zentty-linux: pane-scroll value=460 maximum=460' "${log}" || true)"
 xdotool mousemove --window "${window_id}" 480 114 click 1
 for _ in $(seq 1 100); do
     grep -Fxq 'zentty-linux: terminal-ready-pane=pane-5' "${log}" && break
@@ -774,8 +824,31 @@ for _ in $(seq 1 100); do
 done
 grep -Fxq 'zentty-linux: terminal-ready-pane=pane-5' "${log}" ||
     fail "the real Arrange Add Pane Right action did not create pane-5"
-xdotool type --window "${window_id}" --delay 10 'arranged-pane'
-xdotool key --window "${window_id}" Return
+for _ in $(seq 1 100); do
+    (( $(grep -Fc 'zentty-linux: pane-scroll value=460 maximum=460' "${log}" || true) > pane_scroll_before_arrange )) && break
+    sleep 0.05
+done
+(( $(grep -Fc 'zentty-linux: pane-scroll value=460 maximum=460' "${log}" || true) > pane_scroll_before_arrange )) ||
+    fail "the arranged pane did not complete its real post-layout scroll"
+hover_pane_controls pane-5 1000 350
+focus_pane_two_before_arranged_probe="$(grep -Fc 'zentty-linux: focus-pane pane=pane-2' "${log}" || true)"
+xdotool mousemove --window "${window_id}" 500 350 click 1
+for _ in $(seq 1 100); do
+    (( $(grep -Fc 'zentty-linux: focus-pane pane=pane-2' "${log}" || true) > focus_pane_two_before_arranged_probe )) && break
+    sleep 0.05
+done
+(( $(grep -Fc 'zentty-linux: focus-pane pane=pane-2' "${log}" || true) > focus_pane_two_before_arranged_probe )) ||
+    fail "the adjacent pane did not settle real terminal focus"
+next_before_arranged_probe="$(grep -Fc 'zentty-linux: action=next-pane worklane=worklane-1 pane=pane-5' "${log}" || true)"
+xdotool key ctrl+Tab
+for _ in $(seq 1 100); do
+    (( $(grep -Fc 'zentty-linux: action=next-pane worklane=worklane-1 pane=pane-5' "${log}" || true) > next_before_arranged_probe )) && break
+    sleep 0.05
+done
+(( $(grep -Fc 'zentty-linux: action=next-pane worklane=worklane-1 pane=pane-5' "${log}" || true) > next_before_arranged_probe )) ||
+    fail "pane traversal did not settle the arranged real terminal focus"
+xdotool type --delay 10 'arranged-pane'
+xdotool key Return
 for _ in $(seq 1 100); do
     grep -Fxq 'zentty-linux: title-pane=pane-5 value=focus:arranged-pane' "${log}" && break
     sleep 0.05
@@ -790,7 +863,9 @@ grep -Fxq 'zentty-linux: title-pane=pane-5 value=focus:arranged-pane' "${log}" |
 # Remove pane-5 first so the remaining three-pane geometry returns to the
 # already-qualified two-column layout and fixed controlled coordinates.
 hover_pane_controls pane-5 1000 350
+confirmation_count="$(grep -Fc 'zentty-linux: confirmation shown title="Close this pane?"' "${log}" || true)"
 xdotool mousemove --window "${window_id}" 1178 60 click 1
+accept_latest_pane_confirmation "${confirmation_count}"
 for _ in $(seq 1 100); do
     grep -Fxq 'zentty-linux: pane-control action=close-pane target=pane-5' "${log}" && break
     sleep 0.05
@@ -798,7 +873,9 @@ done
 grep -Fxq 'zentty-linux: pane-control action=close-pane target=pane-5' "${log}" ||
     fail "the arranged pane's Close Pane control did not target pane-5"
 hover_pane_controls pane-1 500 200
+confirmation_count="$(grep -Fc 'zentty-linux: confirmation shown title="Close this pane?"' "${log}" || true)"
 xdotool mousemove --window "${window_id}" 718 60 click 1
+accept_latest_pane_confirmation "${confirmation_count}"
 for _ in $(seq 1 100); do
     grep -Fxq 'zentty-linux: pane-control action=close-pane target=pane-1' "${log}" && break
     sleep 0.05
@@ -806,7 +883,9 @@ done
 grep -Fxq 'zentty-linux: pane-control action=close-pane target=pane-1' "${log}" ||
     fail "the original pane's hover Close Pane control did not target pane-1"
 hover_pane_controls pane-2 1000 350
+confirmation_count="$(grep -Fc 'zentty-linux: confirmation shown title="Close this pane?"' "${log}" || true)"
 xdotool mousemove --window "${window_id}" 1178 60 click 1
+accept_latest_pane_confirmation "${confirmation_count}"
 for _ in $(seq 1 100); do
     grep -Fxq 'zentty-linux: pane-control action=close-pane target=pane-2' "${log}" && break
     sleep 0.05
@@ -814,7 +893,9 @@ done
 grep -Fxq 'zentty-linux: pane-control action=close-pane target=pane-2' "${log}" ||
     fail "the right pane's hover Close Pane control did not target pane-2"
 hover_pane_controls pane-3 700 350
+confirmation_count="$(grep -Fc 'zentty-linux: confirmation shown title="Close this pane?"' "${log}" || true)"
 xdotool mousemove --window "${window_id}" 1178 60 click 1
+accept_latest_pane_confirmation "${confirmation_count}"
 for _ in $(seq 1 100); do
     grep -Fxq 'zentty-linux: pane-control action=close-pane target=pane-3' "${log}" && break
     sleep 0.05

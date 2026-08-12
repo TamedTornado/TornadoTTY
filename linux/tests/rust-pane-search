@@ -52,6 +52,14 @@ for dependency in awk cmp dirname grep mkdir mktemp readlink seq sha256sum sleep
 done
 [[ -x "${product}" ]] || fail "staged product is not built: ${product}"
 product="$(readlink -f -- "${product}")"
+config_file="${XDG_CONFIG_HOME:?}/zentty/config.toml"
+mkdir -p "$(dirname "${config_file}")"
+cat >"${config_file}" <<'EOF'
+[confirmations]
+confirm_before_closing_pane = false
+confirm_before_closing_window = false
+confirm_before_quitting = false
+EOF
 
 press_ctrl_shift() {
     local key="$1"
@@ -196,6 +204,11 @@ clipboard_expected="$(mktemp)"
 config_file="${XDG_CONFIG_HOME:?}/zentty/config.toml"
 mkdir -p "$(dirname "${config_file}")"
 cat >"${config_file}" <<'EOF'
+[confirmations]
+confirm_before_closing_pane = false
+confirm_before_closing_window = false
+confirm_before_quitting = false
+
 [clipboard]
 always_clean_copies = true
 EOF

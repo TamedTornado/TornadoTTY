@@ -71,6 +71,7 @@ layer_runpath="$(
 [[ "${layer_runpath}" == .zig-cache/* ]] || fail "Ghostty layer-shell runpath is missing"
 
 state_dir="$(mktemp -d)"
+zentty_product_disable_lifecycle_confirmations
 working_dir="$(mktemp -d)"
 cwd_receipt="${working_dir}/pty-cwd-receipt"
 log="$(mktemp)"

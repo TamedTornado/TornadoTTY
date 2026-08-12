@@ -44,8 +44,8 @@ pub use agent_status::{
     AgentPhase, AgentProgress, AgentStatusStore, PaneAgentStatus, TerminalProgressState,
 };
 pub use app_config::{
-    AppConfig, AppearanceConfig, ClipboardConfig, OpenWithConfig, OpenWithCustomApp, PaneConfig,
-    ServerBrowserCustomApp, ServerDetectionConfig,
+    AppConfig, AppearanceConfig, ClipboardConfig, ConfirmationsConfig, OpenWithConfig,
+    OpenWithCustomApp, PaneConfig, RestoreConfig, ServerBrowserCustomApp, ServerDetectionConfig,
 };
 pub use appearance::{
     BackgroundOpacity, FALLBACK_DARK_THEME, FALLBACK_LIGHT_THEME, ThemeMode, ThemeModeCommand,

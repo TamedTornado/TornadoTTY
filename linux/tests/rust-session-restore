@@ -91,6 +91,7 @@ state_dir="$(mktemp -d)"
 fake_bin="$(mktemp -d)"
 log="$(mktemp)"
 agent_receipt="$(mktemp)"
+zentty_product_disable_lifecycle_confirmations
 ln -s "${actor}" "${fake_bin}/codex"
 real_scp="$(command -v scp)"
 cat >"${fake_bin}/scp" <<EOF
@@ -503,6 +504,47 @@ jq -e '
     ([.restoreDraftWindows[0].paneDrafts[].sessionID] | sort) == ["session-codex", "session-two"]
 ' "${snapshot}" >/dev/null || fail "clean snapshot lost source metadata, active lane, or agent drafts"
 jq -e '.cleanExit == true' "${lifecycle}" >/dev/null || fail "clean lifecycle marker was not written"
+
+# The source General preference is a real launch gate, not merely a parsed
+# value. Preserve the qualified clean snapshot bytes, disable restoration in
+# the persisted config, and prove a normal second launch presents one fresh
+# real terminal without mounting any saved pane or background agent. Restore
+# those exact bytes and re-enable the preference before the ordinary restore
+# journey below.
+saved_snapshot="${state_dir}/restore-snapshot.general-setting-fixture"
+cp -- "${snapshot}" "${saved_snapshot}"
+cat >"${XDG_CONFIG_HOME}/zentty/config.toml" <<'EOF'
+[confirmations]
+confirm_before_closing_pane = false
+confirm_before_closing_window = false
+confirm_before_quitting = false
+
+[restore]
+restore_workspace_on_launch = false
+EOF
+resume_count_before_disabled_launch="$(grep -c '^resume:' "${agent_receipt}" || true)"
+start_product
+zentty_product_wait_for_log "${log}" \
+    'zentty-linux: topology=worklane-1[title=none,color=none]:pane-1*' \
+    "disabled General restore preference did not present a fresh workspace" ||
+    fail "disabled General restore preference was ignored"
+! grep -Fq 'zentty-linux: terminal-ready-pane=pane-shell-active' "${log}" ||
+    fail "disabled General restore preference mounted a saved pane"
+[[ "$(grep -c '^resume:' "${agent_receipt}" || true)" -eq "${resume_count_before_disabled_launch}" ]] ||
+    fail "disabled General restore preference restarted a saved background agent"
+zentty_product_prepare_input "${backend}" "${log}" || fail "could not prepare fresh preference-disabled input"
+zentty_product_close_window "${backend}"
+wait_for_product_exit
+cp -- "${saved_snapshot}" "${snapshot}"
+cat >"${XDG_CONFIG_HOME}/zentty/config.toml" <<'EOF'
+[confirmations]
+confirm_before_closing_pane = false
+confirm_before_closing_window = false
+confirm_before_quitting = false
+
+[restore]
+restore_workspace_on_launch = true
+EOF
 
 start_product
 assert_background_start 4

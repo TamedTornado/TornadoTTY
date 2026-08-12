@@ -474,7 +474,7 @@ impl ApplicationShell {
     }
 
     pub(crate) fn close_task_manager_pane(shell: &Rc<RefCell<Self>>, pane_id: &str) {
-        Self::close_pane(shell, pane_id);
+        Self::request_close_pane(shell, pane_id);
     }
 
     pub(crate) fn set_application_handlers(
@@ -591,19 +591,84 @@ impl ApplicationShell {
     }
 
     fn request_quit(&self) {
-        if let Some(handler) = self.quit_handler.clone() {
-            handler();
+        let handler = self.quit_handler.clone();
+        let window = self.window.clone();
+        let action: Rc<dyn Fn()> = Rc::new(move || {
+            if let Some(handler) = handler.clone() {
+                handler();
+            } else {
+                window.close();
+            }
+        });
+        if self.config.confirmations.confirm_before_quitting {
+            Self::confirm_action(
+                &self.window,
+                "Quit Zentty?",
+                "Terminal processes in all windows will be closed.",
+                "Quit",
+                action,
+            );
         } else {
-            self.window.close();
+            action();
         }
     }
 
     fn request_close_window(&self) {
-        if let Some(handler) = self.close_window_handler.clone() {
-            handler();
+        let handler = self.close_window_handler.clone();
+        let window = self.window.clone();
+        let action: Rc<dyn Fn()> = Rc::new(move || {
+            if let Some(handler) = handler.clone() {
+                handler();
+            } else {
+                window.close();
+            }
+        });
+        if self.config.confirmations.confirm_before_closing_window
+            && self.pane_runtime.live_children() > 0
+        {
+            Self::confirm_action(
+                &self.window,
+                "Close this window?",
+                "Running terminal processes in this window will be closed.",
+                "Close Window",
+                action,
+            );
         } else {
-            self.window.close();
+            action();
         }
+    }
+
+    fn confirm_action(
+        parent: &gtk::Window,
+        title: &str,
+        detail: &str,
+        accept_label: &str,
+        action: Rc<dyn Fn()>,
+    ) {
+        let dialog = gtk::AlertDialog::builder()
+            .modal(true)
+            .message(title)
+            .detail(detail)
+            .buttons(["Cancel", accept_label])
+            .cancel_button(0)
+            .default_button(1)
+            .build();
+        dialog.choose(
+            Some(parent),
+            None::<&gtk::gio::Cancellable>,
+            move |response| {
+                let accepted = response == Ok(1);
+                eprintln!("zentty-linux: confirmation accepted={accepted}");
+                if accepted {
+                    // AlertDialog completes its response callback before GTK has
+                    // finished removing the modal. Run the accepted action on
+                    // the next main-loop turn so any terminal focus it restores
+                    // is not immediately taken back by the disappearing dialog.
+                    glib::idle_add_local_once(move || action());
+                }
+            },
+        );
+        eprintln!("zentty-linux: confirmation shown title={title:?}");
     }
 
     fn mount_background_restored_agents(&self) {
@@ -1224,6 +1289,7 @@ impl ApplicationShell {
         let weak = self.self_handle.borrow().clone();
         let appearance = self.config.appearance.clone();
         let appearance_weak = self.self_handle.borrow().clone();
+        let general_weak = self.self_handle.borrow().clone();
         let focus_weak = self.self_handle.borrow().clone();
         let restore_parent_focus: Rc<dyn Fn()> = Rc::new(move || {
             if let Some(shell) = focus_weak.upgrade() {
@@ -1256,17 +1322,51 @@ impl ApplicationShell {
                 }
                 Ok(())
             }),
-            appearance,
-            Rc::new(move |appearance| {
-                let shell = appearance_weak
-                    .upgrade()
-                    .ok_or_else(|| "Zentty window closed while applying appearance".to_owned())?;
-                shell.borrow_mut().apply_appearance(appearance, false)
-            }),
+            crate::shortcut_settings::SettingsContext {
+                appearance,
+                apply_appearance: Rc::new(move |appearance| {
+                    let shell = appearance_weak.upgrade().ok_or_else(|| {
+                        "Zentty window closed while applying appearance".to_owned()
+                    })?;
+                    shell.borrow_mut().apply_appearance(appearance, false)
+                }),
+                general: crate::general_settings::GeneralSettings {
+                    confirmations: self.config.confirmations,
+                    restore: self.config.restore,
+                    clipboard: self.config.clipboard,
+                },
+                apply_general: Rc::new(move |general| {
+                    if let Some(shell) = general_weak.upgrade() {
+                        shell.borrow_mut().apply_general(general);
+                    }
+                }),
+                initial_section: section,
+            },
             &restore_parent_focus,
-            section,
         );
         self.shortcut_settings_window = Some(window);
+    }
+
+    fn apply_general(&mut self, general: crate::general_settings::GeneralSettings) {
+        match crate::config_store::ConfigStore::update_default_general(
+            general.confirmations,
+            general.restore,
+            general.clipboard,
+        ) {
+            Ok(path) => {
+                self.config.confirmations = general.confirmations;
+                self.config.restore = general.restore;
+                self.config.clipboard = general.clipboard;
+                self.render_sidebar();
+                eprintln!(
+                    "zentty-linux: general-settings result=persisted path={} restore={} clean-copy={}",
+                    path.display(),
+                    general.restore.restore_workspace_on_launch,
+                    general.clipboard.always_clean_copies
+                );
+            }
+            Err(error) => eprintln!("zentty-linux: general-settings result=error detail={error}"),
+        }
     }
 
     fn reload_ghostty_config(&mut self) {
@@ -2272,7 +2372,33 @@ impl ApplicationShell {
     fn close_focused_pane(shell: &Rc<RefCell<Self>>) {
         let pane_id = shell.borrow().state.focused_pane_id().map(str::to_owned);
         if let Some(pane_id) = pane_id {
-            Self::close_pane(shell, &pane_id);
+            Self::request_close_pane(shell, &pane_id);
+        }
+    }
+
+    fn request_close_pane(shell: &Rc<RefCell<Self>>, pane_id: &str) {
+        let should_confirm = shell
+            .borrow()
+            .config
+            .confirmations
+            .confirm_before_closing_pane;
+        if should_confirm {
+            let weak = Rc::downgrade(shell);
+            let confirmed_pane = pane_id.to_owned();
+            let action: Rc<dyn Fn()> = Rc::new(move || {
+                if let Some(shell) = weak.upgrade() {
+                    Self::close_pane(&shell, &confirmed_pane);
+                }
+            });
+            Self::confirm_action(
+                &shell.borrow().window,
+                "Close this pane?",
+                "The terminal process in this pane will be closed.",
+                "Close Pane",
+                action,
+            );
+        } else {
+            Self::close_pane(shell, pane_id);
         }
     }
 
@@ -2347,7 +2473,7 @@ impl ApplicationShell {
             PaneControlAction::MoveToNewWindow => {
                 shell.borrow().request_move_pane_to_new_window();
             }
-            PaneControlAction::ClosePane => Self::close_pane(shell, pane_id),
+            PaneControlAction::ClosePane => Self::request_close_pane(shell, pane_id),
         }
     }
 
