@@ -83,10 +83,11 @@ as the slice proceeds.
   found eleven missing source IDs. Focused rename actions now reuse the existing
   rename dialog and parameterized action, path copy uses the focused pane's real
   working directory, and duplicate pane opens a new column with that directory as
-  the source specifies. Seven IDs still lack an honest parameterless Linux action
+  the source specifies. Six IDs still lack an honest parameterless Linux action
   and are not falsely advertised as bindable: `open_with.selected_app`,
-  `server.open_selected`, the four appearance-mode commands, and
-  `app.reload_config`.
+  `server.open_selected`, and the four appearance-mode commands. The adjacent
+  issue #20 slice now provides `app.reload_config` through the real Ghostty
+  runtime rather than recreating terminal surfaces.
 - The remainder depends on adjacent issue #20 work (appearance state and safe live config
   reload); selected-app/server commands require a durable selection owner rather
   than guessing from a transient popover.

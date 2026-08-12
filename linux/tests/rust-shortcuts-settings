@@ -48,7 +48,7 @@ case "${backend}" in
         ;;
     *) fail "GDK_BACKEND must be x11 or wayland" ;;
 esac
-for dependency in grep mktemp od readelf sed sleep stty tr; do
+for dependency in awk grep mktemp od readelf sed sleep stty tr; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
 [[ -x "${product}" ]] || fail "staged product is missing: ${product}"
@@ -61,6 +61,9 @@ layer_runpath="$(
 [[ "${layer_runpath}" == .zig-cache/* ]] || fail "Ghostty runpath is not pinned"
 layer_directory="${ghostty_root}/${layer_runpath}"
 mkdir -p "${state_directory}"
+ghostty_config="${XDG_CONFIG_HOME}/ghostty/config"
+mkdir -p "$(dirname "${ghostty_config}")"
+printf 'font-size = 10\n' >"${ghostty_config}"
 
 start_product() {
     local command="$1"
@@ -177,6 +180,19 @@ zentty_product_wait_for_log "${log}" 'zentty-linux: shortcut-settings saved comm
     "physical recorder did not persist the replacement" || fail "shortcut recording failed"
 [[ ! -s "${bytes}" ]] || fail "bound application shortcut leaked bytes into the real PTY"
 
+# Bind the source Reload Configuration command through the same physical UI;
+# it deliberately has no default shortcut in the source registry.
+settings_key ctrl+f
+settings_key ctrl+a
+settings_type 'Reload Configuration'
+settings_key Return
+zentty_product_wait_for_log "${log}" 'zentty-linux: shortcut-settings selected=app.reload_config' \
+    "search did not select Reload Configuration" || fail "reload command search failed"
+settings_key Return
+settings_key ctrl+alt+r
+zentty_product_wait_for_log "${log}" 'zentty-linux: shortcut-settings saved command=app.reload_config value=command+option+r' \
+    "physical recorder did not persist Reload Configuration" || fail "reload binding failed"
+
 settings_key Escape
 zentty_product_wait_for_log "${log}" 'shortcut-settings hidden parent-presented=true' \
     "closing settings did not present its parent window" || fail "main focus restoration failed"
@@ -185,6 +201,35 @@ main_key ctrl+alt+z
 zentty_product_wait_for_log "${log}" 'zentty-linux: shortcut=command+option+z action=toggle-sidebar' \
     "new shortcut did not activate the existing action router" || fail "runtime binding failed"
 [[ ! -s "${bytes}" ]] || fail "bound runtime shortcut leaked into the terminal"
+
+# Add a second real Ghostty surface before reload. The runtime operation is
+# process-global, so the journey must prove propagation beyond the focused pane.
+main_key ctrl+d
+zentty_product_wait_for_log "${log}" 'zentty-linux: pane-display id=pane-2' \
+    "second live pane did not appear" || fail "multi-surface reload setup failed"
+
+# Change the real Ghostty config and reload the one process-global runtime.
+# Cell metrics come from the native surface both before and after; the same
+# foreground PIDs prove that applying appearance did not recreate either PTY.
+printf 'font-size = 24\n' >"${ghostty_config}"
+main_key ctrl+alt+r
+zentty_product_wait_for_log "${log}" 'zentty-linux: action=reload-config result=applied' \
+    "Reload Configuration did not reach the Ghostty runtime" || fail "runtime reload failed"
+for pane_id in pane-1 pane-2; do
+    zentty_product_wait_for_log "${log}" "zentty-linux: reload-config-metric stage=after pane=${pane_id}" \
+        "Ghostty did not publish post-reload metrics for ${pane_id}" || fail "reload metrics missing"
+    before_metric="$(grep -F "zentty-linux: reload-config-metric stage=before pane=${pane_id}" "${log}" | tail -1)"
+    after_metric="$(grep -F "zentty-linux: reload-config-metric stage=after pane=${pane_id}" "${log}" | tail -1)"
+    before_height="$(sed -nE 's/.* cell=[0-9.]+x([0-9.]+) pid=.*/\1/p' <<<"${before_metric}")"
+    after_height="$(sed -nE 's/.* cell=[0-9.]+x([0-9.]+) pid=.*/\1/p' <<<"${after_metric}")"
+    before_pid="$(sed -nE 's/.* pid=([0-9]+)$/\1/p' <<<"${before_metric}")"
+    after_pid="$(sed -nE 's/.* pid=([0-9]+)$/\1/p' <<<"${after_metric}")"
+    [[ "${before_pid}" =~ ^[1-9][0-9]*$ && "${after_pid}" == "${before_pid}" ]] ||
+        fail "reload replaced or lost the real terminal process for ${pane_id}"
+    awk -v before="${before_height}" -v after="${after_height}" 'BEGIN { exit !(after > before) }' ||
+        fail "font-size reload did not change ${pane_id} cell metrics (${before_height} -> ${after_height})"
+done
+[[ ! -s "${bytes}" ]] || fail "bound reload shortcut leaked into the terminal"
 main_key ctrl+s
 for _ in {1..200}; do [[ -s "${bytes}" ]] && break; sleep 0.05; done
 [[ "$(cat "${bytes}" 2>/dev/null || true)" == 13 ]] ||
@@ -193,6 +238,7 @@ for _ in {1..200}; do [[ -s "${bytes}" ]] && break; sleep 0.05; done
 config="${XDG_CONFIG_HOME}/zentty/config.toml"
 grep -Fq 'command_id = "sidebar.toggle"' "${config}" || fail "binding was not written to XDG config"
 grep -Fq 'shortcut = "command+option+z"' "${config}" || fail "stored shortcut is not source-compatible"
+grep -Fq 'command_id = "app.reload_config"' "${config}" || fail "reload binding was not persisted"
 
 # A fresh product process must load exactly the same binding.
 cleanup_product
@@ -204,4 +250,4 @@ zentty_product_wait_for_log "${log}" 'zentty-linux: shortcut=command+option+z ac
     "persisted shortcut was not active after restart" || fail "restart persistence failed"
 [[ ! -s "${bytes}" ]] || fail "restarted bound shortcut leaked into the real PTY"
 
-echo "rust-shortcuts-settings-${backend}: PASS real-gtk-settings physical-recorder real-ghostty-pty bound-action unbound-byte persistence-restart"
+echo "rust-shortcuts-settings-${backend}: PASS real-gtk-settings physical-recorder real-ghostty-reload preserved-pty bound-action unbound-byte persistence-restart"

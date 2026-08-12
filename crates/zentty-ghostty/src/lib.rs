@@ -101,6 +101,7 @@ pub enum Error {
     TextReadFailed,
     InvalidText(FromUtf8Error),
     TickFailed,
+    ConfigReloadFailed,
 }
 
 impl fmt::Display for Error {
@@ -147,6 +148,7 @@ impl fmt::Display for Error {
                 formatter.write_str("Ghostty terminal text was not valid UTF-8")
             }
             Self::TickFailed => formatter.write_str("Ghostty runtime tick failed"),
+            Self::ConfigReloadFailed => formatter.write_str("Ghostty configuration reload failed"),
         }
     }
 }
@@ -224,6 +226,21 @@ impl GhosttyRuntime {
         // `Rc` makes the adapter main-thread-only.
         let succeeded = unsafe { sys::ghostty_gtk_embed_runtime_tick(self.inner.raw.as_ptr()) };
         succeeded.then_some(()).ok_or(Error::TickFailed)
+    }
+
+    /// Hard-reloads Ghostty's default configuration stack and propagates it to
+    /// every existing embedded surface without restarting terminal processes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::ConfigReloadFailed`] when loading or applying the native
+    /// configuration fails.
+    pub fn reload_config(&self) -> Result<(), Error> {
+        // SAFETY: `inner.raw` is the active process-global runtime and this
+        // main-thread-only adapter preserves the native call's ownership rule.
+        let succeeded =
+            unsafe { sys::ghostty_gtk_embed_runtime_reload_config(self.inner.raw.as_ptr()) };
+        succeeded.then_some(()).ok_or(Error::ConfigReloadFailed)
     }
 
     /// Creates one GTK-owned Ghostty surface after GTK initialization.

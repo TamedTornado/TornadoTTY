@@ -83,6 +83,14 @@ pub(crate) const COMMANDS: &[ShortcutCommandSpec] = &[
         Some("command+,")
     ),
     command!(
+        "app.reload_config",
+        "Reload Configuration",
+        "Reload Ghostty configuration in every existing terminal.",
+        General,
+        ACTION_RELOAD_CONFIG,
+        None
+    ),
+    command!(
         "bookmarks.openPopover",
         "Show Bookmarks & Presets",
         "Open the bookmarks and presets browser.",

@@ -78,6 +78,7 @@ macro_rules! action {
 pub(super) const ACTION_TOGGLE_SIDEBAR: &str = "toggle-sidebar";
 pub(super) const ACTION_SHOW_COMMAND_PALETTE: &str = "show-command-palette";
 pub(super) const ACTION_OPEN_SETTINGS: &str = "open-settings";
+pub(super) const ACTION_RELOAD_CONFIG: &str = "reload-config";
 pub(super) const ACTION_OPEN_BOOKMARKS: &str = "open-bookmarks";
 pub(super) const ACTION_JUMP_LATEST_ATTENTION: &str = "jump-latest-attention";
 pub(super) const ACTION_NEW_WINDOW: &str = "new-window";
@@ -184,6 +185,7 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
     action!(ACTION_TOGGLE_SIDEBAR, "toggle-sidebar", None),
     action!(ACTION_SHOW_COMMAND_PALETTE, "show-command-palette", None),
     action!(ACTION_OPEN_SETTINGS, "open-settings", None),
+    action!(ACTION_RELOAD_CONFIG, "reload-config", None),
     action!(ACTION_OPEN_BOOKMARKS, "open-bookmarks", None),
     action!(ACTION_JUMP_LATEST_ATTENTION, "jump-latest-attention", None),
     action!(ACTION_NEW_WORKLANE, "new-worklane", None),
@@ -549,6 +551,9 @@ fn install_settings_shortcut_actions(
 ) {
     add_simple_action(shell, group, ACTION_SHOW_COMMAND_PALETTE, |shell| {
         shell.toggle_command_palette();
+    });
+    add_simple_action(shell, group, ACTION_RELOAD_CONFIG, |shell| {
+        shell.reload_ghostty_config();
     });
     let open_settings = gio::SimpleAction::new(ACTION_OPEN_SETTINGS, None);
     let weak = Rc::downgrade(shell);
@@ -1530,7 +1535,7 @@ mod tests {
 
     #[test]
     fn registry_is_unique_complete_and_typed() {
-        assert_eq!(ACTION_SPECS.len(), 102);
+        assert_eq!(ACTION_SPECS.len(), 103);
         assert_eq!(
             ACTION_SPECS
                 .iter()

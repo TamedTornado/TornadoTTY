@@ -50,6 +50,7 @@ unsafe extern "C" {
     ) -> *mut GhosttyGtkEmbedRuntime;
     pub fn ghostty_gtk_embed_runtime_free(runtime: *mut GhosttyGtkEmbedRuntime);
     pub fn ghostty_gtk_embed_runtime_tick(runtime: *mut GhosttyGtkEmbedRuntime) -> bool;
+    pub fn ghostty_gtk_embed_runtime_reload_config(runtime: *mut GhosttyGtkEmbedRuntime) -> bool;
     pub fn ghostty_gtk_embed_surface_new_with_options(
         runtime: *mut GhosttyGtkEmbedRuntime,
         options: *const GhosttyGtkEmbedSurfaceOptions,

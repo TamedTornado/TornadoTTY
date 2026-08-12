@@ -1238,6 +1238,48 @@ impl ApplicationShell {
         self.shortcut_settings_window = Some(window);
     }
 
+    fn reload_ghostty_config(&mut self) {
+        self.report_ghostty_reload_metrics("before");
+        match self.pane_runtime.runtime().reload_config() {
+            Ok(()) => {
+                self.schedule_layout_render();
+                self.focus_selected_surface();
+                eprintln!("zentty-linux: action=reload-config result=applied");
+                let weak = self.self_handle.borrow().clone();
+                glib::timeout_add_local_once(Duration::from_millis(250), move || {
+                    if let Some(shell) = weak.upgrade()
+                        && let Ok(shell) = shell.try_borrow_mut()
+                    {
+                        shell.report_ghostty_reload_metrics("after");
+                        shell.focus_selected_surface();
+                    }
+                });
+            }
+            Err(error) => {
+                eprintln!("zentty-linux: action=reload-config result=failed detail={error}");
+            }
+        }
+    }
+
+    fn report_ghostty_reload_metrics(&self, stage: &str) {
+        let mut pane_ids = self.pane_runtime.live_pane_ids();
+        pane_ids.sort();
+        for pane_id in pane_ids {
+            let Some(surface) = self.pane_runtime.surface(&pane_id) else {
+                continue;
+            };
+            let Ok(cell) = surface.cell_size() else {
+                continue;
+            };
+            eprintln!(
+                "zentty-linux: reload-config-metric stage={stage} pane={pane_id} cell={:.3}x{:.3} pid={}",
+                cell.width,
+                cell.height,
+                surface.foreground_process_id().unwrap_or(0)
+            );
+        }
+    }
+
     fn request_rename_current_worklane(&self) {
         let worklane = self.state.active_worklane();
         crate::sidebar::present_rename_dialog(
