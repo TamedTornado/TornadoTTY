@@ -102,6 +102,31 @@ the three reproducible compositor/portal defects executable as XFAILs. UI
 exposure alone is not end-to-end evidence, and GH-18 remains open until those
 tracked journeys pass.
 
+## Native GTK closeout — 2026-08-12
+
+The remaining import/export blockers are specific to `GtkFileDialog`'s portal
+delegation, not to Zentty's portable-file model. Linux will use one in-process,
+transient-for-parent GTK file chooser for this application-owned file format.
+This is the native GTK platform implementation of the source macOS save/open
+panel contract; it is not a product-only test route and does not invent a file
+browser. The existing real-file journey stays authoritative.
+
+Construction order:
+
+1. Keep the controlled X11 and Wayland import/export cells RED. Remove their
+   private D-Bus/portal assumption and require a real mapped GTK chooser owned
+   by the Zentty window.
+2. Replace only the chooser coordination boundary; retain the existing bounded
+   import/export envelope, atomic store, extension, diagnostics, and action
+   receipts.
+3. Drive Save/Open with compositor input in both environments and prove the
+   exact exported bytes are deleted, re-imported, and persisted as a portable
+   preset.
+4. Close the independent second-transient Wayland management XFAIL without
+   adding sleeps, retries, or product test modes.
+5. Promote cells only after focused wrapper tests and a complete local
+   qualification run.
+
 ## Qualification language
 
 Passing this slice means only that its implemented local cells pass. It is not
