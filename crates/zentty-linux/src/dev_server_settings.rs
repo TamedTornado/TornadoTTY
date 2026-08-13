@@ -321,14 +321,32 @@ fn add_ignored_rule(state: &Rc<RefCell<State>>) {
             .borrow()
             .status
             .set_text("Enter a valid port from 1–65535 or an inclusive range.");
+        eprintln!(
+            "zentty-linux: dev-server-settings control=add-ignored-port result=rejected-invalid"
+        );
         return;
     };
-    let mut values = state.borrow().config.ignored_port_rules.clone();
-    values.push(rule.canonical());
-    state.borrow_mut().config.ignored_port_rules = ServerPortRule::normalize(&values)
+    let previous = ServerPortRule::normalize(&state.borrow().config.ignored_port_rules)
         .into_iter()
         .map(|rule| rule.canonical())
-        .collect();
+        .collect::<Vec<_>>();
+    let mut values = previous.clone();
+    values.push(rule.canonical());
+    let normalized = ServerPortRule::normalize(&values)
+        .into_iter()
+        .map(|rule| rule.canonical())
+        .collect::<Vec<_>>();
+    if normalized == previous {
+        state
+            .borrow()
+            .status
+            .set_text("That port is already ignored.");
+        eprintln!(
+            "zentty-linux: dev-server-settings control=add-ignored-port result=rejected-duplicate"
+        );
+        return;
+    }
+    state.borrow_mut().config.ignored_port_rules = normalized;
     state.borrow().port_entry.set_text("");
     apply_and_rebuild(state, "add-ignored-port");
 }

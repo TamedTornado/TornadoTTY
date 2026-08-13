@@ -175,6 +175,19 @@ zentty_product_set_file_clipboard() {
             for path in "$@"; do
                 printf 'file://%s\r\n' "${path}"
             done | xclip -selection clipboard -target text/uri-list -in
+            # xclip owns the X selection asynchronously. Under parallel real-
+            # compositor qualification, an immediate Ctrl+Shift+V can precede
+            # ownership publication even though xclip has returned success.
+            # Read the real TARGETS selection before allowing physical paste.
+            for _ in {1..200}; do
+                if xclip -selection clipboard -target TARGETS -out 2>/dev/null |
+                    grep -Fxq 'text/uri-list'; then
+                    return 0
+                fi
+                sleep 0.05
+            done
+            echo "product-input: X11 file clipboard did not publish text/uri-list" >&2
+            return 1
             ;;
         wayland)
             command -v wl-copy >/dev/null || {

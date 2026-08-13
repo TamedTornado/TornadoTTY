@@ -111,7 +111,7 @@ main_type() {
         # The nested compositor shares CPU with real Ghostty builds and product
         # journeys during the full matrix. Preserve every physical key event
         # under that load rather than accepting a partial query as readiness.
-        wtype -d 50 -- "$1"
+        wtype -d 150 -- "$1"
     fi
 }
 

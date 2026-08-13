@@ -241,6 +241,57 @@ authoritative execution plan is
   Valgrind is **PASS with reviewed suppressions**, suppression governance is
   accepted, and ReleaseSafe Valgrind remains XFAIL.
 
+### Ignored-port controls and restart
+
+- The settings control previously normalized overlapping port rules but offered
+  no operator feedback: entering a port already covered by a range performed a
+  redundant config write and appeared successful. The page now distinguishes
+  invalid input from an already-covered port, leaves the exact config bytes
+  unchanged in both cases, and reports each outcome explicitly.
+- The real X11 journey physically enters invalid port `0`, privileged port
+  `80`, a valid inclusive range, and an overlapping port. It proves
+  rejection/no mutation, canonical persistence, duplicate rejection, and
+  physical Stop Ignoring removal of both rows through the same GTK page and
+  authoritative config store. The controlled listener remains live throughout;
+  these controls configure relevance and never manage server processes. A
+  separate real kernel-assigned listener covers an ephemeral port.
+- Both X11 and Wayland journeys now terminate the original product and launch a
+  fresh delivered binary against the same XDG configuration. The new process
+  must resolve exactly the surviving three-target browser catalog, the selected
+  custom browser, enabled passive detection, absence of the stale browser, and
+  absence of the removed ignored-port range.
+- GH-39 now remains open only for the native custom-browser chooser/removal
+  journey and live invalidation when a browser disappears while the settings
+  window remains open.
+- The first full parallel matrix run exposed two unrelated timing defects in
+  existing physical journeys rather than product regressions: the X11 source
+  UX cell sampled sidebar allocation after a fixed 200 ms sleep, and the
+  Wayland shortcut/settings cell could type faster than the loaded nested
+  compositor consumed command-palette input. Both failed cells passed alone.
+  The X11 assertion now waits for the exact allocation receipt, while Wayland
+  text entry uses a deliberately paced physical key stream. Neither repair
+  bypasses GTK, Ghostty, or the controlled compositors.
+- The next aggregate run exposed a pre-existing X11 clipboard ownership race in
+  the agent/remote-transfer journey: `xclip` returned successfully before the
+  compositor advertised `text/uri-list`, so the immediate physical paste had
+  nothing to consume. The shared real-input authority now reads the X11
+  `TARGETS` selection and proceeds only after the actual MIME target is owned;
+  environmental absence remains a failure rather than a pass.
+- That second aggregate completed in 549,700 ms with 122 expected PASS cells
+  passing and only the clipboard race failing; declared matrix totals remained
+  PASS=123, FAIL=0, BLOCKED=7, XFAIL=1, NOT_IMPLEMENTED=23. Debug Valgrind was
+  **PASS with reviewed suppressions**. The repaired session-restore journey then
+  passed against the real X11 selection, real loopback SSH/SCP, GTK, and Ghostty
+  path before the full matrix was rerun.
+- Final post-repair `linux/tests/qualify-local` passed every presently
+  executable support and matrix cell in 512,050 ms. Declared totals were
+  PASS=123, FAIL=0, BLOCKED=7, XFAIL=1, NOT_IMPLEMENTED=23. Implemented-local,
+  product-boundary, and qualification-host-retired claims passed; release and
+  full Linux qualification correctly remained NOT_PASSED. Debug Valgrind was
+  **PASS with reviewed suppressions**: raw 427 errors/contexts and 6,080 direct
+  plus 41,395 indirect bytes; post-suppression zero errors/contexts/bytes with
+  all 427 reviewed contexts accounted for. ReleaseSafe Valgrind remains XFAIL.
+
 ## Dev Servers settings control qualification
 
 - The settings page existed, but its browser catalog retained an unavailable

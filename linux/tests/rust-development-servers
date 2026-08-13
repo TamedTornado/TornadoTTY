@@ -54,7 +54,7 @@ case "${backend}" in
         ;;
     *) fail "GDK_BACKEND must be x11 or wayland" ;;
 esac
-for dependency in grep head mktemp readelf sed seq sleep; do
+for dependency in cut grep head mktemp readelf sed seq sha256sum sleep; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
 [[ -x "${product}" ]] || fail "staged product is missing: ${product}"
@@ -323,6 +323,78 @@ if [[ "${backend}" == x11 ]]; then
     done
     [[ "$(grep -Fc "origin=http://localhost:${port} source=Scanner confidence=Pid" "${log}" || true)" -ge 2 ]] ||
         fail "re-enabled passive detection did not rediscover the real listener"
+    xdotool mousemove --sync --window "${settings_window_id}" 700 680 click 5 click 5 click 5
+    config_hash_before_invalid="$(sha256sum "${config_home}/zentty/config.toml" | cut -d' ' -f1)"
+    xdotool mousemove --sync --window "${settings_window_id}" 600 649 click 1
+    xdotool key ctrl+a
+    xdotool type --delay 10 -- 0
+    xdotool mousemove --sync --window "${settings_window_id}" 995 649 click 1
+    for _ in $(seq 1 100); do
+        grep -Fq 'dev-server-settings control=add-ignored-port result=rejected-invalid' "${log}" && break
+        sleep 0.05
+    done
+    grep -Fq 'dev-server-settings control=add-ignored-port result=rejected-invalid' "${log}" ||
+        fail "invalid physical ignored-port input was not rejected"
+    if [[ "$(sha256sum "${config_home}/zentty/config.toml" | cut -d' ' -f1)" != "${config_hash_before_invalid}" ]]; then
+        fail "invalid ignored-port input mutated persisted configuration"
+    fi
+
+    # A privileged port is still a valid relevance rule: the settings layer
+    # never binds it and must not conflate bind privilege with configuration.
+    add_applied_before="$(grep -Fc 'dev-server-settings control=add-ignored-port result=applied' "${log}" || true)"
+    xdotool mousemove --sync --window "${settings_window_id}" 600 649 click 1
+    xdotool key ctrl+a
+    xdotool type --delay 10 -- 80
+    xdotool mousemove --sync --window "${settings_window_id}" 995 649 click 1
+    for _ in $(seq 1 100); do
+        (( $(grep -Fc 'dev-server-settings control=add-ignored-port result=applied' "${log}" || true) > add_applied_before )) && break
+        sleep 0.05
+    done
+    grep -Fq 'ignored_port_rules = ["80"]' "${config_home}/zentty/config.toml" ||
+        fail "valid privileged ignored port did not persist canonically"
+
+    xdotool mousemove --sync --window "${settings_window_id}" 600 649 click 1
+    xdotool key ctrl+a
+    xdotool type --delay 10 -- '24678-24680'
+    xdotool mousemove --sync --window "${settings_window_id}" 995 649 click 1
+    for _ in $(seq 1 100); do
+        grep -Fq 'dev-server-settings control=add-ignored-port result=applied' "${log}" && break
+        sleep 0.05
+    done
+    grep -Fq 'dev-server-settings control=add-ignored-port result=applied' "${log}" ||
+        fail "valid physical ignored-port range was not applied"
+    grep -Fq 'ignored_port_rules = ["80", "24678-24680"]' "${config_home}/zentty/config.toml" ||
+        fail "ignored-port range did not persist canonically"
+
+    xdotool mousemove --sync --window "${settings_window_id}" 600 649 click 1
+    xdotool type --delay 10 -- 24679
+    xdotool mousemove --sync --window "${settings_window_id}" 995 649 click 1
+    for _ in $(seq 1 100); do
+        grep -Fq 'dev-server-settings control=add-ignored-port result=rejected-duplicate' "${log}" && break
+        sleep 0.05
+    done
+    grep -Fq 'dev-server-settings control=add-ignored-port result=rejected-duplicate' "${log}" ||
+        fail "overlapping ignored-port input was not rejected as a duplicate"
+    [[ "$(grep -Fc '24678-24680' "${config_home}/zentty/config.toml")" -eq 1 ]] ||
+        fail "duplicate ignored-port input changed canonical persistence"
+
+    remove_applied_before="$(grep -Fc 'dev-server-settings control=remove-ignored-port result=applied' "${log}" || true)"
+    xdotool mousemove --sync --window "${settings_window_id}" 990 705 click 1
+    for _ in $(seq 1 100); do
+        (( $(grep -Fc 'dev-server-settings control=remove-ignored-port result=applied' "${log}" || true) > remove_applied_before )) && break
+        sleep 0.05
+    done
+    grep -Fq 'ignored_port_rules = ["24678-24680"]' "${config_home}/zentty/config.toml" ||
+        fail "physical Stop Ignoring did not remove the privileged-port row"
+
+    xdotool mousemove --sync --window "${settings_window_id}" 990 705 click 1
+    for _ in $(seq 1 100); do
+        (( $(grep -Fc 'dev-server-settings control=remove-ignored-port result=applied' "${log}" || true) > remove_applied_before + 1 )) && break
+        sleep 0.05
+    done
+    if grep -Fq '24678-24680' "${config_home}/zentty/config.toml"; then
+        fail "Stop Ignoring retained the removed range"
+    fi
 else
     # The nested Wayland harness provides a scoped virtual keyboard but no
     # pointer injector. It owns real presentation/reconciliation and the
@@ -500,4 +572,38 @@ kill -0 "${server_pid}" 2>/dev/null && fail "owned real server survived the Stop
 grep -Fq "action=stop-server pid=${server_pid} signal=INT result=delivered" "${log}" ||
     fail "product did not receipt its graceful signal"
 
-echo "Rust development-server product journey passed: ${backend} real-pty real-listener authenticated-watch preferred-explicit-and-system-browser exact-browser-argv forged-browser-rejection persisted-ignore safe-stop"
+# A fresh product process must load the normalized settings state rather than a
+# page-local projection. No server fixture is needed for this receipt: the
+# browser catalog and persisted control values are startup-owned boundaries.
+kill -TERM "${product_pid}"
+wait "${product_pid}" 2>/dev/null || true
+product_pid=""
+log="${run_root}/restart.log"
+GDK_SCALE=1 \
+GDK_DPI_SCALE=1 \
+XDG_CONFIG_HOME="${config_home}" \
+XDG_DATA_HOME="${data_home}" \
+PATH="${run_root}/bin:${PATH}" \
+LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+    "${product}" \
+    --command 'sleep 30' \
+    --state-directory "${state_directory}" \
+    --no-session-restore >"${log}" 2>&1 &
+product_pid=$!
+for _ in $(seq 1 300); do
+    grep -Fq 'zentty-linux: terminal-ready' "${log}" &&
+        grep -Fq 'server-browser-discovery available=3 preferred=custom:alternate unavailable=' "${log}" && break
+    sleep 0.05
+done
+grep -Fq 'server-browser-discovery available=3 preferred=custom:alternate unavailable=' "${log}" ||
+    fail "normalized Dev Servers browser state did not survive restart"
+grep -Fq 'passive_detection_enabled = true' "${config_home}/zentty/config.toml" ||
+    fail "passive detection state did not survive restart"
+if grep -Fq 'custom:gone' "${config_home}/zentty/config.toml"; then
+    fail "unavailable browser returned after restart"
+fi
+if grep -Fq '24678-24680' "${config_home}/zentty/config.toml"; then
+    fail "removed ignored-port range returned after restart"
+fi
+
+echo "Rust development-server product journey passed: ${backend} real-pty real-listener authenticated-watch preferred-explicit-and-system-browser exact-browser-argv forged-browser-rejection persisted-ignore safe-stop restart"

@@ -131,17 +131,28 @@ grep -Fxq 'zentty-linux: title-pane=pane-1 value=zentty-title-two' "${log}" ||
 # to one third of a 600px window, then restored to the preferred width when the
 # window widens again.
 xdotool windowsize --sync "${window_id}" 1200 700
-sleep 0.2
+for _ in $(seq 1 200); do
+    grep -Fq 'zentty-linux: sidebar-width=280' "${log}" && break
+    sleep 0.05
+done
 latest_sidebar_width="$(grep -F 'zentty-linux: sidebar-width=' "${log}" | tail -1)"
 [[ "${latest_sidebar_width}" == 'zentty-linux: sidebar-width=280' ]] ||
     fail "the sidebar did not use Zentty's preferred width in a wide window"
 xdotool windowsize --sync "${window_id}" 600 700
-sleep 0.2
+for _ in $(seq 1 200); do
+    [[ "$(grep -F 'zentty-linux: sidebar-width=' "${log}" | tail -1)" == \
+        'zentty-linux: sidebar-width=198' ]] && break
+    sleep 0.05
+done
 latest_sidebar_width="$(grep -F 'zentty-linux: sidebar-width=' "${log}" | tail -1)"
 [[ "${latest_sidebar_width}" == 'zentty-linux: sidebar-width=198' ]] ||
     fail "the sidebar did not clamp to one third of a narrow window"
 xdotool windowsize --sync "${window_id}" 1200 700
-sleep 0.2
+for _ in $(seq 1 200); do
+    [[ "$(grep -F 'zentty-linux: sidebar-width=' "${log}" | tail -1)" == \
+        'zentty-linux: sidebar-width=280' ]] && break
+    sleep 0.05
+done
 latest_sidebar_width="$(grep -F 'zentty-linux: sidebar-width=' "${log}" | tail -1)"
 [[ "${latest_sidebar_width}" == 'zentty-linux: sidebar-width=280' ]] ||
     fail "the preferred sidebar width was lost after temporary window clamping"
