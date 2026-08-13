@@ -203,6 +203,26 @@ mod tests {
     }
 
     #[test]
+    fn explicit_system_default_selection_disables_every_optional_browser() {
+        let catalog = ServerBrowserCatalog::resolve(
+            &config(SYSTEM_DEFAULT_BROWSER_ID, &[SYSTEM_DEFAULT_BROWSER_ID]),
+            vec![target(SYSTEM_DEFAULT_BROWSER_ID), target("firefox")],
+        );
+        assert_eq!(
+            catalog
+                .enabled
+                .iter()
+                .map(|target| target.id.as_str())
+                .collect::<Vec<_>>(),
+            [SYSTEM_DEFAULT_BROWSER_ID]
+        );
+        assert_eq!(
+            catalog.preferred.as_ref().map(|target| target.id.as_str()),
+            Some(SYSTEM_DEFAULT_BROWSER_ID)
+        );
+    }
+
+    #[test]
     fn target_lookup_returns_only_the_exact_enabled_target() {
         let catalog = ServerBrowserCatalog::resolve(
             &config("firefox", &[]),

@@ -689,11 +689,30 @@ impl PaneRuntimeCoordinator {
     ) -> PaneFrame {
         let weak = Rc::downgrade(shell);
         let control_pane_id = pane_id.to_owned();
-        let frame = PaneFrame::new(pane_id, terminal, move |action| {
-            if let Some(shell) = weak.upgrade() {
-                ApplicationShell::activate_pane_control(&shell, &control_pane_id, action);
-            }
-        });
+        let pointer_weak = Rc::downgrade(shell);
+        let pointer_pane_id = pane_id.to_owned();
+        let frame = PaneFrame::new(
+            pane_id,
+            terminal,
+            move |action| {
+                if let Some(shell) = weak.upgrade() {
+                    ApplicationShell::activate_pane_control(&shell, &control_pane_id, action);
+                }
+            },
+            move |present| {
+                let pointer_weak = pointer_weak.clone();
+                let pointer_pane_id = pointer_pane_id.clone();
+                glib::idle_add_local_once(move || {
+                    if let Some(shell) = pointer_weak.upgrade() {
+                        ApplicationShell::handle_pane_pointer_presence(
+                            &shell,
+                            &pointer_pane_id,
+                            present,
+                        );
+                    }
+                });
+            },
+        );
         super::remote_paste::install(shell, pane_id, frame.widget().upcast_ref(), terminal);
         frame
     }

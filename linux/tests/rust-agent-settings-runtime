@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
+ghostty_root="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
+backend="${GDK_BACKEND:-}"
+run_root="$(mktemp -d)"
+state_directory="${run_root}/state"
+log="${run_root}/product.log"
+config="${XDG_CONFIG_HOME}/zentty/config.toml"
+product_pid=""
+
+# shellcheck disable=SC1091
+source "${repo_root}/linux/tests/lib/product-input"
+
+fail() {
+    [[ ! -f "${log}" ]] || cat "${log}" >&2
+    echo "rust-agent-settings-runtime: error: $*" >&2
+    exit 1
+}
+
+stop_product() {
+    if [[ "${product_pid}" =~ ^[1-9][0-9]*$ ]]; then
+        kill -TERM "${product_pid}" 2>/dev/null || true
+        wait "${product_pid}" 2>/dev/null || true
+        product_pid=""
+    fi
+}
+
+cleanup() {
+    stop_product
+    rm -rf -- "${run_root}"
+}
+trap cleanup EXIT
+
+case "${backend}" in
+    x11)
+        [[ "${ZENTTY_NESTED_X11_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+            fail "X11 scenario must run through linux/tests/nested-x11"
+        ;;
+    wayland)
+        [[ "${ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+            fail "Wayland scenario must run through linux/tests/nested-wayland-input"
+        ;;
+    *) fail "GDK_BACKEND must be x11 or wayland" ;;
+esac
+[[ -x "${product}" ]] || fail "staged product is missing: ${product}"
+command -v codex >/dev/null || fail "a real Codex executable is required"
+
+layer_runpath="$(
+    readelf -d "${ghostty_root}/zig-out/lib/libghostty-gtk-embed.so" |
+        sed -n 's/.*Library runpath: \[\([^]]*\)\].*/\1/p' |
+        cut -d: -f1
+)"
+[[ "${layer_runpath}" == .zig-cache/* ]] || fail "Ghostty runpath is not pinned"
+layer_directory="${ghostty_root}/${layer_runpath}"
+mkdir -p "${state_directory}" "$(dirname "${config}")"
+
+start_product() {
+    : >"${log}"
+    # The expansion belongs to the pane's real shell.
+    # shellcheck disable=SC2016
+    GDK_SCALE=1 \
+    GDK_DPI_SCALE=1 \
+    LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+        "${product}" \
+        --command 'printf '\''\033]2;agent-env codex=%s tmux=%s\a'\'' "$(command -v codex)" "${TMUX:-none}"; sleep 30' \
+        --state-directory "${state_directory}" \
+        --no-session-restore >"${log}" 2>&1 &
+    product_pid=$!
+    zentty_product_prepare_input "${backend}" "${log}" || fail "physical product input was unavailable"
+}
+
+type_text() {
+    if [[ "${backend}" == x11 ]]; then
+        xdotool type --delay 5 -- "$1"
+    else
+        wtype -d 35 -- "$1"
+    fi
+}
+
+cat >"${config}" <<'EOF'
+# agent settings integration receipt
+[agent_teams]
+enabled = false
+[agent_integrations]
+grandfathered_v1 = false
+[agent_integrations.states]
+codex = "off"
+EOF
+start_product
+zentty_product_wait_for_log "${log}" 'agent-env codex=' \
+    "disabled agent environment was not emitted" || fail "disabled environment missing"
+grep -F 'agent-env codex=' "${log}" | grep -Fv '/libexec/zentty/agent-wrappers/codex/codex' >/dev/null ||
+    fail "explicit off still selected Zentty's Codex wrapper"
+grep -Fq 'tmux=none' "${log}" || fail "disabled teams still exported a tmux session"
+stop_product
+
+cat >"${config}" <<'EOF'
+# agent settings integration receipt
+[agent_teams]
+enabled = true
+[agent_integrations]
+grandfathered_v1 = false
+[agent_integrations.states]
+codex = "on"
+EOF
+start_product
+zentty_product_wait_for_log "${log}" '/libexec/zentty/agent-wrappers/codex/codex tmux=' \
+    "enabled agent environment did not select the staged wrapper" || fail "enabled wrapper missing"
+grep -F 'agent-env codex=' "${log}" | grep -F 'tmux=' | grep -Fv 'tmux=none' >/dev/null ||
+    fail "enabled teams did not export the staged tmux compatibility session"
+
+zentty_product_ctrl_shift_key "${backend}" p
+type_text 'Agents Settings'
+zentty_product_wait_for_log "${log}" \
+    'command-palette=query value="Agents Settings" results=1' \
+    "Agents Settings did not resolve uniquely" || fail "settings palette route failed"
+zentty_product_key "${backend}" Down
+zentty_product_key "${backend}" Return
+zentty_product_wait_for_log "${log}" \
+    'zentty-linux: settings-section selected=agents' \
+    "palette did not deep-link to Agents" || fail "settings deep-link failed"
+zentty_product_wait_for_log "${log}" \
+    'agent-settings loaded teams=true wrappers-available=3 source-unavailable=13 status-item-available=false caffeination-available=false' \
+    "Agents page did not report its exact source/platform inventory" || fail "settings inventory missing"
+
+grep -Fq '# agent settings integration receipt' "${config}" || fail "configuration comment was lost"
+echo "rust-agent-settings-runtime-${backend}: PASS real-pty real-wrapper-gating real-tmux-team-environment physical-settings-deep-link explicit-platform-unavailability"

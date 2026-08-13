@@ -5,6 +5,26 @@ pub enum AgentIntegrationState {
     Off,
 }
 
+impl AgentIntegrationState {
+    #[must_use]
+    pub const fn config_value(self) -> &'static str {
+        match self {
+            Self::Ask => "ask",
+            Self::On => "on",
+            Self::Off => "off",
+        }
+    }
+
+    pub(crate) fn parse_config_value(value: &str) -> Option<Self> {
+        match value {
+            "ask" => Some(Self::Ask),
+            "on" => Some(Self::On),
+            "off" => Some(Self::Off),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AgentIntegrationClass {
     Persistent,

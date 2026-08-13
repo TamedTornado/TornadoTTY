@@ -251,7 +251,7 @@ fn focused_local_directory(shell: &ApplicationShell) -> Result<PathBuf, &'static
     Ok(canonical)
 }
 
-fn discover_available_targets(
+pub(super) fn discover_available_targets(
     config: &OpenWithConfig,
     path: Option<&std::ffi::OsStr>,
 ) -> Vec<OpenWithTarget> {
@@ -345,7 +345,7 @@ pub(super) fn resolve_executable(
     None
 }
 
-pub(super) fn canonical_executable(path: &Path) -> Option<PathBuf> {
+pub(crate) fn canonical_executable(path: &Path) -> Option<PathBuf> {
     if !path.is_absolute() {
         return None;
     }

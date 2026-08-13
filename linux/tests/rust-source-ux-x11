@@ -46,6 +46,15 @@ layer_directory="${ghostty_root}/${layer_runpath}"
 log="$(mktemp)"
 state_directory="$(mktemp -d)"
 trap 'rm -rf -- "${state_directory}"; cleanup' EXIT
+# This journey exercises the explicit Split Right control later. Pin that
+# product policy instead of depending on the adaptive default, whose narrow
+# viewport intentionally exposes Add Pane Right. The adaptive branch is owned
+# by rust-workspace-pane-settings.
+mkdir -p -- "${XDG_CONFIG_HOME}/zentty"
+cat >"${XDG_CONFIG_HOME}/zentty/config.toml" <<'TOML'
+[pane_layout]
+right_split_behavior = "alwaysSplit"
+TOML
 # The single quotes intentionally defer PTY-child expansion.
 # shellcheck disable=SC2016
 (
@@ -734,10 +743,10 @@ for direction in Right Left Down Up; do
 done
 sleep 0.2
 
-# Until Linux ports Zentty's complete offscreen-pane management system, the
-# pane-local primary command remains Split Right. Exercise it on pane-2, not on
-# the currently focused pane-3, and prove the resulting visible pair belongs to
-# pane-2. Close that exact transient pane through its own control.
+# This journey explicitly selected the always-split pane policy above. Exercise
+# its pane-local Split Right control on pane-2, not on the currently focused
+# pane-3, and prove the resulting visible pair belongs to pane-2. Close that
+# exact transient pane through its own control.
 xdotool mousemove --window "${window_id}" 1000 350
 # Four source actions occupy the pane's trailing control strip. Click the
 # leading Split Right icon; the prior three-control coordinate now correctly

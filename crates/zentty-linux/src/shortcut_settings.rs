@@ -11,11 +11,15 @@ use zentty_core::{
     ShortcutModifier,
 };
 
+use crate::agents_settings::ApplyAgents;
 use crate::appearance_settings::ApplyAppearance;
+use crate::dev_server_settings::ApplyDevServers;
 use crate::general_settings::{ApplyGeneral, GeneralSettings};
 use crate::notifications_settings::ApplyNotifications;
+use crate::open_with_settings::ApplyOpenWith;
 use crate::settings_navigation::SettingsSection;
 use crate::updates_privacy_settings::ApplyUpdates;
+use crate::workspace_pane_settings::ApplyWorkspacePanes;
 
 use crate::application_shell::shortcut_registry::{
     COMMANDS, ShortcutCategory, ShortcutCommandSpec, definitions,
@@ -56,6 +60,21 @@ pub(crate) struct SettingsContext {
     pub(crate) updates: zentty_core::UpdatesConfig,
     pub(crate) error_reporting: zentty_core::ErrorReportingConfig,
     pub(crate) apply_updates: ApplyUpdates,
+    pub(crate) worklanes: zentty_core::WorklaneConfig,
+    pub(crate) pane_layout: zentty_core::PaneLayoutConfig,
+    pub(crate) panes: zentty_core::PaneConfig,
+    pub(crate) apply_workspace_panes: ApplyWorkspacePanes,
+    pub(crate) open_with: zentty_core::OpenWithConfig,
+    pub(crate) open_with_targets: Vec<zentty_core::OpenWithTarget>,
+    pub(crate) apply_open_with: ApplyOpenWith,
+    pub(crate) server_detection: zentty_core::ServerDetectionConfig,
+    pub(crate) server_browser_targets: Vec<zentty_core::ServerBrowserTarget>,
+    pub(crate) apply_dev_servers: ApplyDevServers,
+    pub(crate) agent_teams: zentty_core::AgentTeamsConfig,
+    pub(crate) agent_caffeination: zentty_core::AgentCaffeinationConfig,
+    pub(crate) menu_bar: zentty_core::MenuBarConfig,
+    pub(crate) agent_integrations: zentty_core::AgentIntegrationsConfig,
+    pub(crate) apply_agents: ApplyAgents,
     pub(crate) initial_section: SettingsSection,
 }
 
@@ -210,6 +229,29 @@ pub(crate) fn show(
         settings_context.error_reporting,
         &settings_context.apply_updates,
     );
+    let workspace_panes_page = crate::workspace_pane_settings::build(
+        settings_context.worklanes,
+        settings_context.pane_layout,
+        settings_context.panes,
+        settings_context.apply_workspace_panes,
+    );
+    let open_with_page = crate::open_with_settings::build(
+        settings_context.open_with,
+        settings_context.open_with_targets,
+        settings_context.apply_open_with,
+    );
+    let dev_servers_page = crate::dev_server_settings::build(
+        settings_context.server_detection,
+        settings_context.server_browser_targets,
+        settings_context.apply_dev_servers,
+    );
+    let agents_page = crate::agents_settings::build(
+        settings_context.agent_teams,
+        settings_context.agent_caffeination,
+        settings_context.menu_bar,
+        settings_context.agent_integrations,
+        settings_context.apply_agents,
+    );
     let settings = crate::settings_shell::build(
         crate::settings_shell::SettingsPages {
             general: &general_page,
@@ -217,6 +259,10 @@ pub(crate) fn show(
             shortcuts: &root.clone().upcast(),
             notifications: &notifications_page,
             updates_privacy: &updates_privacy_page,
+            workspace_panes: &workspace_panes_page,
+            open_with: &open_with_page,
+            dev_servers: &dev_servers_page,
+            agents: &agents_page,
         },
         &appearance_search,
         &search,

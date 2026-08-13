@@ -2,20 +2,20 @@
   "schema_version": 1,
   "contract_id": "zentty-application-shell-responsibilities",
   "source": "crates/zentty-linux/src/application_shell.rs",
-  "source_sha256": "45ce2b95871cadebcf9993b09c03efbffc67ec7284a7e15912059f0aef4824f1",
+  "source_sha256": "de677740910d92a99c004069a9aacb7847178faf86b59dc08f6c3ace4ebf7833",
   "owned_source_sha256": {
-    "crates/zentty-linux/src/main.rs": "5cb17d4459048cf783949adca3bb869079b7ed514360558b7ce472cd11a51eb7",
-    "crates/zentty-linux/src/application.rs": "6f14dc9e6c60d46f3713faa997501782e5c9750f0e00b40e27472431cede6c7d",
-    "crates/zentty-linux/src/config_store.rs": "faf041795d43770d53f1e90df3ae40a9529e2731cf5420703bec90f8d15cd743",
+    "crates/zentty-linux/src/main.rs": "0ee821ed9fbd7377be7cd7f73e2802c381791366e5b6c0477b00947953e8a863",
+    "crates/zentty-linux/src/application.rs": "7f84d0560932a6a346b5fb686146c55040055895b8e8cb3dcd76e1c4dd70aa04",
+    "crates/zentty-linux/src/config_store.rs": "2bcd26a065e53542c45278e480df9cade4a6aea1151c547b76c53a813f60dfcb",
     "crates/zentty-linux/src/window_set.rs": "501d595889c11a41a4261ef8282465d76dd9ed8ccd1d004406b558579b0bf58e",
-    "crates/zentty-linux/src/agent_runtime.rs": "48f30d38048ae5388ca59aee2021e1215cabdfc033e66755ed32c6f92dcb8671",
+    "crates/zentty-linux/src/agent_runtime.rs": "e896b4827e1273a67e58bacbf364e5244db856c5466c373d240c5b69d1f0ee5a",
     "crates/zentty-linux/src/codex_enrichment.rs": "fe87631c75c04b63962b7f89d311a778a25af8f27a1dcb4d5950b3efcbaa476e",
-    "crates/zentty-linux/src/application_shell/action_router.rs": "862282fa3a6f15f8ec1dd7f0eddf480c5ee2f8722d1711ba426cf477bc9b9c94",
-    "crates/zentty-linux/src/application_shell/shortcut_registry.rs": "404a10edec7274e49fc3914f3c519f9b0a0d59a7e1f20fddc8cd28643866b1c8",
+    "crates/zentty-linux/src/application_shell/action_router.rs": "d8cfda522361146c455f6e22f417a1dcc45b8a2e7c7319ce1b779bcf178fe66d",
+    "crates/zentty-linux/src/application_shell/shortcut_registry.rs": "c64c3c294fd6f53466990b26fd24f9f247b7c1125794e873d81f6f8df9b44aa8",
     "crates/zentty-linux/src/application_shell/shortcut_runtime.rs": "8b5b0230608324360ee62045c7eb726fc18cae30a5fdeaf86259286610a41d60",
-    "crates/zentty-linux/src/shortcut_settings.rs": "c8668f62dcb3d45e0b6b1b306f4a3642cd0397c3f8864a5768a666a4f4048f47",
+    "crates/zentty-linux/src/shortcut_settings.rs": "8a811f046874d56071dc56ef073079ee81500159dc53dfab33b5883a4ce14c7f",
     "crates/zentty-linux/src/appearance_settings.rs": "7a6aaf6f2ed3636c526e5ff8c8cba214785b541f068eb43c408a8ae1d3be9b22",
-    "crates/zentty-linux/src/settings_shell.rs": "53111a934dfedb61210df5ade446509f5540fe06398360e8d3a180e101df42e7",
+    "crates/zentty-linux/src/settings_shell.rs": "fc5c0ac487688b19354c8f83f2e6cdab67cc90d2eac607f4bb5fcdad1bdc3fc8",
     "crates/zentty-linux/src/settings_navigation.rs": "4c58ea6a0347a60f9f28c5bd790a02c6c3bb94765df587f4b2340e31bbbf2cd4",
     "crates/zentty-linux/src/general_settings.rs": "24bf50a74e7a18730d301431c42d229f1923cbe97422a49a0fe77f421e36aa44",
     "crates/zentty-linux/src/theme_catalog.rs": "e944b9378d77d20c68b7020b71275c4482490819575cc657d23a00d7a22af6d4",
@@ -23,16 +23,16 @@
     "crates/zentty-linux/src/notifications_settings.rs": "7616e51aa2a6949a091479b220845f442665d8762be941467b3298c0af027066",
     "crates/zentty-linux/src/updates_privacy_settings.rs": "c2deeb928c9eb65a48ad3b797c9afe0f983f4b980864bd08cf6587484d3f206a",
     "crates/zentty-linux/src/application_shell/clipboard_actions.rs": "1502a0353bc3e0d645d6c6bd81aae1ed1306f312838f92a635944d402cd441b0",
-    "crates/zentty-linux/src/application_shell/agent_events.rs": "3b6dc220ad2434b15213a34c6c225f5dad868880437b3b54365ba77e42b2d0a4",
+    "crates/zentty-linux/src/application_shell/agent_events.rs": "87c77419231faff7c069fb0616531551191e285d8ddb75895a12b96356cc2696",
     "crates/zentty-linux/src/application_shell/project_context_runtime.rs": "a6168d658c98ab6407f3d0f1f1ab624d3e3f91e10de39fd4b5b28dd22ce19e7f",
-    "crates/zentty-linux/src/application_shell/open_with_runtime.rs": "1e9b197340bf84a3b5f94d8a526b372e3b7e9c90574ce653f40b948e58eb4199",
+    "crates/zentty-linux/src/application_shell/open_with_runtime.rs": "09e6f980f3d2d3160b9bd4688af4dee003659047edfd3e7945a2f67a96e7a97e",
     "crates/zentty-linux/src/application_shell/bookmark_runtime.rs": "6fe9ce520f69bb5be975a0f17e5fec8b7f4392159695afb019ff6ca9f3c883dc",
     "crates/zentty-linux/src/bookmarks_view.rs": "bef44bf6bbd3c1e3a018eb18781f37e2b8a575d5cdc4e936e43c9a33db1e6649",
     "crates/zentty-linux/src/restore_notice.rs": "02844f204871767d2aa4bc6076fff7c2145a52c493583246ef686f886a1db918",
     "crates/zentty-linux/src/sidebar.rs": "34ca061940cbcb26f7547ed5bc33245ba9cf8a3538e9cf18a5c59dbc8b1beb00",
     "crates/zentty-linux/src/application_shell/global_search.rs": "98a1963830af8616b31da2558ae6f27c4461342ef3085f6ef9cda0863a1ddc7c",
-    "crates/zentty-linux/src/application_shell/pane_runtime.rs": "45f238c8949e12786d26c94c77275d42696edfe391f5c96d36db93ca7cbac2f6",
-    "crates/zentty-linux/src/application_shell/server_runtime.rs": "e4aada25021e36c199498aa5b02e83d4976121641c592805d3afbbf331cb5611",
+    "crates/zentty-linux/src/application_shell/pane_runtime.rs": "ed5819a50277f8861200c73e5c80a74fdbf39ff0448ffd8b3ead37724a5f2363",
+    "crates/zentty-linux/src/application_shell/server_runtime.rs": "baaf54cc619296754e51b0122f74965fc1308c74c67cd600135f7aa668857df2",
     "crates/zentty-linux/src/application_shell/task_runner_runtime.rs": "42fe7c62e7876b3f5132a381ac7f8e53f45e820d3d94bf9a519c8d6ed26deded",
     "crates/zentty-linux/src/docker_discovery.rs": "1836046bf3159c0a207ed999dc44a2ef8d9aa6276d79275031e2dbbd6cdd6c6d",
     "crates/zentty-linux/src/server_discovery.rs": "0d398d53a68bd34afa15208e4b2c6c5d3a9739502f1c7b86b40e615ec73d87a8",
@@ -254,7 +254,7 @@
       "fields": [
         "preferred_sidebar_width", "adjusting_sidebar_width", "sidebar_reveal_generation",
         "sidebar_visibility", "sidebar_visibility_generation", "peek_phase", "peek_generation",
-        "peek_tab_down", "peek_view", "command_palette", "restore_notice", "global_search_view", "last_pane_viewport_height",
+        "peek_tab_down", "peek_view", "command_palette", "restore_notice", "global_search_view", "focus_follow_generation", "last_pane_viewport_height",
         "rendered_columns", "last_vertical_divider", "self_handle"
       ]
     },
@@ -304,10 +304,10 @@
     {
       "owner": "pane_runtime_coordinator",
       "methods": [
-        "live_children", "release_surfaces", "create_worklane", "split_focused_pane_right",
+        "live_children", "release_surfaces", "create_worklane", "create_focused_pane_right", "split_focused_pane_right",
         "add_focused_pane_right", "add_focused_pane_left", "split_focused_pane_below",
         "split_focused_pane", "close_focused_pane", "request_close_pane", "close_worklane", "close_pane",
-        "restore_closed_pane", "remove_live_surface", "focus_selected_surface",
+        "restore_closed_pane", "remove_live_surface", "focus_selected_surface", "handle_pane_pointer_presence", "focus_follow_should_apply",
         "focus_selected_surface_unchecked", "duplicate_focused_pane"
       ]
     },
@@ -336,7 +336,7 @@
     },
     {
       "owner": "settings_coordinator",
-      "methods": ["apply_appearance", "apply_general", "apply_notifications", "apply_updates", "confirm_action", "reload_ghostty_config_with_focus", "request_show_settings"]
+      "methods": ["apply_appearance", "apply_general", "apply_notifications", "apply_updates", "apply_workspace_panes", "apply_open_with", "apply_dev_servers", "apply_agents", "confirm_action", "reload_ghostty_config_with_focus", "request_show_settings"]
     },
     {
       "owner": "existing_ui_projection",
@@ -391,6 +391,7 @@
     ],
     "agent_event_coordinator": [
       "event_route_decision", "start", "environment_for_pane", "unregister_pane",
+      "set_agent_teams_enabled", "set_agent_integrations",
       "sync_targets", "schedule_for_pane", "shutdown", "apply_inputs"
     ],
     "global_search_coordinator": [
@@ -441,9 +442,9 @@
     "server_container_discovery": [
       "discover", "run_docker", "parse_inspect_json", "deepest_matching_pane", "is_web_like"
     ],
-    "config_store": ["load_default", "load", "install_default_fallback_theme_if_referenced", "install_fallback_theme_if_referenced", "fallback_theme_publication_error", "update_default_appearance", "update_default_general", "update_default_notifications", "update_default_updates", "update_default_ghostty_theme", "update_default_ghostty_value", "update_default_ignored_port_rules", "update_default_preferred_browser", "update_default_shortcuts", "update_appearance", "update_general", "update_notifications", "update_updates", "update_ghostty_value", "update_ignored_port_rules", "update_preferred_browser", "update_shortcuts", "with_config_lock", "set_optional_appearance_string", "resolve_config_target", "atomic_replace", "read_bounded", "invalid_snapshot", "default_config_file_from", "default_fallback_theme_path", "default_ghostty_config_file_from", "default_theme_resource_path", "nonempty_path"],
+    "config_store": ["load_default", "load", "install_default_fallback_theme_if_referenced", "install_fallback_theme_if_referenced", "fallback_theme_publication_error", "update_default_appearance", "update_default_general", "update_default_notifications", "update_default_updates", "update_default_workspace_panes", "update_default_open_with", "update_default_server_detection", "update_default_agents", "update_default_ghostty_theme", "update_default_ghostty_value", "update_default_ignored_port_rules", "update_default_preferred_browser", "update_default_shortcuts", "update_appearance", "update_general", "update_notifications", "update_updates", "update_workspace_panes", "update_open_with", "update_server_detection", "update_agents", "update_ghostty_value", "update_ignored_port_rules", "update_preferred_browser", "update_shortcuts", "with_config_lock", "set_optional_appearance_string", "resolve_config_target", "atomic_replace", "read_bounded", "invalid_snapshot", "default_config_file_from", "default_fallback_theme_path", "default_ghostty_config_file_from", "default_theme_resource_path", "nonempty_path"],
     "appearance_settings": ["build", "section_title", "refresh_catalog", "preview_summary", "log_theme_selection", "apply_state", "install_styles"],
-    "settings_shell": ["apply_selection", "build", "build_widgets", "connect_navigation", "key_controller", "navigate_back", "navigate_forward", "navigation_actions", "pending_section", "section_target"],
+    "settings_shell": ["apply_selection", "build", "build_widgets", "connect_navigation", "key_controller", "navigate_back", "navigate_forward", "navigation_actions", "section_target"],
     "settings_navigation": ["back", "can_back", "can_forward", "current", "forward", "matches", "new", "parse", "record"],
     "general_settings": ["aggressiveness_for_selected", "aggressiveness_row", "bool_value", "build", "section_heading", "selected_for_aggressiveness", "set_bool", "settings_group", "update_bool"],
     "theme_catalog": ["parse", "hex", "is_dark", "rgb", "repeated_hex", "matches", "discover_themes", "load_directory", "is_eligible_theme_file", "parse_theme", "is_ignored_theme_line", "default_theme_directories"],
@@ -478,6 +479,7 @@
     {"name":"new-worklane","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"select-worklane","parameter":"string","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"split-pane-right","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"new-pane-right","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"add-pane-right","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"add-pane-left","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"split-pane-below","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},

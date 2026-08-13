@@ -2,6 +2,7 @@
 
 mod agent_runtime;
 mod agent_status_view;
+mod agents_settings;
 mod appearance_settings;
 mod application;
 mod application_shell;
@@ -9,11 +10,13 @@ mod bookmarks_view;
 mod codex_enrichment;
 mod command_palette;
 mod config_store;
+mod dev_server_settings;
 mod docker_discovery;
 mod general_settings;
 mod global_search_view;
 mod notification_service;
 mod notifications_settings;
+mod open_with_settings;
 mod pane_controls;
 mod pane_dividers;
 mod pane_scroll_switch;
@@ -36,6 +39,7 @@ mod updates_privacy_settings;
 mod window_chrome;
 mod window_set;
 mod worklane_peek;
+mod workspace_pane_settings;
 
 use application::ApplicationCoordinator;
 use config_store::ConfigStore;

@@ -1,8 +1,24 @@
 use zentty_core::{
     AgentEvent, AgentInteractionKind, AgentTarget, AuthenticatedAgentEvent, ClosePaneOutcome,
-    CodexTranscriptQuestion, PaneRecipe, PaneResizeDirection, SessionRestoreEnvelope, WindowRecipe,
-    WorklaneColor, WorkspaceState, WorkspaceStateImportError,
+    CodexTranscriptQuestion, NewWorklanePlacement, PaneRecipe, PaneResizeDirection,
+    SessionRestoreEnvelope, WindowRecipe, WorklaneColor, WorkspaceState, WorkspaceStateImportError,
 };
+
+#[test]
+fn new_worklane_placement_preserves_source_top_after_current_and_end_semantics() {
+    for (placement, expected) in [
+        (NewWorklanePlacement::Top, vec!["new", "a", "b"]),
+        (NewWorklanePlacement::AfterCurrent, vec!["a", "new", "b"]),
+        (NewWorklanePlacement::End, vec!["a", "b", "new"]),
+    ] {
+        let mut state = WorkspaceState::new("a", "pane-a");
+        assert!(state.create_worklane("b", "pane-b"));
+        assert!(state.select_worklane("a"));
+        assert!(state.create_worklane_with_placement("new", "pane-new", placement));
+        assert_eq!(state.worklane_ids(), expected);
+        assert_eq!(state.active_worklane_id(), "new");
+    }
+}
 
 const V3_ENVELOPE: &[u8] = include_bytes!("fixtures/session-restore-v3.json");
 

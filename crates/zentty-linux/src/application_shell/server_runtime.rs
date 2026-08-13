@@ -78,7 +78,7 @@ const BUILTIN_BROWSERS: &[(&str, &str, &[&str])] = &[
     ("tor-browser", "Tor Browser", &["tor-browser"]),
 ];
 
-fn discover_browser_targets(
+pub(crate) fn discover_browser_targets(
     config: &ServerDetectionConfig,
     path: Option<&std::ffi::OsStr>,
 ) -> Vec<ServerBrowserTarget> {

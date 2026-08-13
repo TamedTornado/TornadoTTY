@@ -70,6 +70,17 @@ impl AgentEventCoordinator {
         self.runtime.borrow_mut().unregister_pane(pane_id);
     }
 
+    pub(super) fn set_agent_teams_enabled(&self, enabled: bool) {
+        self.runtime.borrow_mut().set_agent_teams_enabled(enabled);
+    }
+
+    pub(super) fn set_agent_integrations(
+        &self,
+        states: std::collections::BTreeMap<String, zentty_core::AgentIntegrationState>,
+    ) {
+        self.runtime.borrow_mut().set_agent_integrations(states);
+    }
+
     pub(super) fn sync_targets(&mut self, state: &WorkspaceState) -> Result<(), String> {
         let topology = state
             .worklanes()

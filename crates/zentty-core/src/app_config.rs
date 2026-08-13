@@ -1,9 +1,11 @@
+use std::collections::BTreeMap;
+
 use serde::Deserialize;
 
 use crate::shortcut::ShortcutDocument;
 use crate::{
-    BackgroundOpacity, CleanCopyOptions, CommandFlattenAggressiveness, LINUX_OPEN_WITH_BUILTIN_IDS,
-    ShortcutBinding, ThemeMode, ThemeSpec,
+    AgentIntegrationState, BackgroundOpacity, CleanCopyOptions, CommandFlattenAggressiveness,
+    LINUX_OPEN_WITH_BUILTIN_IDS, ShortcutBinding, ThemeMode, ThemeSpec,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -120,7 +122,13 @@ pub struct AppConfig {
     pub error_reporting: ErrorReportingConfig,
     pub open_with: OpenWithConfig,
     pub server_detection: ServerDetectionConfig,
+    pub worklanes: WorklaneConfig,
+    pub pane_layout: PaneLayoutConfig,
     pub panes: PaneConfig,
+    pub agent_teams: AgentTeamsConfig,
+    pub agent_caffeination: AgentCaffeinationConfig,
+    pub menu_bar: MenuBarConfig,
+    pub agent_integrations: AgentIntegrationsConfig,
     pub shortcuts: Vec<ShortcutBinding>,
 }
 
@@ -143,7 +151,13 @@ impl AppConfig {
             error_reporting: document.error_reporting.into_config(),
             open_with: document.open_with.into_config().normalized(),
             server_detection: document.server_detection.into_config().normalized(),
-            panes: document.panes.into_config(),
+            worklanes: document.worklanes.into_config()?,
+            pane_layout: document.pane_layout.into_config()?,
+            panes: document.panes.into_config()?,
+            agent_teams: document.agent_teams.into_config(),
+            agent_caffeination: document.agent_caffeination.into_config(),
+            menu_bar: document.menu_bar.into_config(),
+            agent_integrations: document.agent_integrations.into_config(),
             shortcuts: document.shortcuts.into_bindings()?,
         })
     }
@@ -161,7 +175,13 @@ struct Document {
     error_reporting: ErrorReportingDocument,
     open_with: OpenWithDocument,
     server_detection: ServerDetectionDocument,
+    worklanes: WorklaneDocument,
+    pane_layout: PaneLayoutDocument,
     panes: PaneDocument,
+    agent_teams: AgentTeamsDocument,
+    agent_caffeination: AgentCaffeinationDocument,
+    menu_bar: MenuBarDocument,
+    agent_integrations: AgentIntegrationsDocument,
     shortcuts: ShortcutDocument,
 }
 
@@ -323,14 +343,205 @@ impl AppearanceDocument {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NewWorklanePlacement {
+    Top,
+    AfterCurrent,
+    End,
+}
+
+impl NewWorklanePlacement {
+    #[must_use]
+    pub const fn config_value(self) -> &'static str {
+        match self {
+            Self::Top => "top",
+            Self::AfterCurrent => "after_current",
+            Self::End => "end",
+        }
+    }
+
+    fn parse_config_value(value: &str) -> Option<Self> {
+        match value {
+            "top" => Some(Self::Top),
+            "after_current" => Some(Self::AfterCurrent),
+            "end" => Some(Self::End),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct WorklaneConfig {
+    pub new_worklane_placement: NewWorklanePlacement,
+}
+
+impl Default for WorklaneConfig {
+    fn default() -> Self {
+        Self {
+            new_worklane_placement: NewWorklanePlacement::AfterCurrent,
+        }
+    }
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct WorklaneDocument {
+    new_worklane_placement: Option<String>,
+}
+
+impl WorklaneDocument {
+    fn into_config(self) -> Result<WorklaneConfig, String> {
+        let placement = self.new_worklane_placement.map_or(
+            Ok(NewWorklanePlacement::AfterCurrent),
+            |value| {
+                NewWorklanePlacement::parse_config_value(&value)
+                    .ok_or_else(|| format!("invalid worklanes.new_worklane_placement: {value}"))
+            },
+        )?;
+        Ok(WorklaneConfig {
+            new_worklane_placement: placement,
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PaneRightBehaviorMode {
+    Adaptive,
+    AlwaysSplit,
+    AlwaysAdd,
+}
+
+impl PaneRightBehaviorMode {
+    #[must_use]
+    pub const fn config_value(self) -> &'static str {
+        match self {
+            Self::Adaptive => "adaptive",
+            Self::AlwaysSplit => "alwaysSplit",
+            Self::AlwaysAdd => "alwaysAdd",
+        }
+    }
+
+    fn parse_config_value(value: &str) -> Option<Self> {
+        match value {
+            "adaptive" => Some(Self::Adaptive),
+            "alwaysSplit" => Some(Self::AlwaysSplit),
+            "alwaysAdd" => Some(Self::AlwaysAdd),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PaneLayoutConfig {
+    pub right_split_behavior: PaneRightBehaviorMode,
+    pub visible_split_window_width: u16,
+}
+
+impl Default for PaneLayoutConfig {
+    fn default() -> Self {
+        Self {
+            right_split_behavior: PaneRightBehaviorMode::Adaptive,
+            visible_split_window_width: 1920,
+        }
+    }
+}
+
+impl PaneLayoutConfig {
+    #[must_use]
+    pub fn right_insertion_behavior(
+        self,
+        viewport_width: i32,
+    ) -> crate::PaneRightInsertionBehavior {
+        match self.right_split_behavior {
+            PaneRightBehaviorMode::AlwaysSplit => crate::PaneRightInsertionBehavior::VisibleSplit,
+            PaneRightBehaviorMode::AlwaysAdd => crate::PaneRightInsertionBehavior::WorklaneAdd,
+            PaneRightBehaviorMode::Adaptive => {
+                if viewport_width >= i32::from(self.visible_split_window_width) {
+                    crate::PaneRightInsertionBehavior::VisibleSplit
+                } else {
+                    crate::PaneRightInsertionBehavior::WorklaneAdd
+                }
+            }
+        }
+    }
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct PaneLayoutDocument {
+    right_split_behavior: Option<String>,
+    visible_split_window_width: Option<u16>,
+}
+
+impl PaneLayoutDocument {
+    fn into_config(self) -> Result<PaneLayoutConfig, String> {
+        let defaults = PaneLayoutConfig::default();
+        let right_split_behavior =
+            self.right_split_behavior
+                .map_or(Ok(defaults.right_split_behavior), |value| {
+                    PaneRightBehaviorMode::parse_config_value(&value)
+                        .ok_or_else(|| format!("invalid pane_layout.right_split_behavior: {value}"))
+                })?;
+        let visible_split_window_width = self
+            .visible_split_window_width
+            .unwrap_or(defaults.visible_split_window_width);
+        if !matches!(visible_split_window_width, 1200 | 1440 | 1680 | 1920 | 2560) {
+            return Err(format!(
+                "invalid pane_layout.visible_split_window_width: {visible_split_window_width}"
+            ));
+        }
+        Ok(PaneLayoutConfig {
+            right_split_behavior,
+            visible_split_window_width,
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FocusFollowsMouseDelay {
+    Immediate,
+    Short,
+}
+
+impl FocusFollowsMouseDelay {
+    #[must_use]
+    pub const fn config_value(self) -> &'static str {
+        match self {
+            Self::Immediate => "immediate",
+            Self::Short => "short",
+        }
+    }
+
+    fn parse_config_value(value: &str) -> Option<Self> {
+        match value {
+            "immediate" => Some(Self::Immediate),
+            "short" => Some(Self::Short),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[allow(clippy::struct_excessive_bools)] // Mirrors the source's independent pane preference keys.
 pub struct PaneConfig {
+    pub show_labels: bool,
+    pub show_borders: bool,
+    pub inactive_opacity_percent: u8,
     pub show_project_icons: bool,
+    pub smooth_scroll_enabled: bool,
+    pub focus_follows_mouse: bool,
+    pub focus_follows_mouse_delay: FocusFollowsMouseDelay,
 }
 
 impl Default for PaneConfig {
     fn default() -> Self {
         Self {
+            show_labels: true,
+            show_borders: true,
+            inactive_opacity_percent: 70,
             show_project_icons: true,
+            smooth_scroll_enabled: false,
+            focus_follows_mouse: false,
+            focus_follows_mouse_delay: FocusFollowsMouseDelay::Short,
         }
     }
 }
@@ -338,13 +549,144 @@ impl Default for PaneConfig {
 #[derive(Deserialize, Default)]
 #[serde(default)]
 struct PaneDocument {
+    show_labels: Option<bool>,
+    show_borders: Option<bool>,
+    inactive_opacity: Option<f64>,
     show_project_icons: Option<bool>,
+    smooth_scroll_enabled: Option<bool>,
+    focus_follows_mouse: Option<bool>,
+    focus_follows_mouse_delay: Option<String>,
 }
 
 impl PaneDocument {
-    fn into_config(self) -> PaneConfig {
-        PaneConfig {
-            show_project_icons: self.show_project_icons.unwrap_or(true),
+    fn into_config(self) -> Result<PaneConfig, String> {
+        let defaults = PaneConfig::default();
+        let opacity = self.inactive_opacity.unwrap_or(0.7);
+        if !opacity.is_finite() || !(0.6..=1.0).contains(&opacity) {
+            return Err(format!("invalid panes.inactive_opacity: {opacity}"));
+        }
+        let focus_follows_mouse_delay = self.focus_follows_mouse_delay.map_or(
+            Ok(defaults.focus_follows_mouse_delay),
+            |value| {
+                FocusFollowsMouseDelay::parse_config_value(&value)
+                    .ok_or_else(|| format!("invalid panes.focus_follows_mouse_delay: {value}"))
+            },
+        )?;
+        Ok(PaneConfig {
+            show_labels: self.show_labels.unwrap_or(defaults.show_labels),
+            show_borders: self.show_borders.unwrap_or(defaults.show_borders),
+            // The finite 0.6..=1.0 check above proves this rounded value is 60..=100.
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            inactive_opacity_percent: (opacity * 100.0).round() as u8,
+            show_project_icons: self
+                .show_project_icons
+                .unwrap_or(defaults.show_project_icons),
+            smooth_scroll_enabled: self
+                .smooth_scroll_enabled
+                .unwrap_or(defaults.smooth_scroll_enabled),
+            focus_follows_mouse: self
+                .focus_follows_mouse
+                .unwrap_or(defaults.focus_follows_mouse),
+            focus_follows_mouse_delay,
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct AgentTeamsConfig {
+    pub enabled: bool,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct AgentTeamsDocument {
+    enabled: Option<bool>,
+}
+
+impl AgentTeamsDocument {
+    fn into_config(self) -> AgentTeamsConfig {
+        AgentTeamsConfig {
+            enabled: self.enabled.unwrap_or(false),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AgentCaffeinationConfig {
+    pub enabled: bool,
+}
+
+impl Default for AgentCaffeinationConfig {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct AgentCaffeinationDocument {
+    enabled: Option<bool>,
+}
+
+impl AgentCaffeinationDocument {
+    fn into_config(self) -> AgentCaffeinationConfig {
+        AgentCaffeinationConfig {
+            enabled: self.enabled.unwrap_or(true),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MenuBarConfig {
+    pub show_status_item: bool,
+}
+
+impl Default for MenuBarConfig {
+    fn default() -> Self {
+        Self {
+            show_status_item: true,
+        }
+    }
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct MenuBarDocument {
+    show_status_item: Option<bool>,
+}
+
+impl MenuBarDocument {
+    fn into_config(self) -> MenuBarConfig {
+        MenuBarConfig {
+            show_status_item: self.show_status_item.unwrap_or(true),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct AgentIntegrationsConfig {
+    pub states: BTreeMap<String, AgentIntegrationState>,
+    pub grandfathered_v1: bool,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct AgentIntegrationsDocument {
+    grandfathered_v1: Option<bool>,
+    states: BTreeMap<String, String>,
+}
+
+impl AgentIntegrationsDocument {
+    fn into_config(self) -> AgentIntegrationsConfig {
+        AgentIntegrationsConfig {
+            states: self
+                .states
+                .into_iter()
+                .filter_map(|(tool, value)| {
+                    AgentIntegrationState::parse_config_value(&value).map(|state| (tool, state))
+                })
+                .collect(),
+            grandfathered_v1: self.grandfathered_v1.unwrap_or(false),
         }
     }
 }

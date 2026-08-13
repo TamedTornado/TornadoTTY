@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
+ghostty_root="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
+backend="${GDK_BACKEND:-}"
+run_root="$(mktemp -d)"
+state_directory="${run_root}/state"
+log="${run_root}/product.log"
+config="${XDG_CONFIG_HOME}/zentty/config.toml"
+product_pid=""
+
+# shellcheck disable=SC1091
+source "${repo_root}/linux/tests/lib/product-input"
+
+fail() {
+    [[ ! -f "${log}" ]] || cat "${log}" >&2
+    echo "rust-workspace-pane-settings: error: $*" >&2
+    exit 1
+}
+
+cleanup() {
+    if [[ "${product_pid}" =~ ^[1-9][0-9]*$ ]]; then
+        kill -TERM "${product_pid}" 2>/dev/null || true
+        wait "${product_pid}" 2>/dev/null || true
+    fi
+    rm -rf -- "${run_root}"
+}
+trap cleanup EXIT
+
+case "${backend}" in
+    x11)
+        [[ "${ZENTTY_NESTED_X11_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+            fail "X11 scenario must run through linux/tests/nested-x11"
+        ;;
+    wayland)
+        [[ "${ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+            fail "Wayland scenario must run through linux/tests/nested-wayland-input"
+        ;;
+    *) fail "GDK_BACKEND must be x11 or wayland" ;;
+esac
+[[ -x "${product}" ]] || fail "staged product is missing: ${product}"
+
+layer_runpath="$(
+    readelf -d "${ghostty_root}/zig-out/lib/libghostty-gtk-embed.so" |
+        sed -n 's/.*Library runpath: \[\([^]]*\)\].*/\1/p' |
+        cut -d: -f1
+)"
+[[ "${layer_runpath}" == .zig-cache/* ]] || fail "Ghostty runpath is not pinned"
+layer_directory="${ghostty_root}/${layer_runpath}"
+mkdir -p "${state_directory}" "$(dirname "${config}")"
+cat >"${config}" <<'EOF'
+# workspace settings integration receipt
+[worklanes]
+new_worklane_placement = "top"
+[pane_layout]
+right_split_behavior = "alwaysSplit"
+visible_split_window_width = 1200
+[panes]
+show_labels = true
+show_borders = false
+inactive_opacity = 0.81
+show_project_icons = false
+smooth_scroll_enabled = false
+focus_follows_mouse = true
+focus_follows_mouse_delay = "immediate"
+EOF
+
+GDK_SCALE=1 \
+GDK_DPI_SCALE=1 \
+LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+    "${product}" --command 'sleep 30' --state-directory "${state_directory}" \
+    --no-session-restore >"${log}" 2>&1 &
+product_pid=$!
+zentty_product_prepare_input "${backend}" "${log}" || fail "physical product input was unavailable"
+
+# Configured top insertion is exercised by the real worklane action and
+# projected by the one workspace state authority.
+zentty_product_ctrl_key "${backend}" t
+zentty_product_wait_for_log "${log}" 'action=new-worklane id=worklane-2 pane=pane-2' \
+    "physical new-worklane action failed" || fail "new worklane missing"
+zentty_product_wait_for_log "${log}" 'topology=worklane-2' \
+    "new worklane was not rendered first" || fail "top placement missing"
+latest_topology="$(grep -F 'zentty-linux: topology=' "${log}" | tail -1)"
+[[ "${latest_topology}" == *'topology=worklane-2'*'|worklane-1'* ]] ||
+    fail "top placement did not precede the original worklane: ${latest_topology}"
+
+# The normal Add Pane Right chord must resolve through the configured
+# Always Split policy and create two real visible Ghostty columns.
+zentty_product_ctrl_key "${backend}" d
+zentty_product_wait_for_log "${log}" 'action=split-pane-right pane=pane-3' \
+    "configured right-pane behavior did not split" || fail "right split missing"
+zentty_product_wait_for_log "${log}" 'geometry=worklane-2:column-pane-2[pane-2],column-pane-3[pane-3]' \
+    "real two-column geometry was not projected" || fail "split geometry missing"
+
+# Enter the right pane and then the left pane through the compositor-owned
+# pointer. Immediate focus-follow must select the actual left surface.
+pointer_evidence="covered-by-controlled-x11-cell"
+if zentty_product_uses_xdotool "${backend}"; then
+    xdotool mousemove --sync --window "${ZENTTY_PRODUCT_WINDOW_ID}" 950 430
+    sleep 0.05
+    xdotool mousemove --sync --window "${ZENTTY_PRODUCT_WINDOW_ID}" 430 430
+    zentty_product_wait_for_log "${log}" 'focus-follows-mouse pane=pane-2 result=focused' \
+        "physical pointer entry did not focus the left pane" || fail "focus follows mouse missing"
+    pointer_evidence="physical-pointer-focus"
+fi
+
+zentty_product_ctrl_shift_key "${backend}" p
+if [[ "${backend}" == x11 ]]; then
+    xdotool type --delay 5 -- 'Worklanes & Panes Settings'
+else
+    # The Wayland product is nested in an outer controlled X11 compositor, but
+    # keyboard input still goes through the compositor's virtual keyboard.
+    wtype -d 35 -- 'Worklanes & Panes Settings'
+fi
+zentty_product_wait_for_log "${log}" \
+    'command-palette=query value="Worklanes & Panes Settings" results=1' \
+    "settings command did not resolve uniquely" || fail "settings palette route failed"
+zentty_product_key "${backend}" Down
+zentty_product_key "${backend}" Return
+zentty_product_wait_for_log "${log}" 'zentty-linux: settings-section selected=pane-layout' \
+    "palette did not deep-link to Worklanes & Panes" || fail "settings deep-link failed"
+zentty_product_wait_for_log "${log}" \
+    'workspace-pane-settings loaded placement=top right-behavior=alwaysSplit threshold=1200 labels=true borders=false icons=false smooth=false focus=true focus-delay=immediate inactive-opacity=81' \
+    "settings page did not load the exact persisted source values" || fail "settings values missing"
+grep -Fq '# workspace settings integration receipt' "${config}" || fail "configuration comment was lost"
+
+echo "rust-workspace-pane-settings-${backend}: PASS real-worklanes real-split real-ghostty-surfaces ${pointer_evidence} physical-settings-deep-link exact-config"

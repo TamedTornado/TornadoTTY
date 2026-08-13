@@ -59,15 +59,18 @@ impl PaneControlAction {
 pub(crate) struct PaneFrame {
     root: gtk::Overlay,
     pane_id: String,
+    label: gtk::Label,
     right_button: gtk::Button,
     move_to_window_button: gtk::Button,
     right_action: Rc<Cell<PaneControlAction>>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct PanePresentation {
     pub(crate) focused: bool,
     pub(crate) worklane_color: Option<WorklaneColor>,
+    pub(crate) show_borders: bool,
+    pub(crate) label: Option<String>,
 }
 
 impl PanePresentation {
@@ -76,23 +79,36 @@ impl PanePresentation {
     // backdrop-aware equivalent of Zentty's inactive-pane presentation.
     const SURFACE_OPACITY: f64 = 1.0;
 
-    fn color_class(self) -> Option<String> {
+    fn color_class(&self) -> Option<String> {
         self.worklane_color
             .map(|color| format!("zentty-pane-color-{}", color.as_str()))
     }
 }
 
 impl PaneFrame {
+    #[allow(clippy::too_many_lines)] // Declarative construction of one pane frame and its controls.
     pub(crate) fn new(
         pane_id: &str,
         terminal: &gtk::Widget,
         on_action: impl Fn(PaneControlAction) + 'static,
+        on_pointer_presence: impl Fn(bool) + 'static,
     ) -> Self {
         let root = gtk::Overlay::new();
         root.add_css_class("zentty-pane-frame");
         root.set_hexpand(true);
         root.set_vexpand(true);
         root.set_child(Some(terminal));
+
+        let label = gtk::Label::new(None);
+        label.add_css_class("zentty-pane-label");
+        label.set_halign(gtk::Align::Start);
+        label.set_valign(gtk::Align::Start);
+        label.set_margin_top(5);
+        label.set_margin_start(6);
+        label.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+        label.set_max_width_chars(48);
+        label.set_visible(false);
+        root.add_overlay(&label);
 
         let controls = gtk::Box::new(gtk::Orientation::Horizontal, 2);
         controls.add_css_class("zentty-pane-controls");
@@ -135,14 +151,19 @@ impl PaneFrame {
         let enter_controls = controls.clone();
         let enter_revealed = Rc::clone(&revealed);
         let enter_pane_id = pane_id.to_owned();
+        let on_pointer_presence: Rc<dyn Fn(bool)> = Rc::new(on_pointer_presence);
+        let enter_pointer = Rc::clone(&on_pointer_presence);
         motion.connect_enter(move |_, _, _| {
             set_revealed(&enter_controls, &enter_revealed, &enter_pane_id, true);
+            enter_pointer(true);
         });
         let leave_controls = controls.clone();
         let leave_revealed = Rc::clone(&revealed);
         let leave_pane_id = pane_id.to_owned();
         let leave_focus = focus.clone();
+        let leave_pointer = Rc::clone(&on_pointer_presence);
         motion.connect_leave(move |controller| {
+            leave_pointer(false);
             let controller = controller.clone();
             let leave_controls = leave_controls.clone();
             let leave_revealed = Rc::clone(&leave_revealed);
@@ -183,6 +204,7 @@ impl PaneFrame {
         Self {
             root,
             pane_id: pane_id.to_owned(),
+            label,
             right_button,
             move_to_window_button,
             right_action,
@@ -193,9 +215,10 @@ impl PaneFrame {
         &self.root
     }
 
-    pub(crate) fn set_presentation(&self, presentation: PanePresentation) {
+    pub(crate) fn set_presentation(&self, presentation: &PanePresentation) {
         self.root.remove_css_class("zentty-pane-frame-focused");
         self.root.remove_css_class("zentty-pane-frame-unfocused");
+        self.root.remove_css_class("zentty-pane-borders-hidden");
         for color in WorklaneColor::ALL {
             self.root
                 .remove_css_class(&format!("zentty-pane-color-{}", color.as_str()));
@@ -209,6 +232,12 @@ impl PaneFrame {
         if let Some(color_class) = presentation.color_class() {
             self.root.add_css_class(&color_class);
         }
+        if !presentation.show_borders {
+            self.root.add_css_class("zentty-pane-borders-hidden");
+        }
+        self.label
+            .set_label(presentation.label.as_deref().unwrap_or_default());
+        self.label.set_visible(presentation.label.is_some());
         self.root.set_opacity(PanePresentation::SURFACE_OPACITY);
     }
 
@@ -272,6 +301,8 @@ pub(crate) fn install_styles() {
              border-color: #69a7ff;\n\
              box-shadow: inset 0 0 0 1px alpha(#69a7ff, 0.48), 0 0 14px alpha(#69a7ff, 0.22);\n\
          }\n\
+         .zentty-pane-borders-hidden.zentty-pane-frame-unfocused { border-color: transparent; }\n\
+         .zentty-pane-label { padding: 2px 6px; border-radius: 5px; color: alpha(white, 0.72); background: alpha(#15171b, 0.80); font-size: 10px; }\n\
          .zentty-pane-frame-focused.zentty-pane-color-red { border-color: #f56565; box-shadow: inset 0 0 0 1px alpha(#f56565, 0.30), 0 0 12px alpha(#f56565, 0.18); }\n\
          .zentty-pane-frame-focused.zentty-pane-color-orange { border-color: #ed8936; box-shadow: inset 0 0 0 1px alpha(#ed8936, 0.30), 0 0 12px alpha(#ed8936, 0.18); }\n\
          .zentty-pane-frame-focused.zentty-pane-color-amber { border-color: #d69e2e; box-shadow: inset 0 0 0 1px alpha(#d69e2e, 0.30), 0 0 12px alpha(#d69e2e, 0.18); }\n\
@@ -377,10 +408,14 @@ mod tests {
         let focused = PanePresentation {
             focused: true,
             worklane_color: Some(WorklaneColor::Amber),
+            show_borders: true,
+            label: Some("~/Projects/zentty".into()),
         };
         let inactive = PanePresentation {
             focused: false,
             worklane_color: None,
+            show_borders: false,
+            label: None,
         };
 
         assert!(
@@ -388,6 +423,8 @@ mod tests {
             "terminal content must not be washed out to indicate focus"
         );
         assert!(!inactive.focused);
+        assert!(!inactive.show_borders);
+        assert_eq!(focused.label.as_deref(), Some("~/Projects/zentty"));
         assert_eq!(
             focused.color_class().as_deref(),
             Some("zentty-pane-color-amber")

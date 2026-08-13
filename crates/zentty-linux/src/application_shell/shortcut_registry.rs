@@ -303,7 +303,7 @@ pub(crate) const COMMANDS: &[ShortcutCommandSpec] = &[
         "Add Pane Right",
         "Add a pane to the right using the normal layout policy.",
         Panes,
-        ACTION_ADD_PANE_RIGHT,
+        ACTION_NEW_PANE_RIGHT,
         Some("command+d")
     ),
     command!(

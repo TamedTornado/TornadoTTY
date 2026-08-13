@@ -57,6 +57,17 @@ impl ApplicationCoordinator {
         let window_set = WindowSet::restore(ids, active_window_id)
             .map_err(|error| format!("could not compose restored windows: {error:?}"))?;
         let agent_runtime = Rc::new(RefCell::new(AgentRuntime::start()?));
+        // Preserve the established process-level opt-in used by agent-team
+        // launchers. A persisted enabled setting may opt in as well; an absent
+        // (default-false) setting must not erase an explicit environment opt-in
+        // before the first pane is created. A live settings change can still
+        // disable teams through ApplicationShell::apply_agent_settings.
+        if config.agent_teams.enabled {
+            agent_runtime.borrow_mut().set_agent_teams_enabled(true);
+        }
+        agent_runtime
+            .borrow_mut()
+            .set_agent_integrations(config.agent_integrations.states.clone());
         let coordinator = Rc::new(RefCell::new(Self {
             runtime: runtime.clone(),
             agent_runtime,

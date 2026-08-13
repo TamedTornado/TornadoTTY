@@ -1,5 +1,6 @@
 use zentty_core::{
-    AppConfig, BackgroundOpacity, CommandFlattenAggressiveness, ThemeMode, UpdateChannel,
+    AgentIntegrationState, AppConfig, BackgroundOpacity, CommandFlattenAggressiveness,
+    FocusFollowsMouseDelay, NewWorklanePlacement, PaneRightBehaviorMode, ThemeMode, UpdateChannel,
 };
 
 #[test]
@@ -178,15 +179,144 @@ fn missing_clipboard_section_uses_source_defaults() {
 }
 
 #[test]
-fn project_icons_default_on_and_preserve_the_source_panes_key() {
-    assert!(AppConfig::parse_toml("").unwrap().panes.show_project_icons);
-    assert!(
-        !AppConfig::parse_toml("[panes]\nshow_project_icons = false\n")
-            .unwrap()
-            .panes
-            .show_project_icons
+fn worklane_and_pane_layout_settings_use_source_defaults_and_exact_keys() {
+    let defaults = AppConfig::parse_toml("").unwrap();
+    assert_eq!(
+        defaults.worklanes.new_worklane_placement,
+        NewWorklanePlacement::AfterCurrent
     );
-    assert!(AppConfig::parse_toml("[panes]\nshow_project_icons = \"yes\"\n").is_err());
+    assert_eq!(
+        defaults.pane_layout.right_split_behavior,
+        PaneRightBehaviorMode::Adaptive
+    );
+    assert_eq!(defaults.pane_layout.visible_split_window_width, 1920);
+    assert!(defaults.panes.show_labels);
+    assert!(defaults.panes.show_borders);
+    assert_eq!(defaults.panes.inactive_opacity_percent, 70);
+    assert!(defaults.panes.show_project_icons);
+    assert!(!defaults.panes.smooth_scroll_enabled);
+    assert!(!defaults.panes.focus_follows_mouse);
+    assert_eq!(
+        defaults.panes.focus_follows_mouse_delay,
+        FocusFollowsMouseDelay::Short
+    );
+
+    let configured = AppConfig::parse_toml(
+        r#"
+        [worklanes]
+        new_worklane_placement = "top"
+
+        [pane_layout]
+        right_split_behavior = "alwaysSplit"
+        visible_split_window_width = 1440
+
+        [panes]
+        show_labels = false
+        show_borders = false
+        inactive_opacity = 0.856
+        show_project_icons = false
+        smooth_scroll_enabled = true
+        focus_follows_mouse = true
+        focus_follows_mouse_delay = "immediate"
+        "#,
+    )
+    .unwrap();
+    assert_eq!(
+        configured.worklanes.new_worklane_placement,
+        NewWorklanePlacement::Top
+    );
+    assert_eq!(
+        configured.pane_layout.right_split_behavior,
+        PaneRightBehaviorMode::AlwaysSplit
+    );
+    assert_eq!(configured.pane_layout.visible_split_window_width, 1440);
+    assert_eq!(
+        configured.pane_layout.right_insertion_behavior(800),
+        zentty_core::PaneRightInsertionBehavior::VisibleSplit
+    );
+    assert!(!configured.panes.show_labels);
+    assert!(!configured.panes.show_borders);
+    assert_eq!(configured.panes.inactive_opacity_percent, 86);
+    assert!(!configured.panes.show_project_icons);
+    assert!(configured.panes.smooth_scroll_enabled);
+    assert!(configured.panes.focus_follows_mouse);
+    assert_eq!(
+        configured.panes.focus_follows_mouse_delay,
+        FocusFollowsMouseDelay::Immediate
+    );
+
+    for source in [
+        "[worklanes]\nnew_worklane_placement = \"middle\"\n",
+        "[pane_layout]\nright_split_behavior = \"sometimes\"\n",
+        "[pane_layout]\nvisible_split_window_width = 1600\n",
+        "[panes]\ninactive_opacity = 0.59\n",
+        "[panes]\ninactive_opacity = 1.01\n",
+        "[panes]\nfocus_follows_mouse_delay = \"long\"\n",
+        "[panes]\nshow_project_icons = \"yes\"\n",
+    ] {
+        assert!(
+            AppConfig::parse_toml(source).is_err(),
+            "accepted {source:?}"
+        );
+    }
+}
+
+#[test]
+fn agent_settings_use_source_defaults_sections_and_forward_compatible_states() {
+    let defaults = AppConfig::parse_toml("").unwrap();
+    assert!(!defaults.agent_teams.enabled);
+    assert!(defaults.agent_caffeination.enabled);
+    assert!(defaults.menu_bar.show_status_item);
+    assert!(!defaults.agent_integrations.grandfathered_v1);
+    assert!(defaults.agent_integrations.states.is_empty());
+
+    let configured = AppConfig::parse_toml(
+        r#"
+        [agent_teams]
+        enabled = true
+        [agent_caffeination]
+        enabled = false
+        [menu_bar]
+        show_status_item = false
+        [agent_integrations]
+        grandfathered_v1 = true
+        [agent_integrations.states]
+        claude = "off"
+        codex = "on"
+        future_agent = "future-state"
+        "#,
+    )
+    .unwrap();
+    assert!(configured.agent_teams.enabled);
+    assert!(!configured.agent_caffeination.enabled);
+    assert!(!configured.menu_bar.show_status_item);
+    assert!(configured.agent_integrations.grandfathered_v1);
+    assert_eq!(
+        configured.agent_integrations.states["claude"],
+        AgentIntegrationState::Off
+    );
+    assert_eq!(
+        configured.agent_integrations.states["codex"],
+        AgentIntegrationState::On
+    );
+    assert!(
+        !configured
+            .agent_integrations
+            .states
+            .contains_key("future_agent")
+    );
+
+    for source in [
+        "[agent_teams]\nenabled = \"yes\"\n",
+        "[agent_caffeination]\nenabled = 1\n",
+        "[menu_bar]\nshow_status_item = []\n",
+        "[agent_integrations]\ngrandfathered_v1 = \"no\"\n",
+    ] {
+        assert!(
+            AppConfig::parse_toml(source).is_err(),
+            "accepted {source:?}"
+        );
+    }
 }
 
 #[test]

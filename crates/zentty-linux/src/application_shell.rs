@@ -29,10 +29,9 @@ use gtk::prelude::*;
 use zentty_core::{
     AgentPhase, AppConfig, ClosePaneOutcome, ColumnRecipe, CommandPaletteItem,
     GlobalSearchCoordinator, GlobalSearchDirection, PaneColumnState, PaneLayoutPolicy, PaneRecipe,
-    PaneReference, PaneResizeDirection, PaneRestoreDraft, PaneRightInsertionBehavior,
-    PaneWindowTransfer, ServerPortRule, ServerRelevanceContext, SidebarWidthPreference,
-    TaskRunnerAction, WindowFrame, WindowRecipe, WorklaneColor, WorklaneRecipe, WorkspaceState,
-    discover_task_runners, rank_servers,
+    PaneReference, PaneResizeDirection, PaneRestoreDraft, PaneWindowTransfer, ServerPortRule,
+    ServerRelevanceContext, SidebarWidthPreference, TaskRunnerAction, WindowFrame, WindowRecipe,
+    WorklaneColor, WorklaneRecipe, WorkspaceState, discover_task_runners, rank_servers,
 };
 use zentty_ghostty::GhosttyRuntime;
 
@@ -43,7 +42,7 @@ mod agent_events;
 mod bookmark_runtime;
 mod clipboard_actions;
 mod global_search;
-mod open_with_runtime;
+pub(crate) mod open_with_runtime;
 mod pane_runtime;
 mod project_context_runtime;
 mod remote_paste;
@@ -67,22 +66,22 @@ use action_router::{
     ACTION_GLOBAL_FIND, ACTION_IGNORE_SERVER_PORT, ACTION_MOVE_PANE_DOWN, ACTION_MOVE_PANE_LEFT,
     ACTION_MOVE_PANE_RIGHT, ACTION_MOVE_PANE_TO_NEW_WINDOW, ACTION_MOVE_PANE_UP,
     ACTION_MOVE_WORKLANE_DOWN, ACTION_MOVE_WORKLANE_UP, ACTION_NAVIGATE_BACK,
-    ACTION_NAVIGATE_FORWARD, ACTION_NEW_WINDOW, ACTION_NEW_WORKLANE, ACTION_NEXT_PANE,
-    ACTION_NEXT_WORKLANE, ACTION_OPEN_BRANCH_REMOTE, ACTION_OPEN_PULL_REQUEST, ACTION_OPEN_SERVER,
-    ACTION_OPEN_SERVER_BROWSER, ACTION_OPEN_SETTINGS, ACTION_OPEN_SETTINGS_SECTION,
-    ACTION_OPEN_WITH_PRIMARY, ACTION_OPEN_WITH_TARGET, ACTION_PREVIOUS_PANE,
-    ACTION_PREVIOUS_WORKLANE, ACTION_REFRESH_REVIEW_STATUS, ACTION_REFRESH_SERVERS,
-    ACTION_RESET_PANE_LAYOUT, ACTION_RESIZE_PANE_DOWN, ACTION_RESIZE_PANE_LEFT,
-    ACTION_RESIZE_PANE_RIGHT, ACTION_RESIZE_PANE_UP, ACTION_RESTORE_CLOSED_PANE, ACTION_SELECT_ALL,
-    ACTION_SHOW_TASK_MANAGER, ACTION_SPLIT_PANE_BELOW, ACTION_SPLIT_PANE_RIGHT,
-    ACTION_STOP_IGNORING_SERVER_PORT, ACTION_STOP_SERVER, ACTION_TOGGLE_LIGHT_DARK_THEME,
-    ACTION_TOGGLE_SIDEBAR, ACTION_USE_AUTO_THEME, ACTION_USE_DARK_THEME, ACTION_USE_LIGHT_THEME,
+    ACTION_NAVIGATE_FORWARD, ACTION_NEW_PANE_RIGHT, ACTION_NEW_WINDOW, ACTION_NEW_WORKLANE,
+    ACTION_NEXT_PANE, ACTION_NEXT_WORKLANE, ACTION_OPEN_BRANCH_REMOTE, ACTION_OPEN_PULL_REQUEST,
+    ACTION_OPEN_SERVER, ACTION_OPEN_SERVER_BROWSER, ACTION_OPEN_SETTINGS,
+    ACTION_OPEN_SETTINGS_SECTION, ACTION_OPEN_WITH_PRIMARY, ACTION_OPEN_WITH_TARGET,
+    ACTION_PREVIOUS_PANE, ACTION_PREVIOUS_WORKLANE, ACTION_REFRESH_REVIEW_STATUS,
+    ACTION_REFRESH_SERVERS, ACTION_RESET_PANE_LAYOUT, ACTION_RESIZE_PANE_DOWN,
+    ACTION_RESIZE_PANE_LEFT, ACTION_RESIZE_PANE_RIGHT, ACTION_RESIZE_PANE_UP,
+    ACTION_RESTORE_CLOSED_PANE, ACTION_SELECT_ALL, ACTION_SHOW_TASK_MANAGER,
+    ACTION_SPLIT_PANE_BELOW, ACTION_SPLIT_PANE_RIGHT, ACTION_STOP_IGNORING_SERVER_PORT,
+    ACTION_STOP_SERVER, ACTION_TOGGLE_LIGHT_DARK_THEME, ACTION_TOGGLE_SIDEBAR,
+    ACTION_USE_AUTO_THEME, ACTION_USE_DARK_THEME, ACTION_USE_LIGHT_THEME,
     ACTION_USE_SELECTION_FOR_FIND, ActionRouter,
 };
 use agent_events::AgentEventCoordinator;
 use pane_runtime::DetachedPaneRuntime;
 use pane_runtime::PaneRuntimeCoordinator;
-const PRIMARY_RIGHT_BEHAVIOR: PaneRightInsertionBehavior = PaneRightInsertionBehavior::VisibleSplit;
 const WORKLANE_PEEK_TAB_HOLD_THRESHOLD: Duration = Duration::from_millis(200);
 type SidebarTrackingState = (Rc<Cell<i32>>, Rc<Cell<bool>>, Rc<Cell<u64>>);
 
@@ -150,6 +149,7 @@ pub(crate) struct ApplicationShell {
     global_search_view: GlobalSearchView,
     global_search: GlobalSearchCoordinator,
     global_search_generation: u64,
+    focus_follow_generation: u64,
     remote_panes: RemotePaneContext,
     server_runtime: server_runtime::ServerRuntime,
     project_context_runtime: project_context_runtime::ProjectContextRuntime,
@@ -278,6 +278,7 @@ fn render_empty_sidebar(
 }
 
 impl ApplicationShell {
+    #[allow(clippy::too_many_lines)] // Initializes the single window authority and its owned coordinators.
     pub(crate) fn new(
         runtimes: &ApplicationRuntimes,
         command: Option<String>,
@@ -353,6 +354,7 @@ impl ApplicationShell {
             global_search_view,
             global_search: GlobalSearchCoordinator::default(),
             global_search_generation: 0,
+            focus_follow_generation: 0,
             remote_panes: RemotePaneContext::default(),
             server_runtime: server_runtime::ServerRuntime::discover(
                 &runtimes.config.server_detection,
@@ -1294,6 +1296,7 @@ impl ApplicationShell {
         self.request_show_settings(crate::settings_navigation::SettingsSection::General);
     }
 
+    #[allow(clippy::too_many_lines)] // Coordinates construction of the typed settings pages.
     fn request_show_settings(&mut self, section: crate::settings_navigation::SettingsSection) {
         if let Some(window) = self.shortcut_settings_window.as_ref() {
             let _ = window.activate_action(
@@ -1309,6 +1312,10 @@ impl ApplicationShell {
         let general_weak = self.self_handle.borrow().clone();
         let notifications_weak = self.self_handle.borrow().clone();
         let updates_weak = self.self_handle.borrow().clone();
+        let workspace_panes_weak = self.self_handle.borrow().clone();
+        let open_with_weak = self.self_handle.borrow().clone();
+        let dev_servers_weak = self.self_handle.borrow().clone();
+        let agents_weak = self.self_handle.borrow().clone();
         let focus_weak = self.self_handle.borrow().clone();
         let restore_parent_focus: Rc<dyn Fn()> = Rc::new(move || {
             if let Some(shell) = focus_weak.upgrade() {
@@ -1372,6 +1379,50 @@ impl ApplicationShell {
                         shell.borrow_mut().apply_updates(updates);
                     }
                 }),
+                worklanes: self.config.worklanes,
+                pane_layout: self.config.pane_layout,
+                panes: self.config.panes,
+                apply_workspace_panes: Rc::new(move |worklanes, pane_layout, panes| {
+                    if let Some(shell) = workspace_panes_weak.upgrade() {
+                        shell
+                            .borrow_mut()
+                            .apply_workspace_panes(worklanes, pane_layout, panes);
+                    }
+                }),
+                open_with: self.config.open_with.clone(),
+                open_with_targets: open_with_runtime::discover_available_targets(
+                    &self.config.open_with,
+                    std::env::var_os("PATH").as_deref(),
+                ),
+                apply_open_with: Rc::new(move |config| {
+                    let shell = open_with_weak.upgrade().ok_or_else(|| {
+                        "Zentty window closed while applying Open With settings".to_owned()
+                    })?;
+                    shell.borrow_mut().apply_open_with(config)
+                }),
+                server_detection: self.config.server_detection.clone(),
+                server_browser_targets: server_runtime::discover_browser_targets(
+                    &self.config.server_detection,
+                    std::env::var_os("PATH").as_deref(),
+                ),
+                apply_dev_servers: Rc::new(move |config| {
+                    let shell = dev_servers_weak.upgrade().ok_or_else(|| {
+                        "Zentty window closed while applying Dev Servers settings".to_owned()
+                    })?;
+                    shell.borrow_mut().apply_dev_servers(config)
+                }),
+                agent_teams: self.config.agent_teams,
+                agent_caffeination: self.config.agent_caffeination,
+                menu_bar: self.config.menu_bar,
+                agent_integrations: self.config.agent_integrations.clone(),
+                apply_agents: Rc::new(move |teams, caffeination, menu_bar, integrations| {
+                    let shell = agents_weak.upgrade().ok_or_else(|| {
+                        "Zentty window closed while applying Agents settings".to_owned()
+                    })?;
+                    shell
+                        .borrow_mut()
+                        .apply_agents(teams, caffeination, menu_bar, integrations)
+                }),
                 initial_section: section,
             },
             &restore_parent_focus,
@@ -1431,6 +1482,117 @@ impl ApplicationShell {
                 eprintln!("zentty-linux: updates-privacy-settings result=error detail={error}");
             }
         }
+    }
+
+    fn apply_workspace_panes(
+        &mut self,
+        worklanes: zentty_core::WorklaneConfig,
+        pane_layout: zentty_core::PaneLayoutConfig,
+        panes: zentty_core::PaneConfig,
+    ) {
+        match crate::config_store::ConfigStore::update_default_workspace_panes(
+            worklanes,
+            pane_layout,
+            panes,
+        ) {
+            Ok(path) => {
+                self.config.worklanes = worklanes;
+                self.config.pane_layout = pane_layout;
+                self.config.panes = panes;
+                self.render_sidebar();
+                self.refresh_pane_presentation();
+                eprintln!(
+                    "zentty-linux: workspace-pane-settings result=persisted path={} placement={} right-behavior={}",
+                    path.display(),
+                    worklanes.new_worklane_placement.config_value(),
+                    pane_layout.right_split_behavior.config_value(),
+                );
+            }
+            Err(error) => {
+                eprintln!("zentty-linux: workspace-pane-settings result=error detail={error}");
+            }
+        }
+    }
+
+    fn apply_open_with(&mut self, config: zentty_core::OpenWithConfig) -> Result<(), String> {
+        let path = crate::config_store::ConfigStore::update_default_open_with(&config)?;
+        self.config.open_with = config;
+        self.open_with_runtime =
+            open_with_runtime::OpenWithRuntime::discover(&self.config.open_with);
+        self.chrome
+            .configure_open_with(&self.open_with_runtime.catalog);
+        self.chrome
+            .set_open_with_context_available(open_with_runtime::focused_context_is_available(self));
+        eprintln!(
+            "zentty-linux: open-with-settings result=persisted path={} primary={}",
+            path.display(),
+            self.config.open_with.primary_target_id,
+        );
+        Ok(())
+    }
+
+    fn apply_dev_servers(
+        &mut self,
+        config: zentty_core::ServerDetectionConfig,
+    ) -> Result<(), String> {
+        let path = crate::config_store::ConfigStore::update_default_server_detection(&config)?;
+        let was_enabled = self.config.server_detection.passive_detection_enabled;
+        self.config.server_detection = config;
+        self.server_runtime.browser_catalog = zentty_core::ServerBrowserCatalog::resolve(
+            &self.config.server_detection,
+            server_runtime::discover_browser_targets(
+                &self.config.server_detection,
+                std::env::var_os("PATH").as_deref(),
+            ),
+        );
+        if was_enabled && !self.config.server_detection.passive_detection_enabled {
+            if let Some(source) = self.server_runtime.probe_source.take() {
+                source.remove();
+            }
+        } else if !was_enabled && self.config.server_detection.passive_detection_enabled {
+            let weak = self.self_handle.borrow().clone();
+            glib::idle_add_local_once(move || {
+                if let Some(shell) = weak.upgrade() {
+                    let source = server_runtime::install(&shell);
+                    shell.borrow_mut().server_runtime.probe_source = source;
+                }
+            });
+        }
+        eprintln!(
+            "zentty-linux: dev-server-settings result=persisted path={} passive={} preferred={}",
+            path.display(),
+            self.config.server_detection.passive_detection_enabled,
+            self.config.server_detection.preferred_browser_id,
+        );
+        Ok(())
+    }
+
+    fn apply_agents(
+        &mut self,
+        teams: zentty_core::AgentTeamsConfig,
+        caffeination: zentty_core::AgentCaffeinationConfig,
+        menu_bar: zentty_core::MenuBarConfig,
+        integrations: zentty_core::AgentIntegrationsConfig,
+    ) -> Result<(), String> {
+        let path = crate::config_store::ConfigStore::update_default_agents(
+            teams,
+            caffeination,
+            menu_bar,
+            &integrations,
+        )?;
+        self.agent_events.set_agent_teams_enabled(teams.enabled);
+        self.agent_events
+            .set_agent_integrations(integrations.states.clone());
+        self.config.agent_teams = teams;
+        self.config.agent_caffeination = caffeination;
+        self.config.menu_bar = menu_bar;
+        self.config.agent_integrations = integrations;
+        eprintln!(
+            "zentty-linux: agent-settings result=persisted path={} teams={} new-panes-only=true",
+            path.display(),
+            teams.enabled
+        );
+        Ok(())
     }
 
     fn reload_ghostty_config(&mut self) {
@@ -1918,7 +2080,7 @@ impl ApplicationShell {
                 "Add Pane Right",
                 "Add a full-width pane to the right of the focused column",
                 "pane column canvas",
-                ACTION_ADD_PANE_RIGHT,
+                ACTION_NEW_PANE_RIGHT,
             ),
             CommandPaletteItem::action(
                 "Add Pane Left",
@@ -2334,10 +2496,12 @@ impl ApplicationShell {
             let worklane_id = format!("worklane-{}", shell.next_worklane_number);
             shell.next_worklane_number += 1;
             let pane_id = shell.take_pane_id();
-            if !shell
-                .state
-                .create_worklane(worklane_id.clone(), pane_id.clone())
-            {
+            let placement = shell.config.worklanes.new_worklane_placement;
+            if !shell.state.create_worklane_with_placement(
+                worklane_id.clone(),
+                pane_id.clone(),
+                placement,
+            ) {
                 return Err("generated duplicate worklane or pane identity".to_owned());
             }
             (worklane_id, pane_id)
@@ -2362,6 +2526,24 @@ impl ApplicationShell {
         })?;
         Self::scroll_panes_to_end(shell);
         Ok(())
+    }
+
+    fn create_focused_pane_right(shell: &Rc<RefCell<Self>>) -> Result<(), String> {
+        let behavior = {
+            let shell = shell.borrow();
+            shell
+                .config
+                .pane_layout
+                .right_insertion_behavior(shell.pane_viewport_width())
+        };
+        match behavior {
+            zentty_core::PaneRightInsertionBehavior::VisibleSplit => {
+                Self::split_focused_pane_right(shell)
+            }
+            zentty_core::PaneRightInsertionBehavior::WorklaneAdd => {
+                Self::add_focused_pane_right(shell)
+            }
+        }
     }
 
     fn add_focused_pane_right(shell: &Rc<RefCell<Self>>) -> Result<(), String> {
@@ -3513,6 +3695,19 @@ impl ApplicationShell {
     fn refresh_pane_presentation(&self) {
         let focused_pane_id = self.state.focused_pane_id();
         let worklane_color = self.state.active_worklane().color;
+        let pane_labels = self
+            .state
+            .sidebar_summaries()
+            .into_iter()
+            .find(|worklane| worklane.is_active)
+            .map(|worklane| {
+                worklane
+                    .pane_rows
+                    .into_iter()
+                    .map(|pane| (pane.pane_id, pane.primary_text))
+                    .collect::<std::collections::BTreeMap<_, _>>()
+            })
+            .unwrap_or_default();
         let window_transfer_available = self
             .state
             .worklanes()
@@ -3523,9 +3718,16 @@ impl ApplicationShell {
             >= 2;
         for pane_id in self.state.active_pane_ids() {
             if let Some(frame) = self.pane_runtime.frame(pane_id) {
-                frame.set_presentation(PanePresentation {
+                frame.set_presentation(&PanePresentation {
                     focused: Some(pane_id) == focused_pane_id,
                     worklane_color,
+                    show_borders: self.config.panes.show_borders,
+                    label: self
+                        .config
+                        .panes
+                        .show_labels
+                        .then(|| pane_labels.get(pane_id).cloned())
+                        .flatten(),
                 });
                 frame.set_window_transfer_available(window_transfer_available);
             }
@@ -3540,7 +3742,11 @@ impl ApplicationShell {
                 // Worklane Peek, and recent-pane management. Keep the
                 // pane-local primary action visible until that navigation
                 // ecosystem makes full-width offscreen panes discoverable.
-                frame.set_right_behavior(PRIMARY_RIGHT_BEHAVIOR);
+                frame.set_right_behavior(
+                    self.config
+                        .pane_layout
+                        .right_insertion_behavior(self.pane_viewport_width()),
+                );
             }
         }
     }
@@ -3550,6 +3756,48 @@ impl ApplicationShell {
             return;
         }
         self.focus_selected_surface_unchecked();
+    }
+
+    fn handle_pane_pointer_presence(shell: &Rc<RefCell<Self>>, pane_id: &str, present: bool) {
+        let generation = {
+            let mut shell = shell.borrow_mut();
+            shell.focus_follow_generation = shell.focus_follow_generation.wrapping_add(1);
+            if !present || !shell.config.panes.focus_follows_mouse {
+                return;
+            }
+            shell.focus_follow_generation
+        };
+        let delay = match shell.borrow().config.panes.focus_follows_mouse_delay {
+            zentty_core::FocusFollowsMouseDelay::Immediate => std::time::Duration::ZERO,
+            zentty_core::FocusFollowsMouseDelay::Short => std::time::Duration::from_millis(150),
+        };
+        let weak = Rc::downgrade(shell);
+        let pane_id = pane_id.to_owned();
+        glib::timeout_add_local_once(delay, move || {
+            let Some(shell) = weak.upgrade() else {
+                return;
+            };
+            let mut shell = shell.borrow_mut();
+            let settings_visible = shell
+                .shortcut_settings_window
+                .as_ref()
+                .is_some_and(gtk::prelude::WidgetExt::is_visible);
+            if !focus_follow_should_apply(
+                generation,
+                shell.focus_follow_generation,
+                shell.window.is_active(),
+                shell.shutting_down
+                    || settings_visible
+                    || shell.command_palette.is_visible()
+                    || shell.global_search.state().visible
+                    || shell.peek_phase.is_active(),
+            ) {
+                return;
+            }
+            let target = PaneReference::new(shell.state.active_worklane_id(), &pane_id);
+            shell.select_pane_reference(&target, true);
+            eprintln!("zentty-linux: focus-follows-mouse pane={pane_id} result=focused");
+        });
     }
 
     fn focus_selected_surface_unchecked(&self) {
@@ -3617,6 +3865,15 @@ impl ApplicationShell {
             .collect::<Vec<_>>()
             .join("|")
     }
+}
+
+fn focus_follow_should_apply(
+    requested_generation: u64,
+    current_generation: u64,
+    window_active: bool,
+    transient_ui_active: bool,
+) -> bool {
+    requested_generation == current_generation && window_active && !transient_ui_active
 }
 
 fn initialize_shell_coordinators(shell: &Rc<RefCell<ApplicationShell>>) {
@@ -4181,11 +4438,19 @@ fn default_window_recipe(id: &str, working_directory: Option<String>) -> WindowR
 mod allocation_tests {
     use super::{
         TerminalGesture, bounded_pane_viewport_height, codex_terminal_gesture,
-        default_window_recipe, is_close_window_shortcut, model_heights_to_pixels,
-        snapshot_window_frame, validated_window_size,
+        default_window_recipe, focus_follow_should_apply, is_close_window_shortcut,
+        model_heights_to_pixels, snapshot_window_frame, validated_window_size,
     };
     use gtk::gdk;
     use zentty_core::WindowFrame;
+
+    #[test]
+    fn pointer_focus_requires_current_generation_active_window_and_no_transient_ui() {
+        assert!(focus_follow_should_apply(4, 4, true, false));
+        assert!(!focus_follow_should_apply(3, 4, true, false));
+        assert!(!focus_follow_should_apply(4, 4, false, false));
+        assert!(!focus_follow_should_apply(4, 4, true, true));
+    }
 
     #[test]
     fn default_pane_records_the_directory_in_which_its_real_child_starts() {

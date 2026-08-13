@@ -24,6 +24,8 @@ pub(crate) struct AgentRuntime {
     tmux_shim_directory: PathBuf,
     shell_integration_directory: PathBuf,
     instance_id: String,
+    agent_teams_enabled: bool,
+    integration_states: std::collections::BTreeMap<String, zentty_core::AgentIntegrationState>,
 }
 
 impl AgentRuntime {
@@ -87,6 +89,10 @@ impl AgentRuntime {
             tmux_shim_directory,
             shell_integration_directory,
             instance_id: instance,
+            agent_teams_enabled: std::env::var_os("CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS")
+                .as_deref()
+                == Some(std::ffi::OsStr::new("1")),
+            integration_states: std::collections::BTreeMap::new(),
         })
     }
 
@@ -136,13 +142,14 @@ impl AgentRuntime {
             ("ZENTTY_PANE_ID".to_owned(), pane_id.to_owned()),
             ("ZENTTY_INSTANCE_ID".to_owned(), self.instance_id.clone()),
         ];
-        if !self.wrapper_directories.is_empty() {
-            let wrappers = std::env::join_paths(&self.wrapper_directories)
+        let active_wrapper_directories = self.active_wrapper_directories();
+        if !active_wrapper_directories.is_empty() {
+            let wrappers = std::env::join_paths(&active_wrapper_directories)
                 .map_err(|error| format!("agent wrapper path is invalid: {error}"))?
                 .to_string_lossy()
                 .into_owned();
             let path = std::env::join_paths(
-                self.wrapper_directories
+                active_wrapper_directories
                     .iter()
                     .cloned()
                     .chain(std::env::split_paths(&current_path())),
@@ -159,7 +166,8 @@ impl AgentRuntime {
             &self.runtime_directory,
             &self.instance_id,
             pane_id,
-            std::env::var_os("CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS").as_deref(),
+            self.agent_teams_enabled
+                .then_some(std::ffi::OsStr::new("1")),
             std::env::var_os("TMUX").as_deref(),
             &pane_path,
         )?);
@@ -170,6 +178,30 @@ impl AgentRuntime {
             std::env::var_os("XDG_DATA_DIRS").as_deref(),
         ));
         Ok(environment)
+    }
+
+    pub(crate) fn set_agent_teams_enabled(&mut self, enabled: bool) {
+        self.agent_teams_enabled = enabled;
+    }
+
+    pub(crate) fn set_agent_integrations(
+        &mut self,
+        states: std::collections::BTreeMap<String, zentty_core::AgentIntegrationState>,
+    ) {
+        self.integration_states = states;
+    }
+
+    fn active_wrapper_directories(&self) -> Vec<PathBuf> {
+        self.wrapper_directories
+            .iter()
+            .filter(|directory| {
+                let Some(tool) = directory.file_name().and_then(|name| name.to_str()) else {
+                    return false;
+                };
+                integration_enabled(&self.integration_states, tool)
+            })
+            .cloned()
+            .collect()
     }
 
     pub(crate) fn missing_codex_home(&self) -> PathBuf {
@@ -227,6 +259,13 @@ impl AgentRuntime {
     pub(crate) fn drain_servers(&self) -> Vec<AuthenticatedServerRequest> {
         self.server_receiver.try_iter().collect()
     }
+}
+
+fn integration_enabled(
+    states: &std::collections::BTreeMap<String, zentty_core::AgentIntegrationState>,
+    tool: &str,
+) -> bool {
+    states.get(tool) != Some(&zentty_core::AgentIntegrationState::Off)
 }
 
 fn current_path() -> std::ffi::OsString {
@@ -420,11 +459,25 @@ impl Drop for AgentRuntime {
 mod tests {
     use super::{
         agent_teams_environment, enabled_wrapper_directories, instance_runtime_directory,
-        pane_path, shell_integration_environment,
+        integration_enabled, pane_path, shell_integration_environment,
     };
     use std::collections::BTreeMap;
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn explicit_off_is_the_only_state_that_removes_an_installed_wrapper() {
+        use zentty_core::AgentIntegrationState::{Ask, Off, On};
+
+        let mut states = BTreeMap::new();
+        assert!(integration_enabled(&states, "codex"));
+        states.insert("codex".to_owned(), Ask);
+        assert!(integration_enabled(&states, "codex"));
+        states.insert("codex".to_owned(), On);
+        assert!(integration_enabled(&states, "codex"));
+        states.insert("codex".to_owned(), Off);
+        assert!(!integration_enabled(&states, "codex"));
+    }
 
     #[test]
     fn wrappers_are_enabled_only_for_installed_real_tools() {

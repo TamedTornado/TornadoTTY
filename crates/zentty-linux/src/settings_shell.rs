@@ -27,6 +27,10 @@ pub(crate) struct SettingsPages<'a> {
     pub(crate) shortcuts: &'a gtk::Widget,
     pub(crate) notifications: &'a gtk::Widget,
     pub(crate) updates_privacy: &'a gtk::Widget,
+    pub(crate) workspace_panes: &'a gtk::Widget,
+    pub(crate) open_with: &'a gtk::Widget,
+    pub(crate) dev_servers: &'a gtk::Widget,
+    pub(crate) agents: &'a gtk::Widget,
 }
 
 struct Widgets {
@@ -147,7 +151,10 @@ fn build_widgets(pages: SettingsPages<'_>) -> Widgets {
             SettingsSection::Shortcuts => pages.shortcuts.clone(),
             SettingsSection::Notifications => pages.notifications.clone(),
             SettingsSection::UpdatesPrivacy => pages.updates_privacy.clone(),
-            _ => pending_section(section),
+            SettingsSection::PaneLayout => pages.workspace_panes.clone(),
+            SettingsSection::OpenWith => pages.open_with.clone(),
+            SettingsSection::DevServers => pages.dev_servers.clone(),
+            SettingsSection::Agents => pages.agents.clone(),
         };
         stack.add_named(&page, Some(section.id()));
         buttons.push((section, button));
@@ -308,34 +315,6 @@ fn navigate_forward(state: &Rc<RefCell<State>>) {
     if let Some(section) = section {
         apply_selection(state, section, false);
     }
-}
-
-fn pending_section(section: SettingsSection) -> gtk::Widget {
-    let page = gtk::Box::new(gtk::Orientation::Vertical, 10);
-    page.set_margin_top(28);
-    page.set_margin_start(30);
-    page.set_margin_end(30);
-    let title = gtk::Label::new(Some(section.title()));
-    title.add_css_class("title-1");
-    title.set_halign(gtk::Align::Start);
-    page.append(&title);
-    let subtitle = gtk::Label::new(Some(section.subtitle()));
-    subtitle.add_css_class("dim-label");
-    subtitle.set_halign(gtk::Align::Start);
-    page.append(&subtitle);
-    let status = gtk::Label::new(Some(
-        "This section is present in the source settings map. Its Linux controls remain explicitly tracked in issue #20.",
-    ));
-    status.set_wrap(true);
-    status.set_halign(gtk::Align::Start);
-    status.set_margin_top(18);
-    status.add_css_class("dim-label");
-    page.append(&status);
-    page.update_property(&[gtk::accessible::Property::Label(&format!(
-        "{} Settings",
-        section.title()
-    ))]);
-    page.upcast()
 }
 
 pub(crate) fn section_target(section: SettingsSection) -> gtk::glib::Variant {

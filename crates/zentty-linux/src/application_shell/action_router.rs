@@ -91,6 +91,7 @@ pub(super) const ACTION_CLOSE_WINDOW: &str = "close-window";
 pub(super) const ACTION_NEW_WORKLANE: &str = "new-worklane";
 pub(super) const ACTION_SELECT_WORKLANE: &str = "select-worklane";
 pub(super) const ACTION_SPLIT_PANE_RIGHT: &str = "split-pane-right";
+pub(super) const ACTION_NEW_PANE_RIGHT: &str = "new-pane-right";
 pub(super) const ACTION_ADD_PANE_RIGHT: &str = "add-pane-right";
 pub(super) const ACTION_ADD_PANE_LEFT: &str = "add-pane-left";
 pub(super) const ACTION_SPLIT_PANE_BELOW: &str = "split-pane-below";
@@ -209,6 +210,7 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
     action!(ACTION_NEW_WORKLANE, "new-worklane", None),
     action!(ACTION_SELECT_WORKLANE, "select-worklane", String),
     action!(ACTION_SPLIT_PANE_RIGHT, "split-pane-right", None),
+    action!(ACTION_NEW_PANE_RIGHT, "new-pane-right", None),
     action!(ACTION_ADD_PANE_RIGHT, "add-pane-right", None),
     action!(ACTION_ADD_PANE_LEFT, "add-pane-left", None),
     action!(ACTION_SPLIT_PANE_BELOW, "split-pane-below", None),
@@ -1324,6 +1326,18 @@ fn install_pane_creation_actions(
     shell: &Rc<RefCell<ApplicationShell>>,
     group: &gio::SimpleActionGroup,
 ) {
+    let new_pane = gio::SimpleAction::new(ACTION_NEW_PANE_RIGHT, None);
+    let weak = Rc::downgrade(shell);
+    new_pane.connect_activate(move |_, _| {
+        let Some(shell) = weak.upgrade() else {
+            return;
+        };
+        if let Err(error) = ApplicationShell::create_focused_pane_right(&shell) {
+            ApplicationShell::report_action_error(&shell, ACTION_NEW_PANE_RIGHT, &error);
+        }
+    });
+    group.add_action(&new_pane);
+
     let split_pane = gio::SimpleAction::new(ACTION_SPLIT_PANE_RIGHT, None);
     let weak = Rc::downgrade(shell);
     split_pane.connect_activate(move |_, _| {
@@ -1591,7 +1605,7 @@ mod tests {
 
     #[test]
     fn registry_is_unique_complete_and_typed() {
-        assert_eq!(ACTION_SPECS.len(), 108);
+        assert_eq!(ACTION_SPECS.len(), 109);
         assert_eq!(
             ACTION_SPECS
                 .iter()

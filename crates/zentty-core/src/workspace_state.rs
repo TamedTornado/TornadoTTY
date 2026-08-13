@@ -1,4 +1,4 @@
-use crate::pane_layout::PaneLayoutPolicy;
+use crate::{NewWorklanePlacement, pane_layout::PaneLayoutPolicy};
 
 /// The source-defined set of user-selectable worklane colors.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -676,15 +676,32 @@ impl WorkspaceState {
         worklane_id: impl Into<String>,
         pane_id: impl Into<String>,
     ) -> bool {
+        self.create_worklane_with_placement(
+            worklane_id,
+            pane_id,
+            NewWorklanePlacement::AfterCurrent,
+        )
+    }
+
+    pub fn create_worklane_with_placement(
+        &mut self,
+        worklane_id: impl Into<String>,
+        pane_id: impl Into<String>,
+        placement: NewWorklanePlacement,
+    ) -> bool {
         let previous = self.current_pane_reference();
         let worklane_id = worklane_id.into();
         let pane_id = pane_id.into();
         if self.contains_worklane(&worklane_id) || self.contains_pane(&pane_id) {
             return false;
         }
-        let insertion_index = self
-            .active_worklane_index()
-            .map_or(self.worklanes.len(), |index| index + 1);
+        let insertion_index = match placement {
+            NewWorklanePlacement::Top => 0,
+            NewWorklanePlacement::AfterCurrent => self
+                .active_worklane_index()
+                .map_or(self.worklanes.len(), |index| index + 1),
+            NewWorklanePlacement::End => self.worklanes.len(),
+        };
         self.worklanes.insert(
             insertion_index,
             WorklaneState {

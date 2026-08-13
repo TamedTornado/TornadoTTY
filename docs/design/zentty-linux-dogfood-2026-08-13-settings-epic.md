@@ -51,3 +51,126 @@ authoritative execution plan is
 - Full config merge/comment preservation and watcher behavior need a fresh
   ownership audit under #36; earlier page-safe writes do not establish that
   complete contract.
+
+## Batch 1 implementation discoveries — #37–#40
+
+### Source contracts recovered before wiring
+
+- The source Worklanes & Panes page is not a generic layout-preferences page.
+  It owns the exact keys for worklane insertion, adaptive right-pane behavior,
+  the visible-split threshold, compact pane path labels, pane borders, project
+  icons, smooth terminal scrolling, focus-follows-mouse/delay, and inactive
+  pane opacity. Linux now parses and safely persists those exact sections rather
+  than inventing a second preference model.
+- Open With and Dev Servers already had product authorities. Their settings
+  pages now edit the existing normalized catalogs; neither page gained a second
+  launcher or scanner. Custom applications are selected through the real GTK
+  file chooser and receive stable IDs derived from canonical executable paths.
+- The source Agents inventory contains persistent and ephemeral integrations.
+  The staged Linux product currently installs authenticated wrappers only for
+  Claude Code, Codex, and Gemini CLI. Those three settings now gate the actual
+  wrapper directories used by newly created panes. Every other source entry is
+  still shown and explicitly unavailable rather than silently disappearing.
+
+### Failures and repairs
+
+- The browser catalog deliberately treats an empty enabled-ID list as its
+  first-run “enable all discovered browsers” default. The initial settings
+  implementation could therefore turn the final optional browser off, persist
+  an empty list, and accidentally re-enable every browser. The repair persists
+  the always-present `system-default` ID as an explicit sentinel for “no
+  optional browser”; a focused catalog test proves it cannot expand to all.
+- A first Worklanes & Panes draft exposed switches whose values persisted but
+  had no Linux runtime effect. That would have been dishonest UI. Compact pane
+  labels and border suppression were subsequently connected to the existing
+  pane frame, and focus-follows-mouse gained a cancellable pointer-enter timer
+  guarded against inactive windows, settings, search, the command palette, and
+  Worklane Peek. Smooth terminal scrolling and inactive opacity remain visible
+  but insensitive with specific reasons until their Ghostty/compositor paths
+  are qualified. Project icons, worklane placement, and right-pane behavior use
+  their existing live owners.
+- GTK opacity applies to the fully composited Ghostty surface. Earlier dogfood
+  showed that reducing it washed out terminal content instead of reproducing
+  the source backdrop-aware inactive-pane treatment. No suppression or cosmetic
+  workaround was added; the limitation remains explicit.
+- Agent menu/status presentation and sleep inhibition have no reviewed Linux
+  backend yet. Their source controls remain visible with the stored state and a
+  concrete unavailable reason. The settings page does not pretend persistence
+  alone implements those lifecycle features.
+
+### Test and ownership evidence so far
+
+- Focused config tests cover source defaults, exact TOML keys, invalid values,
+  unknown-key/comment preservation, and symlink-safe atomic updates.
+- Workspace-state tests cover top, after-current, and end insertion without a
+  parallel worklane store. Agent-runtime tests prove only explicit `off`
+  removes an installed wrapper; default, `ask`, and `on` preserve the existing
+  ephemeral integration behavior.
+- The workspace passed formatting and strict workspace Clippy after the new
+  pages were wired. The real staged X11/Wayland settings journeys subsequently
+  ran as part of the aggregate receipt recorded below; this earlier checkpoint
+  is retained as sequence evidence, not as the current qualification state.
+
+### Real compositor failure: pointer-leave reentrancy
+
+- The first controlled Wayland Worklanes & Panes journey exposed a real abort,
+  not a harness artifact. Creating a worklane unmaps the old pane frame. GTK
+  synchronously emitted the frame's pointer-leave callback while
+  `ApplicationShell::render` still held its mutable `RefCell` borrow. The new
+  focus-follow callback attempted a second borrow and panicked across GTK's C
+  callback boundary, which correctly aborted the process.
+- The repair makes pane pointer presence delivery asynchronous on the GLib main
+  context before it enters the shell authority. Generation cancellation still
+  discards stale enter/leave timers. No `try_borrow` suppression or compositor
+  special case hides the lifecycle error.
+- After repair, the staged X11 journey passes real worklane insertion, the
+  source policy-dispatched Add Pane Right command, two live Ghostty columns,
+  physical pointer focus, settings deep linking, and exact config loading. Its
+  controlled Wayland companion passes the same real product boundaries; the
+  physical pointer-focus assertion remains explicitly owned by the X11 cell
+  because the current nested Wayland input harness exposes a virtual keyboard
+  but no scoped pointer injector.
+
+### Aggregate qualification regressions and repairs
+
+- The first post-batch aggregate receipt correctly failed eight previously
+  passing cells. Five failures converged on the same product regression: the
+  new Agents projection replaced the established
+  `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` process opt-in with the absent
+  configuration default before the first pane was created. Real tmux product,
+  staged-bundle, agent-integration, Ghostty API usage, and multi-window journeys
+  consequently never received their private compatibility endpoint. Startup
+  now preserves an explicit process opt-in while allowing an enabled persisted
+  setting to opt in too; a live settings change remains authoritative in both
+  directions. The isolated real tmux and multi-window journeys pass after the
+  repair.
+- The source-UX journey had silently depended on the old invariant that the
+  pane-local right control was always Split Right. The new source-compatible
+  adaptive policy correctly turned that control into Add Pane Right in its
+  919px terminal viewport. The journey now writes the exact
+  `pane_layout.right_split_behavior = "alwaysSplit"` setting because its later
+  geometry assertions intentionally qualify Split Right. Adaptive dispatch is
+  independently exercised by the new workspace/pane settings journey. The
+  corrected real X11 source-UX journey passes.
+- Running controlled X11 journeys inside the tool filesystem sandbox presents
+  host-root-owned `/tmp/.X11-unix` as `nobody`, which Xorg properly rejects.
+  This is not converted into a pass: compositor journeys are executed outside
+  that user-namespace view, where the system directory is root-owned as
+  required. The failure and rerun are retained here because confusing the
+  sandbox projection with a product or Xvfb defect would corrupt qualification.
+
+### Final presently executable receipt
+
+- After both repairs, `linux/tests/qualify-local` passed every presently
+  executable support test and matrix cell in 469,370 ms. Declared totals are
+  **PASS=123, FAIL=0, BLOCKED=7, XFAIL=1, NOT_IMPLEMENTED=23**.
+- The implemented local suite is passed. Release qualification and full Linux
+  qualification are **not** passed because the authoritative matrix still
+  contains explicit BLOCKED, XFAIL, and NOT_IMPLEMENTED cells. No exhaustive-QA
+  claim is made.
+- Debug Valgrind is **PASS with reviewed suppressions** and the suppression
+  governance review is accepted. ReleaseSafe Valgrind remains XFAIL; no
+  suppression was broadened to change that result.
+- The machine-readable receipt is `build/linux/qualification-summary.json` and
+  its per-cell evidence is under `build/linux/matrix-logs/`. Both are generated
+  evidence rather than source artifacts.

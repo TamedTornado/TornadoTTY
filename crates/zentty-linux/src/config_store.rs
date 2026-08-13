@@ -8,8 +8,10 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use zentty_core::{
-    AppConfig, AppearanceConfig, ClipboardConfig, ConfirmationsConfig, FALLBACK_DARK_THEME,
-    NotificationsConfig, RestoreConfig, ShortcutBinding, ThemeMode, ThemeSpec, UpdatesConfig,
+    AgentCaffeinationConfig, AgentIntegrationsConfig, AgentTeamsConfig, AppConfig,
+    AppearanceConfig, ClipboardConfig, ConfirmationsConfig, FALLBACK_DARK_THEME, MenuBarConfig,
+    NotificationsConfig, OpenWithConfig, PaneConfig, PaneLayoutConfig, RestoreConfig,
+    ServerDetectionConfig, ShortcutBinding, ThemeMode, ThemeSpec, UpdatesConfig, WorklaneConfig,
     update_ghostty_value,
 };
 
@@ -166,6 +168,234 @@ impl ConfigStore {
         )?;
         Self::update_updates(&path, updates)?;
         Ok(path)
+    }
+
+    pub(crate) fn update_default_workspace_panes(
+        worklanes: WorklaneConfig,
+        pane_layout: PaneLayoutConfig,
+        panes: PaneConfig,
+    ) -> Result<PathBuf, String> {
+        let path = default_config_file_from(
+            std::env::var_os("XDG_CONFIG_HOME"),
+            std::env::var_os("HOME"),
+        )?;
+        Self::update_workspace_panes(&path, worklanes, pane_layout, panes)?;
+        Ok(path)
+    }
+
+    pub(crate) fn update_default_open_with(config: &OpenWithConfig) -> Result<PathBuf, String> {
+        let path = default_config_file_from(
+            std::env::var_os("XDG_CONFIG_HOME"),
+            std::env::var_os("HOME"),
+        )?;
+        Self::update_open_with(&path, config)?;
+        Ok(path)
+    }
+
+    fn update_open_with(path: &Path, config: &OpenWithConfig) -> Result<(), String> {
+        let target = resolve_config_target(path)?;
+        with_config_lock(&target, || {
+            let source = match fs::read_to_string(&target) {
+                Ok(source) => source,
+                Err(error) if error.kind() == ErrorKind::NotFound => String::new(),
+                Err(error) => return Err(format!("could not read {}: {error}", target.display())),
+            };
+            if source.len() as u64 > MAX_CONFIG_BYTES {
+                return Err(format!("configuration exceeds {MAX_CONFIG_BYTES} bytes"));
+            }
+            let mut document = source
+                .parse::<toml_edit::DocumentMut>()
+                .map_err(|error| format!("could not edit invalid configuration: {error}"))?;
+            document
+                .entry("open_with")
+                .or_insert_with(|| toml_edit::Item::Table(toml_edit::Table::new()));
+            let table = document["open_with"]
+                .as_table_mut()
+                .ok_or_else(|| "open_with configuration is not a table".to_owned())?;
+            table["primary_target_id"] = toml_edit::value(&config.primary_target_id);
+            let mut enabled = toml_edit::Array::new();
+            for id in &config.enabled_target_ids {
+                enabled.push(id);
+            }
+            table["enabled_target_ids"] = toml_edit::value(enabled);
+            let mut custom_apps = toml_edit::ArrayOfTables::new();
+            for app in &config.custom_apps {
+                let mut custom = toml_edit::Table::new();
+                custom["id"] = toml_edit::value(&app.id);
+                custom["name"] = toml_edit::value(&app.name);
+                custom["path"] = toml_edit::value(&app.path);
+                custom_apps.push(custom);
+            }
+            table["custom_apps"] = toml_edit::Item::ArrayOfTables(custom_apps);
+            atomic_replace(&target, document.to_string().as_bytes())
+        })
+    }
+
+    pub(crate) fn update_default_server_detection(
+        config: &ServerDetectionConfig,
+    ) -> Result<PathBuf, String> {
+        let path = default_config_file_from(
+            std::env::var_os("XDG_CONFIG_HOME"),
+            std::env::var_os("HOME"),
+        )?;
+        Self::update_server_detection(&path, config)?;
+        Ok(path)
+    }
+
+    fn update_server_detection(path: &Path, config: &ServerDetectionConfig) -> Result<(), String> {
+        let target = resolve_config_target(path)?;
+        with_config_lock(&target, || {
+            let source = match fs::read_to_string(&target) {
+                Ok(source) => source,
+                Err(error) if error.kind() == ErrorKind::NotFound => String::new(),
+                Err(error) => return Err(format!("could not read {}: {error}", target.display())),
+            };
+            if source.len() as u64 > MAX_CONFIG_BYTES {
+                return Err(format!("configuration exceeds {MAX_CONFIG_BYTES} bytes"));
+            }
+            let mut document = source
+                .parse::<toml_edit::DocumentMut>()
+                .map_err(|error| format!("could not edit invalid configuration: {error}"))?;
+            document
+                .entry("server_detection")
+                .or_insert_with(|| toml_edit::Item::Table(toml_edit::Table::new()));
+            let table = document["server_detection"]
+                .as_table_mut()
+                .ok_or_else(|| "server_detection configuration is not a table".to_owned())?;
+            table["passive_detection_enabled"] = toml_edit::value(config.passive_detection_enabled);
+            table["preferred_browser_id"] = toml_edit::value(&config.preferred_browser_id);
+            let mut enabled = toml_edit::Array::new();
+            for id in &config.enabled_browser_target_ids {
+                enabled.push(id);
+            }
+            table["enabled_browser_target_ids"] = toml_edit::value(enabled);
+            let mut ignored = toml_edit::Array::new();
+            for rule in &config.ignored_port_rules {
+                ignored.push(rule);
+            }
+            table["ignored_port_rules"] = toml_edit::value(ignored);
+            let mut browsers = toml_edit::ArrayOfTables::new();
+            for browser in &config.custom_browsers {
+                let mut custom = toml_edit::Table::new();
+                custom["id"] = toml_edit::value(&browser.id);
+                custom["name"] = toml_edit::value(&browser.name);
+                custom["path"] = toml_edit::value(&browser.path);
+                if let Some(bundle_identifier) = &browser.bundle_identifier {
+                    custom["bundle_identifier"] = toml_edit::value(bundle_identifier);
+                }
+                browsers.push(custom);
+            }
+            table["custom_browsers"] = toml_edit::Item::ArrayOfTables(browsers);
+            atomic_replace(&target, document.to_string().as_bytes())
+        })
+    }
+
+    pub(crate) fn update_default_agents(
+        teams: AgentTeamsConfig,
+        caffeination: AgentCaffeinationConfig,
+        menu_bar: MenuBarConfig,
+        integrations: &AgentIntegrationsConfig,
+    ) -> Result<PathBuf, String> {
+        let path = default_config_file_from(
+            std::env::var_os("XDG_CONFIG_HOME"),
+            std::env::var_os("HOME"),
+        )?;
+        Self::update_agents(&path, teams, caffeination, menu_bar, integrations)?;
+        Ok(path)
+    }
+
+    fn update_agents(
+        path: &Path,
+        teams: AgentTeamsConfig,
+        caffeination: AgentCaffeinationConfig,
+        menu_bar: MenuBarConfig,
+        integrations: &AgentIntegrationsConfig,
+    ) -> Result<(), String> {
+        let target = resolve_config_target(path)?;
+        with_config_lock(&target, || {
+            let source = match fs::read_to_string(&target) {
+                Ok(source) => source,
+                Err(error) if error.kind() == ErrorKind::NotFound => String::new(),
+                Err(error) => return Err(format!("could not read {}: {error}", target.display())),
+            };
+            if source.len() as u64 > MAX_CONFIG_BYTES {
+                return Err(format!("configuration exceeds {MAX_CONFIG_BYTES} bytes"));
+            }
+            let mut document = source
+                .parse::<toml_edit::DocumentMut>()
+                .map_err(|error| format!("could not edit invalid configuration: {error}"))?;
+            for section in [
+                "agent_teams",
+                "agent_caffeination",
+                "menu_bar",
+                "agent_integrations",
+            ] {
+                document
+                    .entry(section)
+                    .or_insert_with(|| toml_edit::Item::Table(toml_edit::Table::new()));
+                if !document[section].is_table() {
+                    return Err(format!("{section} configuration is not a table"));
+                }
+            }
+            document["agent_teams"]["enabled"] = toml_edit::value(teams.enabled);
+            document["agent_caffeination"]["enabled"] = toml_edit::value(caffeination.enabled);
+            document["menu_bar"]["show_status_item"] = toml_edit::value(menu_bar.show_status_item);
+            document["agent_integrations"]["grandfathered_v1"] =
+                toml_edit::value(integrations.grandfathered_v1);
+            let mut states = toml_edit::Table::new();
+            for (tool, state) in &integrations.states {
+                states[tool] = toml_edit::value(state.config_value());
+            }
+            document["agent_integrations"]["states"] = toml_edit::Item::Table(states);
+            atomic_replace(&target, document.to_string().as_bytes())
+        })
+    }
+
+    fn update_workspace_panes(
+        path: &Path,
+        worklanes: WorklaneConfig,
+        pane_layout: PaneLayoutConfig,
+        panes: PaneConfig,
+    ) -> Result<(), String> {
+        let target = resolve_config_target(path)?;
+        with_config_lock(&target, || {
+            let source = match fs::read_to_string(&target) {
+                Ok(source) => source,
+                Err(error) if error.kind() == ErrorKind::NotFound => String::new(),
+                Err(error) => return Err(format!("could not read {}: {error}", target.display())),
+            };
+            if source.len() as u64 > MAX_CONFIG_BYTES {
+                return Err(format!("configuration exceeds {MAX_CONFIG_BYTES} bytes"));
+            }
+            let mut document = source
+                .parse::<toml_edit::DocumentMut>()
+                .map_err(|error| format!("could not edit invalid configuration: {error}"))?;
+            for section in ["worklanes", "pane_layout", "panes"] {
+                document
+                    .entry(section)
+                    .or_insert_with(|| toml_edit::Item::Table(toml_edit::Table::new()));
+                if !document[section].is_table() {
+                    return Err(format!("{section} configuration is not a table"));
+                }
+            }
+            document["worklanes"]["new_worklane_placement"] =
+                toml_edit::value(worklanes.new_worklane_placement.config_value());
+            document["pane_layout"]["right_split_behavior"] =
+                toml_edit::value(pane_layout.right_split_behavior.config_value());
+            document["pane_layout"]["visible_split_window_width"] =
+                toml_edit::value(i64::from(pane_layout.visible_split_window_width));
+            document["panes"]["show_labels"] = toml_edit::value(panes.show_labels);
+            document["panes"]["show_borders"] = toml_edit::value(panes.show_borders);
+            document["panes"]["inactive_opacity"] =
+                toml_edit::value(f64::from(panes.inactive_opacity_percent) / 100.0);
+            document["panes"]["show_project_icons"] = toml_edit::value(panes.show_project_icons);
+            document["panes"]["smooth_scroll_enabled"] =
+                toml_edit::value(panes.smooth_scroll_enabled);
+            document["panes"]["focus_follows_mouse"] = toml_edit::value(panes.focus_follows_mouse);
+            document["panes"]["focus_follows_mouse_delay"] =
+                toml_edit::value(panes.focus_follows_mouse_delay.config_value());
+            atomic_replace(&target, document.to_string().as_bytes())
+        })
     }
 
     fn update_updates(path: &Path, updates: UpdatesConfig) -> Result<(), String> {
@@ -739,8 +969,12 @@ mod tests {
     use std::path::Path;
     use std::time::{SystemTime, UNIX_EPOCH};
     use zentty_core::{
+        AgentCaffeinationConfig, AgentIntegrationState, AgentIntegrationsConfig, AgentTeamsConfig,
         AppConfig, BackgroundOpacity, ClipboardConfig, CommandFlattenAggressiveness,
-        ConfirmationsConfig, NotificationsConfig, RestoreConfig, ThemeMode, ThemeSpec,
+        ConfirmationsConfig, FocusFollowsMouseDelay, MenuBarConfig, NewWorklanePlacement,
+        NotificationsConfig, OpenWithConfig, OpenWithCustomApp, PaneConfig, PaneLayoutConfig,
+        PaneRightBehaviorMode, RestoreConfig, ServerBrowserCustomApp, ServerDetectionConfig,
+        ThemeMode, ThemeSpec, WorklaneConfig,
     };
 
     fn private_root(name: &str) -> std::path::PathBuf {
@@ -1092,6 +1326,156 @@ mod tests {
                 .preferred_browser_id,
             "firefox"
         );
+        remove(&root);
+    }
+
+    #[test]
+    fn open_with_update_preserves_comments_unknown_keys_and_custom_app_order() {
+        let root = private_root("open-with-settings");
+        let path = root.join("zentty/config.toml");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            &path,
+            "# keep me\nunknown = \"value\"\n[open_with]\nfuture = true\n[appearance]\ntheme_mode = \"light\"\n",
+        )
+        .unwrap();
+        let config = OpenWithConfig {
+            primary_target_id: "custom:tool".into(),
+            enabled_target_ids: vec!["custom:tool".into(), "system-file-manager".into()],
+            custom_apps: vec![OpenWithCustomApp {
+                id: "custom:tool".into(),
+                name: "Tool".into(),
+                path: "/opt/tool".into(),
+            }],
+        };
+
+        ConfigStore::update_open_with(&path, &config).unwrap();
+
+        let source = fs::read_to_string(&path).unwrap();
+        assert!(source.contains("# keep me"));
+        assert!(source.contains("unknown = \"value\""));
+        assert!(source.contains("future = true"));
+        let parsed = AppConfig::parse_toml(&source).unwrap();
+        assert_eq!(parsed.open_with, config);
+        assert_eq!(parsed.appearance.theme_mode, ThemeMode::Light);
+        remove(&root);
+    }
+
+    #[test]
+    fn server_detection_update_preserves_comments_unknowns_and_all_settings() {
+        let root = private_root("server-settings");
+        let path = root.join("zentty/config.toml");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            &path,
+            "# keep me\nunknown = \"value\"\n[server_detection]\nfuture = true\n",
+        )
+        .unwrap();
+        let config = ServerDetectionConfig {
+            passive_detection_enabled: false,
+            preferred_browser_id: "custom:browser".into(),
+            enabled_browser_target_ids: vec!["custom:browser".into(), "firefox".into()],
+            custom_browsers: vec![ServerBrowserCustomApp {
+                id: "custom:browser".into(),
+                name: "Browser".into(),
+                path: "/opt/browser".into(),
+                bundle_identifier: None,
+            }],
+            ignored_port_rules: vec!["3000-3002".into(), "5173".into()],
+        };
+
+        ConfigStore::update_server_detection(&path, &config).unwrap();
+
+        let source = fs::read_to_string(&path).unwrap();
+        assert!(source.contains("# keep me"));
+        assert!(source.contains("unknown = \"value\""));
+        assert!(source.contains("future = true"));
+        assert_eq!(
+            AppConfig::parse_toml(&source).unwrap().server_detection,
+            config
+        );
+        remove(&root);
+    }
+
+    #[test]
+    fn agent_update_preserves_comments_unknowns_and_source_sections() {
+        let root = private_root("agent-settings");
+        let path = root.join("zentty/config.toml");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            &path,
+            "# keep me\nunknown = \"value\"\n[agent_teams]\nfuture = true\n",
+        )
+        .unwrap();
+        let teams = AgentTeamsConfig { enabled: true };
+        let caffeination = AgentCaffeinationConfig { enabled: false };
+        let menu_bar = MenuBarConfig {
+            show_status_item: false,
+        };
+        let integrations = AgentIntegrationsConfig {
+            states: std::collections::BTreeMap::from([
+                ("claude".into(), AgentIntegrationState::Off),
+                ("codex".into(), AgentIntegrationState::On),
+            ]),
+            grandfathered_v1: true,
+        };
+
+        ConfigStore::update_agents(&path, teams, caffeination, menu_bar, &integrations).unwrap();
+
+        let source = fs::read_to_string(&path).unwrap();
+        assert!(source.contains("# keep me"));
+        assert!(source.contains("unknown = \"value\""));
+        assert!(source.contains("future = true"));
+        let parsed = AppConfig::parse_toml(&source).unwrap();
+        assert_eq!(parsed.agent_teams, teams);
+        assert_eq!(parsed.agent_caffeination, caffeination);
+        assert_eq!(parsed.menu_bar, menu_bar);
+        assert_eq!(parsed.agent_integrations, integrations);
+        remove(&root);
+    }
+
+    #[test]
+    fn workspace_pane_update_preserves_comments_unknown_keys_and_symlink() {
+        let root = private_root("workspace-pane-settings");
+        let target = root.join("shared/settings.toml");
+        let path = root.join("zentty/config.toml");
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            &target,
+            "# keep me\nunknown = \"value\"\n[panes]\nfuture = true\n[appearance]\ntheme_mode = \"light\"\n",
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(&target, &path).unwrap();
+        let worklanes = WorklaneConfig {
+            new_worklane_placement: NewWorklanePlacement::End,
+        };
+        let pane_layout = PaneLayoutConfig {
+            right_split_behavior: PaneRightBehaviorMode::AlwaysAdd,
+            visible_split_window_width: 1680,
+        };
+        let panes = PaneConfig {
+            show_labels: false,
+            show_borders: false,
+            inactive_opacity_percent: 83,
+            show_project_icons: false,
+            smooth_scroll_enabled: true,
+            focus_follows_mouse: true,
+            focus_follows_mouse_delay: FocusFollowsMouseDelay::Immediate,
+        };
+
+        ConfigStore::update_workspace_panes(&path, worklanes, pane_layout, panes).unwrap();
+
+        assert_eq!(fs::read_link(&path).unwrap(), target);
+        let source = fs::read_to_string(&path).unwrap();
+        assert!(source.contains("# keep me"));
+        assert!(source.contains("unknown = \"value\""));
+        assert!(source.contains("future = true"));
+        let parsed = AppConfig::parse_toml(&source).unwrap();
+        assert_eq!(parsed.worklanes, worklanes);
+        assert_eq!(parsed.pane_layout, pane_layout);
+        assert_eq!(parsed.panes, panes);
+        assert_eq!(parsed.appearance.theme_mode, ThemeMode::Light);
         remove(&root);
     }
 
