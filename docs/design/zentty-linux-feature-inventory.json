@@ -456,17 +456,17 @@
     {
       "id": "configuration.toml-settings",
       "category": "configuration",
-      "behavior": "Provide the complete searchable settings surface and secure XDG TOML persistence with defaults, validation, partial reload, last-good state, comment/unknown-key preservation where practical, live watch, and symlink-safe atomic writes.",
+      "behavior": "Provide secure XDG TOML persistence with defaults, validation, partial reload, last-good state, comment/unknown-key preservation where practical, live watch, and symlink-safe atomic writes as the shared authority for separately inventoried settings surfaces.",
       "source": ["Zentty/Config/AppConfig.swift", "Zentty/Config/AppConfigStore.swift", "Zentty/Config/AppConfigTOML.swift", "Zentty/UI/Settings/SettingsWindowController.swift", "Zentty/Support/FileManager+SymlinkWrite.swift"],
       "swift_tests": ["ZenttyLogicTests/AppConfigStoreTests.swift", "ZenttyLogicTests/AppConfigClipboardTOMLTests.swift", "ZenttyLogicTests/SettingsSidebarTests.swift", "ZenttyLogicTests/SettingsNavigationHistoryTests.swift", "ZenttyLogicTests/FileManagerSymlinkWriteTests.swift"],
       "classification": "REQUIRED_INITIAL_RELEASE",
       "origin": "PORT_PARITY",
       "user_impact": "Users need source settings and safe dotfile-friendly persistence; hard-coded behavior or destructive rewrites make the port untrustworthy.",
       "linux_owner_issue": 20,
-      "implementation_status": "PARTIAL",
-      "focused_tests": ["crates/zentty-core/tests/app_config.rs", "crates/zentty-linux/src/config_store.rs"],
+      "implementation_status": "IMPLEMENTED",
+      "focused_tests": ["crates/zentty-core/tests/app_config.rs", "crates/zentty-linux/src/config_store.rs", "crates/zentty-linux/src/config_reload.rs"],
       "product_scenarios": ["linux/tests/rust-pane-search", "linux/tests/rust-multi-window", "linux/tests/rust-config-reload"],
-      "test_plan": "GitHub #20 is the umbrella contract. GH-36 now proves coalesced replace-by-rename, independently valid sections, safe last-good recovery, two-window/PTY retention, symlink retargeting, permission recovery, one shared product-writer lock, and file-plus-parent-directory durable replacement. Complete external-writer overlap, broader permission/crash cases, self-write provenance/open-page refresh, complete projection, and validator/migration mutation coverage; complete GH-37 Worklanes & Panes, GH-38 Open With, GH-40 Agents, and GH-41 custom audio before promotion from PARTIAL.",
+      "test_plan": "Maintain GH-36's closed contract: secure XDG ownership, strict startup plus independently valid live sections, content-safe last-good recovery, coalesced rename, logical/target symlink watching, product/external last-writer outcomes, interrupted-temporary refusal, shared product serialization, file-plus-directory durability, visible settings refresh, no self-write loops, two-window projection, and exact PTY retention. The broader settings epic remains GH-20, but those page-specific gaps do not reopen this implemented configuration authority.",
       "alternative_or_blocker": null
     },
     {

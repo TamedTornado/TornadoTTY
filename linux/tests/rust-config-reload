@@ -41,7 +41,7 @@ case "${backend}" in
         ;;
     *) fail "GDK_BACKEND must be x11 or wayland" ;;
 esac
-for dependency in chmod cmp dirname id ln mkdir mktemp mv pgrep sort; do
+for dependency in chmod cmp dirname id ln mkdir mktemp mv pgrep sort stat; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
 [[ -x "${product}" ]] || fail "staged product is not built: ${product}"
@@ -51,6 +51,7 @@ done
 state_dir="$(mktemp -d)"
 log="$(mktemp)"
 mkdir -p "$(dirname "${config_file}")"
+chmod 0777 "$(dirname "${config_file}")"
 cat >"${config_file}" <<'EOF'
 # external edits must preserve this operator-owned document
 [confirmations]
@@ -63,6 +64,7 @@ always_clean_copies = false
 [future_plugin]
 operator_key = "preserved"
 EOF
+chmod 0644 "${config_file}"
 
 # The real PTY child reports typed sentinels through the terminal title.
 # shellcheck disable=SC2016
@@ -73,6 +75,10 @@ LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
 product_pid=$!
 zentty_product_wait_for_log "${log}" 'zentty-linux: terminal-ready-pane=pane-1' \
     "first real terminal did not become ready" || fail "first terminal missing"
+[[ "$(stat -c %a "$(dirname "${config_file}")")" == 700 ]] ||
+    fail "Zentty did not tighten its XDG config directory to mode 0700"
+[[ "$(stat -c %a "${config_file}")" == 600 ]] ||
+    fail "Zentty did not tighten its regular config file to mode 0600"
 zentty_product_prepare_input "${backend}" "${log}" || fail "could not prepare physical input"
 zentty_product_ctrl_shift_key "${backend}" n
 zentty_product_wait_for_log "${log}" 'zentty-linux: terminal-ready-pane=pane-window-2' \
@@ -148,6 +154,9 @@ zentty_product_wait_for_log "${log}" \
 zentty_product_wait_for_log_count "${log}" 'zentty-linux: config-reload result=applied' \
     "$((settings_open_reload_before + 1))" \
     "settings presentation reconciliation did not reach config authority" || fail "settings reconciliation barrier missing"
+[[ "$(stat -c %a "${config_file}")" == 600 ]] || fail "product config replacement is not mode 0600"
+[[ "$(stat -c %a "$(dirname "${config_file}")/.zentty-config.lock")" == 600 ]] ||
+    fail "product config lock is not mode 0600"
 settings_window=""
 if [[ "${backend}" == x11 ]]; then
     for _ in {1..100}; do
@@ -200,6 +209,15 @@ for child in "${children_before[@]}"; do
         fail "visible settings refresh replaced real PTY child ${child}"
 done
 
+overlap_pending="${config_file}.external-overlap"
+cat >"${overlap_pending}" <<'EOF'
+# external transaction began before the product write
+[updates]
+channel = "beta"
+
+[external_overlap]
+winner = "external"
+EOF
 applied_before_self_write="$(grep -Fc 'zentty-linux: config-reload result=applied' "${log}" || true)"
 if [[ "${backend}" == x11 ]]; then
     xdotool windowfocus --sync "${settings_window}"
@@ -220,6 +238,63 @@ sleep 0.5
     fail "settings self-write entered a reload loop"
 [[ "$(grep -Fc 'zentty-linux: settings-live-refresh section=' "${log}" || true)" -eq "$((settings_refresh_before + 1))" ]] ||
     fail "initiating settings editor rebuilt for its own write"
+
+# The external transaction started above but commits after the product write,
+# so its complete atomic document wins. The visible settings page must refresh.
+settings_active_before_external_win="$(grep -Fc 'zentty-linux: shortcut-settings active search-focused=' "${log}" || true)"
+mv -f -- "${overlap_pending}" "${config_file}"
+zentty_product_wait_for_log_count "${log}" 'zentty-linux: config-reload result=applied' \
+    "$((applied_before_self_write + 2))" \
+    "external-last overlapping transaction did not publish" || fail "external-last overlap missing"
+grep -Fq 'channel = "beta"' "${config_file}" || fail "external-last document did not win atomically"
+zentty_product_wait_for_log_count "${log}" \
+    'zentty-linux: settings-live-refresh section=updates-privacy' \
+    "$((settings_refresh_before + 2))" \
+    "external-last document did not refresh visible settings" || fail "external overlap refresh missing"
+if [[ "${backend}" == x11 ]]; then
+    settings_window=""
+    for _ in {1..100}; do
+        settings_window="$(xdotool search --onlyvisible --name '^Zentty Settings$' 2>/dev/null | tail -1 || true)"
+        [[ "${settings_window}" =~ ^[1-9][0-9]*$ ]] && break
+        sleep 0.02
+    done
+    [[ "${settings_window}" =~ ^[1-9][0-9]*$ ]] || fail "external-last refreshed settings window did not appear"
+    xdotool windowfocus --sync "${settings_window}"
+else
+    zentty_product_wait_for_log_count "${log}" \
+        'zentty-linux: shortcut-settings active search-focused=' \
+        "$((settings_active_before_external_win + 1))" \
+        "external-last settings did not receive Wayland activation" || fail "external-last activation missing"
+fi
+
+# Product-last is the inverse ordering. Its read/modify/replace must preserve
+# the complete external document's unknown section while changing only Updates.
+if [[ "${backend}" == x11 ]]; then
+    xdotool key alt+s
+else
+    wtype -M alt -k s -m alt
+fi
+zentty_product_wait_for_log_count "${log}" 'zentty-linux: config-reload result=applied' \
+    "$((applied_before_self_write + 3))" \
+    "product-last overlapping transaction did not publish" || fail "product-last overlap missing"
+grep -Fq 'channel = "stable"' "${config_file}" || fail "product-last update did not win"
+grep -Fq 'winner = "external"' "${config_file}" || fail "product-last update lost external unknown data"
+
+# A real external process dies after publishing only a sibling temporary file.
+# The watcher must ignore it and the accepted/final config must remain complete.
+applied_before_interruption="$(grep -Fc 'zentty-linux: config-reload result=applied' "${log}" || true)"
+interrupted="${config_file}.external-interrupted"
+set +e
+sh -c 'printf "%s" "[updates" >"$1"; kill -KILL $$' sh "${interrupted}"
+interrupted_status=$?
+set -e
+[[ "${interrupted_status}" -eq 137 ]] || fail "external interruption fixture did not die by SIGKILL"
+[[ -f "${interrupted}" ]] || fail "external interruption did not leave its sibling temporary file"
+sleep 0.5
+[[ "$(grep -Fc 'zentty-linux: config-reload result=applied' "${log}" || true)" -eq "${applied_before_interruption}" ]] ||
+    fail "interrupted sibling write was incorrectly published"
+grep -Fq 'channel = "stable"' "${config_file}" || fail "interrupted write damaged accepted config"
+grep -Fq 'winner = "external"' "${config_file}" || fail "interrupted write damaged preserved external data"
 if [[ "${backend}" == x11 ]]; then
     xdotool key Escape
 else
@@ -394,4 +469,4 @@ mapfile -t children_after_permission < <(pgrep -P "${product_pid}" | sort -n)
 kill -TERM "${product_pid}"
 wait "${product_pid}" || true
 product_pid=""
-echo "rust-config-reload: PASS backend=${backend} real-pty=true multi-window=true rename=true coalesced=true partial=true last-good=true symlink-retarget=true permission-recovery=true"
+echo "rust-config-reload: PASS backend=${backend} real-pty=true multi-window=true rename=true coalesced=true partial=true last-good=true symlink-retarget=true permission-recovery=true private-xdg=true product-external-last-writer=true interrupted-temp-ignored=true settings-refresh=true self-write-no-loop=true"

@@ -113,6 +113,11 @@ This is currently a development build, not a supported Linux package. The
 public feature inventory and remaining parity work live in issues #1 and
 #16–#23.
 
+Linux product configuration lives at `$XDG_CONFIG_HOME/zentty/config.toml`
+(falling back to `~/.config/zentty/config.toml`). Its validation, live-reload,
+symlink, concurrency, permissions, and recovery behavior is documented in
+[`docs/configuration.md`](docs/configuration.md).
+
 The development build supports the source-named **Move Pane to New Window**
 command without recreating the live Ghostty surface or PTY. Agent and tmux IPC
 use one process-wide authenticated transport; each GTK window owns only its

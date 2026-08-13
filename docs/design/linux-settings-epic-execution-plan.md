@@ -77,9 +77,13 @@ and one final aggregate qualification run. Focused tests run continuously.
 
 ### Batch 2 — configuration transaction
 
-Complete #36 after the pages exercise the full schema. This prevents each page
-from inventing reload behavior and gives the watcher/merge work representative
-real state to project.
+**Completed by #36.** The single XDG config authority now owns secure creation,
+bounded validation, independently valid live sections, last-good retention,
+atomic/durable product writes, product/external last-writer outcomes, logical
+and target symlink watching, interrupted-temporary refusal, open-settings
+refresh, no-loop self-writes, and multi-window projection without PTY changes.
+Page-specific unfinished controls remain in their own issues and must consume
+this authority rather than reopening or duplicating it.
 
 ### Batch 3 — custom audio
 

@@ -1,7 +1,7 @@
 use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::{ErrorKind, Read, Write};
-use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
@@ -45,10 +45,7 @@ enum ThemeInstallOutcome {
 
 impl ConfigStore {
     pub(crate) fn load_default() -> Result<ConfigSnapshot, String> {
-        Self::load(default_config_file_from(
-            std::env::var_os("XDG_CONFIG_HOME"),
-            std::env::var_os("HOME"),
-        )?)
+        Self::load(default_config_file()?)
     }
 
     pub(crate) fn load_path_for_reload(
@@ -102,19 +99,13 @@ impl ConfigStore {
     }
 
     pub(crate) fn update_default_ignored_port_rules(rules: &[String]) -> Result<PathBuf, String> {
-        let path = default_config_file_from(
-            std::env::var_os("XDG_CONFIG_HOME"),
-            std::env::var_os("HOME"),
-        )?;
+        let path = default_config_file()?;
         Self::update_ignored_port_rules(&path, rules)?;
         Ok(path)
     }
 
     pub(crate) fn update_default_preferred_browser(browser_id: &str) -> Result<PathBuf, String> {
-        let path = default_config_file_from(
-            std::env::var_os("XDG_CONFIG_HOME"),
-            std::env::var_os("HOME"),
-        )?;
+        let path = default_config_file()?;
         Self::update_preferred_browser(&path, browser_id)?;
         Ok(path)
     }
@@ -122,10 +113,7 @@ impl ConfigStore {
     pub(crate) fn update_default_shortcuts(
         bindings: &[ShortcutBinding],
     ) -> Result<PathBuf, String> {
-        let path = default_config_file_from(
-            std::env::var_os("XDG_CONFIG_HOME"),
-            std::env::var_os("HOME"),
-        )?;
+        let path = default_config_file()?;
         Self::update_shortcuts(&path, bindings)?;
         Ok(path)
     }
@@ -133,10 +121,7 @@ impl ConfigStore {
     pub(crate) fn update_default_appearance(
         appearance: &AppearanceConfig,
     ) -> Result<PathBuf, String> {
-        let path = default_config_file_from(
-            std::env::var_os("XDG_CONFIG_HOME"),
-            std::env::var_os("HOME"),
-        )?;
+        let path = default_config_file()?;
         Self::update_appearance(&path, appearance)?;
         Ok(path)
     }
@@ -146,10 +131,7 @@ impl ConfigStore {
         restore: RestoreConfig,
         clipboard: ClipboardConfig,
     ) -> Result<PathBuf, String> {
-        let path = default_config_file_from(
-            std::env::var_os("XDG_CONFIG_HOME"),
-            std::env::var_os("HOME"),
-        )?;
+        let path = default_config_file()?;
         Self::update_general(&path, confirmations, restore, clipboard)?;
         Ok(path)
     }
@@ -157,19 +139,13 @@ impl ConfigStore {
     pub(crate) fn update_default_notifications(
         notifications: &NotificationsConfig,
     ) -> Result<PathBuf, String> {
-        let path = default_config_file_from(
-            std::env::var_os("XDG_CONFIG_HOME"),
-            std::env::var_os("HOME"),
-        )?;
+        let path = default_config_file()?;
         Self::update_notifications(&path, notifications)?;
         Ok(path)
     }
 
     pub(crate) fn update_default_updates(updates: UpdatesConfig) -> Result<PathBuf, String> {
-        let path = default_config_file_from(
-            std::env::var_os("XDG_CONFIG_HOME"),
-            std::env::var_os("HOME"),
-        )?;
+        let path = default_config_file()?;
         Self::update_updates(&path, updates)?;
         Ok(path)
     }
@@ -179,19 +155,13 @@ impl ConfigStore {
         pane_layout: PaneLayoutConfig,
         panes: PaneConfig,
     ) -> Result<PathBuf, String> {
-        let path = default_config_file_from(
-            std::env::var_os("XDG_CONFIG_HOME"),
-            std::env::var_os("HOME"),
-        )?;
+        let path = default_config_file()?;
         Self::update_workspace_panes(&path, worklanes, pane_layout, panes)?;
         Ok(path)
     }
 
     pub(crate) fn update_default_open_with(config: &OpenWithConfig) -> Result<PathBuf, String> {
-        let path = default_config_file_from(
-            std::env::var_os("XDG_CONFIG_HOME"),
-            std::env::var_os("HOME"),
-        )?;
+        let path = default_config_file()?;
         Self::update_open_with(&path, config)?;
         Ok(path)
     }
@@ -238,10 +208,7 @@ impl ConfigStore {
     pub(crate) fn update_default_server_detection(
         config: &ServerDetectionConfig,
     ) -> Result<PathBuf, String> {
-        let path = default_config_file_from(
-            std::env::var_os("XDG_CONFIG_HOME"),
-            std::env::var_os("HOME"),
-        )?;
+        let path = default_config_file()?;
         Self::update_server_detection(&path, config)?;
         Ok(path)
     }
@@ -300,10 +267,7 @@ impl ConfigStore {
         menu_bar: MenuBarConfig,
         integrations: &AgentIntegrationsConfig,
     ) -> Result<PathBuf, String> {
-        let path = default_config_file_from(
-            std::env::var_os("XDG_CONFIG_HOME"),
-            std::env::var_os("HOME"),
-        )?;
+        let path = default_config_file()?;
         Self::update_agents(&path, teams, caffeination, menu_bar, integrations)?;
         Ok(path)
     }
@@ -811,6 +775,8 @@ fn with_config_lock<T>(
         .mode(0o600)
         .open(&lock_path)
         .map_err(|error| format!("could not open {}: {error}", lock_path.display()))?;
+    lock.set_permissions(fs::Permissions::from_mode(0o600))
+        .map_err(|error| format!("could not secure {}: {error}", lock_path.display()))?;
     let deadline = Instant::now() + LOCK_DEADLINE;
     loop {
         match lock.try_lock() {
@@ -977,6 +943,59 @@ fn content_safe_invalid_warning(path: &Path) -> String {
     )
 }
 
+fn default_config_file() -> Result<PathBuf, String> {
+    let path = default_config_file_from(
+        std::env::var_os("XDG_CONFIG_HOME"),
+        std::env::var_os("HOME"),
+    )?;
+    ensure_private_config_parent(&path)?;
+    Ok(path)
+}
+
+fn ensure_private_config_parent(path: &Path) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("configuration has no parent: {}", path.display()))?;
+    match fs::symlink_metadata(parent) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            return Err(format!(
+                "refusing symlinked Zentty configuration directory: {}",
+                parent.display()
+            ));
+        }
+        Ok(metadata) if !metadata.is_dir() => {
+            return Err(format!(
+                "Zentty configuration parent is not a directory: {}",
+                parent.display()
+            ));
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == ErrorKind::NotFound => {
+            let mut builder = fs::DirBuilder::new();
+            builder.recursive(true).mode(0o700);
+            builder
+                .create(parent)
+                .map_err(|error| format!("could not create {}: {error}", parent.display()))?;
+        }
+        Err(error) => {
+            return Err(format!("could not inspect {}: {error}", parent.display()));
+        }
+    }
+    fs::set_permissions(parent, fs::Permissions::from_mode(0o700))
+        .map_err(|error| format!("could not secure {}: {error}", parent.display()))?;
+
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_file() => {
+            fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+                .map_err(|error| format!("could not secure {}: {error}", path.display()))?;
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("could not inspect {}: {error}", path.display())),
+    }
+    Ok(())
+}
+
 fn default_config_file_from(
     xdg_config_home: Option<OsString>,
     home: Option<OsString>,
@@ -1010,10 +1029,11 @@ fn nonempty_path(value: Option<OsString>) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::{
-        BoundedReadError, ConfigStore, MAX_CONFIG_BYTES, ThemeInstallOutcome,
+        BoundedReadError, ConfigStore, MAX_CONFIG_BYTES, ThemeInstallOutcome, default_config_file,
         default_config_file_from, default_fallback_theme_path, default_ghostty_config_file_from,
-        default_theme_resource_path, editable_config_source, fallback_theme_publication_error,
-        install_fallback_theme_if_referenced, read_bounded, with_config_lock,
+        default_theme_resource_path, editable_config_source, ensure_private_config_parent,
+        fallback_theme_publication_error, install_fallback_theme_if_referenced, read_bounded,
+        with_config_lock,
     };
     use std::ffi::OsString;
     use std::fs;
@@ -1038,6 +1058,110 @@ mod tests {
             "zentty-config-{name}-{}-{nonce}",
             std::process::id()
         ))
+    }
+
+    #[test]
+    fn config_parent_and_lock_are_private_and_symlinked_parent_is_rejected() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
+
+        let root = private_root("private-parent");
+        let path = root.join("xdg/zentty/config.toml");
+        ensure_private_config_parent(&path).unwrap();
+        assert_eq!(
+            fs::metadata(path.parent().unwrap()).unwrap().mode() & 0o777,
+            0o700
+        );
+
+        fs::set_permissions(path.parent().unwrap(), fs::Permissions::from_mode(0o777)).unwrap();
+        fs::write(&path, b"").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o666)).unwrap();
+        ensure_private_config_parent(&path).unwrap();
+        assert_eq!(
+            fs::metadata(path.parent().unwrap()).unwrap().mode() & 0o777,
+            0o700
+        );
+        assert_eq!(fs::metadata(&path).unwrap().mode() & 0o777, 0o600);
+
+        with_config_lock(&path, || Ok(())).unwrap();
+        assert_eq!(
+            fs::metadata(path.parent().unwrap().join(".zentty-config.lock"))
+                .unwrap()
+                .mode()
+                & 0o777,
+            0o600
+        );
+
+        let external = root.join("external");
+        fs::create_dir_all(&external).unwrap();
+        let linked_parent = root.join("linked-parent");
+        symlink(&external, &linked_parent).unwrap();
+        assert!(
+            ensure_private_config_parent(&linked_parent.join("config.toml"))
+                .unwrap_err()
+                .contains("symlinked")
+        );
+
+        let file_parent = root.join("not-a-directory");
+        fs::write(&file_parent, b"not a directory").unwrap();
+        assert!(
+            ensure_private_config_parent(&file_parent.join("config.toml"))
+                .unwrap_err()
+                .contains("not a directory")
+        );
+
+        let denied = root.join("denied");
+        fs::create_dir(&denied).unwrap();
+        fs::set_permissions(&denied, fs::Permissions::from_mode(0o000)).unwrap();
+        let denied_error = ensure_private_config_parent(&denied.join("zentty/config.toml"))
+            .expect_err("an inaccessible ancestor must not be mistaken for an absent directory");
+        fs::set_permissions(&denied, fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(denied_error.contains("could not inspect"));
+
+        let linked_config_parent = root.join("linked-config-parent");
+        fs::create_dir(&linked_config_parent).unwrap();
+        let operator_target = root.join("operator-target.toml");
+        fs::write(&operator_target, b"").unwrap();
+        fs::set_permissions(&operator_target, fs::Permissions::from_mode(0o640)).unwrap();
+        let linked_config = linked_config_parent.join("config.toml");
+        symlink(&operator_target, &linked_config).unwrap();
+        ensure_private_config_parent(&linked_config).unwrap();
+        assert_eq!(
+            fs::metadata(&operator_target).unwrap().mode() & 0o777,
+            0o640,
+            "securing the logical path must not chmod an operator-owned symlink target"
+        );
+
+        let overlong_config = path.parent().unwrap().join("x".repeat(300));
+        assert!(
+            ensure_private_config_parent(&overlong_config)
+                .unwrap_err()
+                .contains("could not inspect")
+        );
+        remove(&root);
+    }
+
+    #[test]
+    fn default_config_file_resolves_and_secures_the_process_xdg_home() {
+        const CHILD_MARKER: &str = "ZENTTY_CONFIG_STORE_XDG_CHILD";
+        if let Some(expected) = std::env::var_os(CHILD_MARKER) {
+            let path = default_config_file().unwrap();
+            assert_eq!(path, Path::new(&expected).join("zentty/config.toml"));
+            assert!(path.parent().unwrap().is_dir());
+            return;
+        }
+
+        let root = private_root("default-xdg");
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .arg("--exact")
+            .arg("config_store::tests::default_config_file_resolves_and_secures_the_process_xdg_home")
+            .arg("--nocapture")
+            .env("XDG_CONFIG_HOME", &root)
+            .env(CHILD_MARKER, &root)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        assert!(root.join("zentty").is_dir());
+        remove(&root);
     }
 
     fn remove(root: &Path) {

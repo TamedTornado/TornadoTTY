@@ -829,3 +829,92 @@ authoritative execution plan is
   **PASS with reviewed suppressions**; ReleaseSafe Valgrind remains XFAIL.
   Focused refresh mutation tested three mutants: **2 caught, 1 unviable, 0
   missed**.
+
+## GH-36 closure sweep
+
+- **One-batch rule:** finish the issue rather than landing more partial slices.
+  The remaining acceptance is grouped into one closure change: secure XDG
+  directory/file ownership; deterministic external/product last-writer outcomes;
+  ignored interrupted temporary writes; complete schema projection through the
+  existing settings/runtime authorities; explicit include boundary; reconciled
+  user/architecture/inventory/matrix documentation; governed mutation and one
+  final complete qualification receipt. The issue closes only if every item is
+  evidenced and no GH-36 limitation remains in authoritative prose.
+- **Security contract:** Zentty owns `$XDG_CONFIG_HOME/zentty` and creates or
+  tightens that directory to mode `0700`. Product config temporary/final files
+  and the advisory lock are mode `0600`. A symlink-managed config remains valid:
+  Zentty secures its own logical directory but does not chmod an external target
+  directory selected by the operator. Test overrides resolve wholly inside the
+  controlled temporary XDG tree.
+- **Concurrency/crash contract:** an external editor does not participate in
+  Zentty's advisory lock. Complete atomic replacements are last-writer-wins;
+  Zentty never promises cross-process merge/CAS. When the product writes after
+  an external replacement it rereads that complete document and preserves its
+  unknown keys/comments. When an already-started external transaction renames
+  after a product write, that complete external document wins. A process that
+  dies after writing its sibling temporary file but before rename leaves the
+  accepted config untouched; the directory watcher ignores that unrelated
+  file.
+- **Include boundary:** source `AppConfig` is one TOML document and has no
+  include directive. Ghostty `config-file` includes belong to Ghostty's separate
+  configuration/reload authority and are already qualified by the appearance
+  journey. Zentty preserves unknown keys but does not invent recursive includes
+  or a second watcher for them. This resolves the issue wording explicitly
+  instead of silently claiming an unsupported schema feature.
+- **Real product evidence:** the existing `rust-config-reload` journey, rather
+  than a new harness, now begins with a deliberately permissive logical XDG
+  directory/file and proves the running product tightens them to `0700`/`0600`
+  on both controlled X11 and nested Wayland. It then exercises both orderings
+  of an overlapping product/external atomic transaction, visible Settings
+  reconstruction, preservation of an external unknown table, and a real shell
+  process killed after leaving an invalid sibling temporary. Both focused
+  journeys passed against the freshly staged product: X11 session
+  `a4a3ba7d78dbfc8e331287cc1f3bd1c9` and Wayland session
+  `2cce468a1462846bb691610f49a4b6a0`. The intentional SIGKILL produces a shell
+  `Killed` diagnostic; status 137 and the retained complete config are asserted.
+- **Mutation discovery and repair:** the first governed security-helper run
+  exposed one missed top-level default-path mutant. An isolated child-process
+  test was added so process environment is real without racing the parallel
+  test binary. The next run caught that path but exposed two missed branch
+  guards: non-directory parent and non-NotFound inspection failure. Focused
+  fixtures now cover a regular-file parent and an inaccessible ancestor. Final
+  review then identified that an existing regular logical config also needed
+  tightening at startup, not only after a product write. Adding that behavior
+  exposed two further branch mutants; explicit symlink-target mode preservation
+  and non-NotFound path-inspection fixtures caught them. The final governed run
+  tested **16 mutants: 16 caught, 0 missed, 0 timeout, 0 unviable**.
+  `gitignore = true` and `copy_target = false` remained enforced by
+  `linux/tests/mutate-rust`; no build tree was copied.
+- **Closure qualification:** strict workspace Clippy (`-D warnings`) and the
+  locked complete Rust workspace suite passed. The mandatory fresh
+  `linux/tests/qualify-local` receipt then passed every presently executable
+  support and matrix cell in **540,500 ms**. Declared totals are **PASS=125,
+  FAIL=0, BLOCKED=7, XFAIL=1, NOT_IMPLEMENTED=23**. The implemented local suite
+  passes; release and full Linux qualification remain NOT_PASSED. Debug
+  Valgrind is **PASS with reviewed suppressions**: the preserved unsuppressed
+  receipt reports 427 errors/contexts and 6,240 direct plus 41,428 indirect
+  bytes; the governed post-suppression receipt reports zero errors/contexts and
+  zero direct/indirect bytes, with all 427 contexts explicitly counted as
+  suppressed. ReleaseSafe Valgrind remains XFAIL. The machine receipt is
+  `build/linux/qualification-summary.json` (generated evidence, not committed).
+- **Rejected final-code receipt:** after the final startup-permission repair,
+  the fresh complete run passed every product/config cell but suppression
+  governance correctly rejected one Debug GTK/Pango layout-cache observation:
+  the same two narrowed contexts accounted for 14,731 bytes, below the reviewed
+  20,865–26,208 range. No rule or range was broadened and the receipt was not
+  accepted. An immediate new raw/suppressed run of the same controlled,
+  non-Ghostty GTK/IBus reproducer again produced two contexts/26,208 bytes,
+  zero post-suppression errors, and passed the unchanged governance manifest.
+  This establishes cache-size variability rather than a Zentty product finding,
+  but the one lower observation remains retained here; another complete receipt
+  is required before commit.
+- **Accepted final-code receipt:** the next unchanged complete run passed every
+  presently executable support and matrix cell in **522,530 ms**. Declared
+  totals remain **PASS=125, FAIL=0, BLOCKED=7, XFAIL=1,
+  NOT_IMPLEMENTED=23**. Implemented-local passes; release and full Linux
+  qualification remain NOT_PASSED. Debug Valgrind is **PASS with reviewed
+  suppressions**: its preserved unsuppressed receipt reports 427 errors/contexts
+  and 6,160 direct plus 41,428 indirect bytes; its post-suppression receipt
+  reports zero errors/contexts and zero direct/indirect bytes, with 427
+  suppressed contexts. ReleaseSafe Valgrind remains XFAIL. This is the final
+  receipt used for the GH-36 closure decision.
