@@ -512,10 +512,10 @@
       "user_impact": "Surfacing and jumping to agents that need attention is Zentty's central value proposition and cannot stop at an in-pane badge.",
       "linux_owner_issue": 21,
       "implementation_status": "PARTIAL",
-      "focused_tests": ["crates/zentty-core/tests/app_config.rs", "crates/zentty-linux/src/config_store.rs", "crates/zentty-linux/src/notification_service.rs"],
+      "focused_tests": ["crates/zentty-core/tests/app_config.rs", "crates/zentty-linux/src/config_store.rs", "crates/zentty-linux/src/notification_service.rs", "crates/zentty-linux/src/custom_sound_store.rs"],
       "product_scenarios": ["linux/tests/rust-notifications-settings"],
-      "test_plan": "The settings/service boundary now uses a real controlled freedesktop notification service on X11 and Wayland. Remaining work must emit real attention events from PTYs in multiple windows, inspect the in-app inbox, exercise silent/custom-sound/failure behavior, and activate each route to prove exact PTY focus.",
-      "alternative_or_blocker": "The Linux freedesktop service and sound-theme alternative is implemented for settings and test delivery. Source-parity pane-attention reduction, active-pane suppression, inbox routing, action navigation, and custom sound import remain under issues 21 and 20; Dock-specific badges map to in-app/tray attention where supported."
+      "test_plan": "The settings/service boundary now uses a real controlled freedesktop notification service on X11 and Wayland. The same real-system journey imports, converts, persists across restart, previews, delivers, fails explicitly without audio, and removes a custom sound. Remaining work must emit real attention events from PTYs in multiple windows, inspect the in-app inbox, and activate each route to prove exact PTY focus.",
+      "alternative_or_blocker": "The Linux freedesktop service, sound-theme, and private custom-audio alternative is implemented for settings and test delivery. Source-parity pane-attention reduction, active-pane suppression, inbox routing, and action navigation remain under issue 21; Dock-specific badges map to in-app/tray attention where supported."
     },
     {
       "id": "desktop.fleet-status",

@@ -210,12 +210,20 @@ focus_bookmark_control_after() {
     fail "bookmark keyboard focus did not newly reach ${receipt}"
 }
 
+activate_focused_control() {
+    if [[ "${backend}" == x11 && "${portal_wm_pid}" =~ ^[1-9][0-9]*$ ]]; then
+        xdotool keyup Control_L Control_R Shift_L Shift_R Alt_L Alt_R 2>/dev/null || true
+        xdotool windowactivate --sync "${ZENTTY_PRODUCT_WINDOW_ID}"
+    fi
+    input_key Return
+}
+
 save_named_bookmark() {
     local log="$1"
     local name="$2"
     open_bookmarks "${log}"
     focus_bookmark_control "${log}" save-bookmark
-    input_key Return
+    activate_focused_control
     zentty_product_wait_for_log "${log}" 'zentty-linux: bookmark-name-focused=true' \
         'bookmark name dialog did not receive focus' || fail "bookmark name dialog unavailable"
     # GTK focus changes before the nested compositor has necessarily routed the

@@ -22,6 +22,7 @@ general_settings_file="${ZENTTY_GENERAL_SETTINGS_SOURCE:-${repo_root}/crates/zen
 theme_catalog_file="${ZENTTY_THEME_CATALOG_SOURCE:-${repo_root}/crates/zentty-linux/src/theme_catalog.rs}"
 notification_service_file="${ZENTTY_NOTIFICATION_SERVICE_SOURCE:-${repo_root}/crates/zentty-linux/src/notification_service.rs}"
 notifications_settings_file="${ZENTTY_NOTIFICATIONS_SETTINGS_SOURCE:-${repo_root}/crates/zentty-linux/src/notifications_settings.rs}"
+custom_sound_store_file="${ZENTTY_CUSTOM_SOUND_STORE_SOURCE:-${repo_root}/crates/zentty-linux/src/custom_sound_store.rs}"
 updates_privacy_settings_file="${ZENTTY_UPDATES_PRIVACY_SETTINGS_SOURCE:-${repo_root}/crates/zentty-linux/src/updates_privacy_settings.rs}"
 agent_events_file="${ZENTTY_AGENT_EVENTS_SOURCE:-${repo_root}/crates/zentty-linux/src/application_shell/agent_events.rs}"
 global_search_file="${ZENTTY_GLOBAL_SEARCH_SOURCE:-${repo_root}/crates/zentty-linux/src/application_shell/global_search.rs}"
@@ -74,6 +75,7 @@ done
 [[ -r "${theme_catalog_file}" ]] || fail "theme catalog source is missing: ${theme_catalog_file}"
 [[ -r "${notification_service_file}" ]] || fail "notification service source is missing: ${notification_service_file}"
 [[ -r "${notifications_settings_file}" ]] || fail "notification settings source is missing: ${notifications_settings_file}"
+[[ -r "${custom_sound_store_file}" ]] || fail "custom sound store source is missing: ${custom_sound_store_file}"
 [[ -r "${updates_privacy_settings_file}" ]] || fail "Updates & Privacy settings source is missing: ${updates_privacy_settings_file}"
 [[ -r "${agent_events_file}" ]] || fail "agent events source is missing: ${agent_events_file}"
 [[ -r "${global_search_file}" ]] || fail "global search source is missing: ${global_search_file}"
@@ -154,6 +156,7 @@ general_settings_sha256="$(sha256sum "${general_settings_file}" | awk '{print $1
 theme_catalog_sha256="$(sha256sum "${theme_catalog_file}" | awk '{print $1}')"
 notification_service_sha256="$(sha256sum "${notification_service_file}" | awk '{print $1}')"
 notifications_settings_sha256="$(sha256sum "${notifications_settings_file}" | awk '{print $1}')"
+custom_sound_store_sha256="$(sha256sum "${custom_sound_store_file}" | awk '{print $1}')"
 updates_privacy_settings_sha256="$(sha256sum "${updates_privacy_settings_file}" | awk '{print $1}')"
 agent_events_sha256="$(sha256sum "${agent_events_file}" | awk '{print $1}')"
 global_search_sha256="$(sha256sum "${global_search_file}" | awk '{print $1}')"
@@ -227,6 +230,9 @@ jq -e --arg notification_service_sha256 "${notification_service_sha256}" \
 jq -e --arg notifications_settings_sha256 "${notifications_settings_sha256}" \
     '.owned_source_sha256["crates/zentty-linux/src/notifications_settings.rs"] == $notifications_settings_sha256' \
     "${contract}" >/dev/null || fail "notification settings source hash differs from its ownership contract"
+jq -e --arg custom_sound_store_sha256 "${custom_sound_store_sha256}" \
+    '.owned_source_sha256["crates/zentty-linux/src/custom_sound_store.rs"] == $custom_sound_store_sha256' \
+    "${contract}" >/dev/null || fail "custom sound store source hash differs from its ownership contract"
 jq -e --arg updates_privacy_settings_sha256 "${updates_privacy_settings_sha256}" \
     '.owned_source_sha256["crates/zentty-linux/src/updates_privacy_settings.rs"] == $updates_privacy_settings_sha256' \
     "${contract}" >/dev/null || fail "Updates & Privacy settings source hash differs from its ownership contract"
@@ -490,7 +496,7 @@ if [[ -n "${diff}" ]]; then
     fail "config reload function inventory differs from its ownership contract"
 fi
 
-for module in appearance_settings settings_shell settings_navigation general_settings theme_catalog notification_service notifications_settings; do
+for module in appearance_settings settings_shell settings_navigation general_settings theme_catalog notification_service notifications_settings custom_sound_store; do
     case "${module}" in
         appearance_settings) module_file="${appearance_settings_file}" ;;
         settings_shell) module_file="${settings_shell_file}" ;;
@@ -499,6 +505,7 @@ for module in appearance_settings settings_shell settings_navigation general_set
         theme_catalog) module_file="${theme_catalog_file}" ;;
         notification_service) module_file="${notification_service_file}" ;;
         notifications_settings) module_file="${notifications_settings_file}" ;;
+        custom_sound_store) module_file="${custom_sound_store_file}" ;;
     esac
     sed -n '1,/^#\[cfg(test)\]/p' "${module_file}" |
         sed -nE 's/^[[:space:]]*(pub\(crate\)[[:space:]]+)?fn[[:space:]]+([a-zA-Z0-9_]+).*/\2/p' |
@@ -553,6 +560,7 @@ jq -e --arg main_sha256 "${main_sha256}" \
     --arg theme_catalog_sha256 "${theme_catalog_sha256}" \
     --arg notification_service_sha256 "${notification_service_sha256}" \
     --arg notifications_settings_sha256 "${notifications_settings_sha256}" \
+    --arg custom_sound_store_sha256 "${custom_sound_store_sha256}" \
     --arg updates_privacy_settings_sha256 "${updates_privacy_settings_sha256}" \
     --arg agent_events_sha256 "${agent_events_sha256}" \
     --arg global_search_sha256 "${global_search_sha256}" \
@@ -598,6 +606,7 @@ jq -e --arg main_sha256 "${main_sha256}" \
         "crates/zentty-linux/src/theme_catalog.rs":$theme_catalog_sha256,
         "crates/zentty-linux/src/notification_service.rs":$notification_service_sha256,
         "crates/zentty-linux/src/notifications_settings.rs":$notifications_settings_sha256,
+        "crates/zentty-linux/src/custom_sound_store.rs":$custom_sound_store_sha256,
         "crates/zentty-linux/src/updates_privacy_settings.rs":$updates_privacy_settings_sha256,
         "crates/zentty-linux/src/application_shell/agent_events.rs":$agent_events_sha256,
         "crates/zentty-linux/src/application_shell/global_search.rs":$global_search_sha256,
@@ -657,7 +666,9 @@ jq -e --arg main_sha256 "${main_sha256}" \
         ([.field_assignments[].fields[]] | unique | length) and
     ([.method_assignments[].methods[]] | length) ==
         ([.method_assignments[].methods[]] | unique | length) and
-    (.owned_module_functions | keys | sort) == (["action_router", "agent_event_coordinator", "appearance_settings", "bookmark_coordinator", "clipboard_coordinator", "config_store", "config_reload", "general_settings", "global_search_coordinator", "notification_service", "notifications_settings", "open_with_coordinator", "pane_dividers", "pane_runtime_coordinator", "persistence_coordinator", "project_context_coordinator", "remote_paste_coordinator", "server_runtime_coordinator", "settings_shell", "settings_navigation", "task_runner_coordinator", "server_listener_discovery", "server_container_discovery", "ssh_identity_coordinator", "theme_catalog", "tmux_runtime_coordinator", "tmux_store_policy"] | sort) and
+    (.owned_module_functions | keys | sort) == (["action_router", "agent_event_coordinator", "appearance_settings", "bookmark_coordinator", "clipboard_coordinator", "config_store", "config_reload", "custom_sound_store", "general_settings", "global_search_coordinator", "notification_service", "notifications_settings", "open_with_coordinator", "pane_dividers", "pane_runtime_coordinator", "persistence_coordinator", "project_context_coordinator", "remote_paste_coordinator", "server_runtime_coordinator", "settings_shell", "settings_navigation", "task_runner_coordinator", "server_listener_discovery", "server_container_discovery", "ssh_identity_coordinator", "theme_catalog", "tmux_runtime_coordinator", "tmux_store_policy"] | sort) and
+    (.owned_module_functions.custom_sound_store | length) ==
+        (.owned_module_functions.custom_sound_store | unique | length) and
     (.owned_module_functions.action_router | length) ==
         (.owned_module_functions.action_router | unique | length) and
     (.owned_module_functions.pane_runtime_coordinator | length) ==

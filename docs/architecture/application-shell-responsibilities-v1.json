@@ -2,9 +2,9 @@
   "schema_version": 1,
   "contract_id": "zentty-application-shell-responsibilities",
   "source": "crates/zentty-linux/src/application_shell.rs",
-  "source_sha256": "ffedaa1f03c9aa1246eee880596592ac47bcc9f43abcc503593e5fcf60be6d21",
+  "source_sha256": "542501f6c65a32c67b54b53f8e90976293e079d162bcf6abc5bbb72307676d39",
   "owned_source_sha256": {
-    "crates/zentty-linux/src/main.rs": "f90db7599da006746011b86233348f20e959dfdaab7f809261fa81e16dd850ac",
+    "crates/zentty-linux/src/main.rs": "c8a2552f69613c505ed513c04ad540a22a9e42f20987f0e651b7ece0ad2793ce",
     "crates/zentty-linux/src/application.rs": "2fb379bac4de8f0e13328451e69332c92479e405dacc416afef3ec7f5a267352",
     "crates/zentty-linux/src/config_store.rs": "d63ce1eab6ec989b199630f16fb6fa8ea88171a2e1cb2cb6cc770e9793dc89fb",
     "crates/zentty-linux/src/config_reload.rs": "c70d03ea9e1662c78945fef86e5de7b8787247cdda72e37b8663a99bc26604b1",
@@ -20,8 +20,9 @@
     "crates/zentty-linux/src/settings_navigation.rs": "4c58ea6a0347a60f9f28c5bd790a02c6c3bb94765df587f4b2340e31bbbf2cd4",
     "crates/zentty-linux/src/general_settings.rs": "24bf50a74e7a18730d301431c42d229f1923cbe97422a49a0fe77f421e36aa44",
     "crates/zentty-linux/src/theme_catalog.rs": "e944b9378d77d20c68b7020b71275c4482490819575cc657d23a00d7a22af6d4",
-    "crates/zentty-linux/src/notification_service.rs": "3363da61ef55fb3511472d079e9e8a37cf2137ead470f3e614261939a8f38ad6",
-    "crates/zentty-linux/src/notifications_settings.rs": "7616e51aa2a6949a091479b220845f442665d8762be941467b3298c0af027066",
+    "crates/zentty-linux/src/notification_service.rs": "08c8ed8312e3958e75bf5f9c8e8954cb66f18fba83364453b68a024f0a165b2a",
+    "crates/zentty-linux/src/notifications_settings.rs": "cf3a148b717a18d5997fa107256a5dc4bd5f6c703124a709512472982824a4b2",
+    "crates/zentty-linux/src/custom_sound_store.rs": "e33dc17e04b92f0af4e60f82937b27748641caf720727696d71b8b60d8a8be14",
     "crates/zentty-linux/src/updates_privacy_settings.rs": "c2deeb928c9eb65a48ad3b797c9afe0f983f4b980864bd08cf6587484d3f206a",
     "crates/zentty-linux/src/application_shell/clipboard_actions.rs": "1502a0353bc3e0d645d6c6bd81aae1ed1306f312838f92a635944d402cd441b0",
     "crates/zentty-linux/src/application_shell/agent_events.rs": "87c77419231faff7c069fb0616531551191e285d8ddb75895a12b96356cc2696",
@@ -93,9 +94,9 @@
     {
       "id": "settings_coordinator",
       "status": "existing",
-      "planned_module": "crates/zentty-linux/src/settings_shell.rs, crates/zentty-linux/src/settings_navigation.rs, crates/zentty-linux/src/general_settings.rs, crates/zentty-linux/src/appearance_settings.rs, crates/zentty-linux/src/theme_catalog.rs, crates/zentty-linux/src/notifications_settings.rs, and crates/zentty-linux/src/notification_service.rs",
+      "planned_module": "crates/zentty-linux/src/settings_shell.rs, crates/zentty-linux/src/settings_navigation.rs, crates/zentty-linux/src/general_settings.rs, crates/zentty-linux/src/appearance_settings.rs, crates/zentty-linux/src/theme_catalog.rs, crates/zentty-linux/src/notifications_settings.rs, crates/zentty-linux/src/notification_service.rs, and crates/zentty-linux/src/custom_sound_store.rs",
       "tracking": "GH-20",
-      "responsibility": "The sole nonmodal GTK settings shell, source-section navigation/history policy, Appearance projection, and Notifications projection. Theme discovery is a bounded, read-only projection; notification delivery uses the standard session-bus service without owning terminal-attention policy; all durable settings writes and native reload authority remain in ConfigStore and ApplicationShell."
+      "responsibility": "The sole nonmodal GTK settings shell, source-section navigation/history policy, Appearance projection, and Notifications projection. Theme discovery is a bounded, read-only projection; notification delivery uses the standard session-bus service without owning terminal-attention policy; the focused custom-sound store owns only secure XDG conversion and asset lifecycle; all durable settings writes and native reload authority remain in ConfigStore and ApplicationShell."
     },
     {
       "id": "pane_runtime_coordinator",
@@ -458,7 +459,8 @@
     "general_settings": ["aggressiveness_for_selected", "aggressiveness_row", "bool_value", "build", "section_heading", "selected_for_aggressiveness", "set_bool", "settings_group", "update_bool"],
     "theme_catalog": ["parse", "hex", "is_dark", "rgb", "repeated_hex", "matches", "discover_themes", "load_directory", "is_eligible_theme_file", "parse_theme", "is_ignored_theme_line", "default_theme_directories"],
     "notification_service": ["is_available", "notification_proxy", "open_settings", "preview_sound", "send", "settings_launcher"],
-    "notifications_settings": ["build", "notification_row", "row_labels", "section_heading", "set_row_margins", "sound_row"],
+    "notifications_settings": ["build", "connect_sound_selection", "notification_row", "rebuild_sound_choices", "row_labels", "section_heading", "set_named_child_sensitive", "set_named_sibling_sensitive", "set_row_margins", "sound_row"],
+    "custom_sound_store": ["acquire_lock", "acquire_lock_with_timeout", "copy_source_no_follow", "create_private_directory", "destination_is_missing", "display_name", "drop", "ensure_private_sounds_directory", "finish", "installed_read_limit", "internal_name", "is_custom_name", "lock_wait_remains", "path_for_name", "prepare", "prepare_in_transaction", "probe_duration", "prune", "prune_locked", "rollback", "run_bounded_process", "sounds_directory", "sounds_directory_from", "source_copy_limit", "validate_copied_size", "validate_duration", "validate_installed_size", "validate_source_file", "validate_wav"],
     "persistence_coordinator": [
       "clean_exit_decision", "complete_launch", "default_state_directory", "drain_errors",
       "drain_live_snapshot_errors", "drop", "flush_live_snapshot_if_due",

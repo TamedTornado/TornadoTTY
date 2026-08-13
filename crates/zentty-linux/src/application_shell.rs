@@ -1518,9 +1518,10 @@ impl ApplicationShell {
                 }),
                 notifications: self.config.notifications.clone(),
                 apply_notifications: Rc::new(move |notifications| {
-                    if let Some(shell) = notifications_weak.upgrade() {
-                        shell.borrow_mut().apply_notifications(notifications);
-                    }
+                    let shell = notifications_weak.upgrade().ok_or_else(|| {
+                        "Zentty window closed while applying notifications".to_owned()
+                    })?;
+                    shell.borrow_mut().apply_notifications(notifications)
                 }),
                 updates: self.config.updates,
                 error_reporting: self.config.error_reporting,
@@ -1596,7 +1597,10 @@ impl ApplicationShell {
         }
     }
 
-    fn apply_notifications(&mut self, notifications: zentty_core::NotificationsConfig) {
+    fn apply_notifications(
+        &mut self,
+        notifications: zentty_core::NotificationsConfig,
+    ) -> Result<(), String> {
         match crate::config_store::ConfigStore::update_default_notifications(&notifications) {
             Ok(path) => {
                 self.config.notifications = notifications;
@@ -1605,9 +1609,11 @@ impl ApplicationShell {
                     path.display(),
                     self.config.notifications.sound_name
                 );
+                Ok(())
             }
             Err(error) => {
                 eprintln!("zentty-linux: notification-settings result=error detail={error}");
+                Err(error)
             }
         }
     }

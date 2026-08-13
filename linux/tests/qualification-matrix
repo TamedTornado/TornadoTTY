@@ -11,6 +11,8 @@ source "${repo_root}/linux/tests/lib/valgrind-report"
 source "${repo_root}/linux/tests/lib/controlled-environment"
 # shellcheck source=linux/tests/lib/qualification-outcome
 source "${repo_root}/linux/tests/lib/qualification-outcome"
+# shellcheck source=linux/tests/lib/bounded-batch
+source "${repo_root}/linux/tests/lib/bounded-batch"
 validate_only=false
 qualification_jobs="${ZENTTY_QUALIFICATION_JOBS:-4}"
 
@@ -922,6 +924,10 @@ run_qualification_cell() {
 run_qualification_worker() {
     local cell="$1"
     local id result_path worker_code worker_log worker_log_identity
+    # The scheduler owns the shared result directory. Background functions
+    # inherit its EXIT trap, so clear that trap before this worker exits or one
+    # completed cell can erase every other worker's unpublished result.
+    trap - EXIT
     id="$(jq -r '.id' <<<"${cell}")"
     result_path="${cell_results_directory}/${id}.json"
     set +e
@@ -1133,7 +1139,7 @@ while (( ${#pending_cells[@]} > 0 || ${#active_pid_ids[@]} > 0 )); do
     if (( ${#active_pid_ids[@]} > 0 )); then
         completed_pid=""
         set +e
-        wait -n -p completed_pid
+        zentty_wait_owned_pid completed_pid "${!active_pid_ids[@]}"
         worker_status=$?
         set -e
         [[ -n "${completed_pid}" && -v active_pid_ids["${completed_pid}"] ]] ||

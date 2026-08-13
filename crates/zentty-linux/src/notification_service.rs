@@ -7,6 +7,8 @@ use gtk::glib;
 use gtk::glib::variant::ToVariant;
 use zentty_core::NotificationsConfig;
 
+use crate::custom_sound_store::{APLAY, CustomSoundStore};
+
 const SERVICE: &str = "org.freedesktop.Notifications";
 const OBJECT_PATH: &str = "/org/freedesktop/Notifications";
 const INTERFACE: &str = "org.freedesktop.Notifications";
@@ -44,7 +46,13 @@ impl NotificationService {
         }
         let actions = Vec::<String>::new();
         let mut hints = HashMap::<String, glib::Variant>::new();
-        if !config.sound_name.is_empty() {
+        if CustomSoundStore::is_custom_name(&config.sound_name) {
+            let path = CustomSoundStore::path_for_name(&config.sound_name)?;
+            let path = path
+                .to_str()
+                .ok_or_else(|| "custom sound path is not valid UTF-8".to_owned())?;
+            hints.insert("sound-file".into(), path.to_variant());
+        } else if !config.sound_name.is_empty() {
             hints.insert("sound-name".into(), config.sound_name.to_variant());
         }
         let parameters = ("Zentty", 0_u32, "", title, body, actions, hints, -1_i32).to_variant();
@@ -64,6 +72,30 @@ impl NotificationService {
     }
 
     pub(crate) fn preview_sound(config: &NotificationsConfig) -> Result<(), String> {
+        if CustomSoundStore::is_custom_name(&config.sound_name) {
+            let path = CustomSoundStore::path_for_name(&config.sound_name)?;
+            let device = std::env::var("ZENTTY_AUDIO_DEVICE").unwrap_or_else(|_| "default".into());
+            let mut child = Command::new(APLAY)
+                .args(["-q", "-D", &device])
+                .arg(&path)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .map_err(|error| format!("could not start custom sound preview: {error}"))?;
+            let status = child
+                .wait()
+                .map_err(|error| format!("could not finish custom sound preview: {error}"))?;
+            return if status.success() {
+                eprintln!(
+                    "zentty-linux: custom-sound playback=aplay result=played file={} device={device:?}",
+                    path.display()
+                );
+                Ok(())
+            } else {
+                Err(format!("custom sound preview exited with {status}"))
+            };
+        }
         let sound = if config.sound_name.is_empty() {
             "message-new-instant"
         } else {

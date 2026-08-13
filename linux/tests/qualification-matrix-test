@@ -126,6 +126,17 @@ jq -e '
 # shellcheck disable=SC2016
 grep -F 'source "${repo_root}/linux/tests/lib/qualification-outcome"' \
     "${runner}" >/dev/null
+# shellcheck disable=SC2016
+grep -F 'source "${repo_root}/linux/tests/lib/bounded-batch"' \
+    "${runner}" >/dev/null
 grep -F 'zentty_qualification_classify_outcome' "${runner}" >/dev/null
+
+# Background workers inherit the scheduler's EXIT trap. Each worker must clear
+# it before executing a cell so that completion cannot delete the shared result
+# directory while sibling cells are still running. Cell execution stays in a
+# subshell so per-cell shell state cannot leak into the worker wrapper.
+grep -F 'trap - EXIT' "${runner}" >/dev/null
+# shellcheck disable=SC2016
+grep -F '(run_qualification_cell "${cell}" "${result_path}")' "${runner}" >/dev/null
 
 echo "Qualification matrix focused tests passed"

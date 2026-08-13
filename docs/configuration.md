@@ -90,3 +90,20 @@ The product config is bounded to 1 MiB. Exactly 1 MiB is accepted; a larger
 document is rejected without replacing the accepted runtime state. Unknown
 tables and keys are retained during product writes where practical so future or
 external configuration can coexist with the current build.
+
+## Custom notification sounds
+
+Notifications settings can import a local audio file of at most 30 seconds.
+Zentty validates and converts it to a private mono PCM WAV under
+`$XDG_DATA_HOME/zentty/sounds` (or `$HOME/.local/share/zentty/sounds`), records
+only its Zentty-owned content-derived name in `config.toml`, and sends that
+absolute owned file through the freedesktop `sound-file` hint. The data
+directories are mode `0700`; the installed audio and transaction lock are mode
+`0600`.
+
+Import requires `/usr/bin/ffprobe` and `/usr/bin/ffmpeg`. Preview requires
+`/usr/bin/aplay` and a working ALSA output. Unsupported, corrupt, symlinked,
+oversized, or inaccessible input is rejected visibly. A missing playback device
+is reported as unavailable and does not undo an otherwise successful import.
+Changing to a theme sound or selecting **Remove Custom** deletes obsolete
+Zentty-owned assets only after the new configuration has persisted.

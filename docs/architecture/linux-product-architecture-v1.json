@@ -693,14 +693,14 @@
     {
       "id": "notification-custom-sound-import",
       "capability": "platform_notifications",
-      "status": "NOT_IMPLEMENTED",
+      "status": "PASS",
       "tier": "release",
       "display": "both",
       "optimize": "ReleaseSafe",
       "async_backend": "default",
       "terminals": "single",
-      "tracking": "GH-41",
-      "defect": "Named freedesktop sound themes are implemented, but source custom-audio selection, bounded conversion/install, transactional replacement, preview, and cleanup remain explicitly tracked by GH-41 and do not yet have a Linux policy or real-system journey.",
+      "depends_on": ["platform-notifications-x11", "platform-notifications-wayland"],
+      "command": "cargo test --locked -p zentty-linux custom_sound_store",
       "authoritative": false
     },
     {

@@ -11,6 +11,7 @@ mod codex_enrichment;
 mod command_palette;
 mod config_reload;
 mod config_store;
+mod custom_sound_store;
 mod dev_server_settings;
 mod docker_discovery;
 mod general_settings;

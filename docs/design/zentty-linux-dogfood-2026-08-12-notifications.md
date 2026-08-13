@@ -119,6 +119,15 @@ This append-only record covers the Notifications settings slice of GitHub issue
 
 ## Evidence
 
+## 2026-08-13 correction — custom audio completed by GH-41
+
+The earlier `notification-custom-sound-import` NOT_IMPLEMENTED statement was
+accurate for the GH-20 Notifications-settings slice but is no longer current.
+GH-41 extends the same page, config store, service, and real-system journey; the
+authoritative matrix now marks that explicit cell PASS. Current implementation
+and qualification evidence is recorded in
+`zentty-linux-dogfood-2026-08-13-custom-sounds.md`.
+
 - Core notification TOML defaults, exact keys, unknown-key compatibility, and
   invalid types pass in `zentty-core`'s `app_config` integration test.
 - ConfigStore's real filesystem test proves notification writes preserve the

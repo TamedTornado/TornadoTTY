@@ -8,18 +8,24 @@ backend="${GDK_BACKEND:-}"
 run_root="$(mktemp -d)"
 state_directory="${run_root}/state"
 receipt="${run_root}/notifications.receipt"
+audio_fixture="${run_root}/Friendly notification.wav"
+alsa_config="${run_root}/asound.conf"
 daemon_log="${run_root}/notification-daemon.log"
-log="${run_root}/product.log"
+log=""
+launch_count=0
 product_pid=""
 daemon_pid=""
 monitor_pid=""
+wm_pid=""
 
 # shellcheck disable=SC1091
 source "${repo_root}/linux/tests/lib/product-input"
 
 fail() {
     [[ ! -f "${daemon_log}" ]] || cat "${daemon_log}" >&2
-    [[ ! -f "${log}" ]] || cat "${log}" >&2
+    for product_log in "${run_root}"/product-*.log; do
+        [[ ! -f "${product_log}" ]] || cat "${product_log}" >&2
+    done
     echo "rust-notifications-settings: error: $*" >&2
     exit 1
 }
@@ -28,9 +34,11 @@ cleanup() {
     [[ ! "${product_pid}" =~ ^[1-9][0-9]*$ ]] || kill -TERM "${product_pid}" 2>/dev/null || true
     [[ ! "${monitor_pid}" =~ ^[1-9][0-9]*$ ]] || kill -TERM "${monitor_pid}" 2>/dev/null || true
     [[ ! "${daemon_pid}" =~ ^[1-9][0-9]*$ ]] || kill -TERM "${daemon_pid}" 2>/dev/null || true
+    [[ ! "${wm_pid}" =~ ^[1-9][0-9]*$ ]] || kill -TERM "${wm_pid}" 2>/dev/null || true
     [[ ! "${product_pid}" =~ ^[1-9][0-9]*$ ]] || wait "${product_pid}" 2>/dev/null || true
     [[ ! "${monitor_pid}" =~ ^[1-9][0-9]*$ ]] || wait "${monitor_pid}" 2>/dev/null || true
     [[ ! "${daemon_pid}" =~ ^[1-9][0-9]*$ ]] || wait "${daemon_pid}" 2>/dev/null || true
+    [[ ! "${wm_pid}" =~ ^[1-9][0-9]*$ ]] || wait "${wm_pid}" 2>/dev/null || true
     rm -rf -- "${run_root}"
 }
 trap cleanup EXIT
@@ -38,7 +46,16 @@ trap cleanup EXIT
 case "${backend}" in
     x11)
         [[ "${ZENTTY_NESTED_X11_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
-            fail "X11 scenario must run through linux/tests/nested-x11"
+        fail "X11 scenario must run through linux/tests/nested-x11"
+        command -v openbox >/dev/null || fail "openbox is required for the real native chooser"
+        openbox >"${run_root}/openbox.log" 2>&1 &
+        wm_pid=$!
+        for _ in {1..200}; do
+            xprop -root _NET_SUPPORTING_WM_CHECK 2>/dev/null | grep -Fq 'window id #' && break
+            sleep 0.05
+        done
+        xprop -root _NET_SUPPORTING_WM_CHECK 2>/dev/null | grep -Fq 'window id #' ||
+            fail "controlled X11 window manager did not become ready"
         ;;
     wayland)
         [[ "${ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
@@ -55,6 +72,19 @@ export XDG_CURRENT_DESKTOP=ZenttyQualification
     fail "Ubuntu notification-daemon is required"
 command -v dbus-monitor >/dev/null || fail "dbus-monitor is required"
 command -v gdbus >/dev/null || fail "gdbus is required"
+for dependency in aplay ffmpeg ffprobe stat; do
+    command -v "${dependency}" >/dev/null || fail "${dependency} is required"
+done
+if [[ "${backend}" == x11 ]]; then
+    command -v xclip >/dev/null || fail "xclip is required for the real chooser"
+fi
+ffmpeg -nostdin -v error -f lavfi -i sine=frequency=523.25:duration=0.15 \
+    -y "${audio_fixture}"
+cat >"${alsa_config}" <<'EOF'
+pcm.zentty_dynamic { type null }
+EOF
+export ALSA_CONFIG_PATH="${alsa_config}"
+export ZENTTY_AUDIO_DEVICE=zentty_dynamic
 
 layer_runpath="$(
     readelf -d "${ghostty_root}/zig-out/lib/libghostty-gtk-embed.so" |
@@ -93,24 +123,39 @@ dbus-monitor --session \
 monitor_pid=$!
 sleep 0.05
 
-GDK_SCALE=1 \
-GDK_DPI_SCALE=1 \
-LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
-    "${product}" \
-    --command 'sleep 30' \
-    --state-directory "${state_directory}" \
-    --no-session-restore >"${log}" 2>&1 &
-product_pid=$!
-zentty_product_prepare_input "${backend}" "${log}" || fail "physical product input was unavailable"
+start_product() {
+    launch_count=$((launch_count + 1))
+    log="${run_root}/product-${launch_count}.log"
+    GDK_SCALE=1 \
+    GDK_DPI_SCALE=1 \
+    LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+        "${product}" \
+        --command 'sleep 120' \
+        --state-directory "${state_directory}" \
+        --no-session-restore >"${log}" 2>&1 &
+    product_pid=$!
+    zentty_product_prepare_input "${backend}" "${log}" ||
+        fail "physical product input was unavailable"
+}
+
+stop_product() {
+    kill -TERM "${product_pid}" 2>/dev/null || true
+    wait "${product_pid}" 2>/dev/null || true
+    product_pid=""
+}
 
 main_key() {
-    if zentty_product_uses_xdotool "${backend}"; then
+    if [[ "${backend}" == x11 ]]; then
+        xdotool windowfocus --sync "${ZENTTY_PRODUCT_WINDOW_ID}"
+        xdotool key "$1"
+    elif zentty_product_uses_xdotool "${backend}"; then
         zentty_product_xdotool_key "$1"
     else
         case "$1" in
             ctrl+shift+*) wtype -M ctrl -M shift -k "${1#ctrl+shift+}" -m shift -m ctrl ;;
             ctrl+*) wtype -M ctrl -k "${1#ctrl+}" -m ctrl ;;
             alt+*) wtype -M alt -k "${1#alt+}" -m alt ;;
+            shift+*) wtype -M shift -k "${1#shift+}" -m shift ;;
             *) wtype -k "$1" ;;
         esac
     fi
@@ -131,33 +176,41 @@ settings_key() {
 }
 
 type_text() {
-    if zentty_product_uses_xdotool "${backend}"; then
+    if [[ "${backend}" == x11 ]]; then
+        xdotool windowfocus --sync "${ZENTTY_PRODUCT_WINDOW_ID}"
+        xdotool type --delay 5 -- "$1"
+    elif zentty_product_uses_xdotool "${backend}"; then
         xdotool type --delay 5 -- "$1"
     else
         wtype -d 5 -- "$1"
     fi
 }
 
-main_key ctrl+shift+p
-type_text 'Notifications Settings'
-zentty_product_wait_for_log "${log}" 'command-palette=query value="Notifications Settings" results=1' \
-    "Notifications Settings did not resolve uniquely" || fail "notification palette route failed"
-main_key Down
-main_key Return
-zentty_product_wait_for_log "${log}" 'zentty-linux: settings-section selected=notifications' \
-    "palette did not deep-link to Notifications" || fail "notification deep-link failed"
-zentty_product_wait_for_log "${log}" 'zentty-linux: shortcut-settings active' \
-    "notification settings did not receive compositor activation" || fail "settings activation failed"
-settings_window=""
-if [[ "${backend}" == x11 ]]; then
-    for _ in {1..100}; do
-        settings_window="$(xdotool search --onlyvisible --name '^Zentty Settings$' 2>/dev/null | tail -1 || true)"
-        [[ "${settings_window}" =~ ^[1-9][0-9]*$ ]] && break
-        sleep 0.02
-    done
-    [[ "${settings_window}" =~ ^[1-9][0-9]*$ ]] || fail "settings window did not appear"
-    xdotool windowfocus --sync "${settings_window}"
-fi
+open_notification_settings() {
+    main_key ctrl+shift+p
+    type_text 'Notifications Settings'
+    zentty_product_wait_for_log "${log}" 'command-palette=query value="Notifications Settings" results=1' \
+        "Notifications Settings did not resolve uniquely" || fail "notification palette route failed"
+    main_key Down
+    main_key Return
+    zentty_product_wait_for_log "${log}" 'zentty-linux: settings-section selected=notifications' \
+        "palette did not deep-link to Notifications" || fail "notification deep-link failed"
+    zentty_product_wait_for_log "${log}" 'zentty-linux: shortcut-settings active' \
+        "notification settings did not receive compositor activation" || fail "settings activation failed"
+    settings_window=""
+    if [[ "${backend}" == x11 ]]; then
+        for _ in {1..100}; do
+            settings_window="$(xdotool search --onlyvisible --name '^Zentty Settings$' 2>/dev/null | tail -1 || true)"
+            [[ "${settings_window}" =~ ^[1-9][0-9]*$ ]] && break
+            sleep 0.02
+        done
+        [[ "${settings_window}" =~ ^[1-9][0-9]*$ ]] || fail "settings window did not appear"
+        xdotool windowfocus --sync "${settings_window}"
+    fi
+}
+
+start_product
+open_notification_settings
 
 settings_key alt+t
 zentty_product_wait_for_log "${log}" 'notification-settings action=send-test result=sent id=1' \
@@ -167,6 +220,112 @@ grep -Fq 'string "Zentty"' "${receipt}" ||
     fail "D-Bus monitor did not receive the source test payload"
 grep -Fq 'string "This is a test notification."' "${receipt}" ||
     fail "D-Bus monitor did not receive the source test body"
+
+# Import through the staged GTK page and the native chooser. The installed
+# preview crosses the real aplay/ALSA null-device boundary rather than a mock.
+if [[ "${backend}" == wayland ]]; then
+    # Cage/Wayland reserves some Alt chords depending on the host keymap. Start
+    # from the settings search field, whose shortcut is already qualified, and
+    # traverse the real GTK focus chain until the product reports Import Audio.
+    settings_key ctrl+f
+    for _ in {1..40}; do
+        settings_key Tab
+        grep -Fq 'notification-settings focus=import-custom' "${log}" && break
+    done
+    grep -Fq 'notification-settings focus=import-custom' "${log}" ||
+        fail "custom import focus failed"
+    settings_key Return
+else
+    settings_key alt+i
+fi
+zentty_product_wait_for_log "${log}" \
+    'notification-settings action=import-custom result=chooser-opened' \
+    "Import Audio did not open the native chooser" || fail "custom import control failed"
+if [[ "${backend}" == x11 ]]; then
+    chooser_window=""
+    for _ in {1..200}; do
+        chooser_window="$(
+            xdotool search --onlyvisible --name \
+                '^(Import Notification Audio|Open File)$' 2>/dev/null | tail -1 || true
+        )"
+        [[ "${chooser_window}" =~ ^[1-9][0-9]*$ ]] && break
+        sleep 0.05
+    done
+    [[ "${chooser_window}" =~ ^[1-9][0-9]*$ ]] || fail "native audio chooser did not map"
+    xdotool windowactivate --sync "${chooser_window}"
+    xdotool key --clearmodifiers ctrl+l
+    sleep 0.1
+    printf '%s' "${audio_fixture}" | xclip -selection clipboard -in
+    xdotool key --clearmodifiers ctrl+v Return
+else
+    sleep 0.4
+    settings_key ctrl+l
+    type_text "${audio_fixture}"
+    settings_key Return
+fi
+zentty_product_wait_for_log "${log}" \
+    'notification-settings action=import-custom result=installed sound="zentty-custom-' \
+    "custom audio did not install through the staged GTK page" || fail "custom import failed"
+zentty_product_wait_for_log "${log}" \
+    'notification-settings action=import-preview result=played' \
+    "custom audio did not cross real aplay/ALSA" || fail "custom preview failed"
+custom_name="$(
+    sed -n 's/^sound_name = "\(zentty-custom-[0-9a-f]\{32\}\.wav\)"$/\1/p' "${config}" |
+        tail -1
+)"
+[[ "${custom_name}" =~ ^zentty-custom-[0-9a-f]{32}\.wav$ ]] ||
+    fail "custom sound config name is not strict and collision-safe"
+custom_file="${XDG_DATA_HOME}/zentty/sounds/${custom_name}"
+[[ -f "${custom_file}" && ! -L "${custom_file}" ]] || fail "custom sound was not installed as a regular file"
+[[ "$(stat -c %a "${XDG_DATA_HOME}/zentty")" == 700 ]] || fail "custom data directory is not 0700"
+[[ "$(stat -c %a "${XDG_DATA_HOME}/zentty/sounds")" == 700 ]] || fail "custom sounds directory is not 0700"
+[[ "$(stat -c %a "${custom_file}")" == 600 ]] || fail "custom sound is not 0600"
+grep -Fq 'custom_sound_display_name = "Friendly notification.wav"' "${config}" ||
+    fail "custom sound display name did not persist"
+
+settings_key alt+t
+zentty_product_wait_for_log "${log}" 'notification-settings action=send-test result=sent id=2' \
+    "custom sound notification did not reach the real service" || fail "custom notification failed"
+for _ in {1..100}; do
+    grep -Fq "${custom_file}" "${receipt}" && break
+    sleep 0.02
+done
+grep -Fq 'string "sound-file"' "${receipt}" || fail "custom notification lacked sound-file hint"
+grep -Fq "${custom_file}" "${receipt}" || fail "custom notification did not reference the owned asset"
+
+# Restart the staged product against the same config and XDG data root. This
+# proves that the custom selection is reconstructed from durable state rather
+# than retained in process-local GTK state.
+stop_product
+start_product
+open_notification_settings
+zentty_product_wait_for_log "${log}" \
+    "notification-settings loaded sound=\"${custom_name}\"" \
+    "custom sound selection did not survive a real product restart" ||
+    fail "custom sound restart persistence failed"
+[[ -f "${custom_file}" && ! -L "${custom_file}" ]] ||
+    fail "custom sound asset did not survive a real product restart"
+
+# A missing ALSA PCM is an explicit unavailable preview, not a pass.
+cat >"${alsa_config}" <<'EOF'
+pcm.zentty_dynamic { type does_not_exist }
+EOF
+settings_key alt+p
+zentty_product_wait_for_log "${log}" \
+    'notification-settings action=preview result=unavailable detail=custom sound preview exited' \
+    "missing audio device was not visibly unavailable" || fail "audio absence became a pass"
+[[ "$(find "${XDG_DATA_HOME}/zentty/sounds" -maxdepth 1 -type f -name 'zentty-custom-*.wav' | wc -l)" -eq 1 ]] ||
+    fail "custom sound store contains unexpected assets"
+
+settings_key alt+r
+zentty_product_wait_for_log "${log}" \
+    'notification-settings action=remove-custom result=removed' \
+    "custom sound was not removed through the staged GTK page" || fail "custom removal failed"
+[[ ! -e "${custom_file}" ]] || fail "removed custom sound remained on disk"
+grep -Fq 'sound_name = ""' "${config}" || fail "custom sound removal did not persist default selection"
+if grep -Fq 'custom_sound_display_name' "${config}"; then
+    fail "custom sound removal retained stale display metadata"
+fi
 
 kill -TERM "${daemon_pid}"
 wait "${daemon_pid}" 2>/dev/null || true
@@ -183,4 +342,4 @@ settings_key alt+t
 zentty_product_wait_for_log "${log}" 'notification-settings action=send-test result=error detail=no freedesktop notification service is available' \
     "missing service was not reported as an error" || fail "notification absence became a pass"
 
-echo "rust-notifications-settings-${backend}: PASS real-gtk-settings physical-input private-dbus real-freedesktop-notify explicit-unavailable"
+echo "rust-notifications-settings-${backend}: PASS real-gtk-settings physical-input private-dbus real-freedesktop-notify custom-import real-aplay sound-file-hint secure-xdg restart-persistence dedupe remove explicit-unavailable"

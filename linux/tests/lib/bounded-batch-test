@@ -63,4 +63,16 @@ if zentty_run_bounded_batch 0 run_item invalid >/dev/null 2>&1; then
     exit 1
 fi
 
+sleep 0.01 &
+unrelated_pid=$!
+sleep 0.05 &
+owned_pid=$!
+completed_pid=""
+zentty_wait_owned_pid completed_pid "${owned_pid}"
+[[ "${completed_pid}" == "${owned_pid}" ]] || {
+    echo "bounded-batch-test: unrelated child was reaped from an owned wait" >&2
+    exit 1
+}
+wait "${unrelated_pid}"
+
 echo "Bounded qualification batch tests passed: limit, refill, sibling reap, failure"

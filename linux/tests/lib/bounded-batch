@@ -14,7 +14,7 @@ zentty_run_bounded_batch() {
     for item in "$@"; do
         while (( ${#active[@]} >= jobs )); do
             completed_pid=""
-            if ! wait -n -p completed_pid; then
+            if ! zentty_wait_owned_pid completed_pid "${!active[@]}"; then
                 failed=true
             fi
             [[ -n "${completed_pid}" ]] || return 70
@@ -27,4 +27,13 @@ zentty_run_bounded_batch() {
         wait "${pid}" || failed=true
     done
     ! "${failed}"
+}
+
+# `wait -n -p` can reap a completed descendant that is not part of the caller's
+# pool when other orchestration is active in the same shell. Restrict it to the
+# PIDs owned by this pool so one batch cannot steal another scheduler's result.
+zentty_wait_owned_pid() {
+    local completed_name="$1"
+    shift
+    wait -n -p "${completed_name}" "$@"
 }
