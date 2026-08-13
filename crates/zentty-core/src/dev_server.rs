@@ -375,6 +375,12 @@ impl ServerRegistry {
         });
     }
 
+    pub fn remove_sources(&mut self, sources: &[DetectedServerSource]) -> usize {
+        let previous = self.records.len();
+        self.records.retain(|key, _| !sources.contains(&key.source));
+        previous - self.records.len()
+    }
+
     #[must_use]
     pub fn servers_in(&self, worklane_id: &str) -> Vec<DetectedServer> {
         let mut grouped: BTreeMap<&str, Vec<&DetectedServer>> = BTreeMap::new();

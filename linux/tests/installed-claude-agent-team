@@ -53,6 +53,7 @@ for dependency in claude grep jq mktemp readlink timeout tr; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
 [[ -x "${product}" ]] || fail "staged Zentty product is missing: ${product}"
+product="$(readlink -f -- "${product}")"
 [[ -x "${actor}" ]] || fail "controlled agent actor is missing: ${actor}"
 
 claude_version="$(claude --version 2>/dev/null)"

@@ -538,6 +538,40 @@ fn open_with_presentation_reconciles_stale_targets_and_primary_selection() {
 }
 
 #[test]
+fn dev_server_presentation_reconciles_stale_browser_targets() {
+    let configured = AppConfig::parse_toml(
+        r#"
+        [server_detection]
+        passive_detection_enabled = false
+        preferred_browser_id = "custom:gone"
+        enabled_browser_target_ids = ["custom:gone", "custom:kept"]
+        ignored_port_rules = ["3000-3002"]
+
+        [[server_detection.custom_browsers]]
+        id = "custom:gone"
+        name = "Gone"
+        path = "/opt/gone"
+
+        [[server_detection.custom_browsers]]
+        id = "custom:kept"
+        name = "Kept"
+        path = "/opt/kept"
+        "#,
+    )
+    .unwrap()
+    .server_detection;
+
+    let reconciled =
+        configured.reconciled_available(&["system-default".into(), "custom:kept".into()]);
+    assert!(!reconciled.passive_detection_enabled);
+    assert_eq!(reconciled.preferred_browser_id, "system-default");
+    assert_eq!(reconciled.enabled_browser_target_ids, ["custom:kept"]);
+    assert_eq!(reconciled.custom_browsers.len(), 1);
+    assert_eq!(reconciled.custom_browsers[0].id, "custom:kept");
+    assert_eq!(reconciled.ignored_port_rules, ["3000-3002"]);
+}
+
+#[test]
 fn malformed_known_open_with_values_reject_the_snapshot() {
     for source in [
         "[open_with]\nenabled_target_ids = \"vscode\"\n",

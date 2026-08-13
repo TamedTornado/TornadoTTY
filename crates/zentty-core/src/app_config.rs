@@ -951,6 +951,42 @@ impl ServerDetectionConfig {
             ignored_port_rules: self.ignored_port_rules,
         }
     }
+
+    /// Reconciles persisted browser preferences with the applications the
+    /// platform can resolve when the Dev Servers page is presented.
+    #[must_use]
+    pub fn reconciled_available(self, available_target_ids: &[String]) -> Self {
+        use std::collections::HashSet;
+
+        let available = available_target_ids.iter().collect::<HashSet<_>>();
+        let custom_browsers = self
+            .custom_browsers
+            .into_iter()
+            .filter(|browser| available.contains(&browser.id))
+            .collect::<Vec<_>>();
+        let enabled_browser_target_ids = self
+            .enabled_browser_target_ids
+            .into_iter()
+            .filter(|id| available.contains(id))
+            .collect::<Vec<_>>();
+        let preferred_browser_id = if available.contains(&self.preferred_browser_id)
+            && (enabled_browser_target_ids.is_empty()
+                || enabled_browser_target_ids.contains(&self.preferred_browser_id))
+        {
+            self.preferred_browser_id
+        } else {
+            "system-default".into()
+        };
+
+        Self {
+            passive_detection_enabled: self.passive_detection_enabled,
+            preferred_browser_id,
+            enabled_browser_target_ids,
+            custom_browsers,
+            ignored_port_rules: self.ignored_port_rules,
+        }
+        .normalized()
+    }
 }
 
 #[derive(Deserialize, Default)]

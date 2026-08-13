@@ -320,6 +320,32 @@ fn registry_clears_only_the_authenticated_pane_and_optional_source() {
 }
 
 #[test]
+fn disabling_passive_detection_removes_only_scanner_and_docker_sources() {
+    let mut registry = ServerRegistry::default();
+    for (port, source) in [
+        ("3000", DetectedServerSource::Manual),
+        ("4000", DetectedServerSource::Watch),
+        ("5000", DetectedServerSource::Docker),
+        ("6000", DetectedServerSource::Scanner),
+    ] {
+        registry.upsert(server(port, source, Some("pane-1"), 1));
+    }
+
+    let removed =
+        registry.remove_sources(&[DetectedServerSource::Docker, DetectedServerSource::Scanner]);
+    assert_eq!(removed, 2);
+    let remaining = registry
+        .servers_in("worklane-1")
+        .into_iter()
+        .map(|server| server.source)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        remaining,
+        [DetectedServerSource::Manual, DetectedServerSource::Watch]
+    );
+}
+
+#[test]
 fn termination_requires_a_current_pid_owned_scanner_listener_below_the_pane_shell() {
     let scanner = server("5173", DetectedServerSource::Scanner, Some("pane-1"), 100);
     let observation = ServerTerminationObservation {

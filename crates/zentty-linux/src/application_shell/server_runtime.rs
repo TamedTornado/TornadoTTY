@@ -103,17 +103,25 @@ pub(crate) fn discover_browser_targets(
             }),
     );
 
+    let mut desktop_apps = gio::AppInfo::all_for_type("x-scheme-handler/http")
+        .into_iter()
+        .filter_map(|app| Some((app.id()?.to_string(), app.display_name().to_string())))
+        .collect::<Vec<_>>();
+    desktop_apps.sort_by(|left, right| left.0.cmp(&right.0));
     let mut known_desktop_ids = HashSet::new();
-    for app in gio::AppInfo::all_for_type("x-scheme-handler/http") {
-        let Some(application_id) = app.id().map(|id| id.to_string()) else {
-            continue;
-        };
-        if !known_desktop_ids.insert(application_id.clone()) {
+    let mut known_names = targets
+        .iter()
+        .map(|target| normalized_catalog_name(&target.name))
+        .collect::<HashSet<_>>();
+    for (application_id, name) in desktop_apps {
+        if !known_desktop_ids.insert(application_id.clone())
+            || !known_names.insert(normalized_catalog_name(&name))
+        {
             continue;
         }
         targets.push(ServerBrowserTarget {
             id: format!("desktop:{application_id}"),
-            name: app.display_name().to_string(),
+            name,
             launcher: ServerBrowserLauncher::DesktopApplication { application_id },
         });
     }
@@ -133,6 +141,13 @@ pub(crate) fn discover_browser_targets(
         })
     }));
     targets
+}
+
+fn normalized_catalog_name(name: &str) -> String {
+    name.split_whitespace()
+        .flat_map(str::chars)
+        .flat_map(char::to_lowercase)
+        .collect()
 }
 
 #[derive(Clone)]
@@ -390,6 +405,15 @@ fn refresh_registry_projection(shell: &mut ApplicationShell) {
         .collect();
 }
 
+pub(super) fn clear_passive_servers(shell: &mut ApplicationShell) -> usize {
+    let removed = shell
+        .server_runtime
+        .registry
+        .remove_sources(&[DetectedServerSource::Docker, DetectedServerSource::Scanner]);
+    refresh_registry_projection(shell);
+    removed
+}
+
 pub(super) fn set_port_ignored(shell: &Rc<RefCell<ApplicationShell>>, origin: &str, ignored: bool) {
     let (port, rules) = {
         let shell = shell.borrow();
@@ -456,7 +480,10 @@ pub(super) fn set_port_ignored(shell: &Rc<RefCell<ApplicationShell>>, origin: &s
 fn request_probe(shell: &Rc<RefCell<ApplicationShell>>) {
     let (sources, discover_docker) = {
         let mut shell = shell.borrow_mut();
-        if shell.shutting_down || shell.server_runtime.probe_in_flight {
+        if shell.shutting_down
+            || shell.server_runtime.probe_in_flight
+            || !shell.config.server_detection.passive_detection_enabled
+        {
             return;
         }
         let mut sources = Vec::new();
@@ -497,7 +524,7 @@ fn request_probe(shell: &Rc<RefCell<ApplicationShell>>) {
         };
         let mut shell = shell.borrow_mut();
         shell.server_runtime.probe_in_flight = false;
-        if shell.shutting_down {
+        if shell.shutting_down || !shell.config.server_detection.passive_detection_enabled {
             return;
         }
         match result {
@@ -944,4 +971,19 @@ fn repository_root(path: &Path) -> Option<PathBuf> {
     path.ancestors()
         .find(|candidate| candidate.join(".git").exists())
         .map(Path::to_owned)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalized_catalog_name;
+
+    #[test]
+    fn browser_catalog_names_deduplicate_case_and_desktop_spacing() {
+        assert_eq!(normalized_catalog_name("Google Chrome"), "googlechrome");
+        assert_eq!(
+            normalized_catalog_name("  google   CHROME "),
+            "googlechrome"
+        );
+        assert_ne!(normalized_catalog_name("Chrome Beta"), "googlechrome");
+    }
 }

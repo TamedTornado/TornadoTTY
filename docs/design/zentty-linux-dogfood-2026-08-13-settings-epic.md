@@ -240,3 +240,49 @@ authoritative execution plan is
   passed; release and full Linux qualification remain not passed. Debug
   Valgrind is **PASS with reviewed suppressions**, suppression governance is
   accepted, and ReleaseSafe Valgrind remains XFAIL.
+
+## Dev Servers settings control qualification
+
+- The settings page existed, but its browser catalog retained an unavailable
+  configured custom application until some later configuration mutation. Dev
+  Servers presentation now reconciles the persisted model against the single
+  existing Linux browser discovery authority, removes stale custom/enabled IDs,
+  and falls an unavailable preferred browser back to System Default. Controlled
+  X11 and Wayland journeys prove the stale target is removed from the real XDG
+  config through the shared settings shell.
+- Disabling passive detection previously removed only the GLib timer. Scanner
+  and Docker records already held by the runtime remained visible, and an
+  in-flight probe could repopulate them after disable. The runtime registry now
+  removes only Scanner and Docker sources, preserves authenticated Watch and
+  Manual sources, refuses new probes while disabled, and discards a probe that
+  completes after the setting changes. Sidebar projection is refreshed without
+  signaling any server process.
+- The real X11 journey physically switches passive detection off and on. It
+  proves exact persistence, immediate passive-source removal, survival of the
+  real listener and authenticated Watch record, and rediscovery of that same
+  kernel listener after re-enable. Wayland owns real page presentation,
+  reconciliation, and the pre-existing real scanner/browser actions; its nested
+  harness still has no scoped pointer injector, so switch mutation is explicitly
+  owned by X11 rather than silently skipped.
+- A controlled screenshot exposed repeated Firefox and Google Chrome rows from
+  overlapping native, Snap/Flatpak desktop registrations, and executable
+  discovery. The Linux browser catalog now sorts desktop IDs deterministically
+  and deduplicates case/spacing-equivalent display names, preferring an already
+  resolved built-in executable while retaining genuinely distinct applications.
+- Remaining GH-39 scope is explicit: physical ignored-port add/remove and error
+  controls, the native custom-browser chooser/removal journey, invalidation when
+  a browser disappears while settings remain open, and a full process restart
+  receipt. The platform settings contract therefore remains NOT_IMPLEMENTED.
+- The first aggregate rerun failed the unrelated controlled Claude X11 cell
+  because its model receipt missed the teammate request under load. The focused
+  rerun completed all model roles, then exposed a separate harness defect: its
+  relocated-wrapper assertion compared the child's canonical absolute path to
+  the caller's relative `ZENTTY_LINUX_BINARY`. The journey now canonicalizes the
+  staged product once before deriving its installation root. This does not
+  weaken any model, wrapper, endpoint, or teardown assertion.
+- The corrected aggregate run passed all presently executable support tests and
+  matrix cells in 500,680 ms. Declared totals remain **PASS=123, FAIL=0,
+  BLOCKED=7, XFAIL=1, NOT_IMPLEMENTED=23**. The implemented local suite is
+  passed; release and full Linux qualification remain not passed. Debug
+  Valgrind is **PASS with reviewed suppressions**, suppression governance is
+  accepted, and ReleaseSafe Valgrind remains XFAIL.

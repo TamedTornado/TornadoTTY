@@ -1329,6 +1329,29 @@ impl ApplicationShell {
                 ),
             }
         }
+        let server_browser_targets = server_runtime::discover_browser_targets(
+            &self.config.server_detection,
+            std::env::var_os("PATH").as_deref(),
+        );
+        let available_server_browser_ids = server_browser_targets
+            .iter()
+            .map(|target| target.id.clone())
+            .collect::<Vec<_>>();
+        let reconciled_server_detection = self
+            .config
+            .server_detection
+            .clone()
+            .reconciled_available(&available_server_browser_ids);
+        if reconciled_server_detection != self.config.server_detection {
+            match self.apply_dev_servers(reconciled_server_detection) {
+                Ok(()) => eprintln!(
+                    "zentty-linux: dev-server-settings control=presentation-reconcile result=applied"
+                ),
+                Err(error) => eprintln!(
+                    "zentty-linux: dev-server-settings control=presentation-reconcile result=error detail={error}"
+                ),
+            }
+        }
         let weak = self.self_handle.borrow().clone();
         let appearance = self.config.appearance.clone();
         let appearance_weak = self.self_handle.borrow().clone();
@@ -1421,10 +1444,7 @@ impl ApplicationShell {
                     shell.borrow_mut().apply_open_with(config)
                 }),
                 server_detection: self.config.server_detection.clone(),
-                server_browser_targets: server_runtime::discover_browser_targets(
-                    &self.config.server_detection,
-                    std::env::var_os("PATH").as_deref(),
-                ),
+                server_browser_targets,
                 apply_dev_servers: Rc::new(move |config| {
                     let shell = dev_servers_weak.upgrade().ok_or_else(|| {
                         "Zentty window closed while applying Dev Servers settings".to_owned()
@@ -1569,6 +1589,11 @@ impl ApplicationShell {
             if let Some(source) = self.server_runtime.probe_source.take() {
                 source.remove();
             }
+            let removed = server_runtime::clear_passive_servers(self);
+            eprintln!(
+                "zentty-linux: dev-server-settings passive-sources-cleared={removed} explicit-remaining={}",
+                self.server_runtime.servers.len()
+            );
         } else if !was_enabled && self.config.server_detection.passive_detection_enabled {
             let weak = self.self_handle.borrow().clone();
             glib::idle_add_local_once(move || {
@@ -1578,6 +1603,7 @@ impl ApplicationShell {
                 }
             });
         }
+        self.render_sidebar();
         eprintln!(
             "zentty-linux: dev-server-settings result=persisted path={} passive={} preferred={}",
             path.display(),

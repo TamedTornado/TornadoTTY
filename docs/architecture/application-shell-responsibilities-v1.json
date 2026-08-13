@@ -2,7 +2,7 @@
   "schema_version": 1,
   "contract_id": "zentty-application-shell-responsibilities",
   "source": "crates/zentty-linux/src/application_shell.rs",
-  "source_sha256": "b6b8dcf37dd67202052e3a3fa97f9eac9009735c4efd311e1a56d1e0aad4b74e",
+  "source_sha256": "166eb6a80b2cadcd55c43d2b28c6ace938b25bc6e7f94c3e1f6a27e4077316f6",
   "owned_source_sha256": {
     "crates/zentty-linux/src/main.rs": "0ee821ed9fbd7377be7cd7f73e2802c381791366e5b6c0477b00947953e8a863",
     "crates/zentty-linux/src/application.rs": "7f84d0560932a6a346b5fb686146c55040055895b8e8cb3dcd76e1c4dd70aa04",
@@ -32,7 +32,7 @@
     "crates/zentty-linux/src/sidebar.rs": "34ca061940cbcb26f7547ed5bc33245ba9cf8a3538e9cf18a5c59dbc8b1beb00",
     "crates/zentty-linux/src/application_shell/global_search.rs": "98a1963830af8616b31da2558ae6f27c4461342ef3085f6ef9cda0863a1ddc7c",
     "crates/zentty-linux/src/application_shell/pane_runtime.rs": "ed5819a50277f8861200c73e5c80a74fdbf39ff0448ffd8b3ead37724a5f2363",
-    "crates/zentty-linux/src/application_shell/server_runtime.rs": "baaf54cc619296754e51b0122f74965fc1308c74c67cd600135f7aa668857df2",
+    "crates/zentty-linux/src/application_shell/server_runtime.rs": "49ed8f7000e0fc3223e518cf98b42f79b8a5562f8374df675938257785937268",
     "crates/zentty-linux/src/application_shell/task_runner_runtime.rs": "42fe7c62e7876b3f5132a381ac7f8e53f45e820d3d94bf9a519c8d6ed26deded",
     "crates/zentty-linux/src/docker_discovery.rs": "1836046bf3159c0a207ed999dc44a2ef8d9aa6276d79275031e2dbbd6cdd6c6d",
     "crates/zentty-linux/src/server_discovery.rs": "0d398d53a68bd34afa15208e4b2c6c5d3a9739502f1c7b86b40e615ec73d87a8",
@@ -411,9 +411,9 @@
     "clipboard_coordinator": ["copy_focused_selection"],
     "server_runtime_coordinator": [
       "discover", "discover_browser_targets", "install", "refresh_servers", "handle_ipc", "register_ipc_server", "clear_ipc_servers",
-      "open_ipc_server", "server_state_json", "ipc_failure", "now_ms", "refresh_registry_projection",
+      "open_ipc_server", "server_state_json", "ipc_failure", "now_ms", "refresh_registry_projection", "clear_passive_servers",
       "set_port_ignored", "request_probe", "probe", "apply_servers", "open_server", "open_server_in_browser", "select_browser", "launch_url", "launch_browser_plan",
-      "stop_server", "pane_probe_source", "stop_owned_server", "signal_process"
+      "stop_server", "pane_probe_source", "stop_owned_server", "signal_process", "normalized_catalog_name", "browser_catalog_names_deduplicate_case_and_desktop_spacing"
     ],
     "task_runner_coordinator": ["run_task", "launch_in_new_pane"],
     "project_context_coordinator": [

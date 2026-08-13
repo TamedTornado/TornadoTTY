@@ -112,7 +112,7 @@ EOF
 cat >"${config_home}/zentty/config.toml" <<EOF
 [server_detection]
 preferred_browser_id = "custom:preferred"
-enabled_browser_target_ids = ["custom:preferred", "custom:alternate"]
+enabled_browser_target_ids = ["custom:preferred", "custom:alternate", "custom:gone"]
 
 [[server_detection.custom_browsers]]
 id = "custom:preferred"
@@ -123,6 +123,11 @@ path = "${run_root}/bin/preferred-browser"
 id = "custom:alternate"
 name = "Alternate Browser"
 path = "${run_root}/bin/alternate-browser"
+
+[[server_detection.custom_browsers]]
+id = "custom:gone"
+name = "Unavailable Browser"
+path = "${run_root}/bin/browser-that-does-not-exist"
 EOF
 cat >"${run_root}/run-servers" <<EOF
 #!/usr/bin/env bash
@@ -236,6 +241,106 @@ if [[ -n "${container_id}" ]]; then
     grep -Fq "origin=http://localhost:${docker_port} source=Docker confidence=Cwd" "${log}" ||
         fail "real container-published web port was not attributed to the matching project"
 fi
+
+# Exercise the Dev Servers page through the real command palette and physical
+# GTK input. Presentation must reconcile the deliberately stale browser, and
+# disabling passive detection must remove scanner/Docker projections without
+# disturbing the authenticated Watch server or killing the real listener.
+shown_before="$(grep -Fc 'zentty-linux: command-palette=shown' "${log}" || true)"
+if [[ "${backend}" == x11 ]]; then
+    xdotool windowfocus --sync "${window_id}"
+    xdotool key --window "${window_id}" ctrl+shift+p
+else
+    wtype -M ctrl -M shift -k p -m shift -m ctrl
+fi
+for _ in $(seq 1 200); do
+    (( $(grep -Fc 'zentty-linux: command-palette=shown' "${log}" || true) > shown_before )) && break
+    sleep 0.05
+done
+(( $(grep -Fc 'zentty-linux: command-palette=shown' "${log}" || true) > shown_before )) ||
+    fail "physical shortcut did not present the Dev Servers command palette"
+if [[ "${backend}" == x11 ]]; then
+    xdotool type --window "${window_id}" --delay 10 'Dev Servers Settings'
+else
+    wtype -d 50 -- 'Dev Servers Settings'
+fi
+for _ in $(seq 1 200); do
+    grep -Fq 'command-palette=query value="Dev Servers Settings" results=1' "${log}" && break
+    sleep 0.05
+done
+grep -Fq 'command-palette=query value="Dev Servers Settings" results=1' "${log}" ||
+    fail "Dev Servers settings command was absent or ambiguous"
+if [[ "${backend}" == x11 ]]; then
+    xdotool key --window "${window_id}" Down Return
+else
+    wtype -k Down -k Return
+fi
+for _ in $(seq 1 200); do
+    grep -Fq 'zentty-linux: settings-section selected=dev-servers' "${log}" &&
+        grep -Fq 'zentty-linux: shortcut-settings active search-focused=' "${log}" && break
+    sleep 0.05
+done
+grep -Fq 'zentty-linux: settings-section selected=dev-servers' "${log}" ||
+    fail "Dev Servers settings did not deep-link through the shared shell"
+grep -Fq 'dev-server-settings control=presentation-reconcile result=applied' "${log}" ||
+    fail "Dev Servers settings did not reconcile its stale browser"
+if grep -Fq 'custom:gone' "${config_home}/zentty/config.toml"; then
+    fail "Dev Servers presentation retained an unavailable custom browser"
+fi
+
+settings_window_id=""
+if [[ "${backend}" == x11 ]]; then
+    for _ in $(seq 1 200); do
+        settings_window_id="$(xdotool search --onlyvisible --name '^Zentty Settings$' 2>/dev/null | tail -1 || true)"
+        [[ "${settings_window_id}" =~ ^[1-9][0-9]*$ ]] && break
+        sleep 0.05
+    done
+    [[ "${settings_window_id}" =~ ^[1-9][0-9]*$ ]] || fail "Dev Servers settings window did not appear"
+    xdotool windowfocus --sync "${settings_window_id}"
+    xdotool mousemove --sync --window "${settings_window_id}" 1011 182 click 1
+    for _ in $(seq 1 200); do
+        grep -Fq 'dev-server-settings control=passive-detection result=applied' "${log}" && break
+        sleep 0.05
+    done
+    grep -Fq 'dev-server-settings control=passive-detection result=applied' "${log}" ||
+        fail "physical settings input did not disable passive detection"
+    grep -Fq 'passive_detection_enabled = false' "${config_home}/zentty/config.toml" ||
+        fail "passive detection disable did not persist"
+    grep -Eq 'dev-server-settings passive-sources-cleared=[1-9][0-9]* explicit-remaining=[1-9][0-9]*' "${log}" ||
+        fail "passive detection disable did not preserve explicit server state"
+    kill -0 "${server_pid}" 2>/dev/null || fail "settings disabled passive detection by killing the real server"
+    xdotool mousemove --sync --window "${settings_window_id}" 1011 182 click 1
+    for _ in $(seq 1 200); do
+        [[ "$(grep -Fc 'dev-server-settings control=passive-detection result=applied' "${log}" || true)" -ge 2 ]] &&
+            grep -Fq 'passive_detection_enabled = true' "${config_home}/zentty/config.toml" && break
+        sleep 0.05
+    done
+    grep -Fq 'passive_detection_enabled = true' "${config_home}/zentty/config.toml" ||
+        fail "physical settings input did not re-enable passive detection"
+    for _ in $(seq 1 200); do
+        [[ "$(grep -Fc "origin=http://localhost:${port} source=Scanner confidence=Pid" "${log}" || true)" -ge 2 ]] && break
+        sleep 0.05
+    done
+    [[ "$(grep -Fc "origin=http://localhost:${port} source=Scanner confidence=Pid" "${log}" || true)" -ge 2 ]] ||
+        fail "re-enabled passive detection did not rediscover the real listener"
+else
+    # The nested Wayland harness provides a scoped virtual keyboard but no
+    # pointer injector. It owns real presentation/reconciliation and the
+    # existing server actions; physical switch mutation is owned by X11.
+    grep -Fq 'passive_detection_enabled = true' "${config_home}/zentty/config.toml" ||
+        fail "Wayland presentation changed passive detection without input"
+fi
+if [[ "${backend}" == x11 ]]; then
+    xdotool key Escape
+else
+    wtype -k Escape
+fi
+for _ in $(seq 1 100); do
+    grep -Fq 'shortcut-settings hidden parent-presented=true' "${log}" && break
+    sleep 0.05
+done
+grep -Fq 'shortcut-settings hidden parent-presented=true' "${log}" ||
+    fail "Dev Servers settings did not return focus to the product"
 
 if [[ "${backend}" == x11 ]]; then
     xdotool windowfocus --sync "${window_id}"
