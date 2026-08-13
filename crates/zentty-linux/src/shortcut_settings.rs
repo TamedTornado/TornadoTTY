@@ -78,6 +78,11 @@ pub(crate) struct SettingsContext {
     pub(crate) initial_section: SettingsSection,
 }
 
+pub(crate) struct SettingsWindow {
+    pub(crate) window: gtk::Window,
+    pub(crate) current_section: Rc<std::cell::Cell<SettingsSection>>,
+}
+
 #[allow(clippy::too_many_lines)] // Declarative construction of one focused settings view.
 pub(crate) fn show(
     parent: &gtk::Window,
@@ -85,7 +90,7 @@ pub(crate) fn show(
     apply: ApplyBindings,
     settings_context: SettingsContext,
     restore_parent_focus: &Rc<dyn Fn()>,
-) -> gtk::Window {
+) -> SettingsWindow {
     let initial_section = settings_context.initial_section;
     install_styles();
     crate::appearance_settings::install_styles();
@@ -349,7 +354,10 @@ pub(crate) fn show(
         eprintln!("zentty-linux: shortcut-settings hidden parent-presented=true");
         glib::Propagation::Stop
     });
-    window
+    SettingsWindow {
+        window,
+        current_section: settings.current_section,
+    }
 }
 
 fn install_window_shortcuts(

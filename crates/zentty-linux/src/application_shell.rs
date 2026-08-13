@@ -160,7 +160,7 @@ pub(crate) struct ApplicationShell {
     action_router: Option<ActionRouter>,
     shortcut_manager: Rc<RefCell<zentty_core::ShortcutManager>>,
     shortcut_controller: Option<gtk::EventControllerKey>,
-    shortcut_settings_window: Option<gtk::Window>,
+    shortcut_settings_window: Option<crate::shortcut_settings::SettingsWindow>,
     agent_events: AgentEventCoordinator,
     tmux_compat: crate::tmux_compat::TmuxCompatProduct,
     new_window_handler: Option<Rc<dyn Fn()>>,
@@ -424,6 +424,15 @@ impl ApplicationShell {
         config: &AppConfig,
         shortcut_manager: zentty_core::ShortcutManager,
     ) {
+        let settings_refresh = settings_refresh_section(
+            self.config != *config,
+            self.shortcut_settings_window
+                .as_ref()
+                .is_some_and(|settings| settings.window.is_visible()),
+            self.shortcut_settings_window
+                .as_ref()
+                .map(|settings| settings.current_section.get()),
+        );
         let appearance_changed = self.config.appearance != config.appearance;
         let passive_was_enabled = self.config.server_detection.passive_detection_enabled;
         self.config.clone_from(config);
@@ -464,6 +473,13 @@ impl ApplicationShell {
         self.refresh_pane_presentation();
         if appearance_changed {
             self.reload_ghostty_config_with_focus(false);
+        }
+        if let Some(section) = settings_refresh {
+            eprintln!(
+                "zentty-linux: settings-live-refresh section={}",
+                section.id()
+            );
+            self.request_show_settings(section);
         }
         eprintln!(
             "zentty-linux: config-live-projected window={} automatic-clean-copy={} confirm-close-window={} confirm-quit={}",
@@ -1377,11 +1393,11 @@ impl ApplicationShell {
 
     #[allow(clippy::too_many_lines)] // Coordinates construction of the typed settings pages.
     fn request_show_settings(&mut self, section: crate::settings_navigation::SettingsSection) {
-        if let Some(window) = self.shortcut_settings_window.take() {
+        if let Some(settings) = self.shortcut_settings_window.take() {
             // Settings pages own editable projections. Rebuild on each
             // presentation so a hidden page cannot overwrite runtime changes.
-            window.set_child(None::<&gtk::Widget>);
-            window.set_visible(false);
+            settings.window.set_child(None::<&gtk::Widget>);
+            settings.window.set_visible(false);
             eprintln!("zentty-linux: shortcut-settings refreshed-authoritative-state=true");
         }
         match crate::config_store::ConfigStore::load_default() {
@@ -1460,7 +1476,7 @@ impl ApplicationShell {
                 shell.borrow().focus_selected_surface_unchecked();
             }
         });
-        let window = crate::shortcut_settings::show(
+        let settings = crate::shortcut_settings::show(
             &self.window,
             Rc::clone(&self.shortcut_manager),
             Rc::new(move |bindings| {
@@ -1555,7 +1571,7 @@ impl ApplicationShell {
             },
             &restore_parent_focus,
         );
-        self.shortcut_settings_window = Some(window);
+        self.shortcut_settings_window = Some(settings);
     }
 
     fn apply_general(&mut self, general: crate::general_settings::GeneralSettings) {
@@ -3915,7 +3931,7 @@ impl ApplicationShell {
             let settings_visible = shell
                 .shortcut_settings_window
                 .as_ref()
-                .is_some_and(gtk::prelude::WidgetExt::is_visible);
+                .is_some_and(|settings| settings.window.is_visible());
             if !focus_follow_should_apply(
                 generation,
                 shell.focus_follow_generation,
@@ -4008,6 +4024,16 @@ fn focus_follow_should_apply(
     transient_ui_active: bool,
 ) -> bool {
     requested_generation == current_generation && window_active && !transient_ui_active
+}
+
+fn settings_refresh_section(
+    config_changed: bool,
+    settings_visible: bool,
+    current_section: Option<crate::settings_navigation::SettingsSection>,
+) -> Option<crate::settings_navigation::SettingsSection> {
+    (config_changed && settings_visible)
+        .then_some(current_section)
+        .flatten()
 }
 
 fn initialize_shell_coordinators(shell: &Rc<RefCell<ApplicationShell>>) {
@@ -4573,7 +4599,8 @@ mod allocation_tests {
     use super::{
         TerminalGesture, bounded_pane_viewport_height, codex_terminal_gesture,
         default_window_recipe, focus_follow_should_apply, is_close_window_shortcut,
-        model_heights_to_pixels, snapshot_window_frame, validated_window_size,
+        model_heights_to_pixels, settings_refresh_section, snapshot_window_frame,
+        validated_window_size,
     };
     use gtk::gdk;
     use zentty_core::WindowFrame;
@@ -4584,6 +4611,25 @@ mod allocation_tests {
         assert!(!focus_follow_should_apply(3, 4, true, false));
         assert!(!focus_follow_should_apply(4, 4, false, false));
         assert!(!focus_follow_should_apply(4, 4, true, true));
+    }
+
+    #[test]
+    fn visible_settings_refresh_only_for_a_changed_authoritative_config() {
+        use crate::settings_navigation::SettingsSection;
+
+        assert_eq!(
+            settings_refresh_section(true, true, Some(SettingsSection::DevServers)),
+            Some(SettingsSection::DevServers)
+        );
+        assert_eq!(
+            settings_refresh_section(false, true, Some(SettingsSection::DevServers)),
+            None
+        );
+        assert_eq!(
+            settings_refresh_section(true, false, Some(SettingsSection::DevServers)),
+            None
+        );
+        assert_eq!(settings_refresh_section(true, true, None), None);
     }
 
     #[test]

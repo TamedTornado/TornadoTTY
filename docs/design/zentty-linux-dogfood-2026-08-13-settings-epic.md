@@ -745,3 +745,87 @@ authoritative execution plan is
   implemented-local passes, while release and full Linux qualification remain
   NOT_PASSED. Debug Valgrind remains **PASS with reviewed suppressions** and
   ReleaseSafe Valgrind remains XFAIL.
+
+## GH-36 live settings-editor convergence slice
+
+- **Pre-implementation audit:** live reload updates every terminal window's
+  runtime model, but an already visible settings window retains the editable
+  widgets constructed from its older snapshot. Re-presenting settings rebuilds
+  it, which prevents a hidden stale page from writing later, but the visible
+  page can still show and submit stale state after an external edit.
+- **Contract:** when an accepted external publication changes a shell's config,
+  any visible settings editor owned by that shell is rebuilt from the accepted
+  authority while preserving its currently selected section. A hidden editor
+  stays hidden. A product self-write whose initiating shell already equals the
+  accepted document must not rebuild its editor or cause a reload loop. Other
+  windows still receive and visibly converge on that product write.
+- **Test-first boundary:** keep one settings implementation and one config
+  authority. Expose the settings shell's selected section rather than adding a
+  second navigation model. Unit tests pin the refresh decision, and the real
+  X11/Wayland reload journey must keep a settings window open across an external
+  atomic replacement, observe reconstructed controls from the new state, retain
+  the selected section, preserve both PTYs, and prove a later product write
+  produces no repeated publication.
+- The first expanded X11 run reached and passed the new external-refresh and
+  self-write checks, then exposed an older journey assumption: the later
+  coalescing assertion waited for an absolute total of two projection receipts.
+  Once the earlier scenario legitimately added projections, that wait returned
+  before the writes under test had published. The journey now snapshots the
+  prior receipt count and waits for exactly two additional window projections;
+  no product outcome was converted into a pass.
+- The next X11 run progressed past coalescing and exposed a second historic
+  assumption: after asking the shared input helper to focus the first mapped
+  product toplevel, the journey hard-coded that X11 would select `pane-1` while
+  Wayland would select `pane-window-2`. X11 window enumeration changed after
+  rebuilding the transient settings window, so the real key event reached the
+  other still-live PTY. The assertion now accepts the sentinel from either of
+  the two exact retained pane IDs; child PID equality is still asserted before
+  and after publication, so this removes a window-order guess rather than
+  weakening terminal-liveness coverage.
+- The first Wayland run showed a genuine compositor-ordering gap in the new
+  scenario: terminal readiness preceded activation of the newly created second
+  toplevel, so the palette opened in one window and compositor activation moved
+  keyboard focus to the other midway through physical text entry. The journey
+  now treats the existing `active-window=window-2` receipt as the Wayland
+  activation barrier before opening settings. Environmental focus absence is
+  still a failure, not a pass or desktop assumption.
+- The activation barrier fixed initial entry. The next Wayland run proved the
+  rebuilt settings page had the accepted Beta model, but its immediate Alt+S
+  arrived before the compositor activated the replacement toplevel and was
+  correctly reported by the main window as an unbound shortcut. The journey now
+  also waits for one additional settings-activation receipt after reconstruction
+  before exercising the product self-write. The X11 path continues to focus the
+  exact newly mapped settings window by ID.
+- The first implementation of that second barrier sampled the prior activation
+  count before the initial settings window had itself emitted an activation
+  receipt. It could therefore mistake the delayed initial receipt for the
+  rebuilt window's receipt. Two repeated controlled runs reproduced the exact
+  `option+s` delivery to the main window. The journey now requires initial
+  settings activation before it snapshots the count, making the later
+  increment unambiguous.
+- The complete qualification rerun then failed both expanded cells and was not
+  accepted. X11 exposed an earlier race: opening settings performs a legitimate
+  Open With availability reconciliation and config self-write; the external
+  Beta replacement could overlap that write before authority had published it.
+  The journey now requires that settings-presentation write to complete one
+  authoritative publication before beginning its external-write transaction.
+  Wayland also showed that an exact `pgrep -P` child-list comparison included a
+  short-lived non-PTY helper started by background project discovery. The test
+  now records the original two real PTY child PIDs and proves each remains alive
+  with the product as its parent; it no longer treats an unrelated additional
+  helper as PTY replacement. Later exact PTY checks remain in the same journey.
+- After both repaired config cells passed against the exact qualified binary,
+  the next complete qualification receipt passed them but failed the unrelated
+  multi-window X11 cell while waiting for restored active-window focus. No code
+  or exemption was applied: the same exact qualified cell was rerun alone in a
+  new controlled X11 session and passed its real two-window transfer, clean and
+  SIGKILL restore, size restore, and non-final-close scenarios. The failed full
+  receipt remains rejected; a fresh complete qualification rerun is required.
+- The fresh complete rerun passed every presently executable support and matrix
+  cell in **520,560 ms**, including both expanded config-live-reload journeys
+  and the unchanged multi-window X11 journey. Totals remain **PASS=125,
+  FAIL=0, BLOCKED=7, XFAIL=1, NOT_IMPLEMENTED=23**. Implemented-local passes;
+  release and full Linux qualification remain NOT_PASSED. Debug Valgrind is
+  **PASS with reviewed suppressions**; ReleaseSafe Valgrind remains XFAIL.
+  Focused refresh mutation tested three mutants: **2 caught, 1 unviable, 0
+  missed**.

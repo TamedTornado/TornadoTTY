@@ -2,7 +2,7 @@
   "schema_version": 1,
   "contract_id": "zentty-application-shell-responsibilities",
   "source": "crates/zentty-linux/src/application_shell.rs",
-  "source_sha256": "17d7fd367de794d9f1a568a3b2511405278311c01e468a8271f31d58184a8a0f",
+  "source_sha256": "ffedaa1f03c9aa1246eee880596592ac47bcc9f43abcc503593e5fcf60be6d21",
   "owned_source_sha256": {
     "crates/zentty-linux/src/main.rs": "f90db7599da006746011b86233348f20e959dfdaab7f809261fa81e16dd850ac",
     "crates/zentty-linux/src/application.rs": "2fb379bac4de8f0e13328451e69332c92479e405dacc416afef3ec7f5a267352",
@@ -14,9 +14,9 @@
     "crates/zentty-linux/src/application_shell/action_router.rs": "d8cfda522361146c455f6e22f417a1dcc45b8a2e7c7319ce1b779bcf178fe66d",
     "crates/zentty-linux/src/application_shell/shortcut_registry.rs": "c64c3c294fd6f53466990b26fd24f9f247b7c1125794e873d81f6f8df9b44aa8",
     "crates/zentty-linux/src/application_shell/shortcut_runtime.rs": "8b5b0230608324360ee62045c7eb726fc18cae30a5fdeaf86259286610a41d60",
-    "crates/zentty-linux/src/shortcut_settings.rs": "24e5a3ddbea7834b56270b8eab86c67141790d2751d9971674c6d67c70413723",
+    "crates/zentty-linux/src/shortcut_settings.rs": "115673a52d0b706ab12b5ff18b66a4a595c678bc8cac41fae789cfac51ab842f",
     "crates/zentty-linux/src/appearance_settings.rs": "b870f3168b99d3745d64fffc188f05a01512cf0612dd3b45cd8b6a263e9f3af9",
-    "crates/zentty-linux/src/settings_shell.rs": "3d619a02e57fddee48ab457393e410511784dc9b287cd193caa89171dc3fda26",
+    "crates/zentty-linux/src/settings_shell.rs": "e03fc6e5114160b7c18df5195086ba5873039674724a03d4172e7f15bbbc3549",
     "crates/zentty-linux/src/settings_navigation.rs": "4c58ea6a0347a60f9f28c5bd790a02c6c3bb94765df587f4b2340e31bbbf2cd4",
     "crates/zentty-linux/src/general_settings.rs": "24bf50a74e7a18730d301431c42d229f1923cbe97422a49a0fe77f421e36aa44",
     "crates/zentty-linux/src/theme_catalog.rs": "e944b9378d77d20c68b7020b71275c4482490819575cc657d23a00d7a22af6d4",
@@ -344,7 +344,7 @@
     },
     {
       "owner": "settings_coordinator",
-      "methods": ["apply_appearance", "apply_general", "apply_notifications", "apply_updates", "apply_workspace_panes", "apply_open_with", "apply_dev_servers", "apply_agents", "validate_reloaded_config", "prepare_reloaded_appearance", "apply_reloaded_config", "confirm_action", "reload_ghostty_config_with_focus", "request_show_settings"]
+      "methods": ["apply_appearance", "apply_general", "apply_notifications", "apply_updates", "apply_workspace_panes", "apply_open_with", "apply_dev_servers", "apply_agents", "validate_reloaded_config", "prepare_reloaded_appearance", "apply_reloaded_config", "settings_refresh_section", "confirm_action", "reload_ghostty_config_with_focus", "request_show_settings"]
     },
     {
       "owner": "existing_ui_projection",

@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use gtk::prelude::*;
@@ -7,6 +7,7 @@ use crate::settings_navigation::{SettingsHistory, SettingsSection};
 
 struct State {
     section: SettingsSection,
+    published_section: Rc<Cell<SettingsSection>>,
     history: SettingsHistory,
     stack: gtk::Stack,
     buttons: Vec<(SettingsSection, gtk::ToggleButton)>,
@@ -18,6 +19,7 @@ pub(crate) struct SettingsShell {
     pub(crate) widget: gtk::Widget,
     pub(crate) actions: gtk::gio::SimpleActionGroup,
     pub(crate) initial_focus: gtk::Widget,
+    pub(crate) current_section: Rc<Cell<SettingsSection>>,
 }
 
 #[derive(Clone, Copy)]
@@ -56,8 +58,10 @@ pub(crate) fn build(
         back,
         forward,
     } = build_widgets(pages);
+    let current_section = Rc::new(Cell::new(initial));
     let state = Rc::new(RefCell::new(State {
         section: initial,
+        published_section: Rc::clone(&current_section),
         history: SettingsHistory::new(initial),
         stack,
         buttons,
@@ -78,6 +82,7 @@ pub(crate) fn build(
         widget: root.upcast(),
         actions,
         initial_focus: section_search.upcast(),
+        current_section,
     }
 }
 
@@ -286,6 +291,7 @@ fn apply_selection(state: &Rc<RefCell<State>>, section: SettingsSection, record:
             state.history.record(section);
         }
         state.section = section;
+        state.published_section.set(section);
         (
             state.stack.clone(),
             state.buttons.clone(),

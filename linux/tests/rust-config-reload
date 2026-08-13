@@ -85,6 +85,10 @@ for _ in {1..200}; do
     sleep 0.05
 done
 [[ "${#children_before[@]}" -eq 2 ]] || fail "two windows did not own two PTY children"
+if [[ "${backend}" == wayland ]]; then
+    zentty_product_wait_for_log "${log}" 'zentty-linux: active-window=window-2' \
+        "second Wayland window did not receive compositor activation" || fail "Wayland activation missing"
+fi
 
 replace_config() {
     local clean_copy="$1"
@@ -113,13 +117,125 @@ cancel_confirmation() {
     fi
 }
 
+type_product_text() {
+    if [[ "${backend}" == x11 ]]; then
+        xdotool type --delay 5 -- "$1"
+    else
+        wtype -d 35 -- "$1"
+    fi
+}
+
+# Keep a real settings editor open while an external atomic replacement changes
+# its model. The accepted publication must reconstruct the visible editor from
+# authority, retain its selected section, and leave both PTYs intact. A product
+# write from that reconstructed editor must then publish once without rebuilding
+# the initiating editor or entering a watcher loop.
+settings_open_reload_before="$(grep -Fc 'zentty-linux: config-reload result=applied' "${log}" || true)"
+zentty_product_prepare_input "${backend}" "${log}" || fail "could not focus settings reload window"
+zentty_product_ctrl_shift_key "${backend}" p
+type_product_text 'Updates & Privacy Settings'
+zentty_product_wait_for_log "${log}" \
+    'command-palette=query value="Updates & Privacy Settings" results=1' \
+    "settings route did not resolve uniquely" || fail "settings route missing"
+zentty_product_key "${backend}" Down
+zentty_product_key "${backend}" Return
+zentty_product_wait_for_log "${log}" \
+    'updates-privacy-settings loaded channel=stable error-reporting-available=false' \
+    "visible settings did not load the initial authority" || fail "initial settings state missing"
+zentty_product_wait_for_log "${log}" \
+    'zentty-linux: shortcut-settings active search-focused=' \
+    "initial settings did not receive compositor activation" || fail "initial settings activation missing"
+zentty_product_wait_for_log_count "${log}" 'zentty-linux: config-reload result=applied' \
+    "$((settings_open_reload_before + 1))" \
+    "settings presentation reconciliation did not reach config authority" || fail "settings reconciliation barrier missing"
+settings_window=""
+if [[ "${backend}" == x11 ]]; then
+    for _ in {1..100}; do
+        settings_window="$(xdotool search --onlyvisible --name '^Zentty Settings$' 2>/dev/null | tail -1 || true)"
+        [[ "${settings_window}" =~ ^[1-9][0-9]*$ ]] && break
+        sleep 0.02
+    done
+    [[ "${settings_window}" =~ ^[1-9][0-9]*$ ]] || fail "settings window did not appear"
+fi
+settings_refresh_before="$(grep -Fc 'zentty-linux: settings-live-refresh section=' "${log}" || true)"
+settings_active_before="$(grep -Fc 'zentty-linux: shortcut-settings active search-focused=' "${log}" || true)"
+cat >"${config_file}.settings-external" <<'EOF'
+[confirmations]
+confirm_before_closing_window = false
+confirm_before_quitting = false
+
+[clipboard]
+always_clean_copies = false
+
+[updates]
+channel = "beta"
+
+[future_plugin]
+operator_key = "preserved"
+EOF
+mv -f -- "${config_file}.settings-external" "${config_file}"
+zentty_product_wait_for_log_count "${log}" \
+    'zentty-linux: settings-live-refresh section=updates-privacy' \
+    "$((settings_refresh_before + 1))" \
+    "visible settings editor did not refresh in place" || fail "visible settings refresh missing"
+zentty_product_wait_for_log "${log}" \
+    'updates-privacy-settings loaded channel=beta error-reporting-available=false' \
+    "refreshed settings did not render the accepted external value" || fail "refreshed settings state stale"
+if [[ "${backend}" == x11 ]]; then
+    settings_window=""
+    for _ in {1..100}; do
+        settings_window="$(xdotool search --onlyvisible --name '^Zentty Settings$' 2>/dev/null | tail -1 || true)"
+        [[ "${settings_window}" =~ ^[1-9][0-9]*$ ]] && break
+        sleep 0.02
+    done
+    [[ "${settings_window}" =~ ^[1-9][0-9]*$ ]] || fail "refreshed settings window did not appear"
+else
+    zentty_product_wait_for_log_count "${log}" \
+        'zentty-linux: shortcut-settings active search-focused=' \
+        "$((settings_active_before + 1))" \
+        "refreshed settings did not receive Wayland activation" || fail "refreshed settings activation missing"
+fi
+for child in "${children_before[@]}"; do
+    [[ "$(ps -o ppid= -p "${child}" 2>/dev/null | tr -d ' ')" == "${product_pid}" ]] ||
+        fail "visible settings refresh replaced real PTY child ${child}"
+done
+
+applied_before_self_write="$(grep -Fc 'zentty-linux: config-reload result=applied' "${log}" || true)"
+if [[ "${backend}" == x11 ]]; then
+    xdotool windowfocus --sync "${settings_window}"
+    xdotool key alt+s
+else
+    wtype -M alt -k s -m alt
+fi
+for _ in {1..100}; do
+    grep -Fq 'channel = "stable"' "${config_file}" && break
+    sleep 0.05
+done
+grep -Fq 'channel = "stable"' "${config_file}" || fail "settings self-write did not persist"
+zentty_product_wait_for_log_count "${log}" 'zentty-linux: config-reload result=applied' \
+    "$((applied_before_self_write + 1))" \
+    "settings self-write was not published to the other window" || fail "self-write publication missing"
+sleep 0.5
+[[ "$(grep -Fc 'zentty-linux: config-reload result=applied' "${log}" || true)" -eq "$((applied_before_self_write + 1))" ]] ||
+    fail "settings self-write entered a reload loop"
+[[ "$(grep -Fc 'zentty-linux: settings-live-refresh section=' "${log}" || true)" -eq "$((settings_refresh_before + 1))" ]] ||
+    fail "initiating settings editor rebuilt for its own write"
+if [[ "${backend}" == x11 ]]; then
+    xdotool key Escape
+else
+    wtype -k Escape
+fi
+zentty_product_wait_for_log "${log}" 'shortcut-settings hidden parent-presented=true' \
+    "settings did not return focus to its product window" || fail "settings close missing"
+
 # Two replace-by-rename writes inside the quiet period must publish only the
 # final valid state to both real windows.
 applied_before="$(grep -Fc 'zentty-linux: config-reload result=applied' "${log}" || true)"
+projected_before="$(grep -Fc 'zentty-linux: config-live-projected window=' "${log}" || true)"
 replace_config true false
 replace_config true true
 zentty_product_wait_for_log_count "${log}" \
-    'zentty-linux: config-live-projected window=' 2 \
+    'zentty-linux: config-live-projected window=' "$((projected_before + 2))" \
     "final external config did not reach both windows" || fail "multi-window projection missing"
 [[ "$(grep -Fc 'zentty-linux: config-reload result=applied' "${log}" || true)" -eq "$((applied_before + 1))" ]] ||
     fail "rapid external writes were not coalesced to one publication"
@@ -141,10 +257,12 @@ zentty_product_wait_for_log "${log}" 'zentty-linux: confirmation accepted=false'
 zentty_product_prepare_input "${backend}" "${log}" || fail "could not restore terminal focus"
 zentty_product_type "${backend}" "after-valid-config-reload"
 zentty_product_key "${backend}" Return
-sentinel_pane="pane-window-2"
-[[ "${backend}" == x11 ]] && sentinel_pane="pane-1"
-zentty_product_wait_for_log "${log}" "zentty-linux: title-pane=${sentinel_pane} value=after-valid-config-reload" \
-    "live PTY stopped accepting physical input after reload" || fail "post-reload sentinel missing"
+for _ in {1..200}; do
+    grep -Eq 'zentty-linux: title-pane=(pane-1|pane-window-2) value=after-valid-config-reload$' "${log}" && break
+    sleep 0.05
+done
+grep -Eq 'zentty-linux: title-pane=(pane-1|pane-window-2) value=after-valid-config-reload$' "${log}" ||
+    fail "live PTYs stopped accepting physical input after reload"
 
 # Valid known sections publish independently while an invalid known section
 # retains only its last-good value. A later fully valid edit must converge.
