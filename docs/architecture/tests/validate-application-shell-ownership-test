@@ -7,6 +7,7 @@ contract="${repo_root}/docs/architecture/application-shell-responsibilities-v1.j
 main_file="${repo_root}/crates/zentty-linux/src/main.rs"
 application_file="${repo_root}/crates/zentty-linux/src/application.rs"
 agent_runtime_file="${repo_root}/crates/zentty-linux/src/agent_runtime.rs"
+agents_settings_file="${repo_root}/crates/zentty-linux/src/agents_settings.rs"
 codex_enrichment_file="${repo_root}/crates/zentty-linux/src/codex_enrichment.rs"
 source_file="${repo_root}/crates/zentty-linux/src/application_shell.rs"
 agent_events_file="${repo_root}/crates/zentty-linux/src/application_shell/agent_events.rs"
@@ -95,6 +96,11 @@ sed '/runtime: Rc<RefCell<AgentRuntime>>,/a\    shadow_receiver: std::sync::mpsc
     "${agent_events_file}" >"${temp_dir}/shadow-agent-event-queue.rs"
 expect_failure shadow-agent-event-queue "agent events source hash" \
     "ZENTTY_AGENT_EVENTS_SOURCE=${temp_dir}/shadow-agent-event-queue.rs"
+
+sed '/struct State {/a\    shadow_apply: Option<ApplyAgents>,' \
+    "${agents_settings_file}" >"${temp_dir}/shadow-agents-settings.rs"
+expect_failure shadow-agents-settings-owner "Agents settings source hash" \
+    "ZENTTY_AGENTS_SETTINGS_SOURCE=${temp_dir}/shadow-agents-settings.rs"
 
 jq '(.owned_module_functions.persistence_coordinator) |= map(select(. != "save_clean_exit"))' \
     "${contract}" >"${temp_dir}/missing-persistence-function.json"

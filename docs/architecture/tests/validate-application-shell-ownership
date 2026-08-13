@@ -15,6 +15,7 @@ action_router_file="${ZENTTY_ACTION_ROUTER_SOURCE:-${repo_root}/crates/zentty-li
 shortcut_registry_file="${ZENTTY_SHORTCUT_REGISTRY_SOURCE:-${repo_root}/crates/zentty-linux/src/application_shell/shortcut_registry.rs}"
 shortcut_runtime_file="${ZENTTY_SHORTCUT_RUNTIME_SOURCE:-${repo_root}/crates/zentty-linux/src/application_shell/shortcut_runtime.rs}"
 shortcut_settings_file="${ZENTTY_SHORTCUT_SETTINGS_SOURCE:-${repo_root}/crates/zentty-linux/src/shortcut_settings.rs}"
+agents_settings_file="${ZENTTY_AGENTS_SETTINGS_SOURCE:-${repo_root}/crates/zentty-linux/src/agents_settings.rs}"
 appearance_settings_file="${ZENTTY_APPEARANCE_SETTINGS_SOURCE:-${repo_root}/crates/zentty-linux/src/appearance_settings.rs}"
 settings_shell_file="${ZENTTY_SETTINGS_SHELL_SOURCE:-${repo_root}/crates/zentty-linux/src/settings_shell.rs}"
 settings_navigation_file="${ZENTTY_SETTINGS_NAVIGATION_SOURCE:-${repo_root}/crates/zentty-linux/src/settings_navigation.rs}"
@@ -149,6 +150,7 @@ action_router_sha256="$(sha256sum "${action_router_file}" | awk '{print $1}')"
 shortcut_registry_sha256="$(sha256sum "${shortcut_registry_file}" | awk '{print $1}')"
 shortcut_runtime_sha256="$(sha256sum "${shortcut_runtime_file}" | awk '{print $1}')"
 shortcut_settings_sha256="$(sha256sum "${shortcut_settings_file}" | awk '{print $1}')"
+agents_settings_sha256="$(sha256sum "${agents_settings_file}" | awk '{print $1}')"
 appearance_settings_sha256="$(sha256sum "${appearance_settings_file}" | awk '{print $1}')"
 settings_shell_sha256="$(sha256sum "${settings_shell_file}" | awk '{print $1}')"
 settings_navigation_sha256="$(sha256sum "${settings_navigation_file}" | awk '{print $1}')"
@@ -209,6 +211,9 @@ jq -e --arg shortcut_runtime_sha256 "${shortcut_runtime_sha256}" \
 jq -e --arg shortcut_settings_sha256 "${shortcut_settings_sha256}" \
     '.owned_source_sha256["crates/zentty-linux/src/shortcut_settings.rs"] == $shortcut_settings_sha256' \
     "${contract}" >/dev/null || fail "shortcut settings source hash differs from its ownership contract"
+jq -e --arg agents_settings_sha256 "${agents_settings_sha256}" \
+    '.owned_source_sha256["crates/zentty-linux/src/agents_settings.rs"] == $agents_settings_sha256' \
+    "${contract}" >/dev/null || fail "Agents settings source hash differs from its ownership contract"
 jq -e --arg appearance_settings_sha256 "${appearance_settings_sha256}" \
     '.owned_source_sha256["crates/zentty-linux/src/appearance_settings.rs"] == $appearance_settings_sha256' \
     "${contract}" >/dev/null || fail "appearance settings source hash differs from its ownership contract"
@@ -553,6 +558,7 @@ jq -e --arg main_sha256 "${main_sha256}" \
     --arg shortcut_registry_sha256 "${shortcut_registry_sha256}" \
     --arg shortcut_runtime_sha256 "${shortcut_runtime_sha256}" \
     --arg shortcut_settings_sha256 "${shortcut_settings_sha256}" \
+    --arg agents_settings_sha256 "${agents_settings_sha256}" \
     --arg appearance_settings_sha256 "${appearance_settings_sha256}" \
     --arg settings_shell_sha256 "${settings_shell_sha256}" \
     --arg settings_navigation_sha256 "${settings_navigation_sha256}" \
@@ -599,6 +605,7 @@ jq -e --arg main_sha256 "${main_sha256}" \
         "crates/zentty-linux/src/application_shell/shortcut_registry.rs":$shortcut_registry_sha256,
         "crates/zentty-linux/src/application_shell/shortcut_runtime.rs":$shortcut_runtime_sha256,
         "crates/zentty-linux/src/shortcut_settings.rs":$shortcut_settings_sha256,
+        "crates/zentty-linux/src/agents_settings.rs":$agents_settings_sha256,
         "crates/zentty-linux/src/appearance_settings.rs":$appearance_settings_sha256,
         "crates/zentty-linux/src/settings_shell.rs":$settings_shell_sha256,
         "crates/zentty-linux/src/settings_navigation.rs":$settings_navigation_sha256,

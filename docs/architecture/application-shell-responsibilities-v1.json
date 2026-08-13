@@ -2,19 +2,20 @@
   "schema_version": 1,
   "contract_id": "zentty-application-shell-responsibilities",
   "source": "crates/zentty-linux/src/application_shell.rs",
-  "source_sha256": "f48923c3cd898d1dfd020c374f1399ac9fa4c9c650503a1d4541b666b1dbc903",
+  "source_sha256": "88e30142d5ba58830255652270b8f1a2de07440b968f730914e01ac01a3339cd",
   "owned_source_sha256": {
     "crates/zentty-linux/src/main.rs": "c8a2552f69613c505ed513c04ad540a22a9e42f20987f0e651b7ece0ad2793ce",
     "crates/zentty-linux/src/application.rs": "2fb379bac4de8f0e13328451e69332c92479e405dacc416afef3ec7f5a267352",
     "crates/zentty-linux/src/config_store.rs": "d63ce1eab6ec989b199630f16fb6fa8ea88171a2e1cb2cb6cc770e9793dc89fb",
     "crates/zentty-linux/src/config_reload.rs": "c70d03ea9e1662c78945fef86e5de7b8787247cdda72e37b8663a99bc26604b1",
     "crates/zentty-linux/src/window_set.rs": "501d595889c11a41a4261ef8282465d76dd9ed8ccd1d004406b558579b0bf58e",
-    "crates/zentty-linux/src/agent_runtime.rs": "e896b4827e1273a67e58bacbf364e5244db856c5466c373d240c5b69d1f0ee5a",
+    "crates/zentty-linux/src/agent_runtime.rs": "d148ec2efa71d5aef76a0c0853bb8063e4daab8778cf4c8644fc155520a6db13",
     "crates/zentty-linux/src/codex_enrichment.rs": "fe87631c75c04b63962b7f89d311a778a25af8f27a1dcb4d5950b3efcbaa476e",
     "crates/zentty-linux/src/application_shell/action_router.rs": "d8cfda522361146c455f6e22f417a1dcc45b8a2e7c7319ce1b779bcf178fe66d",
     "crates/zentty-linux/src/application_shell/shortcut_registry.rs": "c64c3c294fd6f53466990b26fd24f9f247b7c1125794e873d81f6f8df9b44aa8",
     "crates/zentty-linux/src/application_shell/shortcut_runtime.rs": "8b5b0230608324360ee62045c7eb726fc18cae30a5fdeaf86259286610a41d60",
-    "crates/zentty-linux/src/shortcut_settings.rs": "da2de4b5df3bd4096b0bdd6bab72323793f5dd349db2b0acaf0d14bbb1232198",
+    "crates/zentty-linux/src/shortcut_settings.rs": "7213f3df95f578e01518f362c91ea68486cd33849cd4bbf11213d54b8cf3cc56",
+    "crates/zentty-linux/src/agents_settings.rs": "855c759c815e5a21d99630e65f783ee707b8cf44b2a777be659612f65aa4d3a1",
     "crates/zentty-linux/src/appearance_settings.rs": "b870f3168b99d3745d64fffc188f05a01512cf0612dd3b45cd8b6a263e9f3af9",
     "crates/zentty-linux/src/settings_shell.rs": "e03fc6e5114160b7c18df5195086ba5873039674724a03d4172e7f15bbbc3549",
     "crates/zentty-linux/src/settings_navigation.rs": "4c58ea6a0347a60f9f28c5bd790a02c6c3bb94765df587f4b2340e31bbbf2cd4",
@@ -25,7 +26,7 @@
     "crates/zentty-linux/src/custom_sound_store.rs": "e33dc17e04b92f0af4e60f82937b27748641caf720727696d71b8b60d8a8be14",
     "crates/zentty-linux/src/updates_privacy_settings.rs": "c2deeb928c9eb65a48ad3b797c9afe0f983f4b980864bd08cf6587484d3f206a",
     "crates/zentty-linux/src/application_shell/clipboard_actions.rs": "1502a0353bc3e0d645d6c6bd81aae1ed1306f312838f92a635944d402cd441b0",
-    "crates/zentty-linux/src/application_shell/agent_events.rs": "87c77419231faff7c069fb0616531551191e285d8ddb75895a12b96356cc2696",
+    "crates/zentty-linux/src/application_shell/agent_events.rs": "75fbc0d4130763e9a6e7e333200e19c00c2365474566e3b42c9c4ea65769b9f7",
     "crates/zentty-linux/src/application_shell/project_context_runtime.rs": "a6168d658c98ab6407f3d0f1f1ab624d3e3f91e10de39fd4b5b28dd22ce19e7f",
     "crates/zentty-linux/src/application_shell/open_with_runtime.rs": "09e6f980f3d2d3160b9bd4688af4dee003659047edfd3e7945a2f67a96e7a97e",
     "crates/zentty-linux/src/application_shell/bookmark_runtime.rs": "6fe9ce520f69bb5be975a0f17e5fec8b7f4392159695afb019ff6ca9f3c883dc",
@@ -94,9 +95,9 @@
     {
       "id": "settings_coordinator",
       "status": "existing",
-      "planned_module": "crates/zentty-linux/src/settings_shell.rs, crates/zentty-linux/src/settings_navigation.rs, crates/zentty-linux/src/general_settings.rs, crates/zentty-linux/src/appearance_settings.rs, crates/zentty-linux/src/theme_catalog.rs, crates/zentty-linux/src/notifications_settings.rs, crates/zentty-linux/src/notification_service.rs, and crates/zentty-linux/src/custom_sound_store.rs",
+      "planned_module": "crates/zentty-linux/src/settings_shell.rs, crates/zentty-linux/src/settings_navigation.rs, crates/zentty-linux/src/general_settings.rs, crates/zentty-linux/src/appearance_settings.rs, crates/zentty-linux/src/theme_catalog.rs, crates/zentty-linux/src/notifications_settings.rs, crates/zentty-linux/src/notification_service.rs, crates/zentty-linux/src/custom_sound_store.rs, and crates/zentty-linux/src/agents_settings.rs",
       "tracking": "GH-20",
-      "responsibility": "The sole nonmodal GTK settings shell, source-section navigation/history policy, Appearance projection, and Notifications projection. Theme discovery is a bounded, read-only projection; notification delivery uses the standard session-bus service without owning terminal-attention policy; the focused custom-sound store owns only secure XDG conversion and asset lifecycle; all durable settings writes and native reload authority remain in ConfigStore and ApplicationShell."
+      "responsibility": "The sole nonmodal GTK settings shell, source-section navigation/history policy, Appearance, Notifications, and Agents projections. Theme and agent-wrapper discovery are bounded read-only projections; notification delivery uses the standard session-bus service without owning terminal-attention policy; the focused custom-sound store owns only secure XDG conversion and asset lifecycle; all durable settings writes and native reload authority remain in ConfigStore and ApplicationShell."
     },
     {
       "id": "pane_runtime_coordinator",
@@ -400,7 +401,7 @@
     ],
     "agent_event_coordinator": [
       "event_route_decision", "start", "environment_for_pane", "unregister_pane",
-      "set_agent_teams_enabled", "set_agent_integrations",
+      "set_agent_teams_enabled", "set_agent_integrations", "available_integration_wrappers",
       "sync_targets", "schedule_for_pane", "shutdown", "apply_inputs"
     ],
     "global_search_coordinator": [

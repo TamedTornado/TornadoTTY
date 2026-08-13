@@ -81,6 +81,10 @@ impl AgentEventCoordinator {
         self.runtime.borrow_mut().set_agent_integrations(states);
     }
 
+    pub(super) fn available_integration_wrappers(&self) -> std::collections::BTreeSet<String> {
+        self.runtime.borrow().available_integration_wrappers()
+    }
+
     pub(super) fn sync_targets(&mut self, state: &WorkspaceState) -> Result<(), String> {
         let topology = state
             .worklanes()

@@ -100,7 +100,7 @@ while (( $# > 0 )); do
 done
 
 [[ -n "${display_number}" && -n "${authority}" && -n "${error_log}" ]] || exit 88
-[[ "${server_args}" == "-screen 0 2560x1440x24 -nolisten tcp" ]] || exit 89
+[[ "${server_args}" == "-screen 0 3200x1800x24 -nolisten tcp" ]] || exit 89
 printf '%s\n' "${authority%/Xauthority}" >"${ZENTTY_FAKE_X11_CAPTURE}/run-root"
 printf '%s\n' "${display_number}" >"${ZENTTY_FAKE_X11_CAPTURE}/display-number"
 : >"${authority}"
@@ -131,7 +131,7 @@ printf 'name of display: %s\n' "${DISPLAY}"
 printf 'version number:    11.0\n'
 printf 'vendor string:    The X.Org Foundation\n'
 printf 'vendor release number:    12101012\n'
-printf 'dimensions:    2560x1440 pixels (677x381 millimeters)\n'
+printf 'dimensions:    3200x1800 pixels (847x476 millimeters)\n'
 printf 'resolution:    96x96 dots per inch\n'
 EOF
 

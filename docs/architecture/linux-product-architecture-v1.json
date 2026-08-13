@@ -823,7 +823,7 @@
       "async_backend": "n/a",
       "terminals": "n/a",
       "tracking": "GH-20",
-      "defect": "GH-36's configuration authority is implemented and qualified: secure XDG ownership, strict/partial validation, content-safe last-good recovery, coalesced rename, logical/target symlink watching, product/external last-writer outcomes, interrupted-temporary refusal, shared product serialization, file-plus-directory durability, visible settings refresh without self-write loops, multi-window projection, and PTY retention. The settings epic remains incomplete only for page-owned scope: GH-37 still lacks qualified smooth Ghostty scrolling and backdrop-aware inactive opacity; GH-38 still requires native chooser add/remove and live external-target invalidation coverage; GH-40 still lacks Linux status-item and sleep-inhibitor backends plus remaining source integrations; GH-41 owns custom notification audio.",
+      "defect": "GH-36 and the page-owned GH-37/GH-38/GH-40/GH-41 settings scopes are implemented and qualified through their explicit matrix cells. The aggregate settings contract remains incomplete because the Agents page accurately exposes, but does not fabricate, runtime capabilities owned elsewhere: persistent and remaining ephemeral integration authorities are tracked by GH-7, while fleet/status-item presentation and sleep inhibition are tracked by GH-21. Those unavailable controls are preserved and tested, not converted into a platform pass.",
       "authoritative": false
     },
     {

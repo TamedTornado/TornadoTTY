@@ -1404,6 +1404,10 @@ impl ApplicationShell {
             Ok(snapshot) => {
                 self.config.server_detection = snapshot.config.server_detection;
                 self.config.open_with = snapshot.config.open_with;
+                self.config.agent_teams = snapshot.config.agent_teams;
+                self.config.agent_caffeination = snapshot.config.agent_caffeination;
+                self.config.menu_bar = snapshot.config.menu_bar;
+                self.config.agent_integrations = snapshot.config.agent_integrations;
             }
             Err(error) => {
                 eprintln!(
@@ -1563,6 +1567,7 @@ impl ApplicationShell {
                 agent_caffeination: self.config.agent_caffeination,
                 menu_bar: self.config.menu_bar,
                 agent_integrations: self.config.agent_integrations.clone(),
+                available_agent_wrappers: self.agent_events.available_integration_wrappers(),
                 apply_agents: Rc::new(move |teams, caffeination, menu_bar, integrations| {
                     let shell = agents_weak.upgrade().ok_or_else(|| {
                         "Zentty window closed while applying Agents settings".to_owned()

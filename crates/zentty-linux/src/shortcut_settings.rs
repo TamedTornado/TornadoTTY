@@ -74,6 +74,7 @@ pub(crate) struct SettingsContext {
     pub(crate) agent_caffeination: zentty_core::AgentCaffeinationConfig,
     pub(crate) menu_bar: zentty_core::MenuBarConfig,
     pub(crate) agent_integrations: zentty_core::AgentIntegrationsConfig,
+    pub(crate) available_agent_wrappers: std::collections::BTreeSet<String>,
     pub(crate) apply_agents: ApplyAgents,
     pub(crate) initial_section: SettingsSection,
 }
@@ -256,6 +257,7 @@ pub(crate) fn show(
         settings_context.agent_caffeination,
         settings_context.menu_bar,
         settings_context.agent_integrations,
+        &settings_context.available_agent_wrappers,
         settings_context.apply_agents,
     );
     let settings = crate::settings_shell::build(

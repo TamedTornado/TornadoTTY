@@ -180,6 +180,14 @@ impl AgentRuntime {
         Ok(environment)
     }
 
+    pub(crate) fn available_integration_wrappers(&self) -> std::collections::BTreeSet<String> {
+        self.wrapper_directories
+            .iter()
+            .filter_map(|directory| directory.file_name())
+            .map(|name| name.to_string_lossy().into_owned())
+            .collect()
+    }
+
     pub(crate) fn set_agent_teams_enabled(&mut self, enabled: bool) {
         self.agent_teams_enabled = enabled;
     }
