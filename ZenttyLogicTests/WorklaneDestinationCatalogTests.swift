@@ -146,6 +146,70 @@ final class WorklaneDestinationCatalogTests: XCTestCase {
         XCTAssertEqual(summary?.color, .blue)
     }
 
+    func test_summary_carriesWorklaneTitle() {
+        let store = makeStore(activeID: "A")
+        let summary = store.destinationSummaries(windowID: testWindowID, excluding: nil).first
+        XCTAssertEqual(summary?.worklaneTitle, "A")
+    }
+
+    func test_summary_worklaneTitleIsNilWhenUntitled() {
+        let store = WorklaneStore(
+            windowID: testWindowID,
+            worklanes: [
+                WorklaneState(
+                    id: WorklaneID("untitled"),
+                    title: nil,
+                    paneStripState: PaneStripState(
+                        panes: [PaneState(id: PaneID("p1"), title: "vim")],
+                        focusedPaneID: PaneID("p1")
+                    )
+                )
+            ],
+            activeWorklaneID: WorklaneID("untitled")
+        )
+        let summary = store.destinationSummaries(windowID: testWindowID, excluding: nil).first
+        XCTAssertNil(summary?.worklaneTitle)
+        XCTAssertEqual(summary?.primaryPaneTitle, "vim")
+    }
+
+    func test_summary_worklaneTitleIsNilWhenBlank() {
+        let store = WorklaneStore(
+            windowID: testWindowID,
+            worklanes: [
+                WorklaneState(
+                    id: WorklaneID("blank"),
+                    title: "   ",
+                    paneStripState: PaneStripState(
+                        panes: [PaneState(id: PaneID("p1"), title: "vim")],
+                        focusedPaneID: PaneID("p1")
+                    )
+                )
+            ],
+            activeWorklaneID: WorklaneID("blank")
+        )
+        let summary = store.destinationSummaries(windowID: testWindowID, excluding: nil).first
+        XCTAssertNil(summary?.worklaneTitle)
+    }
+
+    func test_summary_worklaneTitleIsTrimmed() {
+        let store = WorklaneStore(
+            windowID: testWindowID,
+            worklanes: [
+                WorklaneState(
+                    id: WorklaneID("padded"),
+                    title: "  PLATFORM  ",
+                    paneStripState: PaneStripState(
+                        panes: [PaneState(id: PaneID("p1"), title: "vim")],
+                        focusedPaneID: PaneID("p1")
+                    )
+                )
+            ],
+            activeWorklaneID: WorklaneID("padded")
+        )
+        let summary = store.destinationSummaries(windowID: testWindowID, excluding: nil).first
+        XCTAssertEqual(summary?.worklaneTitle, "PLATFORM")
+    }
+
     func test_catalog_hasAnyDestination_emptyAndCanCreateFalse_returnsFalse() {
         let catalog = WorklaneDestinationCatalog(groups: [], canCreateNewWorklane: false)
         XCTAssertFalse(catalog.hasAnyDestination)
@@ -161,6 +225,7 @@ final class WorklaneDestinationCatalogTests: XCTestCase {
             windowID: testWindowID,
             worklaneID: WorklaneID("X"),
             color: nil,
+            worklaneTitle: nil,
             primaryPaneTitle: "vim",
             additionalPaneCount: 0
         )

@@ -33,6 +33,52 @@ final class MoveToWorklaneMenuBuilderTests: XCTestCase {
         XCTAssertEqual(menu.items[0].title, "vim  +2 more")
     }
 
+    func test_titledWorklane_usesWorklaneTitleInsteadOfPaneTitle() {
+        let summary = makeSummary(
+            windowID: "w1",
+            worklaneID: "A",
+            primary: "vim",
+            additional: 2,
+            worklaneTitle: "PLATFORM"
+        )
+        let catalog = WorklaneDestinationCatalog(
+            groups: [WorklaneDestinationGroup(windowID: WindowID("w1"), summaries: [summary])],
+            canCreateNewWorklane: false
+        )
+
+        let menu = MoveToWorklaneMenuBuilder.makeSubmenu(catalog: catalog, paneID: sourcePaneID)
+
+        XCTAssertEqual(menu.items[0].title, "PLATFORM")
+    }
+
+    func test_titledWorklane_singlePane_usesWorklaneTitle() {
+        let summary = makeSummary(
+            windowID: "w1",
+            worklaneID: "A",
+            primary: "vim",
+            additional: 0,
+            worklaneTitle: "RELEASE"
+        )
+
+        let item = MoveToWorklaneMenuBuilder.makeDestinationItem(summary: summary, paneID: sourcePaneID)
+
+        XCTAssertEqual(item.title, "RELEASE")
+    }
+
+    func test_blankWorklaneTitle_fallsBackToPaneSummary() {
+        let summary = makeSummary(
+            windowID: "w1",
+            worklaneID: "A",
+            primary: "vim",
+            additional: 2,
+            worklaneTitle: "   "
+        )
+
+        let item = MoveToWorklaneMenuBuilder.makeDestinationItem(summary: summary, paneID: sourcePaneID)
+
+        XCTAssertEqual(item.title, "vim  +2 more")
+    }
+
     func test_multipleGroups_insertsSeparatorBetweenWindows() {
         let g1 = WorklaneDestinationGroup(
             windowID: WindowID("w1"),
@@ -127,12 +173,14 @@ final class MoveToWorklaneMenuBuilderTests: XCTestCase {
         worklaneID: String,
         primary: String,
         additional: Int,
-        color: WorklaneColor? = nil
+        color: WorklaneColor? = nil,
+        worklaneTitle: String? = nil
     ) -> WorklaneDestinationSummary {
         WorklaneDestinationSummary(
             windowID: WindowID(windowID),
             worklaneID: WorklaneID(worklaneID),
             color: color,
+            worklaneTitle: worklaneTitle,
             primaryPaneTitle: primary,
             additionalPaneCount: additional
         )
