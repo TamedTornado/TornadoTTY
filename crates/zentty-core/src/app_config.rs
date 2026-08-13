@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use serde::Deserialize;
+use serde::de::DeserializeOwned;
 
 use crate::shortcut::ShortcutDocument;
 use crate::{
@@ -132,6 +133,12 @@ pub struct AppConfig {
     pub shortcuts: Vec<ShortcutBinding>,
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct PartialAppConfig {
+    pub config: AppConfig,
+    pub retained_sections: Vec<&'static str>,
+}
+
 impl AppConfig {
     /// Parses the source-compatible Zentty TOML subset owned by this build.
     ///
@@ -161,6 +168,122 @@ impl AppConfig {
             shortcuts: document.shortcuts.into_bindings()?,
         })
     }
+
+    /// Parses independently valid top-level sections for a live reload.
+    ///
+    /// TOML syntax remains an all-or-nothing boundary. After syntax succeeds,
+    /// an invalid known section retains only its value from `last_good`; absent
+    /// sections are valid and therefore use source defaults.
+    ///
+    /// # Errors
+    ///
+    /// Returns a content-safe error when the document is not valid TOML.
+    pub fn parse_toml_partial(source: &str, last_good: &Self) -> Result<PartialAppConfig, String> {
+        let table = toml::from_str::<toml::Table>(source)
+            .map_err(|_| "invalid Zentty configuration syntax".to_owned())?;
+        let mut retained_sections = Vec::new();
+
+        macro_rules! section {
+            ($field:ident, $document:ty, $convert:expr) => {{
+                let name = stringify!($field);
+                match parse_partial_section::<$document, _>(&table, name, $convert) {
+                    Ok(value) => value,
+                    Err(()) => {
+                        retained_sections.push(name);
+                        last_good.$field.clone()
+                    }
+                }
+            }};
+        }
+
+        let config = Self {
+            appearance: section!(
+                appearance,
+                AppearanceDocument,
+                AppearanceDocument::into_config
+            ),
+            confirmations: section!(
+                confirmations,
+                ConfirmationsDocument,
+                |document: ConfirmationsDocument| Ok(document.into_config())
+            ),
+            restore: section!(restore, RestoreDocument, |document: RestoreDocument| Ok(
+                document.into_config()
+            )),
+            clipboard: section!(
+                clipboard,
+                ClipboardDocument,
+                |document: ClipboardDocument| Ok(document.into_config())
+            ),
+            notifications: section!(
+                notifications,
+                NotificationsDocument,
+                |document: NotificationsDocument| Ok(document.into_config())
+            ),
+            updates: section!(updates, UpdatesDocument, UpdatesDocument::into_config),
+            error_reporting: section!(
+                error_reporting,
+                ErrorReportingDocument,
+                |document: ErrorReportingDocument| Ok(document.into_config())
+            ),
+            open_with: section!(
+                open_with,
+                OpenWithDocument,
+                |document: OpenWithDocument| Ok(document.into_config().normalized())
+            ),
+            server_detection: section!(
+                server_detection,
+                ServerDetectionDocument,
+                |document: ServerDetectionDocument| Ok(document.into_config().normalized())
+            ),
+            worklanes: section!(worklanes, WorklaneDocument, WorklaneDocument::into_config),
+            pane_layout: section!(
+                pane_layout,
+                PaneLayoutDocument,
+                PaneLayoutDocument::into_config
+            ),
+            panes: section!(panes, PaneDocument, PaneDocument::into_config),
+            agent_teams: section!(
+                agent_teams,
+                AgentTeamsDocument,
+                |document: AgentTeamsDocument| Ok(document.into_config())
+            ),
+            agent_caffeination: section!(
+                agent_caffeination,
+                AgentCaffeinationDocument,
+                |document: AgentCaffeinationDocument| Ok(document.into_config())
+            ),
+            menu_bar: section!(menu_bar, MenuBarDocument, |document: MenuBarDocument| Ok(
+                document.into_config()
+            )),
+            agent_integrations: section!(
+                agent_integrations,
+                AgentIntegrationsDocument,
+                |document: AgentIntegrationsDocument| Ok(document.into_config())
+            ),
+            shortcuts: section!(shortcuts, ShortcutDocument, ShortcutDocument::into_bindings),
+        };
+        Ok(PartialAppConfig {
+            config,
+            retained_sections,
+        })
+    }
+}
+
+fn parse_partial_section<T, U>(
+    table: &toml::Table,
+    name: &str,
+    convert: impl FnOnce(T) -> Result<U, String>,
+) -> Result<U, ()>
+where
+    T: Default + DeserializeOwned,
+    U: Default,
+{
+    let document = match table.get(name) {
+        Some(value) => value.clone().try_into::<T>().map_err(|_| ())?,
+        None => T::default(),
+    };
+    convert(document).map_err(|_| ())
 }
 
 #[derive(Deserialize, Default)]

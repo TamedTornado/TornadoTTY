@@ -161,6 +161,100 @@ fn updates_and_error_reporting_use_source_defaults_and_exact_toml_keys() {
 }
 
 #[test]
+fn partial_reload_applies_independent_sections_and_retains_only_invalid_ones() {
+    let last_good = AppConfig::parse_toml(
+        r#"
+        [clipboard]
+        always_clean_copies = false
+
+        [updates]
+        channel = "beta"
+
+        [panes]
+        show_labels = false
+        "#,
+    )
+    .unwrap();
+    let partial = AppConfig::parse_toml_partial(
+        r#"
+        [clipboard]
+        always_clean_copies = true
+
+        [updates]
+        channel = "not-a-channel"
+        "#,
+        &last_good,
+    )
+    .unwrap();
+
+    assert!(partial.config.clipboard.always_clean_copies);
+    assert_eq!(partial.config.updates, last_good.updates);
+    assert_eq!(partial.config.panes, AppConfig::default().panes);
+    assert_eq!(partial.retained_sections, ["updates"]);
+}
+
+#[test]
+fn partial_reload_rejects_syntax_failure_without_exposing_input() {
+    let secret = "operator-secret-must-not-appear";
+    let error = AppConfig::parse_toml_partial(
+        &format!("[clipboard\nsecret = {secret:?}\n"),
+        &AppConfig::default(),
+    )
+    .unwrap_err();
+    assert!(error.contains("invalid Zentty configuration"));
+    assert!(!error.contains(secret));
+}
+
+#[test]
+fn partial_reload_reports_invalid_sections_in_schema_order() {
+    let partial = AppConfig::parse_toml_partial(
+        r#"
+        [appearance]
+        theme_mode = "invalid"
+
+        [updates]
+        channel = "invalid"
+
+        [pane_layout]
+        right_split_behavior = "invalid"
+
+        [shortcuts]
+        [[shortcuts.bindings]]
+        command_id = "pane.close"
+        shortcut = "not a shortcut"
+        "#,
+        &AppConfig::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        partial.retained_sections,
+        ["appearance", "updates", "pane_layout", "shortcuts"]
+    );
+}
+
+#[test]
+fn fully_valid_partial_reload_matches_the_strict_parser() {
+    let source = r#"
+        [appearance]
+        theme_mode = "light"
+
+        [clipboard]
+        always_clean_copies = true
+
+        [updates]
+        channel = "beta"
+
+        [pane_layout]
+        right_split_behavior = "alwaysSplit"
+        visible_split_window_width = 1440
+    "#;
+    let strict = AppConfig::parse_toml(source).unwrap();
+    let partial = AppConfig::parse_toml_partial(source, &AppConfig::default()).unwrap();
+    assert_eq!(partial.config, strict);
+    assert!(partial.retained_sections.is_empty());
+}
+
+#[test]
 fn missing_clipboard_section_uses_source_defaults() {
     let config = AppConfig::parse_toml("[future]\nenabled = true\n").unwrap();
     let clipboard = config.clipboard;

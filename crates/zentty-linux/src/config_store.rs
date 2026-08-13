@@ -22,6 +22,12 @@ pub(crate) struct ConfigSnapshot {
     pub(crate) warning: Option<String>,
 }
 
+pub(crate) struct ConfigReloadSnapshot {
+    pub(crate) config: AppConfig,
+    pub(crate) retained_sections: Vec<&'static str>,
+    pub(crate) warning: Option<String>,
+}
+
 pub(crate) struct ConfigStore;
 
 const MAX_CONFIG_BYTES: u64 = 1_048_576;
@@ -45,59 +51,53 @@ impl ConfigStore {
         )?)
     }
 
-    pub(crate) fn load_path(path: &Path) -> Result<ConfigSnapshot, String> {
-        Self::load(path.to_path_buf())
+    pub(crate) fn load_path_for_reload(
+        path: &Path,
+        last_good: &AppConfig,
+    ) -> Result<ConfigReloadSnapshot, String> {
+        match read_config_contents(path)? {
+            ConfigContents::Missing => Err(format!(
+                "configuration target is unavailable: {}",
+                path.display()
+            )),
+            ConfigContents::Invalid => Ok(ConfigReloadSnapshot {
+                config: last_good.clone(),
+                retained_sections: Vec::new(),
+                warning: Some(content_safe_invalid_warning(path)),
+            }),
+            ConfigContents::Source(source) => {
+                match AppConfig::parse_toml_partial(&source, last_good) {
+                    Ok(partial) => Ok(ConfigReloadSnapshot {
+                        config: partial.config,
+                        retained_sections: partial.retained_sections,
+                        warning: None,
+                    }),
+                    Err(_) => Ok(ConfigReloadSnapshot {
+                        config: last_good.clone(),
+                        retained_sections: Vec::new(),
+                        warning: Some(content_safe_invalid_warning(path)),
+                    }),
+                }
+            }
+        }
     }
 
     fn load(path: PathBuf) -> Result<ConfigSnapshot, String> {
-        let mut file = match File::open(&path) {
-            Ok(file) => file,
-            Err(error) if error.kind() == ErrorKind::NotFound => {
-                return Ok(ConfigSnapshot {
-                    config: AppConfig::default(),
-                    path,
-                    warning: None,
-                });
-            }
-            Err(error) => {
-                return Err(format!(
-                    "could not read Zentty configuration {}: {error}",
-                    path.display()
-                ));
-            }
-        };
-        let metadata = file.metadata().map_err(|error| {
-            format!(
-                "could not inspect Zentty configuration {}: {error}",
-                path.display()
-            )
-        })?;
-        if !metadata.is_file() {
-            return Err(format!(
-                "Zentty configuration is not a regular file: {}",
-                path.display()
-            ));
-        }
-        let bytes = match read_bounded(&mut file, metadata.len()) {
-            Ok(bytes) => bytes,
-            Err(BoundedReadError::TooLarge) => return Ok(invalid_snapshot(path)),
-            Err(BoundedReadError::Io(error)) => {
-                return Err(format!(
-                    "could not read Zentty configuration {}: {error}",
-                    path.display()
-                ));
-            }
-        };
-        let Ok(source) = String::from_utf8(bytes) else {
-            return Ok(invalid_snapshot(path));
-        };
-        match AppConfig::parse_toml(&source) {
-            Ok(config) => Ok(ConfigSnapshot {
-                config,
+        match read_config_contents(&path)? {
+            ConfigContents::Missing => Ok(ConfigSnapshot {
+                config: AppConfig::default(),
                 path,
                 warning: None,
             }),
-            Err(_) => Ok(invalid_snapshot(path)),
+            ConfigContents::Invalid => Ok(invalid_snapshot(path)),
+            ConfigContents::Source(source) => match AppConfig::parse_toml(&source) {
+                Ok(config) => Ok(ConfigSnapshot {
+                    config,
+                    path,
+                    warning: None,
+                }),
+                Err(_) => Ok(invalid_snapshot(path)),
+            },
         }
     }
 
@@ -898,6 +898,50 @@ fn atomic_replace(path: &Path, bytes: &[u8]) -> Result<(), String> {
     result
 }
 
+enum ConfigContents {
+    Missing,
+    Invalid,
+    Source(String),
+}
+
+fn read_config_contents(path: &Path) -> Result<ConfigContents, String> {
+    let mut file = match File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(ConfigContents::Missing),
+        Err(error) => {
+            return Err(format!(
+                "could not read Zentty configuration {}: {error}",
+                path.display()
+            ));
+        }
+    };
+    let metadata = file.metadata().map_err(|error| {
+        format!(
+            "could not inspect Zentty configuration {}: {error}",
+            path.display()
+        )
+    })?;
+    if !metadata.is_file() {
+        return Err(format!(
+            "Zentty configuration is not a regular file: {}",
+            path.display()
+        ));
+    }
+    let bytes = match read_bounded(&mut file, metadata.len()) {
+        Ok(bytes) => bytes,
+        Err(BoundedReadError::TooLarge) => return Ok(ConfigContents::Invalid),
+        Err(BoundedReadError::Io(error)) => {
+            return Err(format!(
+                "could not read Zentty configuration {}: {error}",
+                path.display()
+            ));
+        }
+    };
+    String::from_utf8(bytes)
+        .map(ConfigContents::Source)
+        .or(Ok(ConfigContents::Invalid))
+}
+
 #[derive(Debug)]
 enum BoundedReadError {
     TooLarge,
@@ -921,12 +965,16 @@ fn read_bounded(reader: &mut impl Read, declared_len: u64) -> Result<Vec<u8>, Bo
 fn invalid_snapshot(path: PathBuf) -> ConfigSnapshot {
     ConfigSnapshot {
         config: AppConfig::default(),
-        warning: Some(format!(
-            "ignored invalid Zentty configuration {}: size, encoding, parse, or known-value validation failed",
-            path.display()
-        )),
+        warning: Some(content_safe_invalid_warning(&path)),
         path,
     }
+}
+
+fn content_safe_invalid_warning(path: &Path) -> String {
+    format!(
+        "ignored invalid Zentty configuration {}: size, encoding, parse, or known-value validation failed",
+        path.display()
+    )
 }
 
 fn default_config_file_from(

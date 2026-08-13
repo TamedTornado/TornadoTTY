@@ -146,6 +146,36 @@ sentinel_pane="pane-window-2"
 zentty_product_wait_for_log "${log}" "zentty-linux: title-pane=${sentinel_pane} value=after-valid-config-reload" \
     "live PTY stopped accepting physical input after reload" || fail "post-reload sentinel missing"
 
+# Valid known sections publish independently while an invalid known section
+# retains only its last-good value. A later fully valid edit must converge.
+applied_before="$(grep -Fc 'zentty-linux: config-reload result=applied' "${log}" || true)"
+cat >"${config_file}.partial" <<'EOF'
+[confirmations]
+confirm_before_quitting = "invalid-and-must-not-appear"
+
+[clipboard]
+always_clean_copies = false
+EOF
+mv -f -- "${config_file}.partial" "${config_file}"
+zentty_product_wait_for_log_count "${log}" \
+    'zentty-linux: config-reload result=applied windows=2 retained-sections=confirmations' 1 \
+    "partially valid edit did not publish its independent section" || fail "partial publication missing"
+grep -Fq 'config-live-projected window=window-1 automatic-clean-copy=false confirm-close-window=true confirm-quit=true' "${log}" ||
+    fail "first window did not apply valid partial section and retain invalid confirmations"
+grep -Fq 'config-live-projected window=window-2 automatic-clean-copy=false confirm-close-window=true confirm-quit=true' "${log}" ||
+    fail "second window did not apply valid partial section and retain invalid confirmations"
+! grep -Fq 'invalid-and-must-not-appear' "${log}" || fail "partial diagnostic leaked a config value"
+confirmation_before="$(grep -Fc 'zentty-linux: confirmation shown title="Quit Zentty?"' "${log}" || true)"
+zentty_product_prepare_input "${backend}" "${log}" || fail "could not focus partially reloaded window"
+zentty_product_close_window "${backend}"
+zentty_product_wait_for_log_count "${log}" 'zentty-linux: confirmation shown title="Quit Zentty?"' \
+    "$((confirmation_before + 1))" "invalid confirmation section did not retain live behavior" || fail "partial retention behavior missing"
+cancel_confirmation
+
+replace_config true true
+zentty_product_wait_for_log_count "${log}" 'zentty-linux: config-reload result=applied' \
+    "$((applied_before + 2))" "fully valid edit did not converge after partial reload" || fail "post-partial convergence missing"
+
 # Invalid replacement and disappearance both retain the accepted state without
 # logging file contents or silently resetting to defaults.
 cat >"${config_file}.invalid" <<'EOF'
@@ -162,8 +192,10 @@ zentty_product_wait_for_log_count "${log}" 'zentty-linux: config-reload result=r
     "$((retained_before + 1))" "missing config did not retain last good" || fail "missing retention absent"
 
 zentty_product_prepare_input "${backend}" "${log}" || fail "could not focus retained-last-good window"
+confirmation_before="$(grep -Fc 'zentty-linux: confirmation shown title="Quit Zentty?"' "${log}" || true)"
 zentty_product_close_window "${backend}"
-zentty_product_wait_for_log_count "${log}" 'zentty-linux: confirmation shown title="Quit Zentty?"' 2 \
+zentty_product_wait_for_log_count "${log}" 'zentty-linux: confirmation shown title="Quit Zentty?"' \
+    "$((confirmation_before + 1))" \
     "last-good behavior did not survive invalid and missing files" || fail "last-good behavior reset"
 cancel_confirmation
 
@@ -244,4 +276,4 @@ mapfile -t children_after_permission < <(pgrep -P "${product_pid}" | sort -n)
 kill -TERM "${product_pid}"
 wait "${product_pid}" || true
 product_pid=""
-echo "rust-config-reload: PASS backend=${backend} real-pty=true multi-window=true rename=true coalesced=true last-good=true symlink-retarget=true permission-recovery=true"
+echo "rust-config-reload: PASS backend=${backend} real-pty=true multi-window=true rename=true coalesced=true partial=true last-good=true symlink-retarget=true permission-recovery=true"

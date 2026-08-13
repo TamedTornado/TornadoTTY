@@ -4,10 +4,10 @@
   "source": "crates/zentty-linux/src/application_shell.rs",
   "source_sha256": "17d7fd367de794d9f1a568a3b2511405278311c01e468a8271f31d58184a8a0f",
   "owned_source_sha256": {
-    "crates/zentty-linux/src/main.rs": "df4ddd662ac0453952bd1eb01f0554d0397b7ba3d7fcd9ba867b7a2ee1db033e",
-    "crates/zentty-linux/src/application.rs": "bfe2a8ff60cebaa8297d6bc3c665d87d2d2169336e410e0786bd1f20560338c0",
-    "crates/zentty-linux/src/config_store.rs": "ebeb5b4ab43305986133a3771d82df27e84cf7b2cd3b81794990a2b8ac871405",
-    "crates/zentty-linux/src/config_reload.rs": "57b65a44072eb15fbc494d9bba7f825da354254b89b00a4ef318cbc3306929ad",
+    "crates/zentty-linux/src/main.rs": "f90db7599da006746011b86233348f20e959dfdaab7f809261fa81e16dd850ac",
+    "crates/zentty-linux/src/application.rs": "2fb379bac4de8f0e13328451e69332c92479e405dacc416afef3ec7f5a267352",
+    "crates/zentty-linux/src/config_store.rs": "ec4959008ff99d814733149983c840b6764536631bfb1dd3d6e5009f712c677d",
+    "crates/zentty-linux/src/config_reload.rs": "c70d03ea9e1662c78945fef86e5de7b8787247cdda72e37b8663a99bc26604b1",
     "crates/zentty-linux/src/window_set.rs": "501d595889c11a41a4261ef8282465d76dd9ed8ccd1d004406b558579b0bf58e",
     "crates/zentty-linux/src/agent_runtime.rs": "e896b4827e1273a67e58bacbf364e5244db856c5466c373d240c5b69d1f0ee5a",
     "crates/zentty-linux/src/codex_enrichment.rs": "fe87631c75c04b63962b7f89d311a778a25af8f27a1dcb4d5950b3efcbaa476e",
@@ -450,8 +450,8 @@
     "server_container_discovery": [
       "discover", "run_docker", "parse_inspect_json", "deepest_matching_pane", "is_web_like"
     ],
-    "config_store": ["load_default", "load_path", "load", "install_default_fallback_theme_if_referenced", "install_fallback_theme_if_referenced", "fallback_theme_publication_error", "update_default_appearance", "update_default_general", "update_default_notifications", "update_default_updates", "update_default_workspace_panes", "update_default_open_with", "update_default_server_detection", "update_default_agents", "update_default_ghostty_theme", "update_default_ghostty_value", "update_default_ignored_port_rules", "update_default_preferred_browser", "update_default_shortcuts", "update_appearance", "update_general", "update_notifications", "update_updates", "update_workspace_panes", "update_open_with", "update_server_detection", "update_agents", "update_ghostty_value", "update_ignored_port_rules", "update_preferred_browser", "update_shortcuts", "with_config_lock", "set_optional_appearance_string", "resolve_config_target", "atomic_replace", "read_bounded", "invalid_snapshot", "default_config_file_from", "default_fallback_theme_path", "default_ghostty_config_file_from", "default_theme_resource_path", "nonempty_path"],
-    "config_reload": ["new", "path", "observe_disk", "observe_snapshot", "accept", "install"],
+    "config_store": ["load_default", "load_path_for_reload", "load", "install_default_fallback_theme_if_referenced", "install_fallback_theme_if_referenced", "fallback_theme_publication_error", "update_default_appearance", "update_default_general", "update_default_notifications", "update_default_updates", "update_default_workspace_panes", "update_default_open_with", "update_default_server_detection", "update_default_agents", "update_default_ghostty_theme", "update_default_ghostty_value", "update_default_ignored_port_rules", "update_default_preferred_browser", "update_default_shortcuts", "update_appearance", "update_general", "update_notifications", "update_updates", "update_workspace_panes", "update_open_with", "update_server_detection", "update_agents", "update_ghostty_value", "update_ignored_port_rules", "update_preferred_browser", "update_shortcuts", "with_config_lock", "set_optional_appearance_string", "resolve_config_target", "atomic_replace", "read_config_contents", "read_bounded", "invalid_snapshot", "content_safe_invalid_warning", "default_config_file_from", "default_fallback_theme_path", "default_ghostty_config_file_from", "default_theme_resource_path", "nonempty_path"],
+    "config_reload": ["new", "path", "observe_disk", "observe_reload_snapshot", "accept", "install"],
     "appearance_settings": ["build", "section_title", "refresh_catalog", "preview_summary", "log_theme_selection", "apply_state", "install_styles"],
     "settings_shell": ["apply_selection", "build", "build_widgets", "connect_navigation", "key_controller", "navigate_back", "navigate_forward", "navigation_actions"],
     "settings_navigation": ["back", "can_back", "can_forward", "current", "forward", "matches", "new", "parse", "record"],

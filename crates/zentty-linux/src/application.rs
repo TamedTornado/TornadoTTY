@@ -52,7 +52,7 @@ impl ApplicationCoordinator {
         main_loop: &glib::MainLoop,
         restored_windows: Vec<WindowSnapshot>,
         active_window_id: Option<&str>,
-        config_snapshot: ConfigSnapshot,
+        config_snapshot: &ConfigSnapshot,
     ) -> Result<Rc<RefCell<Self>>, String> {
         let config = config_snapshot.config.clone();
         let ids = restored_windows
@@ -78,7 +78,7 @@ impl ApplicationCoordinator {
             agent_runtime,
             command,
             config,
-            config_reload: ConfigReloadAuthority::new(&config_snapshot),
+            config_reload: ConfigReloadAuthority::new(config_snapshot),
             config_watch: None,
             main_loop: main_loop.clone(),
             window_set,
@@ -166,7 +166,10 @@ impl ApplicationCoordinator {
                     "zentty-linux: config-reload result=retained-last-good detail={diagnostic}"
                 );
             }
-            ReloadDecision::Apply(config) => {
+            ReloadDecision::Apply {
+                config,
+                retained_sections,
+            } => {
                 let projections = self
                     .shells
                     .values()
@@ -180,10 +183,15 @@ impl ApplicationCoordinator {
                     shell.borrow_mut().apply_reloaded_config(&config, shortcuts);
                 }
                 self.config_reload.accept(&config);
-                self.config = config;
+                self.config = *config;
                 eprintln!(
-                    "zentty-linux: config-reload result=applied windows={}",
-                    self.shells.len()
+                    "zentty-linux: config-reload result=applied windows={} retained-sections={}",
+                    self.shells.len(),
+                    if retained_sections.is_empty() {
+                        "none".to_owned()
+                    } else {
+                        retained_sections.join(",")
+                    }
                 );
             }
         }

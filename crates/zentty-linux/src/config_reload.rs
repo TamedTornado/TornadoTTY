@@ -4,14 +4,19 @@ use gtk::gio;
 use gtk::prelude::*;
 use zentty_core::AppConfig;
 
-use crate::config_store::{ConfigSnapshot, ConfigStore, resolve_config_target};
+use crate::config_store::{
+    ConfigReloadSnapshot, ConfigSnapshot, ConfigStore, resolve_config_target,
+};
 
 const RELOAD_QUIET_PERIOD_MILLIS: u64 = 150;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum ReloadDecision {
     Unchanged,
-    Apply(AppConfig),
+    Apply {
+        config: Box<AppConfig>,
+        retained_sections: Vec<&'static str>,
+    },
     RetainLastGood(String),
 }
 
@@ -48,15 +53,15 @@ impl ConfigReloadAuthority {
                 },
             );
         }
-        match ConfigStore::load_path(&self.path) {
-            Ok(snapshot) => self.observe_snapshot(snapshot),
+        match ConfigStore::load_path_for_reload(&self.path, &self.last_good) {
+            Ok(snapshot) => self.observe_reload_snapshot(snapshot),
             Err(error) => ReloadDecision::RetainLastGood(format!(
                 "configuration reload failed; retaining last-good state: {error}"
             )),
         }
     }
 
-    fn observe_snapshot(&mut self, snapshot: ConfigSnapshot) -> ReloadDecision {
+    fn observe_reload_snapshot(&mut self, snapshot: ConfigReloadSnapshot) -> ReloadDecision {
         if let Some(warning) = snapshot.warning {
             return ReloadDecision::RetainLastGood(format!(
                 "{warning}; retaining last-good runtime state"
@@ -65,7 +70,10 @@ impl ConfigReloadAuthority {
         if snapshot.config == self.last_good {
             return ReloadDecision::Unchanged;
         }
-        ReloadDecision::Apply(snapshot.config)
+        ReloadDecision::Apply {
+            config: Box::new(snapshot.config),
+            retained_sections: snapshot.retained_sections,
+        }
     }
 
     pub(crate) fn accept(&mut self, config: &AppConfig) {
@@ -191,9 +199,14 @@ mod tests {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, "[clipboard]\nalways_clean_copies = true\n").unwrap();
         let mut authority = authority(path.clone());
-        let ReloadDecision::Apply(config) = authority.observe_disk() else {
+        let ReloadDecision::Apply {
+            config,
+            retained_sections,
+        } = authority.observe_disk()
+        else {
             panic!("valid change was not applied");
         };
+        assert!(retained_sections.is_empty());
         assert!(config.clipboard.always_clean_copies);
         authority.accept(&config);
         assert_eq!(authority.observe_disk(), ReloadDecision::Unchanged);
@@ -215,6 +228,49 @@ mod tests {
         assert!(matches!(
             authority.observe_disk(),
             ReloadDecision::RetainLastGood(message) if message.contains("disappeared")
+        ));
+        fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn partially_invalid_file_applies_valid_sections_and_names_retained_sections() {
+        let path = private_path("partial");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let mut initial = AppConfig::default();
+        initial.updates.channel = zentty_core::UpdateChannel::Beta;
+        let mut authority = ConfigReloadAuthority::new(&ConfigSnapshot {
+            config: initial.clone(),
+            path: path.clone(),
+            warning: None,
+        });
+        fs::write(
+            &path,
+            "[clipboard]\nalways_clean_copies = true\n[updates]\nchannel = 'invalid'\n",
+        )
+        .unwrap();
+        let ReloadDecision::Apply {
+            config,
+            retained_sections,
+        } = authority.observe_disk()
+        else {
+            panic!("partially valid change was not applied");
+        };
+        assert!(config.clipboard.always_clean_copies);
+        assert_eq!(config.updates, initial.updates);
+        assert_eq!(retained_sections, ["updates"]);
+        fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn broken_symlink_target_retains_last_good_instead_of_applying_defaults() {
+        use std::os::unix::fs::symlink;
+
+        let path = private_path("broken-target");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        symlink(path.with_extension("missing"), &path).unwrap();
+        assert!(matches!(
+            authority(path.clone()).observe_disk(),
+            ReloadDecision::RetainLastGood(message) if message.contains("target is unavailable")
         ));
         fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }

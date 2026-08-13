@@ -619,3 +619,65 @@ authoritative execution plan is
   implemented-local passes, release/full qualification remain NOT_PASSED,
   Debug Valgrind remains **PASS with reviewed suppressions**, and ReleaseSafe
   remains XFAIL.
+
+## GH-36 independently valid section reload slice
+
+- **Pre-implementation boundary:** partial reload is a core schema decision,
+  not a Linux watcher heuristic. Add one typed partial parser beside the
+  existing strict startup parser. TOML syntax failure remains all-or-nothing;
+  after syntax succeeds, each known top-level section is independently decoded
+  and normalized. An invalid known section retains that section from the
+  accepted last-good snapshot while absent valid sections deliberately return
+  to source defaults.
+- **No-accretion rule:** `ConfigStore` remains the only bounded file reader and
+  `ConfigReloadAuthority` remains the only last-good publisher. Do not split
+  the file, introduce per-page stores, parse diagnostic strings, or maintain a
+  second schema. Partial diagnostics may name known sections but must not echo
+  values or file contents.
+- **Test-first contract:** core tests must prove independent valid/invalid and
+  absent/default behavior across representative fallible and infallible
+  sections, strict parser compatibility, parse-failure refusal, deterministic
+  section ordering, and content-safe diagnostics. The real X11/Wayland journey
+  must publish a valid section from a partially invalid edit to both windows,
+  retain the invalid section's live behavior, preserve exact PTY PIDs, and then
+  converge normally on a fully valid replacement. Mutation closure and full
+  qualification are required before commit.
+- **Broken-target discovery:** refactoring the bounded loader exposed that a
+  broken logical symlink passed `symlink_metadata` and then the startup loader
+  treated its missing target as an absent config, which would have published
+  defaults during live reload. The new reload-specific bounded read classifies
+  that case as unavailable and retains last-good; startup's intentional
+  missing-file defaults remain unchanged. A focused authority regression test
+  now pins the distinction.
+- The first controlled X11 attempt executed the prior staged binary even though
+  the combined build/copy command had begun a new Cargo build: its timestamp
+  and absence of the new `retained-sections` receipt proved the copy had not
+  occurred. No result was accepted. The completed Cargo artifact was copied in
+  a separate explicit command, its embedded receipt verified, and the corrected
+  X11 journey passed.
+- The final explicitly staged binary passed both controlled compositor
+  journeys. A syntax-valid edit with invalid `confirmations` and valid
+  `clipboard` published the clipboard change to both windows, retained the
+  previous confirmation behavior, named only `confirmations` in its diagnostic
+  receipt, exposed no rejected value, and preserved both PTY PIDs. A subsequent
+  fully valid replacement converged normally. The strict startup parser remains
+  unchanged; core compatibility tests prove every fully valid partial result is
+  identical to strict parsing and that absent sections use source defaults.
+- Full workspace Clippy with all targets and `-D warnings` initially rejected
+  the long parser method and a large reload-decision enum. The parser macro now
+  derives field names and last-good ownership without repetitive branches, and
+  the config payload is boxed at the decision boundary. A second ownership lint
+  removed needless `ConfigSnapshot` moves through application startup. The
+  complete Clippy rerun passed without adding lint exemptions.
+- Governed mutation testing passed both decision layers: the core partial parser
+  tested **2 mutants, both caught**, and the reload authority tested **12
+  mutants, 8 caught and 4 unviable, 0 missed**. Both invocations used the
+  mandatory ignored-tree/no-target-copy policy.
+- Final `linux/tests/qualify-local` passed every presently executable support
+  and matrix cell in **577,190 ms**, including the expanded partial-reload X11
+  and Wayland scenarios. Totals remain **PASS=125, FAIL=0, BLOCKED=7,
+  XFAIL=1, NOT_IMPLEMENTED=23**. Implemented-local passes; release and full
+  qualification remain NOT_PASSED. Debug Valgrind remains **PASS with reviewed
+  suppressions**, and ReleaseSafe remains XFAIL. GH-36 remains open for
+  self-write provenance/open-page refresh, broader permission and concurrency
+  cases, interrupted/crash durability, and complete projection edges.
