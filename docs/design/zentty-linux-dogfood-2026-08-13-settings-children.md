@@ -78,3 +78,50 @@ This report is append-only while the batch is implemented.
   `.cargo/mutants.toml` copy safety and tested four policy mutants: **3 caught,
   1 unviable, 0 missed**. The remaining unviable mutant cannot compile and is
   not a surviving behavior.
+
+## GH-37 Worklanes & Panes completion
+
+- The page formerly mutated its in-memory projection before persistence and
+  could therefore display a value that the live configuration authority had
+  rejected. Every available control now proposes a complete typed snapshot,
+  accepts it only after `ConfigStore` succeeds, and presents persistence errors
+  without inventing a second settings authority.
+- The focused journey was expanded from one configured action to two real
+  application windows, three retained shell processes, real Ghostty surfaces,
+  every available page control, exact persisted values, restart, surface/PID
+  continuity, and topology non-mutation. It also proves focus-follow through a
+  physical compositor pointer and proves that another window, the command
+  palette, and Settings prevent pointer-driven terminal focus theft.
+- The first physical X11 attempts exposed two harness defects rather than
+  product defects. Xvfb has no window manager, so untargeted focus assumptions
+  could leave input on the wrong toplevel; native `GtkDropDown` also owns a
+  transient popup and keyboard grab rather than a child X11 window. The final
+  journey targets the proven Settings toplevel, explicitly opens each native
+  dropdown, and selects the rendered popup row through XTEST pointer input.
+- The original controlled X11 display was only 2560 pixels wide. That made the
+  source's largest 2560-pixel *content* threshold physically impossible once
+  Zentty's 280-pixel sidebar was included. The private display is now
+  3200x1800, and the journey waits for actual resize receipts before exercising
+  both sides of all five boundaries: 1200, 1440, 1680, 1920, and 2560 pixels.
+  Core policy tests independently cover the exact below/at boundary and both
+  non-adaptive modes.
+- The nested Cage profile has a scoped virtual keyboard but no settings-window
+  pointer injector. GTK's non-active Settings toplevel does not accept a
+  subsequent virtual-keyboard selection after mnemonic focus, so environmental
+  absence is not represented as physical-control success. The Wayland cell
+  qualifies real presentation, exact projection, value preservation, deep
+  linking, Ghostty surfaces, and restart; the companion controlled X11 cell
+  owns every physical settings-control mutation and continuity invariant. This
+  division matches the established Open With and Dev Servers qualification
+  policy and remains explicit in the PASS receipt.
+- Smooth scrolling and inactive opacity remain visibly unavailable with their
+  reasons, and their original values survive all writes. Broadening these
+  controls without a qualified Ghostty smoothing path or without reintroducing
+  the rejected washed-out pane treatment would misrepresent capability.
+- Final focused evidence: the controlled X11 journey passes every physical
+  control, all threshold boundaries, multi-window projection, pointer guards,
+  PID/surface continuity, and restart; the nested Wayland companion journey
+  passes presentation/projection and restart. Strict workspace Clippy,
+  formatting, ShellCheck, focused core tests (5/5), focused page test (1/1),
+  architecture contracts and negative tests all pass. The governed mutation
+  shard tested two adaptive-policy mutants: **1 caught, 1 unviable, 0 missed**.

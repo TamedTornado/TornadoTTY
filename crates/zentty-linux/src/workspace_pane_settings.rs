@@ -7,13 +7,15 @@ use zentty_core::{
     PaneRightBehaviorMode, WorklaneConfig,
 };
 
-pub(crate) type ApplyWorkspacePanes = Rc<dyn Fn(WorklaneConfig, PaneLayoutConfig, PaneConfig)>;
+pub(crate) type ApplyWorkspacePanes =
+    Rc<dyn Fn(WorklaneConfig, PaneLayoutConfig, PaneConfig) -> Result<(), String>>;
 
 struct State {
     worklanes: WorklaneConfig,
     layout: PaneLayoutConfig,
     panes: PaneConfig,
     apply_changes: ApplyWorkspacePanes,
+    status: gtk::Label,
 }
 
 #[allow(clippy::too_many_lines)] // Declarative construction of one focused settings page.
@@ -58,18 +60,21 @@ pub(crate) fn build(
         layout,
         panes,
         apply_changes,
+        status: gtk::Label::new(None),
     }));
 
     let worklane_card = card("Worklanes");
     let placement = gtk::DropDown::from_strings(&["Top", "After current", "End"]);
     placement.set_widget_name("settings-worklane-placement");
+    instrument_focus(&placement, "new-worklane-placement");
+    install_dropdown_boundary_keys(&placement);
     placement.set_selected(match worklanes.new_worklane_placement {
         NewWorklanePlacement::Top => 0,
         NewWorklanePlacement::AfterCurrent => 1,
         NewWorklanePlacement::End => 2,
     });
     worklane_card.append(&setting_row(
-        "New worklane placement",
+        "_New worklane placement",
         "Choose where newly created worklanes appear in the sidebar.",
         &placement,
     ));
@@ -77,31 +82,36 @@ pub(crate) fn build(
     {
         let state = Rc::clone(&state);
         placement.connect_selected_notify(move |control| {
-            state.borrow_mut().worklanes.new_worklane_placement = match control.selected() {
+            let mut next = state.borrow().worklanes;
+            next.new_worklane_placement = match control.selected() {
                 0 => NewWorklanePlacement::Top,
                 2 => NewWorklanePlacement::End,
                 _ => NewWorklanePlacement::AfterCurrent,
             };
-            emit_changes(&state, "new-worklane-placement");
+            emit_changes(&state, Some(next), None, None, "new-worklane-placement");
         });
     }
 
     let split_card = card("Pane right behavior");
     let split = gtk::DropDown::from_strings(&["Adaptive", "Always Split", "Always Add"]);
     split.set_widget_name("settings-pane-right-behavior");
+    instrument_focus(&split, "pane-right-behavior");
+    install_dropdown_boundary_keys(&split);
     split.set_selected(match layout.right_split_behavior {
         PaneRightBehaviorMode::Adaptive => 0,
         PaneRightBehaviorMode::AlwaysSplit => 1,
         PaneRightBehaviorMode::AlwaysAdd => 2,
     });
     split_card.append(&setting_row(
-        "Right-pane command",
+        "_Right-pane command",
         "Adaptive splits visibly at the selected window width and adds offscreen below it.",
         &split,
     ));
     let threshold =
         gtk::DropDown::from_strings(&["1200 pt", "1440 pt", "1680 pt", "1920 pt", "2560 pt"]);
     threshold.set_widget_name("settings-pane-split-threshold");
+    instrument_focus(&threshold, "pane-split-threshold");
+    install_dropdown_boundary_keys(&threshold);
     threshold.set_selected(match layout.visible_split_window_width {
         1200 => 0,
         1440 => 1,
@@ -111,7 +121,7 @@ pub(crate) fn build(
     });
     threshold.set_sensitive(layout.right_split_behavior == PaneRightBehaviorMode::Adaptive);
     split_card.append(&setting_row(
-        "Adaptive split threshold",
+        "Adaptive split _threshold",
         "At this window width or wider, the primary right-pane action splits visibly.",
         &threshold,
     ));
@@ -125,29 +135,32 @@ pub(crate) fn build(
                 2 => PaneRightBehaviorMode::AlwaysAdd,
                 _ => PaneRightBehaviorMode::Adaptive,
             };
-            state.borrow_mut().layout.right_split_behavior = mode;
-            threshold.set_sensitive(mode == PaneRightBehaviorMode::Adaptive);
-            emit_changes(&state, "pane-right-behavior");
+            let mut next = state.borrow().layout;
+            next.right_split_behavior = mode;
+            if emit_changes(&state, None, Some(next), None, "pane-right-behavior") {
+                threshold.set_sensitive(mode == PaneRightBehaviorMode::Adaptive);
+            }
         });
     }
     {
         let state = Rc::clone(&state);
         threshold.connect_selected_notify(move |control| {
-            state.borrow_mut().layout.visible_split_window_width = match control.selected() {
+            let mut next = state.borrow().layout;
+            next.visible_split_window_width = match control.selected() {
                 0 => 1200,
                 1 => 1440,
                 2 => 1680,
                 4 => 2560,
                 _ => 1920,
             };
-            emit_changes(&state, "pane-split-threshold");
+            emit_changes(&state, None, Some(next), None, "pane-split-threshold");
         });
     }
 
     let display_card = card("Display & focus");
     append_switch(
         &display_card,
-        "Show pane labels",
+        "Show pane _labels",
         "Show the compact path label at the top left of each pane.",
         "settings-pane-labels",
         panes.show_labels,
@@ -156,7 +169,7 @@ pub(crate) fn build(
     );
     append_switch(
         &display_card,
-        "Show pane borders",
+        "Show pane _borders",
         "When off, only the focused pane keeps its border.",
         "settings-pane-borders",
         panes.show_borders,
@@ -165,7 +178,7 @@ pub(crate) fn build(
     );
     append_switch(
         &display_card,
-        "Show project icons",
+        "Show project _icons",
         "Show discovered project icons in the worklane sidebar.",
         "settings-pane-project-icons",
         panes.show_project_icons,
@@ -182,6 +195,8 @@ pub(crate) fn build(
 
     let focus_delay = gtk::DropDown::from_strings(&["Immediate", "Short"]);
     focus_delay.set_widget_name("settings-pane-focus-delay");
+    instrument_focus(&focus_delay, "focus-follows-mouse-delay");
+    install_dropdown_boundary_keys(&focus_delay);
     focus_delay.set_selected(match panes.focus_follows_mouse_delay {
         FocusFollowsMouseDelay::Immediate => 0,
         FocusFollowsMouseDelay::Short => 1,
@@ -194,13 +209,14 @@ pub(crate) fn build(
         .valign(gtk::Align::Center)
         .build();
     focus_switch.set_widget_name("settings-pane-focus-follows-mouse");
+    instrument_focus(&focus_switch, "focus-follows-mouse");
     display_card.append(&setting_row(
-        "Focus follows mouse",
+        "Focus follows _mouse",
         "Move keyboard focus to a pane when the pointer enters it. Unavailable in Always Add mode.",
         &focus_switch,
     ));
     display_card.append(&setting_row(
-        "Focus delay",
+        "Focus _delay",
         "A short delay prevents accidental focus changes while crossing panes.",
         &focus_delay,
     ));
@@ -208,20 +224,23 @@ pub(crate) fn build(
         let state = Rc::clone(&state);
         let focus_delay = focus_delay.clone();
         focus_switch.connect_active_notify(move |control| {
-            state.borrow_mut().panes.focus_follows_mouse = control.is_active();
-            focus_delay.set_sensitive(control.is_sensitive() && control.is_active());
-            emit_changes(&state, "focus-follows-mouse");
+            let mut next = state.borrow().panes;
+            next.focus_follows_mouse = control.is_active();
+            if emit_changes(&state, None, None, Some(next), "focus-follows-mouse") {
+                focus_delay.set_sensitive(control.is_sensitive() && control.is_active());
+            }
         });
     }
     {
         let state = Rc::clone(&state);
         focus_delay.connect_selected_notify(move |control| {
-            state.borrow_mut().panes.focus_follows_mouse_delay = if control.selected() == 0 {
+            let mut next = state.borrow().panes;
+            next.focus_follows_mouse_delay = if control.selected() == 0 {
                 FocusFollowsMouseDelay::Immediate
             } else {
                 FocusFollowsMouseDelay::Short
             };
-            emit_changes(&state, "focus-follows-mouse-delay");
+            emit_changes(&state, None, None, Some(next), "focus-follows-mouse-delay");
         });
     }
     {
@@ -248,6 +267,12 @@ pub(crate) fn build(
     ));
     root.append(&display_card);
 
+    let status = state.borrow().status.clone();
+    status.set_halign(gtk::Align::Start);
+    status.set_wrap(true);
+    status.add_css_class("dim-label");
+    root.append(&status);
+
     let scroll = gtk::ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)
         .child(&root)
@@ -258,10 +283,42 @@ pub(crate) fn build(
     scroll.upcast()
 }
 
-fn emit_changes(state: &Rc<RefCell<State>>, control: &str) {
-    let state = state.borrow();
-    (state.apply_changes)(state.worklanes, state.layout, state.panes);
-    eprintln!("zentty-linux: workspace-pane-settings control={control} result=requested");
+fn emit_changes(
+    state: &Rc<RefCell<State>>,
+    worklanes: Option<WorklaneConfig>,
+    layout: Option<PaneLayoutConfig>,
+    panes: Option<PaneConfig>,
+    control: &str,
+) -> bool {
+    let (worklanes, layout, panes, apply) = {
+        let current = state.borrow();
+        (
+            worklanes.unwrap_or(current.worklanes),
+            layout.unwrap_or(current.layout),
+            panes.unwrap_or(current.panes),
+            Rc::clone(&current.apply_changes),
+        )
+    };
+    match apply(worklanes, layout, panes) {
+        Ok(()) => {
+            let mut accepted = state.borrow_mut();
+            accepted.worklanes = worklanes;
+            accepted.layout = layout;
+            accepted.panes = panes;
+            accepted.status.set_text("");
+            eprintln!("zentty-linux: workspace-pane-settings control={control} result=applied");
+            true
+        }
+        Err(error) => {
+            state.borrow().status.set_text(&format!(
+                "Could not save Worklanes & Panes settings: {error}"
+            ));
+            eprintln!(
+                "zentty-linux: workspace-pane-settings control={control} result=error error={error}"
+            );
+            false
+        }
+    }
 }
 
 fn append_switch(
@@ -278,11 +335,19 @@ fn append_switch(
         .valign(gtk::Align::Center)
         .build();
     control.set_widget_name(name);
+    instrument_focus(&control, name);
     card.append(&setting_row(title, subtitle, &control));
     let state = Rc::clone(state);
     control.connect_active_notify(move |control| {
-        update(&mut state.borrow_mut().panes, control.is_active());
-        emit_changes(&state, control.widget_name().as_str());
+        let mut next = state.borrow().panes;
+        update(&mut next, control.is_active());
+        emit_changes(
+            &state,
+            None,
+            None,
+            Some(next),
+            control.widget_name().as_str(),
+        );
     });
 }
 
@@ -293,6 +358,7 @@ fn append_unavailable_switch(card: &gtk::Box, title: &str, reason: &str, name: &
         .valign(gtk::Align::Center)
         .build();
     control.set_widget_name(name);
+    control.update_property(&[gtk::accessible::Property::Description(reason)]);
     card.append(&setting_row(title, reason, &control));
 }
 
@@ -311,6 +377,8 @@ fn setting_row(title: &str, subtitle: &str, control: &impl IsA<gtk::Widget>) -> 
     let labels = gtk::Box::new(gtk::Orientation::Vertical, 3);
     labels.set_hexpand(true);
     let title = gtk::Label::new(Some(title));
+    title.set_use_underline(true);
+    title.set_mnemonic_widget(Some(control));
     title.set_halign(gtk::Align::Start);
     title.add_css_class("heading");
     let subtitle = gtk::Label::new(Some(subtitle));
@@ -322,6 +390,41 @@ fn setting_row(title: &str, subtitle: &str, control: &impl IsA<gtk::Widget>) -> 
     row.append(&labels);
     row.append(control);
     row
+}
+
+fn instrument_focus(control: &impl IsA<gtk::Widget>, name: &str) {
+    let focus = gtk::EventControllerFocus::new();
+    let name = name.to_owned();
+    focus.connect_enter(move |_| {
+        eprintln!("zentty-linux: workspace-pane-settings focus={name}");
+    });
+    control.add_controller(focus);
+}
+
+fn install_dropdown_boundary_keys(control: &gtk::DropDown) {
+    let keys = gtk::EventControllerKey::new();
+    keys.set_propagation_phase(gtk::PropagationPhase::Capture);
+    let dropdown = control.clone();
+    keys.connect_key_pressed(move |_, key, _, modifiers| {
+        let selected = if modifiers.contains(gtk::gdk::ModifierType::CONTROL_MASK)
+            && key == gtk::gdk::Key::Home
+        {
+            Some(0)
+        } else if modifiers.contains(gtk::gdk::ModifierType::CONTROL_MASK)
+            && key == gtk::gdk::Key::End
+        {
+            dropdown
+                .model()
+                .and_then(|model| model.n_items().checked_sub(1))
+        } else {
+            None
+        };
+        selected.map_or(gtk::glib::Propagation::Proceed, |selected| {
+            dropdown.set_selected(selected);
+            gtk::glib::Propagation::Stop
+        })
+    });
+    control.add_controller(keys);
 }
 
 #[cfg(test)]

@@ -1236,7 +1236,8 @@ impl From<Aggressiveness> for CommandFlattenAggressiveness {
 
 #[cfg(test)]
 mod tests {
-    use super::AppConfig;
+    use super::{AppConfig, NewWorklanePlacement, PaneLayoutConfig, PaneRightBehaviorMode};
+    use crate::PaneRightInsertionBehavior;
 
     #[test]
     fn source_shortcut_toml_parses_bindings_and_explicit_unbinds() {
@@ -1275,5 +1276,69 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.contains("invalid shortcut for sidebar.toggle"));
+    }
+
+    #[test]
+    fn adaptive_right_insertion_changes_exactly_at_each_supported_threshold() {
+        for threshold in [1200, 1440, 1680, 1920, 2560] {
+            let config = PaneLayoutConfig {
+                right_split_behavior: PaneRightBehaviorMode::Adaptive,
+                visible_split_window_width: threshold,
+            };
+            assert_eq!(
+                config.right_insertion_behavior(i32::from(threshold) - 1),
+                PaneRightInsertionBehavior::WorklaneAdd
+            );
+            assert_eq!(
+                config.right_insertion_behavior(i32::from(threshold)),
+                PaneRightInsertionBehavior::VisibleSplit
+            );
+        }
+    }
+
+    #[test]
+    fn explicit_right_insertion_modes_ignore_viewport_width() {
+        for width in [0, 1199, 1920, i32::MAX] {
+            assert_eq!(
+                PaneLayoutConfig {
+                    right_split_behavior: PaneRightBehaviorMode::AlwaysSplit,
+                    visible_split_window_width: 1920,
+                }
+                .right_insertion_behavior(width),
+                PaneRightInsertionBehavior::VisibleSplit
+            );
+            assert_eq!(
+                PaneLayoutConfig {
+                    right_split_behavior: PaneRightBehaviorMode::AlwaysAdd,
+                    visible_split_window_width: 1920,
+                }
+                .right_insertion_behavior(width),
+                PaneRightInsertionBehavior::WorklaneAdd
+            );
+        }
+    }
+
+    #[test]
+    fn workspace_settings_parse_placement_and_round_opacity_without_clamping() {
+        let config = AppConfig::parse_toml(
+            r#"
+                [worklanes]
+                new_worklane_placement = "end"
+                [panes]
+                inactive_opacity = 0.816
+            "#,
+        )
+        .unwrap();
+        assert_eq!(
+            config.worklanes.new_worklane_placement,
+            NewWorklanePlacement::End
+        );
+        assert_eq!(config.panes.inactive_opacity_percent, 82);
+
+        for invalid in ["0.599", "1.001", "nan"] {
+            assert!(
+                AppConfig::parse_toml(&format!("[panes]\ninactive_opacity = {invalid}\n")).is_err()
+            );
+        }
     }
 }

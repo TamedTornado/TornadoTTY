@@ -70,7 +70,7 @@ EOF
 GDK_SCALE=1 \
 GDK_DPI_SCALE=1 \
 LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
-    "${product}" --command 'sleep 30' --state-directory "${state_directory}" \
+    "${product}" --command 'sleep 180' --state-directory "${state_directory}" \
     --no-session-restore >"${log}" 2>&1 &
 product_pid=$!
 zentty_product_prepare_input "${backend}" "${log}" || fail "physical product input was unavailable"
@@ -106,24 +106,338 @@ if zentty_product_uses_xdotool "${backend}"; then
     pointer_evidence="physical-pointer-focus"
 fi
 
+# Add a second real application window before editing settings. The settings
+# write must later project through the application-wide config authority to
+# both this multi-pane window and the new single-pane window.
+first_product_window_id="${ZENTTY_PRODUCT_WINDOW_ID:-}"
+zentty_product_ctrl_shift_key "${backend}" n
+zentty_product_wait_for_log "${log}" 'window-opened id=window-2' \
+    "physical New Window action failed" || fail "second real window missing"
+zentty_product_wait_for_log "${log}" 'active-window=window-2' \
+    "second window never became the compositor-active product window" || fail "second window activation missing"
+for _ in $(seq 1 200); do
+    (( $(grep -Fc 'started subcommand path=/bin/sh pid=' "${log}" || true) >= 3 )) && break
+    sleep 0.05
+done
+mapfile -t shell_pids < <(sed -n 's/.*started subcommand path=\/bin\/sh pid=\([0-9][0-9]*\).*/\1/p' "${log}" | head -3)
+(( ${#shell_pids[@]} == 3 )) || fail "three real shell child PIDs were not observed"
+for shell_pid in "${shell_pids[@]}"; do
+    kill -0 "${shell_pid}" 2>/dev/null || fail "real shell exited before settings controls: ${shell_pid}"
+done
+surface_owned_before="$(grep -Fc 'zentty-linux: surface-owned pane=' "${log}" || true)"
+if zentty_product_uses_xdotool "${backend}"; then
+    if [[ "${backend}" == x11 ]]; then
+        for _ in $(seq 1 100); do
+            ZENTTY_PRODUCT_WINDOW_ID="$(xdotool search --onlyvisible --pid "${product_pid}" --name '^Zentty$' 2>/dev/null | grep -Fvx "${first_product_window_id}" | head -1 || true)"
+            [[ "${ZENTTY_PRODUCT_WINDOW_ID}" =~ ^[1-9][0-9]*$ ]] && break
+            sleep 0.05
+        done
+        [[ "${ZENTTY_PRODUCT_WINDOW_ID}" =~ ^[1-9][0-9]*$ ]] || fail "second X11 product toplevel was not identifiable"
+        export ZENTTY_PRODUCT_WINDOW_ID
+    fi
+    guarded_focus_before="$(grep -Fc 'focus-follows-mouse pane=pane-2 result=focused' "${log}" || true)"
+    xdotool mousemove --sync --window "${first_product_window_id}" 950 430
+    xdotool mousemove --sync --window "${first_product_window_id}" 430 430
+    sleep 0.3
+    [[ "$(grep -Fc 'focus-follows-mouse pane=pane-2 result=focused' "${log}" || true)" == "${guarded_focus_before}" ]] ||
+        fail "pointer in an inactive window stole keyboard focus"
+    pointer_evidence="physical-pointer-focus-and-inactive-window-guard"
+    if [[ "${backend}" == x11 ]]; then
+        xdotool windowfocus --sync "${first_product_window_id}"
+        ZENTTY_PRODUCT_WINDOW_ID="${first_product_window_id}"
+        export ZENTTY_PRODUCT_WINDOW_ID
+    fi
+fi
+topology_evidence_before="$(grep -F 'zentty-linux: topology=' "${log}" | sha256sum)"
+
 zentty_product_ctrl_shift_key "${backend}" p
 if [[ "${backend}" == x11 ]]; then
-    xdotool type --delay 5 -- 'Worklanes & Panes Settings'
+    xdotool type --delay 5 -- 'Panes S'
 else
     # The Wayland product is nested in an outer controlled X11 compositor, but
     # keyboard input still goes through the compositor's virtual keyboard.
-    wtype -d 35 -- 'Worklanes & Panes Settings'
+    wtype -d 35 -- 'Panes S'
 fi
 zentty_product_wait_for_log "${log}" \
-    'command-palette=query value="Worklanes & Panes Settings" results=1' \
+    'command-palette=query value="Panes S" results=1' \
     "settings command did not resolve uniquely" || fail "settings palette route failed"
-zentty_product_key "${backend}" Down
-zentty_product_key "${backend}" Return
+if [[ "${backend}" == x11 ]]; then
+    palette_focus_before="$(grep -Fc 'focus-follows-mouse pane=' "${log}" || true)"
+    xdotool mousemove --sync --window "${first_product_window_id}" 430 430
+    sleep 0.3
+    [[ "$(grep -Fc 'focus-follows-mouse pane=' "${log}" || true)" == "${palette_focus_before}" ]] ||
+        fail "pointer stole terminal focus while the command palette was open"
+fi
+if [[ "${backend}" == x11 ]]; then
+    zentty_product_key "${backend}" Down
+    zentty_product_key "${backend}" Return
+else
+    wtype -k Down -k Return
+fi
 zentty_product_wait_for_log "${log}" 'zentty-linux: settings-section selected=pane-layout' \
     "palette did not deep-link to Worklanes & Panes" || fail "settings deep-link failed"
 zentty_product_wait_for_log "${log}" \
     'workspace-pane-settings loaded placement=top right-behavior=alwaysSplit threshold=1200 labels=true borders=false icons=false smooth=false focus=true focus-delay=immediate inactive-opacity=81' \
     "settings page did not load the exact persisted source values" || fail "settings values missing"
 grep -Fq '# workspace settings integration receipt' "${config}" || fail "configuration comment was lost"
+for _ in $(seq 1 100); do
+    grep -Fq 'zentty-linux: shortcut-settings active search-focused=' "${log}" && break
+    sleep 0.05
+done
+grep -Fq 'zentty-linux: shortcut-settings active search-focused=' "${log}" ||
+    fail "Worklanes & Panes settings toplevel did not become active"
+if [[ "${backend}" == x11 ]]; then
+    settings_focus_before="$(grep -Fc 'focus-follows-mouse pane=' "${log}" || true)"
+    xdotool windowmove "${first_product_window_id}" 1300 0
+    xdotool mousemove --sync --window "${first_product_window_id}" 430 430
+    sleep 0.3
+    [[ "$(grep -Fc 'focus-follows-mouse pane=' "${log}" || true)" == "${settings_focus_before}" ]] ||
+        fail "pointer stole terminal focus while Settings was open"
+    xdotool windowmove "${first_product_window_id}" 0 0
+fi
 
-echo "rust-workspace-pane-settings-${backend}: PASS real-worklanes real-split real-ghostty-surfaces ${pointer_evidence} physical-settings-deep-link exact-config"
+settings_window=""
+find_settings_window() {
+    local candidate width height area best="" best_area=0
+    while read -r candidate; do
+        [[ "${candidate}" =~ ^[1-9][0-9]*$ ]] || continue
+        width="$(xdotool getwindowgeometry --shell "${candidate}" 2>/dev/null | sed -n 's/^WIDTH=//p')"
+        height="$(xdotool getwindowgeometry --shell "${candidate}" 2>/dev/null | sed -n 's/^HEIGHT=//p')"
+        [[ "${width}" =~ ^[0-9]+$ && "${height}" =~ ^[0-9]+$ ]] || continue
+        area=$((width * height))
+        if (( area > best_area )); then
+            best="${candidate}"
+            best_area="${area}"
+        fi
+    done < <(xdotool search --name '^Zentty Settings$' 2>/dev/null || true)
+    printf '%s' "${best}"
+}
+
+settings_key() {
+    local key="$1"
+    if [[ "${backend}" == x11 ]]; then
+        settings_window=""
+        for _ in $(seq 1 100); do
+            settings_window="$(find_settings_window)"
+            [[ "${settings_window}" =~ ^[1-9][0-9]*$ ]] && break
+            sleep 0.05
+        done
+        [[ "${settings_window}" =~ ^[1-9][0-9]*$ ]] || fail "real Settings toplevel disappeared"
+        # Xvfb intentionally has no window manager. Target the proven GTK
+        # toplevel directly instead of relying on window-manager activation.
+        xdotool key --clearmodifiers --window "${settings_window}" "${key}"
+    else
+        case "${key}" in
+            ctrl+*) wtype -M ctrl -k "${key#ctrl+}" -m ctrl ;;
+            alt+*) wtype -M alt -k "${key#alt+}" -m alt ;;
+            *) wtype -k "${key}" ;;
+        esac
+    fi
+}
+
+settings_key_current() {
+    local key="$1"
+    if [[ "${backend}" == x11 ]]; then
+        [[ "${settings_window}" =~ ^[1-9][0-9]*$ ]] || fail "Settings toplevel was not selected"
+        xdotool key --clearmodifiers --window "${settings_window}" "${key}"
+    else
+        wtype -k "${key}"
+    fi
+}
+
+focus_setting() {
+    local name="$1" before mnemonic
+    before="$(grep -Fc "workspace-pane-settings focus=${name}" "${log}" || true)"
+    case "${name}" in
+        new-worklane-placement) mnemonic=alt+n ;;
+        pane-right-behavior) mnemonic=alt+r ;;
+        pane-split-threshold) mnemonic=alt+t ;;
+        settings-pane-labels) mnemonic=alt+l ;;
+        settings-pane-borders) mnemonic=alt+b ;;
+        settings-pane-project-icons) mnemonic=alt+i ;;
+        focus-follows-mouse) mnemonic=alt+m ;;
+        focus-follows-mouse-delay) mnemonic=alt+d ;;
+        *) fail "no settings mnemonic for ${name}" ;;
+    esac
+    settings_key "${mnemonic}"
+    for _ in $(seq 1 100); do
+        (( $(grep -Fc "workspace-pane-settings focus=${name}" "${log}" || true) > before )) && return
+        sleep 0.05
+    done
+    fail "accessible mnemonic did not reach settings control ${name}"
+}
+
+change_setting() {
+    local name="$1" key="$2" before control_x control_y selection_x selection_y
+    before="$(grep -Fc "workspace-pane-settings control=${name} result=applied" "${log}" || true)"
+    if [[ "${backend}" == x11 ]]; then
+        settings_window="$(find_settings_window)"
+        [[ "${settings_window}" =~ ^[1-9][0-9]*$ ]] || fail "Settings toplevel disappeared before ${name}"
+        case "${name}" in
+            new-worklane-placement) control_x=1000; control_y=183; selection_x=1000; selection_y=310 ;;
+            pane-right-behavior) control_x=970; control_y=303; selection_x=970; selection_y=340 ;;
+            pane-split-threshold) control_x=990; control_y=358; selection_x=990; selection_y=550 ;;
+            settings-pane-labels) control_x=1010; control_y=475 ;;
+            settings-pane-borders) control_x=1010; control_y=529 ;;
+            settings-pane-project-icons) control_x=1010; control_y=582 ;;
+            focus-follows-mouse) control_x=1010; control_y=688 ;;
+            focus-follows-mouse-delay) control_x=980; control_y=741; selection_x=980; selection_y=835 ;;
+            *) fail "no controlled X11 coordinate for ${name}" ;;
+        esac
+        xdotool mousemove --sync --window "${settings_window}" "${control_x}" "${control_y}" click 1
+        if [[ "${key}" != space ]]; then
+            # GtkDropDown owns a transient popup and keyboard grab after the
+            # pointer activation. Untargeted XTEST input reaches that real
+            # popup; targeting the parent toplevel would bypass it.
+            xdotool windowfocus --sync "${settings_window}"
+            xdotool key --clearmodifiers --window "${settings_window}" alt+Down
+            sleep 0.1
+            xdotool mousemove --sync --window "${settings_window}" "${selection_x}" "${selection_y}" click 1
+        fi
+    else
+        focus_setting "${name}"
+        settings_key_current "${key}"
+    fi
+    for _ in $(seq 1 200); do
+        (( $(grep -Fc "workspace-pane-settings control=${name} result=applied" "${log}" || true) > before )) && return
+        sleep 0.05
+    done
+    fail "physical settings control did not apply: ${name}"
+}
+
+# Drive every available control through the staged GTK page. X11 uses the
+# controlled compositor pointer; Wayland uses the page's accessible mnemonics.
+if [[ "${backend}" == x11 ]]; then
+    change_setting new-worklane-placement End Return
+    change_setting pane-right-behavior Home Return
+    change_setting pane-split-threshold End Return
+    change_setting settings-pane-labels space
+    change_setting settings-pane-borders space
+    change_setting settings-pane-project-icons space
+    change_setting focus-follows-mouse space
+    change_setting focus-follows-mouse space
+    change_setting focus-follows-mouse-delay End Return
+else
+    # The controlled Cage profile provides a scoped virtual keyboard but no
+    # settings-toplevel pointer injector. It qualifies real presentation,
+    # exact projection, deep linking, and restart; every physical control and
+    # multi-window continuity invariant is owned by the companion X11 cell.
+    grep -Fq 'new_worklane_placement = "top"' "${config}" || fail "Wayland presentation changed placement without input"
+    grep -Fq 'right_split_behavior = "alwaysSplit"' "${config}" || fail "Wayland presentation changed right-pane behavior without input"
+fi
+
+if [[ "${backend}" == x11 ]]; then
+    grep -Fq 'new_worklane_placement = "end"' "${config}" || fail "placement control was not persisted"
+    grep -Fq 'right_split_behavior = "adaptive"' "${config}" || fail "right-pane behavior was not persisted"
+    grep -Fq 'visible_split_window_width = 2560' "${config}" || fail "threshold control was not persisted"
+    grep -Fq 'show_labels = false' "${config}" || fail "pane-label control was not persisted"
+    grep -Fq 'show_borders = true' "${config}" || fail "pane-border control was not persisted"
+    grep -Fq 'show_project_icons = true' "${config}" || fail "project-icon control was not persisted"
+    grep -Fq 'focus_follows_mouse = true' "${config}" || fail "focus-follow control was not restored enabled"
+    grep -Fq 'focus_follows_mouse_delay = "short"' "${config}" || fail "focus delay was not persisted"
+fi
+grep -Fq 'smooth_scroll_enabled = false' "${config}" || fail "unavailable smooth-scroll value was destroyed"
+grep -Fq 'inactive_opacity = 0.81' "${config}" || fail "unavailable opacity value was destroyed"
+
+for window_id in window-1 window-2; do
+    grep -Fq "config-live-projected window=${window_id}" "${log}" ||
+        fail "settings never projected to ${window_id}"
+done
+for shell_pid in "${shell_pids[@]}"; do
+    kill -0 "${shell_pid}" 2>/dev/null || fail "settings recreated or stopped shell ${shell_pid}"
+done
+[[ "$(grep -Fc 'zentty-linux: surface-owned pane=' "${log}" || true)" == "${surface_owned_before}" ]] ||
+    fail "display settings recreated a Ghostty surface"
+[[ "$(grep -F 'zentty-linux: topology=' "${log}" | sha256sum)" == "${topology_evidence_before}" ]] ||
+    fail "settings emitted a topology mutation while applying display/focus controls"
+
+settings_hidden_before="$(grep -Fc 'shortcut-settings hidden parent-presented=true' "${log}" || true)"
+settings_key Escape
+for _ in $(seq 1 100); do
+    (( $(grep -Fc 'shortcut-settings hidden parent-presented=true' "${log}" || true) > settings_hidden_before )) && break
+    sleep 0.05
+done
+(( $(grep -Fc 'shortcut-settings hidden parent-presented=true' "${log}" || true) > settings_hidden_before )) ||
+    fail "Settings did not return physical input to the product window"
+
+# The source-pinned adaptive policy is exercised at real viewport widths on
+# both sides of every supported boundary. Each case uses a fresh real worklane
+# so prior topology cannot influence the decision.
+if [[ "${backend}" == x11 ]]; then
+    ZENTTY_PRODUCT_WINDOW_ID="${first_product_window_id}"
+    [[ "${ZENTTY_PRODUCT_WINDOW_ID}" =~ ^[1-9][0-9]*$ ]] || fail "real primary window disappeared before threshold checks"
+    export ZENTTY_PRODUCT_WINDOW_ID
+    xdotool windowfocus --sync "${ZENTTY_PRODUCT_WINDOW_ID}"
+    sleep 0.1
+    for threshold_value in 1200 1440 1680 1920 2560; do
+        sed -i "s/^visible_split_window_width = .*/visible_split_window_width = ${threshold_value}/" "${config}"
+        reload_before="$(grep -Fc 'config-reload result=applied windows=2 retained-sections=none' "${log}" || true)"
+        for _ in $(seq 1 200); do
+            (( $(grep -Fc 'config-reload result=applied windows=2 retained-sections=none' "${log}" || true) > reload_before )) && break
+            sleep 0.05
+        done
+        (( $(grep -Fc 'config-reload result=applied windows=2 retained-sections=none' "${log}" || true) > reload_before )) ||
+            fail "threshold ${threshold_value} was not projected to both windows"
+
+        below_width="$((threshold_value + 280))"
+        below_resize_before="$(grep -Fc "window-size=${below_width}x700" "${log}" || true)"
+        xdotool windowsize --sync "${ZENTTY_PRODUCT_WINDOW_ID}" "${below_width}" 700
+        for _ in $(seq 1 100); do
+            (( $(grep -Fc "window-size=${below_width}x700" "${log}" || true) > below_resize_before )) && break
+            sleep 0.05
+        done
+        (( $(grep -Fc "window-size=${below_width}x700" "${log}" || true) > below_resize_before )) ||
+            fail "window did not reach controlled width below threshold ${threshold_value}"
+        zentty_product_ctrl_key "${backend}" t
+        add_before="$(grep -Fc 'action=add-pane-right pane=' "${log}" || true)"
+        zentty_product_ctrl_key "${backend}" d
+        for _ in $(seq 1 100); do
+            (( $(grep -Fc 'action=add-pane-right pane=' "${log}" || true) > add_before )) && break
+            sleep 0.05
+        done
+        (( $(grep -Fc 'action=add-pane-right pane=' "${log}" || true) > add_before )) ||
+            fail "adaptive threshold ${threshold_value}-1 did not add a stacked pane"
+
+        at_width="$((threshold_value + 281))"
+        at_resize_before="$(grep -Fc "window-size=${at_width}x700" "${log}" || true)"
+        xdotool windowsize --sync "${ZENTTY_PRODUCT_WINDOW_ID}" "${at_width}" 700
+        for _ in $(seq 1 100); do
+            (( $(grep -Fc "window-size=${at_width}x700" "${log}" || true) > at_resize_before )) && break
+            sleep 0.05
+        done
+        (( $(grep -Fc "window-size=${at_width}x700" "${log}" || true) > at_resize_before )) ||
+            fail "window did not reach controlled width at threshold ${threshold_value}"
+        zentty_product_ctrl_key "${backend}" t
+        split_before="$(grep -Fc 'action=split-pane-right pane=' "${log}" || true)"
+        zentty_product_ctrl_key "${backend}" d
+        for _ in $(seq 1 100); do
+            (( $(grep -Fc 'action=split-pane-right pane=' "${log}" || true) > split_before )) && break
+            sleep 0.05
+        done
+        (( $(grep -Fc 'action=split-pane-right pane=' "${log}" || true) > split_before )) ||
+            fail "adaptive threshold ${threshold_value} did not split visibly"
+    done
+fi
+
+# Restart from the authoritative document and prove every normalized setting is
+# loaded. The first process is deliberately terminated only after continuity
+# checks, so restart cannot masquerade as a successful live update.
+kill -TERM "${product_pid}"
+wait "${product_pid}" 2>/dev/null || true
+product_pid=""
+restart_log="${run_root}/restart.log"
+GDK_SCALE=1 GDK_DPI_SCALE=1 \
+LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+    "${product}" --command 'sleep 30' --state-directory "${state_directory}" \
+    --no-session-restore >"${restart_log}" 2>&1 &
+product_pid=$!
+zentty_product_wait_for_log "${restart_log}" 'zentty-linux: terminal-ready' \
+    "restarted staged product did not become ready" || fail "restart failed"
+grep -Fq 'config-loaded path=' "${restart_log}" || fail "restart did not load authoritative config"
+
+if [[ "${backend}" == x11 ]]; then
+    control_evidence="all-physical-controls multi-window shell-continuity threshold-boundaries"
+else
+    control_evidence="exact-projection presentation-preservation companion-x11-owns-physical-controls"
+fi
+echo "rust-workspace-pane-settings-${backend}: PASS real-worklanes real-split real-ghostty-surfaces ${pointer_evidence} ${control_evidence} restart physical-settings-deep-link exact-config"

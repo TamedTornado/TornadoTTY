@@ -1531,11 +1531,12 @@ impl ApplicationShell {
                 pane_layout: self.config.pane_layout,
                 panes: self.config.panes,
                 apply_workspace_panes: Rc::new(move |worklanes, pane_layout, panes| {
-                    if let Some(shell) = workspace_panes_weak.upgrade() {
-                        shell
-                            .borrow_mut()
-                            .apply_workspace_panes(worklanes, pane_layout, panes);
-                    }
+                    let shell = workspace_panes_weak.upgrade().ok_or_else(|| {
+                        "Zentty window closed while applying Worklanes & Panes settings".to_owned()
+                    })?;
+                    shell
+                        .borrow_mut()
+                        .apply_workspace_panes(worklanes, pane_layout, panes)
                 }),
                 open_with_projection,
                 apply_open_with: Rc::new(move |config| {
@@ -1641,7 +1642,7 @@ impl ApplicationShell {
         worklanes: zentty_core::WorklaneConfig,
         pane_layout: zentty_core::PaneLayoutConfig,
         panes: zentty_core::PaneConfig,
-    ) {
+    ) -> Result<(), String> {
         match crate::config_store::ConfigStore::update_default_workspace_panes(
             worklanes,
             pane_layout,
@@ -1659,9 +1660,11 @@ impl ApplicationShell {
                     worklanes.new_worklane_placement.config_value(),
                     pane_layout.right_split_behavior.config_value(),
                 );
+                Ok(())
             }
             Err(error) => {
                 eprintln!("zentty-linux: workspace-pane-settings result=error detail={error}");
+                Err(error)
             }
         }
     }
