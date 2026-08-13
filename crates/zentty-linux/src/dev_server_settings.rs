@@ -149,9 +149,12 @@ pub(crate) fn build(
         let weak_root = root.downgrade();
         let weak_state = Rc::downgrade(&state);
         gtk::glib::timeout_add_local(Duration::from_millis(500), move || {
-            let (Some(_root), Some(state)) = (weak_root.upgrade(), weak_state.upgrade()) else {
+            let (Some(root), Some(state)) = (weak_root.upgrade(), weak_state.upgrade()) else {
                 return gtk::glib::ControlFlow::Break;
             };
+            if !root.is_mapped() {
+                return gtk::glib::ControlFlow::Break;
+            }
             reconcile_live_custom_browsers(&state);
             gtk::glib::ControlFlow::Continue
         });

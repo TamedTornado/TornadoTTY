@@ -260,8 +260,8 @@ authoritative execution plan is
   must resolve exactly the surviving three-target browser catalog, the selected
   custom browser, enabled passive detection, absence of the stale browser, and
   absence of the removed ignored-port range.
-- GH-39 now remains open only for deterministic physical qualification of the
-  native custom-browser chooser.
+- GH-39's final native custom-browser chooser cell is now physically qualified
+  in a controlled X11 environment with a real window manager.
 - The first full parallel matrix run exposed two unrelated timing defects in
   existing physical journeys rather than product regressions: the X11 source
   UX cell sampled sidebar allocation after a fixed 200 ms sleep, and the
@@ -310,8 +310,42 @@ authoritative execution plan is
   nondeterministic in the no-window-manager Xvfb harness: transient child XIDs
   do not identify the focused chooser reliably. This was not converted into a
   pass and no deprecated `FileChooserDialog` was retained merely for test
-  convenience. GH-39 remains open for a deterministic real-system chooser
-  driver; physical custom-browser removal and live invalidation are now covered.
+  convenience. At that point GH-39 remained open for a deterministic
+  real-system chooser driver, while physical custom-browser removal and live
+  invalidation were covered.
+- The missing ingredient was not a product seam: it was a managed X11
+  transient. The final journey starts a private Openbox instance inside the
+  already private Xvfb session, proves `_NET_SUPPORTING_WM_CHECK`, clicks the
+  real Add App control, identifies the chooser as a distinct visible transient,
+  enters the exact executable path through the native location field using the
+  real X11 clipboard, confirms it physically, and proves canonical persistence
+  through the existing config and runtime catalog. It then removes that same
+  browser physically and continues through every existing Dev Servers control.
+- This also exposed and repaired a lifecycle defect in the invalidation timer:
+  an unmapped old settings page could remain alive through GTK signal ownership
+  and perform a second stale reconciliation. The timer now exits as soon as its
+  page is no longer mapped. The complete focused X11 journey passes with one
+  invalidation receipt and controlled window-manager cleanup. GH-39 is now
+  complete; no chooser acceptance cell remains unclaimed.
+- The first aggregate with the managed chooser correctly refused qualification:
+  both X11 Dev Servers cells invalidated a non-preferred executable while the
+  assertion expected System Default fallback, and the unrelated multi-window
+  X11 cell missed its focus-settling deadline under load. The Dev Servers logs
+  proved the authoritative preferred browser was `custom:alternate`; the test
+  now removes that exact executable and requires System Default. The corrected
+  focused chooser/invalidation journey passes end to end. No failed aggregate
+  was described as successful.
+- The next aggregate passed both Dev Servers cells but caught an unrelated X11
+  bookmark dialog focus deadline under load; its immediate focused rerun passed
+  the complete real management journey. The final aggregate then passed every
+  presently executable support and matrix cell in 521,200 ms. Declared totals
+  remained PASS=123, FAIL=0, BLOCKED=7, XFAIL=1, NOT_IMPLEMENTED=23;
+  implemented-local, product-boundary, and qualification-host-retired claims
+  passed while release and full Linux qualification remained NOT_PASSED. Debug
+  Valgrind was **PASS with reviewed suppressions**: raw 427 errors/contexts and
+  6,240 direct plus 41,460 indirect bytes; post-suppression zero errors,
+  contexts, or bytes with all 427 reviewed contexts accounted for. ReleaseSafe
+  remains XFAIL.
 - Final post-change `linux/tests/qualify-local` passed every presently
   executable support and matrix cell in 502,440 ms. Declared totals remained
   PASS=123, FAIL=0, BLOCKED=7, XFAIL=1, NOT_IMPLEMENTED=23; implemented-local,

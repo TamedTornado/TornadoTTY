@@ -22,6 +22,7 @@ product_pid=""
 backend="${GDK_BACKEND:-}"
 container_id=""
 docker_port=""
+window_manager_pid=""
 
 fail() {
     [[ ! -f "${log}" ]] || cat "${log}" >&2
@@ -37,6 +38,10 @@ cleanup() {
     if [[ -n "${container_id}" ]]; then
         docker rm -f "${container_id}" >/dev/null 2>&1 || true
     fi
+    if [[ "${window_manager_pid}" =~ ^[1-9][0-9]*$ ]]; then
+        kill -TERM "${window_manager_pid}" 2>/dev/null || true
+        wait "${window_manager_pid}" 2>/dev/null || true
+    fi
     rm -rf -- "${run_root}"
 }
 trap cleanup EXIT
@@ -46,6 +51,16 @@ case "${backend}" in
         [[ "${ZENTTY_NESTED_X11_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
             fail "X11 scenario must run through linux/tests/nested-x11"
         command -v xdotool >/dev/null || fail "xdotool is required"
+        command -v xclip >/dev/null || fail "xclip is required"
+        command -v openbox >/dev/null || fail "openbox is required"
+        openbox --sm-disable >"${run_root}/openbox.log" 2>&1 &
+        window_manager_pid=$!
+        for _ in $(seq 1 200); do
+            xprop -root _NET_SUPPORTING_WM_CHECK 2>/dev/null | grep -Fq 'window id #' && break
+            sleep 0.05
+        done
+        xprop -root _NET_SUPPORTING_WM_CHECK 2>/dev/null | grep -Fq 'window id #' ||
+            fail "controlled Openbox window manager did not become ready"
         ;;
     wayland)
         [[ "${ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
@@ -54,7 +69,7 @@ case "${backend}" in
         ;;
     *) fail "GDK_BACKEND must be x11 or wayland" ;;
 esac
-for dependency in cut grep head mktemp readelf sed seq sha256sum sleep; do
+for dependency in cut grep head mktemp readelf sed seq sha256sum sleep xprop; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
 [[ -x "${product}" ]] || fail "staged product is missing: ${product}"
@@ -98,8 +113,13 @@ cat >"${run_root}/bin/removable-browser" <<'EOF'
 #!/usr/bin/env bash
 exit 0
 EOF
+cat >"${run_root}/bin/chooser-browser" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
 chmod 700 "${run_root}/bin/preferred-browser" "${run_root}/bin/alternate-browser" \
-    "${run_root}/bin/system-browser" "${run_root}/bin/removable-browser"
+    "${run_root}/bin/system-browser" "${run_root}/bin/removable-browser" \
+    "${run_root}/bin/chooser-browser"
 cat >"${data_home}/applications/zentty-system-browser.desktop" <<EOF
 [Desktop Entry]
 Type=Application
@@ -317,6 +337,44 @@ if [[ "${backend}" == x11 ]]; then
     if grep -Fq "${run_root}/bin/removable-browser" "${config_home}/zentty/config.toml"; then
         fail "physical custom-browser removal retained the selected executable"
     fi
+
+    # A real window manager gives GTK's native asynchronous FileDialog a
+    # distinct managed transient, allowing deterministic physical interaction.
+    xdotool mousemove --sync --window "${settings_window_id}" 700 352 click 1
+    chooser_window_id=""
+    for _ in $(seq 1 200); do
+        chooser_window_id="$(xdotool search --onlyvisible --name '^Add Browser Application$' 2>/dev/null | tail -1 || true)"
+        [[ "${chooser_window_id}" =~ ^[1-9][0-9]*$ && "${chooser_window_id}" != "${settings_window_id}" ]] && break
+        sleep 0.05
+    done
+    [[ "${chooser_window_id}" =~ ^[1-9][0-9]*$ && "${chooser_window_id}" != "${settings_window_id}" ]] ||
+        fail "managed native browser chooser did not appear as a distinct transient"
+    xdotool windowfocus --sync "${chooser_window_id}"
+    xdotool key ctrl+l
+    xdotool mousemove --sync --window "${chooser_window_id}" 400 22 click 1
+    printf '%s' "${run_root}/bin/chooser-browser" | xclip -selection clipboard -in
+    xdotool key ctrl+a ctrl+v
+    xdotool key Return
+    sleep 0.2
+    xdotool key Return
+    for _ in $(seq 1 200); do
+        grep -Fq 'dev-server-settings control=add-browser result=applied' "${log}" && break
+        sleep 0.05
+    done
+    grep -Fq 'dev-server-settings control=add-browser result=applied' "${log}" ||
+        fail "native browser chooser did not add the selected executable"
+    grep -Fq "path = \"${run_root}/bin/chooser-browser\"" "${config_home}/zentty/config.toml" ||
+        fail "native browser chooser did not persist the canonical executable"
+    xdotool windowfocus --sync "${settings_window_id}"
+    chooser_remove_before="$(grep -Fc 'dev-server-settings control=remove-browser result=applied' "${log}" || true)"
+    xdotool mousemove --sync --window "${settings_window_id}" 990 578 click 1
+    for _ in $(seq 1 200); do
+        (( $(grep -Fc 'dev-server-settings control=remove-browser result=applied' "${log}" || true) > chooser_remove_before )) && break
+        sleep 0.05
+    done
+    if grep -Fq "${run_root}/bin/chooser-browser" "${config_home}/zentty/config.toml"; then
+        fail "physical removal retained the native-chooser browser"
+    fi
     xdotool mousemove --sync --window "${settings_window_id}" 1011 182 click 1
     for _ in $(seq 1 200); do
         grep -Fq 'dev-server-settings control=passive-detection result=applied' "${log}" && break
@@ -524,16 +582,16 @@ if [[ "${backend}" == x11 ]]; then
     done
     [[ "${settings_window_id}" =~ ^[1-9][0-9]*$ ]] || fail "refreshed Dev Servers settings window did not appear"
     xdotool windowfocus --sync "${settings_window_id}"
-    rm -f -- "${run_root}/bin/preferred-browser"
+    rm -f -- "${run_root}/bin/alternate-browser"
     for _ in $(seq 1 200); do
-        grep -Fq 'dev-server-settings live-browser-invalidation removed=custom:preferred' "${log}" && break
+        grep -Fq 'dev-server-settings live-browser-invalidation removed=custom:alternate' "${log}" && break
         sleep 0.05
     done
-    grep -Fq 'dev-server-settings live-browser-invalidation removed=custom:preferred' "${log}" ||
+    grep -Fq 'dev-server-settings live-browser-invalidation removed=custom:alternate' "${log}" ||
         fail "open settings page did not invalidate a disappearing browser"
     grep -Fq 'preferred_browser_id = "system-default"' "${config_home}/zentty/config.toml" ||
         fail "disappearing preferred browser did not fall back safely"
-    if grep -Fq 'custom:preferred' "${config_home}/zentty/config.toml"; then
+    if grep -Fq 'custom:alternate' "${config_home}/zentty/config.toml"; then
         fail "live browser invalidation retained stale configuration"
     fi
     xdotool key Escape
@@ -541,6 +599,7 @@ if [[ "${backend}" == x11 ]]; then
         [[ "$(grep -Fc 'shortcut-settings hidden parent-presented=true' "${log}" || true)" -ge 2 ]] && break
         sleep 0.05
     done
+    xdotool windowfocus --sync "${window_id}"
 else
     # The X11 cell owns physical file chooser/removal and disappearance. The
     # Wayland cell retains its configured executable for shared action coverage.
@@ -659,7 +718,7 @@ product_pid=$!
 for _ in $(seq 1 300); do
     if grep -Fq 'zentty-linux: terminal-ready' "${log}"; then
         if [[ "${backend}" == x11 ]]; then
-            grep -Fq 'server-browser-discovery available=2 preferred=custom:alternate unavailable=' "${log}" && break
+            grep -Fq 'server-browser-discovery available=2 preferred=system-default unavailable=' "${log}" && break
         else
             grep -Fq 'server-browser-discovery available=3 preferred=custom:alternate unavailable=' "${log}" && break
         fi
@@ -667,7 +726,7 @@ for _ in $(seq 1 300); do
     sleep 0.05
 done
 if [[ "${backend}" == x11 ]]; then
-    grep -Fq 'server-browser-discovery available=2 preferred=custom:alternate unavailable=' "${log}" ||
+    grep -Fq 'server-browser-discovery available=2 preferred=system-default unavailable=' "${log}" ||
         fail "live-invalidated Dev Servers browser state did not survive restart"
 else
     grep -Fq 'server-browser-discovery available=3 preferred=custom:alternate unavailable=' "${log}" ||
