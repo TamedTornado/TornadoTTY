@@ -589,6 +589,10 @@ if [[ "${backend}" == x11 ]]; then
     done
     grep -Fq 'dev-server-settings live-browser-invalidation removed=custom:alternate' "${log}" ||
         fail "open settings page did not invalidate a disappearing browser"
+    for _ in $(seq 1 100); do
+        grep -Fq 'preferred_browser_id = "system-default"' "${config_home}/zentty/config.toml" && break
+        sleep 0.05
+    done
     grep -Fq 'preferred_browser_id = "system-default"' "${config_home}/zentty/config.toml" ||
         fail "disappearing preferred browser did not fall back safely"
     if grep -Fq 'custom:alternate' "${config_home}/zentty/config.toml"; then

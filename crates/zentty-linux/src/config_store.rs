@@ -606,74 +606,59 @@ impl ConfigStore {
 
     fn update_ignored_port_rules(path: &Path, rules: &[String]) -> Result<(), String> {
         let target = resolve_config_target(path)?;
-        let source = match fs::read_to_string(&target) {
-            Ok(source) => source,
-            Err(error) if error.kind() == ErrorKind::NotFound => String::new(),
-            Err(error) => return Err(format!("could not read {}: {error}", target.display())),
-        };
-        if source.len() as u64 > MAX_CONFIG_BYTES {
-            return Err(format!("configuration exceeds {MAX_CONFIG_BYTES} bytes"));
-        }
-        let mut document = source
-            .parse::<toml_edit::DocumentMut>()
-            .map_err(|error| format!("could not edit invalid configuration: {error}"))?;
-        let mut array = toml_edit::Array::new();
-        for rule in rules {
-            array.push(rule.as_str());
-        }
-        document["server_detection"]["ignored_port_rules"] = toml_edit::value(array);
-        atomic_replace(&target, document.to_string().as_bytes())
+        with_config_lock(&target, || {
+            let source = editable_config_source(&target)?;
+            let mut document = source
+                .parse::<toml_edit::DocumentMut>()
+                .map_err(|error| format!("could not edit invalid configuration: {error}"))?;
+            let mut array = toml_edit::Array::new();
+            for rule in rules {
+                array.push(rule.as_str());
+            }
+            document["server_detection"]["ignored_port_rules"] = toml_edit::value(array);
+            atomic_replace(&target, document.to_string().as_bytes())
+        })
     }
 
     fn update_preferred_browser(path: &Path, browser_id: &str) -> Result<(), String> {
         let target = resolve_config_target(path)?;
-        let source = match fs::read_to_string(&target) {
-            Ok(source) => source,
-            Err(error) if error.kind() == ErrorKind::NotFound => String::new(),
-            Err(error) => return Err(format!("could not read {}: {error}", target.display())),
-        };
-        if source.len() as u64 > MAX_CONFIG_BYTES {
-            return Err(format!("configuration exceeds {MAX_CONFIG_BYTES} bytes"));
-        }
-        let mut document = source
-            .parse::<toml_edit::DocumentMut>()
-            .map_err(|error| format!("could not edit invalid configuration: {error}"))?;
-        document["server_detection"]["preferred_browser_id"] = toml_edit::value(browser_id);
-        atomic_replace(&target, document.to_string().as_bytes())
+        with_config_lock(&target, || {
+            let source = editable_config_source(&target)?;
+            let mut document = source
+                .parse::<toml_edit::DocumentMut>()
+                .map_err(|error| format!("could not edit invalid configuration: {error}"))?;
+            document["server_detection"]["preferred_browser_id"] = toml_edit::value(browser_id);
+            atomic_replace(&target, document.to_string().as_bytes())
+        })
     }
 
     fn update_shortcuts(path: &Path, bindings: &[ShortcutBinding]) -> Result<(), String> {
         let target = resolve_config_target(path)?;
-        let source = match fs::read_to_string(&target) {
-            Ok(source) => source,
-            Err(error) if error.kind() == ErrorKind::NotFound => String::new(),
-            Err(error) => return Err(format!("could not read {}: {error}", target.display())),
-        };
-        if source.len() as u64 > MAX_CONFIG_BYTES {
-            return Err(format!("configuration exceeds {MAX_CONFIG_BYTES} bytes"));
-        }
-        let mut document = source
-            .parse::<toml_edit::DocumentMut>()
-            .map_err(|error| format!("could not edit invalid configuration: {error}"))?;
-        let mut tables = toml_edit::ArrayOfTables::new();
-        for binding in bindings {
-            let mut table = toml_edit::Table::new();
-            table["command_id"] = toml_edit::value(&binding.command_id);
-            table["shortcut"] = toml_edit::value(
-                binding
-                    .shortcut
-                    .as_ref()
-                    .map_or_else(String::new, zentty_core::KeyboardShortcut::storage_string),
-            );
-            tables.push(table);
-        }
-        let shortcuts = document
-            .entry("shortcuts")
-            .or_insert_with(|| toml_edit::Item::Table(toml_edit::Table::new()))
-            .as_table_mut()
-            .ok_or_else(|| "shortcuts configuration is not a table".to_owned())?;
-        shortcuts["bindings"] = toml_edit::Item::ArrayOfTables(tables);
-        atomic_replace(&target, document.to_string().as_bytes())
+        with_config_lock(&target, || {
+            let source = editable_config_source(&target)?;
+            let mut document = source
+                .parse::<toml_edit::DocumentMut>()
+                .map_err(|error| format!("could not edit invalid configuration: {error}"))?;
+            let mut tables = toml_edit::ArrayOfTables::new();
+            for binding in bindings {
+                let mut table = toml_edit::Table::new();
+                table["command_id"] = toml_edit::value(&binding.command_id);
+                table["shortcut"] = toml_edit::value(
+                    binding
+                        .shortcut
+                        .as_ref()
+                        .map_or_else(String::new, zentty_core::KeyboardShortcut::storage_string),
+                );
+                tables.push(table);
+            }
+            let shortcuts = document
+                .entry("shortcuts")
+                .or_insert_with(|| toml_edit::Item::Table(toml_edit::Table::new()))
+                .as_table_mut()
+                .ok_or_else(|| "shortcuts configuration is not a table".to_owned())?;
+            shortcuts["bindings"] = toml_edit::Item::ArrayOfTables(tables);
+            atomic_replace(&target, document.to_string().as_bytes())
+        })
     }
 }
 
@@ -816,7 +801,7 @@ fn with_config_lock<T>(
         .ok_or_else(|| format!("configuration has no parent: {}", path.display()))?;
     fs::create_dir_all(parent)
         .map_err(|error| format!("could not create {}: {error}", parent.display()))?;
-    let lock_path = parent.join(".zentty-appearance.lock");
+    let lock_path = parent.join(".zentty-config.lock");
     let lock = OpenOptions::new()
         .read(true)
         .write(true)
@@ -890,12 +875,27 @@ fn atomic_replace(path: &Path, bytes: &[u8]) -> Result<(), String> {
             .map_err(|error| format!("could not write {}: {error}", temporary.display()))?;
         fs::rename(&temporary, path)
             .map_err(|error| format!("could not replace {}: {error}", path.display()))?;
+        File::open(parent)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|error| format!("could not sync {}: {error}", parent.display()))?;
         Ok(())
     })();
     if result.is_err() {
         let _ = fs::remove_file(&temporary);
     }
     result
+}
+
+fn editable_config_source(path: &Path) -> Result<String, String> {
+    let source = match fs::read_to_string(path) {
+        Ok(source) => source,
+        Err(error) if error.kind() == ErrorKind::NotFound => String::new(),
+        Err(error) => return Err(format!("could not read {}: {error}", path.display())),
+    };
+    if source.len() as u64 > MAX_CONFIG_BYTES {
+        return Err(format!("configuration exceeds {MAX_CONFIG_BYTES} bytes"));
+    }
+    Ok(source)
 }
 
 enum ConfigContents {
@@ -1012,14 +1012,14 @@ mod tests {
     use super::{
         BoundedReadError, ConfigStore, MAX_CONFIG_BYTES, ThemeInstallOutcome,
         default_config_file_from, default_fallback_theme_path, default_ghostty_config_file_from,
-        default_theme_resource_path, fallback_theme_publication_error,
-        install_fallback_theme_if_referenced, read_bounded,
+        default_theme_resource_path, editable_config_source, fallback_theme_publication_error,
+        install_fallback_theme_if_referenced, read_bounded, with_config_lock,
     };
     use std::ffi::OsString;
     use std::fs;
     use std::io::Read;
     use std::path::Path;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
     use zentty_core::{
         AgentCaffeinationConfig, AgentIntegrationState, AgentIntegrationsConfig, AgentTeamsConfig,
         AppConfig, BackgroundOpacity, ClipboardConfig, CommandFlattenAggressiveness,
@@ -1720,6 +1720,119 @@ mod tests {
         let contents = fs::read_to_string(&path).unwrap();
         assert!(contents.contains("theme = TokyoNight\n"));
         assert!(contents.contains("background-opacity = 0.75\n"));
+        remove(&root);
+    }
+
+    #[test]
+    fn every_product_config_writer_contends_on_the_shared_target_lock() {
+        use std::sync::mpsc;
+
+        let root = private_root("all-writers-shared-lock");
+        let path = root.join("zentty/config.toml");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, "[server_detection]\n").unwrap();
+
+        let assert_contends = |operation: Box<dyn FnOnce() + Send>| {
+            let (sender, receiver) = mpsc::channel();
+            let worker = with_config_lock(&path, || {
+                let worker = std::thread::spawn(move || {
+                    operation();
+                    sender.send(()).unwrap();
+                });
+                assert!(
+                    receiver.recv_timeout(Duration::from_millis(50)).is_err(),
+                    "writer bypassed the shared config lock"
+                );
+                Ok(worker)
+            })
+            .unwrap();
+            receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+            worker.join().unwrap();
+        };
+
+        let ignored_path = path.clone();
+        assert_contends(Box::new(move || {
+            ConfigStore::update_ignored_port_rules(&ignored_path, &["3000".into()]).unwrap();
+        }));
+        let browser_path = path.clone();
+        assert_contends(Box::new(move || {
+            ConfigStore::update_preferred_browser(&browser_path, "system-default").unwrap();
+        }));
+        let shortcut_path = path.clone();
+        assert_contends(Box::new(move || {
+            ConfigStore::update_shortcuts(
+                &shortcut_path,
+                &[zentty_core::ShortcutBinding {
+                    command_id: "pane.close".into(),
+                    shortcut: None,
+                }],
+            )
+            .unwrap();
+        }));
+        remove(&root);
+    }
+
+    #[test]
+    fn shared_editable_source_distinguishes_missing_unreadable_and_size_boundaries() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = private_root("shared-editable-source-boundaries");
+        let path = root.join("zentty/config.toml");
+        assert_eq!(editable_config_source(&path).unwrap(), "");
+
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, "private").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o000)).unwrap();
+        assert!(
+            editable_config_source(&path)
+                .unwrap_err()
+                .contains("could not read")
+        );
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+
+        let maximum = usize::try_from(MAX_CONFIG_BYTES).unwrap();
+        fs::write(&path, vec![b' '; maximum]).unwrap();
+        assert_eq!(editable_config_source(&path).unwrap().len(), maximum);
+        fs::write(&path, vec![b' '; maximum + 1]).unwrap();
+        assert!(
+            editable_config_source(&path)
+                .unwrap_err()
+                .contains("exceeds")
+        );
+        remove(&root);
+    }
+
+    #[test]
+    fn concurrent_product_updates_preserve_distinct_owned_sections() {
+        let root = private_root("zentty-config-concurrent-sections");
+        let path = root.join("zentty/config.toml");
+        let general_path = path.clone();
+        let updates_path = path.clone();
+        let general = std::thread::spawn(move || {
+            let clipboard = ClipboardConfig {
+                always_clean_copies: true,
+                ..ClipboardConfig::default()
+            };
+            ConfigStore::update_general(
+                &general_path,
+                ConfirmationsConfig::default(),
+                RestoreConfig::default(),
+                clipboard,
+            )
+        });
+        let updates = std::thread::spawn(move || {
+            ConfigStore::update_updates(
+                &updates_path,
+                zentty_core::UpdatesConfig {
+                    channel: zentty_core::UpdateChannel::Beta,
+                },
+            )
+        });
+        general.join().unwrap().unwrap();
+        updates.join().unwrap().unwrap();
+        let config = ConfigStore::load(path).unwrap().config;
+        assert!(config.clipboard.always_clean_copies);
+        assert_eq!(config.updates.channel, zentty_core::UpdateChannel::Beta);
         remove(&root);
     }
 

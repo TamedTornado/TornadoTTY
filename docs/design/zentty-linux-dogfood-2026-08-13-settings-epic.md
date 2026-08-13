@@ -681,3 +681,67 @@ authoritative execution plan is
   suppressions**, and ReleaseSafe remains XFAIL. GH-36 remains open for
   self-write provenance/open-page refresh, broader permission and concurrency
   cases, interrupted/crash durability, and complete projection edges.
+
+## GH-36 product-write serialization and durability slice
+
+- **Pre-implementation audit:** most product config writers take the shared
+  advisory lock, but shortcut, ignored-port, and preferred-browser writers do
+  not. Their read/modify/replace cycles can therefore lose a distinct
+  concurrent product update. The lock is also misleadingly named
+  `.zentty-appearance.lock`, and atomic replacement syncs the temporary file but
+  not the parent directory after rename.
+- **Contract:** every Zentty-owned config read/modify/replace uses the same
+  target-directory lock, preserving distinct product-owned changes. Every
+  successful replacement syncs file data before rename and the containing
+  directory after rename. Failure to sync the directory is a failed write, not
+  a durable success claim. The symlink entry remains untouched because locking
+  and replacement continue to operate on the resolved target.
+- **External-writer boundary:** an uncooperative external editor does not honor
+  Zentty's advisory lock. Its overlapping atomic rename and a Zentty rename are
+  atomic last-writer-wins operations; neither can tear the file. The live
+  watcher must converge on whichever complete document is finally present.
+  This slice does not falsely promise compare-and-swap semantics that POSIX file
+  replacement does not provide.
+- **Test-first contract:** concurrent real threads update independently owned
+  Zentty sections and must preserve both; the three formerly unlocked paths
+  must contend on the same lock; parent-directory sync failure boundaries must
+  be explicit; existing comment, unknown-key, symlink, size, and invalid-source
+  tests must remain green. Mutation and full qualification are required.
+- The first governed writer mutation run tested 15 mutations and correctly
+  reported five survivors. All five were missing direct boundary observations
+  in the newly shared editable-source helper: missing versus non-missing read
+  errors and exact versus over-limit size. A focused real-filesystem test now
+  proves missing is empty, mode `0000` is an error, exactly 1 MiB is accepted,
+  and one byte over is rejected. The rerun tested all 15: **13 caught, 2
+  unviable, 0 missed**.
+- Deterministic contention tests hold the actual advisory file lock while each
+  formerly unlocked writer runs on a real thread; each blocks until release.
+  A separate two-thread journey concurrently updates General and Updates and
+  proves both independently owned sections survive. These tests would fail if
+  lock calls were removed rather than merely hoping a scheduler exposes a race.
+- A direct ad-hoc mutation command copied the source without the ignored
+  `build/` dependency tree and its unmutated baseline correctly failed because
+  the pinned Ghostty library was absent there; it tested no mutants and no
+  result was accepted. Rerunning through `linux/tests/mutate-rust` supplied the
+  governed ignored-tree/no-target-copy policy and dependency environment.
+  Focused mutation of `atomic_replace` then tested four mutants: **3 caught, 1
+  unviable, 0 missed**, including the durable replacement path.
+- The required full qualification rerun exposed a pre-existing ordering bug in
+  the development-server X11 journey: the product deliberately logs browser
+  invalidation before its persistence callback completes, while the journey
+  treated that trigger log as proof that the config file had already converged.
+  The product subsequently writes the correct fallback, but the journey raced
+  that write and failed `development-servers-x11` after 45.53 seconds. The
+  repair retains the real UI and filesystem boundary and waits (bounded to five
+  seconds) for the authoritative file state after observing the trigger; it
+  does not weaken or skip the final exact assertions. This is harness ordering,
+  not a product exemption, and the failed qualification receipt is retained as
+  evidence until the clean rerun replaces the current summary.
+- The repaired focused X11 journey passed through the real nested X server,
+  real UI controls, real browser executable disappearance, and real config
+  filesystem convergence. The subsequent complete qualification rerun passed
+  every presently executable support and matrix cell in **504,870 ms**. Totals
+  remain **PASS=125, FAIL=0, BLOCKED=7, XFAIL=1, NOT_IMPLEMENTED=23**;
+  implemented-local passes, while release and full Linux qualification remain
+  NOT_PASSED. Debug Valgrind remains **PASS with reviewed suppressions** and
+  ReleaseSafe Valgrind remains XFAIL.
