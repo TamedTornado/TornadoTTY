@@ -695,8 +695,8 @@
       "optimize": "ReleaseSafe",
       "async_backend": "default",
       "terminals": "single",
-      "tracking": "GH-20",
-      "defect": "Named freedesktop sound themes are implemented, but source custom-audio selection, bounded conversion/install, transactional replacement, preview, and cleanup do not yet have a Linux policy or real-system journey.",
+      "tracking": "GH-41",
+      "defect": "Named freedesktop sound themes are implemented, but source custom-audio selection, bounded conversion/install, transactional replacement, preview, and cleanup remain explicitly tracked by GH-41 and do not yet have a Linux policy or real-system journey.",
       "authoritative": false
     },
     {
@@ -771,7 +771,7 @@
       "async_backend": "n/a",
       "terminals": "n/a",
       "tracking": "GH-20",
-      "defect": "The source-shaped nonmodal settings shell, navigation/history, General, Appearance, Shortcuts, named-sound Notifications, and Updates & Privacy settings now exist with focused persistence and real-system journeys. Worklanes & Panes, Open With, Dev Servers, Agents, custom notification sound import, and the complete live-reload/last-good/failure contract remain under GH-20, so the full platform settings contract is not implemented. Linux update delivery and reviewed crash reporting remain separately explicit under GH-23.",
+      "defect": "The source-shaped nonmodal settings shell, navigation/history, General, Appearance, Shortcuts, named-sound Notifications, and Updates & Privacy settings now exist with focused persistence and real-system journeys. The epic's explicit remaining children are GH-36 for authoritative reload/last-good/safe persistence, GH-37 Worklanes & Panes, GH-38 Open With, GH-39 Dev Servers, GH-40 Agents, and GH-41 custom notification audio. The full platform settings contract therefore remains NOT_IMPLEMENTED. Linux update delivery and reviewed crash reporting remain separately explicit under GH-23.",
       "authoritative": false
     },
     {

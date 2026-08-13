@@ -466,7 +466,7 @@
       "implementation_status": "PARTIAL",
       "focused_tests": ["crates/zentty-core/tests/app_config.rs", "crates/zentty-linux/src/config_store.rs"],
       "product_scenarios": ["linux/tests/rust-pane-search", "linux/tests/rust-multi-window"],
-      "test_plan": "Preserve the one bounded XDG config snapshot, source clipboard defaults/validation, content-free invalid-input warning, and identical projection to every real window. Complete every remaining settings section, searchable staged UI, external partial reload and last-good retention, comment/unknown-key preserving writes, symlink-safe atomic persistence, permission/concurrency/crash cases, and validator/migration mutation coverage before promotion from PARTIAL.",
+      "test_plan": "GitHub #20 is the umbrella contract. Complete GH-37 Worklanes & Panes, GH-38 Open With, GH-39 Dev Servers, and GH-40 Agents as one core-settings operator-review batch over existing runtime authorities; complete GH-36 external partial reload, last-good retention, comment/unknown-key preserving writes, symlink-safe atomic persistence, permission/concurrency/crash cases, and validator/migration mutation coverage; and complete GH-41 custom audio. Preserve the one bounded XDG config snapshot, source defaults/validation, content-free invalid-input warning, and identical projection to every real window before promotion from PARTIAL.",
       "alternative_or_blocker": null
     },
     {
