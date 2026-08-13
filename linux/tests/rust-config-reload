@@ -1,0 +1,172 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
+backend="${GDK_BACKEND:-}"
+bundle_root="$(cd "$(dirname "${product}")/.." 2>/dev/null && pwd)" || bundle_root=""
+bundle_lib="${bundle_root}/lib"
+state_dir=""
+log=""
+product_pid=""
+config_file="${XDG_CONFIG_HOME:?}/zentty/config.toml"
+
+# shellcheck source=linux/tests/lib/product-input disable=SC1091
+source "${repo_root}/linux/tests/lib/product-input"
+
+fail() {
+    [[ -z "${log}" || ! -f "${log}" ]] || cat "${log}" >&2
+    echo "rust-config-reload: error: $*" >&2
+    exit 1
+}
+
+cleanup() {
+    if [[ "${product_pid}" =~ ^[1-9][0-9]*$ ]]; then
+        kill -TERM "${product_pid}" 2>/dev/null || true
+        wait "${product_pid}" 2>/dev/null || true
+    fi
+    [[ -z "${state_dir}" ]] || rm -rf -- "${state_dir}"
+    [[ -z "${log}" ]] || rm -f -- "${log}"
+}
+trap cleanup EXIT
+
+case "${backend}" in
+    x11)
+        [[ "${ZENTTY_NESTED_X11_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+            fail "X11 journey must run through linux/tests/nested-x11"
+        ;;
+    wayland)
+        [[ "${ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+            fail "Wayland journey must run through linux/tests/nested-wayland-input"
+        ;;
+    *) fail "GDK_BACKEND must be x11 or wayland" ;;
+esac
+for dependency in cmp dirname mkdir mktemp mv pgrep sort; do
+    command -v "${dependency}" >/dev/null || fail "${dependency} is required"
+done
+[[ -x "${product}" ]] || fail "staged product is not built: ${product}"
+[[ -f "${bundle_lib}/libghostty-gtk-embed.so" ]] || fail "Ghostty bundle is missing"
+
+state_dir="$(mktemp -d)"
+log="$(mktemp)"
+mkdir -p "$(dirname "${config_file}")"
+cat >"${config_file}" <<'EOF'
+# external edits must preserve this operator-owned document
+[confirmations]
+confirm_before_closing_window = false
+confirm_before_quitting = false
+
+[clipboard]
+always_clean_copies = false
+
+[future_plugin]
+operator_key = "preserved"
+EOF
+
+# The real PTY child reports typed sentinels through the terminal title.
+# shellcheck disable=SC2016
+child_command='while IFS= read -r value; do printf '\''\033]2;%s\a'\'' "$value"; done'
+LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+    "${product}" --command "${child_command}" --state-directory "${state_dir}" \
+    --async-backend default >"${log}" 2>&1 &
+product_pid=$!
+zentty_product_wait_for_log "${log}" 'zentty-linux: terminal-ready-pane=pane-1' \
+    "first real terminal did not become ready" || fail "first terminal missing"
+zentty_product_prepare_input "${backend}" "${log}" || fail "could not prepare physical input"
+zentty_product_ctrl_shift_key "${backend}" n
+zentty_product_wait_for_log "${log}" 'zentty-linux: terminal-ready-pane=pane-window-2' \
+    "second real terminal did not become ready" || fail "second terminal missing"
+
+children_before=()
+for _ in {1..200}; do
+    mapfile -t children_before < <(pgrep -P "${product_pid}" | sort -n)
+    [[ "${#children_before[@]}" -eq 2 ]] && break
+    sleep 0.05
+done
+[[ "${#children_before[@]}" -eq 2 ]] || fail "two windows did not own two PTY children"
+
+replace_config() {
+    local clean_copy="$1"
+    local confirm="$2"
+    local temporary="${config_file}.external.$$"
+    cat >"${temporary}" <<EOF
+# external replacement receipt
+[confirmations]
+confirm_before_closing_window = ${confirm}
+confirm_before_quitting = ${confirm}
+
+[clipboard]
+always_clean_copies = ${clean_copy}
+
+[future_plugin]
+operator_key = "preserved"
+EOF
+    mv -f -- "${temporary}" "${config_file}"
+}
+
+cancel_confirmation() {
+    if [[ "${backend}" == x11 ]]; then
+        xdotool key Escape
+    else
+        wtype -k Escape
+    fi
+}
+
+# Two replace-by-rename writes inside the quiet period must publish only the
+# final valid state to both real windows.
+applied_before="$(grep -Fc 'zentty-linux: config-reload result=applied' "${log}" || true)"
+replace_config true false
+replace_config true true
+zentty_product_wait_for_log_count "${log}" \
+    'zentty-linux: config-live-projected window=' 2 \
+    "final external config did not reach both windows" || fail "multi-window projection missing"
+[[ "$(grep -Fc 'zentty-linux: config-reload result=applied' "${log}" || true)" -eq "$((applied_before + 1))" ]] ||
+    fail "rapid external writes were not coalesced to one publication"
+grep -Fq 'config-live-projected window=window-1 automatic-clean-copy=true confirm-close-window=true confirm-quit=true' "${log}" ||
+    fail "first window did not receive final valid state"
+grep -Fq 'config-live-projected window=window-2 automatic-clean-copy=true confirm-close-window=true confirm-quit=true' "${log}" ||
+    fail "second window did not receive final valid state"
+mapfile -t children_after < <(pgrep -P "${product_pid}" | sort -n)
+[[ "${children_after[*]}" == "${children_before[*]}" ]] || fail "config reload replaced a real PTY child"
+
+# The externally enabled confirmation is exercised through the real product UI.
+zentty_product_prepare_input "${backend}" "${log}" || fail "could not focus live reload window"
+zentty_product_close_window "${backend}"
+zentty_product_wait_for_log "${log}" 'zentty-linux: confirmation shown title="Quit Zentty?"' \
+    "live confirmation setting did not affect application quit" || fail "live behavior missing"
+cancel_confirmation
+zentty_product_wait_for_log "${log}" 'zentty-linux: confirmation accepted=false' \
+    "confirmation cancellation did not return to the live pane" || fail "confirmation cancellation missing"
+zentty_product_prepare_input "${backend}" "${log}" || fail "could not restore terminal focus"
+zentty_product_type "${backend}" "after-valid-config-reload"
+zentty_product_key "${backend}" Return
+sentinel_pane="pane-window-2"
+[[ "${backend}" == x11 ]] && sentinel_pane="pane-1"
+zentty_product_wait_for_log "${log}" "zentty-linux: title-pane=${sentinel_pane} value=after-valid-config-reload" \
+    "live PTY stopped accepting physical input after reload" || fail "post-reload sentinel missing"
+
+# Invalid replacement and disappearance both retain the accepted state without
+# logging file contents or silently resetting to defaults.
+cat >"${config_file}.invalid" <<'EOF'
+[confirmations
+operator_secret = "must-not-appear-in-diagnostics"
+EOF
+mv -f -- "${config_file}.invalid" "${config_file}"
+zentty_product_wait_for_log "${log}" 'zentty-linux: config-reload result=retained-last-good' \
+    "invalid external config did not retain last good" || fail "invalid retention missing"
+! grep -Fq 'must-not-appear-in-diagnostics' "${log}" || fail "diagnostic leaked config contents"
+retained_before="$(grep -Fc 'zentty-linux: config-reload result=retained-last-good' "${log}")"
+mv -- "${config_file}" "${config_file}.gone"
+zentty_product_wait_for_log_count "${log}" 'zentty-linux: config-reload result=retained-last-good' \
+    "$((retained_before + 1))" "missing config did not retain last good" || fail "missing retention absent"
+
+zentty_product_prepare_input "${backend}" "${log}" || fail "could not focus retained-last-good window"
+zentty_product_close_window "${backend}"
+zentty_product_wait_for_log_count "${log}" 'zentty-linux: confirmation shown title="Quit Zentty?"' 2 \
+    "last-good behavior did not survive invalid and missing files" || fail "last-good behavior reset"
+cancel_confirmation
+
+kill -TERM "${product_pid}"
+wait "${product_pid}" || true
+product_pid=""
+echo "rust-config-reload: PASS backend=${backend} real-pty=true multi-window=true rename=true coalesced=true last-good=true"

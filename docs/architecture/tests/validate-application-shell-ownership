@@ -6,6 +6,7 @@ contract="${ZENTTY_APPLICATION_SHELL_OWNERSHIP_CONTRACT:-${repo_root}/docs/archi
 main_file="${ZENTTY_APPLICATION_RUNTIME_SOURCE:-${repo_root}/crates/zentty-linux/src/main.rs}"
 application_file="${ZENTTY_APPLICATION_COORDINATOR_SOURCE:-${repo_root}/crates/zentty-linux/src/application.rs}"
 config_store_file="${ZENTTY_CONFIG_STORE_SOURCE:-${repo_root}/crates/zentty-linux/src/config_store.rs}"
+config_reload_file="${ZENTTY_CONFIG_RELOAD_SOURCE:-${repo_root}/crates/zentty-linux/src/config_reload.rs}"
 window_set_file="${ZENTTY_WINDOW_SET_SOURCE:-${repo_root}/crates/zentty-linux/src/window_set.rs}"
 agent_runtime_file="${ZENTTY_AGENT_RUNTIME_SOURCE:-${repo_root}/crates/zentty-linux/src/agent_runtime.rs}"
 codex_enrichment_file="${ZENTTY_CODEX_ENRICHMENT_SOURCE:-${repo_root}/crates/zentty-linux/src/codex_enrichment.rs}"
@@ -57,6 +58,7 @@ done
 [[ -r "${main_file}" ]] || fail "application runtime source is missing: ${main_file}"
 [[ -r "${application_file}" ]] || fail "application coordinator source is missing: ${application_file}"
 [[ -r "${config_store_file}" ]] || fail "config store source is missing: ${config_store_file}"
+[[ -r "${config_reload_file}" ]] || fail "config reload source is missing: ${config_reload_file}"
 [[ -r "${window_set_file}" ]] || fail "window-set source is missing: ${window_set_file}"
 [[ -r "${agent_runtime_file}" ]] || fail "agent runtime source is missing: ${agent_runtime_file}"
 [[ -r "${codex_enrichment_file}" ]] || fail "Codex enrichment source is missing: ${codex_enrichment_file}"
@@ -136,6 +138,7 @@ fi
 main_sha256="$(sha256sum "${main_file}" | awk '{print $1}')"
 application_sha256="$(sha256sum "${application_file}" | awk '{print $1}')"
 config_store_sha256="$(sha256sum "${config_store_file}" | awk '{print $1}')"
+config_reload_sha256="$(sha256sum "${config_reload_file}" | awk '{print $1}')"
 window_set_sha256="$(sha256sum "${window_set_file}" | awk '{print $1}')"
 agent_runtime_sha256="$(sha256sum "${agent_runtime_file}" | awk '{print $1}')"
 codex_enrichment_sha256="$(sha256sum "${codex_enrichment_file}" | awk '{print $1}')"
@@ -182,6 +185,9 @@ jq -e --arg application_sha256 "${application_sha256}" \
 jq -e --arg config_store_sha256 "${config_store_sha256}" \
     '.owned_source_sha256["crates/zentty-linux/src/config_store.rs"] == $config_store_sha256' \
     "${contract}" >/dev/null || fail "config store source hash differs from its ownership contract"
+jq -e --arg config_reload_sha256 "${config_reload_sha256}" \
+    '.owned_source_sha256["crates/zentty-linux/src/config_reload.rs"] == $config_reload_sha256' \
+    "${contract}" >/dev/null || fail "config reload source hash differs from its ownership contract"
 jq -e --arg window_set_sha256 "${window_set_sha256}" \
     '.owned_source_sha256["crates/zentty-linux/src/window_set.rs"] == $window_set_sha256' \
     "${contract}" >/dev/null || fail "window-set source hash differs from its ownership contract"
@@ -473,6 +479,17 @@ if [[ -n "${diff}" ]]; then
     fail "config store function inventory differs from its ownership contract"
 fi
 
+sed -n '1,/^#\[cfg(test)\]/p' "${config_reload_file}" |
+    sed -nE 's/^[[:space:]]*(pub\(crate\)[[:space:]]+)?fn[[:space:]]+([a-zA-Z0-9_]+).*/\2/p' |
+    sort >"${temp_dir}/actual-config-reload-functions"
+jq -r '.owned_module_functions.config_reload | sort | .[]' "${contract}" \
+    >"${temp_dir}/contract-config-reload-functions"
+diff="$(comm -3 "${temp_dir}/actual-config-reload-functions" "${temp_dir}/contract-config-reload-functions")"
+if [[ -n "${diff}" ]]; then
+    printf '%s\n' "${diff}" >&2
+    fail "config reload function inventory differs from its ownership contract"
+fi
+
 for module in appearance_settings settings_shell settings_navigation general_settings theme_catalog notification_service notifications_settings; do
     case "${module}" in
         appearance_settings) module_file="${appearance_settings_file}" ;;
@@ -520,6 +537,7 @@ fi
 jq -e --arg main_sha256 "${main_sha256}" \
     --arg application_sha256 "${application_sha256}" \
     --arg config_store_sha256 "${config_store_sha256}" \
+    --arg config_reload_sha256 "${config_reload_sha256}" \
     --arg window_set_sha256 "${window_set_sha256}" \
     --arg agent_runtime_sha256 "${agent_runtime_sha256}" \
     --arg codex_enrichment_sha256 "${codex_enrichment_sha256}" \
@@ -565,6 +583,7 @@ jq -e --arg main_sha256 "${main_sha256}" \
         "crates/zentty-linux/src/main.rs":$main_sha256,
         "crates/zentty-linux/src/application.rs":$application_sha256,
         "crates/zentty-linux/src/config_store.rs":$config_store_sha256,
+        "crates/zentty-linux/src/config_reload.rs":$config_reload_sha256,
         "crates/zentty-linux/src/window_set.rs":$window_set_sha256,
         "crates/zentty-linux/src/agent_runtime.rs":$agent_runtime_sha256,
         "crates/zentty-linux/src/codex_enrichment.rs":$codex_enrichment_sha256,
@@ -611,6 +630,7 @@ jq -e --arg main_sha256 "${main_sha256}" \
         "bookmark_coordinator",
         "clipboard_coordinator",
         "config_store",
+        "config_reload_authority",
         "existing_tmux_coordinator",
         "global_search_coordinator",
         "ssh_identity_coordinator",
@@ -637,7 +657,7 @@ jq -e --arg main_sha256 "${main_sha256}" \
         ([.field_assignments[].fields[]] | unique | length) and
     ([.method_assignments[].methods[]] | length) ==
         ([.method_assignments[].methods[]] | unique | length) and
-    (.owned_module_functions | keys | sort) == (["action_router", "agent_event_coordinator", "appearance_settings", "bookmark_coordinator", "clipboard_coordinator", "config_store", "general_settings", "global_search_coordinator", "notification_service", "notifications_settings", "open_with_coordinator", "pane_dividers", "pane_runtime_coordinator", "persistence_coordinator", "project_context_coordinator", "remote_paste_coordinator", "server_runtime_coordinator", "settings_shell", "settings_navigation", "task_runner_coordinator", "server_listener_discovery", "server_container_discovery", "ssh_identity_coordinator", "theme_catalog", "tmux_runtime_coordinator", "tmux_store_policy"] | sort) and
+    (.owned_module_functions | keys | sort) == (["action_router", "agent_event_coordinator", "appearance_settings", "bookmark_coordinator", "clipboard_coordinator", "config_store", "config_reload", "general_settings", "global_search_coordinator", "notification_service", "notifications_settings", "open_with_coordinator", "pane_dividers", "pane_runtime_coordinator", "persistence_coordinator", "project_context_coordinator", "remote_paste_coordinator", "server_runtime_coordinator", "settings_shell", "settings_navigation", "task_runner_coordinator", "server_listener_discovery", "server_container_discovery", "ssh_identity_coordinator", "theme_catalog", "tmux_runtime_coordinator", "tmux_store_policy"] | sort) and
     (.owned_module_functions.action_router | length) ==
         (.owned_module_functions.action_router | unique | length) and
     (.owned_module_functions.pane_runtime_coordinator | length) ==
@@ -670,6 +690,8 @@ jq -e --arg main_sha256 "${main_sha256}" \
         (.owned_module_functions.server_container_discovery | unique | length) and
     (.owned_module_functions.config_store | length) ==
         (.owned_module_functions.config_store | unique | length) and
+    (.owned_module_functions.config_reload | length) ==
+        (.owned_module_functions.config_reload | unique | length) and
     (.owned_module_functions.appearance_settings | length) ==
         (.owned_module_functions.appearance_settings | unique | length) and
     (.owned_module_functions.settings_shell | length) ==
@@ -728,7 +750,7 @@ jq -e --arg main_sha256 "${main_sha256}" \
         "ssh_identity_projection": {"owner":"ssh_identity_coordinator","maximum_instances_per_window":1},
         "remote_paste_projection": {"owner":"remote_paste_coordinator","maximum_instances_per_window":1},
         "standard_clipboard_projection": {"owner":"clipboard_coordinator","maximum_instances_per_window":1},
-        "application_config_snapshot": {"owner":"config_store","maximum_instances_per_process":1},
+        "application_config_snapshot": {"owner":"config_reload_authority","maximum_instances_per_process":1},
         "development_server_registry": {"owner":"server_runtime_coordinator","maximum_instances_per_window":1},
         "task_runner_snapshot": {"owner":"task_runner_coordinator","maximum_instances_per_window":1},
         "project_context_projection": {"owner":"project_context_coordinator","maximum_instances_per_window":1},

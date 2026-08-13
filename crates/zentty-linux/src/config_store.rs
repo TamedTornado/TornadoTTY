@@ -45,6 +45,10 @@ impl ConfigStore {
         )?)
     }
 
+    pub(crate) fn load_path(path: &Path) -> Result<ConfigSnapshot, String> {
+        Self::load(path.to_path_buf())
+    }
+
     fn load(path: PathBuf) -> Result<ConfigSnapshot, String> {
         let mut file = match File::open(&path) {
             Ok(file) => file,

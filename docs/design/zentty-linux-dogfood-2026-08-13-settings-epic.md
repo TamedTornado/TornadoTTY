@@ -401,3 +401,126 @@ authoritative execution plan is
   passed; release and full Linux qualification remain not passed. Debug
   Valgrind is **PASS with reviewed suppressions**, suppression governance is
   accepted, and ReleaseSafe Valgrind remains XFAIL.
+
+## GH-36 authoritative configuration reload plan
+
+- **Discovery:** Linux currently has one safe writer (`ConfigStore`) but not one
+  configuration authority. `main` reads one startup snapshot, each
+  `ApplicationShell` clones it, and a settings presentation performs an ad-hoc
+  Dev Servers refresh. There is no parent-directory watcher and therefore no
+  way for a valid external edit to reach an already open window. Invalid input
+  is represented as defaults plus a warning, which is safe at startup but must
+  never be mistaken for a valid live request to reset a running application.
+- **No-accretion rule:** extend `ConfigStore` as the sole bounded reader/writer
+  and add one application-owned reload authority. Do not add page-local file
+  monitors, caches, or a second persistence format. The application authority
+  owns debounce, last-good selection, diagnostics, and publication to every
+  shell; shells only project an accepted snapshot into existing runtime/UI
+  owners.
+- **Test-first order:** (1) pure/real-filesystem authority tests for unchanged,
+  valid, missing, invalid, read-error, and coalesced observations; (2) focused
+  shell projection tests; (3) one staged real-GTK multi-window journey that
+  replaces the config by rename while live Ghostty PTYs retain their PIDs and
+  sentinels; (4) adversarial symlink, chmod, concurrent-write, and interrupted
+  write journeys; (5) governed mutation, matrix registration, focused suites,
+  then the complete presently executable qualification run.
+- **Initial feature slice:** parent-directory observation with a 150 ms quiet
+  period, content-safe last-good retention, no publication for self-write or
+  semantically unchanged snapshots, and representative live projection to all
+  windows without reconstructing a shell or PTY. A missing, unreadable, or
+  invalid file is a retained-last-good diagnostic, never a pass or a reset to
+  defaults.
+- **Later slices already bounded by GH-36:** independent-section partial reload
+  (which requires a parser result richer than the current all-or-nothing
+  `AppConfig::parse_toml`), include dependency watching if includes become part
+  of the authoritative schema, complete runtime projection for every config
+  section, durability/permission adversarial cases, user documentation, matrix
+  cells, and mutation closure. The issue stays open until those contracts and
+  the real-system journeys pass.
+- **First real-journey correction:** the controlled journey initially expected
+  Ctrl+Q to exercise the per-window confirmation title. Ctrl+Q is the existing
+  application-quit command, so the product correctly presented `Quit Zentty?`;
+  the test expectation, not the live projection, was wrong. The journey now
+  asserts the source command/title it physically invokes.
+- The corrected title exposed a second test-fixture error: it enabled
+  `confirm_before_closing_window` while physically invoking application quit,
+  whose independent source setting remained false. The application therefore
+  correctly exited without a dialog. The fixture now changes and proves both
+  confirmation fields; no product behavior was weakened to satisfy it.
+- The next X11 run proved live publication and dialog presentation, then the
+  harness tried to send Escape to the remembered terminal XID rather than the
+  active GTK confirmation transient. Existing confirmation journeys correctly
+  use compositor-global input for this modal. This journey now does the same;
+  the failure was retained as evidence rather than misclassified as a product
+  lifecycle defect.
+- After modal cancellation, the shared physical-input helper deterministically
+  refocused the first product window, but the new journey expected its sentinel
+  from the second pane. Logs proved the bytes reached the original real PTY and
+  its title callback. The assertion now names that actual deterministic target;
+  both PTY PIDs remain independently checked across publication.
+- Wayland correctly preserves compositor activation on the second window after
+  its modal closes, unlike the window-manager-free X11 harness which selects
+  its first discovered toplevel. The cross-compositor journey now states these
+  two deterministic physical targets explicitly instead of pretending focus
+  policy is identical.
+- A subsequent Wayland run exposed a genuine asynchronous boundary in the
+  harness: Ghostty's terminal-ready callback can precede observation of the PTY
+  child in `/proc`. The exact two-child assertion now uses the same bounded
+  convergence already established by the multi-window journey. Environmental
+  absence is still a failure, not a pass.
+- Focused controlled X11 and Wayland journeys then passed the complete initial
+  slice with two real windows and PTYs, replace-by-rename coalescing, live
+  confirmation behavior, post-reload terminal input, invalid/missing last-good
+  retention, and content-safe diagnostics. The first workspace test invocation
+  ran under a restricted syscall sandbox and eight unrelated Agent IPC tests
+  failed to create Unix sockets with `EPERM`; this is environmental absence,
+  not a pass. The suite was rerun with its normal real-socket permissions.
+- The first focused mutation run correctly found four surviving watcher
+  routing mutants because only the authority's load decisions had unit tests;
+  real compositor journeys killed them behaviorally but were not part of that
+  fast mutation command. A real GLib directory-monitor test now distinguishes
+  unrelated file renames from an atomic replacement whose destination alone is
+  `config.toml`. The governed rerun tested 11 mutants: **7 caught, 4 unviable,
+  0 missed**. Cargo-mutants used the repository's mandatory ignored-tree and
+  no-target-copy policy, so no build tree was replicated.
+- Final post-slice `linux/tests/qualify-local` passed every presently executable
+  support and matrix cell in **501,870 ms**, including both new controlled
+  config-live-reload cells. Declared totals are **PASS=125, FAIL=0, BLOCKED=7,
+  XFAIL=1, NOT_IMPLEMENTED=23**. Implemented-local, product-boundary, and
+  qualification-host-retired claims pass; release and full Linux qualification
+  correctly remain NOT_PASSED. Debug Valgrind remains **PASS with reviewed
+  suppressions** and ReleaseSafe remains XFAIL. GH-36 is not complete: partial
+  independent-section reload, complete projection, and the remaining
+  permission/symlink/concurrency/crash durability cases stay explicit.
+- Final diff review caught a transaction risk not exercised by the representative
+  clipboard/confirmation journey: projecting appearance or shortcuts one window
+  at a time could leave earlier windows updated if preparation failed for a
+  later window. Reload now validates every window's shortcut projection first,
+  performs process-wide appearance preparation once, and only then executes the
+  infallible per-window commit. Qualification evidence from before this repair
+  was invalidated and rerun.
+- That aggregate correctly failed eleven existing settings cells. Treating
+  every watched change as external had withdrawn the open settings window after
+  its own `ConfigStore` write, interrupting the physical journey. This exposed
+  the still-missing self-write provenance contract. Closing the page is not an
+  acceptable substitute: it breaks ordinary controls, and leaving a page open
+  is safe for its own callback because that widget already reflects its change.
+  Reload therefore no longer withdraws the page. Refreshing an open page after
+  a genuinely external edit remains explicit GH-36 scope alongside a durable
+  self-write generation token; it is not silently claimed by this slice.
+- The focused real X11 Open With journey passed after that repair, including
+  its real custom executable, canonical target, missing-target diagnostic,
+  physical input, and persistence controls. A direct Notifications invocation
+  outside its matrix wrapper correctly refused to run without the required
+  private D-Bus session; that environmental refusal was not called a product
+  pass. The complete matrix owns its proper controlled notification bus.
+- The corrected final aggregate passed every presently executable support and
+  matrix cell in **507,680 ms**. Declared totals are **PASS=125, FAIL=0,
+  BLOCKED=7, XFAIL=1, NOT_IMPLEMENTED=23**; implemented-local,
+  product-boundary, and qualification-host-retired claims pass, while release
+  and full qualification correctly remain NOT_PASSED. Debug Valgrind is **PASS
+  with reviewed suppressions**: raw 427 errors/contexts, 6,240 definite bytes,
+  and 41,397 indirect bytes; post-suppression errors, contexts, and leaked bytes
+  are zero, with all 427 reviewed contexts accounted for. ReleaseSafe remains
+  XFAIL. This receipt supersedes the failed intermediate aggregate, not its
+  recorded discovery.

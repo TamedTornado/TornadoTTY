@@ -12,6 +12,8 @@ use zentty_tmux_compat::TmuxCompatReply;
 
 use crate::agent_runtime::AgentRuntime;
 use crate::application_shell::{ApplicationRuntimes, ApplicationShell};
+use crate::config_reload::{ConfigDirectoryWatch, ConfigReloadAuthority, ReloadDecision};
+use crate::config_store::ConfigSnapshot;
 use crate::persistence_coordinator::WindowSnapshot;
 use crate::task_manager::TaskManagerController;
 use crate::window_set::{CloseWindowDecision, WindowSet};
@@ -26,6 +28,8 @@ pub(crate) struct ApplicationCoordinator {
     agent_runtime: Rc<RefCell<AgentRuntime>>,
     command: Option<String>,
     config: AppConfig,
+    config_reload: ConfigReloadAuthority,
+    config_watch: Option<ConfigDirectoryWatch>,
     main_loop: glib::MainLoop,
     window_set: WindowSet,
     shells: BTreeMap<String, Rc<RefCell<ApplicationShell>>>,
@@ -48,8 +52,9 @@ impl ApplicationCoordinator {
         main_loop: &glib::MainLoop,
         restored_windows: Vec<WindowSnapshot>,
         active_window_id: Option<&str>,
-        config: AppConfig,
+        config_snapshot: ConfigSnapshot,
     ) -> Result<Rc<RefCell<Self>>, String> {
+        let config = config_snapshot.config.clone();
         let ids = restored_windows
             .iter()
             .map(|snapshot| snapshot.window.id.clone())
@@ -73,6 +78,8 @@ impl ApplicationCoordinator {
             agent_runtime,
             command,
             config,
+            config_reload: ConfigReloadAuthority::new(&config_snapshot),
+            config_watch: None,
             main_loop: main_loop.clone(),
             window_set,
             shells: BTreeMap::new(),
@@ -126,7 +133,58 @@ impl ApplicationCoordinator {
                 }
             }
         }
+        Self::install_config_watch(&coordinator)?;
         Ok(coordinator)
+    }
+
+    fn install_config_watch(coordinator: &Rc<RefCell<Self>>) -> Result<(), String> {
+        let path = coordinator.borrow().config_reload.path().to_path_buf();
+        let weak = Rc::downgrade(coordinator);
+        let watch = ConfigDirectoryWatch::install(&path, move || {
+            let Some(coordinator) = weak.upgrade() else {
+                return;
+            };
+            if let Err(error) = coordinator.borrow_mut().reload_product_config() {
+                eprintln!("zentty-linux: config-reload result=projection-failed detail={error}");
+            }
+        })?;
+        coordinator.borrow_mut().config_watch = Some(watch);
+        eprintln!("zentty-linux: config-watch path={}", path.display());
+        Ok(())
+    }
+
+    fn reload_product_config(&mut self) -> Result<(), String> {
+        match self.config_reload.observe_disk() {
+            ReloadDecision::Unchanged => {
+                eprintln!("zentty-linux: config-reload result=unchanged");
+            }
+            ReloadDecision::RetainLastGood(diagnostic) => {
+                eprintln!(
+                    "zentty-linux: config-reload result=retained-last-good detail={diagnostic}"
+                );
+            }
+            ReloadDecision::Apply(config) => {
+                let projections = self
+                    .shells
+                    .values()
+                    .map(|shell| {
+                        ApplicationShell::validate_reloaded_config(&config)
+                            .map(|shortcuts| (Rc::clone(shell), shortcuts))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                ApplicationShell::prepare_reloaded_appearance(&self.config, &config)?;
+                for (shell, shortcuts) in projections {
+                    shell.borrow_mut().apply_reloaded_config(&config, shortcuts);
+                }
+                self.config_reload.accept(&config);
+                self.config = config;
+                eprintln!(
+                    "zentty-linux: config-reload result=applied windows={}",
+                    self.shells.len()
+                );
+            }
+        }
+        Ok(())
     }
 
     fn create_fresh_window(coordinator: &Rc<RefCell<Self>>) -> Result<(), String> {

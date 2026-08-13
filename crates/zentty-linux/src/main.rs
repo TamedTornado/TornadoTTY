@@ -9,6 +9,7 @@ mod application_shell;
 mod bookmarks_view;
 mod codex_enrichment;
 mod command_palette;
+mod config_reload;
 mod config_store;
 mod dev_server_settings;
 mod docker_discovery;
@@ -126,7 +127,7 @@ fn run_lifecycle_cycle(
     active_window_id: Option<&str>,
     persistence: &Rc<RefCell<PersistenceCoordinator>>,
     default_working_directory: &str,
-    config: zentty_core::AppConfig,
+    config: config_store::ConfigSnapshot,
 ) -> Result<application::ApplicationCycleResult, String> {
     let main_loop = glib::MainLoop::new(None, false);
     let application = ApplicationCoordinator::start(
@@ -254,7 +255,7 @@ fn run() -> Result<(), String> {
         active_window_id.as_deref(),
         &persistence,
         &default_working_directory,
-        config.config,
+        config,
     )?;
     drop(runtime);
     persistence.borrow_mut().save_clean_exit(

@@ -465,8 +465,8 @@
       "linux_owner_issue": 20,
       "implementation_status": "PARTIAL",
       "focused_tests": ["crates/zentty-core/tests/app_config.rs", "crates/zentty-linux/src/config_store.rs"],
-      "product_scenarios": ["linux/tests/rust-pane-search", "linux/tests/rust-multi-window"],
-      "test_plan": "GitHub #20 is the umbrella contract. Complete GH-37 Worklanes & Panes, GH-38 Open With, GH-39 Dev Servers, and GH-40 Agents as one core-settings operator-review batch over existing runtime authorities; complete GH-36 external partial reload, last-good retention, comment/unknown-key preserving writes, symlink-safe atomic persistence, permission/concurrency/crash cases, and validator/migration mutation coverage; and complete GH-41 custom audio. Preserve the one bounded XDG config snapshot, source defaults/validation, content-free invalid-input warning, and identical projection to every real window before promotion from PARTIAL.",
+      "product_scenarios": ["linux/tests/rust-pane-search", "linux/tests/rust-multi-window", "linux/tests/rust-config-reload"],
+      "test_plan": "GitHub #20 is the umbrella contract. GH-36's application-owned parent-directory watcher now proves coalesced replace-by-rename, content-safe last-good retention, identical projection to two real windows, and unchanged real Ghostty PTY PIDs on controlled X11 and Wayland. Complete its independent-section partial reload, permission/symlink/concurrency/crash cases, complete section projection, and validator/migration mutation coverage; complete GH-37 Worklanes & Panes, GH-38 Open With, GH-40 Agents, and GH-41 custom audio. Preserve the one bounded XDG config snapshot and source defaults/validation before promotion from PARTIAL.",
       "alternative_or_blocker": null
     },
     {

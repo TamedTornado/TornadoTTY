@@ -2,11 +2,12 @@
   "schema_version": 1,
   "contract_id": "zentty-application-shell-responsibilities",
   "source": "crates/zentty-linux/src/application_shell.rs",
-  "source_sha256": "5524f9fc689345884a4eea0bbbb70cc0d4d2dcde302e567e5940325fcd5a4e0e",
+  "source_sha256": "17d7fd367de794d9f1a568a3b2511405278311c01e468a8271f31d58184a8a0f",
   "owned_source_sha256": {
-    "crates/zentty-linux/src/main.rs": "0ee821ed9fbd7377be7cd7f73e2802c381791366e5b6c0477b00947953e8a863",
-    "crates/zentty-linux/src/application.rs": "7f84d0560932a6a346b5fb686146c55040055895b8e8cb3dcd76e1c4dd70aa04",
-    "crates/zentty-linux/src/config_store.rs": "2bcd26a065e53542c45278e480df9cade4a6aea1151c547b76c53a813f60dfcb",
+    "crates/zentty-linux/src/main.rs": "df4ddd662ac0453952bd1eb01f0554d0397b7ba3d7fcd9ba867b7a2ee1db033e",
+    "crates/zentty-linux/src/application.rs": "443f8e347d2a9c9afe0b9f59b8a45007498fc06fcef13c4dca95fe9fef8ac5d5",
+    "crates/zentty-linux/src/config_store.rs": "b44aa6fbcb9e7ab72108ae66b640249c47cf4c1f70c36880c2047174b84c7b4c",
+    "crates/zentty-linux/src/config_reload.rs": "249764e645d085509f4f2e73378b73e8aeee1635667a68074a51bbd8d767bf85",
     "crates/zentty-linux/src/window_set.rs": "501d595889c11a41a4261ef8282465d76dd9ed8ccd1d004406b558579b0bf58e",
     "crates/zentty-linux/src/agent_runtime.rs": "e896b4827e1273a67e58bacbf364e5244db856c5466c373d240c5b69d1f0ee5a",
     "crates/zentty-linux/src/codex_enrichment.rs": "fe87631c75c04b63962b7f89d311a778a25af8f27a1dcb4d5950b3efcbaa476e",
@@ -66,7 +67,14 @@
       "status": "existing",
       "planned_module": "crates/zentty-linux/src/config_store.rs",
       "tracking": "GH-20",
-      "responsibility": "The sole process configuration loader: resolves the XDG path, performs bounded validation without logging contents, and supplies one immutable snapshot to application composition."
+      "responsibility": "The sole bounded configuration reader and safe writer: resolves the XDG path, validates without logging contents, and preserves operator-owned TOML while persisting product changes."
+    },
+    {
+      "id": "config_reload_authority",
+      "status": "existing",
+      "planned_module": "crates/zentty-linux/src/config_reload.rs",
+      "tracking": "GH-36",
+      "responsibility": "The sole process last-good configuration and parent-directory observation authority; owns debounce and publication decisions while ApplicationCoordinator projects accepted snapshots to every window."
     },
     {
       "id": "action_router",
@@ -336,7 +344,7 @@
     },
     {
       "owner": "settings_coordinator",
-      "methods": ["apply_appearance", "apply_general", "apply_notifications", "apply_updates", "apply_workspace_panes", "apply_open_with", "apply_dev_servers", "apply_agents", "confirm_action", "reload_ghostty_config_with_focus", "request_show_settings"]
+      "methods": ["apply_appearance", "apply_general", "apply_notifications", "apply_updates", "apply_workspace_panes", "apply_open_with", "apply_dev_servers", "apply_agents", "validate_reloaded_config", "prepare_reloaded_appearance", "apply_reloaded_config", "confirm_action", "reload_ghostty_config_with_focus", "request_show_settings"]
     },
     {
       "owner": "existing_ui_projection",
@@ -442,7 +450,8 @@
     "server_container_discovery": [
       "discover", "run_docker", "parse_inspect_json", "deepest_matching_pane", "is_web_like"
     ],
-    "config_store": ["load_default", "load", "install_default_fallback_theme_if_referenced", "install_fallback_theme_if_referenced", "fallback_theme_publication_error", "update_default_appearance", "update_default_general", "update_default_notifications", "update_default_updates", "update_default_workspace_panes", "update_default_open_with", "update_default_server_detection", "update_default_agents", "update_default_ghostty_theme", "update_default_ghostty_value", "update_default_ignored_port_rules", "update_default_preferred_browser", "update_default_shortcuts", "update_appearance", "update_general", "update_notifications", "update_updates", "update_workspace_panes", "update_open_with", "update_server_detection", "update_agents", "update_ghostty_value", "update_ignored_port_rules", "update_preferred_browser", "update_shortcuts", "with_config_lock", "set_optional_appearance_string", "resolve_config_target", "atomic_replace", "read_bounded", "invalid_snapshot", "default_config_file_from", "default_fallback_theme_path", "default_ghostty_config_file_from", "default_theme_resource_path", "nonempty_path"],
+    "config_store": ["load_default", "load_path", "load", "install_default_fallback_theme_if_referenced", "install_fallback_theme_if_referenced", "fallback_theme_publication_error", "update_default_appearance", "update_default_general", "update_default_notifications", "update_default_updates", "update_default_workspace_panes", "update_default_open_with", "update_default_server_detection", "update_default_agents", "update_default_ghostty_theme", "update_default_ghostty_value", "update_default_ignored_port_rules", "update_default_preferred_browser", "update_default_shortcuts", "update_appearance", "update_general", "update_notifications", "update_updates", "update_workspace_panes", "update_open_with", "update_server_detection", "update_agents", "update_ghostty_value", "update_ignored_port_rules", "update_preferred_browser", "update_shortcuts", "with_config_lock", "set_optional_appearance_string", "resolve_config_target", "atomic_replace", "read_bounded", "invalid_snapshot", "default_config_file_from", "default_fallback_theme_path", "default_ghostty_config_file_from", "default_theme_resource_path", "nonempty_path"],
+    "config_reload": ["new", "path", "observe_disk", "observe_snapshot", "accept", "install"],
     "appearance_settings": ["build", "section_title", "refresh_catalog", "preview_summary", "log_theme_selection", "apply_state", "install_styles"],
     "settings_shell": ["apply_selection", "build", "build_widgets", "connect_navigation", "key_controller", "navigate_back", "navigate_forward", "navigation_actions"],
     "settings_navigation": ["back", "can_back", "can_forward", "current", "forward", "matches", "new", "parse", "record"],
@@ -595,7 +604,7 @@
     "ssh_identity_projection": {"owner":"ssh_identity_coordinator","maximum_instances_per_window":1},
     "remote_paste_projection": {"owner":"remote_paste_coordinator","maximum_instances_per_window":1},
     "standard_clipboard_projection": {"owner":"clipboard_coordinator","maximum_instances_per_window":1},
-    "application_config_snapshot": {"owner":"config_store","maximum_instances_per_process":1},
+    "application_config_snapshot": {"owner":"config_reload_authority","maximum_instances_per_process":1},
     "development_server_registry": {"owner":"server_runtime_coordinator","maximum_instances_per_window":1},
     "task_runner_snapshot": {"owner":"task_runner_coordinator","maximum_instances_per_window":1},
     "project_context_projection": {"owner":"project_context_coordinator","maximum_instances_per_window":1},

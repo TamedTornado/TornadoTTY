@@ -395,6 +395,85 @@ impl ApplicationShell {
         &self.window
     }
 
+    pub(crate) fn validate_reloaded_config(
+        config: &AppConfig,
+    ) -> Result<zentty_core::ShortcutManager, String> {
+        zentty_core::ShortcutManager::new(&shortcut_registry::definitions(), &config.shortcuts)
+    }
+
+    pub(crate) fn prepare_reloaded_appearance(
+        current: &AppConfig,
+        config: &AppConfig,
+    ) -> Result<(), String> {
+        if current.appearance != config.appearance {
+            let spec = config.appearance.theme_spec();
+            crate::config_store::ConfigStore::install_default_fallback_theme_if_referenced(&spec)?;
+            crate::config_store::ConfigStore::update_default_ghostty_theme(&spec)?;
+            if let Some(opacity) = config.appearance.background_opacity {
+                crate::config_store::ConfigStore::update_default_ghostty_value(
+                    "background-opacity",
+                    &opacity.to_string(),
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn apply_reloaded_config(
+        &mut self,
+        config: &AppConfig,
+        shortcut_manager: zentty_core::ShortcutManager,
+    ) {
+        let appearance_changed = self.config.appearance != config.appearance;
+        let passive_was_enabled = self.config.server_detection.passive_detection_enabled;
+        self.config.clone_from(config);
+        *self.shortcut_manager.borrow_mut() = shortcut_manager;
+        self.agent_events
+            .set_agent_teams_enabled(self.config.agent_teams.enabled);
+        self.agent_events
+            .set_agent_integrations(self.config.agent_integrations.states.clone());
+        self.open_with_runtime =
+            open_with_runtime::OpenWithRuntime::discover(&self.config.open_with);
+        self.chrome
+            .configure_open_with(&self.open_with_runtime.catalog);
+        self.chrome
+            .set_open_with_context_available(open_with_runtime::focused_context_is_available(self));
+        self.server_runtime.browser_catalog = zentty_core::ServerBrowserCatalog::resolve(
+            &self.config.server_detection,
+            server_runtime::discover_browser_targets(
+                &self.config.server_detection,
+                std::env::var_os("PATH").as_deref(),
+            ),
+        );
+        let passive_is_enabled = self.config.server_detection.passive_detection_enabled;
+        if passive_was_enabled && !passive_is_enabled {
+            if let Some(source) = self.server_runtime.probe_source.take() {
+                source.remove();
+            }
+            server_runtime::clear_passive_servers(self);
+        } else if !passive_was_enabled && passive_is_enabled {
+            let weak = self.self_handle.borrow().clone();
+            glib::idle_add_local_once(move || {
+                if let Some(shell) = weak.upgrade() {
+                    let source = server_runtime::install(&shell);
+                    shell.borrow_mut().server_runtime.probe_source = source;
+                }
+            });
+        }
+        self.render_sidebar();
+        self.refresh_pane_presentation();
+        if appearance_changed {
+            self.reload_ghostty_config_with_focus(false);
+        }
+        eprintln!(
+            "zentty-linux: config-live-projected window={} automatic-clean-copy={} confirm-close-window={} confirm-quit={}",
+            self.window_template.id,
+            self.config.clipboard.always_clean_copies,
+            self.config.confirmations.confirm_before_closing_window,
+            self.config.confirmations.confirm_before_quitting
+        );
+    }
+
     pub(crate) fn task_manager_pane_sources(&self) -> Vec<crate::task_manager::PaneSource> {
         let status_by_pane = self
             .state
