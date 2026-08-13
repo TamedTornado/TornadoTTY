@@ -16,7 +16,7 @@ use crate::appearance_settings::ApplyAppearance;
 use crate::dev_server_settings::ApplyDevServers;
 use crate::general_settings::{ApplyGeneral, GeneralSettings};
 use crate::notifications_settings::ApplyNotifications;
-use crate::open_with_settings::ApplyOpenWith;
+use crate::open_with_settings::{ApplyOpenWith, OpenWithProjection, RefreshOpenWith};
 use crate::settings_navigation::SettingsSection;
 use crate::updates_privacy_settings::ApplyUpdates;
 use crate::workspace_pane_settings::ApplyWorkspacePanes;
@@ -64,9 +64,9 @@ pub(crate) struct SettingsContext {
     pub(crate) pane_layout: zentty_core::PaneLayoutConfig,
     pub(crate) panes: zentty_core::PaneConfig,
     pub(crate) apply_workspace_panes: ApplyWorkspacePanes,
-    pub(crate) open_with: zentty_core::OpenWithConfig,
-    pub(crate) open_with_targets: Vec<zentty_core::OpenWithTarget>,
+    pub(crate) open_with_projection: OpenWithProjection,
     pub(crate) apply_open_with: ApplyOpenWith,
+    pub(crate) refresh_open_with: RefreshOpenWith,
     pub(crate) server_detection: zentty_core::ServerDetectionConfig,
     pub(crate) server_browser_targets: Vec<zentty_core::ServerBrowserTarget>,
     pub(crate) apply_dev_servers: ApplyDevServers,
@@ -242,9 +242,9 @@ pub(crate) fn show(
         settings_context.apply_workspace_panes,
     );
     let open_with_page = crate::open_with_settings::build(
-        settings_context.open_with,
-        settings_context.open_with_targets,
+        settings_context.open_with_projection,
         settings_context.apply_open_with,
+        settings_context.refresh_open_with,
     );
     let dev_servers_page = crate::dev_server_settings::build(
         settings_context.server_detection,

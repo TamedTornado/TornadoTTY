@@ -1403,6 +1403,7 @@ impl ApplicationShell {
         match crate::config_store::ConfigStore::load_default() {
             Ok(snapshot) => {
                 self.config.server_detection = snapshot.config.server_detection;
+                self.config.open_with = snapshot.config.open_with;
             }
             Err(error) => {
                 eprintln!(
@@ -1414,17 +1415,12 @@ impl ApplicationShell {
             &self.config.open_with,
             std::env::var_os("PATH").as_deref(),
         );
-        let available_open_with_ids = open_with_targets
-            .iter()
-            .map(|target| target.id.clone())
-            .collect::<Vec<_>>();
-        let reconciled_open_with = self
-            .config
-            .open_with
-            .clone()
-            .reconciled_available(&available_open_with_ids);
-        if reconciled_open_with != self.config.open_with {
-            match self.apply_open_with(reconciled_open_with) {
+        let open_with_projection = crate::open_with_settings::OpenWithProjection::reconcile(
+            self.config.open_with.clone(),
+            open_with_targets,
+        );
+        if open_with_projection.config != self.config.open_with {
+            match self.apply_open_with(open_with_projection.config.clone()) {
                 Ok(()) => eprintln!(
                     "zentty-linux: open-with-settings control=presentation-reconcile result=applied"
                 ),
@@ -1464,6 +1460,7 @@ impl ApplicationShell {
         let updates_weak = self.self_handle.borrow().clone();
         let workspace_panes_weak = self.self_handle.borrow().clone();
         let open_with_weak = self.self_handle.borrow().clone();
+        let refresh_open_with_weak = self.self_handle.borrow().clone();
         let dev_servers_weak = self.self_handle.borrow().clone();
         let agents_weak = self.self_handle.borrow().clone();
         let focus_weak = self.self_handle.borrow().clone();
@@ -1540,13 +1537,18 @@ impl ApplicationShell {
                             .apply_workspace_panes(worklanes, pane_layout, panes);
                     }
                 }),
-                open_with: self.config.open_with.clone(),
-                open_with_targets,
+                open_with_projection,
                 apply_open_with: Rc::new(move |config| {
                     let shell = open_with_weak.upgrade().ok_or_else(|| {
                         "Zentty window closed while applying Open With settings".to_owned()
                     })?;
                     shell.borrow_mut().apply_open_with(config)
+                }),
+                refresh_open_with: Rc::new(move || {
+                    let shell = refresh_open_with_weak.upgrade().ok_or_else(|| {
+                        "Zentty window closed while refreshing Open With settings".to_owned()
+                    })?;
+                    shell.borrow_mut().refresh_open_with_projection()
                 }),
                 server_detection: self.config.server_detection.clone(),
                 server_browser_targets,
@@ -1679,6 +1681,22 @@ impl ApplicationShell {
             self.config.open_with.primary_target_id,
         );
         Ok(())
+    }
+
+    fn refresh_open_with_projection(
+        &mut self,
+    ) -> Result<crate::open_with_settings::OpenWithProjection, String> {
+        let snapshot = crate::config_store::ConfigStore::load_default()?;
+        let available = open_with_runtime::discover_available_targets(
+            &snapshot.config.open_with,
+            std::env::var_os("PATH").as_deref(),
+        );
+        let projection = crate::open_with_settings::OpenWithProjection::reconcile(
+            snapshot.config.open_with,
+            available,
+        );
+        self.apply_open_with(projection.config.clone())?;
+        Ok(projection)
     }
 
     fn apply_dev_servers(

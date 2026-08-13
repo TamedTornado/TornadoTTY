@@ -2,7 +2,7 @@
   "schema_version": 1,
   "contract_id": "zentty-application-shell-responsibilities",
   "source": "crates/zentty-linux/src/application_shell.rs",
-  "source_sha256": "542501f6c65a32c67b54b53f8e90976293e079d162bcf6abc5bbb72307676d39",
+  "source_sha256": "225dd2a414dc8449e19d7c54d934d79ea096402a858311691f3892f98bbdc183",
   "owned_source_sha256": {
     "crates/zentty-linux/src/main.rs": "c8a2552f69613c505ed513c04ad540a22a9e42f20987f0e651b7ece0ad2793ce",
     "crates/zentty-linux/src/application.rs": "2fb379bac4de8f0e13328451e69332c92479e405dacc416afef3ec7f5a267352",
@@ -14,7 +14,7 @@
     "crates/zentty-linux/src/application_shell/action_router.rs": "d8cfda522361146c455f6e22f417a1dcc45b8a2e7c7319ce1b779bcf178fe66d",
     "crates/zentty-linux/src/application_shell/shortcut_registry.rs": "c64c3c294fd6f53466990b26fd24f9f247b7c1125794e873d81f6f8df9b44aa8",
     "crates/zentty-linux/src/application_shell/shortcut_runtime.rs": "8b5b0230608324360ee62045c7eb726fc18cae30a5fdeaf86259286610a41d60",
-    "crates/zentty-linux/src/shortcut_settings.rs": "115673a52d0b706ab12b5ff18b66a4a595c678bc8cac41fae789cfac51ab842f",
+    "crates/zentty-linux/src/shortcut_settings.rs": "da2de4b5df3bd4096b0bdd6bab72323793f5dd349db2b0acaf0d14bbb1232198",
     "crates/zentty-linux/src/appearance_settings.rs": "b870f3168b99d3745d64fffc188f05a01512cf0612dd3b45cd8b6a263e9f3af9",
     "crates/zentty-linux/src/settings_shell.rs": "e03fc6e5114160b7c18df5195086ba5873039674724a03d4172e7f15bbbc3549",
     "crates/zentty-linux/src/settings_navigation.rs": "4c58ea6a0347a60f9f28c5bd790a02c6c3bb94765df587f4b2340e31bbbf2cd4",
@@ -185,9 +185,9 @@
     {
       "id": "open_with_coordinator",
       "status": "existing",
-      "planned_module": "crates/zentty-linux/src/application_shell/open_with_runtime.rs and crates/zentty-core/src/open_with.rs",
+      "planned_module": "crates/zentty-linux/src/application_shell/open_with_runtime.rs, crates/zentty-linux/src/open_with_settings.rs, and crates/zentty-core/src/open_with.rs",
       "tracking": "GH-18",
-      "responsibility": "The sole window-local Open With catalog and launch boundary; discovers real Linux desktop applications and executable targets once, resolves the focused canonical local directory or a revalidated product-owned source file, and launches through GIO or direct argv without a shell."
+      "responsibility": "The sole window-local Open With catalog, settings projection, and launch boundary; discovers real Linux desktop applications and executable targets, reconciles explicitly refreshed availability through ConfigStore, resolves the focused canonical local directory or a revalidated product-owned source file, and launches through GIO or direct argv without a shell."
     },
     {
       "id": "bookmark_coordinator",
@@ -337,7 +337,7 @@
     },
     {
       "owner": "open_with_coordinator",
-      "methods": ["command_palette_open_with_items"]
+      "methods": ["command_palette_open_with_items", "refresh_open_with_projection"]
     },
     {
       "owner": "clipboard_coordinator",
