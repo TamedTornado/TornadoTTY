@@ -586,3 +586,36 @@ authoritative execution plan is
   **PASS with reviewed suppressions** and ReleaseSafe remains XFAIL. GH-36 is
   still open for the explicitly listed parser, provenance, permission,
   concurrency, crash durability, and complete-projection work.
+
+## GH-36 live permission-transition slice
+
+- **Pre-implementation boundary:** extend the same reload authority and the
+  same controlled config journey; do not add polling, a second watcher, or a
+  special test-only load path. A readable-to-unreadable transition must retain
+  the accepted runtime state with a content-safe diagnostic. Restoring access
+  and then publishing a valid edit must resume ordinary live projection without
+  restarting windows or PTYs.
+- **Test-first contract:** prove that the real directory monitor reports an
+  attribute transition for the watched config target, then extend both staged
+  compositor journeys with mode `000` refusal, mode restoration, a subsequent
+  atomic valid target replacement, identical two-window projection, and exact
+  PTY PID preservation. If the effective test identity can bypass mode bits,
+  the journey must refuse rather than call that a pass.
+- The focused real-monitor test passed: changing a symlink target from mode
+  `0600` to `0000` and back produced independently debounced observations. The
+  test is serialized with the other GLib default-context monitor tests, not
+  with unrelated unit work.
+- Both controlled compositor journeys passed as a non-root product identity.
+  Mode `0000` produced a content-safe retained-last-good receipt; mode
+  restoration followed by an atomic valid replacement resumed identical
+  projection to both windows, and the exact two PTY child PIDs remained
+  unchanged. This qualifies file read-permission loss and recovery, not every
+  possible directory traversal/ownership/ACL transition; broader permission
+  cases remain explicit GH-36 scope.
+- The governed focused mutation rerun remained **12 tested, 8 caught, 4
+  unviable, 0 missed**. Final `linux/tests/qualify-local` then passed every
+  presently executable support and matrix cell in **521,210 ms**. Totals remain
+  **PASS=125, FAIL=0, BLOCKED=7, XFAIL=1, NOT_IMPLEMENTED=23**;
+  implemented-local passes, release/full qualification remain NOT_PASSED,
+  Debug Valgrind remains **PASS with reviewed suppressions**, and ReleaseSafe
+  remains XFAIL.

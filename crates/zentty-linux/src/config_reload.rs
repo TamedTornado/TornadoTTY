@@ -314,6 +314,31 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    #[test]
+    fn directory_watch_observes_permission_changes_on_a_symlink_target() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+
+        let _watch_test_guard = WATCH_TEST_LOCK.lock().unwrap();
+        let path = private_path("symlink-permission-watch");
+        let root = path.parent().unwrap();
+        let target = root.join("managed/settings.toml");
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        fs::write(&target, "[clipboard]\nalways_clean_copies = false\n").unwrap();
+        symlink(&target, &path).unwrap();
+        let notifications = Rc::new(Cell::new(0_u32));
+        let callback_notifications = Rc::clone(&notifications);
+        let _watch = ConfigDirectoryWatch::install(&path, move || {
+            callback_notifications.set(callback_notifications.get() + 1);
+        })
+        .unwrap();
+
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o000)).unwrap();
+        wait_for_notifications(&notifications, 1);
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o600)).unwrap();
+        wait_for_notifications(&notifications, 2);
+        fs::remove_dir_all(root).unwrap();
+    }
+
     fn wait_for_notifications(notifications: &Cell<u32>, expected: u32) {
         let deadline = std::time::Instant::now() + Duration::from_secs(2);
         while notifications.get() < expected && std::time::Instant::now() < deadline {

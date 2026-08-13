@@ -41,11 +41,12 @@ case "${backend}" in
         ;;
     *) fail "GDK_BACKEND must be x11 or wayland" ;;
 esac
-for dependency in cmp dirname ln mkdir mktemp mv pgrep sort; do
+for dependency in chmod cmp dirname id ln mkdir mktemp mv pgrep sort; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
 [[ -x "${product}" ]] || fail "staged product is not built: ${product}"
 [[ -f "${bundle_lib}/libghostty-gtk-embed.so" ]] || fail "Ghostty bundle is missing"
+[[ "$(id -u)" -ne 0 ]] || fail "permission journey requires a non-root product identity"
 
 state_dir="$(mktemp -d)"
 log="$(mktemp)"
@@ -224,7 +225,23 @@ grep -Fq 'config-live-projected window=window-2 automatic-clean-copy=true confir
 mapfile -t children_after_symlink < <(pgrep -P "${product_pid}" | sort -n)
 [[ "${children_after_symlink[*]}" == "${children_before[*]}" ]] || fail "symlink reload replaced a real PTY child"
 
+# Losing read access must retain the final accepted symlink target state.
+retained_before="$(grep -Fc 'zentty-linux: config-reload result=retained-last-good' "${log}")"
+chmod 000 "${second_target}"
+zentty_product_wait_for_log_count "${log}" 'zentty-linux: config-reload result=retained-last-good' \
+    "$((retained_before + 1))" "unreadable target did not retain last-good state" || fail "permission retention missing"
+chmod 600 "${second_target}"
+write_target "${second_target}" false false
+zentty_product_wait_for_log_count "${log}" 'zentty-linux: config-reload result=applied' \
+    "$((applied_before + 5))" "valid edit after permission restoration did not resume projection" || fail "permission recovery missing"
+grep -Fq 'config-live-projected window=window-1 automatic-clean-copy=false confirm-close-window=false confirm-quit=false' "${log}" ||
+    fail "permission recovery did not reach the first window"
+grep -Fq 'config-live-projected window=window-2 automatic-clean-copy=false confirm-close-window=false confirm-quit=false' "${log}" ||
+    fail "permission recovery did not reach the second window"
+mapfile -t children_after_permission < <(pgrep -P "${product_pid}" | sort -n)
+[[ "${children_after_permission[*]}" == "${children_before[*]}" ]] || fail "permission recovery replaced a real PTY child"
+
 kill -TERM "${product_pid}"
 wait "${product_pid}" || true
 product_pid=""
-echo "rust-config-reload: PASS backend=${backend} real-pty=true multi-window=true rename=true coalesced=true last-good=true symlink-retarget=true"
+echo "rust-config-reload: PASS backend=${backend} real-pty=true multi-window=true rename=true coalesced=true last-good=true symlink-retarget=true permission-recovery=true"
