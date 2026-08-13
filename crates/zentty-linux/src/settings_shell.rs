@@ -1,7 +1,6 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use gtk::glib::variant::ToVariant;
 use gtk::prelude::*;
 
 use crate::settings_navigation::{SettingsHistory, SettingsSection};
@@ -317,8 +316,4 @@ fn navigate_forward(state: &Rc<RefCell<State>>) {
     if let Some(section) = section {
         apply_selection(state, section, false);
     }
-}
-
-pub(crate) fn section_target(section: SettingsSection) -> gtk::glib::Variant {
-    section.id().to_variant()
 }

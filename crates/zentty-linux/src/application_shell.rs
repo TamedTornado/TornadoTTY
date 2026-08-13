@@ -1298,13 +1298,22 @@ impl ApplicationShell {
 
     #[allow(clippy::too_many_lines)] // Coordinates construction of the typed settings pages.
     fn request_show_settings(&mut self, section: crate::settings_navigation::SettingsSection) {
-        if let Some(window) = self.shortcut_settings_window.as_ref() {
-            let _ = window.activate_action(
-                "settings.select-section",
-                Some(&crate::settings_shell::section_target(section)),
-            );
-            window.present();
-            return;
+        if let Some(window) = self.shortcut_settings_window.take() {
+            // Settings pages own editable projections. Rebuild on each
+            // presentation so a hidden page cannot overwrite runtime changes.
+            window.set_child(None::<&gtk::Widget>);
+            window.set_visible(false);
+            eprintln!("zentty-linux: shortcut-settings refreshed-authoritative-state=true");
+        }
+        match crate::config_store::ConfigStore::load_default() {
+            Ok(snapshot) => {
+                self.config.server_detection = snapshot.config.server_detection;
+            }
+            Err(error) => {
+                eprintln!(
+                    "zentty-linux: shortcut-settings authoritative-refresh=failed detail={error}"
+                );
+            }
         }
         let open_with_targets = open_with_runtime::discover_available_targets(
             &self.config.open_with,

@@ -1,5 +1,6 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use std::time::Duration;
 
 use gtk::prelude::*;
 use zentty_core::{
@@ -143,6 +144,17 @@ pub(crate) fn build(
         let state = Rc::clone(&state);
         let entry = state.borrow().port_entry.clone();
         entry.connect_activate(move |_| add_ignored_rule(&state));
+    }
+    {
+        let weak_root = root.downgrade();
+        let weak_state = Rc::downgrade(&state);
+        gtk::glib::timeout_add_local(Duration::from_millis(500), move || {
+            let (Some(_root), Some(state)) = (weak_root.upgrade(), weak_state.upgrade()) else {
+                return gtk::glib::ControlFlow::Break;
+            };
+            reconcile_live_custom_browsers(&state);
+            gtk::glib::ControlFlow::Continue
+        });
     }
 
     let scroll = gtk::ScrolledWindow::builder()
@@ -412,6 +424,48 @@ fn choose_custom_browser(button: &gtk::Button, state: &Rc<RefCell<State>>) {
             apply_and_rebuild(&state, "add-browser");
         },
     );
+}
+
+fn reconcile_live_custom_browsers(state: &Rc<RefCell<State>>) {
+    let missing = state
+        .borrow()
+        .config
+        .custom_browsers
+        .iter()
+        .filter(|browser| {
+            crate::application_shell::open_with_runtime::canonical_executable(std::path::Path::new(
+                &browser.path,
+            ))
+            .is_none()
+        })
+        .map(|browser| browser.id.clone())
+        .collect::<Vec<_>>();
+    if missing.is_empty() {
+        return;
+    }
+    {
+        let mut state = state.borrow_mut();
+        state
+            .config
+            .custom_browsers
+            .retain(|browser| !missing.contains(&browser.id));
+        state
+            .config
+            .enabled_browser_target_ids
+            .retain(|id| !missing.contains(id));
+        if missing.contains(&state.config.preferred_browser_id) {
+            state.config.preferred_browser_id = SYSTEM_DEFAULT_BROWSER_ID.into();
+        }
+        state
+            .available
+            .retain(|browser| !missing.contains(&browser.id));
+        state.config = state.config.clone().normalized();
+    }
+    eprintln!(
+        "zentty-linux: dev-server-settings live-browser-invalidation removed={}",
+        missing.join(",")
+    );
+    apply_and_rebuild(state, "browser-invalidated");
 }
 
 fn stable_path_id(path: &str) -> String {

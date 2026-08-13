@@ -260,9 +260,8 @@ authoritative execution plan is
   must resolve exactly the surviving three-target browser catalog, the selected
   custom browser, enabled passive detection, absence of the stale browser, and
   absence of the removed ignored-port range.
-- GH-39 now remains open only for the native custom-browser chooser/removal
-  journey and live invalidation when a browser disappears while the settings
-  window remains open.
+- GH-39 now remains open only for deterministic physical qualification of the
+  native custom-browser chooser.
 - The first full parallel matrix run exposed two unrelated timing defects in
   existing physical journeys rather than product regressions: the X11 source
   UX cell sampled sidebar allocation after a fixed 200 ms sleep, and the
@@ -291,6 +290,37 @@ authoritative execution plan is
   **PASS with reviewed suppressions**: raw 427 errors/contexts and 6,080 direct
   plus 41,395 indirect bytes; post-suppression zero errors/contexts/bytes with
   all 427 reviewed contexts accounted for. ReleaseSafe Valgrind remains XFAIL.
+
+### Custom-browser lifecycle
+
+- The GTK page already exposed a modern native `FileDialog`, but custom-browser
+  removal and live executable disappearance were prose-only gaps. The X11
+  journey now removes a configured custom browser through its real row control,
+  proves exact config/catalog removal, reopens the settings page, deletes the
+  actual preferred executable, and observes automatic invalidation plus an
+  immediate safe System Default fallback. A fresh process then proves the stale
+  executable cannot return or execute.
+- Reopening settings exposed a real stale-projection defect: the hidden window
+  retained page-local config and could overwrite a browser choice made through
+  the server action authority. Settings presentations now release the hidden
+  widget tree, reload the authoritative persisted Dev Servers config, rediscover
+  browser targets, and construct a fresh page. The live invalidation timer is
+  tied weakly to that page and stops when its widget tree is released.
+- Physical automation of GTK 4's asynchronous native `FileDialog` proved
+  nondeterministic in the no-window-manager Xvfb harness: transient child XIDs
+  do not identify the focused chooser reliably. This was not converted into a
+  pass and no deprecated `FileChooserDialog` was retained merely for test
+  convenience. GH-39 remains open for a deterministic real-system chooser
+  driver; physical custom-browser removal and live invalidation are now covered.
+- Final post-change `linux/tests/qualify-local` passed every presently
+  executable support and matrix cell in 502,440 ms. Declared totals remained
+  PASS=123, FAIL=0, BLOCKED=7, XFAIL=1, NOT_IMPLEMENTED=23; implemented-local,
+  product-boundary, and qualification-host-retired claims passed while release
+  and full Linux qualification correctly remained NOT_PASSED. Debug Valgrind
+  was **PASS with reviewed suppressions**: raw 427 errors/contexts and 6,000
+  direct plus 41,362 indirect bytes; post-suppression zero errors, contexts, or
+  bytes with all 427 reviewed contexts accounted for. ReleaseSafe remains
+  XFAIL.
 
 ## Dev Servers settings control qualification
 
