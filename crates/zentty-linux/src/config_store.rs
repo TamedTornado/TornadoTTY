@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use zentty_core::{
     AppConfig, AppearanceConfig, ClipboardConfig, ConfirmationsConfig, FALLBACK_DARK_THEME,
-    NotificationsConfig, RestoreConfig, ShortcutBinding, ThemeMode, ThemeSpec,
+    NotificationsConfig, RestoreConfig, ShortcutBinding, ThemeMode, ThemeSpec, UpdatesConfig,
     update_ghostty_value,
 };
 
@@ -157,6 +157,40 @@ impl ConfigStore {
         )?;
         Self::update_notifications(&path, notifications)?;
         Ok(path)
+    }
+
+    pub(crate) fn update_default_updates(updates: UpdatesConfig) -> Result<PathBuf, String> {
+        let path = default_config_file_from(
+            std::env::var_os("XDG_CONFIG_HOME"),
+            std::env::var_os("HOME"),
+        )?;
+        Self::update_updates(&path, updates)?;
+        Ok(path)
+    }
+
+    fn update_updates(path: &Path, updates: UpdatesConfig) -> Result<(), String> {
+        let target = resolve_config_target(path)?;
+        with_config_lock(&target, || {
+            let source = match fs::read_to_string(&target) {
+                Ok(source) => source,
+                Err(error) if error.kind() == ErrorKind::NotFound => String::new(),
+                Err(error) => return Err(format!("could not read {}: {error}", target.display())),
+            };
+            if source.len() as u64 > MAX_CONFIG_BYTES {
+                return Err(format!("configuration exceeds {MAX_CONFIG_BYTES} bytes"));
+            }
+            let mut document = source
+                .parse::<toml_edit::DocumentMut>()
+                .map_err(|error| format!("could not edit invalid configuration: {error}"))?;
+            document
+                .entry("updates")
+                .or_insert_with(|| toml_edit::Item::Table(toml_edit::Table::new()));
+            if !document["updates"].is_table() {
+                return Err("updates configuration is not a table".to_owned());
+            }
+            document["updates"]["channel"] = toml_edit::value(updates.channel.config_value());
+            atomic_replace(&target, document.to_string().as_bytes())
+        })
     }
 
     fn update_notifications(
@@ -852,6 +886,47 @@ mod tests {
             AppConfig::parse_toml(&source).unwrap().notifications,
             without_custom
         );
+        remove(&root);
+    }
+
+    #[test]
+    fn update_channel_preserves_symlink_comments_unknowns_privacy_and_mode() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        use zentty_core::{UpdateChannel, UpdatesConfig};
+
+        let root = private_root("update-channel");
+        let target = root.join("shared/settings.toml");
+        let path = root.join("zentty/config.toml");
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            &target,
+            "# preserve\nfuture_root = 7\n[updates]\nchannel = \"stable\"\nfuture = true\n[error_reporting]\nenabled = false\n",
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(&target, &path).unwrap();
+        let symlink_inode = fs::symlink_metadata(&path).unwrap().ino();
+
+        ConfigStore::update_updates(
+            &path,
+            UpdatesConfig {
+                channel: UpdateChannel::Beta,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(fs::symlink_metadata(&path).unwrap().ino(), symlink_inode);
+        assert_eq!(
+            fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        let source = fs::read_to_string(&target).unwrap();
+        assert!(source.contains("# preserve"));
+        assert!(source.contains("future_root = 7"));
+        assert!(source.contains("future = true"));
+        let parsed = AppConfig::parse_toml(&source).unwrap();
+        assert_eq!(parsed.updates.channel, UpdateChannel::Beta);
+        assert!(!parsed.error_reporting.enabled);
         remove(&root);
     }
 

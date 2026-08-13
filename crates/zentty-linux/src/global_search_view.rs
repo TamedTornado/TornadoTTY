@@ -47,6 +47,11 @@ impl GlobalSearchView {
         entry.set_placeholder_text(Some(PLACEHOLDER));
         entry.set_hexpand(true);
         entry.update_property(&[gtk::accessible::Property::Label(GLOBAL_FIND)]);
+        let entry_focus = gtk::EventControllerFocus::new();
+        entry_focus.connect_enter(|_| {
+            eprintln!("zentty-linux: global-find focus=entry");
+        });
+        entry.add_controller(entry_focus);
         let count = gtk::Label::new(None);
         count.add_css_class("sidebar-global-search-count");
         let clear = icon_button("edit-clear-symbolic", CLEAR_GLOBAL_FIND);

@@ -32,6 +32,7 @@ mod task_manager;
 mod theme_catalog;
 mod tmux_compat;
 mod tmux_store;
+mod updates_privacy_settings;
 mod window_chrome;
 mod window_set;
 mod worklane_peek;

@@ -1308,6 +1308,7 @@ impl ApplicationShell {
         let appearance_weak = self.self_handle.borrow().clone();
         let general_weak = self.self_handle.borrow().clone();
         let notifications_weak = self.self_handle.borrow().clone();
+        let updates_weak = self.self_handle.borrow().clone();
         let focus_weak = self.self_handle.borrow().clone();
         let restore_parent_focus: Rc<dyn Fn()> = Rc::new(move || {
             if let Some(shell) = focus_weak.upgrade() {
@@ -1364,6 +1365,13 @@ impl ApplicationShell {
                         shell.borrow_mut().apply_notifications(notifications);
                     }
                 }),
+                updates: self.config.updates,
+                error_reporting: self.config.error_reporting,
+                apply_updates: Rc::new(move |updates| {
+                    if let Some(shell) = updates_weak.upgrade() {
+                        shell.borrow_mut().apply_updates(updates);
+                    }
+                }),
                 initial_section: section,
             },
             &restore_parent_focus,
@@ -1405,6 +1413,22 @@ impl ApplicationShell {
             }
             Err(error) => {
                 eprintln!("zentty-linux: notification-settings result=error detail={error}");
+            }
+        }
+    }
+
+    fn apply_updates(&mut self, updates: zentty_core::UpdatesConfig) {
+        match crate::config_store::ConfigStore::update_default_updates(updates) {
+            Ok(path) => {
+                self.config.updates = updates;
+                eprintln!(
+                    "zentty-linux: updates-privacy-settings result=persisted path={} channel={}",
+                    path.display(),
+                    updates.channel.config_value()
+                );
+            }
+            Err(error) => {
+                eprintln!("zentty-linux: updates-privacy-settings result=error detail={error}");
             }
         }
     }

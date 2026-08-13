@@ -20,6 +20,15 @@ pub(crate) struct SettingsShell {
     pub(crate) actions: gtk::gio::SimpleActionGroup,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct SettingsPages<'a> {
+    pub(crate) general: &'a gtk::Widget,
+    pub(crate) appearance: &'a gtk::Widget,
+    pub(crate) shortcuts: &'a gtk::Widget,
+    pub(crate) notifications: &'a gtk::Widget,
+    pub(crate) updates_privacy: &'a gtk::Widget,
+}
+
 struct Widgets {
     root: gtk::Box,
     section_search: gtk::SearchEntry,
@@ -30,12 +39,9 @@ struct Widgets {
 }
 
 pub(crate) fn build(
-    general: &gtk::Widget,
-    appearance: &gtk::Widget,
+    pages: SettingsPages<'_>,
     appearance_search: &gtk::SearchEntry,
-    shortcuts: &gtk::Widget,
     shortcut_search: &gtk::SearchEntry,
-    notifications: &gtk::Widget,
     initial: SettingsSection,
 ) -> SettingsShell {
     let Widgets {
@@ -45,7 +51,7 @@ pub(crate) fn build(
         buttons,
         back,
         forward,
-    } = build_widgets(general, appearance, shortcuts, notifications);
+    } = build_widgets(pages);
     let state = Rc::new(RefCell::new(State {
         section: initial,
         history: SettingsHistory::new(initial),
@@ -70,12 +76,7 @@ pub(crate) fn build(
     }
 }
 
-fn build_widgets(
-    general: &gtk::Widget,
-    appearance: &gtk::Widget,
-    shortcuts: &gtk::Widget,
-    notifications: &gtk::Widget,
-) -> Widgets {
+fn build_widgets(pages: SettingsPages<'_>) -> Widgets {
     let root = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     let sidebar = gtk::Box::new(gtk::Orientation::Vertical, 6);
     sidebar.set_width_request(250);
@@ -141,10 +142,11 @@ fn build_widgets(
         button.set_child(Some(&labels));
         sidebar.append(&button);
         let page = match section {
-            SettingsSection::General => general.clone(),
-            SettingsSection::Appearance => appearance.clone(),
-            SettingsSection::Shortcuts => shortcuts.clone(),
-            SettingsSection::Notifications => notifications.clone(),
+            SettingsSection::General => pages.general.clone(),
+            SettingsSection::Appearance => pages.appearance.clone(),
+            SettingsSection::Shortcuts => pages.shortcuts.clone(),
+            SettingsSection::Notifications => pages.notifications.clone(),
+            SettingsSection::UpdatesPrivacy => pages.updates_privacy.clone(),
             _ => pending_section(section),
         };
         stack.add_named(&page, Some(section.id()));

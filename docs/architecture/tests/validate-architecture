@@ -293,7 +293,7 @@ jq -e --arg ghostty_revision "${ghostty_revision}" '
         {
             "requirement_id": "ZL-7-PLATFORM-SERVICES",
             "test_ids": ["TEST-PLATFORM-XDG", "TEST-PLATFORM-OPEN", "TEST-PLATFORM-NOTIFICATIONS", "TEST-PLATFORM-CLIPBOARD", "TEST-PLATFORM-SETTINGS", "TEST-PLATFORM-PROCESS"],
-            "qualification_cell_ids": ["platform-xdg-paths-contract", "platform-open-url-file-contract", "platform-notifications-x11", "platform-notifications-wayland", "notification-custom-sound-import", "platform-clipboard-wayland", "platform-clipboard-x11", "clipboard-settings-subset", "platform-settings-contract", "platform-process-launch-contract"]
+            "qualification_cell_ids": ["platform-xdg-paths-contract", "platform-open-url-file-contract", "platform-notifications-x11", "platform-notifications-wayland", "notification-custom-sound-import", "platform-clipboard-wayland", "platform-clipboard-x11", "clipboard-settings-subset", "updates-privacy-settings-x11", "updates-privacy-settings-wayland", "platform-settings-contract", "platform-process-launch-contract"]
         },
         {
             "requirement_id": "ZL-7-WORKFLOW-AGENT-PARITY",
@@ -322,6 +322,14 @@ jq -e --arg ghostty_revision "${ghostty_revision}" '
         then (.display == "x11" or .display == "wayland" or .display == "both") and
              .optimize == "ReleaseSafe" and .async_backend == "default" and
              .terminals == "single"
+        elif .capability == "platform_settings"
+        then if .display == "none"
+             then .optimize == "Debug" and .async_backend == "n/a" and
+                  .terminals == "n/a"
+             else (.display == "x11" or .display == "wayland") and
+                  .optimize == "ReleaseSafe" and .async_backend == "default" and
+                  .terminals == "single"
+             end
         elif (.capability == "workspace_persistence" or .capability == "recovery")
         then .display == "none" and .optimize == "Debug" and
              .async_backend == "n/a" and .terminals == "multi"

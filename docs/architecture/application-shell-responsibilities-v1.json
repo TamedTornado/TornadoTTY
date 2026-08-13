@@ -2,25 +2,26 @@
   "schema_version": 1,
   "contract_id": "zentty-application-shell-responsibilities",
   "source": "crates/zentty-linux/src/application_shell.rs",
-  "source_sha256": "146998521470fbbbac9cfad57d42c7d7253b300f7369f5c092080849a3d20bc8",
+  "source_sha256": "45ce2b95871cadebcf9993b09c03efbffc67ec7284a7e15912059f0aef4824f1",
   "owned_source_sha256": {
-    "crates/zentty-linux/src/main.rs": "f5d066bbb8543cb97e01c25248eb0346182953e76317a024ab17e9dfd3e8f572",
+    "crates/zentty-linux/src/main.rs": "5cb17d4459048cf783949adca3bb869079b7ed514360558b7ce472cd11a51eb7",
     "crates/zentty-linux/src/application.rs": "6f14dc9e6c60d46f3713faa997501782e5c9750f0e00b40e27472431cede6c7d",
-    "crates/zentty-linux/src/config_store.rs": "11fb508a895c11d1e7813ff6ee690d8813a39687fe491c24ed4bd23548e76699",
+    "crates/zentty-linux/src/config_store.rs": "faf041795d43770d53f1e90df3ae40a9529e2731cf5420703bec90f8d15cd743",
     "crates/zentty-linux/src/window_set.rs": "501d595889c11a41a4261ef8282465d76dd9ed8ccd1d004406b558579b0bf58e",
     "crates/zentty-linux/src/agent_runtime.rs": "48f30d38048ae5388ca59aee2021e1215cabdfc033e66755ed32c6f92dcb8671",
     "crates/zentty-linux/src/codex_enrichment.rs": "fe87631c75c04b63962b7f89d311a778a25af8f27a1dcb4d5950b3efcbaa476e",
     "crates/zentty-linux/src/application_shell/action_router.rs": "862282fa3a6f15f8ec1dd7f0eddf480c5ee2f8722d1711ba426cf477bc9b9c94",
     "crates/zentty-linux/src/application_shell/shortcut_registry.rs": "404a10edec7274e49fc3914f3c519f9b0a0d59a7e1f20fddc8cd28643866b1c8",
     "crates/zentty-linux/src/application_shell/shortcut_runtime.rs": "8b5b0230608324360ee62045c7eb726fc18cae30a5fdeaf86259286610a41d60",
-    "crates/zentty-linux/src/shortcut_settings.rs": "a95884e9967dc91ba5c6f11046f5048aece6e026ca38d0a910157adfdc7052ca",
+    "crates/zentty-linux/src/shortcut_settings.rs": "c8668f62dcb3d45e0b6b1b306f4a3642cd0397c3f8864a5768a666a4f4048f47",
     "crates/zentty-linux/src/appearance_settings.rs": "7a6aaf6f2ed3636c526e5ff8c8cba214785b541f068eb43c408a8ae1d3be9b22",
-    "crates/zentty-linux/src/settings_shell.rs": "b77695d6526053018f1fcff9f5ad13dc2d7e51b61f66a6e59b9f6bf07ef9e289",
+    "crates/zentty-linux/src/settings_shell.rs": "53111a934dfedb61210df5ade446509f5540fe06398360e8d3a180e101df42e7",
     "crates/zentty-linux/src/settings_navigation.rs": "4c58ea6a0347a60f9f28c5bd790a02c6c3bb94765df587f4b2340e31bbbf2cd4",
     "crates/zentty-linux/src/general_settings.rs": "24bf50a74e7a18730d301431c42d229f1923cbe97422a49a0fe77f421e36aa44",
     "crates/zentty-linux/src/theme_catalog.rs": "e944b9378d77d20c68b7020b71275c4482490819575cc657d23a00d7a22af6d4",
     "crates/zentty-linux/src/notification_service.rs": "3363da61ef55fb3511472d079e9e8a37cf2137ead470f3e614261939a8f38ad6",
     "crates/zentty-linux/src/notifications_settings.rs": "7616e51aa2a6949a091479b220845f442665d8762be941467b3298c0af027066",
+    "crates/zentty-linux/src/updates_privacy_settings.rs": "c2deeb928c9eb65a48ad3b797c9afe0f983f4b980864bd08cf6587484d3f206a",
     "crates/zentty-linux/src/application_shell/clipboard_actions.rs": "1502a0353bc3e0d645d6c6bd81aae1ed1306f312838f92a635944d402cd441b0",
     "crates/zentty-linux/src/application_shell/agent_events.rs": "3b6dc220ad2434b15213a34c6c225f5dad868880437b3b54365ba77e42b2d0a4",
     "crates/zentty-linux/src/application_shell/project_context_runtime.rs": "a6168d658c98ab6407f3d0f1f1ab624d3e3f91e10de39fd4b5b28dd22ce19e7f",
@@ -335,7 +336,7 @@
     },
     {
       "owner": "settings_coordinator",
-      "methods": ["apply_appearance", "apply_general", "apply_notifications", "confirm_action", "reload_ghostty_config_with_focus", "request_show_settings"]
+      "methods": ["apply_appearance", "apply_general", "apply_notifications", "apply_updates", "confirm_action", "reload_ghostty_config_with_focus", "request_show_settings"]
     },
     {
       "owner": "existing_ui_projection",
@@ -440,7 +441,7 @@
     "server_container_discovery": [
       "discover", "run_docker", "parse_inspect_json", "deepest_matching_pane", "is_web_like"
     ],
-    "config_store": ["load_default", "load", "install_default_fallback_theme_if_referenced", "install_fallback_theme_if_referenced", "fallback_theme_publication_error", "update_default_appearance", "update_default_general", "update_default_notifications", "update_default_ghostty_theme", "update_default_ghostty_value", "update_default_ignored_port_rules", "update_default_preferred_browser", "update_default_shortcuts", "update_appearance", "update_general", "update_notifications", "update_ghostty_value", "update_ignored_port_rules", "update_preferred_browser", "update_shortcuts", "with_config_lock", "set_optional_appearance_string", "resolve_config_target", "atomic_replace", "read_bounded", "invalid_snapshot", "default_config_file_from", "default_fallback_theme_path", "default_ghostty_config_file_from", "default_theme_resource_path", "nonempty_path"],
+    "config_store": ["load_default", "load", "install_default_fallback_theme_if_referenced", "install_fallback_theme_if_referenced", "fallback_theme_publication_error", "update_default_appearance", "update_default_general", "update_default_notifications", "update_default_updates", "update_default_ghostty_theme", "update_default_ghostty_value", "update_default_ignored_port_rules", "update_default_preferred_browser", "update_default_shortcuts", "update_appearance", "update_general", "update_notifications", "update_updates", "update_ghostty_value", "update_ignored_port_rules", "update_preferred_browser", "update_shortcuts", "with_config_lock", "set_optional_appearance_string", "resolve_config_target", "atomic_replace", "read_bounded", "invalid_snapshot", "default_config_file_from", "default_fallback_theme_path", "default_ghostty_config_file_from", "default_theme_resource_path", "nonempty_path"],
     "appearance_settings": ["build", "section_title", "refresh_catalog", "preview_summary", "log_theme_selection", "apply_state", "install_styles"],
     "settings_shell": ["apply_selection", "build", "build_widgets", "connect_navigation", "key_controller", "navigate_back", "navigate_forward", "navigation_actions", "pending_section", "section_target"],
     "settings_navigation": ["back", "can_back", "can_forward", "current", "forward", "matches", "new", "parse", "record"],

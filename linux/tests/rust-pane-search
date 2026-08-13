@@ -435,6 +435,8 @@ else
 fi
 wait_for_fixed 'zentty-linux: global-find shown targets=3' \
     "physical Global Find shortcut did not present the window search"
+wait_for_fixed 'zentty-linux: global-find focus=entry' \
+    "Global Find did not establish real entry focus before physical typing"
 # A two-character query must remain pending until explicit navigation flushes
 # it. Enter is sent immediately, without waiting for a timer receipt, and the
 # actor then requires all three real Ghostty totals plus the selected match.

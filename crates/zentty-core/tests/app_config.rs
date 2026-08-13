@@ -1,4 +1,6 @@
-use zentty_core::{AppConfig, BackgroundOpacity, CommandFlattenAggressiveness, ThemeMode};
+use zentty_core::{
+    AppConfig, BackgroundOpacity, CommandFlattenAggressiveness, ThemeMode, UpdateChannel,
+};
 
 #[test]
 fn appearance_defaults_and_source_compatible_values_are_explicit() {
@@ -116,6 +118,39 @@ fn notification_settings_use_source_defaults_and_exact_toml_keys() {
     for source in [
         "[notifications]\nsound_name = true\n",
         "[notifications]\ncustom_sound_display_name = 3\n",
+    ] {
+        assert!(
+            AppConfig::parse_toml(source).is_err(),
+            "accepted {source:?}"
+        );
+    }
+}
+
+#[test]
+fn updates_and_error_reporting_use_source_defaults_and_exact_toml_keys() {
+    let defaults = AppConfig::parse_toml("").unwrap();
+    assert_eq!(defaults.updates.channel, UpdateChannel::Stable);
+    assert!(defaults.error_reporting.enabled);
+
+    let configured = AppConfig::parse_toml(
+        r#"
+        [updates]
+        channel = "beta"
+        future_update_setting = true
+
+        [error_reporting]
+        enabled = false
+        future_privacy_setting = "preserved"
+        "#,
+    )
+    .unwrap();
+    assert_eq!(configured.updates.channel, UpdateChannel::Beta);
+    assert!(!configured.error_reporting.enabled);
+
+    for source in [
+        "[updates]\nchannel = \"nightly\"\n",
+        "[updates]\nchannel = true\n",
+        "[error_reporting]\nenabled = \"yes\"\n",
     ] {
         assert!(
             AppConfig::parse_toml(source).is_err(),

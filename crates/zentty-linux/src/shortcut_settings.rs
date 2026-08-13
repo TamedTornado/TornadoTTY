@@ -15,6 +15,7 @@ use crate::appearance_settings::ApplyAppearance;
 use crate::general_settings::{ApplyGeneral, GeneralSettings};
 use crate::notifications_settings::ApplyNotifications;
 use crate::settings_navigation::SettingsSection;
+use crate::updates_privacy_settings::ApplyUpdates;
 
 use crate::application_shell::shortcut_registry::{
     COMMANDS, ShortcutCategory, ShortcutCommandSpec, definitions,
@@ -52,6 +53,9 @@ pub(crate) struct SettingsContext {
     pub(crate) apply_general: ApplyGeneral,
     pub(crate) notifications: zentty_core::NotificationsConfig,
     pub(crate) apply_notifications: ApplyNotifications,
+    pub(crate) updates: zentty_core::UpdatesConfig,
+    pub(crate) error_reporting: zentty_core::ErrorReportingConfig,
+    pub(crate) apply_updates: ApplyUpdates,
     pub(crate) initial_section: SettingsSection,
 }
 
@@ -201,13 +205,21 @@ pub(crate) fn show(
         settings_context.notifications,
         &settings_context.apply_notifications,
     );
+    let updates_privacy_page = crate::updates_privacy_settings::build(
+        settings_context.updates,
+        settings_context.error_reporting,
+        &settings_context.apply_updates,
+    );
     let settings = crate::settings_shell::build(
-        &general_page,
-        &appearance_page,
+        crate::settings_shell::SettingsPages {
+            general: &general_page,
+            appearance: &appearance_page,
+            shortcuts: &root.clone().upcast(),
+            notifications: &notifications_page,
+            updates_privacy: &updates_privacy_page,
+        },
         &appearance_search,
-        &root.clone().upcast(),
         &search,
-        &notifications_page,
         settings_context.initial_section,
     );
     window.insert_action_group("settings", Some(&settings.actions));

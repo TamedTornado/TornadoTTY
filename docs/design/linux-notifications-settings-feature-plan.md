@@ -66,5 +66,7 @@ as unavailable and is never treated as success.
 This slice replaces only the Notifications placeholder. Custom audio import and
 conversion require a separately specified freedesktop file-format/install
 policy and remain visibly unavailable rather than being silently simulated.
-The remaining Open With, Dev Servers, Pane Layout, Updates & Privacy, and Agents
-pages remain later source-backed issue #20 slices.
+The remaining Open With, Dev Servers, Pane Layout, and Agents pages remain
+later source-backed issue #20 slices. Updates & Privacy is now implemented by
+`docs/design/linux-updates-privacy-settings-feature-plan.md`; Linux update
+delivery and reviewed crash reporting remain separate issue #23 work.

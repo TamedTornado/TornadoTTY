@@ -53,6 +53,54 @@ pub struct NotificationsConfig {
     pub custom_sound_display_name: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum UpdateChannel {
+    Stable,
+    Beta,
+}
+
+impl UpdateChannel {
+    #[must_use]
+    pub const fn config_value(self) -> &'static str {
+        match self {
+            Self::Stable => "stable",
+            Self::Beta => "beta",
+        }
+    }
+
+    fn parse_config_value(value: &str) -> Option<Self> {
+        match value {
+            "stable" => Some(Self::Stable),
+            "beta" => Some(Self::Beta),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct UpdatesConfig {
+    pub channel: UpdateChannel,
+}
+
+impl Default for UpdatesConfig {
+    fn default() -> Self {
+        Self {
+            channel: UpdateChannel::Stable,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ErrorReportingConfig {
+    pub enabled: bool,
+}
+
+impl Default for ErrorReportingConfig {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
+}
+
 impl Default for RestoreConfig {
     fn default() -> Self {
         Self {
@@ -68,6 +116,8 @@ pub struct AppConfig {
     pub restore: RestoreConfig,
     pub clipboard: ClipboardConfig,
     pub notifications: NotificationsConfig,
+    pub updates: UpdatesConfig,
+    pub error_reporting: ErrorReportingConfig,
     pub open_with: OpenWithConfig,
     pub server_detection: ServerDetectionConfig,
     pub panes: PaneConfig,
@@ -89,6 +139,8 @@ impl AppConfig {
             restore: document.restore.into_config(),
             clipboard: document.clipboard.into_config(),
             notifications: document.notifications.into_config(),
+            updates: document.updates.into_config()?,
+            error_reporting: document.error_reporting.into_config(),
             open_with: document.open_with.into_config().normalized(),
             server_detection: document.server_detection.into_config().normalized(),
             panes: document.panes.into_config(),
@@ -105,6 +157,8 @@ struct Document {
     restore: RestoreDocument,
     clipboard: ClipboardDocument,
     notifications: NotificationsDocument,
+    updates: UpdatesDocument,
+    error_reporting: ErrorReportingDocument,
     open_with: OpenWithDocument,
     server_detection: ServerDetectionDocument,
     panes: PaneDocument,
@@ -116,6 +170,36 @@ struct Document {
 struct NotificationsDocument {
     sound_name: String,
     custom_sound_display_name: Option<String>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct UpdatesDocument {
+    channel: Option<String>,
+}
+
+impl UpdatesDocument {
+    fn into_config(self) -> Result<UpdatesConfig, String> {
+        let channel = self.channel.map_or(Ok(UpdateChannel::Stable), |value| {
+            UpdateChannel::parse_config_value(&value)
+                .ok_or_else(|| format!("invalid updates.channel: {value}"))
+        })?;
+        Ok(UpdatesConfig { channel })
+    }
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct ErrorReportingDocument {
+    enabled: Option<bool>,
+}
+
+impl ErrorReportingDocument {
+    fn into_config(self) -> ErrorReportingConfig {
+        ErrorReportingConfig {
+            enabled: self.enabled.unwrap_or(true),
+        }
+    }
 }
 
 impl NotificationsDocument {

@@ -1,0 +1,170 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
+ghostty_root="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
+backend="${GDK_BACKEND:-}"
+run_root="$(mktemp -d)"
+state_directory="${run_root}/state"
+log="${run_root}/product.log"
+config="${XDG_CONFIG_HOME}/zentty/config.toml"
+product_pid=""
+settings_window=""
+
+# shellcheck disable=SC1091
+source "${repo_root}/linux/tests/lib/product-input"
+
+fail() {
+    [[ ! -f "${log}" ]] || cat "${log}" >&2
+    echo "rust-updates-privacy-settings: error: $*" >&2
+    exit 1
+}
+
+stop_product() {
+    if [[ "${product_pid}" =~ ^[1-9][0-9]*$ ]]; then
+        kill -TERM "${product_pid}" 2>/dev/null || true
+        wait "${product_pid}" 2>/dev/null || true
+        product_pid=""
+    fi
+}
+
+cleanup() {
+    stop_product
+    rm -rf -- "${run_root}"
+}
+trap cleanup EXIT
+
+case "${backend}" in
+    x11)
+        [[ "${ZENTTY_NESTED_X11_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+            fail "X11 scenario must run through linux/tests/nested-x11"
+        command -v xdotool >/dev/null || fail "xdotool is required"
+        ;;
+    wayland)
+        [[ "${ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+            fail "Wayland scenario must run through linux/tests/nested-wayland-input"
+        command -v wtype >/dev/null || fail "wtype is required"
+        ;;
+    *) fail "GDK_BACKEND must be x11 or wayland" ;;
+esac
+[[ -x "${product}" ]] || fail "staged product is missing: ${product}"
+
+layer_runpath="$(
+    readelf -d "${ghostty_root}/zig-out/lib/libghostty-gtk-embed.so" |
+        sed -n 's/.*Library runpath: \[\([^]]*\)\].*/\1/p' |
+        cut -d: -f1
+)"
+[[ "${layer_runpath}" == .zig-cache/* ]] || fail "Ghostty runpath is not pinned"
+layer_directory="${ghostty_root}/${layer_runpath}"
+mkdir -p "${state_directory}" "$(dirname "${config}")"
+cat >"${config}" <<'EOF'
+# preserve updates privacy journey
+future_root = 7
+[updates]
+channel = "stable"
+future_update = true
+[error_reporting]
+enabled = false
+future_privacy = true
+EOF
+
+start_product() {
+    : >"${log}"
+    GDK_SCALE=1 \
+    GDK_DPI_SCALE=1 \
+    LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+        "${product}" --command 'sleep 30' --state-directory "${state_directory}" \
+        --no-session-restore >"${log}" 2>&1 &
+    product_pid=$!
+    zentty_product_prepare_input "${backend}" "${log}" || fail "physical product input was unavailable"
+}
+
+main_key() {
+    case "$1" in
+        ctrl+shift+*) zentty_product_ctrl_shift_key "${backend}" "${1#ctrl+shift+}" ;;
+        *) zentty_product_key "${backend}" "$1" ;;
+    esac
+}
+
+type_text() {
+    if [[ "${backend}" == x11 ]]; then
+        xdotool type --delay 5 -- "$1"
+    else
+        wtype -d 35 -- "$1"
+    fi
+}
+
+settings_key() {
+    if [[ "${backend}" == x11 ]]; then
+        xdotool windowfocus --sync "${settings_window}"
+        xdotool key "$1"
+    else
+        case "$1" in
+            alt+*) wtype -M alt -k "${1#alt+}" -m alt ;;
+            *) wtype -k "$1" ;;
+        esac
+    fi
+}
+
+open_page() {
+    main_key ctrl+shift+p
+    type_text 'Updates & Privacy Settings'
+    zentty_product_wait_for_log "${log}" \
+        'command-palette=query value="Updates & Privacy Settings" results=1' \
+        "Updates & Privacy Settings did not resolve uniquely" || fail "settings palette route failed"
+    main_key Down
+    main_key Return
+    zentty_product_wait_for_log "${log}" \
+        'zentty-linux: settings-section selected=updates-privacy' \
+        "palette did not deep-link to Updates & Privacy" || fail "settings deep-link failed"
+    zentty_product_wait_for_log "${log}" 'zentty-linux: shortcut-settings active' \
+        "settings did not receive compositor activation" || fail "settings activation failed"
+    if [[ "${backend}" == x11 ]]; then
+        settings_window=""
+        for _ in {1..100}; do
+            settings_window="$(xdotool search --onlyvisible --name '^Zentty Settings$' 2>/dev/null | tail -1 || true)"
+            [[ "${settings_window}" =~ ^[1-9][0-9]*$ ]] && break
+            sleep 0.02
+        done
+        [[ "${settings_window}" =~ ^[1-9][0-9]*$ ]] || fail "settings window did not appear"
+        xdotool windowfocus --sync "${settings_window}"
+    fi
+}
+
+wait_for_config() {
+    local value="$1"
+    for _ in {1..100}; do
+        grep -Fq "channel = \"${value}\"" "${config}" && return 0
+        sleep 0.03
+    done
+    return 1
+}
+
+start_product
+open_page
+zentty_product_wait_for_log "${log}" \
+    'updates-privacy-settings loaded channel=stable error-reporting-available=false' \
+    "source settings state was not rendered" || fail "initial settings state failed"
+settings_key alt+b
+zentty_product_wait_for_log "${log}" \
+    'updates-privacy-settings action=channel value=beta' \
+    "physical channel selection did not choose Beta" || fail "Beta selection failed"
+wait_for_config beta || fail "Beta did not persist"
+grep -Fq '# preserve updates privacy journey' "${config}" || fail "comment was discarded"
+grep -Fq 'future_update = true' "${config}" || fail "unknown update key was discarded"
+grep -Fq 'enabled = false' "${config}" || fail "privacy setting was altered"
+
+stop_product
+start_product
+open_page
+zentty_product_wait_for_log "${log}" \
+    'updates-privacy-settings loaded channel=beta error-reporting-available=false' \
+    "persisted Beta channel did not survive restart" || fail "restart reload failed"
+settings_key alt+s
+zentty_product_wait_for_log "${log}" \
+    'updates-privacy-settings action=channel value=stable' \
+    "physical channel selection did not choose Stable" || fail "Stable selection failed"
+wait_for_config stable || fail "Stable did not persist"
+
+echo "rust-updates-privacy-settings-${backend}: PASS real-gtk-settings physical-channel persistence restart explicit-error-reporting-unavailable"

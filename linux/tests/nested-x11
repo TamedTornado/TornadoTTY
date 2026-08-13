@@ -167,7 +167,8 @@ fi
 
 for dependency in \
     xvfb-run Xvfb xauth xdpyinfo glxinfo grep jq sha256sum awk sed head \
-    readlink date setsid ps kill sleep mktemp mkdir rmdir chmod rm env; do
+    readlink date setsid ps kill sleep mktemp mkdir rmdir chmod rm env \
+    findmnt fusermount3; do
     if ! command -v "${dependency}" >/dev/null 2>&1; then
         echo "nested-x11: SKIP missing runtime dependency: ${dependency}" >&2
         exit 77
@@ -224,29 +225,40 @@ terminate_session() {
 remove_run_root() {
     local portal_mount="${run_root}/runtime/doc"
 
-    remove_portal_mount() {
-        mountpoint -q "${portal_mount}" || return 0
-        command -v fusermount3 >/dev/null 2>&1 ||
-            fail "private document-portal mount survived without fusermount3 cleanup"
-        fusermount3 -u "${portal_mount}" ||
-            fail "private document-portal mount could not be unmounted"
-        mountpoint -q "${portal_mount}" &&
-            fail "private document-portal mount survived unmount"
+    portal_mount_count() {
+        findmnt -rn -M "${portal_mount}" -o TARGET 2>/dev/null |
+            grep -Fxc "${portal_mount}" || true
     }
 
-    if command -v mountpoint >/dev/null 2>&1; then
+    remove_portal_mount() {
+        local mounted
+        mounted="$(portal_mount_count)"
+        while (( mounted > 0 )); do
+            if ! fusermount3 -u "${portal_mount}"; then
+                # The portal can complete its own unmount between inspection and
+                # fusermount. That race is complete only when findmnt confirms the
+                # exact wrapper-owned path is no longer mounted.
+                (( $(portal_mount_count) == 0 )) ||
+                    fail "private document-portal mount could not be unmounted"
+                return
+            fi
+            mounted="$(portal_mount_count)"
+        done
+    }
+
+    # xdg-document-portal can publish or withdraw its private FUSE mount while
+    # its D-Bus activation is shutting down. Reinspect only the wrapper-owned
+    # mount and retry bounded removal; never ignore a surviving mount or root.
+    for _ in {1..50}; do
         remove_portal_mount
-    fi
-    if ! rm -rf -- "${run_root}" 2>/dev/null; then
-        # xdg-document-portal can finish publishing its private FUSE mount
-        # between the first mountpoint check and recursive removal. Recheck
-        # exactly that controlled mount and retry only after unmounting it.
-        command -v mountpoint >/dev/null 2>&1 ||
-            fail "private run root survived cleanup without mountpoint inspection"
-        remove_portal_mount
-        rm -rf -- "${run_root}" || fail "private X11 run root survived cleanup"
-    fi
+        rm -rf -- "${run_root}" 2>/dev/null && return
+        sleep 0.02
+    done
+    remove_portal_mount
+    rm -rf -- "${run_root}" || fail "private X11 run root survived cleanup"
 }
+# ShellCheck cannot see that these functions are invoked by signal traps.
+# shellcheck disable=SC2317
 cleanup() {
     trap - EXIT HUP INT TERM
     terminate_session
@@ -256,6 +268,7 @@ cleanup() {
     remove_run_root
     [[ -z "${display_claim}" ]] || rmdir -- "${display_claim}" 2>/dev/null || true
 }
+# shellcheck disable=SC2317
 signal_exit() {
     local status="$1"
     exit "${status}"
