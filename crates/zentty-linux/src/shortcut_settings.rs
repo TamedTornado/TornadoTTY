@@ -86,6 +86,7 @@ pub(crate) fn show(
     settings_context: SettingsContext,
     restore_parent_focus: &Rc<dyn Fn()>,
 ) -> gtk::Window {
+    let initial_section = settings_context.initial_section;
     install_styles();
     crate::appearance_settings::install_styles();
     let window = gtk::Window::builder()
@@ -331,7 +332,11 @@ pub(crate) fn show(
     );
     window.set_transient_for(Some(parent));
     window.present();
-    search.grab_focus();
+    if initial_section == crate::settings_navigation::SettingsSection::Shortcuts {
+        search.grab_focus();
+    } else {
+        settings.initial_focus.grab_focus();
+    }
     let hide_window = window.clone();
     let parent_window = parent.clone();
     let keep_state = Rc::clone(&state);

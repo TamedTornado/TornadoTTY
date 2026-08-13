@@ -18,6 +18,7 @@ struct State {
 pub(crate) struct SettingsShell {
     pub(crate) widget: gtk::Widget,
     pub(crate) actions: gtk::gio::SimpleActionGroup,
+    pub(crate) initial_focus: gtk::Widget,
 }
 
 #[derive(Clone, Copy)]
@@ -77,6 +78,7 @@ pub(crate) fn build(
     SettingsShell {
         widget: root.upcast(),
         actions,
+        initial_focus: section_search.upcast(),
     }
 }
 

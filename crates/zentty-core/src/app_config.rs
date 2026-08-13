@@ -784,6 +784,44 @@ impl OpenWithConfig {
             custom_apps,
         }
     }
+
+    /// Reconciles persisted preferences with the targets the platform can
+    /// actually resolve at presentation time. This mirrors Zentty's source
+    /// settings behavior: stale custom applications are removed, unavailable
+    /// targets cannot remain enabled, and primary selection falls back in the
+    /// surviving enabled order.
+    #[must_use]
+    pub fn reconciled_available(self, available_target_ids: &[String]) -> Self {
+        use std::collections::HashSet;
+
+        let available = available_target_ids.iter().collect::<HashSet<_>>();
+        let requested_primary = self.primary_target_id.clone();
+        let custom_apps = self
+            .custom_apps
+            .into_iter()
+            .filter(|app| available.contains(&app.id))
+            .collect::<Vec<_>>();
+        let enabled_target_ids = self
+            .enabled_target_ids
+            .into_iter()
+            .filter(|id| available.contains(id))
+            .collect::<Vec<_>>();
+        let primary_target_id = if enabled_target_ids.contains(&requested_primary) {
+            requested_primary
+        } else {
+            enabled_target_ids
+                .first()
+                .cloned()
+                .unwrap_or_else(|| Self::default().primary_target_id)
+        };
+
+        Self {
+            primary_target_id,
+            enabled_target_ids,
+            custom_apps,
+        }
+        .normalized()
+    }
 }
 
 #[derive(Deserialize, Default)]

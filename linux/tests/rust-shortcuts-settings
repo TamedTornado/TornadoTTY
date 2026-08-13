@@ -115,6 +115,16 @@ main_type() {
     fi
 }
 
+open_command_palette() {
+    local shown_count
+    shown_count="$(grep -Fc 'zentty-linux: command-palette=shown' "${log}" 2>/dev/null || true)"
+    main_key ctrl+shift+p
+    zentty_product_wait_for_log_count "${log}" \
+        'zentty-linux: command-palette=shown' "$((shown_count + 1))" \
+        "command palette did not become ready for physical input" ||
+        fail "command palette readiness failed"
+}
+
 settings_window=""
 prepare_settings_input() {
     if [[ "${backend}" == x11 ]]; then
@@ -167,7 +177,7 @@ if [[ "${backend}" == wayland ]]; then
     # synchronously by that surface's key event. Activation through the real
     # command palette closes its overlay before presenting the secondary window,
     # matching the already-qualified Task Manager multi-window journey.
-    main_key ctrl+shift+p
+    open_command_palette
     main_type 'Settings'
     zentty_product_wait_for_log "${log}" 'command-palette=query value="Settings" results=1' \
         "Settings did not resolve uniquely in the command palette" || fail "settings palette route failed"
@@ -298,7 +308,7 @@ for _ in {1..200}; do [[ -s "${bytes}" ]] && break; sleep 0.05; done
 # Invoke one newly ported source appearance command through the real command
 # palette. This crosses command discovery, action routing, both durable config
 # files, and the same native live-reload boundary.
-main_key ctrl+shift+p
+open_command_palette
 main_type 'Use Light Theme'
 zentty_product_wait_for_log "${log}" 'command-palette=query value="Use Light Theme" results=1' \
     "Use Light Theme did not resolve uniquely" || fail "theme command palette route failed"
@@ -323,7 +333,7 @@ for _ in {1..200}; do [[ -s "${ready}" ]] && break; sleep 0.05; done
 # The source dark fallback is a Zentty-owned resource rather than a Ghostty
 # built-in. Exercise it after the real restart so this also proves the persisted
 # light theme did not prevent a fresh process from selecting and installing it.
-main_key ctrl+shift+p
+open_command_palette
 main_type 'Use Dark Theme'
 zentty_product_wait_for_log "${log}" 'command-palette=query value="Use Dark Theme" results=1' \
     "Use Dark Theme did not resolve uniquely" || fail "dark-theme palette route failed"
@@ -357,7 +367,7 @@ zentty_product_wait_for_log "${log}" 'zentty-linux: shortcut=command+option+z ac
 # look like an application shortcut regression. The feature itself remains real:
 # catalog search, persistence, native reload metrics, and the live PTY are all
 # observed before the process exits.
-main_key ctrl+shift+p
+open_command_palette
 main_type 'Appearance Settings'
 zentty_product_wait_for_log "${log}" 'command-palette=query value="Appearance Settings" results=1' \
     "Appearance Settings did not resolve uniquely" || fail "appearance settings palette route failed"

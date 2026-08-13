@@ -174,7 +174,7 @@ open_palette() {
     else
         wtype -M ctrl -M shift -k p -m shift -m ctrl
     fi
-    for _ in $(seq 1 100); do
+    for _ in $(seq 1 200); do
         (( $(grep -Fxc 'zentty-linux: command-palette=shown' "${log}" || true) > shown_before )) && break
         sleep 0.05
     done
@@ -202,7 +202,7 @@ activate_palette_action() {
     local query="$1"
     open_palette
     type_text "${query}"
-    for _ in $(seq 1 100); do
+    for _ in $(seq 1 200); do
         grep -Fq "command-palette=query value=\"${query}\" results=1" "${log}" && break
         sleep 0.05
     done
@@ -210,6 +210,80 @@ activate_palette_action() {
         fail "palette action was absent or ambiguous: ${query}"
     activate_first
 }
+
+# Present the real settings page through its physical command-palette route.
+# Source-compatible presentation reconciliation must remove the unavailable
+# Xcode row while preserving every genuinely resolved Linux target.
+activate_palette_action 'Open With Settings'
+for _ in $(seq 1 100); do
+    grep -Fq 'open-with-settings control=presentation-reconcile result=applied' "${log}" && break
+    sleep 0.05
+done
+grep -Fq 'open-with-settings control=presentation-reconcile result=applied' "${log}" ||
+    fail "Open With settings did not reconcile its stale target on presentation"
+for _ in $(seq 1 100); do
+    grep -Fq 'zentty-linux: settings-section selected=open-with' "${log}" && break
+    sleep 0.05
+done
+grep -Fq 'zentty-linux: settings-section selected=open-with' "${log}" ||
+    fail "Open With settings page did not finish presentation"
+for _ in $(seq 1 100); do
+    grep -Fq 'zentty-linux: shortcut-settings active search-focused=' "${log}" && break
+    sleep 0.05
+done
+grep -Fq 'zentty-linux: shortcut-settings active search-focused=' "${log}" ||
+    fail "Open With settings toplevel did not become active"
+grep -Fq 'custom:controlled' "${config_home}/zentty/config.toml" ||
+    fail "settings reconciliation removed the available controlled application"
+if grep -Fq 'xcode' "${config_home}/zentty/config.toml"; then
+    fail "settings reconciliation retained the unavailable Xcode target"
+fi
+
+# Change the real custom-target checkbox through the controlled X11 pointer.
+# Nested Wayland currently owns a virtual keyboard but not a scoped pointer
+# injector, so it qualifies page presentation, reconciliation, and restart;
+# the physical settings control is explicitly owned by this companion X11 run.
+if [[ "${backend}" == x11 ]]; then
+    settings_window_id=""
+    for _ in $(seq 1 100); do
+        settings_window_id="$(xdotool search --onlyvisible --name '^Zentty Settings$' 2>/dev/null | tail -1 || true)"
+        [[ "${settings_window_id}" =~ ^[1-9][0-9]*$ ]] && break
+        sleep 0.05
+    done
+    [[ "${settings_window_id}" =~ ^[1-9][0-9]*$ ]] || fail "real Open With settings window did not appear"
+    xdotool windowfocus --sync "${settings_window_id}"
+    xdotool mousemove --sync --window "${settings_window_id}" 389 444 click 1
+    for _ in $(seq 1 100); do
+        grep -Fq 'open-with-settings control=target-enabled result=applied' "${log}" && break
+        sleep 0.05
+    done
+    grep -Fq 'open-with-settings control=target-enabled result=applied' "${log}" ||
+        fail "physical checkbox input did not cross the Open With settings boundary"
+    if grep -F 'enabled_target_ids' "${config_home}/zentty/config.toml" | grep -Fq 'custom:controlled'; then
+        fail "disabled custom Open With target remained enabled in persisted configuration"
+    fi
+    xdotool mousemove --sync --window "${settings_window_id}" 389 444 click 1
+    for _ in $(seq 1 100); do
+        (( $(grep -Fc 'open-with-settings control=target-enabled result=applied' "${log}" || true) >= 2 )) && break
+        sleep 0.05
+    done
+    (( $(grep -Fc 'open-with-settings control=target-enabled result=applied' "${log}" || true) >= 2 )) ||
+        fail "physical checkbox input did not re-enable the Open With target"
+    grep -F 'enabled_target_ids' "${config_home}/zentty/config.toml" | grep -Fq 'custom:controlled' ||
+        fail "re-enabled custom Open With target was not persisted"
+fi
+
+# Restart through the real product boundary and prove the reconciled catalog is
+# the configuration subsequently loaded by menus and the command palette.
+kill -TERM "${product_pid}"
+wait "${product_pid}" 2>/dev/null || true
+product_pid=""
+log="${run_root}/reconciled-product.log"
+local_log="${log}"
+start_product "${log}"
+wait_for_product
+grep -Fq 'open-with-discovery available=3 primary=system-file-manager unavailable=' "${log}" ||
+    fail "reconciled Open With configuration did not survive restart"
 
 activate_palette_action 'Open focused pane in Controlled Files'
 for _ in $(seq 1 100); do

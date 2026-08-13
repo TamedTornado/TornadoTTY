@@ -436,9 +436,9 @@ fn apply_state(state: &Rc<RefCell<State>>, action: &str) {
 pub(crate) fn install_styles() {
     let provider = gtk::CssProvider::new();
     provider.load_from_string(
-        ".zentty-settings-card { background: #24272d; border: 1px solid #3a3f48; border-radius: 8px; padding: 14px; }\n\
-         #appearance-theme-list row { border-bottom: 1px solid #343840; }\n\
-         #appearance-theme-list row:selected { background: #31547b; }",
+        ".zentty-settings-card { background-color: alpha(@theme_fg_color, 0.06); border: 1px solid alpha(@theme_fg_color, 0.16); border-radius: 8px; padding: 14px; }\n\
+         #appearance-theme-list row { border-bottom: 1px solid alpha(@theme_fg_color, 0.14); }\n\
+         #appearance-theme-list row:selected { background-color: @theme_selected_bg_color; color: @theme_selected_fg_color; }",
     );
     if let Some(display) = gtk::gdk::Display::default() {
         gtk::style_context_add_provider_for_display(

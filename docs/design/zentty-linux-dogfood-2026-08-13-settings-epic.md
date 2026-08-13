@@ -174,3 +174,69 @@ authoritative execution plan is
 - The machine-readable receipt is `build/linux/qualification-summary.json` and
   its per-cell evidence is under `build/linux/matrix-logs/`. Both are generated
   evidence rather than source artifacts.
+
+## Open With settings control qualification
+
+- Extending the real Open With journey beyond page presentation immediately
+  found that Linux retained an unavailable configured target (`xcode`) when the
+  page opened. The macOS source sanitizes preferences against its detected
+  catalog during presentation. Linux now performs the same operation through
+  `OpenWithConfig::reconciled_available`: stale custom rows are removed,
+  unavailable IDs cannot remain enabled, primary selection falls back through
+  surviving enabled order, and the existing config/open-with runtime authority
+  publishes the result. Controlled X11 and Wayland both prove the normalized
+  catalog survives a real process restart.
+- The first physical X11 checkbox click found a real non-unwinding
+  `RefCell already borrowed` abort. `apply_and_rebuild` invoked the shell apply
+  callback through a temporary immutable state borrow and then attempted to
+  store the accepted value. Cloning the callback before invocation fixes that
+  ownership error. The identical latent pattern in Dev Servers was repaired at
+  the same authority boundary rather than waiting for a second crash.
+- The second click found another synchronous GTK reentrancy bug: rebuilding a
+  dropdown model emits `selected` notification while the settings state is
+  mutably borrowed. Rebuild guards now live in independent `Rc<Cell<bool>>`
+  markers for Open With and Dev Servers, so expected programmatic notifications
+  can return without borrowing the model they interrupt. The repaired X11
+  journey physically disables and re-enables the controlled custom application,
+  inspects exact persisted IDs, restarts, launches the real custom executable,
+  and retains the prior real local/SSH launch assertions.
+- A controlled screenshot exposed hard-coded dark card colors under GTK's light
+  theme, producing nearly unreadable dark-on-dark settings rows. Shared settings
+  cards and appearance-list selection now derive background, border, and
+  selected foreground colors from GTK theme colors. This was a product defect,
+  not test-harness polish.
+- The settings window previously always focused the hidden Shortcuts search
+  entry even when command-palette deep linking opened another section. The
+  settings shell now exports its visible section search as the initial focus
+  target; the shortcut search remains initial only for the Shortcuts section.
+  This removes a hidden-focus trap without adding another navigation system.
+- Nested Wayland still has no scoped pointer injector. Its Open With cell proves
+  real settings presentation, catalog reconciliation, persistence/restart, and
+  launcher behavior; the physical checkbox mutation is explicitly owned by the
+  controlled X11 companion rather than being silently skipped or called a pass.
+- The first aggregate rerun exposed an unrelated but real load-sensitive input
+  race in the controlled Wayland shortcut/settings journey. Its fourth command
+  palette invocation typed immediately after the chord; under concurrent load,
+  the overlay had logged only its initial empty query and had not yet accepted
+  text, so `Appearance Settings` never arrived. The prior waits checked query
+  results but did not establish that each newly requested overlay was ready.
+  The journey now counts `command-palette=shown` receipts and waits for the next
+  distinct presentation before every physical query. An isolated controlled
+  Wayland rerun passed before this repair; the aggregate failure remains useful
+  evidence that isolation alone could not reveal the readiness defect.
+- A second aggregate rerun passed the repaired shortcut journey but exposed two
+  different load-sensitive assumptions. Open With allowed only five seconds
+  for the compositor to acknowledge its physical palette chord, while the
+  shared product-input contract allows ten; it now uses the same bounded
+  acknowledgment window for presentation and query delivery. The staged X11
+  tmux journey also asserted pane order immediately after an asynchronous real
+  respawn. It now polls the real IPC `list-panes` result for up to two seconds
+  and still fails with the last observed topology. Both cells passed alone;
+  neither environmental absence nor an isolated rerun is treated as an
+  aggregate pass.
+- The corrected aggregate run passed all presently executable support tests and
+  matrix cells in 479,620 ms. Declared totals remain **PASS=123, FAIL=0,
+  BLOCKED=7, XFAIL=1, NOT_IMPLEMENTED=23**. The implemented local suite is
+  passed; release and full Linux qualification remain not passed. Debug
+  Valgrind is **PASS with reviewed suppressions**, suppression governance is
+  accepted, and ReleaseSafe Valgrind remains XFAIL.

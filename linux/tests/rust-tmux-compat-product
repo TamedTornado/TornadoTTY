@@ -170,7 +170,11 @@ listed="$(${ZENTTY_CLI_BIN} __tmux-compat list-panes -F '#{pane_id}')"
 [[ "${listed}" == $'%pane-1\n%'"${first_id}"$'\n%'"${second_id}" ]]
 ${ZENTTY_CLI_BIN} __tmux-compat respawn-pane -k -t "%${first_id}" \
     -- "env ZENTTY_RESPAWN_PROBE=1 $0"
-listed="$(${ZENTTY_CLI_BIN} __tmux-compat list-panes -F '#{pane_id}')"
+for _ in {1..100}; do
+    listed="$(${ZENTTY_CLI_BIN} __tmux-compat list-panes -F '#{pane_id}')"
+    [[ "${listed}" == $'%pane-1\n%'"${first_id}"$'\n%'"${second_id}" ]] && break
+    sleep 0.02
+done
 [[ "${listed}" == $'%pane-1\n%'"${first_id}"$'\n%'"${second_id}" ]]
 ${ZENTTY_CLI_BIN} __tmux-compat select-layout -t @foreign main-vertical
 ${ZENTTY_CLI_BIN} __tmux-compat select-layout even-vertical

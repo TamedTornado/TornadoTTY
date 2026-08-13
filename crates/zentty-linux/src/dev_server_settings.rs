@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use gtk::prelude::*;
@@ -18,7 +18,7 @@ struct State {
     ports: gtk::Box,
     port_entry: gtk::Entry,
     status: gtk::Label,
-    rebuilding: bool,
+    rebuilding: Rc<Cell<bool>>,
 }
 
 #[allow(clippy::too_many_lines)] // Declarative construction of one focused settings page.
@@ -102,7 +102,7 @@ pub(crate) fn build(
         ports,
         port_entry,
         status,
-        rebuilding: false,
+        rebuilding: Rc::new(Cell::new(false)),
     }));
     rebuild(&state);
     {
@@ -115,8 +115,9 @@ pub(crate) fn build(
     {
         let state = Rc::clone(&state);
         let preferred = state.borrow().preferred.clone();
+        let rebuilding = Rc::clone(&state.borrow().rebuilding);
         preferred.connect_selected_notify(move |control| {
-            if state.borrow().rebuilding {
+            if rebuilding.get() {
                 return;
             }
             let id = state
@@ -154,7 +155,7 @@ pub(crate) fn build(
 
 #[allow(clippy::too_many_lines)] // Reconciles one dynamic browser/port settings view.
 fn rebuild(state: &Rc<RefCell<State>>) {
-    state.borrow_mut().rebuilding = true;
+    state.borrow().rebuilding.set(true);
     while let Some(child) = state.borrow().browsers.first_child() {
         state.borrow().browsers.remove(&child);
     }
@@ -268,7 +269,7 @@ fn rebuild(state: &Rc<RefCell<State>>) {
         state.borrow().ports.append(&row);
     }
     rebuild_preferred(state);
-    state.borrow_mut().rebuilding = false;
+    state.borrow().rebuilding.set(false);
 }
 
 fn rebuild_preferred(state: &Rc<RefCell<State>>) {
@@ -407,7 +408,8 @@ fn stable_path_id(path: &str) -> String {
 
 fn apply_and_rebuild(state: &Rc<RefCell<State>>, control: &str) {
     let config = state.borrow().config.clone().normalized();
-    match (state.borrow().apply)(config.clone()) {
+    let apply = Rc::clone(&state.borrow().apply);
+    match apply(config.clone()) {
         Ok(()) => {
             state.borrow_mut().config = config;
             state.borrow().status.set_text("");

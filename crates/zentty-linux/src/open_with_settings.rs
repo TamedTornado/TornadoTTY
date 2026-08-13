@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::Path;
 use std::rc::Rc;
 
@@ -15,7 +15,7 @@ struct State {
     primary_ids: Vec<String>,
     targets: gtk::Box,
     status: gtk::Label,
-    rebuilding: bool,
+    rebuilding: Rc<Cell<bool>>,
 }
 
 pub(crate) fn build(
@@ -73,15 +73,16 @@ pub(crate) fn build(
         primary_ids: Vec::new(),
         targets,
         status,
-        rebuilding: false,
+        rebuilding: Rc::new(Cell::new(false)),
     }));
     rebuild(&state);
 
     {
         let state = Rc::clone(&state);
         let primary = state.borrow().primary.clone();
+        let rebuilding = Rc::clone(&state.borrow().rebuilding);
         primary.connect_selected_notify(move |control| {
-            if state.borrow().rebuilding {
+            if rebuilding.get() {
                 return;
             }
             let id = state
@@ -109,7 +110,7 @@ pub(crate) fn build(
 }
 
 fn rebuild(state: &Rc<RefCell<State>>) {
-    state.borrow_mut().rebuilding = true;
+    state.borrow().rebuilding.set(true);
     while let Some(child) = state.borrow().targets.first_child() {
         state.borrow().targets.remove(&child);
     }
@@ -120,6 +121,7 @@ fn rebuild(state: &Rc<RefCell<State>>) {
         let id = target.id.clone();
         let enabled = state.borrow().config.enabled_target_ids.contains(&id);
         let toggle = gtk::CheckButton::with_label(&target.name);
+        toggle.set_focusable(true);
         toggle.set_active(enabled);
         toggle.set_widget_name(&format!("settings-open-with-target-{id}"));
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
@@ -174,7 +176,7 @@ fn rebuild(state: &Rc<RefCell<State>>) {
         state.borrow().targets.append(&row);
     }
     rebuild_primary(state);
-    state.borrow_mut().rebuilding = false;
+    state.borrow().rebuilding.set(false);
 }
 
 fn rebuild_primary(state: &Rc<RefCell<State>>) {
@@ -294,7 +296,8 @@ fn stable_path_id(path: &str) -> String {
 
 fn apply_and_rebuild(state: &Rc<RefCell<State>>, control: &str) {
     let config = state.borrow().config.clone().normalized();
-    match (state.borrow().apply)(config.clone()) {
+    let apply = Rc::clone(&state.borrow().apply);
+    match apply(config.clone()) {
         Ok(()) => {
             state.borrow_mut().config = config;
             state.borrow().status.set_text("");

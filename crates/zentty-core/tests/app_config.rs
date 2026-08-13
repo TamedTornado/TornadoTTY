@@ -503,6 +503,41 @@ fn source_open_with_keys_and_custom_apps_are_preserved() {
 }
 
 #[test]
+fn open_with_presentation_reconciles_stale_targets_and_primary_selection() {
+    let configured = AppConfig::parse_toml(
+        r#"
+        [open_with]
+        primary_target_id = "custom:gone"
+        enabled_target_ids = ["custom:gone", "cursor", "system-terminal"]
+
+        [[open_with.custom_apps]]
+        id = "custom:gone"
+        name = "Gone"
+        path = "/opt/gone"
+
+        [[open_with.custom_apps]]
+        id = "custom:kept"
+        name = "Kept"
+        path = "/opt/kept"
+        "#,
+    )
+    .unwrap()
+    .open_with;
+
+    let reconciled =
+        configured.reconciled_available(&["system-terminal".into(), "custom:kept".into()]);
+    assert_eq!(reconciled.primary_target_id, "system-terminal");
+    assert_eq!(reconciled.enabled_target_ids, ["system-terminal"]);
+    assert_eq!(reconciled.custom_apps.len(), 1);
+    assert_eq!(reconciled.custom_apps[0].id, "custom:kept");
+
+    let no_targets = reconciled.reconciled_available(&[]);
+    assert!(no_targets.enabled_target_ids.is_empty());
+    assert!(no_targets.custom_apps.is_empty());
+    assert_eq!(no_targets.primary_target_id, "system-file-manager");
+}
+
+#[test]
 fn malformed_known_open_with_values_reject_the_snapshot() {
     for source in [
         "[open_with]\nenabled_target_ids = \"vscode\"\n",

@@ -1306,6 +1306,29 @@ impl ApplicationShell {
             window.present();
             return;
         }
+        let open_with_targets = open_with_runtime::discover_available_targets(
+            &self.config.open_with,
+            std::env::var_os("PATH").as_deref(),
+        );
+        let available_open_with_ids = open_with_targets
+            .iter()
+            .map(|target| target.id.clone())
+            .collect::<Vec<_>>();
+        let reconciled_open_with = self
+            .config
+            .open_with
+            .clone()
+            .reconciled_available(&available_open_with_ids);
+        if reconciled_open_with != self.config.open_with {
+            match self.apply_open_with(reconciled_open_with) {
+                Ok(()) => eprintln!(
+                    "zentty-linux: open-with-settings control=presentation-reconcile result=applied"
+                ),
+                Err(error) => eprintln!(
+                    "zentty-linux: open-with-settings control=presentation-reconcile result=error detail={error}"
+                ),
+            }
+        }
         let weak = self.self_handle.borrow().clone();
         let appearance = self.config.appearance.clone();
         let appearance_weak = self.self_handle.borrow().clone();
@@ -1390,10 +1413,7 @@ impl ApplicationShell {
                     }
                 }),
                 open_with: self.config.open_with.clone(),
-                open_with_targets: open_with_runtime::discover_available_targets(
-                    &self.config.open_with,
-                    std::env::var_os("PATH").as_deref(),
-                ),
+                open_with_targets,
                 apply_open_with: Rc::new(move |config| {
                     let shell = open_with_weak.upgrade().ok_or_else(|| {
                         "Zentty window closed while applying Open With settings".to_owned()
