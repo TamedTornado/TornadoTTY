@@ -5,9 +5,9 @@
   "source_sha256": "17d7fd367de794d9f1a568a3b2511405278311c01e468a8271f31d58184a8a0f",
   "owned_source_sha256": {
     "crates/zentty-linux/src/main.rs": "df4ddd662ac0453952bd1eb01f0554d0397b7ba3d7fcd9ba867b7a2ee1db033e",
-    "crates/zentty-linux/src/application.rs": "443f8e347d2a9c9afe0b9f59b8a45007498fc06fcef13c4dca95fe9fef8ac5d5",
-    "crates/zentty-linux/src/config_store.rs": "b44aa6fbcb9e7ab72108ae66b640249c47cf4c1f70c36880c2047174b84c7b4c",
-    "crates/zentty-linux/src/config_reload.rs": "249764e645d085509f4f2e73378b73e8aeee1635667a68074a51bbd8d767bf85",
+    "crates/zentty-linux/src/application.rs": "bfe2a8ff60cebaa8297d6bc3c665d87d2d2169336e410e0786bd1f20560338c0",
+    "crates/zentty-linux/src/config_store.rs": "ebeb5b4ab43305986133a3771d82df27e84cf7b2cd3b81794990a2b8ac871405",
+    "crates/zentty-linux/src/config_reload.rs": "fbf6c22d1ee8c4a03af477c7465da06e467fb9ca4b77cb020f0c823820826c56",
     "crates/zentty-linux/src/window_set.rs": "501d595889c11a41a4261ef8282465d76dd9ed8ccd1d004406b558579b0bf58e",
     "crates/zentty-linux/src/agent_runtime.rs": "e896b4827e1273a67e58bacbf364e5244db856c5466c373d240c5b69d1f0ee5a",
     "crates/zentty-linux/src/codex_enrichment.rs": "fe87631c75c04b63962b7f89d311a778a25af8f27a1dcb4d5950b3efcbaa476e",

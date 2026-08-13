@@ -147,6 +147,9 @@ impl ApplicationCoordinator {
             if let Err(error) = coordinator.borrow_mut().reload_product_config() {
                 eprintln!("zentty-linux: config-reload result=projection-failed detail={error}");
             }
+            if let Err(error) = Self::install_config_watch(&coordinator) {
+                eprintln!("zentty-linux: config-watch result=refresh-failed detail={error}");
+            }
         })?;
         coordinator.borrow_mut().config_watch = Some(watch);
         eprintln!("zentty-linux: config-watch path={}", path.display());

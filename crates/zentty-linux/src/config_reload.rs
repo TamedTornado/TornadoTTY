@@ -4,7 +4,7 @@ use gtk::gio;
 use gtk::prelude::*;
 use zentty_core::AppConfig;
 
-use crate::config_store::{ConfigSnapshot, ConfigStore};
+use crate::config_store::{ConfigSnapshot, ConfigStore, resolve_config_target};
 
 const RELOAD_QUIET_PERIOD_MILLIS: u64 = 150;
 
@@ -74,7 +74,7 @@ impl ConfigReloadAuthority {
 }
 
 pub(crate) struct ConfigDirectoryWatch {
-    _monitor: gio::FileMonitor,
+    _monitors: Vec<gio::FileMonitor>,
 }
 
 impl ConfigDirectoryWatch {
@@ -82,52 +82,72 @@ impl ConfigDirectoryWatch {
         path: &Path,
         on_quiet_change: impl Fn() + 'static,
     ) -> Result<Self, String> {
-        let parent = path.parent().ok_or_else(|| {
-            format!(
-                "configuration path has no parent directory: {}",
-                path.display()
-            )
-        })?;
-        std::fs::create_dir_all(parent).map_err(|error| {
-            format!(
-                "could not create configuration directory {}: {error}",
-                parent.display()
-            )
-        })?;
-        let monitor = gio::File::for_path(parent)
-            .monitor_directory(gio::FileMonitorFlags::WATCH_MOVES, gio::Cancellable::NONE)
-            .map_err(|error| {
+        let target = resolve_config_target(path)?;
+        let mut monitor_specs = std::collections::BTreeSet::new();
+        for (watched_path, create_parent) in [(path, true), (target.as_path(), false)] {
+            let parent = watched_path.parent().ok_or_else(|| {
                 format!(
-                    "could not watch configuration directory {}: {error}",
-                    parent.display()
+                    "configuration path has no parent directory: {}",
+                    watched_path.display()
                 )
             })?;
-        let watched_name = path.file_name().map(PathBuf::from);
+            let name = watched_path.file_name().map(PathBuf::from).ok_or_else(|| {
+                format!(
+                    "configuration path has no file name: {}",
+                    watched_path.display()
+                )
+            })?;
+            if create_parent {
+                std::fs::create_dir_all(parent).map_err(|error| {
+                    format!(
+                        "could not create configuration directory {}: {error}",
+                        parent.display()
+                    )
+                })?;
+            } else if !parent.is_dir() {
+                continue;
+            }
+            monitor_specs.insert((parent.to_path_buf(), name));
+        }
         let debounce = std::rc::Rc::new(std::cell::RefCell::new(None::<gtk::glib::SourceId>));
         let callback = std::rc::Rc::new(on_quiet_change);
-        monitor.connect_changed(move |_, file, other_file, _| {
-            let relevant = watched_name.as_ref().is_some_and(|name| {
-                file.basename().as_ref() == Some(name)
-                    || other_file.and_then(gio::File::basename).as_ref() == Some(name)
-            });
-            if !relevant {
-                return;
-            }
-            if let Some(source) = debounce.borrow_mut().take() {
-                source.remove();
-            }
+        let mut monitors = Vec::with_capacity(monitor_specs.len());
+        for (parent, watched_name) in monitor_specs {
+            let monitor = gio::File::for_path(&parent)
+                .monitor_directory(gio::FileMonitorFlags::WATCH_MOVES, gio::Cancellable::NONE)
+                .map_err(|error| {
+                    format!(
+                        "could not watch configuration directory {}: {error}",
+                        parent.display()
+                    )
+                })?;
+            let debounce = std::rc::Rc::clone(&debounce);
             let callback = std::rc::Rc::clone(&callback);
-            let debounce_after = std::rc::Rc::clone(&debounce);
-            let source = gtk::glib::timeout_add_local_once(
-                std::time::Duration::from_millis(RELOAD_QUIET_PERIOD_MILLIS),
-                move || {
-                    debounce_after.borrow_mut().take();
-                    callback();
-                },
-            );
-            *debounce.borrow_mut() = Some(source);
-        });
-        Ok(Self { _monitor: monitor })
+            monitor.connect_changed(move |_, file, other_file, _| {
+                let relevant = file.basename().as_ref() == Some(&watched_name)
+                    || other_file.and_then(gio::File::basename).as_ref() == Some(&watched_name);
+                if !relevant {
+                    return;
+                }
+                if let Some(source) = debounce.borrow_mut().take() {
+                    source.remove();
+                }
+                let callback = std::rc::Rc::clone(&callback);
+                let debounce_after = std::rc::Rc::clone(&debounce);
+                let source = gtk::glib::timeout_add_local_once(
+                    std::time::Duration::from_millis(RELOAD_QUIET_PERIOD_MILLIS),
+                    move || {
+                        debounce_after.borrow_mut().take();
+                        callback();
+                    },
+                );
+                *debounce.borrow_mut() = Some(source);
+            });
+            monitors.push(monitor);
+        }
+        Ok(Self {
+            _monitors: monitors,
+        })
     }
 }
 
@@ -141,6 +161,8 @@ mod tests {
     use std::time::Duration;
     use std::time::{SystemTime, UNIX_EPOCH};
     use zentty_core::AppConfig;
+
+    static WATCH_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     fn private_path(name: &str) -> std::path::PathBuf {
         let nonce = SystemTime::now()
@@ -199,6 +221,7 @@ mod tests {
 
     #[test]
     fn directory_watch_ignores_other_files_and_observes_atomic_replacement() {
+        let _watch_test_guard = WATCH_TEST_LOCK.lock().unwrap();
         let path = private_path("watch");
         let parent = path.parent().unwrap();
         fs::create_dir_all(parent).unwrap();
@@ -224,6 +247,79 @@ mod tests {
         }
         assert_eq!(notifications.get(), 1);
         fs::remove_dir_all(parent).unwrap();
+    }
+
+    #[test]
+    fn directory_watch_observes_a_symlink_target_and_can_follow_a_retarget() {
+        use std::os::unix::fs::symlink;
+
+        let _watch_test_guard = WATCH_TEST_LOCK.lock().unwrap();
+        let path = private_path("symlink-watch");
+        let root = path.parent().unwrap();
+        let first_target = root.join("first/settings.toml");
+        let second_target = root.join("second/settings.toml");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::create_dir_all(first_target.parent().unwrap()).unwrap();
+        fs::create_dir_all(second_target.parent().unwrap()).unwrap();
+        fs::write(&first_target, "[clipboard]\nalways_clean_copies = false\n").unwrap();
+        fs::write(&second_target, "[clipboard]\nalways_clean_copies = true\n").unwrap();
+        symlink(&first_target, &path).unwrap();
+
+        let notifications = Rc::new(Cell::new(0_u32));
+        let callback_notifications = Rc::clone(&notifications);
+        let mut watch = Some(
+            ConfigDirectoryWatch::install(&path, move || {
+                callback_notifications.set(callback_notifications.get() + 1);
+            })
+            .unwrap(),
+        );
+        let replacement = first_target.with_extension("external");
+        fs::write(&replacement, "[clipboard]\nalways_clean_copies = true\n").unwrap();
+        fs::rename(replacement, &first_target).unwrap();
+        wait_for_notifications(&notifications, 1);
+
+        let replacement_link = path.with_extension("external");
+        symlink(&second_target, &replacement_link).unwrap();
+        fs::rename(replacement_link, &path).unwrap();
+        wait_for_notifications(&notifications, 2);
+
+        drop(watch.take());
+        let callback_notifications = Rc::clone(&notifications);
+        watch = Some(
+            ConfigDirectoryWatch::install(&path, move || {
+                callback_notifications.set(callback_notifications.get() + 1);
+            })
+            .unwrap(),
+        );
+        let replacement = second_target.with_extension("external");
+        fs::write(&replacement, "[clipboard]\nalways_clean_copies = false\n").unwrap();
+        fs::rename(replacement, &second_target).unwrap();
+        wait_for_notifications(&notifications, 3);
+        drop(watch);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn directory_watch_does_not_create_a_broken_symlink_target_parent() {
+        use std::os::unix::fs::symlink;
+
+        let _watch_test_guard = WATCH_TEST_LOCK.lock().unwrap();
+        let path = private_path("broken-symlink-watch");
+        let root = path.parent().unwrap();
+        let missing_target = root.join("operator-managed/settings.toml");
+        fs::create_dir_all(root).unwrap();
+        symlink(&missing_target, &path).unwrap();
+        let _watch = ConfigDirectoryWatch::install(&path, || {}).unwrap();
+        assert!(!missing_target.parent().unwrap().exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    fn wait_for_notifications(notifications: &Cell<u32>, expected: u32) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while notifications.get() < expected && std::time::Instant::now() < deadline {
+            iterate_default_context_for(Duration::from_millis(10));
+        }
+        assert_eq!(notifications.get(), expected);
     }
 
     fn iterate_default_context_for(duration: Duration) {

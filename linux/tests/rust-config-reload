@@ -41,7 +41,7 @@ case "${backend}" in
         ;;
     *) fail "GDK_BACKEND must be x11 or wayland" ;;
 esac
-for dependency in cmp dirname mkdir mktemp mv pgrep sort; do
+for dependency in cmp dirname ln mkdir mktemp mv pgrep sort; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
 [[ -x "${product}" ]] || fail "staged product is not built: ${product}"
@@ -166,7 +166,65 @@ zentty_product_wait_for_log_count "${log}" 'zentty-linux: confirmation shown tit
     "last-good behavior did not survive invalid and missing files" || fail "last-good behavior reset"
 cancel_confirmation
 
+# A live operator-managed symlink must preserve the link while following
+# target replacement, a retarget, and later replacement of the new target.
+symlink_root="${state_dir}/managed-config"
+first_target="${symlink_root}/first/settings.toml"
+second_target="${symlink_root}/second/settings.toml"
+mkdir -p "$(dirname "${first_target}")" "$(dirname "${second_target}")"
+write_target() {
+    local target="$1"
+    local clean_copy="$2"
+    local confirm="$3"
+    local temporary="${target}.external.$$"
+    cat >"${temporary}" <<EOF
+[confirmations]
+confirm_before_closing_window = ${confirm}
+confirm_before_quitting = ${confirm}
+
+[clipboard]
+always_clean_copies = ${clean_copy}
+EOF
+    mv -f -- "${temporary}" "${target}"
+}
+
+write_target "${first_target}" false false
+applied_before="$(grep -Fc 'zentty-linux: config-reload result=applied' "${log}" || true)"
+watch_before="$(grep -Fc 'zentty-linux: config-watch path=' "${log}" || true)"
+ln -s "${first_target}" "${config_file}.external-link"
+mv -f -- "${config_file}.external-link" "${config_file}"
+zentty_product_wait_for_log_count "${log}" 'zentty-linux: config-reload result=applied' \
+    "$((applied_before + 1))" "live symlink publication was not observed" || fail "symlink publication missing"
+zentty_product_wait_for_log_count "${log}" 'zentty-linux: config-watch path=' \
+    "$((watch_before + 1))" "watch set was not rebuilt for the symlink target" || fail "symlink watch refresh missing"
+[[ -L "${config_file}" ]] || fail "logical config path stopped being a symlink"
+
+write_target "${first_target}" true false
+zentty_product_wait_for_log_count "${log}" 'zentty-linux: config-reload result=applied' \
+    "$((applied_before + 2))" "first symlink target replacement was not observed" || fail "first target replacement missing"
+[[ -L "${config_file}" ]] || fail "target replacement overwrote the logical symlink"
+
+write_target "${second_target}" false true
+watch_before="$(grep -Fc 'zentty-linux: config-watch path=' "${log}" || true)"
+ln -s "${second_target}" "${config_file}.external-link"
+mv -f -- "${config_file}.external-link" "${config_file}"
+zentty_product_wait_for_log_count "${log}" 'zentty-linux: config-reload result=applied' \
+    "$((applied_before + 3))" "config symlink retarget was not observed" || fail "symlink retarget missing"
+zentty_product_wait_for_log_count "${log}" 'zentty-linux: config-watch path=' \
+    "$((watch_before + 1))" "watch set was not rebuilt after symlink retarget" || fail "retarget watch refresh missing"
+
+write_target "${second_target}" true true
+zentty_product_wait_for_log_count "${log}" 'zentty-linux: config-reload result=applied' \
+    "$((applied_before + 4))" "replacement of retargeted config was not observed" || fail "retargeted replacement missing"
+[[ -L "${config_file}" ]] || fail "retargeted config stopped being a symlink"
+grep -Fq 'config-live-projected window=window-1 automatic-clean-copy=true confirm-close-window=true confirm-quit=true' "${log}" ||
+    fail "final symlink target state did not reach the first window"
+grep -Fq 'config-live-projected window=window-2 automatic-clean-copy=true confirm-close-window=true confirm-quit=true' "${log}" ||
+    fail "final symlink target state did not reach the second window"
+mapfile -t children_after_symlink < <(pgrep -P "${product_pid}" | sort -n)
+[[ "${children_after_symlink[*]}" == "${children_before[*]}" ]] || fail "symlink reload replaced a real PTY child"
+
 kill -TERM "${product_pid}"
 wait "${product_pid}" || true
 product_pid=""
-echo "rust-config-reload: PASS backend=${backend} real-pty=true multi-window=true rename=true coalesced=true last-good=true"
+echo "rust-config-reload: PASS backend=${backend} real-pty=true multi-window=true rename=true coalesced=true last-good=true symlink-retarget=true"

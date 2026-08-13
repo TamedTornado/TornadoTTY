@@ -846,7 +846,7 @@ fn with_config_lock<T>(
     result
 }
 
-fn resolve_config_target(path: &Path) -> Result<PathBuf, String> {
+pub(crate) fn resolve_config_target(path: &Path) -> Result<PathBuf, String> {
     match fs::symlink_metadata(path) {
         Ok(metadata) if metadata.file_type().is_symlink() => {
             let target = fs::read_link(path)

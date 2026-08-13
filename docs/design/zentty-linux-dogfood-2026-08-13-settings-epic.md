@@ -524,3 +524,65 @@ authoritative execution plan is
   are zero, with all 427 reviewed contexts accounted for. ReleaseSafe remains
   XFAIL. This receipt supersedes the failed intermediate aggregate, not its
   recorded discovery.
+
+## GH-36 symlink-managed live configuration slice
+
+- **Pre-implementation boundary:** this slice makes the already supported
+  symlink-preserving writer observable while the product is running. One
+  watcher set must observe both the operator-facing config entry and the
+  resolved target; replacing the symlink must rebuild that set so later edits
+  to the new target are not lost. It must not add a second parser, store, or
+  page-local monitor.
+- **Test-first contract:** extend the controlled real X11/Wayland journey so
+  the application starts from a config symlink whose target lives in a
+  different directory, receives atomic target replacements, receives a
+  symlink retarget, then receives another replacement of the new target. The
+  symlink must remain a symlink, both windows must receive the final state, and
+  the exact real PTY child set must survive. Add focused monitor coverage for
+  target changes and retargeting before changing watcher implementation.
+- **Failure policy:** a broken or unreadable target retains last-good state and
+  remains a diagnostic. Rebuilding the watch set is required after every
+  relevant logical-path event; environmental inability to watch either parent
+  is a failure, not a pass. Existing regular-file replace-by-rename coverage
+  remains authoritative and must not be weakened.
+- **First real-system failure:** the initial X11 extension saw publication of
+  the symlink itself but missed the first target replacement. The application
+  had installed its new target watcher, but the harness raced that installation
+  because it used the earlier reload receipt as the only barrier. The product
+  now emits the existing watch-install receipt after every rebuilt watch set,
+  and the journey waits for that receipt before mutating a newly watched
+  target. This was a test synchronization defect, not converted into a pass.
+- **Staging discovery:** the first synchronization rerun accidentally exercised
+  the prior staged binary: the release-safe Cargo output had been rebuilt, but
+  a preceding compound command had not copied it after a failed relative
+  `GHOSTTY_LIB_DIR` build. File timestamps and the missing new diagnostic string
+  proved the mismatch. The binary was explicitly restaged before any result was
+  accepted; both controlled compositor journeys subsequently passed.
+- **Unit-harness failure:** running all focused monitor tests concurrently
+  allowed two GLib local-source callbacks to share the default main context
+  across Rust test worker threads, triggering GLib's thread guard. The monitor
+  tests now serialize only their real main-context ownership with a test mutex;
+  production behavior and other tests remain parallel. The complete focused
+  module then passed five tests, including proof that watching a broken symlink
+  does not create its operator-managed target directory.
+- Controlled X11 and Wayland now both pass the expanded real-product journey:
+  logical symlink publication, first target atomic replacement, live retarget,
+  replacement of the new target, identical final projection to two windows,
+  preservation of the symlink, and preservation of both exact PTY child PIDs.
+- The first focused mutation invocation was correctly refused at its unmutated
+  baseline because the restricted syscall sandbox denied the existing real
+  kernel-listener test with `EPERM`. The governed runner was rerun with normal
+  real-socket permissions. A non-persistent command wrapper then cut that run
+  off after nine of twelve mutants, so its incomplete receipt was rejected and
+  the suite was rerun in a persistent session. Final result: **12 tested, 8
+  caught, 4 unviable, 0 missed**; the safe ignored-tree/no-target-copy policy
+  remained active.
+- Final `linux/tests/qualify-local` passed every presently executable support
+  and matrix cell in **535,820 ms**, including the expanded controlled X11 and
+  Wayland symlink journeys. Declared totals remain **PASS=125, FAIL=0,
+  BLOCKED=7, XFAIL=1, NOT_IMPLEMENTED=23**. Implemented-local,
+  product-boundary, and qualification-host-retired claims pass; release and
+  full Linux qualification correctly remain NOT_PASSED. Debug Valgrind remains
+  **PASS with reviewed suppressions** and ReleaseSafe remains XFAIL. GH-36 is
+  still open for the explicitly listed parser, provenance, permission,
+  concurrency, crash durability, and complete-projection work.
