@@ -123,6 +123,7 @@ pub(crate) enum ApplicationAction {
     DismissAttention(u64),
     ClearAttention,
     AgentCaffeinationChanged(bool),
+    StatusNotifierChanged(bool),
 }
 
 pub(crate) struct ApplicationShell {
@@ -277,6 +278,7 @@ fn finish_shell_setup(
     ApplicationShell::install_peek_scroll_navigation(shell);
     ApplicationShell::install_pane_scroll_switching(shell);
     ApplicationShell::install_search_shortcuts(shell);
+    ApplicationShell::install_fleet_focus_restoration(shell);
     create_initial_pane_surfaces(shell, initial_pane_ids, deferred_live_pane_id)?;
     shell.borrow().mount_background_restored_agents();
     finish_initial_render(shell);
@@ -292,6 +294,18 @@ fn render_empty_sidebar(
 }
 
 impl ApplicationShell {
+    fn install_fleet_focus_restoration(shell: &Rc<RefCell<Self>>) {
+        let weak = Rc::downgrade(shell);
+        shell.borrow().chrome.connect_fleet_closed(move || {
+            let weak = weak.clone();
+            glib::idle_add_local_once(move || {
+                if let Some(shell) = weak.upgrade() {
+                    shell.borrow().focus_selected_surface();
+                }
+            });
+        });
+    }
+
     #[allow(clippy::too_many_lines)] // Initializes the single window authority and its owned coordinators.
     pub(crate) fn new(
         runtimes: &ApplicationRuntimes,
@@ -656,7 +670,14 @@ impl ApplicationShell {
     }
 
     pub(crate) fn show_agent_fleet(&self) {
-        self.chrome.show_fleet();
+        let weak = self.self_handle.borrow().clone();
+        glib::idle_add_local_once(move || {
+            glib::idle_add_local_once(move || {
+                if let Some(shell) = weak.upgrade() {
+                    shell.borrow().chrome.show_fleet();
+                }
+            });
+        });
     }
 
     pub(crate) fn fleet_source(
@@ -1855,6 +1876,9 @@ impl ApplicationShell {
         self.config.agent_integrations = integrations;
         self.request_application_action(ApplicationAction::AgentCaffeinationChanged(
             caffeination.enabled,
+        ));
+        self.request_application_action(ApplicationAction::StatusNotifierChanged(
+            menu_bar.show_status_item,
         ));
         eprintln!(
             "zentty-linux: agent-settings result=persisted path={} teams={} new-panes-only=true",

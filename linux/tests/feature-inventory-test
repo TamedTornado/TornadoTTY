@@ -44,8 +44,8 @@ jq -e '
     .result == "PASS" and
     .entry_count == 60 and
     .classifications.REQUIRED_INITIAL_RELEASE == 34 and
-    .implementation_statuses.IMPLEMENTED == 12 and
-    .implementation_statuses.PARTIAL == 27 and
+    .implementation_statuses.IMPLEMENTED == 13 and
+    .implementation_statuses.PARTIAL == 26 and
     .implementation_statuses.NOT_IMPLEMENTED == 20 and
     .evidence.app_commands == 70 and
     .evidence.pane_commands == 33 and
@@ -64,6 +64,15 @@ jq -e '
     (.test_plan | contains("multi-window Weston/Wayland"))
 ' "${source_inventory}" >/dev/null || {
     echo "feature-inventory-test: remote-transfer parity evidence regressed" >&2
+    exit 1
+}
+jq -e '
+    .entries[] | select(.id == "desktop.fleet-status") |
+    .implementation_status == "IMPLEMENTED" and
+    (.test_plan | contains("real private D-Bus watcher")) and
+    (.alternative_or_blocker | contains("always-available in-window fleet"))
+' "${source_inventory}" >/dev/null || {
+    echo "feature-inventory-test: fleet StatusNotifierItem evidence regressed" >&2
     exit 1
 }
 jq -e '

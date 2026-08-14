@@ -61,11 +61,13 @@ pub(crate) fn build(
 ) -> gtk::Widget {
     let caffeination_available =
         crate::sleep_inhibitor::SleepInhibitorCapability::discover().available();
+    let status_item_available = crate::status_notifier::watcher_available();
     eprintln!(
-        "zentty-linux: agent-settings loaded teams={} wrappers-available={} source-unavailable={} status-item-available=false caffeination-available={}",
+        "zentty-linux: agent-settings loaded teams={} wrappers-available={} source-unavailable={} status-item-available={} caffeination-available={}",
         teams.enabled,
         available_wrappers.len(),
         UNAVAILABLE_PERSISTENT.len() + UNAVAILABLE_EPHEMERAL.len(),
+        status_item_available,
         caffeination_available,
     );
     let root = gtk::Box::new(gtk::Orientation::Vertical, 16);
@@ -106,11 +108,21 @@ pub(crate) fn build(
         "Expose Zentty's tmux-compatible team environment to newly created panes.",
         &teams_switch,
     ));
-    behavior.append(&unavailable_row(
-        "Show agent status in menu bar",
-        menu_bar.show_status_item,
-        "Unavailable on Linux until a reviewed status-item backend is implemented.",
-        "settings-agents-status-item",
+    let status_item_switch = gtk::Switch::builder()
+        .active(menu_bar.show_status_item)
+        .sensitive(status_item_available)
+        .valign(gtk::Align::Center)
+        .build();
+    status_item_switch.set_widget_name("settings-agents-status-item");
+    instrument_focus(&status_item_switch, "status-item");
+    behavior.append(&setting_row(
+        "Show agent status in s_ystem tray",
+        if status_item_available {
+            "Publish the same in-window fleet through the desktop StatusNotifierItem host."
+        } else {
+            "Unavailable: no desktop StatusNotifierItem watcher. The in-window fleet remains available."
+        },
+        &status_item_switch,
     ));
     let caffeination_switch = gtk::Switch::builder()
         .active(caffeination.enabled)
@@ -208,6 +220,15 @@ pub(crate) fn build(
     }
     {
         let state = Rc::clone(&state);
+        status_item_switch.connect_active_notify(move |control| {
+            if state.borrow().updating.get() {
+                return;
+            }
+            apply_status_item(&state, control);
+        });
+    }
+    {
+        let state = Rc::clone(&state);
         caffeination_switch.connect_active_notify(move |control| {
             if state.borrow().updating.get() {
                 return;
@@ -228,6 +249,40 @@ pub(crate) fn build(
         .build();
     scroll.update_property(&[gtk::accessible::Property::Label("Agents Settings")]);
     scroll.upcast()
+}
+
+fn apply_status_item(state: &Rc<RefCell<State>>, control: &gtk::Switch) {
+    let (teams, caffeination, accepted, integrations, apply) = {
+        let state = state.borrow();
+        (
+            state.teams,
+            state.caffeination,
+            state.menu_bar,
+            state.integrations.clone(),
+            Rc::clone(&state.apply),
+        )
+    };
+    let requested = MenuBarConfig {
+        show_status_item: control.is_active(),
+    };
+    if !has_changed(&accepted, &requested) {
+        return;
+    }
+    match apply(teams, caffeination, requested, integrations) {
+        Ok(()) => {
+            let mut state = state.borrow_mut();
+            state.menu_bar = requested;
+            state.status.set_text("");
+            eprintln!(
+                "zentty-linux: agent-settings control=status-item enabled={} result=applied",
+                requested.show_status_item
+            );
+        }
+        Err(error) => {
+            rollback_switch(state, control, accepted.show_status_item);
+            report_error(state, "status-item", &error);
+        }
+    }
 }
 
 fn effective_state(

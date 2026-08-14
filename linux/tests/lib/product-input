@@ -35,12 +35,13 @@ zentty_product_uses_xdotool() {
 }
 
 zentty_product_xdotool_key() {
-    if [[ "${ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT:-}" == 1 ]]; then
-        xdotool windowfocus --sync "${ZENTTY_PRODUCT_WINDOW_ID}"
-        xdotool key "$@"
-    else
-        xdotool key --window "${ZENTTY_PRODUCT_WINDOW_ID}" "$@"
-    fi
+    # Keep these as compositor-visible XTEST events. `xdotool key --window`
+    # falls back to XSendEvent when the target does not already own focus;
+    # GTK popovers correctly ignore that synthetic delivery even though a
+    # terminal surface may happen to accept it. Qualification must exercise
+    # the same focus and key path as physical input.
+    xdotool windowfocus --sync "${ZENTTY_PRODUCT_WINDOW_ID}"
+    xdotool key "$@"
 }
 
 zentty_product_prepare_input() {
@@ -379,12 +380,8 @@ zentty_product_type() {
     local backend="$1"
     local value="$2"
     if zentty_product_uses_xdotool "${backend}"; then
-        if [[ "${ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT:-}" == 1 ]]; then
-            xdotool windowfocus --sync "${ZENTTY_PRODUCT_WINDOW_ID}"
-            xdotool type --delay 5 "${value}"
-        else
-            xdotool type --window "${ZENTTY_PRODUCT_WINDOW_ID}" --delay 5 "${value}"
-        fi
+        xdotool windowfocus --sync "${ZENTTY_PRODUCT_WINDOW_ID}"
+        xdotool type --delay 5 "${value}"
     else
         wtype "${value}"
     fi

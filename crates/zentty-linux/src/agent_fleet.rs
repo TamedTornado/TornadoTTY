@@ -123,24 +123,55 @@ pub(crate) fn popover(snapshots: &[FleetPaneSnapshot]) -> gtk::Popover {
         root.append(&scroll);
         if let Some(initial_focus) = initial_focus {
             popover.connect_map(move |_| {
-                initial_focus.grab_focus();
+                let initial_focus = initial_focus.clone();
+                gtk::glib::idle_add_local_once(move || {
+                    initial_focus.grab_focus();
+                });
             });
         }
     }
 
+    append_footer(&root, &popover, snapshots.is_empty());
+    popover.set_child(Some(&root));
+    popover
+}
+
+fn append_footer(root: &gtk::Box, popover: &gtk::Popover, initially_empty: bool) {
     let footer = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     footer.set_margin_top(8);
-    let settings = gtk::Button::with_label("Settings…");
+    let settings = gtk::Button::with_mnemonic("_Settings…");
     settings.set_action_name(Some("workspace.open-settings-section"));
     settings.set_action_target_value(Some(&"agents".to_variant()));
     settings.set_hexpand(true);
-    let quit = gtk::Button::with_label("Quit Zentty");
+    settings.connect_has_focus_notify(|button| {
+        if button.has_focus() {
+            eprintln!("zentty-linux: fleet-footer-focus action=settings");
+        }
+    });
+    settings.connect_clicked(|_| {
+        eprintln!("zentty-linux: fleet-footer-activate action=settings");
+    });
+    let quit = gtk::Button::with_mnemonic("_Quit Zentty");
     quit.set_action_name(Some("workspace.quit-application"));
+    quit.connect_has_focus_notify(|button| {
+        if button.has_focus() {
+            eprintln!("zentty-linux: fleet-footer-focus action=quit");
+        }
+    });
+    quit.connect_clicked(|_| {
+        eprintln!("zentty-linux: fleet-footer-activate action=quit");
+    });
     footer.append(&settings);
     footer.append(&quit);
     root.append(&footer);
-    popover.set_child(Some(&root));
-    popover
+    if initially_empty {
+        popover.connect_map(move |_| {
+            let settings = settings.clone();
+            gtk::glib::idle_add_local_once(move || {
+                settings.grab_focus();
+            });
+        });
+    }
 }
 
 fn append_section(

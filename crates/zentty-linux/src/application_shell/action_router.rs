@@ -620,23 +620,34 @@ fn install_fleet_actions(shell: &Rc<RefCell<ApplicationShell>>, group: &gio::Sim
     let activate = gio::SimpleAction::new(ACTION_ACTIVATE_FLEET_PANE, Some(triple));
     let weak = Rc::downgrade(shell);
     activate.connect_activate(move |_, parameter| {
-        let (Some(shell), Some((window_id, worklane_id, pane_id))) = (
-            weak.upgrade(),
-            parameter.and_then(glib::Variant::get::<(String, String, String)>),
-        ) else {
+        let (Some(shell), Some(target)) = (weak.upgrade(), fleet_target(parameter)) else {
             return;
         };
         shell
             .borrow()
-            .request_application_action(super::ApplicationAction::ActivateFleetPane(
-                zentty_core::AttentionTarget::new(window_id, worklane_id, pane_id),
-            ));
+            .request_application_action(super::ApplicationAction::ActivateFleetPane(target));
     });
     group.add_action(&activate);
 
     add_simple_action(shell, group, ACTION_QUIT_APPLICATION, |shell| {
         shell.request_quit();
     });
+}
+
+fn fleet_target(parameter: Option<&glib::Variant>) -> Option<zentty_core::AttentionTarget> {
+    let (window_id, worklane_id, pane_id) =
+        parameter.and_then(glib::Variant::get::<(String, String, String)>)?;
+    if [window_id.as_str(), worklane_id.as_str(), pane_id.as_str()]
+        .iter()
+        .any(|value| value.trim().is_empty())
+    {
+        return None;
+    }
+    Some(zentty_core::AttentionTarget::new(
+        window_id,
+        worklane_id,
+        pane_id,
+    ))
 }
 
 fn install_settings_shortcut_actions(
@@ -1672,7 +1683,8 @@ mod tests {
     use gtk::{gio, glib};
 
     use super::{
-        ACTION_SPECS, ActionSpec, Availability, ParameterSchema, validate_registered_group,
+        ACTION_SPECS, ActionSpec, Availability, ParameterSchema, fleet_target,
+        validate_registered_group,
     };
 
     fn spec(name: &str) -> Option<&'static ActionSpec> {
@@ -1733,6 +1745,28 @@ mod tests {
                 "rename-template",
                 "edit-template",
             ]
+        );
+    }
+
+    #[test]
+    fn fleet_target_rejects_missing_wrong_and_blank_typed_parameters() {
+        assert!(fleet_target(None).is_none());
+        let wrong = "pane".to_variant();
+        assert!(fleet_target(Some(&wrong)).is_none());
+        for value in [
+            ("", "worklane", "pane"),
+            ("window", " ", "pane"),
+            ("window", "worklane", "\n"),
+        ] {
+            let value = value.to_variant();
+            assert!(fleet_target(Some(&value)).is_none());
+        }
+        let valid = ("window", "worklane", "pane").to_variant();
+        assert_eq!(
+            fleet_target(Some(&valid)),
+            Some(zentty_core::AttentionTarget::new(
+                "window", "worklane", "pane"
+            ))
         );
     }
 

@@ -9,6 +9,9 @@ bundle_lib="${bundle_root}/lib"
 state_dir=""
 log=""
 product_pid=""
+status_notifier_pid=""
+status_notifier_receipt=""
+fleet_running_offset=0
 route_probe_index=0
 product_args=()
 config_file=""
@@ -26,6 +29,10 @@ cleanup() {
     if [[ "${product_pid}" =~ ^[1-9][0-9]*$ ]]; then
         kill -TERM "${product_pid}" 2>/dev/null || true
         wait "${product_pid}" 2>/dev/null || true
+    fi
+    if [[ "${status_notifier_pid}" =~ ^[1-9][0-9]*$ ]]; then
+        kill -TERM "${status_notifier_pid}" 2>/dev/null || true
+        wait "${status_notifier_pid}" 2>/dev/null || true
     fi
     [[ -z "${state_dir}" ]] || rm -rf -- "${state_dir}"
     [[ -z "${log}" ]] || rm -f -- "${log}"
@@ -104,6 +111,9 @@ while IFS= read -r value; do
             ;;
         agent-session-end)
             printf '%s' '{"version":1,"event":"session.end","session":{"id":"moved-live-pane"}}' | "$ZENTTY_CLI_BIN" ipc agent-event
+            ;;
+        agent-waiting-end)
+            printf '%s' '{"version":1,"event":"session.end","session":{"id":"fleet-waiting"}}' | "$ZENTTY_CLI_BIN" ipc agent-event
             ;;
         tmux-route)
             route="$(tmux display-message -p '#{pane_id}')" && printf '\033]2;tmux:%s\a' "$route"
@@ -329,7 +339,25 @@ confirm_before_quitting = false
 
 [clipboard]
 always_clean_copies = true
+
+[menu_bar]
+show_status_item = true
 EOF
+
+if [[ "${ZENTTY_STATUS_NOTIFIER:-false}" == true ]]; then
+    [[ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ]] || fail "status-notifier journey requires a private session bus"
+    status_notifier_fixture="${repo_root}/target/release-safe/status_notifier_watcher"
+    [[ -x "${status_notifier_fixture}" ]] || fail "status-notifier watcher fixture is not built"
+    status_notifier_receipt="${state_dir}/status-notifier.jsonl"
+    "${status_notifier_fixture}" --receipt "${status_notifier_receipt}" &
+    status_notifier_pid=$!
+    for _ in {1..100}; do
+        grep -Fq '"event":"ready"' "${status_notifier_receipt}" 2>/dev/null && break
+        kill -0 "${status_notifier_pid}" 2>/dev/null || fail "status-notifier watcher exited before readiness"
+        sleep 0.02
+    done
+    grep -Fq '"event":"ready"' "${status_notifier_receipt}" || fail "status-notifier watcher did not become ready"
+fi
 
 # Journey 0: split a second real pane, then invoke the source-named window move
 # through the real command palette. The exact PTY child set, terminal-ready
@@ -337,6 +365,55 @@ EOF
 # a live reparent rather than a reconstructed terminal or model-only move.
 start_product
 if [[ "${ZENTTY_MULTI_WINDOW_FLEET_ONLY:-false}" == true ]]; then
+zentty_product_wait_for_log "${log}" 'zentty-linux: focus-pane pane=pane-1' \
+    "initial terminal focus did not settle before footer input" || fail "fleet footer focus barrier missing"
+zentty_product_wait_for_log "${log}" 'zentty-linux: project-context pane=pane-1 ' \
+    "initial project-context refresh did not settle before footer input" || fail "fleet footer project barrier missing"
+execute_palette_action "agent activity across every Zentty window" "Agent Status"
+zentty_product_wait_for_log "${log}" 'zentty-linux: fleet-footer-focus action=settings' \
+    "empty fleet did not focus its Settings footer" || fail "fleet Settings focus missing"
+zentty_product_alt_key "${backend}" q
+zentty_product_wait_for_log "${log}" 'zentty-linux: fleet-footer-activate action=quit' \
+    "physical footer activation did not invoke Quit" || fail "fleet Quit activation missing"
+wait_for_exit
+if [[ "${ZENTTY_STATUS_NOTIFIER:-false}" == true ]]; then
+    first_item_service="$(jq -r 'select(.event == "registered") | .service' "${status_notifier_receipt}" | tail -1)"
+    [[ "${first_item_service}" == org.kde.StatusNotifierItem-* ]] || fail "watcher receipt omitted the first item service"
+    for _ in {1..100}; do
+        owner_reply="$(gdbus call --session --dest org.freedesktop.DBus \
+            --object-path /org/freedesktop/DBus --method org.freedesktop.DBus.NameHasOwner \
+            "${first_item_service}" 2>/dev/null || true)"
+        [[ "${owner_reply}" == '(false,)' ]] && break
+        sleep 0.02
+    done
+    [[ "${owner_reply:-}" == '(false,)' ]] || fail "Quit leaked the first status-item bus name"
+fi
+start_product
+execute_palette_action "agent activity across every Zentty window" "Agent Status"
+zentty_product_wait_for_log "${log}" 'zentty-linux: fleet-footer-focus action=settings' \
+    "reopened empty fleet did not restore footer focus" || fail "fleet footer reopen missing"
+zentty_product_alt_key "${backend}" s
+zentty_product_wait_for_log "${log}" 'zentty-linux: fleet-footer-activate action=settings' \
+    "physical footer activation did not invoke Settings" || fail "fleet Settings activation missing"
+zentty_product_wait_for_log "${log}" 'zentty-linux: settings-section selected=agents' \
+    "fleet footer did not deep-link to Agents settings" || fail "fleet Settings route missing"
+zentty_product_wait_for_log "${log}" 'status-item-available=true' \
+    "Agents settings did not discover the controlled watcher" || fail "status-item setting unavailable"
+# The settings route has now been proven through physical input. Restart for
+# the independent multi-window fleet lifecycle instead of coupling it to a
+# transient-toplevel close operation in the deliberately WM-free X11 fixture.
+kill -TERM "${product_pid}"
+wait "${product_pid}" 2>/dev/null || true
+product_pid=""
+start_product
+if [[ "${ZENTTY_STATUS_NOTIFIER:-false}" == true ]]; then
+    sed -i 's/show_status_item = true/show_status_item = false/' "${config_file}"
+    zentty_product_wait_for_log "${log}" 'zentty-linux: status-notifier state=disabled reason=setting-disabled' \
+        "live disabled setting did not withdraw publication" || fail "status-item disabled setting missing"
+    sed -i 's/show_status_item = false/show_status_item = true/' "${config_file}"
+    zentty_product_wait_for_log_count "${log}" 'zentty-linux: status-notifier state=registered service=' 2 \
+        "live enabled setting did not restore publication" || fail "status-item enabled setting missing"
+fi
 zentty_product_type "${backend}" "agent-waiting"
 if [[ "${backend}" == wayland ]]; then
     wtype -k Return
@@ -403,6 +480,73 @@ if [[ "${ZENTTY_MULTI_WINDOW_FLEET_ONLY:-false}" == true ]]; then
 zentty_product_wait_for_log "${log}" \
     'zentty-linux: fleet-refresh windows=2 agents=2 waiting=1 stopped=0 compacting=0 active=1 idle=0 progress=0' \
     "both real-window agent projections did not reach one fleet" || fail "cross-window fleet missing"
+if [[ "${ZENTTY_STATUS_NOTIFIER:-false}" == true ]]; then
+    zentty_product_wait_for_log "${log}" 'zentty-linux: status-notifier state=registered service=' \
+        "product did not register its real status item" || fail "status-notifier registration missing"
+    gdbus call --session --dest org.kde.StatusNotifierWatcher --object-path /StatusNotifierWatcher \
+        --method be.zenjoy.Zentty.TestStatusNotifierWatcher.Inspect >/dev/null
+    grep -Fq '"event":"inspected","status":"NeedsAttention"' "${status_notifier_receipt}" ||
+        fail "status-notifier did not expose the waiting aggregate"
+    zentty_product_wait_for_log "${log}" 'zentty-linux: project-context pane=pane-2 root=' \
+        "destination context did not settle before status-item activation" ||
+        fail "status-notifier destination context barrier missing"
+    gdbus call --session --dest org.kde.StatusNotifierWatcher --object-path /StatusNotifierWatcher \
+        --method be.zenjoy.Zentty.TestStatusNotifierWatcher.Activate >/dev/null
+    zentty_product_wait_for_log "${log}" 'zentty-linux: status-notifier activation=opened-fleet window=window-2' \
+        "status-item activation did not open the canonical fleet" || fail "status-notifier activation missing"
+    zentty_product_wait_for_log "${log}" 'zentty-linux: chrome-popover=agent-fleet state=open' \
+        "status-item activation did not map the real GTK fleet" || fail "status-notifier GTK fallback missing"
+    zentty_product_key "${backend}" Escape
+    zentty_product_wait_for_log "${log}" 'zentty-linux: chrome-popover=agent-fleet state=closed' \
+        "status-item fleet did not close before terminal input resumed" || fail "status-notifier fleet close missing"
+    zentty_product_prepare_input "${backend}" "${log}" || fail "could not refocus after status fleet"
+    if [[ "${backend}" == x11 ]]; then
+        execute_palette_action "Requires approval" "waiting fleet pane"
+        zentty_product_wait_for_log "${log}" \
+            'zentty-linux: fleet-activate window=window-1 worklane=worklane-1 pane=pane-1 result=targeted' \
+            "status journey did not route to the waiting source pane" || fail "status-notifier source route missing"
+        target_second_window "pane-1"
+        zentty_product_type "${backend}" "agent-waiting-end"
+        zentty_product_key "${backend}" Return
+        zentty_product_wait_for_log "${log}" \
+            'zentty-linux: fleet-refresh windows=2 agents=1 waiting=0 stopped=0 compacting=0 active=1 idle=0 progress=0' \
+            "resolved waiting agent did not update the shared fleet" || fail "status-notifier active transition missing"
+        gdbus call --session --dest org.kde.StatusNotifierWatcher --object-path /StatusNotifierWatcher \
+            --method be.zenjoy.Zentty.TestStatusNotifierWatcher.Inspect >/dev/null
+        grep -Fq '"event":"inspected","status":"Active"' "${status_notifier_receipt}" ||
+            fail "status-notifier did not expose the active aggregate"
+        zentty_product_type "${backend}" "agent-waiting"
+        zentty_product_key "${backend}" Return
+        zentty_product_wait_for_log_count "${log}" \
+            'zentty-linux: fleet-refresh windows=2 agents=2 waiting=1 stopped=0 compacting=0 active=1 idle=0 progress=0' 2 \
+            "waiting agent did not return after status-item transition" || fail "status-notifier waiting recovery missing"
+        execute_palette_action "Focus Codex" "active fleet pane"
+        zentty_product_wait_for_log "${log}" \
+            'zentty-linux: fleet-activate window=window-2 worklane=window-2-worklane-1 pane=pane-2 result=targeted' \
+            "status journey did not return to the active destination pane" || fail "status-notifier destination route missing"
+        target_second_window "pane-2"
+        fleet_running_offset=1
+    fi
+    kill -TERM "${status_notifier_pid}"
+    wait "${status_notifier_pid}" 2>/dev/null || true
+    status_notifier_pid=""
+    zentty_product_wait_for_log "${log}" \
+        'zentty-linux: status-notifier state=unavailable reason=watcher-unavailable fallback=in-window' \
+        "watcher loss did not select the explicit in-window fallback" || fail "status-notifier watcher-loss fallback missing"
+    "${status_notifier_fixture}" --receipt "${status_notifier_receipt}" &
+    status_notifier_pid=$!
+    for _ in {1..100}; do
+        [[ "$(grep -Fc '"event":"ready"' "${status_notifier_receipt}" 2>/dev/null || true)" -ge 2 ]] && break
+        kill -0 "${status_notifier_pid}" 2>/dev/null || fail "replacement status-notifier watcher exited"
+        sleep 0.02
+    done
+    [[ "$(grep -Fc '"event":"ready"' "${status_notifier_receipt}" 2>/dev/null || true)" -ge 2 ]] ||
+        fail "replacement status-notifier watcher did not become ready"
+    zentty_product_wait_for_log_count "${log}" 'zentty-linux: status-notifier state=registered service=' 2 \
+        "product did not republish after watcher recovery" || fail "status-notifier watcher recovery missing"
+    gdbus call --session --dest org.kde.StatusNotifierWatcher --object-path /StatusNotifierWatcher \
+        --method be.zenjoy.Zentty.TestStatusNotifierWatcher.Inspect >/dev/null
+fi
 zentty_product_type "${backend}" "agent-progress"
 zentty_product_key "${backend}" Return
 zentty_product_wait_for_log "${log}" \
@@ -421,7 +565,7 @@ zentty_product_wait_for_log "${log}" \
 zentty_product_type "${backend}" "agent-running"
 zentty_product_key "${backend}" Return
 zentty_product_wait_for_log_count "${log}" \
-    'zentty-linux: fleet-refresh windows=2 agents=2 waiting=1 stopped=0 compacting=0 active=1 idle=0 progress=0' 2 \
+    'zentty-linux: fleet-refresh windows=2 agents=2 waiting=1 stopped=0 compacting=0 active=1 idle=0 progress=0' "$((2 + fleet_running_offset))" \
     "running activity did not replace compacting" || fail "fleet running reprioritization missing"
 zentty_product_type "${backend}" "agent-stop-candidate"
 zentty_product_key "${backend}" Return
@@ -434,7 +578,7 @@ zentty_product_wait_for_log "${log}" \
     'zentty-linux: agent-event pane=pane-2 worklane=window-2-worklane-1 kind=agent.running session=moved-live-pane' \
     "tracked agent process did not publish running state" || fail "tracked fleet process missing"
 zentty_product_wait_for_log_count "${log}" \
-    'zentty-linux: fleet-refresh windows=2 agents=2 waiting=1 stopped=0 compacting=0 active=1 idle=0 progress=0' 3 \
+    'zentty-linux: fleet-refresh windows=2 agents=2 waiting=1 stopped=0 compacting=0 active=1 idle=0 progress=0' "$((3 + fleet_running_offset))" \
     "tracked agent process did not return the fleet to running" || fail "tracked fleet running state missing"
 zentty_product_type "${backend}" "agent-kill-process"
 zentty_product_key "${backend}" Return
@@ -444,7 +588,7 @@ zentty_product_wait_for_log "${log}" \
 zentty_product_type "${backend}" "agent-running"
 zentty_product_key "${backend}" Return
 zentty_product_wait_for_log_count "${log}" \
-    'zentty-linux: fleet-refresh windows=2 agents=2 waiting=1 stopped=0 compacting=0 active=1 idle=0 progress=0' 4 \
+    'zentty-linux: fleet-refresh windows=2 agents=2 waiting=1 stopped=0 compacting=0 active=1 idle=0 progress=0' "$((4 + fleet_running_offset))" \
     "new activity did not resolve stopped state" || fail "fleet stopped recovery missing"
 execute_palette_action "agent activity across every Zentty window" "Agent Status"
 zentty_product_wait_for_log "${log}" 'zentty-linux: chrome-popover=agent-fleet state=open' \
@@ -459,6 +603,10 @@ zentty_product_wait_for_log "${log}" \
 # specific coordinates. The opened popover and priority-focus receipt above
 # independently prove the grouped fleet projection itself.
 zentty_product_key "${backend}" Escape
+zentty_product_prepare_input "${backend}" "${log}" || fail "could not refocus after closing fleet"
+if [[ "${backend}" == x11 ]]; then
+    target_second_window "pane-2"
+fi
 zentty_product_type "${backend}" "agent-session-end"
 zentty_product_key "${backend}" Return
 zentty_product_wait_for_log "${log}" \

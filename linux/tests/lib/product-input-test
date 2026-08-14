@@ -38,9 +38,9 @@ fi
 ZENTTY_PRODUCT_WINDOW_ID=4242
 zentty_product_close_window x11
 
-expected=$'key --window 4242 ctrl+q\nkey --window 4242 ctrl+q\nkeyup Control_L Control_R q'
+expected=$'windowfocus --sync 4242\nkey ctrl+q\nwindowfocus --sync 4242\nkey ctrl+q\nkeyup Control_L Control_R q'
 [[ "$(cat "${calls}")" == "${expected}" ]] || {
-    echo "product-input-test: X11 close did not reset the complete synthetic chord" >&2
+    echo "product-input-test: X11 close did not use XTEST and reset the complete chord" >&2
     cat "${calls}" >&2
     exit 1
 }

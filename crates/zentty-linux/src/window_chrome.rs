@@ -282,6 +282,14 @@ impl WindowChrome {
         self.fleet.popup();
     }
 
+    pub(crate) fn connect_fleet_closed(&self, callback: impl Fn() + 'static) {
+        self.fleet.connect_active_notify(move |button| {
+            if !button.is_active() {
+                callback();
+            }
+        });
+    }
+
     pub(crate) fn fleet_snapshot(&self) -> Vec<zentty_core::FleetPaneSnapshot> {
         self.rendered_fleet.borrow().clone()
     }

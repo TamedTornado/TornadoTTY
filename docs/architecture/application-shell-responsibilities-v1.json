@@ -289,7 +289,7 @@
       "methods": [
         "finish_pane_layout_action",
         "install_pane_traversal_shortcuts", "install_pane_traversal_key_release",
-        "record_terminal_gesture", "install_search_shortcuts",
+        "record_terminal_gesture", "install_search_shortcuts", "install_fleet_focus_restoration",
         "perform_focused_binding_action",
         "activate_pane_control", "report_action_error",
         "refresh_pane_layout_action_availability"
@@ -369,7 +369,7 @@
     "action_router": [
       "accepts", "enabled", "install", "uninstall", "refresh_availability",
       "populate", "install_application_actions", "install_edit_actions", "install_worklane_edit_actions",
-      "install_primary_ui_actions", "install_attention_actions", "install_fleet_actions", "install_settings_shortcut_actions",
+      "install_primary_ui_actions", "install_attention_actions", "fleet_target", "install_fleet_actions", "install_settings_shortcut_actions",
       "install_worklane_move_actions", "install_pane_rename_action",
       "install_pane_transfer_action", "install_pane_creation_actions",
       "install_restore_closed_pane_action", "install_clipboard_actions", "install_search_actions", "install_server_actions", "install_task_runner_action", "install_project_context_actions",

@@ -481,6 +481,118 @@ remaining uncertainty as the Linux agent fleet functionality is built.
   report identity is
   `27367065506690b35ea7a1ec38cd8f74ece97f525ec9def620067c0605c5ef5e`.
 
+## 2026-08-14 — GH-21 fleet desktop projection completion
+
+- The source audit was repeated against
+  `MenuBarStatusController.swift` and `MenuBarStatusMenuBuilder.swift` before
+  implementation. The menu-bar controller is an optional projection of the
+  process fleet, not a second agent registry. Linux therefore keeps the
+  existing in-window fleet as the universal surface and publishes that same
+  aggregate through StatusNotifierItem only when a watcher exists. The design
+  and tests-first boundary are recorded in
+  `linux-status-notifier-fleet-completion-plan.md`.
+- No D-Bus or tray package was added. A focused `status_notifier` module uses
+  the existing GIO session-bus support, owns one PID-scoped service name,
+  exports the standard item object, registers it with the real watcher, maps
+  the canonical aggregate to `Passive`, `Active`, or `NeedsAttention`, opens
+  the existing GTK fleet on activation, and releases both the object and bus
+  name on disable, watcher loss, and shutdown. Stock GNOME without an
+  extension remains explicitly supported through the in-window fallback; its
+  lack of a watcher is never represented as desktop-item success.
+- The controlled test is a real private session bus and a real
+  `org.kde.StatusNotifierWatcher` fixture, not a mocked Rust trait. It records
+  actual registration, reads the product's exported properties, calls its
+  D-Bus `Activate`, observes aggregate transitions, kills and replaces the
+  watcher, and checks shutdown name ownership. The existing multi-window
+  journey remains the only fleet product actor and still owns real Ghostty
+  PTYs, authenticated agent events, tracked child death, exact pane routing,
+  and window cleanup.
+- The first physical footer run failed after the Settings button briefly
+  received focus: hiding the command palette and a later project-context
+  projection returned focus to the terminal. Repeated idle deferral was not
+  accepted as a fix. Fleet rows/footer now defer their mapped focus, and the
+  owning window chrome explicitly restores terminal focus when the fleet
+  closes. Settings and Quit gained accessible mnemonics; Settings deep-links
+  to the real Agents page and Quit traverses the normal application action and
+  teardown. X11 qualification input was also corrected to prefer compositor-
+  visible XTEST events over `XSendEvent`; the latter had allowed terminal
+  input to appear real while GTK correctly rejected focused-button delivery.
+- A second real defect appeared when an agent lifecycle event was emitted from
+  the wrong pane after a cross-window fleet action. The event log showed the
+  pane capability and session owner disagreed; the registry correctly refused
+  to erase another pane's session. The journey now routes through the exact
+  typed fleet target before ending/restoring that session, then routes back to
+  the active destination. This proves ownership rather than weakening it.
+- An open fleet can be rebuilt when asynchronously completed project metadata
+  changes its context text. Early test iterations allowed that rebuild to race
+  Escape and reopen the popover. The journey now waits for the completed
+  `project-context ... root=` receipt before status-item activation, and the
+  product restores terminal focus at the chrome close boundary. This removed
+  the lost-first-command symptom without adding sleeps or a second harness.
+- The controlled X11 journey now passes registration, Settings/Quit, live
+  configuration disable/re-enable, exact property inspection, D-Bus
+  activation, `NeedsAttention` to `Active` and back, watcher-loss fallback,
+  watcher recovery, name cleanup, and the pre-existing complete fleet
+  lifecycle. The controlled Cage/Wayland journey reaches exit 98 only at the
+  already-tracked cross-toplevel xdg-activation gap, after passing the new
+  desktop-item behavior. Environmental absence was not converted to PASS.
+- The canonical action boundary now rejects absent, wrongly typed, and blank
+  `(window, worklane, pane)` targets. Exact D-Bus property signatures and
+  values have focused tests. Scoped mutation testing initially demonstrated
+  that applying mutation to the impure D-Bus transport while running only
+  unit tests was meaningless: 26 transport mutants survived even though the
+  real external journey detects them. The scope was corrected to the
+  deterministic presentation/property projection; **16 of 16 viable mutants
+  were caught** and two generated mutants were compiler-unviable. The first
+  sandboxed baseline also failed the unchanged real `/proc` listener test with
+  `EPERM`; the elevated rerun preserved that environmental failure rather than
+  calling it a mutant result.
+- Architecture validation initially rejected the new fleet-focus method and
+  typed-target helper because they were absent from the closed ownership
+  inventory. Both are now assigned to their existing owners and the validator
+  plus negative suite pass. `desktop.fleet-status` is now `IMPLEMENTED`; the
+  machine-readable inventory test requires the real watcher evidence and the
+  always-available fallback. The remaining Wayland activation XFAIL is a
+  qualification environment/activation defect, not silently omitted parity.
+- A strict all-target Clippy invocation also surfaced three existing unrelated
+  pedantic findings (`install_shell_callbacks` at 101 lines,
+  `WindowChrome::new` at 104 lines, and a by-value sleep-inhibitor diagnostic)
+  plus one older workspace test over 100 lines. New slice-local findings were
+  repaired by extracting fleet footer construction and notifier installation,
+  removing redundant match arms, and borrowing fixture JSON values. The
+  repository's authoritative quality and full qualification commands remain
+  required before commit; this note does not portray the ad-hoc strict run as
+  clean.
+- The first complete qualification attempt for this slice correctly failed
+  both its support gate and one product cell. The shared product-input
+  self-test still expected the old `xdotool key --window`/`XSendEvent`
+  transcript after the helper moved to focused XTEST events. Its closed-world
+  expected transcript now requires `windowfocus --sync` followed by global
+  key delivery, and the support test passes. Separately,
+  `agent-settings-runtime-x11` clicked its real Codex switch by controlled
+  window coordinates after deliberately corrupting the config, but the new
+  no-watcher explanation wrapped onto extra lines and moved that switch; the
+  click instead toggled caffeination, so the expected Codex write error never
+  appeared. The unavailable explanation was shortened without hiding the
+  fallback or retained-state policy, restoring the source page geometry. The
+  complete focused malformed-config/rollback Agents journey passes again. The
+  failed 565,000 ms qualification receipt is retained as a failure and is not
+  represented as implemented-suite success; a complete rerun is required.
+- The complete post-repair `linux/tests/qualify-local` rerun passed every
+  presently executable support test and matrix cell in **568,340 ms**. The
+  authoritative declared totals remain **131 PASS, 0 FAIL, 7 BLOCKED, 2
+  XFAIL, and 22 NOT_IMPLEMENTED**. Therefore the implemented local suite and
+  product-boundary qualification passed, while release qualification and full
+  Linux qualification correctly remain not passed. Debug Valgrind is **PASS
+  with reviewed suppressions**, not an unsuppressed-clean claim: the preserved
+  raw receipt reports 427 errors in 427 contexts, 6,240 definitely lost bytes,
+  and 41,460 indirectly lost bytes; the reviewed post-suppression receipt has
+  zero errors, contexts, or lost bytes and records 427 suppressed
+  errors/contexts. The accepted report SHA-256 is
+  `8089b74604f1ffd8bd5633f134a4d416cfe92ee747deb68e9e21121c187abc9b`.
+  ReleaseSafe Valgrind remains non-PASS as declared; no suppression changed.
+  The machine summary is `build/linux/qualification-summary.json`.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were
