@@ -35,6 +35,7 @@ mod sidebar_visibility;
 mod source_ui;
 mod task_manager;
 mod theme_catalog;
+mod theme_preview;
 mod tmux_compat;
 mod tmux_store;
 mod updates_privacy_settings;

@@ -114,3 +114,70 @@ and 41,461 indirect bytes; post-suppression totals are zero errors/contexts and
 zero definite/indirect bytes, with all 427 errors/contexts accounted for by the
 reviewed effective suppression set. The suppression-governance cell passed and
 the summary retained independently hashed raw and suppressed receipts.
+
+## Theme picker follow-up
+
+Human QA then found that the repaired catalog still presented a text-only
+“preview” and made the independent **Dark Theme** and **Light Theme** saved
+slots look like active appearance switches. Selecting the light slot while the
+behavior remained **Always Dark** correctly saved a light preference without
+changing the terminal, but the Linux projection did not explain that model.
+This was not a Ghostty reload failure; it was an incomplete port of the source
+Appearance UX.
+
+The source audit showed that macOS has three separate behavior cards, two
+theme-slot cards with mini-terminal previews, two-row ANSI palette previews in
+the catalog, and explanatory inactive-slot text. A real `Aizen Dark` Ghostty
+theme also disproved the two-color presentation: it contains background,
+foreground, sixteen ANSI colors, cursor/cursor-text, and
+selection-background/selection-foreground values.
+
+Linux now parses those cursor and selection fields, renders real compact
+two-row palette previews in every catalog row and saved-slot card, and renders
+a terminal-like detail preview with themed prompt/output, selection, cursor,
+and all sixteen ANSI colors. The slot cards show their saved theme names. The
+detail panel explicitly states whether the edited slot is currently active,
+saved for another fixed behavior, or selected by Follow System. A focused real
+compositor journey exercises the inactive light slot while Always Dark is
+active and requires the live Ghostty theme to remain unchanged.
+
+The expanded journey initially passed on nested X11 but failed on nested
+Wayland while trying to reach the Light Theme card with reverse focus
+traversal. This was treated as a harness failure, not an environmental pass.
+The deterministic route now uses bounded, paced forward physical `Tab` events
+from the real theme search field, reaches and activates the actual Light Theme
+card on both compositors, and proves that saving Aizen Light updates Zentty's
+inactive light slot without changing the live Always Dark Ghostty
+configuration. The focused X11 and Wayland receipts both report
+`terminal-palette-preview` and `explicit-theme-slots` as passed.
+
+Focused mutation testing used the governed `linux/tests/mutate-rust` entry
+point (`gitignore = true`, `copy_target = false`) over the theme parser and
+slot-status logic. It tested 101 mutants in four minutes: 95 were caught and
+six were compiler-unviable; none were missed or timed out.
+
+The first full local qualification rerun did not pass: the controlled Wayland
+Open With journey missed persistence after its physical primary-target
+selection, and the controlled Wayland Task Runners journey did not observe the
+VS Code task before opening the palette. Their X11 twins passed in the same
+run. Neither absence was accepted as a pass. Immediate isolated reruns through
+the same nested Wayland wrapper both passed their complete real-product
+journeys, identifying intermittent readiness/input ordering under the parallel
+matrix rather than a stable product regression. A fresh complete qualification
+run was therefore required before finalizing the slice.
+
+That fresh four-worker run passed both earlier cells but exposed the same
+physical-input readiness class in `product-source-ux-x11` (a repeated Tab did
+not advance Worklane Peek); the exact cell immediately passed alone. A further
+full run with only two workers passed that cell and every changed theme journey
+but intermittently missed the bookmark name dialog and the Appearance opacity
+focus/action in two unrelated X11 journeys. This is now three complete matrix
+runs with different isolated GUI timing misses, not one reproducible product
+failure. The final run's machine summary records those two executable failures;
+declared matrix totals remain **126 PASS, 0 FAIL, 7 BLOCKED, 1 XFAIL, and 22
+NOT_IMPLEMENTED**. Accordingly, this slice does **not** claim that implemented
+local, release, or full Linux qualification passed. Debug IBus-focus Valgrind
+remains **PASS with reviewed suppressions**; it is not described as an
+unsuppressed clean result. The theme-specific real X11 and Wayland journeys,
+workspace tests, strict Clippy, architecture validators, and focused mutation
+suite all passed.

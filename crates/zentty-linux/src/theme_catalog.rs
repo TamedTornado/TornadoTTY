@@ -67,6 +67,10 @@ pub(crate) struct ThemePreview {
     pub(crate) background: ThemeColor,
     pub(crate) foreground: ThemeColor,
     pub(crate) palette: Vec<ThemeColor>,
+    pub(crate) cursor: Option<ThemeColor>,
+    pub(crate) cursor_text: Option<ThemeColor>,
+    pub(crate) selection_background: Option<ThemeColor>,
+    pub(crate) selection_foreground: Option<ThemeColor>,
     pub(crate) user_owned: bool,
 }
 
@@ -136,6 +140,10 @@ fn parse_theme(name: &str, contents: &str, user_owned: bool) -> Option<ThemePrev
     let mut background = None;
     let mut foreground = None;
     let mut palette = BTreeMap::<u8, ThemeColor>::new();
+    let mut cursor = None;
+    let mut cursor_text = None;
+    let mut selection_background = None;
+    let mut selection_foreground = None;
     for raw_line in contents.lines() {
         let line = raw_line.trim();
         if is_ignored_theme_line(line) {
@@ -147,6 +155,10 @@ fn parse_theme(name: &str, contents: &str, user_owned: bool) -> Option<ThemePrev
         match key.trim() {
             "background" => background = ThemeColor::parse(value),
             "foreground" => foreground = ThemeColor::parse(value),
+            "cursor-color" => cursor = ThemeColor::parse(value),
+            "cursor-text" => cursor_text = ThemeColor::parse(value),
+            "selection-background" => selection_background = ThemeColor::parse(value),
+            "selection-foreground" => selection_foreground = ThemeColor::parse(value),
             "palette" => {
                 if let Some((index, color)) = value.split_once('=')
                     && let Ok(index) = index.trim().parse::<u8>()
@@ -164,6 +176,10 @@ fn parse_theme(name: &str, contents: &str, user_owned: bool) -> Option<ThemePrev
         background: background?,
         foreground: foreground?,
         palette: palette.into_values().collect(),
+        cursor,
+        cursor_text,
+        selection_background,
+        selection_foreground,
         user_owned,
     })
 }
@@ -221,12 +237,22 @@ mod tests {
     fn parses_preview_colors_palette_and_classification() {
         let theme = parse_theme(
             "A Theme",
-            "# comment\nbackground = #123\nforeground = '#fefefe'\npalette = 2=#00ff00\npalette = 15=#0000ff\npalette = 16=#ff0000\npalette = 17=#ffffff\n",
+            "# comment\nbackground = #123\nforeground = '#fefefe'\ncursor-color = #abcdef\ncursor-text = #010203\nselection-background = #112233\nselection-foreground = #ddeeff\npalette = 2=#00ff00\npalette = 15=#0000ff\npalette = 16=#ff0000\npalette = 17=#ffffff\n",
             false,
         )
         .unwrap();
         assert_eq!(theme.background.hex(), "#112233");
         assert_eq!(theme.foreground.hex(), "#FEFEFE");
+        assert_eq!(theme.cursor.as_ref().unwrap().hex(), "#ABCDEF");
+        assert_eq!(theme.cursor_text.as_ref().unwrap().hex(), "#010203");
+        assert_eq!(
+            theme.selection_background.as_ref().unwrap().hex(),
+            "#112233"
+        );
+        assert_eq!(
+            theme.selection_foreground.as_ref().unwrap().hex(),
+            "#DDEEFF"
+        );
         assert_eq!(
             theme
                 .palette

@@ -3,9 +3,12 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use gtk::prelude::*;
-use zentty_core::{AppearanceConfig, BackgroundOpacity, ThemeMode};
+use zentty_core::{
+    AppearanceConfig, BackgroundOpacity, FALLBACK_DARK_THEME, FALLBACK_LIGHT_THEME, ThemeMode,
+};
 
 use crate::theme_catalog::{ThemeFilter, ThemePreview, default_theme_directories, discover_themes};
+use crate::theme_preview;
 
 pub(crate) type ApplyAppearance = Rc<dyn Fn(AppearanceConfig) -> Result<(), String>>;
 
@@ -25,6 +28,12 @@ struct State {
     apply: ApplyAppearance,
     list: gtk::ListBox,
     summary: gtk::Label,
+    preview: gtk::DrawingArea,
+    slot_status: gtk::Label,
+    dark_slot_name: gtk::Label,
+    dark_slot_preview: gtk::DrawingArea,
+    light_slot_name: gtk::Label,
+    light_slot_preview: gtk::DrawingArea,
     count: gtk::Label,
     opacity_apply_source: Option<gtk::glib::SourceId>,
 }
@@ -78,13 +87,27 @@ pub(crate) fn build(
     count.set_halign(gtk::Align::End);
     picker_header.append(&count);
     picker.append(&picker_header);
+    let picker_help = gtk::Label::new(Some(
+        "Choose the saved dark and light themes used by the behavior above.",
+    ));
+    picker_help.add_css_class("dim-label");
+    picker_help.set_halign(gtk::Align::Start);
+    picker_help.set_wrap(true);
+    picker.append(&picker_help);
 
     let slot_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    let dark_slot = gtk::ToggleButton::with_label("Dark theme");
+    let (dark_slot, dark_slot_name, dark_slot_preview) = theme_slot_button("Dark Theme");
     dark_slot.set_widget_name("appearance-dark-slot");
-    let light_slot = gtk::ToggleButton::with_label("Light theme");
+    let (light_slot, light_slot_name, light_slot_preview) = theme_slot_button("Light Theme");
     light_slot.set_group(Some(&dark_slot));
     light_slot.set_widget_name("appearance-light-slot");
+    for (button, slot) in [(&dark_slot, "dark"), (&light_slot, "light")] {
+        button.connect_has_focus_notify(move |button| {
+            if button.has_focus() {
+                eprintln!("zentty-linux: appearance-settings focus=theme-slot-{slot}");
+            }
+        });
+    }
     slot_row.append(&dark_slot);
     slot_row.append(&light_slot);
     picker.append(&slot_row);
@@ -118,8 +141,17 @@ pub(crate) fn build(
     preview.set_margin_start(20);
     preview.set_margin_end(12);
     preview.set_margin_top(14);
-    let preview_title = section_title("Preview");
+    let preview_title = section_title("Terminal preview");
     preview.append(&preview_title);
+    let slot_status = gtk::Label::new(None);
+    slot_status.set_halign(gtk::Align::Start);
+    slot_status.set_wrap(true);
+    slot_status.add_css_class("dim-label");
+    slot_status.set_widget_name("appearance-theme-slot-status");
+    preview.append(&slot_status);
+    let preview_area = theme_preview::detail_area();
+    preview_area.set_widget_name("appearance-theme-preview");
+    preview.append(&preview_area);
     let summary = gtk::Label::new(Some("Select a theme"));
     summary.set_halign(gtk::Align::Start);
     summary.set_wrap(true);
@@ -192,6 +224,12 @@ pub(crate) fn build(
         apply,
         list,
         summary,
+        preview: preview_area,
+        slot_status,
+        dark_slot_name,
+        dark_slot_preview,
+        light_slot_name,
+        light_slot_preview,
         count,
         opacity_apply_source: None,
     }));
@@ -203,6 +241,7 @@ pub(crate) fn build(
     light_slot.set_active(initial_slot == ThemeSlot::Light);
     filter.set_selected(u32::from(initial_slot != ThemeSlot::Dark));
     refresh_catalog(&state);
+    refresh_theme_projection(&state, None);
 
     for (button, mode) in [
         (dark_mode, ThemeMode::Dark),
@@ -214,6 +253,7 @@ pub(crate) fn build(
             if button.is_active() {
                 state.borrow_mut().appearance.theme_mode = mode;
                 apply_state(&state, "theme-mode");
+                refresh_theme_projection(&state, None);
             }
         });
     }
@@ -235,6 +275,7 @@ pub(crate) fn build(
                 drop(current);
                 filter.set_selected(filter_index);
                 refresh_catalog(&state);
+                refresh_theme_projection(&state, None);
             }
         });
     }
@@ -265,6 +306,7 @@ pub(crate) fn build(
             log_theme_selection(&theme);
             drop(current);
             apply_state(&state, "theme-selection");
+            refresh_theme_projection(&state, Some(&theme));
         });
     }
     {
@@ -276,6 +318,26 @@ pub(crate) fn build(
                 _ => ThemeFilter::All,
             };
             refresh_catalog(&state);
+        });
+    }
+    {
+        let state = Rc::clone(&state);
+        let list = state.borrow().list.clone();
+        list.connect_row_selected(move |_, row| {
+            let Some(index) = row.and_then(|row| usize::try_from(row.index()).ok()) else {
+                return;
+            };
+            let theme = {
+                let current = state.borrow();
+                current
+                    .filtered
+                    .get(index)
+                    .and_then(|theme_index| current.themes.get(*theme_index))
+                    .cloned()
+            };
+            if let Some(theme) = theme {
+                refresh_theme_projection(&state, Some(&theme));
+            }
         });
     }
     {
@@ -301,6 +363,7 @@ pub(crate) fn build(
             log_theme_selection(&theme);
             drop(current);
             apply_state(&state, "theme-selection");
+            refresh_theme_projection(&state, Some(&theme));
         });
     }
     {
@@ -337,6 +400,107 @@ fn section_title(text: &str) -> gtk::Label {
     label
 }
 
+fn theme_slot_button(title: &str) -> (gtk::ToggleButton, gtk::Label, gtk::DrawingArea) {
+    let button = gtk::ToggleButton::new();
+    button.add_css_class("zentty-theme-slot");
+    let content = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+    content.set_margin_top(8);
+    content.set_margin_bottom(8);
+    content.set_margin_start(8);
+    content.set_margin_end(8);
+    let preview = theme_preview::compact_area();
+    content.append(&preview);
+    let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    labels.set_hexpand(true);
+    let title = gtk::Label::new(Some(title));
+    title.add_css_class("dim-label");
+    title.set_halign(gtk::Align::Start);
+    labels.append(&title);
+    let name = gtk::Label::new(Some("Default"));
+    name.set_halign(gtk::Align::Start);
+    name.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    labels.append(&name);
+    content.append(&labels);
+    button.set_child(Some(&content));
+    button.set_hexpand(true);
+    (button, name, preview)
+}
+
+fn configured_theme(state: &State, slot: ThemeSlot) -> Option<&ThemePreview> {
+    let name = match slot {
+        ThemeSlot::Dark => state
+            .appearance
+            .preferred_dark_theme_name
+            .as_deref()
+            .unwrap_or(FALLBACK_DARK_THEME),
+        ThemeSlot::Light => state
+            .appearance
+            .preferred_light_theme_name
+            .as_deref()
+            .unwrap_or(FALLBACK_LIGHT_THEME),
+    };
+    state.themes.iter().find(|theme| theme.name == name)
+}
+
+fn refresh_theme_projection(state: &Rc<RefCell<State>>, candidate: Option<&ThemePreview>) {
+    let state = state.borrow();
+    let dark = configured_theme(&state, ThemeSlot::Dark);
+    let light = configured_theme(&state, ThemeSlot::Light);
+    state
+        .dark_slot_name
+        .set_text(dark.map_or(FALLBACK_DARK_THEME, |theme| theme.name.as_str()));
+    state
+        .light_slot_name
+        .set_text(light.map_or(FALLBACK_LIGHT_THEME, |theme| theme.name.as_str()));
+    theme_preview::configure_compact(&state.dark_slot_preview, dark);
+    theme_preview::configure_compact(&state.light_slot_preview, light);
+
+    let shown = candidate.or_else(|| configured_theme(&state, state.slot));
+    theme_preview::configure_detail(&state.preview, shown);
+    if let Some(theme) = shown {
+        state.summary.set_text(&preview_summary(theme));
+    }
+    let status = theme_slot_status(state.appearance.theme_mode, state.slot);
+    state.slot_status.set_text(status);
+    eprintln!(
+        "zentty-linux: appearance-theme-projection slot={} mode={} active={} preview={:?} palette={} cursor={} selection={}",
+        match state.slot {
+            ThemeSlot::Dark => "dark",
+            ThemeSlot::Light => "light",
+        },
+        state.appearance.theme_mode.config_value(),
+        matches!(
+            (state.appearance.theme_mode, state.slot),
+            (ThemeMode::Dark, ThemeSlot::Dark) | (ThemeMode::Light, ThemeSlot::Light)
+        ),
+        shown.map(|theme| theme.name.as_str()),
+        shown.map_or(0, |theme| theme.palette.len()),
+        shown.is_some_and(|theme| theme.cursor.is_some()),
+        shown.is_some_and(|theme| {
+            theme.selection_background.is_some() && theme.selection_foreground.is_some()
+        }),
+    );
+}
+
+fn theme_slot_status(mode: ThemeMode, slot: ThemeSlot) -> &'static str {
+    match (mode, slot) {
+        (ThemeMode::Dark, ThemeSlot::Dark) => "Editing Dark Theme · currently active.",
+        (ThemeMode::Dark, ThemeSlot::Light) => {
+            "Editing Light Theme · saved for Follow System or Always Light; the current terminal remains dark."
+        }
+        (ThemeMode::Light, ThemeSlot::Light) => "Editing Light Theme · currently active.",
+        (ThemeMode::Light, ThemeSlot::Dark) => {
+            "Editing Dark Theme · saved for Follow System or Always Dark; the current terminal remains light."
+        }
+        (ThemeMode::Automatic, ThemeSlot::Dark) => {
+            "Editing Dark Theme · Follow System applies this slot when the desktop is dark."
+        }
+        (ThemeMode::Automatic, ThemeSlot::Light) => {
+            "Editing Light Theme · Follow System applies this slot when the desktop is light."
+        }
+    }
+}
+
 fn refresh_catalog(state: &Rc<RefCell<State>>) {
     let mut state = state.borrow_mut();
     while let Some(child) = state.list.first_child() {
@@ -356,21 +520,10 @@ fn refresh_catalog(state: &Rc<RefCell<State>>) {
         content.set_margin_bottom(7);
         content.set_margin_start(8);
         content.set_margin_end(8);
-        let swatch = gtk::DrawingArea::new();
-        swatch.set_content_width(34);
-        swatch.set_content_height(24);
-        let background = theme.background.clone();
-        let foreground = theme.foreground.clone();
-        swatch.set_draw_func(move |_, context, width, height| {
-            let (red, green, blue) = background.rgb();
-            context.set_source_rgb(red, green, blue);
-            context.rectangle(0.0, 0.0, f64::from(width), f64::from(height));
-            let _ = context.fill();
-            let (red, green, blue) = foreground.rgb();
-            context.set_source_rgb(red, green, blue);
-            context.rectangle(8.0, 7.0, f64::from(width - 16), 3.0);
-            let _ = context.fill();
-        });
+        let swatch = theme_preview::compact_area();
+        swatch.set_content_width(128);
+        swatch.set_content_height(32);
+        theme_preview::configure_compact(&swatch, Some(theme));
         content.append(&swatch);
         let name = gtk::Label::new(Some(&theme.name));
         name.set_halign(gtk::Align::Start);
@@ -438,13 +591,45 @@ pub(crate) fn install_styles() {
     provider.load_from_string(
         ".zentty-settings-card { background-color: alpha(@theme_fg_color, 0.06); border: 1px solid alpha(@theme_fg_color, 0.16); border-radius: 8px; padding: 14px; }\n\
          #appearance-theme-list row { border-bottom: 1px solid alpha(@theme_fg_color, 0.14); }\n\
-         #appearance-theme-list row:selected { background-color: @theme_selected_bg_color; color: @theme_selected_fg_color; }",
+         #appearance-theme-list row:selected { background-color: @theme_selected_bg_color; color: @theme_selected_fg_color; }\n\
+         .zentty-theme-slot { padding: 0; }",
     );
     if let Some(display) = gtk::gdk::Display::default() {
         gtk::style_context_add_provider_for_display(
             &display,
             &provider,
             gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ThemeMode, ThemeSlot, theme_slot_status};
+
+    #[test]
+    fn theme_slots_explain_active_and_saved_inactive_behavior() {
+        assert_eq!(
+            theme_slot_status(ThemeMode::Dark, ThemeSlot::Dark),
+            "Editing Dark Theme · currently active."
+        );
+        assert!(
+            theme_slot_status(ThemeMode::Dark, ThemeSlot::Light)
+                .contains("current terminal remains dark")
+        );
+        assert_eq!(
+            theme_slot_status(ThemeMode::Light, ThemeSlot::Light),
+            "Editing Light Theme · currently active."
+        );
+        assert!(
+            theme_slot_status(ThemeMode::Light, ThemeSlot::Dark)
+                .contains("current terminal remains light")
+        );
+        assert!(
+            theme_slot_status(ThemeMode::Automatic, ThemeSlot::Dark).contains("desktop is dark")
+        );
+        assert!(
+            theme_slot_status(ThemeMode::Automatic, ThemeSlot::Light).contains("desktop is light")
         );
     }
 }

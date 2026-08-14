@@ -17,6 +17,7 @@ shortcut_runtime_file="${ZENTTY_SHORTCUT_RUNTIME_SOURCE:-${repo_root}/crates/zen
 shortcut_settings_file="${ZENTTY_SHORTCUT_SETTINGS_SOURCE:-${repo_root}/crates/zentty-linux/src/shortcut_settings.rs}"
 agents_settings_file="${ZENTTY_AGENTS_SETTINGS_SOURCE:-${repo_root}/crates/zentty-linux/src/agents_settings.rs}"
 appearance_settings_file="${ZENTTY_APPEARANCE_SETTINGS_SOURCE:-${repo_root}/crates/zentty-linux/src/appearance_settings.rs}"
+theme_preview_file="${ZENTTY_THEME_PREVIEW_SOURCE:-${repo_root}/crates/zentty-linux/src/theme_preview.rs}"
 settings_shell_file="${ZENTTY_SETTINGS_SHELL_SOURCE:-${repo_root}/crates/zentty-linux/src/settings_shell.rs}"
 settings_navigation_file="${ZENTTY_SETTINGS_NAVIGATION_SOURCE:-${repo_root}/crates/zentty-linux/src/settings_navigation.rs}"
 general_settings_file="${ZENTTY_GENERAL_SETTINGS_SOURCE:-${repo_root}/crates/zentty-linux/src/general_settings.rs}"
@@ -81,6 +82,7 @@ done
 [[ -r "${shortcut_runtime_file}" ]] || fail "shortcut runtime source is missing: ${shortcut_runtime_file}"
 [[ -r "${shortcut_settings_file}" ]] || fail "shortcut settings source is missing: ${shortcut_settings_file}"
 [[ -r "${appearance_settings_file}" ]] || fail "appearance settings source is missing: ${appearance_settings_file}"
+[[ -r "${theme_preview_file}" ]] || fail "theme preview source is missing: ${theme_preview_file}"
 [[ -r "${settings_shell_file}" ]] || fail "settings shell source is missing: ${settings_shell_file}"
 [[ -r "${settings_navigation_file}" ]] || fail "settings navigation source is missing: ${settings_navigation_file}"
 [[ -r "${general_settings_file}" ]] || fail "general settings source is missing: ${general_settings_file}"
@@ -379,9 +381,10 @@ if [[ -n "${diff}" ]]; then
     fail "config reload function inventory differs from its ownership contract"
 fi
 
-for module in appearance_settings settings_shell settings_navigation general_settings theme_catalog notification_service notifications_settings custom_sound_store; do
+for module in appearance_settings theme_preview settings_shell settings_navigation general_settings theme_catalog notification_service notifications_settings custom_sound_store; do
     case "${module}" in
         appearance_settings) module_file="${appearance_settings_file}" ;;
+        theme_preview) module_file="${theme_preview_file}" ;;
         settings_shell) module_file="${settings_shell_file}" ;;
         settings_navigation) module_file="${settings_navigation_file}" ;;
         general_settings) module_file="${general_settings_file}" ;;
@@ -466,7 +469,7 @@ jq -e '
         ([.field_assignments[].fields[]] | unique | length) and
     ([.method_assignments[].methods[]] | length) ==
         ([.method_assignments[].methods[]] | unique | length) and
-    (.owned_module_functions | keys | sort) == (["action_router", "agent_event_coordinator", "appearance_settings", "bookmark_coordinator", "clipboard_coordinator", "config_store", "config_reload", "custom_sound_store", "general_settings", "global_search_coordinator", "notification_service", "notifications_settings", "open_with_coordinator", "pane_dividers", "pane_runtime_coordinator", "persistence_coordinator", "project_context_coordinator", "remote_paste_coordinator", "server_runtime_coordinator", "settings_shell", "settings_navigation", "task_runner_coordinator", "server_listener_discovery", "server_container_discovery", "ssh_identity_coordinator", "theme_catalog", "tmux_runtime_coordinator", "tmux_store_policy"] | sort) and
+    (.owned_module_functions | keys | sort) == (["action_router", "agent_event_coordinator", "appearance_settings", "bookmark_coordinator", "clipboard_coordinator", "config_store", "config_reload", "custom_sound_store", "general_settings", "global_search_coordinator", "notification_service", "notifications_settings", "open_with_coordinator", "pane_dividers", "pane_runtime_coordinator", "persistence_coordinator", "project_context_coordinator", "remote_paste_coordinator", "server_runtime_coordinator", "settings_shell", "settings_navigation", "task_runner_coordinator", "server_listener_discovery", "server_container_discovery", "ssh_identity_coordinator", "theme_catalog", "theme_preview", "tmux_runtime_coordinator", "tmux_store_policy"] | sort) and
     (.owned_module_functions.custom_sound_store | length) ==
         (.owned_module_functions.custom_sound_store | unique | length) and
     (.owned_module_functions.action_router | length) ==
