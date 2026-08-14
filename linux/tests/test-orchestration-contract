@@ -259,6 +259,25 @@ require "workspace recovery cells remain prose-only or bypass the focused real-I
             .command == "cargo test --locked -p zentty-core --test session_restore_store malformed_type_incompatible_and_future_snapshots_follow_source_contract")
     ' "${matrix}"
 
+# GUI journeys must synchronize on the state transition caused by an input,
+# not merely on an earlier focus receipt or an arbitrary sleep. These focused
+# constraints keep the repaired high-contention boundaries from regressing to
+# the immediate assertions that produced moving full-matrix failures.
+require "settings journey does not count a new opacity application after physical Home" \
+    grep -Fq 'opacity_apply_before=' "${repo_root}/linux/tests/rust-shortcuts-settings"
+require "source UX journey does not count a new Worklane Peek preview after repeated Tab" \
+    grep -Fq 'peek_advance_before=' "${repo_root}/linux/tests/rust-source-ux-x11"
+require "Open With journey does not count a new primary-target application" \
+    grep -Fq 'primary_apply_before=' "${repo_root}/linux/tests/rust-open-with"
+require "task runner journey does not wait for the shell working-directory boundary" \
+    grep -Fq 'real shell did not publish the task project working directory' \
+    "${repo_root}/linux/tests/rust-task-runners"
+require "bookmark journey does not guard retry against an already mapped modal dialog" \
+    grep -Fq -- "--name '^Save workspace$'" "${repo_root}/linux/tests/rust-bookmarks-presets"
+require "bookmark activation reintroduces toplevel activation after widget focus" \
+    grep -Fq 'Do not reactivate the toplevel after reaching the button' \
+    "${repo_root}/linux/tests/rust-bookmarks-presets"
+
 ((failures == 0)) || {
     echo "test-orchestration-contract: FAIL failures=${failures}" >&2
     exit 1

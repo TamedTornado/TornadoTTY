@@ -211,9 +211,22 @@ focus_bookmark_control_after() {
 }
 
 activate_focused_control() {
-    if [[ "${backend}" == x11 && "${portal_wm_pid}" =~ ^[1-9][0-9]*$ ]]; then
+    if [[ "${backend}" == x11 ]]; then
         xdotool keyup Control_L Control_R Shift_L Shift_R Alt_L Alt_R 2>/dev/null || true
-        xdotool windowactivate --sync "${ZENTTY_PRODUCT_WINDOW_ID}"
+        # Do not reactivate the toplevel after reaching the button: Openbox may
+        # restore the popover's initial search focus as part of activation,
+        # invalidating the widget-focus receipt. Traversal already established
+        # that this private X session's product window owns keyboard focus.
+        if [[ "${portal_wm_pid}" =~ ^[1-9][0-9]*$ ]]; then
+            xdotool key --clearmodifiers Return
+        else
+            # The ordinary private X11 profile intentionally has no window
+            # manager or active-window property. Send the event to the mapped
+            # product toplevel while preserving its already-proven widget
+            # focus.
+            xdotool key --clearmodifiers --window "${ZENTTY_PRODUCT_WINDOW_ID}" Return
+        fi
+        return
     fi
     input_key Return
 }
@@ -221,11 +234,29 @@ activate_focused_control() {
 save_named_bookmark() {
     local log="$1"
     local name="$2"
+    local focus_before dialog_window attempt
     open_bookmarks "${log}"
     focus_bookmark_control "${log}" save-bookmark
+    focus_before="$(grep -Fc 'zentty-linux: bookmark-name-focused=true' "${log}" 2>/dev/null || true)"
     activate_focused_control
-    zentty_product_wait_for_log "${log}" 'zentty-linux: bookmark-name-focused=true' \
-        'bookmark name dialog did not receive focus' || fail "bookmark name dialog unavailable"
+    for attempt in {1..200}; do
+        if (( $(grep -Fc 'zentty-linux: bookmark-name-focused=true' "${log}" 2>/dev/null || true) > focus_before )); then
+            break
+        fi
+        if [[ "${backend}" == x11 && $((attempt % 20)) -eq 0 ]]; then
+            dialog_window="$(
+                xdotool search --onlyvisible --pid "${product_pid}" --name '^Save workspace$' \
+                    2>/dev/null | head -1 || true
+            )"
+            # Retrying Return is safe only while the modal dialog has not
+            # mapped. Once mapped, wait for its idle focus receipt rather than
+            # risking submission of an empty name.
+            [[ "${dialog_window}" =~ ^[1-9][0-9]*$ ]] || activate_focused_control
+        fi
+        sleep 0.05
+    done
+    (( $(grep -Fc 'zentty-linux: bookmark-name-focused=true' "${log}" 2>/dev/null || true) > focus_before )) ||
+        fail "bookmark name dialog unavailable"
     # GTK focus changes before the nested compositor has necessarily routed the
     # keyboard to the newly mapped dialog surface.
     sleep 0.15

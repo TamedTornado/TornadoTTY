@@ -182,6 +182,16 @@ if [[ "${backend}" == wayland ]]; then
     grep -Fq 'zentty-linux: focus-pane pane=pane-1' "${log}" ||
         fail "Wayland compositor had not focused the real terminal"
 fi
+# Terminal readiness only proves that Ghostty created the PTY. Task discovery
+# is scoped to the pane's shell-reported working directory, so opening the
+# palette before that independent boundary is observable can legitimately
+# produce an empty task catalog.
+for _ in $(seq 1 200); do
+    grep -Fq "zentty-linux: title-pane=pane-1 value=${project}" "${log}" && break
+    sleep 0.05
+done
+grep -Fq "zentty-linux: title-pane=pane-1 value=${project}" "${log}" ||
+    fail "real shell did not publish the task project working directory"
 
 open_palette() {
     if [[ "${backend}" == x11 ]]; then

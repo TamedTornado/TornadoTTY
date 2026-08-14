@@ -406,13 +406,24 @@ zentty_product_wait_for_log "${log}" 'zentty-linux: appearance-catalog query="To
     "source theme was not searchable in the staged catalog" || fail "theme catalog search failed"
 for _ in {1..12}; do
     settings_key Tab
+    sleep 0.05
     grep -Fq 'zentty-linux: appearance-settings focus=background-opacity' "${log}" && break
 done
 grep -Fq 'zentty-linux: appearance-settings focus=background-opacity' "${log}" ||
     fail "keyboard traversal did not reach the opacity control"
-settings_key Home
-zentty_product_wait_for_log "${log}" 'zentty-linux: appearance-settings action=background-opacity result=applied' \
-    "opacity control did not cross the live appearance boundary" || fail "appearance opacity failed"
+opacity_apply_before="$(grep -Fc 'zentty-linux: appearance-settings action=background-opacity result=applied' "${log}" 2>/dev/null || true)"
+opacity_acknowledged=false
+for _ in {1..3}; do
+    settings_key Home
+    for _ in {1..20}; do
+        if (( $(grep -Fc 'zentty-linux: appearance-settings action=background-opacity result=applied' "${log}" 2>/dev/null || true) > opacity_apply_before )); then
+            opacity_acknowledged=true
+            break 2
+        fi
+        sleep 0.05
+    done
+done
+"${opacity_acknowledged}" || fail "appearance opacity failed"
 grep -Fq 'background-opacity = 0.20' "${ghostty_config}" ||
     fail "opacity control did not update the real Ghostty config"
 grep -Fq 'local_background_opacity = 0.2' "${config}" ||

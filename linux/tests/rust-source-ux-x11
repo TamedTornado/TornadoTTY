@@ -537,8 +537,13 @@ xdotool keydown --window "${window_id}" ctrl
 xdotool keydown --window "${window_id}" Tab
 sleep 0.3
 xdotool keyup --window "${window_id}" Tab
+peek_advance_before="$(grep -Fxc 'zentty-linux: worklane-peek=preview worklane=worklane-1 pane=pane-2' "${log}" 2>/dev/null || true)"
 xdotool key --window "${window_id}" Tab
-grep -Fxq 'zentty-linux: worklane-peek=preview worklane=worklane-1 pane=pane-2' "${log}" ||
+for _ in $(seq 1 200); do
+    (( $(grep -Fxc 'zentty-linux: worklane-peek=preview worklane=worklane-1 pane=pane-2' "${log}" 2>/dev/null || true) > peek_advance_before )) && break
+    sleep 0.05
+done
+(( $(grep -Fxc 'zentty-linux: worklane-peek=preview worklane=worklane-1 pane=pane-2' "${log}" 2>/dev/null || true) > peek_advance_before )) ||
     fail "a repeated Tab did not advance the open Worklane Peek"
 xdotool key --window "${window_id}" Escape
 xdotool keyup --window "${window_id}" ctrl
