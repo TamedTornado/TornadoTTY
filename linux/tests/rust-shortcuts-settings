@@ -226,6 +226,10 @@ zentty_product_wait_for_log "${log}" 'zentty-linux: settings-search query="crash
 settings_key ctrl+2
 zentty_product_wait_for_log "${log}" 'zentty-linux: settings-section selected=shortcuts' \
     "keyboard navigation did not open Shortcuts" || fail "settings shortcut navigation failed"
+zentty_product_wait_for_log "${log}" 'zentty-linux: shortcut-settings keyboard-layout ' \
+    "keyboard preview was not allocated at the real default window width" || fail "keyboard layout receipt missing"
+grep -F 'zentty-linux: shortcut-settings keyboard-layout ' "${log}" | tail -1 | grep -Fq 'fits=true' ||
+    fail "keyboard preview clipped at the real default Settings width"
 
 settings_key ctrl+f
 settings_type 'Toggle Sidebar'
@@ -316,7 +320,8 @@ main_key Down
 main_key Return
 zentty_product_wait_for_log "${log}" 'zentty-linux: action=theme-mode result=persisted mode=light' \
     "source light-theme command did not persist" || fail "theme mode action failed"
-grep -Fq 'theme = GitHub Light Default' "${ghostty_config}" ||
+bundled_theme_root="$(readlink -f -- "$(dirname "${product}")/../share/zentty/ghostty/themes")"
+grep -Fq "theme = ${bundled_theme_root}/GitHub Light Default" "${ghostty_config}" ||
     fail "theme action did not update the real Ghostty config"
 
 grep -Fq 'command_id = "sidebar.toggle"' "${config}" || fail "binding was not written to XDG config"
@@ -329,6 +334,10 @@ cleanup_product
 rm -f -- "${ready}" "${bytes}"
 start_product "printf ready >'${ready}'; stty raw -echo -ixon; dd bs=1 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n' >'${bytes}'; sleep 30"
 for _ in {1..200}; do [[ -s "${ready}" ]] && break; sleep 0.05; done
+zentty_product_wait_for_log "${log}" 'zentty-linux: appearance-startup-projection path=' \
+    "persisted appearance was not projected before Ghostty startup" || fail "startup theme projection missing"
+grep -Fq "theme = ${bundled_theme_root}/GitHub Light Default" "${ghostty_config}" ||
+    fail "restart did not retain the resolvable bundled light-theme path"
 
 # The source dark fallback is a Zentty-owned resource rather than a Ghostty
 # built-in. Exercise it after the real restart so this also proves the persisted
@@ -425,4 +434,23 @@ grep -Fq 'preferred_dark_theme_name = "TokyoNight Moon"' "${config}" ||
     fail "theme selection did not persist the dark slot"
 [[ ! -s "${bytes}" ]] || fail "appearance reload replaced or disturbed the real child PTY"
 
-echo "rust-shortcuts-settings-${backend}: PASS unified-settings theme-catalog real-gtk-settings physical-recorder source-theme-mode real-ghostty-reload preserved-pty bound-action unbound-byte persistence-restart"
+# Select an ordinary bundled theme, not the one privately installed fallback.
+# Embedded Ghostty has no application resource directory, so the generated
+# Ghostty config must use the contained staged absolute path rather than a name
+# that produces its Configuration Errors dialog.
+settings_key ctrl+f
+settings_key ctrl+a
+settings_type 'Abernathy'
+zentty_product_wait_for_log "${log}" 'zentty-linux: appearance-catalog query="Abernathy" results=1' \
+    "ordinary bundled theme was not searchable" || fail "bundled theme search failed"
+settings_key Return
+zentty_product_wait_for_log_count "${log}" \
+    'zentty-linux: appearance-settings action=theme-selection result=applied' 2 \
+    "ordinary bundled theme did not cross the live appearance boundary" ||
+    fail "bundled theme selection failed"
+grep -Fq "theme = ${bundled_theme_root}/Abernathy" "${ghostty_config}" ||
+    fail "bundled theme was not projected as its staged absolute path"
+[[ ! -e "${XDG_CONFIG_HOME}/ghostty/themes/Abernathy" ]] ||
+    fail "ordinary bundled selection polluted the user theme directory"
+
+echo "rust-shortcuts-settings-${backend}: PASS unified-settings theme-catalog bundled-theme-runtime-path real-gtk-settings physical-recorder source-theme-mode real-ghostty-reload preserved-pty bound-action unbound-byte persistence-restart"

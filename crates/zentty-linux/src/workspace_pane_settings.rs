@@ -179,7 +179,7 @@ pub(crate) fn build(
     append_switch(
         &display_card,
         "Show project _icons",
-        "Show discovered project icons in the worklane sidebar.",
+        "Show discovered project icons in window chrome and Worklane Peek.",
         "settings-pane-project-icons",
         panes.show_project_icons,
         &state,

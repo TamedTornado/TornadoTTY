@@ -936,14 +936,6 @@ fn make_pane_row(
     ))]);
     select.update_state(&[gtk::accessible::State::Selected(Some(pane.is_focused))]);
     let pane_content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    let project_icon =
-        crate::project_icon_view::picture(&widget_name("project-icon", &pane.pane_id), 18);
-    crate::project_icon_view::configure(
-        &project_icon,
-        pane.project_icon_path.as_deref(),
-        &format!("sidebar:{}", pane.pane_id),
-    );
-    pane_content.append(&project_icon);
     let marker = gtk::Label::new(Some(if pane.is_focused { "●" } else { "○" }));
     marker.set_widget_name(&widget_name("pane-marker", &pane.pane_id));
     marker.add_css_class("pane-marker");
@@ -1072,26 +1064,6 @@ pub(crate) fn update_project_context_metadata(
     }
 }
 
-pub(crate) fn update_project_icon_metadata(
-    sidebar: &gtk::Box,
-    summaries: &[SidebarWorklaneSummary],
-) {
-    for pane in summaries.iter().flat_map(|summary| &summary.pane_rows) {
-        let Some(project_icon) = find_named_widget(
-            sidebar.upcast_ref(),
-            &widget_name("project-icon", &pane.pane_id),
-        )
-        .and_then(|widget| widget.downcast::<gtk::Picture>().ok()) else {
-            continue;
-        };
-        crate::project_icon_view::configure(
-            &project_icon,
-            pane.project_icon_path.as_deref(),
-            &format!("sidebar:{}", pane.pane_id),
-        );
-    }
-}
-
 fn update_project_context_row(card: &gtk::Widget, summary: &SidebarWorklaneSummary) -> bool {
     let Some(card_box) = card.downcast_ref::<gtk::Box>() else {
         return false;
@@ -1134,18 +1106,6 @@ fn update_pane_metadata(sidebar: &gtk::Box, pane: &zentty_core::SidebarPaneSumma
     } else {
         row.remove_css_class("pane-row-focused");
     }
-    let Some(project_icon) = find_named_widget(
-        sidebar.upcast_ref(),
-        &widget_name("project-icon", &pane.pane_id),
-    )
-    .and_then(|widget| widget.downcast::<gtk::Picture>().ok()) else {
-        return false;
-    };
-    crate::project_icon_view::configure(
-        &project_icon,
-        pane.project_icon_path.as_deref(),
-        &format!("sidebar:{}", pane.pane_id),
-    );
     if pane
         .agent_status
         .as_ref()

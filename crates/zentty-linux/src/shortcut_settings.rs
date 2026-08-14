@@ -143,7 +143,7 @@ pub(crate) fn show(
 
     let content = gtk::Paned::new(gtk::Orientation::Horizontal);
     content.set_wide_handle(true);
-    content.set_position(330);
+    content.set_position(275);
     content.set_vexpand(true);
     let browser = gtk::Box::new(gtk::Orientation::Vertical, 3);
     let browser_scroll = gtk::ScrolledWindow::builder()
@@ -213,13 +213,20 @@ pub(crate) fn show(
     detail.append(&modifier_row);
     let keyboard = build_keyboard_preview();
     detail.append(&keyboard);
+    instrument_keyboard_layout(&keyboard, &detail);
     let physical = gtk::Label::new(Some(
         "Recorder uses GDK physical key events and the current keyboard layout.",
     ));
     physical.set_halign(gtk::Align::Start);
     physical.add_css_class("dim-label");
     detail.append(&physical);
-    content.set_end_child(Some(&detail));
+    let detail_scroll = gtk::ScrolledWindow::builder()
+        .hscrollbar_policy(gtk::PolicyType::Automatic)
+        .vscrollbar_policy(gtk::PolicyType::Automatic)
+        .child(&detail)
+        .build();
+    detail_scroll.set_widget_name("shortcut-detail-scroll");
+    content.set_end_child(Some(&detail_scroll));
     root.append(&content);
     let (appearance_page, appearance_search) = crate::appearance_settings::build(
         settings_context.appearance,
@@ -594,15 +601,14 @@ fn build_keyboard_preview() -> gtk::Box {
     let keyboard = gtk::Box::new(gtk::Orientation::Vertical, 4);
     keyboard.add_css_class("zentty-keyboard-preview");
     for row in [
-        vec!["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "Delete"],
+        vec!["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "⌫"],
         vec!["Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P"],
-        vec!["A", "S", "D", "F", "G", "H", "J", "K", "L", "Return"],
-        vec![
-            "Z", "X", "C", "V", "B", "N", "M", "Left", "Down", "Up", "Right",
-        ],
+        vec!["A", "S", "D", "F", "G", "H", "J", "K", "L", "↵"],
+        vec!["Z", "X", "C", "V", "B", "N", "M", "←", "↓", "↑", "→"],
         vec!["Space", "Tab"],
     ] {
         let line = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+        line.set_homogeneous(true);
         for key in row {
             let button = gtk::Button::with_label(key);
             button.set_widget_name(&format!("shortcut-key-{key}"));
@@ -612,6 +618,22 @@ fn build_keyboard_preview() -> gtk::Box {
         keyboard.append(&line);
     }
     keyboard
+}
+
+fn instrument_keyboard_layout(keyboard: &gtk::Box, detail: &gtk::Box) {
+    let detail = detail.clone();
+    keyboard.add_tick_callback(move |keyboard, _| {
+        let keyboard_width = keyboard.width();
+        let detail_width = detail.width();
+        if keyboard_width <= 0 || detail_width <= 0 {
+            return glib::ControlFlow::Continue;
+        }
+        eprintln!(
+            "zentty-linux: shortcut-settings keyboard-layout detail={detail_width} keyboard={keyboard_width} fits={}",
+            keyboard_width <= detail_width
+        );
+        glib::ControlFlow::Break
+    });
 }
 
 fn connect_preview(keyboard: &gtk::Box, state: &Rc<RefCell<ViewState>>) {
@@ -640,13 +662,13 @@ fn connect_preview(keyboard: &gtk::Box, state: &Rc<RefCell<ViewState>>) {
 fn preview_key(label: &str) -> Option<ShortcutKey> {
     match label {
         "Space" => Some(ShortcutKey::Space),
-        "Delete" => Some(ShortcutKey::Delete),
-        "Return" => Some(ShortcutKey::Return),
+        "⌫" | "Delete" => Some(ShortcutKey::Delete),
+        "↵" | "Return" => Some(ShortcutKey::Return),
         "Tab" => Some(ShortcutKey::Tab),
-        "Left" => Some(ShortcutKey::Left),
-        "Right" => Some(ShortcutKey::Right),
-        "Up" => Some(ShortcutKey::Up),
-        "Down" => Some(ShortcutKey::Down),
+        "←" | "Left" => Some(ShortcutKey::Left),
+        "→" | "Right" => Some(ShortcutKey::Right),
+        "↑" | "Up" => Some(ShortcutKey::Up),
+        "↓" | "Down" => Some(ShortcutKey::Down),
         label => {
             let lowered = label.to_lowercase();
             let mut characters = lowered.chars();
@@ -1091,7 +1113,7 @@ fn install_styles() {
         .zentty-shortcut-category { font-weight: 700; opacity: .65; padding: 12px 8px 4px; }
         .zentty-shortcut-selected { background: #344154; }
         .zentty-keyboard-preview { background: #202329; border-radius: 8px; padding: 10px; }
-        .zentty-keycap { min-width: 38px; min-height: 30px; padding: 2px 6px; }
+        .zentty-keycap { min-width: 24px; min-height: 30px; padding: 2px 3px; }
         label.error { color: #ff7b72; }
     ";
     let provider = gtk::CssProvider::new();
@@ -1108,6 +1130,16 @@ fn install_styles() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compact_keyboard_glyphs_preserve_physical_key_meaning() {
+        assert_eq!(preview_key("⌫"), Some(ShortcutKey::Delete));
+        assert_eq!(preview_key("↵"), Some(ShortcutKey::Return));
+        assert_eq!(preview_key("←"), Some(ShortcutKey::Left));
+        assert_eq!(preview_key("↓"), Some(ShortcutKey::Down));
+        assert_eq!(preview_key("↑"), Some(ShortcutKey::Up));
+        assert_eq!(preview_key("→"), Some(ShortcutKey::Right));
+    }
 
     #[test]
     fn preset_bindings_are_conflict_free_for_available_linux_commands() {

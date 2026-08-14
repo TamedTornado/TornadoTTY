@@ -226,6 +226,18 @@ fn run() -> Result<(), String> {
         config.path.display(),
         config.config.clipboard.always_clean_copies
     );
+    if appearance_needs_startup_projection(&config.config.appearance) {
+        let spec = config.config.appearance.theme_spec();
+        ConfigStore::install_default_fallback_theme_if_referenced(&spec)?;
+        let ghostty_config = ConfigStore::update_default_ghostty_theme(&spec)?;
+        if let Some(opacity) = config.config.appearance.background_opacity {
+            ConfigStore::update_default_ghostty_value("background-opacity", &opacity.to_string())?;
+        }
+        eprintln!(
+            "zentty-linux: appearance-startup-projection path={}",
+            ghostty_config.display()
+        );
+    }
 
     let state_directory = match &options.state_directory {
         Some(path) => path.clone(),
@@ -277,6 +289,10 @@ fn reference_timestamp() -> f64 {
         })
 }
 
+fn appearance_needs_startup_projection(appearance: &zentty_core::AppearanceConfig) -> bool {
+    appearance != &zentty_core::AppearanceConfig::default()
+}
+
 fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
@@ -289,7 +305,7 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::required_argument;
+    use super::{appearance_needs_startup_projection, required_argument};
 
     #[test]
     fn required_arguments_reject_missing_values() {
@@ -298,5 +314,13 @@ mod tests {
             required_argument(&mut missing, "--command"),
             Err("--command requires a value".to_owned())
         );
+    }
+
+    #[test]
+    fn only_explicit_nondefault_appearance_projects_before_ghostty_starts() {
+        let mut appearance = zentty_core::AppearanceConfig::default();
+        assert!(!appearance_needs_startup_projection(&appearance));
+        appearance.preferred_dark_theme_name = Some("Abernathy".to_owned());
+        assert!(appearance_needs_startup_projection(&appearance));
     }
 }

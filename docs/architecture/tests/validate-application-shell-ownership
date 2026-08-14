@@ -53,7 +53,18 @@ fail() {
     exit 1
 }
 
-for dependency in jq sed sort comm mktemp sha256sum; do
+require_pattern_count() {
+    local file="$1"
+    local pattern="$2"
+    local expected="$3"
+    local authority="$4"
+    local actual
+    actual="$(grep -Ec "${pattern}" "${file}" || true)"
+    [[ "${actual}" == "${expected}" ]] ||
+        fail "${authority} expected ${expected} matching source declarations, found ${actual}"
+}
+
+for dependency in jq sed sort comm mktemp grep; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
 [[ -r "${contract}" ]] || fail "ownership contract is missing: ${contract}"
@@ -138,172 +149,39 @@ if [[ -n "${diff}" ]]; then
     fail "action inventory differs from ApplicationShell constants"
 fi
 
-main_sha256="$(sha256sum "${main_file}" | awk '{print $1}')"
-application_sha256="$(sha256sum "${application_file}" | awk '{print $1}')"
-config_store_sha256="$(sha256sum "${config_store_file}" | awk '{print $1}')"
-config_reload_sha256="$(sha256sum "${config_reload_file}" | awk '{print $1}')"
-window_set_sha256="$(sha256sum "${window_set_file}" | awk '{print $1}')"
-agent_runtime_sha256="$(sha256sum "${agent_runtime_file}" | awk '{print $1}')"
-codex_enrichment_sha256="$(sha256sum "${codex_enrichment_file}" | awk '{print $1}')"
-source_sha256="$(sha256sum "${source_file}" | awk '{print $1}')"
-action_router_sha256="$(sha256sum "${action_router_file}" | awk '{print $1}')"
-shortcut_registry_sha256="$(sha256sum "${shortcut_registry_file}" | awk '{print $1}')"
-shortcut_runtime_sha256="$(sha256sum "${shortcut_runtime_file}" | awk '{print $1}')"
-shortcut_settings_sha256="$(sha256sum "${shortcut_settings_file}" | awk '{print $1}')"
-agents_settings_sha256="$(sha256sum "${agents_settings_file}" | awk '{print $1}')"
-appearance_settings_sha256="$(sha256sum "${appearance_settings_file}" | awk '{print $1}')"
-settings_shell_sha256="$(sha256sum "${settings_shell_file}" | awk '{print $1}')"
-settings_navigation_sha256="$(sha256sum "${settings_navigation_file}" | awk '{print $1}')"
-general_settings_sha256="$(sha256sum "${general_settings_file}" | awk '{print $1}')"
-theme_catalog_sha256="$(sha256sum "${theme_catalog_file}" | awk '{print $1}')"
-notification_service_sha256="$(sha256sum "${notification_service_file}" | awk '{print $1}')"
-notifications_settings_sha256="$(sha256sum "${notifications_settings_file}" | awk '{print $1}')"
-custom_sound_store_sha256="$(sha256sum "${custom_sound_store_file}" | awk '{print $1}')"
-updates_privacy_settings_sha256="$(sha256sum "${updates_privacy_settings_file}" | awk '{print $1}')"
-agent_events_sha256="$(sha256sum "${agent_events_file}" | awk '{print $1}')"
-global_search_sha256="$(sha256sum "${global_search_file}" | awk '{print $1}')"
-ssh_identity_sha256="$(sha256sum "${ssh_identity_file}" | awk '{print $1}')"
-remote_paste_sha256="$(sha256sum "${remote_paste_file}" | awk '{print $1}')"
-clipboard_actions_sha256="$(sha256sum "${clipboard_actions_file}" | awk '{print $1}')"
-pane_runtime_sha256="$(sha256sum "${pane_runtime_file}" | awk '{print $1}')"
-server_runtime_sha256="$(sha256sum "${server_runtime_file}" | awk '{print $1}')"
-task_runner_runtime_sha256="$(sha256sum "${task_runner_runtime_file}" | awk '{print $1}')"
-project_context_runtime_sha256="$(sha256sum "${project_context_runtime_file}" | awk '{print $1}')"
-open_with_runtime_sha256="$(sha256sum "${open_with_runtime_file}" | awk '{print $1}')"
-bookmark_runtime_sha256="$(sha256sum "${bookmark_runtime_file}" | awk '{print $1}')"
-bookmarks_view_sha256="$(sha256sum "${bookmarks_view_file}" | awk '{print $1}')"
-restore_notice_sha256="$(sha256sum "${restore_notice_file}" | awk '{print $1}')"
-sidebar_sha256="$(sha256sum "${sidebar_file}" | awk '{print $1}')"
-server_discovery_sha256="$(sha256sum "${server_discovery_file}" | awk '{print $1}')"
-docker_discovery_sha256="$(sha256sum "${docker_discovery_file}" | awk '{print $1}')"
-pane_dividers_sha256="$(sha256sum "${pane_dividers_file}" | awk '{print $1}')"
-tmux_runtime_sha256="$(sha256sum "${tmux_runtime_file}" | awk '{print $1}')"
-persistence_sha256="$(sha256sum "${persistence_file}" | awk '{print $1}')"
-tmux_compat_sha256="$(sha256sum "${tmux_compat_file}" | awk '{print $1}')"
-tmux_store_sha256="$(sha256sum "${tmux_store_file}" | awk '{print $1}')"
-jq -e --arg main_sha256 "${main_sha256}" \
-    '.owned_source_sha256["crates/zentty-linux/src/main.rs"] == $main_sha256' \
-    "${contract}" >/dev/null || fail "application runtime source hash differs from its ownership contract"
-jq -e --arg application_sha256 "${application_sha256}" \
-    '.owned_source_sha256["crates/zentty-linux/src/application.rs"] == $application_sha256' \
-    "${contract}" >/dev/null || fail "application coordinator source hash differs from its ownership contract"
-jq -e --arg config_store_sha256 "${config_store_sha256}" \
-    '.owned_source_sha256["crates/zentty-linux/src/config_store.rs"] == $config_store_sha256' \
-    "${contract}" >/dev/null || fail "config store source hash differs from its ownership contract"
-jq -e --arg config_reload_sha256 "${config_reload_sha256}" \
-    '.owned_source_sha256["crates/zentty-linux/src/config_reload.rs"] == $config_reload_sha256' \
-    "${contract}" >/dev/null || fail "config reload source hash differs from its ownership contract"
-jq -e --arg window_set_sha256 "${window_set_sha256}" \
-    '.owned_source_sha256["crates/zentty-linux/src/window_set.rs"] == $window_set_sha256' \
-    "${contract}" >/dev/null || fail "window-set source hash differs from its ownership contract"
-jq -e --arg agent_runtime_sha256 "${agent_runtime_sha256}" \
-    '.owned_source_sha256["crates/zentty-linux/src/agent_runtime.rs"] == $agent_runtime_sha256' \
-    "${contract}" >/dev/null || fail "agent runtime source hash differs from its ownership contract"
-jq -e --arg codex_enrichment_sha256 "${codex_enrichment_sha256}" \
-    '.owned_source_sha256["crates/zentty-linux/src/codex_enrichment.rs"] == $codex_enrichment_sha256' \
-    "${contract}" >/dev/null || fail "Codex enrichment source hash differs from its ownership contract"
-jq -e --arg shortcut_registry_sha256 "${shortcut_registry_sha256}" \
-    '.owned_source_sha256["crates/zentty-linux/src/application_shell/shortcut_registry.rs"] == $shortcut_registry_sha256' \
-    "${contract}" >/dev/null || fail "shortcut registry source hash differs from its ownership contract"
-jq -e --arg shortcut_runtime_sha256 "${shortcut_runtime_sha256}" \
-    '.owned_source_sha256["crates/zentty-linux/src/application_shell/shortcut_runtime.rs"] == $shortcut_runtime_sha256' \
-    "${contract}" >/dev/null || fail "shortcut runtime source hash differs from its ownership contract"
-jq -e --arg shortcut_settings_sha256 "${shortcut_settings_sha256}" \
-    '.owned_source_sha256["crates/zentty-linux/src/shortcut_settings.rs"] == $shortcut_settings_sha256' \
-    "${contract}" >/dev/null || fail "shortcut settings source hash differs from its ownership contract"
-jq -e --arg agents_settings_sha256 "${agents_settings_sha256}" \
-    '.owned_source_sha256["crates/zentty-linux/src/agents_settings.rs"] == $agents_settings_sha256' \
-    "${contract}" >/dev/null || fail "Agents settings source hash differs from its ownership contract"
-jq -e --arg appearance_settings_sha256 "${appearance_settings_sha256}" \
-    '.owned_source_sha256["crates/zentty-linux/src/appearance_settings.rs"] == $appearance_settings_sha256' \
-    "${contract}" >/dev/null || fail "appearance settings source hash differs from its ownership contract"
-jq -e --arg settings_shell_sha256 "${settings_shell_sha256}" \
-    '.owned_source_sha256["crates/zentty-linux/src/settings_shell.rs"] == $settings_shell_sha256' \
-    "${contract}" >/dev/null || fail "settings shell source hash differs from its ownership contract"
-jq -e --arg settings_navigation_sha256 "${settings_navigation_sha256}" \
-    '.owned_source_sha256["crates/zentty-linux/src/settings_navigation.rs"] == $settings_navigation_sha256' \
-    "${contract}" >/dev/null || fail "settings navigation source hash differs from its ownership contract"
-jq -e --arg general_settings_sha256 "${general_settings_sha256}" \
-    '.owned_source_sha256["crates/zentty-linux/src/general_settings.rs"] == $general_settings_sha256' \
-    "${contract}" >/dev/null || fail "general settings source hash differs from its ownership contract"
-jq -e --arg theme_catalog_sha256 "${theme_catalog_sha256}" \
-    '.owned_source_sha256["crates/zentty-linux/src/theme_catalog.rs"] == $theme_catalog_sha256' \
-    "${contract}" >/dev/null || fail "theme catalog source hash differs from its ownership contract"
-jq -e --arg notification_service_sha256 "${notification_service_sha256}" \
-    '.owned_source_sha256["crates/zentty-linux/src/notification_service.rs"] == $notification_service_sha256' \
-    "${contract}" >/dev/null || fail "notification service source hash differs from its ownership contract"
-jq -e --arg notifications_settings_sha256 "${notifications_settings_sha256}" \
-    '.owned_source_sha256["crates/zentty-linux/src/notifications_settings.rs"] == $notifications_settings_sha256' \
-    "${contract}" >/dev/null || fail "notification settings source hash differs from its ownership contract"
-jq -e --arg custom_sound_store_sha256 "${custom_sound_store_sha256}" \
-    '.owned_source_sha256["crates/zentty-linux/src/custom_sound_store.rs"] == $custom_sound_store_sha256' \
-    "${contract}" >/dev/null || fail "custom sound store source hash differs from its ownership contract"
-jq -e --arg updates_privacy_settings_sha256 "${updates_privacy_settings_sha256}" \
-    '.owned_source_sha256["crates/zentty-linux/src/updates_privacy_settings.rs"] == $updates_privacy_settings_sha256' \
-    "${contract}" >/dev/null || fail "Updates & Privacy settings source hash differs from its ownership contract"
-jq -e --arg pane_runtime_sha256 "${pane_runtime_sha256}" \
-    '.owned_source_sha256["crates/zentty-linux/src/application_shell/pane_runtime.rs"] == $pane_runtime_sha256' \
-    "${contract}" >/dev/null || fail "pane runtime source hash differs from its ownership contract"
-jq -e --arg server_runtime_sha256 "${server_runtime_sha256}" \
-    '.owned_source_sha256["crates/zentty-linux/src/application_shell/server_runtime.rs"] == $server_runtime_sha256' \
-    "${contract}" >/dev/null || fail "server runtime source hash differs from its ownership contract"
-jq -e --arg task_runner_runtime_sha256 "${task_runner_runtime_sha256}" \
-    '.owned_source_sha256["crates/zentty-linux/src/application_shell/task_runner_runtime.rs"] == $task_runner_runtime_sha256' \
-    "${contract}" >/dev/null || fail "task runner runtime source hash differs from its ownership contract"
-jq -e --arg project_context_runtime_sha256 "${project_context_runtime_sha256}" \
-    '.owned_source_sha256["crates/zentty-linux/src/application_shell/project_context_runtime.rs"] == $project_context_runtime_sha256' \
-    "${contract}" >/dev/null || fail "project context runtime source hash differs from its ownership contract"
-jq -e --arg open_with_runtime_sha256 "${open_with_runtime_sha256}" \
-    '.owned_source_sha256["crates/zentty-linux/src/application_shell/open_with_runtime.rs"] == $open_with_runtime_sha256' \
-    "${contract}" >/dev/null || fail "Open With runtime source hash differs from its ownership contract"
-jq -e --arg bookmark_runtime_sha256 "${bookmark_runtime_sha256}" \
-    '.owned_source_sha256["crates/zentty-linux/src/application_shell/bookmark_runtime.rs"] == $bookmark_runtime_sha256' \
-    "${contract}" >/dev/null || fail "bookmark runtime source hash differs from its ownership contract"
-jq -e --arg bookmarks_view_sha256 "${bookmarks_view_sha256}" \
-    '.owned_source_sha256["crates/zentty-linux/src/bookmarks_view.rs"] == $bookmarks_view_sha256' \
-    "${contract}" >/dev/null || fail "bookmarks view source hash differs from its ownership contract"
-jq -e --arg restore_notice_sha256 "${restore_notice_sha256}" \
-    '.owned_source_sha256["crates/zentty-linux/src/restore_notice.rs"] == $restore_notice_sha256' \
-    "${contract}" >/dev/null || fail "restore notice source hash differs from its ownership contract"
-jq -e --arg sidebar_sha256 "${sidebar_sha256}" \
-    '.owned_source_sha256["crates/zentty-linux/src/sidebar.rs"] == $sidebar_sha256' \
-    "${contract}" >/dev/null || fail "sidebar source hash differs from its ownership contract"
-jq -e --arg server_discovery_sha256 "${server_discovery_sha256}" \
-    '.owned_source_sha256["crates/zentty-linux/src/server_discovery.rs"] == $server_discovery_sha256' \
-    "${contract}" >/dev/null || fail "server listener discovery source hash differs from its ownership contract"
-jq -e --arg docker_discovery_sha256 "${docker_discovery_sha256}" \
-    '.owned_source_sha256["crates/zentty-linux/src/docker_discovery.rs"] == $docker_discovery_sha256' \
-    "${contract}" >/dev/null || fail "server container discovery source hash differs from its ownership contract"
-jq -e --arg pane_dividers_sha256 "${pane_dividers_sha256}" \
-    '.owned_source_sha256["crates/zentty-linux/src/pane_dividers.rs"] == $pane_dividers_sha256' \
-    "${contract}" >/dev/null || fail "pane divider source hash differs from its ownership contract"
-jq -e --arg agent_events_sha256 "${agent_events_sha256}" \
-    '.owned_source_sha256["crates/zentty-linux/src/application_shell/agent_events.rs"] == $agent_events_sha256' \
-    "${contract}" >/dev/null || fail "agent events source hash differs from its ownership contract"
-jq -e --arg global_search_sha256 "${global_search_sha256}" \
-    '.owned_source_sha256["crates/zentty-linux/src/application_shell/global_search.rs"] == $global_search_sha256' \
-    "${contract}" >/dev/null || fail "global search source hash differs from its ownership contract"
-jq -e --arg ssh_identity_sha256 "${ssh_identity_sha256}" \
-    '.owned_source_sha256["crates/zentty-linux/src/application_shell/ssh_identity.rs"] == $ssh_identity_sha256' \
-    "${contract}" >/dev/null || fail "SSH identity source hash differs from its ownership contract"
-jq -e --arg remote_paste_sha256 "${remote_paste_sha256}" \
-    '.owned_source_sha256["crates/zentty-linux/src/application_shell/remote_paste.rs"] == $remote_paste_sha256' \
-    "${contract}" >/dev/null || fail "remote paste source hash differs from its ownership contract"
-jq -e --arg clipboard_actions_sha256 "${clipboard_actions_sha256}" \
-    '.owned_source_sha256["crates/zentty-linux/src/application_shell/clipboard_actions.rs"] == $clipboard_actions_sha256' \
-    "${contract}" >/dev/null || fail "clipboard actions source hash differs from its ownership contract"
-jq -e --arg persistence_sha256 "${persistence_sha256}" \
-    '.owned_source_sha256["crates/zentty-linux/src/persistence_coordinator.rs"] == $persistence_sha256' \
-    "${contract}" >/dev/null || fail "persistence coordinator source hash differs from its ownership contract"
-jq -e --arg tmux_runtime_sha256 "${tmux_runtime_sha256}" \
-    '.owned_source_sha256["crates/zentty-linux/src/application_shell/tmux_runtime.rs"] == $tmux_runtime_sha256' \
-    "${contract}" >/dev/null || fail "tmux runtime source hash differs from its ownership contract"
-jq -e --arg tmux_compat_sha256 "${tmux_compat_sha256}" \
-    '.owned_source_sha256["crates/zentty-linux/src/tmux_compat.rs"] == $tmux_compat_sha256' \
-    "${contract}" >/dev/null || fail "tmux compatibility source hash differs from its ownership contract"
-jq -e --arg tmux_store_sha256 "${tmux_store_sha256}" \
-    '.owned_source_sha256["crates/zentty-linux/src/tmux_store.rs"] == $tmux_store_sha256' \
-    "${contract}" >/dev/null || fail "tmux store source hash differs from its ownership contract"
+# These checks guard the concrete single-authority boundaries described by the
+# contract. Unlike whole-file hashes, they tolerate unrelated implementation
+# and presentation changes while rejecting a second runtime, queue, registry,
+# persistence store, or state owner.
+sed -n '/^pub(crate) struct ApplicationCoordinator {/,/^}/p' "${application_file}" \
+    >"${temp_dir}/application-coordinator"
+sed -n '/^pub(crate) struct AgentRuntime {/,/^}/p' "${agent_runtime_file}" \
+    >"${temp_dir}/agent-runtime"
+sed -n '/^struct PendingWorker {/,/^}/p' "${codex_enrichment_file}" \
+    >"${temp_dir}/pending-worker"
+sed -n '/^struct State {/,/^}/p' "${agents_settings_file}" \
+    >"${temp_dir}/agents-settings-state"
+sed -n '/^pub(crate) struct PersistenceCoordinator {/,/^}/p' "${persistence_file}" \
+    >"${temp_dir}/persistence-coordinator"
+sed -n '/^pub(crate) struct TmuxCompatProduct {/,/^}/p' "${tmux_compat_file}" \
+    >"${temp_dir}/tmux-product"
+sed -n '/^pub(crate) struct TmuxStoreFile {/,/^}/p' "${tmux_store_file}" \
+    >"${temp_dir}/tmux-store"
+sed -n '/^pub(super) struct PaneRuntimeCoordinator {/,/^}/p' "${pane_runtime_file}" \
+    >"${temp_dir}/pane-runtime"
+
+require_pattern_count "${main_file}" 'glib::MainLoop::new' 1 "process main-loop authority"
+require_pattern_count "${temp_dir}/application-coordinator" 'GhosttyRuntime' 1 "Ghostty runtime authority"
+require_pattern_count "${temp_dir}/agent-runtime" 'mpsc::Receiver<AuthenticatedAgentEvent>' 1 "authenticated agent transport authority"
+require_pattern_count "${agent_events_file}" 'Receiver<.*AuthenticatedAgentEvent' 0 "agent event coordinator transport boundary"
+require_pattern_count "${temp_dir}/pending-worker" 'generation: u64' 1 "Codex enrichment generation authority"
+require_pattern_count "${temp_dir}/agents-settings-state" 'ApplyAgents' 1 "Agents settings write authority"
+require_pattern_count "${temp_dir}/persistence-coordinator" 'SessionRestoreStore' 0 "persistence store boundary"
+require_pattern_count "${tmux_runtime_file}" 'TmuxCompatProduct::default' 0 "tmux product authority"
+require_pattern_count "${temp_dir}/tmux-product" '^[[:space:]]+store: TeamStore,' 1 "tmux state authority"
+require_pattern_count "${temp_dir}/tmux-product" 'BTreeMap<' 0 "tmux shadow state boundary"
+require_pattern_count "${temp_dir}/tmux-store" 'AtomicFileStore' 1 "tmux persistence authority"
+require_pattern_count "${temp_dir}/pane-runtime" 'BTreeMap<String, GhosttySurface>' 1 "pane surface registry authority"
 
 sed -n '1,/^#\[cfg(test)\]/p' "${action_router_file}" |
     sed -nE 's/^[[:space:]]*(pub\(super\)[[:space:]]+)?(const[[:space:]]+)?fn[[:space:]]+([a-zA-Z0-9_]+).*/\3/p' |
@@ -546,97 +424,12 @@ if [[ -n "${diff}" ]]; then
     fail "tmux store function inventory differs from its ownership contract"
 fi
 
-jq -e --arg main_sha256 "${main_sha256}" \
-    --arg application_sha256 "${application_sha256}" \
-    --arg config_store_sha256 "${config_store_sha256}" \
-    --arg config_reload_sha256 "${config_reload_sha256}" \
-    --arg window_set_sha256 "${window_set_sha256}" \
-    --arg agent_runtime_sha256 "${agent_runtime_sha256}" \
-    --arg codex_enrichment_sha256 "${codex_enrichment_sha256}" \
-    --arg source_sha256 "${source_sha256}" \
-    --arg action_router_sha256 "${action_router_sha256}" \
-    --arg shortcut_registry_sha256 "${shortcut_registry_sha256}" \
-    --arg shortcut_runtime_sha256 "${shortcut_runtime_sha256}" \
-    --arg shortcut_settings_sha256 "${shortcut_settings_sha256}" \
-    --arg agents_settings_sha256 "${agents_settings_sha256}" \
-    --arg appearance_settings_sha256 "${appearance_settings_sha256}" \
-    --arg settings_shell_sha256 "${settings_shell_sha256}" \
-    --arg settings_navigation_sha256 "${settings_navigation_sha256}" \
-    --arg general_settings_sha256 "${general_settings_sha256}" \
-    --arg theme_catalog_sha256 "${theme_catalog_sha256}" \
-    --arg notification_service_sha256 "${notification_service_sha256}" \
-    --arg notifications_settings_sha256 "${notifications_settings_sha256}" \
-    --arg custom_sound_store_sha256 "${custom_sound_store_sha256}" \
-    --arg updates_privacy_settings_sha256 "${updates_privacy_settings_sha256}" \
-    --arg agent_events_sha256 "${agent_events_sha256}" \
-    --arg global_search_sha256 "${global_search_sha256}" \
-    --arg ssh_identity_sha256 "${ssh_identity_sha256}" \
-    --arg remote_paste_sha256 "${remote_paste_sha256}" \
-    --arg clipboard_actions_sha256 "${clipboard_actions_sha256}" \
-    --arg pane_runtime_sha256 "${pane_runtime_sha256}" \
-    --arg server_runtime_sha256 "${server_runtime_sha256}" \
-    --arg task_runner_runtime_sha256 "${task_runner_runtime_sha256}" \
-    --arg project_context_runtime_sha256 "${project_context_runtime_sha256}" \
-    --arg open_with_runtime_sha256 "${open_with_runtime_sha256}" \
-    --arg bookmark_runtime_sha256 "${bookmark_runtime_sha256}" \
-    --arg bookmarks_view_sha256 "${bookmarks_view_sha256}" \
-    --arg restore_notice_sha256 "${restore_notice_sha256}" \
-    --arg sidebar_sha256 "${sidebar_sha256}" \
-    --arg server_discovery_sha256 "${server_discovery_sha256}" \
-    --arg docker_discovery_sha256 "${docker_discovery_sha256}" \
-    --arg pane_dividers_sha256 "${pane_dividers_sha256}" \
-    --arg tmux_runtime_sha256 "${tmux_runtime_sha256}" \
-    --arg persistence_sha256 "${persistence_sha256}" \
-    --arg tmux_compat_sha256 "${tmux_compat_sha256}" \
-    --arg tmux_store_sha256 "${tmux_store_sha256}" '
+jq -e '
     .schema_version == 1 and
     .contract_id == "zentty-application-shell-responsibilities" and
     .source == "crates/zentty-linux/src/application_shell.rs" and
-    .source_sha256 == $source_sha256 and
-    .owned_source_sha256 == {
-        "crates/zentty-linux/src/main.rs":$main_sha256,
-        "crates/zentty-linux/src/application.rs":$application_sha256,
-        "crates/zentty-linux/src/config_store.rs":$config_store_sha256,
-        "crates/zentty-linux/src/config_reload.rs":$config_reload_sha256,
-        "crates/zentty-linux/src/window_set.rs":$window_set_sha256,
-        "crates/zentty-linux/src/agent_runtime.rs":$agent_runtime_sha256,
-        "crates/zentty-linux/src/codex_enrichment.rs":$codex_enrichment_sha256,
-        "crates/zentty-linux/src/application_shell/action_router.rs":$action_router_sha256,
-        "crates/zentty-linux/src/application_shell/shortcut_registry.rs":$shortcut_registry_sha256,
-        "crates/zentty-linux/src/application_shell/shortcut_runtime.rs":$shortcut_runtime_sha256,
-        "crates/zentty-linux/src/shortcut_settings.rs":$shortcut_settings_sha256,
-        "crates/zentty-linux/src/agents_settings.rs":$agents_settings_sha256,
-        "crates/zentty-linux/src/appearance_settings.rs":$appearance_settings_sha256,
-        "crates/zentty-linux/src/settings_shell.rs":$settings_shell_sha256,
-        "crates/zentty-linux/src/settings_navigation.rs":$settings_navigation_sha256,
-        "crates/zentty-linux/src/general_settings.rs":$general_settings_sha256,
-        "crates/zentty-linux/src/theme_catalog.rs":$theme_catalog_sha256,
-        "crates/zentty-linux/src/notification_service.rs":$notification_service_sha256,
-        "crates/zentty-linux/src/notifications_settings.rs":$notifications_settings_sha256,
-        "crates/zentty-linux/src/custom_sound_store.rs":$custom_sound_store_sha256,
-        "crates/zentty-linux/src/updates_privacy_settings.rs":$updates_privacy_settings_sha256,
-        "crates/zentty-linux/src/application_shell/agent_events.rs":$agent_events_sha256,
-        "crates/zentty-linux/src/application_shell/global_search.rs":$global_search_sha256,
-        "crates/zentty-linux/src/application_shell/ssh_identity.rs":$ssh_identity_sha256,
-        "crates/zentty-linux/src/application_shell/remote_paste.rs":$remote_paste_sha256,
-        "crates/zentty-linux/src/application_shell/clipboard_actions.rs":$clipboard_actions_sha256,
-        "crates/zentty-linux/src/application_shell/pane_runtime.rs":$pane_runtime_sha256,
-        "crates/zentty-linux/src/application_shell/server_runtime.rs":$server_runtime_sha256,
-        "crates/zentty-linux/src/application_shell/task_runner_runtime.rs":$task_runner_runtime_sha256,
-        "crates/zentty-linux/src/application_shell/project_context_runtime.rs":$project_context_runtime_sha256,
-        "crates/zentty-linux/src/application_shell/open_with_runtime.rs":$open_with_runtime_sha256,
-        "crates/zentty-linux/src/application_shell/bookmark_runtime.rs":$bookmark_runtime_sha256,
-        "crates/zentty-linux/src/bookmarks_view.rs":$bookmarks_view_sha256,
-        "crates/zentty-linux/src/restore_notice.rs":$restore_notice_sha256,
-        "crates/zentty-linux/src/sidebar.rs":$sidebar_sha256,
-        "crates/zentty-linux/src/server_discovery.rs":$server_discovery_sha256,
-        "crates/zentty-linux/src/docker_discovery.rs":$docker_discovery_sha256,
-        "crates/zentty-linux/src/application_shell/tmux_runtime.rs":$tmux_runtime_sha256,
-        "crates/zentty-linux/src/pane_dividers.rs":$pane_dividers_sha256,
-        "crates/zentty-linux/src/persistence_coordinator.rs":$persistence_sha256,
-        "crates/zentty-linux/src/tmux_compat.rs":$tmux_compat_sha256,
-        "crates/zentty-linux/src/tmux_store.rs":$tmux_store_sha256
-    } and
+    (has("source_sha256") | not) and
+    (has("owned_source_sha256") | not) and
     .tracking == "GH-26" and
     ([.owners[].id] | sort) == ([
         "action_router",

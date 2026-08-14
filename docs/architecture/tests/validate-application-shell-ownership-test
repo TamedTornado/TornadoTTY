@@ -10,6 +10,7 @@ agent_runtime_file="${repo_root}/crates/zentty-linux/src/agent_runtime.rs"
 agents_settings_file="${repo_root}/crates/zentty-linux/src/agents_settings.rs"
 codex_enrichment_file="${repo_root}/crates/zentty-linux/src/codex_enrichment.rs"
 source_file="${repo_root}/crates/zentty-linux/src/application_shell.rs"
+shortcut_settings_file="${repo_root}/crates/zentty-linux/src/shortcut_settings.rs"
 agent_events_file="${repo_root}/crates/zentty-linux/src/application_shell/agent_events.rs"
 pane_runtime_file="${repo_root}/crates/zentty-linux/src/application_shell/pane_runtime.rs"
 tmux_runtime_file="${repo_root}/crates/zentty-linux/src/application_shell/tmux_runtime.rs"
@@ -36,6 +37,18 @@ expect_failure() {
 }
 
 "${validator}" >/dev/null
+
+# A presentation-only source edit must not require re-signing the architecture
+# contract. Structural inventories and authority constraints remain enforced.
+sed '1i// presentation-only change used by the ownership validator self-test' \
+    "${shortcut_settings_file}" >"${temp_dir}/presentation-only.rs"
+env "ZENTTY_SHORTCUT_SETTINGS_SOURCE=${temp_dir}/presentation-only.rs" \
+    "${validator}" >/dev/null
+
+jq '.source_sha256 = "whole-file-hashes-are-not-architecture"' \
+    "${contract}" >"${temp_dir}/reintroduced-source-hash.json"
+expect_failure reintroduced-source-hash "ownership contract invariants failed" \
+    "ZENTTY_APPLICATION_SHELL_OWNERSHIP_CONTRACT=${temp_dir}/reintroduced-source-hash.json"
 
 jq '.field_assignments[0].fields += [.field_assignments[0].fields[0]]' \
     "${contract}" >"${temp_dir}/duplicate-field.json"
@@ -94,12 +107,12 @@ expect_failure missing-agent-event-function "agent event coordinator function in
 
 sed '/runtime: Rc<RefCell<AgentRuntime>>,/a\    shadow_receiver: std::sync::mpsc::Receiver<zentty_core::AuthenticatedAgentEvent>,' \
     "${agent_events_file}" >"${temp_dir}/shadow-agent-event-queue.rs"
-expect_failure shadow-agent-event-queue "agent events source hash" \
+expect_failure shadow-agent-event-queue "agent event coordinator transport boundary" \
     "ZENTTY_AGENT_EVENTS_SOURCE=${temp_dir}/shadow-agent-event-queue.rs"
 
 sed '/struct State {/a\    shadow_apply: Option<ApplyAgents>,' \
     "${agents_settings_file}" >"${temp_dir}/shadow-agents-settings.rs"
-expect_failure shadow-agents-settings-owner "Agents settings source hash" \
+expect_failure shadow-agents-settings-owner "Agents settings write authority" \
     "ZENTTY_AGENTS_SETTINGS_SOURCE=${temp_dir}/shadow-agents-settings.rs"
 
 jq '(.owned_module_functions.persistence_coordinator) |= map(select(. != "save_clean_exit"))' \
@@ -109,7 +122,7 @@ expect_failure missing-persistence-function "persistence coordinator function in
 
 sed '/worker: PersistenceWorker,/a\    shadow_store: SessionRestoreStore,' \
     "${persistence_file}" >"${temp_dir}/shadow-persistence-store.rs"
-expect_failure shadow-persistence-store "persistence coordinator source hash" \
+expect_failure shadow-persistence-store "persistence store boundary" \
     "ZENTTY_PERSISTENCE_COORDINATOR_SOURCE=${temp_dir}/shadow-persistence-store.rs"
 
 jq '(.owned_module_functions.tmux_runtime_coordinator) |= map(select(. != "execute_tmux_command"))' \
@@ -124,42 +137,42 @@ expect_failure missing-tmux-store-function "tmux store function inventory differ
 
 sed '/tmux-command pane=/i\        let shadow_tmux_state = crate::tmux_compat::TmuxCompatProduct::default();' \
     "${tmux_runtime_file}" >"${temp_dir}/shadow-tmux-runtime.rs"
-expect_failure shadow-tmux-runtime "tmux runtime source hash" \
+expect_failure shadow-tmux-runtime "tmux product authority" \
     "ZENTTY_TMUX_RUNTIME_SOURCE=${temp_dir}/shadow-tmux-runtime.rs"
 
 sed '/let main_loop = glib::MainLoop::new/a\    let shadow_main_loop = glib::MainLoop::new(None, false);' \
     "${main_file}" >"${temp_dir}/shadow-main-loop.rs"
-expect_failure shadow-main-loop "application runtime source hash" \
+expect_failure shadow-main-loop "process main-loop authority" \
     "ZENTTY_APPLICATION_RUNTIME_SOURCE=${temp_dir}/shadow-main-loop.rs"
 
 sed '/runtime: GhosttyRuntime,/a\    shadow_runtime: GhosttyRuntime,' \
     "${application_file}" >"${temp_dir}/shadow-application-runtime.rs"
-expect_failure shadow-application-runtime "application coordinator source hash" \
+expect_failure shadow-application-runtime "Ghostty runtime authority" \
     "ZENTTY_APPLICATION_COORDINATOR_SOURCE=${temp_dir}/shadow-application-runtime.rs"
 
 sed '/receiver: mpsc::Receiver<AuthenticatedAgentEvent>,/a\    shadow_receiver: mpsc::Receiver<AuthenticatedAgentEvent>,' \
     "${agent_runtime_file}" >"${temp_dir}/shadow-agent-transport.rs"
-expect_failure shadow-agent-transport "agent runtime source hash" \
+expect_failure shadow-agent-transport "authenticated agent transport authority" \
     "ZENTTY_AGENT_RUNTIME_SOURCE=${temp_dir}/shadow-agent-transport.rs"
 
-sed '/pending_generation: Option<u64>,/a\    shadow_generation: Option<u64>,' \
+sed '/struct PendingWorker {/a\    shadow_generation: u64,' \
     "${codex_enrichment_file}" >"${temp_dir}/shadow-enrichment-generation.rs"
-expect_failure shadow-enrichment-generation "Codex enrichment source hash" \
+expect_failure shadow-enrichment-generation "Codex enrichment generation authority" \
     "ZENTTY_CODEX_ENRICHMENT_SOURCE=${temp_dir}/shadow-enrichment-generation.rs"
 
 sed '/pub(crate) struct TmuxCompatProduct {/a\    shadow: std::collections::BTreeMap<String, String>,' \
     "${tmux_compat_file}" >"${temp_dir}/shadow-tmux-state.rs"
-expect_failure shadow-tmux-state "tmux compatibility source hash" \
+expect_failure shadow-tmux-state "tmux shadow state boundary" \
     "ZENTTY_TMUX_COMPAT_SOURCE=${temp_dir}/shadow-tmux-state.rs"
 
 sed '/file: AtomicFileStore,/a\    shadow_file: AtomicFileStore,' \
     "${tmux_store_file}" >"${temp_dir}/shadow-tmux-store.rs"
-expect_failure shadow-tmux-store "tmux store source hash" \
+expect_failure shadow-tmux-store "tmux persistence authority" \
     "ZENTTY_TMUX_STORE_SOURCE=${temp_dir}/shadow-tmux-store.rs"
 
 sed '/surfaces: BTreeMap<String, GhosttySurface>,/a\    shadow_surfaces: BTreeMap<String, GhosttySurface>,' \
     "${pane_runtime_file}" >"${temp_dir}/shadow-pane-registry.rs"
-expect_failure shadow-pane-registry "pane runtime source hash" \
+expect_failure shadow-pane-registry "pane surface registry authority" \
     "ZENTTY_PANE_RUNTIME_SOURCE=${temp_dir}/shadow-pane-registry.rs"
 
 sed '/pub(super) const ACTION_TOGGLE_SIDEBAR/a\pub(super) const ACTION_UNTRACKED: &str = "untracked";' \

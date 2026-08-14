@@ -528,7 +528,15 @@ impl ConfigStore {
     }
 
     pub(crate) fn update_default_ghostty_theme(spec: &ThemeSpec) -> Result<PathBuf, String> {
-        Self::update_default_ghostty_value("theme", &spec.to_string())
+        let executable = std::env::current_exe()
+            .map_err(|error| format!("could not locate Zentty executable: {error}"))?;
+        let (bundled, user) = crate::theme_catalog::default_theme_directories(
+            &executable,
+            std::env::var_os("XDG_CONFIG_HOME"),
+            std::env::var_os("HOME"),
+        )?;
+        let runtime_spec = ghostty_theme_spec_for_runtime(spec, &bundled, &user)?;
+        Self::update_default_ghostty_value("theme", &runtime_spec.to_string())
     }
 
     pub(crate) fn install_default_fallback_theme_if_referenced(
@@ -721,6 +729,93 @@ fn default_theme_resource_path() -> Result<PathBuf, String> {
     Ok(prefix
         .join("share/zentty/ghostty/themes")
         .join(FALLBACK_DARK_THEME))
+}
+
+fn ghostty_theme_spec_for_runtime(
+    spec: &ThemeSpec,
+    bundled_directory: &Path,
+    user_directory: &Path,
+) -> Result<ThemeSpec, String> {
+    let resolve =
+        |name: &str| ghostty_theme_reference_for_runtime(name, bundled_directory, user_directory);
+    match spec.mode {
+        ThemeMode::Dark => Ok(ThemeSpec {
+            mode: ThemeMode::Dark,
+            dark_theme_name: Some(resolve(spec.resolved_dark_theme_name())?),
+            light_theme_name: None,
+        }),
+        ThemeMode::Light => Ok(ThemeSpec {
+            mode: ThemeMode::Light,
+            dark_theme_name: None,
+            light_theme_name: Some(resolve(spec.resolved_light_theme_name())?),
+        }),
+        ThemeMode::Automatic => Ok(ThemeSpec {
+            mode: ThemeMode::Automatic,
+            dark_theme_name: Some(resolve(spec.resolved_dark_theme_name())?),
+            light_theme_name: Some(resolve(spec.resolved_light_theme_name())?),
+        }),
+    }
+}
+
+fn ghostty_theme_reference_for_runtime(
+    name: &str,
+    bundled_directory: &Path,
+    user_directory: &Path,
+) -> Result<String, String> {
+    let requested = Path::new(name);
+    if requested.is_absolute()
+        || requested.components().count() != 1
+        || !matches!(
+            requested.components().next(),
+            Some(std::path::Component::Normal(_))
+        )
+    {
+        return Ok(name.to_owned());
+    }
+    if fs::metadata(user_directory.join(requested)).is_ok_and(|metadata| metadata.is_file()) {
+        return Ok(name.to_owned());
+    }
+    let candidate = bundled_directory.join(requested);
+    match fs::symlink_metadata(&candidate) {
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(name.to_owned()),
+        Err(error) => {
+            return Err(format!(
+                "could not inspect bundled theme {}: {error}",
+                candidate.display()
+            ));
+        }
+        Ok(metadata) if !metadata.file_type().is_file() => {
+            return Err(format!(
+                "bundled theme is not a regular file: {}",
+                candidate.display()
+            ));
+        }
+        Ok(_) => {}
+    }
+    let canonical_root = fs::canonicalize(bundled_directory).map_err(|error| {
+        format!(
+            "could not resolve bundled theme directory {}: {error}",
+            bundled_directory.display()
+        )
+    })?;
+    let canonical = fs::canonicalize(&candidate).map_err(|error| {
+        format!(
+            "could not resolve bundled theme {}: {error}",
+            candidate.display()
+        )
+    })?;
+    if !canonical.starts_with(&canonical_root) {
+        return Err(format!(
+            "bundled theme escapes its resource directory: {}",
+            candidate.display()
+        ));
+    }
+    canonical.to_str().map(str::to_owned).ok_or_else(|| {
+        format!(
+            "bundled theme path is not valid UTF-8: {}",
+            canonical.display()
+        )
+    })
 }
 
 fn default_fallback_theme_path(
@@ -1032,8 +1127,8 @@ mod tests {
         BoundedReadError, ConfigStore, MAX_CONFIG_BYTES, ThemeInstallOutcome, default_config_file,
         default_config_file_from, default_fallback_theme_path, default_ghostty_config_file_from,
         default_theme_resource_path, editable_config_source, ensure_private_config_parent,
-        fallback_theme_publication_error, install_fallback_theme_if_referenced, read_bounded,
-        with_config_lock,
+        fallback_theme_publication_error, ghostty_theme_spec_for_runtime,
+        install_fallback_theme_if_referenced, read_bounded, with_config_lock,
     };
     use std::ffi::OsString;
     use std::fs;
@@ -2054,6 +2149,89 @@ mod tests {
         );
         assert_eq!(fs::read(&target).unwrap(), b"background = #010203\n");
         remove(&root);
+    }
+
+    #[test]
+    fn runtime_theme_spec_uses_bundled_absolute_paths_without_overriding_user_themes() {
+        let root = private_root("runtime-theme-reference");
+        let bundled = root.join("prefix/share/zentty/ghostty/themes");
+        let user = root.join("xdg/ghostty/themes");
+        fs::create_dir_all(&bundled).unwrap();
+        fs::create_dir_all(&user).unwrap();
+        fs::write(bundled.join("Abernathy"), "background = #111416\n").unwrap();
+        fs::write(bundled.join("User Wins"), "background = #000000\n").unwrap();
+        fs::write(user.join("User Wins"), "background = #ffffff\n").unwrap();
+
+        let bundled_only = ThemeSpec::new(ThemeMode::Dark, Some("Abernathy"), None);
+        let resolved = ghostty_theme_spec_for_runtime(&bundled_only, &bundled, &user).unwrap();
+        assert_eq!(
+            resolved.to_string(),
+            fs::canonicalize(bundled.join("Abernathy"))
+                .unwrap()
+                .to_str()
+                .unwrap()
+        );
+
+        let automatic = ThemeSpec::new(ThemeMode::Automatic, Some("Abernathy"), Some("User Wins"));
+        let resolved = ghostty_theme_spec_for_runtime(&automatic, &bundled, &user).unwrap();
+        assert!(resolved.to_string().starts_with("dark:/"));
+        assert!(resolved.to_string().ends_with(",light:User Wins"));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn runtime_theme_spec_does_not_resolve_unsafe_or_unavailable_names() {
+        let root = private_root("runtime-theme-unavailable");
+        let bundled = root.join("bundled");
+        let user = root.join("user");
+        fs::create_dir_all(&bundled).unwrap();
+        fs::create_dir_all(&user).unwrap();
+        fs::create_dir_all(bundled.join("nested")).unwrap();
+        fs::write(bundled.join("nested/theme"), "background = #111416\n").unwrap();
+
+        for name in [
+            "Missing",
+            "nested/theme",
+            "..",
+            "../escape",
+            "/operator/theme",
+        ] {
+            let spec = ThemeSpec::new(ThemeMode::Dark, Some(name), None);
+            assert_eq!(
+                ghostty_theme_spec_for_runtime(&spec, &bundled, &user)
+                    .unwrap()
+                    .to_string(),
+                name
+            );
+        }
+
+        fs::create_dir(bundled.join("Not A File")).unwrap();
+        let invalid = ThemeSpec::new(ThemeMode::Dark, Some("Not A File"), None);
+        assert!(
+            ghostty_theme_spec_for_runtime(&invalid, &bundled, &user)
+                .unwrap_err()
+                .contains("not a regular file")
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn runtime_theme_spec_reports_bundled_lookup_errors_other_than_absence() {
+        use std::os::unix::fs::symlink;
+
+        let root = private_root("runtime-theme-lookup-error");
+        let bundled = root.join("bundled-loop");
+        let user = root.join("user");
+        fs::create_dir_all(&user).unwrap();
+        symlink("bundled-loop", &bundled).unwrap();
+
+        let spec = ThemeSpec::new(ThemeMode::Dark, Some("Abernathy"), None);
+        let error = ghostty_theme_spec_for_runtime(&spec, &bundled, &user).unwrap_err();
+        assert!(error.contains("could not inspect bundled theme"));
+
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

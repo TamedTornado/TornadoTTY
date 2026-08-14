@@ -117,11 +117,10 @@ zentty_product_wait_for_log "${enabled_log}" \
     "zentty-linux: project-icon pane=pane-1 path=${canonical_icon} result=resolved" \
     'manual refresh did not invalidate the negative icon cache' || fail "icon did not resolve"
 zentty_product_wait_for_log "${enabled_log}" \
-    "zentty-linux: project-icon-projected owner=sidebar:pane-1 path=${canonical_icon} decoded=true" \
-    'sidebar did not decode the real SVG' || fail "sidebar icon absent"
-zentty_product_wait_for_log "${enabled_log}" \
     "zentty-linux: project-icon-projected owner=window-chrome path=${canonical_icon} decoded=true" \
     'window chrome did not decode the real SVG' || fail "chrome icon absent"
+! grep -Fq 'project-icon-projected owner=sidebar:' "${enabled_log}" ||
+    fail "source-incompatible project icon was repeated in a sidebar pane row"
 
 if zentty_product_uses_xdotool "${backend}"; then
     if [[ "${ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT:-}" == 1 ]]; then
@@ -158,4 +157,4 @@ sleep 0.3
 ! grep -Fq 'project-icon-projected owner=' "${disabled_log}" ||
     fail "show_project_icons=false still projected an icon"
 
-echo "Rust project icons passed: ${backend}, containment=real, invalidation=physical, decode=real, sidebar=visible, chrome=visible, peek=visible, opt-out=hidden"
+echo "Rust project icons passed: ${backend}, containment=real, invalidation=physical, decode=real, sidebar-pane-prefix=absent, chrome=visible, peek=visible, opt-out=hidden"

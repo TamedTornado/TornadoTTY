@@ -3607,7 +3607,6 @@ impl ApplicationShell {
         }
         let summaries = self.sidebar_summaries();
         sidebar::update_project_context_metadata(&self.sidebar, &summaries);
-        sidebar::update_project_icon_metadata(&self.sidebar, &summaries);
         self.render_chrome(&summaries);
     }
 
