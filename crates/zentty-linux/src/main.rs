@@ -34,6 +34,7 @@ mod settings_shell;
 mod shortcut_settings;
 mod sidebar;
 mod sidebar_visibility;
+mod sleep_inhibitor;
 mod source_ui;
 mod task_manager;
 mod theme_catalog;
@@ -297,6 +298,14 @@ fn appearance_needs_startup_projection(appearance: &zentty_core::AppearanceConfi
 }
 
 fn main() -> ExitCode {
+    match sleep_inhibitor::run_helper_if_requested() {
+        Ok(true) => return ExitCode::SUCCESS,
+        Ok(false) => {}
+        Err(error) => {
+            eprintln!("zentty-linux: {error}");
+            return ExitCode::FAILURE;
+        }
+    }
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {

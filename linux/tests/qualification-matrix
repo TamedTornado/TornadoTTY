@@ -100,7 +100,7 @@ jq -e '
       "Debug":"build-debug","ReleaseSafe":"build-release"
     }) and
     (.execution_graph.resources == [
-      "abi-mismatch-fixture","consolidated-session-journey","ghostty-source","valgrind-evidence"
+      "abi-mismatch-fixture","bookmarks-wayland-modal-input","consolidated-session-journey","ghostty-source","system-sleep-inhibitor","valgrind-evidence"
     ])
 ' "${matrix}" >/dev/null || fail "matrix root, axes, or claims are not closed-world"
 
@@ -955,11 +955,12 @@ run_qualification_worker() {
     return 0
 }
 
-results='[]'
 run_failed=false
 retained_valgrind_evidence_lock_fd=""
 cell_results_directory="$(mktemp -d "${logs_dir}/.cell-results.XXXXXX")"
 trap 'rm -rf -- "${cell_results_directory}"' EXIT
+raw_results_path="${cell_results_directory}/all-results.jsonl"
+: >"${raw_results_path}"
 qualification_started_monotonic_ms="$(monotonic_milliseconds)"
 
 append_cell_result() {
@@ -972,7 +973,7 @@ append_cell_result() {
     if zentty_qualification_outcome_failed "${outcome}"; then
         run_failed=true
     fi
-    results="$(jq -cn --argjson results "${results}" --argjson result "${result}" '$results + [$result]')"
+    printf '%s\n' "${result}" >>"${raw_results_path}"
 }
 
 declare -A pending_cells=()
@@ -1158,9 +1159,7 @@ while (( ${#pending_cells[@]} > 0 || ${#active_pid_ids[@]} > 0 )); do
     fi
 done
 
-raw_results_path="${cell_results_directory}/all-results.json"
-printf '%s\n' "${results}" >"${raw_results_path}"
-results="$(jq -cn --slurpfile matrix "${matrix}" --slurpfile results "${raw_results_path}" '
+results="$(jq -cs --slurpfile matrix "${matrix}" '
     def dependencies($cell):
       (
         (if $matrix[0].execution_graph.root_prerequisite != $cell.id
@@ -1173,12 +1172,12 @@ results="$(jq -cn --slurpfile matrix "${matrix}" --slurpfile results "${raw_resu
          else [] end)
       ) | unique;
     $matrix[0].cells as $cells |
-    $results[0] |
+    . |
     map(. as $result | ($cells | map(select(.id == $result.id))[0]) as $cell |
       . + {schedule:{dependencies:dependencies($cell),resources:($cell.resources // [])}}) |
     sort_by(. as $result |
       ($cells | map(select(.id == $result.id))[0].order), $result.id)
-')"
+' "${raw_results_path}")"
 
 jq -e --argjson jobs "${qualification_jobs}" '
     . as $results |

@@ -83,6 +83,13 @@
       "responsibility": "One process-wide projection of explicit agent panes across every live window. The core owns source-derived ranking and labels; ApplicationCoordinator owns aggregation and exact-window routing; each shell renders the same nonmodal GTK fleet view."
     },
     {
+      "id": "sleep_inhibitor_coordinator",
+      "status": "existing",
+      "planned_module": "crates/zentty-core/src/agent_sleep_inhibition.rs, crates/zentty-linux/src/sleep_inhibitor.rs, and crates/zentty-linux/src/application.rs",
+      "tracking": "GH-21",
+      "responsibility": "One process-wide agent sleep-inhibition policy and one systemd-logind lease. The core owns running-only and release-debounce transitions; ApplicationCoordinator aggregates every live window, owns backend acquisition and release, and releases synchronously during shutdown; window shells only publish typed setting changes."
+    },
+    {
       "id": "global_search_coordinator",
       "status": "existing",
       "planned_module": "crates/zentty-linux/src/application_shell/global_search.rs",

@@ -177,6 +177,131 @@ remaining uncertainty as the Linux agent fleet functionality is built.
   new X11 fleet cell, and the controlled stale-XFAIL Wayland fleet cell produced
   their expected outcomes in this same run.
 
+## Agent sleep inhibition (GH-21)
+
+### Source audit and design decision
+
+- The authoritative macOS behavior is in
+  `Zentty/AppState/NotificationStore.swift`, not an inferred
+  `AgentStatusCenter` abstraction. It owns one application-wide assertion,
+  acquires only for the explicit `running` phase, and delays release for ten
+  seconds. Starting, needs-input, idle, unresolved-stop, and unrecognized panes
+  are not qualifying sources.
+- Linux retains those policy semantics in the pure
+  `AgentSleepInhibitionState`. `ApplicationCoordinator` is the single
+  process-wide aggregation and lease authority; settings pages and windows do
+  not own competing timers or inhibitors. The architecture ownership contracts
+  now name that authority and its shutdown edge explicitly.
+- The real backend is the host's systemd-logind interface, invoked as
+  `systemd-inhibit --what=sleep --mode=block`. The staged Zentty executable has
+  one hidden lease-helper mode that acknowledges acquisition and then consumes
+  a private stdin pipe. This uses no shell. Ordinary teardown closes the pipe
+  and reaps the wrapper; SIGKILL closes the only writer in the kernel, so the
+  helper exits and cannot silently retain an orphaned logind lease.
+- A final backend review found that readiness had early-exit detection but no
+  deadline if a launched backend stayed alive without granting a lease. The
+  owner now fails and reaps an acquisition that has not acknowledged within
+  five seconds. A real `/bin/false` child test proves that early exit is
+  observed, cleared, and not left as an acquiring lease.
+- The same final ownership review found the bounded readiness thread was not
+  joined after child teardown, despite the architecture contract requiring
+  platform-task join/reap. The lease now retains that join handle, kills and
+  reaps the child before joining on every release/failure path, and
+  transactionally kills/reaps the child if the reader thread itself cannot be
+  created.
+- This backend preserves display sleep, but systemd-logind does not offer the
+  macOS assertion's narrower distinction between idle system sleep and an
+  explicit user-requested system sleep. A block inhibitor therefore also
+  requires explicit sleep operations to negotiate the lock. This known Linux
+  semantic difference is documented rather than hidden behind a fake portal or
+  treated as an unsuppressed parity claim.
+- Host discovery found the real `/usr/bin/systemd-inhibit` from systemd 255 and
+  a responsive logind inhibitor list. Backend absence or denial remains an
+  explicit environment failure; the setting is insensitive when discovery
+  fails and requested configuration is retained.
+
+### Tests-first evidence and repairs
+
+- Six focused core tests cover first acquisition, process-wide lease reuse,
+  ten-second debounce and cancellation, disabled behavior, non-running input,
+  backend-failure retry suppression, and idempotent forced release. Three Linux
+  backend tests cover readiness-before-pipe-consumption, bounded single-line
+  diagnostics, and real early process exit.
+- The real-product journey uses the staged ReleaseSafe binary, Ghostty PTYs,
+  physical nested-compositor keyboard input, authenticated Agent IPC through
+  the injected real Zentty CLI, live config reload, and the real logind
+  inhibitor list. It proves running-only acquisition; shared lease identity;
+  debounce cancellation and completion; immediate setting-disable release;
+  re-enable/reacquire; non-final agent-pane close while a real pane survives;
+  final PTY child exit; graceful shutdown; and SIGKILL cleanup.
+- An initial child-exit assertion expected the ten-second debounce. The real
+  product correctly shuts down when its only PTY child exits, so the process
+  releases immediately with `reason=application-shutdown`. The journey was
+  corrected to require that stronger lifecycle behavior rather than weakening
+  the product to satisfy the mistaken assertion.
+- The expanded X11 journey passed in controlled session
+  `a221f2cd237ba988fa8cdb5d90ba9ae9b518b0256e53b1e45421963062743f16`.
+  The equivalent expanded Wayland journey passed in controlled session
+  `83d6bf6fac3da2183992d384b96f90c50237e965b47a736573b329cc52908ca1`.
+  The existing physical X11 Agents-settings journey also passed with persisted
+  caffeination disabled in session
+  `a65abf37114114f68e4fce14262b3c0d7084355a3d6d3a362e08160fc49d06e8`.
+- A later full-matrix rerun passed both new inhibitor cells but exposed an
+  unrelated nested-Wayland bookmark interaction race: focus reached the Save
+  Bookmark control, yet its first physical Return chord was lost before the
+  name dialog mapped. The exact import/export journey passed alone in session
+  `4d0392af83d7e319f41906bcce6772b9798e71059c8ce2924a7a2aa44315edbc`.
+  The harness now repeats the real Return chord at a bounded interval only
+  while the dialog's required focus receipt is absent. This cannot turn absence
+  into a pass: a mapped empty dialog rejects its default Save action, and the
+  journey still requires focus, typed name, persisted export/import, and final
+  product receipts.
+- The next complete run confirmed the failure was concurrency-shaped rather
+  than specific to import/export: that repaired cell passed, while the
+  simultaneously scheduled Wayland management journey lost the same initial
+  Save Bookmark chord at the same boundary. The three isolated Wayland bookmark
+  journeys now share only a `bookmarks-wayland-modal-input` scheduler resource.
+  They remain parallel with unrelated work and the X11 bookmark journeys; only
+  concurrent ownership of this proven-fragile modal virtual-keyboard gesture is
+  prohibited. A matrix contract requires the resource on all three cells.
+- `desktop.agent-sleep-inhibition` is now IMPLEMENTED in the feature inventory.
+  The qualification matrix adds explicit X11 and Wayland PASS cells and a
+  serialized `system-sleep-inhibitor` resource, because concurrent cells must
+  not make assertions against the same real host-wide logind state.
+- The first full qualification attempt reached all support checks, then failed
+  in the matrix scheduler before publishing product results: its serial result
+  collector rebuilt an increasingly large JSON array through `jq --argjson`
+  for every completed cell and crossed Linux `ARG_MAX` at 131 PASS cells. The
+  earlier bounded-file repair protected only final summary composition, not
+  this per-cell accumulation path. The collector now appends one compact JSON
+  object per line and slurps the bounded file once after scheduling. Focused
+  runner governance asserts both the JSON-lines path and the absence of the old
+  accumulated `--argjson` invocation, so further matrix growth cannot silently
+  reintroduce this failure shape.
+
+### Final qualification receipt for this change
+
+- The complete locked Rust workspace passed, including 6 new core policy tests
+  and 3 new Linux backend tests. Formatting, compilation, ShellCheck, feature
+  inventory, matrix negative tests, orchestration, architecture, and ownership
+  contracts also passed.
+- After the JSON-lines collector repair, a fresh
+  `linux/tests/qualify-local` run passed every presently executable support and
+  matrix cell in 657.57 seconds, including all three serialized Wayland
+  bookmark journeys. Declared totals are **131 PASS, 0 FAIL,
+  7 BLOCKED, 2 XFAIL, and 22 NOT_IMPLEMENTED**. The implemented local suite
+  passed; release qualification and full Linux qualification did **not** pass.
+- Debug IBus-focus Valgrind is **PASS with reviewed suppressions**, never an
+  unsuppressed-clean claim. Its preserved raw receipt contains 427 error
+  contexts, 6,160 definite bytes, and 41,428 indirect bytes. The reviewed
+  post-suppression receipt contains zero error contexts and zero definite or
+  indirect bytes. ReleaseSafe Valgrind remains explicit and non-PASS; no
+  suppression was broadened for this slice.
+- Machine-readable receipt:
+  `build/linux/qualification-summary.json`. No release or full-Linux
+  qualification claim is made while the authoritative matrix retains non-PASS
+  cells.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were

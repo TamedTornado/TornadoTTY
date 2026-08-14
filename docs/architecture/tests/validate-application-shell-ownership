@@ -451,6 +451,7 @@ jq -e '
         "remote_paste_coordinator",
         "server_runtime_coordinator",
         "settings_coordinator",
+        "sleep_inhibitor_coordinator",
         "shortcut_coordinator",
         "task_runner_coordinator",
         "existing_ui_projection",

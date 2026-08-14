@@ -210,6 +210,7 @@ ApplicationRuntimeOwner [one per process, GLib UI thread]
 ├── GtkApplication [created only after Ghostty runtime]
 ├── PlatformServicesOwner
 │   └── PlatformTaskOwner* [bounded, cancellable, joined]
+├── AgentSleepInhibitorOwner
 ├── PersistenceCoordinator [workspace lock + pure WorkspaceStore]
 └── WindowOwner* [stable WindowId + strong gtk::ApplicationWindow]
     └── WorklaneOwner* [stable WorklaneId + model projection]
@@ -246,6 +247,7 @@ the pane. A partial native failure unwinds only native/transient children.
 | `ApplicationRuntimeOwner` | Process main owns exactly one from startup through final GLib shutdown | Acquires only the GLib main context, creates Ghostty runtime, then GTK/application and remaining services in the fixed machine-contract order | Delegates the explicit `ShutdownCoordinator` sequence below; ordinary close transitions are disabled once shutdown starts |
 | `GhosttyRuntimeOwner` | Application owner; unique and non-recreatable in a process under the pinned ABI; a counted lease is attached to every native surface GObject | Created after GLib-context acquisition but before `gtk_init`, `GtkApplication`, or any GTK object; safe adapter accepts the full-transfer non-null runtime handle and installs one GLib tick source only after GTK becomes available | Mark closing and remove the tick source after surface shutdown. Never block the UI thread awaiting finalization: native free is deferred until the last surface GObject's qdata destroy notify releases its lease on the GLib UI thread; never attempt recreation |
 | `PlatformServicesOwner` | Application owner | Builds explicit Linux service implementations from validated XDG/config inputs | Stop accepting requests, cancel tasks, collect results, join/reap, release D-Bus/portal resources |
+| `AgentSleepInhibitorOwner` | Application coordinator; exactly one process-wide policy state and systemd-logind lease | Aggregates explicit Running agent phases across every live window; acquires one real `what=sleep`, `mode=block` lease through a private pipe only when the persisted setting is enabled | Cancel a pending debounce and release synchronously when disabled or during shutdown; pipe EOF also releases the lease if the product is killed before ordinary teardown |
 | `PersistenceCoordinator` | Application owner while workspace lock is held | Loads bytes, selects version, migrates in memory, validates, then exposes a pure model | Complete or reject the last atomic save before releasing lock; never save over rejected/corrupt input automatically |
 | `WindowOwner` | Window registry, keyed by stable ID | Creates a strong `gtk::ApplicationWindow`, then projects already-loaded worklanes/panes | User close routes a model close transaction; application shutdown only tears down projections/native objects and MUST NOT remove durable topology |
 | `WorklaneOwner` | One window; valid only while its stable model entry exists in that window | Projects ordered core state; does not become the source of truth | Close/remove its panes before removing the model projection and GTK container |

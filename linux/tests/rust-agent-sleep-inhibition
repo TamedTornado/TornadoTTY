@@ -1,0 +1,271 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
+ghostty_root="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
+backend="${GDK_BACKEND:-}"
+run_root="$(mktemp -d)"
+state_directory="${run_root}/state"
+config_file="${XDG_CONFIG_HOME:?}/zentty/config.toml"
+log="${run_root}/product.log"
+product_pid=""
+lease_pid=""
+
+# shellcheck disable=SC1091
+source "${repo_root}/linux/tests/lib/product-input"
+
+fail() {
+    [[ ! -f "${log}" ]] || cat "${log}" >&2
+    echo "rust-agent-sleep-inhibition: error: $*" >&2
+    exit 1
+}
+
+stop_product() {
+    if [[ "${product_pid}" =~ ^[1-9][0-9]*$ ]]; then
+        kill -TERM "${product_pid}" 2>/dev/null || true
+        wait "${product_pid}" 2>/dev/null || true
+        product_pid=""
+    fi
+}
+
+cleanup() {
+    stop_product
+    rm -rf -- "${run_root}"
+}
+trap cleanup EXIT
+
+case "${backend}" in
+    x11)
+        [[ "${ZENTTY_NESTED_X11_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+            fail "X11 sleep inhibition must run through linux/tests/nested-x11"
+        ;;
+    wayland)
+        [[ "${ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+            fail "Wayland sleep inhibition must run through linux/tests/nested-wayland-input"
+        ;;
+    *) fail "GDK_BACKEND must be x11 or wayland" ;;
+esac
+for dependency in systemd-inhibit grep sed readelf; do
+    command -v "${dependency}" >/dev/null || fail "${dependency} is required"
+done
+[[ -x "${product}" ]] || fail "staged product is missing: ${product}"
+systemd-inhibit --list --no-pager >/dev/null ||
+    fail "the real systemd-logind inhibitor service is unavailable"
+
+layer_runpath="$(
+    readelf -d "${ghostty_root}/zig-out/lib/libghostty-gtk-embed.so" |
+        sed -n 's/.*Library runpath: \[\([^]]*\)\].*/\1/p' |
+        cut -d: -f1
+)"
+[[ "${layer_runpath}" == .zig-cache/* ]] || fail "Ghostty runpath is not pinned"
+layer_directory="${ghostty_root}/${layer_runpath}"
+mkdir -p "${state_directory}" "$(dirname "${config_file}")"
+
+write_config() {
+    local enabled="$1"
+    local temporary="${config_file}.sleep-inhibitor.$$"
+    cat >"${temporary}" <<EOF
+[agent_caffeination]
+enabled = ${enabled}
+
+[confirmations]
+confirm_before_closing_pane = false
+confirm_before_closing_worklane = false
+confirm_before_closing_window = false
+confirm_before_quitting = false
+EOF
+    mv -f -- "${temporary}" "${config_file}"
+}
+
+# Single quotes intentionally defer every expansion to the real PTY child.
+# shellcheck disable=SC2016
+child_command='while IFS= read -r value; do case "$value" in agent-running) event='\''{"version":1,"event":"agent.running","agent":{"name":"Codex"},"session":{"id":"sleep-inhibitor"}}'\'' ;; agent-idle) event='\''{"version":1,"event":"agent.idle","agent":{"name":"Codex"},"session":{"id":"sleep-inhibitor"}}'\'' ;; agent-waiting) event='\''{"version":1,"event":"agent.needs-input","agent":{"name":"Codex"},"session":{"id":"sleep-inhibitor"},"state":{"text":"Waiting","interaction":{"kind":"question","text":"Waiting"}}}'\'' ;; exit-shell) exit 0 ;; *) printf '\''\033]2;%s\a'\'' "$value"; continue ;; esac; printf '\''%s'\'' "$event" | "$ZENTTY_CLI_BIN" ipc agent-event; done'
+
+start_product() {
+    : >"${log}"
+    GDK_SCALE=1 GDK_DPI_SCALE=1 \
+        LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+        "${product}" --command "${child_command}" --state-directory "${state_directory}" \
+        --no-session-restore >"${log}" 2>&1 &
+    product_pid=$!
+    zentty_product_prepare_input "${backend}" "${log}" || fail "physical product input unavailable"
+}
+
+send_agent_state() {
+    zentty_product_type "${backend}" "$1"
+    zentty_product_key "${backend}" Return
+}
+
+capture_lease_pid() {
+    lease_pid="$(
+        sed -n 's/.*sleep-inhibitor state=acquiring pid=\([0-9][0-9]*\).*/\1/p' "${log}" |
+            tail -1
+    )"
+    [[ "${lease_pid}" =~ ^[1-9][0-9]*$ ]] || fail "inhibitor PID receipt missing"
+}
+
+wait_for_real_lease() {
+    local pid="$1"
+    for _ in {1..200}; do
+        if systemd-inhibit --list --no-pager --no-legend |
+            grep -E "Zentty[[:space:]]+.*[[:space:]]${pid}[[:space:]]+systemd-inhibit[[:space:]]+sleep[[:space:]]+Zentty agent is running[[:space:]]+block" >/dev/null; then
+            return 0
+        fi
+        sleep 0.05
+    done
+    return 1
+}
+
+wait_for_lease_release() {
+    local pid="$1"
+    for _ in {1..240}; do
+        if ! systemd-inhibit --list --no-pager --no-legend | grep -Eq "[[:space:]]${pid}[[:space:]]+systemd-inhibit[[:space:]]+sleep"; then
+            return 0
+        fi
+        sleep 0.05
+    done
+    return 1
+}
+
+write_config true
+start_product
+
+# Idle and attention states are explicitly non-qualifying in the source.
+send_agent_state agent-idle
+sleep 0.3
+! grep -Fq 'sleep-inhibitor state=acquiring' "${log}" || fail "idle agent acquired a lease"
+send_agent_state agent-waiting
+sleep 0.3
+! grep -Fq 'sleep-inhibitor state=acquiring' "${log}" || fail "waiting agent acquired a lease"
+
+send_agent_state agent-running
+zentty_product_wait_for_log "${log}" 'sleep-inhibitor state=acquired' \
+    "running agent did not acquire logind sleep inhibition" || fail "acquisition receipt missing"
+capture_lease_pid
+wait_for_real_lease "${lease_pid}" || fail "acquired lease is absent from real logind state"
+
+# A brief idle transition schedules, then cancels, release without replacing the
+# process-global lease.
+send_agent_state agent-idle
+zentty_product_wait_for_log "${log}" 'sleep-inhibitor state=release-pending delay-ms=10000' \
+    "idle did not schedule the source ten-second release" || fail "release debounce missing"
+send_agent_state agent-running
+zentty_product_wait_for_log "${log}" 'sleep-inhibitor state=release-cancelled' \
+    "running work did not cancel pending release" || fail "release cancellation missing"
+[[ "$(grep -Fc 'sleep-inhibitor state=acquiring' "${log}")" -eq 1 ]] ||
+    fail "debounce cancellation reacquired or duplicated the lease"
+wait_for_real_lease "${lease_pid}" || fail "shared lease disappeared during cancellation"
+
+# A sustained idle transition reaches the exact source deadline and releases.
+send_agent_state agent-idle
+zentty_product_wait_for_log_count "${log}" \
+    'sleep-inhibitor state=release-pending delay-ms=10000' 2 \
+    "sustained idle did not schedule release" || fail "second release debounce missing"
+zentty_product_wait_for_log "${log}" \
+    'sleep-inhibitor state=released reason=idle-debounce-complete' \
+    "ten-second idle deadline did not release" || fail "debounced release missing"
+wait_for_lease_release "${lease_pid}" || fail "idle deadline left a real inhibitor"
+send_agent_state agent-running
+zentty_product_wait_for_log_count "${log}" 'sleep-inhibitor state=acquired' 2 \
+    "running after idle release did not reacquire" || fail "post-idle reacquisition missing"
+capture_lease_pid
+wait_for_real_lease "${lease_pid}" || fail "post-idle lease absent from logind"
+
+# Disabling the persisted setting is immediate, not debounced.
+write_config false
+zentty_product_wait_for_log "${log}" 'config-reload result=applied' \
+    "disabled setting did not live reload" || fail "config disable missing"
+zentty_product_wait_for_log "${log}" 'sleep-inhibitor state=released reason=setting-disabled' \
+    "disabled setting did not release immediately" || fail "immediate release missing"
+wait_for_lease_release "${lease_pid}" || fail "disabled setting left a real inhibitor"
+
+# Re-enable while the recognized pane remains running, then prove graceful app
+# shutdown releases independently of the idle debounce.
+write_config true
+zentty_product_wait_for_log_count "${log}" 'config-reload result=applied' 2 \
+    "re-enabled setting did not live reload" || fail "config re-enable missing"
+zentty_product_wait_for_log_count "${log}" 'sleep-inhibitor state=acquired' 3 \
+    "re-enabled running source did not reacquire" || fail "reacquisition missing"
+capture_lease_pid
+wait_for_real_lease "${lease_pid}" || fail "reacquired lease absent from logind"
+zentty_product_close_window "${backend}"
+for _ in {1..200}; do
+    ! kill -0 "${product_pid}" 2>/dev/null && break
+    sleep 0.05
+done
+wait "${product_pid}" || fail "graceful inhibitor journey failed"
+product_pid=""
+wait_for_lease_release "${lease_pid}" || fail "graceful shutdown orphaned the inhibitor"
+
+# Closing a qualifying non-final pane removes only that source and follows the
+# source debounce while the surviving real PTY keeps the window alive.
+start_product
+zentty_product_ctrl_key "${backend}" t
+zentty_product_wait_for_log "${log}" 'terminal-ready-pane=pane-2' \
+    "second real pane was not created" || fail "pane-close setup missing"
+send_agent_state agent-running
+zentty_product_wait_for_log "${log}" 'sleep-inhibitor state=acquired' \
+    "pane-close journey did not acquire" || fail "pane-close acquisition missing"
+capture_lease_pid
+wait_for_real_lease "${lease_pid}" || fail "pane-close lease absent from logind"
+zentty_product_ctrl_shift_key "${backend}" p
+zentty_product_wait_for_log "${log}" 'command-palette=shown' \
+    "pane-close command palette did not open" || fail "pane-close palette missing"
+zentty_product_type "${backend}" 'Close the focused pane'
+zentty_product_wait_for_log "${log}" \
+    'command-palette=query value="Close the focused pane" results=1' \
+    "Close Pane did not resolve uniquely" || fail "pane-close query missing"
+zentty_product_key "${backend}" Down
+zentty_product_key "${backend}" Return
+zentty_product_wait_for_log "${log}" 'action=close-pane pane=pane-2' \
+    "focused qualifying pane did not close" || fail "pane-close action missing"
+zentty_product_wait_for_log "${log}" 'sleep-inhibitor state=release-pending delay-ms=10000' \
+    "closed agent pane remained an inhibitor source" || fail "pane-close release missing"
+zentty_product_wait_for_log "${log}" 'sleep-inhibitor state=released reason=idle-debounce-complete' \
+    "pane-close debounce did not release" || fail "pane-close inhibitor remained"
+wait_for_lease_release "${lease_pid}" || fail "pane close orphaned the inhibitor"
+kill -0 "${product_pid}" || fail "closing the agent pane killed the surviving window"
+zentty_product_close_window "${backend}"
+for _ in {1..200}; do
+    ! kill -0 "${product_pid}" 2>/dev/null && break
+    sleep 0.05
+done
+wait "${product_pid}" || fail "pane-close shutdown journey failed"
+product_pid=""
+
+# A running status cannot keep the machine awake after its real PTY child exits.
+start_product
+send_agent_state agent-running
+zentty_product_wait_for_log "${log}" 'sleep-inhibitor state=acquired' \
+    "child-exit journey did not acquire" || fail "child-exit acquisition missing"
+capture_lease_pid
+wait_for_real_lease "${lease_pid}" || fail "child-exit lease absent from logind"
+zentty_product_type "${backend}" exit-shell
+zentty_product_key "${backend}" Return
+zentty_product_wait_for_log "${log}" 'child-exited-pane=pane-1' \
+    "real PTY child did not exit" || fail "child exit missing"
+zentty_product_wait_for_log "${log}" 'sleep-inhibitor state=released reason=application-shutdown' \
+    "final PTY exit did not release during application shutdown" || fail "child-exit release missing"
+wait_for_lease_release "${lease_pid}" || fail "child exit orphaned the inhibitor"
+for _ in {1..200}; do
+    ! kill -0 "${product_pid}" 2>/dev/null && break
+    sleep 0.05
+done
+wait "${product_pid}" || fail "child-exit shutdown journey failed"
+product_pid=""
+
+# A kernel-closed stdin pipe is the crash cleanup contract: SIGKILL cannot run
+# Rust destructors, but it must still terminate the lease body and release logind.
+start_product
+send_agent_state agent-running
+zentty_product_wait_for_log "${log}" 'sleep-inhibitor state=acquired' \
+    "crash journey did not acquire" || fail "crash acquisition missing"
+capture_lease_pid
+wait_for_real_lease "${lease_pid}" || fail "crash lease absent from logind"
+kill -KILL "${product_pid}"
+wait "${product_pid}" 2>/dev/null || true
+product_pid=""
+wait_for_lease_release "${lease_pid}" || fail "SIGKILL left an orphaned inhibitor"
+
+echo "Rust agent sleep inhibition passed: ${backend}, service=real-systemd-logind, phases=running-only, debounce=10s, disable=immediate, shutdown=graceful+SIGKILL"

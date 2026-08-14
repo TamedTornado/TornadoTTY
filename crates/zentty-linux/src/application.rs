@@ -28,6 +28,8 @@ pub(crate) struct ApplicationCoordinator {
     agent_runtime: Rc<RefCell<AgentRuntime>>,
     attention_inbox: Rc<RefCell<zentty_core::AttentionInbox>>,
     fleet_snapshot: Vec<zentty_core::FleetPaneSnapshot>,
+    sleep_inhibition_state: zentty_core::AgentSleepInhibitionState,
+    sleep_inhibitor: crate::sleep_inhibitor::SystemdSleepInhibitor,
     command: Option<String>,
     config: AppConfig,
     config_reload: ConfigReloadAuthority,
@@ -75,11 +77,29 @@ impl ApplicationCoordinator {
         agent_runtime
             .borrow_mut()
             .set_agent_integrations(config.agent_integrations.states.clone());
+        let sleep_inhibitor_capability =
+            crate::sleep_inhibitor::SleepInhibitorCapability::discover();
+        eprintln!(
+            "zentty-linux: sleep-inhibitor capability={} executable={}",
+            if sleep_inhibitor_capability.available() {
+                "available"
+            } else {
+                "unavailable"
+            },
+            sleep_inhibitor_capability
+                .executable
+                .as_deref()
+                .map_or_else(|| "none".to_owned(), |path| path.display().to_string())
+        );
         let coordinator = Rc::new(RefCell::new(Self {
             runtime: runtime.clone(),
             agent_runtime,
             attention_inbox: Rc::new(RefCell::new(zentty_core::AttentionInbox::default())),
             fleet_snapshot: Vec::new(),
+            sleep_inhibition_state: zentty_core::AgentSleepInhibitionState::default(),
+            sleep_inhibitor: crate::sleep_inhibitor::SystemdSleepInhibitor::new(
+                sleep_inhibitor_capability,
+            ),
             command,
             config,
             config_reload: ConfigReloadAuthority::new(config_snapshot),
@@ -493,6 +513,12 @@ impl ApplicationCoordinator {
                 refresh_attention = true;
                 eprintln!("zentty-linux: attention-clear");
             }
+            crate::application_shell::ApplicationAction::AgentCaffeinationChanged(enabled) => {
+                coordinator.borrow_mut().config.agent_caffeination.enabled = enabled;
+                eprintln!(
+                    "zentty-linux: sleep-inhibitor setting-enabled={enabled} source=agents-settings"
+                );
+            }
         }
         if refresh_attention {
             for shell in coordinator.borrow().shells.values() {
@@ -898,6 +924,16 @@ impl ApplicationCoordinator {
             )
             .collect::<Vec<_>>();
         let snapshot = zentty_core::build_fleet_snapshots(&sources);
+        let has_running_agent = owned_sources.iter().any(|(_, _, worklanes)| {
+            worklanes.iter().any(|worklane| {
+                worklane.pane_rows.iter().any(|pane| {
+                    pane.agent_status
+                        .as_ref()
+                        .is_some_and(|status| status.phase == zentty_core::AgentPhase::Running)
+                })
+            })
+        });
+        self.refresh_sleep_inhibitor(has_running_agent);
         if snapshot == self.fleet_snapshot {
             return;
         }
@@ -910,6 +946,49 @@ impl ApplicationCoordinator {
             shell.borrow().refresh_fleet(&snapshot);
         }
         self.fleet_snapshot = snapshot;
+    }
+
+    fn refresh_sleep_inhibitor(&mut self, has_running_agent: bool) {
+        let enabled = self.config.agent_caffeination.enabled;
+        let previous_deadline = self.sleep_inhibition_state.release_deadline_ms();
+        let transition =
+            self.sleep_inhibition_state
+                .update(enabled, has_running_agent, monotonic_time_ms());
+        let current_deadline = self.sleep_inhibition_state.release_deadline_ms();
+        if previous_deadline.is_none() && current_deadline.is_some() {
+            eprintln!("zentty-linux: sleep-inhibitor state=release-pending delay-ms=10000");
+        } else if previous_deadline.is_some()
+            && current_deadline.is_none()
+            && transition == zentty_core::SleepInhibitionTransition::None
+            && enabled
+            && has_running_agent
+        {
+            eprintln!("zentty-linux: sleep-inhibitor state=release-cancelled");
+        }
+        match transition {
+            zentty_core::SleepInhibitionTransition::Acquire => {
+                if let Err(error) = self.sleep_inhibitor.acquire() {
+                    eprintln!(
+                        "zentty-linux: sleep-inhibitor state=failed detail={}",
+                        sanitize_log_field(&error)
+                    );
+                    self.sleep_inhibition_state
+                        .mark_backend_lost(enabled && has_running_agent);
+                }
+            }
+            zentty_core::SleepInhibitionTransition::Release => {
+                self.sleep_inhibitor.release(if enabled {
+                    "idle-debounce-complete"
+                } else {
+                    "setting-disabled"
+                })
+            }
+            zentty_core::SleepInhibitionTransition::None => {}
+        }
+        if self.sleep_inhibitor.poll() == crate::sleep_inhibitor::LeasePoll::Lost {
+            self.sleep_inhibition_state
+                .mark_backend_lost(enabled && has_running_agent);
+        }
     }
 
     fn route_server_commands(
@@ -966,6 +1045,8 @@ impl ApplicationCoordinator {
     }
 
     pub(crate) fn finish(&mut self) -> Result<ApplicationCycleResult, String> {
+        let _ = self.sleep_inhibition_state.force_release();
+        self.sleep_inhibitor.release("application-shutdown");
         if let Some(error) = self.terminal_error.take() {
             let _ = self.shutdown_all();
             return Err(error);
@@ -990,6 +1071,24 @@ fn current_time_ms() -> u64 {
         .map_or(0, |duration| {
             u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
         })
+}
+
+fn monotonic_time_ms() -> u64 {
+    u64::try_from(glib::monotonic_time().max(0) / 1_000).unwrap_or(u64::MAX)
+}
+
+fn sanitize_log_field(value: &str) -> String {
+    value
+        .chars()
+        .map(|character| {
+            if character.is_control() {
+                ' '
+            } else {
+                character
+            }
+        })
+        .take(512)
+        .collect()
 }
 
 fn is_wayland_display() -> bool {

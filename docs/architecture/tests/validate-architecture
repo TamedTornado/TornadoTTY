@@ -108,6 +108,7 @@ jq -e --arg ghostty_revision "${ghostty_revision}" '
     ([
         "ApplicationRuntimeOwner",
         "AgentIpcServerOwner",
+        "AgentSleepInhibitorOwner",
         "GhosttyRuntimeOwner",
         "PlatformServicesOwner",
         "PersistenceCoordinator",
@@ -140,6 +141,7 @@ jq -e --arg ghostty_revision "${ghostty_revision}" '
         "atomically-save-frozen-snapshot",
         "destroy-terminal-instances-without-pane-record-close-mutations",
         "stop-agent-ipc-server-and-remove-private-runtime-directory",
+        "release-agent-sleep-inhibitor",
         "destroy-gtk-windows-and-application",
         "free-ghostty-runtime-after-all-native-surface-references-finalize",
         "release-glib-main-context"

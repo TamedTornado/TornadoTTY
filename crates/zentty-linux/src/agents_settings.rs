@@ -59,11 +59,14 @@ pub(crate) fn build(
     available_wrappers: &BTreeSet<String>,
     apply: ApplyAgents,
 ) -> gtk::Widget {
+    let caffeination_available =
+        crate::sleep_inhibitor::SleepInhibitorCapability::discover().available();
     eprintln!(
-        "zentty-linux: agent-settings loaded teams={} wrappers-available={} source-unavailable={} status-item-available=false caffeination-available=false",
+        "zentty-linux: agent-settings loaded teams={} wrappers-available={} source-unavailable={} status-item-available=false caffeination-available={}",
         teams.enabled,
         available_wrappers.len(),
         UNAVAILABLE_PERSISTENT.len() + UNAVAILABLE_EPHEMERAL.len(),
+        caffeination_available,
     );
     let root = gtk::Box::new(gtk::Orientation::Vertical, 16);
     root.set_margin_top(28);
@@ -109,11 +112,21 @@ pub(crate) fn build(
         "Unavailable on Linux until a reviewed status-item backend is implemented.",
         "settings-agents-status-item",
     ));
-    behavior.append(&unavailable_row(
-        "Prevent sleep while agents run",
-        caffeination.enabled,
-        "Unavailable on Linux until the desktop sleep-inhibitor lifecycle is qualified.",
-        "settings-agents-caffeination",
+    let caffeination_switch = gtk::Switch::builder()
+        .active(caffeination.enabled)
+        .sensitive(caffeination_available)
+        .valign(gtk::Align::Center)
+        .build();
+    caffeination_switch.set_widget_name("settings-agents-caffeination");
+    instrument_focus(&caffeination_switch, "caffeination");
+    behavior.append(&setting_row(
+        "Prevent _sleep while agents run",
+        if caffeination_available {
+            "Block system sleep while a recognized agent is running. The display may still sleep."
+        } else {
+            "Unavailable: systemd-logind's inhibitor interface was not found. Requested state is retained."
+        },
+        &caffeination_switch,
     ));
     root.append(&behavior);
 
@@ -191,6 +204,15 @@ pub(crate) fn build(
                 return;
             }
             apply_teams(&state, control);
+        });
+    }
+    {
+        let state = Rc::clone(&state);
+        caffeination_switch.connect_active_notify(move |control| {
+            if state.borrow().updating.get() {
+                return;
+            }
+            apply_caffeination(&state, control);
         });
     }
 
@@ -275,6 +297,40 @@ fn apply_teams(state: &Rc<RefCell<State>>, control: &gtk::Switch) {
         Err(error) => {
             rollback_switch(state, control, accepted.enabled);
             report_error(state, "teams", &error);
+        }
+    }
+}
+
+fn apply_caffeination(state: &Rc<RefCell<State>>, control: &gtk::Switch) {
+    let (teams, accepted, menu_bar, integrations, apply) = {
+        let state = state.borrow();
+        (
+            state.teams,
+            state.caffeination,
+            state.menu_bar,
+            state.integrations.clone(),
+            Rc::clone(&state.apply),
+        )
+    };
+    let requested = AgentCaffeinationConfig {
+        enabled: control.is_active(),
+    };
+    if !has_changed(&accepted, &requested) {
+        return;
+    }
+    match apply(teams, requested, menu_bar, integrations) {
+        Ok(()) => {
+            let mut state = state.borrow_mut();
+            state.caffeination = requested;
+            state.status.set_text("");
+            eprintln!(
+                "zentty-linux: agent-settings control=caffeination enabled={} result=applied",
+                requested.enabled
+            );
+        }
+        Err(error) => {
+            rollback_switch(state, control, accepted.enabled);
+            report_error(state, "caffeination", &error);
         }
     }
 }

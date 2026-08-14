@@ -5,6 +5,7 @@ mod agent_consent;
 mod agent_fleet;
 mod agent_launch;
 mod agent_protocol;
+mod agent_sleep_inhibition;
 mod agent_status;
 mod app_config;
 mod appearance;
@@ -45,6 +46,7 @@ pub use agent_launch::{
     build_gemini_settings,
 };
 pub use agent_protocol::{AgentEvent, AgentInteractionKind, AgentProtocolError};
+pub use agent_sleep_inhibition::{AgentSleepInhibitionState, SleepInhibitionTransition};
 pub use agent_status::{
     AgentPhase, AgentProgress, AgentStatusStore, PaneAgentStatus, TerminalProgressState,
 };

@@ -174,6 +174,7 @@
   "long_lived_owners": [
     "ApplicationRuntimeOwner",
     "AgentIpcServerOwner",
+    "AgentSleepInhibitorOwner",
     "GhosttyRuntimeOwner",
     "PlatformServicesOwner",
     "PersistenceCoordinator",
@@ -207,6 +208,7 @@
       "atomically-save-frozen-snapshot",
       "destroy-terminal-instances-without-pane-record-close-mutations",
       "stop-agent-ipc-server-and-remove-private-runtime-directory",
+      "release-agent-sleep-inhibitor",
       "destroy-gtk-windows-and-application",
       "free-ghostty-runtime-after-all-native-surface-references-finalize",
       "release-glib-main-context"
@@ -823,7 +825,7 @@
       "async_backend": "n/a",
       "terminals": "n/a",
       "tracking": "GH-20",
-      "defect": "GH-36 and the page-owned GH-37/GH-38/GH-40/GH-41 settings scopes are implemented and qualified through their explicit matrix cells. The aggregate settings contract remains incomplete because the Agents page accurately exposes, but does not fabricate, runtime capabilities owned elsewhere: persistent and remaining ephemeral integration authorities are tracked by GH-7, while fleet/status-item presentation and sleep inhibition are tracked by GH-21. Those unavailable controls are preserved and tested, not converted into a platform pass.",
+      "defect": "GH-36 and the page-owned GH-37/GH-38/GH-40/GH-41 settings scopes, fleet presentation, and agent sleep inhibition are implemented and qualified through explicit matrix cells. The aggregate settings contract remains incomplete because the Agents page accurately exposes, but does not fabricate, runtime capabilities owned elsewhere: persistent and remaining ephemeral integration authorities are tracked by GH-7, while optional status-item presentation remains tracked by GH-21. That unavailable control is preserved and tested, not converted into a platform pass.",
       "authoritative": false
     },
     {

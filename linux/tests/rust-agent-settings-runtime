@@ -126,7 +126,7 @@ zentty_product_wait_for_log "${log}" \
     'agent-settings loaded teams=true wrappers-available=' \
     "Agents page did not report its exact source/platform inventory" || fail "settings inventory missing"
 grep -F 'agent-settings loaded teams=true wrappers-available=' "${log}" |
-    grep -Fq 'source-unavailable=13 status-item-available=false caffeination-available=false' ||
+    grep -Fq 'source-unavailable=13 status-item-available=false caffeination-available=true' ||
     fail "Agents page silently dropped source or platform inventory"
 grep -Fq 'agent-settings integration=codex requested=on observed=wrapper-ready class=ephemeral' "${log}" ||
     fail "Agents page did not distinguish requested Codex state from observed wrapper readiness"
@@ -162,6 +162,19 @@ if [[ "${backend}" == x11 ]]; then
     settings_width="$(xdotool getwindowgeometry --shell "${settings_window_id}" | sed -n 's/^WIDTH=//p')"
     [[ "${settings_width}" =~ ^[1-9][0-9]*$ ]] || fail "Agents settings width was unavailable"
     switch_x="$((settings_width - 65))"
+
+    # The Linux inhibitor is a real page-owned setting, not a disabled source
+    # placeholder. Exercise its native mnemonic and persisted config boundary.
+    caffeination_before="$(grep -Fc 'agent-settings control=caffeination enabled=false result=applied' "${log}" || true)"
+    xdotool key --window "${settings_window_id}" alt+s
+    for _ in $(seq 1 100); do
+        (( $(grep -Fc 'agent-settings control=caffeination enabled=false result=applied' "${log}" || true) > caffeination_before )) && break
+        sleep 0.05
+    done
+    (( $(grep -Fc 'agent-settings control=caffeination enabled=false result=applied' "${log}" || true) > caffeination_before )) ||
+        fail "Agents sleep-inhibition mnemonic did not activate the native switch"
+    grep -A1 -Fx '[agent_caffeination]' "${config}" | grep -Fq 'enabled = false' ||
+        fail "sleep-inhibition disabled state was not persisted"
 
     # A malformed externally edited document is retained as last-good by the
     # watcher, but a settings write must still fail transactionally rather than

@@ -122,6 +122,7 @@ pub(crate) enum ApplicationAction {
     ActivateFleetPane(zentty_core::AttentionTarget),
     DismissAttention(u64),
     ClearAttention,
+    AgentCaffeinationChanged(bool),
 }
 
 pub(crate) struct ApplicationShell {
@@ -1852,6 +1853,9 @@ impl ApplicationShell {
         self.config.agent_caffeination = caffeination;
         self.config.menu_bar = menu_bar;
         self.config.agent_integrations = integrations;
+        self.request_application_action(ApplicationAction::AgentCaffeinationChanged(
+            caffeination.enabled,
+        ));
         eprintln!(
             "zentty-linux: agent-settings result=persisted path={} teams={} new-panes-only=true",
             path.display(),
