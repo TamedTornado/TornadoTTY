@@ -13,7 +13,7 @@ struct ChromeControlSpec {
     enabled: bool,
 }
 
-const CHROME_CONTROLS: [ChromeControlSpec; 5] = [
+const CHROME_CONTROLS: [ChromeControlSpec; 6] = [
     ChromeControlSpec {
         id: "toggle-sidebar",
         label: source_ui::TOGGLE_SIDEBAR,
@@ -44,6 +44,12 @@ const CHROME_CONTROLS: [ChromeControlSpec; 5] = [
         icon: "preferences-system-notifications-symbolic",
         enabled: true,
     },
+    ChromeControlSpec {
+        id: "agent-status",
+        label: source_ui::AGENT_STATUS,
+        icon: "system-run-symbolic",
+        enabled: true,
+    },
 ];
 
 pub(crate) struct WindowChrome {
@@ -59,6 +65,9 @@ pub(crate) struct WindowChrome {
     notifications: gtk::MenuButton,
     notification_badge: gtk::Label,
     rendered_attention: RefCell<Vec<zentty_core::AttentionItem>>,
+    fleet: gtk::MenuButton,
+    fleet_indicator: gtk::Box,
+    rendered_fleet: RefCell<Vec<zentty_core::FleetPaneSnapshot>>,
     open_with_primary: gtk::Button,
     open_with_menu: gtk::MenuButton,
 }
@@ -91,6 +100,8 @@ impl WindowChrome {
         let (notifications, notification_badge) = notification_control();
         notifications.set_margin_start(4);
         leading.append(&notifications);
+        let (fleet, fleet_indicator) = fleet_control();
+        leading.append(&fleet);
 
         let context = gtk::Label::new(None);
         context.add_css_class("zentty-window-context");
@@ -169,6 +180,9 @@ impl WindowChrome {
             notifications,
             notification_badge,
             rendered_attention: RefCell::new(Vec::new()),
+            fleet,
+            fleet_indicator,
+            rendered_fleet: RefCell::new(Vec::new()),
             open_with_primary,
             open_with_menu,
         }
@@ -246,6 +260,35 @@ impl WindowChrome {
             format!("Notification Inbox · {count} unresolved")
         }));
         self.rendered_attention.replace(items.to_vec());
+    }
+
+    pub(crate) fn render_fleet(&self, snapshots: &[zentty_core::FleetPaneSnapshot]) {
+        if self.rendered_fleet.borrow().as_slice() == snapshots {
+            return;
+        }
+        let summary = zentty_core::FleetSummary::from_snapshots(snapshots);
+        crate::agent_fleet::update_indicator(&self.fleet_indicator, summary);
+        self.fleet
+            .set_popover(Some(&crate::agent_fleet::popover(snapshots)));
+        self.fleet.set_tooltip_text(Some(&summary.header()));
+        self.fleet
+            .update_property(&[gtk::accessible::Property::Label(
+                &summary.accessibility_label(),
+            )]);
+        self.rendered_fleet.replace(snapshots.to_vec());
+    }
+
+    pub(crate) fn show_fleet(&self) {
+        self.fleet.popup();
+    }
+
+    pub(crate) fn fleet_snapshot(&self) -> Vec<zentty_core::FleetPaneSnapshot> {
+        self.rendered_fleet.borrow().clone()
+    }
+
+    pub(crate) fn dismiss_status_popovers(&self) {
+        self.notifications.popdown();
+        self.fleet.popdown();
     }
 
     pub(crate) fn render(
@@ -353,6 +396,21 @@ fn notification_control() -> (gtk::MenuButton, gtk::Label) {
         );
     });
     (button, badge)
+}
+
+fn fleet_control() -> (gtk::MenuButton, gtk::Box) {
+    let button = gtk::MenuButton::new();
+    configure_menu_button(&button, CHROME_CONTROLS[5]);
+    let (content, indicator) = crate::agent_fleet::button_content();
+    button.set_child(Some(&content));
+    button.set_popover(Some(&crate::agent_fleet::popover(&[])));
+    button.connect_active_notify(|button| {
+        eprintln!(
+            "zentty-linux: chrome-popover=agent-fleet state={}",
+            if button.is_active() { "open" } else { "closed" }
+        );
+    });
+    (button, indicator)
 }
 
 fn navigation_controls() -> (gtk::Button, gtk::Button) {
@@ -557,6 +615,7 @@ mod tests {
                 ("back", source_ui::NAVIGATE_BACK, false),
                 ("forward", source_ui::NAVIGATE_FORWARD, false),
                 ("notifications", source_ui::NOTIFICATIONS, true),
+                ("agent-status", source_ui::AGENT_STATUS, true),
             ]
         );
         assert!(

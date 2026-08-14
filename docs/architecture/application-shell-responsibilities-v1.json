@@ -76,6 +76,13 @@
       "responsibility": "One process-wide bounded attention history and typed cross-window routing authority. ApplicationCoordinator owns target activation and resolution; each shell only reconciles its live pane projection and renders the shared GTK inbox."
     },
     {
+      "id": "fleet_coordinator",
+      "status": "existing",
+      "planned_module": "crates/zentty-core/src/agent_fleet.rs, crates/zentty-linux/src/agent_fleet.rs, and crates/zentty-linux/src/application.rs",
+      "tracking": "GH-21",
+      "responsibility": "One process-wide projection of explicit agent panes across every live window. The core owns source-derived ranking and labels; ApplicationCoordinator owns aggregation and exact-window routing; each shell renders the same nonmodal GTK fleet view."
+    },
+    {
       "id": "global_search_coordinator",
       "status": "existing",
       "planned_module": "crates/zentty-linux/src/application_shell/global_search.rs",
@@ -163,7 +170,7 @@
   "field_assignments": [
     {
       "owner": "application_runtime",
-      "fields": ["new_window_handler", "move_pane_to_new_window_handler", "close_window_handler", "quit_handler", "show_task_manager_handler", "attention_action_handler"]
+      "fields": ["new_window_handler", "move_pane_to_new_window_handler", "close_window_handler", "quit_handler", "show_task_manager_handler", "application_action_handler"]
     },
     {
       "owner": "application_shell",
@@ -243,16 +250,20 @@
     {
       "owner": "attention_coordinator",
       "methods": [
-        "request_attention_action", "request_latest_attention", "activate_attention_target",
+        "request_application_action", "request_latest_attention", "activate_attention_target",
         "refresh_attention_inbox", "reconcile_attention"
       ]
+    },
+    {
+      "owner": "fleet_coordinator",
+      "methods": ["refresh_fleet", "show_agent_fleet", "fleet_source", "command_palette_fleet_items"]
     },
     {
       "owner": "application_runtime",
       "methods": [
         "set_application_handlers", "request_new_window",
         "request_move_pane_to_new_window", "request_close_window", "request_quit",
-        "request_show_task_manager", "task_manager_pane_sources",
+        "request_show_task_manager", "task_manager_pane_sources", "settle_active_window_focus",
         "focus_task_manager_pane", "close_task_manager_pane"
       ]
     },
@@ -351,7 +362,7 @@
     "action_router": [
       "accepts", "enabled", "install", "uninstall", "refresh_availability",
       "populate", "install_application_actions", "install_edit_actions", "install_worklane_edit_actions",
-      "install_primary_ui_actions", "install_attention_actions", "install_settings_shortcut_actions",
+      "install_primary_ui_actions", "install_attention_actions", "install_fleet_actions", "install_settings_shortcut_actions",
       "install_worklane_move_actions", "install_pane_rename_action",
       "install_pane_transfer_action", "install_pane_creation_actions",
       "install_restore_closed_pane_action", "install_clipboard_actions", "install_search_actions", "install_server_actions", "install_task_runner_action", "install_project_context_actions",
@@ -465,6 +476,9 @@
     {"name":"activate-attention","parameter":"string_triple","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"dismiss-attention","parameter":"u64","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"clear-attention","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"activate-fleet-pane","parameter":"string_triple","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"show-agent-fleet","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"quit-application","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"new-worklane","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"select-worklane","parameter":"string","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"split-pane-right","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},

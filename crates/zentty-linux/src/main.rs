@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+mod agent_fleet;
 mod agent_runtime;
 mod agent_status_view;
 mod agents_settings;

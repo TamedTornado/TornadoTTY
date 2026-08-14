@@ -1158,20 +1158,22 @@ while (( ${#pending_cells[@]} > 0 || ${#active_pid_ids[@]} > 0 )); do
     fi
 done
 
-results="$(jq -cn --argjson matrix "$(jq -c . "${matrix}")" --argjson results "${results}" '
+raw_results_path="${cell_results_directory}/all-results.json"
+printf '%s\n' "${results}" >"${raw_results_path}"
+results="$(jq -cn --slurpfile matrix "${matrix}" --slurpfile results "${raw_results_path}" '
     def dependencies($cell):
       (
-        (if $matrix.execution_graph.root_prerequisite != $cell.id
-         then [$matrix.execution_graph.root_prerequisite] else [] end) +
+        (if $matrix[0].execution_graph.root_prerequisite != $cell.id
+         then [$matrix[0].execution_graph.root_prerequisite] else [] end) +
         ($cell.depends_on // []) +
         (if ($cell.skip_profile_prerequisite // false) != true and
-            $matrix.execution_graph.profile_prerequisites[$cell.optimize]? != null and
-            $matrix.execution_graph.profile_prerequisites[$cell.optimize] != $cell.id
-         then [$matrix.execution_graph.profile_prerequisites[$cell.optimize]]
+            $matrix[0].execution_graph.profile_prerequisites[$cell.optimize]? != null and
+            $matrix[0].execution_graph.profile_prerequisites[$cell.optimize] != $cell.id
+         then [$matrix[0].execution_graph.profile_prerequisites[$cell.optimize]]
          else [] end)
       ) | unique;
-    $matrix.cells as $cells |
-    $results |
+    $matrix[0].cells as $cells |
+    $results[0] |
     map(. as $result | ($cells | map(select(.id == $result.id))[0]) as $cell |
       . + {schedule:{dependencies:dependencies($cell),resources:($cell.resources // [])}}) |
     sort_by(. as $result |

@@ -14,6 +14,10 @@ pub enum CommandPaletteTarget {
         action: &'static str,
         parameter: String,
     },
+    TripleParameterizedAction {
+        action: &'static str,
+        parameters: (String, String, String),
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -83,6 +87,26 @@ impl CommandPaletteItem {
                 action,
                 parameter: parameter.into(),
             },
+            enabled: true,
+        }
+    }
+
+    #[must_use]
+    pub fn triple_parameterized_action(
+        title: impl Into<String>,
+        subtitle: impl Into<String>,
+        keywords: &str,
+        action: &'static str,
+        parameters: (String, String, String),
+    ) -> Self {
+        let title = title.into();
+        let subtitle = subtitle.into();
+        Self {
+            search_text: normalize(&format!("{title} {subtitle} {keywords}")),
+            title,
+            subtitle,
+            group: CommandPaletteGroup::Action,
+            target: CommandPaletteTarget::TripleParameterizedAction { action, parameters },
             enabled: true,
         }
     }
@@ -265,5 +289,24 @@ mod tests {
                 parameter: "http://localhost:5173".into(),
             }
         );
+    }
+
+    #[test]
+    fn triple_parameterized_action_preserves_exact_cross_window_identity() {
+        let item = CommandPaletteItem::triple_parameterized_action(
+            "Focus Claude Code",
+            "Requires approval · project",
+            "agent fleet",
+            "activate-fleet-pane",
+            ("window-2".into(), "worklane-3".into(), "pane-7".into()),
+        );
+        assert_eq!(
+            item.target,
+            CommandPaletteTarget::TripleParameterizedAction {
+                action: "activate-fleet-pane",
+                parameters: ("window-2".into(), "worklane-3".into(), "pane-7".into()),
+            }
+        );
+        assert!(item.search_text.contains("agent fleet"));
     }
 }

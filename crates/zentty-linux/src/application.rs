@@ -27,6 +27,7 @@ pub(crate) struct ApplicationCoordinator {
     runtime: GhosttyRuntime,
     agent_runtime: Rc<RefCell<AgentRuntime>>,
     attention_inbox: Rc<RefCell<zentty_core::AttentionInbox>>,
+    fleet_snapshot: Vec<zentty_core::FleetPaneSnapshot>,
     command: Option<String>,
     config: AppConfig,
     config_reload: ConfigReloadAuthority,
@@ -78,6 +79,7 @@ impl ApplicationCoordinator {
             runtime: runtime.clone(),
             agent_runtime,
             attention_inbox: Rc::new(RefCell::new(zentty_core::AttentionInbox::default())),
+            fleet_snapshot: Vec::new(),
             command,
             config,
             config_reload: ConfigReloadAuthority::new(config_snapshot),
@@ -348,17 +350,18 @@ impl ApplicationCoordinator {
                 }
             });
         });
-        let attention_action_handler = Self::attention_action_handler(coordinator);
+        let application_action_handler = Self::application_action_handler(coordinator, &id);
         shell.borrow_mut().set_application_handlers(
             new_window_handler,
             move_pane_to_new_window_handler,
             show_task_manager_handler,
             close_window_handler,
             quit_handler,
-            attention_action_handler,
+            application_action_handler,
         );
 
         let weak = Rc::downgrade(coordinator);
+        let weak_shell = Rc::downgrade(&shell);
         let active_id = id.to_owned();
         let teardown_active = Rc::clone(&coordinator.borrow().teardown_active);
         shell
@@ -367,6 +370,9 @@ impl ApplicationCoordinator {
             .connect_is_active_notify(move |window| {
                 if teardown_active.get() || !window.is_active() {
                     return;
+                }
+                if let Some(shell) = weak_shell.upgrade() {
+                    shell.borrow().settle_active_window_focus();
                 }
                 if let Some(coordinator) = weak.upgrade()
                     && coordinator.borrow_mut().window_set.mark_active(&active_id)
@@ -402,37 +408,47 @@ impl ApplicationCoordinator {
         });
     }
 
-    fn attention_action_handler(
+    fn application_action_handler(
         coordinator: &Rc<RefCell<Self>>,
-    ) -> Rc<dyn Fn(crate::application_shell::AttentionAction)> {
+        source_window_id: &str,
+    ) -> Rc<dyn Fn(crate::application_shell::ApplicationAction)> {
         let weak = Rc::downgrade(coordinator);
+        let source_window_id = source_window_id.to_owned();
         Rc::new(move |action| {
+            let cross_window_activation = match &action {
+                crate::application_shell::ApplicationAction::ActivateFleetPane(target) => {
+                    target.window_id != source_window_id
+                }
+                _ => false,
+            };
+            if cross_window_activation {
+                if let Some(coordinator) = weak.upgrade() {
+                    Self::handle_application_action(&coordinator, action);
+                }
+                return;
+            }
             let weak = weak.clone();
             glib::idle_add_local_once(move || {
                 let Some(coordinator) = weak.upgrade() else {
                     return;
                 };
-                Self::handle_attention_action(&coordinator, action);
+                Self::handle_application_action(&coordinator, action);
             });
         })
     }
 
-    fn handle_attention_action(
+    fn handle_application_action(
         coordinator: &Rc<RefCell<Self>>,
-        action: crate::application_shell::AttentionAction,
+        action: crate::application_shell::ApplicationAction,
     ) {
+        let mut refresh_attention = false;
         match action {
-            crate::application_shell::AttentionAction::Activate(target) => {
+            crate::application_shell::ApplicationAction::ActivateAttention(target) => {
                 let shell = coordinator.borrow().shells.get(&target.window_id).cloned();
                 let activated = shell
                     .as_ref()
                     .is_some_and(|shell| shell.borrow_mut().activate_attention_target(&target));
                 if activated {
-                    coordinator
-                        .borrow()
-                        .attention_inbox
-                        .borrow_mut()
-                        .resolve_target(&target, current_time_ms());
                     eprintln!(
                         "zentty-linux: attention-activate window={} worklane={} pane={} result=focused",
                         target.window_id, target.worklane_id, target.pane_id
@@ -443,27 +459,45 @@ impl ApplicationCoordinator {
                         .attention_inbox
                         .borrow_mut()
                         .resolve_target(&target, current_time_ms());
+                    refresh_attention = true;
                     eprintln!(
                         "zentty-linux: attention-activate window={} worklane={} pane={} result=stale",
                         target.window_id, target.worklane_id, target.pane_id
                     );
                 }
             }
-            crate::application_shell::AttentionAction::Dismiss(id) => {
+            crate::application_shell::ApplicationAction::ActivateFleetPane(target) => {
+                let shell = coordinator.borrow().shells.get(&target.window_id).cloned();
+                let activated = shell
+                    .as_ref()
+                    .is_some_and(|shell| shell.borrow_mut().activate_attention_target(&target));
+                eprintln!(
+                    "zentty-linux: fleet-activate window={} worklane={} pane={} result={}",
+                    target.window_id,
+                    target.worklane_id,
+                    target.pane_id,
+                    if activated { "targeted" } else { "stale" }
+                );
+            }
+            crate::application_shell::ApplicationAction::DismissAttention(id) => {
                 coordinator
                     .borrow()
                     .attention_inbox
                     .borrow_mut()
                     .dismiss(id);
+                refresh_attention = true;
                 eprintln!("zentty-linux: attention-dismiss id={id}");
             }
-            crate::application_shell::AttentionAction::Clear => {
+            crate::application_shell::ApplicationAction::ClearAttention => {
                 coordinator.borrow().attention_inbox.borrow_mut().clear();
+                refresh_attention = true;
                 eprintln!("zentty-linux: attention-clear");
             }
         }
-        for shell in coordinator.borrow().shells.values() {
-            shell.borrow().refresh_attention_inbox();
+        if refresh_attention {
+            for shell in coordinator.borrow().shells.values() {
+                shell.borrow().refresh_attention_inbox();
+            }
         }
     }
 
@@ -843,7 +877,39 @@ impl ApplicationCoordinator {
         for shell in self.shells.values() {
             shell.borrow().refresh_attention_inbox();
         }
+        self.refresh_fleet();
         self.runtime.tick().map_err(|error| error.to_string())
+    }
+
+    fn refresh_fleet(&mut self) {
+        let owned_sources = self
+            .shells
+            .values()
+            .map(|shell| shell.borrow().fleet_source())
+            .collect::<Vec<_>>();
+        let sources = owned_sources
+            .iter()
+            .map(
+                |(window_id, window_title, worklanes)| zentty_core::FleetWindowSource {
+                    window_id,
+                    window_title,
+                    worklanes,
+                },
+            )
+            .collect::<Vec<_>>();
+        let snapshot = zentty_core::build_fleet_snapshots(&sources);
+        if snapshot == self.fleet_snapshot {
+            return;
+        }
+        eprintln!(
+            "zentty-linux: fleet-refresh windows={} agents={}",
+            owned_sources.len(),
+            snapshot.len()
+        );
+        for shell in self.shells.values() {
+            shell.borrow().refresh_fleet(&snapshot);
+        }
+        self.fleet_snapshot = snapshot;
     }
 
     fn route_server_commands(

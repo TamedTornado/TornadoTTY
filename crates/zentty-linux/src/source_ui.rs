@@ -8,6 +8,7 @@ pub(crate) const ARRANGE_PANES: &str = "Arrange panes";
 pub(crate) const NAVIGATE_BACK: &str = "Navigate Back";
 pub(crate) const NAVIGATE_FORWARD: &str = "Navigate Forward";
 pub(crate) const NOTIFICATIONS: &str = "Notifications";
+pub(crate) const AGENT_STATUS: &str = "Agent Status";
 pub(crate) const OPEN_WITH: &str = "Open With";
 pub(crate) const SHOW_OPEN_WITH_MENU: &str = "Show Open With menu";
 

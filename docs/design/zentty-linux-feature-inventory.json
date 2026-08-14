@@ -527,11 +527,11 @@
       "origin": "PORT_PARITY",
       "user_impact": "Cross-window agent visibility is lost if Linux treats the macOS menu-bar implementation as having no user outcome.",
       "linux_owner_issue": 21,
-      "implementation_status": "NOT_IMPLEMENTED",
-      "focused_tests": [],
-      "product_scenarios": [],
-      "test_plan": "Populate multiple real windows with agent states, inspect priority and actions in the in-app fleet surface and a controlled status notifier, then exercise stale/malformed/window-close cases and mutate summary precedence.",
-      "alternative_or_blocker": "Provide an accessible in-window fleet status on every Linux desktop and optionally StatusNotifierItem integration where the desktop supports it; do not require a GNOME extension."
+      "implementation_status": "PARTIAL",
+      "focused_tests": ["crates/zentty-core/tests/agent_fleet.rs", "crates/zentty-linux/src/application_shell/action_router.rs", "crates/zentty-linux/src/window_chrome.rs"],
+      "product_scenarios": ["linux/tests/rust-multi-window"],
+      "test_plan": "The controlled journey populates two real windows and Ghostty PTYs with waiting and running agent states, opens the grouped fleet through real GTK, proves source priority, and routes the typed exact target. X11 proves physical input at the destination PTY. Wayland deterministically reproduces the remaining compositor activation-token defect and exits with a stale-XFAIL contract. Remaining work must cover stale/window-close rows, progress and stopped states in the full product, and the optional controlled StatusNotifierItem alternative.",
+      "alternative_or_blocker": "An accessible in-window fleet status is implemented on every Linux desktop and does not require a GNOME extension. The optional StatusNotifierItem remains future scope. GH-21 tracks token-backed cross-toplevel activation because the controlled Cage compositor currently refuses focus transfer after the exact fleet target is selected."
     },
     {
       "id": "desktop.agent-sleep-inhibition",

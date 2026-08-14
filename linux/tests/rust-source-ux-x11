@@ -188,7 +188,7 @@ restored_sidebar_width="$(
 # Exercise the source leading-chrome sidebar toggle with the real pointer. The
 # sidebar must leave and return without moving chrome, reloading Ghostty's GL
 # presentation, restarting the PTY, or retaining keyboard focus itself.
-grep -Fxq 'zentty-linux: chrome-controls=toggle-sidebar,arrange-panes,back,forward,notifications' "${log}" ||
+grep -Fxq 'zentty-linux: chrome-controls=toggle-sidebar,arrange-panes,back,forward,notifications,agent-status' "${log}" ||
     fail "the source leading chrome control group was not presented"
 xdotool mousemove --window "${window_id}" 16 18 click 1
 for _ in $(seq 1 100); do

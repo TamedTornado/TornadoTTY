@@ -2,6 +2,7 @@
 
 mod agent_adapters;
 mod agent_consent;
+mod agent_fleet;
 mod agent_launch;
 mod agent_protocol;
 mod agent_status;
@@ -35,6 +36,9 @@ mod workspace_template;
 
 pub use agent_consent::{
     AgentIntegrationClass, AgentIntegrationGate, AgentIntegrationState, resolve_integration_gate,
+};
+pub use agent_fleet::{
+    FleetPaneSnapshot, FleetState, FleetSummary, FleetWindowSource, build_fleet_snapshots,
 };
 pub use agent_launch::{
     AgentLaunchError, AgentLaunchPlan, AgentLaunchTool, build_agent_launch_plan,

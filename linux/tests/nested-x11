@@ -127,8 +127,15 @@ if [[ "${1:-}" == "--private-x11-inner" ]]; then
         fail "private Xvfb did not export its owned authority file"
     [[ -f "${XAUTHORITY}" && ! -L "${XAUTHORITY}" ]] ||
         fail "private Xvfb authority is missing or unsafe"
-    xdpyinfo >/dev/null 2>&1 || fail "private Xvfb display did not become ready"
-    xdpyinfo >"${run_root}/display.info" 2>&1 ||
+    display_proof_ready=false
+    for _ in {1..20}; do
+        if xdpyinfo >"${run_root}/display.info" 2>&1; then
+            display_proof_ready=true
+            break
+        fi
+        sleep 0.05
+    done
+    [[ "${display_proof_ready}" == true ]] ||
         fail "private Xvfb display proof could not be captured"
     glxinfo -B >"${run_root}/renderer.info" 2>&1 ||
         fail "private Xvfb renderer did not become ready"

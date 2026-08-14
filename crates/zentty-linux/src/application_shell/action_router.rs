@@ -84,6 +84,9 @@ macro_rules! action {
 pub(super) const ACTION_ACTIVATE_ATTENTION: &str = "activate-attention";
 pub(super) const ACTION_DISMISS_ATTENTION: &str = "dismiss-attention";
 pub(super) const ACTION_CLEAR_ATTENTION: &str = "clear-attention";
+pub(super) const ACTION_ACTIVATE_FLEET_PANE: &str = "activate-fleet-pane";
+pub(super) const ACTION_SHOW_AGENT_FLEET: &str = "show-agent-fleet";
+pub(super) const ACTION_QUIT_APPLICATION: &str = "quit-application";
 
 pub(super) const ACTION_TOGGLE_SIDEBAR: &str = "toggle-sidebar";
 pub(super) const ACTION_SHOW_COMMAND_PALETTE: &str = "show-command-palette";
@@ -224,6 +227,13 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
     ),
     action!(ACTION_DISMISS_ATTENTION, "dismiss-attention", U64),
     action!(ACTION_CLEAR_ATTENTION, "clear-attention", None),
+    action!(
+        ACTION_ACTIVATE_FLEET_PANE,
+        "activate-fleet-pane",
+        StringTriple
+    ),
+    action!(ACTION_SHOW_AGENT_FLEET, "show-agent-fleet", None),
+    action!(ACTION_QUIT_APPLICATION, "quit-application", None),
     action!(ACTION_NEW_WORKLANE, "new-worklane", None),
     action!(ACTION_SELECT_WORKLANE, "select-worklane", String),
     action!(ACTION_SPLIT_PANE_RIGHT, "split-pane-right", None),
@@ -554,6 +564,7 @@ fn install_primary_ui_actions(
         }
     });
     install_attention_actions(shell, group);
+    install_fleet_actions(shell, group);
     add_simple_action(shell, group, ACTION_JUMP_LATEST_ATTENTION, |shell| {
         shell.request_latest_attention();
     });
@@ -575,7 +586,7 @@ fn install_attention_actions(
         };
         shell
             .borrow()
-            .request_attention_action(super::AttentionAction::Activate(
+            .request_application_action(super::ApplicationAction::ActivateAttention(
                 zentty_core::AttentionTarget::new(window_id, worklane_id, pane_id),
             ));
     });
@@ -592,12 +603,39 @@ fn install_attention_actions(
         };
         shell
             .borrow()
-            .request_attention_action(super::AttentionAction::Dismiss(id));
+            .request_application_action(super::ApplicationAction::DismissAttention(id));
     });
     group.add_action(&dismiss);
 
     add_simple_action(shell, group, ACTION_CLEAR_ATTENTION, |shell| {
-        shell.request_attention_action(super::AttentionAction::Clear);
+        shell.request_application_action(super::ApplicationAction::ClearAttention);
+    });
+}
+
+fn install_fleet_actions(shell: &Rc<RefCell<ApplicationShell>>, group: &gio::SimpleActionGroup) {
+    add_simple_action(shell, group, ACTION_SHOW_AGENT_FLEET, |shell| {
+        shell.show_agent_fleet();
+    });
+    let triple = glib::VariantTy::new("(sss)").expect("static action type is valid");
+    let activate = gio::SimpleAction::new(ACTION_ACTIVATE_FLEET_PANE, Some(triple));
+    let weak = Rc::downgrade(shell);
+    activate.connect_activate(move |_, parameter| {
+        let (Some(shell), Some((window_id, worklane_id, pane_id))) = (
+            weak.upgrade(),
+            parameter.and_then(glib::Variant::get::<(String, String, String)>),
+        ) else {
+            return;
+        };
+        shell
+            .borrow()
+            .request_application_action(super::ApplicationAction::ActivateFleetPane(
+                zentty_core::AttentionTarget::new(window_id, worklane_id, pane_id),
+            ));
+    });
+    group.add_action(&activate);
+
+    add_simple_action(shell, group, ACTION_QUIT_APPLICATION, |shell| {
+        shell.request_quit();
     });
 }
 
@@ -1643,7 +1681,7 @@ mod tests {
 
     #[test]
     fn registry_is_unique_complete_and_typed() {
-        assert_eq!(ACTION_SPECS.len(), 112);
+        assert_eq!(ACTION_SPECS.len(), 115);
         assert_eq!(
             ACTION_SPECS
                 .iter()

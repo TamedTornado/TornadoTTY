@@ -200,6 +200,10 @@ impl CommandPaletteView {
                     button.set_action_name(Some(&format!("workspace.{action}")));
                     button.set_action_target_value(Some(&parameter.to_variant()));
                 }
+                CommandPaletteTarget::TripleParameterizedAction { action, parameters } => {
+                    button.set_action_name(Some(&format!("workspace.{action}")));
+                    button.set_action_target_value(Some(&parameters.to_variant()));
+                }
             }
             let hidden = self.clone();
             let target = item.target.clone();

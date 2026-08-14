@@ -73,10 +73,10 @@ use action_router::{
     ACTION_PREVIOUS_PANE, ACTION_PREVIOUS_WORKLANE, ACTION_REFRESH_REVIEW_STATUS,
     ACTION_REFRESH_SERVERS, ACTION_RESET_PANE_LAYOUT, ACTION_RESIZE_PANE_DOWN,
     ACTION_RESIZE_PANE_LEFT, ACTION_RESIZE_PANE_RIGHT, ACTION_RESIZE_PANE_UP,
-    ACTION_RESTORE_CLOSED_PANE, ACTION_SELECT_ALL, ACTION_SHOW_TASK_MANAGER,
-    ACTION_SPLIT_PANE_BELOW, ACTION_SPLIT_PANE_RIGHT, ACTION_STOP_IGNORING_SERVER_PORT,
-    ACTION_STOP_SERVER, ACTION_TOGGLE_LIGHT_DARK_THEME, ACTION_TOGGLE_SIDEBAR,
-    ACTION_USE_AUTO_THEME, ACTION_USE_DARK_THEME, ACTION_USE_LIGHT_THEME,
+    ACTION_RESTORE_CLOSED_PANE, ACTION_SELECT_ALL, ACTION_SHOW_AGENT_FLEET,
+    ACTION_SHOW_TASK_MANAGER, ACTION_SPLIT_PANE_BELOW, ACTION_SPLIT_PANE_RIGHT,
+    ACTION_STOP_IGNORING_SERVER_PORT, ACTION_STOP_SERVER, ACTION_TOGGLE_LIGHT_DARK_THEME,
+    ACTION_TOGGLE_SIDEBAR, ACTION_USE_AUTO_THEME, ACTION_USE_DARK_THEME, ACTION_USE_LIGHT_THEME,
     ACTION_USE_SELECTION_FOR_FIND, ActionRouter,
 };
 use agent_events::AgentEventCoordinator;
@@ -98,6 +98,7 @@ fn install_shell_styles() {
     pane_controls::install_styles();
     pane_dividers::install_styles();
     crate::attention_inbox::install_styles();
+    crate::agent_fleet::install_styles();
 }
 
 fn sidebar_tracking_state() -> SidebarTrackingState {
@@ -116,10 +117,11 @@ pub(crate) struct ApplicationRuntimes {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum AttentionAction {
-    Activate(zentty_core::AttentionTarget),
-    Dismiss(u64),
-    Clear,
+pub(crate) enum ApplicationAction {
+    ActivateAttention(zentty_core::AttentionTarget),
+    ActivateFleetPane(zentty_core::AttentionTarget),
+    DismissAttention(u64),
+    ClearAttention,
 }
 
 pub(crate) struct ApplicationShell {
@@ -178,7 +180,7 @@ pub(crate) struct ApplicationShell {
     show_task_manager_handler: Option<Rc<dyn Fn()>>,
     close_window_handler: Option<Rc<dyn Fn()>>,
     quit_handler: Option<Rc<dyn Fn()>>,
-    attention_action_handler: Option<Rc<dyn Fn(AttentionAction)>>,
+    application_action_handler: Option<Rc<dyn Fn(ApplicationAction)>>,
     self_handle: RefCell<Weak<RefCell<Self>>>,
 }
 
@@ -390,7 +392,7 @@ impl ApplicationShell {
             show_task_manager_handler: None,
             close_window_handler: None,
             quit_handler: None,
-            attention_action_handler: None,
+            application_action_handler: None,
             self_handle: RefCell::new(Weak::new()),
         }));
         finish_shell_setup(
@@ -594,18 +596,18 @@ impl ApplicationShell {
         show_task_manager_handler: Rc<dyn Fn()>,
         close_window_handler: Rc<dyn Fn()>,
         quit_handler: Rc<dyn Fn()>,
-        attention_action_handler: Rc<dyn Fn(AttentionAction)>,
+        application_action_handler: Rc<dyn Fn(ApplicationAction)>,
     ) {
         self.new_window_handler = Some(new_window_handler);
         self.move_pane_to_new_window_handler = Some(move_pane_to_new_window_handler);
         self.show_task_manager_handler = Some(show_task_manager_handler);
         self.close_window_handler = Some(close_window_handler);
         self.quit_handler = Some(quit_handler);
-        self.attention_action_handler = Some(attention_action_handler);
+        self.application_action_handler = Some(application_action_handler);
     }
 
-    pub(crate) fn request_attention_action(&self, action: AttentionAction) {
-        if let Some(handler) = &self.attention_action_handler {
+    pub(crate) fn request_application_action(&self, action: ApplicationAction) {
+        if let Some(handler) = &self.application_action_handler {
             handler(action);
         }
     }
@@ -617,7 +619,7 @@ impl ApplicationShell {
             .most_urgent_unresolved()
             .map(|item| item.target.clone());
         if let Some(target) = target {
-            self.request_attention_action(AttentionAction::Activate(target));
+            self.request_application_action(ApplicationAction::ActivateAttention(target));
         }
     }
 
@@ -632,6 +634,7 @@ impl ApplicationShell {
         {
             return false;
         }
+        self.chrome.dismiss_status_popovers();
         self.render();
         self.window.present();
         self.focus_selected_surface();
@@ -641,6 +644,32 @@ impl ApplicationShell {
     pub(crate) fn refresh_attention_inbox(&self) {
         let inbox = self.attention_inbox.borrow();
         self.chrome.render_attention(inbox.items());
+    }
+
+    pub(crate) fn settle_active_window_focus(&self) {
+        self.focus_selected_surface();
+    }
+
+    pub(crate) fn refresh_fleet(&self, snapshots: &[zentty_core::FleetPaneSnapshot]) {
+        self.chrome.render_fleet(snapshots);
+    }
+
+    pub(crate) fn show_agent_fleet(&self) {
+        self.chrome.show_fleet();
+    }
+
+    pub(crate) fn fleet_source(
+        &self,
+    ) -> (String, String, Vec<zentty_core::SidebarWorklaneSummary>) {
+        let title = self
+            .window
+            .title()
+            .map_or_else(|| "Zentty".to_owned(), |title| title.to_string());
+        (
+            self.window_template.id.clone(),
+            title,
+            self.sidebar_summaries(),
+        )
     }
 
     pub(crate) fn extract_live_pane_to_new_window(
@@ -2067,8 +2096,29 @@ impl ApplicationShell {
         items.extend(self.command_palette_server_items());
         items.extend(self.command_palette_task_items());
         items.extend(self.command_palette_open_with_items());
+        items.extend(self.command_palette_fleet_items());
         items.extend(Self::command_palette_action_items());
         (items, current)
+    }
+
+    fn command_palette_fleet_items(&self) -> Vec<CommandPaletteItem> {
+        self.chrome
+            .fleet_snapshot()
+            .into_iter()
+            .map(|snapshot| {
+                CommandPaletteItem::triple_parameterized_action(
+                    format!("Focus {}: {}", snapshot.agent_name, snapshot.primary_text),
+                    format!("{} · {}", snapshot.status_label, snapshot.context_text),
+                    "agent fleet waiting running idle approval",
+                    action_router::ACTION_ACTIVATE_FLEET_PANE,
+                    (
+                        snapshot.target.window_id,
+                        snapshot.target.worklane_id,
+                        snapshot.target.pane_id,
+                    ),
+                )
+            })
+            .collect()
     }
 
     fn command_palette_open_with_items(&self) -> Vec<CommandPaletteItem> {
@@ -2263,6 +2313,12 @@ impl ApplicationShell {
                 "Inspect CPU, memory, and process trees for every pane",
                 "diagnostics processes performance",
                 ACTION_SHOW_TASK_MANAGER,
+            ),
+            CommandPaletteItem::action(
+                "Agent Status",
+                "Inspect agent activity across every Zentty window",
+                "fleet waiting running idle approval",
+                ACTION_SHOW_AGENT_FLEET,
             ),
             CommandPaletteItem::action(
                 "Refresh Development Servers",

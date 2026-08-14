@@ -445,6 +445,7 @@ jq -e '
         "config_store",
         "config_reload_authority",
         "existing_tmux_coordinator",
+        "fleet_coordinator",
         "global_search_coordinator",
         "ssh_identity_coordinator",
         "remote_paste_coordinator",
@@ -548,9 +549,9 @@ jq -e '
         "move-worklane", "rename-pane", "rename-worklane", "reorder-worklane",
         "select-pane", "set-worklane-color", "edit-template", "rename-template", "save-template"
     ] | sort) and
-    ([.action_contract[] | select(.parameter == "string_triple") | .name]) == ["activate-attention"] and
+    ([.action_contract[] | select(.parameter == "string_triple") | .name]) == ["activate-attention", "activate-fleet-pane"] and
     ([.action_contract[] | select(.parameter == "u64") | .name]) == ["dismiss-attention"] and
-    ([.action_contract[] | select(.parameter == "none")] | length) == 84 and
+    ([.action_contract[] | select(.parameter == "none")] | length) == 86 and
     .conditional_action_availability == {
         "multiple_columns":["resize-pane-left","resize-pane-right","arrange-golden-wide","arrange-golden-narrow"],
         "multiple_panes_in_focused_column":["resize-pane-up","resize-pane-down","arrange-golden-tall","arrange-golden-short"],

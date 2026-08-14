@@ -70,7 +70,7 @@ always_clean_copies = true
 EOF
 # Single quotes intentionally defer every expansion to the real PTY child.
 # shellcheck disable=SC2016
-child_command='while IFS= read -r value; do if [ "$value" = agent-running ]; then printf '\''%s'\'' '\''{"version":1,"event":"agent.running","agent":{"name":"Codex"},"session":{"id":"moved-live-pane"}}'\'' | "$ZENTTY_CLI_BIN" ipc agent-event; elif [ "$value" = tmux-route ]; then route="$(tmux display-message -p '\''#{pane_id}'\'')" && printf '\''\033]2;tmux:%s\a'\'' "$route"; elif [ "$value" = tmux-stale-claim ]; then route="$(ZENTTY_WINDOW_ID=window-1 ZENTTY_WORKLANE_ID=worklane-1 tmux display-message -p '\''#{pane_id}'\'')" && printf '\''\033]2;tmux-stale:%s\a'\'' "$route"; elif [ "$value" = capture-move ]; then tmux capture-pane -p | grep -Fq before-live-window-move && printf '\''\033]2;scrollback-preserved\a'\''; else printf '\''\033]2;%s\a'\'' "$value"; fi; done'
+child_command='while IFS= read -r value; do if [ "$value" = agent-waiting ]; then printf '\''%s'\'' '\''{"version":1,"event":"agent.needs-input","agent":{"name":"Claude Code"},"session":{"id":"fleet-waiting"},"state":{"text":"Approve cross-window deployment?","interaction":{"kind":"approval","text":"Approve cross-window deployment?"}}}'\'' | "$ZENTTY_CLI_BIN" ipc agent-event; elif [ "$value" = agent-running ]; then printf '\''%s'\'' '\''{"version":1,"event":"agent.running","agent":{"name":"Codex"},"session":{"id":"moved-live-pane"}}'\'' | "$ZENTTY_CLI_BIN" ipc agent-event; elif [ "$value" = tmux-route ]; then route="$(tmux display-message -p '\''#{pane_id}'\'')" && printf '\''\033]2;tmux:%s\a'\'' "$route"; elif [ "$value" = tmux-stale-claim ]; then route="$(ZENTTY_WINDOW_ID=window-1 ZENTTY_WORKLANE_ID=worklane-1 tmux display-message -p '\''#{pane_id}'\'')" && printf '\''\033]2;tmux-stale:%s\a'\'' "$route"; elif [ "$value" = capture-move ]; then tmux capture-pane -p | grep -Fq before-live-window-move && printf '\''\033]2;scrollback-preserved\a'\''; else printf '\''\033]2;%s\a'\'' "$value"; fi; done'
 
 start_product() {
     : >"${log}"
@@ -233,6 +233,7 @@ reply_to_confirmation() {
 # windows and real Ghostty PTYs. The rest of this already-large multi-window
 # qualification keeps confirmations disabled so its unrelated transaction and
 # restoration assertions remain independently diagnostic.
+if [[ "${ZENTTY_MULTI_WINDOW_FLEET_ONLY:-false}" != true ]]; then
 start_product
 create_second_window
 close_active_window
@@ -270,6 +271,7 @@ reply_to_confirmation Return
 zentty_product_wait_for_log_count "${log}" 'zentty-linux: confirmation accepted=true' "$((accepted_before + 1))" \
     "Return did not accept Quit" || fail "quit confirmation acceptance missing"
 wait_for_exit
+fi
 
 cat >"${config_file}" <<'EOF'
 [confirmations]
@@ -286,6 +288,17 @@ EOF
 # count, post-move physical input, and authenticated event route prove this is
 # a live reparent rather than a reconstructed terminal or model-only move.
 start_product
+if [[ "${ZENTTY_MULTI_WINDOW_FLEET_ONLY:-false}" == true ]]; then
+zentty_product_type "${backend}" "agent-waiting"
+if [[ "${backend}" == wayland ]]; then
+    wtype -k Return
+else
+    zentty_product_key "${backend}" Return
+fi
+zentty_product_wait_for_log "${log}" \
+    'zentty-linux: agent-event pane=pane-1 worklane=worklane-1 kind=agent.needs-input session=fleet-waiting' \
+    "first-window pane did not publish controlled waiting state" || fail "fleet waiting state missing"
+fi
 mapfile -t children_before_split < <(pgrep -P "${product_pid}" | sort -n)
 [[ "${#children_before_split[@]}" -eq 1 ]] || fail "fresh window did not own exactly one PTY child"
 original_child="${children_before_split[0]}"
@@ -338,6 +351,46 @@ zentty_product_wait_for_log "${log}" \
     'zentty-linux: agent-event pane=pane-2 worklane=window-2-worklane-1 kind=agent.running session=moved-live-pane' \
     "moved pane capability did not retarget through the shared real socket" ||
     fail "post-move authenticated agent route missing"
+if [[ "${ZENTTY_MULTI_WINDOW_FLEET_ONLY:-false}" == true ]]; then
+zentty_product_wait_for_log "${log}" 'zentty-linux: fleet-refresh windows=2 agents=2' \
+    "both real-window agent projections did not reach one fleet" || fail "cross-window fleet missing"
+execute_palette_action "agent activity across every Zentty window" "Agent Status"
+zentty_product_wait_for_log "${log}" 'zentty-linux: chrome-popover=agent-fleet state=open' \
+    "keyboard-accessible fleet control did not open" || fail "fleet popover missing"
+# The source-priority model places the waiting pane first. Opening the popover
+# gives that first real row keyboard focus without relying on backend coordinates.
+zentty_product_wait_for_log "${log}" \
+    'zentty-linux: fleet-row-focus window=window-1 worklane=worklane-1 pane=pane-1' \
+    "fleet did not focus its highest-priority real row" || fail "fleet priority focus missing"
+# The same typed fleet target is projected into Zentty's real command palette,
+# keeping exact cross-window routing keyboard accessible without compositor-
+# specific coordinates. The opened popover and priority-focus receipt above
+# independently prove the grouped fleet projection itself.
+zentty_product_key "${backend}" Escape
+execute_palette_action "Requires approval" "waiting fleet pane"
+zentty_product_wait_for_log "${log}" \
+    'zentty-linux: fleet-activate window=window-1 worklane=worklane-1 pane=pane-1 result=targeted' \
+    "fleet did not route to the urgent pane in the other real window" || fail "fleet route missing"
+if [[ "${backend}" == x11 ]]; then
+    target_second_window "pane-1"
+    type_and_expect_title "fleet-routed-exact-pty" "pane-1"
+else
+    zentty_product_prepare_input "${backend}" "${log}" || fail "could not retarget fleet destination"
+    zentty_product_type "${backend}" "fleet-routed-exact-pty"
+    zentty_product_key "${backend}" Return
+    if ! zentty_product_wait_for_log "${log}" \
+        'zentty-linux: title-pane=pane-1 value=fleet-routed-exact-pty' \
+        "Wayland compositor did not grant focus to the fleet target"; then
+        echo "rust-multi-window: XFAIL Wayland cross-window fleet activation lacks a compositor-granted activation token" >&2
+        exit 98
+    fi
+fi
+zentty_product_close_window "${backend}"
+wait_for_exit
+echo "Rust agent fleet passed: ${backend}, windows=2, statuses=2, route=exact-real-pty"
+exit 0
+fi
+target_second_window "pane-2"
 zentty_product_type "${backend}" "tmux-route"
 zentty_product_key "${backend}" Return
 zentty_product_wait_for_log "${log}" \
