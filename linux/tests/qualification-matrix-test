@@ -121,17 +121,15 @@ jq -e '
       .skip_profile_prerequisite == true)
 ' "${source_matrix}" >/dev/null
 
-# The three nested-Wayland bookmark journeys use modal virtual-keyboard input.
-# They may overlap unrelated cells, but must not contend with each other after
-# repeated full-matrix evidence showed one first dialog chord could be lost.
+# All six bookmark journeys use timing-sensitive modal physical input. They may
+# overlap unrelated cells, but must not contend with each other after repeated
+# full-matrix evidence showed first dialog chords lost on both backends.
 jq -e '
     [
       .cells[] |
-      select(.id == "bookmarks-presets-save-restore-wayland" or
-             .id == "bookmarks-presets-management-wayland" or
-             .id == "bookmarks-presets-import-export-wayland") |
-      select((.resources // []) == ["bookmarks-wayland-modal-input"])
-    ] | length == 3
+      select(.id | startswith("bookmarks-presets-")) |
+      select((.resources // []) == ["bookmarks-modal-input"])
+    ] | length == 6
 ' "${source_matrix}" >/dev/null
 
 # The production runner must use the focused classifier tested above.

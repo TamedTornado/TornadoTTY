@@ -83,6 +83,7 @@ impl ConfigReloadAuthority {
 
 pub(crate) struct ConfigDirectoryWatch {
     _monitors: Vec<gio::FileMonitor>,
+    pending_change: std::rc::Rc<std::cell::RefCell<Option<gtk::glib::SourceId>>>,
 }
 
 impl ConfigDirectoryWatch {
@@ -155,7 +156,16 @@ impl ConfigDirectoryWatch {
         }
         Ok(Self {
             _monitors: monitors,
+            pending_change: debounce,
         })
+    }
+}
+
+impl Drop for ConfigDirectoryWatch {
+    fn drop(&mut self) {
+        if let Some(source) = self.pending_change.borrow_mut().take() {
+            source.remove();
+        }
     }
 }
 
@@ -302,6 +312,41 @@ mod tests {
             iterate_default_context_for(Duration::from_millis(10));
         }
         assert_eq!(notifications.get(), 1);
+        fs::remove_dir_all(parent).unwrap();
+    }
+
+    #[test]
+    fn replacing_a_directory_watch_cancels_its_pending_callback() {
+        let _watch_test_guard = WATCH_TEST_LOCK.lock().unwrap();
+        let path = private_path("replace-pending");
+        let parent = path.parent().unwrap();
+        fs::create_dir_all(parent).unwrap();
+        fs::write(&path, "[clipboard]\nalways_clean_copies = false\n").unwrap();
+
+        let notifications = Rc::new(Cell::new(0_u32));
+        let callback_notifications = Rc::clone(&notifications);
+        let watch = ConfigDirectoryWatch::install(&path, move || {
+            callback_notifications.set(callback_notifications.get() + 1);
+        })
+        .unwrap();
+        let replacement = parent.join("config.external");
+        fs::write(&replacement, "[clipboard]\nalways_clean_copies = true\n").unwrap();
+        fs::rename(replacement, &path).unwrap();
+
+        let event_deadline = std::time::Instant::now() + Duration::from_secs(2);
+        let context = gtk::glib::MainContext::default();
+        while watch.pending_change.borrow().is_none() && std::time::Instant::now() < event_deadline
+        {
+            while context.pending() {
+                context.iteration(false);
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(watch.pending_change.borrow().is_some());
+        drop(watch);
+
+        iterate_default_context_for(Duration::from_millis(250));
+        assert_eq!(notifications.get(), 0);
         fs::remove_dir_all(parent).unwrap();
     }
 

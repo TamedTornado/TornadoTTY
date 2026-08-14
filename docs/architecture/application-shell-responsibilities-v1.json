@@ -66,7 +66,7 @@
       "status": "existing",
       "planned_module": "crates/zentty-linux/src/application_shell/agent_events.rs",
       "tracking": "GH-29",
-      "responsibility": "The sole UI-thread drain of authenticated agent events, enrichment generations, cancellation, and projection through the core reducer."
+      "responsibility": "The sole UI-thread drain of authenticated agent events, bounded lifecycle sweeps, enrichment generations, cancellation, Linux process-liveness projection, and status projection through the core reducer."
     },
     {
       "id": "attention_coordinator",
@@ -393,7 +393,8 @@
     "agent_event_coordinator": [
       "event_route_decision", "start", "environment_for_pane", "unregister_pane",
       "set_agent_teams_enabled", "set_agent_integrations", "available_integration_wrappers",
-      "sync_targets", "schedule_for_pane", "shutdown", "apply_inputs"
+      "sync_targets", "schedule_for_pane", "shutdown", "apply_inputs",
+      "begin_lifecycle_sweep", "lifecycle_sweep_due", "linux_process_is_alive"
     ],
     "global_search_coordinator": [
       "install_global_search_callbacks", "global_search_targets", "toggle_global_find",
@@ -444,7 +445,7 @@
       "discover", "run_docker", "parse_inspect_json", "deepest_matching_pane", "is_web_like"
     ],
     "config_store": ["load_default", "load_path_for_reload", "load", "install_default_fallback_theme_if_referenced", "install_fallback_theme_if_referenced", "fallback_theme_publication_error", "update_default_appearance", "update_default_general", "update_default_notifications", "update_default_updates", "update_default_workspace_panes", "update_default_open_with", "update_default_server_detection", "update_default_agents", "update_default_ghostty_theme", "update_default_ghostty_value", "update_default_ignored_port_rules", "update_default_preferred_browser", "update_default_shortcuts", "update_appearance", "update_general", "update_notifications", "update_updates", "update_workspace_panes", "update_open_with", "update_server_detection", "update_agents", "update_ghostty_value", "update_ignored_port_rules", "update_preferred_browser", "update_shortcuts", "with_config_lock", "set_optional_appearance_string", "resolve_config_target", "atomic_replace", "editable_config_source", "read_config_contents", "read_bounded", "invalid_snapshot", "content_safe_invalid_warning", "ghostty_theme_spec_for_runtime", "ghostty_theme_reference_for_runtime", "default_config_file", "ensure_private_config_parent", "default_config_file_from", "default_fallback_theme_path", "default_ghostty_config_file_from", "default_theme_resource_path", "nonempty_path"],
-    "config_reload": ["new", "path", "observe_disk", "observe_reload_snapshot", "accept", "install"],
+    "config_reload": ["new", "path", "observe_disk", "observe_reload_snapshot", "accept", "install", "drop"],
     "appearance_settings": ["build", "section_title", "theme_slot_button", "configured_theme", "refresh_theme_projection", "theme_slot_status", "refresh_catalog", "preview_summary", "log_theme_selection", "apply_state", "install_styles"],
     "theme_preview": ["compact_area", "detail_area", "configure_compact", "configure_detail", "draw_empty", "fill", "draw_text"],
     "settings_shell": ["apply_selection", "build", "build_widgets", "connect_navigation", "key_controller", "navigate_back", "navigate_forward", "navigation_actions"],

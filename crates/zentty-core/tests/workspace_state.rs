@@ -1,7 +1,8 @@
 use zentty_core::{
-    AgentEvent, AgentInteractionKind, AgentTarget, AuthenticatedAgentEvent, ClosePaneOutcome,
-    CodexTranscriptQuestion, NewWorklanePlacement, PaneRecipe, PaneResizeDirection,
-    SessionRestoreEnvelope, WindowRecipe, WorklaneColor, WorkspaceState, WorkspaceStateImportError,
+    AgentEvent, AgentInteractionKind, AgentPhase, AgentTarget, AuthenticatedAgentEvent,
+    ClosePaneOutcome, CodexTranscriptQuestion, NewWorklanePlacement, PaneRecipe,
+    PaneResizeDirection, SessionRestoreEnvelope, WindowRecipe, WorklaneColor, WorkspaceState,
+    WorkspaceStateImportError,
 };
 
 #[test]
@@ -1243,6 +1244,17 @@ fn split_out_pane_to_new_window_preserves_source_metadata_and_normalizes_destina
         },
         1,
     );
+    state.apply_agent_event(
+        AuthenticatedAgentEvent {
+            target: AgentTarget::new("source-window", "build", "agent"),
+            pane_token: "token-agent".to_owned(),
+            event: AgentEvent::parse(
+                br#"{"version":1,"event":"agent.idle","session":{"id":"session-agent"},"state":{"stopCandidate":true}}"#,
+            )
+            .unwrap(),
+        },
+        2,
+    );
     let mut source_recipe = state.to_window_recipe(&WindowRecipe {
         id: "source-window".to_owned(),
         frame: None,
@@ -1252,7 +1264,7 @@ fn split_out_pane_to_new_window_preserves_source_metadata_and_normalizes_destina
     source_recipe.worklanes[0].next_pane_number = 42;
     source_recipe.worklanes[0].bookmark_origin_id = Some("bookmark-build".to_owned());
 
-    let transfer = state
+    let mut transfer = state
         .split_pane_to_new_window("agent", "destination-lane")
         .expect("a pane in a multi-pane worklane can move to a new window");
 
@@ -1283,6 +1295,34 @@ fn split_out_pane_to_new_window_preserves_source_metadata_and_normalizes_destina
             .as_ref()
             .map(|status| status.session_id.as_str()),
         Some("session-agent")
+    );
+    assert!(transfer.destination.sweep_agent_lifecycle(2_002, |_| true));
+    assert_eq!(
+        transfer.destination.sidebar_summaries()[0].pane_rows[0]
+            .agent_status
+            .as_ref()
+            .map(|status| status.phase),
+        Some(AgentPhase::Idle)
+    );
+    assert!(state.split_focused_pane_below("agent"));
+    state.apply_agent_event(
+        AuthenticatedAgentEvent {
+            target: AgentTarget::new("source-window", "build", "agent"),
+            pane_token: "replacement-token".to_owned(),
+            event: AgentEvent::parse(
+                br#"{"version":1,"event":"task.progress","session":{"id":"session-agent"},"progress":{"done":1,"total":2}}"#,
+            )
+            .unwrap(),
+        },
+        1_000,
+    );
+    assert!(!state.sweep_agent_lifecycle(2_002, |_| true));
+    assert_eq!(
+        state.sidebar_summaries()[0].pane_rows[1]
+            .agent_status
+            .as_ref()
+            .map(|status| status.phase),
+        Some(AgentPhase::Starting)
     );
     let destination_recipe = transfer
         .destination_window_recipe(&source_recipe, "destination-window")

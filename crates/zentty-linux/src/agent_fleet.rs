@@ -58,6 +58,19 @@ pub(crate) fn popover(snapshots: &[FleetPaneSnapshot]) -> gtk::Popover {
     let root = gtk::Box::new(gtk::Orientation::Vertical, 2);
     root.add_css_class("agent-fleet");
     let summary = FleetSummary::from_snapshots(snapshots);
+    eprintln!(
+        "zentty-linux: fleet-popover-render agents={} waiting={} stopped={} compacting={} active={} idle={} progress={}",
+        snapshots.len(),
+        summary.waiting_count,
+        summary.stopped_count,
+        summary.compacting_count,
+        summary.active_count,
+        summary.idle_count,
+        snapshots
+            .iter()
+            .filter(|pane| pane.progress.is_some())
+            .count(),
+    );
 
     let header = gtk::Box::new(gtk::Orientation::Vertical, 2);
     header.add_css_class("agent-fleet-header");
@@ -164,7 +177,7 @@ fn row(snapshot: &FleetPaneSnapshot) -> gtk::Button {
     button.set_action_name(Some("workspace.activate-fleet-pane"));
     button.set_action_target_value(Some(&target_variant(snapshot)));
 
-    let content = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+    let row_content = gtk::Box::new(gtk::Orientation::Horizontal, 10);
     let text = gtk::Box::new(gtk::Orientation::Vertical, 2);
     text.set_hexpand(true);
     let primary = gtk::Label::new(Some(&snapshot.primary_text));
@@ -177,26 +190,18 @@ fn row(snapshot: &FleetPaneSnapshot) -> gtk::Button {
     context.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
     text.append(&primary);
     text.append(&context);
-    content.append(&text);
+    row_content.append(&text);
 
-    let status_text = snapshot.progress.map_or_else(
-        || snapshot.status_label.clone(),
-        |progress| {
-            format!(
-                "{} · {}/{}",
-                snapshot.status_label, progress.done, progress.total
-            )
-        },
-    );
+    let status_text = fleet_status_text(snapshot);
     let status = gtk::Label::new(Some(&status_text));
     status.add_css_class("agent-fleet-status");
     status.add_css_class(state_class(snapshot.state));
     status.set_valign(gtk::Align::Center);
-    content.append(&status);
-    button.set_child(Some(&content));
+    row_content.append(&status);
+    button.set_child(Some(&row_content));
     button.update_property(&[gtk::accessible::Property::Label(&format!(
         "{}, {}, {}",
-        snapshot.primary_text, snapshot.status_label, snapshot.context_text
+        snapshot.primary_text, status_text, snapshot.context_text
     ))]);
     let target = snapshot.target.clone();
     button.connect_has_focus_notify(move |button| {
@@ -208,6 +213,18 @@ fn row(snapshot: &FleetPaneSnapshot) -> gtk::Button {
         }
     });
     button
+}
+
+fn fleet_status_text(snapshot: &FleetPaneSnapshot) -> String {
+    snapshot.progress.map_or_else(
+        || snapshot.status_label.clone(),
+        |progress| {
+            format!(
+                "{} · {}/{}",
+                snapshot.status_label, progress.done, progress.total
+            )
+        },
+    )
 }
 
 fn target_variant(snapshot: &FleetPaneSnapshot) -> gtk::glib::Variant {
@@ -226,5 +243,36 @@ fn state_class(state: FleetState) -> &'static str {
         FleetState::Compacting => "compacting",
         FleetState::Active => "active",
         FleetState::Idle => "idle",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use zentty_core::{AgentProgress, AttentionTarget, FleetPaneSnapshot, FleetState};
+
+    use super::fleet_status_text;
+
+    fn snapshot(progress: Option<AgentProgress>) -> FleetPaneSnapshot {
+        FleetPaneSnapshot {
+            target: AttentionTarget::new("window", "worklane", "pane"),
+            window_title: "Zentty".to_owned(),
+            worklane_title: "Worklane".to_owned(),
+            agent_name: "Codex".to_owned(),
+            primary_text: "Codex".to_owned(),
+            context_text: "Worklane — Zentty".to_owned(),
+            status_label: "Running".to_owned(),
+            state: FleetState::Active,
+            updated_at_ms: 1,
+            progress,
+        }
+    }
+
+    #[test]
+    fn status_and_accessibility_share_visible_incomplete_progress_copy() {
+        assert_eq!(
+            fleet_status_text(&snapshot(Some(AgentProgress { done: 2, total: 5 }))),
+            "Running · 2/5"
+        );
+        assert_eq!(fleet_status_text(&snapshot(None)), "Running");
     }
 }

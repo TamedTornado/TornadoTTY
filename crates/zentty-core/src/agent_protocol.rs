@@ -179,6 +179,12 @@ impl AgentEvent {
         self.state.as_ref()?.text.as_deref()
     }
 
+    pub(crate) fn stop_candidate(&self) -> bool {
+        self.state
+            .as_ref()
+            .is_some_and(|state| state.stop_candidate)
+    }
+
     pub(crate) fn interaction(&self) -> AgentInteractionKind {
         self.state
             .as_ref()

@@ -50,6 +50,231 @@ fn seed_other_pane_codex_tracking(store: &mut AgentStatusStore) {
     }
 }
 
+fn lifecycle_event(
+    pane_id: &str,
+    session_id: &str,
+    kind: &str,
+    extra: &str,
+) -> AuthenticatedAgentEvent {
+    event_for(
+        pane_id,
+        format!(
+            r#"{{"version":1,"event":"{kind}","agent":{{"name":"Codex"}},"session":{{"id":"{session_id}"}}{extra}}}"#
+        )
+        .as_bytes(),
+    )
+}
+
+#[test]
+fn stop_candidate_observes_exact_grace_and_new_activity_cancels_it() {
+    let mut store = AgentStatusStore::default();
+    store.apply(
+        lifecycle_event("pane-a", "session-a", "agent.running", ""),
+        1_000,
+    );
+    store.apply(
+        lifecycle_event(
+            "pane-a",
+            "session-a",
+            "agent.idle",
+            r#","state":{"stopCandidate":true}"#,
+        ),
+        2_000,
+    );
+    assert_eq!(
+        store.status_for_pane("pane-a").unwrap().phase,
+        AgentPhase::Running
+    );
+    assert!(!store.sweep(3_999, |_| true));
+    assert_eq!(
+        store.status_for_pane("pane-a").unwrap().phase,
+        AgentPhase::Running
+    );
+    assert!(store.sweep(4_000, |_| true));
+    assert_eq!(
+        store.status_for_pane("pane-a").unwrap().phase,
+        AgentPhase::Idle
+    );
+
+    store.apply(
+        lifecycle_event("pane-a", "session-a", "agent.running", ""),
+        5_000,
+    );
+    store.apply(
+        lifecycle_event(
+            "pane-a",
+            "session-a",
+            "agent.idle",
+            r#","state":{"stopCandidate":true}"#,
+        ),
+        6_000,
+    );
+    store.apply(
+        lifecycle_event("pane-a", "session-a", "agent.running", ""),
+        6_500,
+    );
+    assert!(!store.sweep(8_000, |_| true));
+    assert_eq!(
+        store.status_for_pane("pane-a").unwrap().phase,
+        AgentPhase::Running
+    );
+
+    store.apply(
+        lifecycle_event(
+            "pane-a",
+            "session-a",
+            "agent.idle",
+            r#","state":{"stopCandidate":true}"#,
+        ),
+        9_000,
+    );
+    assert!(store.apply_terminal_progress("pane-a", TerminalProgressState::Indeterminate, 9_100));
+    assert!(!store.sweep(11_000, |_| true));
+
+    store.apply(
+        lifecycle_event(
+            "pane-a",
+            "session-a",
+            "agent.idle",
+            r#","state":{"stopCandidate":true}"#,
+        ),
+        12_000,
+    );
+    assert!(store.apply_codex_title("pane-a", "Working ⠋ zentty", 12_100));
+    assert!(!store.sweep(14_000, |_| true));
+}
+
+#[test]
+fn unobserved_stop_candidate_is_removed_after_its_grace() {
+    let mut store = AgentStatusStore::default();
+    store.apply(
+        lifecycle_event(
+            "pane-a",
+            "session-a",
+            "agent.idle",
+            r#","state":{"stopCandidate":true}"#,
+        ),
+        1_000,
+    );
+    assert_eq!(
+        store.status_for_pane("pane-a").unwrap().phase,
+        AgentPhase::Running
+    );
+    assert!(store.sweep(3_000, |_| true));
+    assert!(store.status_for_pane("pane-a").is_none());
+}
+
+#[test]
+fn process_death_and_visibility_deadlines_match_the_source_lifecycle() {
+    let mut store = AgentStatusStore::default();
+    store.apply(
+        event_for(
+            "pane-running",
+            br#"{"version":1,"event":"agent.running","agent":{"name":"Codex","pid":4242},"session":{"id":"running"}}"#,
+        ),
+        1_000,
+    );
+    store.apply(
+        lifecycle_event(
+            "pane-running",
+            "running",
+            "agent.needs-input",
+            r#","state":{"text":"Allow?","interaction":{"kind":"approval","text":"Allow?"}}"#,
+        ),
+        1_100,
+    );
+    assert!(store.sweep(2_000, |pid| pid != 4242));
+    let stopped = store.status_for_pane("pane-running").unwrap();
+    assert_eq!(stopped.phase, AgentPhase::UnresolvedStop);
+    assert_eq!(stopped.interaction, AgentInteractionKind::None);
+    assert_eq!(stopped.text, None);
+    assert_eq!(stopped.tracked_pid, None);
+    assert!(!store.sweep(601_999, |_| false));
+    assert!(store.sweep(602_000, |_| false));
+    assert!(store.status_for_pane("pane-running").is_none());
+
+    store.apply(
+        event_for(
+            "pane-idle",
+            br#"{"version":1,"event":"agent.running","agent":{"name":"Codex","pid":4343},"session":{"id":"idle"}}"#,
+        ),
+        700_000,
+    );
+    store.apply(
+        lifecycle_event("pane-idle", "idle", "agent.idle", ""),
+        700_100,
+    );
+    assert!(store.sweep(700_200, |pid| pid != 4343));
+    assert!(store.status_for_pane("pane-idle").is_none());
+}
+
+#[test]
+fn dead_ephemeral_starts_are_silent_only_through_the_exact_source_window() {
+    let starting = |pane: &str| {
+        event_for(
+            pane,
+            br#"{"version":1,"event":"session.start","agent":{"name":"Codex","pid":4444},"session":{"id":"starting"}}"#,
+        )
+    };
+
+    let mut exact = AgentStatusStore::default();
+    exact.apply(starting("pane-exact"), 1_000);
+    assert!(exact.sweep(2_000, |pid| pid != 4444));
+    assert!(exact.status_for_pane("pane-exact").is_none());
+
+    let mut expired = AgentStatusStore::default();
+    expired.apply(starting("pane-expired"), 1_000);
+    assert!(expired.sweep(2_001, |pid| pid != 4444));
+    assert_eq!(
+        expired.status_for_pane("pane-expired").unwrap().phase,
+        AgentPhase::UnresolvedStop
+    );
+}
+
+#[test]
+fn idle_and_inactive_sessions_expire_without_environmental_assumptions() {
+    let mut store = AgentStatusStore::default();
+    store.apply(
+        lifecycle_event("pane-idle", "idle", "agent.running", ""),
+        1_000,
+    );
+    store.apply(
+        lifecycle_event("pane-idle", "idle", "agent.idle", ""),
+        2_000,
+    );
+    assert!(!store.sweep(121_999, |_| true));
+    assert!(store.sweep(122_000, |_| true));
+    assert!(store.status_for_pane("pane-idle").is_none());
+
+    store.apply(
+        lifecycle_event("pane-stale", "stale", "agent.running", ""),
+        200_000,
+    );
+    assert!(!store.sweep(1_999_999, |_| true));
+    assert!(store.sweep(2_000_000, |_| true));
+    assert!(store.status_for_pane("pane-stale").is_none());
+}
+
+#[test]
+fn lifecycle_clocks_are_removed_or_transferred_with_the_pane() {
+    let mut removed = AgentStatusStore::default();
+    removed.apply(
+        lifecycle_event("pane-a", "session-a", "agent.running", ""),
+        1_000,
+    );
+    removed.apply(
+        lifecycle_event(
+            "pane-a",
+            "session-a",
+            "agent.idle",
+            r#","state":{"stopCandidate":true}"#,
+        ),
+        2_000,
+    );
+    removed.remove_pane("pane-a");
+    assert!(!removed.sweep(4_000, |_| true));
+}
+
 fn assert_other_pane_codex_tracking_was_preserved(store: &mut AgentStatusStore) {
     assert!(store.apply_codex_title("pane-inferred", "Working ⠋ tracking", 1_200));
     assert!(!store.apply_codex_title("pane-suppressed", "Working ⠋ tracking", 1_200));

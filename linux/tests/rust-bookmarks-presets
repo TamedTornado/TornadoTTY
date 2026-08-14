@@ -221,10 +221,11 @@ activate_focused_control() {
             xdotool key --clearmodifiers Return
         else
             # The ordinary private X11 profile intentionally has no window
-            # manager or active-window property. Send the event to the mapped
-            # product toplevel while preserving its already-proven widget
-            # focus.
-            xdotool key --clearmodifiers --window "${ZENTTY_PRODUCT_WINDOW_ID}" Return
+            # manager or active-window property. Traversal already established
+            # real X input focus, so use XTest against that focus. XSendEvent's
+            # per-window synthetic-key path can be ignored by GTK under load
+            # even after the widget-focus receipt has been emitted.
+            xdotool key --clearmodifiers Return
         fi
         return
     fi

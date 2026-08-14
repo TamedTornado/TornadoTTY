@@ -937,10 +937,21 @@ impl ApplicationCoordinator {
         if snapshot == self.fleet_snapshot {
             return;
         }
+        let summary = zentty_core::FleetSummary::from_snapshots(&snapshot);
+        let progress_count = snapshot
+            .iter()
+            .filter(|pane| pane.progress.is_some())
+            .count();
         eprintln!(
-            "zentty-linux: fleet-refresh windows={} agents={}",
+            "zentty-linux: fleet-refresh windows={} agents={} waiting={} stopped={} compacting={} active={} idle={} progress={}",
             owned_sources.len(),
-            snapshot.len()
+            snapshot.len(),
+            summary.waiting_count,
+            summary.stopped_count,
+            summary.compacting_count,
+            summary.active_count,
+            summary.idle_count,
+            progress_count,
         );
         for shell in self.shells.values() {
             shell.borrow().refresh_fleet(&snapshot);

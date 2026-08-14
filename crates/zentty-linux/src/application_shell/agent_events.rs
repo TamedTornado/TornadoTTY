@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use zentty_agent_ipc::AuthenticatedTmuxRequest;
@@ -10,6 +10,8 @@ use crate::agent_runtime::AgentRuntime;
 use crate::codex_enrichment::CodexTranscriptEnricher;
 
 use super::{ApplicationShell, unix_time_ms};
+
+const LIFECYCLE_SWEEP_INTERVAL_MS: u64 = 500;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 enum EventRouteDecision {
@@ -39,6 +41,7 @@ pub(super) struct AgentEventCoordinator {
     runtime: Rc<RefCell<AgentRuntime>>,
     window_id: String,
     transcript_enricher: CodexTranscriptEnricher,
+    last_lifecycle_sweep_at: Option<u64>,
 }
 
 impl AgentEventCoordinator {
@@ -52,6 +55,7 @@ impl AgentEventCoordinator {
             runtime,
             window_id,
             transcript_enricher: CodexTranscriptEnricher::new(codex_home),
+            last_lifecycle_sweep_at: None,
         }
     }
 
@@ -222,15 +226,41 @@ impl AgentEventCoordinator {
                 sidebar_changed = true;
             }
         }
+        let should_sweep = shell.borrow_mut().agent_events.begin_lifecycle_sweep(now);
+        if should_sweep
+            && shell
+                .borrow_mut()
+                .state
+                .sweep_agent_lifecycle(now, linux_process_is_alive)
+        {
+            eprintln!("zentty-linux: agent-lifecycle-sweep changed=true");
+            sidebar_changed = true;
+        }
         if sidebar_changed {
             shell.borrow().render_sidebar();
         }
     }
+
+    fn begin_lifecycle_sweep(&mut self, now: u64) -> bool {
+        let due = lifecycle_sweep_due(self.last_lifecycle_sweep_at, now);
+        if due {
+            self.last_lifecycle_sweep_at = Some(now);
+        }
+        due
+    }
+}
+
+fn lifecycle_sweep_due(last: Option<u64>, now: u64) -> bool {
+    last.is_none_or(|last| now < last || now.saturating_sub(last) >= LIFECYCLE_SWEEP_INTERVAL_MS)
+}
+
+fn linux_process_is_alive(pid: i32) -> bool {
+    pid > 0 && Path::new("/proc").join(pid.to_string()).exists()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{EventRouteDecision, event_route_decision};
+    use super::{EventRouteDecision, event_route_decision, lifecycle_sweep_due};
 
     #[test]
     fn authenticated_events_apply_only_to_current_pane_identity() {
@@ -246,5 +276,13 @@ mod tests {
             event_route_decision(None, "lane-a"),
             EventRouteDecision::DropRemovedPane
         );
+    }
+
+    #[test]
+    fn lifecycle_sweep_is_bounded_and_recovers_from_clock_rollback() {
+        assert!(lifecycle_sweep_due(None, 1_000));
+        assert!(!lifecycle_sweep_due(Some(1_000), 1_499));
+        assert!(lifecycle_sweep_due(Some(1_000), 1_500));
+        assert!(lifecycle_sweep_due(Some(1_500), 10));
     }
 }

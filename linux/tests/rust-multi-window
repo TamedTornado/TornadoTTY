@@ -68,9 +68,57 @@ cat >"${config_file}" <<'EOF'
 [clipboard]
 always_clean_copies = true
 EOF
-# Single quotes intentionally defer every expansion to the real PTY child.
-# shellcheck disable=SC2016
-child_command='while IFS= read -r value; do if [ "$value" = agent-waiting ]; then printf '\''%s'\'' '\''{"version":1,"event":"agent.needs-input","agent":{"name":"Claude Code"},"session":{"id":"fleet-waiting"},"state":{"text":"Approve cross-window deployment?","interaction":{"kind":"approval","text":"Approve cross-window deployment?"}}}'\'' | "$ZENTTY_CLI_BIN" ipc agent-event; elif [ "$value" = agent-running ]; then printf '\''%s'\'' '\''{"version":1,"event":"agent.running","agent":{"name":"Codex"},"session":{"id":"moved-live-pane"}}'\'' | "$ZENTTY_CLI_BIN" ipc agent-event; elif [ "$value" = tmux-route ]; then route="$(tmux display-message -p '\''#{pane_id}'\'')" && printf '\''\033]2;tmux:%s\a'\'' "$route"; elif [ "$value" = tmux-stale-claim ]; then route="$(ZENTTY_WINDOW_ID=window-1 ZENTTY_WORKLANE_ID=worklane-1 tmux display-message -p '\''#{pane_id}'\'')" && printf '\''\033]2;tmux-stale:%s\a'\'' "$route"; elif [ "$value" = capture-move ]; then tmux capture-pane -p | grep -Fq before-live-window-move && printf '\''\033]2;scrollback-preserved\a'\''; else printf '\''\033]2;%s\a'\'' "$value"; fi; done'
+# The quoted heredoc defers every expansion to the real PTY child while
+# keeping the controlled agent lifecycle readable and independently auditable.
+child_command="$(cat <<'EOF'
+agent_pid=
+while IFS= read -r value; do
+    case "$value" in
+        agent-waiting)
+            printf '%s' '{"version":1,"event":"agent.needs-input","agent":{"name":"Claude Code"},"session":{"id":"fleet-waiting"},"state":{"text":"Approve cross-window deployment?","interaction":{"kind":"approval","text":"Approve cross-window deployment?"}}}' | "$ZENTTY_CLI_BIN" ipc agent-event
+            ;;
+        agent-running)
+            printf '%s' '{"version":1,"event":"agent.running","agent":{"name":"Codex"},"session":{"id":"moved-live-pane"}}' | "$ZENTTY_CLI_BIN" ipc agent-event
+            ;;
+        agent-progress)
+            printf '%s' '{"version":1,"event":"task.progress","session":{"id":"moved-live-pane"},"progress":{"done":2,"total":5}}' | "$ZENTTY_CLI_BIN" ipc agent-event
+            ;;
+        agent-complete)
+            printf '%s' '{"version":1,"event":"task.progress","session":{"id":"moved-live-pane"},"progress":{"done":5,"total":5}}' | "$ZENTTY_CLI_BIN" ipc agent-event
+            ;;
+        agent-compacting)
+            printf '%s' '{"version":1,"event":"agent.running","agent":{"name":"Codex"},"session":{"id":"moved-live-pane"},"state":{"text":"Compacting"}}' | "$ZENTTY_CLI_BIN" ipc agent-event
+            ;;
+        agent-stop-candidate)
+            printf '%s' '{"version":1,"event":"agent.idle","session":{"id":"moved-live-pane"},"state":{"stopCandidate":true}}' | "$ZENTTY_CLI_BIN" ipc agent-event
+            ;;
+        agent-track-process)
+            sleep 300 &
+            agent_pid=$!
+            printf '%s\n' "{\"version\":1,\"event\":\"agent.running\",\"agent\":{\"name\":\"Codex\",\"pid\":${agent_pid}},\"session\":{\"id\":\"moved-live-pane\"}}" | "$ZENTTY_CLI_BIN" ipc agent-event
+            ;;
+        agent-kill-process)
+            kill "$agent_pid"
+            wait "$agent_pid" 2>/dev/null || true
+            agent_pid=
+            ;;
+        agent-session-end)
+            printf '%s' '{"version":1,"event":"session.end","session":{"id":"moved-live-pane"}}' | "$ZENTTY_CLI_BIN" ipc agent-event
+            ;;
+        tmux-route)
+            route="$(tmux display-message -p '#{pane_id}')" && printf '\033]2;tmux:%s\a' "$route"
+            ;;
+        tmux-stale-claim)
+            route="$(ZENTTY_WINDOW_ID=window-1 ZENTTY_WORKLANE_ID=worklane-1 tmux display-message -p '#{pane_id}')" && printf '\033]2;tmux-stale:%s\a' "$route"
+            ;;
+        capture-move)
+            tmux capture-pane -p | grep -Fq before-live-window-move && printf '\033]2;scrollback-preserved\a'
+            ;;
+        *) printf '\033]2;%s\a' "$value" ;;
+    esac
+done
+EOF
+)"
 
 start_product() {
     : >"${log}"
@@ -352,8 +400,52 @@ zentty_product_wait_for_log "${log}" \
     "moved pane capability did not retarget through the shared real socket" ||
     fail "post-move authenticated agent route missing"
 if [[ "${ZENTTY_MULTI_WINDOW_FLEET_ONLY:-false}" == true ]]; then
-zentty_product_wait_for_log "${log}" 'zentty-linux: fleet-refresh windows=2 agents=2' \
+zentty_product_wait_for_log "${log}" \
+    'zentty-linux: fleet-refresh windows=2 agents=2 waiting=1 stopped=0 compacting=0 active=1 idle=0 progress=0' \
     "both real-window agent projections did not reach one fleet" || fail "cross-window fleet missing"
+zentty_product_type "${backend}" "agent-progress"
+zentty_product_key "${backend}" Return
+zentty_product_wait_for_log "${log}" \
+    'zentty-linux: fleet-popover-render agents=2 waiting=1 stopped=0 compacting=0 active=1 idle=0 progress=1' \
+    "incomplete progress did not reach the real fleet presentation" || fail "fleet progress missing"
+zentty_product_type "${backend}" "agent-complete"
+zentty_product_key "${backend}" Return
+zentty_product_wait_for_log "${log}" \
+    'zentty-linux: fleet-refresh windows=2 agents=2 waiting=1 stopped=0 compacting=0 active=1 idle=0 progress=0' \
+    "completed progress remained visible" || fail "completed fleet progress was not hidden"
+zentty_product_type "${backend}" "agent-compacting"
+zentty_product_key "${backend}" Return
+zentty_product_wait_for_log "${log}" \
+    'zentty-linux: fleet-refresh windows=2 agents=2 waiting=1 stopped=0 compacting=1 active=0 idle=0 progress=0' \
+    "compacting state did not re-prioritize the real fleet" || fail "fleet compacting state missing"
+zentty_product_type "${backend}" "agent-running"
+zentty_product_key "${backend}" Return
+zentty_product_wait_for_log_count "${log}" \
+    'zentty-linux: fleet-refresh windows=2 agents=2 waiting=1 stopped=0 compacting=0 active=1 idle=0 progress=0' 2 \
+    "running activity did not replace compacting" || fail "fleet running reprioritization missing"
+zentty_product_type "${backend}" "agent-stop-candidate"
+zentty_product_key "${backend}" Return
+zentty_product_wait_for_log "${log}" \
+    'zentty-linux: fleet-refresh windows=2 agents=2 waiting=1 stopped=0 compacting=0 active=0 idle=1 progress=0' \
+    "stop-candidate grace did not expire to idle" || fail "fleet stop grace missing"
+zentty_product_type "${backend}" "agent-track-process"
+zentty_product_key "${backend}" Return
+zentty_product_wait_for_log "${log}" \
+    'zentty-linux: agent-event pane=pane-2 worklane=window-2-worklane-1 kind=agent.running session=moved-live-pane' \
+    "tracked agent process did not publish running state" || fail "tracked fleet process missing"
+zentty_product_wait_for_log_count "${log}" \
+    'zentty-linux: fleet-refresh windows=2 agents=2 waiting=1 stopped=0 compacting=0 active=1 idle=0 progress=0' 3 \
+    "tracked agent process did not return the fleet to running" || fail "tracked fleet running state missing"
+zentty_product_type "${backend}" "agent-kill-process"
+zentty_product_key "${backend}" Return
+zentty_product_wait_for_log "${log}" \
+    'zentty-linux: fleet-refresh windows=2 agents=2 waiting=1 stopped=1 compacting=0 active=0 idle=0 progress=0' \
+    "real tracked PID death did not produce a stopped fleet row" || fail "fleet stopped state missing"
+zentty_product_type "${backend}" "agent-running"
+zentty_product_key "${backend}" Return
+zentty_product_wait_for_log_count "${log}" \
+    'zentty-linux: fleet-refresh windows=2 agents=2 waiting=1 stopped=0 compacting=0 active=1 idle=0 progress=0' 4 \
+    "new activity did not resolve stopped state" || fail "fleet stopped recovery missing"
 execute_palette_action "agent activity across every Zentty window" "Agent Status"
 zentty_product_wait_for_log "${log}" 'zentty-linux: chrome-popover=agent-fleet state=open' \
     "keyboard-accessible fleet control did not open" || fail "fleet popover missing"
@@ -367,6 +459,11 @@ zentty_product_wait_for_log "${log}" \
 # specific coordinates. The opened popover and priority-focus receipt above
 # independently prove the grouped fleet projection itself.
 zentty_product_key "${backend}" Escape
+zentty_product_type "${backend}" "agent-session-end"
+zentty_product_key "${backend}" Return
+zentty_product_wait_for_log "${log}" \
+    'zentty-linux: fleet-refresh windows=2 agents=1 waiting=1 stopped=0 compacting=0 active=0 idle=0 progress=0' \
+    "session end did not remove the destination fleet row" || fail "fleet session cleanup missing"
 execute_palette_action "Requires approval" "waiting fleet pane"
 zentty_product_wait_for_log "${log}" \
     'zentty-linux: fleet-activate window=window-1 worklane=worklane-1 pane=pane-1 result=targeted' \
@@ -374,6 +471,13 @@ zentty_product_wait_for_log "${log}" \
 if [[ "${backend}" == x11 ]]; then
     target_second_window "pane-1"
     type_and_expect_title "fleet-routed-exact-pty" "pane-1"
+    close_active_window
+    zentty_product_wait_for_log "${log}" 'zentty-linux: window-closed id=window-1 remaining=1' \
+        "closing the fleet source did not preserve its destination window" || fail "fleet window cleanup failed"
+    zentty_product_wait_for_log "${log}" \
+        'zentty-linux: fleet-refresh windows=1 agents=0 waiting=0 stopped=0 compacting=0 active=0 idle=0 progress=0' \
+        "closed window remained in the fleet registry" || fail "stale fleet window survived"
+    zentty_product_prepare_input "${backend}" "${log}" || fail "could not focus fleet cleanup survivor"
 else
     zentty_product_prepare_input "${backend}" "${log}" || fail "could not retarget fleet destination"
     zentty_product_type "${backend}" "fleet-routed-exact-pty"
@@ -387,7 +491,7 @@ else
 fi
 zentty_product_close_window "${backend}"
 wait_for_exit
-echo "Rust agent fleet passed: ${backend}, windows=2, statuses=2, route=exact-real-pty"
+echo "Rust agent fleet passed: ${backend}, windows=2, lifecycle=waiting-progress-complete-compacting-idle-stopped-cleanup, route=exact-real-pty"
 exit 0
 fi
 target_second_window "pane-2"

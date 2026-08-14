@@ -2023,6 +2023,17 @@ impl WorkspaceState {
         self.agent_statuses.apply(event, now);
     }
 
+    /// Advances lifecycle deadlines for the canonical per-pane agent store.
+    /// The platform supplies process liveness; workspace ownership and pane
+    /// transfer remain authoritative here.
+    pub fn sweep_agent_lifecycle(
+        &mut self,
+        now: u64,
+        is_process_alive: impl FnMut(i32) -> bool,
+    ) -> bool {
+        self.agent_statuses.sweep(now, is_process_alive)
+    }
+
     /// Seeds the canonical sidebar state for one accepted restore draft while
     /// its real resumed process is starting. Subsequent authenticated hooks
     /// replace this projection through the same status store.
