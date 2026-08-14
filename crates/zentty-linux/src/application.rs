@@ -26,6 +26,7 @@ pub(crate) struct ApplicationCycleResult {
 pub(crate) struct ApplicationCoordinator {
     runtime: GhosttyRuntime,
     agent_runtime: Rc<RefCell<AgentRuntime>>,
+    attention_inbox: Rc<RefCell<zentty_core::AttentionInbox>>,
     command: Option<String>,
     config: AppConfig,
     config_reload: ConfigReloadAuthority,
@@ -76,6 +77,7 @@ impl ApplicationCoordinator {
         let coordinator = Rc::new(RefCell::new(Self {
             runtime: runtime.clone(),
             agent_runtime,
+            attention_inbox: Rc::new(RefCell::new(zentty_core::AttentionInbox::default())),
             command,
             config,
             config_reload: ConfigReloadAuthority::new(config_snapshot),
@@ -240,11 +242,12 @@ impl ApplicationCoordinator {
     ) -> Result<Rc<RefCell<ApplicationShell>>, String> {
         let id = snapshot.window.id.clone();
         let restored_window = (!snapshot.window.worklanes.is_empty()).then_some(snapshot.window);
-        let (runtime, agent_runtime, command, config, main_loop) = {
+        let (runtime, agent_runtime, attention_inbox, command, config, main_loop) = {
             let coordinator = coordinator.borrow();
             (
                 coordinator.runtime.clone(),
                 Rc::clone(&coordinator.agent_runtime),
+                Rc::clone(&coordinator.attention_inbox),
                 coordinator.command.clone(),
                 coordinator.config.clone(),
                 coordinator.main_loop.clone(),
@@ -254,6 +257,7 @@ impl ApplicationCoordinator {
             ghostty: runtime,
             agent: agent_runtime,
             config,
+            attention_inbox,
         };
         let shell = ApplicationShell::new(
             &runtimes,
@@ -344,12 +348,14 @@ impl ApplicationCoordinator {
                 }
             });
         });
+        let attention_action_handler = Self::attention_action_handler(coordinator);
         shell.borrow_mut().set_application_handlers(
             new_window_handler,
             move_pane_to_new_window_handler,
             show_task_manager_handler,
             close_window_handler,
             quit_handler,
+            attention_action_handler,
         );
 
         let weak = Rc::downgrade(coordinator);
@@ -394,6 +400,71 @@ impl ApplicationCoordinator {
             });
             glib::Propagation::Stop
         });
+    }
+
+    fn attention_action_handler(
+        coordinator: &Rc<RefCell<Self>>,
+    ) -> Rc<dyn Fn(crate::application_shell::AttentionAction)> {
+        let weak = Rc::downgrade(coordinator);
+        Rc::new(move |action| {
+            let weak = weak.clone();
+            glib::idle_add_local_once(move || {
+                let Some(coordinator) = weak.upgrade() else {
+                    return;
+                };
+                Self::handle_attention_action(&coordinator, action);
+            });
+        })
+    }
+
+    fn handle_attention_action(
+        coordinator: &Rc<RefCell<Self>>,
+        action: crate::application_shell::AttentionAction,
+    ) {
+        match action {
+            crate::application_shell::AttentionAction::Activate(target) => {
+                let shell = coordinator.borrow().shells.get(&target.window_id).cloned();
+                let activated = shell
+                    .as_ref()
+                    .is_some_and(|shell| shell.borrow_mut().activate_attention_target(&target));
+                if activated {
+                    coordinator
+                        .borrow()
+                        .attention_inbox
+                        .borrow_mut()
+                        .resolve_target(&target, current_time_ms());
+                    eprintln!(
+                        "zentty-linux: attention-activate window={} worklane={} pane={} result=focused",
+                        target.window_id, target.worklane_id, target.pane_id
+                    );
+                } else {
+                    coordinator
+                        .borrow()
+                        .attention_inbox
+                        .borrow_mut()
+                        .resolve_target(&target, current_time_ms());
+                    eprintln!(
+                        "zentty-linux: attention-activate window={} worklane={} pane={} result=stale",
+                        target.window_id, target.worklane_id, target.pane_id
+                    );
+                }
+            }
+            crate::application_shell::AttentionAction::Dismiss(id) => {
+                coordinator
+                    .borrow()
+                    .attention_inbox
+                    .borrow_mut()
+                    .dismiss(id);
+                eprintln!("zentty-linux: attention-dismiss id={id}");
+            }
+            crate::application_shell::AttentionAction::Clear => {
+                coordinator.borrow().attention_inbox.borrow_mut().clear();
+                eprintln!("zentty-linux: attention-clear");
+            }
+        }
+        for shell in coordinator.borrow().shells.values() {
+            shell.borrow().refresh_attention_inbox();
+        }
     }
 
     fn move_pane_handler(coordinator: &Rc<RefCell<Self>>, source_id: &str) -> Rc<dyn Fn(String)> {
@@ -769,6 +840,9 @@ impl ApplicationCoordinator {
                 self.last_sidebar_widths.insert(id.clone(), sidebar_width);
             }
         }
+        for shell in self.shells.values() {
+            shell.borrow().refresh_attention_inbox();
+        }
         self.runtime.tick().map_err(|error| error.to_string())
     }
 
@@ -842,6 +916,14 @@ impl ApplicationCoordinator {
         eprintln!("zentty-linux: lifecycle complete");
         Ok(result)
     }
+}
+
+fn current_time_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| {
+            u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
+        })
 }
 
 fn is_wayland_display() -> bool {

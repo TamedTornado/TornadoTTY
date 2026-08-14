@@ -11074,6 +11074,143 @@ test harness, preserve the legacy constructor, and be independently reviewable.
   NOT_IMPLEMENTED for multi-window crash recovery, frame/divider persistence,
   and complete CWD coverage rather than silently treating those gaps as done.
 
+## 2026-08-14 — Issue 21 attention inbox and exact-pane routing
+
+### Discovery and source contract
+
+- The Linux chrome already rendered the source notification control in the
+  correct leading-control order, but deliberately disabled it. Agent IPC could
+  render attention in a sidebar row and the `Jump To Latest Attention Item`
+  shortcut searched the active window's model directly; there was no inbox,
+  history, shared cross-window target, badge, dismiss/clear action, or single
+  routing authority.
+- The macOS source does not treat the inbox as a list of transient strings.
+  `NotificationStore` keeps bounded newest-first history, coalesces a changed
+  request by pane, resolves rather than immediately deleting old entries,
+  reconciles stale panes, and routes an item by window/worklane/pane identity.
+  The Linux slice therefore ports that behavior rather than inventing a toast
+  panel.
+
+### Implementation and regression coverage
+
+- `zentty-core::AttentionInbox` is the sole platform-neutral history reducer.
+  It owns stable targets and IDs, source-shaped interaction labels and fallback
+  copy, newest-first ordering, per-pane coalescing, resolution, stale cleanup,
+  dismissal, clearing, a 50-item bound, and the most-urgent unresolved query.
+  Focused tests cover unchanged-event deduplication, changed-question history,
+  resolution, stale-window scoping, ordering, dismissal, and clearing.
+- One shared inbox now belongs to `ApplicationCoordinator`; individual windows
+  only present it. Both an inbox row and the existing source shortcut dispatch
+  the same typed `AttentionAction::Activate(AttentionTarget)`. The coordinator
+  selects the exact window/worklane/pane, presents it, focuses its real Ghostty
+  surface, and resolves the item only after routing succeeds (or marks a stale
+  target resolved without pretending it was focused).
+- The GTK inbox has a count badge, empty state, bounded scroller, actual agent,
+  interaction and question text, target context, resolved history, accessible
+  labels, per-row dismissal, and clear-all. Replacing its popover on every app
+  tick initially risked closing a live menu; a cached rendered snapshot now
+  rebuilds it only when inbox state actually changes.
+- `linux/tests/rust-attention-inbox` reuses the existing controlled-agent,
+  product-input, nested-X11 and nested-Wayland infrastructure. It launches the
+  staged ReleaseSafe product, crosses the authenticated Unix-socket Agent IPC
+  boundary from a real Codex wrapper in a real Ghostty PTY, observes the inbox,
+  uses real compositor input, activates the row/shortcut, types `ATTENTION42`,
+  and accepts PASS only when the controlled PTY reads those exact bytes.
+
+### Failures and repairs
+
+- The first controlled X11 run
+  (`15987143f2f03605e43572d8dce5d36ad361c8a1d634c73c84413b6aad0a5db8`)
+  proved the inbox item existed but the runner guessed a row coordinate and
+  never activated it. The journey now clicks only the source-pinned chrome
+  control, waits for the real GTK popover receipt and compositor settlement,
+  then clicks the primary row target away from its trailing dismiss control.
+  The exact PTY response—not the coordinate—is the acceptance evidence.
+- The next run
+  (`b4670f57129af503f7c503a44747b63ba3f9fb975d4baaf58af2842f6d085d23`)
+  exposed a popover focus-settle race: GTK briefly focused the row and then the
+  dismiss button, so a prompt Return dismissed instead of routing. A subsequent
+  full-matrix run reproduced that race, and focused diagnosis also showed that
+  the nested X11 session's physical/logical scaling invalidated an early row
+  coordinate. The final journey waits for the rendered popover and uses its
+  controlled, scale-correct primary-row hit target. Sessions
+  `92406b4e3982ef91ff017d7a0bb282fc68548d9d738cb3f785d9409341ca5510`
+  and `be6ec31629fbee19ab5a8f48aadf49bf08d1bc6623bafa827a856679ad2f5a8b`
+  passed consecutively, disproving a timing-only green result.
+  Session
+  `50520c4db0a058feb9bd73c6a5c69f0b9d9a71b27eba72b902efa4c14c7d99e2`
+  passed the corrected physical row route after the matrix failure.
+- Wayland correctly rejected the X11 coordinate assumption and Ghostty retained
+  ordinary Tab focus inside the terminal. Rather than weaken the assertion or
+  inject internal actions, the controlled Wayland route now sends the real
+  source shortcut through the virtual keyboard. The shortcut and GTK row share
+  the exact same application routing authority; X11 independently proves the
+  popover and row. Final sessions
+  `23f4aa89e12aee68668f05f36b94222eecdeb9a20f45f49f890492c5defb5610`
+  (X11) and
+  `70e7c3ef3adf2794126f210f27f8c1de23237113a89d60491d185d2f27bfb64a`
+  (Wayland, nested session
+  `9ab506d64cd6c3400c60977f2b83cfc6d074412b2f144a0f82399f1618ebaba6`)
+  passed real event delivery and exact PTY input routing.
+- This managed development host had nonstandard `nobody:nogroup` ownership on
+  `/tmp` and `/tmp/.X11-unix`, causing Xvfb to reject its listening socket.
+  Tests were not converted to PASS. The operator restored the standard
+  `root:root`, mode `1777` prerequisites in the same elevated execution as each
+  controlled run because the managed environment resets ownership between
+  command cells. Product scripts do not contain `sudo` or silently repair host
+  policy.
+- The first full local qualification attempt stopped at the architecture
+  contract: the new shell field and methods were absent from its authoritative
+  ownership inventory. The initial repair then placed the method assignment in
+  the field array, which the validator rejected rather than allowing a null
+  inventory to pass. The corrected contract records the process-wide attention
+  coordinator, all three typed actions and the new action installer; the
+  architecture cell passes again. This was a qualification failure and repair,
+  not evidence that the earlier focused runs constituted full qualification.
+- The repaired full matrix then exposed the inbox X11 focus race above and
+  three unrelated, pre-existing real-GTK journeys under parallel load:
+  bookmark import/export on X11 and Wayland could not reach its name dialog,
+  and the nested-Wayland file-drop gesture did not complete. None was relabeled
+  PASS from the failed receipt. Each old journey passed unchanged when rerun
+  alone in the same controlled compositor (X11 bookmark session
+  `e89b2a37f1189985f7f8dbdb205aa4faa43112a578e0c0d6da7b26f2b24ddd8a`,
+  Wayland bookmark session
+  `92e918ba061110b1565339c414b003b1c63484c85b31b82e586dcee02711a0d9`,
+  and Wayland file-drop session
+  `d1c578f5b0932065536764f48871cf8472f6caed161da91ae7e2fd884096eed0`).
+  They remain real journeys rather than being weakened or mocked; a fresh full
+  receipt is still required after the inbox repair.
+- The next full receipt passed the repaired inbox and all three previously
+  failing journeys, but `agent-integration-x11` later missed the same
+  consolidated journey's multi-file rollback receipt. Its unchanged focused
+  rerun passed in real X11 session
+  `1a8aa44ec2b54ecee6e8d2fb8008faad0ad8653596b9a441130f6b0a24d625e8`.
+  Audit showed the matrix was launching three copies of the deliberately large
+  `rust-session-restore` journey concurrently with no declared resource: both
+  agent-integration cells and the remote-file-drop cell. This was genuine CPU
+  and compositor timing contention, not an inherently serial product boundary.
+  Those three cells now share the explicit
+  `consolidated-session-journey` scheduler resource. Other independent nested
+  compositor journeys remain parallel, and the matrix runner's closed-world
+  resource validation and negative tests still pass.
+- The final `linux/tests/qualify-local` receipt completed in 551.7 seconds:
+  all presently executable support and matrix cells passed, including both new
+  attention cells and all three serialized consolidated journeys. Declared
+  totals are **128 PASS, 0 FAIL, 7 BLOCKED, 1 XFAIL, and 22
+  NOT_IMPLEMENTED**. This supports only “implemented local suite passed.”
+  Release qualification and full Linux qualification remain not passed because
+  the explicit non-PASS cells remain; Debug Valgrind is a PASS with reviewed
+  suppressions, not an unsuppressed-clean claim.
+
+### Remaining scope
+
+- This is a complete first issue-21 slice, not closure of the epic. Fleet
+  status, tray/status-notifier mapping, sleep inhibition, multiple-window inbox
+  action journeys, desktop-notification action callbacks, completion and
+  unresolved-stop history, active-pane suppression, debounce, and full
+  dismiss/clear/stale-pane physical journeys remain explicit. The feature
+  inventory remains `PARTIAL`; it is not described as exhaustive QA.
+
 ## AI disclosure
 
 Initial repository analysis, implementation assistance, and this report were

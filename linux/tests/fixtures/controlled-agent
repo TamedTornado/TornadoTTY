@@ -36,6 +36,17 @@ codex_has_hook() {
 }
 
 case "${profile}" in
+    attention-inbox)
+        require_helper
+        receipt="${ZENTTY_CONTROLLED_ATTENTION_RECEIPT:-}"
+        [[ -n "${receipt}" ]] || fail "ZENTTY_CONTROLLED_ATTENTION_RECEIPT is required"
+        "${helper}" codex-notify \
+            '{"type":"question","session_id":"attention-inbox-e2e","message":"Allow the controlled deployment?"}'
+        IFS= read -r response
+        printf 'response=%s\n' "${response}" >"${receipt}"
+        "${helper}" codex-notify \
+            '{"type":"agent-turn-complete","session_id":"attention-inbox-e2e"}'
+        ;;
     codex-permission)
         require_helper
         codex_has_hook PermissionRequest "$@" || fail "Codex PermissionRequest hook is missing"

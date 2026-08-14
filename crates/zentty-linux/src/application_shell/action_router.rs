@@ -13,6 +13,8 @@ pub(super) enum ParameterSchema {
     None,
     String,
     StringPair,
+    StringTriple,
+    U64,
 }
 
 impl ParameterSchema {
@@ -23,6 +25,10 @@ impl ParameterSchema {
             Self::StringPair => {
                 parameter.is_some_and(|value| value.get::<(String, String)>().is_some())
             }
+            Self::StringTriple => {
+                parameter.is_some_and(|value| value.get::<(String, String, String)>().is_some())
+            }
+            Self::U64 => parameter.is_some_and(|value| value.get::<u64>().is_some()),
         }
     }
 }
@@ -74,6 +80,10 @@ macro_rules! action {
         }
     };
 }
+
+pub(super) const ACTION_ACTIVATE_ATTENTION: &str = "activate-attention";
+pub(super) const ACTION_DISMISS_ATTENTION: &str = "dismiss-attention";
+pub(super) const ACTION_CLEAR_ATTENTION: &str = "clear-attention";
 
 pub(super) const ACTION_TOGGLE_SIDEBAR: &str = "toggle-sidebar";
 pub(super) const ACTION_SHOW_COMMAND_PALETTE: &str = "show-command-palette";
@@ -207,6 +217,13 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
     action!(ACTION_USE_AUTO_THEME, "use-auto-theme", None),
     action!(ACTION_OPEN_BOOKMARKS, "open-bookmarks", None),
     action!(ACTION_JUMP_LATEST_ATTENTION, "jump-latest-attention", None),
+    action!(
+        ACTION_ACTIVATE_ATTENTION,
+        "activate-attention",
+        StringTriple
+    ),
+    action!(ACTION_DISMISS_ATTENTION, "dismiss-attention", U64),
+    action!(ACTION_CLEAR_ATTENTION, "clear-attention", None),
     action!(ACTION_NEW_WORKLANE, "new-worklane", None),
     action!(ACTION_SELECT_WORKLANE, "select-worklane", String),
     action!(ACTION_SPLIT_PANE_RIGHT, "split-pane-right", None),
@@ -536,32 +553,51 @@ fn install_primary_ui_actions(
             eprintln!("zentty-linux: action=open-bookmarks unavailable");
         }
     });
+    install_attention_actions(shell, group);
     add_simple_action(shell, group, ACTION_JUMP_LATEST_ATTENTION, |shell| {
-        let target = shell
-            .state
-            .sidebar_summaries()
-            .into_iter()
-            .flat_map(|worklane| {
-                worklane.pane_rows.into_iter().filter_map(move |pane| {
-                    pane.agent_status
-                        .filter(zentty_core::PaneAgentStatus::requires_attention)
-                        .map(|status| {
-                            (
-                                status.updated_at,
-                                worklane.worklane_id.clone(),
-                                pane.pane_id,
-                            )
-                        })
-                })
-            })
-            .max_by_key(|(updated_at, _, _)| *updated_at);
-        if let Some((_, worklane_id, pane_id)) = target
-            && shell.state.select_worklane_and_pane(&worklane_id, &pane_id)
-        {
-            shell.render();
-            shell.focus_selected_surface();
-            eprintln!("zentty-linux: action=jump-latest-attention pane={pane_id}");
-        }
+        shell.request_latest_attention();
+    });
+}
+
+fn install_attention_actions(
+    shell: &Rc<RefCell<ApplicationShell>>,
+    group: &gio::SimpleActionGroup,
+) {
+    let triple = glib::VariantTy::new("(sss)").expect("static action type is valid");
+    let activate = gio::SimpleAction::new(ACTION_ACTIVATE_ATTENTION, Some(triple));
+    let weak = Rc::downgrade(shell);
+    activate.connect_activate(move |_, parameter| {
+        let (Some(shell), Some((window_id, worklane_id, pane_id))) = (
+            weak.upgrade(),
+            parameter.and_then(glib::Variant::get::<(String, String, String)>),
+        ) else {
+            return;
+        };
+        shell
+            .borrow()
+            .request_attention_action(super::AttentionAction::Activate(
+                zentty_core::AttentionTarget::new(window_id, worklane_id, pane_id),
+            ));
+    });
+    group.add_action(&activate);
+
+    let dismiss = gio::SimpleAction::new(ACTION_DISMISS_ATTENTION, Some(glib::VariantTy::UINT64));
+    let weak = Rc::downgrade(shell);
+    dismiss.connect_activate(move |_, parameter| {
+        let (Some(shell), Some(id)) = (
+            weak.upgrade(),
+            parameter.and_then(glib::Variant::get::<u64>),
+        ) else {
+            return;
+        };
+        shell
+            .borrow()
+            .request_attention_action(super::AttentionAction::Dismiss(id));
+    });
+    group.add_action(&dismiss);
+
+    add_simple_action(shell, group, ACTION_CLEAR_ATTENTION, |shell| {
+        shell.request_attention_action(super::AttentionAction::Clear);
     });
 }
 
@@ -1576,6 +1612,8 @@ fn validate_registered_group(group: &gio::SimpleActionGroup) -> Result<(), Strin
             ParameterSchema::None => None,
             ParameterSchema::String => Some("s".to_owned()),
             ParameterSchema::StringPair => Some("(ss)".to_owned()),
+            ParameterSchema::StringTriple => Some("(sss)".to_owned()),
+            ParameterSchema::U64 => Some("t".to_owned()),
         };
         if actual_type != expected_type {
             return Err(format!(
@@ -1605,7 +1643,7 @@ mod tests {
 
     #[test]
     fn registry_is_unique_complete_and_typed() {
-        assert_eq!(ACTION_SPECS.len(), 109);
+        assert_eq!(ACTION_SPECS.len(), 112);
         assert_eq!(
             ACTION_SPECS
                 .iter()
@@ -1742,6 +1780,10 @@ mod tests {
                         ParameterSchema::StringPair => {
                             Some(glib::VariantTy::new("(ss)").expect("static test type is valid"))
                         }
+                        ParameterSchema::StringTriple => {
+                            Some(glib::VariantTy::new("(sss)").expect("static test type is valid"))
+                        }
+                        ParameterSchema::U64 => Some(glib::VariantTy::UINT64),
                     }
                 };
                 group.add_action(&gio::SimpleAction::new(spec.name, parameter));

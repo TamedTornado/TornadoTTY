@@ -6,6 +6,7 @@ mod agents_settings;
 mod appearance_settings;
 mod application;
 mod application_shell;
+mod attention_inbox;
 mod bookmarks_view;
 mod codex_enrichment;
 mod command_palette;

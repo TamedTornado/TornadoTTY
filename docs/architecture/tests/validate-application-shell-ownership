@@ -437,6 +437,7 @@ jq -e '
     ([.owners[].id] | sort) == ([
         "action_router",
         "agent_event_coordinator",
+        "attention_coordinator",
         "application_runtime",
         "application_shell",
         "bookmark_coordinator",
@@ -532,7 +533,8 @@ jq -e '
         ([.action_contract[].name] | unique | length) and
     all(.action_contract[];
         (.parameter == "none" or .parameter == "string" or
-         .parameter == "string_pair") and
+         .parameter == "string_pair" or .parameter == "string_triple" or
+         .parameter == "u64") and
         (.owner == "action_router") and
         (.invalid_parameter == "ignore-without-panic")) and
     ([.action_contract[] | select(.parameter == "string") | .name] | sort) == ([
@@ -546,7 +548,9 @@ jq -e '
         "move-worklane", "rename-pane", "rename-worklane", "reorder-worklane",
         "select-pane", "set-worklane-color", "edit-template", "rename-template", "save-template"
     ] | sort) and
-    ([.action_contract[] | select(.parameter == "none")] | length) == 83 and
+    ([.action_contract[] | select(.parameter == "string_triple") | .name]) == ["activate-attention"] and
+    ([.action_contract[] | select(.parameter == "u64") | .name]) == ["dismiss-attention"] and
+    ([.action_contract[] | select(.parameter == "none")] | length) == 84 and
     .conditional_action_availability == {
         "multiple_columns":["resize-pane-left","resize-pane-right","arrange-golden-wide","arrange-golden-narrow"],
         "multiple_panes_in_focused_column":["resize-pane-up","resize-pane-down","arrange-golden-tall","arrange-golden-short"],

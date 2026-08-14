@@ -97,6 +97,7 @@ fn install_shell_styles() {
     sidebar::install_styles();
     pane_controls::install_styles();
     pane_dividers::install_styles();
+    crate::attention_inbox::install_styles();
 }
 
 fn sidebar_tracking_state() -> SidebarTrackingState {
@@ -111,6 +112,14 @@ pub(crate) struct ApplicationRuntimes {
     pub(crate) ghostty: GhosttyRuntime,
     pub(crate) agent: Rc<RefCell<AgentRuntime>>,
     pub(crate) config: AppConfig,
+    pub(crate) attention_inbox: Rc<RefCell<zentty_core::AttentionInbox>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum AttentionAction {
+    Activate(zentty_core::AttentionTarget),
+    Dismiss(u64),
+    Clear,
 }
 
 pub(crate) struct ApplicationShell {
@@ -162,12 +171,14 @@ pub(crate) struct ApplicationShell {
     shortcut_controller: Option<gtk::EventControllerKey>,
     shortcut_settings_window: Option<crate::shortcut_settings::SettingsWindow>,
     agent_events: AgentEventCoordinator,
+    attention_inbox: Rc<RefCell<zentty_core::AttentionInbox>>,
     tmux_compat: crate::tmux_compat::TmuxCompatProduct,
     new_window_handler: Option<Rc<dyn Fn()>>,
     move_pane_to_new_window_handler: Option<Rc<dyn Fn(String)>>,
     show_task_manager_handler: Option<Rc<dyn Fn()>>,
     close_window_handler: Option<Rc<dyn Fn()>>,
     quit_handler: Option<Rc<dyn Fn()>>,
+    attention_action_handler: Option<Rc<dyn Fn(AttentionAction)>>,
     self_handle: RefCell<Weak<RefCell<Self>>>,
 }
 
@@ -372,12 +383,14 @@ impl ApplicationShell {
             shortcut_controller: None,
             shortcut_settings_window: None,
             agent_events,
+            attention_inbox: Rc::clone(&runtimes.attention_inbox),
             tmux_compat: default_tmux_product()?,
             new_window_handler: None,
             move_pane_to_new_window_handler: None,
             show_task_manager_handler: None,
             close_window_handler: None,
             quit_handler: None,
+            attention_action_handler: None,
             self_handle: RefCell::new(Weak::new()),
         }));
         finish_shell_setup(
@@ -581,12 +594,53 @@ impl ApplicationShell {
         show_task_manager_handler: Rc<dyn Fn()>,
         close_window_handler: Rc<dyn Fn()>,
         quit_handler: Rc<dyn Fn()>,
+        attention_action_handler: Rc<dyn Fn(AttentionAction)>,
     ) {
         self.new_window_handler = Some(new_window_handler);
         self.move_pane_to_new_window_handler = Some(move_pane_to_new_window_handler);
         self.show_task_manager_handler = Some(show_task_manager_handler);
         self.close_window_handler = Some(close_window_handler);
         self.quit_handler = Some(quit_handler);
+        self.attention_action_handler = Some(attention_action_handler);
+    }
+
+    pub(crate) fn request_attention_action(&self, action: AttentionAction) {
+        if let Some(handler) = &self.attention_action_handler {
+            handler(action);
+        }
+    }
+
+    pub(crate) fn request_latest_attention(&self) {
+        let target = self
+            .attention_inbox
+            .borrow()
+            .most_urgent_unresolved()
+            .map(|item| item.target.clone());
+        if let Some(target) = target {
+            self.request_attention_action(AttentionAction::Activate(target));
+        }
+    }
+
+    pub(crate) fn activate_attention_target(
+        &mut self,
+        target: &zentty_core::AttentionTarget,
+    ) -> bool {
+        if self.window_template.id != target.window_id
+            || !self
+                .state
+                .select_worklane_and_pane(&target.worklane_id, &target.pane_id)
+        {
+            return false;
+        }
+        self.render();
+        self.window.present();
+        self.focus_selected_surface();
+        true
+    }
+
+    pub(crate) fn refresh_attention_inbox(&self) {
+        let inbox = self.attention_inbox.borrow();
+        self.chrome.render_attention(inbox.items());
     }
 
     pub(crate) fn extract_live_pane_to_new_window(
@@ -3564,6 +3618,7 @@ impl ApplicationShell {
 
     fn render_sidebar(&self) {
         let summaries = self.sidebar_summaries();
+        self.reconcile_attention(&summaries);
         let servers = self.ranked_servers();
         sidebar::render(
             &self.sidebar,
@@ -3580,6 +3635,7 @@ impl ApplicationShell {
 
     fn refresh_sidebar_metadata(&self) {
         let summaries = self.sidebar_summaries();
+        self.reconcile_attention(&summaries);
         let servers = self.ranked_servers();
         if !sidebar::update_metadata(&self.sidebar, &summaries) {
             sidebar::render(
@@ -3618,6 +3674,34 @@ impl ApplicationShell {
         );
         self.chrome
             .set_open_with_context_available(open_with_runtime::focused_context_is_available(self));
+        self.refresh_attention_inbox();
+    }
+
+    fn reconcile_attention(&self, summaries: &[zentty_core::SidebarWorklaneSummary]) {
+        let now = unix_time_ms();
+        let mut live = std::collections::HashSet::new();
+        let mut inbox = self.attention_inbox.borrow_mut();
+        let mut changed = false;
+        for worklane in summaries {
+            for pane in &worklane.pane_rows {
+                let target = zentty_core::AttentionTarget::new(
+                    &self.window_template.id,
+                    &worklane.worklane_id,
+                    &pane.pane_id,
+                );
+                live.insert(target.clone());
+                changed |= inbox.observe(target, pane.agent_status.as_ref(), now);
+            }
+        }
+        changed |= inbox.resolve_stale(&self.window_template.id, &live, now);
+        if changed {
+            eprintln!(
+                "zentty-linux: attention-inbox window={} items={} unresolved={}",
+                self.window_template.id,
+                inbox.items().len(),
+                inbox.unresolved_count()
+            );
+        }
     }
 
     fn sidebar_summaries(&self) -> Vec<zentty_core::SidebarWorklaneSummary> {

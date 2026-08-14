@@ -100,7 +100,7 @@ jq -e '
       "Debug":"build-debug","ReleaseSafe":"build-release"
     }) and
     (.execution_graph.resources == [
-      "abi-mismatch-fixture","ghostty-source","valgrind-evidence"
+      "abi-mismatch-fixture","consolidated-session-journey","ghostty-source","valgrind-evidence"
     ])
 ' "${matrix}" >/dev/null || fail "matrix root, axes, or claims are not closed-world"
 

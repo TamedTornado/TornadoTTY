@@ -1,5 +1,6 @@
 use gtk::glib::variant::ToVariant;
 use gtk::prelude::*;
+use std::cell::RefCell;
 use zentty_core::{OpenWithCatalog, OpenWithTargetKind, SidebarWorklaneSummary};
 
 use crate::source_ui;
@@ -41,7 +42,7 @@ const CHROME_CONTROLS: [ChromeControlSpec; 5] = [
         id: "notifications",
         label: source_ui::NOTIFICATIONS,
         icon: "preferences-system-notifications-symbolic",
-        enabled: false,
+        enabled: true,
     },
 ];
 
@@ -55,6 +56,9 @@ pub(crate) struct WindowChrome {
     refresh_review: gtk::Button,
     back: gtk::Button,
     forward: gtk::Button,
+    notifications: gtk::MenuButton,
+    notification_badge: gtk::Label,
+    rendered_attention: RefCell<Vec<zentty_core::AttentionItem>>,
     open_with_primary: gtk::Button,
     open_with_menu: gtk::MenuButton,
 }
@@ -80,14 +84,11 @@ impl WindowChrome {
         });
         leading.append(&arrange);
 
-        let back = icon_button(CHROME_CONTROLS[2]);
-        back.set_action_name(Some("workspace.navigate-back"));
+        let (back, forward) = navigation_controls();
         leading.append(&back);
-        let forward = icon_button(CHROME_CONTROLS[3]);
-        forward.set_action_name(Some("workspace.navigate-forward"));
         leading.append(&forward);
 
-        let notifications = icon_button(CHROME_CONTROLS[4]);
+        let (notifications, notification_badge) = notification_control();
         notifications.set_margin_start(4);
         leading.append(&notifications);
 
@@ -165,6 +166,9 @@ impl WindowChrome {
             refresh_review,
             back,
             forward,
+            notifications,
+            notification_badge,
+            rendered_attention: RefCell::new(Vec::new()),
             open_with_primary,
             open_with_menu,
         }
@@ -225,6 +229,23 @@ impl WindowChrome {
     pub(crate) fn set_open_with_context_available(&self, available: bool) {
         self.open_with_primary.set_sensitive(available);
         self.open_with_menu.set_sensitive(available);
+    }
+
+    pub(crate) fn render_attention(&self, items: &[zentty_core::AttentionItem]) {
+        if self.rendered_attention.borrow().as_slice() == items {
+            return;
+        }
+        let count = items.iter().filter(|item| !item.is_resolved()).count();
+        crate::attention_inbox::update_badge(&self.notification_badge, count);
+        self.notifications
+            .set_popover(Some(&crate::attention_inbox::popover(items)));
+        self.notifications.set_sensitive(true);
+        self.notifications.set_tooltip_text(Some(&if count == 0 {
+            "Notification Inbox".to_owned()
+        } else {
+            format!("Notification Inbox · {count} unresolved")
+        }));
+        self.rendered_attention.replace(items.to_vec());
     }
 
     pub(crate) fn render(
@@ -317,6 +338,29 @@ fn open_with_icon(kind: OpenWithTargetKind) -> &'static str {
         OpenWithTargetKind::FileManager => "folder-open-symbolic",
         OpenWithTargetKind::Terminal => "utilities-terminal-symbolic",
     }
+}
+
+fn notification_control() -> (gtk::MenuButton, gtk::Label) {
+    let button = gtk::MenuButton::new();
+    configure_menu_button(&button, CHROME_CONTROLS[4]);
+    let (content, badge) = crate::attention_inbox::button_content(0);
+    button.set_child(Some(&content));
+    button.set_popover(Some(&crate::attention_inbox::popover(&[])));
+    button.connect_active_notify(|button| {
+        eprintln!(
+            "zentty-linux: chrome-popover=attention-inbox state={}",
+            if button.is_active() { "open" } else { "closed" }
+        );
+    });
+    (button, badge)
+}
+
+fn navigation_controls() -> (gtk::Button, gtk::Button) {
+    let back = icon_button(CHROME_CONTROLS[2]);
+    back.set_action_name(Some("workspace.navigate-back"));
+    let forward = icon_button(CHROME_CONTROLS[3]);
+    forward.set_action_name(Some("workspace.navigate-forward"));
+    (back, forward)
 }
 
 fn icon_button(spec: ChromeControlSpec) -> gtk::Button {
@@ -512,7 +556,7 @@ mod tests {
                 ("arrange-panes", source_ui::ARRANGE_PANES, true),
                 ("back", source_ui::NAVIGATE_BACK, false),
                 ("forward", source_ui::NAVIGATE_FORWARD, false),
-                ("notifications", source_ui::NOTIFICATIONS, false),
+                ("notifications", source_ui::NOTIFICATIONS, true),
             ]
         );
         assert!(

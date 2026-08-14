@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
+backend="${GDK_BACKEND:-}"
+actor="${repo_root}/linux/tests/fixtures/controlled-agent"
+run_root="$(mktemp -d)"
+state_directory="${run_root}/state"
+fake_bin="${run_root}/bin"
+log="${run_root}/product.log"
+receipt="${run_root}/agent.receipt"
+product_pid=""
+# shellcheck disable=SC1091
+source "${repo_root}/linux/tests/lib/product-input"
+
+fail() {
+    [[ ! -f "${log}" ]] || cat "${log}" >&2
+    echo "rust-attention-inbox: error: $*" >&2
+    exit 1
+}
+
+cleanup() {
+    if [[ "${product_pid}" =~ ^[1-9][0-9]*$ ]]; then
+        kill -TERM "${product_pid}" 2>/dev/null || true
+        wait "${product_pid}" 2>/dev/null || true
+    fi
+    rm -rf -- "${run_root}"
+}
+trap cleanup EXIT
+
+case "${backend}" in
+    x11)
+        [[ "${ZENTTY_NESTED_X11_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+            fail "X11 attention must run in the controlled X11 environment"
+        ;;
+    wayland)
+        [[ "${ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+            fail "Wayland attention must run in the input-capable controlled environment"
+        ;;
+    *) fail "GDK_BACKEND must be x11 or wayland" ;;
+esac
+[[ -x "${product}" && -x "${actor}" ]] || fail "staged product and actor are required"
+mkdir -p "${state_directory}" "${fake_bin}"
+ln -s "${actor}" "${fake_bin}/codex"
+zentty_product_disable_lifecycle_confirmations
+
+PATH="${fake_bin}:${PATH}" GDK_SCALE=1 GDK_DPI_SCALE=1 \
+    ZENTTY_CONTROLLED_AGENT_PROFILE=attention-inbox \
+    ZENTTY_CONTROLLED_ATTENTION_RECEIPT="${receipt}" \
+    "${product}" --command codex --state-directory "${state_directory}" \
+    --no-session-restore >"${log}" 2>&1 &
+product_pid=$!
+
+zentty_product_wait_for_log "${log}" \
+    'attention-inbox window=window-1 items=1 unresolved=1' \
+    "real agent attention did not enter the in-app inbox" || fail "inbox delivery failed"
+zentty_product_prepare_input "${backend}" "${log}" || fail "product input unavailable"
+if [[ "${backend}" == x11 ]]; then
+    # The leading chrome control order is fixed and independently contract-tested:
+    # sidebar, arrange, back, forward, then inbox. Use the real compositor route.
+    inbox_y=18
+    [[ "${ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT:-}" != 1 ]] || inbox_y=34
+    xdotool mousemove --window "${ZENTTY_PRODUCT_WINDOW_ID}" 164 "${inbox_y}" click 1
+    zentty_product_wait_for_log "${log}" \
+        'chrome-popover=attention-inbox state=open' \
+        "physical inbox button did not open its GTK popover" || fail "inbox popover failed"
+    sleep 0.2
+    # The controlled 1000x700 product window and source-owned 340px popover
+    # give the first row a stable hit target below its header. Click the row's
+    # primary action, away from the trailing dismiss control, and prove the
+    # result at the exact PTY rather than trusting coordinates as evidence.
+    xdotool mousemove --window "${ZENTTY_PRODUCT_WINDOW_ID}" 100 150 click 1
+else
+    # Wayland deliberately has no global widget coordinates. The source-owned
+    # Jump To Latest Attention shortcut and an inbox row share the same typed
+    # routing action, so exercise that real physical keyboard route here. X11
+    # above separately proves the row and popover interaction itself.
+    wtype -M ctrl -M shift -k u -m shift -m ctrl
+fi
+
+zentty_product_wait_for_log "${log}" \
+    'attention-activate window=window-1 worklane=worklane-1 pane=pane-1 result=focused' \
+    "inbox row did not route back to the exact real PTY" || fail "exact-pane routing failed"
+zentty_product_type "${backend}" "ATTENTION42"
+zentty_product_key "${backend}" Return
+for _ in {1..200}; do
+    [[ -f "${receipt}" ]] && break
+    sleep 0.05
+done
+grep -Fxq 'response=ATTENTION42' "${receipt}" ||
+    fail "typing after inbox activation did not reach the routed PTY"
+zentty_product_wait_for_log "${log}" \
+    'sidebar-agent-status pane=pane-1 phase=Idle interaction=None attention=false' \
+    "agent completion did not resolve visible attention" || fail "resolution failed"
+
+zentty_product_close_window "${backend}"
+for _ in {1..200}; do
+    ! kill -0 "${product_pid}" 2>/dev/null && break
+    sleep 0.05
+done
+wait "${product_pid}" || fail "attention product journey failed"
+product_pid=""
+if grep -Eq 'panicked at|RefCell already borrowed|CRITICAL: Gtk' "${log}"; then
+    fail "attention journey reported a panic or GTK lifecycle critical"
+fi
+
+route="source-shortcut"
+[[ "${backend}" != x11 ]] || route="inbox-row"
+echo "Rust attention inbox passed: ${backend}, event=real-agent-ipc, gtk-route=${route}, target=exact-real-pty"

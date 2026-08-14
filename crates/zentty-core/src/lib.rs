@@ -8,6 +8,7 @@ mod agent_status;
 mod app_config;
 mod appearance;
 mod atomic_file_store;
+mod attention_inbox;
 mod bookmark_store;
 mod clean_copy;
 mod codex_title;
@@ -56,6 +57,9 @@ pub use appearance::{
     ThemeSpec, update_ghostty_value,
 };
 pub use atomic_file_store::{AtomicFileAction, AtomicFileStore, AtomicFileStoreError};
+pub use attention_inbox::{
+    AttentionInbox, AttentionItem, AttentionTarget, interaction_fallback, interaction_status,
+};
 pub use bookmark_store::{
     BookmarkStore, BookmarkStoreError, BookmarkStoreSnapshot, WorkspaceTemplateExportEnvelope,
 };

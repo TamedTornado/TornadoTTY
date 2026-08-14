@@ -512,10 +512,10 @@
       "user_impact": "Surfacing and jumping to agents that need attention is Zentty's central value proposition and cannot stop at an in-pane badge.",
       "linux_owner_issue": 21,
       "implementation_status": "PARTIAL",
-      "focused_tests": ["crates/zentty-core/tests/app_config.rs", "crates/zentty-linux/src/config_store.rs", "crates/zentty-linux/src/notification_service.rs", "crates/zentty-linux/src/custom_sound_store.rs"],
-      "product_scenarios": ["linux/tests/rust-notifications-settings"],
-      "test_plan": "The settings/service boundary now uses a real controlled freedesktop notification service on X11 and Wayland. The same real-system journey imports, converts, persists across restart, previews, delivers, fails explicitly without audio, and removes a custom sound. Remaining work must emit real attention events from PTYs in multiple windows, inspect the in-app inbox, and activate each route to prove exact PTY focus.",
-      "alternative_or_blocker": "The Linux freedesktop service, sound-theme, and private custom-audio alternative is implemented for settings and test delivery. Source-parity pane-attention reduction, active-pane suppression, inbox routing, and action navigation remain under issue 21; Dock-specific badges map to in-app/tray attention where supported."
+      "focused_tests": ["crates/zentty-core/tests/attention_inbox.rs", "crates/zentty-core/tests/app_config.rs", "crates/zentty-linux/src/config_store.rs", "crates/zentty-linux/src/notification_service.rs", "crates/zentty-linux/src/custom_sound_store.rs"],
+      "product_scenarios": ["linux/tests/rust-attention-inbox", "linux/tests/rust-notifications-settings"],
+      "test_plan": "The settings/service boundary uses a real controlled freedesktop notification service on X11 and Wayland. A second controlled product journey now emits a real authenticated Codex event from a real PTY, observes the shared in-app history and badge, activates the real GTK inbox row under X11 and the source Jump To Latest Attention shortcut under Wayland, and proves subsequent physical input reaches the exact routed PTY. Remaining work must cover multiple real windows, active-pane suppression, completion and unresolved-stop items, explicit inbox dismiss/clear/stale-pane journeys, desktop-notification action callbacks, and debounce timing before promoting this feature from PARTIAL.",
+      "alternative_or_blocker": "The Linux freedesktop service, sound-theme, private custom-audio alternative, source-shaped shared inbox, badge, and exact-pane action authority are implemented. Cross-window delivery/action coverage, complete source notification policy, and optional tray mapping remain under issue 21; Dock-specific badges map to in-app/tray attention where supported."
     },
     {
       "id": "desktop.fleet-status",
