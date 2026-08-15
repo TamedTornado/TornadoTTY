@@ -218,8 +218,105 @@ fn grid_parser_bounds_dimensions_and_preserves_command_argv() {
             "--worklane-id",
             "lane-1",
         ]),
+        values(&["grid", "2x2", "--new-only", "--include-source"]),
     ] {
         assert!(parse_product_cli(&invalid).is_err(), "accepted {invalid:?}");
+    }
+}
+
+#[test]
+fn grid_parser_preserves_valid_boundaries_and_destinations() {
+    let boundary = parse_product_cli(&values(&["grid", "6x6", "--focus", "source"]))
+        .unwrap()
+        .unwrap();
+    let CliProductCommand::Request(boundary) = boundary else {
+        panic!("expected boundary grid request");
+    };
+    assert_eq!(
+        boundary.arguments(),
+        &values(&["--rows", "6", "--columns", "6", "--focus", "source"])
+    );
+
+    let new_window = parse_product_cli(&values(&["grid", "1x1", "--window-id", "new", "--json"]))
+        .unwrap()
+        .unwrap();
+    let CliProductCommand::Request(new_window) = new_window else {
+        panic!("expected new-window grid request");
+    };
+    assert_eq!(
+        new_window.arguments(),
+        &values(&[
+            "--rows",
+            "1",
+            "--columns",
+            "1",
+            "--focus",
+            "source",
+            "--new-window",
+            "--json",
+        ])
+    );
+
+    let existing_destination = parse_product_cli(&values(&[
+        "grid",
+        "1x1",
+        "--window-id",
+        "window-2",
+        "--worklane-id",
+        "worklane-3",
+    ]))
+    .unwrap()
+    .unwrap();
+    let CliProductCommand::Request(existing_destination) = existing_destination else {
+        panic!("expected existing-destination grid request");
+    };
+    assert!(
+        !existing_destination
+            .arguments()
+            .iter()
+            .any(|argument| argument == "--new-only")
+    );
+    assert!(
+        parse_product_cli(&values(&["grid", "1x1", "--include-source"]))
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[test]
+fn topology_mutations_preserve_explicit_machine_output_request() {
+    let cases = [
+        values(&["split", "left", "--ratio", "60", "--json"]),
+        values(&["hsplit", "--equal", "--json"]),
+        values(&["vsplit", "--golden", "--json"]),
+        values(&["grid", "2x3", "--focus", "last", "--json"]),
+        values(&["layout", "thirds", "--vertical", "--json"]),
+        values(&["pane", "resize", "60%", "--json"]),
+        values(&["pane", "zoom", "--json"]),
+    ];
+
+    for arguments in cases {
+        let parsed = parse_product_cli(&arguments).unwrap().unwrap();
+        let CliProductCommand::Request(request) = parsed else {
+            panic!("expected product request for {arguments:?}");
+        };
+        assert!(
+            request
+                .arguments()
+                .iter()
+                .any(|argument| argument == "--json"),
+            "machine-output flag disappeared from {arguments:?}"
+        );
+    }
+}
+
+#[test]
+fn grid_rejects_commands_with_line_breaks_before_contacting_the_product() {
+    for line_break in ["line one\nline two", "line one\rline two"] {
+        assert!(
+            parse_product_cli(&values(&["grid", "1x2", "--", "printf", line_break])).is_err(),
+            "accepted a command token containing a line break"
+        );
     }
 }
 

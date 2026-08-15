@@ -877,6 +877,16 @@ fn right_insertion_commands_preserve_their_distinct_width_contracts() {
             .iter()
             .all(|column| (column.width - 359.0).abs() < f64::EPSILON)
     );
+
+    let mut split_left = WorkspaceState::new("lane-1", "pane-1");
+    assert!(split_left.insert_focused_pane_left("pane-left", 359.0));
+    assert_eq!(split_left.active_pane_ids(), ["pane-left", "pane-1"]);
+    assert!(
+        split_left
+            .active_columns()
+            .iter()
+            .all(|column| (column.width - 359.0).abs() < f64::EPSILON)
+    );
 }
 
 #[test]
@@ -1003,6 +1013,42 @@ fn source_before_insertion_commands_target_the_focused_slot() {
         ["pane-left", "pane-upper", "pane-lower", "pane-a"]
     );
     assert_eq!(state.focused_pane_id(), Some("pane-upper"));
+}
+
+#[test]
+fn source_grid_isolates_a_selected_pane_without_replacing_its_live_identity() {
+    let mut state = WorkspaceState::new("lane", "source");
+    assert!(state.split_focused_pane_right("neighbor"));
+    assert!(state.select_pane("source"));
+    assert!(state.isolate_focused_pane_in_new_worklane(
+        "grid-lane",
+        NewWorklanePlacement::AfterCurrent,
+        720.0,
+    ));
+    assert_eq!(state.worklane_ids(), ["lane", "grid-lane"]);
+    assert_eq!(state.active_worklane_id(), "grid-lane");
+    assert_eq!(state.active_pane_ids(), ["source"]);
+    assert_eq!(state.worklanes()[0].columns[0].panes[0].id, "neighbor");
+    assert_eq!(state.pane("source").unwrap().id, "source");
+    assert!(!state.isolate_focused_pane_in_new_worklane(
+        "unused",
+        NewWorklanePlacement::AfterCurrent,
+        720.0,
+    ));
+
+    let mut last_column = WorkspaceState::new("lane", "first");
+    assert!(last_column.split_focused_pane_right("middle"));
+    assert!(last_column.split_focused_pane_right("last"));
+    assert!(last_column.isolate_focused_pane_in_new_worklane(
+        "grid-lane",
+        NewWorklanePlacement::End,
+        720.0,
+    ));
+    assert_eq!(
+        last_column.worklanes()[0].focused_column_id,
+        "column-middle"
+    );
+    assert_eq!(last_column.worklanes()[0].columns.len(), 2);
 }
 
 #[test]

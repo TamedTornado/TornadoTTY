@@ -600,7 +600,7 @@
       "async_backend": "default",
       "terminals": "multi",
       "environment_profile": "nested-wayland-input-v1",
-      "command": "ZENTTY_REQUIRE_REAL_GEMINI=true ZENTTY_EXPECTED_GEMINI_VERSION=0.53.0 ZENTTY_RUN_CODEX_LIFECYCLE=true GDK_BACKEND=wayland linux/tests/rust-agent-ipc && GDK_BACKEND=wayland linux/tests/rust-tmux-compat-product && GDK_BACKEND=wayland linux/tests/installed-claude-agent-team && GDK_BACKEND=wayland linux/tests/rust-session-restore",
+      "command": "ZENTTY_REQUIRE_REAL_GEMINI=true ZENTTY_EXPECTED_GEMINI_VERSION=0.53.0 ZENTTY_RUN_CODEX_LIFECYCLE=true GDK_BACKEND=wayland linux/tests/rust-agent-ipc && ZENTTY_TOPOLOGY_REPRESENTATIVE=1 GDK_BACKEND=wayland linux/tests/rust-tmux-compat-product && GDK_BACKEND=wayland linux/tests/installed-claude-agent-team && GDK_BACKEND=wayland linux/tests/rust-session-restore",
       "authoritative": false
     },
     {

@@ -134,15 +134,9 @@ action_line="$(grep -F 'zentty-linux: action=restore-closed-pane pane=' "${log}"
 restored_pane="$(sed -n 's/.*pane=\([^ ]*\) worklane=.*/\1/p' <<<"${action_line}")"
 [[ -n "${restored_pane}" && "${restored_pane}" != pane-agent ]] ||
     fail "restore did not allocate a fresh pane identity"
-# Ghostty's Debug logger and the Rust shell share stderr and may interleave a
-# native debug record between fields of this one Rust receipt. Require both
-# unique fields instead of assuming cross-runtime writes are byte-atomic.
 zentty_product_wait_for_log "${log}" \
-    "zentty-linux: restore-prefill pane=" \
+    "zentty-linux: pane-prefill pane=${restored_pane} process-started=true bytes=10" \
     "restored pane did not report its PTY prefill" || fail "real prefill receipt missing"
-zentty_product_wait_for_log "${log}" \
-    "${restored_pane} text=cargo test" \
-    "restored command was not sent through the PTY" || fail "real prefill text missing"
 for _ in {1..200}; do
     [[ -f "${cwd_receipt}" ]] &&
         [[ "$(grep -Fxc "${working_dir}" "${cwd_receipt}" || true)" -ge 3 ]] && break

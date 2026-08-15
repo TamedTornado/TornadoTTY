@@ -208,7 +208,7 @@ fn parse_split(
             "--pane-index",
             "--pane-token",
         ],
-        &["--equal", "--golden"],
+        &["--equal", "--golden", "--json"],
     )?;
     let layout_count = usize::from(options.iter().any(|value| value == "--equal"))
         + usize::from(options.iter().any(|value| value == "--golden"))
@@ -261,7 +261,7 @@ fn parse_grid(arguments: &[String]) -> Result<Option<CliProductCommand>, Product
             "--pane-index",
             "--pane-token",
         ],
-        &["--new-only", "--include-source"],
+        &["--new-only", "--include-source", "--json"],
     )?;
     if options.iter().any(|value| value == "--new-only")
         && options.iter().any(|value| value == "--include-source")
@@ -287,22 +287,34 @@ fn parse_grid(arguments: &[String]) -> Result<Option<CliProductCommand>, Product
         canonical.push("--new-only".to_owned());
     }
     canonical.extend(["--focus".to_owned(), focus.to_owned()]);
-    let mut index = 0;
-    while index < options.len() {
-        let option = options[index].as_str();
-        if ["--new-only", "--include-source", "--focus"].contains(&option) {
-            index += if option == "--focus" { 2 } else { 1 };
+    let mut options = options.iter();
+    while let Some(option) = options.next() {
+        let option = option.as_str();
+        if ["--new-only", "--include-source", "--focus", "--json"].contains(&option) {
+            if option == "--json" {
+                canonical.push(option.to_owned());
+            }
+            if option == "--focus" {
+                let _ = options.next();
+            }
             continue;
         }
-        let value = &options[index + 1];
+        let value = options
+            .next()
+            .expect("validated grid value options contain a value");
         match (option, value.as_str()) {
             ("--window-id", "new") => canonical.push("--new-window".to_owned()),
             ("--worklane-id", "new") => canonical.push("--new-worklane".to_owned()),
             _ => canonical.extend([option.to_owned(), value.clone()]),
         }
-        index += 2;
     }
     if !command.is_empty() {
+        if command
+            .iter()
+            .any(|argument| argument.contains(['\n', '\r']))
+        {
+            return invalid("grid command tokens may not contain line breaks");
+        }
         let json = serde_json::to_string(command)
             .map_err(|error| command_error(format!("could not encode grid command: {error}")))?;
         canonical.extend(["--command-json".to_owned(), json]);
@@ -452,7 +464,7 @@ fn parse_layout(arguments: &[String]) -> Result<Option<CliProductCommand>, Produ
             "--pane-index",
             "--pane-token",
         ],
-        &["--vertical", "-v"],
+        &["--vertical", "-v", "--json"],
     )?;
     request(ProductIpcKind::Pane, "layout", arguments.to_vec())
 }
@@ -503,7 +515,7 @@ fn validate_targeted_options(arguments: &[String]) -> Result<(), ProductIpcError
             "--pane-index",
             "--pane-token",
         ],
-        &[],
+        &["--json"],
     )
 }
 

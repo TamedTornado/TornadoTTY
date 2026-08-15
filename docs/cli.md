@@ -111,9 +111,9 @@ zentty select pane --pane-index 2 --shell --include-control-token
 Split a pane in a direction. `hsplit` is an alias for `split right`; `vsplit` is an alias for `split down`.
 
 ```bash
-zentty split [right|left|up|down] [--equal|--golden|--ratio <ratio>] [selectors]
-zentty hsplit [--equal|--golden|--ratio <ratio>] [selectors]
-zentty vsplit [--equal|--golden|--ratio <ratio>] [selectors]
+zentty split [right|left|up|down] [--equal|--golden|--ratio <ratio>] [--json] [selectors]
+zentty hsplit [--equal|--golden|--ratio <ratio>] [--json] [selectors]
+zentty vsplit [--equal|--golden|--ratio <ratio>] [--json] [selectors]
 ```
 
 Options:
@@ -136,7 +136,7 @@ zentty vsplit --pane-index 2
 Turn the selected pane into a fixed rows-by-columns grid.
 
 ```bash
-zentty grid <rows>x<columns> [options] [-- <command> ...]
+zentty grid <rows>x<columns> [options] [--json] [-- <command> ...]
 ```
 
 By default, a command after `--` runs in every grid pane, including the source pane. Use `--new-only` to leave the source pane untouched and run the command only in panes Zentty creates for the grid.
@@ -170,7 +170,7 @@ zentty grid 2x2 --window-id new -- claude
 Apply a layout preset to the selected pane's worklane.
 
 ```bash
-zentty layout <preset> [-v|--vertical] [selectors]
+zentty layout <preset> [-v|--vertical] [--json] [selectors]
 ```
 
 Presets:
@@ -188,6 +188,24 @@ Presets:
 Options:
 
 - `-v, --vertical`: apply vertically as panes per column instead of horizontally as columns.
+
+## Topology mutation results
+
+`split`, `hsplit`, `vsplit`, `grid`, `layout`, `pane resize`, and `pane zoom`
+always print a result. The default one-line result is intended for people and
+identifies the action, window, worklane, source, final focus, and created and
+affected pane counts. `--json` emits the versioned machine contract:
+
+- `version`, `action`, `windowID`, `worklaneID`, `sourcePaneID`, and
+  `focusedPaneID`;
+- `createdPaneIDs` and `affectedPaneIDs`;
+- `topology.viewportWidth`, `topology.viewportHeight`, and ordered columns
+  containing their rendered width and ordered panes with normalized
+  `heightFraction` values.
+
+The result never contains pane capability tokens or inherited environment
+values. A failed grid is transactional: Zentty destroys every partially
+created terminal and returns an error while preserving the prior topology.
 
 Examples:
 

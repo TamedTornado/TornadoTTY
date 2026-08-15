@@ -2,6 +2,8 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=linux/tests/lib/product-input
+source "${repo_root}/linux/tests/lib/product-input"
 product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
 backend="${GDK_BACKEND:-}"
 
@@ -32,6 +34,10 @@ endpoint_receipt="${fixture_root}/endpoint.receipt"
 split_cwd="${fixture_root}/split-cwd"
 restart_log="${fixture_root}/restart.log"
 recovery_log="${fixture_root}/recovery.log"
+topology_state="${fixture_root}/topology-state"
+topology_receipt="${fixture_root}/topology.receipt"
+topology_log="${fixture_root}/topology.log"
+topology_restart_log="${fixture_root}/topology-restart.log"
 tmux_store="${XDG_CONFIG_HOME}/zentty/tmux-compat-store.json"
 mkdir -p -- "${split_cwd}"
 cleanup() {
@@ -73,6 +79,93 @@ if [[ "${ZENTTY_PANE_ID}" == pane-1 && "${ZENTTY_TMUX_RECOVERY_PROBE:-}" == 1 ]]
     exit 1
 fi
 
+if [[ "${ZENTTY_TOPOLOGY_PERSIST_SETUP:-}" == 1 ]]; then
+    if [[ "${ZENTTY_PANE_ID}" != pane-1 ]]; then
+        sleep 30
+        exit 1
+    fi
+    persisted_grid="$(${ZENTTY_CLI_BIN} grid 2x2 --focus source --json)"
+    persisted_layout="$(${ZENTTY_CLI_BIN} layout golden-wide --json)"
+    jq -e '
+        .action == "grid" and (.createdPaneIDs | length) == 3 and
+        (.topology.columns | length) == 2 and
+        all(.topology.columns[]; (.panes | length) == 2)
+    ' <<<"${persisted_grid}" >/dev/null
+    jq -e '.action == "layout" and (.topology.columns | length) == 2' \
+        <<<"${persisted_layout}" >/dev/null
+    printf '%s\n' "${persisted_layout}" >"${ZENTTY_TOPOLOGY_RECEIPT}"
+    sleep 30
+    exit 1
+fi
+
+if [[ "${ZENTTY_TOPOLOGY_PERSIST_VERIFY:-}" == 1 ]]; then
+    if [[ "${ZENTTY_PANE_ID}" != pane-1 ]]; then
+        sleep 30
+        exit 1
+    fi
+    for _ in {1..200}; do
+        restored_panes="$(${ZENTTY_CLI_BIN} list panes --json)"
+        [[ "$(jq length <<<"${restored_panes}")" == 4 ]] && break
+        sleep 0.02
+    done
+    [[ "$(jq length <<<"${restored_panes}")" == 4 ]]
+    restored_layout="$(${ZENTTY_CLI_BIN} layout golden-wide --json)"
+    jq -e '
+        .action == "layout" and (.topology.columns | length) == 2 and
+        all(.topology.columns[]; (.panes | length) == 2)
+    ' <<<"${restored_layout}" >/dev/null
+    printf '%s\n' "${restored_layout}" >"${ZENTTY_TOPOLOGY_RECEIPT}"
+    sleep 30
+    exit 1
+fi
+
+if [[ "${ZENTTY_TOPOLOGY_REPRESENTATIVE:-}" == 1 ]]; then
+    if [[ "${ZENTTY_PANE_ID}" != pane-1 ]]; then
+        sleep 30
+        exit 1
+    fi
+    representative_grid="$(${ZENTTY_CLI_BIN} grid 2x2 --focus last --json)"
+    jq -e '
+        .action == "grid" and (.createdPaneIDs | length) == 3 and
+        .focusedPaneID == .createdPaneIDs[-1] and (.topology.columns | length) == 2 and
+        all(.topology.columns[]; (.panes | length) == 2)
+    ' <<<"${representative_grid}" >/dev/null
+    representative_before="$(jq -r '.topology.viewportWidth' <<<"${representative_grid}")"
+    representative_layout="$(${ZENTTY_CLI_BIN} layout golden-wide --json)"
+    jq -e '
+        .action == "layout" and .focusedPaneID as $focused |
+        [.topology.columns[] | select(any(.panes[]; .id == $focused))][0].width >
+            [.topology.columns[] | select(all(.panes[]; .id != $focused))][0].width
+    ' <<<"${representative_layout}" >/dev/null
+    printf 'representative-topology=2x2 layout=golden-wide\n' >>"${ZENTTY_TMUX_PRODUCT_PROBE}"
+    if [[ "${ZENTTY_TEST_EXTERNAL_RESIZE:-}" == 1 || \
+        "${ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT:-}" == 1 ]]; then
+        if [[ "${GDK_BACKEND}" == x11 ]]; then
+            outer_window="$(xdotool search --onlyvisible --name '^Zentty$' | tail -1)"
+        else
+            outer_window="${ZENTTY_NESTED_WAYLAND_OUTER_X11_WINDOW:?}"
+        fi
+        outer_geometry="$(xdotool getwindowgeometry --shell "${outer_window}")"
+        outer_width="$(sed -n 's/^WIDTH=//p' <<<"${outer_geometry}")"
+        outer_height="$(sed -n 's/^HEIGHT=//p' <<<"${outer_geometry}")"
+        xdotool windowsize "${outer_window}" "$((outer_width - 100))" "$((outer_height - 50))"
+        sleep 0.25
+        representative_after="$(${ZENTTY_CLI_BIN} layout reset --json)"
+        [[ "$(jq -r '.topology.viewportWidth' <<<"${representative_after}")" != \
+            "${representative_before}" ]]
+        printf 'representative-external-resize=validated\n' >>"${ZENTTY_TMUX_PRODUCT_PROBE}"
+    fi
+    representative_panes="$(${ZENTTY_CLI_BIN} list panes --include-control-token --json)"
+    while IFS=$'\t' read -r pane_id pane_token; do
+        [[ "${pane_id}" != pane-1 ]] || continue
+        env ZENTTY_PANE_TOKEN="${pane_token}" \
+            ${ZENTTY_CLI_BIN} pane close --pane-id "${pane_id}" --pane-token "${pane_token}"
+    done < <(jq -r '.[] | [.id,.controlToken] | @tsv' <<<"${representative_panes}")
+    ${ZENTTY_CLI_BIN} __tmux-compat kill-window
+    sleep 30
+    exit 1
+fi
+
 if [[ "${ZENTTY_PANE_ID}" != pane-1 ]]; then
     if [[ "${ZENTTY_SPLIT_PROBE:-}" == 1 ]]; then
         printf 'split-started=%s cwd=%s\n' "${ZENTTY_PANE_ID}" "${PWD}" \
@@ -89,6 +182,14 @@ if [[ "${ZENTTY_PANE_ID}" != pane-1 ]]; then
         printf 'respawned=%s\n' "${ZENTTY_PANE_ID}" >>"${ZENTTY_TMUX_PRODUCT_PROBE}"
     fi
     IFS= read -r value
+    if [[ "${value}" == sh\ -c* ]]; then
+        eval "${value}"
+        IFS= read -r value
+        [[ "${value}" == sh\ -c* ]]
+        eval "${value}"
+        sleep 30
+        exit 1
+    fi
     [[ "${value}" == team-ready ]]
     printf '\033]2;zentty-tmux-team-%s\a' "${ZENTTY_PANE_ID}"
     sleep 30
@@ -225,7 +326,16 @@ jq -e '
 ${ZENTTY_CLI_BIN} pane rename "CLI source pane"
 ${ZENTTY_CLI_BIN} worklane rename "CLI source lane"
 ${ZENTTY_CLI_BIN} worklane color blue
-${ZENTTY_CLI_BIN} split right --equal
+split_receipt="$(${ZENTTY_CLI_BIN} split right --equal --json)"
+jq -e '
+    .version == 1 and .action == "split" and .windowID == "window-1" and
+    .worklaneID == "worklane-1" and .sourcePaneID == "pane-1" and
+    (.createdPaneIDs | length) == 1 and (.affectedPaneIDs | length) == 2 and
+    (.topology.columns | length) == 2 and
+    all(.topology.columns[]; (.panes | length) == 1) and
+    (tostring | contains("controlToken") | not) and
+    (tostring | contains("ZENTTY_PANE_TOKEN") | not)
+' <<<"${split_receipt}" >/dev/null
 [[ "$(${ZENTTY_CLI_BIN} theme dark)" == dark ]]
 ${ZENTTY_CLI_BIN} pane zoom
 ${ZENTTY_CLI_BIN} pane zoom
@@ -255,11 +365,16 @@ if ! env ZENTTY_PANE_TOKEN="${cli_split_token}" \
     exit 1
 fi
 printf 'cli-stage=focused-by-index\n' >>"${ZENTTY_TMUX_PRODUCT_PROBE}"
-if ! env ZENTTY_PANE_TOKEN="${cli_split_token}" \
-    ${ZENTTY_CLI_BIN} pane resize 60% --pane-token "${cli_split_token}" \
-    2>>"${ZENTTY_TMUX_PRODUCT_PROBE}"; then
+if ! resize_receipt="$(env ZENTTY_PANE_TOKEN="${cli_split_token}" \
+    ${ZENTTY_CLI_BIN} pane resize 60% --json --pane-token "${cli_split_token}" \
+    2>>"${ZENTTY_TMUX_PRODUCT_PROBE}")"; then
     exit 1
 fi
+jq -e '
+    .action == "resize" and .focusedPaneID as $focused |
+    ([.topology.columns[] | select(any(.panes[]; .id == $focused))][0].width /
+        .topology.viewportWidth - 0.60 | fabs) < 0.02
+' <<<"${resize_receipt}" >/dev/null
 printf 'cli-stage=resized-by-percentage\n' >>"${ZENTTY_TMUX_PRODUCT_PROBE}"
 env ZENTTY_PANE_TOKEN="${cli_split_token}" \
     ${ZENTTY_CLI_BIN} pane close --pane-id "${cli_split_id}" --pane-token "${cli_split_token}" \
@@ -271,7 +386,11 @@ for _ in {1..100}; do
     sleep 0.02
 done
 [[ "$(jq length <<<"${panes}")" == 1 ]]
-${ZENTTY_CLI_BIN} split down --ratio 65
+below_receipt="$(${ZENTTY_CLI_BIN} split down --ratio 65 --json)"
+jq -e '
+    .action == "split" and .focusedPaneID as $focused |
+    ([.topology.columns[].panes[] | select(.id == $focused)][0].heightFraction - 0.65 | fabs) < 0.000001
+' <<<"${below_receipt}" >/dev/null
 panes="$(${ZENTTY_CLI_BIN} list panes --include-control-token --json)"
 cli_below_id="$(jq -r '.[] | select(.id != "pane-1") | .id' <<<"${panes}")"
 cli_below_token="$(jq -r --arg id "${cli_below_id}" '.[] | select(.id == $id) | .controlToken' <<<"${panes}")"
@@ -283,7 +402,286 @@ for _ in {1..100}; do
     sleep 0.02
 done
 [[ "$(jq length <<<"${panes}")" == 1 ]]
-${ZENTTY_CLI_BIN} grid 2x2 --focus source
+left_receipt="$(${ZENTTY_CLI_BIN} split left --json)"
+jq -e '
+    .action == "split" and (.createdPaneIDs | length) == 1 and
+    .topology.columns[0].panes[0].id == .createdPaneIDs[0] and
+    .topology.columns[1].panes[0].id == "pane-1" and
+    ((.topology.columns[0].width - .topology.columns[1].width) | fabs) < 0.001
+' <<<"${left_receipt}" >/dev/null
+left_id="$(jq -r '.createdPaneIDs[0]' <<<"${left_receipt}")"
+left_token="$(${ZENTTY_CLI_BIN} list panes --include-control-token --json |
+    jq -r --arg id "${left_id}" '.[] | select(.id == $id) | .controlToken')"
+env ZENTTY_PANE_TOKEN="${left_token}" \
+    ${ZENTTY_CLI_BIN} pane close --pane-id "${left_id}" --pane-token "${left_token}"
+up_receipt="$(${ZENTTY_CLI_BIN} split up --json)"
+jq -e '
+    .action == "split" and (.createdPaneIDs | length) == 1 and
+    (.topology.columns | length) == 1 and
+    .topology.columns[0].panes[0].id == .createdPaneIDs[0] and
+    .topology.columns[0].panes[1].id == "pane-1" and
+    ((.topology.columns[0].panes[0].heightFraction - 0.5) | fabs) < 0.000001
+' <<<"${up_receipt}" >/dev/null
+up_id="$(jq -r '.createdPaneIDs[0]' <<<"${up_receipt}")"
+up_token="$(${ZENTTY_CLI_BIN} list panes --include-control-token --json |
+    jq -r --arg id "${up_id}" '.[] | select(.id == $id) | .controlToken')"
+env ZENTTY_PANE_TOKEN="${up_token}" \
+    ${ZENTTY_CLI_BIN} pane close --pane-id "${up_id}" --pane-token "${up_token}"
+for _ in {1..100}; do
+    panes="$(${ZENTTY_CLI_BIN} list panes --json)"
+    [[ "$(jq length <<<"${panes}")" == 1 ]] && break
+    sleep 0.02
+done
+[[ "$(jq length <<<"${panes}")" == 1 ]]
+isolation_seed="$(${ZENTTY_CLI_BIN} split right --json)"
+isolation_source="$(jq -r '.createdPaneIDs[0]' <<<"${isolation_seed}")"
+isolation_token="$(${ZENTTY_CLI_BIN} list panes --include-control-token --json |
+    jq -r --arg id "${isolation_source}" '.[] | select(.id == $id) | .controlToken')"
+isolation_grid="$(env ZENTTY_PANE_TOKEN="${isolation_token}" \
+    ${ZENTTY_CLI_BIN} grid 2x2 --pane-id "${isolation_source}" \
+        --pane-token "${isolation_token}" --focus source --json)"
+jq -e --arg source "${isolation_source}" '
+    .action == "grid" and .sourcePaneID == $source and .worklaneID != "worklane-1" and
+    (.createdPaneIDs | length) == 3 and (.topology.columns | length) == 2 and
+    all(.topology.columns[]; (.panes | length) == 2)
+' <<<"${isolation_grid}" >/dev/null
+worklanes="$(${ZENTTY_CLI_BIN} list worklanes --json)"
+jq -e --arg grid_lane "$(jq -r '.worklaneID' <<<"${isolation_grid}")" '
+    length == 2 and
+    any(.[]; .id == "worklane-1" and .paneCount == 1) and
+    any(.[]; .id == $grid_lane and .paneCount == 4)
+' <<<"${worklanes}" >/dev/null
+isolation_panes="$(${ZENTTY_CLI_BIN} list panes \
+    --worklane-id "$(jq -r '.worklaneID' <<<"${isolation_grid}")" \
+    --include-control-token --json)"
+while IFS=$'\t' read -r pane_id pane_token; do
+    env ZENTTY_PANE_TOKEN="${pane_token}" \
+        ${ZENTTY_CLI_BIN} pane close --pane-id "${pane_id}" --pane-token "${pane_token}"
+done < <(jq -r '.[] | [.id,.controlToken] | @tsv' <<<"${isolation_panes}")
+for _ in {1..100}; do
+    worklanes="$(${ZENTTY_CLI_BIN} list worklanes --json)"
+    [[ "$(jq length <<<"${worklanes}")" == 1 ]] && break
+    sleep 0.02
+done
+jq -e 'length == 1 and .[0].id == "worklane-1" and .[0].paneCount == 1' \
+    <<<"${worklanes}" >/dev/null
+rollback_before="$(${ZENTTY_CLI_BIN} list panes --include-control-token --json)"
+printf '2\n' >"${ZENTTY_GRID_FAILURE_FILE}"
+if ${ZENTTY_CLI_BIN} grid 2x2 --json >"${TMPDIR:-/tmp}/zentty-grid-failure.$$" 2>&1; then
+    exit 1
+fi
+rm -f -- "${ZENTTY_GRID_FAILURE_FILE}"
+grep -Fq 'injected grid construction failure after 2 panes' \
+    "${TMPDIR:-/tmp}/zentty-grid-failure.$$"
+rm -f -- "${TMPDIR:-/tmp}/zentty-grid-failure.$$"
+rollback_after="$(${ZENTTY_CLI_BIN} list panes --include-control-token --json)"
+[[ "${rollback_after}" == "${rollback_before}" ]]
+[[ "$(${ZENTTY_CLI_BIN} list worklanes --json | jq length)" == 1 ]]
+printf 'cli-stage=mid-grid-rollback-validated\n' >>"${ZENTTY_TMUX_PRODUCT_PROBE}"
+one_by_one="$(${ZENTTY_CLI_BIN} grid 1x1 --focus source --json)"
+printf 'one-by-one=%s\n' "${one_by_one}" >>"${ZENTTY_TMUX_PRODUCT_PROBE}"
+jq -e '
+    .action == "grid" and .sourcePaneID == "pane-1" and
+    .focusedPaneID == "pane-1" and (.createdPaneIDs | length) == 0 and
+    (.topology.columns | length) == 1 and (.topology.columns[0].panes | length) == 1
+' <<<"${one_by_one}" >/dev/null
+human_one_by_one="$(${ZENTTY_CLI_BIN} grid 1x1 --focus source)"
+[[ "${human_one_by_one}" == grid:\ window=window-1\ worklane=worklane-1\ source=pane-1\ focused=pane-1\ created=0\ affected=1 ]]
+one_by_three="$(${ZENTTY_CLI_BIN} grid 1x3 --focus last --json)"
+jq -e '
+    .action == "grid" and (.createdPaneIDs | length) == 2 and
+    .focusedPaneID == .createdPaneIDs[-1] and (.topology.columns | length) == 3 and
+    all(.topology.columns[]; (.panes | length) == 1)
+' <<<"${one_by_three}" >/dev/null
+panes="$(${ZENTTY_CLI_BIN} list panes --include-control-token --json)"
+while IFS=$'\t' read -r pane_id pane_token; do
+    [[ "${pane_id}" != pane-1 ]] || continue
+    env ZENTTY_PANE_TOKEN="${pane_token}" \
+        ${ZENTTY_CLI_BIN} pane close --pane-id "${pane_id}" --pane-token "${pane_token}"
+done < <(jq -r '.[] | [.id,.controlToken] | @tsv' <<<"${panes}")
+for _ in {1..100}; do
+    panes="$(${ZENTTY_CLI_BIN} list panes --json)"
+    [[ "$(jq length <<<"${panes}")" == 1 ]] && break
+    sleep 0.02
+done
+[[ "$(jq length <<<"${panes}")" == 1 ]]
+three_by_one="$(${ZENTTY_CLI_BIN} grid 3x1 --focus first --json)"
+jq -e '
+    .action == "grid" and (.createdPaneIDs | length) == 2 and
+    .focusedPaneID == "pane-1" and (.topology.columns | length) == 1 and
+    (.topology.columns[0].panes | length) == 3
+' <<<"${three_by_one}" >/dev/null
+panes="$(${ZENTTY_CLI_BIN} list panes --include-control-token --json)"
+while IFS=$'\t' read -r pane_id pane_token; do
+    [[ "${pane_id}" != pane-1 ]] || continue
+    env ZENTTY_PANE_TOKEN="${pane_token}" \
+        ${ZENTTY_CLI_BIN} pane close --pane-id "${pane_id}" --pane-token "${pane_token}"
+done < <(jq -r '.[] | [.id,.controlToken] | @tsv' <<<"${panes}")
+for _ in {1..100}; do
+    panes="$(${ZENTTY_CLI_BIN} list panes --json)"
+    [[ "$(jq length <<<"${panes}")" == 1 ]] && break
+    sleep 0.02
+done
+[[ "$(jq length <<<"${panes}")" == 1 ]]
+rm -f -- "${ZENTTY_GRID_COMMAND_RECEIPT}"
+source_grid_cwd="${PWD}"
+command_grid="$(${ZENTTY_CLI_BIN} grid 1x2 --focus last --json -- sh -c \
+    'set -- $(stty size); printf "%s\t%s\t%s\t%s\t%s\t%s\n" "$ZENTTY_WINDOW_ID" "$ZENTTY_WORKLANE_ID" "$ZENTTY_PANE_ID" "$PWD" "$1" "$2" >>"$ZENTTY_GRID_COMMAND_RECEIPT"')"
+IFS= read -r grid_source_command
+[[ "${grid_source_command}" == sh\ -c* ]]
+eval "${grid_source_command}"
+jq -e '
+    .action == "grid" and (.createdPaneIDs | length) == 1 and
+    .focusedPaneID == .createdPaneIDs[0] and (.topology.columns | length) == 2
+' <<<"${command_grid}" >/dev/null
+for _ in {1..200}; do
+    [[ -f "${ZENTTY_GRID_COMMAND_RECEIPT}" ]] &&
+        [[ "$(wc -l <"${ZENTTY_GRID_COMMAND_RECEIPT}")" -ge 2 ]] && break
+    sleep 0.02
+done
+[[ "$(wc -l <"${ZENTTY_GRID_COMMAND_RECEIPT}")" == 2 ]]
+[[ "$(cut -f1 "${ZENTTY_GRID_COMMAND_RECEIPT}" | sort -u)" == window-1 ]]
+[[ "$(cut -f2 "${ZENTTY_GRID_COMMAND_RECEIPT}" | sort -u)" == worklane-1 ]]
+[[ "$(cut -f3 "${ZENTTY_GRID_COMMAND_RECEIPT}" | sort -u | wc -l)" == 2 ]]
+[[ "$(cut -f4 "${ZENTTY_GRID_COMMAND_RECEIPT}" | sort -u)" == "${source_grid_cwd}" ]]
+awk -F '\t' '
+    NF != 6 || $5 !~ /^[0-9]+$/ || $6 !~ /^[0-9]+$/ || $5 < 2 || $6 < 2 { exit 1 }
+' "${ZENTTY_GRID_COMMAND_RECEIPT}"
+printf 'cli-stage=grid-command-validated\n' >>"${ZENTTY_TMUX_PRODUCT_PROBE}"
+if [[ "${ZENTTY_TEST_EXTERNAL_RESIZE:-}" == 1 || \
+    "${ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT:-}" == 1 ]]; then
+if [[ "${backend}" == x11 ]]; then
+    mapfile -t resize_windows < <(xdotool search --onlyvisible --name '^Zentty$')
+elif [[ -n "${ZENTTY_NESTED_WAYLAND_OUTER_X11_WINDOW:-}" ]]; then
+    resize_windows=("${ZENTTY_NESTED_WAYLAND_OUTER_X11_WINDOW}")
+else
+    mapfile -t resize_windows < <(xdotool search --onlyvisible --name '.*')
+fi
+[[ "${#resize_windows[@]}" -ge 1 ]]
+resize_window="${resize_windows[-1]}"
+xdotool windowsize "${resize_window}" 1200 800
+for _ in {1..100}; do
+    resize_geometry="$(xdotool getwindowgeometry --shell "${resize_window}")"
+    [[ "${resize_geometry}" == *$'WIDTH=1200\n'* && \
+        "${resize_geometry}" == *$'HEIGHT=800\n'* ]] && break
+    sleep 0.02
+done
+printf 'external-window-geometry=%q\n' "${resize_geometry}" \
+    >>"${ZENTTY_TMUX_PRODUCT_PROBE}"
+[[ "${resize_geometry}" == *$'WIDTH=1200\n'* && \
+    "${resize_geometry}" == *$'HEIGHT=800\n'* ]]
+sleep 0.25
+printf 'cli-stage=external-window-resized id=%s\n' "${resize_window}" \
+    >>"${ZENTTY_TMUX_PRODUCT_PROBE}"
+rm -f -- "${ZENTTY_GRID_RESIZE_RECEIPT}"
+resize_command='sh -c '\''set -- $(stty size); printf "%s\t%s\t%s\n" "$ZENTTY_PANE_ID" "$1" "$2" >>"$ZENTTY_GRID_RESIZE_RECEIPT"'\'''
+command_grid_panes="$(${ZENTTY_CLI_BIN} list panes --json)"
+while IFS= read -r pane_id; do
+    ${ZENTTY_CLI_BIN} __tmux-compat send-keys -t "%${pane_id}" "${resize_command}" Enter
+done < <(jq -r '.[].id' <<<"${command_grid_panes}")
+IFS= read -r grid_source_resize_command
+[[ "${grid_source_resize_command}" == sh\ -c* ]]
+eval "${grid_source_resize_command}"
+for _ in {1..200}; do
+    [[ -f "${ZENTTY_GRID_RESIZE_RECEIPT}" ]] &&
+        [[ "$(wc -l <"${ZENTTY_GRID_RESIZE_RECEIPT}")" -ge 2 ]] && break
+    sleep 0.02
+done
+[[ "$(wc -l <"${ZENTTY_GRID_RESIZE_RECEIPT}")" == 2 ]]
+awk -F '\t' '
+    NR == FNR { before[$3] = $5 FS $6; next }
+    NF != 3 || $2 !~ /^[0-9]+$/ || $3 !~ /^[0-9]+$/ { exit 1 }
+    { split(before[$1], size, FS); if (size[1] == $2 && size[2] == $3) exit 1 }
+' "${ZENTTY_GRID_COMMAND_RECEIPT}" "${ZENTTY_GRID_RESIZE_RECEIPT}"
+printf 'cli-stage=external-resize-validated\n' >>"${ZENTTY_TMUX_PRODUCT_PROBE}"
+else
+    printf 'cli-stage=external-resize-not-requested compositor=%s\n' \
+        "${ZENTTY_NESTED_WAYLAND_INPUT_COMPOSITOR:-unknown}" \
+        >>"${ZENTTY_TMUX_PRODUCT_PROBE}"
+fi
+panes="$(${ZENTTY_CLI_BIN} list panes --include-control-token --json)"
+while IFS=$'\t' read -r pane_id pane_token; do
+    [[ "${pane_id}" != pane-1 ]] || continue
+    env ZENTTY_PANE_TOKEN="${pane_token}" \
+        ${ZENTTY_CLI_BIN} pane close --pane-id "${pane_id}" --pane-token "${pane_token}"
+done < <(jq -r '.[] | [.id,.controlToken] | @tsv' <<<"${panes}")
+for _ in {1..100}; do
+    panes="$(${ZENTTY_CLI_BIN} list panes --json)"
+    [[ "$(jq length <<<"${panes}")" == 1 ]] && break
+    sleep 0.02
+done
+[[ "$(jq length <<<"${panes}")" == 1 ]]
+new_lane_receipt="$(${ZENTTY_CLI_BIN} grid 1x2 --worklane-id new --focus source --json)"
+jq -e '
+    .action == "grid" and .worklaneID != "worklane-1" and
+    (.createdPaneIDs | length) == 2 and .sourcePaneID == .createdPaneIDs[0] and
+    .focusedPaneID == .sourcePaneID and (.topology.columns | length) == 2
+' <<<"${new_lane_receipt}" >/dev/null
+new_lane_id="$(jq -r '.worklaneID' <<<"${new_lane_receipt}")"
+new_lane_panes="$(${ZENTTY_CLI_BIN} list panes --worklane-id "${new_lane_id}" --include-control-token --json)"
+[[ "$(jq length <<<"${new_lane_panes}")" == 2 ]]
+while IFS=$'\t' read -r pane_id pane_token; do
+    env ZENTTY_PANE_TOKEN="${pane_token}" \
+        ${ZENTTY_CLI_BIN} pane close --pane-id "${pane_id}" --pane-token "${pane_token}"
+done < <(jq -r '.[] | [.id,.controlToken] | @tsv' <<<"${new_lane_panes}")
+for _ in {1..100}; do
+    panes="$(${ZENTTY_CLI_BIN} list panes --json)"
+    [[ "$(jq length <<<"${panes}")" == 1 ]] && break
+    sleep 0.02
+done
+[[ "$(jq length <<<"${panes}")" == 1 ]]
+${ZENTTY_CLI_BIN} split right --json >"${TMPDIR:-/tmp}/zentty-concurrent-a.$$" &
+concurrent_a=$!
+${ZENTTY_CLI_BIN} split right --json >"${TMPDIR:-/tmp}/zentty-concurrent-b.$$" &
+concurrent_b=$!
+wait "${concurrent_a}"
+wait "${concurrent_b}"
+concurrent_first="$(cat "${TMPDIR:-/tmp}/zentty-concurrent-a.$$")"
+concurrent_second="$(cat "${TMPDIR:-/tmp}/zentty-concurrent-b.$$")"
+rm -f -- "${TMPDIR:-/tmp}/zentty-concurrent-a.$$" "${TMPDIR:-/tmp}/zentty-concurrent-b.$$"
+jq -e '.action == "split" and (.createdPaneIDs | length) == 1' <<<"${concurrent_first}" >/dev/null
+jq -e '.action == "split" and (.createdPaneIDs | length) == 1' <<<"${concurrent_second}" >/dev/null
+[[ "$(jq -r '.createdPaneIDs[0]' <<<"${concurrent_first}")" != \
+    "$(jq -r '.createdPaneIDs[0]' <<<"${concurrent_second}")" ]]
+panes="$(${ZENTTY_CLI_BIN} list panes --include-control-token --json)"
+[[ "$(jq length <<<"${panes}")" == 3 ]]
+while IFS=$'\t' read -r pane_id pane_token; do
+    [[ "${pane_id}" != pane-1 ]] || continue
+    env ZENTTY_PANE_TOKEN="${pane_token}" \
+        ${ZENTTY_CLI_BIN} pane close --pane-id "${pane_id}" --pane-token "${pane_token}"
+done < <(jq -r '.[] | [.id,.controlToken] | @tsv' <<<"${panes}")
+for _ in {1..100}; do
+    panes="$(${ZENTTY_CLI_BIN} list panes --json)"
+    [[ "$(jq length <<<"${panes}")" == 1 ]] && break
+    sleep 0.02
+done
+[[ "$(jq length <<<"${panes}")" == 1 ]]
+grid_receipt="$(${ZENTTY_CLI_BIN} grid 2x2 --focus source --json)"
+jq -e '
+    .action == "grid" and (.createdPaneIDs | length) == 3 and
+    .focusedPaneID == "pane-1" and (.topology.columns | length) == 2 and
+    all(.topology.columns[]; (.panes | length) == 2)
+' <<<"${grid_receipt}" >/dev/null
+halves_receipt="$(${ZENTTY_CLI_BIN} layout halves --json)"
+jq -e '
+    .action == "layout" and (.affectedPaneIDs | length) == 4 and
+    (.topology.columns | length) == 2 and
+    ((.topology.columns[0].width - .topology.columns[1].width) | fabs) < 0.001
+' <<<"${halves_receipt}" >/dev/null
+golden_receipt="$(${ZENTTY_CLI_BIN} layout golden-wide --json)"
+jq -e '
+    .action == "layout" and .focusedPaneID as $focused |
+    [.topology.columns[] | select(any(.panes[]; .id == $focused))][0].width >
+        [.topology.columns[] | select(all(.panes[]; .id != $focused))][0].width
+' <<<"${golden_receipt}" >/dev/null
+vertical_receipt="$(${ZENTTY_CLI_BIN} layout thirds --vertical --json)"
+jq -e '
+    .action == "layout" and (.topology.columns | length) == 2 and
+    ([.topology.columns[].panes | length] | sort) == [1,3] and
+    all(.topology.columns[]; ([.panes[].heightFraction] | add) > 0.999999 and
+        ([.panes[].heightFraction] | add) < 1.000001)
+' <<<"${vertical_receipt}" >/dev/null
+${ZENTTY_CLI_BIN} layout reset --json >/dev/null
 panes="$(${ZENTTY_CLI_BIN} list panes --include-control-token --json)"
 [[ "$(jq length <<<"${panes}")" == 4 ]]
 while IFS=$'\t' read -r pane_id pane_token; do
@@ -297,7 +695,12 @@ for _ in {1..100}; do
     sleep 0.02
 done
 [[ "$(jq length <<<"${panes}")" == 1 ]]
-${ZENTTY_CLI_BIN} grid 2x2 --window-id new --focus last
+new_window_receipt="$(${ZENTTY_CLI_BIN} grid 2x2 --window-id new --focus last --json)"
+jq -e '
+    .action == "grid" and .windowID == "window-2" and
+    (.createdPaneIDs | length) == 4 and .focusedPaneID == .createdPaneIDs[-1] and
+    (.topology.columns | length) == 2 and all(.topology.columns[]; (.panes | length) == 2)
+' <<<"${new_window_receipt}" >/dev/null
 windows="$(${ZENTTY_CLI_BIN} list windows --json)"
 [[ "$(jq length <<<"${windows}")" == 2 ]]
 new_window_id="$(jq -r '.[] | select(.id != "window-1") | .id' <<<"${windows}")"
@@ -347,13 +750,16 @@ exit 1
 CHILD
 chmod +x "${child}"
 
-set +e
 env -u TMUX -u TMUX_PANE \
     CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 \
     ZENTTY_TMUX_PRODUCT_PROBE="${fixture_root}/child-probe.log" \
+    ZENTTY_GRID_COMMAND_RECEIPT="${fixture_root}/grid-command.log" \
+    ZENTTY_GRID_RESIZE_RECEIPT="${fixture_root}/grid-resize.log" \
+    ZENTTY_TEST_GRID_FAILURE_AFTER_FILE="${fixture_root}/grid-failure.trigger" \
+    ZENTTY_GRID_FAILURE_FILE="${fixture_root}/grid-failure.trigger" \
     ZENTTY_TMUX_SPLIT_CWD="${split_cwd}" \
     ZENTTY_TMUX_ENDPOINT_RECEIPT="${endpoint_receipt}" \
-    timeout 20s "${product}" \
+    timeout 90s "${product}" \
     --command "${child}" \
     --no-session-restore \
     --state-directory "${state_directory}" >"${log}" 2>&1
@@ -365,6 +771,97 @@ if [[ "${status}" -ne 0 ]]; then
     fail "staged product exited ${status}"
 fi
 assert_no_child_assertion "${fixture_root}/child-probe.log" "${log}"
+if [[ "${ZENTTY_TOPOLOGY_REPRESENTATIVE:-}" == 1 ]]; then
+    grep -Fxq 'representative-topology=2x2 layout=golden-wide' \
+        "${fixture_root}/child-probe.log" || fail "representative topology receipt is missing"
+    if [[ "${ZENTTY_TEST_EXTERNAL_RESIZE:-}" == 1 || \
+        "${ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT:-}" == 1 ]]; then
+        grep -Fxq 'representative-external-resize=validated' \
+            "${fixture_root}/child-probe.log" || fail "representative external resize receipt is missing"
+    fi
+    printf 'Rust tmux compatibility product journey passed: %s representative-topology\n' "${backend}"
+    exit 0
+fi
+
+grep -Fxq 'cli-stage=mid-grid-rollback-validated' "${fixture_root}/child-probe.log" ||
+    fail "mid-grid rollback did not preserve exact discovery state"
+grep -Fxq 'zentty-linux: cli-grid-rollback removed=2 failures=0' "${log}" ||
+    fail "mid-grid rollback did not destroy both partial real surfaces"
+
+if [[ "${backend}" == x11 ]]; then
+env -u TMUX -u TMUX_PANE \
+    ZENTTY_TOPOLOGY_PERSIST_SETUP=1 \
+    ZENTTY_TOPOLOGY_RECEIPT="${topology_receipt}" \
+    ZENTTY_TMUX_PRODUCT_PROBE="${fixture_root}/topology-child-probe.log" \
+    "${product}" --command "${child}" \
+    --state-directory "${topology_state}" >"${topology_log}" 2>&1 &
+topology_pid=$!
+for _ in {1..400}; do
+    [[ -s "${topology_receipt}" ]] && break
+    kill -0 "${topology_pid}" 2>/dev/null || break
+    sleep 0.02
+done
+[[ -s "${topology_receipt}" ]] || fail "topology persistence setup produced no receipt"
+snapshot="${topology_state}/restore-snapshot.json"
+for _ in {1..400}; do
+    [[ -f "${snapshot}" ]] && jq -e '
+        .workspace.windows[0].worklanes[0].columns | length == 2 and
+        all(.[]; (.panes | length) == 2)
+    ' "${snapshot}" >/dev/null 2>&1 && break
+    kill -0 "${topology_pid}" 2>/dev/null || break
+    sleep 0.02
+done
+[[ -f "${snapshot}" ]] || fail "topology persistence setup produced no live snapshot"
+kill -KILL "${topology_pid}"
+set +e
+wait "${topology_pid}"
+topology_status=$?
+set -e
+[[ "${topology_status}" == 137 ]] || {
+    cat "${topology_log}" >&2
+    fail "topology persistence crash exited ${topology_status} instead of 137"
+}
+jq -e '
+    .workspace.windows[0].worklanes[0].columns | length == 2 and
+    all(.[]; (.panes | length) == 2) and
+    ([.[].width] | max) > ([.[].width] | min) and
+    all(.[]; (.paneHeights | length) == 2)
+' "${snapshot}" >/dev/null || fail "clean snapshot lost the CLI-created 2x2 golden topology"
+! grep -Fq 'controlToken' "${snapshot}" || fail "snapshot persisted a pane capability field"
+! grep -Fq 'ZENTTY_PANE_TOKEN' "${snapshot}" || fail "snapshot persisted a capability environment name"
+rm -f -- "${topology_receipt}"
+env -u TMUX -u TMUX_PANE \
+    ZENTTY_TOPOLOGY_PERSIST_VERIFY=1 \
+    ZENTTY_TOPOLOGY_RECEIPT="${topology_receipt}" \
+    ZENTTY_TMUX_PRODUCT_PROBE="${fixture_root}/topology-restart-child-probe.log" \
+    "${product}" --command "${child}" \
+    --state-directory "${topology_state}" >"${topology_restart_log}" 2>&1 &
+topology_restart_pid=$!
+for _ in {1..400}; do
+    [[ -s "${topology_receipt}" ]] && break
+    kill -0 "${topology_restart_pid}" 2>/dev/null || break
+    sleep 0.02
+done
+[[ -s "${topology_receipt}" ]] || fail "topology persistence restart produced no receipt"
+# Consumed by the sourced physical-input helper.
+# shellcheck disable=SC2034
+product_pid="${topology_restart_pid}"
+zentty_product_prepare_input "${backend}" "${topology_restart_log}" ||
+    fail "topology persistence restart window could not receive real close input"
+zentty_product_close_window "${backend}"
+set +e
+wait "${topology_restart_pid}"
+topology_restart_status=$?
+set -e
+[[ "${topology_restart_status}" == 0 ]] || {
+    cat "${topology_restart_log}" >&2
+    fail "topology persistence restart exited ${topology_restart_status}"
+}
+jq -e '
+    .action == "layout" and (.topology.columns | length) == 2 and
+    all(.topology.columns[]; (.panes | length) == 2)
+' "${topology_receipt}" >/dev/null || fail "restarted CLI topology was not the persisted 2x2 grid"
+fi
 
 old_socket="$(sed -n 's/^socket=//p' "${endpoint_receipt}")"
 old_token="$(sed -n 's/^token=//p' "${endpoint_receipt}")"
@@ -617,16 +1114,16 @@ for teammate in pane-2 pane-3; do
         fail "${teammate} did not receive real terminal input"
     }
 done
-final_layout="$(grep -E 'zentty-linux: pane-layout .*columns=column-worklane-1:[0-9]+$' "${log}" | tail -1)"
-if [[ ! "${final_layout}" =~ column-worklane-1:([0-9]+)$ ]]; then
+final_layout="$(grep -E 'zentty-linux: pane-layout viewport=[0-9]+ .*columns=column-worklane-1:[0-9]+$' "${log}" | tail -1)"
+if [[ ! "${final_layout}" =~ viewport=([0-9]+).*column-worklane-1:([0-9]+)$ ]]; then
     cat "${log}" >&2
     fail "dissolved-team leader width was not observable"
 fi
-final_leader_width="${BASH_REMATCH[1]}"
-pre_team_width=$((leader_width + team_width + 1))
-[[ "${final_leader_width}" -eq "${pre_team_width}" ]] || {
+final_viewport_width="${BASH_REMATCH[1]}"
+final_leader_width="${BASH_REMATCH[2]}"
+[[ "${final_leader_width}" -eq "${final_viewport_width}" ]] || {
     cat "${log}" >&2
-    fail "team dissolution did not restore leader width: ${pre_team_width} -> ${final_leader_width}"
+    fail "team dissolution did not restore the current viewport width: ${final_viewport_width} -> ${final_leader_width}"
 }
 mapfile -t final_tmux_panes < <(sed -n 's/^final-tmux-pane=//p' "${fixture_root}/child-probe.log")
 [[ "${#final_tmux_panes[@]}" -eq 2 ]] ||

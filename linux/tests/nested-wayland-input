@@ -179,14 +179,15 @@ if [[ "${1:-}" == --private-wayland-input-inner ]]; then
 
     printf '%s\n' "${ready_marker}"
     printf 'nested-wayland-input: SESSION %s\n' "${ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID}"
+    export ZENTTY_NESTED_WAYLAND_OUTER_X11_PID="${compositor_pid}"
+    ZENTTY_NESTED_WAYLAND_OUTER_X11_WINDOW="$({
+        xdotool search --onlyvisible --pid "${compositor_pid}" --name '.*' 2>/dev/null || true
+    } | tail -1)"
+    export ZENTTY_NESTED_WAYLAND_OUTER_X11_WINDOW
+    [[ "${ZENTTY_NESTED_WAYLAND_OUTER_X11_WINDOW}" =~ ^[1-9][0-9]*$ ]] ||
+        fail "${compositor} outer X11 window identity was unavailable"
     if [[ "${compositor}" != cage ]]; then
         export ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT=1
-        export ZENTTY_NESTED_WAYLAND_OUTER_X11_PID="${compositor_pid}"
-        export ZENTTY_NESTED_WAYLAND_OUTER_X11_WINDOW="$({
-            xdotool search --onlyvisible --name '.*' 2>/dev/null || true
-        } | tail -1)"
-        [[ "${ZENTTY_NESTED_WAYLAND_OUTER_X11_WINDOW}" =~ ^[1-9][0-9]*$ ]] ||
-            fail "${compositor} outer X11 window identity was unavailable"
     fi
     set +e
     "$@"

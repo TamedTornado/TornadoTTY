@@ -495,7 +495,7 @@ impl PaneRuntimeCoordinator {
                 let Some(shell) = weak.upgrade() else {
                     return;
                 };
-                Self::apply_pending_restore_prefill(&shell, &ready_id);
+                Self::schedule_pending_prefill(&shell, &ready_id);
                 let shell = shell.borrow();
                 if shell.shutting_down {
                     return;
@@ -666,20 +666,52 @@ impl PaneRuntimeCoordinator {
         focus_controller
     }
 
-    fn apply_pending_restore_prefill(shell: &Rc<RefCell<ApplicationShell>>, pane_id: &str) {
-        let prefill = shell.borrow_mut().pane_runtime.take_prefill(pane_id);
-        let Some(prefill) = prefill else {
+    fn schedule_pending_prefill(shell: &Rc<RefCell<ApplicationShell>>, pane_id: &str) {
+        if !shell
+            .borrow()
+            .pane_runtime
+            .pending_prefills
+            .contains_key(pane_id)
+        {
             return;
-        };
-        let shell = shell.borrow();
-        let Some(surface) = shell.pane_runtime.surface(pane_id) else {
-            return;
-        };
-        if let Err(error) = surface.send_text(&prefill) {
-            eprintln!("zentty-linux: restore-prefill pane={pane_id} failed={error}");
-        } else {
-            eprintln!("zentty-linux: restore-prefill pane={pane_id} text={prefill}");
         }
+        let weak = Rc::downgrade(shell);
+        let pane_id = pane_id.to_owned();
+        let mut attempts = 0_u8;
+        glib::timeout_add_local(std::time::Duration::from_millis(10), move || {
+            let Some(shell) = weak.upgrade() else {
+                return glib::ControlFlow::Break;
+            };
+            attempts = attempts.saturating_add(1);
+            let process_started = shell
+                .borrow()
+                .pane_runtime
+                .surface(&pane_id)
+                .and_then(GhosttySurface::foreground_process_id)
+                .is_some();
+            if !process_started && attempts < 100 {
+                return glib::ControlFlow::Continue;
+            }
+            let prefill = shell.borrow_mut().pane_runtime.take_prefill(&pane_id);
+            let Some(prefill) = prefill else {
+                return glib::ControlFlow::Break;
+            };
+            let shell = shell.borrow();
+            let Some(surface) = shell.pane_runtime.surface(&pane_id) else {
+                return glib::ControlFlow::Break;
+            };
+            if let Err(error) = surface.send_text(&prefill) {
+                write_prefill_receipt(&format!(
+                    "zentty-linux: pane-prefill pane={pane_id} failed={error}\n"
+                ));
+            } else {
+                write_prefill_receipt(&format!(
+                    "zentty-linux: pane-prefill pane={pane_id} process-started={process_started} bytes={}\n",
+                    prefill.len()
+                ));
+            }
+            glib::ControlFlow::Break
+        });
     }
 
     fn create_pane_frame(
@@ -770,6 +802,15 @@ impl PaneRuntimeCoordinator {
             ClosePaneOutcome::NotFound => {}
         }
     }
+}
+
+fn write_prefill_receipt(receipt: &str) {
+    use std::io::Write;
+
+    // Ghostty's native Debug logger shares stderr with the Rust shell. Build
+    // the complete non-secret receipt first, then submit its short record in a
+    // single write so native records cannot be spliced between its fields.
+    let _ = std::io::stderr().lock().write_all(receipt.as_bytes());
 }
 
 #[cfg(test)]

@@ -3036,9 +3036,21 @@ impl ApplicationShell {
     ) -> Result<(), String> {
         let pane_id = {
             let mut shell = shell.borrow_mut();
+            let source_working_directory = shell
+                .state
+                .focused_pane_id()
+                .and_then(|source_id| shell.state.pane(source_id))
+                .and_then(|pane| pane.working_directory.clone());
             let pane_id = shell.take_pane_id();
             if !update(&mut shell.state, pane_id.clone()) {
                 return Err("generated duplicate pane identity".to_owned());
+            }
+            if !shell
+                .state
+                .configure_pane_launch(&pane_id, source_working_directory, None)
+            {
+                let _ = shell.state.close_pane_after_child_exit(&pane_id);
+                return Err("new pane disappeared before launch configuration".to_owned());
             }
             pane_id
         };

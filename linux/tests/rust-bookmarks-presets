@@ -620,7 +620,7 @@ zentty_product_wait_for_log "${fallback_log}" \
     'zentty-linux: restore-notice visible=true fallbacks=2' \
     'stale restore did not display its user-visible warning' || fail "fallback warning did not appear"
 zentty_product_wait_for_log "${fallback_log}" \
-    "zentty-linux: restore-prefill pane=pane-3 text=${missing_command}" \
+    "zentty-linux: pane-prefill pane=pane-3 process-started=true bytes=${#missing_command}" \
     'missing command was not inserted for user review' || fail "fallback command was not prefilled"
 grep -Fq "requested: \"${missing_directory}\"" "${fallback_log}" ||
     fail "missing-directory fallback was not recorded"

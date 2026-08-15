@@ -2,7 +2,9 @@ use super::ApplicationShell;
 use std::cell::RefCell;
 use std::rc::Rc;
 use zentty_agent_ipc::{ProductIpcReply, ProductIpcRequest};
-use zentty_core::{AgentTarget, PaneRecipe, PaneResizeDirection, ThemeModeCommand, WorklaneColor};
+use zentty_core::{
+    AgentTarget, PaneLayoutPolicy, PaneRecipe, PaneResizeDirection, ThemeModeCommand, WorklaneColor,
+};
 
 pub(crate) struct DiscoveryRows {
     pub(crate) window: serde_json::Value,
@@ -63,16 +65,43 @@ impl ApplicationShell {
             matches!(request.subcommand(), "focus" | "close"),
         )?;
         match request.subcommand() {
-            "split" => apply_split_command(shell, target, request.arguments())?,
+            "split" => {
+                let before = pane_ids(&shell.borrow());
+                apply_split_command(shell, target, request.arguments())?;
+                let created = created_pane_ids(&shell.borrow(), &before);
+                return topology_response(
+                    &shell.borrow(),
+                    "split",
+                    &target.pane_id,
+                    &created,
+                    request.arguments(),
+                );
+            }
             "focus" => apply_focus_command(shell, target, request.arguments())?,
             "pane-rename" | "worklane-rename" | "worklane-color" => {
                 apply_metadata_command(shell, target, request)?;
             }
             "close" => Self::close_pane(shell, &target.pane_id),
-            "resize" => apply_resize_command(shell, target, request.arguments())?,
+            "resize" => {
+                apply_resize_command(shell, target, request.arguments())?;
+                return topology_response(
+                    &shell.borrow(),
+                    "resize",
+                    &target.pane_id,
+                    &[],
+                    request.arguments(),
+                );
+            }
             "layout" => {
                 select_authenticated_target(shell, target)?;
                 apply_layout(shell, request.arguments())?;
+                return topology_response(
+                    &shell.borrow(),
+                    "layout",
+                    &target.pane_id,
+                    &[],
+                    request.arguments(),
+                );
             }
             "theme" => return apply_theme_command(shell, request.arguments()),
             "grid" => {
@@ -87,9 +116,25 @@ impl ApplicationShell {
                         "new-window grid must be handled by the application coordinator".to_owned(),
                     ));
                 }
-                apply_grid(shell, request.arguments())?;
+                let grid = apply_grid(shell, request.arguments())?;
+                return topology_response(
+                    &shell.borrow(),
+                    "grid",
+                    &grid.source_pane_id,
+                    &grid.created_pane_ids,
+                    request.arguments(),
+                );
             }
-            "zoom" => Self::toggle_product_zoom(shell),
+            "zoom" => {
+                Self::toggle_product_zoom(shell);
+                return topology_response(
+                    &shell.borrow(),
+                    "zoom",
+                    &target.pane_id,
+                    &[],
+                    request.arguments(),
+                );
+            }
             value => {
                 return Err((
                     "unsupported_command",
@@ -185,6 +230,97 @@ fn remove_null_fields(value: &mut serde_json::Value) {
     }
 }
 
+fn pane_ids(shell: &ApplicationShell) -> Vec<String> {
+    shell
+        .state
+        .worklanes()
+        .iter()
+        .flat_map(|worklane| &worklane.columns)
+        .flat_map(|column| &column.panes)
+        .map(|pane| pane.id.clone())
+        .collect()
+}
+
+fn created_pane_ids(shell: &ApplicationShell, before: &[String]) -> Vec<String> {
+    pane_ids(shell)
+        .into_iter()
+        .filter(|pane_id| !before.contains(pane_id))
+        .collect()
+}
+
+fn topology_response(
+    shell: &ApplicationShell,
+    action: &str,
+    source_pane_id: &str,
+    created_pane_ids: &[String],
+    arguments: &[String],
+) -> Result<String, (&'static str, String)> {
+    let worklane = shell.state.active_worklane();
+    let focused_pane_id = shell.state.focused_pane_id().unwrap_or(source_pane_id);
+    let all_pane_ids = worklane
+        .columns
+        .iter()
+        .flat_map(|column| &column.panes)
+        .map(|pane| pane.id.clone())
+        .collect::<Vec<_>>();
+    let affected_pane_ids = if action == "layout" {
+        all_pane_ids.clone()
+    } else {
+        std::iter::once(source_pane_id.to_owned())
+            .chain(created_pane_ids.iter().cloned())
+            .collect::<Vec<_>>()
+    };
+    let columns = worklane
+        .columns
+        .iter()
+        .map(|column| {
+            let total_height = column.pane_heights.iter().sum::<f64>();
+            serde_json::json!({
+                "id": column.id,
+                "width": column.width,
+                "panes": column.panes.iter().zip(&column.pane_heights).map(|(pane, height)| {
+                    serde_json::json!({"id": pane.id, "heightFraction": height / total_height})
+                }).collect::<Vec<_>>(),
+            })
+        })
+        .collect::<Vec<_>>();
+    let receipt = serde_json::json!({
+        "version": 1,
+        "action": action,
+        "windowID": shell.window_template.id,
+        "worklaneID": worklane.id,
+        "sourcePaneID": source_pane_id,
+        "focusedPaneID": focused_pane_id,
+        "createdPaneIDs": created_pane_ids,
+        "affectedPaneIDs": affected_pane_ids,
+        "topology": {
+            "viewportWidth": shell.pane_viewport_width(),
+            "viewportHeight": shell.pane_viewport_height(),
+            "columns": columns,
+        },
+    });
+    if arguments.iter().any(|argument| argument == "--json") {
+        serde_json::to_string(&receipt)
+            .map(|value| value + "\n")
+            .map_err(|error| {
+                (
+                    "result_failed",
+                    format!("could not encode topology result: {error}"),
+                )
+            })
+    } else {
+        Ok(format!(
+            "{action}: window={} worklane={} source={} focused={} created={} affected={}\n",
+            shell.window_template.id,
+            worklane.id,
+            source_pane_id,
+            focused_pane_id,
+            created_pane_ids.len(),
+            affected_pane_ids.len(),
+        ))
+    }
+}
+
 fn apply_split_command(
     shell: &Rc<RefCell<ApplicationShell>>,
     target: &AgentTarget,
@@ -194,7 +330,14 @@ fn apply_split_command(
     let direction = arguments.first().map_or("right", String::as_str);
     match direction {
         "right" => ApplicationShell::split_focused_pane_right(shell),
-        "left" => ApplicationShell::add_focused_pane_left(shell),
+        "left" => {
+            let width = f64::from(PaneLayoutPolicy::visible_split_width(
+                shell.borrow().pane_viewport_width(),
+            ));
+            ApplicationShell::split_focused_pane(shell, "cli-split-left", move |state, pane_id| {
+                state.insert_focused_pane_left(pane_id, width)
+            })
+        }
         "down" => ApplicationShell::split_focused_pane_below(shell),
         "up" => ApplicationShell::split_focused_pane(shell, "cli-split-up", |state, pane_id| {
             state.insert_focused_pane_above(pane_id)
@@ -553,10 +696,46 @@ fn apply_layout(
     Ok(())
 }
 
+struct GridMutation {
+    source_pane_id: String,
+    created_pane_ids: Vec<String>,
+}
+
 fn apply_grid(
     shell: &Rc<RefCell<ApplicationShell>>,
     arguments: &[String],
-) -> Result<(), (&'static str, String)> {
+) -> Result<GridMutation, (&'static str, String)> {
+    let before_state = shell.borrow().state.clone();
+    let before_pane_ids = pane_ids(&shell.borrow());
+    match apply_grid_unchecked(shell, arguments) {
+        Ok(mut result) => {
+            result.created_pane_ids = created_pane_ids(&shell.borrow(), &before_pane_ids);
+            if arguments
+                .iter()
+                .any(|argument| argument == "--destination-source-created")
+            {
+                result
+                    .created_pane_ids
+                    .insert(0, result.source_pane_id.clone());
+            }
+            Ok(result)
+        }
+        Err((code, message)) => {
+            let rollback = rollback_grid(shell, before_state, &before_pane_ids);
+            Err((
+                code,
+                rollback.map_or(message.clone(), |detail| {
+                    format!("{message}; rollback warning: {detail}")
+                }),
+            ))
+        }
+    }
+}
+
+fn apply_grid_unchecked(
+    shell: &Rc<RefCell<ApplicationShell>>,
+    arguments: &[String],
+) -> Result<GridMutation, (&'static str, String)> {
     let (rows, columns) = parse_grid_dimensions(arguments)?;
     let command_text = parse_grid_command(arguments)?;
     if rows == 0 || columns == 0 || rows.saturating_mul(columns) > 36 {
@@ -565,12 +744,7 @@ fn apply_grid(
             "grid must contain between 1 and 36 panes".to_owned(),
         ));
     }
-    if arguments
-        .iter()
-        .any(|argument| argument == "--new-worklane")
-    {
-        ApplicationShell::create_worklane(shell).map_err(|message| ("grid_failed", message))?;
-    }
+    prepare_grid_destination(shell, arguments)?;
     let source = shell
         .borrow()
         .state
@@ -596,6 +770,7 @@ fn apply_grid(
             .to_owned();
         created.push(pane_id.clone());
         column_leaders.push(pane_id);
+        inject_grid_failure(created.len())?;
     }
     for leader in &column_leaders {
         let _ = shell
@@ -613,6 +788,7 @@ fn apply_grid(
                     .expect("split focuses its new pane")
                     .to_owned(),
             );
+            inject_grid_failure(created.len())?;
         }
     }
     if let Some(text) = command_text {
@@ -634,7 +810,106 @@ fn apply_grid(
         "zentty-linux: cli-grid worklane={worklane_id} rows={rows} columns={columns} source={source} created={}",
         created.len()
     );
+    Ok(GridMutation {
+        source_pane_id: source,
+        created_pane_ids: created,
+    })
+}
+
+fn prepare_grid_destination(
+    shell: &Rc<RefCell<ApplicationShell>>,
+    arguments: &[String],
+) -> Result<(), (&'static str, String)> {
+    if arguments
+        .iter()
+        .any(|argument| argument == "--new-worklane")
+    {
+        return ApplicationShell::create_worklane(shell)
+            .map_err(|message| ("grid_failed", message));
+    }
+    let should_isolate = shell
+        .borrow()
+        .state
+        .active_worklane()
+        .columns
+        .iter()
+        .map(|column| column.panes.len())
+        .sum::<usize>()
+        > 1;
+    if !should_isolate {
+        return Ok(());
+    }
+    let mut shell = shell.borrow_mut();
+    let worklane_id = shell.take_worklane_id();
+    let placement = shell.config.worklanes.new_worklane_placement;
+    let width = f64::from(shell.pane_viewport_width());
+    if !shell
+        .state
+        .isolate_focused_pane_in_new_worklane(worklane_id.clone(), placement, width)
+    {
+        return Err((
+            "grid_failed",
+            "could not isolate the selected grid source".to_owned(),
+        ));
+    }
+    eprintln!(
+        "zentty-linux: cli-grid-isolated worklane={worklane_id} source={} ",
+        shell.state.focused_pane_id().unwrap_or("unavailable")
+    );
     Ok(())
+}
+
+fn inject_grid_failure(created_count: usize) -> Result<(), (&'static str, String)> {
+    let Some(path) = std::env::var_os("ZENTTY_TEST_GRID_FAILURE_AFTER_FILE") else {
+        return Ok(());
+    };
+    let requested = std::fs::read_to_string(path)
+        .ok()
+        .and_then(|value| value.trim().parse::<usize>().ok());
+    if requested == Some(created_count) {
+        return Err((
+            "grid_failed",
+            format!("injected grid construction failure after {created_count} panes"),
+        ));
+    }
+    Ok(())
+}
+
+fn rollback_grid(
+    shell: &Rc<RefCell<ApplicationShell>>,
+    before_state: zentty_core::WorkspaceState,
+    before_pane_ids: &[String],
+) -> Option<String> {
+    let current_pane_ids = pane_ids(&shell.borrow());
+    let created = rollback_surface_order(&current_pane_ids, before_pane_ids);
+    let mut failures = Vec::new();
+    {
+        let mut shell = shell.borrow_mut();
+        for pane_id in &created {
+            if let Err(error) = shell.remove_live_surface(pane_id) {
+                failures.push(format!("{pane_id}: {error}"));
+            }
+        }
+        shell.state = before_state;
+        shell.sync_agent_targets();
+        shell.render();
+        shell.focus_selected_surface();
+    }
+    eprintln!(
+        "zentty-linux: cli-grid-rollback removed={} failures={}",
+        created.len(),
+        failures.len()
+    );
+    (!failures.is_empty()).then(|| failures.join(", "))
+}
+
+fn rollback_surface_order(current_pane_ids: &[String], before_pane_ids: &[String]) -> Vec<String> {
+    current_pane_ids
+        .iter()
+        .filter(|pane_id| !before_pane_ids.contains(pane_id))
+        .rev()
+        .cloned()
+        .collect()
 }
 
 fn parse_grid_dimensions(arguments: &[String]) -> Result<(usize, usize), (&'static str, String)> {
@@ -656,6 +931,15 @@ fn parse_grid_command(arguments: &[String]) -> Result<Option<String>, (&'static 
     if command.is_empty() {
         return Err(("invalid_request", "grid command is empty".to_owned()));
     }
+    if command
+        .iter()
+        .any(|argument| argument.contains(['\n', '\r']))
+    {
+        return Err((
+            "invalid_request",
+            "grid command tokens may not contain line breaks".to_owned(),
+        ));
+    }
     Ok(Some(
         command
             .iter()
@@ -673,16 +957,27 @@ fn send_grid_command(
     created: &[String],
     text: &str,
 ) -> Result<(), (&'static str, String)> {
-    let mut destinations = created.to_vec();
-    if !arguments.iter().any(|argument| argument == "--new-only") {
-        destinations.push(source.to_owned());
+    {
+        let mut shell = shell.borrow_mut();
+        for pane_id in created {
+            if shell.pane_runtime.surface(pane_id).is_none() {
+                return Err((
+                    "grid_failed",
+                    format!("grid pane {pane_id:?} has no live terminal"),
+                ));
+            }
+            // A native surface is registered before Ghostty reports terminal
+            // initialization. Queue launch text on that existing lifecycle
+            // boundary instead of racing send_text against PTY readiness.
+            shell.pane_runtime.queue_prefill(pane_id, text.to_owned());
+        }
     }
-    for pane_id in destinations {
+    if !arguments.iter().any(|argument| argument == "--new-only") {
         let shell_ref = shell.borrow();
-        let surface = shell_ref.pane_runtime.surface(&pane_id).ok_or_else(|| {
+        let surface = shell_ref.pane_runtime.surface(source).ok_or_else(|| {
             (
                 "grid_failed",
-                format!("grid pane {pane_id:?} has no live terminal"),
+                format!("grid pane {source:?} has no live terminal"),
             )
         })?;
         surface
@@ -707,4 +1002,21 @@ fn option_value<'a>(arguments: &'a [String], option: &str) -> Option<&'a str> {
     arguments
         .windows(2)
         .find_map(|pair| (pair[0] == option).then_some(pair[1].as_str()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::rollback_surface_order;
+
+    #[test]
+    fn grid_rollback_destroys_only_new_surfaces_in_reverse_creation_order() {
+        let current = ["source", "created-1", "neighbor", "created-2"].map(str::to_owned);
+        let before = ["source", "neighbor"].map(str::to_owned);
+
+        assert_eq!(
+            rollback_surface_order(&current, &before),
+            ["created-2", "created-1"]
+        );
+        assert!(rollback_surface_order(&before, &before).is_empty());
+    }
 }

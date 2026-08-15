@@ -978,6 +978,7 @@ impl WorkspaceState {
             .position(|column| column.id == worklane.focused_column_id)
             .expect("workspace invariant: focused column exists");
         let width = sanitize_dimension(column_width);
+        worklane.columns[focused_index].width = width;
         let column_id = format!("column-{pane_id}");
         worklane.columns.insert(
             focused_index,
@@ -1937,6 +1938,92 @@ impl WorkspaceState {
         });
         self.worklanes[target_index].focused_column_id = column_id;
         target_worklane_id.clone_into(&mut self.active_worklane_id);
+        true
+    }
+
+    /// Isolates the focused pane in a new worklane while preserving the live
+    /// pane identity and its auxiliary state. This is the source grid
+    /// behavior when the selected worklane already contains other panes.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if the workspace's internal active-worklane, focused-column,
+    /// or focused-pane invariants were already violated.
+    pub fn isolate_focused_pane_in_new_worklane(
+        &mut self,
+        new_worklane_id: impl Into<String>,
+        placement: NewWorklanePlacement,
+        single_column_width: f64,
+    ) -> bool {
+        let new_worklane_id = new_worklane_id.into();
+        if self.contains_worklane(&new_worklane_id) {
+            return false;
+        }
+        let source_index = self
+            .worklanes
+            .iter()
+            .position(|worklane| worklane.id == self.active_worklane_id)
+            .expect("workspace invariant: active worklane exists");
+        let source_pane_count = self.worklanes[source_index]
+            .columns
+            .iter()
+            .map(|column| column.panes.len())
+            .sum::<usize>();
+        if source_pane_count < 2 {
+            return false;
+        }
+        let previous = self.current_pane_reference();
+        let source_column_index = self.worklanes[source_index]
+            .columns
+            .iter()
+            .position(|column| column.id == self.worklanes[source_index].focused_column_id)
+            .expect("workspace invariant: focused column exists");
+        let pane_id = self.worklanes[source_index].columns[source_column_index]
+            .focused_pane_id
+            .clone();
+        let (pane, _) = remove_pane(
+            &mut self.worklanes[source_index].columns[source_column_index],
+            &pane_id,
+        );
+        if self.worklanes[source_index].columns[source_column_index]
+            .panes
+            .is_empty()
+        {
+            self.worklanes[source_index]
+                .columns
+                .remove(source_column_index);
+        }
+        let source = &mut self.worklanes[source_index];
+        let replacement_index = source_column_index.min(source.columns.len() - 1);
+        source.focused_column_id = source.columns[replacement_index].id.clone();
+
+        let insertion_index = match placement {
+            NewWorklanePlacement::Top => 0,
+            NewWorklanePlacement::AfterCurrent => source_index + 1,
+            NewWorklanePlacement::End => self.worklanes.len(),
+        };
+        let column_id = format!("column-{pane_id}");
+        self.worklanes.insert(
+            insertion_index,
+            WorklaneState {
+                id: new_worklane_id.clone(),
+                title: None,
+                color: None,
+                bookmark_origin_id: None,
+                bookmark_origin_overridden: false,
+                columns: vec![PaneColumnState {
+                    id: column_id.clone(),
+                    width: sanitize_dimension(single_column_width),
+                    panes: vec![pane],
+                    pane_heights: vec![1.0],
+                    focused_pane_id: pane_id.clone(),
+                    last_focused_pane_id: pane_id,
+                }],
+                focused_column_id: column_id,
+            },
+        );
+        self.active_worklane_id = new_worklane_id;
+        self.record_focus_transition(previous);
         true
     }
 

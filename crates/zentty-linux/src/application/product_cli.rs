@@ -114,13 +114,14 @@ impl ApplicationCoordinator {
             .get(&destination_window_id)
             .cloned()
             .expect("newly built grid shell is registered");
-        let arguments = command
+        let mut arguments = command
             .request
             .arguments()
             .iter()
             .filter(|argument| argument.as_str() != "--new-window")
             .cloned()
             .collect::<Vec<_>>();
+        arguments.push("--destination-source-created".to_owned());
         let request = ProductIpcRequest::new(ProductIpcKind::Pane, "grid", arguments)
             .expect("validated grid request remains valid without destination flag");
         let target = AgentTarget::new(&destination_window_id, &worklane_id, &pane_id);
