@@ -11,6 +11,7 @@ receipts="${run_root}/receipts"
 child="${run_root}/cli-child"
 log="${run_root}/product.log"
 product_pid=""
+second_product_pid=""
 
 fail() {
     [[ ! -f "${log}" ]] || cat "${log}" >&2
@@ -25,6 +26,10 @@ cleanup() {
         kill -TERM "${product_pid}" 2>/dev/null || true
         wait "${product_pid}" 2>/dev/null || true
     fi
+    if [[ "${second_product_pid}" =~ ^[1-9][0-9]*$ ]]; then
+        kill -TERM "${second_product_pid}" 2>/dev/null || true
+        wait "${second_product_pid}" 2>/dev/null || true
+    fi
     rm -rf -- "${run_root}"
 }
 trap cleanup EXIT
@@ -34,7 +39,7 @@ case "${backend}" in
     wayland) [[ "${ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] || fail "Wayland requires nested-wayland-input" ;;
     *) fail "GDK_BACKEND must be x11 or wayland" ;;
 esac
-for dependency in cmp grep head jq jsonschema readelf sed; do
+for dependency in cmp dirname grep head jq jsonschema readelf readlink sed stat; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
 [[ -x "${product}" ]] || fail "staged product is missing: ${product}"
@@ -52,6 +57,18 @@ cat >"${child}" <<'CHILD'
 #!/usr/bin/env bash
 set -euo pipefail
 if [[ "${ZENTTY_PANE_ID}" != pane-1 ]]; then
+    umask 077
+    {
+        printf 'cli=%s\n' "${ZENTTY_CLI_BIN}"
+        printf 'socket=%s\n' "${ZENTTY_INSTANCE_SOCKET}"
+        printf 'instance=%s\n' "${ZENTTY_INSTANCE_ID}"
+        printf 'window=%s\n' "${ZENTTY_WINDOW_ID}"
+        printf 'worklane=%s\n' "${ZENTTY_WORKLANE_ID}"
+        printf 'pane=%s\n' "${ZENTTY_PANE_ID}"
+        printf 'token=%s\n' "${ZENTTY_PANE_TOKEN}"
+        printf 'hook=%s\n' "${ZENTTY_AGENT_EVENT_COMMAND}"
+        printf 'integration=%s\n' "${ZENTTY_SHELL_INTEGRATION_DIR:-}"
+    } >"${ZENTTY_CLI_CONTRACT_RECEIPTS}/pane-env-${ZENTTY_PANE_ID}"
     sleep 30
     exit 0
 fi
@@ -77,6 +94,21 @@ out="${ZENTTY_CLI_CONTRACT_RECEIPTS}"
 "${cli}" select pane --pane-index 1 --shell --include-control-token --output-version 1 >"${out}/selected.shell"
 "${cli}" select pane --pane-index 1 >"${out}/selected.txt"
 
+# Discovery is authenticated but read-only. Capabilities are absent by
+# default, explicit forged topology claims cannot redirect the token, and a
+# wrong capability never reaches product dispatch.
+jq -e 'all(.[]; has("controlToken") | not)' "${out}/panes.json" >/dev/null
+env ZENTTY_WINDOW_ID=forged-window ZENTTY_WORKLANE_ID=forged-worklane \
+    ZENTTY_PANE_ID=forged-pane "${cli}" list panes --json >"${out}/forged-claims.json"
+cmp -s "${out}/panes.json" "${out}/forged-claims.json"
+if env ZENTTY_PANE_TOKEN="$(printf '0%.0s' {1..64})" "${cli}" list panes --json \
+    >"${out}/wrong-token.stdout" 2>"${out}/wrong-token.stderr"; then exit 1; fi
+focused_before="$(jq -r '.[] | select(.isFocused) | .id' "${out}/panes.json")"
+if "${cli}" pane focus --pane-id stale-pane \
+    >"${out}/stale-mutation.stdout" 2>"${out}/stale-mutation.stderr"; then exit 1; fi
+focused_after="$("${cli}" list panes --json | jq -r '.[] | select(.isFocused) | .id')"
+[[ "${focused_after}" == "${focused_before}" ]]
+
 cmp -s "${out}/windows.json" "${out}/window-alias.json"
 cmp -s "${out}/worklanes.json" "${out}/worklane-alias.json"
 cmp -s "${out}/panes.json" "${out}/pane-alias.json"
@@ -95,6 +127,12 @@ for _ in {1..100}; do
     [[ "$(jq 'length' "${out}/after-hsplit.json")" -eq 2 ]] && break
     sleep 0.02
 done
+split_id="$(jq -r '.[] | select(.id != env.ZENTTY_PANE_ID) | .id' "${out}/after-hsplit.json")"
+for _ in {1..100}; do
+    [[ -s "${out}/pane-env-${split_id}" ]] && break
+    sleep 0.02
+done
+[[ -s "${out}/pane-env-${split_id}" ]]
 jq -r '.[] | select(.id != env.ZENTTY_PANE_ID) | [.id,.controlToken] | @tsv' "${out}/after-hsplit.json" |
 while IFS=$'\t' read -r id token; do
     "${cli}" pane close --pane-id "${id}" --pane-token "${token}"
@@ -156,6 +194,27 @@ grep -Fq 'unsupported output version "2"' "${receipts}/version-2.stderr" || fail
 grep -Fq 'duplicate option --json' "${receipts}/duplicate.stderr" || fail "duplicate option failure changed"
 grep -Fq 'could not resolve a pane for the requested selectors' "${receipts}/stale.stderr" || fail "stale selector did not fail closed"
 grep -Fq 'duplicate option --pane-index' "${receipts}/ambiguous.stderr" || fail "ambiguous selector did not fail closed"
+grep -Fq 'agent IPC request rejected' "${receipts}/wrong-token.stderr" || fail "wrong capability failure changed"
+grep -Fq 'unauthorized_target' "${receipts}/stale-mutation.stderr" || fail "stale mutation did not fail closed"
+
+# A split is a real Ghostty/PTY child, not a model-only row. Compare its
+# inherited product resources with independently discovered topology.
+split_id="$(jq -r '.[] | select(.id != "pane-1") | .id' "${receipts}/after-hsplit.json")"
+split_token="$(jq -r --arg id "${split_id}" '.[] | select(.id == $id) | .controlToken' "${receipts}/after-hsplit.json")"
+split_env="${receipts}/pane-env-${split_id}"
+staged_cli="$(readlink -f "${product%/*}/zentty")"
+[[ "$(sed -n 's/^cli=//p' "${split_env}")" == "${staged_cli}" ]] || fail "child CLI path is not staged"
+[[ -S "$(sed -n 's/^socket=//p' "${split_env}")" ]] || fail "child socket is not live"
+[[ "$(stat -c %a "$(sed -n 's/^socket=//p' "${split_env}")")" == 600 ]] || fail "child socket is not private"
+[[ "$(stat -c %a "$(dirname "$(sed -n 's/^socket=//p' "${split_env}")")")" == 700 ]] || fail "child runtime directory is not private"
+[[ "$(sed -n 's/^instance=//p' "${split_env}")" =~ ^[0-9a-f]{64}$ ]] || fail "child instance identity is invalid"
+[[ "$(sed -n 's/^window=//p' "${split_env}")" == window-1 ]] || fail "child window identity drifted"
+[[ "$(sed -n 's/^worklane=//p' "${split_env}")" == worklane-1 ]] || fail "child worklane identity drifted"
+[[ "$(sed -n 's/^pane=//p' "${split_env}")" == "${split_id}" ]] || fail "child pane identity drifted"
+[[ "$(sed -n 's/^token=//p' "${split_env}")" == "${split_token}" ]] || fail "child capability differs from authenticated discovery"
+[[ "$(sed -n 's/^hook=//p' "${split_env}")" == "${staged_cli} ipc agent-event" ]] || fail "child hook command is not staged"
+integration="$(sed -n 's/^integration=//p' "${split_env}")"
+[[ -f "${integration}/zentty-bash-integration.bash" && -f "${integration}/zentty-zsh-integration.zsh" ]] || fail "child shell integration resources are missing"
 
 # Evaluate the actual emitted shell program in an empty subshell and compare
 # its exact exports to independently discovered JSON rather than trusting the
@@ -170,5 +229,65 @@ env -i bash -c 'source "$1"; printf "%s\n%s\n%s\n%s\n%s\n" "$ZENTTY_INSTANCE_SOC
 tail -n +2 "${receipts}/selected-evaluated.txt" | cmp -s - <(jq -r '.[0] | [.windowID,.worklaneID,.id,.controlToken] | .[]' "${receipts}/panes-authenticated.json") ||
     fail "selected-pane shell exports changed values"
 
+# Keep the first real application alive while starting a second staged
+# process. Identical topology IDs are intentionally possible across processes;
+# private sockets and pane capabilities must still isolate their authorities.
+second_receipts="${run_root}/second-receipts"
+second_state="${run_root}/second-state"
+second_child="${run_root}/second-child"
+second_log="${run_root}/second-product.log"
+mkdir -p "${second_receipts}" "${second_state}"
+cat >"${second_child}" <<'SECOND_CHILD'
+#!/usr/bin/env bash
+set -euo pipefail
+{
+    printf 'socket=%s\n' "${ZENTTY_INSTANCE_SOCKET}"
+    printf 'instance=%s\n' "${ZENTTY_INSTANCE_ID}"
+    printf 'token=%s\n' "${ZENTTY_PANE_TOKEN}"
+} >"${ZENTTY_SECOND_RECEIPTS}/endpoint"
+for _ in {1..400}; do
+    [[ -e "${ZENTTY_SECOND_RECEIPTS}/release" ]] && exit 0
+    sleep 0.05
+done
+exit 1
+SECOND_CHILD
+chmod 700 "${second_child}"
+GDK_SCALE=1 GDK_DPI_SCALE=1 \
+ZENTTY_SECOND_RECEIPTS="${second_receipts}" \
+LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+    "${product}" --command "${second_child}" --state-directory "${second_state}" --no-session-restore \
+    >"${second_log}" 2>&1 &
+second_product_pid=$!
+for _ in {1..400}; do
+    [[ -s "${second_receipts}/endpoint" ]] && break
+    kill -0 "${second_product_pid}" 2>/dev/null || fail "second staged instance exited before endpoint publication"
+    sleep 0.05
+done
+[[ -s "${second_receipts}/endpoint" ]] || fail "second staged instance did not publish its endpoint"
+first_socket="$(head -1 "${receipts}/selected-evaluated.txt")"
+first_token="$(tail -1 "${receipts}/selected-evaluated.txt")"
+second_socket="$(sed -n 's/^socket=//p' "${second_receipts}/endpoint")"
+second_instance="$(sed -n 's/^instance=//p' "${second_receipts}/endpoint")"
+second_token="$(sed -n 's/^token=//p' "${second_receipts}/endpoint")"
+[[ "${second_socket}" != "${first_socket}" && -S "${second_socket}" ]] || fail "concurrent instances shared a socket"
+[[ "$(stat -c %a "${second_socket}")" == 600 && "$(stat -c %a "$(dirname "${second_socket}")")" == 700 ]] || fail "second instance endpoint is not private"
+[[ "${second_instance}" =~ ^[0-9a-f]{64}$ && "${second_instance}" != "$(sed -n 's/^instance=//p' "${split_env}")" ]] || fail "concurrent instances shared an identity"
+[[ "${second_token}" =~ ^[0-9a-f]{64}$ && "${second_token}" != "${first_token}" ]] || fail "concurrent instances shared a pane capability"
+if env ZENTTY_INSTANCE_SOCKET="${second_socket}" ZENTTY_PANE_TOKEN="${first_token}" \
+    "${staged_cli}" list panes --json >/dev/null 2>&1; then fail "first capability crossed into second instance"; fi
+if env ZENTTY_INSTANCE_SOCKET="${first_socket}" ZENTTY_PANE_TOKEN="${second_token}" \
+    "${staged_cli}" list panes --json >/dev/null 2>&1; then fail "second capability crossed into first instance"; fi
+env ZENTTY_INSTANCE_SOCKET="${second_socket}" ZENTTY_PANE_TOKEN="${second_token}" \
+    "${staged_cli}" worklane rename "Second isolated"
+env ZENTTY_INSTANCE_SOCKET="${second_socket}" ZENTTY_PANE_TOKEN="${second_token}" \
+    "${staged_cli}" list worklanes --json >"${second_receipts}/worklanes.json"
+env ZENTTY_INSTANCE_SOCKET="${first_socket}" ZENTTY_PANE_TOKEN="${first_token}" \
+    "${staged_cli}" list worklanes --json >"${receipts}/first-after-second-mutation.json"
+jq -e '.[0].title == "Second isolated"' "${second_receipts}/worklanes.json" >/dev/null || fail "second instance mutation missed its authority"
+jq -e 'all(.[]; (.title // "") != "Second isolated")' "${receipts}/first-after-second-mutation.json" >/dev/null || fail "second instance mutation crossed into first instance"
+touch "${second_receipts}/release"
+wait "${second_product_pid}" || fail "second staged instance did not exit cleanly"
+second_product_pid=""
+
 touch "${receipts}/release"
-echo "rust-cli-contract-${backend}: PASS staged-cli=true real-product=true authenticated-socket=true aliases=true schemas=4 text-goldens=true hostile-shell-unit=true fail-closed=true"
+echo "rust-cli-contract-${backend}: PASS staged-cli=true real-product=true authenticated-socket=true concurrent-instances=true aliases=true schemas=4 text-goldens=true hostile-shell-unit=true fail-closed=true"

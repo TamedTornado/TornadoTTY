@@ -308,6 +308,25 @@ new_window_panes="$(${ZENTTY_CLI_BIN} list panes --window-id "${new_window_id}" 
 [[ "$(jq -r '[.[].id] | unique | length' <<<"${new_window_panes}")" == 4 ]]
 [[ "$(jq -r 'all(.[]; (.id | startswith("pane-window-2")) and (.controlToken | test("^[0-9a-f]{64}$")))' \
     <<<"${new_window_panes}")" == true ]]
+${ZENTTY_CLI_BIN} pane focus --pane-id pane-1
+for _ in {1..100}; do
+    windows="$(${ZENTTY_CLI_BIN} list windows --json)"
+    [[ "$(jq -r '.[] | select(.id == "window-1") | .isFocused' <<<"${windows}")" == true ]] && break
+    sleep 0.02
+done
+[[ "$(jq -r '.[] | select(.id == "window-1") | .isFocused' <<<"${windows}")" == true ]]
+printf 'cli-stage=selected-original-window\n' >>"${ZENTTY_TMUX_PRODUCT_PROBE}"
+new_window_focus_id="$(jq -r '.[0].id' <<<"${new_window_panes}")"
+new_window_focus_token="$(jq -r '.[0].controlToken' <<<"${new_window_panes}")"
+env ZENTTY_PANE_TOKEN="${new_window_focus_token}" \
+    ${ZENTTY_CLI_BIN} pane focus --pane-id "${new_window_focus_id}" --pane-token "${new_window_focus_token}"
+for _ in {1..100}; do
+    windows="$(${ZENTTY_CLI_BIN} list windows --json)"
+    [[ "$(jq -r --arg id "${new_window_id}" '.[] | select(.id == $id) | .isFocused' <<<"${windows}")" == true ]] && break
+    sleep 0.02
+done
+[[ "$(jq -r --arg id "${new_window_id}" '.[] | select(.id == $id) | .isFocused' <<<"${windows}")" == true ]]
+printf 'cli-stage=selected-new-window\n' >>"${ZENTTY_TMUX_PRODUCT_PROBE}"
 while IFS=$'\t' read -r pane_id pane_token; do
     env ZENTTY_PANE_TOKEN="${pane_token}" \
         ${ZENTTY_CLI_BIN} pane close --pane-id "${pane_id}" --pane-token "${pane_token}"
@@ -499,6 +518,10 @@ grep -Fxq 'zentty-linux: worklane-peek=open trigger=cli' "${log}" ||
     fail "public CLI zoom did not open the real zoomed-out pane view"
 grep -Fxq 'zentty-linux: worklane-peek=cancel' "${log}" ||
     fail "second public CLI zoom did not restore the normal pane view"
+grep -Eq 'zentty-linux: cli-window-select window=window-1 worklane=worklane-1 pane=pane-1 changed=(true|false)' "${log}" ||
+    fail "public CLI focus did not present the original GTK window through the coordinator"
+grep -Eq 'zentty-linux: cli-window-select window=window-2 worklane=worklane-window-2 pane=pane-window-2 changed=(true|false)' "${log}" ||
+    fail "public CLI focus did not present the new GTK window through the coordinator"
 grep -Eq 'zentty-linux: cli-notification inbox=true pane=pane-1 title-bytes=9 body-bytes=24' "${log}" ||
     fail "public CLI pane notification did not enter the one shared inbox"
 grep -Eq 'zentty-linux: cli-notification inbox=false pane=pane-1 title-bytes=9 body-bytes=0' "${log}" ||

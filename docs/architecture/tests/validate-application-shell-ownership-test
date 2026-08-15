@@ -155,6 +155,11 @@ sed '/receiver: mpsc::Receiver<AuthenticatedAgentEvent>,/a\    shadow_receiver: 
 expect_failure shadow-agent-transport "authenticated agent transport authority" \
     "ZENTTY_AGENT_RUNTIME_SOURCE=${temp_dir}/shadow-agent-transport.rs"
 
+sed '/product_receiver: mpsc::Receiver<AuthenticatedProductRequest>,/a\    shadow_product_receiver: mpsc::Receiver<AuthenticatedProductRequest>,' \
+    "${agent_runtime_file}" >"${temp_dir}/shadow-product-transport.rs"
+expect_failure shadow-product-transport "authenticated CLI product transport authority" \
+    "ZENTTY_AGENT_RUNTIME_SOURCE=${temp_dir}/shadow-product-transport.rs"
+
 sed '/struct PendingWorker {/a\    shadow_generation: u64,' \
     "${codex_enrichment_file}" >"${temp_dir}/shadow-enrichment-generation.rs"
 expect_failure shadow-enrichment-generation "Codex enrichment generation authority" \

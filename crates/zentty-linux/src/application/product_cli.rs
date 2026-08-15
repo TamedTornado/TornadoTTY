@@ -40,6 +40,19 @@ impl ApplicationCoordinator {
                     },
                 ),
             };
+            if should_present_product_target(&command.request, &reply)
+                && let Some(shell) = self.shells.get(&command.target.window_id)
+            {
+                // Pane focus is also the source CLI's worklane/window
+                // selection operation. Present the same GTK window owned by
+                // the coordinator; do not create an IPC-specific focus model.
+                shell.borrow().present();
+                let changed = self.window_set.mark_active(&command.target.window_id);
+                eprintln!(
+                    "zentty-linux: cli-window-select window={} worklane={} pane={} changed={changed}",
+                    command.target.window_id, command.target.worklane_id, command.target.pane_id
+                );
+            }
             if let Err(error) = command.respond(reply) {
                 eprintln!("zentty-linux: product-command-response failed={error}");
             }
@@ -271,6 +284,12 @@ impl ApplicationCoordinator {
             |stdout| ProductIpcReply::success(stdout).expect("bounded discovery output"),
         )
     }
+}
+
+fn should_present_product_target(request: &ProductIpcRequest, reply: &ProductIpcReply) -> bool {
+    request.kind() == ProductIpcKind::Pane
+        && request.subcommand() == "focus"
+        && reply.error().is_none()
 }
 
 fn discovery_worklane_filter<'a>(
@@ -749,10 +768,11 @@ fn shell_escape(value: &str) -> String {
 mod tests {
     use super::{
         abbreviate_home_with, agent_summary, discovery_worklane_filter, render_discovery,
-        render_overview, render_rows, render_selected_pane, shell_escape, truncate_leading,
-        truncate_tail,
+        render_overview, render_rows, render_selected_pane, shell_escape,
+        should_present_product_target, truncate_leading, truncate_tail,
     };
     use serde_json::json;
+    use zentty_agent_ipc::{ProductIpcKind, ProductIpcReply, ProductIpcRequest};
 
     fn pane(id: &str, index: u64, token: &str) -> serde_json::Value {
         json!({
@@ -787,6 +807,21 @@ export ZENTTY_PANE_ID='pane-'\"'\"'$HOME\n$(touch nope)'\n\
 export ZENTTY_PANE_TOKEN='token-'\"'\"'quoted'\n"
         );
         assert_eq!(shell_escape("a'b"), "a'\"'\"'b");
+    }
+
+    #[test]
+    fn only_successful_pane_focus_selects_the_containing_window() {
+        let focus = ProductIpcRequest::new(ProductIpcKind::Pane, "focus", Vec::new()).unwrap();
+        let split =
+            ProductIpcRequest::new(ProductIpcKind::Pane, "split", vec!["right".into()]).unwrap();
+        let discovery =
+            ProductIpcRequest::new(ProductIpcKind::Discover, "panes", Vec::new()).unwrap();
+        let success = ProductIpcReply::success("").unwrap();
+        let failure = ProductIpcReply::failure("stale_target", "target disappeared").unwrap();
+        assert!(should_present_product_target(&focus, &success));
+        assert!(!should_present_product_target(&focus, &failure));
+        assert!(!should_present_product_target(&split, &success));
+        assert!(!should_present_product_target(&discovery, &success));
     }
 
     #[test]

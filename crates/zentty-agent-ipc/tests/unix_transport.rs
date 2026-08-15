@@ -82,6 +82,8 @@ fn real_server_rejects_wrong_tokens_malformed_events_and_oversized_frames() {
         .is_err()
     );
     assert!(AgentIpcClient::send_event(&socket, "token-a", b"not-json", None).is_err());
+    let wrong_route = br#"{"version":1,"id":"wrong-route","kind":"ipc","arguments":[],"standardInput":"{\"version\":1,\"event\":\"agent.idle\"}","environment":{"ZENTTY_PANE_TOKEN":"token-a"},"expectsResponse":true,"subcommand":"not-agent-event"}"#;
+    assert!(AgentIpcClient::send_raw_frame(&socket, wrong_route).is_err());
     assert!(
         AgentIpcClient::send_raw_frame(&socket, &vec![b'x'; AgentIpcServer::MAX_FRAME_BYTES + 1])
             .is_err()

@@ -175,6 +175,7 @@ sed -n '/^pub(super) struct PaneRuntimeCoordinator {/,/^}/p' "${pane_runtime_fil
 require_pattern_count "${main_file}" 'glib::MainLoop::new' 1 "process main-loop authority"
 require_pattern_count "${temp_dir}/application-coordinator" 'GhosttyRuntime' 1 "Ghostty runtime authority"
 require_pattern_count "${temp_dir}/agent-runtime" 'mpsc::Receiver<AuthenticatedAgentEvent>' 1 "authenticated agent transport authority"
+require_pattern_count "${temp_dir}/agent-runtime" 'mpsc::Receiver<AuthenticatedProductRequest>' 1 "authenticated CLI product transport authority"
 require_pattern_count "${agent_events_file}" 'Receiver<.*AuthenticatedAgentEvent' 0 "agent event coordinator transport boundary"
 require_pattern_count "${temp_dir}/pending-worker" 'generation: u64' 1 "Codex enrichment generation authority"
 require_pattern_count "${temp_dir}/agents-settings-state" 'ApplyAgents' 1 "Agents settings write authority"

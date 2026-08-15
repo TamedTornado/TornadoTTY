@@ -1,3 +1,5 @@
+use std::io::{Read, Write};
+use std::os::unix::net::UnixStream;
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 use zentty_agent_ipc::{
@@ -11,19 +13,32 @@ fn running_server() -> (
     AgentIpcServer,
     mpsc::Receiver<AuthenticatedProductRequest>,
 ) {
+    running_server_named(
+        "default",
+        "caller-token",
+        AgentTarget::new("window-1", "lane-1", "pane-1"),
+    )
+}
+
+fn running_server_named(
+    name: &str,
+    token: &str,
+    target: AgentTarget,
+) -> (
+    std::path::PathBuf,
+    std::path::PathBuf,
+    AgentIpcServer,
+    mpsc::Receiver<AuthenticatedProductRequest>,
+) {
     let root = std::env::temp_dir().join(format!(
-        "zentty-product-ipc-{}-{:?}",
+        "zentty-product-ipc-{}-{:?}-{name}",
         std::process::id(),
         std::thread::current().id()
     ));
+    let _ = std::fs::remove_dir_all(&root);
     let socket = root.join("runtime/instance.sock");
     let mut registry = PaneTokenRegistry::default();
-    registry
-        .register(
-            "caller-token",
-            AgentTarget::new("window-1", "lane-1", "pane-1"),
-        )
-        .unwrap();
+    registry.register(token, target).unwrap();
     let (event_sender, _event_receiver) = mpsc::channel();
     let (tmux_sender, _tmux_receiver) = mpsc::channel();
     let (server_sender, _server_receiver) = mpsc::channel();
@@ -62,7 +77,11 @@ fn real_socket_authenticates_and_returns_bounded_product_reply() {
         ProductIpcKind::Discover,
         "panes",
         &["--json".to_owned()],
-        Some(AgentTarget::new("window-1", "lane-1", "pane-1")),
+        Some(AgentTarget::new(
+            "forged-window",
+            "forged-lane",
+            "forged-pane",
+        )),
     )
     .unwrap();
     assert_eq!(reply.stdout(), Some(r#"[{"id":"pane-1"}]"#));
@@ -70,6 +89,129 @@ fn real_socket_authenticates_and_returns_bounded_product_reply() {
     worker.join().unwrap();
     server.shutdown().unwrap();
     std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn partial_frame_writes_are_reassembled_before_authentication_and_dispatch() {
+    let (root, socket, server, receiver) = running_server();
+    let worker = std::thread::spawn(move || {
+        let request = receiver.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert_eq!(
+            request.target,
+            AgentTarget::new("window-1", "lane-1", "pane-1")
+        );
+        assert_eq!(request.request.subcommand(), "panes");
+        request
+            .respond(ProductIpcReply::success("partial-ok").unwrap())
+            .unwrap();
+    });
+    let frame = br#"{"version":1,"id":"partial","kind":"discover","arguments":["--json"],"standardInput":null,"environment":{"ZENTTY_PANE_TOKEN":"caller-token","ZENTTY_WINDOW_ID":"forged-window","ZENTTY_WORKLANE_ID":"forged-lane","ZENTTY_PANE_ID":"forged-pane"},"expectsResponse":true,"subcommand":"panes"}"#;
+    let mut stream = UnixStream::connect(&socket).unwrap();
+    for chunk in frame.chunks(7) {
+        stream.write_all(chunk).unwrap();
+    }
+    stream.shutdown(std::net::Shutdown::Write).unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+    let response: serde_json::Value = serde_json::from_str(&response).unwrap();
+    assert_eq!(response["id"], "partial");
+    assert_eq!(response["ok"], true);
+    assert_eq!(response["result"]["stdout"], "partial-ok");
+    worker.join().unwrap();
+    server.shutdown().unwrap();
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn concurrent_mixed_auth_clients_dispatch_only_canonical_authorized_targets() {
+    const AUTHORIZED: usize = 8;
+    const UNAUTHORIZED: usize = 8;
+    let (root, socket, server, receiver) = running_server();
+    let responder = std::thread::spawn(move || {
+        for sequence in 0..AUTHORIZED {
+            let request = receiver.recv_timeout(Duration::from_secs(2)).unwrap();
+            assert_eq!(
+                request.target,
+                AgentTarget::new("window-1", "lane-1", "pane-1")
+            );
+            request
+                .respond(ProductIpcReply::success(format!("authorized-{sequence}")).unwrap())
+                .unwrap();
+        }
+        assert!(receiver.recv_timeout(Duration::from_millis(150)).is_err());
+    });
+    let mut clients = Vec::new();
+    for sequence in 0..AUTHORIZED + UNAUTHORIZED {
+        let socket = socket.clone();
+        clients.push(std::thread::spawn(move || {
+            let authorized = sequence < AUTHORIZED;
+            let result = AgentIpcClient::send_product(
+                socket,
+                if authorized {
+                    "caller-token"
+                } else {
+                    "unauthorized-token"
+                },
+                ProductIpcKind::Discover,
+                "panes",
+                &["--json".to_owned()],
+                Some(AgentTarget::new(
+                    format!("claim-window-{sequence}"),
+                    format!("claim-lane-{sequence}"),
+                    format!("claim-pane-{sequence}"),
+                )),
+            );
+            assert_eq!(result.is_ok(), authorized);
+        }));
+    }
+    for client in clients {
+        client.join().unwrap();
+    }
+    responder.join().unwrap();
+    server.shutdown().unwrap();
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn concurrent_instances_reject_each_others_capabilities() {
+    let (root_a, socket_a, server_a, receiver_a) = running_server_named(
+        "instance-a",
+        "token-a",
+        AgentTarget::new("window-a", "lane-a", "pane-a"),
+    );
+    let (root_b, socket_b, server_b, receiver_b) = running_server_named(
+        "instance-b",
+        "token-b",
+        AgentTarget::new("window-b", "lane-b", "pane-b"),
+    );
+    assert!(
+        AgentIpcClient::send_product(
+            &socket_a,
+            "token-b",
+            ProductIpcKind::Discover,
+            "panes",
+            &[],
+            None,
+        )
+        .is_err()
+    );
+    assert!(
+        AgentIpcClient::send_product(
+            &socket_b,
+            "token-a",
+            ProductIpcKind::Discover,
+            "panes",
+            &[],
+            None,
+        )
+        .is_err()
+    );
+    assert!(receiver_a.recv_timeout(Duration::from_millis(100)).is_err());
+    assert!(receiver_b.recv_timeout(Duration::from_millis(100)).is_err());
+    server_a.shutdown().unwrap();
+    server_b.shutdown().unwrap();
+    std::fs::remove_dir_all(root_a).unwrap();
+    std::fs::remove_dir_all(root_b).unwrap();
 }
 
 #[test]
