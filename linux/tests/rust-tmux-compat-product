@@ -225,7 +225,12 @@ ${ZENTTY_CLI_BIN} pane rename "CLI source pane"
 ${ZENTTY_CLI_BIN} worklane rename "CLI source lane"
 ${ZENTTY_CLI_BIN} worklane color blue
 ${ZENTTY_CLI_BIN} split right --equal
+[[ "$(${ZENTTY_CLI_BIN} theme dark)" == dark ]]
+${ZENTTY_CLI_BIN} notify --title "CLI ready" --subtitle "Review" \
+    --body $'Line one\nline two' --silent
+${ZENTTY_CLI_BIN} notify --title "Ephemeral" --no-inbox --silent
 panes="$(${ZENTTY_CLI_BIN} list panes --include-control-token --json)"
+printf 'cli-stage=discovered-split\n' >>"${ZENTTY_TMUX_PRODUCT_PROBE}"
 jq -e '
     length == 2 and
     any(.[]; .id == "pane-1" and .title == "CLI source pane" and .isFocused == false) and
@@ -237,12 +242,38 @@ if ${ZENTTY_CLI_BIN} pane close --pane-id "${cli_split_id}" \
     2>"${TMPDIR:-/tmp}/zentty-cli-selector.$$"; then
     exit 1
 fi
+cat "${TMPDIR:-/tmp}/zentty-cli-selector.$$" >>"${ZENTTY_TMUX_PRODUCT_PROBE}"
 grep -Fq 'unauthorized_target' "${TMPDIR:-/tmp}/zentty-cli-selector.$$"
 rm -f -- "${TMPDIR:-/tmp}/zentty-cli-selector.$$"
+printf 'cli-stage=rejected-mismatched-selector\n' >>"${ZENTTY_TMUX_PRODUCT_PROBE}"
+if ! env ZENTTY_PANE_TOKEN="${cli_split_token}" \
+    ${ZENTTY_CLI_BIN} pane focus 2 --pane-token "${cli_split_token}" \
+    2>>"${ZENTTY_TMUX_PRODUCT_PROBE}"; then
+    exit 1
+fi
+printf 'cli-stage=focused-by-index\n' >>"${ZENTTY_TMUX_PRODUCT_PROBE}"
+if ! env ZENTTY_PANE_TOKEN="${cli_split_token}" \
+    ${ZENTTY_CLI_BIN} pane resize 60% --pane-token "${cli_split_token}" \
+    2>>"${ZENTTY_TMUX_PRODUCT_PROBE}"; then
+    exit 1
+fi
+printf 'cli-stage=resized-by-percentage\n' >>"${ZENTTY_TMUX_PRODUCT_PROBE}"
 env ZENTTY_PANE_TOKEN="${cli_split_token}" \
-    ${ZENTTY_CLI_BIN} pane focus 2 --pane-token "${cli_split_token}"
-env ZENTTY_PANE_TOKEN="${cli_split_token}" \
-    ${ZENTTY_CLI_BIN} pane close --pane-id "${cli_split_id}" --pane-token "${cli_split_token}"
+    ${ZENTTY_CLI_BIN} pane close --pane-id "${cli_split_id}" --pane-token "${cli_split_token}" \
+    2>>"${ZENTTY_TMUX_PRODUCT_PROBE}"
+printf 'cli-stage=closed-split\n' >>"${ZENTTY_TMUX_PRODUCT_PROBE}"
+for _ in {1..100}; do
+    panes="$(${ZENTTY_CLI_BIN} list panes --json)"
+    [[ "$(jq length <<<"${panes}")" == 1 ]] && break
+    sleep 0.02
+done
+[[ "$(jq length <<<"${panes}")" == 1 ]]
+${ZENTTY_CLI_BIN} split down --ratio 65
+panes="$(${ZENTTY_CLI_BIN} list panes --include-control-token --json)"
+cli_below_id="$(jq -r '.[] | select(.id != "pane-1") | .id' <<<"${panes}")"
+cli_below_token="$(jq -r --arg id "${cli_below_id}" '.[] | select(.id == $id) | .controlToken' <<<"${panes}")"
+env ZENTTY_PANE_TOKEN="${cli_below_token}" \
+    ${ZENTTY_CLI_BIN} pane close --pane-id "${cli_below_id}" --pane-token "${cli_below_token}"
 for _ in {1..100}; do
     panes="$(${ZENTTY_CLI_BIN} list panes --json)"
     [[ "$(jq length <<<"${panes}")" == 1 ]] && break
@@ -263,6 +294,27 @@ for _ in {1..100}; do
     sleep 0.02
 done
 [[ "$(jq length <<<"${panes}")" == 1 ]]
+${ZENTTY_CLI_BIN} grid 2x2 --window-id new --focus last
+windows="$(${ZENTTY_CLI_BIN} list windows --json)"
+[[ "$(jq length <<<"${windows}")" == 2 ]]
+new_window_id="$(jq -r '.[] | select(.id != "window-1") | .id' <<<"${windows}")"
+[[ "${new_window_id}" == window-2 ]]
+new_window_panes="$(${ZENTTY_CLI_BIN} list panes --window-id "${new_window_id}" \
+    --include-control-token --json)"
+[[ "$(jq length <<<"${new_window_panes}")" == 4 ]]
+[[ "$(jq -r '[.[].id] | unique | length' <<<"${new_window_panes}")" == 4 ]]
+[[ "$(jq -r 'all(.[]; (.id | startswith("pane-window-2")) and (.controlToken | test("^[0-9a-f]{64}$")))' \
+    <<<"${new_window_panes}")" == true ]]
+while IFS=$'\t' read -r pane_id pane_token; do
+    env ZENTTY_PANE_TOKEN="${pane_token}" \
+        ${ZENTTY_CLI_BIN} pane close --pane-id "${pane_id}" --pane-token "${pane_token}"
+done < <(jq -r '.[] | [.id,.controlToken] | @tsv' <<<"${new_window_panes}")
+for _ in {1..100}; do
+    windows="$(${ZENTTY_CLI_BIN} list windows --json)"
+    [[ "$(jq length <<<"${windows}")" == 1 ]] && break
+    sleep 0.02
+done
+[[ "$(jq length <<<"${windows}")" == 1 && "$(jq -r '.[0].id' <<<"${windows}")" == window-1 ]]
 final_right="$(${ZENTTY_CLI_BIN} __tmux-compat split-window -h -P -F '#{pane_id}')"
 final_below="$(${ZENTTY_CLI_BIN} __tmux-compat split-window -v -d -P -F '#{pane_id}')"
 printf 'final-tmux-pane=%s\nfinal-tmux-pane=%s\n' \
@@ -434,6 +486,16 @@ grep -Fxq 'zentty-linux: tmux-respawn pane=pane-2' "${log}" || {
     cat "${log}" >&2
     fail "real respawn-pane did not replace the targeted Ghostty PTY child"
 }
+grep -Eq 'zentty-linux: cli-split-layout direction=right mode=equal changed=(true|false)' "${log}" ||
+    fail "public CLI equal split did not apply its source layout policy"
+grep -Eq 'zentty-linux: cli-pane-resize pane=pane-[0-9]+ percentage=60 width=[0-9]+\.[0-9]+' "${log}" ||
+    fail "public CLI percentage resize did not mutate the authenticated real pane"
+grep -Eq 'zentty-linux: cli-split-layout direction=down mode=ratio-65 changed=true' "${log}" ||
+    fail "public CLI vertical split ratio did not apply to the real pane weights"
+grep -Eq 'zentty-linux: cli-notification inbox=true pane=pane-1 title-bytes=9 body-bytes=24' "${log}" ||
+    fail "public CLI pane notification did not enter the one shared inbox"
+grep -Eq 'zentty-linux: cli-notification inbox=false pane=pane-1 title-bytes=9 body-bytes=0' "${log}" ||
+    fail "public CLI --no-inbox notification did not bypass inbox persistence"
 grep -Fxq 'zentty-linux: tmux-deferred pane=pane-3' "${log}" || {
     cat "${log}" >&2
     fail "commandless split did not remain launch-deferred"

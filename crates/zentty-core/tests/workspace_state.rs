@@ -1103,6 +1103,25 @@ fn divider_resize_updates_only_adjacent_panes_and_preserves_total_weight() {
 }
 
 #[test]
+fn absolute_focused_pane_height_matches_source_fraction_and_preserves_other_proportions() {
+    let mut state = WorkspaceState::new("lane", "pane-top");
+    assert!(state.split_focused_pane_below("pane-middle"));
+    assert!(state.split_focused_pane_below("pane-bottom"));
+
+    assert!(state.resize_focused_pane_height_to_fraction(0.60));
+    let heights = &state.active_columns()[0].pane_heights;
+    let total = heights.iter().sum::<f64>();
+    assert!((heights[2] / total - 0.60).abs() < 1e-12);
+    assert!((heights[0] / heights[1] - 2.0).abs() < 1e-12);
+
+    assert!(state.resize_focused_pane_height_to_fraction(0.0));
+    let heights = &state.active_columns()[0].pane_heights;
+    let total = heights.iter().sum::<f64>();
+    assert!((heights[2] / total - 0.05).abs() < 1e-12);
+    assert!(!WorkspaceState::new("lane", "only").resize_focused_pane_height_to_fraction(0.5));
+}
+
+#[test]
 fn divider_geometry_round_trips_exactly_through_the_workspace_recipe() {
     let envelope = SessionRestoreEnvelope::from_json(V3_ENVELOPE).unwrap();
     let mut window = envelope.workspace.windows[0].clone();

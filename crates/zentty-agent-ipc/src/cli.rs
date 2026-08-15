@@ -53,8 +53,36 @@ pub fn parse_product_cli(
         "pane" => parse_pane(rest),
         "layout" => parse_layout(rest),
         "theme" => parse_theme(rest),
+        "notify" => parse_notify(rest),
         _ => Ok(None),
     }
+}
+
+fn parse_notify(arguments: &[String]) -> Result<Option<CliProductCommand>, ProductIpcError> {
+    validate_options(
+        arguments,
+        &["--title", "--subtitle", "--body"],
+        &["--no-inbox", "--silent"],
+    )?;
+    let title = option_value(arguments, "--title")
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| command_error("notification title is required"))?;
+    let mut canonical = vec!["--title".to_owned(), title.to_owned()];
+    for option in ["--subtitle", "--body"] {
+        if let Some(value) = option_value(arguments, option)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            canonical.extend([option.to_owned(), value.to_owned()]);
+        }
+    }
+    for flag in ["--no-inbox", "--silent"] {
+        if arguments.iter().any(|argument| argument == flag) {
+            canonical.push(flag.to_owned());
+        }
+    }
+    request(ProductIpcKind::Pane, "notify", canonical)
 }
 
 fn parse_list(arguments: &[String]) -> Result<Option<CliProductCommand>, ProductIpcError> {

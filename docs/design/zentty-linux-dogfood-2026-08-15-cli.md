@@ -89,3 +89,100 @@ reject every contradictory selector, and positional numeric pane selection was
 treated as an opaque pane ID. The real-product actor now requires a caller-token
 attempt against another pane to fail without mutation and exercises numeric
 selection with that pane's actual capability before authorized close.
+
+The split/resize audit found that Rust had incremental cell-based resizing but
+no absolute vertical fraction primitive. The macOS source represents pane
+heights as relative weights, clamps the requested share to 5–95%, and preserves
+all other panes' relative proportions. A focused core test was red on the
+missing method before the same bounded weight transform was added to the sole
+`WorkspaceState` owner.
+
+The first public split route created the correct real pane but ignored
+`--equal`, `--golden`, and `--ratio`; percentage resize was still an explicit
+placeholder. The handler now applies the source's post-split layout semantics
+to the newly focused pane and absolute horizontal resize uses the materialized
+viewport plus the existing runtime-derived minimum width. The staged actor
+exercises equal horizontal split, 60% resize, a 65% vertical split, and the
+theme command's source-compatible resulting-mode stdout.
+
+Notification construction began with a focused red parser case: the existing
+Linux binary recognized only `codex-notify`, so the public `notify` command
+fell through to the generic IPC usage error. The parser now requires and trims
+the source title, omits blank optional subtitle/body values, preserves embedded
+newlines, and carries the independent inbox and sound flags over the bounded
+authenticated pane route. Delivery is not yet claimed by this parser receipt.
+
+The first inbox implementation exposed a lifecycle collision: the shared inbox
+previously assumed every item was derived from live agent state, so the normal
+next reconciliation with no agent status immediately resolved a manual pane
+notification. A red core test reproduced it. Items now carry a private origin;
+agent reconciliation resolves only agent-origin entries, while explicit
+activation, stale-target cleanup, dismissal, and clear still apply uniformly.
+This extends the one inbox rather than creating a parallel notification store.
+
+Pane notification delivery now routes at the application owner: the existing
+freedesktop service receives the exact title/body and an explicit
+`suppress-sound` hint for `--silent`, while the existing shared inbox records
+the source entry unless `--no-inbox` is present. Desktop-service absence is
+logged as unavailable, not converted into proof of delivery; the staged
+topology actor presently proves both inbox branches and the real private socket
+route. A controlled real D-Bus receipt remains required before closure.
+
+The expanded actor found a target-versus-focus defect before reaching its
+negative selector assertion. The shell eagerly focused the authenticated pane
+for every product command, so `theme dark` invoked from the source shell stole
+focus back from the pane just created by `split`. The source theme handler does
+not focus its routing context, and neither should rename/color/close. Target
+existence and authorization are now validated without selection; only commands
+whose operation is inherently focus-relative (split, focus, resize, layout,
+grid) select their authenticated target. This also prevents an unauthorized
+selector rejection from changing UI focus as a side effect.
+
+New-window grid design exposed two pre-existing multi-window hazards before the
+feature was exercised. Pane/worklane counters were window-local but emitted
+global-looking `pane-N`/`worklane-N` IDs, allowing a split in window 2 to reuse
+window 1's pane ID and retarget its capability. Non-primary windows now emit
+window-qualified opaque IDs and skip any restored collision. Also, closing the
+last pane in any window directly quit the process; it now delegates to the one
+application window-close coordinator, so other windows and their PTYs survive.
+The primary window retains its established IDs for compatibility receipts.
+
+The completed new-window actor creates a real 2x2 grid in `window-2`, discovers
+all four live PTYs through the public CLI, requires their window-qualified IDs
+and capabilities to be unique, closes them using those exact capabilities, and
+then proves `window-1` and its shell remain alive. The same staged ReleaseSafe
+binary and CLI passed this journey under the controlled X11 and Wayland
+compositors. This is direct evidence for multi-window grid lifecycle, including
+the two identity/last-window repairs above; it is not a claim that all GH-22
+commands are complete.
+
+The source audit also caught a representation mismatch hidden by the first
+theme receipt. Linux persists automatic mode as `automatic`, while the macOS
+public CLI intentionally prints `auto`. A separate `cli_token` projection now
+keeps the persisted schema private, and the core test locks the source-facing
+spelling. New-window presentation failure now tears down the registered shell
+and window rather than leaving a headless, discoverable destination behind.
+
+Presently executable receipts after these repairs:
+
+- `cargo test -p zentty-agent-ipc --locked`: 45 tests passed across parser,
+  helper/launcher subprocesses, authenticated real Unix sockets, bounds,
+  concurrency, timeouts, and product transport.
+- focused workspace and inbox suites: 51 and 12 tests passed.
+- architecture contract plus negative self-tests: passed.
+- staged `rust-tmux-compat-product`: passed under controlled X11 and controlled
+  Wayland, including exact split ratios, percentage resize, notification inbox
+  policy, authenticated negative selection, current-window grids, and the new
+  multi-window lifecycle.
+
+A pedantic Clippy audit initially found that the new command dispatcher and
+grid/window builders had grown beyond the repository's 100-line function
+limit, along with avoidable formatting allocations. Those product paths were
+decomposed into focused split, focus, metadata, resize, theme, grid parsing,
+grid delivery, and window-snapshot helpers; the new findings are cleared. The
+workspace-wide Clippy command is not recorded as passing: it still reports
+older unrelated debt in the application tick/callback owner, attention view,
+sleep inhibitor, window chrome, and one oversized workspace test. This slice
+does not hide those findings or turn that existing absence into a clean lint
+claim. The post-decomposition staged X11 and Wayland journeys both passed
+again, so the structural repair did not replace the real-system receipt.

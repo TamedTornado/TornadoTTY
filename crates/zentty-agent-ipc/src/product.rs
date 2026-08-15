@@ -63,6 +63,7 @@ impl ProductIpcRequest {
                 "resize",
                 "layout",
                 "theme",
+                "notify",
             ]
             .as_slice(),
         };

@@ -100,6 +100,48 @@ fn source_mutation_commands_preserve_canonical_vocabulary() {
 }
 
 #[test]
+fn pane_notification_preserves_source_text_and_delivery_flags() {
+    let parsed = parse_product_cli(&values(&[
+        "notify",
+        "--title",
+        " Agent ready ",
+        "--subtitle",
+        "Review it",
+        "--body",
+        "Line one\nline two",
+        "--no-inbox",
+        "--silent",
+    ]))
+    .unwrap()
+    .unwrap();
+    let CliProductCommand::Request(request) = parsed else {
+        panic!("expected product request");
+    };
+    assert_eq!(request.kind(), ProductIpcKind::Pane);
+    assert_eq!(request.subcommand(), "notify");
+    assert_eq!(
+        request.arguments(),
+        &values(&[
+            "--title",
+            "Agent ready",
+            "--subtitle",
+            "Review it",
+            "--body",
+            "Line one\nline two",
+            "--no-inbox",
+            "--silent",
+        ])
+    );
+    for invalid in [
+        vec!["notify"],
+        vec!["notify", "--title", "   "],
+        vec!["notify", "--title", "ready", "--unknown"],
+    ] {
+        assert!(parse_product_cli(&values(&invalid)).is_err(), "{invalid:?}");
+    }
+}
+
+#[test]
 fn grid_parser_bounds_dimensions_and_preserves_command_argv() {
     let parsed = parse_product_cli(&values(&[
         "grid",

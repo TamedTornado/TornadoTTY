@@ -1,11 +1,31 @@
 use super::ApplicationCoordinator;
-use zentty_agent_ipc::{AuthenticatedProductRequest, ProductIpcKind, ProductIpcReply};
+use crate::application_shell::ApplicationShell;
+use crate::persistence_coordinator::WindowSnapshot;
+use gtk::glib;
+use std::fmt::Write;
+use zentty_agent_ipc::{
+    AuthenticatedProductRequest, ProductIpcKind, ProductIpcReply, ProductIpcRequest,
+};
+use zentty_core::{AgentTarget, ColumnRecipe, PaneRecipe, WindowRecipe, WorklaneRecipe};
 
 impl ApplicationCoordinator {
     pub(super) fn handle_product_commands(&mut self, commands: Vec<AuthenticatedProductRequest>) {
         for command in commands {
+            if command.request.subcommand() == "grid"
+                && command
+                    .request
+                    .arguments()
+                    .iter()
+                    .any(|argument| argument == "--new-window")
+            {
+                self.schedule_new_window_grid(command);
+                continue;
+            }
             let reply = match command.request.kind() {
                 ProductIpcKind::Discover => self.handle_discovery_command(&command),
+                ProductIpcKind::Pane if command.request.subcommand() == "notify" => {
+                    self.handle_pane_notification(&command)
+                }
                 ProductIpcKind::Pane => self.shells.get(&command.target.window_id).map_or_else(
                     || {
                         ProductIpcReply::failure("stale_target", "target window is unavailable")
@@ -24,6 +44,171 @@ impl ApplicationCoordinator {
                 eprintln!("zentty-linux: product-command-response failed={error}");
             }
         }
+    }
+
+    fn schedule_new_window_grid(&self, command: AuthenticatedProductRequest) {
+        let coordinator = self.self_handle.clone();
+        glib::idle_add_local_once(move || {
+            let reply = coordinator.upgrade().map_or_else(
+                || {
+                    ProductIpcReply::failure("application_unavailable", "application stopped")
+                        .expect("bounded new-window diagnostic")
+                },
+                |coordinator| Self::create_new_window_grid(&coordinator, &command),
+            );
+            if let Err(error) = command.respond(reply) {
+                eprintln!("zentty-linux: product-command-response failed={error}");
+            }
+        });
+    }
+
+    fn create_new_window_grid(
+        coordinator: &std::rc::Rc<std::cell::RefCell<Self>>,
+        command: &AuthenticatedProductRequest,
+    ) -> ProductIpcReply {
+        let (destination_window_id, source_pane) = {
+            let mut coordinator = coordinator.borrow_mut();
+            let Some(source) = coordinator.shells.get(&command.target.window_id) else {
+                return product_failure("stale_target", "source window is unavailable");
+            };
+            let Some(source_pane) = source.borrow().product_grid_source_pane(&command.target)
+            else {
+                return product_failure("stale_target", "source pane is unavailable");
+            };
+            let destination_window_id = coordinator.window_set.generate_id();
+            if let Err(error) = coordinator.window_set.insert(destination_window_id.clone()) {
+                return product_failure(
+                    "grid_failed",
+                    format!("could not reserve destination window: {error:?}"),
+                );
+            }
+            (destination_window_id, source_pane)
+        };
+        let worklane_id = format!("worklane-{destination_window_id}");
+        let pane_id = format!("pane-{destination_window_id}");
+        let snapshot =
+            new_grid_window_snapshot(&destination_window_id, &worklane_id, &pane_id, source_pane);
+        if let Err(error) = Self::build_shell(coordinator, snapshot) {
+            coordinator
+                .borrow_mut()
+                .window_set
+                .close(&destination_window_id);
+            return product_failure("grid_failed", error);
+        }
+        let destination = coordinator
+            .borrow()
+            .shells
+            .get(&destination_window_id)
+            .cloned()
+            .expect("newly built grid shell is registered");
+        let arguments = command
+            .request
+            .arguments()
+            .iter()
+            .filter(|argument| argument.as_str() != "--new-window")
+            .cloned()
+            .collect::<Vec<_>>();
+        let request = ProductIpcRequest::new(ProductIpcKind::Pane, "grid", arguments)
+            .expect("validated grid request remains valid without destination flag");
+        let target = AgentTarget::new(&destination_window_id, &worklane_id, &pane_id);
+        let reply = ApplicationShell::execute_product_command(&destination, &target, &request);
+        if reply.error().is_some() {
+            let mut coordinator_ref = coordinator.borrow_mut();
+            coordinator_ref.shells.remove(&destination_window_id);
+            coordinator_ref.window_set.close(&destination_window_id);
+            if let Err(error) = coordinator_ref.teardown_shell(&destination_window_id, &destination)
+            {
+                eprintln!(
+                    "zentty-linux: cli-grid rollback-window={destination_window_id} error={error}"
+                );
+            }
+            return reply;
+        }
+        if let Err(error) = Self::present_shell(coordinator, &destination_window_id, true) {
+            if let Err(rollback_error) = coordinator
+                .borrow_mut()
+                .close_window(&destination_window_id)
+            {
+                eprintln!(
+                    "zentty-linux: cli-grid rollback-window={destination_window_id} error={rollback_error}"
+                );
+            }
+            return product_failure("grid_failed", error);
+        }
+        eprintln!(
+            "zentty-linux: cli-grid-window source={} destination={} pane={}",
+            command.target.pane_id, destination_window_id, pane_id
+        );
+        reply
+    }
+
+    fn handle_pane_notification(
+        &mut self,
+        command: &AuthenticatedProductRequest,
+    ) -> ProductIpcReply {
+        let result = parse_pane_notification(command.request.arguments()).map(|notification| {
+            let desktop_body = match (
+                notification.subtitle.as_deref(),
+                notification.body.as_deref(),
+            ) {
+                (Some(subtitle), Some(body)) => format!("{subtitle}\n{body}"),
+                (Some(subtitle), None) => subtitle.to_owned(),
+                (None, Some(body)) => body.to_owned(),
+                (None, None) => String::new(),
+            };
+            match crate::notification_service::NotificationService::send_pane(
+                &notification.title,
+                &desktop_body,
+                &self.config.notifications,
+                notification.silent,
+            ) {
+                Ok(id) => eprintln!(
+                    "zentty-linux: cli-notification desktop=sent service-id={id} pane={} silent={}",
+                    command.target.pane_id, notification.silent
+                ),
+                Err(error) => eprintln!(
+                    "zentty-linux: cli-notification desktop=unavailable pane={} silent={} detail={error}",
+                    command.target.pane_id, notification.silent
+                ),
+            }
+            if notification.include_inbox {
+                let primary = notification
+                    .body
+                    .as_deref()
+                    .or(notification.subtitle.as_deref())
+                    .unwrap_or("Notification from pane.");
+                self.attention_inbox
+                    .borrow_mut()
+                    .record_pane_notification(
+                        zentty_core::AttentionTarget::new(
+                            &command.target.window_id,
+                            &command.target.worklane_id,
+                            &command.target.pane_id,
+                        ),
+                        &notification.title,
+                        primary,
+                        super::current_time_ms(),
+                    );
+                for shell in self.shells.values() {
+                    shell.borrow().refresh_attention_inbox();
+                }
+            }
+            eprintln!(
+                "zentty-linux: cli-notification inbox={} pane={} title-bytes={} body-bytes={}",
+                notification.include_inbox,
+                command.target.pane_id,
+                notification.title.len(),
+                desktop_body.len()
+            );
+            String::new()
+        });
+        result.map_or_else(
+            |message| {
+                ProductIpcReply::failure("invalid_request", message)
+                    .expect("bounded notification diagnostic")
+            },
+            |stdout| ProductIpcReply::success(stdout).expect("bounded notification output"),
+        )
     }
 
     fn handle_discovery_command(&self, command: &AuthenticatedProductRequest) -> ProductIpcReply {
@@ -68,9 +253,9 @@ impl ApplicationCoordinator {
             }));
         }
         let output = match command.request.subcommand() {
-            "windows" => render_rows("windows", windows, json),
-            "worklanes" => render_rows("worklanes", worklanes, json),
-            "panes" | "panes-current-worklane" => render_rows("panes", panes, json),
+            "windows" => Ok(render_rows("windows", windows, json)),
+            "worklanes" => Ok(render_rows("worklanes", worklanes, json)),
+            "panes" | "panes-current-worklane" => Ok(render_rows("panes", panes, json)),
             "overview" => {
                 let overview = serde_json::json!({
                     "windows": windows,
@@ -109,15 +294,96 @@ impl ApplicationCoordinator {
     }
 }
 
-fn render_rows(kind: &str, rows: Vec<serde_json::Value>, json: bool) -> Result<String, String> {
+fn new_grid_window_snapshot(
+    window_id: &str,
+    worklane_id: &str,
+    pane_id: &str,
+    source_pane: PaneRecipe,
+) -> WindowSnapshot {
+    WindowSnapshot {
+        window: WindowRecipe {
+            id: window_id.to_owned(),
+            frame: None,
+            active_worklane_id: Some(worklane_id.to_owned()),
+            worklanes: vec![WorklaneRecipe {
+                id: worklane_id.to_owned(),
+                title: None,
+                next_pane_number: 2,
+                focused_column_id: Some(format!("column-{pane_id}")),
+                columns: vec![ColumnRecipe {
+                    id: format!("column-{pane_id}"),
+                    width: 1.0,
+                    focused_pane_id: Some(pane_id.to_owned()),
+                    last_focused_pane_id: Some(pane_id.to_owned()),
+                    pane_heights: vec![1.0],
+                    panes: vec![PaneRecipe {
+                        id: pane_id.to_owned(),
+                        custom_title: None,
+                        title_seed: source_pane.title_seed,
+                        working_directory: source_pane.working_directory,
+                        last_activity_title: None,
+                        last_run_command: None,
+                    }],
+                }],
+                color: None,
+                bookmark_origin_id: None,
+            }],
+        },
+        restored_drafts: Vec::new(),
+    }
+}
+
+fn product_failure(code: &str, message: impl Into<String>) -> ProductIpcReply {
+    ProductIpcReply::failure(code, message).expect("bounded product diagnostic")
+}
+
+struct PaneNotification {
+    title: String,
+    subtitle: Option<String>,
+    body: Option<String>,
+    include_inbox: bool,
+    silent: bool,
+}
+
+fn parse_pane_notification(arguments: &[String]) -> Result<PaneNotification, String> {
+    let title = option_value(arguments, "--title")
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "notification title is required".to_owned())?
+        .to_owned();
+    let subtitle = option_value(arguments, "--subtitle")
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned);
+    let body = option_value(arguments, "--body")
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned);
+    let mut index = 0;
+    while index < arguments.len() {
+        index += match arguments[index].as_str() {
+            "--title" | "--subtitle" | "--body" if index + 1 < arguments.len() => 2,
+            "--no-inbox" | "--silent" => 1,
+            value => return Err(format!("unexpected notification argument {value:?}")),
+        };
+    }
+    Ok(PaneNotification {
+        title,
+        subtitle,
+        body,
+        include_inbox: !arguments.iter().any(|argument| argument == "--no-inbox"),
+        silent: arguments.iter().any(|argument| argument == "--silent"),
+    })
+}
+
+fn render_rows(kind: &str, rows: Vec<serde_json::Value>, json: bool) -> String {
     if json {
-        return Ok(pretty_json(&serde_json::Value::Array(rows)));
+        return pretty_json(&serde_json::Value::Array(rows));
     }
     if rows.is_empty() {
-        return Ok(format!("No {kind}.\n"));
+        return format!("No {kind}.\n");
     }
-    Ok(rows
-        .iter()
+    rows.iter()
         .map(|row| match kind {
             "windows" => format!(
                 "{}{} worklanes={} panes={}",
@@ -144,7 +410,7 @@ fn render_rows(kind: &str, rows: Vec<serde_json::Value>, json: bool) -> Result<S
         })
         .collect::<Vec<_>>()
         .join("\n")
-        + "\n")
+        + "\n"
 }
 
 fn render_selected_pane(
@@ -171,10 +437,8 @@ fn render_selected_pane(
             shell_escape(selected["id"].as_str().unwrap_or("")),
         );
         if let Some(token) = selected["controlToken"].as_str() {
-            output.push_str(&format!(
-                "export ZENTTY_PANE_TOKEN='{}'\n",
-                shell_escape(token)
-            ));
+            writeln!(output, "export ZENTTY_PANE_TOKEN='{}'", shell_escape(token))
+                .expect("writing to a string cannot fail");
         }
         Ok(output)
     } else {

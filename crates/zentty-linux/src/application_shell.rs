@@ -2018,12 +2018,15 @@ impl ApplicationShell {
         }
     }
 
-    fn apply_theme_mode_command(&mut self, command: zentty_core::ThemeModeCommand) {
+    fn apply_theme_mode_command(
+        &mut self,
+        command: zentty_core::ThemeModeCommand,
+    ) -> Result<zentty_core::ThemeMode, String> {
         let current = match crate::config_store::ConfigStore::load_default() {
             Ok(snapshot) => snapshot.config.appearance,
             Err(error) => {
                 eprintln!("zentty-linux: action=theme-mode result=failed detail={error}");
-                return;
+                return Err(error);
             }
         };
         let desktop_is_dark = gtk::Settings::default()
@@ -2032,12 +2035,13 @@ impl ApplicationShell {
         appearance.theme_mode = command.resolve(appearance.theme_mode, desktop_is_dark);
         if let Err(error) = self.apply_appearance(appearance, true) {
             eprintln!("zentty-linux: action=theme-mode result=failed detail={error}");
-            return;
+            return Err(error);
         }
         eprintln!(
             "zentty-linux: action=theme-mode result=persisted mode={}",
             self.config.appearance.theme_mode.config_value()
         );
+        Ok(self.config.appearance.theme_mode)
     }
 
     fn apply_appearance(
@@ -2912,8 +2916,12 @@ impl ApplicationShell {
     fn create_worklane(shell: &Rc<RefCell<Self>>) -> Result<(), String> {
         let (worklane_id, pane_id) = {
             let mut shell = shell.borrow_mut();
-            let worklane_id = format!("worklane-{}", shell.next_worklane_number);
-            shell.next_worklane_number += 1;
+            let source_cwd = shell
+                .state
+                .focused_pane_id()
+                .and_then(|pane_id| shell.state.pane(pane_id))
+                .and_then(|pane| pane.working_directory.clone());
+            let worklane_id = shell.take_worklane_id();
             let pane_id = shell.take_pane_id();
             let placement = shell.config.worklanes.new_worklane_placement;
             if !shell.state.create_worklane_with_placement(
@@ -2923,6 +2931,9 @@ impl ApplicationShell {
             ) {
                 return Err("generated duplicate worklane or pane identity".to_owned());
             }
+            let _ = shell
+                .state
+                .configure_pane_launch(&pane_id, source_cwd, None);
             (worklane_id, pane_id)
         };
         if let Err(error) = PaneRuntimeCoordinator::create_surface(shell, &pane_id) {
@@ -3202,7 +3213,14 @@ impl ApplicationShell {
                     return;
                 }
                 eprintln!("zentty-linux: action=close-pane pane={pane_id} close-window=true");
-                shell_ref.main_loop.quit();
+                let close_window = shell_ref.close_window_handler.clone();
+                let main_loop = shell_ref.main_loop.clone();
+                drop(shell_ref);
+                if let Some(close_window) = close_window {
+                    close_window();
+                } else {
+                    main_loop.quit();
+                }
             }
             ClosePaneOutcome::NotFound => {}
         }
@@ -3278,9 +3296,33 @@ impl ApplicationShell {
     }
 
     fn take_pane_id(&mut self) -> String {
-        let id = format!("pane-{}", self.next_pane_number);
-        self.next_pane_number += 1;
-        id
+        loop {
+            let number = self.next_pane_number;
+            self.next_pane_number += 1;
+            let id = if self.window_template.id == "window-1" {
+                format!("pane-{number}")
+            } else {
+                format!("pane-{}-{number}", self.window_template.id)
+            };
+            if self.state.pane(&id).is_none() {
+                return id;
+            }
+        }
+    }
+
+    fn take_worklane_id(&mut self) -> String {
+        loop {
+            let number = self.next_worklane_number;
+            self.next_worklane_number += 1;
+            let id = if self.window_template.id == "window-1" {
+                format!("worklane-{number}")
+            } else {
+                format!("worklane-{}-{number}", self.window_template.id)
+            };
+            if !self.state.worklane_ids().contains(&id.as_str()) {
+                return id;
+            }
+        }
     }
 
     fn render(&self) {

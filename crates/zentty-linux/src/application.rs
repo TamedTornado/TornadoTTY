@@ -1,6 +1,6 @@
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 use std::time::Duration;
 
 use gtk::prelude::*;
@@ -26,6 +26,7 @@ pub(crate) struct ApplicationCycleResult {
 }
 
 pub(crate) struct ApplicationCoordinator {
+    self_handle: Weak<RefCell<ApplicationCoordinator>>,
     runtime: GhosttyRuntime,
     agent_runtime: Rc<RefCell<AgentRuntime>>,
     attention_inbox: Rc<RefCell<zentty_core::AttentionInbox>>,
@@ -96,6 +97,7 @@ impl ApplicationCoordinator {
                 .map_or_else(|| "none".to_owned(), |path| path.display().to_string())
         );
         let coordinator = Rc::new(RefCell::new(Self {
+            self_handle: Weak::new(),
             runtime: runtime.clone(),
             agent_runtime,
             attention_inbox: Rc::new(RefCell::new(zentty_core::AttentionInbox::default())),
@@ -124,6 +126,7 @@ impl ApplicationCoordinator {
             teardown_active: Rc::new(Cell::new(false)),
             shutdown_requested: Rc::new(Cell::new(false)),
         }));
+        coordinator.borrow_mut().self_handle = Rc::downgrade(&coordinator);
 
         if restored_windows.is_empty() {
             Self::create_fresh_window(&coordinator)?;

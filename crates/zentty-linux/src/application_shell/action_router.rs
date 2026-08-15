@@ -665,16 +665,16 @@ fn install_settings_shortcut_actions(
         shell.reload_ghostty_config();
     });
     add_simple_action(shell, group, ACTION_TOGGLE_LIGHT_DARK_THEME, |shell| {
-        shell.apply_theme_mode_command(zentty_core::ThemeModeCommand::Toggle);
+        let _ = shell.apply_theme_mode_command(zentty_core::ThemeModeCommand::Toggle);
     });
     add_simple_action(shell, group, ACTION_USE_DARK_THEME, |shell| {
-        shell.apply_theme_mode_command(zentty_core::ThemeModeCommand::Dark);
+        let _ = shell.apply_theme_mode_command(zentty_core::ThemeModeCommand::Dark);
     });
     add_simple_action(shell, group, ACTION_USE_LIGHT_THEME, |shell| {
-        shell.apply_theme_mode_command(zentty_core::ThemeModeCommand::Light);
+        let _ = shell.apply_theme_mode_command(zentty_core::ThemeModeCommand::Light);
     });
     add_simple_action(shell, group, ACTION_USE_AUTO_THEME, |shell| {
-        shell.apply_theme_mode_command(zentty_core::ThemeModeCommand::Automatic);
+        let _ = shell.apply_theme_mode_command(zentty_core::ThemeModeCommand::Automatic);
     });
     let open_settings = gio::SimpleAction::new(ACTION_OPEN_SETTINGS, None);
     let weak = Rc::downgrade(shell);

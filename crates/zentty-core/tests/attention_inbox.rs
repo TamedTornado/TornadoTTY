@@ -4,6 +4,29 @@ use zentty_core::{
     PaneAgentStatus,
 };
 
+#[test]
+fn pane_notification_is_recorded_without_fabricating_an_agent_delivery() {
+    let mut inbox = AttentionInbox::default();
+    let target = AttentionTarget::new("window-1", "lane-1", "pane-1");
+
+    assert!(inbox.record_pane_notification(
+        target.clone(),
+        "Build complete",
+        "Review the result",
+        42,
+    ));
+    assert!(inbox.drain_deliveries().is_empty());
+    let item = &inbox.items()[0];
+    assert_eq!(item.target, target);
+    assert_eq!(item.agent_name, "Zentty");
+    assert_eq!(item.state, AttentionState::Ready);
+    assert_eq!(item.status_text, "Build complete");
+    assert_eq!(item.primary_text, "Review the result");
+    assert_eq!(item.created_at_ms, 42);
+    assert!(!inbox.observe(target, None, 43));
+    assert!(!inbox.items()[0].is_resolved());
+}
+
 fn status(
     interaction: AgentInteractionKind,
     text: Option<&str>,

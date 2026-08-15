@@ -61,6 +61,17 @@ impl ThemeMode {
             Self::Light => "light",
         }
     }
+
+    /// The public CLI deliberately follows the source application's shorter
+    /// vocabulary rather than exposing the persisted TOML spelling.
+    #[must_use]
+    pub const fn cli_token(self) -> &'static str {
+        match self {
+            Self::Automatic => "auto",
+            Self::Dark => "dark",
+            Self::Light => "light",
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -299,6 +310,7 @@ mod tests {
             ThemeMode::Automatic
         );
         assert_eq!(ThemeMode::Automatic.config_value(), "automatic");
+        assert_eq!(ThemeMode::Automatic.cli_token(), "auto");
         assert_eq!(ThemeMode::Dark.config_value(), "dark");
         assert_eq!(ThemeMode::Light.config_value(), "light");
     }

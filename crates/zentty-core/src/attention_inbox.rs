@@ -38,6 +38,13 @@ pub struct AttentionItem {
     pub location_text: Option<String>,
     pub created_at_ms: u64,
     pub resolved_at_ms: Option<u64>,
+    origin: AttentionOrigin,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AttentionOrigin {
+    Agent,
+    PaneNotification,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -207,6 +214,37 @@ impl AttentionInbox {
         std::mem::take(&mut self.deliveries)
     }
 
+    /// Records an explicit pane-local notification in the shared inbox. The
+    /// desktop delivery is intentionally owned by the caller so title/body and
+    /// silent semantics are not coerced through the agent-attention formatter.
+    pub fn record_pane_notification(
+        &mut self,
+        target: AttentionTarget,
+        title: impl Into<String>,
+        primary_text: impl Into<String>,
+        now_ms: u64,
+    ) -> bool {
+        self.next_id = self.next_id.saturating_add(1);
+        self.items.insert(
+            0,
+            AttentionItem {
+                id: self.next_id,
+                target,
+                agent_name: "Zentty".to_owned(),
+                state: AttentionState::Ready,
+                interaction: AgentInteractionKind::None,
+                status_text: title.into(),
+                primary_text: primary_text.into(),
+                location_text: None,
+                created_at_ms: now_ms,
+                resolved_at_ms: None,
+                origin: AttentionOrigin::PaneNotification,
+            },
+        );
+        self.items.truncate(MAX_ITEMS);
+        true
+    }
+
     fn commit(&mut self, pending: PendingAttention) -> bool {
         self.next_id = self.next_id.saturating_add(1);
         let item = AttentionItem {
@@ -220,6 +258,7 @@ impl AttentionInbox {
             location_text: pending.location_text,
             created_at_ms: pending.created_at_ms,
             resolved_at_ms: None,
+            origin: AttentionOrigin::Agent,
         };
         self.items.insert(0, item.clone());
         self.deliveries.push(AttentionDelivery {
@@ -244,13 +283,30 @@ impl AttentionInbox {
         changed
     }
 
+    fn resolve_agent_target(&mut self, target: &AttentionTarget, now_ms: u64) -> bool {
+        let before = self.deliveries.len();
+        self.deliveries
+            .retain(|delivery| delivery.item.target != *target);
+        let mut changed = self.deliveries.len() != before;
+        for item in &mut self.items {
+            if item.target == *target
+                && item.origin == AttentionOrigin::Agent
+                && !item.is_resolved()
+            {
+                item.resolved_at_ms = Some(now_ms);
+                changed = true;
+            }
+        }
+        changed
+    }
+
     fn cancel_pending(&mut self, target: &AttentionTarget) -> bool {
         self.pending.remove(target).is_some()
     }
 
     fn cancel_and_resolve(&mut self, target: &AttentionTarget, now_ms: u64) -> bool {
         let mut changed = self.cancel_pending(target);
-        if self.resolve_target(target, now_ms) {
+        if self.resolve_agent_target(target, now_ms) {
             changed = true;
         }
         changed

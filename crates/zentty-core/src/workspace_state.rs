@@ -1329,6 +1329,51 @@ impl WorkspaceState {
         changed
     }
 
+    /// Sets the focused pane's share of its column while preserving the
+    /// relative weights of every other pane, matching the source CLI's
+    /// percentage resize and split-ratio behavior.
+    pub fn resize_focused_pane_height_to_fraction(&mut self, fraction: f64) -> bool {
+        if !fraction.is_finite() {
+            return false;
+        }
+        let worklane = self.active_worklane_mut();
+        let Some(column) = worklane
+            .columns
+            .iter_mut()
+            .find(|column| column.id == worklane.focused_column_id)
+        else {
+            return false;
+        };
+        if column.panes.len() < 2 {
+            return false;
+        }
+        let Some(focused_index) = column
+            .panes
+            .iter()
+            .position(|pane| pane.id == column.focused_pane_id)
+        else {
+            return false;
+        };
+        let fraction = fraction.clamp(0.05, 0.95);
+        let total = column.pane_heights.iter().sum::<f64>();
+        if !total.is_finite() || total <= 0.0 {
+            return false;
+        }
+        let other_total = total - column.pane_heights[focused_index];
+        if !other_total.is_finite() || other_total <= 0.0 {
+            return false;
+        }
+        let target = fraction / (1.0 - fraction) * other_total;
+        if !target.is_finite()
+            || target <= 0.0
+            || (target - column.pane_heights[focused_index]).abs() <= f64::EPSILON
+        {
+            return false;
+        }
+        column.pane_heights[focused_index] = target;
+        true
+    }
+
     /// Moves the divider after `column_id` while preserving the combined
     /// width of the two adjacent columns.
     pub fn resize_column_divider(

@@ -88,7 +88,7 @@ impl AttentionNotificationService {
             None => item.primary_text.clone(),
         };
         let actions = vec!["default".to_owned(), "Jump to Pane".to_owned()];
-        let id = send_with_proxy(proxy, &title, &body, &actions, config)?;
+        let id = send_with_proxy(proxy, &title, &body, &actions, config, false)?;
         self.targets.insert(id, item.target.clone());
         Ok(id)
     }
@@ -124,7 +124,17 @@ impl NotificationService {
         config: &NotificationsConfig,
     ) -> Result<u32, String> {
         let proxy = notification_proxy()?;
-        send_with_proxy(&proxy, title, body, &[], config)
+        send_with_proxy(&proxy, title, body, &[], config, false)
+    }
+
+    pub(crate) fn send_pane(
+        title: &str,
+        body: &str,
+        config: &NotificationsConfig,
+        silent: bool,
+    ) -> Result<u32, String> {
+        let proxy = notification_proxy()?;
+        send_with_proxy(&proxy, title, body, &[], config, silent)
     }
 
     pub(crate) fn preview_sound(config: &NotificationsConfig) -> Result<(), String> {
@@ -202,12 +212,15 @@ fn send_with_proxy(
     body: &str,
     actions: &[String],
     config: &NotificationsConfig,
+    silent: bool,
 ) -> Result<u32, String> {
     if proxy.name_owner().is_none() {
         return Err("no freedesktop notification service is available".into());
     }
     let mut hints = HashMap::<String, glib::Variant>::new();
-    if CustomSoundStore::is_custom_name(&config.sound_name) {
+    if silent {
+        hints.insert("suppress-sound".into(), true.to_variant());
+    } else if CustomSoundStore::is_custom_name(&config.sound_name) {
         let path = CustomSoundStore::path_for_name(&config.sound_name)?;
         let path = path
             .to_str()
