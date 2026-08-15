@@ -64,7 +64,8 @@ pub use appearance::{
 };
 pub use atomic_file_store::{AtomicFileAction, AtomicFileStore, AtomicFileStoreError};
 pub use attention_inbox::{
-    AttentionInbox, AttentionItem, AttentionTarget, interaction_fallback, interaction_status,
+    AttentionDelivery, AttentionInbox, AttentionItem, AttentionState, AttentionTarget,
+    interaction_fallback, interaction_status,
 };
 pub use bookmark_store::{
     BookmarkStore, BookmarkStoreError, BookmarkStoreSnapshot, WorkspaceTemplateExportEnvelope,

@@ -1,5 +1,6 @@
 use gtk::glib::variant::ToVariant;
 use gtk::prelude::*;
+use std::time::{SystemTime, UNIX_EPOCH};
 use zentty_core::{AttentionItem, AttentionTarget};
 
 pub(crate) fn install_styles() {
@@ -125,7 +126,10 @@ fn row(item: &AttentionItem) -> gtk::Box {
     primary.set_max_width_chars(42);
     let location = gtk::Label::new(Some(&format!(
         "{} · {}",
-        item.target.worklane_id, item.target.pane_id
+        item.location_text
+            .as_deref()
+            .unwrap_or_else(|| item.target.worklane_id.as_str()),
+        relative_timestamp(item.created_at_ms)
     )));
     location.add_css_class("attention-inbox-location");
     location.set_xalign(0.0);
@@ -144,6 +148,21 @@ fn row(item: &AttentionItem) -> gtk::Box {
     dismiss.set_action_target_value(Some(&item.id.to_variant()));
     row.append(&dismiss);
     row
+}
+
+fn relative_timestamp(created_at_ms: u64) -> String {
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| {
+            u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
+        });
+    let elapsed_seconds = now_ms.saturating_sub(created_at_ms) / 1_000;
+    match elapsed_seconds {
+        0..=59 => "Just now".to_owned(),
+        60..=3_599 => format!("{}m ago", elapsed_seconds / 60),
+        3_600..=86_399 => format!("{}h ago", elapsed_seconds / 3_600),
+        _ => format!("{}d ago", elapsed_seconds / 86_400),
+    }
 }
 
 fn target_variant(target: &AttentionTarget) -> gtk::glib::Variant {

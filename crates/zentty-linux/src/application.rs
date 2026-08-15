@@ -27,6 +27,7 @@ pub(crate) struct ApplicationCoordinator {
     runtime: GhosttyRuntime,
     agent_runtime: Rc<RefCell<AgentRuntime>>,
     attention_inbox: Rc<RefCell<zentty_core::AttentionInbox>>,
+    desktop_notifications: crate::notification_service::AttentionNotificationService,
     fleet_snapshot: Vec<zentty_core::FleetPaneSnapshot>,
     status_notifier: Option<crate::status_notifier::StatusNotifierItem>,
     sleep_inhibition_state: zentty_core::AgentSleepInhibitionState,
@@ -96,6 +97,7 @@ impl ApplicationCoordinator {
             runtime: runtime.clone(),
             agent_runtime,
             attention_inbox: Rc::new(RefCell::new(zentty_core::AttentionInbox::default())),
+            desktop_notifications: crate::notification_service::AttentionNotificationService::new(),
             fleet_snapshot: Vec::new(),
             status_notifier: None,
             sleep_inhibition_state: zentty_core::AgentSleepInhibitionState::default(),
@@ -747,6 +749,11 @@ impl ApplicationCoordinator {
         let Some(shell) = self.shells.remove(id) else {
             return Err(format!("registered window {id:?} has no application shell"));
         };
+        self.attention_inbox.borrow_mut().resolve_stale(
+            id,
+            &std::collections::HashSet::new(),
+            current_time_ms(),
+        );
         self.last_window_sizes.remove(id);
         self.last_sidebar_widths.remove(id);
         if decision == CloseWindowDecision::QuitApplication {
@@ -920,6 +927,63 @@ impl ApplicationCoordinator {
                 eprintln!("zentty-linux: sidebar-width={sidebar_width}");
                 self.last_sidebar_widths.insert(id.clone(), sidebar_width);
             }
+        }
+        let attention_changed = self.attention_inbox.borrow_mut().advance(current_time_ms());
+        let deliveries = self.attention_inbox.borrow_mut().drain_deliveries();
+        for delivery in deliveries {
+            if !delivery.desktop_allowed {
+                eprintln!(
+                    "zentty-linux: desktop-attention id={} result=suppressed reason=actively-viewed window={} worklane={} pane={}",
+                    delivery.item.id,
+                    delivery.item.target.window_id,
+                    delivery.item.target.worklane_id,
+                    delivery.item.target.pane_id,
+                );
+                continue;
+            }
+            match self
+                .desktop_notifications
+                .send_attention(&delivery.item, &self.config.notifications)
+            {
+                Ok(id) => eprintln!(
+                    "zentty-linux: desktop-attention id={} service-id={} result=sent window={} worklane={} pane={}",
+                    delivery.item.id,
+                    id,
+                    delivery.item.target.window_id,
+                    delivery.item.target.worklane_id,
+                    delivery.item.target.pane_id,
+                ),
+                Err(error) => eprintln!(
+                    "zentty-linux: desktop-attention id={} result=unavailable detail={error}",
+                    delivery.item.id
+                ),
+            }
+        }
+        for target in self.desktop_notifications.drain_activations() {
+            let activated = self
+                .shells
+                .get(&target.window_id)
+                .is_some_and(|shell| shell.borrow_mut().activate_attention_target(&target));
+            eprintln!(
+                "zentty-linux: desktop-attention-activate window={} worklane={} pane={} result={}",
+                target.window_id,
+                target.worklane_id,
+                target.pane_id,
+                if activated { "focused" } else { "stale" }
+            );
+            if !activated {
+                self.attention_inbox
+                    .borrow_mut()
+                    .resolve_target(&target, current_time_ms());
+            }
+        }
+        if attention_changed {
+            let inbox = self.attention_inbox.borrow();
+            eprintln!(
+                "zentty-linux: attention-inbox commit items={} unresolved={}",
+                inbox.items().len(),
+                inbox.unresolved_count()
+            );
         }
         for shell in self.shells.values() {
             shell.borrow().refresh_attention_inbox();

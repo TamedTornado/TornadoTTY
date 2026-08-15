@@ -452,7 +452,7 @@
     "settings_navigation": ["back", "can_back", "can_forward", "current", "forward", "matches", "new", "parse", "record"],
     "general_settings": ["aggressiveness_for_selected", "aggressiveness_row", "bool_value", "build", "section_heading", "selected_for_aggressiveness", "set_bool", "settings_group", "update_bool"],
     "theme_catalog": ["parse", "hex", "is_dark", "rgb", "repeated_hex", "matches", "discover_themes", "load_directory", "is_eligible_theme_file", "parse_theme", "is_ignored_theme_line", "default_theme_directories"],
-    "notification_service": ["is_available", "notification_proxy", "open_settings", "preview_sound", "send", "settings_launcher"],
+    "notification_service": ["drain_activations", "is_available", "new", "notification_proxy", "open_settings", "preview_sound", "send", "send_attention", "send_with_proxy", "settings_launcher"],
     "notifications_settings": ["build", "connect_sound_selection", "notification_row", "rebuild_sound_choices", "row_labels", "section_heading", "set_named_child_sensitive", "set_named_sibling_sensitive", "set_row_margins", "sound_row"],
     "custom_sound_store": ["acquire_lock", "acquire_lock_with_timeout", "copy_source_no_follow", "create_private_directory", "destination_is_missing", "display_name", "drop", "ensure_private_sounds_directory", "finish", "installed_read_limit", "internal_name", "is_custom_name", "lock_wait_remains", "path_for_name", "prepare", "prepare_in_transaction", "probe_duration", "prune", "prune_locked", "rollback", "run_bounded_process", "sounds_directory", "sounds_directory_from", "source_copy_limit", "validate_copied_size", "validate_duration", "validate_installed_size", "validate_source_file", "validate_wav"],
     "persistence_coordinator": [

@@ -3774,7 +3774,20 @@ impl ApplicationShell {
                     &pane.pane_id,
                 );
                 live.insert(target.clone());
-                changed |= inbox.observe(target, pane.agent_status.as_ref(), now);
+                let is_actively_viewed =
+                    self.window.is_active() && worklane.is_active && pane.is_focused;
+                let worklane_label = worklane
+                    .top_label
+                    .as_deref()
+                    .unwrap_or(&worklane.primary_text);
+                let location = format!("{worklane_label} · {}", pane.primary_text);
+                changed |= inbox.observe_with_context(
+                    target,
+                    pane.agent_status.as_ref(),
+                    is_actively_viewed,
+                    Some(location),
+                    now,
+                );
             }
         }
         changed |= inbox.resolve_stale(&self.window_template.id, &live, now);

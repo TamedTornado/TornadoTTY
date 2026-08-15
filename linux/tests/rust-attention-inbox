@@ -10,7 +10,9 @@ state_directory="${run_root}/state"
 fake_bin="${run_root}/bin"
 log="${run_root}/product.log"
 receipt="${run_root}/agent.receipt"
+notification_receipt="${run_root}/notifications.jsonl"
 product_pid=""
+notification_pid=""
 # shellcheck disable=SC1091
 source "${repo_root}/linux/tests/lib/product-input"
 
@@ -24,6 +26,10 @@ cleanup() {
     if [[ "${product_pid}" =~ ^[1-9][0-9]*$ ]]; then
         kill -TERM "${product_pid}" 2>/dev/null || true
         wait "${product_pid}" 2>/dev/null || true
+    fi
+    if [[ "${notification_pid}" =~ ^[1-9][0-9]*$ ]]; then
+        kill -TERM "${notification_pid}" 2>/dev/null || true
+        wait "${notification_pid}" 2>/dev/null || true
     fi
     rm -rf -- "${run_root}"
 }
@@ -41,26 +47,82 @@ case "${backend}" in
     *) fail "GDK_BACKEND must be x11 or wayland" ;;
 esac
 [[ -x "${product}" && -x "${actor}" ]] || fail "staged product and actor are required"
+[[ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ]] || fail "attention journey requires a private session bus"
 mkdir -p "${state_directory}" "${fake_bin}"
 ln -s "${actor}" "${fake_bin}/codex"
 zentty_product_disable_lifecycle_confirmations
 
+notification_fixture="${repo_root}/target/release-safe/notification_service"
+[[ -x "${notification_fixture}" ]] || fail "controlled notification service is not built"
+"${notification_fixture}" --receipt "${notification_receipt}" &
+notification_pid=$!
+for _ in {1..100}; do
+    grep -Fq '"event":"ready"' "${notification_receipt}" 2>/dev/null && break
+    kill -0 "${notification_pid}" 2>/dev/null || fail "notification service exited before readiness"
+    sleep 0.02
+done
+grep -Fq '"event":"ready"' "${notification_receipt}" || fail "notification service did not become ready"
+
 PATH="${fake_bin}:${PATH}" GDK_SCALE=1 GDK_DPI_SCALE=1 \
     ZENTTY_CONTROLLED_AGENT_PROFILE=attention-inbox \
+    ZENTTY_CONTROLLED_AGENT_START_DELAY_SECONDS=4 \
     ZENTTY_CONTROLLED_ATTENTION_RECEIPT="${receipt}" \
     "${product}" --command codex --state-directory "${state_directory}" \
     --no-session-restore >"${log}" 2>&1 &
 product_pid=$!
 
-zentty_product_wait_for_log "${log}" \
-    'attention-inbox window=window-1 items=1 unresolved=1' \
-    "real agent attention did not enter the in-app inbox" || fail "inbox delivery failed"
 zentty_product_prepare_input "${backend}" "${log}" || fail "product input unavailable"
+window_one_id="${ZENTTY_PRODUCT_WINDOW_ID:-}"
+zentty_product_ctrl_shift_key "${backend}" n
+zentty_product_wait_for_log "${log}" 'zentty-linux: window-opened id=window-2' \
+    "physical New Window did not create a second attention source" || fail "second window missing"
+zentty_product_wait_for_log "${log}" 'zentty-linux: terminal-ready-pane=pane-window-2' \
+    "second attention window did not own a real PTY" || fail "second PTY missing"
+window_two_id=""
+if [[ "${backend}" == x11 ]]; then
+    for candidate in $(xdotool search --onlyvisible --pid "${product_pid}" --name '^Zentty$'); do
+        [[ "${candidate}" == "${window_one_id}" ]] || window_two_id="${candidate}"
+    done
+    [[ "${window_two_id}" =~ ^[1-9][0-9]*$ ]] || fail "second X11 window identity was not discovered"
+fi
+zentty_product_wait_for_log "${log}" \
+    'attention-inbox commit items=2 unresolved=2' \
+    "both real-window agent requests did not enter the shared inbox" || fail "cross-window inbox delivery failed"
+zentty_product_wait_for_log "${log}" \
+    'result=sent window=window-1 worklane=worklane-1 pane=pane-1' \
+    "inactive-window attention did not reach the controlled desktop service" || fail "desktop delivery failed"
+zentty_product_wait_for_log "${log}" \
+    'result=suppressed reason=actively-viewed window=window-2 worklane=worklane-window-2 pane=pane-window-2' \
+    "actively viewed pane did not follow the source desktop suppression policy" || fail "focused suppression failed"
+grep -Fq '"summary":"Codex needs approval"' "${notification_receipt}" ||
+    fail "desktop notification omitted the source and interaction identity"
+grep -Fq 'Allow the controlled deployment?' "${notification_receipt}" ||
+    fail "desktop notification omitted the actual question"
+gdbus call --session --dest org.freedesktop.Notifications \
+    --object-path /org/freedesktop/Notifications \
+    --method be.zenjoy.Zentty.TestNotificationService.ActivateLatest >/dev/null
+zentty_product_wait_for_log "${log}" \
+    'desktop-attention-activate window=window-1 worklane=worklane-1 pane=pane-1 result=focused' \
+    "desktop action did not route across windows to the exact pane" || fail "desktop action routing failed"
+if [[ "${backend}" == x11 ]]; then
+    [[ "${window_one_id}" =~ ^[1-9][0-9]*$ ]] || fail "first X11 window identity was not retained"
+    ZENTTY_PRODUCT_WINDOW_ID="${window_one_id}"
+    export ZENTTY_PRODUCT_WINDOW_ID
+    # Xvfb intentionally has no window manager, so GtkWindow.present cannot
+    # perform the WM raise that a real desktop supplies. Raise only after the
+    # product's typed desktop action has selected the exact target.
+    xdotool windowraise "${window_one_id}"
+    xdotool windowfocus --sync "${window_one_id}"
+    sleep 0.1
+fi
+
 if [[ "${backend}" == x11 ]]; then
     # The leading chrome control order is fixed and independently contract-tested:
     # sidebar, arrange, back, forward, then inbox. Use the real compositor route.
     inbox_y=18
     [[ "${ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT:-}" != 1 ]] || inbox_y=34
+    # The desktop action already selected window-1. Exercise the same window's
+    # real inbox controls before returning through the desktop route again.
     xdotool mousemove --window "${ZENTTY_PRODUCT_WINDOW_ID}" 164 "${inbox_y}" click 1
     zentty_product_wait_for_log "${log}" \
         'chrome-popover=attention-inbox state=open' \
@@ -70,18 +132,29 @@ if [[ "${backend}" == x11 ]]; then
     # give the first row a stable hit target below its header. Click the row's
     # primary action, away from the trailing dismiss control, and prove the
     # result at the exact PTY rather than trusting coordinates as evidence.
+    # The newest row belongs to still-unresolved window-2.
     xdotool mousemove --window "${ZENTTY_PRODUCT_WINDOW_ID}" 100 150 click 1
+    routed_target='window=window-2 worklane=worklane-window-2 pane=pane-window-2'
 else
     # Wayland deliberately has no global widget coordinates. The source-owned
     # Jump To Latest Attention shortcut and an inbox row share the same typed
     # routing action, so exercise that real physical keyboard route here. X11
     # above separately proves the row and popover interaction itself.
     wtype -M ctrl -M shift -k u -m shift -m ctrl
+    routed_target='window=window-2 worklane=worklane-window-2 pane=pane-window-2'
 fi
 
 zentty_product_wait_for_log "${log}" \
-    'attention-activate window=window-1 worklane=worklane-1 pane=pane-1 result=focused' \
+    "zentty-linux: attention-activate ${routed_target} result=focused" \
     "inbox row did not route back to the exact real PTY" || fail "exact-pane routing failed"
+if [[ "${backend}" == x11 ]]; then
+    ZENTTY_PRODUCT_WINDOW_ID="${window_two_id}"
+    export ZENTTY_PRODUCT_WINDOW_ID
+    xdotool windowraise "${window_two_id}"
+    xdotool windowfocus --sync "${window_two_id}"
+    xdotool mousemove --window "${window_two_id}" 600 350 click 1
+    sleep 0.1
+fi
 zentty_product_type "${backend}" "ATTENTION42"
 zentty_product_key "${backend}" Return
 for _ in {1..200}; do
@@ -91,20 +164,41 @@ done
 grep -Fxq 'response=ATTENTION42' "${receipt}" ||
     fail "typing after inbox activation did not reach the routed PTY"
 zentty_product_wait_for_log "${log}" \
-    'sidebar-agent-status pane=pane-1 phase=Idle interaction=None attention=false' \
+    'sidebar-agent-status pane=pane-window-2 phase=Idle interaction=None attention=false' \
     "agent completion did not resolve visible attention" || fail "resolution failed"
+zentty_product_wait_for_log "${log}" \
+    'attention-inbox window=window-2 items=3' \
+    "completion did not create source-compatible ready history" || fail "ready history missing"
+zentty_product_wait_for_log_count "${log}" \
+    'result=suppressed reason=actively-viewed window=window-2 worklane=worklane-window-2 pane=pane-window-2' 2 \
+    "focused completion incorrectly escaped to the desktop" || fail "completion suppression failed"
 
-zentty_product_close_window "${backend}"
-for _ in {1..200}; do
-    ! kill -0 "${product_pid}" 2>/dev/null && break
-    sleep 0.05
-done
+# Desktop dismissal owns only the transient desktop surface. It must remove
+# the action target without resolving the still-live in-app history item.
+activation_count="$(grep -Fc 'zentty-linux: desktop-attention-activate' "${log}" || true)"
+gdbus call --session --dest org.freedesktop.Notifications \
+    --object-path /org/freedesktop/Notifications \
+    --method be.zenjoy.Zentty.TestNotificationService.CloseLatest >/dev/null
+gdbus call --session --dest org.freedesktop.Notifications \
+    --object-path /org/freedesktop/Notifications \
+    --method be.zenjoy.Zentty.TestNotificationService.ActivateLatest >/dev/null
+sleep 0.2
+[[ "$(grep -Fc 'zentty-linux: desktop-attention-activate' "${log}" || true)" == "${activation_count}" ]] ||
+    fail "closed desktop notification retained a live action target"
+
+zentty_product_ctrl_key "${backend}" q
 wait "${product_pid}" || fail "attention product journey failed"
 product_pid=""
 if grep -Eq 'panicked at|RefCell already borrowed|CRITICAL: Gtk' "${log}"; then
     fail "attention journey reported a panic or GTK lifecycle critical"
 fi
 
-route="source-shortcut"
+gdbus call --session --dest org.freedesktop.Notifications \
+    --object-path /org/freedesktop/Notifications \
+    --method be.zenjoy.Zentty.TestNotificationService.Quit >/dev/null
+wait "${notification_pid}"
+notification_pid=""
+
+route="source-shortcut+desktop-action"
 [[ "${backend}" != x11 ]] || route="inbox-row"
-echo "Rust attention inbox passed: ${backend}, event=real-agent-ipc, gtk-route=${route}, target=exact-real-pty"
+echo "Rust attention inbox passed: ${backend}, windows=2, event=real-agent-ipc, desktop=real-private-dbus, gtk-route=${route}, target=exact-real-pty"
