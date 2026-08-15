@@ -119,7 +119,9 @@ pub use workspace_template::{
 /// Stable product identity shared by platform composition roots.
 pub const PRODUCT_NAME: &str = "Zentty";
 pub use agent_adapters::{
-    AgentAdapterError, adapt_claude_hook, adapt_codex_hook, adapt_codex_notify, adapt_gemini_hook,
+    AgentAdapterError, adapt_agy_hook, adapt_claude_hook, adapt_codex_hook, adapt_codex_notify,
+    adapt_cursor_hook, adapt_droid_hook, adapt_gemini_hook, adapt_grok_hook, adapt_hermes_hook,
+    adapt_kimi_hook, adapt_vibe_hook,
 };
 pub use clean_copy::{
     CleanCopyOptions, CleanCopyResult, CommandFlattenAggressiveness, clean_copy,

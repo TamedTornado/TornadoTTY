@@ -223,3 +223,65 @@ new shell method had not been added to the authoritative responsibility
 inventory. The inventory now names it under the existing application-shell
 owner, and the contract plus its negative self-tests pass. No second zoom or
 peek coordinator was introduced.
+
+The integration-management audit found a more serious boundary than the
+filesystem commands initially suggested. The macOS CLI installs hooks for
+Amp, Cursor, Factory Droid, Kimi, Grok Build, Antigravity, Hermes, and Mistral
+Vibe. Linux initially had no install/uninstall commands, but it also lacked the
+Cursor/Droid/Kimi/Grok/Antigravity/Hermes/Vibe adapters and the hidden
+`agy-hook`/`hermes-hook` responders those installed files execute. Installing
+only the configuration files would therefore have produced apparently valid,
+dead integrations. The CLI now refuses no source target: all eight installers
+and uninstallers are implemented, and every installed command reaches a real
+Rust adapter. Antigravity's event-specific JSON acknowledgements and Hermes's
+no-op acknowledgement are preserved, including when a hook executes outside a
+Zentty pane.
+
+Installer ownership is deliberately narrower than a recursive cleanup. JSON
+installers merge only the source-owned entries/group, text formats use explicit
+managed markers, Amp/Grok/Hermes files require a marker before removal, writes
+are bounded and lock-serialized, symlinked targets are rejected, and remove is
+an idempotent atomic-store operation that leaves its adjacent lock file in
+place. Real subprocess tests caught that retained lock files while walking the
+Hermes script directory; uninstall now ignores locks rather than treating them
+as foreign scripts or weakening the shared lock contract. The same tests prove
+foreign Cursor, Droid, Antigravity, Kimi, Hermes, and Vibe configuration
+survives an install/reinstall/uninstall cycle.
+
+Two source compatibility details were easy to miss. Cursor intentionally
+accepts JSONC, including comments and trailing commas; the first Linux parser
+was strict JSON. A bounded string-aware JSONC cleanup now precedes decoding and
+is exercised with both comment forms and trailing commas. Modern Kimi commonly
+stores hooks in an inline TOML array, where blindly appending `[[hooks]]`
+creates conflicting TOML. Linux now detects that source shape, inserts and
+removes its marked inline entries while retaining user hooks, and continues to
+use array tables for legacy/empty configurations.
+
+The staged resource audit found that the Amp TypeScript plugin existed in the
+repository but was not copied into the Linux bundle. ReleaseSafe staging now
+ships it under `share/zentty/amp/plugins`, validates its ownership marker, and
+the staged-bundle journey invokes the real staged CLI to install and uninstall
+all eight integrations in an isolated home. That journey passed under the
+controlled X11 and Wayland environments after verifying exact staged CLI paths,
+executable Grok/Hermes forwarders, and absence of owned artifacts after
+uninstall. Rust subprocess coverage separately drives every new adapter through
+the authenticated private Unix socket into the real status reducer; these are
+not capture-server or filesystem-only claims.
+
+Remaining CLI scope is not hidden by this slice. The adapters now cover the
+installed agents' principal lifecycle and human-input transitions, but the
+macOS Cursor/Droid adapters also maintain richer persistent todo/subagent
+bookkeeping, and several source adapters derive more detailed approval text.
+Those semantic branches remain part of GH-22's exhaustive adapter/golden
+coverage rather than being represented as completed by installation success.
+
+A final source-shape review caught that the first Hermes implementation wrote
+the allowlist as a bare JSON array. Hermes and the macOS installer use an
+object with an `approvals` array, allowing unrelated future keys to coexist.
+The Linux writer now merges that exact container, removes ownership by the
+managed command path rather than a made-up metadata sentinel, and its real
+subprocess receipt retains both a foreign approval and an unrelated top-level
+key across uninstall. This was caught before commit; the earlier staged pass is
+not cited as evidence for the corrected Hermes artifact. The ReleaseSafe
+bundle was rebuilt and the complete staged journey then passed again under
+both controlled X11 and controlled Wayland with the corrected object shape.

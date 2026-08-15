@@ -27,6 +27,44 @@ diff -qr --no-dereference "${theme_source}" "${theme_stage}" || {
     exit 1
 }
 
+amp_plugin="${stage_dir}/share/zentty/amp/plugins/zentty-amp-zentty.ts"
+[[ -f "${amp_plugin}" ]] || {
+    echo "staged-bundle: Amp integration resource is missing" >&2
+    exit 1
+}
+grep -F "zentty-amp-plugin-v1" "${amp_plugin}" >/dev/null || {
+    echo "staged-bundle: Amp integration resource lacks its ownership marker" >&2
+    exit 1
+}
+
+integration_home="${stage_dir}/integration-home"
+mkdir -p "${integration_home}"
+for target in amp-hooks cursor-hooks droid-hooks kimi-hooks grok-hooks agy-hooks hermes-hooks vibe-hooks; do
+    HOME="${integration_home}" \
+    XDG_CONFIG_HOME="${integration_home}/.config" \
+    KIMI_CODE_HOME="${integration_home}/.kimi-code" \
+    HERMES_HOME="${integration_home}/.hermes" \
+        "${stage_dir}/bin/zentty" install "${target}" >/dev/null
+done
+grep -F "${stage_dir}/bin/zentty" "${integration_home}/.cursor/hooks.json" >/dev/null
+grep -F "${stage_dir}/bin/zentty" "${integration_home}/.factory/settings.local.json" >/dev/null
+grep -F "${stage_dir}/bin/zentty" "${integration_home}/.kimi-code/config.toml" >/dev/null
+grep -F "${stage_dir}/bin/zentty" "${integration_home}/.gemini/config/hooks.json" >/dev/null
+grep -F "${stage_dir}/bin/zentty" "${integration_home}/.vibe/hooks.toml" >/dev/null
+grep -F "zentty-amp-plugin-v1" \
+    "${integration_home}/.config/amp/plugins/zentty-amp-zentty.ts" >/dev/null
+[[ -x "${integration_home}/.grok/hooks/zentty-status/01-zentty-status.sh" ]]
+[[ -x "${integration_home}/.hermes/hooks/zentty-status/on-session-start.sh" ]]
+for target in amp-hooks cursor-hooks droid-hooks kimi-hooks grok-hooks agy-hooks hermes-hooks vibe-hooks; do
+    HOME="${integration_home}" \
+    XDG_CONFIG_HOME="${integration_home}/.config" \
+    KIMI_CODE_HOME="${integration_home}/.kimi-code" \
+    HERMES_HOME="${integration_home}/.hermes" \
+        "${stage_dir}/bin/zentty" uninstall "${target}" >/dev/null
+done
+! grep -R -E "zentty-(amp-plugin|agy-hook)|adapter=(cursor|droid|kimi|grok|vibe)|zentty hermes" \
+    "${integration_home}" --exclude='*.lock' >/dev/null
+
 shim="${stage_dir}/libexec/zentty/tmux-shim/tmux"
 [[ -x "${shim}" ]] || {
     echo "staged-bundle: executable tmux shim is missing" >&2

@@ -20,6 +20,8 @@ const LAYOUTS: &[&str] = &[
 pub enum CliProductCommand {
     Version,
     ListColors,
+    InstallIntegration(String),
+    UninstallIntegration(String),
     Request(ProductIpcRequest),
 }
 
@@ -54,8 +56,44 @@ pub fn parse_product_cli(
         "layout" => parse_layout(rest),
         "theme" => parse_theme(rest),
         "notify" => parse_notify(rest),
+        "install" => parse_integration(rest, true),
+        "uninstall" => parse_integration(rest, false),
         _ => Ok(None),
     }
+}
+
+fn parse_integration(
+    arguments: &[String],
+    install: bool,
+) -> Result<Option<CliProductCommand>, ProductIpcError> {
+    const TARGETS: &[&str] = &[
+        "amp-hooks",
+        "cursor-hooks",
+        "droid-hooks",
+        "kimi-hooks",
+        "grok-hooks",
+        "agy-hooks",
+        "hermes-hooks",
+        "vibe-hooks",
+    ];
+    let [target] = arguments else {
+        return invalid(if install {
+            "install requires exactly one integration target"
+        } else {
+            "uninstall requires exactly one integration target"
+        });
+    };
+    if !TARGETS.contains(&target.as_str()) {
+        return invalid(format!(
+            "unknown integration target {target:?}; supported: {}",
+            TARGETS.join(", ")
+        ));
+    }
+    Ok(Some(if install {
+        CliProductCommand::InstallIntegration(target.clone())
+    } else {
+        CliProductCommand::UninstallIntegration(target.clone())
+    }))
 }
 
 fn parse_notify(arguments: &[String]) -> Result<Option<CliProductCommand>, ProductIpcError> {

@@ -53,6 +53,32 @@ fn source_discovery_commands_and_aliases_map_to_one_route() {
 }
 
 #[test]
+fn integration_management_targets_are_local_validated_commands() {
+    for target in [
+        "amp-hooks",
+        "cursor-hooks",
+        "droid-hooks",
+        "kimi-hooks",
+        "grok-hooks",
+        "agy-hooks",
+        "hermes-hooks",
+        "vibe-hooks",
+    ] {
+        assert_eq!(
+            parse_product_cli(&values(&["install", target])).unwrap(),
+            Some(CliProductCommand::InstallIntegration(target.to_owned()))
+        );
+        assert_eq!(
+            parse_product_cli(&values(&["uninstall", target])).unwrap(),
+            Some(CliProductCommand::UninstallIntegration(target.to_owned()))
+        );
+    }
+    assert!(parse_product_cli(&values(&["install", "unknown-hooks"])).is_err());
+    assert!(parse_product_cli(&values(&["uninstall"])).is_err());
+    assert!(parse_product_cli(&values(&["install", "cursor-hooks", "extra"])).is_err());
+}
+
+#[test]
 fn source_mutation_commands_preserve_canonical_vocabulary() {
     let cases = [
         (

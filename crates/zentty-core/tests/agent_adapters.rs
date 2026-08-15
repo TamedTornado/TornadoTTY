@@ -1,6 +1,7 @@
 use zentty_core::{
-    AgentPhase, AgentStatusStore, AgentTarget, AuthenticatedAgentEvent, adapt_claude_hook,
-    adapt_codex_hook, adapt_codex_notify, adapt_gemini_hook,
+    AgentPhase, AgentStatusStore, AgentTarget, AuthenticatedAgentEvent, adapt_agy_hook,
+    adapt_claude_hook, adapt_codex_hook, adapt_codex_notify, adapt_cursor_hook, adapt_droid_hook,
+    adapt_gemini_hook, adapt_grok_hook, adapt_hermes_hook, adapt_kimi_hook, adapt_vibe_hook,
 };
 
 fn reduce(events: Vec<zentty_core::AgentEvent>) -> zentty_core::PaneAgentStatus {
@@ -442,6 +443,109 @@ fn adapters_reject_malformed_or_unsupported_hook_payloads() {
     assert!(adapt_codex_hook(b"not-json", None).is_err());
     assert!(adapt_claude_hook(b"not-json", None).is_err());
     assert!(adapt_claude_hook(br"{}", None).is_err());
+}
+
+#[test]
+fn newly_installed_hook_adapters_drive_real_status_transitions() {
+    let cursor = reduce(
+        adapt_cursor_hook(
+            br#"{"hook_event_name":"SessionStart","conversation_id":"cursor-a"}"#,
+            Some(101),
+        )
+        .unwrap(),
+    );
+    assert_eq!(cursor.agent_name, "Cursor");
+    assert_eq!(cursor.phase, AgentPhase::Starting);
+    assert_eq!(cursor.tracked_pid, Some(101));
+
+    let droid = reduce(
+        adapt_droid_hook(
+            br#"{"hook_event_name":"PreToolUse","session_id":"droid-a","tool_name":"AskUser","tool_input":{"question":"Which branch?"}}"#,
+            Some(202),
+        )
+        .unwrap(),
+    );
+    assert_eq!(droid.phase, AgentPhase::NeedsInput);
+    assert_eq!(droid.text.as_deref(), Some("Which branch?"));
+
+    let vibe = reduce(
+        adapt_vibe_hook(
+            br#"{"hook_event_name":"before_tool","session_id":"vibe-a","tool_name":"ask_user_question","tool_input":{"question":"Ship it?"}}"#,
+        )
+        .unwrap(),
+    );
+    assert_eq!(vibe.agent_name, "Mistral Vibe");
+    assert_eq!(vibe.phase, AgentPhase::NeedsInput);
+    assert_eq!(vibe.text.as_deref(), Some("Ship it?"));
+
+    let progress = reduce(
+        adapt_vibe_hook(
+            br#"{"hook_event_name":"after_tool","session_id":"vibe-a","tool_name":"todo","tool_output":{"todos":[{"status":"completed"},{"status":"pending"}],"total_count":2}}"#,
+        )
+        .unwrap(),
+    );
+    assert_eq!(
+        progress.progress.map(|value| (value.done, value.total)),
+        Some((1, 2))
+    );
+}
+
+#[test]
+fn remaining_integration_adapters_cover_source_lifecycle_and_input_semantics() {
+    for (event, expected_agent) in [
+        (
+            adapt_kimi_hook(
+                br#"{"hook_event_name":"SessionStart","session_id":"a"}"#,
+                Some(1),
+            )
+            .unwrap(),
+            "Kimi",
+        ),
+        (
+            adapt_grok_hook(
+                br#"{"hook_event_name":"session_start","session_id":"b"}"#,
+                Some(2),
+            )
+            .unwrap(),
+            "Grok",
+        ),
+        (
+            adapt_agy_hook(
+                br#"{"hook_event_name":"PreInvocation","session_id":"c"}"#,
+                Some(3),
+            )
+            .unwrap(),
+            "Antigravity",
+        ),
+        (
+            adapt_hermes_hook(
+                br#"{"hook_event_name":"on_session_start","session_id":"d"}"#,
+                Some(4),
+            )
+            .unwrap(),
+            "Hermes",
+        ),
+    ] {
+        let status = reduce(event);
+        assert_eq!(status.agent_name, expected_agent);
+        assert!(matches!(
+            status.phase,
+            AgentPhase::Starting | AgentPhase::Running
+        ));
+    }
+
+    let approval = reduce(adapt_kimi_hook(
+        br#"{"hook_event_name":"PreToolUse","session_id":"kimi","tool_name":"WriteFile","tool_input":{"path":"README.md"}}"#,
+        None,
+    ).unwrap());
+    assert_eq!(approval.phase, AgentPhase::NeedsInput);
+
+    let hermes = reduce(adapt_hermes_hook(
+        br#"{"hook_event_name":"pre_approval_request","session_id":"hermes","message":"Allow deploy?"}"#,
+        None,
+    ).unwrap());
+    assert_eq!(hermes.phase, AgentPhase::NeedsInput);
+    assert_eq!(hermes.text.as_deref(), Some("Allow deploy?"));
 }
 
 #[test]

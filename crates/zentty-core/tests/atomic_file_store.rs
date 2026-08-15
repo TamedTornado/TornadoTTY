@@ -86,6 +86,31 @@ fn missing_read_and_private_atomic_replace_share_one_boundary() {
 }
 
 #[test]
+fn locked_remove_is_idempotent_and_preserves_the_adjacent_lock() {
+    let directory = TestDirectory::new("remove");
+    let store = directory.store(64);
+    store.replace_bytes(b"managed").unwrap();
+
+    let (removed, quarantine) = store
+        .transaction(|bytes| {
+            assert_eq!(bytes, Some(b"managed".as_slice()));
+            Ok(AtomicFileAction::Remove(true))
+        })
+        .unwrap();
+    assert!(removed);
+    assert!(quarantine.is_none());
+    assert!(!store.path().exists());
+    assert!(store.lock_path().is_file());
+
+    store
+        .transaction(|bytes| {
+            assert!(bytes.is_none());
+            Ok(AtomicFileAction::Remove(()))
+        })
+        .unwrap();
+}
+
+#[test]
 fn quarantine_without_replacement_preserves_invalid_bytes_and_leaves_source_absent() {
     let directory = TestDirectory::new("quarantine-only");
     let store = directory.store(64);

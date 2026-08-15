@@ -218,6 +218,122 @@ fn real_cli_process_adapts_gemini_permission_and_returns_empty_hook_json() {
 }
 
 #[test]
+fn real_cli_process_runs_every_newly_installable_hook_adapter() {
+    for (adapter, payload, expected_agent, expected_phase) in [
+        (
+            "cursor",
+            br#"{"hook_event_name":"SessionStart","conversation_id":"cursor-real"}"#.as_slice(),
+            "Cursor",
+            AgentPhase::Starting,
+        ),
+        (
+            "droid",
+            br#"{"hook_event_name":"PreToolUse","session_id":"droid-real","tool_name":"AskUser","tool_input":{"question":"Pick one?"}}"#.as_slice(),
+            "Droid",
+            AgentPhase::NeedsInput,
+        ),
+        (
+            "vibe",
+            br#"{"hook_event_name":"post_agent_turn","session_id":"vibe-real"}"#.as_slice(),
+            "Mistral Vibe",
+            AgentPhase::Idle,
+        ),
+        (
+            "kimi",
+            br#"{"hook_event_name":"SessionStart","session_id":"kimi-real"}"#.as_slice(),
+            "Kimi",
+            AgentPhase::Starting,
+        ),
+        (
+            "grok",
+            br#"{"hook_event_name":"SessionStart","session_id":"grok-real"}"#.as_slice(),
+            "Grok",
+            AgentPhase::Starting,
+        ),
+    ] {
+        let harness = Harness::start();
+        let mut command = harness.command();
+        command.arg("ipc").arg("agent-event").arg(format!("--adapter={adapter}"));
+        let output = run_with_input(command, payload);
+        assert!(
+            output.status.success(),
+            "adapter={adapter} stderr={}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let received = harness.receiver.recv_timeout(Duration::from_secs(2)).unwrap();
+        let target = received.target.clone();
+        let mut statuses = AgentStatusStore::default();
+        statuses.apply(received, 1);
+        let status = statuses.status_for(&target).unwrap();
+        assert_eq!(status.agent_name, expected_agent, "adapter={adapter}");
+        assert_eq!(status.phase, expected_phase, "adapter={adapter}");
+    }
+}
+
+#[test]
+fn installed_hook_subcommands_acknowledge_calls_outside_a_zentty_pane() {
+    for (command, event, expected) in [
+        ("agy-hook", "pre-tool-use", "{\"decision\":\"allow\"}\n"),
+        ("agy-hook", "stop", "{\"decision\":\"\"}\n"),
+        ("hermes-hook", "pre-llm-call", "{}\n"),
+    ] {
+        let mut process = Command::new(env!("CARGO_BIN_EXE_zentty"));
+        process
+            .arg(command)
+            .arg(event)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let output = run_with_input(process, br#"{"session_id":"outside"}"#);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(String::from_utf8(output.stdout).unwrap(), expected);
+    }
+}
+
+#[test]
+fn real_cli_process_runs_installed_agy_and_hermes_subcommands() {
+    for (command_name, event, payload, expected_agent) in [
+        (
+            "agy-hook",
+            "prompt-submit",
+            br#"{"session_id":"agy-real"}"#.as_slice(),
+            "Antigravity",
+        ),
+        (
+            "hermes-hook",
+            "pre-llm-call",
+            br#"{"session_id":"hermes-real"}"#.as_slice(),
+            "Hermes",
+        ),
+    ] {
+        let harness = Harness::start();
+        let mut command = harness.command();
+        command.arg(command_name).arg(event);
+        let output = run_with_input(command, payload);
+        assert!(
+            output.status.success(),
+            "command={command_name} stderr={}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(output.stdout, b"{}\n", "command={command_name}");
+        let received = harness
+            .receiver
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap();
+        let target = received.target.clone();
+        let mut statuses = AgentStatusStore::default();
+        statuses.apply(received, 1);
+        let status = statuses.status_for(&target).unwrap();
+        assert_eq!(status.agent_name, expected_agent);
+        assert_eq!(status.phase, AgentPhase::Running);
+    }
+}
+
+#[test]
 fn real_codex_notify_command_forwards_positional_payload_to_the_canonical_socket() {
     let harness = Harness::start();
     let output = harness

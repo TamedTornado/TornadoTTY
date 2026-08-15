@@ -155,6 +155,11 @@ ghostty_theme_root="${output_dir}/share/zentty/ghostty/themes"
 rm -rf "${ghostty_theme_root}"
 mkdir -p "${ghostty_theme_root}"
 cp -a "${repo_root}/ZenttyResources/ghostty/themes/." "${ghostty_theme_root}/"
+amp_plugin_root="${output_dir}/share/zentty/amp/plugins"
+rm -rf "${amp_plugin_root}"
+mkdir -p "${amp_plugin_root}"
+cp "${repo_root}/ZenttyResources/amp/plugins/zentty-amp-zentty.ts" \
+    "${amp_plugin_root}/"
 
 # The linker must receive the literal loader token, not a shell expansion.
 # shellcheck disable=SC2016

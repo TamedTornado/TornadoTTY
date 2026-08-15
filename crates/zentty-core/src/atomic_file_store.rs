@@ -16,6 +16,7 @@ const LOCK_DEADLINE: Duration = Duration::from_millis(250);
 pub enum AtomicFileAction<T> {
     ReadOnly(T),
     Replace { bytes: Vec<u8>, value: T },
+    Remove(T),
     Quarantine(T),
     QuarantineAndReplace { bytes: Vec<u8>, value: T },
 }
@@ -75,6 +76,10 @@ impl AtomicFileStore {
                 self.replace(&bytes)?;
                 (value, None)
             }
+            AtomicFileAction::Remove(value) => {
+                self.remove()?;
+                (value, None)
+            }
             AtomicFileAction::Quarantine(value) => {
                 let quarantine = self.quarantine()?;
                 (value, quarantine)
@@ -132,6 +137,18 @@ impl AtomicFileStore {
         fs::rename(&temp_path, &self.path)
             .map_err(|source| io_error("replace file", &self.path, source))?;
         cleanup.disarm();
+        File::open(parent)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|source| io_error("sync parent directory", parent, source))
+    }
+
+    fn remove(&self) -> Result<(), AtomicFileStoreError> {
+        match fs::remove_file(&self.path) {
+            Ok(()) => {}
+            Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(source) => return Err(io_error("remove file", &self.path, source)),
+        }
+        let parent = self.parent()?;
         File::open(parent)
             .and_then(|directory| directory.sync_all())
             .map_err(|source| io_error("sync parent directory", parent, source))

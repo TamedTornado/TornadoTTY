@@ -6,11 +6,13 @@ use std::process::ExitCode;
 use std::process::{Command as ProcessCommand, Stdio};
 use std::time::Instant;
 use zentty_agent_ipc::{
-    AgentIpcClient, CliProductCommand, ServerCommand, launch_agent, parse_product_cli,
+    AgentIpcClient, CliProductCommand, ServerCommand, install_integration, launch_agent,
+    parse_product_cli, uninstall_integration,
 };
 use zentty_core::{
-    AgentEvent, adapt_claude_hook, adapt_codex_hook, adapt_codex_notify, adapt_gemini_hook,
-    detect_server_urls,
+    AgentEvent, adapt_agy_hook, adapt_claude_hook, adapt_codex_hook, adapt_codex_notify,
+    adapt_cursor_hook, adapt_droid_hook, adapt_gemini_hook, adapt_grok_hook, adapt_hermes_hook,
+    adapt_kimi_hook, adapt_vibe_hook, detect_server_urls,
 };
 use zentty_tmux_compat::{
     Command, Invocation, TmuxCompatRequest, WAIT_POLL_INTERVAL, WaitForAction,
@@ -28,6 +30,13 @@ fn main() -> ExitCode {
 
 fn run() -> Result<(), String> {
     let raw_arguments = std::env::args().skip(1).collect::<Vec<_>>();
+    let installed_hook = raw_arguments
+        .first()
+        .and_then(|command| match command.as_str() {
+            "agy-hook" | "hermes-hook" => Some(command.clone()),
+            _ => None,
+        });
+    let raw_arguments = normalize_hook_subcommand(raw_arguments);
     if let Some(command) = parse_product_cli(&raw_arguments).map_err(|error| error.to_string())? {
         return run_product_cli(command);
     }
@@ -52,7 +61,7 @@ fn run() -> Result<(), String> {
     }
     if command.as_deref() != Some("ipc") || arguments.next().as_deref() != Some("agent-event") {
         return Err(
-            "usage: zentty ipc agent-event [--adapter=codex|codex-notify|claude|gemini] [event]"
+            "usage: zentty ipc agent-event [--adapter=codex|codex-notify|claude|gemini|cursor|droid|vibe|kimi|grok|agy|hermes] [event]"
                 .to_owned(),
         );
     }
@@ -69,23 +78,24 @@ fn run() -> Result<(), String> {
         .read_to_end(&mut input)
         .map_err(|error| format!("could not read event: {error}"))?;
     let input = add_default_hook_event(input, default_event.map(String::as_str))?;
-    let events = match adapter {
-        Some("codex") => adapt_codex_hook(&input, environment_pid("ZENTTY_CODEX_PID"))
-            .map_err(|error| error.to_string())?,
-        Some("codex-notify") => adapt_codex_notify(&input).map_err(|error| error.to_string())?,
-        Some("claude") => adapt_claude_hook(&input, environment_pid("ZENTTY_CLAUDE_PID"))
-            .map_err(|error| error.to_string())?,
-        Some("gemini") => adapt_gemini_hook(&input, environment_pid("ZENTTY_GEMINI_PID"))
-            .map_err(|error| error.to_string())?,
-        Some(value) => return Err(format!("unsupported agent adapter: {value}")),
-        None => vec![AgentEvent::parse(&input).map_err(|error| error.to_string())?],
-    };
+    let events = adapt_agent_events(adapter, &input)?;
     if adapter == Some("gemini")
         && (events.is_empty()
             || std::env::var_os("ZENTTY_INSTANCE_SOCKET").is_none()
             || std::env::var_os("ZENTTY_PANE_TOKEN").is_none())
     {
         println!("{{}}");
+        return Ok(());
+    }
+    if let Some(command) = installed_hook.as_deref()
+        && (events.is_empty()
+            || std::env::var_os("ZENTTY_INSTANCE_SOCKET").is_none()
+            || std::env::var_os("ZENTTY_PANE_TOKEN").is_none())
+    {
+        println!(
+            "{}",
+            installed_hook_response(command, default_event.map(String::as_str))
+        );
         return Ok(());
     }
     let socket = std::env::var("ZENTTY_INSTANCE_SOCKET")
@@ -99,8 +109,73 @@ fn run() -> Result<(), String> {
     }
     if adapter == Some("gemini") {
         println!("{{}}");
+    } else if let Some(command) = installed_hook.as_deref() {
+        println!(
+            "{}",
+            installed_hook_response(command, default_event.map(String::as_str))
+        );
     }
     Ok(())
+}
+
+fn adapt_agent_events(adapter: Option<&str>, input: &[u8]) -> Result<Vec<AgentEvent>, String> {
+    let events = match adapter {
+        Some("codex") => adapt_codex_hook(input, environment_pid("ZENTTY_CODEX_PID")),
+        Some("claude") => adapt_claude_hook(input, environment_pid("ZENTTY_CLAUDE_PID")),
+        Some("gemini") => adapt_gemini_hook(input, environment_pid("ZENTTY_GEMINI_PID")),
+        Some("cursor") => adapt_cursor_hook(input, environment_pid("ZENTTY_CURSOR_PID")),
+        Some("droid") => adapt_droid_hook(input, environment_pid("ZENTTY_DROID_PID")),
+        Some("kimi") => adapt_kimi_hook(input, environment_pid("ZENTTY_KIMI_PID")),
+        Some("grok") => adapt_grok_hook(input, environment_pid("ZENTTY_GROK_PID")),
+        Some("agy") => adapt_agy_hook(input, environment_pid("ZENTTY_AGY_PID")),
+        Some("hermes") => adapt_hermes_hook(input, environment_pid("ZENTTY_HERMES_PID")),
+        Some("codex-notify") => {
+            return adapt_codex_notify(input).map_err(|error| error.to_string());
+        }
+        Some("vibe") => return adapt_vibe_hook(input).map_err(|error| error.to_string()),
+        Some(value) => return Err(format!("unsupported agent adapter: {value}")),
+        None => {
+            return AgentEvent::parse(input)
+                .map(|event| vec![event])
+                .map_err(|error| error.to_string());
+        }
+    };
+    events.map_err(|error| error.to_string())
+}
+
+fn installed_hook_response(command: &str, event: Option<&str>) -> &'static str {
+    if command == "agy-hook" {
+        match event
+            .unwrap_or_default()
+            .replace('_', "-")
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "stop" => r#"{"decision":""}"#,
+            "pre-tool-use" | "pretooluse" => r#"{"decision":"allow"}"#,
+            _ => "{}",
+        }
+    } else {
+        "{}"
+    }
+}
+
+fn normalize_hook_subcommand(arguments: Vec<String>) -> Vec<String> {
+    let Some(command) = arguments.first().map(String::as_str) else {
+        return arguments;
+    };
+    let adapter = match command {
+        "agy-hook" => "agy",
+        "hermes-hook" => "hermes",
+        _ => return arguments,
+    };
+    let mut normalized = vec![
+        "ipc".to_owned(),
+        "agent-event".to_owned(),
+        format!("--adapter={adapter}"),
+    ];
+    normalized.extend(arguments.into_iter().skip(1));
+    normalized
 }
 
 fn run_product_cli(command: CliProductCommand) -> Result<(), String> {
@@ -120,6 +195,14 @@ fn run_product_cli(command: CliProductCommand) -> Result<(), String> {
             ] {
                 println!("{color}");
             }
+            Ok(())
+        }
+        CliProductCommand::InstallIntegration(target) => {
+            println!("{}", install_integration(&target)?);
+            Ok(())
+        }
+        CliProductCommand::UninstallIntegration(target) => {
+            println!("{}", uninstall_integration(&target)?);
             Ok(())
         }
         CliProductCommand::Request(request) => {
