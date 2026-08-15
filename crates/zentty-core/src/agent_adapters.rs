@@ -372,6 +372,7 @@ pub fn adapt_cursor_hook(
         ],
     );
     let transcript = string_at(&payload, &["transcript_path", "transcriptPath"]);
+    let tool = string_at(&payload, &["tool_name", "toolName", "tool"]);
     let event = match hook.as_str() {
         "sessionstart" => canonical(
             "session.start",
@@ -402,6 +403,16 @@ pub fn adapt_cursor_hook(
             canonical(event, "Cursor", pid, session.as_deref(), None, None)?
         }
         "sessionend" => canonical("session.end", "Cursor", pid, session.as_deref(), None, None)?,
+        "pretooluse" | "posttooluse"
+            if tool
+                .as_deref()
+                .is_some_and(|name| name.eq_ignore_ascii_case("TodoWrite")) =>
+        {
+            let Some((done, total)) = todo_progress(&payload) else {
+                return Ok(Vec::new());
+            };
+            canonical_progress("Cursor", session.as_deref(), done, total)?
+        }
         _ => return Ok(Vec::new()),
     };
     Ok(vec![event.with_transcript_path(transcript)])
@@ -472,6 +483,12 @@ pub fn adapt_droid_hook(
                 Some(&text),
                 Some(kind),
             )?
+        }
+        "PreToolUse" | "PostToolUse" if tool.as_deref().is_some_and(|name| name == "TodoWrite") => {
+            let Some((done, total)) = todo_progress(&payload) else {
+                return Ok(Vec::new());
+            };
+            canonical_progress("Droid", session.as_deref(), done, total)?
         }
         "UserPromptSubmit" | "PreToolUse" | "PostToolUse" | "SubagentStop" => canonical(
             "agent.running",
@@ -705,7 +722,7 @@ fn common_transition(
     if matches!(hook, "pretooluse" | "pretool" | "pretoolcall")
         && tool.is_some_and(common_question_tool)
     {
-        let text = droid_input_text(payload, tool.unwrap_or("tool"));
+        let text = common_input_text(payload, dialect_name(dialect), tool.unwrap_or("tool"));
         let kind = if tool.is_some_and(is_question_tool_name) || tool == Some("ask_question") {
             "question"
         } else {
@@ -777,13 +794,66 @@ fn is_droid_input_tool(tool: &str) -> bool {
 }
 
 fn droid_input_text(payload: &Value, tool: &str) -> String {
+    common_input_text(payload, "Droid", tool)
+}
+
+fn common_input_text(payload: &Value, agent: &str, tool: &str) -> String {
     first_message(payload)
         .or_else(|| {
             payload
                 .get("tool_input")
-                .and_then(|input| string_at(input, &["question", "prompt", "plan", "spec"]))
+                .or_else(|| payload.get("toolInput"))
+                .and_then(|input| {
+                    string_at(
+                        input,
+                        &[
+                            "question",
+                            "prompt",
+                            "plan",
+                            "spec",
+                            "file_path",
+                            "filePath",
+                            "path",
+                        ],
+                    )
+                })
         })
-        .unwrap_or_else(|| format!("Droid needs your input for {tool}"))
+        .map_or_else(
+            || format!("{agent} needs your input for {tool}"),
+            |detail| {
+                if tool == "AskUser" || is_question_tool_name(tool) || tool == "ask_question" {
+                    detail
+                } else {
+                    format!("Allow {tool} on {detail}?")
+                }
+            },
+        )
+}
+
+fn todo_progress(payload: &Value) -> Option<(u64, u64)> {
+    let input = payload
+        .get("tool_input")
+        .or_else(|| payload.get("toolInput"))?;
+    let todos = input.get("todos")?.as_array()?;
+    let total = u64::try_from(todos.len()).ok()?;
+    if total == 0 {
+        return None;
+    }
+    let done = u64::try_from(
+        todos
+            .iter()
+            .filter(|todo| {
+                string_ref_at(todo, &["status", "state"]).is_some_and(|status| {
+                    matches!(
+                        status.to_ascii_lowercase().as_str(),
+                        "completed" | "done" | "cancelled"
+                    )
+                })
+            })
+            .count(),
+    )
+    .ok()?;
+    Some((done, total))
 }
 
 fn vibe_question_text(payload: &Value) -> Option<String> {

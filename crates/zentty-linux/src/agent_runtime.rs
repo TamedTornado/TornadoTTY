@@ -448,20 +448,38 @@ fn enabled_wrapper_directories(
     wrapper_root: &std::path::Path,
     path: &std::ffi::OsStr,
 ) -> Vec<PathBuf> {
-    ["claude", "codex", "gemini"]
-        .into_iter()
-        .filter_map(|tool| {
-            let wrapper_directory = wrapper_root.join(tool);
-            if !is_executable(&wrapper_directory.join(tool)) {
-                return None;
-            }
-            std::env::split_paths(path)
-                .any(|directory| {
-                    !directory.starts_with(wrapper_root) && is_executable(&directory.join(tool))
-                })
-                .then_some(wrapper_directory)
-        })
-        .collect()
+    [
+        ("amp", &["amp"][..]),
+        ("claude", &["claude"][..]),
+        ("codex", &["codex"][..]),
+        ("cursor", &["cursor-agent"][..]),
+        ("droid", &["droid"][..]),
+        ("gemini", &["gemini"][..]),
+        ("kimi", &["kimi", "kimi-cli"][..]),
+        ("grok", &["grok"][..]),
+        ("agy", &["agy"][..]),
+        ("hermes", &["hermes"][..]),
+        ("vibe", &["vibe", "mistral-vibe"][..]),
+    ]
+    .into_iter()
+    .filter_map(|(tool, binaries)| {
+        let wrapper_directory = wrapper_root.join(tool);
+        if !binaries
+            .iter()
+            .any(|binary| is_executable(&wrapper_directory.join(binary)))
+        {
+            return None;
+        }
+        std::env::split_paths(path)
+            .any(|directory| {
+                !directory.starts_with(wrapper_root)
+                    && binaries
+                        .iter()
+                        .any(|binary| is_executable(&directory.join(binary)))
+            })
+            .then_some(wrapper_directory)
+    })
+    .collect()
 }
 
 fn is_executable(path: &std::path::Path) -> bool {
@@ -517,6 +535,16 @@ mod tests {
             fs::write(&wrapper, "wrapper").unwrap();
             fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o700)).unwrap();
         }
+        fs::create_dir_all(wrappers.join("cursor")).unwrap();
+        let cursor_wrapper = wrappers.join("cursor/cursor-agent");
+        fs::write(&cursor_wrapper, "wrapper").unwrap();
+        fs::set_permissions(&cursor_wrapper, fs::Permissions::from_mode(0o700)).unwrap();
+        fs::create_dir_all(wrappers.join("kimi")).unwrap();
+        for binary in ["kimi", "kimi-cli"] {
+            let wrapper = wrappers.join("kimi").join(binary);
+            fs::write(&wrapper, "wrapper").unwrap();
+            fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o700)).unwrap();
+        }
         fs::create_dir_all(&real).unwrap();
         let codex = real.join("codex");
         fs::write(&codex, "real").unwrap();
@@ -524,10 +552,21 @@ mod tests {
         let gemini = real.join("gemini");
         fs::write(&gemini, "real").unwrap();
         fs::set_permissions(&gemini, fs::Permissions::from_mode(0o700)).unwrap();
+        let cursor = real.join("cursor-agent");
+        fs::write(&cursor, "real").unwrap();
+        fs::set_permissions(&cursor, fs::Permissions::from_mode(0o700)).unwrap();
+        let kimi = real.join("kimi-cli");
+        fs::write(&kimi, "real").unwrap();
+        fs::set_permissions(&kimi, fs::Permissions::from_mode(0o700)).unwrap();
 
         assert_eq!(
             enabled_wrapper_directories(&wrappers, real.as_os_str()),
-            [wrappers.join("codex"), wrappers.join("gemini")]
+            [
+                wrappers.join("codex"),
+                wrappers.join("cursor"),
+                wrappers.join("gemini"),
+                wrappers.join("kimi")
+            ]
         );
         assert!(
             enabled_wrapper_directories(&wrappers, wrappers.join("codex").as_os_str()).is_empty()

@@ -3,6 +3,141 @@ use zentty_core::{AgentLaunchTool, build_agent_launch_plan, build_gemini_setting
 
 const SESSION_ID: &str = "12345678-1234-4234-8234-123456789abc";
 
+fn pane_environment() -> BTreeMap<String, String> {
+    BTreeMap::from([
+        (
+            "ZENTTY_INSTANCE_SOCKET".to_owned(),
+            "/run/zentty.sock".to_owned(),
+        ),
+        ("ZENTTY_PANE_TOKEN".to_owned(), "token".to_owned()),
+        ("ZENTTY_WORKLANE_ID".to_owned(), "lane".to_owned()),
+        ("ZENTTY_PANE_ID".to_owned(), "pane".to_owned()),
+    ])
+}
+
+#[test]
+fn persistent_source_agents_preserve_arguments_and_publish_exact_launch_policy() {
+    for (tool, input, binary, target, pid_name) in [
+        (
+            AgentLaunchTool::Amp,
+            "amp",
+            "amp",
+            "amp-hooks",
+            "ZENTTY_AMP_PID",
+        ),
+        (
+            AgentLaunchTool::Cursor,
+            "cursor-agent",
+            "cursor-agent",
+            "cursor-hooks",
+            "ZENTTY_CURSOR_PID",
+        ),
+        (
+            AgentLaunchTool::Droid,
+            "droid",
+            "droid",
+            "droid-hooks",
+            "ZENTTY_DROID_PID",
+        ),
+        (
+            AgentLaunchTool::Kimi,
+            "kimi-cli",
+            "kimi",
+            "kimi-hooks",
+            "ZENTTY_KIMI_PID",
+        ),
+        (
+            AgentLaunchTool::Grok,
+            "grok",
+            "grok",
+            "grok-hooks",
+            "ZENTTY_GROK_PID",
+        ),
+        (
+            AgentLaunchTool::Agy,
+            "agy",
+            "agy",
+            "agy-hooks",
+            "ZENTTY_AGY_PID",
+        ),
+        (
+            AgentLaunchTool::Hermes,
+            "hermes",
+            "hermes",
+            "hermes-hooks",
+            "ZENTTY_HERMES_PID",
+        ),
+        (
+            AgentLaunchTool::Vibe,
+            "mistral-vibe",
+            "vibe",
+            "vibe-hooks",
+            "ZENTTY_VIBE_PID",
+        ),
+    ] {
+        assert_eq!(AgentLaunchTool::parse(input).unwrap(), tool);
+        assert_eq!(tool.binary_name(), binary);
+        assert_eq!(tool.persistent_integration_target(), Some(target));
+        assert!(pid_name.starts_with("ZENTTY_") && pid_name.ends_with("_PID"));
+        let plan = build_agent_launch_plan(
+            tool,
+            format!("/real/{binary}"),
+            &["--project".to_owned(), "hostile path".to_owned()],
+            "/stage/bin/zentty",
+            SESSION_ID,
+            &pane_environment(),
+        )
+        .unwrap();
+        assert_eq!(plan.arguments, ["--project", "hostile path"]);
+        assert!(!plan.set_environment.is_empty());
+    }
+    let vibe = build_agent_launch_plan(
+        AgentLaunchTool::Vibe,
+        "/real/vibe",
+        &[],
+        "/stage/bin/zentty",
+        SESSION_ID,
+        &pane_environment(),
+    )
+    .unwrap();
+    assert_eq!(
+        vibe.set_environment["VIBE_ENABLE_EXPERIMENTAL_HOOKS"],
+        "true"
+    );
+}
+
+#[test]
+fn persistent_agent_management_commands_are_direct_but_grok_flags_remain_integrated() {
+    for (tool, argument) in [
+        (AgentLaunchTool::Amp, "permissions"),
+        (AgentLaunchTool::Kimi, "plugin"),
+        (AgentLaunchTool::Agy, "update"),
+        (AgentLaunchTool::Hermes, "config"),
+        (AgentLaunchTool::Vibe, "setup"),
+    ] {
+        let plan = build_agent_launch_plan(
+            tool,
+            format!("/real/{}", tool.binary_name()),
+            &[argument.to_owned()],
+            "/stage/bin/zentty",
+            SESSION_ID,
+            &pane_environment(),
+        )
+        .unwrap();
+        assert!(plan.set_environment.is_empty(), "tool={tool:?}");
+    }
+    let grok = build_agent_launch_plan(
+        AgentLaunchTool::Grok,
+        "/real/grok",
+        &["--help".to_owned()],
+        "/stage/bin/zentty",
+        SESSION_ID,
+        &pane_environment(),
+    )
+    .unwrap();
+    assert_eq!(grok.set_environment["ZENTTY_AGENT_TOOL"], "grok");
+}
+
 #[test]
 fn claude_plan_injects_ephemeral_source_hooks_without_writing_config() {
     let plan = build_agent_launch_plan(

@@ -25,7 +25,7 @@ impl FakeTool {
         let binary = directory.join(name);
         fs::write(
             &binary,
-            "#!/bin/sh\nprintf '%s\\n' \"$@\" >\"$ZENTTY_TEST_RECEIPT\"\nprintf 'AGENT=%s\\n' \"${ZENTTY_AGENT_TOOL:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nprintf 'CLAUDECODE=%s\\n' \"${CLAUDECODE:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nprintf 'GEMINI_SETTINGS=%s\\n' \"${GEMINI_CLI_SYSTEM_SETTINGS_PATH:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nif [ -n \"${GEMINI_CLI_SYSTEM_SETTINGS_PATH:-}\" ]; then cp \"$GEMINI_CLI_SYSTEM_SETTINGS_PATH\" \"$ZENTTY_TEST_RECEIPT.settings\"; stat -c 'MODE=%a' \"$GEMINI_CLI_SYSTEM_SETTINGS_PATH\" >>\"$ZENTTY_TEST_RECEIPT\"; fi\n",
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" >\"$ZENTTY_TEST_RECEIPT\"\nprintf 'AGENT=%s\\n' \"${ZENTTY_AGENT_TOOL:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nprintf 'CLAUDECODE=%s\\n' \"${CLAUDECODE:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nprintf 'GEMINI_SETTINGS=%s\\n' \"${GEMINI_CLI_SYSTEM_SETTINGS_PATH:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nprintf 'CURSOR_PID=%s DROID_PID=%s KIMI_PID=%s GROK_PID=%s AGY_PID=%s HERMES_PID=%s VIBE_PID=%s\\n' \"${ZENTTY_CURSOR_PID:-}\" \"${ZENTTY_DROID_PID:-}\" \"${ZENTTY_KIMI_PID:-}\" \"${ZENTTY_GROK_PID:-}\" \"${ZENTTY_AGY_PID:-}\" \"${ZENTTY_HERMES_PID:-}\" \"${ZENTTY_VIBE_PID:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nprintf 'VIBE_HOOKS=%s\\n' \"${VIBE_ENABLE_EXPERIMENTAL_HOOKS:-}\" >>\"$ZENTTY_TEST_RECEIPT\"\nif [ -n \"${GEMINI_CLI_SYSTEM_SETTINGS_PATH:-}\" ]; then cp \"$GEMINI_CLI_SYSTEM_SETTINGS_PATH\" \"$ZENTTY_TEST_RECEIPT.settings\"; stat -c 'MODE=%a' \"$GEMINI_CLI_SYSTEM_SETTINGS_PATH\" >>\"$ZENTTY_TEST_RECEIPT\"; fi\n",
         )
         .unwrap();
         fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).unwrap();
@@ -43,7 +43,18 @@ impl FakeTool {
             .arg(tool)
             .env("ZENTTY_REAL_BINARY", &self.binary)
             .env("ZENTTY_CLI_BIN", env!("CARGO_BIN_EXE_zentty"))
-            .env("ZENTTY_TEST_RECEIPT", &self.receipt);
+            .env("ZENTTY_TEST_RECEIPT", &self.receipt)
+            .env(
+                "ZENTTY_INSTANCE_SOCKET",
+                self.directory.join("instance.sock"),
+            )
+            .env("ZENTTY_PANE_TOKEN", "test-token")
+            .env("ZENTTY_WORKLANE_ID", "test-lane")
+            .env("ZENTTY_PANE_ID", "test-pane")
+            .env("HOME", &self.directory)
+            .env("XDG_CONFIG_HOME", self.directory.join(".config"))
+            .env_remove("KIMI_CODE_HOME")
+            .env_remove("HERMES_HOME");
         command
     }
 }
@@ -185,4 +196,127 @@ fn gemini_overlay_refuses_a_substituted_or_non_private_runtime_root() {
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("not a private directory"));
     assert!(!tool.receipt.exists(), "the real executable must not run");
+}
+
+#[test]
+fn real_cli_launches_every_persistent_agent_with_managed_hooks_and_pid() {
+    for (tool_name, binary_name, installed_path, pid_key) in [
+        (
+            "cursor",
+            "cursor-agent",
+            ".cursor/hooks.json",
+            "CURSOR_PID=",
+        ),
+        (
+            "droid",
+            "droid",
+            ".factory/settings.local.json",
+            "DROID_PID=",
+        ),
+        ("kimi", "kimi", ".kimi-code/config.toml", "KIMI_PID="),
+        (
+            "grok",
+            "grok",
+            ".grok/hooks/zentty-status.json",
+            "GROK_PID=",
+        ),
+        ("agy", "agy", ".gemini/config/hooks.json", "AGY_PID="),
+        ("hermes", "hermes", ".hermes/config.yaml", "HERMES_PID="),
+        ("vibe", "vibe", ".vibe/hooks.toml", "VIBE_PID="),
+    ] {
+        let tool = FakeTool::new(binary_name);
+        let output = tool
+            .command(tool_name)
+            .args(["chat", "hello world"])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "tool={tool_name} stderr={}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let receipt = fs::read_to_string(&tool.receipt).unwrap();
+        assert!(
+            receipt.starts_with("chat\nhello world\n"),
+            "tool={tool_name} receipt={receipt}"
+        );
+        assert!(
+            receipt.contains(&format!("AGENT={tool_name}")),
+            "tool={tool_name} receipt={receipt}"
+        );
+        let pid_line = receipt.lines().find(|line| line.contains(pid_key)).unwrap();
+        assert!(
+            !pid_line.contains(&format!("{pid_key} ")),
+            "tool={tool_name} receipt={receipt}"
+        );
+        assert!(
+            tool.directory.join(installed_path).is_file(),
+            "tool={tool_name}"
+        );
+        if tool_name == "vibe" {
+            assert!(receipt.contains("VIBE_HOOKS=true"));
+        }
+    }
+}
+
+#[test]
+fn persistent_agent_passthrough_does_not_install_or_emit_status_environment() {
+    let tool = FakeTool::new("kimi");
+    let output = tool.command("kimi").arg("login").output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let receipt = fs::read_to_string(&tool.receipt).unwrap();
+    assert!(receipt.starts_with("login\n"));
+    assert!(receipt.contains("AGENT=\n"));
+    assert!(receipt.contains("KIMI_PID= "));
+    assert!(!tool.directory.join(".kimi-code/config.toml").exists());
+}
+
+#[test]
+fn failed_persistent_hook_install_never_prevents_the_real_agent_launch() {
+    let tool = FakeTool::new("cursor-agent");
+    fs::create_dir_all(tool.directory.join(".cursor")).unwrap();
+    fs::write(tool.directory.join(".cursor/hooks.json"), "not-json").unwrap();
+    let output = tool
+        .command("cursor")
+        .arg("chat")
+        .env("ZENTTY_CLI_DEBUG", "1")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stderr).contains("launching directly"));
+    let receipt = fs::read_to_string(&tool.receipt).unwrap();
+    assert!(receipt.starts_with("chat\n"));
+    assert!(receipt.contains("AGENT=\n"));
+    assert!(receipt.contains("CURSOR_PID= "));
+    assert_eq!(
+        fs::read(tool.directory.join(".cursor/hooks.json")).unwrap(),
+        b"not-json"
+    );
+}
+
+#[test]
+fn persistent_agent_launch_outside_a_pane_is_a_direct_non_mutating_exec() {
+    let tool = FakeTool::new("droid");
+    let output = tool
+        .command("droid")
+        .arg("chat")
+        .env_remove("ZENTTY_PANE_TOKEN")
+        .env_remove("ZENTTY_INSTANCE_SOCKET")
+        .env_remove("ZENTTY_WORKLANE_ID")
+        .env_remove("ZENTTY_PANE_ID")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let receipt = fs::read_to_string(&tool.receipt).unwrap();
+    assert!(receipt.contains("AGENT=\n"));
+    assert!(receipt.contains("DROID_PID= "));
+    assert!(!tool.directory.join(".factory/settings.local.json").exists());
 }

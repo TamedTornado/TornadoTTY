@@ -285,3 +285,36 @@ key across uninstall. This was caught before commit; the earlier staged pass is
 not cited as evidence for the corrected Hermes artifact. The ReleaseSafe
 bundle was rebuilt and the complete staged journey then passed again under
 both controlled X11 and controlled Wayland with the corrected object shape.
+
+Auditing the hidden `launch` command after integration installation exposed a
+second dead-end: Linux accepted only Claude, Codex, and Gemini, and staged only
+those three PATH wrappers, while the source launches persistent Amp, Cursor,
+Droid, Kimi, Grok, Antigravity, Hermes, and Vibe through the same boundary.
+The Rust launcher now resolves each tool's real binary names (including
+`cursor-agent`, `kimi-cli`, and `mistral-vibe`), preserves hostile argv without
+shell reconstruction, ensures its managed hook before exec, publishes the
+source PID variable, and enables Vibe's experimental hooks. The application
+runtime only injects a wrapper directory when both the staged wrapper and a
+real underlying binary exist, so installing Zentty does not make absent tools
+appear on PATH. A follow-up review caught that checking only Kimi's preferred
+`kimi` name would omit its wrapper for users who have only `kimi-cli` (and the
+same risk exists for `mistral-vibe`); wrapper activation now considers every
+source-declared real binary alias as one logical integration.
+
+The first persistent-launch implementation would have failed the agent itself
+when a user-owned hook file was malformed. Source launch treats persistent
+hook setup as best effort. Linux now executes the real agent directly without
+status environment when installation cannot be performed, optionally reports
+the reason under `ZENTTY_CLI_DEBUG`, and leaves the invalid file byte-for-byte
+unchanged. It likewise performs no install or status injection outside a
+routed Zentty pane or for each source-defined management/early-exit command;
+Grok's deliberate exception for early flags remains integrated. Real exec
+subprocesses cover all seven configuration-only agents, failure fallback,
+outside-pane behavior, and passthrough behavior. Amp additionally requires its
+staged TypeScript resource, so its real exec receipt lives in the staged-bundle
+journey rather than a target-directory test double.
+
+The source launch inventory still contains Copilot, OpenCode, Pi, OMP, and the
+test-only small harness. Those tools have different ephemeral bootstrap or
+plugin/config behavior and are not silently represented as covered by the new
+persistent-agent path; they remain explicit GH-22 work.

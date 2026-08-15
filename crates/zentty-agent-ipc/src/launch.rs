@@ -1,4 +1,4 @@
-use crate::generate_pane_token;
+use crate::{generate_pane_token, install_integration};
 use std::collections::{BTreeMap, HashSet};
 use std::fmt;
 use std::fs;
@@ -78,21 +78,42 @@ pub fn launch_agent(tool: &str, arguments: &[String]) -> Result<(), LaunchError>
         &environment,
     )
     .map_err(|error| LaunchError::Plan(error.to_string()))?;
+    let mut integrated = !plan.set_environment.is_empty();
+    if integrated
+        && let Some(target) = tool.persistent_integration_target()
+        && let Err(error) = install_integration(target)
+    {
+        integrated = false;
+        if environment.get("ZENTTY_CLI_DEBUG").map(String::as_str) == Some("1") {
+            eprintln!("zentty: {tool:?} hook installation failed; launching directly: {error}");
+        }
+    }
     let mut command = Command::new(&plan.executable_path);
     command.args(&plan.arguments);
     for name in plan.unset_environment {
         command.env_remove(name);
     }
-    command.envs(plan.set_environment);
-    command.env(
-        match tool {
-            AgentLaunchTool::Claude => "ZENTTY_CLAUDE_PID",
-            AgentLaunchTool::Codex => "ZENTTY_CODEX_PID",
-            AgentLaunchTool::Gemini => "ZENTTY_GEMINI_PID",
-        },
-        std::process::id().to_string(),
-    );
+    if integrated {
+        command.envs(plan.set_environment);
+        command.env(agent_pid_environment(tool), std::process::id().to_string());
+    }
     Err(LaunchError::Exec(command.exec()))
+}
+
+const fn agent_pid_environment(tool: AgentLaunchTool) -> &'static str {
+    match tool {
+        AgentLaunchTool::Amp => "ZENTTY_AMP_PID",
+        AgentLaunchTool::Claude => "ZENTTY_CLAUDE_PID",
+        AgentLaunchTool::Codex => "ZENTTY_CODEX_PID",
+        AgentLaunchTool::Cursor => "ZENTTY_CURSOR_PID",
+        AgentLaunchTool::Droid => "ZENTTY_DROID_PID",
+        AgentLaunchTool::Gemini => "ZENTTY_GEMINI_PID",
+        AgentLaunchTool::Kimi => "ZENTTY_KIMI_PID",
+        AgentLaunchTool::Grok => "ZENTTY_GROK_PID",
+        AgentLaunchTool::Agy => "ZENTTY_AGY_PID",
+        AgentLaunchTool::Hermes => "ZENTTY_HERMES_PID",
+        AgentLaunchTool::Vibe => "ZENTTY_VIBE_PID",
+    }
 }
 
 fn prepare_gemini_overlay(
@@ -183,7 +204,10 @@ pub fn resolve_real_binary(
 ) -> Result<PathBuf, LaunchError> {
     if let Some(explicit) = environment.get("ZENTTY_REAL_BINARY") {
         let path = PathBuf::from(explicit);
-        if path.file_name().and_then(|name| name.to_str()) != Some(tool.binary_name())
+        if !path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| tool.binary_names().contains(&name))
             || !is_executable_file(&path)
         {
             return Err(LaunchError::InvalidRealBinary(explicit.clone()));
@@ -195,9 +219,11 @@ pub fn resolve_real_binary(
         if excluded.contains(&directory) {
             continue;
         }
-        let candidate = directory.join(tool.binary_name());
-        if is_executable_file(&candidate) {
-            return Ok(candidate);
+        for binary in tool.binary_names() {
+            let candidate = directory.join(binary);
+            if is_executable_file(&candidate) {
+                return Ok(candidate);
+            }
         }
     }
     Err(LaunchError::RealBinaryNotFound(

@@ -6,9 +6,17 @@ use std::path::Path;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AgentLaunchTool {
+    Amp,
     Claude,
     Codex,
+    Cursor,
+    Droid,
     Gemini,
+    Kimi,
+    Grok,
+    Agy,
+    Hermes,
+    Vibe,
 }
 
 impl AgentLaunchTool {
@@ -19,9 +27,17 @@ impl AgentLaunchTool {
     /// Returns an error when the tool has no implemented launch plan.
     pub fn parse(value: &str) -> Result<Self, AgentLaunchError> {
         match value {
+            "amp" => Ok(Self::Amp),
             "claude" => Ok(Self::Claude),
             "codex" => Ok(Self::Codex),
+            "cursor" | "cursor-agent" => Ok(Self::Cursor),
+            "droid" => Ok(Self::Droid),
             "gemini" => Ok(Self::Gemini),
+            "kimi" | "kimi-cli" => Ok(Self::Kimi),
+            "grok" => Ok(Self::Grok),
+            "agy" => Ok(Self::Agy),
+            "hermes" => Ok(Self::Hermes),
+            "vibe" | "mistral-vibe" => Ok(Self::Vibe),
             _ => Err(AgentLaunchError::UnsupportedTool(value.to_owned())),
         }
     }
@@ -29,9 +45,49 @@ impl AgentLaunchTool {
     #[must_use]
     pub const fn binary_name(self) -> &'static str {
         match self {
+            Self::Amp => "amp",
             Self::Claude => "claude",
             Self::Codex => "codex",
+            Self::Cursor => "cursor-agent",
+            Self::Droid => "droid",
             Self::Gemini => "gemini",
+            Self::Kimi => "kimi",
+            Self::Grok => "grok",
+            Self::Agy => "agy",
+            Self::Hermes => "hermes",
+            Self::Vibe => "vibe",
+        }
+    }
+
+    #[must_use]
+    pub const fn binary_names(self) -> &'static [&'static str] {
+        match self {
+            Self::Amp => &["amp"],
+            Self::Claude => &["claude"],
+            Self::Codex => &["codex"],
+            Self::Cursor => &["cursor-agent"],
+            Self::Droid => &["droid"],
+            Self::Gemini => &["gemini"],
+            Self::Kimi => &["kimi", "kimi-cli"],
+            Self::Grok => &["grok"],
+            Self::Agy => &["agy"],
+            Self::Hermes => &["hermes"],
+            Self::Vibe => &["vibe", "mistral-vibe"],
+        }
+    }
+
+    #[must_use]
+    pub const fn persistent_integration_target(self) -> Option<&'static str> {
+        match self {
+            Self::Amp => Some("amp-hooks"),
+            Self::Cursor => Some("cursor-hooks"),
+            Self::Droid => Some("droid-hooks"),
+            Self::Kimi => Some("kimi-hooks"),
+            Self::Grok => Some("grok-hooks"),
+            Self::Agy => Some("agy-hooks"),
+            Self::Hermes => Some("hermes-hooks"),
+            Self::Vibe => Some("vibe-hooks"),
+            Self::Claude | Self::Codex | Self::Gemini => None,
         }
     }
 }
@@ -105,6 +161,7 @@ pub fn build_agent_launch_plan(
             environment,
         )),
         AgentLaunchTool::Gemini => Ok(gemini_plan(executable_path.into(), arguments, environment)),
+        tool => Ok(persistent_plan(tool, executable_path.into(), arguments)),
     }
 }
 
@@ -135,7 +192,116 @@ fn integration_is_disabled(
                 .map(String::as_str)
                 == Some("1")
         }
+        tool => persistent_integration_is_disabled(tool, arguments, environment),
     }
+}
+
+fn persistent_plan(
+    tool: AgentLaunchTool,
+    executable_path: String,
+    arguments: &[String],
+) -> AgentLaunchPlan {
+    let mut set_environment = BTreeMap::from([(
+        "ZENTTY_AGENT_TOOL".to_owned(),
+        tool.binary_name().trim_end_matches("-agent").to_owned(),
+    )]);
+    if tool == AgentLaunchTool::Vibe {
+        set_environment.insert(
+            "VIBE_ENABLE_EXPERIMENTAL_HOOKS".to_owned(),
+            "true".to_owned(),
+        );
+    }
+    AgentLaunchPlan {
+        executable_path,
+        arguments: arguments.to_vec(),
+        set_environment,
+        unset_environment: Vec::new(),
+    }
+}
+
+fn persistent_integration_is_disabled(
+    tool: AgentLaunchTool,
+    arguments: &[String],
+    environment: &BTreeMap<String, String>,
+) -> bool {
+    if [
+        "ZENTTY_INSTANCE_SOCKET",
+        "ZENTTY_PANE_TOKEN",
+        "ZENTTY_WORKLANE_ID",
+        "ZENTTY_PANE_ID",
+    ]
+    .iter()
+    .any(|key| environment.get(*key).is_none_or(String::is_empty))
+    {
+        return true;
+    }
+    let (flag, passthrough): (&str, &[&str]) = match tool {
+        AgentLaunchTool::Amp => (
+            "ZENTTY_AMP_HOOKS_DISABLED",
+            &[
+                "login",
+                "logout",
+                "mcp",
+                "permission",
+                "permissions",
+                "review",
+                "skill",
+                "skills",
+                "tool",
+                "tools",
+                "update",
+                "up",
+                "usage",
+                "version",
+            ],
+        ),
+        AgentLaunchTool::Cursor => ("ZENTTY_CURSOR_HOOKS_DISABLED", &[]),
+        AgentLaunchTool::Droid => ("ZENTTY_DROID_HOOKS_DISABLED", &[]),
+        AgentLaunchTool::Kimi => (
+            "ZENTTY_KIMI_HOOKS_DISABLED",
+            &[
+                "login", "logout", "term", "acp", "info", "export", "mcp", "plugin", "vis", "web",
+            ],
+        ),
+        AgentLaunchTool::Grok => ("ZENTTY_GROK_HOOKS_DISABLED", &[]),
+        AgentLaunchTool::Agy => (
+            "ZENTTY_AGY_HOOKS_DISABLED",
+            &[
+                "changelog",
+                "help",
+                "install",
+                "login",
+                "logout",
+                "plugin",
+                "plugins",
+                "update",
+                "version",
+            ],
+        ),
+        AgentLaunchTool::Hermes => ("ZENTTY_HERMES_HOOKS_DISABLED", &[]),
+        AgentLaunchTool::Vibe => (
+            "ZENTTY_VIBE_HOOKS_DISABLED",
+            &["login", "logout", "setup", "install", "uninstall", "update"],
+        ),
+        AgentLaunchTool::Claude | AgentLaunchTool::Codex | AgentLaunchTool::Gemini => return false,
+    };
+    let hermes_passthrough = tool == AgentLaunchTool::Hermes
+        && arguments
+            .first()
+            .is_some_and(|argument| !argument.starts_with('-') && argument != "chat");
+    let early_exit = tool != AgentLaunchTool::Grok
+        && arguments.iter().any(|argument| {
+            matches!(
+                argument.split('=').next().unwrap_or(argument),
+                "--help" | "-h" | "--version" | "-V" | "-v" | "--list-tools" | "--list-toolsets"
+            )
+        });
+    environment.get(flag).map(String::as_str) == Some("1")
+        || arguments
+            .first()
+            .is_some_and(|argument| passthrough.contains(&argument.as_str()))
+        || hermes_passthrough
+        || early_exit
 }
 
 fn gemini_plan(

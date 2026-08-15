@@ -44,7 +44,7 @@ fn run() -> Result<(), String> {
     let command = arguments.next();
     if command.as_deref() == Some("launch") {
         let tool = arguments.next().ok_or_else(|| {
-            "usage: zentty launch <claude|codex|gemini> [arguments...]".to_owned()
+            "usage: zentty launch <amp|claude|codex|cursor|droid|gemini|kimi|grok|agy|hermes|vibe> [arguments...]".to_owned()
         })?;
         return launch_agent(&tool, &arguments.collect::<Vec<_>>())
             .map_err(|error| error.to_string());

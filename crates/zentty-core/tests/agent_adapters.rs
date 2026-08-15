@@ -546,6 +546,44 @@ fn remaining_integration_adapters_cover_source_lifecycle_and_input_semantics() {
     ).unwrap());
     assert_eq!(hermes.phase, AgentPhase::NeedsInput);
     assert_eq!(hermes.text.as_deref(), Some("Allow deploy?"));
+
+    let kimi = reduce(
+        adapt_kimi_hook(
+            br#"{"hook_event_name":"PreToolUse","session_id":"kimi","tool_name":"WriteFile","tool_input":{"file_path":"README.md"}}"#,
+            None,
+        )
+        .unwrap(),
+    );
+    assert_eq!(kimi.text.as_deref(), Some("Allow WriteFile on README.md?"));
+}
+
+#[test]
+fn cursor_and_droid_todo_hooks_emit_observable_progress() {
+    for (events, expected_agent) in [
+        (
+            adapt_cursor_hook(
+                br#"{"hook_event_name":"PreToolUse","conversation_id":"cursor-tasks","tool_name":"TodoWrite","tool_input":{"todos":[{"status":"completed"},{"status":"in_progress"},{"status":"pending"}]}}"#,
+                None,
+            )
+            .unwrap(),
+            "Cursor",
+        ),
+        (
+            adapt_droid_hook(
+                br#"{"hook_event_name":"PostToolUse","session_id":"droid-tasks","tool_name":"TodoWrite","tool_input":{"todos":[{"status":"done"},{"status":"cancelled"},{"status":"pending"}]}}"#,
+                None,
+            )
+            .unwrap(),
+            "Droid",
+        ),
+    ] {
+        let status = reduce(events);
+        assert_eq!(status.agent_name, expected_agent);
+        assert_eq!(
+            status.progress.map(|progress| (progress.done, progress.total)),
+            Some(if expected_agent == "Cursor" { (1, 3) } else { (2, 3) })
+        );
+    }
 }
 
 #[test]

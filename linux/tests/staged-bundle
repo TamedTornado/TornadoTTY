@@ -65,6 +65,39 @@ done
 ! grep -R -E "zentty-(amp-plugin|agy-hook)|adapter=(cursor|droid|kimi|grok|vibe)|zentty hermes" \
     "${integration_home}" --exclude='*.lock' >/dev/null
 
+for wrapper in \
+    amp/amp claude/claude codex/codex cursor/cursor-agent droid/droid \
+    gemini/gemini kimi/kimi kimi/kimi-cli grok/grok agy/agy hermes/hermes \
+    vibe/vibe vibe/mistral-vibe; do
+    [[ -x "${stage_dir}/libexec/zentty/agent-wrappers/${wrapper}" ]] || {
+        echo "staged-bundle: agent wrapper is missing: ${wrapper}" >&2
+        exit 1
+    }
+done
+
+fake_amp="${integration_home}/real-amp/amp"
+mkdir -p "$(dirname "${fake_amp}")"
+cat >"${fake_amp}" <<'FAKE_AMP'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'args=<%s> agent=<%s> pid=<%s>\n' "$*" "${ZENTTY_AGENT_TOOL:-}" "${ZENTTY_AMP_PID:-}" >"${ZENTTY_TEST_RECEIPT}"
+FAKE_AMP
+chmod 0700 "${fake_amp}"
+HOME="${integration_home}" \
+XDG_CONFIG_HOME="${integration_home}/.config" \
+ZENTTY_REAL_BINARY="${fake_amp}" \
+ZENTTY_CLI_BIN="${stage_dir}/bin/zentty" \
+ZENTTY_TEST_RECEIPT="${integration_home}/amp-launch.receipt" \
+ZENTTY_INSTANCE_SOCKET="${integration_home}/instance.sock" \
+ZENTTY_PANE_TOKEN="staged-token" \
+ZENTTY_WORKLANE_ID="staged-lane" \
+ZENTTY_PANE_ID="staged-pane" \
+    "${stage_dir}/bin/zentty" launch amp --project "hostile path" >/dev/null
+grep -F 'args=<--project hostile path> agent=<amp> pid=<' \
+    "${integration_home}/amp-launch.receipt" >/dev/null
+grep -F 'zentty-amp-plugin-v1' \
+    "${integration_home}/.config/amp/plugins/zentty-amp-zentty.ts" >/dev/null
+
 shim="${stage_dir}/libexec/zentty/tmux-shim/tmux"
 [[ -x "${shim}" ]] || {
     echo "staged-bundle: executable tmux shim is missing" >&2
