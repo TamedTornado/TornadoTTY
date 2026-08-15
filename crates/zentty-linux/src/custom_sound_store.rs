@@ -1,4 +1,4 @@
-use std::ffi::OsString;
+use std::ffi::OsStr;
 use std::fmt::Write as _;
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::{ErrorKind, Read, Seek, SeekFrom};
@@ -8,6 +8,7 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
+use zentty_linux::platform::{UserDirectory, resolve_user_path};
 
 use sha2::{Digest, Sha256};
 
@@ -256,28 +257,23 @@ fn destination_is_missing(kind: ErrorKind) -> bool {
 }
 
 fn sounds_directory() -> Result<PathBuf, String> {
-    sounds_directory_from(std::env::var_os("XDG_DATA_HOME"), std::env::var_os("HOME"))
+    sounds_directory_from(
+        std::env::var_os("XDG_DATA_HOME").as_deref(),
+        std::env::var_os("HOME").as_deref(),
+    )
 }
 
 fn sounds_directory_from(
-    xdg_data_home: Option<OsString>,
-    home: Option<OsString>,
+    xdg_data_home: Option<&OsStr>,
+    home: Option<&OsStr>,
 ) -> Result<PathBuf, String> {
-    let root = xdg_data_home
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| {
-            home.filter(|value| !value.is_empty())
-                .map(PathBuf::from)
-                .map(|home| home.join(".local/share"))
-        })
-        .ok_or_else(|| {
-            "could not resolve custom sounds: XDG_DATA_HOME and HOME are unset".to_owned()
-        })?;
-    if !root.is_absolute() {
-        return Err("custom sound data root must be absolute".into());
-    }
-    Ok(root.join("zentty/sounds"))
+    resolve_user_path(
+        UserDirectory::Data,
+        xdg_data_home,
+        home,
+        Path::new("zentty/sounds"),
+    )
+    .map_err(|error| format!("could not resolve custom sounds: {error}"))
 }
 
 fn ensure_private_sounds_directory() -> Result<PathBuf, String> {
@@ -543,7 +539,7 @@ mod tests {
         sounds_directory_from, source_copy_limit, validate_copied_size, validate_duration,
         validate_installed_size, validate_source_file, validate_wav,
     };
-    use std::ffi::OsString;
+    use std::ffi::OsStr;
     use std::fs;
     use std::io::ErrorKind;
     use std::os::unix::fs::{MetadataExt, symlink};
@@ -576,15 +572,15 @@ mod tests {
             assert!(!CustomSoundStore::is_custom_name(invalid));
         }
         assert_eq!(
-            sounds_directory_from(Some(OsString::from("/xdg")), None).unwrap(),
+            sounds_directory_from(Some(OsStr::new("/xdg")), None).unwrap(),
             Path::new("/xdg/zentty/sounds")
         );
         assert_eq!(
-            sounds_directory_from(Some(OsString::new()), Some(OsString::from("/home"))).unwrap(),
+            sounds_directory_from(Some(OsStr::new("")), Some(OsStr::new("/home"))).unwrap(),
             Path::new("/home/.local/share/zentty/sounds")
         );
         assert!(sounds_directory_from(None, None).is_err());
-        assert!(sounds_directory_from(Some(OsString::from("relative")), None).is_err());
+        assert!(sounds_directory_from(Some(OsStr::new("relative")), None).is_err());
     }
 
     #[test]

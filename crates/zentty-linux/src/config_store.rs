@@ -1,4 +1,4 @@
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::{ErrorKind, Read, Write};
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
+use zentty_linux::platform::{UserDirectory, resolve_user_path};
 
 use zentty_core::{
     AgentCaffeinationConfig, AgentIntegrationsConfig, AgentTeamsConfig, AppConfig,
@@ -532,8 +533,8 @@ impl ConfigStore {
             .map_err(|error| format!("could not locate Zentty executable: {error}"))?;
         let (bundled, user) = crate::theme_catalog::default_theme_directories(
             &executable,
-            std::env::var_os("XDG_CONFIG_HOME"),
-            std::env::var_os("HOME"),
+            std::env::var_os("XDG_CONFIG_HOME").as_deref(),
+            std::env::var_os("HOME").as_deref(),
         )?;
         let runtime_spec = ghostty_theme_spec_for_runtime(spec, &bundled, &user)?;
         Self::update_default_ghostty_value("theme", &runtime_spec.to_string())
@@ -552,8 +553,8 @@ impl ConfigStore {
 
     pub(crate) fn update_default_ghostty_value(key: &str, value: &str) -> Result<PathBuf, String> {
         let path = default_ghostty_config_file_from(
-            std::env::var_os("XDG_CONFIG_HOME"),
-            std::env::var_os("HOME"),
+            std::env::var_os("XDG_CONFIG_HOME").as_deref(),
+            std::env::var_os("HOME").as_deref(),
         )?;
         Self::update_ghostty_value(&path, key, value)?;
         Ok(path)
@@ -1040,8 +1041,8 @@ fn content_safe_invalid_warning(path: &Path) -> String {
 
 fn default_config_file() -> Result<PathBuf, String> {
     let path = default_config_file_from(
-        std::env::var_os("XDG_CONFIG_HOME"),
-        std::env::var_os("HOME"),
+        std::env::var_os("XDG_CONFIG_HOME").as_deref(),
+        std::env::var_os("HOME").as_deref(),
     )?;
     ensure_private_config_parent(&path)?;
     Ok(path)
@@ -1092,29 +1093,29 @@ fn ensure_private_config_parent(path: &Path) -> Result<(), String> {
 }
 
 fn default_config_file_from(
-    xdg_config_home: Option<OsString>,
-    home: Option<OsString>,
+    xdg_config_home: Option<&OsStr>,
+    home: Option<&OsStr>,
 ) -> Result<PathBuf, String> {
-    if let Some(path) = nonempty_path(xdg_config_home) {
-        return Ok(path.join("zentty/config.toml"));
-    }
-    nonempty_path(home)
-        .map(|home| home.join(".config/zentty/config.toml"))
-        .ok_or_else(|| "could not resolve Zentty config: XDG_CONFIG_HOME and HOME are unset".into())
+    resolve_user_path(
+        UserDirectory::Config,
+        xdg_config_home,
+        home,
+        Path::new("zentty/config.toml"),
+    )
+    .map_err(|error| format!("could not resolve Zentty config: {error}"))
 }
 
 fn default_ghostty_config_file_from(
-    xdg_config_home: Option<OsString>,
-    home: Option<OsString>,
+    xdg_config_home: Option<&OsStr>,
+    home: Option<&OsStr>,
 ) -> Result<PathBuf, String> {
-    if let Some(path) = nonempty_path(xdg_config_home) {
-        return Ok(path.join("ghostty/config"));
-    }
-    nonempty_path(home)
-        .map(|home| home.join(".config/ghostty/config"))
-        .ok_or_else(|| {
-            "could not resolve Ghostty config: XDG_CONFIG_HOME and HOME are unset".into()
-        })
+    resolve_user_path(
+        UserDirectory::Config,
+        xdg_config_home,
+        home,
+        Path::new("ghostty/config"),
+    )
+    .map_err(|error| format!("could not resolve Ghostty config: {error}"))
 }
 
 fn nonempty_path(value: Option<OsString>) -> Option<PathBuf> {
@@ -1130,7 +1131,7 @@ mod tests {
         fallback_theme_publication_error, ghostty_theme_spec_for_runtime,
         install_fallback_theme_if_referenced, read_bounded, with_config_lock,
     };
-    use std::ffi::OsString;
+    use std::ffi::OsStr;
     use std::fs;
     use std::io::Read;
     use std::path::Path;
@@ -1860,21 +1861,17 @@ mod tests {
     #[test]
     fn config_path_precedence_and_empty_values_match_xdg() {
         assert_eq!(
-            default_config_file_from(Some(OsString::from("/xdg")), Some(OsString::from("/home")))
-                .unwrap(),
+            default_config_file_from(Some(OsStr::new("/xdg")), Some(OsStr::new("/home"))).unwrap(),
             Path::new("/xdg/zentty/config.toml")
         );
         assert_eq!(
-            default_config_file_from(Some(OsString::new()), Some(OsString::from("/home"))).unwrap(),
+            default_config_file_from(Some(OsStr::new("")), Some(OsStr::new("/home"))).unwrap(),
             Path::new("/home/.config/zentty/config.toml")
         );
         assert!(default_config_file_from(None, None).is_err());
         assert_eq!(
-            default_ghostty_config_file_from(
-                Some(OsString::from("/xdg")),
-                Some(OsString::from("/home"))
-            )
-            .unwrap(),
+            default_ghostty_config_file_from(Some(OsStr::new("/xdg")), Some(OsStr::new("/home")))
+                .unwrap(),
             Path::new("/xdg/ghostty/config")
         );
     }

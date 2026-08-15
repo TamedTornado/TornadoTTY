@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use zentty_core::{AtomicFileAction, AtomicFileStore};
+use zentty_linux::platform::{UserDirectory, resolve_user_path};
 use zentty_tmux_compat::{StoreError, TeamStore};
 
 #[derive(Clone, Debug)]
@@ -96,15 +97,12 @@ fn default_path_from(
     xdg_config_home: Option<&std::ffi::OsStr>,
     home: Option<&std::ffi::OsStr>,
 ) -> Result<PathBuf, String> {
-    if let Some(path) = xdg_config_home {
-        let path = PathBuf::from(path);
-        if !path.is_absolute() {
-            return Err("XDG_CONFIG_HOME must be absolute".to_owned());
-        }
-        return Ok(path.join("zentty/tmux-compat-store.json"));
-    }
-    home.map(|home| PathBuf::from(home).join(".config/zentty/tmux-compat-store.json"))
-        .ok_or_else(|| "neither XDG_CONFIG_HOME nor HOME is set".to_owned())
+    resolve_user_path(
+        UserDirectory::Config,
+        xdg_config_home,
+        home,
+        std::path::Path::new("zentty/tmux-compat-store.json"),
+    )
 }
 
 enum DecodedStore {

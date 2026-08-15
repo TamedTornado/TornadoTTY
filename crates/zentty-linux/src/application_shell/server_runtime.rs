@@ -13,6 +13,7 @@ use zentty_core::{
     ServerDetectionConfig, ServerPortRule, ServerRegistry, ServerTerminationObservation,
     authorize_server_termination, normalize_server_url,
 };
+use zentty_linux::platform::{ProcessLaunch, open_uri, spawn_detached};
 
 use super::ApplicationShell;
 use crate::config_store::ConfigStore;
@@ -818,10 +819,7 @@ fn launch_url(url: String, target: ServerBrowserTarget) -> Result<(), String> {
 
 fn launch_browser_plan(plan: ServerBrowserLaunchPlan) -> Result<(), String> {
     match plan {
-        ServerBrowserLaunchPlan::SystemDefault { url } => {
-            gio::AppInfo::launch_default_for_uri(&url, None::<&gio::AppLaunchContext>)
-                .map_err(|error| error.to_string())
-        }
+        ServerBrowserLaunchPlan::SystemDefault { url } => open_uri(&url),
         ServerBrowserLaunchPlan::DesktopApplication {
             application_id,
             url,
@@ -837,16 +835,7 @@ fn launch_browser_plan(plan: ServerBrowserLaunchPlan) -> Result<(), String> {
             executable,
             arguments,
         } => {
-            let mut child = std::process::Command::new(&executable)
-                .args(arguments)
-                .stdin(std::process::Stdio::null())
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .spawn()
-                .map_err(|error| format!("could not launch {executable}: {error}"))?;
-            std::thread::spawn(move || {
-                let _ = child.wait();
-            });
+            spawn_detached(&ProcessLaunch::detached(&executable, arguments))?;
             Ok(())
         }
     }

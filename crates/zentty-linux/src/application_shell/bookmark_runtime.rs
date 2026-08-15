@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 use std::collections::BTreeMap;
-use std::ffi::OsString;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
@@ -10,6 +10,7 @@ use zentty_core::{
     BookmarkStore, BookmarkStoreSnapshot, TemplateKind, TemplateRestoreFallback, WorkspaceTemplate,
     WorkspaceTemplateCaptureContext, WorkspaceTemplateExportEnvelope,
 };
+use zentty_linux::platform::{UserDirectory, resolve_user_path};
 
 use super::{ApplicationShell, pane_runtime::PaneRuntimeCoordinator};
 
@@ -653,27 +654,22 @@ fn now_iso8601() -> Result<String, String> {
 
 fn default_bookmark_path() -> Result<PathBuf, String> {
     default_bookmark_path_from(
-        std::env::var_os("XDG_CONFIG_HOME"),
-        std::env::var_os("HOME"),
+        std::env::var_os("XDG_CONFIG_HOME").as_deref(),
+        std::env::var_os("HOME").as_deref(),
     )
 }
 
 fn default_bookmark_path_from(
-    xdg_config_home: Option<OsString>,
-    home: Option<OsString>,
+    xdg_config_home: Option<&OsStr>,
+    home: Option<&OsStr>,
 ) -> Result<PathBuf, String> {
-    if let Some(path) = xdg_config_home.filter(|path| !path.is_empty()) {
-        let path = PathBuf::from(path);
-        if !path.is_absolute() {
-            return Err("XDG_CONFIG_HOME must be absolute".to_owned());
-        }
-        return Ok(path.join("zentty/bookmarks.json"));
-    }
-    home.filter(|path| !path.is_empty())
-        .map(PathBuf::from)
-        .filter(|path| path.is_absolute())
-        .map(|path| path.join(".config/zentty/bookmarks.json"))
-        .ok_or_else(|| "could not resolve bookmarks: XDG_CONFIG_HOME and HOME are unset".to_owned())
+    resolve_user_path(
+        UserDirectory::Config,
+        xdg_config_home,
+        home,
+        Path::new("zentty/bookmarks.json"),
+    )
+    .map_err(|error| format!("could not resolve bookmarks: {error}"))
 }
 
 #[cfg(test)]
@@ -682,21 +678,21 @@ mod tests {
         command_is_available, converted_name, default_bookmark_path_from, quote_proc_argument,
         restore_warning,
     };
-    use std::ffi::OsString;
+    use std::ffi::OsStr;
     use std::path::PathBuf;
     use zentty_core::{TemplateKind, TemplateRestoreFallback};
 
     #[test]
     fn bookmark_path_obeys_xdg_then_home_and_rejects_relative_roots() {
         assert_eq!(
-            default_bookmark_path_from(Some(OsString::from("/xdg")), None).unwrap(),
+            default_bookmark_path_from(Some(OsStr::new("/xdg")), None).unwrap(),
             PathBuf::from("/xdg/zentty/bookmarks.json")
         );
         assert_eq!(
-            default_bookmark_path_from(None, Some(OsString::from("/home/tester"))).unwrap(),
+            default_bookmark_path_from(None, Some(OsStr::new("/home/tester"))).unwrap(),
             PathBuf::from("/home/tester/.config/zentty/bookmarks.json")
         );
-        assert!(default_bookmark_path_from(Some(OsString::from("relative")), None).is_err());
+        assert!(default_bookmark_path_from(Some(OsStr::new("relative")), None).is_err());
     }
 
     #[test]

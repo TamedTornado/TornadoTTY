@@ -41,7 +41,11 @@ case "${backend}" in
     wayland)
         [[ "${ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
             fail "Wayland search must run through linux/tests/nested-wayland-input"
-        command -v wtype >/dev/null || fail "wtype is required for Wayland search"
+        if [[ "${ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT:-}" == 1 ]]; then
+            command -v xdotool >/dev/null || fail "xdotool is required for nested Wayland outer input"
+        else
+            command -v wtype >/dev/null || fail "wtype is required for Wayland search"
+        fi
         command -v wl-paste >/dev/null || fail "wl-paste is required for Wayland clipboard proof"
         command -v wl-copy >/dev/null || fail "wl-copy is required for Wayland clipboard proof"
         ;;
@@ -61,11 +65,17 @@ confirm_before_closing_window = false
 confirm_before_quitting = false
 EOF
 
+uses_xdotool() {
+    [[ "${backend}" == x11 || "${ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT:-}" == 1 ]]
+}
+
 press_ctrl_shift() {
     local key="$1"
     if [[ "${backend}" == x11 ]]; then
         xdotool key --window "${window_id}" "ctrl+shift+${key}"
         xdotool keyup Control_L Control_R Shift_L Shift_R "${key}" 2>/dev/null || true
+    elif uses_xdotool; then
+        xdotool key "ctrl+shift+${key}"
     else
         wtype -M ctrl -M shift -k "${key}" -m shift -m ctrl
     fi
@@ -76,6 +86,8 @@ press_ctrl() {
     if [[ "${backend}" == x11 ]]; then
         xdotool key --window "${window_id}" "ctrl+${key}"
         xdotool keyup Control_L Control_R "${key}" 2>/dev/null || true
+    elif uses_xdotool; then
+        xdotool key "ctrl+${key}"
     else
         wtype -M ctrl -k "${key}" -m ctrl
     fi
@@ -86,6 +98,8 @@ press_ctrl_alt_shift() {
     if [[ "${backend}" == x11 ]]; then
         xdotool key --window "${window_id}" "ctrl+alt+shift+${key}"
         xdotool keyup Control_L Control_R Alt_L Alt_R Shift_L Shift_R "${key}" 2>/dev/null || true
+    elif uses_xdotool; then
+        xdotool key "ctrl+alt+shift+${key}"
     else
         wtype -M ctrl -M alt -M shift -k "${key}" -m shift -m alt -m ctrl
     fi
@@ -95,6 +109,8 @@ press_key() {
     local key="$1"
     if [[ "${backend}" == x11 ]]; then
         xdotool key --window "${window_id}" "${key}"
+    elif uses_xdotool; then
+        xdotool key "${key}"
     else
         wtype -k "${key}"
     fi
@@ -104,6 +120,8 @@ type_text() {
     local value="$1"
     if [[ "${backend}" == x11 ]]; then
         xdotool type --window "${window_id}" --delay 10 "${value}"
+    elif uses_xdotool; then
+        xdotool type --delay 10 "${value}"
     else
         wtype "${value}"
     fi
@@ -113,6 +131,8 @@ clear_text() {
     if [[ "${backend}" == x11 ]]; then
         xdotool key --window "${window_id}" ctrl+a BackSpace
         xdotool keyup Control_L Control_R a BackSpace 2>/dev/null || true
+    elif uses_xdotool; then
+        xdotool key ctrl+a BackSpace
     else
         wtype -M ctrl -k a -m ctrl -k BackSpace
     fi
@@ -187,6 +207,25 @@ assert_standard_clipboard() {
     }
 }
 
+assert_primary_clipboard() {
+    local expected="$1"
+    printf '%s' "${expected}" >"${clipboard_expected}"
+    if [[ "${backend}" == x11 ]]; then
+        xclip -selection primary -out >"${clipboard_actual}"
+    else
+        wl-paste --primary --no-newline >"${clipboard_actual}"
+    fi
+    cmp -s "${clipboard_expected}" "${clipboard_actual}" || {
+        printf 'expected primary clipboard sha256=%s bytes=%s\n' \
+            "$(sha256sum "${clipboard_expected}" | awk '{print $1}')" \
+            "$(wc -c <"${clipboard_expected}")" >&2
+        printf 'actual primary clipboard sha256=%s bytes=%s\n' \
+            "$(sha256sum "${clipboard_actual}" | awk '{print $1}')" \
+            "$(wc -c <"${clipboard_actual}")" >&2
+        fail "external ${backend} primary clipboard bytes differed"
+    }
+}
+
 set_standard_clipboard() {
     local value="$1"
     if [[ "${backend}" == x11 ]]; then
@@ -245,9 +284,15 @@ if [[ "${backend}" == x11 ]]; then
     [[ "${window_id}" =~ ^[1-9][0-9]*$ ]] || fail "real X11 Zentty window did not appear"
     xdotool windowfocus --sync "${window_id}"
 else
-    # Zentty is the only client in the private Weston session and is focused
-    # when its first real terminal reports ready.
-    sleep 0.2
+    if [[ "${ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT:-}" == 1 ]]; then
+        window_id="${ZENTTY_NESTED_WAYLAND_OUTER_X11_WINDOW:?}"
+        xdotool windowfocus --sync "${window_id}"
+        xdotool mousemove --sync --window "${window_id}" 700 350 click 1
+    else
+        # Zentty is the only client in the private Cage session and is focused
+        # when its first real terminal reports ready.
+        sleep 0.2
+    fi
 fi
 
 # Use the source Select All command to create a real Ghostty selection, then
@@ -259,6 +304,14 @@ run_palette_action 'Clean Copy' \
 assert_standard_clipboard 'sentinel-existing-owner'
 run_palette_action 'Select All' \
     'zentty-linux: action=select-all pane=pane-1 binding="select_all"'
+# The dedicated platform-clipboard cells additionally prove that Ghostty owns
+# the terminal selection and GTK projects it onto the platform's primary-
+# selection channel. Cage intentionally lacks that protocol, so unrelated
+# product-search cells must not acquire the clipboard cell's compositor
+# requirement merely because they share this real-product driver.
+if [[ "${ZENTTY_CLIPBOARD_ONLY:-false}" == true ]]; then
+    assert_primary_clipboard 'https://example.com/reset?token=noisegamma&utm_source=mail'
+fi
 run_palette_action 'Copy' 'zentty-linux: action=copy pane=pane-1' 5
 grep -F 'zentty-linux: action=copy pane=pane-1 bytes=' "${log}" | tail -1 |
     grep -Fq 'modified=true' || fail "automatic Copy did not run the configured clean pipeline"
@@ -293,6 +346,11 @@ run_palette_action 'Copy as Markdown' \
 grep -F 'zentty-linux: action=copy-as-markdown pane=pane-1 bytes=' "${log}" | tail -1 |
     grep -Fq 'modified=true' || fail "Copy as Markdown did not reflow selected Markdown"
 assert_standard_clipboard $'## Clipboard Notes\n\nOne wrapped paragraph'
+
+if [[ "${ZENTTY_CLIPBOARD_ONLY:-false}" == true ]]; then
+    echo "Rust platform clipboard passed: ${backend}, standard=external primary=external paste=real-pty"
+    exit 0
+fi
 
 type_text search-corpus
 press_key Return

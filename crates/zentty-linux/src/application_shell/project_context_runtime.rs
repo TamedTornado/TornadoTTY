@@ -9,6 +9,7 @@ use zentty_core::{
     ChecksState, ProjectContext, ProjectIconCache, ProjectIconLookup, PullRequestState,
     SystemProjectContextResolver,
 };
+use zentty_linux::platform::open_uri;
 
 use super::ApplicationShell;
 
@@ -156,17 +157,7 @@ fn launch_validated_url(url: Option<&str>, kind: &'static str) {
     };
     let url = url.to_owned();
     glib::spawn_future_local(async move {
-        let launched = gio::spawn_blocking(move || {
-            std::process::Command::new("xdg-open")
-                .arg(&url)
-                .stdin(std::process::Stdio::null())
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .spawn()
-                .map(|_| url)
-                .map_err(|error| error.to_string())
-        })
-        .await;
+        let launched = gio::spawn_blocking(move || open_uri(&url).map(|()| url)).await;
         match launched {
             Ok(Ok(url)) => eprintln!("zentty-linux: action=open-{kind} url={url} result=launched"),
             Ok(Err(error)) => eprintln!("zentty-linux: action=open-{kind} error={error}"),

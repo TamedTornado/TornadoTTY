@@ -13,6 +13,7 @@ controlled_anthropic="${repo_root}/crates/zentty-test-support/src/bin/controlled
 controlled_openai="${repo_root}/crates/zentty-test-support/src/bin/controlled_openai_responses.rs"
 controlled_gemini="${repo_root}/crates/zentty-test-support/src/bin/controlled_gemini.rs"
 development_server="${repo_root}/crates/zentty-test-support/src/bin/development_server.rs"
+platform_contract_actor="${repo_root}/crates/zentty-test-support/src/bin/platform_contract.rs"
 wayland_input_harness="${repo_root}/linux/tests/nested-wayland-input"
 multi_window_harness="${repo_root}/linux/tests/rust-multi-window"
 failures=0
@@ -73,6 +74,7 @@ require "the reviewed Anthropic endpoint is missing" test -f "${controlled_anthr
 require "the reviewed OpenAI Responses endpoint is missing" test -f "${controlled_openai}"
 require "the reviewed Gemini endpoint is missing" test -f "${controlled_gemini}"
 require "the reviewed real development-server fixture is missing" test -f "${development_server}"
+require "the reviewed Linux platform contract actor is missing" test -f "${platform_contract_actor}"
 require "the controlled input-capable Wayland harness is missing or not executable" \
     test -x "${wayland_input_harness}"
 require "the real multi-window product journey is missing or not executable" \
@@ -114,6 +116,40 @@ require "installed Gemini journey does not consume the reviewed Gemini endpoint"
 require "installed Claude journey does not consume the single controlled actor" \
     grep -Fq 'linux/tests/fixtures/controlled-agent' \
     "${repo_root}/linux/tests/installed-claude-agent-team"
+
+# The four non-GUI/aggregate contracts must remain isolated, while clipboard
+# qualification must keep real compositor, product, Ghostty selection, and PTY
+# boundaries. This rejects a future downgrade to unit-only platform claims.
+# shellcheck disable=SC2016
+require "Linux platform contracts are not pinned to their real isolated and compositor journeys" \
+    jq -e '
+        (.cells[] | select(.id == "platform-xdg-paths-contract") |
+            .status == "PASS" and .environment_profile == "isolated-none-v1" and
+            .command == "target/release-safe/platform_contract xdg") and
+        (.cells[] | select(.id == "platform-open-url-file-contract") |
+            .status == "PASS" and .environment_profile == "isolated-none-v1" and
+            .command == "target/release-safe/platform_contract open") and
+        (.cells[] | select(.id == "platform-process-launch-contract") |
+            .status == "PASS" and .environment_profile == "isolated-none-v1" and
+            (.command | contains("target/release-safe/platform_contract process"))) and
+        (.cells[] | select(.id == "platform-clipboard-x11") |
+            .status == "PASS" and .environment_profile == "nested-x11-v1" and
+            (.command | contains("build/linux/bin/zentty-linux")) and
+            (.command | contains("ZENTTY_CLIPBOARD_ONLY=true")) and
+            (.command | contains("linux/tests/rust-pane-search"))) and
+        (.cells[] | select(.id == "platform-clipboard-wayland") |
+            .status == "PASS" and .environment_profile == "nested-wayland-activation-v1" and
+            (.command | contains("build/linux/bin/zentty-linux")) and
+            (.command | contains("ZENTTY_CLIPBOARD_ONLY=true")) and
+            (.command | contains("linux/tests/rust-pane-search"))) and
+        (.cells[] | select(.id == "platform-settings-contract") |
+            .status == "PASS" and .environment_profile == "isolated-none-v1" and
+            (.depends_on | length) == 19 and
+            (.depends_on | index("agent-settings-runtime-wayland") != null) and
+            (.depends_on | index("platform-notifications-wayland") != null) and
+            (.depends_on | index("open-with-wayland") != null) and
+            (.depends_on | index("development-servers-wayland") != null))
+    ' "${matrix}"
 
 require "Wayland agent qualification does not name the event, tmux, installed Claude, and consolidated restore journeys" \
     jq -e '

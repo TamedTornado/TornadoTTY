@@ -20,6 +20,23 @@ fail() {
     exit 1
 }
 
+wait_for_applied_quiescence() {
+    local previous current stable=0
+    previous="$(grep -Fc 'zentty-linux: config-reload result=applied' "${log}" || true)"
+    for _ in {1..100}; do
+        sleep 0.05
+        current="$(grep -Fc 'zentty-linux: config-reload result=applied' "${log}" || true)"
+        if [[ "${current}" == "${previous}" ]]; then
+            stable=$((stable + 1))
+            [[ "${stable}" -ge 10 ]] && return 0
+        else
+            previous="${current}"
+            stable=0
+        fi
+    done
+    fail "config reload stream did not become quiescent"
+}
+
 cleanup() {
     if [[ "${product_pid}" =~ ^[1-9][0-9]*$ ]]; then
         kill -TERM "${product_pid}" 2>/dev/null || true
@@ -282,6 +299,10 @@ grep -Fq 'winner = "external"' "${config_file}" || fail "product-last update los
 
 # A real external process dies after publishing only a sibling temporary file.
 # The watcher must ignore it and the accepted/final config must remain complete.
+# First prove the preceding accepted transaction has finished emitting. Under
+# a loaded qualification host its final coalesced notification may otherwise
+# arrive after the baseline and be misattributed to the sibling fixture.
+wait_for_applied_quiescence
 applied_before_interruption="$(grep -Fc 'zentty-linux: config-reload result=applied' "${log}" || true)"
 interrupted="${config_file}.external-interrupted"
 set +e

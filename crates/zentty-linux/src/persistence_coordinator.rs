@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
+use zentty_linux::platform::{UserDirectory, resolve_user_path};
 
 use zentty_core::{
     PaneRestoreDraft, PersistenceRequest, SaveReason, SessionRestoreDraftWindow,
@@ -490,12 +491,12 @@ fn window_contains_pane(window: &WindowRecipe, pane_id: &str) -> bool {
 }
 
 pub(crate) fn default_state_directory() -> Result<PathBuf, String> {
-    if let Some(path) = std::env::var_os("XDG_STATE_HOME") {
-        return Ok(PathBuf::from(path).join("zentty"));
-    }
-    std::env::var_os("HOME")
-        .map(|home| PathBuf::from(home).join(".local/state/zentty"))
-        .ok_or_else(|| "neither XDG_STATE_HOME nor HOME is set".to_owned())
+    resolve_user_path(
+        UserDirectory::State,
+        std::env::var_os("XDG_STATE_HOME").as_deref(),
+        std::env::var_os("HOME").as_deref(),
+        Path::new("zentty"),
+    )
 }
 
 #[cfg(test)]

@@ -3,7 +3,6 @@ use std::{
     fs,
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
 };
 
 use gtk::gio;
@@ -13,6 +12,7 @@ use zentty_core::{
     OpenWithLauncher, OpenWithTarget, OpenWithTargetKind, SYSTEM_FILE_MANAGER_ID,
     SYSTEM_TERMINAL_ID,
 };
+use zentty_linux::platform::{ProcessLaunch, spawn_detached};
 
 use super::ApplicationShell;
 
@@ -371,16 +371,7 @@ fn launch(plan: OpenWithLaunchPlan) -> Result<(), String> {
             executable,
             arguments,
         } => {
-            let mut child = Command::new(&executable)
-                .args(&arguments)
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn()
-                .map_err(|error| format!("could not launch {executable}: {error}"))?;
-            std::thread::spawn(move || {
-                let _ = child.wait();
-            });
+            spawn_detached(&ProcessLaunch::detached(&executable, arguments))?;
             Ok(())
         }
     }

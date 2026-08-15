@@ -195,8 +195,8 @@ pub(crate) fn build(
         .and_then(|executable| {
             default_theme_directories(
                 &executable,
-                std::env::var_os("XDG_CONFIG_HOME"),
-                std::env::var_os("HOME"),
+                std::env::var_os("XDG_CONFIG_HOME").as_deref(),
+                std::env::var_os("HOME").as_deref(),
             )
         })
         .map_or_else(

@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
-use std::ffi::OsString;
+use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
+use zentty_linux::platform::{UserDirectory, resolve_user_directory};
 
 const MAX_THEME_BYTES: u64 = 64 * 1024;
 
@@ -190,8 +191,8 @@ fn is_ignored_theme_line(line: &str) -> bool {
 
 pub(crate) fn default_theme_directories(
     executable: &Path,
-    xdg_config_home: Option<OsString>,
-    home: Option<OsString>,
+    xdg_config_home: Option<&OsStr>,
+    home: Option<&OsStr>,
 ) -> Result<(PathBuf, PathBuf), String> {
     let prefix = executable.parent().and_then(Path::parent).ok_or_else(|| {
         format!(
@@ -200,17 +201,8 @@ pub(crate) fn default_theme_directories(
         )
     })?;
     let bundled = prefix.join("share/zentty/ghostty/themes");
-    let user_root = xdg_config_home
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| {
-            home.filter(|value| !value.is_empty())
-                .map(PathBuf::from)
-                .map(|home| home.join(".config"))
-        })
-        .ok_or_else(|| {
-            "could not resolve Ghostty themes: XDG_CONFIG_HOME and HOME are unset".to_owned()
-        })?;
+    let user_root = resolve_user_directory(UserDirectory::Config, xdg_config_home, home)
+        .map_err(|error| format!("could not resolve Ghostty themes: {error}"))?;
     Ok((bundled, user_root.join("ghostty/themes")))
 }
 
@@ -220,6 +212,7 @@ mod tests {
         MAX_THEME_BYTES, ThemeColor, ThemeFilter, default_theme_directories, discover_themes,
         is_eligible_theme_file, is_ignored_theme_line, parse_theme,
     };
+    use std::ffi::OsStr;
     use std::fs;
     use std::path::Path;
 
@@ -325,8 +318,8 @@ mod tests {
     fn resolves_installed_and_xdg_theme_directories() {
         let (bundled, user) = default_theme_directories(
             Path::new("/opt/zentty/bin/zentty-linux"),
-            Some("/xdg".into()),
-            Some("/home/user".into()),
+            Some(OsStr::new("/xdg")),
+            Some(OsStr::new("/home/user")),
         )
         .unwrap();
         assert_eq!(
@@ -337,7 +330,7 @@ mod tests {
         let (_, user) = default_theme_directories(
             Path::new("/opt/zentty/bin/zentty-linux"),
             None,
-            Some("/home/user".into()),
+            Some(OsStr::new("/home/user")),
         )
         .unwrap();
         assert_eq!(user, Path::new("/home/user/.config/ghostty/themes"));

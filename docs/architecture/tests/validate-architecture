@@ -310,10 +310,14 @@ jq -e --arg ghostty_revision "${ghostty_revision}" '
              .optimize == "ReleaseSafe" and .async_backend == "default" and
              .terminals == "multi"
         elif (.capability == "product_boundary" or .capability == "workspace_restore" or
-            .capability == "product_worklanes" or .capability == "platform_clipboard")
+            .capability == "product_worklanes")
         then (.display == "wayland" or .display == "x11") and
              .optimize == "ReleaseSafe" and .async_backend == "default" and
              .terminals == "multi"
+        elif .capability == "platform_clipboard"
+        then (.display == "wayland" or .display == "x11") and
+             .optimize == "ReleaseSafe" and .async_backend == "default" and
+             (.terminals == "single" or .terminals == "multi")
         elif .capability == "architecture_contract"
         then .display == "none" and .optimize == "n/a" and
              .async_backend == "n/a" and .terminals == "n/a"
@@ -328,7 +332,7 @@ jq -e --arg ghostty_revision "${ghostty_revision}" '
         then if .display == "none"
              then .optimize == "Debug" and .async_backend == "n/a" and
                   .terminals == "n/a"
-             else (.display == "x11" or .display == "wayland") and
+             else (.display == "x11" or .display == "wayland" or .display == "both") and
                   .optimize == "ReleaseSafe" and .async_backend == "default" and
                   (.terminals == "single" or .terminals == "multi")
              end

@@ -12,6 +12,7 @@ run_root="$(mktemp -d)"
 project="${run_root}/project"
 state_directory="${run_root}/state"
 fixture_bin="${run_root}/bin"
+fixture_data="${run_root}/data"
 forge_receipt="${run_root}/forge.receipt"
 forge_body="${run_root}/forge.body"
 open_receipt="${run_root}/open.receipt"
@@ -65,7 +66,8 @@ layer_runpath="$(
 [[ "${layer_runpath}" == .zig-cache/* ]] || fail "Ghostty runpath is not pinned"
 layer_directory="${ghostty_root}/${layer_runpath}"
 
-mkdir -p "${project}/nested/deep" "${state_directory}" "${fixture_bin}"
+mkdir -p "${project}/nested/deep" "${state_directory}" "${fixture_bin}" \
+    "${fixture_data}/applications"
 git -C "${project}" init -b feature/review-context >/dev/null
 git -C "${project}" config user.email test@zentty.invalid
 git -C "${project}" config user.name 'Zentty Integration'
@@ -92,18 +94,32 @@ printf '%s\n' "$*" >"${ZENTTY_GH_RECEIPT}"
 curl --fail --silent --show-error "${ZENTTY_FORGE_URL}" >"${ZENTTY_FORGE_BODY}"
 printf '%s\n' '{"number":42,"url":"http://127.0.0.1:41777/acme/rocket/pull/42","isDraft":false,"state":"OPEN","reviewDecision":"APPROVED","mergeable":"CONFLICTING","statusCheckRollup":[{"status":"IN_PROGRESS"},{"status":"COMPLETED","conclusion":"FAILURE"}]}'
 EOF
-cat >"${fixture_bin}/xdg-open" <<'EOF'
+cat >"${fixture_bin}/zentty-open-receipt" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 [[ "$#" == 1 ]]
 printf '%s\n' "$1" >>"${ZENTTY_OPEN_RECEIPT}"
 EOF
-chmod 700 "${fixture_bin}/gh" "${fixture_bin}/xdg-open"
+cat >"${fixture_data}/applications/zentty-open-receipt.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Zentty Open Receipt
+Exec=${fixture_bin}/zentty-open-receipt %u
+Terminal=false
+MimeType=x-scheme-handler/http;x-scheme-handler/https;
+EOF
+cat >"${fixture_data}/applications/mimeapps.list" <<'EOF'
+[Default Applications]
+x-scheme-handler/http=zentty-open-receipt.desktop
+x-scheme-handler/https=zentty-open-receipt.desktop
+EOF
+chmod 700 "${fixture_bin}/gh" "${fixture_bin}/zentty-open-receipt"
 
 (
     cd "${project}/nested/deep"
     exec env \
         PATH="${fixture_bin}:${PATH}" \
+        XDG_DATA_HOME="${fixture_data}" \
         ZENTTY_FORGE_URL="${forge_url}" \
         ZENTTY_FORGE_BODY="${forge_body}" \
         ZENTTY_GH_RECEIPT="${gh_receipt}" \
