@@ -106,7 +106,11 @@ fn run() -> Result<(), String> {
 fn run_product_cli(command: CliProductCommand) -> Result<(), String> {
     match command {
         CliProductCommand::Version => {
-            println!("zentty {}", env!("CARGO_PKG_VERSION"));
+            println!(
+                "zentty {} ({})",
+                env!("CARGO_PKG_VERSION"),
+                option_env!("ZENTTY_BUILD_COMMIT").unwrap_or("unknown")
+            );
             Ok(())
         }
         CliProductCommand::ListColors => {

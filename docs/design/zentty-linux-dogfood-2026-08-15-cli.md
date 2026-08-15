@@ -186,3 +186,40 @@ sleep inhibitor, window chrome, and one oversized workspace test. This slice
 does not hide those findings or turn that existing absence into a clean lint
 claim. The post-decomposition staged X11 and Wayland journeys both passed
 again, so the structural repair did not replace the real-system receipt.
+
+The source declares `pane zoom` as “Toggle zoomed-out pane view,” but its
+current pane IPC handler has no matching `zoom` case. Linux already owns the
+source-derived worklane peek UI, so the public command now toggles that single
+existing view instead of creating another zoom system. The first real actor
+run caught an important semantic mistake: selecting the command's routing pane
+before opening peek stole focus from the pane created by the preceding split.
+Zoom is a view toggle, not a focus command. The selector remains authenticated
+and existence-checked by the common router, while open/cancel now preserves the
+current selection. The corrected staged actor proves open and cancel through
+the real overlay lifecycle on X11 and Wayland.
+
+The source version command prints both application version and build commit;
+Linux previously omitted the commit entirely. Staged builds now inject a
+validated 12-hex Zentty revision, record the same revision beside the pinned
+Ghostty revision in build metadata, and rebuild the CLI whenever that injected
+value changes. Direct Cargo builds deliberately report `unknown` rather than
+fabricating provenance. Both controlled display actors require the staged
+binary's exact `zentty VERSION (COMMIT)` shape.
+
+The prior notification receipt stopped at product logs and explicitly left
+real D-Bus delivery open. The existing notification-settings actor—not a new
+parallel harness—now has its real pane publish the staged socket, capability,
+and CLI path. A separate staged CLI process sends a multiline silent
+notification over that socket while the actor's private freedesktop daemon and
+`dbus-monitor` verify the title, combined subtitle/body payload, and
+`suppress-sound` hint. The enhanced actor passed under controlled X11 and
+controlled Wayland. The first manual invocation put `dbus-run-session` outside
+the nested-display wrapper, whose isolation correctly removed the ambient bus;
+that environmental absence failed rather than passing. Reversing the order to
+match the qualification runner produced the two valid receipts.
+
+The first ownership-contract rerun rejected `toggle_product_zoom` because the
+new shell method had not been added to the authoritative responsibility
+inventory. The inventory now names it under the existing application-shell
+owner, and the contract plus its negative self-tests pass. No second zoom or
+peek coordinator was introduced.

@@ -280,7 +280,7 @@
         "new", "initialize_shell_coordinators", "window", "sidebar_container", "present", "detach_and_close",
         "has_worklane", "extract_live_pane_to_new_window",
         "rollback_live_pane_window_transfer", "adopt_live_pane_window_transfer",
-        "move_active_worklane", "move_worklane", "render", "take_pane_id", "take_worklane_id",
+        "move_active_worklane", "move_worklane", "render", "take_pane_id", "take_worklane_id", "toggle_product_zoom",
         "topology_receipt", "geometry_receipt", "focus_terminal_after_present", "sidebar_summaries"
       ]
     },

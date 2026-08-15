@@ -108,6 +108,7 @@ instance_runtime="$(dirname -- "${ZENTTY_INSTANCE_SOCKET}")"
 [[ -f "${ZENTTY_SHELL_INTEGRATION_DIR}/fish/vendor_conf.d/zentty-shell-integration.fish" ]]
 [[ -f "${ZENTTY_SHELL_INTEGRATION_DIR}/nushell/vendor/autoload/zentty.nu" ]]
 [[ "${PROMPT_COMMAND}" == '. "$ZENTTY_SHELL_INTEGRATION_DIR/zentty-bash-integration.bash"' ]]
+[[ "$("${ZENTTY_CLI_BIN}" version)" =~ ^zentty\ [0-9]+\.[0-9]+\.[0-9]+\ \([0-9a-f]{12}\)$ ]]
 umask 077
 printf 'socket=%s\ntoken=%s\ncli=%s\n' \
     "${ZENTTY_INSTANCE_SOCKET}" "${ZENTTY_PANE_TOKEN}" "${ZENTTY_CLI_BIN}" \
@@ -226,6 +227,8 @@ ${ZENTTY_CLI_BIN} worklane rename "CLI source lane"
 ${ZENTTY_CLI_BIN} worklane color blue
 ${ZENTTY_CLI_BIN} split right --equal
 [[ "$(${ZENTTY_CLI_BIN} theme dark)" == dark ]]
+${ZENTTY_CLI_BIN} pane zoom
+${ZENTTY_CLI_BIN} pane zoom
 ${ZENTTY_CLI_BIN} notify --title "CLI ready" --subtitle "Review" \
     --body $'Line one\nline two' --silent
 ${ZENTTY_CLI_BIN} notify --title "Ephemeral" --no-inbox --silent
@@ -492,6 +495,10 @@ grep -Eq 'zentty-linux: cli-pane-resize pane=pane-[0-9]+ percentage=60 width=[0-
     fail "public CLI percentage resize did not mutate the authenticated real pane"
 grep -Eq 'zentty-linux: cli-split-layout direction=down mode=ratio-65 changed=true' "${log}" ||
     fail "public CLI vertical split ratio did not apply to the real pane weights"
+grep -Fxq 'zentty-linux: worklane-peek=open trigger=cli' "${log}" ||
+    fail "public CLI zoom did not open the real zoomed-out pane view"
+grep -Fxq 'zentty-linux: worklane-peek=cancel' "${log}" ||
+    fail "second public CLI zoom did not restore the normal pane view"
 grep -Eq 'zentty-linux: cli-notification inbox=true pane=pane-1 title-bytes=9 body-bytes=24' "${log}" ||
     fail "public CLI pane notification did not enter the one shared inbox"
 grep -Eq 'zentty-linux: cli-notification inbox=false pane=pane-1 title-bytes=9 body-bytes=0' "${log}" ||

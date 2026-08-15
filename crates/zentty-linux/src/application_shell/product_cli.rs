@@ -89,13 +89,7 @@ impl ApplicationShell {
                 }
                 apply_grid(shell, request.arguments())?;
             }
-            "zoom" => {
-                return Err((
-                    "source_unavailable",
-                    "the source CLI declares pane zoom but its product handler does not implement it"
-                        .to_owned(),
-                ));
-            }
+            "zoom" => Self::toggle_product_zoom(shell),
             value => {
                 return Err((
                     "unsupported_command",

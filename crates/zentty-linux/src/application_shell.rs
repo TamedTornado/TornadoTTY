@@ -1395,10 +1395,10 @@ impl ApplicationShell {
         {
             return;
         }
-        Self::open_peek(shell);
+        Self::open_peek(shell, "tab-hold");
     }
 
-    fn open_peek(shell: &Rc<RefCell<Self>>) {
+    fn open_peek(shell: &Rc<RefCell<Self>>, trigger: &str) {
         if matches!(shell.borrow().peek_phase, PeekPhase::Peeking { .. }) {
             return;
         }
@@ -1412,8 +1412,16 @@ impl ApplicationShell {
             current: origin,
             traversal,
         };
-        eprintln!("zentty-linux: worklane-peek=open trigger=tab-hold");
+        eprintln!("zentty-linux: worklane-peek=open trigger={trigger}");
         Self::refresh_peek_view(shell);
+    }
+
+    fn toggle_product_zoom(shell: &Rc<RefCell<Self>>) {
+        if shell.borrow().peek_phase.is_active() {
+            Self::cancel_peek(shell);
+            return;
+        }
+        Self::open_peek(shell, "cli");
     }
 
     fn commit_peek(shell: &Rc<RefCell<Self>>) {

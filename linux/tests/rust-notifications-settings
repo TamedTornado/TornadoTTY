@@ -8,6 +8,8 @@ backend="${GDK_BACKEND:-}"
 run_root="$(mktemp -d)"
 state_directory="${run_root}/state"
 receipt="${run_root}/notifications.receipt"
+cli_receipt="${run_root}/cli-endpoint.receipt"
+cli_child="${run_root}/cli-child"
 audio_fixture="${run_root}/Friendly notification.wav"
 alsa_config="${run_root}/asound.conf"
 daemon_log="${run_root}/notification-daemon.log"
@@ -85,6 +87,16 @@ pcm.zentty_dynamic { type null }
 EOF
 export ALSA_CONFIG_PATH="${alsa_config}"
 export ZENTTY_AUDIO_DEVICE=zentty_dynamic
+cat >"${cli_child}" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+umask 077
+printf 'socket=%s\ntoken=%s\ncli=%s\n' \
+    "${ZENTTY_INSTANCE_SOCKET}" "${ZENTTY_PANE_TOKEN}" "${ZENTTY_CLI_BIN}" \
+    >"${ZENTTY_NOTIFICATION_CLI_RECEIPT}"
+exec sleep 120
+EOF
+chmod 0700 "${cli_child}"
 
 layer_runpath="$(
     readelf -d "${ghostty_root}/zig-out/lib/libghostty-gtk-embed.so" |
@@ -126,16 +138,20 @@ sleep 0.05
 start_product() {
     launch_count=$((launch_count + 1))
     log="${run_root}/product-${launch_count}.log"
+    rm -f -- "${cli_receipt}"
     GDK_SCALE=1 \
     GDK_DPI_SCALE=1 \
+    ZENTTY_NOTIFICATION_CLI_RECEIPT="${cli_receipt}" \
     LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
         "${product}" \
-        --command 'sleep 120' \
+        --command "${cli_child}" \
         --state-directory "${state_directory}" \
         --no-session-restore >"${log}" 2>&1 &
     product_pid=$!
     zentty_product_prepare_input "${backend}" "${log}" ||
         fail "physical product input was unavailable"
+    for _ in {1..100}; do [[ -s "${cli_receipt}" ]] && break; sleep 0.02; done
+    [[ -s "${cli_receipt}" ]] || fail "real pane did not publish its staged CLI endpoint"
 }
 
 stop_product() {
@@ -221,6 +237,29 @@ grep -Fq 'string "Zentty"' "${receipt}" ||
 grep -Fq 'string "This is a test notification."' "${receipt}" ||
     fail "D-Bus monitor did not receive the source test body"
 
+cli_socket="$(sed -n 's/^socket=//p' "${cli_receipt}")"
+cli_token="$(sed -n 's/^token=//p' "${cli_receipt}")"
+cli_binary="$(sed -n 's/^cli=//p' "${cli_receipt}")"
+[[ "${cli_socket}" == /* && "${cli_token}" =~ ^[0-9a-f]{64}$ && -x "${cli_binary}" ]] ||
+    fail "real pane published an invalid CLI endpoint"
+env ZENTTY_INSTANCE_SOCKET="${cli_socket}" ZENTTY_PANE_TOKEN="${cli_token}" \
+    "${cli_binary}" notify --title 'CLI D-Bus title' --subtitle 'CLI subtitle' \
+    --body $'CLI body one\nCLI body two' --silent
+zentty_product_wait_for_log "${log}" \
+    'cli-notification desktop=sent service-id=2 pane=pane-1 silent=true' \
+    "public CLI notification did not reach the freedesktop service" ||
+    fail "public CLI notification delivery failed"
+for _ in {1..100}; do
+    grep -Fq 'string "CLI D-Bus title"' "${receipt}" && break
+    sleep 0.02
+done
+grep -Fq 'string "CLI D-Bus title"' "${receipt}" ||
+    fail "D-Bus monitor did not receive the public CLI title"
+grep -Fq 'string "CLI subtitle' "${receipt}" ||
+    fail "D-Bus monitor did not receive the public CLI subtitle/body payload"
+grep -Fq 'string "suppress-sound"' "${receipt}" ||
+    fail "silent public CLI notification lacked the suppress-sound hint"
+
 # Import through the staged GTK page and the native chooser. The installed
 # preview crosses the real aplay/ALSA null-device boundary rather than a mock.
 if [[ "${backend}" == wayland ]]; then
@@ -284,7 +323,7 @@ grep -Fq 'custom_sound_display_name = "Friendly notification.wav"' "${config}" |
     fail "custom sound display name did not persist"
 
 settings_key alt+t
-zentty_product_wait_for_log "${log}" 'notification-settings action=send-test result=sent id=2' \
+zentty_product_wait_for_log "${log}" 'notification-settings action=send-test result=sent id=3' \
     "custom sound notification did not reach the real service" || fail "custom notification failed"
 for _ in {1..100}; do
     grep -Fq "${custom_file}" "${receipt}" && break
