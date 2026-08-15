@@ -825,7 +825,7 @@
       "async_backend": "n/a",
       "terminals": "n/a",
       "tracking": "GH-20",
-      "defect": "GH-36 and the page-owned GH-37/GH-38/GH-40/GH-41 settings scopes, fleet presentation, and agent sleep inhibition are implemented and qualified through explicit matrix cells. The aggregate settings contract remains incomplete because the Agents page accurately exposes, but does not fabricate, runtime capabilities owned elsewhere: persistent and remaining ephemeral integration authorities are tracked by GH-7, while optional status-item presentation remains tracked by GH-21. That unavailable control is preserved and tested, not converted into a platform pass.",
+      "defect": "GH-36 and the page-owned GH-37/GH-38/GH-40/GH-41 settings scopes, fleet presentation, agent sleep inhibition, and optional status-item behavior are implemented and qualified through explicit matrix cells. The aggregate settings contract remains incomplete because the Agents page accurately exposes, but does not fabricate, persistent and remaining ephemeral integration authorities owned by GH-7. Unavailable runtime capabilities are preserved and tested, not converted into a platform pass.",
       "authoritative": false
     },
     {

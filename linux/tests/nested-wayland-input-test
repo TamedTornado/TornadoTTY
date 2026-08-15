@@ -70,7 +70,31 @@ jq -e '
     (.server.protocols | index("wl_seat") != null) and
     .renderer == {software:true,name:"Pixman",proof:"Using Pixman renderer"}
 ' "${report}" >/dev/null || fail "Weston capability proof is incomplete"
+
+started_at="$(date +%s)"
+# Labwc is the activation-capable profile: unlike the older Cage and Weston
+# packages on this baseline, it advertises xdg-activation-v1 and receives
+# timestamped input through its private nested X11 seat.
+# shellcheck disable=SC2016
+labwc_child='test "${GDK_BACKEND:-}" = wayland && test "${ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT:-}" = 1 && test "${ZENTTY_NESTED_WAYLAND_OUTER_X11_WINDOW:-}" -gt 0 && wayland-info | grep -F xdg_activation_v1 >/dev/null && xdotool windowfocus --sync "${ZENTTY_NESTED_WAYLAND_OUTER_X11_WINDOW}"'
+ZENTTY_NESTED_WAYLAND_INPUT_COMPOSITOR=labwc \
+    ZENTTY_NESTED_WAYLAND_INPUT_REPORT="${report}" \
+    "${harness}" bash -c "${labwc_child}" >"${output}" 2>&1 ||
+    fail "real labwc activation-capable input environment failed"
+grep -Fxq \
+    'nested-wayland-input: READY private-labwc-x11-nested backend=wayland software-renderer=1 outer-x11-input=1 xdg-activation=1' \
+    "${output}" || fail "labwc readiness receipt is missing"
+expected_command="$(jq -cn --arg child "${labwc_child}" '["bash","-c",$child]')"
+zentty_controlled_environment_validate_report \
+    "${report}" "${harness}" wayland 0 "${expected_command}" "${started_at}" 900 \
+    >/dev/null || fail "machine-readable labwc receipt was rejected"
+jq -e '
+    .server.name == "labwc" and .server.backend == "x11-nested" and
+    (.server.protocols | index("xdg_activation_v1") != null) and
+    (.server.protocols | index("wl_seat") != null) and
+    .renderer == {software:true,name:"Pixman",proof:"WLR_RENDERER=pixman"}
+' "${report}" >/dev/null || fail "labwc activation capability proof is incomplete"
 after_roots="$(find /tmp -maxdepth 1 -type d -name 'zwi.*' -printf '%f\n' | sort)"
 [[ "${after_roots}" == "${before_roots}" ]] || fail "controlled runtime root leaked"
 
-echo "Nested Wayland input tests passed: Cage/Weston, Xvfb transport, Pixman, virtual keyboard/outer input, isolation, cleanup"
+echo "Nested Wayland input tests passed: Cage/Weston/labwc, Xvfb transport, Pixman, virtual keyboard/outer input, xdg activation, isolation, cleanup"

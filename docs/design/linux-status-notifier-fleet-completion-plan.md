@@ -59,7 +59,9 @@ the universal fallback and must not disappear when the desktop has no watcher
 - Disabled setting, missing watcher, watcher loss, and app shutdown are explicit
   and leak no bus object or stale registration.
 - Malformed/stale targets are rejected by the canonical action boundary.
-- X11 and Wayland controlled journeys pass, except for the already-declared
-  exact cross-toplevel activation-token XFAIL.
+- X11 and Wayland controlled journeys pass. Cross-toplevel Wayland routing
+  must retain the triggering physical event, obtain a standard single-use
+  activation credential, and prove input reaches the exact destination PTY in
+  a controlled compositor that advertises `xdg-activation-v1`.
 - `desktop.fleet-status` becomes `IMPLEMENTED` only after all presently
   executable qualification cells pass.

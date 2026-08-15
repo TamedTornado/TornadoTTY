@@ -3,17 +3,23 @@ set -euo pipefail
 
 readonly compositor="${ZENTTY_NESTED_WAYLAND_INPUT_COMPOSITOR:-cage}"
 case "${compositor}" in
-    cage | weston) ;;
+    cage | labwc | weston) ;;
     *)
         echo "nested-wayland-input: error: unsupported compositor: ${compositor}" >&2
         exit 64
         ;;
 esac
-if [[ "${compositor}" == cage ]]; then
-    readonly ready_marker="nested-wayland-input: READY private-cage-x11-nested backend=wayland software-renderer=1 virtual-keyboard=1"
-else
-    readonly ready_marker="nested-wayland-input: READY private-weston-x11-nested backend=wayland software-renderer=1 outer-x11-input=1"
-fi
+case "${compositor}" in
+    cage)
+        readonly ready_marker="nested-wayland-input: READY private-cage-x11-nested backend=wayland software-renderer=1 virtual-keyboard=1"
+        ;;
+    labwc)
+        readonly ready_marker="nested-wayland-input: READY private-labwc-x11-nested backend=wayland software-renderer=1 outer-x11-input=1 xdg-activation=1"
+        ;;
+    weston)
+        readonly ready_marker="nested-wayland-input: READY private-weston-x11-nested backend=wayland software-renderer=1 outer-x11-input=1"
+        ;;
+esac
 wrapper_path="$(readlink -f -- "${BASH_SOURCE[0]}")"
 readonly wrapper_path
 wrapper_sha256="$(sha256sum "${wrapper_path}" | awk '{print $1}')"
@@ -96,7 +102,7 @@ if [[ "${1:-}" == --private-wayland-input-inner ]]; then
             ZENTTY_CAGE_APP_PID="${cage_app_pid_file}" \
             cage -s -- sh -c 'printf "%s\n" "$$" >"${ZENTTY_CAGE_APP_PID}"; exec sleep 86400' \
             >"${compositor_log}" 2>&1 &
-    else
+    elif [[ "${compositor}" == weston ]]; then
         setsid weston \
             --backend=x11 \
             --renderer=pixman \
@@ -107,6 +113,13 @@ if [[ "${1:-}" == --private-wayland-input-inner ]]; then
             --idle-time=0 \
             --no-config \
             --log="${compositor_log}" &
+    else
+        mkdir -p "${run_root}/labwc-config"
+        setsid env \
+            WLR_BACKENDS=x11 \
+            WLR_RENDERER=pixman \
+            labwc --config-dir "${run_root}/labwc-config" \
+            >"${compositor_log}" 2>&1 &
     fi
     compositor_pid=$!
 
@@ -135,6 +148,7 @@ if [[ "${1:-}" == --private-wayland-input-inner ]]; then
         required_protocols+=(zwp_virtual_keyboard_manager_v1)
     else
         required_protocols+=(wl_data_device_manager wl_seat)
+        [[ "${compositor}" != labwc ]] || required_protocols+=(xdg_activation_v1)
     fi
     for protocol in "${required_protocols[@]}"; do
         grep -Fx "${protocol}" <<<"${protocols}" >/dev/null ||
@@ -146,11 +160,11 @@ if [[ "${1:-}" == --private-wayland-input-inner ]]; then
     [[ "${width}" =~ ^[1-9][0-9]*$ && "${height}" =~ ^[1-9][0-9]*$ &&
         "${scale}" =~ ^[1-9][0-9]*$ ]] || fail "Cage output facts were incomplete"
     protocols_json="$(jq -Rn '[inputs | select(length > 0)] | sort' <<<"${protocols}")"
-    if [[ "${compositor}" == cage ]]; then
-        compositor_name="Cage"
-    else
-        compositor_name="Weston"
-    fi
+    case "${compositor}" in
+        cage) compositor_name="Cage" ;;
+        labwc) compositor_name="labwc" ;;
+        weston) compositor_name="Weston" ;;
+    esac
     jq -n \
         --arg endpoint "${socket_name}" \
         --arg name "${compositor_name}" \
@@ -165,8 +179,14 @@ if [[ "${1:-}" == --private-wayland-input-inner ]]; then
 
     printf '%s\n' "${ready_marker}"
     printf 'nested-wayland-input: SESSION %s\n' "${ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID}"
-    if [[ "${compositor}" == weston ]]; then
+    if [[ "${compositor}" != cage ]]; then
         export ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT=1
+        export ZENTTY_NESTED_WAYLAND_OUTER_X11_PID="${compositor_pid}"
+        export ZENTTY_NESTED_WAYLAND_OUTER_X11_WINDOW="$({
+            xdotool search --onlyvisible --name '.*' 2>/dev/null || true
+        } | tail -1)"
+        [[ "${ZENTTY_NESTED_WAYLAND_OUTER_X11_WINDOW}" =~ ^[1-9][0-9]*$ ]] ||
+            fail "${compositor} outer X11 window identity was unavailable"
     fi
     set +e
     "$@"
@@ -193,9 +213,14 @@ if [[ "${compositor}" == cage ]]; then
         echo "nested-wayland-input: SKIP missing Cage input dependency" >&2
         exit 77
     fi
-else
+elif [[ "${compositor}" == weston ]]; then
     if ! command -v weston >/dev/null || ! command -v xdotool >/dev/null; then
         echo "nested-wayland-input: SKIP missing Weston input dependency" >&2
+        exit 77
+    fi
+else
+    if ! command -v labwc >/dev/null || ! command -v xdotool >/dev/null; then
+        echo "nested-wayland-input: SKIP missing labwc input dependency" >&2
         exit 77
     fi
 fi
@@ -211,11 +236,11 @@ report="${ZENTTY_NESTED_WAYLAND_INPUT_REPORT:-}"
 run_root="$(mktemp -d /tmp/zwi.XXXXXX)"
 started_at_epoch="$(date +%s)"
 session_id="$(printf '%s\n' "${run_root}" "${started_at_epoch}" "$$" | sha256sum | awk '{print $1}')"
-if [[ "${compositor}" == cage ]]; then
-    compositor_version="$(cage -v 2>&1 | sed -n 's/^Cage version //p')"
-else
-    compositor_version="$(weston --version | sed -n 's/^weston[[:space:]]\+//p')"
-fi
+case "${compositor}" in
+    cage) compositor_version="$(cage -v 2>&1 | sed -n 's/^Cage version //p')" ;;
+    labwc) compositor_version="$(labwc --version 2>&1 | sed -n 's/^labwc[[:space:]]\+//p')" ;;
+    weston) compositor_version="$(weston --version | sed -n 's/^weston[[:space:]]\+//p')" ;;
+esac
 [[ -n "${compositor_version}" ]] || fail "${compositor} version could not be identified"
 session_pid=""
 # ShellCheck cannot see that this function is invoked by the EXIT/signal traps.
@@ -254,7 +279,7 @@ facts=""
 if [[ -n "${report}" && -n "${facts}" ]]; then
     finished_at_epoch="$(date +%s)"
     command_json="$(printf '%s\0' "$@" | jq -Rs 'split("\u0000")[:-1]')"
-    if [[ "${compositor}" == cage ]]; then
+    if [[ "${compositor}" == cage || "${compositor}" == labwc ]]; then
         renderer_proof="WLR_RENDERER=pixman"
     else
         renderer_proof="Using Pixman renderer"

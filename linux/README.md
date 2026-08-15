@@ -182,6 +182,11 @@ cell declares exactly one closed environment profile:
   keyboard-capable Wayland seat and `zwp_virtual_keyboard_manager_v1`; it is
   reserved for physical Wayland-input cells and is not described as native
   Wayland or as the Weston Valgrind environment.
+- `nested-wayland-activation-v1` uses labwc/wlroots with Pixman on the private
+  Xvfb transport. Its real nested X11 seat supplies nonzero physical-event
+  timestamps and it must advertise `xdg-activation-v1`; this profile owns
+  cross-toplevel focus-transfer qualification rather than treating a
+  compositor without the protocol as a passing environment.
 - `phase-managed-x11-v1` and `phase-managed-wayland-v1` are reserved for tests
   such as Valgrind whose raw and suppression-enabled phases must own distinct
   controlled sessions. Controlled input/resize tests that already own Xvfb use

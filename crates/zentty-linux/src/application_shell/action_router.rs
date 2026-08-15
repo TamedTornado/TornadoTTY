@@ -623,9 +623,13 @@ fn install_fleet_actions(shell: &Rc<RefCell<ApplicationShell>>, group: &gio::Sim
         let (Some(shell), Some(target)) = (weak.upgrade(), fleet_target(parameter)) else {
             return;
         };
+        let activation = shell.borrow().take_window_activation();
         shell
             .borrow()
-            .request_application_action(super::ApplicationAction::ActivateFleetPane(target));
+            .request_application_action(super::ApplicationAction::ActivateFleetPane {
+                target,
+                activation,
+            });
     });
     group.add_action(&activate);
 

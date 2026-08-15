@@ -95,15 +95,25 @@ zentty_product_prepare_input() {
                 }
                 ZENTTY_PRODUCT_WINDOW_ID=""
                 for _ in {1..200}; do
-                    ZENTTY_PRODUCT_WINDOW_ID="$(
-                        xdotool search --onlyvisible --class '^Weston Compositor$' \
-                            2>/dev/null | head -1 || true
-                    )"
+                    if [[ "${ZENTTY_NESTED_WAYLAND_OUTER_X11_WINDOW:-}" =~ ^[1-9][0-9]*$ ]]; then
+                        ZENTTY_PRODUCT_WINDOW_ID="${ZENTTY_NESTED_WAYLAND_OUTER_X11_WINDOW}"
+                    elif [[ "${ZENTTY_NESTED_WAYLAND_OUTER_X11_PID:-}" =~ ^[1-9][0-9]*$ ]]; then
+                        ZENTTY_PRODUCT_WINDOW_ID="$(
+                            xdotool search --onlyvisible \
+                                --pid "${ZENTTY_NESTED_WAYLAND_OUTER_X11_PID}" \
+                                2>/dev/null | head -1 || true
+                        )"
+                    else
+                        ZENTTY_PRODUCT_WINDOW_ID="$(
+                            xdotool search --onlyvisible --class '^Weston Compositor$' \
+                                2>/dev/null | head -1 || true
+                        )"
+                    fi
                     [[ "${ZENTTY_PRODUCT_WINDOW_ID}" =~ ^[1-9][0-9]*$ ]] && break
                     sleep 0.05
                 done
                 [[ "${ZENTTY_PRODUCT_WINDOW_ID}" =~ ^[1-9][0-9]*$ ]] || {
-                    echo "product-input: outer Weston window did not appear" >&2
+                    echo "product-input: outer Wayland compositor window did not appear" >&2
                     return 1
                 }
                 xdotool windowfocus --sync "${ZENTTY_PRODUCT_WINDOW_ID}"

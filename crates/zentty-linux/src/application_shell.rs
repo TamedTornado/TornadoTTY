@@ -119,11 +119,42 @@ pub(crate) struct ApplicationRuntimes {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum ApplicationAction {
     ActivateAttention(zentty_core::AttentionTarget),
-    ActivateFleetPane(zentty_core::AttentionTarget),
+    ActivateFleetPane {
+        target: zentty_core::AttentionTarget,
+        activation: WindowActivation,
+    },
     DismissAttention(u64),
     ClearAttention,
     AgentCaffeinationChanged(bool),
     StatusNotifierChanged(bool),
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct WindowActivation {
+    pub(crate) event_time: Option<u32>,
+    pub(crate) startup_id: Option<String>,
+}
+
+#[derive(Default)]
+struct UserActivationClock(Cell<u32>);
+
+impl UserActivationClock {
+    fn record(&self, event_time: u32) {
+        if event_time != gdk::CURRENT_TIME {
+            self.0.set(event_time);
+        }
+    }
+
+    fn take(&self) -> Option<u32> {
+        let event_time = self.0.replace(gdk::CURRENT_TIME);
+        (event_time != gdk::CURRENT_TIME).then_some(event_time)
+    }
+
+    fn discard_if_current(&self, event_time: u32) {
+        if self.0.get() == event_time {
+            self.0.set(gdk::CURRENT_TIME);
+        }
+    }
 }
 
 pub(crate) struct ApplicationShell {
@@ -173,6 +204,7 @@ pub(crate) struct ApplicationShell {
     action_router: Option<ActionRouter>,
     shortcut_manager: Rc<RefCell<zentty_core::ShortcutManager>>,
     shortcut_controller: Option<gtk::EventControllerKey>,
+    user_activation_clock: Rc<UserActivationClock>,
     shortcut_settings_window: Option<crate::shortcut_settings::SettingsWindow>,
     agent_events: AgentEventCoordinator,
     attention_inbox: Rc<RefCell<zentty_core::AttentionInbox>>,
@@ -258,6 +290,7 @@ fn finish_shell_setup(
     deferred_live_pane_id: Option<&str>,
 ) -> Result<(), String> {
     initialize_shell_coordinators(shell);
+    ApplicationShell::install_user_activation_tracking(shell);
     install_sidebar_width_tracking(
         body,
         &shell.borrow().sidebar_scroll,
@@ -398,6 +431,7 @@ impl ApplicationShell {
                 &runtimes.config.shortcuts,
             )?)),
             shortcut_controller: None,
+            user_activation_clock: Rc::new(UserActivationClock::default()),
             shortcut_settings_window: None,
             agent_events,
             attention_inbox: Rc::clone(&runtimes.attention_inbox),
@@ -638,9 +672,31 @@ impl ApplicationShell {
         }
     }
 
+    fn take_window_activation(&self) -> WindowActivation {
+        let event_time = self.user_activation_clock.take();
+        let startup_id = event_time.and_then(|event_time| {
+            let context = gtk::prelude::WidgetExt::display(&self.window).app_launch_context();
+            context.set_timestamp(event_time);
+            let app_info = gtk::gio::AppInfo::create_from_commandline(
+                "zentty",
+                Some("Zentty"),
+                gtk::gio::AppInfoCreateFlags::SUPPORTS_STARTUP_NOTIFICATION,
+            )
+            .ok()?;
+            context
+                .startup_notify_id(Some(&app_info), &[])
+                .map(|value| value.to_string())
+        });
+        WindowActivation {
+            event_time,
+            startup_id,
+        }
+    }
+
     pub(crate) fn activate_attention_target(
         &mut self,
         target: &zentty_core::AttentionTarget,
+        activation: Option<&WindowActivation>,
     ) -> bool {
         if self.window_template.id != target.window_id
             || !self
@@ -651,7 +707,20 @@ impl ApplicationShell {
         }
         self.chrome.dismiss_status_popovers();
         self.render();
-        self.window.present();
+        if let Some(startup_id) = activation.and_then(|value| value.startup_id.as_deref()) {
+            self.window.set_startup_id(startup_id);
+            self.window.present();
+        } else if let Some(event_time) = activation.and_then(|value| value.event_time) {
+            if let Some(toplevel) = self
+                .window
+                .surface()
+                .and_then(|surface| surface.downcast::<gdk::Toplevel>().ok())
+            {
+                toplevel.focus(event_time);
+            }
+        } else {
+            self.window.present();
+        }
         self.focus_selected_surface();
         true
     }
@@ -1183,6 +1252,35 @@ impl ApplicationShell {
         });
         Self::install_pane_traversal_key_release(shell, &controller);
         shell.borrow().window.add_controller(controller);
+    }
+
+    fn install_user_activation_tracking(shell: &Rc<RefCell<Self>>) {
+        let key = gtk::EventControllerKey::new();
+        key.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let activation_clock = Rc::clone(&shell.borrow().user_activation_clock);
+        key.connect_key_pressed(move |controller, _, _, _| {
+            let event_time = controller.current_event_time();
+            activation_clock.record(event_time);
+            let activation_clock = Rc::clone(&activation_clock);
+            glib::idle_add_local_once(move || {
+                activation_clock.discard_if_current(event_time);
+            });
+            glib::Propagation::Proceed
+        });
+        shell.borrow().window.add_controller(key);
+
+        let click = gtk::GestureClick::new();
+        click.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let activation_clock = Rc::clone(&shell.borrow().user_activation_clock);
+        click.connect_pressed(move |gesture, _, _, _| {
+            let event_time = gesture.current_event_time();
+            activation_clock.record(event_time);
+            let activation_clock = Rc::clone(&activation_clock);
+            glib::idle_add_local_once(move || {
+                activation_clock.discard_if_current(event_time);
+            });
+        });
+        shell.borrow().window.add_controller(click);
     }
 
     fn install_pane_traversal_key_release(
@@ -4809,7 +4907,7 @@ fn default_window_recipe(id: &str, working_directory: Option<String>) -> WindowR
 #[cfg(test)]
 mod allocation_tests {
     use super::{
-        TerminalGesture, bounded_pane_viewport_height, codex_terminal_gesture,
+        TerminalGesture, UserActivationClock, bounded_pane_viewport_height, codex_terminal_gesture,
         default_window_recipe, focus_follow_should_apply, is_close_window_shortcut,
         model_heights_to_pixels, settings_refresh_section, snapshot_window_frame,
         validated_window_size,
@@ -5046,5 +5144,26 @@ mod allocation_tests {
             codex_terminal_gesture(gdk::Key::c, gdk::ModifierType::empty()),
             None
         );
+    }
+
+    #[test]
+    fn user_activation_clock_is_single_use_and_ignores_current_time() {
+        let clock = UserActivationClock::default();
+        assert_eq!(clock.take(), None);
+
+        clock.record(42);
+        assert_eq!(clock.take(), Some(42));
+        assert_eq!(clock.take(), None);
+
+        clock.record(84);
+        clock.record(gdk::CURRENT_TIME);
+        assert_eq!(clock.take(), Some(84));
+
+        clock.record(126);
+        clock.discard_if_current(125);
+        assert_eq!(clock.take(), Some(126));
+        clock.record(168);
+        clock.discard_if_current(168);
+        assert_eq!(clock.take(), None);
     }
 }

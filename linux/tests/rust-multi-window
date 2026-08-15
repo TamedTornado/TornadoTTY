@@ -365,6 +365,7 @@ fi
 # a live reparent rather than a reconstructed terminal or model-only move.
 start_product
 if [[ "${ZENTTY_MULTI_WINDOW_FLEET_ONLY:-false}" == true ]]; then
+if [[ "${ZENTTY_MULTI_WINDOW_SKIP_FOOTER_JOURNEYS:-false}" != true ]]; then
 zentty_product_wait_for_log "${log}" 'zentty-linux: focus-pane pane=pane-1' \
     "initial terminal focus did not settle before footer input" || fail "fleet footer focus barrier missing"
 zentty_product_wait_for_log "${log}" 'zentty-linux: project-context pane=pane-1 ' \
@@ -414,12 +415,9 @@ if [[ "${ZENTTY_STATUS_NOTIFIER:-false}" == true ]]; then
     zentty_product_wait_for_log_count "${log}" 'zentty-linux: status-notifier state=registered service=' 2 \
         "live enabled setting did not restore publication" || fail "status-item enabled setting missing"
 fi
-zentty_product_type "${backend}" "agent-waiting"
-if [[ "${backend}" == wayland ]]; then
-    wtype -k Return
-else
-    zentty_product_key "${backend}" Return
 fi
+zentty_product_type "${backend}" "agent-waiting"
+zentty_product_key "${backend}" Return
 zentty_product_wait_for_log "${log}" \
     'zentty-linux: agent-event pane=pane-1 worklane=worklane-1 kind=agent.needs-input session=fleet-waiting' \
     "first-window pane did not publish controlled waiting state" || fail "fleet waiting state missing"
@@ -480,6 +478,17 @@ if [[ "${ZENTTY_MULTI_WINDOW_FLEET_ONLY:-false}" == true ]]; then
 zentty_product_wait_for_log "${log}" \
     'zentty-linux: fleet-refresh windows=2 agents=2 waiting=1 stopped=0 compacting=0 active=1 idle=0 progress=0' \
     "both real-window agent projections did not reach one fleet" || fail "cross-window fleet missing"
+if [[ "${ZENTTY_MULTI_WINDOW_ACTIVATION_ONLY:-false}" == true ]]; then
+    execute_palette_action "Requires approval" "waiting fleet pane"
+    zentty_product_wait_for_log "${log}" \
+        'zentty-linux: fleet-activate window=window-1 worklane=worklane-1 pane=pane-1 result=targeted' \
+        "fleet did not route to the urgent pane in the other real window" || fail "fleet route missing"
+    grep -Eq 'zentty-linux: fleet-activation-context event-time=[1-9][0-9]* startup-id=present' "${log}" ||
+        fail "fleet route did not preserve a compositor activation credential"
+    type_and_expect_title "fleet-routed-exact-pty" "pane-1"
+    echo "rust-multi-window: PASS Wayland event-authorized fleet activation"
+    exit 0
+fi
 if [[ "${ZENTTY_STATUS_NOTIFIER:-false}" == true ]]; then
     zentty_product_wait_for_log "${log}" 'zentty-linux: status-notifier state=registered service=' \
         "product did not register its real status item" || fail "status-notifier registration missing"
@@ -616,6 +625,8 @@ execute_palette_action "Requires approval" "waiting fleet pane"
 zentty_product_wait_for_log "${log}" \
     'zentty-linux: fleet-activate window=window-1 worklane=worklane-1 pane=pane-1 result=targeted' \
     "fleet did not route to the urgent pane in the other real window" || fail "fleet route missing"
+grep -Eq 'zentty-linux: fleet-activation-context event-time=[1-9][0-9]* startup-id=present' "${log}" ||
+    fail "fleet route did not preserve a compositor activation credential"
 if [[ "${backend}" == x11 ]]; then
     target_second_window "pane-1"
     type_and_expect_title "fleet-routed-exact-pty" "pane-1"

@@ -453,9 +453,9 @@ impl ApplicationCoordinator {
         let source_window_id = source_window_id.to_owned();
         Rc::new(move |action| {
             let cross_window_activation = match &action {
-                crate::application_shell::ApplicationAction::ActivateFleetPane(target) => {
-                    target.window_id != source_window_id
-                }
+                crate::application_shell::ApplicationAction::ActivateFleetPane {
+                    target, ..
+                } => target.window_id != source_window_id,
                 _ => false,
             };
             if cross_window_activation {
@@ -482,9 +482,9 @@ impl ApplicationCoordinator {
         match action {
             crate::application_shell::ApplicationAction::ActivateAttention(target) => {
                 let shell = coordinator.borrow().shells.get(&target.window_id).cloned();
-                let activated = shell
-                    .as_ref()
-                    .is_some_and(|shell| shell.borrow_mut().activate_attention_target(&target));
+                let activated = shell.as_ref().is_some_and(|shell| {
+                    shell.borrow_mut().activate_attention_target(&target, None)
+                });
                 if activated {
                     eprintln!(
                         "zentty-linux: attention-activate window={} worklane={} pane={} result=focused",
@@ -503,11 +503,27 @@ impl ApplicationCoordinator {
                     );
                 }
             }
-            crate::application_shell::ApplicationAction::ActivateFleetPane(target) => {
+            crate::application_shell::ApplicationAction::ActivateFleetPane {
+                target,
+                activation,
+            } => {
                 let shell = coordinator.borrow().shells.get(&target.window_id).cloned();
-                let activated = shell
-                    .as_ref()
-                    .is_some_and(|shell| shell.borrow_mut().activate_attention_target(&target));
+                let activated = shell.as_ref().is_some_and(|shell| {
+                    shell
+                        .borrow_mut()
+                        .activate_attention_target(&target, Some(&activation))
+                });
+                eprintln!(
+                    "zentty-linux: fleet-activation-context event-time={} startup-id={}",
+                    activation
+                        .event_time
+                        .map_or_else(|| "none".to_owned(), |value| value.to_string()),
+                    if activation.startup_id.is_some() {
+                        "present"
+                    } else {
+                        "absent"
+                    }
+                );
                 eprintln!(
                     "zentty-linux: fleet-activate window={} worklane={} pane={} result={}",
                     target.window_id,
@@ -963,7 +979,7 @@ impl ApplicationCoordinator {
             let activated = self
                 .shells
                 .get(&target.window_id)
-                .is_some_and(|shell| shell.borrow_mut().activate_attention_target(&target));
+                .is_some_and(|shell| shell.borrow_mut().activate_attention_target(&target, None));
             eprintln!(
                 "zentty-linux: desktop-attention-activate window={} worklane={} pane={} result={}",
                 target.window_id,

@@ -286,6 +286,8 @@ invalid_environment_profiles="$(jq -r '
             (.display == "wayland" and (has_valgrind | not)) | not
          elif .environment_profile == "nested-wayland-multiwindow-v1" then
             (.display == "wayland" and (has_valgrind | not)) | not
+         elif .environment_profile == "nested-wayland-activation-v1" then
+            (.display == "wayland" and (has_valgrind | not)) | not
          elif .environment_profile == "phase-managed-wayland-v1" then
             (.display == "wayland" and has_valgrind) | not
          elif .environment_profile == "phase-managed-x11-v1" then
@@ -486,7 +488,7 @@ matrix_runner_environment_json() {
             backend=wayland
             harness="linux/tests/nested-wayland"
             ;;
-        nested-wayland-input-v1 | nested-wayland-multiwindow-v1)
+        nested-wayland-input-v1 | nested-wayland-multiwindow-v1 | nested-wayland-activation-v1)
             backend=wayland
             harness="linux/tests/nested-wayland-input"
             ;;
@@ -737,6 +739,15 @@ run_qualification_cell() {
                     "${shell_command[@]}"
                 )
                 ;;
+            nested-wayland-activation-v1)
+                cell_command=(
+                    "${sanitized_environment[@]}"
+                    "ZENTTY_NESTED_WAYLAND_INPUT_COMPOSITOR=labwc"
+                    "ZENTTY_NESTED_WAYLAND_INPUT_REPORT=${environment_report}"
+                    "${repo_root}/linux/tests/nested-wayland-input"
+                    "${shell_command[@]}"
+                )
+                ;;
             phase-managed-x11-v1)
                 cell_command=("${sanitized_environment[@]}" "${shell_command[@]}")
                 ;;
@@ -866,7 +877,7 @@ run_qualification_cell() {
             fi
         elif [[ -z "${valgrind_report}" ]]; then
             case "${environment_profile}" in
-                isolated-none-v1 | nested-x11-v1 | nested-wayland-v1 | nested-wayland-input-v1 | nested-wayland-multiwindow-v1)
+                isolated-none-v1 | nested-x11-v1 | nested-wayland-v1 | nested-wayland-input-v1 | nested-wayland-multiwindow-v1 | nested-wayland-activation-v1)
                     if ! environment="$(matrix_runner_environment_json \
                         "${environment_profile}" "${environment_report}" \
                         "${exit_code}" "${command}" "${cell_started_at_epoch}" \
@@ -1231,6 +1242,7 @@ jq -e '
        .environment.profile == "nested-x11-v1" or
        .environment.profile == "nested-wayland-v1" or
        .environment.profile == "nested-wayland-input-v1" or
+       .environment.profile == "nested-wayland-activation-v1" or
        .environment.profile == "nested-wayland-multiwindow-v1" or
        .environment.profile == "phase-managed-x11-v1" or
        .environment.profile == "phase-managed-wayland-v1") and

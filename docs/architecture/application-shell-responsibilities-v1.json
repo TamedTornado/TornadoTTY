@@ -189,7 +189,7 @@
     },
     {
       "owner": "action_router",
-      "fields": ["action_router"]
+      "fields": ["action_router", "user_activation_clock"]
     },
     {
       "owner": "attention_coordinator",
@@ -257,7 +257,7 @@
     {
       "owner": "attention_coordinator",
       "methods": [
-        "request_application_action", "request_latest_attention", "activate_attention_target",
+        "request_application_action", "request_latest_attention", "take_window_activation", "activate_attention_target",
         "refresh_attention_inbox", "reconcile_attention"
       ]
     },
@@ -288,7 +288,7 @@
       "owner": "action_router",
       "methods": [
         "finish_pane_layout_action",
-        "install_pane_traversal_shortcuts", "install_pane_traversal_key_release",
+        "install_pane_traversal_shortcuts", "install_user_activation_tracking", "install_pane_traversal_key_release",
         "record_terminal_gesture", "install_search_shortcuts", "install_fleet_focus_restoration",
         "perform_focused_binding_action",
         "activate_pane_control", "report_action_error",

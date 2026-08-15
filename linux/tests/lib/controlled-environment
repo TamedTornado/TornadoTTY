@@ -152,6 +152,12 @@ zentty_controlled_environment_validate_report() {
                 (.server.width | type == "number" and . > 0 and floor == .) and
                 (.server.height | type == "number" and . > 0 and floor == .) and
                 (.server.scale | type == "number" and . > 0 and floor == .)
+             elif .server.name == "labwc" then
+                .server.backend == "x11-nested" and
+                (.server.endpoint | type == "string" and test("^wayland-[0-9]+$")) and
+                (.server.width | type == "number" and . > 0 and floor == .) and
+                (.server.height | type == "number" and . > 0 and floor == .) and
+                (.server.scale | type == "number" and . > 0 and floor == .)
              else false end) and
             (.server.protocols | type == "array" and length >= 4 and
                 all(.[]; type == "string" and length > 0) and
@@ -160,9 +166,11 @@ zentty_controlled_environment_validate_report() {
                 . as $protocol | $environment.server.protocols | index($protocol) != null) and
             (if .server.name == "Cage" then
                 .server.protocols | index("zwp_virtual_keyboard_manager_v1") != null
+             elif .server.name == "labwc" then
+                .server.protocols | index("xdg_activation_v1") != null
              else true end) and
             (.server.wayland_info_sha256 | type == "string" and test("^[0-9a-f]{64}$")) and
-            (if .server.name == "Cage" then
+            (if .server.name == "Cage" or .server.name == "labwc" then
                 .renderer == {software:true,name:"Pixman",proof:"WLR_RENDERER=pixman"}
              else
                 .renderer == {software:true,name:"Pixman",proof:"Using Pixman renderer"}

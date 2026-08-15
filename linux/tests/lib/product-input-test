@@ -46,6 +46,22 @@ expected=$'windowfocus --sync 4242\nkey ctrl+q\nwindowfocus --sync 4242\nkey ctr
 }
 
 : >"${calls}"
+printf 'zentty-linux: window-size=1000x700\n' >"${receipt_log}"
+ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID="$(printf 'a%.0s' {1..64})"
+ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT=1
+ZENTTY_NESTED_WAYLAND_OUTER_X11_WINDOW=6262
+zentty_product_prepare_input wayland "${receipt_log}"
+[[ "$(cat "${calls}")" == 'windowfocus --sync 6262' ]] || {
+    echo "product-input-test: explicit nested compositor window was not targeted" >&2
+    cat "${calls}" >&2
+    exit 1
+}
+unset ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID \
+    ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT \
+    ZENTTY_NESTED_WAYLAND_OUTER_X11_WINDOW
+ZENTTY_PRODUCT_WINDOW_ID=4242
+
+: >"${calls}"
 mock_drag_receipt="$(mktemp)"
 printf 'ready\n' >"${mock_drag_receipt}"
 zentty_product_drag_from_x11_window 'Zentty File Drag Source' "${mock_drag_receipt}"
