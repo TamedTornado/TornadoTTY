@@ -44,6 +44,7 @@ mod clipboard_actions;
 mod global_search;
 pub(crate) mod open_with_runtime;
 mod pane_runtime;
+mod product_cli;
 mod project_context_runtime;
 mod remote_paste;
 pub(crate) mod server_runtime;

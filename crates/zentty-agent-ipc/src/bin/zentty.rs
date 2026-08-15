@@ -5,7 +5,9 @@ use std::io::{BufReader, IsTerminal, Read, Write};
 use std::process::ExitCode;
 use std::process::{Command as ProcessCommand, Stdio};
 use std::time::Instant;
-use zentty_agent_ipc::{AgentIpcClient, ServerCommand, launch_agent};
+use zentty_agent_ipc::{
+    AgentIpcClient, CliProductCommand, ServerCommand, launch_agent, parse_product_cli,
+};
 use zentty_core::{
     AgentEvent, adapt_claude_hook, adapt_codex_hook, adapt_codex_notify, adapt_gemini_hook,
     detect_server_urls,
@@ -25,7 +27,11 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<(), String> {
-    let mut arguments = std::env::args().skip(1);
+    let raw_arguments = std::env::args().skip(1).collect::<Vec<_>>();
+    if let Some(command) = parse_product_cli(&raw_arguments).map_err(|error| error.to_string())? {
+        return run_product_cli(command);
+    }
+    let mut arguments = raw_arguments.into_iter();
     let command = arguments.next();
     if command.as_deref() == Some("launch") {
         let tool = arguments.next().ok_or_else(|| {
@@ -95,6 +101,58 @@ fn run() -> Result<(), String> {
         println!("{{}}");
     }
     Ok(())
+}
+
+fn run_product_cli(command: CliProductCommand) -> Result<(), String> {
+    match command {
+        CliProductCommand::Version => {
+            println!("zentty {}", env!("CARGO_PKG_VERSION"));
+            Ok(())
+        }
+        CliProductCommand::ListColors => {
+            for color in [
+                "red", "orange", "amber", "yellow", "lime", "green", "teal", "cyan", "blue",
+                "indigo", "purple", "pink",
+            ] {
+                println!("{color}");
+            }
+            Ok(())
+        }
+        CliProductCommand::Request(request) => {
+            let socket = std::env::var("ZENTTY_INSTANCE_SOCKET")
+                .map_err(|_| "not running inside a Zentty instance".to_owned())?;
+            let caller_token = std::env::var("ZENTTY_PANE_TOKEN")
+                .map_err(|_| "ZENTTY_PANE_TOKEN is missing".to_owned())?;
+            let token = request
+                .arguments()
+                .windows(2)
+                .find_map(|pair| (pair[0] == "--pane-token").then_some(pair[1].as_str()))
+                .unwrap_or(&caller_token);
+            let reply = AgentIpcClient::send_product(
+                socket,
+                token,
+                request.kind(),
+                request.subcommand(),
+                request.arguments(),
+                claimed_target_from_environment(),
+            )
+            .map_err(|error| error.to_string())?;
+            if let Some(error) = reply.error() {
+                return Err(format!("{}: {}", error.code(), error.message()));
+            }
+            if let Some(stdout) = reply.stdout() {
+                std::io::stdout()
+                    .write_all(stdout.as_bytes())
+                    .map_err(|error| format!("could not write product response: {error}"))?;
+                if !stdout.is_empty() && !stdout.ends_with('\n') {
+                    std::io::stdout().write_all(b"\n").map_err(|error| {
+                        format!("could not terminate product response: {error}")
+                    })?;
+                }
+            }
+            Ok(())
+        }
+    }
 }
 
 fn run_server(arguments: &[String]) -> Result<(), String> {

@@ -5,7 +5,8 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, mpsc};
 use zentty_agent_ipc::{
-    AgentIpcServer, AuthenticatedServerRequest, AuthenticatedTmuxRequest, generate_pane_token,
+    AgentIpcServer, AuthenticatedProductRequest, AuthenticatedServerRequest,
+    AuthenticatedTmuxRequest, generate_pane_token,
 };
 use zentty_core::{AgentTarget, AuthenticatedAgentEvent, PaneTokenRegistry};
 
@@ -15,6 +16,7 @@ pub(crate) struct AgentRuntime {
     receiver: mpsc::Receiver<AuthenticatedAgentEvent>,
     tmux_receiver: mpsc::Receiver<AuthenticatedTmuxRequest>,
     server_receiver: mpsc::Receiver<AuthenticatedServerRequest>,
+    product_receiver: mpsc::Receiver<AuthenticatedProductRequest>,
     tokens_by_pane: BTreeMap<String, String>,
     target_by_pane: BTreeMap<String, (String, String)>,
     runtime_directory: PathBuf,
@@ -42,12 +44,14 @@ impl AgentRuntime {
         let (sender, receiver) = mpsc::channel();
         let (tmux_sender, tmux_receiver) = mpsc::channel();
         let (server_sender, server_receiver) = mpsc::channel();
-        let server = AgentIpcServer::start_with_product_routes(
+        let (product_sender, product_receiver) = mpsc::channel();
+        let server = AgentIpcServer::start_with_cli_routes(
             &socket_path,
             Arc::clone(&registry),
             sender,
             tmux_sender,
             server_sender,
+            product_sender,
         )
         .map_err(|error| error.to_string())?;
         eprintln!(
@@ -80,6 +84,7 @@ impl AgentRuntime {
             receiver,
             tmux_receiver,
             server_receiver,
+            product_receiver,
             tokens_by_pane: BTreeMap::new(),
             target_by_pane: BTreeMap::new(),
             runtime_directory,
@@ -266,6 +271,18 @@ impl AgentRuntime {
 
     pub(crate) fn drain_servers(&self) -> Vec<AuthenticatedServerRequest> {
         self.server_receiver.try_iter().collect()
+    }
+
+    pub(crate) fn drain_products(&self) -> Vec<AuthenticatedProductRequest> {
+        self.product_receiver.try_iter().collect()
+    }
+
+    pub(crate) fn control_token_for_pane(&self, pane_id: &str) -> Option<&str> {
+        self.tokens_by_pane.get(pane_id).map(String::as_str)
+    }
+
+    pub(crate) fn socket_path_for_cli(&self) -> String {
+        self.socket_path.to_string_lossy().into_owned()
     }
 }
 

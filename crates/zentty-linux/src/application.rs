@@ -18,6 +18,8 @@ use crate::persistence_coordinator::WindowSnapshot;
 use crate::task_manager::TaskManagerController;
 use crate::window_set::{CloseWindowDecision, WindowSet};
 
+mod product_cli;
+
 pub(crate) struct ApplicationCycleResult {
     pub(crate) windows: Vec<WindowSnapshot>,
     pub(crate) active_window_id: Option<String>,
@@ -857,14 +859,16 @@ impl ApplicationCoordinator {
         for shell in self.shells.values() {
             shell.borrow_mut().sync_agent_targets();
         }
-        let (events, tmux_commands, server_commands) = {
+        let (events, tmux_commands, server_commands, product_commands) = {
             let runtime = self.agent_runtime.borrow();
             (
                 runtime.drain(),
                 runtime.drain_tmux(),
                 runtime.drain_servers(),
+                runtime.drain_products(),
             )
         };
+        self.handle_product_commands(product_commands);
         let mut events_by_window = BTreeMap::<String, Vec<_>>::new();
         for event in events {
             events_by_window

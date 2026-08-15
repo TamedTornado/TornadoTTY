@@ -215,8 +215,58 @@ listed="$(${ZENTTY_CLI_BIN} __tmux-compat list-panes -F '#{pane_id}')"
 ${ZENTTY_CLI_BIN} __tmux-compat kill-pane -t "%${second_id}"
 listed="$(${ZENTTY_CLI_BIN} __tmux-compat list-panes -F '#{pane_id}')"
 [[ "${listed}" == '%pane-1' ]]
-${ZENTTY_CLI_BIN} __tmux-compat split-window -h
-${ZENTTY_CLI_BIN} __tmux-compat split-window -v -d
+[[ "$(${ZENTTY_CLI_BIN} version)" == zentty\ * ]]
+windows="$(${ZENTTY_CLI_BIN} list windows --json)"
+jq -e '
+    length == 1 and .[0].id == "window-1" and .[0].order == 1 and
+    .[0].isFocused == true and .[0].worklaneCount == 1 and .[0].paneCount == 1
+' <<<"${windows}" >/dev/null
+${ZENTTY_CLI_BIN} pane rename "CLI source pane"
+${ZENTTY_CLI_BIN} worklane rename "CLI source lane"
+${ZENTTY_CLI_BIN} worklane color blue
+${ZENTTY_CLI_BIN} split right --equal
+panes="$(${ZENTTY_CLI_BIN} list panes --include-control-token --json)"
+jq -e '
+    length == 2 and
+    any(.[]; .id == "pane-1" and .title == "CLI source pane" and .isFocused == false) and
+    any(.[]; .id != "pane-1" and .isFocused == true and (.controlToken | test("^[0-9a-f]{64}$")))
+' <<<"${panes}" >/dev/null
+cli_split_id="$(jq -r '.[] | select(.id != "pane-1") | .id' <<<"${panes}")"
+cli_split_token="$(jq -r --arg id "${cli_split_id}" '.[] | select(.id == $id) | .controlToken' <<<"${panes}")"
+if ${ZENTTY_CLI_BIN} pane close --pane-id "${cli_split_id}" \
+    2>"${TMPDIR:-/tmp}/zentty-cli-selector.$$"; then
+    exit 1
+fi
+grep -Fq 'unauthorized_target' "${TMPDIR:-/tmp}/zentty-cli-selector.$$"
+rm -f -- "${TMPDIR:-/tmp}/zentty-cli-selector.$$"
+env ZENTTY_PANE_TOKEN="${cli_split_token}" \
+    ${ZENTTY_CLI_BIN} pane focus 2 --pane-token "${cli_split_token}"
+env ZENTTY_PANE_TOKEN="${cli_split_token}" \
+    ${ZENTTY_CLI_BIN} pane close --pane-id "${cli_split_id}" --pane-token "${cli_split_token}"
+for _ in {1..100}; do
+    panes="$(${ZENTTY_CLI_BIN} list panes --json)"
+    [[ "$(jq length <<<"${panes}")" == 1 ]] && break
+    sleep 0.02
+done
+[[ "$(jq length <<<"${panes}")" == 1 ]]
+${ZENTTY_CLI_BIN} grid 2x2 --focus source
+panes="$(${ZENTTY_CLI_BIN} list panes --include-control-token --json)"
+[[ "$(jq length <<<"${panes}")" == 4 ]]
+while IFS=$'\t' read -r pane_id pane_token; do
+    [[ "${pane_id}" != pane-1 ]] || continue
+    env ZENTTY_PANE_TOKEN="${pane_token}" \
+        ${ZENTTY_CLI_BIN} pane close --pane-id "${pane_id}" --pane-token "${pane_token}"
+done < <(jq -r '.[] | [.id,.controlToken] | @tsv' <<<"${panes}")
+for _ in {1..100}; do
+    panes="$(${ZENTTY_CLI_BIN} list panes --json)"
+    [[ "$(jq length <<<"${panes}")" == 1 ]] && break
+    sleep 0.02
+done
+[[ "$(jq length <<<"${panes}")" == 1 ]]
+final_right="$(${ZENTTY_CLI_BIN} __tmux-compat split-window -h -P -F '#{pane_id}')"
+final_below="$(${ZENTTY_CLI_BIN} __tmux-compat split-window -v -d -P -F '#{pane_id}')"
+printf 'final-tmux-pane=%s\nfinal-tmux-pane=%s\n' \
+    "${final_right#%}" "${final_below#%}" >>"${ZENTTY_TMUX_PRODUCT_PROBE}"
 ${ZENTTY_CLI_BIN} __tmux-compat kill-window
 sleep 30
 exit 1
@@ -486,7 +536,10 @@ pre_team_width=$((leader_width + team_width + 1))
     cat "${log}" >&2
     fail "team dissolution did not restore leader width: ${pre_team_width} -> ${final_leader_width}"
 }
-for pane in pane-1 pane-2 pane-3 pane-4 pane-5; do
+mapfile -t final_tmux_panes < <(sed -n 's/^final-tmux-pane=//p' "${fixture_root}/child-probe.log")
+[[ "${#final_tmux_panes[@]}" -eq 2 ]] ||
+    fail "final tmux teardown pane identities were not recorded exactly"
+for pane in pane-1 pane-2 pane-3 "${final_tmux_panes[@]}"; do
     grep -Fxq "zentty-linux: tmux-close pane=${pane}" "${log}" || {
         cat "${log}" >&2
         fail "${pane} did not cross real tmux-owned terminal teardown"
