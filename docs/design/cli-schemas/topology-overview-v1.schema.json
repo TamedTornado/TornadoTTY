@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zentty.dev/schemas/cli/topology-overview-v1.schema.json",
+  "title": "Zentty CLI topology overview output v1",
+  "type":"object",
+  "additionalProperties":false,
+  "required":["windows"],
+  "properties":{
+    "windows":{
+      "type":"array",
+      "items":{
+        "type":"object",
+        "additionalProperties":false,
+        "required":["id","order","isFocused","worklanes"],
+        "properties":{
+          "id":{"type":"string","minLength":1},
+          "order":{"type":"integer","minimum":1},
+          "isFocused":{"type":"boolean"},
+          "worklanes":{
+            "type":"array",
+            "items":{
+              "type":"object",
+              "additionalProperties":false,
+              "required":["id","order","isFocused","columnCount","panes"],
+              "properties":{
+                "id":{"type":"string","minLength":1},
+                "order":{"type":"integer","minimum":1},
+                "title":{"type":"string"},
+                "isFocused":{"type":"boolean"},
+                "columnCount":{"type":"integer","minimum":0},
+                "focusedPaneID":{"type":"string","minLength":1},
+                "panes":{
+                  "type":"array",
+                  "items":{
+                    "type":"object",
+                    "additionalProperties":false,
+                    "required":["id","windowID","worklaneID","index","column","title","isFocused"],
+                    "properties":{
+                      "id":{"type":"string","minLength":1},
+                      "windowID":{"type":"string","minLength":1},
+                      "worklaneID":{"type":"string","minLength":1},
+                      "index":{"type":"integer","minimum":1},
+                      "column":{"type":"integer","minimum":1},
+                      "title":{"type":"string"},
+                      "workingDirectory":{"type":"string"},
+                      "isFocused":{"type":"boolean"},
+                      "agentTool":{"type":"string"},
+                      "agentStatus":{"type":"string"},
+                      "controlToken":{"type":"string","minLength":1}
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -233,6 +233,17 @@ fn parser_rejects_ambiguous_and_invalid_source_invocations() {
         values(&["pane", "rename", "Title", "--clear"]),
         values(&["worklane", "color", "ultraviolet"]),
         values(&["layout", "masonry"]),
+        values(&["list", "panes", "--json", "--json"]),
+        values(&[
+            "list",
+            "panes",
+            "--worklane-id",
+            "lane-1",
+            "--worklane-id",
+            "lane-2",
+        ]),
+        values(&["select", "pane", "--pane-index", "1", "--pane-index", "2"]),
+        values(&["list", "panes", "--output-version", "2"]),
     ] {
         assert!(parse_product_cli(&invalid).is_err(), "accepted {invalid:?}");
     }
@@ -241,6 +252,32 @@ fn parser_rejects_ambiguous_and_invalid_source_invocations() {
             .unwrap()
             .is_none()
     );
+}
+
+#[test]
+fn current_output_version_is_explicit_and_preserved_on_the_wire() {
+    for arguments in [
+        values(&["list", "--json", "--output-version", "1"]),
+        values(&[
+            "select",
+            "pane",
+            "--pane-index",
+            "1",
+            "--output-version",
+            "1",
+        ]),
+    ] {
+        let Some(CliProductCommand::Request(request)) = parse_product_cli(&arguments).unwrap()
+        else {
+            panic!("expected product request for {arguments:?}");
+        };
+        assert!(
+            request
+                .arguments()
+                .windows(2)
+                .any(|pair| pair == ["--output-version", "1"])
+        );
+    }
 }
 
 #[test]

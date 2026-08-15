@@ -79,6 +79,8 @@ require "the controlled input-capable Wayland harness is missing or not executab
     test -x "${wayland_input_harness}"
 require "the real multi-window product journey is missing or not executable" \
     test -x "${multi_window_harness}"
+require "the real staged CLI contract journey is missing or not executable" \
+    test -x "${repo_root}/linux/tests/rust-cli-contract"
 require "the cross-compositor window placement policy is missing" \
     test -f "${window_placement_policy}"
 require "the placement policy does not state Wayland compositor ownership" \
@@ -149,6 +151,23 @@ require "Linux platform contracts are not pinned to their real isolated and comp
             (.depends_on | index("platform-notifications-wayland") != null) and
             (.depends_on | index("open-with-wayland") != null) and
             (.depends_on | index("development-servers-wayland") != null))
+    ' "${matrix}"
+
+# CLI compatibility is a real staged-product boundary on each GTK backend,
+# not a parser-only claim or an assumption about the developer desktop.
+# shellcheck disable=SC2016
+require "source CLI compatibility is not pinned to both controlled compositor journeys" \
+    jq -e '
+        [.cells[] | select(.capability == "cli_source_compatibility")] as $cells |
+        ($cells | length) == 2 and
+        all($cells[]; .status == "PASS" and .tier == "release" and
+            .optimize == "ReleaseSafe" and .terminals == "multi" and
+            (.command | contains("build/linux-profiles/release-safe/bin/zentty-linux")) and
+            (.command | contains("linux/tests/rust-cli-contract"))) and
+        any($cells[]; .display == "x11" and
+            .environment_profile == "nested-x11-v1") and
+        any($cells[]; .display == "wayland" and
+            .environment_profile == "nested-wayland-input-v1")
     ' "${matrix}"
 
 require "Wayland agent qualification does not name the event, tmux, installed Claude, and consolidated restore journeys" \

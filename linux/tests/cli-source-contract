@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+contract="${1:-${repo_root}/docs/design/zentty-cli-source-contract.json}"
+evidence="${repo_root}/docs/design/zentty-feature-evidence-2026-08-04.json"
+
+fail() {
+    echo "cli-source-contract: error: $*" >&2
+    exit 1
+}
+
+for dependency in jq comm find grep sort; do
+    command -v "${dependency}" >/dev/null || fail "${dependency} is required"
+done
+[[ -f "${contract}" ]] || fail "contract is missing: ${contract}"
+jq -e . "${contract}" >/dev/null || fail "contract is not valid JSON"
+
+jq -e '
+    . as $root |
+    .schema_version == 1 and
+    .source.source_head == "6e021b0d3d80025900de1a7ab2f37cc6510da3fe" and
+    .current_output_version == 1 and
+    .status_values == ["IMPLEMENTED", "PARTIAL", "NOT_IMPLEMENTED", "PLATFORM_ALTERNATIVE"] and
+    (.commands | length == 40) and
+    ([.commands[].id] | length == (unique | length)) and
+    ([.commands[].path | join(" ")] | length == (unique | length)) and
+    ([.commands[].source_symbols[]] | length == (unique | length)) and
+    ([.commands[].family] | unique | sort) ==
+      ["agent-hook","agent-integration","agent-ipc","agent-launch","notification","pane-control","server","theme","tmux","topology","version","worklane-control"] and
+    all(.commands[];
+        (.id | type == "string" and length > 0) and
+        (.path | type == "array" and length > 0 and all(.[]; type == "string" and length > 0)) and
+        (.source_symbols | type == "array" and length > 0) and
+        (.status == "IMPLEMENTED" or .status == "PARTIAL" or
+         .status == "NOT_IMPLEMENTED" or .status == "PLATFORM_ALTERNATIVE") and
+        (.owner_issue | type == "number" and . > 0) and
+        (.positionals | type == "array") and
+        (.option_sets | type == "array") and
+        (.options | type == "array") and
+        (.defaults | type == "object") and
+        (.output | type == "string" and length > 0) and
+        (.implementation | type == "array") and
+        (.tests | type == "array" and length > 0) and
+        (if .status == "PARTIAL" or .status == "NOT_IMPLEMENTED"
+         then (.difference | type == "string" and length > 0)
+         else (.implementation | length > 0) end) and
+        (if .kind == "alias" or .kind == "alias-with-default"
+         then (.canonical | type == "string" and length > 0) else true end)) and
+    all(.commands[].option_sets[]; $root.option_sets[.] != null) and
+    all(.commands[].output; $root.output_contracts[.] != null) and
+    all(.commands[] | select(.kind == "alias" or .kind == "alias-with-default") | .canonical;
+        . as $id | any($root.commands[]; .id == $id)) and
+    all(.option_sets[]; type == "array" and all(.[];
+        (.name | type == "string" and startswith("-")) and
+        (.kind == "flag" or .kind == "value") and has("default"))) and
+    all(.output_contracts[];
+        (.modes | type == "array" and length > 0) and
+        (has("schema") or has("golden") or has("pattern") or has("values") or has("stability")))
+' "${contract}" >/dev/null || fail "contract invariants failed"
+
+jq -e --slurpfile evidence "${evidence}" '
+    .source.source_head == $evidence[0].source_head
+' "${contract}" >/dev/null || fail "contract source revision differs from the audit ledger"
+
+expected_symbols="$(mktemp)"
+actual_symbols="$(mktemp)"
+paths="$(mktemp)"
+cleanup() { rm -f -- "${expected_symbols}" "${actual_symbols}" "${paths}"; }
+trap cleanup EXIT
+
+jq -r '.cli_registry.commands | keys[] | select(. != "ZenttyCLI")' "${evidence}" | sort -u >"${expected_symbols}"
+jq -r '.commands[].source_symbols[]' "${contract}" | sort -u >"${actual_symbols}"
+comm -3 "${expected_symbols}" "${actual_symbols}" | grep -q . &&
+    fail "source command symbols differ from the exhaustive audit ledger"
+
+jq -r '
+    [.source.files[],
+     (.commands[].implementation[]),
+     (.commands[].tests[]),
+     (.output_contracts[] | .schema? // empty),
+     (.output_contracts[] | .golden? // empty)] | .[]
+' "${contract}" | sort -u >"${paths}"
+while IFS= read -r path; do
+    [[ -e "${repo_root}/${path}" ]] || fail "tracked contract path is missing: ${path}"
+done <"${paths}"
+
+while IFS= read -r schema; do
+    jq -e '
+        .["$schema"] == "https://json-schema.org/draft/2020-12/schema" and
+        (.["$id"] | type == "string" and length > 0) and
+        (.title | type == "string" and length > 0)
+    ' "${repo_root}/${schema}" >/dev/null || fail "invalid committed CLI schema: ${schema}"
+done < <(jq -r '.output_contracts[] | .schema? // empty' "${contract}")
+
+for required in version list-overview list-windows window-list list-worklanes worklane-list \
+    list-panes pane-list select-pane split hsplit vsplit grid pane-focus pane-rename pane-close \
+    pane-zoom pane-resize worklane-rename worklane-color layout theme-toggle theme-dark theme-light \
+    theme-auto server-set server-clear server-list server-open server-watch notify codex-notify \
+    gemini-hook agy-hook hermes-hook ipc launch install uninstall tmux-compat; do
+    jq -e --arg id "${required}" 'any(.commands[]; .id == $id)' "${contract}" >/dev/null ||
+        fail "required command disappeared: ${required}"
+done
+
+echo "cli-source-contract: PASS commands=40 source-symbols=40 output-contracts=$(jq '.output_contracts | length' "${contract}") schemas=$(jq '[.output_contracts[] | select(has("schema"))] | length' "${contract}")"

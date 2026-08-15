@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zentty.dev/schemas/cli/hook-response-v1.schema.json",
+  "title": "Zentty CLI hook response v1",
+  "type":"object",
+  "additionalProperties":false,
+  "properties":{"decision":{"enum":["","allow"]}}
+}

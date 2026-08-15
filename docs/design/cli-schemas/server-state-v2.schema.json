@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zentty.dev/schemas/cli/server-state-v2.schema.json",
+  "title": "Zentty CLI server state v2",
+  "type":"object",
+  "additionalProperties":false,
+  "required":["version","primaryServerID","servers"],
+  "properties":{
+    "version":{"const":2},
+    "primaryServerID":{"type":["string","null"]},
+    "servers":{
+      "type":"array",
+      "items":{
+        "type":"object",
+        "additionalProperties":false,
+        "required":["id","origin","url","display","worklaneID","source","ports","confidence","updatedAt"],
+        "properties":{
+          "id":{"type":"string"},"origin":{"type":"string"},"url":{"type":"string"},
+          "display":{"type":"string"},"worklaneID":{"type":"string"},"paneID":{"type":["string","null"]},
+          "source":{"type":"string"},"ports":{"type":"array","items":{"type":"integer","minimum":1,"maximum":65535}},
+          "confidence":{"type":"string"},"updatedAt":{"type":"string"},
+          "relevance":{"enum":["primary","shown","hidden"]}
+        }
+      }
+    }
+  }
+}

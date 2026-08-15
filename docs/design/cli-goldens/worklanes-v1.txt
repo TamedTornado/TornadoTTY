@@ -1,0 +1,2 @@
+WINDOW                                ORDER  F  WORKLANE              TITLE             COLS  PANES
+<WINDOW_ID>                           1      *  <WORKLANE_ID>         <TITLE>           1     1

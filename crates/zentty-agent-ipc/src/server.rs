@@ -127,10 +127,15 @@ fn parse_set(arguments: &[String], watch: bool) -> Result<ServerCommand, ServerI
     let mut raw_url = None;
     let mut pid = None;
     let mut json = false;
+    let mut saw_pid = false;
     let mut index = 0;
     while index < arguments.len() {
         match arguments[index].as_str() {
             "--pid" => {
+                if saw_pid {
+                    return Err(ServerIpcError::Invalid("duplicate option --pid".to_owned()));
+                }
+                saw_pid = true;
                 let value = arguments
                     .get(index + 1)
                     .ok_or_else(|| ServerIpcError::Invalid("missing value for --pid".to_owned()))?;
@@ -145,6 +150,11 @@ fn parse_set(arguments: &[String], watch: bool) -> Result<ServerCommand, ServerI
                 index += 2;
             }
             "--json" => {
+                if json {
+                    return Err(ServerIpcError::Invalid(
+                        "duplicate option --json".to_owned(),
+                    ));
+                }
                 json = true;
                 index += 1;
             }
@@ -173,6 +183,16 @@ fn parse_no_argument(
     list: bool,
     watch: bool,
 ) -> Result<ServerCommand, ServerIpcError> {
+    if arguments
+        .iter()
+        .filter(|argument| *argument == "--json")
+        .count()
+        > 1
+    {
+        return Err(ServerIpcError::Invalid(
+            "duplicate option --json".to_owned(),
+        ));
+    }
     if arguments.iter().any(|argument| argument != "--json") {
         return Err(ServerIpcError::Invalid(format!(
             "unexpected argument '{}'",
@@ -196,10 +216,17 @@ fn parse_open(arguments: &[String]) -> Result<ServerCommand, ServerIpcError> {
     let mut raw_url = None;
     let mut browser = None;
     let mut json = false;
+    let mut saw_browser = false;
     let mut index = 0;
     while index < arguments.len() {
         match arguments[index].as_str() {
             "--browser" => {
+                if saw_browser {
+                    return Err(ServerIpcError::Invalid(
+                        "duplicate option --browser".to_owned(),
+                    ));
+                }
+                saw_browser = true;
                 browser = Some(
                     arguments
                         .get(index + 1)
@@ -211,6 +238,11 @@ fn parse_open(arguments: &[String]) -> Result<ServerCommand, ServerIpcError> {
                 index += 2;
             }
             "--json" => {
+                if json {
+                    return Err(ServerIpcError::Invalid(
+                        "duplicate option --json".to_owned(),
+                    ));
+                }
                 json = true;
                 index += 1;
             }
@@ -409,6 +441,24 @@ mod tests {
         );
         assert!(ServerCommand::parse(&args(&["watch"])).is_err());
         assert!(ServerCommand::parse(&args(&["set", "3000", "extra"])).is_err());
+        assert_eq!(
+            ServerCommand::parse(&args(&["clear"])).unwrap(),
+            ServerCommand::Clear { json: false }
+        );
+        assert_eq!(
+            ServerCommand::parse(&args(&["list", "--json"])).unwrap(),
+            ServerCommand::List { json: true }
+        );
+        for duplicate in [
+            args(&["set", "3000", "--pid", "1", "--pid", "2"]),
+            args(&["list", "--json", "--json"]),
+            args(&["open", "3000", "--browser", "one", "--browser", "two"]),
+        ] {
+            assert!(
+                ServerCommand::parse(&duplicate).is_err(),
+                "accepted {duplicate:?}"
+            );
+        }
     }
 
     #[test]

@@ -1,0 +1,5 @@
+WINDOWS 1  WORKLANES 1  PANES 1
+
+window *  1  <WINDOW_ID>  worklanes:1  panes:1
+  worklane *  1  <WORKLANE_ID>  panes:1
+    pane *  1   <PANE_ID>  <TITLE>                                     <CWD>

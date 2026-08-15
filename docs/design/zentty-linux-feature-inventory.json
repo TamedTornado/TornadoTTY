@@ -559,10 +559,10 @@
       "origin": "PORT_PARITY",
       "user_impact": "Scriptable pane-aware control and hooks are advertised product behavior and the transport used by agent integrations, notifications and teams.",
       "linux_owner_issue": 22,
-      "implementation_status": "NOT_IMPLEMENTED",
-      "focused_tests": [],
-      "product_scenarios": [],
-      "test_plan": "Invoke the real staged/installed CLI as subprocesses into a running product over the real Unix socket, exercise every command family/alias/selectors/JSON/errors against real PTYs and windows, then mutation-test parsing/auth/output dispatch.",
+      "implementation_status": "PARTIAL",
+      "focused_tests": ["docs/design/zentty-cli-source-contract.json", "linux/tests/cli-source-contract", "crates/zentty-agent-ipc/tests/product_cli.rs", "crates/zentty-agent-ipc/tests/integration_cli.rs"],
+      "product_scenarios": ["linux/tests/rust-cli-contract", "linux/tests/rust-tmux-compat-product", "linux/tests/rust-development-servers", "linux/tests/rust-notifications-settings"],
+      "test_plan": "Maintain exact source-command closure in the machine-readable CLI contract. Invoke the real staged CLI as a subprocess into a running product over the authenticated Unix socket on controlled X11 and Wayland, validate versioned JSON against schemas and text against reviewed goldens, exercise command families/aliases/selectors/errors against real PTYs and windows, and mutation-test parsing/auth/output dispatch. Remaining source agent IPC and managed-launch cases stay explicit under GH-46 and GH-47.",
       "alternative_or_blocker": null
     },
     {

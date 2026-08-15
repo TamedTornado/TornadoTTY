@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zentty.dev/schemas/cli/worklanes-v1.schema.json",
+  "title": "Zentty CLI worklanes output v1",
+  "type": "array",
+  "items": {"$ref":"#/$defs/worklane"},
+  "$defs": {
+    "worklane": {
+      "type":"object",
+      "additionalProperties":false,
+      "required":["id","windowID","order","isFocused","paneCount","columnCount"],
+      "properties":{
+        "id":{"type":"string","minLength":1},
+        "windowID":{"type":"string","minLength":1},
+        "order":{"type":"integer","minimum":1},
+        "title":{"type":"string"},
+        "isFocused":{"type":"boolean"},
+        "paneCount":{"type":"integer","minimum":0},
+        "columnCount":{"type":"integer","minimum":0},
+        "focusedPaneID":{"type":"string","minLength":1}
+      }
+    }
+  }
+}

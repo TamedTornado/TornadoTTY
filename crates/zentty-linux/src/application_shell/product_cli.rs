@@ -133,7 +133,7 @@ impl ApplicationShell {
                 .iter()
                 .map(|column| column.panes.len())
                 .sum::<usize>();
-            worklanes.push(serde_json::json!({
+            let mut worklane_row = serde_json::json!({
                 "id": worklane.id,
                 "windowID": self.window_template.id,
                 "order": worklane_index + 1,
@@ -142,7 +142,9 @@ impl ApplicationShell {
                 "paneCount": worklane_pane_count,
                 "columnCount": worklane.columns.len(),
                 "focusedPaneID": focused_pane_id,
-            }));
+            });
+            remove_null_fields(&mut worklane_row);
+            worklanes.push(worklane_row);
             let mut pane_index = 0_usize;
             for (column_index, column) in worklane.columns.iter().enumerate() {
                 for pane in &column.panes {
@@ -150,7 +152,7 @@ impl ApplicationShell {
                     let control_token = include_control_tokens
                         .then(|| self.agent_events.control_token_for_pane(&pane.id))
                         .flatten();
-                    panes.push(serde_json::json!({
+                    let mut pane_row = serde_json::json!({
                         "id": pane.id,
                         "windowID": self.window_template.id,
                         "worklaneID": worklane.id,
@@ -163,7 +165,9 @@ impl ApplicationShell {
                         "agentTool": serde_json::Value::Null,
                         "agentStatus": serde_json::Value::Null,
                         "controlToken": control_token,
-                    }));
+                    });
+                    remove_null_fields(&mut pane_row);
+                    panes.push(pane_row);
                 }
             }
         }
@@ -172,6 +176,12 @@ impl ApplicationShell {
             worklanes,
             panes,
         }
+    }
+}
+
+fn remove_null_fields(value: &mut serde_json::Value) {
+    if let Some(object) = value.as_object_mut() {
+        object.retain(|_, value| !value.is_null());
     }
 }
 

@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zentty.dev/schemas/cli/panes-v1.schema.json",
+  "title": "Zentty CLI panes output v1",
+  "type": "array",
+  "items": {"$ref":"#/$defs/pane"},
+  "$defs": {
+    "pane": {
+      "type":"object",
+      "additionalProperties":false,
+      "required":["id","windowID","worklaneID","index","column","title","isFocused"],
+      "properties":{
+        "id":{"type":"string","minLength":1},
+        "windowID":{"type":"string","minLength":1},
+        "worklaneID":{"type":"string","minLength":1},
+        "index":{"type":"integer","minimum":1},
+        "column":{"type":"integer","minimum":1},
+        "title":{"type":"string"},
+        "workingDirectory":{"type":"string"},
+        "isFocused":{"type":"boolean"},
+        "agentTool":{"type":"string"},
+        "agentStatus":{"type":"string"},
+        "controlToken":{"type":"string","minLength":1}
+      }
+    }
+  }
+}

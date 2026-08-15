@@ -4,6 +4,33 @@ Zentty includes an embedded `zentty` CLI for scripting windows, worklanes, and p
 
 Most commands must run inside a Zentty pane because they use pane environment variables such as `ZENTTY_INSTANCE_SOCKET`, `ZENTTY_WINDOW_ID`, `ZENTTY_WORKLANE_ID`, `ZENTTY_PANE_ID`, and `ZENTTY_PANE_TOKEN`. Commands that target another pane can use selector flags when a control token is available.
 
+## Compatibility contract
+
+The authoritative source-to-Linux command inventory is
+[`docs/design/zentty-cli-source-contract.json`](design/zentty-cli-source-contract.json).
+It records every source command and alias, its current Linux status, owning
+issue, implementation, tests, defaults, errors, and output contract. The
+schemas under `docs/design/cli-schemas/` and reviewed text fixtures under
+`docs/design/cli-goldens/` are part of that contract.
+
+Discovery and selection commands accept `--output-version 1`. Version 1 is the
+current contract. Unknown versions fail before contacting the running product;
+they never silently produce the latest shape. Documented JSON fields and text
+headers remain stable within a version. IDs and control tokens are opaque: do
+not parse them or infer ordering from their spelling. New optional JSON fields
+may be added compatibly, while removals, renames, type changes, or semantic
+reuse require a new output version.
+
+Selectors fail closed. A missing, stale, duplicate, or ambiguous explicit
+selector is an error rather than permission to act on whichever pane happens
+to have focus. `select pane --shell` emits shell-quoted assignments suitable
+for sourcing; callers must still treat the exported control token as a secret.
+
+Intentional Linux differences are recorded in the inventory. In particular,
+`theme auto` follows the freedesktop/GTK color scheme instead of macOS
+appearance. Agent `ipc` and managed `launch` remain explicitly partial under
+GH-46 and GH-47; their missing source cases are not implied to work.
+
 ## Common Selectors
 
 Pane and layout commands accept these selector flags unless noted otherwise:
@@ -20,6 +47,7 @@ Discovery commands accept:
 - `--worklane-id <worklane-id>`: filter by worklane.
 - `--include-control-token`: include pane control tokens in JSON output.
 - `--json`: output JSON.
+- `--output-version <version>`: require a compatible output contract (currently `1`).
 
 ## Version
 
@@ -34,10 +62,10 @@ zentty version
 List windows, worklanes, and panes.
 
 ```bash
-zentty list [--window-id <window-id>] [--worklane-id <worklane-id>] [--include-control-token] [--json]
-zentty list windows [--json]
-zentty list worklanes [--window-id <window-id>] [--worklane-id <worklane-id>] [--include-control-token] [--json]
-zentty list panes [--window-id <window-id>] [--worklane-id <worklane-id>] [--include-control-token] [--json]
+zentty list [--window-id <window-id>] [--worklane-id <worklane-id>] [--include-control-token] [--json] [--output-version 1]
+zentty list windows [--json] [--output-version 1]
+zentty list worklanes [--window-id <window-id>] [--worklane-id <worklane-id>] [--include-control-token] [--json] [--output-version 1]
+zentty list panes [--window-id <window-id>] [--worklane-id <worklane-id>] [--include-control-token] [--json] [--output-version 1]
 ```
 
 Aliases:
@@ -63,7 +91,7 @@ zentty list panes --worklane-id wl_123 --include-control-token --json
 Resolve a single pane target and print its IDs.
 
 ```bash
-zentty select pane [--window-id <window-id>] [--worklane-id <worklane-id>] [--pane-id <pane-id>] [--pane-index <pane-index>] [--shell] [--include-control-token]
+zentty select pane [--window-id <window-id>] [--worklane-id <worklane-id>] [--pane-id <pane-id>] [--pane-index <pane-index>] [--shell] [--include-control-token] [--output-version 1]
 ```
 
 Options:
@@ -300,11 +328,14 @@ zentty notify --title "Agent ready" --subtitle "Review the result"
 
 ## Agent Integrations
 
-Install or remove shell hook integrations managed by Zentty.
+Install or remove agent hook integrations managed by Zentty. The implemented
+target set is `amp-hooks`, `cursor-hooks`, `droid-hooks`, `kimi-hooks`,
+`grok-hooks`, `agy-hooks`, `hermes-hooks`, and `vibe-hooks`; unsupported names
+fail rather than being interpreted as paths.
 
 ```bash
-zentty install <cursor-hooks|kimi-hooks>
-zentty uninstall <cursor-hooks|kimi-hooks>
+zentty install <amp-hooks|cursor-hooks|droid-hooks|kimi-hooks|grok-hooks|agy-hooks|hermes-hooks|vibe-hooks>
+zentty uninstall <amp-hooks|cursor-hooks|droid-hooks|kimi-hooks|grok-hooks|agy-hooks|hermes-hooks|vibe-hooks>
 ```
 
 Examples:

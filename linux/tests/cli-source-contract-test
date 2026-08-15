@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+runner="${repo_root}/linux/tests/cli-source-contract"
+source_contract="${repo_root}/docs/design/zentty-cli-source-contract.json"
+root="$(mktemp -d)"
+trap 'rm -rf -- "${root}"' EXIT
+
+expect_failure() {
+    local name="$1" filter="$2" expected="$3"
+    local fixture="${root}/${name}.json"
+    jq "${filter}" "${source_contract}" >"${fixture}"
+    set +e
+    output="$(${runner} "${fixture}" 2>&1)"
+    status=$?
+    set -e
+    [[ "${status}" -ne 0 ]] || { echo "cli-source-contract-test: ${name} unexpectedly passed" >&2; exit 1; }
+    grep -Fq "${expected}" <<<"${output}" || {
+        echo "cli-source-contract-test: ${name} produced wrong failure: ${output}" >&2
+        exit 1
+    }
+}
+
+"${runner}" >/dev/null
+expect_failure missing-command 'del(.commands[] | select(.id == "grid"))' 'contract invariants failed'
+expect_failure unknown-status '(.commands[] | select(.id == "version")).status = "DONE"' 'contract invariants failed'
+expect_failure missing-tests '(.commands[] | select(.id == "version")).tests = []' 'contract invariants failed'
+expect_failure missing-implementation '(.commands[] | select(.id == "version")).implementation = []' 'contract invariants failed'
+expect_failure missing-option-default 'del(.option_sets.discovery[0].default)' 'contract invariants failed'
+expect_failure stale-symbol '(.commands[] | select(.id == "version")).source_symbols = ["RemovedCommand"]' 'source command symbols differ'
+expect_failure unknown-option-set '(.commands[] | select(.id == "split")).option_sets += ["ambient-magic"]' 'contract invariants failed'
+expect_failure unknown-output '(.commands[] | select(.id == "version")).output = "unversioned"' 'contract invariants failed'
+expect_failure missing-schema-file '(.output_contracts["panes-v1"].schema = "docs/design/cli-schemas/missing.schema.json")' 'tracked contract path is missing'
+expect_failure duplicate-path '(.commands[] | select(.id == "version")).path = ["split"]' 'contract invariants failed'
+expect_failure false-complete '(.commands[] | select(.id == "ipc")) |= (.status = "IMPLEMENTED" | del(.difference) | .implementation = [])' 'contract invariants failed'
+
+echo "cli-source-contract runner negative tests passed"

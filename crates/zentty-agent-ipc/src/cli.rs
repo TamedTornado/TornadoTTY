@@ -165,9 +165,16 @@ fn parse_select(arguments: &[String]) -> Result<Option<CliProductCommand>, Produ
     let rest = &arguments[1..];
     validate_options(
         rest,
-        &["--window-id", "--worklane-id", "--pane-id", "--pane-index"],
+        &[
+            "--window-id",
+            "--worklane-id",
+            "--pane-id",
+            "--pane-index",
+            "--output-version",
+        ],
         &["--shell", "--include-control-token"],
     )?;
+    validate_output_version(rest)?;
     request(ProductIpcKind::Discover, "select-pane", rest.to_vec())
 }
 
@@ -464,9 +471,21 @@ fn parse_theme(arguments: &[String]) -> Result<Option<CliProductCommand>, Produc
 fn validate_discovery_options(arguments: &[String]) -> Result<(), ProductIpcError> {
     validate_options(
         arguments,
-        &["--window-id", "--worklane-id"],
+        &["--window-id", "--worklane-id", "--output-version"],
         &["--include-control-token", "--json"],
-    )
+    )?;
+    validate_output_version(arguments)
+}
+
+fn validate_output_version(arguments: &[String]) -> Result<(), ProductIpcError> {
+    if let Some(version) = option_value(arguments, "--output-version")
+        && version != "1"
+    {
+        return invalid(format!(
+            "unsupported output version {version:?}; supported: 1"
+        ));
+    }
+    Ok(())
 }
 
 fn validate_targeted_options(arguments: &[String]) -> Result<(), ProductIpcError> {
@@ -494,13 +513,20 @@ fn validate_options(
     flags: &[&str],
 ) -> Result<(), ProductIpcError> {
     let mut index = 0;
+    let mut seen = std::collections::BTreeSet::new();
     while index < arguments.len() {
         let argument = arguments[index].as_str();
         if flags.contains(&argument) {
+            if !seen.insert(argument) {
+                return invalid(format!("duplicate option {argument}"));
+            }
             index += 1;
             continue;
         }
         if value_options.contains(&argument) {
+            if !seen.insert(argument) {
+                return invalid(format!("duplicate option {argument}"));
+            }
             if arguments
                 .get(index + 1)
                 .is_none_or(|value| value.starts_with('-'))

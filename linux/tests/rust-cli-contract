@@ -1,0 +1,174 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
+backend="${GDK_BACKEND:-}"
+ghostty_root="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
+run_root="$(mktemp -d)"
+state_directory="${run_root}/state"
+receipts="${run_root}/receipts"
+child="${run_root}/cli-child"
+log="${run_root}/product.log"
+product_pid=""
+
+fail() {
+    [[ ! -f "${log}" ]] || cat "${log}" >&2
+    [[ ! -f "${receipts}/child.stderr" ]] || cat "${receipts}/child.stderr" >&2
+    [[ ! -f "${receipts}/done" ]] || cat "${receipts}/done" >&2
+    echo "rust-cli-contract: error: $*" >&2
+    exit 1
+}
+
+cleanup() {
+    if [[ "${product_pid}" =~ ^[1-9][0-9]*$ ]]; then
+        kill -TERM "${product_pid}" 2>/dev/null || true
+        wait "${product_pid}" 2>/dev/null || true
+    fi
+    rm -rf -- "${run_root}"
+}
+trap cleanup EXIT
+
+case "${backend}" in
+    x11) [[ "${ZENTTY_NESTED_X11_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] || fail "X11 requires nested-x11" ;;
+    wayland) [[ "${ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] || fail "Wayland requires nested-wayland-input" ;;
+    *) fail "GDK_BACKEND must be x11 or wayland" ;;
+esac
+for dependency in cmp grep head jq jsonschema readelf sed; do
+    command -v "${dependency}" >/dev/null || fail "${dependency} is required"
+done
+[[ -x "${product}" ]] || fail "staged product is missing: ${product}"
+
+layer_runpath="$(
+    readelf -d "${ghostty_root}/zig-out/lib/libghostty-gtk-embed.so" |
+        sed -n 's/.*Library runpath: \[\([^]]*\)\].*/\1/p' |
+        head -1
+)"
+[[ "${layer_runpath}" == .zig-cache/* ]] || fail "Ghostty runpath is not pinned"
+layer_directory="${ghostty_root}/${layer_runpath}"
+mkdir -p "${state_directory}" "${receipts}"
+
+cat >"${child}" <<'CHILD'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${ZENTTY_PANE_ID}" != pane-1 ]]; then
+    sleep 30
+    exit 0
+fi
+exec 2>"${ZENTTY_CLI_CONTRACT_RECEIPTS}/child.stderr"
+trap 'status=$?; printf "FAIL line=%s status=%s\n" "${LINENO}" "${status}" >"${ZENTTY_CLI_CONTRACT_RECEIPTS}/done"; exit "${status}"' ERR
+cli="${ZENTTY_CLI_BIN}"
+out="${ZENTTY_CLI_CONTRACT_RECEIPTS}"
+
+"${cli}" version >"${out}/version.txt"
+"${cli}" worklane color --list >"${out}/colors.txt"
+"${cli}" list --json --output-version 1 >"${out}/overview.json"
+"${cli}" list >"${out}/overview.txt"
+"${cli}" list windows --json --output-version 1 >"${out}/windows.json"
+"${cli}" list windows >"${out}/windows.txt"
+"${cli}" window list --json --output-version 1 >"${out}/window-alias.json"
+"${cli}" list worklanes --json --output-version 1 >"${out}/worklanes.json"
+"${cli}" list worklanes >"${out}/worklanes.txt"
+"${cli}" worklane list --json --output-version 1 >"${out}/worklane-alias.json"
+"${cli}" list panes --json --output-version 1 >"${out}/panes.json"
+"${cli}" list panes --json --include-control-token --output-version 1 >"${out}/panes-authenticated.json"
+"${cli}" list panes >"${out}/panes.txt"
+"${cli}" pane list --json --output-version 1 >"${out}/pane-alias.json"
+"${cli}" select pane --pane-index 1 --shell --include-control-token --output-version 1 >"${out}/selected.shell"
+"${cli}" select pane --pane-index 1 >"${out}/selected.txt"
+
+cmp -s "${out}/windows.json" "${out}/window-alias.json"
+cmp -s "${out}/worklanes.json" "${out}/worklane-alias.json"
+cmp -s "${out}/panes.json" "${out}/pane-alias.json"
+cmp -s "${out}/colors.txt" "${ZENTTY_REPO_ROOT}/docs/design/cli-goldens/colors-v1.txt"
+
+if "${cli}" list panes --json --json >"${out}/duplicate.stdout" 2>"${out}/duplicate.stderr"; then exit 1; fi
+if "${cli}" list panes --output-version 2 >"${out}/version-2.stdout" 2>"${out}/version-2.stderr"; then exit 1; fi
+if "${cli}" select pane --pane-id stale-explicit-id >"${out}/stale.stdout" 2>"${out}/stale.stderr"; then exit 1; fi
+if "${cli}" select pane --pane-index 1 --pane-index 2 >"${out}/ambiguous.stdout" 2>"${out}/ambiguous.stderr"; then exit 1; fi
+
+# Exercise both source aliases through the authenticated real product and
+# remove only the panes created by each alias.
+"${cli}" hsplit --equal
+for _ in {1..100}; do
+    "${cli}" list panes --include-control-token --json >"${out}/after-hsplit.json"
+    [[ "$(jq 'length' "${out}/after-hsplit.json")" -eq 2 ]] && break
+    sleep 0.02
+done
+jq -r '.[] | select(.id != env.ZENTTY_PANE_ID) | [.id,.controlToken] | @tsv' "${out}/after-hsplit.json" |
+while IFS=$'\t' read -r id token; do
+    "${cli}" pane close --pane-id "${id}" --pane-token "${token}"
+done
+for _ in {1..100}; do
+    [[ "$("${cli}" list panes --json | jq 'length')" -eq 1 ]] && break
+    sleep 0.02
+done
+"${cli}" vsplit --golden
+for _ in {1..100}; do
+    "${cli}" list panes --include-control-token --json >"${out}/after-vsplit.json"
+    [[ "$(jq 'length' "${out}/after-vsplit.json")" -eq 2 ]] && break
+    sleep 0.02
+done
+jq -r '.[] | select(.id != env.ZENTTY_PANE_ID) | [.id,.controlToken] | @tsv' "${out}/after-vsplit.json" |
+while IFS=$'\t' read -r id token; do
+    "${cli}" pane close --pane-id "${id}" --pane-token "${token}"
+done
+
+"${cli}" theme toggle >"${out}/theme-toggle.txt"
+"${cli}" theme light >"${out}/theme-light.txt"
+"${cli}" theme auto >"${out}/theme-auto.txt"
+
+printf 'PASS\n' >"${out}/done"
+for _ in {1..200}; do
+    [[ -e "${out}/release" ]] && exit 0
+    sleep 0.05
+done
+exit 1
+CHILD
+chmod 700 "${child}"
+
+GDK_SCALE=1 GDK_DPI_SCALE=1 \
+ZENTTY_CLI_CONTRACT_RECEIPTS="${receipts}" \
+ZENTTY_REPO_ROOT="${repo_root}" \
+LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+    "${product}" --command "${child}" --state-directory "${state_directory}" --no-session-restore \
+    >"${log}" 2>&1 &
+product_pid=$!
+
+for _ in {1..600}; do
+    [[ -s "${receipts}/done" ]] && break
+    kill -0 "${product_pid}" 2>/dev/null || fail "product exited before CLI receipts"
+    sleep 0.05
+done
+[[ "$(cat "${receipts}/done" 2>/dev/null || true)" == PASS ]] || fail "staged CLI child failed"
+
+jsonschema -i "${receipts}/overview.json" "${repo_root}/docs/design/cli-schemas/topology-overview-v1.schema.json"
+jsonschema -i "${receipts}/windows.json" "${repo_root}/docs/design/cli-schemas/windows-v1.schema.json"
+jsonschema -i "${receipts}/worklanes.json" "${repo_root}/docs/design/cli-schemas/worklanes-v1.schema.json"
+jsonschema -i "${receipts}/panes.json" "${repo_root}/docs/design/cli-schemas/panes-v1.schema.json"
+
+grep -Eq '^zentty [0-9]+\.[0-9]+\.[0-9]+ \([0-9a-f]{12}|unknown\)$' "${receipts}/version.txt" ||
+    fail "version text contract changed"
+[[ "$(head -1 "${receipts}/windows.txt")" == "$(head -1 "${repo_root}/docs/design/cli-goldens/windows-v1.txt")" ]] || fail "windows header changed"
+[[ "$(head -1 "${receipts}/worklanes.txt")" == "$(head -1 "${repo_root}/docs/design/cli-goldens/worklanes-v1.txt")" ]] || fail "worklanes header changed"
+[[ "$(head -1 "${receipts}/panes.txt")" == "$(head -1 "${repo_root}/docs/design/cli-goldens/panes-v1.txt")" ]] || fail "panes header changed"
+grep -Fq 'unsupported output version "2"' "${receipts}/version-2.stderr" || fail "output version failure changed"
+grep -Fq 'duplicate option --json' "${receipts}/duplicate.stderr" || fail "duplicate option failure changed"
+grep -Fq 'could not resolve a pane for the requested selectors' "${receipts}/stale.stderr" || fail "stale selector did not fail closed"
+grep -Fq 'duplicate option --pane-index' "${receipts}/ambiguous.stderr" || fail "ambiguous selector did not fail closed"
+
+# Evaluate the actual emitted shell program in an empty subshell and compare
+# its exact exports to independently discovered JSON rather than trusting the
+# renderer that wrote it.
+env -i bash -c 'source "$1"; printf "%s\n%s\n%s\n%s\n%s\n" "$ZENTTY_INSTANCE_SOCKET" "$ZENTTY_WINDOW_ID" "$ZENTTY_WORKLANE_ID" "$ZENTTY_PANE_ID" "$ZENTTY_PANE_TOKEN"' \
+    bash "${receipts}/selected.shell" >"${receipts}/selected-evaluated.txt"
+# The socket path is per-process and intentionally opaque. Check that it is a
+# live Unix socket, then compare every topology value and the capability token
+# against a separate authenticated discovery response.
+[[ -S "$(head -1 "${receipts}/selected-evaluated.txt")" ]] ||
+    fail "selected-pane shell exported a non-socket path"
+tail -n +2 "${receipts}/selected-evaluated.txt" | cmp -s - <(jq -r '.[0] | [.windowID,.worklaneID,.id,.controlToken] | .[]' "${receipts}/panes-authenticated.json") ||
+    fail "selected-pane shell exports changed values"
+
+touch "${receipts}/release"
+echo "rust-cli-contract-${backend}: PASS staged-cli=true real-product=true authenticated-socket=true aliases=true schemas=4 text-goldens=true hostile-shell-unit=true fail-closed=true"

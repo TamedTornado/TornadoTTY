@@ -1,0 +1,2 @@
+WINDOW        WORKLANE              IDX  COL  F  TITLE             CWD                             AGENT         STATUS
+<WINDOW_ID>   <WORKLANE_ID>         1    1    *  <TITLE>           <CWD>                           -             -

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zentty.dev/schemas/cli/windows-v1.schema.json",
+  "title": "Zentty CLI windows output v1",
+  "type": "array",
+  "items": {"$ref":"#/$defs/window"},
+  "$defs": {
+    "window": {
+      "type":"object",
+      "additionalProperties":false,
+      "required":["id","order","isFocused","worklaneCount","paneCount"],
+      "properties":{
+        "id":{"type":"string","minLength":1},
+        "order":{"type":"integer","minimum":1},
+        "isFocused":{"type":"boolean"},
+        "worklaneCount":{"type":"integer","minimum":0},
+        "paneCount":{"type":"integer","minimum":0}
+      }
+    }
+  }
+}
