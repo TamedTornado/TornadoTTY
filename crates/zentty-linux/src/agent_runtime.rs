@@ -266,10 +266,10 @@ impl AgentRuntime {
 
     pub(crate) fn unregister_pane(&mut self, pane_id: &str) {
         self.target_by_pane.remove(pane_id);
-        if let Some(path) = self.credentials_by_pane.remove(pane_id) {
-            if let Err(error) = remove_pane_credential(&path) {
-                eprintln!("zentty-linux: pane-credential-remove pane={pane_id} error={error}");
-            }
+        if let Some(path) = self.credentials_by_pane.remove(pane_id)
+            && let Err(error) = remove_pane_credential(&path)
+        {
+            eprintln!("zentty-linux: pane-credential-remove pane={pane_id} error={error}");
         }
         let Some(token) = self.tokens_by_pane.remove(pane_id) else {
             return;
@@ -493,16 +493,23 @@ fn instance_runtime_directory(
     process_id: u32,
     nonce: &str,
 ) -> PathBuf {
-    let xdg_candidate = xdg_runtime_directory
+    if let Some(runtime) = xdg_runtime_directory
         .map(std::path::Path::new)
         .filter(|path| path.is_absolute())
-        .map(|runtime| {
-            runtime
-                .join("zentty")
-                .join(format!("instance-{process_id}-{nonce}"))
-        });
-    if let Some(candidate) = xdg_candidate.filter(|path| socket_path_fits(path)) {
-        return candidate;
+    {
+        let root = runtime.join("zentty");
+        let descriptive = root.join(format!("instance-{process_id}-{nonce}"));
+        if socket_path_fits(&descriptive) {
+            return descriptive;
+        }
+        // AF_UNIX paths are short on Linux. Keep discovery beneath the
+        // authoritative XDG root when only the descriptive directory name
+        // pushes the socket over that bound; the full process identity and
+        // instance ID remain in the validated private descriptor.
+        let compact = root.join(format!("i-{nonce}"));
+        if socket_path_fits(&compact) {
+            return compact;
+        }
     }
     let temporary_candidate =
         temporary_directory.join(format!("zentty-agent-{process_id}-{nonce}"));
@@ -665,6 +672,19 @@ mod tests {
         assert_eq!(
             instance_runtime_directory(None, "/tmp".as_ref(), 42, "abc"),
             std::path::Path::new("/tmp/zentty-agent-42-abc")
+        );
+        let constrained_runtime = format!("/tmp/{}", "r".repeat(43));
+        let nonce = "0123456789abcdef0123456789abcdef";
+        assert_eq!(
+            instance_runtime_directory(
+                Some(constrained_runtime.as_ref()),
+                "/tmp".as_ref(),
+                1_234_567,
+                nonce,
+            ),
+            std::path::Path::new(&constrained_runtime)
+                .join("zentty")
+                .join(format!("i-{nonce}"))
         );
         let long_runtime = format!("/tmp/{}", "nested-runtime/".repeat(10));
         assert_eq!(

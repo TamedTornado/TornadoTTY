@@ -391,7 +391,7 @@
       "handle_child_exit"
     ],
     "agent_event_coordinator": [
-      "event_route_decision", "start", "environment_for_pane", "control_token_for_pane", "unregister_pane",
+      "event_route_decision", "start", "environment_for_pane", "control_credential_for_pane", "unregister_pane",
       "set_agent_teams_enabled", "set_agent_integrations", "available_integration_wrappers",
       "sync_targets", "schedule_for_pane", "shutdown", "apply_inputs",
       "begin_lifecycle_sweep", "lifecycle_sweep_due", "linux_process_is_alive"

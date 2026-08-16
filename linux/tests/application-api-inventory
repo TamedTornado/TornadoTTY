@@ -20,7 +20,7 @@ jq -e '
       "operations","related_inventories","result_kinds","schema_version","schemas","service","specialized_families","status","transport"
     ] and
     .schema_version == 1 and .api_version == 1 and
-    .status == "EXTRACTION_IN_PROGRESS" and
+    .status == "COMPLETE" and
     .discovery == {
       "status": "IMPLEMENTED_XDG_RUNTIME",
       "metadata_artifact": "instance.json",

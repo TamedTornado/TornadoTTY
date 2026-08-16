@@ -566,8 +566,10 @@ fn apply_focus_command(
         Some("right") => Some(PaneFocusDirection::Right),
         Some("up") => Some(PaneFocusDirection::Up),
         Some("down") => Some(PaneFocusDirection::Down),
-        Some(_) => return Err(("invalid_request", "invalid focus direction".to_owned())),
-        None => None,
+        // Positional pane IDs and indexes were already authenticated against
+        // `target` above. They select that pane; only the four directional
+        // values request an additional navigation operation.
+        _ => None,
     };
     shell
         .borrow_mut()

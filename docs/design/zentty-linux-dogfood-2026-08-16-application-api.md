@@ -528,3 +528,107 @@ all fixtures must change atomically before the inventory can move from
   CLI binary tests 2/2, parser tests 11/11, Linux type-check, strict changed
   API/transport Clippy, schema runner, inventory runner and its negative suite,
   formatting, and diff hygiene all PASS.
+
+## Slice 14: final qualification failures and repair
+
+- The first full post-extraction qualification run did not pass and was not
+  reported as passing. Its declared matrix remained 152 PASS, 0 FAIL,
+  5 BLOCKED, 1 XFAIL, and 15 NOT_IMPLEMENTED, but five declared-PASS cells
+  failed at execution: staged X11, staged Wayland, agent integration X11, the
+  application-shell architecture contract, and the aggregate Ghostty API
+  product-usage cell. The run took 1,012,850 ms. The principal durations were
+  550,070 ms for the Ghostty regression floor, 289,500 ms for ReleaseSafe
+  staging, 167,650/159,740 ms for the staged display cells, and 164,380 ms for
+  the ABI-mismatch fixture. This remains a qualification-cost concern, not a
+  reason to conceal failures or widen timeouts.
+- Two ReleaseSafe staging commands were accidentally started concurrently
+  while recovering a yielded test session. They raced on the same output and
+  one `cp` failed with `File exists`; the other completed. This was operator
+  orchestration error, not a product pass or product defect. Subsequent builds
+  and display cells were run serially.
+- The architecture failure was a stale inventory name left by the credential
+  hardening: `control_token_for_pane` had become
+  `control_credential_for_pane`. The authoritative inventory was corrected,
+  and the architecture contract, its negative tests, application-shell
+  ownership test, and mutation-isolation contract all passed in controlled
+  session `0872eca454adc5ab999a285edc1fd0a3b4e263c35035cd00d08d9c6538483cb9`.
+- The staged and aggregate timeouts shared one root cause. The real tmux
+  product journey stopped at `zentty pane focus 2`: selector authorization
+  correctly established that the credential belonged to pane index 2, but
+  the application service then incorrectly treated the already-authenticated
+  positional index as a navigation direction and rejected it. Temporary
+  artifact retention and a shorter diagnostic timeout localized the exact
+  stage; both diagnostic changes were removed rather than retained as another
+  harness mode. The service now treats an authenticated positional pane ID or
+  index as selection of the canonical target and applies extra navigation only
+  for left/right/up/down.
+- The repaired real tmux product journey passed under controlled X11. The
+  complete real agent integration cell then passed under controlled X11:
+  real Gemini 0.53.0, installed Codex 0.147.0 over its controlled loopback
+  model endpoint, installed Claude 2.1.201 over its controlled loopback model,
+  real GTK/Ghostty terminals, PTYs, wrappers, hooks, Unix IPC, physical
+  lifecycle, teardown, and consolidated session restore. Controlled session:
+  `94fb21ce33e95bd356bc0c71939184540e1ae2c5941c9ddccff12383c7bd327f`.
+- The first manual staged rerun accidentally exercised the stale
+  `build/linux/bin` copy rather than the freshly rebuilt profile artifact and
+  therefore stopped after agent launch. This was not counted as a pass. After
+  staging the corrected binaries, the complete package journeys passed under
+  controlled X11 session
+  `ca9824d6672505b8be794c5232617460397b354c94a8d9ba08b7aedb0c57fb7d`
+  and controlled Wayland session
+  `48990aedaa764623a73009f0ee9b977daaa7b18e3b56d10b4b88297a98104d4c`.
+  Each exercised the packaged product, delivered CLI, real private Unix
+  socket, product smoke, all agent adapters, and the full tmux/topology
+  journey. The final all-cell qualification rerun follows before GH-48 is
+  closed.
+- The next full run improved to 149 executed PASS cells but still failed three
+  declared-PASS cells; it was not accepted. Bookmark import/export on X11 did
+  not map its name dialog after physical focus under matrix load, while the
+  same real file-chooser journey immediately passed alone in controlled
+  session `ae1cf7aab10ab30ee1313ccd034dbb93253632629caf2e6876d8ff6b01d7bf0a`.
+  This is recorded as a load-sensitive input-harness failure, not silently
+  converted to a pass.
+- Both CLI source-compatibility cells exposed a real discovery defect. A long
+  controlled `$XDG_RUNTIME_DIR` made the descriptive Unix-socket pathname
+  exceed Linux's AF_UNIX limit, so the product fell back outside XDG while the
+  CLI correctly searched only XDG. The direct in-pane endpoint worked, but
+  explicit instance discovery could not. The runtime now tries a compact,
+  random instance directory beneath the same private XDG root before using
+  the non-discoverable emergency fallback. The full process/start identity
+  and instance ID remain in the validated private descriptor; no authority is
+  inferred from the shorter directory name. Added an exact boundary unit case.
+  Corrected real source-compatibility receipts passed under controlled X11
+  session `a49fa6badc5a1c37ec24e2716af7fbb4e806c0367dc62bcd13f5633c065ac3bc`
+  and controlled Wayland session
+  `3513b419c25b814b5f77ffe01ed57d57557adc4d0db488790ed536e79f3f94c0`.
+- An all-target API/transport Clippy audit found one pre-existing test binding
+  (`receiver`/`received`) that violates the repository's similar-name rule;
+  it was renamed without behavior change. A Linux-bin pedantic audit also
+  exposed several already-existing function-length findings outside this
+  issue plus two local style findings; the two local findings were repaired.
+  Existing unrelated function-length findings are not represented as a clean
+  strict full-bin Clippy pass.
+- Final presently-executable qualification passed every executable cell with
+  bounded three-cell matrix concurrency in 1,028,080 ms. Machine totals are
+  152 PASS, 0 FAIL, 5 BLOCKED, 1 XFAIL, and 15 NOT_IMPLEMENTED; executed
+  outcomes are 152 PASS, 5 DECLARED_BLOCKED, 1 XFAIL, and
+  15 DECLARED_NOT_IMPLEMENTED. Therefore the implemented local suite and
+  product-boundary qualification passed, while release qualification and full
+  Linux qualification correctly remain NOT_PASSED. Nothing environmental was
+  promoted to PASS.
+- Debug Valgrind is **PASS with reviewed suppressions**, not an unsuppressed
+  clean result. The preserved unsuppressed receipt reports 427 errors in 427
+  contexts, 6,080 definitely lost bytes, and 41,395 indirectly lost bytes.
+  The reviewed suppressed receipt reports zero post-suppression errors,
+  contexts, definite bytes, and indirect bytes, with all 427 contexts counted
+  as suppressed. Suppression governance passed and the machine summary binds
+  both receipt hashes. ReleaseSafe Valgrind remains XFAIL as required; no
+  suppression was broadened to make it green.
+- With the route inventory closed, all executable acceptance evidence green,
+  and the remaining matrix limitations still explicit, the authoritative API
+  inventory moved from `EXTRACTION_IN_PROGRESS` to `COMPLETE`. This status
+  closes GH-48's extraction scope; it does not claim full Linux qualification.
+- The final focused OpenCode prelaunch regression was first invoked inside the
+  restricted workspace sandbox and failed because Unix listener creation
+  returned `EPERM`. It was not counted as a product failure or pass there; the
+  identical test reran in the approved real-socket environment and passed.

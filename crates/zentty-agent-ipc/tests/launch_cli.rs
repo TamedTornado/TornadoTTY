@@ -546,13 +546,13 @@ fn opencode_prelaunch_event_crosses_the_authenticated_socket_before_exec() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let received = receiver.recv_timeout(Duration::from_secs(2)).unwrap();
+    let event = receiver.recv_timeout(Duration::from_secs(2)).unwrap();
     assert_eq!(
-        received.target,
+        event.target,
         AgentTarget::new("window", "test-lane", "test-pane")
     );
     assert_eq!(
-        serde_json::to_value(received.event).unwrap()["event"],
+        serde_json::to_value(event.event).unwrap()["event"],
         "session.start"
     );
     server.shutdown().unwrap();
