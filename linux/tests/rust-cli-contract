@@ -105,6 +105,12 @@ out="${ZENTTY_CLI_CONTRACT_RECEIPTS}"
 "${cli}" pane list --json --output-version 1 >"${out}/pane-alias.json"
 "${cli}" select pane --pane-index 1 --shell --include-control-token --output-version 1 >"${out}/selected.shell"
 "${cli}" select pane --pane-index 1 >"${out}/selected.txt"
+env -u ZENTTY_INSTANCE_SOCKET -u ZENTTY_PANE_TOKEN -u ZENTTY_INSTANCE_ID \
+    "${cli}" list panes --json --output-version 1 >"${out}/discovered-panes.json"
+cmp -s "${out}/panes.json" "${out}/discovered-panes.json"
+if env -u ZENTTY_INSTANCE_SOCKET -u ZENTTY_PANE_TOKEN -u ZENTTY_INSTANCE_ID \
+    "${cli}" split right >"${out}/discovered-mutation.stdout" \
+    2>"${out}/discovered-mutation.stderr"; then exit 1; fi
 
 # Discovery is authenticated but read-only. Capabilities are absent by
 # default, explicit forged topology claims cannot redirect the token, and a
@@ -206,7 +212,8 @@ grep -Fq 'unsupported output version "2"' "${receipts}/version-2.stderr" || fail
 grep -Fq 'duplicate option --json' "${receipts}/duplicate.stderr" || fail "duplicate option failure changed"
 grep -Fq 'could not resolve a pane for the requested selectors' "${receipts}/stale.stderr" || fail "stale selector did not fail closed"
 grep -Fq 'duplicate option --pane-index' "${receipts}/ambiguous.stderr" || fail "ambiguous selector did not fail closed"
-grep -Fq 'agent IPC request rejected' "${receipts}/wrong-token.stderr" || fail "wrong capability failure changed"
+grep -Fq 'application capability rejected: pane token is invalid' \
+    "${receipts}/wrong-token.stderr" || fail "wrong capability failure changed"
 grep -Fq 'unauthorized_target' "${receipts}/stale-mutation.stderr" || fail "stale mutation did not fail closed"
 
 # A split is a real Ghostty/PTY child, not a model-only row. Compare its
@@ -295,6 +302,15 @@ env ZENTTY_INSTANCE_SOCKET="${second_socket}" ZENTTY_PANE_TOKEN="${second_token}
     "${staged_cli}" worklane rename "Second isolated"
 env ZENTTY_INSTANCE_SOCKET="${second_socket}" ZENTTY_PANE_TOKEN="${second_token}" \
     "${staged_cli}" list worklanes --json >"${second_receipts}/worklanes.json"
+if env -u ZENTTY_INSTANCE_SOCKET -u ZENTTY_PANE_TOKEN -u ZENTTY_INSTANCE_ID \
+    "${staged_cli}" list worklanes --json >/dev/null 2>&1; then
+    fail "ambient discovery silently selected one of multiple instances"
+fi
+env -u ZENTTY_INSTANCE_SOCKET -u ZENTTY_PANE_TOKEN \
+    ZENTTY_INSTANCE_ID="${second_instance}" \
+    "${staged_cli}" list worklanes --json >"${second_receipts}/discovered-worklanes.json"
+cmp -s "${second_receipts}/worklanes.json" "${second_receipts}/discovered-worklanes.json" ||
+    fail "explicit instance discovery selected the wrong product"
 env ZENTTY_INSTANCE_SOCKET="${first_socket}" ZENTTY_PANE_TOKEN="${first_token}" \
     "${staged_cli}" list worklanes --json >"${receipts}/first-after-second-mutation.json"
 jq -e '.[0].title == "Second isolated"' "${second_receipts}/worklanes.json" >/dev/null || fail "second instance mutation missed its authority"

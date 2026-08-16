@@ -77,7 +77,8 @@ pub use bookmark_store::{
 pub use pane_focus_history::PaneReference;
 pub use pane_layout::{PaneLayoutPolicy, PaneRightInsertionBehavior};
 pub use pane_token_registry::{
-    AgentTarget, AuthenticatedAgentEvent, PaneTokenError, PaneTokenRegistry,
+    AgentTarget, AuthenticatedAgentEvent, AuthenticatedTarget, CapabilityAuthority, PaneTokenError,
+    PaneTokenRegistry,
 };
 pub use project_icon::{ProjectIconCache, ProjectIconLookup};
 pub use remote_transfer::{

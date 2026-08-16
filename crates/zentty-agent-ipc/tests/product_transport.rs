@@ -1,11 +1,12 @@
 use std::io::{Read, Write};
+use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixStream;
 use std::process::Command;
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 use zentty_agent_ipc::{
     AgentIpcClient, AgentIpcServer, ApplicationErrorCategory, ApplicationRequest,
-    AuthenticatedProductRequest, ProductIpcKind, ProductIpcReply,
+    AuthenticatedProductRequest, ProductIpcKind, ProductIpcReply, publish_instance,
 };
 use zentty_core::{AgentTarget, PaneTokenRegistry};
 
@@ -331,10 +332,90 @@ fn published_non_rust_client_uses_the_real_authenticated_socket() {
         .env("ZENTTY_PANE_TOKEN", token)
         .output()
         .unwrap();
-    assert!(output.status.success(), "{:?}", output);
+    assert!(output.status.success(), "{output:?}");
     assert_eq!(
         String::from_utf8(output.stdout).unwrap(),
         "[{\"id\":\"pane-1\"}]\n"
+    );
+    worker.join().unwrap();
+    server.shutdown().unwrap();
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn delivered_cli_discovers_one_instance_without_exposing_its_credential() {
+    let token = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+    let instance = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    let root = std::env::temp_dir().join(format!(
+        "zentty-cli-discovery-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    let directory = root.join("zentty/instance-test");
+    std::fs::create_dir_all(&directory).unwrap();
+    std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let socket = directory.join("instance.sock");
+    let mut registry = PaneTokenRegistry::default();
+    registry
+        .register_instance(token, AgentTarget::new("window-1", "lane-1", "pane-1"))
+        .unwrap();
+    let (event_sender, event_receiver) = mpsc::channel();
+    let (tmux_sender, _tmux_receiver) = mpsc::channel();
+    let (server_sender, _server_receiver) = mpsc::channel();
+    let (product_sender, product_receiver) = mpsc::channel();
+    let server = AgentIpcServer::start_with_cli_routes(
+        &socket,
+        Arc::new(Mutex::new(registry)),
+        event_sender,
+        tmux_sender,
+        server_sender,
+        product_sender,
+    )
+    .unwrap();
+    publish_instance(&directory, instance, token).unwrap();
+    let worker = std::thread::spawn(move || {
+        let request = product_receiver
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap();
+        assert_eq!(
+            request.authority,
+            zentty_core::CapabilityAuthority::Instance
+        );
+        request
+            .respond(ProductIpcReply::success("[{\"id\":\"pane-1\"}]\n").unwrap())
+            .unwrap();
+        assert!(
+            product_receiver
+                .recv_timeout(Duration::from_millis(150))
+                .is_err()
+        );
+    });
+    let output = Command::new(env!("CARGO_BIN_EXE_zentty"))
+        .args(["list", "panes", "--json"])
+        .env("XDG_RUNTIME_DIR", &root)
+        .env_remove("ZENTTY_INSTANCE_SOCKET")
+        .env_remove("ZENTTY_PANE_TOKEN")
+        .env_remove("ZENTTY_INSTANCE_ID")
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "[{\"id\":\"pane-1\"}]\n"
+    );
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(!stderr.contains(token));
+    let pane_request =
+        ApplicationRequest::new(ProductIpcKind::Pane, "split", vec!["right".to_owned()]).unwrap();
+    let error = AgentIpcClient::send_application(&socket, token, &pane_request, None).unwrap_err();
+    assert_eq!(
+        error.category(),
+        ApplicationErrorCategory::AuthorizationFailure
+    );
+    assert!(
+        event_receiver
+            .recv_timeout(Duration::from_millis(100))
+            .is_err()
     );
     worker.join().unwrap();
     server.shutdown().unwrap();

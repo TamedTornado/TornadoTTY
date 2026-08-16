@@ -300,3 +300,43 @@ disappear from that inventory merely because it is hidden or internal.
 - Results: real transport tests 11/11 PASS, schema positives 3/3 and negatives
   5/5 PASS, strict shipped-target Clippy, ShellCheck, formatting, and diff
   hygiene PASS.
+
+## Slice 8: owner-local discovery with scoped automation authority
+
+- Designed discovery before wiring it into the CLI. Publishing a pane token
+  directly would also authorize fabricated agent events and compatibility
+  traffic, so `PaneTokenRegistry` now records `Pane` versus `Instance`
+  authority. Instance credentials authenticate only application discovery;
+  event, tmux, server, and pane-mutation routes reject them.
+- Added split owner-private artifacts beneath the existing random instance
+  directory: `instance.json` contains only schema/API version, instance ID,
+  PID plus `/proc` start ticks, and the exact socket path;
+  `automation.token` contains the credential. The directory remains 0700 and
+  descriptor, credential, and socket are 0600. The credential's `Debug`
+  representation is always redacted.
+- Discovery validates real files/directories rather than following symlinks,
+  exact modes, the expected socket path and type, API/schema versions, and
+  PID/start-time identity. Invalid or stale candidates do not become usable
+  endpoints. There is deliberately no insecure `/tmp` scan fallback.
+- `AgentRuntime` publishes only after a real pane exists, anchors the instance
+  capability to that pane, retargets it if the anchor closes, and withdraws
+  discovery when the last pane disappears. The CLI preserves complete in-pane
+  environments, refuses partially present endpoint variables, discovers a
+  sole XDG instance, and fails closed on multiple instances unless
+  `ZENTTY_INSTANCE_ID` selects one exactly.
+- Added real tests for separated/redacted artifacts, hostile permissions and
+  symlinks, scoped capability rejection, the delivered CLI as an outside-pane
+  process, and no credential leakage to stderr. The first controlled X11 run
+  failed because the journey still expected the legacy prose-only rejection
+  text. The implementation correctly returned the new typed authorization
+  boundary (`application capability rejected: pane token is invalid`); the
+  assertion was tightened to that exact contract rather than weakening the
+  implementation.
+- Corrected results: core capability tests 4/4 PASS, discovery tests 2/2 PASS,
+  real transport tests 12/12 PASS, Linux integration compile PASS, API schema
+  positives 3/3 and negatives 5/5 PASS, and controlled real-product CLI
+  journeys on X11 and Wayland PASS. Strict Clippy over the changed libraries,
+  binaries, and tests, ShellCheck, formatting, architecture and inventory
+  negative self-tests, and diff hygiene PASS. A broader all-tests Clippy run
+  also exposed a pre-existing `similar_names` warning in `launch_cli.rs`; it
+  is outside this discovery change, while the changed test targets are clean.

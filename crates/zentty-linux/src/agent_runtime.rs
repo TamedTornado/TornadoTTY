@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, mpsc};
 use zentty_agent_ipc::{
     AgentIpcServer, AuthenticatedProductRequest, AuthenticatedServerRequest,
-    AuthenticatedTmuxRequest, generate_pane_token,
+    AuthenticatedTmuxRequest, generate_pane_token, publish_instance,
 };
 use zentty_core::{AgentTarget, AuthenticatedAgentEvent, PaneTokenRegistry};
 
@@ -26,6 +26,8 @@ pub(crate) struct AgentRuntime {
     tmux_shim_directory: PathBuf,
     shell_integration_directory: PathBuf,
     instance_id: String,
+    automation_token: String,
+    automation_target_pane: Option<String>,
     agent_teams_enabled: bool,
     integration_states: std::collections::BTreeMap<String, zentty_core::AgentIntegrationState>,
 }
@@ -33,6 +35,7 @@ pub(crate) struct AgentRuntime {
 impl AgentRuntime {
     pub(crate) fn start() -> Result<Self, String> {
         let instance = generate_pane_token().map_err(|error| error.to_string())?;
+        let automation_token = generate_pane_token().map_err(|error| error.to_string())?;
         let runtime_directory = instance_runtime_directory(
             std::env::var_os("XDG_RUNTIME_DIR").as_deref(),
             &std::env::temp_dir(),
@@ -94,6 +97,8 @@ impl AgentRuntime {
             tmux_shim_directory,
             shell_integration_directory,
             instance_id: instance,
+            automation_token,
+            automation_target_pane: None,
             agent_teams_enabled: std::env::var_os("CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS")
                 .as_deref()
                 == Some(std::ffi::OsStr::new("1")),
@@ -112,7 +117,7 @@ impl AgentRuntime {
             self.registry
                 .lock()
                 .map_err(|_| "agent pane registry is unavailable".to_owned())?
-                .retarget(token, target)
+                .retarget(token, target.clone())
                 .map_err(|error| error.to_string())?;
             token.clone()
         } else {
@@ -120,7 +125,7 @@ impl AgentRuntime {
             self.registry
                 .lock()
                 .map_err(|_| "agent pane registry is unavailable".to_owned())?
-                .register(&token, target)
+                .register(&token, target.clone())
                 .map_err(|error| error.to_string())?;
             self.tokens_by_pane
                 .insert(pane_id.to_owned(), token.clone());
@@ -130,6 +135,27 @@ impl AgentRuntime {
             pane_id.to_owned(),
             (window_id.to_owned(), worklane_id.to_owned()),
         );
+        if self.automation_target_pane.is_none() {
+            let mut registry = self
+                .registry
+                .lock()
+                .map_err(|_| "agent pane registry is unavailable".to_owned())?;
+            registry
+                .register_instance(&self.automation_token, target)
+                .map_err(|error| error.to_string())?;
+            drop(registry);
+            if let Err(error) = publish_instance(
+                &self.runtime_directory,
+                &self.instance_id,
+                &self.automation_token,
+            ) {
+                if let Ok(mut registry) = self.registry.lock() {
+                    let _ = registry.unregister(&self.automation_token);
+                }
+                return Err(format!("could not publish instance discovery: {error}"));
+            }
+            self.automation_target_pane = Some(pane_id.to_owned());
+        }
         let cli = self.cli_path.to_string_lossy().into_owned();
         let mut environment = vec![
             ("ZENTTY_CLI_BIN".to_owned(), cli.clone()),
@@ -232,6 +258,22 @@ impl AgentRuntime {
         };
         if let Ok(mut registry) = self.registry.lock() {
             let _ = registry.unregister(&token);
+            if self.automation_target_pane.as_deref() == Some(pane_id) {
+                if let Some((replacement_pane, (window, worklane))) =
+                    self.target_by_pane.iter().next()
+                {
+                    let _ = registry.retarget(
+                        &self.automation_token,
+                        AgentTarget::new(window, worklane, replacement_pane),
+                    );
+                    self.automation_target_pane = Some(replacement_pane.clone());
+                } else {
+                    let _ = registry.unregister(&self.automation_token);
+                    self.automation_target_pane = None;
+                    let _ = std::fs::remove_file(self.runtime_directory.join("instance.json"));
+                    let _ = std::fs::remove_file(self.runtime_directory.join("automation.token"));
+                }
+            }
         }
     }
 

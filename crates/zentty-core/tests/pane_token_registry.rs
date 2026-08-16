@@ -1,4 +1,6 @@
-use zentty_core::{AgentEvent, AgentTarget, PaneTokenError, PaneTokenRegistry};
+use zentty_core::{
+    AgentEvent, AgentTarget, CapabilityAuthority, PaneTokenError, PaneTokenRegistry,
+};
 
 fn idle_event() -> AgentEvent {
     AgentEvent::parse(br#"{"version":1,"event":"agent.idle"}"#).unwrap()
@@ -64,5 +66,27 @@ fn duplicate_unknown_and_unregistered_tokens_are_rejected() {
     assert!(matches!(
         registry.authenticate("token", idle_event()),
         Err(PaneTokenError::InvalidToken)
+    ));
+}
+
+#[test]
+fn instance_capability_is_limited_to_application_authentication() {
+    let target = AgentTarget::new("window", "lane", "pane");
+    let mut registry = PaneTokenRegistry::default();
+    registry
+        .register_instance("instance-token", target.clone())
+        .unwrap();
+    let authenticated = registry
+        .authenticate_application_target("instance-token")
+        .unwrap();
+    assert_eq!(authenticated.target, target);
+    assert_eq!(authenticated.authority, CapabilityAuthority::Instance);
+    assert!(matches!(
+        registry.authenticate_target("instance-token"),
+        Err(PaneTokenError::InsufficientAuthority)
+    ));
+    assert!(matches!(
+        registry.authenticate("instance-token", idle_event()),
+        Err(PaneTokenError::InsufficientAuthority)
     ));
 }

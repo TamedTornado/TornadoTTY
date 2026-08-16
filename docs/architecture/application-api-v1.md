@@ -1,10 +1,11 @@
 # Zentty application API v1 (extraction contract)
 
-Status: **implemented for authenticated in-pane clients; public instance
-discovery is not implemented yet**. The machine authority is
+Status: **implemented for authenticated in-pane clients and owner-local XDG
+runtime discovery**. The machine authority is
 [`zentty-application-api-v1.json`](zentty-application-api-v1.json). The JSON
 schemas describe what the current producer writes; they do not turn the
-private socket path or pane capability into a public discovery mechanism.
+  private socket path or pane capability into an unprotected discovery
+  mechanism.
 
 ## Ownership
 
@@ -62,9 +63,22 @@ not routing authority.
 
 Using a valid capability against another instance fails authentication. A
 selector that disagrees with the capability fails authorization. A target
-removed after authentication returns `stale_target`. Public discovery and a
-least-authority bootstrap capability remain GH-48 work; do not publish pane
-tokens or scan another process's environment as a substitute.
+removed after authentication returns `stale_target`.
+
+For owner-local automation, each live product publishes non-secret
+`instance.json` metadata and a separate `automation.token` beneath its private
+0700 instance directory in `$XDG_RUNTIME_DIR/zentty`. Both artifacts and the
+socket are 0600. Discovery rejects symlinks, loose modes, incompatible schema
+or API versions, a mismatched socket path, and stale PID/start-time identity.
+The credential has instance authority only for `discover` operations: it
+cannot submit agent events, compatibility requests, server mutations, or pane
+mutations. An automation client explicitly selects a pane and requests shell
+exports to transition to that pane's narrower capability.
+
+With one valid instance, the CLI discovers it automatically. With multiple
+instances it fails closed and requires `ZENTTY_INSTANCE_ID`; it never chooses
+one by recency. There is no `/tmp` scanning fallback when `XDG_RUNTIME_DIR` is
+absent.
 
 ## Lifecycle
 
@@ -101,6 +115,6 @@ authentication path.
 ./examples/application-api-v1.sh
 ```
 
-This example is usable inside a Zentty pane. It is deliberately not advertised
-as an out-of-process discovery solution until the remaining discovery,
-credential rotation, and stale-instance work is implemented and qualified.
+This example is usable inside a Zentty pane. The delivered CLI additionally
+supports owner-local discovery; the example remains in-pane so it demonstrates
+the wire contract without duplicating discovery and credential validation.

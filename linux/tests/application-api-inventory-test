@@ -48,4 +48,7 @@ expect_rejected false-public-classification "external API classification drifted
 jq '.error_categories[0] = "miscellaneous"' "${source_inventory}" >"${temp_dir}/unknown-error-category.json"
 expect_rejected unknown-error-category "schema or closed enums failed"
 
+jq '.discovery.instance_authority_scopes = ["pane"]' "${source_inventory}" >"${temp_dir}/overpowered-discovery.json"
+expect_rejected overpowered-discovery "schema or closed enums failed"
+
 echo "application-api-inventory runner negative tests passed"

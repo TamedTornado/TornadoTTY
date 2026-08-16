@@ -16,11 +16,24 @@ jq empty "${cli_contract}" 2>/dev/null || fail "CLI contract is not valid JSON"
 
 jq -e '
     (keys | sort) == [
-      "api_version","authority","cli","cli_local_families","documentation","error_categories",
+      "api_version","authority","cli","cli_local_families","discovery","documentation","error_categories",
       "operations","schema_version","schemas","service","specialized_families","status","transport"
     ] and
     .schema_version == 1 and .api_version == 1 and
     .status == "EXTRACTION_IN_PROGRESS" and
+    .discovery == {
+      "status": "IMPLEMENTED_XDG_RUNTIME",
+      "metadata_artifact": "instance.json",
+      "credential_artifact": "automation.token",
+      "metadata_contains_credential": false,
+      "directory_mode": "0700",
+      "artifact_mode": "0600",
+      "socket_mode": "0600",
+      "process_identity": "pid-plus-proc-start-ticks",
+      "instance_authority_scopes": ["discover"],
+      "multiple_instance_policy": "require-ZENTTY_INSTANCE_ID",
+      "fallback_without-XDG_RUNTIME_DIR": false
+    } and
     .error_categories == [
       "invalid_arguments","unsupported_operation","unsupported_version",
       "authorization_failure","stale_target","stale_instance",

@@ -6,13 +6,13 @@ use std::process::ExitCode;
 use std::process::{Command as ProcessCommand, Stdio};
 use std::time::Instant;
 use zentty_agent_ipc::{
-    AgentIpcClient, CliProductCommand, ServerCommand, install_integration, launch_agent,
-    parse_product_cli, uninstall_integration,
+    AgentIpcClient, CliProductCommand, ServerCommand, discover_instances, install_integration,
+    launch_agent, parse_product_cli, uninstall_integration,
 };
 use zentty_core::{
-    AgentEvent, adapt_agy_hook, adapt_claude_hook, adapt_codex_hook, adapt_codex_notify,
-    adapt_copilot_hook, adapt_cursor_hook, adapt_droid_hook, adapt_gemini_hook, adapt_grok_hook,
-    adapt_hermes_hook, adapt_kimi_hook, adapt_small_harness_hook, adapt_vibe_hook,
+    AgentEvent, AgentTarget, adapt_agy_hook, adapt_claude_hook, adapt_codex_hook,
+    adapt_codex_notify, adapt_copilot_hook, adapt_cursor_hook, adapt_droid_hook, adapt_gemini_hook,
+    adapt_grok_hook, adapt_hermes_hook, adapt_kimi_hook, adapt_small_harness_hook, adapt_vibe_hook,
     detect_server_urls,
 };
 use zentty_tmux_compat::{
@@ -257,22 +257,14 @@ fn run_product_cli(command: CliProductCommand) -> Result<(), String> {
             Ok(())
         }
         CliProductCommand::Request(request) => {
-            let socket = std::env::var("ZENTTY_INSTANCE_SOCKET")
-                .map_err(|_| "not running inside a Zentty instance".to_owned())?;
-            let caller_token = std::env::var("ZENTTY_PANE_TOKEN")
-                .map_err(|_| "ZENTTY_PANE_TOKEN is missing".to_owned())?;
+            let (socket, caller_token, claimed_target) = application_endpoint()?;
             let token = request
                 .arguments()
                 .windows(2)
                 .find_map(|pair| (pair[0] == "--pane-token").then_some(pair[1].as_str()))
                 .unwrap_or(&caller_token);
-            let reply = AgentIpcClient::send_application(
-                socket,
-                token,
-                &request,
-                claimed_target_from_environment(),
-            )
-            .map_err(|error| error.to_string())?;
+            let reply = AgentIpcClient::send_application(socket, token, &request, claimed_target)
+                .map_err(|error| error.to_string())?;
             if let Some(error) = reply.error() {
                 return Err(format!("{}: {}", error.code(), error.message()));
             }
@@ -288,6 +280,51 @@ fn run_product_cli(command: CliProductCommand) -> Result<(), String> {
             }
             Ok(())
         }
+    }
+}
+
+fn application_endpoint() -> Result<(std::path::PathBuf, String, Option<AgentTarget>), String> {
+    match (
+        std::env::var_os("ZENTTY_INSTANCE_SOCKET"),
+        std::env::var("ZENTTY_PANE_TOKEN"),
+    ) {
+        (Some(socket), Ok(token)) => {
+            return Ok((socket.into(), token, claimed_target_from_environment()));
+        }
+        (None, Err(_)) => {}
+        _ => {
+            return Err(
+                "incomplete in-pane application endpoint environment; refusing discovery fallback"
+                    .to_owned(),
+            );
+        }
+    }
+    let runtime_root = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(std::path::PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .ok_or_else(|| "XDG_RUNTIME_DIR is unavailable for Zentty discovery".to_owned())?;
+    let requested = std::env::var("ZENTTY_INSTANCE_ID").ok();
+    let mut instances = discover_instances(&runtime_root)?;
+    if let Some(requested) = requested.as_deref() {
+        instances.retain(|instance| instance.instance_id == requested);
+    }
+    match instances.as_slice() {
+        [] => Err(requested.map_or_else(
+            || "no discoverable Zentty instance is running".to_owned(),
+            |id| format!("Zentty instance {id:?} is not discoverable"),
+        )),
+        [instance] => Ok((
+            instance.socket_path.clone(),
+            instance.credential.expose().to_owned(),
+            None,
+        )),
+        many => Err(format!(
+            "multiple Zentty instances are running; set ZENTTY_INSTANCE_ID to one of: {}",
+            many.iter()
+                .map(|instance| instance.instance_id.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
     }
 }
 

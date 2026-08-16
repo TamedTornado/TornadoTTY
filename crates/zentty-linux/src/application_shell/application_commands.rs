@@ -8,7 +8,8 @@ use zentty_api::{
     ApplicationRequest as ProductIpcRequest,
 };
 use zentty_core::{
-    AgentTarget, PaneLayoutPolicy, PaneRecipe, PaneResizeDirection, ThemeModeCommand, WorklaneColor,
+    AgentTarget, CapabilityAuthority, PaneLayoutPolicy, PaneRecipe, PaneResizeDirection,
+    ThemeModeCommand, WorklaneColor,
 };
 
 pub(crate) struct DiscoveryRows {
@@ -62,9 +63,10 @@ impl ApplicationShell {
     pub(crate) fn execute_application_request(
         shell: &Rc<RefCell<Self>>,
         target: &AgentTarget,
+        authority: CapabilityAuthority,
         request: &ProductIpcRequest,
     ) -> ProductIpcReply {
-        let result = Self::execute_application_request_inner(shell, target, request);
+        let result = Self::execute_application_request_inner(shell, target, authority, request);
         result.map_or_else(
             |(code, message)| {
                 ProductIpcReply::failure(code, message).expect("bounded product diagnostic")
@@ -76,6 +78,7 @@ impl ApplicationShell {
     fn execute_application_request_inner(
         shell: &Rc<RefCell<Self>>,
         target: &AgentTarget,
+        authority: CapabilityAuthority,
         request: &ProductIpcRequest,
     ) -> Result<String, (&'static str, String)> {
         eprintln!(
@@ -91,15 +94,17 @@ impl ApplicationShell {
         if !target_exists(&shell.borrow(), target) {
             return Err(("stale_target", "target pane is unavailable".to_owned()));
         }
-        validate_authenticated_selectors(
-            &shell.borrow(),
-            target,
-            request.arguments(),
-            matches!(
-                request.operation(),
-                ApplicationOperation::Focus | ApplicationOperation::Close
-            ),
-        )?;
+        if authority == CapabilityAuthority::Pane {
+            validate_authenticated_selectors(
+                &shell.borrow(),
+                target,
+                request.arguments(),
+                matches!(
+                    request.operation(),
+                    ApplicationOperation::Focus | ApplicationOperation::Close
+                ),
+            )?;
+        }
         match request.operation() {
             ApplicationOperation::Split => {
                 let before = pane_ids(&shell.borrow());

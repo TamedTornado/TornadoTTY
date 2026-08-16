@@ -1,11 +1,13 @@
 #![forbid(unsafe_code)]
 
 mod cli;
+mod discovery;
 mod integrations;
 mod launch;
 mod server;
 
 pub use cli::{CliProductCommand, parse_product_cli};
+pub use discovery::{DiscoveredInstance, InstanceCredential, discover_instances, publish_instance};
 pub use integrations::{install_integration, uninstall_integration};
 pub use launch::{LaunchError, launch_agent, resolve_real_binary};
 pub use server::{
@@ -31,7 +33,8 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use zentty_core::{
-    AgentEvent, AgentTarget, AuthenticatedAgentEvent, PaneTokenError, PaneTokenRegistry,
+    AgentEvent, AgentTarget, AuthenticatedAgentEvent, CapabilityAuthority, PaneTokenError,
+    PaneTokenRegistry,
 };
 use zentty_tmux_compat::{TmuxCompatReply, TmuxCompatRequest};
 
@@ -187,6 +190,7 @@ pub struct AuthenticatedServerRequest {
 
 pub struct AuthenticatedProductRequest {
     pub target: AgentTarget,
+    pub authority: CapabilityAuthority,
     pub request: ProductIpcRequest,
     responder: mpsc::SyncSender<ProductIpcReply>,
 }
@@ -1089,11 +1093,17 @@ fn receive_request(
             receive_server_request(request, target, &subcommand, server_sender)
         }
         ("discover" | "pane", Some(subcommand)) => {
-            let target = registry
-                .authenticate_target(&token)
+            let authenticated = registry
+                .authenticate_application_target(&token)
                 .map_err(pane_token_rejection)?;
             drop(registry);
-            receive_product_request(request, target, &subcommand, product_sender)
+            receive_product_request(
+                request,
+                authenticated.target,
+                authenticated.authority,
+                &subcommand,
+                product_sender,
+            )
         }
         _ => Err(AgentIpcError::Rejected("unsupported IPC route".to_owned())),
     }
@@ -1102,6 +1112,7 @@ fn receive_request(
 fn receive_product_request(
     request: WireRequest,
     target: AgentTarget,
+    authority: CapabilityAuthority,
     subcommand: &str,
     product_sender: Option<&mpsc::Sender<AuthenticatedProductRequest>>,
 ) -> Result<ReceivedResponse, AgentIpcError> {
@@ -1115,6 +1126,11 @@ fn receive_product_request(
     } else {
         ProductIpcKind::Pane
     };
+    if authority == CapabilityAuthority::Instance && kind == ProductIpcKind::Pane {
+        return Err(AgentIpcError::Authorization(
+            "instance discovery capability requires explicit pane selection".to_owned(),
+        ));
+    }
     let payload = ProductIpcRequest::new(kind, subcommand, request.arguments)
         .map_err(|error| AgentIpcError::Rejected(error.to_string()))?;
     let product_sender = product_sender
@@ -1123,6 +1139,7 @@ fn receive_product_request(
     product_sender
         .send(AuthenticatedProductRequest {
             target,
+            authority,
             request: payload,
             responder,
         })

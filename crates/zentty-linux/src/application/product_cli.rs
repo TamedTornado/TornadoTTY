@@ -39,6 +39,7 @@ impl ApplicationCoordinator {
                         crate::application_shell::ApplicationShell::execute_application_request(
                             shell,
                             &command.target,
+                            command.authority,
                             &command.request,
                         )
                     },
@@ -129,7 +130,12 @@ impl ApplicationCoordinator {
         let request = ProductIpcRequest::new(ProductIpcKind::Pane, "grid", arguments)
             .expect("validated grid request remains valid without destination flag");
         let target = AgentTarget::new(&destination_window_id, &worklane_id, &pane_id);
-        let reply = ApplicationShell::execute_application_request(&destination, &target, &request);
+        let reply = ApplicationShell::execute_application_request(
+            &destination,
+            &target,
+            zentty_core::CapabilityAuthority::Pane,
+            &request,
+        );
         if reply.error().is_some() {
             let mut coordinator_ref = coordinator.borrow_mut();
             coordinator_ref.shells.remove(&destination_window_id);
