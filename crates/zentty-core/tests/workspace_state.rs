@@ -98,7 +98,7 @@ fn agent_pid_signals_are_session_scoped_and_an_unscoped_clear_clears_every_sessi
     ));
     state.apply_canonical_agent_event(
         AgentTarget::new("window-a", "worklane-a", "pane-a"),
-        AgentEvent::parse(br#"{"version":1,"event":"agent.needs-input","agent":{"name":"Codex"},"session":{"id":"child","parentId":"parent"},"state":{"interaction":{"kind":"question"}}}"#).unwrap(),
+        &AgentEvent::parse(br#"{"version":1,"event":"agent.needs-input","agent":{"name":"Codex"},"session":{"id":"child","parentId":"parent"},"state":{"interaction":{"kind":"question"}}}"#).unwrap(),
         2,
     );
     let child = state.sidebar_summaries()[0].pane_rows[0]
@@ -132,14 +132,14 @@ fn signal_priority_rejects_weaker_conflicts_and_prefers_an_active_root_over_its_
     let target = AgentTarget::new("window-a", "worklane-a", "pane-a");
     state.apply_agent_signal_event(
         target.clone(),
-        AgentEvent::parse(br#"{"version":1,"event":"agent.running","agent":{"name":"Codex"},"session":{"id":"root"}}"#).unwrap(),
+        &AgentEvent::parse(br#"{"version":1,"event":"agent.running","agent":{"name":"Codex"},"session":{"id":"root"}}"#).unwrap(),
         zentty_core::AgentSignalOrigin::ExplicitHook,
         zentty_core::AgentSignalConfidence::Explicit,
         1,
     );
     state.apply_agent_signal_event(
         target.clone(),
-        AgentEvent::parse(br#"{"version":1,"event":"agent.idle","session":{"id":"root"}}"#)
+        &AgentEvent::parse(br#"{"version":1,"event":"agent.idle","session":{"id":"root"}}"#)
             .unwrap(),
         zentty_core::AgentSignalOrigin::Inferred,
         zentty_core::AgentSignalConfidence::Weak,
@@ -156,7 +156,7 @@ fn signal_priority_rejects_weaker_conflicts_and_prefers_an_active_root_over_its_
 
     state.apply_agent_signal_event(
         target,
-        AgentEvent::parse(br#"{"version":1,"event":"agent.running","agent":{"name":"Codex"},"session":{"id":"child","parentId":"root"}}"#).unwrap(),
+        &AgentEvent::parse(br#"{"version":1,"event":"agent.running","agent":{"name":"Codex"},"session":{"id":"child","parentId":"root"}}"#).unwrap(),
         zentty_core::AgentSignalOrigin::ExplicitHook,
         zentty_core::AgentSignalConfidence::Explicit,
         3,
@@ -302,7 +302,7 @@ fn explicit_transcript_context_does_not_require_a_guessed_working_directory() {
             target: AgentTarget::new("window-a", "worklane-a", "pane-a"),
             pane_token: "token-pane-a".to_owned(),
             event: AgentEvent::parse(
-                br#"{"version":1,"event":"agent.running","agent":{"name":"Codex"},"session":{"id":"codex-explicit"},"transcriptPath":"/tmp/explicit.jsonl"}"#,
+                br#"{"version":1,"event":"agent.running","agent":{"name":"Codex"},"session":{"id":"codex-explicit"},"transcriptPath":"/tmp/explicit.jsonl","context":{"workingDirectory":"/tmp/event-project"}}"#,
             )
             .unwrap(),
         },
@@ -316,7 +316,10 @@ fn explicit_transcript_context_does_not_require_a_guessed_working_directory() {
     let candidate = state
         .codex_transcript_enrichment_candidate("pane-a", None)
         .unwrap();
-    assert_eq!(candidate.working_directory, None);
+    assert_eq!(
+        candidate.working_directory.as_deref(),
+        Some("/tmp/event-project")
+    );
     assert_eq!(
         candidate.transcript_path.as_deref(),
         Some("/tmp/explicit.jsonl")
@@ -376,7 +379,7 @@ fn active_supported_agents_produce_restorable_per_pane_drafts() {
     state.apply_agent_event(
         event(
             "pane-agent",
-            br#"{"version":1,"event":"session.start","agent":{"name":"Codex","pid":4242},"session":{"id":"session-codex"}}"#,
+            br#"{"version":1,"event":"session.start","agent":{"name":"Codex","pid":4242},"session":{"id":"session-codex"},"context":{"workingDirectory":"/tmp/event-project","launch":{"arguments":["codex","--ambient-secret","DO_NOT_PERSIST"],"environment":{"API_TOKEN":"DO_NOT_PERSIST"}}}}"#,
         ),
         10,
     );
@@ -387,6 +390,16 @@ fn active_supported_agents_produce_restorable_per_pane_drafts() {
         ),
         11,
     );
+    for (now, payload) in [
+        br#"{"version":1,"event":"task.started","agent":{"name":"Codex"},"session":{"id":"session-codex"},"task":{"id":"worker-a"}}"#.as_slice(),
+        br#"{"version":1,"event":"task.completed","agent":{"name":"Codex"},"session":{"id":"session-codex"},"task":{"id":"worker-a"}}"#.as_slice(),
+        br#"{"version":1,"event":"task.started","agent":{"name":"Codex"},"session":{"id":"session-codex"},"task":{"id":"worker-b"}}"#.as_slice(),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        state.apply_agent_event(event("pane-agent", payload), 12 + u64::try_from(now).unwrap());
+    }
 
     let drafts = state.agent_restore_drafts();
     assert_eq!(drafts.len(), 2);
@@ -396,11 +409,34 @@ fn active_supported_agents_produce_restorable_per_pane_drafts() {
         Some("codex resume session-codex")
     );
     assert_eq!(drafts[0].tracked_pid, 4242);
-    assert_eq!(drafts[0].working_directory.as_deref(), Some("/tmp/project"));
+    assert_eq!(
+        drafts[0].working_directory.as_deref(),
+        Some("/tmp/event-project")
+    );
     assert_eq!(
         drafts[0].agent_launch_snapshot.as_ref().unwrap().arguments,
         ["codex", "resume", "session-codex"]
     );
+    assert!(
+        drafts[0]
+            .agent_launch_snapshot
+            .as_ref()
+            .unwrap()
+            .environment
+            .is_none()
+    );
+    assert!(
+        !serde_json::to_string(&drafts)
+            .unwrap()
+            .contains("DO_NOT_PERSIST")
+    );
+    assert_eq!(
+        drafts[0].task_progress,
+        Some(zentty_core::AgentProgress { done: 1, total: 2 })
+    );
+    assert_eq!(drafts[0].tasks.get("worker-a"), Some(&true));
+    assert_eq!(drafts[0].tasks.get("worker-b"), Some(&false));
+    assert!(!drafts[0].task_progress_authoritative);
     assert_eq!(drafts[1].pane_id, "pane-shell");
     assert_eq!(
         drafts[1].resume_command().as_deref(),
@@ -436,6 +472,34 @@ fn active_supported_agents_produce_restorable_per_pane_drafts() {
     assert_eq!(restored_status.agent_name, "Gemini");
     assert_eq!(restored_status.phase, zentty_core::AgentPhase::Starting);
     assert_eq!(restored_status.session_id, "gemini-session");
+
+    let mut codex_relaunched =
+        WorkspaceState::from_window_recipe(&envelope.workspace.windows[0]).unwrap();
+    assert!(codex_relaunched.seed_restored_agent(&drafts[0], 14));
+    let restored_codex = codex_relaunched.sidebar_summaries()[0].pane_rows[0]
+        .agent_status
+        .as_ref()
+        .unwrap()
+        .clone();
+    assert_eq!(
+        restored_codex.progress,
+        Some(zentty_core::AgentProgress { done: 1, total: 2 })
+    );
+    codex_relaunched.apply_agent_event(
+        event(
+            "pane-agent",
+            br#"{"version":1,"event":"task.completed","agent":{"name":"Codex"},"session":{"id":"session-codex"},"task":{"id":"worker-b"}}"#,
+        ),
+        15,
+    );
+    assert_eq!(
+        codex_relaunched.sidebar_summaries()[0].pane_rows[0]
+            .agent_status
+            .as_ref()
+            .unwrap()
+            .progress,
+        Some(zentty_core::AgentProgress { done: 2, total: 2 })
+    );
 }
 
 #[test]

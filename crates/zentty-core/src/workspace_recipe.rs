@@ -263,6 +263,17 @@ pub struct PaneRestoreDraft {
     pub tracked_pid: i32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_launch_snapshot: Option<AgentLaunchSnapshot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_progress: Option<crate::AgentProgress>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub tasks: BTreeMap<String, bool>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub task_progress_authoritative: bool,
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 impl PaneRestoreDraft {

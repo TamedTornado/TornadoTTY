@@ -75,11 +75,18 @@ wrapper_root="$(cd "$(dirname "${product}")/.." && pwd)/libexec/zentty/agent-wra
 [[ -x "${wrapper_root}/codex/codex" ]] || fail "staged Codex wrapper is missing"
 [[ -x "${wrapper_root}/claude/claude" ]] || fail "staged Claude wrapper is missing"
 [[ -x "${wrapper_root}/gemini/gemini" ]] || fail "staged Gemini wrapper is missing"
+for wrapper in \
+    cursor/cursor-agent droid/droid kimi/kimi grok/grok agy/agy hermes/hermes vibe/vibe; do
+    [[ -x "${wrapper_root}/${wrapper}" ]] || fail "staged ${wrapper} wrapper is missing"
+done
 
 fake_bin="$(mktemp -d)"
 ln -s "${actor}" "${fake_bin}/codex"
 ln -s "${actor}" "${fake_bin}/claude"
 ln -s "${actor}" "${fake_bin}/gemini"
+for binary in cursor-agent droid kimi grok agy hermes vibe; do
+    ln -s "${actor}" "${fake_bin}/${binary}"
+done
 
 run_adapter() {
     local name="$1"
@@ -451,12 +458,63 @@ run_adapter \
     'zentty-linux: sidebar-agent-status pane=pane-1 phase=NeedsInput interaction=Approval attention=true' \
     'Allow release command?'
 run_adapter \
+    claude-task-lifecycle \
+    'claude' \
+    claude-task-lifecycle \
+    'zentty-linux: sidebar-agent-status pane=pane-1 phase=Running interaction=None attention=false progress=2/2'
+run_adapter \
+    small-harness \
+    'claude' \
+    small-harness-adapter \
+    'zentty-linux: sidebar-agent-status pane=pane-1 phase=Running interaction=None attention=false progress=2/5'
+run_adapter \
     gemini \
     'gemini' \
     gemini-permission \
     'zentty-linux: sidebar-agent-status pane=pane-1 phase=NeedsInput interaction=Approval attention=true' \
     'Allow write_file on README.md?'
 run_gemini_terminal_notifications
+run_adapter \
+    cursor \
+    'cursor-agent' \
+    cursor-adapter \
+    'zentty-linux: sidebar-agent-status pane=pane-1 phase=UnresolvedStop interaction=None attention=false'
+run_adapter \
+    droid \
+    'droid' \
+    droid-adapter \
+    'zentty-linux: sidebar-agent-status pane=pane-1 phase=NeedsInput interaction=Question attention=true' \
+    'Choose the Droid path?'
+run_adapter \
+    kimi \
+    'kimi' \
+    kimi-adapter \
+    'zentty-linux: sidebar-agent-status pane=pane-1 phase=NeedsInput interaction=Approval attention=true' \
+    'README.md'
+run_adapter \
+    grok \
+    'grok' \
+    grok-adapter \
+    'zentty-linux: sidebar-agent-status pane=pane-1 phase=Running interaction=None attention=false' \
+    'Approve the Grok action?'
+run_adapter \
+    agy \
+    'agy' \
+    agy-adapter \
+    'zentty-linux: sidebar-agent-status pane=pane-1 phase=NeedsInput interaction=Approval attention=true' \
+    'Approve the Antigravity action?'
+run_adapter \
+    hermes \
+    'hermes' \
+    hermes-adapter \
+    'zentty-linux: sidebar-agent-status pane=pane-1 phase=NeedsInput interaction=Approval attention=true' \
+    'Approve the Hermes action?'
+run_adapter \
+    vibe \
+    'vibe' \
+    vibe-adapter \
+    'zentty-linux: sidebar-agent-status pane=pane-1 phase=NeedsInput interaction=Question attention=true' \
+    'Choose the Vibe path?'
 
 if [[ -n "${ZENTTY_REAL_GEMINI_BIN:-}" ]]; then
     for dependency in jq node pgrep readlink; do
@@ -612,4 +670,4 @@ if [[ -n "${ZENTTY_REAL_GEMINI_BIN:-}" ]]; then
     log=""
 fi
 
-echo "Rust agent launch passed: ${backend}, wrapper=real-process, child=real-pty, helper=real-process, transport=real-unix-socket, compatibility-agent-status=running+needs-input+completed+clear, adapters=codex+claude+gemini, real-gemini=$([[ -n "${ZENTTY_REAL_GEMINI_BIN:-}" ]] && echo true || echo prerequisite-not-requested)"
+echo "Rust agent launch passed: ${backend}, wrapper=real-process, child=real-pty, helper=real-process, transport=real-unix-socket, compatibility-agent-status=running+needs-input+failed+task-idempotency+reordered-completion+completed+clear, adapters=codex+codex-notify+claude+small-harness+gemini+cursor+droid+kimi+grok+agy+hermes+vibe, real-gemini=$([[ -n "${ZENTTY_REAL_GEMINI_BIN:-}" ]] && echo true || echo prerequisite-not-requested)"

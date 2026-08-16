@@ -267,6 +267,9 @@ fn draft_window(pane_ids: &[&str]) -> SessionRestoreDraftWindow {
                     arguments: vec!["codex".to_owned()],
                     environment: None,
                 }),
+                task_progress: None,
+                tasks: Default::default(),
+                task_progress_authoritative: false,
             })
             .collect(),
     }

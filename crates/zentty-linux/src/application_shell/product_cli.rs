@@ -312,7 +312,7 @@ fn apply_agent_lifecycle_signal(
         } => {
             shell.borrow_mut().state.apply_agent_signal_event(
                 target.clone(),
-                event,
+                event.as_ref(),
                 origin,
                 confidence,
                 now,

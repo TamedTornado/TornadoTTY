@@ -24,9 +24,11 @@ The protocol is transport-agnostic from the agent's perspective: send a JSON eve
 | `running` | Agent is actively working |
 | `needs-input` | Agent is blocked waiting for human action |
 | `idle` | Turn complete, agent is waiting for the next prompt |
-| `unresolved-stop` | *(internal only)* Agent process died unexpectedly while running |
+| `unresolved-stop` | Agent process died unexpectedly while running, or an authoritative source hook reported failure |
 
-Agents send the first four. Zentty derives `unresolved-stop` from PID death detection.
+Agents normally send the first four. Zentty derives `unresolved-stop` from PID
+death detection and from the built-in adapters' source-specific failure events;
+external integrations should prefer lifecycle plus PID monitoring.
 
 **Interaction kind.** When an agent needs human input, it classifies what kind of input is required. This drives the sidebar badge and attention indicator. See [section 7](#7-interaction-kinds).
 
@@ -147,6 +149,16 @@ When `state.stopCandidate` is `true`, Zentty applies a 2-second grace window bef
 }
 ```
 
+### `agent.failed`
+
+Built-in source adapters use this event when the upstream hook explicitly
+reports a failed or unresolved stop. It moves the existing session to
+`unresolved-stop`; it does not create a second error-state authority.
+
+```json
+{"version":1,"event":"agent.failed","session":{"id":"session-1"},"state":{"text":"Worker failed"}}
+```
+
 With stop-candidate semantics:
 
 ```json
@@ -204,6 +216,21 @@ The sidebar displays progress as "Running (3/7)".
 }
 ```
 
+### `task.started` / `task.completed`
+
+Built-in adapters use these identity-bearing events for source task and
+subagent hooks. Both `session.id` and `task.id` are required. Repeated events
+are idempotent, completion may arrive before creation, and the reducer updates
+the same progress projection used by `task.progress`. These events are durable
+in Zentty restore drafts so an application restart does not reset bookkeeping.
+Events received after `session.end` are ignored until an explicit
+`session.start` deliberately reuses that session identity.
+
+```json
+{"version":1,"event":"task.started","session":{"id":"session-1"},"task":{"id":"worker-a"}}
+{"version":1,"event":"task.completed","session":{"id":"session-1"},"task":{"id":"worker-a"}}
+```
+
 ## 5. JSON Schema
 
 Every event uses the same JSON envelope. Only `version` and `event` are required — everything else is optional with sensible defaults.
@@ -226,7 +253,7 @@ Every event uses the same JSON envelope. Only `version` and `event` are required
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `version` | integer | yes | Protocol version. Must be `1`. |
-| `event` | string | yes | One of: `session.start`, `session.end`, `agent.running`, `agent.compacting`, `agent.compacted`, `agent.idle`, `agent.needs-input`, `agent.input-resolved`, `task.progress`. |
+| `event` | string | yes | One of: `session.start`, `session.end`, `agent.running`, `agent.compacting`, `agent.compacted`, `agent.idle`, `agent.needs-input`, `agent.input-resolved`, `agent.failed`, `task.progress`, `task.started`, `task.completed`. |
 
 ### `agent` Object
 

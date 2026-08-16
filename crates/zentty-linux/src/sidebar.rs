@@ -1138,11 +1138,15 @@ fn update_pane_metadata(sidebar: &gtk::Box, pane: &zentty_core::SidebarPaneSumma
     update_agent_status_label(&agent_status, pane.agent_status.as_ref());
     if let Some(status) = &pane.agent_status {
         eprintln!(
-            "zentty-linux: sidebar-agent-status pane={} phase={:?} interaction={:?} attention={}",
+            "zentty-linux: sidebar-agent-status pane={} phase={:?} interaction={:?} attention={} progress={}",
             pane.pane_id,
             status.phase,
             status.interaction,
-            status.requires_attention()
+            status.requires_attention(),
+            status.progress.map_or_else(
+                || "none".to_owned(),
+                |progress| format!("{}/{}", progress.done, progress.total)
+            )
         );
     }
     eprintln!(

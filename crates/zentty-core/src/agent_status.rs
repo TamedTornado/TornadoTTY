@@ -2,7 +2,8 @@ use crate::{
     AgentInteractionKind, AgentTarget, AuthenticatedAgentEvent, CodexTitlePhase,
     classify_codex_terminal_title,
 };
-use std::collections::{HashMap, HashSet};
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 const CODEX_TITLE_IDLE_SUPPRESSION_MS: u64 = 1_000;
 const CODEX_INPUT_SUBMIT_STABILIZATION_MS: u64 = 350;
@@ -84,10 +85,17 @@ impl TerminalProgressState {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
 pub struct AgentProgress {
     pub done: u64,
     pub total: u64,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct RestoredTaskState<'a> {
+    pub(crate) progress: Option<AgentProgress>,
+    pub(crate) tasks: &'a BTreeMap<String, bool>,
+    pub(crate) authoritative: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -119,6 +127,9 @@ impl PaneAgentStatus {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct AgentStatusStore {
     panes: HashMap<String, HashMap<String, PaneAgentStatus>>,
+    task_bookkeeping: HashMap<(String, String), HashMap<String, bool>>,
+    authoritative_task_progress: HashSet<(String, String)>,
+    ended_sessions: HashSet<(String, String)>,
     codex_title_inferred: HashSet<(String, String)>,
     codex_idle_suppression_until: HashMap<(String, String), u64>,
     observed_running: HashSet<(String, String)>,
@@ -134,6 +145,7 @@ impl AgentStatusStore {
         pane_id: &str,
         session_id: &str,
         agent_name: &str,
+        task_state: RestoredTaskState<'_>,
         now: u64,
     ) {
         self.panes.entry(pane_id.to_owned()).or_default().insert(
@@ -145,7 +157,7 @@ impl AgentStatusStore {
                 phase: AgentPhase::Starting,
                 text: None,
                 interaction: AgentInteractionKind::None,
-                progress: None,
+                progress: task_state.progress,
                 tracked_pid: None,
                 transcript_path: None,
                 artifact_link: None,
@@ -156,6 +168,30 @@ impl AgentStatusStore {
                 updated_at: now,
             },
         );
+        let key = (pane_id.to_owned(), session_id.to_owned());
+        if !task_state.tasks.is_empty() {
+            self.task_bookkeeping
+                .insert(key.clone(), task_state.tasks.clone().into_iter().collect());
+        }
+        if task_state.authoritative {
+            self.authoritative_task_progress.insert(key);
+        }
+    }
+
+    pub(crate) fn task_restore_state(
+        &self,
+        pane_id: &str,
+        session_id: &str,
+    ) -> (BTreeMap<String, bool>, bool) {
+        let key = (pane_id.to_owned(), session_id.to_owned());
+        let tasks = self
+            .task_bookkeeping
+            .get(&key)
+            .into_iter()
+            .flat_map(|tasks| tasks.iter())
+            .map(|(id, completed)| (id.clone(), *completed))
+            .collect();
+        (tasks, self.authoritative_task_progress.contains(&key))
     }
 
     /// Reconciles Ghostty's OSC 9;4 activity report without treating its
@@ -401,13 +437,13 @@ impl AgentStatusStore {
     pub fn apply(&mut self, authenticated: AuthenticatedAgentEvent, now: u64) {
         let target = authenticated.target;
         let event = authenticated.event;
-        self.apply_for_target(target, event, now);
+        self.apply_for_target(target, &event, now);
     }
 
     pub(crate) fn apply_for_target(
         &mut self,
         target: AgentTarget,
-        event: crate::AgentEvent,
+        event: &crate::AgentEvent,
         now: u64,
     ) {
         self.apply_for_target_with_signal(
@@ -419,35 +455,47 @@ impl AgentStatusStore {
         );
     }
 
+    // Keeping the canonical lifecycle phases in one exhaustive transition
+    // table makes precedence reviewable; task identity bookkeeping is split
+    // into `apply_task_projection` below.
+    #[allow(clippy::too_many_lines)]
     pub(crate) fn apply_for_target_with_signal(
         &mut self,
         target: AgentTarget,
-        event: crate::AgentEvent,
+        event: &crate::AgentEvent,
         origin: AgentSignalOrigin,
         confidence: AgentSignalConfidence,
         now: u64,
     ) {
         let pane_id = target.pane_id;
-        let session_id = self.resolve_session_id(&pane_id, &event);
+        let session_id = self.resolve_session_id(&pane_id, event);
+        let session_key = (pane_id.clone(), session_id.clone());
+        if self.ended_sessions.contains(&session_key) && event.kind() != "session.start" {
+            return;
+        }
+        if event.kind() == "session.start" {
+            self.ended_sessions.remove(&session_key);
+        }
         let Some(event_is_codex) =
-            self.suppress_interrupted_codex_event(&pane_id, &session_id, &event, now)
+            self.suppress_interrupted_codex_event(&pane_id, &session_id, event, now)
         else {
             return;
         };
         if event.kind() == "session.end" {
             self.remove_session(&pane_id, &session_id);
+            self.ended_sessions.insert(session_key);
             return;
         }
 
         let sessions = self.panes.entry(pane_id.clone()).or_default();
         let status = sessions.entry(session_id.clone()).or_insert_with(|| {
-            new_status(&session_id, &event, event_is_codex, origin, confidence, now)
+            new_status(&session_id, event, event_is_codex, origin, confidence, now)
         });
-        if !should_apply_signal(status, &event, origin, confidence) {
+        if !should_apply_signal(status, event, origin, confidence) {
             return;
         }
-        update_status_identity(status, &event);
-        if should_suppress_claude_post_stop_notification(status, &event, now) {
+        update_status_identity(status, event);
+        if should_suppress_claude_post_stop_notification(status, event, now) {
             return;
         }
         match event.kind() {
@@ -525,10 +573,28 @@ impl AgentStatusStore {
                 self.idle_visible_until.remove(&key);
                 self.unresolved_stop_visible_until.remove(&key);
             }
-            "task.progress" => {
-                status.progress = event
-                    .progress()
-                    .map(|(done, total)| AgentProgress { done, total });
+            "agent.failed" => {
+                status.phase = AgentPhase::UnresolvedStop;
+                status.interaction = AgentInteractionKind::None;
+                status.text = event.state_text().map(str::to_owned);
+                let key = (pane_id.clone(), session_id.clone());
+                self.codex_title_inferred.remove(&key);
+                self.codex_idle_suppression_until.remove(&key);
+                self.completion_candidate_deadline.remove(&key);
+                self.idle_visible_until.remove(&key);
+                self.unresolved_stop_visible_until
+                    .insert(key, now.saturating_add(UNRESOLVED_STOP_VISIBILITY_MS));
+            }
+            "task.progress" | "task.started" | "task.completed" => {
+                if !apply_task_projection(
+                    status,
+                    event,
+                    &(pane_id.clone(), session_id.clone()),
+                    &mut self.task_bookkeeping,
+                    &mut self.authoritative_task_progress,
+                ) {
+                    return;
+                }
             }
             _ => unreachable!("AgentEvent exposes only known protocol events"),
         }
@@ -951,6 +1017,12 @@ impl AgentStatusStore {
 
     pub fn remove_pane(&mut self, pane_id: &str) {
         self.panes.remove(pane_id);
+        self.task_bookkeeping
+            .retain(|(tracked_pane, _), _| tracked_pane != pane_id);
+        self.authoritative_task_progress
+            .retain(|(tracked_pane, _)| tracked_pane != pane_id);
+        self.ended_sessions
+            .retain(|(tracked_pane, _)| tracked_pane != pane_id);
         self.codex_title_inferred
             .retain(|(tracked_pane, _)| tracked_pane != pane_id);
         self.codex_idle_suppression_until
@@ -971,6 +1043,30 @@ impl AgentStatusStore {
         if let Some(statuses) = self.panes.remove(pane_id) {
             taken.panes.insert(pane_id.to_owned(), statuses);
         }
+        taken.task_bookkeeping = self
+            .task_bookkeeping
+            .iter()
+            .filter(|((tracked_pane, _), _)| tracked_pane == pane_id)
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect();
+        self.task_bookkeeping
+            .retain(|(tracked_pane, _), _| tracked_pane != pane_id);
+        taken.authoritative_task_progress = self
+            .authoritative_task_progress
+            .iter()
+            .filter(|(tracked_pane, _)| tracked_pane == pane_id)
+            .cloned()
+            .collect();
+        self.authoritative_task_progress
+            .retain(|(tracked_pane, _)| tracked_pane != pane_id);
+        taken.ended_sessions = self
+            .ended_sessions
+            .iter()
+            .filter(|(tracked_pane, _)| tracked_pane == pane_id)
+            .cloned()
+            .collect();
+        self.ended_sessions
+            .retain(|(tracked_pane, _)| tracked_pane != pane_id);
         taken.codex_title_inferred = self
             .codex_title_inferred
             .iter()
@@ -1030,6 +1126,8 @@ impl AgentStatusStore {
 
     fn clear_session_lifecycle(&mut self, pane_id: &str, session_id: &str) {
         let key = (pane_id.to_owned(), session_id.to_owned());
+        self.task_bookkeeping.remove(&key);
+        self.authoritative_task_progress.remove(&key);
         self.codex_title_inferred.remove(&key);
         self.codex_idle_suppression_until.remove(&key);
         self.observed_running.remove(&key);
@@ -1037,6 +1135,40 @@ impl AgentStatusStore {
         self.idle_visible_until.remove(&key);
         self.unresolved_stop_visible_until.remove(&key);
     }
+}
+
+fn apply_task_projection(
+    status: &mut PaneAgentStatus,
+    event: &crate::AgentEvent,
+    key: &(String, String),
+    task_bookkeeping: &mut HashMap<(String, String), HashMap<String, bool>>,
+    authoritative_task_progress: &mut HashSet<(String, String)>,
+) -> bool {
+    if event.kind() == "task.progress" {
+        status.progress = event
+            .progress()
+            .map(|(done, total)| AgentProgress { done, total });
+        task_bookkeeping.remove(key);
+        authoritative_task_progress.insert(key.clone());
+        return true;
+    }
+    let Some(task_id) = event.task_id().map(str::trim).filter(|id| !id.is_empty()) else {
+        return false;
+    };
+    if authoritative_task_progress.contains(key) {
+        return false;
+    }
+    let tasks = task_bookkeeping.entry(key.clone()).or_default();
+    let completed = event.kind() == "task.completed";
+    tasks
+        .entry(task_id.to_owned())
+        .and_modify(|was_completed| *was_completed |= completed)
+        .or_insert(completed);
+    status.progress = Some(AgentProgress {
+        done: u64::try_from(tasks.values().filter(|done| **done).count()).unwrap_or(u64::MAX),
+        total: u64::try_from(tasks.len()).unwrap_or(u64::MAX),
+    });
+    true
 }
 
 fn transfer_pane_deadlines(

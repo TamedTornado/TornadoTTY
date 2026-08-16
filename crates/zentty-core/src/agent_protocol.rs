@@ -38,8 +38,14 @@ enum AgentEventKind {
     NeedsInput,
     #[serde(rename = "agent.input-resolved")]
     InputResolved,
+    #[serde(rename = "agent.failed")]
+    Failed,
     #[serde(rename = "task.progress")]
     TaskProgress,
+    #[serde(rename = "task.started")]
+    TaskStarted,
+    #[serde(rename = "task.completed")]
+    TaskCompleted,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
@@ -73,6 +79,11 @@ struct StateDescriptor {
 struct ProgressDescriptor {
     done: u64,
     total: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+struct TaskDescriptor {
+    id: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
@@ -124,6 +135,7 @@ pub struct AgentEvent {
     session: Option<SessionDescriptor>,
     state: Option<StateDescriptor>,
     progress: Option<ProgressDescriptor>,
+    task: Option<TaskDescriptor>,
     artifact: Option<ArtifactDescriptor>,
     context: Option<ContextDescriptor>,
     #[serde(rename = "transcriptPath")]
@@ -136,6 +148,7 @@ pub enum AgentProtocolError {
     InvalidJson(String),
     UnsupportedVersion(u32),
     InvalidProgress,
+    MissingTaskIdentity,
 }
 
 impl fmt::Display for AgentProtocolError {
@@ -149,6 +162,8 @@ impl fmt::Display for AgentProtocolError {
             Self::InvalidProgress => {
                 formatter.write_str("task progress total must be greater than zero")
             }
+            Self::MissingTaskIdentity => formatter
+                .write_str("task lifecycle events require non-empty session.id and task.id"),
         }
     }
 }
@@ -178,6 +193,14 @@ impl AgentEvent {
         {
             return Err(AgentProtocolError::InvalidProgress);
         }
+        if matches!(
+            event.event,
+            AgentEventKind::TaskStarted | AgentEventKind::TaskCompleted
+        ) && (event.session_id().is_none_or(|id| id.trim().is_empty())
+            || event.task_id().is_none_or(|id| id.trim().is_empty()))
+        {
+            return Err(AgentProtocolError::MissingTaskIdentity);
+        }
         Ok(event)
     }
 
@@ -193,6 +216,7 @@ impl AgentEvent {
             }),
             state: None,
             progress: None,
+            task: None,
             artifact: None,
             context: None,
             transcript_path: None,
@@ -209,7 +233,10 @@ impl AgentEvent {
             AgentEventKind::Idle => "agent.idle",
             AgentEventKind::NeedsInput => "agent.needs-input",
             AgentEventKind::InputResolved => "agent.input-resolved",
+            AgentEventKind::Failed => "agent.failed",
             AgentEventKind::TaskProgress => "task.progress",
+            AgentEventKind::TaskStarted => "task.started",
+            AgentEventKind::TaskCompleted => "task.completed",
         }
     }
 
@@ -219,6 +246,10 @@ impl AgentEvent {
 
     pub(crate) fn parent_session_id(&self) -> Option<&str> {
         self.session.as_ref()?.parent_id.as_deref()
+    }
+
+    pub(crate) fn task_id(&self) -> Option<&str> {
+        self.task.as_ref()?.id.as_deref()
     }
 
     pub(crate) fn agent_name(&self) -> Option<&str> {

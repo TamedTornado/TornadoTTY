@@ -82,6 +82,7 @@ agent_pid=
 while IFS= read -r value; do
     case "$value" in
         agent-waiting)
+            printf '%s' '{"version":1,"event":"session.start","agent":{"name":"Claude Code"},"session":{"id":"fleet-waiting"}}' | "$ZENTTY_CLI_BIN" ipc agent-event
             printf '%s' '{"version":1,"event":"agent.needs-input","agent":{"name":"Claude Code"},"session":{"id":"fleet-waiting"},"state":{"text":"Approve cross-window deployment?","interaction":{"kind":"approval","text":"Approve cross-window deployment?"}}}' | "$ZENTTY_CLI_BIN" ipc agent-event
             ;;
         agent-running)

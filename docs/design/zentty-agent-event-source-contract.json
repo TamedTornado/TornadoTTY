@@ -12,14 +12,17 @@
   "statuses": ["IMPLEMENTED", "PARTIAL", "NOT_IMPLEMENTED", "DEPENDENCY"],
   "canonical_events": [
     {"id":"session.start","source":true,"linux":"IMPLEMENTED","effect":"create-or-update-session-starting;attach-pid-when-present"},
-    {"id":"session.end","source":true,"linux":"IMPLEMENTED","effect":"remove-exact-session-and-pid"},
+    {"id":"session.end","source":true,"linux":"IMPLEMENTED","effect":"remove-exact-session-and-pid;reject-late-events-until-explicit-session-start"},
     {"id":"agent.running","source":true,"linux":"IMPLEMENTED","effect":"running;clear-interaction"},
     {"id":"agent.compacting","source":true,"linux":"IMPLEMENTED","effect":"running;compacting-text;tool-activity"},
     {"id":"agent.compacted","source":true,"linux":"IMPLEMENTED","effect":"running;clear-compacting-text"},
     {"id":"agent.idle","source":true,"linux":"IMPLEMENTED","effect":"idle-or-stop-candidate-grace"},
     {"id":"agent.needs-input","source":true,"linux":"IMPLEMENTED","effect":"needs-input;typed-interaction"},
     {"id":"agent.input-resolved","source":true,"linux":"IMPLEMENTED","effect":"running;clear-interaction"},
-    {"id":"task.progress","source":true,"linux":"IMPLEMENTED","effect":"clamped-session-progress"}
+    {"id":"agent.failed","source":false,"linux":"IMPLEMENTED","effect":"explicit-source-failure-to-unresolved-stop-with-bounded-visibility"},
+    {"id":"task.progress","source":true,"linux":"IMPLEMENTED","effect":"clamped-session-progress"},
+    {"id":"task.started","source":false,"linux":"IMPLEMENTED","effect":"idempotently-add-source-task-by-session-and-task-identity"},
+    {"id":"task.completed","source":false,"linux":"IMPLEMENTED","effect":"idempotently-complete-source-task-even-when-completion-arrives-first"}
   ],
   "canonical_fields": [
     {"id":"agent.name","linux":"IMPLEMENTED"},
@@ -32,16 +35,17 @@
     {"id":"state.interaction.text","linux":"IMPLEMENTED"},
     {"id":"progress.done","linux":"IMPLEMENTED"},
     {"id":"progress.total","linux":"IMPLEMENTED"},
-    {"id":"artifact.kind","linux":"NOT_IMPLEMENTED","tracked_defect":"GH-46"},
-    {"id":"artifact.label","linux":"NOT_IMPLEMENTED","tracked_defect":"GH-46"},
-    {"id":"artifact.url","linux":"NOT_IMPLEMENTED","tracked_defect":"GH-46"},
-    {"id":"context.workingDirectory","linux":"NOT_IMPLEMENTED","tracked_defect":"GH-46"},
-    {"id":"context.launch.arguments","linux":"NOT_IMPLEMENTED","tracked_defect":"GH-46"},
-    {"id":"context.launch.environment","linux":"NOT_IMPLEMENTED","tracked_defect":"GH-46"},
+    {"id":"task.id","linux":"IMPLEMENTED","effect":"required non-empty identity for task lifecycle events"},
+    {"id":"artifact.kind","linux":"IMPLEMENTED","effect":"retained on the canonical session status exactly when kind, label, and URL are complete"},
+    {"id":"artifact.label","linux":"IMPLEMENTED","effect":"retained with the canonical artifact link and never emitted in receipts"},
+    {"id":"artifact.url","linux":"IMPLEMENTED","effect":"retained with the canonical artifact link and never opened without a user action"},
+    {"id":"context.workingDirectory","linux":"IMPLEMENTED","effect":"status context overrides launch-time pane cwd for transcript lookup and validated restore drafts"},
+    {"id":"context.launch.arguments","linux":"PARTIAL","remaining":"retained in volatile status; persisted restore commands are rebuilt from validated tool and session identity rather than untrusted event arguments"},
+    {"id":"context.launch.environment","linux":"PARTIAL","remaining":"retained in volatile status; arbitrary event environment is intentionally excluded from persistence until tool-specific allowlists are source-audited"},
     {"id":"transcriptPath","linux":"IMPLEMENTED","classification":"linux-and-adapter-extension"}
   ],
   "cli_forms": [
-    {"id":"agent-event","linux":"PARTIAL","remaining":["artifact/context projections and persistence","missing source adapters"]},
+    {"id":"agent-event","linux":"PARTIAL","remaining":["Copilot source adapter and managed launch (GH-47)","Small Harness managed launch (GH-47)"]},
     {"id":"agent-signal.lifecycle","linux":"IMPLEMENTED"},
     {"id":"agent-signal.pid","linux":"IMPLEMENTED"},
     {"id":"agent-signal.shell-state","linux":"IMPLEMENTED"},
@@ -49,20 +53,118 @@
     {"id":"agent-signal.pane-context","linux":"IMPLEMENTED"},
     {"id":"agent-status","linux":"IMPLEMENTED"}
   ],
+  "adapter_defaults": {
+    "required_identifiers": ["authenticated-pane"],
+    "acknowledgement": "exit-0;empty-stdout",
+    "unknown_event": "exit-0;no-event",
+    "malformed_event": "nonzero-exit;bounded-diagnostic-without-payload",
+    "routing_failure": "nonzero-exit;no-mutation",
+    "alias_key_policy": "hook_event_name and hookEventName where the source adapter accepts both"
+  },
   "adapters": [
-    {"id":"claude","source":true,"linux":"IMPLEMENTED"},
-    {"id":"copilot","source":true,"linux":"DEPENDENCY","prerequisite":"GH-47 managed Copilot launcher and exact source adapter audit"},
-    {"id":"codex","source":true,"linux":"IMPLEMENTED"},
-    {"id":"small-harness","source":true,"linux":"DEPENDENCY","prerequisite":"GH-47 source small-harness launch parity"},
-    {"id":"codex-notify","source":true,"linux":"IMPLEMENTED"},
-    {"id":"droid","source":true,"linux":"IMPLEMENTED"},
-    {"id":"gemini","source":true,"linux":"IMPLEMENTED"},
-    {"id":"cursor","source":true,"linux":"IMPLEMENTED"},
-    {"id":"kimi","source":true,"linux":"IMPLEMENTED"},
-    {"id":"grok","source":true,"linux":"IMPLEMENTED"},
-    {"id":"agy","source":true,"linux":"IMPLEMENTED"},
-    {"id":"hermes","source":true,"linux":"IMPLEMENTED"},
-    {"id":"vibe","source":true,"linux":"IMPLEMENTED"}
+    {"id":"claude","source":true,"linux":"IMPLEMENTED","events":[
+      {"aliases":["SessionStart"],"normalized":["session.start"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"unknown-no-op;malformed-error"},
+      {"aliases":["UserPromptSubmit"],"normalized":["agent.running"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"unknown-no-op;malformed-error"},
+      {"aliases":["PreToolUse"],"normalized":["agent.needs-input when question tool;otherwise agent.running"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"unknown-no-op;malformed-error"},
+      {"aliases":["PermissionRequest"],"normalized":["agent.needs-input"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"unknown-no-op;malformed-error"},
+      {"aliases":["Notification"],"normalized":["agent.idle for idle_prompt;agent.needs-input for actionable text;otherwise no-event"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"unknown-no-op;malformed-error"},
+      {"aliases":["SubagentStart"],"normalized":["agent.running"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"unknown-no-op;malformed-error"},
+      {"aliases":["SubagentStop"],"normalized":["agent.idle"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"unknown-no-op;malformed-error"},
+      {"aliases":["PreCompact"],"normalized":["agent.compacting"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"unknown-no-op;malformed-error"},
+      {"aliases":["PostCompact"],"normalized":["agent.compacted"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"unknown-no-op;malformed-error"},
+      {"aliases":["TaskCreated"],"normalized":["agent.running","task.started"],"required_identifiers":["authenticated-pane","session.id","task.id"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"missing-task-identity-no-event;malformed-error"},
+      {"aliases":["TaskCompleted"],"normalized":["agent.running","task.completed"],"required_identifiers":["authenticated-pane","session.id","task.id"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"missing-task-identity-no-event;malformed-error"},
+      {"aliases":["Stop"],"normalized":["agent.idle"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"unknown-no-op;malformed-error"},
+      {"aliases":["SessionEnd"],"normalized":["session.end"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"unknown-no-op;malformed-error"}
+    ]},
+    {"id":"codex","source":true,"linux":"IMPLEMENTED","events":[
+      {"aliases":["SessionStart","session-start"],"normalized":["session.start"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"unknown-no-op;malformed-error"},
+      {"aliases":["UserPromptSubmit","prompt-submit"],"normalized":["agent.running"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"unknown-no-op;malformed-error"},
+      {"aliases":["PreToolUse","pre-tool-use"],"normalized":["agent.needs-input when question tool;otherwise agent.running"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"unknown-no-op;malformed-error"},
+      {"aliases":["PermissionRequest","permission-request"],"normalized":["agent.needs-input"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"unknown-no-op;malformed-error"},
+      {"aliases":["PostToolUse","post-tool-use"],"normalized":["agent.running"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"unknown-no-op;malformed-error"},
+      {"aliases":["PreCompact","pre-compact"],"normalized":["agent.compacting"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"unknown-no-op;malformed-error"},
+      {"aliases":["PostCompact","post-compact"],"normalized":["agent.compacted"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"unknown-no-op;malformed-error"},
+      {"aliases":["Stop","stop"],"normalized":["agent.idle"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"unknown-no-op;malformed-error"}
+    ]},
+    {"id":"codex-notify","source":true,"linux":"IMPLEMENTED","events":[
+      {"aliases":["agent-turn-complete"],"normalized":["agent.idle"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"unclassified-notification-no-op;malformed-error"},
+      {"aliases":["permission-requested","permission","question","auth","notice"],"normalized":["agent.needs-input when human interaction classified;otherwise no-event"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"auto-review-and-unclassified-no-op;malformed-error"}
+    ]},
+    {"id":"gemini","source":true,"linux":"IMPLEMENTED","acknowledgement_override":"exit-0;stdout-json-object","events":[
+      {"aliases":["SessionStart"],"normalized":["session.start"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;stdout-json-object","failure_behavior":"outside-routed-pane-no-op-with-json-object;malformed-error"},
+      {"aliases":["BeforeAgent","BeforeTool"],"normalized":["agent.running"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;stdout-json-object","failure_behavior":"outside-routed-pane-no-op-with-json-object;malformed-error"},
+      {"aliases":["AfterAgent"],"normalized":["agent.idle"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;stdout-json-object","failure_behavior":"outside-routed-pane-no-op-with-json-object;malformed-error"},
+      {"aliases":["Notification"],"normalized":["agent.needs-input for ToolPermission;otherwise no-event"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;stdout-json-object","failure_behavior":"non-permission-no-op;malformed-error"},
+      {"aliases":["SessionEnd"],"normalized":["session.end"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;stdout-json-object","failure_behavior":"outside-routed-pane-no-op-with-json-object;malformed-error"}
+    ]},
+    {"id":"cursor","source":true,"linux":"IMPLEMENTED","alias_policy":"event names are ASCII-case-insensitive; key aliases and session/conversation aliases are explicit","events":[
+      {"aliases":["SessionStart"],"normalized":["session.start"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"unknown-no-op;malformed-error"},
+      {"aliases":["BeforeSubmitPrompt","AfterShellExecution"],"normalized":["agent.running"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"unknown-no-op;malformed-error"},
+      {"aliases":["SubagentStart","SubagentStop"],"normalized":["agent.running plus task.started or task.completed"],"required_identifiers":["authenticated-pane","parent-session.id","subagent.id"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"missing-identity-no-event;malformed-error"},
+      {"aliases":["Stop"],"normalized":["agent.failed for error;agent.idle stop-candidate for aborted;otherwise agent.idle"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"unknown-status-treated-as-idle;malformed-error"},
+      {"aliases":["PreToolUse","PostToolUse"],"normalized":["task.progress for valid TodoWrite;otherwise no-event"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"invalid-progress-no-op;malformed-error"},
+      {"aliases":["SessionEnd"],"normalized":["session.end"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"unknown-no-op;malformed-error"}
+    ]},
+    {"id":"droid","source":true,"linux":"IMPLEMENTED","events":[
+      {"aliases":["SessionStart"],"normalized":["session.start"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"unknown-no-op;malformed-error"},
+      {"aliases":["UserPromptSubmit","PreToolUse","PostToolUse","SubagentStop"],"normalized":["agent.needs-input for AskUser, ExitSpecMode, or manual-mode mutation;task.progress for TodoWrite;task.started or task.completed when stable task identity exists;otherwise agent.running;PostToolUse ExitSpecMode is no-event"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"invalid-todo-no-op;missing-task-identity-running-without-progress;malformed-error"},
+      {"aliases":["Notification"],"normalized":["agent.needs-input"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"unknown-no-op;malformed-error"},
+      {"aliases":["Stop"],"normalized":["agent.idle;no-event in spec permission mode"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"spec-mode-no-op;malformed-error"},
+      {"aliases":["SessionEnd"],"normalized":["session.end"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"unknown-no-op;malformed-error"}
+    ]},
+    {"id":"vibe","source":true,"linux":"IMPLEMENTED","events":[
+      {"aliases":["canonical-v1-event"],"normalized":["canonical-v1-event"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"canonical-validation-error"},
+      {"aliases":["before_tool"],"normalized":["agent.needs-input for question tool;otherwise agent.running"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"unknown-no-op;malformed-error"},
+      {"aliases":["after_tool"],"normalized":["agent.input-resolved for question;task.progress for valid task output;otherwise agent.running"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"unknown-no-op;malformed-error"},
+      {"aliases":["post_agent_turn"],"normalized":["agent.idle"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"unknown-no-op;malformed-error"}
+    ]},
+    {"id":"kimi","source":true,"linux":"IMPLEMENTED","alias_policy":"source event names are exact; documented payload keys accept source snake/camel variants","events":[
+      {"aliases":["SessionStart"],"normalized":["session.start"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"unknown-no-op;malformed-error"},
+      {"aliases":["UserPromptSubmit"],"normalized":["agent.running"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"unknown-no-op;malformed-error"},
+      {"aliases":["PreToolUse"],"normalized":["agent.needs-input for AskUserQuestion or Shell, WriteFile, StrReplaceFile approval;otherwise no-event"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"unclassified-tool-no-op;malformed-error"},
+      {"aliases":["PostToolUse"],"normalized":["agent.input-resolved for source question and approval tools;otherwise no-event"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"unclassified-tool-no-op;malformed-error"},
+      {"aliases":["Notification"],"normalized":["agent.needs-input for permission_prompt;otherwise no-event"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"non-permission-no-op;malformed-error"},
+      {"aliases":["Stop"],"normalized":["agent.idle"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"unknown-no-op;malformed-error"},
+      {"aliases":["SessionEnd"],"normalized":["session.end"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"unknown-no-op;malformed-error"}
+    ]},
+    {"id":"grok","source":true,"linux":"IMPLEMENTED","alias_policy":"event separators and ASCII case normalize to alphanumeric lowercase","events":[
+      {"aliases":["SessionStart","Start"],"normalized":["session.start"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"unknown-no-op;malformed-error"},
+      {"aliases":["UserPromptSubmit","PromptSubmit","PreToolUse","PostToolUse","PreTool"],"normalized":["agent.running except question pre-tool is no-event for canonical re-emitter"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"question-pre-tool-and-unknown-no-op;malformed-error"},
+      {"aliases":["Notification","Permission","Approval"],"normalized":["no-event;canonical re-emitter owns legitimate attention"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"intentional-no-op;malformed-error"},
+      {"aliases":["Stop","TurnComplete"],"normalized":["agent.idle"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"unknown-no-op;malformed-error"},
+      {"aliases":["SessionEnd","End"],"normalized":["session.end"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"unknown-no-op;malformed-error"}
+    ]},
+    {"id":"agy","source":true,"linux":"IMPLEMENTED","alias_policy":"event separators and ASCII case normalize to alphanumeric lowercase","acknowledgement_override":"installed stop emits empty decision; installed pre-tool emits allow decision; other installed events emit JSON object","events":[
+      {"aliases":["SessionStart","Start"],"normalized":["session.start"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;stdout-json-object","failure_behavior":"outside-routed-pane-no-op-with-source-ack;malformed-error"},
+      {"aliases":["UserPromptSubmit","PreInvocation","PostInvocation","PreToolUse","PostToolUse","PreTool","PostTool"],"normalized":["agent.needs-input for question tool;otherwise agent.running"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;source-decision-json","failure_behavior":"outside-routed-pane-no-op-with-source-ack;malformed-error"},
+      {"aliases":["Notification","Permission","Approval"],"normalized":["agent.needs-input"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;stdout-json-object","failure_behavior":"outside-routed-pane-no-op-with-source-ack;malformed-error"},
+      {"aliases":["Stop","TurnCompletion"],"normalized":["agent.idle unless fullyIdle is false;then agent.failed"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-decision-json","failure_behavior":"outside-routed-pane-no-op-with-source-ack;malformed-error"},
+      {"aliases":["SessionEnd","End"],"normalized":["session.end"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;stdout-json-object","failure_behavior":"outside-routed-pane-no-op-with-source-ack;malformed-error"}
+    ]},
+    {"id":"hermes","source":true,"linux":"IMPLEMENTED","alias_policy":"event separators and ASCII case normalize to alphanumeric lowercase","acknowledgement_override":"installed events emit JSON object","events":[
+      {"aliases":["on_session_start","on_session_reset","session_start","start"],"normalized":["session.start"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;stdout-json-object","failure_behavior":"outside-routed-pane-no-op-with-json-object;malformed-error"},
+      {"aliases":["pre_llm_call","pre_tool_call","post_tool_call","post_approval_response"],"normalized":["agent.needs-input for question tool;otherwise agent.running"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;stdout-json-object","failure_behavior":"outside-routed-pane-no-op-with-json-object;malformed-error"},
+      {"aliases":["pre_approval_request"],"normalized":["agent.needs-input"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;stdout-json-object","failure_behavior":"outside-routed-pane-no-op-with-json-object;malformed-error"},
+      {"aliases":["post_llm_call"],"normalized":["agent.idle"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;stdout-json-object","failure_behavior":"outside-routed-pane-no-op-with-json-object;malformed-error"},
+      {"aliases":["on_session_end","on_session_finalize","session_end","end"],"normalized":["agent.idle"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;stdout-json-object","failure_behavior":"outside-routed-pane-no-op-with-json-object;malformed-error"}
+    ]},
+    {"id":"copilot","source":true,"linux":"DEPENDENCY","prerequisite":"GH-47 managed Copilot launcher and exact source adapter audit","events":[
+      {"aliases":["session-start","session-end","user-prompt-submitted","pre-tool-use","post-tool-use","error-occurred"],"normalized":["session.start","session.end","agent.running","agent.needs-input or agent.input-resolved for question tool","agent.needs-input for error"],"required_identifiers":["authenticated-pane"],"acknowledgement":"source-acknowledgement-pending-GH-47","failure_behavior":"not-installed;GH-47 dependency"}
+    ]},
+    {"id":"small-harness","source":true,"linux":"IMPLEMENTED","launcher_status":"DEPENDENCY","launcher_prerequisite":"GH-47 source small-harness managed launch parity","events":[
+      {"aliases":["SessionStart"],"normalized":["session.start"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"unknown-no-op;malformed-error"},
+      {"aliases":["PermissionRequest"],"normalized":["agent.needs-input"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"unknown-no-op;malformed-error"},
+      {"aliases":["PreToolUse"],"normalized":["agent.needs-input for question tool;otherwise agent.running"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"unknown-no-op;malformed-error"},
+      {"aliases":["PostToolUse","UserPromptSubmit"],"normalized":["agent.running"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"unknown-no-op;malformed-error"},
+      {"aliases":["PlanUpdated"],"normalized":["agent.running","task.progress when valid progress present"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"invalid-or-absent-progress-retains-running;malformed-error"},
+      {"aliases":["SubagentStart"],"normalized":["agent.running","task.started"],"required_identifiers":["authenticated-pane","session.id","task-or-subagent.id"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"missing-task-identity-no-event;malformed-error"},
+      {"aliases":["SubagentStop"],"normalized":["agent.running","task.completed"],"required_identifiers":["authenticated-pane","session.id","task-or-subagent.id"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"missing-task-identity-no-event;malformed-error"},
+      {"aliases":["PreCompact"],"normalized":["agent.compacting"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"unknown-no-op;malformed-error"},
+      {"aliases":["PostCompact"],"normalized":["agent.compacted"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"unknown-no-op;malformed-error"},
+      {"aliases":["Stop"],"normalized":["agent.idle"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"unknown-no-op;malformed-error"},
+      {"aliases":["SessionEnd"],"normalized":["session.end"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"unknown-no-op;malformed-error"}
+    ]}
   ],
   "single_authorities": {
     "transport": "zentty-agent-ipc AgentIpcServer",

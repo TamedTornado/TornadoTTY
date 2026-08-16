@@ -206,6 +206,40 @@ case "${profile}" in
             sleep 0.1
         done
         ;;
+    claude-task-lifecycle)
+        require_helper
+        settings=""
+        previous=""
+        for argument in "$@"; do
+            [[ "${previous}" == --settings ]] && settings="${argument}"
+            previous="${argument}"
+        done
+        [[ "${settings}" == *'"TaskCreated"'* &&
+            "${settings}" == *'"TaskCompleted"'* ]] ||
+            fail "Claude task lifecycle hook settings are missing"
+        for payload in \
+            '{"hook_event_name":"TaskCompleted","session_id":"claude-task-e2e","task_id":"task-b"}' \
+            '{"hook_event_name":"TaskCreated","session_id":"claude-task-e2e","task_id":"task-a"}' \
+            '{"hook_event_name":"TaskCreated","session_id":"claude-task-e2e","task_id":"task-b"}' \
+            '{"hook_event_name":"TaskCreated","session_id":"claude-task-e2e","task_id":"task-a"}' \
+            '{"hook_event_name":"TaskCompleted","session_id":"claude-task-e2e","task_id":"task-a"}'; do
+            printf '%s' "${payload}" |
+                "${helper}" ipc agent-event --adapter=claude
+            sleep 0.1
+        done
+        ;;
+    small-harness-adapter)
+        require_helper
+        for payload in \
+            '{"hook_event_name":"SessionStart","session_id":"small-harness-e2e"}' \
+            '{"hook_event_name":"PlanUpdated","session_id":"small-harness-e2e","progress":{"doneCount":2,"totalCount":5}}' \
+            '{"hook_event_name":"SubagentStart","session_id":"small-harness-e2e","subagent_id":"worker-a"}' \
+            '{"hook_event_name":"SubagentStop","session_id":"small-harness-e2e","subagent_id":"worker-a"}'; do
+            printf '%s' "${payload}" |
+                "${helper}" ipc agent-event --adapter=small-harness
+            sleep 0.1
+        done
+        ;;
     gemini-permission)
         require_helper
         settings="${GEMINI_CLI_SYSTEM_SETTINGS_PATH:-}"
@@ -230,6 +264,48 @@ case "${profile}" in
         sleep 1.2
         printf '\033]777;notify;Gemini;Session complete\a'
         sleep 0.3
+        ;;
+    cursor-adapter)
+        require_helper
+        printf '%s' \
+            '{"hook_event_name":"Stop","conversation_id":"cursor-e2e","status":"error"}' |
+            "${helper}" ipc agent-event --adapter=cursor
+        ;;
+    droid-adapter)
+        require_helper
+        printf '%s' \
+            '{"hook_event_name":"PreToolUse","session_id":"droid-e2e","tool_name":"AskUser","tool_input":{"question":"Choose the Droid path?"}}' |
+            "${helper}" ipc agent-event --adapter=droid
+        ;;
+    kimi-adapter)
+        require_helper
+        printf '%s' \
+            '{"hook_event_name":"PreToolUse","session_id":"kimi-e2e","tool_name":"WriteFile","tool_input":{"file_path":"README.md"}}' |
+            "${helper}" ipc agent-event --adapter=kimi
+        ;;
+    grok-adapter)
+        require_helper
+        printf '%s' \
+            '{"hook_event_name":"pre_tool_use","session_id":"grok-e2e","tool_name":"shell"}' |
+            "${helper}" ipc agent-event --adapter=grok
+        ;;
+    agy-adapter)
+        require_helper
+        printf '%s' \
+            '{"hook_event_name":"approval","session_id":"agy-e2e","message":"Approve the Antigravity action?"}' |
+            "${helper}" ipc agent-event --adapter=agy
+        ;;
+    hermes-adapter)
+        require_helper
+        printf '%s' \
+            '{"hook_event_name":"pre_approval_request","session_id":"hermes-e2e","message":"Approve the Hermes action?"}' |
+            "${helper}" ipc agent-event --adapter=hermes
+        ;;
+    vibe-adapter)
+        require_helper
+        printf '%s' \
+            '{"hook_event_name":"before_tool","session_id":"vibe-e2e","tool_name":"ask_user_question","tool_input":{"question":"Choose the Vibe path?"}}' |
+            "${helper}" ipc agent-event --adapter=vibe
         ;;
     claude-team)
         fixture="${ZENTTY_CONTROLLED_CLAUDE_FIXTURE:-}"
@@ -306,6 +382,10 @@ case "${profile}" in
         printf 'cwd:%s value:%s\n' "${session_id}" "${PWD}" >>"${ZENTTY_CONTROLLED_AGENT_RECEIPT}"
         printf '{"hook_event_name":"SessionStart","session_id":"%s"}' "${session_id}" |
             "${helper}" ipc agent-event --adapter=codex session-start
+        if [[ "${ZENTTY_CONTROLLED_AGENT_COMPLETE_TASK_SESSION:-}" == "${session_id}" ]]; then
+            printf '{"version":1,"event":"task.completed","agent":{"name":"Codex"},"session":{"id":"%s"},"task":{"id":"worker-b"}}' "${session_id}" |
+                "${helper}" ipc agent-event
+        fi
         # Emit terminal evidence only after the real helper has authenticated the
         # restored session. This makes the marker prove both IPC completion and
         # subsequent PTY scrollback continuity rather than racing surface setup.

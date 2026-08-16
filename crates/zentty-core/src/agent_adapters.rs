@@ -37,8 +37,37 @@ pub fn adapt_codex_hook(
     bytes: &[u8],
     pid: Option<i32>,
 ) -> Result<Vec<AgentEvent>, AgentAdapterError> {
+    adapt_codex_family_hook(bytes, pid, "Codex", false)
+}
+
+/// Converts a source Small Harness hook payload into canonical events. The
+/// managed launcher remains owned by GH-47; this adapter is independently
+/// usable through the authenticated CLI protocol.
+///
+/// # Errors
+///
+/// Returns the same bounded parse and canonical-protocol errors as the Codex
+/// family adapter.
+pub fn adapt_small_harness_hook(
+    bytes: &[u8],
+    pid: Option<i32>,
+) -> Result<Vec<AgentEvent>, AgentAdapterError> {
+    adapt_codex_family_hook(bytes, pid, "Small Harness", true)
+}
+
+fn adapt_codex_family_hook(
+    bytes: &[u8],
+    pid: Option<i32>,
+    agent_name: &str,
+    extended_lifecycle: bool,
+) -> Result<Vec<AgentEvent>, AgentAdapterError> {
     let payload = parse_payload(bytes)?;
-    let hook = event_name(&payload)?;
+    let raw_hook = event_name(&payload)?;
+    let hook = if extended_lifecycle {
+        raw_hook
+    } else {
+        codex_source_event_alias(raw_hook)
+    };
     let session = string_at(
         &payload,
         &[
@@ -50,10 +79,24 @@ pub fn adapt_codex_hook(
         ],
     );
     let transcript_path = string_at(&payload, &["transcript_path", "transcriptPath"]);
+    if extended_lifecycle
+        && matches!(
+            hook,
+            "PlanUpdated" | "SubagentStart" | "SubagentStop" | "SessionEnd"
+        )
+    {
+        return adapt_small_harness_lifecycle(
+            &payload,
+            hook,
+            pid,
+            session.as_deref(),
+            transcript_path.as_deref(),
+        );
+    }
     let event = match hook {
         "SessionStart" => canonical(
             "session.start",
-            "Codex",
+            agent_name,
             pid,
             session.as_deref(),
             None,
@@ -61,15 +104,15 @@ pub fn adapt_codex_hook(
         )?,
         "PreToolUse" if is_question_tool(&payload) => canonical(
             "agent.needs-input",
-            "Codex",
+            agent_name,
             pid,
             session.as_deref(),
             codex_question_text(&payload).as_deref(),
             Some("decision"),
         )?,
-        "UserPromptSubmit" | "PreToolUse" | "PostToolUse" | "PostCompact" => canonical(
+        "UserPromptSubmit" | "PreToolUse" | "PostToolUse" => canonical(
             "agent.running",
-            "Codex",
+            agent_name,
             pid,
             session.as_deref(),
             None,
@@ -84,7 +127,7 @@ pub fn adapt_codex_hook(
             };
             canonical(
                 "agent.needs-input",
-                "Codex",
+                agent_name,
                 pid,
                 session.as_deref(),
                 text.as_deref(),
@@ -92,17 +135,93 @@ pub fn adapt_codex_hook(
             )?
         }
         "PreCompact" => canonical(
-            "agent.running",
-            "Codex",
+            "agent.compacting",
+            agent_name,
             pid,
             session.as_deref(),
             Some("Compacting"),
             None,
         )?,
-        "Stop" => canonical("agent.idle", "Codex", pid, session.as_deref(), None, None)?,
+        "PostCompact" => canonical(
+            "agent.compacted",
+            agent_name,
+            pid,
+            session.as_deref(),
+            None,
+            None,
+        )?,
+        "Stop" => canonical(
+            "agent.idle",
+            agent_name,
+            pid,
+            session.as_deref(),
+            None,
+            None,
+        )?,
         _ => return Ok(Vec::new()),
     };
     Ok(vec![event.with_transcript_path(transcript_path)])
+}
+
+fn adapt_small_harness_lifecycle(
+    payload: &Value,
+    hook: &str,
+    pid: Option<i32>,
+    session_id: Option<&str>,
+    transcript_path: Option<&str>,
+) -> Result<Vec<AgentEvent>, AgentAdapterError> {
+    match hook {
+        "PlanUpdated" => {
+            let running = canonical(
+                "agent.running",
+                "Small Harness",
+                pid,
+                session_id,
+                None,
+                None,
+            )?
+            .with_transcript_path(transcript_path.map(str::to_owned));
+            let Some((done, total)) = explicit_progress(payload) else {
+                return Ok(vec![running]);
+            };
+            Ok(vec![
+                running,
+                canonical_progress("Small Harness", session_id, done, total)?
+                    .with_transcript_path(transcript_path.map(str::to_owned)),
+            ])
+        }
+        "SubagentStart" | "SubagentStop" => task_lifecycle_event(
+            if hook == "SubagentStart" {
+                "task.started"
+            } else {
+                "task.completed"
+            },
+            "Small Harness",
+            pid,
+            session_id,
+            source_task_id(payload).as_deref(),
+            transcript_path,
+        ),
+        "SessionEnd" => Ok(vec![
+            canonical("session.end", "Small Harness", pid, session_id, None, None)?
+                .with_transcript_path(transcript_path.map(str::to_owned)),
+        ]),
+        _ => Ok(Vec::new()),
+    }
+}
+
+fn codex_source_event_alias(event: &str) -> &str {
+    match event.to_ascii_lowercase().as_str() {
+        "session-start" => "SessionStart",
+        "pre-tool-use" => "PreToolUse",
+        "permission-request" => "PermissionRequest",
+        "post-tool-use" => "PostToolUse",
+        "prompt-submit" => "UserPromptSubmit",
+        "pre-compact" => "PreCompact",
+        "post-compact" => "PostCompact",
+        "stop" => "Stop",
+        _ => event,
+    }
 }
 
 /// Converts a Codex `notify` callback payload into canonical version-1 events.
@@ -192,7 +311,28 @@ pub fn adapt_claude_hook(
 ) -> Result<Vec<AgentEvent>, AgentAdapterError> {
     let payload = parse_payload(bytes)?;
     let hook = event_name(&payload)?;
-    let session = string_at(&payload, &["session_id", "sessionId"]);
+    let session = string_at(&payload, &["session_id", "sessionId", "sessionID"]);
+    if let Some(task_event) = match hook {
+        "TaskCreated" => Some("task.started"),
+        "TaskCompleted" => Some("task.completed"),
+        _ => None,
+    } {
+        return task_lifecycle_event(
+            task_event,
+            "Claude Code",
+            pid,
+            session.as_deref(),
+            source_task_id(&payload).as_deref(),
+            None,
+        );
+    }
+    if hook == "Notification" {
+        return Ok(
+            claude_notification_event(&payload, pid, session.as_deref())?
+                .into_iter()
+                .collect(),
+        );
+    }
     let event = match hook {
         "SessionStart" => canonical(
             "session.start",
@@ -210,7 +350,7 @@ pub fn adapt_claude_hook(
             question_text(&payload).as_deref(),
             Some("decision"),
         )?,
-        "UserPromptSubmit" | "SubagentStart" | "PreToolUse" | "PostCompact" => canonical(
+        "UserPromptSubmit" | "SubagentStart" | "PreToolUse" => canonical(
             "agent.running",
             "Claude Code",
             pid,
@@ -218,56 +358,21 @@ pub fn adapt_claude_hook(
             None,
             None,
         )?,
-        "PermissionRequest" => {
-            let is_question = is_question_tool(&payload);
-            let text = if is_question {
-                question_text(&payload)
-                    .or_else(|| Some("Claude is waiting for your decision".to_owned()))
-            } else {
-                first_message(&payload).or_else(|| Some("Claude needs your approval".to_owned()))
-            };
-            canonical(
-                "agent.needs-input",
-                "Claude Code",
-                pid,
-                session.as_deref(),
-                text.as_deref(),
-                Some(if is_question { "decision" } else { "approval" }),
-            )?
-        }
-        "Notification"
-            if string_at(&payload, &["notification_type", "notificationType"]).as_deref()
-                == Some("idle_prompt") =>
-        {
-            canonical(
-                "agent.idle",
-                "Claude Code",
-                pid,
-                session.as_deref(),
-                None,
-                None,
-            )?
-        }
-        "Notification" => {
-            let message = first_message(&payload);
-            if !message.as_deref().is_some_and(requires_human_input) {
-                return Ok(Vec::new());
-            }
-            canonical(
-                "agent.needs-input",
-                "Claude Code",
-                pid,
-                session.as_deref(),
-                message.as_deref(),
-                Some("generic-input"),
-            )?
-        }
+        "PermissionRequest" => claude_permission_event(&payload, pid, session.as_deref())?,
         "PreCompact" => canonical(
-            "agent.running",
+            "agent.compacting",
             "Claude Code",
             pid,
             session.as_deref(),
             Some("Compacting"),
+            None,
+        )?,
+        "PostCompact" => canonical(
+            "agent.compacted",
+            "Claude Code",
+            pid,
+            session.as_deref(),
+            None,
             None,
         )?,
         "Stop" | "SubagentStop" => canonical(
@@ -291,6 +396,52 @@ pub fn adapt_claude_hook(
     Ok(vec![event])
 }
 
+fn claude_permission_event(
+    payload: &Value,
+    pid: Option<i32>,
+    session_id: Option<&str>,
+) -> Result<AgentEvent, AgentAdapterError> {
+    let is_question = is_question_tool(payload);
+    let text = if is_question {
+        question_text(payload).or_else(|| Some("Claude is waiting for your decision".to_owned()))
+    } else {
+        first_message(payload).or_else(|| Some("Claude needs your approval".to_owned()))
+    };
+    canonical(
+        "agent.needs-input",
+        "Claude Code",
+        pid,
+        session_id,
+        text.as_deref(),
+        Some(if is_question { "decision" } else { "approval" }),
+    )
+}
+
+fn claude_notification_event(
+    payload: &Value,
+    pid: Option<i32>,
+    session_id: Option<&str>,
+) -> Result<Option<AgentEvent>, AgentAdapterError> {
+    if string_at(payload, &["notification_type", "notificationType"]).as_deref()
+        == Some("idle_prompt")
+    {
+        return canonical("agent.idle", "Claude Code", pid, session_id, None, None).map(Some);
+    }
+    let message = first_message(payload);
+    if !message.as_deref().is_some_and(requires_human_input) {
+        return Ok(None);
+    }
+    canonical(
+        "agent.needs-input",
+        "Claude Code",
+        pid,
+        session_id,
+        message.as_deref(),
+        Some("generic-input"),
+    )
+    .map(Some)
+}
+
 /// Converts a Gemini CLI hook payload into canonical version-1 status events.
 ///
 /// Unknown hooks and non-permission notifications are intentional no-ops,
@@ -306,7 +457,7 @@ pub fn adapt_gemini_hook(
 ) -> Result<Vec<AgentEvent>, AgentAdapterError> {
     let payload = parse_payload(bytes)?;
     let hook = event_name(&payload)?;
-    let session = string_at(&payload, &["session_id", "sessionId"]);
+    let session = string_at(&payload, &["session_id", "sessionId", "sessionID"]);
     let event = match hook {
         "SessionStart" => canonical(
             "session.start",
@@ -382,25 +533,55 @@ pub fn adapt_cursor_hook(
             None,
             None,
         )?,
-        "beforesubmitprompt" | "subagentstart" | "subagentstop" | "aftershellexecution" => {
-            canonical(
-                "agent.running",
+        "beforesubmitprompt" | "aftershellexecution" => canonical(
+            "agent.running",
+            "Cursor",
+            pid,
+            session.as_deref(),
+            None,
+            None,
+        )?,
+        "stop" => match string_ref_at(&payload, &["status"]).map(str::to_ascii_lowercase) {
+            Some(status) if status == "error" => canonical(
+                "agent.failed",
                 "Cursor",
                 pid,
                 session.as_deref(),
+                first_message(&payload).as_deref(),
                 None,
-                None,
-            )?
-        }
-        "stop" => {
-            let event = if string_ref_at(&payload, &["status"])
-                .is_some_and(|status| status.eq_ignore_ascii_case("error"))
-            {
-                "agent.needs-input"
-            } else {
-                "agent.idle"
-            };
-            canonical(event, "Cursor", pid, session.as_deref(), None, None)?
+            )?,
+            Some(status) if status == "aborted" => canonical_stop_candidate(
+                "Cursor",
+                pid,
+                session.as_deref(),
+                first_message(&payload).as_deref(),
+            )?,
+            _ => canonical("agent.idle", "Cursor", pid, session.as_deref(), None, None)?,
+        },
+        "subagentstart" | "subagentstop" => {
+            let parent_session = string_at(
+                &payload,
+                &[
+                    "parent_conversation_id",
+                    "parentConversationId",
+                    "conversation_id",
+                    "conversationId",
+                    "session_id",
+                    "sessionId",
+                ],
+            );
+            return task_lifecycle_event(
+                if hook == "subagentstart" {
+                    "task.started"
+                } else {
+                    "task.completed"
+                },
+                "Cursor",
+                pid,
+                parent_session.as_deref(),
+                string_at(&payload, &["subagent_id", "subagentId"]).as_deref(),
+                transcript.as_deref(),
+            );
         }
         "sessionend" => canonical("session.end", "Cursor", pid, session.as_deref(), None, None)?,
         "pretooluse" | "posttooluse"
@@ -434,6 +615,9 @@ pub fn adapt_droid_hook(
     let tool = string_at(&payload, &["tool_name", "toolName"]);
     let message = first_message(&payload);
     let permission_mode = string_at(&payload, &["permission_mode", "permissionMode"]);
+    if (hook == "PreToolUse" && tool.as_deref() == Some("Task")) || hook == "SubagentStop" {
+        return droid_task_event(&payload, hook, pid, session.as_deref());
+    }
     let event = match hook {
         "SessionStart" => canonical(
             "session.start",
@@ -484,13 +668,30 @@ pub fn adapt_droid_hook(
                 Some(kind),
             )?
         }
+        "PreToolUse"
+            if permission_mode
+                .as_deref()
+                .is_some_and(|mode| mode.eq_ignore_ascii_case("off"))
+                && tool.as_deref().is_some_and(droid_manual_approval_tool) =>
+        {
+            let text = droid_input_text(&payload, tool.as_deref().unwrap_or("tool"));
+            canonical(
+                "agent.needs-input",
+                "Droid",
+                pid,
+                session.as_deref(),
+                Some(&text),
+                Some("approval"),
+            )?
+        }
         "PreToolUse" | "PostToolUse" if tool.as_deref().is_some_and(|name| name == "TodoWrite") => {
             let Some((done, total)) = todo_progress(&payload) else {
                 return Ok(Vec::new());
             };
             canonical_progress("Droid", session.as_deref(), done, total)?
         }
-        "UserPromptSubmit" | "PreToolUse" | "PostToolUse" | "SubagentStop" => canonical(
+        "PostToolUse" if tool.as_deref() == Some("ExitSpecMode") => return Ok(Vec::new()),
+        "UserPromptSubmit" | "PreToolUse" | "PostToolUse" => canonical(
             "agent.running",
             "Droid",
             pid,
@@ -501,6 +702,37 @@ pub fn adapt_droid_hook(
         _ => return Ok(Vec::new()),
     };
     Ok(vec![event])
+}
+
+fn droid_task_event(
+    payload: &Value,
+    hook: &str,
+    pid: Option<i32>,
+    session_id: Option<&str>,
+) -> Result<Vec<AgentEvent>, AgentAdapterError> {
+    let task_id = source_task_id(payload);
+    if task_id.is_some() {
+        return task_lifecycle_event(
+            if hook == "PreToolUse" {
+                "task.started"
+            } else {
+                "task.completed"
+            },
+            "Droid",
+            pid,
+            session_id,
+            task_id.as_deref(),
+            None,
+        );
+    }
+    Ok(vec![canonical(
+        "agent.running",
+        "Droid",
+        pid,
+        session_id,
+        None,
+        None,
+    )?])
 }
 
 /// Converts a Mistral Vibe hook payload into canonical status events.
@@ -521,6 +753,9 @@ pub fn adapt_vibe_hook(bytes: &[u8]) -> Result<Vec<AgentEvent>, AgentAdapterErro
     let hook = event_name(&payload)?;
     let session = string_at(&payload, &["session_id", "sessionId"]);
     let tool = string_at(&payload, &["tool_name", "toolName"]);
+    if matches!(hook, "before_tool" | "after_tool") && tool.is_none() {
+        return Ok(Vec::new());
+    }
     let event = match hook {
         "post_agent_turn" => canonical(
             "agent.idle",
@@ -587,7 +822,70 @@ pub fn adapt_kimi_hook(
     bytes: &[u8],
     pid: Option<i32>,
 ) -> Result<Vec<AgentEvent>, AgentAdapterError> {
-    adapt_common_hook(bytes, "Kimi", pid, CommonHookDialect::Kimi)
+    let payload = parse_payload(bytes)?;
+    let hook = event_name(&payload)?;
+    let session = string_at(&payload, &["session_id", "sessionId"]);
+    let tool = string_at(&payload, &["tool_name", "toolName"]);
+    let event = match hook {
+        "SessionStart" => canonical("session.start", "Kimi", pid, session.as_deref(), None, None)?,
+        "UserPromptSubmit" => {
+            canonical("agent.running", "Kimi", pid, session.as_deref(), None, None)?
+        }
+        "Stop" => canonical("agent.idle", "Kimi", pid, session.as_deref(), None, None)?,
+        "SessionEnd" => canonical("session.end", "Kimi", pid, session.as_deref(), None, None)?,
+        "Notification"
+            if string_at(&payload, &["notification_type", "notificationType"])
+                .is_some_and(|kind| kind.eq_ignore_ascii_case("permission_prompt")) =>
+        {
+            let text = first_message(&payload).unwrap_or_else(|| "Kimi needs your approval".into());
+            canonical(
+                "agent.needs-input",
+                "Kimi",
+                pid,
+                session.as_deref(),
+                Some(&text),
+                Some("approval"),
+            )?
+        }
+        "PreToolUse" if tool.as_deref() == Some("AskUserQuestion") => {
+            let text = question_text(&payload)
+                .unwrap_or_else(|| "Kimi is waiting for your input".to_owned());
+            canonical(
+                "agent.needs-input",
+                "Kimi",
+                pid,
+                session.as_deref(),
+                Some(&text),
+                Some("question"),
+            )?
+        }
+        "PreToolUse" if tool.as_deref().is_some_and(kimi_tool_requires_approval) => {
+            let text = common_input_text(&payload, "Kimi", tool.as_deref().unwrap_or("tool"));
+            canonical(
+                "agent.needs-input",
+                "Kimi",
+                pid,
+                session.as_deref(),
+                Some(&text),
+                Some("approval"),
+            )?
+        }
+        "PostToolUse"
+            if tool.as_deref() == Some("AskUserQuestion")
+                || tool.as_deref().is_some_and(kimi_tool_requires_approval) =>
+        {
+            canonical(
+                "agent.input-resolved",
+                "Kimi",
+                pid,
+                session.as_deref(),
+                None,
+                None,
+            )?
+        }
+        _ => return Ok(Vec::new()),
+    };
+    Ok(vec![event])
 }
 
 /// Converts Grok Build hook input into canonical status events.
@@ -600,7 +898,38 @@ pub fn adapt_grok_hook(
     bytes: &[u8],
     pid: Option<i32>,
 ) -> Result<Vec<AgentEvent>, AgentAdapterError> {
-    adapt_common_hook(bytes, "Grok", pid, CommonHookDialect::Grok)
+    let payload = parse_payload(bytes)?;
+    if payload.get("version").and_then(Value::as_u64) == Some(1)
+        && payload.get("event").and_then(Value::as_str).is_some()
+    {
+        return AgentEvent::parse(bytes)
+            .map(|event| vec![event])
+            .map_err(AgentAdapterError::Protocol);
+    }
+    let hook = normalize_hook(source_event_name(&payload)?);
+    let session = string_at(&payload, &["session_id", "sessionId", "sessionID"]);
+    let tool = string_at(&payload, &["tool_name", "toolName", "tool"]);
+    let event = match hook.as_str() {
+        "sessionstart" | "start" => {
+            canonical("session.start", "Grok", pid, session.as_deref(), None, None)?
+        }
+        "userpromptsubmit" | "promptsubmit" => {
+            canonical("agent.running", "Grok", pid, session.as_deref(), None, None)?
+        }
+        "stop" | "turncomplete" => {
+            canonical("agent.idle", "Grok", pid, session.as_deref(), None, None)?
+        }
+        "sessionend" | "end" => {
+            canonical("session.end", "Grok", pid, session.as_deref(), None, None)?
+        }
+        "pretooluse" | "pretool" | "posttooluse"
+            if !tool.as_deref().is_some_and(is_question_tool_name) =>
+        {
+            canonical("agent.running", "Grok", pid, session.as_deref(), None, None)?
+        }
+        _ => return Ok(Vec::new()),
+    };
+    Ok(vec![event])
 }
 
 /// Converts Antigravity hook input into canonical status events.
@@ -613,6 +942,21 @@ pub fn adapt_agy_hook(
     bytes: &[u8],
     pid: Option<i32>,
 ) -> Result<Vec<AgentEvent>, AgentAdapterError> {
+    let payload = parse_payload(bytes)?;
+    let hook = normalize_hook(source_event_name(&payload)?);
+    if matches!(hook.as_str(), "stop" | "turncompletion")
+        && bool_at(&payload, &["fullyIdle", "fully_idle"]) == Some(false)
+    {
+        let session = string_at(&payload, &["session_id", "sessionId"]);
+        return Ok(vec![canonical(
+            "agent.failed",
+            "Antigravity",
+            pid,
+            session.as_deref(),
+            first_message(&payload).as_deref(),
+            None,
+        )?]);
+    }
     adapt_common_hook(bytes, "Antigravity", pid, CommonHookDialect::Agy)
 }
 
@@ -626,15 +970,79 @@ pub fn adapt_hermes_hook(
     bytes: &[u8],
     pid: Option<i32>,
 ) -> Result<Vec<AgentEvent>, AgentAdapterError> {
-    adapt_common_hook(bytes, "Hermes", pid, CommonHookDialect::Hermes)
+    let payload = parse_payload(bytes)?;
+    let hook = normalize_hook(source_event_name(&payload)?);
+    let session = string_at(&payload, &["session_id", "sessionId", "sessionID", "id"])
+        .or_else(|| {
+            payload
+                .get("session")
+                .and_then(|value| string_at(value, &["id", "session_id"]))
+        })
+        .or_else(|| {
+            payload
+                .get("context")
+                .and_then(|value| string_at(value, &["session_id", "sessionId"]))
+        });
+    let tool = string_at(&payload, &["tool_name", "toolName", "tool"]).or_else(|| {
+        payload
+            .get("tool_call")
+            .and_then(|call| string_at(call, &["name", "tool_name"]))
+    });
+    let event = match hook.as_str() {
+        "onsessionstart" | "onsessionreset" | "sessionstart" | "start" => canonical(
+            "session.start",
+            "Hermes",
+            pid,
+            session.as_deref(),
+            None,
+            None,
+        )?,
+        "pretoolcall" if tool.as_deref().is_some_and(common_question_tool) => {
+            let text = common_input_text(&payload, "Hermes", tool.as_deref().unwrap_or("tool"));
+            canonical(
+                "agent.needs-input",
+                "Hermes",
+                pid,
+                session.as_deref(),
+                Some(&text),
+                Some(if tool.as_deref().is_some_and(is_question_tool_name) {
+                    "question"
+                } else {
+                    "approval"
+                }),
+            )?
+        }
+        "prellmcall" | "pretoolcall" | "posttoolcall" | "postapprovalresponse" => canonical(
+            "agent.running",
+            "Hermes",
+            pid,
+            session.as_deref(),
+            None,
+            None,
+        )?,
+        "postllmcall" | "onsessionend" | "onsessionfinalize" | "sessionend" | "end" => {
+            canonical("agent.idle", "Hermes", pid, session.as_deref(), None, None)?
+        }
+        "preapprovalrequest" => {
+            let text =
+                first_message(&payload).unwrap_or_else(|| "Hermes needs your approval".into());
+            canonical(
+                "agent.needs-input",
+                "Hermes",
+                pid,
+                session.as_deref(),
+                Some(&text),
+                Some("approval"),
+            )?
+        }
+        _ => return Ok(Vec::new()),
+    };
+    Ok(vec![event])
 }
 
 #[derive(Clone, Copy)]
 enum CommonHookDialect {
-    Kimi,
-    Grok,
     Agy,
-    Hermes,
 }
 
 fn adapt_common_hook(
@@ -651,12 +1059,13 @@ fn adapt_common_hook(
             .map(|event| vec![event])
             .map_err(AgentAdapterError::Protocol);
     }
-    let hook = normalize_hook(event_name(&payload)?);
+    let hook = normalize_hook(source_event_name(&payload)?);
     let session = string_at(
         &payload,
         &[
             "session_id",
             "sessionId",
+            "sessionID",
             "conversation_id",
             "conversationId",
         ],
@@ -772,11 +1181,15 @@ fn common_question_tool(tool: &str) -> bool {
 
 fn dialect_name(dialect: CommonHookDialect) -> &'static str {
     match dialect {
-        CommonHookDialect::Kimi => "Kimi",
-        CommonHookDialect::Grok => "Grok",
         CommonHookDialect::Agy => "Antigravity",
-        CommonHookDialect::Hermes => "Hermes",
     }
+}
+
+fn kimi_tool_requires_approval(tool: &str) -> bool {
+    matches!(
+        tool.trim().to_ascii_lowercase().as_str(),
+        "shell" | "writefile" | "strreplacefile"
+    )
 }
 
 fn is_question_tool_name(tool: &str) -> bool {
@@ -791,6 +1204,13 @@ fn is_task_tool_name(tool: &str) -> bool {
 
 fn is_droid_input_tool(tool: &str) -> bool {
     matches!(tool, "AskUser" | "ExitSpecMode")
+}
+
+fn droid_manual_approval_tool(tool: &str) -> bool {
+    matches!(
+        tool,
+        "Create" | "Edit" | "Execute" | "MultiEdit" | "NotebookEdit" | "Write"
+    )
 }
 
 fn droid_input_text(payload: &Value, tool: &str) -> String {
@@ -910,6 +1330,71 @@ fn canonical_progress(
     .map_err(AgentAdapterError::Protocol)
 }
 
+fn task_lifecycle_event(
+    event: &str,
+    agent_name: &str,
+    pid: Option<i32>,
+    session_id: Option<&str>,
+    task_id: Option<&str>,
+    transcript_path: Option<&str>,
+) -> Result<Vec<AgentEvent>, AgentAdapterError> {
+    let (Some(session_id), Some(task_id)) = (
+        session_id.map(str::trim).filter(|id| !id.is_empty()),
+        task_id.map(str::trim).filter(|id| !id.is_empty()),
+    ) else {
+        return Ok(Vec::new());
+    };
+    let value = json!({
+        "version": 1,
+        "event": event,
+        "agent": {"name": agent_name, "pid": pid},
+        "session": {"id": session_id},
+        "task": {"id": task_id},
+        "transcriptPath": transcript_path,
+    });
+    let lifecycle = canonical(
+        "agent.running",
+        agent_name,
+        pid,
+        Some(session_id),
+        None,
+        None,
+    )?
+    .with_transcript_path(transcript_path.map(str::to_owned));
+    AgentEvent::parse(value.to_string().as_bytes())
+        .map(|event| vec![lifecycle, event])
+        .map_err(AgentAdapterError::Protocol)
+}
+
+fn source_task_id(payload: &Value) -> Option<String> {
+    string_at(
+        payload,
+        &[
+            "task_id",
+            "taskId",
+            "subagent_id",
+            "subagentId",
+            "agent_id",
+            "agentId",
+            "tool_use_id",
+            "toolUseId",
+        ],
+    )
+}
+
+fn explicit_progress(payload: &Value) -> Option<(u64, u64)> {
+    let progress = payload.get("progress")?;
+    let done = progress
+        .get("done")
+        .or_else(|| progress.get("doneCount"))?
+        .as_u64()?;
+    let total = progress
+        .get("total")
+        .or_else(|| progress.get("totalCount"))?
+        .as_u64()?;
+    (total > 0).then_some((done.min(total), total))
+}
+
 fn parse_payload(bytes: &[u8]) -> Result<Value, AgentAdapterError> {
     if bytes.len() > AgentEvent::MAX_WIRE_BYTES {
         return Err(AgentAdapterError::Protocol(
@@ -923,6 +1408,14 @@ fn parse_payload(bytes: &[u8]) -> Result<Value, AgentAdapterError> {
 fn event_name(payload: &Value) -> Result<&str, AgentAdapterError> {
     string_ref_at(payload, &["hook_event_name", "hookEventName"])
         .ok_or(AgentAdapterError::MissingEventName)
+}
+
+fn source_event_name(payload: &Value) -> Result<&str, AgentAdapterError> {
+    string_ref_at(
+        payload,
+        &["hook_event_name", "hookEventName", "event", "type"],
+    )
+    .ok_or(AgentAdapterError::MissingEventName)
 }
 
 fn canonical(
@@ -945,6 +1438,26 @@ fn canonical(
         "state": state,
     });
     AgentEvent::parse(value.to_string().as_bytes()).map_err(AgentAdapterError::Protocol)
+}
+
+fn canonical_stop_candidate(
+    agent_name: &str,
+    pid: Option<i32>,
+    session_id: Option<&str>,
+    text: Option<&str>,
+) -> Result<AgentEvent, AgentAdapterError> {
+    AgentEvent::parse(
+        json!({
+            "version": 1,
+            "event": "agent.idle",
+            "agent": {"name": agent_name, "pid": pid},
+            "session": {"id": session_id},
+            "state": {"text": text, "stopCandidate": true},
+        })
+        .to_string()
+        .as_bytes(),
+    )
+    .map_err(AgentAdapterError::Protocol)
 }
 
 fn is_question_tool(payload: &Value) -> bool {
@@ -1200,6 +1713,10 @@ fn question_text_without_fallback(payload: &Value) -> Option<String> {
 
 fn string_at(payload: &Value, keys: &[&str]) -> Option<String> {
     string_ref_at(payload, keys).map(str::to_owned)
+}
+
+fn bool_at(payload: &Value, keys: &[&str]) -> Option<bool> {
+    keys.iter().find_map(|key| payload.get(*key)?.as_bool())
 }
 
 fn string_ref_at<'a>(payload: &'a Value, keys: &[&str]) -> Option<&'a str> {

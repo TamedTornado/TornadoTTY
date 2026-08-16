@@ -12,7 +12,7 @@ use zentty_agent_ipc::{
 use zentty_core::{
     AgentEvent, adapt_agy_hook, adapt_claude_hook, adapt_codex_hook, adapt_codex_notify,
     adapt_cursor_hook, adapt_droid_hook, adapt_gemini_hook, adapt_grok_hook, adapt_hermes_hook,
-    adapt_kimi_hook, adapt_vibe_hook, detect_server_urls,
+    adapt_kimi_hook, adapt_small_harness_hook, adapt_vibe_hook, detect_server_urls,
 };
 use zentty_tmux_compat::{
     Command, Invocation, TmuxCompatRequest, WAIT_POLL_INTERVAL, WaitForAction,
@@ -162,6 +162,9 @@ fn run_agent_signal(arguments: &[String]) -> Result<(), String> {
 fn adapt_agent_events(adapter: Option<&str>, input: &[u8]) -> Result<Vec<AgentEvent>, String> {
     let events = match adapter {
         Some("codex") => adapt_codex_hook(input, environment_pid("ZENTTY_CODEX_PID")),
+        Some("small-harness") => {
+            adapt_small_harness_hook(input, environment_pid("ZENTTY_SMALL_HARNESS_PID"))
+        }
         Some("claude") => adapt_claude_hook(input, environment_pid("ZENTTY_CLAUDE_PID")),
         Some("gemini") => adapt_gemini_hook(input, environment_pid("ZENTTY_GEMINI_PID")),
         Some("cursor") => adapt_cursor_hook(input, environment_pid("ZENTTY_CURSOR_PID")),

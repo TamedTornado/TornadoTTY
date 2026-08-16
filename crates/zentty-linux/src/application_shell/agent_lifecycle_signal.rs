@@ -3,7 +3,7 @@ use zentty_core::{AgentEvent, AgentSignalConfidence, AgentSignalOrigin};
 #[derive(Debug, Eq, PartialEq)]
 pub(super) enum AgentLifecycleSignal {
     Event {
-        event: AgentEvent,
+        event: Box<AgentEvent>,
         origin: AgentSignalOrigin,
         confidence: AgentSignalConfidence,
     },
@@ -108,10 +108,20 @@ fn parse_lifecycle(
     })?;
     let event =
         AgentEvent::parse(&bytes).map_err(|error| ("invalid_request", error.to_string()))?;
+    let (origin, confidence) = signal_priority(options);
+    Ok(AgentLifecycleSignal::Event {
+        event: Box::new(event),
+        origin,
+        confidence,
+    })
+}
+
+fn signal_priority(
+    options: &std::collections::BTreeMap<String, String>,
+) -> (AgentSignalOrigin, AgentSignalConfidence) {
     let origin = match options
         .get("origin")
-        .map(String::as_str)
-        .unwrap_or("compatibility")
+        .map_or("compatibility", String::as_str)
     {
         "explicit-hook" => AgentSignalOrigin::ExplicitHook,
         "explicit-api" => AgentSignalOrigin::ExplicitApi,
@@ -136,11 +146,7 @@ fn parse_lifecycle(
             _ => AgentSignalConfidence::Weak,
         },
     );
-    Ok(AgentLifecycleSignal::Event {
-        event,
-        origin,
-        confidence,
-    })
+    (origin, confidence)
 }
 
 fn parse_pid(
@@ -249,7 +255,7 @@ mod tests {
         AuthenticatedAgentEvent {
             target: AgentTarget::new("window", "lane", "pane"),
             pane_token: "redacted".to_owned(),
-            event,
+            event: *event,
         }
         .event_kind()
     }

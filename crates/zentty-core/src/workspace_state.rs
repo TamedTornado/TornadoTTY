@@ -2161,7 +2161,7 @@ impl WorkspaceState {
     pub fn apply_canonical_agent_event(
         &mut self,
         target: crate::AgentTarget,
-        event: crate::AgentEvent,
+        event: &crate::AgentEvent,
         now: u64,
     ) {
         self.agent_statuses.apply_for_target(target, event, now);
@@ -2170,7 +2170,7 @@ impl WorkspaceState {
     pub fn apply_agent_signal_event(
         &mut self,
         target: crate::AgentTarget,
-        event: crate::AgentEvent,
+        event: &crate::AgentEvent,
         origin: crate::AgentSignalOrigin,
         confidence: crate::AgentSignalConfidence,
         now: u64,
@@ -2214,6 +2214,11 @@ impl WorkspaceState {
             &draft.pane_id,
             &draft.session_id,
             &draft.tool_name,
+            crate::agent_status::RestoredTaskState {
+                progress: draft.task_progress,
+                tasks: &draft.tasks,
+                authoritative: draft.task_progress_authoritative,
+            },
             now,
         );
         true
@@ -2270,9 +2275,11 @@ impl WorkspaceState {
             .agent_statuses
             .codex_transcript_enrichment_context(pane_id)?;
         let pane = self.pane(pane_id)?;
-        let working_directory = pane
-            .working_directory
-            .as_deref()
+        let working_directory = self
+            .agent_statuses
+            .status_for_pane(pane_id)
+            .and_then(|status| status.working_directory.as_deref())
+            .or(pane.working_directory.as_deref())
             .or(fallback_working_directory)
             .map(str::to_owned);
         if transcript_path.is_none() && working_directory.is_none() {
@@ -2348,17 +2355,26 @@ impl WorkspaceState {
                 } else {
                     return None;
                 };
+                let (tasks, task_progress_authoritative) = self
+                    .agent_statuses
+                    .task_restore_state(&pane.id, &status.session_id);
                 let draft = PaneRestoreDraft {
                     pane_id: pane.id.clone(),
                     kind: RestoreDraftKind::AgentResume,
                     tool_name: status.agent_name.clone(),
                     session_id: status.session_id.clone(),
-                    working_directory: pane.working_directory.clone(),
+                    working_directory: status
+                        .working_directory
+                        .clone()
+                        .or_else(|| pane.working_directory.clone()),
                     tracked_pid: status.tracked_pid.unwrap_or_default(),
                     agent_launch_snapshot: Some(AgentLaunchSnapshot {
                         arguments,
                         environment: None,
                     }),
+                    task_progress: status.progress,
+                    tasks,
+                    task_progress_authoritative,
                 };
                 draft.resume_command().is_some().then_some(draft)
             })

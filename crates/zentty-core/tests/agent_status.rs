@@ -1,7 +1,7 @@
 use zentty_core::{
-    AgentEvent, AgentInteractionKind, AgentPhase, AgentSignalConfidence, AgentSignalOrigin,
-    AgentStatusStore, AgentTarget, AuthenticatedAgentEvent, PaneAgentStatus, PaneTokenRegistry,
-    TerminalProgressState,
+    AgentEvent, AgentInteractionKind, AgentPhase, AgentProgress, AgentSignalConfidence,
+    AgentSignalOrigin, AgentStatusStore, AgentTarget, AuthenticatedAgentEvent, PaneAgentStatus,
+    PaneTokenRegistry, TerminalProgressState,
 };
 
 fn target() -> AgentTarget {
@@ -14,6 +14,17 @@ fn event_for(pane_id: &str, json: &[u8]) -> AuthenticatedAgentEvent {
         pane_token: format!("token-{pane_id}"),
         event: AgentEvent::parse(json).unwrap(),
     }
+}
+
+fn apply_to_target(store: &mut AgentStatusStore, target: &AgentTarget, payload: &[u8], now: u64) {
+    store.apply(
+        AuthenticatedAgentEvent {
+            target: target.clone(),
+            pane_token: "token".to_owned(),
+            event: AgentEvent::parse(payload).unwrap(),
+        },
+        now,
+    );
 }
 
 fn seed_other_pane_codex_tracking(store: &mut AgentStatusStore) {
@@ -535,7 +546,22 @@ fn protocol_rejects_bad_versions_unknown_events_and_oversized_requests() {
     assert!(AgentEvent::parse(br#"{"version":2,"event":"agent.idle"}"#).is_err());
     assert!(AgentEvent::parse(br#"{"version":1,"event":"agent.teleported"}"#).is_err());
     assert!(AgentEvent::parse(b"not-json").is_err());
-    assert!(AgentEvent::parse(&vec![b' '; AgentEvent::MAX_WIRE_BYTES + 1]).is_err());
+    let mut maximum = br#"{"version":1,"event":"agent.idle"}"#.to_vec();
+    maximum.resize(AgentEvent::MAX_WIRE_BYTES, b' ');
+    assert!(AgentEvent::parse(&maximum).is_ok());
+    maximum.push(b' ');
+    assert!(matches!(
+        AgentEvent::parse(&maximum),
+        Err(zentty_core::AgentProtocolError::RequestTooLarge)
+    ));
+    for payload in [
+        br#"{"version":1,"event":"task.started","session":{"id":"session"}}"#.as_slice(),
+        br#"{"version":1,"event":"task.completed","task":{"id":"task"}}"#.as_slice(),
+        br#"{"version":1,"event":"task.started","session":{"id":" "},"task":{"id":"task"}}"#
+            .as_slice(),
+    ] {
+        assert!(AgentEvent::parse(payload).is_err());
+    }
 }
 
 #[test]
@@ -597,6 +623,75 @@ fn reducer_prioritizes_attention_and_session_end_clears_only_its_session() {
     let remaining = store.status_for(&target()).unwrap();
     assert_eq!(remaining.session_id, "codex");
     assert_eq!(remaining.phase, AgentPhase::Running);
+}
+
+#[test]
+fn task_bookkeeping_is_cross_pane_isolated_conflict_stable_and_rejects_late_events() {
+    let mut store = AgentStatusStore::default();
+    let target_a = AgentTarget::new("window", "lane", "pane-a");
+    let target_b = AgentTarget::new("window", "lane", "pane-b");
+    apply_to_target(
+        &mut store,
+        &target_a,
+        br#"{"version":1,"event":"task.started","session":{"id":"shared"},"task":{"id":"worker"}}"#,
+        1,
+    );
+    apply_to_target(
+        &mut store,
+        &target_b,
+        br#"{"version":1,"event":"task.completed","session":{"id":"shared"},"task":{"id":"worker"}}"#,
+        2,
+    );
+    assert_eq!(
+        store.status_for(&target_a).unwrap().progress,
+        Some(AgentProgress { done: 0, total: 1 })
+    );
+    assert_eq!(
+        store.status_for(&target_b).unwrap().progress,
+        Some(AgentProgress { done: 1, total: 1 })
+    );
+
+    apply_to_target(
+        &mut store,
+        &target_a,
+        br#"{"version":1,"event":"task.progress","session":{"id":"shared"},"progress":{"done":3,"total":4}}"#,
+        3,
+    );
+    apply_to_target(
+        &mut store,
+        &target_a,
+        br#"{"version":1,"event":"task.completed","session":{"id":"shared"},"task":{"id":"worker"}}"#,
+        4,
+    );
+    assert_eq!(
+        store.status_for(&target_a).unwrap().progress,
+        Some(AgentProgress { done: 3, total: 4 }),
+        "an explicit snapshot remains authoritative over counter-style hooks"
+    );
+
+    apply_to_target(
+        &mut store,
+        &target_a,
+        br#"{"version":1,"event":"session.end","session":{"id":"shared"}}"#,
+        5,
+    );
+    apply_to_target(
+        &mut store,
+        &target_a,
+        br#"{"version":1,"event":"task.completed","session":{"id":"shared"},"task":{"id":"late"}}"#,
+        6,
+    );
+    assert!(store.status_for(&target_a).is_none());
+    apply_to_target(
+        &mut store,
+        &target_a,
+        br#"{"version":1,"event":"session.start","session":{"id":"shared"}}"#,
+        7,
+    );
+    assert_eq!(
+        store.status_for(&target_a).unwrap().phase,
+        AgentPhase::Starting
+    );
 }
 
 #[test]

@@ -250,6 +250,12 @@ fn real_cli_process_runs_every_newly_installable_hook_adapter() {
             "Grok",
             AgentPhase::Starting,
         ),
+        (
+            "small-harness",
+            br#"{"hook_event_name":"SessionStart","session_id":"small-real"}"#.as_slice(),
+            "Small Harness",
+            AgentPhase::Starting,
+        ),
     ] {
         let harness = Harness::start();
         let mut command = harness.command();
@@ -260,6 +266,7 @@ fn real_cli_process_runs_every_newly_installable_hook_adapter() {
             "adapter={adapter} stderr={}",
             String::from_utf8_lossy(&output.stderr)
         );
+        assert!(output.stdout.is_empty(), "adapter={adapter} emitted an unexpected acknowledgement");
         let received = harness.receiver.recv_timeout(Duration::from_secs(2)).unwrap();
         let target = received.target.clone();
         let mut statuses = AgentStatusStore::default();

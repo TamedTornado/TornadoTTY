@@ -111,6 +111,8 @@ mkfifo "${state_dir}/scp-delay-fifo"
 jq '
     (.workspace.windows[0].worklanes[].columns[].panes[] | select(.id == "pane-agent").workingDirectory) = "/tmp" |
     (.restoreDraftWindows[].paneDrafts[] | select(.paneID == "pane-agent").workingDirectory) = "/tmp" |
+    (.restoreDraftWindows[].paneDrafts[] | select(.paneID == "pane-agent").taskProgress) = {"done":1,"total":2} |
+    (.restoreDraftWindows[].paneDrafts[] | select(.paneID == "pane-agent").tasks) = {"worker-a":true,"worker-b":false} |
     .workspace.windows[0].worklanes[0].columns[0].panes += [{
         "id": "pane-ordinary-inactive",
         "workingDirectory": "/tmp"
@@ -170,6 +172,7 @@ start_product() {
         PATH="${fake_bin}:${PATH}" \
         ZENTTY_CONTROLLED_AGENT_PROFILE=codex-restore \
         ZENTTY_CONTROLLED_AGENT_SESSIONS=session-codex,session-two \
+        ZENTTY_CONTROLLED_AGENT_COMPLETE_TASK_SESSION=session-codex \
         ZENTTY_CONTROLLED_AGENT_RECEIPT="${agent_receipt}" \
         ZENTTY_CONTROLLED_AGENT_START_DELAY_SECONDS="${agent_start_delay}" \
         ZENTTY_CONTROLLED_AGENT_START_RECEIPT="${agent_start_receipt}" \
@@ -214,6 +217,16 @@ assert_background_start() {
     zentty_product_wait_for_log "${log}" \
         'zentty-linux: agent-event pane=pane-agent-two worklane=worklane-second-agent' \
         "second inactive agent did not authenticate" || fail "second inactive agent event missing"
+    if [[ "${cumulative_count}" -eq 2 ]]; then
+        zentty_product_wait_for_log "${log}" \
+            'sidebar-agent-status pane=pane-agent phase=Starting interaction=None attention=false progress=1/2' \
+            "restored task projection was not visible before the child hook" ||
+            fail "restored task projection missing"
+    fi
+    zentty_product_wait_for_log "${log}" \
+        'sidebar-agent-status pane=pane-agent phase=Starting interaction=None attention=false progress=2/2' \
+        "real resumed child did not idempotently complete the remaining task" ||
+        fail "restored task completion missing"
     grep -Fq '|worklane-active[title=Active shell,color=none]:pane-shell-active*' "${log}" ||
         fail "background startup changed the active worklane"
     [[ "$(grep -Fxc 'zentty-linux: terminal-ready-pane=pane-agent' "${log}" || true)" -eq 1 ]] ||

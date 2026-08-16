@@ -1,7 +1,8 @@
 use zentty_core::{
     AgentPhase, AgentStatusStore, AgentTarget, AuthenticatedAgentEvent, adapt_agy_hook,
     adapt_claude_hook, adapt_codex_hook, adapt_codex_notify, adapt_cursor_hook, adapt_droid_hook,
-    adapt_gemini_hook, adapt_grok_hook, adapt_hermes_hook, adapt_kimi_hook, adapt_vibe_hook,
+    adapt_gemini_hook, adapt_grok_hook, adapt_hermes_hook, adapt_kimi_hook,
+    adapt_small_harness_hook, adapt_vibe_hook,
 };
 
 fn reduce(events: Vec<zentty_core::AgentEvent>) -> zentty_core::PaneAgentStatus {
@@ -18,6 +19,25 @@ fn reduce(events: Vec<zentty_core::AgentEvent>) -> zentty_core::PaneAgentStatus 
         );
     }
     store.status_for(&target).unwrap().clone()
+}
+
+fn apply_small_harness_payload(
+    store: &mut AgentStatusStore,
+    target: &AgentTarget,
+    payload: &str,
+    now: &mut u64,
+) {
+    for event in adapt_small_harness_hook(payload.as_bytes(), None).unwrap() {
+        store.apply(
+            AuthenticatedAgentEvent {
+                target: target.clone(),
+                pane_token: "token".to_owned(),
+                event,
+            },
+            *now,
+        );
+        *now += 1;
+    }
 }
 
 #[test]
@@ -61,25 +81,6 @@ fn codex_hooks_map_source_lifecycle_and_approval_semantics() {
         Some("Which database?\n[Postgres] [SQLite]")
     );
 
-    let compacting = reduce(
-        adapt_codex_hook(
-            br#"{"hook_event_name":"PreCompact","session_id":"codex-a"}"#,
-            None,
-        )
-        .unwrap(),
-    );
-    assert_eq!(compacting.phase, AgentPhase::Running);
-    assert_eq!(compacting.text.as_deref(), Some("Compacting"));
-    let compacted = reduce(
-        adapt_codex_hook(
-            br#"{"hook_event_name":"PostCompact","session_id":"codex-a"}"#,
-            None,
-        )
-        .unwrap(),
-    );
-    assert_eq!(compacted.phase, AgentPhase::Running);
-    assert_eq!(compacted.text, None);
-
     let running = reduce(
         adapt_codex_hook(
             br#"{"hook_event_name":"PreToolUse","session_id":"codex-a","tool_name":"shell"}"#,
@@ -111,6 +112,172 @@ fn codex_hooks_map_source_lifecycle_and_approval_semantics() {
     assert!(SOURCE.contains("case \"PreCompact\""));
     assert!(SOURCE.contains("case \"PostCompact\""));
     assert!(SOURCE.contains("case \"Stop\""));
+}
+
+#[test]
+fn codex_compaction_hooks_preserve_canonical_transition_identity() {
+    for (hook, expected, text) in [
+        ("PreCompact", "agent.compacting", Some("Compacting")),
+        ("PostCompact", "agent.compacted", None),
+    ] {
+        let payload = serde_json::json!({
+            "hook_event_name": hook,
+            "session_id": "codex-a",
+        });
+        let events = adapt_codex_hook(payload.to_string().as_bytes(), None).unwrap();
+        let status = reduce(events.clone());
+        assert_eq!(status.phase, AgentPhase::Running, "{hook}");
+        assert_eq!(status.text.as_deref(), text, "{hook}");
+        assert_eq!(
+            serde_json::to_value(&events[0]).unwrap()["event"],
+            expected,
+            "{hook}"
+        );
+    }
+}
+
+#[test]
+fn codex_positional_aliases_each_preserve_their_source_transition() {
+    for (alias, expected) in [
+        ("session-start", "session.start"),
+        ("pre-tool-use", "agent.running"),
+        ("permission-request", "agent.needs-input"),
+        ("post-tool-use", "agent.running"),
+        ("prompt-submit", "agent.running"),
+        ("pre-compact", "agent.compacting"),
+        ("post-compact", "agent.compacted"),
+        ("stop", "agent.idle"),
+    ] {
+        let payload = serde_json::json!({
+            "hook_event_name": alias,
+            "session_id": "codex-positional",
+            "tool_name": "shell",
+            "message": "Allow command?",
+        });
+        let events = adapt_codex_hook(payload.to_string().as_bytes(), None).unwrap();
+        assert_eq!(events.len(), 1, "{alias}");
+        assert_eq!(
+            serde_json::to_value(&events[0]).unwrap()["event"],
+            expected,
+            "{alias}"
+        );
+    }
+}
+
+#[test]
+fn small_harness_plan_subagent_and_session_end_events_preserve_source_bookkeeping() {
+    assert!(
+        adapt_codex_hook(
+            br#"{"hook_event_name":"PlanUpdated","session_id":"codex-plan","progress":{"done":1,"total":2}}"#,
+            None,
+        )
+        .unwrap()
+        .is_empty(),
+        "PlanUpdated belongs to the source Small Harness adapter, not Codex"
+    );
+    let zero_total = adapt_small_harness_hook(
+        br#"{"hook_event_name":"PlanUpdated","session_id":"codex-plan","progress":{"done":0,"total":0}}"#,
+        None,
+    )
+    .unwrap();
+    assert_eq!(zero_total.len(), 1);
+    assert_eq!(
+        serde_json::to_value(&zero_total[0]).unwrap()["event"],
+        "agent.running"
+    );
+    let target = AgentTarget::new("window", "lane", "pane");
+    let mut store = AgentStatusStore::default();
+    let mut now = 0;
+
+    apply_small_harness_payload(
+        &mut store,
+        &target,
+        r#"{"hook_event_name":"PlanUpdated","session_id":"codex-plan","progress":{"doneCount":2,"totalCount":5}}"#,
+        &mut now,
+    );
+    assert_eq!(
+        store.status_for(&target).unwrap().progress,
+        Some(zentty_core::AgentProgress { done: 2, total: 5 })
+    );
+    apply_small_harness_payload(
+        &mut store,
+        &target,
+        r#"{"hook_event_name":"SubagentStart","session_id":"codex-plan","subagent_id":"worker-a"}"#,
+        &mut now,
+    );
+    apply_small_harness_payload(
+        &mut store,
+        &target,
+        r#"{"hook_event_name":"SubagentStart","session_id":"codex-plan","subagent_id":"worker-a"}"#,
+        &mut now,
+    );
+    assert_eq!(
+        store.status_for(&target).unwrap().progress,
+        Some(zentty_core::AgentProgress { done: 2, total: 5 })
+    );
+    apply_small_harness_payload(
+        &mut store,
+        &target,
+        r#"{"hook_event_name":"SubagentStop","session_id":"codex-plan","subagent_id":"worker-a"}"#,
+        &mut now,
+    );
+    apply_small_harness_payload(
+        &mut store,
+        &target,
+        r#"{"hook_event_name":"SubagentStop","session_id":"codex-plan","subagent_id":"worker-a"}"#,
+        &mut now,
+    );
+    assert_eq!(
+        store.status_for(&target).unwrap().progress,
+        Some(zentty_core::AgentProgress { done: 2, total: 5 })
+    );
+    apply_small_harness_payload(
+        &mut store,
+        &target,
+        r#"{"hook_event_name":"SessionEnd","session_id":"codex-plan"}"#,
+        &mut now,
+    );
+    assert!(store.status_for(&target).is_none());
+}
+
+#[test]
+fn small_harness_and_droid_task_aliases_preserve_started_and_completed_identity() {
+    for (hook, expected) in [
+        ("SubagentStart", "task.started"),
+        ("SubagentStop", "task.completed"),
+    ] {
+        let payload = serde_json::json!({
+            "hook_event_name": hook,
+            "session_id": "small-tasks",
+            "subagent_id": "worker-a",
+        });
+        let events = adapt_small_harness_hook(payload.to_string().as_bytes(), None).unwrap();
+        assert_eq!(events.len(), 2, "{hook}");
+        assert_eq!(
+            serde_json::to_value(&events[1]).unwrap()["event"],
+            expected,
+            "{hook}"
+        );
+    }
+
+    for (hook, tool, expected) in [
+        ("PreToolUse", "Task", "task.started"),
+        ("SubagentStop", "Task", "task.completed"),
+    ] {
+        let payload = serde_json::json!({
+            "hook_event_name": hook,
+            "session_id": "droid-tasks",
+            "tool_name": tool,
+            "task_id": "worker-a",
+        });
+        let events = adapt_droid_hook(payload.to_string().as_bytes(), None).unwrap();
+        assert_eq!(events.len(), 2, "{hook}");
+        assert_eq!(
+            serde_json::to_value(&events[1]).unwrap()["event"],
+            expected,
+            "{hook}"
+        );
+    }
 }
 
 #[test]
@@ -411,6 +578,45 @@ fn claude_hooks_map_the_source_lifecycle_and_ignore_non_action_chatter() {
 }
 
 #[test]
+fn claude_task_hooks_are_idempotent_and_reordered_completion_is_deterministic() {
+    let target = AgentTarget::new("window", "lane", "pane");
+    let mut store = AgentStatusStore::default();
+    let payloads = [
+        r#"{"hook_event_name":"TaskCompleted","session_id":"claude-tasks","task_id":"task-b"}"#,
+        r#"{"hook_event_name":"TaskCreated","session_id":"claude-tasks","task_id":"task-a"}"#,
+        r#"{"hook_event_name":"TaskCreated","session_id":"claude-tasks","task_id":"task-b"}"#,
+        r#"{"hook_event_name":"TaskCreated","session_id":"claude-tasks","task_id":"task-a"}"#,
+        r#"{"hook_event_name":"TaskCompleted","session_id":"claude-tasks","task_id":"task-a"}"#,
+    ];
+    for (now, payload) in payloads.into_iter().enumerate() {
+        for event in adapt_claude_hook(payload.as_bytes(), None).unwrap() {
+            store.apply(
+                AuthenticatedAgentEvent {
+                    target: target.clone(),
+                    pane_token: "token".to_owned(),
+                    event,
+                },
+                u64::try_from(now).unwrap(),
+            );
+        }
+    }
+    let status = store.status_for(&target).unwrap();
+    assert_eq!(status.phase, AgentPhase::Running);
+    assert_eq!(
+        status.progress,
+        Some(zentty_core::AgentProgress { done: 2, total: 2 })
+    );
+    assert!(
+        adapt_claude_hook(
+            br#"{"hook_event_name":"TaskCreated","session_id":"claude-tasks"}"#,
+            None,
+        )
+        .unwrap()
+        .is_empty()
+    );
+}
+
+#[test]
 fn claude_questions_preserve_options_and_permission_fallbacks() {
     let question = reduce(
         adapt_claude_hook(
@@ -555,6 +761,129 @@ fn remaining_integration_adapters_cover_source_lifecycle_and_input_semantics() {
         .unwrap(),
     );
     assert_eq!(kimi.text.as_deref(), Some("Allow WriteFile on README.md?"));
+}
+
+#[test]
+fn claude_and_kimi_do_not_regress_into_generic_hook_guesses() {
+    assert!(
+        adapt_claude_hook(br#"{"event":"SessionStart","session_id":"claude-a"}"#, None,).is_err(),
+        "Claude's source hook contract does not accept the Small Harness event key"
+    );
+    assert!(
+        adapt_kimi_hook(
+            br#"{"hook_event_name":"Notification","session_id":"kimi-a","notification_type":"turn_complete","message":"done"}"#,
+            None,
+        )
+        .unwrap()
+        .is_empty()
+    );
+    assert!(
+        adapt_kimi_hook(
+            br#"{"hook_event_name":"PreToolUse","session_id":"kimi-a","tool_name":"ReadFile"}"#,
+            None,
+        )
+        .unwrap()
+        .is_empty()
+    );
+    let kimi_approval = reduce(
+        adapt_kimi_hook(
+            br#"{"hook_event_name":"PreToolUse","session_id":"kimi-a","tool_name":"Shell","tool_input":{"command":"cargo test"}}"#,
+            None,
+        )
+        .unwrap(),
+    );
+    assert_eq!(kimi_approval.phase, AgentPhase::NeedsInput);
+    assert_eq!(
+        kimi_approval.interaction,
+        zentty_core::AgentInteractionKind::Approval
+    );
+    let kimi_resolved = reduce(
+        adapt_kimi_hook(
+            br#"{"hook_event_name":"PostToolUse","session_id":"kimi-a","tool_name":"Shell"}"#,
+            None,
+        )
+        .unwrap(),
+    );
+    assert_eq!(kimi_resolved.phase, AgentPhase::Running);
+}
+
+#[test]
+fn source_specific_adapter_exceptions_do_not_regress_into_generic_hook_guesses() {
+    for payload in [
+        br#"{"hook_event_name":"Notification","session_id":"grok-a","message":"turn complete"}"#.as_slice(),
+        br#"{"hook_event_name":"PreToolUse","session_id":"grok-a","tool_name":"ask_user_question"}"#.as_slice(),
+    ] {
+        assert!(adapt_grok_hook(payload, None).unwrap().is_empty());
+    }
+    let grok_tool = reduce(
+        adapt_grok_hook(
+            br#"{"hook_event_name":"pre_tool_use","session_id":"grok-a","tool_name":"shell"}"#,
+            None,
+        )
+        .unwrap(),
+    );
+    assert_eq!(grok_tool.phase, AgentPhase::Running);
+
+    let hermes_end = reduce(
+        adapt_hermes_hook(
+            br#"{"hook_event_name":"on_session_end","session_id":"hermes-a"}"#,
+            None,
+        )
+        .unwrap(),
+    );
+    assert_eq!(hermes_end.phase, AgentPhase::Idle);
+
+    let agy_background = reduce(
+        adapt_agy_hook(
+            br#"{"hook_event_name":"Stop","session_id":"agy-a","fullyIdle":false,"message":"background work remains"}"#,
+            None,
+        )
+        .unwrap(),
+    );
+    assert_eq!(agy_background.phase, AgentPhase::UnresolvedStop);
+    assert_eq!(
+        agy_background.text.as_deref(),
+        Some("background work remains")
+    );
+
+    let cursor_error = reduce(
+        adapt_cursor_hook(
+            br#"{"hook_event_name":"Stop","conversation_id":"cursor-a","status":"error","error":"worker failed"}"#,
+            None,
+        )
+        .unwrap(),
+    );
+    assert_eq!(cursor_error.phase, AgentPhase::UnresolvedStop);
+    let cursor_aborted = adapt_cursor_hook(
+        br#"{"hook_event_name":"Stop","conversation_id":"cursor-a","status":"aborted"}"#,
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        serde_json::to_value(&cursor_aborted[0]).unwrap()["state"]["stopCandidate"],
+        true
+    );
+
+    let droid_manual = reduce(
+        adapt_droid_hook(
+            br#"{"hook_event_name":"PreToolUse","session_id":"droid-a","permission_mode":"off","tool_name":"Write","tool_input":{"path":"src/main.rs"}}"#,
+            None,
+        )
+        .unwrap(),
+    );
+    assert_eq!(droid_manual.phase, AgentPhase::NeedsInput);
+    assert_eq!(
+        droid_manual.interaction,
+        zentty_core::AgentInteractionKind::Approval
+    );
+    assert!(
+        adapt_droid_hook(
+            br#"{"hook_event_name":"PostToolUse","session_id":"droid-a","tool_name":"ExitSpecMode"}"#,
+            None,
+        )
+        .unwrap()
+        .is_empty()
+    );
 }
 
 #[test]

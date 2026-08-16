@@ -124,7 +124,7 @@ pub const PRODUCT_NAME: &str = "Zentty";
 pub use agent_adapters::{
     AgentAdapterError, adapt_agy_hook, adapt_claude_hook, adapt_codex_hook, adapt_codex_notify,
     adapt_cursor_hook, adapt_droid_hook, adapt_gemini_hook, adapt_grok_hook, adapt_hermes_hook,
-    adapt_kimi_hook, adapt_vibe_hook,
+    adapt_kimi_hook, adapt_small_harness_hook, adapt_vibe_hook,
 };
 pub use clean_copy::{
     CleanCopyOptions, CleanCopyResult, CommandFlattenAggressiveness, clean_copy,
