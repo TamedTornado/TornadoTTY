@@ -91,4 +91,18 @@ if grep -Fq 'AgentIpcClient::send_product(' "${cli_binary}"; then
     fail "delivered CLI bypasses the application request client"
 fi
 
+shell_service="${repo_root}/crates/zentty-linux/src/application_shell/application_commands.rs"
+coordinator_service="${repo_root}/crates/zentty-linux/src/application/product_cli.rs"
+grep -Fq 'match request.operation()' "${shell_service}" ||
+    fail "application shell does not dispatch through the closed operation registry"
+if grep -Fq 'match request.subcommand()' "${shell_service}"; then
+    fail "application shell dispatches through open string command names"
+fi
+grep -Fq 'apply_focus_operation(Some(direction))' "${action_source}" ||
+    fail "GUI focus actions bypass the shared application operation"
+grep -Fq 'apply_focus_operation(direction)' "${shell_service}" ||
+    fail "external focus requests bypass the shared application operation"
+grep -Fq 'command.request.operation() == ApplicationOperation::Grid' "${coordinator_service}" ||
+    fail "application coordinator grid dispatch bypasses the closed operation registry"
+
 echo "application-api-inventory: PASS operations=19 specialized=3 cli-local=4 cli-contract=$(wc -l <<<"${contract_ids}")"

@@ -5,15 +5,15 @@ use gtk::glib;
 use std::fmt::Write;
 use zentty_agent_ipc::AuthenticatedProductRequest;
 use zentty_api::{
-    ApplicationReply as ProductIpcReply, ApplicationRequest as ProductIpcRequest,
-    ApplicationScope as ProductIpcKind,
+    ApplicationOperation, ApplicationReply as ProductIpcReply,
+    ApplicationRequest as ProductIpcRequest, ApplicationScope as ProductIpcKind,
 };
 use zentty_core::{AgentTarget, ColumnRecipe, PaneRecipe, WindowRecipe, WorklaneRecipe};
 
 impl ApplicationCoordinator {
     pub(super) fn handle_product_commands(&mut self, commands: Vec<AuthenticatedProductRequest>) {
         for command in commands {
-            if command.request.subcommand() == "grid"
+            if command.request.operation() == ApplicationOperation::Grid
                 && command
                     .request
                     .arguments()
@@ -25,7 +25,9 @@ impl ApplicationCoordinator {
             }
             let reply = match command.request.kind() {
                 ProductIpcKind::Discover => self.handle_discovery_command(&command),
-                ProductIpcKind::Pane if command.request.subcommand() == "notify" => {
+                ProductIpcKind::Pane
+                    if command.request.operation() == ApplicationOperation::Notify =>
+                {
                     self.handle_pane_notification(&command)
                 }
                 ProductIpcKind::Pane => self.shells.get(&command.target.window_id).map_or_else(
@@ -34,7 +36,7 @@ impl ApplicationCoordinator {
                             .expect("bounded static product failure")
                     },
                     |shell| {
-                        crate::application_shell::ApplicationShell::execute_product_command(
+                        crate::application_shell::ApplicationShell::execute_application_request(
                             shell,
                             &command.target,
                             &command.request,
@@ -127,7 +129,7 @@ impl ApplicationCoordinator {
         let request = ProductIpcRequest::new(ProductIpcKind::Pane, "grid", arguments)
             .expect("validated grid request remains valid without destination flag");
         let target = AgentTarget::new(&destination_window_id, &worklane_id, &pane_id);
-        let reply = ApplicationShell::execute_product_command(&destination, &target, &request);
+        let reply = ApplicationShell::execute_application_request(&destination, &target, &request);
         if reply.error().is_some() {
             let mut coordinator_ref = coordinator.borrow_mut();
             coordinator_ref.shells.remove(&destination_window_id);
@@ -291,7 +293,7 @@ impl ApplicationCoordinator {
 
 fn should_present_product_target(request: &ProductIpcRequest, reply: &ProductIpcReply) -> bool {
     request.kind() == ProductIpcKind::Pane
-        && request.subcommand() == "focus"
+        && request.operation() == ApplicationOperation::Focus
         && reply.error().is_none()
 }
 

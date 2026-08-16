@@ -7,7 +7,7 @@
   "cli": "crates/zentty-agent-ipc/src/cli.rs",
   "service": [
     "crates/zentty-linux/src/application/product_cli.rs",
-    "crates/zentty-linux/src/application_shell/product_cli.rs"
+    "crates/zentty-linux/src/application_shell/application_commands.rs"
   ],
   "operations": [
     {"id":"overview","scope":"discover","wire_name":"overview","cli_contract_ids":["list-overview"],"gui_entry_points":[],"owner":"application-coordinator","result":"discovery","external":true},

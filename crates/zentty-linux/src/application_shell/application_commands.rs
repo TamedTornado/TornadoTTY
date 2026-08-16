@@ -3,7 +3,10 @@ use super::agent_lifecycle_signal::{AgentLifecycleSignal, parse_agent_lifecycle_
 use super::shell_signal::{ShellSignal, parse_shell_signal};
 use std::cell::RefCell;
 use std::rc::Rc;
-use zentty_api::{ApplicationReply as ProductIpcReply, ApplicationRequest as ProductIpcRequest};
+use zentty_api::{
+    ApplicationOperation, ApplicationReply as ProductIpcReply,
+    ApplicationRequest as ProductIpcRequest,
+};
 use zentty_core::{
     AgentTarget, PaneLayoutPolicy, PaneRecipe, PaneResizeDirection, ThemeModeCommand, WorklaneColor,
 };
@@ -14,7 +17,35 @@ pub(crate) struct DiscoveryRows {
     pub(crate) panes: Vec<serde_json::Value>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum PaneFocusDirection {
+    Left,
+    Right,
+    Up,
+    Down,
+}
+
 impl ApplicationShell {
+    pub(super) fn apply_focus_operation(
+        &mut self,
+        direction: Option<PaneFocusDirection>,
+    ) -> Result<(), &'static str> {
+        let changed = match direction {
+            Some(PaneFocusDirection::Left) => self.state.focus_pane_left(),
+            Some(PaneFocusDirection::Right) => self.state.focus_pane_right(),
+            Some(PaneFocusDirection::Up) => self.state.focus_pane_up(),
+            Some(PaneFocusDirection::Down) => self.state.focus_pane_down(),
+            None => true,
+        };
+        if !changed {
+            return Err("no pane exists in that direction");
+        }
+        self.render();
+        self.scroll_panes_to_focused();
+        self.focus_selected_surface();
+        Ok(())
+    }
+
     pub(crate) fn product_grid_source_pane(&self, target: &AgentTarget) -> Option<PaneRecipe> {
         let pane = self.state.pane(&target.pane_id)?;
         (self.state.worklane_id_for_pane(&target.pane_id) == Some(target.worklane_id.as_str()))
@@ -28,12 +59,12 @@ impl ApplicationShell {
             })
     }
 
-    pub(crate) fn execute_product_command(
+    pub(crate) fn execute_application_request(
         shell: &Rc<RefCell<Self>>,
         target: &AgentTarget,
         request: &ProductIpcRequest,
     ) -> ProductIpcReply {
-        let result = Self::execute_product_command_inner(shell, target, request);
+        let result = Self::execute_application_request_inner(shell, target, request);
         result.map_or_else(
             |(code, message)| {
                 ProductIpcReply::failure(code, message).expect("bounded product diagnostic")
@@ -42,7 +73,7 @@ impl ApplicationShell {
         )
     }
 
-    fn execute_product_command_inner(
+    fn execute_application_request_inner(
         shell: &Rc<RefCell<Self>>,
         target: &AgentTarget,
         request: &ProductIpcRequest,
@@ -64,10 +95,13 @@ impl ApplicationShell {
             &shell.borrow(),
             target,
             request.arguments(),
-            matches!(request.subcommand(), "focus" | "close"),
+            matches!(
+                request.operation(),
+                ApplicationOperation::Focus | ApplicationOperation::Close
+            ),
         )?;
-        match request.subcommand() {
-            "split" => {
+        match request.operation() {
+            ApplicationOperation::Split => {
                 let before = pane_ids(&shell.borrow());
                 apply_split_command(shell, target, request.arguments())?;
                 let created = created_pane_ids(&shell.borrow(), &before);
@@ -79,12 +113,14 @@ impl ApplicationShell {
                     request.arguments(),
                 );
             }
-            "focus" => apply_focus_command(shell, target, request.arguments())?,
-            "pane-rename" | "worklane-rename" | "worklane-color" => {
+            ApplicationOperation::Focus => apply_focus_command(shell, target, request.arguments())?,
+            ApplicationOperation::PaneRename
+            | ApplicationOperation::WorklaneRename
+            | ApplicationOperation::WorklaneColor => {
                 apply_metadata_command(shell, target, request)?;
             }
-            "close" => Self::close_pane(shell, &target.pane_id),
-            "resize" => {
+            ApplicationOperation::Close => Self::close_pane(shell, &target.pane_id),
+            ApplicationOperation::Resize => {
                 apply_resize_command(shell, target, request.arguments())?;
                 return topology_response(
                     &shell.borrow(),
@@ -94,7 +130,7 @@ impl ApplicationShell {
                     request.arguments(),
                 );
             }
-            "layout" => {
+            ApplicationOperation::Layout => {
                 select_authenticated_target(shell, target)?;
                 apply_layout(shell, request.arguments())?;
                 return topology_response(
@@ -105,9 +141,11 @@ impl ApplicationShell {
                     request.arguments(),
                 );
             }
-            "theme" => return apply_theme_command(shell, request.arguments()),
-            "shell-signal" => return apply_shell_signal(shell, target, request.arguments()),
-            "grid" => {
+            ApplicationOperation::Theme => return apply_theme_command(shell, request.arguments()),
+            ApplicationOperation::ShellSignal => {
+                return apply_shell_signal(shell, target, request.arguments());
+            }
+            ApplicationOperation::Grid => {
                 select_authenticated_target(shell, target)?;
                 if request
                     .arguments()
@@ -128,7 +166,7 @@ impl ApplicationShell {
                     request.arguments(),
                 );
             }
-            "zoom" => {
+            ApplicationOperation::Zoom => {
                 Self::toggle_product_zoom(shell);
                 return topology_response(
                     &shell.borrow(),
@@ -138,10 +176,14 @@ impl ApplicationShell {
                     request.arguments(),
                 );
             }
-            value => {
+            operation => {
                 return Err((
                     "unsupported_command",
-                    format!("unsupported product command {value:?}"),
+                    format!(
+                        "{} operation {:?} is not owned by the application shell",
+                        operation.scope().wire_name(),
+                        operation.wire_name()
+                    ),
                 ));
             }
         }
@@ -494,23 +536,18 @@ fn apply_focus_command(
         .first()
         .filter(|value| !value.starts_with('-'))
         .map(String::as_str);
-    let changed = match positional {
-        Some("left") => shell.borrow_mut().state.focus_pane_left(),
-        Some("right") => shell.borrow_mut().state.focus_pane_right(),
-        Some("up") => shell.borrow_mut().state.focus_pane_up(),
-        Some("down") => shell.borrow_mut().state.focus_pane_down(),
-        Some(_) | None => true,
+    let direction = match positional {
+        Some("left") => Some(PaneFocusDirection::Left),
+        Some("right") => Some(PaneFocusDirection::Right),
+        Some("up") => Some(PaneFocusDirection::Up),
+        Some("down") => Some(PaneFocusDirection::Down),
+        Some(_) => return Err(("invalid_request", "invalid focus direction".to_owned())),
+        None => None,
     };
-    if !changed {
-        return Err((
-            "target_not_found",
-            "no pane exists in that direction".to_owned(),
-        ));
-    }
-    shell.borrow().render();
-    shell.borrow().scroll_panes_to_focused();
-    shell.borrow().focus_selected_surface();
-    Ok(())
+    shell
+        .borrow_mut()
+        .apply_focus_operation(direction)
+        .map_err(|message| ("target_not_found", message.to_owned()))
 }
 
 fn apply_metadata_command(
@@ -519,8 +556,8 @@ fn apply_metadata_command(
     request: &ProductIpcRequest,
 ) -> Result<(), (&'static str, String)> {
     let arguments = request.arguments();
-    let changed = match request.subcommand() {
-        "pane-rename" => {
+    let changed = match request.operation() {
+        ApplicationOperation::PaneRename => {
             if option_value(arguments, "--rename-pane-id")
                 .is_some_and(|pane_id| pane_id != target.pane_id)
             {
@@ -534,7 +571,7 @@ fn apply_metadata_command(
                 .state
                 .set_pane_custom_title(&target.pane_id, option_value(arguments, "--title"))
         }
-        "worklane-rename" | "worklane-color" => {
+        ApplicationOperation::WorklaneRename | ApplicationOperation::WorklaneColor => {
             if option_value(arguments, "--id")
                 .is_some_and(|worklane_id| worklane_id != target.worklane_id)
             {
@@ -543,7 +580,7 @@ fn apply_metadata_command(
                     "worklane selector does not match the authenticated token".to_owned(),
                 ));
             }
-            if request.subcommand() == "worklane-rename" {
+            if request.operation() == ApplicationOperation::WorklaneRename {
                 shell
                     .borrow_mut()
                     .state
@@ -558,7 +595,7 @@ fn apply_metadata_command(
                     .set_worklane_color(&target.worklane_id, color)
             }
         }
-        _ => unreachable!("metadata dispatcher receives only metadata commands"),
+        _ => unreachable!("metadata dispatcher receives only metadata operations"),
     };
     if !changed {
         return Err(("unchanged", "metadata did not change".to_owned()));

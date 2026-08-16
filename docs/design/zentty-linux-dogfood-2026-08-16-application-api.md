@@ -178,3 +178,33 @@ disappear from that inventory merely because it is hidden or internal.
   pass. An exploratory `--all-targets` Clippy run exposed the pre-existing
   `similar_names` warning in `tests/launch_cli.rs`; the shipped library/binary
   targets remain clean and this slice does not suppress that warning.
+
+## Slice 3: closed service dispatch and first shared GUI operation
+
+- Renamed the per-window `product_cli` module to `application_commands` and
+  renamed its entry point to `execute_application_request`. This is the
+  application service for pane-owned operations; it is not CLI presentation
+  or Unix transport code. The coordinator remains the owner of discovery,
+  cross-window grid, and notification operations.
+- Replaced the application-shell and coordinator route decisions based on
+  command-name strings with `ApplicationOperation` matches. Human-readable
+  wire names remain only for logging, rendering, compatibility parsing, and
+  legacy envelope projection.
+- Found that GUI directional focus and external directional focus duplicated
+  the state transition plus render/scroll/native-focus sequence. Added the
+  typed `PaneFocusDirection` service operation and routed both GTK actions and
+  authenticated API requests through it. Directionless API focus retains its
+  original select-and-present behavior.
+- Extended the architecture validator to require closed operation dispatch and
+  both GUI/external focus paths through the same service operation, and to
+  reject restoration of open string dispatch.
+- Focused Rust service tests passed 9/9; CLI parser tests passed 11/11; real
+  socket transport tests passed 9/9; strict shipped-target Clippy, formatting,
+  inventory negative tests, ShellCheck, and diff hygiene pass. A fresh
+  ReleaseSafe staged product was built. The full delivered-CLI journey then
+  passed against the real GTK/Ghostty product and private authenticated Unix
+  socket in both controlled X11 and controlled Wayland, including concurrent
+  instances, aliases, four schemas, text goldens, hostile shell input, and
+  fail-closed cases. The first sandboxed X11 attempt was rejected because Xvfb
+  could not create its private display socket; it was not counted as a pass and
+  was rerun in the approved controlled environment.

@@ -4,7 +4,7 @@ use std::rc::Rc;
 use gtk::glib;
 use gtk::prelude::*;
 use gtk::{gio, prelude::ActionMapExt};
-use zentty_core::{WorklaneColor, WorkspaceState};
+use zentty_core::WorklaneColor;
 
 use super::ApplicationShell;
 
@@ -1535,18 +1535,27 @@ fn install_pane_layout_actions(
     shell: &Rc<RefCell<ApplicationShell>>,
     group: &gio::SimpleActionGroup,
 ) {
-    for (name, update) in [
+    for (name, direction) in [
         (
             ACTION_FOCUS_PANE_LEFT,
-            WorkspaceState::focus_pane_left as fn(&mut WorkspaceState) -> bool,
+            super::application_commands::PaneFocusDirection::Left,
         ),
-        (ACTION_FOCUS_PANE_RIGHT, WorkspaceState::focus_pane_right),
-        (ACTION_FOCUS_PANE_UP, WorkspaceState::focus_pane_up),
-        (ACTION_FOCUS_PANE_DOWN, WorkspaceState::focus_pane_down),
+        (
+            ACTION_FOCUS_PANE_RIGHT,
+            super::application_commands::PaneFocusDirection::Right,
+        ),
+        (
+            ACTION_FOCUS_PANE_UP,
+            super::application_commands::PaneFocusDirection::Up,
+        ),
+        (
+            ACTION_FOCUS_PANE_DOWN,
+            super::application_commands::PaneFocusDirection::Down,
+        ),
     ] {
         add_simple_action(shell, group, name, move |shell| {
-            if update(&mut shell.state) {
-                shell.finish_pane_layout_action(name);
+            if let Err(message) = shell.apply_focus_operation(Some(direction)) {
+                eprintln!("zentty-linux: action={name} result=unchanged detail={message}");
             }
         });
     }
