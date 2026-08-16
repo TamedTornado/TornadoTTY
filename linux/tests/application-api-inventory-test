@@ -45,4 +45,7 @@ expect_rejected missing-gui-action "GUI entry point is not registered"
 jq '.operations[0].external = false' "${source_inventory}" >"${temp_dir}/false-public-classification.json"
 expect_rejected false-public-classification "external API classification drifted"
 
+jq '.error_categories[0] = "miscellaneous"' "${source_inventory}" >"${temp_dir}/unknown-error-category.json"
+expect_rejected unknown-error-category "schema or closed enums failed"
+
 echo "application-api-inventory runner negative tests passed"

@@ -2,6 +2,18 @@
   "schema_version": 1,
   "api_version": 1,
   "status": "EXTRACTION_IN_PROGRESS",
+  "error_categories": [
+    "invalid_arguments",
+    "unsupported_operation",
+    "unsupported_version",
+    "authorization_failure",
+    "stale_target",
+    "stale_instance",
+    "retryable_instance_replacement",
+    "product_unavailable",
+    "product_rejection",
+    "permanent_transport_failure"
+  ],
   "authority": "crates/zentty-api/src/lib.rs",
   "transport": "crates/zentty-agent-ipc/src/lib.rs",
   "cli": "crates/zentty-agent-ipc/src/cli.rs",

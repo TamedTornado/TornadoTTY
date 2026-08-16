@@ -273,7 +273,11 @@ impl ApplicationReply {
         }
         Ok(Self {
             stdout: None,
-            error: Some(ApplicationReplyError { code, message }),
+            error: Some(ApplicationReplyError {
+                category: ApplicationErrorCategory::from_code(&code),
+                code,
+                message,
+            }),
         })
     }
 
@@ -290,11 +294,17 @@ impl ApplicationReply {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ApplicationReplyError {
+    category: ApplicationErrorCategory,
     code: String,
     message: String,
 }
 
 impl ApplicationReplyError {
+    #[must_use]
+    pub const fn category(&self) -> ApplicationErrorCategory {
+        self.category
+    }
+
     #[must_use]
     pub fn code(&self) -> &str {
         &self.code
@@ -303,6 +313,39 @@ impl ApplicationReplyError {
     #[must_use]
     pub fn message(&self) -> &str {
         &self.message
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ApplicationErrorCategory {
+    InvalidArguments,
+    UnsupportedOperation,
+    UnsupportedVersion,
+    AuthorizationFailure,
+    StaleTarget,
+    StaleInstance,
+    RetryableInstanceReplacement,
+    ProductUnavailable,
+    ProductRejection,
+    PermanentTransportFailure,
+}
+
+impl ApplicationErrorCategory {
+    #[must_use]
+    pub fn from_code(code: &str) -> Self {
+        match code {
+            "invalid_command" | "invalid_request" => Self::InvalidArguments,
+            "unsupported" | "unsupported_command" => Self::UnsupportedOperation,
+            "unsupported_version" => Self::UnsupportedVersion,
+            "authorization_failed" | "unauthorized_target" => Self::AuthorizationFailure,
+            "stale_target" => Self::StaleTarget,
+            "stale_instance" => Self::StaleInstance,
+            "instance_replaced" => Self::RetryableInstanceReplacement,
+            "application_unavailable" => Self::ProductUnavailable,
+            "permanent_transport_failure" => Self::PermanentTransportFailure,
+            _ => Self::ProductRejection,
+        }
     }
 }
 
@@ -332,7 +375,8 @@ pub type ProductIpcError = ApplicationApiError;
 #[cfg(test)]
 mod tests {
     use super::{
-        APPLICATION_API_VERSION, ApplicationOperation, ApplicationRequest, ApplicationScope,
+        APPLICATION_API_VERSION, ApplicationErrorCategory, ApplicationOperation, ApplicationReply,
+        ApplicationRequest, ApplicationScope,
     };
     use std::collections::HashSet;
 
@@ -418,5 +462,45 @@ mod tests {
             })
             .collect::<HashSet<_>>();
         assert_eq!(documented, compiled);
+    }
+
+    #[test]
+    fn reply_errors_have_a_stable_machine_category_independent_of_prose() {
+        for (code, expected) in [
+            (
+                "invalid_request",
+                ApplicationErrorCategory::InvalidArguments,
+            ),
+            (
+                "unsupported_command",
+                ApplicationErrorCategory::UnsupportedOperation,
+            ),
+            (
+                "unsupported_version",
+                ApplicationErrorCategory::UnsupportedVersion,
+            ),
+            (
+                "unauthorized_target",
+                ApplicationErrorCategory::AuthorizationFailure,
+            ),
+            ("stale_target", ApplicationErrorCategory::StaleTarget),
+            ("stale_instance", ApplicationErrorCategory::StaleInstance),
+            (
+                "instance_replaced",
+                ApplicationErrorCategory::RetryableInstanceReplacement,
+            ),
+            (
+                "application_unavailable",
+                ApplicationErrorCategory::ProductUnavailable,
+            ),
+            ("grid_failed", ApplicationErrorCategory::ProductRejection),
+            (
+                "permanent_transport_failure",
+                ApplicationErrorCategory::PermanentTransportFailure,
+            ),
+        ] {
+            let reply = ApplicationReply::failure(code, "prose may change").unwrap();
+            assert_eq!(reply.error().unwrap().category(), expected, "{code}");
+        }
     }
 }

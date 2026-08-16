@@ -208,3 +208,22 @@ disappear from that inventory merely because it is hidden or internal.
   fail-closed cases. The first sandboxed X11 attempt was rejected because Xvfb
   could not create its private display socket; it was not counted as a pass and
   was rerun in the approved controlled environment.
+
+## Slice 4: machine-readable application failure categories
+
+- `ApplicationReplyError` previously exposed a stable short code but still
+  required clients to maintain an undocumented code-to-meaning table. Added a
+  serialized `ApplicationErrorCategory` with ten closed categories covering
+  invalid arguments, unsupported operation/version, authorization failure,
+  stale target/instance, retryable instance replacement, product
+  unavailability/rejection, and permanent transport failure. Human prose can
+  now change without changing client control flow.
+- Preserved existing granular error codes for source compatibility. Reply
+  construction assigns their stable category centrally in `zentty-api`; it
+  does not duplicate classification in the CLI or transport.
+- Added the exact category set to the machine inventory and a negative runner
+  case for an unknown category. API tests exercise every category, including
+  the legacy product-rejection fallback. Results: API tests 4/4 PASS, real
+  Unix-socket transport tests 9/9 PASS, strict API/transport Clippy PASS, and
+  inventory/schema negative tests, ShellCheck, formatting, and diff hygiene
+  PASS.

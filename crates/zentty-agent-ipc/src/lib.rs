@@ -12,9 +12,9 @@ pub use server::{
     ServerCommand, ServerIpcError, ServerIpcReply, ServerIpcReplyError, ServerIpcRequest,
 };
 pub use zentty_api::{
-    ApplicationApiError, ApplicationOperation, ApplicationReply, ApplicationReplyError,
-    ApplicationRequest, ApplicationScope, ProductIpcError, ProductIpcKind, ProductIpcReply,
-    ProductIpcReplyError, ProductIpcRequest,
+    ApplicationApiError, ApplicationErrorCategory, ApplicationOperation, ApplicationReply,
+    ApplicationReplyError, ApplicationRequest, ApplicationScope, ProductIpcError, ProductIpcKind,
+    ProductIpcReply, ProductIpcReplyError, ProductIpcRequest,
 };
 
 use serde::{Deserialize, Serialize};
