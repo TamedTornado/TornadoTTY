@@ -1,7 +1,9 @@
 use std::fs;
 use std::os::unix::fs::{PermissionsExt, symlink};
 use std::os::unix::net::UnixListener;
-use zentty_agent_ipc::{discover_instances, publish_instance};
+use zentty_agent_ipc::{
+    discover_instances, publish_instance, publish_pane_credential, remove_pane_credential,
+};
 
 const INSTANCE: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 const TOKEN: &str = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
@@ -116,6 +118,31 @@ fn publication_rejects_each_malformed_identity_independently() {
     }
     drop(listener);
     fs::remove_dir_all(directory.parent().unwrap().parent().unwrap()).unwrap();
+}
+
+#[test]
+fn pane_credentials_are_private_indirect_and_revocable() {
+    let (root, directory, listener) = fixture("pane-credential");
+    let path = publish_pane_credential(&directory, INSTANCE, TOKEN).unwrap();
+    assert!(!path.to_string_lossy().contains(TOKEN));
+    assert_eq!(fs::read_to_string(&path).unwrap(), TOKEN);
+    assert_eq!(
+        fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    assert_eq!(
+        fs::metadata(path.parent().unwrap())
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o700
+    );
+    remove_pane_credential(&path).unwrap();
+    assert!(!path.exists());
+    remove_pane_credential(&path).unwrap();
+    drop(listener);
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]

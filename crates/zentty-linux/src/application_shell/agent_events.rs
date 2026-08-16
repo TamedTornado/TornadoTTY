@@ -89,11 +89,11 @@ impl AgentEventCoordinator {
         self.runtime.borrow().available_integration_wrappers()
     }
 
-    pub(super) fn control_token_for_pane(&self, pane_id: &str) -> Option<String> {
+    pub(super) fn control_credential_for_pane(&self, pane_id: &str) -> Option<String> {
         self.runtime
             .borrow()
-            .control_token_for_pane(pane_id)
-            .map(str::to_owned)
+            .control_credential_for_pane(pane_id)
+            .map(|path| format!("@file:{}", path.to_string_lossy()))
     }
 
     pub(super) fn sync_targets(&mut self, state: &WorkspaceState) -> Result<(), String> {

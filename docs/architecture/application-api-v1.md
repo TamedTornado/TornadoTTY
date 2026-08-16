@@ -77,7 +77,15 @@ or API versions, a mismatched socket path, and stale PID/start-time identity.
 The credential has instance authority only for `discover` operations: it
 cannot submit agent events, compatibility requests, server mutations, or pane
 mutations. An automation client explicitly selects a pane and requests shell
-exports to transition to that pane's narrower capability.
+exports to transition to that pane's narrower capability. For source
+compatibility, the opt-in `--include-control-token` spelling and
+`controlToken` result field are retained, but the value is now an opaque
+`@file:/...` reference to a separate 0600 credential file under the
+instance's 0700 `pane-credentials` directory. It is never the capability
+itself. The delivered CLI resolves and validates that reference immediately
+before transport; external clients must do the same. Each pane credential
+file has an independently random non-secret name, is removed when the pane is
+unregistered, and the entire directory is removed at instance shutdown.
 
 With one valid instance, the CLI discovers it automatically. With multiple
 instances it fails closed and requires `ZENTTY_INSTANCE_ID`; it never chooses

@@ -8,7 +8,10 @@ mod presentation;
 mod server;
 
 pub use cli::{CliProductCommand, parse_product_cli};
-pub use discovery::{DiscoveredInstance, InstanceCredential, discover_instances, publish_instance};
+pub use discovery::{
+    DiscoveredInstance, InstanceCredential, discover_instances, publish_instance,
+    publish_pane_credential, remove_pane_credential,
+};
 pub use integrations::{install_integration, uninstall_integration};
 pub use launch::{LaunchError, launch_agent, resolve_real_binary};
 pub use presentation::render_application_result;

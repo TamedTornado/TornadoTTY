@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 const DISCOVERY_SCHEMA_VERSION: u32 = 1;
 const DESCRIPTOR_NAME: &str = "instance.json";
 const CREDENTIAL_NAME: &str = "automation.token";
+const PANE_CREDENTIAL_DIRECTORY: &str = "pane-credentials";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -76,6 +77,56 @@ pub fn publish_instance(
         return Err(error);
     }
     Ok(())
+}
+
+/// Publishes one pane capability through an owner-private credential file.
+/// The opaque credential identifier is deliberately independent of the
+/// capability, so discovery output can name this file without disclosing the
+/// secret itself.
+///
+/// # Errors
+///
+/// Returns an error when the instance directory is not private, the
+/// identifier is malformed, or the credential cannot be written atomically.
+pub fn publish_pane_credential(
+    runtime_directory: &Path,
+    credential_id: &str,
+    credential: &str,
+) -> Result<PathBuf, String> {
+    validate_private_directory(runtime_directory)?;
+    if credential_id.len() != 64
+        || !credential_id.bytes().all(|byte| byte.is_ascii_hexdigit())
+        || credential.len() != 64
+        || !credential.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err("pane credential identity is malformed".to_owned());
+    }
+    let directory = runtime_directory.join(PANE_CREDENTIAL_DIRECTORY);
+    match fs::create_dir(&directory) {
+        Ok(()) => fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))
+            .map_err(|error| error.to_string())?,
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            validate_private_directory(&directory)?;
+        }
+        Err(error) => return Err(error.to_string()),
+    }
+    let name = format!("{credential_id}.token");
+    atomic_private_write(&directory, &name, credential.as_bytes())?;
+    Ok(directory.join(name))
+}
+
+/// Removes a previously published pane credential. Missing files are already
+/// revoked and therefore succeed.
+///
+/// # Errors
+///
+/// Returns an error when an existing credential file cannot be removed.
+pub fn remove_pane_credential(path: &Path) -> Result<(), String> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.to_string()),
+    }
 }
 
 /// Finds valid live instances beneath one XDG runtime root. Invalid, stale,

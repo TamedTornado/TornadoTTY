@@ -451,3 +451,32 @@ all fixtures must change atomically before the inventory can move from
   15 tested, all 15 caught. Every mutation run used the committed
   `gitignore=true`, `copy_target=false` policy, one worker, and the dedicated
   capped systemd scope; no product/terminal process shared its OOM policy.
+
+## Slice 12: remove pane capabilities from machine output
+
+- The acceptance audit found a real contradiction: pane capabilities had
+  been removed from argv and default discovery, but the opt-in
+  `--include-control-token` path still returned the raw token in JSON and
+  shell output. That was source behavior, not an acceptable public automation
+  contract, and GH-48 explicitly forbids credentials in machine output.
+- Pane registration now writes the capability to a separate 0600 file beneath
+  the instance's 0700 `pane-credentials` directory. Its independently random
+  filename is not derived from the pane ID or capability. Discovery retains
+  the source-compatible option and field names but returns an opaque
+  `@file:/...` reference; the CLI validates file type and mode, rejects
+  symlinks and malformed contents, and reads the capability only immediately
+  before sending the request. Pane removal revokes both the registry entry and
+  file; instance teardown removes the whole private tree.
+- The first focused compilation failed because a closure attempted to move
+  the token while `strip_prefix` still borrowed it. This was a Rust ownership
+  defect in the new adapter, not suppressed; a direct branch removed the
+  overlapping borrow. The first discovery suite run then failed 6/6 because
+  the workspace sandbox forbids Unix listener creation. It was not counted as
+  a pass. The same suite ran in the approved controlled environment and all
+  6 discovery tests passed.
+- Focused results after repair: agent IPC library 6/6 PASS, CLI credential
+  reader 1/1 PASS, discovery 6/6 PASS, helper CLI 15/15 PASS, integrations
+  8/8 PASS, launch 18/18 PASS, product parser 11/11 PASS, product transport
+  13/13 PASS, server transport 2/2 PASS, tmux CLI 5/5 PASS, tmux transport
+  6/6 PASS, Unix transport 6/6 PASS, and Linux type-check PASS. The controlled
+  staged X11/Wayland receipts are rerun below before this issue can close.

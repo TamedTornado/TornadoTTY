@@ -113,8 +113,7 @@ fn run() -> Result<(), String> {
     }
     let socket = std::env::var("ZENTTY_INSTANCE_SOCKET")
         .map_err(|_| "ZENTTY_INSTANCE_SOCKET is missing".to_owned())?;
-    let token = std::env::var("ZENTTY_PANE_TOKEN")
-        .map_err(|_| "ZENTTY_PANE_TOKEN is missing".to_owned())?;
+    let token = require_pane_credential()?;
     for event in events {
         let bytes = serde_json::to_vec(&event).map_err(|error| error.to_string())?;
         AgentIpcClient::send_event(&socket, &token, &bytes, claimed_target_from_environment())
@@ -148,7 +147,7 @@ fn run_agent_signal(arguments: &[String]) -> Result<(), String> {
     let Ok(socket) = std::env::var("ZENTTY_INSTANCE_SOCKET") else {
         return Ok(());
     };
-    let Ok(token) = std::env::var("ZENTTY_PANE_TOKEN") else {
+    let Ok(Some(token)) = pane_credential_from_environment() else {
         return Ok(());
     };
     let request = zentty_agent_ipc::ApplicationRequest::new(
@@ -281,14 +280,12 @@ fn run_product_cli(command: CliProductCommand) -> Result<(), String> {
 }
 
 fn application_endpoint() -> Result<(std::path::PathBuf, String, Option<AgentTarget>), String> {
-    match (
-        std::env::var_os("ZENTTY_INSTANCE_SOCKET"),
-        std::env::var("ZENTTY_PANE_TOKEN"),
-    ) {
-        (Some(socket), Ok(token)) => {
+    let pane_credential = pane_credential_from_environment()?;
+    match (std::env::var_os("ZENTTY_INSTANCE_SOCKET"), pane_credential) {
+        (Some(socket), Some(token)) => {
             return Ok((socket.into(), token, claimed_target_from_environment()));
         }
-        (None, Err(_)) => {}
+        (None, None) => {}
         _ => {
             return Err(
                 "incomplete in-pane application endpoint environment; refusing discovery fallback"
@@ -325,6 +322,42 @@ fn application_endpoint() -> Result<(std::path::PathBuf, String, Option<AgentTar
     }
 }
 
+fn pane_credential_from_environment() -> Result<Option<String>, String> {
+    if let Ok(token) = std::env::var("ZENTTY_PANE_TOKEN") {
+        if let Some(path) = token.strip_prefix("@file:") {
+            return read_pane_credential(std::path::Path::new(path)).map(Some);
+        }
+        return Ok(Some(token));
+    }
+    let Some(path) = std::env::var_os("ZENTTY_PANE_CREDENTIAL") else {
+        return Ok(None);
+    };
+    read_pane_credential(std::path::Path::new(&path)).map(Some)
+}
+
+fn require_pane_credential() -> Result<String, String> {
+    pane_credential_from_environment()?.ok_or_else(|| "ZENTTY_PANE_TOKEN is missing".to_owned())
+}
+
+fn read_pane_credential(path: &std::path::Path) -> Result<String, String> {
+    use std::os::unix::fs::PermissionsExt;
+    let metadata = std::fs::symlink_metadata(path)
+        .map_err(|error| format!("could not inspect pane credential: {error}"))?;
+    if metadata.file_type().is_symlink()
+        || !metadata.is_file()
+        || metadata.permissions().mode() & 0o777 != 0o600
+    {
+        return Err("pane credential is not an owner-private regular file".to_owned());
+    }
+    let token = std::fs::read_to_string(path)
+        .map_err(|error| format!("could not read pane credential: {error}"))?;
+    let token = token.trim();
+    if token.len() != 64 || !token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("pane credential is malformed".to_owned());
+    }
+    Ok(token.to_owned())
+}
+
 fn run_server(arguments: &[String]) -> Result<(), String> {
     let command = ServerCommand::parse(arguments).map_err(|error| error.to_string())?;
     if let ServerCommand::Watch { command } = command {
@@ -336,7 +369,7 @@ fn run_server(arguments: &[String]) -> Result<(), String> {
 fn send_server_command(command: &ServerCommand) -> Result<(), String> {
     let socket = std::env::var("ZENTTY_INSTANCE_SOCKET")
         .map_err(|_| "zentty server commands must run inside a Zentty pane".to_owned())?;
-    let token = std::env::var("ZENTTY_PANE_TOKEN")
+    let token = require_pane_credential()
         .map_err(|_| "zentty server commands must run inside a Zentty pane".to_owned())?;
     let route = command
         .route()
@@ -475,8 +508,7 @@ fn run_codex_notify(payload: Option<String>) -> Result<(), String> {
     let events = adapt_codex_notify(&input).map_err(|error| error.to_string())?;
     let socket = std::env::var("ZENTTY_INSTANCE_SOCKET")
         .map_err(|_| "ZENTTY_INSTANCE_SOCKET is missing".to_owned())?;
-    let token = std::env::var("ZENTTY_PANE_TOKEN")
-        .map_err(|_| "ZENTTY_PANE_TOKEN is missing".to_owned())?;
+    let token = require_pane_credential()?;
     for event in events {
         let bytes = serde_json::to_vec(&event).map_err(|error| error.to_string())?;
         if let Err(error) =
@@ -515,8 +547,7 @@ fn run_tmux_compat(arguments: &[String]) -> Result<(), String> {
     };
     let socket = std::env::var("ZENTTY_INSTANCE_SOCKET")
         .map_err(|_| "ZENTTY_INSTANCE_SOCKET is missing".to_owned())?;
-    let token = std::env::var("ZENTTY_PANE_TOKEN")
-        .map_err(|_| "ZENTTY_PANE_TOKEN is missing".to_owned())?;
+    let token = require_pane_credential()?;
     let wait = if invocation.command == Command::WaitFor {
         match WaitForAction::parse(&invocation.arguments).map_err(str::to_owned)? {
             WaitForAction::Wait { name, timeout } => Some((name, timeout)),
@@ -598,4 +629,36 @@ fn claimed_target_from_environment() -> Option<zentty_core::AgentTarget> {
         std::env::var("ZENTTY_WORKLANE_ID").ok()?,
         std::env::var("ZENTTY_PANE_ID").ok()?,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::read_pane_credential;
+    use std::fs;
+    use std::os::unix::fs::{PermissionsExt, symlink};
+
+    #[test]
+    fn pane_credential_reader_rejects_loose_symlinked_and_malformed_files() {
+        let root = std::env::temp_dir().join(format!(
+            "zentty-pane-credential-reader-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let credential = root.join("credential");
+        let token = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        fs::write(&credential, token).unwrap();
+        fs::set_permissions(&credential, fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(read_pane_credential(&credential).unwrap(), token);
+
+        fs::set_permissions(&credential, fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(read_pane_credential(&credential).is_err());
+        fs::set_permissions(&credential, fs::Permissions::from_mode(0o600)).unwrap();
+        let link = root.join("link");
+        symlink(&credential, &link).unwrap();
+        assert!(read_pane_credential(&link).is_err());
+        fs::write(&credential, "not-a-token").unwrap();
+        assert!(read_pane_credential(&credential).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
 }

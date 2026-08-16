@@ -473,7 +473,7 @@ mod tests {
                     "id":"pane-'$HOME\n$(touch nope)",
                     "windowID":"window-'$(literal)\n雪",
                     "worklaneID":"lane-'two",
-                    "controlToken":"token-'quoted"
+                    "controlToken":"@file:/tmp/token-'quoted"
                 }
             }),
         );
@@ -492,7 +492,7 @@ mod tests {
 export ZENTTY_WINDOW_ID='window-'\"'\"'$(literal)\n雪'\n\
 export ZENTTY_WORKLANE_ID='lane-'\"'\"'two'\n\
 export ZENTTY_PANE_ID='pane-'\"'\"'$HOME\n$(touch nope)'\n\
-export ZENTTY_PANE_TOKEN='token-'\"'\"'quoted'\n"
+export ZENTTY_PANE_TOKEN='@file:/tmp/token-'\"'\"'quoted'\n"
         );
     }
 

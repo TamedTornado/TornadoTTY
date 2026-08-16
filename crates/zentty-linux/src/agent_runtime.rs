@@ -6,7 +6,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, mpsc};
 use zentty_agent_ipc::{
     AgentIpcServer, AuthenticatedProductRequest, AuthenticatedServerRequest,
-    AuthenticatedTmuxRequest, generate_pane_token, publish_instance,
+    AuthenticatedTmuxRequest, generate_pane_token, publish_instance, publish_pane_credential,
+    remove_pane_credential,
 };
 use zentty_core::{AgentTarget, AuthenticatedAgentEvent, PaneTokenRegistry};
 
@@ -18,6 +19,7 @@ pub(crate) struct AgentRuntime {
     server_receiver: mpsc::Receiver<AuthenticatedServerRequest>,
     product_receiver: mpsc::Receiver<AuthenticatedProductRequest>,
     tokens_by_pane: BTreeMap<String, String>,
+    credentials_by_pane: BTreeMap<String, PathBuf>,
     target_by_pane: BTreeMap<String, (String, String)>,
     runtime_directory: PathBuf,
     socket_path: PathBuf,
@@ -89,6 +91,7 @@ impl AgentRuntime {
             server_receiver,
             product_receiver,
             tokens_by_pane: BTreeMap::new(),
+            credentials_by_pane: BTreeMap::new(),
             target_by_pane: BTreeMap::new(),
             runtime_directory,
             socket_path,
@@ -122,13 +125,23 @@ impl AgentRuntime {
             token.clone()
         } else {
             let token = generate_pane_token().map_err(|error| error.to_string())?;
+            let credential_id = generate_pane_token().map_err(|error| error.to_string())?;
             self.registry
                 .lock()
                 .map_err(|_| "agent pane registry is unavailable".to_owned())?
                 .register(&token, target.clone())
                 .map_err(|error| error.to_string())?;
+            let credential_path =
+                publish_pane_credential(&self.runtime_directory, &credential_id, &token)
+                    .inspect_err(|_| {
+                        if let Ok(mut registry) = self.registry.lock() {
+                            let _ = registry.unregister(&token);
+                        }
+                    })?;
             self.tokens_by_pane
                 .insert(pane_id.to_owned(), token.clone());
+            self.credentials_by_pane
+                .insert(pane_id.to_owned(), credential_path);
             token
         };
         self.target_by_pane.insert(
@@ -253,6 +266,11 @@ impl AgentRuntime {
 
     pub(crate) fn unregister_pane(&mut self, pane_id: &str) {
         self.target_by_pane.remove(pane_id);
+        if let Some(path) = self.credentials_by_pane.remove(pane_id) {
+            if let Err(error) = remove_pane_credential(&path) {
+                eprintln!("zentty-linux: pane-credential-remove pane={pane_id} error={error}");
+            }
+        }
         let Some(token) = self.tokens_by_pane.remove(pane_id) else {
             return;
         };
@@ -323,8 +341,8 @@ impl AgentRuntime {
         self.product_receiver.try_iter().collect()
     }
 
-    pub(crate) fn control_token_for_pane(&self, pane_id: &str) -> Option<&str> {
-        self.tokens_by_pane.get(pane_id).map(String::as_str)
+    pub(crate) fn control_credential_for_pane(&self, pane_id: &str) -> Option<&Path> {
+        self.credentials_by_pane.get(pane_id).map(PathBuf::as_path)
     }
 
     pub(crate) fn socket_path_for_cli(&self) -> String {

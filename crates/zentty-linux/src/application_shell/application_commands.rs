@@ -239,8 +239,8 @@ impl ApplicationShell {
             for (column_index, column) in worklane.columns.iter().enumerate() {
                 for pane in &column.panes {
                     pane_index += 1;
-                    let control_token = include_control_tokens
-                        .then(|| self.agent_events.control_token_for_pane(&pane.id))
+                    let control_credential = include_control_tokens
+                        .then(|| self.agent_events.control_credential_for_pane(&pane.id))
                         .flatten();
                     let mut pane_row = serde_json::json!({
                         "id": pane.id,
@@ -254,7 +254,9 @@ impl ApplicationShell {
                             && focused_pane_id.as_deref() == Some(pane.id.as_str()),
                         "agentTool": serde_json::Value::Null,
                         "agentStatus": serde_json::Value::Null,
-                        "controlToken": control_token,
+                        // The source-compatible field now carries an opaque
+                        // owner-private credential reference, never a token.
+                        "controlToken": control_credential,
                     });
                     remove_null_fields(&mut pane_row);
                     panes.push(pane_row);
