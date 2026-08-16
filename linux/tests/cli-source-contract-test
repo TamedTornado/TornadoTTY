@@ -96,13 +96,13 @@ expect_agent_failure unknown-agent-status '(.canonical_events[0].linux = "DONE")
 expect_agent_failure duplicate-agent-event '(.canonical_events[1].id = .canonical_events[0].id)'
 expect_agent_failure untracked-agent-gap '(.canonical_fields[] | select(.id == "artifact.kind")) |= (.linux = "NOT_IMPLEMENTED" | del(.tracked_defect))'
 expect_agent_failure unexplained-agent-partial 'del(.canonical_fields[] | select(.id == "context.launch.arguments") | .remaining)'
-expect_agent_failure missing-agent-dependency 'del(.adapters[] | select(.id == "copilot") | .prerequisite)'
+expect_agent_failure missing-agent-dependency '(.adapters[] | select(.id == "copilot")) |= (.linux = "DEPENDENCY" | del(.prerequisite))'
 expect_agent_failure missing-adapter-event '(.adapters[] | select(.id == "claude") | .events) = []'
 expect_agent_failure duplicate-event-alias '(.adapters[] | select(.id == "claude") | .events[0].aliases) = ["SessionStart", "SessionStart"]'
 expect_agent_failure missing-event-normalization 'del(.adapters[] | select(.id == "codex") | .events[0].normalized)'
 expect_agent_failure missing-event-identifiers 'del(.adapters[] | select(.id == "gemini") | .events[0].required_identifiers)'
 expect_agent_failure missing-event-acknowledgement 'del(.adapters[] | select(.id == "agy") | .events[0].acknowledgement)'
 expect_agent_failure missing-event-failure-behavior 'del(.adapters[] | select(.id == "vibe") | .events[0].failure_behavior)'
-expect_agent_failure missing-launcher-prerequisite 'del(.adapters[] | select(.id == "small-harness") | .launcher_prerequisite)'
+expect_agent_failure missing-launcher-prerequisite '(.adapters[] | select(.id == "small-harness")) |= (.launcher_status = "DEPENDENCY" | del(.launcher_prerequisite))'
 
 echo "cli-source-contract runner and agent-event inventory negative tests passed"

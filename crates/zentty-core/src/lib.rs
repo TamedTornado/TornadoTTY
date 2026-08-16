@@ -42,8 +42,9 @@ pub use agent_fleet::{
     FleetPaneSnapshot, FleetState, FleetSummary, FleetWindowSource, build_fleet_snapshots,
 };
 pub use agent_launch::{
-    AgentLaunchError, AgentLaunchPlan, AgentLaunchTool, build_agent_launch_plan,
-    build_gemini_settings,
+    AgentLaunchAction, AgentLaunchError, AgentLaunchPlan, AgentLaunchTool,
+    agent_launch_requires_bootstrap, build_agent_launch_plan, build_copilot_config,
+    build_gemini_settings, build_small_harness_hooks,
 };
 pub use agent_protocol::{
     AgentArtifactKind, AgentArtifactLink, AgentEvent, AgentInteractionKind, AgentProtocolError,
@@ -123,8 +124,8 @@ pub use workspace_template::{
 pub const PRODUCT_NAME: &str = "Zentty";
 pub use agent_adapters::{
     AgentAdapterError, adapt_agy_hook, adapt_claude_hook, adapt_codex_hook, adapt_codex_notify,
-    adapt_cursor_hook, adapt_droid_hook, adapt_gemini_hook, adapt_grok_hook, adapt_hermes_hook,
-    adapt_kimi_hook, adapt_small_harness_hook, adapt_vibe_hook,
+    adapt_copilot_hook, adapt_cursor_hook, adapt_droid_hook, adapt_gemini_hook, adapt_grok_hook,
+    adapt_hermes_hook, adapt_kimi_hook, adapt_small_harness_hook, adapt_vibe_hook,
 };
 pub use clean_copy::{
     CleanCopyOptions, CleanCopyResult, CommandFlattenAggressiveness, clean_copy,

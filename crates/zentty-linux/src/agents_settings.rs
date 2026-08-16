@@ -17,10 +17,15 @@ pub(crate) type ApplyAgents = Rc<
     ) -> Result<(), String>,
 >;
 
-const AVAILABLE_INTEGRATIONS: [(&str, &str); 3] = [
+const AVAILABLE_INTEGRATIONS: [(&str, &str); 8] = [
     ("claude", "Claude Code"),
     ("codex", "Codex"),
+    ("copilot", "GitHub Copilot CLI"),
     ("gemini", "Gemini CLI"),
+    ("opencode", "OpenCode"),
+    ("pi", "Pi"),
+    ("omp", "Oh My Pi"),
+    ("small-harness", "Small Harness"),
 ];
 const UNAVAILABLE_PERSISTENT: [(&str, &str); 8] = [
     ("amp", "Amp"),
@@ -31,13 +36,6 @@ const UNAVAILABLE_PERSISTENT: [(&str, &str); 8] = [
     ("hermes", "Hermes"),
     ("vibe", "Vibe"),
     ("kimi", "Kimi"),
-];
-const UNAVAILABLE_EPHEMERAL: [(&str, &str); 5] = [
-    ("copilot", "GitHub Copilot CLI"),
-    ("opencode", "OpenCode"),
-    ("pi", "Pi"),
-    ("omp", "Oh My Posh"),
-    ("small-harness", "Small Harness"),
 ];
 
 struct State {
@@ -66,7 +64,7 @@ pub(crate) fn build(
         "zentty-linux: agent-settings loaded teams={} wrappers-available={} source-unavailable={} status-item-available={} caffeination-available={}",
         teams.enabled,
         available_wrappers.len(),
-        UNAVAILABLE_PERSISTENT.len() + UNAVAILABLE_EPHEMERAL.len(),
+        UNAVAILABLE_PERSISTENT.len(),
         status_item_available,
         caffeination_available,
     );
@@ -191,19 +189,6 @@ pub(crate) fn build(
             name,
             configured == AgentIntegrationState::On,
             integration_detail(configured, true),
-            &format!("settings-agents-integration-{id}"),
-        ));
-    }
-    for (id, name) in UNAVAILABLE_EPHEMERAL {
-        let configured = effective_state(&state.borrow().integrations, id, false);
-        eprintln!(
-            "zentty-linux: agent-settings integration={id} requested={} observed=unavailable class=ephemeral",
-            configured.config_value()
-        );
-        integrations_box.append(&unavailable_row(
-            name,
-            configured != AgentIntegrationState::Off,
-            "Unavailable: this source integration has no reviewed Linux wrapper. Requested state is retained.",
             &format!("settings-agents-integration-{id}"),
         ));
     }
@@ -497,8 +482,8 @@ fn instrument_focus(control: &impl IsA<gtk::Widget>, name: &str) {
 #[cfg(test)]
 mod tests {
     use super::{
-        AVAILABLE_INTEGRATIONS, UNAVAILABLE_EPHEMERAL, UNAVAILABLE_PERSISTENT, effective_state,
-        has_changed, integration_detail,
+        AVAILABLE_INTEGRATIONS, UNAVAILABLE_PERSISTENT, effective_state, has_changed,
+        integration_detail,
     };
     use std::collections::BTreeMap;
     use zentty_core::{AgentIntegrationState, AgentIntegrationsConfig};
@@ -507,14 +492,18 @@ mod tests {
     fn source_agent_inventory_never_disappears_silently() {
         assert_eq!(
             AVAILABLE_INTEGRATIONS.map(|(id, _)| id),
-            ["claude", "codex", "gemini"]
+            [
+                "claude",
+                "codex",
+                "copilot",
+                "gemini",
+                "opencode",
+                "pi",
+                "omp",
+                "small-harness"
+            ]
         );
         assert!(UNAVAILABLE_PERSISTENT.iter().any(|(id, _)| *id == "amp"));
-        assert!(
-            UNAVAILABLE_EPHEMERAL
-                .iter()
-                .any(|(id, _)| *id == "opencode")
-        );
     }
 
     #[test]

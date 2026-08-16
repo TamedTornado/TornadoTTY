@@ -36,6 +36,17 @@ grep -F "zentty-amp-plugin-v1" "${amp_plugin}" >/dev/null || {
     echo "staged-bundle: Amp integration resource lacks its ownership marker" >&2
     exit 1
 }
+for resource in \
+    opencode/plugins/zentty-opencode-zentty.js \
+    pi/extensions/zentty-pi-zentty.js \
+    omp/extensions/zentty-omp-zentty.js \
+    shared/pi-family/zentty-pi-family-zentty.js; do
+    cmp "${repo_root}/ZenttyResources/${resource}" \
+        "${stage_dir}/share/zentty/${resource}" || {
+        echo "staged-bundle: managed launcher resource differs from source: ${resource}" >&2
+        exit 1
+    }
+done
 
 integration_home="${stage_dir}/integration-home"
 mkdir -p "${integration_home}"
@@ -66,9 +77,10 @@ done
     "${integration_home}" --exclude='*.lock' >/dev/null
 
 for wrapper in \
-    amp/amp claude/claude codex/codex cursor/cursor-agent droid/droid \
-    gemini/gemini kimi/kimi kimi/kimi-cli grok/grok agy/agy hermes/hermes \
-    vibe/vibe vibe/mistral-vibe; do
+    amp/amp claude/claude codex/codex copilot/copilot cursor/cursor-agent \
+    droid/droid gemini/gemini opencode/opencode pi/pi omp/omp kimi/kimi \
+    kimi/kimi-cli grok/grok agy/agy hermes/hermes vibe/vibe \
+    vibe/mistral-vibe small-harness/small-harness; do
     [[ -x "${stage_dir}/libexec/zentty/agent-wrappers/${wrapper}" ]] || {
         echo "staged-bundle: agent wrapper is missing: ${wrapper}" >&2
         exit 1

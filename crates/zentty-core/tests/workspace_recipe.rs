@@ -67,6 +67,37 @@ fn supported_agent_restore_commands_are_source_compatible_and_injection_safe() {
     assert_eq!(draft.resume_command(), None);
     draft.working_directory = Some("/tmp/project".to_owned());
 
+    draft.tool_name = "GitHub Copilot CLI".to_owned();
+    draft.session_id = "123E4567-E89B-12D3-A456-426614174000".to_owned();
+    assert_eq!(
+        draft.resume_command().as_deref(),
+        Some("copilot --resume=123e4567-e89b-12d3-a456-426614174000")
+    );
+    draft.tool_name = "OpenCode".to_owned();
+    draft.session_id = "ses_AbC123".to_owned();
+    assert_eq!(
+        draft.resume_command().as_deref(),
+        Some("opencode --session ses_AbC123")
+    );
+    for (tool, expected) in [
+        ("Pi", "pi -c"),
+        ("Oh My Pi", "omp -c"),
+        ("Small Harness", "small-harness --continue"),
+    ] {
+        draft.tool_name = tool.to_owned();
+        assert_eq!(draft.resume_command().as_deref(), Some(expected));
+    }
+    draft.working_directory = Some(" ".to_owned());
+    assert_eq!(draft.resume_command(), None);
+
+    draft.working_directory = Some("/tmp/project".to_owned());
+    draft.tool_name = "OpenCode".to_owned();
+    draft.session_id = "ses_safe;touch".to_owned();
+    assert_eq!(draft.resume_command(), None);
+    draft.tool_name = "Copilot".to_owned();
+    draft.session_id = "not-a-uuid".to_owned();
+    assert_eq!(draft.resume_command(), None);
+
     draft.tool_name = "Claude Code".to_owned();
     draft.session_id = "$(touch /tmp/zentty-must-not-run)".to_owned();
     assert_eq!(draft.resume_command(), None);

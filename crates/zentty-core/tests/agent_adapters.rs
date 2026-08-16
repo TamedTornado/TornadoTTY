@@ -1,7 +1,7 @@
 use zentty_core::{
     AgentPhase, AgentStatusStore, AgentTarget, AuthenticatedAgentEvent, adapt_agy_hook,
-    adapt_claude_hook, adapt_codex_hook, adapt_codex_notify, adapt_cursor_hook, adapt_droid_hook,
-    adapt_gemini_hook, adapt_grok_hook, adapt_hermes_hook, adapt_kimi_hook,
+    adapt_claude_hook, adapt_codex_hook, adapt_codex_notify, adapt_copilot_hook, adapt_cursor_hook,
+    adapt_droid_hook, adapt_gemini_hook, adapt_grok_hook, adapt_hermes_hook, adapt_kimi_hook,
     adapt_small_harness_hook, adapt_vibe_hook,
 };
 
@@ -1057,4 +1057,86 @@ fn gemini_ignores_non_permission_notifications_and_future_events_but_rejects_bad
     );
     assert!(adapt_gemini_hook(b"not-json", None).is_err());
     assert!(adapt_gemini_hook(br"{}", None).is_err());
+}
+
+#[test]
+fn copilot_source_aliases_preserve_session_and_question_lifecycle() {
+    let starting = adapt_copilot_hook(
+        br#"{"sessionId":"copilot-a","cwd":"/tmp/project"}"#,
+        Some("session-start"),
+        Some(991),
+    )
+    .unwrap();
+    assert_eq!(starting.len(), 2);
+    let started = serde_json::to_value(&starting[0]).unwrap();
+    let seeded = serde_json::to_value(&starting[1]).unwrap();
+    assert_eq!(started["event"], "session.start");
+    assert_eq!(started["agent"]["pid"], 991);
+    assert_eq!(seeded["event"], "agent.idle");
+    assert_eq!(seeded["session"]["id"], "copilot-a");
+
+    let question = reduce(
+        adapt_copilot_hook(
+            br#"{"session_id":"copilot-a","tool_name":"Ask_User-Question","tool_args":"{\"question\":\"Which file?\"}"}"#,
+            Some("pre-tool-use"),
+            None,
+        )
+        .unwrap(),
+    );
+    assert_eq!(question.phase, AgentPhase::NeedsInput);
+    assert_eq!(question.text.as_deref(), Some("Which file?"));
+
+    assert!(
+        adapt_copilot_hook(
+            br#"{"sessionId":"copilot-b","message":"Model request failed"}"#,
+            Some("error-occurred"),
+            None,
+        )
+        .unwrap()
+        .is_empty()
+    );
+}
+
+#[test]
+fn copilot_non_question_tools_are_noops_and_question_completion_returns_idle() {
+    assert!(
+        adapt_copilot_hook(br#"{"toolName":"ReadFile"}"#, Some("pre-tool-use"), None,)
+            .unwrap()
+            .is_empty()
+    );
+    let idle = adapt_copilot_hook(
+        br#"{"sessionID":"copilot-a","toolName":"AskUserQuestion"}"#,
+        Some("post-tool-use"),
+        None,
+    )
+    .unwrap();
+    assert_eq!(idle.len(), 1);
+    assert_eq!(
+        serde_json::to_value(&idle[0]).unwrap()["event"],
+        "agent.idle"
+    );
+
+    let running = adapt_copilot_hook(
+        br#"{"sessionId":"copilot-a"}"#,
+        Some("user-prompt-submitted"),
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        serde_json::to_value(&running[0]).unwrap()["event"],
+        "agent.running"
+    );
+    let ended =
+        adapt_copilot_hook(br#"{"sessionId":"copilot-a"}"#, Some("session-end"), None).unwrap();
+    assert_eq!(
+        serde_json::to_value(&ended[0]).unwrap()["event"],
+        "session.end"
+    );
+}
+
+#[test]
+fn copilot_rejects_missing_or_unknown_events_and_malformed_payloads() {
+    assert!(adapt_copilot_hook(br"{}", None, None).is_err());
+    assert!(adapt_copilot_hook(b"not-json", Some("session-start"), None).is_err());
+    assert!(adapt_copilot_hook(br"{}", Some("future-event"), None).is_err());
 }

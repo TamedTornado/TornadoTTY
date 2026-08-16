@@ -251,6 +251,12 @@ fn real_cli_process_runs_every_newly_installable_hook_adapter() {
             AgentPhase::Starting,
         ),
         (
+            "copilot",
+            br#"{"hook_event_name":"preToolUse","session_id":"copilot-real","toolName":"AskUserQuestion","toolArgs":"{\"question\":\"Pick Copilot path?\"}"}"#.as_slice(),
+            "Copilot",
+            AgentPhase::NeedsInput,
+        ),
+        (
             "small-harness",
             br#"{"hook_event_name":"SessionStart","session_id":"small-real"}"#.as_slice(),
             "Small Harness",
@@ -274,6 +280,34 @@ fn real_cli_process_runs_every_newly_installable_hook_adapter() {
         let status = statuses.status_for(&target).unwrap();
         assert_eq!(status.agent_name, expected_agent, "adapter={adapter}");
         assert_eq!(status.phase, expected_phase, "adapter={adapter}");
+    }
+}
+
+#[test]
+fn copilot_source_noop_events_succeed_without_a_routed_pane() {
+    for (event, payload) in [
+        (
+            "error-occurred",
+            br#"{"message":"ignored by source"}"#.as_slice(),
+        ),
+        ("pre-tool-use", br#"{"toolName":"ReadFile"}"#.as_slice()),
+    ] {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_zentty"));
+        command
+            .args(["ipc", "agent-event", "--adapter=copilot", event])
+            .env_remove("ZENTTY_INSTANCE_SOCKET")
+            .env_remove("ZENTTY_PANE_TOKEN")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let output = run_with_input(command, payload);
+        assert!(
+            output.status.success(),
+            "event={event} stderr={}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(output.stdout.is_empty());
+        assert!(output.stderr.is_empty());
     }
 }
 

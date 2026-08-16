@@ -465,14 +465,19 @@ fn enabled_wrapper_directories(
         ("amp", &["amp"][..]),
         ("claude", &["claude"][..]),
         ("codex", &["codex"][..]),
+        ("copilot", &["copilot"][..]),
         ("cursor", &["cursor-agent"][..]),
         ("droid", &["droid"][..]),
         ("gemini", &["gemini"][..]),
+        ("opencode", &["opencode"][..]),
+        ("pi", &["pi"][..]),
+        ("omp", &["omp"][..]),
         ("kimi", &["kimi", "kimi-cli"][..]),
         ("grok", &["grok"][..]),
         ("agy", &["agy"][..]),
         ("hermes", &["hermes"][..]),
         ("vibe", &["vibe", "mistral-vibe"][..]),
+        ("small-harness", &["small-harness"][..]),
     ]
     .into_iter()
     .filter_map(|(tool, binaries)| {

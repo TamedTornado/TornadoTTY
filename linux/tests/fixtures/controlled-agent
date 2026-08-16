@@ -22,7 +22,14 @@ require_helper() {
 }
 
 if [[ -n "${ZENTTY_CONTROLLED_AGENT_START_RECEIPT:-}" ]]; then
-    printf 'started pid:%s profile:%s\n' "$$" "${profile}" >>"${ZENTTY_CONTROLLED_AGENT_START_RECEIPT}"
+    printf 'started pid:%s profile:%s\n' "$$" "${profile}" \
+        >>"${ZENTTY_CONTROLLED_AGENT_START_RECEIPT}"
+    printf 'launch agent:%s canonical:%s socket:%s token:%s lane:%s pane:%s pi-disabled:%s args:<%s>\n' \
+        "${ZENTTY_AGENT_TOOL:-}" \
+        "${ZENTTY_AGENT_CANONICAL_NAME:-}" "${ZENTTY_INSTANCE_SOCKET:-}" \
+        "${ZENTTY_PANE_TOKEN:-}" "${ZENTTY_WORKLANE_ID:-}" "${ZENTTY_PANE_ID:-}" \
+        "${ZENTTY_PI_HOOKS_DISABLED:-}" "$*" \
+        >>"${ZENTTY_CONTROLLED_AGENT_START_RECEIPT}"
 fi
 sleep "${start_delay_seconds}"
 
@@ -228,8 +235,25 @@ case "${profile}" in
             sleep 0.1
         done
         ;;
+    copilot-question)
+        require_helper
+        [[ -f "${COPILOT_HOME:-}/config.json" ]] ||
+            fail "Copilot config overlay is missing"
+        grep -Fq -- '--adapter=copilot' "${COPILOT_HOME}/config.json" ||
+            fail "Copilot hook command is missing"
+        printf '%s' \
+            '{"session_id":"123e4567-e89b-12d3-a456-426614174000","toolName":"AskUserQuestion","toolArgs":"{\"question\":\"Choose the Copilot path?\"}"}' |
+            "${helper}" ipc agent-event --adapter=copilot pre-tool-use
+        ;;
+    managed-prelaunch)
+        sleep 0.3
+        ;;
     small-harness-adapter)
         require_helper
+        hooks_file="${SMALL_HARNESS_MANAGED_HOOKS_FILE:-}"
+        [[ -f "${hooks_file}" ]] || fail "Small Harness managed hooks file is missing"
+        grep -Fq -- '--adapter=small-harness' "${hooks_file}" ||
+            fail "Small Harness hook command is missing"
         for payload in \
             '{"hook_event_name":"SessionStart","session_id":"small-harness-e2e"}' \
             '{"hook_event_name":"PlanUpdated","session_id":"small-harness-e2e","progress":{"doneCount":2,"totalCount":5}}' \

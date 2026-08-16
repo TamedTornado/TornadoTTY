@@ -136,9 +136,10 @@ rm -rf "${wrapper_root}"
 mkdir -p "${wrapper_root}/shared"
 cp "${output_dir}/bin/zentty" "${wrapper_root}/shared/zentty"
 for specification in \
-    amp:amp claude:claude codex:codex cursor:cursor-agent droid:droid \
-    gemini:gemini kimi:kimi kimi:kimi-cli grok:grok agy:agy hermes:hermes \
-    vibe:vibe vibe:mistral-vibe; do
+    amp:amp claude:claude codex:codex copilot:copilot cursor:cursor-agent \
+    droid:droid gemini:gemini opencode:opencode pi:pi omp:omp kimi:kimi \
+    kimi:kimi-cli grok:grok agy:agy hermes:hermes vibe:vibe \
+    vibe:mistral-vibe small-harness:small-harness; do
     tool="${specification%%:*}"
     binary="${specification#*:}"
     mkdir -p "${wrapper_root}/${tool}"
@@ -165,6 +166,15 @@ rm -rf "${amp_plugin_root}"
 mkdir -p "${amp_plugin_root}"
 cp "${repo_root}/ZenttyResources/amp/plugins/zentty-amp-zentty.ts" \
     "${amp_plugin_root}/"
+for resource in \
+    opencode/plugins/zentty-opencode-zentty.js \
+    pi/extensions/zentty-pi-zentty.js \
+    omp/extensions/zentty-omp-zentty.js \
+    shared/pi-family/zentty-pi-family-zentty.js; do
+    destination="${output_dir}/share/zentty/${resource}"
+    mkdir -p "$(dirname "${destination}")"
+    cp "${repo_root}/ZenttyResources/${resource}" "${destination}"
+done
 
 # The linker must receive the literal loader token, not a shell expansion.
 # shellcheck disable=SC2016

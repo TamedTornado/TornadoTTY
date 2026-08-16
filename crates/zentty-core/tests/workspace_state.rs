@@ -503,6 +503,46 @@ fn active_supported_agents_produce_restorable_per_pane_drafts() {
 }
 
 #[test]
+fn remaining_managed_agents_produce_their_source_resume_invocations() {
+    let envelope = SessionRestoreEnvelope::from_json(V3_ENVELOPE).unwrap();
+    for (agent, session_id, expected) in [
+        (
+            "GitHub Copilot CLI",
+            "123e4567-e89b-12d3-a456-426614174000",
+            "copilot --resume=123e4567-e89b-12d3-a456-426614174000",
+        ),
+        ("OpenCode", "ses_AbC123", "opencode --session ses_AbC123"),
+        ("Pi", "project-session", "pi -c"),
+        ("OMP", "project-session", "omp -c"),
+        (
+            "Small Harness",
+            "project-session",
+            "small-harness --continue",
+        ),
+    ] {
+        let mut state = WorkspaceState::from_window_recipe(&envelope.workspace.windows[0]).unwrap();
+        let payload = format!(
+            r#"{{"version":1,"event":"session.start","agent":{{"name":"{agent}","pid":4242}},"session":{{"id":"{session_id}"}},"context":{{"workingDirectory":"/tmp/project"}}}}"#
+        );
+        state.apply_agent_event(
+            AuthenticatedAgentEvent {
+                target: AgentTarget::new("window-main", "worklane-main", "pane-agent"),
+                pane_token: "token-pane-agent".to_owned(),
+                event: AgentEvent::parse(payload.as_bytes()).unwrap(),
+            },
+            10,
+        );
+        let drafts = state.agent_restore_drafts();
+        assert_eq!(drafts.len(), 1, "agent={agent}");
+        assert_eq!(
+            drafts[0].resume_command().as_deref(),
+            Some(expected),
+            "agent={agent}"
+        );
+    }
+}
+
+#[test]
 fn restored_explicit_task_progress_remains_authoritative() {
     let envelope = SessionRestoreEnvelope::from_json(V3_ENVELOPE).unwrap();
     let mut state = WorkspaceState::from_window_recipe(&envelope.workspace.windows[0]).unwrap();

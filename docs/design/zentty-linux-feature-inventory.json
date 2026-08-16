@@ -759,10 +759,10 @@
       "origin": "PORT_PARITY",
       "user_impact": "OpenCode requires terminal/theme coordination in addition to generic agent status.",
       "linux_owner_issue": 7,
-      "implementation_status": "NOT_IMPLEMENTED",
-      "focused_tests": [],
-      "product_scenarios": [],
-      "test_plan": "Run a real OpenCode terminal and local theme files, then assert status and theme changes without faking filesystem or PTY behavior.",
+      "implementation_status": "PARTIAL",
+      "focused_tests": ["crates/zentty-core/tests/agent_launch.rs", "crates/zentty-agent-ipc/tests/launch_cli.rs"],
+      "product_scenarios": ["linux/tests/rust-agent-ipc"],
+      "test_plan": "Keep managed launch, private configuration overlay, session bootstrap, resume, and the staged real-pane journey green; add source-faithful live theme synchronization before marking the complete inventory behavior implemented.",
       "alternative_or_blocker": null
     },
     {
@@ -791,10 +791,10 @@
       "origin": "PORT_PARITY",
       "user_impact": "Copilot remains usable, but its explicit progress and needs-input presentation is deferred.",
       "linux_owner_issue": 7,
-      "implementation_status": "NOT_IMPLEMENTED",
-      "focused_tests": [],
-      "product_scenarios": [],
-      "test_plan": "Run Copilot's real hook, PTY, OSC, adapter, and visible progress and attention path.",
+      "implementation_status": "PARTIAL",
+      "focused_tests": ["crates/zentty-core/tests/agent_adapters.rs", "crates/zentty-core/tests/agent_launch.rs", "crates/zentty-agent-ipc/tests/launch_cli.rs"],
+      "product_scenarios": ["linux/tests/rust-agent-ipc"],
+      "test_plan": "Keep the private hook overlay, source event adapter, resume command, and staged real-pane journey green; add the source OSC progress and title-needs-input presentation reducers before marking the complete inventory behavior implemented.",
       "alternative_or_blocker": null
     },
     {
@@ -855,10 +855,10 @@
       "origin": "PORT_PARITY",
       "user_impact": "Pi remains usable, but Zentty-specific overlay, status, and resume behavior is deferred.",
       "linux_owner_issue": 7,
-      "implementation_status": "NOT_IMPLEMENTED",
-      "focused_tests": [],
-      "product_scenarios": [],
-      "test_plan": "Run the real Pi CLI management and agent paths in a PTY and assert passthrough and status behavior.",
+      "implementation_status": "IMPLEMENTED",
+      "focused_tests": ["crates/zentty-core/tests/agent_launch.rs", "crates/zentty-core/tests/workspace_recipe.rs", "crates/zentty-core/tests/workspace_state.rs", "crates/zentty-agent-ipc/tests/launch_cli.rs"],
+      "product_scenarios": ["linux/tests/rust-agent-ipc"],
+      "test_plan": "Keep management-command passthrough, scoped overlay launch, staged extension discovery, status bootstrap, resume, and the staged real-pane journey green.",
       "alternative_or_blocker": null
     },
     {
@@ -871,10 +871,10 @@
       "origin": "PORT_PARITY",
       "user_impact": "OMP remains usable, but Zentty-specific overlay, status, and resume behavior is deferred.",
       "linux_owner_issue": 7,
-      "implementation_status": "NOT_IMPLEMENTED",
-      "focused_tests": [],
-      "product_scenarios": [],
-      "test_plan": "Run the real OMP CLI management and agent paths in a PTY and assert passthrough and status behavior.",
+      "implementation_status": "IMPLEMENTED",
+      "focused_tests": ["crates/zentty-core/tests/agent_launch.rs", "crates/zentty-core/tests/workspace_recipe.rs", "crates/zentty-core/tests/workspace_state.rs", "crates/zentty-agent-ipc/tests/launch_cli.rs"],
+      "product_scenarios": ["linux/tests/rust-agent-ipc"],
+      "test_plan": "Keep management-command passthrough, scoped overlay launch, staged extension discovery, status bootstrap, resume, and the staged real-pane journey green.",
       "alternative_or_blocker": null
     },
     {
@@ -951,10 +951,10 @@
       "origin": "PORT_PARITY",
       "user_impact": "Small Harness remains usable as a terminal process but lacks Zentty-specific status presentation.",
       "linux_owner_issue": 7,
-      "implementation_status": "NOT_IMPLEMENTED",
-      "focused_tests": [],
-      "product_scenarios": [],
-      "test_plan": "Run Small Harness in a real PTY and feed its real explicit status payload through IPC to the visible sidebar.",
+      "implementation_status": "IMPLEMENTED",
+      "focused_tests": ["crates/zentty-core/tests/agent_launch.rs", "crates/zentty-core/tests/workspace_recipe.rs", "crates/zentty-core/tests/workspace_state.rs", "crates/zentty-agent-ipc/tests/launch_cli.rs"],
+      "product_scenarios": ["linux/tests/rust-agent-ipc"],
+      "test_plan": "Keep the exact ephemeral hook file, shared explicit event adapter, status presentation, --continue resume contract, and staged real-pane journey green.",
       "alternative_or_blocker": null
     },
     {

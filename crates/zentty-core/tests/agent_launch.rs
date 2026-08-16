@@ -1,5 +1,8 @@
 use std::collections::BTreeMap;
-use zentty_core::{AgentLaunchTool, build_agent_launch_plan, build_gemini_settings};
+use zentty_core::{
+    AgentLaunchTool, build_agent_launch_plan, build_copilot_config, build_gemini_settings,
+    build_small_harness_hooks,
+};
 
 const SESSION_ID: &str = "12345678-1234-4234-8234-123456789abc";
 
@@ -467,4 +470,360 @@ fn gemini_opt_out_is_a_direct_passthrough() {
     .unwrap();
     assert_eq!(plan.arguments, ["--version"]);
     assert!(plan.set_environment.is_empty());
+}
+
+#[test]
+fn remaining_source_tools_publish_exact_names_and_no_persistent_install_target() {
+    for (input, tool, binary) in [
+        ("copilot", AgentLaunchTool::Copilot, "copilot"),
+        ("opencode", AgentLaunchTool::OpenCode, "opencode"),
+        ("pi", AgentLaunchTool::Pi, "pi"),
+        ("omp", AgentLaunchTool::Omp, "omp"),
+        (
+            "small-harness",
+            AgentLaunchTool::SmallHarness,
+            "small-harness",
+        ),
+    ] {
+        assert_eq!(AgentLaunchTool::parse(input).unwrap(), tool);
+        assert_eq!(tool.binary_name(), binary);
+        assert_eq!(tool.binary_names(), &[binary]);
+        assert_eq!(tool.persistent_integration_target(), None);
+    }
+}
+
+#[test]
+fn remaining_source_tools_are_direct_outside_a_routed_pane() {
+    for tool in [
+        AgentLaunchTool::Copilot,
+        AgentLaunchTool::OpenCode,
+        AgentLaunchTool::Pi,
+        AgentLaunchTool::Omp,
+        AgentLaunchTool::SmallHarness,
+    ] {
+        let arguments = vec!["--literal".to_owned(), "hostile path;$HOME".to_owned()];
+        let environment = match tool {
+            AgentLaunchTool::Copilot => BTreeMap::from([(
+                "ZENTTY_COPILOT_HOME_OVERLAY".to_owned(),
+                "/private/copilot".to_owned(),
+            )]),
+            AgentLaunchTool::Pi => {
+                BTreeMap::from([("ZENTTY_PI_EXTENSION".to_owned(), "/stage/pi.js".to_owned())])
+            }
+            AgentLaunchTool::Omp => BTreeMap::from([(
+                "ZENTTY_OMP_EXTENSION".to_owned(),
+                "/stage/omp.js".to_owned(),
+            )]),
+            AgentLaunchTool::SmallHarness => BTreeMap::from([(
+                "ZENTTY_SMALL_HARNESS_HOOKS_FILE".to_owned(),
+                "/private/small-hooks.json".to_owned(),
+            )]),
+            AgentLaunchTool::OpenCode => BTreeMap::new(),
+            _ => unreachable!(),
+        };
+        let plan = build_agent_launch_plan(
+            tool,
+            format!("/real/{}", tool.binary_name()),
+            &arguments,
+            "/stage/bin/zentty",
+            SESSION_ID,
+            &environment,
+        )
+        .unwrap();
+        assert_eq!(plan.arguments, arguments, "tool={tool:?}");
+        assert!(plan.set_environment.is_empty(), "tool={tool:?}");
+        assert!(plan.pre_launch_actions.is_empty(), "tool={tool:?}");
+    }
+}
+
+#[test]
+fn pi_family_management_and_early_exit_arguments_never_load_extensions() {
+    for (tool, arguments) in [
+        (AgentLaunchTool::Pi, vec!["install"]),
+        (AgentLaunchTool::Pi, vec!["--version=full"]),
+        (AgentLaunchTool::Pi, vec!["--profile", "work", "config"]),
+        (AgentLaunchTool::Omp, vec!["plugin", "list"]),
+        (AgentLaunchTool::Omp, vec!["--cwd=/hostile path", "models"]),
+        (AgentLaunchTool::Omp, vec!["--alias=value"]),
+    ] {
+        let arguments = arguments.into_iter().map(str::to_owned).collect::<Vec<_>>();
+        let mut environment = pane_environment();
+        let extension_key = match tool {
+            AgentLaunchTool::Pi => "ZENTTY_PI_EXTENSION",
+            AgentLaunchTool::Omp => "ZENTTY_OMP_EXTENSION",
+            _ => unreachable!(),
+        };
+        environment.insert(extension_key.to_owned(), "/stage/extension.js".to_owned());
+        let plan = build_agent_launch_plan(
+            tool,
+            format!("/real/{}", tool.binary_name()),
+            &arguments,
+            "/stage/bin/zentty",
+            SESSION_ID,
+            &environment,
+        )
+        .unwrap();
+        assert_eq!(plan.arguments, arguments, "tool={tool:?}");
+        assert!(plan.set_environment.is_empty(), "tool={tool:?}");
+        assert!(plan.pre_launch_actions.is_empty(), "tool={tool:?}");
+    }
+}
+
+#[test]
+fn pi_family_managed_plans_prepend_only_the_matching_staged_extension() {
+    for (tool, canonical, variable, extension) in [
+        (
+            AgentLaunchTool::Pi,
+            "Pi",
+            "ZENTTY_PI_EXTENSION",
+            "/stage/share/zentty/pi/extensions/zentty-pi-zentty.js",
+        ),
+        (
+            AgentLaunchTool::Omp,
+            "OMP",
+            "ZENTTY_OMP_EXTENSION",
+            "/stage/share/zentty/omp/extensions/zentty-omp-zentty.js",
+        ),
+    ] {
+        let mut environment = pane_environment();
+        environment.insert(variable.to_owned(), extension.to_owned());
+        let plan = build_agent_launch_plan(
+            tool,
+            format!("/real/{}", tool.binary_name()),
+            &["--prompt".to_owned(), "hostile path;$HOME".to_owned()],
+            "/stage/bin/zentty",
+            SESSION_ID,
+            &environment,
+        )
+        .unwrap();
+        assert_eq!(&plan.arguments[..2], ["-e", extension]);
+        assert_eq!(&plan.arguments[2..], ["--prompt", "hostile path;$HOME"]);
+        assert_eq!(
+            plan.set_environment["ZENTTY_AGENT_TOOL"],
+            tool.binary_name()
+        );
+        assert_eq!(
+            plan.set_environment["ZENTTY_AGENT_CANONICAL_NAME"],
+            canonical
+        );
+        assert_eq!(plan.pre_launch_actions.len(), 1);
+        assert!(
+            plan.pre_launch_actions[0]
+                .standard_input
+                .contains(canonical)
+        );
+        assert!(
+            plan.pre_launch_actions[0]
+                .standard_input
+                .contains("__ZENTTY_SELF_PID__")
+        );
+    }
+}
+
+#[test]
+fn small_harness_uses_only_the_ephemeral_managed_hook_file_and_clears_stale_inline_state() {
+    let mut environment = pane_environment();
+    environment.insert(
+        "ZENTTY_SMALL_HARNESS_HOOKS_FILE".to_owned(),
+        "/run/zentty/launch/lane/pane/small-harness/managed-hooks.json".to_owned(),
+    );
+    let plan = build_agent_launch_plan(
+        AgentLaunchTool::SmallHarness,
+        "/real/small-harness",
+        &["--continue".to_owned()],
+        "/stage/bin/zentty",
+        SESSION_ID,
+        &environment,
+    )
+    .unwrap();
+    assert_eq!(plan.arguments, ["--continue"]);
+    assert_eq!(plan.set_environment["ZENTTY_AGENT_TOOL"], "small-harness");
+    assert_eq!(
+        plan.set_environment["SMALL_HARNESS_MANAGED_HOOKS_FILE"],
+        "/run/zentty/launch/lane/pane/small-harness/managed-hooks.json"
+    );
+    assert_eq!(plan.unset_environment, ["SMALL_HARNESS_MANAGED_HOOKS_JSON"]);
+
+    for arguments in [vec!["completions"], vec!["--help=plain"]] {
+        let arguments = arguments.into_iter().map(str::to_owned).collect::<Vec<_>>();
+        let direct = build_agent_launch_plan(
+            AgentLaunchTool::SmallHarness,
+            "/real/small-harness",
+            &arguments,
+            "/stage/bin/zentty",
+            SESSION_ID,
+            &environment,
+        )
+        .unwrap();
+        assert!(direct.set_environment.is_empty());
+        assert_eq!(
+            direct.unset_environment,
+            [
+                "SMALL_HARNESS_MANAGED_HOOKS_FILE",
+                "SMALL_HARNESS_MANAGED_HOOKS_JSON"
+            ]
+        );
+    }
+}
+
+#[test]
+fn copilot_plan_consumes_config_override_and_selects_private_overlay() {
+    let mut environment = pane_environment();
+    environment.insert(
+        "ZENTTY_COPILOT_HOME_OVERLAY".to_owned(),
+        "/run/zentty/launch/lane/pane/copilot/home".to_owned(),
+    );
+    let plan = build_agent_launch_plan(
+        AgentLaunchTool::Copilot,
+        "/real/copilot",
+        &[
+            "--config-dir".to_owned(),
+            "/hostile config;$HOME".to_owned(),
+            "--resume=session-safe".to_owned(),
+        ],
+        "/stage/bin/zentty",
+        SESSION_ID,
+        &environment,
+    )
+    .unwrap();
+    assert_eq!(plan.arguments, ["--resume=session-safe"]);
+    assert_eq!(plan.set_environment["ZENTTY_AGENT_TOOL"], "copilot");
+    assert_eq!(
+        plan.set_environment["COPILOT_HOME"],
+        "/run/zentty/launch/lane/pane/copilot/home"
+    );
+}
+
+#[test]
+fn opencode_plan_selects_overlay_and_emits_one_session_start_before_exec() {
+    let mut environment = pane_environment();
+    environment.insert(
+        "ZENTTY_OPENCODE_CONFIG_OVERLAY".to_owned(),
+        "/run/zentty/launch/lane/pane/opencode/config".to_owned(),
+    );
+    environment.insert(
+        "ZENTTY_OPENCODE_BASE_CONFIG_DIR".to_owned(),
+        "/home/user/.config/opencode".to_owned(),
+    );
+    let plan = build_agent_launch_plan(
+        AgentLaunchTool::OpenCode,
+        "/real/.opencode",
+        &["--session".to_owned(), "session-safe".to_owned()],
+        "/stage/bin/zentty",
+        SESSION_ID,
+        &environment,
+    )
+    .unwrap();
+    assert_eq!(plan.executable_path, "/real/.opencode");
+    assert_eq!(plan.arguments, ["--session", "session-safe"]);
+    assert_eq!(plan.set_environment["ZENTTY_AGENT_TOOL"], "opencode");
+    assert_eq!(
+        plan.set_environment["OPENCODE_CONFIG_DIR"],
+        "/run/zentty/launch/lane/pane/opencode/config"
+    );
+    assert_eq!(plan.pre_launch_actions.len(), 1);
+    assert!(
+        plan.pre_launch_actions[0]
+            .standard_input
+            .contains("OpenCode")
+    );
+}
+
+#[test]
+fn opencode_without_a_staged_plugin_still_emits_source_prelaunch_status() {
+    let plan = build_agent_launch_plan(
+        AgentLaunchTool::OpenCode,
+        "/real/opencode",
+        &["run".to_owned()],
+        "/stage/bin/zentty",
+        SESSION_ID,
+        &pane_environment(),
+    )
+    .unwrap();
+    assert_eq!(plan.set_environment["ZENTTY_AGENT_TOOL"], "opencode");
+    assert!(!plan.set_environment.contains_key("OPENCODE_CONFIG_DIR"));
+    assert_eq!(plan.pre_launch_actions.len(), 1);
+}
+
+#[test]
+fn copilot_config_merge_preserves_user_fields_and_adds_each_hook_once() {
+    let existing = br#"{
+        // user comment
+        "model": "gpt-5",
+        "hooks": {"sessionStart": [{"type":"command","bash":"mine","timeoutSec":7},],},
+    }"#;
+    let merged = build_copilot_config(Some(existing), "/stage/Zentty $CLI `beta`").unwrap();
+    let value: serde_json::Value = serde_json::from_slice(&merged).unwrap();
+    assert_eq!(value["model"], "gpt-5");
+    assert_eq!(value["version"], 1);
+    for (name, timeout) in [
+        ("sessionStart", 10),
+        ("sessionEnd", 10),
+        ("userPromptSubmitted", 10),
+        ("preToolUse", 5),
+        ("postToolUse", 5),
+        ("errorOccurred", 10),
+    ] {
+        let hooks = value["hooks"][name].as_array().unwrap();
+        assert_eq!(
+            hooks
+                .iter()
+                .filter(|hook| hook["bash"]
+                    .as_str()
+                    .is_some_and(|command| command.contains("--adapter=copilot")))
+                .count(),
+            1,
+            "{name}"
+        );
+        let ours = hooks.last().unwrap();
+        assert_eq!(ours["type"], "command");
+        assert_eq!(ours["timeoutSec"], timeout);
+    }
+    let again = build_copilot_config(Some(&merged), "/stage/Zentty $CLI `beta`").unwrap();
+    assert_eq!(merged, again);
+
+    let replaced = build_copilot_config(
+        Some(br#"{"hooks":{"sessionStart":"invalid"}}"#),
+        "/stage/bin/zentty",
+    )
+    .unwrap();
+    let replaced: serde_json::Value = serde_json::from_slice(&replaced).unwrap();
+    assert!(replaced["hooks"]["sessionStart"].is_array());
+    assert!(build_copilot_config(Some(b"not-json"), "/stage/bin/zentty").is_err());
+}
+
+#[test]
+fn small_harness_hooks_are_complete_bounded_and_idempotently_serialized() {
+    let hooks = build_small_harness_hooks("/stage/Zentty $CLI `beta`").unwrap();
+    let value: serde_json::Value = serde_json::from_slice(&hooks).unwrap();
+    assert_eq!(value["source"], "zentty");
+    assert_eq!(value["hooks"].as_object().unwrap().len(), 12);
+    for event in [
+        "SessionStart",
+        "UserPromptSubmit",
+        "PreToolUse",
+        "PermissionRequest",
+        "PostToolUse",
+        "PreCompact",
+        "PostCompact",
+        "PlanUpdated",
+        "SubagentStart",
+        "SubagentStop",
+        "Stop",
+        "SessionEnd",
+    ] {
+        let hook = &value["hooks"][event][0]["hooks"][0];
+        assert_eq!(hook["type"], "command");
+        assert!(
+            hook["command"]
+                .as_str()
+                .unwrap()
+                .contains("--adapter=small-harness")
+        );
+        assert_eq!(
+            hook["timeoutSec"],
+            if event == "SessionEnd" { 1 } else { 10 }
+        );
+        assert_eq!(hook["envVars"].as_array().unwrap().len(), 7);
+    }
 }

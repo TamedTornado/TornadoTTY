@@ -11,8 +11,9 @@ use zentty_agent_ipc::{
 };
 use zentty_core::{
     AgentEvent, adapt_agy_hook, adapt_claude_hook, adapt_codex_hook, adapt_codex_notify,
-    adapt_cursor_hook, adapt_droid_hook, adapt_gemini_hook, adapt_grok_hook, adapt_hermes_hook,
-    adapt_kimi_hook, adapt_small_harness_hook, adapt_vibe_hook, detect_server_urls,
+    adapt_copilot_hook, adapt_cursor_hook, adapt_droid_hook, adapt_gemini_hook, adapt_grok_hook,
+    adapt_hermes_hook, adapt_kimi_hook, adapt_small_harness_hook, adapt_vibe_hook,
+    detect_server_urls,
 };
 use zentty_tmux_compat::{
     Command, Invocation, TmuxCompatRequest, WAIT_POLL_INTERVAL, WaitForAction,
@@ -43,11 +44,7 @@ fn run() -> Result<(), String> {
     let mut arguments = raw_arguments.into_iter();
     let command = arguments.next();
     if command.as_deref() == Some("launch") {
-        let tool = arguments.next().ok_or_else(|| {
-            "usage: zentty launch <amp|claude|codex|cursor|droid|gemini|kimi|grok|agy|hermes|vibe> [arguments...]".to_owned()
-        })?;
-        return launch_agent(&tool, &arguments.collect::<Vec<_>>())
-            .map_err(|error| error.to_string());
+        return run_launch(arguments);
     }
     if command.as_deref() == Some("__tmux-compat") {
         let arguments = arguments.collect::<Vec<_>>();
@@ -92,6 +89,9 @@ fn run() -> Result<(), String> {
         .map_err(|error| format!("could not read event: {error}"))?;
     let input = add_default_hook_event(input, default_event.map(String::as_str))?;
     let events = adapt_agent_events(adapter, &input)?;
+    if adapter == Some("copilot") && events.is_empty() {
+        return Ok(());
+    }
     if adapter == Some("gemini")
         && (events.is_empty()
             || std::env::var_os("ZENTTY_INSTANCE_SOCKET").is_none()
@@ -131,6 +131,13 @@ fn run() -> Result<(), String> {
     Ok(())
 }
 
+fn run_launch(mut arguments: impl Iterator<Item = String>) -> Result<(), String> {
+    let tool = arguments.next().ok_or_else(|| {
+        "usage: zentty launch <amp|claude|codex|copilot|cursor|droid|gemini|opencode|pi|omp|kimi|grok|agy|hermes|vibe|small-harness> [arguments...]".to_owned()
+    })?;
+    launch_agent(&tool, &arguments.collect::<Vec<_>>()).map_err(|error| error.to_string())
+}
+
 fn run_agent_signal(arguments: &[String]) -> Result<(), String> {
     // Shell hooks are deliberately non-invasive outside a live Zentty pane.
     // Validate and deliver only when the complete authenticated environment is
@@ -166,6 +173,7 @@ fn adapt_agent_events(adapter: Option<&str>, input: &[u8]) -> Result<Vec<AgentEv
             adapt_small_harness_hook(input, environment_pid("ZENTTY_SMALL_HARNESS_PID"))
         }
         Some("claude") => adapt_claude_hook(input, environment_pid("ZENTTY_CLAUDE_PID")),
+        Some("copilot") => adapt_copilot_hook(input, None, environment_pid("ZENTTY_COPILOT_PID")),
         Some("gemini") => adapt_gemini_hook(input, environment_pid("ZENTTY_GEMINI_PID")),
         Some("cursor") => adapt_cursor_hook(input, environment_pid("ZENTTY_CURSOR_PID")),
         Some("droid") => adapt_droid_hook(input, environment_pid("ZENTTY_DROID_PID")),

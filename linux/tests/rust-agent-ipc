@@ -11,6 +11,7 @@ server_pid=""
 fake_bin=""
 real_gemini_bin=""
 private_home=""
+start_receipt=""
 actor="${repo_root}/linux/tests/fixtures/controlled-agent"
 # shellcheck disable=SC1091
 source "${repo_root}/linux/tests/lib/product-input"
@@ -34,6 +35,7 @@ cleanup() {
     [[ -z "${state_directory}" ]] || rm -rf -- "${state_directory}"
     [[ -z "${fake_bin}" ]] || rm -rf -- "${fake_bin}"
     [[ -z "${private_home}" ]] || rm -rf -- "${private_home}"
+    [[ -z "${start_receipt}" ]] || rm -f -- "${start_receipt}"
 }
 trap cleanup EXIT
 
@@ -76,6 +78,7 @@ wrapper_root="$(cd "$(dirname "${product}")/.." && pwd)/libexec/zentty/agent-wra
 [[ -x "${wrapper_root}/claude/claude" ]] || fail "staged Claude wrapper is missing"
 [[ -x "${wrapper_root}/gemini/gemini" ]] || fail "staged Gemini wrapper is missing"
 for wrapper in \
+    copilot/copilot opencode/opencode pi/pi omp/omp small-harness/small-harness \
     cursor/cursor-agent droid/droid kimi/kimi grok/grok agy/agy hermes/hermes vibe/vibe; do
     [[ -x "${wrapper_root}/${wrapper}" ]] || fail "staged ${wrapper} wrapper is missing"
 done
@@ -84,7 +87,7 @@ fake_bin="$(mktemp -d)"
 ln -s "${actor}" "${fake_bin}/codex"
 ln -s "${actor}" "${fake_bin}/claude"
 ln -s "${actor}" "${fake_bin}/gemini"
-for binary in cursor-agent droid kimi grok agy hermes vibe; do
+for binary in copilot opencode pi omp small-harness cursor-agent droid kimi grok agy hermes vibe; do
     ln -s "${actor}" "${fake_bin}/${binary}"
 done
 
@@ -97,8 +100,11 @@ run_adapter() {
     local socket=""
 
     log="$(mktemp)"
+    start_receipt="$(mktemp)"
     state_directory="$(mktemp -d)"
     PATH="${fake_bin}:${PATH}" GDK_SCALE=1 GDK_DPI_SCALE=1 \
+        ZENTTY_CLI_DEBUG=1 \
+        ZENTTY_CONTROLLED_AGENT_START_RECEIPT="${start_receipt}" \
         ZENTTY_CONTROLLED_AGENT_PROFILE="${profile}" \
         "${product}" \
         --command "${command}" \
@@ -110,8 +116,10 @@ run_adapter() {
         grep -Fq "${expected}" "${log}" && break
         sleep 0.05
     done
-    grep -Fq 'zentty-linux: agent-event pane=pane-1 worklane=worklane-1' "${log}" ||
+    if ! grep -Fq 'zentty-linux: agent-event pane=pane-1 worklane=worklane-1' "${log}"; then
+        cat "${start_receipt}" >>"${log}"
         fail "${name} terminal child did not deliver an authenticated event"
+    fi
     grep -Fq "${expected}" "${log}" ||
         fail "${name} event was not reduced and rendered as an attention state"
     if [[ -n "${forbidden}" ]] && grep -Fq "${forbidden}" "${log}"; then
@@ -137,6 +145,8 @@ run_adapter() {
     [[ ! -e "$(dirname "${socket}")" ]] ||
         fail "${name} product left its private runtime directory behind"
     rm -f -- "${log}"
+    rm -f -- "${start_receipt}"
+    start_receipt=""
     rm -rf -- "${state_directory}"
     log=""
     state_directory=""
@@ -463,10 +473,23 @@ run_adapter \
     claude-task-lifecycle \
     'zentty-linux: sidebar-agent-status pane=pane-1 phase=Running interaction=None attention=false progress=2/2'
 run_adapter \
+    copilot \
+    'copilot' \
+    copilot-question \
+    'zentty-linux: sidebar-agent-status pane=pane-1 phase=NeedsInput interaction=Question attention=true' \
+    'Choose the Copilot path?'
+run_adapter \
     small-harness \
-    'claude' \
+    'small-harness' \
     small-harness-adapter \
     'zentty-linux: sidebar-agent-status pane=pane-1 phase=Running interaction=None attention=false progress=2/5'
+for managed_tool in pi opencode omp; do
+    run_adapter \
+        "${managed_tool}" \
+        "${managed_tool}" \
+        managed-prelaunch \
+        'zentty-linux: agent-event pane=pane-1 worklane=worklane-1 kind=session.start'
+done
 run_adapter \
     gemini \
     'gemini' \
@@ -670,4 +693,4 @@ if [[ -n "${ZENTTY_REAL_GEMINI_BIN:-}" ]]; then
     log=""
 fi
 
-echo "Rust agent launch passed: ${backend}, wrapper=real-process, child=real-pty, helper=real-process, transport=real-unix-socket, compatibility-agent-status=running+needs-input+failed+task-idempotency+reordered-completion+completed+clear, adapters=codex+codex-notify+claude+small-harness+gemini+cursor+droid+kimi+grok+agy+hermes+vibe, real-gemini=$([[ -n "${ZENTTY_REAL_GEMINI_BIN:-}" ]] && echo true || echo prerequisite-not-requested)"
+echo "Rust agent launch passed: ${backend}, wrapper=real-process, child=real-pty, helper=real-process, transport=real-unix-socket, compatibility-agent-status=running+needs-input+failed+task-idempotency+reordered-completion+completed+clear, adapters=codex+codex-notify+claude+copilot+opencode+pi+omp+small-harness+gemini+cursor+droid+kimi+grok+agy+hermes+vibe, real-gemini=$([[ -n "${ZENTTY_REAL_GEMINI_BIN:-}" ]] && echo true || echo prerequisite-not-requested)"

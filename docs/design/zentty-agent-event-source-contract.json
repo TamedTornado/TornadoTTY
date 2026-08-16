@@ -45,7 +45,7 @@
     {"id":"transcriptPath","linux":"IMPLEMENTED","classification":"linux-and-adapter-extension"}
   ],
   "cli_forms": [
-    {"id":"agent-event","linux":"PARTIAL","remaining":["Copilot source adapter and managed launch (GH-47)","Small Harness managed launch (GH-47)"]},
+    {"id":"agent-event","linux":"IMPLEMENTED"},
     {"id":"agent-signal.lifecycle","linux":"IMPLEMENTED"},
     {"id":"agent-signal.pid","linux":"IMPLEMENTED"},
     {"id":"agent-signal.shell-state","linux":"IMPLEMENTED"},
@@ -149,10 +149,10 @@
       {"aliases":["post_llm_call"],"normalized":["agent.idle"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;stdout-json-object","failure_behavior":"outside-routed-pane-no-op-with-json-object;malformed-error"},
       {"aliases":["on_session_end","on_session_finalize","session_end","end"],"normalized":["agent.idle"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;stdout-json-object","failure_behavior":"outside-routed-pane-no-op-with-json-object;malformed-error"}
     ]},
-    {"id":"copilot","source":true,"linux":"DEPENDENCY","prerequisite":"GH-47 managed Copilot launcher and exact source adapter audit","events":[
-      {"aliases":["session-start","session-end","user-prompt-submitted","pre-tool-use","post-tool-use","error-occurred"],"normalized":["session.start","session.end","agent.running","agent.needs-input or agent.input-resolved for question tool","agent.needs-input for error"],"required_identifiers":["authenticated-pane"],"acknowledgement":"source-acknowledgement-pending-GH-47","failure_behavior":"not-installed;GH-47 dependency"}
+    {"id":"copilot","source":true,"linux":"IMPLEMENTED","events":[
+      {"aliases":["session-start","session-end","user-prompt-submitted","pre-tool-use","post-tool-use","error-occurred"],"normalized":["session.start plus agent.idle","session.end","agent.running","agent.needs-input for question tool","agent.idle for completed question tool","no event for error or non-question tool"],"required_identifiers":["authenticated-pane for emitted events"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"recognized source no-op exits zero;unknown or malformed event exits nonzero"}
     ]},
-    {"id":"small-harness","source":true,"linux":"IMPLEMENTED","launcher_status":"DEPENDENCY","launcher_prerequisite":"GH-47 source small-harness managed launch parity","events":[
+    {"id":"small-harness","source":true,"linux":"IMPLEMENTED","events":[
       {"aliases":["SessionStart"],"normalized":["session.start"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"unknown-no-op;malformed-error"},
       {"aliases":["PermissionRequest"],"normalized":["agent.needs-input"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"unknown-no-op;malformed-error"},
       {"aliases":["PreToolUse"],"normalized":["agent.needs-input for question tool;otherwise agent.running"],"required_identifiers":["authenticated-pane"],"acknowledgement":"exit-0;empty-stdout","failure_behavior":"unknown-no-op;malformed-error"},

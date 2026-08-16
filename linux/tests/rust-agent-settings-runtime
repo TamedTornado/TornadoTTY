@@ -126,7 +126,7 @@ zentty_product_wait_for_log "${log}" \
     'agent-settings loaded teams=true wrappers-available=' \
     "Agents page did not report its exact source/platform inventory" || fail "settings inventory missing"
 grep -F 'agent-settings loaded teams=true wrappers-available=' "${log}" |
-    grep -Fq 'source-unavailable=13 status-item-available=false caffeination-available=true' ||
+    grep -Fq 'source-unavailable=8 status-item-available=false caffeination-available=true' ||
     fail "Agents page silently dropped source or platform inventory"
 grep -Fq 'agent-settings integration=codex requested=on observed=wrapper-ready class=ephemeral' "${log}" ||
     fail "Agents page did not distinguish requested Codex state from observed wrapper readiness"

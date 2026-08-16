@@ -2352,6 +2352,30 @@ impl WorkspaceState {
                     || status.agent_name.eq_ignore_ascii_case("gemini cli")
                 {
                     vec!["gemini".to_owned(), "--resume".to_owned()]
+                } else if status.agent_name.eq_ignore_ascii_case("copilot")
+                    || status.agent_name.eq_ignore_ascii_case("github copilot")
+                    || status.agent_name.eq_ignore_ascii_case("github copilot cli")
+                {
+                    vec![
+                        "copilot".to_owned(),
+                        format!("--resume={}", status.session_id),
+                    ]
+                } else if status.agent_name.eq_ignore_ascii_case("opencode") {
+                    vec![
+                        "opencode".to_owned(),
+                        "--session".to_owned(),
+                        status.session_id.clone(),
+                    ]
+                } else if status.agent_name.eq_ignore_ascii_case("pi") {
+                    vec!["pi".to_owned(), "-c".to_owned()]
+                } else if status.agent_name.eq_ignore_ascii_case("omp")
+                    || status.agent_name.eq_ignore_ascii_case("oh my pi")
+                {
+                    vec!["omp".to_owned(), "-c".to_owned()]
+                } else if status.agent_name.eq_ignore_ascii_case("small harness")
+                    || status.agent_name.eq_ignore_ascii_case("small-harness")
+                {
+                    vec!["small-harness".to_owned(), "--continue".to_owned()]
                 } else {
                     return None;
                 };

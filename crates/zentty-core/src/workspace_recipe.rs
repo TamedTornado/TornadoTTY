@@ -299,13 +299,45 @@ impl PaneRestoreDraft {
         if self.tool_name.eq_ignore_ascii_case("gemini")
             || self.tool_name.eq_ignore_ascii_case("gemini cli")
         {
-            self.working_directory
-                .as_deref()
-                .map(str::trim)
-                .filter(|path| !path.is_empty())?;
+            self.require_working_directory()?;
             return Some("gemini --resume".to_owned());
         }
+        if self.tool_name.eq_ignore_ascii_case("copilot")
+            || self.tool_name.eq_ignore_ascii_case("github copilot")
+            || self.tool_name.eq_ignore_ascii_case("github copilot cli")
+        {
+            let session_id = validated_uuid(&self.session_id)?;
+            return Some(format!("copilot --resume={session_id}"));
+        }
+        if self.tool_name.eq_ignore_ascii_case("opencode") {
+            let session_id = validated_opencode_session_id(&self.session_id)?;
+            return Some(format!("opencode --session {session_id}"));
+        }
+        if self.tool_name.eq_ignore_ascii_case("pi") {
+            self.require_working_directory()?;
+            return Some("pi -c".to_owned());
+        }
+        if self.tool_name.eq_ignore_ascii_case("omp")
+            || self.tool_name.eq_ignore_ascii_case("oh my pi")
+        {
+            self.require_working_directory()?;
+            return Some("omp -c".to_owned());
+        }
+        if self.tool_name.eq_ignore_ascii_case("small harness")
+            || self.tool_name.eq_ignore_ascii_case("small-harness")
+        {
+            self.require_working_directory()?;
+            return Some("small-harness --continue".to_owned());
+        }
         None
+    }
+
+    fn require_working_directory(&self) -> Option<()> {
+        self.working_directory
+            .as_deref()
+            .map(str::trim)
+            .filter(|path| !path.is_empty())
+            .map(|_| ())
     }
 }
 
@@ -333,6 +365,15 @@ fn validated_codex_session_id(value: &str) -> Option<String> {
         return None;
     }
     Some(value.to_owned())
+}
+
+fn validated_opencode_session_id(value: &str) -> Option<String> {
+    let suffix = value.strip_prefix("ses_")?;
+    (!suffix.is_empty()
+        && suffix
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric()))
+    .then(|| value.to_owned())
 }
 
 fn validated_uuid(value: &str) -> Option<String> {

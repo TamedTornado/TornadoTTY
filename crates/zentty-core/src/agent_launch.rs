@@ -4,19 +4,29 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::path::Path;
 
+mod remaining;
+
+pub use remaining::{build_copilot_config, build_small_harness_hooks};
+use remaining::{copilot_plan, opencode_plan, pi_family_plan, small_harness_plan};
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AgentLaunchTool {
     Amp,
     Claude,
     Codex,
+    Copilot,
     Cursor,
     Droid,
     Gemini,
+    OpenCode,
+    Pi,
+    Omp,
     Kimi,
     Grok,
     Agy,
     Hermes,
     Vibe,
+    SmallHarness,
 }
 
 impl AgentLaunchTool {
@@ -30,14 +40,19 @@ impl AgentLaunchTool {
             "amp" => Ok(Self::Amp),
             "claude" => Ok(Self::Claude),
             "codex" => Ok(Self::Codex),
+            "copilot" => Ok(Self::Copilot),
             "cursor" | "cursor-agent" => Ok(Self::Cursor),
             "droid" => Ok(Self::Droid),
             "gemini" => Ok(Self::Gemini),
+            "opencode" => Ok(Self::OpenCode),
+            "pi" => Ok(Self::Pi),
+            "omp" => Ok(Self::Omp),
             "kimi" | "kimi-cli" => Ok(Self::Kimi),
             "grok" => Ok(Self::Grok),
             "agy" => Ok(Self::Agy),
             "hermes" => Ok(Self::Hermes),
             "vibe" | "mistral-vibe" => Ok(Self::Vibe),
+            "small-harness" => Ok(Self::SmallHarness),
             _ => Err(AgentLaunchError::UnsupportedTool(value.to_owned())),
         }
     }
@@ -48,14 +63,19 @@ impl AgentLaunchTool {
             Self::Amp => "amp",
             Self::Claude => "claude",
             Self::Codex => "codex",
+            Self::Copilot => "copilot",
             Self::Cursor => "cursor-agent",
             Self::Droid => "droid",
             Self::Gemini => "gemini",
+            Self::OpenCode => "opencode",
+            Self::Pi => "pi",
+            Self::Omp => "omp",
             Self::Kimi => "kimi",
             Self::Grok => "grok",
             Self::Agy => "agy",
             Self::Hermes => "hermes",
             Self::Vibe => "vibe",
+            Self::SmallHarness => "small-harness",
         }
     }
 
@@ -65,14 +85,19 @@ impl AgentLaunchTool {
             Self::Amp => &["amp"],
             Self::Claude => &["claude"],
             Self::Codex => &["codex"],
+            Self::Copilot => &["copilot"],
             Self::Cursor => &["cursor-agent"],
             Self::Droid => &["droid"],
             Self::Gemini => &["gemini"],
+            Self::OpenCode => &["opencode"],
+            Self::Pi => &["pi"],
+            Self::Omp => &["omp"],
             Self::Kimi => &["kimi", "kimi-cli"],
             Self::Grok => &["grok"],
             Self::Agy => &["agy"],
             Self::Hermes => &["hermes"],
             Self::Vibe => &["vibe", "mistral-vibe"],
+            Self::SmallHarness => &["small-harness"],
         }
     }
 
@@ -87,9 +112,21 @@ impl AgentLaunchTool {
             Self::Agy => Some("agy-hooks"),
             Self::Hermes => Some("hermes-hooks"),
             Self::Vibe => Some("vibe-hooks"),
-            Self::Claude | Self::Codex | Self::Gemini => None,
+            Self::Claude
+            | Self::Codex
+            | Self::Copilot
+            | Self::Gemini
+            | Self::OpenCode
+            | Self::Pi
+            | Self::Omp
+            | Self::SmallHarness => None,
         }
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AgentLaunchAction {
+    pub standard_input: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -98,6 +135,7 @@ pub struct AgentLaunchPlan {
     pub arguments: Vec<String>,
     pub set_environment: BTreeMap<String, String>,
     pub unset_environment: Vec<String>,
+    pub pre_launch_actions: Vec<AgentLaunchAction>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -141,9 +179,15 @@ pub fn build_agent_launch_plan(
             set_environment: BTreeMap::new(),
             unset_environment: if tool == AgentLaunchTool::Claude {
                 vec!["CLAUDECODE".to_owned()]
+            } else if tool == AgentLaunchTool::SmallHarness {
+                vec![
+                    "SMALL_HARNESS_MANAGED_HOOKS_FILE".to_owned(),
+                    "SMALL_HARNESS_MANAGED_HOOKS_JSON".to_owned(),
+                ]
             } else {
                 Vec::new()
             },
+            pre_launch_actions: Vec::new(),
         });
     }
     match tool {
@@ -161,6 +205,25 @@ pub fn build_agent_launch_plan(
             environment,
         )),
         AgentLaunchTool::Gemini => Ok(gemini_plan(executable_path.into(), arguments, environment)),
+        AgentLaunchTool::Copilot => {
+            Ok(copilot_plan(executable_path.into(), arguments, environment))
+        }
+        AgentLaunchTool::OpenCode => Ok(opencode_plan(
+            executable_path.into(),
+            arguments,
+            environment,
+        )),
+        AgentLaunchTool::Pi | AgentLaunchTool::Omp => Ok(pi_family_plan(
+            tool,
+            executable_path.into(),
+            arguments,
+            environment,
+        )),
+        AgentLaunchTool::SmallHarness => Ok(small_harness_plan(
+            executable_path.into(),
+            arguments,
+            environment,
+        )),
         tool => Ok(persistent_plan(tool, executable_path.into(), arguments)),
     }
 }
@@ -170,6 +233,24 @@ fn integration_is_disabled(
     arguments: &[String],
     environment: &BTreeMap<String, String>,
 ) -> bool {
+    if matches!(
+        tool,
+        AgentLaunchTool::Copilot
+            | AgentLaunchTool::OpenCode
+            | AgentLaunchTool::Pi
+            | AgentLaunchTool::Omp
+            | AgentLaunchTool::SmallHarness
+    ) && [
+        "ZENTTY_INSTANCE_SOCKET",
+        "ZENTTY_PANE_TOKEN",
+        "ZENTTY_WORKLANE_ID",
+        "ZENTTY_PANE_ID",
+    ]
+    .iter()
+    .any(|key| environment.get(*key).is_none_or(String::is_empty))
+    {
+        return true;
+    }
     match tool {
         AgentLaunchTool::Claude => {
             environment
@@ -192,8 +273,34 @@ fn integration_is_disabled(
                 .map(String::as_str)
                 == Some("1")
         }
+        AgentLaunchTool::Copilot => {
+            environment
+                .get("ZENTTY_COPILOT_HOOKS_DISABLED")
+                .map(String::as_str)
+                == Some("1")
+        }
+        AgentLaunchTool::OpenCode => false,
+        AgentLaunchTool::Pi | AgentLaunchTool::Omp => {
+            remaining::pi_family_integration_is_disabled(tool, arguments, environment)
+        }
+        AgentLaunchTool::SmallHarness => {
+            remaining::small_harness_integration_is_disabled(arguments, environment)
+        }
         tool => persistent_integration_is_disabled(tool, arguments, environment),
     }
+}
+
+/// Returns whether this invocation is eligible for pane-scoped integration.
+///
+/// Filesystem preparation must call this before creating ephemeral overlays so
+/// management, early-exit, disabled, and outside-pane launches stay non-mutating.
+#[must_use]
+pub fn agent_launch_requires_bootstrap(
+    tool: AgentLaunchTool,
+    arguments: &[String],
+    environment: &BTreeMap<String, String>,
+) -> bool {
+    !integration_is_disabled(tool, arguments, environment)
 }
 
 fn persistent_plan(
@@ -216,6 +323,7 @@ fn persistent_plan(
         arguments: arguments.to_vec(),
         set_environment,
         unset_environment: Vec::new(),
+        pre_launch_actions: Vec::new(),
     }
 }
 
@@ -283,7 +391,14 @@ fn persistent_integration_is_disabled(
             "ZENTTY_VIBE_HOOKS_DISABLED",
             &["login", "logout", "setup", "install", "uninstall", "update"],
         ),
-        AgentLaunchTool::Claude | AgentLaunchTool::Codex | AgentLaunchTool::Gemini => return false,
+        AgentLaunchTool::Claude
+        | AgentLaunchTool::Codex
+        | AgentLaunchTool::Copilot
+        | AgentLaunchTool::Gemini
+        | AgentLaunchTool::OpenCode
+        | AgentLaunchTool::Pi
+        | AgentLaunchTool::Omp
+        | AgentLaunchTool::SmallHarness => return false,
     };
     let hermes_passthrough = tool == AgentLaunchTool::Hermes
         && arguments
@@ -319,6 +434,7 @@ fn gemini_plan(
         arguments: arguments.to_vec(),
         set_environment,
         unset_environment: Vec::new(),
+        pre_launch_actions: Vec::new(),
     }
 }
 
@@ -446,6 +562,7 @@ fn claude_plan(
         arguments: planned,
         set_environment,
         unset_environment: vec!["CLAUDECODE".to_owned()],
+        pre_launch_actions: Vec::new(),
     })
 }
 
@@ -538,6 +655,7 @@ fn codex_plan(
             .filter(|path| is_linux_zentty_launch_path(path))
             .map(|_| vec!["CODEX_HOME".to_owned()])
             .unwrap_or_default(),
+        pre_launch_actions: Vec::new(),
     }
 }
 
