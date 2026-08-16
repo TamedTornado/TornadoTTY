@@ -217,29 +217,31 @@ pub type ProductIpcRequest = ApplicationRequest;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ApplicationReply {
-    stdout: Option<String>,
+    result: Option<ApplicationResult>,
     error: Option<ApplicationReplyError>,
 }
 
 impl ApplicationReply {
-    pub const MAX_STDOUT_BYTES: usize = 256 * 1024;
+    pub const MAX_RESULT_BYTES: usize = 256 * 1024;
     pub const MAX_ERROR_BYTES: usize = 4 * 1024;
 
-    /// Creates a bounded successful reply.
+    /// Creates a bounded successful structured result.
     ///
     /// # Errors
     ///
-    /// Returns [`ApplicationApiError`] when stdout exceeds the protocol ceiling.
-    pub fn success(stdout: impl Into<String>) -> Result<Self, ApplicationApiError> {
-        let stdout = stdout.into();
-        if stdout.len() > Self::MAX_STDOUT_BYTES {
+    /// Returns [`ApplicationApiError`] when the serialized result exceeds the
+    /// protocol ceiling.
+    pub fn success(result: ApplicationResult) -> Result<Self, ApplicationApiError> {
+        let bytes = serde_json::to_vec(&result)
+            .map_err(|error| ApplicationApiError::InvalidReply(error.to_string()))?;
+        if bytes.len() > Self::MAX_RESULT_BYTES {
             return Err(ApplicationApiError::InvalidReply(format!(
-                "product output exceeds {} bytes",
-                Self::MAX_STDOUT_BYTES
+                "application result exceeds {} bytes",
+                Self::MAX_RESULT_BYTES
             )));
         }
         Ok(Self {
-            stdout: Some(stdout),
+            result: Some(result),
             error: None,
         })
     }
@@ -272,7 +274,7 @@ impl ApplicationReply {
             )));
         }
         Ok(Self {
-            stdout: None,
+            result: None,
             error: Some(ApplicationReplyError {
                 category: ApplicationErrorCategory::from_code(&code),
                 code,
@@ -282,13 +284,54 @@ impl ApplicationReply {
     }
 
     #[must_use]
-    pub fn stdout(&self) -> Option<&str> {
-        self.stdout.as_deref()
+    pub const fn result(&self) -> Option<&ApplicationResult> {
+        self.result.as_ref()
     }
 
     #[must_use]
     pub const fn error(&self) -> Option<&ApplicationReplyError> {
         self.error.as_ref()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ApplicationResultKind {
+    Empty,
+    Discovery,
+    Selection,
+    Topology,
+    Theme,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ApplicationResult {
+    kind: ApplicationResultKind,
+    value: serde_json::Value,
+}
+
+impl ApplicationResult {
+    #[must_use]
+    pub const fn new(kind: ApplicationResultKind, value: serde_json::Value) -> Self {
+        Self { kind, value }
+    }
+
+    #[must_use]
+    pub const fn empty() -> Self {
+        Self {
+            kind: ApplicationResultKind::Empty,
+            value: serde_json::Value::Null,
+        }
+    }
+
+    #[must_use]
+    pub const fn kind(&self) -> ApplicationResultKind {
+        self.kind
+    }
+
+    #[must_use]
+    pub const fn value(&self) -> &serde_json::Value {
+        &self.value
     }
 }
 
@@ -376,7 +419,7 @@ pub type ProductIpcError = ApplicationApiError;
 mod tests {
     use super::{
         APPLICATION_API_VERSION, ApplicationErrorCategory, ApplicationOperation, ApplicationReply,
-        ApplicationRequest, ApplicationScope,
+        ApplicationRequest, ApplicationResult, ApplicationResultKind, ApplicationScope,
     };
     use std::collections::HashSet;
 
@@ -502,5 +545,33 @@ mod tests {
             let reply = ApplicationReply::failure(code, "prose may change").unwrap();
             assert_eq!(reply.error().unwrap().category(), expected, "{code}");
         }
+    }
+
+    #[test]
+    fn successful_replies_carry_one_closed_structured_result() {
+        let result = ApplicationResult::new(
+            ApplicationResultKind::Topology,
+            serde_json::json!({"createdPaneIDs":["pane-2"]}),
+        );
+        let reply = ApplicationReply::success(result.clone()).unwrap();
+        assert_eq!(reply.result(), Some(&result));
+        assert!(reply.error().is_none());
+        assert_eq!(
+            serde_json::to_value(reply).unwrap(),
+            serde_json::json!({
+                "result": {
+                    "kind": "topology",
+                    "value": {"createdPaneIDs":["pane-2"]}
+                },
+                "error": null
+            })
+        );
+        assert!(
+            ApplicationReply::success(ApplicationResult::new(
+                ApplicationResultKind::Theme,
+                serde_json::Value::String("x".repeat(ApplicationReply::MAX_RESULT_BYTES + 1)),
+            ))
+            .is_err()
+        );
     }
 }

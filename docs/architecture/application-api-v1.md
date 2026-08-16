@@ -49,8 +49,12 @@ and
 [`schemas/zentty-application-response-v1.schema.json`](schemas/zentty-application-response-v1.schema.json).
 The request schema expresses per-argument and count ceilings. The additional
 128 KiB aggregate-argument ceiling is enforced by the API constructor because
-JSON Schema cannot express the aggregate UTF-8 byte count directly. Successful
-stdout is limited to 256 KiB and an error message to 4 KiB.
+JSON Schema cannot express the aggregate UTF-8 byte count directly. A
+serialized structured result is limited to 256 KiB and an error message to 4
+KiB. The five closed result kinds are `empty`, `discovery`, `selection`,
+`topology`, and `theme`; product owners never choose terminal tables, shell
+exports, or pretty-printed JSON. The CLI renders those presentations from the
+structured result and the original parsed command.
 
 ## Authentication and target identity
 

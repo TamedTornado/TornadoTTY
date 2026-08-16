@@ -4,19 +4,22 @@ mod cli;
 mod discovery;
 mod integrations;
 mod launch;
+mod presentation;
 mod server;
 
 pub use cli::{CliProductCommand, parse_product_cli};
 pub use discovery::{DiscoveredInstance, InstanceCredential, discover_instances, publish_instance};
 pub use integrations::{install_integration, uninstall_integration};
 pub use launch::{LaunchError, launch_agent, resolve_real_binary};
+pub use presentation::render_application_result;
 pub use server::{
     ServerCommand, ServerIpcError, ServerIpcReply, ServerIpcReplyError, ServerIpcRequest,
 };
 pub use zentty_api::{
     APPLICATION_API_VERSION, ApplicationApiError, ApplicationErrorCategory, ApplicationOperation,
-    ApplicationReply, ApplicationReplyError, ApplicationRequest, ApplicationScope, ProductIpcError,
-    ProductIpcKind, ProductIpcReply, ProductIpcReplyError, ProductIpcRequest,
+    ApplicationReply, ApplicationReplyError, ApplicationRequest, ApplicationResult,
+    ApplicationResultKind, ApplicationScope, ProductIpcError, ProductIpcKind, ProductIpcReply,
+    ProductIpcReplyError, ProductIpcRequest,
 };
 
 use serde::{Deserialize, Serialize};
@@ -165,7 +168,10 @@ struct WireResponse {
 
 #[derive(Debug, Deserialize, Serialize)]
 struct WireResponseResult {
+    #[serde(skip_serializing_if = "Option::is_none")]
     stdout: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    application: Option<ApplicationResult>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -675,13 +681,16 @@ impl AgentIpcClient {
             });
         }
         if response.ok {
-            ProductIpcReply::success(
-                response
-                    .result
-                    .and_then(|result| result.stdout)
-                    .unwrap_or_default(),
-            )
-            .map_err(|error| AgentIpcError::InvalidRequest(error.to_string()))
+            let result = response
+                .result
+                .and_then(|result| result.application)
+                .ok_or_else(|| {
+                    AgentIpcError::InvalidRequest(
+                        "successful application response omitted its structured result".to_owned(),
+                    )
+                })?;
+            ProductIpcReply::success(result)
+                .map_err(|error| AgentIpcError::InvalidRequest(error.to_string()))
         } else {
             let error = response.error.ok_or_else(|| {
                 AgentIpcError::InvalidRequest("failed response omitted its error".to_owned())
@@ -849,6 +858,7 @@ fn handle_connection(
             ok: true,
             result: Some(WireResponseResult {
                 stdout: reply.stdout,
+                application: reply.application,
             }),
             error: None,
         },
@@ -930,6 +940,7 @@ struct ReceivedResponse {
 
 struct ProductReply {
     stdout: Option<String>,
+    application: Option<ApplicationResult>,
     error: Option<ProductReplyError>,
 }
 
@@ -943,6 +954,7 @@ impl From<TmuxCompatReply> for ProductReply {
     fn from(reply: TmuxCompatReply) -> Self {
         Self {
             stdout: reply.stdout().map(str::to_owned),
+            application: None,
             error: reply.error().map(|error| ProductReplyError {
                 category: Some(ApplicationErrorCategory::ProductRejection),
                 code: error.code().to_owned(),
@@ -956,6 +968,7 @@ impl From<ServerIpcReply> for ProductReply {
     fn from(reply: ServerIpcReply) -> Self {
         Self {
             stdout: reply.stdout().map(str::to_owned),
+            application: None,
             error: reply.error().map(|error| ProductReplyError {
                 category: Some(ApplicationErrorCategory::ProductRejection),
                 code: error.code().to_owned(),
@@ -968,7 +981,8 @@ impl From<ServerIpcReply> for ProductReply {
 impl From<ProductIpcReply> for ProductReply {
     fn from(reply: ProductIpcReply) -> Self {
         Self {
-            stdout: reply.stdout().map(str::to_owned),
+            stdout: None,
+            application: reply.result().cloned(),
             error: reply.error().map(|error| ProductReplyError {
                 category: Some(error.category()),
                 code: error.code().to_owned(),

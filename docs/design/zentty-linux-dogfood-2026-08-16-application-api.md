@@ -366,3 +366,58 @@ disappear from that inventory merely because it is hidden or internal.
   delivered CLI exercised the real GTK/Ghostty product over its private socket
   under controlled X11 and Wayland, including cross-pane environment
   credentials and concurrent-instance fail-closed behavior, PASS.
+
+## Slice 10 plan: typed results and CLI-owned presentation
+
+The remaining architectural mismatch is explicit: `ApplicationReply` still
+names its success field `stdout`, and the Linux product service still chooses
+JSON versus table/text output from CLI flags. That contradicts the intended
+boundary even though routing already uses the API. The repair will:
+
+1. add a closed, serialized application-result kind to `zentty-api`;
+2. make product owners return canonical structured discovery, selection,
+   topology, theme, or empty results rather than terminal presentation;
+3. render source-compatible JSON/text/shell output only in the CLI adapter;
+4. update the executable response schema and non-Rust example without adding a
+   second transport or product harness; and
+5. retain exact existing CLI goldens through the real staged X11/Wayland
+   journey before committing.
+
+Raw string success exists only in specialized tmux/server protocols and will
+not be smuggled back into the application result enum. This is a contract
+change inside the still-open extraction issue, so the v1 producer schema and
+all fixtures must change atomically before the inventory can move from
+`EXTRACTION_IN_PROGRESS`.
+
+## Slice 10 result: structured results and CLI-owned presentation
+
+- Added the closed `ApplicationResultKind` set (`empty`, `discovery`,
+  `selection`, `topology`, `theme`) and a bounded structured value to
+  `zentty-api`. Application replies no longer expose a field named `stdout`.
+  The shared Unix envelope retains its purpose-specific `stdout` member only
+  for the separately owned tmux/server protocols; application responses carry
+  `result.application`.
+- Product owners now return canonical values. Discovery returns arrays or a
+  nested overview, selection returns a selected pane plus endpoint metadata,
+  topology returns the receipt object, theme returns its stable token, and
+  side-effect-only operations return `empty`. Moved table, overview, JSON,
+  shell-export, topology-summary, and theme text formatting into the CLI
+  adapter. The old product-side renderer and its duplicate helpers were
+  removed rather than retained as a second presentation system.
+- The first transport rerun exposed two exact-output fixture mistakes: the
+  language-neutral example intentionally emits compact JSON while the
+  delivered CLI preserves its reviewed pretty JSON. Corrected the two swapped
+  expectations; no runtime output was normalized or changed to satisfy them.
+  The first presentation golden run also caught a missing fixture title in the
+  worklane row. The renderer was correct; the focused fixture was repaired.
+- Updated the executable response schema, inventory, schema negative test, and
+  non-Rust client atomically. A wrong `empty` kind carrying a discovery array
+  is now rejected. Focused results: API tests 5/5 PASS, CLI presentation/library
+  tests 5/5 PASS, parser tests 11/11 PASS, real Unix transport tests 12/12 PASS,
+  Linux coordinator service tests 4/4 PASS, schema positives 3/3 and negatives
+  6/6 PASS, inventory/architecture positive and negative runners PASS,
+  ShellCheck, formatting, and diff hygiene PASS.
+- Fresh ReleaseSafe staging PASS. The delivered CLI and real GTK/Ghostty
+  product preserved exact schemas, text goldens, discovery, selection, theme,
+  topology mutations, cross-pane capabilities, and concurrent-instance
+  isolation under both controlled X11 and controlled Wayland, PASS.

@@ -6,9 +6,22 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 use zentty_agent_ipc::{
     AgentIpcClient, AgentIpcServer, ApplicationErrorCategory, ApplicationRequest,
-    AuthenticatedProductRequest, ProductIpcKind, ProductIpcReply, publish_instance,
+    ApplicationResult, ApplicationResultKind, AuthenticatedProductRequest, ProductIpcKind,
+    ProductIpcReply, publish_instance,
 };
 use zentty_core::{AgentTarget, PaneTokenRegistry};
+
+fn discovery_reply(value: serde_json::Value) -> ProductIpcReply {
+    ProductIpcReply::success(ApplicationResult::new(
+        ApplicationResultKind::Discovery,
+        value,
+    ))
+    .unwrap()
+}
+
+fn empty_reply() -> ProductIpcReply {
+    ProductIpcReply::success(ApplicationResult::empty()).unwrap()
+}
 
 fn running_server() -> (
     std::path::PathBuf,
@@ -70,7 +83,7 @@ fn real_socket_authenticates_and_returns_bounded_product_reply() {
         assert_eq!(request.request.subcommand(), "panes");
         assert_eq!(request.request.arguments(), ["--json"]);
         request
-            .respond(ProductIpcReply::success(r#"[{"id":"pane-1"}]"#).unwrap())
+            .respond(discovery_reply(serde_json::json!([{"id":"pane-1"}])))
             .unwrap();
     });
 
@@ -88,7 +101,10 @@ fn real_socket_authenticates_and_returns_bounded_product_reply() {
         )),
     )
     .unwrap();
-    assert_eq!(reply.stdout(), Some(r#"[{"id":"pane-1"}]"#));
+    assert_eq!(
+        reply.result().unwrap().value(),
+        &serde_json::json!([{"id":"pane-1"}])
+    );
     assert!(reply.error().is_none());
     worker.join().unwrap();
     server.shutdown().unwrap();
@@ -106,7 +122,7 @@ fn partial_frame_writes_are_reassembled_before_authentication_and_dispatch() {
         );
         assert_eq!(request.request.subcommand(), "panes");
         request
-            .respond(ProductIpcReply::success("partial-ok").unwrap())
+            .respond(discovery_reply(serde_json::json!([{"id":"partial-ok"}])))
             .unwrap();
     });
     let frame = br#"{"version":1,"id":"partial","kind":"discover","arguments":["--json"],"standardInput":null,"environment":{"ZENTTY_PANE_TOKEN":"caller-token","ZENTTY_WINDOW_ID":"forged-window","ZENTTY_WORKLANE_ID":"forged-lane","ZENTTY_PANE_ID":"forged-pane"},"expectsResponse":true,"subcommand":"panes"}"#;
@@ -120,7 +136,10 @@ fn partial_frame_writes_are_reassembled_before_authentication_and_dispatch() {
     let response: serde_json::Value = serde_json::from_str(&response).unwrap();
     assert_eq!(response["id"], "partial");
     assert_eq!(response["ok"], true);
-    assert_eq!(response["result"]["stdout"], "partial-ok");
+    assert_eq!(
+        response["result"]["application"],
+        serde_json::json!({"kind":"discovery","value":[{"id":"partial-ok"}]})
+    );
     worker.join().unwrap();
     server.shutdown().unwrap();
     std::fs::remove_dir_all(root).unwrap();
@@ -177,7 +196,10 @@ fn concurrent_mixed_auth_clients_dispatch_only_canonical_authorized_targets() {
                 AgentTarget::new("window-1", "lane-1", "pane-1")
             );
             request
-                .respond(ProductIpcReply::success(format!("authorized-{sequence}")).unwrap())
+                .respond(discovery_reply(serde_json::json!({
+                    "sequence": sequence,
+                    "authorized": true,
+                })))
                 .unwrap();
         }
         assert!(receiver.recv_timeout(Duration::from_millis(150)).is_err());
@@ -300,7 +322,7 @@ fn published_non_rust_client_uses_the_real_authenticated_socket() {
         assert_eq!(request.request.subcommand(), "panes");
         assert_eq!(request.request.arguments(), ["--json"]);
         request
-            .respond(ProductIpcReply::success("[{\"id\":\"pane-1\"}]\n").unwrap())
+            .respond(discovery_reply(serde_json::json!([{"id":"pane-1"}])))
             .unwrap();
     });
     let example = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -360,7 +382,7 @@ fn delivered_cli_discovers_one_instance_without_exposing_its_credential() {
             zentty_core::CapabilityAuthority::Instance
         );
         request
-            .respond(ProductIpcReply::success("[{\"id\":\"pane-1\"}]\n").unwrap())
+            .respond(discovery_reply(serde_json::json!([{"id":"pane-1"}])))
             .unwrap();
         assert!(
             product_receiver
@@ -379,7 +401,7 @@ fn delivered_cli_discovers_one_instance_without_exposing_its_credential() {
     assert!(output.status.success(), "{output:?}");
     assert_eq!(
         String::from_utf8(output.stdout).unwrap(),
-        "[{\"id\":\"pane-1\"}]\n"
+        "[\n  {\n    \"id\": \"pane-1\"\n  }\n]\n"
     );
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(!stderr.contains(token));
@@ -415,9 +437,7 @@ fn real_shell_signal_cli_uses_the_authenticated_product_route() {
             request.request.arguments(),
             ["pane-context", "local", "--path", "/tmp/space and λ"]
         );
-        request
-            .respond(ProductIpcReply::success("").unwrap())
-            .unwrap();
+        request.respond(empty_reply()).unwrap();
     });
     let output = Command::new(env!("CARGO_BIN_EXE_zentty"))
         .args([
@@ -484,9 +504,7 @@ fn real_agent_status_cli_maps_to_the_authenticated_lifecycle_route() {
                 "approval",
             ]
         );
-        request
-            .respond(ProductIpcReply::success("").unwrap())
-            .unwrap();
+        request.respond(empty_reply()).unwrap();
     });
     let output = Command::new(env!("CARGO_BIN_EXE_zentty"))
         .args([

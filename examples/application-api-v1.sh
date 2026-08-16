@@ -39,7 +39,9 @@ response="$({
 jq -e --arg id "${request_id}" '
   .version == 1 and .applicationApiVersion == 1 and .id == $id and
   (.capabilities | index("panes") != null) and
-  ((.ok == true and .error == null and (.result.stdout | type == "string")) or
+  ((.ok == true and .error == null and
+    .result.application.kind == "discovery" and
+    (.result.application.value | type == "array")) or
    (.ok == false and .result == null and
     (.error.category | type == "string") and
     (.error.code | type == "string") and
@@ -53,4 +55,4 @@ if [[ "$(jq -r '.ok' <<<"${response}")" != true ]]; then
     jq -r '"\(.error.category)/\(.error.code): \(.error.message)"' <<<"${response}" >&2
     exit 1
 fi
-jq -j '.result.stdout' <<<"${response}"
+jq -j '.result.application.value | tojson + "\n"' <<<"${response}"

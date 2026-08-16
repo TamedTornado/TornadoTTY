@@ -1,5 +1,6 @@
 use zentty_agent_ipc::{
-    CliProductCommand, ProductIpcKind, ProductIpcReply, ProductIpcRequest, parse_product_cli,
+    ApplicationResult, ApplicationResultKind, CliProductCommand, ProductIpcKind, ProductIpcReply,
+    ProductIpcRequest, parse_product_cli,
 };
 
 fn values(arguments: &[&str]) -> Vec<String> {
@@ -394,5 +395,11 @@ fn bounded_product_protocol_rejects_unknown_routes_and_large_payloads() {
         )
         .is_err()
     );
-    assert!(ProductIpcReply::success("x".repeat(ProductIpcReply::MAX_STDOUT_BYTES + 1)).is_err());
+    assert!(
+        ProductIpcReply::success(ApplicationResult::new(
+            ApplicationResultKind::Theme,
+            serde_json::Value::String("x".repeat(ProductIpcReply::MAX_RESULT_BYTES + 1)),
+        ))
+        .is_err()
+    );
 }

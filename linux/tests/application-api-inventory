@@ -17,7 +17,7 @@ jq empty "${cli_contract}" 2>/dev/null || fail "CLI contract is not valid JSON"
 jq -e '
     (keys | sort) == [
       "api_version","authority","cli","cli_local_families","discovery","documentation","error_categories",
-      "operations","schema_version","schemas","service","specialized_families","status","transport"
+      "operations","result_kinds","schema_version","schemas","service","specialized_families","status","transport"
     ] and
     .schema_version == 1 and .api_version == 1 and
     .status == "EXTRACTION_IN_PROGRESS" and
@@ -40,6 +40,7 @@ jq -e '
       "retryable_instance_replacement","product_unavailable",
       "product_rejection","permanent_transport_failure"
     ] and
+    .result_kinds == ["empty","discovery","selection","topology","theme"] and
     (.operations | length == 19) and
     all(.operations[];
       (.id | type == "string" and test("^[a-z][a-z0-9-]*$")) and

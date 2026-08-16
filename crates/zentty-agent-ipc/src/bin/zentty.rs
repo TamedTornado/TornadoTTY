@@ -7,7 +7,7 @@ use std::process::{Command as ProcessCommand, Stdio};
 use std::time::Instant;
 use zentty_agent_ipc::{
     AgentIpcClient, CliProductCommand, ServerCommand, discover_instances, install_integration,
-    launch_agent, parse_product_cli, uninstall_integration,
+    launch_agent, parse_product_cli, render_application_result, uninstall_integration,
 };
 use zentty_core::{
     AgentEvent, AgentTarget, adapt_agy_hook, adapt_claude_hook, adapt_codex_hook,
@@ -264,7 +264,8 @@ fn run_product_cli(command: CliProductCommand) -> Result<(), String> {
             if let Some(error) = reply.error() {
                 return Err(format!("{}: {}", error.code(), error.message()));
             }
-            if let Some(stdout) = reply.stdout() {
+            if let Some(result) = reply.result() {
+                let stdout = render_application_result(&request, result)?;
                 std::io::stdout()
                     .write_all(stdout.as_bytes())
                     .map_err(|error| format!("could not write product response: {error}"))?;

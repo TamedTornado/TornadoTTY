@@ -25,9 +25,35 @@
     "result": {
       "type": ["object", "null"],
       "additionalProperties": false,
-      "required": ["stdout"],
+      "required": ["application"],
       "properties": {
-        "stdout": {"type": ["string", "null"], "maxLength": 262144}
+        "application": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "value"],
+          "properties": {
+            "kind": {"enum": ["empty", "discovery", "selection", "topology", "theme"]},
+            "value": {}
+          },
+          "allOf": [
+            {
+              "if": {"properties": {"kind": {"const": "empty"}}},
+              "then": {"properties": {"value": {"type": "null"}}}
+            },
+            {
+              "if": {"properties": {"kind": {"const": "discovery"}}},
+              "then": {"properties": {"value": {"type": ["array", "object"]}}}
+            },
+            {
+              "if": {"properties": {"kind": {"enum": ["selection", "topology"]}}},
+              "then": {"properties": {"value": {"type": "object"}}}
+            },
+            {
+              "if": {"properties": {"kind": {"const": "theme"}}},
+              "then": {"properties": {"value": {"type": "string"}}}
+            }
+          ]
+        }
       }
     },
     "error": {

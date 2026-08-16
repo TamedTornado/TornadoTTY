@@ -27,6 +27,7 @@
     "product_rejection",
     "permanent_transport_failure"
   ],
+  "result_kinds": ["empty", "discovery", "selection", "topology", "theme"],
   "authority": "crates/zentty-api/src/lib.rs",
   "documentation": "docs/architecture/application-api-v1.md",
   "schemas": {

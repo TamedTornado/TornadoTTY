@@ -32,12 +32,16 @@ inventory_capabilities="$(jq -c '[.operations[] | select(.external == true) | .w
 schema_capabilities="$(jq -c '.properties.capabilities.items.enum | sort' "${response_schema}")"
 [[ "${inventory_capabilities}" == "${schema_capabilities}" ]] ||
     fail "response schema capabilities drifted"
+inventory_result_kinds="$(jq -c '.result_kinds | sort' "${inventory}")"
+schema_result_kinds="$(jq -c '.properties.result.properties.application.properties.kind.enum | sort' "${response_schema}")"
+[[ "${inventory_result_kinds}" == "${schema_result_kinds}" ]] ||
+    fail "response schema result kinds drifted"
 
 cat >"${temp_dir}/request.json" <<'JSON'
 {"version":1,"applicationApiVersion":1,"id":"example-1","kind":"discover","arguments":["--json"],"standardInput":null,"environment":{"ZENTTY_PANE_TOKEN":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},"expectsResponse":true,"subcommand":"panes"}
 JSON
 cat >"${temp_dir}/success.json" <<'JSON'
-{"version":1,"applicationApiVersion":1,"capabilities":["panes"],"id":"example-1","ok":true,"result":{"stdout":"[]\n"},"error":null}
+{"version":1,"applicationApiVersion":1,"capabilities":["panes"],"id":"example-1","ok":true,"result":{"application":{"kind":"discovery","value":[]}},"error":null}
 JSON
 cat >"${temp_dir}/failure.json" <<'JSON'
 {"version":1,"applicationApiVersion":1,"capabilities":["panes"],"id":"example-1","ok":false,"result":null,"error":{"category":"stale_target","code":"stale_target","message":"target pane is unavailable"}}
@@ -64,5 +68,7 @@ jq 'del(.error.category)' "${temp_dir}/failure.json" >"${temp_dir}/missing-categ
 expect_rejected missing-category "${response_schema}"
 jq '.ok = true' "${temp_dir}/failure.json" >"${temp_dir}/contradictory-response.json"
 expect_rejected contradictory-response "${response_schema}"
+jq '.result.application.kind = "empty"' "${temp_dir}/success.json" >"${temp_dir}/wrong-result-shape.json"
+expect_rejected wrong-result-shape "${response_schema}"
 
-echo "application-api-schema: PASS operations=19 categories=10 positive=3 negative=5"
+echo "application-api-schema: PASS operations=19 categories=10 result-kinds=5 positive=3 negative=6"

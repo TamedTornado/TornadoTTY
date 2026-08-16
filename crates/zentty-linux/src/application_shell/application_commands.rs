@@ -5,7 +5,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use zentty_api::{
     ApplicationOperation, ApplicationReply as ProductIpcReply,
-    ApplicationRequest as ProductIpcRequest,
+    ApplicationRequest as ProductIpcRequest, ApplicationResult, ApplicationResultKind,
 };
 use zentty_core::{
     AgentTarget, CapabilityAuthority, PaneLayoutPolicy, PaneRecipe, PaneResizeDirection,
@@ -71,7 +71,7 @@ impl ApplicationShell {
             |(code, message)| {
                 ProductIpcReply::failure(code, message).expect("bounded product diagnostic")
             },
-            |stdout| ProductIpcReply::success(stdout).expect("bounded product output"),
+            |result| ProductIpcReply::success(result).expect("bounded product result"),
         )
     }
 
@@ -80,7 +80,7 @@ impl ApplicationShell {
         target: &AgentTarget,
         authority: CapabilityAuthority,
         request: &ProductIpcRequest,
-    ) -> Result<String, (&'static str, String)> {
+    ) -> Result<ApplicationResult, (&'static str, String)> {
         eprintln!(
             "zentty-linux: product-command subcommand={} target={} selector-pane={} selector-index={}",
             request.subcommand(),
@@ -110,13 +110,12 @@ impl ApplicationShell {
                 let before = pane_ids(&shell.borrow());
                 apply_split_command(shell, target, request.arguments())?;
                 let created = created_pane_ids(&shell.borrow(), &before);
-                return topology_response(
+                return Ok(topology_response(
                     &shell.borrow(),
                     "split",
                     &target.pane_id,
                     &created,
-                    request.arguments(),
-                );
+                ));
             }
             ApplicationOperation::Focus => apply_focus_command(shell, target, request.arguments())?,
             ApplicationOperation::PaneRename
@@ -127,24 +126,22 @@ impl ApplicationShell {
             ApplicationOperation::Close => Self::close_pane(shell, &target.pane_id),
             ApplicationOperation::Resize => {
                 apply_resize_command(shell, target, request.arguments())?;
-                return topology_response(
+                return Ok(topology_response(
                     &shell.borrow(),
                     "resize",
                     &target.pane_id,
                     &[],
-                    request.arguments(),
-                );
+                ));
             }
             ApplicationOperation::Layout => {
                 select_authenticated_target(shell, target)?;
                 apply_layout(shell, request.arguments())?;
-                return topology_response(
+                return Ok(topology_response(
                     &shell.borrow(),
                     "layout",
                     &target.pane_id,
                     &[],
-                    request.arguments(),
-                );
+                ));
             }
             ApplicationOperation::Theme => return apply_theme_command(shell, request.arguments()),
             ApplicationOperation::ShellSignal => {
@@ -163,23 +160,21 @@ impl ApplicationShell {
                     ));
                 }
                 let grid = apply_grid(shell, request.arguments())?;
-                return topology_response(
+                return Ok(topology_response(
                     &shell.borrow(),
                     "grid",
                     &grid.source_pane_id,
                     &grid.created_pane_ids,
-                    request.arguments(),
-                );
+                ));
             }
             ApplicationOperation::Zoom => {
                 Self::toggle_product_zoom(shell);
-                return topology_response(
+                return Ok(topology_response(
                     &shell.borrow(),
                     "zoom",
                     &target.pane_id,
                     &[],
-                    request.arguments(),
-                );
+                ));
             }
             operation => {
                 return Err((
@@ -192,7 +187,7 @@ impl ApplicationShell {
                 ));
             }
         }
-        Ok(String::new())
+        Ok(ApplicationResult::empty())
     }
 
     pub(crate) fn product_discovery_rows(
@@ -278,7 +273,7 @@ fn apply_shell_signal(
     shell: &Rc<RefCell<ApplicationShell>>,
     target: &AgentTarget,
     arguments: &[String],
-) -> Result<String, (&'static str, String)> {
+) -> Result<ApplicationResult, (&'static str, String)> {
     if arguments
         .first()
         .is_some_and(|kind| matches!(kind.as_str(), "lifecycle" | "pid"))
@@ -341,14 +336,14 @@ fn apply_shell_signal(
             );
         }
     }
-    Ok(String::new())
+    Ok(ApplicationResult::empty())
 }
 
 fn apply_agent_lifecycle_signal(
     shell: &Rc<RefCell<ApplicationShell>>,
     target: &AgentTarget,
     arguments: &[String],
-) -> Result<String, (&'static str, String)> {
+) -> Result<ApplicationResult, (&'static str, String)> {
     let signal = parse_agent_lifecycle_signal(arguments)?;
     let now = super::unix_time_ms();
     match signal {
@@ -404,7 +399,7 @@ fn apply_agent_lifecycle_signal(
         }
     }
     shell.borrow().render_sidebar();
-    Ok(String::new())
+    Ok(ApplicationResult::empty())
 }
 
 fn remove_null_fields(value: &mut serde_json::Value) {
@@ -436,8 +431,7 @@ fn topology_response(
     action: &str,
     source_pane_id: &str,
     created_pane_ids: &[String],
-    arguments: &[String],
-) -> Result<String, (&'static str, String)> {
+) -> ApplicationResult {
     let worklane = shell.state.active_worklane();
     let focused_pane_id = shell.state.focused_pane_id().unwrap_or(source_pane_id);
     let all_pane_ids = worklane
@@ -482,26 +476,7 @@ fn topology_response(
             "columns": columns,
         },
     });
-    if arguments.iter().any(|argument| argument == "--json") {
-        serde_json::to_string(&receipt)
-            .map(|value| value + "\n")
-            .map_err(|error| {
-                (
-                    "result_failed",
-                    format!("could not encode topology result: {error}"),
-                )
-            })
-    } else {
-        Ok(format!(
-            "{action}: window={} worklane={} source={} focused={} created={} affected={}\n",
-            shell.window_template.id,
-            worklane.id,
-            source_pane_id,
-            focused_pane_id,
-            created_pane_ids.len(),
-            affected_pane_ids.len(),
-        ))
-    }
+    ApplicationResult::new(ApplicationResultKind::Topology, receipt)
 }
 
 fn apply_split_command(
@@ -671,7 +646,7 @@ fn apply_percentage_resize(
 fn apply_theme_command(
     shell: &Rc<RefCell<ApplicationShell>>,
     arguments: &[String],
-) -> Result<String, (&'static str, String)> {
+) -> Result<ApplicationResult, (&'static str, String)> {
     let command = match arguments.first().map(String::as_str) {
         Some("toggle") => ThemeModeCommand::Toggle,
         Some("dark") => ThemeModeCommand::Dark,
@@ -683,7 +658,10 @@ fn apply_theme_command(
         .borrow_mut()
         .apply_theme_mode_command(command)
         .map_err(|message| ("theme_failed", message))?;
-    Ok(format!("{}\n", mode.cli_token()))
+    Ok(ApplicationResult::new(
+        ApplicationResultKind::Theme,
+        serde_json::Value::String(mode.cli_token().to_owned()),
+    ))
 }
 
 fn target_exists(shell: &ApplicationShell, target: &AgentTarget) -> bool {
