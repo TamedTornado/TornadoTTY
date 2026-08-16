@@ -5,7 +5,7 @@ use std::process::Command;
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 use zentty_agent_ipc::{
-    AgentIpcClient, AgentIpcServer, ApplicationErrorCategory, ApplicationRequest,
+    AgentIpcClient, AgentIpcError, AgentIpcServer, ApplicationErrorCategory, ApplicationRequest,
     ApplicationResult, ApplicationResultKind, AuthenticatedProductRequest, ProductIpcKind,
     ProductIpcReply, publish_instance,
 };
@@ -181,6 +181,64 @@ fn wire_rejections_and_missing_instance_have_typed_categories() {
 
     server.shutdown().unwrap();
     std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn transport_classification_and_capability_negotiation_boundaries_are_exact() {
+    for kind in [
+        std::io::ErrorKind::ConnectionReset,
+        std::io::ErrorKind::ConnectionAborted,
+        std::io::ErrorKind::BrokenPipe,
+    ] {
+        assert_eq!(
+            AgentIpcError::Io(std::io::Error::from(kind)).category(),
+            ApplicationErrorCategory::RetryableInstanceReplacement
+        );
+    }
+    for (capabilities, expected) in [
+        (Vec::<&str>::new(), None),
+        (vec!["panes"], None),
+        (
+            vec!["windows"],
+            Some(ApplicationErrorCategory::UnsupportedOperation),
+        ),
+    ] {
+        let root = std::env::temp_dir().join(format!(
+            "zentty-capability-response-{}-{:?}-{}",
+            std::process::id(),
+            std::thread::current().id(),
+            capabilities.len()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let socket = root.join("instance.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        let response_capabilities = capabilities.clone();
+        let responder = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = Vec::new();
+            stream.read_to_end(&mut request).unwrap();
+            let request: serde_json::Value = serde_json::from_slice(&request).unwrap();
+            let response = serde_json::json!({
+                "version": 1,
+                "applicationApiVersion": 1,
+                "capabilities": response_capabilities,
+                "id": request["id"],
+                "ok": true,
+                "result": {"application":{"kind":"discovery","value":[]}},
+                "error": null,
+            });
+            stream
+                .write_all(&serde_json::to_vec(&response).unwrap())
+                .unwrap();
+        });
+        let request =
+            ApplicationRequest::new(ProductIpcKind::Discover, "panes", Vec::new()).unwrap();
+        let result = AgentIpcClient::send_application(&socket, "caller-token", &request, None);
+        assert_eq!(result.as_ref().err().map(AgentIpcError::category), expected);
+        responder.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }
 
 #[test]

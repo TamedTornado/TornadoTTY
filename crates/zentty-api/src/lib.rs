@@ -566,12 +566,37 @@ mod tests {
                 "error": null
             })
         );
+        let empty_theme = ApplicationResult::new(
+            ApplicationResultKind::Theme,
+            serde_json::Value::String(String::new()),
+        );
+        let overhead = serde_json::to_vec(&empty_theme).unwrap().len();
+        let boundary = ApplicationResult::new(
+            ApplicationResultKind::Theme,
+            serde_json::Value::String("x".repeat(ApplicationReply::MAX_RESULT_BYTES - overhead)),
+        );
+        assert_eq!(
+            serde_json::to_vec(&boundary).unwrap().len(),
+            ApplicationReply::MAX_RESULT_BYTES
+        );
+        assert!(ApplicationReply::success(boundary).is_ok());
         assert!(
             ApplicationReply::success(ApplicationResult::new(
                 ApplicationResultKind::Theme,
-                serde_json::Value::String("x".repeat(ApplicationReply::MAX_RESULT_BYTES + 1)),
+                serde_json::Value::String(
+                    "x".repeat(ApplicationReply::MAX_RESULT_BYTES - overhead + 1)
+                ),
             ))
             .is_err()
         );
+    }
+
+    #[test]
+    fn reply_error_code_and_message_boundaries_are_exact() {
+        assert!(ApplicationReply::failure("a".repeat(64), "x".repeat(4096)).is_ok());
+        assert!(ApplicationReply::failure("", "valid message").is_err());
+        assert!(ApplicationReply::failure("a".repeat(65), "valid message").is_err());
+        assert!(ApplicationReply::failure("Uppercase", "valid message").is_err());
+        assert!(ApplicationReply::failure("valid_code", "x".repeat(4097)).is_err());
     }
 }

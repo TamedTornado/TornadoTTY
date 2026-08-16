@@ -110,12 +110,16 @@ done < <(jq -r '.operations[].gui_entry_points[]' "${inventory}" | LC_ALL=C sort
 cli_binary="${repo_root}/crates/zentty-agent-ipc/src/bin/zentty.rs"
 grep -Fq 'AgentIpcClient::send_application(' "${cli_binary}" ||
     fail "delivered CLI does not invoke the application API client"
+grep -Fq 'render_application_result(&request, result)' "${cli_binary}" ||
+    fail "delivered CLI does not own application result presentation"
 if grep -Fq 'AgentIpcClient::send_product(' "${cli_binary}"; then
     fail "delivered CLI bypasses the application request client"
 fi
 
 shell_service="${repo_root}/crates/zentty-linux/src/application_shell/application_commands.rs"
 coordinator_service="${repo_root}/crates/zentty-linux/src/application/product_cli.rs"
+api_model="${repo_root}/crates/zentty-api/src/lib.rs"
+presentation="${repo_root}/crates/zentty-agent-ipc/src/presentation.rs"
 grep -Fq 'match request.operation()' "${shell_service}" ||
     fail "application shell does not dispatch through the closed operation registry"
 if grep -Fq 'match request.subcommand()' "${shell_service}"; then
@@ -127,5 +131,12 @@ grep -Fq 'apply_focus_operation(direction)' "${shell_service}" ||
     fail "external focus requests bypass the shared application operation"
 grep -Fq 'command.request.operation() == ApplicationOperation::Grid' "${coordinator_service}" ||
     fail "application coordinator grid dispatch bypasses the closed operation registry"
+grep -Fq 'pub enum ApplicationResultKind' "${api_model}" ||
+    fail "application API lacks a closed structured result kind"
+if grep -Eq 'fn render_(rows|overview|selected_pane|discovery)' "${coordinator_service}"; then
+    fail "application product service owns CLI presentation"
+fi
+grep -Fq 'pub fn render_application_result(' "${presentation}" ||
+    fail "CLI presentation owner is missing"
 
 echo "application-api-inventory: PASS operations=19 specialized=3 cli-local=4 cli-contract=$(wc -l <<<"${contract_ids}")"

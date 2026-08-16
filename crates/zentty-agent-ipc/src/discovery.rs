@@ -207,3 +207,30 @@ fn process_start_ticks(process_id: u32) -> Result<u64, String> {
         .and_then(|value| value.parse::<u64>().ok())
         .ok_or_else(|| "process start time is malformed".to_owned())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{validate_private_directory, validate_private_file};
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn private_path_type_checks_reject_real_non_symlink_wrong_types() {
+        let root = std::env::temp_dir().join(format!(
+            "zentty-discovery-path-types-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let regular = root.join("regular");
+        fs::write(&regular, b"file").unwrap();
+        fs::set_permissions(&regular, fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(validate_private_directory(&regular).is_err());
+
+        let directory = root.join("directory");
+        fs::create_dir(&directory).unwrap();
+        fs::set_permissions(&directory, fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(validate_private_file(&directory).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+}

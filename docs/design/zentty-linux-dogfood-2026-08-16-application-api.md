@@ -421,3 +421,33 @@ all fixtures must change atomically before the inventory can move from
   product preserved exact schemas, text goldens, discovery, selection, theme,
   topology mutations, cross-pane capabilities, and concurrent-instance
   isolation under both controlled X11 and controlled Wayland, PASS.
+
+## Slice 11: mutation-led API and discovery hardening
+
+- Strengthened the architecture gate so it now rejects a missing CLI result
+  renderer, a missing closed result kind, or product-side discovery/table/
+  selection renderers. Added a negative inventory mutation for an unknown
+  result kind. This turns the ownership statement into an executable check.
+- The first API mutation run tested 27 mutants and reported seven survivors at
+  exact size/code/message boundaries. Added exact-success and one-byte-over
+  result cases plus independent empty, 64/65-byte, invalid-character, and
+  4096/4097-byte error cases. Corrected rerun: 24 caught, 3 unviable, zero
+  survivors.
+- The first discovery mutation run tested 40 mutants and reported twelve
+  survivors. They exposed missing independent cases for each descriptor field,
+  each credential/identity property, real non-symlink wrong path types, and an
+  independent `/proc` start-tick oracle. Added those cases using real files,
+  directories, sockets, modes, and the current process record. The second run
+  left two public-behavior-equivalent wrong-type survivors because later I/O
+  still rejected them; direct tests at the private type boundary removed that
+  ambiguity. Corrected rerun: 39 caught, 1 unviable, zero survivors.
+- The first transport mutation run tested 20 mutants and reported three
+  survivors: reset/abort/broken-pipe retry classification and empty/exact/
+  missing capability-list negotiation. Added direct error-kind cases plus a
+  real scripted Unix peer returning each response shape. Corrected rerun: 16
+  caught, 4 unviable, zero survivors.
+- Pane/instance authentication and retargeting mutation scope: 8 tested, 6
+  caught, 2 unviable, zero survivors. CLI result-kind/presentation dispatch:
+  15 tested, all 15 caught. Every mutation run used the committed
+  `gitignore=true`, `copy_target=false` policy, one worker, and the dedicated
+  capped systemd scope; no product/terminal process shared its OOM policy.
