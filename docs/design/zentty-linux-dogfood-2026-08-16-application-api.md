@@ -150,3 +150,31 @@ disappear from that inventory merely because it is hidden or internal.
   dependency graph, architecture contract, architecture negative self-tests,
   `ApplicationShell` ownership contract, mutation resource-isolation policy,
   strict Clippy, formatting, ShellCheck, and diff hygiene all PASS.
+
+## Slice 2: CLI consumes an application request
+
+- The delivered `zentty` binary previously parsed a valid
+  `ApplicationRequest`, decomposed it back into the old transport tuple, and
+  asked `AgentIpcClient::send_product` to validate and reconstruct it. That
+  made the CLI appear to use the API while still coupling it to socket route
+  fields.
+- Added `AgentIpcClient::send_application`, whose client boundary is the
+  already-validated `ApplicationRequest`. Both ordinary CLI commands and the
+  internal shell-signal path now call it. The Unix transport alone projects
+  the operation into the legacy wire envelope.
+- Retained `send_product` temporarily as an explicitly documented
+  source-compatibility adapter for existing internal tests/callers. It creates
+  one `ApplicationRequest` and delegates immediately; it owns no behavior.
+  Removing this adapter is tracked within GH-48 after all callers migrate.
+- Extended the inventory validator to reject either loss of the API client
+  call or reintroduction of the old tuple-shaped call in the delivered CLI.
+- Real Unix-socket tests initially failed 8/9 inside the filesystem sandbox
+  because creating their Unix listener returned `EPERM`. This was an
+  environment restriction, not treated as a pass. The same focused suite was
+  rerun with the required permission and passed 9/9, including authentication,
+  canonical targets, concurrent clients/instances, partial frames, CLI shell
+  signals, and bounded replies. CLI parser tests passed 11/11. Focused strict
+  Clippy, inventory negative tests, ShellCheck, formatting, and diff hygiene
+  pass. An exploratory `--all-targets` Clippy run exposed the pre-existing
+  `similar_names` warning in `tests/launch_cli.rs`; the shipped library/binary
+  targets remain clean and this slice does not suppress that warning.

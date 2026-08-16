@@ -151,15 +151,14 @@ fn run_agent_signal(arguments: &[String]) -> Result<(), String> {
     let Ok(token) = std::env::var("ZENTTY_PANE_TOKEN") else {
         return Ok(());
     };
-    let reply = AgentIpcClient::send_product(
-        socket,
-        &token,
-        zentty_agent_ipc::ProductIpcKind::Pane,
+    let request = zentty_agent_ipc::ApplicationRequest::new(
+        zentty_agent_ipc::ApplicationScope::Pane,
         "shell-signal",
-        arguments,
-        Some(target),
+        arguments.to_vec(),
     )
     .map_err(|error| error.to_string())?;
+    let reply = AgentIpcClient::send_application(socket, &token, &request, Some(target))
+        .map_err(|error| error.to_string())?;
     if let Some(error) = reply.error() {
         return Err(format!("{}: {}", error.code(), error.message()));
     }
@@ -267,12 +266,10 @@ fn run_product_cli(command: CliProductCommand) -> Result<(), String> {
                 .windows(2)
                 .find_map(|pair| (pair[0] == "--pane-token").then_some(pair[1].as_str()))
                 .unwrap_or(&caller_token);
-            let reply = AgentIpcClient::send_product(
+            let reply = AgentIpcClient::send_application(
                 socket,
                 token,
-                request.kind(),
-                request.subcommand(),
-                request.arguments(),
+                &request,
                 claimed_target_from_environment(),
             )
             .map_err(|error| error.to_string())?;

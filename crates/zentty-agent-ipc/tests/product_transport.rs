@@ -4,7 +4,8 @@ use std::process::Command;
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 use zentty_agent_ipc::{
-    AgentIpcClient, AgentIpcServer, AuthenticatedProductRequest, ProductIpcKind, ProductIpcReply,
+    AgentIpcClient, AgentIpcServer, ApplicationRequest, AuthenticatedProductRequest,
+    ProductIpcKind, ProductIpcReply,
 };
 use zentty_core::{AgentTarget, PaneTokenRegistry};
 
@@ -72,12 +73,13 @@ fn real_socket_authenticates_and_returns_bounded_product_reply() {
             .unwrap();
     });
 
-    let reply = AgentIpcClient::send_product(
+    let request =
+        ApplicationRequest::new(ProductIpcKind::Discover, "panes", vec!["--json".to_owned()])
+            .unwrap();
+    let reply = AgentIpcClient::send_application(
         &socket,
         "caller-token",
-        ProductIpcKind::Discover,
-        "panes",
-        &["--json".to_owned()],
+        &request,
         Some(AgentTarget::new(
             "forged-window",
             "forged-lane",

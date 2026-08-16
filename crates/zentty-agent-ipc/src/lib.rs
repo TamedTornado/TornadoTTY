@@ -535,22 +535,19 @@ impl AgentIpcClient {
         }
     }
 
-    /// Sends one bounded source-compatible discovery or topology command.
+    /// Sends one bounded application API request through the authenticated
+    /// Unix transport.
     ///
     /// # Errors
     ///
     /// Rejects invalid command payloads, authentication failures, malformed
     /// responses, and replies outside the product protocol bounds.
-    pub fn send_product(
+    pub fn send_application(
         socket_path: impl AsRef<Path>,
         pane_token: &str,
-        kind: ProductIpcKind,
-        subcommand: &str,
-        arguments: &[String],
+        request: &ApplicationRequest,
         claimed_target: Option<AgentTarget>,
     ) -> Result<ProductIpcReply, AgentIpcError> {
-        ProductIpcRequest::new(kind, subcommand, arguments.to_vec())
-            .map_err(|error| AgentIpcError::InvalidRequest(error.to_string()))?;
         let mut environment = std::collections::BTreeMap::from([(
             "ZENTTY_PANE_TOKEN".to_owned(),
             pane_token.to_owned(),
@@ -563,12 +560,12 @@ impl AgentIpcClient {
         let request = WireRequest {
             version: 1,
             id: request_id(),
-            kind: kind.wire_name().to_owned(),
-            arguments: arguments.to_vec(),
+            kind: request.kind().wire_name().to_owned(),
+            arguments: request.arguments().to_vec(),
             standard_input: None,
             environment,
             expects_response: true,
-            subcommand: Some(subcommand.to_owned()),
+            subcommand: Some(request.subcommand().to_owned()),
         };
         let frame = serde_json::to_vec(&request)
             .map_err(|error| AgentIpcError::InvalidRequest(error.to_string()))?;
@@ -591,6 +588,29 @@ impl AgentIpcClient {
             ProductIpcReply::failure(error.code, error.message)
                 .map_err(|error| AgentIpcError::InvalidRequest(error.to_string()))
         }
+    }
+
+    /// Transitional source-compatible adapter for callers that still provide
+    /// the former transport-shaped command tuple.
+    ///
+    /// New callers, including the delivered CLI, must construct an
+    /// [`ApplicationRequest`] and call [`Self::send_application`].
+    ///
+    /// # Errors
+    ///
+    /// Returns request validation or transport errors from the application
+    /// request path.
+    pub fn send_product(
+        socket_path: impl AsRef<Path>,
+        pane_token: &str,
+        kind: ProductIpcKind,
+        subcommand: &str,
+        arguments: &[String],
+        claimed_target: Option<AgentTarget>,
+    ) -> Result<ProductIpcReply, AgentIpcError> {
+        let request = ApplicationRequest::new(kind, subcommand, arguments.to_vec())
+            .map_err(|error| AgentIpcError::InvalidRequest(error.to_string()))?;
+        Self::send_application(socket_path, pane_token, &request, claimed_target)
     }
 
     /// Sends an already encoded frame, primarily for negative transport tests.

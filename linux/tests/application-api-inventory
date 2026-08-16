@@ -84,4 +84,11 @@ done < <(jq -r '.operations[].gui_entry_points[]' "${inventory}" | LC_ALL=C sort
 [[ "$(jq -r '[.operations[] | select(.external == false) | .id] == ["shell-signal"]' "${inventory}")" == true ]] ||
     fail "external API classification drifted"
 
+cli_binary="${repo_root}/crates/zentty-agent-ipc/src/bin/zentty.rs"
+grep -Fq 'AgentIpcClient::send_application(' "${cli_binary}" ||
+    fail "delivered CLI does not invoke the application API client"
+if grep -Fq 'AgentIpcClient::send_product(' "${cli_binary}"; then
+    fail "delivered CLI bypasses the application request client"
+fi
+
 echo "application-api-inventory: PASS operations=19 specialized=3 cli-local=4 cli-contract=$(wc -l <<<"${contract_ids}")"
