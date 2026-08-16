@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+inventory="${repo_root}/docs/architecture/zentty-application-api-v1.json"
+request_schema="${repo_root}/docs/architecture/schemas/zentty-application-request-v1.schema.json"
+response_schema="${repo_root}/docs/architecture/schemas/zentty-application-response-v1.schema.json"
+temp_dir="$(mktemp -d)"
+trap 'rm -rf -- "${temp_dir}"' EXIT
+
+fail() {
+    echo "application-api-schema: error: $*" >&2
+    exit 1
+}
+
+for dependency in jq jsonschema; do
+    command -v "${dependency}" >/dev/null || fail "${dependency} is required"
+done
+for document in "${inventory}" "${request_schema}" "${response_schema}"; do
+    jq empty "${document}" >/dev/null 2>&1 || fail "invalid JSON: ${document}"
+done
+
+inventory_operations="$(jq -c '[.operations[].wire_name] | sort' "${inventory}")"
+schema_operations="$(jq -c '[.properties.subcommand.enum[]] | sort' "${request_schema}")"
+[[ "${inventory_operations}" == "${schema_operations}" ]] ||
+    fail "request schema operation registry drifted"
+inventory_categories="$(jq -c '.error_categories | sort' "${inventory}")"
+schema_categories="$(jq -c '.properties.error.properties.category.enum | sort' "${response_schema}")"
+[[ "${inventory_categories}" == "${schema_categories}" ]] ||
+    fail "response schema error categories drifted"
+
+cat >"${temp_dir}/request.json" <<'JSON'
+{"version":1,"id":"example-1","kind":"discover","arguments":["--json"],"standardInput":null,"environment":{"ZENTTY_PANE_TOKEN":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},"expectsResponse":true,"subcommand":"panes"}
+JSON
+cat >"${temp_dir}/success.json" <<'JSON'
+{"version":1,"id":"example-1","ok":true,"result":{"stdout":"[]\n"},"error":null}
+JSON
+cat >"${temp_dir}/failure.json" <<'JSON'
+{"version":1,"id":"example-1","ok":false,"result":null,"error":{"category":"stale_target","code":"stale_target","message":"target pane is unavailable"}}
+JSON
+jsonschema -i "${temp_dir}/request.json" "${request_schema}" >/dev/null
+jsonschema -i "${temp_dir}/success.json" "${response_schema}" >/dev/null
+jsonschema -i "${temp_dir}/failure.json" "${response_schema}" >/dev/null
+
+expect_rejected() {
+    local name="$1"
+    local schema="$2"
+    if jsonschema -i "${temp_dir}/${name}.json" "${schema}" >"${temp_dir}/${name}.log" 2>&1; then
+        fail "${name} unexpectedly conformed"
+    fi
+}
+
+jq '.kind = "discover" | .subcommand = "split"' "${temp_dir}/request.json" >"${temp_dir}/wrong-scope.json"
+expect_rejected wrong-scope "${request_schema}"
+jq 'del(.environment.ZENTTY_PANE_TOKEN)' "${temp_dir}/request.json" >"${temp_dir}/missing-token.json"
+expect_rejected missing-token "${request_schema}"
+jq '.error.category = "miscellaneous"' "${temp_dir}/failure.json" >"${temp_dir}/unknown-category.json"
+expect_rejected unknown-category "${response_schema}"
+jq 'del(.error.category)' "${temp_dir}/failure.json" >"${temp_dir}/missing-category.json"
+expect_rejected missing-category "${response_schema}"
+jq '.ok = true' "${temp_dir}/failure.json" >"${temp_dir}/contradictory-response.json"
+expect_rejected contradictory-response "${response_schema}"
+
+echo "application-api-schema: PASS operations=19 categories=10 positive=3 negative=5"

@@ -109,6 +109,8 @@ struct WireResponseResult {
 
 #[derive(Debug, Deserialize, Serialize)]
 struct WireResponseError {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    category: Option<ApplicationErrorCategory>,
     code: String,
     message: String,
 }
@@ -585,8 +587,18 @@ impl AgentIpcClient {
             if error.code == "request_rejected" {
                 return Err(AgentIpcError::Rejected(error.message));
             }
-            ProductIpcReply::failure(error.code, error.message)
-                .map_err(|error| AgentIpcError::InvalidRequest(error.to_string()))
+            let category = error.category;
+            let reply = ProductIpcReply::failure(error.code, error.message)
+                .map_err(|error| AgentIpcError::InvalidRequest(error.to_string()))?;
+            if category
+                .zip(reply.error().map(ApplicationReplyError::category))
+                .is_some_and(|(documented, derived)| documented != derived)
+            {
+                return Err(AgentIpcError::InvalidRequest(
+                    "response error category contradicts its stable code".to_owned(),
+                ));
+            }
+            Ok(reply)
         }
     }
 
@@ -761,6 +773,7 @@ fn handle_connection(
                 ok: false,
                 result: None,
                 error: Some(WireResponseError {
+                    category: error.category,
                     code: error.code,
                     message: error.message,
                 }),
@@ -771,6 +784,7 @@ fn handle_connection(
                 ok: false,
                 result: None,
                 error: Some(WireResponseError {
+                    category: Some(ApplicationErrorCategory::ProductRejection),
                     code: "invalid_product_reply".to_owned(),
                     message: "failed compatibility reply omitted its error".to_owned(),
                 }),
@@ -782,6 +796,13 @@ fn handle_connection(
             ok: false,
             result: None,
             error: Some(WireResponseError {
+                category: Some(match error {
+                    AgentIpcError::InvalidRequest(_) => ApplicationErrorCategory::InvalidArguments,
+                    AgentIpcError::Io(_) | AgentIpcError::WorkerPanicked => {
+                        ApplicationErrorCategory::PermanentTransportFailure
+                    }
+                    AgentIpcError::Rejected(_) => ApplicationErrorCategory::ProductRejection,
+                }),
                 code: "request_rejected".to_owned(),
                 message: error.to_string(),
             }),
@@ -803,6 +824,7 @@ struct ProductReply {
 }
 
 struct ProductReplyError {
+    category: Option<ApplicationErrorCategory>,
     code: String,
     message: String,
 }
@@ -812,6 +834,7 @@ impl From<TmuxCompatReply> for ProductReply {
         Self {
             stdout: reply.stdout().map(str::to_owned),
             error: reply.error().map(|error| ProductReplyError {
+                category: Some(ApplicationErrorCategory::ProductRejection),
                 code: error.code().to_owned(),
                 message: error.message().to_owned(),
             }),
@@ -824,6 +847,7 @@ impl From<ServerIpcReply> for ProductReply {
         Self {
             stdout: reply.stdout().map(str::to_owned),
             error: reply.error().map(|error| ProductReplyError {
+                category: Some(ApplicationErrorCategory::ProductRejection),
                 code: error.code().to_owned(),
                 message: error.message().to_owned(),
             }),
@@ -836,6 +860,7 @@ impl From<ProductIpcReply> for ProductReply {
         Self {
             stdout: reply.stdout().map(str::to_owned),
             error: reply.error().map(|error| ProductReplyError {
+                category: Some(error.category()),
                 code: error.code().to_owned(),
                 message: error.message().to_owned(),
             }),

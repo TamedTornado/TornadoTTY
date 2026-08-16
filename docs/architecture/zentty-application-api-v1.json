@@ -15,6 +15,11 @@
     "permanent_transport_failure"
   ],
   "authority": "crates/zentty-api/src/lib.rs",
+  "documentation": "docs/architecture/application-api-v1.md",
+  "schemas": {
+    "request": "docs/architecture/schemas/zentty-application-request-v1.schema.json",
+    "response": "docs/architecture/schemas/zentty-application-response-v1.schema.json"
+  },
   "transport": "crates/zentty-agent-ipc/src/lib.rs",
   "cli": "crates/zentty-agent-ipc/src/cli.rs",
   "service": [

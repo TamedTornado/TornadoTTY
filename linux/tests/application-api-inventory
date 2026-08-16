@@ -16,8 +16,8 @@ jq empty "${cli_contract}" 2>/dev/null || fail "CLI contract is not valid JSON"
 
 jq -e '
     (keys | sort) == [
-      "api_version","authority","cli","cli_local_families","error_categories",
-      "operations","schema_version","service","specialized_families","status","transport"
+      "api_version","authority","cli","cli_local_families","documentation","error_categories",
+      "operations","schema_version","schemas","service","specialized_families","status","transport"
     ] and
     .schema_version == 1 and .api_version == 1 and
     .status == "EXTRACTION_IN_PROGRESS" and
@@ -64,6 +64,9 @@ actual_operations="$(jq -r '.operations[].id' "${inventory}")"
 
 for path in \
     "$(jq -r '.authority' "${inventory}")" \
+    "$(jq -r '.documentation' "${inventory}")" \
+    "$(jq -r '.schemas.request' "${inventory}")" \
+    "$(jq -r '.schemas.response' "${inventory}")" \
     "$(jq -r '.transport' "${inventory}")" \
     "$(jq -r '.cli' "${inventory}")"; do
     [[ -f "${repo_root}/${path}" ]] || fail "owned source path is missing: ${path}"

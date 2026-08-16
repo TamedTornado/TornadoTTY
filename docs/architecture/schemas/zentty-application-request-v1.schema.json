@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/TamedTornado/zentty/blob/linux/port/docs/architecture/schemas/zentty-application-request-v1.schema.json",
+  "title": "Zentty authenticated application request v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "id", "kind", "arguments", "standardInput", "environment", "expectsResponse", "subcommand"],
+  "properties": {
+    "version": {"const": 1},
+    "id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "kind": {"enum": ["discover", "pane"]},
+    "arguments": {
+      "type": "array",
+      "maxItems": 128,
+      "items": {"type": "string", "maxLength": 16384}
+    },
+    "standardInput": {"type": "null"},
+    "environment": {
+      "type": "object",
+      "additionalProperties": {"type": "string", "maxLength": 16384},
+      "required": ["ZENTTY_PANE_TOKEN"],
+      "properties": {
+        "ZENTTY_PANE_TOKEN": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "ZENTTY_WINDOW_ID": {"type": "string", "minLength": 1, "maxLength": 256},
+        "ZENTTY_WORKLANE_ID": {"type": "string", "minLength": 1, "maxLength": 256},
+        "ZENTTY_PANE_ID": {"type": "string", "minLength": 1, "maxLength": 256}
+      }
+    },
+    "expectsResponse": {"const": true},
+    "subcommand": {
+      "enum": [
+        "overview", "windows", "worklanes", "panes", "panes-current-worklane",
+        "select-pane", "split", "grid", "focus", "pane-rename", "close",
+        "worklane-color", "worklane-rename", "zoom", "resize", "layout",
+        "theme", "notify", "shell-signal"
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"kind": {"const": "discover"}}},
+      "then": {
+        "properties": {
+          "subcommand": {"enum": ["overview", "windows", "worklanes", "panes", "panes-current-worklane", "select-pane"]}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"kind": {"const": "pane"}}},
+      "then": {
+        "properties": {
+          "subcommand": {"enum": ["split", "grid", "focus", "pane-rename", "close", "worklane-color", "worklane-rename", "zoom", "resize", "layout", "theme", "notify", "shell-signal"]}
+        }
+      }
+    }
+  ]
+}

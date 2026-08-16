@@ -1,0 +1,98 @@
+# Zentty application API v1 (extraction contract)
+
+Status: **implemented for authenticated in-pane clients; public instance
+discovery is not implemented yet**. The machine authority is
+[`zentty-application-api-v1.json`](zentty-application-api-v1.json). The JSON
+schemas describe what the current producer writes; they do not turn the
+private socket path or pane capability into a public discovery mechanism.
+
+## Ownership
+
+```text
+GTK actions ─┐
+             ├── application command service ── existing product owners
+API request ─┘
+      ^
+      └── authenticated Unix transport
+```
+
+The API owns operation, result, and error meaning. The application command
+service owns dispatch. The Unix transport owns framing, authentication,
+timeouts, and socket lifetime. The CLI owns source-compatible argument parsing,
+response rendering, and exit status. None of those adapters owns workspace or
+terminal state.
+
+## Versions and compatibility
+
+- Application API version: `1`.
+- Current Unix envelope version: `1`.
+- Readers must reject an unsupported major version before dispatch.
+- Within v1, producers may add optional response fields and new error codes in
+  an existing category. Readers must ignore unknown optional fields.
+- Removing or changing a field, operation identity, category, authentication
+  rule, or existing result meaning requires a new major version.
+- An operation not implemented by a running instance is an explicit
+  `unsupported_operation` result; it is never silently treated as success.
+
+The request and response producer schemas are in
+[`schemas/zentty-application-request-v1.schema.json`](schemas/zentty-application-request-v1.schema.json)
+and
+[`schemas/zentty-application-response-v1.schema.json`](schemas/zentty-application-response-v1.schema.json).
+The request schema expresses per-argument and count ceilings. The additional
+128 KiB aggregate-argument ceiling is enforced by the API constructor because
+JSON Schema cannot express the aggregate UTF-8 byte count directly. Successful
+stdout is limited to 256 KiB and an error message to 4 KiB.
+
+## Authentication and target identity
+
+The socket and its runtime directory are owner-private. Every request carries
+a 256-bit pane capability in the JSON payload. The token must not be placed in
+argv, filenames, logs, diagnostics, or normal output. The server authenticates
+that capability and derives the canonical window/worklane/pane target from its
+registry. Claimed target environment fields are diagnostic compatibility data,
+not routing authority.
+
+Using a valid capability against another instance fails authentication. A
+selector that disagrees with the capability fails authorization. A target
+removed after authentication returns `stale_target`. Public discovery and a
+least-authority bootstrap capability remain GH-48 work; do not publish pane
+tokens or scan another process's environment as a substitute.
+
+## Lifecycle
+
+1. The product creates one owner-private runtime directory and Unix listener.
+2. A terminal receives its socket path, instance identity, canonical target
+   metadata, and pane capability in its launch environment.
+3. A client sends one bounded JSON request, shuts down its write half, and
+   receives one bounded JSON response.
+4. Socket replacement or application restart invalidates the old instance and
+   all of its capabilities. Clients must rediscover rather than replay them.
+5. Shutdown stops acceptance, bounds in-flight work, removes the socket and
+   private runtime directory, and never transfers product ownership to a
+   client.
+
+## Error handling
+
+Clients branch on `error.category`, not prose. `error.code` preserves a more
+specific stable product reason. The ten closed categories are in the machine
+inventory. In particular, retry is only appropriate for
+`retryable_instance_replacement`; `stale_target` requires target discovery,
+and `authorization_failure` must not be retried with the same capability.
+
+## Non-Rust example
+
+[`../../examples/application-api-v1.sh`](../../examples/application-api-v1.sh)
+uses only Bash, jq, socat, the published schema, and the authenticated pane
+environment. It performs the read-only `discover/panes` operation. jq reads the
+token from its environment instead of an argv option, and socat is launched
+with the token removed from its environment. Its integration test runs the
+script as a separate process against the real Unix listener and server
+authentication path.
+
+```sh
+./examples/application-api-v1.sh
+```
+
+This example is usable inside a Zentty pane. It is deliberately not advertised
+as an out-of-process discovery solution until the remaining discovery,
+credential rotation, and stale-instance work is implemented and qualified.

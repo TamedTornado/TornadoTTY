@@ -227,3 +227,33 @@ disappear from that inventory merely because it is hidden or internal.
   Unix-socket transport tests 9/9 PASS, strict API/transport Clippy PASS, and
   inventory/schema negative tests, ShellCheck, formatting, and diff hygiene
   PASS.
+
+## Slice 5: executable language-neutral contract and client
+
+- The Rust reply had a machine category, but the Unix envelope still emitted
+  only code and prose. Added the category to every produced error response.
+  It is additive for v1 readers. The Rust client accepts an older response
+  without the optional field, but rejects a producer whose category
+  contradicts the stable code-derived category.
+- Added draft-2020-12 request and response producer schemas. The executable
+  schema runner requires exact agreement with the operation and category
+  inventories, validates three positive fixtures, and rejects wrong-scope
+  operations, a missing token, unknown/missing categories, and contradictory
+  success/error state. The aggregate request byte ceiling remains a documented
+  runtime invariant because JSON Schema cannot sum UTF-8 byte lengths.
+- Added an architecture note covering ownership, version compatibility,
+  ceilings, authentication, canonical targets, lifecycle, error behavior, and
+  the explicit limitation that public instance discovery is not implemented.
+  It does not pretend that scanning process environments or publishing pane
+  tokens is an acceptable discovery design.
+- Added a Bash/jq/socat client that depends only on the documented wire
+  contract. It reads the pane token from environment rather than argv and
+  removes it from socat's environment. Its real integration test runs the
+  script as a separate process against the actual Unix listener and
+  authentication registry.
+- The first client run exposed a byte-accuracy bug: `jq -r` appended a newline
+  to stdout that already ended in one. The integration assertion failed rather
+  than normalizing it away. Replacing it with `jq -j` preserved the API result
+  exactly. Corrected results: real socket tests 10/10 PASS, API tests 4/4 PASS,
+  schema runner 3 positive/5 negative PASS, strict shipped-target Clippy,
+  ShellCheck, inventory negatives, formatting, and diff hygiene PASS.

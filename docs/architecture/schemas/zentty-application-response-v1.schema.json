@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/TamedTornado/zentty/blob/linux/port/docs/architecture/schemas/zentty-application-response-v1.schema.json",
+  "title": "Zentty application response v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "id", "ok", "result", "error"],
+  "properties": {
+    "version": {"const": 1},
+    "id": {"type": "string", "maxLength": 128},
+    "ok": {"type": "boolean"},
+    "result": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["stdout"],
+      "properties": {
+        "stdout": {"type": ["string", "null"], "maxLength": 262144}
+      }
+    },
+    "error": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["category", "code", "message"],
+      "properties": {
+        "category": {
+          "enum": [
+            "invalid_arguments", "unsupported_operation", "unsupported_version",
+            "authorization_failure", "stale_target", "stale_instance",
+            "retryable_instance_replacement", "product_unavailable",
+            "product_rejection", "permanent_transport_failure"
+          ]
+        },
+        "code": {"type": "string", "pattern": "^[a-z0-9_]{1,64}$"},
+        "message": {"type": "string", "maxLength": 4096}
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "properties": {"ok": {"const": true}, "error": {"type": "null"}}
+    },
+    {
+      "properties": {"ok": {"const": false}, "result": {"type": "null"}, "error": {"type": "object"}}
+    }
+  ]
+}

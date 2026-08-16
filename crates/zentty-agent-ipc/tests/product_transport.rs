@@ -4,8 +4,8 @@ use std::process::Command;
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 use zentty_agent_ipc::{
-    AgentIpcClient, AgentIpcServer, ApplicationRequest, AuthenticatedProductRequest,
-    ProductIpcKind, ProductIpcReply,
+    AgentIpcClient, AgentIpcServer, ApplicationErrorCategory, ApplicationRequest,
+    AuthenticatedProductRequest, ProductIpcKind, ProductIpcReply,
 };
 use zentty_core::{AgentTarget, PaneTokenRegistry};
 
@@ -257,8 +257,43 @@ fn product_failure_preserves_machine_code_and_message() {
     )
     .unwrap();
     let error = reply.error().unwrap();
+    assert_eq!(error.category(), ApplicationErrorCategory::ProductRejection);
     assert_eq!(error.code(), "ambiguous_target");
     assert_eq!(error.message(), "select one pane explicitly");
+    worker.join().unwrap();
+    server.shutdown().unwrap();
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn published_non_rust_client_uses_the_real_authenticated_socket() {
+    let token = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    let (root, socket, server, receiver) = running_server_named(
+        "shell-example",
+        token,
+        AgentTarget::new("window-1", "lane-1", "pane-1"),
+    );
+    let worker = std::thread::spawn(move || {
+        let request = receiver.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert_eq!(request.request.kind(), ProductIpcKind::Discover);
+        assert_eq!(request.request.subcommand(), "panes");
+        assert_eq!(request.request.arguments(), ["--json"]);
+        request
+            .respond(ProductIpcReply::success("[{\"id\":\"pane-1\"}]\n").unwrap())
+            .unwrap();
+    });
+    let example = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../examples/application-api-v1.sh");
+    let output = Command::new(example)
+        .env("ZENTTY_INSTANCE_SOCKET", &socket)
+        .env("ZENTTY_PANE_TOKEN", token)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "[{\"id\":\"pane-1\"}]\n"
+    );
     worker.join().unwrap();
     server.shutdown().unwrap();
     std::fs::remove_dir_all(root).unwrap();
