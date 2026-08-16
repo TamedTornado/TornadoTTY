@@ -258,13 +258,9 @@ fn run_product_cli(command: CliProductCommand) -> Result<(), String> {
         }
         CliProductCommand::Request(request) => {
             let (socket, caller_token, claimed_target) = application_endpoint()?;
-            let token = request
-                .arguments()
-                .windows(2)
-                .find_map(|pair| (pair[0] == "--pane-token").then_some(pair[1].as_str()))
-                .unwrap_or(&caller_token);
-            let reply = AgentIpcClient::send_application(socket, token, &request, claimed_target)
-                .map_err(|error| error.to_string())?;
+            let reply =
+                AgentIpcClient::send_application(socket, &caller_token, &request, claimed_target)
+                    .map_err(|error| error.to_string())?;
             if let Some(error) = reply.error() {
                 return Err(format!("{}: {}", error.code(), error.message()));
             }

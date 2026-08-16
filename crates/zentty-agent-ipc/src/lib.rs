@@ -710,29 +710,6 @@ impl AgentIpcClient {
         }
     }
 
-    /// Transitional source-compatible adapter for callers that still provide
-    /// the former transport-shaped command tuple.
-    ///
-    /// New callers, including the delivered CLI, must construct an
-    /// [`ApplicationRequest`] and call [`Self::send_application`].
-    ///
-    /// # Errors
-    ///
-    /// Returns request validation or transport errors from the application
-    /// request path.
-    pub fn send_product(
-        socket_path: impl AsRef<Path>,
-        pane_token: &str,
-        kind: ProductIpcKind,
-        subcommand: &str,
-        arguments: &[String],
-        claimed_target: Option<AgentTarget>,
-    ) -> Result<ProductIpcReply, AgentIpcError> {
-        let request = ApplicationRequest::new(kind, subcommand, arguments.to_vec())
-            .map_err(|error| AgentIpcError::InvalidRequest(error.to_string()))?;
-        Self::send_application(socket_path, pane_token, &request, claimed_target)
-    }
-
     /// Sends an already encoded frame, primarily for negative transport tests.
     ///
     /// # Errors

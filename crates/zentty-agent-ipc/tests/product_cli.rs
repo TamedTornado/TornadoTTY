@@ -341,6 +341,12 @@ fn parser_rejects_ambiguous_and_invalid_source_invocations() {
         ]),
         values(&["select", "pane", "--pane-index", "1", "--pane-index", "2"]),
         values(&["list", "panes", "--output-version", "2"]),
+        values(&[
+            "pane",
+            "close",
+            "--pane-token",
+            "secret-must-not-enter-argv",
+        ]),
     ] {
         assert!(parse_product_cli(&invalid).is_err(), "accepted {invalid:?}");
     }

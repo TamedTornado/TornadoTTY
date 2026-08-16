@@ -153,7 +153,7 @@ done
 [[ -s "${out}/pane-env-${split_id}" ]]
 jq -r '.[] | select(.id != env.ZENTTY_PANE_ID) | [.id,.controlToken] | @tsv' "${out}/after-hsplit.json" |
 while IFS=$'\t' read -r id token; do
-    "${cli}" pane close --pane-id "${id}" --pane-token "${token}"
+    env ZENTTY_PANE_TOKEN="${token}" "${cli}" pane close --pane-id "${id}"
 done
 for _ in {1..100}; do
     [[ "$("${cli}" list panes --json | jq 'length')" -eq 1 ]] && break
@@ -167,7 +167,7 @@ for _ in {1..100}; do
 done
 jq -r '.[] | select(.id != env.ZENTTY_PANE_ID) | [.id,.controlToken] | @tsv' "${out}/after-vsplit.json" |
 while IFS=$'\t' read -r id token; do
-    "${cli}" pane close --pane-id "${id}" --pane-token "${token}"
+    env ZENTTY_PANE_TOKEN="${token}" "${cli}" pane close --pane-id "${id}"
 done
 
 "${cli}" theme toggle >"${out}/theme-toggle.txt"

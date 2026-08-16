@@ -187,16 +187,20 @@ fn concurrent_mixed_auth_clients_dispatch_only_canonical_authorized_targets() {
         let socket = socket.clone();
         clients.push(std::thread::spawn(move || {
             let authorized = sequence < AUTHORIZED;
-            let result = AgentIpcClient::send_product(
+            let request = ApplicationRequest::new(
+                ProductIpcKind::Discover,
+                "panes",
+                vec!["--json".to_owned()],
+            )
+            .unwrap();
+            let result = AgentIpcClient::send_application(
                 socket,
                 if authorized {
                     "caller-token"
                 } else {
                     "unauthorized-token"
                 },
-                ProductIpcKind::Discover,
-                "panes",
-                &["--json".to_owned()],
+                &request,
                 Some(AgentTarget::new(
                     format!("claim-window-{sequence}"),
                     format!("claim-lane-{sequence}"),
@@ -226,28 +230,9 @@ fn concurrent_instances_reject_each_others_capabilities() {
         "token-b",
         AgentTarget::new("window-b", "lane-b", "pane-b"),
     );
-    assert!(
-        AgentIpcClient::send_product(
-            &socket_a,
-            "token-b",
-            ProductIpcKind::Discover,
-            "panes",
-            &[],
-            None,
-        )
-        .is_err()
-    );
-    assert!(
-        AgentIpcClient::send_product(
-            &socket_b,
-            "token-a",
-            ProductIpcKind::Discover,
-            "panes",
-            &[],
-            None,
-        )
-        .is_err()
-    );
+    let request = ApplicationRequest::new(ProductIpcKind::Discover, "panes", Vec::new()).unwrap();
+    assert!(AgentIpcClient::send_application(&socket_a, "token-b", &request, None).is_err());
+    assert!(AgentIpcClient::send_application(&socket_b, "token-a", &request, None).is_err());
     assert!(receiver_a.recv_timeout(Duration::from_millis(100)).is_err());
     assert!(receiver_b.recv_timeout(Duration::from_millis(100)).is_err());
     server_a.shutdown().unwrap();
@@ -259,12 +244,12 @@ fn concurrent_instances_reject_each_others_capabilities() {
 #[test]
 fn forged_token_is_rejected_before_product_dispatch() {
     let (root, socket, server, receiver) = running_server();
-    let error = AgentIpcClient::send_product(
+    let request =
+        ApplicationRequest::new(ProductIpcKind::Pane, "split", vec!["right".to_owned()]).unwrap();
+    let error = AgentIpcClient::send_application(
         &socket,
         "forged-token",
-        ProductIpcKind::Pane,
-        "split",
-        &["right".to_owned()],
+        &request,
         Some(AgentTarget::new("window-1", "lane-1", "pane-1")),
     )
     .unwrap_err();
@@ -290,15 +275,8 @@ fn product_failure_preserves_machine_code_and_message() {
             )
             .unwrap();
     });
-    let reply = AgentIpcClient::send_product(
-        &socket,
-        "caller-token",
-        ProductIpcKind::Pane,
-        "focus",
-        &[],
-        None,
-    )
-    .unwrap();
+    let request = ApplicationRequest::new(ProductIpcKind::Pane, "focus", Vec::new()).unwrap();
+    let reply = AgentIpcClient::send_application(&socket, "caller-token", &request, None).unwrap();
     let error = reply.error().unwrap();
     assert_eq!(error.category(), ApplicationErrorCategory::ProductRejection);
     assert_eq!(error.code(), "ambiguous_target");

@@ -206,7 +206,6 @@ fn parse_split(
             "--worklane-id",
             "--pane-id",
             "--pane-index",
-            "--pane-token",
         ],
         &["--equal", "--golden", "--json"],
     )?;
@@ -259,7 +258,6 @@ fn parse_grid(arguments: &[String]) -> Result<Option<CliProductCommand>, Product
             "--worklane-id",
             "--pane-id",
             "--pane-index",
-            "--pane-token",
         ],
         &["--new-only", "--include-source", "--json"],
     )?;
@@ -457,13 +455,7 @@ fn parse_layout(arguments: &[String]) -> Result<Option<CliProductCommand>, Produ
     }
     validate_options(
         &arguments[1..],
-        &[
-            "--window-id",
-            "--worklane-id",
-            "--pane-id",
-            "--pane-index",
-            "--pane-token",
-        ],
+        &["--window-id", "--worklane-id", "--pane-id", "--pane-index"],
         &["--vertical", "-v", "--json"],
     )?;
     request(ProductIpcKind::Pane, "layout", arguments.to_vec())
@@ -508,13 +500,7 @@ fn validate_targeted_options(arguments: &[String]) -> Result<(), ProductIpcError
     );
     validate_options(
         &arguments[start..],
-        &[
-            "--window-id",
-            "--worklane-id",
-            "--pane-id",
-            "--pane-index",
-            "--pane-token",
-        ],
+        &["--window-id", "--worklane-id", "--pane-id", "--pane-index"],
         &["--json"],
     )
 }

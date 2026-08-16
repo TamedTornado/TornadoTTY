@@ -340,3 +340,29 @@ disappear from that inventory merely because it is hidden or internal.
   negative self-tests, and diff hygiene PASS. A broader all-tests Clippy run
   also exposed a pre-existing `similar_names` warning in `launch_cli.rs`; it
   is outside this discovery change, while the changed test targets are clean.
+
+## Slice 9: remove transport adapters and argv credentials
+
+- The audit found two intentionally transitional paths still present after the
+  typed application request landed: `AgentIpcClient::send_product` rebuilt a
+  request from the old scope/name/string tuple, and `--pane-token` let callers
+  place a live capability in process arguments. All callers now construct one
+  `ApplicationRequest` and use `send_application`; the adapter was removed.
+- Removed `--pane-token` from every command family and from the published CLI
+  contract. Cross-pane real-product journeys now provide a selected pane
+  capability through `ZENTTY_PANE_TOKEN`, so the secret is not visible in
+  `/proc/*/cmdline` or ordinary process listings. A parser negative case proves
+  that the former option is rejected before transport contact.
+- The first source-contract run exposed an already-stale implementation path
+  left by the earlier application-shell decomposition
+  (`application_shell/product_cli.rs`). Corrected it to the existing focused
+  `application/product_cli.rs`; no implementation was added or duplicated.
+- Focused results: CLI parser tests 11/11 PASS, real Unix-socket transport tests
+  12/12 PASS, CLI source-contract positive and negative runners PASS,
+  application API inventory PASS, ShellCheck, formatting, and diff hygiene
+  PASS. The restricted sandbox denied real Unix socket creation; the same test
+  executable passed outside that restriction, confirming an environment
+  denial rather than a product failure. Fresh ReleaseSafe staging PASS; the
+  delivered CLI exercised the real GTK/Ghostty product over its private socket
+  under controlled X11 and Wayland, including cross-pane environment
+  credentials and concurrent-instance fail-closed behavior, PASS.

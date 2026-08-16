@@ -159,7 +159,7 @@ if [[ "${ZENTTY_TOPOLOGY_REPRESENTATIVE:-}" == 1 ]]; then
     while IFS=$'\t' read -r pane_id pane_token; do
         [[ "${pane_id}" != pane-1 ]] || continue
         env ZENTTY_PANE_TOKEN="${pane_token}" \
-            ${ZENTTY_CLI_BIN} pane close --pane-id "${pane_id}" --pane-token "${pane_token}"
+            ${ZENTTY_CLI_BIN} pane close --pane-id "${pane_id}"
     done < <(jq -r '.[] | [.id,.controlToken] | @tsv' <<<"${representative_panes}")
     ${ZENTTY_CLI_BIN} __tmux-compat kill-window
     sleep 30
@@ -360,13 +360,13 @@ grep -Fq 'unauthorized_target' "${TMPDIR:-/tmp}/zentty-cli-selector.$$"
 rm -f -- "${TMPDIR:-/tmp}/zentty-cli-selector.$$"
 printf 'cli-stage=rejected-mismatched-selector\n' >>"${ZENTTY_TMUX_PRODUCT_PROBE}"
 if ! env ZENTTY_PANE_TOKEN="${cli_split_token}" \
-    ${ZENTTY_CLI_BIN} pane focus 2 --pane-token "${cli_split_token}" \
+    ${ZENTTY_CLI_BIN} pane focus 2 \
     2>>"${ZENTTY_TMUX_PRODUCT_PROBE}"; then
     exit 1
 fi
 printf 'cli-stage=focused-by-index\n' >>"${ZENTTY_TMUX_PRODUCT_PROBE}"
 if ! resize_receipt="$(env ZENTTY_PANE_TOKEN="${cli_split_token}" \
-    ${ZENTTY_CLI_BIN} pane resize 60% --json --pane-token "${cli_split_token}" \
+    ${ZENTTY_CLI_BIN} pane resize 60% --json \
     2>>"${ZENTTY_TMUX_PRODUCT_PROBE}")"; then
     exit 1
 fi
@@ -377,7 +377,7 @@ jq -e '
 ' <<<"${resize_receipt}" >/dev/null
 printf 'cli-stage=resized-by-percentage\n' >>"${ZENTTY_TMUX_PRODUCT_PROBE}"
 env ZENTTY_PANE_TOKEN="${cli_split_token}" \
-    ${ZENTTY_CLI_BIN} pane close --pane-id "${cli_split_id}" --pane-token "${cli_split_token}" \
+    ${ZENTTY_CLI_BIN} pane close --pane-id "${cli_split_id}" \
     2>>"${ZENTTY_TMUX_PRODUCT_PROBE}"
 printf 'cli-stage=closed-split\n' >>"${ZENTTY_TMUX_PRODUCT_PROBE}"
 for _ in {1..100}; do
@@ -395,7 +395,7 @@ panes="$(${ZENTTY_CLI_BIN} list panes --include-control-token --json)"
 cli_below_id="$(jq -r '.[] | select(.id != "pane-1") | .id' <<<"${panes}")"
 cli_below_token="$(jq -r --arg id "${cli_below_id}" '.[] | select(.id == $id) | .controlToken' <<<"${panes}")"
 env ZENTTY_PANE_TOKEN="${cli_below_token}" \
-    ${ZENTTY_CLI_BIN} pane close --pane-id "${cli_below_id}" --pane-token "${cli_below_token}"
+    ${ZENTTY_CLI_BIN} pane close --pane-id "${cli_below_id}"
 for _ in {1..100}; do
     panes="$(${ZENTTY_CLI_BIN} list panes --json)"
     [[ "$(jq length <<<"${panes}")" == 1 ]] && break
@@ -413,7 +413,7 @@ left_id="$(jq -r '.createdPaneIDs[0]' <<<"${left_receipt}")"
 left_token="$(${ZENTTY_CLI_BIN} list panes --include-control-token --json |
     jq -r --arg id "${left_id}" '.[] | select(.id == $id) | .controlToken')"
 env ZENTTY_PANE_TOKEN="${left_token}" \
-    ${ZENTTY_CLI_BIN} pane close --pane-id "${left_id}" --pane-token "${left_token}"
+    ${ZENTTY_CLI_BIN} pane close --pane-id "${left_id}"
 up_receipt="$(${ZENTTY_CLI_BIN} split up --json)"
 jq -e '
     .action == "split" and (.createdPaneIDs | length) == 1 and
@@ -426,7 +426,7 @@ up_id="$(jq -r '.createdPaneIDs[0]' <<<"${up_receipt}")"
 up_token="$(${ZENTTY_CLI_BIN} list panes --include-control-token --json |
     jq -r --arg id "${up_id}" '.[] | select(.id == $id) | .controlToken')"
 env ZENTTY_PANE_TOKEN="${up_token}" \
-    ${ZENTTY_CLI_BIN} pane close --pane-id "${up_id}" --pane-token "${up_token}"
+    ${ZENTTY_CLI_BIN} pane close --pane-id "${up_id}"
 for _ in {1..100}; do
     panes="$(${ZENTTY_CLI_BIN} list panes --json)"
     [[ "$(jq length <<<"${panes}")" == 1 ]] && break
@@ -439,7 +439,7 @@ isolation_token="$(${ZENTTY_CLI_BIN} list panes --include-control-token --json |
     jq -r --arg id "${isolation_source}" '.[] | select(.id == $id) | .controlToken')"
 isolation_grid="$(env ZENTTY_PANE_TOKEN="${isolation_token}" \
     ${ZENTTY_CLI_BIN} grid 2x2 --pane-id "${isolation_source}" \
-        --pane-token "${isolation_token}" --focus source --json)"
+        --focus source --json)"
 jq -e --arg source "${isolation_source}" '
     .action == "grid" and .sourcePaneID == $source and .worklaneID != "worklane-1" and
     (.createdPaneIDs | length) == 3 and (.topology.columns | length) == 2 and
@@ -456,7 +456,7 @@ isolation_panes="$(${ZENTTY_CLI_BIN} list panes \
     --include-control-token --json)"
 while IFS=$'\t' read -r pane_id pane_token; do
     env ZENTTY_PANE_TOKEN="${pane_token}" \
-        ${ZENTTY_CLI_BIN} pane close --pane-id "${pane_id}" --pane-token "${pane_token}"
+        ${ZENTTY_CLI_BIN} pane close --pane-id "${pane_id}"
 done < <(jq -r '.[] | [.id,.controlToken] | @tsv' <<<"${isolation_panes}")
 for _ in {1..100}; do
     worklanes="$(${ZENTTY_CLI_BIN} list worklanes --json)"
@@ -497,7 +497,7 @@ panes="$(${ZENTTY_CLI_BIN} list panes --include-control-token --json)"
 while IFS=$'\t' read -r pane_id pane_token; do
     [[ "${pane_id}" != pane-1 ]] || continue
     env ZENTTY_PANE_TOKEN="${pane_token}" \
-        ${ZENTTY_CLI_BIN} pane close --pane-id "${pane_id}" --pane-token "${pane_token}"
+        ${ZENTTY_CLI_BIN} pane close --pane-id "${pane_id}"
 done < <(jq -r '.[] | [.id,.controlToken] | @tsv' <<<"${panes}")
 for _ in {1..100}; do
     panes="$(${ZENTTY_CLI_BIN} list panes --json)"
@@ -515,7 +515,7 @@ panes="$(${ZENTTY_CLI_BIN} list panes --include-control-token --json)"
 while IFS=$'\t' read -r pane_id pane_token; do
     [[ "${pane_id}" != pane-1 ]] || continue
     env ZENTTY_PANE_TOKEN="${pane_token}" \
-        ${ZENTTY_CLI_BIN} pane close --pane-id "${pane_id}" --pane-token "${pane_token}"
+        ${ZENTTY_CLI_BIN} pane close --pane-id "${pane_id}"
 done < <(jq -r '.[] | [.id,.controlToken] | @tsv' <<<"${panes}")
 for _ in {1..100}; do
     panes="$(${ZENTTY_CLI_BIN} list panes --json)"
@@ -603,7 +603,7 @@ panes="$(${ZENTTY_CLI_BIN} list panes --include-control-token --json)"
 while IFS=$'\t' read -r pane_id pane_token; do
     [[ "${pane_id}" != pane-1 ]] || continue
     env ZENTTY_PANE_TOKEN="${pane_token}" \
-        ${ZENTTY_CLI_BIN} pane close --pane-id "${pane_id}" --pane-token "${pane_token}"
+        ${ZENTTY_CLI_BIN} pane close --pane-id "${pane_id}"
 done < <(jq -r '.[] | [.id,.controlToken] | @tsv' <<<"${panes}")
 for _ in {1..100}; do
     panes="$(${ZENTTY_CLI_BIN} list panes --json)"
@@ -622,7 +622,7 @@ new_lane_panes="$(${ZENTTY_CLI_BIN} list panes --worklane-id "${new_lane_id}" --
 [[ "$(jq length <<<"${new_lane_panes}")" == 2 ]]
 while IFS=$'\t' read -r pane_id pane_token; do
     env ZENTTY_PANE_TOKEN="${pane_token}" \
-        ${ZENTTY_CLI_BIN} pane close --pane-id "${pane_id}" --pane-token "${pane_token}"
+        ${ZENTTY_CLI_BIN} pane close --pane-id "${pane_id}"
 done < <(jq -r '.[] | [.id,.controlToken] | @tsv' <<<"${new_lane_panes}")
 for _ in {1..100}; do
     panes="$(${ZENTTY_CLI_BIN} list panes --json)"
@@ -648,7 +648,7 @@ panes="$(${ZENTTY_CLI_BIN} list panes --include-control-token --json)"
 while IFS=$'\t' read -r pane_id pane_token; do
     [[ "${pane_id}" != pane-1 ]] || continue
     env ZENTTY_PANE_TOKEN="${pane_token}" \
-        ${ZENTTY_CLI_BIN} pane close --pane-id "${pane_id}" --pane-token "${pane_token}"
+        ${ZENTTY_CLI_BIN} pane close --pane-id "${pane_id}"
 done < <(jq -r '.[] | [.id,.controlToken] | @tsv' <<<"${panes}")
 for _ in {1..100}; do
     panes="$(${ZENTTY_CLI_BIN} list panes --json)"
@@ -687,7 +687,7 @@ panes="$(${ZENTTY_CLI_BIN} list panes --include-control-token --json)"
 while IFS=$'\t' read -r pane_id pane_token; do
     [[ "${pane_id}" != pane-1 ]] || continue
     env ZENTTY_PANE_TOKEN="${pane_token}" \
-        ${ZENTTY_CLI_BIN} pane close --pane-id "${pane_id}" --pane-token "${pane_token}"
+        ${ZENTTY_CLI_BIN} pane close --pane-id "${pane_id}"
 done < <(jq -r '.[] | [.id,.controlToken] | @tsv' <<<"${panes}")
 for _ in {1..100}; do
     panes="$(${ZENTTY_CLI_BIN} list panes --json)"
@@ -722,7 +722,7 @@ printf 'cli-stage=selected-original-window\n' >>"${ZENTTY_TMUX_PRODUCT_PROBE}"
 new_window_focus_id="$(jq -r '.[0].id' <<<"${new_window_panes}")"
 new_window_focus_token="$(jq -r '.[0].controlToken' <<<"${new_window_panes}")"
 env ZENTTY_PANE_TOKEN="${new_window_focus_token}" \
-    ${ZENTTY_CLI_BIN} pane focus --pane-id "${new_window_focus_id}" --pane-token "${new_window_focus_token}"
+    ${ZENTTY_CLI_BIN} pane focus --pane-id "${new_window_focus_id}"
 for _ in {1..100}; do
     windows="$(${ZENTTY_CLI_BIN} list windows --json)"
     [[ "$(jq -r --arg id "${new_window_id}" '.[] | select(.id == $id) | .isFocused' <<<"${windows}")" == true ]] && break
@@ -732,7 +732,7 @@ done
 printf 'cli-stage=selected-new-window\n' >>"${ZENTTY_TMUX_PRODUCT_PROBE}"
 while IFS=$'\t' read -r pane_id pane_token; do
     env ZENTTY_PANE_TOKEN="${pane_token}" \
-        ${ZENTTY_CLI_BIN} pane close --pane-id "${pane_id}" --pane-token "${pane_token}"
+        ${ZENTTY_CLI_BIN} pane close --pane-id "${pane_id}"
 done < <(jq -r '.[] | [.id,.controlToken] | @tsv' <<<"${new_window_panes}")
 for _ in {1..100}; do
     windows="$(${ZENTTY_CLI_BIN} list windows --json)"
