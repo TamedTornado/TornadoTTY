@@ -126,6 +126,40 @@ fn partial_frame_writes_are_reassembled_before_authentication_and_dispatch() {
 }
 
 #[test]
+fn wire_rejections_and_missing_instance_have_typed_categories() {
+    let (root, socket, server, receiver) = running_server();
+    for (frame, expected) in [
+        (
+            br#"{"version":99,"id":"future","kind":"discover","arguments":[],"standardInput":null,"environment":{"ZENTTY_PANE_TOKEN":"caller-token"},"expectsResponse":true,"subcommand":"panes"}"#.as_slice(),
+            "unsupported_version",
+        ),
+        (
+            br#"{"version":1,"id":"missing-token","kind":"discover","arguments":[],"standardInput":null,"environment":{},"expectsResponse":true,"subcommand":"panes"}"#.as_slice(),
+            "authorization_failure",
+        ),
+    ] {
+        let mut stream = UnixStream::connect(&socket).unwrap();
+        stream.write_all(frame).unwrap();
+        stream.shutdown(std::net::Shutdown::Write).unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).unwrap();
+        let response: serde_json::Value = serde_json::from_str(&response).unwrap();
+        assert_eq!(response["ok"], false);
+        assert_eq!(response["error"]["category"], expected);
+    }
+    assert!(receiver.recv_timeout(Duration::from_millis(100)).is_err());
+
+    let request = ApplicationRequest::new(ProductIpcKind::Discover, "panes", Vec::new()).unwrap();
+    let missing = root.join("removed.sock");
+    let error =
+        AgentIpcClient::send_application(&missing, "caller-token", &request, None).unwrap_err();
+    assert_eq!(error.category(), ApplicationErrorCategory::StaleInstance);
+
+    server.shutdown().unwrap();
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn concurrent_mixed_auth_clients_dispatch_only_canonical_authorized_targets() {
     const AUTHORIZED: usize = 8;
     const UNAUTHORIZED: usize = 8;
@@ -229,6 +263,10 @@ fn forged_token_is_rejected_before_product_dispatch() {
         Some(AgentTarget::new("window-1", "lane-1", "pane-1")),
     )
     .unwrap_err();
+    assert_eq!(
+        error.category(),
+        ApplicationErrorCategory::AuthorizationFailure
+    );
     assert!(error.to_string().contains("rejected"));
     assert!(receiver.recv_timeout(Duration::from_millis(100)).is_err());
     server.shutdown().unwrap();

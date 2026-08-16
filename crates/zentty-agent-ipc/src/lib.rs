@@ -56,6 +56,13 @@ pub fn generate_pane_token() -> Result<String, AgentIpcError> {
 pub enum AgentIpcError {
     Io(std::io::Error),
     InvalidRequest(String),
+    Authorization(String),
+    UnsupportedVersion(u32),
+    Remote {
+        category: ApplicationErrorCategory,
+        code: String,
+        message: String,
+    },
     Rejected(String),
     WorkerPanicked,
 }
@@ -65,8 +72,47 @@ impl fmt::Display for AgentIpcError {
         match self {
             Self::Io(error) => write!(formatter, "agent IPC I/O failed: {error}"),
             Self::InvalidRequest(error) => write!(formatter, "invalid agent IPC request: {error}"),
+            Self::Authorization(error) => {
+                write!(formatter, "application capability rejected: {error}")
+            }
+            Self::UnsupportedVersion(version) => {
+                write!(formatter, "unsupported IPC version {version}")
+            }
+            Self::Remote {
+                category,
+                code,
+                message,
+            } => write!(
+                formatter,
+                "application transport rejected request ({category:?}/{code}): {message}"
+            ),
             Self::Rejected(error) => write!(formatter, "agent IPC request rejected: {error}"),
             Self::WorkerPanicked => formatter.write_str("agent IPC worker panicked"),
+        }
+    }
+}
+
+impl AgentIpcError {
+    #[must_use]
+    pub fn category(&self) -> ApplicationErrorCategory {
+        match self {
+            Self::InvalidRequest(_) => ApplicationErrorCategory::InvalidArguments,
+            Self::Authorization(_) => ApplicationErrorCategory::AuthorizationFailure,
+            Self::UnsupportedVersion(_) => ApplicationErrorCategory::UnsupportedVersion,
+            Self::Remote { category, .. } => *category,
+            Self::Rejected(_) => ApplicationErrorCategory::ProductRejection,
+            Self::WorkerPanicked => ApplicationErrorCategory::PermanentTransportFailure,
+            Self::Io(error) => match error.kind() {
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused => {
+                    ApplicationErrorCategory::StaleInstance
+                }
+                std::io::ErrorKind::ConnectionReset
+                | std::io::ErrorKind::ConnectionAborted
+                | std::io::ErrorKind::BrokenPipe => {
+                    ApplicationErrorCategory::RetryableInstanceReplacement
+                }
+                _ => ApplicationErrorCategory::PermanentTransportFailure,
+            },
         }
     }
 }
@@ -472,7 +518,13 @@ impl AgentIpcClient {
                 AgentIpcError::InvalidRequest("failed response omitted its error".to_owned())
             })?;
             if error.code == "request_rejected" {
-                return Err(AgentIpcError::Rejected(error.message));
+                return Err(AgentIpcError::Remote {
+                    category: error
+                        .category
+                        .unwrap_or(ApplicationErrorCategory::ProductRejection),
+                    code: error.code,
+                    message: error.message,
+                });
             }
             TmuxCompatReply::failure(error.code, error.message)
                 .map_err(|error| AgentIpcError::InvalidRequest(error.to_string()))
@@ -585,7 +637,13 @@ impl AgentIpcClient {
                 AgentIpcError::InvalidRequest("failed response omitted its error".to_owned())
             })?;
             if error.code == "request_rejected" {
-                return Err(AgentIpcError::Rejected(error.message));
+                return Err(AgentIpcError::Remote {
+                    category: error
+                        .category
+                        .unwrap_or(ApplicationErrorCategory::ProductRejection),
+                    code: error.code,
+                    message: error.message,
+                });
             }
             let category = error.category;
             let reply = ProductIpcReply::failure(error.code, error.message)
@@ -798,9 +856,16 @@ fn handle_connection(
             error: Some(WireResponseError {
                 category: Some(match error {
                     AgentIpcError::InvalidRequest(_) => ApplicationErrorCategory::InvalidArguments,
+                    AgentIpcError::Authorization(_) => {
+                        ApplicationErrorCategory::AuthorizationFailure
+                    }
+                    AgentIpcError::UnsupportedVersion(_) => {
+                        ApplicationErrorCategory::UnsupportedVersion
+                    }
                     AgentIpcError::Io(_) | AgentIpcError::WorkerPanicked => {
                         ApplicationErrorCategory::PermanentTransportFailure
                     }
+                    AgentIpcError::Remote { category, .. } => category,
                     AgentIpcError::Rejected(_) => ApplicationErrorCategory::ProductRejection,
                 }),
                 code: "request_rejected".to_owned(),
@@ -891,7 +956,7 @@ fn receive_request(
     let token = request
         .environment
         .get("ZENTTY_PANE_TOKEN")
-        .ok_or_else(|| AgentIpcError::Rejected("missing pane token".to_owned()))?
+        .ok_or_else(|| AgentIpcError::Authorization("missing pane token".to_owned()))?
         .clone();
     let registry = registry
         .lock()
@@ -1034,10 +1099,7 @@ fn receive_server_request(
 
 fn validate_envelope(request: &WireRequest) -> Result<(), AgentIpcError> {
     if request.version != 1 {
-        return Err(AgentIpcError::Rejected(format!(
-            "unsupported IPC version {}",
-            request.version
-        )));
+        return Err(AgentIpcError::UnsupportedVersion(request.version));
     }
     if !request.expects_response {
         return Err(AgentIpcError::Rejected(
@@ -1048,7 +1110,7 @@ fn validate_envelope(request: &WireRequest) -> Result<(), AgentIpcError> {
 }
 
 fn pane_token_rejection(error: PaneTokenError) -> AgentIpcError {
-    AgentIpcError::Rejected(error.to_string())
+    AgentIpcError::Authorization(error.to_string())
 }
 
 fn request_id() -> String {

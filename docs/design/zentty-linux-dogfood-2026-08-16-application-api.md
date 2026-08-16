@@ -257,3 +257,25 @@ disappear from that inventory merely because it is hidden or internal.
   exactly. Corrected results: real socket tests 10/10 PASS, API tests 4/4 PASS,
   schema runner 3 positive/5 negative PASS, strict shipped-target Clippy,
   ShellCheck, inventory negatives, formatting, and diff hygiene PASS.
+
+## Slice 6: typed transport failures
+
+- `AgentIpcError` previously reduced every server-side envelope rejection to a
+  prose-only `Rejected(String)`. Added explicit authorization, unsupported
+  version, and categorized remote variants plus a public `category()` method.
+  Local missing/refused sockets classify as stale instances;
+  reset/aborted/broken connections classify as retryable instance replacement;
+  other I/O and worker failures remain permanent transport failures.
+- Authentication failures now originate as authorization errors at the token
+  boundary, and envelope-version failures originate as unsupported-version
+  errors. The server writes those categories without parsing its own prose.
+  The application API client preserves the category in a typed remote error.
+- Added real-socket cases for a missing token, unsupported version, forged
+  capability before dispatch, and a removed socket path. The forged-token test
+  initially demonstrated that the application client still used the legacy
+  prose-only branch even though the server emitted the right category. The
+  test failed (`product_rejection` versus `authorization_failure`); the client
+  branch was repaired rather than weakening the assertion.
+- Corrected results: real transport tests 11/11 PASS and strict shipped-target
+  Clippy, formatting, and diff hygiene PASS. No retry loop was added; the API
+  now supplies the classification a future bounded client policy can use.
