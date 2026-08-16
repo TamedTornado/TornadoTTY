@@ -20,12 +20,18 @@ use zentty_tmux_compat::{
 };
 
 fn main() -> ExitCode {
-    match run() {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(error) => {
-            eprintln!("zentty: {error}");
-            ExitCode::FAILURE
-        }
+    let result = run();
+    if let Err(error) = &result {
+        eprintln!("zentty: {error}");
+    }
+    application_exit_code(&result)
+}
+
+fn application_exit_code(result: &Result<(), String>) -> ExitCode {
+    if result.is_ok() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
     }
 }
 
@@ -633,7 +639,7 @@ fn claimed_target_from_environment() -> Option<zentty_core::AgentTarget> {
 
 #[cfg(test)]
 mod tests {
-    use super::read_pane_credential;
+    use super::{application_exit_code, read_pane_credential};
     use std::fs;
     use std::os::unix::fs::{PermissionsExt, symlink};
 
@@ -660,5 +666,17 @@ mod tests {
         fs::write(&credential, "not-a-token").unwrap();
         assert!(read_pane_credential(&credential).is_err());
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn application_exit_mapping_is_zero_only_for_success() {
+        assert_eq!(
+            application_exit_code(&Ok(())),
+            std::process::ExitCode::SUCCESS
+        );
+        assert_eq!(
+            application_exit_code(&Err("typed API failure".to_owned())),
+            std::process::ExitCode::FAILURE
+        );
     }
 }

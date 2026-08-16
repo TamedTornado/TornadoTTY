@@ -33,6 +33,25 @@
   "result_kinds": ["empty", "discovery", "selection", "topology", "theme"],
   "authority": "crates/zentty-api/src/lib.rs",
   "documentation": "docs/architecture/application-api-v1.md",
+  "related_inventories": [
+    {"scope":"all-gui-actions","path":"docs/architecture/application-shell-responsibilities-v1.json","validator":"docs/architecture/tests/validate-application-shell-ownership"},
+    {"scope":"all-cli-commands","path":"docs/design/zentty-cli-source-contract.json","validator":"linux/tests/cli-source-contract"},
+    {"scope":"tmux-routes","path":"docs/design/zentty-tmux-compat-source-contract-v1.json","validator":"linux/tests/tmux-compat-source-contract"}
+  ],
+  "acceptance_evidence": [
+    {"case":"api-conformance","test":"linux/tests/application-api-schema"},
+    {"case":"route-and-owner-inventory","test":"linux/tests/application-api-inventory"},
+    {"case":"inventory-negative-self-test","test":"linux/tests/application-api-inventory-test"},
+    {"case":"all-gui-actions","test":"docs/architecture/tests/validate-application-shell-ownership"},
+    {"case":"application-service-real-owners","test":"crates/zentty-linux/src/application/product_cli.rs"},
+    {"case":"invalid-missing-rotated-token","test":"crates/zentty-agent-ipc/tests/product_transport.rs"},
+    {"case":"peer-permissions-malformed-oversized-slow-client","test":"crates/zentty-agent-ipc/tests/unix_transport.rs"},
+    {"case":"wrong-instance-cross-window-concurrency-partial-client","test":"crates/zentty-agent-ipc/tests/product_transport.rs"},
+    {"case":"stale-instance-socket-replacement","test":"crates/zentty-agent-ipc/tests/discovery.rs"},
+    {"case":"bounded-shutdown","test":"crates/zentty-agent-ipc/tests/tmux_cli.rs"},
+    {"case":"secret-leak-and-real-x11-wayland","test":"linux/tests/rust-cli-contract"},
+    {"case":"mutation-api-auth-target-version-capability-retry-presentation","test":"linux/tests/mutate-rust"}
+  ],
   "schemas": {
     "request": "docs/architecture/schemas/zentty-application-request-v1.schema.json",
     "response": "docs/architecture/schemas/zentty-application-response-v1.schema.json"

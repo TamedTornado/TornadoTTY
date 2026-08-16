@@ -5,9 +5,9 @@ use std::process::Command;
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 use zentty_agent_ipc::{
-    AgentIpcClient, AgentIpcError, AgentIpcServer, ApplicationErrorCategory, ApplicationRequest,
-    ApplicationResult, ApplicationResultKind, AuthenticatedProductRequest, ProductIpcKind,
-    ProductIpcReply, publish_instance,
+    AgentIpcClient, AgentIpcError, AgentIpcServer, ApplicationAuthority, ApplicationErrorCategory,
+    ApplicationRequest, ApplicationResult, ApplicationResultKind, ApplicationTarget,
+    AuthenticatedProductRequest, ProductIpcKind, ProductIpcReply, publish_instance,
 };
 use zentty_core::{AgentTarget, PaneTokenRegistry};
 
@@ -118,7 +118,7 @@ fn partial_frame_writes_are_reassembled_before_authentication_and_dispatch() {
         let request = receiver.recv_timeout(Duration::from_secs(2)).unwrap();
         assert_eq!(
             request.target,
-            AgentTarget::new("window-1", "lane-1", "pane-1")
+            ApplicationTarget::new("window-1", "lane-1", "pane-1")
         );
         assert_eq!(request.request.subcommand(), "panes");
         request
@@ -251,7 +251,7 @@ fn concurrent_mixed_auth_clients_dispatch_only_canonical_authorized_targets() {
             let request = receiver.recv_timeout(Duration::from_secs(2)).unwrap();
             assert_eq!(
                 request.target,
-                AgentTarget::new("window-1", "lane-1", "pane-1")
+                ApplicationTarget::new("window-1", "lane-1", "pane-1")
             );
             request
                 .respond(discovery_reply(serde_json::json!({
@@ -435,10 +435,7 @@ fn delivered_cli_discovers_one_instance_without_exposing_its_credential() {
         let request = product_receiver
             .recv_timeout(Duration::from_secs(2))
             .unwrap();
-        assert_eq!(
-            request.authority,
-            zentty_core::CapabilityAuthority::Instance
-        );
+        assert_eq!(request.authority, ApplicationAuthority::Instance);
         request
             .respond(discovery_reply(serde_json::json!([{"id":"pane-1"}])))
             .unwrap();
@@ -487,7 +484,7 @@ fn real_shell_signal_cli_uses_the_authenticated_product_route() {
         let request = receiver.recv_timeout(Duration::from_secs(2)).unwrap();
         assert_eq!(
             request.target,
-            AgentTarget::new("window-1", "lane-1", "pane-1")
+            ApplicationTarget::new("window-1", "lane-1", "pane-1")
         );
         assert_eq!(request.request.kind(), ProductIpcKind::Pane);
         assert_eq!(request.request.subcommand(), "shell-signal");
@@ -542,7 +539,7 @@ fn real_agent_status_cli_maps_to_the_authenticated_lifecycle_route() {
         let request = receiver.recv_timeout(Duration::from_secs(2)).unwrap();
         assert_eq!(
             request.target,
-            AgentTarget::new("window-1", "lane-1", "pane-1")
+            ApplicationTarget::new("window-1", "lane-1", "pane-1")
         );
         assert_eq!(request.request.subcommand(), "shell-signal");
         assert_eq!(

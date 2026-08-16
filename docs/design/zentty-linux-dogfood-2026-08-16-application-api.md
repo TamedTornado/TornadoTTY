@@ -480,3 +480,51 @@ all fixtures must change atomically before the inventory can move from
   13/13 PASS, server transport 2/2 PASS, tmux CLI 5/5 PASS, tmux transport
   6/6 PASS, Unix transport 6/6 PASS, and Linux type-check PASS. The controlled
   staged X11/Wayland receipts are rerun below before this issue can close.
+
+- The first controlled X11 rerun correctly used the new reference for a
+  cross-pane CLI mutation, then failed in a later assertion that attempted to
+  reread that credential after the pane had already been closed. The missing
+  file proved revocation was working. The test had incorrectly treated
+  post-close persistence as required; it now asserts that the child received
+  a real capability distinct from the reference and that the credential file
+  is gone after close. Corrected receipts: controlled X11 session
+  `44b67d0196e0fe93737393d56fd28cf73380d6260eff2562ebdf05fd2fe1c530`
+  PASS and controlled Wayland input session
+  `162678f131a6412628468820b0cfa16302b7cdbfd2cf3dd69ef4707c0dd56d45`
+  PASS. Both used the freshly staged ReleaseSafe product and report the real
+  product, delivered CLI, authenticated socket, concurrent instances, aliases,
+  schemas, text goldens, hostile shell quoting, and fail-closed cases as PASS.
+
+## Slice 13: close the service-context and acceptance inventory gaps
+
+- The final architecture audit found that canonical target and authority were
+  still represented by transport/core types at the application-service
+  boundary. Added language-neutral `ApplicationTarget` and
+  `ApplicationAuthority` types to `zentty-api`. The Unix transport alone maps
+  its authenticated registry result into those types; the service no longer
+  accepts a transport authentication enum or agent-specific target type.
+- Pane title, worklane title, and worklane color GUI handlers had duplicated
+  their state transition/projection sequence instead of calling the same
+  operation methods used by external API requests. Extracted three focused
+  `ApplicationShell` operation methods and routed both adapters through them.
+  The application inventory now rejects either GUI or external bypass.
+- Linked the API inventory to the existing authoritative inventory of all 115
+  GTK actions, all 40 CLI commands, and the tmux compatibility route contract
+  rather than creating a second copy. Added a closed acceptance-evidence list
+  mapping conformance, negative architecture tests, real owners, auth,
+  permissions, framing, partial/slow clients, concurrency, stale/replaced
+  instances, bounded shutdown, secret leakage, controlled displays, and
+  mutation scope to their existing tests. Negative runner cases reject a
+  missing acceptance cell or related inventory.
+- Added an explicit threat model and clarified that v1's bounded normalized
+  parameter vector is transport-neutral: source syntax is parsed by the CLI,
+  semantic interpretation occurs once in the operation owner, and transport
+  never branches on it. Added an exact success/failure exit-code function and
+  test. Its focused mutation run tested one generated mutant and caught it;
+  there were zero survivors.
+- During focused verification, the sandboxed real product-transport run failed
+  12/13 solely because Unix listener creation returned `EPERM`; this was not
+  counted as a product pass. The approved rerun passed 13/13. API tests 7/7,
+  CLI binary tests 2/2, parser tests 11/11, Linux type-check, strict changed
+  API/transport Clippy, schema runner, inventory runner and its negative suite,
+  formatting, and diff hygiene all PASS.

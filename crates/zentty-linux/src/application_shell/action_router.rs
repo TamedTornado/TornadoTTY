@@ -1198,16 +1198,9 @@ fn install_worklane_edit_actions(
         ) else {
             return;
         };
-        let changed = {
-            let mut shell_ref = shell.borrow_mut();
-            let changed = shell_ref
-                .state
-                .set_worklane_title(&worklane_id, Some(&title));
-            if changed {
-                shell_ref.refresh_sidebar_metadata();
-            }
-            changed
-        };
+        let changed = shell
+            .borrow_mut()
+            .apply_worklane_title_operation(&worklane_id, Some(&title));
         if changed {
             eprintln!("zentty-linux: action=rename-worklane id={worklane_id} title={title:?}");
             ApplicationShell::focus_terminal_after_present(&shell);
@@ -1235,7 +1228,7 @@ fn install_worklane_edit_actions(
             return;
         };
         let mut shell = shell.borrow_mut();
-        if shell.state.set_worklane_color(&worklane_id, color) {
+        if shell.apply_worklane_color_operation(&worklane_id, color) {
             eprintln!(
                 "zentty-linux: action=set-worklane-color id={worklane_id} color={}",
                 color.map_or("none", WorklaneColor::as_str)
@@ -1342,7 +1335,6 @@ fn install_worklane_move_actions(
                 shell.state.active_worklane_id(),
                 shell.state.focused_pane_id().unwrap_or("none")
             );
-            shell.render_sidebar();
             shell.focus_selected_surface();
         }
     });
@@ -1363,16 +1355,9 @@ fn install_pane_rename_action(
         ) else {
             return;
         };
-        let changed = {
-            let mut shell_ref = shell.borrow_mut();
-            let changed = shell_ref
-                .state
-                .set_pane_custom_title(&pane_id, Some(&title));
-            if changed {
-                shell_ref.refresh_sidebar_metadata();
-            }
-            changed
-        };
+        let changed = shell
+            .borrow_mut()
+            .apply_pane_title_operation(&pane_id, Some(&title));
         if changed {
             eprintln!("zentty-linux: action=rename-pane id={pane_id} title={title:?}");
             ApplicationShell::focus_terminal_after_present(&shell);

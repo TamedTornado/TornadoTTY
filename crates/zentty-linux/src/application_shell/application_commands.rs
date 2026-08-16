@@ -4,12 +4,12 @@ use super::shell_signal::{ShellSignal, parse_shell_signal};
 use std::cell::RefCell;
 use std::rc::Rc;
 use zentty_api::{
-    ApplicationOperation, ApplicationReply as ProductIpcReply,
+    ApplicationAuthority, ApplicationOperation, ApplicationReply as ProductIpcReply,
     ApplicationRequest as ProductIpcRequest, ApplicationResult, ApplicationResultKind,
+    ApplicationTarget,
 };
 use zentty_core::{
-    AgentTarget, CapabilityAuthority, PaneLayoutPolicy, PaneRecipe, PaneResizeDirection,
-    ThemeModeCommand, WorklaneColor,
+    PaneLayoutPolicy, PaneRecipe, PaneResizeDirection, ThemeModeCommand, WorklaneColor,
 };
 
 pub(crate) struct DiscoveryRows {
@@ -27,6 +27,42 @@ pub(super) enum PaneFocusDirection {
 }
 
 impl ApplicationShell {
+    pub(super) fn apply_pane_title_operation(
+        &mut self,
+        pane_id: &str,
+        title: Option<&str>,
+    ) -> bool {
+        let changed = self.state.set_pane_custom_title(pane_id, title);
+        if changed {
+            self.refresh_sidebar_metadata();
+        }
+        changed
+    }
+
+    pub(super) fn apply_worklane_title_operation(
+        &mut self,
+        worklane_id: &str,
+        title: Option<&str>,
+    ) -> bool {
+        let changed = self.state.set_worklane_title(worklane_id, title);
+        if changed {
+            self.refresh_sidebar_metadata();
+        }
+        changed
+    }
+
+    pub(super) fn apply_worklane_color_operation(
+        &mut self,
+        worklane_id: &str,
+        color: Option<WorklaneColor>,
+    ) -> bool {
+        let changed = self.state.set_worklane_color(worklane_id, color);
+        if changed {
+            self.render_sidebar();
+        }
+        changed
+    }
+
     pub(super) fn apply_focus_operation(
         &mut self,
         direction: Option<PaneFocusDirection>,
@@ -47,7 +83,10 @@ impl ApplicationShell {
         Ok(())
     }
 
-    pub(crate) fn product_grid_source_pane(&self, target: &AgentTarget) -> Option<PaneRecipe> {
+    pub(crate) fn product_grid_source_pane(
+        &self,
+        target: &ApplicationTarget,
+    ) -> Option<PaneRecipe> {
         let pane = self.state.pane(&target.pane_id)?;
         (self.state.worklane_id_for_pane(&target.pane_id) == Some(target.worklane_id.as_str()))
             .then(|| PaneRecipe {
@@ -62,8 +101,8 @@ impl ApplicationShell {
 
     pub(crate) fn execute_application_request(
         shell: &Rc<RefCell<Self>>,
-        target: &AgentTarget,
-        authority: CapabilityAuthority,
+        target: &ApplicationTarget,
+        authority: ApplicationAuthority,
         request: &ProductIpcRequest,
     ) -> ProductIpcReply {
         let result = Self::execute_application_request_inner(shell, target, authority, request);
@@ -77,8 +116,8 @@ impl ApplicationShell {
 
     fn execute_application_request_inner(
         shell: &Rc<RefCell<Self>>,
-        target: &AgentTarget,
-        authority: CapabilityAuthority,
+        target: &ApplicationTarget,
+        authority: ApplicationAuthority,
         request: &ProductIpcRequest,
     ) -> Result<ApplicationResult, (&'static str, String)> {
         eprintln!(
@@ -94,7 +133,7 @@ impl ApplicationShell {
         if !target_exists(&shell.borrow(), target) {
             return Err(("stale_target", "target pane is unavailable".to_owned()));
         }
-        if authority == CapabilityAuthority::Pane {
+        if authority == ApplicationAuthority::Pane {
             validate_authenticated_selectors(
                 &shell.borrow(),
                 target,
@@ -273,7 +312,7 @@ impl ApplicationShell {
 
 fn apply_shell_signal(
     shell: &Rc<RefCell<ApplicationShell>>,
-    target: &AgentTarget,
+    target: &ApplicationTarget,
     arguments: &[String],
 ) -> Result<ApplicationResult, (&'static str, String)> {
     if arguments
@@ -343,7 +382,7 @@ fn apply_shell_signal(
 
 fn apply_agent_lifecycle_signal(
     shell: &Rc<RefCell<ApplicationShell>>,
-    target: &AgentTarget,
+    target: &ApplicationTarget,
     arguments: &[String],
 ) -> Result<ApplicationResult, (&'static str, String)> {
     let signal = parse_agent_lifecycle_signal(arguments)?;
@@ -355,7 +394,11 @@ fn apply_agent_lifecycle_signal(
             confidence,
         } => {
             shell.borrow_mut().state.apply_agent_signal_event(
-                target.clone(),
+                zentty_core::AgentTarget::new(
+                    &target.window_id,
+                    &target.worklane_id,
+                    &target.pane_id,
+                ),
                 event.as_ref(),
                 origin,
                 confidence,
@@ -483,7 +526,7 @@ fn topology_response(
 
 fn apply_split_command(
     shell: &Rc<RefCell<ApplicationShell>>,
-    target: &AgentTarget,
+    target: &ApplicationTarget,
     arguments: &[String],
 ) -> Result<(), (&'static str, String)> {
     select_authenticated_target(shell, target)?;
@@ -510,7 +553,7 @@ fn apply_split_command(
 
 fn apply_focus_command(
     shell: &Rc<RefCell<ApplicationShell>>,
-    target: &AgentTarget,
+    target: &ApplicationTarget,
     arguments: &[String],
 ) -> Result<(), (&'static str, String)> {
     select_authenticated_target(shell, target)?;
@@ -534,7 +577,7 @@ fn apply_focus_command(
 
 fn apply_metadata_command(
     shell: &Rc<RefCell<ApplicationShell>>,
-    target: &AgentTarget,
+    target: &ApplicationTarget,
     request: &ProductIpcRequest,
 ) -> Result<(), (&'static str, String)> {
     let arguments = request.arguments();
@@ -550,8 +593,7 @@ fn apply_metadata_command(
             }
             shell
                 .borrow_mut()
-                .state
-                .set_pane_custom_title(&target.pane_id, option_value(arguments, "--title"))
+                .apply_pane_title_operation(&target.pane_id, option_value(arguments, "--title"))
         }
         ApplicationOperation::WorklaneRename | ApplicationOperation::WorklaneColor => {
             if option_value(arguments, "--id")
@@ -563,18 +605,17 @@ fn apply_metadata_command(
                 ));
             }
             if request.operation() == ApplicationOperation::WorklaneRename {
-                shell
-                    .borrow_mut()
-                    .state
-                    .set_worklane_title(&target.worklane_id, option_value(arguments, "--title"))
+                shell.borrow_mut().apply_worklane_title_operation(
+                    &target.worklane_id,
+                    option_value(arguments, "--title"),
+                )
             } else {
                 let color = option_value(arguments, "--color")
                     .and_then(|value| (value != "reset").then(|| WorklaneColor::named(value)))
                     .flatten();
                 shell
                     .borrow_mut()
-                    .state
-                    .set_worklane_color(&target.worklane_id, color)
+                    .apply_worklane_color_operation(&target.worklane_id, color)
             }
         }
         _ => unreachable!("metadata dispatcher receives only metadata operations"),
@@ -588,7 +629,7 @@ fn apply_metadata_command(
 
 fn apply_resize_command(
     shell: &Rc<RefCell<ApplicationShell>>,
-    target: &AgentTarget,
+    target: &ApplicationTarget,
     arguments: &[String],
 ) -> Result<(), (&'static str, String)> {
     select_authenticated_target(shell, target)?;
@@ -666,7 +707,7 @@ fn apply_theme_command(
     ))
 }
 
-fn target_exists(shell: &ApplicationShell, target: &AgentTarget) -> bool {
+fn target_exists(shell: &ApplicationShell, target: &ApplicationTarget) -> bool {
     shell.state.worklanes().iter().any(|worklane| {
         worklane.id == target.worklane_id
             && worklane
@@ -679,7 +720,7 @@ fn target_exists(shell: &ApplicationShell, target: &AgentTarget) -> bool {
 
 fn select_authenticated_target(
     shell: &Rc<RefCell<ApplicationShell>>,
-    target: &AgentTarget,
+    target: &ApplicationTarget,
 ) -> Result<(), (&'static str, String)> {
     if shell
         .borrow_mut()
@@ -757,7 +798,7 @@ fn apply_split_layout(
 
 fn validate_authenticated_selectors(
     shell: &ApplicationShell,
-    target: &AgentTarget,
+    target: &ApplicationTarget,
     arguments: &[String],
     positional_pane_selector: bool,
 ) -> Result<(), (&'static str, String)> {

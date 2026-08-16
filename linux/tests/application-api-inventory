@@ -16,8 +16,8 @@ jq empty "${cli_contract}" 2>/dev/null || fail "CLI contract is not valid JSON"
 
 jq -e '
     (keys | sort) == [
-      "api_version","authority","cli","cli_local_families","discovery","documentation","error_categories",
-      "operations","result_kinds","schema_version","schemas","service","specialized_families","status","transport"
+      "acceptance_evidence","api_version","authority","cli","cli_local_families","discovery","documentation","error_categories",
+      "operations","related_inventories","result_kinds","schema_version","schemas","service","specialized_families","status","transport"
     ] and
     .schema_version == 1 and .api_version == 1 and
     .status == "EXTRACTION_IN_PROGRESS" and
@@ -66,7 +66,17 @@ jq -e '
       (.id | type == "string" and length > 0) and
       (.owner | type == "string" and length > 0) and
       (.cli_contract_ids | type == "array" and length > 0)
-    )
+    ) and
+    ([.acceptance_evidence[].case] | length == (unique | length)) and
+    ([.acceptance_evidence[].case] | sort) == ([
+      "all-gui-actions","api-conformance","application-service-real-owners",
+      "bounded-shutdown","invalid-missing-rotated-token","inventory-negative-self-test",
+      "mutation-api-auth-target-version-capability-retry-presentation",
+      "peer-permissions-malformed-oversized-slow-client","route-and-owner-inventory",
+      "secret-leak-and-real-x11-wayland","stale-instance-socket-replacement",
+      "wrong-instance-cross-window-concurrency-partial-client"
+    ] | sort) and
+    [.related_inventories[].scope] == ["all-gui-actions","all-cli-commands","tmux-routes"]
 ' "${inventory}" >/dev/null || fail "inventory schema or closed enums failed"
 
 [[ "$(jq -r '[.operations[].id] | length == (unique | length)' "${inventory}")" == true ]] ||
@@ -91,6 +101,12 @@ done
 while IFS= read -r path; do
     [[ -f "${repo_root}/${path}" ]] || fail "service source path is missing: ${path}"
 done < <(jq -r '.service[]' "${inventory}")
+while IFS= read -r path; do
+    [[ -f "${repo_root}/${path}" ]] || fail "related inventory source is missing: ${path}"
+done < <(jq -r '.related_inventories[] | .path,.validator' "${inventory}")
+while IFS= read -r path; do
+    [[ -f "${repo_root}/${path}" ]] || fail "acceptance evidence source is missing: ${path}"
+done < <(jq -r '.acceptance_evidence[].test' "${inventory}" | LC_ALL=C sort -u)
 
 contract_ids="$(jq -r '.commands[].id' "${cli_contract}" | LC_ALL=C sort -u)"
 inventory_ids="$(jq -r '
@@ -132,6 +148,12 @@ grep -Fq 'apply_focus_operation(Some(direction))' "${action_source}" ||
     fail "GUI focus actions bypass the shared application operation"
 grep -Fq 'apply_focus_operation(direction)' "${shell_service}" ||
     fail "external focus requests bypass the shared application operation"
+for operation in apply_pane_title_operation apply_worklane_title_operation apply_worklane_color_operation; do
+    grep -Fq "${operation}(" "${action_source}" ||
+        fail "GUI metadata action bypasses shared application operation: ${operation}"
+    grep -Fq "${operation}(" "${shell_service}" ||
+        fail "external metadata request bypasses shared application operation: ${operation}"
+done
 grep -Fq 'command.request.operation() == ApplicationOperation::Grid' "${coordinator_service}" ||
     fail "application coordinator grid dispatch bypasses the closed operation registry"
 grep -Fq 'pub enum ApplicationResultKind' "${api_model}" ||

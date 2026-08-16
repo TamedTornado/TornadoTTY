@@ -54,4 +54,11 @@ expect_rejected unknown-result-kind "schema or closed enums failed"
 jq '.discovery.instance_authority_scopes = ["pane"]' "${source_inventory}" >"${temp_dir}/overpowered-discovery.json"
 expect_rejected overpowered-discovery "schema or closed enums failed"
 
+jq '.acceptance_evidence |= .[:-1]' "${source_inventory}" >"${temp_dir}/missing-acceptance-case.json"
+expect_rejected missing-acceptance-case "schema or closed enums failed"
+
+jq '.related_inventories[0].path = "docs/architecture/missing.json"' \
+    "${source_inventory}" >"${temp_dir}/missing-related-inventory.json"
+expect_rejected missing-related-inventory "related inventory source is missing"
+
 echo "application-api-inventory runner negative tests passed"

@@ -233,8 +233,10 @@ staged_cli="$(readlink -f "${product%/*}/zentty")"
 [[ "$(sed -n 's/^worklane=//p' "${split_env}")" == worklane-1 ]] || fail "child worklane identity drifted"
 [[ "$(sed -n 's/^pane=//p' "${split_env}")" == "${split_id}" ]] || fail "child pane identity drifted"
 [[ "${split_token}" == @file:/* ]] || fail "discovery exposed a capability instead of a credential reference"
-[[ "$(sed -n 's/^token=//p' "${split_env}")" == "$(cat -- "${split_token#@file:}")" ]] ||
-    fail "child capability differs from its authenticated credential file"
+[[ "$(sed -n 's/^token=//p' "${split_env}")" != "${split_token}" ]] ||
+    fail "child capability was exposed directly instead of through a credential reference"
+[[ ! -e "${split_token#@file:}" ]] ||
+    fail "closed pane retained its credential file"
 [[ "$(sed -n 's/^hook=//p' "${split_env}")" == "${staged_cli} ipc agent-event" ]] || fail "child hook command is not staged"
 integration="$(sed -n 's/^integration=//p' "${split_env}")"
 [[ -f "${integration}/zentty-bash-integration.bash" && -f "${integration}/zentty-zsh-integration.zsh" ]] || fail "child shell integration resources are missing"

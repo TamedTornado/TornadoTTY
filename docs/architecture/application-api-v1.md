@@ -23,6 +23,13 @@ timeouts, and socket lifetime. The CLI owns source-compatible argument parsing,
 response rendering, and exit status. None of those adapters owns workspace or
 terminal state.
 
+The transport passes the service a closed `ApplicationAuthority` and
+`ApplicationTarget` from `zentty-api`. The target is canonical authenticated
+context, not a serialized client claim. The v1 request's bounded string vector
+is a language-neutral normalized parameter sequence: the CLI validates source
+syntax and constructs it, while each operation owner performs the one semantic
+interpretation. The transport never branches on those parameters.
+
 ## Versions and compatibility
 
 - Application API version: `1`.
@@ -91,6 +98,26 @@ With one valid instance, the CLI discovers it automatically. With multiple
 instances it fails closed and requires `ZENTTY_INSTANCE_ID`; it never chooses
 one by recency. There is no `/tmp` scanning fallback when `XDG_RUNTIME_DIR` is
 absent.
+
+## Threat model
+
+The protected assets are pane capabilities, the instance discovery
+capability, canonical topology identity, terminal input/state, and sensitive
+payloads. The local adversary model includes another process with the same
+login's observable argv/process metadata, stale clients after restart, forged
+selectors, symlink or permission substitution in the runtime tree, partial or
+oversized frames, slow clients, and a valid capability replayed against the
+wrong instance. The API does not claim isolation from a process already able
+to read the owner's 0600 files or ptrace the owner under the host's security
+policy.
+
+Mitigations are owner-private runtime artifacts, independently random scoped
+capabilities, canonical server-side target derivation, PID plus `/proc` start
+identity, exact socket-path validation, bounded framing and waits, explicit
+version/capability negotiation, typed stale/retry failures, credential-file
+indirection for opt-in pane selection, and revocation on pane/instance
+teardown. Tests exercise each of these boundaries through the real Unix
+transport and the staged product; environmental absence is never a pass.
 
 ## Lifecycle
 

@@ -19,10 +19,10 @@ pub use server::{
     ServerCommand, ServerIpcError, ServerIpcReply, ServerIpcReplyError, ServerIpcRequest,
 };
 pub use zentty_api::{
-    APPLICATION_API_VERSION, ApplicationApiError, ApplicationErrorCategory, ApplicationOperation,
-    ApplicationReply, ApplicationReplyError, ApplicationRequest, ApplicationResult,
-    ApplicationResultKind, ApplicationScope, ProductIpcError, ProductIpcKind, ProductIpcReply,
-    ProductIpcReplyError, ProductIpcRequest,
+    APPLICATION_API_VERSION, ApplicationApiError, ApplicationAuthority, ApplicationErrorCategory,
+    ApplicationOperation, ApplicationReply, ApplicationReplyError, ApplicationRequest,
+    ApplicationResult, ApplicationResultKind, ApplicationScope, ApplicationTarget, ProductIpcError,
+    ProductIpcKind, ProductIpcReply, ProductIpcReplyError, ProductIpcRequest,
 };
 
 use serde::{Deserialize, Serialize};
@@ -198,8 +198,8 @@ pub struct AuthenticatedServerRequest {
 }
 
 pub struct AuthenticatedProductRequest {
-    pub target: AgentTarget,
-    pub authority: CapabilityAuthority,
+    pub target: ApplicationTarget,
+    pub authority: ApplicationAuthority,
     pub request: ProductIpcRequest,
     responder: mpsc::SyncSender<ProductIpcReply>,
 }
@@ -1132,8 +1132,11 @@ fn receive_product_request(
     let (responder, response) = mpsc::sync_channel(1);
     product_sender
         .send(AuthenticatedProductRequest {
-            target,
-            authority,
+            target: ApplicationTarget::new(target.window_id, target.worklane_id, target.pane_id),
+            authority: match authority {
+                CapabilityAuthority::Pane => ApplicationAuthority::Pane,
+                CapabilityAuthority::Instance => ApplicationAuthority::Instance,
+            },
             request: payload,
             responder,
         })

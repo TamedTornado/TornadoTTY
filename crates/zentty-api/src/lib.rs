@@ -13,6 +13,39 @@ pub enum ApplicationScope {
     Pane,
 }
 
+/// Canonical application target derived by authentication. This is service
+/// context, not a client routing claim.
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplicationTarget {
+    pub window_id: String,
+    pub worklane_id: String,
+    pub pane_id: String,
+}
+
+impl ApplicationTarget {
+    #[must_use]
+    pub fn new(
+        window_id: impl Into<String>,
+        worklane_id: impl Into<String>,
+        pane_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            window_id: window_id.into(),
+            worklane_id: worklane_id.into(),
+            pane_id: pane_id.into(),
+        }
+    }
+}
+
+/// Authority scope established by the transport before service dispatch.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ApplicationAuthority {
+    Pane,
+    Instance,
+}
+
 impl ApplicationScope {
     #[must_use]
     pub const fn wire_name(self) -> &'static str {
@@ -418,8 +451,9 @@ pub type ProductIpcError = ApplicationApiError;
 #[cfg(test)]
 mod tests {
     use super::{
-        APPLICATION_API_VERSION, ApplicationErrorCategory, ApplicationOperation, ApplicationReply,
-        ApplicationRequest, ApplicationResult, ApplicationResultKind, ApplicationScope,
+        APPLICATION_API_VERSION, ApplicationAuthority, ApplicationErrorCategory,
+        ApplicationOperation, ApplicationReply, ApplicationRequest, ApplicationResult,
+        ApplicationResultKind, ApplicationScope, ApplicationTarget,
     };
     use std::collections::HashSet;
 
@@ -480,6 +514,27 @@ mod tests {
 
         assert!(ApplicationRequest::new(ApplicationScope::Discover, "split", Vec::new()).is_err());
         assert!(ApplicationRequest::new(ApplicationScope::Pane, "panes", Vec::new()).is_err());
+    }
+
+    #[test]
+    fn canonical_target_and_authority_are_language_neutral_service_context() {
+        let target = ApplicationTarget::new("window-1", "worklane-2", "pane-3");
+        assert_eq!(
+            serde_json::to_value(&target).unwrap(),
+            serde_json::json!({
+                "windowId":"window-1",
+                "worklaneId":"worklane-2",
+                "paneId":"pane-3"
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(ApplicationAuthority::Pane).unwrap(),
+            serde_json::json!("pane")
+        );
+        assert_eq!(
+            serde_json::to_value(ApplicationAuthority::Instance).unwrap(),
+            serde_json::json!("instance")
+        );
     }
 
     #[test]

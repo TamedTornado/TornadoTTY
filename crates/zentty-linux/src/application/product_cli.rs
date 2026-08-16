@@ -4,11 +4,11 @@ use crate::persistence_coordinator::WindowSnapshot;
 use gtk::glib;
 use zentty_agent_ipc::AuthenticatedProductRequest;
 use zentty_api::{
-    ApplicationOperation, ApplicationReply as ProductIpcReply,
+    ApplicationAuthority, ApplicationOperation, ApplicationReply as ProductIpcReply,
     ApplicationRequest as ProductIpcRequest, ApplicationResult, ApplicationResultKind,
-    ApplicationScope as ProductIpcKind,
+    ApplicationScope as ProductIpcKind, ApplicationTarget,
 };
-use zentty_core::{AgentTarget, ColumnRecipe, PaneRecipe, WindowRecipe, WorklaneRecipe};
+use zentty_core::{ColumnRecipe, PaneRecipe, WindowRecipe, WorklaneRecipe};
 
 impl ApplicationCoordinator {
     pub(super) fn handle_product_commands(&mut self, commands: Vec<AuthenticatedProductRequest>) {
@@ -129,11 +129,11 @@ impl ApplicationCoordinator {
         arguments.push("--destination-source-created".to_owned());
         let request = ProductIpcRequest::new(ProductIpcKind::Pane, "grid", arguments)
             .expect("validated grid request remains valid without destination flag");
-        let target = AgentTarget::new(&destination_window_id, &worklane_id, &pane_id);
+        let target = ApplicationTarget::new(&destination_window_id, &worklane_id, &pane_id);
         let reply = ApplicationShell::execute_application_request(
             &destination,
             &target,
-            zentty_core::CapabilityAuthority::Pane,
+            ApplicationAuthority::Pane,
             &request,
         );
         if reply.error().is_some() {
