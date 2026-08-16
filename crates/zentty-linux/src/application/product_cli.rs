@@ -3,8 +3,10 @@ use crate::application_shell::ApplicationShell;
 use crate::persistence_coordinator::WindowSnapshot;
 use gtk::glib;
 use std::fmt::Write;
-use zentty_agent_ipc::{
-    AuthenticatedProductRequest, ProductIpcKind, ProductIpcReply, ProductIpcRequest,
+use zentty_agent_ipc::AuthenticatedProductRequest;
+use zentty_api::{
+    ApplicationReply as ProductIpcReply, ApplicationRequest as ProductIpcRequest,
+    ApplicationScope as ProductIpcKind,
 };
 use zentty_core::{AgentTarget, ColumnRecipe, PaneRecipe, WindowRecipe, WorklaneRecipe};
 
@@ -773,7 +775,10 @@ mod tests {
         should_present_product_target, truncate_leading, truncate_tail,
     };
     use serde_json::json;
-    use zentty_agent_ipc::{ProductIpcKind, ProductIpcReply, ProductIpcRequest};
+    use zentty_api::{
+        ApplicationReply as ProductIpcReply, ApplicationRequest as ProductIpcRequest,
+        ApplicationScope as ProductIpcKind,
+    };
 
     fn pane(id: &str, index: u64, token: &str) -> serde_json::Value {
         json!({

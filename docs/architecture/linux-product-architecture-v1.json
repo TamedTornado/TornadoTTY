@@ -14,6 +14,26 @@
   "ghostty_revision": "f4e85f032a0118eca32d2179b4f379a3769c7bb2",
   "workspace_crates": [
     {
+      "name": "zentty-api",
+      "kind": "transport-neutral-contract-library",
+      "shipped": true,
+      "responsibilities": [
+        "versioned-application-operation-registry",
+        "bounded-application-request-and-reply-types",
+        "transport-neutral-error-contract"
+      ],
+      "workspace_dependencies": [],
+      "forbidden_dependency_classes": [
+        "gtk",
+        "gobject",
+        "ghostty-ffi",
+        "socket-transport",
+        "cli-presentation",
+        "product-ui-state"
+      ],
+      "unsafe_policy": "forbid"
+    },
+    {
       "name": "zentty-core",
       "kind": "library",
       "shipped": true,
@@ -45,6 +65,7 @@
         "agent-wrapper-exec-and-real-binary-resolution"
       ],
       "workspace_dependencies": [
+        "zentty-api",
         "zentty-core",
         "zentty-tmux-compat"
       ],
@@ -126,6 +147,7 @@
         "lifecycle-orchestration"
       ],
       "workspace_dependencies": [
+        "zentty-api",
         "zentty-core",
         "zentty-agent-ipc",
         "zentty-ghostty",
@@ -160,10 +182,12 @@
     }
   ],
   "allowed_workspace_edges": [
+    "zentty-agent-ipc->zentty-api",
     "zentty-agent-ipc->zentty-core",
     "zentty-agent-ipc->zentty-tmux-compat",
     "zentty-ghostty->zentty-ghostty-sys",
     "zentty-linux->zentty-agent-ipc",
+    "zentty-linux->zentty-api",
     "zentty-linux->zentty-core",
     "zentty-linux->zentty-ghostty",
     "zentty-linux->zentty-tmux-compat",

@@ -3,7 +3,7 @@ use super::agent_lifecycle_signal::{AgentLifecycleSignal, parse_agent_lifecycle_
 use super::shell_signal::{ShellSignal, parse_shell_signal};
 use std::cell::RefCell;
 use std::rc::Rc;
-use zentty_agent_ipc::{ProductIpcReply, ProductIpcRequest};
+use zentty_api::{ApplicationReply as ProductIpcReply, ApplicationRequest as ProductIpcRequest};
 use zentty_core::{
     AgentTarget, PaneLayoutPolicy, PaneRecipe, PaneResizeDirection, ThemeModeCommand, WorklaneColor,
 };

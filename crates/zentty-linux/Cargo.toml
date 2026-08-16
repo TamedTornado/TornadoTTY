@@ -12,6 +12,7 @@ libc = "=0.2.189"
 sha2 = "=0.10.9"
 serde_json = "=1.0.145"
 toml_edit = "=0.25.13"
+zentty-api = { path = "../zentty-api" }
 zentty-agent-ipc = { path = "../zentty-agent-ipc" }
 zentty-core = { path = "../zentty-core" }
 zentty-ghostty = { path = "../zentty-ghostty" }

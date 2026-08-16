@@ -3,17 +3,18 @@
 mod cli;
 mod integrations;
 mod launch;
-mod product;
 mod server;
 
 pub use cli::{CliProductCommand, parse_product_cli};
 pub use integrations::{install_integration, uninstall_integration};
 pub use launch::{LaunchError, launch_agent, resolve_real_binary};
-pub use product::{
-    ProductIpcError, ProductIpcKind, ProductIpcReply, ProductIpcReplyError, ProductIpcRequest,
-};
 pub use server::{
     ServerCommand, ServerIpcError, ServerIpcReply, ServerIpcReplyError, ServerIpcRequest,
+};
+pub use zentty_api::{
+    ApplicationApiError, ApplicationOperation, ApplicationReply, ApplicationReplyError,
+    ApplicationRequest, ApplicationScope, ProductIpcError, ProductIpcKind, ProductIpcReply,
+    ProductIpcReplyError, ProductIpcRequest,
 };
 
 use serde::{Deserialize, Serialize};

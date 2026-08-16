@@ -767,8 +767,17 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+ "zentty-api",
  "zentty-core",
  "zentty-tmux-compat",
+]
+
+[[package]]
+name = "zentty-api"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -803,6 +812,7 @@ dependencies = [
  "sha2",
  "toml_edit",
  "zentty-agent-ipc",
+ "zentty-api",
  "zentty-core",
  "zentty-ghostty",
  "zentty-tmux-compat",

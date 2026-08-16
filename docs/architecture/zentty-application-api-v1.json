@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "api_version": 1,
+  "status": "EXTRACTION_IN_PROGRESS",
+  "authority": "crates/zentty-api/src/lib.rs",
+  "transport": "crates/zentty-agent-ipc/src/lib.rs",
+  "cli": "crates/zentty-agent-ipc/src/cli.rs",
+  "service": [
+    "crates/zentty-linux/src/application/product_cli.rs",
+    "crates/zentty-linux/src/application_shell/product_cli.rs"
+  ],
+  "operations": [
+    {"id":"overview","scope":"discover","wire_name":"overview","cli_contract_ids":["list-overview"],"gui_entry_points":[],"owner":"application-coordinator","result":"discovery","external":true},
+    {"id":"windows","scope":"discover","wire_name":"windows","cli_contract_ids":["list-windows","window-list"],"gui_entry_points":[],"owner":"application-coordinator","result":"discovery","external":true},
+    {"id":"worklanes","scope":"discover","wire_name":"worklanes","cli_contract_ids":["list-worklanes","worklane-list"],"gui_entry_points":[],"owner":"application-coordinator","result":"discovery","external":true},
+    {"id":"panes","scope":"discover","wire_name":"panes","cli_contract_ids":["list-panes"],"gui_entry_points":[],"owner":"application-coordinator","result":"discovery","external":true},
+    {"id":"panes-current-worklane","scope":"discover","wire_name":"panes-current-worklane","cli_contract_ids":["pane-list"],"gui_entry_points":[],"owner":"application-coordinator","result":"discovery","external":true},
+    {"id":"select-pane","scope":"discover","wire_name":"select-pane","cli_contract_ids":["select-pane"],"gui_entry_points":["select-pane"],"owner":"application-coordinator","result":"selection","external":true},
+    {"id":"split","scope":"pane","wire_name":"split","cli_contract_ids":["split","hsplit","vsplit"],"gui_entry_points":["split-pane-right","split-pane-below"],"owner":"application-shell","result":"topology","external":true},
+    {"id":"grid","scope":"pane","wire_name":"grid","cli_contract_ids":["grid"],"gui_entry_points":[],"owner":"application-coordinator","result":"topology","external":true},
+    {"id":"focus","scope":"pane","wire_name":"focus","cli_contract_ids":["pane-focus"],"gui_entry_points":["focus-pane-left","focus-pane-right","focus-pane-up","focus-pane-down"],"owner":"application-shell","result":"empty","external":true},
+    {"id":"pane-rename","scope":"pane","wire_name":"pane-rename","cli_contract_ids":["pane-rename"],"gui_entry_points":["rename-pane"],"owner":"application-shell","result":"empty","external":true},
+    {"id":"close","scope":"pane","wire_name":"close","cli_contract_ids":["pane-close"],"gui_entry_points":["close-pane"],"owner":"application-shell","result":"empty","external":true},
+    {"id":"worklane-color","scope":"pane","wire_name":"worklane-color","cli_contract_ids":["worklane-color"],"gui_entry_points":["set-worklane-color"],"owner":"application-shell","result":"empty","external":true},
+    {"id":"worklane-rename","scope":"pane","wire_name":"worklane-rename","cli_contract_ids":["worklane-rename"],"gui_entry_points":["rename-worklane"],"owner":"application-shell","result":"empty","external":true},
+    {"id":"zoom","scope":"pane","wire_name":"zoom","cli_contract_ids":["pane-zoom"],"gui_entry_points":[],"owner":"application-shell","result":"topology","external":true},
+    {"id":"resize","scope":"pane","wire_name":"resize","cli_contract_ids":["pane-resize"],"gui_entry_points":["resize-pane-left","resize-pane-right","resize-pane-up","resize-pane-down"],"owner":"application-shell","result":"topology","external":true},
+    {"id":"layout","scope":"pane","wire_name":"layout","cli_contract_ids":["layout"],"gui_entry_points":["arrange-width-full","arrange-width-half","arrange-width-thirds","arrange-width-quarters","arrange-height-full","arrange-height-two","arrange-height-three","arrange-height-four","arrange-golden-wide","arrange-golden-narrow","arrange-golden-tall","arrange-golden-short","reset-pane-layout"],"owner":"application-shell","result":"topology","external":true},
+    {"id":"theme","scope":"pane","wire_name":"theme","cli_contract_ids":["theme-toggle","theme-dark","theme-light","theme-auto"],"gui_entry_points":["toggle-light-dark-theme","use-dark-theme","use-light-theme","use-auto-theme"],"owner":"application-shell","result":"theme","external":true},
+    {"id":"notify","scope":"pane","wire_name":"notify","cli_contract_ids":["notify"],"gui_entry_points":[],"owner":"application-coordinator","result":"empty","external":true},
+    {"id":"shell-signal","scope":"pane","wire_name":"shell-signal","cli_contract_ids":["ipc"],"gui_entry_points":[],"owner":"application-shell","result":"empty","external":false}
+  ],
+  "specialized_families": [
+    {"id":"agent-event","wire_kind":"ipc","owner":"agent-status-reducer","cli_contract_ids":["ipc","codex-notify","gemini-hook","agy-hook","hermes-hook"],"classification":"event-input"},
+    {"id":"development-server","wire_kind":"server","owner":"development-server-runtime","cli_contract_ids":["server-set","server-clear","server-list","server-open","server-watch"],"classification":"candidate-application-api"},
+    {"id":"tmux-compat","wire_kind":"tmux_compat","owner":"tmux-compat-runtime","cli_contract_ids":["tmux-compat"],"classification":"compatibility-api"}
+  ],
+  "cli_local_families": [
+    {"id":"version","cli_contract_ids":["version"],"owner":"cli-presentation"},
+    {"id":"agent-launch","cli_contract_ids":["launch"],"owner":"launcher"},
+    {"id":"integration-management","cli_contract_ids":["install","uninstall"],"owner":"integration-installer"},
+    {"id":"server-watch-supervision","cli_contract_ids":["server-watch"],"owner":"cli-process-supervisor"}
+  ]
+}

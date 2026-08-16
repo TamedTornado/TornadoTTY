@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
+    "crates/zentty-api",
     "crates/zentty-core",
     "crates/zentty-ghostty-sys",
     "crates/zentty-ghostty",

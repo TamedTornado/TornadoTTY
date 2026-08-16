@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+inventory="${1:-${repo_root}/docs/architecture/zentty-application-api-v1.json}"
+cli_contract="${2:-${repo_root}/docs/design/zentty-cli-source-contract.json}"
+
+fail() {
+    echo "application-api-inventory: error: $*" >&2
+    exit 1
+}
+
+command -v jq >/dev/null || fail "jq is required"
+jq empty "${inventory}" 2>/dev/null || fail "inventory is not valid JSON"
+jq empty "${cli_contract}" 2>/dev/null || fail "CLI contract is not valid JSON"
+
+jq -e '
+    (keys | sort) == [
+      "api_version","authority","cli","cli_local_families","operations",
+      "schema_version","service","specialized_families","status","transport"
+    ] and
+    .schema_version == 1 and .api_version == 1 and
+    .status == "EXTRACTION_IN_PROGRESS" and
+    (.operations | length == 19) and
+    all(.operations[];
+      (.id | type == "string" and test("^[a-z][a-z0-9-]*$")) and
+      (.scope | IN("discover","pane")) and
+      (.wire_name == .id) and
+      (.cli_contract_ids | type == "array" and length > 0) and
+      (.gui_entry_points | type == "array") and
+      (.owner | IN("application-coordinator","application-shell")) and
+      (.result | IN("discovery","selection","topology","empty","theme")) and
+      (.external | type == "boolean")
+    ) and
+    all(.specialized_families[];
+      (.id | IN("agent-event","development-server","tmux-compat")) and
+      (.wire_kind | IN("ipc","server","tmux_compat")) and
+      (.owner | type == "string" and length > 0) and
+      (.cli_contract_ids | type == "array" and length > 0) and
+      (.classification | IN("event-input","candidate-application-api","compatibility-api"))
+    ) and
+    all(.cli_local_families[];
+      (.id | type == "string" and length > 0) and
+      (.owner | type == "string" and length > 0) and
+      (.cli_contract_ids | type == "array" and length > 0)
+    )
+' "${inventory}" >/dev/null || fail "inventory schema or closed enums failed"
+
+[[ "$(jq -r '[.operations[].id] | length == (unique | length)' "${inventory}")" == true ]] ||
+    fail "operation IDs are duplicated"
+[[ "$(jq -r '[.operations[] | [.scope,.wire_name] | join("/")] | length == (unique | length)' "${inventory}")" == true ]] ||
+    fail "operation wire identities are duplicated"
+
+expected_operations=$'overview\nwindows\nworklanes\npanes\npanes-current-worklane\nselect-pane\nsplit\ngrid\nfocus\npane-rename\nclose\nworklane-color\nworklane-rename\nzoom\nresize\nlayout\ntheme\nnotify\nshell-signal'
+actual_operations="$(jq -r '.operations[].id' "${inventory}")"
+[[ "${actual_operations}" == "${expected_operations}" ]] ||
+    fail "compiled operation order or coverage drifted"
+
+for path in \
+    "$(jq -r '.authority' "${inventory}")" \
+    "$(jq -r '.transport' "${inventory}")" \
+    "$(jq -r '.cli' "${inventory}")"; do
+    [[ -f "${repo_root}/${path}" ]] || fail "owned source path is missing: ${path}"
+done
+while IFS= read -r path; do
+    [[ -f "${repo_root}/${path}" ]] || fail "service source path is missing: ${path}"
+done < <(jq -r '.service[]' "${inventory}")
+
+contract_ids="$(jq -r '.commands[].id' "${cli_contract}" | LC_ALL=C sort -u)"
+inventory_ids="$(jq -r '
+    .operations[].cli_contract_ids[],
+    .specialized_families[].cli_contract_ids[],
+    .cli_local_families[].cli_contract_ids[]
+' "${inventory}" | LC_ALL=C sort -u)"
+[[ "${inventory_ids}" == "${contract_ids}" ]] ||
+    fail "CLI command coverage is incomplete or references unknown commands"
+
+action_source="${repo_root}/crates/zentty-linux/src/application_shell/action_router.rs"
+while IFS= read -r action; do
+    grep -Fq "\"${action}\"" "${action_source}" ||
+        fail "GUI entry point is not registered: ${action}"
+done < <(jq -r '.operations[].gui_entry_points[]' "${inventory}" | LC_ALL=C sort -u)
+
+[[ "$(jq -r '[.operations[] | select(.external == false) | .id] == ["shell-signal"]' "${inventory}")" == true ]] ||
+    fail "external API classification drifted"
+
+echo "application-api-inventory: PASS operations=19 specialized=3 cli-local=4 cli-contract=$(wc -l <<<"${contract_ids}")"

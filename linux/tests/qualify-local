@@ -21,6 +21,7 @@ pinned_gemini_bin="${repo_root}/build/linux-deps/gemini-cli-0.53.0/node_modules/
 
 support_tests=(
     linux/tests/qualification-matrix-test
+    linux/tests/application-api-inventory-test
     linux/tests/feature-inventory-test
     linux/tests/cli-source-contract-test
     linux/tests/test-orchestration-contract
