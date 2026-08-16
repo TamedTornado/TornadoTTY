@@ -503,6 +503,53 @@ fn active_supported_agents_produce_restorable_per_pane_drafts() {
 }
 
 #[test]
+fn restored_explicit_task_progress_remains_authoritative() {
+    let envelope = SessionRestoreEnvelope::from_json(V3_ENVELOPE).unwrap();
+    let mut state = WorkspaceState::from_window_recipe(&envelope.workspace.windows[0]).unwrap();
+    let pane_id = "pane-agent";
+    let session_id = "session-codex";
+    let draft = zentty_core::PaneRestoreDraft {
+        pane_id: pane_id.to_owned(),
+        kind: zentty_core::RestoreDraftKind::AgentResume,
+        tool_name: "Codex".to_owned(),
+        session_id: session_id.to_owned(),
+        working_directory: Some("/tmp/project".to_owned()),
+        tracked_pid: 0,
+        agent_launch_snapshot: Some(zentty_core::AgentLaunchSnapshot {
+            arguments: vec![
+                "codex".to_owned(),
+                "resume".to_owned(),
+                session_id.to_owned(),
+            ],
+            environment: None,
+        }),
+        task_progress: Some(zentty_core::AgentProgress { done: 3, total: 4 }),
+        tasks: Default::default(),
+        task_progress_authoritative: true,
+    };
+    assert!(state.seed_restored_agent(&draft, 16));
+    state.apply_agent_event(
+        AuthenticatedAgentEvent {
+            target: AgentTarget::new("window-main", "worklane-main", pane_id),
+            pane_token: "token-pane-agent".to_owned(),
+            event: AgentEvent::parse(
+                br#"{"version":1,"event":"task.completed","agent":{"name":"Codex"},"session":{"id":"session-codex"},"task":{"id":"late-counter"}}"#,
+            )
+            .unwrap(),
+        },
+        17,
+    );
+    assert_eq!(
+        state.sidebar_summaries()[0].pane_rows[0]
+            .agent_status
+            .as_ref()
+            .unwrap()
+            .progress,
+        Some(zentty_core::AgentProgress { done: 3, total: 4 })
+    );
+}
+
+#[test]
 fn worklane_commands_preserve_order_selection_and_source_title_semantics() {
     let mut state = WorkspaceState::new("worklane-a", "pane-a");
 

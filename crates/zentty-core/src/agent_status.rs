@@ -127,16 +127,57 @@ impl PaneAgentStatus {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct AgentStatusStore {
     panes: HashMap<String, HashMap<String, PaneAgentStatus>>,
-    task_bookkeeping: HashMap<(String, String), HashMap<String, bool>>,
-    authoritative_task_progress: HashSet<(String, String)>,
-    ended_sessions: HashSet<(String, String)>,
-    codex_title_inferred: HashSet<(String, String)>,
-    codex_idle_suppression_until: HashMap<(String, String), u64>,
-    observed_running: HashSet<(String, String)>,
-    completion_candidate_deadline: HashMap<(String, String), u64>,
-    idle_visible_until: HashMap<(String, String), u64>,
-    unresolved_stop_visible_until: HashMap<(String, String), u64>,
+    session_bookkeeping: HashMap<SessionKey, SessionBookkeeping>,
     codex_interrupt_suppression: HashMap<String, CodexInterruptSuppression>,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct SessionKey {
+    pane_id: String,
+    session_id: String,
+}
+
+impl SessionKey {
+    fn new(pane_id: &str, session_id: &str) -> Self {
+        Self {
+            pane_id: pane_id.to_owned(),
+            session_id: session_id.to_owned(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct SessionBookkeeping {
+    tasks: HashMap<String, bool>,
+    task_progress_authority: TaskProgressAuthority,
+    lifecycle: SessionLifecycle,
+    codex_title_ownership: CodexTitleOwnership,
+    codex_idle_suppression_until: Option<u64>,
+    observed_running: bool,
+    completion_candidate_deadline: Option<u64>,
+    idle_visible_until: Option<u64>,
+    unresolved_stop_visible_until: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum TaskProgressAuthority {
+    #[default]
+    IdentityEvents,
+    ExplicitSnapshot,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum SessionLifecycle {
+    #[default]
+    Active,
+    Ended,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum CodexTitleOwnership {
+    #[default]
+    Explicit,
+    Inferred,
 }
 
 impl AgentStatusStore {
@@ -168,13 +209,19 @@ impl AgentStatusStore {
                 updated_at: now,
             },
         );
-        let key = (pane_id.to_owned(), session_id.to_owned());
-        if !task_state.tasks.is_empty() {
-            self.task_bookkeeping
-                .insert(key.clone(), task_state.tasks.clone().into_iter().collect());
-        }
-        if task_state.authoritative {
-            self.authoritative_task_progress.insert(key);
+        if !task_state.tasks.is_empty() || task_state.authoritative {
+            self.session_bookkeeping.insert(
+                SessionKey::new(pane_id, session_id),
+                SessionBookkeeping {
+                    tasks: task_state.tasks.clone().into_iter().collect(),
+                    task_progress_authority: if task_state.authoritative {
+                        TaskProgressAuthority::ExplicitSnapshot
+                    } else {
+                        TaskProgressAuthority::IdentityEvents
+                    },
+                    ..SessionBookkeeping::default()
+                },
+            );
         }
     }
 
@@ -183,15 +230,20 @@ impl AgentStatusStore {
         pane_id: &str,
         session_id: &str,
     ) -> (BTreeMap<String, bool>, bool) {
-        let key = (pane_id.to_owned(), session_id.to_owned());
-        let tasks = self
-            .task_bookkeeping
-            .get(&key)
+        let bookkeeping = self
+            .session_bookkeeping
+            .get(&SessionKey::new(pane_id, session_id));
+        let tasks = bookkeeping
             .into_iter()
-            .flat_map(|tasks| tasks.iter())
+            .flat_map(|state| state.tasks.iter())
             .map(|(id, completed)| (id.clone(), *completed))
             .collect();
-        (tasks, self.authoritative_task_progress.contains(&key))
+        (
+            tasks,
+            bookkeeping.is_some_and(|state| {
+                state.task_progress_authority == TaskProgressAuthority::ExplicitSnapshot
+            }),
+        )
     }
 
     /// Reconciles Ghostty's OSC 9;4 activity report without treating its
@@ -225,13 +277,16 @@ impl AgentStatusStore {
             status.text = None;
             status.updated_at = now;
         }
-        let key = (pane_id.to_owned(), status.session_id.clone());
-        self.codex_title_inferred.remove(&key);
-        self.codex_idle_suppression_until.remove(&key);
-        self.observed_running.insert(key.clone());
-        let candidate_cancelled = self.completion_candidate_deadline.remove(&key).is_some();
-        self.idle_visible_until.remove(&key);
-        self.unresolved_stop_visible_until.remove(&key);
+        let lifecycle = self
+            .session_bookkeeping
+            .entry(SessionKey::new(pane_id, &status.session_id))
+            .or_default();
+        lifecycle.codex_title_ownership = CodexTitleOwnership::Explicit;
+        lifecycle.codex_idle_suppression_until = None;
+        lifecycle.observed_running = true;
+        let candidate_cancelled = lifecycle.completion_candidate_deadline.take().is_some();
+        lifecycle.idle_visible_until = None;
+        lifecycle.unresolved_stop_visible_until = None;
         visible_changed || candidate_cancelled
     }
 
@@ -312,14 +367,16 @@ impl AgentStatusStore {
         status.interaction = interaction;
         status.text = text;
         status.updated_at = now;
-        let key = (pane_id.to_owned(), status.session_id.clone());
-        self.completion_candidate_deadline.remove(&key);
-        self.unresolved_stop_visible_until.remove(&key);
+        let lifecycle = self
+            .session_bookkeeping
+            .entry(SessionKey::new(pane_id, &status.session_id))
+            .or_default();
+        lifecycle.completion_candidate_deadline = None;
+        lifecycle.unresolved_stop_visible_until = None;
         if phase == AgentPhase::Idle {
-            self.idle_visible_until
-                .insert(key, now.saturating_add(IDLE_VISIBILITY_MS));
+            lifecycle.idle_visible_until = Some(now.saturating_add(IDLE_VISIBILITY_MS));
         } else {
-            self.idle_visible_until.remove(&key);
+            lifecycle.idle_visible_until = None;
         }
         changed
     }
@@ -336,8 +393,11 @@ impl AgentStatusStore {
             // the canonical eligibility invariant rather than a second set
             // of status predicates that can drift from marker lifecycle.
             .filter(|status| {
-                self.codex_title_inferred
-                    .contains(&(pane_id.to_owned(), status.session_id.clone()))
+                self.session_bookkeeping
+                    .get(&SessionKey::new(pane_id, &status.session_id))
+                    .is_some_and(|state| {
+                        state.codex_title_ownership == CodexTitleOwnership::Inferred
+                    })
             })
             .max_by_key(|status| (status_priority(status), status.updated_at))
             .map(|status| {
@@ -355,8 +415,12 @@ impl AgentStatusStore {
         question: &crate::CodexTranscriptQuestion,
         now: u64,
     ) -> bool {
-        let key = (pane_id.to_owned(), session_id.to_owned());
-        if !self.codex_title_inferred.contains(&key) {
+        let key = SessionKey::new(pane_id, session_id);
+        if !self
+            .session_bookkeeping
+            .get(&key)
+            .is_some_and(|state| state.codex_title_ownership == CodexTitleOwnership::Inferred)
+        {
             return false;
         }
         let Some(status) = self
@@ -369,7 +433,9 @@ impl AgentStatusStore {
         status.text = Some(question.text.clone());
         status.interaction = question.interaction;
         status.updated_at = now;
-        self.codex_title_inferred.remove(&key);
+        if let Some(state) = self.session_bookkeeping.get_mut(&key) {
+            state.codex_title_ownership = CodexTitleOwnership::Explicit;
+        }
         true
     }
 
@@ -469,12 +535,19 @@ impl AgentStatusStore {
     ) {
         let pane_id = target.pane_id;
         let session_id = self.resolve_session_id(&pane_id, event);
-        let session_key = (pane_id.clone(), session_id.clone());
-        if self.ended_sessions.contains(&session_key) && event.kind() != "session.start" {
+        let session_key = SessionKey::new(&pane_id, &session_id);
+        if self
+            .session_bookkeeping
+            .get(&session_key)
+            .is_some_and(|state| state.lifecycle == SessionLifecycle::Ended)
+            && event.kind() != "session.start"
+        {
             return;
         }
-        if event.kind() == "session.start" {
-            self.ended_sessions.remove(&session_key);
+        if event.kind() == "session.start"
+            && let Some(state) = self.session_bookkeeping.get_mut(&session_key)
+        {
+            state.lifecycle = SessionLifecycle::Active;
         }
         let Some(event_is_codex) =
             self.suppress_interrupted_codex_event(&pane_id, &session_id, event, now)
@@ -483,7 +556,10 @@ impl AgentStatusStore {
         };
         if event.kind() == "session.end" {
             self.remove_session(&pane_id, &session_id);
-            self.ended_sessions.insert(session_key);
+            self.session_bookkeeping
+                .entry(session_key)
+                .or_default()
+                .lifecycle = SessionLifecycle::Ended;
             return;
         }
 
@@ -498,19 +574,15 @@ impl AgentStatusStore {
         if should_suppress_claude_post_stop_notification(status, event, now) {
             return;
         }
+        let lifecycle = self.session_bookkeeping.entry(session_key).or_default();
         match event.kind() {
             "session.start" => {
                 status.phase = AgentPhase::Starting;
-                self.codex_title_inferred
-                    .remove(&(pane_id.clone(), session_id.clone()));
-                self.codex_idle_suppression_until
-                    .remove(&(pane_id.clone(), session_id.clone()));
-                self.completion_candidate_deadline
-                    .remove(&(pane_id.clone(), session_id.clone()));
-                self.idle_visible_until
-                    .remove(&(pane_id.clone(), session_id.clone()));
-                self.unresolved_stop_visible_until
-                    .remove(&(pane_id.clone(), session_id.clone()));
+                lifecycle.codex_title_ownership = CodexTitleOwnership::Explicit;
+                lifecycle.codex_idle_suppression_until = None;
+                lifecycle.completion_candidate_deadline = None;
+                lifecycle.idle_visible_until = None;
+                lifecycle.unresolved_stop_visible_until = None;
             }
             "agent.running" | "agent.input-resolved" | "agent.compacting" | "agent.compacted" => {
                 status.phase = AgentPhase::Running;
@@ -520,42 +592,34 @@ impl AgentStatusStore {
                 } else {
                     event.state_text().map(str::to_owned)
                 };
-                self.codex_title_inferred
-                    .remove(&(pane_id.clone(), session_id.clone()));
-                self.codex_idle_suppression_until
-                    .remove(&(pane_id.clone(), session_id.clone()));
-                let key = (pane_id.clone(), session_id.clone());
-                self.observed_running.insert(key.clone());
-                self.completion_candidate_deadline.remove(&key);
-                self.idle_visible_until.remove(&key);
-                self.unresolved_stop_visible_until.remove(&key);
+                lifecycle.codex_title_ownership = CodexTitleOwnership::Explicit;
+                lifecycle.codex_idle_suppression_until = None;
+                lifecycle.observed_running = true;
+                lifecycle.completion_candidate_deadline = None;
+                lifecycle.idle_visible_until = None;
+                lifecycle.unresolved_stop_visible_until = None;
             }
             "agent.idle" => {
-                let key = (pane_id.clone(), session_id.clone());
                 if event.stop_candidate() {
                     status.phase = AgentPhase::Running;
                     status.interaction = AgentInteractionKind::None;
                     status.text = None;
-                    self.completion_candidate_deadline
-                        .insert(key.clone(), now.saturating_add(STOP_GRACE_MS));
-                    self.idle_visible_until.remove(&key);
-                    self.unresolved_stop_visible_until.remove(&key);
+                    lifecycle.completion_candidate_deadline =
+                        Some(now.saturating_add(STOP_GRACE_MS));
+                    lifecycle.idle_visible_until = None;
+                    lifecycle.unresolved_stop_visible_until = None;
                     status.updated_at = now;
                     return;
                 }
                 status.phase = AgentPhase::Idle;
                 status.interaction = AgentInteractionKind::None;
                 status.text = None;
-                self.codex_title_inferred
-                    .remove(&(pane_id.clone(), session_id.clone()));
-                self.codex_idle_suppression_until.insert(
-                    key.clone(),
-                    now.saturating_add(CODEX_TITLE_IDLE_SUPPRESSION_MS),
-                );
-                self.completion_candidate_deadline.remove(&key);
-                self.idle_visible_until
-                    .insert(key.clone(), now.saturating_add(IDLE_VISIBILITY_MS));
-                self.unresolved_stop_visible_until.remove(&key);
+                lifecycle.codex_title_ownership = CodexTitleOwnership::Explicit;
+                lifecycle.codex_idle_suppression_until =
+                    Some(now.saturating_add(CODEX_TITLE_IDLE_SUPPRESSION_MS));
+                lifecycle.completion_candidate_deadline = None;
+                lifecycle.idle_visible_until = Some(now.saturating_add(IDLE_VISIBILITY_MS));
+                lifecycle.unresolved_stop_visible_until = None;
             }
             "agent.needs-input" => {
                 status.phase = AgentPhase::NeedsInput;
@@ -564,35 +628,25 @@ impl AgentStatusStore {
                     .interaction_text()
                     .or_else(|| event.state_text())
                     .map(str::to_owned);
-                self.codex_title_inferred
-                    .remove(&(pane_id.clone(), session_id.clone()));
-                self.codex_idle_suppression_until
-                    .remove(&(pane_id.clone(), session_id.clone()));
-                let key = (pane_id.clone(), session_id.clone());
-                self.completion_candidate_deadline.remove(&key);
-                self.idle_visible_until.remove(&key);
-                self.unresolved_stop_visible_until.remove(&key);
+                lifecycle.codex_title_ownership = CodexTitleOwnership::Explicit;
+                lifecycle.codex_idle_suppression_until = None;
+                lifecycle.completion_candidate_deadline = None;
+                lifecycle.idle_visible_until = None;
+                lifecycle.unresolved_stop_visible_until = None;
             }
             "agent.failed" => {
                 status.phase = AgentPhase::UnresolvedStop;
                 status.interaction = AgentInteractionKind::None;
                 status.text = event.state_text().map(str::to_owned);
-                let key = (pane_id.clone(), session_id.clone());
-                self.codex_title_inferred.remove(&key);
-                self.codex_idle_suppression_until.remove(&key);
-                self.completion_candidate_deadline.remove(&key);
-                self.idle_visible_until.remove(&key);
-                self.unresolved_stop_visible_until
-                    .insert(key, now.saturating_add(UNRESOLVED_STOP_VISIBILITY_MS));
+                lifecycle.codex_title_ownership = CodexTitleOwnership::Explicit;
+                lifecycle.codex_idle_suppression_until = None;
+                lifecycle.completion_candidate_deadline = None;
+                lifecycle.idle_visible_until = None;
+                lifecycle.unresolved_stop_visible_until =
+                    Some(now.saturating_add(UNRESOLVED_STOP_VISIBILITY_MS));
             }
             "task.progress" | "task.started" | "task.completed" => {
-                if !apply_task_projection(
-                    status,
-                    event,
-                    &(pane_id.clone(), session_id.clone()),
-                    &mut self.task_bookkeeping,
-                    &mut self.authoritative_task_progress,
-                ) {
+                if !apply_task_projection(status, event, lifecycle) {
                     return;
                 }
             }
@@ -686,12 +740,12 @@ impl AgentStatusStore {
         }) else {
             return false;
         };
-        let key = (pane_id.to_owned(), session_id.clone());
-        let title_inferred = self.codex_title_inferred.contains(&key);
-        let idle_suppressed = self
+        let key = SessionKey::new(pane_id, &session_id);
+        let lifecycle = self.session_bookkeeping.entry(key).or_default();
+        let title_inferred = lifecycle.codex_title_ownership == CodexTitleOwnership::Inferred;
+        let idle_suppressed = lifecycle
             .codex_idle_suppression_until
-            .get(&key)
-            .is_some_and(|deadline| now < *deadline);
+            .is_some_and(|deadline| now < deadline);
         let Some(status) = self
             .panes
             .get_mut(pane_id)
@@ -717,10 +771,10 @@ impl AgentStatusStore {
                     status.phase = AgentPhase::NeedsInput;
                     status.interaction = signal.interaction;
                     status.text = Some(title.trim().to_owned());
-                    self.codex_title_inferred.insert(key.clone());
-                    self.completion_candidate_deadline.remove(&key);
-                    self.idle_visible_until.remove(&key);
-                    self.unresolved_stop_visible_until.remove(&key);
+                    lifecycle.codex_title_ownership = CodexTitleOwnership::Inferred;
+                    lifecycle.completion_candidate_deadline = None;
+                    lifecycle.idle_visible_until = None;
+                    lifecycle.unresolved_stop_visible_until = None;
                     changed = true;
                 }
             }
@@ -740,13 +794,13 @@ impl AgentStatusStore {
                         status.text = None;
                         changed = true;
                     }
-                    self.codex_title_inferred.remove(&key);
-                    self.codex_idle_suppression_until.remove(&key);
-                    if self.completion_candidate_deadline.remove(&key).is_some() {
+                    lifecycle.codex_title_ownership = CodexTitleOwnership::Explicit;
+                    lifecycle.codex_idle_suppression_until = None;
+                    if lifecycle.completion_candidate_deadline.take().is_some() {
                         changed = true;
                     }
-                    self.idle_visible_until.remove(&key);
-                    self.unresolved_stop_visible_until.remove(&key);
+                    lifecycle.idle_visible_until = None;
+                    lifecycle.unresolved_stop_visible_until = None;
                 }
             }
             CodexTitlePhase::Idle => {
@@ -757,15 +811,12 @@ impl AgentStatusStore {
                         status.text = None;
                         changed = true;
                     }
-                    self.codex_title_inferred.remove(&key);
-                    self.codex_idle_suppression_until.insert(
-                        key.clone(),
-                        now.saturating_add(CODEX_TITLE_IDLE_SUPPRESSION_MS),
-                    );
-                    self.completion_candidate_deadline.remove(&key);
-                    self.idle_visible_until
-                        .insert(key.clone(), now.saturating_add(IDLE_VISIBILITY_MS));
-                    self.unresolved_stop_visible_until.remove(&key);
+                    lifecycle.codex_title_ownership = CodexTitleOwnership::Explicit;
+                    lifecycle.codex_idle_suppression_until =
+                        Some(now.saturating_add(CODEX_TITLE_IDLE_SUPPRESSION_MS));
+                    lifecycle.completion_candidate_deadline = None;
+                    lifecycle.idle_visible_until = Some(now.saturating_add(IDLE_VISIBILITY_MS));
+                    lifecycle.unresolved_stop_visible_until = None;
                 }
             }
         }
@@ -781,9 +832,12 @@ impl AgentStatusStore {
     /// newly delivered question.
     pub fn apply_codex_user_submitted(&mut self, pane_id: &str, now: u64) -> bool {
         self.codex_interrupt_suppression.remove(pane_id);
-        self.codex_idle_suppression_until
-            .retain(|(tracked_pane, _), _| tracked_pane != pane_id);
-        let observed_running = &self.observed_running;
+        for (key, state) in &mut self.session_bookkeeping {
+            if key.pane_id == pane_id {
+                state.codex_idle_suppression_until = None;
+            }
+        }
+        let session_bookkeeping = &self.session_bookkeeping;
         let Some(status) = self.panes.get_mut(pane_id).and_then(|sessions| {
             sessions
                 .values_mut()
@@ -793,9 +847,9 @@ impl AgentStatusStore {
                         now.saturating_sub(status.updated_at) >= CODEX_INPUT_SUBMIT_STABILIZATION_MS
                     }
                     AgentPhase::Starting => true,
-                    AgentPhase::Idle => {
-                        observed_running.contains(&(pane_id.to_owned(), status.session_id.clone()))
-                    }
+                    AgentPhase::Idle => session_bookkeeping
+                        .get(&SessionKey::new(pane_id, &status.session_id))
+                        .is_some_and(|state| state.observed_running),
                     AgentPhase::Running | AgentPhase::UnresolvedStop => false,
                 })
                 .max_by_key(|status| (status_priority(status), status.updated_at))
@@ -806,13 +860,15 @@ impl AgentStatusStore {
         status.interaction = AgentInteractionKind::None;
         status.text = None;
         status.updated_at = now;
-        self.codex_title_inferred
-            .remove(&(pane_id.to_owned(), status.session_id.clone()));
-        let key = (pane_id.to_owned(), status.session_id.clone());
-        self.observed_running.insert(key.clone());
-        self.completion_candidate_deadline.remove(&key);
-        self.idle_visible_until.remove(&key);
-        self.unresolved_stop_visible_until.remove(&key);
+        let lifecycle = self
+            .session_bookkeeping
+            .entry(SessionKey::new(pane_id, &status.session_id))
+            .or_default();
+        lifecycle.codex_title_ownership = CodexTitleOwnership::Explicit;
+        lifecycle.observed_running = true;
+        lifecycle.completion_candidate_deadline = None;
+        lifecycle.idle_visible_until = None;
+        lifecycle.unresolved_stop_visible_until = None;
         true
     }
 
@@ -834,18 +890,8 @@ impl AgentStatusStore {
         if sessions.is_empty() {
             self.panes.remove(pane_id);
         }
-        self.codex_title_inferred
-            .retain(|(tracked_pane, _)| tracked_pane != pane_id);
-        self.codex_idle_suppression_until
-            .retain(|(tracked_pane, _), _| tracked_pane != pane_id);
-        self.observed_running
-            .retain(|(tracked_pane, _)| tracked_pane != pane_id);
-        self.completion_candidate_deadline
-            .retain(|(tracked_pane, _), _| tracked_pane != pane_id);
-        self.idle_visible_until
-            .retain(|(tracked_pane, _), _| tracked_pane != pane_id);
-        self.unresolved_stop_visible_until
-            .retain(|(tracked_pane, _), _| tracked_pane != pane_id);
+        self.session_bookkeeping
+            .retain(|key, _| key.pane_id != pane_id);
         self.codex_interrupt_suppression.insert(
             pane_id.to_owned(),
             CodexInterruptSuppression {
@@ -877,18 +923,8 @@ impl AgentStatusStore {
                 self.panes.remove(pane_id);
             }
         }
-        self.codex_title_inferred
-            .retain(|(tracked_pane, _)| tracked_pane != pane_id);
-        self.codex_idle_suppression_until
-            .retain(|(tracked_pane, _), _| tracked_pane != pane_id);
-        self.observed_running
-            .retain(|(tracked_pane, _)| tracked_pane != pane_id);
-        self.completion_candidate_deadline
-            .retain(|(tracked_pane, _), _| tracked_pane != pane_id);
-        self.idle_visible_until
-            .retain(|(tracked_pane, _), _| tracked_pane != pane_id);
-        self.unresolved_stop_visible_until
-            .retain(|(tracked_pane, _), _| tracked_pane != pane_id);
+        self.session_bookkeeping
+            .retain(|key, _| key.pane_id != pane_id);
         self.codex_interrupt_suppression.remove(pane_id);
         true
     }
@@ -928,7 +964,10 @@ impl AgentStatusStore {
         let mut changed = false;
 
         for (pane_id, session_id) in keys {
-            let key = (pane_id.clone(), session_id.clone());
+            let lifecycle = self
+                .session_bookkeeping
+                .entry(SessionKey::new(&pane_id, &session_id))
+                .or_default();
             let Some(status) = self
                 .panes
                 .get_mut(&pane_id)
@@ -949,39 +988,35 @@ impl AgentStatusStore {
                         remove = true;
                     } else if matches!(status.phase, AgentPhase::Starting | AgentPhase::Running)
                         || status.requires_attention()
-                        || self.completion_candidate_deadline.contains_key(&key)
+                        || lifecycle.completion_candidate_deadline.is_some()
                     {
                         status.phase = AgentPhase::UnresolvedStop;
                         status.interaction = AgentInteractionKind::None;
                         status.text = None;
                         status.updated_at = now;
-                        self.completion_candidate_deadline.remove(&key);
-                        self.idle_visible_until.remove(&key);
-                        self.unresolved_stop_visible_until.insert(
-                            key.clone(),
-                            now.saturating_add(UNRESOLVED_STOP_VISIBILITY_MS),
-                        );
+                        lifecycle.completion_candidate_deadline = None;
+                        lifecycle.idle_visible_until = None;
+                        lifecycle.unresolved_stop_visible_until =
+                            Some(now.saturating_add(UNRESOLVED_STOP_VISIBILITY_MS));
                         changed = true;
                     }
                 }
             }
 
             if !remove
-                && self
+                && lifecycle
                     .completion_candidate_deadline
-                    .get(&key)
-                    .is_some_and(|deadline| now >= *deadline)
+                    .is_some_and(|deadline| now >= deadline)
             {
-                if self.observed_running.contains(&key) {
+                if lifecycle.observed_running {
                     status.phase = AgentPhase::Idle;
                     status.interaction = AgentInteractionKind::None;
                     status.text = None;
                     status.tracked_pid = None;
                     status.updated_at = now;
-                    self.completion_candidate_deadline.remove(&key);
-                    self.idle_visible_until
-                        .insert(key.clone(), now.saturating_add(IDLE_VISIBILITY_MS));
-                    self.unresolved_stop_visible_until.remove(&key);
+                    lifecycle.completion_candidate_deadline = None;
+                    lifecycle.idle_visible_until = Some(now.saturating_add(IDLE_VISIBILITY_MS));
+                    lifecycle.unresolved_stop_visible_until = None;
                     changed = true;
                 } else {
                     remove = true;
@@ -991,16 +1026,14 @@ impl AgentStatusStore {
             if !remove {
                 let idle_expired = status.phase == AgentPhase::Idle
                     && status.tracked_pid.is_none()
-                    && self
+                    && lifecycle
                         .idle_visible_until
-                        .get(&key)
-                        .is_some_and(|deadline| now >= *deadline);
+                        .is_some_and(|deadline| now >= deadline);
                 let unresolved_expired = status.phase == AgentPhase::UnresolvedStop
                     && status.tracked_pid.is_none()
-                    && self
+                    && lifecycle
                         .unresolved_stop_visible_until
-                        .get(&key)
-                        .is_some_and(|deadline| now >= *deadline);
+                        .is_some_and(|deadline| now >= deadline);
                 let stale = status.tracked_pid.is_none()
                     && !status.requires_attention()
                     && now.saturating_sub(status.updated_at) >= STALE_SESSION_VISIBILITY_MS;
@@ -1017,24 +1050,8 @@ impl AgentStatusStore {
 
     pub fn remove_pane(&mut self, pane_id: &str) {
         self.panes.remove(pane_id);
-        self.task_bookkeeping
-            .retain(|(tracked_pane, _), _| tracked_pane != pane_id);
-        self.authoritative_task_progress
-            .retain(|(tracked_pane, _)| tracked_pane != pane_id);
-        self.ended_sessions
-            .retain(|(tracked_pane, _)| tracked_pane != pane_id);
-        self.codex_title_inferred
-            .retain(|(tracked_pane, _)| tracked_pane != pane_id);
-        self.codex_idle_suppression_until
-            .retain(|(tracked_pane, _), _| tracked_pane != pane_id);
-        self.observed_running
-            .retain(|(tracked_pane, _)| tracked_pane != pane_id);
-        self.completion_candidate_deadline
-            .retain(|(tracked_pane, _), _| tracked_pane != pane_id);
-        self.idle_visible_until
-            .retain(|(tracked_pane, _), _| tracked_pane != pane_id);
-        self.unresolved_stop_visible_until
-            .retain(|(tracked_pane, _), _| tracked_pane != pane_id);
+        self.session_bookkeeping
+            .retain(|key, _| key.pane_id != pane_id);
         self.codex_interrupt_suppression.remove(pane_id);
     }
 
@@ -1043,69 +1060,14 @@ impl AgentStatusStore {
         if let Some(statuses) = self.panes.remove(pane_id) {
             taken.panes.insert(pane_id.to_owned(), statuses);
         }
-        taken.task_bookkeeping = self
-            .task_bookkeeping
+        taken.session_bookkeeping = self
+            .session_bookkeeping
             .iter()
-            .filter(|((tracked_pane, _), _)| tracked_pane == pane_id)
+            .filter(|(key, _)| key.pane_id == pane_id)
             .map(|(key, value)| (key.clone(), value.clone()))
             .collect();
-        self.task_bookkeeping
-            .retain(|(tracked_pane, _), _| tracked_pane != pane_id);
-        taken.authoritative_task_progress = self
-            .authoritative_task_progress
-            .iter()
-            .filter(|(tracked_pane, _)| tracked_pane == pane_id)
-            .cloned()
-            .collect();
-        self.authoritative_task_progress
-            .retain(|(tracked_pane, _)| tracked_pane != pane_id);
-        taken.ended_sessions = self
-            .ended_sessions
-            .iter()
-            .filter(|(tracked_pane, _)| tracked_pane == pane_id)
-            .cloned()
-            .collect();
-        self.ended_sessions
-            .retain(|(tracked_pane, _)| tracked_pane != pane_id);
-        taken.codex_title_inferred = self
-            .codex_title_inferred
-            .iter()
-            .filter(|(tracked_pane, _)| tracked_pane == pane_id)
-            .cloned()
-            .collect();
-        self.codex_title_inferred
-            .retain(|(tracked_pane, _)| tracked_pane != pane_id);
-        taken.codex_idle_suppression_until = self
-            .codex_idle_suppression_until
-            .iter()
-            .filter(|((tracked_pane, _), _)| tracked_pane == pane_id)
-            .map(|(key, value)| (key.clone(), *value))
-            .collect();
-        self.codex_idle_suppression_until
-            .retain(|(tracked_pane, _), _| tracked_pane != pane_id);
-        taken.observed_running = self
-            .observed_running
-            .iter()
-            .filter(|(tracked_pane, _)| tracked_pane == pane_id)
-            .cloned()
-            .collect();
-        self.observed_running
-            .retain(|(tracked_pane, _)| tracked_pane != pane_id);
-        transfer_pane_deadlines(
-            pane_id,
-            &mut self.completion_candidate_deadline,
-            &mut taken.completion_candidate_deadline,
-        );
-        transfer_pane_deadlines(
-            pane_id,
-            &mut self.idle_visible_until,
-            &mut taken.idle_visible_until,
-        );
-        transfer_pane_deadlines(
-            pane_id,
-            &mut self.unresolved_stop_visible_until,
-            &mut taken.unresolved_stop_visible_until,
-        );
+        self.session_bookkeeping
+            .retain(|key, _| key.pane_id != pane_id);
         if let Some(suppression) = self.codex_interrupt_suppression.remove(pane_id) {
             taken
                 .codex_interrupt_suppression
@@ -1125,64 +1087,42 @@ impl AgentStatusStore {
     }
 
     fn clear_session_lifecycle(&mut self, pane_id: &str, session_id: &str) {
-        let key = (pane_id.to_owned(), session_id.to_owned());
-        self.task_bookkeeping.remove(&key);
-        self.authoritative_task_progress.remove(&key);
-        self.codex_title_inferred.remove(&key);
-        self.codex_idle_suppression_until.remove(&key);
-        self.observed_running.remove(&key);
-        self.completion_candidate_deadline.remove(&key);
-        self.idle_visible_until.remove(&key);
-        self.unresolved_stop_visible_until.remove(&key);
+        self.session_bookkeeping
+            .remove(&SessionKey::new(pane_id, session_id));
     }
 }
 
 fn apply_task_projection(
     status: &mut PaneAgentStatus,
     event: &crate::AgentEvent,
-    key: &(String, String),
-    task_bookkeeping: &mut HashMap<(String, String), HashMap<String, bool>>,
-    authoritative_task_progress: &mut HashSet<(String, String)>,
+    bookkeeping: &mut SessionBookkeeping,
 ) -> bool {
     if event.kind() == "task.progress" {
         status.progress = event
             .progress()
             .map(|(done, total)| AgentProgress { done, total });
-        task_bookkeeping.remove(key);
-        authoritative_task_progress.insert(key.clone());
+        bookkeeping.tasks.clear();
+        bookkeeping.task_progress_authority = TaskProgressAuthority::ExplicitSnapshot;
         return true;
     }
     let Some(task_id) = event.task_id().map(str::trim).filter(|id| !id.is_empty()) else {
         return false;
     };
-    if authoritative_task_progress.contains(key) {
+    if bookkeeping.task_progress_authority == TaskProgressAuthority::ExplicitSnapshot {
         return false;
     }
-    let tasks = task_bookkeeping.entry(key.clone()).or_default();
     let completed = event.kind() == "task.completed";
-    tasks
+    bookkeeping
+        .tasks
         .entry(task_id.to_owned())
         .and_modify(|was_completed| *was_completed |= completed)
         .or_insert(completed);
     status.progress = Some(AgentProgress {
-        done: u64::try_from(tasks.values().filter(|done| **done).count()).unwrap_or(u64::MAX),
-        total: u64::try_from(tasks.len()).unwrap_or(u64::MAX),
+        done: u64::try_from(bookkeeping.tasks.values().filter(|done| **done).count())
+            .unwrap_or(u64::MAX),
+        total: u64::try_from(bookkeeping.tasks.len()).unwrap_or(u64::MAX),
     });
     true
-}
-
-fn transfer_pane_deadlines(
-    pane_id: &str,
-    source: &mut HashMap<(String, String), u64>,
-    destination: &mut HashMap<(String, String), u64>,
-) {
-    destination.extend(
-        source
-            .iter()
-            .filter(|((tracked_pane, _), _)| tracked_pane == pane_id)
-            .map(|(key, value)| (key.clone(), *value)),
-    );
-    source.retain(|(tracked_pane, _), _| tracked_pane != pane_id);
 }
 
 fn new_status(

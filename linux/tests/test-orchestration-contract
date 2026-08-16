@@ -16,6 +16,7 @@ development_server="${repo_root}/crates/zentty-test-support/src/bin/development_
 platform_contract_actor="${repo_root}/crates/zentty-test-support/src/bin/platform_contract.rs"
 wayland_input_harness="${repo_root}/linux/tests/nested-wayland-input"
 multi_window_harness="${repo_root}/linux/tests/rust-multi-window"
+workspace_settings_harness="${repo_root}/linux/tests/rust-workspace-pane-settings"
 failures=0
 
 reject() {
@@ -318,6 +319,14 @@ require "workspace recovery cells remain prose-only or bypass the focused real-I
 # not merely on an earlier focus receipt or an arbitrary sleep. These focused
 # constraints keep the repaired high-contention boundaries from regressing to
 # the immediate assertions that produced moving full-matrix failures.
+threshold_receipt_line="$(grep -n 'reload_before=.*config-reload result=applied' "${workspace_settings_harness}" | tail -1 | cut -d: -f1)"
+threshold_write_line="$(grep -n 'sed -i .*visible_split_window_width' "${workspace_settings_harness}" | tail -1 | cut -d: -f1)"
+if [[ ! "${threshold_receipt_line}" =~ ^[1-9][0-9]*$ ||
+      ! "${threshold_write_line}" =~ ^[1-9][0-9]*$ ||
+      "${threshold_receipt_line}" -ge "${threshold_write_line}" ]]; then
+    echo "test-orchestration-contract: workspace threshold receipt boundary must precede the watched config write" >&2
+    failures=$((failures + 1))
+fi
 require "settings journey does not count a new opacity application after physical Home" \
     grep -Fq 'opacity_apply_before=' "${repo_root}/linux/tests/rust-shortcuts-settings"
 require "source UX journey does not count a new Worklane Peek preview after repeated Tab" \

@@ -370,8 +370,12 @@ if [[ "${backend}" == x11 ]]; then
     xdotool windowfocus --sync "${ZENTTY_PRODUCT_WINDOW_ID}"
     sleep 0.1
     for threshold_value in 1200 1440 1680 1920 2560; do
-        sed -i "s/^visible_split_window_width = .*/visible_split_window_width = ${threshold_value}/" "${config}"
         reload_before="$(grep -Fc 'config-reload result=applied windows=2 retained-sections=none' "${log}" || true)"
+        # Establish the receipt boundary before editing. Under load the GIO
+        # directory watcher can project the atomic sed rename before the next
+        # shell command runs; sampling afterward incorrectly waits for a
+        # second reload that will never occur.
+        sed -i "s/^visible_split_window_width = .*/visible_split_window_width = ${threshold_value}/" "${config}"
         for _ in $(seq 1 200); do
             (( $(grep -Fc 'config-reload result=applied windows=2 retained-sections=none' "${log}" || true) > reload_before )) && break
             sleep 0.05

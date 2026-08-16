@@ -692,6 +692,17 @@ fn task_bookkeeping_is_cross_pane_isolated_conflict_stable_and_rejects_late_even
         store.status_for(&target_a).unwrap().phase,
         AgentPhase::Starting
     );
+    apply_to_target(
+        &mut store,
+        &target_a,
+        br#"{"version":1,"event":"task.started","session":{"id":"shared"},"task":{"id":"fresh"}}"#,
+        8,
+    );
+    assert_eq!(
+        store.status_for(&target_a).unwrap().progress,
+        Some(AgentProgress { done: 0, total: 1 }),
+        "explicit session reuse must not inherit ended-session task authority"
+    );
 }
 
 #[test]
