@@ -2155,6 +2155,43 @@ impl WorkspaceState {
         self.agent_statuses.apply(event, now);
     }
 
+    /// Applies an event whose target was already canonicalized by another
+    /// authenticated route on the one product socket. No pane capability is
+    /// copied into application state or diagnostics.
+    pub fn apply_canonical_agent_event(
+        &mut self,
+        target: crate::AgentTarget,
+        event: crate::AgentEvent,
+        now: u64,
+    ) {
+        self.agent_statuses.apply_for_target(target, event, now);
+    }
+
+    pub fn apply_agent_signal_event(
+        &mut self,
+        target: crate::AgentTarget,
+        event: crate::AgentEvent,
+        origin: crate::AgentSignalOrigin,
+        confidence: crate::AgentSignalConfidence,
+        now: u64,
+    ) {
+        self.agent_statuses
+            .apply_for_target_with_signal(target, event, origin, confidence, now);
+    }
+
+    pub fn apply_agent_pid_signal(
+        &mut self,
+        pane_id: &str,
+        session_id: Option<&str>,
+        parent_session_id: Option<&str>,
+        tool: Option<&str>,
+        pid: Option<i32>,
+        now: u64,
+    ) -> bool {
+        self.agent_statuses
+            .apply_pid_signal(pane_id, session_id, parent_session_id, tool, pid, now)
+    }
+
     /// Advances lifecycle deadlines for the canonical per-pane agent store.
     /// The platform supplies process liveness; workspace ownership and pane
     /// transfer remain authoritative here.

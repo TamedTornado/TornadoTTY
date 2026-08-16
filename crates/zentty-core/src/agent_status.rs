@@ -30,6 +30,45 @@ pub enum AgentPhase {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AgentSignalOrigin {
+    Compatibility,
+    ExplicitHook,
+    ExplicitApi,
+    Heuristic,
+    Shell,
+    Inferred,
+}
+
+impl AgentSignalOrigin {
+    const fn priority(self) -> u8 {
+        match self {
+            Self::ExplicitHook | Self::ExplicitApi => 4,
+            Self::Heuristic => 3,
+            Self::Compatibility => 2,
+            Self::Shell => 1,
+            Self::Inferred => 0,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AgentSignalConfidence {
+    Weak,
+    Strong,
+    Explicit,
+}
+
+impl AgentSignalConfidence {
+    const fn priority(self) -> u8 {
+        match self {
+            Self::Explicit => 2,
+            Self::Strong => 1,
+            Self::Weak => 0,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TerminalProgressState {
     Remove,
     Set,
@@ -62,6 +101,11 @@ pub struct PaneAgentStatus {
     pub progress: Option<AgentProgress>,
     pub tracked_pid: Option<i32>,
     pub transcript_path: Option<String>,
+    pub artifact_link: Option<crate::AgentArtifactLink>,
+    pub working_directory: Option<String>,
+    pub agent_launch_snapshot: Option<crate::AgentLaunchSnapshot>,
+    pub signal_origin: AgentSignalOrigin,
+    pub signal_confidence: AgentSignalConfidence,
     pub updated_at: u64,
 }
 
@@ -104,6 +148,11 @@ impl AgentStatusStore {
                 progress: None,
                 tracked_pid: None,
                 transcript_path: None,
+                artifact_link: None,
+                working_directory: None,
+                agent_launch_snapshot: None,
+                signal_origin: AgentSignalOrigin::Compatibility,
+                signal_confidence: AgentSignalConfidence::Strong,
                 updated_at: now,
             },
         );
@@ -204,6 +253,11 @@ impl AgentStatusStore {
                 progress: None,
                 tracked_pid: None,
                 transcript_path: None,
+                artifact_link: None,
+                working_directory: None,
+                agent_launch_snapshot: None,
+                signal_origin: AgentSignalOrigin::Heuristic,
+                signal_confidence: AgentSignalConfidence::Strong,
                 updated_at: now,
             });
 
@@ -309,7 +363,12 @@ impl AgentStatusStore {
         }
         let new_activity = matches!(
             event.kind(),
-            "session.start" | "agent.running" | "agent.input-resolved" | "agent.needs-input"
+            "session.start"
+                | "agent.running"
+                | "agent.compacting"
+                | "agent.compacted"
+                | "agent.input-resolved"
+                | "agent.needs-input"
         );
         if new_activity || !active {
             self.codex_interrupt_suppression.remove(pane_id);
@@ -342,6 +401,32 @@ impl AgentStatusStore {
     pub fn apply(&mut self, authenticated: AuthenticatedAgentEvent, now: u64) {
         let target = authenticated.target;
         let event = authenticated.event;
+        self.apply_for_target(target, event, now);
+    }
+
+    pub(crate) fn apply_for_target(
+        &mut self,
+        target: AgentTarget,
+        event: crate::AgentEvent,
+        now: u64,
+    ) {
+        self.apply_for_target_with_signal(
+            target,
+            event,
+            AgentSignalOrigin::ExplicitHook,
+            AgentSignalConfidence::Explicit,
+            now,
+        );
+    }
+
+    pub(crate) fn apply_for_target_with_signal(
+        &mut self,
+        target: AgentTarget,
+        event: crate::AgentEvent,
+        origin: AgentSignalOrigin,
+        confidence: AgentSignalConfidence,
+        now: u64,
+    ) {
         let pane_id = target.pane_id;
         let session_id = self.resolve_session_id(&pane_id, &event);
         let Some(event_is_codex) =
@@ -355,9 +440,12 @@ impl AgentStatusStore {
         }
 
         let sessions = self.panes.entry(pane_id.clone()).or_default();
-        let status = sessions
-            .entry(session_id.clone())
-            .or_insert_with(|| new_status(&session_id, &event, event_is_codex, now));
+        let status = sessions.entry(session_id.clone()).or_insert_with(|| {
+            new_status(&session_id, &event, event_is_codex, origin, confidence, now)
+        });
+        if !should_apply_signal(status, &event, origin, confidence) {
+            return;
+        }
         update_status_identity(status, &event);
         if should_suppress_claude_post_stop_notification(status, &event, now) {
             return;
@@ -376,10 +464,14 @@ impl AgentStatusStore {
                 self.unresolved_stop_visible_until
                     .remove(&(pane_id.clone(), session_id.clone()));
             }
-            "agent.running" | "agent.input-resolved" => {
+            "agent.running" | "agent.input-resolved" | "agent.compacting" | "agent.compacted" => {
                 status.phase = AgentPhase::Running;
                 status.interaction = AgentInteractionKind::None;
-                status.text = event.state_text().map(str::to_owned);
+                status.text = if event.kind() == "agent.compacting" {
+                    Some(event.state_text().unwrap_or("Compacting").to_owned())
+                } else {
+                    event.state_text().map(str::to_owned)
+                };
                 self.codex_title_inferred
                     .remove(&(pane_id.clone(), session_id.clone()));
                 self.codex_idle_suppression_until
@@ -440,7 +532,77 @@ impl AgentStatusStore {
             }
             _ => unreachable!("AgentEvent exposes only known protocol events"),
         }
+        status.signal_origin = origin;
+        status.signal_confidence = confidence;
         status.updated_at = now;
+    }
+
+    pub(crate) fn apply_pid_signal(
+        &mut self,
+        pane_id: &str,
+        session_id: Option<&str>,
+        parent_session_id: Option<&str>,
+        tool: Option<&str>,
+        pid: Option<i32>,
+        now: u64,
+    ) -> bool {
+        if pid.is_none() {
+            let Some(sessions) = self.panes.get_mut(pane_id) else {
+                return false;
+            };
+            let mut changed = false;
+            if let Some(session_id) = session_id {
+                if let Some(status) = sessions.get_mut(session_id)
+                    && status.tracked_pid.take().is_some()
+                {
+                    status.updated_at = now;
+                    changed = true;
+                }
+            } else {
+                for status in sessions.values_mut() {
+                    if status.tracked_pid.take().is_some() {
+                        status.updated_at = now;
+                        changed = true;
+                    }
+                }
+            }
+            return changed;
+        }
+        let session_id = session_id.unwrap_or("pane-default");
+        let status = self
+            .panes
+            .entry(pane_id.to_owned())
+            .or_default()
+            .entry(session_id.to_owned())
+            .or_insert_with(|| PaneAgentStatus {
+                session_id: session_id.to_owned(),
+                parent_session_id: parent_session_id.map(str::to_owned),
+                agent_name: tool.unwrap_or("Agent").to_owned(),
+                phase: AgentPhase::Starting,
+                text: None,
+                interaction: AgentInteractionKind::None,
+                progress: None,
+                tracked_pid: None,
+                transcript_path: None,
+                artifact_link: None,
+                working_directory: None,
+                agent_launch_snapshot: None,
+                signal_origin: AgentSignalOrigin::ExplicitApi,
+                signal_confidence: AgentSignalConfidence::Explicit,
+                updated_at: now,
+            });
+        let changed = status.tracked_pid != pid;
+        status.tracked_pid = pid;
+        if let Some(parent_session_id) = parent_session_id {
+            status.parent_session_id = Some(parent_session_id.to_owned());
+        }
+        if let Some(tool) = tool {
+            tool.clone_into(&mut status.agent_name);
+        }
+        if changed {
+            status.updated_at = now;
+        }
+        changed
     }
 
     /// Reconciles one real Ghostty title callback into the canonical Codex
@@ -895,6 +1057,8 @@ fn new_status(
     session_id: &str,
     event: &crate::AgentEvent,
     event_is_codex: bool,
+    signal_origin: AgentSignalOrigin,
+    signal_confidence: AgentSignalConfidence,
     now: u64,
 ) -> PaneAgentStatus {
     PaneAgentStatus {
@@ -910,8 +1074,38 @@ fn new_status(
         progress: None,
         tracked_pid: None,
         transcript_path: None,
+        artifact_link: None,
+        working_directory: None,
+        agent_launch_snapshot: None,
+        signal_origin,
+        signal_confidence,
         updated_at: now,
     }
+}
+
+fn should_apply_signal(
+    status: &PaneAgentStatus,
+    event: &crate::AgentEvent,
+    origin: AgentSignalOrigin,
+    confidence: AgentSignalConfidence,
+) -> bool {
+    if origin.priority() > status.signal_origin.priority() {
+        return true;
+    }
+    if origin.priority() < status.signal_origin.priority() {
+        return event.kind() == "agent.needs-input"
+            && matches!(status.phase, AgentPhase::Starting | AgentPhase::Running);
+    }
+    if confidence.priority() < status.signal_confidence.priority()
+        && event.kind() != "agent.needs-input"
+    {
+        return false;
+    }
+    if event.kind() == "agent.needs-input" && status.phase == AgentPhase::NeedsInput {
+        return interaction_priority(event.interaction())
+            >= interaction_priority(status.interaction);
+    }
+    true
 }
 
 fn should_suppress_claude_post_stop_notification(
@@ -949,17 +1143,44 @@ fn update_status_identity(status: &mut PaneAgentStatus, event: &crate::AgentEven
     if let Some(path) = event.transcript_path() {
         status.transcript_path = Some(path.to_owned());
     }
+    if let Some(artifact) = event.artifact_link() {
+        status.artifact_link = Some(artifact);
+    }
+    if let Some(working_directory) = event.working_directory() {
+        status.working_directory = Some(working_directory.to_owned());
+    }
+    if let Some(snapshot) = event.launch_snapshot() {
+        status.agent_launch_snapshot = Some(snapshot);
+    }
 }
 
-fn status_priority(status: &PaneAgentStatus) -> u8 {
-    if status.requires_attention() {
-        return 5;
-    }
-    match status.phase {
-        AgentPhase::Running => 4,
-        AgentPhase::Starting => 3,
-        AgentPhase::Idle => 2,
-        AgentPhase::UnresolvedStop => 1,
-        AgentPhase::NeedsInput => 5,
+fn status_priority(status: &PaneAgentStatus) -> (u16, u8, u8, u8) {
+    let state = if status.requires_attention() || status.phase == AgentPhase::NeedsInput {
+        500 + u16::from(interaction_priority(status.interaction))
+    } else {
+        match status.phase {
+            AgentPhase::UnresolvedStop => 400,
+            AgentPhase::Running => 300,
+            AgentPhase::Starting => 250,
+            AgentPhase::Idle => 200,
+            AgentPhase::NeedsInput => 500,
+        }
+    };
+    (
+        state,
+        status.signal_confidence.priority(),
+        status.signal_origin.priority(),
+        u8::from(status.parent_session_id.is_none()),
+    )
+}
+
+const fn interaction_priority(interaction: AgentInteractionKind) -> u8 {
+    match interaction {
+        AgentInteractionKind::Approval => 5,
+        AgentInteractionKind::Question => 4,
+        AgentInteractionKind::Decision => 3,
+        AgentInteractionKind::Auth => 2,
+        AgentInteractionKind::GenericInput => 1,
+        AgentInteractionKind::None => 0,
     }
 }

@@ -45,10 +45,13 @@ pub use agent_launch::{
     AgentLaunchError, AgentLaunchPlan, AgentLaunchTool, build_agent_launch_plan,
     build_gemini_settings,
 };
-pub use agent_protocol::{AgentEvent, AgentInteractionKind, AgentProtocolError};
+pub use agent_protocol::{
+    AgentArtifactKind, AgentArtifactLink, AgentEvent, AgentInteractionKind, AgentProtocolError,
+};
 pub use agent_sleep_inhibition::{AgentSleepInhibitionState, SleepInhibitionTransition};
 pub use agent_status::{
-    AgentPhase, AgentProgress, AgentStatusStore, PaneAgentStatus, TerminalProgressState,
+    AgentPhase, AgentProgress, AgentSignalConfidence, AgentSignalOrigin, AgentStatusStore,
+    PaneAgentStatus, TerminalProgressState,
 };
 pub use app_config::{
     AgentCaffeinationConfig, AgentIntegrationsConfig, AgentTeamsConfig, AppConfig,

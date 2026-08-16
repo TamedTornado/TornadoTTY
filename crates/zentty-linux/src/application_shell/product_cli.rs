@@ -1,4 +1,5 @@
 use super::ApplicationShell;
+use super::agent_lifecycle_signal::{AgentLifecycleSignal, parse_agent_lifecycle_signal};
 use super::shell_signal::{ShellSignal, parse_shell_signal};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -231,6 +232,12 @@ fn apply_shell_signal(
     target: &AgentTarget,
     arguments: &[String],
 ) -> Result<String, (&'static str, String)> {
+    if arguments
+        .first()
+        .is_some_and(|kind| matches!(kind.as_str(), "lifecycle" | "pid"))
+    {
+        return apply_agent_lifecycle_signal(shell, target, arguments);
+    }
     let signal = parse_shell_signal(arguments)?;
     match &signal {
         ShellSignal::State { state, command } => {
@@ -287,6 +294,69 @@ fn apply_shell_signal(
             );
         }
     }
+    Ok(String::new())
+}
+
+fn apply_agent_lifecycle_signal(
+    shell: &Rc<RefCell<ApplicationShell>>,
+    target: &AgentTarget,
+    arguments: &[String],
+) -> Result<String, (&'static str, String)> {
+    let signal = parse_agent_lifecycle_signal(arguments)?;
+    let now = super::unix_time_ms();
+    match signal {
+        AgentLifecycleSignal::Event {
+            event,
+            origin,
+            confidence,
+        } => {
+            shell.borrow_mut().state.apply_agent_signal_event(
+                target.clone(),
+                event,
+                origin,
+                confidence,
+                now,
+            );
+            eprintln!(
+                "zentty-linux: agent-signal pane={} kind=lifecycle",
+                target.pane_id
+            );
+        }
+        AgentLifecycleSignal::AttachPid {
+            pid,
+            tool,
+            session_id,
+            parent_session_id,
+        } => {
+            shell.borrow_mut().state.apply_agent_pid_signal(
+                &target.pane_id,
+                session_id.as_deref(),
+                parent_session_id.as_deref(),
+                tool.as_deref(),
+                Some(pid),
+                now,
+            );
+            eprintln!(
+                "zentty-linux: agent-signal pane={} kind=pid event=attach pid={pid}",
+                target.pane_id
+            );
+        }
+        AgentLifecycleSignal::ClearPid { session_id } => {
+            shell.borrow_mut().state.apply_agent_pid_signal(
+                &target.pane_id,
+                session_id.as_deref(),
+                None,
+                None,
+                None,
+                now,
+            );
+            eprintln!(
+                "zentty-linux: agent-signal pane={} kind=pid event=clear",
+                target.pane_id
+            );
+        }
+    }
+    shell.borrow().render_sidebar();
     Ok(String::new())
 }
 

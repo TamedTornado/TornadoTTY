@@ -318,3 +318,67 @@ fn shell_signal_is_silent_and_non_invasive_outside_a_live_pane() {
     assert!(output.stdout.is_empty());
     assert!(output.stderr.is_empty());
 }
+
+#[test]
+fn real_agent_status_cli_maps_to_the_authenticated_lifecycle_route() {
+    let (root, socket, server, receiver) = running_server();
+    let worker = std::thread::spawn(move || {
+        let request = receiver.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert_eq!(
+            request.target,
+            AgentTarget::new("window-1", "lane-1", "pane-1")
+        );
+        assert_eq!(request.request.subcommand(), "shell-signal");
+        assert_eq!(
+            request.request.arguments(),
+            [
+                "lifecycle",
+                "needs-input",
+                "--tool",
+                "Custom Agent",
+                "--text",
+                "Approve λ?",
+                "--session-id",
+                "child-a",
+                "--parent-session-id",
+                "parent-a",
+                "--interaction-kind",
+                "approval",
+            ]
+        );
+        request
+            .respond(ProductIpcReply::success("").unwrap())
+            .unwrap();
+    });
+    let output = Command::new(env!("CARGO_BIN_EXE_zentty"))
+        .args([
+            "ipc",
+            "agent-status",
+            "needs-input",
+            "--tool",
+            "Custom Agent",
+            "--text",
+            "Approve λ?",
+            "--session-id",
+            "child-a",
+            "--parent-session-id",
+            "parent-a",
+            "--interaction-kind",
+            "approval",
+        ])
+        .env("ZENTTY_INSTANCE_SOCKET", &socket)
+        .env("ZENTTY_PANE_TOKEN", "caller-token")
+        .env("ZENTTY_WINDOW_ID", "forged-window")
+        .env("ZENTTY_WORKLANE_ID", "forged-lane")
+        .env("ZENTTY_PANE_ID", "forged-pane")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    worker.join().unwrap();
+    server.shutdown().unwrap();
+    std::fs::remove_dir_all(root).unwrap();
+}

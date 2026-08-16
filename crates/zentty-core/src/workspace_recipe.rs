@@ -304,7 +304,7 @@ pub enum RestoreDraftKind {
     AgentResume,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentLaunchSnapshot {
     pub arguments: Vec<String>,

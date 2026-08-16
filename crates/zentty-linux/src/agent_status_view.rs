@@ -29,7 +29,10 @@ pub(crate) fn present(status: &PaneAgentStatus) -> AgentStatusPresentation {
 #[cfg(test)]
 mod tests {
     use super::present;
-    use zentty_core::{AgentInteractionKind, AgentPhase, AgentProgress, PaneAgentStatus};
+    use zentty_core::{
+        AgentInteractionKind, AgentPhase, AgentProgress, AgentSignalConfidence, AgentSignalOrigin,
+        PaneAgentStatus,
+    };
 
     fn status(phase: AgentPhase) -> PaneAgentStatus {
         PaneAgentStatus {
@@ -42,6 +45,11 @@ mod tests {
             progress: None,
             tracked_pid: None,
             transcript_path: None,
+            artifact_link: None,
+            working_directory: None,
+            agent_launch_snapshot: None,
+            signal_origin: AgentSignalOrigin::ExplicitHook,
+            signal_confidence: AgentSignalConfidence::Explicit,
             updated_at: 1,
         }
     }

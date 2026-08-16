@@ -1,6 +1,7 @@
 use zentty_core::{
-    AgentInteractionKind, AgentPhase, AgentProgress, FleetState, FleetSummary, FleetWindowSource,
-    PaneAgentStatus, SidebarPaneSummary, SidebarWorklaneSummary, build_fleet_snapshots,
+    AgentInteractionKind, AgentPhase, AgentProgress, AgentSignalConfidence, AgentSignalOrigin,
+    FleetState, FleetSummary, FleetWindowSource, PaneAgentStatus, SidebarPaneSummary,
+    SidebarWorklaneSummary, build_fleet_snapshots,
 };
 
 fn status(
@@ -20,6 +21,11 @@ fn status(
         progress: None,
         tracked_pid: None,
         transcript_path: None,
+        artifact_link: None,
+        working_directory: None,
+        agent_launch_snapshot: None,
+        signal_origin: AgentSignalOrigin::ExplicitHook,
+        signal_confidence: AgentSignalConfidence::Explicit,
         updated_at,
     }
 }

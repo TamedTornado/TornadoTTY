@@ -4,6 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 runner="${repo_root}/linux/tests/cli-source-contract"
 source_contract="${repo_root}/docs/design/zentty-cli-source-contract.json"
+agent_contract="${repo_root}/docs/design/zentty-agent-event-source-contract.json"
 root="$(mktemp -d)"
 trap 'rm -rf -- "${root}"' EXIT
 
@@ -22,6 +23,41 @@ expect_failure() {
     }
 }
 
+validate_agent_contract() {
+    local contract="$1"
+    jq -e '
+        .schema_version == 1 and .owner_issue == 46 and
+        (.statuses | sort == ["DEPENDENCY", "IMPLEMENTED", "NOT_IMPLEMENTED", "PARTIAL"]) and
+        ([.canonical_events[].id] | length == (unique | length)) and
+        ([.canonical_fields[].id] | length == (unique | length)) and
+        ([.cli_forms[].id] | length == (unique | length)) and
+        ([.adapters[].id] | length == (unique | length)) and
+        ([.canonical_events[], .canonical_fields[], .cli_forms[], .adapters[]] |
+            all(.linux as $status | $status == "IMPLEMENTED" or $status == "PARTIAL" or
+                $status == "NOT_IMPLEMENTED" or $status == "DEPENDENCY")) and
+        ([.canonical_events[], .canonical_fields[], .cli_forms[], .adapters[]] |
+            all(if .linux == "NOT_IMPLEMENTED" then
+                    (.tracked_defect | type == "string" and length > 0)
+                elif .linux == "DEPENDENCY" then
+                    (.prerequisite | type == "string" and length > 0)
+                else true end)) and
+        (.single_authorities.transport | length > 0) and
+        (.single_authorities.reducer | length > 0) and
+        (.single_authorities.controlled_actor | length > 0) and
+        (.single_authorities.real_product_journey | length > 0)
+    ' "${contract}" >/dev/null
+}
+
+expect_agent_failure() {
+    local name="$1" filter="$2"
+    local fixture="${root}/agent-${name}.json"
+    jq "${filter}" "${agent_contract}" >"${fixture}"
+    if validate_agent_contract "${fixture}"; then
+        echo "cli-source-contract-test: agent ${name} unexpectedly passed" >&2
+        exit 1
+    fi
+}
+
 "${runner}" >/dev/null
 expect_failure missing-command 'del(.commands[] | select(.id == "grid"))' 'contract invariants failed'
 expect_failure unknown-status '(.commands[] | select(.id == "version")).status = "DONE"' 'contract invariants failed'
@@ -35,4 +71,10 @@ expect_failure missing-schema-file '(.output_contracts["panes-v1"].schema = "doc
 expect_failure duplicate-path '(.commands[] | select(.id == "version")).path = ["split"]' 'contract invariants failed'
 expect_failure false-complete '(.commands[] | select(.id == "ipc")) |= (.status = "IMPLEMENTED" | del(.difference) | .implementation = [])' 'contract invariants failed'
 
-echo "cli-source-contract runner negative tests passed"
+validate_agent_contract "${agent_contract}"
+expect_agent_failure unknown-agent-status '(.canonical_events[0].linux = "DONE")'
+expect_agent_failure duplicate-agent-event '(.canonical_events[1].id = .canonical_events[0].id)'
+expect_agent_failure untracked-agent-gap 'del(.canonical_fields[] | select(.id == "artifact.kind") | .tracked_defect)'
+expect_agent_failure missing-agent-dependency 'del(.adapters[] | select(.id == "copilot") | .prerequisite)'
+
+echo "cli-source-contract runner and agent-event inventory negative tests passed"

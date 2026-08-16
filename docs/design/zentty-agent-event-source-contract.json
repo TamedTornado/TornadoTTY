@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "owner_issue": 46,
+  "source_authorities": [
+    "Zentty/AppState/Agent/AgentEventBridge.swift",
+    "Zentty/AppState/Agent/AgentStatusCommand.swift",
+    "Zentty/AppState/Agent/EventAdapters/AgentEventAdapting.swift",
+    "Zentty/AppState/Agent/PaneAgentReducer.swift",
+    "Zentty/AppState/Agent/AgentStatusPayload.swift",
+    "docs/agent-status-protocol.md"
+  ],
+  "statuses": ["IMPLEMENTED", "PARTIAL", "NOT_IMPLEMENTED", "DEPENDENCY"],
+  "canonical_events": [
+    {"id":"session.start","source":true,"linux":"IMPLEMENTED","effect":"create-or-update-session-starting;attach-pid-when-present"},
+    {"id":"session.end","source":true,"linux":"IMPLEMENTED","effect":"remove-exact-session-and-pid"},
+    {"id":"agent.running","source":true,"linux":"IMPLEMENTED","effect":"running;clear-interaction"},
+    {"id":"agent.compacting","source":true,"linux":"IMPLEMENTED","effect":"running;compacting-text;tool-activity"},
+    {"id":"agent.compacted","source":true,"linux":"IMPLEMENTED","effect":"running;clear-compacting-text"},
+    {"id":"agent.idle","source":true,"linux":"IMPLEMENTED","effect":"idle-or-stop-candidate-grace"},
+    {"id":"agent.needs-input","source":true,"linux":"IMPLEMENTED","effect":"needs-input;typed-interaction"},
+    {"id":"agent.input-resolved","source":true,"linux":"IMPLEMENTED","effect":"running;clear-interaction"},
+    {"id":"task.progress","source":true,"linux":"IMPLEMENTED","effect":"clamped-session-progress"}
+  ],
+  "canonical_fields": [
+    {"id":"agent.name","linux":"IMPLEMENTED"},
+    {"id":"agent.pid","linux":"IMPLEMENTED"},
+    {"id":"session.id","linux":"IMPLEMENTED"},
+    {"id":"session.parentId","linux":"IMPLEMENTED"},
+    {"id":"state.text","linux":"IMPLEMENTED"},
+    {"id":"state.stopCandidate","linux":"IMPLEMENTED"},
+    {"id":"state.interaction.kind","linux":"IMPLEMENTED"},
+    {"id":"state.interaction.text","linux":"IMPLEMENTED"},
+    {"id":"progress.done","linux":"IMPLEMENTED"},
+    {"id":"progress.total","linux":"IMPLEMENTED"},
+    {"id":"artifact.kind","linux":"NOT_IMPLEMENTED","tracked_defect":"GH-46"},
+    {"id":"artifact.label","linux":"NOT_IMPLEMENTED","tracked_defect":"GH-46"},
+    {"id":"artifact.url","linux":"NOT_IMPLEMENTED","tracked_defect":"GH-46"},
+    {"id":"context.workingDirectory","linux":"NOT_IMPLEMENTED","tracked_defect":"GH-46"},
+    {"id":"context.launch.arguments","linux":"NOT_IMPLEMENTED","tracked_defect":"GH-46"},
+    {"id":"context.launch.environment","linux":"NOT_IMPLEMENTED","tracked_defect":"GH-46"},
+    {"id":"transcriptPath","linux":"IMPLEMENTED","classification":"linux-and-adapter-extension"}
+  ],
+  "cli_forms": [
+    {"id":"agent-event","linux":"PARTIAL","remaining":["artifact/context projections and persistence","missing source adapters"]},
+    {"id":"agent-signal.lifecycle","linux":"IMPLEMENTED"},
+    {"id":"agent-signal.pid","linux":"IMPLEMENTED"},
+    {"id":"agent-signal.shell-state","linux":"IMPLEMENTED"},
+    {"id":"agent-signal.pane-root-pid","linux":"IMPLEMENTED"},
+    {"id":"agent-signal.pane-context","linux":"IMPLEMENTED"},
+    {"id":"agent-status","linux":"IMPLEMENTED"}
+  ],
+  "adapters": [
+    {"id":"claude","source":true,"linux":"IMPLEMENTED"},
+    {"id":"copilot","source":true,"linux":"DEPENDENCY","prerequisite":"GH-47 managed Copilot launcher and exact source adapter audit"},
+    {"id":"codex","source":true,"linux":"IMPLEMENTED"},
+    {"id":"small-harness","source":true,"linux":"DEPENDENCY","prerequisite":"GH-47 source small-harness launch parity"},
+    {"id":"codex-notify","source":true,"linux":"IMPLEMENTED"},
+    {"id":"droid","source":true,"linux":"IMPLEMENTED"},
+    {"id":"gemini","source":true,"linux":"IMPLEMENTED"},
+    {"id":"cursor","source":true,"linux":"IMPLEMENTED"},
+    {"id":"kimi","source":true,"linux":"IMPLEMENTED"},
+    {"id":"grok","source":true,"linux":"IMPLEMENTED"},
+    {"id":"agy","source":true,"linux":"IMPLEMENTED"},
+    {"id":"hermes","source":true,"linux":"IMPLEMENTED"},
+    {"id":"vibe","source":true,"linux":"IMPLEMENTED"}
+  ],
+  "single_authorities": {
+    "transport": "zentty-agent-ipc AgentIpcServer",
+    "target_authentication": "zentty-core PaneTokenRegistry",
+    "application_ingestion": "zentty-linux AgentEventCoordinator",
+    "reducer": "zentty-core AgentStatusStore",
+    "workspace_owner": "zentty-core WorkspaceState",
+    "controlled_actor": "linux/tests/fixtures/controlled-agent",
+    "real_product_journey": "linux/tests/rust-agent-ipc"
+  }
+}

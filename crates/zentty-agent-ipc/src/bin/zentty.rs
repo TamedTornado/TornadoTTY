@@ -60,14 +60,23 @@ fn run() -> Result<(), String> {
         return run_server(&arguments.collect::<Vec<_>>());
     }
     if command.as_deref() != Some("ipc") {
-        return Err("usage: zentty ipc <agent-event|agent-signal> [arguments...]".to_owned());
+        return Err(
+            "usage: zentty ipc <agent-event|agent-signal|agent-status> [arguments...]".to_owned(),
+        );
     }
     let subcommand = arguments.next();
     if subcommand.as_deref() == Some("agent-signal") {
         return run_agent_signal(&arguments.collect::<Vec<_>>());
     }
+    if subcommand.as_deref() == Some("agent-status") {
+        let mut signal = vec!["lifecycle".to_owned()];
+        signal.extend(arguments);
+        return run_agent_signal(&signal);
+    }
     if subcommand.as_deref() != Some("agent-event") {
-        return Err("usage: zentty ipc <agent-event|agent-signal> [arguments...]".to_owned());
+        return Err(
+            "usage: zentty ipc <agent-event|agent-signal|agent-status> [arguments...]".to_owned(),
+        );
     }
     let remaining = arguments.collect::<Vec<_>>();
     let adapter = remaining

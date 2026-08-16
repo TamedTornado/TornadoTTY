@@ -17,37 +17,11 @@ pub(super) enum ShellSignal {
 pub(super) fn parse_shell_signal(
     arguments: &[String],
 ) -> Result<ShellSignal, (&'static str, String)> {
-    let Some(kind) = arguments.first().map(String::as_str) else {
-        return Err(("invalid_request", "shell signal kind is missing".to_owned()));
-    };
-    let mut positionals = Vec::new();
-    let mut options = std::collections::BTreeMap::new();
-    let mut index = 1;
-    while index < arguments.len() {
-        let argument = &arguments[index];
-        if let Some(option) = argument.strip_prefix("--") {
-            let Some(value) = arguments.get(index + 1) else {
-                return Err((
-                    "invalid_request",
-                    format!("shell signal option {argument} is missing its value"),
-                ));
-            };
-            if options.insert(option, value.clone()).is_some() {
-                return Err((
-                    "invalid_request",
-                    format!("duplicate shell signal option {argument}"),
-                ));
-            }
-            index += 2;
-        } else {
-            positionals.push(argument.clone());
-            index += 1;
-        }
-    }
-    match kind {
-        "shell-state" => parse_shell_state(&positionals, &options),
-        "pane-root-pid" => parse_root_pid(&positionals, &options),
-        "pane-context" => parse_context(&positionals, &options),
+    let parsed = super::signal_arguments::parse_signal_arguments(arguments, "shell signal")?;
+    match parsed.kind.as_str() {
+        "shell-state" => parse_shell_state(&parsed.positionals, &parsed.options),
+        "pane-root-pid" => parse_root_pid(&parsed.positionals, &parsed.options),
+        "pane-context" => parse_context(&parsed.positionals, &parsed.options),
         value => Err((
             "invalid_request",
             format!("unsupported shell signal kind {value:?}"),
@@ -57,7 +31,7 @@ pub(super) fn parse_shell_signal(
 
 fn parse_shell_state(
     positionals: &[String],
-    options: &std::collections::BTreeMap<&str, String>,
+    options: &std::collections::BTreeMap<String, String>,
 ) -> Result<ShellSignal, (&'static str, String)> {
     validate_options(
         options,
@@ -97,7 +71,7 @@ fn parse_shell_state(
 
 fn parse_root_pid(
     positionals: &[String],
-    options: &std::collections::BTreeMap<&str, String>,
+    options: &std::collections::BTreeMap<String, String>,
 ) -> Result<ShellSignal, (&'static str, String)> {
     validate_options(options, &["session-id", "parent-session-id", "origin"])?;
     let (event, pid) = match positionals {
@@ -138,7 +112,7 @@ fn parse_root_pid(
 
 fn parse_context(
     positionals: &[String],
-    options: &std::collections::BTreeMap<&str, String>,
+    options: &std::collections::BTreeMap<String, String>,
 ) -> Result<ShellSignal, (&'static str, String)> {
     validate_options(
         options,
@@ -189,16 +163,10 @@ fn parse_context(
 }
 
 fn validate_options(
-    options: &std::collections::BTreeMap<&str, String>,
+    options: &std::collections::BTreeMap<String, String>,
     allowed: &[&str],
 ) -> Result<(), (&'static str, String)> {
-    if let Some(option) = options.keys().find(|option| !allowed.contains(option)) {
-        return Err((
-            "invalid_request",
-            format!("unsupported shell signal option --{option}"),
-        ));
-    }
-    Ok(())
+    super::signal_arguments::validate_signal_options(options, allowed)
 }
 
 #[cfg(test)]

@@ -122,6 +122,18 @@ The agent is actively working. Clears any pending interaction state.
 }
 ```
 
+### `agent.compacting` / `agent.compacted`
+
+`agent.compacting` reports that the agent is compacting its context. It keeps
+the lifecycle phase at `running` and displays `state.text`, defaulting to
+`Compacting`. `agent.compacted` keeps the phase at `running` and clears that
+transient compaction text. Either event cancels a stale stop candidate.
+
+```json
+{"version":1,"event":"agent.compacting","state":{"text":"Compacting"}}
+{"version":1,"event":"agent.compacted"}
+```
+
 ### `agent.idle`
 
 The agent's turn is complete. It is waiting for the next user prompt.
@@ -214,7 +226,7 @@ Every event uses the same JSON envelope. Only `version` and `event` are required
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `version` | integer | yes | Protocol version. Must be `1`. |
-| `event` | string | yes | One of: `session.start`, `session.end`, `agent.running`, `agent.idle`, `agent.needs-input`, `agent.input-resolved`, `task.progress`. |
+| `event` | string | yes | One of: `session.start`, `session.end`, `agent.running`, `agent.compacting`, `agent.compacted`, `agent.idle`, `agent.needs-input`, `agent.input-resolved`, `task.progress`. |
 
 ### `agent` Object
 

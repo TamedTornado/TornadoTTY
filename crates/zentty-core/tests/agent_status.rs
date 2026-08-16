@@ -1,6 +1,7 @@
 use zentty_core::{
-    AgentEvent, AgentInteractionKind, AgentPhase, AgentStatusStore, AgentTarget,
-    AuthenticatedAgentEvent, PaneAgentStatus, PaneTokenRegistry, TerminalProgressState,
+    AgentEvent, AgentInteractionKind, AgentPhase, AgentSignalConfidence, AgentSignalOrigin,
+    AgentStatusStore, AgentTarget, AuthenticatedAgentEvent, PaneAgentStatus, PaneTokenRegistry,
+    TerminalProgressState,
 };
 
 fn target() -> AgentTarget {
@@ -63,6 +64,89 @@ fn lifecycle_event(
         )
         .as_bytes(),
     )
+}
+
+#[test]
+fn canonical_compaction_events_preserve_source_running_transition() {
+    let mut store = AgentStatusStore::default();
+    store.apply(
+        lifecycle_event(
+            "pane-a",
+            "session-a",
+            "agent.compacting",
+            r#","state":{"text":"Compacting context…"}"#,
+        ),
+        1_000,
+    );
+    let compacting = store.status_for_pane("pane-a").unwrap();
+    assert_eq!(compacting.phase, AgentPhase::Running);
+    assert_eq!(compacting.text.as_deref(), Some("Compacting context…"));
+
+    store.apply(
+        lifecycle_event("pane-a", "session-a", "agent.compacted", ""),
+        2_000,
+    );
+    let compacted = store.status_for_pane("pane-a").unwrap();
+    assert_eq!(compacted.phase, AgentPhase::Running);
+    assert_eq!(compacted.text, None);
+}
+
+#[test]
+fn canonical_artifact_context_and_launch_metadata_merge_without_erasure() {
+    let mut store = AgentStatusStore::default();
+    store.apply(
+        event_for(
+            "pane-a",
+            br#"{
+                "version":1,
+                "event":"agent.running",
+                "agent":{"name":"Codex"},
+                "session":{"id":"session-a","parentId":"parent-a"},
+                "artifact":{"kind":"pull-request","label":"PR #42","url":"https://example.test/pull/42"},
+                "context":{
+                    "workingDirectory":"/tmp/project with spaces",
+                    "launch":{"arguments":["codex","resume","session-a"],"environment":{"SAFE_FLAG":"1"}}
+                }
+            }"#,
+        ),
+        1_000,
+    );
+    let status = store.status_for_pane("pane-a").unwrap();
+    let artifact = status.artifact_link.as_ref().unwrap();
+    assert_eq!(artifact.kind, zentty_core::AgentArtifactKind::PullRequest);
+    assert_eq!(artifact.label, "PR #42");
+    assert_eq!(artifact.url, "https://example.test/pull/42");
+    assert_eq!(
+        status.working_directory.as_deref(),
+        Some("/tmp/project with spaces")
+    );
+    let launch = status.agent_launch_snapshot.as_ref().unwrap();
+    assert_eq!(launch.arguments, ["codex", "resume", "session-a"]);
+    assert_eq!(
+        launch
+            .environment
+            .as_ref()
+            .and_then(|environment| environment.get("SAFE_FLAG"))
+            .map(String::as_str),
+        Some("1")
+    );
+
+    store.apply(
+        lifecycle_event(
+            "pane-a",
+            "session-a",
+            "task.progress",
+            r#","progress":{"done":1,"total":2}"#,
+        ),
+        2_000,
+    );
+    let status = store.status_for_pane("pane-a").unwrap();
+    assert!(status.artifact_link.is_some());
+    assert_eq!(
+        status.working_directory.as_deref(),
+        Some("/tmp/project with spaces")
+    );
+    assert!(status.agent_launch_snapshot.is_some());
 }
 
 #[test]
@@ -466,6 +550,11 @@ fn attention_requires_both_the_needs_input_phase_and_a_real_interaction() {
         progress: None,
         tracked_pid: None,
         transcript_path: None,
+        artifact_link: None,
+        working_directory: None,
+        agent_launch_snapshot: None,
+        signal_origin: AgentSignalOrigin::ExplicitHook,
+        signal_confidence: AgentSignalConfidence::Explicit,
         updated_at: 1,
     };
     assert!(!status(AgentPhase::Running, AgentInteractionKind::Approval).requires_attention());

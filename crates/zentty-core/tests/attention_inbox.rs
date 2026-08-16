@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use zentty_core::{
-    AgentInteractionKind, AgentPhase, AttentionInbox, AttentionState, AttentionTarget,
-    PaneAgentStatus,
+    AgentInteractionKind, AgentPhase, AgentSignalConfidence, AgentSignalOrigin, AttentionInbox,
+    AttentionState, AttentionTarget, PaneAgentStatus,
 };
 
 #[test]
@@ -42,6 +42,11 @@ fn status(
         progress: None,
         tracked_pid: None,
         transcript_path: None,
+        artifact_link: None,
+        working_directory: None,
+        agent_launch_snapshot: None,
+        signal_origin: AgentSignalOrigin::ExplicitHook,
+        signal_confidence: AgentSignalConfidence::Explicit,
         updated_at,
     }
 }

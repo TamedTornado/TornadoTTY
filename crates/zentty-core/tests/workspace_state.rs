@@ -78,6 +78,100 @@ fn real_terminal_titles_reconcile_agent_state_used_by_sidebar_summaries() {
 }
 
 #[test]
+fn agent_pid_signals_are_session_scoped_and_an_unscoped_clear_clears_every_session() {
+    let mut state = WorkspaceState::new("worklane-a", "pane-a");
+    assert!(state.apply_agent_pid_signal(
+        "pane-a",
+        Some("parent"),
+        None,
+        Some("Codex"),
+        Some(4101),
+        1,
+    ));
+    assert!(state.apply_agent_pid_signal(
+        "pane-a",
+        Some("child"),
+        Some("parent"),
+        Some("Codex"),
+        Some(4102),
+        2,
+    ));
+    state.apply_canonical_agent_event(
+        AgentTarget::new("window-a", "worklane-a", "pane-a"),
+        AgentEvent::parse(br#"{"version":1,"event":"agent.needs-input","agent":{"name":"Codex"},"session":{"id":"child","parentId":"parent"},"state":{"interaction":{"kind":"question"}}}"#).unwrap(),
+        2,
+    );
+    let child = state.sidebar_summaries()[0].pane_rows[0]
+        .agent_status
+        .clone()
+        .unwrap();
+    assert_eq!(child.session_id, "child");
+    assert_eq!(child.parent_session_id.as_deref(), Some("parent"));
+    assert_eq!(child.tracked_pid, Some(4102));
+
+    assert!(state.apply_agent_pid_signal("pane-a", Some("child"), None, None, None, 3));
+    let cleared_child = state.sidebar_summaries()[0].pane_rows[0]
+        .agent_status
+        .clone()
+        .unwrap();
+    assert_eq!(cleared_child.session_id, "child");
+    assert!(cleared_child.tracked_pid.is_none());
+
+    assert!(state.apply_agent_pid_signal("pane-a", None, None, None, None, 4));
+    let remaining = state.sidebar_summaries()[0].pane_rows[0]
+        .agent_status
+        .clone()
+        .unwrap();
+    assert!(remaining.tracked_pid.is_none());
+    assert!(!state.apply_agent_pid_signal("pane-a", None, None, None, None, 5));
+}
+
+#[test]
+fn signal_priority_rejects_weaker_conflicts_and_prefers_an_active_root_over_its_child() {
+    let mut state = WorkspaceState::new("worklane-a", "pane-a");
+    let target = AgentTarget::new("window-a", "worklane-a", "pane-a");
+    state.apply_agent_signal_event(
+        target.clone(),
+        AgentEvent::parse(br#"{"version":1,"event":"agent.running","agent":{"name":"Codex"},"session":{"id":"root"}}"#).unwrap(),
+        zentty_core::AgentSignalOrigin::ExplicitHook,
+        zentty_core::AgentSignalConfidence::Explicit,
+        1,
+    );
+    state.apply_agent_signal_event(
+        target.clone(),
+        AgentEvent::parse(br#"{"version":1,"event":"agent.idle","session":{"id":"root"}}"#)
+            .unwrap(),
+        zentty_core::AgentSignalOrigin::Inferred,
+        zentty_core::AgentSignalConfidence::Weak,
+        2,
+    );
+    assert_eq!(
+        state.sidebar_summaries()[0].pane_rows[0]
+            .agent_status
+            .as_ref()
+            .unwrap()
+            .phase,
+        AgentPhase::Running
+    );
+
+    state.apply_agent_signal_event(
+        target,
+        AgentEvent::parse(br#"{"version":1,"event":"agent.running","agent":{"name":"Codex"},"session":{"id":"child","parentId":"root"}}"#).unwrap(),
+        zentty_core::AgentSignalOrigin::ExplicitHook,
+        zentty_core::AgentSignalConfidence::Explicit,
+        3,
+    );
+    assert_eq!(
+        state.sidebar_summaries()[0].pane_rows[0]
+            .agent_status
+            .as_ref()
+            .unwrap()
+            .session_id,
+        "root"
+    );
+}
+
+#[test]
 fn title_inferred_codex_questions_offer_and_validate_transcript_enrichment() {
     let envelope = SessionRestoreEnvelope::from_json(V3_ENVELOPE).unwrap();
     let mut state = WorkspaceState::from_window_recipe(&envelope.workspace.windows[0]).unwrap();

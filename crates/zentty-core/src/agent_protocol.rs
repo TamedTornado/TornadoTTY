@@ -1,5 +1,8 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fmt;
+
+use crate::AgentLaunchSnapshot;
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
 pub enum AgentInteractionKind {
@@ -25,6 +28,10 @@ enum AgentEventKind {
     SessionEnd,
     #[serde(rename = "agent.running")]
     Running,
+    #[serde(rename = "agent.compacting")]
+    Compacting,
+    #[serde(rename = "agent.compacted")]
+    Compacted,
     #[serde(rename = "agent.idle")]
     Idle,
     #[serde(rename = "agent.needs-input")]
@@ -68,6 +75,47 @@ struct ProgressDescriptor {
     total: u64,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
+pub enum AgentArtifactKind {
+    #[serde(rename = "pull-request")]
+    PullRequest,
+    #[serde(rename = "session")]
+    Session,
+    #[serde(rename = "share")]
+    Share,
+    #[serde(rename = "compare")]
+    Compare,
+    #[serde(rename = "generic")]
+    Generic,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AgentArtifactLink {
+    pub kind: AgentArtifactKind,
+    pub label: String,
+    pub url: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+struct ArtifactDescriptor {
+    kind: Option<String>,
+    label: Option<String>,
+    url: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+struct LaunchDescriptor {
+    arguments: Option<Vec<String>>,
+    environment: Option<BTreeMap<String, String>>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct ContextDescriptor {
+    working_directory: Option<String>,
+    launch: Option<LaunchDescriptor>,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 pub struct AgentEvent {
     version: u32,
@@ -76,6 +124,8 @@ pub struct AgentEvent {
     session: Option<SessionDescriptor>,
     state: Option<StateDescriptor>,
     progress: Option<ProgressDescriptor>,
+    artifact: Option<ArtifactDescriptor>,
+    context: Option<ContextDescriptor>,
     #[serde(rename = "transcriptPath")]
     transcript_path: Option<String>,
 }
@@ -143,6 +193,8 @@ impl AgentEvent {
             }),
             state: None,
             progress: None,
+            artifact: None,
+            context: None,
             transcript_path: None,
         }
     }
@@ -152,6 +204,8 @@ impl AgentEvent {
             AgentEventKind::SessionStart => "session.start",
             AgentEventKind::SessionEnd => "session.end",
             AgentEventKind::Running => "agent.running",
+            AgentEventKind::Compacting => "agent.compacting",
+            AgentEventKind::Compacted => "agent.compacted",
             AgentEventKind::Idle => "agent.idle",
             AgentEventKind::NeedsInput => "agent.needs-input",
             AgentEventKind::InputResolved => "agent.input-resolved",
@@ -204,6 +258,51 @@ impl AgentEvent {
 
     pub(crate) fn transcript_path(&self) -> Option<&str> {
         self.transcript_path.as_deref()
+    }
+
+    pub(crate) fn artifact_link(&self) -> Option<AgentArtifactLink> {
+        let artifact = self.artifact.as_ref()?;
+        let label = artifact.label.as_deref()?.trim();
+        let url = artifact.url.as_deref()?.trim();
+        if label.is_empty() || url.is_empty() {
+            return None;
+        }
+        Some(AgentArtifactLink {
+            kind: match artifact.kind.as_deref().unwrap_or("generic") {
+                "pull-request" => AgentArtifactKind::PullRequest,
+                "session" => AgentArtifactKind::Session,
+                "share" => AgentArtifactKind::Share,
+                "compare" => AgentArtifactKind::Compare,
+                "generic" => AgentArtifactKind::Generic,
+                _ => return None,
+            },
+            label: label.to_owned(),
+            url: url.to_owned(),
+        })
+    }
+
+    pub(crate) fn working_directory(&self) -> Option<&str> {
+        self.context
+            .as_ref()?
+            .working_directory
+            .as_deref()
+            .map(str::trim)
+            .filter(|path| !path.is_empty())
+    }
+
+    pub(crate) fn launch_snapshot(&self) -> Option<AgentLaunchSnapshot> {
+        let launch = self.context.as_ref()?.launch.as_ref()?;
+        let arguments = launch.arguments.clone()?;
+        if arguments.is_empty() || arguments.iter().any(|argument| argument.contains('\0')) {
+            return None;
+        }
+        Some(AgentLaunchSnapshot {
+            arguments,
+            environment: launch
+                .environment
+                .clone()
+                .filter(|values| !values.is_empty()),
+        })
     }
 
     pub(crate) fn with_transcript_path(mut self, path: Option<String>) -> Self {

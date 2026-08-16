@@ -200,6 +200,54 @@ run_codex_lifecycle() {
     state_directory=""
 }
 
+run_agent_status_lifecycle() {
+    log="$(mktemp)"
+    state_directory="$(mktemp -d)"
+    PATH="${fake_bin}:${PATH}" GDK_SCALE=1 GDK_DPI_SCALE=1 \
+        ZENTTY_CONTROLLED_AGENT_PROFILE=agent-status-lifecycle \
+        "${product}" \
+        --command codex \
+        --state-directory "${state_directory}" \
+        --no-session-restore >"${log}" 2>&1 &
+    product_pid=$!
+
+    zentty_product_wait_for_log "${log}" \
+        'zentty-linux: agent-signal pane=pane-1 kind=lifecycle' \
+        "source-compatible agent-status did not reach the product lifecycle route"
+    zentty_product_wait_for_log "${log}" \
+        'sidebar-agent-status pane=pane-1 phase=Running interaction=None attention=false' \
+        "agent-status running did not reach the visible sidebar"
+    zentty_product_wait_for_log "${log}" \
+        'zentty-linux: agent-signal pane=pane-1 kind=pid event=attach pid=' \
+        "agent-signal did not attach the real controlled child PID"
+    zentty_product_wait_for_log "${log}" \
+        'sidebar-agent-status pane=pane-1 phase=NeedsInput interaction=GenericInput attention=true' \
+        "agent-status needs-input did not reach the visible sidebar"
+    zentty_product_wait_for_log "${log}" \
+        'zentty-linux: fleet-refresh windows=1 agents=1 waiting=1 stopped=0 compacting=0 active=0 idle=0 progress=0' \
+        "agent-status needs-input did not reach the canonical fleet"
+    zentty_product_wait_for_log "${log}" \
+        'sidebar-agent-status pane=pane-1 phase=Idle interaction=None attention=false' \
+        "the completed compatibility alias did not reach the visible sidebar"
+    zentty_product_wait_for_log "${log}" \
+        'zentty-linux: fleet-refresh windows=1 agents=0 waiting=0 stopped=0 compacting=0 active=0 idle=0 progress=0' \
+        "agent-status clear did not remove the canonical fleet row"
+    if grep -Fq 'Choose λ mode --literal [Safe] [Fast]' "${log}"; then
+        fail "hostile lifecycle text escaped into product receipts"
+    fi
+
+    for _ in {1..200}; do
+        ! kill -0 "${product_pid}" 2>/dev/null && break
+        sleep 0.05
+    done
+    wait "${product_pid}" || fail "agent-status lifecycle product run failed"
+    product_pid=""
+    rm -f -- "${log}"
+    rm -rf -- "${state_directory}"
+    log=""
+    state_directory=""
+}
+
 run_codex_title_transcript_enrichment() {
     local transcript=""
 
@@ -381,6 +429,7 @@ run_adapter \
     'zentty-linux: sidebar-agent-status pane=pane-1 phase=NeedsInput interaction=GenericInput attention=true'
 run_codex_title_transcript_enrichment
 run_codex_osc_progress
+run_agent_status_lifecycle
 case "${ZENTTY_RUN_CODEX_LIFECYCLE:-false}" in
     true)
         run_codex_lifecycle
@@ -563,4 +612,4 @@ if [[ -n "${ZENTTY_REAL_GEMINI_BIN:-}" ]]; then
     log=""
 fi
 
-echo "Rust agent launch passed: ${backend}, wrapper=real-process, child=real-pty, helper=real-process, transport=real-unix-socket, adapters=codex+claude+gemini, real-gemini=$([[ -n "${ZENTTY_REAL_GEMINI_BIN:-}" ]] && echo true || echo prerequisite-not-requested)"
+echo "Rust agent launch passed: ${backend}, wrapper=real-process, child=real-pty, helper=real-process, transport=real-unix-socket, compatibility-agent-status=running+needs-input+completed+clear, adapters=codex+claude+gemini, real-gemini=$([[ -n "${ZENTTY_REAL_GEMINI_BIN:-}" ]] && echo true || echo prerequisite-not-requested)"

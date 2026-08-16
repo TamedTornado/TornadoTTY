@@ -143,6 +143,30 @@ case "${profile}" in
             while sleep 1; do :; done
         fi
         ;;
+    agent-status-lifecycle)
+        require_helper
+        "${helper}" ipc agent-status running \
+            --tool Codex \
+            --session-id agent-status-parent-e2e \
+            --text 'Running through the compatibility CLI'
+        "${helper}" ipc agent-signal pid attach "$$" \
+            --tool Codex \
+            --session-id agent-status-parent-e2e
+        sleep 0.2
+        "${helper}" ipc agent-status needs-input \
+            --tool Codex \
+            --session-id agent-status-parent-e2e \
+            --text 'Choose λ mode --literal [Safe] [Fast]'
+        sleep 0.4
+        "${helper}" ipc agent-status completed \
+            --tool Codex \
+            --session-id agent-status-parent-e2e
+        sleep 0.2
+        "${helper}" ipc agent-status clear \
+            --tool Codex \
+            --session-id agent-status-parent-e2e
+        sleep 0.2
+        ;;
     claude-question)
         require_helper
         settings=""

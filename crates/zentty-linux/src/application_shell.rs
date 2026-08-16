@@ -39,6 +39,7 @@ use crate::agent_runtime::AgentRuntime;
 
 mod action_router;
 mod agent_events;
+mod agent_lifecycle_signal;
 mod bookmark_runtime;
 mod clipboard_actions;
 mod global_search;
@@ -51,6 +52,7 @@ pub(crate) mod server_runtime;
 mod shell_signal;
 pub(crate) mod shortcut_registry;
 pub(crate) mod shortcut_runtime;
+mod signal_arguments;
 mod ssh_identity;
 mod task_runner_runtime;
 mod tmux_runtime;
