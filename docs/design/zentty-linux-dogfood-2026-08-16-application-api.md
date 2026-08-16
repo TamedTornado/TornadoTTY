@@ -279,3 +279,24 @@ disappear from that inventory merely because it is hidden or internal.
 - Corrected results: real transport tests 11/11 PASS and strict shipped-target
   Clippy, formatting, and diff hygiene PASS. No retry loop was added; the API
   now supplies the classification a future bounded client policy can use.
+
+## Slice 7: explicit API version and capability negotiation
+
+- The envelope version governed framing but did not state which application
+  contract or operations the peer implemented. Current application requests
+  now carry `applicationApiVersion: 1`; every response carries that version and
+  the 18 externally callable operation IDs derived from the closed registry.
+  Internal `shell-signal` is intentionally not advertised.
+- The server rejects an explicitly incompatible application version before
+  product dispatch. The application client rejects a mismatched response
+  version or a response that does not advertise its requested public
+  operation. Transition compatibility remains bounded: legacy v1 in-pane
+  requests/responses may omit the additive negotiation fields, but current
+  producer schemas require them and current producers always write them.
+- Updated the executable schemas and non-Rust client. The schema runner now
+  proves that the advertised capability enum exactly equals the inventory's
+  externally callable operations. Added a real-socket incompatible application
+  version case alongside the existing incompatible envelope version case.
+- Results: real transport tests 11/11 PASS, schema positives 3/3 and negatives
+  5/5 PASS, strict shipped-target Clippy, ShellCheck, formatting, and diff
+  hygiene PASS.

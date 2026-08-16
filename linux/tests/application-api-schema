@@ -28,15 +28,19 @@ inventory_categories="$(jq -c '.error_categories | sort' "${inventory}")"
 schema_categories="$(jq -c '.properties.error.properties.category.enum | sort' "${response_schema}")"
 [[ "${inventory_categories}" == "${schema_categories}" ]] ||
     fail "response schema error categories drifted"
+inventory_capabilities="$(jq -c '[.operations[] | select(.external == true) | .wire_name] | sort' "${inventory}")"
+schema_capabilities="$(jq -c '.properties.capabilities.items.enum | sort' "${response_schema}")"
+[[ "${inventory_capabilities}" == "${schema_capabilities}" ]] ||
+    fail "response schema capabilities drifted"
 
 cat >"${temp_dir}/request.json" <<'JSON'
-{"version":1,"id":"example-1","kind":"discover","arguments":["--json"],"standardInput":null,"environment":{"ZENTTY_PANE_TOKEN":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},"expectsResponse":true,"subcommand":"panes"}
+{"version":1,"applicationApiVersion":1,"id":"example-1","kind":"discover","arguments":["--json"],"standardInput":null,"environment":{"ZENTTY_PANE_TOKEN":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},"expectsResponse":true,"subcommand":"panes"}
 JSON
 cat >"${temp_dir}/success.json" <<'JSON'
-{"version":1,"id":"example-1","ok":true,"result":{"stdout":"[]\n"},"error":null}
+{"version":1,"applicationApiVersion":1,"capabilities":["panes"],"id":"example-1","ok":true,"result":{"stdout":"[]\n"},"error":null}
 JSON
 cat >"${temp_dir}/failure.json" <<'JSON'
-{"version":1,"id":"example-1","ok":false,"result":null,"error":{"category":"stale_target","code":"stale_target","message":"target pane is unavailable"}}
+{"version":1,"applicationApiVersion":1,"capabilities":["panes"],"id":"example-1","ok":false,"result":null,"error":{"category":"stale_target","code":"stale_target","message":"target pane is unavailable"}}
 JSON
 jsonschema -i "${temp_dir}/request.json" "${request_schema}" >/dev/null
 jsonschema -i "${temp_dir}/success.json" "${response_schema}" >/dev/null

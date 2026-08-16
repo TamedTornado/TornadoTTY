@@ -4,9 +4,10 @@
   "title": "Zentty authenticated application request v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["version", "id", "kind", "arguments", "standardInput", "environment", "expectsResponse", "subcommand"],
+  "required": ["version", "applicationApiVersion", "id", "kind", "arguments", "standardInput", "environment", "expectsResponse", "subcommand"],
   "properties": {
     "version": {"const": 1},
+    "applicationApiVersion": {"const": 1},
     "id": {"type": "string", "minLength": 1, "maxLength": 128},
     "kind": {"enum": ["discover", "pane"]},
     "arguments": {

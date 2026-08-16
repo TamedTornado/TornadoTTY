@@ -26,9 +26,17 @@ terminal state.
 
 - Application API version: `1`.
 - Current Unix envelope version: `1`.
+- Application requests state `applicationApiVersion`. Responses state that
+  version and advertise the currently callable external operation IDs in
+  `capabilities`. `shell-signal` is deliberately absent because it is an
+  internal shell-integration route, not a public automation capability.
 - Readers must reject an unsupported major version before dispatch.
 - Within v1, producers may add optional response fields and new error codes in
   an existing category. Readers must ignore unknown optional fields.
+- During extraction, the server accepts a legacy in-pane v1 request that omits
+  `applicationApiVersion`, and the Rust client accepts a legacy response that
+  omits negotiation fields. Current producers always emit them, and the
+  published producer schemas require them.
 - Removing or changing a field, operation identity, category, authentication
   rule, or existing result meaning requires a new major version.
 - An operation not implemented by a running instance is an explicit

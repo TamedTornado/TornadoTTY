@@ -4,9 +4,22 @@
   "title": "Zentty application response v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["version", "id", "ok", "result", "error"],
+  "required": ["version", "applicationApiVersion", "capabilities", "id", "ok", "result", "error"],
   "properties": {
     "version": {"const": 1},
+    "applicationApiVersion": {"const": 1},
+    "capabilities": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "overview", "windows", "worklanes", "panes", "panes-current-worklane",
+          "select-pane", "split", "grid", "focus", "pane-rename", "close",
+          "worklane-color", "worklane-rename", "zoom", "resize", "layout",
+          "theme", "notify"
+        ]
+      }
+    },
     "id": {"type": "string", "maxLength": 128},
     "ok": {"type": "boolean"},
     "result": {

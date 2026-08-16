@@ -25,6 +25,7 @@ response="$({
         --arg id "${request_id}" \
         '{
           version: 1,
+          applicationApiVersion: 1,
           id: $id,
           kind: "discover",
           arguments: ["--json"],
@@ -36,7 +37,8 @@ response="$({
 } | env -u ZENTTY_PANE_TOKEN socat -t 3 - "UNIX-CONNECT:${socket}")"
 
 jq -e --arg id "${request_id}" '
-  .version == 1 and .id == $id and
+  .version == 1 and .applicationApiVersion == 1 and .id == $id and
+  (.capabilities | index("panes") != null) and
   ((.ok == true and .error == null and (.result.stdout | type == "string")) or
    (.ok == false and .result == null and
     (.error.category | type == "string") and

@@ -12,9 +12,9 @@ pub use server::{
     ServerCommand, ServerIpcError, ServerIpcReply, ServerIpcReplyError, ServerIpcRequest,
 };
 pub use zentty_api::{
-    ApplicationApiError, ApplicationErrorCategory, ApplicationOperation, ApplicationReply,
-    ApplicationReplyError, ApplicationRequest, ApplicationScope, ProductIpcError, ProductIpcKind,
-    ProductIpcReply, ProductIpcReplyError, ProductIpcRequest,
+    APPLICATION_API_VERSION, ApplicationApiError, ApplicationErrorCategory, ApplicationOperation,
+    ApplicationReply, ApplicationReplyError, ApplicationRequest, ApplicationScope, ProductIpcError,
+    ProductIpcKind, ProductIpcReply, ProductIpcReplyError, ProductIpcRequest,
 };
 
 use serde::{Deserialize, Serialize};
@@ -128,6 +128,11 @@ impl From<std::io::Error> for AgentIpcError {
 #[derive(Debug, Deserialize, Serialize)]
 struct WireRequest {
     version: u32,
+    #[serde(
+        rename = "applicationApiVersion",
+        skip_serializing_if = "Option::is_none"
+    )]
+    application_api_version: Option<u32>,
     id: String,
     kind: String,
     arguments: Vec<String>,
@@ -142,6 +147,13 @@ struct WireRequest {
 #[derive(Debug, Deserialize, Serialize)]
 struct WireResponse {
     version: u32,
+    #[serde(
+        rename = "applicationApiVersion",
+        skip_serializing_if = "Option::is_none"
+    )]
+    application_api_version: Option<u32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    capabilities: Vec<String>,
     id: String,
     ok: bool,
     result: Option<WireResponseResult>,
@@ -454,6 +466,7 @@ impl AgentIpcClient {
         }
         let request = WireRequest {
             version: 1,
+            application_api_version: None,
             id: request_id(),
             kind: "ipc".to_owned(),
             arguments: Vec::new(),
@@ -495,6 +508,7 @@ impl AgentIpcClient {
         }
         let request = WireRequest {
             version: 1,
+            application_api_version: None,
             id: request_id(),
             kind: "tmux_compat".to_owned(),
             arguments: arguments.to_vec(),
@@ -558,6 +572,7 @@ impl AgentIpcClient {
         }
         let request = WireRequest {
             version: 1,
+            application_api_version: None,
             id: request_id(),
             kind: "server".to_owned(),
             arguments: arguments.to_vec(),
@@ -602,6 +617,8 @@ impl AgentIpcClient {
         request: &ApplicationRequest,
         claimed_target: Option<AgentTarget>,
     ) -> Result<ProductIpcReply, AgentIpcError> {
+        let requested_operation = request.operation();
+        let requested_name = request.subcommand().to_owned();
         let mut environment = std::collections::BTreeMap::from([(
             "ZENTTY_PANE_TOKEN".to_owned(),
             pane_token.to_owned(),
@@ -613,6 +630,7 @@ impl AgentIpcClient {
         }
         let request = WireRequest {
             version: 1,
+            application_api_version: Some(APPLICATION_API_VERSION),
             id: request_id(),
             kind: request.kind().wire_name().to_owned(),
             arguments: request.arguments().to_vec(),
@@ -624,6 +642,34 @@ impl AgentIpcClient {
         let frame = serde_json::to_vec(&request)
             .map_err(|error| AgentIpcError::InvalidRequest(error.to_string()))?;
         let response = Self::exchange_raw_frame(socket_path, &frame)?;
+        if response
+            .application_api_version
+            .is_some_and(|version| version != APPLICATION_API_VERSION)
+        {
+            return Err(AgentIpcError::Remote {
+                category: ApplicationErrorCategory::UnsupportedVersion,
+                code: "unsupported_version".to_owned(),
+                message: format!(
+                    "server application API version {:?} is incompatible with client version {}",
+                    response.application_api_version, APPLICATION_API_VERSION
+                ),
+            });
+        }
+        if !response.capabilities.is_empty()
+            && requested_operation != ApplicationOperation::ShellSignal
+            && !response
+                .capabilities
+                .iter()
+                .any(|capability| capability == &requested_name)
+        {
+            return Err(AgentIpcError::Remote {
+                category: ApplicationErrorCategory::UnsupportedOperation,
+                code: "unsupported_operation".to_owned(),
+                message: format!(
+                    "server did not advertise application operation {requested_name:?}"
+                ),
+            });
+        }
         if response.ok {
             ProductIpcReply::success(
                 response
@@ -804,6 +850,8 @@ fn handle_connection(
     let response = match result {
         Ok(ReceivedResponse { id, reply: None }) => WireResponse {
             version: 1,
+            application_api_version: Some(APPLICATION_API_VERSION),
+            capabilities: application_capabilities(),
             id,
             ok: true,
             result: None,
@@ -814,6 +862,8 @@ fn handle_connection(
             reply: Some(reply),
         }) if reply.error.is_none() => WireResponse {
             version: 1,
+            application_api_version: Some(APPLICATION_API_VERSION),
+            capabilities: application_capabilities(),
             id,
             ok: true,
             result: Some(WireResponseResult {
@@ -827,6 +877,8 @@ fn handle_connection(
         }) => match reply.error {
             Some(error) => WireResponse {
                 version: 1,
+                application_api_version: Some(APPLICATION_API_VERSION),
+                capabilities: application_capabilities(),
                 id,
                 ok: false,
                 result: None,
@@ -838,6 +890,8 @@ fn handle_connection(
             },
             None => WireResponse {
                 version: 1,
+                application_api_version: Some(APPLICATION_API_VERSION),
+                capabilities: application_capabilities(),
                 id,
                 ok: false,
                 result: None,
@@ -850,6 +904,8 @@ fn handle_connection(
         },
         Err(error) => WireResponse {
             version: 1,
+            application_api_version: Some(APPLICATION_API_VERSION),
+            capabilities: application_capabilities(),
             id: String::new(),
             ok: false,
             result: None,
@@ -876,6 +932,14 @@ fn handle_connection(
     if let Ok(bytes) = serde_json::to_vec(&response) {
         let _ = stream.write_all(&bytes);
     }
+}
+
+fn application_capabilities() -> Vec<String> {
+    ApplicationOperation::ALL
+        .into_iter()
+        .filter(|operation| *operation != ApplicationOperation::ShellSignal)
+        .map(|operation| operation.wire_name().to_owned())
+        .collect()
 }
 
 struct ReceivedResponse {
@@ -1041,6 +1105,11 @@ fn receive_product_request(
     subcommand: &str,
     product_sender: Option<&mpsc::Sender<AuthenticatedProductRequest>>,
 ) -> Result<ReceivedResponse, AgentIpcError> {
+    if let Some(version) = request.application_api_version
+        && version != APPLICATION_API_VERSION
+    {
+        return Err(AgentIpcError::UnsupportedVersion(version));
+    }
     let kind = if request.kind == "discover" {
         ProductIpcKind::Discover
     } else {

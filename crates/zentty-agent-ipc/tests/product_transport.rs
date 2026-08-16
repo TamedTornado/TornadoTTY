@@ -134,6 +134,10 @@ fn wire_rejections_and_missing_instance_have_typed_categories() {
             "unsupported_version",
         ),
         (
+            br#"{"version":1,"applicationApiVersion":99,"id":"future-api","kind":"discover","arguments":[],"standardInput":null,"environment":{"ZENTTY_PANE_TOKEN":"caller-token"},"expectsResponse":true,"subcommand":"panes"}"#.as_slice(),
+            "unsupported_version",
+        ),
+        (
             br#"{"version":1,"id":"missing-token","kind":"discover","arguments":[],"standardInput":null,"environment":{},"expectsResponse":true,"subcommand":"panes"}"#.as_slice(),
             "authorization_failure",
         ),
