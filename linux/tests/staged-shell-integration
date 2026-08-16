@@ -2,6 +2,8 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=linux/tests/lib/shell-binaries
+source "${repo_root}/linux/tests/lib/shell-binaries"
 stage_root="${ZENTTY_STAGE_ROOT:-${repo_root}/build/linux}"
 integration="${stage_root}/share/zentty/shell-integration"
 shim="${stage_root}/libexec/zentty/tmux-shim"
@@ -12,15 +14,35 @@ fail() {
     exit 1
 }
 
+run_quiet_mode() {
+    local label="$1"
+    shift
+    local stdout="${fixture}/${label}.stdout"
+    local stderr="${fixture}/${label}.stderr"
+    if ! "$@" >"${stdout}" 2>"${stderr}"; then
+        cat "${stdout}" "${stderr}" >&2
+        fail "${label} startup mode failed"
+    fi
+    if [[ -s "${stdout}" || -s "${stderr}" ]]; then
+        cat "${stdout}" "${stderr}" >&2
+        fail "${label} startup mode emitted user-visible bytes"
+    fi
+}
+
 [[ "${shell_name}" =~ ^(bash|zsh|fish|nu)$ ]] || {
     echo "usage: staged-shell-integration bash|zsh|fish|nu" >&2
     exit 64
 }
-command -v "${shell_name}" >/dev/null 2>&1 || {
+shell_binary="$(zentty_test_shell_binary "${shell_name}" "${repo_root}")" || {
     printf 'staged-shell-integration: SKIP missing shell prerequisite: %s\n' "${shell_name}" >&2
     exit 77
 }
-shell_binary="$(command -v "${shell_name}")"
+shell_version="$(zentty_test_shell_version "${shell_name}" "${shell_binary}")"
+zentty_test_shell_version_supported "${shell_name}" "${shell_version}" || {
+    printf 'staged-shell-integration: SKIP unsupported shell version: %s: %s\n' \
+        "${shell_name}" "${shell_version}" >&2
+    exit 77
+}
 [[ -f "${integration}/.zshenv" ]] || fail "staged integration tree is missing"
 [[ -x "${shim}/tmux" ]] || fail "staged tmux shim is missing"
 
@@ -64,10 +86,25 @@ case "${shell_name}" in
                 [[ "$ZENTTY_USER_PROMPT_RAN" == 1 ]]
                 [[ "$(command -v tmux)" == "$ZENTTY_TMUX_SHIM_DIR/tmux" ]]
             '
+        # PROMPT_COMMAND is a prompt hook, not a non-interactive startup-file
+        # override. Both login and non-login command shells must remain quiet
+        # and leave the hook available for a later interactive shell.
+        for mode in nonlogin login; do
+            bash_arguments=(--noprofile --norc -c)
+            [[ "${mode}" == login ]] && bash_arguments=(--noprofile --norc -l -c)
+            # shellcheck disable=SC2016 # Expanded by the tested Bash process.
+            run_quiet_mode "bash-${mode}" "${common_environment[@]}" \
+                'PROMPT_COMMAND=. "$ZENTTY_SHELL_INTEGRATION_DIR/zentty-bash-integration.bash"' \
+                "${shell_binary}" "${bash_arguments[@]}" \
+                '[[ -z "${ZENTTY_BASH_INTEGRATION_LOADED:-}" && "$PROMPT_COMMAND" == *zentty-bash-integration.bash* ]]'
+        done
         ;;
     zsh)
         cat >"${fixture}/user-zdotdir/.zshenv" <<'USER_ZSHENV'
 export ZENTTY_USER_ZSHENV_RAN=1
+if [[ -n "${ZENTTY_ZSH_MODE_MARKER:-}" ]]; then
+    print -r -- user-zshenv >>"${ZENTTY_ZSH_MODE_MARKER}"
+fi
 USER_ZSHENV
         # shellcheck disable=SC2016 # Expanded by the tested Zsh process.
         "${common_environment[@]}" \
@@ -78,13 +115,24 @@ USER_ZSHENV
                 [[ "$ZDOTDIR" == *"/user-zdotdir" ]]
                 [[ "$(command -v tmux)" == "$ZENTTY_TMUX_SHIM_DIR/tmux" ]]
             '
+        : >"${fixture}/zsh-mode-user-marker"
+        for mode in nonlogin login; do
+            zsh_arguments=(-c)
+            [[ "${mode}" == login ]] && zsh_arguments=(-l -c)
+            # .zshenv deliberately restores and sources the user's .zshenv in
+            # every mode, but installs interactive hooks only interactively.
+            # shellcheck disable=SC2016 # Expanded by the tested Zsh process.
+            run_quiet_mode "zsh-${mode}" "${common_environment[@]}" \
+                "ZDOTDIR=${integration}" \
+                "ZENTTY_ORIGINAL_ZDOTDIR=${fixture}/user-zdotdir" \
+                "ZENTTY_ZSH_MODE_MARKER=${fixture}/zsh-mode-user-marker" \
+                "${shell_binary}" "${zsh_arguments[@]}" \
+                '[[ "$ZDOTDIR" == *"/user-zdotdir" && -z "${ZENTTY_ZSH_INTEGRATION_LOADED:-}" ]]'
+        done
+        [[ "$(wc -l <"${fixture}/zsh-mode-user-marker")" == 2 ]] ||
+            fail "Zsh login/non-login modes did not source the user .zshenv exactly once"
         ;;
     fish)
-        fish_major="$("${shell_binary}" --version | sed -n 's/^fish, version \([0-9][0-9]*\).*/\1/p')"
-        [[ "${fish_major}" =~ ^[0-9]+$ && "${fish_major}" -ge 4 ]] || {
-            printf 'staged-shell-integration: SKIP fish 4 or later required\n' >&2
-            exit 77
-        }
         fish_marker="${fixture}/fish-passed"
         # shellcheck disable=SC2016 # Expanded by the tested Fish process.
         if ! printf '%s\n' \
@@ -103,6 +151,14 @@ USER_ZSHENV
             fail "Fish startup process failed"
         fi
         grep -Fxq passed "${fish_marker}" || fail "Fish startup assertions did not complete"
+        # Fish executes vendor conf in command mode, where Zentty must consume
+        # its XDG discovery root but must not install interactive hooks.
+        # shellcheck disable=SC2016 # Expanded by the tested Fish process.
+        run_quiet_mode fish-noninteractive "${common_environment[@]}" \
+            "XDG_DATA_DIRS=${integration}:/usr/local/share:/usr/share" \
+            "ZENTTY_ORIGINAL_XDG_DATA_DIRS=/usr/local/share:/usr/share" \
+            "${shell_binary}" -c \
+            'not set -q ZENTTY_FISH_INTEGRATION_LOADED; and not contains "$ZENTTY_SHELL_INTEGRATION_DIR" (string split : -- "$XDG_DATA_DIRS")'
         ;;
     nu)
         nu_marker="${fixture}/nu-passed"
@@ -123,6 +179,14 @@ USER_ZSHENV
             fail "Nushell startup process failed"
         fi
         grep -Fxq passed "${nu_marker}" || fail "Nushell startup assertions did not complete"
+        # Nushell does not load vendor autoload files for `-c`; leaving the
+        # discovery path untouched allows a later interactive child to load it.
+        # shellcheck disable=SC2016 # Expanded by the tested Nushell process.
+        run_quiet_mode nu-noninteractive "${common_environment[@]}" \
+            "XDG_DATA_DIRS=${integration}:/usr/local/share:/usr/share" \
+            "ZENTTY_ORIGINAL_XDG_DATA_DIRS=/usr/local/share:/usr/share" \
+            "${shell_binary}" -c \
+            'if ($env | get -o ZENTTY_NU_INTEGRATION_LOADED | default "") != "" { exit 1 }; if not ($env.XDG_DATA_DIRS | str contains $env.ZENTTY_SHELL_INTEGRATION_DIR) { exit 1 }'
         ;;
 esac
 

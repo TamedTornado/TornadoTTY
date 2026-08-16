@@ -48,6 +48,7 @@ mod product_cli;
 mod project_context_runtime;
 mod remote_paste;
 pub(crate) mod server_runtime;
+mod shell_signal;
 pub(crate) mod shortcut_registry;
 pub(crate) mod shortcut_runtime;
 mod ssh_identity;

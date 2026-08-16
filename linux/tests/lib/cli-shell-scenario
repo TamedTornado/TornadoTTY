@@ -1,0 +1,294 @@
+#!/usr/bin/env bash
+# shellcheck disable=SC2154 # This file is sourced by rust-cli-contract.
+
+# Sourced by rust-cli-contract. This remains a scenario of that one staged
+# product actor rather than an independently executable integration harness.
+
+zentty_cli_shell_user_manifest() {
+    local home_directory="$1"
+    find "${home_directory}" -type f \
+        ! -path "${home_directory}/.config/ghostty/*" \
+        ! -path "${home_directory}/.config/zentty/*" \
+        ! -path "${home_directory}/.config/nushell/history.txt" \
+        ! -path "${home_directory}/.dbus/*" \
+        -print0 | sort -z | xargs -0 sha256sum
+}
+
+zentty_cli_shell_scenario() {
+    local shell_name="${ZENTTY_CLI_SHELL_SCENARIO:?}"
+    local shell_binary shell_version shell_home shell_runtime hostile_cwd
+    local scenario_root transcript receipt nested_receipt cli_receipt version_receipt agent_receipt
+    local driver probe before_manifest after_manifest expected_user_rc nested_expected status stage_root
+    local terminal_identity fake_bin expected_wrapper
+    local test_bash test_zsh test_fish test_nu
+
+    stage_root="$(cd "$(dirname "${product}")/.." && pwd)"
+    shell_integration_directory="${stage_root}/share/zentty/shell-integration"
+    tmux_shim_directory="${stage_root}/libexec/zentty/tmux-shim"
+    [[ -d "${shell_integration_directory}" ]] || fail "staged shell integration is missing"
+    [[ -x "${tmux_shim_directory}/tmux" ]] || fail "staged tmux shim is missing"
+
+    shell_binary="$(zentty_test_shell_binary "${shell_name}" "${repo_root}")" ||
+        fail "${shell_name} prerequisite is missing"
+    [[ -x "${shell_binary}" ]] || fail "${shell_name} prerequisite is missing"
+    shell_version="$(zentty_test_shell_version "${shell_name}" "${shell_binary}")"
+    test_bash="${ZENTTY_TEST_BASH:-$(command -v bash 2>/dev/null || true)}"
+    test_zsh="${ZENTTY_TEST_ZSH:-$(command -v zsh 2>/dev/null || true)}"
+    test_fish="${ZENTTY_TEST_FISH:-$(command -v fish 2>/dev/null || true)}"
+    test_nu="${ZENTTY_TEST_NU:-$(command -v nu 2>/dev/null || true)}"
+    case "${shell_name}" in
+        bash) test_bash="${shell_binary}" ;;
+        zsh) test_zsh="${shell_binary}" ;;
+        fish) test_fish="${shell_binary}" ;;
+        nu) test_nu="${shell_binary}" ;;
+    esac
+    zentty_test_shell_version_supported "${shell_name}" "${shell_version}" ||
+        fail "${shell_name} version is unsupported: ${shell_version}"
+
+    scenario_root="${run_root}/shell-${shell_name}"
+    shell_home="${scenario_root}/home"
+    shell_runtime="${scenario_root}/runtime"
+    hostile_cwd="${scenario_root}/project with spaces-λ"
+    transcript="${scenario_root}/transcript"
+    receipt="${scenario_root}/environment.receipt"
+    nested_receipt="${scenario_root}/nested.receipt"
+    cli_receipt="${scenario_root}/panes.json"
+    version_receipt="${scenario_root}/version.txt"
+    agent_receipt="${scenario_root}/agent-wrapper.receipt"
+    driver="${scenario_root}/driver"
+    probe="${scenario_root}/probe"
+    before_manifest="${scenario_root}/user-files.before"
+    after_manifest="${scenario_root}/user-files.after"
+    mkdir -p -- "${shell_home}/.config/fish" "${shell_home}/.config/nushell" \
+        "${shell_runtime}/data" "${shell_runtime}/cache" "${hostile_cwd}" \
+        "${scenario_root}/real-bin"
+    fake_bin="${scenario_root}/real-bin"
+    expected_wrapper="${stage_root}/libexec/zentty/agent-wrappers/codex/codex"
+    [[ -x "${expected_wrapper}" ]] || fail "staged Codex wrapper is missing"
+    ln -s "${repo_root}/linux/tests/fixtures/controlled-agent" "${fake_bin}/codex"
+
+    cat >"${shell_home}/.bashrc" <<'EOF'
+PS1='BASH_READY> '
+export PS1
+printf 'bash-user-rc\n' >>"$ZENTTY_USER_RC_MARKER"
+EOF
+    cat >"${shell_home}/.zshenv" <<'EOF'
+export HISTFILE=/dev/null
+printf 'zsh-user-zshenv\n' >>"$ZENTTY_USER_RC_MARKER"
+EOF
+    cat >"${shell_home}/.zshrc" <<'EOF'
+PROMPT='ZSH_READY> '
+printf 'zsh-user-zshrc\n' >>"$ZENTTY_USER_RC_MARKER"
+EOF
+    cat >"${shell_home}/.config/fish/config.fish" <<'EOF'
+set -g fish_history ''
+function fish_prompt
+    printf 'FISH_READY> '
+end
+printf 'fish-user-config\n' >>$ZENTTY_USER_RC_MARKER
+EOF
+    cat >"${shell_home}/.config/nushell/config.nu" <<'EOF'
+$env.PROMPT_COMMAND = {|| 'NU_READY> ' }
+'nu-user-config' | save --append $env.ZENTTY_USER_RC_MARKER
+EOF
+
+    # Ubuntu's global Zsh startup runs compinit and creates ~/.zcompdump even
+    # without Zentty. Establish that native baseline before hashing so the
+    # assertion isolates integration-caused changes rather than blaming the
+    # product for an ordinary distribution-shell side effect.
+    if [[ "${shell_name}" == zsh ]]; then
+        HOME="${shell_home}" ZDOTDIR="${shell_home}" \
+            ZENTTY_USER_RC_MARKER="${scenario_root}/user-rc.marker" \
+            "${shell_binary}" -i -c exit </dev/null >/dev/null 2>&1
+    fi
+    : >"${scenario_root}/user-rc.marker"
+
+    zentty_cli_shell_user_manifest "${shell_home}" >"${before_manifest}"
+
+    cat >"${probe}" <<'PROBE'
+#!/usr/bin/env bash
+set -euo pipefail
+shell_name="$1"
+{
+    printf 'shell=%s\n' "${shell_name}"
+    printf 'pwd=%s\n' "${PWD}"
+    printf 'window=%s\n' "${ZENTTY_WINDOW_ID}"
+    printf 'worklane=%s\n' "${ZENTTY_WORKLANE_ID}"
+    printf 'pane=%s\n' "${ZENTTY_PANE_ID}"
+    printf 'instance=%s\n' "${ZENTTY_INSTANCE_ID}"
+    printf 'socket=%s\n' "${ZENTTY_INSTANCE_SOCKET}"
+    printf 'cli=%s\n' "${ZENTTY_CLI_BIN}"
+    printf 'integration=%s\n' "${ZENTTY_SHELL_INTEGRATION_DIR}"
+    printf 'hook=%s\n' "${ZENTTY_AGENT_EVENT_COMMAND}"
+    printf 'term=%s\n' "${TERM}"
+    printf 'colorterm=%s\n' "${COLORTERM}"
+    printf 'xdg=%s\n' "${XDG_DATA_DIRS:-}"
+    printf 'path=%s\n' "${PATH}"
+    printf 'tmux=%s\n' "$(command -v tmux)"
+    printf 'codex=%s\n' "$(command -v codex)"
+} >"${ZENTTY_SHELL_RECEIPT}"
+"${ZENTTY_CLI_BIN}" list panes --json >"${ZENTTY_SHELL_CLI_RECEIPT}"
+"${ZENTTY_CLI_BIN}" version >"${ZENTTY_SHELL_VERSION_RECEIPT}"
+codex --zentty-shell-probe 'space and λ' >"${ZENTTY_SHELL_AGENT_RECEIPT}"
+case "${shell_name}" in
+    bash) "${ZENTTY_TEST_BASH}" --noprofile --norc -c 'printf "nested=%s loaded=%s\n" bash "${ZENTTY_BASH_INTEGRATION_LOADED:-}"' ;;
+    zsh) "${ZENTTY_TEST_ZSH}" -f -c 'printf "nested=%s loaded=%s\n" zsh "${ZENTTY_ZSH_INTEGRATION_LOADED:-}"' ;;
+    fish) "${ZENTTY_TEST_FISH}" -c 'printf "nested=%s loaded=%s\n" fish "$ZENTTY_FISH_INTEGRATION_LOADED"' ;;
+    nu) "${ZENTTY_TEST_NU}" -c 'print $"nested=nu loaded=($env.ZENTTY_NU_INTEGRATION_LOADED? | default "")"' ;;
+esac >"${ZENTTY_SHELL_NESTED_RECEIPT}"
+PROBE
+    chmod 0700 "${probe}"
+
+    cat >"${driver}" <<'DRIVER'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${ZENTTY_CLI_SHELL_SCENARIO}" in
+    bash) command=("${ZENTTY_TEST_BASH}" --noprofile --rcfile "${HOME}/.bashrc" -i) ;;
+    zsh) command=("${ZENTTY_TEST_ZSH}" -i) ;;
+    fish) command=("${ZENTTY_TEST_FISH}" -i) ;;
+    nu) command=("${ZENTTY_TEST_NU}") ;;
+esac
+printf 'ready\n' >"${ZENTTY_SHELL_READY}"
+printf -v quoted '%q ' "${command[@]}"
+exec script --quiet --flush --return --log-out "${ZENTTY_SHELL_TRANSCRIPT}" \
+    --command "${quoted}"
+DRIVER
+    chmod 0700 "${driver}"
+
+    GDK_SCALE=1 GDK_DPI_SCALE=1 \
+    HOME="${shell_home}" XDG_CONFIG_HOME="${shell_home}/.config" \
+    XDG_DATA_HOME="${shell_runtime}/data" XDG_CACHE_HOME="${shell_runtime}/cache" \
+    HISTFILE=/dev/null ZDOTDIR="${shell_home}" \
+    CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 \
+    ZENTTY_CONTROLLED_AGENT_PROFILE=shell-boundary \
+    ZENTTY_CONTROLLED_AGENT_SLEEP_SECONDS=0 \
+    ZENTTY_CLI_SHELL_SCENARIO="${shell_name}" \
+    ZENTTY_TEST_BASH="${test_bash}" ZENTTY_TEST_ZSH="${test_zsh}" \
+    ZENTTY_TEST_FISH="${test_fish}" ZENTTY_TEST_NU="${test_nu}" \
+    ZENTTY_USER_RC_MARKER="${scenario_root}/user-rc.marker" \
+    ZENTTY_SHELL_READY="${scenario_root}/ready" \
+    ZENTTY_SHELL_TRANSCRIPT="${transcript}" \
+    ZENTTY_SHELL_RECEIPT="${receipt}" \
+    ZENTTY_SHELL_NESTED_RECEIPT="${nested_receipt}" \
+    ZENTTY_SHELL_CLI_RECEIPT="${cli_receipt}" \
+    ZENTTY_SHELL_VERSION_RECEIPT="${version_receipt}" \
+    ZENTTY_SHELL_AGENT_RECEIPT="${agent_receipt}" \
+    D="${hostile_cwd}" P="${probe}" \
+    PATH="${fake_bin}:${PATH}" \
+    LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+        "${product}" --command "${driver}" --state-directory "${state_directory}" \
+        --no-session-restore >"${log}" 2>&1 &
+    product_pid=$!
+
+    for _ in {1..400}; do
+        [[ -s "${scenario_root}/ready" ]] && break
+        kill -0 "${product_pid}" 2>/dev/null || fail "product exited before ${shell_name} startup"
+        sleep 0.05
+    done
+    [[ -s "${scenario_root}/ready" ]] || fail "${shell_name} driver did not become ready"
+    for _ in {1..400}; do
+        grep -Fq "${shell_name^^}_READY>" "${transcript}" 2>/dev/null && break
+        if ! kill -0 "${product_pid}" 2>/dev/null; then
+            [[ ! -f "${transcript}" ]] || cat "${transcript}" >&2
+            fail "${shell_name} exited before its prompt became ready"
+        fi
+        sleep 0.05
+    done
+    grep -Fq "${shell_name^^}_READY>" "${transcript}" 2>/dev/null ||
+        fail "${shell_name} prompt did not become ready"
+    zentty_product_prepare_input "${backend}" "${log}" || fail "${shell_name} pane could not receive physical input"
+    sleep 0.5
+    if [[ "${shell_name}" == nu ]]; then
+        # shellcheck disable=SC2016 # Expanded by the tested Nushell process.
+        zentty_product_type "${backend}" 'cd $env.D'
+    else
+        # shellcheck disable=SC2016 # Expanded by the tested shell process.
+        zentty_product_type "${backend}" 'cd "$D"'
+    fi
+    zentty_product_key "${backend}" Return
+    zentty_product_wait_for_log "${log}" "zentty-linux: title=${hostile_cwd}" \
+        "${shell_name} did not report its hostile CWD before the probe" ||
+        fail "${shell_name} CWD transition did not settle"
+    if [[ "${shell_name}" == nu ]]; then
+        # shellcheck disable=SC2016 # Expanded by the tested Nushell process.
+        zentty_product_type "${backend}" '^$env.P nu'
+    else
+        # Keep the compositor-typed command short. Cage's virtual keyboard can
+        # deliver an encoded key-release sequence in a long synthesized path;
+        # the real shell still expands P to the hostile absolute probe path.
+        zentty_product_type "${backend}" "\"\$P\" '${shell_name}'"
+    fi
+    zentty_product_key "${backend}" Return
+    for _ in {1..400}; do
+        [[ -s "${receipt}" && -s "${nested_receipt}" && -s "${cli_receipt}" && -s "${agent_receipt}" ]] && break
+        kill -0 "${product_pid}" 2>/dev/null || fail "${shell_name} exited before receipts"
+        sleep 0.05
+    done
+    [[ -s "${receipt}" && -s "${nested_receipt}" && -s "${cli_receipt}" && -s "${agent_receipt}" ]] || fail "${shell_name} receipts are incomplete"
+    zentty_product_type "${backend}" exit
+    zentty_product_key "${backend}" Return
+    set +e
+    wait "${product_pid}"
+    status=$?
+    set -e
+    product_pid=""
+    [[ "${status}" == 0 ]] || fail "${shell_name} product exited ${status}"
+
+    zentty_cli_shell_user_manifest "${shell_home}" >"${after_manifest}"
+    if ! cmp -s "${before_manifest}" "${after_manifest}"; then
+        diff -u "${before_manifest}" "${after_manifest}" >&2 || true
+        fail "${shell_name} modified user configuration files"
+    fi
+    case "${shell_name}" in
+        bash) expected_user_rc='bash-user-rc' ;;
+        zsh) expected_user_rc=$'zsh-user-zshenv\nzsh-user-zshrc' ;;
+        fish) expected_user_rc=$'fish-user-config\nfish-user-config' ;;
+        nu) expected_user_rc='nu-user-config' ;;
+    esac
+    [[ "$(cat "${scenario_root}/user-rc.marker")" == "${expected_user_rc}" ]] ||
+        fail "${shell_name} did not load user configuration exactly once per shell process"
+    [[ "$(sed -n 's/^pwd=//p' "${receipt}")" == "${hostile_cwd}" ]] || fail "${shell_name} CWD hook did not preserve hostile path"
+    [[ "$(sed -n 's/^window=//p' "${receipt}")" == window-1 ]] || fail "${shell_name} window identity drifted"
+    [[ "$(sed -n 's/^worklane=//p' "${receipt}")" == worklane-1 ]] || fail "${shell_name} worklane identity drifted"
+    [[ "$(sed -n 's/^pane=//p' "${receipt}")" == pane-1 ]] || fail "${shell_name} pane identity drifted"
+    [[ "$(sed -n 's/^instance=//p' "${receipt}")" =~ ^[0-9a-f]{64}$ ]] || fail "${shell_name} instance identity is invalid"
+    [[ -S "$(sed -n 's/^socket=//p' "${receipt}")" ]] && fail "${shell_name} socket survived product shutdown"
+    [[ "$(sed -n 's/^cli=//p' "${receipt}")" == "$(readlink -f "${product%/*}/zentty")" ]] || fail "${shell_name} CLI is not staged"
+    [[ "$(sed -n 's/^integration=//p' "${receipt}")" == "${shell_integration_directory}" ]] || fail "${shell_name} integration root drifted"
+    [[ "$(sed -n 's/^hook=//p' "${receipt}")" == "$(readlink -f "${product%/*}/zentty") ipc agent-event" ]] || fail "${shell_name} agent hook discovery drifted"
+    terminal_identity="$(sed -n 's/^term=//p' "${receipt}")"
+    [[ -n "${terminal_identity}" && "${terminal_identity}" != dumb ]] ||
+        fail "${shell_name} terminal identity is unusable: ${terminal_identity:-<empty>}"
+    [[ "$(sed -n 's/^colorterm=//p' "${receipt}")" == truecolor ]] || fail "${shell_name} truecolor resource drifted"
+    if [[ "${shell_name}" == fish || "${shell_name}" == nu ]]; then
+        [[ ":$(sed -n 's/^xdg=//p' "${receipt}"):" != *":${shell_integration_directory}:"* ]] ||
+            fail "${shell_name} leaked its consumed XDG discovery root"
+    else
+        [[ ":$(sed -n 's/^xdg=//p' "${receipt}"):" == *":${shell_integration_directory}:"* ]] ||
+            fail "${shell_name} removed cross-shell discovery before Fish or Nushell could consume it"
+    fi
+    [[ "$(sed -n 's/^tmux=//p' "${receipt}")" == "${tmux_shim_directory}/tmux" ]] || fail "${shell_name} tmux shim was not first"
+    [[ "$(sed -n 's/^codex=//p' "${receipt}")" == "${expected_wrapper}" ]] || fail "${shell_name} did not enable the staged Codex wrapper"
+    grep -Fxq 'argument=<--zentty-shell-probe>' "${agent_receipt}" || fail "${shell_name} wrapper lost the probe argument"
+    grep -Fxq 'argument=<space and λ>' "${agent_receipt}" || fail "${shell_name} wrapper lost hostile argument boundaries"
+    grep -Fxq 'pane=pane-1' "${agent_receipt}" || fail "${shell_name} wrapper lost pane identity"
+    grep -Fxq 'worklane=worklane-1' "${agent_receipt}" || fail "${shell_name} wrapper lost worklane identity"
+    jq -e --arg cwd "${hostile_cwd}" 'length == 1 and .[0].workingDirectory == $cwd' "${cli_receipt}" >/dev/null || fail "${shell_name} context did not reach product state"
+    grep -Eq '^zentty [0-9]+\.[0-9]+\.[0-9]+ \(' "${version_receipt}" || fail "${shell_name} management command did not pass through"
+    case "${shell_name}" in
+        bash | nu) nested_expected="nested=${shell_name} loaded=1" ;;
+        zsh | fish) nested_expected="nested=${shell_name} loaded=" ;;
+    esac
+    grep -Fxq "${nested_expected}" "${nested_receipt}" ||
+        fail "${shell_name} nested integration behavior drifted"
+    grep -Fq "${shell_name^^}_READY>" "${transcript}" || fail "${shell_name} prompt never became ready"
+    ! grep -Eiq 'command not found|parse error|stack traceback|panic|zentty shell integration for' "${transcript}" || fail "${shell_name} startup emitted integration noise"
+    grep -Fq "zentty-linux: shell-signal pane=pane-1 kind=pane-root-pid event=attach" "${log}" || fail "${shell_name} root PID signal was not authenticated"
+    grep -Fq "zentty-linux: shell-signal pane=pane-1 kind=pane-context scope=local path-present=true" "${log}" || fail "${shell_name} CWD signal was not authenticated"
+    grep -Fq "zentty-linux: shell-signal pane=pane-1 kind=shell-state state=running" "${log}" || fail "${shell_name} activity signal was not authenticated"
+    printf 'rust-cli-contract-%s: PASS shell=%s version=%q real-product=true real-pty=true physical-input=true user-files=unchanged startup-bytes=%s startup-sha256=%s environment-sha256=%s nested-sha256=%s\n' \
+        "${backend}" "${shell_name}" "${shell_version}" \
+        "$(stat -c %s "${transcript}")" "$(sha256sum "${transcript}" | awk '{print $1}')" \
+        "$(sha256sum "${receipt}" | awk '{print $1}')" \
+        "$(sha256sum "${nested_receipt}" | awk '{print $1}')"
+}

@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+runner="${repo_root}/linux/tests/mutate-rust"
+fixture="$(mktemp -d)"
+trap 'rm -rf -- "${fixture}"' EXIT
+
+fail() {
+    printf 'mutation-isolation-test: error: %s\n' "$*" >&2
+    exit 1
+}
+
+mkdir -p "${fixture}/bin"
+cat >"${fixture}/bin/systemctl" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+cat >"${fixture}/bin/systemd-run" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$@" >"${ZENTTY_MUTATION_SCOPE_RECEIPT}"
+EOF
+cat >"${fixture}/bin/cargo-mutants" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$(ulimit -v)" >"${ZENTTY_MUTATION_LIMIT_RECEIPT}"
+EOF
+chmod 0700 "${fixture}/bin/systemctl" "${fixture}/bin/systemd-run" \
+    "${fixture}/bin/cargo-mutants"
+
+ZENTTY_MUTATION_SCOPE_RECEIPT="${fixture}/scope.receipt" \
+PATH="${fixture}/bin:/usr/bin:/bin" \
+    "${runner}" --list >/dev/null
+
+for required in \
+    --user --scope --quiet --collect \
+    --property=MemoryHigh=8G \
+    --property=MemoryMax=12G \
+    --property=MemorySwapMax=1G \
+    --property=OOMPolicy=continue \
+    --property=CPUWeight=50 \
+    --property=IOWeight=25 \
+    ZENTTY_MUTATION_RESOURCE_SCOPE=active \
+    ZENTTY_MUTATION_ISOLATION_KIND=systemd-scope; do
+    grep -Fxq -- "${required}" "${fixture}/scope.receipt" ||
+        fail "dedicated scope omitted ${required}"
+done
+
+grep -Fxq -- "${runner}" "${fixture}/scope.receipt" ||
+    fail "dedicated scope does not re-enter the mutation runner"
+grep -Fxq -- '--list' "${fixture}/scope.receipt" ||
+    fail "dedicated scope changed mutation arguments"
+
+# The inner invocation must retain a finite address-space ceiling even if the
+# cgroup policy is later changed. A child cannot raise this inherited limit.
+ZENTTY_MUTATION_RESOURCE_SCOPE=active \
+ZENTTY_MUTATION_ISOLATION_KIND=test \
+ZENTTY_MUTATION_LIMIT_RECEIPT="${fixture}/limit.receipt" \
+PATH="${fixture}/bin:/usr/bin:/bin" \
+    "${runner}" --list >/dev/null
+[[ "$(cat "${fixture}/limit.receipt")" == 6291456 ]] ||
+    fail "inner mutation process does not inherit the 6 GiB virtual-memory ceiling"
+
+printf 'mutation resource-isolation tests passed\n'

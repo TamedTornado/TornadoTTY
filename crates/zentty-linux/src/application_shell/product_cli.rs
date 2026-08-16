@@ -1,4 +1,5 @@
 use super::ApplicationShell;
+use super::shell_signal::{ShellSignal, parse_shell_signal};
 use std::cell::RefCell;
 use std::rc::Rc;
 use zentty_agent_ipc::{ProductIpcReply, ProductIpcRequest};
@@ -104,6 +105,7 @@ impl ApplicationShell {
                 );
             }
             "theme" => return apply_theme_command(shell, request.arguments()),
+            "shell-signal" => return apply_shell_signal(shell, target, request.arguments()),
             "grid" => {
                 select_authenticated_target(shell, target)?;
                 if request
@@ -222,6 +224,70 @@ impl ApplicationShell {
             panes,
         }
     }
+}
+
+fn apply_shell_signal(
+    shell: &Rc<RefCell<ApplicationShell>>,
+    target: &AgentTarget,
+    arguments: &[String],
+) -> Result<String, (&'static str, String)> {
+    let signal = parse_shell_signal(arguments)?;
+    match &signal {
+        ShellSignal::State { state, command } => {
+            if state == "running"
+                && let Some(command) = command
+            {
+                let working_directory = shell
+                    .borrow()
+                    .state
+                    .pane(&target.pane_id)
+                    .and_then(|pane| pane.working_directory.clone());
+                shell.borrow_mut().state.configure_pane_launch(
+                    &target.pane_id,
+                    working_directory,
+                    Some(command.clone()),
+                );
+            }
+            eprintln!(
+                "zentty-linux: shell-signal pane={} kind=shell-state state={} command-present={}",
+                target.pane_id,
+                state,
+                command.is_some()
+            );
+        }
+        ShellSignal::RootPid { event, pid } => {
+            eprintln!(
+                "zentty-linux: shell-signal pane={} kind=pane-root-pid event={} pid={}",
+                target.pane_id,
+                event,
+                pid.map_or_else(|| "none".to_owned(), |pid| pid.to_string())
+            );
+        }
+        ShellSignal::Context { scope, path } => {
+            // A remote path is display context for an SSH process, not a
+            // locally launchable directory. Preserve the pane's last local
+            // launch directory until the richer remote-context model lands.
+            if scope != "remote" {
+                let last_run_command = shell
+                    .borrow()
+                    .state
+                    .pane(&target.pane_id)
+                    .and_then(|pane| pane.last_run_command.clone());
+                shell.borrow_mut().state.configure_pane_launch(
+                    &target.pane_id,
+                    path.clone(),
+                    last_run_command,
+                );
+            }
+            eprintln!(
+                "zentty-linux: shell-signal pane={} kind=pane-context scope={} path-present={}",
+                target.pane_id,
+                scope,
+                path.is_some()
+            );
+        }
+    }
+    Ok(String::new())
 }
 
 fn remove_null_fields(value: &mut serde_json::Value) {

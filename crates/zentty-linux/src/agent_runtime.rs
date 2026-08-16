@@ -146,6 +146,10 @@ impl AgentRuntime {
             ("ZENTTY_WORKLANE_ID".to_owned(), worklane_id.to_owned()),
             ("ZENTTY_PANE_ID".to_owned(), pane_id.to_owned()),
             ("ZENTTY_INSTANCE_ID".to_owned(), self.instance_id.clone()),
+            (
+                "COLORTERM".to_owned(),
+                color_terminal_environment(std::env::var_os("COLORTERM").as_deref()),
+            ),
         ];
         let active_wrapper_directories = self.active_wrapper_directories();
         if !active_wrapper_directories.is_empty() {
@@ -414,6 +418,15 @@ fn shell_integration_environment(
     environment
 }
 
+fn color_terminal_environment(inherited: Option<&std::ffi::OsStr>) -> String {
+    inherited
+        .filter(|value| !value.to_string_lossy().trim().is_empty())
+        .map_or_else(
+            || "truecolor".to_owned(),
+            |value| value.to_string_lossy().into_owned(),
+        )
+}
+
 fn instance_runtime_directory(
     xdg_runtime_directory: Option<&std::ffi::OsStr>,
     temporary_directory: &std::path::Path,
@@ -501,8 +514,8 @@ impl Drop for AgentRuntime {
 #[cfg(test)]
 mod tests {
     use super::{
-        agent_teams_environment, enabled_wrapper_directories, instance_runtime_directory,
-        integration_enabled, pane_path, shell_integration_environment,
+        agent_teams_environment, color_terminal_environment, enabled_wrapper_directories,
+        instance_runtime_directory, integration_enabled, pane_path, shell_integration_environment,
     };
     use std::collections::BTreeMap;
     use std::fs;
@@ -773,5 +786,18 @@ mod tests {
         fs::remove_file(integration.join(".zshenv")).unwrap();
         assert!(shell_integration_environment(&integration, None, None, None).is_empty());
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn terminal_color_preserves_nonblank_values_and_defaults_to_truecolor() {
+        assert_eq!(color_terminal_environment(None), "truecolor");
+        assert_eq!(
+            color_terminal_environment(Some(std::ffi::OsStr::new(" \n\t"))),
+            "truecolor"
+        );
+        assert_eq!(
+            color_terminal_environment(Some(std::ffi::OsStr::new("24bit"))),
+            "24bit"
+        );
     }
 }

@@ -134,6 +134,21 @@ grep -Eq '^resume:session-one pid:[0-9]+$' "${receipt}" ||
 grep -Fxq 'ipc agent-event --adapter=codex session-start' "${calls}" ||
     fail "Codex restore profile did not send SessionStart"
 
+shell_boundary="$({
+    run_actor \
+        ZENTTY_CONTROLLED_AGENT_PROFILE=shell-boundary \
+        ZENTTY_PANE_ID=pane-shell ZENTTY_WORKLANE_ID=lane-shell \
+        "${actor}" --zentty-shell-probe 'space and λ'
+})"
+grep -Fqx 'argument=<--zentty-shell-probe>' <<<"${shell_boundary}" ||
+    fail "shell boundary profile lost the option argument"
+grep -Fqx 'argument=<space and λ>' <<<"${shell_boundary}" ||
+    fail "shell boundary profile lost the hostile argument"
+grep -Fqx 'pane=pane-shell' <<<"${shell_boundary}" ||
+    fail "shell boundary profile lost pane identity"
+grep -Fqx 'worklane=lane-shell' <<<"${shell_boundary}" ||
+    fail "shell boundary profile lost worklane identity"
+
 if run_actor ZENTTY_CONTROLLED_AGENT_PROFILE=codex-permission "${actor}" >/dev/null 2>&1; then
     fail "Codex permission profile accepted missing ephemeral hooks"
 fi
@@ -145,4 +160,4 @@ if run_actor \
     fail "Codex restore profile accepted an undeclared session"
 fi
 
-echo "Controlled agent tests passed: codex-permission, codex-notify, codex-title, codex-title-transcript, codex-title-transcript-pending, codex-progress, codex-lifecycle, claude-question, claude-lifecycle, gemini-permission, codex-restore"
+echo "Controlled agent tests passed: codex-permission, codex-notify, codex-title, codex-title-transcript, codex-title-transcript-pending, codex-progress, codex-lifecycle, claude-question, claude-lifecycle, gemini-permission, codex-restore, shell-boundary"

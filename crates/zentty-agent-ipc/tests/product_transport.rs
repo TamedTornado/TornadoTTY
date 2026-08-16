@@ -1,5 +1,6 @@
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
+use std::process::Command;
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 use zentty_agent_ipc::{
@@ -259,4 +260,61 @@ fn product_failure_preserves_machine_code_and_message() {
     worker.join().unwrap();
     server.shutdown().unwrap();
     std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn real_shell_signal_cli_uses_the_authenticated_product_route() {
+    let (root, socket, server, receiver) = running_server();
+    let worker = std::thread::spawn(move || {
+        let request = receiver.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert_eq!(
+            request.target,
+            AgentTarget::new("window-1", "lane-1", "pane-1")
+        );
+        assert_eq!(request.request.kind(), ProductIpcKind::Pane);
+        assert_eq!(request.request.subcommand(), "shell-signal");
+        assert_eq!(
+            request.request.arguments(),
+            ["pane-context", "local", "--path", "/tmp/space and λ"]
+        );
+        request
+            .respond(ProductIpcReply::success("").unwrap())
+            .unwrap();
+    });
+    let output = Command::new(env!("CARGO_BIN_EXE_zentty"))
+        .args([
+            "ipc",
+            "agent-signal",
+            "pane-context",
+            "local",
+            "--path",
+            "/tmp/space and λ",
+        ])
+        .env("ZENTTY_INSTANCE_SOCKET", &socket)
+        .env("ZENTTY_PANE_TOKEN", "caller-token")
+        .env("ZENTTY_WINDOW_ID", "forged-window")
+        .env("ZENTTY_WORKLANE_ID", "forged-lane")
+        .env("ZENTTY_PANE_ID", "forged-pane")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    worker.join().unwrap();
+    server.shutdown().unwrap();
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn shell_signal_is_silent_and_non_invasive_outside_a_live_pane() {
+    let output = Command::new(env!("CARGO_BIN_EXE_zentty"))
+        .args(["ipc", "agent-signal", "shell-state", "prompt"])
+        .env_clear()
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(output.stderr.is_empty());
 }

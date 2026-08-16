@@ -64,6 +64,7 @@ impl ProductIpcRequest {
                 "layout",
                 "theme",
                 "notify",
+                "shell-signal",
             ]
             .as_slice(),
         };

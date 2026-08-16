@@ -8,3 +8,4 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 "${repo_root}/docs/architecture/tests/validate-application-shell-ownership"
 "${repo_root}/docs/architecture/tests/validate-application-shell-ownership-test"
 "${repo_root}/linux/tests/mutate-rust" --check-config
+"${repo_root}/linux/tests/lib/mutation-isolation-test"

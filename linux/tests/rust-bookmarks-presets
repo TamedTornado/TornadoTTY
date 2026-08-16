@@ -446,8 +446,11 @@ chooser_path() {
         echo "rust-bookmarks-presets: chooser-window=$(xdotool getwindowname "${chooser_window}")"
         if [[ "${mode}" == save ]]; then
             xdotool windowactivate --sync "${chooser_window}"
-            xdotool key --clearmodifiers ctrl+a
-            xdotool type --clearmodifiers --delay 5 -- "${path##*/}"
+            # The product supplied this exact reviewed filename. Accept it as
+            # a user would: GTK selects only the basename in save entries, so
+            # replacing the selected text can retain and duplicate the suffix.
+            [[ "${path##*/}" == Portable.zenttypreset ]] ||
+                fail "unexpected export filename contract"
             xdotool key --clearmodifiers alt+s
         else
             xdotool windowactivate --sync "${chooser_window}"
@@ -465,7 +468,11 @@ chooser_path() {
         sleep 0.4
     fi
     if [[ "${mode}" == save ]]; then
-        replace_text "${path##*/}"
+        # The default name is already Portable.zenttypreset. Do not turn this
+        # into a text-entry test: GTK's save-name selection excludes the
+        # suffix and compositor key injection can create a duplicate suffix.
+        [[ "${path##*/}" == Portable.zenttypreset ]] ||
+            fail "unexpected export filename contract"
         input_key Return
     else
         input_ctrl_key l

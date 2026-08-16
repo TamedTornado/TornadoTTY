@@ -15,10 +15,52 @@ if [[ "${1:-}" == "--check-config" ]]; then
     exit 0
 fi
 
+# Mutants are intentionally capable of creating non-terminating allocation
+# loops. Never let such a child inherit the terminal application's systemd
+# scope: Ubuntu's OOMPolicy=stop would tear down the entire terminal after one
+# descendant is OOM-killed. Prefer a dedicated cgroup and retain a per-process
+# address-space ceiling as a second boundary. On hosts without a user systemd
+# manager, prlimit still provides the mandatory per-process ceiling.
+if [[ "${ZENTTY_MUTATION_RESOURCE_SCOPE:-}" != active ]]; then
+    if command -v systemd-run >/dev/null 2>&1 \
+        && command -v systemctl >/dev/null 2>&1 \
+        && systemctl --user show-environment >/dev/null 2>&1; then
+        exec systemd-run --user --scope --quiet --collect \
+            --property=MemoryHigh=8G \
+            --property=MemoryMax=12G \
+            --property=MemorySwapMax=1G \
+            --property=OOMPolicy=continue \
+            --property=CPUWeight=50 \
+            --property=IOWeight=25 \
+            env ZENTTY_MUTATION_RESOURCE_SCOPE=active \
+                ZENTTY_MUTATION_ISOLATION_KIND=systemd-scope \
+                "${BASH_SOURCE[0]}" "$@"
+    fi
+    if command -v prlimit >/dev/null 2>&1; then
+        exec prlimit --as=6442450944 -- \
+            env ZENTTY_MUTATION_RESOURCE_SCOPE=active \
+                ZENTTY_MUTATION_ISOLATION_KIND=prlimit \
+                "${BASH_SOURCE[0]}" "$@"
+    fi
+    printf 'error: mutation tests require systemd-run or prlimit resource isolation\n' >&2
+    exit 2
+fi
+
+# Six GiB of virtual address space is comfortably above the measured Rust/GTK
+# worker peak and far below the 93 GiB runaway that triggered the host OOM.
+ulimit -v 6291456
+printf 'Mutation resource isolation: %s; process-vm-max=6GiB; scope-memory-max=12GiB\n' \
+    "${ZENTTY_MUTATION_ISOLATION_KIND:-unknown}"
+
 ghostty_lib_dir="${repo_root}/build/linux-deps/ghostty/zig-out/lib"
 if [[ -z "${GHOSTTY_LIB_DIR:-}" && -f "${ghostty_lib_dir}/libghostty-gtk-embed.so" ]]; then
     export GHOSTTY_LIB_DIR="${ghostty_lib_dir}"
 fi
 
 cd "${repo_root}"
-exec cargo mutants "$@"
+mutants_binary="$(command -v cargo-mutants 2>/dev/null || true)"
+if [[ -z "${mutants_binary}" ]]; then
+    printf 'error: cargo-mutants is not installed or not on PATH\n' >&2
+    exit 2
+fi
+exec "${mutants_binary}" mutants "$@"

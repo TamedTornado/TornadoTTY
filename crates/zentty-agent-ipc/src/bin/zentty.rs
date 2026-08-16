@@ -59,11 +59,15 @@ fn run() -> Result<(), String> {
     if command.as_deref() == Some("server") {
         return run_server(&arguments.collect::<Vec<_>>());
     }
-    if command.as_deref() != Some("ipc") || arguments.next().as_deref() != Some("agent-event") {
-        return Err(
-            "usage: zentty ipc agent-event [--adapter=codex|codex-notify|claude|gemini|cursor|droid|vibe|kimi|grok|agy|hermes] [event]"
-                .to_owned(),
-        );
+    if command.as_deref() != Some("ipc") {
+        return Err("usage: zentty ipc <agent-event|agent-signal> [arguments...]".to_owned());
+    }
+    let subcommand = arguments.next();
+    if subcommand.as_deref() == Some("agent-signal") {
+        return run_agent_signal(&arguments.collect::<Vec<_>>());
+    }
+    if subcommand.as_deref() != Some("agent-event") {
+        return Err("usage: zentty ipc <agent-event|agent-signal> [arguments...]".to_owned());
     }
     let remaining = arguments.collect::<Vec<_>>();
     let adapter = remaining
@@ -114,6 +118,34 @@ fn run() -> Result<(), String> {
             "{}",
             installed_hook_response(command, default_event.map(String::as_str))
         );
+    }
+    Ok(())
+}
+
+fn run_agent_signal(arguments: &[String]) -> Result<(), String> {
+    // Shell hooks are deliberately non-invasive outside a live Zentty pane.
+    // Validate and deliver only when the complete authenticated environment is
+    // present; otherwise preserve normal shell startup and command behavior.
+    let Some(target) = claimed_target_from_environment() else {
+        return Ok(());
+    };
+    let Ok(socket) = std::env::var("ZENTTY_INSTANCE_SOCKET") else {
+        return Ok(());
+    };
+    let Ok(token) = std::env::var("ZENTTY_PANE_TOKEN") else {
+        return Ok(());
+    };
+    let reply = AgentIpcClient::send_product(
+        socket,
+        &token,
+        zentty_agent_ipc::ProductIpcKind::Pane,
+        "shell-signal",
+        arguments,
+        Some(target),
+    )
+    .map_err(|error| error.to_string())?;
+    if let Some(error) = reply.error() {
+        return Err(format!("{}: {}", error.code(), error.message()));
     }
     Ok(())
 }

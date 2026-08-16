@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+# shellcheck source=linux/tests/lib/shell-binaries
+source "${repo_root}/linux/tests/lib/shell-binaries"
+
+fail() {
+    echo "shell-binaries-test: error: $*" >&2
+    exit 1
+}
+
+fixture="$(mktemp -d)"
+trap 'rm -rf -- "${fixture}"' EXIT
+mkdir -p "${fixture}/explicit" "${fixture}/path" "${fixture}/workspace/project"
+for path in "${fixture}/explicit/bash" "${fixture}/path/bash"; do
+    printf '#!/usr/bin/env bash\necho fake\n' >"${path}"
+    chmod 0700 "${path}"
+done
+
+resolved="$(
+    ZENTTY_TEST_BASH="${fixture}/explicit/bash" PATH="${fixture}/path:/usr/bin:/bin" \
+        zentty_test_shell_binary bash "${fixture}/workspace/project"
+)"
+[[ "${resolved}" == "$(readlink -f "${fixture}/explicit/bash")" ]] ||
+    fail "explicit prerequisite did not win over PATH"
+
+set +e
+PATH=/usr/bin:/bin zentty_test_shell_binary fish "${fixture}/workspace/project" >/dev/null
+status=$?
+set -e
+[[ "${status}" == 77 ]] || fail "missing prerequisite did not return 77"
+
+mkdir -p "${fixture}/workspace/.tools/fish-4.8.1/bin" \
+    "${fixture}/workspace/.tools/nu-0.114.1"
+for path in \
+    "${fixture}/workspace/.tools/fish-4.8.1/bin/fish" \
+    "${fixture}/workspace/.tools/nu-0.114.1/nu"; do
+    printf '#!/usr/bin/env bash\necho portable\n' >"${path}"
+    chmod 0700 "${path}"
+done
+[[ "$(PATH=/usr/bin:/bin zentty_test_shell_binary fish "${fixture}/workspace/project")" == \
+    "$(readlink -f "${fixture}/workspace/.tools/fish-4.8.1/bin/fish")" ]] ||
+    fail "documented portable Fish prerequisite was not discovered"
+[[ "$(PATH=/usr/bin:/bin zentty_test_shell_binary nu "${fixture}/workspace/project")" == \
+    "$(readlink -f "${fixture}/workspace/.tools/nu-0.114.1/nu")" ]] ||
+    fail "documented portable Nushell prerequisite was not discovered"
+
+set +e
+zentty_test_shell_binary unknown "${fixture}/workspace/project" >/dev/null
+status=$?
+set -e
+[[ "${status}" == 64 ]] || fail "unknown shell did not return 64"
+
+for supported in \
+    'bash|GNU bash, version 4.0.0(1)-release' \
+    'zsh|zsh 5.0.0' \
+    'fish|fish, version 4.0.0' \
+    'nu|0.100.0'; do
+    IFS='|' read -r shell_name version <<<"${supported}"
+    zentty_test_shell_version_supported "${shell_name}" "${version}" ||
+        fail "supported ${shell_name} version was rejected"
+done
+for unsupported in \
+    'bash|GNU bash, version 3.2.0(1)-release' \
+    'zsh|zsh 4.9.0' \
+    'fish|fish, version 3.7.1' \
+    'nu|0.99.1'; do
+    IFS='|' read -r shell_name version <<<"${unsupported}"
+    if zentty_test_shell_version_supported "${shell_name}" "${version}"; then
+        fail "unsupported ${shell_name} version was accepted"
+    fi
+done
+
+cat >"${fixture}/old-fish" <<'OLD_FISH'
+#!/usr/bin/env bash
+if [[ "${1:-}" == --version ]]; then
+    echo 'fish, version 3.7.1'
+    exit 0
+fi
+touch "${OLD_SHELL_EXECUTED:?}"
+OLD_FISH
+chmod 0700 "${fixture}/old-fish"
+set +e
+OLD_SHELL_EXECUTED="${fixture}/old-shell-executed" \
+    ZENTTY_TEST_FISH="${fixture}/old-fish" \
+    "${repo_root}/linux/tests/staged-shell-integration" fish \
+    >"${fixture}/old.stdout" 2>"${fixture}/old.stderr"
+status=$?
+set -e
+[[ "${status}" == 77 ]] || fail "old-shell journey did not return 77"
+grep -Fq 'unsupported shell version: fish: fish, version 3.7.1' \
+    "${fixture}/old.stderr" || fail "old-shell diagnostic drifted"
+[[ ! -e "${fixture}/old-shell-executed" ]] ||
+    fail "unsupported shell was launched after version rejection"
+
+echo "shell-binaries-test: PASS"

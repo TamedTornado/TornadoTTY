@@ -287,6 +287,13 @@ case "${profile}" in
         # subsequent PTY scrollback continuity rather than racing surface setup.
         printf 'zentty-agent-resume-marker\n'
         ;;
+    shell-boundary)
+        for argument in "$@"; do
+            printf 'argument=<%s>\n' "${argument}"
+        done
+        printf 'pane=%s\nworklane=%s\n' \
+            "${ZENTTY_PANE_ID:-}" "${ZENTTY_WORKLANE_ID:-}"
+        ;;
     *) fail "unknown profile: ${profile}" ;;
 esac
 
