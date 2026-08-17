@@ -202,6 +202,10 @@ EOF
 ) >"${package_root}/DEBIAN/md5sums"
 chmod 0644 "${package_root}/DEBIAN/control" "${package_root}/DEBIAN/md5sums"
 find "${package_root}/DEBIAN" -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} +
+# Creating DEBIAN changes the package root directory mtime after the payload's
+# first normalization pass. Normalize the complete finished tree once more;
+# no package-root writes are permitted after this point.
+find "${package_root}" -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} +
 
 : >"${receipt_rows}"
 while IFS= read -r payload_path; do

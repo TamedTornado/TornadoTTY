@@ -182,3 +182,9 @@ second package layout.
   hashes of Cargo.lock, Ghostty build.zig.zon, packaging policy, and the closed
   install manifest. The isolated test rejects absent or malformed dependency
   provenance.
+- The first explicit timestamp assertion caught the package root directory
+  itself: creating `DEBIAN` after the payload normalization pass advanced its
+  mtime even though every file and child directory was normalized. The builder
+  now performs a final whole-tree timestamp pass after all package-root writes
+  and before receipt/audit/archive construction; the assertion remains in
+  place to prevent recurrence.
