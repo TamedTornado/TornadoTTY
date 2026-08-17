@@ -121,3 +121,30 @@ explicitly sets `kernel.apparmor_restrict_unprivileged_userns=0` only when that
 Ubuntu policy knob exists and is enabled. Preflight still proves that both
 `unshare` and Bubblewrap actually work afterward; it does not convert their
 absence into PASS. The policy change is logged and retained with the run.
+
+The foundation acceptance criteria also require positive proof that bootstrap
+or a future source cache cannot leave a product binary that satisfies the job.
+Before the product build, CI now removes only the known Zentty product bundles,
+metadata, and final Rust executables, while preserving Ghostty sources and
+compiler dependency caches. The cleanup is idempotently tested, rejects an
+unsafe root, and proves dependency directories survive. The workflow then
+requires both rebuilt executables before running either real display journey.
+The first cleanup-runner test expected seven removals but its fixture correctly
+created all eight declared output paths, including empty `libexec` and `share`
+directories. The test failed rather than masking the discrepancy; its exact
+expectation was repaired to eight, with the protected dependency assertions
+unchanged.
+
+Public run [32066390972](https://github.com/TamedTornado/zentty/actions/runs/32066390972)
+proved the AppArmor repair: bootstrap, exact-source preflight, the full fresh
+ReleaseSafe build, and the controlled Wayland product journey passed. The X11
+journey then exited 77 because `xdpyinfo` was absent. This was correctly a job
+failure rather than an environmental PASS, and failure evidence uploaded.
+
+The immediate missing package was `x11-utils`, but auditing every external
+program owned by the controlled X11 wrapper exposed four more dependencies the
+runner image happened to supply without our manifest: `mesa-utils` (`glxinfo`),
+`fuse3` (`fusermount3`), `util-linux` (`findmnt`/`setsid`), and `procps` (`ps`).
+All five are now explicit manifest packages, and preflight names the critical
+display and cleanup commands so this class of failure occurs before a costly
+product build. The reviewed apt contract therefore has 58 packages, not 53.

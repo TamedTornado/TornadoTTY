@@ -48,7 +48,9 @@ expected_ghostty_revision="$(jq -r '.source_contract.ghostty_revision' "${manife
     fail "prepared Ghostty revision is not reviewed"
 [[ -z "$(git -C "${ghostty_source}" status --porcelain=v1)" ]] || fail "Ghostty checkout is dirty"
 
-for dependency in bwrap cage jq labwc rustup valgrind weston Xvfb xdotool wtype; do
+for dependency in \
+    bwrap cage findmnt fusermount3 glxinfo jq labwc rustup valgrind weston \
+    Xvfb xdotool xdpyinfo wtype; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
 unshare --user --map-root-user true >/dev/null 2>&1 || fail "unprivileged user namespaces are required"

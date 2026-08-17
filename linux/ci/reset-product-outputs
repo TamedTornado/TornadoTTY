@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+root="${ZENTTY_CI_PRODUCT_OUTPUT_ROOT:-${repo_root}}"
+
+[[ "${root}" == /* && "${root}" != / ]] || {
+    echo "reset-product-outputs: unsafe product root: ${root}" >&2
+    exit 64
+}
+
+paths=(
+    build/linux/bin
+    build/linux/lib
+    build/linux/libexec
+    build/linux/share
+    build/linux/build-metadata
+    build/linux-profiles/release-safe
+    target/release-safe/zentty
+    target/release-safe/zentty-linux
+)
+
+removed=0
+for relative_path in "${paths[@]}"; do
+    path="${root}/${relative_path}"
+    if [[ -e "${path}" || -L "${path}" ]]; then
+        rm -rf -- "${path}"
+        ((removed += 1))
+    fi
+done
+
+for relative_path in "${paths[@]}"; do
+    path="${root}/${relative_path}"
+    [[ ! -e "${path}" && ! -L "${path}" ]] || {
+        echo "reset-product-outputs: failed to remove ${relative_path}" >&2
+        exit 1
+    }
+done
+
+printf 'reset-product-outputs: PASS removed=%d protected=build/linux-deps,target/deps\n' "${removed}"

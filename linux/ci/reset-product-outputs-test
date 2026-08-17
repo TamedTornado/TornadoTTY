@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+fixture="$(mktemp -d)"
+trap 'rm -rf -- "${fixture}"' EXIT
+
+mkdir -p \
+    "${fixture}/build/linux/bin" \
+    "${fixture}/build/linux/lib" \
+    "${fixture}/build/linux/libexec" \
+    "${fixture}/build/linux/share" \
+    "${fixture}/build/linux-profiles/release-safe" \
+    "${fixture}/build/linux-deps/ghostty" \
+    "${fixture}/target/release-safe" \
+    "${fixture}/target/deps"
+touch \
+    "${fixture}/build/linux/bin/zentty-linux" \
+    "${fixture}/build/linux/lib/libghostty-gtk-embed.so" \
+    "${fixture}/build/linux/build-metadata" \
+    "${fixture}/build/linux-profiles/release-safe/stale" \
+    "${fixture}/target/release-safe/zentty" \
+    "${fixture}/target/release-safe/zentty-linux" \
+    "${fixture}/build/linux-deps/ghostty/keep" \
+    "${fixture}/target/deps/keep"
+
+output="$(ZENTTY_CI_PRODUCT_OUTPUT_ROOT="${fixture}" \
+    "${repo_root}/linux/ci/reset-product-outputs")"
+grep -Fq 'reset-product-outputs: PASS removed=8' <<<"${output}"
+[[ -f "${fixture}/build/linux-deps/ghostty/keep" ]]
+[[ -f "${fixture}/target/deps/keep" ]]
+[[ ! -e "${fixture}/build/linux/bin" ]]
+[[ ! -e "${fixture}/build/linux-profiles/release-safe" ]]
+[[ ! -e "${fixture}/target/release-safe/zentty" ]]
+
+output="$(ZENTTY_CI_PRODUCT_OUTPUT_ROOT="${fixture}" \
+    "${repo_root}/linux/ci/reset-product-outputs")"
+grep -Fq 'reset-product-outputs: PASS removed=0' <<<"${output}"
+
+if ZENTTY_CI_PRODUCT_OUTPUT_ROOT=/ \
+    "${repo_root}/linux/ci/reset-product-outputs" >/dev/null 2>&1; then
+    echo "reset-product-outputs-test: unsafe root was accepted" >&2
+    exit 1
+fi
+
+echo "reset-product-outputs-test: PASS"

@@ -91,8 +91,12 @@ jobs:
         run: |
           set -euo pipefail
           source build/linux-ci-tools/environment.sh
+          linux/ci/reset-product-outputs \
+            2>&1 | tee build/linux/ci-product-reset.log
           ZENTTY_GHOSTTY_PREPARED=true GHOSTTY_OPTIMIZE=ReleaseSafe \
             linux/scripts/build-local 2>&1 | tee build/linux/ci-build-release.log
+          test -x build/linux/bin/zentty-linux
+          test -x build/linux/bin/zentty
 
       - name: Run real controlled Wayland product journey
         shell: bash

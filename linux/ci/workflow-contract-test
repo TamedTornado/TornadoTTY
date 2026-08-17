@@ -40,6 +40,8 @@ expect_workflow_rejected wrong-event-commit \
     'ZENTTY_EXPECTED_COMMIT: ${{ github.sha }}' 'ZENTTY_EXPECTED_COMMIT: refs/heads/linux/port'
 expect_workflow_rejected missing-userns-policy \
     'kernel.apparmor_restrict_unprivileged_userns=0' 'kernel.apparmor_restrict_unprivileged_userns=1'
+expect_workflow_rejected missing-product-reset \
+    'linux/ci/reset-product-outputs' 'true # product reset removed'
 
 jq '.actions[0].revision = "0000000000000000000000000000000000000000"' \
     "${actions_manifest}" >"${fixture}/changed-actions.json"
@@ -48,4 +50,4 @@ if ZENTTY_CI_ACTIONS_MANIFEST="${fixture}/changed-actions.json" "${validator}" \
     fail "changed action manifest was accepted"
 fi
 
-echo "ci-workflow-contract-test: PASS negatives=action+permission+runner+credentials+evidence+node+commit+manifest"
+echo "ci-workflow-contract-test: PASS negatives=action+permission+runner+credentials+evidence+node+commit+manifest+product-reset"
