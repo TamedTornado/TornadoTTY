@@ -192,7 +192,7 @@ require "Wayland agent qualification does not name the event, tmux, installed Cl
     jq -e '
         .cells[] | select(.id == "agent-integration-wayland") |
         .environment_profile == "nested-wayland-input-v1" and
-        .command == "ZENTTY_REQUIRE_REAL_GEMINI=true ZENTTY_EXPECTED_GEMINI_VERSION=0.55.1 ZENTTY_RUN_CODEX_LIFECYCLE=true GDK_BACKEND=wayland linux/tests/rust-agent-ipc && ZENTTY_TOPOLOGY_REPRESENTATIVE=1 GDK_BACKEND=wayland linux/tests/rust-tmux-compat-product && GDK_BACKEND=wayland linux/tests/installed-claude-agent-team && GDK_BACKEND=wayland linux/tests/rust-session-restore"
+        .command == "ZENTTY_REQUIRE_REAL_GEMINI=true ZENTTY_EXPECTED_GEMINI_VERSION=0.53.0 ZENTTY_RUN_CODEX_LIFECYCLE=true GDK_BACKEND=wayland linux/tests/rust-agent-ipc && ZENTTY_TOPOLOGY_REPRESENTATIVE=1 GDK_BACKEND=wayland linux/tests/rust-tmux-compat-product && GDK_BACKEND=wayland linux/tests/installed-claude-agent-team && GDK_BACKEND=wayland linux/tests/rust-session-restore"
     ' "${matrix}"
 require "controlled multi-window Wayland remote drop is not an explicit real-product cell" \
     jq -e '
@@ -205,7 +205,7 @@ require "controlled multi-window Wayland remote drop is not an explicit real-pro
 require "X11 agent qualification does not add installed Codex and Claude to the consolidated journeys" \
     jq -e '
         .cells[] | select(.id == "agent-integration-x11") |
-        .command == "ZENTTY_REQUIRE_REAL_GEMINI=true ZENTTY_EXPECTED_GEMINI_VERSION=0.55.1 ZENTTY_RUN_CODEX_LIFECYCLE=true GDK_BACKEND=x11 linux/tests/rust-agent-ipc && GDK_BACKEND=x11 linux/tests/rust-tmux-compat-product && GDK_BACKEND=x11 linux/tests/installed-codex-integration && GDK_BACKEND=x11 linux/tests/installed-claude-agent-team && GDK_BACKEND=x11 linux/tests/rust-session-restore"
+        .command == "ZENTTY_REQUIRE_REAL_GEMINI=true ZENTTY_EXPECTED_GEMINI_VERSION=0.53.0 ZENTTY_RUN_CODEX_LIFECYCLE=true GDK_BACKEND=x11 linux/tests/rust-agent-ipc && GDK_BACKEND=x11 linux/tests/rust-tmux-compat-product && GDK_BACKEND=x11 linux/tests/installed-codex-integration && GDK_BACKEND=x11 linux/tests/installed-claude-agent-team && GDK_BACKEND=x11 linux/tests/rust-session-restore"
     ' "${matrix}"
 reject "superseded inactive-agent journey remains authoritative" \
     grep -Fq 'linux/tests/rust-inactive-agent-restore' "${matrix}"

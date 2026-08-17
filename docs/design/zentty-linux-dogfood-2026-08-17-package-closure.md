@@ -230,3 +230,21 @@ Wayland: real Gemini `0.55.1`, PTYs and Unix socket; the representative tmux
 topology; real Claude `2.1.201` against the controlled loopback model; and the
 consolidated restore journey including transient loopback SSH, physical input,
 remote paste, background agents, crash recovery, and corrupt-state recovery.
+
+That focused agent conclusion was itself incomplete because the manual command
+did not reproduce `qualify-local`'s reviewed-tool prefix. The all-cell run
+proved the distinction: `qualify-local` deliberately places the vendored
+`build/linux-deps/gemini-cli-0.53.0` first on `PATH`, and both X11 and Wayland
+correctly executed `0.53.0`; changing only the expected receipt to the ambient
+operator version made both cells fail. This was a test invocation error, not
+dependency drift. The reviewed pin is restored consistently to `0.53.0`. Future
+focused reruns of these cells must include the same pinned-tool prefix rather
+than resolving the operator's mutable global executable.
+
+Apart from that incorrect pin, the first final-candidate matrix run validated
+the new package graph end to end: lifecycle construction and install/uninstall,
+installed X11 and Wayland journeys, clean different-path reproducibility,
+payload audit, install/reinstall, expected upgrade rejection, purge/residue,
+and the authoritative summary all passed. The run remained failed because both
+agent cells rejected the mismatched expected version, so none of those results
+is promoted to final qualification evidence.
