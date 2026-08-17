@@ -134,9 +134,18 @@ process audits per backend:
 - manifest SHA-256 `629e6093cb2da649c20eb47efb68abe6a0907e0a9ba0a505aff7c2696dd86e03`
 
 These are development receipts for commit `8a9e7ff37a50`; they are not final
-qualification receipts because the runner repairs below are not yet committed
-and the remaining installed clipboard, launcher, and agent-wrapper behavior has
-not yet been promoted into matrix cells.
+qualification receipts because the runner repairs landed later and the
+remaining installed clipboard, launcher, and agent-wrapper behavior had not
+yet been promoted into matrix cells.
+
+The next test-first extension closes those remaining representative paths
+without importing another journey: a pane writes OSC 52 through the real
+installed Ghostty surface and the outer controlled compositor reads it; the
+exact installed Codex wrapper and CLI exec a controlled agent binary; and the
+existing physical-input helper selects an installed Open With target whose
+real process receipt proves the canonical working directory. X11 therefore
+requires `xclip`, while Wayland requires the existing input-capable compositor
+profile and `wl-paste`; absence is a failed prerequisite, never a pass.
 
 ## Qualification boundary
 

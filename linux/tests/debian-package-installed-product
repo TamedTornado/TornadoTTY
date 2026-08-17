@@ -3,6 +3,8 @@ set -Eeuo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 helper="${repo_root}/linux/tests/lib/installed-product-root"
+# shellcheck disable=SC1091
+source "${repo_root}/linux/tests/lib/product-input"
 
 if [[ "${1:-}" != --namespace-root ]]; then
     if [[ "$(id -u)" -ne 0 ]]; then
@@ -94,6 +96,11 @@ esac
 for dependency in dpkg dpkg-deb dpkg-query find git grep jq ps readlink sha256sum stat unshare; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
+if [[ "${backend}" == x11 ]]; then
+    command -v xclip >/dev/null || fail "xclip is required for installed clipboard qualification"
+else
+    command -v wl-paste >/dev/null || fail "wl-paste is required for installed clipboard qualification"
+fi
 [[ "$(id -u)" -eq 0 ]] || fail "journey must run as namespace root"
 [[ -f "${artifact}" && ! -L "${artifact}" ]] || fail "exact package is missing: ${artifact}"
 [[ -f "${manifest}" && ! -L "${manifest}" ]] || fail "exact manifest is missing"
@@ -129,6 +136,42 @@ for required in \
     [[ -e "${install_root}${required}" || -L "${install_root}${required}" ]] ||
         fail "installed resource is missing: ${required}"
 done
+desktop_entry="${install_root}/usr/share/applications/com.zentty.zentty.desktop"
+appstream="${install_root}/usr/share/metainfo/com.zentty.zentty.metainfo.xml"
+grep -Fxq 'Exec=zentty-linux' "${desktop_entry}" || fail "desktop executable identity differs"
+grep -Fxq 'Icon=com.zentty.zentty' "${desktop_entry}" || fail "desktop icon identity differs"
+grep -Fxq 'StartupWMClass=Zentty' "${desktop_entry}" || fail "desktop window identity differs"
+grep -Fq '<id>com.zentty.zentty</id>' "${appstream}" || fail "AppStream application ID differs"
+grep -Fq '<launchable type="desktop-id">com.zentty.zentty.desktop</launchable>' "${appstream}" ||
+    fail "AppStream desktop identity differs"
+
+mkdir -p "${receipts}/bin" "${XDG_CONFIG_HOME}/zentty"
+cat >"${receipts}/bin/codex" <<'FAKE_CODEX'
+#!/usr/bin/env bash
+set -euo pipefail
+{
+    printf 'tool=%s\n' "${ZENTTY_AGENT_TOOL:-}"
+    printf 'cli=%s\n' "${ZENTTY_CLI_BIN:-}"
+    printf 'argc=%s\n' "$#"
+    printf 'arg=%s\n' "$@"
+} >"${ZENTTY_TEST_RECEIPT}"
+FAKE_CODEX
+cat >"${receipts}/open-probe" <<'OPEN_PROBE'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'argc=%s\narg1=%s\n' "$#" "${1:-}" >"${ZENTTY_INSTALLED_RECEIPTS}/open-with.receipt"
+OPEN_PROBE
+chmod 0700 "${receipts}/bin/codex" "${receipts}/open-probe"
+cat >"${XDG_CONFIG_HOME}/zentty/config.toml" <<EOF
+[open_with]
+primary_target_id = "custom:installed-probe"
+enabled_target_ids = ["custom:installed-probe"]
+
+[[open_with.custom_apps]]
+id = "custom:installed-probe"
+name = "Installed Probe"
+path = "${receipts}/open-probe"
+EOF
 
 clean_environment() {
     local name
@@ -187,6 +230,11 @@ if mkdir "${out}/${phase}-leader" 2>/dev/null; then
         tmux_path=/usr/lib/zentty/libexec/zentty/tmux-shim/tmux
         "${tmux_path}" list-panes -F '#{pane_id}' >"${out}/first-tmux-panes.txt"
         [[ "$(wc -l <"${out}/first-tmux-panes.txt")" -eq 3 ]]
+        PATH="${out}/bin:/usr/bin:/bin" \
+            ZENTTY_TEST_RECEIPT="${out}/agent-wrapper.receipt" \
+            /usr/lib/zentty/libexec/zentty/agent-wrappers/codex/codex \
+            --installed-package-probe
+        printf '\033]52;c;emVudHR5LWluc3RhbGxlZC1jbGlwYm9hcmQ=\033\\'
     else
         [[ "$(jq 'length' "${out}/${phase}-panes-before.json")" -eq 3 ]]
         "${ZENTTY_CLI_BIN}" list worklanes --json >"${out}/second-worklanes.json"
@@ -300,6 +348,58 @@ start_direct first
 wait_for_file "${receipts}/first-ready" "first installed CLI mutation"
 first_product="$(find_product_pid)" || fail "first installed product PID was not observable"
 audit_process "${first_product}" first
+grep -Fxq 'tool=codex' "${receipts}/agent-wrapper.receipt" ||
+    fail "installed Codex wrapper did not execute the representative agent"
+grep -Fxq 'cli=/usr/lib/zentty/bin/zentty' "${receipts}/agent-wrapper.receipt" ||
+    fail "installed Codex wrapper did not use the installed CLI"
+grep -Fxq 'arg=--installed-package-probe' "${receipts}/agent-wrapper.receipt" ||
+    fail "installed Codex wrapper did not preserve the representative argument"
+clipboard=""
+for _ in {1..200}; do
+    if [[ "${backend}" == x11 ]]; then
+        clipboard="$(xclip -selection clipboard -o 2>/dev/null || true)"
+    else
+        clipboard="$(wl-paste --no-newline 2>/dev/null || true)"
+    fi
+    [[ "${clipboard}" == zentty-installed-clipboard ]] && break
+    sleep 0.025
+done
+[[ "${clipboard}" == zentty-installed-clipboard ]] ||
+    fail "installed Ghostty OSC 52 write did not reach the compositor clipboard"
+
+# Use the established real-input helper to invoke one installed Open With
+# action. The configured executable is outside PATH and is launched by the
+# product through its real platform service.
+supervisor_pid="${product_pid}"
+product_pid="${first_product}"
+zentty_product_prepare_input "${backend}" "${product_log}" ||
+    fail "installed product input did not become ready"
+zentty_product_ctrl_shift_key "${backend}" p
+zentty_product_wait_for_log "${product_log}" 'zentty-linux: command-palette=shown' \
+    "installed command palette did not open" || fail "installed command palette did not open"
+if zentty_product_uses_xdotool "${backend}"; then
+    xdotool type --clearmodifiers --window "${ZENTTY_PRODUCT_WINDOW_ID}" --delay 4 -- \
+        'Open With: Installed Probe'
+else
+    wtype -- 'Open With: Installed Probe'
+fi
+zentty_product_wait_for_log "${product_log}" \
+    'command-palette=query value="Open With: Installed Probe" results=1' \
+    "installed Open With action was absent or ambiguous" ||
+    fail "installed Open With action was absent or ambiguous"
+zentty_product_key "${backend}" Down
+zentty_product_key "${backend}" Return
+for _ in {1..200}; do
+    [[ -s "${receipts}/open-with.receipt" ]] && break
+    sleep 0.025
+done
+grep -Fxq 'argc=1' "${receipts}/open-with.receipt" ||
+    fail "installed Open With launcher did not receive one target"
+grep -Fxq "arg1=${HOME}" "${receipts}/open-with.receipt" ||
+    fail "installed Open With launcher received the wrong working directory"
+grep -Fq 'action=open-with-target id=custom:installed-probe result=launched' "${product_log}" ||
+    fail "installed product did not record the platform launch"
+product_pid="${supervisor_pid}"
 for _ in {1..400}; do
     if jq -e '
       .workspace.windows[0].worklanes[0].title == "Installed qualified" and
@@ -406,6 +506,7 @@ jq -n \
       launches:{direct:true,desktop_entry:true,restart:true},
       product:{ghostty_pty:true,single_and_multi_pane:true,persistence:true,
         cli_read:true,cli_mutation:true,tmux_shim:true,agent_wrapper_present:true,
+        agent_wrapper_executed:true,clipboard_write:true,open_with_launch:true,
         shell_integration:true,terminfo:true,desktop_identity:true},
       process_audits:[$first_process,$second_process,$desktop_process],
       clean_path:"/usr/bin:/bin",
