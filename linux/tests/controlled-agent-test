@@ -25,6 +25,8 @@ fi
 printf '\n' >>"${CONTROLLED_HELPER_PAYLOADS}"
 HELPER
 chmod 700 "${helper}"
+: >"${calls}"
+: >"${payloads}"
 
 run_actor() {
     env \
@@ -34,6 +36,30 @@ run_actor() {
         ZENTTY_CONTROLLED_AGENT_SLEEP_SECONDS=0 \
         "$@"
 }
+
+start_gate="${temp_dir}/start-{pane}.gate"
+calls_before="$(wc -l <"${calls}" 2>/dev/null || true)"
+run_actor ZENTTY_CONTROLLED_AGENT_PROFILE=codex-notify \
+    ZENTTY_CONTROLLED_AGENT_START_GATE="${start_gate}" \
+    ZENTTY_PANE_ID=pane-test \
+    "${actor}" -c 'notify=["/stage/bin/zentty","codex-notify"]' &
+gated_actor_pid=$!
+sleep 0.1
+[[ "$(wc -l <"${calls}" 2>/dev/null || true)" -eq "${calls_before}" ]] ||
+    fail "controlled start gate allowed an early helper call"
+touch "${start_gate/\{pane\}/pane-test}"
+wait "${gated_actor_pid}"
+[[ "$(wc -l <"${calls}")" -eq $((calls_before + 1)) ]] ||
+    fail "controlled start gate did not release exactly one helper call"
+if run_actor ZENTTY_CONTROLLED_AGENT_PROFILE=codex-notify \
+    ZENTTY_CONTROLLED_AGENT_START_GATE="${start_gate}" \
+    ZENTTY_PANE_ID='../unsafe' \
+    "${actor}" -c 'notify=["/stage/bin/zentty","codex-notify"]' \
+    >"${temp_dir}/unsafe-gate.log" 2>&1; then
+    fail "pane-scoped start gate accepted an unsafe pane ID"
+fi
+grep -Fq 'pane-scoped start gate requires a safe ZENTTY_PANE_ID' \
+    "${temp_dir}/unsafe-gate.log" || fail "unsafe start gate lacked its exact diagnostic"
 
 run_actor ZENTTY_CONTROLLED_AGENT_PROFILE=codex-permission "${actor}" \
     -c 'hooks.PermissionRequest=["command"]' -c 'hooks.state={"key":"value"}' \

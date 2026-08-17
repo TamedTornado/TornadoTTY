@@ -10,6 +10,8 @@ state_directory="${run_root}/state"
 fake_bin="${run_root}/bin"
 log="${run_root}/product.log"
 receipt="${run_root}/agent.receipt"
+agent_start_receipt="${run_root}/agent-start.receipt"
+agent_start_gate="${run_root}/agent-start-{pane}.gate"
 notification_receipt="${run_root}/notifications.jsonl"
 product_pid=""
 notification_pid=""
@@ -65,7 +67,8 @@ grep -Fq '"event":"ready"' "${notification_receipt}" || fail "notification servi
 
 PATH="${fake_bin}:${PATH}" GDK_SCALE=1 GDK_DPI_SCALE=1 \
     ZENTTY_CONTROLLED_AGENT_PROFILE=attention-inbox \
-    ZENTTY_CONTROLLED_AGENT_START_DELAY_SECONDS=4 \
+    ZENTTY_CONTROLLED_AGENT_START_RECEIPT="${agent_start_receipt}" \
+    ZENTTY_CONTROLLED_AGENT_START_GATE="${agent_start_gate}" \
     ZENTTY_CONTROLLED_ATTENTION_RECEIPT="${receipt}" \
     "${product}" --command codex --state-directory "${state_directory}" \
     --no-session-restore >"${log}" 2>&1 &
@@ -78,6 +81,12 @@ zentty_product_wait_for_log "${log}" 'zentty-linux: window-opened id=window-2' \
     "physical New Window did not create a second attention source" || fail "second window missing"
 zentty_product_wait_for_log "${log}" 'zentty-linux: terminal-ready-pane=pane-window-2' \
     "second attention window did not own a real PTY" || fail "second PTY missing"
+zentty_product_wait_for_log "${log}" 'zentty-linux: active-window=window-2' \
+    "second attention window did not become the active product target" 400 ||
+    fail "second window activation missing"
+zentty_product_wait_for_log "${log}" 'zentty-linux: focus-pane pane=pane-window-2' \
+    "second attention pane did not receive product focus" 400 ||
+    fail "second pane focus missing"
 window_two_id=""
 if [[ "${backend}" == x11 ]]; then
     for candidate in $(xdotool search --onlyvisible --pid "${product_pid}" --name '^Zentty$'); do
@@ -85,6 +94,18 @@ if [[ "${backend}" == x11 ]]; then
     done
     [[ "${window_two_id}" =~ ^[1-9][0-9]*$ ]] || fail "second X11 window identity was not discovered"
 fi
+for _ in {1..200}; do
+    [[ "$(grep -Fc 'started pid:' "${agent_start_receipt}" 2>/dev/null || true)" -ge 2 ]] && break
+    sleep 0.05
+done
+[[ "$(grep -Fc 'started pid:' "${agent_start_receipt}" 2>/dev/null || true)" -eq 2 ]] ||
+    fail "both controlled agents did not reach the start gate"
+touch "${agent_start_gate/\{pane\}/pane-1}"
+zentty_product_wait_for_log "${log}" \
+    'zentty-linux: agent-event pane=pane-1 worklane=worklane-1 kind=agent.needs-input' \
+    "first controlled attention actor did not cross its authenticated route" ||
+    fail "first attention actor release failed"
+touch "${agent_start_gate/\{pane\}/pane-window-2}"
 zentty_product_wait_for_log "${log}" \
     'attention-inbox commit items=2 unresolved=2' \
     "both real-window agent requests did not enter the shared inbox" || fail "cross-window inbox delivery failed"

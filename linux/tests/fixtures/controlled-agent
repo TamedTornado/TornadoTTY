@@ -5,6 +5,7 @@ profile="${ZENTTY_CONTROLLED_AGENT_PROFILE:-}"
 helper="${ZENTTY_CLI_BIN:-}"
 sleep_seconds="${ZENTTY_CONTROLLED_AGENT_SLEEP_SECONDS:-2}"
 start_delay_seconds="${ZENTTY_CONTROLLED_AGENT_START_DELAY_SECONDS:-0}"
+start_gate="${ZENTTY_CONTROLLED_AGENT_START_GATE:-}"
 
 fail() {
     echo "controlled-agent: $*" >&2
@@ -16,6 +17,13 @@ fail() {
     fail "ZENTTY_CONTROLLED_AGENT_SLEEP_SECONDS must be a non-negative number"
 [[ "${start_delay_seconds}" =~ ^[0-9]+([.][0-9]+)?$ ]] ||
     fail "ZENTTY_CONTROLLED_AGENT_START_DELAY_SECONDS must be a non-negative number"
+if [[ "${start_gate}" == *'{pane}'* ]]; then
+    [[ "${ZENTTY_PANE_ID:-}" =~ ^[A-Za-z0-9._-]+$ ]] ||
+        fail "pane-scoped start gate requires a safe ZENTTY_PANE_ID"
+    start_gate="${start_gate//\{pane\}/${ZENTTY_PANE_ID}}"
+fi
+[[ -z "${start_gate}" || "${start_gate}" == /* ]] ||
+    fail "ZENTTY_CONTROLLED_AGENT_START_GATE must be an absolute path"
 
 require_helper() {
     [[ -x "${helper}" ]] || fail "ZENTTY_CLI_BIN must name the staged executable helper"
@@ -31,7 +39,15 @@ if [[ -n "${ZENTTY_CONTROLLED_AGENT_START_RECEIPT:-}" ]]; then
         "${ZENTTY_PI_HOOKS_DISABLED:-}" "$*" \
         >>"${ZENTTY_CONTROLLED_AGENT_START_RECEIPT}"
 fi
-sleep "${start_delay_seconds}"
+if [[ -n "${start_gate}" ]]; then
+    for _ in {1..400}; do
+        [[ -e "${start_gate}" ]] && break
+        sleep 0.05
+    done
+    [[ -e "${start_gate}" ]] || fail "controlled start gate did not open"
+else
+    sleep "${start_delay_seconds}"
+fi
 
 codex_has_hook() {
     local hook="$1"

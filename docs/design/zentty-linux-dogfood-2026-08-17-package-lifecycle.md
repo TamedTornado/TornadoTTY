@@ -169,3 +169,49 @@ lifecycle journey.
 - The repaired X11 and Wayland shortcut/settings journeys then passed
   concurrently with a second real Wayland Task Manager journey and the real
   custom-sound Cargo integration suite, matching the matrix's four-worker load.
+- The next full run passed the package, CLI, and shortcut repairs but exposed a
+  pre-existing fixed-delay race in the X11 attention-inbox journey. Its two
+  real agent PTYs started under a package build and two other desktops, then
+  exited without publishing the expected shared-inbox events; the exact cell
+  passed alone. The harness had assumed a four-second actor sleep would place
+  both requests after the second window became ready, which is not a causal
+  boundary under load.
+- The existing controlled-agent fixture now supports an explicit absolute-path
+  start gate with a bounded failure. The attention journey waits for start
+  receipts from exactly two real PTY actors only after both windows and PTYs
+  are ready, then opens one shared gate and requires both authenticated events.
+  Its fixture unit test proves no helper call crosses a closed gate and exactly
+  one call follows release. This removes the timer assumption without faking
+  the agents, IPC, GTK windows, notification service, or compositor.
+- The first concurrent X11/Wayland gate validation exposed a second missing
+  boundary rather than being relabeled a pass. Opening the gate immediately
+  after the second PTY became ready allowed both events to arrive while GTK was
+  still changing the active window. The inbox correctly canceled the pending
+  item whose pane became actively viewed during its debounce, so only one item
+  committed. The journey now also waits for product-owned `active-window` and
+  exact pane-focus receipts for window 2 before releasing either actor. That
+  preserves the intended assertion—window 1 receives desktop delivery while
+  the already-active window 2 is suppressed—without timing assumptions.
+- A deliberately concurrent X11/Wayland attention stress run then exceeded the
+  shared helper's ten-second focus deadline while two private desktop-portal
+  stacks were starting; both product logs eventually contained the required
+  exact focus receipt. Attention cells are already serialized by the reviewed
+  consolidated-session resource, but the new causal readiness boundary now
+  permits a bounded twenty seconds for portal/compositor activation rather
+  than failing just before an observed receipt.
+- The first implementation of that focus boundary searched for
+  `focus-pane pane-window-2`, omitting the product log's `pane=` field. The
+  focused runs therefore failed despite printing the exact required receipt.
+  The assertion now uses the product's real `focus-pane pane=pane-window-2`
+  vocabulary; no deadline change could have repaired that predicate error.
+- Releasing both actors through one gate also removed the journey's historical
+  ordering: whichever event reached the tick first could become the older
+  inbox row, while the physical click deliberately targets the newest row in
+  window 2. Controlled-agent gates now accept a validated `{pane}` placeholder.
+  The journey releases pane 1, observes its authenticated product event, then
+  releases pane-window-2. This preserves distinct real PTY processes and makes
+  the row-order precondition causal rather than dependent on two sleeps.
+- With the corrected predicate and pane-scoped release order, the complete
+  real X11 and real Wayland attention journeys each passed: two Ghostty PTYs,
+  authenticated agent events, private D-Bus notification service, active-pane
+  suppression, desktop activation, inbox routing, and exact-pane response.
