@@ -88,7 +88,7 @@ jq -e '
   all(.inputs[]; test("^[0-9a-f]{64}$"))' "${provenance}" >/dev/null
 "${isolated}/linux/tests/debian-package-build-test" "${artifact}" "${manifest}" >/dev/null
 
-mapfile -t primary_files < <(
+mapfile -t expected_files < <(
     printf '%s\n' \
         "$(basename "${ZENTTY_PACKAGE_ARTIFACT}")" \
         "$(basename "${ZENTTY_PACKAGE_MANIFEST}")" \
@@ -99,15 +99,24 @@ mapfile -t isolated_files < <(
     cd "${isolated}/build/isolated-package"
     find . -maxdepth 1 -type f -printf '%P\n' | LC_ALL=C sort
 )
-[[ "${primary_files[*]}" == "${isolated_files[*]}" ]] || {
+[[ "${expected_files[*]}" == "${isolated_files[*]}" ]] || {
     printf 'primary: %s\nisolated: %s\n' \
-        "${primary_files[*]}" "${isolated_files[*]}" >&2
+        "${expected_files[*]}" "${isolated_files[*]}" >&2
     echo "debian-package-clean-checkout: release output sets differ" >&2
     exit 1
 }
+primary_files=(
+    "$(basename "${ZENTTY_PACKAGE_ARTIFACT}")"
+    "$(basename "${ZENTTY_PACKAGE_MANIFEST}")"
+    "$(basename "${ZENTTY_PACKAGE_PROVENANCE}")"
+    "$(basename "${ZENTTY_PACKAGE_CHECKSUMS}")"
+)
 for file in "${primary_files[@]}"; do
     cmp --silent "${primary_output}/${file}" \
         "${isolated}/build/isolated-package/${file}" || {
+        printf 'primary sha256:  %s\nisolated sha256: %s\n' \
+            "$(sha256sum "${primary_output}/${file}" | awk '{print $1}')" \
+            "$(sha256sum "${isolated}/build/isolated-package/${file}" | awk '{print $1}')" >&2
         echo "debian-package-clean-checkout: reproducibility mismatch: ${file}" >&2
         exit 1
     }

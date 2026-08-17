@@ -137,3 +137,11 @@ controlled machine already provides an empty `/mnt` directory, so the journey
 now binds its single temporary root there and uses `/mnt/source`, `/mnt/ghostty`,
 and `/mnt/zig-global-cache`. This is a namespace-path correction only; the host
 root remains read-only and the checkout mask remains in force.
+
+The first complete different-path build reached comparison and rejected
+`SHA256SUMS`. The comparator had sorted file names, so the checksum file was
+checked before the three artifacts it describes and hid the causal mismatch.
+It now validates the closed file set separately, then compares package,
+manifest, provenance, and finally checksum file in causal order, printing only
+the two mismatched SHA-256 values. Reproducibility remains failed until the
+underlying first differing artifact is identified and repaired.
