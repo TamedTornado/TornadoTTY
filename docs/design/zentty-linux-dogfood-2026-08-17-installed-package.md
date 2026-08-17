@@ -208,6 +208,18 @@ The package SHA-256 in that diagnostic run was
 These results justify the deadline repair but do not replace a complete clean
 matrix receipt, which must still be rerun with bounded concurrency.
 
+The two-worker complete rerun passed both new installed-product cells and every
+previously failed input cell, but exposed a separate pre-existing 10-second
+Openbox startup deadline in `development-servers-docker-x11`. Its standalone
+rerun passed unchanged in session
+`c0d13818c94def52848dbf627c26176bb8fd6cdec06ea7fc04185812fccb5316`.
+The harness now allows 30 bounded seconds for the real window manager to publish
+`_NET_SUPPORTING_WM_CHECK`; it still requires the exact root-window property and
+does not turn missing Openbox into a pass. This receipt also demonstrated that
+two matrix workers are counterproductive here: wall time grew from 761 seconds
+to 1,465 seconds while one startup deadline still failed. Final qualification
+therefore returns to four workers after repairing the observed bounded waits.
+
 ## Qualification boundary
 
 This feature may make the installed X11/Wayland cells pass. It does not imply

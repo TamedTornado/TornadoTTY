@@ -55,7 +55,7 @@ case "${backend}" in
         command -v openbox >/dev/null || fail "openbox is required"
         openbox --sm-disable >"${run_root}/openbox.log" 2>&1 &
         window_manager_pid=$!
-        for _ in $(seq 1 200); do
+        for _ in $(seq 1 600); do
             xprop -root _NET_SUPPORTING_WM_CHECK 2>/dev/null | grep -Fq 'window id #' && break
             sleep 0.05
         done
