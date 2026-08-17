@@ -100,3 +100,13 @@ false full-qualification claims, stale revisions, source/build leakage, an
 installed receipt bound to the wrong package, and an unexpected lifecycle
 outcome. Receipt hashes alone are insufficient: the validator also checks the
 semantic contract of every source receipt.
+
+The first real clean-build run failed before entering the network-disabled build
+namespace. The prepared Ghostty checkout is an intentional partial clone;
+`git clone --no-local` asked its promisor remote for unrelated missing history
+and aborted when lazy fetching was unavailable. The journey only needs the
+already checked-out pinned commit, not remote history. It now creates a
+single-branch local clone with copied (not hard-linked) objects, verifies the
+exact pinned revision and clean state, and then disables networking for the
+actual build. A focused clone reproduced the repair without contacting a
+remote. The failure was not converted into a pass.

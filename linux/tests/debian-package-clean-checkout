@@ -31,7 +31,7 @@ primary_output="$(dirname "${ZENTTY_PACKAGE_ARTIFACT}")"
 git clone --quiet --no-local --no-hardlinks "${repo_root}" "${isolated}"
 git -C "${isolated}" checkout --quiet --detach "${revision}"
 [[ -z "$(git -C "${isolated}" status --porcelain=v1)" ]]
-git clone --quiet --no-local --no-hardlinks \
+git clone --quiet --local --no-hardlinks --single-branch \
     "${repo_root}/build/linux-deps/ghostty" "${isolated_ghostty}"
 git -C "${isolated_ghostty}" checkout --quiet --detach \
     "$(sed -n 's/^revision=//p' "${repo_root}/linux/ghostty.lock")"
