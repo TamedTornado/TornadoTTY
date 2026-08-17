@@ -73,3 +73,8 @@ second package layout.
   unversioned libraries and their `$ORIGIN` lookup; its warning bitmask is now
   disabled while fatal dependency resolution remains enforced and the
   separate ELF/RUNPATH audit remains authoritative.
+- With checksums repaired, expanded-manifest generation found a jq scoping
+  error: piping `$path` into `startswith` changed `.` from the manifest entry
+  to the path string, so `.destination` attempted to index a string. The
+  query now binds each entry explicitly before comparing exact and descendant
+  destinations, preserving longest-prefix ownership for generated trees.

@@ -203,7 +203,9 @@ find "${package_root}/DEBIAN" -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} +
 while IFS= read -r payload_path; do
     absolute="${package_root}${payload_path}"
     owner_component="$(jq -er --arg path "${payload_path}" '
-      [.entries[] | select($path == .destination or ($path | startswith(.destination + "/")))] |
+      [.entries[] as $entry |
+        select($path == $entry.destination or
+          ($path | startswith($entry.destination + "/"))) | $entry] |
       sort_by(.destination | length) | last.owner_component' "${manifest}")"
     if [[ -L "${absolute}" ]]; then
         jq -cn --arg path "${payload_path}" --arg owner_component "${owner_component}" \
