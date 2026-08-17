@@ -151,3 +151,12 @@ the checksum file. A failed comparison now preserves compact payload-manifest
 and provenance diffs below the ignored qualification output rather than
 retaining two large package trees. The archive is still rejected immediately;
 the diagnostics exist only to locate the first differing packaged path.
+
+The compact diff localized the divergence to the two Rust executables (and the
+second installed copy of the CLI); both Ghostty shared libraries and all other
+1,281 payload entries were identical. Cargo was compiling the same commit from
+different absolute checkout roots. The Debian build now passes rustc an exact
+`--remap-path-prefix=<checkout>=/usr/src/zentty`, giving primary and detached
+builds one canonical source identity before debug sections are stripped. This
+is build policy, not a post-build binary rewrite; the payload audit continues
+to reject leaked host paths.
