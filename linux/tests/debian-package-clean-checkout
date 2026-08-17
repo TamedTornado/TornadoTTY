@@ -7,6 +7,7 @@ temporary="$(mktemp -d)"
 isolated="${temporary}/source"
 isolated_ghostty="${temporary}/ghostty"
 isolated_zig_cache="${temporary}/zig-global-cache"
+isolated_cargo_home="${temporary}/cargo-home"
 prepared_zig_packages="${repo_root}/build/linux-deps/zig-global-cache/p"
 masked_checkout="${temporary}/masked-checkout"
 output_directory="${ZENTTY_PACKAGE_QUALIFICATION_DIR:-${repo_root}/build/linux/package-qualification}"
@@ -17,16 +18,27 @@ source "${repo_root}/linux/tests/lib/exact-package-artifact"
     echo "debian-package-clean-checkout: source checkout must be clean" >&2
     exit 1
 }
-for dependency in bwrap git; do
+for dependency in bwrap getent git rustup; do
     command -v "${dependency}" >/dev/null || {
         echo "debian-package-clean-checkout: ${dependency} is required" >&2
         exit 1
     }
 done
 
-mkdir -p -- "${masked_checkout}" "${isolated_zig_cache}/p"
+host_home="$(getent passwd "$(id -u)" | cut -d: -f6)"
+toolchain="$(sed -n 's/^channel = "\([^"]*\)"/\1/p' "${repo_root}/rust-toolchain.toml")"
+rustc="$(RUSTUP_HOME="${host_home}/.rustup" rustup which rustc --toolchain "${toolchain}")"
+toolchain_bin="$(dirname "${rustc}")"
+prepared_cargo_home="${host_home}/.cargo"
+
+mkdir -p -- "${masked_checkout}" "${isolated_zig_cache}/p" \
+    "${isolated_cargo_home}/registry" "${isolated_cargo_home}/git"
 [[ -d "${prepared_zig_packages}" ]] || {
     echo "debian-package-clean-checkout: prepared Zig package cache is missing" >&2
+    exit 1
+}
+[[ -d "${prepared_cargo_home}/registry" ]] || {
+    echo "debian-package-clean-checkout: prepared Cargo registry is missing" >&2
     exit 1
 }
 zentty_exact_package_artifact "${repo_root}" || {
@@ -53,10 +65,15 @@ bwrap \
     --tmpfs /tmp \
     --bind "${temporary}" /mnt \
     --ro-bind "${prepared_zig_packages}" /mnt/zig-global-cache/p \
+    --ro-bind "${prepared_cargo_home}/registry" /mnt/cargo-home/registry \
     --ro-bind "${masked_checkout}" "${repo_root}" \
     --chdir /mnt/source \
     -- \
     env \
+        PATH="${toolchain_bin}:${PATH}" \
+        CARGO_HOME=/mnt/cargo-home \
+        CARGO_NET_OFFLINE=true \
+        RUSTC="${rustc}" \
         ZIG="${zig}" \
         BLUEPRINT_COMPILER_DIR="${blueprint}" \
         GHOSTTY_SOURCE_DIR=/mnt/ghostty \

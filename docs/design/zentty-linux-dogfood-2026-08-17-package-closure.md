@@ -178,3 +178,15 @@ deliberately mounted; it is not a portable property of every developer build
 invocation. The global Cargo override was removed. The failed producer caused
 all installed/package-summary dependents to report blocked-by-failed-dependency,
 not false passes; all unrelated executable cells passed.
+
+The second full run passed the real package lifecycle, both installed display
+journeys, the payload audit, and all three lifecycle evidence cells, but the
+clean-build cell failed before compilation. Its outer display-none environment
+correctly supplies a private empty home; after entering the network-disabled
+inner namespace, the rustup proxy tried to install the pinned toolchain into
+that empty home. The clean journey now resolves the pinned toolchain from the
+operator's prepared rustup store before isolation, places its real `cargo` and
+`rustc` directory first on `PATH`, and mounts the prepared Cargo registry
+read-only into a fresh `CARGO_HOME` with Cargo offline. Build outputs and Cargo
+compilation state remain writable only in the temporary workspace. This makes
+the clean proof independent of ambient `HOME` without permitting downloads.
