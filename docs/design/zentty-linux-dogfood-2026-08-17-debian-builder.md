@@ -188,3 +188,10 @@ second package layout.
   now performs a final whole-tree timestamp pass after all package-root writes
   and before receipt/audit/archive construction; the assertion remains in
   place to prevent recurrence.
+- Inspecting the completed control/provenance data showed correct but noisy
+  duplicate Debian relationships whenever the ratified baseline floor and
+  `dpkg-shlibdeps` named the same package. The builder now parses only the
+  supported simple Debian relations, rejects an unfamiliar relation shape,
+  chooses the strongest version with `dpkg --compare-versions`, and emits one
+  bytewise-sorted relationship per package. This preserves policy floors while
+  retaining stronger ELF-derived requirements such as GTK 4.14.1.

@@ -182,7 +182,37 @@ derived_dependencies="$(sed -n 's/^shlibs:Depends=//p' <<<"${shlibs_output}")"
 [[ -n "${derived_dependencies}" ]] || fail "dpkg-shlibdeps produced no dependency metadata"
 baseline_dependencies="$(jq -r '.dependencies.baseline_packages[] |
     "\(.name) (>= \(.minimum))"' "${policy}" | paste -sd, -)"
-runtime_dependencies="${baseline_dependencies}, ${derived_dependencies}"
+declare -A dependency_versions
+dependency_pattern='^([a-z0-9][a-z0-9+.-]*)([[:space:]]+\(>=[[:space:]]+([^)]+)\))?$'
+while IFS= read -r relation; do
+    relation="${relation#"${relation%%[![:space:]]*}"}"
+    relation="${relation%"${relation##*[![:space:]]}"}"
+    if [[ "${relation}" =~ ${dependency_pattern} ]]; then
+        dependency_name="${BASH_REMATCH[1]}"
+        dependency_version="${BASH_REMATCH[3]:-}"
+    else
+        fail "unsupported Debian dependency relation: ${relation}"
+    fi
+    if [[ -n "${dependency_version}" ]] &&
+       { [[ -z "${dependency_versions[${dependency_name}]:-}" ]] ||
+         dpkg --compare-versions "${dependency_version}" gt "${dependency_versions[${dependency_name}]}"; }; then
+        dependency_versions["${dependency_name}"]="${dependency_version}"
+    elif [[ ! -v "dependency_versions[${dependency_name}]" ]]; then
+        dependency_versions["${dependency_name}"]=""
+    fi
+done < <(printf '%s,%s\n' "${baseline_dependencies}" "${derived_dependencies}" | tr ',' '\n')
+
+runtime_dependency_lines=()
+while IFS= read -r dependency_name; do
+    if [[ -n "${dependency_versions[${dependency_name}]}" ]]; then
+        runtime_dependency_lines+=(
+            "${dependency_name} (>= ${dependency_versions[${dependency_name}]})"
+        )
+    else
+        runtime_dependency_lines+=("${dependency_name}")
+    fi
+done < <(printf '%s\n' "${!dependency_versions[@]}" | LC_ALL=C sort)
+runtime_dependencies="$(printf '%s\n' "${runtime_dependency_lines[@]}" | paste -sd, -)"
 
 cat >"${package_root}/DEBIAN/control" <<EOF
 Package: zentty
