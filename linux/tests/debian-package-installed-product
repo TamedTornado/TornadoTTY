@@ -448,7 +448,7 @@ set -euo pipefail
 [[ "${ZENTTY_CLI_BIN}" == /usr/lib/zentty/bin/zentty ]]
 [[ "${GHOSTTY_RESOURCES_DIR}" == /usr/share/ghostty ]]
 printf 'ready\n' >"${ZENTTY_INSTALLED_RECEIPTS}/desktop-ready"
-for _ in {1..400}; do
+for _ in {1..1200}; do
     [[ -e "${ZENTTY_INSTALLED_RECEIPTS}/desktop-release" ]] && exit 0
     sleep 0.05
 done
@@ -466,7 +466,7 @@ for _ in {1..600}; do
 done
 [[ -s "${ZENTTY_INSTALLED_RECEIPTS}/desktop-ready" ]]
 printf 'ready\n' >"${ZENTTY_INSTALLED_RECEIPTS}/desktop-supervisor-ready"
-for _ in {1..600}; do
+for _ in {1..2400}; do
     [[ -e "${ZENTTY_INSTALLED_RECEIPTS}/desktop-release" ]] && break
     sleep 0.025
 done

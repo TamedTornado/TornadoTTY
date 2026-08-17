@@ -180,6 +180,34 @@ already selected first result. The installed journey now uses the same closed
 expectation (five), records pre-action counts to reject stale log matches, and
 presses Return without the erroneous Down navigation.
 
+The first full four-worker matrix exposed one installed-Wayland deadline bug:
+the desktop receipt shell's 20-second safety deadline expired while the heavily
+loaded host was scheduling the `/proc` audit, so the executable disappeared
+between discovery and inspection. Standalone X11 and Wayland runs had passed,
+which confirms this was a bounded-runner scheduling defect rather than a
+desktop product failure. The desktop child and its supervisor now share a
+60-second bounded release window; the audit still fails if identity is absent
+or wrong and environmental absence is not converted into success.
+
+That same overloaded run also reported pre-existing physical-input readiness
+failures in source UX, remote Wayland drag, and shortcut settings. Their logs
+showed input/deadline loss rather than product assertions. They remain failures
+until rerun; qualification is not claimed from the partial receipt.
+
+All four failed cells passed immediately when rerun sequentially against the
+same build: installed Wayland session
+`64b4b07ecbb50b3c07626431b8994292e49c4427c7e0a6c39b975347bc7ab17e`,
+source UX X11 session
+`5bfba1e10eabcce75a09382abdaa20507cefccb0f21f3d2f821b7bf26e2d89b1`,
+remote-drop Weston session
+`35630b8405ba8bbd9b511fd05743f321da9ad4bb3036a3de66551f2282fa000a`,
+and shortcut-settings Wayland session
+`c6bcc283dd61726051357b5a53218fc4791b5fe493f417dd3fcaf57f4c3c19c9`.
+The package SHA-256 in that diagnostic run was
+`7e59b34a59e0e0601960ff10ced70c4c259a134ef6091c1e62860b7c7bc9dd7f`.
+These results justify the deadline repair but do not replace a complete clean
+matrix receipt, which must still be rerun with bounded concurrency.
+
 ## Qualification boundary
 
 This feature may make the installed X11/Wayland cells pass. It does not imply
