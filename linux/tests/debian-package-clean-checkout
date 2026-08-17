@@ -50,19 +50,23 @@ bwrap \
     --ro-bind / / \
     --unshare-net \
     --dev-bind /dev /dev \
-    --bind "${temporary}" "${temporary}" \
-    --ro-bind "${prepared_zig_packages}" "${isolated_zig_cache}/p" \
+    --tmpfs /tmp \
+    --dir /work \
+    --bind "${isolated}" /work/source \
+    --bind "${isolated_ghostty}" /work/ghostty \
+    --bind "${isolated_zig_cache}" /work/zig-global-cache \
+    --ro-bind "${prepared_zig_packages}" /work/zig-global-cache/p \
     --ro-bind "${masked_checkout}" "${repo_root}" \
-    --chdir "${isolated}" \
+    --chdir /work/source \
     -- \
     env \
         ZIG="${zig}" \
         BLUEPRINT_COMPILER_DIR="${blueprint}" \
-        GHOSTTY_SOURCE_DIR="${isolated_ghostty}" \
-        ZENTTY_ZIG_GLOBAL_CACHE_DIR="${isolated_zig_cache}" \
+        GHOSTTY_SOURCE_DIR=/work/ghostty \
+        ZENTTY_ZIG_GLOBAL_CACHE_DIR=/work/zig-global-cache \
         ZENTTY_GHOSTTY_PREPARED=true \
-        ZENTTY_PACKAGE_OUTPUT_DIR="${isolated}/build/isolated-package" \
-        ZENTTY_PACKAGE_WORK_DIR="${isolated}/build/isolated-package-work" \
+        ZENTTY_PACKAGE_OUTPUT_DIR=/work/source/build/isolated-package \
+        ZENTTY_PACKAGE_WORK_DIR=/work/source/build/isolated-package-work \
         bash -c \
         "[[ ! -e \"\$1/Cargo.toml\" ]] && linux/scripts/build-deb" \
         bash "${repo_root}" >"${temporary}/build.log" 2>&1 || {

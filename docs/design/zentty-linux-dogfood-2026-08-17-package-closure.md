@@ -121,3 +121,12 @@ creates a fresh writable cache and mounts only the prepared package-download
 subtree read-only at `p`; compilation objects are rebuilt in the temporary
 namespace. Network remains disabled, a missing prepared package remains a hard
 failure, and the potentially large temporary build tree is removed on exit.
+
+That repair reached the real Ghostty compile and exposed a second sandbox
+mistake: the read-only host root also made `/tmp` read-only, while
+`glib-compile-resources` legitimately creates private temporary files there.
+The journey now supplies a private tmpfs at `/tmp` and mounts only the detached
+source, detached Ghostty source, and fresh Zig cache below `/work`. The masked
+developer checkout remains at its original absolute path, so any accidental
+source-tree fallback still fails. This permits tool-owned temporary files
+without granting writes to host `/tmp` or the host root.
