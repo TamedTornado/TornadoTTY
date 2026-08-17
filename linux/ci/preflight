@@ -23,6 +23,9 @@ source "${os_release}"
 [[ "$(dpkg --print-architecture)" == amd64 && "$(uname -m)" == x86_64 ]] ||
     fail "amd64/x86_64 is required"
 [[ -z "$(git -C "${repo_root}" status --porcelain=v1)" ]] || fail "Zentty checkout is dirty"
+[[ -z "${ZENTTY_EXPECTED_COMMIT:-}" ||
+    "$(git -C "${repo_root}" rev-parse HEAD)" == "${ZENTTY_EXPECTED_COMMIT}" ]] ||
+    fail "Zentty checkout does not match the expected workflow commit"
 while IFS='=' read -r name expected; do
     [[ "${!name:-}" == "${expected}" ]] || fail "deterministic environment mismatch: ${name}"
 done < <(jq -r '.deterministic_environment | to_entries[] | "\(.key)=\(.value)"' "${manifest}")
@@ -61,7 +64,8 @@ pnpm="${ZENTTY_PNPM:-${tools_root}/pnpm-10.32.1/bin/pnpm.cjs}"
     fail "Blueprint compiler version is not reviewed"
 [[ "$(rustc --version | awk '{print $2}')" == "$(jq -r '.toolchains.rust.version' "${manifest}")" ]] ||
     fail "Rust version is not reviewed"
-[[ "$(node --version)" == v24.* ]] || fail "Node 24 is required"
+[[ "$(node --version)" == "v$(jq -r '.toolchains.node.version' "${manifest}")" ]] ||
+    fail "Node version is not reviewed"
 [[ "$("${pnpm}" --version)" == "$(jq -r '.toolchains.node.pnpm_version' "${manifest}")" ]] ||
     fail "pnpm version is not reviewed"
 

@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+workflow="${repo_root}/.github/workflows/linux-ci-foundation.yml"
+actions_manifest="${repo_root}/linux/ci/actions-v1.json"
+validator="${repo_root}/linux/ci/workflow-contract"
+fixture="$(mktemp -d)"
+trap 'rm -rf -- "${fixture}"' EXIT
+
+fail() {
+    echo "ci-workflow-contract-test: error: $*" >&2
+    exit 1
+}
+
+"${validator}" >/dev/null
+
+expect_workflow_rejected() {
+    local name="$1"
+    local old="$2"
+    local new="$3"
+    local candidate="${fixture}/${name}.yml"
+    sed "s|${old}|${new}|" "${workflow}" >"${candidate}"
+    if ZENTTY_CI_FOUNDATION_WORKFLOW="${candidate}" "${validator}" \
+        >"${fixture}/${name}.out" 2>&1; then
+        fail "${name} workflow mutation was accepted"
+    fi
+}
+
+expect_workflow_rejected mutable-action \
+    'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1' 'actions/checkout@v7'
+expect_workflow_rejected write-permission 'contents: read' 'contents: write'
+expect_workflow_rejected mutable-runner 'runs-on: ubuntu-24.04' 'runs-on: ubuntu-latest'
+expect_workflow_rejected persisted-credential 'persist-credentials: false' 'persist-credentials: true'
+expect_workflow_rejected missing-always 'if: always()' 'if: success()'
+expect_workflow_rejected wrong-node 'node-version: 24.14.0' 'node-version: latest'
+# GitHub expression must remain literal.
+# shellcheck disable=SC2016
+expect_workflow_rejected wrong-event-commit \
+    'ZENTTY_EXPECTED_COMMIT: ${{ github.sha }}' 'ZENTTY_EXPECTED_COMMIT: refs/heads/linux/port'
+
+jq '.actions[0].revision = "0000000000000000000000000000000000000000"' \
+    "${actions_manifest}" >"${fixture}/changed-actions.json"
+if ZENTTY_CI_ACTIONS_MANIFEST="${fixture}/changed-actions.json" "${validator}" \
+    >"${fixture}/changed-actions.out" 2>&1; then
+    fail "changed action manifest was accepted"
+fi
+
+echo "ci-workflow-contract-test: PASS negatives=action+permission+runner+credentials+evidence+node+commit+manifest"

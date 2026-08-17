@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+workflow="${ZENTTY_CI_FOUNDATION_WORKFLOW:-${repo_root}/.github/workflows/linux-ci-foundation.yml}"
+actions_manifest="${ZENTTY_CI_ACTIONS_MANIFEST:-${repo_root}/linux/ci/actions-v1.json}"
+
+fail() {
+    echo "ci-workflow-contract: error: $*" >&2
+    exit 1
+}
+
+for dependency in grep jq; do
+    command -v "${dependency}" >/dev/null || fail "${dependency} is required"
+done
+[[ -f "${workflow}" ]] || fail "foundation workflow is missing"
+
+jq -e '
+  . == {
+    schema_version:1,
+    actions:[
+      {repository:"actions/checkout",release:"v7.0.1",revision:"3d3c42e5aac5ba805825da76410c181273ba90b1"},
+      {repository:"actions/setup-node",release:"v7.0.0",revision:"820762786026740c76f36085b0efc47a31fe5020"},
+      {repository:"actions/upload-artifact",release:"v7.0.1",revision:"043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"}
+    ]
+  }
+' "${actions_manifest}" >/dev/null || fail "actions manifest is invalid"
+
+while IFS=$'\t' read -r repository revision; do
+    grep -Fq "uses: ${repository}@${revision}" "${workflow}" ||
+        fail "workflow does not pin ${repository} to ${revision}"
+done < <(jq -r '.actions[] | [.repository,.revision] | @tsv' "${actions_manifest}")
+
+if grep -Eq 'uses: [^#[:space:]]+@(v[0-9]+|main|master|latest)([[:space:]#]|$)' "${workflow}"; then
+    fail "workflow contains a mutable action reference"
+fi
+grep -Fq 'runs-on: ubuntu-24.04' "${workflow}" || fail "workflow baseline is not pinned"
+grep -Fq 'node-version: 24.14.0' "${workflow}" || fail "workflow Node version is not pinned"
+grep -Fq 'permissions:' "${workflow}" || fail "workflow permissions are missing"
+grep -Fq 'contents: read' "${workflow}" || fail "workflow lacks read-only contents permission"
+grep -Fq 'persist-credentials: false' "${workflow}" || fail "checkout credentials remain persisted"
+# GitHub expression must remain literal.
+# shellcheck disable=SC2016
+grep -Fq 'ZENTTY_EXPECTED_COMMIT: ${{ github.sha }}' "${workflow}" ||
+    fail "workflow does not bind preflight to the event commit"
+grep -Fq 'if: always()' "${workflow}" || fail "failure evidence is not uploaded"
+grep -Fq 'retention-days: 14' "${workflow}" || fail "artifact retention is not bounded"
+grep -Fq 'cancel-in-progress: true' "${workflow}" || fail "superseded runs are not cancelled"
+grep -Fq 'linux/ci/preflight' "${workflow}" || fail "preflight is not executed"
+grep -Fq 'linux/tests/qualification-matrix --validate-only' "${workflow}" ||
+    fail "authoritative matrix validation is absent"
+grep -Fq 'linux/tests/nested-wayland' "${workflow}" || fail "controlled Wayland is absent"
+grep -Fq 'linux/tests/nested-x11' "${workflow}" || fail "controlled X11 is absent"
+
+echo "ci-workflow-contract: PASS actions=3 permissions=read evidence=always"

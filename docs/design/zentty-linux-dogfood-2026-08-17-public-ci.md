@@ -92,3 +92,19 @@ The checked-in pnpm Gemini/Codex directory then passed the real Gemini agent
 journey through nested input-capable Wayland session
 `5052ecc72b7c2f4382d03c2362f97432850a3c84130298a714e5e8f95d46ef94`.
 This closes the local bootstrap proof, not the required fresh public-run proof.
+
+The first public foundation workflow uses only official GitHub actions, pinned
+to full reviewed release commits: checkout v7.0.1, setup-node v7.0.0, and
+upload-artifact v7.0.1. It has read-only contents permission, disables persisted
+checkout credentials, binds preflight to the exact event SHA, cancels
+superseded ref runs, and uploads bounded-retention logs/receipts even after a
+failure. Node is pinned to 24.14.0 rather than the mutable Node 24 major.
+
+The workflow runs the same bootstrap, Ghostty lock preparation, preflight,
+matrix validator, product build, and real nested X11/Wayland smoke commands used
+locally. It does not add a CI-specific product simulator. Static negative tests
+reject mutable actions/runners/Node, write permissions, persisted credentials,
+missing always-upload, wrong event binding, and altered action manifests. The
+workflow passed the checksum-pinned official actionlint 1.7.12 parser. The next
+evidence must come from its fresh public `ubuntu-24.04` run; local success does
+not substitute for that prerequisite.

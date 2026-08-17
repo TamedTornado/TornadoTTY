@@ -13,7 +13,7 @@ fail() {
 
 [[ -f "${receipt}" ]] || fail "receipt is missing: ${receipt}"
 manifest_sha="$(sha256sum "${manifest}" | awk '{print $1}')"
-zentty_revision="$(git -C "${repo_root}" rev-parse HEAD)"
+zentty_revision="${ZENTTY_EXPECTED_COMMIT:-$(git -C "${repo_root}" rev-parse HEAD)}"
 ghostty_revision="$(sed -n 's/^revision=//p' "${repo_root}/linux/ghostty.lock")"
 expected_apt="$(jq -c '.apt_packages | sort' "${manifest}")"
 

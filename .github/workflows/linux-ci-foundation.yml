@@ -1,0 +1,126 @@
+name: Linux CI foundation
+
+on:
+  push:
+    branches:
+      - linux/port
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-ci-foundation-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  controlled-foundation:
+    name: Pinned Ubuntu 24.04 X11 and Wayland
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      LANG: C.UTF-8
+      LC_ALL: C.UTF-8
+      TZ: UTC
+      XKB_DEFAULT_LAYOUT: us
+      LIBGL_ALWAYS_SOFTWARE: "1"
+      GALLIUM_DRIVER: llvmpipe
+      GSETTINGS_BACKEND: memory
+      GIO_USE_VFS: local
+      ZENTTY_BUILD_JOBS: "2"
+      ZENTTY_EXPECTED_COMMIT: ${{ github.sha }}
+
+    steps:
+      - name: Check out exact event commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install reviewed Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.14.0
+          check-latest: false
+
+      - name: Install Ubuntu qualification packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/linux
+          mapfile -t packages < <(linux/ci/bootstrap-ubuntu-24.04 --print-apt)
+          sudo apt-get update 2>&1 | tee build/linux/ci-apt-update.log
+          sudo env DEBIAN_FRONTEND=noninteractive \
+            apt-get install -y --no-install-recommends "${packages[@]}" \
+            2>&1 | tee build/linux/ci-apt-install.log
+
+      - name: Bootstrap content-pinned tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          linux/ci/bootstrap-ubuntu-24.04 --no-system-install \
+            2>&1 | tee build/linux/ci-bootstrap.log
+
+      - name: Prepare exact Ghostty source
+        shell: bash
+        run: |
+          set -euo pipefail
+          source build/linux-ci-tools/environment.sh
+          linux/scripts/prepare-ghostty-source \
+            2>&1 | tee build/linux/ci-prepare-ghostty.log
+
+      - name: Validate environment and exact sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          source build/linux-ci-tools/environment.sh
+          linux/ci/preflight 2>&1 | tee build/linux/ci-preflight.log
+          linux/ci/validate-preflight-receipt
+
+      - name: Validate authoritative matrix
+        shell: bash
+        run: linux/tests/qualification-matrix --validate-only
+
+      - name: Build exact ReleaseSafe product
+        shell: bash
+        run: |
+          set -euo pipefail
+          source build/linux-ci-tools/environment.sh
+          ZENTTY_GHOSTTY_PREPARED=true GHOSTTY_OPTIMIZE=ReleaseSafe \
+            linux/scripts/build-local 2>&1 | tee build/linux/ci-build-release.log
+
+      - name: Run real controlled Wayland product journey
+        shell: bash
+        run: |
+          set -euo pipefail
+          source build/linux-ci-tools/environment.sh
+          ZENTTY_NESTED_WAYLAND_REPORT="$PWD/build/linux/ci-wayland-environment.json" \
+            linux/tests/nested-wayland bash -o pipefail -c \
+            'GDK_BACKEND=wayland ZENTTY_LINUX_ASYNC_BACKEND=default linux/tests/rust-product-smoke' \
+            2>&1 | tee build/linux/ci-wayland.log
+
+      - name: Run real controlled X11 product journey
+        shell: bash
+        run: |
+          set -euo pipefail
+          source build/linux-ci-tools/environment.sh
+          ZENTTY_NESTED_X11_REPORT="$PWD/build/linux/ci-x11-environment.json" \
+            linux/tests/nested-x11 bash -o pipefail -c \
+            'GDK_BACKEND=x11 ZENTTY_LINUX_ASYNC_BACKEND=default linux/tests/rust-product-smoke' \
+            2>&1 | tee build/linux/ci-x11.log
+
+      - name: Revalidate preflight receipt
+        shell: bash
+        run: linux/ci/validate-preflight-receipt
+
+      - name: Upload foundation evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: linux-ci-foundation-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            build/linux/ci-*.json
+            build/linux/ci-*.log
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 6

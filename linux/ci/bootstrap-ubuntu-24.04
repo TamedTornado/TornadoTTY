@@ -85,7 +85,8 @@ pnpm_integrity="$(jq -r '.toolchains.node.pnpm_integrity' "${manifest}")"
 pnpm_dir="${tools_root}/pnpm-${pnpm_version}"
 pnpm_bin="${pnpm_dir}/bin/pnpm.cjs"
 command -v node >/dev/null || fail "Node is required"
-[[ "$(node --version)" == v24.* ]] || fail "Node 24 is required"
+[[ "$(node --version)" == "v$(jq -r '.toolchains.node.version' "${manifest}")" ]] ||
+    fail "reviewed Node version is required"
 if [[ ! -x "${pnpm_bin}" ]] || [[ "$("${pnpm_bin}" --version)" != "${pnpm_version}" ]]; then
     archive="$(mktemp)"
     trap 'rm -f -- "${archive:-}"' EXIT
