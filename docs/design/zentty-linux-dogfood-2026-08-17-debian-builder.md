@@ -64,3 +64,12 @@ second package layout.
   `prepare-ghostty-source` correctly refuses to change revisions. The builder
   now leaves the variable unset for its managed default and exports it only
   when the caller explicitly supplied an external checkout.
+- The next build reached Debian metadata generation and exposed a path-basis
+  bug in `DEBIAN/md5sums`: GNU `find`'s `%P` removed the starting `usr/`
+  component, so every checksum command addressed a nonexistent root-relative
+  path. The checksum list now retains `usr/` while remaining NUL-delimited and
+  bytewise sorted, including theme names containing spaces. `dpkg-shlibdeps`
+  also emitted pages of advisory warnings for the deliberately private
+  unversioned libraries and their `$ORIGIN` lookup; its warning bitmask is now
+  disabled while fatal dependency resolution remains enforced and the
+  separate ELF/RUNPATH audit remains authoritative.

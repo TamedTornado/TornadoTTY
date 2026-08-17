@@ -40,6 +40,10 @@ dpkg-deb --contents "${artifact}" >/dev/null
 
 extract_package positive
 "${audit}" "${temporary}/positive" "${manifest}" >/dev/null
+(
+    cd "${temporary}/positive"
+    md5sum --check --strict DEBIAN/md5sums >/dev/null
+)
 
 extract_package undeclared
 install -m 0644 /dev/null "${temporary}/undeclared/usr/lib/zentty/unexpected.a"

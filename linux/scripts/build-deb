@@ -154,7 +154,7 @@ done < <(find "${package_root}" -type f -print | LC_ALL=C sort)
 find "${package_root}" -type d -exec chmod 0755 {} +
 find "${package_root}" -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} +
 
-mkdir -p -- "${work_root}/debian"
+mkdir -p -- "${work_root}/debian" "${package_root}/DEBIAN"
 cat >"${work_root}/debian/control" <<'EOF'
 Source: zentty
 Section: utils
@@ -168,7 +168,7 @@ Description: terminal workspace for coding agents
 EOF
 shlibs_output="$(
     cd "${work_root}"
-    dpkg-shlibdeps -O \
+    dpkg-shlibdeps --warnings=0 -O \
         -l"${package_root}/usr/lib/zentty/lib" \
         -e"${package_root}/usr/lib/zentty/bin/zentty-linux" \
         -e"${package_root}/usr/lib/zentty/bin/zentty" \
@@ -180,7 +180,6 @@ derived_dependencies="$(sed -n 's/^shlibs:Depends=//p' <<<"${shlibs_output}")"
 baseline_dependencies="$(jq -r '.dependencies.baseline_packages[] |
     "\(.name) (>= \(.minimum))"' "${policy}" | paste -sd, -)"
 
-mkdir -p -- "${package_root}/DEBIAN"
 cat >"${package_root}/DEBIAN/control" <<EOF
 Package: zentty
 Version: ${package_version}
@@ -194,7 +193,7 @@ Description: terminal workspace for coding agents
 EOF
 (
     cd "${package_root}"
-    find usr -type f -printf '%P\0' | LC_ALL=C sort -z |
+    find usr -type f -print0 | LC_ALL=C sort -z |
         xargs -0 md5sum
 ) >"${package_root}/DEBIAN/md5sums"
 chmod 0644 "${package_root}/DEBIAN/control" "${package_root}/DEBIAN/md5sums"
