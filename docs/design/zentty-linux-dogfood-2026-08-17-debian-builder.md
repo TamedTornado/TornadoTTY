@@ -47,3 +47,10 @@ second package layout.
   empty columns; Bash whitespace-field collapsing shifted the symlink target
   into the destination column. File and symlink manifest variants now use
   separate typed loops with no optional fields.
+- The second build proved that `-Demit-terminfo=true` alone was insufficient:
+  Ghostty's custom `gtk-embed-lib` step installed only its library and header,
+  while resource steps were attached only to the full application install.
+  The minimal Ghostty change `7f0b21e3f` makes the standalone embedding build
+  depend on Ghostty's existing resource installation steps. A targeted clean
+  prefix build produced the real compiled `x/xterm-ghostty` entry and relative
+  `g/ghostty` alias; no Zentty-owned terminfo generator was introduced.
