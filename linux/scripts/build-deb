@@ -43,6 +43,8 @@ fi
 package_version="$(cargo metadata --locked --no-deps --format-version 1 |
     jq -er '.packages[] | select(.name == "zentty-linux") | .version')+git${zentty_short}"
 dpkg --validate-version "${package_version}" || fail "invalid Debian version ${package_version}"
+cargo_home="${CARGO_HOME:-${HOME}/.cargo}"
+[[ "${cargo_home}" == /* ]] || fail "Cargo home must be absolute for reproducible path remapping"
 
 "${repo_root}/linux/tests/packaging-policy" >/dev/null
 desktop-file-validate "${repo_root}/linux/packaging/com.zentty.zentty.desktop"
@@ -57,7 +59,7 @@ mkdir -p -- "${output_root}" "${stage}" "${ghostty_install}" "${package_root}"
 build_environment=(
     "ZENTTY_GHOSTTY_INSTALL_DIR=${ghostty_install}"
     "ZENTTY_BUILD_OUTPUT_DIR=${stage}"
-    "RUSTFLAGS=--remap-path-prefix=${repo_root}=/usr/src/zentty"
+    "RUSTFLAGS=--remap-path-prefix=${repo_root}=/usr/src/zentty --remap-path-prefix=${cargo_home}=/usr/src/cargo"
     "GHOSTTY_OPTIMIZE=ReleaseSafe"
     "GHOSTTY_SYSTEM_INTEGRATIONS=fontconfig"
 )

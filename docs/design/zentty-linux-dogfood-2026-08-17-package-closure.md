@@ -199,3 +199,12 @@ inner build now explicitly binds `TMPDIR=/tmp`, matching its private writable
 tmpfs. The same run had one unrelated Wayland agent-hook deadline failure; no
 package dependency relied on it, and it remains a failure pending rerun rather
 than being reclassified.
+
+The exact private-home reproduction then completed but correctly rejected the
+two Rust executables as different. The prepared registry was mounted at
+`/mnt/cargo-home`, while the primary build's registry lived under its ambient
+Cargo home. Rust crate identity can incorporate dependency source paths, so
+remapping only the Zentty checkout was incomplete. `build-deb` now derives the
+effective Cargo home and remaps it to `/usr/src/cargo` alongside the Zentty
+source remap. Primary, matrix-private-home, and clean-clone builds therefore
+share canonical identities without requiring a fixed operator home path.
