@@ -565,9 +565,15 @@ for _ in $(seq 1 100); do
     grep -Fxq 'zentty-linux: action=next-pane worklane=worklane-1 pane=pane-2' "${log}" && break
     sleep 0.05
 done
+peek_mapped_before="$(grep -Fxc 'zentty-linux: worklane-peek=mapped' "${log}" || true)"
 xdotool keydown --window "${window_id}" ctrl
 xdotool keydown --window "${window_id}" Tab
-sleep 0.3
+for _ in $(seq 1 200); do
+    (( $(grep -Fxc 'zentty-linux: worklane-peek=mapped' "${log}" || true) > peek_mapped_before )) && break
+    sleep 0.05
+done
+(( $(grep -Fxc 'zentty-linux: worklane-peek=mapped' "${log}" || true) > peek_mapped_before )) ||
+    fail "held Worklane Peek did not map before pointer selection"
 xdotool keyup --window "${window_id}" Tab
 xdotool mousemove --window "${window_id}" 600 270 click 1
 for _ in $(seq 1 100); do

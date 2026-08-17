@@ -154,6 +154,7 @@ impl WorklanePeekView {
         root.set_halign(gtk::Align::Fill);
         root.set_valign(gtk::Align::Fill);
         root.set_visible(false);
+        root.connect_map(|_| eprintln!("zentty-linux: worklane-peek=mapped"));
 
         let content = gtk::Box::new(gtk::Orientation::Horizontal, 18);
         content.add_css_class("zentty-peek-content");

@@ -152,7 +152,7 @@ clear_global_find() {
 wait_for_fixed() {
     local receipt="$1"
     local message="$2"
-    for _ in $(seq 1 160); do
+    for _ in $(seq 1 400); do
         grep -Fxq "${receipt}" "${log}" && return
         sleep 0.05
     done
@@ -163,7 +163,7 @@ wait_for_count_greater() {
     local receipt="$1"
     local baseline="$2"
     local message="$3"
-    for _ in $(seq 1 160); do
+    for _ in $(seq 1 400); do
         [[ "$(grep -Fc "${receipt}" "${log}" || true)" -gt "${baseline}" ]] && return
         sleep 0.05
     done

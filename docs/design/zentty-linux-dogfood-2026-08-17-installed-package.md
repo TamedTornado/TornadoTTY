@@ -220,6 +220,21 @@ two matrix workers are counterproductive here: wall time grew from 761 seconds
 to 1,465 seconds while one startup deadline still failed. Final qualification
 therefore returns to four workers after repairing the observed bounded waits.
 
+The next four-worker run passed the package cells and the repaired Docker cell,
+then exposed two more pre-existing time assumptions. The platform clipboard
+cell allowed only eight seconds for a real Ghostty surface to initialize; the
+log stopped immediately after OpenGL load. Its shared exact-receipt waits now
+allow 20 bounded seconds. Source UX used a fixed 300 ms sleep between the
+Ctrl+Tab keydown and pointer selection; under load GTK had armed the hold timer
+but had not displayed Peek before Tab was released, so the test clicked an
+absent card. The first repair mistakenly waited for a nonexistent
+`worklane-peek=shown` receipt; a standalone run rejected that harness defect
+rather than silently passing. Worklane Peek now publishes a receipt from GTK's
+real widget `map` signal, and the journey waits for a fresh exact
+`worklane-peek=mapped` receipt before releasing Tab and clicking. Neither repair
+retries a product operation or accepts absence; both replace wall-clock
+assumptions with observed real-system state.
+
 ## Qualification boundary
 
 This feature may make the installed X11/Wayland cells pass. It does not imply
