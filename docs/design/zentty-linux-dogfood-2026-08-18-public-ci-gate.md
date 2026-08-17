@@ -157,3 +157,22 @@ requires commit- plus attempt-specific artifact names, while ref-scoped
 concurrency cancels older branch executions. This closes the wrong-event and
 older-publication cases without putting the commit in the concurrency group,
 which would incorrectly prevent cancellation across successive branch commits.
+
+## Committed exact-source local receipt
+
+After review and commit, the complete gate was rerun from clean revision
+`8832ea614da38af60c1869e297c1bf42ee0cb624` with
+`ZENTTY_EXPECTED_COMMIT` set to that same full identity. All 8 versioned support
+tests and all 18 real matrix cells passed in 366 seconds. Both X11 and Wayland,
+Debug and ReleaseSafe, single and multi-terminal behavior, staged product
+boundaries, native key input, lifecycle, shortcuts, API audit, and recovery ran
+through their authoritative commands and environment profiles.
+
+The machine summary SHA-256 is
+`cfb7c0dc3370fb968e662c0fd9b7c1b49240b219a18aab769983d8ca3728fd99`.
+The policy SHA-256 is
+`795d87778403875bb686b1dc8bb87924f3632cef8ba1d101aa4005d8f8df8c14`;
+the referenced qualification matrix SHA-256 is
+`cfb00b392def7069ca9b9baa0a2ff3587f9e65955fc54232064808d7f7387851`.
+The receipt claims only the public PR subset. Implemented-local, release, and
+full-Linux qualification remain explicitly unclaimed.
