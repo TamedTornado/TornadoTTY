@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+revision="$(git -C "${repo_root}" rev-parse HEAD)"
+temporary="$(mktemp -d)"
+isolated="${temporary}/source"
+masked_checkout="${temporary}/masked-checkout"
+trap 'rm -rf -- "${temporary}"' EXIT
+
+[[ -z "$(git -C "${repo_root}" status --porcelain=v1)" ]] || {
+    echo "debian-package-clean-checkout: source checkout must be clean" >&2
+    exit 1
+}
+for dependency in bwrap git; do
+    command -v "${dependency}" >/dev/null || {
+        echo "debian-package-clean-checkout: ${dependency} is required" >&2
+        exit 1
+    }
+done
+
+mkdir -p -- "${masked_checkout}"
+git clone --quiet --no-local --no-hardlinks "${repo_root}" "${isolated}"
+git -C "${isolated}" checkout --quiet --detach "${revision}"
+[[ -z "$(git -C "${isolated}" status --porcelain=v1)" ]]
+
+zig="${ZIG:-${repo_root}/../.tools/zig-x86_64-linux-0.16.0/zig}"
+blueprint="${BLUEPRINT_COMPILER_DIR:-${repo_root}/../.tools/blueprint-compiler-0.16.0/bin}"
+
+bwrap \
+    --bind / / \
+    --ro-bind "${masked_checkout}" "${repo_root}" \
+    --chdir "${isolated}" \
+    -- \
+    env \
+        ZIG="${zig}" \
+        BLUEPRINT_COMPILER_DIR="${blueprint}" \
+        ZENTTY_PACKAGE_OUTPUT_DIR="${isolated}/build/isolated-package" \
+        ZENTTY_PACKAGE_WORK_DIR="${isolated}/build/isolated-package-work" \
+        bash -c \
+        "[[ ! -e \"\$1/Cargo.toml\" ]] && linux/scripts/build-deb" \
+        bash "${repo_root}" >"${temporary}/build.log" 2>&1 || {
+            cat "${temporary}/build.log" >&2
+            echo "debian-package-clean-checkout: isolated build failed" >&2
+            exit 1
+        }
+
+artifact="$(find "${isolated}/build/isolated-package" -maxdepth 1 -name '*.deb' -type f -print -quit)"
+version="$(dpkg-deb -f "${artifact}" Version)"
+manifest="${isolated}/build/isolated-package/zentty_${version}_amd64.manifest.json"
+provenance="${isolated}/build/isolated-package/zentty_${version}_amd64.provenance.json"
+
+[[ "$(jq -er '.zentty_revision' "${provenance}")" == "${revision}" ]]
+"${isolated}/linux/tests/debian-package-build-test" "${artifact}" "${manifest}" >/dev/null
+
+echo "debian-package-clean-checkout: PASS revision=${revision} developer_checkout=masked"

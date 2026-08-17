@@ -117,3 +117,8 @@ second package layout.
   That is not an adequate completed license audit. The release builder must
   add deterministic dependency notices rather than treating the top-level
   project licenses as transitive coverage.
+- The committed two-build reproducibility harness built from two independent
+  package work/output roots and byte-compared the `.deb`, expanded manifest,
+  provenance JSON, and `SHA256SUMS`. All four outputs were identical for
+  version `0.1.0+gitbd7f13576cb3`; the compressed Debian container needs no
+  variance exception.
