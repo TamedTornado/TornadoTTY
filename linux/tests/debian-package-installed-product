@@ -1,8 +1,17 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 helper="${repo_root}/linux/tests/lib/installed-product-root"
+
+if [[ "${1:-}" != --namespace-root ]]; then
+    if [[ "$(id -u)" -ne 0 ]]; then
+        exec unshare -Ur -- "${BASH_SOURCE[0]}" --namespace-root
+    fi
+else
+    shift
+fi
+
 backend="${GDK_BACKEND:-}"
 revision="$(git -C "${repo_root}" rev-parse HEAD)"
 short_revision="${revision:0:12}"
@@ -26,11 +35,23 @@ fail() {
     exit 1
 }
 
+record_unhandled_failure() {
+    local status="$?" line="${BASH_LINENO[0]:-${LINENO}}"
+    mkdir -p -- "${output_dir}/failure-${backend}"
+    [[ ! -f "${product_log}" ]] || cp -- "${product_log}" "${output_dir}/failure-${backend}/product.log"
+    [[ ! -f "${desktop_log}" ]] || cp -- "${desktop_log}" "${output_dir}/failure-${backend}/desktop.log"
+    [[ ! -d "${receipts}" ]] || cp -a -- "${receipts}" "${output_dir}/failure-${backend}/receipts"
+    echo "debian-package-installed-product: error: unhandled failure line=${line} status=${status}" >&2
+    exit "${status}"
+}
+trap record_unhandled_failure ERR
+
 pid_running() {
     [[ "$1" =~ ^[1-9][0-9]*$ ]] && kill -0 "$1" 2>/dev/null
 }
 
 cleanup() {
+    local status="$?"
     if pid_running "${product_pid}"; then
         kill -TERM "${product_pid}" 2>/dev/null || true
         wait "${product_pid}" 2>/dev/null || true
@@ -39,7 +60,16 @@ cleanup() {
         kill -TERM "${desktop_pid}" 2>/dev/null || true
         wait "${desktop_pid}" 2>/dev/null || true
     fi
-    rm -rf -- "${run_root}" "${state_dir}" "${receipts}"
+    if [[ "${status}" -eq 0 ]]; then
+        rm -rf -- "${run_root}" "${state_dir}" "${receipts}"
+    else
+        mkdir -p -- "${output_dir}/failure-${backend}"
+        [[ ! -f "${product_log}" ]] || cp -- "${product_log}" "${output_dir}/failure-${backend}/product.log"
+        [[ ! -f "${desktop_log}" ]] || cp -- "${desktop_log}" "${output_dir}/failure-${backend}/desktop.log"
+        [[ ! -d "${receipts}" ]] || cp -a -- "${receipts}" "${output_dir}/failure-${backend}/receipts"
+        echo "debian-package-installed-product: preserved failure evidence at ${output_dir}/failure-${backend}" >&2
+    fi
+    return "${status}"
 }
 trap cleanup EXIT
 
@@ -61,7 +91,7 @@ case "${backend}" in
     *) fail "GDK_BACKEND must be x11 or wayland" ;;
 esac
 
-for dependency in dpkg dpkg-deb dpkg-query find git grep jq ps readlink sha256sum stat; do
+for dependency in dpkg dpkg-deb dpkg-query find git grep jq ps readlink sha256sum stat unshare; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
 [[ "$(id -u)" -eq 0 ]] || fail "journey must run as namespace root"
@@ -70,13 +100,14 @@ done
 [[ -f "${provenance}" && ! -L "${provenance}" ]] || fail "exact provenance is missing"
 [[ "$(jq -r '.zentty_revision' "${manifest}")" == "${revision}" ]] ||
     fail "package is not the current clean revision"
-[[ "$(jq -r '.artifact_sha256' "${provenance}")" == "$(sha256sum "${artifact}" | awk '{print $1}')" ]] ||
+[[ "$(jq -r '.artifact.sha256' "${provenance}")" == "$(sha256sum "${artifact}" | awk '{print $1}')" ]] ||
     fail "artifact provenance hash differs"
-[[ "$(jq -r '.manifest_sha256' "${provenance}")" == "$(sha256sum "${manifest}" | awk '{print $1}')" ]] ||
+[[ "$(jq -r '.manifest.sha256' "${provenance}")" == "$(sha256sum "${manifest}" | awk '{print $1}')" ]] ||
     fail "manifest provenance hash differs"
 
 mkdir -p "${install_root}/var/lib/dpkg" "${install_root}/var/log" \
     "${output_dir}" "${state_dir}" "${receipts}"
+rm -rf -- "${output_dir}/failure-${backend}"
 : >"${install_root}/var/lib/dpkg/status"
 dpkg --root="${install_root}" --log="${install_root}/var/log/dpkg.log" \
     --force-depends --force-script-chrootless --install "${artifact}" \
@@ -124,6 +155,7 @@ set -euo pipefail
 out="${ZENTTY_INSTALLED_RECEIPTS}"
 phase="${ZENTTY_INSTALLED_PHASE}"
 pane="${ZENTTY_PANE_ID}"
+trap 'status=$?; printf "line=%s status=%s\n" "${LINENO}" "${status}" >"${out}/${phase}-failure-${pane}"; exit "${status}"' ERR
 {
     printf 'cli=%s\n' "${ZENTTY_CLI_BIN}"
     printf 'integration=%s\n' "${ZENTTY_SHELL_INTEGRATION_DIR}"
@@ -152,9 +184,8 @@ if mkdir "${out}/${phase}-leader" 2>/dev/null; then
             sleep 0.02
         done
         [[ "$(jq 'length' "${out}/first-panes-after.json")" -eq 3 ]]
-        tmux_path="$(command -v tmux)"
-        [[ "${tmux_path}" == /usr/lib/zentty/libexec/zentty/tmux-shim/tmux ]]
-        tmux list-panes -F '#{pane_id}' >"${out}/first-tmux-panes.txt"
+        tmux_path=/usr/lib/zentty/libexec/zentty/tmux-shim/tmux
+        "${tmux_path}" list-panes -F '#{pane_id}' >"${out}/first-tmux-panes.txt"
         [[ "$(wc -l <"${out}/first-tmux-panes.txt")" -eq 3 ]]
     else
         [[ "$(jq 'length' "${out}/${phase}-panes-before.json")" -eq 3 ]]
@@ -208,17 +239,31 @@ wait_for_file() {
 }
 
 find_product_pid() {
-    local needle="${1:-${state_dir}}" pid cmdline
-    [[ "${needle}" != --any ]] || needle=""
+    local needle="${1:-${state_dir}}" pid cmdline parent any_ancestry=false
+    if [[ "${needle}" == --any ]]; then
+        needle=""
+        any_ancestry=true
+    fi
     for _ in {1..400}; do
         for path in /proc/[0-9]*/cmdline; do
             pid="${path#/proc/}"
             pid="${pid%/cmdline}"
+            [[ -r "${path}" ]] || continue
             cmdline="$(tr '\0' ' ' <"${path}" 2>/dev/null || true)"
             if [[ "${cmdline}" == "/usr/bin/zentty-linux "* &&
                 ( -z "${needle}" || "${cmdline}" == *"${needle}"* ) ]]; then
-                printf '%s\n' "${pid}"
-                return 0
+                if [[ "${any_ancestry}" == true ]]; then
+                    printf '%s\n' "${pid}"
+                    return 0
+                fi
+                parent="${pid}"
+                while [[ "${parent}" =~ ^[1-9][0-9]*$ && "${parent}" -ne 1 ]]; do
+                    if [[ "${parent}" == "${product_pid}" ]]; then
+                        printf '%s\n' "${pid}"
+                        return 0
+                    fi
+                    parent="$(ps -o ppid= -p "${parent}" 2>/dev/null | tr -d ' ' || true)"
+                done
             fi
         done
         sleep 0.025
@@ -228,8 +273,9 @@ find_product_pid() {
 
 audit_process() {
     local pid="$1" phase="$2" exe environment_hash mappings_hash
-    exe="$(readlink -f "/proc/${pid}/exe")"
-    [[ "${exe}" == "${install_root}/usr/lib/zentty/bin/zentty-linux" ]] ||
+    exe="$(readlink "/proc/${pid}/exe" 2>/dev/null || true)"
+    [[ "${exe}" == "${install_root}/usr/lib/zentty/bin/zentty-linux" ||
+        "${exe}" == /usr/lib/zentty/bin/zentty-linux ]] ||
         fail "${phase} executable is not the dpkg-owned payload: ${exe}"
     if tr '\0' '\n' <"/proc/${pid}/environ" | grep -F "${repo_root}" >/dev/null; then
         fail "${phase} product environment leaked the source checkout"
@@ -254,11 +300,26 @@ start_direct first
 wait_for_file "${receipts}/first-ready" "first installed CLI mutation"
 first_product="$(find_product_pid)" || fail "first installed product PID was not observable"
 audit_process "${first_product}" first
-touch "${receipts}/first-release"
-wait "${product_pid}" || fail "first installed product exited unsuccessfully"
+for _ in {1..400}; do
+    if jq -e '
+      .workspace.windows[0].worklanes[0].title == "Installed qualified" and
+      ([.workspace.windows[0].worklanes[0].columns[].panes[]] | length) == 3
+    ' "${state_dir}/restore-snapshot.json" >/dev/null 2>&1; then
+        break
+    fi
+    pid_running "${product_pid}" || fail "product exited before live persistence receipt"
+    sleep 0.025
+done
+jq -e '
+  .workspace.windows[0].worklanes[0].title == "Installed qualified" and
+  ([.workspace.windows[0].worklanes[0].columns[].panes[]] | length) == 3
+' "${state_dir}/restore-snapshot.json" >/dev/null ||
+    fail "live installed topology was not persisted before restart"
+kill -KILL "${product_pid}"
+first_status=0
+wait "${product_pid}" || first_status=$?
+[[ "${first_status}" -ne 0 ]] || fail "injected installed crash unexpectedly exited cleanly"
 product_pid=""
-grep -Fxq 'zentty-linux: lifecycle complete' "${product_log}" ||
-    fail "first installed lifecycle did not complete"
 [[ -s "${state_dir}/restore-snapshot.json" ]] || fail "first lifecycle did not persist state"
 
 start_direct second
@@ -302,8 +363,10 @@ done
 wait "${launcher}"
 DESKTOP_SUPERVISOR
 chmod 0700 "${receipts}/desktop-shell" "${receipts}/desktop-supervisor"
+mkdir -p "${XDG_CONFIG_HOME}/ghostty"
+printf 'command = %s\n' "${receipts}/desktop-shell" \
+    >"${XDG_CONFIG_HOME}/ghostty/config.ghostty"
 clean_environment \
-    SHELL="${receipts}/desktop-shell" \
     ZENTTY_INSTALLED_RECEIPTS="${receipts}" \
     "${helper}" exec "${install_root}" -- "${receipts}/desktop-supervisor" \
     >"${desktop_log}" 2>&1 &

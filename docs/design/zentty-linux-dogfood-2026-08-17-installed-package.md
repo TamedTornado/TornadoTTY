@@ -85,6 +85,59 @@ and receipts.
   fixture and the real qualified package CLI both executed successfully inside
   the resulting Bubblewrap namespace.
 
+## Installed journey discoveries and repairs
+
+- The first complete runner assumed that the nested compositor had made the
+  caller UID 0. That is not part of either display harness contract. The runner
+  now enters its own unprivileged user namespace with `unshare -Ur`; package
+  installation therefore remains disposable and never requires host root.
+- The provenance validator initially read obsolete top-level hash names. The
+  package provenance schema owns the hashes at `.artifact.sha256` and
+  `.manifest.sha256`; the runner now validates those authoritative fields.
+- A normal restored shell does not promise that Zentty's tmux compatibility
+  shim is first on `PATH`. Qualification now invokes the exact dpkg-owned shim
+  and proves that it observes all three real panes rather than accidentally
+  accepting a host tmux installation.
+- Initial `/proc` discovery could select a stale product from another journey,
+  and `readlink -f` translated namespace paths through the host mount. Direct
+  launches are now tied to the supervised descendant process tree, executable
+  identity uses the raw `/proc/<pid>/exe` target, and desktop-entry launch is
+  accepted only after the direct applications have exited. Environment and
+  mappings remain hashed only after explicit source/build leakage checks.
+- Cleanly releasing every PTY intentionally closes the panes, so it cannot
+  prove crash recovery of a live topology. The journey now waits for the real
+  debounced snapshot containing the CLI rename and three panes, deliberately
+  kills the supervised namespace, and verifies that a new installed process
+  restores that exact live topology before completing cleanly.
+- `gtk-launch` follows the user's configured login shell rather than a caller's
+  `SHELL` variable. The desktop-entry proof now uses a private, real Ghostty
+  configuration whose `command` is the controlled receipt shell. This tests
+  Ghostty's installed configuration path instead of relying on an ineffective
+  environment override.
+- Package building was accidentally started twice while a long-running command
+  was being polled, producing a transient `Directory not empty` collision in
+  the shared build tree. This was orchestration error, not a product failure;
+  the build was rerun once, serially, and completed. Future polling must use the
+  returned process session rather than launching or matching the command again.
+
+## First controlled installed-product receipts
+
+The real dpkg-owned payload now passes both controlled display journeys with a
+clean `/usr/bin:/bin` path, no source/build mount, direct launch, desktop-entry
+launch, three real Ghostty PTYs, CLI read and mutation, tmux observation, live
+snapshot crash recovery, installed shell integration and terminfo, and three
+process audits per backend:
+
+- X11 session `fce05710555166b349f4057df1532d735e7e517873c68deaf9b1f0ab02ccc73d`
+- Wayland session `8e9c2363470c7f49bcc58abfa9eaac946b9d659f26c959c555c5b63462b27cc0`
+- package SHA-256 `c11b4dea05b4d997c19f4feae60be5c973c674ac7481af535ba19f371b188745`
+- manifest SHA-256 `629e6093cb2da649c20eb47efb68abe6a0907e0a9ba0a505aff7c2696dd86e03`
+
+These are development receipts for commit `8a9e7ff37a50`; they are not final
+qualification receipts because the runner repairs below are not yet committed
+and the remaining installed clipboard, launcher, and agent-wrapper behavior has
+not yet been promoted into matrix cells.
+
 ## Qualification boundary
 
 This feature may make the installed X11/Wayland cells pass. It does not imply
