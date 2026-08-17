@@ -122,3 +122,8 @@ second package layout.
   provenance JSON, and `SHA256SUMS`. All four outputs were identical for
   version `0.1.0+gitbd7f13576cb3`; the compressed Debian container needs no
   variance exception.
+- The first masked-checkout isolation run failed immediately because a plain
+  bubblewrap root bind did not preserve writable device semantics for
+  `/dev/null`; even the prerequisite probe could not redirect output. The
+  harness now explicitly device-binds `/dev` while continuing to replace the
+  developer checkout with an empty read-only mount.

@@ -29,6 +29,7 @@ blueprint="${BLUEPRINT_COMPILER_DIR:-${repo_root}/../.tools/blueprint-compiler-0
 
 bwrap \
     --bind / / \
+    --dev-bind /dev /dev \
     --ro-bind "${masked_checkout}" "${repo_root}" \
     --chdir "${isolated}" \
     -- \
