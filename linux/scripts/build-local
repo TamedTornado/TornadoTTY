@@ -19,6 +19,18 @@ if [[ "${ghostty_install_dir}" != /* ]]; then
     ghostty_install_dir="${repo_root}/${ghostty_install_dir}"
 fi
 optimize="${GHOSTTY_OPTIMIZE:-ReleaseSafe}"
+ghostty_system_integrations="${GHOSTTY_SYSTEM_INTEGRATIONS:-}"
+ghostty_system_integration_args=()
+if [[ -n "${ghostty_system_integrations}" ]]; then
+    IFS=, read -r -a requested_integrations <<<"${ghostty_system_integrations}"
+    for integration in "${requested_integrations[@]}"; do
+        [[ "${integration}" =~ ^[a-z0-9-]+$ ]] || {
+            echo "error: invalid Ghostty system integration: ${integration}" >&2
+            exit 1
+        }
+        ghostty_system_integration_args+=("-fsys=${integration}")
+    done
+fi
 c_probe_flags=(
     -std=c17
     -Wall
@@ -102,6 +114,7 @@ fi
         -Doptimize="${optimize}" \
         -Dcpu=baseline \
         -Demit-terminfo=true \
+        "${ghostty_system_integration_args[@]}" \
         -fno-sys=gtk4-layer-shell
 )
 

@@ -78,3 +78,15 @@ second package layout.
   to the path string, so `.destination` attempted to index a string. The
   query now binds each entry explicitly before comparing exact and descendant
   destinations, preserving longest-prefix ownership for generated trees.
+- The first complete payload audit then rejected real source paths retained
+  by C/C++ `__FILE__` strings in Ghostty's bundled shader translators, ImGui,
+  stb, HarfBuzz, Fontconfig, and libxml2 code. Stripping debug sections cannot
+  remove runtime assertion strings, and broadening the audit would hide a real
+  reproducibility and privacy defect. Ghostty commit
+  `4ceacd74b00da6f84c7986291954c81c3d9b733e` applies compiler-supported
+  `-ffile-prefix-map` flags to the bundled code that Ghostty must retain. The
+  Ubuntu package build uses the baseline system Fontconfig and HarfBuzz,
+  consistent with the ratified system-library policy, rather than bundling
+  second copies merely to control their source paths. A real stripped embed
+  build proved that the remaining bundled paths map under `/usr/src/ghostty`;
+  no binary string rewriting or audit exception was introduced.

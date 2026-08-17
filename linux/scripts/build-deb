@@ -52,6 +52,7 @@ build_environment=(
     "ZENTTY_GHOSTTY_INSTALL_DIR=${ghostty_install}"
     "ZENTTY_BUILD_OUTPUT_DIR=${stage}"
     "GHOSTTY_OPTIMIZE=ReleaseSafe"
+    "GHOSTTY_SYSTEM_INTEGRATIONS=fontconfig,harfbuzz"
 )
 if [[ -n "${GHOSTTY_SOURCE_DIR:-}" ]]; then
     build_environment+=("GHOSTTY_SOURCE_DIR=${ghostty_source}")
