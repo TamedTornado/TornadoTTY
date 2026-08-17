@@ -156,3 +156,16 @@ second package layout.
   extracted notices survived the full structural audit, and deleting either
   the main copyright or a single Ghostty third-party notice caused the mutated
   payload to fail qualification.
+- Final notice-bearing reproducibility passed for all four release outputs at
+  `0.1.0+git7b40b65be420`. A second clean independent clone at exact revision
+  `7b40b65be420b9842e6f802d256ea88405ee2b89` also built and passed with the
+  developer checkout masked. Dependency-notice collection is part of routine
+  qualification support; the expensive double-build and clean-clone journeys
+  remain explicit release-builder tests rather than silently inflating every
+  local matrix run.
+- Builder-contract negatives use independent real Git repositories: a dirty
+  Zentty clone, a clean commit with the required icon removed, and a clean but
+  wrong Ghostty repository. Payload mutations now also recompute the expanded
+  manifest digest before proving credential-shaped content and static archives
+  are rejected by their specific policies rather than merely by the generic
+  closed-world file-set comparison.

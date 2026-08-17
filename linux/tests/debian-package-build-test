@@ -79,4 +79,23 @@ jq --arg sha "${runpath_sha}" '(.files[] | select(.path == "/usr/lib/zentty/lib/
     "${manifest}" >"${runpath_manifest}"
 expect_rejected bad-runpath "Ghostty RUNPATH is not install-relative" "${runpath_manifest}"
 
-echo "debian-package-build-test: PASS structural=real negatives=undeclared+license+third-party-license+mode+path+runpath"
+extract_package credential
+printf '\napi_key=not-a-real-secret-fixture\n' >> \
+    "${temporary}/credential/usr/share/applications/com.zentty.zentty.desktop"
+credential_manifest="${temporary}/credential-manifest.json"
+credential_sha="$(sha256sum "${temporary}/credential/usr/share/applications/com.zentty.zentty.desktop" | awk '{print $1}')"
+jq --arg sha "${credential_sha}" '(.files[] | select(.path == "/usr/share/applications/com.zentty.zentty.desktop") | .sha256) = $sha' \
+    "${manifest}" >"${credential_manifest}"
+expect_rejected credential "credential-shaped content in payload" "${credential_manifest}"
+
+forbidden_file="${temporary}/forbidden-static/usr/lib/zentty/unexpected.a"
+extract_package forbidden-static
+install -m 0644 /dev/null "${forbidden_file}"
+forbidden_manifest="${temporary}/forbidden-static-manifest.json"
+jq --arg sha "$(sha256sum "${forbidden_file}" | awk '{print $1}')" \
+    '.files += [{path:"/usr/lib/zentty/unexpected.a",type:"file",mode:"644",
+      owner_component:"negative-fixture",sha256:$sha}]' \
+    "${manifest}" >"${forbidden_manifest}"
+expect_rejected forbidden-static "forbidden payload file" "${forbidden_manifest}"
+
+echo "debian-package-build-test: PASS structural=real negatives=undeclared+license+third-party-license+mode+path+runpath+credential+static-archive"

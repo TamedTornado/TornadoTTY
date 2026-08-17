@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+temporary="$(mktemp -d)"
+trap 'rm -rf -- "${temporary}"' EXIT
+
+expect_failure() {
+    local name="$1" expected="$2"
+    shift 2
+    if "$@" >"${temporary}/${name}.log" 2>&1; then
+        echo "debian-package-builder-contract-test: ${name} unexpectedly passed" >&2
+        exit 1
+    fi
+    grep -Fq "${expected}" "${temporary}/${name}.log" || {
+        cat "${temporary}/${name}.log" >&2
+        echo "debian-package-builder-contract-test: ${name} lacked expected failure" >&2
+        exit 1
+    }
+}
+
+git clone --quiet --no-local --no-hardlinks "${repo_root}" "${temporary}/dirty"
+printf '\ndirty package build\n' >>"${temporary}/dirty/README.md"
+expect_failure dirty-checkout "Zentty checkout must be clean" \
+    env ZENTTY_PACKAGE_OUTPUT_DIR="${temporary}/dirty-output" \
+    "${temporary}/dirty/linux/scripts/build-deb"
+
+git clone --quiet --no-local --no-hardlinks "${repo_root}" "${temporary}/missing-resource"
+git -C "${temporary}/missing-resource" rm --quiet assets/icon.png
+git -C "${temporary}/missing-resource" \
+    -c user.name='Zentty Test' -c user.email='test@invalid' \
+    commit --quiet -m 'remove required package resource'
+expect_failure missing-resource "manifest source file is missing: assets/icon.png" \
+    env ZENTTY_PACKAGE_OUTPUT_DIR="${temporary}/missing-output" \
+    "${temporary}/missing-resource/linux/scripts/build-deb"
+
+mkdir -p -- "${temporary}/wrong-ghostty"
+git -C "${temporary}/wrong-ghostty" init --quiet
+printf 'not Ghostty\n' >"${temporary}/wrong-ghostty/README"
+git -C "${temporary}/wrong-ghostty" add README
+git -C "${temporary}/wrong-ghostty" \
+    -c user.name='Zentty Test' -c user.email='test@invalid' \
+    commit --quiet -m 'wrong source'
+expect_failure wrong-ghostty "expected $(sed -n 's/^revision=//p' "${repo_root}/linux/ghostty.lock")" \
+    env GHOSTTY_SOURCE_DIR="${temporary}/wrong-ghostty" \
+    ZENTTY_PACKAGE_OUTPUT_DIR="${temporary}/wrong-output" \
+    ZENTTY_PACKAGE_WORK_DIR="${temporary}/wrong-work" \
+    "${repo_root}/linux/scripts/build-deb"
+
+echo "debian-package-builder-contract-test: PASS negatives=dirty+missing-resource+wrong-ghostty"
