@@ -90,3 +90,12 @@ second package layout.
   second copies merely to control their source paths. A real stripped embed
   build proved that the remaining bundled paths map under `/usr/src/ghostty`;
   no binary string rewriting or audit exception was introduced.
+- Ubuntu 24.04's system HarfBuzz 8.3 lacks
+  `HB_BUFFER_CLUSTER_LEVEL_GRAPHEMES`, which the pinned Ghostty Zig binding
+  requires, so the first system-library build failed at compile time rather
+  than silently weakening the API. Ghostty commit
+  `831a92dd27ef811af94d505d2a870b6603fe904c` extends the same compiler mapping
+  to its required bundled HarfBuzz. A real ReleaseSafe build with system
+  Fontconfig, bundled HarfBuzz, and external debug stripping then contained
+  zero developer checkout or build paths. The package therefore uses system
+  Fontconfig but retains the compatibility-required HarfBuzz bundle.
