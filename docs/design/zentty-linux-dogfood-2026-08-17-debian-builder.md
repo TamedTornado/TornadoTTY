@@ -54,3 +54,7 @@ second package layout.
   depend on Ghostty's existing resource installation steps. A targeted clean
   prefix build produced the real compiled `x/xterm-ghostty` entry and relative
   `g/ghostty` alias; no Zentty-owned terminfo generator was introduced.
+- The first lock edit expanded the displayed short hash by hand and therefore
+  wrote a nonexistent 40-character object. Immediate `rev-parse` comparison
+  caught it before any build; the lock now contains the exact Git-produced
+  revision `7f0b21e3f594a6821512e4532a7eda76828400c0`.

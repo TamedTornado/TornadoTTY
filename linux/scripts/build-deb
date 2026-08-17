@@ -17,8 +17,9 @@ fail() {
     exit 1
 }
 
-for dependency in appstreamcli cargo date desktop-file-validate dpkg-deb \
-    dpkg-shlibdeps file find gzip jq patchelf readelf sha256sum stat strip; do
+for dependency in appstreamcli awk cargo cmp cut date desktop-file-validate \
+    dpkg dpkg-deb dpkg-shlibdeps file find git gzip install jq md5sum paste \
+    patchelf readelf rustc sed sha256sum sort stat strip touch xargs; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
 
