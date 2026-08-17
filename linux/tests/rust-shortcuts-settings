@@ -3,7 +3,8 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
-ghostty_root="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
+bundle_root="$(cd "$(dirname "${product}")/.." 2>/dev/null && pwd)" || bundle_root=""
+bundle_lib="${bundle_root}/lib"
 run_root="$(mktemp -d)"
 state_directory="${run_root}/state"
 ready="${run_root}/terminal.ready"
@@ -52,14 +53,17 @@ for dependency in awk cmp grep mktemp od readelf sed sleep stat stty tr; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
 [[ -x "${product}" ]] || fail "staged product is missing: ${product}"
+[[ -f "${bundle_lib}/libghostty-gtk-embed.so" ]] ||
+    fail "selected product bundle has no Ghostty library"
+[[ -f "${bundle_lib}/libgtk4-layer-shell.so" ]] ||
+    fail "selected product bundle has no GTK layer-shell library"
 
 layer_runpath="$(
-    readelf -d "${ghostty_root}/zig-out/lib/libghostty-gtk-embed.so" |
+    readelf -d "${bundle_lib}/libghostty-gtk-embed.so" |
         sed -n 's/.*Library runpath: \[\([^]]*\)\].*/\1/p' |
         cut -d: -f1
 )"
 [[ "${layer_runpath}" == .zig-cache/* ]] || fail "Ghostty runpath is not pinned"
-layer_directory="${ghostty_root}/${layer_runpath}"
 mkdir -p "${state_directory}"
 ghostty_config="${XDG_CONFIG_HOME}/ghostty/config"
 mkdir -p "$(dirname "${ghostty_config}")"
@@ -79,7 +83,7 @@ start_product() {
     : >"${log}"
     GDK_SCALE=1 \
     GDK_DPI_SCALE=1 \
-    LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+    LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
         "${product}" \
         --command "${command}" \
         --state-directory "${state_directory}" \

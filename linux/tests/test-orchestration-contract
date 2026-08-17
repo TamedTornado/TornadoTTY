@@ -17,6 +17,7 @@ platform_contract_actor="${repo_root}/crates/zentty-test-support/src/bin/platfor
 wayland_input_harness="${repo_root}/linux/tests/nested-wayland-input"
 multi_window_harness="${repo_root}/linux/tests/rust-multi-window"
 workspace_settings_harness="${repo_root}/linux/tests/rust-workspace-pane-settings"
+shortcut_settings_harness="${repo_root}/linux/tests/rust-shortcuts-settings"
 failures=0
 
 reject() {
@@ -82,6 +83,12 @@ require "the real multi-window product journey is missing or not executable" \
     test -x "${multi_window_harness}"
 require "the real staged CLI contract journey is missing or not executable" \
     test -x "${repo_root}/linux/tests/rust-cli-contract"
+# The product script must retain this literal runtime path expression.
+# shellcheck disable=SC2016
+require "shortcut settings does not load Ghostty from the selected product bundle" \
+    grep -Fq 'bundle_lib="${bundle_root}/lib"' "${shortcut_settings_harness}"
+reject "shortcut settings still depends on a mutable Ghostty source-tree output" \
+    grep -Fq 'ghostty_root}/zig-out' "${shortcut_settings_harness}"
 require "the cross-compositor window placement policy is missing" \
     test -f "${window_placement_policy}"
 require "the placement policy does not state Wayland compositor ownership" \

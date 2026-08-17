@@ -176,3 +176,38 @@ the referenced qualification matrix SHA-256 is
 `cfb00b392def7069ca9b9baa0a2ff3587f9e65955fc54232064808d7f7387851`.
 The receipt claims only the public PR subset. Implemented-local, release, and
 full-Linux qualification remain explicitly unclaimed.
+
+## Public run 32080633377: clean-run-only test dependency found
+
+The first gate push ran publicly at
+<https://github.com/TamedTornado/zentty/actions/runs/32080633377>. The workflow
+reconstructed the pinned environment, exact Ghostty source, ReleaseSafe product,
+both release display journeys, both staged journeys, API audit, Debug product,
+X11 physical keys, and both product boundaries. It then failed
+`shortcut-binding-runtime-wayland` after 18 minutes. The failure remained a
+failure, the preflight receipt revalidated, and the artifact upload retained
+the machine summary, all earlier logs, and every controlled-environment receipt.
+
+The retained command log showed `rust-shortcuts-settings` trying to inspect
+`build/linux-deps/ghostty/zig-out/lib/libghostty-gtk-embed.so`. The authoritative
+ReleaseSafe build deliberately installs Ghostty into the selected product
+profile and does not create that source-tree output. The local gate had passed
+only because an unrelated old `zig-out` survived from development. This was a
+real clean-environment test bug: the shortcut journey could load a dependency
+different from the binary under test.
+
+The journey now derives `bundle_root/lib` from `ZENTTY_LINUX_BINARY`, requires
+both delivered Ghostty and layer-shell libraries there, reads the runpath from
+that delivered Ghostty library, and runs the product with only the selected
+bundle library path. `test-orchestration-contract` rejects reintroduction of
+the mutable source-tree dependency and is now the ninth support test in the
+single versioned gate policy.
+
+The first focused repair run could not start Xvfb because the restricted
+namespace presents `/tmp/.X11-unix` with the wrong ownership. That environmental
+absence failed rather than passing. Repeating through the approved host
+namespace produced controlled X11 session
+`559534892023366b5f4658346e77ecf23dcd6547ab37e3168d9a5bfdbdfcaf93` and
+input-capable Wayland session
+`e25a4b82fd30a207925c70bb45f21dc4410130df9ed467c8cbcbdb29d71cecc3`;
+the complete physical shortcut/settings/reload/persistence journey passed.

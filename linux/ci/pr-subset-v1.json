@@ -10,7 +10,8 @@
     "linux/ci/workflow-contract-test",
     "linux/ci/gate-workflow-contract-test",
     "linux/ci/validate-pr-subset-test",
-    "linux/ci/run-pr-subset-test"
+    "linux/ci/run-pr-subset-test",
+    "linux/tests/test-orchestration-contract"
   ],
   "selected_cells": [
     "prepare-ghostty",

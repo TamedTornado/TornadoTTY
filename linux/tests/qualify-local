@@ -33,7 +33,6 @@ support_tests=(
     linux/tests/package-qualification-receipt-test
     linux/tests/feature-inventory-test
     linux/tests/cli-source-contract-test
-    linux/tests/test-orchestration-contract
     linux/tests/tmux-compat-source-contract-test
     linux/tests/controlled-agent-test
     linux/tests/lib/controlled-environment-test
