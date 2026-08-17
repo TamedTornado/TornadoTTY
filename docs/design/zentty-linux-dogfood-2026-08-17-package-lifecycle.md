@@ -96,3 +96,18 @@ lifecycle journey.
   snapshot. The receipt now includes before-state hashes and after-state user,
   system-path, package-status, and payload fingerprints for each transition,
   plus raw dpkg and failed-upgrade log digests.
+
+## Qualification notes
+
+- The first post-commit focused-suite command used the nonexistent historical
+  names `debian-package-policy-test`, `qualification-matrix-validate`, and
+  `architecture-validate`. It stopped immediately before executing a test.
+  The repository's authoritative entry points are `packaging-policy-test`,
+  `qualification-matrix --validate-only`, and `architecture-contract`; the
+  corrected command passed those suites, the lifecycle runner negatives, and
+  ShellCheck for every changed shell script.
+- The clean-revision wrapper built commit `120f4a110ec448eb19f41d52e60468b6c537be5a`
+  into `zentty_0.1.0+git120f4a110ec4_amd64.deb` and the resulting real-dpkg
+  nine-transition journey passed. The builder boundary suite also passed its
+  dirty-tree, missing-resource, wrong-Ghostty, and prepared-wrong-Ghostty
+  negative cases.
