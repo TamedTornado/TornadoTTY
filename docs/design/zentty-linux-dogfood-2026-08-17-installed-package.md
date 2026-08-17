@@ -1,6 +1,6 @@
 # Installed-package qualification dogfood — 2026-08-17
 
-Issue: GH-54  
+Issue: GH-54
 Parent: GH-9
 
 ## Purpose and non-drift constraints
