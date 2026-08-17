@@ -190,3 +190,12 @@ operator's prepared rustup store before isolation, places its real `cargo` and
 read-only into a fresh `CARGO_HOME` with Cargo offline. Build outputs and Cargo
 compilation state remain writable only in the temporary workspace. This makes
 the clean proof independent of ambient `HOME` without permitting downloads.
+
+The third full run progressed through the pinned Rust setup and then exposed
+one remaining inherited-environment leak: the outer isolated session's
+`TMPDIR` named its private host path, which intentionally does not exist behind
+the inner `/tmp` tmpfs. GLib honored that stale path and failed closed. The
+inner build now explicitly binds `TMPDIR=/tmp`, matching its private writable
+tmpfs. The same run had one unrelated Wayland agent-hook deadline failure; no
+package dependency relied on it, and it remains a failure pending rerun rather
+than being reclassified.

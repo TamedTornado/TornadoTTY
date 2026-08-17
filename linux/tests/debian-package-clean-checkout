@@ -74,6 +74,7 @@ bwrap \
         CARGO_HOME=/mnt/cargo-home \
         CARGO_NET_OFFLINE=true \
         RUSTC="${rustc}" \
+        TMPDIR=/tmp \
         ZIG="${zig}" \
         BLUEPRINT_COMPILER_DIR="${blueprint}" \
         GHOSTTY_SOURCE_DIR=/mnt/ghostty \
