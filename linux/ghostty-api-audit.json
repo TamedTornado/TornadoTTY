@@ -8,7 +8,7 @@
     "local_fork_main_merge_base": "ac04fc276169c70d31aa6fcfc5b43fc160d6fe6e",
     "upstream_remote_tracking_ref_available": false,
     "embedding_series_base": "ac04fc276169c70d31aa6fcfc5b43fc160d6fe6e",
-    "head": "f4e85f032a0118eca32d2179b4f379a3769c7bb2"
+    "head": "281d7d7dbeab24c1a2d04f6d3c720c34dbfac645"
   },
   "diff_identity": {
     "git_object_format": "sha1",
@@ -53,16 +53,28 @@
       "classification": "Complete GTK embedding implementation, downstream policy, current-upstream port, and experimental test harness."
     },
     {
+      "id": "packaging-reproducibility",
+      "base": "f4e85f032a0118eca32d2179b4f379a3769c7bb2",
+      "head": "281d7d7dbeab24c1a2d04f6d3c720c34dbfac645",
+      "commit_count": 4,
+      "file_count": 7,
+      "hunk_count": 8,
+      "additions": 41,
+      "deletions": 2,
+      "patch_sha256": "9c463c20978174b65fe3f3f9c1b06b7c554f5be45dbc787e0491c64e72dfa832",
+      "classification": "Resource installation and reproducible debug-path mapping required by the deterministic Debian package builder."
+    },
+    {
       "id": "all-downstream-from-recorded-official-base",
       "base": "ac04fc276169c70d31aa6fcfc5b43fc160d6fe6e",
-      "head": "f4e85f032a0118eca32d2179b4f379a3769c7bb2",
-      "commit_count": 27,
-      "file_count": 16,
-      "hunk_count": 57,
-      "additions": 1468,
-      "deletions": 53,
-      "patch_sha256": "28ba7da03e47217658b2c16e1ab87cffaa5619c78d553b8865b477264d8ec9e5",
-      "classification": "Complete direct-fork downstream delta; identical to the GTK embedding range after obsolete inherited smooth-scroll history was removed."
+      "head": "281d7d7dbeab24c1a2d04f6d3c720c34dbfac645",
+      "commit_count": 31,
+      "file_count": 20,
+      "hunk_count": 64,
+      "additions": 1509,
+      "deletions": 55,
+      "patch_sha256": "de9255524cdddada4a3109e7a223fb0a319ada4db40c04cd265872f7a3afc8ac",
+      "classification": "Complete direct-fork downstream delta: the GTK embedding range plus the separately classified packaging-reproducibility range."
     }
   ],
   "commits": [
@@ -92,7 +104,11 @@
     {"id":"b992c688a680067fae8b51112d1833611136fb57","subject":"Expose embedded surface cell metrics","partition":"gtk-embedding"},
     {"id":"472ba70436a7f13006d24612eab7d04cce820cc9","subject":"Expose embedded terminal selection reads","partition":"gtk-embedding"},
     {"id":"c92768fae16bff6fc849f53176c1c77813e6135a","subject":"gtk: expose surface foreground process ID","partition":"gtk-embedding"},
-    {"id":"f4e85f032a0118eca32d2179b4f379a3769c7bb2","subject":"gtk: expose embedded runtime config reload","partition":"gtk-embedding"}
+    {"id":"f4e85f032a0118eca32d2179b4f379a3769c7bb2","subject":"gtk: expose embedded runtime config reload","partition":"gtk-embedding"},
+    {"id":"7f0b21e3f594a6821512e4532a7eda76828400c0","subject":"Install resources with GTK embed library","partition":"packaging-reproducibility"},
+    {"id":"4ceacd74b00da6f84c7986291954c81c3d9b733e","subject":"build: map bundled C source paths reproducibly","partition":"packaging-reproducibility"},
+    {"id":"831a92dd27ef811af94d505d2a870b6603fe904c","subject":"build: map bundled HarfBuzz source paths","partition":"packaging-reproducibility"},
+    {"id":"281d7d7dbeab24c1a2d04f6d3c720c34dbfac645","subject":"build: map bundled layer-shell source paths","partition":"packaging-reproducibility"}
   ],
   "files": [
     {"partition":"gtk-embedding","status":"M","path":"AGENTS.md","additions":24,"deletions":0,"hunks":1,"patch_sha256":"20b72948328b85597eaafc218b3fdc2133f1b34e935fff85e3979e00c55c15d6","purpose":"Zentty-only dogfood and qualification policy.","recommendation":"Retain downstream only; exclude from any generic patch."},
@@ -110,7 +126,14 @@
     {"partition":"gtk-embedding","status":"A","path":"src/gtk_embed_options.zig","additions":68,"deletions":0,"hunks":1,"patch_sha256":"b05b8ca00c11cb6e081413373d338c3bbf1905124dc3def9ff49db4b7de04c1c","purpose":"Pure size-versioned surface-option validation and focused unit tests without compiling the full GTK embedding dependency graph.","recommendation":"Retain as narrow engine-owned contract coverage for the construction options."},
     {"partition":"gtk-embedding","status":"A","path":"src/gtk_embed_spike.valgrind.supp","additions":71,"deletions":0,"hunks":1,"patch_sha256":"78ec498786b543fc22d8e80013bb937445aac642b9bd6ad84db4971b68004e57","purpose":"Private spike suppressions for external GTK/fontconfig allocations.","recommendation":"Retain downstream test evidence only; do not mix with generic implementation."},
     {"partition":"gtk-embedding","status":"A","path":"src/gtk_embed_spike.zig","additions":423,"deletions":0,"hunks":1,"patch_sha256":"e5705302e7f1b622c9762ad79fea482f6b20b074e21bbd557a7af246cec1ae9c","purpose":"Private alternate-host probe using internal Zig APIs for lifecycle, PTY, signals, input, clipboard, OSC progress and desktop notifications, focus, resize, and scale.","recommendation":"Retain the real PTY/parser/action/progress and desktop-notification signal assertions as engine-owned behavior; keep downstream orchestration and unrelated qualification policy out of a generic patch."},
-    {"partition":"gtk-embedding","status":"M","path":"src/termio/Exec.zig","additions":31,"deletions":1,"hunks":2,"patch_sha256":"47ba5b910e8de2fdbb6b998530b196573d4d5caa4adabf71649862fbd4c4188b","purpose":"Clone shell command text into subprocess ownership and add a freed-config regression test.","recommendation":"Plausibly independent generic bug fix; review separately."}
+    {"partition":"gtk-embedding","status":"M","path":"src/termio/Exec.zig","additions":31,"deletions":1,"hunks":2,"patch_sha256":"47ba5b910e8de2fdbb6b998530b196573d4d5caa4adabf71649862fbd4c4188b","purpose":"Clone shell command text into subprocess ownership and add a freed-config regression test.","recommendation":"Plausibly independent generic bug fix; review separately."},
+    {"partition":"packaging-reproducibility","status":"M","path":"build.zig","additions":4,"deletions":0,"hunks":1,"patch_sha256":"fef8cb6e2122aef7092ae9a48a1878ca59d4e2405a2d17b3a243801a85a9e8b1","purpose":"Install Ghostty runtime resources when building only the GTK embedding library.","recommendation":"Keep as minimal upstream-reviewable build plumbing for alternate GTK hosts."},
+    {"partition":"packaging-reproducibility","status":"M","path":"pkg/dcimgui/build.zig","additions":6,"deletions":0,"hunks":1,"patch_sha256":"c94aa60df080eec51e0ce895c4daf3cc76339fc1b4fa1c3abce65d8a3ff15850","purpose":"Map bundled dcimgui compiler paths to stable package-owned paths.","recommendation":"Keep with the reproducible-build change set."},
+    {"partition":"packaging-reproducibility","status":"M","path":"pkg/glslang/build.zig","additions":6,"deletions":0,"hunks":1,"patch_sha256":"92156caa5ffaebeee14f2e3c4cc74a9e8a475cbd1307ae595effb08b279d6a02","purpose":"Map bundled glslang compiler paths to stable package-owned paths.","recommendation":"Keep with the reproducible-build change set."},
+    {"partition":"packaging-reproducibility","status":"M","path":"pkg/gtk4-layer-shell/build.zig","additions":3,"deletions":0,"hunks":1,"patch_sha256":"b664237504ce4e534a675d3be58c0cc1a8143909f42bb7cee2a4e345ee1fd81d","purpose":"Map bundled gtk4-layer-shell compiler paths to stable package-owned paths.","recommendation":"Keep with the reproducible-build change set."},
+    {"partition":"packaging-reproducibility","status":"M","path":"pkg/harfbuzz/build.zig","additions":6,"deletions":0,"hunks":1,"patch_sha256":"b9f0e8d536a40c63f853abd96acc5a7e8be670c0e7228d759726c156ebf2b554","purpose":"Map bundled HarfBuzz compiler paths to stable package-owned paths.","recommendation":"Keep with the reproducible-build change set."},
+    {"partition":"packaging-reproducibility","status":"M","path":"pkg/spirv-cross/build.zig","additions":6,"deletions":0,"hunks":1,"patch_sha256":"5ba20c22f5ed70dadbc1184f4354b86a4e8320f3e87602f33c340f2866b5863a","purpose":"Map bundled SPIRV-Cross compiler paths to stable package-owned paths.","recommendation":"Keep with the reproducible-build change set."},
+    {"partition":"packaging-reproducibility","status":"M","path":"src/build/SharedDeps.zig","additions":10,"deletions":2,"hunks":2,"patch_sha256":"fb26d20dc83fc013a1f5aae68562235328ca5b3972a5e71a3682f422d5a08ca4","purpose":"Use the stable package path mapping for shared C dependencies while preserving existing C flags.","recommendation":"Keep with the reproducible-build change set and its byte-identical package proof."}
   ],
   "abi": {
     "exported_function_count": 16,

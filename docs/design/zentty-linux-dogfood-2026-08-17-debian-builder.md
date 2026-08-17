@@ -200,3 +200,17 @@ second package layout.
   rejected it. The audit now parses the emitted relation and uses Debian's own
   version comparison to prove it is greater than or equal to the floor; a
   stronger derived dependency is no longer mistaken for a missing baseline.
+- The first full qualification rerun after the packaging work correctly failed
+  three declared-PASS cells. `linux/ghostty.lock` had advanced through four
+  packaging commits, while both the architecture contract and the authoritative
+  Ghostty delta audit still ended at the preceding embedding-API commit. The
+  failure was policy drift, not a product runtime failure, and it was not
+  converted into a skip. The audit now keeps the original 27-commit/16-file
+  GTK embedding range intact, adds a distinct four-commit/seven-file
+  `packaging-reproducibility` range, and verifies the aggregate 31-commit
+  downstream delta independently. Its per-file ledger includes normalized
+  patch identities for every duplicated build file, so packaging changes are
+  not mislabeled as API changes or allowed to disappear behind the aggregate.
+  The architecture contract now pins the same reviewed Ghostty revision as the
+  build lock. The focused audit normalization self-test and architecture
+  positive/negative contract suites pass with this repair.

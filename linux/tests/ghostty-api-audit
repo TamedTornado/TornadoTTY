@@ -70,8 +70,8 @@ jq -e '
     (.diff_identity.digest_algorithm == "sha256") and
     (.diff_identity.locale == "C") and
     (.diff_identity.normalization | length) == 21 and
-    (.ranges | length) == 2 and
-    (.files | length) == 16 and
+    (.ranges | length) == 3 and
+    (.files | length) == 23 and
     (.abi.exported_function_count == 16) and
     (.abi.operations | length) == .abi.exported_function_count and
     (.abi.ghostty_owned_public_type_count == 6) and
@@ -99,7 +99,7 @@ jq -e '
         .requirement_id == "ZL-11-GHOSTTY-ABI-COMPAT" and
         .test_id == "TEST-GHOSTTY-ASYNC-BACKEND-ABI" and
         .matrix_cell_id == "ghostty-async-backend-abi-representation")) and
-    ([.files[].path] | length == (unique | length)) and
+    ([.files[] | "\(.partition):\(.path)"] | length == (unique | length)) and
     ([.abi.operations[].symbol] | length == (unique | length)) and
     (.rust_binding.declared_function_count == 13) and
     ((.rust_binding.operations | length) == .rust_binding.declared_function_count) and
@@ -252,10 +252,11 @@ validate_range() {
 }
 
 validate_range gtk-embedding
+validate_range packaging-reproducibility
 validate_range all-downstream-from-recorded-official-base
 
-partition=gtk-embedding
-range_id="${partition}"
+for partition in gtk-embedding packaging-reproducibility; do
+    range_id="${partition}"
     base="$(jq -r --arg id "${range_id}" '.ranges[] | select(.id == $id) | .base' "${inventory}")"
     range_head="$(jq -r --arg id "${range_id}" '.ranges[] | select(.id == $id) | .head' "${inventory}")"
     expected_count="$(jq -r --arg p "${partition}" '[.files[] | select(.partition == $p)] | length' "${inventory}")"
@@ -283,6 +284,7 @@ range_id="${partition}"
              (.hunks | tostring), .patch_sha256, .path] | @tsv
         ' "${inventory}"
     )
+done
 
 expected_commits="$(jq -r '.commits[].id' "${inventory}")"
 actual_commits="$(git -C "${ghostty_source}" rev-list --reverse "${official_base}..${head}")"
@@ -385,7 +387,7 @@ done < <(
     ' "${inventory}"
 )
 
-pass_message="Ghostty API audit inventory passed: 16 files, 57 hunks, 16 allowlisted function exports, 13 product-owned Rust declarations, 6 Ghostty-owned public types, 1 external GtkWidget dependency"
+pass_message="Ghostty API audit inventory passed: 16 embedding files, 7 packaging files, 65 partition hunks, 16 allowlisted function exports, 13 product-owned Rust declarations, 6 Ghostty-owned public types, 1 external GtkWidget dependency"
 echo "${pass_message}"
 
 if [[ "${mode}" == "--self-test" ]]; then
