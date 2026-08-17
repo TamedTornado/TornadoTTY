@@ -248,3 +248,40 @@ payload audit, install/reinstall, expected upgrade rejection, purge/residue,
 and the authoritative summary all passed. The run remained failed because both
 agent cells rejected the mismatched expected version, so none of those results
 is promoted to final qualification evidence.
+
+The focused Wayland agent journey was rerun with the same reviewed Gemini
+`0.53.0` directory prepended by `qualify-local`; every real-system stage passed.
+The subsequent complete qualification of implementation revision
+`f1937303947b632bace4950e8b69dbb7d08a0a33` passed every presently executable
+support test and matrix cell. Declared totals were 161 PASS, 0 FAIL, 5 BLOCKED,
+1 XFAIL, and 14 NOT_IMPLEMENTED. Therefore the implemented local suite passed,
+while release and full Linux qualification correctly remained unclaimed. The
+matrix wall time was 1,069,480 ms; the summary SHA-256 was
+`76d994ecb34e774df0fb34859fe338507df80db51bf541d00e4134ae0cefb6dc`.
+
+The exact Debian artifact was
+`zentty_0.1.0+gitf1937303947b_amd64.deb`, SHA-256
+`55fff91c0e24bee24c7147ea87b466765af5ccb8af7613668cdecf8ef804d1ef`.
+The clean different-path, network-disabled rebuild produced all four outputs
+byte-identically. Its receipt SHA-256 was
+`fb187c0609123be23021a005ccf178de0a7d96552978a6337b9d6bc858976ec4`;
+the package-audit receipt was
+`065600a82322a47096902962d2ed22d939c10ea7ecc427eb0ce56ba138628549`;
+the lifecycle receipt was
+`60427147e797c6cf1d4e4b9123a0906a7dd291c6a8de792d813ecb7e1212616e`;
+and the authoritative package-summary receipt was
+`316e821ef2844cfa6743f70d29ce81472295ae1fda07040964b5265270866383`.
+Installed-product receipts passed in controlled X11 session
+`decba2ceec1ad8a44ee66ddce81657c7b9645d932c76784e7909b9691d6e8ba4`
+and controlled Wayland session
+`1d9fe32b57a462bab07f33099a2c4ea11559aaab40f1c1ed73e18a8521ee7775`.
+
+Debug Valgrind is **PASS with reviewed suppressions**, not an unsuppressed
+clean result. The preserved raw run reported 427 errors in 427 contexts,
+6,240 definite bytes and 41,460 indirect bytes. The reviewed effective set
+reduced the post-suppression report to zero errors, contexts, definite bytes,
+and indirect bytes, with all 427 errors/contexts accounted as suppressed. The
+governance cell accepted the effective Ghostty and Zentty suppression manifests;
+the report SHA-256 was
+`b57cadb7529b370be48d15b2d1fc3c4316c93867b7e1ae4eb3814b8ff0bcf48c`.
+ReleaseSafe Valgrind remains the declared XFAIL and was not broadened to green.
