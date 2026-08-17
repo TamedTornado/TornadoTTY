@@ -1,0 +1,137 @@
+{
+  "schema_version": 1,
+  "baseline": {
+    "runner_label": "ubuntu-24.04",
+    "distribution_id": "ubuntu",
+    "distribution_version": "24.04",
+    "architecture": "amd64",
+    "runner_image_identity": "record-from-GITHUB_ACTIONS_IMAGE_VERSION"
+  },
+  "toolchains": {
+    "rust": {
+      "version": "1.97.1",
+      "source": "rust-toolchain.toml"
+    },
+    "zig": {
+      "version": "0.16.0",
+      "url": "https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz",
+      "sha256": "70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00"
+    },
+    "blueprint_compiler": {
+      "version": "0.16.0",
+      "repository": "https://gitlab.gnome.org/jwestman/blueprint-compiler.git",
+      "revision": "04ef0944db56ab01307a29aaa7303df6067cb3c0"
+    },
+    "node": {
+      "major": 24,
+      "package_manager": "pnpm",
+      "pnpm_version": "10.32.1",
+      "pnpm_url": "https://registry.npmjs.org/pnpm/-/pnpm-10.32.1.tgz",
+      "pnpm_integrity": "sha512-pwaTjw6JrBRWtlY+q07fHR+vM2jRGR/FxZeQ6W3JGORFarLmfWE94QQ9LoyB+HMD5rQNT/7KnfFe8a1Wc0jyvg==",
+      "minimum_release_age_minutes": 10080,
+      "lockfile": "linux/ci/node-tools/pnpm-lock.yaml"
+    }
+  },
+  "reviewed_agent_clis": {
+    "gemini": {
+      "package": "@google/gemini-cli",
+      "version": "0.53.0"
+    },
+    "codex": {
+      "package": "@openai/codex",
+      "version": "0.147.0"
+    },
+    "claude": {
+      "version": "2.1.201",
+      "url": "https://downloads.claude.ai/claude-code-releases/2.1.201/linux-x64/claude",
+      "sha256": "a34809a6839fdefff21b9347d7fb5b6b58e6a9cc208a5e62853f29c83eb107a3",
+      "size_bytes": 251300664
+    }
+  },
+  "apt_packages": [
+    "alsa-utils",
+    "appstream",
+    "bubblewrap",
+    "build-essential",
+    "cage",
+    "curl",
+    "dbus-x11",
+    "desktop-file-utils",
+    "dpkg-dev",
+    "ffmpeg",
+    "fish",
+    "fontconfig",
+    "gir1.2-gtk-4.0",
+    "git",
+    "ibus",
+    "ibus-gtk4",
+    "imagemagick",
+    "jq",
+    "labwc",
+    "libadwaita-1-dev",
+    "libcairo2-dev",
+    "libfontconfig-dev",
+    "libglib2.0-dev",
+    "libgtk-4-dev",
+    "libnotify-bin",
+    "libwayland-dev",
+    "libx11-dev",
+    "libxkbcommon-dev",
+    "meson",
+    "ninja-build",
+    "openbox",
+    "openssh-client",
+    "openssh-server",
+    "patchelf",
+    "pkg-config",
+    "python3",
+    "python3-gi",
+    "python3-jsonschema",
+    "shellcheck",
+    "tmux",
+    "valgrind",
+    "wayland-utils",
+    "weston",
+    "wl-clipboard",
+    "wtype",
+    "xauth",
+    "xclip",
+    "xdg-utils",
+    "xdotool",
+    "xserver-xephyr",
+    "xvfb",
+    "ydotool",
+    "zsh"
+  ],
+  "deterministic_environment": {
+    "LANG": "C.UTF-8",
+    "LC_ALL": "C.UTF-8",
+    "TZ": "UTC",
+    "XKB_DEFAULT_LAYOUT": "us",
+    "LIBGL_ALWAYS_SOFTWARE": "1",
+    "GALLIUM_DRIVER": "llvmpipe",
+    "GSETTINGS_BACKEND": "memory",
+    "GIO_USE_VFS": "local"
+  },
+  "source_contract": {
+    "ghostty_lock": "linux/ghostty.lock",
+    "ghostty_repository": "https://github.com/TamedTornado/ghostty.git",
+    "ghostty_revision": "281d7d7dbeab24c1a2d04f6d3c720c34dbfac645"
+  },
+  "cache_policy": {
+    "allowed": [
+      "cargo-git",
+      "cargo-registry",
+      "pnpm-store",
+      "rust-toolchain",
+      "zig-global-source-cache"
+    ],
+    "forbidden": [
+      "build-output",
+      "package-artifact",
+      "qualification-summary",
+      "test-receipt",
+      "valgrind-receipt"
+    ]
+  }
+}

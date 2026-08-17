@@ -5,7 +5,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=linux/tests/lib/bounded-batch
 source "${repo_root}/linux/tests/lib/bounded-batch"
 support_jobs="${ZENTTY_QUALIFICATION_SUPPORT_JOBS:-2}"
-pinned_gemini_bin="${repo_root}/build/linux-deps/gemini-cli-0.53.0/node_modules/.bin/gemini"
+pinned_gemini_bin="${repo_root}/linux/ci/node-tools/node_modules/.bin/gemini"
 [[ "${support_jobs}" =~ ^[1-9][0-9]*$ ]] || {
     echo "qualify-local: ZENTTY_QUALIFICATION_SUPPORT_JOBS must be a positive integer" >&2
     exit 64

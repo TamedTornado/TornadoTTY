@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+manifest="${ZENTTY_CI_ENVIRONMENT_MANIFEST:-${repo_root}/linux/ci/environment-v1.json}"
+
+fail() {
+    echo "validate-ci-environment: error: $*" >&2
+    exit 1
+}
+
+command -v jq >/dev/null || fail "jq is required"
+[[ -f "${manifest}" ]] || fail "manifest is missing: ${manifest}"
+
+jq -e '
+  .schema_version == 1 and
+  (.baseline == {
+    runner_label:"ubuntu-24.04",
+    distribution_id:"ubuntu",
+    distribution_version:"24.04",
+    architecture:"amd64",
+    runner_image_identity:"record-from-GITHUB_ACTIONS_IMAGE_VERSION"
+  }) and
+  (.toolchains.rust == {version:"1.97.1",source:"rust-toolchain.toml"}) and
+  (.toolchains.zig.version == "0.16.0") and
+  (.toolchains.zig.url == "https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz") and
+  (.toolchains.zig.sha256 | test("^[0-9a-f]{64}$")) and
+  (.toolchains.blueprint_compiler.version == "0.16.0") and
+  (.toolchains.blueprint_compiler.revision | test("^[0-9a-f]{40}$")) and
+  (.toolchains.node == {
+    major:24,
+    package_manager:"pnpm",
+    pnpm_version:"10.32.1",
+    pnpm_url:"https://registry.npmjs.org/pnpm/-/pnpm-10.32.1.tgz",
+    pnpm_integrity:"sha512-pwaTjw6JrBRWtlY+q07fHR+vM2jRGR/FxZeQ6W3JGORFarLmfWE94QQ9LoyB+HMD5rQNT/7KnfFe8a1Wc0jyvg==",
+    minimum_release_age_minutes:10080,
+    lockfile:"linux/ci/node-tools/pnpm-lock.yaml"
+  }) and
+  (.reviewed_agent_clis.gemini == {package:"@google/gemini-cli",version:"0.53.0"}) and
+  (.reviewed_agent_clis.codex == {package:"@openai/codex",version:"0.147.0"}) and
+  (.reviewed_agent_clis.claude.version == "2.1.201") and
+  (.reviewed_agent_clis.claude.sha256 | test("^[0-9a-f]{64}$")) and
+  (.reviewed_agent_clis.claude.size_bytes == 251300664) and
+  (.apt_packages | type == "array" and length > 0 and . == (sort | unique)) and
+  (.deterministic_environment == {
+    LANG:"C.UTF-8",LC_ALL:"C.UTF-8",TZ:"UTC",XKB_DEFAULT_LAYOUT:"us",
+    LIBGL_ALWAYS_SOFTWARE:"1",GALLIUM_DRIVER:"llvmpipe",
+    GSETTINGS_BACKEND:"memory",GIO_USE_VFS:"local"
+  }) and
+  (.source_contract.ghostty_lock == "linux/ghostty.lock") and
+  (.source_contract.ghostty_repository == "https://github.com/TamedTornado/ghostty.git") and
+  (.source_contract.ghostty_revision | test("^[0-9a-f]{40}$")) and
+  (.cache_policy.allowed == (.cache_policy.allowed | sort | unique)) and
+  (.cache_policy.forbidden == (.cache_policy.forbidden | sort | unique)) and
+  ((.cache_policy.allowed - .cache_policy.forbidden) == .cache_policy.allowed)
+' "${manifest}" >/dev/null || fail "manifest shape or pinned policy is invalid"
+
+[[ "$(jq -r '.toolchains.rust.version' "${manifest}")" == \
+    "$(sed -n 's/^channel = "\([^"]*\)"/\1/p' "${repo_root}/rust-toolchain.toml")" ]] ||
+    fail "Rust manifest version differs from rust-toolchain.toml"
+[[ "$(jq -r '.source_contract.ghostty_repository' "${manifest}")" == \
+    "$(sed -n 's/^repo=//p' "${repo_root}/linux/ghostty.lock")" ]] ||
+    fail "Ghostty repository differs from linux/ghostty.lock"
+[[ "$(jq -r '.source_contract.ghostty_revision' "${manifest}")" == \
+    "$(sed -n 's/^revision=//p' "${repo_root}/linux/ghostty.lock")" ]] ||
+    fail "Ghostty revision differs from linux/ghostty.lock"
+[[ "$(jq -r '.toolchains.node.minimum_release_age_minutes' "${manifest}")" == 10080 ]] ||
+    fail "pnpm minimum release age must be seven days"
+grep -Fxq 'minimum-release-age=10080' "${repo_root}/linux/ci/node-tools/.npmrc" ||
+    fail "node toolchain .npmrc must enforce the seven-day release age"
+jq -e '
+  .name == "zentty-ci-agent-cli-toolchain" and
+  .private == true and
+  .packageManager == "pnpm@10.32.1" and
+  .dependencies == {
+    "@google/gemini-cli":"0.53.0",
+    "@openai/codex":"0.147.0"
+  }
+' "${repo_root}/linux/ci/node-tools/package.json" >/dev/null ||
+    fail "node toolchain package policy is invalid"
+grep -Fq "'@google/gemini-cli@0.53.0':" \
+    "${repo_root}/linux/ci/node-tools/pnpm-lock.yaml" ||
+    fail "Gemini is absent from the pnpm lockfile"
+grep -Fq "'@openai/codex@0.147.0':" \
+    "${repo_root}/linux/ci/node-tools/pnpm-lock.yaml" ||
+    fail "Codex is absent from the pnpm lockfile"
+grep -Fq 'sha512-2taA43ERfQ4yPzJGYGTQ4LPjDsFs8d52v1SbInm8ZKtzSyXlHJnI4LHL/wGRBY0MGqH/IWCv7zvT+8aZPu3Sew==' \
+    "${repo_root}/linux/ci/node-tools/pnpm-lock.yaml" ||
+    fail "Gemini lockfile integrity changed"
+grep -Fq 'sha512-EQLEXecAG2ptxI7UpBMo2TR/ga5596/c/OsYF/0LoUDh5JANZ7IoGqlzBEWbuEVQ76JePIbtTW/ihCkp1a7Z3w==' \
+    "${repo_root}/linux/ci/node-tools/pnpm-lock.yaml" ||
+    fail "Codex lockfile integrity changed"
+
+echo "validate-ci-environment: PASS baseline=ubuntu-24.04-amd64 rust=1.97.1 zig=0.16.0 pnpm=10.32.1"

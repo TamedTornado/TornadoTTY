@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+validator="${repo_root}/linux/ci/validate-environment"
+fixture="$(mktemp -d)"
+trap 'rm -rf -- "${fixture}"' EXIT
+
+fail() {
+    echo "validate-environment-test: error: $*" >&2
+    exit 1
+}
+
+expect_rejected() {
+    local name="$1"
+    local filter="$2"
+    local candidate="${fixture}/${name}.json"
+    jq "${filter}" "${repo_root}/linux/ci/environment-v1.json" >"${candidate}"
+    if ZENTTY_CI_ENVIRONMENT_MANIFEST="${candidate}" "${validator}" \
+        >"${fixture}/${name}.out" 2>&1; then
+        fail "${name} mutation was accepted"
+    fi
+}
+
+"${validator}" >/dev/null
+expect_rejected missing-baseline 'del(.baseline.architecture)'
+expect_rejected wrong-runner '.baseline.runner_label = "ubuntu-latest"'
+expect_rejected wrong-rust '.toolchains.rust.version = "1.96.0"'
+expect_rejected wrong-zig-hash '.toolchains.zig.sha256 = "unverified"'
+expect_rejected unpinned-blueprint '.toolchains.blueprint_compiler.revision = "main"'
+expect_rejected wrong-pnpm '.toolchains.node.pnpm_version = "10.31.0"'
+expect_rejected release-age-disabled '.toolchains.node.minimum_release_age_minutes = 0'
+expect_rejected wrong-agent-version '.reviewed_agent_clis.codex.version = "latest"'
+expect_rejected duplicate-apt '.apt_packages += ["zsh"]'
+expect_rejected unsorted-apt '.apt_packages = (.apt_packages | reverse)'
+expect_rejected cache-overlap '.cache_policy.allowed += ["test-receipt"] | .cache_policy.allowed |= sort'
+expect_rejected wrong-ghostty '.source_contract.ghostty_revision = "0000000000000000000000000000000000000000"'
+
+echo "validate-environment-test: PASS negatives=baseline+toolchains+release-age+agents+apt+cache+ghostty"

@@ -1,0 +1,133 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+manifest="${ZENTTY_CI_ENVIRONMENT_MANIFEST:-${repo_root}/linux/ci/environment-v1.json}"
+tools_root="${ZENTTY_CI_TOOLS_ROOT:-${repo_root}/build/linux-ci-tools}"
+install_system=true
+
+fail() {
+    echo "bootstrap-ubuntu-24.04: error: $*" >&2
+    exit 1
+}
+
+case "${1:-}" in
+    --print-apt)
+        jq -r '.apt_packages[]' "${manifest}"
+        exit 0
+        ;;
+    --no-system-install) install_system=false ;;
+    "") ;;
+    *) fail "usage: $0 [--print-apt|--no-system-install]" ;;
+esac
+
+"${repo_root}/linux/ci/validate-environment" >/dev/null
+for dependency in base64 curl git jq openssl sha256sum tar; do
+    command -v "${dependency}" >/dev/null || fail "${dependency} is required"
+done
+
+if "${install_system}"; then
+    [[ "$(id -u)" == 0 ]] || fail "system package installation requires root"
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update
+    mapfile -t apt_packages < <(jq -r '.apt_packages[]' "${manifest}")
+    apt-get install -y --no-install-recommends "${apt_packages[@]}"
+fi
+
+mkdir -p "${tools_root}" "${repo_root}/build/linux-deps"
+
+zig_version="$(jq -r '.toolchains.zig.version' "${manifest}")"
+zig_url="$(jq -r '.toolchains.zig.url' "${manifest}")"
+zig_sha="$(jq -r '.toolchains.zig.sha256' "${manifest}")"
+zig_dir="${tools_root}/zig-x86_64-linux-${zig_version}"
+if [[ ! -x "${zig_dir}/zig" ]] || [[ "$("${zig_dir}/zig" version)" != "${zig_version}" ]]; then
+    archive="$(mktemp)"
+    trap 'rm -f -- "${archive:-}"' EXIT
+    curl -fsSL "${zig_url}" -o "${archive}"
+    [[ "$(sha256sum "${archive}" | awk '{print $1}')" == "${zig_sha}" ]] ||
+        fail "Zig archive checksum mismatch"
+    rm -rf -- "${zig_dir}"
+    tar -xJf "${archive}" -C "${tools_root}"
+    rm -f -- "${archive}"
+    trap - EXIT
+fi
+[[ "$("${zig_dir}/zig" version)" == "${zig_version}" ]] || fail "Zig version mismatch"
+
+blueprint_version="$(jq -r '.toolchains.blueprint_compiler.version' "${manifest}")"
+blueprint_repository="$(jq -r '.toolchains.blueprint_compiler.repository' "${manifest}")"
+blueprint_revision="$(jq -r '.toolchains.blueprint_compiler.revision' "${manifest}")"
+blueprint_source="${tools_root}/blueprint-compiler-source"
+blueprint_prefix="${tools_root}/blueprint-compiler-${blueprint_version}"
+if [[ ! -x "${blueprint_prefix}/bin/blueprint-compiler" ]] ||
+    [[ "$("${blueprint_prefix}/bin/blueprint-compiler" --version)" != "${blueprint_version}" ]]; then
+    rm -rf -- "${blueprint_source}" "${blueprint_prefix}"
+    git clone --filter=blob:none --no-checkout "${blueprint_repository}" "${blueprint_source}"
+    git -C "${blueprint_source}" fetch --depth=1 origin "${blueprint_revision}"
+    git -C "${blueprint_source}" checkout --detach "${blueprint_revision}"
+    [[ "$(git -C "${blueprint_source}" rev-parse HEAD)" == "${blueprint_revision}" ]] ||
+        fail "Blueprint compiler revision mismatch"
+    meson setup "${blueprint_source}/build" "${blueprint_source}" \
+        --prefix "${blueprint_prefix}" --buildtype release
+    meson install -C "${blueprint_source}/build"
+fi
+[[ "$("${blueprint_prefix}/bin/blueprint-compiler" --version)" == "${blueprint_version}" ]] ||
+    fail "Blueprint compiler version mismatch"
+
+rust_version="$(jq -r '.toolchains.rust.version' "${manifest}")"
+command -v rustup >/dev/null || fail "rustup is required"
+if ! rustup toolchain list | grep -Eq "^${rust_version}(-x86_64-unknown-linux-gnu)?( \(.*\))?$"; then
+    rustup toolchain install "${rust_version}" --profile minimal --component clippy,rustfmt
+fi
+
+pnpm_version="$(jq -r '.toolchains.node.pnpm_version' "${manifest}")"
+pnpm_url="$(jq -r '.toolchains.node.pnpm_url' "${manifest}")"
+pnpm_integrity="$(jq -r '.toolchains.node.pnpm_integrity' "${manifest}")"
+pnpm_dir="${tools_root}/pnpm-${pnpm_version}"
+pnpm_bin="${pnpm_dir}/bin/pnpm.cjs"
+command -v node >/dev/null || fail "Node is required"
+[[ "$(node --version)" == v24.* ]] || fail "Node 24 is required"
+if [[ ! -x "${pnpm_bin}" ]] || [[ "$("${pnpm_bin}" --version)" != "${pnpm_version}" ]]; then
+    archive="$(mktemp)"
+    trap 'rm -f -- "${archive:-}"' EXIT
+    curl -fsSL "${pnpm_url}" -o "${archive}"
+    actual_integrity="sha512-$(openssl dgst -sha512 -binary "${archive}" | base64 -w0)"
+    [[ "${actual_integrity}" == "${pnpm_integrity}" ]] || fail "pnpm archive integrity mismatch"
+    rm -rf -- "${pnpm_dir}"
+    mkdir -p "${pnpm_dir}"
+    tar -xzf "${archive}" --strip-components=1 -C "${pnpm_dir}"
+    chmod 0755 "${pnpm_bin}" "${pnpm_dir}/bin/pnpx.cjs"
+    rm -f -- "${archive}"
+    trap - EXIT
+fi
+(
+    cd "${repo_root}/linux/ci/node-tools"
+    "${pnpm_bin}" install --frozen-lockfile
+)
+
+claude_version="$(jq -r '.reviewed_agent_clis.claude.version' "${manifest}")"
+claude_url="$(jq -r '.reviewed_agent_clis.claude.url' "${manifest}")"
+claude_sha="$(jq -r '.reviewed_agent_clis.claude.sha256' "${manifest}")"
+claude_size="$(jq -r '.reviewed_agent_clis.claude.size_bytes' "${manifest}")"
+claude_dir="${HOME}/.local/share/claude/versions"
+claude_binary="${claude_dir}/${claude_version}"
+mkdir -p "${claude_dir}" "${HOME}/.local/bin"
+if [[ ! -f "${claude_binary}" ]] || [[ "$(sha256sum "${claude_binary}" | awk '{print $1}')" != "${claude_sha}" ]]; then
+    rm -f -- "${claude_binary}"
+    curl -fsSL "${claude_url}" -o "${claude_binary}"
+fi
+[[ "$(stat -c %s "${claude_binary}")" == "${claude_size}" ]] || fail "Claude binary size mismatch"
+[[ "$(sha256sum "${claude_binary}" | awk '{print $1}')" == "${claude_sha}" ]] ||
+    fail "Claude binary checksum mismatch"
+[[ -x "${claude_binary}" ]] || chmod 0755 "${claude_binary}"
+if [[ "$(readlink -f "${HOME}/.local/bin/claude" 2>/dev/null || true)" != "${claude_binary}" ]]; then
+    ln -sfn "${claude_binary}" "${HOME}/.local/bin/claude"
+fi
+
+cat >"${tools_root}/environment.sh" <<EOF
+export ZIG='${zig_dir}/zig'
+export BLUEPRINT_COMPILER_DIR='${blueprint_prefix}/bin'
+export ZENTTY_PNPM='${pnpm_bin}'
+export PATH='${repo_root}/linux/ci/node-tools/node_modules/.bin:${pnpm_dir}/bin:${HOME}/.local/bin':\$PATH
+EOF
+
+echo "bootstrap-ubuntu-24.04: PASS tools=${tools_root}"

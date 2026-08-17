@@ -1,0 +1,15 @@
+{
+  "name": "zentty-ci-agent-cli-toolchain",
+  "private": true,
+  "packageManager": "pnpm@10.32.1",
+  "dependencies": {
+    "@google/gemini-cli": "0.53.0",
+    "@openai/codex": "0.147.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@github/keytar",
+      "node-pty"
+    ]
+  }
+}

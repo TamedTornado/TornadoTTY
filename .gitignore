@@ -12,6 +12,7 @@ tmp/
 .opencode
 build/
 target/
+node_modules/
 mutants.out*/
 .agent-bench-runs/
 .sessions/
