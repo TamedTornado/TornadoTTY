@@ -215,3 +215,14 @@ now requires the live executable plus the exact backend-private installed
 receipt root inherited through the real desktop launch. Direct launches retain
 their stricter process-ancestry check. No product assertion was weakened, and
 the failed public-package evidence remains recorded.
+
+The first focused concurrency rerun command accidentally backgrounded the
+entire package-build AND-list rather than only the X11 journey. Wayland started
+before the exact package existed and correctly failed its provenance
+prerequisite; this was orchestration error, not product evidence. With explicit
+subshell grouping, the exact package was then exercised concurrently by real
+X11 and real nested Wayland sessions. Both installed-product journeys passed,
+including direct launch, injected crash/restart, desktop entry, PTYs, panes,
+clipboard, Open With, shell integration, and exact process audits. The selector
+repair therefore has the real colliding-workload coverage that exposed the bug;
+a final clean aggregate remains required.
