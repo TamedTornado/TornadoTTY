@@ -8,7 +8,7 @@ ghostty_revision="$(sed -n 's/^revision=//p' "${lock_file}")"
 ghostty_source="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
 zig="${ZIG:-${repo_root}/../.tools/zig-x86_64-linux-0.16.0/zig}"
 blueprint_dir="${BLUEPRINT_COMPILER_DIR:-${repo_root}/../.tools/blueprint-compiler-0.16.0/bin}"
-zig_global_cache="${repo_root}/build/linux-deps/zig-global-cache"
+zig_global_cache="${ZENTTY_ZIG_GLOBAL_CACHE_DIR:-${repo_root}/build/linux-deps/zig-global-cache}"
 zig_local_cache="${ghostty_source}/.zig-cache"
 output_dir="${ZENTTY_BUILD_OUTPUT_DIR:-${repo_root}/build/linux}"
 if [[ "${output_dir}" != /* ]]; then

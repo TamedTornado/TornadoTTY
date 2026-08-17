@@ -110,3 +110,14 @@ single-branch local clone with copied (not hard-linked) objects, verifies the
 exact pinned revision and clean state, and then disables networking for the
 actual build. A focused clone reproduced the repair without contacting a
 remote. The failure was not converted into a pass.
+
+The next run correctly entered the network-disabled namespace, then Zig tried
+to download `uucode`: cloning Ghostty does not include its ignored local cache,
+and `build-local` previously hard-coded the Zentty checkout's global Zig cache.
+Copying the 821 MiB cache for every qualification would waste disk and time,
+while reusing its compiled objects would weaken the different-path proof. The
+build helper now accepts an explicit global-cache directory. The clean journey
+creates a fresh writable cache and mounts only the prepared package-download
+subtree read-only at `p`; compilation objects are rebuilt in the temporary
+namespace. Network remains disabled, a missing prepared package remains a hard
+failure, and the potentially large temporary build tree is removed on exit.

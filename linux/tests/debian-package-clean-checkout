@@ -6,6 +6,8 @@ revision="$(git -C "${repo_root}" rev-parse HEAD)"
 temporary="$(mktemp -d)"
 isolated="${temporary}/source"
 isolated_ghostty="${temporary}/ghostty"
+isolated_zig_cache="${temporary}/zig-global-cache"
+prepared_zig_packages="${repo_root}/build/linux-deps/zig-global-cache/p"
 masked_checkout="${temporary}/masked-checkout"
 output_directory="${ZENTTY_PACKAGE_QUALIFICATION_DIR:-${repo_root}/build/linux/package-qualification}"
 trap 'rm -rf -- "${temporary}"' EXIT
@@ -22,7 +24,11 @@ for dependency in bwrap git; do
     }
 done
 
-mkdir -p -- "${masked_checkout}"
+mkdir -p -- "${masked_checkout}" "${isolated_zig_cache}/p"
+[[ -d "${prepared_zig_packages}" ]] || {
+    echo "debian-package-clean-checkout: prepared Zig package cache is missing" >&2
+    exit 1
+}
 zentty_exact_package_artifact "${repo_root}" || {
     echo "debian-package-clean-checkout: exact primary artifact set is missing or stale" >&2
     exit 1
@@ -45,6 +51,7 @@ bwrap \
     --unshare-net \
     --dev-bind /dev /dev \
     --bind "${temporary}" "${temporary}" \
+    --ro-bind "${prepared_zig_packages}" "${isolated_zig_cache}/p" \
     --ro-bind "${masked_checkout}" "${repo_root}" \
     --chdir "${isolated}" \
     -- \
@@ -52,6 +59,7 @@ bwrap \
         ZIG="${zig}" \
         BLUEPRINT_COMPILER_DIR="${blueprint}" \
         GHOSTTY_SOURCE_DIR="${isolated_ghostty}" \
+        ZENTTY_ZIG_GLOBAL_CACHE_DIR="${isolated_zig_cache}" \
         ZENTTY_GHOSTTY_PREPARED=true \
         ZENTTY_PACKAGE_OUTPUT_DIR="${isolated}/build/isolated-package" \
         ZENTTY_PACKAGE_WORK_DIR="${isolated}/build/isolated-package-work" \
