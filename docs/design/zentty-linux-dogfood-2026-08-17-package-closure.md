@@ -168,3 +168,13 @@ different canonical mount path. The diagnostic implementation commit was
 `baedc7242340a112302467ea9797ddc23be56b38ed01b9ab1b4df2479f41105b`.
 This focused receipt proves the repair. Final GH-55 evidence must still come
 from the subsequent all-cell qualification of the final implementation commit.
+
+The first full matrix run then failed `install-uninstall` before construction.
+Setting Cargo offline globally in `build-deb` was too broad: the matrix's
+display-none isolation intentionally supplies a private empty home, so its Cargo
+registry index is not the operator's prepared cache. Offline enforcement belongs
+to the clean-build Bubblewrap network namespace, where dependencies are
+deliberately mounted; it is not a portable property of every developer build
+invocation. The global Cargo override was removed. The failed producer caused
+all installed/package-summary dependents to report blocked-by-failed-dependency,
+not false passes; all unrelated executable cells passed.
