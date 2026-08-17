@@ -169,3 +169,9 @@ second package layout.
   manifest digest before proving credential-shaped content and static archives
   are rejected by their specific policies rather than merely by the generic
   closed-world file-set comparison.
+- Adding 160 dependency-notice files exposed an audit scaling flaw: every
+  payload file launched several jq processes to re-scan the full expanded
+  manifest, multiplying each negative mutation's cost. The audit now loads
+  receipt type/mode/digest/target maps once using a non-whitespace unit
+  separator (TSV would collapse empty symlink fields). A real 690-file positive
+  audit fell to about 5.6 seconds without removing any content checks.

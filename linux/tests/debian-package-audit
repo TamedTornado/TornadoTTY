@@ -25,24 +25,34 @@ find "${root}" -mindepth 1 \( -type f -o -type l \) ! -path "${root}/DEBIAN/*" \
 jq -r '.files[].path' "${expanded_manifest}" | LC_ALL=C sort >"${receipt_paths}"
 cmp -s "${actual_paths}" "${receipt_paths}" || fail "expanded manifest and payload differ"
 
+declare -A receipt_types receipt_modes receipt_digests receipt_targets
+while IFS=$'\x1f' read -r path type mode digest target; do
+    receipt_types["${path}"]="${type}"
+    receipt_modes["${path}"]="${mode}"
+    receipt_digests["${path}"]="${digest}"
+    receipt_targets["${path}"]="${target}"
+done < <(jq -r '.files[] |
+    [.path,.type,(.mode // ""),(.sha256 // ""),(.target // "")] | join("\u001f")' \
+    "${expanded_manifest}")
+
 while IFS= read -r path; do
     absolute="${root}${path}"
-    receipt_type="$(jq -er --arg path "${path}" '.files[] | select(.path == $path) | .type' "${expanded_manifest}")"
+    receipt_type="${receipt_types[${path}]}"
     [[ "${path}" != *'/../'* && "${path}" != /home/* && "${path}" != /tmp/* ]] ||
         fail "unsafe payload path: ${path}"
     if [[ -L "${absolute}" ]]; then
         [[ "${receipt_type}" == symlink ]] || fail "payload type drift: ${path}"
         target="$(readlink "${absolute}")"
-        [[ "${target}" == "$(jq -er --arg path "${path}" '.files[] | select(.path == $path) | .target' "${expanded_manifest}")" ]] ||
+        [[ "${target}" == "${receipt_targets[${path}]}" ]] ||
             fail "payload symlink drift: ${path}"
         [[ "${target}" != /* && "${target}" != *'..'*'..'* ]] || fail "unsafe symlink: ${path}"
     else
         [[ "${receipt_type}" == file ]] || fail "payload type drift: ${path}"
         mode="$(stat -c %a "${absolute}")"
-        [[ "${mode}" == "$(jq -er --arg path "${path}" '.files[] | select(.path == $path) | .mode' "${expanded_manifest}")" ]] ||
+        [[ "${mode}" == "${receipt_modes[${path}]}" ]] ||
             fail "payload mode drift: ${path}"
         [[ "$(sha256sum "${absolute}" | awk '{print $1}')" == \
-            "$(jq -er --arg path "${path}" '.files[] | select(.path == $path) | .sha256' "${expanded_manifest}")" ]] ||
+            "${receipt_digests[${path}]}" ]] ||
             fail "payload digest drift: ${path}"
         [[ "${mode}" == 644 || "${mode}" == 755 ]] || fail "unsafe payload mode ${mode}: ${path}"
         [[ ! -u "${absolute}" && ! -g "${absolute}" ]] || fail "set-id payload file: ${path}"
