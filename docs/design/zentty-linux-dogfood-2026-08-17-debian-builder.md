@@ -175,3 +175,10 @@ second package layout.
   receipt type/mode/digest/target maps once using a non-whitespace unit
   separator (TSV would collapse empty symlink fields). A real 690-file positive
   audit fell to about 5.6 seconds without removing any content checks.
+- Provenance review found that the first receipt pinned source/toolchain
+  revisions but did not expose dependency versions directly. The receipt now
+  records the exact derived Debian runtime relationship string, counts and
+  hashes for the packaged 77-Cargo/27-Ghostty component inventories, and
+  hashes of Cargo.lock, Ghostty build.zig.zon, packaging policy, and the closed
+  install manifest. The isolated test rejects absent or malformed dependency
+  provenance.

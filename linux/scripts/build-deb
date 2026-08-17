@@ -182,6 +182,7 @@ derived_dependencies="$(sed -n 's/^shlibs:Depends=//p' <<<"${shlibs_output}")"
 [[ -n "${derived_dependencies}" ]] || fail "dpkg-shlibdeps produced no dependency metadata"
 baseline_dependencies="$(jq -r '.dependencies.baseline_packages[] |
     "\(.name) (>= \(.minimum))"' "${policy}" | paste -sd, -)"
+runtime_dependencies="${baseline_dependencies}, ${derived_dependencies}"
 
 cat >"${package_root}/DEBIAN/control" <<EOF
 Package: zentty
@@ -190,7 +191,7 @@ Architecture: amd64
 Maintainer: Zentty Project <noreply@zentty.dev>
 Section: utils
 Priority: optional
-Depends: ${baseline_dependencies}, ${derived_dependencies}
+Depends: ${runtime_dependencies}
 Description: terminal workspace for coding agents
  Zentty organizes real Ghostty terminal sessions into worklanes and panes.
 EOF
@@ -229,11 +230,19 @@ jq -s --arg version "${package_version}" --arg revision "${zentty_revision}" \
     '{schema_version:1,package:"zentty",version:$version,architecture:"amd64",
       zentty_revision:$revision,files:.}' "${receipt_rows}" >"${expanded_manifest}"
 
+while IFS= read -r packaged_path; do
+    [[ "$(stat -c %Y "${packaged_path}")" == "${SOURCE_DATE_EPOCH}" ]] ||
+        fail "package timestamp was not normalized: ${packaged_path}"
+done < <(find "${package_root}" -print | LC_ALL=C sort)
+
 "${repo_root}/linux/tests/debian-package-audit" "${package_root}" "${expanded_manifest}"
 
 artifact="${output_root}/zentty_${package_version}_amd64.deb"
 rm -f -- "${artifact}"
 dpkg-deb --root-owner-group -Zxz --build "${package_root}" "${artifact}" >/dev/null
+if dpkg-deb --contents "${artifact}" | awk '$2 != "root/root" { found=1 } END { exit !found }'; then
+    fail "Debian archive contains a non-root owner or group"
+fi
 
 provenance="${output_root}/zentty_${package_version}_amd64.provenance.json"
 jq -n \
@@ -245,6 +254,15 @@ jq -n \
     --arg artifact_sha256 "$(sha256sum "${artifact}" | awk '{print $1}')" \
     --arg manifest "$(basename "${expanded_manifest}")" \
     --arg manifest_sha256 "$(sha256sum "${expanded_manifest}" | awk '{print $1}')" \
+    --arg runtime_dependencies "${runtime_dependencies}" \
+    --arg cargo_packages_sha256 "$(sha256sum "${package_root}/usr/share/doc/zentty/third-party/cargo-packages.json" | awk '{print $1}')" \
+    --argjson cargo_packages_count "$(jq 'length' "${package_root}/usr/share/doc/zentty/third-party/cargo-packages.json")" \
+    --arg ghostty_components_sha256 "$(sha256sum "${package_root}/usr/share/doc/zentty/third-party/ghostty-components.json" | awk '{print $1}')" \
+    --argjson ghostty_components_count "$(jq '.components | length' "${package_root}/usr/share/doc/zentty/third-party/ghostty-components.json")" \
+    --arg cargo_lock_sha256 "$(sha256sum "${repo_root}/Cargo.lock" | awk '{print $1}')" \
+    --arg ghostty_zon_sha256 "$(sha256sum "${ghostty_source}/build.zig.zon" | awk '{print $1}')" \
+    --arg policy_sha256 "$(sha256sum "${policy}" | awk '{print $1}')" \
+    --arg install_manifest_sha256 "$(sha256sum "${manifest}" | awk '{print $1}')" \
     --arg rustc "$(rustc --version)" --arg cargo "$(cargo --version)" \
     --arg zig "$("${ZIG:-${repo_root}/../.tools/zig-x86_64-linux-0.16.0/zig}" version)" \
     --arg dpkg_deb "$(dpkg-deb --version | head -1)" \
@@ -254,8 +272,23 @@ jq -n \
       zentty_revision:$zentty_revision,ghostty_revision:$ghostty_revision,
       source_date_epoch:$source_date_epoch,artifact:{file:$artifact,sha256:$artifact_sha256},
       manifest:{file:$manifest,sha256:$manifest_sha256},
+      dependencies:{debian_runtime:$runtime_dependencies,
+        cargo_packages:{count:$cargo_packages_count,sha256:$cargo_packages_sha256},
+        ghostty_components:{count:$ghostty_components_count,sha256:$ghostty_components_sha256}},
+      inputs:{cargo_lock_sha256:$cargo_lock_sha256,
+        ghostty_build_zon_sha256:$ghostty_zon_sha256,
+        policy_sha256:$policy_sha256,
+        install_manifest_sha256:$install_manifest_sha256},
       toolchain:{rustc:$rustc,cargo:$cargo,zig:$zig,dpkg_deb:$dpkg_deb,patchelf:$patchelf}}' \
     >"${provenance}"
+jq -e --arg revision "${zentty_revision}" --arg ghostty "${ghostty_revision}" '
+  .schema_version == 1 and .zentty_revision == $revision and
+  .ghostty_revision == $ghostty and
+  (.dependencies.debian_runtime | length > 0) and
+  (.dependencies.cargo_packages.count > 0) and
+  (.dependencies.ghostty_components.count > 0) and
+  all(.inputs[]; test("^[0-9a-f]{64}$"))' "${provenance}" >/dev/null ||
+    fail "provenance receipt is incomplete"
 
 (
     cd "${output_root}"

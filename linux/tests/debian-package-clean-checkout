@@ -52,6 +52,13 @@ manifest="${isolated}/build/isolated-package/zentty_${version}_amd64.manifest.js
 provenance="${isolated}/build/isolated-package/zentty_${version}_amd64.provenance.json"
 
 [[ "$(jq -er '.zentty_revision' "${provenance}")" == "${revision}" ]]
+jq -e '
+  (.dependencies.debian_runtime | length > 0) and
+  (.dependencies.cargo_packages.count > 0) and
+  (.dependencies.cargo_packages.sha256 | test("^[0-9a-f]{64}$")) and
+  (.dependencies.ghostty_components.count > 0) and
+  (.dependencies.ghostty_components.sha256 | test("^[0-9a-f]{64}$")) and
+  all(.inputs[]; test("^[0-9a-f]{64}$"))' "${provenance}" >/dev/null
 "${isolated}/linux/tests/debian-package-build-test" "${artifact}" "${manifest}" >/dev/null
 
 echo "debian-package-clean-checkout: PASS revision=${revision} developer_checkout=masked"
