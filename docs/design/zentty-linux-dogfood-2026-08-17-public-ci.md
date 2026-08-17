@@ -148,3 +148,33 @@ runner image happened to supply without our manifest: `mesa-utils` (`glxinfo`),
 All five are now explicit manifest packages, and preflight names the critical
 display and cleanup commands so this class of failure occurs before a costly
 product build. The reviewed apt contract therefore has 58 packages, not 53.
+
+Public run [32067900394](https://github.com/TamedTornado/zentty/actions/runs/32067900394)
+passed the final GH-56 foundation workflow at exact Zentty revision
+`2e785499c4d5124160a34dec25575339262eb0f0` and Ghostty revision
+`281d7d7dbeab24c1a2d04f6d3c720c34dbfac645`. The fresh hosted image was
+`20260810.271.1`; the 58-package manifest identity was
+`c6a8d877a5b77ee06224acdade1363bd242007508ee55cfc02f2e9d4ebe8766d`.
+The downloaded preflight receipt revalidated locally and has SHA-256
+`cd0b9136f3e1099fe5505da156d4f88ed47cf60070ef96ae1b3149a393bfbd4e`.
+A credential-pattern scan of every downloaded artifact file passed.
+
+The fresh job took 11 minutes 54 seconds. Apt provisioning took 1 minute 46
+seconds; content-pinned tool bootstrap took 29 seconds; exact Ghostty source
+preparation took 7 seconds; preflight took 5 seconds; and the uncached
+ReleaseSafe product build took 9 minutes 4 seconds. The controlled Wayland and
+X11 journeys then passed in 9 and 3 seconds, respectively. Their environment
+receipt SHA-256 identities are
+`e270a958a0c6e57f132b77aa61f1ad01a6ce4cf6e0e7667ab2abf4ec85b07187`
+and `3d527a524b896b77da778109a59a61eec52f77305adb482c77bc899438855e8b`.
+The cleanup receipt reported zero pre-existing product outputs on the fresh
+runner, after which both required executables were reconstructed and exercised.
+
+An attempted full local qualification before committing this evidence failed
+immediately and correctly: the package builder and `prepare-ghostty` reject a
+dirty Zentty checkout. That prerequisite failure also invalidated a packaging
+negative test whose intended Ghostty fault could not be reached. Concurrent
+wrapper self-tests subsequently observed fixture-only socket startup failures,
+but none can be treated as product evidence because the root prerequisite had
+already failed. The evidence must be committed first, then the entire local
+qualification rerun from the clean exact revision.
