@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+temporary="$(mktemp -d)"
+trap 'rm -rf -- "${temporary}"' EXIT
+
+for run in first second; do
+    ZENTTY_PACKAGE_OUTPUT_DIR="${temporary}/${run}/output" \
+    ZENTTY_PACKAGE_WORK_DIR="${temporary}/${run}/work" \
+        "${repo_root}/linux/scripts/build-deb" >"${temporary}/${run}.log" 2>&1 || {
+            cat "${temporary}/${run}.log" >&2
+            echo "debian-package-reproducibility: ${run} build failed" >&2
+            exit 1
+        }
+done
+
+mapfile -t first_files < <(
+    cd "${temporary}/first/output"
+    find . -maxdepth 1 -type f -printf '%P\n' | LC_ALL=C sort
+)
+mapfile -t second_files < <(
+    cd "${temporary}/second/output"
+    find . -maxdepth 1 -type f -printf '%P\n' | LC_ALL=C sort
+)
+
+[[ "${first_files[*]}" == "${second_files[*]}" ]] || {
+    printf 'first: %s\nsecond: %s\n' "${first_files[*]}" "${second_files[*]}" >&2
+    echo "debian-package-reproducibility: output file sets differ" >&2
+    exit 1
+}
+[[ "${#first_files[@]}" -eq 4 ]] || {
+    echo "debian-package-reproducibility: expected four release outputs" >&2
+    exit 1
+}
+
+for file in "${first_files[@]}"; do
+    cmp --silent \
+        "${temporary}/first/output/${file}" \
+        "${temporary}/second/output/${file}" || {
+            echo "debian-package-reproducibility: output differs: ${file}" >&2
+            exit 1
+        }
+done
+
+artifact="$(find "${temporary}/first/output" -maxdepth 1 -name '*.deb' -type f -print -quit)"
+version="$(dpkg-deb -f "${artifact}" Version)"
+echo "debian-package-reproducibility: PASS version=${version} outputs=${#first_files[@]}"
