@@ -38,6 +38,8 @@ expect_workflow_rejected wrong-node 'node-version: 24.14.0' 'node-version: lates
 # shellcheck disable=SC2016
 expect_workflow_rejected wrong-event-commit \
     'ZENTTY_EXPECTED_COMMIT: ${{ github.sha }}' 'ZENTTY_EXPECTED_COMMIT: refs/heads/linux/port'
+expect_workflow_rejected missing-userns-policy \
+    'kernel.apparmor_restrict_unprivileged_userns=0' 'kernel.apparmor_restrict_unprivileged_userns=1'
 
 jq '.actions[0].revision = "0000000000000000000000000000000000000000"' \
     "${actions_manifest}" >"${fixture}/changed-actions.json"

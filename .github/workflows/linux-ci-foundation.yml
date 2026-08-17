@@ -53,6 +53,11 @@ jobs:
           sudo env DEBIAN_FRONTEND=noninteractive \
             apt-get install -y --no-install-recommends "${packages[@]}" \
             2>&1 | tee build/linux/ci-apt-install.log
+          if [[ -r /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]] &&
+            [[ "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns)" == 1 ]]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 \
+              2>&1 | tee build/linux/ci-userns-policy.log
+          fi
 
       - name: Bootstrap content-pinned tools
         shell: bash

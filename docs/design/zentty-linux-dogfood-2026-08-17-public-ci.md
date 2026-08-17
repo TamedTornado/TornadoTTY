@@ -108,3 +108,16 @@ missing always-upload, wrong event binding, and altered action manifests. The
 workflow passed the checksum-pinned official actionlint 1.7.12 parser. The next
 evidence must come from its fresh public `ubuntu-24.04` run; local success does
 not substitute for that prerequisite.
+
+Public run [32066079879](https://github.com/TamedTornado/zentty/actions/runs/32066079879)
+completed provisioning and exact Ghostty preparation, then correctly failed
+preflight because GitHub's Ubuntu 24.04 image restricts unprivileged user
+namespaces through AppArmor. Failure evidence uploaded successfully and no
+stale preflight receipt survived. Bubblewrap and the clean package lifecycle
+cannot operate under that default.
+
+The runner is a fresh disposable VM dedicated to this job, so the workflow now
+explicitly sets `kernel.apparmor_restrict_unprivileged_userns=0` only when that
+Ubuntu policy knob exists and is enabled. Preflight still proves that both
+`unshare` and Bubblewrap actually work afterward; it does not convert their
+absence into PASS. The policy change is logged and retained with the run.

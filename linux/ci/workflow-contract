@@ -47,6 +47,8 @@ grep -Fq 'if: always()' "${workflow}" || fail "failure evidence is not uploaded"
 grep -Fq 'retention-days: 14' "${workflow}" || fail "artifact retention is not bounded"
 grep -Fq 'cancel-in-progress: true' "${workflow}" || fail "superseded runs are not cancelled"
 grep -Fq 'linux/ci/preflight' "${workflow}" || fail "preflight is not executed"
+grep -Fq 'kernel.apparmor_restrict_unprivileged_userns=0' "${workflow}" ||
+    fail "Ubuntu 24.04 user-namespace policy is not made explicit"
 grep -Fq 'linux/tests/qualification-matrix --validate-only' "${workflow}" ||
     fail "authoritative matrix validation is absent"
 grep -Fq 'linux/tests/nested-wayland' "${workflow}" || fail "controlled Wayland is absent"
