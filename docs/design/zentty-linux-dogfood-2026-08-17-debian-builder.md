@@ -41,3 +41,9 @@ second package layout.
   building or publishing anything. Static policy negatives, ShellCheck,
   desktop-file validation, pedantic offline AppStream validation, and diff
   hygiene passed before the first implementation commit.
+- The first real build completed the pinned Ghostty and ReleaseSafe Rust build,
+  including terminfo generation, then failed before package publication. A
+  single tab-separated loop tried to represent file and symlink variants with
+  empty columns; Bash whitespace-field collapsing shifted the symlink target
+  into the destination column. File and symlink manifest variants now use
+  separate typed loops with no optional fields.

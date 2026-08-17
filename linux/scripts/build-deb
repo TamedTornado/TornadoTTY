@@ -66,29 +66,27 @@ copy_file() {
 
 copy_stage_file() {
     local source="$1" destination="$2" mode="$3"
-    [[ -f "${repo_root}/${source}" ]] || fail "staged file is missing: ${source}"
+    [[ -f "${source}" ]] || fail "staged file is missing: ${source}"
     mkdir -p -- "$(dirname "${package_root}${destination}")"
-    install -m "${mode}" "${repo_root}/${source}" "${package_root}${destination}"
+    install -m "${mode}" "${source}" "${package_root}${destination}"
 }
 
-while IFS=$'\t' read -r kind source destination mode target; do
-    case "${kind}" in
-        file)
-            if [[ "${source}" == build/linux/* ]]; then
-                relative="${source#build/linux/}"
-                source="${stage#"${repo_root}"/}/${relative}"
-                copy_stage_file "${source}" "${destination}" "${mode}"
-            else
-                copy_file "${source}" "${destination}" "${mode}"
-            fi
-            ;;
-        symlink)
-            mkdir -p -- "$(dirname "${package_root}${destination}")"
-            ln -s -- "${target}" "${package_root}${destination}"
-            ;;
-    esac
-done < <(jq -r '.entries[] | select(.kind == "file" or .kind == "symlink") |
-    [.kind, (.source // ""), .destination, (.mode // ""), (.target // "")] | @tsv' "${manifest}")
+while IFS=$'\t' read -r source destination mode; do
+    if [[ "${source}" == build/linux/* ]]; then
+        relative="${source#build/linux/}"
+        source="${stage}/${relative}"
+        copy_stage_file "${source}" "${destination}" "${mode}"
+    else
+        copy_file "${source}" "${destination}" "${mode}"
+    fi
+done < <(jq -r '.entries[] | select(.kind == "file") |
+    [.source, .destination, .mode] | @tsv' "${manifest}")
+
+while IFS=$'\t' read -r destination target; do
+    mkdir -p -- "$(dirname "${package_root}${destination}")"
+    ln -s -- "${target}" "${package_root}${destination}"
+done < <(jq -r '.entries[] | select(.kind == "symlink") |
+    [.destination, .target] | @tsv' "${manifest}")
 
 while IFS=$'\t' read -r source destination mode_policy; do
     source_path="${stage}/${source#build/linux/}"
