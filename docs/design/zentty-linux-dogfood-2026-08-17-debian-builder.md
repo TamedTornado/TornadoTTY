@@ -99,3 +99,9 @@ second package layout.
   Fontconfig, bundled HarfBuzz, and external debug stripping then contained
   zero developer checkout or build paths. The package therefore uses system
   Fontconfig but retains the compatibility-required HarfBuzz bundle.
+- The subsequent package audit found the same runtime-path class independently
+  in the separately packaged gtk4-layer-shell library. Ghostty commit
+  `281d7d7dbeab24c1a2d04f6d3c720c34dbfac645` maps that dependency's source
+  root as well. Both stripped shared objects were inspected directly and now
+  contain no developer checkout or build path; this remains a build repair,
+  not a package-audit exclusion.
