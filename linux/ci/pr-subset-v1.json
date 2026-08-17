@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "name": "linux-public-pr-v1",
+  "matrix": "linux/qualification-matrix.json",
+  "support_tests": [
+    "linux/ci/validate-environment-test",
+    "linux/ci/preflight-test",
+    "linux/ci/reset-product-outputs-test",
+    "linux/ci/validate-preflight-receipt-test",
+    "linux/ci/workflow-contract-test",
+    "linux/ci/gate-workflow-contract-test",
+    "linux/ci/validate-pr-subset-test",
+    "linux/ci/run-pr-subset-test"
+  ],
+  "selected_cells": [
+    "prepare-ghostty",
+    "build-release",
+    "release-wayland-default-single",
+    "release-wayland-default-multi",
+    "release-x11-default-single",
+    "release-x11-default-multi",
+    "staged-wayland",
+    "staged-x11",
+    "ghostty-api-audit-inventory",
+    "build-debug",
+    "physical-key-x11",
+    "product-boundary-wayland",
+    "product-boundary-x11",
+    "shortcut-binding-runtime-wayland",
+    "product-pane-lifecycle-debug-wayland-default-multi",
+    "product-pane-lifecycle-debug-x11-default-multi",
+    "workspace-recovery-interrupted-write",
+    "workspace-recovery-corrupt-state"
+  ],
+  "coverage": {
+    "optimizations": ["Debug", "ReleaseSafe"],
+    "displays": ["wayland", "x11"],
+    "terminal_counts": ["single", "multi"],
+    "capabilities": [
+      "build",
+      "ghostty_api_audit",
+      "physical_key_translation",
+      "product_boundary",
+      "product_pane_terminal_lifecycle",
+      "recovery",
+      "shortcut_binding_runtime",
+      "staged_packaging",
+      "terminal_behavior"
+    ]
+  },
+  "known_gaps": [
+    {
+      "id": "physical-key-wayland",
+      "expected_status": "BLOCKED",
+      "prerequisite": "Tracked matrix prerequisite remains required; X11 physical-key coverage does not satisfy Wayland physical-key qualification."
+    },
+    {
+      "id": "ghostty-async-backend-abi-representation",
+      "expected_status": "XFAIL",
+      "prerequisite": "DOGFOOD-2026-08-02-GHOSTTY-ASYNC-ENUM-ABI must remain an explicit expected failure until the fixed-width ABI contract lands."
+    }
+  ],
+  "claims": {
+    "public_pr_subset_passed": false,
+    "implemented_local_suite_passed": false,
+    "release_qualification_passed": false,
+    "full_linux_qualification_passed": false
+  }
+}

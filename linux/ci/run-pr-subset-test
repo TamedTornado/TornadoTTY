@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+runner="${repo_root}/linux/ci/run-pr-subset"
+result_tool="${repo_root}/linux/ci/pr-subset-result"
+fixture="$(mktemp -d)"
+trap 'rm -rf -- "${fixture}"' EXIT
+
+fail() {
+    echo "run-pr-subset-test: error: $*" >&2
+    exit 1
+}
+
+expect_classification() {
+    local expected="$1" code="$2" receipt="$3"
+    [[ "$("${result_tool}" classify "${code}" "${receipt}")" == "${expected}" ]] ||
+        fail "exit=${code} receipt=${receipt} was not ${expected}"
+}
+
+expect_summary_rejected() {
+    local name="$1" filter="$2"
+    jq "${filter}" "${fixture}/passing.json" >"${fixture}/${name}.json"
+    if "${result_tool}" validate-summary "${fixture}/${name}.json" \
+        >"${fixture}/${name}.out" 2>&1; then
+        fail "${name} summary mutation was accepted"
+    fi
+}
+
+"${runner}" --validate-only >/dev/null
+grep -Fq 'subset evidence requires an exact committed tree' "${runner}" ||
+    fail "runner no longer rejects dirty source evidence"
+grep -Fq 'source revision differs from the exact event commit' "${runner}" ||
+    fail "runner no longer rejects the wrong event revision"
+expect_classification PASS 0 true
+expect_classification FAIL 1 true
+expect_classification UNEXPECTED_SKIP 77 true
+expect_classification INVALID_ENVIRONMENT_RECEIPT 0 false
+expect_classification INVALID_ENVIRONMENT_RECEIPT 77 false
+
+mkdir -p "${fixture}/logs"
+printf 'stale\n' >"${fixture}/summary.json"
+printf 'stale\n' >"${fixture}/logs/old.log"
+ZENTTY_CI_PR_SUBSET_SUMMARY="${fixture}/summary.json" \
+ZENTTY_CI_PR_SUBSET_LOGS="${fixture}/logs" \
+    "${runner}" --prepare-only >/dev/null
+[[ ! -e "${fixture}/summary.json" ]] || fail "stale summary survived preparation"
+[[ -z "$(find "${fixture}/logs" -mindepth 1 -print -quit)" ]] ||
+    fail "stale log survived preparation"
+
+hash="$(printf fixture | sha256sum | awk '{print $1}')"
+revision="0123456789abcdef0123456789abcdef01234567"
+jq -n \
+    --arg revision "${revision}" --arg hash "${hash}" '
+    {
+      schema_version:1,source_revision:$revision,ghostty_revision:$revision,
+      policy_sha256:$hash,matrix_sha256:$hash,
+      started_at_epoch:1,finished_at_epoch:2,
+      totals:{selected:1,passed:1,support_selected:1,support_passed:1},
+      support_results:[{
+        path:"linux/ci/preflight-test",outcome:"PASS",exit_code:0,
+        log:{path:"build/support.log",sha256:$hash}
+      }],
+      results:[{
+        id:"prepare-ghostty",declared_status:"PASS",outcome:"PASS",exit_code:0,
+        log:{path:"build/log",sha256:$hash},
+        environment:{path:"build/environment.json",sha256:$hash,session_id:$hash}
+      }],
+      claims:{
+        public_pr_subset_passed:true,
+        implemented_local_suite_passed:false,
+        release_qualification_passed:false,
+        full_linux_qualification_passed:false
+      }
+    }
+  ' >"${fixture}/passing.json"
+"${result_tool}" validate-summary "${fixture}/passing.json" >/dev/null
+
+expect_summary_rejected failed-command \
+    '.results[0].outcome="FAIL" | .results[0].exit_code=1 | .totals.passed=0'
+expect_summary_rejected unexpected-skip \
+    '.results[0].outcome="UNEXPECTED_SKIP" | .results[0].exit_code=77 | .totals.passed=0'
+expect_summary_rejected invalid-receipt \
+    '.results[0].outcome="INVALID_ENVIRONMENT_RECEIPT" | .totals.passed=0'
+expect_summary_rejected failed-support \
+    '.support_results[0].outcome="FAIL" | .support_results[0].exit_code=1 | .totals.support_passed=0'
+expect_summary_rejected false-subset-claim '.claims.public_pr_subset_passed=false'
+expect_summary_rejected false-full-claim '.claims.full_linux_qualification_passed=true'
+expect_summary_rejected incomplete-success '.totals.selected=2'
+expect_summary_rejected duplicate-result '.results += [.results[0]] | .totals.selected=2 | .totals.passed=2'
+
+echo "run-pr-subset-test: PASS negatives=stale+command+skip+receipt+support+claims+incomplete+duplicate"

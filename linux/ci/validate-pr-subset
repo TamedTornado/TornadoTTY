@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+policy="${ZENTTY_CI_PR_SUBSET_POLICY:-${repo_root}/linux/ci/pr-subset-v1.json}"
+matrix="${ZENTTY_QUALIFICATION_MATRIX:-${repo_root}/linux/qualification-matrix.json}"
+
+fail() {
+    echo "validate-pr-subset: error: $*" >&2
+    exit 1
+}
+
+command -v jq >/dev/null || fail "jq is required"
+[[ -f "${policy}" ]] || fail "subset policy is missing"
+[[ -f "${matrix}" ]] || fail "qualification matrix is missing"
+
+jq -e '
+  (keys | sort) == ["claims","coverage","known_gaps","matrix","name","schema_version","selected_cells","support_tests"] and
+  .schema_version == 1 and .name == "linux-public-pr-v1" and
+  .matrix == "linux/qualification-matrix.json" and
+  (.selected_cells | type == "array" and length > 0 and
+    all(.[]; type == "string" and test("^[a-z0-9][a-z0-9-]*$")) and
+    length == (unique | length)) and
+  .support_tests == [
+    "linux/ci/validate-environment-test",
+    "linux/ci/preflight-test",
+    "linux/ci/reset-product-outputs-test",
+    "linux/ci/validate-preflight-receipt-test",
+    "linux/ci/workflow-contract-test",
+    "linux/ci/gate-workflow-contract-test",
+    "linux/ci/validate-pr-subset-test",
+    "linux/ci/run-pr-subset-test"
+  ] and
+  .coverage == {
+    optimizations:["Debug","ReleaseSafe"],
+    displays:["wayland","x11"],
+    terminal_counts:["single","multi"],
+    capabilities:[
+      "build","ghostty_api_audit","physical_key_translation",
+      "product_boundary","product_pane_terminal_lifecycle","recovery",
+      "shortcut_binding_runtime","staged_packaging","terminal_behavior"
+    ]
+  } and
+  .claims == {
+    public_pr_subset_passed:false,
+    implemented_local_suite_passed:false,
+    release_qualification_passed:false,
+    full_linux_qualification_passed:false
+  } and
+  .known_gaps == [
+    {
+      id:"physical-key-wayland",expected_status:"BLOCKED",
+      prerequisite:"Tracked matrix prerequisite remains required; X11 physical-key coverage does not satisfy Wayland physical-key qualification."
+    },
+    {
+      id:"ghostty-async-backend-abi-representation",expected_status:"XFAIL",
+      prerequisite:"DOGFOOD-2026-08-02-GHOSTTY-ASYNC-ENUM-ABI must remain an explicit expected failure until the fixed-width ABI contract lands."
+    }
+  ]
+' "${policy}" >/dev/null || fail "policy schema, coverage, gaps, or claims drifted"
+
+if ! jq -e --slurpfile policy "${policy}" '
+  . as $matrix | $policy[0] as $policy |
+  def selected: [$matrix.cells[] | select(.id as $id | $policy.selected_cells | index($id))];
+  ($policy.selected_cells | length) == (selected | length) and
+  all(selected[];
+    .status == "PASS" and (.command | type == "string" and length > 0) and
+    (.environment_profile | type == "string" and length > 0)) and
+  all($policy.known_gaps[]; . as $gap |
+    any($matrix.cells[];
+      .id == $gap.id and .status == $gap.expected_status and
+      ((.prerequisite // .defect) | type == "string" and length > 0))) and
+  any(selected[]; .id == "prepare-ghostty") and
+  any(selected[]; .capability == "build" and .optimize == "ReleaseSafe") and
+  any(selected[]; .capability == "build" and .optimize == "Debug") and
+  all(["wayland","x11"][]; . as $display |
+    all(["single","multi"][]; . as $terminals |
+      any(selected[]; .capability == "terminal_behavior" and .display == $display and
+          .optimize == "ReleaseSafe" and .async_backend == "default" and
+          .terminals == $terminals))) and
+  all(["wayland","x11"][]; . as $display |
+    any(selected[]; .capability == "product_pane_terminal_lifecycle" and
+        .display == $display and .optimize == "Debug" and .terminals == "multi")) and
+  any(selected[]; .capability == "physical_key_translation" and .display == "x11") and
+  any(selected[]; .capability == "shortcut_binding_runtime" and .display == "wayland") and
+  all(["wayland","x11"][]; . as $display |
+    any(selected[]; .capability == "staged_packaging" and .display == $display)) and
+  all(["wayland","x11"][]; . as $display |
+    any(selected[]; .capability == "product_boundary" and .display == $display)) and
+  ([selected[] | select(.capability == "recovery")] | length) >= 2 and
+  any(selected[]; .capability == "ghostty_api_audit")
+' "${matrix}" >/dev/null; then
+    fail "selected cells are missing, non-executable, status-drifted, or semantically incomplete"
+fi
+
+if ! jq -e --slurpfile policy "${policy}" '
+  . as $matrix | $policy[0] as $policy |
+  def position($id): $policy.selected_cells | index($id);
+  def cell($id): first($matrix.cells[] | select(.id == $id));
+  all($policy.selected_cells[]; . as $id |
+    cell($id) as $cell |
+    (
+      (if $matrix.execution_graph.root_prerequisite != $id
+       then [$matrix.execution_graph.root_prerequisite] else [] end) +
+      ($cell.depends_on // []) +
+      (if ($cell.skip_profile_prerequisite // false) != true and
+          $matrix.execution_graph.profile_prerequisites[$cell.optimize]? != null and
+          $matrix.execution_graph.profile_prerequisites[$cell.optimize] != $id
+       then [$matrix.execution_graph.profile_prerequisites[$cell.optimize]] else [] end)
+    ) | unique |
+    all(.[]; position(.) != null and position(.) < position($id)))
+' "${matrix}" >/dev/null; then
+    fail "selected-cell order omits or precedes an authoritative prerequisite"
+fi
+
+while IFS= read -r support_test; do
+    [[ -f "${repo_root}/${support_test}" && -x "${repo_root}/${support_test}" ]] ||
+        fail "support test is missing or not executable: ${support_test}"
+done < <(jq -r '.support_tests[]' "${policy}")
+
+echo "validate-pr-subset: PASS cells=$(jq '.selected_cells | length' "${policy}") claims=subset-only"

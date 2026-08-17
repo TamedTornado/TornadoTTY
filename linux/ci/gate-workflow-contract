@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+workflow="${ZENTTY_CI_GATE_WORKFLOW:-${repo_root}/.github/workflows/linux-ci-gate.yml}"
+actions_manifest="${ZENTTY_CI_ACTIONS_MANIFEST:-${repo_root}/linux/ci/actions-v1.json}"
+environment_manifest="${ZENTTY_CI_ENVIRONMENT_MANIFEST:-${repo_root}/linux/ci/environment-v1.json}"
+fixture="$(mktemp -d)"
+trap 'rm -rf -- "${fixture}"' EXIT
+
+fail() {
+    echo "ci-gate-workflow-contract: error: $*" >&2
+    exit 1
+}
+
+for dependency in awk grep jq sort; do
+    command -v "${dependency}" >/dev/null || fail "${dependency} is required"
+done
+[[ -f "${workflow}" ]] || fail "gate workflow is missing"
+
+while IFS=$'\t' read -r repository revision; do
+    grep -Fq "uses: ${repository}@${revision}" "${workflow}" ||
+        fail "workflow does not pin ${repository} to ${revision}"
+done < <(jq -r '.actions[] | [.repository,.revision] | @tsv' "${actions_manifest}")
+
+if grep -Eq 'uses: [^#[:space:]]+@(v[0-9]+|main|master|latest)([[:space:]#]|$)' "${workflow}"; then
+    fail "workflow contains a mutable action reference"
+fi
+grep -Eq '^  pull_request:$' "${workflow}" || fail "pull_request trigger is absent"
+! grep -Eq 'pull_request_target|^[[:space:]]*secrets:' "${workflow}" ||
+    fail "privileged PR trigger or secrets are present"
+grep -Fq 'runs-on: ubuntu-24.04' "${workflow}" || fail "runner baseline is not pinned"
+grep -Fq 'node-version: 24.14.0' "${workflow}" || fail "Node version is not pinned"
+grep -Fq 'contents: read' "${workflow}" || fail "read-only contents permission is absent"
+! grep -Eq 'contents:[[:space:]]+write|permissions:[[:space:]]+write-all' "${workflow}" ||
+    fail "write permission is present"
+grep -Fq 'persist-credentials: false' "${workflow}" || fail "checkout credentials remain persisted"
+# GitHub expression must remain literal.
+# shellcheck disable=SC2016
+grep -Fq 'ZENTTY_EXPECTED_COMMIT: ${{ github.sha }}' "${workflow}" ||
+    fail "preflight is not bound to the event commit"
+grep -Fq 'linux/ci/run-pr-subset' "${workflow}" || fail "authoritative subset runner is absent"
+grep -Fq 'if: always()' "${workflow}" || fail "failure evidence is not retained"
+grep -Fq 'retention-days: 14' "${workflow}" || fail "artifact retention is not bounded"
+grep -Fq 'cancel-in-progress: true' "${workflow}" || fail "superseded runs are not cancelled"
+# GitHub expressions must remain literal.
+# shellcheck disable=SC2016
+grep -Fq 'name: linux-ci-gate-${{ github.sha }}-${{ github.run_attempt }}' "${workflow}" ||
+    fail "artifact identity is not commit- and attempt-specific"
+grep -Fq 'kernel.apparmor_restrict_unprivileged_userns=0' "${workflow}" ||
+    fail "Ubuntu user-namespace policy is not explicit"
+
+awk '
+  /^[[:space:]]+packages=\($/ { capture=1; next }
+  capture && /^[[:space:]]+\)$/ { exit }
+  capture {
+    for (field=1; field<=NF; field++) print $field
+  }
+' "${workflow}" | sort >"${fixture}/workflow-packages"
+jq -r '.apt_packages[]' "${environment_manifest}" | sort >"${fixture}/manifest-packages"
+cmp -s "${fixture}/workflow-packages" "${fixture}/manifest-packages" ||
+    fail "literal apt package list differs from the reviewed environment manifest"
+
+[[ "$(grep -Ec '^[[:space:]]+sudo (apt-get update|env DEBIAN_FRONTEND=noninteractive|sysctl -w kernel[.]apparmor_restrict_unprivileged_userns=0)' "${workflow}")" == 3 ]] ||
+    fail "sudo operations differ from the three reviewed workflow operations"
+! grep -Eq 'sudo[[:space:]]+(env[[:space:]]+[^[:space:]]+[[:space:]]+)?linux/|sudo .*\$\(|sudo .*`' "${workflow}" ||
+    fail "repository-derived or shell-generated command crosses sudo"
+
+echo "ci-gate-workflow-contract: PASS trigger=pull_request permissions=read subset=authoritative packages=reviewed"

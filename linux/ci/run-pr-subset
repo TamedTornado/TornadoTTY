@@ -1,0 +1,238 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+policy="${ZENTTY_CI_PR_SUBSET_POLICY:-${repo_root}/linux/ci/pr-subset-v1.json}"
+matrix="${ZENTTY_QUALIFICATION_MATRIX:-${repo_root}/linux/qualification-matrix.json}"
+summary="${ZENTTY_CI_PR_SUBSET_SUMMARY:-${repo_root}/build/linux/ci-pr-subset-summary.json}"
+logs_dir="${ZENTTY_CI_PR_SUBSET_LOGS:-${repo_root}/build/linux/ci-pr-subset-logs}"
+# Repository-root path is resolved at runtime.
+# shellcheck disable=SC1091
+source "${repo_root}/linux/tests/lib/controlled-environment"
+result_tool="${repo_root}/linux/ci/pr-subset-result"
+
+fail() {
+    echo "run-pr-subset: error: $*" >&2
+    exit 1
+}
+
+mode=run
+case "${1:-}" in
+    --validate-only) mode=validate ;;
+    --prepare-only) mode=prepare ;;
+    "") ;;
+    *) fail "usage: $0 [--validate-only|--prepare-only]" ;;
+esac
+
+command -v jq >/dev/null || fail "jq is required"
+command -v sha256sum >/dev/null || fail "sha256sum is required"
+ZENTTY_QUALIFICATION_MATRIX="${matrix}" \
+    "${repo_root}/linux/tests/qualification-matrix" --validate-only >/dev/null
+ZENTTY_CI_PR_SUBSET_POLICY="${policy}" ZENTTY_QUALIFICATION_MATRIX="${matrix}" \
+    "${repo_root}/linux/ci/validate-pr-subset" >/dev/null
+if [[ "${mode}" == validate ]]; then
+    echo "run-pr-subset: policy validation PASS"
+    exit 0
+fi
+
+mkdir -p "$(dirname "${summary}")" "${logs_dir}"
+[[ ! -L "${logs_dir}" && -d "${logs_dir}" ]] || fail "logs directory is unsafe"
+rm -f -- "${summary}"
+find "${logs_dir}" -mindepth 1 -maxdepth 1 -type f -delete
+[[ -z "$(find "${logs_dir}" -mindepth 1 -maxdepth 1 -print -quit)" ]] ||
+    fail "logs directory contains an unexpected entry"
+if [[ "${mode}" == prepare ]]; then
+    echo "run-pr-subset: workspace preparation PASS"
+    exit 0
+fi
+[[ -z "$(git -C "${repo_root}" status --porcelain=v1 --untracked-files=all)" ]] ||
+    fail "source checkout is dirty; subset evidence requires an exact committed tree"
+source_revision="$(git -C "${repo_root}" rev-parse HEAD)"
+if [[ -n "${ZENTTY_EXPECTED_COMMIT:-}" ]]; then
+    [[ "${ZENTTY_EXPECTED_COMMIT}" =~ ^[0-9a-f]{40}$ ]] ||
+        fail "ZENTTY_EXPECTED_COMMIT is not a full commit identity"
+    [[ "${source_revision}" == "${ZENTTY_EXPECTED_COMMIT}" ]] ||
+        fail "source revision differs from the exact event commit"
+fi
+
+results_file="$(mktemp)"
+support_results_file="$(mktemp)"
+summary_temp=""
+trap 'rm -f -- "${results_file}" "${support_results_file}" "${summary_temp}"' EXIT
+started_at_epoch="$(date +%s)"
+run_failed=false
+
+run_support_test() {
+    local path="$1" log code outcome log_sha
+    log="${logs_dir}/support-${path//\//__}.log"
+    set +e
+    "${repo_root}/${path}" >"${log}" 2>&1
+    code=$?
+    set -e
+    outcome="$("${result_tool}" classify "${code}" true)"
+    log_sha="$(sha256sum "${log}" | awk '{print $1}')"
+    jq -cn \
+        --arg path "${path}" \
+        --arg outcome "${outcome}" \
+        --argjson exit_code "${code}" \
+        --arg log "${log}" \
+        --arg log_sha256 "${log_sha}" '
+        {
+          path:$path,outcome:$outcome,exit_code:$exit_code,
+          log:{path:$log,sha256:$log_sha256}
+        }
+    ' >>"${support_results_file}"
+    if [[ "${outcome}" != PASS ]]; then
+        run_failed=true
+        echo "run-pr-subset: support ${path} ${outcome} exit=${code}" >&2
+        return 1
+    fi
+    echo "run-pr-subset: support ${path} PASS"
+}
+
+run_cell() {
+    local id="$1" cell command profile wrapper report_variable backend
+    local log report expected_command code outcome validated report_sha log_sha
+    cell="$(jq -ce --arg id "${id}" '.cells[] | select(.id == $id)' "${matrix}")" ||
+        fail "selected matrix cell disappeared: ${id}"
+    command="$(jq -r '.command' <<<"${cell}")"
+    profile="$(jq -r '.environment_profile' <<<"${cell}")"
+    log="${logs_dir}/${id}.log"
+    report="${logs_dir}/${id}.environment.json"
+    rm -f -- "${log}" "${report}"
+    case "${profile}" in
+        isolated-none-v1)
+            wrapper="${repo_root}/linux/tests/isolated-session"
+            report_variable=ZENTTY_ISOLATED_SESSION_REPORT
+            backend=none
+            ;;
+        nested-x11-v1)
+            wrapper="${repo_root}/linux/tests/nested-x11"
+            report_variable=ZENTTY_NESTED_X11_REPORT
+            backend=x11
+            ;;
+        nested-wayland-v1)
+            wrapper="${repo_root}/linux/tests/nested-wayland"
+            report_variable=ZENTTY_NESTED_WAYLAND_REPORT
+            backend=wayland
+            ;;
+        nested-wayland-input-v1)
+            wrapper="${repo_root}/linux/tests/nested-wayland-input"
+            report_variable=ZENTTY_NESTED_WAYLAND_INPUT_REPORT
+            backend=wayland
+            ;;
+        *) fail "selected cell has unsupported environment profile: ${id}=${profile}" ;;
+    esac
+    cell_started_at_epoch="$(date +%s)"
+    set +e
+    env \
+        -u ZENTTY_ISOLATED_SESSION_REPORT \
+        -u ZENTTY_NESTED_X11_REPORT \
+        -u ZENTTY_NESTED_WAYLAND_REPORT \
+        -u ZENTTY_NESTED_WAYLAND_INPUT_REPORT \
+        "${report_variable}=${report}" \
+        "${wrapper}" bash -o pipefail -c "${command}" >"${log}" 2>&1
+    code=$?
+    set -e
+    expected_command="$(jq -cn --arg command "${command}" \
+        '["bash","-o","pipefail","-c",$command]')"
+    validated=""
+    receipt_valid=true
+    if ! validated="$(zentty_controlled_environment_validate_report \
+        "${report}" "${wrapper}" "${backend}" "${code}" \
+        "${expected_command}" "${cell_started_at_epoch}" 1800)"; then
+        receipt_valid=false
+    fi
+    outcome="$("${result_tool}" classify "${code}" "${receipt_valid}")"
+    log_sha="$(sha256sum "${log}" | awk '{print $1}')"
+    report_sha=""
+    [[ ! -f "${report}" ]] || report_sha="$(sha256sum "${report}" | awk '{print $1}')"
+    jq -cn \
+        --arg id "${id}" \
+        --arg declared_status "$(jq -r '.status' <<<"${cell}")" \
+        --arg outcome "${outcome}" \
+        --argjson exit_code "${code}" \
+        --arg log "${log}" \
+        --arg log_sha256 "${log_sha}" \
+        --arg environment_report "${report}" \
+        --arg environment_sha256 "${report_sha}" \
+        --arg session_id "$(jq -r '.session_id // empty' <<<"${validated:-null}" 2>/dev/null || true)" '
+        {
+          id:$id,declared_status:$declared_status,outcome:$outcome,
+          exit_code:$exit_code,log:{path:$log,sha256:$log_sha256},
+          environment:{path:$environment_report,sha256:$environment_sha256,
+            session_id:$session_id}
+        }
+    ' >>"${results_file}"
+    if [[ "${outcome}" != PASS ]]; then
+        run_failed=true
+        echo "run-pr-subset: ${id} ${outcome} exit=${code}" >&2
+        return 1
+    fi
+    echo "run-pr-subset: ${id} PASS"
+}
+
+while IFS= read -r support_test; do
+    run_support_test "${support_test}" || break
+done < <(jq -r '.support_tests[]' "${policy}")
+if ! "${run_failed}"; then
+    while IFS= read -r id; do
+        run_cell "${id}" || break
+    done < <(jq -r '.selected_cells[]' "${policy}")
+fi
+
+finished_at_epoch="$(date +%s)"
+results="$(jq -cs . "${results_file}")"
+support_results="$(jq -cs . "${support_results_file}")"
+selected_count="$(jq '.selected_cells | length' "${policy}")"
+support_selected_count="$(jq '.support_tests | length' "${policy}")"
+passed_count="$(jq '[.[] | select(.outcome == "PASS")] | length' <<<"${results}")"
+support_passed_count="$(jq '[.[] | select(.outcome == "PASS")] | length' <<<"${support_results}")"
+subset_passed=false
+if ! "${run_failed}" && (( passed_count == selected_count )) &&
+    (( support_passed_count == support_selected_count )); then
+    subset_passed=true
+fi
+summary_temp="$(mktemp "${summary}.tmp.XXXXXX")"
+jq -n \
+    --arg source_revision "${source_revision}" \
+    --arg ghostty_revision "$(sed -n 's/^revision=//p' "${repo_root}/linux/ghostty.lock")" \
+    --arg policy_sha256 "$(sha256sum "${policy}" | awk '{print $1}')" \
+    --arg matrix_sha256 "$(sha256sum "${matrix}" | awk '{print $1}')" \
+    --argjson started_at_epoch "${started_at_epoch}" \
+    --argjson finished_at_epoch "${finished_at_epoch}" \
+    --argjson selected_count "${selected_count}" \
+    --argjson passed_count "${passed_count}" \
+    --argjson results "${results}" \
+    --argjson support_selected_count "${support_selected_count}" \
+    --argjson support_passed_count "${support_passed_count}" \
+    --argjson support_results "${support_results}" \
+    --argjson subset_passed "${subset_passed}" '
+    {
+      schema_version:1,source_revision:$source_revision,
+      ghostty_revision:$ghostty_revision,policy_sha256:$policy_sha256,
+      matrix_sha256:$matrix_sha256,started_at_epoch:$started_at_epoch,
+      finished_at_epoch:$finished_at_epoch,
+      totals:{
+        selected:$selected_count,passed:$passed_count,
+        support_selected:$support_selected_count,support_passed:$support_passed_count
+      },
+      support_results:$support_results,results:$results,
+      claims:{
+        public_pr_subset_passed:$subset_passed,
+        implemented_local_suite_passed:false,
+        release_qualification_passed:false,
+        full_linux_qualification_passed:false
+      }
+    }
+  ' >"${summary_temp}"
+mv -f -- "${summary_temp}" "${summary}"
+summary_temp=""
+"${result_tool}" validate-summary "${summary}" >/dev/null
+
+echo "Public PR subset: $([[ "${subset_passed}" == true ]] && echo PASSED || echo FAILED)"
+echo "Implemented local suite: NOT_CLAIMED"
+echo "Release qualification: NOT_CLAIMED"
+echo "Full Linux qualification: NOT_CLAIMED"
+echo "Machine summary: ${summary}"
+"${subset_passed}" || exit 1

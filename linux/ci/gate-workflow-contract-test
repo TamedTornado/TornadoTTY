@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+workflow="${repo_root}/.github/workflows/linux-ci-gate.yml"
+validator="${repo_root}/linux/ci/gate-workflow-contract"
+fixture="$(mktemp -d)"
+trap 'rm -rf -- "${fixture}"' EXIT
+
+fail() {
+    echo "ci-gate-workflow-contract-test: error: $*" >&2
+    exit 1
+}
+
+expect_rejected() {
+    local name="$1" old="$2" new="$3"
+    sed "s|${old}|${new}|" "${workflow}" >"${fixture}/${name}.yml"
+    if ZENTTY_CI_GATE_WORKFLOW="${fixture}/${name}.yml" "${validator}" \
+        >"${fixture}/${name}.out" 2>&1; then
+        fail "${name} workflow mutation was accepted"
+    fi
+}
+
+"${validator}" >/dev/null
+expect_rejected privileged-trigger 'pull_request:' 'pull_request_target:'
+expect_rejected mutable-action \
+    'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1' 'actions/checkout@v7'
+expect_rejected write-permission 'contents: read' 'contents: write'
+expect_rejected mutable-runner 'runs-on: ubuntu-24.04' 'runs-on: ubuntu-latest'
+expect_rejected persisted-credentials 'persist-credentials: false' 'persist-credentials: true'
+expect_rejected wrong-node 'node-version: 24.14.0' 'node-version: latest'
+# The mutation must write a literal shell substitution into the fixture.
+# shellcheck disable=SC2016
+expect_rejected generated-package 'alsa-utils appstream' '$(linux/ci/bootstrap-ubuntu-24.04 --print-apt)'
+expect_rejected repository-sudo 'sudo apt-get update' 'sudo linux/ci/bootstrap-ubuntu-24.04'
+expect_rejected missing-runner 'linux/ci/run-pr-subset' 'true # subset removed'
+expect_rejected missing-evidence 'if: always()' 'if: success()'
+# The expected GitHub expressions must remain literal fixture text.
+# shellcheck disable=SC2016
+expect_rejected older-run-publication \
+    'name: linux-ci-gate-${{ github.sha }}-${{ github.run_attempt }}' 'name: linux-ci-gate-current'
+# GitHub expression must remain literal.
+# shellcheck disable=SC2016
+expect_rejected wrong-event-commit \
+    'ZENTTY_EXPECTED_COMMIT: ${{ github.sha }}' 'ZENTTY_EXPECTED_COMMIT: refs/heads/linux/port'
+
+echo "ci-gate-workflow-contract-test: PASS negatives=trigger+action+permission+runner+credentials+node+packages+sudo+subset+evidence+older-run+commit"

@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+fail() {
+    echo "pr-subset-result: error: $*" >&2
+    exit 1
+}
+
+case "${1:-}" in
+    classify)
+        [[ $# == 3 ]] || fail "usage: $0 classify EXIT_CODE RECEIPT_VALID"
+        [[ "$2" =~ ^([0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])$ ]] ||
+            fail "invalid exit code"
+        [[ "$3" == true || "$3" == false ]] || fail "invalid receipt verdict"
+        if [[ "$3" != true ]]; then
+            echo INVALID_ENVIRONMENT_RECEIPT
+        elif (( $2 == 77 )); then
+            echo UNEXPECTED_SKIP
+        elif (( $2 != 0 )); then
+            echo FAIL
+        else
+            echo PASS
+        fi
+        ;;
+    validate-summary)
+        [[ $# == 2 ]] || fail "usage: $0 validate-summary SUMMARY"
+        summary="$2"
+        [[ -f "${summary}" && ! -L "${summary}" ]] || fail "summary is missing or unsafe"
+        jq -e '
+          (keys | sort) == [
+            "claims","finished_at_epoch","ghostty_revision","matrix_sha256",
+            "policy_sha256","results","schema_version","source_revision",
+            "started_at_epoch","support_results","totals"
+          ] and
+          .schema_version == 1 and
+          (.source_revision | type == "string" and test("^[0-9a-f]{40}$")) and
+          (.ghostty_revision | type == "string" and test("^[0-9a-f]{40}$")) and
+          (.policy_sha256 | type == "string" and test("^[0-9a-f]{64}$")) and
+          (.matrix_sha256 | type == "string" and test("^[0-9a-f]{64}$")) and
+          (.started_at_epoch | type == "number" and floor == . and . >= 0) and
+          (.finished_at_epoch | type == "number" and floor == . and . >= 0) and
+          .finished_at_epoch >= .started_at_epoch and
+          (.results | type == "array") and
+          (.totals | keys | sort) == ["passed","selected","support_passed","support_selected"] and
+          (.totals.selected | type == "number" and floor == . and . >= 1) and
+          (.totals.passed | type == "number" and floor == . and . >= 0) and
+          .totals.passed <= .totals.selected and
+          (.totals.support_selected | type == "number" and floor == . and . >= 1) and
+          (.totals.support_passed | type == "number" and floor == . and . >= 0) and
+          .totals.support_passed <= .totals.support_selected and
+          (.support_results | type == "array") and
+          .totals.support_passed == ([.support_results[] | select(.outcome == "PASS")] | length) and
+          (.support_results | length) <= .totals.support_selected and
+          (.support_results | length) == ([.support_results[].path] | unique | length) and
+          all(.support_results[];
+            (keys | sort) == ["exit_code","log","outcome","path"] and
+            (.path | type == "string" and test("^linux/[a-z0-9./-]+$")) and
+            (.outcome | IN("PASS","FAIL","UNEXPECTED_SKIP")) and
+            (.exit_code | type == "number" and floor == . and . >= 0 and . <= 255) and
+            (.log | keys | sort) == ["path","sha256"] and
+            (.log.path | type == "string" and length > 0) and
+            (.log.sha256 | type == "string" and test("^[0-9a-f]{64}$")) and
+            (if .outcome == "PASS" then .exit_code == 0
+             elif .outcome == "UNEXPECTED_SKIP" then .exit_code == 77
+             else .exit_code != 0 and .exit_code != 77 end)) and
+          .totals.passed == ([.results[] | select(.outcome == "PASS")] | length) and
+          (.results | length) <= .totals.selected and
+          (.results | length) == ([.results[].id] | unique | length) and
+          all(.results[];
+            (keys | sort) == [
+              "declared_status","environment","exit_code","id","log","outcome"
+            ] and
+            (.id | type == "string" and test("^[a-z0-9][a-z0-9-]*$")) and
+            .declared_status == "PASS" and
+            (.outcome | IN("PASS","FAIL","UNEXPECTED_SKIP","INVALID_ENVIRONMENT_RECEIPT")) and
+            (.exit_code | type == "number" and floor == . and . >= 0 and . <= 255) and
+            (.log | keys | sort) == ["path","sha256"] and
+            (.log.path | type == "string" and length > 0) and
+            (.log.sha256 | type == "string" and test("^[0-9a-f]{64}$")) and
+            (.environment | keys | sort) == ["path","session_id","sha256"] and
+            (.environment.path | type == "string" and length > 0) and
+            (.environment.sha256 | type == "string") and
+            (.environment.session_id | type == "string") and
+            (if .outcome == "PASS" then
+               .exit_code == 0 and
+               (.environment.sha256 | test("^[0-9a-f]{64}$")) and
+               (.environment.session_id | test("^[0-9a-f]{64}$"))
+             elif .outcome == "UNEXPECTED_SKIP" then .exit_code == 77
+             elif .outcome == "FAIL" then .exit_code != 0 and .exit_code != 77
+             else true end)) and
+          .claims == {
+            public_pr_subset_passed:
+              (.totals.passed == .totals.selected and
+               .totals.support_passed == .totals.support_selected and
+               (.support_results | length) == .totals.support_selected and
+               all(.support_results[]; .outcome == "PASS") and
+               (.results | length) == .totals.selected and
+               all(.results[]; .outcome == "PASS")),
+            implemented_local_suite_passed:false,
+            release_qualification_passed:false,
+            full_linux_qualification_passed:false
+          }
+        ' "${summary}" >/dev/null || fail "summary schema or claims are invalid"
+        echo "pr-subset-result: PASS summary=$(jq -r '.claims.public_pr_subset_passed' "${summary}")"
+        ;;
+    *)
+        fail "usage: $0 {classify EXIT_CODE RECEIPT_VALID|validate-summary SUMMARY}"
+        ;;
+esac

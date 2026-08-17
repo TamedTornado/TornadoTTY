@@ -2,7 +2,8 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-# shellcheck source=linux/tests/lib/bounded-batch
+# Repository-root path is resolved at runtime.
+# shellcheck disable=SC1091
 source "${repo_root}/linux/tests/lib/bounded-batch"
 support_jobs="${ZENTTY_QUALIFICATION_SUPPORT_JOBS:-2}"
 pinned_gemini_bin="${repo_root}/linux/ci/node-tools/node_modules/.bin/gemini"
@@ -19,7 +20,9 @@ pinned_gemini_bin="${repo_root}/linux/ci/node-tools/node_modules/.bin/gemini"
     exit 77
 }
 
+mapfile -t ci_support_tests < <(jq -r '.support_tests[]' "${repo_root}/linux/ci/pr-subset-v1.json")
 support_tests=(
+    "${ci_support_tests[@]}"
     linux/tests/qualification-matrix-test
     linux/tests/application-api-inventory-test
     linux/tests/application-api-schema

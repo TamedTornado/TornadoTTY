@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+policy="${repo_root}/linux/ci/pr-subset-v1.json"
+matrix="${repo_root}/linux/qualification-matrix.json"
+validator="${repo_root}/linux/ci/validate-pr-subset"
+fixture="$(mktemp -d)"
+trap 'rm -rf -- "${fixture}"' EXIT
+
+fail() {
+    echo "validate-pr-subset-test: error: $*" >&2
+    exit 1
+}
+
+"${validator}" >/dev/null
+
+expect_policy_rejected() {
+    local name="$1" filter="$2"
+    jq "${filter}" "${policy}" >"${fixture}/${name}.json"
+    if ZENTTY_CI_PR_SUBSET_POLICY="${fixture}/${name}.json" \
+        "${validator}" >"${fixture}/${name}.out" 2>&1; then
+        fail "${name} policy mutation was accepted"
+    fi
+}
+
+expect_matrix_rejected() {
+    local name="$1" filter="$2"
+    jq "${filter}" "${matrix}" >"${fixture}/${name}-matrix.json"
+    if ZENTTY_QUALIFICATION_MATRIX="${fixture}/${name}-matrix.json" \
+        "${validator}" >"${fixture}/${name}.out" 2>&1; then
+        fail "${name} matrix mutation was accepted"
+    fi
+}
+
+expect_policy_rejected missing-cell \
+    '.selected_cells |= map(select(. != "product-boundary-wayland"))'
+expect_policy_rejected unknown-cell \
+    '.selected_cells[0] = "does-not-exist"'
+expect_policy_rejected duplicate-cell \
+    '.selected_cells += [.selected_cells[0]]'
+expect_policy_rejected false-full-claim \
+    '.claims.full_linux_qualification_passed = true'
+expect_policy_rejected hidden-gap '.known_gaps = []'
+expect_policy_rejected missing-support-test '.support_tests |= map(select(. != "linux/ci/preflight-test"))'
+expect_policy_rejected reordered-prerequisite \
+    '.selected_cells |= ([.[1], .[0]] + .[2:])'
+expect_policy_rejected missing-debug-coverage \
+    '.selected_cells |= map(select(. != "build-debug"))'
+expect_matrix_rejected selected-status-drift \
+    '(.cells[] | select(.id == "physical-key-x11")).status = "BLOCKED" | (.cells[] | select(.id == "physical-key-x11")).prerequisite = "fixture"'
+expect_matrix_rejected stale-gap \
+    '(.cells[] | select(.id == "physical-key-wayland")).status = "PASS" | (.cells[] | select(.id == "physical-key-wayland")).command = "true" | (.cells[] | select(.id == "physical-key-wayland")).environment_profile = "nested-wayland-input-v1"'
+expect_matrix_rejected stale-xfail \
+    '(.cells[] | select(.id == "ghostty-async-backend-abi-representation")).status = "PASS"'
+
+echo "validate-pr-subset-test: PASS negatives=missing+unknown+duplicate+claim+gap+support+order+coverage+status+stale-gap+stale-xfail"
