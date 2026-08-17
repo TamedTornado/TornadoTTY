@@ -112,6 +112,23 @@ fn real_socket_authenticates_and_returns_bounded_product_reply() {
 }
 
 #[test]
+fn application_reply_budget_exceeds_the_generic_transport_budget() {
+    let (root, socket, server, receiver) = running_server();
+    let worker = std::thread::spawn(move || {
+        let request = receiver.recv_timeout(Duration::from_secs(2)).unwrap();
+        std::thread::sleep(AgentIpcServer::TMUX_REPLY_TIMEOUT + Duration::from_millis(250));
+        request.respond(empty_reply()).unwrap();
+    });
+
+    let request = ApplicationRequest::new(ProductIpcKind::Discover, "panes", Vec::new()).unwrap();
+    let reply = AgentIpcClient::send_application(&socket, "caller-token", &request, None).unwrap();
+    assert_eq!(reply.result().unwrap().kind(), ApplicationResultKind::Empty);
+    worker.join().unwrap();
+    server.shutdown().unwrap();
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn partial_frame_writes_are_reassembled_before_authentication_and_dispatch() {
     let (root, socket, server, receiver) = running_server();
     let worker = std::thread::spawn(move || {

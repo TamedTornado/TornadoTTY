@@ -122,3 +122,33 @@ lifecycle journey.
   dependencies to silence the test. The focused notice test compares the
   generated inventory with independently filtered metadata and rejects any
   `windows-*` package in Linux notices.
+- The next full matrix run proved the package repair: `install-uninstall`
+  passed its real build and nine dpkg transitions in the isolated root. It then
+  exposed a separate application-transport limit in both X11 and Wayland CLI
+  cells. Four real software-rendered GTK/compositor journeys were scheduled at
+  once; the product accepted and logged each CLI request, but its main-loop
+  dispatch did not return within the transport's generic two-second reply
+  budget. Both CLI journeys passed unchanged when run concurrently without the
+  other two desktops, and a package-build-plus-both-CLI reproduction also
+  passed, ruling out the new package cell as the shared resource.
+- This was not papered over by reducing matrix workers or inventing a scheduler
+  resource: a user's CLI should not fail merely because the real GTK main loop
+  is busy for two seconds. Application commands now have a bounded five-second
+  end-to-end response budget on both client and server, while tmux, development
+  server, raw-frame, and connection deadlines retain their existing tighter
+  bounds. A real Unix-socket regression deliberately holds an authenticated
+  application request beyond the old two-second ceiling and requires the
+  structured reply to arrive successfully.
+- The complete `zentty-agent-ipc` all-target suite passed with 93 tests,
+  including the new delayed real-socket case; strict package Clippy, formatting,
+  API schema, CLI inventory, and architecture contracts also passed. The
+  focused timeout-selection mutation campaign tested five generated mutants:
+  four were caught and one did not compile, with zero viable survivors.
+- The first hand-launched four-journey stress command captured background PIDs
+  through command substitutions, making them children of subshells that the
+  supervisor could not `wait` for; it failed immediately and no processes
+  remained. The corrected supervisor launches all four jobs directly and owns
+  every PID. It reproduced the exact failed-matrix overlap—workspace/pane
+  settings X11, agent settings X11, CLI X11, and CLI Wayland—with real staged
+  ReleaseSafe Zentty, Ghostty PTYs, and controlled compositors. All four passed
+  concurrently after the bounded application-response repair.

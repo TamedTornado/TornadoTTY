@@ -254,6 +254,7 @@ impl AgentIpcServer {
     pub const MAX_FRAME_READ_BYTES: usize = Self::MAX_FRAME_BYTES + 1;
     pub const CONNECTION_TIMEOUT: Duration = Duration::from_millis(250);
     pub const TMUX_REPLY_TIMEOUT: Duration = Duration::from_secs(2);
+    pub const APPLICATION_REPLY_TIMEOUT: Duration = Duration::from_secs(5);
     pub const CONNECTION_WORKERS: usize = 4;
     pub const MAX_PENDING_CONNECTIONS: usize = 32;
 
@@ -654,7 +655,11 @@ impl AgentIpcClient {
         };
         let frame = serde_json::to_vec(&request)
             .map_err(|error| AgentIpcError::InvalidRequest(error.to_string()))?;
-        let response = Self::exchange_raw_frame(socket_path, &frame)?;
+        let response = Self::exchange_raw_frame_with_timeout(
+            socket_path,
+            &frame,
+            AgentIpcServer::APPLICATION_REPLY_TIMEOUT,
+        )?;
         if response
             .application_api_version
             .is_some_and(|version| version != APPLICATION_API_VERSION)
@@ -747,13 +752,25 @@ impl AgentIpcClient {
         socket_path: impl AsRef<Path>,
         frame: &[u8],
     ) -> Result<WireResponse, AgentIpcError> {
+        Self::exchange_raw_frame_with_timeout(
+            socket_path,
+            frame,
+            AgentIpcServer::TMUX_REPLY_TIMEOUT,
+        )
+    }
+
+    fn exchange_raw_frame_with_timeout(
+        socket_path: impl AsRef<Path>,
+        frame: &[u8],
+        response_timeout: Duration,
+    ) -> Result<WireResponse, AgentIpcError> {
         if frame.len() > AgentIpcServer::MAX_FRAME_BYTES {
             return Err(AgentIpcError::InvalidRequest(
                 "request exceeds transport limit".to_owned(),
             ));
         }
         let mut stream = UnixStream::connect(socket_path)?;
-        stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+        stream.set_read_timeout(Some(response_timeout))?;
         stream.set_write_timeout(Some(Duration::from_secs(2)))?;
         stream.write_all(frame)?;
         stream.shutdown(std::net::Shutdown::Write)?;
@@ -1142,7 +1159,7 @@ fn receive_product_request(
         })
         .map_err(|_| AgentIpcError::Rejected("product command receiver unavailable".to_owned()))?;
     let reply = response
-        .recv_timeout(AgentIpcServer::TMUX_REPLY_TIMEOUT)
+        .recv_timeout(AgentIpcServer::APPLICATION_REPLY_TIMEOUT)
         .map_err(|_| AgentIpcError::Rejected("product command response timed out".to_owned()))?;
     Ok(ReceivedResponse {
         id: request.id,
