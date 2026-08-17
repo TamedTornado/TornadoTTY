@@ -178,3 +178,29 @@ wrapper self-tests subsequently observed fixture-only socket startup failures,
 but none can be treated as product evidence because the root prerequisite had
 already failed. The evidence must be committed first, then the entire local
 qualification rerun from the clean exact revision.
+
+The first clean rerun inside the restricted coding sandbox was not valid
+qualification: Ghostty preparation could not resolve GitHub, fixture Unix
+socket binds were denied, and Xvfb found `/tmp/.X11-unix` owned by the
+user-namespace overflow identity rather than root. The standard X11 socket
+directory was restored to `root:root` mode `1777`, and preflight now rejects a
+missing, linked, wrongly owned, or wrongly permissioned directory before any
+build. The aggregate was rerun with the network, namespace, Unix-socket, and
+compositor access its real harnesses require.
+
+That real aggregate exercised all 181 cells and exposed two CI-foundation
+integration defects. First, bootstrap placed Zig below repository `build/`.
+The network-disabled clean-package mount intentionally replaces the repository
+root, so the otherwise valid compiler path disappeared and package
+reproducibility failed. Versioned tools now use Zentty's established sibling
+`.tools` boundary; only the generated environment file remains below ignored
+`build/`. Bootstrap and preflight both reject compiler tools that fall back
+inside the checkout. This is also safer for future mutation source-tree copies.
+
+Second, installing Ubuntu's Fish 3.7 made the shell prerequisite resolver pick
+the unsupported distribution binary before the already reviewed sibling Fish
+4.8.1. The missing-tool unit case also incorrectly assumed `/usr/bin` lacked
+Fish. Controlled versioned Fish and Nushell now precede PATH unless an explicit
+operator override is supplied, while the negative test uses a genuinely empty
+PATH. This preserves ordinary PATH fallback on hosts without controlled tools
+and makes the supported-version gate deterministic.

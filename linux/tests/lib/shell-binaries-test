@@ -25,8 +25,10 @@ resolved="$(
 [[ "${resolved}" == "$(readlink -f "${fixture}/explicit/bash")" ]] ||
     fail "explicit prerequisite did not win over PATH"
 
+mkdir -p "${fixture}/empty-path"
 set +e
-PATH=/usr/bin:/bin zentty_test_shell_binary fish "${fixture}/workspace/project" >/dev/null
+PATH="${fixture}/empty-path" \
+    zentty_test_shell_binary fish "${fixture}/workspace/project" >/dev/null
 status=$?
 set -e
 [[ "${status}" == 77 ]] || fail "missing prerequisite did not return 77"

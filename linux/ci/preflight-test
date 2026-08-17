@@ -5,7 +5,8 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 preflight="${repo_root}/linux/ci/preflight"
 fixture="$(mktemp -d)"
 dirty_sentinel="${repo_root}/.zentty-ci-preflight-dirty-sentinel"
-trap 'rm -rf -- "${fixture}"; rm -f -- "${dirty_sentinel}"' EXIT
+in_source_tool_root="${repo_root}/build/linux-ci-preflight-fixture"
+trap 'rm -rf -- "${fixture}" "${in_source_tool_root}"; rm -f -- "${dirty_sentinel}"' EXIT
 
 fail() {
     echo "ci-preflight-test: error: $*" >&2
@@ -45,4 +46,14 @@ expect_failed_without_receipt wrong-ghostty-origin \
 
 expect_failed_without_receipt wrong-zig env ZIG=/bin/true "${preflight}"
 
-echo "ci-preflight-test: PASS negatives=os+dirty-source+ghostty-origin+tool+stale-receipt"
+mkdir -p "${in_source_tool_root}"
+cat >"${in_source_tool_root}/zig" <<'EOF'
+#!/usr/bin/env bash
+[[ "${1:-}" == version ]] || exit 1
+echo 0.16.0
+EOF
+chmod 0700 "${in_source_tool_root}/zig"
+expect_failed_without_receipt in-source-zig \
+    env ZIG="${in_source_tool_root}/zig" "${preflight}"
+
+echo "ci-preflight-test: PASS negatives=os+dirty-source+ghostty-origin+tool+tool-location+stale-receipt"

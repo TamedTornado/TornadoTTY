@@ -4,7 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 manifest="${ZENTTY_CI_ENVIRONMENT_MANIFEST:-${repo_root}/linux/ci/environment-v1.json}"
 os_release="${ZENTTY_CI_OS_RELEASE:-/etc/os-release}"
-tools_root="${ZENTTY_CI_TOOLS_ROOT:-${repo_root}/build/linux-ci-tools}"
+tools_root="${ZENTTY_CI_TOOLS_ROOT:-${repo_root}/../.tools}"
 receipt="${ZENTTY_CI_PREFLIGHT_RECEIPT:-${repo_root}/build/linux/ci-preflight.json}"
 started_at_epoch="$(date +%s)"
 
@@ -53,6 +53,10 @@ for dependency in \
     Xvfb xdotool xdpyinfo wtype; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
+[[ -d /tmp/.X11-unix && ! -L /tmp/.X11-unix ]] ||
+    fail "/tmp/.X11-unix must be a real directory"
+[[ "$(stat -c '%u:%g:%a' /tmp/.X11-unix)" == "0:0:1777" ]] ||
+    fail "/tmp/.X11-unix must be root-owned with mode 1777"
 unshare --user --map-root-user true >/dev/null 2>&1 || fail "unprivileged user namespaces are required"
 bwrap --ro-bind / / --proc /proc --dev /dev true >/dev/null 2>&1 ||
     fail "Bubblewrap user namespaces are required"
@@ -62,8 +66,12 @@ blueprint="${BLUEPRINT_COMPILER_DIR:-${tools_root}/blueprint-compiler-0.16.0/bin
 pnpm="${ZENTTY_PNPM:-${tools_root}/pnpm-10.32.1/bin/pnpm.cjs}"
 [[ "$("${zig}" version)" == "$(jq -r '.toolchains.zig.version' "${manifest}")" ]] ||
     fail "Zig version is not reviewed"
+[[ "$(readlink -f -- "${zig}")" != "${repo_root}/"* ]] ||
+    fail "Zig must remain available outside the source checkout"
 [[ "$("${blueprint}" --version)" == "$(jq -r '.toolchains.blueprint_compiler.version' "${manifest}")" ]] ||
     fail "Blueprint compiler version is not reviewed"
+[[ "$(readlink -f -- "${blueprint}")" != "${repo_root}/"* ]] ||
+    fail "Blueprint compiler must remain available outside the source checkout"
 [[ "$(rustc --version | awk '{print $2}')" == "$(jq -r '.toolchains.rust.version' "${manifest}")" ]] ||
     fail "Rust version is not reviewed"
 [[ "$(node --version)" == "v$(jq -r '.toolchains.node.version' "${manifest}")" ]] ||

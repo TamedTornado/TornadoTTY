@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 
 # Resolve qualification-only shell prerequisites without making them product
-# dependencies. Explicit operator paths win, then PATH, then the documented
-# sibling .tools layout used by controlled development/CI hosts.
+# dependencies. Explicit operator paths win, then the documented controlled
+# sibling tool, then PATH. The controlled candidate must precede an older
+# distribution shell that is installed but below Zentty's supported version.
 zentty_test_shell_binary() {
     local shell_name="$1"
     local repo_root="$2"
@@ -16,13 +17,14 @@ zentty_test_shell_binary() {
     esac
     candidate="${!variable:-}"
     if [[ -z "${candidate}" ]]; then
-        candidate="$(command -v "${shell_name}" 2>/dev/null || true)"
-    fi
-    if [[ -z "${candidate}" ]]; then
         case "${shell_name}" in
             fish) candidate="${repo_root}/../.tools/fish-4.8.1/bin/fish" ;;
             nu) candidate="${repo_root}/../.tools/nu-0.114.1/nu" ;;
         esac
+        [[ -x "${candidate}" ]] || candidate=""
+    fi
+    if [[ -z "${candidate}" ]]; then
+        candidate="$(command -v "${shell_name}" 2>/dev/null || true)"
     fi
     [[ -x "${candidate}" ]] || return 77
     readlink -f -- "${candidate}"

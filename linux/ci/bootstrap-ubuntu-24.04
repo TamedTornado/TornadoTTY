@@ -3,8 +3,15 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 manifest="${ZENTTY_CI_ENVIRONMENT_MANIFEST:-${repo_root}/linux/ci/environment-v1.json}"
-tools_root="${ZENTTY_CI_TOOLS_ROOT:-${repo_root}/build/linux-ci-tools}"
+tools_root="${ZENTTY_CI_TOOLS_ROOT:-${repo_root}/../.tools}"
+environment_root="${repo_root}/build/linux-ci-tools"
 install_system=true
+
+tools_root="$(readlink -m -- "${tools_root}")"
+[[ "${tools_root}/" != "${repo_root}/"* ]] || {
+    echo "bootstrap-ubuntu-24.04: error: tools root must be outside the source checkout" >&2
+    exit 1
+}
 
 fail() {
     echo "bootstrap-ubuntu-24.04: error: $*" >&2
@@ -34,7 +41,7 @@ if "${install_system}"; then
     apt-get install -y --no-install-recommends "${apt_packages[@]}"
 fi
 
-mkdir -p "${tools_root}" "${repo_root}/build/linux-deps"
+mkdir -p "${tools_root}" "${environment_root}" "${repo_root}/build/linux-deps"
 
 zig_version="$(jq -r '.toolchains.zig.version' "${manifest}")"
 zig_url="$(jq -r '.toolchains.zig.url' "${manifest}")"
@@ -124,7 +131,7 @@ if [[ "$(readlink -f "${HOME}/.local/bin/claude" 2>/dev/null || true)" != "${cla
     ln -sfn "${claude_binary}" "${HOME}/.local/bin/claude"
 fi
 
-cat >"${tools_root}/environment.sh" <<EOF
+cat >"${environment_root}/environment.sh" <<EOF
 export ZIG='${zig_dir}/zig'
 export BLUEPRINT_COMPILER_DIR='${blueprint_prefix}/bin'
 export ZENTTY_PNPM='${pnpm_bin}'
@@ -139,4 +146,4 @@ export GSETTINGS_BACKEND='memory'
 export GIO_USE_VFS='local'
 EOF
 
-echo "bootstrap-ubuntu-24.04: PASS tools=${tools_root}"
+echo "bootstrap-ubuntu-24.04: PASS tools=${tools_root} environment=${environment_root}/environment.sh"
