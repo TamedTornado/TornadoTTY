@@ -1,0 +1,259 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+policy="${repo_root}/linux/packaging/policy-v1.json"
+manifest="${repo_root}/linux/packaging/install-manifest-v1.json"
+output_root="${ZENTTY_PACKAGE_OUTPUT_DIR:-${repo_root}/build/linux-package}"
+work_root="${ZENTTY_PACKAGE_WORK_DIR:-${repo_root}/build/linux-package-work}"
+ghostty_source="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
+ghostty_install="${work_root}/ghostty-install"
+stage="${work_root}/stage"
+package_root="${work_root}/debian/zentty"
+receipt_rows="${work_root}/expanded-manifest.ndjson"
+
+fail() {
+    echo "build-deb: error: $*" >&2
+    exit 1
+}
+
+for dependency in appstreamcli cargo date desktop-file-validate dpkg-deb \
+    dpkg-shlibdeps file find gzip jq patchelf readelf sha256sum stat strip; do
+    command -v "${dependency}" >/dev/null || fail "${dependency} is required"
+done
+
+[[ "$(dpkg --print-architecture)" == amd64 ]] || fail "host architecture must be amd64"
+[[ -z "$(git -C "${repo_root}" status --porcelain=v1)" ]] || fail "Zentty checkout must be clean"
+zentty_revision="$(git -C "${repo_root}" rev-parse HEAD)"
+[[ "${zentty_revision}" =~ ^[0-9a-f]{40}$ ]] || fail "invalid Zentty revision"
+zentty_short="${zentty_revision:0:12}"
+source_date_epoch="$(git -C "${repo_root}" show -s --format=%ct HEAD)"
+[[ "${source_date_epoch}" =~ ^[1-9][0-9]*$ ]] || fail "invalid source commit epoch"
+export SOURCE_DATE_EPOCH="${source_date_epoch}"
+
+ghostty_revision="$(sed -n 's/^revision=//p' "${repo_root}/linux/ghostty.lock")"
+[[ "${ghostty_revision}" =~ ^[0-9a-f]{40}$ ]] || fail "invalid pinned Ghostty revision"
+package_version="$(cargo metadata --locked --no-deps --format-version 1 |
+    jq -er '.packages[] | select(.name == "zentty-linux") | .version')+git${zentty_short}"
+dpkg --validate-version "${package_version}" || fail "invalid Debian version ${package_version}"
+
+"${repo_root}/linux/tests/packaging-policy" >/dev/null
+desktop-file-validate "${repo_root}/linux/packaging/com.zentty.zentty.desktop"
+appstreamcli validate --no-net --pedantic \
+    "${repo_root}/linux/packaging/com.zentty.zentty.metainfo.xml" >/dev/null
+[[ "$(file -b "${repo_root}/assets/icon.png")" == \
+    'PNG image data, 256 x 256, 8-bit/color RGBA, non-interlaced' ]] ||
+    fail "application icon is not the reviewed 256x256 RGBA PNG"
+
+rm -rf -- "${work_root}"
+mkdir -p -- "${output_root}" "${stage}" "${ghostty_install}" "${package_root}"
+GHOSTTY_SOURCE_DIR="${ghostty_source}" \
+ZENTTY_GHOSTTY_INSTALL_DIR="${ghostty_install}" \
+ZENTTY_BUILD_OUTPUT_DIR="${stage}" \
+GHOSTTY_OPTIMIZE=ReleaseSafe \
+    "${repo_root}/linux/scripts/build-local"
+
+[[ "$(git -C "${ghostty_source}" rev-parse HEAD)" == "${ghostty_revision}" ]] ||
+    fail "prepared Ghostty revision changed during build"
+[[ -z "$(git -C "${ghostty_source}" status --porcelain=v1)" ]] ||
+    fail "prepared Ghostty checkout is dirty"
+
+copy_file() {
+    local source="$1" destination="$2" mode="$3"
+    mkdir -p -- "$(dirname "${package_root}${destination}")"
+    install -m "${mode}" "${repo_root}/${source}" "${package_root}${destination}"
+}
+
+copy_stage_file() {
+    local source="$1" destination="$2" mode="$3"
+    [[ -f "${repo_root}/${source}" ]] || fail "staged file is missing: ${source}"
+    mkdir -p -- "$(dirname "${package_root}${destination}")"
+    install -m "${mode}" "${repo_root}/${source}" "${package_root}${destination}"
+}
+
+while IFS=$'\t' read -r kind source destination mode target; do
+    case "${kind}" in
+        file)
+            if [[ "${source}" == build/linux/* ]]; then
+                relative="${source#build/linux/}"
+                source="${stage#"${repo_root}"/}/${relative}"
+                copy_stage_file "${source}" "${destination}" "${mode}"
+            else
+                copy_file "${source}" "${destination}" "${mode}"
+            fi
+            ;;
+        symlink)
+            mkdir -p -- "$(dirname "${package_root}${destination}")"
+            ln -s -- "${target}" "${package_root}${destination}"
+            ;;
+    esac
+done < <(jq -r '.entries[] | select(.kind == "file" or .kind == "symlink") |
+    [.kind, (.source // ""), .destination, (.mode // ""), (.target // "")] | @tsv' "${manifest}")
+
+while IFS=$'\t' read -r source destination mode_policy; do
+    source_path="${stage}/${source#build/linux/}"
+    [[ -d "${source_path}" ]] || fail "staged tree is missing: ${source}"
+    mkdir -p -- "${package_root}${destination}"
+    while IFS= read -r relative; do
+        skip=false
+        while IFS= read -r exclusion; do
+            [[ -z "${exclusion}" ]] && continue
+            if [[ "${relative}" == "${exclusion}" || "${relative}" == "${exclusion}/"* ]]; then
+                skip=true
+                break
+            fi
+        done < <(jq -r --arg source "${source}" '.entries[] | select(.source == $source) |
+            (.exclude // [])[]' "${manifest}")
+        "${skip}" && continue
+        source_file="${source_path}/${relative}"
+        destination_file="${package_root}${destination}/${relative}"
+        mkdir -p -- "$(dirname "${destination_file}")"
+        if [[ "${mode_policy}" == preserve-reviewed-executables && -x "${source_file}" ]]; then
+            install -m 0755 "${source_file}" "${destination_file}"
+        else
+            install -m 0644 "${source_file}" "${destination_file}"
+        fi
+    done < <(cd "${source_path}" && find . -type f -printf '%P\n' | LC_ALL=C sort)
+done < <(jq -r '.entries[] | select(.kind == "tree") |
+    [.source, .destination, .mode_policy] | @tsv' "${manifest}")
+
+terminfo_source="${ghostty_install}/share/terminfo/x/xterm-ghostty"
+[[ -f "${terminfo_source}" ]] || fail "pinned Ghostty terminfo was not generated"
+mkdir -p -- "${package_root}/usr/share/terminfo/x" "${package_root}/usr/share/terminfo/g"
+install -m 0644 "${terminfo_source}" "${package_root}/usr/share/terminfo/x/xterm-ghostty"
+ln -s ../x/xterm-ghostty "${package_root}/usr/share/terminfo/g/ghostty"
+
+mkdir -p -- "${package_root}/usr/share/doc/zentty"
+changelog_date="$(date -u -d "@${SOURCE_DATE_EPOCH}" --rfc-email)"
+printf 'zentty (%s) noble; urgency=medium\n\n  * Build from immutable source revision %s.\n\n -- Zentty Project <noreply@zentty.dev>  %s\n' \
+    "${package_version}" "${zentty_revision}" "${changelog_date}" |
+    gzip -n -9 >"${package_root}/usr/share/doc/zentty/changelog.Debian.gz"
+chmod 0644 "${package_root}/usr/share/doc/zentty/changelog.Debian.gz"
+
+# The loader token must remain literal for the dynamic linker.
+# shellcheck disable=SC2016
+patchelf --set-rpath '$ORIGIN' \
+    "${package_root}/usr/lib/zentty/lib/libghostty-gtk-embed.so"
+# shellcheck disable=SC2016
+[[ "$(patchelf --print-rpath "${package_root}/usr/lib/zentty/lib/libghostty-gtk-embed.so")" == '$ORIGIN' ]] ||
+    fail "Ghostty package RUNPATH normalization failed"
+
+# ReleaseSafe deliberately retains enough debug information for developer
+# diagnostics. Public packages must not embed checkout paths, so strip only
+# debug sections from every ELF payload copy while preserving symbols needed
+# for dynamic linking and runtime diagnostics.
+while IFS= read -r candidate; do
+    if file "${candidate}" | grep -Fq ELF; then
+        strip --strip-debug "${candidate}"
+    fi
+done < <(find "${package_root}" -type f -print | LC_ALL=C sort)
+
+find "${package_root}" -type d -exec chmod 0755 {} +
+find "${package_root}" -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} +
+
+mkdir -p -- "${work_root}/debian"
+cat >"${work_root}/debian/control" <<'EOF'
+Source: zentty
+Section: utils
+Priority: optional
+Maintainer: Zentty Project <noreply@zentty.dev>
+Standards-Version: 4.7.0
+
+Package: zentty
+Architecture: amd64
+Description: terminal workspace for coding agents
+EOF
+shlibs_output="$(
+    cd "${work_root}"
+    dpkg-shlibdeps -O \
+        -l"${package_root}/usr/lib/zentty/lib" \
+        -e"${package_root}/usr/lib/zentty/bin/zentty-linux" \
+        -e"${package_root}/usr/lib/zentty/bin/zentty" \
+        -e"${package_root}/usr/lib/zentty/lib/libghostty-gtk-embed.so" \
+        -e"${package_root}/usr/lib/zentty/lib/libgtk4-layer-shell.so"
+)"
+derived_dependencies="$(sed -n 's/^shlibs:Depends=//p' <<<"${shlibs_output}")"
+[[ -n "${derived_dependencies}" ]] || fail "dpkg-shlibdeps produced no dependency metadata"
+baseline_dependencies="$(jq -r '.dependencies.baseline_packages[] |
+    "\(.name) (>= \(.minimum))"' "${policy}" | paste -sd, -)"
+
+mkdir -p -- "${package_root}/DEBIAN"
+cat >"${package_root}/DEBIAN/control" <<EOF
+Package: zentty
+Version: ${package_version}
+Architecture: amd64
+Maintainer: Zentty Project <noreply@zentty.dev>
+Section: utils
+Priority: optional
+Depends: ${baseline_dependencies}, ${derived_dependencies}
+Description: terminal workspace for coding agents
+ Zentty organizes real Ghostty terminal sessions into worklanes and panes.
+EOF
+(
+    cd "${package_root}"
+    find usr -type f -printf '%P\0' | LC_ALL=C sort -z |
+        xargs -0 md5sum
+) >"${package_root}/DEBIAN/md5sums"
+chmod 0644 "${package_root}/DEBIAN/control" "${package_root}/DEBIAN/md5sums"
+find "${package_root}/DEBIAN" -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} +
+
+: >"${receipt_rows}"
+while IFS= read -r payload_path; do
+    absolute="${package_root}${payload_path}"
+    owner_component="$(jq -er --arg path "${payload_path}" '
+      [.entries[] | select($path == .destination or ($path | startswith(.destination + "/")))] |
+      sort_by(.destination | length) | last.owner_component' "${manifest}")"
+    if [[ -L "${absolute}" ]]; then
+        jq -cn --arg path "${payload_path}" --arg owner_component "${owner_component}" \
+            --arg target "$(readlink "${absolute}")" \
+            '{path:$path,type:"symlink",mode:"0777",owner_component:$owner_component,target:$target}' \
+            >>"${receipt_rows}"
+    else
+        jq -cn --arg path "${payload_path}" --arg owner_component "${owner_component}" \
+            --arg mode "$(stat -c %a "${absolute}")" --arg sha256 "$(sha256sum "${absolute}" | awk '{print $1}')" \
+            '{path:$path,type:"file",mode:$mode,owner_component:$owner_component,sha256:$sha256}' \
+            >>"${receipt_rows}"
+    fi
+done < <(find "${package_root}" -mindepth 1 \( -type f -o -type l \) \
+    ! -path "${package_root}/DEBIAN/*" -printf '/%P\n' | LC_ALL=C sort)
+
+expanded_manifest="${output_root}/zentty_${package_version}_amd64.manifest.json"
+jq -s --arg version "${package_version}" --arg revision "${zentty_revision}" \
+    '{schema_version:1,package:"zentty",version:$version,architecture:"amd64",
+      zentty_revision:$revision,files:.}' "${receipt_rows}" >"${expanded_manifest}"
+
+"${repo_root}/linux/tests/debian-package-audit" "${package_root}" "${expanded_manifest}"
+
+artifact="${output_root}/zentty_${package_version}_amd64.deb"
+rm -f -- "${artifact}"
+dpkg-deb --root-owner-group -Zxz --build "${package_root}" "${artifact}" >/dev/null
+
+provenance="${output_root}/zentty_${package_version}_amd64.provenance.json"
+jq -n \
+    --arg package_version "${package_version}" \
+    --arg zentty_revision "${zentty_revision}" \
+    --arg ghostty_revision "${ghostty_revision}" \
+    --argjson source_date_epoch "${SOURCE_DATE_EPOCH}" \
+    --arg artifact "$(basename "${artifact}")" \
+    --arg artifact_sha256 "$(sha256sum "${artifact}" | awk '{print $1}')" \
+    --arg manifest "$(basename "${expanded_manifest}")" \
+    --arg manifest_sha256 "$(sha256sum "${expanded_manifest}" | awk '{print $1}')" \
+    --arg rustc "$(rustc --version)" --arg cargo "$(cargo --version)" \
+    --arg zig "$("${ZIG:-${repo_root}/../.tools/zig-x86_64-linux-0.16.0/zig}" version)" \
+    --arg dpkg_deb "$(dpkg-deb --version | head -1)" \
+    --arg patchelf "$(patchelf --version)" \
+    '{schema_version:1,package:"zentty",package_version:$package_version,
+      architecture:"amd64",baseline:"ubuntu-24.04-noble",
+      zentty_revision:$zentty_revision,ghostty_revision:$ghostty_revision,
+      source_date_epoch:$source_date_epoch,artifact:{file:$artifact,sha256:$artifact_sha256},
+      manifest:{file:$manifest,sha256:$manifest_sha256},
+      toolchain:{rustc:$rustc,cargo:$cargo,zig:$zig,dpkg_deb:$dpkg_deb,patchelf:$patchelf}}' \
+    >"${provenance}"
+
+(
+    cd "${output_root}"
+    sha256sum "$(basename "${artifact}")" "$(basename "${expanded_manifest}")" \
+        "$(basename "${provenance}")" >SHA256SUMS
+)
+
+echo "build-deb: PASS artifact=${artifact} version=${package_version}"

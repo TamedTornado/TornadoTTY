@@ -166,6 +166,11 @@ jq -e '
       select(.destination | startswith("/usr/share/doc/zentty/") | not)] | length == 0)
 ' "${manifest}" >/dev/null || fail "manifest destinations or required entry details drifted"
 
+while IFS= read -r source; do
+    [[ -f "${repo_root}/${source}" ]] || fail "manifest source file is missing: ${source}"
+done < <(jq -r '.entries[] | select(.kind == "file") |
+    select(.source | startswith("build/linux/") | not) | .source' "${manifest}")
+
 [[ -f "${build_script}" ]] || fail "build-local contract source is missing"
 # These are deliberately literal shell fragments owned by build-local.
 # shellcheck disable=SC2016

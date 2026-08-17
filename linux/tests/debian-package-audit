@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+root="${1:?usage: debian-package-audit PACKAGE_ROOT EXPANDED_MANIFEST}"
+expanded_manifest="${2:?usage: debian-package-audit PACKAGE_ROOT EXPANDED_MANIFEST}"
+policy="${repo_root}/linux/packaging/policy-v1.json"
+
+fail() {
+    echo "debian-package-audit: error: $*" >&2
+    exit 1
+}
+
+[[ -d "${root}/DEBIAN" && -f "${root}/DEBIAN/control" ]] || fail "package control is missing"
+jq -e '.schema_version == 1 and .package == "zentty" and .architecture == "amd64" and
+    (.files | type == "array" and length > 0) and
+    ([.files[].path] | length == (unique | length))' "${expanded_manifest}" >/dev/null ||
+    fail "expanded manifest is invalid"
+
+actual_paths="$(mktemp)"
+receipt_paths="$(mktemp)"
+trap 'rm -f -- "${actual_paths}" "${receipt_paths}"' EXIT
+find "${root}" -mindepth 1 \( -type f -o -type l \) ! -path "${root}/DEBIAN/*" \
+    -printf '/%P\n' | LC_ALL=C sort >"${actual_paths}"
+jq -r '.files[].path' "${expanded_manifest}" | LC_ALL=C sort >"${receipt_paths}"
+cmp -s "${actual_paths}" "${receipt_paths}" || fail "expanded manifest and payload differ"
+
+while IFS= read -r path; do
+    absolute="${root}${path}"
+    receipt_type="$(jq -er --arg path "${path}" '.files[] | select(.path == $path) | .type' "${expanded_manifest}")"
+    [[ "${path}" != *'/../'* && "${path}" != /home/* && "${path}" != /tmp/* ]] ||
+        fail "unsafe payload path: ${path}"
+    if [[ -L "${absolute}" ]]; then
+        [[ "${receipt_type}" == symlink ]] || fail "payload type drift: ${path}"
+        target="$(readlink "${absolute}")"
+        [[ "${target}" == "$(jq -er --arg path "${path}" '.files[] | select(.path == $path) | .target' "${expanded_manifest}")" ]] ||
+            fail "payload symlink drift: ${path}"
+        [[ "${target}" != /* && "${target}" != *'..'*'..'* ]] || fail "unsafe symlink: ${path}"
+    else
+        [[ "${receipt_type}" == file ]] || fail "payload type drift: ${path}"
+        mode="$(stat -c %a "${absolute}")"
+        [[ "${mode}" == "$(jq -er --arg path "${path}" '.files[] | select(.path == $path) | .mode' "${expanded_manifest}")" ]] ||
+            fail "payload mode drift: ${path}"
+        [[ "$(sha256sum "${absolute}" | awk '{print $1}')" == \
+            "$(jq -er --arg path "${path}" '.files[] | select(.path == $path) | .sha256' "${expanded_manifest}")" ]] ||
+            fail "payload digest drift: ${path}"
+        [[ "${mode}" == 644 || "${mode}" == 755 ]] || fail "unsafe payload mode ${mode}: ${path}"
+        [[ ! -u "${absolute}" && ! -g "${absolute}" ]] || fail "set-id payload file: ${path}"
+        case "${path}" in
+            *.a|*.la|*.log|*.receipt|*/tests/*|*/fixtures/*) fail "forbidden payload file: ${path}" ;;
+        esac
+        if grep -IElq '(^|[^A-Za-z])(api[_-]?key|authorization|bearer)[=:][^[:space:]]+' "${absolute}"; then
+            fail "credential-shaped content in payload: ${path}"
+        fi
+        if grep -IaFq "${repo_root}" "${absolute}" || grep -IaEq '/(home|tmp)/[^ ]+/(Projects|build)/' "${absolute}"; then
+            fail "source or build path leaked into payload: ${path}"
+        fi
+    fi
+done <"${actual_paths}"
+
+ghostty="${root}/usr/lib/zentty/lib/libghostty-gtk-embed.so"
+# The loader token must remain literal in the audited ELF.
+# shellcheck disable=SC2016
+[[ "$(patchelf --print-rpath "${ghostty}")" == '$ORIGIN' ]] ||
+    fail "Ghostty RUNPATH is not install-relative"
+for elf in \
+    "${root}/usr/lib/zentty/bin/zentty-linux" \
+    "${root}/usr/lib/zentty/bin/zentty" \
+    "${ghostty}" \
+    "${root}/usr/lib/zentty/lib/libgtk4-layer-shell.so"; do
+    file "${elf}" | grep -Fq ELF || fail "expected ELF payload is missing: ${elf}"
+    readelf -lW "${elf}" | grep -Fq GNU_RELRO || fail "RELRO missing: ${elf}"
+    ! readelf -lW "${elf}" | grep -F GNU_STACK | grep -Fq RWE || fail "executable stack: ${elf}"
+    readelf -dW "${elf}" | grep -Eq 'BIND_NOW|FLAGS_1.*NOW' || fail "immediate binding missing: ${elf}"
+    runpath="$(readelf -dW "${elf}" | sed -n 's/.*\(RPATH\|RUNPATH\).*\[\([^]]*\)\].*/\2/p')"
+    [[ "${runpath}" != *'.zig-cache'* && "${runpath}" != *'/home/'* && "${runpath}" != *'/tmp/'* ]] ||
+        fail "build-tree loader path: ${elf}"
+done
+
+control="${root}/DEBIAN/control"
+[[ "$(sed -n 's/^Package: //p' "${control}")" == zentty ]] || fail "wrong package name"
+[[ "$(sed -n 's/^Architecture: //p' "${control}")" == amd64 ]] || fail "wrong package architecture"
+dependencies="$(sed -n 's/^Depends: //p' "${control}")"
+while IFS=$'\t' read -r package minimum; do
+    grep -Fq "${package} (>= ${minimum})" <<<"${dependencies}" ||
+        fail "ratified dependency floor is absent: ${package} >= ${minimum}"
+done < <(jq -r '.dependencies.baseline_packages[] | [.name,.minimum] | @tsv' "${policy}")
+
+desktop-file-validate "${root}/usr/share/applications/com.zentty.zentty.desktop"
+appstreamcli validate --no-net --pedantic \
+    "${root}/usr/share/metainfo/com.zentty.zentty.metainfo.xml" >/dev/null
+[[ -s "${root}/usr/share/doc/zentty/copyright" ]] || fail "copyright is absent"
+[[ -s "${root}/usr/share/terminfo/x/xterm-ghostty" ]] || fail "terminfo is absent"
+[[ "$(readlink "${root}/usr/share/terminfo/g/ghostty")" == ../x/xterm-ghostty ]] ||
+    fail "terminfo alias is wrong"
+
+echo "debian-package-audit: PASS files=$(wc -l <"${actual_paths}")"

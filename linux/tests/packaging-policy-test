@@ -88,6 +88,10 @@ jq '.entries |= map(select(.id != "copyright"))' \
     "${source_manifest}" >"${temporary}/missing-license.json"
 expect_manifest_rejected missing-license "manifest schema or path safety failed"
 
+jq '.entries[] |= if .id == "application-icon" then .source = "linux/packaging/missing.png" else . end' \
+    "${source_manifest}" >"${temporary}/missing-source-file.json"
+expect_manifest_rejected missing-source-file "manifest source file is missing"
+
 jq '.dependencies.bundled_libraries += [{"soname":"libssl.so","source":"unknown","reason":"convenience"}]' \
     "${source_policy}" >"${temporary}/unreviewed-bundled-library.json"
 expect_policy_rejected unreviewed-bundled-library "policy schema or ratified values drifted"

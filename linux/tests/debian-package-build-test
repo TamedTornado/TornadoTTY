@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+artifact="${1:?usage: debian-package-build-test ARTIFACT EXPANDED_MANIFEST}"
+manifest="${2:?usage: debian-package-build-test ARTIFACT EXPANDED_MANIFEST}"
+audit="${repo_root}/linux/tests/debian-package-audit"
+temporary="$(mktemp -d)"
+trap 'rm -rf -- "${temporary}"' EXIT
+
+extract_package() {
+    local name="$1"
+    rm -rf -- "${temporary:?}/${name}"
+    mkdir -p -- "${temporary}/${name}"
+    dpkg-deb -x "${artifact}" "${temporary}/${name}"
+    dpkg-deb -e "${artifact}" "${temporary}/${name}/DEBIAN"
+}
+
+expect_rejected() {
+    local name="$1" expected="$2" candidate_manifest="${3:-${manifest}}"
+    if "${audit}" "${temporary}/${name}" "${candidate_manifest}" >"${temporary}/${name}.log" 2>&1; then
+        echo "debian-package-build-test: ${name} unexpectedly passed" >&2
+        exit 1
+    fi
+    grep -Fq "${expected}" "${temporary}/${name}.log" || {
+        cat "${temporary}/${name}.log" >&2
+        echo "debian-package-build-test: ${name} lacked expected failure" >&2
+        exit 1
+    }
+}
+
+[[ -f "${artifact}" && -f "${manifest}" ]] || {
+    echo "debian-package-build-test: artifact and manifest are required" >&2
+    exit 1
+}
+[[ "$(dpkg-deb -f "${artifact}" Package)" == zentty ]]
+[[ "$(dpkg-deb -f "${artifact}" Architecture)" == amd64 ]]
+dpkg-deb --info "${artifact}" >/dev/null
+dpkg-deb --contents "${artifact}" >/dev/null
+
+extract_package positive
+"${audit}" "${temporary}/positive" "${manifest}" >/dev/null
+
+extract_package undeclared
+install -m 0644 /dev/null "${temporary}/undeclared/usr/lib/zentty/unexpected.a"
+expect_rejected undeclared "expanded manifest and payload differ"
+
+extract_package missing-license
+rm "${temporary}/missing-license/usr/share/doc/zentty/copyright"
+expect_rejected missing-license "expanded manifest and payload differ"
+
+extract_package wrong-mode
+chmod 0777 "${temporary}/wrong-mode/usr/lib/zentty/bin/zentty"
+expect_rejected wrong-mode "payload mode drift"
+
+extract_package path-leak
+printf '\n/home/builder/Projects/zentty/build/private\n' >> \
+    "${temporary}/path-leak/usr/share/applications/com.zentty.zentty.desktop"
+path_manifest="${temporary}/path-leak-manifest.json"
+path_sha="$(sha256sum "${temporary}/path-leak/usr/share/applications/com.zentty.zentty.desktop" | awk '{print $1}')"
+jq --arg sha "${path_sha}" '(.files[] | select(.path == "/usr/share/applications/com.zentty.zentty.desktop") | .sha256) = $sha' \
+    "${manifest}" >"${path_manifest}"
+expect_rejected path-leak "source or build path leaked" "${path_manifest}"
+
+extract_package bad-runpath
+patchelf --set-rpath /tmp/build-tree \
+    "${temporary}/bad-runpath/usr/lib/zentty/lib/libghostty-gtk-embed.so"
+runpath_manifest="${temporary}/bad-runpath-manifest.json"
+runpath_sha="$(sha256sum "${temporary}/bad-runpath/usr/lib/zentty/lib/libghostty-gtk-embed.so" | awk '{print $1}')"
+jq --arg sha "${runpath_sha}" '(.files[] | select(.path == "/usr/lib/zentty/lib/libghostty-gtk-embed.so") | .sha256) = $sha' \
+    "${manifest}" >"${runpath_manifest}"
+expect_rejected bad-runpath "Ghostty RUNPATH is not install-relative" "${runpath_manifest}"
+
+echo "debian-package-build-test: PASS structural=real negatives=undeclared+license+mode+path+runpath"

@@ -101,6 +101,7 @@ fi
         --prefix "${ghostty_install_dir}" \
         -Doptimize="${optimize}" \
         -Dcpu=baseline \
+        -Demit-terminfo=true \
         -fno-sys=gtk4-layer-shell
 )
 

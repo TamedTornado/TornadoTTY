@@ -23,9 +23,9 @@
     "public_cli_target": "../lib/zentty/bin/zentty",
     "public_gui": "/usr/bin/zentty-linux",
     "public_gui_target": "../lib/zentty/bin/zentty-linux",
-    "desktop_entry": "/usr/share/applications/com.zentty.Zentty.desktop",
-    "appstream_metadata": "/usr/share/metainfo/com.zentty.Zentty.metainfo.xml",
-    "icon": "/usr/share/icons/hicolor/scalable/apps/com.zentty.Zentty.svg",
+    "desktop_entry": "/usr/share/applications/com.zentty.zentty.desktop",
+    "appstream_metadata": "/usr/share/metainfo/com.zentty.zentty.metainfo.xml",
+    "icon": "/usr/share/icons/hicolor/256x256/apps/com.zentty.zentty.png",
     "terminfo_roots": [
       "/usr/share/terminfo/g/ghostty",
       "/usr/share/terminfo/x/xterm-ghostty"

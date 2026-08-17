@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Zentty
+Comment=Terminal workspace for coding agents
+Exec=zentty-linux
+Icon=com.zentty.zentty
+Terminal=false
+Categories=System;TerminalEmulator;
+Keywords=terminal;shell;workspace;agent;
+StartupNotify=true
+StartupWMClass=Zentty
