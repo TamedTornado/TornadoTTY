@@ -1,0 +1,354 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+helper="${repo_root}/linux/tests/lib/installed-product-root"
+backend="${GDK_BACKEND:-}"
+revision="$(git -C "${repo_root}" rev-parse HEAD)"
+short_revision="${revision:0:12}"
+artifact="${ZENTTY_INSTALLED_PACKAGE:-${repo_root}/build/linux-package/zentty_0.1.0+git${short_revision}_amd64.deb}"
+manifest="${ZENTTY_INSTALLED_MANIFEST:-${artifact%.deb}.manifest.json}"
+provenance="${artifact%.deb}.provenance.json"
+output_dir="${ZENTTY_INSTALLED_PRODUCT_OUTPUT_DIR:-${repo_root}/build/linux/installed-package}"
+run_root="$(mktemp -d)"
+install_root="${run_root}/root"
+state_dir="${TMPDIR}/zentty-installed-state-${short_revision}-${backend}"
+receipts="${TMPDIR}/zentty-installed-receipts-${short_revision}-${backend}"
+product_log="${run_root}/product.log"
+desktop_log="${run_root}/desktop.log"
+product_pid=""
+desktop_pid=""
+
+fail() {
+    [[ ! -f "${product_log}" ]] || tail -120 "${product_log}" >&2
+    [[ ! -f "${desktop_log}" ]] || tail -120 "${desktop_log}" >&2
+    echo "debian-package-installed-product: error: $*" >&2
+    exit 1
+}
+
+pid_running() {
+    [[ "$1" =~ ^[1-9][0-9]*$ ]] && kill -0 "$1" 2>/dev/null
+}
+
+cleanup() {
+    if pid_running "${product_pid}"; then
+        kill -TERM "${product_pid}" 2>/dev/null || true
+        wait "${product_pid}" 2>/dev/null || true
+    fi
+    if pid_running "${desktop_pid}"; then
+        kill -TERM "${desktop_pid}" 2>/dev/null || true
+        wait "${desktop_pid}" 2>/dev/null || true
+    fi
+    rm -rf -- "${run_root}" "${state_dir}" "${receipts}"
+}
+trap cleanup EXIT
+
+case "${backend}" in
+    x11)
+        [[ "${ZENTTY_NESTED_X11_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+            fail "X11 journey requires linux/tests/nested-x11"
+        display_session_id="${ZENTTY_NESTED_X11_SESSION_ID}"
+        ;;
+    wayland)
+        if [[ "${ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]]; then
+            display_session_id="${ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID}"
+        elif [[ "${ZENTTY_NESTED_WAYLAND_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]]; then
+            display_session_id="${ZENTTY_NESTED_WAYLAND_SESSION_ID}"
+        else
+            fail "Wayland journey requires a controlled nested-Wayland environment"
+        fi
+        ;;
+    *) fail "GDK_BACKEND must be x11 or wayland" ;;
+esac
+
+for dependency in dpkg dpkg-deb dpkg-query find git grep jq ps readlink sha256sum stat; do
+    command -v "${dependency}" >/dev/null || fail "${dependency} is required"
+done
+[[ "$(id -u)" -eq 0 ]] || fail "journey must run as namespace root"
+[[ -f "${artifact}" && ! -L "${artifact}" ]] || fail "exact package is missing: ${artifact}"
+[[ -f "${manifest}" && ! -L "${manifest}" ]] || fail "exact manifest is missing"
+[[ -f "${provenance}" && ! -L "${provenance}" ]] || fail "exact provenance is missing"
+[[ "$(jq -r '.zentty_revision' "${manifest}")" == "${revision}" ]] ||
+    fail "package is not the current clean revision"
+[[ "$(jq -r '.artifact_sha256' "${provenance}")" == "$(sha256sum "${artifact}" | awk '{print $1}')" ]] ||
+    fail "artifact provenance hash differs"
+[[ "$(jq -r '.manifest_sha256' "${provenance}")" == "$(sha256sum "${manifest}" | awk '{print $1}')" ]] ||
+    fail "manifest provenance hash differs"
+
+mkdir -p "${install_root}/var/lib/dpkg" "${install_root}/var/log" \
+    "${output_dir}" "${state_dir}" "${receipts}"
+: >"${install_root}/var/lib/dpkg/status"
+dpkg --root="${install_root}" --log="${install_root}/var/log/dpkg.log" \
+    --force-depends --force-script-chrootless --install "${artifact}" \
+    >"${run_root}/dpkg-install.log" 2>&1
+"${helper}" prepare "${install_root}" "${artifact}" "${manifest}" \
+    >"${run_root}/prepare.log"
+
+for required in \
+    /usr/bin/zentty /usr/bin/zentty-linux \
+    /usr/lib/zentty/lib/libghostty-gtk-embed.so \
+    /usr/lib/zentty/libexec/zentty/tmux-shim/tmux \
+    /usr/lib/zentty/libexec/zentty/agent-wrappers/codex/codex \
+    /usr/lib/zentty/share/zentty/shell-integration/zentty-bash-integration.bash \
+    /usr/share/ghostty/shell-integration/bash/ghostty.bash \
+    /usr/share/terminfo/x/xterm-ghostty \
+    /usr/share/applications/com.zentty.zentty.desktop \
+    /usr/share/metainfo/com.zentty.zentty.metainfo.xml \
+    /usr/share/icons/hicolor/256x256/apps/com.zentty.zentty.png; do
+    [[ -e "${install_root}${required}" || -L "${install_root}${required}" ]] ||
+        fail "installed resource is missing: ${required}"
+done
+
+clean_environment() {
+    local name
+    local -a command
+    command=(env -i PATH=/usr/bin:/bin PWD="${HOME}" HOME="${HOME}" \
+        GDK_BACKEND="${backend}" XDG_DATA_DIRS=/usr/share \
+        GSETTINGS_BACKEND=memory GIO_USE_VFS=local NO_AT_BRIDGE=1 GTK_A11Y=none \
+        LANG="${LANG:-C.UTF-8}" LC_ALL="${LC_ALL:-C.UTF-8}")
+    for name in \
+        DISPLAY XAUTHORITY WAYLAND_DISPLAY XDG_SESSION_TYPE XDG_CURRENT_DESKTOP \
+        XDG_CONFIG_HOME XDG_CACHE_HOME XDG_DATA_HOME XDG_STATE_HOME \
+        XDG_RUNTIME_DIR TMPDIR DBUS_SESSION_BUS_ADDRESS DBUS_SYSTEM_BUS_ADDRESS \
+        LIBGL_ALWAYS_SOFTWARE WLR_RENDERER GDK_DEBUG GDK_DISABLE \
+        ZENTTY_NESTED_X11_SESSION_ID ZENTTY_NESTED_WAYLAND_SESSION_ID \
+        ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID; do
+        [[ -v "${name}" ]] && command+=("${name}=${!name}")
+    done
+    "${command[@]}" "$@"
+}
+
+cat >"${receipts}/pane-child" <<'CHILD'
+#!/usr/bin/env bash
+set -euo pipefail
+out="${ZENTTY_INSTALLED_RECEIPTS}"
+phase="${ZENTTY_INSTALLED_PHASE}"
+pane="${ZENTTY_PANE_ID}"
+{
+    printf 'cli=%s\n' "${ZENTTY_CLI_BIN}"
+    printf 'integration=%s\n' "${ZENTTY_SHELL_INTEGRATION_DIR}"
+    printf 'term=%s\n' "${TERM}"
+    printf 'resources=%s\n' "${GHOSTTY_RESOURCES_DIR}"
+    printf 'pwd=%s\n' "${PWD}"
+} >"${out}/${phase}-pane-${pane}.env"
+[[ "${ZENTTY_CLI_BIN}" == /usr/lib/zentty/bin/zentty ]]
+[[ "${ZENTTY_SHELL_INTEGRATION_DIR}" == /usr/lib/zentty/share/zentty/shell-integration ]]
+[[ "${GHOSTTY_RESOURCES_DIR}" == /usr/share/ghostty ]]
+[[ "${TERM}" == xterm-ghostty ]]
+[[ -f /usr/share/ghostty/shell-integration/bash/ghostty.bash ]]
+[[ -f /usr/lib/zentty/share/zentty/shell-integration/zentty-bash-integration.bash ]]
+[[ -x /usr/lib/zentty/libexec/zentty/agent-wrappers/codex/codex ]]
+[[ -x /usr/lib/zentty/libexec/zentty/tmux-shim/tmux ]]
+
+if mkdir "${out}/${phase}-leader" 2>/dev/null; then
+    "${ZENTTY_CLI_BIN}" list panes --json >"${out}/${phase}-panes-before.json"
+    if [[ "${phase}" == first ]]; then
+        [[ "$(jq 'length' "${out}/${phase}-panes-before.json")" -eq 2 ]]
+        "${ZENTTY_CLI_BIN}" worklane rename "Installed qualified"
+        "${ZENTTY_CLI_BIN}" split right
+        for _ in {1..200}; do
+            "${ZENTTY_CLI_BIN}" list panes --json >"${out}/first-panes-after.json"
+            [[ "$(jq 'length' "${out}/first-panes-after.json")" -eq 3 ]] && break
+            sleep 0.02
+        done
+        [[ "$(jq 'length' "${out}/first-panes-after.json")" -eq 3 ]]
+        tmux_path="$(command -v tmux)"
+        [[ "${tmux_path}" == /usr/lib/zentty/libexec/zentty/tmux-shim/tmux ]]
+        tmux list-panes -F '#{pane_id}' >"${out}/first-tmux-panes.txt"
+        [[ "$(wc -l <"${out}/first-tmux-panes.txt")" -eq 3 ]]
+    else
+        [[ "$(jq 'length' "${out}/${phase}-panes-before.json")" -eq 3 ]]
+        "${ZENTTY_CLI_BIN}" list worklanes --json >"${out}/second-worklanes.json"
+        jq -e 'any(.[]; .title == "Installed qualified")' "${out}/second-worklanes.json" >/dev/null
+    fi
+    printf 'ready\n' >"${out}/${phase}-ready"
+fi
+for _ in {1..600}; do
+    [[ -e "${out}/${phase}-release" ]] && exit 0
+    sleep 0.05
+done
+exit 1
+CHILD
+chmod 0700 "${receipts}/pane-child"
+
+# Seed two real panes without exposing the source fixture to the product.
+jq --arg cwd "${HOME}" '
+  .workspace.windows = [.workspace.windows[0]] |
+  .workspace.windows[0].id = "window-installed" |
+  .workspace.windows[0].worklanes = [.workspace.windows[0].worklanes[0]] |
+  .workspace.windows[0].worklanes[0].id = "worklane-installed" |
+  .workspace.windows[0].worklanes[0].title = "Installed initial" |
+  .workspace.windows[0].worklanes[0].columns[0].panes |= map(.workingDirectory = $cwd) |
+  .workspace.windows[0].activeWorklaneID = "worklane-installed" |
+  .workspace.activeWindowID = "window-installed" |
+  .restoreDraftWindows = []
+' "${repo_root}/crates/zentty-core/tests/fixtures/session-restore-v3.json" \
+    >"${state_dir}/restore-snapshot.json"
+
+start_direct() {
+    local phase="$1"
+    : >"${product_log}"
+    clean_environment \
+        ZENTTY_INSTALLED_RECEIPTS="${receipts}" \
+        ZENTTY_INSTALLED_PHASE="${phase}" \
+        "${helper}" exec "${install_root}" -- \
+        /usr/bin/zentty-linux --state-directory "${state_dir}" \
+        --command "${receipts}/pane-child" >"${product_log}" 2>&1 &
+    product_pid=$!
+}
+
+wait_for_file() {
+    local path="$1" label="$2"
+    for _ in {1..800}; do
+        [[ -s "${path}" ]] && return
+        pid_running "${product_pid}" || fail "product exited before ${label}"
+        sleep 0.025
+    done
+    fail "timed out waiting for ${label}"
+}
+
+find_product_pid() {
+    local needle="${1:-${state_dir}}" pid cmdline
+    [[ "${needle}" != --any ]] || needle=""
+    for _ in {1..400}; do
+        for path in /proc/[0-9]*/cmdline; do
+            pid="${path#/proc/}"
+            pid="${pid%/cmdline}"
+            cmdline="$(tr '\0' ' ' <"${path}" 2>/dev/null || true)"
+            if [[ "${cmdline}" == "/usr/bin/zentty-linux "* &&
+                ( -z "${needle}" || "${cmdline}" == *"${needle}"* ) ]]; then
+                printf '%s\n' "${pid}"
+                return 0
+            fi
+        done
+        sleep 0.025
+    done
+    return 1
+}
+
+audit_process() {
+    local pid="$1" phase="$2" exe environment_hash mappings_hash
+    exe="$(readlink -f "/proc/${pid}/exe")"
+    [[ "${exe}" == "${install_root}/usr/lib/zentty/bin/zentty-linux" ]] ||
+        fail "${phase} executable is not the dpkg-owned payload: ${exe}"
+    if tr '\0' '\n' <"/proc/${pid}/environ" | grep -F "${repo_root}" >/dev/null; then
+        fail "${phase} product environment leaked the source checkout"
+    fi
+    if grep -F "${repo_root}" "/proc/${pid}/maps" >/dev/null; then
+        fail "${phase} process mapped the source or build tree"
+    fi
+    [[ "$(tr '\0' '\n' <"/proc/${pid}/environ" | sed -n 's/^PATH=//p')" == /usr/bin:/bin ]] ||
+        fail "${phase} product PATH is not the approved clean path"
+    environment_hash="$(tr '\0' '\n' <"/proc/${pid}/environ" |
+        grep -Ev '^(ZENTTY_PANE_TOKEN|.*SECRET|.*TOKEN|.*PASSWORD)=' |
+        LC_ALL=C sort | sha256sum | awk '{print $1}')"
+    mappings_hash="$(sha256sum "/proc/${pid}/maps" | awk '{print $1}')"
+    jq -n --argjson pid "${pid}" --arg exe "${exe}" \
+        --arg environment_sha256 "${environment_hash}" --arg mappings_sha256 "${mappings_hash}" \
+        '{pid:$pid,executable:$exe,environment_sha256:$environment_sha256,
+          mappings_sha256:$mappings_sha256,source_or_build_leakage:false}' \
+        >"${receipts}/${phase}-process.json"
+}
+
+start_direct first
+wait_for_file "${receipts}/first-ready" "first installed CLI mutation"
+first_product="$(find_product_pid)" || fail "first installed product PID was not observable"
+audit_process "${first_product}" first
+touch "${receipts}/first-release"
+wait "${product_pid}" || fail "first installed product exited unsuccessfully"
+product_pid=""
+grep -Fxq 'zentty-linux: lifecycle complete' "${product_log}" ||
+    fail "first installed lifecycle did not complete"
+[[ -s "${state_dir}/restore-snapshot.json" ]] || fail "first lifecycle did not persist state"
+
+start_direct second
+wait_for_file "${receipts}/second-ready" "installed restart restore"
+second_product="$(find_product_pid)" || fail "restarted installed product PID was not observable"
+audit_process "${second_product}" second
+touch "${receipts}/second-release"
+wait "${product_pid}" || fail "restarted installed product exited unsuccessfully"
+product_pid=""
+grep -Fxq 'zentty-linux: lifecycle complete' "${product_log}" ||
+    fail "restarted installed lifecycle did not complete"
+
+cat >"${receipts}/desktop-shell" <<'DESKTOP_SHELL'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "${ZENTTY_CLI_BIN}" == /usr/lib/zentty/bin/zentty ]]
+[[ "${GHOSTTY_RESOURCES_DIR}" == /usr/share/ghostty ]]
+printf 'ready\n' >"${ZENTTY_INSTALLED_RECEIPTS}/desktop-ready"
+for _ in {1..400}; do
+    [[ -e "${ZENTTY_INSTALLED_RECEIPTS}/desktop-release" ]] && exit 0
+    sleep 0.05
+done
+exit 1
+DESKTOP_SHELL
+cat >"${receipts}/desktop-supervisor" <<'DESKTOP_SUPERVISOR'
+#!/usr/bin/env bash
+set -euo pipefail
+gtk-launch com.zentty.zentty >"${ZENTTY_INSTALLED_RECEIPTS}/desktop-product.log" 2>&1 &
+launcher=$!
+for _ in {1..600}; do
+    [[ -s "${ZENTTY_INSTALLED_RECEIPTS}/desktop-ready" ]] && break
+    kill -0 "${launcher}" 2>/dev/null || true
+    sleep 0.025
+done
+[[ -s "${ZENTTY_INSTALLED_RECEIPTS}/desktop-ready" ]]
+printf 'ready\n' >"${ZENTTY_INSTALLED_RECEIPTS}/desktop-supervisor-ready"
+for _ in {1..600}; do
+    [[ -e "${ZENTTY_INSTALLED_RECEIPTS}/desktop-release" ]] && break
+    sleep 0.025
+done
+wait "${launcher}"
+DESKTOP_SUPERVISOR
+chmod 0700 "${receipts}/desktop-shell" "${receipts}/desktop-supervisor"
+clean_environment \
+    SHELL="${receipts}/desktop-shell" \
+    ZENTTY_INSTALLED_RECEIPTS="${receipts}" \
+    "${helper}" exec "${install_root}" -- "${receipts}/desktop-supervisor" \
+    >"${desktop_log}" 2>&1 &
+desktop_pid=$!
+product_pid="${desktop_pid}"
+wait_for_file "${receipts}/desktop-supervisor-ready" "installed desktop-entry launch"
+desktop_product="$(find_product_pid --any)" || fail "desktop-entry product PID was not observable"
+audit_process "${desktop_product}" desktop
+touch "${receipts}/desktop-release"
+wait "${desktop_pid}" || fail "installed desktop-entry launch exited unsuccessfully"
+desktop_pid=""
+product_pid=""
+
+artifact_sha="$(sha256sum "${artifact}" | awk '{print $1}')"
+manifest_sha="$(sha256sum "${manifest}" | awk '{print $1}')"
+installed_paths="${run_root}/installed-paths.txt"
+dpkg-query --admindir="${install_root}/var/lib/dpkg" -L zentty | LC_ALL=C sort >"${installed_paths}"
+jq -n \
+    --arg backend "${backend}" \
+    --arg display_session_id "${display_session_id}" \
+    --arg package_version "$(dpkg-deb -f "${artifact}" Version)" \
+    --arg artifact_sha256 "${artifact_sha}" \
+    --arg manifest_sha256 "${manifest_sha}" \
+    --arg zentty_revision "${revision}" \
+    --arg ghostty_revision "$(jq -r '.ghostty_revision' "${provenance}")" \
+    --arg installed_paths_sha256 "$(sha256sum "${installed_paths}" | awk '{print $1}')" \
+    --argjson first_process "$(cat "${receipts}/first-process.json")" \
+    --argjson second_process "$(cat "${receipts}/second-process.json")" \
+    --argjson desktop_process "$(cat "${receipts}/desktop-process.json")" '
+    {
+      schema_version:1,
+      backend:$backend,
+      display_session_id:$display_session_id,
+      package:{version:$package_version,sha256:$artifact_sha256,
+        manifest_sha256:$manifest_sha256,installed_paths_sha256:$installed_paths_sha256},
+      revisions:{zentty:$zentty_revision,ghostty:$ghostty_revision},
+      launches:{direct:true,desktop_entry:true,restart:true},
+      product:{ghostty_pty:true,single_and_multi_pane:true,persistence:true,
+        cli_read:true,cli_mutation:true,tmux_shim:true,agent_wrapper_present:true,
+        shell_integration:true,terminfo:true,desktop_identity:true},
+      process_audits:[$first_process,$second_process,$desktop_process],
+      clean_path:"/usr/bin:/bin",
+      source_or_build_leakage:false,
+      credentials_recorded:false
+    }
+' >"${output_dir}/${backend}.json"
+
+echo "debian-package-installed-product: PASS backend=${backend} session=${display_session_id} package=${artifact_sha}"

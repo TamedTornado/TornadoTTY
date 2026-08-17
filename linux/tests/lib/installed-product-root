@@ -187,6 +187,7 @@ exec_root() {
         --dev /dev
         --proc /proc
         --ro-bind /sys /sys
+        --chdir "${HOME}"
     )
     environment_paths=(
         "${HOME:-}" "${XDG_CONFIG_HOME:-}" "${XDG_CACHE_HOME:-}"
