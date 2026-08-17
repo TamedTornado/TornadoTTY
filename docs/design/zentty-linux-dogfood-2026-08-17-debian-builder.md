@@ -214,3 +214,13 @@ second package layout.
   The architecture contract now pins the same reviewed Ghostty revision as the
   build lock. The focused audit normalization self-test and architecture
   positive/negative contract suites pass with this repair.
+- The repaired full matrix then exposed a pre-existing race in the Wayland
+  live-configuration journey. The test counted every direct product child and
+  could snapshot a short-lived project-discovery helper while the second real
+  shell was still starting. When that helper exited, the test incorrectly
+  reported that settings refresh had replaced a PTY child. The product log
+  proved the PID named by the failure was neither of the two Ghostty-launched
+  shells. The journey now identifies only the two deliberately launched shell
+  commands, and uses that same typed set for every later no-replacement
+  assertion. It does not add a retry around the failed assertion or weaken the
+  real-child identity contract.

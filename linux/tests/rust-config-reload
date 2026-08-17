@@ -86,6 +86,15 @@ chmod 0644 "${config_file}"
 # The real PTY child reports typed sentinels through the terminal title.
 # shellcheck disable=SC2016
 child_command='while IFS= read -r value; do printf '\''\033]2;%s\a'\'' "$value"; done'
+
+pty_children() {
+    # Zentty also owns short-lived project-discovery helpers. A bare pgrep of
+    # every direct child can therefore capture a transient git process in
+    # place of a not-yet-scheduled second shell. Identify the two deliberately
+    # launched real PTY children by their unique command contract instead.
+    pgrep -P "${product_pid}" -f 'while IFS= read -r value' | sort -n
+}
+
 LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
     "${product}" --command "${child_command}" --state-directory "${state_dir}" \
     --async-backend default >"${log}" 2>&1 &
@@ -103,7 +112,7 @@ zentty_product_wait_for_log "${log}" 'zentty-linux: terminal-ready-pane=pane-win
 
 children_before=()
 for _ in {1..200}; do
-    mapfile -t children_before < <(pgrep -P "${product_pid}" | sort -n)
+    mapfile -t children_before < <(pty_children)
     [[ "${#children_before[@]}" -eq 2 ]] && break
     sleep 0.05
 done
@@ -339,7 +348,7 @@ grep -Fq 'config-live-projected window=window-1 automatic-clean-copy=true confir
     fail "first window did not receive final valid state"
 grep -Fq 'config-live-projected window=window-2 automatic-clean-copy=true confirm-close-window=true confirm-quit=true' "${log}" ||
     fail "second window did not receive final valid state"
-mapfile -t children_after < <(pgrep -P "${product_pid}" | sort -n)
+mapfile -t children_after < <(pty_children)
 [[ "${children_after[*]}" == "${children_before[*]}" ]] || fail "config reload replaced a real PTY child"
 
 # The externally enabled confirmation is exercised through the real product UI.
@@ -468,7 +477,7 @@ grep -Fq 'config-live-projected window=window-1 automatic-clean-copy=true confir
     fail "final symlink target state did not reach the first window"
 grep -Fq 'config-live-projected window=window-2 automatic-clean-copy=true confirm-close-window=true confirm-quit=true' "${log}" ||
     fail "final symlink target state did not reach the second window"
-mapfile -t children_after_symlink < <(pgrep -P "${product_pid}" | sort -n)
+mapfile -t children_after_symlink < <(pty_children)
 [[ "${children_after_symlink[*]}" == "${children_before[*]}" ]] || fail "symlink reload replaced a real PTY child"
 
 # Losing read access must retain the final accepted symlink target state.
@@ -484,7 +493,7 @@ grep -Fq 'config-live-projected window=window-1 automatic-clean-copy=false confi
     fail "permission recovery did not reach the first window"
 grep -Fq 'config-live-projected window=window-2 automatic-clean-copy=false confirm-close-window=false confirm-quit=false' "${log}" ||
     fail "permission recovery did not reach the second window"
-mapfile -t children_after_permission < <(pgrep -P "${product_pid}" | sort -n)
+mapfile -t children_after_permission < <(pty_children)
 [[ "${children_after_permission[*]}" == "${children_before[*]}" ]] || fail "permission recovery replaced a real PTY child"
 
 kill -TERM "${product_pid}"
