@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+ghostty_source="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
+temporary="$(mktemp -d)"
+trap 'rm -rf -- "${temporary}"' EXIT
+
+"${repo_root}/linux/scripts/collect-package-notices" \
+    "${ghostty_source}" "${temporary}/positive" >/dev/null
+jq -e 'map(.name + "@" + .version) |
+    length > 0 and length == (unique | length)' \
+    "${temporary}/positive/cargo-packages.json" >/dev/null
+jq -e '.components | length > 0' \
+    "${temporary}/positive/ghostty-components.json" >/dev/null
+if grep -IRFq "${repo_root}" "${temporary}/positive"; then
+    echo "package-notices-test: checkout path leaked into notices" >&2
+    exit 1
+fi
+
+mkdir -p -- "${temporary}/missing-ghostty"
+if "${repo_root}/linux/scripts/collect-package-notices" \
+    "${temporary}/missing-ghostty" "${temporary}/negative" \
+    >"${temporary}/negative.log" 2>&1; then
+    echo "package-notices-test: missing Ghostty notices unexpectedly passed" >&2
+    exit 1
+fi
+grep -Fq "notice source is missing for ghostty" "${temporary}/negative.log"
+
+echo "package-notices-test: PASS real_graph=true negative=missing-ghostty-notice"

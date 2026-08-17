@@ -79,4 +79,4 @@ jq --arg sha "${runpath_sha}" '(.files[] | select(.path == "/usr/lib/zentty/lib/
     "${manifest}" >"${runpath_manifest}"
 expect_rejected bad-runpath "Ghostty RUNPATH is not install-relative" "${runpath_manifest}"
 
-echo "debian-package-build-test: PASS structural=real negatives=undeclared+license+mode+path+runpath"
+echo "debian-package-build-test: PASS structural=real negatives=undeclared+license+third-party-license+mode+path+runpath"

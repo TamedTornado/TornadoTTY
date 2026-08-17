@@ -151,3 +151,8 @@ second package layout.
   files, so their evidence and the applicable Apache/MPL texts are included
   explicitly. Notice collection runs Cargo metadata offline after compilation;
   missing locked sources or notice files are failures, not network fallbacks.
+- The first notice-bearing artifact passed with 690 closed-manifest files,
+  77 Cargo dependency records, and 27 reviewed Ghostty/Zig components. Its
+  extracted notices survived the full structural audit, and deleting either
+  the main copyright or a single Ghostty third-party notice caused the mutated
+  payload to fail qualification.
