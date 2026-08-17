@@ -5,6 +5,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 runner="${repo_root}/linux/tests/packaging-policy"
 source_policy="${repo_root}/linux/packaging/policy-v1.json"
 source_manifest="${repo_root}/linux/packaging/install-manifest-v1.json"
+source_fixture="${repo_root}/linux/packaging/upgrade-fixture-v1.json"
 temporary="$(mktemp -d)"
 trap 'rm -rf -- "${temporary}"' EXIT
 
@@ -40,6 +41,22 @@ expect_build_rejected() {
     local name="$1"
     local expected="$2"
     if "${runner}" "${source_policy}" "${source_manifest}" "${temporary}/${name}" >"${temporary}/${name}.log" 2>&1; then
+        echo "packaging-policy-test: ${name} unexpectedly passed" >&2
+        exit 1
+    fi
+    grep -Fq "${expected}" "${temporary}/${name}.log" || {
+        cat "${temporary}/${name}.log" >&2
+        echo "packaging-policy-test: ${name} lacked expected failure" >&2
+        exit 1
+    }
+}
+
+expect_fixture_rejected() {
+    local name="$1"
+    local expected="$2"
+    if "${runner}" "${source_policy}" "${source_manifest}" \
+        "${repo_root}/linux/scripts/build-local" "${temporary}/${name}.json" \
+        >"${temporary}/${name}.log" 2>&1; then
         echo "packaging-policy-test: ${name} unexpectedly passed" >&2
         exit 1
     fi
@@ -115,6 +132,14 @@ expect_policy_rejected unsafe-maintainer-script "policy schema or ratified value
 jq '.construction.closed_world = false' \
     "${source_policy}" >"${temporary}/open-world.json"
 expect_policy_rejected open-world "policy schema or ratified values drifted"
+
+jq '.user_data_contract.config = "DELETE"' \
+    "${source_fixture}" >"${temporary}/unsafe-fixture-user-action.json"
+expect_fixture_rejected unsafe-fixture-user-action "upgrade fixture contract drifted"
+
+jq '.version = "9.9.9"' \
+    "${source_fixture}" >"${temporary}/newer-fixture.json"
+expect_fixture_rejected newer-fixture "upgrade fixture contract drifted"
 
 sed '/output_dir}\/share\/zentty\/ghostty\/themes/d' \
     "${repo_root}/linux/scripts/build-local" >"${temporary}/contradictory-build-local"

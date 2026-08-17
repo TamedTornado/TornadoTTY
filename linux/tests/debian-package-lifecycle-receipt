@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+fail() {
+    echo "debian-package-lifecycle-receipt: error: $*" >&2
+    exit 1
+}
+
+[[ "$#" -eq 3 || "$#" -eq 5 ]] ||
+    fail "usage: $0 SUMMARY DPKG_LOG FAILED_UPGRADE_LOG [PACKAGE EXPANDED_MANIFEST]"
+summary="$1"
+dpkg_log="$2"
+failed_log="$3"
+package="${4:-}"
+manifest="${5:-}"
+
+for command in jq sha256sum; do
+    command -v "${command}" >/dev/null || fail "required command not found: ${command}"
+done
+for evidence in "${summary}" "${dpkg_log}" "${failed_log}"; do
+    [[ -f "${evidence}" ]] || fail "evidence file is missing: ${evidence}"
+done
+jq empty "${summary}" || fail "summary is not valid JSON"
+
+jq -e '
+    . as $root |
+    .schema_version == 1 and
+    .environment == {
+      kind:"bubblewrap-user-namespace",
+      dpkg_root:"disposable",
+      host_root:"read-only"
+    } and
+    .package.maintainer_scripts == [] and
+    (.package.version | test("^[0-9A-Za-z.+:~-]+$")) and
+    (.package.zentty_revision | test("^[0-9a-f]{40}$")) and
+    (.package.sha256 | test("^[0-9a-f]{64}$")) and
+    .oldest_supported_fixture.version == "0.1.0~fixture1" and
+    .oldest_supported_fixture.contract == "linux/packaging/upgrade-fixture-v1.json" and
+    (.oldest_supported_fixture.sha256 | test("^[0-9a-f]{64}$")) and
+    .ownership.path_count > 690 and
+    (.ownership.paths_sha256 | test("^[0-9a-f]{64}$")) and
+    (.ownership.payload_fingerprint_sha256 | test("^[0-9a-f]{64}$")) and
+    .ownership.owner == "root" and .ownership.group == "root" and
+    (.preserved.user_snapshot_sha256 | test("^[0-9a-f]{64}$")) and
+    (.preserved.unrelated_system_snapshot_sha256 | test("^[0-9a-f]{64}$")) and
+    (.preserved.unrelated_system_paths_snapshot_sha256 | test("^[0-9a-f]{64}$")) and
+    (.preserved.unrelated_system_sentinel_sha256 | test("^[0-9a-f]{64}$")) and
+    .failed_upgrade.exit_code != 0 and
+    .failed_upgrade.boundary == "injected-preinst-before-unpack" and
+    .failed_upgrade.previous_payload_preserved == true and
+    .failed_upgrade.general_rollback_claim == false and
+    (.failed_upgrade.log_sha256 | test("^[0-9a-f]{64}$")) and
+    [.transitions[].id] == [
+      "fresh-install",
+      "same-version-reinstall",
+      "default-remove",
+      "oldest-fixture-install",
+      "supported-upgrade",
+      "injected-failed-upgrade",
+      "explicit-purge",
+      "second-install",
+      "second-remove"
+    ] and
+    (.transitions | length) == 9 and
+    all(.transitions[];
+      (.user_snapshot_sha256 | test("^[0-9a-f]{64}$")) and
+      (.system_paths_snapshot_sha256 | test("^[0-9a-f]{64}$"))) and
+    [.transitions[].operation] == [
+      "dpkg --install","dpkg --install","dpkg --remove","dpkg --install",
+      "dpkg --install","dpkg --install","dpkg --purge","dpkg --install","dpkg --remove"
+    ] and
+    [.transitions[].outcome] == [
+      "PASS","PASS","PASS","PASS","PASS","EXPECTED_FAILURE","PASS","PASS","PASS"
+    ] and
+    all(.transitions[];
+      .user_snapshot_sha256 == $root.preserved.user_snapshot_sha256) and
+    all(.transitions[] | select(.id == "default-remove" or
+                                 .id == "explicit-purge" or
+                                 .id == "second-remove");
+      .system_paths_snapshot_sha256 == $root.preserved.unrelated_system_paths_snapshot_sha256) and
+    ([.transitions[] | select(.id == "fresh-install" or
+                               .id == "same-version-reinstall" or
+                               .id == "supported-upgrade" or
+                               .id == "injected-failed-upgrade" or
+                               .id == "second-install") |
+      .payload_fingerprint_sha256] | unique | length) == 1 and
+    all(.transitions[] | select(.id == "default-remove" or
+                                 .id == "explicit-purge" or
+                                 .id == "second-remove");
+      .package_status == null and .payload_fingerprint_sha256 == null) and
+    .claims == {
+      fresh_install:true,
+      reinstall_idempotent:true,
+      supported_upgrade:true,
+      failed_upgrade_previous_payload_usable:true,
+      remove_clean:true,
+      purge_clean:true,
+      repeated_cycle_clean:true,
+      user_data_preserved:true,
+      host_root_mutated:false
+    }
+' "${summary}" >/dev/null || fail "summary contract is invalid"
+
+[[ "$(sha256sum "${dpkg_log}" | awk '{print $1}')" == \
+   "$(jq -r '.logs.dpkg_sha256' "${summary}")" ]] || fail "dpkg log digest differs"
+[[ "$(sha256sum "${failed_log}" | awk '{print $1}')" == \
+   "$(jq -r '.logs.failed_upgrade_sha256' "${summary}")" ]] ||
+    fail "failed-upgrade log digest differs"
+[[ "$(jq -r '.failed_upgrade.log_sha256' "${summary}")" == \
+   "$(jq -r '.logs.failed_upgrade_sha256' "${summary}")" ]] ||
+    fail "failed-upgrade digest fields disagree"
+
+if [[ -n "${package}" ]]; then
+    [[ -f "${package}" && -f "${manifest}" ]] || fail "package validation inputs are missing"
+    [[ "$(sha256sum "${package}" | awk '{print $1}')" == \
+       "$(jq -r '.package.sha256' "${summary}")" ]] || fail "package digest differs"
+    [[ "$(jq -r '.version' "${manifest}")" == \
+       "$(jq -r '.package.version' "${summary}")" ]] || fail "package version differs"
+    [[ "$(jq -r '.zentty_revision' "${manifest}")" == \
+       "$(jq -r '.package.zentty_revision' "${summary}")" ]] ||
+        fail "package revision differs"
+fi
+
+echo "debian-package-lifecycle-receipt: PASS transitions=9"

@@ -47,4 +47,11 @@ expect_failure wrong-ghostty "expected $(sed -n 's/^revision=//p' "${repo_root}/
     ZENTTY_PACKAGE_WORK_DIR="${temporary}/wrong-work" \
     "${repo_root}/linux/scripts/build-deb"
 
-echo "debian-package-builder-contract-test: PASS negatives=dirty+missing-resource+wrong-ghostty"
+expect_failure prepared-wrong-ghostty "prepared Ghostty checkout does not match the pinned revision" \
+    env GHOSTTY_SOURCE_DIR="${temporary}/wrong-ghostty" \
+    ZENTTY_GHOSTTY_PREPARED=true \
+    ZENTTY_PACKAGE_OUTPUT_DIR="${temporary}/prepared-wrong-output" \
+    ZENTTY_PACKAGE_WORK_DIR="${temporary}/prepared-wrong-work" \
+    "${repo_root}/linux/scripts/build-deb"
+
+echo "debian-package-builder-contract-test: PASS negatives=dirty+missing-resource+wrong-ghostty+prepared-wrong-ghostty"

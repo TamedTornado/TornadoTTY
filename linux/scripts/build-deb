@@ -34,6 +34,12 @@ export SOURCE_DATE_EPOCH="${source_date_epoch}"
 
 ghostty_revision="$(sed -n 's/^revision=//p' "${repo_root}/linux/ghostty.lock")"
 [[ "${ghostty_revision}" =~ ^[0-9a-f]{40}$ ]] || fail "invalid pinned Ghostty revision"
+if [[ "${ZENTTY_GHOSTTY_PREPARED:-false}" == true ]]; then
+    [[ "$(git -C "${ghostty_source}" rev-parse HEAD 2>/dev/null)" == "${ghostty_revision}" ]] ||
+        fail "prepared Ghostty checkout does not match the pinned revision"
+    [[ -z "$(git -C "${ghostty_source}" status --porcelain=v1)" ]] ||
+        fail "prepared Ghostty checkout is dirty"
+fi
 package_version="$(cargo metadata --locked --no-deps --format-version 1 |
     jq -er '.packages[] | select(.name == "zentty-linux") | .version')+git${zentty_short}"
 dpkg --validate-version "${package_version}" || fail "invalid Debian version ${package_version}"
@@ -54,6 +60,9 @@ build_environment=(
     "GHOSTTY_OPTIMIZE=ReleaseSafe"
     "GHOSTTY_SYSTEM_INTEGRATIONS=fontconfig"
 )
+if [[ "${ZENTTY_GHOSTTY_PREPARED:-false}" == true ]]; then
+    build_environment+=("ZENTTY_GHOSTTY_PREPARED=true")
+fi
 if [[ -n "${GHOSTTY_SOURCE_DIR:-}" ]]; then
     build_environment+=("GHOSTTY_SOURCE_DIR=${ghostty_source}")
 fi

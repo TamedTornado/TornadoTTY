@@ -5,6 +5,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 policy="${1:-${repo_root}/linux/packaging/policy-v1.json}"
 manifest="${2:-${repo_root}/linux/packaging/install-manifest-v1.json}"
 build_script="${3:-${repo_root}/linux/scripts/build-local}"
+fixture="${4:-${repo_root}/linux/packaging/upgrade-fixture-v1.json}"
 
 fail() {
     echo "packaging-policy: error: $*" >&2
@@ -12,8 +13,10 @@ fail() {
 }
 
 command -v jq >/dev/null || fail "jq is required"
+command -v dpkg >/dev/null || fail "dpkg is required"
 jq empty "${policy}" 2>/dev/null || fail "policy is not valid JSON"
 jq empty "${manifest}" 2>/dev/null || fail "manifest is not valid JSON"
+jq empty "${fixture}" 2>/dev/null || fail "upgrade fixture is not valid JSON"
 
 jq -e '
   (keys | sort) == [
@@ -136,6 +139,32 @@ jq -e '
      else true end)
   )
 ' "${manifest}" >/dev/null || fail "manifest schema or path safety failed"
+
+jq -e '
+  (keys | sort) == [
+    "derivation","id","limitations","package_delta","purpose","schema_version",
+    "status","user_data_contract","version"
+  ] and
+  .schema_version == 1 and .status == "RATIFIED" and
+  .id == "zentty-debian-oldest-supported-lifecycle-fixture" and
+  .version == "0.1.0~fixture1" and
+  .derivation == "repack-current-candidate-payload" and
+  .package_delta == {
+    "added_owned_file":"/usr/lib/zentty/legacy-upgrade-fixture",
+    "added_owned_file_mode":"0644",
+    "added_owned_file_sha256":"a411c9a247b164bc70ef3cc1139e4dfe1adb05e549e1dd6b745b15df7257f933",
+    "expected_after_upgrade":"REMOVED"
+  } and
+  .user_data_contract == {
+    "config":"PRESERVE","data":"PRESERVE","state":"PRESERVE",
+    "cache":"PRESERVE","runtime":"PRESERVE"
+  } and
+  (.limitations | type == "array" and length == 2 and all(.[]; type == "string"))
+' "${fixture}" >/dev/null || fail "upgrade fixture contract drifted"
+dpkg --validate-version "$(jq -r '.version' "${fixture}")" ||
+    fail "upgrade fixture version is invalid"
+dpkg --compare-versions "$(jq -r '.version' "${fixture}")" lt '0.1.0+git000000000000' ||
+    fail "upgrade fixture does not sort before candidate versions"
 
 expected_ids=$'public-cli\npublic-gui\nprivate-cli\nprivate-gui\nghostty-embedding\nlayer-shell\nagent-wrappers\ntmux-shim\nshell-integration\nthemes\nagent-integrations\nthird-party-notices\nterminfo-ghostty\nterminfo-xterm-ghostty\ndesktop-entry\nappstream-metadata\napplication-icon\ncopyright\nchangelog'
 actual_ids="$(jq -r '.entries[].id' "${manifest}")"

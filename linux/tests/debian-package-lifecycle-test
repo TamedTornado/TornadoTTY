@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+journey="${repo_root}/linux/tests/debian-package-lifecycle"
+validator="${repo_root}/linux/tests/debian-package-lifecycle-receipt"
+temporary="$(mktemp -d)"
+trap 'rm -rf -- "${temporary}"' EXIT
+
+expect_failure() {
+    local name="$1" expected="$2"
+    shift 2
+    local output="${temporary}/${name}.log"
+    set +e
+    "$@" >"${output}" 2>&1
+    local status=$?
+    set -e
+    [[ "${status}" -ne 0 ]] || {
+        echo "debian-package-lifecycle-test: ${name} unexpectedly passed" >&2
+        exit 1
+    }
+    grep -Fq "${expected}" "${output}" || {
+        cat "${output}" >&2
+        echo "debian-package-lifecycle-test: ${name} lacked expected failure" >&2
+        exit 1
+    }
+}
+
+set +e
+ZENTTY_BWRAP="${temporary}/missing-bwrap" \
+    "${journey}" --probe-isolation-prerequisite >"${temporary}/missing-bwrap.log" 2>&1
+missing_bwrap_status=$?
+set -e
+[[ "${missing_bwrap_status}" -eq 77 ]] || {
+    cat "${temporary}/missing-bwrap.log" >&2
+    echo "debian-package-lifecycle-test: missing Bubblewrap was not a prerequisite failure" >&2
+    exit 1
+}
+
+mkdir -p "${temporary}/inner-output"
+expect_failure host-root "refusing non-disposable dpkg root: /" \
+    bwrap --die-with-parent --unshare-user --uid 0 --gid 0 --ro-bind / / \
+    --dev /dev --proc /proc \
+    --setenv ZENTTY_DPKG_LIFECYCLE_SESSION \
+        0000000000000000000000000000000000000000000000000000000000000000 \
+    -- "${journey}" --private-inner / /missing.deb /missing.json \
+        /missing.provenance.json "${temporary}/inner-output"
+
+: >"${temporary}/dpkg.log"
+printf 'injected failure\n' >"${temporary}/failed.log"
+dpkg_sha="$(sha256sum "${temporary}/dpkg.log" | awk '{print $1}')"
+failed_sha="$(sha256sum "${temporary}/failed.log" | awk '{print $1}')"
+zero64="$(printf '0%.0s' {1..64})"
+one64="$(printf '1%.0s' {1..64})"
+revision40="$(printf 'a%.0s' {1..40})"
+
+jq -n \
+    --arg dpkg_sha "${dpkg_sha}" \
+    --arg failed_sha "${failed_sha}" \
+    --arg zero64 "${zero64}" \
+    --arg one64 "${one64}" \
+    --arg revision40 "${revision40}" '
+    def transition($id; $operation; $outcome; $status; $payload): {
+      id:$id, operation:$operation, outcome:$outcome, package_status:$status,
+      payload_fingerprint_sha256:$payload,
+      user_snapshot_sha256:$zero64,
+      system_paths_snapshot_sha256:$zero64
+    };
+    {
+      schema_version:1,
+      environment:{kind:"bubblewrap-user-namespace",dpkg_root:"disposable",host_root:"read-only"},
+      package:{version:"0.1.0+gitfixture0000",zentty_revision:$revision40,sha256:$zero64,
+        maintainer_scripts:[]},
+      oldest_supported_fixture:{version:"0.1.0~fixture1",sha256:$zero64,
+        contract:"linux/packaging/upgrade-fixture-v1.json"},
+      ownership:{path_count:829,paths_sha256:$zero64,payload_fingerprint_sha256:$one64,
+        owner:"root",group:"root"},
+      preserved:{user_snapshot_sha256:$zero64,unrelated_system_snapshot_sha256:$zero64,
+        unrelated_system_paths_snapshot_sha256:$zero64,
+        unrelated_system_sentinel_sha256:$zero64},
+      failed_upgrade:{exit_code:1,boundary:"injected-preinst-before-unpack",
+        previous_payload_preserved:true,general_rollback_claim:false,log_sha256:$failed_sha},
+      transitions:[
+        transition("fresh-install";"dpkg --install";"PASS";"ii |0.1.0+gitfixture0000";$one64),
+        transition("same-version-reinstall";"dpkg --install";"PASS";"ii |0.1.0+gitfixture0000";$one64),
+        transition("default-remove";"dpkg --remove";"PASS";null;null),
+        transition("oldest-fixture-install";"dpkg --install";"PASS";"ii |0.1.0~fixture1";$zero64),
+        transition("supported-upgrade";"dpkg --install";"PASS";"ii |0.1.0+gitfixture0000";$one64),
+        transition("injected-failed-upgrade";"dpkg --install";"EXPECTED_FAILURE";"ii |0.1.0+gitfixture0000";$one64),
+        transition("explicit-purge";"dpkg --purge";"PASS";null;null),
+        transition("second-install";"dpkg --install";"PASS";"ii |0.1.0+gitfixture0000";$one64),
+        transition("second-remove";"dpkg --remove";"PASS";null;null)
+      ],
+      logs:{dpkg_sha256:$dpkg_sha,failed_upgrade_sha256:$failed_sha},
+      claims:{fresh_install:true,reinstall_idempotent:true,supported_upgrade:true,
+        failed_upgrade_previous_payload_usable:true,remove_clean:true,purge_clean:true,
+        repeated_cycle_clean:true,user_data_preserved:true,host_root_mutated:false}
+    }
+' >"${temporary}/valid.json"
+
+"${validator}" "${temporary}/valid.json" "${temporary}/dpkg.log" \
+    "${temporary}/failed.log" >/dev/null
+
+jq '.transitions |= map(select(.id != "supported-upgrade"))' \
+    "${temporary}/valid.json" >"${temporary}/missing-transition.json"
+expect_failure missing-transition "summary contract is invalid" \
+    "${validator}" "${temporary}/missing-transition.json" \
+    "${temporary}/dpkg.log" "${temporary}/failed.log"
+
+jq '.claims.purge_clean = false' "${temporary}/valid.json" >"${temporary}/false-claim.json"
+expect_failure false-claim "summary contract is invalid" \
+    "${validator}" "${temporary}/false-claim.json" \
+    "${temporary}/dpkg.log" "${temporary}/failed.log"
+
+jq '.package.maintainer_scripts = ["postinst"]' \
+    "${temporary}/valid.json" >"${temporary}/unreviewed-script.json"
+expect_failure unreviewed-script "summary contract is invalid" \
+    "${validator}" "${temporary}/unreviewed-script.json" \
+    "${temporary}/dpkg.log" "${temporary}/failed.log"
+
+jq '(.transitions[] | select(.id == "same-version-reinstall") | .outcome) = "SKIPPED"' \
+    "${temporary}/valid.json" >"${temporary}/unexpected-outcome.json"
+expect_failure unexpected-outcome "summary contract is invalid" \
+    "${validator}" "${temporary}/unexpected-outcome.json" \
+    "${temporary}/dpkg.log" "${temporary}/failed.log"
+
+printf 'stale\n' >>"${temporary}/dpkg.log"
+expect_failure stale-log "dpkg log digest differs" \
+    "${validator}" "${temporary}/valid.json" \
+    "${temporary}/dpkg.log" "${temporary}/failed.log"
+
+echo "debian-package-lifecycle-test: PASS negatives=missing-bwrap+host-root+missing-transition+false-claim+unreviewed-script+unexpected-outcome+stale-log"

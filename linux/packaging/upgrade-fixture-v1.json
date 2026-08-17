@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "status": "RATIFIED",
+  "id": "zentty-debian-oldest-supported-lifecycle-fixture",
+  "version": "0.1.0~fixture1",
+  "derivation": "repack-current-candidate-payload",
+  "purpose": "Exercise a real dpkg upgrade from the oldest lifecycle-contract fixture without storing a binary package in Git.",
+  "package_delta": {
+    "added_owned_file": "/usr/lib/zentty/legacy-upgrade-fixture",
+    "added_owned_file_mode": "0644",
+    "added_owned_file_sha256": "a411c9a247b164bc70ef3cc1139e4dfe1adb05e549e1dd6b745b15df7257f933",
+    "expected_after_upgrade": "REMOVED"
+  },
+  "user_data_contract": {
+    "config": "PRESERVE",
+    "data": "PRESERVE",
+    "state": "PRESERVE",
+    "cache": "PRESERVE",
+    "runtime": "PRESERVE"
+  },
+  "limitations": [
+    "This is a deterministic transaction fixture, not a previously published Zentty release.",
+    "User-state downgrade compatibility is outside the fixture contract."
+  ]
+}

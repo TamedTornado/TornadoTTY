@@ -1,0 +1,613 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+fixture_contract="${repo_root}/linux/packaging/upgrade-fixture-v1.json"
+policy="${repo_root}/linux/packaging/policy-v1.json"
+
+fail() {
+    echo "debian-package-lifecycle: error: $*" >&2
+    exit 1
+}
+
+prerequisite_failure() {
+    echo "debian-package-lifecycle: prerequisite unavailable: $*" >&2
+    exit 77
+}
+
+snapshot_tree() {
+    local output="$1"
+    shift
+    : >"${output}"
+    local root_path path relative kind mode uid gid digest
+    for root_path in "$@"; do
+        [[ -e "${root_path}" || -L "${root_path}" ]] || continue
+        while IFS= read -r -d '' path; do
+            relative="${path#"${lifecycle_root}"}"
+            mode="$(stat -c %a -- "${path}")"
+            uid="$(stat -c %u -- "${path}")"
+            gid="$(stat -c %g -- "${path}")"
+            if [[ -L "${path}" ]]; then
+                kind="symlink"
+                digest="$(readlink -- "${path}")"
+            elif [[ -d "${path}" ]]; then
+                kind="directory"
+                digest=-
+            elif [[ -f "${path}" ]]; then
+                kind="file"
+                digest="$(sha256sum "${path}" | awk '{print $1}')"
+            else
+                fail "unsupported snapshot path type: ${relative}"
+            fi
+            printf '%s\037%s\037%s\037%s\037%s\037%s\n' \
+                "${relative}" "${kind}" "${mode}" "${uid}" "${gid}" "${digest}" \
+                >>"${output}"
+        done < <(find "${root_path}" -xdev -print0)
+    done
+    LC_ALL=C sort -o "${output}" "${output}"
+}
+
+snapshot_system() {
+    snapshot_tree "$1" \
+        "${lifecycle_root}/usr" \
+        "${lifecycle_root}/etc" \
+        "${lifecycle_root}/opt"
+}
+
+snapshot_user() {
+    snapshot_tree "$1" \
+        "${lifecycle_root}/home" \
+        "${lifecycle_root}/run/user"
+}
+
+normalize_archive_paths() {
+    local package="$1" output="$2" raw="${work_dir}/archive-raw.$$.txt"
+    dpkg-deb --fsys-tarfile "${package}" | tar -tf - >"${raw}"
+    awk '
+        $0 == "./" { print "/"; next }
+        {
+            path=$0
+            sub(/^\./, "", path)
+            sub(/\/$/, "", path)
+            print path
+        }
+    ' "${raw}" | LC_ALL=C sort -u >"${output}"
+}
+
+normalize_database_paths() {
+    local output="$1"
+    dpkg-query --admindir="${lifecycle_root}/var/lib/dpkg" -L zentty |
+        sed 's#^/\.$#/#' | LC_ALL=C sort -u >"${output}"
+}
+
+package_status() {
+    dpkg-query --admindir="${lifecycle_root}/var/lib/dpkg" \
+        -W -f='${db:Status-Abbrev}|${Version}' zentty 2>/dev/null || true
+}
+
+run_dpkg() {
+    dpkg \
+        --root="${lifecycle_root}" \
+        --log="${lifecycle_root}/var/log/dpkg.log" \
+        --force-depends \
+        --force-script-chrootless \
+        "$@"
+}
+
+assert_user_and_sentinels() {
+    local transition="$1"
+    local current_user="${work_dir}/user-${transition}.txt"
+    snapshot_user "${current_user}"
+    cmp -s "${user_before}" "${current_user}" ||
+        fail "${transition} changed user-owned XDG data"
+    [[ "$(sha256sum "${lifecycle_root}/opt/zentty-unrelated/system-sentinel" | awk '{print $1}')" == "${system_sentinel_sha}" ]] ||
+        fail "${transition} changed the unrelated system sentinel"
+}
+
+snapshot_system_paths() {
+    local output="$1"
+    (
+        cd "${lifecycle_root}"
+        existing_roots=()
+        for path in usr etc opt; do
+            [[ ! -e "${path}" ]] || existing_roots+=("${path}")
+        done
+        if [[ "${#existing_roots[@]}" -gt 0 ]]; then
+            find "${existing_roots[@]}" -xdev -printf '/%p\n'
+        fi
+    ) | LC_ALL=C sort -u >"${output}"
+}
+
+record_transition() {
+    local id="$1" operation="$2" outcome="$3" payload_fingerprint="$4"
+    local user_snapshot="${work_dir}/receipt-user-${id}.txt"
+    local system_paths="${work_dir}/receipt-system-paths-${id}.txt"
+    local status
+    snapshot_user "${user_snapshot}"
+    snapshot_system_paths "${system_paths}"
+    status="$(package_status)"
+    jq -cn \
+        --arg id "${id}" \
+        --arg operation "${operation}" \
+        --arg outcome "${outcome}" \
+        --arg package_status "${status}" \
+        --arg payload_fingerprint "${payload_fingerprint}" \
+        --arg user_snapshot_sha256 "$(sha256sum "${user_snapshot}" | awk '{print $1}')" \
+        --arg system_paths_sha256 "$(sha256sum "${system_paths}" | awk '{print $1}')" '
+        {
+          id:$id,
+          operation:$operation,
+          outcome:$outcome,
+          package_status:(if $package_status == "" then null else $package_status end),
+          payload_fingerprint_sha256:(if $payload_fingerprint == "" then null else $payload_fingerprint end),
+          user_snapshot_sha256:$user_snapshot_sha256,
+          system_paths_snapshot_sha256:$system_paths_sha256
+        }
+    ' >>"${transition_receipts}"
+}
+
+assert_system_baseline() {
+    local transition="$1"
+    local current="${work_dir}/system-${transition}.txt"
+    snapshot_system "${current}"
+    cmp -s "${system_before}" "${current}" ||
+        fail "${transition} left package-owned system residue or changed unrelated paths"
+}
+
+audit_installed_candidate() {
+    local transition="$1"
+    local expected_version archive_paths database_paths manifest_paths
+    local installed_non_directories installed_directories expected_directories
+    local actual_metadata package_metadata expected_metadata checksum_file
+    local fingerprint_input path relative directory_prefix
+
+    expected_version="$(jq -r '.version' "${expanded_manifest}")"
+    [[ "$(package_status)" == "ii |${expected_version}" ]] ||
+        fail "${transition} package database does not contain configured candidate ${expected_version}"
+
+    archive_paths="${work_dir}/archive-${transition}.txt"
+    database_paths="${work_dir}/database-${transition}.txt"
+    manifest_paths="${work_dir}/manifest-${transition}.txt"
+    installed_non_directories="${work_dir}/non-directories-${transition}.txt"
+    installed_directories="${work_dir}/directories-${transition}.txt"
+    expected_directories="${work_dir}/expected-directories-${transition}.txt"
+    actual_metadata="${work_dir}/actual-metadata-${transition}.txt"
+    package_metadata="${work_dir}/package-metadata-${transition}.txt"
+    expected_metadata="${work_dir}/expected-metadata-${transition}.txt"
+    checksum_file="${work_dir}/checksums-${transition}.txt"
+    fingerprint_input="${work_dir}/fingerprint-${transition}.txt"
+    normalize_archive_paths "${candidate_package}" "${archive_paths}"
+    normalize_database_paths "${database_paths}"
+    cmp -s "${archive_paths}" "${database_paths}" ||
+        fail "${transition} dpkg ownership list differs from package archive"
+    jq -r '.files[].path' "${expanded_manifest}" | LC_ALL=C sort >"${manifest_paths}"
+    : >"${installed_non_directories}"
+    : >"${installed_directories}"
+    : >"${expected_directories}"
+    : >"${expected_metadata}"
+
+    while IFS= read -r path; do
+        directory_prefix="${path%/*}"
+        while [[ -n "${directory_prefix}" && "${directory_prefix}" != / ]]; do
+            printf '%s\n' "${directory_prefix}" >>"${expected_directories}"
+            directory_prefix="${directory_prefix%/*}"
+        done
+    done <"${manifest_paths}"
+    LC_ALL=C sort -u -o "${expected_directories}" "${expected_directories}"
+
+    while IFS= read -r path; do
+        [[ "${path}" == / ]] && continue
+        relative="${lifecycle_root}${path}"
+        [[ -e "${relative}" || -L "${relative}" ]] ||
+            fail "${transition} missing dpkg-owned path: ${path}"
+        if [[ -d "${relative}" && ! -L "${relative}" ]]; then
+            printf '%s\n' "${path}" >>"${installed_directories}"
+        else
+            printf '%s\n' "${path}" >>"${installed_non_directories}"
+        fi
+    done <"${archive_paths}"
+
+    LC_ALL=C sort -o "${installed_non_directories}" "${installed_non_directories}"
+    LC_ALL=C sort -u -o "${installed_directories}" "${installed_directories}"
+    cmp -s "${expected_directories}" "${installed_directories}" ||
+        fail "${transition} archive directory paths differ from manifest ancestors"
+    cmp -s "${manifest_paths}" "${installed_non_directories}" ||
+        fail "${transition} archive non-directory paths differ from expanded manifest"
+
+    while IFS= read -r path; do
+        printf '%s\037d\037755\0370:0\037\n' "${path}"
+    done <"${expected_directories}" >"${expected_metadata}"
+    jq -r '
+        .files[] |
+        [
+          .path,
+          (if .type == "file" then "f" elif .type == "symlink" then "l" else error("unsupported type") end),
+          (.mode | ltrimstr("0")),
+          "0:0",
+          (.target // "")
+        ] | join("\u001f")
+    ' "${expanded_manifest}" >>"${expected_metadata}"
+    LC_ALL=C sort -o "${expected_metadata}" "${expected_metadata}"
+
+    (
+        cd "${lifecycle_root}"
+        existing_roots=()
+        for path in usr etc opt; do
+            [[ ! -e "${path}" ]] || existing_roots+=("${path}")
+        done
+        find "${existing_roots[@]}" -xdev \
+            -printf '/%p\037%y\037%m\037%U:%G\037%l\n'
+    ) | LC_ALL=C sort >"${actual_metadata}"
+    grep -v '^/$' "${archive_paths}" >"${work_dir}/archive-keys-${transition}.txt"
+    join -t $'\037' -1 1 -2 1 \
+        "${work_dir}/archive-keys-${transition}.txt" "${actual_metadata}" \
+        >"${package_metadata}"
+    if ! cmp -s "${expected_metadata}" "${package_metadata}"; then
+        diff -u "${expected_metadata}" "${package_metadata}" | sed -n '1,80p' >&2 || true
+        fail "${transition} installed type, mode, owner, or symlink metadata differs"
+    fi
+
+    jq -r '.files[] | select(.type == "file") | "\(.sha256)  .\(.path)"' \
+        "${expanded_manifest}" >"${checksum_file}"
+    (cd "${lifecycle_root}" && sha256sum --quiet --strict -c "${checksum_file}") ||
+        fail "${transition} installed file digest differs"
+
+    dpkg --root="${lifecycle_root}" --verify zentty >/dev/null ||
+        fail "${transition} failed dpkg payload verification"
+    {
+        cat "${expected_metadata}"
+        jq -r '.files[] | [.path, (.sha256 // .target)] | join("\u001f")' \
+            "${expanded_manifest}"
+    } >"${fingerprint_input}"
+    sha256sum "${fingerprint_input}" | awk '{print $1}'
+}
+
+assert_installed_system_paths() {
+    local transition="$1"
+    local installed_package="${2:-${candidate_package}}"
+    local current="${work_dir}/system-${transition}.txt"
+    local before_paths="${work_dir}/before-paths-${transition}.txt"
+    local current_paths="${work_dir}/current-paths-${transition}.txt"
+    local additions="${work_dir}/additions-${transition}.txt"
+    local expected="${work_dir}/expected-additions-${transition}.txt"
+    local archive="${work_dir}/expected-archive-${transition}.txt"
+
+    snapshot_system_paths "${current_paths}"
+    cut -d $'\037' -f1 "${system_before}" | LC_ALL=C sort -u >"${before_paths}"
+    comm -13 "${before_paths}" "${current_paths}" >"${additions}"
+    normalize_archive_paths "${installed_package}" "${archive}"
+    grep -v '^/$' "${archive}" | while IFS= read -r path; do
+        grep -Fxq "${path}" "${before_paths}" || printf '%s\n' "${path}"
+    done | LC_ALL=C sort -u >"${expected}"
+    cmp -s "${expected}" "${additions}" ||
+        fail "${transition} wrote undeclared system paths"
+}
+
+build_upgrade_fixture() {
+    local fixture_dir="${work_dir}/upgrade-fixture-root"
+    local fixture_version legacy_path legacy_sha epoch
+    fixture_version="$(jq -r '.version' "${fixture_contract}")"
+    legacy_path="$(jq -r '.package_delta.added_owned_file' "${fixture_contract}")"
+    legacy_sha="$(jq -r '.package_delta.added_owned_file_sha256' "${fixture_contract}")"
+    epoch="$(jq -r '.source_date_epoch' "${candidate_provenance}")"
+    dpkg-deb --raw-extract "${candidate_package}" "${fixture_dir}"
+    sed -i "s/^Version: .*/Version: ${fixture_version}/" "${fixture_dir}/DEBIAN/control"
+    printf 'zentty lifecycle fixture v1\n' >"${fixture_dir}${legacy_path}"
+    chmod 0644 "${fixture_dir}${legacy_path}"
+    [[ "$(sha256sum "${fixture_dir}${legacy_path}" | awk '{print $1}')" == "${legacy_sha}" ]] ||
+        fail "upgrade fixture legacy content differs from its contract"
+    printf '%s  %s\n' \
+        "$(md5sum "${fixture_dir}${legacy_path}" | awk '{print $1}')" "${legacy_path#/}" \
+        >>"${fixture_dir}/DEBIAN/md5sums"
+    LC_ALL=C sort -o "${fixture_dir}/DEBIAN/md5sums" "${fixture_dir}/DEBIAN/md5sums"
+    find "${fixture_dir}" -exec touch -h -d "@${epoch}" {} +
+    SOURCE_DATE_EPOCH="${epoch}" dpkg-deb --root-owner-group --build \
+        "${fixture_dir}" "${upgrade_package}" >/dev/null
+    [[ "$(dpkg-deb -f "${upgrade_package}" Version)" == "${fixture_version}" ]] ||
+        fail "upgrade fixture version differs after build"
+    dpkg --compare-versions "${fixture_version}" lt "$(jq -r '.version' "${expanded_manifest}")" ||
+        fail "upgrade fixture is not older than the candidate"
+}
+
+build_failed_upgrade() {
+    local fixture_dir="${work_dir}/failed-upgrade-root"
+    local epoch
+    epoch="$(jq -r '.source_date_epoch' "${candidate_provenance}")"
+    dpkg-deb --raw-extract "${candidate_package}" "${fixture_dir}"
+    sed -i 's/^Version: .*/Version: 9.9.9+injectedfailure1/' "${fixture_dir}/DEBIAN/control"
+    cat >"${fixture_dir}/DEBIAN/preinst" <<'EOF'
+#!/bin/sh
+exit 42
+EOF
+    chmod 0755 "${fixture_dir}/DEBIAN/preinst"
+    find "${fixture_dir}" -exec touch -h -d "@${epoch}" {} +
+    SOURCE_DATE_EPOCH="${epoch}" dpkg-deb --root-owner-group --build \
+        "${fixture_dir}" "${failed_package}" >/dev/null
+}
+
+inner_journey() {
+    [[ "${ZENTTY_DPKG_LIFECYCLE_SESSION:-}" =~ ^[0-9a-f]{64}$ ]] ||
+        fail "private inner journey requires an outer isolation session"
+    [[ "$(id -u)" -eq 0 && "$(id -g)" -eq 0 ]] ||
+        fail "inner journey must run as namespace root"
+    lifecycle_root="$1"
+    candidate_package="$2"
+    expanded_manifest="$3"
+    candidate_provenance="$4"
+    output_dir="$5"
+    [[ "${lifecycle_root}" == /tmp/zentty-dpkg-lifecycle.* && "${lifecycle_root}" != / ]] ||
+        fail "refusing non-disposable dpkg root: ${lifecycle_root}"
+    [[ -d "${lifecycle_root}/var/lib/dpkg" && -f "${lifecycle_root}/var/lib/dpkg/status" ]] ||
+        fail "disposable dpkg database was not initialized"
+
+    work_dir="${lifecycle_root}/var/tmp/zentty-lifecycle"
+    mkdir -p "${work_dir}" "${lifecycle_root}/var/log"
+    upgrade_package="${work_dir}/zentty-upgrade-fixture.deb"
+    failed_package="${work_dir}/zentty-failed-upgrade.deb"
+    user_before="${work_dir}/user-before.txt"
+    system_before="${work_dir}/system-before.txt"
+    system_paths_before="${work_dir}/system-paths-before.txt"
+    transition_receipts="${work_dir}/transitions.jsonl"
+    : >"${transition_receipts}"
+
+    mkdir -p \
+        "${lifecycle_root}/opt/zentty-unrelated" \
+        "${lifecycle_root}/home/tester/.config/zentty/themes" \
+        "${lifecycle_root}/home/tester/.local/share/zentty/sounds" \
+        "${lifecycle_root}/home/tester/.local/state/zentty" \
+        "${lifecycle_root}/home/tester/.cache/zentty" \
+        "${lifecycle_root}/run/user/1000/zentty"
+    printf 'system sentinel\n' >"${lifecycle_root}/opt/zentty-unrelated/system-sentinel"
+    printf 'config sentinel\n' >"${lifecycle_root}/home/tester/.config/zentty/config.toml"
+    printf 'custom theme\n' >"${lifecycle_root}/home/tester/.config/zentty/themes/custom-theme"
+    printf 'custom sound\n' >"${lifecycle_root}/home/tester/.local/share/zentty/sounds/custom.oga"
+    printf 'workspace state\n' >"${lifecycle_root}/home/tester/.local/state/zentty/workspace.json"
+    printf 'cache sentinel\n' >"${lifecycle_root}/home/tester/.cache/zentty/cache"
+    printf 'runtime sentinel\n' >"${lifecycle_root}/run/user/1000/zentty/runtime"
+    system_sentinel_sha="$(sha256sum "${lifecycle_root}/opt/zentty-unrelated/system-sentinel" | awk '{print $1}')"
+    snapshot_system "${system_before}"
+    snapshot_system_paths "${system_paths_before}"
+    snapshot_user "${user_before}"
+    user_snapshot_sha="$(sha256sum "${user_before}" | awk '{print $1}')"
+    system_snapshot_sha="$(sha256sum "${system_before}" | awk '{print $1}')"
+    system_paths_snapshot_sha="$(sha256sum "${system_paths_before}" | awk '{print $1}')"
+
+    control_dir="${work_dir}/candidate-control"
+    dpkg-deb --control "${candidate_package}" "${control_dir}"
+    [[ ! -e "${control_dir}/preinst" && ! -e "${control_dir}/postinst" &&
+       ! -e "${control_dir}/prerm" && ! -e "${control_dir}/postrm" ]] ||
+        fail "candidate unexpectedly contains maintainer scripts"
+
+    build_upgrade_fixture
+    build_failed_upgrade
+
+    run_dpkg --install "${candidate_package}" >"${work_dir}/fresh-install.log" 2>&1
+    fresh_fingerprint="$(audit_installed_candidate fresh-install)"
+    assert_installed_system_paths fresh-install
+    assert_user_and_sentinels fresh-install
+    record_transition fresh-install 'dpkg --install' PASS "${fresh_fingerprint}"
+
+    run_dpkg --install "${candidate_package}" >"${work_dir}/reinstall.log" 2>&1
+    reinstall_fingerprint="$(audit_installed_candidate reinstall)"
+    [[ "${reinstall_fingerprint}" == "${fresh_fingerprint}" ]] ||
+        fail "same-version reinstall changed the candidate payload"
+    assert_installed_system_paths reinstall
+    assert_user_and_sentinels reinstall
+    record_transition same-version-reinstall 'dpkg --install' PASS "${reinstall_fingerprint}"
+
+    run_dpkg --remove zentty >"${work_dir}/remove.log" 2>&1
+    [[ -z "$(package_status)" ]] || fail "remove left a package database record"
+    assert_system_baseline remove
+    assert_user_and_sentinels remove
+    record_transition default-remove 'dpkg --remove' PASS ""
+
+    run_dpkg --install "${upgrade_package}" >"${work_dir}/fixture-install.log" 2>&1
+    fixture_version="$(jq -r '.version' "${fixture_contract}")"
+    [[ "$(package_status)" == "ii |${fixture_version}" ]] ||
+        fail "oldest supported fixture did not configure"
+    normalize_archive_paths "${upgrade_package}" "${work_dir}/fixture-archive.txt"
+    normalize_database_paths "${work_dir}/fixture-database.txt"
+    cmp -s "${work_dir}/fixture-archive.txt" "${work_dir}/fixture-database.txt" ||
+        fail "fixture package database ownership differs from its archive"
+    legacy_path="$(jq -r '.package_delta.added_owned_file' "${fixture_contract}")"
+    [[ -f "${lifecycle_root}${legacy_path}" ]] || fail "fixture legacy file was not installed"
+    dpkg --root="${lifecycle_root}" --verify zentty >/dev/null ||
+        fail "fixture failed dpkg payload verification"
+    assert_installed_system_paths fixture-install "${upgrade_package}"
+    assert_user_and_sentinels fixture-install
+    fixture_fingerprint="$(sha256sum "${upgrade_package}" | awk '{print $1}')"
+    record_transition oldest-fixture-install 'dpkg --install' PASS "${fixture_fingerprint}"
+
+    run_dpkg --install "${candidate_package}" >"${work_dir}/upgrade.log" 2>&1
+    upgrade_fingerprint="$(audit_installed_candidate supported-upgrade)"
+    [[ "${upgrade_fingerprint}" == "${fresh_fingerprint}" ]] ||
+        fail "supported upgrade payload differs from fresh install"
+    [[ ! -e "${lifecycle_root}${legacy_path}" ]] ||
+        fail "supported upgrade retained the fixture legacy file"
+    assert_installed_system_paths supported-upgrade
+    assert_user_and_sentinels supported-upgrade
+    record_transition supported-upgrade 'dpkg --install' PASS "${upgrade_fingerprint}"
+
+    set +e
+    run_dpkg --install "${failed_package}" >"${work_dir}/failed-upgrade.log" 2>&1
+    failed_upgrade_status=$?
+    set -e
+    [[ "${failed_upgrade_status}" -ne 0 ]] || fail "injected failed upgrade unexpectedly passed"
+    grep -Fq 'pre-installation script subprocess returned error exit status 42' \
+        "${work_dir}/failed-upgrade.log" ||
+        fail "failed upgrade did not stop at the injected preinst boundary"
+    failed_fingerprint="$(audit_installed_candidate failed-upgrade)"
+    [[ "${failed_fingerprint}" == "${fresh_fingerprint}" ]] ||
+        fail "failed pre-unpack upgrade changed the installed payload"
+    assert_installed_system_paths failed-upgrade
+    assert_user_and_sentinels failed-upgrade
+    record_transition injected-failed-upgrade 'dpkg --install' EXPECTED_FAILURE "${failed_fingerprint}"
+
+    run_dpkg --purge zentty >"${work_dir}/purge.log" 2>&1
+    [[ -z "$(package_status)" ]] || fail "purge left a package database record"
+    assert_system_baseline purge
+    assert_user_and_sentinels purge
+    record_transition explicit-purge 'dpkg --purge' PASS ""
+
+    run_dpkg --install "${candidate_package}" >"${work_dir}/second-install.log" 2>&1
+    second_fingerprint="$(audit_installed_candidate second-install)"
+    [[ "${second_fingerprint}" == "${fresh_fingerprint}" ]] ||
+        fail "second-cycle install payload differs from fresh install"
+    assert_installed_system_paths second-install
+    assert_user_and_sentinels second-install
+    record_transition second-install 'dpkg --install' PASS "${second_fingerprint}"
+    run_dpkg --remove zentty >"${work_dir}/second-remove.log" 2>&1
+    [[ -z "$(package_status)" ]] || fail "second remove left a package database record"
+    assert_system_baseline second-remove
+    assert_user_and_sentinels second-remove
+    record_transition second-remove 'dpkg --remove' PASS ""
+
+    package_paths="${work_dir}/receipt-package-paths.txt"
+    normalize_archive_paths "${candidate_package}" "${package_paths}"
+    package_path_count="$(grep -vc '^/$' "${package_paths}")"
+    package_paths_sha="$(sha256sum "${package_paths}" | awk '{print $1}')"
+    dpkg_log_sha="$(sha256sum "${lifecycle_root}/var/log/dpkg.log" | awk '{print $1}')"
+    failed_log_sha="$(sha256sum "${work_dir}/failed-upgrade.log" | awk '{print $1}')"
+    candidate_sha="$(sha256sum "${candidate_package}" | awk '{print $1}')"
+    upgrade_sha="$(sha256sum "${upgrade_package}" | awk '{print $1}')"
+    candidate_version="$(jq -r '.version' "${expanded_manifest}")"
+    zentty_revision="$(jq -r '.zentty_revision' "${expanded_manifest}")"
+
+    jq -n \
+        --arg candidate_version "${candidate_version}" \
+        --arg fixture_version "${fixture_version}" \
+        --arg zentty_revision "${zentty_revision}" \
+        --arg candidate_sha256 "${candidate_sha}" \
+        --arg fixture_sha256 "${upgrade_sha}" \
+        --arg package_paths_sha256 "${package_paths_sha}" \
+        --arg payload_fingerprint "${fresh_fingerprint}" \
+        --arg user_snapshot_sha256 "${user_snapshot_sha}" \
+        --arg system_snapshot_sha256 "${system_snapshot_sha}" \
+        --arg system_paths_snapshot_sha256 "${system_paths_snapshot_sha}" \
+        --arg system_sentinel_sha256 "${system_sentinel_sha}" \
+        --arg dpkg_log_sha256 "${dpkg_log_sha}" \
+        --arg failed_upgrade_log_sha256 "${failed_log_sha}" \
+        --argjson package_path_count "${package_path_count}" \
+        --argjson failed_upgrade_exit "${failed_upgrade_status}" \
+        --slurpfile transitions "${transition_receipts}" '
+        {
+          schema_version:1,
+          environment:{kind:"bubblewrap-user-namespace",dpkg_root:"disposable",host_root:"read-only"},
+          package:{version:$candidate_version,zentty_revision:$zentty_revision,sha256:$candidate_sha256,
+            maintainer_scripts:[]},
+          oldest_supported_fixture:{version:$fixture_version,sha256:$fixture_sha256,
+            contract:"linux/packaging/upgrade-fixture-v1.json"},
+          ownership:{path_count:$package_path_count,paths_sha256:$package_paths_sha256,
+            payload_fingerprint_sha256:$payload_fingerprint,owner:"root",group:"root"},
+          preserved:{user_snapshot_sha256:$user_snapshot_sha256,
+            unrelated_system_snapshot_sha256:$system_snapshot_sha256,
+            unrelated_system_paths_snapshot_sha256:$system_paths_snapshot_sha256,
+            unrelated_system_sentinel_sha256:$system_sentinel_sha256},
+          failed_upgrade:{exit_code:$failed_upgrade_exit,
+            boundary:"injected-preinst-before-unpack",previous_payload_preserved:true,
+            general_rollback_claim:false,log_sha256:$failed_upgrade_log_sha256},
+          transitions:$transitions,
+          logs:{dpkg_sha256:$dpkg_log_sha256,failed_upgrade_sha256:$failed_upgrade_log_sha256},
+          claims:{fresh_install:true,reinstall_idempotent:true,supported_upgrade:true,
+            failed_upgrade_previous_payload_usable:true,remove_clean:true,purge_clean:true,
+            repeated_cycle_clean:true,user_data_preserved:true,host_root_mutated:false}
+        }' >"${output_dir}/package-lifecycle-summary.json"
+    cp "${lifecycle_root}/var/log/dpkg.log" "${output_dir}/dpkg.log"
+    cp "${work_dir}/failed-upgrade.log" "${output_dir}/failed-upgrade.log"
+}
+
+if [[ "${1:-}" == --private-inner ]]; then
+    shift
+    [[ "$#" -eq 5 ]] || fail "private inner journey expects ROOT PACKAGE MANIFEST PROVENANCE OUTPUT"
+    inner_journey "$@"
+    exit 0
+fi
+
+if [[ "${1:-}" == --probe-isolation-prerequisite ]]; then
+    [[ "$#" -eq 1 ]] || fail "isolation prerequisite probe takes no arguments"
+    bwrap_path="${ZENTTY_BWRAP:-$(command -v bwrap || true)}"
+    [[ -x "${bwrap_path}" ]] || prerequisite_failure "Bubblewrap is required"
+    echo "debian-package-lifecycle: isolation prerequisite available"
+    exit 0
+fi
+
+[[ "$#" -ge 2 && "$#" -le 3 ]] ||
+    fail "usage: $0 PACKAGE EXPANDED_MANIFEST [RECEIPT_DIRECTORY]"
+candidate_package="$(readlink -f -- "$1")"
+expanded_manifest="$(readlink -f -- "$2")"
+receipt_directory="${3:-${repo_root}/build/linux/package-lifecycle}"
+candidate_provenance="${candidate_package%.deb}.provenance.json"
+
+for command in awk bwrap cmp cut diff dpkg dpkg-deb dpkg-query find grep jq md5sum \
+    readlink sed sha256sum sort stat tar touch; do
+    command -v "${command}" >/dev/null || prerequisite_failure "required command not found: ${command}"
+done
+[[ -f "${candidate_package}" ]] || fail "candidate package is missing: ${candidate_package}"
+[[ -f "${expanded_manifest}" ]] || fail "expanded manifest is missing: ${expanded_manifest}"
+[[ -f "${candidate_provenance}" ]] || fail "candidate provenance is missing: ${candidate_provenance}"
+jq empty "${fixture_contract}" "${policy}" "${expanded_manifest}" "${candidate_provenance}" ||
+    fail "package lifecycle input JSON is invalid"
+jq -e --arg package_sha "$(sha256sum "${candidate_package}" | awk '{print $1}')" '
+    .schema_version == 1 and .package == "zentty" and
+    .artifact.sha256 == $package_sha
+' "${candidate_provenance}" >/dev/null || fail "candidate provenance does not match package"
+jq -e --arg version "$(dpkg-deb -f "${candidate_package}" Version)" '
+    .schema_version == 1 and .package == "zentty" and .architecture == "amd64" and
+    .version == $version and (.files | length) > 0
+' "${expanded_manifest}" >/dev/null || fail "expanded manifest does not match package identity"
+jq -e \
+    --arg manifest_revision "$(jq -r '.zentty_revision' "${expanded_manifest}")" \
+    --arg provenance_revision "$(jq -r '.zentty_revision' "${candidate_provenance}")" \
+    '$manifest_revision == $provenance_revision' "${expanded_manifest}" >/dev/null ||
+    fail "expanded manifest and provenance revisions differ"
+
+bwrap_path="${ZENTTY_BWRAP:-$(command -v bwrap || true)}"
+[[ -x "${bwrap_path}" ]] || prerequisite_failure "Bubblewrap is required"
+lifecycle_root="$(mktemp -d /tmp/zentty-dpkg-lifecycle.XXXXXX)"
+outer_output="$(mktemp -d /tmp/zentty-dpkg-lifecycle-output.XXXXXX)"
+cleanup_outer() {
+    rm -rf -- "${lifecycle_root}" "${outer_output}"
+}
+trap cleanup_outer EXIT
+chmod 0755 "${lifecycle_root}"
+mkdir -p "${lifecycle_root}/var/lib/dpkg" "${lifecycle_root}/var/log" \
+    "${lifecycle_root}/var/tmp"
+: >"${lifecycle_root}/var/lib/dpkg/status"
+session_id="$(printf '%s\0' "${candidate_package}" "${expanded_manifest}" "$$" "$(date +%s%N)" | sha256sum | awk '{print $1}')"
+
+"${bwrap_path}" \
+    --die-with-parent \
+    --new-session \
+    --unshare-user \
+    --unshare-pid \
+    --unshare-net \
+    --uid 0 \
+    --gid 0 \
+    --ro-bind / / \
+    --bind "${lifecycle_root}" "${lifecycle_root}" \
+    --bind "${outer_output}" "${outer_output}" \
+    --dev /dev \
+    --proc /proc \
+    --chdir "${repo_root}" \
+    --setenv TMPDIR "${lifecycle_root}/var/tmp" \
+    --setenv HOME "${lifecycle_root}/root" \
+    --setenv ZENTTY_DPKG_LIFECYCLE_SESSION "${session_id}" \
+    -- "${BASH_SOURCE[0]}" --private-inner \
+    "${lifecycle_root}" "${candidate_package}" "${expanded_manifest}" \
+    "${candidate_provenance}" "${outer_output}"
+
+mkdir -p "${receipt_directory}"
+install -m 0644 "${outer_output}/package-lifecycle-summary.json" \
+    "${receipt_directory}/package-lifecycle-summary.json"
+install -m 0644 "${outer_output}/dpkg.log" "${receipt_directory}/dpkg.log"
+install -m 0644 "${outer_output}/failed-upgrade.log" \
+    "${receipt_directory}/failed-upgrade.log"
+
+"${repo_root}/linux/tests/debian-package-lifecycle-receipt" \
+    "${receipt_directory}/package-lifecycle-summary.json" \
+    "${receipt_directory}/dpkg.log" \
+    "${receipt_directory}/failed-upgrade.log" \
+    "${candidate_package}" "${expanded_manifest}" >/dev/null
+
+transition_count="$(jq '.transitions | length' "${receipt_directory}/package-lifecycle-summary.json")"
+echo "debian-package-lifecycle: PASS transitions=${transition_count} receipt=${receipt_directory}/package-lifecycle-summary.json"
