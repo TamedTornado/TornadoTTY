@@ -128,6 +128,14 @@ export ZIG='${zig_dir}/zig'
 export BLUEPRINT_COMPILER_DIR='${blueprint_prefix}/bin'
 export ZENTTY_PNPM='${pnpm_bin}'
 export PATH='${repo_root}/linux/ci/node-tools/node_modules/.bin:${pnpm_dir}/bin:${HOME}/.local/bin':\$PATH
+export LANG='C.UTF-8'
+export LC_ALL='C.UTF-8'
+export TZ='UTC'
+export XKB_DEFAULT_LAYOUT='us'
+export LIBGL_ALWAYS_SOFTWARE='1'
+export GALLIUM_DRIVER='llvmpipe'
+export GSETTINGS_BACKEND='memory'
+export GIO_USE_VFS='local'
 EOF
 
 echo "bootstrap-ubuntu-24.04: PASS tools=${tools_root}"

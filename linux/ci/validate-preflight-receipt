@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+manifest="${ZENTTY_CI_ENVIRONMENT_MANIFEST:-${repo_root}/linux/ci/environment-v1.json}"
+receipt="${ZENTTY_CI_PREFLIGHT_RECEIPT:-${repo_root}/build/linux/ci-preflight.json}"
+now="$(date +%s)"
+
+fail() {
+    echo "validate-ci-preflight-receipt: error: $*" >&2
+    exit 1
+}
+
+[[ -f "${receipt}" ]] || fail "receipt is missing: ${receipt}"
+manifest_sha="$(sha256sum "${manifest}" | awk '{print $1}')"
+zentty_revision="$(git -C "${repo_root}" rev-parse HEAD)"
+ghostty_revision="$(sed -n 's/^revision=//p' "${repo_root}/linux/ghostty.lock")"
+expected_apt="$(jq -c '.apt_packages | sort' "${manifest}")"
+
+jq -e \
+    --argjson now "${now}" \
+    --arg manifest_sha "${manifest_sha}" \
+    --arg zentty_revision "${zentty_revision}" \
+    --arg ghostty_revision "${ghostty_revision}" \
+    --argjson expected_apt "${expected_apt}" \
+    --arg expected_image_version "${ZENTTY_EXPECTED_RUNNER_IMAGE_VERSION:-}" '
+  .schema_version == 1 and
+  (.generated_at_epoch | type == "number" and . <= $now and . >= ($now - 3600)) and
+  (.baseline.runner_label == "ubuntu-24.04") and
+  (.baseline.runner_image_version | type == "string" and length > 0) and
+  ($expected_image_version == "" or .baseline.runner_image_version == $expected_image_version) and
+  (.run.id | type == "string" and length > 0) and
+  (.run.attempt | type == "number" and . >= 1 and floor == .) and
+  (.source == {zentty_revision:$zentty_revision,ghostty_revision:$ghostty_revision,trees:"clean"}) and
+  (.environment_manifest_sha256 == $manifest_sha) and
+  ((.apt_packages | keys | sort) == $expected_apt) and
+  (all(.apt_packages[]; type == "string" and length > 0)) and
+  (.tools.zig == "0.16.0") and
+  (.tools.rust | startswith("rustc 1.97.1 ")) and
+  (.tools.pnpm == "10.32.1") and
+  (.tools.gemini == "0.53.0") and
+  (.tools.codex == "codex-cli 0.147.0") and
+  (.tools.claude == "2.1.201 (Claude Code)") and
+  (.prerequisites == {user_namespaces:true,bubblewrap:true,controlled_x11:true,controlled_wayland:true}) and
+  ([paths(scalars) as $p | getpath($p) | strings] |
+    all(.[]; test("(gh[pousr]_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9]{20,}|must-not-cross-product-boundary)") | not))
+' "${receipt}" >/dev/null || fail "receipt is stale, incomplete, mismatched, or unsafe"
+
+echo "validate-ci-preflight-receipt: PASS revision=${zentty_revision}"

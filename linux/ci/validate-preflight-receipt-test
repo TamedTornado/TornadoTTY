@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+manifest="${repo_root}/linux/ci/environment-v1.json"
+validator="${repo_root}/linux/ci/validate-preflight-receipt"
+fixture="$(mktemp -d)"
+trap 'rm -rf -- "${fixture}"' EXIT
+now="$(date +%s)"
+
+fail() {
+    echo "validate-preflight-receipt-test: error: $*" >&2
+    exit 1
+}
+
+apt_packages="$(jq -Rn --slurpfile manifest "${manifest}" '
+  reduce $manifest[0].apt_packages[] as $package ({}; .[$package] = "reviewed-version")
+')"
+jq -n \
+    --argjson now "${now}" \
+    --arg revision "$(git -C "${repo_root}" rev-parse HEAD)" \
+    --arg ghostty "$(sed -n 's/^revision=//p' "${repo_root}/linux/ghostty.lock")" \
+    --arg manifest_sha "$(sha256sum "${manifest}" | awk '{print $1}')" \
+    --argjson apt_packages "${apt_packages}" '
+  {
+    schema_version:1,
+    generated_at_epoch:$now,
+    baseline:{runner_label:"ubuntu-24.04",runner_image_version:"local-unversioned"},
+    run:{id:"local",attempt:1},
+    source:{zentty_revision:$revision,ghostty_revision:$ghostty,trees:"clean"},
+    environment_manifest_sha256:$manifest_sha,
+    apt_packages:$apt_packages,
+    tools:{
+      zig:"0.16.0",rust:"rustc 1.97.1 (reviewed)",pnpm:"10.32.1",
+      gemini:"0.53.0",codex:"codex-cli 0.147.0",claude:"2.1.201 (Claude Code)"
+    },
+    prerequisites:{user_namespaces:true,bubblewrap:true,controlled_x11:true,controlled_wayland:true}
+  }
+' >"${fixture}/valid.json"
+ZENTTY_CI_PREFLIGHT_RECEIPT="${fixture}/valid.json" "${validator}" >/dev/null
+
+expect_rejected() {
+    local name="$1"
+    local filter="$2"
+    jq "${filter}" "${fixture}/valid.json" >"${fixture}/${name}.json"
+    if ZENTTY_CI_PREFLIGHT_RECEIPT="${fixture}/${name}.json" "${validator}" \
+        >"${fixture}/${name}.out" 2>&1; then
+        fail "${name} mutation was accepted"
+    fi
+}
+
+expect_rejected stale '.generated_at_epoch -= 7200'
+expect_rejected wrong-commit '.source.zentty_revision = "0000000000000000000000000000000000000000"'
+expect_rejected wrong-ghostty '.source.ghostty_revision = "0000000000000000000000000000000000000000"'
+expect_rejected dirty-source '.source.trees = "dirty"'
+expect_rejected missing-package '.apt_packages |= del(.fish)'
+expect_rejected wrong-tool '.tools.codex = "codex-cli latest"'
+expect_rejected missing-prerequisite '.prerequisites.controlled_wayland = false'
+expect_rejected wrong-attempt '.run.attempt = 0'
+expect_rejected secret '.unexpected = "sk-abcdefghijklmnopqrstuvwxyz123456"'
+
+echo "validate-preflight-receipt-test: PASS negatives=stale+source+apt+tool+prerequisite+run+secret"

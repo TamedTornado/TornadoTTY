@@ -6,12 +6,14 @@ manifest="${ZENTTY_CI_ENVIRONMENT_MANIFEST:-${repo_root}/linux/ci/environment-v1
 os_release="${ZENTTY_CI_OS_RELEASE:-/etc/os-release}"
 tools_root="${ZENTTY_CI_TOOLS_ROOT:-${repo_root}/build/linux-ci-tools}"
 receipt="${ZENTTY_CI_PREFLIGHT_RECEIPT:-${repo_root}/build/linux/ci-preflight.json}"
+started_at_epoch="$(date +%s)"
 
 fail() {
     echo "ci-preflight: error: $*" >&2
     exit 1
 }
 
+rm -f -- "${receipt}"
 "${repo_root}/linux/ci/validate-environment" >/dev/null
 [[ -f "${os_release}" ]] || fail "OS release identity is missing"
 # shellcheck disable=SC1090
@@ -21,6 +23,17 @@ source "${os_release}"
 [[ "$(dpkg --print-architecture)" == amd64 && "$(uname -m)" == x86_64 ]] ||
     fail "amd64/x86_64 is required"
 [[ -z "$(git -C "${repo_root}" status --porcelain=v1)" ]] || fail "Zentty checkout is dirty"
+while IFS='=' read -r name expected; do
+    [[ "${!name:-}" == "${expected}" ]] || fail "deterministic environment mismatch: ${name}"
+done < <(jq -r '.deterministic_environment | to_entries[] | "\(.key)=\(.value)"' "${manifest}")
+
+apt_receipt="$(mktemp)"
+trap 'rm -f -- "${apt_receipt:-}"' EXIT
+while IFS= read -r package; do
+    version="$(dpkg-query -W -f='${Version}' "${package}" 2>/dev/null)" ||
+        fail "required apt package is missing: ${package}"
+    printf '%s\t%s\n' "${package}" "${version}" >>"${apt_receipt}"
+done < <(jq -r '.apt_packages[]' "${manifest}")
 
 ghostty_source="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
 expected_ghostty_repo="$(jq -r '.source_contract.ghostty_repository' "${manifest}")"
@@ -68,9 +81,15 @@ claude_binary="$(readlink -f -- "$(command -v claude)")"
     fail "Claude version is not reviewed"
 
 mkdir -p "$(dirname "${receipt}")"
+apt_packages_json="$(jq -Rn '
+  [inputs | split("\t") | {(.[0]):.[1]}] | add
+' <"${apt_receipt}")"
 jq -n \
     --arg runner_label "$(jq -r '.baseline.runner_label' "${manifest}")" \
     --arg runner_image_version "${ImageVersion:-local-unversioned}" \
+    --arg started_at_epoch "${started_at_epoch}" \
+    --arg run_id "${GITHUB_RUN_ID:-local}" \
+    --arg run_attempt "${GITHUB_RUN_ATTEMPT:-1}" \
     --arg zentty_revision "$(git -C "${repo_root}" rev-parse HEAD)" \
     --arg ghostty_revision "${expected_ghostty_revision}" \
     --arg manifest_sha256 "$(sha256sum "${manifest}" | awk '{print $1}')" \
@@ -79,15 +98,21 @@ jq -n \
     --arg pnpm "$("${pnpm}" --version)" \
     --arg gemini "$(gemini --version 2>/dev/null | tail -1)" \
     --arg codex "$(codex --version 2>/dev/null)" \
-    --arg claude "$(claude --version 2>/dev/null)" '
+    --arg claude "$(claude --version 2>/dev/null)" \
+    --argjson apt_packages "${apt_packages_json}" '
     {
       schema_version:1,
+      generated_at_epoch:($started_at_epoch | tonumber),
       baseline:{runner_label:$runner_label,runner_image_version:$runner_image_version},
+      run:{id:$run_id,attempt:($run_attempt | tonumber)},
       source:{zentty_revision:$zentty_revision,ghostty_revision:$ghostty_revision,trees:"clean"},
       environment_manifest_sha256:$manifest_sha256,
+      apt_packages:$apt_packages,
       tools:{zig:$zig,rust:$rust,pnpm:$pnpm,gemini:$gemini,codex:$codex,claude:$claude},
       prerequisites:{user_namespaces:true,bubblewrap:true,controlled_x11:true,controlled_wayland:true}
     }
 ' >"${receipt}"
+rm -f -- "${apt_receipt}"
+trap - EXIT
 
 echo "ci-preflight: PASS receipt=${receipt}"
