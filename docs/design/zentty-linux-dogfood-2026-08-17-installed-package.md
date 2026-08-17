@@ -235,6 +235,38 @@ real widget `map` signal, and the journey waits for a fresh exact
 retries a product operation or accepts absence; both replace wall-clock
 assumptions with observed real-system state.
 
+The corrected four-worker qualification completed cleanly against implementation
+commit `e3b0953459bf755ab26854fa2382e4d04117d2ea`. All 155 PASS-declared matrix
+cells passed, the one defect-linked XFAIL had its expected outcome, and every
+support/negative runner test passed. The run took 821,490 ms; its machine
+summary SHA-256 is
+`21633ff04af2d1c75cb379d61cc9cef7f7a7e1937a56aa4165c1799d3a87e0d1`.
+The exact installed Debian artifact was
+`zentty_0.1.0+gite3b0953459bf_amd64.deb`, SHA-256
+`4d7ebf2a52da26e70d7cc78b8bb7eaa6d447cc6af671adb1ba4155b61ccde843`,
+containing Zentty commit `e3b0953459bf755ab26854fa2382e4d04117d2ea` and Ghostty
+commit `281d7d7dbeab24c1a2d04f6d3c720c34dbfac645`. Its installed manifest
+SHA-256 was
+`1da71f9f96b94bf727decd656a94a9674e9ebe828807366b974d6a43a7a0b288`.
+The controlled installed-product display sessions were
+`e74988f59dc0d171a86a1d2bdb84c5330cffed25253fbf091659a874762d9c99`
+for X11 and
+`7315c65feae451f63d0cb6e86b3b906030dd6ab7ebbdd829ce0e99182eede201`
+for Wayland. Both receipts prove direct, restart, and desktop-entry launches;
+real single/multi-pane PTYs; CLI read/mutation; persistence; installed tmux and
+agent paths; clipboard and Open With actions; shell integration and terminfo;
+desktop identity; clean `/usr/bin:/bin`; and no source/build leakage or recorded
+credentials across all audited processes.
+
+Debug Valgrind is **PASS with reviewed suppressions**, never described as an
+unsuppressed clean result. The preserved unsuppressed receipt contains 427
+errors/contexts, 6,160 definitely lost bytes, and 41,428 indirectly lost bytes.
+The paired reviewed-suppression receipt contains zero post-suppression errors,
+contexts, definite bytes, or indirect bytes and exactly 427 suppressed
+errors/contexts. Suppression governance passed and the summary records both
+receipt identities. ReleaseSafe Valgrind remains the declared XFAIL; no rule
+was broadened to make it green.
+
 ## Qualification boundary
 
 This feature may make the installed X11/Wayland cells pass. It does not imply
