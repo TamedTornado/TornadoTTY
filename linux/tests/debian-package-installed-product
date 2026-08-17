@@ -279,10 +279,10 @@ wait_for_file() {
 }
 
 find_product_pid() {
-    local needle="${1:-${state_dir}}" pid cmdline parent any_ancestry=false
-    if [[ "${needle}" == --any ]]; then
+    local needle="${1:-${state_dir}}" pid cmdline parent desktop_launch=false
+    if [[ "${needle}" == --desktop ]]; then
         needle=""
-        any_ancestry=true
+        desktop_launch=true
     fi
     for _ in {1..400}; do
         for path in /proc/[0-9]*/cmdline; do
@@ -292,7 +292,10 @@ find_product_pid() {
             cmdline="$(tr '\0' ' ' <"${path}" 2>/dev/null || true)"
             if [[ "${cmdline}" == "/usr/bin/zentty-linux "* &&
                 ( -z "${needle}" || "${cmdline}" == *"${needle}"* ) ]]; then
-                if [[ "${any_ancestry}" == true ]]; then
+                if [[ "${desktop_launch}" == true ]] &&
+                    [[ -n "$(readlink "/proc/${pid}/exe" 2>/dev/null || true)" ]] &&
+                    tr '\0' '\n' <"/proc/${pid}/environ" 2>/dev/null |
+                        grep -Fxq "ZENTTY_INSTALLED_RECEIPTS=${receipts}"; then
                     printf '%s\n' "${pid}"
                     return 0
                 fi
@@ -483,7 +486,7 @@ clean_environment \
 desktop_pid=$!
 product_pid="${desktop_pid}"
 wait_for_file "${receipts}/desktop-supervisor-ready" "installed desktop-entry launch"
-desktop_product="$(find_product_pid --any)" || fail "desktop-entry product PID was not observable"
+desktop_product="$(find_product_pid --desktop)" || fail "desktop-entry product PID was not observable"
 audit_process "${desktop_product}" desktop
 touch "${receipts}/desktop-release"
 wait "${desktop_pid}" || fail "installed desktop-entry launch exited unsuccessfully"

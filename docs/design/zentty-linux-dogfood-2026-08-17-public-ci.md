@@ -204,3 +204,14 @@ Fish. Controlled versioned Fish and Nushell now precede PATH unless an explicit
 operator override is supplied, while the negative test uses a genuinely empty
 PATH. This preserves ordinary PATH fallback on hosts without controlled tools
 and makes the supported-version gate deterministic.
+
+The next aggregate proved both repairs: clean package reconstruction and all
+five Fish cells passed. It then exposed an independent concurrency bug in the
+installed-product harness. X11 and Wayland installed-package cells correctly
+run in parallel, but the desktop-entry phase searched globally for *any*
+`/usr/bin/zentty-linux`. Wayland selected a withdrawing process from the X11
+cell; `/proc/PID/exe` was consequently empty and the audit failed. The selector
+now requires the live executable plus the exact backend-private installed
+receipt root inherited through the real desktop launch. Direct launches retain
+their stricter process-ancestry check. No product assertion was weakened, and
+the failed public-package evidence remains recorded.
