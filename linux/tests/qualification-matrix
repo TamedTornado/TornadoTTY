@@ -425,6 +425,24 @@ for capability in $(jq -r '.required_capabilities[]' "${matrix}"); do
         fail "missing required capability: ${capability}"
 done
 
+jq -e '
+    [.cells[] | select(.capability == "installed_product")] as $cells |
+    ($cells | length) == 2 and
+    all($cells[];
+        .status == "PASS" and .tier == "release" and
+        .optimize == "ReleaseSafe" and .async_backend == "default" and
+        .terminals == "multi" and .depends_on == ["install-uninstall"] and
+        (.command | contains("linux/tests/debian-package-installed-product"))) and
+    any($cells[];
+        .id == "installed-product-x11" and .display == "x11" and
+        .environment_profile == "nested-x11-v1" and
+        (.command | startswith("GDK_BACKEND=x11 "))) and
+    any($cells[];
+        .id == "installed-product-wayland" and .display == "wayland" and
+        .environment_profile == "nested-wayland-input-v1" and
+        (.command | startswith("GDK_BACKEND=wayland ")))
+' "${matrix}" >/dev/null || fail "installed-product cells are missing or malformed"
+
 for optimize in ReleaseSafe Debug; do
     for display in wayland x11; do
         for async_backend in default epoll io_uring; do

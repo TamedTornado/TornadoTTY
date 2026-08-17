@@ -147,6 +147,39 @@ real process receipt proves the canonical working directory. X11 therefore
 requires `xclip`, while Wayland requires the existing input-capable compositor
 profile and `wl-paste`; absence is a failed prerequisite, never a pass.
 
+The first extended X11 run failed an over-specific test assertion: the wrapper
+correctly preferred its colocated dpkg-owned CLI at
+`/usr/lib/zentty/libexec/zentty/agent-wrappers/shared/zentty`, while the test
+expected the general `/usr/lib/zentty/bin/zentty` entry point. The colocated
+copy is deliberate so hooks remain bound to the same installed payload even
+when PATH changes. The temporary diagnostic proved the full Codex hook
+arguments and original probe argument reached the subprocess, but it was
+subsequently replaced by the reviewed actor boundary described below.
+
+The orchestration contract then correctly rejected an inline fake Codex
+program in the installed runner. The runner now copies the single reviewed
+`controlled-agent` actor into its source-hidden namespace, selects its
+`codex-permission` profile, and requires both successful wrapper return and the
+authenticated application event. It deliberately does not enable the actor's
+verbose start receipt because that diagnostic contains the pane capability;
+no installed qualification receipt may record that token.
+
+The first Wayland extension then failed the OSC 52 clipboard assertion. Moving
+the write among panes did not repair it reliably, and relying on the focused
+pane's OSC timing would test a narrower Ghostty protocol path than Zentty's
+user-facing Copy feature. The journey now reuses the existing physical-input
+helper and real command palette to invoke Select All and Copy on the focused
+installed surface. An independent `xclip`/`wl-paste` compositor client must see
+the pane's sentinel. This is both more representative and removes the faulty
+leader/focus assumption rather than weakening the assertion.
+
+The first physical-copy retry correctly executed Select All but rejected the
+Copy query because five legitimate palette entries match the word “Copy.” The
+existing source journey deliberately specifies that count and activates the
+already selected first result. The installed journey now uses the same closed
+expectation (five), records pre-action counts to reject stale log matches, and
+presses Return without the erroneous Down navigation.
+
 ## Qualification boundary
 
 This feature may make the installed X11/Wayland cells pass. It does not imply

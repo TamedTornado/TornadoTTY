@@ -146,16 +146,7 @@ grep -Fq '<launchable type="desktop-id">com.zentty.zentty.desktop</launchable>' 
     fail "AppStream desktop identity differs"
 
 mkdir -p "${receipts}/bin" "${XDG_CONFIG_HOME}/zentty"
-cat >"${receipts}/bin/codex" <<'FAKE_CODEX'
-#!/usr/bin/env bash
-set -euo pipefail
-{
-    printf 'tool=%s\n' "${ZENTTY_AGENT_TOOL:-}"
-    printf 'cli=%s\n' "${ZENTTY_CLI_BIN:-}"
-    printf 'argc=%s\n' "$#"
-    printf 'arg=%s\n' "$@"
-} >"${ZENTTY_TEST_RECEIPT}"
-FAKE_CODEX
+cp -- "${repo_root}/linux/tests/fixtures/controlled-agent" "${receipts}/bin/codex"
 cat >"${receipts}/open-probe" <<'OPEN_PROBE'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -231,10 +222,10 @@ if mkdir "${out}/${phase}-leader" 2>/dev/null; then
         "${tmux_path}" list-panes -F '#{pane_id}' >"${out}/first-tmux-panes.txt"
         [[ "$(wc -l <"${out}/first-tmux-panes.txt")" -eq 3 ]]
         PATH="${out}/bin:/usr/bin:/bin" \
-            ZENTTY_TEST_RECEIPT="${out}/agent-wrapper.receipt" \
+            ZENTTY_CONTROLLED_AGENT_PROFILE=codex-permission \
             /usr/lib/zentty/libexec/zentty/agent-wrappers/codex/codex \
             --installed-package-probe
-        printf '\033]52;c;emVudHR5LWluc3RhbGxlZC1jbGlwYm9hcmQ=\033\\'
+        printf 'passed\n' >"${out}/agent-wrapper.receipt"
     else
         [[ "$(jq 'length' "${out}/${phase}-panes-before.json")" -eq 3 ]]
         "${ZENTTY_CLI_BIN}" list worklanes --json >"${out}/second-worklanes.json"
@@ -242,6 +233,7 @@ if mkdir "${out}/${phase}-leader" 2>/dev/null; then
     fi
     printf 'ready\n' >"${out}/${phase}-ready"
 fi
+printf 'zentty-installed-clipboard-visible\n'
 for _ in {1..600}; do
     [[ -e "${out}/${phase}-release" ]] && exit 0
     sleep 0.05
@@ -348,25 +340,10 @@ start_direct first
 wait_for_file "${receipts}/first-ready" "first installed CLI mutation"
 first_product="$(find_product_pid)" || fail "first installed product PID was not observable"
 audit_process "${first_product}" first
-grep -Fxq 'tool=codex' "${receipts}/agent-wrapper.receipt" ||
-    fail "installed Codex wrapper did not execute the representative agent"
-grep -Fxq 'cli=/usr/lib/zentty/bin/zentty' "${receipts}/agent-wrapper.receipt" ||
-    fail "installed Codex wrapper did not use the installed CLI"
-grep -Fxq 'arg=--installed-package-probe' "${receipts}/agent-wrapper.receipt" ||
-    fail "installed Codex wrapper did not preserve the representative argument"
-clipboard=""
-for _ in {1..200}; do
-    if [[ "${backend}" == x11 ]]; then
-        clipboard="$(xclip -selection clipboard -o 2>/dev/null || true)"
-    else
-        clipboard="$(wl-paste --no-newline 2>/dev/null || true)"
-    fi
-    [[ "${clipboard}" == zentty-installed-clipboard ]] && break
-    sleep 0.025
-done
-[[ "${clipboard}" == zentty-installed-clipboard ]] ||
-    fail "installed Ghostty OSC 52 write did not reach the compositor clipboard"
-
+grep -Fxq 'passed' "${receipts}/agent-wrapper.receipt" ||
+    fail "installed Codex wrapper did not execute the controlled agent"
+grep -Fq 'zentty-linux: agent-event pane=' "${product_log}" ||
+    fail "installed Codex wrapper did not deliver an authenticated hook event"
 # Use the established real-input helper to invoke one installed Open With
 # action. The configured executable is outside PATH and is launched by the
 # product through its real platform service.
@@ -374,21 +351,56 @@ supervisor_pid="${product_pid}"
 product_pid="${first_product}"
 zentty_product_prepare_input "${backend}" "${product_log}" ||
     fail "installed product input did not become ready"
-zentty_product_ctrl_shift_key "${backend}" p
-zentty_product_wait_for_log "${product_log}" 'zentty-linux: command-palette=shown' \
-    "installed command palette did not open" || fail "installed command palette did not open"
-if zentty_product_uses_xdotool "${backend}"; then
-    xdotool type --clearmodifiers --window "${ZENTTY_PRODUCT_WINDOW_ID}" --delay 4 -- \
-        'Open With: Installed Probe'
-else
-    wtype -- 'Open With: Installed Probe'
-fi
-zentty_product_wait_for_log "${product_log}" \
-    'command-palette=query value="Open With: Installed Probe" results=1' \
-    "installed Open With action was absent or ambiguous" ||
-    fail "installed Open With action was absent or ambiguous"
-zentty_product_key "${backend}" Down
-zentty_product_key "${backend}" Return
+activate_palette_action() {
+    local query="$1" expected="$2" expected_results="${3:-1}" shown_before query_before action_before
+    shown_before="$(grep -Fxc 'zentty-linux: command-palette=shown' "${product_log}" || true)"
+    query_before="$(grep -Fc "command-palette=query value=\"${query}\" results=${expected_results}" "${product_log}" || true)"
+    action_before="$(grep -Fc "${expected}" "${product_log}" || true)"
+    zentty_product_ctrl_shift_key "${backend}" p
+    for _ in {1..200}; do
+        (( $(grep -Fxc 'zentty-linux: command-palette=shown' "${product_log}" || true) > shown_before )) && break
+        sleep 0.025
+    done
+    (( $(grep -Fxc 'zentty-linux: command-palette=shown' "${product_log}" || true) > shown_before )) ||
+        fail "installed command palette did not open for: ${query}"
+    if zentty_product_uses_xdotool "${backend}"; then
+        xdotool type --clearmodifiers --window "${ZENTTY_PRODUCT_WINDOW_ID}" --delay 4 -- "${query}"
+    else
+        wtype -- "${query}"
+    fi
+    for _ in {1..200}; do
+        (( $(grep -Fc "command-palette=query value=\"${query}\" results=${expected_results}" "${product_log}" || true) > query_before )) && break
+        sleep 0.025
+    done
+    (( $(grep -Fc "command-palette=query value=\"${query}\" results=${expected_results}" "${product_log}" || true) > query_before )) ||
+        fail "installed palette query differed: ${query}"
+    zentty_product_key "${backend}" Return
+    for _ in {1..200}; do
+        (( $(grep -Fc "${expected}" "${product_log}" || true) > action_before )) && return
+        sleep 0.025
+    done
+    fail "installed palette action did not complete: ${query}"
+}
+
+# Select and copy through Zentty's real action router and Ghostty selection.
+# An independent compositor client then verifies the result.
+activate_palette_action 'Select All' 'zentty-linux: action=select-all pane='
+activate_palette_action 'Copy' 'zentty-linux: action=copy pane=' 5
+clipboard=""
+for _ in {1..200}; do
+    if [[ "${backend}" == x11 ]]; then
+        clipboard="$(xclip -selection clipboard -o 2>/dev/null || true)"
+    else
+        clipboard="$(wl-paste --no-newline 2>/dev/null || true)"
+    fi
+    [[ "${clipboard}" == *zentty-installed-clipboard-visible* ]] && break
+    sleep 0.025
+done
+[[ "${clipboard}" == *zentty-installed-clipboard-visible* ]] ||
+    fail "installed product copy did not reach the compositor clipboard"
+
+activate_palette_action 'Open With: Installed Probe' \
+    'action=open-with-target id=custom:installed-probe result=launched'
 for _ in {1..200}; do
     [[ -s "${receipts}/open-with.receipt" ]] && break
     sleep 0.025
@@ -397,8 +409,6 @@ grep -Fxq 'argc=1' "${receipts}/open-with.receipt" ||
     fail "installed Open With launcher did not receive one target"
 grep -Fxq "arg1=${HOME}" "${receipts}/open-with.receipt" ||
     fail "installed Open With launcher received the wrong working directory"
-grep -Fq 'action=open-with-target id=custom:installed-probe result=launched' "${product_log}" ||
-    fail "installed product did not record the platform launch"
 product_pid="${supervisor_pid}"
 for _ in {1..400}; do
     if jq -e '

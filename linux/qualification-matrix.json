@@ -31,7 +31,7 @@
   "required_capabilities": [
     "build", "terminal_behavior", "api_misuse", "lifecycle", "physical_key_translation",
     "ime_composition", "external_resize", "compositor_scaling", "valgrind", "suppression_governance",
-    "staged_packaging", "install_uninstall", "controlled_public_ci", "product_boundary",
+    "staged_packaging", "install_uninstall", "installed_product", "controlled_public_ci", "product_boundary",
     "architecture_contract", "workspace_schema", "workspace_persistence", "workspace_restore",
     "product_worklanes", "product_pane_terminal_lifecycle", "recovery", "platform_xdg_paths", "platform_open",
     "platform_notifications", "platform_clipboard", "platform_settings", "platform_process_launch",
@@ -106,6 +106,8 @@
     {"id":"fractional-scale-wayland","order":60,"capability":"compositor_scaling","display":"wayland","optimize":"ReleaseSafe","async_backend":"default","terminals":"multi","status":"BLOCKED","tier":"release","prerequisite":"A controlled nested Wayland compositor exposing deterministic integer and fractional output-scale protocols."},
     {"id":"scale-x11","order":60,"capability":"compositor_scaling","display":"x11","optimize":"ReleaseSafe","async_backend":"default","terminals":"multi","status":"BLOCKED","tier":"release","prerequisite":"A controlled X11/Xwayland server with deterministic DPI/output scaling and externally observable geometry."},
     {"id":"install-uninstall","order":60,"schedule_priority":1,"capability":"install_uninstall","display":"both","optimize":"ReleaseSafe","async_backend":"default","terminals":"single","status":"PASS","tier":"release","depends_on":["ghostty-regression"],"environment_profile":"isolated-none-v1","command":"linux/tests/debian-package-lifecycle-build"},
+    {"id":"installed-product-x11","order":61,"schedule_priority":2,"capability":"installed_product","display":"x11","optimize":"ReleaseSafe","async_backend":"default","terminals":"multi","status":"PASS","tier":"release","depends_on":["install-uninstall"],"environment_profile":"nested-x11-v1","command":"GDK_BACKEND=x11 linux/tests/debian-package-installed-product"},
+    {"id":"installed-product-wayland","order":61,"schedule_priority":2,"capability":"installed_product","display":"wayland","optimize":"ReleaseSafe","async_backend":"default","terminals":"multi","status":"PASS","tier":"release","depends_on":["install-uninstall"],"environment_profile":"nested-wayland-input-v1","command":"GDK_BACKEND=wayland linux/tests/debian-package-installed-product"},
     {"id":"controlled-ci-wayland","order":60,"capability":"controlled_public_ci","display":"wayland","optimize":"both","async_backend":"all","terminals":"all","status":"BLOCKED","tier":"full","prerequisite":"Public CI runner configuration with a controlled nested Wayland compositor, GPU/software-renderer policy, and retained receipts."},
     {"id":"controlled-ci-x11","order":60,"capability":"controlled_public_ci","display":"x11","optimize":"both","async_backend":"all","terminals":"all","status":"BLOCKED","tier":"full","prerequisite":"Public CI runner configuration with controlled X11/Xwayland, GPU/software-renderer policy, and retained receipts."},
 

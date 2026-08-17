@@ -58,6 +58,16 @@ jq 'del(.cells[] | select(.id == "debug-wayland-epoll-single"))' \
     "${source_matrix}" >"${temp_dir}/matrix.json"
 expect_validation_failure 'missing terminal cell: Debug/wayland/epoll/single'
 
+# Installed payload qualification is an inseparable X11/Wayland pair and may
+# not degrade to staged execution or a non-input Wayland environment.
+jq 'del(.cells[] | select(.id == "installed-product-x11"))' \
+    "${source_matrix}" >"${temp_dir}/matrix.json"
+expect_validation_failure 'installed-product cells are missing or malformed'
+
+jq '(.cells[] | select(.id == "installed-product-wayland")).environment_profile = "nested-wayland-v1"' \
+    "${source_matrix}" >"${temp_dir}/matrix.json"
+expect_validation_failure 'installed-product cells are missing or malformed'
+
 # Status vocabulary is closed; SKIPPED is never an accepted qualification result.
 jq '(.cells[] | select(.id == "install-uninstall")).status = "SKIPPED"' \
     "${source_matrix}" >"${temp_dir}/matrix.json"
