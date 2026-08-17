@@ -63,3 +63,32 @@ reviewed SHA-512, extracts the self-contained CLI below the ignored tool root,
 and uses that executable for the frozen lockfile install. The second real run
 completed idempotently without reconstructing Zig, Blueprint, Rust, pnpm,
 Claude, or the node dependency graph.
+
+Preflight now deletes its output before checking anything, validates all 53 apt
+packages and records their actual Ubuntu versions, requires the deterministic
+environment, proves user namespaces and Bubblewrap, checks clean exact Zentty
+and Ghostty trees, and verifies every pinned tool and agent CLI. Its pure
+receipt validator rejects stale time, wrong run/source, missing apt packages,
+wrong tools, false prerequisites, and credential-shaped content. The negative
+runner additionally proved wrong OS, a dirty Zentty tree, wrong Ghostty origin,
+wrong Zig, and stale receipt cleanup.
+
+The local Ubuntu baseline lacked only `fish` from the declared apt set. It was
+installed from Noble (`3.7.0-1`); apt also reported an unrelated pre-existing
+Unity repository missing-key warning, which does not exist on a fresh hosted
+runner and was not treated as qualification evidence. The exact preflight of
+Zentty `6bb98eef63b6d1d406e09305369b7ee4be7fcf2f` and Ghostty
+`281d7d7dbeab24c1a2d04f6d3c720c34dbfac645` passed with all 53 packages,
+namespaces, both controlled-display capabilities, and reviewed tools. Receipt
+SHA-256: `5e881fa5418e24ebf8523b2318625f96dac9115e1405404f2a77a9f16a5ff4b7`.
+
+Using only the new bootstrap environment, the exact current product was rebuilt
+and passed real single-terminal Ghostty/GTK/PTY smoke journeys in nested
+Wayland session
+`aeaedd65ae4aa023cb05820a28ea2b93109d4ea9477da45476989aa5240114a0`
+and nested X11 session
+`1b0053ffe1a3c308d7a18454ff5198611dc246dfca5347a30b4daedbc59cb417`.
+The checked-in pnpm Gemini/Codex directory then passed the real Gemini agent
+journey through nested input-capable Wayland session
+`5052ecc72b7c2f4382d03c2362f97432850a3c84130298a714e5e8f95d46ef94`.
+This closes the local bootstrap proof, not the required fresh public-run proof.
