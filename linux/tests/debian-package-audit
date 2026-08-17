@@ -91,9 +91,15 @@ control="${root}/DEBIAN/control"
 [[ "$(sed -n 's/^Package: //p' "${control}")" == zentty ]] || fail "wrong package name"
 [[ "$(sed -n 's/^Architecture: //p' "${control}")" == amd64 ]] || fail "wrong package architecture"
 dependencies="$(sed -n 's/^Depends: //p' "${control}")"
+dependency_floor_pattern='\(>=[[:space:]]+([^)]+)\)'
 while IFS=$'\t' read -r package minimum; do
-    grep -Fq "${package} (>= ${minimum})" <<<"${dependencies}" ||
+    dependency_relation="$(tr ',' '\n' <<<"${dependencies}" |
+        sed 's/^[[:space:]]*//;s/[[:space:]]*$//' |
+        grep -E "^${package//./\\.}([[:space:]]|$)" || true)"
+    [[ "${dependency_relation}" =~ ${dependency_floor_pattern} ]] ||
         fail "ratified dependency floor is absent: ${package} >= ${minimum}"
+    dpkg --compare-versions "${BASH_REMATCH[1]}" ge "${minimum}" ||
+        fail "ratified dependency floor is too low: ${package} ${BASH_REMATCH[1]} < ${minimum}"
 done < <(jq -r '.dependencies.baseline_packages[] | [.name,.minimum] | @tsv' "${policy}")
 
 desktop-file-validate "${root}/usr/share/applications/com.zentty.zentty.desktop"

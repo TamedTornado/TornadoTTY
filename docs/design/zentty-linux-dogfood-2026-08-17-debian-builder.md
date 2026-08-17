@@ -195,3 +195,8 @@ second package layout.
   chooses the strongest version with `dpkg --compare-versions`, and emits one
   bytewise-sorted relationship per package. This preserves policy floors while
   retaining stronger ELF-derived requirements such as GTK 4.14.1.
+- The first normalized artifact was correctly emitted with GTK 4.14.1, but
+  the audit still searched for the literal weaker policy string `>= 4.14` and
+  rejected it. The audit now parses the emitted relation and uses Debian's own
+  version comparison to prove it is greater than or equal to the floor; a
+  stronger derived dependency is no longer mistaken for a missing baseline.
