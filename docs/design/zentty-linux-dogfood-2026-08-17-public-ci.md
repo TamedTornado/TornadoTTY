@@ -226,3 +226,20 @@ including direct launch, injected crash/restart, desktop entry, PTYs, panes,
 clipboard, Open With, shell integration, and exact process audits. The selector
 repair therefore has the real colliding-workload coverage that exposed the bug;
 a final clean aggregate remains required.
+
+The final clean aggregate at revision
+`c879cfa37e640592716648f85bfdab3fd46b40b2` passed every presently executable
+support test and matrix cell. The machine summary SHA-256 is
+`b1bebc6b8976fb81f1e08f91b61232cf76ba879e913b6ca61acebc08e1615586`.
+Declared totals are **161 PASS, 0 FAIL, 5 BLOCKED, 1 XFAIL, and 14
+NOT_IMPLEMENTED**. Implemented-local and product-boundary qualification passed;
+release and full-Linux qualification did not pass because the declared gaps
+remain. Valgrind is **PASS with reviewed suppressions**; ReleaseSafe Valgrind
+remains the expected tracked XFAIL.
+
+The aggregate took 1,047.930 seconds. Its critical path is now explicit:
+current pinned Ghostty regression took 487.040 seconds, network-disabled clean
+package reconstruction 315.460 seconds, and install/upgrade/uninstall lifecycle
+227.770 seconds. This is appropriate for complete/release qualification, not a
+pull-request subset; GH-57 must select a real representative gate without
+mislabeling it as full qualification.
