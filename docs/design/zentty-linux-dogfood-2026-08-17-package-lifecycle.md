@@ -111,3 +111,14 @@ lifecycle journey.
   nine-transition journey passed. The builder boundary suite also passed its
   dirty-tree, missing-resource, wrong-Ghostty, and prepared-wrong-Ghostty
   negative cases.
+- The first full matrix run exposed a clean-environment packaging defect that
+  ambient developer caches had hidden. The Linux build downloaded and compiled
+  its complete active dependency graph, but notice collection then asked Cargo
+  for the unfiltered all-platform graph in offline mode. That graph included
+  `windows-link` and `windows-sys`, so the package cell failed after the product
+  build when the isolated Cargo cache correctly lacked an unused Windows-only
+  crate. Notice collection now uses Cargo's host `--filter-platform` graph,
+  matching what the Linux artifact can contain rather than downloading foreign
+  dependencies to silence the test. The focused notice test compares the
+  generated inventory with independently filtered metadata and rejects any
+  `windows-*` package in Linux notices.

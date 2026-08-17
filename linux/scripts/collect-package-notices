@@ -45,7 +45,15 @@ done < <(jq -r '.components[] |
         >"${output}/ghostty-components.json"
 
 cargo_metadata="${output}/cargo-metadata.json"
-cargo metadata --locked --offline --format-version 1 >"${cargo_metadata}"
+host_target="$(rustc -vV | sed -n 's/^host: //p')"
+[[ "${host_target}" =~ ^[A-Za-z0-9_.-]+$ ]] ||
+    fail "could not determine the Rust host target"
+# A Linux package ships only the dependency closure selected for its target.
+# Without --filter-platform, Cargo also resolves target-specific crates for
+# other operating systems and an otherwise complete clean Linux build can fail
+# here merely because (for example) a Windows-only crate was never downloaded.
+cargo metadata --locked --offline --format-version 1 \
+    --filter-platform "${host_target}" >"${cargo_metadata}"
 jq -e 'all(.packages[] | select(.source != null); .license != null or .license_file != null)' \
     "${cargo_metadata}" >/dev/null || fail "a Cargo dependency lacks license metadata"
 

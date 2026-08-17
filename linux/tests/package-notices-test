@@ -11,6 +11,19 @@ trap 'rm -rf -- "${temporary}"' EXIT
 jq -e 'map(.name + "@" + .version) |
     length > 0 and length == (unique | length)' \
     "${temporary}/positive/cargo-packages.json" >/dev/null
+host_target="$(rustc -vV | sed -n 's/^host: //p')"
+cargo metadata --locked --offline --format-version 1 \
+    --filter-platform "${host_target}" |
+    jq '[.packages[] | select(.source != null) |
+      {name,version,source,license,license_file,repository}] |
+      sort_by(.name,.version,.source)' >"${temporary}/expected-cargo-packages.json"
+cmp "${temporary}/expected-cargo-packages.json" \
+    "${temporary}/positive/cargo-packages.json"
+if jq -e 'any(.[]; .name | startswith("windows-"))' \
+    "${temporary}/positive/cargo-packages.json" >/dev/null; then
+    echo "package-notices-test: unrelated Windows dependency entered Linux notices" >&2
+    exit 1
+fi
 jq -e '.components | length > 0' \
     "${temporary}/positive/ghostty-components.json" >/dev/null
 if grep -IRFq "${repo_root}" "${temporary}/positive"; then
@@ -27,4 +40,4 @@ if "${repo_root}/linux/scripts/collect-package-notices" \
 fi
 grep -Fq "notice source is missing for ghostty" "${temporary}/negative.log"
 
-echo "package-notices-test: PASS real_graph=true negative=missing-ghostty-notice"
+echo "package-notices-test: PASS real_linux_graph=true negative=missing-ghostty-notice"
