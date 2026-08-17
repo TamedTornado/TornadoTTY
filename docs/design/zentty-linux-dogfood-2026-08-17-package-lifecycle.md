@@ -215,3 +215,28 @@ lifecycle journey.
   real X11 and real Wayland attention journeys each passed: two Ghostty PTYs,
   authenticated agent events, private D-Bus notification service, active-pane
   suppression, desktop activation, inbox routing, and exact-pane response.
+
+## Accepted qualification receipt
+
+- The final clean-tree qualification of implementation revision
+  `11bfab2095dab5cbd4c8993bd428d7662ffcf9dd` completed in 790.470 seconds.
+  Its authoritative matrix totals are 153 `PASS`, zero `FAIL`, five `BLOCKED`,
+  one `XFAIL`, and 14 `NOT_IMPLEMENTED`. The implemented local suite and the
+  product-boundary qualification passed. Release qualification and full Linux
+  qualification remain explicitly unclaimed while the recorded gaps remain.
+- The isolated package journey passed all nine transitions. It qualified
+  `zentty_0.1.0+git11bfab2095da_amd64.deb` with SHA-256
+  `0671c8614a8c891dc4e79f8c1fe8a62fd20b7631a637b5ad630ae9f9bb039236`,
+  823 root-owned package paths, exact payload fingerprinting, preservation of
+  user and unrelated-system state, and no host-root mutation. The deliberately
+  failed upgrade proves only the documented pre-unpack `preinst` boundary; it
+  does not make a general transactional rollback claim.
+- Debug IBus-focus Valgrind is **PASS with reviewed suppressions**, not an
+  unsuppressed-clean result. The preserved unsuppressed receipt reports 427
+  errors in 427 contexts, 6,160 definitely lost bytes, and 41,364 indirectly
+  lost bytes. After the audited effective suppression set, the receipt reports
+  zero errors, contexts, definite bytes, and indirect bytes, with all 427
+  contexts accounted for as suppressed. Its governance report and receipt
+  identities passed. The other Debug Valgrind scenarios remain
+  `NOT_IMPLEMENTED`, and ReleaseSafe Valgrind remains represented by its
+  declared gaps rather than being made green through broader suppressions.
