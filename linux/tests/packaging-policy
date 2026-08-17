@@ -1,0 +1,187 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+policy="${1:-${repo_root}/linux/packaging/policy-v1.json}"
+manifest="${2:-${repo_root}/linux/packaging/install-manifest-v1.json}"
+build_script="${3:-${repo_root}/linux/scripts/build-local}"
+
+fail() {
+    echo "packaging-policy: error: $*" >&2
+    exit 1
+}
+
+command -v jq >/dev/null || fail "jq is required"
+jq empty "${policy}" 2>/dev/null || fail "policy is not valid JSON"
+jq empty "${manifest}" 2>/dev/null || fail "manifest is not valid JSON"
+
+jq -e '
+  (keys | sort) == [
+    "artifact","authority","construction","dependencies","desktop_integration","layout",
+    "lifecycle","ownership","resource_ownership","schema_version","status",
+    "supported_runtime","user_data","versioning"
+  ] and
+  .schema_version == 1 and .status == "RATIFIED" and
+  .artifact == {
+    "format":"deb","package":"zentty","distribution":"ubuntu",
+    "release":"24.04","codename":"noble","architecture":"amd64",
+    "deferred_formats":["appimage","flatpak","rpm"]
+  } and
+  .supported_runtime == {
+    "glibc_minimum":"2.39","gtk_minimum":"4.14","libadwaita_minimum":"1.5",
+    "display_backends":["wayland","x11"]
+  } and
+  .layout.private_root == "/usr/lib/zentty" and
+  .layout.public_cli == "/usr/bin/zentty" and
+  .layout.public_cli_target == "../lib/zentty/bin/zentty" and
+  .layout.public_gui == "/usr/bin/zentty-linux" and
+  .layout.public_gui_target == "../lib/zentty/bin/zentty-linux" and
+  .layout.terminfo_roots == [
+    "/usr/share/terminfo/g/ghostty","/usr/share/terminfo/x/xterm-ghostty"
+  ] and
+  .desktop_integration == {
+    "desktop_entry":"PACKAGE_OWNED","icon":"PACKAGE_OWNED",
+    "appstream_metadata":"PACKAGE_OWNED","terminal_application":true,
+    "mime_handlers":[],"url_handlers":[],"dbus_service":"NOT_DECLARED"
+  } and
+  .dependencies.generation == "dpkg-shlibdeps-from-final-elf" and
+  .dependencies.system_library_policy == "system-by-default" and
+  .dependencies.system_components == [
+    "glibc","gtk4","glib-gio","libadwaita","pango","fontconfig",
+    "mesa-graphics-stack","dbus-desktop-services","wayland","x11"
+  ] and
+  [.dependencies.bundled_libraries[].soname] == [
+    "libghostty-gtk-embed.so","libgtk4-layer-shell.so"
+  ] and
+  .dependencies.forbidden_runpath_patterns == [".zig-cache","/home/","/tmp/"] and
+  .dependencies.allowed_private_runpath == "$ORIGIN" and
+  [.dependencies.baseline_packages[].name] == [
+    "libc6","libgtk-4-1","libadwaita-1-0","libglib2.0-0t64",
+    "libwayland-client0","libx11-6"
+  ] and
+  .versioning.dirty_tree == "REJECT" and
+  .versioning.timestamp_source == "SOURCE_DATE_EPOCH" and
+  .versioning.ghostty_revision_source == "linux/ghostty.lock" and
+  .user_data.install_action == "PRESERVE" and
+  .user_data.upgrade_action == "PRESERVE" and
+  .user_data.uninstall_action == "PRESERVE" and
+  .user_data.dpkg_purge_action == "PRESERVE" and
+  .user_data.maintainer_script_home_enumeration == "FORBIDDEN" and
+  .lifecycle.same_version_reinstall == "REQUIRED" and
+  .lifecycle.upgrade == "REQUIRED" and
+  .lifecycle.user_state_downgrade == "NOT_GUARANTEED" and
+  .ownership == {
+    "owner":"root","group":"root","executable_mode":"0755",
+    "regular_mode":"0644","directory_mode":"0755",
+    "setuid_setgid":"FORBIDDEN","world_writable":"FORBIDDEN"
+  } and
+  .resource_ownership == {
+    "terminfo":"PACKAGE_OWNED_GENERATED_FROM_PINNED_GHOSTTY",
+    "shell_integration":"PACKAGE_OWNED",
+    "agent_helpers_and_wrappers":"PACKAGE_OWNED",
+    "themes":"PACKAGE_OWNED","core_shaders":"EMBEDDED_IN_LIBGHOSTTY",
+    "zentty_license":"GPL-3.0-only","ghostty_license":"MIT",
+    "gtk4_layer_shell_license":"MIT",
+    "bundled_transitive_license_audit":"REQUIRED_BEFORE_RELEASE",
+    "copyright_and_notices":"PACKAGE_OWNED_REVIEWED_AGGREGATE"
+  } and
+  .construction.install_manifest == "linux/packaging/install-manifest-v1.json" and
+  .construction.expanded_file_receipt == "REQUIRED" and
+  .construction.closed_world == true and
+  .construction.network_access == "FORBIDDEN_AFTER_SOURCE_PREPARATION" and
+  .construction.package_scripts == "NONE_UNLESS_SEPARATELY_REVIEWED"
+' "${policy}" >/dev/null || fail "policy schema or ratified values drifted"
+
+authority="$(jq -r '.authority' "${policy}")"
+[[ "${authority}" != /* && "${authority}" != *'..'* ]] ||
+    fail "authority path is unsafe"
+[[ -f "${repo_root}/${authority}" ]] || fail "authority document is missing: ${authority}"
+[[ -f "${repo_root}/$(jq -r '.versioning.ghostty_revision_source' "${policy}")" ]] ||
+    fail "Ghostty revision authority is missing"
+
+jq -e '
+  (keys | sort) == ["closed_world","entries","policy","schema_version","status"] and
+  .schema_version == 1 and .status == "RATIFIED" and .closed_world == true and
+  .policy == "linux/packaging/policy-v1.json" and
+  (.entries | type == "array" and length == 18) and
+  all(.entries[];
+    (.id | type == "string" and test("^[a-z][a-z0-9-]*$")) and
+    (.kind | IN("file","tree","symlink","generated-file","generated-symlink")) and
+    (.owner_component | type == "string" and test("^[a-z][a-z0-9-]*$")) and
+    (.destination | type == "string" and startswith("/")) and
+    (.destination | test("(^|/)[.][.](/|$)") | not) and
+    (.destination | (startswith("/home/") or startswith("/root/") or startswith("/tmp/")) | not) and
+    (if (.kind | IN("file","tree")) then
+       (.source | type == "string") and
+       (.source | startswith("/") | not) and
+       (.source | test("(^|/)[.][.](/|$)") | not)
+     else true end) and
+    (if (.kind | IN("symlink","generated-symlink")) then
+       (.target | type == "string") and
+       (.target | startswith("/") | not)
+     else true end) and
+    (if .kind == "file" then
+       (keys | sort) == ["destination","id","kind","mode","owner_component","source"]
+     elif .kind == "tree" and has("exclude") then
+       (keys | sort) == ["destination","exclude","id","kind","mode_policy","owner_component","source"]
+     elif .kind == "tree" then
+       (keys | sort) == ["destination","id","kind","mode_policy","owner_component","source"]
+     elif .kind == "symlink" or .kind == "generated-symlink" then
+       (keys | sort) == ["destination","id","kind","owner_component","target"]
+     elif .kind == "generated-file" then
+       (keys | sort) == ["destination","generator","id","kind","mode","owner_component"]
+     else false end) and
+    (if (.kind | IN("file","generated-file")) then
+       (.mode | IN("0644","0755"))
+     else true end)
+  )
+' "${manifest}" >/dev/null || fail "manifest schema or path safety failed"
+
+expected_ids=$'public-cli\npublic-gui\nprivate-cli\nprivate-gui\nghostty-embedding\nlayer-shell\nagent-wrappers\ntmux-shim\nshell-integration\nthemes\nagent-integrations\nterminfo-ghostty\nterminfo-xterm-ghostty\ndesktop-entry\nappstream-metadata\napplication-icon\ncopyright\nchangelog'
+actual_ids="$(jq -r '.entries[].id' "${manifest}")"
+[[ "${actual_ids}" == "${expected_ids}" ]] || fail "required install entries are missing, reordered, or undeclared"
+[[ "$(jq -r '[.entries[].id] | length == (unique | length)' "${manifest}")" == true ]] ||
+    fail "manifest entry IDs are duplicated"
+[[ "$(jq -r '[.entries[].destination] | length == (unique | length)' "${manifest}")" == true ]] ||
+    fail "manifest destinations are duplicated"
+
+jq -e '
+  def entry($id): first(.entries[] | select(.id == $id));
+  entry("public-cli") == {
+    "id":"public-cli","kind":"symlink","destination":"/usr/bin/zentty",
+    "owner_component":"entry-points","target":"../lib/zentty/bin/zentty"
+  } and
+  entry("public-gui") == {
+    "id":"public-gui","kind":"symlink","destination":"/usr/bin/zentty-linux",
+    "owner_component":"entry-points","target":"../lib/zentty/bin/zentty-linux"
+  } and
+  entry("agent-integrations").exclude == ["ghostty/themes","shell-integration"] and
+  entry("terminfo-ghostty").target == "../x/xterm-ghostty" and
+  ([.entries[] | select(.destination | startswith("/usr/lib/zentty/") | not) |
+      select(.destination | startswith("/usr/bin/") | not) |
+      select(.destination | startswith("/usr/share/applications/") | not) |
+      select(.destination | startswith("/usr/share/metainfo/") | not) |
+      select(.destination | startswith("/usr/share/icons/hicolor/") | not) |
+      select(.destination | startswith("/usr/share/terminfo/") | not) |
+      select(.destination | startswith("/usr/share/doc/zentty/") | not)] | length == 0)
+' "${manifest}" >/dev/null || fail "manifest destinations or required entry details drifted"
+
+[[ -f "${build_script}" ]] || fail "build-local contract source is missing"
+# These are deliberately literal shell fragments owned by build-local.
+# shellcheck disable=SC2016
+for build_contract in \
+    '"${output_dir}/bin/zentty-linux"' \
+    '"${output_dir}/bin/zentty"' \
+    '"${output_dir}/libexec/zentty/agent-wrappers"' \
+    '"${output_dir}/libexec/zentty/tmux-shim"' \
+    '"${output_dir}/share/zentty/shell-integration"' \
+    '"${output_dir}/share/zentty/ghostty/themes"'; do
+    grep -Fq "${build_contract}" "${build_script}" ||
+        fail "build-local contradicts a required staged source: ${build_contract}"
+done
+for bundled in libghostty-gtk-embed.so libgtk4-layer-shell.so; do
+    grep -Fq "${bundled}" "${build_script}" ||
+        fail "build-local does not construct reviewed bundled library: ${bundled}"
+done
+
+echo "packaging-policy: PASS format=deb target=ubuntu-24.04-amd64 entries=18 bundled-libraries=2"

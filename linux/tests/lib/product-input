@@ -7,7 +7,7 @@ zentty_product_wait_for_log() {
     local attempts="${4:-200}"
     local index
     for ((index = 0; index < attempts; index++)); do
-        grep -Fq "${pattern}" "${log}" && return 0
+        grep -Fq "${pattern}" "${log}" 2>/dev/null && return 0
         sleep 0.05
     done
     echo "product-input: ${message}" >&2

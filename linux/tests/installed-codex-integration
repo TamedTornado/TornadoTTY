@@ -47,6 +47,7 @@ done
 [[ -x "${endpoint_binary}" ]] ||
     fail "controlled Responses endpoint is not built: ${endpoint_binary}"
 [[ -x "${notify_observer}" ]] || fail "Codex notify observer is not executable"
+zentty_product_disable_lifecycle_confirmations
 
 codex_version="$(codex --version 2>/dev/null)"
 [[ "${codex_version}" == "codex-cli 0.147.0" ]] ||

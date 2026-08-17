@@ -23,6 +23,7 @@ support_tests=(
     linux/tests/qualification-matrix-test
     linux/tests/application-api-inventory-test
     linux/tests/application-api-schema
+    linux/tests/packaging-policy-test
     linux/tests/feature-inventory-test
     linux/tests/cli-source-contract-test
     linux/tests/test-orchestration-contract

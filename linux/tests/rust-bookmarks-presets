@@ -183,29 +183,51 @@ replace_text() {
     fi
 }
 
+bookmark_focus_count() {
+    grep -Ec 'zentty-linux: (bookmarks-focus=|bookmarks-search-focused=true)' "$1" 2>/dev/null || true
+}
+
+wait_for_bookmark_focus_after() {
+    local log="$1"
+    local before="$2"
+    for _ in {1..40}; do
+        (( $(bookmark_focus_count "${log}") > before )) && return 0
+        sleep 0.05
+    done
+    return 1
+}
+
 focus_bookmark_control() {
     local log="$1"
     local receipt="$2"
+    local focus_before latest
     for _ in {1..36}; do
-        grep -Fq "zentty-linux: bookmarks-focus=${receipt}" "${log}" && return 0
+        latest="$(grep -E 'zentty-linux: (bookmarks-focus=|bookmarks-search-focused=true)' "${log}" 2>/dev/null | tail -1 || true)"
+        [[ "${latest}" == *"zentty-linux: bookmarks-focus=${receipt}"* ]] && return 0
+        focus_before="$(bookmark_focus_count "${log}")"
         input_key Tab
-        sleep 0.05
+        # A nested compositor may drop a complete injected key chord while
+        # the popover is mapping. Do not advance on a timer: retry the same
+        # physical step only when no focus transition was acknowledged.
+        wait_for_bookmark_focus_after "${log}" "${focus_before}" || continue
     done
-    grep -Fq "zentty-linux: bookmarks-focus=${receipt}" "${log}" ||
-        fail "bookmark keyboard focus did not reach ${receipt}"
+    fail "bookmark keyboard focus did not reach ${receipt}"
 }
 
 focus_bookmark_control_after() {
     local log="$1"
     local receipt="$2"
-    local before
+    local before focus_before latest
     before="$(grep -Fc "zentty-linux: bookmarks-focus=${receipt}" "${log}" 2>/dev/null || true)"
     for _ in {1..16}; do
-        if (( $(grep -Fc "zentty-linux: bookmarks-focus=${receipt}" "${log}" 2>/dev/null || true) > before )); then
+        latest="$(grep -E 'zentty-linux: (bookmarks-focus=|bookmarks-search-focused=true)' "${log}" 2>/dev/null | tail -1 || true)"
+        if (( $(grep -Fc "zentty-linux: bookmarks-focus=${receipt}" "${log}" 2>/dev/null || true) > before )) &&
+            [[ "${latest}" == *"zentty-linux: bookmarks-focus=${receipt}"* ]]; then
             return 0
         fi
+        focus_before="$(bookmark_focus_count "${log}")"
         input_key Tab
-        sleep 0.05
+        wait_for_bookmark_focus_after "${log}" "${focus_before}" || continue
     done
     fail "bookmark keyboard focus did not newly reach ${receipt}"
 }
@@ -235,12 +257,20 @@ activate_focused_control() {
 save_named_bookmark() {
     local log="$1"
     local name="$2"
-    local focus_before dialog_window attempt
+    local activation_before focus_before dialog_window attempt
     open_bookmarks "${log}"
     focus_bookmark_control "${log}" save-bookmark
+    activation_before="$(grep -Fc 'zentty-linux: bookmark-save-activated' "${log}" 2>/dev/null || true)"
     focus_before="$(grep -Fc 'zentty-linux: bookmark-name-focused=true' "${log}" 2>/dev/null || true)"
     activate_focused_control
     for attempt in {1..200}; do
+        if (( $(grep -Fc 'zentty-linux: bookmark-save-activated' "${log}" 2>/dev/null || true) <= activation_before )); then
+            if (( attempt % 20 == 0 )); then
+                activate_focused_control
+            fi
+            sleep 0.05
+            continue
+        fi
         if (( $(grep -Fc 'zentty-linux: bookmark-name-focused=true' "${log}" 2>/dev/null || true) > focus_before )); then
             break
         fi
@@ -253,17 +283,11 @@ save_named_bookmark() {
             # mapped. Once mapped, wait for its idle focus receipt rather than
             # risking submission of an empty name.
             [[ "${dialog_window}" =~ ^[1-9][0-9]*$ ]] || activate_focused_control
-        elif [[ "${backend}" == wayland && $((attempt % 20)) -eq 0 ]]; then
-            # A heavily loaded nested compositor can acknowledge focus on the
-            # popover button yet lose the first complete Return chord before
-            # the dialog maps. Retrying while the required focus receipt is
-            # absent remains a real physical activation. If the empty dialog
-            # has mapped but its idle focus callback is delayed, its default
-            # Save action rejects the empty name and safely remains open.
-            activate_focused_control
         fi
         sleep 0.05
     done
+    (( $(grep -Fc 'zentty-linux: bookmark-save-activated' "${log}" 2>/dev/null || true) > activation_before )) ||
+        fail "bookmark save button did not acknowledge physical activation"
     (( $(grep -Fc 'zentty-linux: bookmark-name-focused=true' "${log}" 2>/dev/null || true) > focus_before )) ||
         fail "bookmark name dialog unavailable"
     # GTK focus changes before the nested compositor has necessarily routed the
@@ -279,16 +303,19 @@ focus_filtered_template() {
     local log="$1"
     local name="$2"
     local receipt="zentty-linux: bookmarks-focus=activate-template"
-    local before
+    local before focus_before latest
     open_bookmarks "${log}"
     replace_text "${name}"
     before="$(grep -F "${receipt}" "${log}" 2>/dev/null | grep -Fc "name=\"${name}\"" || true)"
     for _ in {1..16}; do
-        if (( $(grep -F "${receipt}" "${log}" 2>/dev/null | grep -Fc "name=\"${name}\"" || true) > before )); then
+        latest="$(grep -E 'zentty-linux: (bookmarks-focus=|bookmarks-search-focused=true)' "${log}" 2>/dev/null | tail -1 || true)"
+        if (( $(grep -F "${receipt}" "${log}" 2>/dev/null | grep -Fc "name=\"${name}\"" || true) > before )) &&
+            [[ "${latest}" == *"${receipt}"* && "${latest}" == *"name=\"${name}\""* ]]; then
             return 0
         fi
+        focus_before="$(bookmark_focus_count "${log}")"
         input_key Tab
-        sleep 0.05
+        wait_for_bookmark_focus_after "${log}" "${focus_before}" || continue
     done
     fail "bookmark keyboard focus did not reach filtered template ${name}"
 }

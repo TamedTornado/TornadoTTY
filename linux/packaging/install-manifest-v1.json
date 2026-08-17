@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "status": "RATIFIED",
+  "closed_world": true,
+  "policy": "linux/packaging/policy-v1.json",
+  "entries": [
+    {"id": "public-cli", "kind": "symlink", "owner_component": "entry-points", "destination": "/usr/bin/zentty", "target": "../lib/zentty/bin/zentty"},
+    {"id": "public-gui", "kind": "symlink", "owner_component": "entry-points", "destination": "/usr/bin/zentty-linux", "target": "../lib/zentty/bin/zentty-linux"},
+    {"id": "private-cli", "kind": "file", "owner_component": "zentty-cli", "source": "build/linux/bin/zentty", "destination": "/usr/lib/zentty/bin/zentty", "mode": "0755"},
+    {"id": "private-gui", "kind": "file", "owner_component": "zentty-linux", "source": "build/linux/bin/zentty-linux", "destination": "/usr/lib/zentty/bin/zentty-linux", "mode": "0755"},
+    {"id": "ghostty-embedding", "kind": "file", "owner_component": "ghostty-embedding", "source": "build/linux/lib/libghostty-gtk-embed.so", "destination": "/usr/lib/zentty/lib/libghostty-gtk-embed.so", "mode": "0644"},
+    {"id": "layer-shell", "kind": "file", "owner_component": "ghostty-embedding", "source": "build/linux/lib/libgtk4-layer-shell.so", "destination": "/usr/lib/zentty/lib/libgtk4-layer-shell.so", "mode": "0644"},
+    {"id": "agent-wrappers", "kind": "tree", "owner_component": "agent-integrations", "source": "build/linux/libexec/zentty/agent-wrappers", "destination": "/usr/lib/zentty/libexec/zentty/agent-wrappers", "mode_policy": "preserve-reviewed-executables"},
+    {"id": "tmux-shim", "kind": "file", "owner_component": "tmux-compat", "source": "build/linux/libexec/zentty/tmux-shim/tmux", "destination": "/usr/lib/zentty/libexec/zentty/tmux-shim/tmux", "mode": "0755"},
+    {"id": "shell-integration", "kind": "tree", "owner_component": "shell-integration", "source": "build/linux/share/zentty/shell-integration", "destination": "/usr/lib/zentty/share/zentty/shell-integration", "mode_policy": "regular-0644"},
+    {"id": "themes", "kind": "tree", "owner_component": "ghostty-resources", "source": "build/linux/share/zentty/ghostty/themes", "destination": "/usr/lib/zentty/share/zentty/ghostty/themes", "mode_policy": "regular-0644"},
+    {"id": "agent-integrations", "kind": "tree", "owner_component": "agent-integrations", "source": "build/linux/share/zentty", "destination": "/usr/lib/zentty/share/zentty", "exclude": ["ghostty/themes", "shell-integration"], "mode_policy": "regular-0644"},
+    {"id": "terminfo-ghostty", "kind": "generated-symlink", "owner_component": "ghostty-resources", "destination": "/usr/share/terminfo/g/ghostty", "target": "../x/xterm-ghostty"},
+    {"id": "terminfo-xterm-ghostty", "kind": "generated-file", "owner_component": "ghostty-resources", "generator": "pinned-ghostty-build-data", "destination": "/usr/share/terminfo/x/xterm-ghostty", "mode": "0644"},
+    {"id": "desktop-entry", "kind": "file", "owner_component": "desktop-integration", "source": "linux/packaging/com.zentty.Zentty.desktop", "destination": "/usr/share/applications/com.zentty.Zentty.desktop", "mode": "0644"},
+    {"id": "appstream-metadata", "kind": "file", "owner_component": "desktop-integration", "source": "linux/packaging/com.zentty.Zentty.metainfo.xml", "destination": "/usr/share/metainfo/com.zentty.Zentty.metainfo.xml", "mode": "0644"},
+    {"id": "application-icon", "kind": "file", "owner_component": "desktop-integration", "source": "linux/packaging/com.zentty.Zentty.svg", "destination": "/usr/share/icons/hicolor/scalable/apps/com.zentty.Zentty.svg", "mode": "0644"},
+    {"id": "copyright", "kind": "generated-file", "owner_component": "license-notices", "generator": "debian-copyright-from-reviewed-licenses", "destination": "/usr/share/doc/zentty/copyright", "mode": "0644"},
+    {"id": "changelog", "kind": "generated-file", "owner_component": "release-metadata", "generator": "deterministic-debian-changelog", "destination": "/usr/share/doc/zentty/changelog.Debian.gz", "mode": "0644"}
+  ]
+}

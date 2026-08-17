@@ -54,6 +54,9 @@ esac
 for dependency in cmp dirname jq mkdir readelf timeout mktemp grep; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
+if [[ "${backend}" == x11 ]]; then
+    command -v xprop >/dev/null || fail "xprop is required for X11 toplevel identity"
+fi
 [[ -x "${product}" ]] || fail "staged product is not built: ${product}"
 [[ -f "${bundle_lib}/libghostty-gtk-embed.so" ]] ||
     fail "selected product bundle has no Ghostty library"
@@ -170,11 +173,22 @@ wait_for_exit() {
 target_second_window() {
     local pane_id="${1:-pane-window-2}"
     if [[ "${backend}" == x11 ]]; then
-        mapfile -t candidate_ids < <(
+        local candidate_id
+        local -a titled_ids candidate_ids
+        mapfile -t titled_ids < <(
             xdotool search --onlyvisible --pid "${product_pid}" --name '^Zentty$' 2>/dev/null
         )
+        candidate_ids=()
+        for candidate_id in "${titled_ids[@]}"; do
+            # GTK popovers are native X11 windows and inherit the application
+            # title and PID. They are visible while the fleet chooser is open,
+            # but they are not routable product toplevels. Restrict identity
+            # discovery to EWMH normal windows instead of counting transients.
+            xprop -id "${candidate_id}" _NET_WM_WINDOW_TYPE 2>/dev/null |
+                grep -Fq '_NET_WM_WINDOW_TYPE_NORMAL' && candidate_ids+=("${candidate_id}")
+        done
         [[ "${#candidate_ids[@]}" -eq 2 ]] ||
-            fail "X11 did not expose exactly two product window identities"
+            fail "X11 exposed ${#candidate_ids[@]} normal product windows from ${#titled_ids[@]} visible titled windows, expected two"
         route_probe_index=$((route_probe_index + 1))
         for candidate_id in "${candidate_ids[@]}"; do
             [[ "$(xdotool getwindowpid "${candidate_id}" 2>/dev/null || true)" == "${product_pid}" ]] ||

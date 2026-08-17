@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+runner="${repo_root}/linux/tests/packaging-policy"
+source_policy="${repo_root}/linux/packaging/policy-v1.json"
+source_manifest="${repo_root}/linux/packaging/install-manifest-v1.json"
+temporary="$(mktemp -d)"
+trap 'rm -rf -- "${temporary}"' EXIT
+
+expect_manifest_rejected() {
+    local name="$1"
+    local expected="$2"
+    if "${runner}" "${source_policy}" "${temporary}/${name}.json" >"${temporary}/${name}.log" 2>&1; then
+        echo "packaging-policy-test: ${name} unexpectedly passed" >&2
+        exit 1
+    fi
+    grep -Fq "${expected}" "${temporary}/${name}.log" || {
+        cat "${temporary}/${name}.log" >&2
+        echo "packaging-policy-test: ${name} lacked expected failure" >&2
+        exit 1
+    }
+}
+
+expect_policy_rejected() {
+    local name="$1"
+    local expected="$2"
+    if "${runner}" "${temporary}/${name}.json" "${source_manifest}" >"${temporary}/${name}.log" 2>&1; then
+        echo "packaging-policy-test: ${name} unexpectedly passed" >&2
+        exit 1
+    fi
+    grep -Fq "${expected}" "${temporary}/${name}.log" || {
+        cat "${temporary}/${name}.log" >&2
+        echo "packaging-policy-test: ${name} lacked expected failure" >&2
+        exit 1
+    }
+}
+
+expect_build_rejected() {
+    local name="$1"
+    local expected="$2"
+    if "${runner}" "${source_policy}" "${source_manifest}" "${temporary}/${name}" >"${temporary}/${name}.log" 2>&1; then
+        echo "packaging-policy-test: ${name} unexpectedly passed" >&2
+        exit 1
+    fi
+    grep -Fq "${expected}" "${temporary}/${name}.log" || {
+        cat "${temporary}/${name}.log" >&2
+        echo "packaging-policy-test: ${name} lacked expected failure" >&2
+        exit 1
+    }
+}
+
+"${runner}" >/dev/null
+
+jq '.entries |= map(select(.id != "terminfo-ghostty"))' \
+    "${source_manifest}" >"${temporary}/missing-resource.json"
+expect_manifest_rejected missing-resource "manifest schema or path safety failed"
+
+jq '.entries += [{"id":"secret","kind":"file","source":"secret","destination":"/home/user/.config/zentty/secret","mode":"0644"}]' \
+    "${source_manifest}" >"${temporary}/unsafe-user-destination.json"
+expect_manifest_rejected unsafe-user-destination "manifest schema or path safety failed"
+
+jq '.entries[0].target = "/usr/lib/zentty/bin/zentty"' \
+    "${source_manifest}" >"${temporary}/absolute-symlink.json"
+expect_manifest_rejected absolute-symlink "manifest schema or path safety failed"
+
+jq '.entries[1].destination = .entries[0].destination' \
+    "${source_manifest}" >"${temporary}/duplicate-destination.json"
+expect_manifest_rejected duplicate-destination "manifest destinations are duplicated"
+
+jq '.entries[0].kind = "bind-mount"' \
+    "${source_manifest}" >"${temporary}/unknown-kind.json"
+expect_manifest_rejected unknown-kind "manifest schema or path safety failed"
+
+jq '.entries[2].source = "../../outside"' \
+    "${source_manifest}" >"${temporary}/source-traversal.json"
+expect_manifest_rejected source-traversal "manifest schema or path safety failed"
+
+jq '.entries[2].mode = "0777"' \
+    "${source_manifest}" >"${temporary}/world-writable-executable.json"
+expect_manifest_rejected world-writable-executable "manifest schema or path safety failed"
+
+jq '.entries[2].mystery = true' \
+    "${source_manifest}" >"${temporary}/unknown-entry-key.json"
+expect_manifest_rejected unknown-entry-key "manifest schema or path safety failed"
+
+jq '.entries |= map(select(.id != "copyright"))' \
+    "${source_manifest}" >"${temporary}/missing-license.json"
+expect_manifest_rejected missing-license "manifest schema or path safety failed"
+
+jq '.dependencies.bundled_libraries += [{"soname":"libssl.so","source":"unknown","reason":"convenience"}]' \
+    "${source_policy}" >"${temporary}/unreviewed-bundled-library.json"
+expect_policy_rejected unreviewed-bundled-library "policy schema or ratified values drifted"
+
+jq '.artifact.format = "tar"' \
+    "${source_policy}" >"${temporary}/unknown-format.json"
+expect_policy_rejected unknown-format "policy schema or ratified values drifted"
+
+jq '.artifact.architecture = "any"' \
+    "${source_policy}" >"${temporary}/unknown-architecture.json"
+expect_policy_rejected unknown-architecture "policy schema or ratified values drifted"
+
+jq '.user_data.dpkg_purge_action = "DELETE"' \
+    "${source_policy}" >"${temporary}/unsafe-user-purge.json"
+expect_policy_rejected unsafe-user-purge "policy schema or ratified values drifted"
+
+jq '.construction.package_scripts = "DELETE_HOME_DIRECTORIES"' \
+    "${source_policy}" >"${temporary}/unsafe-maintainer-script.json"
+expect_policy_rejected unsafe-maintainer-script "policy schema or ratified values drifted"
+
+jq '.construction.closed_world = false' \
+    "${source_policy}" >"${temporary}/open-world.json"
+expect_policy_rejected open-world "policy schema or ratified values drifted"
+
+sed '/output_dir}\/share\/zentty\/ghostty\/themes/d' \
+    "${repo_root}/linux/scripts/build-local" >"${temporary}/contradictory-build-local"
+expect_build_rejected contradictory-build-local "build-local contradicts a required staged source"
+
+echo "packaging-policy runner negative tests passed"

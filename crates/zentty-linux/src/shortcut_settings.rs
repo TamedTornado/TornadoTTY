@@ -102,6 +102,13 @@ pub(crate) fn show(
         .modal(false)
         .build();
     window.set_hide_on_close(true);
+    window.connect_focus_widget_notify(|window| {
+        let name = gtk::prelude::GtkWindowExt::focus(window).map_or_else(
+            || "none".to_owned(),
+            |widget| widget.widget_name().to_string(),
+        );
+        eprintln!("zentty-linux: settings-focus widget={name}");
+    });
     let root = gtk::Box::new(gtk::Orientation::Vertical, 12);
     root.set_margin_top(16);
     root.set_margin_bottom(16);

@@ -260,6 +260,10 @@ fn connect_save_button(
     let window = window.clone();
     let popover = popover.clone();
     button.connect_clicked(move |_| {
+        eprintln!(
+            "zentty-linux: bookmark-save-activated kind={}",
+            kind_label(kind)
+        );
         popover.popdown();
         present_name_dialog(&window, "Save workspace", kind, None, "");
     });

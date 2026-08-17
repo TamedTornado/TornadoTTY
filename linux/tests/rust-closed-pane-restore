@@ -91,8 +91,19 @@ env GHOSTTY_LOG=false \
     --command 'printf "\033]0;CWD:%s\007" "$PWD"; printf "%s\n" "$PWD" >> "$ZENTTY_CWD_RECEIPT"; sleep 30' >"${log}" 2>&1 &
 product_pid=$!
 
-zentty_product_wait_for_log "${log}" 'zentty-linux: terminal-ready-pane=pane-agent' \
-    "source pane did not initialize" 400 || fail "source surface missing"
+# Debug Ghostty writes renderer diagnostics and product lifecycle markers to
+# the same file descriptor from different threads. Under load those byte
+# streams can interleave, so an exact log line is not a transaction boundary.
+# The two real PTY children publish one CWD line each only after exec.
+for _ in {1..400}; do
+    [[ -f "${cwd_receipt}" ]] &&
+        [[ "$(grep -Fxc "${working_dir}" "${cwd_receipt}" || true)" -ge 2 ]] && break
+    sleep 0.05
+done
+if [[ ! -f "${cwd_receipt}" ]] ||
+    [[ "$(grep -Fxc "${working_dir}" "${cwd_receipt}" || true)" -lt 2 ]]; then
+    fail "source PTY children did not initialize"
+fi
 zentty_product_prepare_input "${backend}" "${log}" || fail "physical input was unavailable"
 zentty_product_key "${backend}" Shift_L
 zentty_product_wait_for_log "${log}" 'zentty-linux: focus-pane pane=pane-agent' \

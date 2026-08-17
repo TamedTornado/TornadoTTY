@@ -268,10 +268,17 @@ if [[ "${backend}" == wayland ]]; then
     # traverse the real GTK focus chain until the product reports Import Audio.
     settings_key ctrl+f
     for _ in {1..40}; do
+        focus_before="$(grep -Fc 'zentty-linux: settings-focus widget=' "${log}" || true)"
         settings_key Tab
-        grep -Fq 'notification-settings focus=import-custom' "${log}" && break
+        zentty_product_wait_for_log_count "${log}" \
+            'zentty-linux: settings-focus widget=' "$((focus_before + 1))" \
+            "settings focus did not acknowledge one physical Tab" ||
+            fail "settings focus traversal lost physical input"
+        [[ "$(grep -F 'zentty-linux: settings-focus widget=' "${log}" | tail -1)" == \
+            'zentty-linux: settings-focus widget=notification-sound-import' ]] && break
     done
-    grep -Fq 'notification-settings focus=import-custom' "${log}" ||
+    [[ "$(grep -F 'zentty-linux: settings-focus widget=' "${log}" | tail -1)" == \
+        'zentty-linux: settings-focus widget=notification-sound-import' ]] ||
         fail "custom import focus failed"
     settings_key Return
 else

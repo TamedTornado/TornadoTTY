@@ -1,0 +1,129 @@
+{
+  "schema_version": 1,
+  "status": "RATIFIED",
+  "authority": "docs/design/zentty-linux-dogfood-2026-08-17-packaging.md",
+  "artifact": {
+    "format": "deb",
+    "package": "zentty",
+    "distribution": "ubuntu",
+    "release": "24.04",
+    "codename": "noble",
+    "architecture": "amd64",
+    "deferred_formats": ["appimage", "flatpak", "rpm"]
+  },
+  "supported_runtime": {
+    "glibc_minimum": "2.39",
+    "gtk_minimum": "4.14",
+    "libadwaita_minimum": "1.5",
+    "display_backends": ["wayland", "x11"]
+  },
+  "layout": {
+    "private_root": "/usr/lib/zentty",
+    "public_cli": "/usr/bin/zentty",
+    "public_cli_target": "../lib/zentty/bin/zentty",
+    "public_gui": "/usr/bin/zentty-linux",
+    "public_gui_target": "../lib/zentty/bin/zentty-linux",
+    "desktop_entry": "/usr/share/applications/com.zentty.Zentty.desktop",
+    "appstream_metadata": "/usr/share/metainfo/com.zentty.Zentty.metainfo.xml",
+    "icon": "/usr/share/icons/hicolor/scalable/apps/com.zentty.Zentty.svg",
+    "terminfo_roots": [
+      "/usr/share/terminfo/g/ghostty",
+      "/usr/share/terminfo/x/xterm-ghostty"
+    ]
+  },
+  "desktop_integration": {
+    "desktop_entry": "PACKAGE_OWNED",
+    "icon": "PACKAGE_OWNED",
+    "appstream_metadata": "PACKAGE_OWNED",
+    "terminal_application": true,
+    "mime_handlers": [],
+    "url_handlers": [],
+    "dbus_service": "NOT_DECLARED"
+  },
+  "dependencies": {
+    "generation": "dpkg-shlibdeps-from-final-elf",
+    "system_library_policy": "system-by-default",
+    "system_components": [
+      "glibc", "gtk4", "glib-gio", "libadwaita", "pango", "fontconfig",
+      "mesa-graphics-stack", "dbus-desktop-services", "wayland", "x11"
+    ],
+    "baseline_packages": [
+      {"name": "libc6", "minimum": "2.39"},
+      {"name": "libgtk-4-1", "minimum": "4.14"},
+      {"name": "libadwaita-1-0", "minimum": "1.5"},
+      {"name": "libglib2.0-0t64", "minimum": "2.80"},
+      {"name": "libwayland-client0", "minimum": "1.22"},
+      {"name": "libx11-6", "minimum": "2:1.8.7"}
+    ],
+    "bundled_libraries": [
+      {
+        "soname": "libghostty-gtk-embed.so",
+        "source": "pinned-ghostty-fork",
+        "reason": "upstream-reviewable GTK embedding ABI under active development"
+      },
+      {
+        "soname": "libgtk4-layer-shell.so",
+        "source": "pinned-ghostty-build-dependency",
+        "reason": "private direct dependency of the pinned embedding library"
+      }
+    ],
+    "forbidden_runpath_patterns": [".zig-cache", "/home/", "/tmp/"],
+    "allowed_private_runpath": "$ORIGIN"
+  },
+  "versioning": {
+    "source": "cargo-package-version-plus-clean-git-commit",
+    "debian_pattern": "<semver>+git<12-lowercase-hex>",
+    "dirty_tree": "REJECT",
+    "timestamp_source": "SOURCE_DATE_EPOCH",
+    "ghostty_revision_source": "linux/ghostty.lock"
+  },
+  "user_data": {
+    "config": "$XDG_CONFIG_HOME/zentty",
+    "data": "$XDG_DATA_HOME/zentty",
+    "state": "$XDG_STATE_HOME/zentty",
+    "cache": "$XDG_CACHE_HOME/zentty",
+    "runtime": "$XDG_RUNTIME_DIR/zentty",
+    "install_action": "PRESERVE",
+    "upgrade_action": "PRESERVE",
+    "uninstall_action": "PRESERVE",
+    "dpkg_purge_action": "PRESERVE",
+    "maintainer_script_home_enumeration": "FORBIDDEN",
+    "explicit_user_cleanup": "DEFERRED"
+  },
+  "lifecycle": {
+    "same_version_reinstall": "REQUIRED",
+    "upgrade": "REQUIRED",
+    "package_file_rollback": "DPKG_OWNED",
+    "user_state_downgrade": "NOT_GUARANTEED",
+    "uninstall": "REMOVE_PACKAGE_OWNED_FILES_ONLY",
+    "purge": "REMOVE_PACKAGE_OWNED_SYSTEM_CONFIG_ONLY"
+  },
+  "ownership": {
+    "owner": "root",
+    "group": "root",
+    "executable_mode": "0755",
+    "regular_mode": "0644",
+    "directory_mode": "0755",
+    "setuid_setgid": "FORBIDDEN",
+    "world_writable": "FORBIDDEN"
+  },
+  "resource_ownership": {
+    "terminfo": "PACKAGE_OWNED_GENERATED_FROM_PINNED_GHOSTTY",
+    "shell_integration": "PACKAGE_OWNED",
+    "agent_helpers_and_wrappers": "PACKAGE_OWNED",
+    "themes": "PACKAGE_OWNED",
+    "core_shaders": "EMBEDDED_IN_LIBGHOSTTY",
+    "zentty_license": "GPL-3.0-only",
+    "ghostty_license": "MIT",
+    "gtk4_layer_shell_license": "MIT",
+    "bundled_transitive_license_audit": "REQUIRED_BEFORE_RELEASE",
+    "copyright_and_notices": "PACKAGE_OWNED_REVIEWED_AGGREGATE"
+  },
+  "construction": {
+    "install_manifest": "linux/packaging/install-manifest-v1.json",
+    "expanded_file_receipt": "REQUIRED",
+    "closed_world": true,
+    "network_access": "FORBIDDEN_AFTER_SOURCE_PREPARATION",
+    "package_scripts": "NONE_UNLESS_SEPARATELY_REVIEWED"
+  }
+}

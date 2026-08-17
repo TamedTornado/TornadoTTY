@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 
 use serde_json::{Value, json};
-use std::fs::OpenOptions;
+use std::fs::{OpenOptions, read, remove_file, rename};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
@@ -308,13 +308,59 @@ fn append_receipt(
         "resultMentionsBackground": value_contains(&body["messages"], "background"),
         "messageShape": message_shape(&body["messages"]),
     });
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .map_err(|error| format!("could not open controlled receipt: {error}"))?;
-    writeln!(file, "{receipt}")
-        .map_err(|error| format!("could not write controlled receipt: {error}"))
+    let mut line = serde_json::to_vec(&receipt)
+        .map_err(|error| format!("could not serialize controlled receipt: {error}"))?;
+    line.push(b'\n');
+    publish_receipt(path, &line, || Ok(()))
+}
+
+fn publish_receipt(
+    path: &Path,
+    line: &[u8],
+    before_rename: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
+    if line.is_empty() || !line.ends_with(b"\n") {
+        return Err("controlled receipt record must end with one newline".to_owned());
+    }
+    let mut complete = match read(path) {
+        Ok(existing) => existing,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(error) => return Err(format!("could not read controlled receipt: {error}")),
+    };
+    if !complete.is_empty() && !complete.ends_with(b"\n") {
+        return Err("controlled receipt contains an incomplete committed record".to_owned());
+    }
+    complete.extend_from_slice(line);
+
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| "controlled receipt requires a UTF-8 file name".to_owned())?;
+    let next = path.with_file_name(format!(".{file_name}.next-{}", std::process::id()));
+    match remove_file(&next) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(format!(
+                "could not clear stale receipt transaction: {error}"
+            ));
+        }
+    }
+    let mut transaction = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&next)
+        .map_err(|error| format!("could not create controlled receipt transaction: {error}"))?;
+    transaction
+        .write_all(&complete)
+        .map_err(|error| format!("could not write controlled receipt transaction: {error}"))?;
+    transaction
+        .sync_all()
+        .map_err(|error| format!("could not sync controlled receipt transaction: {error}"))?;
+    drop(transaction);
+    before_rename()?;
+    rename(&next, path)
+        .map_err(|error| format!("could not publish controlled receipt transaction: {error}"))
 }
 
 fn write_empty_response(stream: &mut TcpStream) -> Result<(), String> {
@@ -384,8 +430,8 @@ fn write_model_response(
 mod tests {
     use super::{
         MAX_BODY_BYTES, MAX_HEADER_BYTES, RequestRole, append_receipt, classify_request,
-        exceeds_limit, message_shape, parse_receipt_path, read_request, summarize_tool_results,
-        value_contains,
+        exceeds_limit, message_shape, parse_receipt_path, publish_receipt, read_request,
+        summarize_tool_results, value_contains,
     };
     use serde_json::json;
     use std::io::Write;
@@ -601,5 +647,30 @@ mod tests {
         std::fs::remove_file(receipt).unwrap();
         assert!(!retained.contains(secret));
         assert!(retained.contains("\"role\":\"leader_initial\""));
+    }
+
+    #[test]
+    fn interrupted_receipt_publication_preserves_complete_committed_records() {
+        let receipt = std::env::temp_dir().join(format!(
+            "zentty-controlled-anthropic-transaction-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::write(&receipt, b"{\"sequence\":1}\n").unwrap();
+
+        let failure = publish_receipt(&receipt, b"{\"sequence\":2}\n", || {
+            Err("controlled interruption before rename".to_owned())
+        })
+        .unwrap_err();
+        assert_eq!(failure, "controlled interruption before rename");
+        assert_eq!(std::fs::read(&receipt).unwrap(), b"{\"sequence\":1}\n");
+
+        publish_receipt(&receipt, b"{\"sequence\":2}\n", || Ok(())).unwrap();
+        let committed = std::fs::read_to_string(&receipt).unwrap();
+        assert_eq!(committed, "{\"sequence\":1}\n{\"sequence\":2}\n");
+        for line in committed.lines() {
+            serde_json::from_str::<serde_json::Value>(line).unwrap();
+        }
+        std::fs::remove_file(receipt).unwrap();
     }
 }
