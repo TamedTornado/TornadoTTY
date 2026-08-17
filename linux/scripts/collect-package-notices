@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+ghostty_source="${1:?usage: collect-package-notices GHOSTTY_SOURCE OUTPUT_DIR}"
+output="${2:?usage: collect-package-notices GHOSTTY_SOURCE OUTPUT_DIR}"
+manifest="${repo_root}/linux/packaging/ghostty-notices-v1.json"
+
+fail() {
+    echo "collect-package-notices: error: $*" >&2
+    exit 1
+}
+
+jq -e '
+  .schema_version == 1 and .status == "RATIFIED" and
+  (.components | length > 0) and
+  all(.components[];
+    (.name | type == "string" and length > 0) and
+    (.license | type == "string" and length > 0) and
+    (.notice | test("^[A-Za-z0-9._+-]+$")) and
+    ([has("source"), has("system_source"), has("project_source")] |
+      map(select(.)) | length == 1))' "${manifest}" >/dev/null ||
+    fail "Ghostty notice manifest is invalid"
+
+rm -rf -- "${output}"
+mkdir -p -- "${output}/ghostty" "${output}/cargo"
+
+while IFS=$'\t' read -r name license notice source_kind source; do
+    case "${source_kind}" in
+        source) source_path="${ghostty_source}/${source}" ;;
+        system_source) source_path="${source}" ;;
+        project_source) source_path="${repo_root}/${source}" ;;
+        *) fail "unsupported source kind for ${name}" ;;
+    esac
+    [[ -f "${source_path}" ]] || fail "notice source is missing for ${name}: ${source_path}"
+    install -m 0644 "${source_path}" "${output}/ghostty/${notice}"
+    jq -cn --arg name "${name}" --arg license "${license}" \
+        --arg notice "ghostty/${notice}" \
+        '{name:$name,license:$license,notice:$notice}'
+done < <(jq -r '.components[] |
+  if has("source") then [.name,.license,.notice,"source",.source]
+  elif has("system_source") then [.name,.license,.notice,"system_source",.system_source]
+  else [.name,.license,.notice,"project_source",.project_source] end | @tsv' "${manifest}") |
+    jq -s '{schema_version:1,ecosystem:"ghostty-zig",components:.}' \
+        >"${output}/ghostty-components.json"
+
+cargo_metadata="${output}/cargo-metadata.json"
+cargo metadata --locked --offline --format-version 1 >"${cargo_metadata}"
+jq -e 'all(.packages[] | select(.source != null); .license != null or .license_file != null)' \
+    "${cargo_metadata}" >/dev/null || fail "a Cargo dependency lacks license metadata"
+
+jq '[.packages[] | select(.source != null) |
+  {name,version,source,license,license_file,repository}] |
+  sort_by(.name,.version,.source)' "${cargo_metadata}" >"${output}/cargo-packages.json"
+
+while IFS=$'\t' read -r name version manifest_path license_file; do
+    package_root="${manifest_path%/*}"
+    destination="${output}/cargo/${name}-${version}"
+    mkdir -p -- "${destination}"
+    copied=0
+    while IFS= read -r license_path; do
+        install -m 0644 "${license_path}" "${destination}/$(basename "${license_path}")"
+        copied=$((copied + 1))
+    done < <(find "${package_root}" -maxdepth 1 -type f \
+        \( -iname 'LICENSE*' -o -iname 'COPYING*' -o -iname 'NOTICE*' \) \
+        -print | LC_ALL=C sort)
+    if [[ "${copied}" -eq 0 && -n "${license_file}" ]]; then
+        license_path="${package_root}/${license_file}"
+        [[ -f "${license_path}" ]] || fail "Cargo license file is missing for ${name} ${version}"
+        install -m 0644 "${license_path}" "${destination}/$(basename "${license_path}")"
+        copied=1
+    fi
+    [[ "${copied}" -gt 0 ]] || fail "Cargo notice text is missing for ${name} ${version}"
+done < <(jq -r '.packages[] | select(.source != null) |
+    [.name,.version,.manifest_path,(.license_file // "")] | @tsv' "${cargo_metadata}")
+
+rm -- "${cargo_metadata}"
+install -m 0644 "${repo_root}/linux/packaging/notices/embedded-code-NOTICE" \
+    "${output}/ghostty/embedded-code-NOTICE"
+install -m 0644 /usr/share/common-licenses/Apache-2.0 \
+    "${output}/ghostty/Apache-2.0"
+
+echo "collect-package-notices: PASS cargo=$(jq 'length' "${output}/cargo-packages.json") ghostty=$(jq '.components | length' "${output}/ghostty-components.json")"

@@ -116,7 +116,7 @@
     "zentty_license": "GPL-3.0-only",
     "ghostty_license": "MIT",
     "gtk4_layer_shell_license": "MIT",
-    "bundled_transitive_license_audit": "REQUIRED_BEFORE_RELEASE",
+    "bundled_transitive_license_audit": "linux/packaging/ghostty-notices-v1.json-plus-locked-cargo-metadata",
     "copyright_and_notices": "PACKAGE_OWNED_REVIEWED_AGGREGATE"
   },
   "construction": {

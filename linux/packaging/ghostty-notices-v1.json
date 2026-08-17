@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "status": "RATIFIED",
+  "ghostty_revision_source": "linux/ghostty.lock",
+  "components": [
+    {"name":"ghostty","license":"MIT","source":"LICENSE","notice":"ghostty-LICENSE"},
+    {"name":"wuffs","license":"Apache-2.0 OR MIT","source":"zig-pkg/N-V-__8AAAzZywE3s51XfsLbP9eyEw57ae9swYB9aGB6fCMs/LICENSE","notice":"wuffs-LICENSE"},
+    {"name":"zlib","license":"Zlib","source":"zig-pkg/N-V-__8AAB0eQwD-0MdOEBmz7intriBReIsIDNlukNVoNu6o/LICENSE","notice":"zlib-LICENSE"},
+    {"name":"glslang","license":"BSD-3-Clause","source":"zig-pkg/N-V-__8AABzkUgISeKGgXAzgtutgJsZc0-kkeqBBscJgMkvy/LICENSE.txt","notice":"glslang-LICENSE.txt"},
+    {"name":"wuffs-test-pixels","license":"CC0-1.0","source":"zig-pkg/N-V-__8AADYiAAB_80AWnH1AxXC0tql9thT-R-DYO1gBqTLc/LICENSE","notice":"wuffs-test-pixels-LICENSE"},
+    {"name":"imgui","license":"MIT","source":"zig-pkg/N-V-__8AAEbOfQBnvcFcCX2W5z7tDaN8vaNZGamEQtNOe0UI/LICENSE.txt","notice":"imgui-LICENSE.txt"},
+    {"name":"wayland-protocols","license":"MIT","source":"zig-pkg/N-V-__8AAFdWDwA0ktbNUi9pFBHCRN4weXIgIfCrVjfGxqgA/COPYING","notice":"wayland-protocols-COPYING"},
+    {"name":"harfbuzz","license":"MIT","source":"zig-pkg/N-V-__8AAG02ugUcWec-Ndp-i7JTsJ0dgF8nnJRUInkGLG7G/COPYING","notice":"harfbuzz-COPYING"},
+    {"name":"highway","license":"Apache-2.0 OR BSD-3-Clause","source":"zig-pkg/N-V-__8AAGmZhABbsPJLfbqrh6JTHsXhY6qCaLAQyx25e0XE/LICENSE","notice":"highway-LICENSE"},
+    {"name":"oniguruma","license":"BSD-2-Clause","source":"zig-pkg/N-V-__8AAHjwMQDBXnLq3Q2QhaivE0kE2aD138vtX2Bq1g7c/COPYING","notice":"oniguruma-COPYING"},
+    {"name":"jetbrains-mono","license":"OFL-1.1","source":"zig-pkg/N-V-__8AAIC5lwAVPJJzxnCAahSvZTIlG-HhtOvnM1uh-66x/OFL.txt","notice":"jetbrains-mono-OFL.txt"},
+    {"name":"libpng","license":"libpng-2.0","source":"zig-pkg/N-V-__8AAJrvXQCqAT8Mg9o_tk6m0yf5Fz-gCNEOKLyTSerD/LICENSE","notice":"libpng-LICENSE"},
+    {"name":"freetype","license":"FTL OR GPL-2.0-only","source":"zig-pkg/N-V-__8AAKLKpwC4H27Ps_0iL3bPkQb-z6ZVSrB-x_3EEkub/LICENSE.TXT","notice":"freetype-LICENSE.TXT"},
+    {"name":"plasma-wayland-protocols","license":"LGPL-2.1-or-later","source":"zig-pkg/N-V-__8AAKYZBAB-CFHBKs3u4JkeiT4BMvyHu3Y5aaWF3Bbs/COPYING.LIB","notice":"plasma-wayland-protocols-COPYING.LIB"},
+    {"name":"wayland","license":"MIT","source":"zig-pkg/N-V-__8AAKrHGAAs2shYq8UkE6bGcR1QJtLTyOE_lcosMn6t/COPYING","notice":"wayland-COPYING"},
+    {"name":"gtk4-layer-shell-protocols","license":"MIT","source":"zig-pkg/N-V-__8AAKw-DAAaV8bOAAGqA0-oD7o-HNIlPFYKRXSPT03S/COPYING","notice":"gtk4-layer-shell-protocols-COPYING"},
+    {"name":"gtk4-layer-shell","license":"MIT","source":"zig-pkg/N-V-__8AALiNBAA-_0gprYr92CjrMj1I5bqNu0TSJOnjFNSr/LICENSE","notice":"gtk4-layer-shell-LICENSE"},
+    {"name":"nerd-fonts-symbols","license":"MIT","source":"zig-pkg/N-V-__8AAMVLTABmYkLqhZPLXnMl-KyN38R8UVYqGrxqO26s/LICENSE","notice":"nerd-fonts-symbols-LICENSE"},
+    {"name":"spirv-cross","license":"Apache-2.0","source":"zig-pkg/N-V-__8AANb6pwD7O1WG6L5nvD_rNMvnSc9Cpg1ijSlTYywv/LICENSE","notice":"spirv-cross-LICENSE"},
+    {"name":"libxev","license":"MIT","source":"zig-pkg/libxev-0.0.0-86vtcwIRFADbH4hk-EjROXxlrKIRPQdA41XiTSytYO-F/LICENSE","notice":"libxev-LICENSE"},
+    {"name":"uucode","license":"MIT","source":"zig-pkg/uucode-0.2.0-ZZjBPlK5VADj7fdoq7G8LIHzD5o6FSkcBXXrRWr4jnrA/LICENSE.md","notice":"uucode-LICENSE.md"},
+    {"name":"vaxis","license":"MIT","source":"zig-pkg/vaxis-0.6.0-BWNV_CrbCQCscGpzsAlR402rYQ_tV3aAl081c2iRRkka/LICENSE","notice":"vaxis-LICENSE"},
+    {"name":"wayland-zig","license":"MIT","source":"zig-pkg/wayland-0.6.0-lQa1kqz8AQADQmdNJsNhLoNHcnEGEUjrOaPV-dtEnEmX/LICENSE","notice":"wayland-zig-LICENSE"},
+    {"name":"zf","license":"MIT","source":"zig-pkg/zf-0.11.0-OIRy8X-RAAAwaRXHMYpj2uvBnuGTZWEE_3V7acqHQNtW/LICENSE","notice":"zf-LICENSE"},
+    {"name":"zigimg","license":"MIT","source":"zig-pkg/zigimg-0.1.0-8_eo2oyaFwBZwJpmqPkCfVXWBrHcqbYwmrp1I6bTD3lI/LICENSE","notice":"zigimg-LICENSE"},
+    {"name":"zig-gobject","license":"MIT","project_source":"linux/packaging/notices/zig-gobject-LICENSE","notice":"zig-gobject-LICENSE"},
+    {"name":"z2d","license":"MPL-2.0","system_source":"/usr/share/common-licenses/MPL-2.0","notice":"z2d-MPL-2.0"}
+  ],
+  "embedded_notice_only": [
+    {"name":"stb","license":"MIT OR Unlicense","evidence":"src/stb/stb_image.h"},
+    {"name":"glad","license":"(WTFPL OR CC0-1.0) AND Apache-2.0","evidence":"vendor/glad/src/gl.c"}
+  ]
+}

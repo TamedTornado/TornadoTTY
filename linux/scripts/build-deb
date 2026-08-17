@@ -58,6 +58,8 @@ if [[ -n "${GHOSTTY_SOURCE_DIR:-}" ]]; then
     build_environment+=("GHOSTTY_SOURCE_DIR=${ghostty_source}")
 fi
 env "${build_environment[@]}" "${repo_root}/linux/scripts/build-local"
+"${repo_root}/linux/scripts/collect-package-notices" \
+    "${ghostty_source}" "${stage}/share/zentty/package-notices"
 
 [[ "$(git -C "${ghostty_source}" rev-parse HEAD)" == "${ghostty_revision}" ]] ||
     fail "prepared Ghostty revision changed during build"

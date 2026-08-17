@@ -136,3 +136,18 @@ second package layout.
   invocation, then performs the existing exact-revision and clean-tree checks
   after checkout. Existing managed or caller-owned checkouts receive no
   relaxation.
+- With that repair, a full independent clone built and passed the package
+  mutation audit while bubblewrap replaced the original developer checkout
+  with an empty read-only mount. Provenance recorded exact Zentty revision
+  `975381237a7a8de44e22b394174c2cb61ba8e216`; neither build nor audit could
+  read the developer source tree.
+- The dependency-notice audit enumerated 77 locked external Cargo packages;
+  every package has both Cargo license metadata and at least one source-shipped
+  license/notice file. Ghostty's embedded graph required a separate reviewed
+  27-component notice manifest. The pinned zig-gobject release archive omits
+  its repository LICENSE, so the exact release-tag MIT text (Git blob
+  `2e486f241150be06138ff29dfd903f692f67f514`) is now a reviewed package source.
+  stb, glad, and z2d carry source-level SPDX/notices rather than standalone
+  files, so their evidence and the applicable Apache/MPL texts are included
+  explicitly. Notice collection runs Cargo metadata offline after compilation;
+  missing locked sources or notice files are failures, not network fallbacks.

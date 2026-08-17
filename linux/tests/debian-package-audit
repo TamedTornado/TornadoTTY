@@ -90,8 +90,33 @@ desktop-file-validate "${root}/usr/share/applications/com.zentty.zentty.desktop"
 appstreamcli validate --no-net --pedantic \
     "${root}/usr/share/metainfo/com.zentty.zentty.metainfo.xml" >/dev/null
 [[ -s "${root}/usr/share/doc/zentty/copyright" ]] || fail "copyright is absent"
+notices="${root}/usr/share/doc/zentty/third-party"
+ghostty_notices="${notices}/ghostty-components.json"
+cargo_notices="${notices}/cargo-packages.json"
+[[ -s "${ghostty_notices}" && -s "${cargo_notices}" ]] ||
+    fail "third-party notice manifests are absent"
+jq -e '.schema_version == 1 and .ecosystem == "ghostty-zig" and
+    (.components | length > 0) and
+    ([.components[].name] | length == (unique | length)) and
+    all(.components[]; .license != "" and (.notice | startswith("ghostty/")))' \
+    "${ghostty_notices}" >/dev/null || fail "Ghostty notice manifest is invalid"
+jq -e 'type == "array" and length > 0 and
+    all(.[]; .name != "" and .version != "" and
+      (.license != null or .license_file != null))' \
+    "${cargo_notices}" >/dev/null || fail "Cargo notice manifest is invalid"
+while IFS= read -r notice; do
+    [[ -s "${notices}/${notice}" ]] || fail "Ghostty notice text is absent: ${notice}"
+done < <(jq -r '.components[].notice' "${ghostty_notices}")
+while IFS=$'\t' read -r name version; do
+    cargo_notice_dir="${notices}/cargo/${name}-${version}"
+    [[ -d "${cargo_notice_dir}" ]] || fail "Cargo notice directory is absent: ${name} ${version}"
+    find "${cargo_notice_dir}" -maxdepth 1 -type f -size +0c -print -quit | grep -q . ||
+        fail "Cargo notice text is absent: ${name} ${version}"
+done < <(jq -r '.[] | [.name,.version] | @tsv' "${cargo_notices}")
+[[ -s "${notices}/ghostty/embedded-code-NOTICE" &&
+   -s "${notices}/ghostty/Apache-2.0" ]] || fail "embedded source notices are absent"
 [[ -s "${root}/usr/share/terminfo/x/xterm-ghostty" ]] || fail "terminfo is absent"
 [[ "$(readlink "${root}/usr/share/terminfo/g/ghostty")" == ../x/xterm-ghostty ]] ||
     fail "terminfo alias is wrong"
 
-echo "debian-package-audit: PASS files=$(wc -l <"${actual_paths}")"
+echo "debian-package-audit: PASS files=$(wc -l <"${actual_paths}") cargo_notices=$(jq 'length' "${cargo_notices}") ghostty_notices=$(jq '.components | length' "${ghostty_notices}")"

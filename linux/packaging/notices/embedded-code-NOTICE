@@ -1,0 +1,10 @@
+Ghostty embeds the following source-distributed components whose license
+notice is carried in their source rather than a standalone file in the pinned
+archive:
+
+* stb image code: MIT OR Unlicense; evidence: src/stb/stb_image.h
+* glad generated OpenGL loader: (WTFPL OR CC0-1.0) AND Apache-2.0;
+  evidence: vendor/glad/src/gl.c
+* z2d 0.12.1: MPL-2.0; evidence: SPDX headers in the z2d source package.
+
+The complete Apache-2.0 and MPL-2.0 texts are included beside this notice.

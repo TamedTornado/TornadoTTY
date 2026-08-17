@@ -53,6 +53,10 @@ extract_package missing-license
 rm "${temporary}/missing-license/usr/share/doc/zentty/copyright"
 expect_rejected missing-license "expanded manifest and payload differ"
 
+extract_package missing-third-party-notice
+rm "${temporary}/missing-third-party-notice/usr/share/doc/zentty/third-party/ghostty/ghostty-LICENSE"
+expect_rejected missing-third-party-notice "expanded manifest and payload differ"
+
 extract_package wrong-mode
 chmod 0777 "${temporary}/wrong-mode/usr/lib/zentty/bin/zentty"
 expect_rejected wrong-mode "payload mode drift"
