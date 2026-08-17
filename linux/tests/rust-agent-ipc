@@ -59,7 +59,7 @@ case "${ZENTTY_REQUIRE_REAL_GEMINI:-false}" in
             export ZENTTY_REAL_GEMINI_BIN
         fi
         [[ -n "${ZENTTY_EXPECTED_GEMINI_VERSION:-}" ]] ||
-            ZENTTY_EXPECTED_GEMINI_VERSION=0.53.0
+            ZENTTY_EXPECTED_GEMINI_VERSION=0.55.1
         export ZENTTY_EXPECTED_GEMINI_VERSION
         ;;
     false) ;;

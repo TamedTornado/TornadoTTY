@@ -208,3 +208,25 @@ remapping only the Zentty checkout was incomplete. `build-deb` now derives the
 effective Cargo home and remaps it to `/usr/src/cargo` alongside the Zentty
 source remap. Primary, matrix-private-home, and clean-clone builds therefore
 share canonical identities without requiring a fixed operator home path.
+
+The focused rerun at `7a8a43226282f22488409131efdcef140fa5a6b1`
+passed the complete clean-build proof: a detached exact-revision checkout,
+different source path, private home and temporary filesystem, prepared
+read-only dependency stores, and disabled network produced the same closed set
+of four release artifacts byte for byte. The clean-build evidence validator
+also accepted the resulting receipt. This is focused repair evidence only;
+the final claim still requires an all-cell run against the final implementation
+revision.
+
+The separately rerun Wayland agent-integration cell failed before its earlier
+hook-deadline path: the real Gemini executable on the controlled host now
+reports `0.55.1`, while qualification pinned the previously reviewed `0.53.0`.
+The exact-version guard did its job and rejected unreviewed environmental drift
+rather than silently passing it. The matrix, its architecture mirror, its
+orchestration contract, and the harness default now consistently pin `0.55.1`.
+No agent behavior or product adapter was changed by this qualification repair.
+The corrected focused cell then passed its full real-system chain under nested
+Wayland: real Gemini `0.55.1`, PTYs and Unix socket; the representative tmux
+topology; real Claude `2.1.201` against the controlled loopback model; and the
+consolidated restore journey including transient loopback SSH, physical input,
+remote paste, background agents, crash recovery, and corrupt-state recovery.
