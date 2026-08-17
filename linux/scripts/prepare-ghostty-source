@@ -24,14 +24,18 @@ if [[ -n "${GHOSTTY_SOURCE_DIR:-}" ]]; then
         exit 1
     }
 else
+    managed_clone_created=false
     if [[ ! -d "${ghostty_source}/.git" ]]; then
         # The API audit needs the real historical blobs, not a promisor clone.
         git clone --no-checkout "${ghostty_repo}" "${ghostty_source}"
+        managed_clone_created=true
     fi
-    [[ -z "$(git -C "${ghostty_source}" status --porcelain)" ]] || {
-        echo "error: managed Ghostty checkout is dirty: ${ghostty_source}" >&2
-        exit 1
-    }
+    if [[ "${managed_clone_created}" == false ]]; then
+        [[ -z "$(git -C "${ghostty_source}" status --porcelain)" ]] || {
+            echo "error: managed Ghostty checkout is dirty: ${ghostty_source}" >&2
+            exit 1
+        }
+    fi
     actual_origin="$(git -C "${ghostty_source}" remote get-url origin)"
     [[ "${actual_origin}" == "${ghostty_repo}" ]] || {
         echo "error: managed Ghostty origin is ${actual_origin}; expected ${ghostty_repo}" >&2

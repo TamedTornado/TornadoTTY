@@ -127,3 +127,12 @@ second package layout.
   `/dev/null`; even the prerequisite probe could not redirect output. The
   harness now explicitly device-binds `/dev` while continuing to replace the
   developer checkout with an empty read-only mount.
+- The next isolated run found a previously hidden bootstrap bug in
+  `prepare-ghostty-source`: immediately after `git clone --no-checkout`, Git
+  correctly reports the default branch's entire index as deleted because no
+  worktree has been checked out yet. The script mistook that initial state for
+  caller modifications and refused every truly fresh managed clone. It now
+  skips only the pre-checkout dirtiness test for a clone it created in that
+  invocation, then performs the existing exact-revision and clean-tree checks
+  after checkout. Existing managed or caller-owned checkouts receive no
+  relaxation.
