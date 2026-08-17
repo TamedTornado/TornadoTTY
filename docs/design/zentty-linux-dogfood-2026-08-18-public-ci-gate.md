@@ -211,3 +211,11 @@ namespace produced controlled X11 session
 input-capable Wayland session
 `e25a4b82fd30a207925c70bb45f21dc4410130df9ed467c8cbcbdb29d71cecc3`;
 the complete physical shortcut/settings/reload/persistence journey passed.
+
+The complete committed gate then passed from clean revision
+`d6f3c23c51a9d92a7041655c5e6f1cc709737e35`: 9/9 support tests and 18/18
+real matrix cells in 377 seconds. Its summary SHA-256 is
+`3c691362b4d86fdf0c3b1ea94412cebd7e302c5a17476f2844cb78c7d3c6c386`,
+and the repaired policy SHA-256 is
+`3179de53c57100d90d4f9dadae984837e1c57c03a6f4c3f0efb685fda89c4598`.
+Only the public PR subset claim is true.
