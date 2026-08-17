@@ -62,6 +62,28 @@ and receipts.
   presents dpkg-owned `/usr` paths while retaining only documented host runtime
   dependencies. Merely pointing `LD_LIBRARY_PATH` at the extracted package is
   insufficient because it does not prove absolute desktop/resource paths.
+- The first real installed X11 probe launched successfully from
+  `/usr/bin/zentty-linux` in the controlled package namespace, created a real
+  Ghostty PTY, delivered its OSC title, and completed lifecycle cleanup. It
+  also exposed a package defect: Ghostty discovered `/usr/share/ghostty` from
+  the installed terminfo sentinel, but the package did not own that resource
+  directory. The successful terminal did not make the missing directory a
+  pass; it would leave Ghostty's shell integration and runtime themes dependent
+  on unrelated host state.
+- The package contract now owns the pinned Ghostty runtime resources at
+  `/usr/share/ghostty`. `build-local` stages them from the exact Ghostty install
+  prefix; the closed manifest, ratified policy, documentation, and policy
+  negative tests all require the new tree. Zentty's separately consumed theme
+  catalog remains in its private application tree.
+- A focused installed-root resolver now validates the real dpkg database,
+  artifact/manifest revision and hashes, and every installed payload checksum
+  before execution. It constructs a disposable merged-runtime namespace from
+  symlinks to documented host runtime dependencies without mounting the Zentty
+  source or build tree. Its negative suite rejects the host root, an
+  uninstalled root, wrong manifest checksums, execution outside a controlled
+  session, stale helper identity, modified payload, and source visibility. The
+  fixture and the real qualified package CLI both executed successfully inside
+  the resulting Bubblewrap namespace.
 
 ## Qualification boundary
 

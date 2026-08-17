@@ -26,7 +26,11 @@ The relocatable application tree is installed below `/usr/lib/zentty`. Relative
 links in `/usr/bin` expose the GUI and CLI without breaking the application's
 sibling-binary, private-library, and resource lookup. Desktop integration,
 compiled terminfo, icons, and copyright material use standard `/usr/share`
-locations.
+locations. Ghostty's runtime shell-integration and theme resources live at
+`/usr/share/ghostty`, adjacent to the compiled terminfo sentinel Ghostty uses
+to discover that directory. Zentty's product-specific shell integration and
+theme catalog remain below `/usr/lib/zentty/share/zentty`; the two resource
+roots serve separate consumers and neither substitutes for the other.
 
 Package-manager removal never deletes files below a user's XDG directories.
 Zentty may later expose a separate, explicit per-user cleanup command; it must

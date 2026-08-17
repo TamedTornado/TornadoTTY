@@ -14,6 +14,7 @@
     {"id": "tmux-shim", "kind": "file", "owner_component": "tmux-compat", "source": "build/linux/libexec/zentty/tmux-shim/tmux", "destination": "/usr/lib/zentty/libexec/zentty/tmux-shim/tmux", "mode": "0755"},
     {"id": "shell-integration", "kind": "tree", "owner_component": "shell-integration", "source": "build/linux/share/zentty/shell-integration", "destination": "/usr/lib/zentty/share/zentty/shell-integration", "mode_policy": "regular-0644"},
     {"id": "themes", "kind": "tree", "owner_component": "ghostty-resources", "source": "build/linux/share/zentty/ghostty/themes", "destination": "/usr/lib/zentty/share/zentty/ghostty/themes", "mode_policy": "regular-0644"},
+    {"id": "ghostty-runtime-resources", "kind": "tree", "owner_component": "ghostty-resources", "source": "build/linux/share/ghostty", "destination": "/usr/share/ghostty", "mode_policy": "regular-0644"},
     {"id": "agent-integrations", "kind": "tree", "owner_component": "agent-integrations", "source": "build/linux/share/zentty", "destination": "/usr/lib/zentty/share/zentty", "exclude": ["ghostty/themes", "shell-integration", "package-notices"], "mode_policy": "regular-0644"},
     {"id": "third-party-notices", "kind": "tree", "owner_component": "license-notices", "source": "build/linux/share/zentty/package-notices", "destination": "/usr/share/doc/zentty/third-party", "mode_policy": "regular-0644"},
     {"id": "terminfo-ghostty", "kind": "generated-symlink", "owner_component": "ghostty-resources", "destination": "/usr/share/terminfo/g/ghostty", "target": "../x/xterm-ghostty"},

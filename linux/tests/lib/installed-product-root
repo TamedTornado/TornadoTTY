@@ -1,0 +1,229 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+fail() {
+    echo "installed-product-root: error: $*" >&2
+    exit 1
+}
+
+usage() {
+    echo "usage: installed-product-root prepare ROOT PACKAGE MANIFEST | exec ROOT -- COMMAND [ARG ...]" >&2
+    exit 64
+}
+
+canonical_directory() {
+    local path="$1"
+    [[ "${path}" == /* && -d "${path}" && ! -L "${path}" ]] ||
+        fail "root must be an existing absolute non-symlink directory"
+    readlink -f -- "${path}"
+}
+
+link_missing_children() {
+    local source="$1" destination="$2" namespace_source="$3" skip="${4:-}"
+    local path name
+    [[ -d "${source}" ]] || return 0
+    mkdir -p -- "${destination}"
+    while IFS= read -r -d '' path; do
+        name="${path##*/}"
+        [[ " ${skip} " != *" ${name} "* ]] || continue
+        [[ -e "${destination}/${name}" || -L "${destination}/${name}" ]] ||
+            ln -s -- "${namespace_source}/${name}" "${destination}/${name}"
+    done < <(find "${source}" -mindepth 1 -maxdepth 1 -print0)
+}
+
+validate_package_identity() {
+    local root="$1" package="$2" manifest="$3"
+    local package_version manifest_version package_architecture revision status
+
+    [[ -f "${package}" && ! -L "${package}" ]] || fail "package is missing or unsafe"
+    [[ -f "${manifest}" && ! -L "${manifest}" ]] || fail "manifest is missing or unsafe"
+    jq -e '
+      .schema_version == 1 and .package == "zentty" and
+      .architecture == "amd64" and
+      (.version | type == "string" and length > 0) and
+      (.zentty_revision | type == "string" and test("^[0-9a-f]{40}$")) and
+      (.files | type == "array" and length > 0)
+    ' "${manifest}" >/dev/null || fail "expanded manifest is malformed"
+
+    package_version="$(dpkg-deb -f "${package}" Version)"
+    package_architecture="$(dpkg-deb -f "${package}" Architecture)"
+    manifest_version="$(jq -r '.version' "${manifest}")"
+    revision="$(jq -r '.zentty_revision' "${manifest}")"
+    [[ "${package_version}" == "${manifest_version}" ]] ||
+        fail "package and manifest versions differ"
+    [[ "${package_architecture}" == amd64 ]] || fail "package architecture is not amd64"
+    [[ "${package_version}" == *"+git${revision:0:12}" ]] ||
+        fail "package version does not identify the manifest revision"
+
+    status="$(dpkg-query --admindir="${root}/var/lib/dpkg" \
+        -W -f='${db:Status-Abbrev}|${Version}|${Architecture}' zentty 2>/dev/null || true)"
+    [[ "${status}" == "ii |${package_version}|amd64" ]] ||
+        fail "root does not contain the configured package identity"
+
+    while IFS=$'\t' read -r path expected_sha; do
+        [[ -f "${root}${path}" && ! -L "${root}${path}" ]] ||
+            fail "installed manifest file is missing: ${path}"
+        [[ "$(sha256sum -- "${root}${path}" | awk '{print $1}')" == "${expected_sha}" ]] ||
+            fail "installed manifest checksum differs: ${path}"
+    done < <(jq -r '.files[] | select(.type == "file") | [.path,.sha256] | @tsv' "${manifest}")
+}
+
+prepare_root() {
+    local root package manifest marker helper_sha
+    root="$(canonical_directory "$1")"
+    package="$(readlink -f -- "$2")"
+    manifest="$(readlink -f -- "$3")"
+    [[ "${root}" != / ]] || fail "host root is forbidden"
+    validate_package_identity "${root}" "${package}" "${manifest}"
+
+    mkdir -p -- \
+        "${root}/.zentty-host/usr" \
+        "${root}/.zentty-host/etc" \
+        "${root}/.zentty-host/var" \
+        "${root}/dev" "${root}/proc" "${root}/sys" "${root}/tmp" \
+        "${root}/usr/bin" "${root}/usr/lib" "${root}/usr/lib64" \
+        "${root}/usr/share" "${root}/var/cache"
+
+    link_missing_children /usr/bin "${root}/usr/bin" /.zentty-host/usr/bin
+    link_missing_children /usr/lib "${root}/usr/lib" /.zentty-host/usr/lib
+    link_missing_children /usr/lib64 "${root}/usr/lib64" /.zentty-host/usr/lib64
+    link_missing_children /usr/share "${root}/usr/share" /.zentty-host/usr/share icons
+    link_missing_children /usr/share/icons "${root}/usr/share/icons" /.zentty-host/usr/share/icons hicolor
+    link_missing_children /usr/share/icons/hicolor "${root}/usr/share/icons/hicolor" \
+        /.zentty-host/usr/share/icons/hicolor
+
+    [[ -e "${root}/bin" || -L "${root}/bin" ]] || ln -s usr/bin "${root}/bin"
+    [[ -e "${root}/lib" || -L "${root}/lib" ]] || ln -s usr/lib "${root}/lib"
+    [[ -e "${root}/lib64" || -L "${root}/lib64" ]] || ln -s usr/lib64 "${root}/lib64"
+    [[ -e "${root}/etc" || -L "${root}/etc" ]] || ln -s /.zentty-host/etc "${root}/etc"
+    [[ -e "${root}/var/cache/fontconfig" || -L "${root}/var/cache/fontconfig" ]] ||
+        ln -s /.zentty-host/var/cache/fontconfig "${root}/var/cache/fontconfig"
+
+    marker="${root}/.zentty-installed-runtime.json"
+    helper_sha="$(sha256sum -- "${BASH_SOURCE[0]}" | awk '{print $1}')"
+    jq -n \
+        --arg package "${package}" \
+        --arg package_sha256 "$(sha256sum -- "${package}" | awk '{print $1}')" \
+        --arg manifest "${manifest}" \
+        --arg manifest_sha256 "$(sha256sum -- "${manifest}" | awk '{print $1}')" \
+        --arg version "$(jq -r '.version' "${manifest}")" \
+        --arg zentty_revision "$(jq -r '.zentty_revision' "${manifest}")" \
+        --arg helper_sha256 "${helper_sha}" '
+        {
+          schema_version:1,
+          package:{path:$package,sha256:$package_sha256,version:$version},
+          manifest:{path:$manifest,sha256:$manifest_sha256},
+          zentty_revision:$zentty_revision,
+          helper_sha256:$helper_sha256,
+          namespace:{host_source_mounted:false,build_source_mounted:false}
+        }
+    ' >"${marker}"
+    chmod 0444 "${marker}"
+    echo "installed-product-root: prepared ${root}"
+}
+
+bind_environment_path() {
+    local root="$1" path="$2"
+    [[ "${path}" == /* && ( -e "${path}" || -L "${path}" ) ]] || return 0
+    if [[ -d "${path}" ]]; then
+        mkdir -p -- "${root}${path}"
+    else
+        mkdir -p -- "${root}$(dirname "${path}")"
+        : >"${root}${path}"
+    fi
+    printf '%s\0%s\0%s\0' --bind "${path}" "${path}"
+}
+
+exec_root() {
+    local root marker package manifest expected actual variable path
+    local -a bwrap_args environment_paths
+    root="$(canonical_directory "$1")"
+    shift
+    [[ "${1:-}" == -- ]] || usage
+    shift
+    (( $# > 0 )) || usage
+    [[ "${root}" != / ]] || fail "host root is forbidden"
+    marker="${root}/.zentty-installed-runtime.json"
+    [[ -f "${marker}" && ! -L "${marker}" ]] || fail "prepared-root marker is missing"
+    jq -e '.schema_version == 1 and .namespace == {host_source_mounted:false,build_source_mounted:false}' \
+        "${marker}" >/dev/null || fail "prepared-root marker is malformed"
+    expected="$(jq -r '.helper_sha256' "${marker}")"
+    actual="$(sha256sum -- "${BASH_SOURCE[0]}" | awk '{print $1}')"
+    [[ "${actual}" == "${expected}" ]] || fail "prepared-root helper identity is stale"
+    package="$(jq -r '.package.path' "${marker}")"
+    manifest="$(jq -r '.manifest.path' "${marker}")"
+    [[ "$(sha256sum -- "${package}" | awk '{print $1}')" == "$(jq -r '.package.sha256' "${marker}")" ]] ||
+        fail "prepared package identity changed"
+    [[ "$(sha256sum -- "${manifest}" | awk '{print $1}')" == "$(jq -r '.manifest.sha256' "${marker}")" ]] ||
+        fail "prepared manifest identity changed"
+    validate_package_identity "${root}" "${package}" "${manifest}"
+
+    case "${GDK_BACKEND:-none}" in
+        x11)
+            [[ "${ZENTTY_NESTED_X11_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+                fail "X11 execution requires the controlled nested-X11 environment"
+            ;;
+        wayland)
+            if [[ ! "${ZENTTY_NESTED_WAYLAND_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ &&
+                ! "${ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ &&
+                ! "${ZENTTY_NESTED_WAYLAND_ACTIVATION_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]]; then
+                fail "Wayland execution requires a controlled nested-Wayland environment"
+            fi
+            ;;
+        none)
+            [[ "${ZENTTY_ISOLATED_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+                fail "headless execution requires the controlled isolated environment"
+            ;;
+        *) fail "unsupported GDK_BACKEND for installed execution" ;;
+    esac
+
+    bwrap_args=(
+        --die-with-parent
+        --new-session
+        --ro-bind "${root}" /
+        --ro-bind /usr /.zentty-host/usr
+        --ro-bind /etc /.zentty-host/etc
+        --ro-bind /var /.zentty-host/var
+        --dev /dev
+        --proc /proc
+        --ro-bind /sys /sys
+    )
+    environment_paths=(
+        "${HOME:-}" "${XDG_CONFIG_HOME:-}" "${XDG_CACHE_HOME:-}"
+        "${XDG_DATA_HOME:-}" "${XDG_STATE_HOME:-}" "${XDG_RUNTIME_DIR:-}"
+        "${TMPDIR:-}" "${XAUTHORITY:-}"
+    )
+    if [[ "${GDK_BACKEND:-}" == x11 && -d /tmp/.X11-unix ]]; then
+        environment_paths+=(/tmp/.X11-unix)
+    fi
+    if [[ "${DBUS_SESSION_BUS_ADDRESS:-}" == unix:path=* ]]; then
+        path="${DBUS_SESSION_BUS_ADDRESS#unix:path=}"
+        path="${path%%,*}"
+        environment_paths+=("${path}")
+    fi
+    for path in "${environment_paths[@]}"; do
+        [[ -n "${path}" ]] || continue
+        while IFS= read -r -d '' variable; do
+            bwrap_args+=("${variable}")
+        done < <(bind_environment_path "${root}" "${path}")
+    done
+    exec bwrap "${bwrap_args[@]}" -- "$@"
+}
+
+for dependency in bwrap dirname dpkg-deb dpkg-query find jq ln mkdir readlink sha256sum awk; do
+    command -v "${dependency}" >/dev/null || fail "${dependency} is required"
+done
+
+case "${1:-}" in
+    prepare)
+        (( $# == 4 )) || usage
+        prepare_root "$2" "$3" "$4"
+        ;;
+    exec)
+        (( $# >= 4 )) || usage
+        root="$2"
+        shift 2
+        exec_root "${root}" "$@"
+        ;;
+    *) usage ;;
+esac

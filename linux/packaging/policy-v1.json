@@ -26,6 +26,7 @@
     "desktop_entry": "/usr/share/applications/com.zentty.zentty.desktop",
     "appstream_metadata": "/usr/share/metainfo/com.zentty.zentty.metainfo.xml",
     "icon": "/usr/share/icons/hicolor/256x256/apps/com.zentty.zentty.png",
+    "ghostty_resources": "/usr/share/ghostty",
     "terminfo_roots": [
       "/usr/share/terminfo/g/ghostty",
       "/usr/share/terminfo/x/xterm-ghostty"

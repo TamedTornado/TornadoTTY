@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+helper="${repo_root}/linux/tests/lib/installed-product-root"
+
+fail() {
+    echo "installed-product-root-test: error: $*" >&2
+    exit 1
+}
+
+if [[ "${1:-}" != --inner ]]; then
+    exec unshare -Ur -- "${BASH_SOURCE[0]}" --inner
+fi
+
+work="$(mktemp -d)"
+trap 'rm -rf -- "${work}"' EXIT
+package_root="${work}/package"
+install_root="${work}/installed"
+uninstalled_root="${work}/uninstalled"
+package="${work}/zentty.deb"
+manifest="${work}/manifest.json"
+mkdir -p \
+    "${package_root}/DEBIAN" \
+    "${package_root}/usr/lib/zentty/bin" \
+    "${package_root}/usr/bin" \
+    "${install_root}/var/lib/dpkg" \
+    "${install_root}/var/log" \
+    "${uninstalled_root}/var/lib/dpkg"
+: >"${install_root}/var/lib/dpkg/status"
+: >"${uninstalled_root}/var/lib/dpkg/status"
+
+cat >"${package_root}/DEBIAN/control" <<'EOF'
+Package: zentty
+Version: 0.1.0+git0123456789ab
+Architecture: amd64
+Maintainer: Test <test@example.invalid>
+Description: installed-root contract fixture
+EOF
+cat >"${package_root}/usr/lib/zentty/bin/zentty" <<'EOF'
+#!/bin/sh
+printf 'fixture-installed-product\n'
+EOF
+chmod 0755 "${package_root}/usr/lib/zentty/bin/zentty"
+ln -s ../lib/zentty/bin/zentty "${package_root}/usr/bin/zentty"
+dpkg-deb --root-owner-group --build "${package_root}" "${package}" >/dev/null
+fixture_sha="$(sha256sum "${package_root}/usr/lib/zentty/bin/zentty" | awk '{print $1}')"
+jq -n --arg sha "${fixture_sha}" '
+  {
+    schema_version:1,
+    package:"zentty",
+    version:"0.1.0+git0123456789ab",
+    architecture:"amd64",
+    zentty_revision:"0123456789abcdef0123456789abcdef01234567",
+    files:[
+      {path:"/usr/bin/zentty",type:"symlink",mode:"0777",target:"../lib/zentty/bin/zentty"},
+      {path:"/usr/lib/zentty/bin/zentty",type:"file",mode:"755",sha256:$sha}
+    ]
+  }
+' >"${manifest}"
+
+if "${helper}" prepare / "${package}" "${manifest}" >/dev/null 2>&1; then
+    fail "host root was accepted"
+fi
+if "${helper}" prepare "${uninstalled_root}" "${package}" "${manifest}" >/dev/null 2>&1; then
+    fail "uninstalled root was accepted"
+fi
+dpkg --root="${install_root}" --log="${install_root}/var/log/dpkg.log" \
+    --force-depends --force-script-chrootless --install "${package}" >/dev/null 2>&1
+
+jq '.files[1].sha256 = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"' \
+    "${manifest}" >"${work}/wrong-manifest.json"
+if "${helper}" prepare "${install_root}" "${package}" "${work}/wrong-manifest.json" >/dev/null 2>&1; then
+    fail "wrong installed checksum was accepted"
+fi
+
+"${helper}" prepare "${install_root}" "${package}" "${manifest}" >/dev/null
+if "${helper}" exec "${install_root}" -- /usr/bin/zentty >/dev/null 2>&1; then
+    fail "execution outside a controlled environment was accepted"
+fi
+output="$("${repo_root}/linux/tests/isolated-session" \
+    "${helper}" exec "${install_root}" -- /usr/bin/zentty)"
+grep -Fxq fixture-installed-product <<<"${output}" ||
+    fail "installed executable did not run in the controlled namespace"
+"${repo_root}/linux/tests/isolated-session" \
+    "${helper}" exec "${install_root}" -- /usr/bin/test ! -e "${repo_root}" ||
+    fail "source checkout was visible inside the installed namespace"
+
+chmod 0644 "${install_root}/.zentty-installed-runtime.json"
+cp "${install_root}/.zentty-installed-runtime.json" "${work}/marker.json"
+jq '.helper_sha256 = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"' \
+    "${work}/marker.json" >"${install_root}/.zentty-installed-runtime.json"
+chmod 0444 "${install_root}/.zentty-installed-runtime.json"
+if "${repo_root}/linux/tests/isolated-session" \
+    "${helper}" exec "${install_root}" -- /usr/bin/zentty >/dev/null 2>&1; then
+    fail "stale helper identity was accepted"
+fi
+chmod 0644 "${install_root}/.zentty-installed-runtime.json"
+cp "${work}/marker.json" "${install_root}/.zentty-installed-runtime.json"
+chmod 0444 "${install_root}/.zentty-installed-runtime.json"
+
+printf 'tampered\n' >>"${install_root}/usr/lib/zentty/bin/zentty"
+if "${repo_root}/linux/tests/isolated-session" \
+    "${helper}" exec "${install_root}" -- /usr/bin/zentty >/dev/null 2>&1; then
+    fail "modified installed payload was accepted"
+fi
+
+echo "installed-product-root-test: PASS"

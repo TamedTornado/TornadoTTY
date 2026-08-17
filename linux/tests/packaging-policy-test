@@ -73,6 +73,10 @@ jq '.entries |= map(select(.id != "terminfo-ghostty"))' \
     "${source_manifest}" >"${temporary}/missing-resource.json"
 expect_manifest_rejected missing-resource "manifest schema or path safety failed"
 
+jq '.entries |= map(select(.id != "ghostty-runtime-resources"))' \
+    "${source_manifest}" >"${temporary}/missing-ghostty-runtime.json"
+expect_manifest_rejected missing-ghostty-runtime "manifest schema or path safety failed"
+
 jq '.entries += [{"id":"secret","kind":"file","source":"secret","destination":"/home/user/.config/zentty/secret","mode":"0644"}]' \
     "${source_manifest}" >"${temporary}/unsafe-user-destination.json"
 expect_manifest_rejected unsafe-user-destination "manifest schema or path safety failed"
@@ -144,5 +148,9 @@ expect_fixture_rejected newer-fixture "upgrade fixture contract drifted"
 sed '/output_dir}\/share\/zentty\/ghostty\/themes/d' \
     "${repo_root}/linux/scripts/build-local" >"${temporary}/contradictory-build-local"
 expect_build_rejected contradictory-build-local "build-local contradicts a required staged source"
+
+sed '/output_dir}\/share\/ghostty/d' \
+    "${repo_root}/linux/scripts/build-local" >"${temporary}/missing-ghostty-runtime-build"
+expect_build_rejected missing-ghostty-runtime-build "build-local contradicts a required staged source"
 
 echo "packaging-policy runner negative tests passed"

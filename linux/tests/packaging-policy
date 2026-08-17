@@ -39,6 +39,7 @@ jq -e '
   .layout.public_cli_target == "../lib/zentty/bin/zentty" and
   .layout.public_gui == "/usr/bin/zentty-linux" and
   .layout.public_gui_target == "../lib/zentty/bin/zentty-linux" and
+  .layout.ghostty_resources == "/usr/share/ghostty" and
   .layout.terminfo_roots == [
     "/usr/share/terminfo/g/ghostty","/usr/share/terminfo/x/xterm-ghostty"
   ] and
@@ -106,7 +107,7 @@ jq -e '
   (keys | sort) == ["closed_world","entries","policy","schema_version","status"] and
   .schema_version == 1 and .status == "RATIFIED" and .closed_world == true and
   .policy == "linux/packaging/policy-v1.json" and
-  (.entries | type == "array" and length == 19) and
+  (.entries | type == "array" and length == 20) and
   all(.entries[];
     (.id | type == "string" and test("^[a-z][a-z0-9-]*$")) and
     (.kind | IN("file","tree","symlink","generated-file","generated-symlink")) and
@@ -166,7 +167,7 @@ dpkg --validate-version "$(jq -r '.version' "${fixture}")" ||
 dpkg --compare-versions "$(jq -r '.version' "${fixture}")" lt '0.1.0+git000000000000' ||
     fail "upgrade fixture does not sort before candidate versions"
 
-expected_ids=$'public-cli\npublic-gui\nprivate-cli\nprivate-gui\nghostty-embedding\nlayer-shell\nagent-wrappers\ntmux-shim\nshell-integration\nthemes\nagent-integrations\nthird-party-notices\nterminfo-ghostty\nterminfo-xterm-ghostty\ndesktop-entry\nappstream-metadata\napplication-icon\ncopyright\nchangelog'
+expected_ids=$'public-cli\npublic-gui\nprivate-cli\nprivate-gui\nghostty-embedding\nlayer-shell\nagent-wrappers\ntmux-shim\nshell-integration\nthemes\nghostty-runtime-resources\nagent-integrations\nthird-party-notices\nterminfo-ghostty\nterminfo-xterm-ghostty\ndesktop-entry\nappstream-metadata\napplication-icon\ncopyright\nchangelog'
 actual_ids="$(jq -r '.entries[].id' "${manifest}")"
 [[ "${actual_ids}" == "${expected_ids}" ]] || fail "required install entries are missing, reordered, or undeclared"
 [[ "$(jq -r '[.entries[].id] | length == (unique | length)' "${manifest}")" == true ]] ||
@@ -185,6 +186,11 @@ jq -e '
     "owner_component":"entry-points","target":"../lib/zentty/bin/zentty-linux"
   } and
   entry("agent-integrations").exclude == ["ghostty/themes","shell-integration","package-notices"] and
+  entry("ghostty-runtime-resources") == {
+    "id":"ghostty-runtime-resources","kind":"tree",
+    "owner_component":"ghostty-resources","source":"build/linux/share/ghostty",
+    "destination":"/usr/share/ghostty","mode_policy":"regular-0644"
+  } and
   entry("third-party-notices").destination == "/usr/share/doc/zentty/third-party" and
   entry("terminfo-ghostty").target == "../x/xterm-ghostty" and
   ([.entries[] | select(.destination | startswith("/usr/lib/zentty/") | not) |
@@ -192,6 +198,7 @@ jq -e '
       select(.destination | startswith("/usr/share/applications/") | not) |
       select(.destination | startswith("/usr/share/metainfo/") | not) |
       select(.destination | startswith("/usr/share/icons/hicolor/") | not) |
+      select(.destination | startswith("/usr/share/ghostty") | not) |
       select(.destination | startswith("/usr/share/terminfo/") | not) |
       select(.destination | startswith("/usr/share/doc/zentty/") | not)] | length == 0)
 ' "${manifest}" >/dev/null || fail "manifest destinations or required entry details drifted"
@@ -210,7 +217,8 @@ for build_contract in \
     '"${output_dir}/libexec/zentty/agent-wrappers"' \
     '"${output_dir}/libexec/zentty/tmux-shim"' \
     '"${output_dir}/share/zentty/shell-integration"' \
-    '"${output_dir}/share/zentty/ghostty/themes"'; do
+    '"${output_dir}/share/zentty/ghostty/themes"' \
+    '"${output_dir}/share/ghostty"'; do
     grep -Fq "${build_contract}" "${build_script}" ||
         fail "build-local contradicts a required staged source: ${build_contract}"
 done
@@ -219,4 +227,4 @@ for bundled in libghostty-gtk-embed.so libgtk4-layer-shell.so; do
         fail "build-local does not construct reviewed bundled library: ${bundled}"
 done
 
-echo "packaging-policy: PASS format=deb target=ubuntu-24.04-amd64 entries=19 bundled-libraries=2"
+echo "packaging-policy: PASS format=deb target=ubuntu-24.04-amd64 entries=20 bundled-libraries=2"
