@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+fail() {
+    echo "package-qualification-receipt: error: $*" >&2
+    exit 1
+}
+
+[[ "$#" -eq 9 ]] || fail "usage: $0 SUMMARY CLEAN AUDIT LIFECYCLE X11 WAYLAND ARTIFACT MANIFEST PROVENANCE"
+summary="$1"
+clean="$2"
+audit="$3"
+lifecycle="$4"
+x11="$5"
+wayland="$6"
+artifact="$7"
+manifest="$8"
+provenance="$9"
+
+for command in jq sha256sum; do
+    command -v "${command}" >/dev/null || fail "required command not found: ${command}"
+done
+for evidence in "${summary}" "${clean}" "${audit}" "${lifecycle}" "${x11}" \
+    "${wayland}" "${artifact}" "${manifest}" "${provenance}"; do
+    [[ -f "${evidence}" ]] || fail "evidence file is missing: ${evidence}"
+done
+jq empty "${summary}" "${clean}" "${audit}" "${lifecycle}" "${x11}" \
+    "${wayland}" "${manifest}" "${provenance}" || fail "evidence JSON is invalid"
+
+revision="$(jq -r '.zentty_revision' "${provenance}")"
+ghostty="$(jq -r '.ghostty_revision' "${provenance}")"
+version="$(jq -r '.package_version' "${provenance}")"
+[[ "${revision}" =~ ^[0-9a-f]{40}$ && "${ghostty}" =~ ^[0-9a-f]{40}$ ]] ||
+    fail "provenance revisions are malformed"
+[[ "$(jq -r '.zentty_revision' "${manifest}")" == "${revision}" ]] ||
+    fail "manifest revision is stale"
+
+jq -e \
+    --arg revision "${revision}" --arg ghostty "${ghostty}" --arg version "${version}" \
+    --arg artifact "$(basename "${artifact}")" \
+    --arg artifact_sha "$(sha256sum "${artifact}" | awk '{print $1}')" \
+    --arg manifest_sha "$(sha256sum "${manifest}" | awk '{print $1}')" \
+    --arg provenance_sha "$(sha256sum "${provenance}" | awk '{print $1}')" \
+    --arg clean_sha "$(sha256sum "${clean}" | awk '{print $1}')" \
+    --arg audit_sha "$(sha256sum "${audit}" | awk '{print $1}')" \
+    --arg lifecycle_sha "$(sha256sum "${lifecycle}" | awk '{print $1}')" \
+    --arg x11_sha "$(sha256sum "${x11}" | awk '{print $1}')" \
+    --arg wayland_sha "$(sha256sum "${wayland}" | awk '{print $1}')" '
+    .schema_version == 1 and
+    .package.version == $version and .package.zentty_revision == $revision and
+    .package.ghostty_revision == $ghostty and .package.artifact == $artifact and
+    .package.sha256 == $artifact_sha and .package.manifest_sha256 == $manifest_sha and
+    .package.provenance_sha256 == $provenance_sha and
+    .evidence.clean_build_sha256 == $clean_sha and
+    .evidence.package_audit_sha256 == $audit_sha and
+    .evidence.lifecycle_sha256 == $lifecycle_sha and
+    .evidence.installed.x11.receipt_sha256 == $x11_sha and
+    .evidence.installed.wayland.receipt_sha256 == $wayland_sha and
+    .claims == {clean_build:true,reproducible:true,payload_audited:true,
+      install_reinstall:true,upgrade_and_failure_boundary:true,
+      uninstall_purge_residue:true,installed_x11:true,installed_wayland:true,
+      staged_bundle_distinct:true,release_qualification_passed:false,
+      full_linux_qualification_passed:false}
+' "${summary}" >/dev/null || fail "summary identity, digest, or claims are invalid"
+
+jq -e --arg revision "${revision}" --arg ghostty "${ghostty}" '
+    .schema_version == 1 and .package.zentty_revision == $revision and
+    .package.ghostty_revision == $ghostty and
+    .environment.developer_checkout == "masked" and
+    .environment.source_network_after_preparation == false and
+    .reproducibility == {primary_vs_clean_clone:"BYTE_IDENTICAL",output_count:4}
+' "${clean}" >/dev/null || fail "clean-build evidence is invalid or stale"
+jq -e --arg revision "${revision}" '
+    .schema_version == 1 and .package.zentty_revision == $revision and all(.claims[]; . == true)
+' "${audit}" >/dev/null || fail "package-audit evidence is invalid or stale"
+jq -e --arg revision "${revision}" '
+    .schema_version == 1 and .package.zentty_revision == $revision and
+    [.transitions[].outcome] == ["PASS","PASS","PASS","PASS","PASS",
+      "EXPECTED_FAILURE","PASS","PASS","PASS"] and
+    .failed_upgrade.general_rollback_claim == false and
+    .claims.host_root_mutated == false
+' "${lifecycle}" >/dev/null || fail "lifecycle evidence has a stale revision or unexpected outcome"
+
+for backend in x11 wayland; do
+    if [[ "${backend}" == x11 ]]; then receipt="${x11}"; else receipt="${wayland}"; fi
+    jq -e --arg backend "${backend}" --arg revision "${revision}" \
+        --arg package_sha "$(sha256sum "${artifact}" | awk '{print $1}')" '
+        .schema_version == 1 and .backend == $backend and
+        .revisions.zentty == $revision and
+        .package.sha256 == $package_sha and
+        (.display_session_id | test("^[0-9a-f]{64}$")) and
+        .source_or_build_leakage == false and .credentials_recorded == false and
+        all(.process_audits[]; .source_or_build_leakage == false)
+    ' "${receipt}" >/dev/null || fail "installed ${backend} evidence is missing, stale, or leaked"
+done
+
+echo "package-qualification-receipt: PASS revision=${revision}"

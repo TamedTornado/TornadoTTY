@@ -40,6 +40,8 @@ dpkg-deb --contents "${artifact}" >/dev/null
 
 extract_package positive
 "${audit}" "${temporary}/positive" "${manifest}" >/dev/null
+ZENTTY_BUILD_DIR="${temporary}/positive/usr/lib/zentty" \
+    "${repo_root}/linux/tests/abi-surface" >/dev/null
 (
     cd "${temporary}/positive"
     md5sum --check --strict DEBIAN/md5sums >/dev/null

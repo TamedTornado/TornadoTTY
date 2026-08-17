@@ -21,7 +21,7 @@ jq empty "${fixture}" 2>/dev/null || fail "upgrade fixture is not valid JSON"
 jq -e '
   (keys | sort) == [
     "artifact","authority","construction","dependencies","desktop_integration","layout",
-    "lifecycle","ownership","resource_ownership","schema_version","status",
+    "lifecycle","ownership","qualification","resource_ownership","schema_version","status",
     "supported_runtime","user_data","versioning"
   ] and
   .schema_version == 1 and .status == "RATIFIED" and
@@ -93,7 +93,14 @@ jq -e '
   .construction.expanded_file_receipt == "REQUIRED" and
   .construction.closed_world == true and
   .construction.network_access == "FORBIDDEN_AFTER_SOURCE_PREPARATION" and
-  .construction.package_scripts == "NONE_UNLESS_SEPARATELY_REVIEWED"
+  .construction.package_scripts == "NONE_UNLESS_SEPARATELY_REVIEWED" and
+  .qualification == {
+    "matrix":"linux/qualification-matrix.json",
+    "summary":"build/linux/package-qualification/package-qualification-summary.json",
+    "staged_and_installed_claims":"DISTINCT",
+    "missing_environment":"BLOCKED_NOT_PASS",
+    "release_and_full_claims":false
+  }
 ' "${policy}" >/dev/null || fail "policy schema or ratified values drifted"
 
 authority="$(jq -r '.authority' "${policy}")"

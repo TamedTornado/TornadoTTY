@@ -1,0 +1,131 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+validator="${repo_root}/linux/tests/package-qualification-receipt"
+temporary="$(mktemp -d)"
+trap 'rm -rf -- "${temporary}"' EXIT
+revision="0123456789abcdef0123456789abcdef01234567"
+ghostty="89abcdef0123456789abcdef0123456789abcdef"
+
+write_summary() {
+    jq -n \
+        --arg revision "${revision}" --arg ghostty "${ghostty}" \
+        --arg artifact_sha "$(sha256sum "${temporary}/zentty.deb" | awk '{print $1}')" \
+        --arg manifest_sha "$(sha256sum "${temporary}/manifest.json" | awk '{print $1}')" \
+        --arg provenance_sha "$(sha256sum "${temporary}/provenance.json" | awk '{print $1}')" \
+        --arg clean_sha "$(sha256sum "${temporary}/clean.json" | awk '{print $1}')" \
+        --arg audit_sha "$(sha256sum "${temporary}/audit.json" | awk '{print $1}')" \
+        --arg lifecycle_sha "$(sha256sum "${temporary}/lifecycle.json" | awk '{print $1}')" \
+        --arg x11_sha "$(sha256sum "${temporary}/x11.json" | awk '{print $1}')" \
+        --arg wayland_sha "$(sha256sum "${temporary}/wayland.json" | awk '{print $1}')" '
+        {schema_version:1,package:{version:"1.0.0",architecture:"amd64",baseline:"test",
+          zentty_revision:$revision,ghostty_revision:$ghostty,artifact:"zentty.deb",
+          sha256:$artifact_sha,manifest_sha256:$manifest_sha,provenance_sha256:$provenance_sha},
+         evidence:{clean_build_sha256:$clean_sha,package_audit_sha256:$audit_sha,
+          lifecycle_sha256:$lifecycle_sha,installed:{
+            x11:{receipt_sha256:$x11_sha,display_session_id:("a" * 64)},
+            wayland:{receipt_sha256:$wayland_sha,display_session_id:("b" * 64)}}},
+         claims:{clean_build:true,reproducible:true,payload_audited:true,
+          install_reinstall:true,upgrade_and_failure_boundary:true,
+          uninstall_purge_residue:true,installed_x11:true,installed_wayland:true,
+          staged_bundle_distinct:true,release_qualification_passed:false,
+          full_linux_qualification_passed:false}}
+    ' >"${temporary}/summary.json"
+}
+
+reset_fixture() {
+    printf 'real package bytes\n' >"${temporary}/zentty.deb"
+    jq -n --arg revision "${revision}" \
+        '{schema_version:1,version:"1.0.0",zentty_revision:$revision,files:[]}' \
+        >"${temporary}/manifest.json"
+    jq -n --arg revision "${revision}" --arg ghostty "${ghostty}" \
+        '{schema_version:1,package_version:"1.0.0",zentty_revision:$revision,
+          ghostty_revision:$ghostty}' >"${temporary}/provenance.json"
+    jq -n --arg revision "${revision}" --arg ghostty "${ghostty}" '
+        {schema_version:1,environment:{kind:"detached-clean-clone",developer_checkout:"masked",
+          source_network_after_preparation:false},package:{zentty_revision:$revision,
+          ghostty_revision:$ghostty},
+          reproducibility:{primary_vs_clean_clone:"BYTE_IDENTICAL",output_count:4}}
+    ' >"${temporary}/clean.json"
+    jq -n --arg revision "${revision}" '
+        {schema_version:1,package:{zentty_revision:$revision},claims:{payload:true,metadata:true}}
+    ' >"${temporary}/audit.json"
+    jq -n --arg revision "${revision}" '
+        {schema_version:1,package:{zentty_revision:$revision},
+         transitions:["PASS","PASS","PASS","PASS","PASS","EXPECTED_FAILURE","PASS","PASS","PASS"] |
+           map({outcome:.}),failed_upgrade:{general_rollback_claim:false},
+         claims:{host_root_mutated:false}}
+    ' >"${temporary}/lifecycle.json"
+    for backend in x11 wayland; do
+        jq -n --arg backend "${backend}" --arg revision "${revision}" \
+            --arg package_sha "$(sha256sum "${temporary}/zentty.deb" | awk '{print $1}')" '
+          {schema_version:1,backend:$backend,revisions:{zentty:$revision},
+           package:{sha256:$package_sha},display_session_id:("c" * 64),
+           source_or_build_leakage:false,credentials_recorded:false,
+           process_audits:[{source_or_build_leakage:false}]}
+        ' >"${temporary}/${backend}.json"
+    done
+    write_summary
+}
+
+run_validator() {
+    "${validator}" "${temporary}/summary.json" "${temporary}/clean.json" \
+        "${temporary}/audit.json" "${temporary}/lifecycle.json" \
+        "${temporary}/x11.json" "${temporary}/wayland.json" \
+        "${temporary}/zentty.deb" "${temporary}/manifest.json" \
+        "${temporary}/provenance.json"
+}
+
+expect_failure() {
+    local expected="$1"
+    if run_validator >"${temporary}/stdout" 2>"${temporary}/stderr"; then
+        echo "package-qualification-receipt-test: expected failure: ${expected}" >&2
+        exit 1
+    fi
+    grep -Fq "${expected}" "${temporary}/stderr" || {
+        cat "${temporary}/stderr" >&2
+        exit 1
+    }
+}
+
+reset_fixture
+run_validator >/dev/null
+
+rm "${temporary}/wayland.json"
+expect_failure 'evidence file is missing'
+
+reset_fixture
+printf 'tampered\n' >>"${temporary}/zentty.deb"
+expect_failure 'summary identity, digest, or claims are invalid'
+
+reset_fixture
+jq '.claims.full_linux_qualification_passed = true' "${temporary}/summary.json" \
+    >"${temporary}/changed" && mv "${temporary}/changed" "${temporary}/summary.json"
+expect_failure 'summary identity, digest, or claims are invalid'
+
+reset_fixture
+jq '.package.zentty_revision = ("f" * 40)' "${temporary}/clean.json" \
+    >"${temporary}/changed" && mv "${temporary}/changed" "${temporary}/clean.json"
+write_summary
+expect_failure 'clean-build evidence is invalid or stale'
+
+reset_fixture
+jq '.source_or_build_leakage = true' "${temporary}/x11.json" \
+    >"${temporary}/changed" && mv "${temporary}/changed" "${temporary}/x11.json"
+write_summary
+expect_failure 'installed x11 evidence is missing, stale, or leaked'
+
+reset_fixture
+jq '.package.sha256 = ("f" * 64)' "${temporary}/wayland.json" \
+    >"${temporary}/changed" && mv "${temporary}/changed" "${temporary}/wayland.json"
+write_summary
+expect_failure 'installed wayland evidence is missing, stale, or leaked'
+
+reset_fixture
+jq '.transitions[5].outcome = "PASS"' "${temporary}/lifecycle.json" \
+    >"${temporary}/changed" && mv "${temporary}/changed" "${temporary}/lifecycle.json"
+write_summary
+expect_failure 'lifecycle evidence has a stale revision or unexpected outcome'
+
+echo "package-qualification-receipt-test: PASS negatives=missing+checksum+false-claim+stale+leak+unexpected-outcome"

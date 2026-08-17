@@ -27,6 +27,7 @@ support_tests=(
     linux/tests/package-notices-test
     linux/tests/debian-package-builder-contract-test
     linux/tests/debian-package-lifecycle-test
+    linux/tests/package-qualification-receipt-test
     linux/tests/feature-inventory-test
     linux/tests/cli-source-contract-test
     linux/tests/test-orchestration-contract

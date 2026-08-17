@@ -16,9 +16,93 @@ Zentty's first supported Linux artifact is a native Debian package for Ubuntu
   build boundary. `linux/tests/packaging-policy-test` supplies its negative
   fixtures.
 
-The staged bundle is not an installer. GH-52 builds the native package and
-GH-53 owns real package-manager lifecycle qualification; installed GUI launch
-and public release qualification remain separate GH-54/GH-55 work.
+The staged bundle is not an installer. Native-package evidence is kept distinct
+from staged evidence in the qualification matrix and the versioned package
+qualification summary.
+
+## Supported baseline and dependencies
+
+The qualified package target is **Ubuntu 24.04 LTS (Noble), amd64** with glibc
+2.39, GTK 4.14, libadwaita 1.5, Wayland 1.22, or X11 1.8.7 and newer compatible
+versions. The exact runtime dependency relation is generated from the final ELF
+payload with `dpkg-shlibdeps`, reconciled with the minimum baseline in
+`policy-v1.json`, and recorded in the artifact provenance JSON. Ghostty and
+gtk4-layer-shell are the only private shared libraries; all other dependencies
+are system libraries. Other distributions, architectures, and older library
+stacks are not qualified.
+
+## Build, checksums, and provenance
+
+From a clean checkout with the pinned Ghostty source prepared:
+
+```sh
+linux/scripts/prepare-ghostty-source
+ZENTTY_GHOSTTY_PREPARED=true linux/scripts/build-deb
+```
+
+The output directory `build/linux-package/` contains the current revision's
+`.deb`, expanded manifest JSON, provenance JSON, and `SHA256SUMS` (and may retain
+older developer-build artifacts).
+The provenance records the Zentty and Ghostty commits, Ubuntu baseline,
+architecture, dependency-set hashes, source-input hashes, toolchain versions,
+and artifact/manifest hashes. Release qualification additionally rebuilds from
+a detached clean clone with the developer checkout masked and networking
+disabled, then requires all four outputs to be byte-identical.
+
+Verify an artifact set before installation:
+
+```sh
+cd build/linux-package
+sha256sum --check --strict SHA256SUMS
+dpkg-deb --info ./zentty_*_amd64.deb
+dpkg-deb --contents ./zentty_*_amd64.deb
+```
+
+## Install, verify, upgrade, and remove
+
+Install or perform a same-version reinstall with the system package manager:
+
+```sh
+sudo apt install ./build/linux-package/zentty_*_amd64.deb
+zentty --help
+zentty-linux
+```
+
+`apt install ./newer-zentty.deb` is the supported upgrade route. The automated
+lifecycle journey proves upgrade from the oldest supported fixture and proves
+that an injected `preinst` failure before unpack preserves the previous
+payload. This is deliberately **not** a claim of automatic rollback after an
+arbitrary failure once unpack has begun. Preserve the previous `.deb` if manual
+package-file rollback may be needed; compatibility of newer user state with an
+older application is not guaranteed.
+
+Remove package-owned system files with either:
+
+```sh
+sudo apt remove zentty
+sudo apt purge zentty
+```
+
+The package has no maintainer scripts or conffiles, so remove and purge
+currently have the same system-payload result. Neither command deletes user
+data. Configuration, data, state, cache, and runtime files below the user's XDG
+directories are retained by design. There is not yet a package-owned command
+for explicit per-user cleanup.
+
+## Qualification receipts
+
+`linux/tests/debian-package-lifecycle-build` is the single real dpkg lifecycle
+producer. It runs install, reinstall, upgrade, injected failure, remove, purge,
+and a repeated cycle inside a disposable Bubblewrap root with the host root
+read-only. `linux/tests/debian-package-installed-product` launches the installed
+GUI and CLI under controlled nested X11 and Wayland using installed paths only.
+
+The matrix exposes separate command-backed evidence cells for clean
+build/reproducibility, payload audit, install/reinstall, upgrade/failure,
+uninstall/purge/residue, installed X11, installed Wayland, and the final
+summary. Their closed receipt graph is written below
+`build/linux/package-qualification/`; missing or stale evidence is a failure,
+not a skip. `linux/tests/qualify-local` remains the authoritative entry point.
 
 ## Filesystem model
 
@@ -37,14 +121,9 @@ Zentty may later expose a separate, explicit per-user cleanup command; it must
 not be implemented by enumerating home directories in Debian maintainer
 scripts.
 
-`linux/tests/debian-package-lifecycle-build` is the authoritative GH-53
-qualification entry point. It builds the exact clean revision, then drives real
-`dpkg` install, reinstall, upgrade, injected pre-unpack failure, remove, purge,
-and repeat-cycle operations inside a disposable Bubblewrap root. Its validated
-machine receipt and raw dpkg logs are written below
-`build/linux/package-lifecycle/`. The host root is mounted read-only; missing
-Bubblewrap/user-namespace support is a prerequisite failure rather than a
-passing skip.
+Its validated lifecycle receipt and raw dpkg logs are written below
+`build/linux/package-lifecycle/`. Missing Bubblewrap/user-namespace support is
+a prerequisite failure rather than a passing skip.
 
 The injected failure proves only Debian's pre-installation-script boundary:
 when `preinst` fails before unpack, the prior payload remains installed. Zentty

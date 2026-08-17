@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+
+# Resolve and validate the Debian output set belonging to the current clean
+# Zentty revision. Source this file, then call zentty_exact_package_artifact.
+
+zentty_exact_package_artifact() {
+    local repo_root="$1"
+    local output_root="${2:-${repo_root}/build/linux-package}"
+    local short_revision
+
+    ZENTTY_PACKAGE_REVISION="$(git -C "${repo_root}" rev-parse HEAD)"
+    [[ "${ZENTTY_PACKAGE_REVISION}" =~ ^[0-9a-f]{40}$ ]] || return 1
+    short_revision="${ZENTTY_PACKAGE_REVISION:0:12}"
+    ZENTTY_PACKAGE_ARTIFACT="$(find "${output_root}" -maxdepth 1 -type f \
+        -name "zentty_*+git${short_revision}_amd64.deb" -print -quit)"
+    [[ -n "${ZENTTY_PACKAGE_ARTIFACT}" ]] || return 1
+    ZENTTY_PACKAGE_ARTIFACT="$(readlink -f -- "${ZENTTY_PACKAGE_ARTIFACT}")"
+    ZENTTY_PACKAGE_MANIFEST="${ZENTTY_PACKAGE_ARTIFACT%.deb}.manifest.json"
+    ZENTTY_PACKAGE_PROVENANCE="${ZENTTY_PACKAGE_ARTIFACT%.deb}.provenance.json"
+    ZENTTY_PACKAGE_CHECKSUMS="${output_root}/SHA256SUMS"
+    [[ -f "${ZENTTY_PACKAGE_MANIFEST}" && -f "${ZENTTY_PACKAGE_PROVENANCE}" &&
+       -f "${ZENTTY_PACKAGE_CHECKSUMS}" ]] || return 1
+    ZENTTY_PACKAGE_VERSION="$(dpkg-deb -f "${ZENTTY_PACKAGE_ARTIFACT}" Version)"
+    [[ "$(jq -r '.version' "${ZENTTY_PACKAGE_MANIFEST}")" == "${ZENTTY_PACKAGE_VERSION}" &&
+       "$(jq -r '.zentty_revision' "${ZENTTY_PACKAGE_MANIFEST}")" == "${ZENTTY_PACKAGE_REVISION}" &&
+       "$(jq -r '.zentty_revision' "${ZENTTY_PACKAGE_PROVENANCE}")" == "${ZENTTY_PACKAGE_REVISION}" ]] || return 1
+    (
+        cd "${output_root}"
+        sha256sum --quiet --strict -c "$(basename "${ZENTTY_PACKAGE_CHECKSUMS}")"
+    ) || return 1
+}

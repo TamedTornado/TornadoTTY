@@ -62,11 +62,21 @@ expect_validation_failure 'missing terminal cell: Debug/wayland/epoll/single'
 # not degrade to staged execution or a non-input Wayland environment.
 jq 'del(.cells[] | select(.id == "installed-product-x11"))' \
     "${source_matrix}" >"${temp_dir}/matrix.json"
-expect_validation_failure 'installed-product cells are missing or malformed'
+expect_validation_failure 'cells with malformed or unknown dependencies: package-qualification-summary'
 
 jq '(.cells[] | select(.id == "installed-product-wayland")).environment_profile = "nested-wayland-v1"' \
     "${source_matrix}" >"${temp_dir}/matrix.json"
 expect_validation_failure 'installed-product cells are missing or malformed'
+
+# Package closure is a closed evidence graph. Lifecycle labels may validate the
+# one real producer receipt, but no cell or installed backend may disappear.
+jq 'del(.cells[] | select(.id == "package-upgrade-failure-evidence"))' \
+    "${source_matrix}" >"${temp_dir}/matrix.json"
+expect_validation_failure 'cells with malformed or unknown dependencies: package-qualification-summary'
+
+jq '(.cells[] | select(.id == "package-qualification-summary")).depends_on -= ["installed-product-wayland"]' \
+    "${source_matrix}" >"${temp_dir}/matrix.json"
+expect_validation_failure 'package-qualification cells are missing or malformed'
 
 # Status vocabulary is closed; SKIPPED is never an accepted qualification result.
 jq '(.cells[] | select(.id == "install-uninstall")).status = "SKIPPED"' \
@@ -151,6 +161,11 @@ grep -F 'source "${repo_root}/linux/tests/lib/qualification-outcome"' \
 grep -F 'source "${repo_root}/linux/tests/lib/bounded-batch"' \
     "${runner}" >/dev/null
 grep -F 'zentty_qualification_classify_outcome' "${runner}" >/dev/null
+
+[[ ! -e "${repo_root}/linux/tests/debian-package-reproducibility" ]] || {
+    echo "qualification-matrix-test: duplicate package reproducibility runner returned" >&2
+    exit 1
+}
 
 # The complete real matrix can exceed Linux's argv limit. Feed the matrix and
 # JSON-lines results to jq as files rather than expanding either document into

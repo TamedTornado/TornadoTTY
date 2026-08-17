@@ -4,7 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 output_root="${ZENTTY_PACKAGE_OUTPUT_DIR:-${repo_root}/build/linux-package}"
 revision="$(git -C "${repo_root}" rev-parse HEAD)"
-short_revision="${revision:0:12}"
+source "${repo_root}/linux/tests/lib/exact-package-artifact"
 
 [[ -z "$(git -C "${repo_root}" status --porcelain=v1)" ]] || {
     echo "debian-package-lifecycle-build: error: Zentty checkout must be clean" >&2
@@ -12,17 +12,11 @@ short_revision="${revision:0:12}"
 }
 
 ZENTTY_GHOSTTY_PREPARED=true "${repo_root}/linux/scripts/build-deb"
-artifact="$(find "${output_root}" -maxdepth 1 -type f \
-    -name "zentty_*+git${short_revision}_amd64.deb" -print -quit)"
-[[ -n "${artifact}" ]] || {
+zentty_exact_package_artifact "${repo_root}" "${output_root}" || {
     echo "debian-package-lifecycle-build: error: exact-revision package was not produced" >&2
     exit 1
 }
-manifest="${artifact%.deb}.manifest.json"
-[[ -f "${manifest}" ]] || {
-    echo "debian-package-lifecycle-build: error: exact-revision manifest was not produced" >&2
-    exit 1
-}
 
-"${repo_root}/linux/tests/debian-package-lifecycle" "${artifact}" "${manifest}"
+"${repo_root}/linux/tests/debian-package-lifecycle" \
+    "${ZENTTY_PACKAGE_ARTIFACT}" "${ZENTTY_PACKAGE_MANIFEST}"
 echo "debian-package-lifecycle-build: PASS revision=${revision}"

@@ -5,8 +5,11 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 revision="$(git -C "${repo_root}" rev-parse HEAD)"
 temporary="$(mktemp -d)"
 isolated="${temporary}/source"
+isolated_ghostty="${temporary}/ghostty"
 masked_checkout="${temporary}/masked-checkout"
+output_directory="${ZENTTY_PACKAGE_QUALIFICATION_DIR:-${repo_root}/build/linux/package-qualification}"
 trap 'rm -rf -- "${temporary}"' EXIT
+source "${repo_root}/linux/tests/lib/exact-package-artifact"
 
 [[ -z "$(git -C "${repo_root}" status --porcelain=v1)" ]] || {
     echo "debian-package-clean-checkout: source checkout must be clean" >&2
@@ -20,22 +23,36 @@ for dependency in bwrap git; do
 done
 
 mkdir -p -- "${masked_checkout}"
+zentty_exact_package_artifact "${repo_root}" || {
+    echo "debian-package-clean-checkout: exact primary artifact set is missing or stale" >&2
+    exit 1
+}
+primary_output="$(dirname "${ZENTTY_PACKAGE_ARTIFACT}")"
 git clone --quiet --no-local --no-hardlinks "${repo_root}" "${isolated}"
 git -C "${isolated}" checkout --quiet --detach "${revision}"
 [[ -z "$(git -C "${isolated}" status --porcelain=v1)" ]]
+git clone --quiet --no-local --no-hardlinks \
+    "${repo_root}/build/linux-deps/ghostty" "${isolated_ghostty}"
+git -C "${isolated_ghostty}" checkout --quiet --detach \
+    "$(sed -n 's/^revision=//p' "${repo_root}/linux/ghostty.lock")"
+[[ -z "$(git -C "${isolated_ghostty}" status --porcelain=v1)" ]]
 
 zig="${ZIG:-${repo_root}/../.tools/zig-x86_64-linux-0.16.0/zig}"
 blueprint="${BLUEPRINT_COMPILER_DIR:-${repo_root}/../.tools/blueprint-compiler-0.16.0/bin}"
 
 bwrap \
-    --bind / / \
+    --ro-bind / / \
+    --unshare-net \
     --dev-bind /dev /dev \
+    --bind "${temporary}" "${temporary}" \
     --ro-bind "${masked_checkout}" "${repo_root}" \
     --chdir "${isolated}" \
     -- \
     env \
         ZIG="${zig}" \
         BLUEPRINT_COMPILER_DIR="${blueprint}" \
+        GHOSTTY_SOURCE_DIR="${isolated_ghostty}" \
+        ZENTTY_GHOSTTY_PREPARED=true \
         ZENTTY_PACKAGE_OUTPUT_DIR="${isolated}/build/isolated-package" \
         ZENTTY_PACKAGE_WORK_DIR="${isolated}/build/isolated-package-work" \
         bash -c \
@@ -50,6 +67,7 @@ artifact="$(find "${isolated}/build/isolated-package" -maxdepth 1 -name '*.deb' 
 version="$(dpkg-deb -f "${artifact}" Version)"
 manifest="${isolated}/build/isolated-package/zentty_${version}_amd64.manifest.json"
 provenance="${isolated}/build/isolated-package/zentty_${version}_amd64.provenance.json"
+checksums="${isolated}/build/isolated-package/SHA256SUMS"
 
 [[ "$(jq -er '.zentty_revision' "${provenance}")" == "${revision}" ]]
 jq -e '
@@ -61,4 +79,50 @@ jq -e '
   all(.inputs[]; test("^[0-9a-f]{64}$"))' "${provenance}" >/dev/null
 "${isolated}/linux/tests/debian-package-build-test" "${artifact}" "${manifest}" >/dev/null
 
-echo "debian-package-clean-checkout: PASS revision=${revision} developer_checkout=masked"
+mapfile -t primary_files < <(
+    printf '%s\n' \
+        "$(basename "${ZENTTY_PACKAGE_ARTIFACT}")" \
+        "$(basename "${ZENTTY_PACKAGE_MANIFEST}")" \
+        "$(basename "${ZENTTY_PACKAGE_PROVENANCE}")" \
+        "$(basename "${ZENTTY_PACKAGE_CHECKSUMS}")" | LC_ALL=C sort
+)
+mapfile -t isolated_files < <(
+    cd "${isolated}/build/isolated-package"
+    find . -maxdepth 1 -type f -printf '%P\n' | LC_ALL=C sort
+)
+[[ "${primary_files[*]}" == "${isolated_files[*]}" ]] || {
+    printf 'primary: %s\nisolated: %s\n' \
+        "${primary_files[*]}" "${isolated_files[*]}" >&2
+    echo "debian-package-clean-checkout: release output sets differ" >&2
+    exit 1
+}
+for file in "${primary_files[@]}"; do
+    cmp --silent "${primary_output}/${file}" \
+        "${isolated}/build/isolated-package/${file}" || {
+        echo "debian-package-clean-checkout: reproducibility mismatch: ${file}" >&2
+        exit 1
+    }
+done
+
+mkdir -p -- "${output_directory}"
+jq -n \
+    --arg revision "${revision}" \
+    --arg ghostty_revision "$(git -C "${isolated_ghostty}" rev-parse HEAD)" \
+    --arg version "${version}" \
+    --arg artifact "$(basename "${artifact}")" \
+    --arg artifact_sha256 "$(sha256sum "${artifact}" | awk '{print $1}')" \
+    --arg manifest_sha256 "$(sha256sum "${manifest}" | awk '{print $1}')" \
+    --arg provenance_sha256 "$(sha256sum "${provenance}" | awk '{print $1}')" \
+    --arg checksums_sha256 "$(sha256sum "${checksums}" | awk '{print $1}')" '
+    {
+      schema_version:1,
+      environment:{kind:"detached-clean-clone",developer_checkout:"masked",
+        source_network_after_preparation:false},
+      package:{version:$version,zentty_revision:$revision,
+        ghostty_revision:$ghostty_revision,artifact:$artifact},
+      reproducibility:{primary_vs_clean_clone:"BYTE_IDENTICAL",output_count:4},
+      outputs:{artifact_sha256:$artifact_sha256,manifest_sha256:$manifest_sha256,
+        provenance_sha256:$provenance_sha256,checksums_sha256:$checksums_sha256}
+    }' >"${output_directory}/clean-build.json"
+
+echo "debian-package-clean-checkout: PASS revision=${revision} developer_checkout=masked reproducible=4"

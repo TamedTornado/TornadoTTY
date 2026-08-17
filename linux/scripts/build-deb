@@ -31,6 +31,7 @@ zentty_short="${zentty_revision:0:12}"
 source_date_epoch="$(git -C "${repo_root}" show -s --format=%ct HEAD)"
 [[ "${source_date_epoch}" =~ ^[1-9][0-9]*$ ]] || fail "invalid source commit epoch"
 export SOURCE_DATE_EPOCH="${source_date_epoch}"
+export CARGO_NET_OFFLINE=true
 
 ghostty_revision="$(sed -n 's/^revision=//p' "${repo_root}/linux/ghostty.lock")"
 [[ "${ghostty_revision}" =~ ^[0-9a-f]{40}$ ]] || fail "invalid pinned Ghostty revision"

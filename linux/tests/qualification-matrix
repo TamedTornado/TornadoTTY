@@ -443,6 +443,33 @@ jq -e '
         (.command | startswith("GDK_BACKEND=wayland ")))
 ' "${matrix}" >/dev/null || fail "installed-product cells are missing or malformed"
 
+jq -e '
+    [.cells[] | select(.capability == "package_qualification")] as $cells |
+    [$cells[].id] == [
+      "package-clean-build-reproducibility",
+      "package-payload-audit",
+      "package-install-reinstall-evidence",
+      "package-upgrade-failure-evidence",
+      "package-uninstall-purge-residue-evidence",
+      "package-qualification-summary"
+    ] and
+    all($cells[]; .status == "PASS" and .tier == "release" and
+      .optimize == "ReleaseSafe" and .environment_profile == "isolated-none-v1" and
+      (.command | contains("linux/tests/package-qualification-evidence"))) and
+    all($cells[] | select(.id != "package-qualification-summary");
+      .depends_on == ["install-uninstall"]) and
+    (first($cells[] | select(.id == "package-clean-build-reproducibility")) |
+      (.command | startswith("linux/tests/debian-package-clean-checkout && "))) and
+    (first($cells[] | select(.id == "package-qualification-summary")) |
+      .display == "both" and .async_backend == "default" and .terminals == "multi" and
+      .depends_on == [
+        "package-clean-build-reproducibility","package-payload-audit",
+        "package-install-reinstall-evidence","package-upgrade-failure-evidence",
+        "package-uninstall-purge-residue-evidence",
+        "installed-product-x11","installed-product-wayland"
+      ] and (.command | endswith(" summary")))
+' "${matrix}" >/dev/null || fail "package-qualification cells are missing or malformed"
+
 for optimize in ReleaseSafe Debug; do
     for display in wayland x11; do
         for async_backend in default epoll io_uring; do

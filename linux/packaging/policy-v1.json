@@ -126,5 +126,12 @@
     "closed_world": true,
     "network_access": "FORBIDDEN_AFTER_SOURCE_PREPARATION",
     "package_scripts": "NONE_UNLESS_SEPARATELY_REVIEWED"
+  },
+  "qualification": {
+    "matrix": "linux/qualification-matrix.json",
+    "summary": "build/linux/package-qualification/package-qualification-summary.json",
+    "staged_and_installed_claims": "DISTINCT",
+    "missing_environment": "BLOCKED_NOT_PASS",
+    "release_and_full_claims": false
   }
 }

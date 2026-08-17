@@ -1,0 +1,175 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+scenario="${1:-}"
+output_directory="${ZENTTY_PACKAGE_QUALIFICATION_DIR:-${repo_root}/build/linux/package-qualification}"
+lifecycle_directory="${ZENTTY_PACKAGE_LIFECYCLE_DIR:-${repo_root}/build/linux/package-lifecycle}"
+installed_directory="${ZENTTY_INSTALLED_PACKAGE_OUTPUT_DIR:-${repo_root}/build/linux/installed-package}"
+source "${repo_root}/linux/tests/lib/exact-package-artifact"
+
+fail() {
+    echo "package-qualification-evidence: error: $*" >&2
+    exit 1
+}
+
+[[ "${scenario}" =~ ^(clean-build|package-audit|install-reinstall|upgrade-failure|uninstall-purge-residue|summary)$ ]] ||
+    fail "usage: $0 clean-build|package-audit|install-reinstall|upgrade-failure|uninstall-purge-residue|summary"
+for command in dpkg-deb git jq sha256sum; do
+    command -v "${command}" >/dev/null || fail "required command not found: ${command}"
+done
+zentty_exact_package_artifact "${repo_root}" || fail "exact current-revision artifact set is missing or stale"
+mkdir -p -- "${output_directory}"
+
+clean_receipt="${output_directory}/clean-build.json"
+audit_receipt="${output_directory}/package-audit.json"
+lifecycle_summary="${lifecycle_directory}/package-lifecycle-summary.json"
+dpkg_log="${lifecycle_directory}/dpkg.log"
+failed_log="${lifecycle_directory}/failed-upgrade.log"
+
+validate_clean_build() {
+    [[ -f "${clean_receipt}" ]] || fail "clean-build receipt is missing"
+    jq -e --arg revision "${ZENTTY_PACKAGE_REVISION}" \
+        --arg ghostty "$(jq -r '.ghostty_revision' "${ZENTTY_PACKAGE_PROVENANCE}")" \
+        --arg version "${ZENTTY_PACKAGE_VERSION}" \
+        --arg artifact "$(basename "${ZENTTY_PACKAGE_ARTIFACT}")" \
+        --arg artifact_sha "$(sha256sum "${ZENTTY_PACKAGE_ARTIFACT}" | awk '{print $1}')" \
+        --arg manifest_sha "$(sha256sum "${ZENTTY_PACKAGE_MANIFEST}" | awk '{print $1}')" \
+        --arg provenance_sha "$(sha256sum "${ZENTTY_PACKAGE_PROVENANCE}" | awk '{print $1}')" \
+        --arg checksums_sha "$(sha256sum "${ZENTTY_PACKAGE_CHECKSUMS}" | awk '{print $1}')" '
+        .schema_version == 1 and
+        .environment == {kind:"detached-clean-clone",developer_checkout:"masked",
+          source_network_after_preparation:false} and
+        .package == {version:$version,zentty_revision:$revision,
+          ghostty_revision:$ghostty,artifact:$artifact} and
+        .reproducibility == {primary_vs_clean_clone:"BYTE_IDENTICAL",output_count:4} and
+        .outputs == {artifact_sha256:$artifact_sha,manifest_sha256:$manifest_sha,
+          provenance_sha256:$provenance_sha,checksums_sha256:$checksums_sha}
+    ' "${clean_receipt}" >/dev/null || fail "clean-build receipt is stale or malformed"
+}
+
+validate_lifecycle() {
+    "${repo_root}/linux/tests/debian-package-lifecycle-receipt" \
+        "${lifecycle_summary}" "${dpkg_log}" "${failed_log}" \
+        "${ZENTTY_PACKAGE_ARTIFACT}" "${ZENTTY_PACKAGE_MANIFEST}" >/dev/null
+}
+
+case "${scenario}" in
+    clean-build)
+        validate_clean_build
+        ;;
+    package-audit)
+        "${repo_root}/linux/tests/debian-package-build-test" \
+            "${ZENTTY_PACKAGE_ARTIFACT}" "${ZENTTY_PACKAGE_MANIFEST}" >/dev/null
+        jq -n \
+            --arg version "${ZENTTY_PACKAGE_VERSION}" \
+            --arg revision "${ZENTTY_PACKAGE_REVISION}" \
+            --arg artifact "$(basename "${ZENTTY_PACKAGE_ARTIFACT}")" \
+            --arg artifact_sha "$(sha256sum "${ZENTTY_PACKAGE_ARTIFACT}" | awk '{print $1}')" \
+            --arg manifest_sha "$(sha256sum "${ZENTTY_PACKAGE_MANIFEST}" | awk '{print $1}')" \
+            --arg provenance_sha "$(sha256sum "${ZENTTY_PACKAGE_PROVENANCE}" | awk '{print $1}')" \
+            --arg dependencies "$(jq -r '.dependencies.debian_runtime' "${ZENTTY_PACKAGE_PROVENANCE}")" '
+            {schema_version:1,package:{version:$version,zentty_revision:$revision,
+              artifact:$artifact,sha256:$artifact_sha},
+             evidence:{manifest_sha256:$manifest_sha,provenance_sha256:$provenance_sha,
+              runtime_dependencies:$dependencies},
+             claims:{closed_payload:true,metadata:true,dependencies:true,symbols_and_hardening:true,
+              notices:true,no_credentials:true,no_source_or_build_paths:true,
+              no_static_archives:true,no_test_artifacts:true}}
+        ' >"${audit_receipt}"
+        ;;
+    install-reinstall)
+        validate_lifecycle
+        jq -e '
+          [.transitions[] | select(.id == "fresh-install" or .id == "same-version-reinstall") |
+            [.id,.outcome]] == [["fresh-install","PASS"],["same-version-reinstall","PASS"]] and
+          .claims.fresh_install and .claims.reinstall_idempotent
+        ' "${lifecycle_summary}" >/dev/null || fail "install/reinstall evidence is incomplete"
+        ;;
+    upgrade-failure)
+        validate_lifecycle
+        jq -e '
+          [.transitions[] | select(.id == "oldest-fixture-install" or
+            .id == "supported-upgrade" or .id == "injected-failed-upgrade") |
+            [.id,.outcome]] == [["oldest-fixture-install","PASS"],
+              ["supported-upgrade","PASS"],["injected-failed-upgrade","EXPECTED_FAILURE"]] and
+          .claims.supported_upgrade and .claims.failed_upgrade_previous_payload_usable and
+          .failed_upgrade.previous_payload_preserved and
+          (.failed_upgrade.general_rollback_claim | not)
+        ' "${lifecycle_summary}" >/dev/null || fail "upgrade/failure evidence is incomplete"
+        ;;
+    uninstall-purge-residue)
+        validate_lifecycle
+        jq -e '
+          [.transitions[] | select(.id == "default-remove" or .id == "explicit-purge" or
+            .id == "second-install" or .id == "second-remove") | [.id,.outcome]] ==
+            [["default-remove","PASS"],["explicit-purge","PASS"],
+             ["second-install","PASS"],["second-remove","PASS"]] and
+          .claims.remove_clean and .claims.purge_clean and .claims.repeated_cycle_clean and
+          .claims.user_data_preserved and (.claims.host_root_mutated | not)
+        ' "${lifecycle_summary}" >/dev/null || fail "remove/purge/residue evidence is incomplete"
+        ;;
+    summary)
+        validate_clean_build
+        [[ -f "${audit_receipt}" ]] || fail "package-audit receipt is missing"
+        jq -e --arg revision "${ZENTTY_PACKAGE_REVISION}" \
+            --arg sha "$(sha256sum "${ZENTTY_PACKAGE_ARTIFACT}" | awk '{print $1}')" '
+            .schema_version == 1 and .package.zentty_revision == $revision and
+            .package.sha256 == $sha and all(.claims[]; . == true)
+        ' "${audit_receipt}" >/dev/null || fail "package-audit receipt is stale or malformed"
+        validate_lifecycle
+        for backend in x11 wayland; do
+            receipt="${installed_directory}/${backend}.json"
+            [[ -f "${receipt}" ]] || fail "installed ${backend} receipt is missing"
+            jq -e --arg backend "${backend}" \
+                --arg revision "${ZENTTY_PACKAGE_REVISION}" \
+                --arg package_sha "$(sha256sum "${ZENTTY_PACKAGE_ARTIFACT}" | awk '{print $1}')" '
+                .schema_version == 1 and .backend == $backend and
+                .revisions.zentty == $revision and .package.sha256 == $package_sha and
+                .launches == {direct:true,desktop_entry:true,restart:true} and
+                all(.product[]; . == true) and .source_or_build_leakage == false and
+                .credentials_recorded == false and
+                all(.process_audits[]; .source_or_build_leakage == false)
+            ' "${receipt}" >/dev/null || fail "installed ${backend} receipt is stale or malformed"
+        done
+        jq -n \
+            --arg version "${ZENTTY_PACKAGE_VERSION}" \
+            --arg architecture "$(dpkg-deb -f "${ZENTTY_PACKAGE_ARTIFACT}" Architecture)" \
+            --arg baseline "$(jq -r '.baseline' "${ZENTTY_PACKAGE_PROVENANCE}")" \
+            --arg zentty_revision "${ZENTTY_PACKAGE_REVISION}" \
+            --arg ghostty_revision "$(jq -r '.ghostty_revision' "${ZENTTY_PACKAGE_PROVENANCE}")" \
+            --arg artifact "$(basename "${ZENTTY_PACKAGE_ARTIFACT}")" \
+            --arg artifact_sha "$(sha256sum "${ZENTTY_PACKAGE_ARTIFACT}" | awk '{print $1}')" \
+            --arg manifest_sha "$(sha256sum "${ZENTTY_PACKAGE_MANIFEST}" | awk '{print $1}')" \
+            --arg provenance_sha "$(sha256sum "${ZENTTY_PACKAGE_PROVENANCE}" | awk '{print $1}')" \
+            --arg clean_sha "$(sha256sum "${clean_receipt}" | awk '{print $1}')" \
+            --arg audit_sha "$(sha256sum "${audit_receipt}" | awk '{print $1}')" \
+            --arg lifecycle_sha "$(sha256sum "${lifecycle_summary}" | awk '{print $1}')" \
+            --arg x11_sha "$(sha256sum "${installed_directory}/x11.json" | awk '{print $1}')" \
+            --arg wayland_sha "$(sha256sum "${installed_directory}/wayland.json" | awk '{print $1}')" \
+            --arg x11_session "$(jq -r '.display_session_id' "${installed_directory}/x11.json")" \
+            --arg wayland_session "$(jq -r '.display_session_id' "${installed_directory}/wayland.json")" '
+            {schema_version:1,package:{version:$version,architecture:$architecture,
+              baseline:$baseline,zentty_revision:$zentty_revision,
+              ghostty_revision:$ghostty_revision,artifact:$artifact,sha256:$artifact_sha,
+              manifest_sha256:$manifest_sha,provenance_sha256:$provenance_sha},
+             evidence:{clean_build_sha256:$clean_sha,package_audit_sha256:$audit_sha,
+              lifecycle_sha256:$lifecycle_sha,
+              installed:{x11:{receipt_sha256:$x11_sha,display_session_id:$x11_session},
+                wayland:{receipt_sha256:$wayland_sha,display_session_id:$wayland_session}}},
+             claims:{clean_build:true,reproducible:true,payload_audited:true,
+              install_reinstall:true,upgrade_and_failure_boundary:true,
+              uninstall_purge_residue:true,installed_x11:true,installed_wayland:true,
+              staged_bundle_distinct:true,release_qualification_passed:false,
+              full_linux_qualification_passed:false}}
+        ' >"${output_directory}/package-qualification-summary.json"
+        "${repo_root}/linux/tests/package-qualification-receipt" \
+            "${output_directory}/package-qualification-summary.json" \
+            "${clean_receipt}" "${audit_receipt}" "${lifecycle_summary}" \
+            "${installed_directory}/x11.json" "${installed_directory}/wayland.json" \
+            "${ZENTTY_PACKAGE_ARTIFACT}" "${ZENTTY_PACKAGE_MANIFEST}" \
+            "${ZENTTY_PACKAGE_PROVENANCE}" >/dev/null
+        ;;
+esac
+
+echo "package-qualification-evidence: PASS scenario=${scenario} revision=${ZENTTY_PACKAGE_REVISION}"
