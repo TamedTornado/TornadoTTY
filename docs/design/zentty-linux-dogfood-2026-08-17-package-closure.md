@@ -145,3 +145,9 @@ It now validates the closed file set separately, then compares package,
 manifest, provenance, and finally checksum file in causal order, printing only
 the two mismatched SHA-256 values. Reproducibility remains failed until the
 underlying first differing artifact is identified and repaired.
+
+The causal rerun confirmed the Debian archives themselves differ, not merely
+the checksum file. A failed comparison now preserves compact payload-manifest
+and provenance diffs below the ignored qualification output rather than
+retaining two large package trees. The archive is still rejected immediately;
+the diagnostics exist only to locate the first differing packaged path.

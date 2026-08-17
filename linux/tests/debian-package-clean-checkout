@@ -114,13 +114,28 @@ primary_files=(
 for file in "${primary_files[@]}"; do
     cmp --silent "${primary_output}/${file}" \
         "${isolated}/build/isolated-package/${file}" || {
+        diagnostic_directory="${output_directory}/reproducibility-failure"
+        mkdir -p -- "${diagnostic_directory}"
         printf 'primary sha256:  %s\nisolated sha256: %s\n' \
             "$(sha256sum "${primary_output}/${file}" | awk '{print $1}')" \
             "$(sha256sum "${isolated}/build/isolated-package/${file}" | awk '{print $1}')" >&2
+        if [[ "${file}" == *.deb ]]; then
+            jq -r '.files[] | [.path,.type,(.mode // ""),(.sha256 // .target)] | @tsv' \
+                "${ZENTTY_PACKAGE_MANIFEST}" >"${diagnostic_directory}/primary-payload.tsv"
+            jq -r '.files[] | [.path,.type,(.mode // ""),(.sha256 // .target)] | @tsv' \
+                "${manifest}" >"${diagnostic_directory}/isolated-payload.tsv"
+            diff -u "${diagnostic_directory}/primary-payload.tsv" \
+                "${diagnostic_directory}/isolated-payload.tsv" \
+                >"${diagnostic_directory}/payload.diff" || true
+            diff -u "${ZENTTY_PACKAGE_PROVENANCE}" "${provenance}" \
+                >"${diagnostic_directory}/provenance.diff" || true
+            echo "diagnostics: ${diagnostic_directory}" >&2
+        fi
         echo "debian-package-clean-checkout: reproducibility mismatch: ${file}" >&2
         exit 1
     }
 done
+rm -rf -- "${output_directory}/reproducibility-failure"
 
 mkdir -p -- "${output_directory}"
 jq -n \
