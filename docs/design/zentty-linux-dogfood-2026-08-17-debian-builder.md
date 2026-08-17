@@ -105,3 +105,15 @@ second package layout.
   root as well. Both stripped shared objects were inspected directly and now
   contain no developer checkout or build path; this remains a build repair,
   not a package-audit exclusion.
+- The next clean build completed end to end: the audit accepted exactly 530
+  manifest-declared payload files, and the real `.deb` passed extraction,
+  control/archive inspection, strict `DEBIAN/md5sums` verification, and the
+  undeclared-file, missing-license, wrong-mode, source-path, and bad-RUNPATH
+  negative mutations. This is the first structurally valid artifact, not yet
+  a reproducibility or isolated-checkout qualification claim.
+- Review of the first artifact's legal payload showed that the Debian
+  `copyright` file covers Zentty, Ghostty, and gtk4-layer-shell, while the
+  binaries also statically incorporate Cargo and Ghostty/Zig dependencies.
+  That is not an adequate completed license audit. The release builder must
+  add deterministic dependency notices rather than treating the top-level
+  project licenses as transitive coverage.
