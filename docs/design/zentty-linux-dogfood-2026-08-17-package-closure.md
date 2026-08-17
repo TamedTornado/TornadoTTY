@@ -130,3 +130,10 @@ source, detached Ghostty source, and fresh Zig cache below `/work`. The masked
 developer checkout remains at its original absolute path, so any accidental
 source-tree fallback still fails. This permits tool-owned temporary files
 without granting writes to host `/tmp` or the host root.
+
+The first private-workspace attempt used `--dir /work` after mounting the host
+root read-only; Bubblewrap correctly refused to create that mountpoint. The
+controlled machine already provides an empty `/mnt` directory, so the journey
+now binds its single temporary root there and uses `/mnt/source`, `/mnt/ghostty`,
+and `/mnt/zig-global-cache`. This is a namespace-path correction only; the host
+root remains read-only and the checkout mask remains in force.

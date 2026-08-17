@@ -51,22 +51,19 @@ bwrap \
     --unshare-net \
     --dev-bind /dev /dev \
     --tmpfs /tmp \
-    --dir /work \
-    --bind "${isolated}" /work/source \
-    --bind "${isolated_ghostty}" /work/ghostty \
-    --bind "${isolated_zig_cache}" /work/zig-global-cache \
-    --ro-bind "${prepared_zig_packages}" /work/zig-global-cache/p \
+    --bind "${temporary}" /mnt \
+    --ro-bind "${prepared_zig_packages}" /mnt/zig-global-cache/p \
     --ro-bind "${masked_checkout}" "${repo_root}" \
-    --chdir /work/source \
+    --chdir /mnt/source \
     -- \
     env \
         ZIG="${zig}" \
         BLUEPRINT_COMPILER_DIR="${blueprint}" \
-        GHOSTTY_SOURCE_DIR=/work/ghostty \
-        ZENTTY_ZIG_GLOBAL_CACHE_DIR=/work/zig-global-cache \
+        GHOSTTY_SOURCE_DIR=/mnt/ghostty \
+        ZENTTY_ZIG_GLOBAL_CACHE_DIR=/mnt/zig-global-cache \
         ZENTTY_GHOSTTY_PREPARED=true \
-        ZENTTY_PACKAGE_OUTPUT_DIR=/work/source/build/isolated-package \
-        ZENTTY_PACKAGE_WORK_DIR=/work/source/build/isolated-package-work \
+        ZENTTY_PACKAGE_OUTPUT_DIR=/mnt/source/build/isolated-package \
+        ZENTTY_PACKAGE_WORK_DIR=/mnt/source/build/isolated-package-work \
         bash -c \
         "[[ ! -e \"\$1/Cargo.toml\" ]] && linux/scripts/build-deb" \
         bash "${repo_root}" >"${temporary}/build.log" 2>&1 || {
