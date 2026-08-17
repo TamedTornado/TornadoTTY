@@ -167,6 +167,24 @@ settings_type() {
     fi
 }
 
+settings_tab_until_focus_marker() {
+    local marker="$1"
+    local attempts="$2"
+    local attempt marker_before focus_before
+    for ((attempt = 0; attempt < attempts; attempt++)); do
+        marker_before="$(grep -Fc "${marker}" "${log}" 2>/dev/null || true)"
+        focus_before="$(grep -Fc 'zentty-linux: settings-focus widget=' "${log}" 2>/dev/null || true)"
+        settings_key Tab
+        zentty_product_wait_for_log_count "${log}" \
+            'zentty-linux: settings-focus widget=' "$((focus_before + 1))" \
+            "settings focus did not acknowledge one physical Tab" || return 1
+        if (( $(grep -Fc "${marker}" "${log}" 2>/dev/null || true) > marker_before )); then
+            return 0
+        fi
+    done
+    return 1
+}
+
 # The real child PTY enters raw mode so delivery of the old Ctrl+S binding is
 # observable as byte 0x13. A bound app shortcut must not satisfy this read.
 start_product "printf ready >'${ready}'; stty raw -echo -ixon; dd bs=1 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n' >'${bytes}'; sleep 30"
@@ -195,12 +213,8 @@ zentty_product_wait_for_log "${log}" 'zentty-linux: shortcut-settings active' \
 zentty_product_wait_for_log "${log}" 'zentty-linux: settings-section selected=general' \
     "Settings did not open the source default General section" || fail "settings default section failed"
 settings_key ctrl+f
-for _ in {1..30}; do
-    settings_key Tab
-    sleep 0.15
-    grep -Fq 'zentty-linux: general-settings focus=always-clean-copies' "${log}" && break
-done
-grep -Fq 'zentty-linux: general-settings focus=always-clean-copies' "${log}" ||
+settings_tab_until_focus_marker \
+    'zentty-linux: general-settings focus=always-clean-copies' 30 ||
     fail "physical keyboard traversal did not reach the General clipboard controls"
 settings_key space
 zentty_product_wait_for_log "${log}" 'zentty-linux: general-settings action=always-clean-copies value=true' \
@@ -404,12 +418,8 @@ settings_key ctrl+f
 settings_type 'TokyoNight Moon'
 zentty_product_wait_for_log "${log}" 'zentty-linux: appearance-catalog query="TokyoNight Moon" results=1' \
     "source theme was not searchable in the staged catalog" || fail "theme catalog search failed"
-for _ in {1..12}; do
-    settings_key Tab
-    sleep 0.05
-    grep -Fq 'zentty-linux: appearance-settings focus=background-opacity' "${log}" && break
-done
-grep -Fq 'zentty-linux: appearance-settings focus=background-opacity' "${log}" ||
+settings_tab_until_focus_marker \
+    'zentty-linux: appearance-settings focus=background-opacity' 12 ||
     fail "keyboard traversal did not reach the opacity control"
 opacity_apply_before="$(grep -Fc 'zentty-linux: appearance-settings action=background-opacity result=applied' "${log}" 2>/dev/null || true)"
 opacity_acknowledged=false
@@ -475,12 +485,8 @@ zentty_product_wait_for_log "${log}" \
 # the live Always Dark terminal. Forward traversal is used because GTK's nested
 # Wayland reverse traversal skips grouped check buttons in this hierarchy.
 settings_key ctrl+f
-for _ in {1..30}; do
-    settings_key Tab
-    sleep 0.05
-    grep -Fq 'zentty-linux: appearance-settings focus=theme-slot-light' "${log}" && break
-done
-grep -Fq 'zentty-linux: appearance-settings focus=theme-slot-light' "${log}" ||
+settings_tab_until_focus_marker \
+    'zentty-linux: appearance-settings focus=theme-slot-light' 30 ||
     fail "keyboard traversal did not reach the Light Theme slot card"
 settings_key space
 zentty_product_wait_for_log "${log}" \

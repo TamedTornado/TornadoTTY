@@ -152,3 +152,20 @@ lifecycle journey.
   settings X11, agent settings X11, CLI X11, and CLI Wayland—with real staged
   ReleaseSafe Zentty, Ghostty PTYs, and controlled compositors. All four passed
   concurrently after the bounded application-response repair.
+- The following full run passed both repaired CLI cells and the package cell,
+  then exposed an older shortcut/settings X11 focus race while its Wayland twin
+  and three other real GUI journeys ran concurrently. The log proved the
+  opacity control received focus, but the harness's 50 ms polling loop could
+  observe that historical marker only after it had already queued another Tab;
+  its subsequent Home events therefore targeted the wrong widget. The exact
+  failed X11 cell passed unchanged when rerun alone, confirming a stimulus/
+  acknowledgement race rather than an opacity assertion mismatch.
+- Shortcut/settings traversal now sends one physical Tab, waits for the
+  product's next completed GTK focus-change receipt, and only then decides
+  whether to advance. The same helper governs General, opacity, and Light Theme
+  traversal so the stale-marker pattern cannot silently survive elsewhere in
+  that journey. A missing compositor delivery remains a hard failure; the
+  feature action itself is neither retried nor mocked.
+- The repaired X11 and Wayland shortcut/settings journeys then passed
+  concurrently with a second real Wayland Task Manager journey and the real
+  custom-sound Cargo integration suite, matching the matrix's four-worker load.
