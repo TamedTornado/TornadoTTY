@@ -58,3 +58,9 @@ second package layout.
   wrote a nonexistent 40-character object. Immediate `rev-parse` comparison
   caught it before any build; the lock now contains the exact Git-produced
   revision `7f0b21e3f594a6821512e4532a7eda76828400c0`.
+- The first build with the corrected pin stopped before compilation because
+  `build-deb` always exported its computed default as `GHOSTTY_SOURCE_DIR`.
+  That accidentally selected the caller-owned-checkout contract, under which
+  `prepare-ghostty-source` correctly refuses to change revisions. The builder
+  now leaves the variable unset for its managed default and exports it only
+  when the caller explicitly supplied an external checkout.

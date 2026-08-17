@@ -48,11 +48,15 @@ appstreamcli validate --no-net --pedantic \
 
 rm -rf -- "${work_root}"
 mkdir -p -- "${output_root}" "${stage}" "${ghostty_install}" "${package_root}"
-GHOSTTY_SOURCE_DIR="${ghostty_source}" \
-ZENTTY_GHOSTTY_INSTALL_DIR="${ghostty_install}" \
-ZENTTY_BUILD_OUTPUT_DIR="${stage}" \
-GHOSTTY_OPTIMIZE=ReleaseSafe \
-    "${repo_root}/linux/scripts/build-local"
+build_environment=(
+    "ZENTTY_GHOSTTY_INSTALL_DIR=${ghostty_install}"
+    "ZENTTY_BUILD_OUTPUT_DIR=${stage}"
+    "GHOSTTY_OPTIMIZE=ReleaseSafe"
+)
+if [[ -n "${GHOSTTY_SOURCE_DIR:-}" ]]; then
+    build_environment+=("GHOSTTY_SOURCE_DIR=${ghostty_source}")
+fi
+env "${build_environment[@]}" "${repo_root}/linux/scripts/build-local"
 
 [[ "$(git -C "${ghostty_source}" rev-parse HEAD)" == "${ghostty_revision}" ]] ||
     fail "prepared Ghostty revision changed during build"
