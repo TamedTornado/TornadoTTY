@@ -126,10 +126,10 @@ That repair reached the real Ghostty compile and exposed a second sandbox
 mistake: the read-only host root also made `/tmp` read-only, while
 `glib-compile-resources` legitimately creates private temporary files there.
 The journey now supplies a private tmpfs at `/tmp` and mounts only the detached
-source, detached Ghostty source, and fresh Zig cache below `/work`. The masked
-developer checkout remains at its original absolute path, so any accidental
-source-tree fallback still fails. This permits tool-owned temporary files
-without granting writes to host `/tmp` or the host root.
+source, detached Ghostty source, and fresh Zig cache below a private workspace.
+The masked developer checkout remains at its original absolute path, so any
+accidental source-tree fallback still fails. This permits tool-owned temporary
+files without granting writes to host `/tmp` or the host root.
 
 The first private-workspace attempt used `--dir /work` after mounting the host
 root read-only; Bubblewrap correctly refused to create that mountpoint. The
@@ -160,3 +160,11 @@ different absolute checkout roots. The Debian build now passes rustc an exact
 builds one canonical source identity before debug sections are stripped. This
 is build policy, not a post-build binary rewrite; the payload audit continues
 to reject leaked host paths.
+
+The next independent build passed: all four release outputs were byte-identical
+between the primary checkout and the network-disabled detached clone at a
+different canonical mount path. The diagnostic implementation commit was
+`efcf02eeba3b41c3ddd5bc1209d42a56df330d00`; its package SHA-256 was
+`baedc7242340a112302467ea9797ddc23be56b38ed01b9ab1b4df2479f41105b`.
+This focused receipt proves the repair. Final GH-55 evidence must still come
+from the subsequent all-cell qualification of the final implementation commit.
