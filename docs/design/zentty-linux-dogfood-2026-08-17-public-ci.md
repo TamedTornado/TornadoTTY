@@ -243,3 +243,18 @@ package reconstruction 315.460 seconds, and install/upgrade/uninstall lifecycle
 227.770 seconds. This is appropriate for complete/release qualification, not a
 pull-request subset; GH-57 must select a real representative gate without
 mislabeling it as full qualification.
+
+Final public run [32077398464](https://github.com/TamedTornado/zentty/actions/runs/32077398464)
+passed from exact evidence revision
+`695b4c8342ab2f6c60da8f4f75cc5d1e392457db` in 11 minutes 53 seconds.
+The downloaded artifact revalidated against the current manifest and exact
+source identities, and a credential-pattern scan passed. Receipt SHA-256
+identities are preflight
+`1a114e5c29361de756a13f57b762ff2af9df5f4b0eb717f1096accefb5027323`,
+Wayland
+`2e4a69f4479d831df46ebf19170bae3170a7ecd88025eaa7ac10044f35785470`,
+and X11
+`e8fe6227345c0c6ba6989de9c364b21d769b3cf158b77030383ba2c02f6dd0be`.
+Both real product journeys passed after a clean output reset and uncached
+ReleaseSafe reconstruction. GH-56's public foundation prerequisite is closed;
+this is not a claim of release or full-Linux qualification.
