@@ -1,0 +1,167 @@
+name: Linux full qualification
+
+on:
+  schedule:
+    - cron: '17 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-ci-full-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  full-qualification:
+    name: Complete presently executable Linux qualification
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    env:
+      LANG: C.UTF-8
+      LC_ALL: C.UTF-8
+      TZ: UTC
+      XKB_DEFAULT_LAYOUT: us
+      LIBGL_ALWAYS_SOFTWARE: "1"
+      GALLIUM_DRIVER: llvmpipe
+      GSETTINGS_BACKEND: memory
+      GIO_USE_VFS: local
+      ZENTTY_BUILD_JOBS: "2"
+      ZENTTY_QUALIFICATION_SUPPORT_JOBS: "2"
+      ZENTTY_CI_QUALIFICATION_PROFILE: full
+      ZENTTY_EXPECTED_COMMIT: ${{ github.sha }}
+
+    steps:
+      - name: Check out exact event commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install reviewed Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.14.0
+          check-latest: false
+
+      # Literal list is contract-checked against environment-v1.json.
+      - name: Install complete reviewed qualification environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/linux
+          packages=(
+            alsa-utils appstream bubblewrap build-essential cage curl dbus-x11
+            desktop-file-utils dpkg-dev ffmpeg fish fontconfig fuse3
+            gir1.2-gtk-4.0 git ibus ibus-gtk4 imagemagick jq labwc
+            libadwaita-1-dev libcairo2-dev libfontconfig-dev libglib2.0-dev
+            libgtk-4-dev libnotify-bin libwayland-dev libx11-dev
+            libxkbcommon-dev mesa-utils meson ninja-build openbox
+            openssh-client openssh-server patchelf pkg-config procps python3
+            python3-gi python3-jsonschema shellcheck tmux util-linux valgrind
+            wayland-utils weston wl-clipboard wtype x11-utils xauth xclip
+            xdg-utils xdotool xserver-xephyr xvfb ydotool zsh
+          )
+          sudo timeout --signal=TERM --kill-after=30s 1800s \
+            apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update \
+            2>&1 | tee build/linux/ci-full-apt-update.log
+          sudo env DEBIAN_FRONTEND=noninteractive \
+            timeout --signal=TERM --kill-after=30s 1800s \
+            apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 \
+            install -y --no-install-recommends "${packages[@]}" \
+            2>&1 | tee build/linux/ci-full-apt-install.log
+          if [[ -r /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]] &&
+            [[ "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns)" == 1 ]]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 \
+              2>&1 | tee build/linux/ci-full-userns-policy.log
+          fi
+
+      - name: Bootstrap content-pinned tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          linux/ci/bootstrap-ubuntu-24.04 --no-system-install \
+            2>&1 | tee build/linux/ci-full-bootstrap.log
+
+      - name: Prepare exact sources and preflight environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          source build/linux-ci-tools/environment.sh
+          linux/scripts/prepare-ghostty-source \
+            2>&1 | tee build/linux/ci-full-prepare-ghostty.log
+          linux/ci/preflight 2>&1 | tee build/linux/ci-full-preflight.log
+          linux/ci/validate-preflight-receipt
+
+      - name: Remove stale product and qualification outputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          linux/ci/reset-product-outputs \
+            2>&1 | tee build/linux/ci-full-reset.log
+          rm -rf -- build/linux/matrix-logs build/linux/package-qualification \
+            build/linux/package-lifecycle build/linux-package
+          rm -f -- build/linux/qualification-summary.json \
+            build/linux/qualification-mutations.json \
+            build/linux/memory-safety-*.json \
+            build/linux/memory-safety-*.raw.log \
+            build/linux/memory-safety-*.suppressed.log
+
+      - name: Run authoritative complete local qualification
+        shell: bash
+        run: |
+          set -euo pipefail
+          source build/linux-ci-tools/environment.sh
+          linux/tests/qualify-local 2>&1 | tee build/linux/ci-full-qualification.log
+
+      - name: Revalidate full-profile preflight receipt
+        if: always()
+        shell: bash
+        run: linux/ci/validate-preflight-receipt
+
+      - name: Publish bounded full-suite claim
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '### Linux full qualification'
+            if [[ -f build/linux/qualification-summary.json ]] &&
+              jq -e '.claims.implemented_local_suite_passed == true' \
+                build/linux/qualification-summary.json >/dev/null; then
+              echo 'Presently executable public suite: PASSED'
+            else
+              echo 'Presently executable public suite: NOT_ESTABLISHED'
+            fi
+            echo 'Release qualification: NOT_CLAIMED'
+            echo 'Full Linux qualification: NOT_CLAIMED'
+            echo 'Debug Valgrind: PASS only when reported with reviewed suppressions'
+            echo 'ReleaseSafe Valgrind: expected XFAIL; never an unsuppressed-clean claim'
+          } >>"${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload complete qualification evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: linux-ci-full-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            linux/qualification-matrix.json
+            linux/tests/valgrind-suppressions.json
+            linux/tests/valgrind-suppressions.schema.json
+            linux/tests/valgrind.supp
+            build/linux/ci-full-*.log
+            build/linux/ci-preflight.json
+            build/linux/qualification-summary.json
+            build/linux/qualification-mutations.json
+            build/linux/matrix-logs
+            build/linux/memory-safety-*.json
+            build/linux/memory-safety-*.raw.log
+            build/linux/memory-safety-*.suppressed.log
+            build/linux/package-qualification
+            build/linux/package-lifecycle
+            build/linux-package/*.deb
+            build/linux-package/SHA256SUMS
+            build/linux-package/*.manifest.json
+            build/linux-package/*.provenance.json
+          if-no-files-found: warn
+          retention-days: 14
+          compression-level: 6

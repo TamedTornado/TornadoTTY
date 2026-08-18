@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+set -euo pipefail
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+workflow="${repo_root}/.github/workflows/linux-ci-full.yml"
+validator="${repo_root}/linux/ci/full-workflow-contract"
+fixture="$(mktemp -d)"; trap 'rm -rf -- "${fixture}"' EXIT
+fail() { echo "ci-full-workflow-contract-test: error: $*" >&2; exit 1; }
+expect_rejected() {
+    local name="$1" old="$2" new="$3"
+    sed "s|${old}|${new}|" "${workflow}" >"${fixture}/${name}.yml"
+    ! ZENTTY_CI_FULL_WORKFLOW="${fixture}/${name}.yml" "${validator}" >"${fixture}/${name}.out" 2>&1 || fail "${name} mutation was accepted"
+}
+"${validator}" >/dev/null
+expect_rejected schedule 'schedule:' 'schedule_REMOVED:'
+expect_rejected manual 'workflow_dispatch:' 'workflow_dispatch_REMOVED:'
+expect_rejected action 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1' 'actions/checkout@v7'
+expect_rejected permission 'contents: read' 'contents: write'
+expect_rejected runner 'runs-on: ubuntu-24.04' 'runs-on: ubuntu-latest'
+expect_rejected credentials 'persist-credentials: false' 'persist-credentials: true'
+expect_rejected profile 'ZENTTY_CI_QUALIFICATION_PROFILE: full' 'ZENTTY_CI_QUALIFICATION_PROFILE: public-pr'
+# shellcheck disable=SC2016
+expect_rejected package 'alsa-utils appstream' '$(linux/ci/bootstrap-ubuntu-24.04 --print-apt)'
+expect_rejected sudo 'sudo timeout --signal=TERM --kill-after=30s 1800s' 'sudo linux/ci/bootstrap-ubuntu-24.04'
+expect_rejected timeout 'timeout --signal=TERM --kill-after=30s 1800s' 'timeout --signal=TERM --kill-after=30s 0s'
+expect_rejected qualify 'linux/tests/qualify-local' 'true # removed'
+expect_rejected cleanup 'linux/ci/reset-product-outputs' 'true # removed'
+expect_rejected always 'if: always()' 'if: success()'
+expect_rejected release-claim 'Release qualification: NOT_CLAIMED' 'Release qualification: PASSED'
+expect_rejected full-claim 'Full Linux qualification: NOT_CLAIMED' 'Full Linux qualification: PASSED'
+expect_rejected raw 'memory-safety-' 'REMOVED-memory-safety-'
+expect_rejected suppression-manifest 'linux/tests/valgrind-suppressions.json' 'linux/tests/REMOVED-suppressions.json'
+expect_rejected package-artifact 'build/linux-package/' 'build/REMOVED-linux-package/'
+# shellcheck disable=SC2016
+expect_rejected artifact-id 'name: linux-ci-full-${{ github.sha }}-${{ github.run_attempt }}' 'name: linux-ci-full-current'
+# shellcheck disable=SC2016
+expect_rejected commit 'ZENTTY_EXPECTED_COMMIT: ${{ github.sha }}' 'ZENTTY_EXPECTED_COMMIT: refs/heads/linux/port'
+echo "ci-full-workflow-contract-test: PASS negatives=triggers+action+permission+runner+credentials+profile+packages+sudo+timeout+runner+cleanup+evidence+claims+valgrind+package+artifact+commit"
