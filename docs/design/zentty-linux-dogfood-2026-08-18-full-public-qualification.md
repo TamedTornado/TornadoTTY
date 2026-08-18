@@ -406,3 +406,21 @@ focus transition. This is bounded input recovery, not a sleep or a fabricated
 application receipt. The orchestration contract rejects removing the bounded
 Escape retry. Three further real nested-Cage journeys passed locally; run
 32138712649 remains failed and the next public run remains authoritative.
+
+Public gate 32140781822 invalidated that diagnosis. It delivered all three
+Escape events, but none reached the palette: after the first `z`, a deferred
+Ghostty surface-focus callback had selected the pane and refreshed its
+presentation while the palette overlay remained visible. This was a product
+focus-ownership bug, not unreliable physical input. The preceding harness
+retries were therefore removed rather than allowed to accrete.
+
+Deferred surface-focus callbacks now refuse to apply while either global search
+or the command palette owns focus. Command-palette presentation also confirms
+entry focus from the GTK idle queue, after already queued surface callbacks,
+and the journey waits for that product-owned receipt before typing the actual
+command. A unit contract covers shutdown, both overlay owners, absent surface
+focus, and the valid terminal case. The orchestration contract rejects
+reintroducing the sacrificial `zz` query. After rebuilding the real ReleaseSafe
+bundle, three consecutive nested-Cage Wayland journeys and one nested-X11
+journey passed. Run 32140781822 remains failed; only its replacement can prove
+the hosted behavior.

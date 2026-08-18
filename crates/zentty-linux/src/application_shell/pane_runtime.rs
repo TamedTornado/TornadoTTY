@@ -651,15 +651,26 @@ impl PaneRuntimeCoordinator {
                 let Some(shell) = weak.upgrade() else {
                     return;
                 };
-                if shell.borrow().shutting_down || shell.borrow().global_search.state().visible {
+                let apply = {
+                    let shell = shell.borrow();
+                    let blocker = if shell.shutting_down {
+                        SurfaceFocusBlocker::Shutdown
+                    } else if shell.global_search.state().visible {
+                        SurfaceFocusBlocker::GlobalSearch
+                    } else if shell.command_palette.is_visible() {
+                        SurfaceFocusBlocker::CommandPalette
+                    } else {
+                        SurfaceFocusBlocker::None
+                    };
+                    surface_focus_event_should_apply(blocker, controller.contains_focus())
+                };
+                if !apply {
                     return;
                 }
-                if controller.contains_focus() {
-                    let changed = shell.borrow_mut().state.select_pane(&focus_id);
-                    if changed {
-                        eprintln!("zentty-linux: focus-pane pane={focus_id}");
-                        shell.borrow().refresh_sidebar_metadata();
-                    }
+                let changed = shell.borrow_mut().state.select_pane(&focus_id);
+                if changed {
+                    eprintln!("zentty-linux: focus-pane pane={focus_id}");
+                    shell.borrow().refresh_sidebar_metadata();
                 }
             });
         });
@@ -813,11 +824,27 @@ fn write_prefill_receipt(receipt: &str) {
     let _ = std::io::stderr().lock().write_all(receipt.as_bytes());
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SurfaceFocusBlocker {
+    None,
+    Shutdown,
+    GlobalSearch,
+    CommandPalette,
+}
+
+fn surface_focus_event_should_apply(
+    blocker: SurfaceFocusBlocker,
+    surface_contains_focus: bool,
+) -> bool {
+    blocker == SurfaceFocusBlocker::None && surface_contains_focus
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        ChildExitDisposition, RegistrationDecision, RemovalDecision, child_exit_disposition,
-        registration_decision, removal_decision,
+        ChildExitDisposition, RegistrationDecision, RemovalDecision, SurfaceFocusBlocker,
+        child_exit_disposition, registration_decision, removal_decision,
+        surface_focus_event_should_apply,
     };
 
     #[test]
@@ -877,5 +904,24 @@ mod tests {
             child_exit_disposition(true, false, true),
             ChildExitDisposition::PreserveTmuxTeammate
         );
+    }
+
+    #[test]
+    fn deferred_surface_focus_cannot_steal_focus_from_overlays() {
+        assert!(surface_focus_event_should_apply(
+            SurfaceFocusBlocker::None,
+            true
+        ));
+        for blocker in [
+            SurfaceFocusBlocker::Shutdown,
+            SurfaceFocusBlocker::GlobalSearch,
+            SurfaceFocusBlocker::CommandPalette,
+        ] {
+            assert!(!surface_focus_event_should_apply(blocker, true));
+        }
+        assert!(!surface_focus_event_should_apply(
+            SurfaceFocusBlocker::None,
+            false
+        ));
     }
 }

@@ -82,6 +82,14 @@ impl CommandPaletteView {
         self.root.set_visible(true);
         self.entry.grab_focus();
         eprintln!("zentty-linux: command-palette=shown");
+        let entry = self.entry.clone();
+        let visible = Rc::clone(&self.visible);
+        glib::idle_add_local_once(move || {
+            if visible.get() {
+                let focused = entry.grab_focus();
+                eprintln!("zentty-linux: command-palette-focus=confirmed result={focused}");
+            }
+        });
     }
 
     pub(crate) fn hide(&self) {

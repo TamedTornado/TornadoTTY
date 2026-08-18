@@ -119,80 +119,19 @@ main_type() {
     fi
 }
 
-close_command_palette_and_wait_for_focus() {
-    local context="$1" attempt hidden_count focus_count hidden_ready
-    hidden_count="$(grep -Fc 'zentty-linux: command-palette=hidden' "${log}" 2>/dev/null || true)"
-    focus_count="$(grep -Fc 'zentty-linux: focus-pane pane=' "${log}" 2>/dev/null || true)"
-    hidden_ready=false
-    for attempt in {1..3}; do
-        main_key Escape
-        for _ in {1..40}; do
-            if (( $(grep -Fc 'zentty-linux: command-palette=hidden' "${log}" 2>/dev/null || true) > hidden_count )); then
-                hidden_ready=true
-                break 2
-            fi
-            sleep 0.05
-        done
-    done
-    "${hidden_ready}" || fail "${context} did not close after three physical Escape events"
-    zentty_product_wait_for_log_count "${log}" \
-        'zentty-linux: focus-pane pane=' "$((focus_count + 1))" \
-        "terminal focus did not return after ${context}" ||
-        fail "command palette focus reset failed"
-}
-
 open_command_palette() {
-    local attempt shown_count empty_count query_count query_ready
-    for attempt in {1..3}; do
-        shown_count="$(grep -Fc 'zentty-linux: command-palette=shown' "${log}" 2>/dev/null || true)"
-        main_key ctrl+shift+p
-        if ! zentty_product_wait_for_log_count "${log}" \
-            'zentty-linux: command-palette=shown' "$((shown_count + 1))" \
-            "command palette did not become ready for physical input"; then
-            # A chord can arrive while focus is still returning from the
-            # preceding overlay. The bounded outer attempt is the recovery;
-            # one lost opening chord must not abort before it can run.
-            continue
-        fi
-
-        # A completed two-key query is an observable focus/readiness barrier.
-        # A compositor may deliver the first event while an immediately prior
-        # sidebar or config projection is still reallocating the window, then
-        # move focus before the second event. Close and reopen in that case;
-        # never treat a partial synthetic input sequence as readiness.
-        query_count="$(grep -Fc 'zentty-linux: command-palette=query value="zz"' "${log}" 2>/dev/null || true)"
-        main_type zz
-        query_ready=false
-        for _ in {1..40}; do
-            if (( $(grep -Fc 'zentty-linux: command-palette=query value="zz"' "${log}" 2>/dev/null || true) > query_count )); then
-                query_ready=true
-                break
-            fi
-            sleep 0.05
-        done
-        if "${query_ready}"; then
-            # Close and reopen after the readiness probe rather than racing a
-            # Ctrl+A/Backspace pair through the compositor. The public gate
-            # proved a stale earlier `zz` receipt could make a later partial
-            # `z` query look ready; count every transition from this attempt.
-            close_command_palette_and_wait_for_focus "command palette readiness probe"
-
-            shown_count="$(grep -Fc 'zentty-linux: command-palette=shown' "${log}" 2>/dev/null || true)"
-            empty_count="$(grep -Fc 'zentty-linux: command-palette=query value=""' "${log}" 2>/dev/null || true)"
-            main_key ctrl+shift+p
-            zentty_product_wait_for_log_count "${log}" \
-                'zentty-linux: command-palette=shown' "$((shown_count + 1))" \
-                "command palette did not reopen after its readiness probe" ||
-                fail "command palette readiness reset failed"
-            zentty_product_wait_for_log_count "${log}" \
-                'zentty-linux: command-palette=query value=""' "$((empty_count + 1))" \
-                "command palette did not reopen with an empty query" ||
-                fail "command palette readiness reset failed"
-            return 0
-        fi
-        close_command_palette_and_wait_for_focus "partial command palette probe"
-    done
-    fail "command palette never retained two consecutive physical key events"
+    local shown_count focus_count
+    shown_count="$(grep -Fc 'zentty-linux: command-palette=shown' "${log}" 2>/dev/null || true)"
+    focus_count="$(grep -Fc 'zentty-linux: command-palette-focus=confirmed result=true' "${log}" 2>/dev/null || true)"
+    main_key ctrl+shift+p
+    zentty_product_wait_for_log_count "${log}" \
+        'zentty-linux: command-palette=shown' "$((shown_count + 1))" \
+        "command palette did not open from physical input" ||
+        fail "command palette opening failed"
+    zentty_product_wait_for_log_count "${log}" \
+        'zentty-linux: command-palette-focus=confirmed result=true' "$((focus_count + 1))" \
+        "command palette entry did not retain focus after deferred surface callbacks" ||
+        fail "command palette focus confirmation failed"
 }
 
 settings_window=""
