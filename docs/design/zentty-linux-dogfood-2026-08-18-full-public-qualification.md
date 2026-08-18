@@ -394,3 +394,15 @@ opening chord proceeds to the next bounded attempt rather than aborting the
 loop. The orchestration contract preserves both requirements. Three consecutive
 real nested-Cage Wayland journeys and one nested-X11 journey passed after the
 repair. This focused local evidence does not replace the next public receipt.
+
+Public replacement gate 32138712649 showed that the focus wait was necessary
+but not sufficient: its physical `zz` probe again arrived as one `z`, and the
+first physical Escape event was itself lost before any `command-palette=hidden`
+transition. The new wait correctly refused to accept that absence as a close,
+but treated it as fatal instead of retryable. The close boundary now sends at
+most three compositor-visible Escape events, stopping only after a newly
+counted hidden transition, and then still requires the subsequent terminal
+focus transition. This is bounded input recovery, not a sleep or a fabricated
+application receipt. The orchestration contract rejects removing the bounded
+Escape retry. Three further real nested-Cage journeys passed locally; run
+32138712649 remains failed and the next public run remains authoritative.

@@ -358,9 +358,11 @@ require "settings journey does not count a new opacity application after physica
 require "settings palette readiness is scoped to the current physical query" \
     grep -Fq 'query_count="$(grep -Fc' "${shortcut_settings_harness}"
 require "settings palette readiness resets through a compositor-visible close and reopen" \
-    grep -Fq 'command palette readiness probe did not close' "${shortcut_settings_harness}"
+    grep -Fq 'close_command_palette_and_wait_for_focus "command palette readiness probe"' "${shortcut_settings_harness}"
 require "settings palette retry waits for terminal focus after closing its probe" \
-    grep -Fq 'terminal focus did not return after a partial readiness probe' "${shortcut_settings_harness}"
+    grep -Fq 'terminal focus did not return after ${context}' "${shortcut_settings_harness}"
+require "settings palette close retries bounded physical Escape events" \
+    grep -Fq 'did not close after three physical Escape events' "${shortcut_settings_harness}"
 require "settings palette lost-opening chord reaches the bounded retry" \
     grep -Fq 'one lost opening chord must not abort before it can run' "${shortcut_settings_harness}"
 require "source UX journey does not count a new Worklane Peek preview after repeated Tab" \
