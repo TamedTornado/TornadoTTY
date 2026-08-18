@@ -424,3 +424,94 @@ reintroducing the sacrificial `zz` query. After rebuilding the real ReleaseSafe
 bundle, three consecutive nested-Cage Wayland journeys and one nested-X11
 journey passed. Run 32140781822 remains failed; only its replacement can prove
 the hosted behavior.
+
+## Fifth public run: focus repair passed; full-suite defects remain explicit
+
+The replacement public gate for exact commit `03e50a2e`
+<https://github.com/TamedTornado/zentty/actions/runs/32143657847> passed in
+19 minutes 18 seconds. This is the first hosted receipt proving the product
+focus-ownership repair; it does not establish full qualification.
+
+The corresponding serial full run
+<https://github.com/TamedTornado/zentty/actions/runs/32143658025> failed after
+4,466,510 ms. It retained 161 declared PASS cells, 0 declared FAIL, 5 BLOCKED,
+1 XFAIL, and 14 NOT_IMPLEMENTED, while actual execution failed 14 cells and
+dependency-blocked two more. The failures were installed-product on both
+backends, clean package reproducibility, agent integration on both backends,
+the architecture contract, both X11 development-server cells, X11 Open With,
+X11 workspace/pane settings, X11 agent settings, Zsh integration on both
+backends, and suppression governance. The run therefore establishes neither
+the implemented-local, release, nor full-Linux claim.
+
+The architecture failure was deterministic: the focus repair added
+`surface_focus_event_should_apply` but omitted it from the authoritative pane
+runtime ownership inventory. The ownership mirror now names that function and
+both the positive validator and its mutation/negative suite pass.
+
+The retained Debug IBus report preserves an unsuppressed receipt with 414
+errors/contexts, 5,936 definitely lost bytes, and 28,043 indirectly lost bytes.
+Its SHA-256 is
+`0e62ab9694cbb6cc30bb80919c394a2bc50b5471fff3a9bf1f0017bab40c724d`.
+The paired post-suppression receipt reports zero errors and zero definite or
+indirect bytes; its SHA-256 is
+`e84cd565ca998b150e57eeb9809a44aeee8da619de657177aba35457c7fd2433`.
+Governance rejected, rather than silently accepting, a new
+13,253-byte observation for the same two narrowed Pango layout roots on the
+same pinned Fontconfig 2.15.0/Pango 1.52.1 public environment. The reviewed
+scenario lower bound now includes that exact observation; context count,
+maximum bytes, consumer stack, child-root co-occurrence, and allowed scenarios
+are unchanged. The governance mutation suite passes. Any successful Debug
+result remains **PASS with reviewed suppressions**, never an unsuppressed clean
+result, and ReleaseSafe Valgrind remains XFAIL.
+
+Both installed-package journeys completed the direct launch, authenticated CLI
+mutation, real clipboard/Open-With action, injected crash, and restart before
+the desktop-entry phase exited. The same exact public package and desktop-entry
+phase passed locally under a private Xvfb, D-Bus session, and namespace. The
+public artifact did not include `build/linux/installed-package`, so the decisive
+`desktop-product.log` was unavailable. Full CI now uploads that directory on
+success or failure. No speculative product or package change is justified
+until a replacement public receipt retains the missing evidence.
+
+The clean-clone comparison proved that only
+`libghostty-gtk-embed.so` differed between otherwise identical package payloads.
+Two same-source builds with distinct install directories and a third build
+from a distinct local Ghostty clone produced byte-identical normalized
+libraries locally. The current public evidence therefore does not support a
+source-path or install-prefix diagnosis. On the next mismatch the package
+journey retains both normalized libraries plus their ELF notes, in addition to
+the existing payload and provenance diffs, so the defect can be diagnosed
+rather than guessed away.
+
+The serial full run legitimately exceeded the preflight receipt's former
+one-hour validity window. Full-profile receipts now remain valid for three
+hours, below the workflow's six-hour hard timeout; the shorter public-PR profile
+remains one hour. Tests reject a four-hour full receipt and a two-hour public-PR
+receipt while preserving exact commit, Ghostty revision, environment manifest,
+tool versions, package versions, prerequisites, and secret scanning.
+
+Several hosted X11 settings failures show that fixed pointer coordinates are
+not portable across runner font/layout state. An attempted replacement using
+semantic GTK focus receipts was exercised repeatedly against the real nested
+X11 product and failed to reach the intended dynamic controls; those
+experiments were reverted rather than left as an unproven parallel harness.
+The existing failures remain visible and unresolved. The real Gemini journey
+also discarded its decisive product log because `set -e` exited directly from
+a ten-second wait helper. Its installed-Gemini readiness boundaries now allow
+60 seconds on the two-core hosted runner and route timeout through the test's
+evidence-preserving failure path. No agent component is mocked: the real pinned
+Gemini CLI, controlled loopback model endpoint, installed hooks, reducer, PTY,
+and restore path remain in the journey.
+
+The complete local real-agent journey passed with the installed Gemini 0.55.1
+binary after the evidence-preserving wait repair. An intentional run demanding
+the public pin 0.53.0 failed at the version boundary before exercising hooks,
+so local evidence is not misreported as a test of the public binary. The next
+hosted run remains authoritative for pinned Gemini 0.53.0.
+
+The public Zsh logs already contained the product-owned shell-integration
+`state=prompt` receipt even though util-linux `script --flush` did not publish
+the literal prompt transcript within 20 seconds. Shell readiness now waits for
+that semantic receipt, while the subsequent compositor-typed command and real
+environment receipts still prove interactive PTY input. This removes a
+transcript-flush race without converting missing shell readiness into a pass.

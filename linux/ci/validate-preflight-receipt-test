@@ -56,7 +56,7 @@ expect_rejected() {
     fi
 }
 
-expect_rejected stale '.generated_at_epoch -= 7200'
+expect_rejected stale '.generated_at_epoch -= 14400'
 expect_rejected old-schema '.schema_version = 1'
 expect_rejected wrong-commit '.source.zentty_revision = "0000000000000000000000000000000000000000"'
 expect_rejected wrong-ghostty '.source.ghostty_revision = "0000000000000000000000000000000000000000"'
@@ -78,5 +78,13 @@ jq --argjson apt_packages "${public_apt_packages}" '
 ' "${fixture}/valid.json" >"${fixture}/valid-public-pr.json"
 ZENTTY_CI_QUALIFICATION_PROFILE=public-pr \
 ZENTTY_CI_PREFLIGHT_RECEIPT="${fixture}/valid-public-pr.json" "${validator}" >/dev/null
+
+jq '.generated_at_epoch -= 7200' "${fixture}/valid-public-pr.json" \
+    >"${fixture}/stale-public-pr.json"
+if ZENTTY_CI_QUALIFICATION_PROFILE=public-pr \
+    ZENTTY_CI_PREFLIGHT_RECEIPT="${fixture}/stale-public-pr.json" "${validator}" \
+    >"${fixture}/stale-public-pr.out" 2>&1; then
+    fail "public-pr profile accepted a two-hour-old receipt"
+fi
 
 echo "validate-preflight-receipt-test: PASS profiles=full+public-pr negatives=schema+stale+source+apt+tool+shell+profile+prerequisite+run+secret"

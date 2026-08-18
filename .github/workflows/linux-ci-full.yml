@@ -168,6 +168,7 @@ jobs:
             build/linux/memory-safety-*.suppressed.log
             build/linux/package-qualification
             build/linux/package-lifecycle
+            build/linux/installed-package
             build/linux-package/*.deb
             build/linux-package/SHA256SUMS
             build/linux-package/*.manifest.json

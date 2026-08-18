@@ -387,7 +387,8 @@
       "create_surface_with_command", "create_surface_configured", "surface_config",
       "connect_surface_callbacks", "connect_surface_progress_callback",
       "connect_surface_notification_callback",
-      "make_surface_focus_controller", "schedule_pending_prefill", "write_prefill_receipt", "create_pane_frame",
+      "make_surface_focus_controller", "surface_focus_event_should_apply",
+      "schedule_pending_prefill", "write_prefill_receipt", "create_pane_frame",
       "handle_child_exit"
     ],
     "agent_event_coordinator": [

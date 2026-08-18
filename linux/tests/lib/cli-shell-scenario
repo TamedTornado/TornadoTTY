@@ -186,16 +186,25 @@ DRIVER
         sleep 0.05
     done
     [[ -s "${scenario_root}/ready" ]] || fail "${shell_name} driver did not become ready"
-    for _ in {1..400}; do
-        grep -Fq "${shell_name^^}_READY>" "${transcript}" 2>/dev/null && break
+    # Ghostty's shell-integration signal is the semantic readiness boundary.
+    # A util-linux `script --flush` transcript can lag indefinitely on a slow
+    # hosted runner even after the real shell has rendered and reported its
+    # prompt; the subsequent compositor-typed command still proves that the
+    # interactive PTY accepts input.
+    for _ in {1..1200}; do
+        grep -Fq 'zentty-linux: shell-signal pane=pane-1 kind=shell-state state=prompt' \
+            "${log}" 2>/dev/null && break
         if ! kill -0 "${product_pid}" 2>/dev/null; then
             [[ ! -f "${transcript}" ]] || cat "${transcript}" >&2
             fail "${shell_name} exited before its prompt became ready"
         fi
         sleep 0.05
     done
-    grep -Fq "${shell_name^^}_READY>" "${transcript}" 2>/dev/null ||
+    grep -Fq 'zentty-linux: shell-signal pane=pane-1 kind=shell-state state=prompt' \
+        "${log}" 2>/dev/null || {
+        [[ ! -f "${transcript}" ]] || cat "${transcript}" >&2
         fail "${shell_name} prompt did not become ready"
+    }
     zentty_product_prepare_input "${backend}" "${log}" || fail "${shell_name} pane could not receive physical input"
     sleep 0.5
     if [[ "${shell_name}" == nu ]]; then

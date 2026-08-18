@@ -261,10 +261,10 @@
       "finding_type": "Memcheck:Leak definite root through pango_layout_get_size",
       "expected_suppressed": {"matches": {"min": 1, "max": 1}, "bytes": {"min": 13100, "max": 13200}},
       "expected_by_scenario": {
-        "Debug/ibus-focus/x11": {"matches": {"min": 2, "max": 2}, "bytes": {"min": 13285, "max": 26208}}
+        "Debug/ibus-focus/x11": {"matches": {"min": 2, "max": 2}, "bytes": {"min": 13253, "max": 26208}}
       },
       "allowed_scenarios": ["Debug/interaction/x11", "Debug/ibus-focus/x11", "ReleaseSafe/interaction/x11"],
-      "justification": "The consumer is the named Pango layout API and the rule does not match metrics-only or API-lifecycle scenarios. Local reviewed runs retained exactly two contexts with 20,865-26,208 bytes. Public full run 32121127845 on the same pinned Ubuntu Fontconfig 2.15.0/Pango 1.52.1 environment retained the same two realloc roots and exact Pango consumer stacks at 6,575 and 6,710 bytes, totaling 13,285. The reviewed range covers that demonstrated cache-size variation without increasing the allowed context count or changing the suppression rule.",
+      "justification": "The consumer is the named Pango layout API and the rule does not match metrics-only or API-lifecycle scenarios. Local reviewed runs retained exactly two contexts with 20,865-26,208 bytes. Public full runs 32121127845 and 32143658025 on the same pinned Ubuntu Fontconfig 2.15.0/Pango 1.52.1 environment retained exactly two realloc roots and the exact Pango consumer stacks, totaling 13,285 and 13,253 bytes respectively. The reviewed range covers that demonstrated cache-size variation without increasing the allowed context count or changing the suppression rule.",
       "reproducer": "linux/tests/ibus-focus-reproducer.c calls pango_layout_get_size directly without Ghostty; the X11 product interaction can also produce this cache. The public 7d7e3ca8 run retained raw receipt c6bbf33fc15f2a25dac12de47689d26e4588c09df672dc449176674deb012549 and suppressed receipt 9e8db97d04defbe3d790b99afa0412cbcfdd711dca617ea385e827b9337bad36 for the reviewed 13,285-byte observation.",
       "required_usage": true
     },

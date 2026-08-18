@@ -618,10 +618,12 @@ if [[ -n "${ZENTTY_REAL_GEMINI_BIN:-}" ]]; then
     product_pid=$!
     zentty_product_wait_for_log "${log}" \
         'kind=agent.running session=' \
-        "installed Gemini BeforeAgent hook did not reach the reducer"
+        "installed Gemini BeforeAgent hook did not reach the reducer" 1200 ||
+        fail "installed Gemini BeforeAgent hook did not reach the reducer"
     zentty_product_wait_for_log "${log}" \
         'kind=agent.idle session=' \
-        "installed Gemini AfterAgent hook did not reach the reducer"
+        "installed Gemini AfterAgent hook did not reach the reducer" 1200 ||
+        fail "installed Gemini AfterAgent hook did not reach the reducer"
     grep -Fq '"containsProbe":true' "${model_receipt}" ||
         fail "controlled endpoint did not retain a sanitized Gemini receipt"
     wait "${server_pid}" || fail "controlled Gemini endpoint failed"
@@ -652,12 +654,15 @@ if [[ -n "${ZENTTY_REAL_GEMINI_BIN:-}" ]]; then
     product_pid=$!
     zentty_product_wait_for_log "${log}" \
         'zentty-linux: agent-resume-launch pane=pane-1 command=gemini --resume' \
-        "installed Gemini relaunch did not use the source-compatible resume command"
+        "installed Gemini relaunch did not use the source-compatible resume command" 1200 ||
+        fail "installed Gemini relaunch did not use the source-compatible resume command"
     zentty_product_wait_for_log "${log}" \
         'sidebar-agent-status pane=pane-1 phase=Starting interaction=None attention=false' \
-        "persisted Gemini restore state did not reach the sidebar"
+        "persisted Gemini restore state did not reach the sidebar" 1200 ||
+        fail "persisted Gemini restore state did not reach the sidebar"
     zentty_product_wait_for_log "${log}" 'zentty-linux: title=◇  Ready (zentty)' \
-        "resumed real Gemini TUI did not render"
+        "resumed real Gemini TUI did not render" 1200 ||
+        fail "resumed real Gemini TUI did not render"
     zentty_product_prepare_input "${backend}" "${log}"
     zentty_product_close_window "${backend}"
     for _ in {1..240}; do

@@ -147,6 +147,19 @@ for file in "${primary_files[@]}"; do
                 >"${diagnostic_directory}/payload.diff" || true
             diff -u "${ZENTTY_PACKAGE_PROVENANCE}" "${provenance}" \
                 >"${diagnostic_directory}/provenance.diff" || true
+            primary_root="${diagnostic_directory}/primary-root"
+            isolated_root="${diagnostic_directory}/isolated-root"
+            dpkg-deb -x "${primary_output}/${file}" "${primary_root}"
+            dpkg-deb -x "${isolated}/build/isolated-package/${file}" "${isolated_root}"
+            cp -- "${primary_root}/usr/lib/zentty/lib/libghostty-gtk-embed.so" \
+                "${diagnostic_directory}/primary-libghostty-gtk-embed.so"
+            cp -- "${isolated_root}/usr/lib/zentty/lib/libghostty-gtk-embed.so" \
+                "${diagnostic_directory}/isolated-libghostty-gtk-embed.so"
+            readelf -n "${diagnostic_directory}/primary-libghostty-gtk-embed.so" \
+                >"${diagnostic_directory}/primary-libghostty.notes.txt"
+            readelf -n "${diagnostic_directory}/isolated-libghostty-gtk-embed.so" \
+                >"${diagnostic_directory}/isolated-libghostty.notes.txt"
+            rm -rf -- "${primary_root}" "${isolated_root}"
             echo "diagnostics: ${diagnostic_directory}" >&2
         fi
         echo "debian-package-clean-checkout: reproducibility mismatch: ${file}" >&2

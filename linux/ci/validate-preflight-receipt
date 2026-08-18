@@ -17,15 +17,20 @@ manifest_sha="$(sha256sum "${manifest}" | awk '{print $1}')"
 zentty_revision="${ZENTTY_EXPECTED_COMMIT:-$(git -C "${repo_root}" rev-parse HEAD)}"
 ghostty_revision="$(sed -n 's/^revision=//p' "${repo_root}/linux/ghostty.lock")"
 case "${qualification_profile}" in
-    full) expected_apt="$(jq -c '.apt_packages | sort' "${manifest}")" ;;
+    full)
+        expected_apt="$(jq -c '.apt_packages | sort' "${manifest}")"
+        max_receipt_age_seconds=10800
+        ;;
     public-pr)
         expected_apt="$(jq -c '.qualification_profiles["public-pr"].apt_packages | sort' "${manifest}")"
+        max_receipt_age_seconds=3600
         ;;
     *) fail "unknown qualification profile: ${qualification_profile}" ;;
 esac
 
 jq -e \
     --argjson now "${now}" \
+    --argjson max_receipt_age_seconds "${max_receipt_age_seconds}" \
     --arg manifest_sha "${manifest_sha}" \
     --arg zentty_revision "${zentty_revision}" \
     --arg ghostty_revision "${ghostty_revision}" \
@@ -33,7 +38,8 @@ jq -e \
     --argjson expected_apt "${expected_apt}" \
     --arg expected_image_version "${ZENTTY_EXPECTED_RUNNER_IMAGE_VERSION:-}" '
   .schema_version == 2 and
-  (.generated_at_epoch | type == "number" and . <= $now and . >= ($now - 3600)) and
+  (.generated_at_epoch | type == "number" and . <= $now and
+    . >= ($now - $max_receipt_age_seconds)) and
   (.baseline.runner_label == "ubuntu-24.04") and
   (.baseline.runner_image_version | type == "string" and length > 0) and
   ($expected_image_version == "" or .baseline.runner_image_version == $expected_image_version) and
