@@ -368,3 +368,13 @@ reviewed suppressions**, not an unsuppressed clean result. ReleaseSafe Valgrind
 remains XFAIL. Remaining uncertainty is whether serial public execution plus
 the narrowly authorized logind operation is sufficient; only the next clean
 public full receipt can answer that.
+
+After committing the fourth-run repairs, a clean `linux/tests/qualify-local`
+run at exact commit `2f2cbef8` passed every presently executable support and
+matrix cell in 1,031,890 ms. This rerun includes the modified installed-product
+journeys on nested X11 and nested Cage Wayland, the 64 MiB real-child SIGKILL
+recovery journey, custom-sound import against the immutable ReleaseSafe bundle,
+and Valgrind governance. The Debug Valgrind result is **PASS with reviewed
+suppressions**. Declared totals remain 161 PASS, 0 FAIL, 5 BLOCKED, 1 XFAIL,
+and 14 NOT_IMPLEMENTED, so implemented local qualification passed while release
+and full Linux qualification remain NOT_PASSED.
