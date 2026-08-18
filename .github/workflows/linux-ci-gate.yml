@@ -61,7 +61,7 @@ jobs:
             libfontconfig-dev libglib2.0-dev libgtk-4-dev libnotify-bin libwayland-dev
             libx11-dev libxkbcommon-dev mesa-utils meson ninja-build
             openssh-client patchelf pkg-config procps python3 python3-gi
-            python3-jsonschema shellcheck tmux util-linux wayland-utils
+            python3-jsonschema shellcheck tmux util-linux wayland-utils weston
             wl-clipboard wtype x11-utils xauth xclip xdg-utils xdotool
             xvfb zsh
           )

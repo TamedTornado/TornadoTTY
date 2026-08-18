@@ -339,3 +339,26 @@ receipt SHA-256 is
 `a9f0ccffee26cff0d38cd9760fb7b3a33e585468cba9fc17c4ec7ba53d642f95`;
 the environment manifest SHA-256 is
 `8910b3b4cda5691fb8eacbb1e3d11c5c943b2ff5069e4f162f6910262795bb03`.
+
+## Public-run discovery: Weston is a PR-subset dependency
+
+The first public run of the reduced profile,
+<https://github.com/TamedTornado/zentty/actions/runs/32100809397>, proved that
+the package-graph repair worked: apt update and installation completed in under
+one minute, bootstrap and the exact-profile preflight passed, all nine support
+tests passed, and the release build passed. The first real matrix cell then
+failed closed. `release-wayland-default-single.log` contains
+`nested-wayland: SKIP missing runtime dependency: weston`; because no controlled
+environment receipt could be produced, the runner classified the cell as
+`INVALID_ENVIRONMENT_RECEIPT` rather than treating environmental absence as a
+pass.
+
+The profile review incorrectly classified Weston as full-qualification-only.
+That contradicted the selected cell's `nested-wayland-v1` environment profile,
+whose authoritative wrapper starts a private headless Weston compositor and
+proves its software renderer, socket, and required protocols. Cage is required
+by input-capable Wayland scenarios but cannot replace this wrapper without
+changing the qualified environment. Weston is therefore restored as the one
+exact missing package and required command; the other eight exclusions remain.
+The failed run and its retained artifact remain the negative receipt for this
+discovery, not evidence of product failure.

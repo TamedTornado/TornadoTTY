@@ -151,6 +151,7 @@
         "tmux",
         "util-linux",
         "wayland-utils",
+        "weston",
         "wl-clipboard",
         "wtype",
         "x11-utils",
@@ -170,6 +171,7 @@
         "glxinfo",
         "jq",
         "rustup",
+        "weston",
         "wtype",
         "xdotool",
         "xdpyinfo"
@@ -181,7 +183,6 @@
         "openbox",
         "openssh-server",
         "valgrind",
-        "weston",
         "xserver-xephyr",
         "ydotool"
       ]
