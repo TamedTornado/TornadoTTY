@@ -157,14 +157,27 @@ if [[ "${backend}" == x11 ]]; then
     [[ "${settings_window_id}" =~ ^[1-9][0-9]*$ ]] || fail "real Agents settings toplevel was not identifiable"
 
     focus_agent_control() {
-        local widget="$1" description="$2" before
+        local widget="$1" description="$2" before search_before step_before
         before="$(grep -Fc "settings-focus widget=${widget}" "${log}" || true)"
+        search_before="$(grep -Fc 'settings-search shortcut section=agents' "${log}" || true)"
         xdotool windowfocus --sync "${settings_window_id}"
         xdotool key --clearmodifiers --window "${settings_window_id}" ctrl+f
-        for _ in $(seq 1 80); do
-            xdotool key --clearmodifiers --window "${settings_window_id}" Tab
-            (( $(grep -Fc "settings-focus widget=${widget}" "${log}" || true) > before )) && return
+        for _ in $(seq 1 100); do
+            (( $(grep -Fc 'settings-search shortcut section=agents' "${log}" || true) > search_before )) && break
             sleep 0.05
+        done
+        (( $(grep -Fc 'settings-search shortcut section=agents' "${log}" || true) > search_before )) ||
+            fail "Settings search did not acknowledge keyboard focus"
+        for _ in $(seq 1 80); do
+            step_before="$(grep -Fc 'settings-focus widget=' "${log}" || true)"
+            xdotool key --clearmodifiers --window "${settings_window_id}" Tab
+            for _ in $(seq 1 100); do
+                (( $(grep -Fc 'settings-focus widget=' "${log}" || true) > step_before )) && break
+                sleep 0.05
+            done
+            (( $(grep -Fc 'settings-focus widget=' "${log}" || true) > step_before )) ||
+                fail "keyboard traversal did not acknowledge its next focus step"
+            (( $(grep -Fc "settings-focus widget=${widget}" "${log}" || true) > before )) && return
         done
         fail "keyboard traversal did not reach ${description}"
     }

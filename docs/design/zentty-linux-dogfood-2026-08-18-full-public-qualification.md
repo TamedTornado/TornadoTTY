@@ -678,3 +678,28 @@ Agents passed session
 `799085cc45147097b488d862b212fbf61ea1c6904d4f72242d0524e687dbf620`.
 All presently known isolated failure groups are green. Only now is another
 complete local qualification run permitted.
+
+The permitted full run at clean commit `a8e8a607` completed in 1,024,760 ms.
+It again correctly refused every qualification claim: 159 executable cells
+passed, `agent-settings-runtime-x11` failed, and its aggregate dependency was
+blocked; the 5 declared BLOCKED, 1 XFAIL, and 14 NOT_IMPLEMENTED entries
+remained explicit. The Worklanes & Panes cell that failed the preceding run
+was green, as were Open With and both Dev Servers cells.
+
+The retained Agents log proved that the malformed-config action reached the
+Gemini switch although the journey had stopped traversal when it observed the
+Codex focus receipt. The traversal loop could enqueue another addressed Tab
+before GTK had processed the preceding Tab; under full-suite load, observing a
+target receipt did not prove that no later Tab remained in flight. The earlier
+isolated pass was therefore a scheduler-dependent false green.
+
+The repair adds one semantic receipt when the Settings shell has actually
+processed Ctrl+F, then requires an acknowledged GTK focus transition after
+each individual Tab before the next Tab may be injected. Space remains a real
+XTEST event delivered to the resulting focused switch. Three consecutive
+isolated Agents journeys passed after this repair in sessions
+`7e4d3dd8f03db81c98332ee9f27ab9855392b96f308818277e8f42d99620afa4`,
+`2f53bb021e883b4a829c023605dde046dbb3882a93125e1099ddab5ca813c2bc`,
+and `d1ae373e167b6c7911303f7a23abf2605046096e30d4b170074a3c607dd4d358`.
+This is synchronization with the real GTK event stream, not a delay or an
+internal control mutation.

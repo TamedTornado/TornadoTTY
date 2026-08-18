@@ -265,7 +265,8 @@ fn key_controller(
             return gtk::glib::Propagation::Stop;
         }
         if matches!(key, gtk::gdk::Key::f | gtk::gdk::Key::F) {
-            match state_for_keys.borrow().section {
+            let section = state_for_keys.borrow().section;
+            match section {
                 SettingsSection::Appearance => {
                     appearance_search.grab_focus();
                 }
@@ -277,6 +278,10 @@ fn key_controller(
                     sidebar_search.grab_focus();
                 }
             }
+            eprintln!(
+                "zentty-linux: settings-search shortcut section={}",
+                section.id()
+            );
             return gtk::glib::Propagation::Stop;
         }
         gtk::glib::Propagation::Proceed
