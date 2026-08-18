@@ -253,3 +253,8 @@ The shared palette helper also passed the complete controlled-X11 journey in
 session `f224c7c590e59b949fb098fe58fb7bb705fbdca313c6121465c365ee09099427`.
 No retry was converted into a pass without the exact two-key and clear-query
 receipts.
+
+The complete committed gate passed after the focus repair at revision
+`7eb60b4c6d4d24d7db0dff73e7783e9418f6bdac`: 9/9 support tests and 18/18
+real cells in 388 seconds. Summary SHA-256:
+`998549b9f5d2c3616608c6d95611a9761d091df34d0ed2d91661704365dcdccb`.
