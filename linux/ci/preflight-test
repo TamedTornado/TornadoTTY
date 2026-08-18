@@ -18,33 +18,42 @@ source "${repo_root}/build/linux-ci-tools/environment.sh"
 
 expect_failed_without_receipt() {
     local name="$1"
-    shift
+    local expected="$2"
+    shift 2
     local receipt="${fixture}/${name}.json"
     printf '%s\n' stale >"${receipt}"
     if ZENTTY_CI_PREFLIGHT_RECEIPT="${receipt}" "$@" >"${fixture}/${name}.out" 2>&1; then
         fail "${name} scenario passed"
     fi
     [[ ! -e "${receipt}" ]] || fail "${name} scenario retained a stale receipt"
+    grep -Fq "${expected}" "${fixture}/${name}.out" || {
+        cat "${fixture}/${name}.out" >&2
+        fail "${name} failed for the wrong reason"
+    }
 }
 
 cat >"${fixture}/wrong-os-release" <<'EOF'
 ID=debian
 VERSION_ID=12
 EOF
-expect_failed_without_receipt wrong-os \
+expect_failed_without_receipt wrong-os 'Ubuntu 24.04 is required' \
     env ZENTTY_CI_OS_RELEASE="${fixture}/wrong-os-release" "${preflight}"
 
 touch "${dirty_sentinel}"
-expect_failed_without_receipt dirty-zentty "${preflight}"
+expect_failed_without_receipt dirty-zentty 'Zentty checkout is dirty' "${preflight}"
 rm -f -- "${dirty_sentinel}"
 
 git clone --quiet --shared --no-hardlinks "${repo_root}/build/linux-deps/ghostty" \
     "${fixture}/ghostty"
 git -C "${fixture}/ghostty" remote set-url origin https://example.invalid/ghostty.git
-expect_failed_without_receipt wrong-ghostty-origin \
+expect_failed_without_receipt wrong-ghostty-origin 'prepared Ghostty origin is not reviewed' \
     env GHOSTTY_SOURCE_DIR="${fixture}/ghostty" "${preflight}"
 
-expect_failed_without_receipt wrong-zig env ZIG=/bin/true "${preflight}"
+expect_failed_without_receipt wrong-zig 'Zig version is not reviewed' \
+    env ZIG=/bin/true "${preflight}"
+expect_failed_without_receipt unknown-profile \
+    'unknown qualification profile: not-reviewed' \
+    env ZENTTY_CI_QUALIFICATION_PROFILE=not-reviewed "${preflight}"
 
 mkdir -p "${in_source_tool_root}"
 cat >"${in_source_tool_root}/zig" <<'EOF'
@@ -53,7 +62,7 @@ cat >"${in_source_tool_root}/zig" <<'EOF'
 echo 0.16.0
 EOF
 chmod 0700 "${in_source_tool_root}/zig"
-expect_failed_without_receipt in-source-zig \
+expect_failed_without_receipt in-source-zig 'Zig must remain available outside the source checkout' \
     env ZIG="${in_source_tool_root}/zig" "${preflight}"
 
-echo "ci-preflight-test: PASS negatives=os+dirty-source+ghostty-origin+tool+tool-location+stale-receipt"
+echo "ci-preflight-test: PASS negatives=os+dirty-source+ghostty-origin+tool+tool-location+profile+stale-receipt"

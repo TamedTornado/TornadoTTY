@@ -7,28 +7,34 @@ validator="${repo_root}/linux/ci/validate-preflight-receipt"
 fixture="$(mktemp -d)"
 trap 'rm -rf -- "${fixture}"' EXIT
 now="$(date +%s)"
+qualification_profile="${ZENTTY_CI_QUALIFICATION_PROFILE:-full}"
 
 fail() {
     echo "validate-preflight-receipt-test: error: $*" >&2
     exit 1
 }
 
-apt_packages="$(jq -Rn --slurpfile manifest "${manifest}" '
-  reduce $manifest[0].apt_packages[] as $package ({}; .[$package] = "reviewed-version")
+apt_packages="$(jq -Rn --slurpfile manifest "${manifest}" --arg profile "${qualification_profile}" '
+  ($manifest[0] |
+    if $profile == "full" then .apt_packages
+    else .qualification_profiles[$profile].apt_packages end) as $packages |
+  reduce $packages[] as $package ({}; .[$package] = "reviewed-version")
 ')"
 jq -n \
     --argjson now "${now}" \
     --arg revision "$(git -C "${repo_root}" rev-parse HEAD)" \
     --arg ghostty "$(sed -n 's/^revision=//p' "${repo_root}/linux/ghostty.lock")" \
     --arg manifest_sha "$(sha256sum "${manifest}" | awk '{print $1}')" \
+    --arg qualification_profile "${qualification_profile}" \
     --argjson apt_packages "${apt_packages}" '
   {
-    schema_version:1,
+    schema_version:2,
     generated_at_epoch:$now,
     baseline:{runner_label:"ubuntu-24.04",runner_image_version:"local-unversioned"},
     run:{id:"local",attempt:1},
     source:{zentty_revision:$revision,ghostty_revision:$ghostty,trees:"clean"},
     environment_manifest_sha256:$manifest_sha,
+    qualification_profile:$qualification_profile,
     apt_packages:$apt_packages,
     tools:{
       zig:"0.16.0",rust:"rustc 1.97.1 (reviewed)",pnpm:"10.32.1",
@@ -50,13 +56,25 @@ expect_rejected() {
 }
 
 expect_rejected stale '.generated_at_epoch -= 7200'
+expect_rejected old-schema '.schema_version = 1'
 expect_rejected wrong-commit '.source.zentty_revision = "0000000000000000000000000000000000000000"'
 expect_rejected wrong-ghostty '.source.ghostty_revision = "0000000000000000000000000000000000000000"'
 expect_rejected dirty-source '.source.trees = "dirty"'
 expect_rejected missing-package '.apt_packages |= del(.fish)'
 expect_rejected wrong-tool '.tools.codex = "codex-cli latest"'
+expect_rejected wrong-profile '.qualification_profile = "not-reviewed"'
 expect_rejected missing-prerequisite '.prerequisites.controlled_wayland = false'
 expect_rejected wrong-attempt '.run.attempt = 0'
 expect_rejected secret '.unexpected = "sk-abcdefghijklmnopqrstuvwxyz123456"'
 
-echo "validate-preflight-receipt-test: PASS negatives=stale+source+apt+tool+prerequisite+run+secret"
+public_apt_packages="$(jq -Rn --slurpfile manifest "${manifest}" '
+  reduce $manifest[0].qualification_profiles["public-pr"].apt_packages[] as $package
+    ({}; .[$package] = "reviewed-version")
+')"
+jq --argjson apt_packages "${public_apt_packages}" '
+  .qualification_profile = "public-pr" | .apt_packages = $apt_packages
+' "${fixture}/valid.json" >"${fixture}/valid-public-pr.json"
+ZENTTY_CI_QUALIFICATION_PROFILE=public-pr \
+ZENTTY_CI_PREFLIGHT_RECEIPT="${fixture}/valid-public-pr.json" "${validator}" >/dev/null
+
+echo "validate-preflight-receipt-test: PASS profiles=full+public-pr negatives=schema+stale+source+apt+tool+profile+prerequisite+run+secret"

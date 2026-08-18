@@ -33,7 +33,11 @@ expect_rejected release-age-disabled '.toolchains.node.minimum_release_age_minut
 expect_rejected wrong-agent-version '.reviewed_agent_clis.codex.version = "latest"'
 expect_rejected duplicate-apt '.apt_packages += ["zsh"]'
 expect_rejected unsorted-apt '.apt_packages = (.apt_packages | reverse)'
+expect_rejected missing-pr-package '.qualification_profiles["public-pr"].apt_packages |= map(select(. != "cage"))'
+expect_rejected extra-pr-package '.qualification_profiles["public-pr"].apt_packages += ["not-reviewed"]'
+expect_rejected unsorted-pr-command '.qualification_profiles["public-pr"].required_commands |= reverse'
+expect_rejected hidden-pr-exclusion '.qualification_profiles["public-pr"].excluded_full_qualification_packages |= map(select(. != "valgrind"))'
 expect_rejected cache-overlap '.cache_policy.allowed += ["test-receipt"] | .cache_policy.allowed |= sort'
 expect_rejected wrong-ghostty '.source_contract.ghostty_revision = "0000000000000000000000000000000000000000"'
 
-echo "validate-environment-test: PASS negatives=baseline+toolchains+release-age+agents+apt+cache+ghostty"
+echo "validate-environment-test: PASS negatives=baseline+toolchains+release-age+agents+apt+public-profile+cache+ghostty"

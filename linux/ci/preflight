@@ -6,6 +6,7 @@ manifest="${ZENTTY_CI_ENVIRONMENT_MANIFEST:-${repo_root}/linux/ci/environment-v1
 os_release="${ZENTTY_CI_OS_RELEASE:-/etc/os-release}"
 tools_root="${ZENTTY_CI_TOOLS_ROOT:-${repo_root}/../.tools}"
 receipt="${ZENTTY_CI_PREFLIGHT_RECEIPT:-${repo_root}/build/linux/ci-preflight.json}"
+qualification_profile="${ZENTTY_CI_QUALIFICATION_PROFILE:-full}"
 started_at_epoch="$(date +%s)"
 
 fail() {
@@ -15,6 +16,22 @@ fail() {
 
 rm -f -- "${receipt}"
 "${repo_root}/linux/ci/validate-environment" >/dev/null
+case "${qualification_profile}" in
+    full)
+        apt_packages_query='.apt_packages[]'
+        required_commands=(
+            bwrap cage findmnt fusermount3 glxinfo jq labwc rustup valgrind weston
+            Xvfb xdotool xdpyinfo wtype
+        )
+        ;;
+    public-pr)
+        apt_packages_query='.qualification_profiles["public-pr"].apt_packages[]'
+        mapfile -t required_commands < <(
+            jq -r '.qualification_profiles["public-pr"].required_commands[]' "${manifest}"
+        )
+        ;;
+    *) fail "unknown qualification profile: ${qualification_profile}" ;;
+esac
 [[ -f "${os_release}" ]] || fail "OS release identity is missing"
 # shellcheck disable=SC1090
 source "${os_release}"
@@ -36,7 +53,7 @@ while IFS= read -r package; do
     version="$(dpkg-query -W -f='${Version}' "${package}" 2>/dev/null)" ||
         fail "required apt package is missing: ${package}"
     printf '%s\t%s\n' "${package}" "${version}" >>"${apt_receipt}"
-done < <(jq -r '.apt_packages[]' "${manifest}")
+done < <(jq -r "${apt_packages_query}" "${manifest}")
 
 ghostty_source="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
 expected_ghostty_repo="$(jq -r '.source_contract.ghostty_repository' "${manifest}")"
@@ -48,9 +65,7 @@ expected_ghostty_revision="$(jq -r '.source_contract.ghostty_revision' "${manife
     fail "prepared Ghostty revision is not reviewed"
 [[ -z "$(git -C "${ghostty_source}" status --porcelain=v1)" ]] || fail "Ghostty checkout is dirty"
 
-for dependency in \
-    bwrap cage findmnt fusermount3 glxinfo jq labwc rustup valgrind weston \
-    Xvfb xdotool xdpyinfo wtype; do
+for dependency in "${required_commands[@]}"; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
 [[ -d /tmp/.X11-unix && ! -L /tmp/.X11-unix ]] ||
@@ -107,6 +122,7 @@ jq -n \
     --arg zentty_revision "$(git -C "${repo_root}" rev-parse HEAD)" \
     --arg ghostty_revision "${expected_ghostty_revision}" \
     --arg manifest_sha256 "$(sha256sum "${manifest}" | awk '{print $1}')" \
+    --arg qualification_profile "${qualification_profile}" \
     --arg zig "$(${zig} version)" \
     --arg rust "$(rustc --version)" \
     --arg pnpm "$("${pnpm}" --version)" \
@@ -115,12 +131,13 @@ jq -n \
     --arg claude "$(claude --version 2>/dev/null)" \
     --argjson apt_packages "${apt_packages_json}" '
     {
-      schema_version:1,
+      schema_version:2,
       generated_at_epoch:($started_at_epoch | tonumber),
       baseline:{runner_label:$runner_label,runner_image_version:$runner_image_version},
       run:{id:$run_id,attempt:($run_attempt | tonumber)},
       source:{zentty_revision:$zentty_revision,ghostty_revision:$ghostty_revision,trees:"clean"},
       environment_manifest_sha256:$manifest_sha256,
+      qualification_profile:$qualification_profile,
       apt_packages:$apt_packages,
       tools:{zig:$zig,rust:$rust,pnpm:$pnpm,gemini:$gemini,codex:$codex,claude:$claude},
       prerequisites:{user_namespaces:true,bubblewrap:true,controlled_x11:true,controlled_wayland:true}

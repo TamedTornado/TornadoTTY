@@ -42,6 +42,20 @@ jq -e '
   (.reviewed_agent_clis.claude.sha256 | test("^[0-9a-f]{64}$")) and
   (.reviewed_agent_clis.claude.size_bytes == 251300664) and
   (.apt_packages | type == "array" and length > 0 and . == (sort | unique)) and
+  (.qualification_profiles == {
+    "public-pr":{
+      apt_packages:.qualification_profiles["public-pr"].apt_packages,
+      required_commands:.qualification_profiles["public-pr"].required_commands,
+      excluded_full_qualification_packages:.qualification_profiles["public-pr"].excluded_full_qualification_packages
+    }
+  }) and
+  (.qualification_profiles["public-pr"] as $profile |
+    ($profile.apt_packages | type == "array" and length > 0 and . == (sort | unique)) and
+    ($profile.required_commands | type == "array" and length > 0 and . == (sort | unique)) and
+    ($profile.excluded_full_qualification_packages | type == "array" and length > 0 and . == (sort | unique)) and
+    ($profile.apt_packages + $profile.excluded_full_qualification_packages | sort) == .apt_packages and
+    ($profile.apt_packages - .apt_packages) == [] and
+    ($profile.excluded_full_qualification_packages - .apt_packages) == []) and
   (.deterministic_environment == {
     LANG:"C.UTF-8",LC_ALL:"C.UTF-8",TZ:"UTC",XKB_DEFAULT_LAYOUT:"us",
     LIBGL_ALWAYS_SOFTWARE:"1",GALLIUM_DRIVER:"llvmpipe",

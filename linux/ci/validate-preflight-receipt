@@ -5,6 +5,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 manifest="${ZENTTY_CI_ENVIRONMENT_MANIFEST:-${repo_root}/linux/ci/environment-v1.json}"
 receipt="${ZENTTY_CI_PREFLIGHT_RECEIPT:-${repo_root}/build/linux/ci-preflight.json}"
 now="$(date +%s)"
+qualification_profile="${ZENTTY_CI_QUALIFICATION_PROFILE:-full}"
 
 fail() {
     echo "validate-ci-preflight-receipt: error: $*" >&2
@@ -15,16 +16,23 @@ fail() {
 manifest_sha="$(sha256sum "${manifest}" | awk '{print $1}')"
 zentty_revision="${ZENTTY_EXPECTED_COMMIT:-$(git -C "${repo_root}" rev-parse HEAD)}"
 ghostty_revision="$(sed -n 's/^revision=//p' "${repo_root}/linux/ghostty.lock")"
-expected_apt="$(jq -c '.apt_packages | sort' "${manifest}")"
+case "${qualification_profile}" in
+    full) expected_apt="$(jq -c '.apt_packages | sort' "${manifest}")" ;;
+    public-pr)
+        expected_apt="$(jq -c '.qualification_profiles["public-pr"].apt_packages | sort' "${manifest}")"
+        ;;
+    *) fail "unknown qualification profile: ${qualification_profile}" ;;
+esac
 
 jq -e \
     --argjson now "${now}" \
     --arg manifest_sha "${manifest_sha}" \
     --arg zentty_revision "${zentty_revision}" \
     --arg ghostty_revision "${ghostty_revision}" \
+    --arg qualification_profile "${qualification_profile}" \
     --argjson expected_apt "${expected_apt}" \
     --arg expected_image_version "${ZENTTY_EXPECTED_RUNNER_IMAGE_VERSION:-}" '
-  .schema_version == 1 and
+  .schema_version == 2 and
   (.generated_at_epoch | type == "number" and . <= $now and . >= ($now - 3600)) and
   (.baseline.runner_label == "ubuntu-24.04") and
   (.baseline.runner_image_version | type == "string" and length > 0) and
@@ -33,6 +41,7 @@ jq -e \
   (.run.attempt | type == "number" and . >= 1 and floor == .) and
   (.source == {zentty_revision:$zentty_revision,ghostty_revision:$ghostty_revision,trees:"clean"}) and
   (.environment_manifest_sha256 == $manifest_sha) and
+  (.qualification_profile == $qualification_profile) and
   ((.apt_packages | keys | sort) == $expected_apt) and
   (all(.apt_packages[]; type == "string" and length > 0)) and
   (.tools.zig == "0.16.0") and

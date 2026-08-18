@@ -31,6 +31,7 @@ jobs:
       GSETTINGS_BACKEND: memory
       GIO_USE_VFS: local
       ZENTTY_BUILD_JOBS: "2"
+      ZENTTY_CI_QUALIFICATION_PROFILE: public-pr
       ZENTTY_EXPECTED_COMMIT: ${{ github.sha }}
 
     steps:
@@ -55,14 +56,14 @@ jobs:
           mkdir -p build/linux
           packages=(
             alsa-utils appstream bubblewrap build-essential cage curl dbus-x11
-            desktop-file-utils dpkg-dev ffmpeg fish fontconfig fuse3 gir1.2-gtk-4.0
-            git ibus ibus-gtk4 imagemagick jq labwc libadwaita-1-dev libcairo2-dev
+            desktop-file-utils dpkg-dev fish fontconfig fuse3 gir1.2-gtk-4.0
+            git ibus ibus-gtk4 jq libadwaita-1-dev libcairo2-dev
             libfontconfig-dev libglib2.0-dev libgtk-4-dev libnotify-bin libwayland-dev
-            libx11-dev libxkbcommon-dev mesa-utils meson ninja-build openbox
-            openssh-client openssh-server patchelf pkg-config procps python3 python3-gi
-            python3-jsonschema shellcheck tmux util-linux valgrind wayland-utils weston
-            wl-clipboard wtype x11-utils xauth xclip xdg-utils xdotool xserver-xephyr
-            xvfb ydotool zsh
+            libx11-dev libxkbcommon-dev mesa-utils meson ninja-build
+            openssh-client patchelf pkg-config procps python3 python3-gi
+            python3-jsonschema shellcheck tmux util-linux wayland-utils
+            wl-clipboard wtype x11-utils xauth xclip xdg-utils xdotool
+            xvfb zsh
           )
           sudo timeout --signal=TERM --kill-after=30s 600s \
             apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update \

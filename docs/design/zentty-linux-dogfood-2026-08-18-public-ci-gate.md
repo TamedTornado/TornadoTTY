@@ -293,3 +293,40 @@ if no validated subset receipt exists it says `NOT_ESTABLISHED`, and it always
 states that implemented-local, release, and full-Linux qualification are not
 claimed. Contract mutations reject removal of either apt deadline or the
 bounded human summary.
+
+## Repair: separate the PR dependency boundary from full qualification
+
+The bounded rerun
+<https://github.com/TamedTornado/zentty/actions/runs/32085986027> failed exactly
+at its 600-second apt-install deadline and still published its human
+`NOT_ESTABLISHED` summary plus retained logs. The receipt shows progress through
+274 packages, ending while fetching the 14.9 MB Valgrind package after the
+7.5 MB libc debug symbols. The earlier log also showed FFmpeg's codec graph and
+ImageMagick/Ghostscript dependencies. None of those tools is invoked by the
+versioned PR subset. Installing the complete release-qualification environment
+on every PR was therefore the wrong boundary, not a reason to increase the
+deadline.
+
+`environment-v1.json` now owns a closed `public-pr` qualification profile. It
+is the full reviewed package set minus exactly nine full-qualification-only
+packages: FFmpeg, ImageMagick, labwc, Openbox, OpenSSH server, Valgrind, Weston,
+Xephyr, and ydotool. The PR retains the real GTK/Ghostty build dependencies,
+Cage, Xvfb, Xauthority and X11 inspection/input, Wayland inspection/input,
+Bubblewrap/user namespaces, packaging tools, shells, agent CLIs, and staged
+product dependencies. The full apt list remains unchanged for GH-58; this is
+not a weakening of release or full qualification.
+
+The manifest validator proves the profile and exclusion lists are sorted,
+unique, disjoint, exhaustive relative to the full list, and closed against
+extra fields. The gate workflow's literal packages must match that profile
+token-for-token. Preflight now selects either `full` or `public-pr`, validates
+only that profile's required packages and commands, and writes the selected
+profile into receipt schema v2. Receipt validation rejects the wrong profile,
+old schema, or a package set from the other profile.
+
+Review of the focused negative test exposed another evidence hazard:
+`preflight-test` could pass several scenarios for the generic reason that the
+developer checkout was already dirty. Each negative now requires its exact
+diagnostic in addition to failure and stale-receipt deletion. A dirty tree can
+no longer masquerade as proof of wrong-origin, wrong-tool, or unknown-profile
+handling.

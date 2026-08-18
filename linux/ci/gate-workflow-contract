@@ -31,6 +31,8 @@ grep -Eq '^  pull_request:$' "${workflow}" || fail "pull_request trigger is abse
     fail "privileged PR trigger or secrets are present"
 grep -Fq 'runs-on: ubuntu-24.04' "${workflow}" || fail "runner baseline is not pinned"
 grep -Fq 'node-version: 24.14.0' "${workflow}" || fail "Node version is not pinned"
+grep -Fq 'ZENTTY_CI_QUALIFICATION_PROFILE: public-pr' "${workflow}" ||
+    fail "workflow does not select the reviewed public-PR dependency profile"
 grep -Fq 'contents: read' "${workflow}" || fail "read-only contents permission is absent"
 ! grep -Eq 'contents:[[:space:]]+write|permissions:[[:space:]]+write-all' "${workflow}" ||
     fail "write permission is present"
@@ -60,7 +62,8 @@ awk '
     for (field=1; field<=NF; field++) print $field
   }
 ' "${workflow}" | sort >"${fixture}/workflow-packages"
-jq -r '.apt_packages[]' "${environment_manifest}" | sort >"${fixture}/manifest-packages"
+jq -r '.qualification_profiles["public-pr"].apt_packages[]' \
+    "${environment_manifest}" | sort >"${fixture}/manifest-packages"
 cmp -s "${fixture}/workflow-packages" "${fixture}/manifest-packages" ||
     fail "literal apt package list differs from the reviewed environment manifest"
 

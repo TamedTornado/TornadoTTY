@@ -29,6 +29,8 @@ expect_rejected write-permission 'contents: read' 'contents: write'
 expect_rejected mutable-runner 'runs-on: ubuntu-24.04' 'runs-on: ubuntu-latest'
 expect_rejected persisted-credentials 'persist-credentials: false' 'persist-credentials: true'
 expect_rejected wrong-node 'node-version: 24.14.0' 'node-version: latest'
+expect_rejected wrong-profile \
+    'ZENTTY_CI_QUALIFICATION_PROFILE: public-pr' 'ZENTTY_CI_QUALIFICATION_PROFILE: full'
 # The mutation must write a literal shell substitution into the fixture.
 # shellcheck disable=SC2016
 expect_rejected generated-package 'alsa-utils appstream' '$(linux/ci/bootstrap-ubuntu-24.04 --print-apt)'
@@ -48,4 +50,4 @@ expect_rejected older-run-publication \
 expect_rejected wrong-event-commit \
     'ZENTTY_EXPECTED_COMMIT: ${{ github.sha }}' 'ZENTTY_EXPECTED_COMMIT: refs/heads/linux/port'
 
-echo "ci-gate-workflow-contract-test: PASS negatives=trigger+action+permission+runner+credentials+node+packages+sudo+timeout+subset+evidence+summary+older-run+commit"
+echo "ci-gate-workflow-contract-test: PASS negatives=trigger+action+permission+runner+credentials+node+profile+packages+sudo+timeout+subset+evidence+summary+older-run+commit"
