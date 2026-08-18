@@ -264,36 +264,14 @@ focus_setting() {
 }
 
 change_setting() {
-    local name="$1" key="$2" before control_x control_y selection_x selection_y
+    local name="$1" key="$2" before
     before="$(grep -Fc "workspace-pane-settings control=${name} result=applied" "${log}" || true)"
-    if [[ "${backend}" == x11 ]]; then
-        settings_window="$(find_settings_window)"
-        [[ "${settings_window}" =~ ^[1-9][0-9]*$ ]] || fail "Settings toplevel disappeared before ${name}"
-        case "${name}" in
-            new-worklane-placement) control_x=1000; control_y=183; selection_x=1000; selection_y=310 ;;
-            pane-right-behavior) control_x=970; control_y=303; selection_x=970; selection_y=340 ;;
-            pane-split-threshold) control_x=990; control_y=358; selection_x=990; selection_y=550 ;;
-            settings-pane-labels) control_x=1010; control_y=475 ;;
-            settings-pane-borders) control_x=1010; control_y=529 ;;
-            settings-pane-project-icons) control_x=1010; control_y=582 ;;
-            focus-follows-mouse) control_x=1010; control_y=688 ;;
-            focus-follows-mouse-delay) control_x=980; control_y=741; selection_x=980; selection_y=835 ;;
-            *) fail "no controlled X11 coordinate for ${name}" ;;
-        esac
-        xdotool mousemove --sync --window "${settings_window}" "${control_x}" "${control_y}" click 1
-        if [[ "${key}" != space ]]; then
-            # GtkDropDown owns a transient popup and keyboard grab after the
-            # pointer activation. Untargeted XTEST input reaches that real
-            # popup; targeting the parent toplevel would bypass it.
-            xdotool windowfocus --sync "${settings_window}"
-            xdotool key --clearmodifiers --window "${settings_window}" alt+Down
-            sleep 0.1
-            xdotool mousemove --sync --window "${settings_window}" "${selection_x}" "${selection_y}" click 1
-        fi
-    else
-        focus_setting "${name}"
-        settings_key_current "${key}"
-    fi
+    # GTK mnemonics route through the rendered label/control relationship and
+    # therefore remain stable across fonts, themes, and runner DPI. Keep both
+    # compositors on the same physical keyboard path; fixed X11 coordinates
+    # silently target the wrong row when hosted font metrics differ.
+    focus_setting "${name}"
+    settings_key_current "${key}"
     for _ in $(seq 1 200); do
         (( $(grep -Fc "workspace-pane-settings control=${name} result=applied" "${log}" || true) > before )) && return
         sleep 0.05

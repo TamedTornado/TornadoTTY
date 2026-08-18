@@ -79,8 +79,12 @@ pub(crate) fn build(
         .hexpand(true)
         .build();
     port_entry.set_widget_name("settings-dev-servers-ignored-port-entry");
+    let port_label = gtk::Label::new(Some("_Port or range"));
+    port_label.set_use_underline(true);
+    port_label.set_mnemonic_widget(Some(&port_entry));
     let add_port = gtk::Button::with_label("Ignore");
     add_port.set_widget_name("settings-dev-servers-add-ignored-port");
+    port_row.append(&port_label);
     port_row.append(&port_entry);
     port_row.append(&add_port);
     ports_card.append(&port_row);
@@ -190,6 +194,7 @@ fn rebuild(state: &Rc<RefCell<State>>) {
         toggle.set_active(enabled);
         toggle.set_sensitive(id != SYSTEM_DEFAULT_BROWSER_ID);
         toggle.set_halign(gtk::Align::Start);
+        toggle.set_widget_name(&format!("settings-dev-servers-browser-{id}"));
         if id != SYSTEM_DEFAULT_BROWSER_ID {
             let state_for_toggle = Rc::clone(state);
             let toggle_id = id.clone();
@@ -240,6 +245,7 @@ fn rebuild(state: &Rc<RefCell<State>>) {
             .any(|browser| browser.id == id)
         {
             let remove = gtk::Button::with_label("Remove");
+            remove.set_widget_name(&format!("settings-dev-servers-remove-browser-{id}"));
             let state_for_remove = Rc::clone(state);
             let remove_id = id.clone();
             remove.connect_clicked(move |_| {
@@ -270,6 +276,7 @@ fn rebuild(state: &Rc<RefCell<State>>) {
         label.set_halign(gtk::Align::Start);
         label.set_hexpand(true);
         let remove = gtk::Button::with_label("Stop Ignoring");
+        remove.set_widget_name(&format!("settings-dev-servers-stop-ignoring-{rule}"));
         let state_for_remove = Rc::clone(state);
         remove.connect_clicked(move |_| {
             state_for_remove

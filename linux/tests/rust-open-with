@@ -321,6 +321,7 @@ find_settings_window() {
 settings_key() {
     local key="$1"
     if [[ "${backend}" == x11 ]]; then
+        xdotool windowfocus --sync "${settings_window_id}"
         xdotool key --clearmodifiers --window "${settings_window_id}" "${key}"
     else
         case "${key}" in
@@ -329,6 +330,18 @@ settings_key() {
             *) wtype -k "${key}" ;;
         esac
     fi
+}
+
+focus_open_with_control() {
+    local marker="$1" description="$2" before
+    before="$(grep -Fc "${marker}" "${log}" || true)"
+    settings_key ctrl+f
+    for _ in $(seq 1 60); do
+        settings_key Tab
+        (( $(grep -Fc "${marker}" "${log}" || true) > before )) && return
+        sleep 0.05
+    done
+    fail "keyboard traversal did not reach ${description}"
 }
 
 activate_refresh() {
@@ -357,7 +370,10 @@ if [[ "${backend}" == x11 ]]; then
         sleep 0.05
     done
     [[ "${settings_window_id}" =~ ^[1-9][0-9]*$ ]] || fail "real Open With settings window did not appear"
-    xdotool mousemove --sync --window "${settings_window_id}" 389 444 click 1
+    focus_open_with_control \
+        'settings-focus widget=settings-open-with-target-custom:controlled' \
+        'the controlled Open With target'
+    settings_key space
     for _ in $(seq 1 100); do
         grep -Fq 'open-with-settings control=target-enabled result=applied' "${log}" && break
         sleep 0.05
@@ -367,7 +383,10 @@ if [[ "${backend}" == x11 ]]; then
     if grep -F 'enabled_target_ids' "${config_home}/zentty/config.toml" | grep -Fq 'custom:controlled'; then
         fail "disabled custom Open With target remained enabled in persisted configuration"
     fi
-    xdotool mousemove --sync --window "${settings_window_id}" 389 444 click 1
+    focus_open_with_control \
+        'settings-focus widget=settings-open-with-target-custom:controlled' \
+        'the controlled Open With target after rebuild'
+    settings_key space
     for _ in $(seq 1 100); do
         (( $(grep -Fc 'open-with-settings control=target-enabled result=applied' "${log}" || true) >= 2 )) && break
         sleep 0.05
@@ -437,31 +456,14 @@ grep -Fq "path = \"${fixture_bin}/additional-open\"" "${config_home}/zentty/conf
 # dropdown, then remove it through the real focused Remove button. The removal
 # must fall back to the first surviving enabled target.
 primary_apply_before="$(grep -Fc 'open-with-settings control=primary result=applied' "${log}" 2>/dev/null || true)"
-if [[ "${backend}" == x11 ]]; then
-    settings_window_id="$(find_settings_window)"
-    [[ "${settings_window_id}" =~ ^[1-9][0-9]*$ ]] || fail "Open With settings window disappeared before primary selection"
-    xdotool mousemove --sync --window "${settings_window_id}" 960 184 click 1
-    sleep 0.25
-    xdotool key --clearmodifiers --window "${settings_window_id}" alt+Down
-    xdotool mousemove --sync --window "${settings_window_id}" 970 394 click 1
-else
-    primary_focus_before="$(grep -Fc 'open-with-settings focus=primary' "${log}" || true)"
-    settings_key ctrl+f
-    for _ in $(seq 1 30); do
-        settings_key Tab
-        (( $(grep -Fc 'open-with-settings focus=primary' "${log}" || true) > primary_focus_before )) && break
+focus_open_with_control 'open-with-settings focus=primary' 'the Primary application dropdown'
+for _ in {1..3}; do
+    settings_key End
+    for _ in {1..20}; do
+        (( $(grep -Fc 'open-with-settings control=primary result=applied' "${log}" 2>/dev/null || true) > primary_apply_before )) && break 2
         sleep 0.05
     done
-    (( $(grep -Fc 'open-with-settings focus=primary' "${log}" || true) > primary_focus_before )) ||
-        fail "keyboard traversal did not reach the Primary application dropdown"
-    for _ in {1..3}; do
-        wtype -k End
-        for _ in {1..20}; do
-            (( $(grep -Fc 'open-with-settings control=primary result=applied' "${log}" 2>/dev/null || true) > primary_apply_before )) && break 2
-            sleep 0.05
-        done
-    done
-fi
+done
 for _ in $(seq 1 200); do
     (( $(grep -Fc 'open-with-settings control=primary result=applied' "${log}" 2>/dev/null || true) > primary_apply_before )) && break
     sleep 0.05
@@ -470,21 +472,10 @@ done
     fail "physical primary selection was not applied"
 grep -Fq "primary_target_id = \"${additional_id}\"" "${config_home}/zentty/config.toml" ||
     fail "physical primary selection did not persist the added target"
-if [[ "${backend}" == x11 ]]; then
-    settings_window_id="$(find_settings_window)"
-    [[ "${settings_window_id}" =~ ^[1-9][0-9]*$ ]] || fail "Open With settings window disappeared before Remove"
-    xdotool mousemove --sync --window "${settings_window_id}" 990 485 click 1
-else
-    settings_key ctrl+f
-    for _ in $(seq 1 50); do
-        settings_key Tab
-        grep -Fq "open-with-settings focus=remove id=${additional_id}" "${log}" && break
-        sleep 0.05
-    done
-    grep -Fq "open-with-settings focus=remove id=${additional_id}" "${log}" ||
-        fail "keyboard traversal did not reach the added application's Remove button"
-    settings_key Return
-fi
+focus_open_with_control \
+    "open-with-settings focus=remove id=${additional_id}" \
+    "the added application's Remove button"
+settings_key Return
 for _ in $(seq 1 100); do
     grep -Fq 'open-with-settings control=remove-custom result=applied' "${log}" && break
     sleep 0.05

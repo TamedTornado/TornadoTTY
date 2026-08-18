@@ -515,3 +515,75 @@ the literal prompt transcript within 20 seconds. Shell readiness now waits for
 that semantic receipt, while the subsequent compositor-typed command and real
 environment receipts still prove interactive PTY input. This removes a
 transcript-flush race without converting missing shell readiness into a pass.
+
+## Isolated repair pass before another full qualification
+
+The first clean local rerun at `cd0fcb10406d` completed in 1,220,220 ms with
+161 PASS, zero actual failures, 5 declared BLOCKED, 1 XFAIL, and 14
+NOT_IMPLEMENTED cells. It established that the evidence-boundary repairs did
+not leave the local suite red, but it ran before the hosted-X11 interaction
+repair below and is therefore not the final qualification receipt for that
+change.
+
+The exact failed public artifact from run 32143658025 was downloaded and its
+individual logs inspected before changing another test. They confirmed that
+the five X11 settings failures were not a common product exception: each
+fixed-coordinate interaction reached either the wrong rendered row or no
+control when the hosted runner's font metrics differed. The affected cells
+were Dev Servers with and without Docker, Open With, Worklanes & Panes, and
+Agents. The repair removes those layout coordinates and drives the real GTK
+controls through the settings window's physical keyboard focus chain,
+mnemonics, stable widget identities, and resulting persisted configuration.
+This is the same product and the same native controls; it does not call an
+internal settings setter or add a second automation authority.
+
+The Open With conversion initially failed because a focus controller attached
+to `GtkCheckButton` did not receive focus when GTK focused its internal toggle
+child. The settings shell's existing global focus receipt already reported the
+stable widget identity, so the redundant experimental controller was removed
+and the test now consumes that one existing receipt. A second attempt reached
+the controlled target but failed after the native file chooser because the
+settings toplevel had not regained X focus. Explicitly restoring focus to the
+real settings window before keyboard traversal repaired that boundary. The
+isolated real X11 Open With journey then passed under nested X11 session
+`51183b42f1c7da5c7e53a9fcdf2408f42bd297490f10e8565cf81a412c64ea81`.
+
+The first semantic Dev Servers attempt reached every dynamic browser control
+but exposed that a GTK Entry focuses its internal `GtkText`, not the Entry's
+widget name. The product page now gives the visible “Port or range” label a
+real mnemonic associated with that Entry, which improves keyboard
+accessibility and provides a layout-independent physical-input path. Dynamic
+browser and ignored-port removal buttons also have stable widget identities.
+The non-Docker X11 journey passed in session
+`afe4d5856f49118a45dc1f392d94675fca3e7af3005ee3a0f75373aa72473b9c`.
+One attempted Docker run was rejected before product launch because the
+operator command accidentally duplicated part of the required image digest;
+it was not recorded as product evidence. The corrected content-pinned Docker
+journey passed in session
+`f56c209317f07f2dc82ed1849763fd254baf59bcbf40924f71668343b4d69df0`.
+
+The Worklanes & Panes journey passed after both backends were placed on the
+already-present mnemonic path; the isolated X11 session was
+`0acd21c91fe73943493b0c3f4ace73e92827986adfefdd33436a7d2f2789726e`.
+The Agents test now reaches the rendered Codex switch through the same stable
+focus chain for both the rejected malformed-config write and the subsequent
+accepted write. Its isolated X11 session
+`18b217846c2c44e4994bc98037f5fae88b37e24e956cf388852248039e9eb39d`
+passed the transactional rollback, persistence, live refresh, wrapper, and
+tmux-team boundaries.
+
+The installed-package journeys were also rerun independently rather than via
+the matrix. X11 passed with session
+`d8c0a0e1dc6ba2e8e07756482f084f70694cb52111c65165fe2780b84d26bb0a`;
+Wayland passed with session
+`75f88f139acf220167c28d99e4a7ac4f48f49928efa8b809ac43adce441486e7`.
+During the Wayland run the host's GNOME portal backend repeatedly exited with
+signal 11, but xdg-desktop-portal selected the GTK backend and the complete
+installed-product command returned zero. This is retained as environmental
+noise, not silently promoted into evidence that the GNOME portal is healthy.
+
+The clean-checkout reproducibility cell correctly refused to run while these
+repairs were uncommitted. It must be rerun from the resulting clean commit,
+followed by the pinned hosted Gemini cells and the other repaired regression
+cells, before another complete matrix invocation. No release or full-Linux
+qualification is claimed by these isolated passes.
