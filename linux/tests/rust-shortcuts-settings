@@ -120,13 +120,42 @@ main_type() {
 }
 
 open_command_palette() {
-    local shown_count
-    shown_count="$(grep -Fc 'zentty-linux: command-palette=shown' "${log}" 2>/dev/null || true)"
-    main_key ctrl+shift+p
-    zentty_product_wait_for_log_count "${log}" \
-        'zentty-linux: command-palette=shown' "$((shown_count + 1))" \
-        "command palette did not become ready for physical input" ||
-        fail "command palette readiness failed"
+    local attempt shown_count empty_count query_ready
+    for attempt in {1..3}; do
+        shown_count="$(grep -Fc 'zentty-linux: command-palette=shown' "${log}" 2>/dev/null || true)"
+        main_key ctrl+shift+p
+        zentty_product_wait_for_log_count "${log}" \
+            'zentty-linux: command-palette=shown' "$((shown_count + 1))" \
+            "command palette did not become ready for physical input" ||
+            fail "command palette readiness failed"
+
+        # A completed two-key query is an observable focus/readiness barrier.
+        # A compositor may deliver the first event while an immediately prior
+        # sidebar or config projection is still reallocating the window, then
+        # move focus before the second event. Close and reopen in that case;
+        # never treat a partial synthetic input sequence as readiness.
+        main_type zz
+        query_ready=false
+        for _ in {1..40}; do
+            if grep -Fq 'zentty-linux: command-palette=query value="zz"' "${log}" 2>/dev/null; then
+                query_ready=true
+                break
+            fi
+            sleep 0.05
+        done
+        if "${query_ready}"; then
+            empty_count="$(grep -Fc 'zentty-linux: command-palette=query value=""' "${log}" 2>/dev/null || true)"
+            main_key ctrl+a
+            main_key BackSpace
+            zentty_product_wait_for_log_count "${log}" \
+                'zentty-linux: command-palette=query value=""' "$((empty_count + 1))" \
+                "command palette readiness query did not clear" ||
+                fail "command palette readiness reset failed"
+            return 0
+        fi
+        main_key Escape
+    done
+    fail "command palette never retained two consecutive physical key events"
 }
 
 settings_window=""

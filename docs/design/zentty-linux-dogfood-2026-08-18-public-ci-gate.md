@@ -219,3 +219,37 @@ real matrix cells in 377 seconds. Its summary SHA-256 is
 and the repaired policy SHA-256 is
 `3179de53c57100d90d4f9dadae984837e1c57c03a6f4c3f0efb685fda89c4598`.
 Only the public PR subset claim is true.
+
+## Public run 32082709691: focus-readiness flake remained a failure
+
+The repaired push reran publicly at
+<https://github.com/TamedTornado/zentty/actions/runs/32082709691>. It proved the
+delivered-library repair: the shortcut journey started the real product and
+completed its settings, recording, reload, restart, light/dark theme, and
+persisted-shortcut stages. It then failed rather than flaking green when the
+final Appearance palette query received only the first `A` of `Appearance
+Settings`.
+
+The retained log establishes the race. Immediately after the persisted sidebar
+shortcut, GTK was still projecting sidebar/pane layout while the palette became
+visible. The palette received one physical event, then focus moved during the
+remaining projection. The old readiness check observed only
+`command-palette=shown`, which proves visibility but not stable keyboard focus.
+
+`open_command_palette` now uses an observable two-event readiness transaction:
+it types `zz`, requires the exact resulting query, clears it physically, and
+requires the empty query before returning to its caller. If projection steals
+focus between the two events, the test closes and reopens the real overlay up
+to three times. It does not sleep and declare success, inject text through an
+internal API, or accept partial delivery. The public flake remains recorded as
+a failure pending a corrected public PASS.
+
+Three consecutive real input-capable nested-Wayland repetitions passed after
+the repair, with session IDs
+`a95e859ed757c061147de8e920736b2852a5df3221a6810adf105c4e517f8669`,
+`96d4a4bd982c369825a28914e943bfb7f29e7948943d037f8e91b6f147e4d35e`,
+and `d9071bf8ccbae5f14d19986a91df60eea78a7ed7c00152c13d7420b0305d3775`.
+The shared palette helper also passed the complete controlled-X11 journey in
+session `f224c7c590e59b949fb098fe58fb7bb705fbdca313c6121465c365ee09099427`.
+No retry was converted into a pass without the exact two-key and clear-query
+receipts.
