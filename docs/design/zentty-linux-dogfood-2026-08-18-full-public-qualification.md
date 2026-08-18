@@ -188,3 +188,13 @@ contract rejects removal of both boundaries. Three consecutive journeys pass
 through the real nested Cage, virtual-keyboard, GTK, and Ghostty stack after
 the repair. The failed public gate remains a failure until its replacement run
 passes.
+
+Pushing that journey repair exposed a public-control defect before it could be
+silently missed: the PR gate started, but the full workflow did not. Its push
+trigger used a narrow path allowlist containing the matrix and runner while
+excluding individual journey scripts, Rust product code, and other qualified
+inputs. A full run for the preceding commit therefore continued instead of
+being superseded by the repaired candidate. The integration branch now runs
+full qualification for every push; the workflow contract has a negative that
+rejects any reintroduced `paths` filter. This deliberately favors trustworthy
+candidate identity over saving a run for documentation-only commits.

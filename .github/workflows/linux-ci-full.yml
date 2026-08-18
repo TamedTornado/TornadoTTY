@@ -4,14 +4,6 @@ on:
   push:
     branches:
       - linux/port
-    paths:
-      - .github/workflows/linux-ci-full.yml
-      - linux/ci/full-*
-      - linux/ci/bootstrap-ubuntu-24.04
-      - linux/ci/environment-v1.json
-      - linux/tests/qualify-local
-      - linux/tests/qualification-matrix
-      - linux/qualification-matrix.json
   schedule:
     - cron: '17 3 * * 1'
   workflow_dispatch:

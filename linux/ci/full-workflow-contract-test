@@ -12,6 +12,7 @@ expect_rejected() {
 }
 "${validator}" >/dev/null
 expect_rejected integration '  push:' '  push_REMOVED:'
+expect_rejected path-filter '  schedule:' '    paths:\n      - linux/tests/qualify-local\n  schedule:'
 expect_rejected schedule 'schedule:' 'schedule_REMOVED:'
 expect_rejected manual 'workflow_dispatch:' 'workflow_dispatch_REMOVED:'
 expect_rejected action 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1' 'actions/checkout@v7'
@@ -36,4 +37,4 @@ expect_rejected package-artifact 'build/linux-package/' 'build/REMOVED-linux-pac
 expect_rejected artifact-id 'name: linux-ci-full-${{ github.sha }}-${{ github.run_attempt }}' 'name: linux-ci-full-current'
 # shellcheck disable=SC2016
 expect_rejected commit 'ZENTTY_EXPECTED_COMMIT: ${{ github.sha }}' 'ZENTTY_EXPECTED_COMMIT: refs/heads/linux/port'
-echo "ci-full-workflow-contract-test: PASS negatives=triggers+action+permission+runner+credentials+profile+packages+sudo+timeout+runner+cleanup+cargo+evidence+claims+valgrind+package+artifact+commit"
+echo "ci-full-workflow-contract-test: PASS negatives=triggers+path-filter+action+permission+runner+credentials+profile+packages+sudo+timeout+runner+cleanup+cargo+evidence+claims+valgrind+package+artifact+commit"
