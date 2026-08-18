@@ -42,6 +42,9 @@
       "pnpm_integrity": "sha512-pwaTjw6JrBRWtlY+q07fHR+vM2jRGR/FxZeQ6W3JGORFarLmfWE94QQ9LoyB+HMD5rQNT/7KnfFe8a1Wc0jyvg==",
       "minimum_release_age_minutes": 10080,
       "lockfile": "linux/ci/node-tools/pnpm-lock.yaml"
+    },
+    "container_images": {
+      "busybox": "busybox@sha256:7a3ebe5bfd1a4a19797d20b0c0bb39d44393e9a03fd852c0865b0f540d868df0"
     }
   },
   "reviewed_agent_clis": {
@@ -94,6 +97,7 @@
     "mesa-utils",
     "meson",
     "ninja-build",
+    "notification-daemon",
     "openbox",
     "openssh-client",
     "openssh-server",
@@ -197,6 +201,7 @@
         "ffmpeg",
         "imagemagick",
         "labwc",
+        "notification-daemon",
         "openbox",
         "openssh-server",
         "valgrind",

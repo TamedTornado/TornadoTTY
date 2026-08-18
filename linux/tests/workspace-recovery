@@ -122,7 +122,7 @@ validate_publication "${state_directory}/restore-snapshot.json" 8388608
 writer_pid=$!
 temporary_file=""
 writer_stopped=false
-for _ in {1..10000}; do
+for _ in {1..2000}; do
     temporary_file="$(find "${state_directory}" -maxdepth 1 -type f -name '.restore-snapshot.json.tmp.*' -print -quit)"
     if [[ -n "${temporary_file}" ]]; then
         # Freeze the real writer before inspecting its path. Without this,
@@ -138,6 +138,7 @@ for _ in {1..10000}; do
         break
     fi
     kill -0 "${writer_pid}" 2>/dev/null || break
+    sleep 0.005
 done
 observed_temporary=false
 [[ -z "${temporary_file}" || "${writer_stopped}" == false ]] || observed_temporary=true

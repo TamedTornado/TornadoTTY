@@ -145,6 +145,10 @@ if [[ ! -x "${pnpm_bin}" ]] || [[ "$("${pnpm_bin}" --version)" != "${pnpm_versio
     rm -f -- "${archive}"
     trap - EXIT
 fi
+ln -sfn pnpm.cjs "${pnpm_dir}/bin/pnpm"
+ln -sfn pnpx.cjs "${pnpm_dir}/bin/pnpx"
+[[ "$("${pnpm_dir}/bin/pnpm" --version)" == "${pnpm_version}" ]] ||
+    fail "pnpm command shim is not reviewed"
 (
     cd "${repo_root}/linux/ci/node-tools"
     "${pnpm_bin}" install --frozen-lockfile

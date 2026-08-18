@@ -51,6 +51,15 @@ expect_failed_without_receipt wrong-ghostty-origin 'prepared Ghostty origin is n
 
 expect_failed_without_receipt wrong-zig 'Zig version is not reviewed' \
     env ZIG=/bin/true "${preflight}"
+mkdir -p "${fixture}/wrong-pnpm"
+cat >"${fixture}/wrong-pnpm/pnpm" <<'EOF'
+#!/usr/bin/env bash
+echo 10.32.1
+EOF
+chmod 0700 "${fixture}/wrong-pnpm/pnpm"
+expect_failed_without_receipt wrong-pnpm-command \
+    'pnpm command does not resolve to the reviewed tool' \
+    env PATH="${fixture}/wrong-pnpm:${PATH}" "${preflight}"
 expect_failed_without_receipt unknown-profile \
     'unknown qualification profile: not-reviewed' \
     env ZENTTY_CI_QUALIFICATION_PROFILE=not-reviewed "${preflight}"
@@ -65,4 +74,4 @@ chmod 0700 "${in_source_tool_root}/zig"
 expect_failed_without_receipt in-source-zig 'Zig must remain available outside the source checkout' \
     env ZIG="${in_source_tool_root}/zig" "${preflight}"
 
-echo "ci-preflight-test: PASS negatives=os+dirty-source+ghostty-origin+tool+tool-location+profile+stale-receipt"
+echo "ci-preflight-test: PASS negatives=os+dirty-source+ghostty-origin+tool+tool-command+tool-location+profile+stale-receipt"

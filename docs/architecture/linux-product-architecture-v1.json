@@ -760,7 +760,7 @@
       "optimize": "Debug",
       "async_backend": "n/a",
       "terminals": "n/a",
-      "command": "cargo test -p zentty-core --locked --test app_config && GHOSTTY_LIB_DIR=build/linux-profiles/debug/lib cargo test -p zentty-linux --locked config_store",
+      "command": "cargo test -p zentty-core --locked --test app_config && GHOSTTY_LIB_DIR=$PWD/build/linux-profiles/debug/lib cargo test -p zentty-linux --locked config_store",
       "authoritative": false
     },
     {

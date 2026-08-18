@@ -49,7 +49,7 @@ case "${backend}" in
         ;;
     *) fail "GDK_BACKEND must be x11 or wayland" ;;
 esac
-for dependency in grep head mktemp pnpm readelf sed seq sleep; do
+for dependency in grep head mktemp readelf sed seq sleep; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
 [[ -x "${product}" ]] || fail "staged product is missing: ${product}"

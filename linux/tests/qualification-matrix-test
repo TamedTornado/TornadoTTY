@@ -143,6 +143,12 @@ jq -e '
       .skip_profile_prerequisite == true)
 ' "${source_matrix}" >/dev/null
 
+jq -e '
+    (.cells[] | select(.id == "development-servers-docker-x11") |
+      (.command | contains("ZENTTY_TEST_BUSYBOX_IMAGE=busybox@sha256:7a3ebe5bfd1a4a19797d20b0c0bb39d44393e9a03fd852c0865b0f540d868df0")) and
+      (.command | contains("ZENTTY_TEST_DOCKER=true")))
+' "${source_matrix}" >/dev/null
+
 # All six bookmark journeys use timing-sensitive modal physical input. They may
 # overlap unrelated cells, but must not contend with each other after repeated
 # full-matrix evidence showed first dialog chords lost on both backends.

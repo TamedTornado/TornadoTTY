@@ -198,3 +198,93 @@ being superseded by the repaired candidate. The integration branch now runs
 full qualification for every push; the workflow contract has a negative that
 rejects any reintroduced `paths` filter. This deliberately favors trustworthy
 candidate identity over saving a run for documentation-only commits.
+
+## Third public run: real gate pass and full-run resource/dependency failures
+
+The replacement PR gate
+<https://github.com/TamedTornado/zentty/actions/runs/32121127865> passed at exact
+commit `7d7e3ca8` in 19 minutes 44 seconds. This is the first public proof that
+the bounded gate, including its repaired Wayland shortcut journey, passes from
+a cold hosted checkout. It does not qualify the larger release suite.
+
+The corresponding full run
+<https://github.com/TamedTornado/zentty/actions/runs/32121127845> failed after
+55 minutes 57 seconds and retained its machine-readable summary and receipts.
+It reported 25 failed executed cells. The failures were not collapsed into the
+declared matrix totals and the run is not a qualification pass. Inspection of
+the receipts separated five deterministic environment/test defects from a
+larger group of concurrent real-GUI failures:
+
+- the public archive contained `pnpm.cjs`, but bootstrap had not installed a
+  command named `pnpm`; a developer-machine installation had masked this;
+- `notification-daemon` was absent from the full package manifest;
+- the Docker journey assumed a mutable `busybox:latest` image already existed
+  while also prohibiting pulls;
+- the interrupted-write recovery harness polled in a scheduler-hostile busy
+  loop, allowing its 10,000 checks to finish before the writer ran; and
+- the architecture mirror still contained the pre-repair relative Debug
+  library path.
+
+The run also launched four software-rendered GTK/Ghostty journeys at once on a
+two-core hosted runner. The same shortcut journey that passed serially in the
+public gate failed in this overloaded full run, together with many independent
+X11 and Wayland journeys. This is evidence that four-way public GUI execution
+is not a trustworthy qualification environment, not evidence that those cells
+passed. The full workflow now limits matrix-cell concurrency to two while
+retaining two build and support jobs. The workflow contract mutation-tests
+that policy; this does not serialize the suite or restore the obsolete
+one-worker workaround.
+
+Bootstrap now creates `pnpm`/`pnpx` command links to the content-pinned archive,
+and preflight proves the command found on `PATH` resolves to the exact reviewed
+binary. The full environment explicitly installs `notification-daemon`.
+Docker qualification uses and pre-pulls the immutable amd64 BusyBox fixture
+`busybox@sha256:7a3ebe5bfd1a4a19797d20b0c0bb39d44393e9a03fd852c0865b0f540d868df0`;
+the environment validator, matrix contract, and journey all reject a mutable
+tag. The recovery harness now yields for up to ten bounded seconds rather than
+consuming a core in a tight loop, and the architecture mirror again matches the
+authoritative command.
+
+Focused local proof after these repairs includes three consecutive real
+SIGKILL interrupted-write journeys; real task-runner journeys on nested X11
+and nested Cage Wayland input; real notification journeys on both backends with
+a private D-Bus and the actual notification daemon; and a real Docker-backed
+development-server journey using the exact digest. Environment, workflow,
+matrix, architecture, and shell contracts pass. The local host's
+`/tmp/.X11-unix` had nonstandard `nobody:nogroup` ownership and initially
+prevented Xvfb from binding; correcting it to the X11-required root ownership
+made the controlled X11 journeys executable. That environmental absence was
+recorded as a failure and was not treated as a pass.
+
+Valgrind governance correctly failed the public run and prompted a separate raw
+receipt audit. The Debug IBus-focus candidate retained both unsuppressed and
+post-suppression receipts, with 414 raw errors, 6,016 definitely lost bytes,
+and 28,044 indirectly lost bytes. The project layout-cache rule still matched
+exactly two contexts, but their two definite realloc roots were 6,575 and 6,710
+bytes rather than the larger cache roots seen locally. Both raw records retain
+the exact Fontconfig-to-Pango `pango_layout_get_size` consumer stack documented
+by the non-Ghostty reproducer. The public report identifies the same reviewed
+Ubuntu Fontconfig 2.15.0 and Pango 1.52.1 libraries; its raw receipt SHA-256 is
+`c6bbf33fc15f2a25dac12de47689d26e4588c09df672dc449176674deb012549`
+and its suppressed receipt SHA-256 is
+`9e8db97d04defbe3d790b99afa0412cbcfdd711dca617ea385e827b9337bad36`.
+
+The suppression stack and maximum allowed context count are unchanged. The
+manifest's reviewed lower byte bound now includes the independently retained
+13,285-byte public observation, while the existing maximum still rejects any
+increase. Zero use remains stale, use outside the IBus/X11 scenario remains an
+error, and the child rules still require this exact root. This is an evidence
+range correction, not a broader Valgrind suppression. Debug can therefore only
+be described as PASS with reviewed suppressions after governance passes again;
+it is not an unsuppressed clean result. ReleaseSafe Valgrind remains XFAIL.
+Until a corrected public full run passes every executable cell, the only valid
+claim is that the replacement public gate passed.
+
+A fresh local paired run subsequently exercised the unchanged non-Ghostty
+GTK/IBus reproducer and governance. Its unsuppressed receipt reported 427
+errors from 427 contexts, 6,160 definitely lost bytes, and 41,428 indirectly
+lost bytes. The post-suppression receipt reported zero errors and zero
+definite/indirect bytes; the layout root remained exactly two contexts and
+26,176 bytes. Governance passed against the full inherited Ghostty plus Zentty
+suppression set. The correct result wording is **PASS with reviewed
+suppressions**, never an unsuppressed clean result.

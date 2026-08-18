@@ -82,12 +82,15 @@ bundle_lib="${ZENTTY_PRODUCT_BUNDLE_LIB}"
 
 if [[ "${ZENTTY_TEST_DOCKER:-false}" == true ]]; then
     command -v docker >/dev/null || fail "docker is required for the container cell"
+    busybox_image="${ZENTTY_TEST_BUSYBOX_IMAGE:-}"
+    [[ "${busybox_image}" =~ ^busybox@sha256:[0-9a-f]{64}$ ]] ||
+        fail "a content-pinned BusyBox image is required"
     container_id="$(
         docker run -d --rm --pull=never \
             --label "com.docker.compose.project.working_dir=${repo_root}" \
             --label 'com.docker.compose.service=web' \
             -p 127.0.0.1::8000 \
-            busybox:latest httpd -f -p 8000
+            "${busybox_image}" httpd -f -p 8000
     )" || fail "real disposable web container did not start"
     docker_port="$(docker port "${container_id}" 8000/tcp | sed -n 's/^127\.0\.0\.1:\([0-9][0-9]*\)$/\1/p')"
     [[ "${docker_port}" =~ ^[1-9][0-9]*$ ]] || fail "Docker did not publish a dynamic host port"

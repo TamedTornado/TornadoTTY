@@ -31,6 +31,7 @@ jobs:
       GIO_USE_VFS: local
       ZENTTY_BUILD_JOBS: "2"
       ZENTTY_QUALIFICATION_SUPPORT_JOBS: "2"
+      ZENTTY_QUALIFICATION_JOBS: "2"
       ZENTTY_CI_QUALIFICATION_PROFILE: full
       ZENTTY_EXPECTED_COMMIT: ${{ github.sha }}
 
@@ -59,8 +60,8 @@ jobs:
             gir1.2-gtk-4.0 git ibus ibus-gtk4 imagemagick jq labwc
             libadwaita-1-dev libcairo2-dev libfontconfig-dev libglib2.0-dev
             libgtk-4-dev libnotify-bin libwayland-dev libx11-dev
-            libxkbcommon-dev libxml2-utils mesa-utils meson ninja-build openbox
-            openssh-client openssh-server patchelf pkg-config procps python3
+            libxkbcommon-dev libxml2-utils mesa-utils meson ninja-build
+            notification-daemon openbox openssh-client openssh-server patchelf pkg-config procps python3
             python3-gi python3-jsonschema shellcheck socat tmux util-linux valgrind
             wayland-utils weston wl-clipboard wtype x11-utils xauth xclip
             xdg-utils xdotool xserver-xephyr xvfb ydotool zsh
@@ -92,6 +93,8 @@ jobs:
           set -euo pipefail
           source build/linux-ci-tools/environment.sh
           cargo fetch --locked 2>&1 | tee build/linux/ci-full-cargo-fetch.log
+          docker pull busybox@sha256:7a3ebe5bfd1a4a19797d20b0c0bb39d44393e9a03fd852c0865b0f540d868df0 \
+            2>&1 | tee build/linux/ci-full-docker-pull.log
           linux/scripts/prepare-ghostty-source \
             2>&1 | tee build/linux/ci-full-prepare-ghostty.log
           linux/ci/preflight 2>&1 | tee build/linux/ci-full-preflight.log

@@ -95,6 +95,10 @@ nu="${ZENTTY_TEST_NU:-${tools_root}/nu-0.114.1/nu}"
     fail "Node version is not reviewed"
 [[ "$("${pnpm}" --version)" == "$(jq -r '.toolchains.node.pnpm_version' "${manifest}")" ]] ||
     fail "pnpm version is not reviewed"
+pnpm_command="$(command -v pnpm || true)"
+[[ -n "${pnpm_command}" &&
+    "$(readlink -f -- "${pnpm_command}")" == "$(readlink -f -- "${pnpm}")" ]] ||
+    fail "pnpm command does not resolve to the reviewed tool"
 [[ "$("${fish}" --version)" == "fish, version $(jq -r '.toolchains.qualification_shells.fish.version' "${manifest}")" ]] ||
     fail "Fish version is not reviewed"
 [[ "$("${nu}" --version)" == "$(jq -r '.toolchains.qualification_shells.nu.version' "${manifest}")" ]] ||
