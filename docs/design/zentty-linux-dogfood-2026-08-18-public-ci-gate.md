@@ -362,3 +362,74 @@ changing the qualified environment. Weston is therefore restored as the one
 exact missing package and required command; the other eight exclusions remain.
 The failed run and its retained artifact remain the negative receipt for this
 discovery, not evidence of product failure.
+
+## Corrected `linux/port` public PASS
+
+The exact Weston repair at revision
+`a63a82f520fc7e2a6b2ab632d8dbf8730fe211f1` passed the public push gate at
+<https://github.com/TamedTornado/zentty/actions/runs/32101731515>. Package
+installation, now including Weston, completed in about one minute. The
+authoritative subset then passed all 9 support tests and all 18 selected real
+matrix cells on controlled Wayland and X11 in 1,170 seconds. The independently
+downloaded machine summary has SHA-256
+`db29c0009ed61d3b6dd2531806a5f7cac4f5842c3f2e35d4866a6792b9e46d25`.
+Its only true claim is `public_pr_subset_passed`; implemented-local, release,
+and full-Linux qualification remain false.
+
+The independently revalidated preflight receipt selected `public-pr`, recorded
+50 exact apt package versions, identified Zentty revision
+`a63a82f520fc7e2a6b2ab632d8dbf8730fe211f1` and Ghostty revision
+`281d7d7dbeab24c1a2d04f6d3c720c34dbfac645`, and proved user namespaces,
+Bubblewrap, controlled X11, and controlled Wayland. Its SHA-256 is
+`1acfa7c3ff0a54b3ec22b670780c2cbc0a65cffcdbce4e26c556d717fb489b27`.
+
+Together with PR run 32082760261 and the three consecutive local Wayland plus
+one local X11 repetitions recorded above, this supplies a repeat baseline
+across both event kinds and display backends. The two earlier public failures
+remain failures with tracked diagnoses; they were not removed from the
+baseline as flakes.
+
+## Deliberate public fail-closed fixtures
+
+Four disposable pull requests, all based on the corrected passing revision,
+exercised the required negative cases in parallel on separate public runners.
+Each branch contained one conspicuous `GH-57` fixture (or the all-zero Ghostty
+revision), was contract-validated before push, and is prohibited from merging.
+
+- Wrong Ghostty revision: PR #61, run
+  <https://github.com/TamedTornado/zentty/actions/runs/32103338576>, branch
+  revision `820625fc6623bbd72ab9c438b3cdc94dd72ba9c3`. Preparing the reviewed
+  source failed on `not our ref 0000000000000000000000000000000000000000`.
+  No preflight or subset receipt existed, so the job published no positive
+  qualification claim and the always-run artifact retained the apt, bootstrap,
+  and prepare-source logs.
+- Wayland startup: PR #62, run
+  <https://github.com/TamedTornado/zentty/actions/runs/32103340967>, branch
+  revision `96cb8542e6e9e54fc7de37fc9170dcf49518d65c`. The first Wayland cell
+  emitted the deliberate compositor-startup diagnostic. With no valid
+  controlled-environment receipt, the runner reported
+  `INVALID_ENVIRONMENT_RECEIPT`, 2/18 cells passed, and a false subset claim.
+  The validated failure-summary SHA-256 is
+  `972a6eee07f3941bc9019f00ed44f313fe89dd3a273412f26490df342c8a11b5`.
+- Real product assertion: PR #63, run
+  <https://github.com/TamedTornado/zentty/actions/runs/32103341178>, branch
+  revision `a48a49e3d508adb6ec59731affa99d69b25aaf9e`. The real delivered product,
+  compositor, Ghostty terminal, and PTY lifecycle ran, then the deliberately
+  impossible terminal-readiness assertion failed. The runner reported `FAIL`,
+  2/18 cells passed, and a false subset claim. The validated failure-summary
+  SHA-256 is
+  `8e5a1a2a41d19522cccdd5c8586ea517f6c2e0c7337a0fc2e07b319397470e36`.
+- X11 startup: PR #64, run
+  <https://github.com/TamedTornado/zentty/actions/runs/32103342843>, branch
+  revision `0a2a35a4e02740817ac55ceffc910ab2b64122f9`. Both preceding real Wayland
+  cells passed; the first X11 cell then emitted the deliberate display-startup
+  diagnostic. The absent X11 receipt produced
+  `INVALID_ENVIRONMENT_RECEIPT`, 4/18 cells passed, and a false subset claim.
+  The validated failure-summary SHA-256 is
+  `37818a6c4558556263a3bc887c3c645f6bde0a377142e66e04939c6714acc8f0`.
+
+All four jobs concluded `failure`, all ran their `if: always()` evidence upload,
+and the three runs that reached the subset produced independently validated
+negative machine summaries. Environmental/startup absence was never converted
+to PASS, and the real assertion failure remained distinct from invalid
+environment evidence.
