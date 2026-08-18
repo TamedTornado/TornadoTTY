@@ -149,6 +149,13 @@ jq -e '
       (.command | contains("ZENTTY_TEST_DOCKER=true")))
 ' "${source_matrix}" >/dev/null
 
+jq -e '
+    all(.cells[] | select(.id == "installed-product-x11" or .id == "installed-product-wayland");
+      (.command | startswith("dbus-run-session -- env "))) and
+    (.cells[] | select(.id == "notification-custom-sound-import") |
+      (.command | startswith("GHOSTTY_LIB_DIR=$PWD/build/linux-profiles/release-safe/lib ")))
+' "${source_matrix}" >/dev/null
+
 # All six bookmark journeys use timing-sensitive modal physical input. They may
 # overlap unrelated cells, but must not contend with each other after repeated
 # full-matrix evidence showed first dialog chords lost on both backends.

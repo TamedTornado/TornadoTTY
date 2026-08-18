@@ -31,7 +31,7 @@ jobs:
       GIO_USE_VFS: local
       ZENTTY_BUILD_JOBS: "2"
       ZENTTY_QUALIFICATION_SUPPORT_JOBS: "2"
-      ZENTTY_QUALIFICATION_JOBS: "2"
+      ZENTTY_QUALIFICATION_JOBS: "1"
       ZENTTY_CI_QUALIFICATION_PROFILE: full
       ZENTTY_EXPECTED_COMMIT: ${{ github.sha }}
 
@@ -97,6 +97,9 @@ jobs:
             2>&1 | tee build/linux/ci-full-docker-pull.log
           linux/scripts/prepare-ghostty-source \
             2>&1 | tee build/linux/ci-full-prepare-ghostty.log
+          sudo install -o root -g root -m 0644 \
+            linux/ci/60-zentty-public-inhibit.rules \
+            /etc/polkit-1/rules.d/60-zentty-public-inhibit.rules
           linux/ci/preflight 2>&1 | tee build/linux/ci-full-preflight.log
           linux/ci/validate-preflight-receipt
 

@@ -724,7 +724,7 @@
       "async_backend": "default",
       "terminals": "single",
       "depends_on": ["platform-notifications-x11", "platform-notifications-wayland"],
-      "command": "cargo test --locked -p zentty-linux custom_sound_store",
+      "command": "GHOSTTY_LIB_DIR=$PWD/build/linux-profiles/release-safe/lib cargo test --locked -p zentty-linux custom_sound_store",
       "authoritative": false
     },
     {

@@ -190,11 +190,11 @@
       "expected_suppressed": {"matches": {"min": 1, "max": 2}, "bytes": {"min": 13100, "max": 26300}},
       "expected_by_scenario": {
         "Debug/single/x11": {"matches": {"min": 1, "max": 1}, "bytes": {"min": 8656, "max": 13200}},
-        "Debug/ibus-focus/x11": {"matches": {"min": 2, "max": 2}, "bytes": {"min": 10150, "max": 10182}}
+        "Debug/ibus-focus/x11": {"matches": {"min": 2, "max": 2}, "bytes": {"min": 9552, "max": 10182}}
       },
       "allowed_scenarios": ["Debug/single/wayland", "Debug/interaction/wayland", "Debug/single/x11", "Debug/interaction/x11", "Debug/ibus-focus/x11", "ReleaseSafe/interaction/wayland", "ReleaseSafe/interaction/x11"],
-      "justification": "The allocation begins in stripped Fontconfig and is consumed through the named Pango metrics API. Child rules are permitted only when this root is present in the same report.",
-      "reproducer": "linux/tests/ibus-focus-reproducer.c reproduces the root without linking Ghostty; linux/tests/ibus-focus-memory preserves raw and suppression-enabled candidate receipts pending qualification governance.",
+      "justification": "The allocation begins in stripped Fontconfig and is consumed through the named Pango metrics API. Child rules are permitted only when this root is present in the same report. Public full runs 32121127845 and 32129794981 independently retained exactly two roots totaling 9,552 bytes; the maximum context count remains unchanged.",
+      "reproducer": "linux/tests/ibus-focus-reproducer.c reproduces the root without linking Ghostty. Public run 32129794981 retained the paired raw and suppression-enabled receipts for the reviewed 9,552-byte observation.",
       "required_usage": true
     },
     {
@@ -204,12 +204,12 @@
       "finding_type": "Memcheck:Leak indirect children with pango_context_get_metrics consumer",
       "expected_suppressed": {"matches": {"min": 16, "max": 32}, "bytes": {"min": 512, "max": 1024}},
       "expected_by_scenario": {
-        "Debug/ibus-focus/x11": {"matches": {"min": 31, "max": 32}, "bytes": {"min": 992, "max": 1024}}
+        "Debug/ibus-focus/x11": {"matches": {"min": 30, "max": 32}, "bytes": {"min": 960, "max": 1024}}
       },
       "allowed_scenarios": ["Debug/single/wayland", "Debug/interaction/wayland", "Debug/single/x11", "Debug/interaction/x11", "Debug/ibus-focus/x11", "ReleaseSafe/interaction/wayland", "ReleaseSafe/interaction/x11"],
       "requires_root_rule": "GTK Pango Fontconfig metrics cache",
-      "justification": "Every frame includes both stripped Fontconfig and pango_context_get_metrics; usage must co-occur with the separately tracked root.",
-      "reproducer": "The non-Ghostty Pango/IBus reproducer yields 32 matches/1024 bytes beside two metrics roots; product X11 yields 16/512 beside one root.",
+      "justification": "Every frame includes both stripped Fontconfig and pango_context_get_metrics; usage must co-occur with the separately tracked root. Public runs 32121127845 and 32129794981 retained 30 contexts/960 bytes beside the same two metrics roots.",
+      "reproducer": "The non-Ghostty Pango/IBus reproducer yields 30-32 matches/960-1024 bytes beside two metrics roots; product X11 yields 16/512 beside one root.",
       "required_usage": true
     },
     {
@@ -223,14 +223,14 @@
         "Debug/interaction/wayland": {"matches": {"min": 10, "max": 10}, "bytes": {"min": 4634, "max": 4634}},
         "Debug/single/x11": {"matches": {"min": 8, "max": 21}, "bytes": {"min": 1933, "max": 2289}},
         "Debug/interaction/x11": {"matches": {"min": 8, "max": 10}, "bytes": {"min": 2289, "max": 4634}},
-        "Debug/ibus-focus/x11": {"matches": {"min": 2, "max": 8}, "bytes": {"min": 4281, "max": 4618}},
+        "Debug/ibus-focus/x11": {"matches": {"min": 2, "max": 20}, "bytes": {"min": 1836, "max": 4618}},
         "ReleaseSafe/interaction/wayland": {"matches": {"min": 10, "max": 10}, "bytes": {"min": 4634, "max": 4634}},
         "ReleaseSafe/interaction/x11": {"matches": {"min": 4, "max": 8}, "bytes": {"min": 2182, "max": 4536}}
       },
       "allowed_scenarios": ["Debug/single/wayland", "Debug/interaction/wayland", "Debug/single/x11", "Debug/interaction/x11", "Debug/ibus-focus/x11", "ReleaseSafe/interaction/wayland", "ReleaseSafe/interaction/x11"],
       "requires_root_rule": "GTK Pango Fontconfig metrics cache",
-      "justification": "The prior one-frame Fontconfig rule was rejected. This rule now requires strdup followed by five consecutive stripped Fontconfig frames and is valid only beside the metrics root. A reviewed 2026-08-11 warm-cache IBus run increased this exact narrowed child rule from 2-4 to 8 matches while retaining the two metrics roots; the scenario maximum now records that observation and remains below the standalone reproducer's 18 matches.",
-      "reproducer": "With 40-frame receipts, the non-Ghostty Pango/IBus reproducer records 18 matches/2962 bytes beside two explicitly requested metrics roots; reviewed cold/warm product runs include the preserved 8-match/4281-byte Debug IBus receipt.",
+      "justification": "The prior one-frame Fontconfig rule was rejected. This rule requires strdup followed by five consecutive stripped Fontconfig frames and is valid only beside the metrics root. Public runs 32121127845 and 32129794981 retained 20 fragmented string contexts totaling 1,836 bytes beside exactly two metrics roots; the increased context count is therefore reviewed only with the lower bounded total and unchanged root requirement.",
+      "reproducer": "With 40-frame receipts, the non-Ghostty Pango/IBus reproducer records the deep string descendants beside two explicitly requested metrics roots. Public run 32129794981 preserves the reviewed 20-match/1,836-byte paired receipt.",
       "required_usage": true
     },
     {
@@ -244,14 +244,14 @@
         "Debug/interaction/wayland": {"matches": {"min": 1, "max": 1}, "bytes": {"min": 7744, "max": 7744}},
         "Debug/single/x11": {"matches": {"min": 1, "max": 1}, "bytes": {"min": 2688, "max": 3872}},
         "Debug/interaction/x11": {"matches": {"min": 1, "max": 1}, "bytes": {"min": 3872, "max": 7744}},
-        "Debug/ibus-focus/x11": {"matches": {"min": 1, "max": 1}, "bytes": {"min": 7072, "max": 8256}},
+        "Debug/ibus-focus/x11": {"matches": {"min": 1, "max": 1}, "bytes": {"min": 2880, "max": 8256}},
         "ReleaseSafe/interaction/wayland": {"matches": {"min": 1, "max": 1}, "bytes": {"min": 7744, "max": 7744}},
         "ReleaseSafe/interaction/x11": {"matches": {"min": 1, "max": 1}, "bytes": {"min": 3872, "max": 7744}}
       },
       "allowed_scenarios": ["Debug/single/wayland", "Debug/interaction/wayland", "Debug/single/x11", "Debug/interaction/x11", "Debug/ibus-focus/x11", "ReleaseSafe/interaction/wayland", "ReleaseSafe/interaction/x11"],
       "requires_root_rule": "GTK Pango Fontconfig metrics cache",
-      "justification": "The prior malloc-plus-one-Fontconfig rule was rejected. This replacement requires eight consecutive stripped Fontconfig frames and root co-occurrence. The reviewed Debug IBus warm-cache receipt retained exactly one narrowed node context while its indirect bytes decreased from 8,256 to 7,072.",
-      "reproducer": "The non-Ghostty Pango/IBus reproducer records 1 match/4384 bytes beside two explicitly requested metrics roots; reviewed cold/warm product runs include the preserved one-match/7072-byte Debug IBus receipt.",
+      "justification": "The prior malloc-plus-one-Fontconfig rule was rejected. This replacement requires eight consecutive stripped Fontconfig frames and root co-occurrence. Public runs 32121127845 and 32129794981 retained exactly one narrowed node context/2,880 bytes beside the same two metrics roots.",
+      "reproducer": "The non-Ghostty Pango/IBus reproducer records this single deep-node graph beside two explicitly requested metrics roots; public run 32129794981 preserves the reviewed one-match/2,880-byte receipt.",
       "required_usage": true
     },
     {

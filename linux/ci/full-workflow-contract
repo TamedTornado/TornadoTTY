@@ -5,12 +5,15 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 workflow="${ZENTTY_CI_FULL_WORKFLOW:-${repo_root}/.github/workflows/linux-ci-full.yml}"
 actions_manifest="${ZENTTY_CI_ACTIONS_MANIFEST:-${repo_root}/linux/ci/actions-v1.json}"
 environment_manifest="${ZENTTY_CI_ENVIRONMENT_MANIFEST:-${repo_root}/linux/ci/environment-v1.json}"
+logind_policy="${ZENTTY_CI_LOGIND_POLICY:-${repo_root}/linux/ci/60-zentty-public-inhibit.rules}"
 fixture="$(mktemp -d)"
 trap 'rm -rf -- "${fixture}"' EXIT
 fail() { echo "ci-full-workflow-contract: error: $*" >&2; exit 1; }
 
-for dependency in awk grep jq sort; do command -v "${dependency}" >/dev/null || fail "${dependency} is required"; done
+for dependency in awk grep jq sha256sum sort; do command -v "${dependency}" >/dev/null || fail "${dependency} is required"; done
 [[ -f "${workflow}" ]] || fail "full qualification workflow is missing"
+[[ "$(sha256sum "${logind_policy}" | awk '{print $1}')" == "9fab31b97a88e65f0466bd0d4896f85d0e1f91b59c68a5f1c7d85d082514ff00" ]] ||
+    fail "public logind policy is not the reviewed least-privilege rule"
 while IFS=$'\t' read -r repository revision; do
     grep -Fq "uses: ${repository}@${revision}" "${workflow}" || fail "workflow does not pin ${repository} to ${revision}"
 done < <(jq -r '.actions[] | [.repository,.revision] | @tsv' "${actions_manifest}")
@@ -26,7 +29,7 @@ grep -Fq 'runs-on: ubuntu-24.04' "${workflow}" || fail "runner baseline is not p
 grep -Fq 'timeout-minutes: 360' "${workflow}" || fail "job deadline is absent"
 grep -Fq 'node-version: 24.14.0' "${workflow}" || fail "Node version is not pinned"
 grep -Fq 'ZENTTY_CI_QUALIFICATION_PROFILE: full' "${workflow}" || fail "full profile is absent"
-grep -Fq 'ZENTTY_QUALIFICATION_JOBS: "2"' "${workflow}" || fail "public runner concurrency is unbounded"
+grep -Fq 'ZENTTY_QUALIFICATION_JOBS: "1"' "${workflow}" || fail "public GUI qualification is not isolated"
 grep -Fq 'contents: read' "${workflow}" || fail "read-only permission is absent"
 ! grep -Eq 'contents:[[:space:]]+write|permissions:[[:space:]]+write-all' "${workflow}" || fail "write permission is present"
 grep -Fq 'persist-credentials: false' "${workflow}" || fail "checkout credentials persist"
@@ -36,6 +39,7 @@ grep -Fq 'linux/tests/qualify-local' "${workflow}" || fail "authoritative runner
 grep -Fq 'linux/ci/reset-product-outputs' "${workflow}" || fail "product cleanup is absent"
 grep -Fq 'cargo fetch --locked' "${workflow}" || fail "prepared Cargo registry is absent"
 grep -Fq 'docker pull busybox@sha256:7a3ebe5bfd1a4a19797d20b0c0bb39d44393e9a03fd852c0865b0f540d868df0' "${workflow}" || fail "pinned Docker fixture is absent"
+grep -Fq 'linux/ci/60-zentty-public-inhibit.rules' "${workflow}" || fail "reviewed public logind policy is absent"
 grep -Fq 'rm -rf -- build/linux/matrix-logs' "${workflow}" || fail "qualification cleanup is absent"
 [[ "$(grep -Fc 'if: always()' "${workflow}")" -ge 3 ]] || fail "always-run evidence is incomplete"
 grep -Fq 'GITHUB_STEP_SUMMARY' "${workflow}" || fail "human summary is absent"

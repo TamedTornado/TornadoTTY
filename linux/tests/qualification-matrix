@@ -436,11 +436,11 @@ jq -e '
     any($cells[];
         .id == "installed-product-x11" and .display == "x11" and
         .environment_profile == "nested-x11-v1" and
-        (.command | startswith("GDK_BACKEND=x11 "))) and
+        (.command | startswith("dbus-run-session -- env GDK_BACKEND=x11 "))) and
     any($cells[];
         .id == "installed-product-wayland" and .display == "wayland" and
         .environment_profile == "nested-wayland-input-v1" and
-        (.command | startswith("GDK_BACKEND=wayland ")))
+        (.command | startswith("dbus-run-session -- env GDK_BACKEND=wayland ")))
 ' "${matrix}" >/dev/null || fail "installed-product cells are missing or malformed"
 
 jq -e '

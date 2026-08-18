@@ -298,3 +298,73 @@ and the paired Debug Valgrind run. Declared matrix totals remain 161 PASS,
 0 FAIL, 5 BLOCKED, 1 XFAIL, and 14 NOT_IMPLEMENTED. Therefore implemented
 local qualification passed, but release qualification and full Linux
 qualification remain correctly NOT_PASSED.
+
+## Fourth public run: two GUI workers are still not a controlled host
+
+The public PR gate for exact commit `e2c6ff23`
+<https://github.com/TamedTornado/zentty/actions/runs/32129795002> passed in
+20 minutes 36 seconds. The corresponding full run
+<https://github.com/TamedTornado/zentty/actions/runs/32129794981> retained its
+receipts and failed after 50 minutes 8 seconds: 141 executed cells passed, 18
+failed, and two were blocked by failed dependencies. The declared matrix still
+contains 161 PASS, 0 FAIL, 5 BLOCKED, 1 XFAIL, and 14 NOT_IMPLEMENTED cells;
+those declarations do not conceal the execution failures. No release or full
+qualification claim is valid for this run.
+
+The attempted reduction from four to two simultaneous GUI cells was
+insufficient on the two-core hosted runner. Physical-input and real process
+journeys on both backends timed out in groups while the same journeys passed
+in the serial public gate and in the four-worker local qualification on this
+development host. Public full qualification will therefore execute one matrix
+cell at a time. This is scoped to the resource-constrained public GUI runner:
+public compilation and support work retain two jobs, and local qualification
+retains its four-cell default. The workflow contract now rejects relaxing the
+public isolation accidentally. This supersedes the earlier expectation that
+two public GUI workers would be trustworthy; retained public evidence proved
+otherwise.
+
+Four independent deterministic defects were also present and are repaired
+rather than attributed to load:
+
+- installed-package journeys had a private display but inherited no D-Bus
+  session, so the real status-notifier startup failed; both authoritative cells
+  now run inside `dbus-run-session` as well as their nested display;
+- GitHub's runner account has no active logind seat, so the real
+  `systemd-inhibit --what=sleep --mode=block` call was denied. The full workflow
+  installs a reviewed polkit rule granting only user `runner` and only
+  `org.freedesktop.login1.inhibit-block-sleep`; its exact content is hashed and
+  mutation-tested by the workflow contract. No fake inhibitor replaces the
+  production integration;
+- the custom-sound test relied on a source-tree Ghostty library that is absent
+  in a clean public checkout. Its matrix and architecture commands now select
+  the immutable ReleaseSafe bundle explicitly; and
+- the real interrupted-write child could finish its 8 MiB publication between
+  public polling intervals. The harness now writes 64 MiB, preserving a wide
+  observable interruption window without adding another watcher or mock. Three
+  consecutive local SIGKILL journeys passed.
+
+Valgrind again retained paired raw and post-suppression evidence. The public
+raw receipt SHA-256 is
+`40300a5c8349bd5d5c66d4da38c02567d4ff7979f03f68019b8f747dcaf6e4b3`
+and reports 414 errors/contexts, 5,936 definitely lost bytes, and 28,043
+indirectly lost bytes. Its post-suppression receipt SHA-256 is
+`82de13b66d999113993cbd08a95672b450f0917f2883cbd6c2728bf9d1ce7d33`;
+the retained machine-readable report contains zero post-suppression errors or
+leak bytes. Governance rejected the run because the hosted Fontconfig/Pango
+cache graph used the same narrowed
+roots but split descendants differently: metrics roots 2/9,552 bytes, node
+1/2,880 bytes, strings 20/1,836 bytes, and children 30/960 bytes. The preceding
+public run independently recorded the same graph. The manifest now admits
+these exact reviewed observations while retaining root co-occurrence,
+scenario restrictions, and maximum root counts. No suppression pattern was
+broadened.
+
+A fresh local non-Ghostty GTK/IBus run after the manifest correction retained
+its unsuppressed receipt with 427 errors/contexts, 6,080 definitely lost bytes,
+and 41,395 indirectly lost bytes. The paired suppressed receipt contained zero
+errors and zero definite/indirect bytes; governance passed across the effective
+inherited Ghostty and project suppression set. This result is **PASS with
+reviewed suppressions**, not an unsuppressed clean result. ReleaseSafe Valgrind
+remains XFAIL. Remaining uncertainty is whether serial public execution plus
+the narrowly authorized logind operation is sufficient; only the next clean
+public full receipt can answer that.

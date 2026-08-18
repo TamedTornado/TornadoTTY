@@ -6,6 +6,7 @@ writer="${repo_root}/target/debug/examples/workspace_recovery_writer"
 state_directory=""
 writer_log=""
 writer_pid=""
+interrupted_payload_bytes=67108864
 
 fail() {
     echo "workspace-recovery: error: $*" >&2
@@ -115,10 +116,10 @@ state_directory="$(mktemp -d)"
 writer_log="$(mktemp)"
 
 "${writer}" "${state_directory}" 0 >"${writer_log}" 2>&1
-validate_publication "${state_directory}/restore-snapshot.json" 8388608
+validate_publication "${state_directory}/restore-snapshot.json" "${interrupted_payload_bytes}"
 : >"${writer_log}"
 
-"${writer}" "${state_directory}" 8388608 >"${writer_log}" 2>&1 &
+"${writer}" "${state_directory}" "${interrupted_payload_bytes}" >"${writer_log}" 2>&1 &
 writer_pid=$!
 temporary_file=""
 writer_stopped=false
@@ -150,7 +151,7 @@ writer_status=$?
 set -e
 writer_pid=""
 require_interruption_evidence "${observed_temporary}" "${writer_status}" "${writer_log}"
-validate_publication "${state_directory}/restore-snapshot.json" 8388608
+validate_publication "${state_directory}/restore-snapshot.json" "${interrupted_payload_bytes}"
 
 "${writer}" "${state_directory}" 64 >"${writer_log}" 2>&1
 grep -Fx 'workspace-recovery-writer: COMPLETE payload_bytes=64' "${writer_log}" >/dev/null ||
