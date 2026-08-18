@@ -330,3 +330,12 @@ developer checkout was already dirty. Each negative now requires its exact
 diagnostic in addition to failure and stale-receipt deletion. A dirty tree can
 no longer masquerade as proof of wrong-origin, wrong-tool, or unknown-profile
 handling.
+
+From clean revision `a00bf39c78533a9b9a922b11f02c46bb5e5d9343`, the
+reason-specific preflight negative suite passed and a real local `public-pr`
+preflight validated 49 installed packages, both controlled-display
+prerequisites, the exact Zentty/Ghostty identities, and receipt schema v2. The
+receipt SHA-256 is
+`a9f0ccffee26cff0d38cd9760fb7b3a33e585468cba9fc17c4ec7ba53d642f95`;
+the environment manifest SHA-256 is
+`8910b3b4cda5691fb8eacbb1e3d11c5c943b2ff5069e4f162f6910262795bb03`.
