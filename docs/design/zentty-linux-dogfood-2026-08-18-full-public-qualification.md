@@ -288,3 +288,13 @@ definite/indirect bytes; the layout root remained exactly two contexts and
 26,176 bytes. Governance passed against the full inherited Ghostty plus Zentty
 suppression set. The correct result wording is **PASS with reviewed
 suppressions**, never an unsuppressed clean result.
+
+After committing the repair so clean-checkout package and preflight contracts
+could execute, `linux/tests/qualify-local` reran every presently executable
+support and matrix cell at commit `c731bb66`. The implemented local suite
+passed in 880,420 ms, including the real staged install/uninstall lifecycle,
+clean package rebuild, Docker fixture, both display backends, agent journeys,
+and the paired Debug Valgrind run. Declared matrix totals remain 161 PASS,
+0 FAIL, 5 BLOCKED, 1 XFAIL, and 14 NOT_IMPLEMENTED. Therefore implemented
+local qualification passed, but release qualification and full Linux
+qualification remain correctly NOT_PASSED.
