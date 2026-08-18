@@ -134,8 +134,8 @@ for ((cycle = 2; cycle <= lifecycle_cycles; cycle++)); do
     wait_for_cycle
 done
 expected_events=$((terminal_count * lifecycle_cycles))
-[[ "$(grep -Fxc 'zentty-linux: terminal-ready' "${log}" || true)" -eq "${expected_events}" ]] ||
-    fail "product did not acknowledge every real Ghostty terminal"
+[[ "$(grep -Fxc 'zentty-linux: terminal-ready' "${log}" || true)" -eq "$((expected_events + 1))" ]] ||
+    fail "GH-57 deliberate real-product assertion failure fixture"
 [[ "$(grep -Fxc "zentty-linux: title=zentty-rust-smoke-${backend}" "${log}" || true)" -eq "${expected_events}" ]] ||
     fail "PTY output did not reach every real Ghostty title property"
 [[ "$(grep -Fxc 'zentty-linux: child-exited' "${log}" || true)" -eq "${expected_events}" ]] ||
