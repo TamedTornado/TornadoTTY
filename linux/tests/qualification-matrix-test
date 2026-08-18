@@ -136,6 +136,8 @@ jq -e '
       .resources == ["ghostty-source"] and
       (.command | contains("ZENTTY_BUILD_OUTPUT_DIR=build/linux-profiles/debug")) and
       (.command | contains("ZENTTY_GHOSTTY_INSTALL_DIR=build/linux-deps/ghostty-install/debug"))) and
+    (all(.cells[] | select((.command // "") | contains("GHOSTTY_LIB_DIR="));
+      (.command | contains("GHOSTTY_LIB_DIR=$PWD/")))) and
     (.cells[] | select(.id == "ghostty-regression") |
       .resources == ["ghostty-source"] and .schedule_priority == 12 and
       .skip_profile_prerequisite == true)

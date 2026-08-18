@@ -162,3 +162,15 @@ environment-report failures also showed that `xdpyinfo` readiness does not
 guarantee the first immediate `glxinfo` probe succeeds under load. The nested
 X11 owner now polls the real GLX renderer for a bounded five seconds, retaining
 the same software-renderer proof and failing if readiness never arrives.
+
+The first complete local rerun on `f7b93e02` executed every presently feasible
+cell in 1,414 seconds. It reached packaging and all real product journeys, but
+correctly refused qualification because three direct Debug Cargo cells failed.
+The immutable Debug libraries existed; the commands passed
+`GHOSTTY_LIB_DIR=build/...`, and Cargo runs a package build script with the
+package directory as its working directory. The relative path therefore named
+a nonexistent directory below `crates/zentty-ghostty-sys`. A focused real
+reproduction failed with the relative path and passed with the exact absolute
+path. The matrix now anchors these inputs at `$PWD`, and both the matrix runner
+test and orchestration contract reject a return to relative `GHOSTTY_LIB_DIR`
+values. The failed receipt remains evidence; it is not reported as a pass.

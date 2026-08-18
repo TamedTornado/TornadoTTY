@@ -277,6 +277,7 @@ require "Rust/Ghostty adapter cells are not assigned to focused and real existin
         (.cells[] | select(.id == "rust-ghostty-callback-drop-order") |
             .status == "PASS" and .display == "x11" and
             .environment_profile == "nested-x11-v1" and
+            (.command | contains("GHOSTTY_LIB_DIR=$PWD/build/linux-profiles/debug/lib")) and
             (.command | contains("cargo test -p zentty-ghostty --locked --doc")) and
             (.command | contains("linux/tests/rust-closed-pane-restore"))) and
         (.cells[] | select(.id == "rust-global-find-product-usage-wayland") |
@@ -287,6 +288,7 @@ require "Rust/Ghostty adapter cells are not assigned to focused and real existin
         (.cells[] | select(.id == "rust-ghostty-config-construction") |
             .status == "PASS" and .display == "none" and
             .environment_profile == "isolated-none-v1" and
+            (.command | contains("GHOSTTY_LIB_DIR=$PWD/build/linux-profiles/debug/lib")) and
             (.command | contains("cargo test -p zentty-ghostty")))
     ' "${matrix}"
 
