@@ -4,8 +4,9 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=linux/tests/lib/disposable-sshd
 source "${repo_root}/linux/tests/lib/disposable-sshd"
+# shellcheck source=linux/tests/lib/product-bundle
+source "${repo_root}/linux/tests/lib/product-bundle"
 product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
-ghostty_root="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
 run_root="$(mktemp -d)"
 project="${run_root}/project path # controlled"
 state_directory="${run_root}/state"
@@ -63,15 +64,9 @@ for dependency in desktop-file-validate grep head mktemp readelf readlink sed se
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
 [[ -x "${product}" ]] || fail "staged product is missing: ${product}"
-product="$(readlink -f -- "${product}")"
-
-layer_runpath="$(
-    readelf -d "${ghostty_root}/zig-out/lib/libghostty-gtk-embed.so" |
-        sed -n 's/.*Library runpath: \[\([^]]*\)\].*/\1/p' |
-        cut -d: -f1
-)"
-[[ "${layer_runpath}" == .zig-cache/* ]] || fail "Ghostty runpath is not pinned"
-layer_directory="${ghostty_root}/${layer_runpath}"
+zentty_product_bundle_resolve "${product}" || fail "staged product bundle is invalid"
+product="${ZENTTY_PRODUCT_BINARY}"
+bundle_lib="${ZENTTY_PRODUCT_BUNDLE_LIB}"
 
 mkdir -p \
     "${project}" \
@@ -161,7 +156,7 @@ start_product() {
             ZENTTY_TERMINAL_RECEIPT="${terminal_receipt}" \
             GDK_SCALE=1 \
             GDK_DPI_SCALE=1 \
-            LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+            LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
             "${product}" "$@" --state-directory "${state_directory}" --no-session-restore
     ) >"${output_log}" 2>&1 &
     product_pid=$!

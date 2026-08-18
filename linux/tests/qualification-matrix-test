@@ -133,11 +133,11 @@ if jq -e '.cells[] | select(.id == "restore-release")' "${source_matrix}" >/dev/
 fi
 jq -e '
     (.cells[] | select(.id == "build-debug") |
-      (.resources // []) == [] and
+      .resources == ["ghostty-source"] and
       (.command | contains("ZENTTY_BUILD_OUTPUT_DIR=build/linux-profiles/debug")) and
       (.command | contains("ZENTTY_GHOSTTY_INSTALL_DIR=build/linux-deps/ghostty-install/debug"))) and
     (.cells[] | select(.id == "ghostty-regression") |
-      (.resources // []) == [] and .schedule_priority == 12 and
+      .resources == ["ghostty-source"] and .schedule_priority == 12 and
       .skip_profile_prerequisite == true)
 ' "${source_matrix}" >/dev/null
 

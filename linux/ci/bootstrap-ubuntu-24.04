@@ -86,6 +86,44 @@ if ! rustup toolchain list | grep -Eq "^${rust_version}(-x86_64-unknown-linux-gn
     rustup toolchain install "${rust_version}" --profile minimal --component clippy,rustfmt
 fi
 
+fish_version="$(jq -r '.toolchains.qualification_shells.fish.version' "${manifest}")"
+fish_url="$(jq -r '.toolchains.qualification_shells.fish.url' "${manifest}")"
+fish_sha="$(jq -r '.toolchains.qualification_shells.fish.sha256' "${manifest}")"
+fish_dir="${tools_root}/fish-${fish_version}"
+if [[ ! -x "${fish_dir}/bin/fish" ]] ||
+    [[ "$("${fish_dir}/bin/fish" --version)" != "fish, version ${fish_version}" ]]; then
+    archive="$(mktemp)"
+    trap 'rm -f -- "${archive:-}"' EXIT
+    curl -fsSL "${fish_url}" -o "${archive}"
+    [[ "$(sha256sum "${archive}" | awk '{print $1}')" == "${fish_sha}" ]] ||
+        fail "Fish archive checksum mismatch"
+    rm -rf -- "${fish_dir}"
+    mkdir -p "${fish_dir}/bin"
+    tar -xJf "${archive}" -C "${fish_dir}/bin"
+    rm -f -- "${archive}"
+    trap - EXIT
+fi
+[[ "$("${fish_dir}/bin/fish" --version)" == "fish, version ${fish_version}" ]] ||
+    fail "Fish version mismatch"
+
+nu_version="$(jq -r '.toolchains.qualification_shells.nu.version' "${manifest}")"
+nu_url="$(jq -r '.toolchains.qualification_shells.nu.url' "${manifest}")"
+nu_sha="$(jq -r '.toolchains.qualification_shells.nu.sha256' "${manifest}")"
+nu_dir="${tools_root}/nu-${nu_version}"
+if [[ ! -x "${nu_dir}/nu" ]] || [[ "$("${nu_dir}/nu" --version)" != "${nu_version}" ]]; then
+    archive="$(mktemp)"
+    trap 'rm -f -- "${archive:-}"' EXIT
+    curl -fsSL "${nu_url}" -o "${archive}"
+    [[ "$(sha256sum "${archive}" | awk '{print $1}')" == "${nu_sha}" ]] ||
+        fail "Nushell archive checksum mismatch"
+    rm -rf -- "${nu_dir}"
+    mkdir -p "${nu_dir}"
+    tar -xzf "${archive}" --strip-components=1 -C "${nu_dir}"
+    rm -f -- "${archive}"
+    trap - EXIT
+fi
+[[ "$("${nu_dir}/nu" --version)" == "${nu_version}" ]] || fail "Nushell version mismatch"
+
 pnpm_version="$(jq -r '.toolchains.node.pnpm_version' "${manifest}")"
 pnpm_url="$(jq -r '.toolchains.node.pnpm_url' "${manifest}")"
 pnpm_integrity="$(jq -r '.toolchains.node.pnpm_integrity' "${manifest}")"
@@ -135,6 +173,10 @@ cat >"${environment_root}/environment.sh" <<EOF
 export ZIG='${zig_dir}/zig'
 export BLUEPRINT_COMPILER_DIR='${blueprint_prefix}/bin'
 export ZENTTY_PNPM='${pnpm_bin}'
+export ZENTTY_TEST_FISH='${fish_dir}/bin/fish'
+export ZENTTY_TEST_NU='${nu_dir}/nu'
+export CARGO_HOME='${CARGO_HOME:-${HOME}/.cargo}'
+export RUSTUP_HOME='${RUSTUP_HOME:-${HOME}/.rustup}'
 export PATH='${repo_root}/linux/ci/node-tools/node_modules/.bin:${pnpm_dir}/bin:${HOME}/.local/bin':\$PATH
 export LANG='C.UTF-8'
 export LC_ALL='C.UTF-8'

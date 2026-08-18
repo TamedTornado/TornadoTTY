@@ -7,7 +7,6 @@ if [[ "${product}" != /* ]]; then
     product="${repo_root}/${product}"
 fi
 forge="${repo_root}/target/release-safe/development_server"
-ghostty_root="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
 run_root="$(mktemp -d)"
 project="${run_root}/project"
 state_directory="${run_root}/state"
@@ -19,6 +18,9 @@ open_receipt="${run_root}/open.receipt"
 gh_receipt="${run_root}/gh.receipt"
 log="${run_root}/product.log"
 product_pid=""
+
+# shellcheck source=linux/tests/lib/product-bundle
+source "${repo_root}/linux/tests/lib/product-bundle"
 forge_pid=""
 backend="${GDK_BACKEND:-}"
 
@@ -56,15 +58,11 @@ for dependency in curl git grep head mktemp readelf sed seq sleep; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
 [[ -x "${product}" ]] || fail "staged product is missing: ${product}"
+zentty_product_bundle_resolve "${product}" || fail "staged product bundle is invalid"
+product="${ZENTTY_PRODUCT_BINARY}"
+bundle_lib="${ZENTTY_PRODUCT_BUNDLE_LIB}"
 [[ -x "${forge}" ]] || fail "controlled HTTP forge fixture is missing: ${forge}"
 
-layer_runpath="$(
-    readelf -d "${ghostty_root}/zig-out/lib/libghostty-gtk-embed.so" |
-        sed -n 's/.*Library runpath: \[\([^]]*\)\].*/\1/p' |
-        cut -d: -f1
-)"
-[[ "${layer_runpath}" == .zig-cache/* ]] || fail "Ghostty runpath is not pinned"
-layer_directory="${ghostty_root}/${layer_runpath}"
 
 mkdir -p "${project}/nested/deep" "${state_directory}" "${fixture_bin}" \
     "${fixture_data}/applications"
@@ -126,7 +124,7 @@ chmod 700 "${fixture_bin}/gh" "${fixture_bin}/zentty-open-receipt"
         ZENTTY_OPEN_RECEIPT="${open_receipt}" \
         GDK_SCALE=1 \
         GDK_DPI_SCALE=1 \
-        LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+        LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
         "${product}" --state-directory "${state_directory}" --no-session-restore
 ) >"${log}" 2>&1 &
 product_pid=$!

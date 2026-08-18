@@ -3,7 +3,6 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
-ghostty_root="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
 backend="${GDK_BACKEND:-}"
 run_root="$(mktemp -d)"
 state_directory="${run_root}/state"
@@ -14,6 +13,8 @@ settings_window=""
 
 # shellcheck disable=SC1091
 source "${repo_root}/linux/tests/lib/product-input"
+# shellcheck source=linux/tests/lib/product-bundle
+source "${repo_root}/linux/tests/lib/product-bundle"
 
 fail() {
     [[ ! -f "${log}" ]] || cat "${log}" >&2
@@ -49,14 +50,9 @@ case "${backend}" in
     *) fail "GDK_BACKEND must be x11 or wayland" ;;
 esac
 [[ -x "${product}" ]] || fail "staged product is missing: ${product}"
-
-layer_runpath="$(
-    readelf -d "${ghostty_root}/zig-out/lib/libghostty-gtk-embed.so" |
-        sed -n 's/.*Library runpath: \[\([^]]*\)\].*/\1/p' |
-        cut -d: -f1
-)"
-[[ "${layer_runpath}" == .zig-cache/* ]] || fail "Ghostty runpath is not pinned"
-layer_directory="${ghostty_root}/${layer_runpath}"
+zentty_product_bundle_resolve "${product}" || fail "staged product bundle is invalid"
+product="${ZENTTY_PRODUCT_BINARY}"
+bundle_lib="${ZENTTY_PRODUCT_BUNDLE_LIB}"
 mkdir -p "${state_directory}" "$(dirname "${config}")"
 cat >"${config}" <<'EOF'
 # preserve updates privacy journey
@@ -73,7 +69,7 @@ start_product() {
     : >"${log}"
     GDK_SCALE=1 \
     GDK_DPI_SCALE=1 \
-    LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+    LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
         "${product}" --command 'sleep 30' --state-directory "${state_directory}" \
         --no-session-restore >"${log}" 2>&1 &
     product_pid=$!

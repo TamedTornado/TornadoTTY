@@ -4,9 +4,10 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=linux/tests/lib/product-input
 source "${repo_root}/linux/tests/lib/product-input"
+# shellcheck source=linux/tests/lib/product-bundle
+source "${repo_root}/linux/tests/lib/product-bundle"
 product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
 [[ "${product}" == /* ]] || product="${repo_root}/${product}"
-ghostty_root="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
 run_root="$(mktemp -d)"
 project="${run_root}/project"
 outside="${run_root}/outside"
@@ -47,13 +48,9 @@ for dependency in grep mktemp readelf readlink sed sleep xdotool; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
 [[ -x "${product}" ]] || fail "staged product is missing: ${product}"
-
-layer_runpath="$({
-    readelf -d "${ghostty_root}/zig-out/lib/libghostty-gtk-embed.so" |
-        sed -n 's/.*Library runpath: \[\([^]]*\)\].*/\1/p' |
-        cut -d: -f1
-})"
-layer_directory="${ghostty_root}/${layer_runpath}"
+zentty_product_bundle_resolve "${product}" || fail "staged product bundle is invalid"
+product="${ZENTTY_PRODUCT_BINARY}"
+bundle_lib="${ZENTTY_PRODUCT_BUNDLE_LIB}"
 mkdir -p "${project}" "${outside}" "${state_directory}"
 cat >"${outside}/favicon.svg" <<'SVG'
 <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18">
@@ -69,7 +66,7 @@ start_product() {
         exec env \
             GDK_SCALE=1 \
             GDK_DPI_SCALE=1 \
-            LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+            LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
             "${product}" --state-directory "${state_directory}" --no-session-restore
     ) >"${log}" 2>&1 &
     product_pid=$!

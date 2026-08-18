@@ -1463,6 +1463,12 @@ EOF
     expect_protocol_failure wrong-report-source \
         "protocol report identity or lifecycle metadata drifted"
     write_protocol_report
+    jq '.protocol.executable_sha256 = ("f" * 64)' \
+        "${fixture_report}" >"${fixture_root}/wrong-live-executable.json"
+    mv "${fixture_root}/wrong-live-executable.json" "${fixture_report}"
+    expect_protocol_failure wrong-live-executable \
+        "protocol report identity or lifecycle metadata drifted"
+    write_protocol_report
     sed -i '/GTK IBus focus preedit string/d' "${fixture_suppressed}"
     refresh_protocol_report
     expect_protocol_failure missing-protocol-rule \
@@ -1493,9 +1499,6 @@ EOF
     expect_protocol_manifest_failure protocol-runtime-drift \
         '.protocol_ceilings[0].runtime_identity.gtk = "0.0.0"' \
         "protocol GTK runtime identity drifted"
-    expect_protocol_manifest_failure protocol-executable-hash-drift \
-        '.protocol_ceilings[0].evidence_identity.executable.sha256 = ("0" * 64)' \
-        "protocol executable identity drifted"
     expect_protocol_manifest_failure protocol-source-version-drift \
         '.protocol_ceilings[0].source_identity.version = "1.5.28"' \
         "manifest does not conform to suppression schema"

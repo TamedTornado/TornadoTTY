@@ -137,7 +137,15 @@ if [[ "${1:-}" == "--private-x11-inner" ]]; then
     done
     [[ "${display_proof_ready}" == true ]] ||
         fail "private Xvfb display proof could not be captured"
-    glxinfo -B >"${run_root}/renderer.info" 2>&1 ||
+    renderer_proof_ready=false
+    for _ in {1..100}; do
+        if glxinfo -B >"${run_root}/renderer.info" 2>&1; then
+            renderer_proof_ready=true
+            break
+        fi
+        sleep 0.05
+    done
+    [[ "${renderer_proof_ready}" == true ]] ||
         fail "private Xvfb renderer did not become ready"
     grep -Eq '^[[:space:]]*Accelerated:[[:space:]]+no[[:space:]]*$|^OpenGL renderer string:.*(llvmpipe|softpipe|swrast)' \
         "${run_root}/renderer.info" || fail "private Xvfb did not prove a software renderer"

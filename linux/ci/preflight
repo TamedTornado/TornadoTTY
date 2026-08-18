@@ -79,6 +79,8 @@ bwrap --ro-bind / / --proc /proc --dev /dev true >/dev/null 2>&1 ||
 zig="${ZIG:-${tools_root}/zig-x86_64-linux-0.16.0/zig}"
 blueprint="${BLUEPRINT_COMPILER_DIR:-${tools_root}/blueprint-compiler-0.16.0/bin}/blueprint-compiler"
 pnpm="${ZENTTY_PNPM:-${tools_root}/pnpm-10.32.1/bin/pnpm.cjs}"
+fish="${ZENTTY_TEST_FISH:-${tools_root}/fish-4.8.1/bin/fish}"
+nu="${ZENTTY_TEST_NU:-${tools_root}/nu-0.114.1/nu}"
 [[ "$("${zig}" version)" == "$(jq -r '.toolchains.zig.version' "${manifest}")" ]] ||
     fail "Zig version is not reviewed"
 [[ "$(readlink -f -- "${zig}")" != "${repo_root}/"* ]] ||
@@ -93,6 +95,13 @@ pnpm="${ZENTTY_PNPM:-${tools_root}/pnpm-10.32.1/bin/pnpm.cjs}"
     fail "Node version is not reviewed"
 [[ "$("${pnpm}" --version)" == "$(jq -r '.toolchains.node.pnpm_version' "${manifest}")" ]] ||
     fail "pnpm version is not reviewed"
+[[ "$("${fish}" --version)" == "fish, version $(jq -r '.toolchains.qualification_shells.fish.version' "${manifest}")" ]] ||
+    fail "Fish version is not reviewed"
+[[ "$("${nu}" --version)" == "$(jq -r '.toolchains.qualification_shells.nu.version' "${manifest}")" ]] ||
+    fail "Nushell version is not reviewed"
+[[ "$(readlink -f -- "${fish}")" != "${repo_root}/"* &&
+    "$(readlink -f -- "${nu}")" != "${repo_root}/"* ]] ||
+    fail "qualification shells must remain available outside the source checkout"
 
 node_bin="${repo_root}/linux/ci/node-tools/node_modules/.bin"
 PATH="${node_bin}:${HOME}/.local/bin:${PATH}"
@@ -126,6 +135,8 @@ jq -n \
     --arg zig "$(${zig} version)" \
     --arg rust "$(rustc --version)" \
     --arg pnpm "$("${pnpm}" --version)" \
+    --arg fish "$("${fish}" --version)" \
+    --arg nu "$("${nu}" --version)" \
     --arg gemini "$(gemini --version 2>/dev/null | tail -1)" \
     --arg codex "$(codex --version 2>/dev/null)" \
     --arg claude "$(claude --version 2>/dev/null)" \
@@ -139,7 +150,8 @@ jq -n \
       environment_manifest_sha256:$manifest_sha256,
       qualification_profile:$qualification_profile,
       apt_packages:$apt_packages,
-      tools:{zig:$zig,rust:$rust,pnpm:$pnpm,gemini:$gemini,codex:$codex,claude:$claude},
+      tools:{zig:$zig,rust:$rust,pnpm:$pnpm,fish:$fish,nu:$nu,
+        gemini:$gemini,codex:$codex,claude:$claude},
       prerequisites:{user_namespaces:true,bubblewrap:true,controlled_x11:true,controlled_wayland:true}
     }
 ' >"${receipt}"

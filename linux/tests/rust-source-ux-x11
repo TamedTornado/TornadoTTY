@@ -3,9 +3,11 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
-ghostty_root="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
 log=""
 product_pid=""
+
+# shellcheck source=linux/tests/lib/product-bundle
+source "${repo_root}/linux/tests/lib/product-bundle"
 
 fail() {
     if [[ -n "${log}" && -f "${log}" ]]; then
@@ -31,17 +33,9 @@ for dependency in cut grep head mktemp readelf readlink sed seq sleep tail timeo
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
 [[ -x "${product}" ]] || fail "delivered Rust product is not built: ${product}"
-product="$(readlink -f -- "${product}")"
-ghostty_root="$(readlink -f -- "${ghostty_root}")"
-
-layer_runpath="$(
-    readelf -d "${ghostty_root}/zig-out/lib/libghostty-gtk-embed.so" |
-        sed -n 's/.*Library runpath: \[\([^]]*\)\].*/\1/p' |
-        cut -d: -f1
-)"
-[[ "${layer_runpath}" == .zig-cache/* ]] ||
-    fail "Ghostty library has no pinned relative layer-shell runpath"
-layer_directory="${ghostty_root}/${layer_runpath}"
+zentty_product_bundle_resolve "${product}" || fail "staged product bundle is invalid"
+product="${ZENTTY_PRODUCT_BINARY}"
+bundle_lib="${ZENTTY_PRODUCT_BUNDLE_LIB}"
 
 log="$(mktemp)"
 state_directory="$(mktemp -d)"
@@ -66,7 +60,7 @@ TOML
     exec env \
         GDK_SCALE=1 \
         GDK_DPI_SCALE=1 \
-        LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+        LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
         "${product}" \
         --command 'printf "\033]2;zentty-title-one\a"; sleep 0.2; printf "\033]2;zentty-title-two\a"; while IFS= read -r line; do printf "\033]2;focus:%s\a" "$line"; done' \
         --state-directory "${state_directory}" \

@@ -38,6 +38,7 @@ support_tests=(
     linux/tests/controlled-agent-test
     linux/tests/lib/controlled-environment-test
     linux/tests/lib/product-input-test
+    linux/tests/lib/product-bundle-test
     linux/tests/isolated-session-test
     linux/tests/nested-x11-test
     linux/tests/nested-wayland-test

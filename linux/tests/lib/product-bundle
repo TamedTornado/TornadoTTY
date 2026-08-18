@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+
+# Resolve the immutable library bundle that belongs to a selected Zentty
+# executable. Product tests must not load Ghostty from its mutable Zig source
+# tree: ReleaseSafe, Debug, and regression builds legitimately replace that
+# tree's zig-out while qualification cells run concurrently.
+zentty_product_bundle_resolve() {
+    local selected_product="$1"
+    local canonical_product bundle_root bundle_lib layer_runpath
+
+    [[ "${selected_product}" == /* ]] || selected_product="${PWD}/${selected_product}"
+    canonical_product="$(readlink -f -- "${selected_product}")" || {
+        echo "product-bundle: error: product cannot be resolved: ${selected_product}" >&2
+        return 1
+    }
+    [[ -x "${canonical_product}" ]] || {
+        echo "product-bundle: error: product is not executable: ${canonical_product}" >&2
+        return 1
+    }
+    bundle_root="$(cd "$(dirname "${canonical_product}")/.." && pwd)"
+    bundle_lib="${bundle_root}/lib"
+    [[ -f "${bundle_lib}/libghostty-gtk-embed.so" ]] || {
+        echo "product-bundle: error: Ghostty library is missing: ${bundle_lib}" >&2
+        return 1
+    }
+    [[ -f "${bundle_lib}/libgtk4-layer-shell.so" ]] || {
+        echo "product-bundle: error: GTK layer-shell library is missing: ${bundle_lib}" >&2
+        return 1
+    }
+    layer_runpath="$(
+        readelf -d "${bundle_lib}/libghostty-gtk-embed.so" |
+            sed -n 's/.*Library runpath: \[\([^]]*\)\].*/\1/p' |
+            cut -d: -f1
+    )"
+    [[ "${layer_runpath}" == .zig-cache/* ]] || {
+        echo "product-bundle: error: Ghostty layer-shell runpath is not pinned" >&2
+        return 1
+    }
+
+    # Outputs are globals by design because command substitution would run the
+    # resolver in a subshell and discard its validated identities.
+    # shellcheck disable=SC2034
+    ZENTTY_PRODUCT_BINARY="${canonical_product}"
+    # shellcheck disable=SC2034
+    ZENTTY_PRODUCT_BUNDLE_ROOT="${bundle_root}"
+    # shellcheck disable=SC2034
+    ZENTTY_PRODUCT_BUNDLE_LIB="${bundle_lib}"
+}

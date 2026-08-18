@@ -149,8 +149,13 @@ if [[ "${ZENTTY_TOPOLOGY_REPRESENTATIVE:-}" == 1 ]]; then
         outer_width="$(sed -n 's/^WIDTH=//p' <<<"${outer_geometry}")"
         outer_height="$(sed -n 's/^HEIGHT=//p' <<<"${outer_geometry}")"
         xdotool windowsize "${outer_window}" "$((outer_width - 100))" "$((outer_height - 50))"
-        sleep 0.25
-        representative_after="$(${ZENTTY_CLI_BIN} layout reset --json)"
+        representative_after=""
+        for _ in {1..100}; do
+            representative_after="$(${ZENTTY_CLI_BIN} layout reset --json)"
+            [[ "$(jq -r '.topology.viewportWidth' <<<"${representative_after}")" != \
+                "${representative_before}" ]] && break
+            sleep 0.05
+        done
         [[ "$(jq -r '.topology.viewportWidth' <<<"${representative_after}")" != \
             "${representative_before}" ]]
         printf 'representative-external-resize=validated\n' >>"${ZENTTY_TMUX_PRODUCT_PROBE}"

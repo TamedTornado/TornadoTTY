@@ -74,3 +74,91 @@ ceiling was not a test timeout: successful build and regression commands took
 1,044 and 1,441 seconds. The receipt span is raised to 1,800 seconds while the
 workflow and commands retain their independent hard deadlines. The original run
 remains a public failure; no missing artifact or environment was called PASS.
+
+## Second public run: warm-checkout assumptions and mutable build paths
+
+Run <https://github.com/TamedTornado/zentty/actions/runs/32109787409> at exact
+commit `519db59676bc545b688e2b9619f7915841c31f81` reached the complete matrix and
+retained 340 evidence files. It failed after 43 minutes 54 seconds. Declared
+totals remained 161 PASS, 0 FAIL, 5 BLOCKED, 1 XFAIL, and 14 NOT_IMPLEMENTED;
+the executed suite did **not** pass. The run established several independent
+cold-run defects:
+
+- Seventeen real-product journeys loaded Ghostty and GTK layer-shell from the
+  mutable managed source checkout's `zig-out`. Concurrent ReleaseSafe, Debug,
+  regression, and historical-ABI builds legitimately replace that directory.
+  Most affected cells therefore failed immediately after `readelf` could no
+  longer find the source-tree library. This was test architecture drift: the
+  delivered product already owns an immutable adjacent `lib` bundle.
+- Direct Debug Cargo cells similarly linked against the mutable
+  `ghostty-install/debug` staging prefix instead of the immutable Debug product
+  bundle.
+- The historical ABI builder read current headers from mutable `zig-out` while
+  the Debug build owned that tree. Its current library already came from the
+  immutable ReleaseSafe bundle, so the mixed ownership was internally
+  inconsistent.
+- The qualification host had neither a prepared host Cargo registry nor
+  content-pinned Fish 4.8.1/Nushell 0.114.1. Consequently the offline clean
+  package rebuild failed, package notices could not resolve `serde`, Fish 3.7
+  was correctly rejected, and Nushell was correctly reported absent. No skip
+  was converted to PASS.
+- The real nested-Wayland wrapper uses `socat`; the full apt profile omitted
+  it. Its absence failed the harness rather than being treated as an
+  environmental pass.
+- The external-resize journey used a fixed 250 ms sleep after asking the real
+  X server to resize a four-pane window. The resize arrived after that sleep on
+  the public runner, and the child correctly failed its viewport assertion.
+- The architecture mirror still held the pre-repair clipboard command, so its
+  exact reconciliation check correctly rejected the drift.
+- Debug Valgrind itself passed with reviewed suppressions and retained both raw
+  and post-suppression receipts. Governance then rejected the live Debug
+  reproducer because it required the public runner's debug binary hash to equal
+  the hash of a separately retained local eight-run archive. Debug symbols
+  encode build-root/toolchain metadata, so that equality is not portable. The
+  live report already binds its raw and suppressed receipts to the actual
+  candidate executable hash and exact source/protocol/runtime identities.
+
+The repair consolidates product library selection in one focused
+`product-bundle` helper and migrates every affected journey to the libraries
+adjacent to its selected executable. A mutation-style helper test rejects a
+missing layer-shell library; repository search rejects remaining product-test
+loads from source `zig-out`. Debug Cargo cells now link from the immutable Debug
+bundle, and the ABI fixture consumes the staged ReleaseSafe header. This is a
+test-boundary repair, not a scheduler resource added to serialize otherwise
+independent product journeys.
+
+The reviewed environment manifest now content-pins the official Fish 4.8.1
+x86_64 archive (`39cab352...`) and Nushell 0.114.1 x86_64 GNU archive
+(`8802b26e...`). Bootstrap verifies each archive before extraction, exports the
+exact qualification-only paths, and preserves explicit host `CARGO_HOME` and
+`RUSTUP_HOME` across private application homes. The public workflow prepares
+the locked Cargo registry before network-isolated package reproduction. `socat`
+is now an explicit reviewed package in both complete and PR profiles rather
+than an undeclared desktop assumption.
+
+The external-resize assertion now polls the real product topology for at most
+five seconds instead of assuming a 250 ms compositor/GTK deadline. Suppression
+governance retains the archive executable hash as archive identity, but binds
+each live candidate to the executable hash in that run's report and paired raw
+receipts. Its negative suite now corrupts the live report hash and proves the
+candidate binding fails closed. The archive remains non-public and explicitly
+NOT_IMPLEMENTED under GH-10; this repair does not pretend otherwise.
+
+Focused receipts after repair: environment, full/gate workflow contracts,
+matrix schema/runner, architecture reconciliation, suppression governance,
+ShellCheck, and the product-bundle helper all pass. The real old/new Ghostty
+ABI fixture also passes using the immutable current header/library. A further
+public run is still required. The second run also contained later real-journey
+failures (including attention routing, shortcut readiness, multi-window frame
+restore, installed desktop launch, and two Xvfb readiness failures) that may be
+load-sensitive or independent defects; they remain failures until reproduced
+or repaired, not collateral passes from the build-path corrections.
+
+Two focused follow-ups came from exercising the repaired environment locally.
+The shell-prerequisite negative test inherited the newly explicit Fish/Nushell
+paths and therefore no longer represented an absent-tool case; each relevant
+case now clears only the variable it is testing. The full run's two Xvfb
+environment-report failures also showed that `xdpyinfo` readiness does not
+guarantee the first immediate `glxinfo` probe succeeds under load. The nested
+X11 owner now polls the real GLX renderer for a bounded five seconds, retaining
+the same software-renderer proof and failing if readiness never arrives.

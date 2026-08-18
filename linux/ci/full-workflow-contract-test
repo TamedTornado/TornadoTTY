@@ -25,6 +25,7 @@ expect_rejected sudo 'sudo timeout --signal=TERM --kill-after=30s 1800s' 'sudo l
 expect_rejected timeout 'timeout --signal=TERM --kill-after=30s 1800s' 'timeout --signal=TERM --kill-after=30s 0s'
 expect_rejected qualify 'linux/tests/qualify-local' 'true # removed'
 expect_rejected cleanup 'linux/ci/reset-product-outputs' 'true # removed'
+expect_rejected cargo-fetch 'cargo fetch --locked' 'cargo metadata --locked --no-deps'
 expect_rejected always 'if: always()' 'if: success()'
 expect_rejected release-claim 'Release qualification: NOT_CLAIMED' 'Release qualification: PASSED'
 expect_rejected full-claim 'Full Linux qualification: NOT_CLAIMED' 'Full Linux qualification: PASSED'
@@ -35,4 +36,4 @@ expect_rejected package-artifact 'build/linux-package/' 'build/REMOVED-linux-pac
 expect_rejected artifact-id 'name: linux-ci-full-${{ github.sha }}-${{ github.run_attempt }}' 'name: linux-ci-full-current'
 # shellcheck disable=SC2016
 expect_rejected commit 'ZENTTY_EXPECTED_COMMIT: ${{ github.sha }}' 'ZENTTY_EXPECTED_COMMIT: refs/heads/linux/port'
-echo "ci-full-workflow-contract-test: PASS negatives=triggers+action+permission+runner+credentials+profile+packages+sudo+timeout+runner+cleanup+evidence+claims+valgrind+package+artifact+commit"
+echo "ci-full-workflow-contract-test: PASS negatives=triggers+action+permission+runner+credentials+profile+packages+sudo+timeout+runner+cleanup+cargo+evidence+claims+valgrind+package+artifact+commit"

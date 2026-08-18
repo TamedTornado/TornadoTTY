@@ -3,7 +3,6 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
-ghostty_root="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
 fixture="${repo_root}/crates/zentty-core/tests/fixtures/session-restore-v3.json"
 actor="${repo_root}/linux/tests/fixtures/controlled-agent"
 backend="${GDK_BACKEND:-}"
@@ -23,6 +22,8 @@ product_args=()
 
 # shellcheck source=linux/tests/lib/product-input
 source "${repo_root}/linux/tests/lib/product-input"
+# shellcheck source=linux/tests/lib/product-bundle
+source "${repo_root}/linux/tests/lib/product-bundle"
 # shellcheck source=linux/tests/lib/disposable-sshd
 source "${repo_root}/linux/tests/lib/disposable-sshd"
 
@@ -73,19 +74,15 @@ for dependency in jq readelf timeout mktemp grep sed pgrep cut tail sha256sum co
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
 [[ -x "${product}" ]] || fail "staged product is not built: ${product}"
+zentty_product_bundle_resolve "${product}" || fail "staged product bundle is invalid"
+product="${ZENTTY_PRODUCT_BINARY}"
+bundle_lib="${ZENTTY_PRODUCT_BUNDLE_LIB}"
 [[ -x "${actor}" ]] || fail "controlled agent actor is missing: ${actor}"
 drag_source="${repo_root}/target/release-safe/file_drag_source"
 if [[ "${backend}" == x11 || "${ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT:-}" == 1 ]]; then
     [[ -x "${drag_source}" ]] || fail "real GTK file drag source is missing: ${drag_source}"
 fi
 
-layer_runpath="$(
-    readelf -d "${ghostty_root}/zig-out/lib/libghostty-gtk-embed.so" |
-        sed -n 's/.*Library runpath: \[\([^]]*\)\].*/\1/p' |
-        cut -d: -f1
-)"
-[[ "${layer_runpath}" == .zig-cache/* ]] || fail "Ghostty layer-shell runpath is missing"
-layer_directory="${ghostty_root}/${layer_runpath}"
 
 state_dir="$(mktemp -d)"
 fake_bin="$(mktemp -d)"
@@ -177,7 +174,7 @@ start_product() {
         ZENTTY_CONTROLLED_AGENT_START_DELAY_SECONDS="${agent_start_delay}" \
         ZENTTY_CONTROLLED_AGENT_START_RECEIPT="${agent_start_receipt}" \
         ZENTTY_CONTROLLED_AGENT_SLEEP_SECONDS=30 \
-        LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+        LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
         "${product}" --state-directory "${state_dir}" "${product_args[@]}" >"${log}" 2>&1 &
     product_pid=$!
 }

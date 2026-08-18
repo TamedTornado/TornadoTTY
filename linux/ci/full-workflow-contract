@@ -32,6 +32,7 @@ grep -Fq 'persist-credentials: false' "${workflow}" || fail "checkout credential
 grep -Fq 'ZENTTY_EXPECTED_COMMIT: ${{ github.sha }}' "${workflow}" || fail "event commit binding is absent"
 grep -Fq 'linux/tests/qualify-local' "${workflow}" || fail "authoritative runner is absent"
 grep -Fq 'linux/ci/reset-product-outputs' "${workflow}" || fail "product cleanup is absent"
+grep -Fq 'cargo fetch --locked' "${workflow}" || fail "prepared Cargo registry is absent"
 grep -Fq 'rm -rf -- build/linux/matrix-logs' "${workflow}" || fail "qualification cleanup is absent"
 [[ "$(grep -Fc 'if: always()' "${workflow}")" -ge 3 ]] || fail "always-run evidence is incomplete"
 grep -Fq 'GITHUB_STEP_SUMMARY' "${workflow}" || fail "human summary is absent"
@@ -57,4 +58,4 @@ cmp -s "${fixture}/workflow" "${fixture}/manifest" || fail "literal packages dif
 [[ "$(grep -Ec '^[[:space:]]+sudo (timeout --signal=TERM --kill-after=30s 1800s|env DEBIAN_FRONTEND=noninteractive|sysctl -w kernel[.]apparmor_restrict_unprivileged_userns=0)' "${workflow}")" == 3 ]] || fail "sudo boundary changed"
 ! grep -Eq 'sudo[[:space:]]+(env[[:space:]]+[^[:space:]]+[[:space:]]+)?linux/|sudo .*\$\(|sudo .*`' "${workflow}" || fail "repository command crosses sudo"
 
-echo "ci-full-workflow-contract: PASS triggers=integration+schedule+manual permissions=read runner=qualify-local packages=full"
+echo "ci-full-workflow-contract: PASS triggers=integration+schedule+manual permissions=read runner=qualify-local packages=full cargo=prepared"

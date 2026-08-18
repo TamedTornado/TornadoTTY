@@ -175,7 +175,7 @@ DRIVER
     ZENTTY_SHELL_AGENT_RECEIPT="${agent_receipt}" \
     D="${hostile_cwd}" P="${probe}" \
     PATH="${fake_bin}:${PATH}" \
-    LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+    LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
         "${product}" --command "${driver}" --state-directory "${state_directory}" \
         --no-session-restore >"${log}" 2>&1 &
     product_pid=$!

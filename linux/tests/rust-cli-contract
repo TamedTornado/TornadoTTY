@@ -4,13 +4,14 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=linux/tests/lib/product-input
 source "${repo_root}/linux/tests/lib/product-input"
+# shellcheck source=linux/tests/lib/product-bundle
+source "${repo_root}/linux/tests/lib/product-bundle"
 # shellcheck source=linux/tests/lib/shell-binaries
 source "${repo_root}/linux/tests/lib/shell-binaries"
 # shellcheck source=linux/tests/lib/cli-shell-scenario
 source "${repo_root}/linux/tests/lib/cli-shell-scenario"
 product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
 backend="${GDK_BACKEND:-}"
-ghostty_root="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
 run_root="$(mktemp -d)"
 state_directory="${run_root}/state"
 receipts="${run_root}/receipts"
@@ -50,14 +51,9 @@ for dependency in awk cmp diff dirname find grep head jq jsonschema readelf read
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
 [[ -x "${product}" ]] || fail "staged product is missing: ${product}"
-
-layer_runpath="$(
-    readelf -d "${ghostty_root}/zig-out/lib/libghostty-gtk-embed.so" |
-        sed -n 's/.*Library runpath: \[\([^]]*\)\].*/\1/p' |
-        head -1
-)"
-[[ "${layer_runpath}" == .zig-cache/* ]] || fail "Ghostty runpath is not pinned"
-layer_directory="${ghostty_root}/${layer_runpath}"
+zentty_product_bundle_resolve "${product}" || fail "staged product bundle is invalid"
+product="${ZENTTY_PRODUCT_BINARY}"
+bundle_lib="${ZENTTY_PRODUCT_BUNDLE_LIB}"
 mkdir -p "${state_directory}" "${receipts}"
 
 if [[ -n "${ZENTTY_CLI_SHELL_SCENARIO:-}" ]]; then
@@ -188,7 +184,7 @@ chmod 700 "${child}"
 GDK_SCALE=1 GDK_DPI_SCALE=1 \
 ZENTTY_CLI_CONTRACT_RECEIPTS="${receipts}" \
 ZENTTY_REPO_ROOT="${repo_root}" \
-LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
     "${product}" --command "${child}" --state-directory "${state_directory}" --no-session-restore \
     >"${log}" 2>&1 &
 product_pid=$!
@@ -281,7 +277,7 @@ SECOND_CHILD
 chmod 700 "${second_child}"
 GDK_SCALE=1 GDK_DPI_SCALE=1 \
 ZENTTY_SECOND_RECEIPTS="${second_receipts}" \
-LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
     "${product}" --command "${second_child}" --state-directory "${second_state}" --no-session-restore \
     >"${second_log}" 2>&1 &
 second_product_pid=$!

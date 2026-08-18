@@ -3,7 +3,6 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
-ghostty_root="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
 server_fixture="${repo_root}/target/release-safe/development_server"
 run_root="$(mktemp -d)"
 log="${run_root}/product.log"
@@ -19,6 +18,9 @@ config_home="${run_root}/config"
 data_home="${run_root}/data"
 state_directory="${run_root}/state"
 product_pid=""
+
+# shellcheck source=linux/tests/lib/product-bundle
+source "${repo_root}/linux/tests/lib/product-bundle"
 backend="${GDK_BACKEND:-}"
 container_id=""
 docker_port=""
@@ -73,6 +75,9 @@ for dependency in cut grep head mktemp readelf sed seq sha256sum sleep xprop; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
 [[ -x "${product}" ]] || fail "staged product is missing: ${product}"
+zentty_product_bundle_resolve "${product}" || fail "staged product bundle is invalid"
+product="${ZENTTY_PRODUCT_BINARY}"
+bundle_lib="${ZENTTY_PRODUCT_BUNDLE_LIB}"
 [[ -x "${server_fixture}" ]] || fail "real server fixture is missing: ${server_fixture}"
 
 if [[ "${ZENTTY_TEST_DOCKER:-false}" == true ]]; then
@@ -88,13 +93,6 @@ if [[ "${ZENTTY_TEST_DOCKER:-false}" == true ]]; then
     [[ "${docker_port}" =~ ^[1-9][0-9]*$ ]] || fail "Docker did not publish a dynamic host port"
 fi
 
-layer_runpath="$(
-    readelf -d "${ghostty_root}/zig-out/lib/libghostty-gtk-embed.so" |
-        sed -n 's/.*Library runpath: \[\([^]]*\)\].*/\1/p' |
-        cut -d: -f1
-)"
-[[ "${layer_runpath}" == .zig-cache/* ]] || fail "Ghostty runpath is not pinned"
-layer_directory="${ghostty_root}/${layer_runpath}"
 mkdir -p "${run_root}/bin" "${state_directory}" "${config_home}/zentty" \
     "${data_home}/applications"
 cat >"${run_root}/bin/preferred-browser" <<EOF
@@ -212,7 +210,7 @@ GDK_DPI_SCALE=1 \
 XDG_CONFIG_HOME="${config_home}" \
 XDG_DATA_HOME="${data_home}" \
 PATH="${run_root}/bin:${PATH}" \
-LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
     "${product}" \
     --command "exec '${run_root}/run-servers'" \
     --state-directory "${state_directory}" \
@@ -713,7 +711,7 @@ GDK_DPI_SCALE=1 \
 XDG_CONFIG_HOME="${config_home}" \
 XDG_DATA_HOME="${data_home}" \
 PATH="${run_root}/bin:${PATH}" \
-LD_LIBRARY_PATH="${ghostty_root}/zig-out/lib:${layer_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
     "${product}" \
     --command 'sleep 30' \
     --state-directory "${state_directory}" \

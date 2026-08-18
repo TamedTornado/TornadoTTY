@@ -4,6 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 inventory="${repo_root}/linux/ghostty-api-audit.json"
 current_source="${repo_root}/build/linux-deps/ghostty"
+current_install="${repo_root}/build/linux-deps/ghostty-install/release-safe"
 historical_source="${repo_root}/build/linux-deps/ghostty-abi-historical"
 fixture_root="${repo_root}/build/linux-abi-mismatch"
 current_revision="$(sed -n 's/^revision=//p' "${repo_root}/linux/ghostty.lock")"
@@ -75,7 +76,7 @@ link_flags=(
 )
 
 cc "${c_flags[@]}" \
-    -I"${current_source}/zig-out/include" \
+    -I"${current_install}/include" \
     "${repo_root}/linux/tests/abi-mismatch-current-consumer.c" \
     -L"${fixture_root}/current" -lghostty-gtk-embed "${link_flags[@]}" \
     -o "${fixture_root}/bin/current-consumer"

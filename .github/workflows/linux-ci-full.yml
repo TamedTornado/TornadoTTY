@@ -7,6 +7,8 @@ on:
     paths:
       - .github/workflows/linux-ci-full.yml
       - linux/ci/full-*
+      - linux/ci/bootstrap-ubuntu-24.04
+      - linux/ci/environment-v1.json
       - linux/tests/qualify-local
       - linux/tests/qualification-matrix
       - linux/qualification-matrix.json
@@ -67,7 +69,7 @@ jobs:
             libgtk-4-dev libnotify-bin libwayland-dev libx11-dev
             libxkbcommon-dev libxml2-utils mesa-utils meson ninja-build openbox
             openssh-client openssh-server patchelf pkg-config procps python3
-            python3-gi python3-jsonschema shellcheck tmux util-linux valgrind
+            python3-gi python3-jsonschema shellcheck socat tmux util-linux valgrind
             wayland-utils weston wl-clipboard wtype x11-utils xauth xclip
             xdg-utils xdotool xserver-xephyr xvfb ydotool zsh
           )
@@ -97,6 +99,7 @@ jobs:
         run: |
           set -euo pipefail
           source build/linux-ci-tools/environment.sh
+          cargo fetch --locked 2>&1 | tee build/linux/ci-full-cargo-fetch.log
           linux/scripts/prepare-ghostty-source \
             2>&1 | tee build/linux/ci-full-prepare-ghostty.log
           linux/ci/preflight 2>&1 | tee build/linux/ci-full-preflight.log
