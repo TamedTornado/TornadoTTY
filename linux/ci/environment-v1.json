@@ -201,7 +201,7 @@
   "source_contract": {
     "ghostty_lock": "linux/ghostty.lock",
     "ghostty_repository": "https://github.com/TamedTornado/ghostty.git",
-    "ghostty_revision": "281d7d7dbeab24c1a2d04f6d3c720c34dbfac645"
+    "ghostty_revision": "0000000000000000000000000000000000000000"
   },
   "cache_policy": {
     "allowed": [
