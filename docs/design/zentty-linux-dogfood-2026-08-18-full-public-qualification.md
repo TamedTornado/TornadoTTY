@@ -36,3 +36,18 @@ The workflow is not qualified merely because it exists. Its mutation-tested
 contract and a real public run must expose incorrect paths, missing packages,
 runner-only races, unsafe receipts, or duration problems.
 
+## Discovery: manual dispatch registration follows the default branch
+
+The first `workflow_dispatch` request for revision `2b0d51c3` returned GitHub
+HTTP 404. GitHub does not register a newly introduced dispatchable workflow
+until that workflow exists on the repository's default branch; this repository
+still uses `main`, while the port is developed on `linux/port`. Changing the
+default branch or copying mutable port orchestration into the old product branch
+would be a larger repository-policy decision, not a test repair.
+
+The same workflow now has a path-bounded `linux/port` push trigger for its own
+workflow, full-CI contract/runner files, and authoritative matrix. This gives
+the integration branch a real first run without causing every product commit to
+launch the multi-hour suite. Schedule and manual dispatch remain declared and
+will become registered when this workflow reaches the default branch. The
+contract rejects loss of any of the three trigger modes.

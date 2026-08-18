@@ -18,6 +18,8 @@ done < <(jq -r '.actions[] | [.repository,.revision] | @tsv' "${actions_manifest
 
 grep -Eq '^  schedule:$' "${workflow}" || fail "scheduled trigger is absent"
 grep -Eq '^  workflow_dispatch:$' "${workflow}" || fail "manual trigger is absent"
+grep -Eq '^  push:$' "${workflow}" || fail "integration-branch trigger is absent"
+grep -Fq '      - linux/port' "${workflow}" || fail "integration-branch identity is absent"
 ! grep -Eq 'pull_request_target|^[[:space:]]*secrets:' "${workflow}" || fail "privileged trigger or secrets are present"
 grep -Fq 'runs-on: ubuntu-24.04' "${workflow}" || fail "runner baseline is not pinned"
 grep -Fq 'timeout-minutes: 360' "${workflow}" || fail "job deadline is absent"
@@ -55,4 +57,4 @@ cmp -s "${fixture}/workflow" "${fixture}/manifest" || fail "literal packages dif
 [[ "$(grep -Ec '^[[:space:]]+sudo (timeout --signal=TERM --kill-after=30s 1800s|env DEBIAN_FRONTEND=noninteractive|sysctl -w kernel[.]apparmor_restrict_unprivileged_userns=0)' "${workflow}")" == 3 ]] || fail "sudo boundary changed"
 ! grep -Eq 'sudo[[:space:]]+(env[[:space:]]+[^[:space:]]+[[:space:]]+)?linux/|sudo .*\$\(|sudo .*`' "${workflow}" || fail "repository command crosses sudo"
 
-echo "ci-full-workflow-contract: PASS triggers=schedule+manual permissions=read runner=qualify-local packages=full"
+echo "ci-full-workflow-contract: PASS triggers=integration+schedule+manual permissions=read runner=qualify-local packages=full"

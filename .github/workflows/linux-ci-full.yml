@@ -1,6 +1,15 @@
 name: Linux full qualification
 
 on:
+  push:
+    branches:
+      - linux/port
+    paths:
+      - .github/workflows/linux-ci-full.yml
+      - linux/ci/full-*
+      - linux/tests/qualify-local
+      - linux/tests/qualification-matrix
+      - linux/qualification-matrix.json
   schedule:
     - cron: '17 3 * * 1'
   workflow_dispatch:

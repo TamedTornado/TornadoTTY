@@ -11,6 +11,7 @@ expect_rejected() {
     ! ZENTTY_CI_FULL_WORKFLOW="${fixture}/${name}.yml" "${validator}" >"${fixture}/${name}.out" 2>&1 || fail "${name} mutation was accepted"
 }
 "${validator}" >/dev/null
+expect_rejected integration '  push:' '  push_REMOVED:'
 expect_rejected schedule 'schedule:' 'schedule_REMOVED:'
 expect_rejected manual 'workflow_dispatch:' 'workflow_dispatch_REMOVED:'
 expect_rejected action 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1' 'actions/checkout@v7'
