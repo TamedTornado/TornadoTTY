@@ -703,3 +703,16 @@ isolated Agents journeys passed after this repair in sessions
 and `d1ae373e167b6c7911303f7a23abf2605046096e30d4b170074a3c607dd4d358`.
 This is synchronization with the real GTK event stream, not a delay or an
 internal control mutation.
+
+The complete local rerun at clean code commit
+`26720a5ea053fe2ae8339155296bbe4fee7395e1` returned zero in 1,004,930 ms.
+All 161 presently executable PASS cells passed, the tracked ABI defect remained
+the sole XFAIL, and all 5 BLOCKED plus 14 NOT_IMPLEMENTED declarations remained
+explicit. The implemented local suite and product-boundary claims are true;
+release and full-Linux qualification remain false because those declared gaps
+have not been erased or converted into passes. Suppression governance was
+accepted. The Debug IBus Valgrind receipt records 427 raw errors/contexts,
+6,240 definitely lost bytes, and 41,461 indirectly lost bytes; after the
+reviewed effective suppression set it records zero errors/contexts and zero
+definite/indirect bytes, with exactly 427 suppressed errors/contexts. This is
+**PASS with reviewed suppressions**, not an unsuppressed clean result.
