@@ -196,7 +196,10 @@ if [[ "${backend}" == x11 ]]; then
         fail "malformed external config was not retained as last-good"
     error_before="$(grep -Fc 'agent-settings control=codex result=error' "${log}" || true)"
     focus_agent_control 'settings-agents-integration-codex' 'the Codex integration switch'
-    xdotool key --clearmodifiers --window "${settings_window_id}" space
+    # Traversal established the GTK child focus. Deliver Space through XTEST
+    # to that current focus; addressed XSendEvent input is routed back through
+    # the Settings toplevel and can land in the sidebar search instead.
+    xdotool key --clearmodifiers space
     for _ in $(seq 1 100); do
         (( $(grep -Fc 'agent-settings control=codex result=error' "${log}" || true) > error_before )) && break
         sleep 0.05
@@ -221,7 +224,7 @@ if [[ "${backend}" == x11 ]]; then
     focus_agent_control \
         'settings-agents-integration-codex' \
         'the Codex integration switch after restoring valid configuration'
-    xdotool key --clearmodifiers --window "${settings_window_id}" space
+    xdotool key --clearmodifiers space
     zentty_product_wait_for_log "${log}" \
         'agent-settings control=integration id=codex requested=off observed=wrapper-configured result=applied' \
         "physical Codex switch did not persist" || fail "Codex disable missing"

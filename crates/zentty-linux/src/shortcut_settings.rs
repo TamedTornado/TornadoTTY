@@ -322,20 +322,35 @@ pub(crate) fn show(
     install_window_shortcuts(&window, parent, &search, Rc::clone(restore_parent_focus));
     install_recorder(&window, &state);
     let initial_search = search.clone();
+    let initial_focus = settings.initial_focus.clone();
     window.connect_map(move |window| {
-        gtk::prelude::GtkWindowExt::set_focus(window, Some(&initial_search));
-        let search = initial_search.clone();
+        let focus = if initial_section == crate::settings_navigation::SettingsSection::Shortcuts {
+            initial_search.clone().upcast::<gtk::Widget>()
+        } else {
+            initial_focus.clone()
+        };
+        gtk::prelude::GtkWindowExt::set_focus(window, Some(&focus));
         glib::idle_add_local_once(move || {
-            search.grab_focus();
+            focus.grab_focus();
             eprintln!(
-                "zentty-linux: shortcut-settings search-focused value={}",
-                search.has_focus()
+                "zentty-linux: shortcut-settings initial-focus value={}",
+                focus.has_focus()
             );
         });
     });
     let active_search = search.clone();
+    let active_section = Rc::clone(&settings.current_section);
     window.connect_is_active_notify(move |window| {
-        if window.is_active() {
+        if !window.is_active() {
+            return;
+        }
+        let section = active_section.get();
+        eprintln!(
+            "zentty-linux: shortcut-settings active search-focused={} section={}",
+            active_search.has_focus(),
+            section.id()
+        );
+        if section == crate::settings_navigation::SettingsSection::Shortcuts {
             gtk::prelude::GtkWindowExt::set_focus(window, Some(&active_search));
             let search = active_search.clone();
             glib::idle_add_local_once(move || {

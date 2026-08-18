@@ -620,3 +620,61 @@ Every known failure group is now green in its smallest locally controlled
 integration journey. The next permitted step is one complete local matrix
 run, followed by the authoritative hosted run; a hosted pass is still required
 before declaring the public failures repaired.
+
+## Full-local failure and focused GTK repair
+
+The next complete local qualification run at commit `9002476c` took roughly
+19 minutes. Its declared inventory was 161 PASS, 5 BLOCKED, 1 XFAIL, and 14
+NOT_IMPLEMENTED; its executable result was 159 PASS, 1 FAIL, and 1
+BLOCKED_BY_FAILED_DEPENDENCY. `workspace-pane-settings-x11` failed and its
+`platform-settings-contract` aggregate was consequently blocked. Implemented,
+release, and full-Linux qualification claims were all correctly false. This
+was a real red full run, not an exhaustive-QA pass.
+
+The isolated failure initially looked like another coordinate problem, but
+several attempted repairs exposed two distinct GTK input semantics. First,
+the Settings window's activation callback always re-focused the Shortcuts
+search field even when the window had been deep-linked to Worklanes & Panes.
+Under scheduler timing, that stole focus after a mnemonic had reached the
+intended control. Settings now gives initial and activation focus to the
+Shortcuts search only while the Shortcuts section is current; other sections
+retain their own child focus. The generic activation receipt remains visible
+and now records the current section instead of silently changing it.
+
+Second, a `GtkDropDown` mnemonic opens its native popup and transfers focus to
+an internal list item, whereas a switch mnemonic activates the switch
+immediately. Addressing follow-up keys to the Settings toplevel, or re-focusing
+that toplevel after the mnemonic, steals/bypasses the popup grab. The journey
+now sends the dropdown selection through XTEST to the current native focus and
+does not send an extra Space after a switch mnemonic has already applied the
+change. The Agents journey had the same addressed-input defect after keyboard
+traversal: its Space event was routed into the sidebar search rather than the
+focused Codex switch. It now sends Space through XTEST to the physically
+traversed GTK child.
+
+During diagnosis, one experimental product build failed to compile because it
+attempted an invalid GTK root downcast. A yielded build command then allowed a
+stale staged binary to be exercised in subsequent attempts. Those attempts
+are invalid evidence and are not cited as passes. Later iterations explicitly
+waited for build completion and checked each nested environment receipt before
+using its result. Bounds-based pointer experiments and temporary key traces
+were removed rather than retained as a second automation path.
+
+The final Worklanes & Panes journey passed three consecutive isolated X11
+sessions:
+
+- `1b916e96a5177d04cb9eecce5b96fe068af07bb19c1ea68134812a4ee6eca35c`
+- `a503171369535ee3f8e45bf2626e5d50ef07b97be663163483fe77840c2d229a`
+- `66f196eba92cdf2a2cdac40ea0ae274cb6f69272f22d63be31cec3dd41f9ff77`
+
+Because the focus repair is shared by every Settings section, the other known
+hosted failure groups were rerun against the rebuilt product rather than
+assuming their earlier receipts still applied. Open With passed session
+`f9642aad2986c9c0f558470dcec7909a5474c79a905ca19f04d2734200baa30d`;
+Dev Servers passed normal and pinned-Docker sessions
+`7a8d4c305ca840fe0ee01c12ca304b73d21023b5cc4116620224a0ae40749ea4`
+and `8513ff5422404f3cf32265c2c274eb71c7e0274c720ef510f7618a531a144e48`;
+Agents passed session
+`799085cc45147097b488d862b212fbf61ea1c6904d4f72242d0524e687dbf620`.
+All presently known isolated failure groups are green. Only now is another
+complete local qualification run permitted.
