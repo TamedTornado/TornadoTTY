@@ -587,3 +587,36 @@ repairs were uncommitted. It must be rerun from the resulting clean commit,
 followed by the pinned hosted Gemini cells and the other repaired regression
 cells, before another complete matrix invocation. No release or full-Linux
 qualification is claimed by these isolated passes.
+
+After commit `5f1d6e7aeb69`, the first reproducibility invocation reported that
+the exact primary artifact was missing. The preceding package builder was
+still running even though its interactive command had yielded, so this was an
+operator sequencing failure rather than a package comparison result. The
+builder was allowed to finish and the exact-commit artifact was verified
+before retrying. The clean-checkout comparison then returned zero in isolated
+session
+`2c1adcc34d44f3890067922e6defcad625dbab378fe64a10cedf297de3d85321`;
+the package reproducibility cell is locally green for the repair commit.
+
+The real Gemini boundary was then exercised independently with the exact
+content-installed 0.53.0 CLI used by public CI, not the workstation's newer
+0.55.1 executable. The X11 journey passed in session
+`48582492a2a5ad3b22592b41ff226b3320e8913b3278bcac75dc8f802cc95494`;
+the Wayland journey passed in session
+`48d694bdd03214fc06ee5aef45b2621e3c9de070a39eab41c4eea62b23ca7b5b`.
+Both retained the real CLI, controlled loopback model endpoint, installed
+hooks, reducer, PTY, and Codex lifecycle rather than substituting an agent
+mock.
+
+The remaining repaired regression boundaries were also kept isolated. The
+architecture contract and its negative validators passed. Valgrind
+suppression governance and its mutation suite passed against the retained raw
+and post-suppression receipts. Zsh physical shell integration passed on X11
+session
+`dfef0150823b4757883b0894dd5877fd980958522cbd25e2d5fe0a797b5dc070`
+and Wayland session
+`da29cad2ddd397c887bb2df67002698296daf15d2eabef4e0cbd1efce3ae2e43`.
+Every known failure group is now green in its smallest locally controlled
+integration journey. The next permitted step is one complete local matrix
+run, followed by the authoritative hosted run; a hosted pass is still required
+before declaring the public failures repaired.
