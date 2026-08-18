@@ -41,6 +41,9 @@ grep -Fq 'ZENTTY_EXPECTED_COMMIT: ${{ github.sha }}' "${workflow}" ||
     fail "preflight is not bound to the event commit"
 grep -Fq 'linux/ci/run-pr-subset' "${workflow}" || fail "authoritative subset runner is absent"
 grep -Fq 'if: always()' "${workflow}" || fail "failure evidence is not retained"
+grep -Fq 'GITHUB_STEP_SUMMARY' "${workflow}" || fail "bounded human job summary is absent"
+grep -Fq 'Full Linux qualification: NOT_CLAIMED' "${workflow}" ||
+    fail "human summary can overclaim full qualification"
 grep -Fq 'retention-days: 14' "${workflow}" || fail "artifact retention is not bounded"
 grep -Fq 'cancel-in-progress: true' "${workflow}" || fail "superseded runs are not cancelled"
 # GitHub expressions must remain literal.
@@ -61,8 +64,10 @@ jq -r '.apt_packages[]' "${environment_manifest}" | sort >"${fixture}/manifest-p
 cmp -s "${fixture}/workflow-packages" "${fixture}/manifest-packages" ||
     fail "literal apt package list differs from the reviewed environment manifest"
 
-[[ "$(grep -Ec '^[[:space:]]+sudo (apt-get update|env DEBIAN_FRONTEND=noninteractive|sysctl -w kernel[.]apparmor_restrict_unprivileged_userns=0)' "${workflow}")" == 3 ]] ||
+[[ "$(grep -Ec '^[[:space:]]+sudo (timeout --signal=TERM --kill-after=30s 600s|env DEBIAN_FRONTEND=noninteractive|sysctl -w kernel[.]apparmor_restrict_unprivileged_userns=0)' "${workflow}")" == 3 ]] ||
     fail "sudo operations differ from the three reviewed workflow operations"
+[[ "$(grep -Fc 'timeout --signal=TERM --kill-after=30s 600s' "${workflow}")" == 2 ]] ||
+    fail "apt update and install do not both have bounded wall time"
 ! grep -Eq 'sudo[[:space:]]+(env[[:space:]]+[^[:space:]]+[[:space:]]+)?linux/|sudo .*\$\(|sudo .*`' "${workflow}" ||
     fail "repository-derived or shell-generated command crosses sudo"
 

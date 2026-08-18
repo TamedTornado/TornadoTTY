@@ -258,3 +258,38 @@ The complete committed gate passed after the focus repair at revision
 `7eb60b4c6d4d24d7db0dff73e7783e9418f6bdac`: 9/9 support tests and 18/18
 real cells in 388 seconds. Summary SHA-256:
 `998549b9f5d2c3616608c6d95611a9761d091df34d0ed2d91661704365dcdccb`.
+
+## Public PR PASS and runner-network stall
+
+Temporary PR #60 exercised the actual `pull_request` event at
+<https://github.com/TamedTornado/zentty/actions/runs/32082760261>. Its exact
+GitHub merge revision was `3bb85373262dcb28d5db965abfe65af55f87ee8f`.
+The independently downloaded artifact revalidated: 9/9 support tests and 18/18
+real matrix cells passed in 845 seconds, with only the bounded subset claim
+true. Summary SHA-256:
+`941265438762dcc9ffd03c73f57e79d8351d741c5f3a12c8d3fce8ba8810152d`.
+The first push of its fixture branch was rejected by a transient GitHub
+`fatal error in commit_refs`; an unchanged retry succeeded. No local rewrite or
+force push was used.
+
+A subsequent corrected branch run
+<https://github.com/TamedTornado/zentty/actions/runs/32084808939> then remained
+inside the apt-install step for more than 15 minutes, versus under a minute in
+the prior public runs. No repository code had run after checkout and no live
+job log was available from GitHub's blob endpoint. The run was deliberately
+cancelled rather than spending the 60-minute job budget or calling the absence
+a pass. The always-run upload still retained evidence. Its apt-update receipt
+shows 11.3 MB fetched in one second. The install receipt shows that this runner
+needed the full FFmpeg codec dependency expansion and was still fetching its
+83rd package when cancelled; earlier images already contained substantially
+more of that graph. This is recorded as mutable runner-image package-state plus
+install-network drift, not a product failure.
+
+Both apt network operations now have three apt retries, a 30-second per-request
+HTTP timeout, and a 600-second process deadline with a 30-second TERM-to-KILL
+window. `pipefail` preserves timeout failure and the always-run evidence step.
+The workflow now also publishes a human GitHub job summary on every outcome;
+if no validated subset receipt exists it says `NOT_ESTABLISHED`, and it always
+states that implemented-local, release, and full-Linux qualification are not
+claimed. Contract mutations reject removal of either apt deadline or the
+bounded human summary.

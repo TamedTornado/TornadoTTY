@@ -64,9 +64,13 @@ jobs:
             wl-clipboard wtype x11-utils xauth xclip xdg-utils xdotool xserver-xephyr
             xvfb ydotool zsh
           )
-          sudo apt-get update 2>&1 | tee build/linux/ci-apt-update.log
+          sudo timeout --signal=TERM --kill-after=30s 600s \
+            apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update \
+            2>&1 | tee build/linux/ci-apt-update.log
           sudo env DEBIAN_FRONTEND=noninteractive \
-            apt-get install -y --no-install-recommends "${packages[@]}" \
+            timeout --signal=TERM --kill-after=30s 600s \
+            apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 \
+            install -y --no-install-recommends "${packages[@]}" \
             2>&1 | tee build/linux/ci-apt-install.log
           if [[ -r /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]] &&
             [[ "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns)" == 1 ]]; then
@@ -102,6 +106,24 @@ jobs:
         if: always()
         shell: bash
         run: linux/ci/validate-preflight-receipt
+
+      - name: Publish bounded qualification claim
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '### Linux PR qualification gate'
+            if [[ -f build/linux/ci-pr-subset-summary.json ]] &&
+              linux/ci/pr-subset-result validate-summary build/linux/ci-pr-subset-summary.json >/dev/null; then
+              jq -r '"Public PR subset: " + (if .claims.public_pr_subset_passed then "PASSED" else "FAILED" end)' \
+                build/linux/ci-pr-subset-summary.json
+            else
+              echo 'Public PR subset: NOT_ESTABLISHED'
+            fi
+            echo 'Implemented local suite: NOT_CLAIMED'
+            echo 'Release qualification: NOT_CLAIMED'
+            echo 'Full Linux qualification: NOT_CLAIMED'
+          } >>"${GITHUB_STEP_SUMMARY}"
 
       - name: Upload PR qualification evidence
         if: always()

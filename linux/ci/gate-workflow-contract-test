@@ -32,9 +32,13 @@ expect_rejected wrong-node 'node-version: 24.14.0' 'node-version: latest'
 # The mutation must write a literal shell substitution into the fixture.
 # shellcheck disable=SC2016
 expect_rejected generated-package 'alsa-utils appstream' '$(linux/ci/bootstrap-ubuntu-24.04 --print-apt)'
-expect_rejected repository-sudo 'sudo apt-get update' 'sudo linux/ci/bootstrap-ubuntu-24.04'
+expect_rejected repository-sudo \
+    'sudo timeout --signal=TERM --kill-after=30s 600s' 'sudo linux/ci/bootstrap-ubuntu-24.04'
+expect_rejected missing-apt-deadline \
+    'timeout --signal=TERM --kill-after=30s 600s' 'timeout --signal=TERM --kill-after=30s 0s'
 expect_rejected missing-runner 'linux/ci/run-pr-subset' 'true # subset removed'
 expect_rejected missing-evidence 'if: always()' 'if: success()'
+expect_rejected missing-human-summary 'GITHUB_STEP_SUMMARY' 'REMOVED_JOB_SUMMARY'
 # The expected GitHub expressions must remain literal fixture text.
 # shellcheck disable=SC2016
 expect_rejected older-run-publication \
@@ -44,4 +48,4 @@ expect_rejected older-run-publication \
 expect_rejected wrong-event-commit \
     'ZENTTY_EXPECTED_COMMIT: ${{ github.sha }}' 'ZENTTY_EXPECTED_COMMIT: refs/heads/linux/port'
 
-echo "ci-gate-workflow-contract-test: PASS negatives=trigger+action+permission+runner+credentials+node+packages+sudo+subset+evidence+older-run+commit"
+echo "ci-gate-workflow-contract-test: PASS negatives=trigger+action+permission+runner+credentials+node+packages+sudo+timeout+subset+evidence+summary+older-run+commit"

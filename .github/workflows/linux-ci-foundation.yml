@@ -46,9 +46,13 @@ jobs:
           set -euo pipefail
           mkdir -p build/linux
           mapfile -t packages < <(linux/ci/bootstrap-ubuntu-24.04 --print-apt)
-          sudo apt-get update 2>&1 | tee build/linux/ci-apt-update.log
+          sudo timeout --signal=TERM --kill-after=30s 600s \
+            apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update \
+            2>&1 | tee build/linux/ci-apt-update.log
           sudo env DEBIAN_FRONTEND=noninteractive \
-            apt-get install -y --no-install-recommends "${packages[@]}" \
+            timeout --signal=TERM --kill-after=30s 600s \
+            apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 \
+            install -y --no-install-recommends "${packages[@]}" \
             2>&1 | tee build/linux/ci-apt-install.log
           if [[ -r /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]] &&
             [[ "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns)" == 1 ]]; then
