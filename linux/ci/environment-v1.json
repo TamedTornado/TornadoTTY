@@ -78,6 +78,7 @@
     "libwayland-dev",
     "libx11-dev",
     "libxkbcommon-dev",
+    "libxml2-utils",
     "mesa-utils",
     "meson",
     "ninja-build",
@@ -137,6 +138,7 @@
         "libwayland-dev",
         "libx11-dev",
         "libxkbcommon-dev",
+        "libxml2-utils",
         "mesa-utils",
         "meson",
         "ninja-build",
@@ -174,7 +176,8 @@
         "weston",
         "wtype",
         "xdotool",
-        "xdpyinfo"
+        "xdpyinfo",
+        "xmllint"
       ],
       "excluded_full_qualification_packages": [
         "ffmpeg",

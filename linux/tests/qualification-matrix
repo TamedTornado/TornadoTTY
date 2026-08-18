@@ -697,7 +697,9 @@ run_qualification_cell() {
     cell_evidence_lock_fd=""
     cell_evidence_lock_acquired=false
     retain_cell_evidence_lock=false
-    environment_capture_span_seconds=900
+    # This validates receipt chronology; it is not a command timeout. Cold
+    # public Ghostty builds legitimately exceeded the former 15-minute span.
+    environment_capture_span_seconds=1800
 
     if [[ "${status}" == "FAIL" ]]; then
         outcome="FAIL"

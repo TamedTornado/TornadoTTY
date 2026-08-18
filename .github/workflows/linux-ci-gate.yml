@@ -59,7 +59,7 @@ jobs:
             desktop-file-utils dpkg-dev fish fontconfig fuse3 gir1.2-gtk-4.0
             git ibus ibus-gtk4 jq libadwaita-1-dev libcairo2-dev
             libfontconfig-dev libglib2.0-dev libgtk-4-dev libnotify-bin libwayland-dev
-            libx11-dev libxkbcommon-dev mesa-utils meson ninja-build
+            libx11-dev libxkbcommon-dev libxml2-utils mesa-utils meson ninja-build
             openssh-client patchelf pkg-config procps python3 python3-gi
             python3-jsonschema shellcheck tmux util-linux wayland-utils weston
             wl-clipboard wtype x11-utils xauth xclip xdg-utils xdotool

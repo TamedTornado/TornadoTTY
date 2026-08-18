@@ -51,3 +51,26 @@ the integration branch a real first run without causing every product commit to
 launch the multi-hour suite. Schedule and manual dispatch remain declared and
 will become registered when this workflow reaches the default branch. The
 contract rejects loss of any of the three trigger modes.
+
+## First public run: cold-checkout dependency failures
+
+Run <https://github.com/TamedTornado/zentty/actions/runs/32107609194> installed
+the complete package graph and reached the real authoritative suite, then
+failed after 25 minutes with retained receipts. It exposed four locally cached
+assumptions rather than product failures:
+
+1. `libxml2-utils` was absent, so Ghostty resource generation could not find
+   `xmllint`.
+2. Release, Debug, and regression Ghostty builds concurrently mutated the same
+   source tree. They now share the existing `ghostty-source` scheduler resource.
+3. several Rust/platform contract cells omitted their actual build dependency
+   and, for direct Cargo invocations, the profile-specific `GHOSTTY_LIB_DIR`.
+4. support contracts ran concurrently with matrix producers whose generated
+   dependencies and artifacts they inspect. Support tests remain mutually
+   parallel, but now start only after the matrix phase.
+
+The cold builds also proved that the environment receipt's 900-second chronology
+ceiling was not a test timeout: successful build and regression commands took
+1,044 and 1,441 seconds. The receipt span is raised to 1,800 seconds while the
+workflow and commands retain their independent hard deadlines. The original run
+remains a public failure; no missing artifact or environment was called PASS.
