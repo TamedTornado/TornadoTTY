@@ -378,3 +378,19 @@ and Valgrind governance. The Debug Valgrind result is **PASS with reviewed
 suppressions**. Declared totals remain 161 PASS, 0 FAIL, 5 BLOCKED, 1 XFAIL,
 and 14 NOT_IMPLEMENTED, so implemented local qualification passed while release
 and full Linux qualification remain NOT_PASSED.
+
+The replacement public gate for documentation commit `76d890d3` then exposed
+a distinct real Wayland focus race in `shortcut-binding-runtime-wayland`. Its
+retained log proves the first two-character readiness query delivered only one
+`z`. The harness closed the partial palette but immediately sent the next
+opening chord before GTK had returned focus to the terminal. That chord was
+lost; worse, the nominal three-attempt loop aborted on a missing `shown` receipt
+instead of allowing its next attempt. This was a harness failure, not a product
+pass, and public run 32136889427 remains failed.
+
+The readiness state machine now waits for both the compositor-visible palette
+close and the subsequent real `focus-pane` transition before retrying. A lost
+opening chord proceeds to the next bounded attempt rather than aborting the
+loop. The orchestration contract preserves both requirements. Three consecutive
+real nested-Cage Wayland journeys and one nested-X11 journey passed after the
+repair. This focused local evidence does not replace the next public receipt.

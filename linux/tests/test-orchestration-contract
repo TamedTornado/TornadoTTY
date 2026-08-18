@@ -359,6 +359,10 @@ require "settings palette readiness is scoped to the current physical query" \
     grep -Fq 'query_count="$(grep -Fc' "${shortcut_settings_harness}"
 require "settings palette readiness resets through a compositor-visible close and reopen" \
     grep -Fq 'command palette readiness probe did not close' "${shortcut_settings_harness}"
+require "settings palette retry waits for terminal focus after closing its probe" \
+    grep -Fq 'terminal focus did not return after a partial readiness probe' "${shortcut_settings_harness}"
+require "settings palette lost-opening chord reaches the bounded retry" \
+    grep -Fq 'one lost opening chord must not abort before it can run' "${shortcut_settings_harness}"
 require "source UX journey does not count a new Worklane Peek preview after repeated Tab" \
     grep -Fq 'peek_advance_before=' "${repo_root}/linux/tests/rust-source-ux-x11"
 require "Open With journey does not count a new primary-target application" \
