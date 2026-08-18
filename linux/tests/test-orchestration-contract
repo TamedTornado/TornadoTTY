@@ -355,6 +355,10 @@ if [[ ! "${threshold_receipt_line}" =~ ^[1-9][0-9]*$ ||
 fi
 require "settings journey does not count a new opacity application after physical Home" \
     grep -Fq 'opacity_apply_before=' "${repo_root}/linux/tests/rust-shortcuts-settings"
+require "settings palette readiness is scoped to the current physical query" \
+    grep -Fq 'query_count="$(grep -Fc' "${shortcut_settings_harness}"
+require "settings palette readiness resets through a compositor-visible close and reopen" \
+    grep -Fq 'command palette readiness probe did not close' "${shortcut_settings_harness}"
 require "source UX journey does not count a new Worklane Peek preview after repeated Tab" \
     grep -Fq 'peek_advance_before=' "${repo_root}/linux/tests/rust-source-ux-x11"
 require "Open With journey does not count a new primary-target application" \

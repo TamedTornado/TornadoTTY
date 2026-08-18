@@ -174,3 +174,17 @@ reproduction failed with the relative path and passed with the exact absolute
 path. The matrix now anchors these inputs at `$PWD`, and both the matrix runner
 test and orchestration contract reject a return to relative `GHOSTTY_LIB_DIR`
 values. The failed receipt remains evidence; it is not reported as a pass.
+
+Public PR gate `32118652113` then passed both builds, staged X11/Wayland,
+physical X11 input, and the product-boundary journeys before failing the real
+Wayland shortcut/settings journey. Its retained log exposed a harness defect:
+the first command-palette probe had produced `zz`, while a later probe produced
+only `z`; the later attempt searched the entire log and incorrectly accepted
+the stale earlier `zz` receipt. It consequently raced Ctrl+A and Backspace
+against the wrong attempt. Readiness is now count-scoped to the current
+physical query. Once proven, the harness closes and reopens the real palette to
+obtain an empty input rather than injecting an immediate two-chord reset. The
+contract rejects removal of both boundaries. Three consecutive journeys pass
+through the real nested Cage, virtual-keyboard, GTK, and Ghostty stack after
+the repair. The failed public gate remains a failure until its replacement run
+passes.
