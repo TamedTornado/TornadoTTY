@@ -200,6 +200,10 @@ for dependency in \
     fi
 done
 
+# GH-57 public negative-evidence fixture: prove compositor startup failure is
+# fatal and retained. This branch must never merge.
+fail "GH-57 deliberate Wayland compositor startup failure fixture"
+
 report="${ZENTTY_NESTED_WAYLAND_REPORT:-}"
 report_temp=""
 if [[ -n "${report}" ]]; then
