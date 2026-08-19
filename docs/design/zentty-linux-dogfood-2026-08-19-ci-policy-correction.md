@@ -66,3 +66,10 @@ than falsely converted to PASS.
 The parent epic and GH-9/GH-10/GH-56 through GH-59 were reconciled. GH-58 and
 GH-59 are closed as not planned; the closed GH-56/GH-57 histories carry an
 operator-correction notice while retaining the useful secure-CI work.
+
+The clean-checkout `linux/ci/preflight-test` initially failed inside Codex's
+filesystem sandbox because the user namespace maps the host's root-owned
+`/tmp/.X11-unix` directory to `nobody:nogroup`. The host directory itself was
+the required `root:root` mode `1777`; rerunning that host-environment preflight
+outside the sandbox passed. This was an execution-environment mismatch, not a
+reason to weaken the ownership check.
