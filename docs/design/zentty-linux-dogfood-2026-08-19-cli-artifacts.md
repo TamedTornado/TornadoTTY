@@ -71,3 +71,31 @@ The installed package embeds the source commit identity, so its modified
 journey cannot honestly run against a dirty checkout or a package from the
 previous commit. The change is committed first, then the exact-commit package
 is rebuilt and the installed X11/Wayland journeys are run before GH-49 closes.
+
+## Exact installed-package results
+
+Commit `621136210123b27b15ae62a262bcb8b7ef73dd88` produced Debian package
+`0.1.0+git621136210123` with SHA-256
+`e0fa9df94b318b352e587e0fbca5a71b0068b28504ec54bc75c3eae57f22e5b3`.
+The package lifecycle suite passed all nine transitions.
+
+The real installed product then passed under both controlled displays:
+
+- X11 session `15571914ae442da46cc34741cea9ef0f54529bb0e15fa1f09f516565df750c8b`;
+- Wayland session `d38581d163161cc9309a32f45ab2566316edad1834f45cc59d925a5bbe4bc152`.
+
+Both receipts record real Ghostty PTYs, multi-pane mutation, persistence and
+restart, CLI reads and mutation, tmux shim execution, agent wrapper execution,
+installed integration CLI install/uninstall, clipboard, Open With, shell
+integration, terminfo, desktop identity, and no source/build leakage.
+
+The Wayland host again logged crashes from Ubuntu's
+`xdg-desktop-portal-gnome` inside the nested compositor while
+`xdg-desktop-portal-gtk` supplied the fallback. The installed Zentty journey
+completed successfully. This remains an external desktop-service defect, not
+a reason to call the portal clean or to hide its diagnostics.
+
+GH-49 is therefore satisfied without a hosted-CI receipt or a new aggregate
+runner. Matrix declarations remain `161 PASS`, `3 BLOCKED`, `1 XFAIL`, and
+`14 NOT_IMPLEMENTED`; this feature added coverage to existing PASS cells and
+did not misrepresent unrelated product gaps as completed.
