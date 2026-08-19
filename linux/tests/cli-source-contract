@@ -4,6 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 contract="${1:-${repo_root}/docs/design/zentty-cli-source-contract.json}"
 evidence="${repo_root}/docs/design/zentty-feature-evidence-2026-08-04.json"
+matrix="${ZENTTY_QUALIFICATION_MATRIX:-${repo_root}/linux/qualification-matrix.json}"
 
 fail() {
     echo "cli-source-contract: error: $*" >&2
@@ -14,6 +15,7 @@ for dependency in jq comm find grep sort; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
 [[ -f "${contract}" ]] || fail "contract is missing: ${contract}"
+[[ -f "${matrix}" ]] || fail "qualification matrix is missing: ${matrix}"
 jq -e . "${contract}" >/dev/null || fail "contract is not valid JSON"
 
 jq -e '
@@ -58,6 +60,18 @@ jq -e '
         (.modes | type == "array" and length > 0) and
         (has("schema") or has("golden") or has("pattern") or has("values") or has("stability")))
 ' "${contract}" >/dev/null || fail "contract invariants failed"
+
+jq -e --slurpfile matrix "${matrix}" '
+    all(.commands | group_by(.family)[];
+        ([.[].tests[] | select(startswith("linux/tests/"))] | unique) as $journeys |
+        ($journeys | length) > 0 and
+        ($journeys | any(.[];
+            . as $journey |
+            any($matrix[0].cells[];
+                .status == "PASS" and
+                ((.command // "") | contains($journey))))))
+' "${contract}" >/dev/null ||
+    fail "command family lacks an executable staged real-product journey"
 
 jq -e --slurpfile evidence "${evidence}" '
     .source.source_head == $evidence[0].source_head

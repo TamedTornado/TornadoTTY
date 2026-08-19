@@ -212,6 +212,20 @@ if mkdir "${out}/${phase}-leader" 2>/dev/null; then
         [[ "$(jq 'length' "${out}/${phase}-panes-before.json")" -eq 2 ]]
         "${ZENTTY_CLI_BIN}" worklane rename "Installed qualified"
         "${ZENTTY_CLI_BIN}" split right
+        mkdir -p "${HOME}/.cursor"
+        printf '%s\n' '{"version":1,"hooks":{"sessionStart":[{"command":"user-owned"}]}}' \
+            >"${HOME}/.cursor/hooks.json"
+        "${ZENTTY_CLI_BIN}" install cursor-hooks
+        jq -e '
+            any(.hooks.sessionStart[]; .command == "user-owned") and
+            any(.hooks.sessionStart[];
+                (.command | contains("/usr/lib/zentty/bin/zentty") and
+                    contains("ipc agent-event --adapter=cursor")))
+        ' "${HOME}/.cursor/hooks.json" >/dev/null
+        "${ZENTTY_CLI_BIN}" uninstall cursor-hooks
+        jq -e '.hooks.sessionStart == [{"command":"user-owned"}]' \
+            "${HOME}/.cursor/hooks.json" >/dev/null
+        printf 'passed\n' >"${out}/installed-integration-cli.receipt"
         for _ in {1..200}; do
             "${ZENTTY_CLI_BIN}" list panes --json >"${out}/first-panes-after.json"
             [[ "$(jq 'length' "${out}/first-panes-after.json")" -eq 3 ]] && break
@@ -345,6 +359,8 @@ first_product="$(find_product_pid)" || fail "first installed product PID was not
 audit_process "${first_product}" first
 grep -Fxq 'passed' "${receipts}/agent-wrapper.receipt" ||
     fail "installed Codex wrapper did not execute the controlled agent"
+grep -Fxq 'passed' "${receipts}/installed-integration-cli.receipt" ||
+    fail "installed integration CLI did not complete install and uninstall"
 grep -Fq 'zentty-linux: agent-event pane=' "${product_log}" ||
     fail "installed Codex wrapper did not deliver an authenticated hook event"
 # Use the established real-input helper to invoke one installed Open With
@@ -519,7 +535,8 @@ jq -n \
       launches:{direct:true,desktop_entry:true,restart:true},
       product:{ghostty_pty:true,single_and_multi_pane:true,persistence:true,
         cli_read:true,cli_mutation:true,tmux_shim:true,agent_wrapper_present:true,
-        agent_wrapper_executed:true,clipboard_write:true,open_with_launch:true,
+        agent_wrapper_executed:true,integration_cli:true,
+        clipboard_write:true,open_with_launch:true,
         shell_integration:true,terminfo:true,desktop_identity:true},
       process_audits:[$first_process,$second_process,$desktop_process],
       clean_path:"/usr/bin:/bin",

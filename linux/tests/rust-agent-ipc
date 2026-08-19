@@ -83,6 +83,34 @@ for wrapper in \
     [[ -x "${wrapper_root}/${wrapper}" ]] || fail "staged ${wrapper} wrapper is missing"
 done
 
+qualify_staged_integration_cli() (
+    local home config
+    home="$(mktemp -d)"
+    trap 'rm -rf -- "${home}"' EXIT
+    config="${home}/.cursor/hooks.json"
+    mkdir -p "$(dirname "${config}")"
+    printf '%s\n' '{"version":1,"hooks":{"sessionStart":[{"command":"user-owned"}]}}' \
+        >"${config}"
+
+    HOME="${home}" XDG_CONFIG_HOME="${home}/xdg-config" \
+        "${helper}" install cursor-hooks >/dev/null
+    jq -e --arg helper "${helper}" '
+        any(.hooks.sessionStart[]; .command == "user-owned") and
+        any(.hooks.sessionStart[];
+            (.command | contains($helper) and contains("ipc agent-event --adapter=cursor")))
+    ' "${config}" >/dev/null || fail "staged CLI did not install its owned Cursor hook"
+
+    HOME="${home}" XDG_CONFIG_HOME="${home}/xdg-config" \
+        "${helper}" uninstall cursor-hooks >/dev/null
+    jq -e '
+        .hooks.sessionStart == [{"command":"user-owned"}] and
+        ([.hooks[][]?.command // empty] | all(contains("zentty ipc") | not))
+    ' "${config}" >/dev/null ||
+        fail "staged CLI uninstall damaged user hooks or retained its own hook"
+)
+
+qualify_staged_integration_cli
+
 fake_bin="$(mktemp -d)"
 ln -s "${actor}" "${fake_bin}/codex"
 ln -s "${actor}" "${fake_bin}/claude"

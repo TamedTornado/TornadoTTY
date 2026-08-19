@@ -90,6 +90,7 @@ expect_failure unknown-output '(.commands[] | select(.id == "version")).output =
 expect_failure missing-schema-file '(.output_contracts["panes-v1"].schema = "docs/design/cli-schemas/missing.schema.json")' 'tracked contract path is missing'
 expect_failure duplicate-path '(.commands[] | select(.id == "version")).path = ["split"]' 'contract invariants failed'
 expect_failure false-complete '(.commands[] | select(.id == "ipc")) |= (.status = "IMPLEMENTED" | del(.difference) | .implementation = [])' 'contract invariants failed'
+expect_failure missing-family-journey '(.commands[] | select(.family == "agent-launch")).tests = ["crates/zentty-agent-ipc/tests/launch_cli.rs"]' 'command family lacks an executable staged real-product journey'
 
 validate_agent_contract "${agent_contract}"
 expect_agent_failure unknown-agent-status '(.canonical_events[0].linux = "DONE")'
