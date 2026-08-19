@@ -187,3 +187,9 @@ Adding the missing action exposed the validator's intentional exact count for
 parameterless actions. That count was updated from 86 to 87. The named-action
 equality check remains the substantive guard; the count continues to reject
 duplicates or an unreviewed contract-shape change.
+
+After the reconciliation commit was pushed, the first GH-1 comment expanded
+the correct short hash `ca3f5a11` with an incorrect suffix instead of reading
+the object ID from Git. A corrective public comment records the actual commit
+`ca3f5a11a944babdbb27a15501ece8b783613ea2`. Exact hashes must be copied from
+`git rev-parse`, never reconstructed from a short prefix.
