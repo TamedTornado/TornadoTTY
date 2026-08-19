@@ -33,6 +33,8 @@ pub(crate) const MOVE_PANE_LEFT: &str = "Move Pane Left";
 pub(crate) const MOVE_PANE_RIGHT: &str = "Move Pane Right";
 pub(crate) const MOVE_PANE_UP: &str = "Move Pane Up";
 pub(crate) const MOVE_PANE_DOWN: &str = "Move Pane Down";
+pub(crate) const MOVE_PANE_TO_WORKLANE: &str = "Move Pane to Worklane";
+pub(crate) const NEW_WORKLANE_IN_THIS_WINDOW: &str = "New Worklane in This Window";
 pub(crate) const MOVE_PANE_TO_NEW_WINDOW: &str = "Move Pane to New Window";
 pub(crate) const RESIZE_PANE_LEFT: &str = "Resize Pane Left";
 pub(crate) const RESIZE_PANE_RIGHT: &str = "Resize Pane Right";
@@ -122,6 +124,11 @@ mod tests {
         }
         assert!(SIDEBAR_SOURCE.contains("Rename Pane\\u{2026}"));
         assert!(SIDEBAR_SOURCE.contains("Rename Worklane\\u{2026}"));
+        assert!(SIDEBAR_SOURCE.contains(MOVE_PANE_TO_WORKLANE));
+        assert!(
+            include_str!("../../../Zentty/UI/PaneStrip/MoveToWorklaneMenuBuilder.swift")
+                .contains(NEW_WORKLANE_IN_THIS_WINDOW)
+        );
         assert_eq!(RENAME_PANE, "Rename Pane…");
         assert_eq!(RENAME_WORKLANE, "Rename Worklane…");
         assert!(LAYOUT_SOURCE.contains(SPLIT_RIGHT));

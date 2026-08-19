@@ -110,7 +110,7 @@
       "linux_owner_issue": 4,
       "implementation_status": "PARTIAL",
       "focused_tests": ["crates/zentty-core/tests/workspace_state.rs"],
-      "product_scenarios": ["linux/tests/rust-source-ux-x11", "linux/tests/rust-session-restore"],
+      "product_scenarios": ["linux/tests/rust-source-ux-x11", "linux/tests/rust-session-restore", "linux/tests/rust-sidebar-management-x11"],
       "test_plan": "Cover controlled Wayland physical keyboard/pointer injection, direct-drag relaunch, cross-window moves, and source top/bottom cross-worklane focus behavior. Current controlled X11 coverage physically drags both divider axes and sends all four Ctrl+Alt+Shift+Arrow cell-resize chords while retaining real Ghostty PTYs; core tests prove focused-only cell steps, adjacent-pair minimum clamps, and exact recipe round-trip, and the controlled Wayland restore journey covers the resulting overlay lifecycle.",
       "alternative_or_blocker": null
     },

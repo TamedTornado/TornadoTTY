@@ -128,6 +128,7 @@ pub(super) const ACTION_MOVE_PANE_RIGHT: &str = "move-pane-right";
 pub(super) const ACTION_MOVE_PANE_UP: &str = "move-pane-up";
 pub(super) const ACTION_MOVE_PANE_DOWN: &str = "move-pane-down";
 pub(super) const ACTION_MOVE_PANE_TO_WORKLANE: &str = "move-pane-to-worklane";
+pub(super) const ACTION_MOVE_PANE_TO_NEW_WORKLANE: &str = "move-pane-to-new-worklane";
 pub(super) const ACTION_MOVE_PANE_TO_NEW_WINDOW: &str = "move-pane-to-new-window";
 pub(super) const ACTION_SELECT_PANE: &str = "select-pane";
 pub(super) const ACTION_NAVIGATE_BACK: &str = "navigate-back";
@@ -268,6 +269,12 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
         ACTION_MOVE_PANE_TO_WORKLANE,
         "move-pane-to-worklane",
         String
+    ),
+    action!(
+        ACTION_MOVE_PANE_TO_NEW_WORKLANE,
+        "move-pane-to-new-worklane",
+        None,
+        MultipleWorkspacePanes
     ),
     action!(
         ACTION_MOVE_PANE_TO_NEW_WINDOW,
@@ -1394,6 +1401,31 @@ fn install_pane_transfer_action(
         }
     });
     group.add_action(&move_pane);
+
+    let move_to_new_worklane = gio::SimpleAction::new(ACTION_MOVE_PANE_TO_NEW_WORKLANE, None);
+    let weak = Rc::downgrade(shell);
+    move_to_new_worklane.connect_activate(move |_, _| {
+        let Some(shell) = weak.upgrade() else {
+            return;
+        };
+        let mut shell = shell.borrow_mut();
+        let pane_id = shell.state.focused_pane_id().map(str::to_owned);
+        let worklane_id = shell.take_worklane_id();
+        let placement = shell.config.worklanes.new_worklane_placement;
+        let width = f64::from(shell.pane_viewport_width());
+        if shell
+            .state
+            .isolate_focused_pane_in_new_worklane(worklane_id.clone(), placement, width)
+        {
+            eprintln!(
+                "zentty-linux: action=move-pane-to-new-worklane pane={} target={worklane_id}",
+                pane_id.as_deref().unwrap_or("unknown")
+            );
+            shell.render();
+            shell.focus_selected_surface();
+        }
+    });
+    group.add_action(&move_to_new_worklane);
 }
 
 fn install_pane_creation_actions(
@@ -1691,7 +1723,7 @@ mod tests {
 
     #[test]
     fn registry_is_unique_complete_and_typed() {
-        assert_eq!(ACTION_SPECS.len(), 115);
+        assert_eq!(ACTION_SPECS.len(), 116);
         assert_eq!(
             ACTION_SPECS
                 .iter()
@@ -1804,6 +1836,10 @@ mod tests {
         assert_eq!(
             conditional,
             [
+                (
+                    "move-pane-to-new-worklane",
+                    Availability::MultipleWorkspacePanes
+                ),
                 (
                     "move-pane-to-new-window",
                     Availability::MultipleWorkspacePanes

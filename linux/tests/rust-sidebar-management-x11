@@ -39,14 +39,14 @@ product="${ZENTTY_PRODUCT_BINARY}"
 bundle_lib="${ZENTTY_PRODUCT_BUNDLE_LIB}"
 mkdir -p "${state_directory}/working-directory"
 
-# Keep all nine real PTYs alive through the pointer journey even when the
-# qualification host is concurrently busy compiling other matrix cells.
+# Keep all nine real PTYs alive through the pointer journey and expose a title
+# receipt for the final post-transfer physical-input proof.
 (
     cd "${state_directory}/working-directory"
     exec env GDK_SCALE=1 GDK_DPI_SCALE=1 \
     LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
     "${product}" \
-    --command 'sleep 30' \
+        --command "while IFS= read -r line; do printf '\033]2;%s\a' \"\$line\"; done" \
     --state-directory "${state_directory}" \
         --no-session-restore
 ) >"${log}" 2>&1 &
@@ -212,8 +212,102 @@ done
 [[ "$(grep -Fc 'zentty-linux: sidebar-card id=worklane-4 panes=1 ' "${log}" || true)" -eq 1 ]] ||
     fail "an unaffected worklane card was rebuilt during selection or reorder"
 
+# The source pane menu catalogs every other worklane in current sidebar order.
+# Resolve each rendered hit target from GTK pointer-enter receipts instead of
+# encoding compositor- or font-dependent menu coordinates. The final click
+# moves pane-1's live Ghostty surface into worklane-2; no model-only action or
+# synthetic test API stands in for the visible contextual affordance.
+find_pointer_target() {
+    local receipt="$1"
+    local x="$2"
+    local before candidate_x y
+    local -a candidate_xs
+    before="$(grep -Fxc "${receipt}" "${log}" || true)"
+    if [[ "${x}" == any ]]; then
+        mapfile -t candidate_xs < <(seq 40 30 490)
+    else
+        candidate_xs=("${x}")
+    fi
+    for candidate_x in "${candidate_xs[@]}"; do
+        xdotool mousemove --sync --window "${window_id}" 600 60
+        for y in $(seq 70 10 680); do
+            xdotool mousemove --sync --window "${window_id}" "${candidate_x}" "${y}"
+            sleep 0.03
+            if (( $(grep -Fxc "${receipt}" "${log}" || true) > before )); then
+                return 0
+            fi
+        done
+    done
+    return 1
+}
+
+find_pointer_target \
+    'zentty-linux: pane-context-pointer action=open pane=pane-1' 250 ||
+    fail "physical pointer could not locate pane-1's rendered action button"
+xdotool click 1
+sleep 0.1
+find_pointer_target \
+    'zentty-linux: pane-context-pointer action=move-pane-to-worklane pane=pane-1' any ||
+    fail "physical pointer could not locate the source Move Pane to Worklane affordance"
+xdotool click 1
+sleep 0.1
+find_pointer_target \
+    'zentty-linux: pane-context-pointer action=move-pane-to-worklane target=worklane-2' any ||
+    fail "physical pointer could not locate the ordered worklane-2 destination"
+xdotool click 1
+for _ in $(seq 1 120); do
+    grep -Fxq 'zentty-linux: action=move-pane-to-worklane pane=pane-1 target=worklane-2' "${log}" && break
+    sleep 0.05
+done
+grep -Fxq 'zentty-linux: action=move-pane-to-worklane pane=pane-1 target=worklane-2' "${log}" ||
+    fail "the real contextual destination did not move pane-1 into worklane-2"
+[[ "$(grep -Fc 'zentty-linux: terminal-ready-pane=' "${log}" || true)" -eq 9 ]] ||
+    fail "same-window worklane transfer recreated or destroyed a Ghostty terminal"
+xdotool type --window "${window_id}" --delay 5 'contextual-transfer-live-pty'
+xdotool key --window "${window_id}" Return
+for _ in $(seq 1 100); do
+    grep -Fxq 'zentty-linux: title-pane=pane-1 value=contextual-transfer-live-pty' "${log}" && break
+    sleep 0.05
+done
+grep -Fxq 'zentty-linux: title-pane=pane-1 value=contextual-transfer-live-pty' "${log}" ||
+    fail "moved pane-1 did not retain real PTY input after contextual transfer"
+
+# With pane-1 now sharing worklane-2, the same source submenu must append the
+# distinct "New Worklane in This Window" operation. Drive that final item and
+# prove it isolates the existing live pane rather than starting a replacement.
+find_pointer_target \
+    'zentty-linux: pane-context-pointer action=open pane=pane-1' any ||
+    fail "physical pointer could not relocate pane-1 after its first transfer"
+xdotool click 1
+sleep 0.1
+find_pointer_target \
+    'zentty-linux: pane-context-pointer action=move-pane-to-worklane pane=pane-1' any ||
+    fail "relocated pane did not retain its Move Pane to Worklane affordance"
+xdotool click 1
+sleep 0.1
+find_pointer_target \
+    'zentty-linux: pane-context-pointer action=move-pane-to-new-worklane target=new' any ||
+    fail "source New Worklane in This Window destination was not rendered"
+xdotool click 1
+for _ in $(seq 1 120); do
+    grep -Fxq 'zentty-linux: action=move-pane-to-new-worklane pane=pane-1 target=worklane-10' "${log}" && break
+    sleep 0.05
+done
+grep -Fxq 'zentty-linux: action=move-pane-to-new-worklane pane=pane-1 target=worklane-10' "${log}" ||
+    fail "New Worklane in This Window did not isolate the selected live pane"
+[[ "$(grep -Fc 'zentty-linux: terminal-ready-pane=' "${log}" || true)" -eq 9 ]] ||
+    fail "new-worklane isolation recreated or destroyed a Ghostty terminal"
+xdotool type --window "${window_id}" --delay 5 'contextual-new-worklane-live-pty'
+xdotool key --window "${window_id}" Return
+for _ in $(seq 1 100); do
+    grep -Fxq 'zentty-linux: title-pane=pane-1 value=contextual-new-worklane-live-pty' "${log}" && break
+    sleep 0.05
+done
+grep -Fxq 'zentty-linux: title-pane=pane-1 value=contextual-new-worklane-live-pty' "${log}" ||
+    fail "isolated pane-1 did not retain real PTY input"
+
 if grep -Eq 'panicked at|thread caused non-unwinding panic|RefCell already borrowed|CRITICAL: Gtk|has a parent GtkBox' "${log}"; then
     fail "sidebar management reported a panic or GTK lifecycle critical"
 fi
 
-echo "Rust sidebar management passed: x11, worklanes=9, overflow=revealed, drag-reorder=real, rows=stable"
+echo "Rust sidebar management passed: x11, worklanes=9, overflow=revealed, drag-reorder=real, contextual-transfer=live-pty, rows=stable"
