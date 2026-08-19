@@ -446,11 +446,11 @@
       "classification": "REQUIRED_LATER",
       "origin": "PORT_PARITY",
       "user_impact": "The Task Manager lets users identify expensive or stuck work by pane without leaving Zentty or guessing from process titles.",
-      "linux_owner_issue": 19,
+      "linux_owner_issue": 65,
       "implementation_status": "PARTIAL",
       "focused_tests": ["crates/zentty-linux/src/task_manager/model.rs", "crates/zentty-linux/src/task_manager/proc_sampler.rs"],
       "product_scenarios": ["linux/tests/rust-task-manager"],
-      "test_plan": "Keep the controlled X11/Wayland real-PTY journey for CPU, memory, search, expansion, clipboard, focus, close, PID churn, and absence of a dead Network column when no telemetry backend is active. Add multiwindow, cgroup/container, and trustworthy per-pane network accounting evidence before promotion. Evaluate cgroup-attached eBPF with real TCP/UDP traffic from two pane trees plus unrelated and containerized processes; prove attribution, lifecycle, privilege, namespace, overhead, and no double counting. Never substitute aggregate interface counters or socket-queue bytes for pane throughput, and never treat an unavailable environment as a pass.",
+      "test_plan": "Keep the controlled X11/Wayland real-PTY journey for CPU, memory, search, expansion, clipboard, focus, close, PID churn, multiwindow behavior, and absence of a dead Network column when no telemetry backend is active. Under deferred issue #65, add cgroup/container and trustworthy per-pane network accounting evidence before promotion. Evaluate cgroup-attached eBPF with real TCP/UDP traffic from two pane trees plus unrelated and containerized processes; prove attribution, lifecycle, privilege, namespace, overhead, and no double counting. Never substitute aggregate interface counters or socket-queue bytes for pane throughput, and never treat an unavailable environment as a pass.",
       "alternative_or_blocker": null
     },
     {

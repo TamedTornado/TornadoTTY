@@ -515,6 +515,7 @@
     {"name":"move-pane-up","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"move-pane-down","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"move-pane-to-worklane","parameter":"string","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"move-pane-to-new-worklane","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"move-pane-to-new-window","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"select-pane","parameter":"string_pair","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"navigate-back","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},

@@ -611,7 +611,7 @@
       "async_backend": "default",
       "terminals": "multi",
       "tracking": "GH-4",
-      "defect": "A real compound-card worklane slice owns creation, selection, rename, reorder, color, ordered columns, vertical and horizontal pane splits, same-window cross-worklane transfer, focus, close, teardown, authenticated agent-attention presentation, and physical divider drags under controlled X11, but deterministic physical double-click equalization, the source contextual move affordance, end-to-end progress/failure states, and the full accessibility audit remain.",
+      "defect": "A real compound-card worklane slice owns creation, selection, rename, reorder, color, ordered columns, vertical and horizontal pane splits, source-contextual same-window cross-worklane transfer and new-worklane isolation with live PTY preservation, focus, close, teardown, authenticated agent-attention presentation, and physical divider drags under controlled X11, but deterministic physical double-click equalization, end-to-end progress/failure states, and the full accessibility audit remain.",
       "authoritative": false
     },
     {
