@@ -159,7 +159,7 @@ Retain:
 - raw/suppressed Valgrind totals and suppression review; and
 - atomic publication of the final summary.
 
-Remove or defer until public CI has a concrete consumer:
+Remove unless a concrete product or ordinary CI maintenance need exists:
 
 - recursive source-snapshot validation inside every test layer;
 - a mutation campaign for the Bash evidence framework;
@@ -168,9 +168,9 @@ Remove or defer until public CI has a concrete consumer:
 - relocatable archive attack simulations as a local product gate; and
 - hour-long outer evidence spans caused by nesting aggregate suites.
 
-Release/public CI may later sign and retain artifacts from a clean commit. That
-work starts only after the Rust product integration path is green and must not
-be added merely to make local evidence look more sophisticated.
+CI may retain short-lived logs for debugging. Artifact signing, release
+approval, and hosted-evidence governance are separate future release-design
+questions and must not be inferred from qualification work.
 
 ## 5. Mutation-testing policy
 
@@ -384,7 +384,8 @@ Add behavior only test-first, in this order:
 5. external resize and compositor scaling;
 6. clipboard and Linux platform services;
 7. packaging, install, upgrade and uninstall; and
-8. controlled public CI and representative desktop/hardware qualification.
+8. representative desktop/hardware qualification where it tests supported
+   product behavior.
 
 Each new PASS cell must launch the delivered product or a clearly named narrow
 dependency probe. Gaps remain explicit until that is true.

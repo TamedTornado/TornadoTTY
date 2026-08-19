@@ -1,5 +1,9 @@
 # Zentty Linux dogfood — shell integration
 
+> **Operator correction — 2026-08-19:** Historical references below to a
+> public qualification contract are superseded by
+> [ADR 0005](../architecture/0005-ci-is-advisory.md). CI is advisory only.
+
 ## 2026-08-15 — GH-45 baseline
 
 The source already contains substantial Bash, Zsh, Fish, and Nushell

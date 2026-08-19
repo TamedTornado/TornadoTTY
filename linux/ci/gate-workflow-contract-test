@@ -39,6 +39,7 @@ expect_rejected repository-sudo \
 expect_rejected missing-apt-deadline \
     'timeout --signal=TERM --kill-after=30s 600s' 'timeout --signal=TERM --kill-after=30s 0s'
 expect_rejected missing-runner 'linux/ci/run-pr-subset' 'true # subset removed'
+expect_rejected advisory-label 'Linux advisory regression checks' 'Linux release qualification gate'
 expect_rejected missing-evidence 'if: always()' 'if: success()'
 expect_rejected missing-human-summary 'GITHUB_STEP_SUMMARY' 'REMOVED_JOB_SUMMARY'
 # The expected GitHub expressions must remain literal fixture text.

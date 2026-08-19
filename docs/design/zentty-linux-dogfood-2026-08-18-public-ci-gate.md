@@ -1,5 +1,10 @@
 # Zentty Linux public CI gate dogfood — 2026-08-18
 
+> **Operator correction — 2026-08-19:** This workflow is an ordinary advisory
+> CI check. It is not qualification authority, a release gate, or a source of
+> evidence that must be approved or documented. See
+> [ADR 0005](../architecture/0005-ci-is-advisory.md).
+
 This append-only report covers GH-57. GH-56 established the pinned public
 environment; this issue turns that foundation into a pull-request gate without
 creating a CI-only product or a second qualification matrix.

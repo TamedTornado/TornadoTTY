@@ -310,8 +310,8 @@ gaps explicit.
    locked downstream head `b992c688`; later official movement requires a new
    normalized audit rather than silently reusing these identities.
 9. **Qualification gaps:** ReleaseSafe Valgrind, controlled native Wayland
-   input/IME/resize/scaling, X11 IME/scaling, packaging, and public CI remain
-   non-PASS exactly as the unchanged matrix declares.
+   input/IME/resize/scaling, X11 IME/scaling, and remaining packaging/product
+   gaps stay explicit in the matrix. CI itself is not a qualification cell.
 
 ## Matrix integration reconciliation
 

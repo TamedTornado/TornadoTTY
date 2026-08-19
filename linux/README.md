@@ -127,8 +127,9 @@ scenario may use its protocol ceiling: the object rule is limited to
 `4/1160/16` matches/bytes/blocks and the child string rule to `2/8/8`, with
 string bytes equal to blocks and the child forbidden without its root. Missing
 or reordered acknowledgements, identity drift, and any over-ceiling use fail.
-These gitignored identities are not public proof; public access remains
-`NOT_IMPLEMENTED` under GH-10 until retained public artifacts exist.
+These gitignored identities are local diagnostic records. They are not release
+artifacts, and CI publication is neither required nor represented as a product
+qualification cell. See ADR 0005.
 
 Three earlier exploratory archives—
 `2026-08-03-ibus-one-cycle-characterization`,

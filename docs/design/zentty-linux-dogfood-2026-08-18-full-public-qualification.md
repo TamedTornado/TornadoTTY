@@ -1,4 +1,11 @@
-# Zentty Linux dogfood: full public qualification
+# Zentty Linux dogfood: retired hosted full-qualification experiment
+
+> **Operator correction — 2026-08-19:** GitHub CI checks the work; it is not
+> authoritative qualification, a release process, or a completion gate. The
+> scheduled/manual full workflow and CI matrix cells were removed by
+> [ADR 0005](../architecture/0005-ci-is-advisory.md). The material below is a
+> historical failure/repair record only. Any statement that another hosted
+> receipt is required is superseded.
 
 This record begins GH-58 after the bounded public PR gate passed and GH-57
 closed. It records discoveries, failures, repairs, receipts, and remaining

@@ -23,7 +23,6 @@ pinned_gemini_bin="${repo_root}/linux/ci/node-tools/node_modules/.bin/gemini"
 mapfile -t ci_support_tests < <(jq -r '.support_tests[]' "${repo_root}/linux/ci/pr-subset-v1.json")
 support_tests=(
     "${ci_support_tests[@]}"
-    linux/ci/full-workflow-contract-test
     linux/tests/qualification-matrix-test
     linux/tests/application-api-inventory-test
     linux/tests/application-api-schema

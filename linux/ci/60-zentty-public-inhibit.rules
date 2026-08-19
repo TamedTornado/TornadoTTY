@@ -1,9 +1,0 @@
-// GitHub-hosted runners have no active desktop seat. Grant only the runner
-// account and only Zentty's real block-sleep logind operation so the public
-// journey exercises the actual systemd-inhibit/logind lifecycle.
-polkit.addRule(function(action, subject) {
-    if (action.id == "org.freedesktop.login1.inhibit-block-sleep" &&
-        subject.user == "runner") {
-        return polkit.Result.YES;
-    }
-});

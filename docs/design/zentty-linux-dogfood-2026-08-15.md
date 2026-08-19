@@ -111,7 +111,8 @@ The nested Wayland run repeatedly activates Ubuntu's
 session. `xdg-desktop-portal-gtk` supplies the fallback and the controlled
 product journey passes. This is external nested-environment evidence, not an
 unsuppressed product-clean claim and not a reason to convert absence into PASS.
-The authoritative matrix still owns compositor and controlled-public-CI gaps.
+The authoritative matrix still owns compositor gaps. ADR 0005 removed CI-host
+status from product qualification because CI is an advisory check.
 
 ## Privacy
 

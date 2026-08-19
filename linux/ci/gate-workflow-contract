@@ -41,7 +41,7 @@ grep -Fq 'persist-credentials: false' "${workflow}" || fail "checkout credential
 # shellcheck disable=SC2016
 grep -Fq 'ZENTTY_EXPECTED_COMMIT: ${{ github.sha }}' "${workflow}" ||
     fail "preflight is not bound to the event commit"
-grep -Fq 'linux/ci/run-pr-subset' "${workflow}" || fail "authoritative subset runner is absent"
+grep -Fq 'linux/ci/run-pr-subset' "${workflow}" || fail "selected-check runner is absent"
 grep -Fq 'if: always()' "${workflow}" || fail "failure evidence is not retained"
 grep -Fq 'GITHUB_STEP_SUMMARY' "${workflow}" || fail "bounded human job summary is absent"
 grep -Fq 'Full Linux qualification: NOT_CLAIMED' "${workflow}" ||
@@ -74,4 +74,9 @@ cmp -s "${fixture}/workflow-packages" "${fixture}/manifest-packages" ||
 ! grep -Eq 'sudo[[:space:]]+(env[[:space:]]+[^[:space:]]+[[:space:]]+)?linux/|sudo .*\$\(|sudo .*`' "${workflow}" ||
     fail "repository-derived or shell-generated command crosses sudo"
 
-echo "ci-gate-workflow-contract: PASS trigger=pull_request permissions=read subset=authoritative packages=reviewed"
+grep -Fq 'Linux advisory regression checks' "${workflow}" ||
+    fail "workflow does not describe itself as advisory"
+! grep -Fq 'Run authoritative' "${workflow}" || fail "workflow claims authority"
+! grep -Fq 'qualification evidence' "${workflow}" || fail "debug artifacts are mislabeled as qualification evidence"
+
+echo "ci-gate-workflow-contract: PASS trigger=pull_request permissions=read subset=advisory packages=reviewed"

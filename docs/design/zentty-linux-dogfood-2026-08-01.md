@@ -1,5 +1,10 @@
 # Zentty Linux port dogfood field report
 
+> **Operator correction — 2026-08-19:** Historical references in this report
+> to controlled/public CI qualification, hosted receipts, or artifact approval
+> are superseded by [ADR 0005](../architecture/0005-ci-is-advisory.md). CI is an
+> advisory repository check, not qualification or release authority.
+
 Date: 2026-08-01
 
 Status: **in progress**. This is a contemporaneous field report. Entries record

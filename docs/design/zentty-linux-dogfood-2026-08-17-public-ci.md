@@ -1,5 +1,10 @@
 # Zentty Linux public CI dogfood — 2026-08-17
 
+> **Operator correction — 2026-08-19:** CI is advisory regression checking,
+> not qualification or release authority. [ADR 0005](../architecture/0005-ci-is-advisory.md)
+> supersedes the hosted-evidence and release-gate policy described below.
+> Historical environment and failure discoveries remain useful.
+
 This append-only report covers GH-10 and children GH-56 through GH-59. The
 authoritative local product runner remains `linux/tests/qualify-local`; public
 CI must consume it rather than grow a parallel product-test architecture.

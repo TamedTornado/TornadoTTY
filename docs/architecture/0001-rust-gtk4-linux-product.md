@@ -627,7 +627,7 @@ Retirement is a replacement of evidence, never deletion of a difficult cell.
 No newly discovered product work is left as an unowned prose requirement.
 Existing public issues own it: #13 bootstrap/adapter; #3 state/persistence; #4
 GTK shell; #5 pane/terminal lifecycle; #6 recovery; #7 workflow/agent/server
-parity; #8 input/IME/resize/scaling; #9 packaging; #10 controlled public CI;
+parity; #8 input/IME/resize/scaling; #9 packaging; #10 advisory CI checks;
 #11 Ghostty API decision; and #12 qualification architecture/matrix
 traceability.
 
@@ -635,7 +635,8 @@ The accepted order is #2 + #12, then #13 bootstrap may establish Cargo and raw
 declarations, but #11's scoped transfer/header/finalize proof MUST land before
 #13 exposes a safe surface constructor. #3, #4, and #5 then build the product;
 #6 follows the real lifecycle. #7 inventory may continue early but its
-delivery depends on that foundation. #8–#10 expand real product evidence.
+delivery depends on that foundation. #8–#9 expand real product evidence; #10
+checks changes without becoming product or release authority.
 #11's broader final API-retention/upstream decision still waits for #5's real
 callers. This refines the epic order only for the concrete safety prerequisite
 and does not create hidden work.

@@ -1,4 +1,4 @@
-name: Linux PR qualification gate
+name: Linux advisory regression checks
 
 on:
   pull_request:
@@ -96,7 +96,7 @@ jobs:
           linux/ci/preflight 2>&1 | tee build/linux/ci-preflight.log
           linux/ci/validate-preflight-receipt
 
-      - name: Run authoritative real-system PR subset
+      - name: Run selected real-system regression checks
         shell: bash
         run: |
           set -euo pipefail
@@ -108,25 +108,25 @@ jobs:
         shell: bash
         run: linux/ci/validate-preflight-receipt
 
-      - name: Publish bounded qualification claim
+      - name: Summarize advisory check result
         if: always()
         shell: bash
         run: |
           {
-            echo '### Linux PR qualification gate'
+            echo '### Linux advisory regression checks'
             if [[ -f build/linux/ci-pr-subset-summary.json ]] &&
               linux/ci/pr-subset-result validate-summary build/linux/ci-pr-subset-summary.json >/dev/null; then
-              jq -r '"Public PR subset: " + (if .claims.public_pr_subset_passed then "PASSED" else "FAILED" end)' \
+              jq -r '"Selected checks: " + (if .claims.public_pr_subset_passed then "PASSED" else "FAILED" end)' \
                 build/linux/ci-pr-subset-summary.json
             else
-              echo 'Public PR subset: NOT_ESTABLISHED'
+              echo 'Selected checks: NOT_ESTABLISHED'
             fi
             echo 'Implemented local suite: NOT_CLAIMED'
             echo 'Release qualification: NOT_CLAIMED'
             echo 'Full Linux qualification: NOT_CLAIMED'
           } >>"${GITHUB_STEP_SUMMARY}"
 
-      - name: Upload PR qualification evidence
+      - name: Upload debugging logs
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

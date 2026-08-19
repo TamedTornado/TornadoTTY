@@ -168,12 +168,14 @@ An installable artifact, XDG integration, resources, upgrade, and uninstall
 ownership are required for Linux delivery. Packaging must follow the product,
 not block construction of the worklane shell.
 
-### #10 — Controlled public CI
+### #10 — Advisory CI checks
 
-**Disposition: retain as LINUX_NECESSITY, decouple from feature sequencing.**
+**Disposition: retain ordinary CI only; remove it from product qualification.**
 
-Public Wayland/X11 execution is valuable. It must not prevent focused local
-product implementation while the public environment is being constructed.
+A clean hosted Wayland/X11 check is useful regression feedback. It is not a
+product capability, release authority, evidence-approval process, or blocker
+for focused local product implementation. ADR 0005 supersedes the earlier
+controlled-public-qualification design.
 
 ### #11 — Ghostty upstream decision
 

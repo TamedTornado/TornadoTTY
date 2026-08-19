@@ -230,7 +230,7 @@ mv -f -- "${summary_temp}" "${summary}"
 summary_temp=""
 "${result_tool}" validate-summary "${summary}" >/dev/null
 
-echo "Public PR subset: $([[ "${subset_passed}" == true ]] && echo PASSED || echo FAILED)"
+echo "Selected advisory checks: $([[ "${subset_passed}" == true ]] && echo PASSED || echo FAILED)"
 echo "Implemented local suite: NOT_CLAIMED"
 echo "Release qualification: NOT_CLAIMED"
 echo "Full Linux qualification: NOT_CLAIMED"

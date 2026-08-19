@@ -26,6 +26,16 @@ expect_validation_failure() {
 "${repo_root}/linux/tests/lib/qualification-outcome-test" >/dev/null
 "${repo_root}/linux/tests/lib/bounded-batch-test" >/dev/null
 
+# CI checks repository changes; it is not product behavior or qualification
+# authority. Keep provider/workflow state out of the product matrix.
+if jq -e '
+    (.required_capabilities[]? == "controlled_public_ci") or
+    (.cells[]? | .capability == "controlled_public_ci" or (.id | startswith("controlled-ci-")))
+' "${source_matrix}" >/dev/null; then
+    echo "qualification-matrix-test: CI authority returned to the product matrix" >&2
+    exit 1
+fi
+
 if ZENTTY_QUALIFICATION_JOBS=0 "${runner}" --validate-only \
     >"${temp_dir}/stdout" 2>"${temp_dir}/stderr"; then
     echo "qualification-matrix-test: zero parallel jobs were accepted" >&2
