@@ -331,8 +331,19 @@ zentty_product_drag_in_nested_wayland() {
         echo "product-input: pointer did not enter nested Wayland drag source" >&2
         return 1
     }
-    if (( pickup_x < 640 )); then target_x=1050; else target_x=230; fi
-    if (( pickup_y < 512 )); then target_y=760; else target_y=260; fi
+    if [[ -n "${ZENTTY_NESTED_WAYLAND_DRAG_TARGET_X:-}" ||
+        -n "${ZENTTY_NESTED_WAYLAND_DRAG_TARGET_Y:-}" ]]; then
+        [[ "${ZENTTY_NESTED_WAYLAND_DRAG_TARGET_X:-}" =~ ^[1-9][0-9]*$ &&
+            "${ZENTTY_NESTED_WAYLAND_DRAG_TARGET_Y:-}" =~ ^[1-9][0-9]*$ ]] || {
+            echo "product-input: explicit nested Wayland drag target must be positive coordinates" >&2
+            return 1
+        }
+        target_x="${ZENTTY_NESTED_WAYLAND_DRAG_TARGET_X}"
+        target_y="${ZENTTY_NESTED_WAYLAND_DRAG_TARGET_Y}"
+    else
+        if (( pickup_x < 640 )); then target_x=1050; else target_x=230; fi
+        if (( pickup_y < 512 )); then target_y=760; else target_y=260; fi
+    fi
     xdotool mousedown 1
     sleep 0.25
     xdotool mousemove_relative --sync -- 30 30

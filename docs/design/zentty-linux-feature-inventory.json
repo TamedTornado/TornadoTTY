@@ -237,9 +237,9 @@
       "user_impact": "Agent-aware UI is unusable if shells, editors, pagers, multiplexers, selection, or scrolling are subtly damaged by the host application.",
       "linux_owner_issue": 17,
       "implementation_status": "PARTIAL",
-      "focused_tests": [],
-      "product_scenarios": [],
-      "test_plan": "Drive real physical keys, IME, pointer, selection, clipboard, drag/drop, scrollback and representative TUIs through staged Wayland/X11 surfaces into real PTYs; mutation-test routing and gesture precedence.",
+      "focused_tests": ["crates/zentty-linux/src/pane_scroll_switch.rs", "linux/tests/lib/product-input-test"],
+      "product_scenarios": ["linux/tests/rust-pane-search", "linux/tests/rust-source-ux-x11", "linux/tests/rust-session-restore"],
+      "test_plan": "Controlled X11 and Wayland journeys now drive primary-selection middle-click paste into a real PTY; a separate GTK URI-list drag into local and real-SSH panes; ordinary vertical scrollback selection; selection edge-drag autoscroll; exact background-viewport continuity; and horizontal pane-switch gestures. Existing platform clipboard, search, restore, and remote-transfer cells cover ownership, multiple windows, hidden panes, and hostile transfer cases. GH8 still owns the explicit non-PASS real IME-composition cells and remaining native smooth/fractional input qualification; this feature must remain PARTIAL until those cells are implemented.",
       "alternative_or_blocker": null
     },
     {

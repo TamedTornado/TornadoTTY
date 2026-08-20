@@ -88,4 +88,35 @@ expected=$'mousemove --sync --window 4242 80 80\nmousedown 1\nmousemove_relative
     exit 1
 }
 
+: >"${calls}"
+mock_drag_receipt="$(mktemp)"
+printf 'ready\n' >"${mock_drag_receipt}"
+mock_wayland_drag=true
+ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT=1
+ZENTTY_NESTED_WAYLAND_DRAG_TARGET_X=800
+ZENTTY_NESTED_WAYLAND_DRAG_TARGET_Y=500
+zentty_product_drag_in_nested_wayland "${mock_drag_receipt}"
+unset mock_wayland_drag ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT \
+    ZENTTY_NESTED_WAYLAND_DRAG_TARGET_X ZENTTY_NESTED_WAYLAND_DRAG_TARGET_Y
+rm -f -- "${mock_drag_receipt}"
+grep -Fqx 'mousemove --sync --window 4242 800 500' "${calls}" || {
+    echo "product-input-test: explicit nested Wayland terminal target was ignored" >&2
+    cat "${calls}" >&2
+    exit 1
+}
+
+mock_drag_receipt="$(mktemp)"
+printf 'ready\n' >"${mock_drag_receipt}"
+mock_wayland_drag=true
+ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT=1
+ZENTTY_NESTED_WAYLAND_DRAG_TARGET_X=800
+ZENTTY_NESTED_WAYLAND_DRAG_TARGET_Y=invalid
+if zentty_product_drag_in_nested_wayland "${mock_drag_receipt}" 2>/dev/null; then
+    echo "product-input-test: malformed explicit Wayland target unexpectedly passed" >&2
+    exit 1
+fi
+unset mock_wayland_drag ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT \
+    ZENTTY_NESTED_WAYLAND_DRAG_TARGET_X ZENTTY_NESTED_WAYLAND_DRAG_TARGET_Y
+rm -f -- "${mock_drag_receipt}"
+
 echo "Product input helper tests passed: counted synchronization, X11 key release, and physical X11/Wayland drag"

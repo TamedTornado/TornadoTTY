@@ -12,6 +12,11 @@ clipboard_actual=""
 clipboard_expected=""
 clipboard_non_text=""
 config_file=""
+drag_source_pid=""
+drag_receipt=""
+
+# shellcheck source=linux/tests/lib/product-input
+source "${repo_root}/linux/tests/lib/product-input"
 
 fail() {
     [[ -z "${log}" || ! -f "${log}" ]] || cat "${log}" >&2
@@ -24,12 +29,17 @@ cleanup() {
         kill -TERM "${product_pid}" 2>/dev/null || true
         wait "${product_pid}" 2>/dev/null || true
     fi
+    if [[ "${drag_source_pid}" =~ ^[1-9][0-9]*$ ]]; then
+        kill -TERM "${drag_source_pid}" 2>/dev/null || true
+        wait "${drag_source_pid}" 2>/dev/null || true
+    fi
     [[ -z "${log}" ]] || rm -f -- "${log}"
     [[ -z "${state_directory}" ]] || rm -rf -- "${state_directory}"
     [[ -z "${clipboard_actual}" ]] || rm -f -- "${clipboard_actual}"
     [[ -z "${clipboard_expected}" ]] || rm -f -- "${clipboard_expected}"
     [[ -z "${clipboard_non_text}" ]] || rm -f -- "${clipboard_non_text}"
     [[ -z "${config_file}" ]] || rm -f -- "${config_file}"
+    [[ -z "${drag_receipt}" ]] || rm -f -- "${drag_receipt}"
 }
 trap cleanup EXIT
 
@@ -240,6 +250,32 @@ assert_primary_clipboard() {
     }
 }
 
+set_primary_clipboard() {
+    local value="$1"
+    if [[ "${backend}" == x11 ]]; then
+        printf '%s' "${value}" | xclip -selection primary -in
+        for _ in $(seq 1 200); do
+            [[ "$(xclip -selection primary -out 2>/dev/null || true)" == "${value}" ]] && return
+            sleep 0.05
+        done
+    else
+        printf '%s' "${value}" | wl-copy --primary
+        for _ in $(seq 1 200); do
+            [[ "$(wl-paste --primary --no-newline 2>/dev/null || true)" == "${value}" ]] && return
+            sleep 0.05
+        done
+    fi
+    fail "${backend} primary clipboard owner did not publish exact bytes"
+}
+
+read_primary_clipboard() {
+    if [[ "${backend}" == x11 ]]; then
+        xclip -selection primary -out
+    else
+        wl-paste --primary --no-newline
+    fi
+}
+
 set_standard_clipboard() {
     local value="$1"
     if [[ "${backend}" == x11 ]]; then
@@ -287,13 +323,21 @@ confirm_before_quitting = false
 [clipboard]
 always_clean_copies = true
 EOF
+if [[ "${ZENTTY_TERMINAL_INPUT_ONLY:-false}" == true ]]; then
+    # File-list drops intentionally include a trailing newline and therefore
+    # exercise Ghostty's unsafe-paste dialog by default. That dialog is owned
+    # and tested upstream; disable it only in this insertion/routing scenario
+    # so compositor automation can observe the resulting PTY bytes directly.
+    mkdir -p "${XDG_CONFIG_HOME}/ghostty"
+    printf 'clipboard-paste-protection = false\n' >"${XDG_CONFIG_HOME}/ghostty/config.ghostty"
+fi
 # The single quotes intentionally defer PTY-child expansion.
 # shellcheck disable=SC2016
 (
     cd "${state_directory}/working-directory"
     exec env GDK_SCALE=1 GDK_DPI_SCALE=1 \
     "${product}" \
-    --command 'printf "https://example.com/reset?token=noisegamma&utm_source=mail"; while IFS= read -r line; do case "$line" in markdown) printf "\033[2J\033[3J\033[H## Clipboard Notes\n\nOne wrapped\nparagraph"; printf "\033]2;focus:markdown-ready\a" ;; clipboard-second) printf "\033[2J\033[3J\033[Hhttps://second.example/reset?utm_source=other-window"; printf "\033]2;focus:clipboard-second-ready\a" ;; search-corpus) printf "\033[2J\033[3J\033[Hselectable alpha\nnoise\nselectable beta\nselectable gamma\n"; printf "\033]2;focus:search-ready\a" ;; *) printf "\033]2;focus:%s\a" "$line" ;; esac; done' \
+    --command 'printf "https://example.com/reset?token=noisegamma&utm_source=mail"; while IFS= read -r line; do case "$line" in markdown) printf "\033[2J\033[3J\033[H## Clipboard Notes\n\nOne wrapped\nparagraph"; printf "\033]2;focus:markdown-ready\a" ;; clipboard-second) printf "\033[2J\033[3J\033[Hhttps://second.example/reset?utm_source=other-window"; printf "\033]2;focus:clipboard-second-ready\a" ;; search-corpus) printf "\033[2J\033[3J\033[Hselectable alpha\nnoise\nselectable beta\nselectable gamma\n"; printf "\033]2;focus:search-ready\a" ;; terminal-input-corpus) printf "\033[2J\033[3J\033[H"; for row in $(seq -w 1 160); do printf "AUTOSCROLL-%s\n" "$row"; done; printf "\033]2;focus:terminal-input-ready\a" ;; *) printf "\033]2;focus:%s\a" "$line" ;; esac; done' \
     --state-directory "${state_directory}" \
     --no-session-restore
 ) >"${log}" 2>&1 &
@@ -329,6 +373,121 @@ else
         # when its first real terminal reports ready.
         sleep 0.2
     fi
+fi
+
+if [[ "${ZENTTY_TERMINAL_INPUT_ONLY:-false}" == true ]]; then
+    uses_xdotool || fail "terminal interaction proof requires controlled pointer input"
+    terminal_input_scenario="${ZENTTY_TERMINAL_INPUT_SCENARIO:-all}"
+    case "${terminal_input_scenario}" in
+        all | primary-scroll | local-drop) ;;
+        *) fail "unknown terminal input scenario: ${terminal_input_scenario}" ;;
+    esac
+    ZENTTY_PRODUCT_WINDOW_ID="${window_id}"
+    export ZENTTY_PRODUCT_WINDOW_ID
+
+    # GTK's primary-selection owner is independent of the ordinary clipboard.
+    # Drive a real middle button through the compositor and require the bytes
+    # to emerge from the real PTY child, not an application-side callback.
+    if [[ "${terminal_input_scenario}" != local-drop ]]; then
+        set_primary_clipboard 'middle-click-real-pty'
+        xdotool mousemove --sync --window "${window_id}" 700 350 click 2
+        press_key Return
+        wait_for_fixed 'zentty-linux: title-pane=pane-1 value=focus:middle-click-real-pty' \
+            "middle-click did not paste the compositor primary selection through Ghostty"
+    fi
+
+    # A separate GTK application offers an actual GDK text/uri-list drag. The
+    # local pane must leave ownership with Ghostty, preserve shell escaping,
+    # and never enter Zentty's remote-transfer policy.
+    if [[ "${terminal_input_scenario}" != primary-scroll ]]; then
+        local_drop_path="${state_directory}/local drop\$(proof).txt"
+        printf 'local drop bytes\n' >"${local_drop_path}"
+        drag_source="${repo_root}/target/release-safe/file_drag_source"
+        [[ -x "${drag_source}" ]] || fail "real GTK file drag source is missing: ${drag_source}"
+        drag_receipt="${state_directory}/file-drag-source.ready"
+        "${drag_source}" "${local_drop_path}" "${drag_receipt}" >>"${log}" 2>&1 &
+        drag_source_pid=$!
+        for _ in $(seq 1 250); do
+            [[ -s "${drag_receipt}" ]] && break
+            kill -0 "${drag_source_pid}" 2>/dev/null || fail "real GTK drag source exited before readiness"
+            sleep 0.02
+        done
+        [[ -s "${drag_receipt}" ]] || fail "real GTK drag source did not become ready"
+        if [[ "${backend}" == x11 ]]; then
+            zentty_product_drag_from_x11_window 'Zentty File Drag Source' "${drag_receipt}" ||
+                fail "physical X11 local-file drag could not be completed"
+        else
+            ZENTTY_NESTED_WAYLAND_DRAG_TARGET_X=800 \
+                ZENTTY_NESTED_WAYLAND_DRAG_TARGET_Y=500 \
+                zentty_product_drag_in_nested_wayland "${drag_receipt}" ||
+                fail "physical nested-Wayland local-file drag could not be completed"
+        fi
+        escaped_drop_path="${state_directory}/local\\ drop\\\$\\(proof\\).txt"
+        wait_for_fixed "zentty-linux: title-pane=pane-1 value=focus:${escaped_drop_path}" \
+            "local file drop did not insert Ghostty's shell-escaped path into the PTY"
+        ! grep -Fq 'zentty-linux: remote-paste pane=pane-1' "${log}" ||
+            fail "local file drop incorrectly entered remote-transfer policy"
+        grep -F 'drag-begin:' "${drag_receipt}" | grep -Fq 'text/uri-list' ||
+            fail "desktop drag did not advertise its real URI-list format"
+        kill -TERM "${drag_source_pid}" 2>/dev/null || true
+        wait "${drag_source_pid}" 2>/dev/null || true
+        drag_source_pid=""
+    fi
+
+    # Populate real scrollback, scroll it with ordinary vertical wheel events,
+    # and select one visible line. If Zentty's capture controller steals those
+    # events, the selected line will not be from the corpus. Keep the pane in
+    # the background, return, and select the same screen position again: exact
+    # primary-selection bytes prove that the native viewport did not reset.
+    if [[ "${terminal_input_scenario}" != local-drop ]]; then
+        xdotool windowfocus --sync "${window_id}"
+        type_text terminal-input-corpus
+        press_key Return
+        wait_for_fixed 'zentty-linux: title-pane=pane-1 value=focus:terminal-input-ready' \
+            "real PTY did not publish the terminal input corpus"
+        xdotool mousemove --window "${window_id}" 500 300 click --repeat 18 --delay 20 4
+        sleep 0.3
+        xdotool mousemove --window "${window_id}" 360 240 click --repeat 3 --delay 60 1
+        sleep 0.2
+        viewport_line_before="$(read_primary_clipboard)"
+        [[ "${viewport_line_before}" =~ ^AUTOSCROLL-[0-9][0-9][0-9]$ ]] ||
+            fail "ordinary vertical scroll did not expose selectable Ghostty scrollback"
+
+        run_palette_action 'Split Right' 'zentty-linux: action=split-pane-right pane=pane-2'
+        wait_for_fixed 'zentty-linux: terminal-ready-pane=pane-2' \
+            "background-stability pane did not initialize its real Ghostty surface"
+        wait_for_fixed 'zentty-linux: focus-pane pane=pane-2' \
+            "background-stability pane did not receive terminal focus"
+        type_text background-pane-active
+        press_key Return
+        wait_for_fixed 'zentty-linux: title-pane=pane-2 value=focus:background-pane-active' \
+            "real background-stability pane did not accept PTY input"
+        press_ctrl Tab
+        wait_for_fixed 'zentty-linux: focus-pane pane=pane-1' \
+            "pane navigation did not return to the scrolled terminal"
+        xdotool mousemove --window "${window_id}" 360 240 click --repeat 3 --delay 60 1
+        sleep 0.2
+        viewport_line_after="$(read_primary_clipboard)"
+        [[ "${viewport_line_after}" == "${viewport_line_before}" ]] ||
+            fail "background pane activation reset the Ghostty viewport"
+
+        # Keep the real left-button drag at the first terminal row long enough
+        # for Ghostty's termio selection timer to advance several rows. The
+        # externally owned primary selection must then span multiple corpus
+        # lines; a static drag or a Zentty-side fake cannot satisfy this.
+        xdotool mousemove --sync --window "${window_id}" 400 650 mousedown 1
+        xdotool mousemove --sync --window "${window_id}" 400 93
+        sleep 0.8
+        xdotool mouseup 1
+        sleep 0.2
+        autoscroll_selection="$(read_primary_clipboard)"
+        autoscroll_line_count="$(grep -o 'AUTOSCROLL-[0-9][0-9][0-9]' <<<"${autoscroll_selection}" | wc -l)"
+        (( autoscroll_line_count >= 5 )) ||
+            fail "selection edge drag did not autoscroll through multiple Ghostty rows"
+    fi
+
+    echo "Rust terminal input passed: ${backend}, scenario=${terminal_input_scenario}, real-pty=true, physical-pointer=true"
+    exit 0
 fi
 
 # Use the source Select All command to create a real Ghostty selection, then
