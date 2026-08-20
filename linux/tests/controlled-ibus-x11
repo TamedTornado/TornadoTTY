@@ -1,7 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly controlled_session_marker_prefix="controlled-ibus-x11: READY x11-display private-xvfb private-dbus foreground-ibus engine=xkb:us::eng sync-mode=1"
+controlled_engine="${ZENTTY_CONTROLLED_IBUS_ENGINE:-xkb:us::eng}"
+[[ "${controlled_engine}" =~ ^[A-Za-z0-9._:+-]+$ ]] || {
+    echo "controlled-ibus-x11: error: ZENTTY_CONTROLLED_IBUS_ENGINE contains invalid characters" >&2
+    exit 64
+}
+readonly controlled_engine
+if [[ "${ZENTTY_CONTROLLED_IBUS_REUSE_DISPLAY_INNER:-0}" == 1 ]]; then
+    readonly controlled_display_fact="inherited-controlled-x11"
+else
+    readonly controlled_display_fact="private-xvfb"
+fi
+readonly controlled_session_marker_prefix="controlled-ibus-x11: READY x11-display ${controlled_display_fact} private-dbus foreground-ibus engine=${controlled_engine} sync-mode=1"
 startup_timeout_seconds="${ZENTTY_CONTROLLED_IBUS_STARTUP_TIMEOUT_SECONDS:-45}"
 service_timeout_seconds="${ZENTTY_CONTROLLED_IBUS_SERVICE_TIMEOUT_SECONDS:-10}"
 query_timeout_seconds="${ZENTTY_CONTROLLED_IBUS_QUERY_TIMEOUT_SECONDS:-2}"
@@ -136,21 +147,26 @@ run_inside_private_bus() {
         fi
         exit 1
     fi
-    if ! bounded_query ibus engine xkb:us::eng >/dev/null 2>&1; then
-        fail "private IBus could not select xkb:us::eng"
+    if ! awk -v engine="${controlled_engine}" \
+        '$1 == engine && $2 == "-" { found=1 } END { exit !found }' \
+        "${engine_query}"; then
+        fail "private IBus does not provide requested engine ${controlled_engine}"
+    fi
+    if ! bounded_query ibus engine "${controlled_engine}" >/dev/null 2>&1; then
+        fail "private IBus could not select ${controlled_engine}"
     fi
     ready=false
     service_deadline=$((SECONDS + service_timeout_seconds))
     while (( SECONDS <= service_deadline )); do
         engine_readback="$(bounded_query ibus engine 2>/dev/null || true)"
-        if [[ "${engine_readback}" == "xkb:us::eng" ]]; then
+        if [[ "${engine_readback}" == "${controlled_engine}" ]]; then
             ready=true
             break
         fi
         sleep 0.02
     done
     [[ "${ready}" == true ]] ||
-        fail "private IBus did not acknowledge xkb:us::eng"
+        fail "private IBus did not acknowledge ${controlled_engine}"
     if [[ ! "${address}" =~ ^unix:path=([^,]+),guid=([0-9a-f]{32})$ ]]; then
         fail "private IBus returned a malformed or compound address"
     fi
@@ -172,6 +188,7 @@ run_inside_private_bus() {
     : >"${run_root}/session.ready"
     printf '%s session-id=%s\n' \
         "${controlled_session_marker_prefix}" "${session_id}"
+    export ZENTTY_CONTROLLED_IBUS_X11_SESSION_ID="${session_id}"
     unset ZENTTY_CONTROLLED_IBUS_RUN_ROOT ZENTTY_CONTROLLED_IBUS_SESSION_ID
 
     set +e
@@ -191,19 +208,37 @@ if [[ "${1:-}" == "--private-bus-inner" ]]; then
     exit $?
 fi
 
+reuse_controlled_display=false
+if [[ "${1:-}" == "--reuse-controlled-display" ]]; then
+    reuse_controlled_display=true
+    shift
+fi
+
 if (( $# == 0 )); then
-    echo "usage: controlled-ibus-x11 COMMAND [ARG ...]" >&2
+    echo "usage: controlled-ibus-x11 [--reuse-controlled-display] COMMAND [ARG ...]" >&2
     exit 64
 fi
 
 for dependency in \
-    xvfb-run Xvfb xauth xdpyinfo dbus-run-session dbus-daemon ibus-daemon ibus \
+    xauth xdpyinfo dbus-run-session dbus-daemon ibus-daemon ibus \
     setsid ps grep sed mktemp mkdir chmod rm sleep env bash cat timeout readlink; do
     if ! command -v "${dependency}" >/dev/null 2>&1; then
         echo "controlled-ibus-x11: SKIP missing runtime dependency: ${dependency}" >&2
         exit 77
     fi
 done
+if [[ "${reuse_controlled_display}" == false ]]; then
+    for dependency in xvfb-run Xvfb; do
+        command -v "${dependency}" >/dev/null || {
+            echo "controlled-ibus-x11: SKIP missing runtime dependency: ${dependency}" >&2
+            exit 77
+        }
+    done
+else
+    [[ "${ZENTTY_NESTED_X11_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ &&
+        "${DISPLAY:-}" =~ ^:[0-9]+([.][0-9]+)?$ ]] ||
+        fail "display reuse requires a linux/tests/nested-x11 session"
+fi
 
 run_root="$(mktemp -d /tmp/controlled-ibus-x11.XXXXXX)"
 cleanup_unstarted_root() {
@@ -315,7 +350,10 @@ cat >"${run_root}/dbus-session.conf" <<EOF
 EOF
 
 (
-    unset DISPLAY WAYLAND_DISPLAY XAUTHORITY
+    if [[ "${reuse_controlled_display}" == false ]]; then
+        unset DISPLAY XAUTHORITY
+    fi
+    unset WAYLAND_DISPLAY
     unset DBUS_SESSION_BUS_ADDRESS DBUS_STARTER_ADDRESS DBUS_STARTER_BUS_TYPE
     unset DBUS_SYSTEM_BUS_ADDRESS DBUS_SESSION_BUS_PID DBUS_SESSION_BUS_WINDOWID
     unset IBUS_ADDRESS IBUS_ADDRESS_FILE IBUS_USE_PORTAL
@@ -336,6 +374,22 @@ EOF
     export GTK_A11Y=none
     export LIBGL_ALWAYS_SOFTWARE=1
 
+    session_command=(
+        dbus-run-session --config-file="${run_root}/dbus-session.conf" --
+        env ZENTTY_CONTROLLED_IBUS_RUN_ROOT="${run_root}"
+        ZENTTY_CONTROLLED_IBUS_SESSION_ID="${session_id}"
+    )
+    if [[ "${reuse_controlled_display}" == true ]]; then
+        session_command+=(ZENTTY_CONTROLLED_IBUS_REUSE_DISPLAY_INNER=1)
+    fi
+    session_command+=("${BASH_SOURCE[0]}" --private-bus-inner "$@")
+    if [[ "${reuse_controlled_display}" == false ]]; then
+        session_command=(
+            xvfb-run -a -s "-screen 0 1280x1024x24 -nolisten tcp"
+            "${session_command[@]}"
+        )
+    fi
+
     setsid --fork --wait bash -c '
         set -euo pipefail
         pgid_file=$1
@@ -353,11 +407,7 @@ EOF
         "${session_pgid_file}" \
         "${session_start_file}" \
         "${session_cancel_file}" \
-        xvfb-run -a -s "-screen 0 1280x1024x24 -nolisten tcp" \
-        dbus-run-session --config-file="${run_root}/dbus-session.conf" -- \
-        env ZENTTY_CONTROLLED_IBUS_RUN_ROOT="${run_root}" \
-        ZENTTY_CONTROLLED_IBUS_SESSION_ID="${session_id}" \
-        "${BASH_SOURCE[0]}" --private-bus-inner "$@"
+        "${session_command[@]}"
 ) &
 session_supervisor_pid=$!
 

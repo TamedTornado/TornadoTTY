@@ -1,0 +1,176 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
+backend="${GDK_BACKEND:-}"
+run_root="$(mktemp -d)"
+state_directory="${run_root}/state"
+receipt="${run_root}/pty.receipt"
+close_marker="${run_root}/close-pane-2"
+focus_marker="${run_root}/focus-pane-1"
+return_marker="${run_root}/focus-pane-2"
+child="${run_root}/child"
+log="${run_root}/product.log"
+product_pid=""
+
+# shellcheck source=linux/tests/lib/product-input
+source "${repo_root}/linux/tests/lib/product-input"
+# shellcheck source=linux/tests/lib/product-bundle
+source "${repo_root}/linux/tests/lib/product-bundle"
+
+fail() {
+    [[ ! -f "${log}" ]] || cat "${log}" >&2
+    [[ ! -f "${receipt}" ]] || sed 's/^/pty-receipt: /' "${receipt}" >&2
+    echo "rust-ime-composition: error: $*" >&2
+    exit 1
+}
+
+cleanup() {
+    if [[ "${product_pid}" =~ ^[1-9][0-9]*$ ]]; then
+        kill -TERM "${product_pid}" 2>/dev/null || true
+        wait "${product_pid}" 2>/dev/null || true
+    fi
+    rm -rf -- "${run_root}"
+}
+trap cleanup EXIT
+
+[[ "${backend}" == x11 ]] || fail "the implemented composition actor requires x11"
+[[ "${ZENTTY_CONTROLLED_IBUS_X11_SESSION_ID:-}" =~ ^[0-9]+-[A-Za-z0-9]+$ ]] ||
+    fail "composition must run in the controlled private IBus X11 session"
+[[ "${GTK_IM_MODULE:-}" == ibus && -n "${IBUS_ADDRESS:-}" ]] ||
+    fail "composition requires the wrapper-owned IBus GTK context"
+[[ "$(ibus engine 2>/dev/null || true)" == table:cangjie5 ]] ||
+    fail "composition requires the pinned table:cangjie5 engine"
+for dependency in ibus xdotool grep sed; do
+    command -v "${dependency}" >/dev/null || fail "${dependency} is required"
+done
+[[ -x "${product}" ]] || fail "staged Zentty product is missing: ${product}"
+zentty_product_bundle_resolve "${product}" || fail "staged product bundle is invalid"
+product="${ZENTTY_PRODUCT_BINARY}"
+bundle_lib="${ZENTTY_PRODUCT_BUNDLE_LIB}"
+mkdir -p "${state_directory}" "${XDG_CONFIG_HOME}/zentty"
+cat >"${XDG_CONFIG_HOME}/zentty/config.toml" <<'CONFIG'
+[confirmations]
+confirm_before_closing_pane = false
+confirm_before_closing_worklane = false
+confirm_before_closing_window = false
+confirm_before_quitting = false
+CONFIG
+
+cat >"${child}" <<'CHILD'
+#!/usr/bin/env bash
+set -euo pipefail
+trap 'status=$?; printf "%s:ERROR:%s:%s\n" "${ZENTTY_PANE_ID}" "${LINENO}" "${status}" >>"${ZENTTY_IME_RECEIPT}"; exit "${status}"' ERR
+
+record() {
+    printf '%s:%s\n' "${ZENTTY_PANE_ID}" "$1" >>"${ZENTTY_IME_RECEIPT}"
+}
+
+case "${ZENTTY_PANE_ID}" in
+    pane-1)
+        while [[ ! -e "${ZENTTY_IME_FOCUS_MARKER}" ]]; do sleep 0.02; done
+        "${ZENTTY_CLI_BIN}" pane focus --pane-id pane-1
+        IFS= read -r after_focus
+        [[ "${after_focus}" == 1 ]]
+        record "${after_focus}"
+        : >"${ZENTTY_IME_RETURN_MARKER}"
+        IFS= read -r after_destroy
+        [[ "${after_destroy}" == 日 ]]
+        record "${after_destroy}"
+        sleep 30
+        ;;
+    pane-2)
+        (
+            while [[ ! -e "${ZENTTY_IME_RETURN_MARKER}" ]]; do sleep 0.02; done
+            "${ZENTTY_CLI_BIN}" pane focus --pane-id pane-2
+            while [[ ! -e "${ZENTTY_IME_CLOSE_MARKER}" ]]; do sleep 0.02; done
+            "${ZENTTY_CLI_BIN}" pane close --pane-id pane-2
+        ) &
+        IFS= read -r after_cancel
+        [[ "${after_cancel}" == 日 ]]
+        record "${after_cancel}"
+        IFS= read -r after_transfer
+        [[ "${after_transfer}" == 日 ]]
+        record "${after_transfer}"
+        sleep 30
+        ;;
+    *) exit 64 ;;
+esac
+CHILD
+chmod +x "${child}"
+
+ZENTTY_IME_RECEIPT="${receipt}" \
+ZENTTY_IME_CLOSE_MARKER="${close_marker}" \
+ZENTTY_IME_FOCUS_MARKER="${focus_marker}" \
+ZENTTY_IME_RETURN_MARKER="${return_marker}" \
+LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+    "${product}" --command "${child}" --state-directory "${state_directory}" \
+    --no-session-restore >"${log}" 2>&1 &
+product_pid=$!
+zentty_product_prepare_input x11 "${log}" || fail "physical X11 input unavailable"
+zentty_product_ctrl_key x11 t
+zentty_product_wait_for_log "${log}" 'terminal-ready-pane=pane-2' \
+    "second real pane was not created" || fail "IME multi-pane setup failed"
+
+# A Cangjie `a` creates a visible preedit candidate. Escape cancels it. The
+# second `a`, Space, Return sequence commits 日 and supplies the PTY newline.
+# Exact child matching proves the cancelled preedit did not leak.
+zentty_product_type x11 a
+zentty_product_key x11 Escape
+zentty_product_type x11 a
+zentty_product_key x11 space
+zentty_product_key x11 Return
+zentty_product_wait_for_log "${receipt}" 'pane-2:日' \
+    "cancelled preedit did not produce one exact composed commit" ||
+    fail "preedit cancel/commit journey failed"
+
+# Move focus through the public application API while `a` is still preedit.
+# Plain `1` in pane 1 proves the pending pane-2 preedit stays owned by pane 2.
+zentty_product_type x11 a
+: >"${focus_marker}"
+zentty_product_wait_for_log "${log}" 'focus-pane pane=pane-1' \
+    "public API did not restore focus to the first pane" ||
+    fail "IME focus restoration failed"
+zentty_product_type x11 1
+zentty_product_key x11 Return
+zentty_product_wait_for_log "${receipt}" 'pane-1:1' \
+    "focus transfer retained or leaked pending preedit text" ||
+    fail "IME focus reset failed"
+zentty_product_wait_for_log_count "${log}" 'focus-pane pane=pane-2' 2 \
+    "first pane did not restore focus to the second pane" ||
+    fail "IME second focus restoration failed"
+zentty_product_type x11 a
+zentty_product_key x11 space
+zentty_product_key x11 Return
+zentty_product_wait_for_log_count "${receipt}" 'pane-2:日' 2 \
+    "refocused second pane did not receive an independent composition" ||
+    fail "IME post-focus composition failed"
+
+# Destroy pane 2 from pane 1's authenticated CLI while pane 2 has active
+# preedit. The exact close receipt, continued product life, and a fresh
+# composition in pane 1 jointly guard the surface/IM-context teardown path.
+zentty_product_type x11 a
+: >"${close_marker}"
+zentty_product_wait_for_log "${log}" 'action=close-pane pane=pane-2' \
+    "active-preedit pane was not destroyed through the product lifecycle" ||
+    fail "IME destruction action failed"
+kill -0 "${product_pid}" 2>/dev/null || fail "product died after active-preedit destruction"
+zentty_product_type x11 a
+zentty_product_key x11 space
+zentty_product_key x11 Return
+zentty_product_wait_for_log "${receipt}" 'pane-1:日' \
+    "surviving pane could not compose after active-preedit destruction" ||
+    fail "IME post-destruction composition failed"
+
+[[ "$(grep -Fxc 'pane-1:日' "${receipt}")" -eq 1 ]] ||
+    fail "post-destruction journey produced duplicate or missing commits"
+[[ "$(grep -Fxc 'pane-1:1' "${receipt}")" -eq 1 ]] ||
+    fail "focus journey produced duplicate or missing plain input"
+[[ "$(grep -Fxc 'pane-2:日' "${receipt}")" -eq 2 ]] ||
+    fail "cancel journey produced duplicate or missing commits"
+
+zentty_product_close_window x11
+wait "${product_pid}" || fail "product did not exit cleanly after IME journey"
+product_pid=""
+echo "rust-ime-composition-x11: PASS real-ibus preedit-update cancel commit focus-transfer active-preedit-destruction real-pty"

@@ -199,6 +199,7 @@ case "${1:-}" in
         ;;
     list-engine)
         printf 'language: English\n  xkb:us::eng - English (US)\n'
+        printf 'language: Chinese\n  table:cangjie5 - CangJie5\n'
         ;;
     engine)
         if [[ -n "${2:-}" ]]; then
@@ -342,6 +343,52 @@ if grep -Ex -- '--replace|-r|--daemonize|-d' "${success_capture}/daemon.args" >/
 fi
 assert_cleaned "${success_capture}" true
 echo "controlled IBus success/isolation test passed"
+
+custom_engine_capture="${temp_dir}/custom-engine"
+mkdir -p "${custom_engine_capture}"
+ZENTTY_FAKE_CAPTURE_DIR="${custom_engine_capture}" \
+ZENTTY_CONTROLLED_IBUS_ENGINE=table:cangjie5 \
+    "${wrapper}" session-probe success \
+    >"${custom_engine_capture}/stdout" 2>"${custom_engine_capture}/stderr"
+grep -Ex \
+    '^controlled-ibus-x11: READY x11-display private-xvfb private-dbus foreground-ibus engine=table:cangjie5 sync-mode=1 session-id=[1-9][0-9]*-[[:alnum:]]+$' \
+    "${custom_engine_capture}/stdout" >/dev/null ||
+    fail "custom engine receipt did not identify table:cangjie5"
+grep -Fx 'table:cangjie5' "${custom_engine_capture}/engine" >/dev/null ||
+    fail "wrapper did not select the requested custom engine"
+assert_cleaned "${custom_engine_capture}" true
+echo "controlled IBus custom-engine test passed"
+
+reused_display_capture="${temp_dir}/reused-display"
+mkdir -p "${reused_display_capture}"
+env -u WAYLAND_DISPLAY \
+    DISPLAY=:4242 \
+    ZENTTY_NESTED_X11_SESSION_ID="$(printf fixture | sha256sum | awk '{print $1}')" \
+    ZENTTY_FAKE_CAPTURE_DIR="${reused_display_capture}" \
+    "${wrapper}" --reuse-controlled-display session-probe success \
+    >"${reused_display_capture}/stdout" 2>"${reused_display_capture}/stderr"
+grep -Ex \
+    '^controlled-ibus-x11: READY x11-display inherited-controlled-x11 private-dbus foreground-ibus engine=xkb:us::eng sync-mode=1 session-id=[1-9][0-9]*-[[:alnum:]]+$' \
+    "${reused_display_capture}/stdout" >/dev/null ||
+    fail "display-reuse receipt did not identify the inherited controlled X11 display"
+[[ ! -e "${reused_display_capture}/xvfb-entry" ]] ||
+    fail "display reuse unexpectedly started a nested Xvfb"
+assert_cleaned "${reused_display_capture}" true
+echo "controlled IBus controlled-display reuse test passed"
+
+set +e
+env -u ZENTTY_NESTED_X11_SESSION_ID DISPLAY=:4242 \
+    ZENTTY_FAKE_CAPTURE_DIR="${temp_dir}/unsafe-reuse" \
+    "${wrapper}" --reuse-controlled-display true \
+    >"${temp_dir}/unsafe-reuse.stdout" 2>"${temp_dir}/unsafe-reuse.stderr"
+unsafe_reuse_status=$?
+set -e
+[[ "${unsafe_reuse_status}" -eq 1 ]] ||
+    fail "uncontrolled display reuse status 1 became ${unsafe_reuse_status}"
+grep -F 'display reuse requires a linux/tests/nested-x11 session' \
+    "${temp_dir}/unsafe-reuse.stderr" >/dev/null ||
+    fail "uncontrolled display reuse lacked a diagnostic"
+echo "controlled IBus uncontrolled-display reuse negative test passed"
 
 failure_capture="${temp_dir}/child-failure"
 mkdir -p "${failure_capture}"
