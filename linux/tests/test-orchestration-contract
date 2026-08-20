@@ -143,12 +143,14 @@ require "Linux platform contracts are not pinned to their real isolated and comp
             .status == "PASS" and .environment_profile == "isolated-none-v1" and
             (.command | contains("target/release-safe/platform_contract process"))) and
         (.cells[] | select(.id == "platform-clipboard-x11") |
-            .status == "PASS" and .environment_profile == "nested-x11-v1" and
+            .status == "PASS" and .terminals == "multi" and
+            .environment_profile == "nested-x11-v1" and
             (.command | contains("build/linux/bin/zentty-linux")) and
             (.command | contains("ZENTTY_CLIPBOARD_ONLY=true")) and
             (.command | contains("linux/tests/rust-pane-search"))) and
         (.cells[] | select(.id == "platform-clipboard-wayland") |
-            .status == "PASS" and .environment_profile == "nested-wayland-activation-v1" and
+            .status == "PASS" and .terminals == "multi" and
+            .environment_profile == "nested-wayland-activation-v1" and
             (.command | contains("build/linux/bin/zentty-linux")) and
             (.command | contains("ZENTTY_CLIPBOARD_ONLY=true")) and
             (.command | contains("linux/tests/rust-pane-search"))) and

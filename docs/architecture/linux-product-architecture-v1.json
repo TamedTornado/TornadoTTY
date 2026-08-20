@@ -735,7 +735,7 @@
       "display": "wayland",
       "optimize": "ReleaseSafe",
       "async_backend": "default",
-      "terminals": "single",
+      "terminals": "multi",
       "command": "ZENTTY_LINUX_BINARY=build/linux/bin/zentty-linux ZENTTY_CLIPBOARD_ONLY=true GDK_BACKEND=wayland linux/tests/rust-pane-search",
       "authoritative": false
     },
@@ -747,7 +747,7 @@
       "display": "x11",
       "optimize": "ReleaseSafe",
       "async_backend": "default",
-      "terminals": "single",
+      "terminals": "multi",
       "command": "ZENTTY_LINUX_BINARY=build/linux/bin/zentty-linux ZENTTY_CLIPBOARD_ONLY=true GDK_BACKEND=x11 linux/tests/rust-pane-search",
       "authoritative": false
     },

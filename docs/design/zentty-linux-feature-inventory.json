@@ -368,10 +368,10 @@
       "origin": "PORT_PARITY",
       "user_impact": "Clean Copy is a named public Zentty feature; corruption or omission forces users back to manually repairing terminal output.",
       "linux_owner_issue": 17,
-      "implementation_status": "PARTIAL",
+      "implementation_status": "IMPLEMENTED",
       "focused_tests": ["crates/zentty-core/tests/clean_copy.rs", "crates/zentty-linux/src/platform.rs", "crates/zentty-linux/src/application_shell/clipboard_actions.rs", "crates/zentty-linux/src/application_shell/action_router.rs", "crates/zentty-linux/src/sidebar.rs"],
       "product_scenarios": ["linux/tests/rust-pane-search"],
-      "test_plan": "Preserve source-derived cleanup and bailout goldens plus mutation coverage; in controlled X11 and Wayland, select real Ghostty text through Select All, read the exact primary selection from an independent compositor client, invoke automatic Copy, Copy Raw and Copy as Markdown through the real command palette, read exact standard-clipboard bytes externally, and paste cleaned bytes back through the real PTY. The process-level clipboard config snapshot and automatic clean-copy substitution are implemented through the single GH-20 settings owner. Non-text clipboard semantics remain owned by the separately qualified remote-paste journeys rather than this text-copy contract."
+      "test_plan": "Preserve source-derived cleanup and bailout goldens plus mutation coverage; in controlled X11 and Wayland, preserve an independent non-text owner when no Ghostty selection exists, select real terminal text through Select All, read the exact primary selection externally, invoke automatic Copy, Copy Raw and Copy as Markdown through the real command palette, read exact standard-clipboard bytes externally, paste cleaned bytes back through the real PTY, and prove distinct selections remain isolated across two real windows. The process-level clipboard config snapshot and automatic clean-copy substitution use the single GH-20 settings owner. Remote non-text paste/upload remains owned by its separately qualified GH-17 workflow."
     },
     {
       "id": "project.git-review-icons",

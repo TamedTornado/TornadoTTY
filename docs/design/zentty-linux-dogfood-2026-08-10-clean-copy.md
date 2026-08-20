@@ -2,6 +2,13 @@
 
 Tracking: [GH-35](https://github.com/TamedTornado/zentty/issues/35)
 
+> Historical receipt: the “Remaining boundary” below describes the state of
+> the 2026-08-10 Clean Copy commit. Automatic-clean configuration was later
+> delivered by `2ea8ff23`; final non-text-owner and multi-window qualification
+> is recorded in
+> `zentty-linux-dogfood-2026-08-20-clipboard-closeout.md`. The authoritative
+> feature inventory, not this dated receipt, owns current implementation state.
+
 ## Discovery and frozen plan
 
 - The next actual feature slice is the source Clean Copy family, not another

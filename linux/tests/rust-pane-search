@@ -10,6 +10,7 @@ product_pid=""
 window_id=""
 clipboard_actual=""
 clipboard_expected=""
+clipboard_non_text=""
 config_file=""
 
 fail() {
@@ -27,6 +28,7 @@ cleanup() {
     [[ -z "${state_directory}" ]] || rm -rf -- "${state_directory}"
     [[ -z "${clipboard_actual}" ]] || rm -f -- "${clipboard_actual}"
     [[ -z "${clipboard_expected}" ]] || rm -f -- "${clipboard_expected}"
+    [[ -z "${clipboard_non_text}" ]] || rm -f -- "${clipboard_non_text}"
     [[ -z "${config_file}" ]] || rm -f -- "${config_file}"
 }
 trap cleanup EXIT
@@ -51,7 +53,7 @@ case "${backend}" in
         ;;
     *) fail "GDK_BACKEND must be x11 or wayland" ;;
 esac
-for dependency in awk cmp dirname grep mkdir mktemp readlink seq sha256sum sleep tail wc; do
+for dependency in awk base64 cmp dirname grep mkdir mktemp readlink seq sha256sum sleep tail wc; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
 [[ -x "${product}" ]] || fail "staged product is not built: ${product}"
@@ -78,6 +80,18 @@ press_ctrl_shift() {
         xdotool key "ctrl+shift+${key}"
     else
         wtype -M ctrl -M shift -k "${key}" -m shift -m ctrl
+    fi
+}
+
+close_current_window() {
+    if [[ "${backend}" == x11 ]]; then
+        # The target is destroyed on key-down, before XTest can deliver every
+        # synthetic release to that XID. The owned window-closed receipt below
+        # remains authoritative; clear global modifier state on the live root.
+        xdotool key --window "${window_id}" ctrl+shift+w 2>/dev/null || true
+        xdotool keyup Control_L Control_R Shift_L Shift_R w 2>/dev/null || true
+    else
+        press_ctrl_shift w
     fi
 }
 
@@ -235,11 +249,33 @@ set_standard_clipboard() {
     fi
 }
 
+set_non_text_clipboard() {
+    if [[ "${backend}" == x11 ]]; then
+        xclip -selection clipboard -target image/png -in <"${clipboard_non_text}"
+    else
+        wl-copy --type image/png <"${clipboard_non_text}"
+    fi
+}
+
+assert_non_text_clipboard() {
+    if [[ "${backend}" == x11 ]]; then
+        xclip -selection clipboard -target image/png -out >"${clipboard_actual}"
+    else
+        wl-paste --type image/png >"${clipboard_actual}"
+    fi
+    cmp -s "${clipboard_non_text}" "${clipboard_actual}" ||
+        fail "no-selection copy replaced the existing ${backend} non-text clipboard owner"
+}
+
 log="$(mktemp)"
 state_directory="$(mktemp -d)"
 mkdir -p "${state_directory}/working-directory"
 clipboard_actual="$(mktemp)"
 clipboard_expected="$(mktemp)"
+clipboard_non_text="$(mktemp)"
+printf '%s' \
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=' |
+    base64 --decode >"${clipboard_non_text}"
 config_file="${XDG_CONFIG_HOME:?}/zentty/config.toml"
 mkdir -p "$(dirname "${config_file}")"
 cat >"${config_file}" <<'EOF'
@@ -257,7 +293,7 @@ EOF
     cd "${state_directory}/working-directory"
     exec env GDK_SCALE=1 GDK_DPI_SCALE=1 \
     "${product}" \
-    --command 'printf "https://example.com/reset?token=noisegamma&utm_source=mail"; while IFS= read -r line; do case "$line" in markdown) printf "\033[2J\033[3J\033[H## Clipboard Notes\n\nOne wrapped\nparagraph"; printf "\033]2;focus:markdown-ready\a" ;; search-corpus) printf "\033[2J\033[3J\033[Hselectable alpha\nnoise\nselectable beta\nselectable gamma\n"; printf "\033]2;focus:search-ready\a" ;; *) printf "\033]2;focus:%s\a" "$line" ;; esac; done' \
+    --command 'printf "https://example.com/reset?token=noisegamma&utm_source=mail"; while IFS= read -r line; do case "$line" in markdown) printf "\033[2J\033[3J\033[H## Clipboard Notes\n\nOne wrapped\nparagraph"; printf "\033]2;focus:markdown-ready\a" ;; clipboard-second) printf "\033[2J\033[3J\033[Hhttps://second.example/reset?utm_source=other-window"; printf "\033]2;focus:clipboard-second-ready\a" ;; search-corpus) printf "\033[2J\033[3J\033[Hselectable alpha\nnoise\nselectable beta\nselectable gamma\n"; printf "\033]2;focus:search-ready\a" ;; *) printf "\033]2;focus:%s\a" "$line" ;; esac; done' \
     --state-directory "${state_directory}" \
     --no-session-restore
 ) >"${log}" 2>&1 &
@@ -298,6 +334,10 @@ fi
 # Use the source Select All command to create a real Ghostty selection, then
 # drive every source copy action through the command palette. The assertion is
 # made by an independent compositor client, not an in-process GTK receipt.
+set_non_text_clipboard
+run_palette_action 'Clean Copy' \
+    'zentty-linux: action=clean-copy pane=pane-1 error=selection-unavailable'
+assert_non_text_clipboard
 set_standard_clipboard 'sentinel-existing-owner'
 run_palette_action 'Clean Copy' \
     'zentty-linux: action=clean-copy pane=pane-1 error=selection-unavailable'
@@ -348,7 +388,59 @@ grep -F 'zentty-linux: action=copy-as-markdown pane=pane-1 bytes=' "${log}" | ta
 assert_standard_clipboard $'## Clipboard Notes\n\nOne wrapped paragraph'
 
 if [[ "${ZENTTY_CLIPBOARD_ONLY:-false}" == true ]]; then
-    echo "Rust platform clipboard passed: ${backend}, standard=external primary=external paste=real-pty"
+    first_window_id="${window_id}"
+    press_ctrl_shift n
+    wait_for_fixed 'zentty-linux: window-opened id=window-2' \
+        "New Window did not create a second real clipboard owner"
+    wait_for_fixed 'zentty-linux: terminal-ready-pane=pane-window-2' \
+        "second window did not initialize a distinct Ghostty surface"
+    wait_for_fixed 'zentty-linux: focus-pane pane=pane-window-2' \
+        "second window did not receive terminal focus"
+    if [[ "${backend}" == x11 ]]; then
+        window_id=""
+        for _ in $(seq 1 160); do
+            while IFS= read -r candidate; do
+                if [[ "${candidate}" =~ ^[1-9][0-9]*$ &&
+                    "${candidate}" != "${first_window_id}" ]]; then
+                    window_id="${candidate}"
+                    break
+                fi
+            done < <(xdotool search --onlyvisible --pid "${product_pid}" --name '^Zentty$' 2>/dev/null || true)
+            [[ "${window_id}" =~ ^[1-9][0-9]*$ ]] && break
+            sleep 0.05
+        done
+        [[ "${window_id}" =~ ^[1-9][0-9]*$ ]] ||
+            fail "could not identify the second real X11 product window"
+        xdotool windowfocus --sync "${window_id}"
+    fi
+
+    type_text clipboard-second
+    press_key Return
+    wait_for_fixed \
+        'zentty-linux: title-pane=pane-window-2 value=focus:clipboard-second-ready' \
+        "input did not reach the second window's real PTY"
+    run_palette_action 'Select All' \
+        'zentty-linux: action=select-all pane=pane-window-2 binding="select_all"'
+    assert_primary_clipboard 'https://second.example/reset?utm_source=other-window'
+    run_palette_action 'Copy' 'zentty-linux: action=copy pane=pane-window-2' 5
+    assert_standard_clipboard 'https://second.example/reset'
+    run_palette_action 'Copy Raw' \
+        'zentty-linux: action=copy-raw pane=pane-window-2'
+    assert_standard_clipboard 'https://second.example/reset?utm_source=other-window'
+
+    close_current_window
+    wait_for_fixed 'zentty-linux: window-closed id=window-2 remaining=1' \
+        "closing the second window did not preserve the first clipboard surface"
+    assert_standard_clipboard 'https://second.example/reset?utm_source=other-window'
+    window_id="${first_window_id}"
+    if [[ "${backend}" == x11 ]]; then
+        xdotool windowfocus --sync "${window_id}"
+    fi
+    run_palette_action 'Copy as Markdown' \
+        'zentty-linux: action=copy-as-markdown pane=pane-1 bytes='
+    assert_standard_clipboard $'## Clipboard Notes\n\nOne wrapped paragraph'
+
+    echo "Rust platform clipboard passed: ${backend}, standard=external primary=external paste=real-pty windows=isolated"
     exit 0
 fi
 

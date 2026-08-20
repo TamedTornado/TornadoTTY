@@ -58,11 +58,24 @@ impl ApplicationShell {
         };
         shell.borrow().focus_selected_surface();
         let clipboard = shell.borrow().config.clipboard;
-        let transformed = transform_selection(&raw, style, clipboard);
+        let Some(transformed) = prepared_payload(&raw, style, clipboard) else {
+            eprintln!(
+                "zentty-linux: action={} pane={pane_id} error=selection-empty",
+                style.action_name()
+            );
+            return;
+        };
         let modified = transformed != raw;
-        gtk::prelude::WidgetExt::display(&shell.borrow().window)
-            .clipboard()
-            .set_text(&transformed);
+        let provider = gtk::gdk::ContentProvider::for_value(&transformed.to_value());
+        let platform_clipboard =
+            gtk::prelude::WidgetExt::display(&shell.borrow().window).clipboard();
+        if let Err(error) = platform_clipboard.set_content(Some(&provider)) {
+            eprintln!(
+                "zentty-linux: action={} pane={pane_id} error=clipboard-write-failed detail={error}",
+                style.action_name()
+            );
+            return;
+        }
         let digest = Sha256::digest(transformed.as_bytes());
         eprintln!(
             "zentty-linux: action={} pane={pane_id} bytes={} modified={modified} sha256={digest:x}",
@@ -70,6 +83,10 @@ impl ApplicationShell {
             transformed.len()
         );
     }
+}
+
+fn prepared_payload(raw: &str, style: CopyStyle, clipboard: ClipboardConfig) -> Option<String> {
+    (!raw.is_empty()).then(|| transform_selection(raw, style, clipboard))
 }
 
 fn resolved_style(style: CopyStyle, clipboard: ClipboardConfig) -> CopyStyle {
@@ -90,7 +107,7 @@ fn transform_selection(raw: &str, style: CopyStyle, clipboard: ClipboardConfig) 
 
 #[cfg(test)]
 mod tests {
-    use super::{CopyStyle, resolved_style, transform_selection};
+    use super::{CopyStyle, prepared_payload, resolved_style, transform_selection};
     use zentty_core::{ClipboardConfig, reformat_markdown};
 
     #[test]
@@ -150,6 +167,18 @@ mod tests {
         assert_eq!(
             transform_selection(prose, CopyStyle::Markdown, clipboard),
             prose
+        );
+    }
+
+    #[test]
+    fn empty_selection_never_replaces_an_existing_clipboard_owner() {
+        assert_eq!(
+            prepared_payload("", CopyStyle::Default, ClipboardConfig::default()),
+            None
+        );
+        assert_eq!(
+            prepared_payload(" ", CopyStyle::Raw, ClipboardConfig::default()),
+            Some(" ".to_owned())
         );
     }
 }
