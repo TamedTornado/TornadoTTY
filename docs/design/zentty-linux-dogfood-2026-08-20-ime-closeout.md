@@ -94,3 +94,49 @@ No Ghostty code changed. The declared matrix is now 173 PASS, 0 FAIL,
 2 BLOCKED, 3 XFAIL, and 5 NOT_IMPLEMENTED. This is not full Linux
 qualification: `ime-wayland` remains NOT_IMPLEMENTED and is the next IME
 milestone.
+
+## Wayland qualification result
+
+The next milestone generalized the same service wrapper and product actor; it
+did not add a second IME harness. `nested-wayland-input` remains the compositor
+owner. The IBus layer reuses its exact Cage socket by canonical absolute path,
+creates only a private D-Bus/XDG service environment, and rejects any caller
+without the authenticated nested-Wayland session identity. Zentty is forced
+through `GDK_BACKEND=wayland`, and `wtype` sends input over Cage's advertised
+`zwp_virtual_keyboard_manager_v1` protocol.
+
+The first attempt removed the wrapper-owned outer `DISPLAY`. On this Ubuntu
+IBus 1.5.29 / ibus-table 1.17.4 environment, the foreground daemon published a
+valid address and then segfaulted while the Cangjie table component started.
+The minimal nested-Wayland control retained the outer X11 transport and did not
+crash. Real GNOME Wayland sessions normally provide Xwayland to IBus as well;
+the corrected controlled journey therefore retains the nested compositor's
+authenticated outer-X11 transport while proving that the **application and
+physical input path** remain native Wayland. This is recorded evidence, not a
+claim that IBus table engines work without Xwayland on this package set.
+
+A separate failure after service readiness was a harness identity collision:
+the wrapper exported its actor identity under the same variable it then
+correctly removed as an internal startup secret. The public actor identity now
+uses a distinct name, while the internal variable remains unset before product
+launch.
+
+The first generalized focus barrier counted an assumed number of historic
+focus receipts. Pane creation does not emit the same redundant receipts on
+every backend/timing, so the assertion could pass early or wait for an event
+that had already happened. A controls-overlay visibility receipt was also
+tested and rejected because it describes presentation, not keyboard focus.
+The final actor records the exact focus count immediately before each command
+and requires one new product focus acknowledgement before sending input.
+
+The final real Wayland product journey passed on compositor session
+`8fa0050452d5472c6f97cdf102d8c4b89a686941c160c252a6290b84e9b50ded`;
+the companion X11 regression passed on session
+`4c68f42dceb21dbe25122f806e1d66d2f7f48dfe2df931bba60f0cfaac92469b`.
+It exercised the same cancellation, commit, focus, active-preedit destruction,
+post-destruction composition, and clean shutdown contract as X11. No Ghostty
+code changed.
+
+Both IME cells are now PASS. The declared matrix is 174 PASS, 0 FAIL,
+2 BLOCKED, 3 XFAIL, and 4 NOT_IMPLEMENTED. Full Linux qualification is still
+not claimed.

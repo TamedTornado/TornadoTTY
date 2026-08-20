@@ -166,6 +166,12 @@ printf 'ready\n' >"${ZENTTY_FAKE_CAPTURE_DIR}/x11-query"
 printf 'name of display: %s\n' "${DISPLAY}"
 EOF
 
+cat >"${fake_bin}/wayland-info" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'controlled fake Wayland display\n'
+EOF
+
 cat >"${fake_bin}/ibus" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -253,6 +259,8 @@ run_root="${HOME%/home}"
 [[ -z "${IBUS_ADDRESS_FILE:-}" ]] || exit 57
 [[ "${IBUS_ENABLE_SYNC_MODE:-}" == 1 ]] || exit 75
 [[ -z "${IBUS_USE_PORTAL:-}" ]] || exit 72
+[[ "${ZENTTY_CONTROLLED_IBUS_ACTOR_SESSION_ID:-}" =~ ^[1-9][0-9]*-[[:alnum:]]+$ ]] || exit 76
+[[ -z "${ZENTTY_CONTROLLED_IBUS_SESSION_ID:-}" ]] || exit 77
 [[ "${XDG_CONFIG_HOME}" == "${run_root}/config" ]] || exit 58
 [[ "${XDG_CACHE_HOME}" == "${run_root}/cache" ]] || exit 59
 [[ "${XDG_DATA_HOME}" == "${run_root}/data" ]] || exit 60
@@ -389,6 +397,25 @@ grep -F 'display reuse requires a linux/tests/nested-x11 session' \
     "${temp_dir}/unsafe-reuse.stderr" >/dev/null ||
     fail "uncontrolled display reuse lacked a diagnostic"
 echo "controlled IBus uncontrolled-display reuse negative test passed"
+
+set +e
+env DISPLAY=:4242 \
+    WAYLAND_DISPLAY=missing-wayland-socket \
+    XDG_RUNTIME_DIR="${temp_dir}" \
+    ZENTTY_NESTED_X11_SESSION_ID="$(printf x11-fixture | sha256sum | awk '{print $1}')" \
+    ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID="$(printf wayland-fixture | sha256sum | awk '{print $1}')" \
+    ZENTTY_FAKE_CAPTURE_DIR="${temp_dir}/unsafe-wayland-reuse" \
+    "${wrapper}" --reuse-controlled-wayland true \
+    >"${temp_dir}/unsafe-wayland-reuse.stdout" \
+    2>"${temp_dir}/unsafe-wayland-reuse.stderr"
+unsafe_wayland_reuse_status=$?
+set -e
+[[ "${unsafe_wayland_reuse_status}" -eq 1 ]] ||
+    fail "unsafe Wayland reuse status 1 became ${unsafe_wayland_reuse_status}"
+grep -F 'controlled Wayland socket is missing or unsafe' \
+    "${temp_dir}/unsafe-wayland-reuse.stderr" >/dev/null ||
+    fail "unsafe Wayland reuse lacked a diagnostic"
+echo "controlled IBus unsafe-Wayland-socket negative test passed"
 
 failure_capture="${temp_dir}/child-failure"
 mkdir -p "${failure_capture}"
@@ -635,7 +662,7 @@ missing_cat_bin="${temp_dir}/missing-cat-bin"
 mkdir -p "${missing_cat_bin}"
 for dependency in \
     bash xvfb-run Xvfb xauth xdpyinfo dbus-run-session dbus-daemon ibus-daemon \
-    ibus setsid ps grep sed mktemp mkdir chmod rm sleep env timeout readlink; do
+    ibus setsid ps grep sed awk mktemp mkdir chmod rm sleep env timeout readlink; do
     ln -s "$(PATH="${original_path}" command -v "${dependency}")" \
         "${missing_cat_bin}/${dependency}"
 done

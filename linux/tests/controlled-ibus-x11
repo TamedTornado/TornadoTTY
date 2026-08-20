@@ -7,12 +7,25 @@ controlled_engine="${ZENTTY_CONTROLLED_IBUS_ENGINE:-xkb:us::eng}"
     exit 64
 }
 readonly controlled_engine
-if [[ "${ZENTTY_CONTROLLED_IBUS_REUSE_DISPLAY_INNER:-0}" == 1 ]]; then
-    readonly controlled_display_fact="inherited-controlled-x11"
-else
-    readonly controlled_display_fact="private-xvfb"
-fi
-readonly controlled_session_marker_prefix="controlled-ibus-x11: READY x11-display ${controlled_display_fact} private-dbus foreground-ibus engine=${controlled_engine} sync-mode=1"
+case "${ZENTTY_CONTROLLED_IBUS_REUSE_DISPLAY_INNER:-none}" in
+    x11)
+        readonly controlled_display_kind="x11-display"
+        readonly controlled_display_fact="inherited-controlled-x11"
+        ;;
+    wayland)
+        readonly controlled_display_kind="wayland-display"
+        readonly controlled_display_fact="inherited-controlled-wayland"
+        ;;
+    none)
+        readonly controlled_display_kind="x11-display"
+        readonly controlled_display_fact="private-xvfb"
+        ;;
+    *)
+        echo "controlled-ibus-x11: error: invalid internal display mode" >&2
+        exit 64
+        ;;
+esac
+readonly controlled_session_marker_prefix="controlled-ibus-x11: READY ${controlled_display_kind} ${controlled_display_fact} private-dbus foreground-ibus engine=${controlled_engine} sync-mode=1"
 startup_timeout_seconds="${ZENTTY_CONTROLLED_IBUS_STARTUP_TIMEOUT_SECONDS:-45}"
 service_timeout_seconds="${ZENTTY_CONTROLLED_IBUS_SERVICE_TIMEOUT_SECONDS:-10}"
 query_timeout_seconds="${ZENTTY_CONTROLLED_IBUS_QUERY_TIMEOUT_SECONDS:-2}"
@@ -107,8 +120,12 @@ run_inside_private_bus() {
     trap 'signal_inner 130' INT
     trap 'signal_inner 143' TERM
 
-    if ! bounded_query xdpyinfo >/dev/null 2>&1; then
-        fail "private X11 display did not become ready"
+    if [[ "${ZENTTY_CONTROLLED_IBUS_REUSE_DISPLAY_INNER:-none}" == wayland ]]; then
+        bounded_query wayland-info >/dev/null 2>&1 ||
+            fail "controlled Wayland display did not remain ready"
+    else
+        bounded_query xdpyinfo >/dev/null 2>&1 ||
+            fail "private X11 display did not become ready"
     fi
 
     ibus-daemon \
@@ -142,6 +159,10 @@ run_inside_private_bus() {
 
     if [[ "${ready}" != true ]]; then
         echo "controlled-ibus-x11: error: private IBus did not become ready" >&2
+        printf 'controlled-ibus-x11: address-readback: %s\n' "${address:-<empty>}" >&2
+        if [[ -s "${engine_query}" ]]; then
+            sed 's/^/controlled-ibus-x11: engine-query: /' "${engine_query}" >&2
+        fi
         if [[ -s "${ibus_log}" ]]; then
             sed 's/^/controlled-ibus-x11: ibus-daemon: /' "${ibus_log}" >&2
         fi
@@ -188,7 +209,10 @@ run_inside_private_bus() {
     : >"${run_root}/session.ready"
     printf '%s session-id=%s\n' \
         "${controlled_session_marker_prefix}" "${session_id}"
-    export ZENTTY_CONTROLLED_IBUS_X11_SESSION_ID="${session_id}"
+    export ZENTTY_CONTROLLED_IBUS_ACTOR_SESSION_ID="${session_id}"
+    if [[ "${ZENTTY_CONTROLLED_IBUS_REUSE_DISPLAY_INNER:-none}" != wayland ]]; then
+        export ZENTTY_CONTROLLED_IBUS_X11_SESSION_ID="${session_id}"
+    fi
     unset ZENTTY_CONTROLLED_IBUS_RUN_ROOT ZENTTY_CONTROLLED_IBUS_SESSION_ID
 
     set +e
@@ -208,36 +232,68 @@ if [[ "${1:-}" == "--private-bus-inner" ]]; then
     exit $?
 fi
 
-reuse_controlled_display=false
-if [[ "${1:-}" == "--reuse-controlled-display" ]]; then
-    reuse_controlled_display=true
-    shift
-fi
+reuse_controlled_display=none
+case "${1:-}" in
+    --reuse-controlled-display | --reuse-controlled-x11)
+        reuse_controlled_display=x11
+        shift
+        ;;
+    --reuse-controlled-wayland)
+        reuse_controlled_display=wayland
+        shift
+        ;;
+esac
 
 if (( $# == 0 )); then
-    echo "usage: controlled-ibus-x11 [--reuse-controlled-display] COMMAND [ARG ...]" >&2
+    echo "usage: controlled-ibus-x11 [--reuse-controlled-x11|--reuse-controlled-wayland] COMMAND [ARG ...]" >&2
     exit 64
 fi
 
 for dependency in \
-    xauth xdpyinfo dbus-run-session dbus-daemon ibus-daemon ibus \
-    setsid ps grep sed mktemp mkdir chmod rm sleep env bash cat timeout readlink; do
+    dbus-run-session dbus-daemon ibus-daemon ibus \
+    setsid ps grep sed awk mktemp mkdir chmod rm sleep env bash cat timeout readlink; do
     if ! command -v "${dependency}" >/dev/null 2>&1; then
         echo "controlled-ibus-x11: SKIP missing runtime dependency: ${dependency}" >&2
         exit 77
     fi
 done
-if [[ "${reuse_controlled_display}" == false ]]; then
-    for dependency in xvfb-run Xvfb; do
+controlled_wayland_socket=""
+if [[ "${reuse_controlled_display}" == none ]]; then
+    for dependency in xvfb-run Xvfb xauth xdpyinfo; do
         command -v "${dependency}" >/dev/null || {
             echo "controlled-ibus-x11: SKIP missing runtime dependency: ${dependency}" >&2
             exit 77
         }
     done
-else
+elif [[ "${reuse_controlled_display}" == x11 ]]; then
+    command -v xdpyinfo >/dev/null || {
+        echo "controlled-ibus-x11: SKIP missing runtime dependency: xdpyinfo" >&2
+        exit 77
+    }
     [[ "${ZENTTY_NESTED_X11_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ &&
         "${DISPLAY:-}" =~ ^:[0-9]+([.][0-9]+)?$ ]] ||
         fail "display reuse requires a linux/tests/nested-x11 session"
+else
+    command -v wayland-info >/dev/null || {
+        echo "controlled-ibus-x11: SKIP missing runtime dependency: wayland-info" >&2
+        exit 77
+    }
+    [[ "${ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ &&
+        "${ZENTTY_NESTED_X11_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ &&
+        "${DISPLAY:-}" =~ ^:[0-9]+([.][0-9]+)?$ &&
+        -n "${WAYLAND_DISPLAY:-}" ]] ||
+        fail "Wayland reuse requires a linux/tests/nested-wayland-input session"
+    if [[ "${WAYLAND_DISPLAY}" == /* ]]; then
+        controlled_wayland_socket="${WAYLAND_DISPLAY}"
+    else
+        controlled_wayland_socket="${XDG_RUNTIME_DIR:?}/${WAYLAND_DISPLAY}"
+    fi
+    [[ -S "${controlled_wayland_socket}" && ! -L "${controlled_wayland_socket}" ]] ||
+        fail "controlled Wayland socket is missing or unsafe"
+    controlled_wayland_socket="$(readlink -f -- "${controlled_wayland_socket}")"
+    controlled_wayland_runtime="$(readlink -f -- "${XDG_RUNTIME_DIR}")"
+    [[ "${controlled_wayland_socket%/*}" == "${controlled_wayland_runtime}" ]] ||
+        fail "controlled Wayland socket escaped the authenticated runtime"
 fi
 
 run_root="$(mktemp -d /tmp/controlled-ibus-x11.XXXXXX)"
@@ -350,10 +406,12 @@ cat >"${run_root}/dbus-session.conf" <<EOF
 EOF
 
 (
-    if [[ "${reuse_controlled_display}" == false ]]; then
+    if [[ "${reuse_controlled_display}" == none ]]; then
         unset DISPLAY XAUTHORITY
+        unset WAYLAND_DISPLAY
+    elif [[ "${reuse_controlled_display}" == wayland ]]; then
+        export WAYLAND_DISPLAY="${controlled_wayland_socket}"
     fi
-    unset WAYLAND_DISPLAY
     unset DBUS_SESSION_BUS_ADDRESS DBUS_STARTER_ADDRESS DBUS_STARTER_BUS_TYPE
     unset DBUS_SYSTEM_BUS_ADDRESS DBUS_SESSION_BUS_PID DBUS_SESSION_BUS_WINDOWID
     unset IBUS_ADDRESS IBUS_ADDRESS_FILE IBUS_USE_PORTAL
@@ -364,10 +422,15 @@ EOF
     export XDG_STATE_HOME="${run_root}/state"
     export XDG_RUNTIME_DIR="${run_root}/runtime"
     export TMPDIR="${run_root}/tmp"
-    export GDK_BACKEND=x11
+    if [[ "${reuse_controlled_display}" == wayland ]]; then
+        export GDK_BACKEND=wayland
+        export XDG_SESSION_TYPE=wayland
+    else
+        export GDK_BACKEND=x11
+        export XDG_SESSION_TYPE=x11
+    fi
     export GTK_IM_MODULE=ibus
     export IBUS_ENABLE_SYNC_MODE=1
-    export XDG_SESSION_TYPE=x11
     export GSETTINGS_BACKEND=memory
     export GIO_USE_VFS=local
     export NO_AT_BRIDGE=1
@@ -379,11 +442,11 @@ EOF
         env ZENTTY_CONTROLLED_IBUS_RUN_ROOT="${run_root}"
         ZENTTY_CONTROLLED_IBUS_SESSION_ID="${session_id}"
     )
-    if [[ "${reuse_controlled_display}" == true ]]; then
-        session_command+=(ZENTTY_CONTROLLED_IBUS_REUSE_DISPLAY_INNER=1)
+    if [[ "${reuse_controlled_display}" != none ]]; then
+        session_command+=(ZENTTY_CONTROLLED_IBUS_REUSE_DISPLAY_INNER="${reuse_controlled_display}")
     fi
     session_command+=("${BASH_SOURCE[0]}" --private-bus-inner "$@")
-    if [[ "${reuse_controlled_display}" == false ]]; then
+    if [[ "${reuse_controlled_display}" == none ]]; then
         session_command=(
             xvfb-run -a -s "-screen 0 1280x1024x24 -nolisten tcp"
             "${session_command[@]}"
