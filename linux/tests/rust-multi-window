@@ -207,6 +207,10 @@ target_second_window() {
             done
         done
         fail "physical route probes could not identify ${pane_id}'s X11 toplevel"
+    elif [[ "${ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT:-}" == 1 ]]; then
+        find_pointer_target "zentty-linux: pane-controls pane=${pane_id} state=shown" any ||
+            fail "physical Wayland pointer could not identify ${pane_id}'s toplevel"
+        xdotool click 1
     fi
 }
 
@@ -222,6 +226,117 @@ execute_palette_action() {
         "${action} did not resolve uniquely" || fail "${action} palette query failed"
     zentty_product_key "${backend}" Down
     zentty_product_key "${backend}" Return
+}
+
+# Resolve a real GTK sidebar or popover hit target from its pointer-enter
+# receipt. This avoids hard-coding theme/font-dependent menu row positions
+# while still requiring physical XTest input against the rendered product.
+find_pointer_target() {
+    local receipt="$1"
+    local x="$2"
+    local before candidate_x candidate_ys y
+    local -a candidate_xs
+    if [[ "${backend}" == x11 ]]; then
+        # The nested X11 fixture deliberately has no window manager, so EWMH
+        # _NET_ACTIVE_WINDOW is unavailable. Raise and focus the owned toplevel
+        # directly before root-coordinate pointer delivery.
+        xdotool windowraise "${ZENTTY_PRODUCT_WINDOW_ID}"
+        xdotool windowfocus --sync "${ZENTTY_PRODUCT_WINDOW_ID}"
+    elif [[ "${ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT:-}" != 1 ]]; then
+        fail "Wayland pointer target discovery requires controlled outer-X11 input"
+    fi
+    before="$(grep -Fxc "${receipt}" "${log}" || true)"
+    if [[ "${x}" == any ]]; then
+        if [[ "${backend}" == wayland ]]; then
+            mapfile -t candidate_xs < <(seq 40 40 1240)
+        else
+            mapfile -t candidate_xs < <(seq 40 30 490)
+        fi
+    else
+        candidate_xs=("${x}")
+    fi
+    for candidate_x in "${candidate_xs[@]}"; do
+        xdotool mousemove --sync --window "${ZENTTY_PRODUCT_WINDOW_ID}" 600 60
+        if [[ "${backend}" == wayland ]]; then
+            candidate_ys="$(seq 40 30 1000)"
+        else
+            candidate_ys="$(seq 70 10 680)"
+        fi
+        for y in ${candidate_ys}; do
+            xdotool mousemove --sync --window "${ZENTTY_PRODUCT_WINDOW_ID}" "${candidate_x}" "${y}"
+            sleep 0.03
+            if (( $(grep -Fxc "${receipt}" "${log}" || true) > before )); then
+                return 0
+            fi
+        done
+    done
+    return 1
+}
+
+# Search the bounded neighborhood of the pointer that opened a GTK popover.
+# The popup is anchored to that real button even when Weston has placed two
+# application toplevels within its single outer X11 window. Staying local to
+# the anchor avoids crossing the other toplevel; the exact GTK enter receipt,
+# not a coordinate assumption, identifies the rendered row.
+find_popover_target() {
+    local receipt="$1"
+    local before pointer_x pointer_y display_width display_height
+    local min_x max_x min_y max_y x y replay_before index
+    local -a recent_x=() recent_y=()
+    before="$(grep -Fxc "${receipt}" "${log}" || true)"
+    pointer_x="$(xdotool getmouselocation --shell | sed -n 's/^X=//p')"
+    pointer_y="$(xdotool getmouselocation --shell | sed -n 's/^Y=//p')"
+    read -r display_width display_height < <(xdotool getdisplaygeometry)
+    [[ "${pointer_x}" =~ ^[0-9]+$ && "${pointer_y}" =~ ^[0-9]+$ ]] || return 1
+    min_x=$((pointer_x > 450 ? pointer_x - 450 : 0))
+    max_x=$((pointer_x + 450 < display_width ? pointer_x + 450 : display_width - 1))
+    min_y=$((pointer_y > 650 ? pointer_y - 650 : 0))
+    max_y=$((pointer_y + 650 < display_height ? pointer_y + 650 : display_height - 1))
+    for y in $(seq "${min_y}" 12 "${max_y}"); do
+        for x in $(seq "${min_x}" 24 "${max_x}"); do
+            xdotool mousemove --sync "${x}" "${y}"
+            recent_x+=("${x}")
+            recent_y+=("${y}")
+            if (( ${#recent_x[@]} > 128 )); then
+                recent_x=("${recent_x[@]:1}")
+                recent_y=("${recent_y[@]:1}")
+            fi
+            sleep 0.005
+            if (( $(grep -Fxc "${receipt}" "${log}" || true) > before )); then
+                # The receipt may reach the log after the coarse sweep has
+                # advanced past its originating coordinate. Replay only the
+                # bounded recent path with a GTK scheduling dwell, require a
+                # fresh enter receipt, and return while the pointer is still
+                # on that exact rendered row so the following click is real.
+                xdotool mousemove --sync "${pointer_x}" "${pointer_y}"
+                sleep 0.1
+                replay_before="$(grep -Fxc "${receipt}" "${log}" || true)"
+                for ((index = ${#recent_x[@]} - 1; index >= 0; index--)); do
+                    xdotool mousemove --sync "${recent_x[${index}]}" "${recent_y[${index}]}"
+                    # Replay newest-first because the coarse detector normally
+                    # observes the asynchronous receipt only a few points after
+                    # its origin. The dwell is deliberately longer than one
+                    # loaded GTK main-loop turn, keeping the pointer on the row
+                    # whose fresh receipt is observed.
+                    sleep 0.25
+                    if (( $(grep -Fxc "${receipt}" "${log}" || true) > replay_before )); then
+                        sleep 0.1
+                        return 0
+                    fi
+                done
+                return 1
+            fi
+        done
+    done
+    return 1
+}
+
+focus_outer_wayland_pane() {
+    local pane_id="$1"
+    [[ "${ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT:-}" == 1 ]] || return 0
+    find_pointer_target "zentty-linux: pane-controls pane=${pane_id} state=shown" any ||
+        fail "physical Wayland pointer could not focus ${pane_id}"
+    xdotool click 1
 }
 
 create_second_window() {
@@ -306,7 +421,8 @@ reply_to_confirmation() {
 # windows and real Ghostty PTYs. The rest of this already-large multi-window
 # qualification keeps confirmations disabled so its unrelated transaction and
 # restoration assertions remain independently diagnostic.
-if [[ "${ZENTTY_MULTI_WINDOW_FLEET_ONLY:-false}" != true ]]; then
+if [[ "${ZENTTY_MULTI_WINDOW_FLEET_ONLY:-false}" != true &&
+    "${ZENTTY_MULTI_WINDOW_EXISTING_WORKLANE_ONLY:-false}" != true ]]; then
 start_product
 create_second_window
 close_active_window
@@ -326,7 +442,14 @@ zentty_product_wait_for_log_count "${log}" 'zentty-linux: confirmation accepted=
     "Return did not accept Close Window" || fail "window confirmation acceptance missing"
 zentty_product_wait_for_log "${log}" 'zentty-linux: window-closed id=window-2 remaining=1' \
     "accepted Close Window did not close only its target" || fail "confirmed window close failed"
+if [[ "${backend}" == wayland && "${ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT:-}" != 1 ]]; then
+    # Cage may destroy the shortcut target before the virtual-keyboard key-up
+    # reaches it. Clear global modifier state against the surviving toplevel so
+    # the next physical text cannot be interpreted as another shortcut.
+    wtype -M ctrl -M shift -m shift -m ctrl
+fi
 zentty_product_prepare_input "${backend}" "${log}" || fail "could not retarget surviving confirmation window"
+focus_outer_wayland_pane pane-1
 type_and_expect_title "window-close-confirmed-survivor" "pane-1"
 zentty_product_close_window "${backend}"
 zentty_product_wait_for_log "${log}" 'zentty-linux: confirmation shown title="Quit Zentty?"' \
@@ -335,6 +458,7 @@ reply_to_confirmation Escape
 zentty_product_wait_for_log_count "${log}" 'zentty-linux: confirmation accepted=false' 2 \
     "Escape did not cancel Quit" || fail "quit confirmation cancellation missing"
 zentty_product_prepare_input "${backend}" "${log}" || fail "could not refocus after cancelled quit"
+focus_outer_wayland_pane pane-1
 type_and_expect_title "quit-cancelled" "pane-1"
 accepted_before="$(grep -Fc 'zentty-linux: confirmation accepted=true' "${log}" || true)"
 zentty_product_close_window "${backend}"
@@ -378,6 +502,7 @@ fi
 # through the real command palette. The exact PTY child set, terminal-ready
 # count, post-move physical input, and authenticated event route prove this is
 # a live reparent rather than a reconstructed terminal or model-only move.
+if [[ "${ZENTTY_MULTI_WINDOW_EXISTING_WORKLANE_ONLY:-false}" != true ]]; then
 start_product
 if [[ "${ZENTTY_MULTI_WINDOW_FLEET_ONLY:-false}" == true ]]; then
 if [[ "${ZENTTY_MULTI_WINDOW_SKIP_FOOTER_JOURNEYS:-false}" != true ]]; then
@@ -776,6 +901,7 @@ zentty_product_wait_for_log "${log}" 'zentty-linux: window-closed id=window-2 re
     "closing the restored transfer destination did not preserve its source" ||
     fail "restored transfer destination close failed"
 zentty_product_prepare_input "${backend}" "${log}" || fail "could not focus the surviving transfer source"
+focus_outer_wayland_pane pane-1
 type_and_expect_title "surviving-transfer-source" "pane-1"
 zentty_product_close_window "${backend}"
 wait_for_exit
@@ -877,6 +1003,117 @@ jq -e '
     fail "live snapshot published duplicate or missing ownership after rollback"
 zentty_product_close_window "${backend}"
 wait_for_exit
+fi
+
+# Journey 0c: move the only pane in one existing window into an existing
+# worklane in another. X11 clicks the exact contextual rows resolved from GTK
+# pointer receipts; nested Wayland sends the same real pointer input through
+# its controlled outer-X11 compositor window. The source toplevel must close, while both original PTY
+# children and the moved pane's authenticated routes continue in the existing
+# destination without constructing a replacement surface.
+if [[ "${ZENTTY_MULTI_WINDOW_SKIP_EXISTING_WORKLANE:-false}" != true ]]; then
+rm -rf -- "${state_dir}"
+state_dir="$(mktemp -d)"
+start_product
+create_second_window
+mapfile -t existing_transfer_children_before < <(pgrep -P "${product_pid}" | sort -n)
+[[ "${#existing_transfer_children_before[@]}" -eq 2 ]] ||
+    fail "existing-worklane journey did not begin with two real PTY children"
+if [[ "${backend}" == x11 ]]; then
+    source_window=window-1
+    source_pane=pane-1
+    destination_window=window-2
+    destination_worklane=worklane-window-2
+    destination_existing_pane=pane-window-2
+    target_second_window "${source_pane}"
+    find_pointer_target \
+        "zentty-linux: pane-context-pointer action=open pane=${source_pane}" 250 ||
+        fail "physical pointer could not locate ${source_pane}'s rendered action button"
+    xdotool click 1
+    sleep 0.1
+    find_pointer_target \
+        "zentty-linux: pane-context-pointer action=move-pane-to-worklane pane=${source_pane}" any ||
+        fail "physical pointer could not locate Move Pane to Worklane"
+    xdotool click 1
+    sleep 0.1
+    find_pointer_target \
+        "zentty-linux: pane-context-pointer action=move-pane-to-worklane window=${destination_window} target=${destination_worklane}" any ||
+        fail "foreign window worklane destination was not rendered in the source menu"
+    xdotool click 1
+else
+    source_window=window-2
+    source_pane=pane-window-2
+    destination_window=window-1
+    destination_worklane=worklane-1
+    destination_existing_pane=pane-1
+    find_pointer_target \
+        "zentty-linux: pane-context-pointer action=open pane=${source_pane}" any ||
+        fail "physical pointer could not locate ${source_pane}'s rendered action button"
+    xdotool click 1
+    sleep 0.1
+    find_popover_target \
+        "zentty-linux: pane-context-pointer action=move-pane-to-worklane pane=${source_pane}" ||
+        fail "physical pointer could not locate Move Pane to Worklane near its rendered anchor"
+    xdotool click 1
+    sleep 0.1
+    zentty_product_wait_for_log "${log}" \
+        "zentty-linux: pane-context-focus action=move-pane-to-worklane window=${destination_window} target=${destination_worklane}" \
+        "foreign worklane destination did not receive GTK focus" ||
+        fail "foreign worklane destination was not focused when its rendered submenu opened"
+    # GTK focuses the sole rendered foreign destination when the submenu is
+    # installed. Activate that real button with one physical key event; unlike
+    # the source-menu traversal, no queued navigation event can move focus
+    # after the exact receipt. Clear only synthetic modifier state inherited
+    # from earlier XTest chords before delivery.
+    xdotool key --clearmodifiers Return
+fi
+zentty_product_wait_for_log "${log}" \
+    "zentty-linux: action=move-pane-to-window-worklane pane=${source_pane} source=${source_window} destination-window=${destination_window} destination-worklane=${destination_worklane}" \
+    "existing-worklane transfer did not commit" || fail "existing-worklane transaction missing"
+zentty_product_wait_for_log "${log}" "zentty-linux: window-closed id=${source_window} remaining=1" \
+    "moving the final source pane did not close its empty window" ||
+    fail "empty transfer source survived"
+zentty_product_wait_for_log "${log}" \
+    "zentty-linux: topology=${destination_worklane}[title=none,color=none]:${destination_existing_pane},${source_pane}*" \
+    "destination did not append and focus the moved pane" ||
+    fail "existing-worklane destination topology missing"
+[[ "$(grep -Fc "zentty-linux: terminal-ready-pane=${source_pane}" "${log}")" -eq 1 ]] ||
+    fail "existing-worklane transfer recreated ${source_pane}'s Ghostty surface"
+mapfile -t existing_transfer_children_after < <(pgrep -P "${product_pid}" | sort -n)
+[[ "${existing_transfer_children_after[*]}" == "${existing_transfer_children_before[*]}" ]] ||
+    fail "existing-worklane transfer changed the real PTY child set"
+zentty_product_prepare_input "${backend}" "${log}" || fail "could not focus transfer destination"
+if [[ "${backend}" == wayland ]]; then
+    hover_before="$(grep -Fc "zentty-linux: pane-controls pane=${source_pane} state=shown" "${log}" || true)"
+    moved_pane_found=false
+    for focus_y in 300 450 600 750; do
+        for focus_x in 600 800 1000 1200; do
+            xdotool mousemove --sync --window "${ZENTTY_PRODUCT_WINDOW_ID}" "${focus_x}" "${focus_y}"
+            sleep 0.05
+            if (( $(grep -Fc "zentty-linux: pane-controls pane=${source_pane} state=shown" "${log}" || true) > hover_before )); then
+                xdotool click 1
+                moved_pane_found=true
+                break 2
+            fi
+        done
+    done
+    [[ "${moved_pane_found}" == true ]] ||
+        fail "physical Wayland pointer could not locate the moved destination pane"
+fi
+type_and_expect_title "existing-worklane-live-pty" "${source_pane}"
+zentty_product_type "${backend}" "agent-running"
+zentty_product_key "${backend}" Return
+zentty_product_wait_for_log "${log}" \
+    "zentty-linux: agent-event pane=${source_pane} worklane=${destination_worklane} kind=agent.running session=moved-live-pane" \
+    "moved pane agent route did not adopt the destination worklane" ||
+    fail "existing-worklane agent route missing"
+zentty_product_close_window "${backend}"
+wait_for_exit
+if [[ "${ZENTTY_MULTI_WINDOW_EXISTING_WORKLANE_ONLY:-false}" == true ]]; then
+    echo "Rust existing-worklane live transfer passed: ${backend}, source=closed, destination=existing, pty=preserved, route=adopted"
+    exit 0
+fi
+fi
 
 # Journey 1: create two windows through the real shortcut, prove the active
 # second PTY receives input, save both through the one real persistence path,
@@ -944,6 +1181,7 @@ zentty_product_wait_for_log "${log}" 'zentty-linux: window-closed id=window-2 re
     "Close Window did not remove only the active second window" || fail "non-final close failed"
 kill -0 "${product_pid}" 2>/dev/null || fail "closing the second window terminated the application"
 zentty_product_prepare_input "${backend}" "${log}" || fail "could not retarget the surviving window"
+focus_outer_wayland_pane pane-1
 type_and_expect_title "surviving-first-marker" "pane-1"
 zentty_product_close_window "${backend}"
 wait_for_exit

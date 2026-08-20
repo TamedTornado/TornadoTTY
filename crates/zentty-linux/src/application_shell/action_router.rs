@@ -128,6 +128,7 @@ pub(super) const ACTION_MOVE_PANE_RIGHT: &str = "move-pane-right";
 pub(super) const ACTION_MOVE_PANE_UP: &str = "move-pane-up";
 pub(super) const ACTION_MOVE_PANE_DOWN: &str = "move-pane-down";
 pub(super) const ACTION_MOVE_PANE_TO_WORKLANE: &str = "move-pane-to-worklane";
+pub(super) const ACTION_MOVE_PANE_TO_WINDOW_WORKLANE: &str = "move-pane-to-window-worklane";
 pub(super) const ACTION_MOVE_PANE_TO_NEW_WORKLANE: &str = "move-pane-to-new-worklane";
 pub(super) const ACTION_MOVE_PANE_TO_NEW_WINDOW: &str = "move-pane-to-new-window";
 pub(super) const ACTION_SELECT_PANE: &str = "select-pane";
@@ -269,6 +270,11 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
         ACTION_MOVE_PANE_TO_WORKLANE,
         "move-pane-to-worklane",
         String
+    ),
+    action!(
+        ACTION_MOVE_PANE_TO_WINDOW_WORKLANE,
+        "move-pane-to-window-worklane",
+        StringPair
     ),
     action!(
         ACTION_MOVE_PANE_TO_NEW_WORKLANE,
@@ -1402,6 +1408,22 @@ fn install_pane_transfer_action(
     });
     group.add_action(&move_pane);
 
+    let string_pair = glib::VariantTy::new("(ss)").expect("static action type is valid");
+    let move_pane = gio::SimpleAction::new(ACTION_MOVE_PANE_TO_WINDOW_WORKLANE, Some(string_pair));
+    let weak = Rc::downgrade(shell);
+    move_pane.connect_activate(move |_, parameter| {
+        let (Some(shell), Some((destination_window_id, destination_worklane_id))) = (
+            weak.upgrade(),
+            parameter.and_then(glib::Variant::get::<(String, String)>),
+        ) else {
+            return;
+        };
+        shell
+            .borrow()
+            .request_move_pane_to_window_worklane(destination_window_id, destination_worklane_id);
+    });
+    group.add_action(&move_pane);
+
     let move_to_new_worklane = gio::SimpleAction::new(ACTION_MOVE_PANE_TO_NEW_WORKLANE, None);
     let weak = Rc::downgrade(shell);
     move_to_new_worklane.connect_activate(move |_, _| {
@@ -1723,7 +1745,7 @@ mod tests {
 
     #[test]
     fn registry_is_unique_complete_and_typed() {
-        assert_eq!(ACTION_SPECS.len(), 116);
+        assert_eq!(ACTION_SPECS.len(), 117);
         assert_eq!(
             ACTION_SPECS
                 .iter()
@@ -1770,6 +1792,7 @@ mod tests {
                 "set-worklane-color",
                 "move-worklane",
                 "reorder-worklane",
+                "move-pane-to-window-worklane",
                 "select-pane",
                 "save-template",
                 "rename-template",

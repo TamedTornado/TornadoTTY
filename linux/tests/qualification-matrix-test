@@ -51,6 +51,11 @@ fi
 grep -F 'ZENTTY_QUALIFICATION_JOBS must not exceed 32' \
     "${temp_dir}/stderr" >/dev/null
 
+jq '(.cells[] | select(.id == "ghostty-regression")).blocks_display = "yes"' \
+    "${source_matrix}" >"${temp_dir}/matrix.json"
+expect_validation_failure \
+    'cells with invalid display-blocking policy: ghostty-regression'
+
 # The IBus harness deliberately emits process/random-token markers, while the
 # common matrix summary schema requires opaque 64-hex session identities.
 source "${repo_root}/linux/tests/lib/controlled-environment"
@@ -143,14 +148,42 @@ if jq -e '.cells[] | select(.id == "restore-release")' "${source_matrix}" >/dev/
 fi
 jq -e '
     (.cells[] | select(.id == "build-debug") |
-      .resources == ["ghostty-source"] and
+      .resources == ["compiler-load","ghostty-source"] and .blocks_display == true and
       (.command | contains("ZENTTY_BUILD_OUTPUT_DIR=build/linux-profiles/debug")) and
       (.command | contains("ZENTTY_GHOSTTY_INSTALL_DIR=build/linux-deps/ghostty-install/debug"))) and
     (all(.cells[] | select((.command // "") | contains("GHOSTTY_LIB_DIR="));
       (.command | contains("GHOSTTY_LIB_DIR=$PWD/")))) and
     (.cells[] | select(.id == "ghostty-regression") |
-      .resources == ["ghostty-source"] and .schedule_priority == 12 and
+      .resources == ["compiler-load","ghostty-source"] and .schedule_priority == 12 and
+      .blocks_display == true and
       .skip_profile_prerequisite == true)
+' "${source_matrix}" >/dev/null
+
+# Compiler-heavy source rebuilds are allowed to overlap non-display checks, but
+# must never compete with real GTK/compositor actors for scheduling latency.
+jq -e '
+    [.cells[] | select(.blocks_display == true) | .id] | sort == [
+      "build-debug",
+      "build-release",
+      "ghostty-regression",
+      "package-clean-build-reproducibility",
+      "product-existing-worklane-transfer-wayland"
+    ]
+' "${source_matrix}" >/dev/null
+grep -F 'active_display_cells' "${runner}" >/dev/null
+grep -F 'active_display_blockers' "${runner}" >/dev/null
+grep -F '.schedule.blocks_display' "${runner}" >/dev/null
+
+# Cargo test commands share one build target and do not gain real parallelism
+# by contending on its lock while a Ghostty or clean-package compile saturates
+# the same host. The compiler resource keeps other non-build checks parallel.
+jq -e '
+    all(.cells[] | select((.command // "") | contains("cargo test"));
+      (.resources // []) | index("compiler-load") != null) and
+    all(.cells[] | select(.id == "build-release" or .id == "build-debug" or
+                          .id == "ghostty-regression" or
+                          .id == "package-clean-build-reproducibility");
+      (.resources // []) | index("compiler-load") != null)
 ' "${source_matrix}" >/dev/null
 
 jq -e '
@@ -175,6 +208,18 @@ jq -e '
       select(.id | startswith("bookmarks-presets-")) |
       select((.resources // []) == ["bookmarks-modal-input"])
     ] | length == 6
+' "${source_matrix}" >/dev/null
+
+# The three full multi-window menu journeys physically search the same dense
+# contextual controls and are deliberately serialized with one another. Fleet
+# modes skip that menu transaction and remain independently parallel.
+jq -e '
+    [ .cells[] | select(
+        .id == "product-multi-window-clean-crash-size-restore-wayland" or
+        .id == "product-multi-window-clean-crash-size-restore-x11" or
+        .id == "product-existing-worklane-transfer-wayland") |
+      select(.resources == ["multi-window-menu-input"])
+    ] | length == 3
 ' "${source_matrix}" >/dev/null
 
 # The production runner must use the focused classifier tested above.

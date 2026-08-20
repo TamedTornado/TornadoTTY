@@ -548,7 +548,7 @@ jq -e '
         "stop-ignoring-server-port", "stop-server", "toggle-template-pin"
     ] | sort) and
     ([.action_contract[] | select(.parameter == "string_pair") | .name] | sort) == ([
-        "move-worklane", "rename-pane", "rename-worklane", "reorder-worklane",
+        "move-pane-to-window-worklane", "move-worklane", "rename-pane", "rename-worklane", "reorder-worklane",
         "select-pane", "set-worklane-color", "edit-template", "rename-template", "save-template"
     ] | sort) and
     ([.action_contract[] | select(.parameter == "string_triple") | .name]) == ["activate-attention", "activate-fleet-pane"] and

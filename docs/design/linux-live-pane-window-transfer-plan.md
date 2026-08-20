@@ -78,8 +78,10 @@ moving one pane from transferring an entire single-pane worklane.
 - A recreated terminal is a failure even if its command/CWD match.
 - X11 evidence does not establish Wayland; both controlled environments are
   required for the supported command.
-- Cross-window drag animation and moves into an existing foreign worklane remain
-  explicit later scope until their separately stated contracts pass.
+- Moving into an existing foreign worklane now reuses the same linear live-
+  runtime ownership boundary and passes separate controlled X11/Wayland
+  journeys. Cross-window drag animation remains explicit GH-16 scope until its
+  separately stated pointer, visual, and accessibility contract passes.
 - No release or full-Linux qualification claim is permitted while the
   authoritative matrix retains non-PASS required cells.
 

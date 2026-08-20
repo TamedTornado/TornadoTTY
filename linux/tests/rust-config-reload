@@ -194,6 +194,7 @@ if [[ "${backend}" == x11 ]]; then
 fi
 settings_refresh_before="$(grep -Fc 'zentty-linux: settings-live-refresh section=' "${log}" || true)"
 settings_active_before="$(grep -Fc 'zentty-linux: shortcut-settings active search-focused=' "${log}" || true)"
+settings_reload_before="$(grep -Fc 'zentty-linux: config-reload result=applied' "${log}" || true)"
 cat >"${config_file}.settings-external" <<'EOF'
 [confirmations]
 confirm_before_closing_window = false
@@ -213,6 +214,10 @@ zentty_product_wait_for_log_count "${log}" \
     'zentty-linux: settings-live-refresh section=updates-privacy' \
     "$((settings_refresh_before + 1))" \
     "visible settings editor did not refresh in place" || fail "visible settings refresh missing"
+zentty_product_wait_for_log_count "${log}" \
+    'zentty-linux: config-reload result=applied' \
+    "$((settings_reload_before + 1))" \
+    "external settings reload did not reach config authority" || fail "external settings reload barrier missing"
 zentty_product_wait_for_log "${log}" \
     'updates-privacy-settings loaded channel=beta error-reporting-available=false' \
     "refreshed settings did not render the accepted external value" || fail "refreshed settings state stale"

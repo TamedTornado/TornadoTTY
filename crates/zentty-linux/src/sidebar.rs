@@ -15,32 +15,64 @@ struct PaneActionSpec {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct WorklaneDestination {
+    window_id: String,
     worklane_id: String,
     label: String,
     color: Option<zentty_core::WorklaneColor>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct WorklaneDestinationGroup {
+    pub(crate) window_id: String,
+    pub(crate) summaries: Vec<SidebarWorklaneSummary>,
+}
+
 fn worklane_destinations(
-    summaries: &[SidebarWorklaneSummary],
+    groups: &[WorklaneDestinationGroup],
+    source_window_id: &str,
     source_worklane_id: &str,
-) -> Vec<WorklaneDestination> {
-    summaries
+) -> Vec<Vec<WorklaneDestination>> {
+    groups
         .iter()
-        .filter(|summary| summary.worklane_id != source_worklane_id)
-        .filter_map(|summary| {
-            let primary = summary.pane_rows.first()?;
-            let additional = summary.pane_rows.len() - 1;
-            Some(WorklaneDestination {
-                worklane_id: summary.worklane_id.clone(),
-                label: if additional == 0 {
-                    primary.primary_text.clone()
-                } else {
-                    format!("{}  +{} more", primary.primary_text, additional)
-                },
-                color: summary.color,
-            })
+        .filter_map(|group| {
+            let destinations = group
+                .summaries
+                .iter()
+                .filter(|summary| {
+                    group.window_id != source_window_id || summary.worklane_id != source_worklane_id
+                })
+                .filter_map(|summary| {
+                    let primary = summary.pane_rows.first()?;
+                    let additional = summary.pane_rows.len() - 1;
+                    Some(WorklaneDestination {
+                        window_id: group.window_id.clone(),
+                        worklane_id: summary.worklane_id.clone(),
+                        label: if additional == 0 {
+                            primary.primary_text.clone()
+                        } else {
+                            format!("{}  +{} more", primary.primary_text, additional)
+                        },
+                        color: summary.color,
+                    })
+                })
+                .collect::<Vec<_>>();
+            if destinations.is_empty() {
+                None
+            } else {
+                Some(destinations)
+            }
         })
         .collect()
+}
+
+fn local_destination_groups(
+    window_id: &str,
+    summaries: &[SidebarWorklaneSummary],
+) -> Vec<WorklaneDestinationGroup> {
+    vec![WorklaneDestinationGroup {
+        window_id: window_id.to_owned(),
+        summaries: summaries.to_vec(),
+    }]
 }
 
 const PANE_ACTIONS: [PaneActionSpec; 14] = [
@@ -272,6 +304,7 @@ pub(crate) fn install_styles() {
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn render(
     sidebar: &gtk::Box,
     window: &gtk::Window,
@@ -280,6 +313,8 @@ pub(crate) fn render(
     servers: &[RankedServer],
     templates: &[zentty_core::WorkspaceTemplate],
     active_origin_id: Option<&str>,
+    current_window_id: &str,
+    destination_groups: Option<&[WorklaneDestinationGroup]>,
 ) {
     sidebar.add_css_class("zentty-sidebar");
     let header = ensure_header(sidebar);
@@ -310,12 +345,28 @@ pub(crate) fn render(
                 if let Some(stale) = find_named_widget(sidebar.upcast_ref(), &name) {
                     sidebar.remove(&stale);
                 }
-                let card =
-                    make_worklane_card(window, summary, summaries, index, clipboard, servers);
+                let card = make_worklane_card(
+                    window,
+                    summary,
+                    summaries,
+                    index,
+                    clipboard,
+                    servers,
+                    current_window_id,
+                    destination_groups,
+                );
                 sidebar.append(&card);
                 card.upcast()
             });
-        refresh_pane_menus(&card, window, summary, summaries, clipboard);
+        refresh_pane_menus(
+            &card,
+            window,
+            summary,
+            summaries,
+            clipboard,
+            current_window_id,
+            destination_groups,
+        );
         sidebar.reorder_child_after(&card, Some(&previous));
         previous = card;
     }
@@ -354,6 +405,7 @@ pub(crate) fn clear(sidebar: &gtk::Box) {
     remove_all_children(sidebar);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn make_worklane_card(
     window: &gtk::Window,
     summary: &SidebarWorklaneSummary,
@@ -361,6 +413,8 @@ fn make_worklane_card(
     index: usize,
     clipboard: ClipboardConfig,
     servers: &[RankedServer],
+    current_window_id: &str,
+    destination_groups: Option<&[WorklaneDestinationGroup]>,
 ) -> gtk::Box {
     let card = gtk::Box::new(gtk::Orientation::Vertical, 4);
     card.set_widget_name(&widget_name("worklane-card", &summary.worklane_id));
@@ -442,7 +496,15 @@ fn make_worklane_card(
     }
 
     for pane in &summary.pane_rows {
-        card.append(&make_pane_row(window, summary, summaries, pane, clipboard));
+        card.append(&make_pane_row(
+            window,
+            summary,
+            summaries,
+            pane,
+            clipboard,
+            current_window_id,
+            destination_groups,
+        ));
     }
     for server in servers.iter().filter(|server| {
         server.server.worklane_id == summary.worklane_id
@@ -941,6 +1003,8 @@ fn make_pane_row(
     summaries: &[SidebarWorklaneSummary],
     pane: &zentty_core::SidebarPaneSummary,
     clipboard: ClipboardConfig,
+    current_window_id: &str,
+    destination_groups: Option<&[WorklaneDestinationGroup]>,
 ) -> gtk::Box {
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 2);
     row.set_widget_name(&widget_name("pane-row", &pane.pane_id));
@@ -997,6 +1061,12 @@ fn make_pane_row(
     pane_menu.set_tooltip_text(Some("Pane actions"));
     pane_menu.set_accessible_role(gtk::AccessibleRole::Button);
     pane_menu.update_property(&[gtk::accessible::Property::Label("Pane actions")]);
+    let focus_pane_id = pane.pane_id.clone();
+    pane_menu.connect_has_focus_notify(move |button| {
+        if button.has_focus() {
+            eprintln!("zentty-linux: pane-context-focus action=open pane={focus_pane_id}");
+        }
+    });
     let pointer_receipt = gtk::EventControllerMotion::new();
     let pointer_pane_id = pane.pane_id.clone();
     pointer_receipt.connect_enter(move |_, _, _| {
@@ -1010,6 +1080,8 @@ fn make_pane_row(
         pane,
         summary.pane_rows.len() > 1,
         clipboard,
+        current_window_id,
+        destination_groups,
     )));
     row.append(&pane_menu);
     row
@@ -1021,6 +1093,8 @@ fn refresh_pane_menus(
     summary: &SidebarWorklaneSummary,
     summaries: &[SidebarWorklaneSummary],
     clipboard: ClipboardConfig,
+    current_window_id: &str,
+    destination_groups: Option<&[WorklaneDestinationGroup]>,
 ) {
     for pane in &summary.pane_rows {
         let Some(menu) = find_named_widget(card, &widget_name("pane-menu", &pane.pane_id))
@@ -1028,6 +1102,15 @@ fn refresh_pane_menus(
         else {
             continue;
         };
+        // Preserve the user's open contextual transaction across unrelated
+        // metadata refreshes (server discovery, agent status, project state).
+        // Replacing a visible popover destroys its focus chain and can route
+        // the next real key event to the window beneath it. Its destinations
+        // are a coherent snapshot; the action router still validates the
+        // selected target when activation commits.
+        if menu.popover().is_some_and(|popover| popover.is_visible()) {
+            continue;
+        }
         menu.set_popover(Some(&make_pane_context_menu(
             window,
             summary,
@@ -1035,6 +1118,8 @@ fn refresh_pane_menus(
             pane,
             summary.pane_rows.len() > 1,
             clipboard,
+            current_window_id,
+            destination_groups,
         )));
     }
 }
@@ -1320,6 +1405,7 @@ pub(crate) fn reveal_range(
     (card_top < viewport_top || card_bottom > viewport_bottom).then_some((card_top, card_bottom))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn make_pane_context_menu(
     window: &gtk::Window,
     source_worklane: &SidebarWorklaneSummary,
@@ -1327,6 +1413,8 @@ fn make_pane_context_menu(
     pane: &zentty_core::SidebarPaneSummary,
     can_close: bool,
     clipboard: ClipboardConfig,
+    current_window_id: &str,
+    destination_groups: Option<&[WorklaneDestinationGroup]>,
 ) -> gtk::Popover {
     let popover = gtk::Popover::new();
     let menu = gtk::Box::new(gtk::Orientation::Vertical, 2);
@@ -1352,7 +1440,15 @@ fn make_pane_context_menu(
     });
     menu.append(&rename);
 
-    let destinations = worklane_destinations(summaries, &source_worklane.worklane_id);
+    let local_groups;
+    let groups = if let Some(groups) = destination_groups {
+        groups
+    } else {
+        local_groups = local_destination_groups(current_window_id, summaries);
+        &local_groups
+    };
+    let destinations =
+        worklane_destinations(groups, current_window_id, &source_worklane.worklane_id);
     let can_create_new_worklane = source_worklane.pane_rows.len() > 1;
     for action in pane_action_specs(clipboard) {
         if action.action == "close-pane" && !can_close {
@@ -1394,6 +1490,7 @@ fn make_pane_context_menu(
                 &pane.pane_id,
                 &destinations,
                 can_create_new_worklane,
+                current_window_id,
             ));
         }
     }
@@ -1407,8 +1504,9 @@ fn make_move_to_worklane_button(
     window: &gtk::Window,
     source_worklane_id: &str,
     pane_id: &str,
-    destinations: &[WorklaneDestination],
+    destinations: &[Vec<WorklaneDestination>],
     can_create_new_worklane: bool,
+    current_window_id: &str,
 ) -> gtk::Button {
     let button = gtk::Button::new();
     button.add_css_class("pane-context-action");
@@ -1432,11 +1530,20 @@ fn make_move_to_worklane_button(
         );
     });
     button.add_controller(pointer_receipt);
+    let focus_pane_id = pane_id.to_owned();
+    button.connect_has_focus_notify(move |button| {
+        if button.has_focus() {
+            eprintln!(
+                "zentty-linux: pane-context-focus action=move-pane-to-worklane pane={focus_pane_id}"
+            );
+        }
+    });
     let parent_popover = parent_popover.clone();
     let window = window.clone();
     let source_worklane_id = source_worklane_id.to_owned();
     let pane_id = pane_id.to_owned();
     let destinations = destinations.to_vec();
+    let current_window_id = current_window_id.to_owned();
     button.connect_clicked(move |_| {
         eprintln!(
             "zentty-linux: pane-context action=move-pane-to-worklane pane={pane_id} view=destinations"
@@ -1446,6 +1553,7 @@ fn make_move_to_worklane_button(
         let source_worklane_id = source_worklane_id.clone();
         let pane_id = pane_id.clone();
         let destinations = destinations.clone();
+        let current_window_id = current_window_id.clone();
         gtk::glib::idle_add_local_once(move || {
             parent_popover.set_child(Some(&make_move_to_worklane_content(
                 &parent_popover,
@@ -1454,6 +1562,7 @@ fn make_move_to_worklane_button(
                 &pane_id,
                 &destinations,
                 can_create_new_worklane,
+                &current_window_id,
             )));
         });
     });
@@ -1465,51 +1574,81 @@ fn make_move_to_worklane_content(
     window: &gtk::Window,
     source_worklane_id: &str,
     pane_id: &str,
-    destinations: &[WorklaneDestination],
+    destinations: &[Vec<WorklaneDestination>],
     can_create_new_worklane: bool,
+    current_window_id: &str,
 ) -> gtk::Box {
     let menu = gtk::Box::new(gtk::Orientation::Vertical, 2);
     menu.set_margin_top(6);
     menu.set_margin_bottom(6);
     menu.set_margin_start(6);
     menu.set_margin_end(6);
-    for destination in destinations {
-        let button = menu_button(&destination.label, "media-record-symbolic");
-        if let Some(color) = destination.color {
-            button.add_css_class(&format!("worklane-color-{}", color.as_str()));
+    for (group_index, group) in destinations.iter().enumerate() {
+        if group_index > 0 {
+            menu.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
         }
-        let window = window.clone();
-        let source_worklane_id = source_worklane_id.to_owned();
-        let pane_id = pane_id.to_owned();
-        let target_worklane_id = destination.worklane_id.clone();
-        let pointer_receipt = gtk::EventControllerMotion::new();
-        let pointer_target = target_worklane_id.clone();
-        pointer_receipt.connect_enter(move |_, _, _| {
-            eprintln!(
-                "zentty-linux: pane-context-pointer action=move-pane-to-worklane target={pointer_target}"
-            );
-        });
-        button.add_controller(pointer_receipt);
-        let destination_popover = parent_popover.clone();
-        button.connect_clicked(move |_| {
-            eprintln!(
-                "zentty-linux: pane-context action=move-pane-to-worklane target={target_worklane_id} activated=true"
-            );
-            destination_popover.popdown();
-            let _ = window.activate_action(
-                "workspace.select-pane",
-                Some(&(source_worklane_id.as_str(), pane_id.as_str()).to_variant()),
-            );
+        for destination in group {
+            let button = menu_button(&destination.label, "media-record-symbolic");
+            if let Some(color) = destination.color {
+                button.add_css_class(&format!("worklane-color-{}", color.as_str()));
+            }
             let window = window.clone();
-            let target_worklane_id = target_worklane_id.clone();
-            gtk::glib::idle_add_local_once(move || {
-                let _ = window.activate_action(
-                    "workspace.move-pane-to-worklane",
-                    Some(&target_worklane_id.to_variant()),
+            let source_worklane_id = source_worklane_id.to_owned();
+            let pane_id = pane_id.to_owned();
+            let target_window_id = destination.window_id.clone();
+            let target_worklane_id = destination.worklane_id.clone();
+            let pointer_receipt = gtk::EventControllerMotion::new();
+            let pointer_window = target_window_id.clone();
+            let pointer_target = target_worklane_id.clone();
+            pointer_receipt.connect_enter(move |_, _, _| {
+                eprintln!(
+                    "zentty-linux: pane-context-pointer action=move-pane-to-worklane window={pointer_window} target={pointer_target}"
                 );
             });
-        });
-        menu.append(&button);
+            button.add_controller(pointer_receipt);
+            let focus_window = target_window_id.clone();
+            let focus_target = target_worklane_id.clone();
+            button.connect_has_focus_notify(move |button| {
+                if button.has_focus() {
+                    eprintln!(
+                        "zentty-linux: pane-context-focus action=move-pane-to-worklane window={focus_window} target={focus_target}"
+                    );
+                }
+            });
+            let destination_popover = parent_popover.clone();
+            let current_window_id = current_window_id.to_owned();
+            button.connect_clicked(move |_| {
+                eprintln!(
+                    "zentty-linux: pane-context action=move-pane-to-worklane window={target_window_id} target={target_worklane_id} activated=true"
+                );
+                destination_popover.popdown();
+                let _ = window.activate_action(
+                    "workspace.select-pane",
+                    Some(&(source_worklane_id.as_str(), pane_id.as_str()).to_variant()),
+                );
+                let window = window.clone();
+                let target_window_id = target_window_id.clone();
+                let target_worklane_id = target_worklane_id.clone();
+                let current_window_id = current_window_id.clone();
+                gtk::glib::idle_add_local_once(move || {
+                    if target_window_id == current_window_id {
+                        let _ = window.activate_action(
+                            "workspace.move-pane-to-worklane",
+                            Some(&target_worklane_id.to_variant()),
+                        );
+                    } else {
+                        let _ = window.activate_action(
+                            "workspace.move-pane-to-window-worklane",
+                            Some(
+                                &(target_window_id.as_str(), target_worklane_id.as_str())
+                                    .to_variant(),
+                            ),
+                        );
+                    }
+                });
+            });
+            menu.append(&button);
+        }
     }
     if can_create_new_worklane {
         let button = menu_button(source_ui::NEW_WORKLANE_IN_THIS_WINDOW, "list-add-symbolic");
@@ -1748,7 +1887,8 @@ fn remove_all_children(container: &gtk::Box) {
 #[cfg(test)]
 mod tests {
     use super::{
-        WorklaneDropEdge, WorklaneSelectionState, pane_action_specs, reveal_range, selection_state,
+        WorklaneDestinationGroup, WorklaneDropEdge, WorklaneSelectionState,
+        local_destination_groups, pane_action_specs, reveal_range, selection_state,
         worklane_destinations,
     };
     use crate::source_ui;
@@ -1784,13 +1924,43 @@ mod tests {
             lane("target-a", &["vim"], Some(WorklaneColor::Blue)),
             lane("target-b", &["server", "logs", "shell"], None),
         ];
-        let destinations = worklane_destinations(&summaries, "source");
-        assert_eq!(destinations.len(), 2);
-        assert_eq!(destinations[0].worklane_id, "target-a");
-        assert_eq!(destinations[0].label, "vim");
-        assert_eq!(destinations[0].color, Some(WorklaneColor::Blue));
-        assert_eq!(destinations[1].worklane_id, "target-b");
-        assert_eq!(destinations[1].label, "server  +2 more");
+        let groups = local_destination_groups("window-1", &summaries);
+        let destinations = worklane_destinations(&groups, "window-1", "source");
+        assert_eq!(destinations.len(), 1);
+        assert_eq!(destinations[0].len(), 2);
+        assert_eq!(destinations[0][0].window_id, "window-1");
+        assert_eq!(destinations[0][0].worklane_id, "target-a");
+        assert_eq!(destinations[0][0].label, "vim");
+        assert_eq!(destinations[0][0].color, Some(WorklaneColor::Blue));
+        assert_eq!(destinations[0][1].worklane_id, "target-b");
+        assert_eq!(destinations[0][1].label, "server  +2 more");
+    }
+
+    #[test]
+    fn move_destination_catalog_preserves_source_first_window_groups() {
+        let groups = [
+            WorklaneDestinationGroup {
+                window_id: "window-1".to_owned(),
+                summaries: vec![lane("source", &["source"], None)],
+            },
+            WorklaneDestinationGroup {
+                window_id: "window-2".to_owned(),
+                summaries: vec![
+                    lane("foreign-a", &["server"], None),
+                    lane("foreign-b", &["agent", "logs"], Some(WorklaneColor::Purple)),
+                ],
+            },
+        ];
+        let destinations = worklane_destinations(&groups, "window-1", "source");
+        assert_eq!(destinations.len(), 1);
+        assert_eq!(destinations[0].len(), 2);
+        assert!(
+            destinations[0]
+                .iter()
+                .all(|destination| destination.window_id == "window-2")
+        );
+        assert_eq!(destinations[0][0].label, "server");
+        assert_eq!(destinations[0][1].label, "agent  +1 more");
     }
 
     #[test]

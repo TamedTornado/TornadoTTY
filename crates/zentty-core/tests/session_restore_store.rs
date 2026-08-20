@@ -268,7 +268,7 @@ fn draft_window(pane_ids: &[&str]) -> SessionRestoreDraftWindow {
                     environment: None,
                 }),
                 task_progress: None,
-                tasks: Default::default(),
+                tasks: std::collections::BTreeMap::default(),
                 task_progress_authoritative: false,
             })
             .collect(),

@@ -145,21 +145,21 @@ impl SystemdSleepInhibitor {
                         lease.child.id()
                     );
                 }
-                Ok(Err(error)) => return self.lose_lease(error),
+                Ok(Err(error)) => return self.lose_lease(&error),
                 Err(TryRecvError::Disconnected) => {
-                    return self.lose_lease("readiness reader disconnected".to_owned());
+                    return self.lose_lease("readiness reader disconnected");
                 }
                 Err(TryRecvError::Empty) => {}
             }
             if lease.acquisition_started.elapsed() >= ACQUISITION_DEADLINE {
-                return self.lose_lease("acquisition readiness deadline expired".to_owned());
+                return self.lose_lease("acquisition readiness deadline expired");
             }
         }
         match lease.child.try_wait() {
-            Ok(Some(status)) => self.lose_lease(format!("systemd-inhibit exited with {status}")),
+            Ok(Some(status)) => self.lose_lease(&format!("systemd-inhibit exited with {status}")),
             Ok(None) if lease.ready => LeasePoll::Acquired,
             Ok(None) => LeasePoll::Acquiring,
-            Err(error) => self.lose_lease(format!("could not inspect systemd-inhibit: {error}")),
+            Err(error) => self.lose_lease(&format!("could not inspect systemd-inhibit: {error}")),
         }
     }
 
@@ -178,7 +178,7 @@ impl SystemdSleepInhibitor {
         eprintln!("zentty-linux: sleep-inhibitor state=released reason={reason}");
     }
 
-    fn lose_lease(&mut self, detail: String) -> LeasePoll {
+    fn lose_lease(&mut self, detail: &str) -> LeasePoll {
         let mut lease = self.lease.take().expect("lease exists while polling");
         lease.stdin.take();
         if lease.child.try_wait().ok().flatten().is_none() {
@@ -195,7 +195,7 @@ impl SystemdSleepInhibitor {
         let stderr = stderr.trim();
         eprintln!(
             "zentty-linux: sleep-inhibitor state=failed detail={} stderr={}",
-            sanitize_log_field(&detail),
+            sanitize_log_field(detail),
             sanitize_log_field(if stderr.is_empty() { "none" } else { stderr })
         );
         LeasePoll::Lost

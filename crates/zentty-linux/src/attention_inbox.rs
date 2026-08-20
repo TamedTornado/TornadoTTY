@@ -128,7 +128,7 @@ fn row(item: &AttentionItem) -> gtk::Box {
         "{} · {}",
         item.location_text
             .as_deref()
-            .unwrap_or_else(|| item.target.worklane_id.as_str()),
+            .unwrap_or(item.target.worklane_id.as_str()),
         relative_timestamp(item.created_at_ms)
     )));
     location.add_css_class("attention-inbox-location");

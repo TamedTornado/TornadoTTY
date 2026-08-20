@@ -73,6 +73,7 @@ pub(crate) struct WindowChrome {
 }
 
 impl WindowChrome {
+    #[allow(clippy::too_many_lines)]
     pub(crate) fn new() -> Self {
         let root = gtk::CenterBox::new();
         root.add_css_class("zentty-window-chrome");

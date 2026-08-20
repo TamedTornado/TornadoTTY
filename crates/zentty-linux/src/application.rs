@@ -165,6 +165,7 @@ impl ApplicationCoordinator {
                     Self::present_shell(&coordinator, &active_id, true)?;
                 }
             }
+            Self::refresh_worklane_destination_catalogs(&coordinator);
         }
         Self::install_status_notifier(&coordinator);
         Self::install_config_watch(&coordinator)?;
@@ -264,7 +265,11 @@ impl ApplicationCoordinator {
             restored_drafts: Vec::new(),
         };
         match Self::build_shell(coordinator, snapshot) {
-            Ok(()) => Self::present_shell(coordinator, &id, true),
+            Ok(()) => {
+                Self::present_shell(coordinator, &id, true)?;
+                Self::refresh_worklane_destination_catalogs(coordinator);
+                Ok(())
+            }
             Err(error) => {
                 coordinator.borrow_mut().window_set.close(&id);
                 Err(error)
@@ -340,6 +345,45 @@ impl ApplicationCoordinator {
         Ok(())
     }
 
+    fn refresh_worklane_destination_catalogs(coordinator: &Rc<RefCell<Self>>) {
+        let (ordered_ids, shells) = {
+            let coordinator = coordinator.borrow();
+            (
+                coordinator.window_set.ordered_ids().to_vec(),
+                coordinator
+                    .shells
+                    .iter()
+                    .map(|(id, shell)| (id.clone(), Rc::clone(shell)))
+                    .collect::<BTreeMap<_, _>>(),
+            )
+        };
+        let summaries = shells
+            .iter()
+            .map(|(id, shell)| (id.clone(), shell.borrow().sidebar_summaries()))
+            .collect::<BTreeMap<_, _>>();
+        for (source_id, shell) in &shells {
+            let mut destination_ids = vec![source_id.clone()];
+            destination_ids.extend(
+                ordered_ids
+                    .iter()
+                    .filter(|id| id.as_str() != source_id)
+                    .cloned(),
+            );
+            let groups = destination_ids
+                .into_iter()
+                .filter_map(|window_id| {
+                    Some(crate::sidebar::WorklaneDestinationGroup {
+                        summaries: summaries.get(&window_id)?.clone(),
+                        window_id,
+                    })
+                })
+                .collect();
+            shell.borrow_mut().set_worklane_destination_groups(groups);
+            shell.borrow().render();
+        }
+    }
+
+    #[allow(clippy::too_many_lines)]
     fn install_shell_callbacks(
         coordinator: &Rc<RefCell<Self>>,
         shell: &Rc<RefCell<ApplicationShell>>,
@@ -361,6 +405,8 @@ impl ApplicationCoordinator {
             });
         });
         let move_pane_to_new_window_handler = Self::move_pane_handler(coordinator, id);
+        let move_pane_to_window_worklane_handler =
+            Self::move_pane_to_window_worklane_handler(coordinator, id);
         let show_task_manager_handler = Self::task_manager_handler(coordinator, shell);
         let weak = Rc::downgrade(coordinator);
         let close_id = id.to_owned();
@@ -368,10 +414,13 @@ impl ApplicationCoordinator {
             let weak = weak.clone();
             let id = close_id.clone();
             glib::idle_add_local_once(move || {
-                if let Some(coordinator) = weak.upgrade()
-                    && let Err(error) = coordinator.borrow_mut().close_window(&id)
-                {
-                    eprintln!("zentty-linux: close-window id={id} error={error}");
+                if let Some(coordinator) = weak.upgrade() {
+                    let result = coordinator.borrow_mut().close_window(&id);
+                    if let Err(error) = result {
+                        eprintln!("zentty-linux: close-window id={id} error={error}");
+                    } else if !coordinator.borrow().shutting_down {
+                        Self::refresh_worklane_destination_catalogs(&coordinator);
+                    }
                 }
             });
         });
@@ -401,6 +450,9 @@ impl ApplicationCoordinator {
             quit_handler,
             application_action_handler,
         );
+        shell
+            .borrow_mut()
+            .set_move_pane_to_window_worklane_handler(move_pane_to_window_worklane_handler);
 
         let weak = Rc::downgrade(coordinator);
         let weak_shell = Rc::downgrade(shell);
@@ -595,6 +647,39 @@ impl ApplicationCoordinator {
         })
     }
 
+    fn move_pane_to_window_worklane_handler(
+        coordinator: &Rc<RefCell<Self>>,
+        source_id: &str,
+    ) -> Rc<dyn Fn(String, String, String)> {
+        let weak = Rc::downgrade(coordinator);
+        let source_id = source_id.to_owned();
+        Rc::new(
+            move |pane_id, destination_window_id, destination_worklane_id| {
+                let weak = weak.clone();
+                let source_id = source_id.clone();
+                glib::idle_add_local_once(move || {
+                    let Some(coordinator) = weak.upgrade() else {
+                        return;
+                    };
+                    if coordinator.borrow().shutting_down {
+                        return;
+                    }
+                    if let Err(error) = Self::move_pane_to_existing_worklane(
+                        &coordinator,
+                        &source_id,
+                        &pane_id,
+                        &destination_window_id,
+                        &destination_worklane_id,
+                    ) {
+                        eprintln!(
+                            "zentty-linux: action=move-pane-to-window-worklane pane={pane_id} destination-window={destination_window_id} destination-worklane={destination_worklane_id} error={error}"
+                        );
+                    }
+                });
+            },
+        )
+    }
+
     fn task_manager_handler(
         coordinator: &Rc<RefCell<Self>>,
         shell: &Rc<RefCell<ApplicationShell>>,
@@ -753,8 +838,80 @@ impl ApplicationCoordinator {
             .window_set
             .mark_active(&destination_id);
         Self::present_shell(coordinator, &destination_id, true)?;
+        Self::refresh_worklane_destination_catalogs(coordinator);
         eprintln!(
             "zentty-linux: action=move-pane-to-new-window pane={pane_id} source={source_id} destination={destination_id}"
+        );
+        Ok(())
+    }
+
+    fn move_pane_to_existing_worklane(
+        coordinator: &Rc<RefCell<Self>>,
+        source_id: &str,
+        pane_id: &str,
+        destination_id: &str,
+        destination_worklane_id: &str,
+    ) -> Result<(), String> {
+        if source_id == destination_id {
+            return Err("cross-window transfer requires a different destination window".to_owned());
+        }
+        let (source, destination) = {
+            let coordinator = coordinator.borrow();
+            let source = coordinator
+                .shells
+                .get(source_id)
+                .cloned()
+                .ok_or_else(|| format!("source window {source_id:?} is unavailable"))?;
+            let destination = coordinator
+                .shells
+                .get(destination_id)
+                .cloned()
+                .ok_or_else(|| format!("destination window {destination_id:?} is unavailable"))?;
+            if !destination.borrow().has_worklane(destination_worklane_id) {
+                return Err(format!(
+                    "destination worklane {destination_worklane_id:?} is unavailable"
+                ));
+            }
+            (source, destination)
+        };
+        let transfer = source
+            .borrow_mut()
+            .extract_live_pane_for_existing_window(pane_id)?;
+        let source_window_should_close = transfer.model.source_window_should_close;
+        let crate::application_shell::ExtractedExistingWindowPane {
+            model,
+            runtime,
+            source_before,
+        } = transfer;
+        if let Err((error, runtime)) = ApplicationShell::adopt_live_pane_in_existing_window(
+            &destination,
+            model,
+            runtime,
+            destination_worklane_id,
+        ) {
+            ApplicationShell::rollback_live_pane_existing_window_transfer(
+                &source,
+                pane_id,
+                source_before,
+                runtime,
+            )?;
+            return Err(error);
+        }
+
+        destination.borrow_mut().sync_agent_targets();
+        coordinator
+            .borrow_mut()
+            .window_set
+            .mark_active(destination_id);
+        if source_window_should_close {
+            coordinator.borrow_mut().close_window(source_id)?;
+        } else {
+            source.borrow_mut().sync_agent_targets();
+        }
+        Self::present_shell(coordinator, destination_id, true)?;
+        Self::refresh_worklane_destination_catalogs(coordinator);
+        eprintln!(
+            "zentty-linux: action=move-pane-to-window-worklane pane={pane_id} source={source_id} destination-window={destination_id} destination-worklane={destination_worklane_id}"
         );
         Ok(())
     }
@@ -858,6 +1015,7 @@ impl ApplicationCoordinator {
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     pub(crate) fn tick(&mut self) -> Result<(), String> {
         for shell in self.shells.values() {
             shell.borrow_mut().sync_agent_targets();

@@ -10,7 +10,8 @@ zig="${ZIG:-${repo_root}/../.tools/zig-x86_64-linux-0.16.0/zig}"
 blueprint_dir="${BLUEPRINT_COMPILER_DIR:-${repo_root}/../.tools/blueprint-compiler-0.16.0/bin}"
 zig_global_cache="${ZENTTY_ZIG_GLOBAL_CACHE_DIR:-${repo_root}/build/linux-deps/zig-global-cache}"
 zig_local_cache="${ghostty_source}/.zig-cache"
-output_dir="${ZENTTY_BUILD_OUTPUT_DIR:-${repo_root}/build/linux}"
+default_output_dir="${repo_root}/build/linux"
+output_dir="${ZENTTY_BUILD_OUTPUT_DIR:-${default_output_dir}}"
 if [[ "${output_dir}" != /* ]]; then
     output_dir="${repo_root}/${output_dir}"
 fi
@@ -253,7 +254,8 @@ printf 'ghostty_source=%s\nghostty_revision=%s\nghostty_tree=%s\nzentty_revision
     >"${output_dir}/build-metadata"
 
 profile_bundle="${repo_root}/build/linux-profiles/${cargo_profile}"
-if [[ "$(readlink -m -- "${output_dir}")" != "$(readlink -m -- "${profile_bundle}")" ]]; then
+if [[ "$(readlink -m -- "${output_dir}")" == "$(readlink -m -- "${default_output_dir}")" &&
+    "$(readlink -m -- "${output_dir}")" != "$(readlink -m -- "${profile_bundle}")" ]]; then
     rm -rf -- "${profile_bundle}"
     mkdir -p "${profile_bundle}"
     for entry in bin lib libexec share build-metadata; do

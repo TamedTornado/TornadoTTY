@@ -96,6 +96,7 @@ fn parse_receipt_path() -> PathBuf {
     PathBuf::from(receipt)
 }
 
+#[allow(clippy::too_many_lines)]
 fn register_service(
     connection: &gio::DBusConnection,
     state: &Rc<RefCell<State>>,
@@ -145,7 +146,8 @@ fn register_service(
                     invocation.return_value(Some(&(state.next_id,).to_variant()));
                 }
                 "GetCapabilities" => {
-                    invocation.return_value(Some(&(vec!["actions", "body", "sound"],).to_variant()))
+                    invocation
+                        .return_value(Some(&(vec!["actions", "body", "sound"],).to_variant()));
                 }
                 "GetServerInformation" => invocation.return_value(Some(
                     &("Zentty Test Notifications", "Zentty", "1", "1.2").to_variant(),

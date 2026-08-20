@@ -368,6 +368,7 @@ fn physical_terminal_lifecycle_events_reconcile_the_sidebar_status_store() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn active_supported_agents_produce_restorable_per_pane_drafts() {
     let envelope = SessionRestoreEnvelope::from_json(V3_ENVELOPE).unwrap();
     let mut state = WorkspaceState::from_window_recipe(&envelope.workspace.windows[0]).unwrap();
@@ -564,7 +565,7 @@ fn restored_explicit_task_progress_remains_authoritative() {
             environment: None,
         }),
         task_progress: Some(zentty_core::AgentProgress { done: 3, total: 4 }),
-        tasks: Default::default(),
+        tasks: std::collections::BTreeMap::default(),
         task_progress_authoritative: true,
     };
     assert!(state.seed_restored_agent(&draft, 16));
@@ -1532,6 +1533,7 @@ fn keyboard_vertical_resize_uses_an_adjacent_last_interacted_divider() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn split_out_pane_to_new_window_preserves_source_metadata_and_normalizes_destination() {
     let mut state = WorkspaceState::new("build", "shell");
     assert!(state.set_worklane_title("build", Some("Build")));
@@ -1728,6 +1730,122 @@ fn split_out_rejects_stale_or_colliding_identity_without_mutation() {
     assert_eq!(state, before);
     assert!(state.split_pane_to_new_window("right", "main").is_none());
     assert_eq!(state, before);
+}
+
+#[test]
+fn cross_window_transfer_preserves_pane_agent_state_and_uses_destination_geometry() {
+    let mut source = WorkspaceState::new("source", "shell");
+    assert!(source.split_focused_pane_right("agent"));
+    assert!(source.configure_pane_launch(
+        "agent",
+        Some("/tmp/project".to_owned()),
+        Some("codex resume session-1".to_owned()),
+    ));
+    assert!(source.set_pane_custom_title("agent", Some("Reviewer")));
+    source.apply_agent_event(
+        AuthenticatedAgentEvent {
+            target: AgentTarget::new("source-window", "source", "agent"),
+            pane_token: "agent-token".to_owned(),
+            event: AgentEvent::parse(
+                br#"{"version":1,"event":"agent.running","agent":{"name":"Codex"},"session":{"id":"session-1"}}"#,
+            )
+            .unwrap(),
+        },
+        1,
+    );
+    let transfer = source
+        .extract_pane_for_cross_window_transfer("agent")
+        .expect("a live pane can leave for an existing window");
+
+    assert!(!transfer.source_window_should_close);
+    assert_eq!(source.active_pane_ids(), ["shell"]);
+    assert!(
+        source.sidebar_summaries()[0].pane_rows[0]
+            .agent_status
+            .is_none()
+    );
+
+    let mut destination = WorkspaceState::new("destination", "destination-pane");
+    assert!(destination.insert_cross_window_pane(transfer, "destination", 240.0,));
+    assert_eq!(destination.active_worklane_id(), "destination");
+    assert_eq!(destination.focused_pane_id(), Some("agent"));
+    let moved = destination.pane("agent").expect("moved pane exists");
+    assert_eq!(moved.custom_title.as_deref(), Some("Reviewer"));
+    assert_eq!(moved.working_directory.as_deref(), Some("/tmp/project"));
+    assert_eq!(
+        moved.last_run_command.as_deref(),
+        Some("codex resume session-1")
+    );
+    let column = destination
+        .active_columns()
+        .last()
+        .expect("moved pane owns a destination column");
+    assert!((column.width - 240.0).abs() < f64::EPSILON);
+    assert_eq!(column.pane_heights, [1.0]);
+    assert_eq!(
+        destination.sidebar_summaries()[0].pane_rows[1]
+            .agent_status
+            .as_ref()
+            .map(|status| status.session_id.as_str()),
+        Some("session-1")
+    );
+}
+
+#[test]
+fn cross_window_transfer_allows_the_final_source_pane_and_rejects_invalid_destinations() {
+    let mut multi_worklane_source = WorkspaceState::new("one", "pane-one");
+    assert!(multi_worklane_source.create_worklane("two", "pane-two"));
+    assert!(multi_worklane_source.create_worklane("three", "pane-three"));
+    let ordered_ids = multi_worklane_source
+        .worklane_ids()
+        .into_iter()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    let retained_active_id = ordered_ids[0].clone();
+    let departing_id = ordered_ids[1].clone();
+    let departing_pane_id = multi_worklane_source
+        .sidebar_summaries()
+        .into_iter()
+        .find(|summary| summary.worklane_id == departing_id)
+        .and_then(|summary| summary.pane_rows.into_iter().next())
+        .map(|pane| pane.pane_id)
+        .expect("middle worklane owns one pane");
+    assert!(multi_worklane_source.select_worklane(&retained_active_id));
+    let inactive_transfer = multi_worklane_source
+        .extract_pane_for_cross_window_transfer(&departing_pane_id)
+        .expect("an inactive single-pane worklane can leave");
+    assert!(!inactive_transfer.source_window_should_close);
+    assert_eq!(multi_worklane_source.worklane_ids().len(), 2);
+    assert!(
+        !multi_worklane_source
+            .worklane_ids()
+            .contains(&departing_id.as_str())
+    );
+    assert_eq!(
+        multi_worklane_source.active_worklane_id(),
+        retained_active_id
+    );
+
+    let mut source = WorkspaceState::new("source", "only");
+    let transfer = source
+        .extract_pane_for_cross_window_transfer("only")
+        .expect("the destination keeps the application alive");
+    assert!(transfer.source_window_should_close);
+    assert!(source.worklane_ids().is_empty());
+
+    let mut missing_target = WorkspaceState::new("destination", "existing");
+    let missing_before = missing_target.clone();
+    assert!(!missing_target.insert_cross_window_pane(transfer.clone(), "missing", 200.0,));
+    assert_eq!(missing_target, missing_before);
+
+    let mut duplicate = WorkspaceState::new("destination", "only");
+    let duplicate_before = duplicate.clone();
+    assert!(!duplicate.insert_cross_window_pane(transfer.clone(), "destination", 200.0));
+    assert_eq!(duplicate, duplicate_before);
+
+    let mut destination = WorkspaceState::new("destination", "existing");
+    assert!(destination.insert_cross_window_pane(transfer, "destination", 200.0));
+    assert_eq!(destination.active_pane_ids(), ["existing", "only"]);
 }
 
 #[test]

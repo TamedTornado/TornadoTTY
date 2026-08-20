@@ -230,7 +230,7 @@ require "clean, crash, and size multi-window restoration is not qualified on bot
             (.command | contains("build/linux-profiles/release-safe/bin/zentty-linux")) and
             (.command | contains("linux/tests/rust-multi-window"))) and
         any($cells[]; .display == "wayland" and
-            .environment_profile == "nested-wayland-input-v1") and
+            .environment_profile == "nested-wayland-multiwindow-v1") and
         any($cells[]; .display == "x11" and
             .environment_profile == "nested-x11-v1")
     ' "${matrix}"

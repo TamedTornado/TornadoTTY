@@ -1076,6 +1076,39 @@ impl AgentStatusStore {
         taken
     }
 
+    pub(crate) fn has_pane_data(&self, pane_id: &str) -> bool {
+        self.panes.contains_key(pane_id)
+            || self
+                .session_bookkeeping
+                .keys()
+                .any(|key| key.pane_id == pane_id)
+            || self.codex_interrupt_suppression.contains_key(pane_id)
+    }
+
+    pub(crate) fn adopt_pane_data(&mut self, pane_id: &str, source: Self) -> bool {
+        if self.has_pane_data(pane_id)
+            || source
+                .panes
+                .keys()
+                .any(|source_pane_id| source_pane_id != pane_id)
+            || source
+                .session_bookkeeping
+                .keys()
+                .any(|key| key.pane_id != pane_id)
+            || source
+                .codex_interrupt_suppression
+                .keys()
+                .any(|source_pane_id| source_pane_id != pane_id)
+        {
+            return false;
+        }
+        self.panes.extend(source.panes);
+        self.session_bookkeeping.extend(source.session_bookkeeping);
+        self.codex_interrupt_suppression
+            .extend(source.codex_interrupt_suppression);
+        true
+    }
+
     fn remove_session(&mut self, pane_id: &str, session_id: &str) {
         if let Some(sessions) = self.panes.get_mut(pane_id) {
             sessions.remove(session_id);

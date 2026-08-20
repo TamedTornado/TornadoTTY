@@ -114,6 +114,7 @@ impl ApplicationShell {
         )
     }
 
+    #[allow(clippy::too_many_lines)]
     fn execute_application_request_inner(
         shell: &Rc<RefCell<Self>>,
         target: &ApplicationTarget,

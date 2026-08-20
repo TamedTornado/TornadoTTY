@@ -28,10 +28,11 @@ use gtk::glib;
 use gtk::prelude::*;
 use zentty_core::{
     AgentPhase, AppConfig, ClosePaneOutcome, ColumnRecipe, CommandPaletteItem,
-    GlobalSearchCoordinator, GlobalSearchDirection, PaneColumnState, PaneLayoutPolicy, PaneRecipe,
-    PaneReference, PaneResizeDirection, PaneRestoreDraft, PaneWindowTransfer, ServerPortRule,
-    ServerRelevanceContext, SidebarWidthPreference, TaskRunnerAction, WindowFrame, WindowRecipe,
-    WorklaneColor, WorklaneRecipe, WorkspaceState, discover_task_runners, rank_servers,
+    GlobalSearchCoordinator, GlobalSearchDirection, PaneColumnState, PaneCrossWindowTransfer,
+    PaneLayoutPolicy, PaneRecipe, PaneReference, PaneResizeDirection, PaneRestoreDraft,
+    PaneWindowTransfer, ServerPortRule, ServerRelevanceContext, SidebarWidthPreference,
+    TaskRunnerAction, WindowFrame, WindowRecipe, WorklaneColor, WorklaneRecipe, WorkspaceState,
+    discover_task_runners, rank_servers,
 };
 use zentty_ghostty::GhosttyRuntime;
 
@@ -215,6 +216,8 @@ pub(crate) struct ApplicationShell {
     tmux_compat: crate::tmux_compat::TmuxCompatProduct,
     new_window_handler: Option<Rc<dyn Fn()>>,
     move_pane_to_new_window_handler: Option<Rc<dyn Fn(String)>>,
+    move_pane_to_window_worklane_handler: Option<MovePaneToWindowWorklaneHandler>,
+    worklane_destination_groups: Vec<sidebar::WorklaneDestinationGroup>,
     show_task_manager_handler: Option<Rc<dyn Fn()>>,
     close_window_handler: Option<Rc<dyn Fn()>>,
     quit_handler: Option<Rc<dyn Fn()>>,
@@ -222,9 +225,17 @@ pub(crate) struct ApplicationShell {
     self_handle: RefCell<Weak<RefCell<Self>>>,
 }
 
+type MovePaneToWindowWorklaneHandler = Rc<dyn Fn(String, String, String)>;
+
 pub(crate) struct ExtractedWindowPane {
     pub(crate) model: PaneWindowTransfer,
     pub(crate) destination_recipe: WindowRecipe,
+    pub(crate) runtime: DetachedPaneRuntime,
+    pub(crate) source_before: WorkspaceState,
+}
+
+pub(crate) struct ExtractedExistingWindowPane {
+    pub(crate) model: PaneCrossWindowTransfer,
     pub(crate) runtime: DetachedPaneRuntime,
     pub(crate) source_before: WorkspaceState,
 }
@@ -327,7 +338,7 @@ fn render_empty_sidebar(
     window: &gtk::Window,
     clipboard: zentty_core::ClipboardConfig,
 ) {
-    sidebar::render(sidebar, window, &[], clipboard, &[], &[], None);
+    sidebar::render(sidebar, window, &[], clipboard, &[], &[], None, "", None);
 }
 
 impl ApplicationShell {
@@ -442,6 +453,8 @@ impl ApplicationShell {
             tmux_compat: default_tmux_product()?,
             new_window_handler: None,
             move_pane_to_new_window_handler: None,
+            move_pane_to_window_worklane_handler: None,
+            worklane_destination_groups: Vec::new(),
             show_task_manager_handler: None,
             close_window_handler: None,
             quit_handler: None,
@@ -659,6 +672,20 @@ impl ApplicationShell {
         self.application_action_handler = Some(application_action_handler);
     }
 
+    pub(crate) fn set_move_pane_to_window_worklane_handler(
+        &mut self,
+        handler: MovePaneToWindowWorklaneHandler,
+    ) {
+        self.move_pane_to_window_worklane_handler = Some(handler);
+    }
+
+    pub(crate) fn set_worklane_destination_groups(
+        &mut self,
+        groups: Vec<sidebar::WorklaneDestinationGroup>,
+    ) {
+        self.worklane_destination_groups = groups;
+    }
+
     pub(crate) fn request_application_action(&self, action: ApplicationAction) {
         if let Some(handler) = &self.application_action_handler {
             handler(action);
@@ -803,6 +830,33 @@ impl ApplicationShell {
         })
     }
 
+    pub(crate) fn extract_live_pane_for_existing_window(
+        &mut self,
+        pane_id: &str,
+    ) -> Result<ExtractedExistingWindowPane, String> {
+        let source_before = self.state.clone();
+        let model = self
+            .state
+            .extract_pane_for_cross_window_transfer(pane_id)
+            .ok_or_else(|| format!("pane {pane_id} cannot move to another window"))?;
+        let runtime = match self.pane_runtime.detach_for_window_transfer(pane_id) {
+            Ok(runtime) => runtime,
+            Err(error) => {
+                self.state = source_before;
+                return Err(error);
+            }
+        };
+        if !model.source_window_should_close {
+            self.render();
+            self.focus_selected_surface();
+        }
+        Ok(ExtractedExistingWindowPane {
+            model,
+            runtime,
+            source_before,
+        })
+    }
+
     pub(crate) fn has_worklane(&self, worklane_id: &str) -> bool {
         self.state.worklane_ids().contains(&worklane_id)
     }
@@ -821,12 +875,58 @@ impl ApplicationShell {
         Ok(())
     }
 
+    pub(crate) fn rollback_live_pane_existing_window_transfer(
+        shell: &Rc<RefCell<Self>>,
+        pane_id: &str,
+        source_before: WorkspaceState,
+        runtime: DetachedPaneRuntime,
+    ) -> Result<(), String> {
+        shell.borrow_mut().state = source_before;
+        PaneRuntimeCoordinator::adopt_window_transfer(shell, pane_id, runtime)
+            .map_err(|(error, _)| error)?;
+        let shell_ref = shell.borrow();
+        shell_ref.render();
+        shell_ref.focus_selected_surface();
+        Ok(())
+    }
+
     pub(crate) fn adopt_live_pane_window_transfer(
         shell: &Rc<RefCell<Self>>,
         pane_id: &str,
         runtime: DetachedPaneRuntime,
     ) -> Result<(), (String, DetachedPaneRuntime)> {
         PaneRuntimeCoordinator::adopt_window_transfer(shell, pane_id, runtime)?;
+        let shell_ref = shell.borrow();
+        shell_ref.render();
+        shell_ref.focus_selected_surface();
+        Ok(())
+    }
+
+    pub(crate) fn adopt_live_pane_in_existing_window(
+        shell: &Rc<RefCell<Self>>,
+        transfer: PaneCrossWindowTransfer,
+        runtime: DetachedPaneRuntime,
+        target_worklane_id: &str,
+    ) -> Result<(), (String, DetachedPaneRuntime)> {
+        let pane_id = transfer.pane.id.clone();
+        let destination_before = shell.borrow().state.clone();
+        let single_column_width = f64::from(shell.borrow().pane_viewport_width());
+        if !shell.borrow_mut().state.insert_cross_window_pane(
+            transfer,
+            target_worklane_id,
+            single_column_width,
+        ) {
+            return Err((
+                format!("pane {pane_id} cannot move into worklane {target_worklane_id:?}"),
+                runtime,
+            ));
+        }
+        if let Err((error, runtime)) =
+            PaneRuntimeCoordinator::adopt_window_transfer(shell, &pane_id, runtime)
+        {
+            shell.borrow_mut().state = destination_before;
+            return Err((error, runtime));
+        }
         let shell_ref = shell.borrow();
         shell_ref.render();
         shell_ref.focus_selected_surface();
@@ -862,6 +962,23 @@ impl ApplicationShell {
         };
         if let Some(handler) = self.move_pane_to_new_window_handler.clone() {
             handler(pane_id.to_owned());
+        }
+    }
+
+    fn request_move_pane_to_window_worklane(
+        &self,
+        destination_window_id: String,
+        destination_worklane_id: String,
+    ) {
+        let Some(pane_id) = self.state.focused_pane_id() else {
+            return;
+        };
+        if let Some(handler) = self.move_pane_to_window_worklane_handler.clone() {
+            handler(
+                pane_id.to_owned(),
+                destination_window_id,
+                destination_worklane_id,
+            );
         }
     }
 
@@ -3348,7 +3465,7 @@ impl ApplicationShell {
         }
     }
 
-    fn render(&self) {
+    pub(crate) fn render(&self) {
         clear_pane_columns(&self.pane_box);
         self.rendered_columns.borrow_mut().clear();
         self.render_sidebar();
@@ -3866,6 +3983,7 @@ impl ApplicationShell {
 
     fn render_sidebar(&self) {
         let summaries = self.sidebar_summaries();
+        let destination_groups = self.sidebar_destination_groups(&summaries);
         self.reconcile_attention(&summaries);
         let servers = self.ranked_servers();
         sidebar::render(
@@ -3876,6 +3994,8 @@ impl ApplicationShell {
             &servers,
             self.bookmark_runtime.templates(),
             self.state.active_worklane().bookmark_origin_id.as_deref(),
+            &self.window_template.id,
+            Some(&destination_groups),
         );
         self.render_chrome(&summaries);
         self.schedule_active_worklane_reveal();
@@ -3886,6 +4006,7 @@ impl ApplicationShell {
         self.reconcile_attention(&summaries);
         let servers = self.ranked_servers();
         if !sidebar::update_metadata(&self.sidebar, &summaries) {
+            let destination_groups = self.sidebar_destination_groups(&summaries);
             sidebar::render(
                 &self.sidebar,
                 &self.window,
@@ -3894,6 +4015,8 @@ impl ApplicationShell {
                 &servers,
                 self.bookmark_runtime.templates(),
                 self.state.active_worklane().bookmark_origin_id.as_deref(),
+                &self.window_template.id,
+                Some(&destination_groups),
             );
         }
         self.render_chrome(&summaries);
@@ -3965,7 +4088,7 @@ impl ApplicationShell {
         }
     }
 
-    fn sidebar_summaries(&self) -> Vec<zentty_core::SidebarWorklaneSummary> {
+    pub(crate) fn sidebar_summaries(&self) -> Vec<zentty_core::SidebarWorklaneSummary> {
         let mut summaries = self.state.sidebar_summaries();
         for pane in summaries
             .iter_mut()
@@ -3989,6 +4112,28 @@ impl ApplicationShell {
                 .flatten();
         }
         summaries
+    }
+
+    fn sidebar_destination_groups(
+        &self,
+        current_summaries: &[zentty_core::SidebarWorklaneSummary],
+    ) -> Vec<sidebar::WorklaneDestinationGroup> {
+        let mut groups = self.worklane_destination_groups.clone();
+        if let Some(current) = groups
+            .iter_mut()
+            .find(|group| group.window_id == self.window_template.id)
+        {
+            current.summaries = current_summaries.to_vec();
+        } else {
+            groups.insert(
+                0,
+                sidebar::WorklaneDestinationGroup {
+                    window_id: self.window_template.id.clone(),
+                    summaries: current_summaries.to_vec(),
+                },
+            );
+        }
+        groups
     }
 
     fn ranked_servers(&self) -> Vec<zentty_core::RankedServer> {

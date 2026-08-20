@@ -197,6 +197,13 @@ pub struct PaneWindowTransfer {
     pub source_window_should_close: bool,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct PaneCrossWindowTransfer {
+    pub pane: PaneState,
+    agent_statuses: AgentStatusStore,
+    pub source_window_should_close: bool,
+}
+
 impl PaneWindowTransfer {
     /// Projects the destination while retaining source recipe metadata that is
     /// not part of live topology state, including next-pane numbering and a
@@ -2106,6 +2113,107 @@ impl WorkspaceState {
             moved_pane_id: pane_id.to_owned(),
             source_window_should_close: self.worklanes.is_empty(),
         })
+    }
+
+    /// Extracts one pane for insertion into an existing worklane owned by a
+    /// different window. Unlike [`Self::split_pane_to_new_window`], the final
+    /// source pane may leave because the already-existing destination window
+    /// keeps the application alive.
+    pub fn extract_pane_for_cross_window_transfer(
+        &mut self,
+        pane_id: &str,
+    ) -> Option<PaneCrossWindowTransfer> {
+        let worklane_index = self.worklanes.iter().position(|worklane| {
+            worklane
+                .columns
+                .iter()
+                .any(|column| column.panes.iter().any(|pane| pane.id == pane_id))
+        })?;
+        let column_index = self.worklanes[worklane_index]
+            .columns
+            .iter()
+            .position(|column| column.panes.iter().any(|pane| pane.id == pane_id))?;
+        let agent_statuses = self.agent_statuses.take_pane(pane_id);
+        let (pane, _) = remove_pane(
+            &mut self.worklanes[worklane_index].columns[column_index],
+            pane_id,
+        );
+        if self.worklanes[worklane_index].columns[column_index]
+            .panes
+            .is_empty()
+        {
+            self.worklanes[worklane_index].columns.remove(column_index);
+            if let Some(replacement_id) = self.worklanes[worklane_index]
+                .columns
+                .get(column_index)
+                .or_else(|| self.worklanes[worklane_index].columns.last())
+                .map(|column| column.id.clone())
+            {
+                self.worklanes[worklane_index]
+                    .focused_column_id
+                    .clone_from(&replacement_id);
+            }
+        }
+        if self.worklanes[worklane_index].columns.is_empty() {
+            let removed_active = self.active_worklane_id == self.worklanes[worklane_index].id;
+            self.worklanes.remove(worklane_index);
+            if removed_active {
+                if let Some(replacement) = self
+                    .worklanes
+                    .get(worklane_index)
+                    .or_else(|| self.worklanes.last())
+                {
+                    self.active_worklane_id.clone_from(&replacement.id);
+                } else {
+                    self.active_worklane_id.clear();
+                }
+            }
+        }
+        Some(PaneCrossWindowTransfer {
+            pane,
+            agent_statuses,
+            source_window_should_close: self.worklanes.is_empty(),
+        })
+    }
+
+    /// Appends an extracted foreign pane as a destination-sized rightmost
+    /// column and focuses its worklane. Rejection is mutation-free.
+    pub fn insert_cross_window_pane(
+        &mut self,
+        transfer: PaneCrossWindowTransfer,
+        target_worklane_id: &str,
+        single_column_width: f64,
+    ) -> bool {
+        let Some(target_index) = self
+            .worklanes
+            .iter()
+            .position(|worklane| worklane.id == target_worklane_id)
+        else {
+            return false;
+        };
+        let pane_id = transfer.pane.id.clone();
+        if self.pane(&pane_id).is_some() || self.agent_statuses.has_pane_data(&pane_id) {
+            return false;
+        }
+        let mut agent_statuses = self.agent_statuses.clone();
+        if !agent_statuses.adopt_pane_data(&pane_id, transfer.agent_statuses) {
+            return false;
+        }
+        let previous = self.current_pane_reference();
+        let column_id = self.unique_column_id(&pane_id);
+        self.worklanes[target_index].columns.push(PaneColumnState {
+            id: column_id.clone(),
+            width: sanitize_dimension(single_column_width),
+            panes: vec![transfer.pane],
+            pane_heights: vec![1.0],
+            focused_pane_id: pane_id.clone(),
+            last_focused_pane_id: pane_id,
+        });
+        self.worklanes[target_index].focused_column_id = column_id;
+        target_worklane_id.clone_into(&mut self.active_worklane_id);
+        self.agent_statuses = agent_statuses;
+        self.record_focus_transition(previous);
+        true
     }
 
     /// Closes the focused pane or requests window closure for the last pane.

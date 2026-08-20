@@ -109,6 +109,7 @@ impl AgentRuntime {
         })
     }
 
+    #[allow(clippy::too_many_lines)]
     pub(crate) fn environment_for_pane(
         &mut self,
         window_id: &str,

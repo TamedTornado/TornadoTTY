@@ -177,7 +177,7 @@
   "field_assignments": [
     {
       "owner": "application_runtime",
-      "fields": ["new_window_handler", "move_pane_to_new_window_handler", "close_window_handler", "quit_handler", "show_task_manager_handler", "application_action_handler"]
+      "fields": ["new_window_handler", "move_pane_to_new_window_handler", "move_pane_to_window_worklane_handler", "worklane_destination_groups", "close_window_handler", "quit_handler", "show_task_manager_handler", "application_action_handler"]
     },
     {
       "owner": "application_shell",
@@ -268,8 +268,8 @@
     {
       "owner": "application_runtime",
       "methods": [
-        "set_application_handlers", "request_new_window",
-        "request_move_pane_to_new_window", "request_close_window", "request_quit",
+        "set_application_handlers", "set_move_pane_to_window_worklane_handler", "set_worklane_destination_groups", "request_new_window",
+        "request_move_pane_to_new_window", "request_move_pane_to_window_worklane", "request_close_window", "request_quit",
         "request_show_task_manager", "task_manager_pane_sources", "settle_active_window_focus",
         "focus_task_manager_pane", "close_task_manager_pane"
       ]
@@ -278,8 +278,9 @@
       "owner": "application_shell",
       "methods": [
         "new", "initialize_shell_coordinators", "window", "sidebar_container", "present", "detach_and_close",
-        "has_worklane", "extract_live_pane_to_new_window",
+        "has_worklane", "extract_live_pane_to_new_window", "extract_live_pane_for_existing_window", "sidebar_destination_groups",
         "rollback_live_pane_window_transfer", "adopt_live_pane_window_transfer",
+        "rollback_live_pane_existing_window_transfer", "adopt_live_pane_in_existing_window",
         "move_active_worklane", "move_worklane", "render", "take_pane_id", "take_worklane_id", "toggle_product_zoom",
         "topology_receipt", "geometry_receipt", "focus_terminal_after_present", "sidebar_summaries"
       ]
@@ -515,6 +516,7 @@
     {"name":"move-pane-up","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"move-pane-down","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"move-pane-to-worklane","parameter":"string","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"move-pane-to-window-worklane","parameter":"string_pair","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"move-pane-to-new-worklane","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"move-pane-to-new-window","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"select-pane","parameter":"string_pair","owner":"action_router","invalid_parameter":"ignore-without-panic"},

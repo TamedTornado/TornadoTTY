@@ -314,8 +314,19 @@ zentty_product_wait_for_log_count "${log}" \
     fail "remote SSH identity receipt missing"
 remote_identity_line="$(grep -Fn 'zentty-linux: ssh-identity pane=pane-shell-active state=remote' "${log}" | tail -1 | cut -d: -f1)"
 [[ "${remote_identity_line}" =~ ^[1-9][0-9]*$ ]] || fail "remote SSH identity line is malformed"
-tail -n "+${remote_identity_line}" "${log}" |
-    grep -Fq 'zentty-linux: pane-display id=pane-shell-active label-present=true custom=false' ||
+remote_identity_rendered=false
+for _ in {1..200}; do
+    if tail -n "+${remote_identity_line}" "${log}" |
+        grep -Fq 'zentty-linux: pane-display id=pane-shell-active label-present=true custom=false'; then
+        remote_identity_rendered=true
+        break
+    fi
+    # The identity receipt is emitted immediately before rendering. Under a
+    # loaded qualification scheduler, the log reader can observe that first
+    # write before GTK finishes and flushes the following presentation line.
+    sleep 0.02
+done
+[[ "${remote_identity_rendered}" == true ]] ||
     fail "remote SSH identity did not reach the rendered pane/sidebar presentation"
 terminal_ready_before="$(grep -Fc 'zentty-linux: terminal-ready-pane=pane-shell-active' "${log}" || true)"
 ssh_local_before="$(grep -Fc 'zentty-linux: ssh-identity pane=pane-shell-active state=local' "${log}" || true)"

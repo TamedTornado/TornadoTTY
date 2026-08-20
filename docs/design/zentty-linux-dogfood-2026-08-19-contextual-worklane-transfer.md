@@ -68,15 +68,10 @@ operation. No second workspace model or transfer mechanism was needed.
 
 ## Remaining limitations
 
-- The shared GTK implementation is compiled for Wayland, but the contextual
-  pointer journey has not yet been added to the controlled Wayland input cell.
-  The Wayland worklane cell therefore remains `NOT_IMPLEMENTED`; environmental
-  absence is not reported as a pass.
-- Zentty's source catalog also groups destinations from other existing windows.
-  Linux currently catalogs only worklanes in the pane's current window. Moving
-  a live pane to a *new* window is already real and qualified, but moving it
-  directly into an existing worklane in another existing window remains GH-32
-  scope.
+- Superseded on 2026-08-20: the shared contextual catalog now has controlled
+  pointer journeys on both X11 and nested Wayland/Weston, and catalogs grouped
+  worklanes from every existing window. See
+  `zentty-linux-dogfood-2026-08-20-existing-window-transfer.md`.
 - The X11 worklane cell remains `NOT_IMPLEMENTED` for its separately stated
   double-click equalization, progress/failure presentation, and full
   accessibility requirements. This slice removes only the now-executed

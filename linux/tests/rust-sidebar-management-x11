@@ -224,7 +224,10 @@ find_pointer_target() {
     local -a candidate_xs
     before="$(grep -Fxc "${receipt}" "${log}" || true)"
     if [[ "${x}" == any ]]; then
-        mapfile -t candidate_xs < <(seq 40 30 490)
+        # Popovers may be placed to either side of the sidebar when the source
+        # worklane catalog is tall. Search the complete owned 1000px toplevel;
+        # the pointer receipt, not a coordinate assumption, identifies the row.
+        mapfile -t candidate_xs < <(seq 40 30 940)
     else
         candidate_xs=("${x}")
     fi
@@ -252,7 +255,7 @@ find_pointer_target \
 xdotool click 1
 sleep 0.1
 find_pointer_target \
-    'zentty-linux: pane-context-pointer action=move-pane-to-worklane target=worklane-2' any ||
+    'zentty-linux: pane-context-pointer action=move-pane-to-worklane window=window-1 target=worklane-2' any ||
     fail "physical pointer could not locate the ordered worklane-2 destination"
 xdotool click 1
 for _ in $(seq 1 120); do

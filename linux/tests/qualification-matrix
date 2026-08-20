@@ -100,7 +100,7 @@ jq -e '
       "Debug":"build-debug","ReleaseSafe":"build-release"
     }) and
     (.execution_graph.resources == [
-      "abi-mismatch-fixture","bookmarks-modal-input","consolidated-session-journey","ghostty-source","system-sleep-inhibitor","valgrind-evidence"
+      "abi-mismatch-fixture","bookmarks-modal-input","compiler-load","consolidated-session-journey","ghostty-source","multi-window-menu-input","system-sleep-inhibitor","valgrind-evidence"
     ])
 ' "${matrix}" >/dev/null || fail "matrix root, axes, or claims are not closed-world"
 
@@ -149,6 +149,11 @@ invalid_schedule_priorities="$(jq -r '.cells[] | select(
 ) | .id' "${matrix}")"
 [[ -z "${invalid_schedule_priorities}" ]] ||
     fail "cells with invalid schedule priority: ${invalid_schedule_priorities}"
+invalid_display_blockers="$(jq -r '.cells[] | select(
+    (.blocks_display? != null) and (.blocks_display | type) != "boolean"
+) | .id' "${matrix}")"
+[[ -z "${invalid_display_blockers}" ]] ||
+    fail "cells with invalid display-blocking policy: ${invalid_display_blockers}"
 
 unknown_tiers="$(jq -r --argjson allowed "${allowed_tiers}" '.cells[] | select(.tier as $value | $allowed | index($value) == null) | .id + "=" + (.tier | tostring)' "${matrix}")"
 [[ -z "${unknown_tiers}" ]] || fail "unknown tiers: ${unknown_tiers}"
@@ -1040,17 +1045,23 @@ declare -A active_pid_ids=()
 declare -A active_resource_owners=()
 declare -A cell_dependency_ids=()
 declare -A cell_resource_ids=()
+declare -A cell_displays=()
+declare -A cell_display_blockers=()
 declare -A cell_statuses=()
 declare -A cell_governance=()
+active_display_cells=0
+active_display_blockers=0
 mapfile -t scheduled_ids < <(jq -r \
     '.cells | sort_by(.schedule_priority // .order, .order, .id)[] | .id' \
     "${matrix}")
 while IFS= read -r cell; do
     pending_cells["$(jq -r '.id' <<<"${cell}")"]="${cell}"
 done < <(jq -c '.cells[]' "${matrix}")
-while IFS='|' read -r metadata_id metadata_dependencies metadata_resources metadata_status metadata_governance; do
+while IFS='|' read -r metadata_id metadata_dependencies metadata_resources metadata_status metadata_governance metadata_display metadata_blocks_display; do
     cell_dependency_ids["${metadata_id}"]="${metadata_dependencies}"
     cell_resource_ids["${metadata_id}"]="${metadata_resources}"
+    cell_displays["${metadata_id}"]="${metadata_display}"
+    cell_display_blockers["${metadata_id}"]="${metadata_blocks_display}"
     cell_statuses["${metadata_id}"]="${metadata_status}"
     cell_governance["${metadata_id}"]="${metadata_governance}"
 done < <(jq -r '
@@ -1066,7 +1077,8 @@ done < <(jq -r '
         else [] end) | unique | join(" ")
     ) as $dependencies |
     [$cell.id, $dependencies, (($cell.resources // []) | join(" ")),
-     $cell.status, (($cell.suppression_review_governance // false) | tostring)] |
+     $cell.status, (($cell.suppression_review_governance // false) | tostring),
+     $cell.display, (($cell.blocks_display // false) | tostring)] |
     join("|")
 ' "${matrix}")
 
@@ -1094,6 +1106,11 @@ resources_available() {
     for resource in ${cell_resource_ids[${id}]}; do
         [[ ! -v active_resource_owners["${resource}"] ]] || return 1
     done
+    if [[ "${cell_display_blockers[${id}]}" == "true" ]]; then
+        (( active_display_cells == 0 )) || return 1
+    elif [[ "${cell_displays[${id}]}" != "none" ]]; then
+        (( active_display_blockers == 0 )) || return 1
+    fi
 }
 
 claim_resources() {
@@ -1102,6 +1119,11 @@ claim_resources() {
     for resource in ${cell_resource_ids[${id}]}; do
         active_resource_owners["${resource}"]="${id}"
     done
+    if [[ "${cell_display_blockers[${id}]}" == "true" ]]; then
+        active_display_blockers=$((active_display_blockers + 1))
+    elif [[ "${cell_displays[${id}]}" != "none" ]]; then
+        active_display_cells=$((active_display_cells + 1))
+    fi
 }
 
 release_resources() {
@@ -1110,6 +1132,11 @@ release_resources() {
     for resource in ${cell_resource_ids[${id}]}; do
         unset 'active_resource_owners['"${resource}"']'
     done
+    if [[ "${cell_display_blockers[${id}]}" == "true" ]]; then
+        active_display_blockers=$((active_display_blockers - 1))
+    elif [[ "${cell_displays[${id}]}" != "none" ]]; then
+        active_display_cells=$((active_display_cells - 1))
+    fi
 }
 
 publish_dependency_failure() {
@@ -1232,7 +1259,9 @@ results="$(jq -cs --slurpfile matrix "${matrix}" '
     $matrix[0].cells as $cells |
     . |
     map(. as $result | ($cells | map(select(.id == $result.id))[0]) as $cell |
-      . + {schedule:{dependencies:dependencies($cell),resources:($cell.resources // [])}}) |
+      . + {schedule:{dependencies:dependencies($cell),resources:($cell.resources // []),
+                     display:$cell.display,
+                     blocks_display:($cell.blocks_display // false)}}) |
     sort_by(. as $result |
       ($cells | map(select(.id == $result.id))[0].order), $result.id)
 ' "${raw_results_path}")"
@@ -1262,6 +1291,13 @@ jq -e --argjson jobs "${qualification_jobs}" '
           $right.timing.started_monotonic_ms or
         $right.timing.finished_monotonic_ms <=
           $left.timing.started_monotonic_ms)) and
+    all(.[] | select(.timing? != null and .schedule.blocks_display) as $blocker |
+      all($results[] | select(.timing? != null and .id != $blocker.id and
+                              .schedule.display != "none") as $display |
+        $blocker.timing.finished_monotonic_ms <=
+          $display.timing.started_monotonic_ms or
+        $display.timing.finished_monotonic_ms <=
+          $blocker.timing.started_monotonic_ms)) and
     all([.[] | select(.timing? != null) | .timing.started_monotonic_ms][] as $instant |
       ([.[] | select(.timing? != null and
         .timing.started_monotonic_ms <= $instant and
