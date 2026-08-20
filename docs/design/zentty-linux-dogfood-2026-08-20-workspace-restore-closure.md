@@ -143,3 +143,20 @@ because the persistence contract closes.
   for the isolated pass. A clean-checkout complete rerun is still required
   after the reviewed feature commit; the failed receipt is not being relabeled
   as a pass.
+
+### Final clean-checkout qualification
+
+- Committed the reviewed feature as `63ca9fc1`, confirmed a clean checkout, and
+  reran `linux/tests/qualify-local` without excluding any executable cell.
+- Result: implemented local suite PASSED; product boundary qualification
+  PASSED; release qualification and full Linux qualification remain NOT_PASSED
+  because the authoritative matrix still declares 3 BLOCKED, 1 XFAIL, and 12
+  NOT_IMPLEMENTED cells. Declared totals are 164 PASS and 0 FAIL.
+- Both GH3 cells passed in the complete runner: controlled Wayland in 40.39 s
+  and controlled X11 in 42.09 s. The complete qualification took
+  1,533,490 ms.
+- Debug Valgrind is **PASS with reviewed suppressions**, not unsuppressed clean.
+  Its preserved raw receipt contains 427 errors/contexts, 6,160 definite bytes,
+  and 41,428 indirect bytes; post-suppression totals are zero. Governance was
+  ACCEPTED and the raw and suppressed receipt hashes are present in
+  `build/linux/qualification-summary.json`. ReleaseSafe Valgrind remains XFAIL.
