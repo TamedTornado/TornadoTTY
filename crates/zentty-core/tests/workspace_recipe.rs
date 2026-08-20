@@ -2,6 +2,7 @@ use zentty_core::{SaveReason, SessionRestoreEnvelope, WorkspaceRecipe};
 
 const V3_ENVELOPE: &[u8] = include_bytes!("fixtures/session-restore-v3.json");
 const UNVERSIONED_RECIPE: &[u8] = include_bytes!("fixtures/workspace-recipe-unversioned.json");
+const VERSION_TWO_RECIPE: &[u8] = include_bytes!("fixtures/workspace-recipe-v2.json");
 const FUTURE_RECIPE: &[u8] = include_bytes!("fixtures/workspace-recipe-future.json");
 
 #[test]
@@ -127,6 +128,26 @@ fn unversioned_migration_only_sanitizes_legacy_generated_titles() {
             .map(|worklane| worklane.title.as_deref())
             .collect::<Vec<_>>(),
         [None, None, Some("Nimbu support")]
+    );
+}
+
+#[test]
+fn version_two_migration_keeps_titles_verbatim() {
+    let recipe = WorkspaceRecipe::from_json(VERSION_TWO_RECIPE).unwrap();
+    assert_eq!(recipe.schema_version, Some(2));
+
+    let migrated = recipe.migrated();
+    assert_eq!(
+        migrated.schema_version,
+        Some(WorkspaceRecipe::CURRENT_SCHEMA_VERSION)
+    );
+    assert_eq!(
+        migrated.windows[0]
+            .worklanes
+            .iter()
+            .map(|worklane| worklane.title.as_deref())
+            .collect::<Vec<_>>(),
+        [Some("MAIN"), Some("WS 3"), Some("Nimbu support")]
     );
 }
 

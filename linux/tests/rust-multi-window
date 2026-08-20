@@ -273,6 +273,89 @@ find_pointer_target() {
     return 1
 }
 
+# Divider handles span one complete viewport axis. Search only across the
+# narrow axis instead of raster-scanning the whole toplevel. The exact GTK
+# enter receipt remains the authority, while the bounded one-dimensional scan
+# keeps this real-pointer qualification fast on both nested backends.
+find_divider_target() {
+    local receipt="$1"
+    local axis="$2"
+    local before width height anchor candidate limit
+    local -a anchors
+    if [[ "${backend}" == x11 ]]; then
+        xdotool windowraise "${ZENTTY_PRODUCT_WINDOW_ID}"
+        xdotool windowfocus --sync "${ZENTTY_PRODUCT_WINDOW_ID}"
+    elif [[ "${ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT:-}" != 1 ]]; then
+        fail "Wayland divider discovery requires controlled outer-X11 input"
+    fi
+    width="$(xdotool getwindowgeometry --shell "${ZENTTY_PRODUCT_WINDOW_ID}" | sed -n 's/^WIDTH=//p')"
+    height="$(xdotool getwindowgeometry --shell "${ZENTTY_PRODUCT_WINDOW_ID}" | sed -n 's/^HEIGHT=//p')"
+    [[ "${width}" =~ ^[0-9]+$ && "${height}" =~ ^[0-9]+$ ]] ||
+        fail "could not inspect the controlled product toplevel geometry"
+    before="$(grep -Fxc "${receipt}" "${log}" || true)"
+    if [[ "${axis}" == horizontal ]]; then
+        anchors=($((height / 3)) $((height * 2 / 3)))
+        limit=$((width - 20))
+        for anchor in "${anchors[@]}"; do
+            xdotool mousemove --sync --window "${ZENTTY_PRODUCT_WINDOW_ID}" 10 "${anchor}"
+            for candidate in $(seq 20 3 "${limit}"); do
+                xdotool mousemove --sync --window "${ZENTTY_PRODUCT_WINDOW_ID}" "${candidate}" "${anchor}"
+                sleep 0.02
+                if (( $(grep -Fxc "${receipt}" "${log}" || true) > before )); then
+                    return 0
+                fi
+            done
+        done
+    else
+        anchors=($((width * 2 / 3)) $((width * 3 / 4)))
+        limit=$((height - 20))
+        for anchor in "${anchors[@]}"; do
+            xdotool mousemove --sync --window "${ZENTTY_PRODUCT_WINDOW_ID}" "${anchor}" 50
+            for candidate in $(seq 70 3 "${limit}"); do
+                xdotool mousemove --sync --window "${ZENTTY_PRODUCT_WINDOW_ID}" "${anchor}" "${candidate}"
+                sleep 0.02
+                if (( $(grep -Fxc "${receipt}" "${log}" || true) > before )); then
+                    return 0
+                fi
+            done
+        done
+    fi
+    return 1
+}
+
+drag_divider_physically() {
+    local pointer_receipt="$1"
+    local axis="$2"
+    local resize_receipt="$3"
+    local delta_x="$4"
+    local delta_y="$5"
+    local description="$6"
+    local before
+    find_divider_target "${pointer_receipt}" "${axis}" ||
+        fail "physical pointer could not locate the ${description} divider"
+    before="$(grep -Fc "${resize_receipt}" "${log}" || true)"
+    xdotool mousedown 1
+    xdotool mousemove_relative --sync -- "${delta_x}" "${delta_y}"
+    xdotool mouseup 1
+    zentty_product_wait_for_log_count "${log}" "${resize_receipt}" "$((before + 1))" \
+        "${description} drag did not reach GTK" || fail "physical ${description} divider drag missing"
+}
+
+equalize_divider_physically() {
+    local pointer_receipt="$1"
+    local axis="$2"
+    local equalize_receipt="$3"
+    local description="$4"
+    local before
+    find_divider_target "${pointer_receipt}" "${axis}" ||
+        fail "physical pointer could not locate the ${description} divider"
+    before="$(grep -Fc "${equalize_receipt}" "${log}" || true)"
+    xdotool click --repeat 2 --delay 80 1
+    zentty_product_wait_for_log_count "${log}" "${equalize_receipt}" "$((before + 1))" \
+        "${description} double-click did not equalize" ||
+        fail "physical ${description} divider equalization missing"
+}
+
 # Search the bounded neighborhood of the pointer that opened a GTK popover.
 # The popup is anchored to that real button even when Weston has placed two
 # application toplevels within its single outer X11 window. Staying local to
@@ -422,7 +505,8 @@ reply_to_confirmation() {
 # qualification keeps confirmations disabled so its unrelated transaction and
 # restoration assertions remain independently diagnostic.
 if [[ "${ZENTTY_MULTI_WINDOW_FLEET_ONLY:-false}" != true &&
-    "${ZENTTY_MULTI_WINDOW_EXISTING_WORKLANE_ONLY:-false}" != true ]]; then
+    "${ZENTTY_MULTI_WINDOW_EXISTING_WORKLANE_ONLY:-false}" != true &&
+    "${ZENTTY_MULTI_WINDOW_RESTORE_LAYOUT_ONLY:-false}" != true ]]; then
 start_product
 create_second_window
 close_active_window
@@ -482,6 +566,129 @@ always_clean_copies = true
 [menu_bar]
 show_status_item = true
 EOF
+
+# Focused GH3 closure journey. This remains a mode of the canonical real
+# multi-window actor so persistence, product startup, compositor input, and PTY
+# assertions cannot drift into a second qualification path.
+if [[ "${ZENTTY_MULTI_WINDOW_RESTORE_LAYOUT_ONLY:-false}" == true ]]; then
+    start_product
+    execute_palette_action \
+        "Split the focused pane into a visible right column" "Split Right"
+    zentty_product_wait_for_log "${log}" 'zentty-linux: terminal-ready-pane=pane-2' \
+        "right split did not create pane-2" || fail "restore-layout right pane missing"
+    execute_palette_action "Split the focused pane vertically" "New Pane Below"
+    zentty_product_wait_for_log "${log}" 'zentty-linux: terminal-ready-pane=pane-3' \
+        "vertical split did not create pane-3" || fail "restore-layout lower pane missing"
+    zentty_product_wait_for_log "${log}" \
+        'zentty-linux: geometry=worklane-1:column-worklane-1[pane-1],column-pane-2[pane-2,pane-3]' \
+        "real actions did not create the expected two-axis layout" ||
+        fail "restore-layout topology missing"
+
+    horizontal_pointer='zentty-linux: pane-divider-pointer id=pane-divider-column-after-column-worklane-1 state=enter'
+    vertical_pointer='zentty-linux: pane-divider-pointer id=pane-divider-column-pane-2-after-pane-2 state=enter'
+    horizontal_resize='zentty-linux: pane-divider-resize axis=horizontal after=column-worklane-1 '
+    vertical_resize='zentty-linux: pane-divider-resize axis=vertical column=column-pane-2 after=pane-2 '
+    horizontal_equalize='zentty-linux: pane-divider-equalize axis=horizontal after=column-worklane-1'
+    vertical_equalize='zentty-linux: pane-divider-equalize axis=vertical column=column-pane-2 after=pane-2'
+
+    drag_divider_physically "${horizontal_pointer}" horizontal "${horizontal_resize}" 80 0 horizontal
+    drag_divider_physically "${vertical_pointer}" vertical "${vertical_resize}" 0 60 vertical
+    equalize_divider_physically \
+        "${horizontal_pointer}" horizontal "${horizontal_equalize}" horizontal
+    equalize_divider_physically \
+        "${vertical_pointer}" vertical "${vertical_equalize}" vertical
+
+    # Persist deliberately non-default final geometry after proving the source
+    # double-click behavior. These are again real pointer drags, not model calls.
+    drag_divider_physically "${horizontal_pointer}" horizontal "${horizontal_resize}" 70 0 \
+        "final horizontal"
+    drag_divider_physically "${vertical_pointer}" vertical "${vertical_resize}" 0 50 \
+        "final vertical"
+
+    snapshot="${state_dir}/restore-snapshot.json"
+    # The product contract deliberately debounces live snapshots for 350 ms.
+    # Do not accept the structurally valid snapshot written for the preceding
+    # equalized layout; wait past that owned quiet period before inspecting the
+    # final two physical drags.
+    sleep 0.5
+    for _ in {1..240}; do
+        if [[ -f "${snapshot}" ]] && jq -e '
+            .reason == "liveSnapshot" and
+            [.workspace.windows[0].worklanes[0].columns[].id] ==
+                ["column-worklane-1", "column-pane-2"] and
+            [.workspace.windows[0].worklanes[0].columns[].panes[].id] ==
+                ["pane-1", "pane-2", "pane-3"] and
+            (.workspace.windows[0].worklanes[0].columns[0].width > 0) and
+            (.workspace.windows[0].worklanes[0].columns[1].paneHeights | length) == 2
+        ' "${snapshot}" >/dev/null 2>&1; then
+            break
+        fi
+        sleep 0.05
+    done
+    jq -e '
+        .reason == "liveSnapshot" and
+        .workspace.schemaVersion == 3 and
+        [.workspace.windows[0].worklanes[0].columns[].id] ==
+            ["column-worklane-1", "column-pane-2"] and
+        [.workspace.windows[0].worklanes[0].columns[].panes[].id] ==
+            ["pane-1", "pane-2", "pane-3"] and
+        ([.. | objects | keys[]] | any(. == "surface" or . == "pty" or
+            . == "transcript" or . == "clipboard" or . == "runtimeHandle") | not)
+    ' "${snapshot}" >/dev/null || fail "physical layout live snapshot was incomplete or unsafe"
+    stored_left_width="$(jq -r '.workspace.windows[0].worklanes[0].columns[0].width' "${snapshot}")"
+    stored_top_weight="$(jq -r '.workspace.windows[0].worklanes[0].columns[1].paneHeights[0]' "${snapshot}")"
+    stored_bottom_weight="$(jq -r '.workspace.windows[0].worklanes[0].columns[1].paneHeights[1]' "${snapshot}")"
+
+    zentty_product_close_window "${backend}"
+    wait_for_exit
+    jq -e --argjson width "${stored_left_width}" \
+        --argjson top "${stored_top_weight}" --argjson bottom "${stored_bottom_weight}" '
+        .reason == "cleanExit" and
+        .workspace.windows[0].worklanes[0].columns[0].width == $width and
+        .workspace.windows[0].worklanes[0].columns[1].paneHeights == [$top, $bottom]
+    ' "${snapshot}" >/dev/null || fail "clean exit changed physical divider geometry"
+
+    start_product
+    zentty_product_wait_for_log "${log}" 'zentty-linux: terminal-ready-pane=pane-3' \
+        "relaunch did not restore all three real Ghostty panes" ||
+        fail "restored physical layout pane missing"
+    zentty_product_wait_for_log "${log}" \
+        'zentty-linux: geometry=worklane-1:column-worklane-1[pane-1],column-pane-2[pane-2,pane-3]' \
+        "relaunch did not restore exact pane/column topology" ||
+        fail "restored physical layout topology missing"
+    for _ in {1..240}; do
+        if [[ -f "${snapshot}" ]] && jq -e \
+            --argjson width "${stored_left_width}" \
+            --argjson top "${stored_top_weight}" --argjson bottom "${stored_bottom_weight}" '
+            def near($actual; $expected): (($actual - $expected) | abs) < 0.000000001;
+            .reason == "liveSnapshot" and
+            near(.workspace.windows[0].worklanes[0].columns[0].width; $width) and
+            near(.workspace.windows[0].worklanes[0].columns[1].paneHeights[0]; $top) and
+            near(.workspace.windows[0].worklanes[0].columns[1].paneHeights[1]; $bottom)
+        ' "${snapshot}" >/dev/null 2>&1; then
+            break
+        fi
+        sleep 0.05
+    done
+    if ! jq -e --argjson width "${stored_left_width}" \
+        --argjson top "${stored_top_weight}" --argjson bottom "${stored_bottom_weight}" '
+        def near($actual; $expected): (($actual - $expected) | abs) < 0.000000001;
+        near(.workspace.windows[0].worklanes[0].columns[0].width; $width) and
+        near(.workspace.windows[0].worklanes[0].columns[1].paneHeights[0]; $top) and
+        near(.workspace.windows[0].worklanes[0].columns[1].paneHeights[1]; $bottom)
+    ' "${snapshot}" >/dev/null; then
+        printf 'rust-multi-window: expected restored geometry width=%s pane-heights=%s,%s; actual=' \
+            "${stored_left_width}" "${stored_top_weight}" "${stored_bottom_weight}" >&2
+        jq -c '[.workspace.windows[0].worklanes[0].columns[0].width,
+            .workspace.windows[0].worklanes[0].columns[1].paneHeights]' "${snapshot}" >&2
+        fail "relaunch changed exact physical divider geometry"
+    fi
+    type_and_expect_title "restored-physical-divider-layout" "pane-3"
+    zentty_product_close_window "${backend}"
+    wait_for_exit
+    echo "Rust workspace layout restore passed: ${backend}, pointer=drag+double-click, geometry=pixel-exact, relaunch=real-pty"
+    exit 0
+fi
 
 if [[ "${ZENTTY_STATUS_NOTIFIER:-false}" == true ]]; then
     [[ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ]] || fail "status-notifier journey requires a private session bus"

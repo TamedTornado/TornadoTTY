@@ -167,7 +167,9 @@ jq -e '
       "build-release",
       "ghostty-regression",
       "package-clean-build-reproducibility",
-      "product-existing-worklane-transfer-wayland"
+      "product-existing-worklane-transfer-wayland",
+      "product-workspace-restore-wayland",
+      "product-workspace-restore-x11"
     ]
 ' "${source_matrix}" >/dev/null
 grep -F 'active_display_cells' "${runner}" >/dev/null

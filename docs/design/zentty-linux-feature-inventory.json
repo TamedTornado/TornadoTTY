@@ -12,10 +12,10 @@
       "origin": "PORT_PARITY",
       "user_impact": "Without exact recipes, Linux cannot restore the workspace users created in Zentty.",
       "linux_owner_issue": 3,
-      "implementation_status": "PARTIAL",
+      "implementation_status": "IMPLEMENTED",
       "focused_tests": ["crates/zentty-core/tests/workspace_recipe.rs"],
       "product_scenarios": ["linux/tests/rust-session-restore"],
-      "test_plan": "Add staged-product import, action mutation, clean-exit export, and exact relaunch assertions under controlled X11 and Wayland.",
+      "test_plan": "Focused fixtures cover unversioned, explicit source-v2, schema-v3, future-compatible, color, title, CWD, command, and meaningful-default contracts. Controlled X11 and Wayland staged-product journeys import source-compatible recipes, mutate real GTK topology and divider geometry through physical input, inspect live and clean JSON, relaunch real Ghostty PTYs, and prove exact identities/topology with pixel-equivalent persisted proportions.",
       "alternative_or_blocker": null
     },
     {
@@ -28,10 +28,10 @@
       "origin": "PORT_PARITY",
       "user_impact": "Workspace changes would otherwise disappear at ordinary shutdown or race into an older snapshot.",
       "linux_owner_issue": 3,
-      "implementation_status": "PARTIAL",
+      "implementation_status": "IMPLEMENTED",
       "focused_tests": ["crates/zentty-core/tests/session_restore_store.rs"],
       "product_scenarios": ["linux/tests/rust-session-restore"],
-      "test_plan": "Drive real GTK actions, wait for the real debounce or clean-exit path, and inspect and relaunch from the produced envelope.",
+      "test_plan": "Focused store tests prove atomic replacement, stale-generation rejection, meaningful-default filtering, corrupt fallback, and save-reason policy. Controlled X11 and Wayland actors drive real GTK changes, honor the owned 350 ms debounce, inspect live and synchronous clean-exit envelopes, and relaunch the resulting real workspace.",
       "alternative_or_blocker": null
     },
     {
@@ -140,10 +140,10 @@
       "origin": "PORT_PARITY",
       "user_impact": "Restored terminals would open in the wrong project or lose the context that identifies their task.",
       "linux_owner_issue": 3,
-      "implementation_status": "MODEL_ONLY",
+      "implementation_status": "IMPLEMENTED",
       "focused_tests": ["crates/zentty-core/tests/workspace_recipe.rs"],
-      "product_scenarios": [],
-      "test_plan": "Restore real shells in controlled temporary directories and prove titles and command metadata survive mutation and relaunch.",
+      "product_scenarios": ["linux/tests/rust-session-restore", "linux/tests/rust-multi-window"],
+      "test_plan": "Controlled X11 and Wayland source-recipe journeys launch real shells in controlled temporary directories, prove stored CWD and command metadata, preserve custom and remembered title fields through clean/crash snapshots, relaunch real Ghostty PTYs, and route fresh input to the restored selected pane.",
       "alternative_or_blocker": null
     },
     {

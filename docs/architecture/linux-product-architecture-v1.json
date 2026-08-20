@@ -565,27 +565,27 @@
     {
       "id": "product-workspace-restore-wayland",
       "capability": "workspace_restore",
-      "status": "NOT_IMPLEMENTED",
+      "status": "PASS",
       "tier": "release",
       "display": "wayland",
       "optimize": "ReleaseSafe",
       "async_backend": "default",
       "terminals": "multi",
-      "tracking": "GH-3",
-      "defect": "Real two-window clean/SIGKILL relaunch, per-window client sizes, stored CWD launch fidelity, and the divider overlay lifecycle pass under controlled Wayland. Full qualification still lacks controlled Wayland pointer injection, physical double-click equalization, and an end-to-end relaunch starting from physically dragged divider geometry; window coordinates remain compositor-owned by documented policy.",
+      "environment_profile": "nested-wayland-multiwindow-v1",
+      "command": "ZENTTY_MULTI_WINDOW_RESTORE_LAYOUT_ONLY=true ZENTTY_LINUX_BINARY=build/linux-profiles/release-safe/bin/zentty-linux GDK_BACKEND=wayland linux/tests/rust-multi-window",
       "authoritative": false
     },
     {
       "id": "product-workspace-restore-x11",
       "capability": "workspace_restore",
-      "status": "NOT_IMPLEMENTED",
+      "status": "PASS",
       "tier": "release",
       "display": "x11",
       "optimize": "ReleaseSafe",
       "async_backend": "default",
       "terminals": "multi",
-      "tracking": "GH-3",
-      "defect": "Real two-window clean/SIGKILL relaunch, externally driven window-size persistence, stored CWD launch fidelity, physical horizontal/vertical divider drags, and exact divider recipe round-trip now pass under controlled X11. Full qualification still lacks deterministic physical double-click equalization and one end-to-end relaunch starting from physically dragged divider geometry; GTK4 exposes no supported cross-backend toplevel coordinate placement API.",
+      "environment_profile": "nested-x11-v1",
+      "command": "ZENTTY_MULTI_WINDOW_RESTORE_LAYOUT_ONLY=true ZENTTY_LINUX_BINARY=build/linux-profiles/release-safe/bin/zentty-linux GDK_BACKEND=x11 linux/tests/rust-multi-window",
       "authoritative": false
     },
     {

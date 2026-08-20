@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 2,
+  "windows": [
+    {
+      "id": "version-two-window",
+      "worklanes": [
+        {
+          "id": "version-two-main",
+          "title": "MAIN",
+          "nextPaneNumber": 1,
+          "columns": []
+        },
+        {
+          "id": "version-two-workspace",
+          "title": "WS 3",
+          "nextPaneNumber": 1,
+          "columns": []
+        },
+        {
+          "id": "version-two-named",
+          "title": "Nimbu support",
+          "nextPaneNumber": 1,
+          "columns": []
+        }
+      ]
+    }
+  ],
+  "activeWindowID": "version-two-window"
+}

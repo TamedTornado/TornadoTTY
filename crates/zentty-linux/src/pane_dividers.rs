@@ -116,6 +116,13 @@ pub(crate) fn new_handle(
     });
     handle.add_controller(drag);
 
+    let pointer_identity = divider.name();
+    let pointer = gtk::EventControllerMotion::new();
+    pointer.connect_enter(move |_, _, _| {
+        eprintln!("zentty-linux: pane-divider-pointer id={pointer_identity} state=enter");
+    });
+    handle.add_controller(pointer);
+
     let click = gtk::GestureClick::new();
     click.set_button(gdk::BUTTON_PRIMARY);
     click.connect_released(move |_, presses, _, _| {
