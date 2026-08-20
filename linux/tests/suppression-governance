@@ -291,6 +291,13 @@ for sha in "${project_sha}" "${inherited_hashes[@]}"; do
         --arg sha "${sha}" \
         '$values + [$sha]')"
 done
+inherited_only_suppression_hashes='[]'
+for sha in "${inherited_hashes[@]}"; do
+    inherited_only_suppression_hashes="$(jq -cn \
+        --argjson values "${inherited_only_suppression_hashes}" \
+        --arg sha "${sha}" \
+        '$values + [$sha]')"
+done
 jq -e 'length == (unique | length)' <<<"${expected_explicit_suppression_hashes}" >/dev/null ||
     fail "manifest explicit suppression SHA set contains duplicates"
 effective_suppression_paths=("${inherited_paths[@]}" "${project_path}")
@@ -627,7 +634,13 @@ for report in "${reports[@]}"; do
         fail "IBus report has an invalid optimization mode: ${report}"
     fi
 
-    jq -e --argjson expected "${expected_explicit_suppression_hashes}" '
+    report_expected_suppression_hashes="${expected_explicit_suppression_hashes}"
+    report_effective_suppression_paths=("${effective_suppression_paths[@]}")
+    if [[ "${optimize}" == "ReleaseSafe" ]]; then
+        report_expected_suppression_hashes="${inherited_only_suppression_hashes}"
+        report_effective_suppression_paths=("${inherited_paths[@]}")
+    fi
+    jq -e --argjson expected "${report_expected_suppression_hashes}" '
         (.effective_suppression_files | map(.sha256)) as $actual |
         ($actual | length) == ($actual | unique | length) and
         ($actual | sort) == ($expected | sort)
@@ -646,12 +659,14 @@ for report in "${reports[@]}"; do
         fail "post-suppression metrics do not match bound receipt for ${report}"
     recomputed_suppression_usage="$(zentty_valgrind_usage_json \
         "${suppressed_receipt}" \
-        "${effective_suppression_paths[@]}")" ||
+        "${report_effective_suppression_paths[@]}")" ||
         fail "cannot recompute suppression usage for ${report}"
     receipt_usage_line_count="$(grep -Fc 'used_suppression:' \
         "${suppressed_receipt}" || true)"
     recomputed_usage_count="$(jq -r 'length' <<<"${recomputed_suppression_usage}")"
-    [[ "${receipt_usage_line_count}" -eq "${recomputed_usage_count}" ]] ||
+    builtin_usage_count="$(grep -Fc ' /usr/libexec/valgrind/default.supp:' \
+        "${suppressed_receipt}" || true)"
+    [[ "${receipt_usage_line_count}" -eq $((recomputed_usage_count + builtin_usage_count)) ]] ||
         fail "suppression usage contains an unrecognized file for ${report}"
     jq -e --argjson recomputed "${recomputed_suppression_usage}" \
         '.suppression_usage == $recomputed' "${report}" >/dev/null ||

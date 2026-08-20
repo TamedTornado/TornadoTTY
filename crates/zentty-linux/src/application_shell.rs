@@ -34,7 +34,7 @@ use zentty_core::{
     TaskRunnerAction, WindowFrame, WindowRecipe, WorklaneColor, WorklaneRecipe, WorkspaceState,
     discover_task_runners, rank_servers,
 };
-use zentty_ghostty::GhosttyRuntime;
+use zentty_ghostty::{GhosttyRuntime, TextExtent};
 
 use crate::agent_runtime::AgentRuntime;
 
@@ -3334,7 +3334,14 @@ impl ApplicationShell {
 
     fn close_pane(shell: &Rc<RefCell<Self>>, pane_id: &str) {
         let mut shell_ref = shell.borrow_mut();
-        match shell_ref.state.close_pane(pane_id) {
+        let scrollback_text = shell_ref
+            .pane_runtime
+            .surface(pane_id)
+            .and_then(|surface| surface.read_text(TextExtent::Screen).ok());
+        match shell_ref
+            .state
+            .close_pane_with_scrollback(pane_id, scrollback_text)
+        {
             ClosePaneOutcome::Closed => {
                 if let Err(error) = shell_ref.remove_live_surface(pane_id) {
                     drop(shell_ref);
@@ -3376,7 +3383,30 @@ impl ApplicationShell {
             eprintln!("zentty-linux: action=restore-closed-pane available=false");
             return Ok(());
         };
-        if let Some(prefill) = &restored.prefill_text {
+        let archive = restored.scrollback_text.as_deref().and_then(|scrollback| {
+            crate::closed_pane_archive::default_directory()
+                .and_then(|directory| {
+                    crate::closed_pane_archive::write(&directory, &restored.pane_id, scrollback)
+                })
+                .map_err(|error| {
+                    eprintln!("zentty-linux: closed-pane-archive failed={error}");
+                    error
+                })
+                .ok()
+                .flatten()
+        });
+        if let Some(path) = archive.as_deref() {
+            eprintln!(
+                "zentty-linux: closed-pane-archive pane={} path={}",
+                restored.pane_id,
+                path.display()
+            );
+        }
+        let prefill = crate::closed_pane_archive::compose_prefill(
+            archive.as_deref(),
+            restored.prefill_text.as_deref(),
+        );
+        if let Some(prefill) = &prefill {
             shell
                 .borrow_mut()
                 .pane_runtime
@@ -3388,12 +3418,19 @@ impl ApplicationShell {
             let now = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .map_or(0, |duration| duration.as_secs());
-            let _ = shell
-                .state
-                .rollback_restored_pane_at(&restored.pane_id, now);
+            let _ = shell.state.rollback_restored_pane_at(restored, now);
             return Err(error);
         }
         let shell_ref = shell.borrow();
+        if restored.original_directory_missing {
+            let directory = restored.working_directory.as_deref().unwrap_or("/");
+            let warning = format!("Restored pane at {directory} — original directory missing");
+            shell_ref.restore_notice.show(&warning);
+            eprintln!(
+                "zentty-linux: closed-pane-cwd-fallback pane={} directory={directory}",
+                restored.pane_id
+            );
+        }
         eprintln!(
             "zentty-linux: action=restore-closed-pane pane={} worklane={} cwd={} prefill={}",
             restored.pane_id,

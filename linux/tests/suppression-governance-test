@@ -1638,7 +1638,7 @@ if [[ "${ZENTTY_FAKE_VALGRIND_KIND:-memory}" == "ibus" ]]; then
     echo "==9==    by 0x3: drive_lifecycle (ibus-focus-reproducer.c:1)"
     echo "==9=="
 else
-    echo "zentty-linux: integration PASS"
+    echo "api-contract: PASS"
 fi
 echo "==9== definitely lost: 0 bytes in 0 blocks"
 echo "==9== indirectly lost: 0 bytes in 0 blocks"
@@ -1682,6 +1682,7 @@ expect_producer_rejection() {
     printf '{"stale":true}\n' >"${rejected_report}"
     set +e
     PATH="${fake_bin}:${PATH}" \
+    ZENTTY_MEMORY_SCENARIO=api \
     ZENTTY_MEMORY_EXPECT_OPTIMIZE="${optimize}" \
     ZENTTY_FAKE_VALGRIND_KIND="${kind}" \
     ZENTTY_FAKE_SUPPRESSED_STATUS="${rejected_status}" \
@@ -1706,8 +1707,8 @@ expect_producer_rejection() {
 
 fake_memory_producer="${producer_fixture_root}/linux/tests/memory-safety"
 fake_ibus_producer="${producer_fixture_root}/linux/tests/ibus-focus-memory"
-debug_report="${producer_fixture_root}/build/linux/memory-safety-Debug-single-wayland.json"
-release_report="${producer_fixture_root}/build/linux/memory-safety-ReleaseSafe-single-wayland.json"
+debug_report="${producer_fixture_root}/build/linux/memory-safety-Debug-api-wayland.json"
+release_report="${producer_fixture_root}/build/linux/memory-safety-ReleaseSafe-api-wayland.json"
 ibus_report="${producer_fixture_root}/build/linux/memory-safety-Debug-ibus-focus-x11.json"
 expect_producer_rejection debug-status-publication \
     "${fake_memory_producer}" Debug memory 99 "${debug_report}"
@@ -1772,6 +1773,7 @@ printf 'optimize=ReleaseSafe\nproduct_profile=release-safe\nprobe_profile=releas
     >"${producer_fixture_root}/build/linux/build-metadata"
 set +e
 PATH="${fake_bin}:${PATH}" \
+ZENTTY_MEMORY_SCENARIO=api \
 ZENTTY_MEMORY_EXPECT_OPTIMIZE=ReleaseSafe \
 ZENTTY_FAKE_VALGRIND_KIND=memory \
 ZENTTY_FAKE_SUPPRESSED_STATUS=99 \
@@ -1794,6 +1796,7 @@ printf 'optimize=Debug\nproduct_profile=debug\nprobe_profile=debug\nibus_focus_r
 printf '{"stale":true}\n' >"${debug_report}"
 set +e
 PATH="${fake_bin}:${PATH}" \
+ZENTTY_MEMORY_SCENARIO=api \
 ZENTTY_MEMORY_EXPECT_OPTIMIZE=Debug \
 ZENTTY_FAKE_VALGRIND_KIND=memory \
 ZENTTY_FAKE_SUPPRESSED_STATUS=0 \
@@ -1818,6 +1821,7 @@ zentty_valgrind_acquire_evidence_lock "${producer_set_lock}" producer_set_lock_f
 ZENTTY_VALGRIND_EVIDENCE_LOCK_FD="${producer_set_lock_fd}" \
 ZENTTY_VALGRIND_EVIDENCE_LOCK_PATH="${producer_set_lock}" \
 PATH="${fake_bin}:${PATH}" \
+ZENTTY_MEMORY_SCENARIO=api \
 ZENTTY_MEMORY_EXPECT_OPTIMIZE=Debug \
 ZENTTY_FAKE_VALGRIND_KIND=memory \
 ZENTTY_FAKE_SUPPRESSED_STATUS=0 \

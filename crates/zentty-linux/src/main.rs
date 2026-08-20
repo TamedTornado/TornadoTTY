@@ -9,6 +9,7 @@ mod application;
 mod application_shell;
 mod attention_inbox;
 mod bookmarks_view;
+mod closed_pane_archive;
 mod codex_enrichment;
 mod command_palette;
 mod config_reload;

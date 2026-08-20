@@ -9,6 +9,31 @@
    fun:gdk_pixbuf_loader_close
 }
 
+# Mesa 25.2.8 llvmpipe reads driver-owned vector padding while executing a
+# completed Ghostty instanced draw. Keep both the external producer and the
+# Ghostty draw consumer in the rule so unrelated Gallium findings stay visible.
+{
+   Mesa llvmpipe Ghostty instanced draw undefined values
+   Memcheck:Cond
+   obj:*libgallium*.so*
+   ...
+   fun:draw.drawArraysInstanced
+}
+
+# GTK 4.14.5 retains each mnemonic label relationship after the owning widget
+# is destroyed. The standalone gtk-mnemonic-memory-reproducer proves the same
+# 24-byte root without loading Ghostty or Zentty.
+{
+   GTK mnemonic label accessibility relation
+   Memcheck:Leak
+   match-leak-kinds: definite
+   fun:malloc
+   fun:g_malloc
+   fun:g_list_prepend
+   fun:gtk_widget_list_mnemonic_labels
+   fun:gtk_widget_add_mnemonic_label
+}
+
 # Ubuntu 24.04's stripped Fontconfig retains the Pango metrics cache through
 # process exit. The direct allocation originates in Fontconfig and reaches GTK
 # only through pango_context_get_metrics; do not suppress other Fontconfig or

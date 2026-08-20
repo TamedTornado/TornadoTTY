@@ -122,12 +122,12 @@
       "swift_tests": ["ZenttyLogicTests/ClosedPaneStackTests.swift", "ZenttyLogicTests/WorklaneStoreClosedPaneRestoreTests.swift", "ZenttyLogicTests/ClosedPaneRestoreCommandResolverTests.swift"],
       "classification": "REQUIRED_INITIAL_RELEASE",
       "origin": "PORT_PARITY",
-      "user_impact": "Undo Close Pane now restores a recent user-closed local pane with a fresh identity, original slot/weight, custom title, CWD, command prefill, focus, and real Ghostty surface. Agent-specific resume, scrollback archive presentation, missing-CWD fallback, and broader close-source coverage remain incomplete.",
+      "user_impact": "Undo Close Pane restores a recent user-closed local pane with a fresh identity, original slot/weight, custom title, real Ghostty surface, focus, and persistence. It preserves real terminal output in an expiring XDG archive, restores validated agent resume context ahead of the previous command, falls back from a deleted CWD to its nearest existing ancestor or home, presents a visible warning, and rolls the complete restore transaction back if surface construction fails.",
       "linux_owner_issue": 5,
-      "implementation_status": "PARTIAL",
-      "focused_tests": ["crates/zentty-core/tests/workspace_state.rs"],
+      "implementation_status": "IMPLEMENTED",
+      "focused_tests": ["crates/zentty-core/tests/workspace_state.rs", "crates/zentty-linux/src/closed_pane_archive.rs"],
       "product_scenarios": ["linux/tests/rust-closed-pane-restore"],
-      "test_plan": "Current controlled X11/Wayland coverage closes and restores a real local PTY, asserting fresh identity, CWD, command prefill, focus, geometry, persistence, and one-model/one-surface/one-child ownership. Add running/exited/active/inactive close-source combinations, missing-CWD fallback, scrollback archive presentation, and agent-resume restoration.",
+      "test_plan": "Core tests cover LIFO/expiry, running/exited and active/inactive close sources, focus fallback, child-exit non-capture, agent-resume precedence, missing-CWD ancestor/home resolution, scrollback composition, and rollback/retry. Controlled X11/Wayland coverage closes and restores a real Ghostty PTY through physical GTK input and asserts real scrollback archival, missing-CWD warning, delivered agent wrapper/resume, fresh identity and PTY, CWD, focus, geometry, persistence, one-model/one-surface/one-child ownership, and callback quiescence. Debug single- and multi-terminal Valgrind cells exercise the same product ownership paths with reviewed suppressions; ReleaseSafe remains an explicit executable XFAIL.",
       "alternative_or_blocker": null
     },
     {

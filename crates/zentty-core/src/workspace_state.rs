@@ -1,4 +1,5 @@
 use crate::{NewWorklanePlacement, pane_layout::PaneLayoutPolicy};
+use std::path::{Path, PathBuf};
 
 /// The source-defined set of user-selectable worklane colors.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -180,14 +181,19 @@ struct ClosedPaneEntry {
     pane_index: usize,
     column_width: f64,
     pane_height: Option<f64>,
+    agent_restore_draft: Option<crate::PaneRestoreDraft>,
+    scrollback_text: Option<String>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct RestoredPane {
     pub pane_id: String,
     pub worklane_id: String,
     pub working_directory: Option<String>,
     pub prefill_text: Option<String>,
+    pub scrollback_text: Option<String>,
+    pub original_directory_missing: bool,
+    rollback_entry: Box<ClosedPaneEntry>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -2240,23 +2246,59 @@ impl WorkspaceState {
         self.close_pane_at(pane_id, now)
     }
 
+    /// Product user-close form with terminal text captured before teardown.
+    pub fn close_pane_with_scrollback(
+        &mut self,
+        pane_id: &str,
+        scrollback_text: Option<String>,
+    ) -> ClosePaneOutcome {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_secs());
+        self.close_pane_with_scrollback_at(pane_id, now, scrollback_text)
+    }
+
     /// Closes a pane using an explicit clock value for deterministic expiry
     /// tests. Product callers should use [`Self::close_pane`].
     pub fn close_pane_at(&mut self, pane_id: &str, now: u64) -> ClosePaneOutcome {
-        self.close_pane_at_with_capture(pane_id, now, true)
+        self.close_pane_at_with_capture(pane_id, now, true, None)
+    }
+
+    /// User-close form that captures the real terminal text read immediately
+    /// before the owning surface is disposed.
+    pub fn close_pane_with_scrollback_at(
+        &mut self,
+        pane_id: &str,
+        now: u64,
+        scrollback_text: Option<String>,
+    ) -> ClosePaneOutcome {
+        self.close_pane_at_with_capture(pane_id, now, true, scrollback_text)
     }
 
     /// Removes a pane because its child exited naturally. Source behavior does
     /// not put non-user closures on the Undo Close Pane stack.
     pub fn close_pane_after_child_exit(&mut self, pane_id: &str) -> ClosePaneOutcome {
-        self.close_pane_at_with_capture(pane_id, 0, false)
+        self.close_pane_at_with_capture(pane_id, 0, false, None)
     }
 
     /// Rolls back a pane that was inserted by restore but whose runtime
     /// surface could not be constructed. Unlike a natural child exit, this
     /// must put the pane back on the closed-pane stack so the user can retry.
-    pub fn rollback_restored_pane_at(&mut self, pane_id: &str, now: u64) -> ClosePaneOutcome {
-        self.close_pane_at_with_capture(pane_id, now, true)
+    pub fn rollback_restored_pane_at(
+        &mut self,
+        restored: RestoredPane,
+        now: u64,
+    ) -> ClosePaneOutcome {
+        let outcome = self.close_pane_at_with_capture(&restored.pane_id, now, false, None);
+        if outcome == ClosePaneOutcome::Closed {
+            let mut entry = *restored.rollback_entry;
+            entry.closed_at = now;
+            self.closed_panes.push(entry);
+            if self.closed_panes.len() > CLOSED_PANE_CAPACITY {
+                self.closed_panes.remove(0);
+            }
+        }
+        outcome
     }
 
     pub fn apply_agent_event(&mut self, event: AuthenticatedAgentEvent, now: u64) {
@@ -2440,77 +2482,79 @@ impl WorkspaceState {
             .iter()
             .flat_map(|worklane| &worklane.columns)
             .flat_map(|column| &column.panes)
-            .filter_map(|pane| {
-                let status = self.agent_statuses.status_for_pane(&pane.id)?;
-                let arguments = if status.agent_name.eq_ignore_ascii_case("codex") {
-                    vec![
-                        "codex".to_owned(),
-                        "resume".to_owned(),
-                        status.session_id.clone(),
-                    ]
-                } else if status.agent_name.eq_ignore_ascii_case("claude")
-                    || status.agent_name.eq_ignore_ascii_case("claude code")
-                {
-                    vec![
-                        "claude".to_owned(),
-                        "--resume".to_owned(),
-                        status.session_id.clone(),
-                    ]
-                } else if status.agent_name.eq_ignore_ascii_case("gemini")
-                    || status.agent_name.eq_ignore_ascii_case("gemini cli")
-                {
-                    vec!["gemini".to_owned(), "--resume".to_owned()]
-                } else if status.agent_name.eq_ignore_ascii_case("copilot")
-                    || status.agent_name.eq_ignore_ascii_case("github copilot")
-                    || status.agent_name.eq_ignore_ascii_case("github copilot cli")
-                {
-                    vec![
-                        "copilot".to_owned(),
-                        format!("--resume={}", status.session_id),
-                    ]
-                } else if status.agent_name.eq_ignore_ascii_case("opencode") {
-                    vec![
-                        "opencode".to_owned(),
-                        "--session".to_owned(),
-                        status.session_id.clone(),
-                    ]
-                } else if status.agent_name.eq_ignore_ascii_case("pi") {
-                    vec!["pi".to_owned(), "-c".to_owned()]
-                } else if status.agent_name.eq_ignore_ascii_case("omp")
-                    || status.agent_name.eq_ignore_ascii_case("oh my pi")
-                {
-                    vec!["omp".to_owned(), "-c".to_owned()]
-                } else if status.agent_name.eq_ignore_ascii_case("small harness")
-                    || status.agent_name.eq_ignore_ascii_case("small-harness")
-                {
-                    vec!["small-harness".to_owned(), "--continue".to_owned()]
-                } else {
-                    return None;
-                };
-                let (tasks, task_progress_authoritative) = self
-                    .agent_statuses
-                    .task_restore_state(&pane.id, &status.session_id);
-                let draft = PaneRestoreDraft {
-                    pane_id: pane.id.clone(),
-                    kind: RestoreDraftKind::AgentResume,
-                    tool_name: status.agent_name.clone(),
-                    session_id: status.session_id.clone(),
-                    working_directory: status
-                        .working_directory
-                        .clone()
-                        .or_else(|| pane.working_directory.clone()),
-                    tracked_pid: status.tracked_pid.unwrap_or_default(),
-                    agent_launch_snapshot: Some(AgentLaunchSnapshot {
-                        arguments,
-                        environment: None,
-                    }),
-                    task_progress: status.progress,
-                    tasks,
-                    task_progress_authoritative,
-                };
-                draft.resume_command().is_some().then_some(draft)
-            })
+            .filter_map(|pane| self.agent_restore_draft_for_pane(pane))
             .collect()
+    }
+
+    fn agent_restore_draft_for_pane(&self, pane: &PaneState) -> Option<PaneRestoreDraft> {
+        let status = self.agent_statuses.status_for_pane(&pane.id)?;
+        let arguments = if status.agent_name.eq_ignore_ascii_case("codex") {
+            vec![
+                "codex".to_owned(),
+                "resume".to_owned(),
+                status.session_id.clone(),
+            ]
+        } else if status.agent_name.eq_ignore_ascii_case("claude")
+            || status.agent_name.eq_ignore_ascii_case("claude code")
+        {
+            vec![
+                "claude".to_owned(),
+                "--resume".to_owned(),
+                status.session_id.clone(),
+            ]
+        } else if status.agent_name.eq_ignore_ascii_case("gemini")
+            || status.agent_name.eq_ignore_ascii_case("gemini cli")
+        {
+            vec!["gemini".to_owned(), "--resume".to_owned()]
+        } else if status.agent_name.eq_ignore_ascii_case("copilot")
+            || status.agent_name.eq_ignore_ascii_case("github copilot")
+            || status.agent_name.eq_ignore_ascii_case("github copilot cli")
+        {
+            vec![
+                "copilot".to_owned(),
+                format!("--resume={}", status.session_id),
+            ]
+        } else if status.agent_name.eq_ignore_ascii_case("opencode") {
+            vec![
+                "opencode".to_owned(),
+                "--session".to_owned(),
+                status.session_id.clone(),
+            ]
+        } else if status.agent_name.eq_ignore_ascii_case("pi") {
+            vec!["pi".to_owned(), "-c".to_owned()]
+        } else if status.agent_name.eq_ignore_ascii_case("omp")
+            || status.agent_name.eq_ignore_ascii_case("oh my pi")
+        {
+            vec!["omp".to_owned(), "-c".to_owned()]
+        } else if status.agent_name.eq_ignore_ascii_case("small harness")
+            || status.agent_name.eq_ignore_ascii_case("small-harness")
+        {
+            vec!["small-harness".to_owned(), "--continue".to_owned()]
+        } else {
+            return None;
+        };
+        let (tasks, task_progress_authoritative) = self
+            .agent_statuses
+            .task_restore_state(&pane.id, &status.session_id);
+        let draft = PaneRestoreDraft {
+            pane_id: pane.id.clone(),
+            kind: RestoreDraftKind::AgentResume,
+            tool_name: status.agent_name.clone(),
+            session_id: status.session_id.clone(),
+            working_directory: status
+                .working_directory
+                .clone()
+                .or_else(|| pane.working_directory.clone()),
+            tracked_pid: status.tracked_pid.unwrap_or_default(),
+            agent_launch_snapshot: Some(AgentLaunchSnapshot {
+                arguments,
+                environment: None,
+            }),
+            task_progress: status.progress,
+            tasks,
+            task_progress_authoritative,
+        };
+        draft.resume_command().is_some().then_some(draft)
     }
 
     fn close_pane_at_with_capture(
@@ -2518,6 +2562,7 @@ impl WorkspaceState {
         pane_id: &str,
         now: u64,
         capture: bool,
+        scrollback_text: Option<String>,
     ) -> ClosePaneOutcome {
         let Some((worklane_index, column_index, pane_index)) = self
             .worklanes
@@ -2549,7 +2594,13 @@ impl WorkspaceState {
                 return ClosePaneOutcome::CloseWindow;
             }
             if capture {
-                self.capture_closed_pane(worklane_index, column_index, pane_index, now);
+                self.capture_closed_pane(
+                    worklane_index,
+                    column_index,
+                    pane_index,
+                    now,
+                    scrollback_text,
+                );
             }
             self.agent_statuses.remove_pane(pane_id);
             let removed_active = self.worklanes[worklane_index].id == self.active_worklane_id;
@@ -2564,7 +2615,13 @@ impl WorkspaceState {
         }
 
         if capture {
-            self.capture_closed_pane(worklane_index, column_index, pane_index, now);
+            self.capture_closed_pane(
+                worklane_index,
+                column_index,
+                pane_index,
+                now,
+                scrollback_text,
+            );
         }
         self.agent_statuses.remove_pane(pane_id);
         let worklane = &mut self.worklanes[worklane_index];
@@ -2607,7 +2664,8 @@ impl WorkspaceState {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |duration| duration.as_secs());
-        self.restore_closed_pane_at(new_pane_id, now)
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/".to_owned());
+        self.restore_closed_pane_at_in_home(new_pane_id, now, &home)
     }
 
     /// Deterministic-clock form of [`Self::restore_closed_pane`].
@@ -2616,12 +2674,37 @@ impl WorkspaceState {
         new_pane_id: impl Into<String>,
         now: u64,
     ) -> Option<RestoredPane> {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/".to_owned());
+        self.restore_closed_pane_at_in_home(new_pane_id, now, &home)
+    }
+
+    /// Deterministic home-directory form for source CWD fallback tests.
+    pub fn restore_closed_pane_at_in_home(
+        &mut self,
+        new_pane_id: impl Into<String>,
+        now: u64,
+        home_directory: &str,
+    ) -> Option<RestoredPane> {
         let new_pane_id = new_pane_id.into();
         if self.pane(&new_pane_id).is_some() {
             return None;
         }
         self.prune_closed_panes(now);
         let entry = self.closed_panes.pop()?;
+        let rollback_entry = Box::new(entry.clone());
+        let requested_working_directory = entry
+            .agent_restore_draft
+            .as_ref()
+            .and_then(|draft| draft.working_directory.as_deref())
+            .or(entry.pane.working_directory.as_deref());
+        let (working_directory, original_directory_missing) =
+            resolve_closed_pane_directory(requested_working_directory, home_directory);
+        let prefill_text = entry
+            .agent_restore_draft
+            .as_ref()
+            .and_then(PaneRestoreDraft::resume_command)
+            .or_else(|| trimmed_owned(entry.pane.last_run_command.as_deref()));
+        let restored_agent_draft = entry.agent_restore_draft.clone();
         let target_worklane_index = self
             .worklanes
             .iter()
@@ -2631,6 +2714,7 @@ impl WorkspaceState {
         let mut pane = entry.pane;
         pane.id.clone_from(&new_pane_id);
         pane.ssh_connection_label = None;
+        pane.working_directory = Some(working_directory.clone());
 
         let existing_column_index = self.worklanes[target_worklane_index]
             .columns
@@ -2641,13 +2725,9 @@ impl WorkspaceState {
             let pane_index = entry.pane_index.min(column.panes.len());
             column.panes.insert(pane_index, pane);
             column.pane_heights.fill(1.0);
-            column.pane_heights.insert(
-                pane_index,
-                entry
-                    .pane_height
-                    .filter(|height| *height > 0.0)
-                    .unwrap_or(1.0),
-            );
+            column
+                .pane_heights
+                .insert(pane_index, entry.pane_height.unwrap_or(1.0));
             column.focused_pane_id.clone_from(&new_pane_id);
             column.last_focused_pane_id.clone_from(&new_pane_id);
             self.worklanes[target_worklane_index]
@@ -2672,12 +2752,19 @@ impl WorkspaceState {
             self.worklanes[target_worklane_index].focused_column_id = column_id;
         }
         self.active_worklane_id.clone_from(&target_worklane_id);
-        let pane = self.pane(&new_pane_id)?;
+        if let Some(mut draft) = restored_agent_draft {
+            draft.pane_id.clone_from(&new_pane_id);
+            draft.working_directory = Some(working_directory.clone());
+            let _ = self.seed_restored_agent(&draft, now);
+        }
         let restored = RestoredPane {
             pane_id: new_pane_id,
             worklane_id: target_worklane_id,
-            working_directory: pane.working_directory.clone(),
-            prefill_text: trimmed_owned(pane.last_run_command.as_deref()),
+            working_directory: Some(working_directory),
+            prefill_text,
+            scrollback_text: entry.scrollback_text,
+            original_directory_missing,
+            rollback_entry,
         };
         self.record_focus_transition(None);
         Some(restored)
@@ -2689,10 +2776,12 @@ impl WorkspaceState {
         column_index: usize,
         pane_index: usize,
         now: u64,
+        scrollback_text: Option<String>,
     ) {
         self.prune_closed_panes(now);
         let worklane = &self.worklanes[worklane_index];
         let column = &worklane.columns[column_index];
+        let agent_restore_draft = self.agent_restore_draft_for_pane(&column.panes[pane_index]);
         self.closed_panes.push(ClosedPaneEntry {
             closed_at: now,
             pane: column.panes[pane_index].clone(),
@@ -2701,7 +2790,9 @@ impl WorkspaceState {
             column_index,
             pane_index,
             column_width: column.width,
-            pane_height: (column.panes.len() > 1).then(|| column.pane_heights[pane_index]),
+            pane_height: column.panes.get(1).map(|_| column.pane_heights[pane_index]),
+            agent_restore_draft,
+            scrollback_text,
         });
         if self.closed_panes.len() > CLOSED_PANE_CAPACITY {
             self.closed_panes.remove(0);
@@ -2891,6 +2982,41 @@ fn trimmed_owned(value: Option<&str>) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_owned)
+}
+
+fn resolve_closed_pane_directory(original: Option<&str>, home_directory: &str) -> (String, bool) {
+    let home = trimmed_owned(Some(home_directory)).unwrap_or_else(|| "/".to_owned());
+    let Some(original) = trimmed_owned(original) else {
+        return (home, true);
+    };
+    let standardized = normalize_path_lexically(Path::new(&original));
+    if standardized.is_dir() {
+        return (standardized.to_string_lossy().into_owned(), false);
+    }
+    let mut current = standardized;
+    while current.pop() {
+        if current.as_os_str().is_empty() {
+            break;
+        }
+        if current.is_dir() {
+            return (current.to_string_lossy().into_owned(), true);
+        }
+    }
+    (home, true)
+}
+
+fn normalize_path_lexically(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                normalized.pop();
+            }
+            other => normalized.push(other.as_os_str()),
+        }
+    }
+    normalized
 }
 
 fn small_count_as_f64(count: usize) -> f64 {

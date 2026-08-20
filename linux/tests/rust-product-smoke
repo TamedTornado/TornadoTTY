@@ -11,6 +11,7 @@ fixture="${repo_root}/crates/zentty-core/tests/fixtures/session-restore-v3.json"
 scenario="${ZENTTY_RUST_SCENARIO:-single}"
 terminal_count="${ZENTTY_RUST_TERMINALS:-1}"
 lifecycle_cycles="${ZENTTY_RUST_CYCLES:-1}"
+startup_attempts="${ZENTTY_RUST_STARTUP_ATTEMPTS:-200}"
 async_backend="${ZENTTY_LINUX_ASYNC_BACKEND:-default}"
 [[ "${async_backend}" == auto ]] && async_backend=default
 
@@ -25,9 +26,16 @@ fail() {
     fail "ZENTTY_RUST_SCENARIO must be single or lifecycle"
 [[ "${terminal_count}" =~ ^[1-9][0-9]*$ ]] || fail "invalid terminal count"
 [[ "${lifecycle_cycles}" =~ ^[1-9][0-9]*$ ]] || fail "invalid lifecycle cycle count"
+[[ "${startup_attempts}" =~ ^[1-9][0-9]*$ ]] || fail "invalid startup attempt count"
 [[ "${async_backend}" == default || "${async_backend}" == epoll ||
     "${async_backend}" == io_uring ]] || fail "invalid async backend"
 [[ -x "${product}" ]] || fail "delivered Rust product is not built: ${product}"
+product_command=("${product}")
+if (($# > 0)); then
+    product_command=("$@")
+    [[ " ${product_command[*]} " == *" ${product} "* ]] ||
+        fail "custom product command must contain the selected product binary"
+fi
 [[ -f "${bundle_lib}/libghostty-gtk-embed.so" ]] ||
     fail "selected product bundle has no Ghostty library"
 [[ -f "${bundle_lib}/libgtk4-layer-shell.so" ]] ||
@@ -47,23 +55,32 @@ layer_runpath="$(
 [[ "${layer_runpath}" == .zig-cache/* ]] ||
     fail "Ghostty library has no pinned relative layer-shell runpath"
 
-log="$(mktemp)"
+log_owned=true
+if [[ -n "${ZENTTY_RUST_PRODUCT_LOG_PATH:-}" ]]; then
+    log="${ZENTTY_RUST_PRODUCT_LOG_PATH}"
+    [[ ! -L "${log}" ]] || fail "product log path may not be a symbolic link"
+    : >"${log}"
+    log_owned=false
+else
+    log="$(mktemp)"
+fi
 barrier="$(mktemp -d)"
 state_directory=""
 product_pid=""
+final_status=0
 cleanup() {
     if [[ "${product_pid}" =~ ^[1-9][0-9]*$ ]]; then
         kill -TERM "${product_pid}" 2>/dev/null || true
         wait "${product_pid}" 2>/dev/null || true
     fi
-    rm -f -- "${log}"
+    [[ "${log_owned}" == false ]] || rm -f -- "${log}"
     rm -rf -- "${barrier}"
     [[ -z "${state_directory}" ]] || rm -rf -- "${state_directory}"
 }
 trap cleanup EXIT
 
 if [[ "${scenario}" == lifecycle ]]; then
-    child_command="touch '${barrier}'/\$\$; while [ \"\$(find '${barrier}' -type f | wc -l)\" -lt '${terminal_count}' ]; do sleep 0.01; done; printf '\\033]2;zentty-rust-smoke-${backend}\\a'; sleep 0.1"
+    child_command="printf '\\033]2;zentty-rust-smoke-${backend}\\a'; sleep 0.1"
 elif [[ "${backend}" == x11 ]]; then
     command -v xdotool >/dev/null || fail "xdotool is required for real X11 input and resize"
     # The single quotes intentionally defer child-shell expansion.
@@ -88,7 +105,7 @@ run_cycle() {
     ((terminal_count > 1)) || product_args+=(--no-session-restore)
     set +e
     LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
-    "${product}" "${product_args[@]}" >>"${log}" 2>&1 &
+    "${product_command[@]}" "${product_args[@]}" >>"${log}" 2>&1 &
     product_pid=$!
     set -e
 }
@@ -96,7 +113,7 @@ run_cycle() {
 run_cycle
 if [[ "${backend}" == x11 && "${scenario}" == single ]]; then
     window_id=""
-    for _ in $(seq 1 200); do
+    for _ in $(seq 1 "${startup_attempts}"); do
         window_id="$(xdotool search --name '^Zentty$' 2>/dev/null | head -1 || true)"
         if [[ "${window_id}" =~ ^[1-9][0-9]*$ ]] &&
             grep -Fxq 'zentty-linux: terminal-ready' "${log}"; then
@@ -104,7 +121,10 @@ if [[ "${backend}" == x11 && "${scenario}" == single ]]; then
         fi
         sleep 0.05
     done
-    [[ "${window_id}" =~ ^[1-9][0-9]*$ ]] || fail "real Zentty X11 window did not appear"
+    if [[ ! "${window_id}" =~ ^[1-9][0-9]*$ ]]; then
+        cat "${log}" >&2
+        fail "real Zentty X11 window did not appear"
+    fi
     grep -Fxq 'zentty-linux: terminal-ready' "${log}" ||
         fail "real Ghostty terminal did not establish input readiness"
     xdotool windowsize --sync "${window_id}" 820 640
@@ -120,10 +140,15 @@ wait_for_cycle() {
     status=$?
     set -e
     product_pid=""
-    [[ "${status}" -eq 0 ]] || {
+    if [[ "${status}" -eq 99 ]]; then
+        # Valgrind's governed --error-exitcode preserves a completed product
+        # lifecycle while marking post-suppression findings. Finish the actor's
+        # semantic assertions, then propagate the instrumentation status.
+        final_status=99
+    elif [[ "${status}" -ne 0 ]]; then
         cat "${log}" >&2
         fail "product exited ${status} before terminal lifecycle completed"
-    }
+    fi
     rm -rf -- "${state_directory}"
     state_directory=""
 }
@@ -134,14 +159,34 @@ for ((cycle = 2; cycle <= lifecycle_cycles; cycle++)); do
     wait_for_cycle
 done
 expected_events=$((terminal_count * lifecycle_cycles))
-[[ "$(grep -Fxc 'zentty-linux: terminal-ready' "${log}" || true)" -eq "${expected_events}" ]] ||
-    fail "product did not acknowledge every real Ghostty terminal"
-[[ "$(grep -Fxc "zentty-linux: title=zentty-rust-smoke-${backend}" "${log}" || true)" -eq "${expected_events}" ]] ||
-    fail "PTY output did not reach every real Ghostty title property"
-[[ "$(grep -Fxc 'zentty-linux: child-exited' "${log}" || true)" -eq "${expected_events}" ]] ||
-    fail "product did not acknowledge every child exit"
-[[ "$(grep -Fxc 'zentty-linux: lifecycle complete' "${log}" || true)" -eq "${lifecycle_cycles}" ]] ||
-    fail "product did not complete every lifecycle cycle"
+assert_log_count() {
+    local expected="$1"
+    local line="$2"
+    local failure="$3"
+    if [[ "$(grep -Fxc "${line}" "${log}" || true)" -ne "${expected}" ]]; then
+        cat "${log}" >&2
+        fail "${failure}"
+    fi
+}
+assert_log_occurrences() {
+    local expected="$1"
+    local marker="$2"
+    local failure="$3"
+    local actual
+    actual="$(grep -Fo -- "${marker}" "${log}" | wc -l || true)"
+    if [[ "${actual}" -ne "${expected}" ]]; then
+        cat "${log}" >&2
+        fail "${failure}"
+    fi
+}
+assert_log_occurrences "${expected_events}" 'zentty-linux: terminal-ready-pane=' \
+    "product did not acknowledge every real Ghostty terminal"
+assert_log_count "${expected_events}" "zentty-linux: title=zentty-rust-smoke-${backend}" \
+    "PTY output did not reach every real Ghostty title property"
+assert_log_count "${expected_events}" 'zentty-linux: child-exited' \
+    "product did not acknowledge every child exit"
+assert_log_count "${lifecycle_cycles}" 'zentty-linux: lifecycle complete' \
+    "product did not complete every lifecycle cycle"
 if [[ "${backend}" == x11 && "${scenario}" == single ]]; then
     grep -Fx 'zentty-linux: window-size=820x640' "${log}" >/dev/null || {
         cat "${log}" >&2
@@ -149,4 +194,9 @@ if [[ "${backend}" == x11 && "${scenario}" == single ]]; then
     }
 fi
 
+if [[ "${ZENTTY_RUST_EMIT_PRODUCT_LOG:-0}" == 1 ]]; then
+    cat "${log}"
+fi
+
 echo "Rust product smoke passed: ${backend}, scenario=${scenario}, terminals=${terminal_count}, cycles=${lifecycle_cycles}"
+exit "${final_status}"

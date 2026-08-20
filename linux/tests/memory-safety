@@ -4,9 +4,11 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "${repo_root}/linux/tests/lib/valgrind-report"
 ghostty_source="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
-binary="${repo_root}/build/linux/bin/zentty-linux"
-api_contract="${repo_root}/build/linux/bin/api-contract"
-metadata="${repo_root}/build/linux/build-metadata"
+bundle_root="${ZENTTY_MEMORY_BUNDLE_ROOT:-${repo_root}/build/linux}"
+[[ "${bundle_root}" == /* ]] || bundle_root="${repo_root}/${bundle_root}"
+binary="${bundle_root}/bin/zentty-linux"
+api_contract="${bundle_root}/bin/api-contract"
+metadata="${bundle_root}/build-metadata"
 backend="${GDK_BACKEND:-wayland}"
 scenario="${ZENTTY_MEMORY_SCENARIO:-single}"
 expected_optimize="${ZENTTY_MEMORY_EXPECT_OPTIMIZE:-Debug}"
@@ -29,6 +31,7 @@ suppressed_receipt="${receipt_base}.suppressed.log"
 report="${receipt_base}.json"
 raw_environment_report="${receipt_base}.raw.environment"
 suppressed_environment_report="${receipt_base}.suppressed.environment"
+product_diagnostic_log="${receipt_base}.active-product.log"
 nested_x11="${repo_root}/linux/tests/nested-x11"
 nested_wayland="${repo_root}/linux/tests/nested-wayland"
 if [[ "${backend}" == "x11" ]]; then
@@ -47,8 +50,10 @@ max_capture_span_seconds=900
 effective_suppressions=(
     "${ghostty_source}/valgrind.supp"
     "${ghostty_source}/src/gtk_embed_spike.valgrind.supp"
-    "${repo_root}/linux/tests/valgrind.supp"
 )
+if [[ "${expected_optimize}" == Debug ]]; then
+    effective_suppressions+=("${repo_root}/linux/tests/valgrind.supp")
+fi
 
 evidence_lock_fd=""
 zentty_valgrind_acquire_evidence_lock "${evidence_lock}" evidence_lock_fd || exit 1
@@ -63,10 +68,9 @@ rm -f -- \
     "${suppressed_environment_report}" \
     "${report}"
 report_temp=""
+# shellcheck disable=SC2317 # invoked by the EXIT trap
 cleanup() {
-    if [[ -n "${report_temp}" ]]; then
-        rm -f -- "${report_temp}"
-    fi
+    [[ -z "${report_temp}" ]] || rm -f -- "${report_temp}"
 }
 trap cleanup EXIT
 
@@ -103,15 +107,19 @@ done
 environment=(
     "GDK_BACKEND=${backend}"
     "ZENTTY_LINUX_ASYNC_BACKEND=epoll"
-    "ZENTTY_LINUX_SLOW_INTEGRATION_TEST=1"
+    "ZENTTY_LINUX_BINARY=${binary}"
+    "ZENTTY_EXPECTED_PRODUCT_PROFILE=$([[ "${expected_optimize}" == Debug ]] && printf debug || printf release-safe)"
+    "ZENTTY_RUST_STARTUP_ATTEMPTS=1200"
+    "ZENTTY_RUST_EMIT_PRODUCT_LOG=1"
+    "ZENTTY_RUST_PRODUCT_LOG_PATH=${product_diagnostic_log}"
 )
-program=("${binary}")
+program=("${repo_root}/linux/tests/rust-product-smoke")
 case "${scenario}" in
     single)
-        environment+=("ZENTTY_LINUX_INTEGRATION_TEST=1")
+        environment+=("ZENTTY_RUST_SCENARIO=single" "ZENTTY_RUST_TERMINALS=1")
         ;;
     interaction)
-        environment+=("ZENTTY_LINUX_INTERACTION_TEST=1")
+        environment+=("ZENTTY_RUST_SCENARIO=lifecycle" "ZENTTY_RUST_TERMINALS=2")
         ;;
     api)
         environment+=("ZENTTY_API_CONTRACT_ASYNC_BACKEND=epoll")
@@ -121,15 +129,21 @@ esac
 
 valgrind_flags=(
     -s
+    --read-inline-info=no
     --num-callers=40
     --leak-check=full
     "--show-leak-kinds=definite,indirect"
     "--errors-for-leak-kinds=definite,indirect"
 )
 
-raw_command=(env "${environment[@]}" timeout 300s valgrind \
-    "${valgrind_flags[@]}" \
-    "${program[@]}")
+if [[ "${scenario}" == api ]]; then
+    raw_command=(env "${environment[@]}" timeout 300s \
+        valgrind "${valgrind_flags[@]}" "${program[@]}")
+else
+    raw_command=(env "${environment[@]}" \
+        timeout 300s "${program[@]}" \
+        valgrind "${valgrind_flags[@]}" "${binary}")
+fi
 set +e
 if [[ "${backend}" == "x11" ]]; then
     ZENTTY_NESTED_X11_REPORT="${raw_environment_report}" \
@@ -149,11 +163,16 @@ suppression_flags=()
 for suppression in "${effective_suppressions[@]}"; do
     suppression_flags+=("--suppressions=${suppression}")
 done
-suppressed_command=(env "${environment[@]}" timeout 300s valgrind \
-    "${valgrind_flags[@]}" \
-    --error-exitcode=99 \
-    "${suppression_flags[@]}" \
-    "${program[@]}")
+if [[ "${scenario}" == api ]]; then
+    suppressed_command=(env "${environment[@]}" timeout 300s \
+        valgrind "${valgrind_flags[@]}" --error-exitcode=99 \
+        "${suppression_flags[@]}" "${program[@]}")
+else
+    suppressed_command=(env "${environment[@]}" \
+        timeout 300s "${program[@]}" \
+        valgrind "${valgrind_flags[@]}" --error-exitcode=99 \
+        "${suppression_flags[@]}" "${binary}")
+fi
 set +e
 if [[ "${backend}" == "x11" ]]; then
     ZENTTY_NESTED_X11_REPORT="${suppressed_environment_report}" \
@@ -178,10 +197,7 @@ assert_semantic_pass() {
     if [[ "${scenario}" == "api" ]]; then
         grep -Fx "api-contract: PASS" "${receipt}" >/dev/null
     else
-        grep -F "zentty-linux: integration PASS" "${receipt}" >/dev/null
-    fi
-    if [[ "${scenario}" == "interaction" ]]; then
-        grep -F "keyboard=1 clipboard=1/1" "${receipt}" >/dev/null
+        grep -F "Rust product smoke passed: ${backend}" "${receipt}" >/dev/null
     fi
 }
 assert_semantic_pass "${raw_receipt}"

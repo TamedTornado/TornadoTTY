@@ -1,6 +1,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
+use std::time::Duration;
 
 use gtk::{glib, prelude::*};
 use zentty_core::{ClosePaneOutcome, TerminalProgressState};
@@ -545,7 +546,10 @@ impl PaneRuntimeCoordinator {
             eprintln!("zentty-linux: child-exited-pane={exited_id}");
             let weak = weak.clone();
             let exited_id = exited_id.clone();
-            glib::idle_add_local_once(move || {
+            // A child exit owns pane teardown. Do not queue it at idle
+            // priority: a continuously rendering surface can otherwise starve
+            // the callback indefinitely on a slow or instrumented renderer.
+            glib::timeout_add_local_once(Duration::ZERO, move || {
                 if let Some(shell) = weak.upgrade() {
                     Self::handle_child_exit(&shell, &exited_id);
                 }

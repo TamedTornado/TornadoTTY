@@ -2,6 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+controlled_agent="${repo_root}/linux/tests/fixtures/controlled-agent"
 product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
 bundle_root="$(cd "$(dirname "${product}")/.." 2>/dev/null && pwd)" || bundle_root=""
 bundle_lib="${bundle_root}/lib"
@@ -10,8 +11,12 @@ fixture="${repo_root}/crates/zentty-core/tests/fixtures/session-restore-v3.json"
 backend="${GDK_BACKEND:-}"
 async_backend="${ZENTTY_LINUX_ASYNC_BACKEND:-default}"
 state_dir=""
+working_root=""
 working_dir=""
 cwd_receipt=""
+agent_resume_receipt=""
+prefill_lines_receipt=""
+shim_dir=""
 log=""
 product_pid=""
 
@@ -30,7 +35,7 @@ cleanup() {
         wait "${product_pid}" 2>/dev/null || true
     fi
     [[ -z "${state_dir}" ]] || rm -rf -- "${state_dir}"
-    [[ -z "${working_dir}" ]] || rm -rf -- "${working_dir}"
+    [[ -z "${working_root}" ]] || rm -rf -- "${working_root}"
     [[ -z "${log}" ]] || rm -f -- "${log}"
 }
 trap cleanup EXIT
@@ -72,23 +77,50 @@ layer_runpath="$(
 
 state_dir="$(mktemp -d)"
 zentty_product_disable_lifecycle_confirmations
-working_dir="$(mktemp -d)"
-cwd_receipt="${working_dir}/pty-cwd-receipt"
+working_root="$(mktemp -d)"
+working_dir="${working_root}/project"
+shim_dir="${working_root}/bin"
+mkdir -p "${working_dir}" "${shim_dir}"
+cwd_receipt="${working_root}/pty-cwd-receipt"
+agent_resume_receipt="${working_root}/agent-resume-receipt"
+prefill_lines_receipt="${working_root}/prefill-lines-receipt"
+ln -s "${controlled_agent}" "${shim_dir}/codex"
 log="$(mktemp)"
 jq --arg cwd "${working_dir}" '
     .workspace.windows[0].worklanes[0].columns[0].panes[].workingDirectory = $cwd |
+    .workspace.windows[0].worklanes[0].columns[0].panes[].lastRunCommand = "fallback command must lose to agent resume" |
     .restoreDraftWindows[0].paneDrafts = []
 ' "${fixture}" >"${state_dir}/restore-snapshot.json"
 
-# The single quotes intentionally defer expansion to each real PTY child.
-# shellcheck disable=SC2016
+# The quoted heredoc defers expansion to each real PTY child. The Codex binary
+# is a controlled agent-call boundary; the terminal, shell, IPC, close, archive,
+# prefill, and restored process are all real product components.
+child_command="$(cat <<'EOF'
+printf '\033]0;CWD:%s\007' "$PWD"
+printf 'closed-pane-scrollback-marker\n'
+printf '%s\n' "$PWD" >>"$ZENTTY_CWD_RECEIPT"
+printf '%s' '{"version":1,"event":"agent.running","agent":{"name":"Codex"},"session":{"id":"agent-session-safe"}}' |
+    "$ZENTTY_CLI_BIN" ipc agent-event
+while IFS= read -r line; do
+    printf '%s\n' "$line" >>"$ZENTTY_PREFILL_LINES_RECEIPT"
+    eval "$line"
+done
+EOF
+)"
 env GHOSTTY_LOG=false \
     ZENTTY_CWD_RECEIPT="${cwd_receipt}" \
+    ZENTTY_CONTROLLED_AGENT_PROFILE=codex-restore \
+    ZENTTY_CONTROLLED_AGENT_SESSIONS=agent-session-safe \
+    ZENTTY_CONTROLLED_AGENT_RECEIPT="${agent_resume_receipt}" \
+    ZENTTY_CONTROLLED_AGENT_SLEEP_SECONDS=0 \
+    ZENTTY_PREFILL_LINES_RECEIPT="${prefill_lines_receipt}" \
+    XDG_CACHE_HOME="${state_dir}/cache" \
+    PATH="${shim_dir}:${PATH}" \
     LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
     "${product}" \
     --state-directory "${state_dir}" \
     --async-backend "${async_backend}" \
-    --command 'printf "\033]0;CWD:%s\007" "$PWD"; printf "%s\n" "$PWD" >> "$ZENTTY_CWD_RECEIPT"; sleep 30' >"${log}" 2>&1 &
+    --command "${child_command}" >"${log}" 2>&1 &
 product_pid=$!
 
 # Debug Ghostty writes renderer diagnostics and product lifecycle markers to
@@ -127,6 +159,7 @@ zentty_product_wait_for_log_count "${log}" \
     'zentty-linux: sidebar-active-visible worklane=worklane-main' \
     "$((active_visible_before_close + 1))" \
     "post-close UI projection did not settle" || fail "post-close projection missing"
+rmdir -- "${working_dir}" || fail "controlled missing-CWD fixture could not be removed"
 
 zentty_product_ctrl_shift_key "${backend}" p
 zentty_product_wait_for_log "${log}" 'zentty-linux: command-palette=shown' \
@@ -140,23 +173,49 @@ zentty_product_key "${backend}" Return
 zentty_product_wait_for_log "${log}" 'zentty-linux: action=restore-closed-pane pane=' \
     "real palette did not restore the pane" || fail "restore action missing"
 action_line="$(grep -F 'zentty-linux: action=restore-closed-pane pane=' "${log}" | tail -1)"
-[[ "${action_line}" == *" cwd=${working_dir} prefill=cargo test" ]] ||
-    fail "restore action lost CWD or command prefill: ${action_line}"
+[[ "${action_line}" == *" cwd=${working_root} prefill=codex resume agent-session-safe" ]] ||
+    fail "restore action lost source agent-resume precedence or CWD fallback: ${action_line}"
 restored_pane="$(sed -n 's/.*pane=\([^ ]*\) worklane=.*/\1/p' <<<"${action_line}")"
 [[ -n "${restored_pane}" && "${restored_pane}" != pane-agent ]] ||
     fail "restore did not allocate a fresh pane identity"
 zentty_product_wait_for_log "${log}" \
-    "zentty-linux: pane-prefill pane=${restored_pane} process-started=true bytes=10" \
+    "zentty-linux: pane-prefill pane=${restored_pane} process-started=true bytes=" \
     "restored pane did not report its PTY prefill" || fail "real prefill receipt missing"
+zentty_product_wait_for_log "${log}" \
+    "zentty-linux: closed-pane-cwd-fallback pane=${restored_pane} directory=${working_root}" \
+    "missing source CWD did not project a visible restore warning" || fail "CWD fallback warning missing"
+archive_line="$(grep -F "zentty-linux: closed-pane-archive pane=${restored_pane} path=" "${log}" | tail -1)"
+archive_path="${archive_line##* path=}"
+[[ "${archive_path}" == "${state_dir}/cache/zentty/restore-output/${restored_pane}.txt" ]] ||
+    fail "closed-pane archive escaped its private XDG cache: ${archive_line}"
+[[ -f "${archive_path}" && ! -L "${archive_path}" ]] || fail "closed-pane archive was not a regular file"
+grep -F 'closed-pane-scrollback-marker' "${archive_path}" >/dev/null ||
+    fail "real Ghostty text did not reach the closed-pane archive"
 for _ in {1..200}; do
     [[ -f "${cwd_receipt}" ]] &&
-        [[ "$(grep -Fxc "${working_dir}" "${cwd_receipt}" || true)" -ge 3 ]] && break
+        [[ "$(grep -Fxc "${working_root}" "${cwd_receipt}" || true)" -ge 1 ]] &&
+        [[ -f "${agent_resume_receipt}" ]] &&
+        grep -Fx "cwd:agent-session-safe value:${working_root}" \
+            "${agent_resume_receipt}" >/dev/null &&
+        grep -Eq '^resume:agent-session-safe pid:[0-9]+$' \
+            "${agent_resume_receipt}" && break
     sleep 0.05
 done
 if [[ ! -f "${cwd_receipt}" ]] ||
-    [[ "$(grep -Fxc "${working_dir}" "${cwd_receipt}" || true)" -lt 3 ]]; then
-    fail "restored real PTY did not start in captured CWD"
+    [[ "$(grep -Fxc "${working_root}" "${cwd_receipt}" || true)" -lt 1 ]] ||
+    [[ ! -f "${agent_resume_receipt}" ]] ||
+    ! grep -Fx "cwd:agent-session-safe value:${working_root}" \
+        "${agent_resume_receipt}" >/dev/null ||
+    ! grep -Eq '^resume:agent-session-safe pid:[0-9]+$' \
+        "${agent_resume_receipt}"; then
+    [[ ! -f "${prefill_lines_receipt}" ]] || sed 's/^/prefill-line: /' "${prefill_lines_receipt}" >&2
+    [[ ! -f "${agent_resume_receipt}" ]] || sed 's/^/agent-resume: /' "${agent_resume_receipt}" >&2
+    fail "restored real PTY did not use fallback CWD and controlled agent resume"
 fi
+grep -Fx 'codex resume agent-session-safe' "${prefill_lines_receipt}" >/dev/null ||
+    fail "controlled shell did not receive the source agent-resume command"
+grep -F 'Previous output: file://' "${prefill_lines_receipt}" >/dev/null ||
+    fail "controlled shell did not receive the source scrollback link before agent resume"
 
 zentty_product_close_window "${backend}"
 for _ in {1..240}; do
@@ -185,12 +244,12 @@ late_source_callback="$(
 
 [[ "$(grep -Fc 'started subcommand path=/bin/sh pid=' "${log}" || true)" -eq 3 ]] ||
     fail "expected two original real PTYs plus one restored PTY"
-jq -e --arg pane "${restored_pane}" --arg cwd "${working_dir}" '
+jq -e --arg pane "${restored_pane}" --arg cwd "${working_root}" '
     .reason == "cleanExit" and
     (.workspace.windows[0].worklanes[0].columns[0].panes[0].id == $pane) and
     (.workspace.windows[0].worklanes[0].columns[0].panes[0].workingDirectory == $cwd) and
-    (.workspace.windows[0].worklanes[0].columns[0].panes[0].lastRunCommand == "cargo test")
+    (.workspace.windows[0].worklanes[0].columns[0].panes[0].lastRunCommand == "fallback command must lose to agent resume")
 ' "${state_dir}/restore-snapshot.json" >/dev/null ||
     fail "restored identity or launch context was not persisted"
 
-echo "Rust closed-pane restore passed: ${backend}, pane=${restored_pane}, cwd=real, prefill=real, ownership=real, callbacks=quiescent, input=physical"
+echo "Rust closed-pane restore passed: ${backend}, pane=${restored_pane}, cwd=fallback-real, agent-resume=controlled, scrollback=real, ownership=real, callbacks=quiescent, input=physical"

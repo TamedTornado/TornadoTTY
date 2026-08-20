@@ -465,6 +465,22 @@ fn active_supported_agents_produce_restorable_per_pane_drafts() {
         ["gemini", "--resume"]
     );
 
+    let mut copilot_state =
+        WorkspaceState::from_window_recipe(&envelope.workspace.windows[0]).unwrap();
+    copilot_state.apply_agent_event(
+        event(
+            "pane-shell",
+            br#"{"version":1,"event":"session.start","agent":{"name":"Copilot","pid":4545},"session":{"id":"123e4567-e89b-12d3-a456-426614174001"}}"#,
+        ),
+        13,
+    );
+    let copilot = copilot_state.agent_restore_drafts();
+    assert_eq!(copilot.len(), 1);
+    assert_eq!(
+        copilot[0].resume_command().as_deref(),
+        Some("copilot --resume=123e4567-e89b-12d3-a456-426614174001")
+    );
+
     let mut relaunched =
         WorkspaceState::from_window_recipe(&envelope.workspace.windows[0]).unwrap();
     assert!(relaunched.seed_restored_agent(&gemini[0], 13));
@@ -681,6 +697,11 @@ fn closed_pane_restore_is_lifo_expiring_and_preserves_source_launch_context() {
     ));
     let envelope = SessionRestoreEnvelope::from_json(V3_ENVELOPE).unwrap();
     let mut state = WorkspaceState::from_window_recipe(&envelope.workspace.windows[0]).unwrap();
+    assert!(state.configure_pane_launch(
+        "pane-agent",
+        Some("/tmp".to_owned()),
+        Some("cargo test".to_owned())
+    ));
 
     assert_eq!(
         state.close_pane_at("pane-agent", 1_000),
@@ -691,7 +712,7 @@ fn closed_pane_restore_is_lifo_expiring_and_preserves_source_launch_context() {
         .expect("recent local pane should restore");
     assert_eq!(restored.pane_id, "pane-restored");
     assert_eq!(restored.worklane_id, "worklane-main");
-    assert_eq!(restored.working_directory.as_deref(), Some("/tmp/project"));
+    assert_eq!(restored.working_directory.as_deref(), Some("/tmp"));
     assert_eq!(restored.prefill_text.as_deref(), Some("cargo test"));
     assert_eq!(state.active_pane_ids(), ["pane-restored", "pane-shell"]);
     assert_eq!(state.focused_pane_id(), Some("pane-restored"));
@@ -725,6 +746,167 @@ fn closed_pane_restore_is_lifo_expiring_and_preserves_source_launch_context() {
 }
 
 #[test]
+fn product_clock_close_and_restore_entry_points_share_the_deterministic_contract() {
+    let mut state = WorkspaceState::new("lane", "pane-a");
+    assert!(state.split_focused_pane_right("pane-b"));
+    assert_eq!(state.close_pane("pane-b"), ClosePaneOutcome::Closed);
+    let restored = state
+        .restore_closed_pane("pane-restored")
+        .expect("a pane closed on the product clock must be immediately restorable");
+    assert_eq!(restored.pane_id, "pane-restored");
+    assert_eq!(state.active_pane_ids(), ["pane-a", "pane-restored"]);
+}
+
+#[test]
+fn restore_returns_an_inactive_pane_to_its_original_worklane() {
+    let mut state = WorkspaceState::new("lane-a", "pane-a");
+    assert!(state.create_worklane("lane-b", "pane-b"));
+    assert!(state.split_focused_pane_right("pane-b-keep"));
+    assert!(state.select_worklane("lane-a"));
+
+    assert_eq!(
+        state.close_pane_at("pane-b", 1_000),
+        ClosePaneOutcome::Closed
+    );
+    let restored = state
+        .restore_closed_pane_at("pane-b-restored", 1_001)
+        .expect("inactive worklane pane should restore");
+    assert_eq!(restored.worklane_id, "lane-b");
+    assert_eq!(state.active_worklane_id(), "lane-b");
+    assert_eq!(state.focused_pane_id(), Some("pane-b-restored"));
+    assert_eq!(
+        state.worklane_id_for_pane("pane-b-restored"),
+        Some("lane-b")
+    );
+}
+
+#[test]
+fn closed_pane_history_keeps_exact_capacity_across_capture_and_rollback() {
+    fn filled_history() -> WorkspaceState {
+        let mut state = WorkspaceState::new("lane", "pane-base");
+        for index in 0..10 {
+            let pane_id = format!("pane-{index}");
+            assert!(state.split_focused_pane_right(&pane_id));
+            assert_eq!(
+                state.close_pane_at(&pane_id, 1_000 + index),
+                ClosePaneOutcome::Closed
+            );
+        }
+        state
+    }
+
+    fn drain_history(state: &mut WorkspaceState) -> usize {
+        let mut count = 0;
+        while state
+            .restore_closed_pane_at(format!("restored-{count}"), 2_003)
+            .is_some()
+        {
+            count += 1;
+        }
+        count
+    }
+
+    let mut capture_at_capacity = filled_history();
+    assert_eq!(drain_history(&mut capture_at_capacity), 10);
+
+    let mut rollback_at_capacity = filled_history();
+    let pending = rollback_at_capacity
+        .restore_closed_pane_at("pane-pending", 2_000)
+        .expect("latest pane should restore");
+    assert_eq!(
+        rollback_at_capacity.rollback_restored_pane_at(pending, 2_001),
+        ClosePaneOutcome::Closed
+    );
+    assert_eq!(drain_history(&mut rollback_at_capacity), 10);
+
+    let mut rollback_over_capacity = filled_history();
+    let pending = rollback_over_capacity
+        .restore_closed_pane_at("pane-pending", 2_000)
+        .expect("latest pane should restore");
+    assert!(rollback_over_capacity.split_focused_pane_right("pane-after-restore"));
+    assert_eq!(
+        rollback_over_capacity.close_pane_at("pane-after-restore", 2_001),
+        ClosePaneOutcome::Closed
+    );
+    assert_eq!(
+        rollback_over_capacity.rollback_restored_pane_at(pending, 2_002),
+        ClosePaneOutcome::Closed
+    );
+    assert_eq!(drain_history(&mut rollback_over_capacity), 10);
+}
+
+#[test]
+fn closed_pane_restore_prefers_agent_resume_and_preserves_scrollback() {
+    let envelope = SessionRestoreEnvelope::from_json(V3_ENVELOPE).unwrap();
+    let mut state = WorkspaceState::from_window_recipe(&envelope.workspace.windows[0]).unwrap();
+    state.apply_agent_event(
+        AuthenticatedAgentEvent {
+            target: AgentTarget::new("window-main", "worklane-main", "pane-agent"),
+            pane_token: "token-pane-agent".to_owned(),
+            event: AgentEvent::parse(
+                br#"{"version":1,"event":"agent.running","agent":{"name":"Codex"},"session":{"id":"agent-session-safe"},"context":{"workingDirectory":"/tmp"}}"#,
+            )
+            .unwrap(),
+        },
+        999,
+    );
+
+    assert_eq!(
+        state.close_pane_with_scrollback_at(
+            "pane-agent",
+            1_000,
+            Some("first line\nsecond line".to_owned())
+        ),
+        ClosePaneOutcome::Closed
+    );
+    let restored = state
+        .restore_closed_pane_at_in_home("pane-restored", 1_001, "/tmp")
+        .expect("agent pane should restore");
+    assert_eq!(
+        restored.prefill_text.as_deref(),
+        Some("codex resume agent-session-safe")
+    );
+    assert_eq!(
+        restored.scrollback_text.as_deref(),
+        Some("first line\nsecond line")
+    );
+    assert!(!restored.original_directory_missing);
+}
+
+#[test]
+fn closed_pane_restore_walks_a_missing_cwd_to_an_existing_ancestor() {
+    let root = std::env::temp_dir().join(format!(
+        "zentty-closed-pane-cwd-{}-{}",
+        std::process::id(),
+        std::thread::current().name().unwrap_or("test")
+    ));
+    let missing = root.join("deleted").join("project");
+    std::fs::create_dir_all(&root).unwrap();
+
+    let mut state = WorkspaceState::new("lane", "pane-a");
+    assert!(state.split_focused_pane_right("pane-b"));
+    assert!(state.configure_pane_launch(
+        "pane-b",
+        Some(missing.to_string_lossy().into_owned()),
+        None
+    ));
+    assert_eq!(
+        state.close_pane_at("pane-b", 1_000),
+        ClosePaneOutcome::Closed
+    );
+    let restored = state
+        .restore_closed_pane_at_in_home("pane-restored", 1_001, "/")
+        .expect("missing-CWD pane should restore");
+    assert_eq!(
+        restored.working_directory.as_deref(),
+        Some(root.to_string_lossy().as_ref())
+    );
+    assert!(restored.original_directory_missing);
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn failed_runtime_restore_can_be_rolled_back_and_retried_without_losing_history() {
     let mut state = WorkspaceState::new("lane", "pane-a");
     assert!(state.split_focused_pane_right("pane-b"));
@@ -738,7 +920,7 @@ fn failed_runtime_restore_can_be_rolled_back_and_retried_without_losing_history(
         .expect("closed pane should be available for the first attempt");
     assert_eq!(first_attempt.pane_id, "pane-runtime-failed");
     assert_eq!(
-        state.rollback_restored_pane_at("pane-runtime-failed", 1_001),
+        state.rollback_restored_pane_at(first_attempt, 1_001),
         ClosePaneOutcome::Closed
     );
     assert_eq!(state.active_pane_ids(), ["pane-a"]);
