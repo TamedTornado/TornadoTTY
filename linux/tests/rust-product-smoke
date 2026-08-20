@@ -13,7 +13,11 @@ terminal_count="${ZENTTY_RUST_TERMINALS:-1}"
 lifecycle_cycles="${ZENTTY_RUST_CYCLES:-1}"
 startup_attempts="${ZENTTY_RUST_STARTUP_ATTEMPTS:-200}"
 async_backend="${ZENTTY_LINUX_ASYNC_BACKEND:-default}"
+physical_input="${ZENTTY_RUST_PHYSICAL_INPUT:-false}"
 [[ "${async_backend}" == auto ]] && async_backend=default
+
+# shellcheck source=linux/tests/lib/product-input
+source "${repo_root}/linux/tests/lib/product-input"
 
 fail() {
     echo "rust-product-smoke: error: $*" >&2
@@ -29,6 +33,8 @@ fail() {
 [[ "${startup_attempts}" =~ ^[1-9][0-9]*$ ]] || fail "invalid startup attempt count"
 [[ "${async_backend}" == default || "${async_backend}" == epoll ||
     "${async_backend}" == io_uring ]] || fail "invalid async backend"
+[[ "${physical_input}" == true || "${physical_input}" == false ]] ||
+    fail "ZENTTY_RUST_PHYSICAL_INPUT must be true or false"
 [[ -x "${product}" ]] || fail "delivered Rust product is not built: ${product}"
 product_command=("${product}")
 if (($# > 0)); then
@@ -81,11 +87,13 @@ trap cleanup EXIT
 
 if [[ "${scenario}" == lifecycle ]]; then
     child_command="printf '\\033]2;zentty-rust-smoke-${backend}\\a'; sleep 0.1"
-elif [[ "${backend}" == x11 ]]; then
-    command -v xdotool >/dev/null || fail "xdotool is required for real X11 input and resize"
-    # The single quotes intentionally defer child-shell expansion.
+elif [[ "${backend}" == x11 || "${physical_input}" == true ]]; then
+    if [[ "${backend}" == x11 ]]; then
+        command -v xdotool >/dev/null || fail "xdotool is required for real X11 input and resize"
+    fi
+    # The escaped dollar intentionally defers child-shell expansion.
     # shellcheck disable=SC2016
-    child_command='IFS= read -r value; [ "$value" = zentty-rust-input ] || exit 44; printf '\''\033]2;zentty-rust-smoke-x11\a'\''; sleep 0.1'
+    child_command="IFS= read -r value; [ \"\$value\" = zentty-rust-input ] || exit 44; printf '\\033]2;zentty-rust-smoke-${backend}\\a'; sleep 0.1"
 else
     child_command="printf '\\033]2;zentty-rust-smoke-wayland\\a'; sleep 0.1"
 fi
@@ -111,27 +119,15 @@ run_cycle() {
 }
 
 run_cycle
-if [[ "${backend}" == x11 && "${scenario}" == single ]]; then
-    window_id=""
-    for _ in $(seq 1 "${startup_attempts}"); do
-        window_id="$(xdotool search --name '^Zentty$' 2>/dev/null | head -1 || true)"
-        if [[ "${window_id}" =~ ^[1-9][0-9]*$ ]] &&
-            grep -Fxq 'zentty-linux: terminal-ready' "${log}"; then
-            break
-        fi
-        sleep 0.05
-    done
-    if [[ ! "${window_id}" =~ ^[1-9][0-9]*$ ]]; then
-        cat "${log}" >&2
-        fail "real Zentty X11 window did not appear"
+if [[ "${scenario}" == single && ("${backend}" == x11 || "${physical_input}" == true) ]]; then
+    zentty_product_prepare_input "${backend}" "${log}" ||
+        fail "controlled ${backend} input did not become ready"
+    if [[ "${backend}" == x11 ]]; then
+        xdotool windowsize --sync "${ZENTTY_PRODUCT_WINDOW_ID}" 820 640
     fi
-    grep -Fxq 'zentty-linux: terminal-ready' "${log}" ||
-        fail "real Ghostty terminal did not establish input readiness"
-    xdotool windowsize --sync "${window_id}" 820 640
-    xdotool windowfocus --sync "${window_id}"
     sleep 0.1
-    xdotool type --window "${window_id}" --delay 5 zentty-rust-input
-    xdotool key --window "${window_id}" Return
+    zentty_product_type "${backend}" zentty-rust-input
+    zentty_product_key "${backend}" Return
 fi
 
 wait_for_cycle() {
