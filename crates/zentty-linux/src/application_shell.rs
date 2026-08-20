@@ -119,6 +119,7 @@ pub(crate) struct ApplicationRuntimes {
     pub(crate) agent: Rc<RefCell<AgentRuntime>>,
     pub(crate) config: AppConfig,
     pub(crate) attention_inbox: Rc<RefCell<zentty_core::AttentionInbox>>,
+    pub(crate) tmux_session: crate::tmux_compat::TmuxCompatSession,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -450,7 +451,7 @@ impl ApplicationShell {
             shortcut_settings_window: None,
             agent_events,
             attention_inbox: Rc::clone(&runtimes.attention_inbox),
-            tmux_compat: default_tmux_product()?,
+            tmux_compat: default_tmux_product(runtimes.tmux_session.clone())?,
             new_window_handler: None,
             move_pane_to_new_window_handler: None,
             move_pane_to_window_worklane_handler: None,
@@ -792,6 +793,19 @@ impl ApplicationShell {
             title,
             self.sidebar_summaries(),
         )
+    }
+
+    pub(crate) fn forget_tmux_worklanes(&mut self) -> Result<(), String> {
+        let worklane_ids = self
+            .state
+            .worklanes()
+            .iter()
+            .map(|worklane| worklane.id.clone())
+            .collect::<Vec<_>>();
+        for worklane_id in worklane_ids {
+            self.tmux_compat.forget_worklane(&worklane_id)?;
+        }
+        Ok(())
     }
 
     pub(crate) fn extract_live_pane_to_new_window(
@@ -3317,6 +3331,11 @@ impl ApplicationShell {
         if !shell_ref.state.close_worklane(worklane_id) {
             return;
         }
+        if let Err(error) = shell_ref.tmux_compat.forget_worklane(worklane_id) {
+            eprintln!(
+                "zentty-linux: tmux-store-cleanup worklane={worklane_id} result=failed detail={error}"
+            );
+        }
         for pane_id in &pane_ids {
             if let Err(error) = shell_ref.remove_live_surface(pane_id) {
                 drop(shell_ref);
@@ -3334,6 +3353,10 @@ impl ApplicationShell {
 
     fn close_pane(shell: &Rc<RefCell<Self>>, pane_id: &str) {
         let mut shell_ref = shell.borrow_mut();
+        let worklane_id = shell_ref
+            .state
+            .worklane_id_for_pane(pane_id)
+            .map(str::to_owned);
         let scrollback_text = shell_ref
             .pane_runtime
             .surface(pane_id)
@@ -3343,6 +3366,26 @@ impl ApplicationShell {
             .close_pane_with_scrollback(pane_id, scrollback_text)
         {
             ClosePaneOutcome::Closed => {
+                let restoration = worklane_id.as_deref().and_then(|worklane_id| {
+                    match shell_ref
+                        .tmux_compat
+                        .complete_external_pane_close(worklane_id, pane_id)
+                    {
+                        Ok(restoration) => restoration,
+                        Err(error) => {
+                            eprintln!(
+                                "zentty-linux: tmux-store-cleanup pane={pane_id} result=failed detail={error}"
+                            );
+                            None
+                        }
+                    }
+                });
+                if let Some(restoration) = restoration {
+                    let _ = shell_ref.state.restore_column_width(
+                        &restoration.leader_pane_id,
+                        f64::from(restoration.width),
+                    );
+                }
                 if let Err(error) = shell_ref.remove_live_surface(pane_id) {
                     drop(shell_ref);
                     Self::report_action_error(shell, ACTION_CLOSE_PANE, &error);
@@ -5036,10 +5079,13 @@ fn next_numeric_identity<'a>(ids: impl Iterator<Item = &'a str>, prefix: &str) -
         .saturating_add(1)
 }
 
-fn default_tmux_product() -> Result<crate::tmux_compat::TmuxCompatProduct, String> {
-    crate::tmux_compat::TmuxCompatProduct::persistent(crate::tmux_store::TmuxStoreFile::new(
-        crate::tmux_store::TmuxStoreFile::default_path()?,
-    ))
+fn default_tmux_product(
+    session: crate::tmux_compat::TmuxCompatSession,
+) -> Result<crate::tmux_compat::TmuxCompatProduct, String> {
+    crate::tmux_compat::TmuxCompatProduct::persistent_in_session(
+        crate::tmux_store::TmuxStoreFile::new(crate::tmux_store::TmuxStoreFile::default_path()?),
+        session,
+    )
 }
 
 fn restored_or_default_window(

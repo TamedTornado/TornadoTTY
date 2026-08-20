@@ -716,6 +716,91 @@ new_window_panes="$(${ZENTTY_CLI_BIN} list panes --window-id "${new_window_id}" 
 [[ "$(jq -r '[.[].id] | unique | length' <<<"${new_window_panes}")" == 4 ]]
 [[ "$(jq -r 'all(.[]; (.id | startswith("pane-window-2")) and (.controlToken | test("^@file:/")))' \
     <<<"${new_window_panes}")" == true ]]
+new_window_worklane_id="$(jq -r '.[0].worklaneID' <<<"${new_window_panes}")"
+[[ -n "${new_window_worklane_id}" && "${new_window_worklane_id}" != worklane-1 ]]
+[[ "$(jq -r --arg worklane "${new_window_worklane_id}" \
+    'all(.[]; .windowID == "window-2" and .worklaneID == $worklane)' \
+    <<<"${new_window_panes}")" == true ]]
+new_window_focus_id="$(jq -r '.[0].id' <<<"${new_window_panes}")"
+new_window_focus_token="$(jq -r '.[0].controlToken' <<<"${new_window_panes}")"
+
+# A pane capability is the routing authority. Forwarded window/worklane values
+# still describe the original child environment and must not override the
+# server-canonical target selected by the second window's token.
+first_tmux_windows="$(${ZENTTY_CLI_BIN} __tmux-compat list-windows -F '#{window_uuid}')"
+second_tmux_windows="$(env ZENTTY_PANE_TOKEN="${new_window_focus_token}" \
+    ${ZENTTY_CLI_BIN} __tmux-compat list-windows -F '#{window_uuid}')"
+[[ "${first_tmux_windows}" == worklane-1 ]]
+[[ "${second_tmux_windows}" == "${new_window_worklane_id}" ]]
+first_tmux_panes="$(${ZENTTY_CLI_BIN} __tmux-compat list-panes -F '#{pane_uuid}')"
+second_tmux_panes="$(env ZENTTY_PANE_TOKEN="${new_window_focus_token}" \
+    ${ZENTTY_CLI_BIN} __tmux-compat list-panes -F '#{pane_uuid}')"
+[[ "${first_tmux_panes}" == pane-1 ]]
+[[ "$(wc -l <<<"${second_tmux_panes}")" == 4 ]]
+while IFS= read -r pane_id; do
+    grep -Fxq "${pane_id}" <<<"${second_tmux_panes}"
+done < <(jq -r '.[].id' <<<"${new_window_panes}")
+
+cross_window_error="${TMPDIR:-/tmp}/zentty-tmux-cross-window.$$"
+if ${ZENTTY_CLI_BIN} __tmux-compat display-message -p \
+    -t "%${new_window_focus_id}" '#{pane_uuid}' 2>"${cross_window_error}"; then
+    printf 'tmux-product-child: first-window token reached pane %s\n' \
+        "${new_window_focus_id}" >&2
+    false
+fi
+grep -Fq 'is unavailable in the routed worklane' "${cross_window_error}" || {
+    cat "${cross_window_error}" >&2
+    false
+}
+if env ZENTTY_PANE_TOKEN="${new_window_focus_token}" \
+    ${ZENTTY_CLI_BIN} __tmux-compat display-message -p -t %pane-1 \
+        '#{pane_uuid}' 2>"${cross_window_error}"; then
+    printf 'tmux-product-child: second-window token reached pane-1\n' >&2
+    false
+fi
+grep -Fq 'is unavailable in the routed worklane' "${cross_window_error}" || {
+    cat "${cross_window_error}" >&2
+    false
+}
+rm -f -- "${cross_window_error}"
+
+# Buffers and wait signals are deliberately instance-scoped in the source
+# contract; pane selection and team anchors are worklane-scoped. Prove both
+# sides of that boundary through separate real CLI processes.
+[[ "$(env ZENTTY_PANE_TOKEN="${new_window_focus_token}" \
+    ${ZENTTY_CLI_BIN} __tmux-compat show-buffer -b agent)" == named-buffer-real ]]
+printf second-window-buffer | env ZENTTY_PANE_TOKEN="${new_window_focus_token}" \
+    ${ZENTTY_CLI_BIN} __tmux-compat set-buffer -b cross-window
+[[ "$(${ZENTTY_CLI_BIN} __tmux-compat show-buffer -b cross-window)" == \
+    second-window-buffer ]]
+env ZENTTY_PANE_TOKEN="${new_window_focus_token}" \
+    ${ZENTTY_CLI_BIN} __tmux-compat wait-for -S cross-window-ready
+${ZENTTY_CLI_BIN} __tmux-compat wait-for --timeout 1 cross-window-ready
+
+new_window_selected_id="$(jq -r '.[1].id' <<<"${new_window_panes}")"
+env ZENTTY_PANE_TOKEN="${new_window_focus_token}" \
+    ${ZENTTY_CLI_BIN} __tmux-compat select-pane -t "%${new_window_selected_id}"
+[[ "$(env ZENTTY_PANE_TOKEN="${new_window_focus_token}" \
+    ${ZENTTY_CLI_BIN} __tmux-compat display-message -p '#{pane_uuid}')" == \
+    "${new_window_selected_id}" ]]
+[[ "$(${ZENTTY_CLI_BIN} __tmux-compat display-message -p '#{pane_uuid}')" == pane-1 ]]
+
+new_window_team_pane="$(env ZENTTY_PANE_TOKEN="${new_window_focus_token}" \
+    ${ZENTTY_CLI_BIN} __tmux-compat split-window -h -d -P -F '#{pane_id}')"
+new_window_team_pane="${new_window_team_pane#%}"
+[[ "${new_window_team_pane}" == pane-window-2* ]]
+[[ "$(${ZENTTY_CLI_BIN} __tmux-compat list-panes -F '#{pane_uuid}')" == pane-1 ]]
+second_tmux_panes="$(env ZENTTY_PANE_TOKEN="${new_window_focus_token}" \
+    ${ZENTTY_CLI_BIN} __tmux-compat list-panes -F '#{pane_uuid}')"
+[[ "$(wc -l <<<"${second_tmux_panes}")" == 5 ]]
+grep -Fxq "${new_window_team_pane}" <<<"${second_tmux_panes}"
+env ZENTTY_PANE_TOKEN="${new_window_focus_token}" \
+    ${ZENTTY_CLI_BIN} __tmux-compat kill-pane -t "%${new_window_team_pane}"
+second_tmux_panes="$(env ZENTTY_PANE_TOKEN="${new_window_focus_token}" \
+    ${ZENTTY_CLI_BIN} __tmux-compat list-panes -F '#{pane_uuid}')"
+[[ "$(wc -l <<<"${second_tmux_panes}")" == 4 ]]
+printf 'tmux-multiwindow=canonical-routing target-rejection shared-buffer isolated-selection-anchor\n' \
+    >>"${ZENTTY_TMUX_PRODUCT_PROBE}"
 ${ZENTTY_CLI_BIN} pane focus --pane-id pane-1
 for _ in {1..100}; do
     windows="$(${ZENTTY_CLI_BIN} list windows --json)"
@@ -724,8 +809,6 @@ for _ in {1..100}; do
 done
 [[ "$(jq -r '.[] | select(.id == "window-1") | .isFocused' <<<"${windows}")" == true ]]
 printf 'cli-stage=selected-original-window\n' >>"${ZENTTY_TMUX_PRODUCT_PROBE}"
-new_window_focus_id="$(jq -r '.[0].id' <<<"${new_window_panes}")"
-new_window_focus_token="$(jq -r '.[0].controlToken' <<<"${new_window_panes}")"
 env ZENTTY_PANE_TOKEN="${new_window_focus_token}" \
     ${ZENTTY_CLI_BIN} pane focus --pane-id "${new_window_focus_id}"
 for _ in {1..100}; do
@@ -787,6 +870,11 @@ if [[ "${ZENTTY_TOPOLOGY_REPRESENTATIVE:-}" == 1 ]]; then
     printf 'Rust tmux compatibility product journey passed: %s representative-topology\n' "${backend}"
     exit 0
 fi
+
+grep -Fxq \
+    'tmux-multiwindow=canonical-routing target-rejection shared-buffer isolated-selection-anchor' \
+    "${fixture_root}/child-probe.log" ||
+    fail "multi-window tmux compatibility receipt is missing"
 
 grep -Fxq 'cli-stage=mid-grid-rollback-validated' "${fixture_root}/child-probe.log" ||
     fail "mid-grid rollback did not preserve exact discovery state"
@@ -961,7 +1049,7 @@ grep -Fxq 'not valid tmux JSON' "${quarantines[0]}" ||
 jq -e '.version == 1 and .buffers.recovered == "recovered-buffer"' \
     "${tmux_store}" >/dev/null || fail "recovered compatibility store is not valid v1 state"
 
-[[ "$(grep -Fxc 'zentty-linux: tmux-command pane=pane-1 worklane=worklane-1 command=DisplayMessage' "${log}" || true)" -eq 3 ]] || {
+[[ "$(grep -Fxc 'zentty-linux: tmux-command pane=pane-1 worklane=worklane-1 command=DisplayMessage' "${log}" || true)" -eq 5 ]] || {
     cat "${log}" >&2
     [[ ! -f "${fixture_root}/child-probe.log" ]] || cat "${fixture_root}/child-probe.log" >&2
     fail "real display-message did not cross the product handler"
@@ -971,14 +1059,16 @@ jq -e '.version == 1 and .buffers.recovered == "recovered-buffer"' \
     fail "real wait-for signal, consume, pending, and timeout requests did not cross the product handler"
 }
 awk '
-    /command=DisplayMessage$/ { displays += 1 }
-    displays == 2 && /command=WaitFor$/ { pending_before_independent_command = 1 }
-    END { exit !(displays == 3 && pending_before_independent_command == 1) }
+    /pane=pane-1 worklane=worklane-1 command=DisplayMessage$/ { displays += 1 }
+    displays == 2 && /pane=pane-1 worklane=worklane-1 command=WaitFor$/ {
+        pending_before_independent_command = 1
+    }
+    END { exit !(displays == 5 && pending_before_independent_command == 1) }
 ' "${log}" || {
     cat "${log}" >&2
     fail "pending wait probe did not precede the independent display command"
 }
-[[ "$(grep -Fxc 'zentty-linux: tmux-command pane=pane-1 worklane=worklane-1 command=ListPanes' "${log}" || true)" -eq 5 ]] || {
+[[ "$(grep -Fxc 'zentty-linux: tmux-command pane=pane-1 worklane=worklane-1 command=ListPanes' "${log}" || true)" -eq 7 ]] || {
     cat "${log}" >&2
     fail "real list-panes did not cross the product handler"
 }

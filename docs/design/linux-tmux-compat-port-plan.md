@@ -1,11 +1,10 @@
 # Linux tmux-compatibility facade port plan
 
-- **Status:** Phases 0–2 and the installed Phase 4/5 boundaries are complete.
-  Phase 3 implements the inventoried command vocabulary and its deferred-pane
-  lifecycle and file-backed compatibility-store lifetime are repaired and
-  qualified. It remains incomplete on the separately explicit multi-window
-  isolation criterion; that behavior cannot be inferred from the current
-  single-window product journey.
+- **Status:** Complete. Phases 0–5, including the deferred-pane lifecycle,
+  file-backed compatibility-store lifetime, and multi-window isolation/scope
+  boundary, are implemented and qualified. The existing staged product actor
+  now routes real tmux CLI subprocesses through pane capabilities from two live
+  GTK windows under controlled X11 and Wayland compositors.
 - **Date:** 2026-08-05
 - **Owner:** [#14 — Linux tmux compatibility and agent-team IPC](https://github.com/TamedTornado/zentty/issues/14)
 - **Parent:** [#1 — production-quality Zentty Linux port](https://github.com/TamedTornado/zentty/issues/1)
@@ -154,9 +153,8 @@ The repair remains inside the existing `TmuxCompatProduct`,
    CWD, Ghostty surface, PTY, capture, focus, and teardown;
 3. implement the smallest typed split/send actions and coordinator operations;
 4. rerun focused mutation and both existing controlled-compositor journeys;
-5. separately resolve the still-explicit multi-window scope and durable-store
-   lifetime criteria. Do not use the deferred-pane repair to declare all of
-   issue #14 complete.
+5. separately resolve the explicit multi-window scope and durable-store
+   lifetime criteria before declaring issue #14 complete.
 
 No new actor, socket, pane model, test product, or orchestration layer is
 permitted for this repair.
@@ -165,16 +163,20 @@ The repair is complete. Focused pure tests and mutation, the extended real
 staged-product journey on X11 and Wayland, and the installed Claude 2.1.201
 journey on X11 and Wayland prove the commandless split, absent PTY, submitted
 launch, direct split command/CWD, current `respawn-pane`, real terminal input,
-capture, focus, teardown, and private-session boundaries. Phase 3 remains open
-only for the separately named multi-window decision. The state-lifetime
+capture, focus, teardown, and private-session boundaries. The state-lifetime
 decision is implemented by the ratified compatibility-store design below and
-its controlled-compositor restart/corruption evidence.
+its controlled-compositor restart/corruption evidence. The existing product
+actor now also creates two live GTK windows and proves token-canonical routing,
+cross-window target rejection, worklane-local selection and team anchors, and
+the source-defined application-instance scope of buffers and wait signals.
 
-Multi-window qualification depends on the live multi-window application
-composition and handoff owned by issue #16. Linux currently constructs one
-`ApplicationShell` per process, so manufacturing a second shell only inside a
-tmux test would create the forbidden alternate-product behavior. GH-14 remains
-open and the feature inventory remains `PARTIAL` until #16 supplies the real
+Multi-window qualification depended on the live multi-window application
+composition and handoff that was delivered by GH-32. The product journey uses
+that public composition to create a second `ApplicationShell`; it does not
+manufacture an alternate shell inside the tmux adapter. GH-14 can therefore
+close and the feature inventory can become `IMPLEMENTED` after the focused
+X11/Wayland journeys pass. The earlier reference to issue #16 as the blocker was
+stale: GH-32 is the completed issue that supplied the real
 window lifecycle and the existing tmux journey can exercise two actual windows.
 
 ### Phase 4 — Staging, discovery, and shell integration

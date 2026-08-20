@@ -110,6 +110,11 @@ sed '/runtime: Rc<RefCell<AgentRuntime>>,/a\    shadow_receiver: std::sync::mpsc
 expect_failure shadow-agent-event-queue "agent event coordinator transport boundary" \
     "ZENTTY_AGENT_EVENTS_SOURCE=${temp_dir}/shadow-agent-event-queue.rs"
 
+sed '/tmux_session: crate::tmux_compat::TmuxCompatSession,/a\    shadow_tmux_session: crate::tmux_compat::TmuxCompatSession,' \
+    "${application_file}" >"${temp_dir}/shadow-tmux-session.rs"
+expect_failure shadow-tmux-session "tmux wait-signal authority" \
+    "ZENTTY_APPLICATION_COORDINATOR_SOURCE=${temp_dir}/shadow-tmux-session.rs"
+
 sed '/struct State {/a\    shadow_apply: Option<ApplyAgents>,' \
     "${agents_settings_file}" >"${temp_dir}/shadow-agents-settings.rs"
 expect_failure shadow-agents-settings-owner "Agents settings write authority" \

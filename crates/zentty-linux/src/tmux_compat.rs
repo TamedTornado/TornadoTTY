@@ -1,4 +1,6 @@
+use std::cell::RefCell;
 use std::collections::BTreeMap;
+use std::rc::Rc;
 use zentty_core::{AgentTarget, PaneState, WorklaneState, WorkspaceState};
 use zentty_tmux_compat::{
     Command, FormatRenderer, PaneTarget, ParsedArguments, SendKeys, StoreError, TeamStore,
@@ -10,11 +12,16 @@ const DEFAULT_LIST_WINDOWS: &str = "#{window_id} #{window_index} #{window_name}"
 const DEFAULT_DISPLAY_MESSAGE: &str = "#{pane_id}";
 const DEFAULT_SPLIT_PRINT: &str = "#{pane_id}";
 
+#[derive(Clone, Default)]
+pub(crate) struct TmuxCompatSession {
+    wait_for: Rc<RefCell<WaitForSignals>>,
+}
+
 #[derive(Default)]
 pub(crate) struct TmuxCompatProduct {
     store: TeamStore,
     persistence: Option<crate::tmux_store::TmuxStoreFile>,
-    wait_for: WaitForSignals,
+    session: TmuxCompatSession,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -79,14 +86,15 @@ pub(crate) struct LayoutPlan {
 }
 
 impl TmuxCompatProduct {
-    pub(crate) fn persistent(
+    pub(crate) fn persistent_in_session(
         persistence: crate::tmux_store::TmuxStoreFile,
+        session: TmuxCompatSession,
     ) -> Result<Self, String> {
         let store = persistence.load()?;
         Ok(Self {
             store,
             persistence: Some(persistence),
-            wait_for: WaitForSignals::default(),
+            session,
         })
     }
 
@@ -95,6 +103,32 @@ impl TmuxCompatProduct {
             self.store = persistence.load()?;
         }
         Ok(())
+    }
+
+    pub(crate) fn complete_external_pane_close(
+        &mut self,
+        worklane_id: &str,
+        pane_id: &str,
+    ) -> Result<Option<KillRestoration>, String> {
+        self.mutate_store(|store| {
+            let leader_pane_id = store
+                .anchor(worklane_id)
+                .map(|anchor| anchor.leader_pane_id.clone());
+            let width = store.remove_pane(worklane_id, pane_id);
+            Ok(width
+                .zip(leader_pane_id)
+                .map(|(width, leader_pane_id)| KillRestoration {
+                    leader_pane_id,
+                    width,
+                }))
+        })
+    }
+
+    pub(crate) fn forget_worklane(&mut self, worklane_id: &str) -> Result<(), String> {
+        self.mutate_store(|store| {
+            store.remove_worklane(worklane_id);
+            Ok(())
+        })
     }
 
     /// Claude's tmux integration may launch a short-lived bootstrap command
@@ -548,15 +582,13 @@ impl TmuxCompatProduct {
     }
 
     fn wait_for(&mut self, arguments: &[String]) -> Result<String, (&'static str, String)> {
+        let mut wait_for = self.session.wait_for.borrow_mut();
         match WaitForAction::parse(arguments) {
-            Ok(WaitForAction::Signal(name)) => self
-                .wait_for
+            Ok(WaitForAction::Signal(name)) => wait_for
                 .signal(name)
                 .map(|()| String::new())
                 .map_err(|message| ("wait_capacity", message.to_owned())),
-            Ok(WaitForAction::Wait { name, .. }) if self.wait_for.consume(&name) => {
-                Ok(String::new())
-            }
+            Ok(WaitForAction::Wait { name, .. }) if wait_for.consume(&name) => Ok(String::new()),
             Ok(WaitForAction::Wait { .. }) => {
                 Err(("wait_pending", "wait-for signal is not pending".to_owned()))
             }
@@ -604,6 +636,7 @@ impl TmuxCompatProduct {
             .iter()
             .map(|(_, pane, _)| pane.id.clone())
             .collect::<Vec<_>>();
+        validate_explicit_pane_target(parsed.value("-t"), &pane_ids)?;
         let explicit = parsed
             .value("-t")
             .map(|selector| PaneTarget::resolve(Some(selector), &pane_ids, &target.pane_id));
@@ -644,6 +677,7 @@ impl TmuxCompatProduct {
             .map(|(_, pane, _)| pane.id.clone())
             .collect::<Vec<_>>();
         let parsed = parsed(arguments, &["-t", "-T"], &["-P"]);
+        validate_explicit_pane_target(parsed.value("-t"), &pane_ids)?;
         let pane_id = PaneTarget::resolve(parsed.value("-t"), &pane_ids, &target.pane_id);
         self.mutate_store(|store| {
             store.record_active_pane(&target.worklane_id, &pane_id);
@@ -900,8 +934,8 @@ fn failure(code: &'static str, message: impl Into<String>) -> TmuxCompatReply {
 #[cfg(test)]
 mod tests {
     use super::{
-        KillRestoration, LayoutPlan, SplitDisposition, TmuxCompatProduct, TmuxProductAction,
-        shell_wrapped_command,
+        KillRestoration, LayoutPlan, SplitDisposition, TmuxCompatProduct, TmuxCompatSession,
+        TmuxProductAction, shell_wrapped_command,
     };
     use zentty_core::AgentTarget;
     use zentty_core::WorkspaceState;
@@ -1016,6 +1050,59 @@ mod tests {
     }
 
     #[test]
+    fn display_and_selection_reject_explicit_panes_outside_the_canonical_worklane() {
+        let mut product = TmuxCompatProduct::default();
+        let mut state = workspace();
+        for command in ["display-message", "select-pane"] {
+            let reply = product.handle(
+                &mut state,
+                &target("pane-1"),
+                &request(command, &["-t", "%pane-3"]),
+            );
+            let error = reply.error().expect("cross-worklane target must fail");
+            assert_eq!(error.code(), "target_not_found", "{command}");
+            assert_eq!(
+                error.message(),
+                "pane %pane-3 is unavailable in the routed worklane",
+                "{command}"
+            );
+        }
+
+        let display = product.handle(
+            &mut state,
+            &target("pane-1"),
+            &request("display-message", &["-p", "#{pane_id}"]),
+        );
+        assert_eq!(display.stdout(), Some("%pane-1\n"));
+
+        assert!(
+            product
+                .handle(
+                    &mut state,
+                    &target("pane-1"),
+                    &request("select-pane", &["-t", "%pane-2"]),
+                )
+                .is_ok()
+        );
+        assert_eq!(product.store.active_pane("lane-1"), Some("pane-2"));
+        assert_eq!(
+            product
+                .complete_external_pane_close("lane-1", "pane-2")
+                .unwrap(),
+            None
+        );
+        assert_eq!(product.store.active_pane("lane-1"), None);
+
+        let _ = product
+            .store
+            .record_split("lane-2", "pane-3", "teammate", false, Some(640));
+        assert!(product.store.anchor("lane-2").is_some());
+        product.forget_worklane("lane-2").unwrap();
+        assert!(product.store.anchor("lane-2").is_none());
+        assert_eq!(product.store.active_pane("lane-2"), None);
+    }
+
+    #[test]
     fn intentional_noops_and_unsupported_or_pending_commands_are_explicit() {
         let mut product = TmuxCompatProduct::default();
         let mut state = workspace();
@@ -1076,6 +1163,45 @@ mod tests {
             &request("wait-for", &["agent-ready"]),
         );
         assert_eq!(isolated.error().unwrap().code(), "wait_pending");
+    }
+
+    #[test]
+    fn one_application_session_shares_wait_signals_across_window_products() {
+        let session = TmuxCompatSession::default();
+        let mut first = TmuxCompatProduct {
+            session: session.clone(),
+            ..TmuxCompatProduct::default()
+        };
+        let mut second = TmuxCompatProduct {
+            session,
+            ..TmuxCompatProduct::default()
+        };
+        let mut state = workspace();
+
+        assert!(
+            second
+                .handle(
+                    &mut state,
+                    &target("pane-3"),
+                    &request("wait-for", &["-S", "window-ready"]),
+                )
+                .is_ok()
+        );
+        assert!(
+            first
+                .handle(
+                    &mut state,
+                    &target("pane-1"),
+                    &request("wait-for", &["window-ready"]),
+                )
+                .is_ok()
+        );
+        let consumed = second.handle(
+            &mut state,
+            &target("pane-3"),
+            &request("wait-for", &["window-ready"]),
+        );
+        assert_eq!(consumed.error().unwrap().code(), "wait_pending");
     }
 
     #[test]
@@ -1473,7 +1599,9 @@ mod tests {
     #[test]
     fn persistent_product_loads_on_construction_and_refreshes_external_mutations() {
         let fixture = PersistentStoreFixture::new();
-        let mut first = TmuxCompatProduct::persistent(fixture.store()).unwrap();
+        let mut first =
+            TmuxCompatProduct::persistent_in_session(fixture.store(), TmuxCompatSession::default())
+                .unwrap();
         let mut state = workspace();
         let set = first.handle(
             &mut state,
@@ -1482,7 +1610,9 @@ mod tests {
         );
         assert_eq!(set.stdout(), Some(""));
 
-        let mut second = TmuxCompatProduct::persistent(fixture.store()).unwrap();
+        let mut second =
+            TmuxCompatProduct::persistent_in_session(fixture.store(), TmuxCompatSession::default())
+                .unwrap();
         let loaded = second.handle(
             &mut state,
             &target("pane-1"),

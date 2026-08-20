@@ -235,6 +235,22 @@ fn source_team_store_records_compatibility_selection_without_a_split() {
 }
 
 #[test]
+fn removing_a_worklane_clears_only_its_scoped_compatibility_state() {
+    let mut store = TeamStore::default();
+    let _ = store.record_split("lane-1", "pane-1", "pane-2", false, Some(800));
+    let _ = store.record_split("lane-2", "pane-3", "pane-4", false, Some(640));
+    store.set_buffer("shared", "instance-buffer").unwrap();
+
+    store.remove_worklane("lane-1");
+
+    assert!(store.anchor("lane-1").is_none());
+    assert_eq!(store.active_pane("lane-1"), None);
+    assert_eq!(store.anchor("lane-2").unwrap().leader_pane_id, "pane-3");
+    assert_eq!(store.active_pane("lane-2"), Some("pane-4"));
+    assert_eq!(store.buffer(Some("shared")), "instance-buffer");
+}
+
+#[test]
 fn named_buffers_are_bounded_and_default_reads_use_sorted_source_order() {
     let mut store = TeamStore::default();
     store.set_buffer("z-last", "last").unwrap();

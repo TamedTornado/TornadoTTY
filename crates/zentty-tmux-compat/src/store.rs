@@ -176,6 +176,11 @@ impl TeamStore {
             .insert(worklane_id.to_owned(), pane_id.to_owned());
     }
 
+    pub fn remove_worklane(&mut self, worklane_id: &str) {
+        self.anchors.remove(worklane_id);
+        self.active_pane_ids.remove(worklane_id);
+    }
+
     #[must_use]
     pub fn buffer(&self, name: Option<&str>) -> &str {
         let selected = name.or_else(|| self.buffers.keys().next().map(String::as_str));

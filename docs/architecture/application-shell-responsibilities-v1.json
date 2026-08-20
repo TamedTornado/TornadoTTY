@@ -136,7 +136,7 @@
       "status": "existing",
       "planned_module": "crates/zentty-linux/src/application_shell/tmux_runtime.rs and crates/zentty-linux/src/tmux_store.rs",
       "tracking": "GH-14",
-      "responsibility": "The already extracted bridge from the pure tmux compatibility model to the single product workspace and pane runtime, plus the one locked XDG file policy for source-compatible durable tmux state."
+      "responsibility": "The already extracted bridge from the pure tmux compatibility model to each window-local product workspace and pane runtime, plus the one locked XDG file policy for source-compatible durable tmux state and one application-session authority for source-scoped volatile wait signals."
     },
     {
       "id": "server_runtime_coordinator",
@@ -323,6 +323,10 @@
     {
       "owner": "persistence_coordinator",
       "methods": ["window_recipe"]
+    },
+    {
+      "owner": "existing_tmux_coordinator",
+      "methods": ["forget_tmux_worklanes"]
     },
     {
       "owner": "task_runner_coordinator",
@@ -617,6 +621,7 @@
     "open_with_catalog": {"owner":"open_with_coordinator","maximum_instances_per_window":1},
     "bookmark_store": {"owner":"bookmark_coordinator","maximum_instances_per_window":1},
     "tmux_compatibility_state": {"owner":"existing_tmux_coordinator","maximum_instances_per_window":1},
+    "tmux_wait_signal_state": {"owner":"application_runtime","maximum_instances_per_process":1},
     "glib_scheduling": {"owner":"application_runtime","kind":"default-glib-main-context","maximum_instances_per_process":1}
   },
   "construction_order": [

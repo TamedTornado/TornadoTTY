@@ -29,6 +29,7 @@ pub(crate) struct ApplicationCoordinator {
     self_handle: Weak<RefCell<ApplicationCoordinator>>,
     runtime: GhosttyRuntime,
     agent_runtime: Rc<RefCell<AgentRuntime>>,
+    tmux_session: crate::tmux_compat::TmuxCompatSession,
     attention_inbox: Rc<RefCell<zentty_core::AttentionInbox>>,
     desktop_notifications: crate::notification_service::AttentionNotificationService,
     fleet_snapshot: Vec<zentty_core::FleetPaneSnapshot>,
@@ -100,6 +101,7 @@ impl ApplicationCoordinator {
             self_handle: Weak::new(),
             runtime: runtime.clone(),
             agent_runtime,
+            tmux_session: crate::tmux_compat::TmuxCompatSession::default(),
             attention_inbox: Rc::new(RefCell::new(zentty_core::AttentionInbox::default())),
             desktop_notifications: crate::notification_service::AttentionNotificationService::new(),
             fleet_snapshot: Vec::new(),
@@ -291,12 +293,13 @@ impl ApplicationCoordinator {
     ) -> Result<Rc<RefCell<ApplicationShell>>, String> {
         let id = snapshot.window.id.clone();
         let restored_window = (!snapshot.window.worklanes.is_empty()).then_some(snapshot.window);
-        let (runtime, agent_runtime, attention_inbox, command, config, main_loop) = {
+        let (runtime, agent_runtime, attention_inbox, tmux_session, command, config, main_loop) = {
             let coordinator = coordinator.borrow();
             (
                 coordinator.runtime.clone(),
                 Rc::clone(&coordinator.agent_runtime),
                 Rc::clone(&coordinator.attention_inbox),
+                coordinator.tmux_session.clone(),
                 coordinator.command.clone(),
                 coordinator.config.clone(),
                 coordinator.main_loop.clone(),
@@ -307,6 +310,7 @@ impl ApplicationCoordinator {
             agent: agent_runtime,
             config,
             attention_inbox,
+            tmux_session,
         };
         let shell = ApplicationShell::new(
             &runtimes,
@@ -940,6 +944,8 @@ impl ApplicationCoordinator {
                 active_window_id: Some(id.to_owned()),
             });
             self.shutting_down = true;
+        } else {
+            shell.borrow_mut().forget_tmux_worklanes()?;
         }
         self.teardown_shell(id, &shell)?;
         eprintln!(
