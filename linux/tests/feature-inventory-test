@@ -44,9 +44,9 @@ jq -e '
     .result == "PASS" and
     .entry_count == 60 and
     .classifications.REQUIRED_INITIAL_RELEASE == 34 and
-    .implementation_statuses.IMPLEMENTED == 23 and
-    .implementation_statuses.PARTIAL == 23 and
-    .implementation_statuses.NOT_IMPLEMENTED == 14 and
+    .implementation_statuses.IMPLEMENTED == 25 and
+    .implementation_statuses.PARTIAL == 22 and
+    .implementation_statuses.NOT_IMPLEMENTED == 13 and
     .evidence.app_commands == 70 and
     .evidence.pane_commands == 33 and
     .evidence.settings_sections == 9 and
@@ -56,6 +56,17 @@ jq -e '
 ' "${temp_dir}/summary.json" >/dev/null || {
     cat "${temp_dir}/summary.json" >&2
     echo "feature-inventory-test: machine summary is incomplete or incorrect" >&2
+    exit 1
+}
+jq -e '
+    [.entries[] | select(.linux_owner_issue == 22)] |
+    length == 2 and all(.[]; .implementation_status == "IMPLEMENTED") and
+    (map(select(.id == "cli.topology-control-grid-notify"))[0].test_plan |
+        contains("All 40 source commands")) and
+    (map(select(.id == "shell.environment-integration"))[0].test_plan |
+        contains("byte-identical user files"))
+' "${source_inventory}" >/dev/null || {
+    echo "feature-inventory-test: GH22 CLI/shell closeout evidence regressed" >&2
     exit 1
 }
 jq -e '

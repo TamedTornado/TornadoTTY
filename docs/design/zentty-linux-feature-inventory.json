@@ -559,10 +559,10 @@
       "origin": "PORT_PARITY",
       "user_impact": "Scriptable pane-aware control and hooks are advertised product behavior and the transport used by agent integrations, notifications and teams.",
       "linux_owner_issue": 22,
-      "implementation_status": "PARTIAL",
+      "implementation_status": "IMPLEMENTED",
       "focused_tests": ["docs/design/zentty-cli-source-contract.json", "linux/tests/cli-source-contract", "crates/zentty-agent-ipc/tests/product_cli.rs", "crates/zentty-agent-ipc/tests/integration_cli.rs"],
       "product_scenarios": ["linux/tests/rust-cli-contract", "linux/tests/rust-tmux-compat-product", "linux/tests/rust-development-servers", "linux/tests/rust-notifications-settings"],
-      "test_plan": "Maintain exact source-command closure in the machine-readable CLI contract. Invoke the real staged CLI as a subprocess into a running product over the authenticated Unix socket on controlled X11 and Wayland, validate versioned JSON against schemas and text against reviewed goldens, exercise command families/aliases/selectors/errors against real PTYs and windows, and mutation-test parsing/auth/output dispatch. Remaining source agent IPC and managed-launch cases stay explicit under GH-46 and GH-47.",
+      "test_plan": "Maintain exact source-command closure in the machine-readable CLI contract. Invoke the real staged CLI as a subprocess into a running product over the authenticated Unix socket on controlled X11 and Wayland, validate versioned JSON against schemas and text against reviewed goldens, exercise command families/aliases/selectors/errors against real PTYs and windows, and mutation-test parsing/auth/output dispatch. All 40 source commands are implemented or carry the documented Linux platform alternative; downstream agent context persistence remains separately explicit in the GH-46 agent-event contract rather than being misclassified as a CLI gap.",
       "alternative_or_blocker": null
     },
     {
@@ -575,10 +575,10 @@
       "origin": "PORT_PARITY",
       "user_impact": "CWD, hooks, CLI routing and clean prompts fail if pane shell integration is incomplete or pollutes terminal input/output.",
       "linux_owner_issue": 22,
-      "implementation_status": "NOT_IMPLEMENTED",
-      "focused_tests": [],
-      "product_scenarios": [],
-      "test_plan": "Launch real Bash/Zsh/Fish/Nushell panes, capture exact startup bytes and environment, change CWD/nest shells/run management commands, and assert routing metadata without stray sequences; mutate shell policy/escaping.",
+      "implementation_status": "IMPLEMENTED",
+      "focused_tests": ["linux/tests/lib/shell-binaries-test", "linux/tests/staged-shell-integration", "crates/zentty-linux/src/agent_runtime.rs"],
+      "product_scenarios": ["linux/tests/rust-cli-contract"],
+      "test_plan": "Launch real Bash, Zsh, Fish, and Nushell processes in staged real Ghostty panes under controlled X11 and Wayland; capture exact startup bytes and environment, change CWD, nest shells, run management commands, assert authenticated routing metadata and byte-identical user files, and reject missing or unsupported shell prerequisites rather than skipping them.",
       "alternative_or_blocker": null
     },
     {

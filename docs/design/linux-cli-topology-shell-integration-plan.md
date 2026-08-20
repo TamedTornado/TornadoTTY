@@ -1,7 +1,9 @@
 # Linux Zentty CLI, topology, and shell-integration closure plan
 
 - **Tracking:** GH-22
-- **Status:** implementation approved; tests precede production routing
+- **Status:** Complete. GH-42 through GH-49 and cross-epic dependencies GH-9,
+  GH-10, GH-14, and GH-32 are closed; the two GH-22-owned inventory features
+  are implemented and backed by existing controlled real-product journeys.
 - **Source authority:** `ZenttyCLI/`, `docs/cli.md`, `PaneIPCHandler`, and
   `DiscoveryIPCHandler` in the retained macOS source
 
@@ -74,7 +76,9 @@ silently succeed or disappear from help and qualification.
 7. Mutation-test parsing, authorization, selector resolution, grid planning,
    and output dispatch with the repository's copy-safe mutation policy.
 8. Run focused checks continuously and full local qualification once after the
-   final diff review.
+   final implementation diff review. The child-issue qualification already
+   satisfied this gate; the later ledger-only epic closeout does not rerun the
+   entire application matrix.
 
 ## Closure criteria
 
@@ -89,3 +93,19 @@ silently succeed or disappear from help and qualification.
   remaining environmental limitation.
 - GH-22 closes only after every presently executable cell passes. Full Linux
   qualification is not claimed while unrelated non-PASS cells remain.
+
+## Closure evidence
+
+The machine-readable source contract contains all 40 source CLI commands: 39
+are `IMPLEMENTED` and the macOS-only blur command has the documented Linux
+`PLATFORM_ALTERNATIVE`. Hidden `ipc` accepts and transports every inventoried
+source form; the separate agent-event contract remains authoritative for its
+explicit downstream launch-context persistence boundary.
+
+The authoritative matrix contains PASS cells for the full real staged CLI on
+controlled X11 and Wayland, four standalone staged real-shell contracts, and
+real Ghostty-pane Bash, Zsh, Fish, and Nushell journeys on both compositors.
+All eight GH-22 children ran their focused unit, negative, mutation, transport,
+and real-product evidence before closure. The 2026-08-20 epic reconciliation
+uses those existing actors and does not add another socket, topology model,
+shell layer, or test harness.
