@@ -25,6 +25,7 @@
     "ghostty-api-audit-inventory",
     "build-debug",
     "fractional-scale-wayland",
+    "scale-xwayland",
     "physical-key-x11",
     "product-boundary-wayland",
     "product-boundary-x11",

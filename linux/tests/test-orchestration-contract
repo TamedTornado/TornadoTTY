@@ -175,6 +175,18 @@ require "Wayland fractional scaling is not pinned to its controlled mixed-output
         (.command | contains("linux/tests/rust-wayland-scaling"))
     ' "${matrix}"
 
+require "Xwayland scaling is not pinned to its owned controlled compositor journey" \
+    jq -e '
+        .cells[] | select(.id == "scale-xwayland") |
+        .status == "PASS" and .display == "x11" and .optimize == "both" and
+        .terminals == "multi" and
+        .environment_profile == "nested-xwayland-scaling-v1" and
+        (.depends_on | sort) == ["build-debug","build-release"] and
+        (.command | contains("GDK_BACKEND=x11")) and
+        (.command | contains("ZENTTY_COMPOSITOR_SCALING_BACKEND=xwayland")) and
+        (.command | contains("linux/tests/rust-wayland-scaling"))
+    ' "${matrix}"
+
 # CLI compatibility is a real staged-product boundary on each GTK backend,
 # not a parser-only claim or an assumption about the developer desktop.
 # shellcheck disable=SC2016

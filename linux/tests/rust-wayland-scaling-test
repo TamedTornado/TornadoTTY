@@ -17,12 +17,20 @@ output="$(
         ZENTTY_DEBUG_BINARY=/bin/true "${subject}" 2>&1 || true
 )"
 grep -Fq 'controlled mixed-scale Wayland session is required' <<<"${output}" ||
-    fail "ambient Wayland rejection is absent"
+    grep -Fq 'controlled mixed-scale compositor session is required' <<<"${output}" ||
+        fail "ambient compositor rejection is absent"
 
+# These are literal source-contract fragments, not shell expansions.
+# shellcheck disable=SC2016
 for contract in \
     'wlr-randr --output X11-1 --scale 1.5' \
     'preferred_scale(180)' \
     'preferred_scale(240)' \
+    'owned Xwayland scaling session' \
+    'X11-1 connected 682x512' \
+    'No current owner for _XSETTINGS_S0 selection' \
+    'unexpectedly published X resource DPI' \
+    'backend=${scaling_backend}' \
     'single-baseline' \
     'multi-baseline' \
     'fractional-1.5' \
@@ -33,4 +41,4 @@ for contract in \
         fail "missing scaling contract: ${contract}"
 done
 
-echo "Rust Wayland scaling harness tests passed: isolation, 1x/1.5x/2x, Debug/ReleaseSafe, single/multi, PTY, SIGWINCH, pointer"
+echo "Rust compositor scaling harness tests passed: Wayland/Xwayland isolation, 1x/1.5x/2x, Debug/ReleaseSafe, single/multi, PTY, SIGWINCH, pointer"

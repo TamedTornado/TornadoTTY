@@ -5,7 +5,8 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 harness="${repo_root}/linux/tests/nested-wayland-input"
 report="$(mktemp)"
 output="$(mktemp)"
-trap 'rm -f -- "${report}" "${output}"' EXIT
+malformed_report="$(mktemp)"
+trap 'rm -f -- "${report}" "${output}" "${malformed_report}"' EXIT
 
 fail() {
     cat "${output}" >&2 2>/dev/null || true
@@ -17,6 +18,28 @@ for dependency in jq sha256sum stat date; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
 [[ -x "${harness}" ]] || fail "input-capable Wayland harness is missing"
+
+set +e
+ZENTTY_NESTED_WAYLAND_INPUT_COMPOSITOR=labwc \
+    ZENTTY_NESTED_WAYLAND_XWAYLAND_PROFILE=1 "${harness}" true \
+    >"${output}" 2>&1
+invalid_status=$?
+set -e
+if [[ "${invalid_status}" -ne 64 ]] ||
+    ! grep -Fxq 'nested-wayland-input: error: Xwayland profile requires the labwc scaling profile' \
+        "${output}"; then
+    fail "invalid Xwayland profile combination was not rejected"
+fi
+
+set +e
+ZENTTY_NESTED_WAYLAND_XWAYLAND_PROFILE=2 "${harness}" true >"${output}" 2>&1
+invalid_status=$?
+set -e
+if [[ "${invalid_status}" -ne 64 ]] ||
+    ! grep -Fxq 'nested-wayland-input: error: ZENTTY_NESTED_WAYLAND_XWAYLAND_PROFILE must be 0 or 1' \
+        "${output}"; then
+    fail "invalid Xwayland profile value was not rejected"
+fi
 
 # shellcheck disable=SC1091
 source "${repo_root}/linux/tests/lib/controlled-environment"
@@ -120,7 +143,42 @@ jq -e '
     any(.server.outputs[]; .name == "X11-2" and .position == "1024,0" and .scale == 2)
 ' "${report}" >/dev/null || fail "labwc scaling protocol or output proof is incomplete"
 
+started_at="$(date +%s)"
+# shellcheck disable=SC2016
+xwayland_child='test "${GDK_BACKEND:-}" = wayland && test "${DISPLAY:-}" = "${ZENTTY_NESTED_XWAYLAND_DISPLAY:-missing}" && test "${ZENTTY_NESTED_XWAYLAND_PID:-}" -gt 0 && xdpyinfo | grep -F "dimensions:    1536x768 pixels" >/dev/null && test "$(xrandr --current | grep -c " connected ")" -eq 2'
+ZENTTY_NESTED_WAYLAND_INPUT_COMPOSITOR=labwc \
+    ZENTTY_NESTED_WAYLAND_SCALING_PROFILE=1 \
+    ZENTTY_NESTED_WAYLAND_XWAYLAND_PROFILE=1 \
+    ZENTTY_NESTED_WAYLAND_INPUT_REPORT="${report}" \
+    "${harness}" bash -c "${xwayland_child}" >"${output}" 2>&1 ||
+    fail "real labwc-owned Xwayland environment failed"
+grep -Fxq \
+    'nested-wayland-input: READY private-labwc-x11-nested backend=wayland software-renderer=1 outer-x11-input=1 xdg-activation=1 mixed-scale-outputs=2 owned-xwayland=1' \
+    "${output}" || fail "labwc Xwayland readiness receipt is missing"
+expected_command="$(jq -cn --arg child "${xwayland_child}" '["bash","-c",$child]')"
+zentty_controlled_environment_validate_report \
+    "${report}" "${harness}" wayland 0 "${expected_command}" "${started_at}" 900 \
+    >/dev/null || fail "machine-readable labwc Xwayland receipt was rejected"
+jq -e '
+    .server.name == "labwc" and .server.xwayland.display != "" and
+    .server.xwayland.pid > 0 and .server.xwayland.process_group > 0 and
+    .server.xwayland.binary_path == "/usr/bin/Xwayland" and
+    (.server.xwayland.binary_sha256 | test("^[0-9a-f]{64}$")) and
+    (.server.xwayland.command_sha256 | test("^[0-9a-f]{64}$")) and
+    .server.xwayland.transport == "shm" and
+    .server.xwayland.root_geometry == "1536x768" and
+    (.server.xwayland.version | length) > 0 and
+    (.server.xwayland.xdpyinfo_sha256 | test("^[0-9a-f]{64}$")) and
+    (.server.xwayland.randr_sha256 | test("^[0-9a-f]{64}$"))
+' "${report}" >/dev/null || fail "labwc Xwayland identity or geometry proof is incomplete"
+jq 'del(.server.xwayland.command_sha256)' "${report}" >"${malformed_report}"
+if zentty_controlled_environment_validate_report \
+    "${malformed_report}" "${harness}" wayland 0 "${expected_command}" \
+    "${started_at}" 900 >/dev/null 2>&1; then
+    fail "Xwayland receipt without command identity was accepted"
+fi
+
 after_roots="$(find /tmp -maxdepth 1 -type d -name 'zwi.*' -printf '%f\n' | sort)"
 [[ "${after_roots}" == "${before_roots}" ]] || fail "controlled runtime root leaked"
 
-echo "Nested Wayland input tests passed: Cage/Weston/labwc, Xvfb transport, Pixman, virtual keyboard/outer input, xdg activation, mixed scaling, isolation, cleanup"
+echo "Nested Wayland input tests passed: Cage/Weston/labwc, Xvfb transport, Pixman, virtual keyboard/outer input, xdg activation, mixed scaling, owned Xwayland, isolation, cleanup"

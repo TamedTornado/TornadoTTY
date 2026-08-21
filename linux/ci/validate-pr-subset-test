@@ -51,7 +51,9 @@ expect_matrix_rejected selected-status-drift \
     '(.cells[] | select(.id == "physical-key-x11")).status = "BLOCKED" | (.cells[] | select(.id == "physical-key-x11")).prerequisite = "fixture"'
 expect_matrix_rejected scaling-contract-drift \
     '(.cells[] | select(.id == "fractional-scale-wayland")).status = "PASS" | (.cells[] | select(.id == "fractional-scale-wayland")).command = "true" | (.cells[] | select(.id == "fractional-scale-wayland")).environment_profile = "nested-wayland-input-v1"'
+expect_matrix_rejected xwayland-scaling-contract-drift \
+    '(.cells[] | select(.id == "scale-xwayland")).command = "true" | (.cells[] | select(.id == "scale-xwayland")).environment_profile = "nested-x11-v1"'
 expect_matrix_rejected stale-xfail \
     '(.cells[] | select(.id == "ghostty-async-backend-abi-representation")).status = "PASS"'
 
-echo "validate-pr-subset-test: PASS negatives=missing+unknown+duplicate+claim+gap+support+order+coverage+status+scaling-contract+stale-xfail"
+echo "validate-pr-subset-test: PASS negatives=missing+unknown+duplicate+claim+gap+support+order+coverage+status+scaling-contracts+stale-xfail"

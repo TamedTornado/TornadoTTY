@@ -3,8 +3,13 @@ set -euo pipefail
 
 readonly compositor="${ZENTTY_NESTED_WAYLAND_INPUT_COMPOSITOR:-cage}"
 readonly scaling_profile="${ZENTTY_NESTED_WAYLAND_SCALING_PROFILE:-0}"
+readonly xwayland_profile="${ZENTTY_NESTED_WAYLAND_XWAYLAND_PROFILE:-0}"
 [[ "${scaling_profile}" == 0 || "${scaling_profile}" == 1 ]] || {
     echo "nested-wayland-input: error: ZENTTY_NESTED_WAYLAND_SCALING_PROFILE must be 0 or 1" >&2
+    exit 64
+}
+[[ "${xwayland_profile}" == 0 || "${xwayland_profile}" == 1 ]] || {
+    echo "nested-wayland-input: error: ZENTTY_NESTED_WAYLAND_XWAYLAND_PROFILE must be 0 or 1" >&2
     exit 64
 }
 case "${compositor}" in
@@ -18,13 +23,22 @@ if [[ "${scaling_profile}" == 1 && "${compositor}" != labwc ]]; then
     echo "nested-wayland-input: error: scaling profile requires labwc" >&2
     exit 64
 fi
+if [[ "${xwayland_profile}" == 1 &&
+    ("${compositor}" != labwc || "${scaling_profile}" != 1) ]]; then
+    echo "nested-wayland-input: error: Xwayland profile requires the labwc scaling profile" >&2
+    exit 64
+fi
 case "${compositor}" in
     cage)
         readonly ready_marker="nested-wayland-input: READY private-cage-x11-nested backend=wayland software-renderer=1 virtual-keyboard=1"
         ;;
     labwc)
         if [[ "${scaling_profile}" == 1 ]]; then
-            readonly ready_marker="nested-wayland-input: READY private-labwc-x11-nested backend=wayland software-renderer=1 outer-x11-input=1 xdg-activation=1 mixed-scale-outputs=2"
+            if [[ "${xwayland_profile}" == 1 ]]; then
+                readonly ready_marker="nested-wayland-input: READY private-labwc-x11-nested backend=wayland software-renderer=1 outer-x11-input=1 xdg-activation=1 mixed-scale-outputs=2 owned-xwayland=1"
+            else
+                readonly ready_marker="nested-wayland-input: READY private-labwc-x11-nested backend=wayland software-renderer=1 outer-x11-input=1 xdg-activation=1 mixed-scale-outputs=2"
+            fi
         else
             readonly ready_marker="nested-wayland-input: READY private-labwc-x11-nested backend=wayland software-renderer=1 outer-x11-input=1 xdg-activation=1"
         fi
@@ -137,14 +151,34 @@ if [[ "${1:-}" == --private-wayland-input-inner ]]; then
     <keybind key="F1"><action name="MoveToOutput" direction="left" /></keybind>
     <keybind key="F2"><action name="MoveToOutput" direction="right" /></keybind>
     <keybind key="F3"><action name="Maximize" /></keybind>
+    <keybind key="F4"><action name="ToggleMaximize" /></keybind>
   </keyboard>
 </labwc_config>
 LABWC_CONFIG
         fi
+        labwc_command=(labwc --config-dir "${run_root}/labwc-config")
+        if [[ "${xwayland_profile}" == 1 ]]; then
+            xwayland_binary="$(command -v Xwayland)"
+            [[ -x "${xwayland_binary}" ]] || fail "reviewed Xwayland binary is unavailable"
+            cat >"${run_root}/Xwayland-shm" <<XWAYLAND_SHM
+#!/usr/bin/env bash
+exec "${xwayland_binary}" "\$@" -shm
+XWAYLAND_SHM
+            chmod +x "${run_root}/Xwayland-shm"
+            cat >"${run_root}/labwc-xwayland-startup" <<XWAYLAND_STARTUP
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "\${DISPLAY:?}" >"${run_root}/xwayland.display"
+XWAYLAND_STARTUP
+            chmod +x "${run_root}/labwc-xwayland-startup"
+            labwc_command+=(--startup "${run_root}/labwc-xwayland-startup")
+        fi
         labwc_environment=(WLR_BACKENDS=x11 WLR_RENDERER=pixman)
+        [[ "${xwayland_profile}" == 0 ]] ||
+            labwc_environment+=(WLR_XWAYLAND="${run_root}/Xwayland-shm")
         [[ "${scaling_profile}" == 0 ]] || labwc_environment+=(WLR_X11_OUTPUTS=2)
         setsid env "${labwc_environment[@]}" \
-            labwc --config-dir "${run_root}/labwc-config" \
+            "${labwc_command[@]}" \
             >"${compositor_log}" 2>&1 &
     fi
     compositor_pid=$!
@@ -153,7 +187,10 @@ LABWC_CONFIG
     for _ in {1..300}; do
         socket_path="$(find "${XDG_RUNTIME_DIR}" -maxdepth 1 -type s -name 'wayland-*' -print -quit)"
         [[ -n "${socket_path}" ]] && break
-        pid_is_running "${compositor_pid}" || fail "${compositor} exited before creating its private socket"
+        if ! pid_is_running "${compositor_pid}"; then
+            [[ "${xwayland_profile}" == 0 ]] || tail -80 "${compositor_log}" >&2
+            fail "${compositor} exited before creating its private socket"
+        fi
         sleep 0.02
     done
     [[ -n "${socket_path}" && -S "${socket_path}" && ! -L "${socket_path}" ]] ||
@@ -212,6 +249,61 @@ LABWC_CONFIG
         ' <<<"${outputs_json}" >/dev/null ||
             fail "labwc did not expose the exact owned 1x/2x output baseline"
     fi
+    xwayland_json='null'
+    if [[ "${xwayland_profile}" == 1 ]]; then
+        for _ in {1..200}; do
+            [[ -s "${run_root}/xwayland.display" ]] && break
+            pid_is_running "${compositor_pid}" || break
+            sleep 0.02
+        done
+        [[ -s "${run_root}/xwayland.display" ]] ||
+            fail "labwc did not publish its owned Xwayland display"
+        read -r xwayland_display <"${run_root}/xwayland.display"
+        [[ "${xwayland_display}" =~ ^:[0-9]+$ && "${xwayland_display}" != "${DISPLAY}" ]] ||
+            fail "labwc Xwayland display identity was invalid or reused outer Xvfb"
+        for _ in {1..200}; do
+            if DISPLAY="${xwayland_display}" xdpyinfo \
+                >"${run_root}/xwayland-xdpyinfo.log" 2>/dev/null; then
+                break
+            fi
+            pid_is_running "${compositor_pid}" || break
+            sleep 0.02
+        done
+        [[ -s "${run_root}/xwayland-xdpyinfo.log" ]] ||
+            fail "owned Xwayland display rejected authenticated X11 inspection"
+        xwayland_pid="$(ps -eo pid=,pgid=,comm= | awk -v owned="${compositor_pid}" \
+            '$2 == owned && $3 == "Xwayland" {print $1}')"
+        [[ "${xwayland_pid}" =~ ^[1-9][0-9]*$ ]] ||
+            fail "owned Xwayland process-group identity was unavailable"
+        xwayland_executable="$(readlink -f "/proc/${xwayland_pid}/exe")"
+        [[ "${xwayland_executable}" == "$(readlink -f "${xwayland_binary}")" ]] ||
+            fail "owned Xwayland executable identity did not match the reviewed binary"
+        tr '\0' ' ' <"/proc/${xwayland_pid}/cmdline" >"${run_root}/xwayland-command.log"
+        grep -Eq '(^| )-shm( |$)' "${run_root}/xwayland-command.log" ||
+            fail "owned Xwayland did not use the reviewed shared-memory transport"
+        DISPLAY="${xwayland_display}" xrandr --current >"${run_root}/xwayland-randr.log" ||
+            fail "owned Xwayland RANDR state was unavailable"
+        xwayland_version="$(Xwayland -version 2>&1 | sed -n 's/^The X.Org Foundation Xwayland Version //p')"
+        xwayland_root="$(sed -n 's/^  dimensions:[[:space:]]*\([0-9][0-9]*x[0-9][0-9]*\).*/\1/p' "${run_root}/xwayland-xdpyinfo.log")"
+        [[ -n "${xwayland_version}" && "${xwayland_root}" =~ ^[0-9]+x[0-9]+$ ]] ||
+            fail "owned Xwayland version or root geometry was unavailable"
+        xwayland_json="$(jq -n \
+            --arg display "${xwayland_display}" \
+            --argjson pid "${xwayland_pid}" \
+            --argjson process_group "${compositor_pid}" \
+            --arg version "${xwayland_version}" \
+            --arg binary_path "${xwayland_executable}" \
+            --arg binary_sha "$(sha256sum "${xwayland_executable}" | awk '{print $1}')" \
+            --arg command_sha "$(sha256sum "${run_root}/xwayland-command.log" | awk '{print $1}')" \
+            --arg root_geometry "${xwayland_root}" \
+            --arg xdpyinfo_sha "$(sha256sum "${run_root}/xwayland-xdpyinfo.log" | awk '{print $1}')" \
+            --arg randr_sha "$(sha256sum "${run_root}/xwayland-randr.log" | awk '{print $1}')" \
+            '{display:$display,pid:$pid,process_group:$process_group,version:$version,
+              binary_path:$binary_path,binary_sha256:$binary_sha,
+              command_sha256:$command_sha,transport:"shm",
+              root_geometry:$root_geometry,xdpyinfo_sha256:$xdpyinfo_sha,
+              randr_sha256:$randr_sha}')"
+    fi
     protocols_json="$(jq -Rn '[inputs | select(length > 0)] | sort' <<<"${protocols}")"
     case "${compositor}" in
         cage) compositor_name="Cage" ;;
@@ -227,8 +319,9 @@ LABWC_CONFIG
         --argjson scale "${scale}" \
         --argjson protocols "${protocols_json}" \
         --argjson outputs "${outputs_json}" \
+        --argjson xwayland "${xwayland_json}" \
         --arg info_sha "$(sha256sum "${info_log}" | awk '{print $1}')" \
-        '{name:$name,endpoint:$endpoint,version:$version,width:$width,height:$height,scale:$scale,protocols:$protocols,outputs:$outputs,wayland_info_sha256:$info_sha}' \
+        '{name:$name,endpoint:$endpoint,version:$version,width:$width,height:$height,scale:$scale,protocols:$protocols,outputs:$outputs,xwayland:$xwayland,wayland_info_sha256:$info_sha}' \
         >"${run_root}/session-facts.json"
 
     printf '%s\n' "${ready_marker}"
@@ -264,6 +357,13 @@ LABWC_CONFIG
         export ZENTTY_NESTED_WAYLAND_OUTER_X11_OUTPUT_1="${outer_x11_windows[0]}"
         export ZENTTY_NESTED_WAYLAND_OUTER_X11_OUTPUT_2="${outer_x11_windows[1]}"
     fi
+    if [[ "${xwayland_profile}" == 1 ]]; then
+        export ZENTTY_NESTED_WAYLAND_OUTER_DISPLAY="${DISPLAY}"
+        export ZENTTY_NESTED_XWAYLAND_PID="${xwayland_pid}"
+        export ZENTTY_NESTED_XWAYLAND_DISPLAY="${xwayland_display}"
+        DISPLAY="${xwayland_display}"
+        export DISPLAY
+    fi
     set +e
     "$@"
     status=$?
@@ -277,7 +377,7 @@ fi
     echo "usage: nested-wayland-input COMMAND [ARG ...]" >&2
     exit 64
 }
-for dependency in wayland-info jq grep sed awk sort sha256sum readlink \
+for dependency in wayland-info jq grep sed awk sort sha256sum readlink tr \
     date setsid ps kill sleep timeout mktemp mkdir chmod rm env find basename stat; do
     command -v "${dependency}" >/dev/null || {
         echo "nested-wayland-input: SKIP missing runtime dependency: ${dependency}" >&2
@@ -302,6 +402,14 @@ else
     if [[ "${scaling_profile}" == 1 ]] && ! command -v wlr-randr >/dev/null; then
         echo "nested-wayland-input: SKIP missing reviewed wlr-randr scaling dependency" >&2
         exit 77
+    fi
+    if [[ "${xwayland_profile}" == 1 ]]; then
+        for dependency in Xwayland xdpyinfo xrandr; do
+            command -v "${dependency}" >/dev/null || {
+                echo "nested-wayland-input: SKIP missing reviewed Xwayland dependency: ${dependency}" >&2
+                exit 77
+            }
+        done
     fi
 fi
 
@@ -384,7 +492,8 @@ if [[ -n "${report}" && -n "${facts}" ]]; then
             endpoint:$facts.endpoint,width:$facts.width,height:$facts.height,
             scale:$facts.scale,protocols:$facts.protocols,
             wayland_info_sha256:$facts.wayland_info_sha256} +
-            (if ($facts.outputs | length) > 0 then {outputs:$facts.outputs} else {} end)),
+            (if ($facts.outputs | length) > 0 then {outputs:$facts.outputs} else {} end) +
+            (if $facts.xwayland != null then {xwayland:$facts.xwayland} else {} end)),
           renderer:{software:true,name:"Pixman",proof:$renderer_proof},
           isolation:{ambient_display_sanitized:true,ambient_dbus_sanitized:true,
             process_group:$process_group,run_root_removed:true,

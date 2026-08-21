@@ -4,8 +4,10 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 release_binary="${ZENTTY_RELEASE_SAFE_BINARY:-${repo_root}/build/linux-profiles/release-safe/bin/zentty-linux}"
 debug_binary="${ZENTTY_DEBUG_BINARY:-${repo_root}/build/linux-profiles/debug/bin/zentty-linux}"
+scaling_backend="${ZENTTY_COMPOSITOR_SCALING_BACKEND:-wayland}"
 run_root="$(mktemp -d)"
 product_pid=""
+product_window=""
 
 # shellcheck source=linux/tests/lib/product-bundle
 source "${repo_root}/linux/tests/lib/product-bundle"
@@ -40,24 +42,53 @@ cleanup() {
 }
 trap cleanup EXIT
 
-[[ "${GDK_BACKEND:-}" == wayland &&
-    "${ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ &&
+case "${scaling_backend}" in
+    wayland)
+        [[ "${GDK_BACKEND:-}" == wayland &&
+            "${ZENTTY_NESTED_WAYLAND_XWAYLAND_PROFILE:-0}" == 0 ]] ||
+            fail "native Wayland scaling requires the GTK Wayland backend"
+        ;;
+    xwayland)
+        [[ "${GDK_BACKEND:-}" == x11 &&
+            "${ZENTTY_NESTED_WAYLAND_XWAYLAND_PROFILE:-}" == 1 &&
+            "${DISPLAY:-}" == "${ZENTTY_NESTED_XWAYLAND_DISPLAY:-missing}" &&
+            "${ZENTTY_NESTED_XWAYLAND_PID:-}" =~ ^[1-9][0-9]*$ ]] ||
+            fail "controlled owned Xwayland scaling session is required"
+        ;;
+    *) fail "unsupported compositor scaling backend: ${scaling_backend}" ;;
+esac
+[[ "${ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ &&
     "${ZENTTY_NESTED_WAYLAND_SCALING_PROFILE:-}" == 1 ]] ||
-    fail "controlled mixed-scale Wayland session is required"
+    fail "controlled mixed-scale compositor session is required"
 [[ -z "${GDK_SCALE:-}" && -z "${GDK_DPI_SCALE:-}" ]] ||
     fail "process-local GDK scaling overrides are forbidden"
 for dependency in wlr-randr wayland-info xdotool jq grep sed awk sort seq ps kill sleep mktemp; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
+if [[ "${scaling_backend}" == xwayland ]]; then
+    for dependency in dump_xsettings xrdb xrandr; do
+        command -v "${dependency}" >/dev/null || fail "${dependency} is required"
+    done
+    if dump_xsettings >"${run_root}/xwayland.xsettings" 2>&1; then
+        fail "controlled Xwayland unexpectedly published an XSETTINGS manager"
+    fi
+    grep -Fxq 'No current owner for _XSETTINGS_S0 selection' \
+        "${run_root}/xwayland.xsettings" ||
+        fail "controlled Xwayland XSETTINGS absence was not explicit"
+    xrdb -query >"${run_root}/xwayland.resources"
+    ! grep -Eq '(^|[.*])Xft[.]dpi:' "${run_root}/xwayland.resources" ||
+        fail "controlled Xwayland unexpectedly published X resource DPI"
+fi
 for binary in "${release_binary}" "${debug_binary}"; do
     [[ -x "${binary}" ]] || fail "staged Zentty product is missing: ${binary}"
 done
 
 outer_one="${ZENTTY_NESTED_WAYLAND_OUTER_X11_OUTPUT_1:?}"
 outer_two="${ZENTTY_NESTED_WAYLAND_OUTER_X11_OUTPUT_2:?}"
+outer_display="${ZENTTY_NESTED_WAYLAND_OUTER_DISPLAY:-${DISPLAY:?}}"
 outer_windows=("${outer_one}" "${outer_two}")
 for outer in "${outer_windows[@]}"; do
-    geometry="$(xdotool getwindowgeometry --shell "${outer}")"
+    geometry="$(DISPLAY="${outer_display}" xdotool getwindowgeometry --shell "${outer}")"
     [[ "${geometry}" == *$'WIDTH=1024\n'* && "${geometry}" == *$'HEIGHT=768\n'* ]] ||
         fail "owned labwc output window geometry is not 1024x768"
 done
@@ -168,17 +199,33 @@ configure_outputs() {
         fail "X11-1 scale ${scale_one} was not observed through output management"
     grep -A9 '^X11-2 ' "${output_file}" | grep -Fq 'Scale: 2.000000' ||
         fail "X11-2 scale 2 was not retained"
+    if [[ "${scaling_backend}" == xwayland ]]; then
+        xrandr --current >"${output_file}.xwayland"
+        [[ "$(grep -c ' connected ' "${output_file}.xwayland")" -eq 2 ]] ||
+            fail "owned Xwayland did not expose exactly two compositor outputs"
+        if [[ "${scale_one}" == 1 ]]; then
+            grep -Eq '^X11-1 connected 1024x768\+' "${output_file}.xwayland" ||
+                fail "owned Xwayland did not observe the compositor 1x geometry"
+        else
+            grep -Eq '^X11-1 connected 682x512\+' "${output_file}.xwayland" ||
+                fail "owned Xwayland did not observe the compositor 1.5x geometry"
+        fi
+        grep -Eq '^X11-2 connected 512x384\+' "${output_file}.xwayland" ||
+            fail "owned Xwayland did not retain the compositor 2x geometry"
+    fi
 }
 
 send_compositor_key() {
     local outer="$1" key="$2"
-    xdotool windowfocus --sync "${outer}"
-    xdotool key "${key}"
+    DISPLAY="${outer_display}" xdotool windowfocus --sync "${outer}"
+    DISPLAY="${outer_display}" xdotool key "${key}"
 }
 
 run_stage() {
     local profile="$1" stage="$2" pane_count="$3" receipt="$4" log="$5" candidate
-    local done_pattern mouse_pattern x commits_before commits_after
+    local done_pattern mouse_pattern x commits_before commits_after pointer_display
+    local window_geometry window_width window_height
+    local -a input_windows
     commits_before="$(grep -aEc ' -> wl_surface@[0-9]+\.commit\(\)' "${log}" || true)"
     : >"${run_root}/${profile}-stage-${stage}"
     wait_for_log "${run_root}/${profile}-${stage}-mouse-ready" '' \
@@ -190,10 +237,21 @@ run_stage() {
     # the terminal-height row rather than assuming a sidebar width or responsive
     # layout at any scale. The actor consumes the first two pane-local clicks.
     printf -v mouse_pattern 'MOUSE\t%s\t%s\t' "${profile}" "${stage}"
-    for candidate in "${outer_windows[@]}"; do
-        xdotool windowfocus --sync "${candidate}"
-        for x in $(seq 50 100 950); do
-            xdotool mousemove --sync --window "${candidate}" "${x}" 450 click 1
+    if [[ "${scaling_backend}" == xwayland ]]; then
+        input_windows=("${product_window}")
+        pointer_display="${DISPLAY}"
+    else
+        input_windows=("${outer_windows[@]}")
+        pointer_display="${outer_display}"
+    fi
+    for candidate in "${input_windows[@]}"; do
+        window_geometry="$(DISPLAY="${pointer_display}" xdotool getwindowgeometry --shell "${candidate}")"
+        window_width="$(sed -n 's/^WIDTH=//p' <<<"${window_geometry}")"
+        window_height="$(sed -n 's/^HEIGHT=//p' <<<"${window_geometry}")"
+        DISPLAY="${pointer_display}" xdotool windowfocus --sync "${candidate}"
+        for x in $(seq 50 100 "$((window_width - 50))"); do
+            DISPLAY="${pointer_display}" xdotool mousemove --sync --window "${candidate}" \
+                "${x}" "$((window_height / 2))" click 1
             if grep -Fq -- "${mouse_pattern}" "${receipt}"; then
                 break 2
             fi
@@ -210,13 +268,24 @@ run_stage() {
             "${profile} stage ${stage} pane 2 did not acknowledge"
     fi
     sleep 0.2
-    commits_after="$(grep -aEc ' -> wl_surface@[0-9]+\.commit\(\)' "${log}" || true)"
-    (( commits_after > commits_before )) ||
-        fail "${profile} stage ${stage} stopped producing compositor-visible surface commits"
+    if [[ "${scaling_backend}" == wayland ]]; then
+        commits_after="$(grep -aEc ' -> wl_surface@[0-9]+\.commit\(\)' "${log}" || true)"
+        (( commits_after > commits_before )) ||
+            fail "${profile} stage ${stage} stopped producing compositor-visible surface commits"
+    else
+        window_geometry="$(xdotool getwindowgeometry --shell "${product_window}")"
+        printf 'WINDOW\t%s\t%s\t%s\t%s\t%s\t%s\n' "${profile}" "${stage}" \
+            "$(sed -n 's/^X=//p' <<<"${window_geometry}")" \
+            "$(sed -n 's/^Y=//p' <<<"${window_geometry}")" \
+            "$(sed -n 's/^WIDTH=//p' <<<"${window_geometry}")" \
+            "$(sed -n 's/^HEIGHT=//p' <<<"${window_geometry}")" >>"${receipt}"
+    fi
 }
 
 run_profile() {
     local profile="$1" requested_binary="$2" product bundle_lib cli state receipt log
+    local xwayland_two_x
+    local -a product_environment
     product="${requested_binary}"
     zentty_product_bundle_resolve "${product}" || fail "${profile} staged bundle is invalid"
     product="${ZENTTY_PRODUCT_BINARY}"
@@ -235,19 +304,30 @@ confirm_before_quitting = false
 CONFIG
     : >"${receipt}"
     configure_outputs "${run_root}/${profile}-baseline.outputs" 1
-    xdotool windowfocus --sync "${outer_one}"
-    xdotool mousemove --sync --window "${outer_one}" 512 384
-    ZENTTY_SCALE_ROOT="${run_root}" ZENTTY_SCALE_PROFILE="${profile}" \
-    ZENTTY_SCALE_RECEIPT="${receipt}" WAYLAND_DEBUG=client \
-    LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
-        "${product}" --command "${actor}" --state-directory "${state}" \
+    DISPLAY="${outer_display}" xdotool windowfocus --sync "${outer_one}"
+    DISPLAY="${outer_display}" xdotool mousemove --sync --window "${outer_one}" 512 384
+    product_environment=(
+        "ZENTTY_SCALE_ROOT=${run_root}"
+        "ZENTTY_SCALE_PROFILE=${profile}"
+        "ZENTTY_SCALE_RECEIPT=${receipt}"
+        "LD_LIBRARY_PATH=${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+    )
+    [[ "${scaling_backend}" == xwayland ]] || product_environment+=(WAYLAND_DEBUG=client)
+    env "${product_environment[@]}" "${product}" \
+        --command "${actor}" --state-directory "${state}" \
         --no-session-restore >"${log}" 2>&1 &
     product_pid=$!
     wait_for_log "${log}" 'terminal-ready-pane=pane-1' \
         "${profile} single real terminal did not initialize"
-    zentty_product_prepare_input wayland "${log}" ||
+    zentty_product_prepare_input "${scaling_backend/xwayland/x11}" "${log}" ||
         fail "${profile} compositor presentation/input did not become ready"
-    send_compositor_key "${outer_two}" F1
+    if [[ "${scaling_backend}" == xwayland ]]; then
+        product_window="${ZENTTY_PRODUCT_WINDOW_ID}"
+        xdotool windowmove "${product_window}" 10 10
+        xdotool windowactivate --sync "${product_window}"
+    else
+        send_compositor_key "${outer_two}" F1
+    fi
     send_compositor_key "${outer_one}" F3
     run_stage "${profile}" 0 1 "${receipt}" "${log}" # single-baseline
 
@@ -258,18 +338,38 @@ CONFIG
     run_stage "${profile}" 1 2 "${receipt}" "${log}" # multi-baseline
 
     configure_outputs "${run_root}/${profile}-fractional.outputs" 1.5
-    wait_for_log "${log}" 'preferred_scale(180)' \
-        "${profile} did not observe compositor preferred_scale(180)"
+    if [[ "${scaling_backend}" == wayland ]]; then
+        wait_for_log "${log}" 'preferred_scale(180)' \
+            "${profile} did not observe compositor preferred_scale(180)"
+    else
+        sleep 0.5
+    fi
     run_stage "${profile}" 2 2 "${receipt}" "${log}" # fractional-1.5
 
-    send_compositor_key "${outer_one}" F2
-    wait_for_log "${log}" 'preferred_scale(240)' \
-        "${profile} did not observe compositor preferred_scale(240)"
+    if [[ "${scaling_backend}" == wayland ]]; then
+        send_compositor_key "${outer_one}" F2
+        wait_for_log "${log}" 'preferred_scale(240)' \
+            "${profile} did not observe compositor preferred_scale(240)"
+    else
+        send_compositor_key "${outer_one}" F4
+        xwayland_two_x="$(sed -n 's/^X11-2 connected [0-9][0-9]*x[0-9][0-9]*+\([0-9][0-9]*\)+.*/\1/p' \
+            "${run_root}/${profile}-fractional.outputs.xwayland")"
+        [[ "${xwayland_two_x}" =~ ^[0-9]+$ ]] ||
+            fail "${profile} Xwayland 2x output position was unavailable"
+        xdotool windowmove "${product_window}" "$((xwayland_two_x + 10))" 10
+        xdotool windowactivate --sync "${product_window}"
+        send_compositor_key "${outer_two}" F3
+    fi
     focus_pane_one "${cli}"
     run_stage "${profile}" 3 2 "${receipt}" "${log}" # integer-2
 
-    xdotool windowfocus --sync "${outer_two}"
-    xdotool key ctrl+q 2>/dev/null || true
+    if [[ "${scaling_backend}" == xwayland ]]; then
+        xdotool windowfocus --sync "${product_window}"
+        xdotool key ctrl+q 2>/dev/null || true
+    else
+        DISPLAY="${outer_display}" xdotool windowfocus --sync "${outer_two}"
+        DISPLAY="${outer_display}" xdotool key ctrl+q 2>/dev/null || true
+    fi
     wait "${product_pid}" || fail "${profile} product did not exit cleanly"
     product_pid=""
     [[ "$(grep -Fc 'terminal-ready-pane=' "${log}")" -eq 2 ]] ||
@@ -278,6 +378,10 @@ CONFIG
         "$(grep -c '^MOUSE' "${receipt}")" -eq 4 &&
         "$(grep -c '^DONE' "${receipt}")" -eq 7 ]] ||
         fail "${profile} PTY receipt counts are not exact"
+    if [[ "${scaling_backend}" == xwayland ]]; then
+        [[ "$(grep -c '^WINDOW' "${receipt}")" -eq 4 ]] ||
+            fail "${profile} Xwayland window receipt count is not exact"
+    fi
 }
 
 run_profile release-safe "${release_binary}"
@@ -286,7 +390,7 @@ run_profile debug "${debug_binary}"
 validate_profile() {
     local profile="$1"
     local receipt="${run_root}/${profile}.receipt"
-    awk -F '\t' -v profile="${profile}" '
+    awk -F '\t' -v profile="${profile}" -v backend="${scaling_backend}" '
         $1 == "GEOMETRY" {
             if (NF != 9 || $2 != profile || $3 !~ /^[0-3]$/ ||
                 $4 !~ /^pane-[12]$/ || $5 !~ /^[1-9][0-9]*$/ ||
@@ -301,6 +405,12 @@ validate_profile() {
                 $6 !~ /^[1-9][0-9]*$/ || $7 !~ /^[1-9][0-9]*$/ ||
                 $5 != $7 || $6 <= $4) exit 1
             mouse[$3]=1
+        }
+        $1 == "WINDOW" {
+            if (NF != 7 || $2 != profile || $3 !~ /^[0-3]$/ ||
+                $4 !~ /^[0-9]+$/ || $5 !~ /^[0-9]+$/ ||
+                $6 !~ /^[1-9][0-9]*$/ || $7 !~ /^[1-9][0-9]*$/) exit 1
+            window_w[$3]=$6; window_h[$3]=$7
         }
         END {
             if (length(rows) != 7 || length(mouse) != 4) exit 1
@@ -318,12 +428,23 @@ validate_profile() {
                 winch[3 SUBSEP "pane-1"] <= winch[2 SUBSEP "pane-1"] ||
                 winch[2 SUBSEP "pane-2"] <= winch[1 SUBSEP "pane-2"] ||
                 winch[3 SUBSEP "pane-2"] <= winch[2 SUBSEP "pane-2"]) exit 1
-            if (columns[1 SUBSEP "pane-1"] >= columns[0 SUBSEP "pane-1"] ||
-                rows[2 SUBSEP "pane-1"] != rows[1 SUBSEP "pane-1"] ||
-                columns[2 SUBSEP "pane-1"] != columns[1 SUBSEP "pane-1"] ||
-                cell_h[3 SUBSEP "pane-1"] < cell_h[2 SUBSEP "pane-1"] * 1.8 ||
-                cell_w[3 SUBSEP "pane-1"] < cell_w[2 SUBSEP "pane-1"] * 1.8 ||
-                rows[3 SUBSEP "pane-1"] >= rows[2 SUBSEP "pane-1"]) exit 1
+            if (columns[1 SUBSEP "pane-1"] >= columns[0 SUBSEP "pane-1"]) exit 1
+            if (backend == "wayland") {
+                if (length(window_w) != 0 ||
+                    rows[2 SUBSEP "pane-1"] != rows[1 SUBSEP "pane-1"] ||
+                    columns[2 SUBSEP "pane-1"] != columns[1 SUBSEP "pane-1"] ||
+                    cell_h[3 SUBSEP "pane-1"] < cell_h[2 SUBSEP "pane-1"] * 1.8 ||
+                    cell_w[3 SUBSEP "pane-1"] < cell_w[2 SUBSEP "pane-1"] * 1.8 ||
+                    rows[3 SUBSEP "pane-1"] >= rows[2 SUBSEP "pane-1"]) exit 1
+            } else {
+                if (length(window_w) != 4 || window_w[0] != 1024 || window_w[1] != 1024 ||
+                    window_w[2] != 682 || window_w[3] != 512 ||
+                    window_h[2] >= window_h[1] || window_h[3] >= window_h[2] ||
+                    rows[2 SUBSEP "pane-1"] >= rows[1 SUBSEP "pane-1"] ||
+                    rows[3 SUBSEP "pane-1"] >= rows[2 SUBSEP "pane-1"] ||
+                    cell_h[3 SUBSEP "pane-1"] != cell_h[1 SUBSEP "pane-1"] ||
+                    cell_w[3 SUBSEP "pane-1"] != cell_w[1 SUBSEP "pane-1"]) exit 1
+            }
         }
     ' "${receipt}" || fail "${profile} geometry, SIGWINCH, or mouse-coordinate coherence failed"
 }
@@ -340,6 +461,10 @@ for profile in release-safe debug; do
             printf "rust-wayland-scaling: pointer profile=%s stage=%s from=%s,%s to=%s,%s\n",
                 profile, $3, $4, $5, $6, $7
         }
+        $1 == "WINDOW" {
+            printf "rust-wayland-scaling: window profile=%s stage=%s position=%s,%s size=%sx%s\n",
+                profile, $3, $4, $5, $6, $7
+        }
     ' "${run_root}/${profile}.receipt"
 done
-echo "rust-wayland-scaling: PASS profiles=ReleaseSafe,Debug scales=1,1.5,2 single-baseline multi-baseline fractional-1.5 integer-2 real-ghostty-csi real-pty SIGWINCH mouse-coordinate"
+echo "rust-wayland-scaling: PASS backend=${scaling_backend} profiles=ReleaseSafe,Debug scales=1,1.5,2 single-baseline multi-baseline fractional-1.5 integer-2 real-ghostty-csi real-pty SIGWINCH mouse-coordinate"

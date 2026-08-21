@@ -82,6 +82,10 @@ if ! jq -e --slurpfile policy "${policy}" '
     .id == "fractional-scale-wayland" and .status == "PASS" and
     .optimize == "both" and .environment_profile == "nested-wayland-scaling-v1" and
     .command == "env -u GDK_SCALE -u GDK_DPI_SCALE GDK_BACKEND=wayland linux/tests/rust-wayland-scaling") and
+  any(selected[];
+    .id == "scale-xwayland" and .status == "PASS" and .display == "x11" and
+    .optimize == "both" and .environment_profile == "nested-xwayland-scaling-v1" and
+    .command == "env -u GDK_SCALE -u GDK_DPI_SCALE GDK_BACKEND=x11 ZENTTY_COMPOSITOR_SCALING_BACKEND=xwayland linux/tests/rust-wayland-scaling") and
   any(selected[]; .capability == "physical_key_translation" and .display == "x11") and
   any(selected[]; .capability == "shortcut_binding_runtime" and .display == "wayland") and
   all(["wayland","x11"][]; . as $display |

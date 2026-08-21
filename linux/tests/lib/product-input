@@ -94,10 +94,18 @@ zentty_product_prepare_input() {
             local focused_window focused_pid
             focused_window="$(xdotool getwindowfocus 2>/dev/null || true)"
             focused_pid="$(xdotool getwindowpid "${focused_window}" 2>/dev/null || true)"
-            [[ "${focused_pid}" == "${product_pid}" ]] || {
-                echo "product-input: real X11 focus is not owned by the product" >&2
-                return 1
-            }
+            if [[ "${focused_pid}" != "${product_pid}" ]]; then
+                if [[ "${ZENTTY_NESTED_WAYLAND_XWAYLAND_PROFILE:-0}" == 1 &&
+                    "${ZENTTY_NESTED_XWAYLAND_PID:-}" =~ ^[1-9][0-9]*$ &&
+                    "${ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ &&
+                    "${DISPLAY:-}" == "${ZENTTY_NESTED_XWAYLAND_DISPLAY:-missing}" &&
+                    -z "${focused_window}" ]]; then
+                    : # Rootless Xwayland reports PointerRoot; PTY input proves focus below.
+                else
+                    echo "product-input: real X11 focus is not owned by the product (window=${focused_window:-missing} focused-pid=${focused_pid:-missing} product-window=${ZENTTY_PRODUCT_WINDOW_ID} product-pid=${product_pid})" >&2
+                    return 1
+                fi
+            fi
             ;;
         wayland)
             [[ "${ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] || {

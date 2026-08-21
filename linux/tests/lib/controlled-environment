@@ -142,6 +142,10 @@ zentty_controlled_environment_validate_report() {
              (.server | keys | sort) == [
                  "backend","endpoint","height","name","outputs","protocols",
                  "scale","version","wayland_info_sha256","width"
+             ] or
+             (.server | keys | sort) == [
+                 "backend","endpoint","height","name","outputs","protocols",
+                 "scale","version","wayland_info_sha256","width","xwayland"
              ]) and
             (.server.version | type == "string" and length > 0) and
             (if .server.name == "Weston" then
@@ -176,6 +180,26 @@ zentty_controlled_environment_validate_report() {
                         .scale == 1 and .mode == "1024x768") and
                      any(.[]; .name == "X11-2" and .position == "1024,0" and
                         .scale == 2 and .mode == "1024x768"))
+                 else true end)
+                and
+                (if .server.xwayland? then
+                    (.server.outputs? and
+                     (.server.xwayland | keys | sort) == [
+                        "binary_path","binary_sha256","command_sha256","display",
+                        "pid","process_group","randr_sha256","root_geometry",
+                        "transport","version","xdpyinfo_sha256"
+                     ] and
+                     .server.xwayland.binary_path == "/usr/bin/Xwayland" and
+                     (.server.xwayland.binary_sha256 | test("^[0-9a-f]{64}$")) and
+                     (.server.xwayland.command_sha256 | test("^[0-9a-f]{64}$")) and
+                     (.server.xwayland.display | test("^:[0-9]+$")) and
+                     (.server.xwayland.pid | type == "number" and . > 0 and floor == .) and
+                     (.server.xwayland.process_group | type == "number" and . > 0 and floor == .) and
+                     (.server.xwayland.version | type == "string" and length > 0) and
+                     .server.xwayland.transport == "shm" and
+                     .server.xwayland.root_geometry == "1536x768" and
+                     (.server.xwayland.xdpyinfo_sha256 | test("^[0-9a-f]{64}$")) and
+                     (.server.xwayland.randr_sha256 | test("^[0-9a-f]{64}$")))
                  else true end)
              else false end) and
             (.server.protocols | type == "array" and length >= 4 and

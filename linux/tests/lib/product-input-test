@@ -10,9 +10,17 @@ xdotool() {
     if [[ "${1:-}" == search ]]; then
         printf '5151\n'
     elif [[ "${1:-}" == getwindowfocus ]]; then
-        printf '5151\n'
+        if [[ -v mock_focus_window ]]; then
+            printf '%s\n' "${mock_focus_window}"
+        else
+            printf '5151\n'
+        fi
     elif [[ "${1:-}" == getwindowpid ]]; then
-        printf '%s\n' "${product_pid:-0}"
+        if [[ -v mock_focus_window && -z "${2:-}" ]]; then
+            :
+        else
+            printf '%s\n' "${product_pid:-0}"
+        fi
     elif [[ "${1:-}" == mousemove && -n "${mock_drag_receipt:-}" &&
         ("$*" == *'--window 5151'* || "${mock_wayland_drag:-}" == true) ]]; then
         printf 'pointer-target\n' >>"${mock_drag_receipt}"
@@ -47,6 +55,23 @@ expected=$'search --onlyvisible --pid 7777 --name ^Zentty$\ngetwindowpid 5151\nw
     exit 1
 }
 unset product_pid
+
+: >"${calls}"
+product_pid=8888
+mock_focus_window=""
+if zentty_product_prepare_input x11 "${receipt_log}" 1 2>/dev/null; then
+    echo "product-input-test: PointerRoot focus passed outside controlled Xwayland" >&2
+    exit 1
+fi
+ZENTTY_NESTED_WAYLAND_XWAYLAND_PROFILE=1
+ZENTTY_NESTED_XWAYLAND_PID=9999
+ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID="$(printf 'b%.0s' {1..64})"
+ZENTTY_NESTED_XWAYLAND_DISPLAY=:77
+DISPLAY=:77
+zentty_product_prepare_input x11 "${receipt_log}" 1
+unset product_pid mock_focus_window ZENTTY_NESTED_WAYLAND_XWAYLAND_PROFILE \
+    ZENTTY_NESTED_XWAYLAND_PID ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID \
+    ZENTTY_NESTED_XWAYLAND_DISPLAY DISPLAY
 
 printf '%s\n%s\n' ready ready >"${receipt_log}"
 zentty_product_wait_for_log_count "${receipt_log}" ready 2 \
@@ -142,4 +167,4 @@ unset mock_wayland_drag ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT \
     ZENTTY_NESTED_WAYLAND_DRAG_TARGET_X ZENTTY_NESTED_WAYLAND_DRAG_TARGET_Y
 rm -f -- "${mock_drag_receipt}"
 
-echo "Product input helper tests passed: counted synchronization, X11 key release, and physical X11/Wayland drag"
+echo "Product input helper tests passed: counted synchronization, native/Xwayland focus, X11 key release, and physical X11/Wayland drag"
