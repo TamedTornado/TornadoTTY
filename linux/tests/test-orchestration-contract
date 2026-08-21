@@ -163,6 +163,18 @@ require "Linux platform contracts are not pinned to their real isolated and comp
             (.depends_on | index("development-servers-wayland") != null))
     ' "${matrix}"
 
+# Fractional scaling is a two-profile real-product journey in a controlled
+# mixed-output compositor, never an ambient-desktop assumption or prose gap.
+require "Wayland fractional scaling is not pinned to its controlled mixed-output journey" \
+    jq -e '
+        .cells[] | select(.id == "fractional-scale-wayland") |
+        .status == "PASS" and .optimize == "both" and .terminals == "multi" and
+        .environment_profile == "nested-wayland-scaling-v1" and
+        (.depends_on | sort) == ["build-debug","build-release"] and
+        (.command | contains("env -u GDK_SCALE -u GDK_DPI_SCALE")) and
+        (.command | contains("linux/tests/rust-wayland-scaling"))
+    ' "${matrix}"
+
 # CLI compatibility is a real staged-product boundary on each GTK backend,
 # not a parser-only claim or an assumption about the developer desktop.
 # shellcheck disable=SC2016

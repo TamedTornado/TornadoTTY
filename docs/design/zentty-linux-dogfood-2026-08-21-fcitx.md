@@ -221,6 +221,10 @@ blocked gap is fractional Wayland scaling. The manifest, validator, and
 negative tests now agree on `fractional-scale-wayland`. Public CI remains a
 check of committed work, not a release-approval authority.
 
+> **Superseded on 2026-08-21 by GH68:** this paragraph records the state of the
+> fcitx slice. `fractional-scale-wayland` is now PASS in the authoritative
+> matrix under `nested-wayland-scaling-v1`; it is no longer a known gap.
+
 ### Deterministic fcitx activation
 
 Fixed sleeps, one-shot `fcitx5-remote` activation, and a second helper-owned

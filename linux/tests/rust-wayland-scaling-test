@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+subject="${repo_root}/linux/tests/rust-wayland-scaling"
+
+fail() {
+    echo "rust-wayland-scaling-test: error: $*" >&2
+    exit 1
+}
+
+output="$(
+    set +e
+    env -u ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID \
+        -u ZENTTY_NESTED_WAYLAND_SCALING_PROFILE \
+        GDK_BACKEND=wayland ZENTTY_RELEASE_SAFE_BINARY=/bin/true \
+        ZENTTY_DEBUG_BINARY=/bin/true "${subject}" 2>&1 || true
+)"
+grep -Fq 'controlled mixed-scale Wayland session is required' <<<"${output}" ||
+    fail "ambient Wayland rejection is absent"
+
+for contract in \
+    'wlr-randr --output X11-1 --scale 1.5' \
+    'preferred_scale(180)' \
+    'preferred_scale(240)' \
+    'single-baseline' \
+    'multi-baseline' \
+    'fractional-1.5' \
+    'integer-2' \
+    'SIGWINCH' \
+    'mouse-coordinate'; do
+    grep -Fq "${contract}" "${subject}" ||
+        fail "missing scaling contract: ${contract}"
+done
+
+echo "Rust Wayland scaling harness tests passed: isolation, 1x/1.5x/2x, Debug/ReleaseSafe, single/multi, PTY, SIGWINCH, pointer"

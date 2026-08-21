@@ -2,6 +2,11 @@
 set -euo pipefail
 
 readonly compositor="${ZENTTY_NESTED_WAYLAND_INPUT_COMPOSITOR:-cage}"
+readonly scaling_profile="${ZENTTY_NESTED_WAYLAND_SCALING_PROFILE:-0}"
+[[ "${scaling_profile}" == 0 || "${scaling_profile}" == 1 ]] || {
+    echo "nested-wayland-input: error: ZENTTY_NESTED_WAYLAND_SCALING_PROFILE must be 0 or 1" >&2
+    exit 64
+}
 case "${compositor}" in
     cage | labwc | weston) ;;
     *)
@@ -9,12 +14,20 @@ case "${compositor}" in
         exit 64
         ;;
 esac
+if [[ "${scaling_profile}" == 1 && "${compositor}" != labwc ]]; then
+    echo "nested-wayland-input: error: scaling profile requires labwc" >&2
+    exit 64
+fi
 case "${compositor}" in
     cage)
         readonly ready_marker="nested-wayland-input: READY private-cage-x11-nested backend=wayland software-renderer=1 virtual-keyboard=1"
         ;;
     labwc)
-        readonly ready_marker="nested-wayland-input: READY private-labwc-x11-nested backend=wayland software-renderer=1 outer-x11-input=1 xdg-activation=1"
+        if [[ "${scaling_profile}" == 1 ]]; then
+            readonly ready_marker="nested-wayland-input: READY private-labwc-x11-nested backend=wayland software-renderer=1 outer-x11-input=1 xdg-activation=1 mixed-scale-outputs=2"
+        else
+            readonly ready_marker="nested-wayland-input: READY private-labwc-x11-nested backend=wayland software-renderer=1 outer-x11-input=1 xdg-activation=1"
+        fi
         ;;
     weston)
         readonly ready_marker="nested-wayland-input: READY private-weston-x11-nested backend=wayland software-renderer=1 outer-x11-input=1"
@@ -115,9 +128,22 @@ if [[ "${1:-}" == --private-wayland-input-inner ]]; then
             --log="${compositor_log}" &
     else
         mkdir -p "${run_root}/labwc-config"
-        setsid env \
-            WLR_BACKENDS=x11 \
-            WLR_RENDERER=pixman \
+        if [[ "${scaling_profile}" == 1 ]]; then
+            cat >"${run_root}/labwc-config/rc.xml" <<'LABWC_CONFIG'
+<?xml version="1.0"?>
+<labwc_config>
+  <keyboard>
+    <default />
+    <keybind key="F1"><action name="MoveToOutput" direction="left" /></keybind>
+    <keybind key="F2"><action name="MoveToOutput" direction="right" /></keybind>
+    <keybind key="F3"><action name="Maximize" /></keybind>
+  </keyboard>
+</labwc_config>
+LABWC_CONFIG
+        fi
+        labwc_environment=(WLR_BACKENDS=x11 WLR_RENDERER=pixman)
+        [[ "${scaling_profile}" == 0 ]] || labwc_environment+=(WLR_X11_OUTPUTS=2)
+        setsid env "${labwc_environment[@]}" \
             labwc --config-dir "${run_root}/labwc-config" \
             >"${compositor_log}" 2>&1 &
     fi
@@ -150,6 +176,9 @@ if [[ "${1:-}" == --private-wayland-input-inner ]]; then
         required_protocols+=(wl_data_device_manager wl_seat)
         [[ "${compositor}" != labwc ]] || required_protocols+=(xdg_activation_v1)
     fi
+    if [[ "${scaling_profile}" == 1 ]]; then
+        required_protocols+=(wp_fractional_scale_manager_v1 wp_viewporter zwlr_output_manager_v1)
+    fi
     for protocol in "${required_protocols[@]}"; do
         grep -Fx "${protocol}" <<<"${protocols}" >/dev/null ||
             fail "${compositor} lacks required protocol ${protocol}"
@@ -159,6 +188,30 @@ if [[ "${1:-}" == --private-wayland-input-inner ]]; then
     scale="$(sed -n 's/.*scale: \([0-9][0-9]*\),.*/\1/p' "${info_log}" | head -1)"
     [[ "${width}" =~ ^[1-9][0-9]*$ && "${height}" =~ ^[1-9][0-9]*$ &&
         "${scale}" =~ ^[1-9][0-9]*$ ]] || fail "Cage output facts were incomplete"
+    outputs_json='[]'
+    if [[ "${scaling_profile}" == 1 ]]; then
+        wlr-randr --output X11-1 --scale 1 --pos 0,0 \
+            --output X11-2 --scale 2 --pos 1024,0 ||
+            fail "labwc baseline mixed-scale configuration was rejected"
+        wlr-randr >"${run_root}/outputs.info" ||
+            fail "labwc output-management inventory was unavailable"
+        outputs_json="$(awk '
+            /^[^ ]/ { name=$1; mode="" }
+            /^  Modes:/ { in_modes=1; next }
+            in_modes && /\(current\)/ { mode=$1; in_modes=0 }
+            /^  Position:/ { position=$2 }
+            /^  Scale:/ { print name "\t" position "\t" $2 "\t" mode }
+        ' "${run_root}/outputs.info" | jq -Rn '
+            [inputs | split("\t") |
+             {name:.[0],position:.[1],scale:(.[2] | tonumber),mode:.[3]}]
+        ')"
+        jq -e '
+            length == 2 and
+            any(.[]; .name == "X11-1" and .position == "0,0" and .scale == 1) and
+            any(.[]; .name == "X11-2" and .position == "1024,0" and .scale == 2)
+        ' <<<"${outputs_json}" >/dev/null ||
+            fail "labwc did not expose the exact owned 1x/2x output baseline"
+    fi
     protocols_json="$(jq -Rn '[inputs | select(length > 0)] | sort' <<<"${protocols}")"
     case "${compositor}" in
         cage) compositor_name="Cage" ;;
@@ -173,21 +226,43 @@ if [[ "${1:-}" == --private-wayland-input-inner ]]; then
         --argjson height "${height}" \
         --argjson scale "${scale}" \
         --argjson protocols "${protocols_json}" \
+        --argjson outputs "${outputs_json}" \
         --arg info_sha "$(sha256sum "${info_log}" | awk '{print $1}')" \
-        '{name:$name,endpoint:$endpoint,version:$version,width:$width,height:$height,scale:$scale,protocols:$protocols,wayland_info_sha256:$info_sha}' \
+        '{name:$name,endpoint:$endpoint,version:$version,width:$width,height:$height,scale:$scale,protocols:$protocols,outputs:$outputs,wayland_info_sha256:$info_sha}' \
         >"${run_root}/session-facts.json"
 
     printf '%s\n' "${ready_marker}"
     printf 'nested-wayland-input: SESSION %s\n' "${ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID}"
     export ZENTTY_NESTED_WAYLAND_OUTER_X11_PID="${compositor_pid}"
-    ZENTTY_NESTED_WAYLAND_OUTER_X11_WINDOW="$({
+    mapfile -t all_outer_x11_windows < <({
         xdotool search --onlyvisible --pid "${compositor_pid}" --name '.*' 2>/dev/null || true
-    } | tail -1)"
+    } | sort -n)
+    ZENTTY_NESTED_WAYLAND_OUTER_X11_WINDOW="${all_outer_x11_windows[-1]:-}"
     export ZENTTY_NESTED_WAYLAND_OUTER_X11_WINDOW
     [[ "${ZENTTY_NESTED_WAYLAND_OUTER_X11_WINDOW}" =~ ^[1-9][0-9]*$ ]] ||
         fail "${compositor} outer X11 window identity was unavailable"
     if [[ "${compositor}" != cage ]]; then
         export ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT=1
+    fi
+    if [[ "${scaling_profile}" == 1 ]]; then
+        export ZENTTY_NESTED_WAYLAND_COMPOSITOR_LOG="${compositor_log}"
+        mapfile -t outer_x11_windows < <(
+            printf '%s\n' "${all_outer_x11_windows[@]}" |
+                while read -r window; do
+                    geometry="$(xdotool getwindowgeometry --shell "${window}")"
+                    [[ "${geometry}" == *$'WIDTH=1024\n'* &&
+                        "${geometry}" == *$'HEIGHT=768\n'* ]] && printf '%s\n' "${window}"
+                done
+        )
+        [[ "${#outer_x11_windows[@]}" -eq 2 ]] ||
+            fail "labwc mixed-scale outer X11 window count was not two"
+        # wlroots' X11 backend initially overlaps its two top-level output
+        # windows. Separate them on the private Xvfb desktop so XTEST pointer
+        # events can address each real Wayland output deterministically.
+        xdotool windowmove "${outer_x11_windows[0]}" 0 0
+        xdotool windowmove "${outer_x11_windows[1]}" 1100 0
+        export ZENTTY_NESTED_WAYLAND_OUTER_X11_OUTPUT_1="${outer_x11_windows[0]}"
+        export ZENTTY_NESTED_WAYLAND_OUTER_X11_OUTPUT_2="${outer_x11_windows[1]}"
     fi
     set +e
     "$@"
@@ -222,6 +297,10 @@ elif [[ "${compositor}" == weston ]]; then
 else
     if ! command -v labwc >/dev/null || ! command -v xdotool >/dev/null; then
         echo "nested-wayland-input: SKIP missing labwc input dependency" >&2
+        exit 77
+    fi
+    if [[ "${scaling_profile}" == 1 ]] && ! command -v wlr-randr >/dev/null; then
+        echo "nested-wayland-input: SKIP missing reviewed wlr-randr scaling dependency" >&2
         exit 77
     fi
 fi
@@ -301,10 +380,11 @@ if [[ -n "${report}" && -n "${facts}" ]]; then
           wrapper:{path:$wrapper_path,sha256:$wrapper_sha256},
           started_at_epoch:$started_at_epoch,finished_at_epoch:$finished_at_epoch,
           command:$command,command_exit_code:$command_exit_code,
-          server:{name:$facts.name,version:$facts.version,backend:"x11-nested",
+          server:({name:$facts.name,version:$facts.version,backend:"x11-nested",
             endpoint:$facts.endpoint,width:$facts.width,height:$facts.height,
             scale:$facts.scale,protocols:$facts.protocols,
-            wayland_info_sha256:$facts.wayland_info_sha256},
+            wayland_info_sha256:$facts.wayland_info_sha256} +
+            (if ($facts.outputs | length) > 0 then {outputs:$facts.outputs} else {} end)),
           renderer:{software:true,name:"Pixman",proof:$renderer_proof},
           isolation:{ambient_display_sanitized:true,ambient_dbus_sanitized:true,
             process_group:$process_group,run_root_removed:true,

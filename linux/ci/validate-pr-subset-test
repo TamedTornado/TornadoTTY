@@ -49,9 +49,9 @@ expect_policy_rejected missing-debug-coverage \
     '.selected_cells |= map(select(. != "build-debug"))'
 expect_matrix_rejected selected-status-drift \
     '(.cells[] | select(.id == "physical-key-x11")).status = "BLOCKED" | (.cells[] | select(.id == "physical-key-x11")).prerequisite = "fixture"'
-expect_matrix_rejected stale-gap \
+expect_matrix_rejected scaling-contract-drift \
     '(.cells[] | select(.id == "fractional-scale-wayland")).status = "PASS" | (.cells[] | select(.id == "fractional-scale-wayland")).command = "true" | (.cells[] | select(.id == "fractional-scale-wayland")).environment_profile = "nested-wayland-input-v1"'
 expect_matrix_rejected stale-xfail \
     '(.cells[] | select(.id == "ghostty-async-backend-abi-representation")).status = "PASS"'
 
-echo "validate-pr-subset-test: PASS negatives=missing+unknown+duplicate+claim+gap+support+order+coverage+status+stale-gap+stale-xfail"
+echo "validate-pr-subset-test: PASS negatives=missing+unknown+duplicate+claim+gap+support+order+coverage+status+scaling-contract+stale-xfail"

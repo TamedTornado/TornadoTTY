@@ -92,6 +92,7 @@
             "nested-wayland-input-v1",
             "nested-wayland-multiwindow-v1",
             "nested-wayland-activation-v1",
+            "nested-wayland-scaling-v1",
             "phase-managed-x11-v1",
             "phase-managed-wayland-v1"
           ]

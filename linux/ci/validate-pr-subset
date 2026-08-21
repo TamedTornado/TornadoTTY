@@ -37,7 +37,7 @@ jq -e '
     displays:["wayland","x11"],
     terminal_counts:["single","multi"],
     capabilities:[
-      "build","ghostty_api_audit","physical_key_translation",
+      "build","compositor_scaling","ghostty_api_audit","physical_key_translation",
       "product_boundary","product_pane_terminal_lifecycle","recovery",
       "shortcut_binding_runtime","staged_packaging","terminal_behavior"
     ]
@@ -49,10 +49,6 @@ jq -e '
     full_linux_qualification_passed:false
   } and
   .known_gaps == [
-    {
-      id:"fractional-scale-wayland",expected_status:"BLOCKED",
-      prerequisite:"A controlled nested Wayland compositor exposing deterministic integer and fractional output-scale protocols remains required."
-    },
     {
       id:"ghostty-async-backend-abi-representation",expected_status:"XFAIL",
       prerequisite:"DOGFOOD-2026-08-02-GHOSTTY-ASYNC-ENUM-ABI must remain an explicit expected failure until the fixed-width ABI contract lands."
@@ -82,6 +78,10 @@ if ! jq -e --slurpfile policy "${policy}" '
   all(["wayland","x11"][]; . as $display |
     any(selected[]; .capability == "product_pane_terminal_lifecycle" and
         .display == $display and .optimize == "Debug" and .terminals == "multi")) and
+  any(selected[];
+    .id == "fractional-scale-wayland" and .status == "PASS" and
+    .optimize == "both" and .environment_profile == "nested-wayland-scaling-v1" and
+    .command == "env -u GDK_SCALE -u GDK_DPI_SCALE GDK_BACKEND=wayland linux/tests/rust-wayland-scaling") and
   any(selected[]; .capability == "physical_key_translation" and .display == "x11") and
   any(selected[]; .capability == "shortcut_binding_runtime" and .display == "wayland") and
   all(["wayland","x11"][]; . as $display |

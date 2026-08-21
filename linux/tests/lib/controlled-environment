@@ -135,10 +135,14 @@ zentty_controlled_environment_validate_report() {
                 "isolation","renderer","schema_version","server","session_id",
                 "started_at_epoch","wrapper"
             ] and
-            (.server | keys | sort) == [
-                "backend","endpoint","height","name","protocols","scale",
-                "version","wayland_info_sha256","width"
-            ] and
+            ((.server | keys | sort) == [
+                 "backend","endpoint","height","name","protocols","scale",
+                 "version","wayland_info_sha256","width"
+             ] or
+             (.server | keys | sort) == [
+                 "backend","endpoint","height","name","outputs","protocols",
+                 "scale","version","wayland_info_sha256","width"
+             ]) and
             (.server.version | type == "string" and length > 0) and
             (if .server.name == "Weston" then
                 ((.server.backend == "headless" and
@@ -157,7 +161,22 @@ zentty_controlled_environment_validate_report() {
                 (.server.endpoint | type == "string" and test("^wayland-[0-9]+$")) and
                 (.server.width | type == "number" and . > 0 and floor == .) and
                 (.server.height | type == "number" and . > 0 and floor == .) and
-                (.server.scale | type == "number" and . > 0 and floor == .)
+                (.server.scale | type == "number" and . > 0 and floor == .) and
+                (if .server.outputs? then
+                    (.server.outputs |
+                     type == "array" and length == 2 and
+                     all(.[];
+                        (keys | sort) == ["mode","name","position","scale"] and
+                        (.name | type == "string" and length > 0) and
+                        (.position | type == "string" and test("^[0-9]+,[0-9]+$")) and
+                        (.scale | type == "number" and . > 0) and
+                        (.mode | type == "string" and test("^[0-9]+x[0-9]+$"))) and
+                     ([.[].name] | unique | length) == 2 and
+                     any(.[]; .name == "X11-1" and .position == "0,0" and
+                        .scale == 1 and .mode == "1024x768") and
+                     any(.[]; .name == "X11-2" and .position == "1024,0" and
+                        .scale == 2 and .mode == "1024x768"))
+                 else true end)
              else false end) and
             (.server.protocols | type == "array" and length >= 4 and
                 all(.[]; type == "string" and length > 0) and

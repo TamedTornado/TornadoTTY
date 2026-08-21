@@ -24,6 +24,7 @@
     "staged-x11",
     "ghostty-api-audit-inventory",
     "build-debug",
+    "fractional-scale-wayland",
     "physical-key-x11",
     "product-boundary-wayland",
     "product-boundary-x11",
@@ -39,6 +40,7 @@
     "terminal_counts": ["single", "multi"],
     "capabilities": [
       "build",
+      "compositor_scaling",
       "ghostty_api_audit",
       "physical_key_translation",
       "product_boundary",
@@ -50,11 +52,6 @@
     ]
   },
   "known_gaps": [
-    {
-      "id": "fractional-scale-wayland",
-      "expected_status": "BLOCKED",
-      "prerequisite": "A controlled nested Wayland compositor exposing deterministic integer and fractional output-scale protocols remains required."
-    },
     {
       "id": "ghostty-async-backend-abi-representation",
       "expected_status": "XFAIL",

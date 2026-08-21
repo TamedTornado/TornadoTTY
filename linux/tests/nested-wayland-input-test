@@ -94,7 +94,33 @@ jq -e '
     (.server.protocols | index("wl_seat") != null) and
     .renderer == {software:true,name:"Pixman",proof:"WLR_RENDERER=pixman"}
 ' "${report}" >/dev/null || fail "labwc activation capability proof is incomplete"
+
+started_at="$(date +%s)"
+# shellcheck disable=SC2016
+scaling_child='test "${GDK_BACKEND:-}" = wayland && test "$(wlr-randr | grep -c "^[^ ]")" -eq 2 && wayland-info | grep -F wp_fractional_scale_manager_v1 >/dev/null && wayland-info | grep -F zwlr_output_manager_v1 >/dev/null'
+ZENTTY_NESTED_WAYLAND_INPUT_COMPOSITOR=labwc \
+    ZENTTY_NESTED_WAYLAND_SCALING_PROFILE=1 \
+    ZENTTY_NESTED_WAYLAND_INPUT_REPORT="${report}" \
+    "${harness}" bash -c "${scaling_child}" >"${output}" 2>&1 ||
+    fail "real labwc mixed-scale environment failed"
+grep -Fxq \
+    'nested-wayland-input: READY private-labwc-x11-nested backend=wayland software-renderer=1 outer-x11-input=1 xdg-activation=1 mixed-scale-outputs=2' \
+    "${output}" || fail "labwc scaling readiness receipt is missing"
+expected_command="$(jq -cn --arg child "${scaling_child}" '["bash","-c",$child]')"
+zentty_controlled_environment_validate_report \
+    "${report}" "${harness}" wayland 0 "${expected_command}" "${started_at}" 900 \
+    >/dev/null || fail "machine-readable labwc scaling receipt was rejected"
+jq -e '
+    .server.name == "labwc" and
+    (.server.protocols | index("wp_fractional_scale_manager_v1") != null) and
+    (.server.protocols | index("wp_viewporter") != null) and
+    (.server.protocols | index("zwlr_output_manager_v1") != null) and
+    (.server.outputs | length) == 2 and
+    any(.server.outputs[]; .name == "X11-1" and .position == "0,0" and .scale == 1) and
+    any(.server.outputs[]; .name == "X11-2" and .position == "1024,0" and .scale == 2)
+' "${report}" >/dev/null || fail "labwc scaling protocol or output proof is incomplete"
+
 after_roots="$(find /tmp -maxdepth 1 -type d -name 'zwi.*' -printf '%f\n' | sort)"
 [[ "${after_roots}" == "${before_roots}" ]] || fail "controlled runtime root leaked"
 
-echo "Nested Wayland input tests passed: Cage/Weston/labwc, Xvfb transport, Pixman, virtual keyboard/outer input, xdg activation, isolation, cleanup"
+echo "Nested Wayland input tests passed: Cage/Weston/labwc, Xvfb transport, Pixman, virtual keyboard/outer input, xdg activation, mixed scaling, isolation, cleanup"
