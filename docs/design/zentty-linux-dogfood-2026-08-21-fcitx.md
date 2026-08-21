@@ -527,9 +527,13 @@ bundle rebuild journeys pass against the consolidated artifact.
 The pinned Ghostty regression target remains the longest single matrix cell.
 Its cold isolated-cache measurement was 559,817 ms; subsequent warm runs were
 390,290 ms and 369,180 ms. The cell is an upstream Zig build-and-test graph plus
-the GTK embedding regression target, not one behavioral assertion. The wrapper
-must report its constituent phases rather than presenting that aggregate as a
-single opaque test duration. No complete post-repair qualification receipt has
+the GTK embedding regression target, not one behavioral assertion. Giving this
+critical-path graph 16 workers while the two product-profile builders share the
+other half of the host reduced the next warm run to 332,747 ms. Its new
+machine-readable timing receipt attributes 332,319 ms to Ghostty's combined
+upstream build/test graph and 428 ms to the already-cached GTK embedding target.
+This makes the remaining cost explicit rather than presenting the aggregate as
+one opaque behavioral test. No complete post-repair qualification receipt has
 yet been accepted.
 
 ## AI disclosure

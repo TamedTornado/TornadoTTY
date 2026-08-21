@@ -10,12 +10,13 @@ blueprint_dir="${BLUEPRINT_COMPILER_DIR:-${repo_root}/../.tools/blueprint-compil
 zig_global_cache="${repo_root}/build/linux-deps/zig-global-cache"
 zig_local_cache="${ZENTTY_ZIG_LOCAL_CACHE_DIR:-${ghostty_source}/.zig-cache}"
 [[ "${zig_local_cache}" == /* ]] || zig_local_cache="${repo_root}/${zig_local_cache}"
-build_jobs="${ZENTTY_BUILD_JOBS:-$(zentty_qualification_build_jobs)}"
+build_jobs="${ZENTTY_BUILD_JOBS:-$(zentty_qualification_regression_jobs)}"
 [[ "${build_jobs}" =~ ^[1-9][0-9]*$ ]] || {
     echo "error: ZENTTY_BUILD_JOBS must be a positive integer" >&2
     exit 64
 }
 receipt="${repo_root}/build/linux/ghostty-regression.log"
+timing_receipt="${repo_root}/build/linux/ghostty-regression-timing.json"
 install_dir="${ZENTTY_GHOSTTY_REGRESSION_INSTALL_DIR:-${repo_root}/build/linux-deps/ghostty-regression-out}"
 if [[ "${install_dir}" != /* ]]; then
     install_dir="${repo_root}/${install_dir}"
@@ -39,10 +40,13 @@ if [[ -n "$(git -C "${ghostty_source}" status --porcelain)" ]]; then
     echo "error: Ghostty regression requires a clean pinned checkout" >&2
     exit 1
 fi
-mkdir -p "${zig_global_cache}" "${zig_local_cache}"
+mkdir -p "${zig_global_cache}" "${zig_local_cache}" "$(dirname "${timing_receipt}")"
+timing_temp="$(mktemp "${timing_receipt}.tmp.XXXXXX")"
+trap 'rm -f -- "${timing_temp}"' EXIT
 
 (
     cd "${ghostty_source}"
+    test_started_ms="$(date +%s%3N)"
     PATH="${blueprint_dir}:$(dirname "${zig}"):${PATH}" \
         ZIG_GLOBAL_CACHE_DIR="${zig_global_cache}" \
         ZIG_LOCAL_CACHE_DIR="${zig_local_cache}" \
@@ -52,6 +56,8 @@ mkdir -p "${zig_global_cache}" "${zig_local_cache}"
         -Doptimize=Debug \
         -Dcpu=baseline \
         -fno-sys=gtk4-layer-shell
+    test_finished_ms="$(date +%s%3N)"
+    embed_started_ms="${test_finished_ms}"
     PATH="${blueprint_dir}:$(dirname "${zig}"):${PATH}" \
         ZIG_GLOBAL_CACHE_DIR="${zig_global_cache}" \
         ZIG_LOCAL_CACHE_DIR="${zig_local_cache}" \
@@ -61,6 +67,16 @@ mkdir -p "${zig_global_cache}" "${zig_local_cache}"
         -Doptimize=Debug \
         -Dcpu=baseline \
         -fno-sys=gtk4-layer-shell
+    embed_finished_ms="$(date +%s%3N)"
+    jq -n \
+        --argjson jobs "${build_jobs}" \
+        --argjson test_ms "$((test_finished_ms - test_started_ms))" \
+        --argjson embed_ms "$((embed_finished_ms - embed_started_ms))" \
+        --argjson total_ms "$((embed_finished_ms - test_started_ms))" \
+        '{schema_version: 1, jobs: $jobs, phases: {ghostty_test_ms: $test_ms, gtk_embed_lib_test_ms: $embed_ms}, total_ms: $total_ms}' \
+        >"${timing_temp}"
 ) >"${receipt}" 2>&1
+mv -f -- "${timing_temp}" "${timing_receipt}"
+trap - EXIT
 
-echo "Pinned Ghostty regression suite passed"
+echo "Pinned Ghostty regression suite passed: $(jq -c . "${timing_receipt}")"

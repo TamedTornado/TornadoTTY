@@ -187,9 +187,13 @@ jq -e '
     (.cells[] | select(.id == "ghostty-regression") |
       ((.resources // []) | length) == 0 and .schedule_priority == 12 and
       (.blocks_display // false) == false and
+      (.command | contains("ZENTTY_BUILD_JOBS=16")) and
       (.command | contains("ZENTTY_ZIG_LOCAL_CACHE_DIR=build/linux-deps/ghostty/.zig-cache/qualification/regression")) and
       .skip_profile_prerequisite == true)
 ' "${source_matrix}" >/dev/null
+grep -F 'ghostty-regression-timing.json' "${repo_root}/linux/tests/ghostty-regression" >/dev/null
+grep -F 'ghostty_test_ms' "${repo_root}/linux/tests/ghostty-regression" >/dev/null
+grep -F 'gtk_embed_lib_test_ms' "${repo_root}/linux/tests/ghostty-regression" >/dev/null
 
 # Every graphical journey owns a nested display. CPU-heavy producers are
 # bounded internally rather than imposing a global display barrier.

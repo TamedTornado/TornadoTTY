@@ -69,3 +69,15 @@ zentty_qualification_build_jobs() {
     (( jobs >= 2 )) || jobs=2
     printf '%s\n' "${jobs}"
 }
+
+zentty_qualification_regression_jobs() {
+    local cpu_count jobs
+    cpu_count="$(nproc)"
+    [[ "${cpu_count}" =~ ^[1-9][0-9]*$ ]] || cpu_count=1
+    # This is the longest build graph. Give it half the host while the two
+    # product-profile builders share the other half.
+    jobs=$((cpu_count / 2))
+    (( jobs >= 2 )) || jobs=2
+    (( jobs > 16 )) && jobs=16
+    printf '%s\n' "${jobs}"
+}
