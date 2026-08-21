@@ -602,6 +602,22 @@ pub(crate) const COMMANDS: &[ShortcutCommandSpec] = &[
         ACTION_CLOSE_WINDOW,
         Some("command+shift+w")
     ),
+    command!(
+        "window.toggle_fullscreen",
+        "Toggle Full Screen",
+        "Enter or leave compositor-managed full screen.",
+        General,
+        ACTION_TOGGLE_FULLSCREEN,
+        Some("f11")
+    ),
+    command!(
+        "window.minimize",
+        "Minimize Window",
+        "Minimize the active Zentty window through the compositor.",
+        General,
+        ACTION_MINIMIZE_WINDOW,
+        None
+    ),
 ];
 
 pub(crate) fn definitions() -> Vec<ShortcutDefinition> {

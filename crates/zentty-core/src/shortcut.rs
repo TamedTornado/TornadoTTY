@@ -13,6 +13,7 @@ pub enum ShortcutKey {
     Right,
     Up,
     Down,
+    Function(u8),
 }
 
 impl ShortcutKey {
@@ -27,6 +28,11 @@ impl ShortcutKey {
             "up" => Some(Self::Up),
             "down" => Some(Self::Down),
             value => {
+                if let Some(number) = value.strip_prefix('f').and_then(|value| value.parse().ok())
+                    && (1..=12).contains(&number)
+                {
+                    return Some(Self::Function(number));
+                }
                 let mut characters = value.chars();
                 let character = characters.next()?;
                 (characters.next().is_none()).then_some(Self::Character(character))
@@ -45,6 +51,7 @@ impl ShortcutKey {
             Self::Right => "right".into(),
             Self::Up => "up".into(),
             Self::Down => "down".into(),
+            Self::Function(number) => format!("f{number}"),
         }
     }
 
@@ -60,6 +67,7 @@ impl ShortcutKey {
             Self::Right => "Right".into(),
             Self::Up => "Up".into(),
             Self::Down => "Down".into(),
+            Self::Function(number) => format!("F{number}"),
         }
     }
 }
@@ -167,12 +175,15 @@ impl KeyboardShortcut {
 
     #[must_use]
     pub fn is_eligible_command_binding(&self) -> bool {
-        self.modifiers.iter().any(|modifier| {
-            matches!(
-                modifier,
-                ShortcutModifier::Command | ShortcutModifier::Control | ShortcutModifier::Option
-            )
-        })
+        matches!(self.key, ShortcutKey::Function(_))
+            || self.modifiers.iter().any(|modifier| {
+                matches!(
+                    modifier,
+                    ShortcutModifier::Command
+                        | ShortcutModifier::Control
+                        | ShortcutModifier::Option
+                )
+            })
     }
 }
 
@@ -468,6 +479,7 @@ mod tests {
             "command+right",
             "command+up",
             "command+down",
+            "f11",
         ] {
             assert_eq!(shortcut(storage).storage_string(), storage);
         }
@@ -481,6 +493,7 @@ mod tests {
             "Ctrl+Alt+Shift+Left"
         );
         assert_eq!(shortcut("control+return").display(), "Control+Return");
+        assert_eq!(shortcut("f11").display(), "F11");
     }
 
     #[test]

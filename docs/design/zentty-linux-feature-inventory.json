@@ -591,10 +591,10 @@
       "origin": "PORT_PARITY",
       "user_impact": "Users must be protected from accidentally destroying live agent work while normal Linux window/fullscreen/shutdown behavior remains reliable.",
       "linux_owner_issue": 23,
-      "implementation_status": "PARTIAL",
-      "focused_tests": [],
-      "product_scenarios": ["linux/tests/rust-product-smoke", "linux/tests/rust-session-restore"],
-      "test_plan": "Drive close/quit/fullscreen/multiwindow with real live/idle PTYs and agent state, keyboard accept/cancel, background callbacks, restart and crash injection; assert prompts, cleanup and persistence in controlled compositors.",
+      "implementation_status": "IMPLEMENTED",
+      "focused_tests": ["crates/zentty-core/src/close_decision.rs", "crates/zentty-linux/src/application_shell/close_runtime.rs", "crates/zentty-linux/src/window_set.rs"],
+      "product_scenarios": ["linux/tests/rust-multi-window", "linux/tests/rust-product-lifecycle", "linux/tests/rust-agent-ipc", "linux/tests/rust-product-smoke", "linux/tests/rust-session-restore"],
+      "test_plan": "One pure typed authority evaluates exact pane/worklane/window/application scope from real Ghostty foreground PID, active agent state, and meaningful session history. Existing controlled X11 and Wayland actors cover idle/live work, active/waiting agents, keyboard cancellation/acceptance, stale and duplicate callbacks, WM close, fullscreen, native X11 and request-only Wayland minimize, activation, compositor-owned placement, PTY reaping, persistence/restart, and empty/last-target boundaries without a second lifecycle system.",
       "alternative_or_blocker": "Map standard macOS Hide/Minimize/Mission Control behavior to GTK/window-manager conventions while preserving confirmation, activation, fullscreen and restored-placement outcomes."
     },
     {

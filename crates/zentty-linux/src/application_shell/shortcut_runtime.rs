@@ -22,6 +22,18 @@ pub(crate) fn shortcut_from_event(
         gdk::Key::Right => ShortcutKey::Right,
         gdk::Key::Up => ShortcutKey::Up,
         gdk::Key::Down => ShortcutKey::Down,
+        gdk::Key::F1 => ShortcutKey::Function(1),
+        gdk::Key::F2 => ShortcutKey::Function(2),
+        gdk::Key::F3 => ShortcutKey::Function(3),
+        gdk::Key::F4 => ShortcutKey::Function(4),
+        gdk::Key::F5 => ShortcutKey::Function(5),
+        gdk::Key::F6 => ShortcutKey::Function(6),
+        gdk::Key::F7 => ShortcutKey::Function(7),
+        gdk::Key::F8 => ShortcutKey::Function(8),
+        gdk::Key::F9 => ShortcutKey::Function(9),
+        gdk::Key::F10 => ShortcutKey::Function(10),
+        gdk::Key::F11 => ShortcutKey::Function(11),
+        gdk::Key::F12 => ShortcutKey::Function(12),
         key => ShortcutKey::Character(key.to_unicode()?.to_lowercase().next()?),
     };
     let mut translated = HashSet::new();
@@ -128,7 +140,12 @@ mod tests {
     }
 
     #[test]
-    fn unknown_function_keys_do_not_become_command_bindings() {
-        assert!(shortcut_from_event(gdk::Key::F8, gdk::ModifierType::CONTROL_MASK).is_none());
+    fn function_keys_are_physical_command_bindings() {
+        assert_eq!(
+            shortcut_from_event(gdk::Key::F11, gdk::ModifierType::empty())
+                .unwrap()
+                .storage_string(),
+            "f11"
+        );
     }
 }

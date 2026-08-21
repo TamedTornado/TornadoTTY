@@ -691,6 +691,11 @@ fn preview_key(label: &str) -> Option<ShortcutKey> {
         "→" | "Right" => Some(ShortcutKey::Right),
         "↑" | "Up" => Some(ShortcutKey::Up),
         "↓" | "Down" => Some(ShortcutKey::Down),
+        value if value.len() <= 3 && value.starts_with('F') => value[1..]
+            .parse::<u8>()
+            .ok()
+            .filter(|number| (1..=12).contains(number))
+            .map(ShortcutKey::Function),
         label => {
             let lowered = label.to_lowercase();
             let mut characters = lowered.chars();

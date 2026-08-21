@@ -102,6 +102,8 @@ pub(super) const ACTION_OPEN_BOOKMARKS: &str = "open-bookmarks";
 pub(super) const ACTION_JUMP_LATEST_ATTENTION: &str = "jump-latest-attention";
 pub(super) const ACTION_NEW_WINDOW: &str = "new-window";
 pub(super) const ACTION_CLOSE_WINDOW: &str = "close-window";
+pub(super) const ACTION_TOGGLE_FULLSCREEN: &str = "toggle-fullscreen";
+pub(super) const ACTION_MINIMIZE_WINDOW: &str = "minimize-window";
 pub(super) const ACTION_NEW_WORKLANE: &str = "new-worklane";
 pub(super) const ACTION_SELECT_WORKLANE: &str = "select-worklane";
 pub(super) const ACTION_SPLIT_PANE_RIGHT: &str = "split-pane-right";
@@ -204,6 +206,8 @@ pub(super) const ACTION_EDIT_TEMPLATE: &str = "edit-template";
 pub(super) const ACTION_SPECS: &[ActionSpec] = &[
     action!(ACTION_NEW_WINDOW, "new-window", None),
     action!(ACTION_CLOSE_WINDOW, "close-window", None),
+    action!(ACTION_TOGGLE_FULLSCREEN, "toggle-fullscreen", None),
+    action!(ACTION_MINIMIZE_WINDOW, "minimize-window", None),
     action!(ACTION_TOGGLE_SIDEBAR, "toggle-sidebar", None),
     action!(ACTION_SHOW_COMMAND_PALETTE, "show-command-palette", None),
     action!(ACTION_OPEN_SETTINGS, "open-settings", None),
@@ -1107,6 +1111,13 @@ fn install_application_actions(
         }
     });
     group.add_action(&close_window);
+
+    add_simple_action(shell, group, ACTION_TOGGLE_FULLSCREEN, |shell| {
+        shell.toggle_fullscreen();
+    });
+    add_simple_action(shell, group, ACTION_MINIMIZE_WINDOW, |shell| {
+        shell.minimize_window();
+    });
 
     let move_pane = gio::SimpleAction::new(ACTION_MOVE_PANE_TO_NEW_WINDOW, None);
     let weak = Rc::downgrade(shell);

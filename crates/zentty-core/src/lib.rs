@@ -13,6 +13,7 @@ mod atomic_file_store;
 mod attention_inbox;
 mod bookmark_store;
 mod clean_copy;
+mod close_decision;
 mod codex_title;
 mod codex_transcript;
 mod command_palette;
@@ -131,6 +132,9 @@ pub use agent_adapters::{
 pub use clean_copy::{
     CleanCopyOptions, CleanCopyResult, CommandFlattenAggressiveness, clean_copy,
     is_likely_markdown, reformat_markdown,
+};
+pub use close_decision::{
+    CloseDecision, CloseEvidence, ClosePaneEvidence, CloseReason, CloseTarget, decide_close,
 };
 pub use codex_title::{CodexTitlePhase, CodexTitleSignal, classify_codex_terminal_title};
 pub use codex_transcript::{

@@ -10,6 +10,8 @@ state_dir=""
 log=""
 product_pid=""
 status_notifier_pid=""
+window_manager_pid=""
+window_manager_log=""
 status_notifier_receipt=""
 fleet_running_offset=0
 route_probe_index=0
@@ -34,9 +36,14 @@ cleanup() {
         kill -TERM "${status_notifier_pid}" 2>/dev/null || true
         wait "${status_notifier_pid}" 2>/dev/null || true
     fi
+    if [[ "${window_manager_pid}" =~ ^[1-9][0-9]*$ ]]; then
+        kill -TERM "${window_manager_pid}" 2>/dev/null || true
+        wait "${window_manager_pid}" 2>/dev/null || true
+    fi
     [[ -z "${state_dir}" ]] || rm -rf -- "${state_dir}"
     [[ -z "${log}" ]] || rm -f -- "${log}"
     [[ -z "${config_file}" ]] || rm -f -- "${config_file}"
+    [[ -z "${window_manager_log}" ]] || rm -f -- "${window_manager_log}"
 }
 trap cleanup EXIT
 
@@ -56,6 +63,20 @@ for dependency in cmp dirname jq mkdir readelf timeout mktemp grep; do
 done
 if [[ "${backend}" == x11 ]]; then
     command -v xprop >/dev/null || fail "xprop is required for X11 toplevel identity"
+    if [[ "${ZENTTY_MULTI_WINDOW_LIFECYCLE_ONLY:-false}" == true ||
+        "${ZENTTY_MULTI_WINDOW_WINDOW_STATE_ONLY:-false}" == true ]]; then
+        command -v openbox >/dev/null || fail "openbox is required for native X11 lifecycle state"
+        window_manager_log="$(mktemp)"
+        openbox --sm-disable >"${window_manager_log}" 2>&1 &
+        window_manager_pid=$!
+        for _ in {1..100}; do
+            xprop -root _NET_SUPPORTING_WM_CHECK 2>/dev/null |
+                grep -Fq '_NET_SUPPORTING_WM_CHECK(WINDOW)' && break
+            sleep 0.05
+        done
+        xprop -root _NET_SUPPORTING_WM_CHECK 2>/dev/null |
+            grep -Fq '_NET_SUPPORTING_WM_CHECK(WINDOW)' || fail "controlled X11 window manager did not start"
+    fi
 fi
 [[ -x "${product}" ]] || fail "staged product is not built: ${product}"
 [[ -f "${bundle_lib}/libghostty-gtk-embed.so" ]] ||
@@ -133,13 +154,14 @@ while IFS= read -r value; do
 done
 EOF
 )"
+launch_command="${child_command}"
 
 start_product() {
     : >"${log}"
     CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 \
         LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
         "${product}" \
-        --command "${child_command}" \
+        --command "${launch_command}" \
         --state-directory "${state_dir}" \
         --async-backend default \
         "${product_args[@]}" >"${log}" 2>&1 &
@@ -217,12 +239,15 @@ target_second_window() {
 execute_palette_action() {
     local query="$1"
     local action="$2"
+    local shown_before query_before
+    shown_before="$(grep -Fc 'zentty-linux: command-palette=shown' "${log}" || true)"
+    query_before="$(grep -Fc "zentty-linux: command-palette=query value=\"${query}\" results=1" "${log}" || true)"
     zentty_product_ctrl_shift_key "${backend}" p
-    zentty_product_wait_for_log "${log}" 'zentty-linux: command-palette=shown' \
+    zentty_product_wait_for_log_count "${log}" 'zentty-linux: command-palette=shown' "$((shown_before + 1))" \
         "command palette did not open for ${action}" || fail "${action} palette missing"
     zentty_product_type "${backend}" "${query}"
-    zentty_product_wait_for_log "${log}" \
-        "zentty-linux: command-palette=query value=\"${query}\" results=1" \
+    zentty_product_wait_for_log_count "${log}" \
+        "zentty-linux: command-palette=query value=\"${query}\" results=1" "$((query_before + 1))" \
         "${action} did not resolve uniquely" || fail "${action} palette query failed"
     zentty_product_key "${backend}" Down
     zentty_product_key "${backend}" Return
@@ -423,6 +448,7 @@ focus_outer_wayland_pane() {
 }
 
 create_second_window() {
+    local route_probe="${1:-true}"
     zentty_product_ctrl_shift_key "${backend}" n
     zentty_product_wait_for_log "${log}" 'zentty-linux: window-opened id=window-2' \
         "physical New Window did not create the second GTK window" || fail "second window missing"
@@ -437,7 +463,32 @@ create_second_window() {
         visible_count="$(xdotool search --onlyvisible --pid "${product_pid}" --name '^Zentty$' 2>/dev/null | wc -l)"
         [[ "${visible_count}" -eq 2 ]] || fail "X11 exposed ${visible_count} product windows instead of two"
     fi
-    target_second_window
+    if [[ "${route_probe}" == true ]]; then
+        target_second_window
+    elif [[ "${backend}" == x11 ]]; then
+        if [[ "${window_manager_pid}" =~ ^[1-9][0-9]*$ ]]; then
+            ZENTTY_PRODUCT_WINDOW_ID="$(xdotool getactivewindow)"
+            [[ "$(xdotool getwindowpid "${ZENTTY_PRODUCT_WINDOW_ID}" 2>/dev/null || true)" == "${product_pid}" ]] ||
+                fail "controlled window manager did not activate the new product window"
+            export ZENTTY_PRODUCT_WINDOW_ID
+            return
+        fi
+        mapfile -t idle_window_ids < <(
+            xdotool search --onlyvisible --pid "${product_pid}" --name '^Zentty$' 2>/dev/null |
+                while read -r candidate_id; do
+                    xprop -id "${candidate_id}" _NET_WM_WINDOW_TYPE 2>/dev/null |
+                        grep -Fq '_NET_WM_WINDOW_TYPE_NORMAL' && printf '%s\n' "${candidate_id}"
+                done |
+                sort -n
+        )
+        [[ "${#idle_window_ids[@]}" -eq 2 ]] ||
+            fail "could not identify two normal idle X11 windows"
+        # Xvfb allocates XIDs monotonically; the newly constructed second
+        # toplevel therefore has the larger identity without typing a probe
+        # command into either otherwise-idle shell.
+        ZENTTY_PRODUCT_WINDOW_ID="${idle_window_ids[1]}"
+        export ZENTTY_PRODUCT_WINDOW_ID
+    fi
 }
 
 type_and_expect_title() {
@@ -480,6 +531,11 @@ wait_for_frame_restore_requests() {
 
 close_active_window() {
     if [[ "${backend}" == x11 ]]; then
+        if [[ "${window_manager_pid}" =~ ^[1-9][0-9]*$ ]]; then
+            xdotool windowactivate --sync "${ZENTTY_PRODUCT_WINDOW_ID}"
+            xdotool key ctrl+shift+w
+            return
+        fi
         # The target is destroyed on key-down, before XTest can deliver every
         # synthetic release to that XID. Product logs and survivor input prove
         # the close; reset global key state against the live root window.
@@ -504,11 +560,98 @@ reply_to_confirmation() {
 # windows and real Ghostty PTYs. The rest of this already-large multi-window
 # qualification keeps confirmations disabled so its unrelated transaction and
 # restoration assertions remain independently diagnostic.
+if [[ "${ZENTTY_MULTI_WINDOW_WINDOW_STATE_ONLY:-false}" == true ]]; then
+# Keep native window-state qualification independent from destructive-close
+# dialogs. Fullscreen changes compositor geometry and pointer-enter timing; it
+# must not contaminate the separate confirmation journey's input targeting.
+launch_command="${SHELL:-/bin/bash}"
+start_product
+create_second_window false
+zentty_product_wait_for_log "${log}" \
+    'zentty-linux: shell-signal pane=pane-window-2 kind=shell-state state=prompt command-present=false' \
+    "window-state shell did not reach its prompt" || fail "window-state idle prompt missing"
+
+# F11 is the standard Linux fullscreen binding. Require the physical shortcut
+# to reach the named action and require GTK to report both compositor-accepted
+# state transitions.
+zentty_product_key "${backend}" F11
+zentty_product_wait_for_log "${log}" 'zentty-linux: shortcut=f11 action=toggle-fullscreen' \
+    "physical F11 did not route to Toggle Full Screen" || fail "fullscreen shortcut missing"
+zentty_product_wait_for_log "${log}" 'zentty-linux: window-state id=window-2 fullscreen=true' \
+    "compositor did not acknowledge fullscreen" || fail "fullscreen transition missing"
+zentty_product_key "${backend}" F11
+zentty_product_wait_for_log_count "${log}" 'zentty-linux: shortcut=f11 action=toggle-fullscreen' 2 \
+    "second physical F11 did not route" || fail "fullscreen exit shortcut missing"
+zentty_product_wait_for_log "${log}" 'zentty-linux: window-state id=window-2 fullscreen=false' \
+    "compositor did not acknowledge leaving fullscreen" || fail "fullscreen exit missing"
+
+# X11 exposes the compositor's minimized state and lets the harness reactivate
+# the exact native toplevel. Wayland's xdg-toplevel minimize request has no
+# acknowledged minimized state, so product code uses the same GTK request but
+# must not fabricate a PASS for an unobservable compositor outcome.
+if [[ "${backend}" == x11 ]]; then
+    execute_palette_action "Minimize this window through the compositor" "Minimize Window"
+    zentty_product_wait_for_log "${log}" \
+        'zentty-linux: window-state id=window-2 minimize-requested=true' \
+        "Minimize Window did not reach GTK" || fail "minimize request missing"
+    for _ in {1..240}; do
+        xprop -id "${ZENTTY_PRODUCT_WINDOW_ID}" _NET_WM_STATE 2>/dev/null |
+            grep -Fq '_NET_WM_STATE_HIDDEN' && break
+        sleep 0.05
+    done
+    xprop -id "${ZENTTY_PRODUCT_WINDOW_ID}" _NET_WM_STATE 2>/dev/null |
+        grep -Fq '_NET_WM_STATE_HIDDEN' || fail "X11 compositor did not minimize the target"
+    xdotool windowactivate --sync "${ZENTTY_PRODUCT_WINDOW_ID}"
+fi
+close_active_window
+zentty_product_wait_for_log "${log}" 'zentty-linux: window-closed id=window-2 remaining=1' \
+    "window-state target did not close after activation" || fail "window-state close missing"
+zentty_product_close_window "${backend}"
+wait_for_exit
+echo "Rust multi-window state passed: backend=${backend}, fullscreen=roundtrip, minimize=$([[ "${backend}" == x11 ]] && echo native || echo compositor-request-only)"
+exit 0
+fi
+
 if [[ "${ZENTTY_MULTI_WINDOW_FLEET_ONLY:-false}" != true &&
     "${ZENTTY_MULTI_WINDOW_EXISTING_WORKLANE_ONLY:-false}" != true &&
     "${ZENTTY_MULTI_WINDOW_RESTORE_LAYOUT_ONLY:-false}" != true ]]; then
 start_product
 create_second_window
+
+# A worklane close uses the same typed live-work authority as pane, window,
+# and application close. Exercise its exact target, cancellation, acceptance,
+# and survivor PTY before changing window count.
+if [[ "${backend}" == wayland ]]; then
+    # Creating a surface during Cage's synthetic Control+T key-down can move
+    # focus before the matching key-up is delivered. Exercise the same product
+    # action through the real command palette so a held `t` cannot be replayed
+    # against the survivor later in this destructive-close journey.
+    execute_palette_action "Create another worklane" "New Worklane"
+else
+    zentty_product_ctrl_key "${backend}" t
+fi
+zentty_product_wait_for_log "${log}" \
+    'zentty-linux: action=new-worklane id=worklane-window-2-1 pane=pane-window-2-1' \
+    "New Worklane did not create the real close target" || fail "worklane close target missing"
+execute_palette_action "Close Worklane" "Close Worklane"
+zentty_product_wait_for_log "${log}" 'zentty-linux: confirmation shown title="Close this worklane?"' \
+    "Close Worklane did not present its source confirmation" || fail "worklane confirmation missing"
+reply_to_confirmation Escape
+zentty_product_wait_for_log "${log}" 'zentty-linux: confirmation accepted=false' \
+    "Escape did not cancel Close Worklane" || fail "worklane confirmation cancellation missing"
+type_and_expect_title "worklane-close-cancelled" "pane-window-2-1"
+accepted_before="$(grep -Fc 'zentty-linux: confirmation accepted=true' "${log}" || true)"
+execute_palette_action "Close Worklane" "Close Worklane"
+zentty_product_wait_for_log_count "${log}" 'zentty-linux: confirmation shown title="Close this worklane?"' 2 \
+    "second Close Worklane did not present confirmation" || fail "second worklane confirmation missing"
+reply_to_confirmation Return
+zentty_product_wait_for_log_count "${log}" 'zentty-linux: confirmation accepted=true' "$((accepted_before + 1))" \
+    "Return did not accept Close Worklane" || fail "worklane confirmation acceptance missing"
+zentty_product_wait_for_log "${log}" \
+    'zentty-linux: action=close-worklane id=worklane-window-2-1 panes=1' \
+    "accepted Close Worklane did not remove its exact target" || fail "confirmed worklane close failed"
+type_and_expect_title "worklane-close-survivor" "pane-window-2"
+
 close_active_window
 zentty_product_wait_for_log "${log}" 'zentty-linux: confirmation shown title="Close this window?"' \
     "Close Window did not present its source confirmation" || fail "window confirmation missing"
@@ -527,9 +670,10 @@ zentty_product_wait_for_log_count "${log}" 'zentty-linux: confirmation accepted=
 zentty_product_wait_for_log "${log}" 'zentty-linux: window-closed id=window-2 remaining=1' \
     "accepted Close Window did not close only its target" || fail "confirmed window close failed"
 if [[ "${backend}" == wayland && "${ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT:-}" != 1 ]]; then
-    # Cage may destroy the shortcut target before the virtual-keyboard key-up
-    # reaches it. Clear global modifier state against the surviving toplevel so
-    # the next physical text cannot be interpreted as another shortcut.
+    # Cage may destroy the shortcut target before its key-up reaches the
+    # surviving toplevel. Clear modifier state through whichever controlled
+    # physical-input route owns this nested compositor so following text cannot
+    # become an unrelated shortcut (for example Control+T / New Worklane).
     wtype -M ctrl -M shift -m shift -m ctrl
 fi
 zentty_product_prepare_input "${backend}" "${log}" || fail "could not retarget surviving confirmation window"
@@ -552,6 +696,38 @@ reply_to_confirmation Return
 zentty_product_wait_for_log_count "${log}" 'zentty-linux: confirmation accepted=true' "$((accepted_before + 1))" \
     "Return did not accept Quit" || fail "quit confirmation acceptance missing"
 wait_for_exit
+
+# Source behavior does not nag for an untouched interactive shell merely
+# because a PTY child exists. Repeat the same physical window-manager route
+# with two real idle shells and prove both closes are immediate.
+rm -rf -- "${state_dir}"
+state_dir="$(mktemp -d)"
+launch_command="${SHELL:-/bin/bash}"
+start_product
+create_second_window false
+zentty_product_wait_for_log "${log}" \
+    'zentty-linux: shell-signal pane=pane-1 kind=shell-state state=prompt command-present=false' \
+    "first untouched shell did not reach its prompt" || fail "first idle prompt missing"
+zentty_product_wait_for_log "${log}" \
+    'zentty-linux: shell-signal pane=pane-window-2 kind=shell-state state=prompt command-present=false' \
+    "second untouched shell did not reach its prompt" || fail "second idle prompt missing"
+confirmation_before="$(grep -Fc 'zentty-linux: confirmation shown title=' "${log}" || true)"
+close_active_window
+zentty_product_wait_for_log "${log}" 'zentty-linux: window-closed id=window-2 remaining=1' \
+    "idle Close Window did not close immediately" || fail "idle window close failed"
+[[ "$(grep -Fc 'zentty-linux: confirmation shown title=' "${log}" || true)" == "${confirmation_before}" ]] ||
+    fail "idle shell incorrectly presented a close confirmation"
+zentty_product_prepare_input "${backend}" "${log}" || fail "could not retarget idle surviving window"
+zentty_product_close_window "${backend}"
+wait_for_exit
+[[ "$(grep -Fc 'zentty-linux: confirmation shown title=' "${log}" || true)" == "${confirmation_before}" ]] ||
+    fail "idle final shell incorrectly presented a quit confirmation"
+launch_command="${child_command}"
+fi
+
+if [[ "${ZENTTY_MULTI_WINDOW_LIFECYCLE_ONLY:-false}" == true ]]; then
+    echo "Rust multi-window lifecycle passed: backend=${backend}, real-windows=2, fullscreen=roundtrip, confirmation=cancel+accept, real-ptys=preserved+reaped"
+    exit 0
 fi
 
 cat >"${config_file}" <<'EOF'

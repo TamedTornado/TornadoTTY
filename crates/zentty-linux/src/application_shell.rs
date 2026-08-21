@@ -27,7 +27,7 @@ use gtk::gdk;
 use gtk::glib;
 use gtk::prelude::*;
 use zentty_core::{
-    AgentPhase, AppConfig, ClosePaneOutcome, ColumnRecipe, CommandPaletteItem,
+    AgentPhase, AppConfig, CloseEvidence, ClosePaneOutcome, ColumnRecipe, CommandPaletteItem,
     GlobalSearchCoordinator, GlobalSearchDirection, PaneColumnState, PaneCrossWindowTransfer,
     PaneLayoutPolicy, PaneRecipe, PaneReference, PaneResizeDirection, PaneRestoreDraft,
     PaneWindowTransfer, ServerPortRule, ServerRelevanceContext, SidebarWidthPreference,
@@ -44,6 +44,7 @@ mod agent_lifecycle_signal;
 mod application_commands;
 mod bookmark_runtime;
 mod clipboard_actions;
+mod close_runtime;
 mod global_search;
 pub(crate) mod open_with_runtime;
 mod pane_runtime;
@@ -68,9 +69,9 @@ use action_router::{
     ACTION_COPY, ACTION_COPY_AS_MARKDOWN, ACTION_COPY_RAW, ACTION_CYCLE_WORKLANE_COLOR,
     ACTION_DUPLICATE_PANE, ACTION_FIND, ACTION_FIND_NEXT, ACTION_FIND_PREVIOUS,
     ACTION_FOCUS_PANE_DOWN, ACTION_FOCUS_PANE_LEFT, ACTION_FOCUS_PANE_RIGHT, ACTION_FOCUS_PANE_UP,
-    ACTION_GLOBAL_FIND, ACTION_IGNORE_SERVER_PORT, ACTION_MOVE_PANE_DOWN, ACTION_MOVE_PANE_LEFT,
-    ACTION_MOVE_PANE_RIGHT, ACTION_MOVE_PANE_TO_NEW_WINDOW, ACTION_MOVE_PANE_UP,
-    ACTION_MOVE_WORKLANE_DOWN, ACTION_MOVE_WORKLANE_UP, ACTION_NAVIGATE_BACK,
+    ACTION_GLOBAL_FIND, ACTION_IGNORE_SERVER_PORT, ACTION_MINIMIZE_WINDOW, ACTION_MOVE_PANE_DOWN,
+    ACTION_MOVE_PANE_LEFT, ACTION_MOVE_PANE_RIGHT, ACTION_MOVE_PANE_TO_NEW_WINDOW,
+    ACTION_MOVE_PANE_UP, ACTION_MOVE_WORKLANE_DOWN, ACTION_MOVE_WORKLANE_UP, ACTION_NAVIGATE_BACK,
     ACTION_NAVIGATE_FORWARD, ACTION_NEW_PANE_RIGHT, ACTION_NEW_WINDOW, ACTION_NEW_WORKLANE,
     ACTION_NEXT_PANE, ACTION_NEXT_WORKLANE, ACTION_OPEN_BRANCH_REMOTE, ACTION_OPEN_PULL_REQUEST,
     ACTION_OPEN_SERVER, ACTION_OPEN_SERVER_BROWSER, ACTION_OPEN_SETTINGS,
@@ -80,9 +81,9 @@ use action_router::{
     ACTION_RESIZE_PANE_LEFT, ACTION_RESIZE_PANE_RIGHT, ACTION_RESIZE_PANE_UP,
     ACTION_RESTORE_CLOSED_PANE, ACTION_SELECT_ALL, ACTION_SHOW_ABOUT, ACTION_SHOW_AGENT_FLEET,
     ACTION_SHOW_TASK_MANAGER, ACTION_SPLIT_PANE_BELOW, ACTION_SPLIT_PANE_RIGHT,
-    ACTION_STOP_IGNORING_SERVER_PORT, ACTION_STOP_SERVER, ACTION_TOGGLE_LIGHT_DARK_THEME,
-    ACTION_TOGGLE_SIDEBAR, ACTION_USE_AUTO_THEME, ACTION_USE_DARK_THEME, ACTION_USE_LIGHT_THEME,
-    ACTION_USE_SELECTION_FOR_FIND, ActionRouter,
+    ACTION_STOP_IGNORING_SERVER_PORT, ACTION_STOP_SERVER, ACTION_TOGGLE_FULLSCREEN,
+    ACTION_TOGGLE_LIGHT_DARK_THEME, ACTION_TOGGLE_SIDEBAR, ACTION_USE_AUTO_THEME,
+    ACTION_USE_DARK_THEME, ACTION_USE_LIGHT_THEME, ACTION_USE_SELECTION_FOR_FIND, ActionRouter,
 };
 use agent_events::AgentEventCoordinator;
 use pane_runtime::DetachedPaneRuntime;
@@ -223,12 +224,26 @@ pub(crate) struct ApplicationShell {
     worklane_destination_groups: Vec<sidebar::WorklaneDestinationGroup>,
     show_task_manager_handler: Option<Rc<dyn Fn()>>,
     close_window_handler: Option<Rc<dyn Fn()>>,
+    close_window_evidence_handler: Option<Rc<dyn Fn() -> CloseEvidence>>,
     quit_handler: Option<Rc<dyn Fn()>>,
+    quit_evidence_handler: Option<Rc<dyn Fn() -> CloseEvidence>>,
     application_action_handler: Option<Rc<dyn Fn(ApplicationAction)>>,
+    pending_close_evidence: RefCell<Option<CloseEvidence>>,
     self_handle: RefCell<Weak<RefCell<Self>>>,
 }
 
 type MovePaneToWindowWorklaneHandler = Rc<dyn Fn(String, String, String)>;
+
+pub(crate) struct ApplicationHandlers {
+    pub(crate) new_window: Rc<dyn Fn()>,
+    pub(crate) move_pane_to_new_window: Rc<dyn Fn(String)>,
+    pub(crate) show_task_manager: Rc<dyn Fn()>,
+    pub(crate) close_window: Rc<dyn Fn()>,
+    pub(crate) close_window_evidence: Rc<dyn Fn() -> CloseEvidence>,
+    pub(crate) quit: Rc<dyn Fn()>,
+    pub(crate) quit_evidence: Rc<dyn Fn() -> CloseEvidence>,
+    pub(crate) application_action: Rc<dyn Fn(ApplicationAction)>,
+}
 
 pub(crate) struct ExtractedWindowPane {
     pub(crate) model: PaneWindowTransfer,
@@ -386,6 +401,14 @@ impl ApplicationShell {
         render_empty_sidebar(&sidebar, &window, runtimes.config.clipboard);
         let global_search_view = GlobalSearchView::attach(&sidebar);
         let window_template = restored_or_default_window(restored_window, fresh_window_id);
+        let fullscreen_window_id = window_template.id.clone();
+        window.connect_fullscreened_notify(move |window| {
+            eprintln!(
+                "zentty-linux: window-state id={} fullscreen={}",
+                fullscreen_window_id,
+                window.is_fullscreen()
+            );
+        });
         apply_restored_window_size(&window, &window_template);
         let (state, restored_pane_commands) =
             restore_workspace_state(&window_template, restored_drafts)?;
@@ -462,8 +485,11 @@ impl ApplicationShell {
             worklane_destination_groups: Vec::new(),
             show_task_manager_handler: None,
             close_window_handler: None,
+            close_window_evidence_handler: None,
             quit_handler: None,
+            quit_evidence_handler: None,
             application_action_handler: None,
+            pending_close_evidence: RefCell::new(None),
             self_handle: RefCell::new(Weak::new()),
         }));
         finish_shell_setup(
@@ -660,21 +686,15 @@ impl ApplicationShell {
         Self::request_close_pane(shell, pane_id);
     }
 
-    pub(crate) fn set_application_handlers(
-        &mut self,
-        new_window_handler: Rc<dyn Fn()>,
-        move_pane_to_new_window_handler: Rc<dyn Fn(String)>,
-        show_task_manager_handler: Rc<dyn Fn()>,
-        close_window_handler: Rc<dyn Fn()>,
-        quit_handler: Rc<dyn Fn()>,
-        application_action_handler: Rc<dyn Fn(ApplicationAction)>,
-    ) {
-        self.new_window_handler = Some(new_window_handler);
-        self.move_pane_to_new_window_handler = Some(move_pane_to_new_window_handler);
-        self.show_task_manager_handler = Some(show_task_manager_handler);
-        self.close_window_handler = Some(close_window_handler);
-        self.quit_handler = Some(quit_handler);
-        self.application_action_handler = Some(application_action_handler);
+    pub(crate) fn set_application_handlers(&mut self, handlers: ApplicationHandlers) {
+        self.new_window_handler = Some(handlers.new_window);
+        self.move_pane_to_new_window_handler = Some(handlers.move_pane_to_new_window);
+        self.show_task_manager_handler = Some(handlers.show_task_manager);
+        self.close_window_handler = Some(handlers.close_window);
+        self.close_window_evidence_handler = Some(handlers.close_window_evidence);
+        self.quit_handler = Some(handlers.quit);
+        self.quit_evidence_handler = Some(handlers.quit_evidence);
+        self.application_action_handler = Some(handlers.application_action);
     }
 
     pub(crate) fn set_move_pane_to_window_worklane_handler(
@@ -1001,6 +1021,9 @@ impl ApplicationShell {
     }
 
     fn request_quit(&self) {
+        if self.shutting_down {
+            return;
+        }
         let handler = self.quit_handler.clone();
         let window = self.window.clone();
         let action: Rc<dyn Fn()> = Rc::new(move || {
@@ -1010,20 +1033,29 @@ impl ApplicationShell {
                 window.close();
             }
         });
-        if self.config.confirmations.confirm_before_quitting {
-            Self::confirm_action(
-                &self.window,
-                "Quit Zentty?",
-                "Terminal processes in all windows will be closed.",
-                "Quit",
-                action,
-            );
-        } else {
-            action();
-        }
+        let Some(shell) = self.self_handle.borrow().upgrade() else {
+            return;
+        };
+        let evidence = self.quit_evidence_handler.as_ref().map_or_else(
+            || {
+                let mut evidence = self.window_close_evidence();
+                evidence.target = zentty_core::CloseTarget::Application;
+                evidence
+            },
+            |handler| handler(),
+        );
+        Self::request_close_action(
+            &shell,
+            &evidence,
+            self.config.confirmations.confirm_before_quitting,
+            action,
+        );
     }
 
-    fn request_close_window(&self) {
+    pub(crate) fn request_close_window(&self) {
+        if self.shutting_down {
+            return;
+        }
         let handler = self.close_window_handler.clone();
         let window = self.window.clone();
         let action: Rc<dyn Fn()> = Rc::new(move || {
@@ -1033,52 +1065,20 @@ impl ApplicationShell {
                 window.close();
             }
         });
-        if self.config.confirmations.confirm_before_closing_window
-            && self.pane_runtime.live_children() > 0
-        {
-            Self::confirm_action(
-                &self.window,
-                "Close this window?",
-                "Running terminal processes in this window will be closed.",
-                "Close Window",
-                action,
-            );
-        } else {
-            action();
-        }
-    }
-
-    fn confirm_action(
-        parent: &gtk::Window,
-        title: &str,
-        detail: &str,
-        accept_label: &str,
-        action: Rc<dyn Fn()>,
-    ) {
-        let dialog = gtk::AlertDialog::builder()
-            .modal(true)
-            .message(title)
-            .detail(detail)
-            .buttons(["Cancel", accept_label])
-            .cancel_button(0)
-            .default_button(1)
-            .build();
-        dialog.choose(
-            Some(parent),
-            None::<&gtk::gio::Cancellable>,
-            move |response| {
-                let accepted = response == Ok(1);
-                eprintln!("zentty-linux: confirmation accepted={accepted}");
-                if accepted {
-                    // AlertDialog completes its response callback before GTK has
-                    // finished removing the modal. Run the accepted action on
-                    // the next main-loop turn so any terminal focus it restores
-                    // is not immediately taken back by the disappearing dialog.
-                    glib::idle_add_local_once(move || action());
-                }
-            },
-        );
-        eprintln!("zentty-linux: confirmation shown title={title:?}");
+        let Some(shell) = self.self_handle.borrow().upgrade() else {
+            return;
+        };
+        let evidence = self
+            .close_window_evidence_handler
+            .as_ref()
+            .map_or_else(|| self.window_close_evidence(), |handler| handler());
+        let confirmation_enabled = match evidence.target {
+            zentty_core::CloseTarget::Application => {
+                self.config.confirmations.confirm_before_quitting
+            }
+            _ => self.config.confirmations.confirm_before_closing_window,
+        };
+        Self::request_close_action(&shell, &evidence, confirmation_enabled, action);
     }
 
     fn mount_background_restored_agents(&self) {
@@ -1142,6 +1142,27 @@ impl ApplicationShell {
     pub(crate) fn present(&self) {
         self.window.present();
         self.focus_selected_surface_unchecked();
+    }
+
+    pub(crate) fn toggle_fullscreen(&self) {
+        let entering = !self.window.is_fullscreen();
+        if entering {
+            self.window.fullscreen();
+        } else {
+            self.window.unfullscreen();
+        }
+        eprintln!(
+            "zentty-linux: window-state id={} fullscreen-requested={entering}",
+            self.window_template.id
+        );
+    }
+
+    pub(crate) fn minimize_window(&self) {
+        self.window.minimize();
+        eprintln!(
+            "zentty-linux: window-state id={} minimize-requested=true",
+            self.window_template.id
+        );
     }
 
     pub(crate) fn detach_for_shutdown(&mut self) {
@@ -2655,6 +2676,18 @@ impl ApplicationShell {
                 ACTION_CLOSE_WINDOW,
             ),
             CommandPaletteItem::action(
+                "Toggle Full Screen",
+                "Enter or leave compositor-managed full screen",
+                "window fullscreen f11",
+                ACTION_TOGGLE_FULLSCREEN,
+            ),
+            CommandPaletteItem::action(
+                "Minimize Window",
+                "Minimize this window through the compositor",
+                "window hide",
+                ACTION_MINIMIZE_WINDOW,
+            ),
+            CommandPaletteItem::action(
                 "New Worklane",
                 "Create another worklane",
                 "workspace lane",
@@ -3261,29 +3294,21 @@ impl ApplicationShell {
     }
 
     fn request_close_pane(shell: &Rc<RefCell<Self>>, pane_id: &str) {
-        let should_confirm = shell
-            .borrow()
-            .config
-            .confirmations
-            .confirm_before_closing_pane;
-        if should_confirm {
-            let weak = Rc::downgrade(shell);
-            let confirmed_pane = pane_id.to_owned();
-            let action: Rc<dyn Fn()> = Rc::new(move || {
-                if let Some(shell) = weak.upgrade() {
-                    Self::close_pane(&shell, &confirmed_pane);
-                }
-            });
-            Self::confirm_action(
-                &shell.borrow().window,
-                "Close this pane?",
-                "The terminal process in this pane will be closed.",
-                "Close Pane",
-                action,
-            );
-        } else {
-            Self::close_pane(shell, pane_id);
-        }
+        let (evidence, should_confirm) = {
+            let shell = shell.borrow();
+            (
+                shell.pane_close_evidence(pane_id),
+                shell.config.confirmations.confirm_before_closing_pane,
+            )
+        };
+        let weak = Rc::downgrade(shell);
+        let confirmed_pane = pane_id.to_owned();
+        let action: Rc<dyn Fn()> = Rc::new(move || {
+            if let Some(shell) = weak.upgrade() {
+                Self::close_pane(&shell, &confirmed_pane);
+            }
+        });
+        Self::request_close_action(shell, &evidence, should_confirm, action);
     }
 
     fn scroll_panes_to_end(shell: &Rc<RefCell<Self>>) {
@@ -3362,6 +3387,24 @@ impl ApplicationShell {
     }
 
     fn close_worklane(shell: &Rc<RefCell<Self>>, worklane_id: &str) {
+        let (evidence, should_confirm) = {
+            let shell = shell.borrow();
+            (
+                shell.worklane_close_evidence(worklane_id),
+                shell.config.confirmations.confirm_before_closing_pane,
+            )
+        };
+        let weak = Rc::downgrade(shell);
+        let confirmed_worklane = worklane_id.to_owned();
+        let action: Rc<dyn Fn()> = Rc::new(move || {
+            if let Some(shell) = weak.upgrade() {
+                Self::perform_close_worklane(&shell, &confirmed_worklane);
+            }
+        });
+        Self::request_close_action(shell, &evidence, should_confirm, action);
+    }
+
+    fn perform_close_worklane(shell: &Rc<RefCell<Self>>, worklane_id: &str) {
         let pane_ids = {
             let shell = shell.borrow();
             shell

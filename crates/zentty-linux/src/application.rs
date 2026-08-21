@@ -6,12 +6,12 @@ use std::time::Duration;
 use gtk::prelude::*;
 use gtk::{gdk, glib};
 use zentty_agent_ipc::ServerIpcReply;
-use zentty_core::{AppConfig, WindowRecipe};
+use zentty_core::{AppConfig, CloseEvidence, CloseTarget, WindowRecipe};
 use zentty_ghostty::GhosttyRuntime;
 use zentty_tmux_compat::TmuxCompatReply;
 
 use crate::agent_runtime::AgentRuntime;
-use crate::application_shell::{ApplicationRuntimes, ApplicationShell};
+use crate::application_shell::{ApplicationHandlers, ApplicationRuntimes, ApplicationShell};
 use crate::config_reload::{ConfigDirectoryWatch, ConfigReloadAuthority, ReloadDecision};
 use crate::config_store::ConfigSnapshot;
 use crate::persistence_coordinator::WindowSnapshot;
@@ -431,6 +431,34 @@ impl ApplicationCoordinator {
             });
         });
         let weak = Rc::downgrade(coordinator);
+        let evidence_id = id.to_owned();
+        let close_window_evidence_handler: Rc<dyn Fn() -> CloseEvidence> = Rc::new(move || {
+            let Some(coordinator) = weak.upgrade() else {
+                return CloseEvidence::new(
+                    CloseTarget::Window {
+                        window_id: evidence_id.clone(),
+                    },
+                    Vec::new(),
+                );
+            };
+            let coordinator = coordinator.borrow();
+            if coordinator.shells.len() == 1 {
+                coordinator.application_close_evidence()
+            } else {
+                coordinator.shells.get(&evidence_id).map_or_else(
+                    || {
+                        CloseEvidence::new(
+                            CloseTarget::Window {
+                                window_id: evidence_id.clone(),
+                            },
+                            Vec::new(),
+                        )
+                    },
+                    |shell| shell.borrow().window_close_evidence(),
+                )
+            }
+        });
+        let weak = Rc::downgrade(coordinator);
         let shutdown_requested = Rc::clone(&coordinator.borrow().shutdown_requested);
         let quit_handler: Rc<dyn Fn()> = Rc::new(move || {
             if shutdown_requested.replace(true) {
@@ -447,15 +475,31 @@ impl ApplicationCoordinator {
                 }
             });
         });
+        let weak = Rc::downgrade(coordinator);
+        let quit_evidence_handler: Rc<dyn Fn() -> CloseEvidence> = Rc::new(move || {
+            weak.upgrade().map_or_else(
+                || CloseEvidence::new(CloseTarget::Application, Vec::new()),
+                |coordinator| {
+                    coordinator.try_borrow().map_or_else(
+                        |_| CloseEvidence::new(CloseTarget::Application, Vec::new()),
+                        |coordinator| coordinator.application_close_evidence(),
+                    )
+                },
+            )
+        });
         let application_action_handler = Self::application_action_handler(coordinator, id);
-        shell.borrow_mut().set_application_handlers(
-            new_window_handler,
-            move_pane_to_new_window_handler,
-            show_task_manager_handler,
-            close_window_handler,
-            quit_handler,
-            application_action_handler,
-        );
+        shell
+            .borrow_mut()
+            .set_application_handlers(ApplicationHandlers {
+                new_window: new_window_handler,
+                move_pane_to_new_window: move_pane_to_new_window_handler,
+                show_task_manager: show_task_manager_handler,
+                close_window: close_window_handler,
+                close_window_evidence: close_window_evidence_handler,
+                quit: quit_handler,
+                quit_evidence: quit_evidence_handler,
+                application_action: application_action_handler,
+            });
         shell
             .borrow_mut()
             .set_move_pane_to_window_worklane_handler(move_pane_to_window_worklane_handler);
@@ -481,8 +525,7 @@ impl ApplicationCoordinator {
                 }
             });
 
-        let weak = Rc::downgrade(coordinator);
-        let closing_id = id.to_owned();
+        let weak_shell = Rc::downgrade(shell);
         let close_flag = Rc::new(Cell::new(false));
         coordinator
             .borrow_mut()
@@ -492,18 +535,9 @@ impl ApplicationCoordinator {
             if close_flag.get() {
                 return glib::Propagation::Proceed;
             }
-            let Some(coordinator) = weak.upgrade() else {
-                return glib::Propagation::Proceed;
-            };
-            let weak = Rc::downgrade(&coordinator);
-            let id = closing_id.clone();
-            glib::idle_add_local_once(move || {
-                if let Some(coordinator) = weak.upgrade()
-                    && let Err(error) = coordinator.borrow_mut().close_window(&id)
-                {
-                    eprintln!("zentty-linux: close-window id={id} error={error}");
-                }
-            });
+            if let Some(shell) = weak_shell.upgrade() {
+                shell.borrow().request_close_window();
+            }
             glib::Propagation::Stop
         });
     }
@@ -973,6 +1007,16 @@ impl ApplicationCoordinator {
         self.shutdown_all()?;
         self.main_loop.quit();
         Ok(())
+    }
+
+    fn application_close_evidence(&self) -> CloseEvidence {
+        CloseEvidence::new(
+            CloseTarget::Application,
+            self.shells
+                .values()
+                .flat_map(|shell| shell.borrow().window_close_evidence().panes)
+                .collect(),
+        )
     }
 
     fn teardown_shell(
