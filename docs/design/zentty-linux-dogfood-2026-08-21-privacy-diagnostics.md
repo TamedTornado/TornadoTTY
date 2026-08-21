@@ -111,6 +111,22 @@ are not collected.
   updates its action cardinality, and also records this slice's sole settings
   callback and ConfigStore writer. Both the positive validator and its negative
   self-tests pass; no duplicate runtime was added to repair the documentation.
+- Exact-package qualification exposed a clean-tree defect in the shared
+  working-tree fixture: it always invoked `git apply`, even when `git diff`
+  produced an empty patch. Dirty-tree tests therefore passed while qualification
+  of the committed candidate failed with `No valid patches in input`. The helper
+  now applies only a non-empty captured diff, and its contract test exercises
+  both dirty and already-clean source trees.
+- Final callback review found that two activation events delivered to the same
+  confirmation button could enqueue the reviewed report twice before the window
+  finished closing. The shared submission gate now uses an atomic-in-callback
+  `Cell::replace` guard: only the first explicitly confirmed activation can start
+  transport, while later events are ignored.
+- The original interrupted-write test constructed a plausible temporary file,
+  but did not prove the production write boundary. A child-process test now
+  drives the real store through create, write, permission assignment, and
+  `fsync`, exits immediately before rename without unwinding, then proves that
+  startup pruning removes the orphan and never publishes a partial report.
 
 ## Real-system evidence
 

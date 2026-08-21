@@ -214,6 +214,10 @@ fn atomic_private_replace(path: &Path, bytes: &[u8]) -> Result<(), String> {
             .map_err(|error| format!("could not write {}: {error}", temporary.display()))?;
         file.sync_all()
             .map_err(|error| format!("could not sync {}: {error}", temporary.display()))?;
+        #[cfg(test)]
+        if std::env::var_os("ZENTTY_TEST_EXIT_DURING_DIAGNOSTIC_WRITE").is_some() {
+            std::process::exit(86);
+        }
         fs::rename(&temporary, path)
             .map_err(|error| format!("could not replace {}: {error}", path.display()))?;
         File::open(parent)
@@ -237,6 +241,7 @@ fn remove_if_exists(path: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    use std::process::Command;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::thread;
 
@@ -361,6 +366,44 @@ mod tests {
                 .all(|report| report.detail == "render failed")
         );
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn abrupt_exit_between_sync_and_rename_is_recovered_without_partial_report() {
+        let root = temporary_directory();
+        let status = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "diagnostic_store::tests::exit_during_diagnostic_write_child",
+                "--nocapture",
+            ])
+            .env("ZENTTY_TEST_DIAGNOSTIC_STORE", &root)
+            .env("ZENTTY_TEST_EXIT_DURING_DIAGNOSTIC_WRITE", "1")
+            .status()
+            .unwrap();
+        assert_eq!(status.code(), Some(86));
+        assert!(
+            fs::read_dir(&root)
+                .unwrap()
+                .filter_map(Result::ok)
+                .any(|entry| entry.file_name().to_string_lossy().contains(".tmp-"))
+        );
+
+        let store = DiagnosticStore::new(&root).unwrap();
+        assert_eq!(store.prune(200).unwrap(), 0);
+        assert!(store.list().unwrap().is_empty());
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn exit_during_diagnostic_write_child() {
+        let Some(root) = std::env::var_os("ZENTTY_TEST_DIAGNOSTIC_STORE") else {
+            return;
+        };
+        let store = DiagnosticStore::new(root).unwrap();
+        store.save(&report("interrupted", 100)).unwrap();
+        panic!("diagnostic write exit injection did not terminate the child");
     }
 
     #[test]

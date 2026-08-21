@@ -425,20 +425,12 @@ fn connect_report_review_actions(
         let review_window = confirmation_parent.clone();
         let confirmation_for_submit = confirmation.clone();
         confirm.connect_clicked(move |_| {
-            let report_id = report_id.clone();
-            submitted.set(true);
-            confirmation_for_submit.close();
-            review_window.close();
-            std::thread::spawn(move || {
-                match crate::diagnostics_runtime::submit_reviewed_report(&report_id) {
-                    Ok(_) => eprintln!(
-                        "zentty-linux: diagnostics report={report_id} state=sent explicit=true"
-                    ),
-                    Err(error) => eprintln!(
-                        "zentty-linux: diagnostics report={report_id} state=failed detail={error}"
-                    ),
-                }
-            });
+            begin_reviewed_report_submission(
+                &report_id,
+                &submitted,
+                &confirmation_for_submit,
+                &review_window,
+            );
         });
         let keys = gtk::EventControllerKey::new();
         keys.set_propagation_phase(gtk::PropagationPhase::Capture);
@@ -467,6 +459,32 @@ fn connect_report_review_actions(
             }
         });
         confirmation.present();
+    });
+}
+
+fn begin_reviewed_report_submission(
+    report_id: &str,
+    submitted: &Cell<bool>,
+    confirmation: &gtk::Window,
+    review_window: &gtk::Window,
+) {
+    if submitted.replace(true) {
+        return;
+    }
+    let report_id = report_id.to_owned();
+    confirmation.close();
+    review_window.close();
+    std::thread::spawn(move || {
+        match crate::diagnostics_runtime::submit_reviewed_report(&report_id) {
+            Ok(_) => {
+                eprintln!("zentty-linux: diagnostics report={report_id} state=sent explicit=true");
+            }
+            Err(error) => {
+                eprintln!(
+                    "zentty-linux: diagnostics report={report_id} state=failed detail={error}"
+                );
+            }
+        }
     });
 }
 

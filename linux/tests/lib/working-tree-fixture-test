@@ -29,4 +29,11 @@ zentty_create_working_tree_fixture \
 [[ ! -e "${fixture_root}/ignored" ]]
 [[ -z "$(git -C "${fixture_root}" status --porcelain)" ]]
 
-echo "Working-tree fixture tests passed: tracked diff, untracked source, ignored exclusion"
+clean_fixture_root="${temporary}/clean-fixture"
+zentty_create_working_tree_fixture \
+    "${fixture_root}" "${clean_fixture_root}" 'exact clean source fixture'
+[[ "$(cat "${clean_fixture_root}/tracked")" == tracked-new ]]
+[[ "$(cat "${clean_fixture_root}/new/directory/file")" == untracked ]]
+[[ -z "$(git -C "${clean_fixture_root}" status --porcelain)" ]]
+
+echo "Working-tree fixture tests passed: clean/dirty tracked source, untracked source, ignored exclusion"

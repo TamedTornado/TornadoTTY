@@ -7,11 +7,16 @@ zentty_create_working_tree_fixture() {
     local source_root="$1"
     local fixture_root="$2"
     local commit_message="${3:-working tree test fixture}"
+    local tracked_diff
     local untracked_manifest
 
     git clone --quiet --no-local --no-hardlinks "${source_root}" "${fixture_root}"
-    git -C "${source_root}" diff --binary HEAD -- . |
-        git -C "${fixture_root}" apply
+    tracked_diff="$(mktemp)"
+    git -C "${source_root}" diff --binary HEAD -- . >"${tracked_diff}"
+    if [[ -s "${tracked_diff}" ]]; then
+        git -C "${fixture_root}" apply "${tracked_diff}"
+    fi
+    rm -f -- "${tracked_diff}"
 
     untracked_manifest="$(mktemp)"
     git -C "${source_root}" ls-files --others --exclude-standard -z \
