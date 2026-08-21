@@ -341,10 +341,12 @@ impl ApplicationCoordinator {
             .get(id)
             .cloned()
             .ok_or_else(|| format!("registered window {id:?} has no application shell"))?;
-        shell.borrow().present();
         if schedule_focus {
-            ApplicationShell::focus_terminal_after_present(&shell);
+            // Capture the restored selection before GTK maps the window and
+            // temporarily focuses its first child.
+            ApplicationShell::preserve_initial_terminal_focus(&shell);
         }
+        shell.borrow().present();
         eprintln!("zentty-linux: window-opened id={id}");
         Ok(())
     }

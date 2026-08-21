@@ -25,6 +25,8 @@ expect_validation_failure() {
 "${repo_root}/linux/tests/qualification-boundary-contract-test" >/dev/null
 "${repo_root}/linux/tests/lib/qualification-outcome-test" >/dev/null
 "${repo_root}/linux/tests/lib/bounded-batch-test" >/dev/null
+"${repo_root}/linux/tests/lib/qualification-capacity-test" >/dev/null
+"${repo_root}/linux/tests/lib/valgrind-evidence-lock-test" >/dev/null
 
 # CI checks repository changes; it is not product behavior or qualification
 # authority. Keep provider/workflow state out of the product matrix.
@@ -49,6 +51,34 @@ if ZENTTY_QUALIFICATION_JOBS=33 "${runner}" --validate-only \
     exit 1
 fi
 grep -F 'ZENTTY_QUALIFICATION_JOBS must not exceed 32' \
+    "${temp_dir}/stderr" >/dev/null
+if ZENTTY_QUALIFICATION_DISPLAY_JOBS=0 "${runner}" --validate-only \
+    >"${temp_dir}/stdout" 2>"${temp_dir}/stderr"; then
+    echo "qualification-matrix-test: zero display jobs were accepted" >&2
+    exit 1
+fi
+grep -F 'ZENTTY_QUALIFICATION_DISPLAY_JOBS must be a positive integer' \
+    "${temp_dir}/stderr" >/dev/null
+if ZENTTY_QUALIFICATION_JOBS=4 ZENTTY_QUALIFICATION_DISPLAY_JOBS=5 \
+    "${runner}" --validate-only >"${temp_dir}/stdout" 2>"${temp_dir}/stderr"; then
+    echo "qualification-matrix-test: display jobs exceeded total jobs" >&2
+    exit 1
+fi
+grep -F 'ZENTTY_QUALIFICATION_DISPLAY_JOBS must not exceed total jobs' \
+    "${temp_dir}/stderr" >/dev/null
+if ZENTTY_QUALIFICATION_INTERACTIVE_JOBS=0 "${runner}" --validate-only \
+    >"${temp_dir}/stdout" 2>"${temp_dir}/stderr"; then
+    echo "qualification-matrix-test: zero interactive jobs were accepted" >&2
+    exit 1
+fi
+grep -F 'ZENTTY_QUALIFICATION_INTERACTIVE_JOBS must be a positive integer' \
+    "${temp_dir}/stderr" >/dev/null
+if ZENTTY_QUALIFICATION_DISPLAY_JOBS=4 ZENTTY_QUALIFICATION_INTERACTIVE_JOBS=5 \
+    "${runner}" --validate-only >"${temp_dir}/stdout" 2>"${temp_dir}/stderr"; then
+    echo "qualification-matrix-test: interactive jobs exceeded display jobs" >&2
+    exit 1
+fi
+grep -F 'ZENTTY_QUALIFICATION_INTERACTIVE_JOBS must not exceed display jobs' \
     "${temp_dir}/stderr" >/dev/null
 
 jq '(.cells[] | select(.id == "ghostty-regression")).blocks_display = "yes"' \
@@ -98,11 +128,11 @@ jq '(.cells[] | select(.id == "install-uninstall")).status = "SKIPPED"' \
     "${source_matrix}" >"${temp_dir}/matrix.json"
 expect_validation_failure 'unknown statuses: install-uninstall=SKIPPED'
 
-# Resource-mutating commands must name the resource they actually contend for.
-jq 'del(.cells[] | select(.id == "debug-valgrind-ibus-focus-x11").resources)' \
+# Independently scheduled Valgrind producers must retain unique report paths.
+jq '(.cells[] | select(.id == "debug-valgrind-ibus-focus-x11")).valgrind_report = "build/linux/memory-safety-Debug-single-x11.json"' \
     "${source_matrix}" >"${temp_dir}/matrix.json"
 expect_validation_failure \
-    'resource-mutating cells lack their named resource: debug-valgrind-ibus-focus-x11'
+    'duplicate Valgrind report paths:'
 
 jq '(.cells[] | select(.id == "release-x11-default-single")).resources = ["desktop"]' \
     "${source_matrix}" >"${temp_dir}/matrix.json"
@@ -148,44 +178,42 @@ if jq -e '.cells[] | select(.id == "restore-release")' "${source_matrix}" >/dev/
 fi
 jq -e '
     (.cells[] | select(.id == "build-debug") |
-      .resources == ["compiler-load","ghostty-source"] and .blocks_display == true and
+      ((.resources // []) | length) == 0 and (.blocks_display // false) == false and
       (.command | contains("ZENTTY_BUILD_OUTPUT_DIR=build/linux-profiles/debug")) and
-      (.command | contains("ZENTTY_GHOSTTY_INSTALL_DIR=build/linux-deps/ghostty-install/debug"))) and
+      (.command | contains("ZENTTY_GHOSTTY_INSTALL_DIR=build/linux-deps/ghostty-install/debug")) and
+      (.command | contains("ZENTTY_ZIG_LOCAL_CACHE_DIR=build/linux-deps/ghostty/.zig-cache/qualification/debug"))) and
     (all(.cells[] | select((.command // "") | contains("GHOSTTY_LIB_DIR="));
       (.command | contains("GHOSTTY_LIB_DIR=$PWD/")))) and
     (.cells[] | select(.id == "ghostty-regression") |
-      .resources == ["compiler-load","ghostty-source"] and .schedule_priority == 12 and
-      .blocks_display == true and
+      ((.resources // []) | length) == 0 and .schedule_priority == 12 and
+      (.blocks_display // false) == false and
+      (.command | contains("ZENTTY_ZIG_LOCAL_CACHE_DIR=build/linux-deps/ghostty/.zig-cache/qualification/regression")) and
       .skip_profile_prerequisite == true)
 ' "${source_matrix}" >/dev/null
 
-# Compiler-heavy source rebuilds are allowed to overlap non-display checks, but
-# must never compete with real GTK/compositor actors for scheduling latency.
+# Every graphical journey owns a nested display. CPU-heavy producers are
+# bounded internally rather than imposing a global display barrier.
 jq -e '
-    [.cells[] | select(.blocks_display == true) | .id] | sort == [
-      "build-debug",
-      "build-release",
-      "ghostty-regression",
-      "package-clean-build-reproducibility",
-      "product-existing-worklane-transfer-wayland",
-      "product-workspace-restore-wayland",
-      "product-workspace-restore-x11"
-    ]
+    [.cells[] | select(.blocks_display == true) | .id] == []
 ' "${source_matrix}" >/dev/null
 grep -F 'active_display_cells' "${runner}" >/dev/null
 grep -F 'active_display_blockers' "${runner}" >/dev/null
 grep -F '.schedule.blocks_display' "${runner}" >/dev/null
 
 # Cargo test commands share one build target and do not gain real parallelism
-# by contending on its lock while a Ghostty or clean-package compile saturates
-# the same host. The compiler resource keeps other non-build checks parallel.
+# by contending on Cargo's own lock. Profile builds and Ghostty regression use
+# isolated Zig cache/install outputs and are intentionally admitted together.
 jq -e '
     all(.cells[] | select((.command // "") | contains("cargo test"));
       (.resources // []) | index("compiler-load") != null) and
-    all(.cells[] | select(.id == "build-release" or .id == "build-debug" or
-                          .id == "ghostty-regression" or
-                          .id == "package-clean-build-reproducibility");
+    all(.cells[] | select(.id == "package-clean-build-reproducibility");
       (.resources // []) | index("compiler-load") != null)
+' "${source_matrix}" >/dev/null
+
+jq -e '
+    all(.cells[] | select(has("valgrind_report"));
+      ((.resources // []) | length) == 0) and
+    ((.execution_graph.resources | index("valgrind-evidence")) == null)
 ' "${source_matrix}" >/dev/null
 
 jq -e '
@@ -233,6 +261,27 @@ grep -F 'source "${repo_root}/linux/tests/lib/qualification-outcome"' \
 grep -F 'source "${repo_root}/linux/tests/lib/bounded-batch"' \
     "${runner}" >/dev/null
 grep -F 'zentty_qualification_classify_outcome' "${runner}" >/dev/null
+grep -F 'qualification_jobs="${ZENTTY_QUALIFICATION_JOBS:-$(zentty_qualification_matrix_jobs)}"' \
+    "${runner}" >/dev/null
+grep -F 'observed_peak_workers' "${runner}" >/dev/null
+grep -F 'observed_peak_display_workers' "${runner}" >/dev/null
+grep -F 'observed_peak_interactive_workers' "${runner}" >/dev/null
+
+# Local support contracts overlap the real matrix; returning to a strict
+# matrix-then-support sequence would restore several minutes of dead time.
+qualify_local="${repo_root}/linux/tests/qualify-local"
+matrix_start_line="$(grep -n '"${repo_root}/linux/tests/qualification-matrix" >"${matrix_output}"' \
+    "${qualify_local}" | cut -d: -f1)"
+support_start_line="$(grep -n 'zentty_run_bounded_batch "${support_jobs}"' \
+    "${qualify_local}" | tail -n 1 | cut -d: -f1)"
+matrix_wait_line="$(grep -n 'wait "${matrix_pid}"' "${qualify_local}" | cut -d: -f1)"
+[[ -n "${matrix_start_line}" && -n "${support_start_line}" &&
+    -n "${matrix_wait_line}" &&
+    "${matrix_start_line}" -lt "${support_start_line}" &&
+    "${support_start_line}" -lt "${matrix_wait_line}" ]] || {
+    echo "qualification-matrix-test: support checks no longer overlap the matrix" >&2
+    exit 1
+}
 
 [[ ! -e "${repo_root}/linux/tests/debian-package-reproducibility" ]] || {
     echo "qualification-matrix-test: duplicate package reproducibility runner returned" >&2

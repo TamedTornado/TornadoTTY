@@ -5,7 +5,9 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # Repository-root path is resolved at runtime.
 # shellcheck disable=SC1091
 source "${repo_root}/linux/tests/lib/bounded-batch"
-support_jobs="${ZENTTY_QUALIFICATION_SUPPORT_JOBS:-2}"
+# shellcheck source=linux/tests/lib/qualification-capacity
+source "${repo_root}/linux/tests/lib/qualification-capacity"
+support_jobs="${ZENTTY_QUALIFICATION_SUPPORT_JOBS:-$(zentty_qualification_support_jobs)}"
 pinned_gemini_bin="${repo_root}/linux/ci/node-tools/node_modules/.bin/gemini"
 [[ "${support_jobs}" =~ ^[1-9][0-9]*$ ]] || {
     echo "qualify-local: ZENTTY_QUALIFICATION_SUPPORT_JOBS must be a positive integer" >&2
@@ -35,6 +37,9 @@ support_tests=(
     linux/tests/cli-source-contract-test
     linux/tests/tmux-compat-source-contract-test
     linux/tests/controlled-agent-test
+    linux/tests/lib/qualification-capacity-test
+    linux/tests/lib/valgrind-evidence-lock-test
+    linux/tests/lib/working-tree-fixture-test
     linux/tests/lib/controlled-environment-test
     linux/tests/lib/product-input-test
     linux/tests/lib/product-bundle-test
@@ -94,18 +99,18 @@ PATH="$(dirname "${pinned_gemini_bin}"):${PATH}" \
 matrix_pid=$!
 set -e
 
-set +e
-wait "${matrix_pid}"
-matrix_status=$?
-set -e
-
-# Support contracts inspect artifacts and dependency caches produced by the
-# matrix. Running them concurrently made cold checkouts race those producers;
-# they remain parallel with one another after the authoritative matrix phase.
+# Support contracts use their own temporary fixtures and do not consume the
+# matrix's canonical evidence. Run them while the matrix performs its build and
+# product journeys instead of imposing a second qualification phase.
 if ! zentty_run_bounded_batch "${support_jobs}" \
     run_support_test "${parallel_support_tests[@]}"; then
     support_failed=true
 fi
+
+set +e
+wait "${matrix_pid}"
+matrix_status=$?
+set -e
 
 for test_path in "${support_tests[@]}"; do
     test_name="${test_path//\//__}"

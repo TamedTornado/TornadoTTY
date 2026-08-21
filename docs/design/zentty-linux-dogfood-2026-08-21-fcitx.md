@@ -303,6 +303,235 @@ loaded, and the exact composition/lifecycle/PTy journey passed. This is retained
 as external-environment noise and uncertainty, not called a Zentty pass in its
 own right and not hidden as infrastructure absence.
 
+### First complete qualification rerun: rejected evidence and repairs
+
+The first complete post-fcitx qualification ran for 2,661,660 ms and correctly
+failed the implemented local suite. It reported 19 failing cells rather than
+allowing the focused passes to stand in for the whole matrix. The failures
+resolved to four causes:
+
+1. Ghostty's new embedding logger was invoked on the deliberately rejected
+   GTK-first constructor path, before Ghostty global state existed, and aborted
+   instead of returning `null`. Ghostty commit
+   `23d8414f3d1871cd67735d85e9815221d5e6b60c` prints only that pre-initialization
+   diagnostic directly; normal initialized logging still uses the shared
+   `GHOSTTY_LOG` policy. Fresh-process X11 and Wayland probes both pass against
+   the rebuilt library.
+2. Twelve multi-pane cells plus two aggregate API cells still counted Ghostty's
+   former `started subcommand` diagnostic as PTY evidence. That diagnostic is
+   intentionally absent when embedded logging is disabled. The canonical
+   closed-pane journey now requires exactly three child-owned CWD receipt lines:
+   two from the original real shells and one from the restored real shell. Its
+   existing exact archive, prefill, controlled-resume PID, and shutdown checks
+   remain unchanged. Representative Debug/X11 and ReleaseSafe/Wayland journeys
+   pass with physical input.
+3. Restoring a multi-pane workspace retained `pane-3` in the durable model, but
+   GTK map-time focus of the first child changed the live selection to `pane-1`.
+   This was a product defect, not a harness timeout. Startup focus is now
+   captured before mapping and applied exactly once from the selected Ghostty
+   surface's real initialization callback. Repeated timer-driven attempts were
+   tested and rejected because they could steal focus from an immediately
+   opened command palette. The final event-driven repair passes the real
+   divider-drag, clean-exit, relaunch, exact-geometry, and physical-input journey
+   under both X11 and nested Weston Wayland.
+4. The real IBus X11 post-destruction composition journey failed once during the
+   parallel run but passed unchanged in an immediate isolated controlled rerun.
+   No absence, retry, or reduced assertion was converted into a pass. It remains
+   a cell that the next complete qualification must execute again.
+
+Suppression governance also rejected the complete run. The suppression rules
+were not broadened. Raw and suppressed receipts proved the same existing exact
+producer/consumer stacks, while current process/cache sizes crossed stale
+per-scenario bounds:
+
+- interaction Wayland retained 33 Fontconfig string descendants totaling 712
+  bytes beside three Pango metrics roots totaling 9,127 bytes;
+- interaction Wayland and X11 each reached the already reviewed global Mesa
+  ceiling of 140 contexts, always between `libgallium` and Ghostty's
+  `draw.drawArraysInstanced`;
+- interaction X11 retained a smaller one-root Pango metrics graph
+  (4,405-byte root plus 15/480-byte children) and two 4,418-byte layout roots;
+- single Wayland retained a smaller one-root metrics graph
+  (2,448-byte root plus 15/480-byte children) and two layout roots totaling
+  5,865 bytes.
+
+Only those scenario count/byte ranges and their manifest explanations changed.
+The raw receipts remain beside every suppressed receipt, child rules still
+require their separately tracked Pango root, and the stale/increase,
+out-of-scenario, and untracked-rule negative suite passes. Live governance now
+passes. Because the complete run itself failed, no release or full-Linux
+qualification claim is made from it.
+
+### Qualification rerun prerequisite repairs
+
+The next complete-run attempt was rejected before product execution and is not
+qualification evidence. Two independent prerequisite defects were exposed:
+
+1. The managed Ghostty checkout was a blob-filtered clone. Fetching the new
+   locked commit object alone did not materialize its changed
+   `src/gtk_embed_lib.zig` blob, so the async-backend support probe could not
+   check out the revision without network access. The exact locked revision was
+   fetched and materialized before rerunning support qualification.
+2. `preflight-test` and `debian-package-builder-contract-test` ran later
+   negative scenarios from the developer checkout. Any legitimate uncommitted
+   implementation caused those scenarios to fail early at the clean-tree guard
+   instead of at the condition they purported to test. Each runner now creates
+   one temporary clean commit containing the exact tracked working-tree diff,
+   then mutates only its owned negative condition. Their dirty-tree,
+   wrong-origin, wrong-tool, missing-resource, and wrong-Ghostty cases pass from
+   the currently modified source tree.
+
+Running namespace-sensitive support probes inside the workspace sandbox also
+changed `/tmp/.X11-unix` ownership from `root:root` to the outer mapping for the
+namespace root and made nested displays fail. The directory was restored to
+the standard `0:0:1777` identity. The same repaired support tests pass outside
+that additional sandbox and leave the identity unchanged. Full controlled
+display qualification must therefore run in its intended host namespace, not
+inside a second tool sandbox. No product, release, or full-Linux qualification
+claim is made from either rejected prerequisite attempt.
+
+### Second complete qualification rerun: four rejected cells
+
+The intended-host rerun completed in 2,251,390 ms. Support qualification and
+175 implemented matrix cells passed, including all real IBus/fcitx journeys,
+all 24 pane-lifecycle variants, both restored-workspace journeys, all four
+Debug Valgrind profiles, and both ReleaseSafe Valgrind XFAIL contracts. Four
+implemented cells still failed, so the run is rejected as a release or full
+qualification receipt:
+
+1. `install-uninstall` correctly rejected the dirty developer checkout before
+   packaging. Its runner now creates one clean temporary commit from the exact
+   tracked working-tree diff and invokes `build-deb` from that fixture. The
+   first repair attempt was rejected because invoking the fixture script from
+   the developer working directory caused Cargo to build the wrong workspace;
+   a second attempt was rejected because `CARGO_TARGET_DIR` changed Cargo's
+   output location without changing `build-local`'s copy contract. The final
+   runner changes into the fixture and exposes the existing target cache through
+   an ignored fixture-local symlink. The real nine-transition staged
+   install/launch/uninstall journey passes for synthetic source identity
+   `e52a87fcc170b8890e0c2e31c72668c1b5212781`; release provenance remains owned
+   by the real reviewed commit.
+2. `product-multi-window-clean-crash-size-restore-x11` restored and focused the
+   correct terminal but lacked its focus receipt because the readiness callback
+   selected the model before GTK's focus controller observed the same pane.
+   The readiness path now emits the receipt when it performs the actual focus.
+   The exact isolated journey passes through two real windows, live pane
+   transfer, construction rollback, clean restore, SIGKILL restore, size
+   restore, and non-final close.
+3. `product-source-ux-x11` reproducibly lost the Ctrl+Shift+P window shortcut
+   after a pointer-driven rename. The startup repair had accidentally reused
+   the post-transient `focus_terminal_after_present` method as a readiness
+   marker, leaving an already initialized pane pending forever and removing the
+   one main-loop-turn toplevel reactivation after rename menus. Startup now has
+   the distinct `preserve_initial_terminal_focus` operation; menu actions use
+   one guarded idle presentation followed by terminal focus. It does not use a
+   timer and refuses to steal focus from settings, palette, global search, or
+   peek overlays. The complete real X11 source-UX journey passes again.
+4. Suppression governance rejected new per-process Fontconfig/Pango cache
+   partitions while every suppressed run retained its unsuppressed receipt.
+   No stack pattern changed. Exact complete-run observations adjusted only
+   scenario count/byte ranges: the metrics roots included a 1,933-byte
+   interaction/Wayland process, 7,113 bytes in single/Wayland, and 9,601 bytes
+   in single/X11; their already root-bound children/strings/nodes changed in
+   corresponding bounded partitions; one single/Wayland layout cache retained
+   three exact `pango_layout_get_size` contexts totaling 164,200 bytes. Live
+   governance and its stale/increase/out-of-scenario/untracked negative suite
+   now pass. Results remain **PASS with reviewed suppressions**, never an
+   unsuppressed-clean claim.
+
+All four failed cells now pass in isolation. A new complete qualification run
+is still required; no complete qualification claim is made from focused repair
+receipts.
+
+### Qualification critical-path audit and scheduler repair
+
+The 2,251,390 ms wall time was not an unavoidable consequence of real-system
+coverage. Inspection found that the runner advertised four workers while its
+resource graph serialized most of the expensive path:
+
+- all seven Valgrind evidence producers took the same exclusive evidence-set
+  lock, even though every producer already owns a unique report and receipt
+  path;
+- ReleaseSafe, Debug, and the pinned Ghostty regression shared coarse
+  `compiler-load` and `ghostty-source` resources and consequently built in
+  sequence;
+- CPU-heavy producers globally excluded every controlled display journey even
+  though those journeys create separate nested compositor sessions; and
+- `qualify-local` waited for the entire matrix before starting its independent
+  support contracts, with only two support workers.
+
+Those constraints originated in earlier emergency throttling and evidence-race
+repairs. They outlived the underlying duplicate-tree/memory bug and turned
+resource names into global serialization rather than identifying actual shared
+state.
+
+The repaired runner derives 24 matrix workers and 8 support workers on this
+32-core, 94-GiB host. ReleaseSafe, Debug, and regression builds own distinct
+Ghostty local-cache and install paths and bound their internal compilation to
+10 jobs each. Independent support contracts now overlap the matrix. Controlled
+display cells no longer wait behind unrelated compilation.
+
+Valgrind producers now take a shared evidence-set lease and a unique exclusive
+report lock. Suppression governance retains the exclusive evidence-set lease,
+and its dependency closure still requires every producer before review and
+summary publication. A focused negative test proves that multiple producers
+may coexist, duplicate report writers remain excluded, and governance cannot
+overlap a producer. The existing stale, increased-count, out-of-scenario, and
+untracked-suppression governance suite passes unchanged.
+
+Real focused timings, not a scheduler simulation, establish the improvement:
+
+- concurrent Debug, ReleaseSafe, and pinned Ghostty producers passed in one
+  559,817 ms wall-clock window; their individual durations were 135,604 ms,
+  268,887 ms, and 559,817 ms respectively, instead of forming a serial chain;
+- simultaneous Debug single-terminal Wayland and X11 Valgrind scenarios both
+  passed in a 219,689 ms wall-clock window, with individual durations of
+  219,689 ms and 180,803 ms rather than their 400,492 ms sum.
+
+The machine-readable summary now records configured jobs, observed peak worker
+count, host logical CPUs, and starting available memory. A complete rerun is
+still required to measure the new critical path and detect cross-scenario
+interference. No qualification claim is made from these focused concurrency
+receipts.
+
+### Bounded graphical concurrency and one qualified package identity
+
+The first complete scheduler trial deliberately allowed all 24 workers to run
+graphical cells. It finished in 471,220 ms, but produced roughly fifty rejected
+product journeys: competing GTK applications and software-rendered nested
+compositors exhausted desktop resources, GIO monitors became unavailable, and
+timing-sensitive pointer and PTY readiness checks failed. This receipt is not a
+qualification result. It demonstrates that CPU capacity is not the same as
+interactive desktop capacity.
+
+The runner now has independent total, controlled-display, and interactive-UI
+capacities. On this host they resolve to 24, 8, and 4 workers. Nested X11 and
+Wayland sessions also bound llvmpipe to two threads. The second complete trial
+finished in 645,460 ms with an observed peak of 22 total and 8 display workers.
+It removed the resource-exhaustion failure flood while retaining real nested
+compositors and real product input. Several individual interactive journeys
+remained rejected, so this receipt is also not a qualification pass.
+
+That run exposed a more serious packaging defect in the harness: the lifecycle
+producer built a clean synthetic revision while later package cells could
+independently select an artifact from the developer checkout. Digest failures
+were therefore evidence of two parallel qualification systems, not a packaging
+feature failure. The lifecycle producer now publishes one immutable artifact
+locator plus a Git source bundle. Install, upgrade, uninstall, audit, installed-
+product, and clean-rebuild consumers all verify and consume that same identity.
+The shared working-tree fixture includes tracked changes and non-ignored
+untracked source while excluding ignored build output. Focused real lifecycle,
+install/reinstall, upgrade/failure, uninstall/purge, audit, and detached clean-
+bundle rebuild journeys pass against the consolidated artifact.
+
+The pinned Ghostty regression target remains the longest single matrix cell.
+Its cold isolated-cache measurement was 559,817 ms; subsequent warm runs were
+390,290 ms and 369,180 ms. The cell is an upstream Zig build-and-test graph plus
+the GTK embedding regression target, not one behavioral assertion. The wrapper
+must report its constituent phases rather than presenting that aggregate as a
+single opaque test duration. No complete post-repair qualification receipt has
+yet been accepted.
+
 ## AI disclosure
 
 Investigation and implementation assistance were provided by OpenAI Codex

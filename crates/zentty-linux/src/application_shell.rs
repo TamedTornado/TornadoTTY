@@ -200,6 +200,7 @@ pub(crate) struct ApplicationShell {
     global_search: GlobalSearchCoordinator,
     global_search_generation: u64,
     focus_follow_generation: u64,
+    pending_initial_focus: Option<String>,
     remote_panes: RemotePaneContext,
     server_runtime: server_runtime::ServerRuntime,
     project_context_runtime: project_context_runtime::ProjectContextRuntime,
@@ -432,6 +433,7 @@ impl ApplicationShell {
             global_search: GlobalSearchCoordinator::default(),
             global_search_generation: 0,
             focus_follow_generation: 0,
+            pending_initial_focus: None,
             remote_panes: RemotePaneContext::default(),
             server_runtime: server_runtime::ServerRuntime::discover(
                 &runtimes.config.server_detection,
@@ -3023,14 +3025,38 @@ impl ApplicationShell {
 
     pub(crate) fn focus_terminal_after_present(shell: &Rc<RefCell<Self>>) {
         let weak = Rc::downgrade(shell);
-        glib::timeout_add_local_once(Duration::from_millis(50), move || {
-            if let Some(shell) = weak.upgrade() {
-                let shell = shell.borrow();
-                if !shell.shutting_down {
-                    shell.present();
-                }
+        glib::idle_add_local_once(move || {
+            let Some(shell) = weak.upgrade() else {
+                return;
+            };
+            let shell = shell.borrow();
+            let settings_visible = shell
+                .shortcut_settings_window
+                .as_ref()
+                .is_some_and(|settings| settings.window.is_visible());
+            if shell.shutting_down
+                || settings_visible
+                || shell.command_palette.is_visible()
+                || shell.global_search.state().visible
+                || shell.peek_phase.is_active()
+            {
+                return;
             }
+            // Rename/menu actions can leave GTK's transient surface as the
+            // active toplevel even after it closes. Re-present once on the
+            // next main-loop turn, then restore the selected terminal. Unlike
+            // the former timer, this cannot race a later overlay opening.
+            shell.present();
+            shell.focus_selected_surface_unchecked();
         });
+    }
+
+    pub(crate) fn preserve_initial_terminal_focus(shell: &Rc<RefCell<Self>>) {
+        // GTK may temporarily focus the first mapped child before the window
+        // settles. Preserve the workspace's restored selection until that
+        // exact Ghostty surface reports initialization.
+        let selected_pane = shell.borrow().state.focused_pane_id().map(str::to_owned);
+        shell.borrow_mut().pending_initial_focus = selected_pane;
     }
 
     fn move_active_worklane(&mut self, delta: isize) {

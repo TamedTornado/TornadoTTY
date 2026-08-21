@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+
+# Creates a clean committed fixture containing the exact tracked diff and every
+# non-ignored untracked source file. Negative tests can then exercise their own
+# failure condition without rejecting a developer tree or omitting new files.
+zentty_create_working_tree_fixture() {
+    local source_root="$1"
+    local fixture_root="$2"
+    local commit_message="${3:-working tree test fixture}"
+    local untracked_manifest
+
+    git clone --quiet --no-local --no-hardlinks "${source_root}" "${fixture_root}"
+    git -C "${source_root}" diff --binary HEAD -- . |
+        git -C "${fixture_root}" apply
+
+    untracked_manifest="$(mktemp)"
+    git -C "${source_root}" ls-files --others --exclude-standard -z \
+        >"${untracked_manifest}"
+    if [[ -s "${untracked_manifest}" ]]; then
+        tar -C "${source_root}" --null --files-from="${untracked_manifest}" -cf - |
+            tar -C "${fixture_root}" -xf -
+    fi
+    rm -f -- "${untracked_manifest}"
+
+    git -C "${fixture_root}" add -A
+    git -C "${fixture_root}" \
+        -c user.name='Zentty Test' -c user.email='test@invalid' \
+        commit --quiet --allow-empty -m "${commit_message}"
+}

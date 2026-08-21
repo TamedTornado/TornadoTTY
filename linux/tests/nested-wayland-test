@@ -56,6 +56,7 @@ fi
 [[ "${GDK_BACKEND:-}" == wayland ]] || exit 87
 [[ "${XDG_SESSION_TYPE:-}" == wayland ]] || exit 88
 [[ "${LIBGL_ALWAYS_SOFTWARE:-}" == 1 ]] || exit 89
+[[ "${LP_NUM_THREADS:-}" == 2 ]] || exit 88
 
 backend=""
 renderer=""
@@ -162,6 +163,7 @@ set -euo pipefail
 [[ "${GDK_BACKEND:-}" == wayland ]] || exit 54
 [[ "${XDG_SESSION_TYPE:-}" == wayland ]] || exit 55
 [[ "${LIBGL_ALWAYS_SOFTWARE:-}" == 1 ]] || exit 56
+[[ "${LP_NUM_THREADS:-}" == 2 ]] || exit 55
 [[ -z "${ZENTTY_NESTED_WAYLAND_RUN_ROOT:-}" ]] || exit 57
 run_root="${XDG_RUNTIME_DIR%/runtime}"
 [[ "${HOME:-}" == "${run_root}/home" ]] || exit 58

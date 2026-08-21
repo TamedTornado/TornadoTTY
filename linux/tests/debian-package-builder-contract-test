@@ -2,8 +2,17 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=linux/tests/lib/working-tree-fixture
+source "${repo_root}/linux/tests/lib/working-tree-fixture"
 temporary="$(mktemp -d)"
 trap 'rm -rf -- "${temporary}"' EXIT
+
+# shellcheck disable=SC1091
+source "${repo_root}/build/linux-ci-tools/environment.sh"
+
+source_fixture="${temporary}/source"
+zentty_create_working_tree_fixture \
+    "${repo_root}" "${source_fixture}" 'package builder test source fixture'
 
 expect_failure() {
     local name="$1" expected="$2"
@@ -19,13 +28,13 @@ expect_failure() {
     }
 }
 
-git clone --quiet --no-local --no-hardlinks "${repo_root}" "${temporary}/dirty"
+git clone --quiet --no-local --no-hardlinks "${source_fixture}" "${temporary}/dirty"
 printf '\ndirty package build\n' >>"${temporary}/dirty/README.md"
 expect_failure dirty-checkout "Zentty checkout must be clean" \
     env ZENTTY_PACKAGE_OUTPUT_DIR="${temporary}/dirty-output" \
     "${temporary}/dirty/linux/scripts/build-deb"
 
-git clone --quiet --no-local --no-hardlinks "${repo_root}" "${temporary}/missing-resource"
+git clone --quiet --no-local --no-hardlinks "${source_fixture}" "${temporary}/missing-resource"
 git -C "${temporary}/missing-resource" rm --quiet assets/icon.png
 git -C "${temporary}/missing-resource" \
     -c user.name='Zentty Test' -c user.email='test@invalid' \
@@ -41,17 +50,17 @@ git -C "${temporary}/wrong-ghostty" add README
 git -C "${temporary}/wrong-ghostty" \
     -c user.name='Zentty Test' -c user.email='test@invalid' \
     commit --quiet -m 'wrong source'
-expect_failure wrong-ghostty "expected $(sed -n 's/^revision=//p' "${repo_root}/linux/ghostty.lock")" \
+expect_failure wrong-ghostty "expected $(sed -n 's/^revision=//p' "${source_fixture}/linux/ghostty.lock")" \
     env GHOSTTY_SOURCE_DIR="${temporary}/wrong-ghostty" \
     ZENTTY_PACKAGE_OUTPUT_DIR="${temporary}/wrong-output" \
     ZENTTY_PACKAGE_WORK_DIR="${temporary}/wrong-work" \
-    "${repo_root}/linux/scripts/build-deb"
+    "${source_fixture}/linux/scripts/build-deb"
 
 expect_failure prepared-wrong-ghostty "prepared Ghostty checkout does not match the pinned revision" \
     env GHOSTTY_SOURCE_DIR="${temporary}/wrong-ghostty" \
     ZENTTY_GHOSTTY_PREPARED=true \
     ZENTTY_PACKAGE_OUTPUT_DIR="${temporary}/prepared-wrong-output" \
     ZENTTY_PACKAGE_WORK_DIR="${temporary}/prepared-wrong-work" \
-    "${repo_root}/linux/scripts/build-deb"
+    "${source_fixture}/linux/scripts/build-deb"
 
 echo "debian-package-builder-contract-test: PASS negatives=dirty+missing-resource+wrong-ghostty+prepared-wrong-ghostty"

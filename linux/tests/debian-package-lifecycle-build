@@ -2,21 +2,68 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=linux/tests/lib/working-tree-fixture
+source "${repo_root}/linux/tests/lib/working-tree-fixture"
 output_root="${ZENTTY_PACKAGE_OUTPUT_DIR:-${repo_root}/build/linux-package}"
-revision="$(git -C "${repo_root}" rev-parse HEAD)"
+lifecycle_root="${ZENTTY_PACKAGE_LIFECYCLE_DIR:-${repo_root}/build/linux/package-lifecycle}"
+# shellcheck disable=SC1091
 source "${repo_root}/linux/tests/lib/exact-package-artifact"
 
-[[ -z "$(git -C "${repo_root}" status --porcelain=v1)" ]] || {
-    echo "debian-package-lifecycle-build: error: Zentty checkout must be clean" >&2
-    exit 1
-}
+# Package the exact tracked working tree under qualification without weakening
+# build-deb's clean, immutable-source contract. The temporary commit is only a
+# source identity for this local journey; release packaging still starts from
+# the real reviewed commit.
+temporary="$(mktemp -d)"
+source_fixture="${temporary}/source"
+trap 'rm -rf -- "${temporary}"' EXIT
+mkdir -p -- "${lifecycle_root}"
+rm -f -- "${lifecycle_root}/package-artifact.json" \
+    "${lifecycle_root}/qualified-source.bundle"
+zentty_create_working_tree_fixture \
+    "${repo_root}" "${source_fixture}" 'package lifecycle source fixture'
+revision="$(git -C "${source_fixture}" rev-parse HEAD)"
+printf '/target\n' >>"${source_fixture}/.git/info/exclude"
+ln -s -- "${repo_root}/target" "${source_fixture}/target"
 
-ZENTTY_GHOSTTY_PREPARED=true "${repo_root}/linux/scripts/build-deb"
-zentty_exact_package_artifact "${repo_root}" "${output_root}" || {
+(
+    cd "${source_fixture}"
+    ZIG="${ZIG:-${repo_root}/../.tools/zig-x86_64-linux-0.16.0/zig}" \
+        BLUEPRINT_COMPILER_DIR="${BLUEPRINT_COMPILER_DIR:-${repo_root}/../.tools/blueprint-compiler-0.16.0/bin}" \
+        GHOSTTY_SOURCE_DIR="${repo_root}/build/linux-deps/ghostty" \
+        ZENTTY_GHOSTTY_PREPARED=true \
+        ZENTTY_PACKAGE_OUTPUT_DIR="${output_root}" \
+        linux/scripts/build-deb
+)
+zentty_exact_package_artifact "${source_fixture}" "${output_root}" || {
     echo "debian-package-lifecycle-build: error: exact-revision package was not produced" >&2
     exit 1
 }
 
 "${repo_root}/linux/tests/debian-package-lifecycle" \
     "${ZENTTY_PACKAGE_ARTIFACT}" "${ZENTTY_PACKAGE_MANIFEST}"
+
+bundle_temp="${lifecycle_root}/qualified-source.bundle.tmp"
+locator_temp="${lifecycle_root}/package-artifact.json.tmp"
+git -C "${source_fixture}" bundle create "${bundle_temp}" HEAD
+mv -f -- "${bundle_temp}" "${lifecycle_root}/qualified-source.bundle"
+jq -n \
+    --arg revision "${revision}" \
+    --arg bundle "$(realpath --relative-to="${repo_root}" "${lifecycle_root}/qualified-source.bundle")" \
+    --arg bundle_sha "$(sha256sum "${lifecycle_root}/qualified-source.bundle" | awk '{print $1}')" \
+    --arg artifact "$(realpath --relative-to="${repo_root}" "${ZENTTY_PACKAGE_ARTIFACT}")" \
+    --arg artifact_sha "$(sha256sum "${ZENTTY_PACKAGE_ARTIFACT}" | awk '{print $1}')" \
+    --arg manifest "$(realpath --relative-to="${repo_root}" "${ZENTTY_PACKAGE_MANIFEST}")" \
+    --arg manifest_sha "$(sha256sum "${ZENTTY_PACKAGE_MANIFEST}" | awk '{print $1}')" \
+    --arg provenance "$(realpath --relative-to="${repo_root}" "${ZENTTY_PACKAGE_PROVENANCE}")" \
+    --arg provenance_sha "$(sha256sum "${ZENTTY_PACKAGE_PROVENANCE}" | awk '{print $1}')" \
+    --arg checksums "$(realpath --relative-to="${repo_root}" "${ZENTTY_PACKAGE_CHECKSUMS}")" \
+    --arg checksums_sha "$(sha256sum "${ZENTTY_PACKAGE_CHECKSUMS}" | awk '{print $1}')" '
+    {schema_version:1,
+     source:{revision:$revision,bundle:{path:$bundle,sha256:$bundle_sha}},
+     package:{artifact:{path:$artifact,sha256:$artifact_sha},
+       manifest:{path:$manifest,sha256:$manifest_sha},
+       provenance:{path:$provenance,sha256:$provenance_sha},
+       checksums:{path:$checksums,sha256:$checksums_sha}}}
+' >"${locator_temp}"
+mv -f -- "${locator_temp}" "${lifecycle_root}/package-artifact.json"
 echo "debian-package-lifecycle-build: PASS revision=${revision}"

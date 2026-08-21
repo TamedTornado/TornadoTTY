@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+
+# Resolves the immutable package/source snapshot published by the real package
+# lifecycle producer. Downstream qualification cells must consume this locator
+# rather than independently guessing an artifact from the developer HEAD.
+zentty_qualified_package_artifact() {
+    local repo_root="$1"
+    local locator="${ZENTTY_QUALIFIED_PACKAGE_LOCATOR:-${repo_root}/build/linux/package-lifecycle/package-artifact.json}"
+    local resolve_field expected_sha
+
+    [[ -f "${locator}" && ! -L "${locator}" ]] || return 1
+    jq -e '
+      .schema_version == 1 and
+      (.source.revision | test("^[0-9a-f]{40}$")) and
+      (.source.bundle.path | type == "string" and length > 0) and
+      (.source.bundle.sha256 | test("^[0-9a-f]{64}$")) and
+      all(.package[]; .path | type == "string" and length > 0) and
+      all(.package[]; .sha256 | test("^[0-9a-f]{64}$"))
+    ' "${locator}" >/dev/null || return 1
+
+    ZENTTY_PACKAGE_REVISION="$(jq -r '.source.revision' "${locator}")"
+    ZENTTY_PACKAGE_SOURCE_BUNDLE="$(jq -r '.source.bundle.path' "${locator}")"
+    [[ "${ZENTTY_PACKAGE_SOURCE_BUNDLE}" == /* ]] ||
+        ZENTTY_PACKAGE_SOURCE_BUNDLE="${repo_root}/${ZENTTY_PACKAGE_SOURCE_BUNDLE}"
+    expected_sha="$(jq -r '.source.bundle.sha256' "${locator}")"
+    [[ -f "${ZENTTY_PACKAGE_SOURCE_BUNDLE}" &&
+       ! -L "${ZENTTY_PACKAGE_SOURCE_BUNDLE}" &&
+       "$(sha256sum "${ZENTTY_PACKAGE_SOURCE_BUNDLE}" | awk '{print $1}')" == "${expected_sha}" ]] || return 1
+
+    for resolve_field in artifact manifest provenance checksums; do
+        local path_variable="ZENTTY_PACKAGE_${resolve_field^^}"
+        local path
+        path="$(jq -r --arg field "${resolve_field}" '.package[$field].path' "${locator}")"
+        [[ "${path}" == /* ]] || path="${repo_root}/${path}"
+        expected_sha="$(jq -r --arg field "${resolve_field}" '.package[$field].sha256' "${locator}")"
+        [[ -f "${path}" && ! -L "${path}" &&
+           "$(sha256sum "${path}" | awk '{print $1}')" == "${expected_sha}" ]] || return 1
+        printf -v "${path_variable}" '%s' "${path}"
+    done
+    # Published for callers sourcing this resolver.
+    # shellcheck disable=SC2034
+    ZENTTY_PACKAGE_VERSION="$(dpkg-deb -f "${ZENTTY_PACKAGE_ARTIFACT}" Version)"
+    [[ "$(jq -r '.zentty_revision' "${ZENTTY_PACKAGE_MANIFEST}")" == "${ZENTTY_PACKAGE_REVISION}" &&
+       "$(jq -r '.zentty_revision' "${ZENTTY_PACKAGE_PROVENANCE}")" == "${ZENTTY_PACKAGE_REVISION}" ]] || return 1
+}

@@ -2,7 +2,6 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-revision="$(git -C "${repo_root}" rev-parse HEAD)"
 temporary="$(mktemp -d)"
 isolated="${temporary}/source"
 isolated_ghostty="${temporary}/ghostty"
@@ -12,12 +11,8 @@ prepared_zig_packages="${repo_root}/build/linux-deps/zig-global-cache/p"
 masked_checkout="${temporary}/masked-checkout"
 output_directory="${ZENTTY_PACKAGE_QUALIFICATION_DIR:-${repo_root}/build/linux/package-qualification}"
 trap 'rm -rf -- "${temporary}"' EXIT
-source "${repo_root}/linux/tests/lib/exact-package-artifact"
+source "${repo_root}/linux/tests/lib/qualified-package-artifact"
 
-[[ -z "$(git -C "${repo_root}" status --porcelain=v1)" ]] || {
-    echo "debian-package-clean-checkout: source checkout must be clean" >&2
-    exit 1
-}
 for dependency in bwrap getent git rustup; do
     command -v "${dependency}" >/dev/null || {
         echo "debian-package-clean-checkout: ${dependency} is required" >&2
@@ -41,12 +36,14 @@ mkdir -p -- "${masked_checkout}" "${isolated_zig_cache}/p" \
     echo "debian-package-clean-checkout: prepared Cargo registry is missing" >&2
     exit 1
 }
-zentty_exact_package_artifact "${repo_root}" || {
-    echo "debian-package-clean-checkout: exact primary artifact set is missing or stale" >&2
+zentty_qualified_package_artifact "${repo_root}" || {
+    echo "debian-package-clean-checkout: qualified primary artifact set is missing or stale" >&2
     exit 1
 }
+revision="${ZENTTY_PACKAGE_REVISION}"
 primary_output="$(dirname "${ZENTTY_PACKAGE_ARTIFACT}")"
-git clone --quiet --no-local --no-hardlinks "${repo_root}" "${isolated}"
+git clone --quiet --no-local --no-hardlinks \
+    "${ZENTTY_PACKAGE_SOURCE_BUNDLE}" "${isolated}"
 git -C "${isolated}" checkout --quiet --detach "${revision}"
 [[ -z "$(git -C "${isolated}" status --porcelain=v1)" ]]
 git clone --quiet --local --no-hardlinks --single-branch \

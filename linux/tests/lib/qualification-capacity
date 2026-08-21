@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+
+# Choose useful host defaults without consuming every logical CPU. Matrix cells
+# include multi-process GTK and Valgrind journeys, while support checks are
+# predominantly single-process contracts. Explicit environment overrides remain
+# authoritative for constrained hosts.
+zentty_qualification_matrix_jobs() {
+    local cpu_count available_kib cpu_jobs memory_jobs jobs
+    cpu_count="$(nproc)"
+    available_kib="$(awk '/^MemAvailable:/ { print $2; exit }' /proc/meminfo)"
+    [[ "${cpu_count}" =~ ^[1-9][0-9]*$ ]] || cpu_count=1
+    [[ "${available_kib}" =~ ^[1-9][0-9]*$ ]] || available_kib=$((2 * 1024 * 1024))
+
+    # Reserve one quarter of the machine for the desktop, compilers spawned by
+    # cells, and operator work. Admit at most one cell per 2 GiB available RAM.
+    cpu_jobs=$((cpu_count * 3 / 4))
+    (( cpu_jobs >= 1 )) || cpu_jobs=1
+    memory_jobs=$((available_kib / (2 * 1024 * 1024)))
+    (( memory_jobs >= 1 )) || memory_jobs=1
+    jobs="${cpu_jobs}"
+    (( memory_jobs < jobs )) && jobs="${memory_jobs}"
+    (( jobs > 32 )) && jobs=32
+    printf '%s\n' "${jobs}"
+}
+
+zentty_qualification_support_jobs() {
+    local cpu_count jobs
+    cpu_count="$(nproc)"
+    [[ "${cpu_count}" =~ ^[1-9][0-9]*$ ]] || cpu_count=1
+    jobs=$((cpu_count / 4))
+    (( jobs >= 2 )) || jobs=2
+    (( jobs > 8 )) && jobs=8
+    printf '%s\n' "${jobs}"
+}
+
+zentty_qualification_display_jobs() {
+    local cpu_count jobs
+    cpu_count="$(nproc)"
+    [[ "${cpu_count}" =~ ^[1-9][0-9]*$ ]] || cpu_count=1
+    # Each real GTK journey includes a compositor/X server, D-Bus services,
+    # file monitors, renderer threads, and one or more PTYs. Eight such actors
+    # use this 32-core host effectively without exhausting per-user inotify and
+    # renderer resources.
+    jobs=$((cpu_count / 4))
+    (( jobs >= 2 )) || jobs=2
+    (( jobs > 8 )) && jobs=8
+    printf '%s\n' "${jobs}"
+}
+
+zentty_qualification_interactive_jobs() {
+    local cpu_count jobs
+    cpu_count="$(nproc)"
+    [[ "${cpu_count}" =~ ^[1-9][0-9]*$ ]] || cpu_count=1
+    # Physical-input product journeys each own several timing-sensitive actors
+    # and real file monitors. Keep them below the broader display/Valgrind pool.
+    jobs=$((cpu_count / 8))
+    (( jobs >= 2 )) || jobs=2
+    (( jobs > 4 )) && jobs=4
+    printf '%s\n' "${jobs}"
+}
+
+zentty_qualification_build_jobs() {
+    local cpu_count jobs
+    cpu_count="$(nproc)"
+    [[ "${cpu_count}" =~ ^[1-9][0-9]*$ ]] || cpu_count=1
+    # The matrix may build ReleaseSafe, Debug, and Ghostty regression in
+    # parallel. Divide CPU capacity between those producers.
+    jobs=$((cpu_count / 3))
+    (( jobs >= 2 )) || jobs=2
+    printf '%s\n' "${jobs}"
+}

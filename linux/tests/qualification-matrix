@@ -13,8 +13,12 @@ source "${repo_root}/linux/tests/lib/controlled-environment"
 source "${repo_root}/linux/tests/lib/qualification-outcome"
 # shellcheck source=linux/tests/lib/bounded-batch
 source "${repo_root}/linux/tests/lib/bounded-batch"
+# shellcheck source=linux/tests/lib/qualification-capacity
+source "${repo_root}/linux/tests/lib/qualification-capacity"
 validate_only=false
-qualification_jobs="${ZENTTY_QUALIFICATION_JOBS:-4}"
+qualification_jobs="${ZENTTY_QUALIFICATION_JOBS:-$(zentty_qualification_matrix_jobs)}"
+qualification_display_jobs="${ZENTTY_QUALIFICATION_DISPLAY_JOBS:-$(zentty_qualification_display_jobs)}"
+qualification_interactive_jobs="${ZENTTY_QUALIFICATION_INTERACTIVE_JOBS:-$(zentty_qualification_interactive_jobs)}"
 
 allowed_tiers='["local","release","full"]'
 allowed_displays='["none","wayland","x11","both"]'
@@ -42,6 +46,14 @@ monotonic_milliseconds() {
     fail "ZENTTY_QUALIFICATION_JOBS must be a positive integer"
 (( qualification_jobs <= 32 )) ||
     fail "ZENTTY_QUALIFICATION_JOBS must not exceed 32"
+[[ "${qualification_display_jobs}" =~ ^[1-9][0-9]*$ ]] ||
+    fail "ZENTTY_QUALIFICATION_DISPLAY_JOBS must be a positive integer"
+(( qualification_display_jobs <= qualification_jobs )) ||
+    fail "ZENTTY_QUALIFICATION_DISPLAY_JOBS must not exceed total jobs"
+[[ "${qualification_interactive_jobs}" =~ ^[1-9][0-9]*$ ]] ||
+    fail "ZENTTY_QUALIFICATION_INTERACTIVE_JOBS must be a positive integer"
+(( qualification_interactive_jobs <= qualification_display_jobs )) ||
+    fail "ZENTTY_QUALIFICATION_INTERACTIVE_JOBS must not exceed display jobs"
 
 if ! "${validate_only}"; then
     command -v flock >/dev/null || fail "flock is required"
@@ -100,7 +112,7 @@ jq -e '
       "Debug":"build-debug","ReleaseSafe":"build-release"
     }) and
     (.execution_graph.resources == [
-      "abi-mismatch-fixture","bookmarks-modal-input","compiler-load","consolidated-session-journey","fcitx5-gtk-source","ghostty-source","multi-window-menu-input","system-sleep-inhibitor","valgrind-evidence"
+      "abi-mismatch-fixture","bookmarks-modal-input","compiler-load","consolidated-session-journey","fcitx5-gtk-source","ghostty-source","multi-window-menu-input","system-sleep-inhibitor"
     ])
 ' "${matrix}" >/dev/null || fail "matrix root, axes, or claims are not closed-world"
 
@@ -225,9 +237,7 @@ invalid_resources="$(jq -r '
     fail "cells with malformed, unknown, or duplicate resources: ${invalid_resources}"
 unsafe_resource_cells="$(jq -r '.cells[] | select(
     (.status == "PASS" or .status == "XFAIL") and
-    (if has("valgrind_report") or (.suppression_review_governance // false) then
-       ((.resources // []) | index("valgrind-evidence") == null)
-     elif ((.command // "") | contains("linux/scripts/prepare-ghostty-source")) then
+    (if ((.command // "") | contains("linux/scripts/prepare-ghostty-source")) then
        ((.resources // []) | index("ghostty-source") == null)
      elif ((.command // "") | contains("linux/scripts/build-abi-mismatch-fixture")) then
        ((.resources // []) | index("abi-mismatch-fixture") == null)
@@ -238,12 +248,14 @@ unsafe_resource_cells="$(jq -r '.cells[] | select(
 unsafe_ghostty_builds="$(jq -r '.cells[] | select(
     (((.command // "") | contains("linux/scripts/build-local")) and
       (((.command | contains("ZENTTY_GHOSTTY_PREPARED=true")) and
-        (.command | contains("ZENTTY_GHOSTTY_INSTALL_DIR="))) | not)) or
+        (.command | contains("ZENTTY_GHOSTTY_INSTALL_DIR=")) and
+        (.command | contains("ZENTTY_ZIG_LOCAL_CACHE_DIR="))) | not)) or
     (.id == "ghostty-regression" and
-      ((.command | contains("ZENTTY_GHOSTTY_REGRESSION_INSTALL_DIR=")) | not))
+      (((.command | contains("ZENTTY_GHOSTTY_REGRESSION_INSTALL_DIR=")) and
+        (.command | contains("ZENTTY_ZIG_LOCAL_CACHE_DIR="))) | not))
 ) | .id' "${matrix}")"
 [[ -z "${unsafe_ghostty_builds}" ]] ||
-    fail "Ghostty builds do not own isolated install output: ${unsafe_ghostty_builds}"
+    fail "Ghostty builds do not own isolated cache and install output: ${unsafe_ghostty_builds}"
 
 if ! jq -e '
     . as $matrix |
@@ -718,21 +730,22 @@ run_qualification_cell() {
             fi
             valgrind_report="$(readlink -m -- "${valgrind_report}")"
         fi
-        if [[ -n "${valgrind_report}" || "${is_suppression_governance}" == "true" ]]; then
+        if [[ -n "${valgrind_report}" ]]; then
+            # Every producer owns a unique canonical report path and acquires a
+            # shared evidence-set lease plus its report-specific lock. Removing
+            # only that producer's prior files is safe while siblings run.
+            rm -f -- \
+                "${valgrind_report}" \
+                "${valgrind_report%.json}.raw.log" \
+                "${valgrind_report%.json}.suppressed.log" \
+                "${valgrind_report%.json}.raw.environment" \
+                "${valgrind_report%.json}.suppressed.environment"
+        fi
+        if [[ "${is_suppression_governance}" == "true" ]]; then
             if zentty_valgrind_acquire_evidence_lock \
                 "${valgrind_evidence_lock}" cell_evidence_lock_fd; then
                 cell_evidence_lock_acquired=true
-                if [[ -n "${valgrind_report}" ]]; then
-                    rm -f -- \
-                        "${valgrind_report}" \
-                        "${valgrind_report%.json}.raw.log" \
-                        "${valgrind_report%.json}.suppressed.log" \
-                        "${valgrind_report%.json}.raw.environment" \
-                        "${valgrind_report%.json}.suppressed.environment"
-                fi
-                if [[ "${is_suppression_governance}" == "true" ]]; then
-                    retain_cell_evidence_lock=true
-                fi
+                retain_cell_evidence_lock=true
             else
                 printf 'qualification-matrix: error: could not acquire Valgrind evidence-set lock: %s\n' \
                     "${valgrind_evidence_lock}" >"${log}"
@@ -811,18 +824,12 @@ run_qualification_cell() {
                 ;;
         esac
         set +e
-        if [[ -n "${valgrind_report}" || "${is_suppression_governance}" == "true" ]] &&
+        if [[ "${is_suppression_governance}" == "true" ]] &&
             ! "${cell_evidence_lock_acquired}"; then
             code=1
         elif [[ "${is_suppression_governance}" == "true" ]]; then
             (cd "${repo_root}" && \
                 ZENTTY_VALGRIND_EXPECTED_REPORTS_JSON="${expected_valgrind_report_paths}" \
-                ZENTTY_VALGRIND_EVIDENCE_LOCK_FD="${cell_evidence_lock_fd}" \
-                ZENTTY_VALGRIND_EVIDENCE_LOCK_PATH="${valgrind_evidence_lock}" \
-                "${cell_command[@]}") >"${log}" 2>&1
-            code=$?
-        elif [[ -n "${valgrind_report}" ]]; then
-            (cd "${repo_root}" && \
                 ZENTTY_VALGRIND_EVIDENCE_LOCK_FD="${cell_evidence_lock_fd}" \
                 ZENTTY_VALGRIND_EVIDENCE_LOCK_PATH="${valgrind_evidence_lock}" \
                 "${cell_command[@]}") >"${log}" 2>&1
@@ -1025,6 +1032,9 @@ trap 'rm -rf -- "${cell_results_directory}"' EXIT
 raw_results_path="${cell_results_directory}/all-results.jsonl"
 : >"${raw_results_path}"
 qualification_started_monotonic_ms="$(monotonic_milliseconds)"
+qualification_host_logical_cpus="$(nproc)"
+qualification_host_available_memory_kib="$(awk '/^MemAvailable:/ { print $2; exit }' /proc/meminfo)"
+peak_active_workers=0
 
 append_cell_result() {
     local result_path="$1"
@@ -1047,21 +1057,26 @@ declare -A cell_dependency_ids=()
 declare -A cell_resource_ids=()
 declare -A cell_displays=()
 declare -A cell_display_blockers=()
+declare -A cell_interactive=()
 declare -A cell_statuses=()
 declare -A cell_governance=()
 active_display_cells=0
 active_display_blockers=0
+peak_active_display_cells=0
+active_interactive_cells=0
+peak_active_interactive_cells=0
 mapfile -t scheduled_ids < <(jq -r \
     '.cells | sort_by(.schedule_priority // .order, .order, .id)[] | .id' \
     "${matrix}")
 while IFS= read -r cell; do
     pending_cells["$(jq -r '.id' <<<"${cell}")"]="${cell}"
 done < <(jq -c '.cells[]' "${matrix}")
-while IFS='|' read -r metadata_id metadata_dependencies metadata_resources metadata_status metadata_governance metadata_display metadata_blocks_display; do
+while IFS='|' read -r metadata_id metadata_dependencies metadata_resources metadata_status metadata_governance metadata_display metadata_blocks_display metadata_interactive; do
     cell_dependency_ids["${metadata_id}"]="${metadata_dependencies}"
     cell_resource_ids["${metadata_id}"]="${metadata_resources}"
     cell_displays["${metadata_id}"]="${metadata_display}"
     cell_display_blockers["${metadata_id}"]="${metadata_blocks_display}"
+    cell_interactive["${metadata_id}"]="${metadata_interactive}"
     cell_statuses["${metadata_id}"]="${metadata_status}"
     cell_governance["${metadata_id}"]="${metadata_governance}"
 done < <(jq -r '
@@ -1078,7 +1093,9 @@ done < <(jq -r '
     ) as $dependencies |
     [$cell.id, $dependencies, (($cell.resources // []) | join(" ")),
      $cell.status, (($cell.suppression_review_governance // false) | tostring),
-     $cell.display, (($cell.blocks_display // false) | tostring)] |
+     $cell.display, (($cell.blocks_display // false) | tostring),
+     (($cell.display != "none" and
+       (($cell.environment_profile // "") | startswith("phase-managed-") | not)) | tostring)] |
     join("|")
 ' "${matrix}")
 
@@ -1110,6 +1127,10 @@ resources_available() {
         (( active_display_cells == 0 )) || return 1
     elif [[ "${cell_displays[${id}]}" != "none" ]]; then
         (( active_display_blockers == 0 )) || return 1
+        (( active_display_cells < qualification_display_jobs )) || return 1
+        if [[ "${cell_interactive[${id}]}" == "true" ]]; then
+            (( active_interactive_cells < qualification_interactive_jobs )) || return 1
+        fi
     fi
 }
 
@@ -1123,6 +1144,15 @@ claim_resources() {
         active_display_blockers=$((active_display_blockers + 1))
     elif [[ "${cell_displays[${id}]}" != "none" ]]; then
         active_display_cells=$((active_display_cells + 1))
+        if (( active_display_cells > peak_active_display_cells )); then
+            peak_active_display_cells="${active_display_cells}"
+        fi
+        if [[ "${cell_interactive[${id}]}" == "true" ]]; then
+            active_interactive_cells=$((active_interactive_cells + 1))
+            if (( active_interactive_cells > peak_active_interactive_cells )); then
+                peak_active_interactive_cells="${active_interactive_cells}"
+            fi
+        fi
     fi
 }
 
@@ -1136,6 +1166,9 @@ release_resources() {
         active_display_blockers=$((active_display_blockers - 1))
     elif [[ "${cell_displays[${id}]}" != "none" ]]; then
         active_display_cells=$((active_display_cells - 1))
+        if [[ "${cell_interactive[${id}]}" == "true" ]]; then
+            active_interactive_cells=$((active_interactive_cells - 1))
+        fi
     fi
 }
 
@@ -1219,6 +1252,9 @@ while (( ${#pending_cells[@]} > 0 || ${#active_pid_ids[@]} > 0 )); do
         run_qualification_worker "${selected_cell}" &
         worker_pid=$!
         active_pid_ids["${worker_pid}"]="${id}"
+        if (( ${#active_pid_ids[@]} > peak_active_workers )); then
+            peak_active_workers=${#active_pid_ids[@]}
+        fi
         scheduler_progress=true
     done
 
@@ -1261,12 +1297,17 @@ results="$(jq -cs --slurpfile matrix "${matrix}" '
     map(. as $result | ($cells | map(select(.id == $result.id))[0]) as $cell |
       . + {schedule:{dependencies:dependencies($cell),resources:($cell.resources // []),
                      display:$cell.display,
+                     interactive:($cell.display != "none" and
+                       (($cell.environment_profile // "") |
+                         startswith("phase-managed-") | not)),
                      blocks_display:($cell.blocks_display // false)}}) |
     sort_by(. as $result |
       ($cells | map(select(.id == $result.id))[0].order), $result.id)
 ' "${raw_results_path}")"
 
-jq -e --argjson jobs "${qualification_jobs}" '
+jq -e --argjson jobs "${qualification_jobs}" \
+    --argjson display_jobs "${qualification_display_jobs}" \
+    --argjson interactive_jobs "${qualification_interactive_jobs}" '
     . as $results |
     all(.[] | select(.timing? != null);
       (.timing | keys | sort) ==
@@ -1301,7 +1342,17 @@ jq -e --argjson jobs "${qualification_jobs}" '
     all([.[] | select(.timing? != null) | .timing.started_monotonic_ms][] as $instant |
       ([.[] | select(.timing? != null and
         .timing.started_monotonic_ms <= $instant and
-        .timing.finished_monotonic_ms > $instant)] | length) <= $jobs)
+        .timing.finished_monotonic_ms > $instant)] | length) <= $jobs) and
+    all([.[] | select(.timing? != null and .schedule.display != "none") |
+         .timing.started_monotonic_ms][] as $instant |
+      ([.[] | select(.timing? != null and .schedule.display != "none" and
+        .timing.started_monotonic_ms <= $instant and
+        .timing.finished_monotonic_ms > $instant)] | length) <= $display_jobs) and
+    all([.[] | select(.timing? != null and .schedule.interactive) |
+         .timing.started_monotonic_ms][] as $instant |
+      ([.[] | select(.timing? != null and .schedule.interactive and
+        .timing.started_monotonic_ms <= $instant and
+        .timing.finished_monotonic_ms > $instant)] | length) <= $interactive_jobs)
 ' <<<"${results}" >/dev/null ||
     fail "qualification timing, dependency, resource, or worker-limit evidence is invalid"
 
@@ -1493,6 +1544,24 @@ qualification_timing="$(jq -cn \
      duration_ms:$duration_ms,
      longest_cells:$longest_cells}
 ')"
+qualification_scheduler="$(jq -cn \
+    --argjson configured_jobs "${qualification_jobs}" \
+    --argjson configured_display_jobs "${qualification_display_jobs}" \
+    --argjson configured_interactive_jobs "${qualification_interactive_jobs}" \
+    --argjson observed_peak_workers "${peak_active_workers}" \
+    --argjson observed_peak_display_workers "${peak_active_display_cells}" \
+    --argjson observed_peak_interactive_workers "${peak_active_interactive_cells}" \
+    --argjson host_logical_cpus "${qualification_host_logical_cpus}" \
+    --argjson host_available_memory_kib "${qualification_host_available_memory_kib}" '
+    {configured_jobs:$configured_jobs,
+     configured_display_jobs:$configured_display_jobs,
+     configured_interactive_jobs:$configured_interactive_jobs,
+     observed_peak_workers:$observed_peak_workers,
+     observed_peak_display_workers:$observed_peak_display_workers,
+     observed_peak_interactive_workers:$observed_peak_interactive_workers,
+     host_logical_cpus:$host_logical_cpus,
+     host_available_memory_kib_at_start:$host_available_memory_kib}
+')"
 
 summary_temp="$(mktemp "${summary}.tmp.XXXXXX")"
 summary_results_temp="$(mktemp "${summary}.results.XXXXXX")"
@@ -1513,11 +1582,13 @@ jq -n \
     --argjson release "${release}" \
     --argjson full "${full}" \
     --argjson qualification_timing "${qualification_timing}" \
+    --argjson qualification_scheduler "${qualification_scheduler}" \
     '$summary_results[0] as $results | {
       schema_version: 1,
       totals_by_declared_status: $totals,
       logs_directory: $logs_directory,
       qualification_timing: $qualification_timing,
+      qualification_scheduler: $qualification_scheduler,
       results: $results,
       suppression_review: {
         governance_cell_id: $governance_cell_id,
@@ -1577,6 +1648,11 @@ printf 'Release qualification:    %s\n' "$("${release}" && echo PASSED || echo N
 printf 'Full Linux qualification: %s\n' "$("${full}" && echo PASSED || echo NOT_PASSED)"
 printf 'Suppression review:        %s\n' "$("${suppression_reviewed}" && echo ACCEPTED || echo NOT_ACCEPTED)"
 printf 'Qualification wall time:   %sms\n' "${qualification_duration_ms}"
+printf 'Scheduler:                 jobs=%s peak=%s display_jobs=%s display_peak=%s interactive_jobs=%s interactive_peak=%s host_cpus=%s start_available_memory_kib=%s\n' \
+    "${qualification_jobs}" "${peak_active_workers}" \
+    "${qualification_display_jobs}" "${peak_active_display_cells}" \
+    "${qualification_interactive_jobs}" "${peak_active_interactive_cells}" \
+    "${qualification_host_logical_cpus}" "${qualification_host_available_memory_kib}"
 printf 'Longest cells:             %s\n' "$(jq -r '
     .longest_cells | map(.id + "=" + (.duration_ms | tostring) + "ms") | join(", ")
 ' <<<"${qualification_timing}")"

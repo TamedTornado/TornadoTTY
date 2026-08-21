@@ -6,7 +6,7 @@ scenario="${1:-}"
 output_directory="${ZENTTY_PACKAGE_QUALIFICATION_DIR:-${repo_root}/build/linux/package-qualification}"
 lifecycle_directory="${ZENTTY_PACKAGE_LIFECYCLE_DIR:-${repo_root}/build/linux/package-lifecycle}"
 installed_directory="${ZENTTY_INSTALLED_PACKAGE_OUTPUT_DIR:-${repo_root}/build/linux/installed-package}"
-source "${repo_root}/linux/tests/lib/exact-package-artifact"
+source "${repo_root}/linux/tests/lib/qualified-package-artifact"
 
 fail() {
     echo "package-qualification-evidence: error: $*" >&2
@@ -18,7 +18,7 @@ fail() {
 for command in dpkg-deb git jq sha256sum; do
     command -v "${command}" >/dev/null || fail "required command not found: ${command}"
 done
-zentty_exact_package_artifact "${repo_root}" || fail "exact current-revision artifact set is missing or stale"
+zentty_qualified_package_artifact "${repo_root}" || fail "qualified package artifact set is missing or stale"
 mkdir -p -- "${output_directory}"
 
 clean_receipt="${output_directory}/clean-build.json"

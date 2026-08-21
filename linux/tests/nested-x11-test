@@ -68,6 +68,7 @@ set -euo pipefail
 [[ "${GDK_BACKEND:-}" == x11 ]] || exit 85
 [[ "${XDG_SESSION_TYPE:-}" == x11 ]] || exit 86
 [[ "${LIBGL_ALWAYS_SOFTWARE:-}" == 1 ]] || exit 87
+[[ "${LP_NUM_THREADS:-}" == 2 ]] || exit 86
 printf '%s\n' "${BASHPID}" >"${ZENTTY_FAKE_X11_CAPTURE}/session-supervisor-pid"
 
 authority=""
@@ -141,6 +142,7 @@ set -euo pipefail
 [[ "${DISPLAY:-}" =~ ^:([0-9]+)$ ]]
 ((10#${BASH_REMATCH[1]} >= 2000 && 10#${BASH_REMATCH[1]} <= 11999))
 [[ "${LIBGL_ALWAYS_SOFTWARE:-}" == 1 ]]
+[[ "${LP_NUM_THREADS:-}" == 2 ]]
 printf '    Accelerated: no\nOpenGL renderer string: llvmpipe (fixture)\n'
 printf 'OpenGL vendor string: Mesa/X.org\nOpenGL version string: 4.5 fixture\n'
 EOF
@@ -156,6 +158,7 @@ set -euo pipefail
 [[ "${GDK_BACKEND:-}" == x11 ]] || exit 54
 [[ "${XDG_SESSION_TYPE:-}" == x11 ]] || exit 55
 [[ "${LIBGL_ALWAYS_SOFTWARE:-}" == 1 ]] || exit 56
+[[ "${LP_NUM_THREADS:-}" == 2 ]] || exit 55
 [[ -z "${ZENTTY_NESTED_X11_RUN_ROOT:-}" ]] || exit 57
 run_root="${XAUTHORITY%/Xauthority}"
 [[ "${HOME:-}" == "${run_root}/home" ]] || exit 58

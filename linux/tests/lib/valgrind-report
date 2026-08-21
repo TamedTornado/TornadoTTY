@@ -281,7 +281,19 @@ zentty_valgrind_validate_wayland_phase_environment() {
 zentty_valgrind_acquire_evidence_lock() {
     local lock_file="$1"
     local descriptor_variable="$2"
+    local lock_mode="${3:-exclusive}"
+    local inheritance_policy="${4:-require-match}"
     local descriptor inherited_descriptor advertised_lock actual_lock
+    local -a flock_arguments=(-n)
+
+    case "${lock_mode}" in
+        shared) flock_arguments+=(-s) ;;
+        exclusive) flock_arguments+=(-x) ;;
+        *)
+            echo "error: invalid Valgrind evidence lock mode: ${lock_mode}" >&2
+            return 1
+            ;;
+    esac
 
     command -v flock >/dev/null || {
         echo "error: flock is required for Valgrind evidence locking" >&2
@@ -297,9 +309,19 @@ zentty_valgrind_acquire_evidence_lock() {
     inherited_descriptor="${ZENTTY_VALGRIND_EVIDENCE_LOCK_FD:-}"
     if [[ -n "${advertised_lock}" ]] &&
         [[ "$(readlink -m -- "${advertised_lock}")" != "${lock_file}" ]]; then
-        echo "error: inherited Valgrind evidence lock path does not match: ${lock_file}" >&2
-        return 1
+        if [[ "${inheritance_policy}" == "independent" ]]; then
+            advertised_lock=""
+            inherited_descriptor=""
+        else
+            echo "error: inherited Valgrind evidence lock path does not match: ${lock_file}" >&2
+            return 1
+        fi
     fi
+    [[ "${inheritance_policy}" == "require-match" ||
+        "${inheritance_policy}" == "independent" ]] || {
+        echo "error: invalid Valgrind evidence lock inheritance policy: ${inheritance_policy}" >&2
+        return 1
+    }
 
     if [[ -n "${inherited_descriptor}" ]]; then
         if [[ -z "${advertised_lock}" || ! "${inherited_descriptor}" =~ ^[0-9]+$ ||
@@ -315,7 +337,7 @@ zentty_valgrind_acquire_evidence_lock() {
             echo "error: inherited Valgrind evidence lock descriptor points to ${actual_lock}, expected ${lock_file}" >&2
             return 1
         fi
-        if ! flock -n "${inherited_descriptor}"; then
+        if ! flock "${flock_arguments[@]}" "${inherited_descriptor}"; then
             echo "error: inherited Valgrind evidence lock is not held: ${lock_file}" >&2
             return 1
         fi
@@ -341,7 +363,7 @@ zentty_valgrind_acquire_evidence_lock() {
         echo "error: Valgrind evidence lock identity changed while opening: ${lock_file}" >&2
         return 1
     fi
-    if ! flock -n "${descriptor}"; then
+    if ! flock "${flock_arguments[@]}" "${descriptor}"; then
         exec {descriptor}>&-
         echo "error: Valgrind evidence is already being produced: ${lock_file}" >&2
         return 1
@@ -352,7 +374,18 @@ zentty_valgrind_acquire_evidence_lock() {
 zentty_valgrind_validate_evidence_lock_descriptor() {
     local lock_file="$1"
     local descriptor="$2"
+    local lock_mode="${3:-exclusive}"
     local actual_lock
+    local -a flock_arguments=(-n)
+
+    case "${lock_mode}" in
+        shared) flock_arguments+=(-s) ;;
+        exclusive) flock_arguments+=(-x) ;;
+        *)
+            echo "error: invalid acquired Valgrind evidence lock mode: ${lock_mode}" >&2
+            return 1
+            ;;
+    esac
 
     lock_file="$(readlink -m -- "${lock_file}")"
     if [[ ! "${descriptor}" =~ ^[0-9]+$ ||
@@ -368,7 +401,7 @@ zentty_valgrind_validate_evidence_lock_descriptor() {
         echo "error: acquired Valgrind evidence lock descriptor points to ${actual_lock}, expected ${lock_file}" >&2
         return 1
     fi
-    if ! flock -n "${descriptor}"; then
+    if ! flock "${flock_arguments[@]}" "${descriptor}"; then
         echo "error: acquired Valgrind evidence lock is not held: ${lock_file}" >&2
         return 1
     fi

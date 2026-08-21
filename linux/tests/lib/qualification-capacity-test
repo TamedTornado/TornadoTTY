@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+# shellcheck source=linux/tests/lib/qualification-capacity
+source "${repo_root}/linux/tests/lib/qualification-capacity"
+
+matrix_jobs="$(zentty_qualification_matrix_jobs)"
+support_jobs="$(zentty_qualification_support_jobs)"
+display_jobs="$(zentty_qualification_display_jobs)"
+interactive_jobs="$(zentty_qualification_interactive_jobs)"
+build_jobs="$(zentty_qualification_build_jobs)"
+[[ "${matrix_jobs}" =~ ^[1-9][0-9]*$ && "${matrix_jobs}" -le 32 ]]
+[[ "${support_jobs}" =~ ^[1-9][0-9]*$ && "${support_jobs}" -le 8 ]]
+[[ "${display_jobs}" =~ ^[1-9][0-9]*$ && "${display_jobs}" -le 8 ]]
+[[ "${interactive_jobs}" =~ ^[1-9][0-9]*$ &&
+    "${interactive_jobs}" -le "${display_jobs}" ]]
+[[ "${build_jobs}" =~ ^[1-9][0-9]*$ ]]
+
+# This project's qualification host has enough capacity that silently
+# returning to the former four-worker emergency throttle is a regression.
+if (( $(nproc) >= 16 )) && (( matrix_jobs <= 4 )); then
+    echo "qualification-capacity-test: capable host was throttled to four workers" >&2
+    exit 1
+fi
+
+echo "Qualification capacity tests passed: matrix=${matrix_jobs} display=${display_jobs} interactive=${interactive_jobs} support=${support_jobs} build=${build_jobs}"

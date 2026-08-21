@@ -201,7 +201,7 @@
     },
     {
       "owner": "pane_runtime_coordinator",
-      "fields": ["pane_runtime"]
+      "fields": ["pane_runtime", "pending_initial_focus"]
     },
     {
       "owner": "server_runtime_coordinator",
@@ -310,7 +310,7 @@
         "add_focused_pane_right", "add_focused_pane_left", "split_focused_pane_below",
         "split_focused_pane", "close_focused_pane", "request_close_pane", "close_worklane", "close_pane",
         "restore_closed_pane", "remove_live_surface", "focus_selected_surface", "handle_pane_pointer_presence", "focus_follow_should_apply",
-        "focus_selected_surface_unchecked", "duplicate_focused_pane"
+        "focus_selected_surface_unchecked", "preserve_initial_terminal_focus", "duplicate_focused_pane"
       ]
     },
     {

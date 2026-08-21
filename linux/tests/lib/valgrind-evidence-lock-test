@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+# shellcheck source=linux/tests/lib/valgrind-report
+source "${repo_root}/linux/tests/lib/valgrind-report"
+temp_dir="$(mktemp -d)"
+trap 'rm -rf -- "${temp_dir}"' EXIT
+set_lock="${temp_dir}/evidence-set.lock"
+ready="${temp_dir}/shared.ready"
+release="${temp_dir}/shared.release"
+
+(
+    shared_fd=""
+    zentty_valgrind_acquire_evidence_lock "${set_lock}" shared_fd shared
+    zentty_valgrind_validate_evidence_lock_descriptor \
+        "${set_lock}" "${shared_fd}" shared
+    : >"${ready}"
+    while [[ ! -e "${release}" ]]; do sleep 0.01; done
+) &
+shared_pid=$!
+for _ in {1..500}; do
+    [[ -e "${ready}" ]] && break
+    sleep 0.01
+done
+[[ -e "${ready}" ]] || {
+    echo "valgrind-evidence-lock-test: shared holder did not start" >&2
+    exit 1
+}
+
+# A second producer may join the evidence set.
+second_shared_fd=""
+zentty_valgrind_acquire_evidence_lock "${set_lock}" second_shared_fd shared
+zentty_valgrind_validate_evidence_lock_descriptor \
+    "${set_lock}" "${second_shared_fd}" shared
+
+# Governance may not overlap any producer.
+if (
+    exclusive_fd=""
+    zentty_valgrind_acquire_evidence_lock \
+        "${set_lock}" exclusive_fd exclusive
+) >/dev/null 2>&1; then
+    echo "valgrind-evidence-lock-test: governance overlapped a producer" >&2
+    exit 1
+fi
+
+exec {second_shared_fd}>&-
+: >"${release}"
+wait "${shared_pid}"
+
+exclusive_fd=""
+zentty_valgrind_acquire_evidence_lock "${set_lock}" exclusive_fd exclusive
+zentty_valgrind_validate_evidence_lock_descriptor \
+    "${set_lock}" "${exclusive_fd}" exclusive
+
+echo "Valgrind evidence lock tests passed: concurrent producers, exclusive governance"

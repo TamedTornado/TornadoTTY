@@ -2,11 +2,19 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=linux/tests/lib/qualification-capacity
+source "${repo_root}/linux/tests/lib/qualification-capacity"
 ghostty_source="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
 zig="${ZIG:-${repo_root}/../.tools/zig-x86_64-linux-0.16.0/zig}"
 blueprint_dir="${BLUEPRINT_COMPILER_DIR:-${repo_root}/../.tools/blueprint-compiler-0.16.0/bin}"
 zig_global_cache="${repo_root}/build/linux-deps/zig-global-cache"
-zig_local_cache="${ghostty_source}/.zig-cache"
+zig_local_cache="${ZENTTY_ZIG_LOCAL_CACHE_DIR:-${ghostty_source}/.zig-cache}"
+[[ "${zig_local_cache}" == /* ]] || zig_local_cache="${repo_root}/${zig_local_cache}"
+build_jobs="${ZENTTY_BUILD_JOBS:-$(zentty_qualification_build_jobs)}"
+[[ "${build_jobs}" =~ ^[1-9][0-9]*$ ]] || {
+    echo "error: ZENTTY_BUILD_JOBS must be a positive integer" >&2
+    exit 64
+}
 receipt="${repo_root}/build/linux/ghostty-regression.log"
 install_dir="${ZENTTY_GHOSTTY_REGRESSION_INSTALL_DIR:-${repo_root}/build/linux-deps/ghostty-regression-out}"
 if [[ "${install_dir}" != /* ]]; then
@@ -39,6 +47,7 @@ mkdir -p "${zig_global_cache}" "${zig_local_cache}"
         ZIG_GLOBAL_CACHE_DIR="${zig_global_cache}" \
         ZIG_LOCAL_CACHE_DIR="${zig_local_cache}" \
         "${zig}" build test \
+        -j"${build_jobs}" \
         --prefix "${install_dir}" \
         -Doptimize=Debug \
         -Dcpu=baseline \
@@ -47,6 +56,7 @@ mkdir -p "${zig_global_cache}" "${zig_local_cache}"
         ZIG_GLOBAL_CACHE_DIR="${zig_global_cache}" \
         ZIG_LOCAL_CACHE_DIR="${zig_local_cache}" \
         "${zig}" build gtk-embed-lib-test \
+        -j"${build_jobs}" \
         --prefix "${install_dir}" \
         -Doptimize=Debug \
         -Dcpu=baseline \

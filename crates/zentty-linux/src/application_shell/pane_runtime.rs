@@ -497,9 +497,17 @@ impl PaneRuntimeCoordinator {
                     return;
                 };
                 Self::schedule_pending_prefill(&shell, &ready_id);
-                let shell = shell.borrow();
+                let mut shell = shell.borrow_mut();
                 if shell.shutting_down {
                     return;
+                }
+                if shell.pending_initial_focus.as_deref() == Some(&ready_id) {
+                    shell.pending_initial_focus = None;
+                    if shell.state.select_pane(&ready_id) {
+                        shell.refresh_sidebar_metadata();
+                    }
+                    shell.focus_selected_surface_unchecked();
+                    eprintln!("zentty-linux: focus-pane pane={ready_id}");
                 }
                 if let Some(surface) = shell.pane_runtime.surface(&ready_id) {
                     observe_ghostty_search_state(

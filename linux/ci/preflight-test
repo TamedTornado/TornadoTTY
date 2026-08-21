@@ -2,11 +2,13 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-preflight="${repo_root}/linux/ci/preflight"
+# shellcheck source=linux/tests/lib/working-tree-fixture
+source "${repo_root}/linux/tests/lib/working-tree-fixture"
 fixture="$(mktemp -d)"
-dirty_sentinel="${repo_root}/.zentty-ci-preflight-dirty-sentinel"
-in_source_tool_root="${repo_root}/build/linux-ci-preflight-fixture"
-trap 'rm -rf -- "${fixture}" "${in_source_tool_root}"; rm -f -- "${dirty_sentinel}"' EXIT
+source_fixture="${fixture}/source"
+dirty_sentinel="${source_fixture}/.zentty-ci-preflight-dirty-sentinel"
+in_source_tool_root="${source_fixture}/build/linux-ci-preflight-fixture"
+trap 'rm -rf -- "${fixture}"' EXIT
 
 fail() {
     echo "ci-preflight-test: error: $*" >&2
@@ -15,6 +17,14 @@ fail() {
 
 # shellcheck disable=SC1091
 source "${repo_root}/build/linux-ci-tools/environment.sh"
+
+# Negative preflight cases must not inherit unrelated edits from the developer
+# checkout. Build one clean commit containing the exact tracked working-tree
+# content under test, then mutate only the condition owned by each scenario.
+zentty_create_working_tree_fixture \
+    "${repo_root}" "${source_fixture}" 'preflight test source fixture'
+preflight="${source_fixture}/linux/ci/preflight"
+export GHOSTTY_SOURCE_DIR="${repo_root}/build/linux-deps/ghostty"
 
 expect_failed_without_receipt() {
     local name="$1"

@@ -242,8 +242,15 @@ late_source_callback="$(
 [[ -z "${late_source_callback}" ]] ||
     fail "disposed pane delivered a late callback: ${late_source_callback}"
 
-[[ "$(grep -Fc 'started subcommand path=/bin/sh pid=' "${log}" || true)" -eq 3 ]] ||
+# The child-owned receipt is the PTY launch evidence. Ghostty diagnostics are
+# intentionally disabled for embedded-library consumers, so they are not a
+# stable product contract. Require exactly the two source shells and the one
+# restored shell that already proved its controlled resume journey above.
+if ! [[ "$(grep -Fxc "${working_dir}" "${cwd_receipt}" || true)" -eq 2 &&
+    "$(grep -Fxc "${working_root}" "${cwd_receipt}" || true)" -eq 1 &&
+    "$(wc -l <"${cwd_receipt}")" -eq 3 ]]; then
     fail "expected two original real PTYs plus one restored PTY"
+fi
 jq -e --arg pane "${restored_pane}" --arg cwd "${working_root}" '
     .reason == "cleanExit" and
     (.workspace.windows[0].worklanes[0].columns[0].panes[0].id == $pane) and

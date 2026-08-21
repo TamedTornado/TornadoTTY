@@ -286,6 +286,7 @@ export TMPDIR="${run_root}/tmp"
 export GDK_BACKEND=wayland
 export XDG_SESSION_TYPE=wayland
 export LIBGL_ALWAYS_SOFTWARE=1
+export LP_NUM_THREADS="${ZENTTY_SOFTWARE_RENDERER_THREADS:-2}"
 export GSETTINGS_BACKEND=memory
 export GIO_USE_VFS=local
 export NO_AT_BRIDGE=1

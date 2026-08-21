@@ -15,7 +15,8 @@ controlled_ibus="${repo_root}/linux/tests/controlled-ibus-x11"
 controlled_ibus_harness="linux/tests/controlled-ibus-x11"
 protocol_ceiling_id="$(zentty_ibus_focus_protocol_ceiling_id)"
 controlled_marker_prefix="$(zentty_ibus_focus_controlled_marker_prefix)"
-evidence_lock="$(dirname "${report}")/.zentty-valgrind-evidence.lock"
+evidence_set_lock="$(dirname "${report}")/.zentty-valgrind-evidence.lock"
+report_lock="${report}.lock"
 max_capture_span_seconds=900
 effective_suppressions=(
     "${ghostty_source}/valgrind.supp"
@@ -23,10 +24,16 @@ effective_suppressions=(
     "${repo_root}/linux/tests/valgrind.supp"
 )
 
-evidence_lock_fd=""
-zentty_valgrind_acquire_evidence_lock "${evidence_lock}" evidence_lock_fd || exit 1
+evidence_set_lock_fd=""
+report_lock_fd=""
+zentty_valgrind_acquire_evidence_lock \
+    "${evidence_set_lock}" evidence_set_lock_fd shared || exit 1
 zentty_valgrind_validate_evidence_lock_descriptor \
-    "${evidence_lock}" "${evidence_lock_fd}" || exit 1
+    "${evidence_set_lock}" "${evidence_set_lock_fd}" shared || exit 1
+zentty_valgrind_acquire_evidence_lock \
+    "${report_lock}" report_lock_fd exclusive independent || exit 1
+zentty_valgrind_validate_evidence_lock_descriptor \
+    "${report_lock}" "${report_lock_fd}" || exit 1
 
 # Any failed focused invocation must invalidate all prior publishable evidence.
 rm -f -- "${raw_receipt}" "${suppressed_receipt}" "${report}"

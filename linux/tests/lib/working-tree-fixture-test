@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+# shellcheck source=linux/tests/lib/working-tree-fixture
+source "${repo_root}/linux/tests/lib/working-tree-fixture"
+temporary="$(mktemp -d)"
+trap 'rm -rf -- "${temporary}"' EXIT
+source_root="${temporary}/source"
+fixture_root="${temporary}/fixture"
+
+git init --quiet "${source_root}"
+git -C "${source_root}" config user.name 'Zentty Test'
+git -C "${source_root}" config user.email test@invalid
+printf 'tracked-old\n' >"${source_root}/tracked"
+printf 'ignored\n' >"${source_root}/.gitignore"
+printf 'ignored\n' >>"${source_root}/.gitignore"
+git -C "${source_root}" add tracked .gitignore
+git -C "${source_root}" commit --quiet -m baseline
+printf 'tracked-new\n' >"${source_root}/tracked"
+mkdir -p "${source_root}/new/directory"
+printf 'untracked\n' >"${source_root}/new/directory/file"
+printf 'ignored\n' >"${source_root}/ignored"
+
+zentty_create_working_tree_fixture \
+    "${source_root}" "${fixture_root}" 'exact dirty source fixture'
+[[ "$(cat "${fixture_root}/tracked")" == tracked-new ]]
+[[ "$(cat "${fixture_root}/new/directory/file")" == untracked ]]
+[[ ! -e "${fixture_root}/ignored" ]]
+[[ -z "$(git -C "${fixture_root}" status --porcelain)" ]]
+
+echo "Working-tree fixture tests passed: tracked diff, untracked source, ignored exclusion"

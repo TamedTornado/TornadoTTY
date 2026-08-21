@@ -2,6 +2,8 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=linux/tests/lib/qualification-capacity
+source "${repo_root}/linux/tests/lib/qualification-capacity"
 lock_file="${repo_root}/linux/ghostty.lock"
 ghostty_repo="$(sed -n 's/^repo=//p' "${lock_file}")"
 ghostty_revision="$(sed -n 's/^revision=//p' "${lock_file}")"
@@ -9,7 +11,13 @@ ghostty_source="${GHOSTTY_SOURCE_DIR:-${repo_root}/build/linux-deps/ghostty}"
 zig="${ZIG:-${repo_root}/../.tools/zig-x86_64-linux-0.16.0/zig}"
 blueprint_dir="${BLUEPRINT_COMPILER_DIR:-${repo_root}/../.tools/blueprint-compiler-0.16.0/bin}"
 zig_global_cache="${ZENTTY_ZIG_GLOBAL_CACHE_DIR:-${repo_root}/build/linux-deps/zig-global-cache}"
-zig_local_cache="${ghostty_source}/.zig-cache"
+zig_local_cache="${ZENTTY_ZIG_LOCAL_CACHE_DIR:-${ghostty_source}/.zig-cache}"
+[[ "${zig_local_cache}" == /* ]] || zig_local_cache="${repo_root}/${zig_local_cache}"
+build_jobs="${ZENTTY_BUILD_JOBS:-$(zentty_qualification_build_jobs)}"
+[[ "${build_jobs}" =~ ^[1-9][0-9]*$ ]] || {
+    echo "error: ZENTTY_BUILD_JOBS must be a positive integer" >&2
+    exit 64
+}
 default_output_dir="${repo_root}/build/linux"
 output_dir="${ZENTTY_BUILD_OUTPUT_DIR:-${default_output_dir}}"
 if [[ "${output_dir}" != /* ]]; then
@@ -110,6 +118,7 @@ fi
         ZIG_GLOBAL_CACHE_DIR="${zig_global_cache}" \
         ZIG_LOCAL_CACHE_DIR="${zig_local_cache}" \
         "${zig}" build \
+        -j"${build_jobs}" \
         gtk-embed-lib \
         --prefix "${ghostty_install_dir}" \
         -Doptimize="${optimize}" \
@@ -141,7 +150,7 @@ cp "${layer_shell_library}" "${output_dir}/lib/"
 
 GHOSTTY_LIB_DIR="${ghostty_install_dir}/lib" \
     ZENTTY_BUILD_COMMIT="${zentty_revision}" \
-    cargo "${cargo_arguments[@]}"
+    cargo "${cargo_arguments[@]}" --jobs "${build_jobs}"
 cp "${repo_root}/target/${cargo_profile}/zentty-linux" \
     "${output_dir}/bin/zentty-linux"
 cp "${repo_root}/target/${cargo_profile}/zentty" \
