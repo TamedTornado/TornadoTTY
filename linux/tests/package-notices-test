@@ -26,6 +26,37 @@ if jq -e 'any(.[]; .name | startswith("windows-"))' \
 fi
 jq -e '.components | length > 0' \
     "${temporary}/positive/ghostty-components.json" >/dev/null
+jq -e --slurpfile cargo "${temporary}/positive/cargo-packages.json" \
+    --slurpfile ghostty "${temporary}/positive/ghostty-components.json" \
+    --slurpfile policy "${repo_root}/linux/packaging/ghostty-notices-v1.json" '
+    .schema_version == 1 and
+    (.generated_from.zentty.revision | test("^[0-9a-f]{40}$")) and
+    (.generated_from.ghostty.revision | test("^[0-9a-f]{40}$")) and
+    (.entries | length) ==
+      (($cargo[0] | length) + ($ghostty[0].components | length) +
+       ($policy[0].embedded_notice_only | length)) and
+    ([.entries[].id] | length == (unique | length)) and
+    all(.entries[];
+      (.source_url | startswith("https://")) and
+      (.homepage_url == null or (.homepage_url | startswith("https://"))) and
+      (.notice.path | startswith("/") | not) and
+      (.notice.path | contains("..") | not))
+' "${temporary}/positive/catalog-v1.json" >/dev/null
+while IFS=$'\t' read -r kind notice; do
+    if [[ "${kind}" == file ]]; then
+        [[ -s "${temporary}/positive/${notice}" ]] || {
+            echo "package-notices-test: catalog notice file is absent: ${notice}" >&2
+            exit 1
+        }
+    else
+        find "${temporary}/positive/${notice}" -maxdepth 1 -type f -size +0c \
+            -print -quit | grep -q . || {
+            echo "package-notices-test: catalog notice directory is empty: ${notice}" >&2
+            exit 1
+        }
+    fi
+done < <(jq -r '.entries[] | [.notice.kind,.notice.path] | @tsv' \
+    "${temporary}/positive/catalog-v1.json")
 if grep -IRFq "${repo_root}" "${temporary}/positive"; then
     echo "package-notices-test: checkout path leaked into notices" >&2
     exit 1

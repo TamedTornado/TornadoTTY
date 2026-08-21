@@ -78,7 +78,7 @@ use action_router::{
     ACTION_PREVIOUS_PANE, ACTION_PREVIOUS_WORKLANE, ACTION_REFRESH_REVIEW_STATUS,
     ACTION_REFRESH_SERVERS, ACTION_RESET_PANE_LAYOUT, ACTION_RESIZE_PANE_DOWN,
     ACTION_RESIZE_PANE_LEFT, ACTION_RESIZE_PANE_RIGHT, ACTION_RESIZE_PANE_UP,
-    ACTION_RESTORE_CLOSED_PANE, ACTION_SELECT_ALL, ACTION_SHOW_AGENT_FLEET,
+    ACTION_RESTORE_CLOSED_PANE, ACTION_SELECT_ALL, ACTION_SHOW_ABOUT, ACTION_SHOW_AGENT_FLEET,
     ACTION_SHOW_TASK_MANAGER, ACTION_SPLIT_PANE_BELOW, ACTION_SPLIT_PANE_RIGHT,
     ACTION_STOP_IGNORING_SERVER_PORT, ACTION_STOP_SERVER, ACTION_TOGGLE_LIGHT_DARK_THEME,
     ACTION_TOGGLE_SIDEBAR, ACTION_USE_AUTO_THEME, ACTION_USE_DARK_THEME, ACTION_USE_LIGHT_THEME,
@@ -213,6 +213,7 @@ pub(crate) struct ApplicationShell {
     shortcut_controller: Option<gtk::EventControllerKey>,
     user_activation_clock: Rc<UserActivationClock>,
     shortcut_settings_window: Option<crate::shortcut_settings::SettingsWindow>,
+    about_window: Option<gtk::Window>,
     agent_events: AgentEventCoordinator,
     attention_inbox: Rc<RefCell<zentty_core::AttentionInbox>>,
     tmux_compat: crate::tmux_compat::TmuxCompatProduct,
@@ -451,6 +452,7 @@ impl ApplicationShell {
             shortcut_controller: None,
             user_activation_clock: Rc::new(UserActivationClock::default()),
             shortcut_settings_window: None,
+            about_window: None,
             agent_events,
             attention_inbox: Rc::clone(&runtimes.attention_inbox),
             tmux_compat: default_tmux_product(runtimes.tmux_session.clone())?,
@@ -1166,6 +1168,9 @@ impl ApplicationShell {
         self.peek_tab_down = false;
         self.peek_view.hide();
         self.command_palette.hide();
+        if let Some(about) = self.about_window.take() {
+            about.close();
+        }
         gtk::prelude::GtkWindowExt::set_focus(&self.window, gtk::Widget::NONE);
         self.window.set_default_widget(gtk::Widget::NONE);
         clear_pane_columns(&self.pane_box);
@@ -1740,6 +1745,15 @@ impl ApplicationShell {
 
     fn request_show_shortcut_settings(&mut self) {
         self.request_show_settings(crate::settings_navigation::SettingsSection::General);
+    }
+
+    fn request_show_about(&mut self) {
+        if let Some(window) = self.about_window.as_ref() {
+            window.present();
+            eprintln!("zentty-linux: about-view state=represented");
+            return;
+        }
+        self.about_window = Some(crate::about_view::show(&self.window));
     }
 
     #[allow(clippy::too_many_lines)] // Coordinates construction of the typed settings pages.
@@ -2563,6 +2577,12 @@ impl ApplicationShell {
                 ACTION_OPEN_SETTINGS,
             ),
             CommandPaletteItem::action(
+                "About Zentty",
+                "Build identity, documentation, source, and third-party licenses",
+                "version commit license privacy trust",
+                ACTION_SHOW_ABOUT,
+            ),
+            CommandPaletteItem::action(
                 "Toggle Light/Dark Theme",
                 "Switch between the remembered light and dark themes",
                 "appearance colors automatic",
@@ -3034,8 +3054,13 @@ impl ApplicationShell {
                 .shortcut_settings_window
                 .as_ref()
                 .is_some_and(|settings| settings.window.is_visible());
+            let about_visible = shell
+                .about_window
+                .as_ref()
+                .is_some_and(gtk::prelude::WidgetExt::is_visible);
             if shell.shutting_down
                 || settings_visible
+                || about_visible
                 || shell.command_palette.is_visible()
                 || shell.global_search.state().visible
                 || shell.peek_phase.is_active()
@@ -4562,12 +4587,17 @@ impl ApplicationShell {
                 .shortcut_settings_window
                 .as_ref()
                 .is_some_and(|settings| settings.window.is_visible());
+            let about_visible = shell
+                .about_window
+                .as_ref()
+                .is_some_and(gtk::prelude::WidgetExt::is_visible);
             if !focus_follow_should_apply(
                 generation,
                 shell.focus_follow_generation,
                 shell.window.is_active(),
                 shell.shutting_down
                     || settings_visible
+                    || about_visible
                     || shell.command_palette.is_visible()
                     || shell.global_search.state().visible
                     || shell.peek_phase.is_active(),

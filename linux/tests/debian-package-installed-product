@@ -6,6 +6,7 @@ helper="${repo_root}/linux/tests/lib/installed-product-root"
 # shellcheck disable=SC1091
 source "${repo_root}/linux/tests/lib/product-input"
 # shellcheck source=linux/tests/lib/qualified-package-artifact
+# shellcheck disable=SC1091
 source "${repo_root}/linux/tests/lib/qualified-package-artifact"
 
 if [[ "${1:-}" != --namespace-root ]]; then
@@ -435,6 +436,31 @@ grep -Fxq 'argc=1' "${receipts}/open-with.receipt" ||
     fail "installed Open With launcher did not receive one target"
 grep -Fxq "arg1=${HOME}" "${receipts}/open-with.receipt" ||
     fail "installed Open With launcher received the wrong working directory"
+installed_catalog="${install_root}/usr/share/doc/zentty/third-party/catalog-v1.json"
+[[ -s "${installed_catalog}" ]] || fail "installed About catalog is absent"
+installed_entries="$(jq -er '.entries | length | select(. > 0)' "${installed_catalog}")"
+installed_ghostty_revision="$(jq -er '.generated_from.ghostty.revision' "${installed_catalog}")"
+[[ "$(jq -r '.generated_from.zentty.revision' "${installed_catalog}")" == "${revision}" ]] ||
+    fail "installed About catalog has the wrong Zentty revision"
+[[ "${installed_ghostty_revision}" == "$(jq -r '.ghostty_revision' "${provenance}")" ]] ||
+    fail "installed About catalog has the wrong Ghostty revision"
+activate_palette_action 'About Zentty' 'zentty-linux: about-view state=shown'
+grep -Fq \
+    "licenses-catalog result=loaded entries=${installed_entries} zentty-revision=${revision} ghostty-revision=${installed_ghostty_revision}" \
+    "${product_log}" || fail "installed About did not load the exact packaged catalog"
+if zentty_product_uses_xdotool "${backend}"; then
+    about_window=""
+    for _ in {1..200}; do
+        about_window="$(xdotool search --onlyvisible --name '^About Zentty$' 2>/dev/null | tail -1 || true)"
+        [[ "${about_window}" =~ ^[1-9][0-9]*$ ]] && break
+        sleep 0.025
+    done
+    [[ "${about_window}" =~ ^[1-9][0-9]*$ ]] || fail "installed About toplevel is absent"
+    xdotool windowfocus --sync "${about_window}"
+    xdotool key alt+F4
+else
+    wtype -M alt -k F4 -m alt
+fi
 product_pid="${supervisor_pid}"
 for _ in {1..400}; do
     if jq -e '
@@ -544,6 +570,7 @@ jq -n \
         cli_read:true,cli_mutation:true,tmux_shim:true,agent_wrapper_present:true,
         agent_wrapper_executed:true,integration_cli:true,
         clipboard_write:true,open_with_launch:true,
+        about_licenses:true,
         shell_integration:true,terminfo:true,desktop_identity:true},
       process_audits:[$first_process,$second_process,$desktop_process],
       clean_path:"/usr/bin:/bin",

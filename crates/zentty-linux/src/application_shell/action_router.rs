@@ -92,6 +92,7 @@ pub(super) const ACTION_TOGGLE_SIDEBAR: &str = "toggle-sidebar";
 pub(super) const ACTION_SHOW_COMMAND_PALETTE: &str = "show-command-palette";
 pub(super) const ACTION_OPEN_SETTINGS: &str = "open-settings";
 pub(super) const ACTION_OPEN_SETTINGS_SECTION: &str = "open-settings-section";
+pub(super) const ACTION_SHOW_ABOUT: &str = "show-about";
 pub(super) const ACTION_RELOAD_CONFIG: &str = "reload-config";
 pub(super) const ACTION_TOGGLE_LIGHT_DARK_THEME: &str = "toggle-light-dark-theme";
 pub(super) const ACTION_USE_DARK_THEME: &str = "use-dark-theme";
@@ -206,6 +207,7 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
     action!(ACTION_TOGGLE_SIDEBAR, "toggle-sidebar", None),
     action!(ACTION_SHOW_COMMAND_PALETTE, "show-command-palette", None),
     action!(ACTION_OPEN_SETTINGS, "open-settings", None),
+    action!(ACTION_SHOW_ABOUT, "show-about", None),
     action!(
         ACTION_OPEN_SETTINGS_SECTION,
         "open-settings-section",
@@ -673,6 +675,9 @@ fn install_settings_shortcut_actions(
 ) {
     add_simple_action(shell, group, ACTION_SHOW_COMMAND_PALETTE, |shell| {
         shell.toggle_command_palette();
+    });
+    add_simple_action(shell, group, ACTION_SHOW_ABOUT, |shell| {
+        shell.request_show_about();
     });
     add_simple_action(shell, group, ACTION_RELOAD_CONFIG, |shell| {
         shell.reload_ghostty_config();
@@ -1745,7 +1750,7 @@ mod tests {
 
     #[test]
     fn registry_is_unique_complete_and_typed() {
-        assert_eq!(ACTION_SPECS.len(), 117);
+        assert_eq!(ACTION_SPECS.len(), 118);
         assert_eq!(
             ACTION_SPECS
                 .iter()

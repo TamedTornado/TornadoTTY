@@ -109,7 +109,8 @@ appstreamcli validate --no-net --pedantic \
 notices="${root}/usr/share/doc/zentty/third-party"
 ghostty_notices="${notices}/ghostty-components.json"
 cargo_notices="${notices}/cargo-packages.json"
-[[ -s "${ghostty_notices}" && -s "${cargo_notices}" ]] ||
+catalog="${notices}/catalog-v1.json"
+[[ -s "${ghostty_notices}" && -s "${cargo_notices}" && -s "${catalog}" ]] ||
     fail "third-party notice manifests are absent"
 jq -e '.schema_version == 1 and .ecosystem == "ghostty-zig" and
     (.components | length > 0) and
@@ -120,6 +121,24 @@ jq -e 'type == "array" and length > 0 and
     all(.[]; .name != "" and .version != "" and
       (.license != null or .license_file != null))' \
     "${cargo_notices}" >/dev/null || fail "Cargo notice manifest is invalid"
+jq -e --slurpfile cargo "${cargo_notices}" --slurpfile ghostty "${ghostty_notices}" \
+    --slurpfile policy "${repo_root}/linux/packaging/ghostty-notices-v1.json" \
+    --arg zentty_revision "$(jq -r '.zentty_revision' "${expanded_manifest}")" \
+    --arg ghostty_revision "$(sed -n 's/^revision=//p' "${repo_root}/linux/ghostty.lock")" '
+    .schema_version == 1 and
+    .generated_from.zentty.revision == $zentty_revision and
+    .generated_from.ghostty.revision == $ghostty_revision and
+    (.entries | length) ==
+      (($cargo[0] | length) + ($ghostty[0].components | length) +
+       ($policy[0].embedded_notice_only | length)) and
+    ([.entries[].id] | length == (unique | length)) and
+    all(.entries[];
+      (.source_url | startswith("https://")) and
+      (.homepage_url == null or (.homepage_url | startswith("https://"))) and
+      (.notice.kind == "file" or .notice.kind == "directory") and
+      (.notice.path | startswith("/") | not) and
+      (.notice.path | contains("..") | not))
+' "${catalog}" >/dev/null || fail "product license catalog is invalid or incomplete"
 while IFS= read -r notice; do
     [[ -s "${notices}/${notice}" ]] || fail "Ghostty notice text is absent: ${notice}"
 done < <(jq -r '.components[].notice' "${ghostty_notices}")
@@ -129,6 +148,15 @@ while IFS=$'\t' read -r name version; do
     find "${cargo_notice_dir}" -maxdepth 1 -type f -size +0c -print -quit | grep -q . ||
         fail "Cargo notice text is absent: ${name} ${version}"
 done < <(jq -r '.[] | [.name,.version] | @tsv' "${cargo_notices}")
+while IFS=$'\t' read -r kind notice; do
+    if [[ "${kind}" == file ]]; then
+        [[ -s "${notices}/${notice}" ]] ||
+            fail "catalog notice text is absent: ${notice}"
+    else
+        find "${notices}/${notice}" -maxdepth 1 -type f -size +0c -print -quit |
+            grep -q . || fail "catalog notice directory is empty: ${notice}"
+    fi
+done < <(jq -r '.entries[] | [.notice.kind,.notice.path] | @tsv' "${catalog}")
 [[ -s "${notices}/ghostty/embedded-code-NOTICE" &&
    -s "${notices}/ghostty/Apache-2.0" ]] || fail "embedded source notices are absent"
 [[ -s "${root}/usr/share/terminfo/x/xterm-ghostty" ]] || fail "terminfo is absent"

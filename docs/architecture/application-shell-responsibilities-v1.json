@@ -184,7 +184,8 @@
       "fields": [
         "window", "chrome", "body", "sidebar_reservation", "sidebar_hover_rail",
         "sidebar", "sidebar_scroll", "pane_scroll", "pane_box", "background_agent_host",
-        "state", "config", "main_loop", "next_worklane_number", "next_pane_number", "shutting_down"
+        "state", "config", "main_loop", "next_worklane_number", "next_pane_number", "shutting_down",
+        "about_window"
       ]
     },
     {
@@ -282,7 +283,8 @@
         "rollback_live_pane_window_transfer", "adopt_live_pane_window_transfer",
         "rollback_live_pane_existing_window_transfer", "adopt_live_pane_in_existing_window",
         "move_active_worklane", "move_worklane", "render", "take_pane_id", "take_worklane_id", "toggle_product_zoom",
-        "topology_receipt", "geometry_receipt", "focus_terminal_after_present", "sidebar_summaries"
+        "topology_receipt", "geometry_receipt", "focus_terminal_after_present", "sidebar_summaries",
+        "request_show_about"
       ]
     },
     {
@@ -484,6 +486,7 @@
     {"name":"toggle-sidebar","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"show-command-palette","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"open-settings","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"show-about","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"open-settings-section","parameter":"string","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"open-bookmarks","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"jump-latest-attention","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},

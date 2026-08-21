@@ -19,7 +19,13 @@ jq -e '
     (.license | type == "string" and length > 0) and
     (.notice | test("^[A-Za-z0-9._+-]+$")) and
     ([has("source"), has("system_source"), has("project_source")] |
-      map(select(.)) | length == 1))' "${manifest}" >/dev/null ||
+      map(select(.)) | length == 1)) and
+  (.embedded_notice_only | length > 0) and
+  all(.embedded_notice_only[];
+    (.name | test("^[A-Za-z0-9._+-]+$")) and
+    (.license | type == "string" and length > 0) and
+    (.evidence | test("^[A-Za-z0-9._+/-]+$") and
+      (startswith("/") | not) and (contains("..") | not)))' "${manifest}" >/dev/null ||
     fail "Ghostty notice manifest is invalid"
 
 rm -rf -- "${output}"
@@ -88,4 +94,93 @@ install -m 0644 "${repo_root}/linux/packaging/notices/embedded-code-NOTICE" \
 install -m 0644 /usr/share/common-licenses/Apache-2.0 \
     "${output}/ghostty/Apache-2.0"
 
-echo "collect-package-notices: PASS cargo=$(jq 'length' "${output}/cargo-packages.json") ghostty=$(jq '.components | length' "${output}/ghostty-components.json")"
+zentty_revision="$(git -C "${repo_root}" rev-parse HEAD)"
+ghostty_revision="$(git -C "${ghostty_source}" rev-parse HEAD)"
+zentty_repository="$(cargo metadata --locked --offline --no-deps --format-version 1 |
+    jq -er '.packages[] | select(.name == "zentty-linux") | .repository')"
+ghostty_repository="$(sed -n 's/^repo=//p' "${repo_root}/linux/ghostty.lock")"
+zentty_repository="${zentty_repository%.git}"
+ghostty_repository="${ghostty_repository%.git}"
+[[ "${zentty_revision}" =~ ^[0-9a-f]{40}$ &&
+   "${ghostty_revision}" =~ ^[0-9a-f]{40}$ ]] ||
+    fail "catalog source revisions are invalid"
+[[ "${zentty_repository}" =~ ^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ &&
+   "${ghostty_repository}" =~ ^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] ||
+    fail "catalog source repositories are not reviewed HTTPS GitHub origins"
+
+jq -n \
+    --slurpfile cargo "${output}/cargo-packages.json" \
+    --slurpfile ghostty "${output}/ghostty-components.json" \
+    --slurpfile notice_manifest "${manifest}" \
+    --arg zentty_revision "${zentty_revision}" \
+    --arg ghostty_revision "${ghostty_revision}" \
+    --arg zentty_repository "${zentty_repository}" \
+    --arg ghostty_repository "${ghostty_repository}" '
+  def https_repository_or_crate:
+    if (.repository | type) == "string" and
+       (.repository | test("^https://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+$"))
+    then .repository
+    else "https://crates.io/crates/\(.name)/\(.version)"
+    end;
+  {
+    schema_version:1,
+    generated_from:{
+      zentty:{repository:$zentty_repository,revision:$zentty_revision},
+      ghostty:{repository:$ghostty_repository,revision:$ghostty_revision}
+    },
+    entries:(
+      ($cargo[0] | map({
+        id:("cargo/" + .name + "/" + .version),
+        ecosystem:"cargo",
+        display_name:.name,
+        version:.version,
+        license:(.license // ("License file: " + .license_file)),
+        source_url:https_repository_or_crate,
+        homepage_url:(if (.repository | type) == "string" and
+          (.repository | startswith("https://")) then .repository else null end),
+        notice:{kind:"directory",path:("cargo/" + .name + "-" + .version)}
+      })) +
+      ($ghostty[0].components | map({
+        id:("ghostty/" + .name),
+        ecosystem:"ghostty-zig",
+        display_name:.name,
+        version:$ghostty_revision,
+        license:.license,
+        source_url:(if .name == "ghostty" then
+          $ghostty_repository + "/tree/" + $ghostty_revision
+        else $ghostty_repository + "/blob/" + $ghostty_revision + "/build.zig.zon" end),
+        homepage_url:(if .name == "ghostty" then "https://ghostty.org" else null end),
+        notice:{kind:"file",path:.notice}
+      })) +
+      ($notice_manifest[0].embedded_notice_only | map({
+        id:("ghostty-embedded/" + .name),
+        ecosystem:"ghostty-embedded",
+        display_name:.name,
+        version:$ghostty_revision,
+        license:.license,
+        source_url:($ghostty_repository + "/blob/" + $ghostty_revision + "/" + .evidence),
+        homepage_url:null,
+        notice:{kind:"file",path:"ghostty/embedded-code-NOTICE"}
+      }))
+    ) | sort_by(.display_name,.version,.id)
+  }' >"${output}/catalog-v1.json"
+
+jq -e '
+  .schema_version == 1 and
+  (.generated_from.zentty.revision | test("^[0-9a-f]{40}$")) and
+  (.generated_from.ghostty.revision | test("^[0-9a-f]{40}$")) and
+  (.entries | length > 0) and
+  ([.entries[].id] | length == (unique | length)) and
+  all(.entries[];
+    (.id | test("^[A-Za-z0-9._+/-]+$")) and
+    (.display_name | type == "string" and length > 0) and
+    (.version | type == "string" and length > 0) and
+    (.license | type == "string" and length > 0) and
+    (.source_url | startswith("https://")) and
+    (.homepage_url == null or (.homepage_url | startswith("https://"))) and
+    (.notice.kind == "file" or .notice.kind == "directory") and
+    (.notice.path | test("^[A-Za-z0-9._+/-]+$") and
+      (startswith("/") | not) and (contains("..") | not)))
+' "${output}/catalog-v1.json" >/dev/null || fail "UI license catalog is invalid"
+
+echo "collect-package-notices: PASS cargo=$(jq 'length' "${output}/cargo-packages.json") ghostty=$(jq '.components | length' "${output}/ghostty-components.json") catalog=$(jq '.entries | length' "${output}/catalog-v1.json")"

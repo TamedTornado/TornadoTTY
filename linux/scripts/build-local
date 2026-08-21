@@ -18,6 +18,10 @@ build_jobs="${ZENTTY_BUILD_JOBS:-$(zentty_qualification_build_jobs)}"
     echo "error: ZENTTY_BUILD_JOBS must be a positive integer" >&2
     exit 64
 }
+cargo_target_dir="${CARGO_TARGET_DIR:-${repo_root}/target}"
+if [[ "${cargo_target_dir}" != /* ]]; then
+    cargo_target_dir="${repo_root}/${cargo_target_dir}"
+fi
 default_output_dir="${repo_root}/build/linux"
 output_dir="${ZENTTY_BUILD_OUTPUT_DIR:-${default_output_dir}}"
 if [[ "${output_dir}" != /* ]]; then
@@ -106,10 +110,14 @@ ghostty_tree="clean"
 if [[ -n "$(git -C "${ghostty_source}" status --porcelain)" ]]; then
     ghostty_tree="dirty"
 fi
-zentty_revision="$(git -C "${repo_root}" rev-parse --short=12 HEAD)"
-if [[ ! "${zentty_revision}" =~ ^[0-9a-f]{12}$ ]]; then
+zentty_revision="$(git -C "${repo_root}" rev-parse HEAD)"
+if [[ ! "${zentty_revision}" =~ ^[0-9a-f]{40}$ ]]; then
     echo "error: invalid Zentty revision: ${zentty_revision}" >&2
     exit 1
+fi
+zentty_tree="clean"
+if [[ -n "$(git -C "${repo_root}" status --porcelain=v1)" ]]; then
+    zentty_tree="dirty"
 fi
 
 (
@@ -150,12 +158,14 @@ cp "${layer_shell_library}" "${output_dir}/lib/"
 
 GHOSTTY_LIB_DIR="${ghostty_install_dir}/lib" \
     ZENTTY_BUILD_COMMIT="${zentty_revision}" \
+    ZENTTY_BUILD_TREE="${zentty_tree}" \
+    ZENTTY_BUILD_PROFILE="${cargo_profile}" \
     cargo "${cargo_arguments[@]}" --jobs "${build_jobs}"
-cp "${repo_root}/target/${cargo_profile}/zentty-linux" \
+cp "${cargo_target_dir}/${cargo_profile}/zentty-linux" \
     "${output_dir}/bin/zentty-linux"
-cp "${repo_root}/target/${cargo_profile}/zentty" \
+cp "${cargo_target_dir}/${cargo_profile}/zentty" \
     "${output_dir}/bin/zentty"
-cp "${repo_root}/target/${cargo_profile}/zentty-focus-steal-helper" \
+cp "${cargo_target_dir}/${cargo_profile}/zentty-focus-steal-helper" \
     "${output_dir}/bin/zentty-focus-steal-helper"
 wrapper_root="${output_dir}/libexec/zentty/agent-wrappers"
 rm -rf "${wrapper_root}"
@@ -191,6 +201,9 @@ ghostty_runtime_root="${output_dir}/share/ghostty"
 rm -rf "${ghostty_runtime_root}"
 mkdir -p "${ghostty_runtime_root}"
 cp -a "${ghostty_install_dir}/share/ghostty/." "${ghostty_runtime_root}/"
+application_icon="${output_dir}/share/icons/hicolor/256x256/apps/com.zentty.zentty.png"
+mkdir -p "$(dirname "${application_icon}")"
+cp "${repo_root}/assets/icon.png" "${application_icon}"
 amp_plugin_root="${output_dir}/share/zentty/amp/plugins"
 rm -rf "${amp_plugin_root}"
 mkdir -p "${amp_plugin_root}"
@@ -205,6 +218,8 @@ for resource in \
     mkdir -p "$(dirname "${destination}")"
     cp "${repo_root}/ZenttyResources/${resource}" "${destination}"
 done
+"${repo_root}/linux/scripts/collect-package-notices" \
+    "${ghostty_source}" "${output_dir}/share/zentty/package-notices"
 
 # The linker must receive the literal loader token, not a shell expansion.
 # shellcheck disable=SC2016
@@ -253,11 +268,12 @@ c++ \
     -I"${ghostty_install_dir}/include" \
     "${repo_root}/linux/tests/api-header-cpp.cc"
 
-printf 'ghostty_source=%s\nghostty_revision=%s\nghostty_tree=%s\nzentty_revision=%s\noptimize=%s\nproduct_profile=%s\nprobe_profile=%s\nibus_focus_reproducer_sha256=%s\n' \
+printf 'ghostty_source=%s\nghostty_revision=%s\nghostty_tree=%s\nzentty_revision=%s\nzentty_tree=%s\noptimize=%s\nproduct_profile=%s\nprobe_profile=%s\nibus_focus_reproducer_sha256=%s\n' \
     "${ghostty_source}" \
     "${ghostty_revision}" \
     "${ghostty_tree}" \
     "${zentty_revision}" \
+    "${zentty_tree}" \
     "${optimize}" \
     "${cargo_profile}" \
     "${probe_profile}" \

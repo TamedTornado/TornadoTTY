@@ -1,0 +1,243 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
+bundle_root="$(cd "$(dirname "${product}")/.." 2>/dev/null && pwd)" || bundle_root=""
+bundle_lib="${bundle_root}/lib"
+notices="${bundle_root}/share/zentty/package-notices"
+[[ -d "${notices}" ]] || notices=/usr/share/doc/zentty/third-party
+run_root="$(mktemp -d)"
+state_directory="${run_root}/state"
+log="${run_root}/product.log"
+link_receipt="${run_root}/links"
+product_pid=""
+backend="${GDK_BACKEND:-}"
+
+# shellcheck disable=SC1091
+source "${repo_root}/linux/tests/lib/product-input"
+
+fail() {
+    [[ ! -f "${log}" ]] || cat "${log}" >&2
+    echo "rust-about-licenses: error: $*" >&2
+    exit 1
+}
+
+cleanup() {
+    if [[ "${product_pid}" =~ ^[1-9][0-9]*$ ]]; then
+        kill -TERM "${product_pid}" 2>/dev/null || true
+        wait "${product_pid}" 2>/dev/null || true
+    fi
+    rm -rf -- "${run_root}"
+}
+trap cleanup EXIT
+
+case "${backend}" in
+    x11)
+        [[ "${ZENTTY_NESTED_X11_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+            fail "X11 scenario must run through linux/tests/nested-x11"
+        ;;
+    wayland)
+        [[ "${ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+            fail "Wayland scenario must run through linux/tests/nested-wayland-input"
+        ;;
+    *) fail "GDK_BACKEND must be x11 or wayland" ;;
+esac
+for dependency in cp grep jq ln mkdir mktemp mv sed sleep update-desktop-database xdg-mime; do
+    command -v "${dependency}" >/dev/null || fail "${dependency} is required"
+done
+[[ -x "${product}" && -f "${bundle_lib}/libghostty-gtk-embed.so" ]] ||
+    fail "staged product bundle is incomplete"
+[[ -s "${notices}/catalog-v1.json" ]] || fail "product license catalog is absent"
+expected_entries="$(jq -er '.entries | length | select(. > 0)' "${notices}/catalog-v1.json")"
+expected_zentty="$(jq -er '.generated_from.zentty.revision' "${notices}/catalog-v1.json")"
+expected_ghostty="$(jq -er '.generated_from.ghostty.revision' "${notices}/catalog-v1.json")"
+[[ "${expected_zentty}" =~ ^[0-9a-f]{40}$ && "${expected_ghostty}" =~ ^[0-9a-f]{40}$ ]] ||
+    fail "catalog source identities are invalid"
+
+mkdir -p "${state_directory}" "${XDG_CONFIG_HOME}/ghostty" \
+    "${XDG_DATA_HOME}/applications"
+printf 'font-size = 10\n' >"${XDG_CONFIG_HOME}/ghostty/config"
+capture="${run_root}/capture-link"
+cat >"${capture}" <<CAPTURE
+#!/usr/bin/env bash
+printf '%s\n' "\${1:?}" >>"${link_receipt}"
+CAPTURE
+chmod 0755 "${capture}"
+cat >"${XDG_DATA_HOME}/applications/zentty-about-capture.desktop" <<DESKTOP
+[Desktop Entry]
+Type=Application
+Name=Zentty About Test Capture
+Exec=${capture} %u
+MimeType=x-scheme-handler/https;
+NoDisplay=true
+Terminal=false
+DESKTOP
+update-desktop-database "${XDG_DATA_HOME}/applications"
+xdg-mime default zentty-about-capture.desktop x-scheme-handler/https
+
+LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+    "${product}" --command 'sleep 60' --state-directory "${state_directory}" \
+    --no-session-restore >"${log}" 2>&1 &
+product_pid=$!
+zentty_product_prepare_input "${backend}" "${log}" || fail "physical product input was unavailable"
+
+key() {
+    case "$1" in
+        ctrl+shift+*)
+            if zentty_product_uses_xdotool "${backend}"; then
+                xdotool key "$1"
+            else
+                wtype -M ctrl -M shift -k "${1#ctrl+shift+}" -m shift -m ctrl
+            fi
+            ;;
+        shift+*)
+            if zentty_product_uses_xdotool "${backend}"; then
+                xdotool key "$1"
+            else
+                wtype -M shift -k "${1#shift+}" -m shift
+            fi
+            ;;
+        alt+*)
+            if zentty_product_uses_xdotool "${backend}"; then
+                xdotool key "$1"
+            else
+                wtype -M alt -k "${1#alt+}" -m alt
+            fi
+            ;;
+        *)
+            if zentty_product_uses_xdotool "${backend}"; then
+                xdotool key "$1"
+            else
+                wtype -k "$1"
+            fi
+            ;;
+    esac
+}
+
+type_text() {
+    if zentty_product_uses_xdotool "${backend}"; then
+        xdotool type --delay 8 -- "$1"
+    else
+        wtype -d 40 -- "$1"
+    fi
+}
+
+focus_about_x11() {
+    [[ "${backend}" != x11 ]] && return 0
+    local about=""
+    for _ in {1..200}; do
+        about="$(xdotool search --onlyvisible --name '^About Zentty$' 2>/dev/null | tail -1 || true)"
+        [[ "${about}" =~ ^[1-9][0-9]*$ ]] && break
+        sleep 0.05
+    done
+    [[ "${about}" =~ ^[1-9][0-9]*$ ]] || return 1
+    xdotool windowfocus --sync "${about}"
+}
+
+key ctrl+shift+p
+zentty_product_wait_for_log "${log}" 'command-palette-focus=confirmed result=true' \
+    "command palette did not receive physical focus" || fail "command palette did not open"
+type_text 'About Zentty'
+zentty_product_wait_for_log "${log}" 'command-palette=query value="About Zentty" results=1' \
+    "About command did not resolve uniquely" || fail "About palette route failed"
+key Down
+key Return
+zentty_product_wait_for_log "${log}" 'zentty-linux: about-view state=shown' \
+    "About action did not present its GTK toplevel" || fail "About was not shown"
+focus_about_x11 || fail "X11 About toplevel could not be focused"
+zentty_product_wait_for_log "${log}" 'zentty-linux: about-view state=active' \
+    "About toplevel did not receive compositor activation" || fail "About was not active"
+zentty_product_wait_for_log "${log}" 'zentty-linux: about-focus widget=about-open-docs' \
+    "About did not establish a deterministic initial keyboard focus" ||
+    fail "About initial keyboard focus failed"
+
+grep -Fq "licenses-catalog result=loaded entries=${expected_entries} zentty-revision=${expected_zentty} ghostty-revision=${expected_ghostty}" \
+    "${log}" || fail "About did not consume the exact staged/installed catalog identity"
+[[ ! -e "${link_receipt}" ]] || fail "rendering About silently opened an external URI"
+
+key Tab
+zentty_product_wait_for_log "${log}" 'zentty-linux: about-focus widget=about-open-source' \
+    "one Tab did not move from Docs to Source" || fail "About keyboard order is incorrect"
+key Return
+for _ in {1..100}; do [[ -s "${link_receipt}" ]] && break; sleep 0.05; done
+[[ "$(cat "${link_receipt}" 2>/dev/null || true)" == \
+   'https://github.com/TamedTornado/zentty' ]] ||
+    fail "source action did not open the exact reviewed URI through the controlled handler"
+
+focus_about_x11 || fail "About could not regain focus after the controlled URI action"
+key Tab
+zentty_product_wait_for_log "${log}" 'zentty-linux: about-focus widget=about-open-licenses' \
+    "one Tab did not move from Source to Licenses" || fail "About keyboard order is incorrect"
+key Return
+zentty_product_wait_for_log "${log}" 'zentty-linux: about-view page=licenses' \
+    "Licenses action did not change pages" || fail "Licenses page did not open"
+zentty_product_wait_for_log "${log}" \
+    'zentty-linux: about-focus widget=licenses-search requested result=true' \
+    "license search did not receive physical focus" || fail "license search focus failed"
+type_text autocfg
+zentty_product_wait_for_log "${log}" 'zentty-linux: licenses-search query="autocfg" results=1' \
+    "real catalog search was not exact" || fail "license search failed"
+zentty_product_wait_for_log "${log}" 'zentty-linux: license-detail id=cargo/autocfg/1.5.1' \
+    "filtered package detail did not render" || fail "license detail failed"
+grep -Fq 'Copyright (c) 2018 Josh Stone' "${notices}/cargo/autocfg-1.5.1/LICENSE-MIT" ||
+    fail "real selected package license text is absent"
+
+key shift+Tab
+zentty_product_wait_for_log "${log}" 'zentty-linux: about-focus widget=licenses-back' \
+    "Shift+Tab did not move from search to Back" || fail "Licenses keyboard order is incorrect"
+key Return
+zentty_product_wait_for_log "${log}" 'zentty-linux: about-view page=about' \
+    "Back action did not restore About" || fail "About navigation failed"
+key alt+F4
+kill -0 "${product_pid}" 2>/dev/null || fail "closing About terminated the real product"
+[[ "$(grep -Fc 'terminal-ready-pane=pane-1' "${log}")" -eq 1 ]] ||
+    fail "About lifecycle restarted the real terminal"
+
+# Exercise the product-visible failure path from a second, genuinely malformed
+# staged bundle. The executable path—not a test-only resource override—selects
+# this copied catalog, matching installed-product discovery semantics.
+kill -TERM "${product_pid}"
+wait "${product_pid}" 2>/dev/null || true
+product_pid=""
+bad_prefix="${run_root}/bad-bundle"
+bad_log="${run_root}/bad-product.log"
+mkdir -p "${bad_prefix}/bin" "${bad_prefix}/share/zentty"
+cp "${product}" "${bad_prefix}/bin/zentty-linux"
+ln -s "${bundle_lib}" "${bad_prefix}/lib"
+cp -a "${notices}" "${bad_prefix}/share/zentty/package-notices"
+jq '.generated_from.zentty.revision = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"' \
+    "${bad_prefix}/share/zentty/package-notices/catalog-v1.json" > \
+    "${bad_prefix}/share/zentty/package-notices/catalog-v1.json.new"
+mv "${bad_prefix}/share/zentty/package-notices/catalog-v1.json.new" \
+    "${bad_prefix}/share/zentty/package-notices/catalog-v1.json"
+log="${bad_log}"
+mkdir -p "${run_root}/bad-state"
+LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+    "${bad_prefix}/bin/zentty-linux" --command 'sleep 60' \
+    --state-directory "${run_root}/bad-state" --no-session-restore >"${log}" 2>&1 &
+product_pid=$!
+zentty_product_prepare_input "${backend}" "${log}" ||
+    fail "malformed-bundle product input was unavailable"
+key ctrl+shift+p
+zentty_product_wait_for_log "${log}" 'command-palette-focus=confirmed result=true' \
+    "malformed-bundle command palette did not receive focus" || fail "palette did not open"
+type_text 'About Zentty'
+zentty_product_wait_for_log "${log}" 'command-palette=query value="About Zentty" results=1' \
+    "malformed-bundle About command did not resolve" || fail "About route failed"
+key Down
+key Return
+zentty_product_wait_for_log "${log}" \
+    'catalog Zentty revision bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb does not match executable revision' \
+    "stale catalog did not produce the exact product diagnostic" ||
+    fail "stale catalog was accepted"
+focus_about_x11 || fail "malformed-bundle About toplevel could not be focused"
+zentty_product_wait_for_log "${log}" 'zentty-linux: about-focus widget=about-open-docs' \
+    "malformed-bundle About was not keyboard accessible" || fail "About focus failed"
+key Tab
+key Tab
+key Return
+zentty_product_wait_for_log "${log}" 'zentty-linux: about-view page=licenses' \
+    "recoverable diagnostic page could not be opened" || fail "diagnostic was not recoverable"
+
+echo "rust-about-licenses-${backend}: PASS real-product real-pty physical-command keyboard-accessible exact-build-and-catalog local-full-text controlled-links no-silent-open recoverable-malformed-bundle"
