@@ -63,7 +63,7 @@ jobs:
             openssh-client patchelf pkg-config procps python3 python3-gi
             python3-jsonschema shellcheck socat tmux util-linux wayland-utils weston
             wl-clipboard wtype x11-utils xauth xclip xdg-utils xdotool
-            xvfb zsh
+            xsettingsd xvfb zsh
           )
           sudo timeout --signal=TERM --kill-after=30s 600s \
             apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update \

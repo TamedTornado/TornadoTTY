@@ -1,0 +1,196 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
+fixture="${repo_root}/crates/zentty-core/tests/fixtures/session-restore-v3.json"
+run_root="$(mktemp -d)"
+product_pid=""
+settings_pid=""
+
+# shellcheck source=linux/tests/lib/product-bundle
+# shellcheck disable=SC1091
+source "${repo_root}/linux/tests/lib/product-bundle"
+
+fail() {
+    local message="$*"
+    for candidate in "${run_root}"/*.product.log "${run_root}"/*.settings.log; do
+        [[ ! -f "${candidate}" ]] || { echo "--- ${candidate}" >&2; cat "${candidate}" >&2; }
+    done
+    for candidate in "${run_root}"/*.receipt "${run_root}"/*.debug; do
+        [[ ! -f "${candidate}" ]] || { echo "--- ${candidate}" >&2; cat "${candidate}" >&2; }
+    done
+    echo "rust-x11-scaling: error: ${message}" >&2
+    exit 1
+}
+
+pid_is_running() {
+    local pid="$1"
+    kill -0 "${pid}" 2>/dev/null &&
+        [[ "$(ps -o stat= -p "${pid}" 2>/dev/null || true)" != Z* ]]
+}
+
+stop_pid() {
+    local pid="$1"
+    [[ "${pid}" =~ ^[1-9][0-9]*$ ]] || return
+    if pid_is_running "${pid}"; then
+        kill -TERM "${pid}" 2>/dev/null || true
+        for _ in {1..40}; do
+            pid_is_running "${pid}" || break
+            sleep 0.05
+        done
+        if pid_is_running "${pid}"; then
+            kill -KILL "${pid}" 2>/dev/null || true
+        fi
+    fi
+    wait "${pid}" 2>/dev/null || true
+}
+
+cleanup() {
+    stop_pid "${product_pid}"
+    stop_pid "${settings_pid}"
+    rm -rf -- "${run_root}"
+}
+trap cleanup EXIT
+
+[[ "${GDK_BACKEND:-}" == x11 ]] || fail "GDK_BACKEND must be x11"
+[[ -z "${GDK_SCALE:-}" && -z "${GDK_DPI_SCALE:-}" ]] ||
+    fail "process-local GDK scaling overrides are forbidden"
+[[ -n "${DISPLAY:-}" && -n "${XAUTHORITY:-}" ]] ||
+    fail "a controlled X11 display is required"
+[[ -x "${product}" ]] || fail "staged Zentty product is missing: ${product}"
+[[ -f "${fixture}" ]] || fail "restore fixture is missing"
+for dependency in xsettingsd dump_xsettings xdotool jq grep sed awk ps kill sleep mktemp; do
+    command -v "${dependency}" >/dev/null || fail "${dependency} is required"
+done
+zentty_product_bundle_resolve "${product}" || fail "staged product bundle is invalid"
+product="${ZENTTY_PRODUCT_BINARY}"
+bundle_lib="${ZENTTY_PRODUCT_BUNDLE_LIB}"
+
+actor="${run_root}/actor"
+cat >"${actor}" <<'ACTOR'
+#!/usr/bin/env bash
+set -euo pipefail
+trap 'status=$?; printf "ERROR\t%s\t%s\t%s\n" "${ZENTTY_PANE_ID:-unknown}" "${LINENO}" "${status}" >>"${ZENTTY_SCALE_RECEIPT:-/dev/null}"; exit "${status}"' ERR
+while [[ ! -e "${ZENTTY_SCALE_RELEASE}" ]]; do sleep 0.02; done
+stty -echo -icanon min 0 time 30
+read_terminal_report() {
+    local operation="$1"
+    local expected="$2"
+    local response
+    printf '\033[%st' "${operation}" >/dev/tty
+    if ! IFS= read -r -d t response </dev/tty; then
+        printf 'RESPONSE_ERROR\t%s\tread\n' "${ZENTTY_PANE_ID}" >>"${ZENTTY_SCALE_RECEIPT}"
+        return 1
+    fi
+    printf 'RESPONSE\t%s\t%q\n' "${ZENTTY_PANE_ID}" "${response}" >>"${ZENTTY_SCALE_RECEIPT}.debug"
+    [[ "${response}" == "${expected};"* ]]
+    response="${response#"${expected};"}"
+    [[ "${response}" =~ ^([1-9][0-9]*)\;([1-9][0-9]*)$ ]]
+    printf '%s\t%s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+}
+read -r rows columns < <(stty size)
+IFS=$'\t' read -r cell_height cell_width < <(read_terminal_report 16 $'\033[6')
+line="${ZENTTY_SCALE_PROFILE}\t${ZENTTY_PANE_ID}\t${rows}\t${columns}\t${cell_height}\t${cell_width}"
+flock "${ZENTTY_SCALE_RECEIPT}" bash -c 'printf "%b\n" "$1" >>"$2"' _ "${line}" "${ZENTTY_SCALE_RECEIPT}"
+ACTOR
+chmod +x "${actor}"
+
+wait_for_count() {
+    local file="$1"
+    local pattern="$2"
+    local expected="$3"
+    for _ in {1..300}; do
+        [[ -f "${file}" ]] &&
+            [[ "$(grep -Fc -- "${pattern}" "${file}" || true)" -ge "${expected}" ]] && return
+        pid_is_running "${product_pid}" || break
+        sleep 0.02
+    done
+    return 1
+}
+
+run_profile() {
+    local profile="$1"
+    local dpi="$2"
+    local state="${run_root}/${profile}.state"
+    local receipt="${run_root}/${profile}.receipt"
+    local release="${run_root}/${profile}.release"
+    local product_log="${run_root}/${profile}.product.log"
+    local settings_log="${run_root}/${profile}.settings.log"
+    local settings="${run_root}/${profile}.xsettings"
+    local dump="${run_root}/${profile}.xsettings.dump"
+    local window geometry status
+
+    printf 'Xft/DPI %s\n' "$((dpi * 1024))" >"${settings}"
+    xsettingsd -c "${settings}" >"${settings_log}" 2>&1 &
+    settings_pid=$!
+    for _ in {1..100}; do
+        dump_xsettings >"${dump}" 2>/dev/null &&
+            grep -Fxq "Xft/DPI $((dpi * 1024))" "${dump}" && break
+        pid_is_running "${settings_pid}" || break
+        sleep 0.02
+    done
+    grep -Fxq "Xft/DPI $((dpi * 1024))" "${dump}" ||
+        fail "${profile} XSETTINGS DPI was not observable"
+
+    mkdir -p "${state}"
+    jq '.restoreDraftWindows = []' "${fixture}" >"${state}/restore-snapshot.json"
+    : >"${receipt}"
+    ZENTTY_SCALE_PROFILE="${profile}" \
+    ZENTTY_SCALE_RECEIPT="${receipt}" \
+    ZENTTY_SCALE_RELEASE="${release}" \
+    LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+        "${product}" --command "${actor}" --state-directory "${state}" \
+        >"${product_log}" 2>&1 &
+    product_pid=$!
+    wait_for_count "${product_log}" 'terminal-ready-pane=' 2 ||
+        fail "${profile} did not create both real terminals"
+    mapfile -t windows < <(xdotool search --onlyvisible --name '^Zentty$')
+    [[ "${#windows[@]}" -eq 1 ]] || fail "${profile} exposed ${#windows[@]} Zentty windows"
+    window="${windows[0]}"
+    xdotool windowsize --sync "${window}" 1200 800
+    geometry="$(xdotool getwindowgeometry --shell "${window}")"
+    [[ "${geometry}" == *$'WIDTH=1200\n'* && "${geometry}" == *$'HEIGHT=800\n'* ]] ||
+        fail "${profile} external X geometry is not 1200x800"
+    : >"${release}"
+    wait_for_count "${receipt}" "${profile}" 2 ||
+        fail "${profile} did not receive both PTY terminal reports"
+    set +e
+    wait "${product_pid}"
+    status=$?
+    set -e
+    product_pid=""
+    [[ "${status}" -eq 0 ]] || fail "${profile} product exited ${status}"
+    [[ "$(wc -l <"${receipt}")" -eq 2 ]] || fail "${profile} receipt count is not exact"
+    awk -F '\t' -v expected="${profile}" '
+        NF != 6 || $1 != expected || $2 !~ /^pane-/ ||
+        $3 !~ /^[0-9]+$/ || $4 !~ /^[0-9]+$/ ||
+        $5 !~ /^[0-9]+$/ || $6 !~ /^[0-9]+$/ { exit 1 }
+    ' "${receipt}" || fail "${profile} contains a malformed PTY receipt"
+    stop_pid "${settings_pid}"
+    settings_pid=""
+}
+
+run_profile baseline 96
+run_profile scaled 192
+
+baseline="${run_root}/baseline.receipt"
+scaled="${run_root}/scaled.receipt"
+join -t $'\t' -1 2 -2 2 \
+    <(sort -t $'\t' -k2,2 "${baseline}") \
+    <(sort -t $'\t' -k2,2 "${scaled}") |
+awk -F '\t' '
+    BEGIN { count = 0 }
+    {
+        # pane, baseline profile/rows/cols/cell h/w,
+        # scaled profile/rows/cols/cell h/w
+        if (NF != 11 || $2 != "baseline" || $7 != "scaled") exit 1
+        if ($8 >= $3 || $9 >= $4) exit 1
+        if ($10 <= $5 || $11 <= $6) exit 1
+        if ($10 * 10 < $5 * 15 || $11 * 10 < $6 * 15) exit 1
+        count++
+    }
+    END { if (count != 2) exit 1 }
+' || fail "scaled XSETTINGS profile did not coherently resize both real terminals"
+
+echo "rust-x11-scaling: PASS xsettings-dpi=96,192 window=1200x800 panes=2 real-ghostty-csi real-pty"

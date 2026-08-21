@@ -21,7 +21,7 @@ case "${qualification_profile}" in
         apt_packages_query='.apt_packages[]'
         required_commands=(
             bwrap cage findmnt fusermount3 glxinfo jq labwc rustup valgrind weston
-            Xvfb xdotool xdpyinfo wtype
+            Xvfb dump_xsettings xdotool xdpyinfo xsettingsd wtype
         )
         ;;
     public-pr)

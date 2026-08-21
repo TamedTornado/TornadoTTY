@@ -122,6 +122,7 @@
     "xdg-utils",
     "xdotool",
     "xserver-xephyr",
+    "xsettingsd",
     "xvfb",
     "ydotool",
     "zsh"
@@ -179,6 +180,7 @@
         "xclip",
         "xdg-utils",
         "xdotool",
+        "xsettingsd",
         "xvfb",
         "zsh"
       ],
@@ -186,6 +188,7 @@
         "Xvfb",
         "bwrap",
         "cage",
+        "dump_xsettings",
         "findmnt",
         "fusermount3",
         "glxinfo",
@@ -195,7 +198,8 @@
         "wtype",
         "xdotool",
         "xdpyinfo",
-        "xmllint"
+        "xmllint",
+        "xsettingsd"
       ],
       "excluded_full_qualification_packages": [
         "ffmpeg",
