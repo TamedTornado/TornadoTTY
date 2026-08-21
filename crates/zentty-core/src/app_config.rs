@@ -93,15 +93,9 @@ impl Default for UpdatesConfig {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ErrorReportingConfig {
     pub enabled: bool,
-}
-
-impl Default for ErrorReportingConfig {
-    fn default() -> Self {
-        Self { enabled: true }
-    }
 }
 
 impl Default for RestoreConfig {
@@ -340,7 +334,7 @@ struct ErrorReportingDocument {
 impl ErrorReportingDocument {
     fn into_config(self) -> ErrorReportingConfig {
         ErrorReportingConfig {
-            enabled: self.enabled.unwrap_or(true),
+            enabled: self.enabled.unwrap_or(false),
         }
     }
 }

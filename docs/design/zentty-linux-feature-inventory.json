@@ -623,10 +623,10 @@
       "origin": "PORT_PARITY",
       "user_impact": "A public terminal handling agent content and tokens must disclose its build and dependencies and must never silently export user data.",
       "linux_owner_issue": 23,
-      "implementation_status": "PARTIAL",
-      "focused_tests": ["crates/zentty-linux/src/about_catalog.rs", "crates/zentty-linux/src/about_view.rs", "linux/tests/package-notices-test", "linux/tests/debian-package-audit", "linux/tests/qualification-matrix-test"],
-      "product_scenarios": ["linux/tests/rust-about-licenses", "linux/tests/debian-package-installed-product"],
-      "test_plan": "About/build identity and the exact staged/installed license catalog are implemented and covered by controlled X11/Wayland product journeys, malformed-bundle recovery, Debian payload audit, installed-product execution, controlled link handlers, and focused mutation testing. GH-76 still must prove no silent telemetry plus explicit crash review, consent, redaction, opt-out, and controlled transmission.",
+      "implementation_status": "IMPLEMENTED",
+      "focused_tests": ["crates/zentty-core/src/support_diagnostics.rs", "crates/zentty-linux/src/about_catalog.rs", "crates/zentty-linux/src/about_view.rs", "crates/zentty-linux/src/diagnostic_store.rs", "crates/zentty-linux/src/diagnostics_runtime.rs", "linux/tests/package-notices-test", "linux/tests/debian-package-audit", "linux/tests/qualification-matrix-test"],
+      "product_scenarios": ["linux/tests/rust-about-licenses", "linux/tests/debian-package-installed-product", "linux/tests/rust-updates-privacy-settings"],
+      "test_plan": "About/build identity and the exact staged/installed license catalog are covered by controlled X11/Wayland product journeys, malformed-bundle recovery, Debian payload audit, installed-product execution, controlled link handlers, and focused mutation testing. Diagnostics default disabled and network-silent; opt-in real panic capture uses a bounded allowlist, private atomic XDG storage, retention and corruption recovery, complete local review, safe-default second confirmation, explicit controlled failure/retry/transmission, persisted sent/failed lifecycle, revocable capture, clearing, and hostile-secret redaction in the same controlled X11/Wayland product journey. The installed Debian product also remains silent behind a live capture origin through real multi-pane terminals, controlled agent hooks, settings, clipboard, persistence, injected failure, restart, About, Open With, CLI, and desktop-entry launch.",
       "alternative_or_blocker": null
     },
     {

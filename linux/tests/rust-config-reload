@@ -172,7 +172,7 @@ zentty_product_wait_for_log "${log}" \
 zentty_product_key "${backend}" Down
 zentty_product_key "${backend}" Return
 zentty_product_wait_for_log "${log}" \
-    'updates-privacy-settings loaded channel=stable error-reporting-available=false' \
+    'updates-privacy-settings loaded channel=stable error-reporting-available=true' \
     "visible settings did not load the initial authority" || fail "initial settings state missing"
 zentty_product_wait_for_log "${log}" \
     'zentty-linux: shortcut-settings active search-focused=' \
@@ -219,7 +219,7 @@ zentty_product_wait_for_log_count "${log}" \
     "$((settings_reload_before + 1))" \
     "external settings reload did not reach config authority" || fail "external settings reload barrier missing"
 zentty_product_wait_for_log "${log}" \
-    'updates-privacy-settings loaded channel=beta error-reporting-available=false' \
+    'updates-privacy-settings loaded channel=beta error-reporting-available=true' \
     "refreshed settings did not render the accepted external value" || fail "refreshed settings state stale"
 if [[ "${backend}" == x11 ]]; then
     settings_window=""

@@ -18,7 +18,7 @@ use crate::general_settings::{ApplyGeneral, GeneralSettings};
 use crate::notifications_settings::ApplyNotifications;
 use crate::open_with_settings::{ApplyOpenWith, OpenWithProjection, RefreshOpenWith};
 use crate::settings_navigation::SettingsSection;
-use crate::updates_privacy_settings::ApplyUpdates;
+use crate::updates_privacy_settings::{ApplyErrorReporting, ApplyUpdates};
 use crate::workspace_pane_settings::ApplyWorkspacePanes;
 
 use crate::application_shell::shortcut_registry::{
@@ -60,6 +60,7 @@ pub(crate) struct SettingsContext {
     pub(crate) updates: zentty_core::UpdatesConfig,
     pub(crate) error_reporting: zentty_core::ErrorReportingConfig,
     pub(crate) apply_updates: ApplyUpdates,
+    pub(crate) apply_error_reporting: ApplyErrorReporting,
     pub(crate) worklanes: zentty_core::WorklaneConfig,
     pub(crate) pane_layout: zentty_core::PaneLayoutConfig,
     pub(crate) panes: zentty_core::PaneConfig,
@@ -246,9 +247,11 @@ pub(crate) fn show(
         &settings_context.apply_notifications,
     );
     let updates_privacy_page = crate::updates_privacy_settings::build(
+        &window,
         settings_context.updates,
         settings_context.error_reporting,
         &settings_context.apply_updates,
+        &settings_context.apply_error_reporting,
     );
     let workspace_panes_page = crate::workspace_pane_settings::build(
         settings_context.worklanes,

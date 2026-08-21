@@ -18,6 +18,8 @@ mod config_reload;
 mod config_store;
 mod custom_sound_store;
 mod dev_server_settings;
+mod diagnostic_store;
+mod diagnostics_runtime;
 mod docker_discovery;
 mod general_settings;
 mod global_search_view;
@@ -234,6 +236,8 @@ fn run() -> Result<(), String> {
         config.path.display(),
         config.config.clipboard.always_clean_copies
     );
+    diagnostics_runtime::install_local_panic_capture(config.config.error_reporting.enabled);
+    diagnostics_runtime::maybe_inject_controlled_crash(config.config.error_reporting.enabled);
     if appearance_needs_startup_projection(&config.config.appearance) {
         let spec = config.config.appearance.theme_spec();
         ConfigStore::install_default_fallback_theme_if_referenced(&spec)?;

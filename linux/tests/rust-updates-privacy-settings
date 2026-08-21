@@ -10,6 +10,10 @@ log="${run_root}/product.log"
 config="${XDG_CONFIG_HOME}/zentty/config.toml"
 product_pid=""
 settings_window=""
+controlled_crash=""
+diagnostic_endpoint=""
+capture_server_pid=""
+capture_body="${run_root}/captured-report.json"
 
 # shellcheck disable=SC1091
 source "${repo_root}/linux/tests/lib/product-input"
@@ -17,7 +21,7 @@ source "${repo_root}/linux/tests/lib/product-input"
 source "${repo_root}/linux/tests/lib/product-bundle"
 
 fail() {
-    [[ ! -f "${log}" ]] || cat "${log}" >&2
+    [[ ! -f "${log}" ]] || tail -n 200 "${log}" >&2
     echo "rust-updates-privacy-settings: error: $*" >&2
     exit 1
 }
@@ -32,6 +36,7 @@ stop_product() {
 
 cleanup() {
     stop_product
+    stop_capture_server
     rm -rf -- "${run_root}"
 }
 trap cleanup EXIT
@@ -49,6 +54,9 @@ case "${backend}" in
         ;;
     *) fail "GDK_BACKEND must be x11 or wayland" ;;
 esac
+for dependency in curl find jq socat stat; do
+    command -v "${dependency}" >/dev/null || fail "${dependency} is required"
+done
 [[ -x "${product}" ]] || fail "staged product is missing: ${product}"
 zentty_product_bundle_resolve "${product}" || fail "staged product bundle is invalid"
 product="${ZENTTY_PRODUCT_BINARY}"
@@ -66,14 +74,65 @@ future_privacy = true
 EOF
 
 start_product() {
+    local prepare_input="${1:-true}"
     : >"${log}"
-    GDK_SCALE=1 \
-    GDK_DPI_SCALE=1 \
-    LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+    local -a environment=(
+        "GDK_SCALE=1"
+        "GDK_DPI_SCALE=1"
+        "LD_LIBRARY_PATH=${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+    )
+    [[ -z "${controlled_crash}" ]] ||
+        environment+=("ZENTTY_DIAGNOSTICS_CONTROLLED_CRASH=${controlled_crash}")
+    [[ -z "${diagnostic_endpoint}" ]] ||
+        environment+=("ZENTTY_DIAGNOSTICS_TEST_ENDPOINT=${diagnostic_endpoint}")
+    env "${environment[@]}" \
         "${product}" --command 'sleep 30' --state-directory "${state_directory}" \
         --no-session-restore >"${log}" 2>&1 &
     product_pid=$!
+    [[ "${prepare_input}" == true ]] || return 0
     zentty_product_prepare_input "${backend}" "${log}" || fail "physical product input was unavailable"
+}
+
+stop_capture_server() {
+    if [[ "${capture_server_pid}" =~ ^[1-9][0-9]*$ ]]; then
+        kill -TERM "${capture_server_pid}" 2>/dev/null || true
+        wait "${capture_server_pid}" 2>/dev/null || true
+        capture_server_pid=""
+    fi
+}
+
+start_capture_server() {
+    local mode="${1:?}" port handler response
+    case "${mode}" in
+        success) response='204 No Content' ;;
+        failure) response='500 Controlled Failure' ;;
+        *) fail "unknown capture-server mode: ${mode}" ;;
+    esac
+    port=$((38000 + BASHPID % 1000))
+    handler="${run_root}/capture-handler"
+    cat >"${handler}" <<HANDLER
+#!/usr/bin/env bash
+set -euo pipefail
+content_length=0
+IFS= read -r request
+printf '%s\n' "\${request%\$'\\r'}" >"${run_root}/captured-request"
+while IFS= read -r header; do
+    header="\${header%\$'\\r'}"
+    [[ -n "\${header}" ]] || break
+    case "\${header}" in
+        [Cc]ontent-[Ll]ength:*) content_length="\${header#*: }" ;;
+    esac
+done
+dd bs=1 count="\${content_length}" of="${capture_body}" status=none
+printf 'HTTP/1.1 ${response}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n'
+HANDLER
+    chmod 0700 "${handler}"
+    socat "TCP-LISTEN:${port},bind=127.0.0.1,reuseaddr" "EXEC:${handler}" \
+        >"${run_root}/capture-server.log" 2>&1 &
+    capture_server_pid=$!
+    sleep 0.1
+    kill -0 "${capture_server_pid}" 2>/dev/null || fail "diagnostic capture server did not start"
+    diagnostic_endpoint="http://127.0.0.1:${port}/v1/reports"
 }
 
 main_key() {
@@ -94,6 +153,17 @@ type_text() {
 settings_key() {
     if [[ "${backend}" == x11 ]]; then
         xdotool windowfocus --sync "${settings_window}"
+        xdotool key "$1"
+    else
+        case "$1" in
+            alt+*) wtype -M alt -k "${1#alt+}" -m alt ;;
+            *) wtype -k "$1" ;;
+        esac
+    fi
+}
+
+dialog_key() {
+    if [[ "${backend}" == x11 ]]; then
         xdotool key "$1"
     else
         case "$1" in
@@ -137,11 +207,27 @@ wait_for_config() {
     return 1
 }
 
+wait_for_error_reporting() {
+    local value="$1"
+    for _ in {1..100}; do
+        grep -Fq "enabled = ${value}" "${config}" && return 0
+        sleep 0.03
+    done
+    return 1
+}
+
 start_product
 open_page
 zentty_product_wait_for_log "${log}" \
-    'updates-privacy-settings loaded channel=stable error-reporting-available=false' \
+    'updates-privacy-settings loaded channel=stable error-reporting-available=true' \
     "source settings state was not rendered" || fail "initial settings state failed"
+settings_key alt+l
+zentty_product_wait_for_log "${log}" \
+    'diagnostics preference=persisted' \
+    "Local Crash Capture did not persist" || fail "privacy preference enable failed"
+wait_for_error_reporting true || fail "enabled local crash capture did not reach config"
+dialog_key Escape
+sleep 0.15
 settings_key alt+b
 zentty_product_wait_for_log "${log}" \
     'updates-privacy-settings action=channel value=beta' \
@@ -149,18 +235,135 @@ zentty_product_wait_for_log "${log}" \
 wait_for_config beta || fail "Beta did not persist"
 grep -Fq '# preserve updates privacy journey' "${config}" || fail "comment was discarded"
 grep -Fq 'future_update = true' "${config}" || fail "unknown update key was discarded"
-grep -Fq 'enabled = false' "${config}" || fail "privacy setting was altered"
+grep -Fq 'enabled = true' "${config}" || fail "privacy setting was not preserved"
 
 stop_product
+
+# A controlled real panic is captured only after the explicit opt-in and is
+# persisted locally before any transport exists. The hostile text exercises
+# every high-risk free-text class without recording the raw values in receipts.
+controlled_crash='path=/home/jason/private API_KEY=hunter2 URL=https://example.test/a?token=raw pane-pane123 session-session123'
+start_product false
+if wait "${product_pid}"; then
+    fail "controlled diagnostics crash unexpectedly exited successfully"
+fi
+product_pid=""
+controlled_crash=""
+if grep -Eq '(/home/jason/private|hunter2|token=raw|pane123|session123)' "${log}"; then
+    fail "controlled panic leaked hostile source material to the product log"
+fi
+diagnostic_directory="${XDG_STATE_HOME}/zentty/diagnostics"
+mapfile -t diagnostic_reports < <(find "${diagnostic_directory}" -maxdepth 1 -type f -name 'diagnostic-*.json')
+[[ "${#diagnostic_reports[@]}" -eq 1 ]] || fail "controlled crash did not create exactly one local report"
+diagnostic_report="${diagnostic_reports[0]}"
+[[ "$(stat -c '%a' "${diagnostic_directory}")" == 700 ]] || fail "diagnostic directory is not private"
+[[ "$(stat -c '%a' "${diagnostic_report}")" == 600 ]] || fail "diagnostic report is not private"
+jq -e '.state == "local" and .reason == "panic" and .schema_version == 1' \
+    "${diagnostic_report}" >/dev/null || fail "controlled crash report has incorrect typed state"
+if grep -Eq '(/home/jason|hunter2|token=raw|pane123|session123)' "${diagnostic_report}"; then
+    fail "controlled crash report leaked hostile source material"
+fi
+jq -e '.detail | startswith("Zentty encountered an internal panic at diagnostics_runtime.rs:")' \
+    "${diagnostic_report}" >/dev/null || fail "panic report did not use the payload-free diagnostic detail"
+
+# Starting a capture origin proves the ordinary restarted product remains
+# silent. The only request is allowed after opening the actual payload, choosing
+# Submit, and then accepting a second safe-default confirmation.
+start_capture_server failure
 start_product
 open_page
 zentty_product_wait_for_log "${log}" \
-    'updates-privacy-settings loaded channel=beta error-reporting-available=false' \
+    'updates-privacy-settings loaded channel=beta error-reporting-available=true' \
     "persisted Beta channel did not survive restart" || fail "restart reload failed"
+zentty_product_wait_for_log "${log}" \
+    'diagnostics crash-capture=local-only network=disabled' \
+    "enabled restart did not install local-only crash capture" || fail "local crash restart semantics failed"
+[[ ! -e "${capture_body}" ]] || fail "ordinary launch silently submitted diagnostics"
+dialog_key alt+r
+zentty_product_wait_for_log "${log}" \
+    'state=pending-review' \
+    "Review Latest did not open the exact local payload" || fail "local report review failed"
+[[ ! -e "${capture_body}" ]] || fail "opening review silently submitted diagnostics"
+dialog_key alt+s
+zentty_product_wait_for_log "${log}" \
+    'diagnostics submission=confirmation-requested' \
+    "Submit Reviewed Report did not open confirmation" || fail "reviewed submission action failed"
+sleep 0.1
+[[ ! -e "${capture_body}" ]] || fail "submission bypassed the second confirmation"
+dialog_key Return
+zentty_product_wait_for_log "${log}" \
+    'diagnostics submission=cancelled' \
+    "safe-default confirmation did not cancel" || fail "submission confirmation default was unsafe"
+[[ ! -e "${capture_body}" ]] || fail "safe-default confirmation submitted diagnostics"
+dialog_key alt+s
+for _ in {1..100}; do
+    (( $(grep -Fc 'diagnostics submission-confirmation=active' "${log}" || true) >= 2 )) && break
+    sleep 0.03
+done
+(( $(grep -Fc 'diagnostics submission-confirmation=active' "${log}" || true) >= 2 )) ||
+    fail "second submission confirmation did not receive compositor activation"
+dialog_key alt+s
+for _ in {1..200}; do
+    [[ -s "${capture_body}" ]] && break
+    sleep 0.03
+done
+[[ -s "${capture_body}" ]] || fail "explicit confirmed submission did not reach capture origin"
+grep -Fx 'POST /v1/reports HTTP/1.1' "${run_root}/captured-request" >/dev/null ||
+    fail "diagnostic transport used an unexpected request"
+jq -e '.state == "pending_review" and .reason == "panic"' "${capture_body}" >/dev/null ||
+    fail "captured payload was not the reviewed report"
+if grep -Eq '(/home/jason|hunter2|token=raw|pane123|session123)' "${capture_body}"; then
+    fail "submitted report leaked hostile source material"
+fi
+zentty_product_wait_for_log "${log}" 'state=failed' \
+    "controlled failed transport lacked a failed receipt" || fail "diagnostic failure state failed"
+jq -e '.state == "failed"' "${diagnostic_report}" >/dev/null ||
+    fail "failed transport did not persist failed state"
+
+# A failed reviewed report remains local and retryable. Restart against a new
+# controlled success origin, review the exact failed report again, and submit.
+stop_product
+stop_capture_server
+rm -f -- "${capture_body}" "${run_root}/captured-request"
+start_capture_server success
+start_product
+open_page
+dialog_key alt+r
+zentty_product_wait_for_log "${log}" 'state=pending-review' \
+    "failed report could not return to review" || fail "diagnostic retry review failed"
+dialog_key alt+s
+zentty_product_wait_for_log "${log}" 'diagnostics submission=confirmation-requested' \
+    "retry did not open confirmation" || fail "diagnostic retry confirmation failed"
+zentty_product_wait_for_log "${log}" 'diagnostics submission-confirmation=active' \
+    "retry confirmation was not active" || fail "diagnostic retry activation failed"
+dialog_key alt+s
+for _ in {1..200}; do
+    [[ -s "${capture_body}" ]] && break
+    sleep 0.03
+done
+[[ -s "${capture_body}" ]] || fail "explicit retry did not reach success origin"
+zentty_product_wait_for_log "${log}" 'state=sent explicit=true' \
+    "explicit retry did not reach sent state" || fail "diagnostic submission state failed"
+jq -e '.state == "sent"' "${diagnostic_report}" >/dev/null ||
+    fail "local report did not persist sent state"
+
 settings_key alt+s
 zentty_product_wait_for_log "${log}" \
     'updates-privacy-settings action=channel value=stable' \
     "physical channel selection did not choose Stable" || fail "Stable selection failed"
 wait_for_config stable || fail "Stable did not persist"
+settings_key alt+l
+zentty_product_wait_for_log "${log}" 'local-crash-capture=false restart-required=true' \
+    "Local Crash Capture opt-out did not persist" || fail "privacy preference disable failed"
+wait_for_error_reporting false || fail "disabled local crash capture did not reach config"
+dialog_key Escape
+sleep 0.15
+settings_key alt+d
+for _ in {1..100}; do
+    [[ ! -e "${diagnostic_report}" ]] && break
+    sleep 0.03
+done
+[[ ! -e "${diagnostic_report}" ]] || fail "Delete All did not clear local reports"
+dialog_key Return
 
-echo "rust-updates-privacy-settings-${backend}: PASS real-gtk-settings physical-channel persistence restart explicit-error-reporting-unavailable"
+echo "rust-updates-privacy-settings-${backend}: PASS real-gtk-settings physical-channel persistence restart default-network-silent local-crash=private+redacted review=required submission=failure+retry+explicit+captured opt-out=revocable clear=user-controlled"

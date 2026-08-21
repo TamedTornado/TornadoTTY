@@ -151,6 +151,14 @@ impl ConfigStore {
         Ok(path)
     }
 
+    pub(crate) fn update_default_error_reporting(
+        error_reporting: zentty_core::ErrorReportingConfig,
+    ) -> Result<PathBuf, String> {
+        let path = default_config_file()?;
+        Self::update_error_reporting(&path, error_reporting)?;
+        Ok(path)
+    }
+
     pub(crate) fn update_default_workspace_panes(
         worklanes: WorklaneConfig,
         pane_layout: PaneLayoutConfig,
@@ -388,6 +396,34 @@ impl ConfigStore {
                 return Err("updates configuration is not a table".to_owned());
             }
             document["updates"]["channel"] = toml_edit::value(updates.channel.config_value());
+            atomic_replace(&target, document.to_string().as_bytes())
+        })
+    }
+
+    fn update_error_reporting(
+        path: &Path,
+        error_reporting: zentty_core::ErrorReportingConfig,
+    ) -> Result<(), String> {
+        let target = resolve_config_target(path)?;
+        with_config_lock(&target, || {
+            let source = match fs::read_to_string(&target) {
+                Ok(source) => source,
+                Err(error) if error.kind() == ErrorKind::NotFound => String::new(),
+                Err(error) => return Err(format!("could not read {}: {error}", target.display())),
+            };
+            if source.len() as u64 > MAX_CONFIG_BYTES {
+                return Err(format!("configuration exceeds {MAX_CONFIG_BYTES} bytes"));
+            }
+            let mut document = source
+                .parse::<toml_edit::DocumentMut>()
+                .map_err(|error| format!("could not edit invalid configuration: {error}"))?;
+            document
+                .entry("error_reporting")
+                .or_insert_with(|| toml_edit::Item::Table(toml_edit::Table::new()));
+            if !document["error_reporting"].is_table() {
+                return Err("error_reporting configuration is not a table".to_owned());
+            }
+            document["error_reporting"]["enabled"] = toml_edit::value(error_reporting.enabled);
             atomic_replace(&target, document.to_string().as_bytes())
         })
     }
@@ -1433,6 +1469,19 @@ mod tests {
         let parsed = AppConfig::parse_toml(&source).unwrap();
         assert_eq!(parsed.updates.channel, UpdateChannel::Beta);
         assert!(!parsed.error_reporting.enabled);
+
+        ConfigStore::update_error_reporting(
+            &path,
+            zentty_core::ErrorReportingConfig { enabled: true },
+        )
+        .unwrap();
+        assert_eq!(fs::symlink_metadata(&path).unwrap().ino(), symlink_inode);
+        let source = fs::read_to_string(&target).unwrap();
+        assert!(source.contains("# preserve"));
+        assert!(source.contains("future = true"));
+        let parsed = AppConfig::parse_toml(&source).unwrap();
+        assert_eq!(parsed.updates.channel, UpdateChannel::Beta);
+        assert!(parsed.error_reporting.enabled);
         remove(&root);
     }
 

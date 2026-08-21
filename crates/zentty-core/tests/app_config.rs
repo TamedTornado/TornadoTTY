@@ -131,7 +131,7 @@ fn notification_settings_use_source_defaults_and_exact_toml_keys() {
 fn updates_and_error_reporting_use_source_defaults_and_exact_toml_keys() {
     let defaults = AppConfig::parse_toml("").unwrap();
     assert_eq!(defaults.updates.channel, UpdateChannel::Stable);
-    assert!(defaults.error_reporting.enabled);
+    assert!(!defaults.error_reporting.enabled);
 
     let configured = AppConfig::parse_toml(
         r#"

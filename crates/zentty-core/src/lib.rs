@@ -31,6 +31,7 @@ mod session_restore_store;
 mod shortcut;
 mod sidebar_width;
 mod ssh_identity;
+mod support_diagnostics;
 mod task_runner;
 mod workspace_recipe;
 mod workspace_state;
@@ -102,6 +103,11 @@ pub use shortcut::{
 };
 pub use sidebar_width::SidebarWidthPreference;
 pub use ssh_identity::{SshConnectionOption, SshDestination, parse_ssh_destination};
+pub use support_diagnostics::{
+    DIAGNOSTIC_SCHEMA_VERSION, DiagnosticDraft, DiagnosticReason, DiagnosticReport,
+    DiagnosticState, MAX_DIAGNOSTIC_CONTEXT_FIELDS, MAX_DIAGNOSTIC_CONTEXT_VALUE_BYTES,
+    MAX_DIAGNOSTIC_DETAIL_BYTES, redact_text,
+};
 pub use task_runner::{
     TaskRunnerAction, TaskRunnerDisabledReason, TaskRunnerSourceKind, discover_task_runners,
     revalidate_task_runner,

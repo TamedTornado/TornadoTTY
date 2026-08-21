@@ -177,7 +177,7 @@
   "field_assignments": [
     {
       "owner": "application_runtime",
-      "fields": ["new_window_handler", "move_pane_to_new_window_handler", "move_pane_to_window_worklane_handler", "worklane_destination_groups", "close_window_handler", "quit_handler", "show_task_manager_handler", "application_action_handler"]
+      "fields": ["new_window_handler", "move_pane_to_new_window_handler", "move_pane_to_window_worklane_handler", "worklane_destination_groups", "close_window_handler", "close_window_evidence_handler", "quit_handler", "quit_evidence_handler", "show_task_manager_handler", "application_action_handler"]
     },
     {
       "owner": "application_shell",
@@ -185,7 +185,7 @@
         "window", "chrome", "body", "sidebar_reservation", "sidebar_hover_rail",
         "sidebar", "sidebar_scroll", "pane_scroll", "pane_box", "background_agent_host",
         "state", "config", "main_loop", "next_worklane_number", "next_pane_number", "shutting_down",
-        "about_window"
+        "about_window", "pending_close_evidence"
       ]
     },
     {
@@ -284,7 +284,7 @@
         "rollback_live_pane_existing_window_transfer", "adopt_live_pane_in_existing_window",
         "move_active_worklane", "move_worklane", "render", "take_pane_id", "take_worklane_id", "toggle_product_zoom",
         "topology_receipt", "geometry_receipt", "focus_terminal_after_present", "sidebar_summaries",
-        "request_show_about"
+        "request_show_about", "toggle_fullscreen", "minimize_window"
       ]
     },
     {
@@ -311,7 +311,7 @@
         "live_children", "release_surfaces", "create_worklane", "create_focused_pane_right", "split_focused_pane_right",
         "add_focused_pane_right", "add_focused_pane_left", "split_focused_pane_below",
         "split_focused_pane", "close_focused_pane", "request_close_pane", "close_worklane", "close_pane",
-        "restore_closed_pane", "remove_live_surface", "focus_selected_surface", "handle_pane_pointer_presence", "focus_follow_should_apply",
+        "restore_closed_pane", "perform_close_worklane", "remove_live_surface", "focus_selected_surface", "handle_pane_pointer_presence", "focus_follow_should_apply",
         "focus_selected_surface_unchecked", "preserve_initial_terminal_focus", "duplicate_focused_pane"
       ]
     },
@@ -344,7 +344,7 @@
     },
     {
       "owner": "settings_coordinator",
-      "methods": ["apply_appearance", "apply_general", "apply_notifications", "apply_updates", "apply_workspace_panes", "apply_open_with", "apply_dev_servers", "apply_agents", "validate_reloaded_config", "prepare_reloaded_appearance", "apply_reloaded_config", "settings_refresh_section", "confirm_action", "reload_ghostty_config_with_focus", "request_show_settings"]
+      "methods": ["apply_appearance", "apply_general", "apply_notifications", "apply_updates", "apply_error_reporting", "apply_workspace_panes", "apply_open_with", "apply_dev_servers", "apply_agents", "validate_reloaded_config", "prepare_reloaded_appearance", "apply_reloaded_config", "settings_refresh_section", "reload_ghostty_config_with_focus", "request_show_settings"]
     },
     {
       "owner": "existing_ui_projection",
@@ -452,7 +452,7 @@
     "server_container_discovery": [
       "discover", "run_docker", "parse_inspect_json", "deepest_matching_pane", "is_web_like"
     ],
-    "config_store": ["load_default", "load_path_for_reload", "load", "install_default_fallback_theme_if_referenced", "install_fallback_theme_if_referenced", "fallback_theme_publication_error", "update_default_appearance", "update_default_general", "update_default_notifications", "update_default_updates", "update_default_workspace_panes", "update_default_open_with", "update_default_server_detection", "update_default_agents", "update_default_ghostty_theme", "update_default_ghostty_value", "update_default_ignored_port_rules", "update_default_preferred_browser", "update_default_shortcuts", "update_appearance", "update_general", "update_notifications", "update_updates", "update_workspace_panes", "update_open_with", "update_server_detection", "update_agents", "update_ghostty_value", "update_ignored_port_rules", "update_preferred_browser", "update_shortcuts", "with_config_lock", "set_optional_appearance_string", "resolve_config_target", "atomic_replace", "editable_config_source", "read_config_contents", "read_bounded", "invalid_snapshot", "content_safe_invalid_warning", "ghostty_theme_spec_for_runtime", "ghostty_theme_reference_for_runtime", "default_config_file", "ensure_private_config_parent", "default_config_file_from", "default_fallback_theme_path", "default_ghostty_config_file_from", "default_theme_resource_path", "nonempty_path"],
+    "config_store": ["load_default", "load_path_for_reload", "load", "install_default_fallback_theme_if_referenced", "install_fallback_theme_if_referenced", "fallback_theme_publication_error", "update_default_appearance", "update_default_general", "update_default_notifications", "update_default_updates", "update_default_error_reporting", "update_default_workspace_panes", "update_default_open_with", "update_default_server_detection", "update_default_agents", "update_default_ghostty_theme", "update_default_ghostty_value", "update_default_ignored_port_rules", "update_default_preferred_browser", "update_default_shortcuts", "update_appearance", "update_general", "update_notifications", "update_updates", "update_error_reporting", "update_workspace_panes", "update_open_with", "update_server_detection", "update_agents", "update_ghostty_value", "update_ignored_port_rules", "update_preferred_browser", "update_shortcuts", "with_config_lock", "set_optional_appearance_string", "resolve_config_target", "atomic_replace", "editable_config_source", "read_config_contents", "read_bounded", "invalid_snapshot", "content_safe_invalid_warning", "ghostty_theme_spec_for_runtime", "ghostty_theme_reference_for_runtime", "default_config_file", "ensure_private_config_parent", "default_config_file_from", "default_fallback_theme_path", "default_ghostty_config_file_from", "default_theme_resource_path", "nonempty_path"],
     "config_reload": ["new", "path", "observe_disk", "observe_reload_snapshot", "accept", "install", "drop"],
     "appearance_settings": ["build", "section_title", "theme_slot_button", "configured_theme", "refresh_theme_projection", "theme_slot_status", "refresh_catalog", "preview_summary", "log_theme_selection", "apply_state", "install_styles"],
     "theme_preview": ["compact_area", "detail_area", "configure_compact", "configure_detail", "draw_empty", "fill", "draw_text"],
@@ -483,6 +483,8 @@
   "action_contract": [
     {"name":"new-window","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"close-window","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"toggle-fullscreen","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"minimize-window","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"toggle-sidebar","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"show-command-palette","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"open-settings","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},

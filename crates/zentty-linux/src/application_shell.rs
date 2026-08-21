@@ -1848,6 +1848,7 @@ impl ApplicationShell {
         let general_weak = self.self_handle.borrow().clone();
         let notifications_weak = self.self_handle.borrow().clone();
         let updates_weak = self.self_handle.borrow().clone();
+        let error_reporting_weak = self.self_handle.borrow().clone();
         let workspace_panes_weak = self.self_handle.borrow().clone();
         let open_with_weak = self.self_handle.borrow().clone();
         let refresh_open_with_weak = self.self_handle.borrow().clone();
@@ -1916,6 +1917,12 @@ impl ApplicationShell {
                     if let Some(shell) = updates_weak.upgrade() {
                         shell.borrow_mut().apply_updates(updates);
                     }
+                }),
+                apply_error_reporting: Rc::new(move |error_reporting| {
+                    let shell = error_reporting_weak.upgrade().ok_or_else(|| {
+                        "Zentty window closed while applying privacy settings".to_owned()
+                    })?;
+                    shell.borrow_mut().apply_error_reporting(error_reporting)
                 }),
                 worklanes: self.config.worklanes,
                 pane_layout: self.config.pane_layout,
@@ -2026,6 +2033,21 @@ impl ApplicationShell {
                 eprintln!("zentty-linux: updates-privacy-settings result=error detail={error}");
             }
         }
+    }
+
+    fn apply_error_reporting(
+        &mut self,
+        error_reporting: zentty_core::ErrorReportingConfig,
+    ) -> Result<(), String> {
+        let path =
+            crate::config_store::ConfigStore::update_default_error_reporting(error_reporting)?;
+        self.config.error_reporting = error_reporting;
+        eprintln!(
+            "zentty-linux: diagnostics preference=persisted path={} local-crash-capture={} restart-required=true",
+            path.display(),
+            error_reporting.enabled
+        );
+        Ok(())
     }
 
     fn apply_workspace_panes(

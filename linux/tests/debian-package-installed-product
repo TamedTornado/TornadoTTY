@@ -23,6 +23,8 @@ product_log=""
 desktop_log=""
 product_pid=""
 desktop_pid=""
+diagnostic_capture_pid=""
+diagnostic_capture_body=""
 
 fail() {
     [[ -z "${product_log}" || ! -f "${product_log}" ]] || tail -120 "${product_log}" >&2
@@ -70,6 +72,10 @@ cleanup() {
         kill -TERM "${desktop_pid}" 2>/dev/null || true
         wait "${desktop_pid}" 2>/dev/null || true
     fi
+    if pid_running "${diagnostic_capture_pid}"; then
+        kill -TERM "${diagnostic_capture_pid}" 2>/dev/null || true
+        wait "${diagnostic_capture_pid}" 2>/dev/null || true
+    fi
     if [[ "${status}" -eq 0 ]]; then
         rm -rf -- "${run_root}" "${state_dir}" "${receipts}"
     else
@@ -101,7 +107,7 @@ case "${backend}" in
     *) fail "GDK_BACKEND must be x11 or wayland" ;;
 esac
 
-for dependency in dpkg dpkg-deb dpkg-query find git grep jq ps readlink sha256sum stat unshare; do
+for dependency in dpkg dpkg-deb dpkg-query find git grep jq ps readlink sha256sum socat stat unshare; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
 if [[ "${backend}" == x11 ]]; then
@@ -154,6 +160,22 @@ grep -Fq '<launchable type="desktop-id">com.zentty.zentty.desktop</launchable>' 
     fail "AppStream desktop identity differs"
 
 mkdir -p "${receipts}/bin" "${XDG_CONFIG_HOME}/zentty"
+diagnostic_capture_body="${receipts}/unexpected-diagnostic-request"
+diagnostic_capture_handler="${receipts}/diagnostic-capture-handler"
+diagnostic_capture_port=$((39000 + BASHPID % 1000))
+cat >"${diagnostic_capture_handler}" <<CAPTURE_HANDLER
+#!/usr/bin/env bash
+set -euo pipefail
+cat >"${diagnostic_capture_body}"
+printf 'HTTP/1.1 500 Unexpected Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n'
+CAPTURE_HANDLER
+chmod 0700 "${diagnostic_capture_handler}"
+socat "TCP-LISTEN:${diagnostic_capture_port},bind=127.0.0.1,reuseaddr" \
+    "EXEC:${diagnostic_capture_handler}" >"${receipts}/diagnostic-capture.log" 2>&1 &
+diagnostic_capture_pid=$!
+sleep 0.1
+pid_running "${diagnostic_capture_pid}" || fail "installed diagnostic capture boundary did not start"
+export ZENTTY_DIAGNOSTICS_TEST_ENDPOINT="http://127.0.0.1:${diagnostic_capture_port}/v1/reports"
 cp -- "${repo_root}/linux/tests/fixtures/controlled-agent" "${receipts}/bin/codex"
 cat >"${receipts}/open-probe" <<'OPEN_PROBE'
 #!/usr/bin/env bash
@@ -185,7 +207,7 @@ clean_environment() {
         XDG_RUNTIME_DIR TMPDIR DBUS_SESSION_BUS_ADDRESS DBUS_SYSTEM_BUS_ADDRESS \
         LIBGL_ALWAYS_SOFTWARE WLR_RENDERER GDK_DEBUG GDK_DISABLE \
         ZENTTY_NESTED_X11_SESSION_ID ZENTTY_NESTED_WAYLAND_SESSION_ID \
-        ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID; do
+        ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID ZENTTY_DIAGNOSTICS_TEST_ENDPOINT; do
         [[ -v "${name}" ]] && command+=("${name}=${!name}")
     done
     "${command[@]}" "$@"
@@ -482,6 +504,7 @@ first_status=0
 wait "${product_pid}" || first_status=$?
 [[ "${first_status}" -ne 0 ]] || fail "injected installed crash unexpectedly exited cleanly"
 product_pid=""
+
 [[ -s "${state_dir}/restore-snapshot.json" ]] || fail "first lifecycle did not persist state"
 
 start_direct second
@@ -542,6 +565,11 @@ wait "${desktop_pid}" || fail "installed desktop-entry launch exited unsuccessfu
 desktop_pid=""
 product_pid=""
 
+[[ ! -e "${diagnostic_capture_body}" ]] ||
+    fail "installed product silently transmitted diagnostics during representative use"
+pid_running "${diagnostic_capture_pid}" ||
+    fail "installed diagnostic capture boundary exited without an observed request"
+
 artifact_sha="$(sha256sum "${artifact}" | awk '{print $1}')"
 manifest_sha="$(sha256sum "${manifest}" | awk '{print $1}')"
 installed_paths="${run_root}/installed-paths.txt"
@@ -571,6 +599,7 @@ jq -n \
         agent_wrapper_executed:true,integration_cli:true,
         clipboard_write:true,open_with_launch:true,
         about_licenses:true,
+        diagnostics_network_silent:true,
         shell_integration:true,terminfo:true,desktop_identity:true},
       process_audits:[$first_process,$second_process,$desktop_process],
       clean_path:"/usr/bin:/bin",
