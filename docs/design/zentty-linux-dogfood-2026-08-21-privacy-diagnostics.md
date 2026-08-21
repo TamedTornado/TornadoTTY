@@ -160,6 +160,22 @@ The controlled endpoint captured exactly `POST /v1/reports` only after explicit
 review and confirmation. This is not a claim that production telemetry was
 contacted: the default build intentionally contains no production endpoint.
 
+The final installable candidate was the public commit
+`a8d45b772d8e7d9433728f84c27aa6d21e918907`, packaged as
+`zentty_0.1.0+gita8d45b772d8e_amd64.deb` with SHA-256
+`09ddbf82722f2e97cd9a41bed059564ac390eaceda3f70171bb532b41fc61322`.
+The disposable Debian lifecycle passed all nine install, reinstall, supported
+upgrade, injected-failure, remove, purge, and repeated-cycle transitions.
+Installed-product journeys then passed against that same package under X11
+session `177a08500e40d7d492e247a98b9f0d33099e082c733d6d9353b40ca503a543a3`
+and Wayland session
+`9417acd1fda033bc990297ca11824169946612cf5e737b2dda3981faf8e261da`.
+Both receipts include `diagnostics_network_silent: true` after direct launch,
+real PTYs and panes, agent traffic, CLI mutation, clipboard, Open With, About,
+an injected process kill, restore, and desktop-entry launch. This establishes
+silence for the representative installed journey; it is not a claim that every
+future product action has been enumerated.
+
 ### Mutation repair
 
 - The first governed file-wide mutation pass found 99 mutants: 63 caught, 33
