@@ -43,6 +43,10 @@ that is not evidence for X11 DPI qualification.
   preflight correctly rejected the dirty checkout, so that test must be rerun
   after the reviewed commit rather than weakened or misreported as a product
   failure.
+- The post-commit unelevated preflight regression then observed the sandbox's
+  mapped `nobody` ownership for `/tmp/.X11-unix` and correctly rejected it.
+  Rerunning the unchanged test on the host passed every negative fixture:
+  `os+dirty-source+ghostty-origin+tool+tool-command+tool-location+profile+stale-receipt`.
 
 ## Implementation and final receipts
 
@@ -75,6 +79,9 @@ Focused policy commands also passed:
 - `linux/ci/validate-environment`
 - `linux/tests/qualification-matrix --validate-only linux/qualification-matrix.json`
 - `linux/tests/qualification-matrix-test`
+- `linux/ci/validate-environment-test`
+- `linux/ci/gate-workflow-contract-test`
+- host-executed `linux/ci/preflight-test`
 - `git diff --check`
 
 The native `scale-x11` cell moved from BLOCKED to PASS. The explicit Xwayland
