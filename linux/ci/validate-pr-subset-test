@@ -50,7 +50,7 @@ expect_policy_rejected missing-debug-coverage \
 expect_matrix_rejected selected-status-drift \
     '(.cells[] | select(.id == "physical-key-x11")).status = "BLOCKED" | (.cells[] | select(.id == "physical-key-x11")).prerequisite = "fixture"'
 expect_matrix_rejected stale-gap \
-    '(.cells[] | select(.id == "physical-key-wayland")).status = "PASS" | (.cells[] | select(.id == "physical-key-wayland")).command = "true" | (.cells[] | select(.id == "physical-key-wayland")).environment_profile = "nested-wayland-input-v1"'
+    '(.cells[] | select(.id == "fractional-scale-wayland")).status = "PASS" | (.cells[] | select(.id == "fractional-scale-wayland")).command = "true" | (.cells[] | select(.id == "fractional-scale-wayland")).environment_profile = "nested-wayland-input-v1"'
 expect_matrix_rejected stale-xfail \
     '(.cells[] | select(.id == "ghostty-async-backend-abi-representation")).status = "PASS"'
 

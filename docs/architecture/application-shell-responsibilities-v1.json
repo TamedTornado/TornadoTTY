@@ -277,7 +277,7 @@
     {
       "owner": "application_shell",
       "methods": [
-        "new", "initialize_shell_coordinators", "window", "sidebar_container", "present", "detach_and_close",
+        "new", "initialize_shell_coordinators", "window", "sidebar_container", "present", "detach_for_shutdown", "close_detached_window",
         "has_worklane", "extract_live_pane_to_new_window", "extract_live_pane_for_existing_window", "sidebar_destination_groups",
         "rollback_live_pane_window_transfer", "adopt_live_pane_window_transfer",
         "rollback_live_pane_existing_window_transfer", "adopt_live_pane_in_existing_window",

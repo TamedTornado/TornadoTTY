@@ -70,8 +70,8 @@ jq -e '
     (.diff_identity.digest_algorithm == "sha256") and
     (.diff_identity.locale == "C") and
     (.diff_identity.normalization | length) == 21 and
-    (.ranges | length) == 3 and
-    (.files | length) == 23 and
+    (.ranges | length) == 5 and
+    (.files | length) == 25 and
     (.abi.exported_function_count == 16) and
     (.abi.operations | length) == .abi.exported_function_count and
     (.abi.ghostty_owned_public_type_count == 6) and
@@ -254,8 +254,10 @@ validate_range() {
 validate_range gtk-embedding
 validate_range packaging-reproducibility
 validate_range all-downstream-from-recorded-official-base
+validate_range ime-lifecycle
+validate_range embed-logging-control
 
-for partition in gtk-embedding packaging-reproducibility; do
+for partition in gtk-embedding packaging-reproducibility ime-lifecycle embed-logging-control; do
     range_id="${partition}"
     base="$(jq -r --arg id "${range_id}" '.ranges[] | select(.id == $id) | .base' "${inventory}")"
     range_head="$(jq -r --arg id "${range_id}" '.ranges[] | select(.id == $id) | .head' "${inventory}")"
@@ -387,7 +389,7 @@ done < <(
     ' "${inventory}"
 )
 
-pass_message="Ghostty API audit inventory passed: 16 embedding files, 7 packaging files, 65 partition hunks, 16 allowlisted function exports, 13 product-owned Rust declarations, 6 Ghostty-owned public types, 1 external GtkWidget dependency"
+pass_message="Ghostty API audit inventory passed: 16 embedding files, 7 packaging files, 1 IM lifecycle file, 1 embed logging-control file, 70 partition hunks, 16 allowlisted function exports, 13 product-owned Rust declarations, 6 Ghostty-owned public types, 1 external GtkWidget dependency"
 echo "${pass_message}"
 
 if [[ "${mode}" == "--self-test" ]]; then

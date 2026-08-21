@@ -7,6 +7,10 @@ license.workspace = true
 repository.workspace = true
 publish = false
 
+[[bin]]
+name = "zentty-focus-steal-helper"
+path = "src/bin/focus_steal_helper.rs"
+
 [dependencies]
 gtk = { package = "gtk4", version = "=0.11.3", features = ["v4_14"] }
 serde_json = "=1.0.145"

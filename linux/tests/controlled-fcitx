@@ -1,0 +1,183 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+startup_timeout_seconds="${ZENTTY_CONTROLLED_FCITX_STARTUP_TIMEOUT_SECONDS:-20}"
+
+fail() {
+    echo "controlled-fcitx: error: $*" >&2
+    exit 1
+}
+
+if [[ ! "${startup_timeout_seconds}" =~ ^[1-9][0-9]*$ ]] ||
+    (( startup_timeout_seconds > 120 )); then
+    fail "startup timeout must be an integer from 1 to 120"
+fi
+
+if [[ "${1:-}" == --private-bus-inner ]]; then
+    shift
+    (( $# > 0 )) || fail "missing private-session command"
+    run_root="${ZENTTY_CONTROLLED_FCITX_RUN_ROOT:?}"
+    session_id="${ZENTTY_CONTROLLED_FCITX_PENDING_SESSION_ID:?}"
+    daemon_log="${run_root}/fcitx5.log"
+    daemon_pid=""
+    child_pid=""
+
+    cleanup_inner() {
+        trap - EXIT HUP INT TERM
+        [[ -z "${child_pid}" ]] || kill -TERM "${child_pid}" 2>/dev/null || true
+        [[ -z "${child_pid}" ]] || wait "${child_pid}" 2>/dev/null || true
+        [[ -z "${daemon_pid}" ]] || kill -TERM "${daemon_pid}" 2>/dev/null || true
+        [[ -z "${daemon_pid}" ]] || wait "${daemon_pid}" 2>/dev/null || true
+    }
+    trap cleanup_inner EXIT
+    trap 'exit 129' HUP
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+
+    mkdir -p "${XDG_CONFIG_HOME}/fcitx5"
+    cat >"${XDG_CONFIG_HOME}/fcitx5/profile" <<'PROFILE'
+[Groups/0]
+Name=Default
+Default Layout=us
+DefaultIM=cangjie5
+
+[Groups/0/Items/0]
+Name=keyboard-us
+Layout=
+
+[Groups/0/Items/1]
+Name=cangjie5
+Layout=
+
+[GroupOrder]
+0=Default
+PROFILE
+
+    fcitx5 -D --disable=notifications >"${daemon_log}" 2>&1 &
+    daemon_pid=$!
+    ready=false
+    deadline=$((SECONDS + startup_timeout_seconds))
+    while (( SECONDS <= deadline )); do
+        kill -0 "${daemon_pid}" 2>/dev/null || break
+        if busctl --user list 2>/dev/null |
+            awk '$1 == "org.fcitx.Fcitx5" && $2 ~ /^[1-9][0-9]*$/ { found=1 } END { exit !found }' &&
+            [[ "$(fcitx5-remote -q 2>/dev/null || true)" == Default ]]; then
+            ready=true
+            break
+        fi
+        sleep 0.02
+    done
+    if [[ "${ready}" != true ]]; then
+        sed 's/^/controlled-fcitx: daemon: /' "${daemon_log}" >&2 || true
+        fail "private fcitx5 daemon did not become ready"
+    fi
+
+    export GTK_IM_MODULE=fcitx
+    export XMODIFIERS=@im=fcitx
+    export ZENTTY_CONTROLLED_FCITX_SESSION_ID="${session_id}"
+    unset ZENTTY_CONTROLLED_FCITX_RUN_ROOT ZENTTY_CONTROLLED_FCITX_PENDING_SESSION_ID
+    printf 'controlled-fcitx: READY private-dbus foreground-fcitx5 version=%s engine=cangjie5 gtk-module=fcitx session-id=%s\n' \
+        "$(fcitx5 --version | awk 'NR == 1 { print $1 }')" "${session_id}"
+    if [[ -n "${ZENTTY_CONTROLLED_FCITX_GTK4_MODULE:-}" ]]; then
+        printf 'controlled-fcitx: GTK4 module-version=%s module=%s\n' \
+            "${ZENTTY_CONTROLLED_FCITX_GTK4_VERSION:?}" \
+            "${ZENTTY_CONTROLLED_FCITX_GTK4_MODULE}"
+    fi
+
+    set +e
+    "$@" &
+    child_pid=$!
+    wait "${child_pid}"
+    status=$?
+    child_pid=""
+    set -e
+    if (( status != 0 )); then
+        sed 's/^/controlled-fcitx: daemon: /' "${daemon_log}" >&2 || true
+    fi
+    cleanup_inner
+    exit "${status}"
+fi
+
+(( $# > 0 )) || {
+    echo "usage: controlled-fcitx COMMAND [ARG ...]" >&2
+    exit 64
+}
+for dependency in \
+    awk busctl cat dbus-run-session fcitx5 fcitx5-remote grep kill mkdir \
+    mktemp readlink rm sed setsid sha256sum sleep; do
+    command -v "${dependency}" >/dev/null 2>&1 || {
+        echo "controlled-fcitx: SKIP missing runtime dependency: ${dependency}" >&2
+        exit 77
+    }
+done
+[[ "${GDK_BACKEND:-}" == x11 || "${GDK_BACKEND:-}" == wayland ]] ||
+    fail "GDK_BACKEND must name an inherited controlled display"
+if [[ -n "${ZENTTY_CONTROLLED_FCITX_GTK4_MODULE:-}" ]]; then
+    [[ "${ZENTTY_CONTROLLED_FCITX_GTK4_MODULE}" == /* &&
+        -f "${ZENTTY_CONTROLLED_FCITX_GTK4_MODULE}" &&
+        ! -L "${ZENTTY_CONTROLLED_FCITX_GTK4_MODULE}" ]] ||
+        fail "pinned fcitx GTK4 module must be an absolute regular file"
+    [[ "${ZENTTY_CONTROLLED_FCITX_GTK4_VERSION:-}" == 5.1.7 ]] ||
+        fail "controlled pinned fcitx GTK4 module must be version 5.1.7"
+    expected_gtk_path="$(dirname "$(dirname "$(dirname \
+        "${ZENTTY_CONTROLLED_FCITX_GTK4_MODULE}")")")"
+    [[ "${GTK_PATH:-}" == "${expected_gtk_path}" ]] ||
+        fail "GTK_PATH does not select the pinned fcitx GTK4 module"
+else
+    unset GTK_PATH
+fi
+if [[ "${GDK_BACKEND}" == x11 ]]; then
+    [[ "${ZENTTY_NESTED_X11_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+        fail "X11 run is not inside linux/tests/nested-x11"
+    xdpyinfo >/dev/null 2>&1 || fail "controlled X11 display is unavailable"
+else
+    [[ "${ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+        fail "Wayland run is not inside linux/tests/nested-wayland-input"
+    if [[ "${WAYLAND_DISPLAY:-}" != /* ]]; then
+        export WAYLAND_DISPLAY="${XDG_RUNTIME_DIR:?}/${WAYLAND_DISPLAY:?}"
+    fi
+    [[ -S "${WAYLAND_DISPLAY}" ]] || fail "controlled Wayland socket is unavailable"
+fi
+
+run_root="$(mktemp -d /tmp/zentty-controlled-fcitx.XXXXXX)"
+session_id="$(printf '%s\n' "${run_root}" "$$" | sha256sum | awk '{print $1}')"
+# shellcheck disable=SC2317
+cleanup_outer() {
+    trap - EXIT HUP INT TERM
+    rm -rf -- "${run_root}"
+}
+trap cleanup_outer EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+mkdir -p \
+    "${run_root}/home" "${run_root}/config" "${run_root}/cache" \
+    "${run_root}/data" "${run_root}/state" "${run_root}/runtime" \
+    "${run_root}/tmp"
+chmod 700 "${run_root}" "${run_root}"/*
+
+unset \
+    DBUS_SESSION_BUS_ADDRESS DBUS_STARTER_ADDRESS DBUS_STARTER_BUS_TYPE \
+    IBUS_ADDRESS IBUS_ADDRESS_FILE IBUS_USE_PORTAL IBUS_ENABLE_SYNC_MODE \
+    GTK_IM_MODULE XMODIFIERS
+export HOME="${run_root}/home"
+export XDG_CONFIG_HOME="${run_root}/config"
+export XDG_CACHE_HOME="${run_root}/cache"
+export XDG_DATA_HOME="${run_root}/data"
+export XDG_STATE_HOME="${run_root}/state"
+export XDG_RUNTIME_DIR="${run_root}/runtime"
+export TMPDIR="${run_root}/tmp"
+export GSETTINGS_BACKEND=memory
+export GIO_USE_VFS=local
+export NO_AT_BRIDGE=1
+export GTK_A11Y=none
+export LIBGL_ALWAYS_SOFTWARE=1
+
+set +e
+setsid dbus-run-session -- \
+    env ZENTTY_CONTROLLED_FCITX_RUN_ROOT="${run_root}" \
+    ZENTTY_CONTROLLED_FCITX_PENDING_SESSION_ID="${session_id}" \
+    "${BASH_SOURCE[0]}" --private-bus-inner "$@"
+status=$?
+set -e
+exit "${status}"

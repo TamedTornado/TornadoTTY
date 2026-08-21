@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+metadata="${repo_root}/build/linux-deps/fcitx5-gtk-test/module.json"
+
+(( $# > 0 )) || {
+    echo "usage: with-supported-fcitx-gtk COMMAND [ARG ...]" >&2
+    exit 64
+}
+
+"${repo_root}/linux/scripts/prepare-fcitx5-gtk-test-module"
+module="$(jq -er '.module' "${metadata}")"
+version="$(jq -er '.version' "${metadata}")"
+module_sha256="$(jq -er '.module_sha256' "${metadata}")"
+[[ "$(sha256sum "${module}" | awk '{print $1}')" == "${module_sha256}" ]] || {
+    echo "with-supported-fcitx-gtk: error: prepared module identity changed" >&2
+    exit 1
+}
+
+gtk_path="$(dirname "$(dirname "$(dirname "${module}")")")"
+export GTK_PATH="${gtk_path}"
+export ZENTTY_CONTROLLED_FCITX_GTK4_MODULE="${module}"
+export ZENTTY_CONTROLLED_FCITX_GTK4_VERSION="${version}"
+exec "$@"

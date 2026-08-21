@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+lock_file="${repo_root}/linux/fcitx5-gtk-test.lock"
+source_repo="$(sed -n 's/^repo=//p' "${lock_file}")"
+revision="$(sed -n 's/^revision=//p' "${lock_file}")"
+version="$(sed -n 's/^version=//p' "${lock_file}")"
+dependency_root="${repo_root}/build/linux-deps/fcitx5-gtk-test"
+source_dir="${dependency_root}/source"
+build_dir="${dependency_root}/build"
+prefix="${dependency_root}/prefix"
+module="${prefix}/lib/gtk-4.0/4.0.0/immodules/libim-fcitx5.so"
+metadata="${dependency_root}/module.json"
+source_lock="${repo_root}/build/linux-deps/.fcitx5-gtk-test.lock"
+jobs="${ZENTTY_FCITX5_GTK_BUILD_JOBS:-4}"
+
+fail() {
+    echo "prepare-fcitx5-gtk-test-module: error: $*" >&2
+    exit 1
+}
+
+[[ "${source_repo}" == https://github.com/fcitx/fcitx5-gtk.git ]] ||
+    fail "unexpected source repository in ${lock_file}"
+[[ "${revision}" =~ ^[0-9a-f]{40}$ ]] || fail "invalid pinned revision"
+[[ "${version}" =~ ^[0-9]+[.][0-9]+[.][0-9]+$ ]] || fail "invalid pinned version"
+[[ "${jobs}" =~ ^[1-8]$ ]] || fail "build jobs must be an integer from 1 to 8"
+
+for dependency in cmake flock git jq pkg-config sha256sum; do
+    command -v "${dependency}" >/dev/null || fail "${dependency} is required"
+done
+
+mkdir -p "$(dirname "${source_lock}")"
+exec 9>"${source_lock}"
+flock 9
+
+if [[ -f "${module}" && -f "${metadata}" ]] &&
+    jq -e --arg revision "${revision}" --arg version "${version}" \
+        --arg module_sha256 "$(sha256sum "${module}" | awk '{print $1}')" \
+        '.revision == $revision and .version == $version and
+         .module_sha256 == $module_sha256' "${metadata}" >/dev/null; then
+    printf 'Prepared fcitx5-gtk test module %s revision=%s module=%s\n' \
+        "${version}" "${revision}" "${module}"
+    exit 0
+fi
+
+if [[ ! -d "${source_dir}/.git" ]]; then
+    git clone --no-checkout "${source_repo}" "${source_dir}"
+else
+    [[ "$(git -C "${source_dir}" remote get-url origin)" == "${source_repo}" ]] ||
+        fail "managed source origin does not match the lock"
+    [[ -z "$(git -C "${source_dir}" status --porcelain)" ]] ||
+        fail "managed source checkout is dirty"
+fi
+git -C "${source_dir}" fetch origin "${revision}"
+git -C "${source_dir}" checkout --detach "${revision}"
+[[ "$(git -C "${source_dir}" rev-parse HEAD)" == "${revision}" ]] ||
+    fail "managed source checkout does not match the lock"
+
+rm -rf -- "${build_dir}" "${prefix}"
+cmake -S "${source_dir}" -B "${build_dir}" \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX="${prefix}" \
+    -DENABLE_GTK2_IM_MODULE=OFF \
+    -DENABLE_GTK3_IM_MODULE=OFF \
+    -DENABLE_GTK4_IM_MODULE=ON \
+    -DENABLE_GIR=OFF \
+    -DENABLE_SNOOPER=OFF \
+    -DBUILD_ONLY_PLUGIN=ON
+cmake --build "${build_dir}" --parallel "${jobs}"
+cmake --install "${build_dir}"
+[[ -f "${module}" && ! -L "${module}" ]] || fail "pinned GTK4 module was not installed"
+
+module_sha256="$(sha256sum "${module}" | awk '{print $1}')"
+jq -n \
+    --arg repository "${source_repo}" \
+    --arg revision "${revision}" \
+    --arg version "${version}" \
+    --arg module "${module}" \
+    --arg module_sha256 "${module_sha256}" \
+    '{repository:$repository,revision:$revision,version:$version,module:$module,
+      module_sha256:$module_sha256}' >"${metadata}.tmp"
+mv "${metadata}.tmp" "${metadata}"
+printf 'Prepared fcitx5-gtk test module %s revision=%s module=%s\n' \
+    "${version}" "${revision}" "${module}"

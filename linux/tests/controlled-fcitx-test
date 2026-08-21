@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+wrapper="${repo_root}/linux/tests/controlled-fcitx"
+run_root="$(mktemp -d)"
+fake_bin="${run_root}/bin"
+output="${run_root}/output"
+daemon_pid_file="${run_root}/daemon.pid"
+
+fail() {
+    echo "controlled-fcitx-test: error: $*" >&2
+    exit 1
+}
+
+cleanup() {
+    rm -rf -- "${run_root}"
+}
+trap cleanup EXIT
+mkdir -p "${fake_bin}" "${run_root}/config"
+
+cat >"${fake_bin}/fcitx5" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == --version ]]; then
+    echo '5.1.7'
+    exit 0
+fi
+printf '%s\n' "$$" >"${ZENTTY_FAKE_FCITX_PID_FILE:?}"
+trap 'exit 0' TERM INT
+while true; do sleep 1; done
+EOF
+cat >"${fake_bin}/fcitx5-remote" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == -q ]]; then echo Default; else echo 1; fi
+EOF
+cat >"${fake_bin}/busctl" <<'EOF'
+#!/usr/bin/env bash
+echo 'org.fcitx.Fcitx5 123 fake'
+EOF
+chmod 0755 "${fake_bin}"/*
+
+set +e
+ZENTTY_CONTROLLED_FCITX_STARTUP_TIMEOUT_SECONDS=0 "${wrapper}" true \
+    >"${output}" 2>&1
+status=$?
+set -e
+[[ "${status}" -eq 1 ]] || fail "invalid startup timeout was accepted"
+grep -Fq 'startup timeout must be an integer from 1 to 120' "${output}" ||
+    fail "invalid timeout diagnostic was missing"
+
+session_id="$(printf fixture | sha256sum | awk '{print $1}')"
+# The private child, not this test shell, expands the controlled environment.
+# shellcheck disable=SC2016
+PATH="${fake_bin}:${PATH}" \
+ZENTTY_FAKE_FCITX_PID_FILE="${daemon_pid_file}" \
+ZENTTY_CONTROLLED_FCITX_RUN_ROOT="${run_root}" \
+ZENTTY_CONTROLLED_FCITX_PENDING_SESSION_ID="${session_id}" \
+XDG_CONFIG_HOME="${run_root}/config" \
+"${wrapper}" --private-bus-inner bash -ceu '
+    [[ "${GTK_IM_MODULE}" == fcitx ]]
+    [[ "${XMODIFIERS}" == @im=fcitx ]]
+    [[ "${ZENTTY_CONTROLLED_FCITX_SESSION_ID}" =~ ^[0-9a-f]{64}$ ]]
+    echo controlled-fcitx-test-child: PASS
+' >"${output}" 2>&1
+
+grep -Eq '^controlled-fcitx: READY private-dbus foreground-fcitx5 version=5[.]1[.]7 engine=cangjie5 gtk-module=fcitx session-id=[0-9a-f]{64}$' \
+    "${output}" || fail "controlled readiness identity was missing"
+grep -Fxq 'controlled-fcitx-test-child: PASS' "${output}" ||
+    fail "private child contract did not run"
+read -r daemon_pid <"${daemon_pid_file}"
+if kill -0 "${daemon_pid}" 2>/dev/null; then
+    fail "wrapper leaked its owned fcitx daemon"
+fi
+
+set +e
+env -u ZENTTY_NESTED_X11_SESSION_ID -u ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID \
+    GDK_BACKEND=x11 "${wrapper}" true >"${output}" 2>&1
+status=$?
+set -e
+[[ "${status}" -eq 1 ]] || fail "ambient X11 environment was accepted"
+grep -Fq 'X11 run is not inside linux/tests/nested-x11' "${output}" ||
+    fail "ambient X11 rejection was not explicit"
+
+mkdir -p "${run_root}/gtk/lib/gtk-4.0/4.0.0/immodules"
+fake_module="${run_root}/gtk/lib/gtk-4.0/4.0.0/immodules/libim-fcitx5.so"
+touch "${fake_module}"
+set +e
+GDK_BACKEND=x11 \
+ZENTTY_CONTROLLED_FCITX_GTK4_MODULE="${fake_module}" \
+ZENTTY_CONTROLLED_FCITX_GTK4_VERSION=5.1.6 \
+GTK_PATH="${run_root}/gtk/lib" \
+    "${wrapper}" true >"${output}" 2>&1
+status=$?
+set -e
+[[ "${status}" -eq 1 ]] || fail "unsupported pinned GTK module version was accepted"
+grep -Fq 'controlled pinned fcitx GTK4 module must be version 5.1.7' "${output}" ||
+    fail "unsupported pinned GTK module diagnostic was missing"
+
+echo 'controlled-fcitx-test: PASS private-env readiness cleanup identity negative-contracts'

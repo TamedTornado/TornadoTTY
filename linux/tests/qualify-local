@@ -43,6 +43,7 @@ support_tests=(
     linux/tests/nested-wayland-test
     linux/tests/nested-wayland-input-test
     linux/tests/controlled-ibus-x11-test
+    linux/tests/controlled-fcitx-test
     linux/tests/ghostty-async-backend-abi-test
     linux/tests/suppression-governance-test
 )

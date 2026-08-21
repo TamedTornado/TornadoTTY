@@ -9,7 +9,11 @@ xdotool() {
     printf '%s\n' "$*" >>"${calls}"
     if [[ "${1:-}" == search ]]; then
         printf '5151\n'
-    elif [[ "${1:-}" == mousemove &&
+    elif [[ "${1:-}" == getwindowfocus ]]; then
+        printf '5151\n'
+    elif [[ "${1:-}" == getwindowpid ]]; then
+        printf '%s\n' "${product_pid:-0}"
+    elif [[ "${1:-}" == mousemove && -n "${mock_drag_receipt:-}" &&
         ("$*" == *'--window 5151'* || "${mock_wayland_drag:-}" == true) ]]; then
         printf 'pointer-target\n' >>"${mock_drag_receipt}"
     elif [[ "${1:-}" == mousemove_relative ]]; then
@@ -26,6 +30,24 @@ source "${repo_root}/linux/tests/lib/product-input"
 
 receipt_log="$(mktemp)"
 trap 'rm -f -- "${calls}" "${receipt_log}"' EXIT
+
+if zentty_product_prepare_input x11 /dev/null invalid 2>/dev/null; then
+    echo "product-input-test: invalid readiness attempt count unexpectedly passed" >&2
+    exit 1
+fi
+
+: >"${calls}"
+product_pid=7777
+: >"${receipt_log}"
+zentty_product_prepare_input x11 "${receipt_log}" 3
+expected=$'search --onlyvisible --pid 7777 --name ^Zentty$\ngetwindowpid 5151\nwindowfocus --sync 5151\nmousemove --window 5151 700 400 click 1\ngetwindowfocus\ngetwindowpid 5151'
+[[ "$(cat "${calls}")" == "${expected}" ]] || {
+    echo "product-input-test: X11 readiness did not bind and focus the product-owned window" >&2
+    cat "${calls}" >&2
+    exit 1
+}
+unset product_pid
+
 printf '%s\n%s\n' ready ready >"${receipt_log}"
 zentty_product_wait_for_log_count "${receipt_log}" ready 2 \
     "existing receipt count was not recognized"
@@ -35,6 +57,7 @@ if zentty_product_wait_for_log_count "${receipt_log}" ready 3 \
     exit 1
 fi
 
+: >"${calls}"
 ZENTTY_PRODUCT_WINDOW_ID=4242
 zentty_product_close_window x11
 

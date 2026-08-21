@@ -78,6 +78,10 @@ if ! command -v valgrind >/dev/null || ! command -v jq >/dev/null; then
     echo "error: valgrind and jq are required" >&2
     exit 1
 fi
+if [[ "${scenario}" != api ]] && ! command -v dbus-run-session >/dev/null; then
+    echo "error: dbus-run-session is required for product memory-safety" >&2
+    exit 1
+fi
 if [[ ! -x "${binary}" || ! -x "${api_contract}" ]]; then
     echo "error: Linux test binaries do not exist; run linux/scripts/build-local" >&2
     exit 1
@@ -106,10 +110,21 @@ done
 
 environment=(
     "GDK_BACKEND=${backend}"
+    # Debug Ghostty emits very high-volume diagnostics by default. Under
+    # Valgrind, serializing those diagnostics can delay real focus/input far
+    # beyond the semantic journey without improving memory evidence.
+    "GHOSTTY_LOG=false"
     "ZENTTY_LINUX_ASYNC_BACKEND=epoll"
     "ZENTTY_LINUX_BINARY=${binary}"
     "ZENTTY_EXPECTED_PRODUCT_PROFILE=$([[ "${expected_optimize}" == Debug ]] && printf debug || printf release-safe)"
-    "ZENTTY_RUST_STARTUP_ATTEMPTS=1200"
+    # A Debug GTK/Ghostty process under Memcheck can take longer than one
+    # minute to map its first real window on cold library/font caches. This is
+    # bounded below the enclosing 300-second journey timeout.
+    "ZENTTY_RUST_STARTUP_ATTEMPTS=2400"
+    # Physical-key translation has dedicated exact-PTY matrix cells. Keep
+    # Memcheck focused on the real terminal/window lifecycle rather than
+    # multiplying its runtime with an orthogonal XTEST journey.
+    "ZENTTY_RUST_X11_PHYSICAL_INPUT=false"
     "ZENTTY_RUST_EMIT_PRODUCT_LOG=1"
     "ZENTTY_RUST_PRODUCT_LOG_PATH=${product_diagnostic_log}"
 )
@@ -140,7 +155,7 @@ if [[ "${scenario}" == api ]]; then
     raw_command=(env "${environment[@]}" timeout 300s \
         valgrind "${valgrind_flags[@]}" "${program[@]}")
 else
-    raw_command=(env "${environment[@]}" \
+    raw_command=(dbus-run-session -- env "${environment[@]}" \
         timeout 300s "${program[@]}" \
         valgrind "${valgrind_flags[@]}" "${binary}")
 fi
@@ -168,7 +183,7 @@ if [[ "${scenario}" == api ]]; then
         valgrind "${valgrind_flags[@]}" --error-exitcode=99 \
         "${suppression_flags[@]}" "${program[@]}")
 else
-    suppressed_command=(env "${environment[@]}" \
+    suppressed_command=(dbus-run-session -- env "${environment[@]}" \
         timeout 300s "${program[@]}" \
         valgrind "${valgrind_flags[@]}" --error-exitcode=99 \
         "${suppression_flags[@]}" "${binary}")
@@ -202,6 +217,12 @@ assert_semantic_pass() {
 }
 assert_semantic_pass "${raw_receipt}"
 assert_semantic_pass "${suppressed_receipt}"
+for receipt in "${raw_receipt}" "${suppressed_receipt}"; do
+    if grep -Eq '^(debug|info|warning|error)(\([^)]*\))?: ' "${receipt}"; then
+        echo "error: Ghostty embedding diagnostics ignored GHOSTTY_LOG=false: ${receipt}" >&2
+        exit 1
+    fi
+done
 
 raw_metrics="$(zentty_valgrind_metrics_json "${raw_receipt}")"
 suppressed_metrics="$(zentty_valgrind_metrics_json "${suppressed_receipt}")"

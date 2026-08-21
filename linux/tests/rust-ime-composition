@@ -4,6 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
 backend="${GDK_BACKEND:-}"
+ime_provider="${ZENTTY_CONTROLLED_IME_PROVIDER:-ibus}"
 run_root="$(mktemp -d)"
 state_directory="${run_root}/state"
 receipt="${run_root}/pty.receipt"
@@ -13,6 +14,7 @@ return_marker="${run_root}/focus-pane-2"
 child="${run_root}/child"
 log="${run_root}/product.log"
 product_pid=""
+focus_helper_pid=""
 
 # shellcheck source=linux/tests/lib/product-input
 source "${repo_root}/linux/tests/lib/product-input"
@@ -27,6 +29,10 @@ fail() {
 }
 
 cleanup() {
+    if [[ "${focus_helper_pid}" =~ ^[1-9][0-9]*$ ]]; then
+        kill -TERM "${focus_helper_pid}" 2>/dev/null || true
+        wait "${focus_helper_pid}" 2>/dev/null || true
+    fi
     if [[ "${product_pid}" =~ ^[1-9][0-9]*$ ]]; then
         kill -TERM "${product_pid}" 2>/dev/null || true
         wait "${product_pid}" 2>/dev/null || true
@@ -37,13 +43,25 @@ trap cleanup EXIT
 
 [[ "${backend}" == x11 || "${backend}" == wayland ]] ||
     fail "GDK_BACKEND must be x11 or wayland"
-[[ "${ZENTTY_CONTROLLED_IBUS_ACTOR_SESSION_ID:-}" =~ ^[0-9]+-[A-Za-z0-9]+$ ]] ||
-    fail "composition must run in the controlled private IBus session"
-[[ "${GTK_IM_MODULE:-}" == ibus && -n "${IBUS_ADDRESS:-}" ]] ||
-    fail "composition requires the wrapper-owned IBus GTK context"
-[[ "$(ibus engine 2>/dev/null || true)" == table:cangjie5 ]] ||
-    fail "composition requires the pinned table:cangjie5 engine"
-dependencies=(ibus grep sed)
+case "${ime_provider}" in
+    ibus)
+        [[ "${ZENTTY_CONTROLLED_IBUS_ACTOR_SESSION_ID:-}" =~ ^[0-9]+-[A-Za-z0-9]+$ ]] ||
+            fail "composition must run in the controlled private IBus session"
+        [[ "${GTK_IM_MODULE:-}" == ibus && -n "${IBUS_ADDRESS:-}" ]] ||
+            fail "composition requires the wrapper-owned IBus GTK context"
+        [[ "$(ibus engine 2>/dev/null || true)" == table:cangjie5 ]] ||
+            fail "composition requires the pinned table:cangjie5 engine"
+        dependencies=(ibus grep sed)
+        ;;
+    fcitx)
+        [[ "${ZENTTY_CONTROLLED_FCITX_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+            fail "composition must run in the controlled private fcitx session"
+        [[ "${GTK_IM_MODULE:-}" == fcitx && "${XMODIFIERS:-}" == @im=fcitx ]] ||
+            fail "composition requires the wrapper-owned fcitx GTK context"
+        dependencies=(busctl fcitx5-remote grep readlink sed)
+        ;;
+    *) fail "unsupported input-method provider: ${ime_provider}" ;;
+esac
 if [[ "${backend}" == x11 ]]; then
     dependencies+=(xdotool)
 else
@@ -52,10 +70,59 @@ fi
 for dependency in "${dependencies[@]}"; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
+
+activate_fcitx() {
+    [[ "${ime_provider}" == fcitx ]] || return 0
+    # The public focus receipt is emitted when Zentty selects the surface;
+    # fcitx publishes the replacement GTK input context asynchronously on the
+    # next compositor/GLib turns. State 0 means the focused context is closed,
+    # not that it is absent, so activation itself is the bounded readiness
+    # handshake; the exact PTY receipt proves which context received input.
+    sleep 0.1
+    for _ in {1..100}; do
+        # Context construction is asynchronous. Reissue the idempotent open
+        # and switch requests until the currently focused context can accept
+        # them instead of losing a one-shot request sent before publication.
+        fcitx5-remote -o >/dev/null 2>&1 || true
+        fcitx5-remote -s cangjie5 >/dev/null 2>&1 || true
+        if [[ "$(fcitx5-remote)" == 2 && "$(fcitx5-remote -n)" == cangjie5 ]]; then
+            # The controller acknowledgement can precede delivery of the
+            # activation signal to the focused GTK module. Give that real
+            # D-Bus/GLib transition one bounded turn before physical input.
+            sleep 0.1
+            return 0
+        fi
+        sleep 0.05
+    done
+    printf 'rust-ime-composition: fcitx-state=%s engine=%s\n' \
+        "$(fcitx5-remote 2>/dev/null || true)" \
+        "$(fcitx5-remote -n 2>/dev/null || true)" >&2
+    busctl --user tree org.fcitx.Fcitx5 2>&1 |
+        sed 's/^/rust-ime-composition: fcitx-tree: /' >&2 || true
+    fail "focused pane did not activate the pinned fcitx engine"
+}
+
+wait_fcitx_context_published() {
+    [[ "${ime_provider}" == fcitx ]] || return 0
+    for _ in {1..250}; do
+        if busctl --user tree org.fcitx.Fcitx5 2>/dev/null |
+            grep -Eq '/(org/freedesktop/portal/)?inputcontext(/|_)'; then
+            echo 'rust-ime-composition: fcitx-context=published-before-focus-transfer'
+            return 0
+        fi
+        sleep 0.02
+    done
+    fail "fcitx GTK context was not published before focus transfer"
+}
+
 [[ -x "${product}" ]] || fail "staged Zentty product is missing: ${product}"
 zentty_product_bundle_resolve "${product}" || fail "staged product bundle is invalid"
 product="${ZENTTY_PRODUCT_BINARY}"
 bundle_lib="${ZENTTY_PRODUCT_BUNDLE_LIB}"
+focus_helper="$(dirname "${product}")/zentty-focus-steal-helper"
+if [[ "${ime_provider}" == fcitx && ! -x "${focus_helper}" ]]; then
+    fail "staged fcitx focus helper is missing: ${focus_helper}"
+fi
 mkdir -p "${state_directory}" "${XDG_CONFIG_HOME}/zentty"
 cat >"${XDG_CONFIG_HOME}/zentty/config.toml" <<'CONFIG'
 [confirmations]
@@ -98,6 +165,9 @@ case "${ZENTTY_PANE_ID}" in
         [[ "${after_cancel}" == 日 ]]
         record "${after_cancel}"
         IFS= read -r after_transfer
+        if [[ "${after_transfer}" != 日 ]]; then
+            record "MISMATCH:${after_transfer@Q}"
+        fi
         [[ "${after_transfer}" == 日 ]]
         record "${after_transfer}"
         sleep 30
@@ -117,6 +187,78 @@ LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
 product_pid=$!
 zentty_product_prepare_input "${backend}" "${log}" ||
     fail "physical ${backend} input unavailable"
+
+if [[ "${ime_provider}" == fcitx && -n "${ZENTTY_CONTROLLED_FCITX_GTK4_MODULE:-}" ]]; then
+    expected_fcitx_module="$(readlink -f -- "${ZENTTY_CONTROLLED_FCITX_GTK4_MODULE}")"
+    [[ -f "${expected_fcitx_module}" ]] || fail "pinned fcitx GTK4 module is missing"
+    module_loaded=false
+    for _ in {1..200}; do
+        if grep -Fq "${expected_fcitx_module}" "/proc/${product_pid}/maps" 2>/dev/null; then
+            module_loaded=true
+            break
+        fi
+        sleep 0.02
+    done
+    [[ "${module_loaded}" == true ]] ||
+        fail "product did not load the pinned fcitx GTK4 module"
+    printf 'rust-ime-composition: fcitx-gtk-module version=%s path=%s\n' \
+        "${ZENTTY_CONTROLLED_FCITX_GTK4_VERSION:?}" "${expected_fcitx_module}"
+fi
+
+if [[ "${ime_provider}" == fcitx ]]; then
+    helper_log="${run_root}/focus-helper.log"
+    initial_focus_before="$(grep -Fc 'focus-pane pane=pane-1' "${log}" || true)"
+    # Wait for asynchronous client publication, then drive a real compositor
+    # transition. The helper deliberately uses GTK's simple context so the only
+    # fcitx context in this phase belongs to the product under test.
+    wait_fcitx_context_published
+    GTK_IM_MODULE=gtk-im-context-simple XMODIFIERS='' \
+        "${focus_helper}" >"${helper_log}" 2>&1 &
+    focus_helper_pid=$!
+    zentty_product_wait_for_log "${helper_log}" \
+        'zentty-focus-steal-helper: ACTIVE compositor-focus-owned' \
+        "real GTK focus helper did not receive compositor focus" ||
+        fail "fcitx focus helper failed"
+    if [[ "${backend}" == x11 ]]; then
+        helper_window=""
+        for _ in {1..100}; do
+            helper_window="$(
+                xdotool search --onlyvisible --pid "${focus_helper_pid}" \
+                    --name '^Zentty controlled IME focus helper$' 2>/dev/null |
+                    head -1 || true
+            )"
+            [[ "${helper_window}" =~ ^[1-9][0-9]*$ ]] && break
+            sleep 0.02
+        done
+        [[ "${helper_window}" =~ ^[1-9][0-9]*$ ]] ||
+            fail "controlled X11 focus helper window was not observable"
+        xdotool windowfocus --sync "${helper_window}"
+    fi
+    sleep 0.25
+    if [[ "${backend}" == x11 ]]; then
+        # Keep the inactive helper alive until both GTK and fcitx acknowledge
+        # the product focus. Destroying the helper first lets X11 window-manager
+        # fallback and its later focus-out race the explicit product activation.
+        xdotool windowfocus --sync "${ZENTTY_PRODUCT_WINDOW_ID}"
+        xdotool mousemove --window "${ZENTTY_PRODUCT_WINDOW_ID}" 700 400 click 1
+    else
+        # Cage deterministically returns focus to the product when the only
+        # newer toplevel is destroyed.
+        kill -TERM "${focus_helper_pid}"
+        wait "${focus_helper_pid}" || true
+        focus_helper_pid=""
+    fi
+    zentty_product_wait_for_log_count "${log}" 'focus-pane pane=pane-1' \
+        "$((initial_focus_before + 1))" \
+        "product did not regain compositor focus after the real GTK transition" ||
+        fail "fcitx product focus transition failed"
+    activate_fcitx
+    if [[ "${backend}" == x11 ]]; then
+        kill -TERM "${focus_helper_pid}"
+        wait "${focus_helper_pid}" || true
+        focus_helper_pid=""
+    fi
+fi
 pane_2_focus_before="$(grep -Fc 'focus-pane pane=pane-2' "${log}" || true)"
 zentty_product_ctrl_key "${backend}" t
 zentty_product_wait_for_log "${log}" 'terminal-ready-pane=pane-2' \
@@ -125,6 +267,7 @@ zentty_product_wait_for_log_count "${log}" 'focus-pane pane=pane-2' \
     "$((pane_2_focus_before + 1))" \
     "second terminal surface did not receive initial focus" ||
     fail "IME initial compositor-focus barrier failed"
+activate_fcitx
 
 # A Cangjie `a` creates a visible preedit candidate. Escape cancels it. The
 # second `a`, Space, Return sequence commits 日 and supplies the PTY newline.
@@ -147,6 +290,7 @@ zentty_product_wait_for_log_count "${log}" 'focus-pane pane=pane-1' \
     "$((pane_1_focus_before + 1))" \
     "public API did not restore focus to the first pane" ||
     fail "IME focus restoration failed"
+activate_fcitx
 pane_2_focus_before="$(grep -Fc 'focus-pane pane=pane-2' "${log}" || true)"
 zentty_product_type "${backend}" 1
 zentty_product_key "${backend}" Return
@@ -157,6 +301,7 @@ zentty_product_wait_for_log_count "${log}" 'focus-pane pane=pane-2' \
     "$((pane_2_focus_before + 1))" \
     "first pane did not restore focus to the second pane" ||
     fail "IME second focus restoration failed"
+activate_fcitx
 zentty_product_type "${backend}" a
 zentty_product_key "${backend}" space
 zentty_product_key "${backend}" Return
@@ -178,6 +323,7 @@ zentty_product_wait_for_log_count "${log}" 'focus-pane pane=pane-1' \
     "surviving terminal did not regain focus after destruction" ||
     fail "IME post-destruction focus barrier failed"
 kill -0 "${product_pid}" 2>/dev/null || fail "product died after active-preedit destruction"
+activate_fcitx
 zentty_product_type "${backend}" a
 zentty_product_key "${backend}" space
 zentty_product_key "${backend}" Return
@@ -195,4 +341,4 @@ zentty_product_wait_for_log "${receipt}" 'pane-1:日' \
 zentty_product_close_window "${backend}"
 wait "${product_pid}" || fail "product did not exit cleanly after IME journey"
 product_pid=""
-echo "rust-ime-composition-${backend}: PASS real-ibus preedit-update cancel commit focus-transfer active-preedit-destruction real-pty"
+echo "rust-ime-composition-${backend}: PASS real-${ime_provider} preedit-update cancel commit focus-transfer active-preedit-destruction real-pty"

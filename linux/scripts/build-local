@@ -146,6 +146,8 @@ cp "${repo_root}/target/${cargo_profile}/zentty-linux" \
     "${output_dir}/bin/zentty-linux"
 cp "${repo_root}/target/${cargo_profile}/zentty" \
     "${output_dir}/bin/zentty"
+cp "${repo_root}/target/${cargo_profile}/zentty-focus-steal-helper" \
+    "${output_dir}/bin/zentty-focus-steal-helper"
 wrapper_root="${output_dir}/libexec/zentty/agent-wrappers"
 rm -rf "${wrapper_root}"
 mkdir -p "${wrapper_root}/shared"

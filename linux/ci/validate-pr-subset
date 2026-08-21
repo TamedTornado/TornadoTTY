@@ -50,8 +50,8 @@ jq -e '
   } and
   .known_gaps == [
     {
-      id:"physical-key-wayland",expected_status:"BLOCKED",
-      prerequisite:"Tracked matrix prerequisite remains required; X11 physical-key coverage does not satisfy Wayland physical-key qualification."
+      id:"fractional-scale-wayland",expected_status:"BLOCKED",
+      prerequisite:"A controlled nested Wayland compositor exposing deterministic integer and fractional output-scale protocols remains required."
     },
     {
       id:"ghostty-async-backend-abi-representation",expected_status:"XFAIL",

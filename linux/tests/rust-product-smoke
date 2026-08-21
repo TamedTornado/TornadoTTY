@@ -14,6 +14,7 @@ lifecycle_cycles="${ZENTTY_RUST_CYCLES:-1}"
 startup_attempts="${ZENTTY_RUST_STARTUP_ATTEMPTS:-200}"
 async_backend="${ZENTTY_LINUX_ASYNC_BACKEND:-default}"
 physical_input="${ZENTTY_RUST_PHYSICAL_INPUT:-false}"
+x11_physical_input="${ZENTTY_RUST_X11_PHYSICAL_INPUT:-true}"
 [[ "${async_backend}" == auto ]] && async_backend=default
 
 # shellcheck source=linux/tests/lib/product-input
@@ -35,6 +36,13 @@ fail() {
     "${async_backend}" == io_uring ]] || fail "invalid async backend"
 [[ "${physical_input}" == true || "${physical_input}" == false ]] ||
     fail "ZENTTY_RUST_PHYSICAL_INPUT must be true or false"
+[[ "${x11_physical_input}" == true || "${x11_physical_input}" == false ]] ||
+    fail "ZENTTY_RUST_X11_PHYSICAL_INPUT must be true or false"
+physical_journey=false
+if [[ ("${backend}" == x11 && "${x11_physical_input}" == true) ||
+    "${physical_input}" == true ]]; then
+    physical_journey=true
+fi
 [[ -x "${product}" ]] || fail "delivered Rust product is not built: ${product}"
 product_command=("${product}")
 if (($# > 0)); then
@@ -87,7 +95,7 @@ trap cleanup EXIT
 
 if [[ "${scenario}" == lifecycle ]]; then
     child_command="printf '\\033]2;zentty-rust-smoke-${backend}\\a'; sleep 0.1"
-elif [[ "${backend}" == x11 || "${physical_input}" == true ]]; then
+elif [[ "${physical_journey}" == true ]]; then
     if [[ "${backend}" == x11 ]]; then
         command -v xdotool >/dev/null || fail "xdotool is required for real X11 input and resize"
     fi
@@ -95,7 +103,7 @@ elif [[ "${backend}" == x11 || "${physical_input}" == true ]]; then
     # shellcheck disable=SC2016
     child_command="IFS= read -r value; [ \"\$value\" = zentty-rust-input ] || exit 44; printf '\\033]2;zentty-rust-smoke-${backend}\\a'; sleep 0.1"
 else
-    child_command="printf '\\033]2;zentty-rust-smoke-wayland\\a'; sleep 0.1"
+    child_command="printf '\\033]2;zentty-rust-smoke-${backend}\\a'; sleep 0.1"
 fi
 
 run_cycle() {
@@ -119,8 +127,8 @@ run_cycle() {
 }
 
 run_cycle
-if [[ "${scenario}" == single && ("${backend}" == x11 || "${physical_input}" == true) ]]; then
-    zentty_product_prepare_input "${backend}" "${log}" ||
+if [[ "${scenario}" == single && "${physical_journey}" == true ]]; then
+    zentty_product_prepare_input "${backend}" "${log}" "${startup_attempts}" ||
         fail "controlled ${backend} input did not become ready"
     if [[ "${backend}" == x11 ]]; then
         xdotool windowsize --sync "${ZENTTY_PRODUCT_WINDOW_ID}" 820 640
@@ -183,7 +191,8 @@ assert_log_count "${expected_events}" 'zentty-linux: child-exited' \
     "product did not acknowledge every child exit"
 assert_log_count "${lifecycle_cycles}" 'zentty-linux: lifecycle complete' \
     "product did not complete every lifecycle cycle"
-if [[ "${backend}" == x11 && "${scenario}" == single ]]; then
+if [[ "${backend}" == x11 && "${scenario}" == single &&
+    "${physical_journey}" == true ]]; then
     grep -Fx 'zentty-linux: window-size=820x640' "${log}" >/dev/null || {
         cat "${log}" >&2
         fail "externally driven X11 resize did not reach the delivered product"

@@ -47,6 +47,12 @@ zentty_product_xdotool_key() {
 zentty_product_prepare_input() {
     local backend="$1"
     local log="$2"
+    local attempts="${3:-200}"
+    local attempt
+    [[ "${attempts}" =~ ^[1-9][0-9]*$ ]] || {
+        echo "product-input: input readiness attempts must be a positive integer" >&2
+        return 1
+    }
     case "${backend}" in
         x11)
             command -v xdotool >/dev/null || {
@@ -58,7 +64,7 @@ zentty_product_prepare_input() {
                 return 1
             }
             ZENTTY_PRODUCT_WINDOW_ID=""
-            for _ in {1..200}; do
+            for ((attempt = 0; attempt < attempts; attempt++)); do
                 # The qualification cell deliberately reuses one private X
                 # server for several complete product journeys. A name-only
                 # search can race a withdrawing window from the preceding
@@ -80,6 +86,18 @@ zentty_product_prepare_input() {
                 return 1
             }
             xdotool windowfocus --sync "${ZENTTY_PRODUCT_WINDOW_ID}"
+            xdotool mousemove --window "${ZENTTY_PRODUCT_WINDOW_ID}" 700 400 click 1
+            # The initially selected pane does not emit `focus-pane` when it
+            # receives focus because product selection did not change. Prove
+            # the real X server focused this product instead; the journey's
+            # exact PTY acknowledgement then proves terminal-child focus.
+            local focused_window focused_pid
+            focused_window="$(xdotool getwindowfocus 2>/dev/null || true)"
+            focused_pid="$(xdotool getwindowpid "${focused_window}" 2>/dev/null || true)"
+            [[ "${focused_pid}" == "${product_pid}" ]] || {
+                echo "product-input: real X11 focus is not owned by the product" >&2
+                return 1
+            }
             ;;
         wayland)
             [[ "${ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] || {
@@ -87,14 +105,15 @@ zentty_product_prepare_input() {
                 return 1
             }
             zentty_product_wait_for_log "${log}" 'zentty-linux: window-size=' \
-                "Wayland product window did not report presentation readiness"
+                "Wayland product window did not report presentation readiness" \
+                "${attempts}"
             if [[ "${ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT:-}" == 1 ]]; then
                 command -v xdotool >/dev/null || {
                     echo "product-input: xdotool is required for outer-X11 Wayland input" >&2
                     return 1
                 }
                 ZENTTY_PRODUCT_WINDOW_ID=""
-                for _ in {1..200}; do
+                for ((attempt = 0; attempt < attempts; attempt++)); do
                     if [[ "${ZENTTY_NESTED_WAYLAND_OUTER_X11_WINDOW:-}" =~ ^[1-9][0-9]*$ ]]; then
                         ZENTTY_PRODUCT_WINDOW_ID="${ZENTTY_NESTED_WAYLAND_OUTER_X11_WINDOW}"
                     elif [[ "${ZENTTY_NESTED_WAYLAND_OUTER_X11_PID:-}" =~ ^[1-9][0-9]*$ ]]; then

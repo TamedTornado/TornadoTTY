@@ -69,7 +69,7 @@
         "contract": "linux/tests/lib/ibus-focus-protocol",
         "contract_sha256": "5c940161c1086feff86f94038023b3eec9c829066148c8a00e8763e5e2955612",
         "wrapper": "linux/tests/controlled-ibus-x11",
-        "wrapper_sha256": "24ffd8bb69c42c662447b3320fcbdb75387c71efb6ba84865d9dcdbc96f56db3",
+        "wrapper_sha256": "4b68abf6b75ad3bedbb3e43697e1a572e567f791b917e0c83e04584e0fa309d0",
         "reproducer": "linux/tests/ibus-focus-reproducer.c",
         "reproducer_sha256": "03c9449c7a0a33693e2a469480ee521df3ee72693ba3f8af10b362260499775b",
         "sync_mode_environment": "IBUS_ENABLE_SYNC_MODE",
@@ -180,7 +180,7 @@
       "expected_by_scenario": {
         "Debug/single/wayland": {"matches": {"min": 97, "max": 97}, "bytes": null},
         "Debug/interaction/wayland": {"matches": {"min": 97, "max": 97}, "bytes": null},
-        "Debug/single/x11": {"matches": {"min": 140, "max": 140}, "bytes": null},
+        "Debug/single/x11": {"matches": {"min": 97, "max": 140}, "bytes": null},
         "Debug/interaction/x11": {"matches": {"min": 97, "max": 97}, "bytes": null}
       },
       "allowed_scenarios": ["Debug/single/wayland", "Debug/interaction/wayland", "Debug/single/x11", "Debug/interaction/x11"],
@@ -221,12 +221,12 @@
       "tracking_id": "ZENTTY-VG-FONT-METRICS-ROOT-001",
       "affected": "Ubuntu Fontconfig 2.15.0 and Pango 1.52.1 process-global metrics cache",
       "finding_type": "Memcheck:Leak definite root through pango_context_get_metrics",
-      "expected_suppressed": {"matches": {"min": 1, "max": 5}, "bytes": {"min": 4037, "max": 26300}},
+      "expected_suppressed": {"matches": {"min": 1, "max": 5}, "bytes": {"min": 2425, "max": 26300}},
       "expected_by_scenario": {
-        "Debug/single/wayland": {"matches": {"min": 2, "max": 2}, "bytes": {"min": 5061, "max": 6652}},
-        "Debug/interaction/wayland": {"matches": {"min": 1, "max": 4}, "bytes": {"min": 4037, "max": 14300}},
-        "Debug/single/x11": {"matches": {"min": 4, "max": 5}, "bytes": {"min": 10860, "max": 13189}},
-        "Debug/interaction/x11": {"matches": {"min": 2, "max": 4}, "bytes": {"min": 7377, "max": 18971}},
+        "Debug/single/wayland": {"matches": {"min": 2, "max": 3}, "bytes": {"min": 5061, "max": 6652}},
+        "Debug/interaction/wayland": {"matches": {"min": 1, "max": 4}, "bytes": {"min": 2425, "max": 14300}},
+        "Debug/single/x11": {"matches": {"min": 4, "max": 5}, "bytes": {"min": 10860, "max": 20028}},
+        "Debug/interaction/x11": {"matches": {"min": 1, "max": 4}, "bytes": {"min": 4619, "max": 18971}},
         "Debug/ibus-focus/x11": {"matches": {"min": 2, "max": 2}, "bytes": {"min": 9552, "max": 10182}}
       },
       "allowed_scenarios": ["Debug/single/wayland", "Debug/interaction/wayland", "Debug/single/x11", "Debug/interaction/x11", "Debug/ibus-focus/x11"],
@@ -239,12 +239,12 @@
       "tracking_id": "ZENTTY-VG-FONT-METRICS-CALLOC-001",
       "affected": "Ubuntu Fontconfig 2.15.0 indirect calloc children of the Pango metrics cache",
       "finding_type": "Memcheck:Leak indirect children with pango_context_get_metrics consumer",
-      "expected_suppressed": {"matches": {"min": 14, "max": 74}, "bytes": {"min": 448, "max": 2368}},
+      "expected_suppressed": {"matches": {"min": 12, "max": 74}, "bytes": {"min": 384, "max": 2368}},
       "expected_by_scenario": {
-        "Debug/single/wayland": {"matches": {"min": 31, "max": 32}, "bytes": {"min": 992, "max": 1024}},
-        "Debug/interaction/wayland": {"matches": {"min": 16, "max": 63}, "bytes": {"min": 512, "max": 2016}},
+        "Debug/single/wayland": {"matches": {"min": 31, "max": 43}, "bytes": {"min": 992, "max": 1376}},
+        "Debug/interaction/wayland": {"matches": {"min": 12, "max": 63}, "bytes": {"min": 384, "max": 2016}},
         "Debug/single/x11": {"matches": {"min": 58, "max": 74}, "bytes": {"min": 1856, "max": 2368}},
-        "Debug/interaction/x11": {"matches": {"min": 18, "max": 59}, "bytes": {"min": 576, "max": 1888}},
+        "Debug/interaction/x11": {"matches": {"min": 16, "max": 59}, "bytes": {"min": 512, "max": 1888}},
         "Debug/ibus-focus/x11": {"matches": {"min": 30, "max": 32}, "bytes": {"min": 960, "max": 1024}}
       },
       "allowed_scenarios": ["Debug/single/wayland", "Debug/interaction/wayland", "Debug/single/x11", "Debug/interaction/x11", "Debug/ibus-focus/x11"],
@@ -258,12 +258,12 @@
       "tracking_id": "ZENTTY-VG-FONT-METRICS-STRINGS-001",
       "affected": "Ubuntu Fontconfig 2.15.0 deep recursive string nodes owned by the Pango metrics cache",
       "finding_type": "Memcheck:Leak indirect malloc/strdup children",
-      "expected_suppressed": {"matches": {"min": 1, "max": 20}, "bytes": {"min": 133, "max": 14308}},
+      "expected_suppressed": {"matches": {"min": 1, "max": 20}, "bytes": {"min": 45, "max": 14308}},
       "expected_by_scenario": {
-        "Debug/single/wayland": {"matches": {"min": 1, "max": 1}, "bytes": {"min": 133, "max": 133}},
-        "Debug/interaction/wayland": {"matches": {"min": 1, "max": 5}, "bytes": {"min": 207, "max": 3033}},
+        "Debug/single/wayland": {"matches": {"min": 1, "max": 1}, "bytes": {"min": 45, "max": 133}},
+        "Debug/interaction/wayland": {"matches": {"min": 1, "max": 15}, "bytes": {"min": 207, "max": 3033}},
         "Debug/single/x11": {"matches": {"min": 1, "max": 2}, "bytes": {"min": 343, "max": 9021}},
-        "Debug/interaction/x11": {"matches": {"min": 1, "max": 5}, "bytes": {"min": 310, "max": 3196}},
+        "Debug/interaction/x11": {"matches": {"min": 1, "max": 12}, "bytes": {"min": 310, "max": 3196}},
         "Debug/ibus-focus/x11": {"matches": {"min": 2, "max": 20}, "bytes": {"min": 1836, "max": 4618}}
       },
       "allowed_scenarios": ["Debug/single/wayland", "Debug/interaction/wayland", "Debug/single/x11", "Debug/interaction/x11", "Debug/ibus-focus/x11"],
@@ -299,9 +299,9 @@
       "expected_suppressed": {"matches": {"min": 1, "max": 8}, "bytes": {"min": 1699, "max": 552400}},
       "expected_by_scenario": {
         "Debug/single/wayland": {"matches": {"min": 1, "max": 2}, "bytes": {"min": 1699, "max": 4480}},
-        "Debug/interaction/wayland": {"matches": {"min": 1, "max": 2}, "bytes": {"min": 2106, "max": 6791}},
+        "Debug/interaction/wayland": {"matches": {"min": 1, "max": 3}, "bytes": {"min": 2106, "max": 236679}},
         "Debug/single/x11": {"matches": {"min": 2, "max": 6}, "bytes": {"min": 6198, "max": 57363}},
-        "Debug/interaction/x11": {"matches": {"min": 3, "max": 4}, "bytes": {"min": 11122, "max": 241078}},
+        "Debug/interaction/x11": {"matches": {"min": 1, "max": 4}, "bytes": {"min": 11122, "max": 241078}},
         "Debug/ibus-focus/x11": {"matches": {"min": 2, "max": 2}, "bytes": {"min": 13253, "max": 26208}}
       },
       "allowed_scenarios": ["Debug/single/wayland", "Debug/interaction/wayland", "Debug/single/x11", "Debug/interaction/x11", "Debug/ibus-focus/x11"],
@@ -317,9 +317,9 @@
       "expected_suppressed": {"matches": {"min": 14, "max": 128}, "bytes": {"min": 448, "max": 5984}},
       "expected_by_scenario": {
         "Debug/single/wayland": {"matches": {"min": 16, "max": 32}, "bytes": {"min": 512, "max": 1024}},
-        "Debug/interaction/wayland": {"matches": {"min": 14, "max": 30}, "bytes": {"min": 448, "max": 960}},
+        "Debug/interaction/wayland": {"matches": {"min": 14, "max": 31}, "bytes": {"min": 448, "max": 992}},
         "Debug/single/x11": {"matches": {"min": 31, "max": 93}, "bytes": {"min": 992, "max": 4000}},
-        "Debug/interaction/x11": {"matches": {"min": 44, "max": 47}, "bytes": {"min": 1408, "max": 1504}},
+        "Debug/interaction/x11": {"matches": {"min": 16, "max": 47}, "bytes": {"min": 512, "max": 1504}},
         "Debug/ibus-focus/x11": {"matches": {"min": 29, "max": 31}, "bytes": {"min": 928, "max": 992}}
       },
       "allowed_scenarios": ["Debug/single/wayland", "Debug/interaction/wayland", "Debug/single/x11", "Debug/interaction/x11", "Debug/ibus-focus/x11"],

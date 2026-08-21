@@ -100,7 +100,7 @@ jq -e '
       "Debug":"build-debug","ReleaseSafe":"build-release"
     }) and
     (.execution_graph.resources == [
-      "abi-mismatch-fixture","bookmarks-modal-input","compiler-load","consolidated-session-journey","ghostty-source","multi-window-menu-input","system-sleep-inhibitor","valgrind-evidence"
+      "abi-mismatch-fixture","bookmarks-modal-input","compiler-load","consolidated-session-journey","fcitx5-gtk-source","ghostty-source","multi-window-menu-input","system-sleep-inhibitor","valgrind-evidence"
     ])
 ' "${matrix}" >/dev/null || fail "matrix root, axes, or claims are not closed-world"
 

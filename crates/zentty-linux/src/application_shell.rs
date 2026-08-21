@@ -1140,7 +1140,7 @@ impl ApplicationShell {
         self.focus_selected_surface_unchecked();
     }
 
-    pub(crate) fn detach_and_close(&mut self) {
+    pub(crate) fn detach_for_shutdown(&mut self) {
         self.shutting_down = true;
         for upload in self.remote_panes.uploads.values() {
             upload.cancel();
@@ -1174,6 +1174,9 @@ impl ApplicationShell {
         // callbacks are finalized before Ghostty's process-global teardown.
         sidebar::clear(&self.sidebar);
         self.window.set_child(gtk::Widget::NONE);
+    }
+
+    pub(crate) fn close_detached_window(&self) {
         self.window.close();
     }
 

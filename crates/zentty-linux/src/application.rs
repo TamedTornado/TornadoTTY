@@ -983,9 +983,11 @@ impl ApplicationCoordinator {
         if let Some(flag) = self.close_flags.get(id) {
             flag.set(true);
         }
-        shell.borrow_mut().detach_and_close();
+        shell.borrow_mut().detach_for_shutdown();
         settle_gtk_teardown();
         let release_result = shell.borrow_mut().release_surfaces();
+        settle_gtk_teardown();
+        shell.borrow().close_detached_window();
         settle_gtk_teardown();
         self.teardown_active.set(false);
         release_result?;
