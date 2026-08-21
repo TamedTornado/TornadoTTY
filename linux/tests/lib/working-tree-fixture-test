@@ -30,10 +30,12 @@ zentty_create_working_tree_fixture \
 [[ -z "$(git -C "${fixture_root}" status --porcelain)" ]]
 
 clean_fixture_root="${temporary}/clean-fixture"
+fixture_revision="$(git -C "${fixture_root}" rev-parse HEAD)"
 zentty_create_working_tree_fixture \
     "${fixture_root}" "${clean_fixture_root}" 'exact clean source fixture'
 [[ "$(cat "${clean_fixture_root}/tracked")" == tracked-new ]]
 [[ "$(cat "${clean_fixture_root}/new/directory/file")" == untracked ]]
 [[ -z "$(git -C "${clean_fixture_root}" status --porcelain)" ]]
+[[ "$(git -C "${clean_fixture_root}" rev-parse HEAD)" == "${fixture_revision}" ]]
 
 echo "Working-tree fixture tests passed: clean/dirty tracked source, untracked source, ignored exclusion"

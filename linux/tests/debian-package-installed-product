@@ -470,7 +470,7 @@ activate_palette_action 'About Zentty' 'zentty-linux: about-view state=shown'
 grep -Fq \
     "licenses-catalog result=loaded entries=${installed_entries} zentty-revision=${revision} ghostty-revision=${installed_ghostty_revision}" \
     "${product_log}" || fail "installed About did not load the exact packaged catalog"
-if zentty_product_uses_xdotool "${backend}"; then
+if [[ "${backend}" == x11 ]]; then
     about_window=""
     for _ in {1..200}; do
         about_window="$(xdotool search --onlyvisible --name '^About Zentty$' 2>/dev/null | tail -1 || true)"
@@ -481,7 +481,7 @@ if zentty_product_uses_xdotool "${backend}"; then
     xdotool windowfocus --sync "${about_window}"
     xdotool key alt+F4
 else
-    wtype -M alt -k F4 -m alt
+    zentty_product_alt_key "${backend}" F4
 fi
 product_pid="${supervisor_pid}"
 for _ in {1..400}; do

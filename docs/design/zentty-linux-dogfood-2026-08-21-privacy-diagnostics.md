@@ -127,6 +127,19 @@ are not collected.
   drives the real store through create, write, permission assignment, and
   `fsync`, exits immediately before rename without unwinding, then proves that
   startup pruning removes the orphan and never publishes a partial report.
+- The exact installed Wayland journey exposed a pre-existing input/top-level
+  category error. Labwc is itself hosted in private X11 so physical keys use
+  XTest, but Zentty's inner windows remain Wayland surfaces and cannot be found
+  as X11 toplevels. The About close assertion had conflated those facts. X11
+  still locates the exact toplevel; Wayland now closes it through the existing
+  compositor-input abstraction, which selects outer XTest or `wtype` without
+  pretending the inner surface belongs to X11.
+- The clean-tree repair then exposed a provenance flaw hidden by the same
+  helper: it created an empty synthetic commit even when the reviewed tree was
+  already committed, so package manifests named a content-equivalent but
+  non-public revision. Fixtures now commit only when they actually materialize
+  dirty source. The clean contract pins `HEAD`, allowing final package receipts
+  to identify the reviewed public commit exactly.
 
 ## Real-system evidence
 

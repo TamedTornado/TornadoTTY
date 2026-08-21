@@ -28,7 +28,9 @@ zentty_create_working_tree_fixture() {
     rm -f -- "${untracked_manifest}"
 
     git -C "${fixture_root}" add -A
-    git -C "${fixture_root}" \
-        -c user.name='Zentty Test' -c user.email='test@invalid' \
-        commit --quiet --allow-empty -m "${commit_message}"
+    if ! git -C "${fixture_root}" diff --cached --quiet; then
+        git -C "${fixture_root}" \
+            -c user.name='Zentty Test' -c user.email='test@invalid' \
+            commit --quiet -m "${commit_message}"
+    fi
 }
