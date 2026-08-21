@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
+backend="${GDK_BACKEND:-}"
+run_root="$(mktemp -d)"
+state_directory="${run_root}/state"
+receipt="${run_root}/pty.receipt"
+product_log="${run_root}/product.log"
+keymap_receipt="${run_root}/keymap.xkb"
+product_pid=""
+
+# shellcheck source=linux/tests/lib/product-input
+# shellcheck disable=SC1091
+source "${repo_root}/linux/tests/lib/product-input"
+# shellcheck source=linux/tests/lib/product-bundle
+# shellcheck disable=SC1091
+source "${repo_root}/linux/tests/lib/product-bundle"
+
+fail() {
+    [[ ! -f "${product_log}" ]] || cat "${product_log}" >&2
+    [[ ! -f "${receipt}" ]] || { echo "--- PTY receipt" >&2; cat "${receipt}" >&2; }
+    [[ ! -f "${keymap_receipt}" ]] || {
+        echo "--- X11 keymap evidence" >&2
+        grep -E 'xkb_symbols|us\(intl\)|compose\(ralt\)' "${keymap_receipt}" >&2 || true
+    }
+    echo "rust-keyboard-compose: error: $*" >&2
+    exit 1
+}
+
+cleanup() {
+    if [[ "${product_pid}" =~ ^[1-9][0-9]*$ ]]; then
+        kill -TERM "${product_pid}" 2>/dev/null || true
+        wait "${product_pid}" 2>/dev/null || true
+    fi
+    rm -rf -- "${run_root}"
+}
+trap cleanup EXIT
+
+[[ "${backend}" == x11 || "${backend}" == wayland ]] ||
+    fail "GDK_BACKEND must be x11 or wayland"
+[[ -x "${product}" ]] || fail "staged Zentty product is missing: ${product}"
+for dependency in grep od; do
+    command -v "${dependency}" >/dev/null || fail "${dependency} is required"
+done
+if [[ "${backend}" == x11 ]]; then
+    for dependency in setxkbmap xdotool; do
+        command -v "${dependency}" >/dev/null || fail "${dependency} is required"
+    done
+else
+    command -v wtype >/dev/null || fail "wtype is required"
+fi
+zentty_product_bundle_resolve "${product}" || fail "staged product bundle is invalid"
+product="${ZENTTY_PRODUCT_BINARY}"
+bundle_lib="${ZENTTY_PRODUCT_BUNDLE_LIB}"
+mkdir -p "${state_directory}"
+
+actor="${run_root}/actor"
+cat >"${actor}" <<'ACTOR'
+#!/usr/bin/env bash
+set -euo pipefail
+trap 'status=$?; printf "ERROR:%s:%s\n" "${LINENO}" "${status}" >>"${ZENTTY_KEY_RECEIPT}"; exit "${status}"' ERR
+IFS= read -r dead_key_value
+IFS= read -r compose_value
+[[ "${dead_key_value}" == é ]]
+[[ "${compose_value}" == æ ]]
+dead_hex="$(printf '%s' "${dead_key_value}" | od -An -tx1 | tr -d ' \n')"
+compose_hex="$(printf '%s' "${compose_value}" | od -An -tx1 | tr -d ' \n')"
+printf 'dead-key=%s hex=%s\ncompose=%s hex=%s\n' \
+    "${dead_key_value}" "${dead_hex}" "${compose_value}" "${compose_hex}" \
+    >"${ZENTTY_KEY_RECEIPT}"
+ACTOR
+chmod +x "${actor}"
+
+ZENTTY_KEY_RECEIPT="${receipt}" \
+LC_ALL=C.UTF-8 LANG=C.UTF-8 \
+LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+    "${product}" --command "${actor}" --no-session-restore \
+    --state-directory "${state_directory}" >"${product_log}" 2>&1 &
+product_pid=$!
+zentty_product_prepare_input "${backend}" "${product_log}" ||
+    fail "controlled ${backend} physical input did not become ready"
+
+if [[ "${backend}" == x11 ]]; then
+    # Xvfb resets its keymap when its final client disconnects. Load and inspect
+    # the map only after Zentty's real X connection keeps this session alive.
+    setxkbmap -layout us -variant intl -option '' -option compose:ralt
+    setxkbmap -print >"${keymap_receipt}"
+    grep -Fq 'us(intl)' "${keymap_receipt}" || fail "X11 intl map was not active"
+    grep -Fq 'compose(ralt)' "${keymap_receipt}" || fail "X11 Compose key was not active"
+    xdotool key dead_acute e Return
+    xdotool key Multi_key a e Return
+else
+    wtype -k dead_acute -k e -k Return
+    wtype -k Multi_key -k a -k e -k Return
+fi
+
+for _ in {1..300}; do
+    [[ -f "${receipt}" ]] && grep -Fxq 'dead-key=é hex=c3a9' "${receipt}" &&
+        grep -Fxq 'compose=æ hex=c3a6' "${receipt}" && break
+    kill -0 "${product_pid}" 2>/dev/null || break
+    sleep 0.02
+done
+grep -Fxq 'dead-key=é hex=c3a9' "${receipt}" || fail "dead-key PTY receipt is not exact"
+grep -Fxq 'compose=æ hex=c3a6' "${receipt}" || fail "Compose PTY receipt is not exact"
+[[ "$(wc -l <"${receipt}")" -eq 2 ]] || fail "PTY receipt line count is not exact"
+
+set +e
+wait "${product_pid}"
+status=$?
+set -e
+product_pid=""
+[[ "${status}" -eq 0 ]] || fail "product exited ${status}"
+grep -Fxq 'zentty-linux: child-exited-pane=pane-1' "${product_log}" ||
+    fail "real terminal child lifecycle did not complete"
+grep -Fxq 'zentty-linux: lifecycle complete' "${product_log}" ||
+    fail "product lifecycle did not complete"
+
+echo "rust-keyboard-compose-${backend}: PASS dead-key=é compose=æ utf8=c3a9,c3a6 real-physical-input real-pty"
