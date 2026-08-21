@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+subject="${repo_root}/linux/tests/rust-keyboard-layouts"
+
+fail() {
+    echo "rust-keyboard-layouts-test: error: $*" >&2
+    exit 1
+}
+
+output="$(
+    set +e
+    GDK_BACKEND=unsupported ZENTTY_LINUX_BINARY=/bin/true "${subject}" 2>&1 || true
+)"
+grep -Fq 'GDK_BACKEND must be x11 or wayland' <<<"${output}" ||
+    fail "unsupported backend was not rejected"
+
+output="$(
+    set +e
+    env -u ZENTTY_NESTED_X11_SESSION_ID \
+        GDK_BACKEND=x11 ZENTTY_LINUX_BINARY=/bin/true "${subject}" 2>&1 || true
+)"
+grep -Fq 'X11 layout qualification requires the private Xvfb session' <<<"${output}" ||
+    fail "ambient X11 execution was not rejected"
+
+output="$(
+    set +e
+    env -u ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID \
+        GDK_BACKEND=wayland ZENTTY_LINUX_BINARY=/bin/true "${subject}" 2>&1 || true
+)"
+grep -Fq 'Wayland layout qualification requires the private input session' <<<"${output}" ||
+    fail "ambient Wayland execution was not rejected"
+
+grep -Fq -- '--keycode 21' "${subject}" || fail "Wayland numeric keycode contract is absent"
+if grep -Eq 'wtype|xdotool type' "${subject}"; then
+    fail "text-oriented injection returned to the layout journey"
+fi
+for receipt in 'pane-1:y:79' 'pane-1:z:7a' 'pane-1:ü:c3bc' 'pane-2:z:7a'; do
+    grep -Fq "${receipt}" "${subject}" || fail "missing exact PTY contract: ${receipt}"
+done
+
+echo "Rust keyboard layout harness tests passed: isolation, numeric keycodes, exact PTY receipts"

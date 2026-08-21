@@ -1,0 +1,184 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
+backend="${GDK_BACKEND:-}"
+run_root="$(mktemp -d)"
+state_directory="${run_root}/state"
+receipt="${run_root}/pty.receipt"
+product_log="${run_root}/product.log"
+actor="${run_root}/actor"
+product_pid=""
+map_sequence=0
+
+# shellcheck source=linux/tests/lib/product-input
+source "${repo_root}/linux/tests/lib/product-input"
+# shellcheck source=linux/tests/lib/product-bundle
+source "${repo_root}/linux/tests/lib/product-bundle"
+
+fail() {
+    [[ ! -f "${product_log}" ]] || cat "${product_log}" >&2
+    [[ ! -f "${receipt}" ]] || { echo "--- PTY receipt" >&2; cat "${receipt}" >&2; }
+    find "${run_root}" -maxdepth 1 -name '*.evidence' -type f -print \
+        -exec grep -n -A3 -B1 '<AD06>\|^map=' {} \; >&2
+    echo "rust-keyboard-layouts: error: $*" >&2
+    exit 1
+}
+
+cleanup() {
+    if [[ "${product_pid}" =~ ^[1-9][0-9]*$ ]]; then
+        kill -TERM "${product_pid}" 2>/dev/null || true
+        wait "${product_pid}" 2>/dev/null || true
+    fi
+    rm -rf -- "${run_root}"
+}
+trap cleanup EXIT
+
+[[ "${backend}" == x11 || "${backend}" == wayland ]] ||
+    fail "GDK_BACKEND must be x11 or wayland"
+[[ -x "${product}" ]] || fail "staged Zentty product is missing: ${product}"
+for dependency in grep od sha256sum; do
+    command -v "${dependency}" >/dev/null || fail "${dependency} is required"
+done
+if [[ "${backend}" == x11 ]]; then
+    [[ "${ZENTTY_NESTED_X11_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+        fail "X11 layout qualification requires the private Xvfb session"
+    for dependency in setxkbmap xkbcomp xmodmap xdotool; do
+        command -v "${dependency}" >/dev/null || fail "${dependency} is required"
+    done
+else
+    [[ "${ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+        fail "Wayland layout qualification requires the private input session"
+fi
+
+zentty_product_bundle_resolve "${product}" || fail "staged product bundle is invalid"
+product="${ZENTTY_PRODUCT_BINARY}"
+bundle_lib="${ZENTTY_PRODUCT_BUNDLE_LIB}"
+mkdir -p "${state_directory}" "${XDG_CONFIG_HOME}/zentty"
+cat >"${XDG_CONFIG_HOME}/zentty/config.toml" <<'CONFIG'
+[confirmations]
+confirm_before_closing_pane = false
+confirm_before_closing_worklane = false
+confirm_before_closing_window = false
+confirm_before_quitting = false
+CONFIG
+
+cat >"${actor}" <<'ACTOR'
+#!/usr/bin/env bash
+set -euo pipefail
+trap 'status=$?; printf "%s:ERROR:%s:%s\n" "${ZENTTY_PANE_ID}" "${LINENO}" "${status}" >>"${ZENTTY_LAYOUT_RECEIPT}"; exit "${status}"' ERR
+record_line() {
+    local expected="$1" value hex
+    IFS= read -r value
+    [[ "${value}" == "${expected}" ]]
+    hex="$(printf '%s' "${value}" | od -An -tx1 | tr -d ' \n')"
+    printf '%s:%s:%s\n' "${ZENTTY_PANE_ID}" "${value}" "${hex}" >>"${ZENTTY_LAYOUT_RECEIPT}"
+}
+case "${ZENTTY_PANE_ID}" in
+    pane-1)
+        record_line y
+        record_line z
+        record_line ü
+        sleep 30
+        ;;
+    pane-2)
+        record_line z
+        sleep 30
+        ;;
+    *) exit 64 ;;
+esac
+ACTOR
+chmod +x "${actor}"
+
+ZENTTY_LAYOUT_RECEIPT="${receipt}" \
+LC_ALL=C.UTF-8 LANG=C.UTF-8 \
+LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+    "${product}" --command "${actor}" --state-directory "${state_directory}" \
+    --no-session-restore >"${product_log}" 2>&1 &
+product_pid=$!
+zentty_product_prepare_input "${backend}" "${product_log}" ||
+    fail "controlled ${backend} physical input did not become ready"
+
+send_x11_map() {
+    local map="$1"
+    local evidence="${run_root}/${map}.evidence"
+    local expected_symbol
+    case "${map}" in
+        us) setxkbmap -layout us -variant '' -option '' ;;
+        de) setxkbmap -layout de -variant '' -option '' ;;
+        remap)
+            xmodmap -e 'keycode 29 = udiaeresis Udiaeresis'
+            ;;
+        *) fail "unsupported X11 map: ${map}" ;;
+    esac
+    xkbcomp -xkb "${DISPLAY}" - >"${evidence}" 2>/dev/null
+    case "${map}" in
+        us) expected_symbol=y ;;
+        de) expected_symbol=z ;;
+        remap) expected_symbol=udiaeresis ;;
+    esac
+    awk -v expected="${expected_symbol}" '
+        /key <AD06>/ { in_key=1; next }
+        in_key && /symbols\[Group1\]/ && index($0, expected) { found=1 }
+        in_key && /};/ { exit !found }
+        END { if (!in_key) exit 1 }
+    ' "${evidence}" || fail "X11 server did not expose the requested ${map} map"
+    zentty_product_xdotool_key 29
+    zentty_product_xdotool_key Return
+    printf 'map=%s keycode=29 sha256=%s\n' "${map}" \
+        "$(sha256sum "${evidence}" | awk '{print $1}')"
+}
+
+send_wayland_map() {
+    local map="$1"
+    map_sequence=$((map_sequence + 1))
+    local evidence="${run_root}/${map}-${map_sequence}.evidence"
+    "${repo_root}/target/debug/wayland-keycode-driver" \
+        --map "${map}" --keycode 21 --receipt "${evidence}"
+    grep -Eq "^map=${map} keycode=21 expected=.+ keymap_bytes=[1-9][0-9]*$" "${evidence}" ||
+        fail "Wayland driver receipt is invalid for ${map}"
+    printf '%s sha256=%s\n' "$(cat "${evidence}")" \
+        "$(sha256sum "${evidence}" | awk '{print $1}')"
+}
+
+send_map() {
+    if [[ "${backend}" == x11 ]]; then
+        send_x11_map "$1"
+    else
+        send_wayland_map "$1"
+    fi
+}
+
+send_map us
+zentty_product_wait_for_log "${receipt}" 'pane-1:y:79' \
+    "US physical position was not acknowledged" || fail "US map failed"
+send_map de
+zentty_product_wait_for_log "${receipt}" 'pane-1:z:7a' \
+    "runtime German map was not acknowledged" || fail "German map failed"
+send_map remap
+zentty_product_wait_for_log "${receipt}" 'pane-1:ü:c3bc' \
+    "runtime remap was not acknowledged" || fail "remap failed"
+
+pane_2_focus_before="$(grep -Fc 'focus-pane pane=pane-2' "${product_log}" || true)"
+zentty_product_ctrl_key "${backend}" t
+zentty_product_wait_for_log "${product_log}" 'terminal-ready-pane=pane-2' \
+    "second real pane was not created" || fail "multi-pane setup failed"
+zentty_product_wait_for_log_count "${product_log}" 'focus-pane pane=pane-2' \
+    "$((pane_2_focus_before + 1))" "second pane did not receive focus" ||
+    fail "multi-pane focus failed"
+send_map de
+zentty_product_wait_for_log "${receipt}" 'pane-2:z:7a' \
+    "focused second pane did not acknowledge the physical key" ||
+    fail "multi-pane physical input failed"
+
+[[ "$(grep -Fxc 'pane-1:y:79' "${receipt}")" -eq 1 ]] || fail "US receipt is not exact"
+[[ "$(grep -Fxc 'pane-1:z:7a' "${receipt}")" -eq 1 ]] || fail "German receipt is not exact"
+[[ "$(grep -Fxc 'pane-1:ü:c3bc' "${receipt}")" -eq 1 ]] || fail "remap receipt is not exact"
+[[ "$(grep -Fxc 'pane-2:z:7a' "${receipt}")" -eq 1 ]] || fail "focused-pane receipt is not exact"
+[[ "$(wc -l <"${receipt}")" -eq 4 ]] || fail "PTY receipt line count is not exact"
+
+zentty_product_close_window "${backend}"
+wait "${product_pid}" || fail "product did not exit cleanly"
+product_pid=""
+echo "rust-keyboard-layouts-${backend}: PASS runtime-us-to-de physical-remap same-key-position multi-pane-focus real-pty"

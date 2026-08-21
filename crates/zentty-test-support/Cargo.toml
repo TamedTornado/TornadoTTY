@@ -11,12 +11,22 @@ publish = false
 name = "zentty-focus-steal-helper"
 path = "src/bin/focus_steal_helper.rs"
 
+[[bin]]
+name = "wayland-keycode-driver"
+path = "src/bin/wayland_keycode_driver.rs"
+required-features = ["wayland-keycode-driver"]
+
+[features]
+wayland-keycode-driver = ["dep:wayland-client", "dep:wayland-protocols-misc"]
+
 [dependencies]
 gtk = { package = "gtk4", version = "=0.11.3", features = ["v4_14"] }
 serde_json = "=1.0.145"
 zentty-core = { path = "../zentty-core" }
 zentty-ghostty = { path = "../zentty-ghostty" }
 zentty-linux = { path = "../zentty-linux" }
+wayland-client = { version = "=0.31.13", optional = true }
+wayland-protocols-misc = { version = "=0.3.11", features = ["client"], optional = true }
 
 [lints]
 workspace = true
