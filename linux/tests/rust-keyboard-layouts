@@ -136,7 +136,7 @@ send_wayland_map() {
     local evidence="${run_root}/${map}-${map_sequence}.evidence"
     "${repo_root}/target/debug/wayland-keycode-driver" \
         --map "${map}" --keycode 21 --receipt "${evidence}"
-    grep -Eq "^map=${map} keycode=21 expected=.+ keymap_bytes=[1-9][0-9]*$" "${evidence}" ||
+    grep -Eq "^map=${map} keycode=21 expected=.+ action=tap .*keymap_bytes=[1-9][0-9]*$" "${evidence}" ||
         fail "Wayland driver receipt is invalid for ${map}"
     printf '%s sha256=%s\n' "$(cat "${evidence}")" \
         "$(sha256sum "${evidence}" | awk '{print $1}')"

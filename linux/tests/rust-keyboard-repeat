@@ -1,0 +1,249 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
+backend="${GDK_BACKEND:-}"
+run_root="$(mktemp -d)"
+state_directory="${run_root}/state"
+receipt="${run_root}/pty.receipt"
+product_log="${run_root}/product.log"
+actor="${run_root}/actor"
+product_pid=""
+hold_pid=""
+hold_ms=1100
+repeat_rate=0
+repeat_delay_ms=0
+
+# shellcheck source=linux/tests/lib/product-input
+source "${repo_root}/linux/tests/lib/product-input"
+# shellcheck source=linux/tests/lib/product-bundle
+source "${repo_root}/linux/tests/lib/product-bundle"
+
+fail() {
+    [[ ! -f "${product_log}" ]] || cat "${product_log}" >&2
+    [[ ! -f "${receipt}" ]] || { echo "--- PTY receipt" >&2; cat "${receipt}" >&2; }
+    find "${run_root}" -maxdepth 1 -name '*.evidence' -type f -print -exec cat {} \; >&2
+    echo "rust-keyboard-repeat: error: $*" >&2
+    exit 1
+}
+
+cleanup() {
+    if [[ "${hold_pid}" =~ ^[1-9][0-9]*$ ]]; then
+        kill -TERM "${hold_pid}" 2>/dev/null || true
+        wait "${hold_pid}" 2>/dev/null || true
+    fi
+    if [[ "${product_pid}" =~ ^[1-9][0-9]*$ ]]; then
+        kill -TERM "${product_pid}" 2>/dev/null || true
+        wait "${product_pid}" 2>/dev/null || true
+    fi
+    rm -rf -- "${run_root}"
+}
+trap cleanup EXIT
+
+[[ "${backend}" == x11 || "${backend}" == wayland ]] ||
+    fail "GDK_BACKEND must be x11 or wayland"
+[[ -x "${product}" ]] || fail "staged Zentty product is missing: ${product}"
+if [[ "${backend}" == x11 ]]; then
+    [[ "${ZENTTY_NESTED_X11_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+        fail "X11 repeat qualification requires the private Xvfb session"
+    for dependency in setxkbmap xdotool xset; do
+        command -v "${dependency}" >/dev/null || fail "${dependency} is required"
+    done
+else
+    [[ "${ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
+        fail "Wayland repeat qualification requires the private input session"
+    [[ -x "${repo_root}/target/debug/wayland-keycode-driver" ]] ||
+        fail "tested Wayland keycode driver is missing"
+fi
+
+zentty_product_bundle_resolve "${product}" || fail "staged product bundle is invalid"
+product="${ZENTTY_PRODUCT_BINARY}"
+bundle_lib="${ZENTTY_PRODUCT_BUNDLE_LIB}"
+cli="$(dirname "${product}")/zentty"
+[[ -x "${cli}" ]] || fail "staged public CLI is missing: ${cli}"
+mkdir -p "${state_directory}" "${XDG_CONFIG_HOME}/zentty"
+cat >"${XDG_CONFIG_HOME}/zentty/config.toml" <<'CONFIG'
+[confirmations]
+confirm_before_closing_pane = false
+confirm_before_closing_worklane = false
+confirm_before_closing_window = false
+confirm_before_quitting = false
+CONFIG
+
+cat >"${actor}" <<'ACTOR'
+#!/usr/bin/env bash
+set -euo pipefail
+trap 'status=$?; printf "%s:ERROR:%s:%s\n" "${ZENTTY_PANE_ID}" "${LINENO}" "${status}" >>"${ZENTTY_REPEAT_RECEIPT}"; exit "${status}"' ERR
+record_exact() {
+    local label="$1" expected="$2" value hex
+    IFS= read -r value
+    [[ "${value}" == "${expected}" ]]
+    hex="$(printf '%s' "${value}" | od -An -tx1 | tr -d ' \n')"
+    printf '%s:%s:%s:%s\n' "${ZENTTY_PANE_ID}" "${label}" "${value}" "${hex}" >>"${ZENTTY_REPEAT_RECEIPT}"
+}
+record_repeat() {
+    local value
+    IFS= read -r value
+    [[ "${value}" =~ ^y+$ ]]
+    (( ${#value} >= 1 && ${#value} <= 64 ))
+    printf '%s:repeat:%s\n' "${ZENTTY_PANE_ID}" "${#value}" >>"${ZENTTY_REPEAT_RECEIPT}"
+}
+case "${ZENTTY_PANE_ID}" in
+    pane-1)
+        record_exact shifted Y
+        record_exact plain y
+        record_repeat
+        sleep 30
+        ;;
+    pane-2)
+        record_repeat
+        sleep 30
+        ;;
+    *) exit 64 ;;
+esac
+ACTOR
+chmod +x "${actor}"
+
+ZENTTY_REPEAT_RECEIPT="${receipt}" \
+LC_ALL=C.UTF-8 LANG=C.UTF-8 \
+LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+    "${product}" --command "${actor}" --state-directory "${state_directory}" \
+    --no-session-restore >"${product_log}" 2>&1 &
+product_pid=$!
+zentty_product_prepare_input "${backend}" "${product_log}" ||
+    fail "controlled ${backend} physical input did not become ready"
+
+driver_action() {
+    local action="$1"
+    local evidence
+    evidence="${run_root}/${action}-$(date +%s%N).evidence"
+    shift
+    "${repo_root}/target/debug/wayland-keycode-driver" \
+        --map us --keycode 21 --action "${action}" --receipt "${evidence}" "$@"
+    cat "${evidence}"
+}
+
+focus_pane() {
+    local selected_endpoint
+    selected_endpoint="$(env -u ZENTTY_INSTANCE_SOCKET -u ZENTTY_PANE_TOKEN \
+        -u ZENTTY_PANE_CREDENTIAL \
+        -u ZENTTY_WINDOW_ID -u ZENTTY_WORKLANE_ID -u ZENTTY_PANE_ID \
+        "${cli}" select pane --pane-id "$1" --shell --include-control-token)"
+    (
+        eval "${selected_endpoint}"
+        "${cli}" pane focus --pane-id "$1"
+    )
+}
+
+x11_keydown() {
+    xdotool windowfocus --sync "${ZENTTY_PRODUCT_WINDOW_ID}"
+    xdotool keydown "$1"
+}
+
+x11_keyup() {
+    xdotool windowfocus --sync "${ZENTTY_PRODUCT_WINDOW_ID}"
+    xdotool keyup "$1"
+}
+
+if [[ "${backend}" == x11 ]]; then
+    setxkbmap -layout us -variant '' -option ''
+    xset r rate 200 20
+    xset q >"${run_root}/x11-repeat.evidence"
+    read -r repeat_delay_ms repeat_rate < <(
+        awk '/auto repeat delay:/ { print $4, $7; exit }' "${run_root}/x11-repeat.evidence"
+    )
+    [[ "${repeat_delay_ms}" -eq 200 && "${repeat_rate}" -eq 20 ]] ||
+        fail "X11 server repeat configuration was not applied"
+    x11_keydown Shift_L
+    zentty_product_xdotool_key 29
+    x11_keyup Shift_L
+    zentty_product_xdotool_key Return
+    zentty_product_xdotool_key 29
+    zentty_product_xdotool_key Return
+else
+    driver_action shifted
+    driver_action tap
+fi
+
+zentty_product_wait_for_log "${receipt}" 'pane-1:shifted:Y:59' \
+    "ordered Shift input was not acknowledged" || fail "modifier ordering failed"
+zentty_product_wait_for_log "${receipt}" 'pane-1:plain:y:79' \
+    "post-release lowercase input was not acknowledged" || fail "modifier remained stuck"
+
+zentty_product_ctrl_key "${backend}" t
+zentty_product_wait_for_log "${product_log}" 'terminal-ready-pane=pane-2' \
+    "second real pane was not created" || fail "multi-pane setup failed"
+
+pane_1_focus_before="$(grep -Fc 'focus-pane pane=pane-1' "${product_log}" || true)"
+focus_pane pane-1
+zentty_product_wait_for_log_count "${product_log}" 'focus-pane pane=pane-1' \
+    "$((pane_1_focus_before + 1))" "public CLI did not restore pane 1 focus" ||
+    fail "pane 1 focus barrier failed"
+
+if [[ "${backend}" == x11 ]]; then
+    x11_keydown 29
+else
+    hold_evidence="${run_root}/hold.evidence"
+    "${repo_root}/target/debug/wayland-keycode-driver" \
+        --map us --keycode 21 --action hold --hold-ms "${hold_ms}" \
+        --receipt "${hold_evidence}" &
+    hold_pid=$!
+fi
+
+sleep 0.5
+pane_2_focus_before="$(grep -Fc 'focus-pane pane=pane-2' "${product_log}" || true)"
+focus_pane pane-2
+zentty_product_wait_for_log_count "${product_log}" 'focus-pane pane=pane-2' \
+    "$((pane_2_focus_before + 1))" "focus did not transfer while key was held" ||
+    fail "held-key focus transfer failed"
+
+if [[ "${backend}" == x11 ]]; then
+    sleep 0.6
+    x11_keyup 29
+    zentty_product_xdotool_key Return
+else
+    wait "${hold_pid}" || fail "Wayland held-key driver failed"
+    hold_pid=""
+    cat "${hold_evidence}"
+    read -r repeat_rate repeat_delay_ms < <(
+        sed -n 's/.* repeat_rate=\([0-9][0-9]*\) repeat_delay_ms=\([0-9][0-9]*\) .*/\1 \2/p' \
+            "${hold_evidence}"
+    )
+    [[ "${repeat_rate}" -gt 0 && "${repeat_delay_ms}" -gt 0 ]] ||
+        fail "Wayland compositor repeat configuration was not captured"
+fi
+
+zentty_product_wait_for_log "${receipt}" 'pane-2:repeat:' \
+    "focused pane 2 did not receive repeated input" || fail "repeat suffix missing"
+pane_1_focus_before="$(grep -Fc 'focus-pane pane=pane-1' "${product_log}" || true)"
+focus_pane pane-1
+zentty_product_wait_for_log_count "${product_log}" 'focus-pane pane=pane-1' \
+    "$((pane_1_focus_before + 1))" "pane 1 did not regain focus for prefix receipt" ||
+    fail "repeat prefix focus restoration failed"
+if [[ "${backend}" == x11 ]]; then
+    zentty_product_xdotool_key Return
+else
+    driver_action enter
+fi
+zentty_product_wait_for_log "${receipt}" 'pane-1:repeat:' \
+    "pane 1 did not retain the pre-transfer repeat prefix" || fail "repeat prefix missing"
+
+prefix_count="$(sed -n 's/^pane-1:repeat:\([0-9][0-9]*\)$/\1/p' "${receipt}")"
+suffix_count="$(sed -n 's/^pane-2:repeat:\([0-9][0-9]*\)$/\1/p' "${receipt}")"
+[[ "${prefix_count}" =~ ^[1-9][0-9]*$ && "${suffix_count}" =~ ^[1-9][0-9]*$ ]] ||
+    fail "repeat counts are incomplete"
+expected_max=$((1 + ((hold_ms - repeat_delay_ms) * repeat_rate / 1000) + 5))
+(( prefix_count + suffix_count <= expected_max )) ||
+    fail "repeat count exceeded captured configuration bound ${expected_max}"
+[[ "$(wc -l <"${receipt}")" -eq 4 ]] || fail "PTY receipt line count is not exact"
+
+settled_hash="$(sha256sum "${receipt}" | awk '{print $1}')"
+sleep 0.25
+[[ "$(sha256sum "${receipt}" | awk '{print $1}')" == "${settled_hash}" ]] ||
+    fail "input continued after physical key-up"
+
+zentty_product_close_window "${backend}"
+wait "${product_pid}" || fail "product did not exit cleanly"
+product_pid=""
+echo "rust-keyboard-repeat-${backend}: PASS repeat=${prefix_count}+${suffix_count}/${expected_max} rate=${repeat_rate} delay=${repeat_delay_ms} modifier-order focus-transfer key-up-stop real-pty"

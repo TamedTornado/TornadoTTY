@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+subject="${repo_root}/linux/tests/rust-keyboard-repeat"
+
+fail() {
+    echo "rust-keyboard-repeat-test: error: $*" >&2
+    exit 1
+}
+
+for backend in unsupported x11 wayland; do
+    output="$(
+        set +e
+        env -u ZENTTY_NESTED_X11_SESSION_ID -u ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID \
+            GDK_BACKEND="${backend}" ZENTTY_LINUX_BINARY=/bin/true "${subject}" 2>&1 || true
+    )"
+    case "${backend}" in
+        unsupported) expected='GDK_BACKEND must be x11 or wayland' ;;
+        x11) expected='X11 repeat qualification requires the private Xvfb session' ;;
+        wayland) expected='Wayland repeat qualification requires the private input session' ;;
+    esac
+    grep -Fq "${expected}" <<<"${output}" || fail "${backend} isolation rejection is absent"
+done
+
+grep -Fq 'xset r rate 200 20' "${subject}" || fail "X11 repeat configuration is not pinned"
+grep -Fq -- '--action hold --hold-ms "${hold_ms}"' "${subject}" ||
+    fail "Wayland held-key action is absent"
+grep -Fq "'pane-1:shifted:Y:59'" "${subject}" || fail "modifier ordering receipt is absent"
+grep -Fq "'pane-1:plain:y:79'" "${subject}" || fail "modifier release receipt is absent"
+grep -Fq 'input continued after physical key-up' "${subject}" ||
+    fail "post-key-up stability assertion is absent"
+
+echo "Rust keyboard repeat harness tests passed: isolation, bounded repeat, modifiers, focus, key-up"

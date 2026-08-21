@@ -94,6 +94,26 @@ harness, feature-inventory, ShellCheck, formatting, and Rust unit tests pass.
 This is focused GH-71 evidence, not a claim that the entire Linux matrix or
 GH-8 epic passes.
 
+## GH-72 driver-extension regression
+
+GH-72 extended the same opt-in raw-key driver with explicit modifier, hold,
+and Enter actions. That changed the reviewed XKB payload and receipt shape, so
+the Wayland layout journey was rerun rather than treating the earlier hashes as
+current. It passed in private Cage session
+`90ec7d67501f05b04d5cb6df490e355fef330227823ed5d4227b90266c475d84`
+over private Xvfb transport session
+`3529edfbac25f4b53fdabc80bd2568cca4c27df873372fac472ad133b5c11203`.
+The current receipt hashes are:
+
+```text
+us      525523d3481a8a32297937df912d9f13736c05677ffa1c9dd37d76f6609054f7
+de      6b30065dea0dfcd6278c528dfc02e56774c244a35dd822f8c5fd0424f3abdcc3
+remap   6d330a350b4452c016b3cfca333972703abc157fca1d48900e0e64e4003a3b17
+de      6b30065dea0dfcd6278c528dfc02e56774c244a35dd822f8c5fd0424f3abdcc3
+```
+
+The exact four-line PTY result remained unchanged.
+
 ## AI disclosure
 
 Investigation and implementation assistance were provided by OpenAI Codex
