@@ -90,7 +90,7 @@ activate_palette_action() {
     zentty_product_type "${backend}" "${query}"
     zentty_product_wait_for_log "${log}" \
         "zentty-linux: command-palette=query value=\"${query}\" results=1" \
-        'command palette did not resolve project refresh' || fail "refresh action absent"
+        'command palette did not resolve requested action' || fail "palette action absent: ${query}"
     zentty_product_key "${backend}" Down
     zentty_product_key "${backend}" Return
 }
@@ -119,6 +119,11 @@ zentty_product_wait_for_log "${enabled_log}" \
 ! grep -Fq 'project-icon-projected owner=sidebar:' "${enabled_log}" ||
     fail "source-incompatible project icon was repeated in a sidebar pane row"
 
+activate_palette_action "${enabled_log}" 'Split Right'
+zentty_product_wait_for_log "${enabled_log}" \
+    'zentty-linux: terminal-ready-pane=pane-2' \
+    'second real pane did not become ready' || fail "split pane absent"
+
 if zentty_product_uses_xdotool "${backend}"; then
     if [[ "${ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT:-}" == 1 ]]; then
         xdotool windowfocus --sync "${ZENTTY_PRODUCT_WINDOW_ID}"
@@ -130,12 +135,16 @@ if zentty_product_uses_xdotool "${backend}"; then
     fi
     sleep 0.3
     xdotool keyup Tab
+    xdotool key Left
 else
-    wtype -M ctrl -P Tab -s 300 -p Tab -s 100 -m ctrl
+    wtype -M ctrl -P Tab -s 300 -p Tab -k Left -s 100 -m ctrl
 fi
 zentty_product_wait_for_log "${enabled_log}" \
     "zentty-linux: project-icon-projected owner=worklane-peek:pane-1 path=${canonical_icon} decoded=true" \
     'Worklane Peek did not decode the real SVG' || fail "peek icon absent"
+zentty_product_wait_for_log "${enabled_log}" \
+    'zentty-linux: worklane-peek-transition mode=animated animations-enabled=true' \
+    'ordinary Peek traversal did not use bounded motion' || fail "normal Peek transition absent"
 if zentty_product_uses_xdotool "${backend}"; then
     xdotool keyup ctrl
 fi
@@ -146,6 +155,11 @@ cat >"${XDG_CONFIG_HOME}/zentty/config.toml" <<'TOML'
 [panes]
 show_project_icons = false
 TOML
+mkdir -p "${XDG_CONFIG_HOME}/gtk-4.0"
+cat >"${XDG_CONFIG_HOME}/gtk-4.0/settings.ini" <<'INI'
+[Settings]
+gtk-enable-animations=false
+INI
 start_product "${disabled_log}"
 zentty_product_wait_for_log "${disabled_log}" \
     "zentty-linux: project-icon pane=pane-1 path=${canonical_icon} result=resolved" \
@@ -154,4 +168,41 @@ sleep 0.3
 ! grep -Fq 'project-icon-projected owner=' "${disabled_log}" ||
     fail "show_project_icons=false still projected an icon"
 
-echo "Rust project icons passed: ${backend}, containment=real, invalidation=physical, decode=real, sidebar-pane-prefix=absent, chrome=visible, peek=visible, opt-out=hidden"
+activate_palette_action "${disabled_log}" 'Split Right'
+zentty_product_wait_for_log "${disabled_log}" \
+    'zentty-linux: terminal-ready-pane=pane-2' \
+    'reduced-motion second pane did not become ready' || fail "reduced-motion split absent"
+if zentty_product_uses_xdotool "${backend}"; then
+    if [[ "${ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT:-}" == 1 ]]; then
+        xdotool windowfocus --sync "${ZENTTY_PRODUCT_WINDOW_ID}"
+        xdotool keydown ctrl
+        xdotool keydown Tab
+    else
+        xdotool keydown --window "${ZENTTY_PRODUCT_WINDOW_ID}" ctrl
+        xdotool keydown --window "${ZENTTY_PRODUCT_WINDOW_ID}" Tab
+    fi
+    sleep 0.3
+    xdotool keyup Tab
+    xdotool key Left
+    xdotool keyup ctrl
+else
+    wtype -M ctrl -P Tab -s 300 -p Tab -k Left -s 100 -m ctrl
+fi
+if [[ "${backend}" == x11 ]]; then
+    zentty_product_wait_for_log "${disabled_log}" \
+        'zentty-linux: worklane-peek-transition mode=animated animations-enabled=false' \
+        'reduced-motion Peek traversal did not hard-update' || fail "reduced-motion transition absent"
+    motion_receipt="normal-and-reduced"
+else
+    # Cage's nested Wayland settings provider intentionally owns this setting
+    # and reports animations enabled despite a private GTK settings.ini. Do not
+    # misreport that environmental policy as reduced-motion coverage; the X11
+    # controlled profile above owns that exact cell.
+    zentty_product_wait_for_log "${disabled_log}" \
+        'zentty-linux: worklane-peek-transition mode=animated animations-enabled=true' \
+        'controlled Wayland animation policy was not reported' || fail "Wayland motion receipt absent"
+    motion_receipt="normal; reduced-motion=x11-owned"
+fi
+stop_product
+
+echo "Rust project icons passed: ${backend}, containment=real, invalidation=physical, decode=real, sidebar-pane-prefix=absent, chrome=visible, peek=visible, motion=${motion_receipt}, opt-out=hidden"

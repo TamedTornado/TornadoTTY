@@ -20,7 +20,7 @@ use crate::{
     window_chrome::WindowChrome,
     worklane_peek::{
         self, Direction as PeekDirection, PanePreview, Phase as PeekPhase,
-        SpatialDirection as PeekSpatialDirection, WorklanePeekView,
+        SpatialDirection as PeekSpatialDirection, Transition as PeekTransition, WorklanePeekView,
     },
 };
 use gtk::gdk;
@@ -176,7 +176,7 @@ pub(crate) struct ApplicationShell {
     pane_box: gtk::Box,
     rendered_columns: RefCell<BTreeMap<String, gtk::Overlay>>,
     last_vertical_divider: RefCell<Option<(String, String)>>,
-    background_agent_host: gtk::Box,
+    background_agent_host: gtk::Overlay,
     state: WorkspaceState,
     pane_runtime: PaneRuntimeCoordinator,
     config: AppConfig,
@@ -194,6 +194,7 @@ pub(crate) struct ApplicationShell {
     peek_phase: PeekPhase,
     peek_generation: u64,
     peek_tab_down: bool,
+    peek_refresh_pending: Cell<bool>,
     peek_view: WorklanePeekView,
     command_palette: CommandPaletteView,
     restore_notice: RestoreNotice,
@@ -268,7 +269,7 @@ struct ShellWidgets {
     sidebar_hover_rail: gtk::Box,
     pane_scroll: gtk::ScrolledWindow,
     pane_box: gtk::Box,
-    background_agent_host: gtk::Box,
+    background_agent_host: gtk::Overlay,
     peek_view: WorklanePeekView,
     command_palette: CommandPaletteView,
     restore_notice: RestoreNotice,
@@ -467,6 +468,7 @@ impl ApplicationShell {
             peek_phase: PeekPhase::Idle,
             peek_generation: 0,
             peek_tab_down: false,
+            peek_refresh_pending: Cell::new(false),
             peek_view,
             command_palette,
             restore_notice,
@@ -1110,16 +1112,35 @@ impl ApplicationShell {
     }
 
     fn mount_background_restored_agents(&self) {
+        clear_overlay_children(&self.background_agent_host);
         let active_panes = self.state.active_pane_ids();
         for pane_id in self.restored_pane_commands.keys() {
             if active_panes.iter().any(|active| active == pane_id) {
                 continue;
             }
             if let Some(frame) = self.pane_runtime.frame(pane_id) {
-                self.background_agent_host.append(frame.widget());
+                remove_frame_from_parent(frame.widget());
+                self.background_agent_host.add_overlay(frame.widget());
                 eprintln!("zentty-linux: background-agent-host pane={pane_id}");
             }
         }
+    }
+
+    fn mount_live_peek_surfaces(&self) {
+        clear_overlay_children(&self.background_agent_host);
+        let active_panes = self.state.active_pane_ids();
+        let mut mounted = 0;
+        for pane_id in self.pane_runtime.live_pane_ids() {
+            if active_panes.iter().any(|active| *active == pane_id) {
+                continue;
+            }
+            if let Some(frame) = self.pane_runtime.frame(&pane_id) {
+                remove_frame_from_parent(frame.widget());
+                self.background_agent_host.add_overlay(frame.widget());
+                mounted += 1;
+            }
+        }
+        eprintln!("zentty-linux: worklane-peek-live-surfaces mounted={mounted}");
     }
 
     pub(crate) fn sidebar_container(&self) -> &gtk::ScrolledWindow {
@@ -1223,7 +1244,7 @@ impl ApplicationShell {
         gtk::prelude::GtkWindowExt::set_focus(&self.window, gtk::Widget::NONE);
         self.window.set_default_widget(gtk::Widget::NONE);
         clear_pane_columns(&self.pane_box);
-        clear_box_children(&self.background_agent_host);
+        clear_overlay_children(&self.background_agent_host);
         self.pane_runtime.detach_widgets();
         // The shell retains `sidebar` after detaching the root widget. Clear
         // its cards explicitly so their menu popovers and window-capturing
@@ -1559,6 +1580,8 @@ impl ApplicationShell {
                 current,
                 traversal,
             } => {
+                let transition =
+                    worklane_peek::transition_for_step(&traversal, &current, direction);
                 let Some(next) = worklane_peek::step(&traversal, &current, direction) else {
                     return;
                 };
@@ -1571,7 +1594,7 @@ impl ApplicationShell {
                     current: next,
                     traversal,
                 };
-                Self::refresh_peek_view(shell);
+                Self::refresh_peek_view(shell, transition);
             }
         }
     }
@@ -1607,6 +1630,12 @@ impl ApplicationShell {
         if matches!(shell.borrow().peek_phase, PeekPhase::Peeking { .. }) {
             return;
         }
+        if shell.borrow().shutting_down {
+            shell.borrow_mut().peek_phase = PeekPhase::Idle;
+            shell.borrow_mut().peek_tab_down = false;
+            eprintln!("zentty-linux: worklane-peek=rejected reason=closing");
+            return;
+        }
         let traversal = shell.borrow().pane_references_in_sidebar_order();
         let Some(origin) = shell.borrow().current_pane_reference() else {
             Self::cancel_peek(shell);
@@ -1617,8 +1646,9 @@ impl ApplicationShell {
             current: origin,
             traversal,
         };
+        shell.borrow().mount_live_peek_surfaces();
         eprintln!("zentty-linux: worklane-peek=open trigger={trigger}");
-        Self::refresh_peek_view(shell);
+        Self::refresh_peek_view(shell, PeekTransition::HardCut);
     }
 
     fn toggle_product_zoom(shell: &Rc<RefCell<Self>>) {
@@ -1644,6 +1674,7 @@ impl ApplicationShell {
             PeekPhase::Peeking { current, .. } => {
                 shell.borrow_mut().peek_phase = PeekPhase::Idle;
                 shell.borrow().peek_view.hide();
+                shell.borrow().mount_background_restored_agents();
                 shell.borrow_mut().select_pane_reference(&current, true);
                 eprintln!(
                     "zentty-linux: worklane-peek=commit worklane={} pane={}",
@@ -1657,10 +1688,29 @@ impl ApplicationShell {
         let phase = shell.borrow().peek_phase.clone();
         shell.borrow_mut().peek_phase = PeekPhase::Idle;
         shell.borrow().peek_view.hide();
+        shell.borrow().mount_background_restored_agents();
         if let PeekPhase::Peeking { original, .. } = phase {
             shell.borrow_mut().select_pane_reference(&original, true);
         }
         eprintln!("zentty-linux: worklane-peek=cancel");
+    }
+
+    pub(crate) fn cancel_peek_for_window_event(shell: &Rc<RefCell<Self>>, reason: &str) -> bool {
+        if !shell.borrow().peek_phase.is_active() {
+            return false;
+        }
+        let phase = shell.borrow().peek_phase.clone();
+        shell.borrow_mut().peek_phase = PeekPhase::Idle;
+        shell.borrow_mut().peek_tab_down = false;
+        shell.borrow().peek_view.hide();
+        shell.borrow().mount_background_restored_agents();
+        if let PeekPhase::Peeking { original, .. } = phase {
+            shell
+                .borrow_mut()
+                .select_pane_reference(&original, reason == "window-resized");
+        }
+        eprintln!("zentty-linux: worklane-peek=window-cancel reason={reason}");
+        true
     }
 
     fn refocus_after_peek_key_release(shell: &Rc<RefCell<Self>>) {
@@ -1702,7 +1752,7 @@ impl ApplicationShell {
             "zentty-linux: worklane-peek=spatial worklane={} pane={}",
             target.worklane_id, target.pane_id
         );
-        Self::refresh_peek_view(shell);
+        Self::refresh_peek_view(shell, PeekTransition::Animated);
     }
 
     fn preview_peek_selection(shell: &Rc<RefCell<Self>>, target: &PaneReference) {
@@ -1727,10 +1777,10 @@ impl ApplicationShell {
             "zentty-linux: worklane-peek=click worklane={} pane={}",
             target.worklane_id, target.pane_id
         );
-        Self::refresh_peek_view(shell);
+        Self::refresh_peek_view(shell, PeekTransition::Animated);
     }
 
-    fn refresh_peek_view(shell: &Rc<RefCell<Self>>) {
+    fn refresh_peek_view(shell: &Rc<RefCell<Self>>, transition: PeekTransition) {
         let selected = shell.borrow().peek_phase.selected().cloned();
         let Some(selected) = selected else {
             return;
@@ -1740,7 +1790,7 @@ impl ApplicationShell {
         shell
             .borrow()
             .peek_view
-            .render(previews, &selected, move |target| {
+            .render(previews, &selected, transition, move |target| {
                 if let Some(shell) = weak.upgrade() {
                     Self::preview_peek_selection(&shell, &target);
                 }
@@ -3872,7 +3922,7 @@ impl ApplicationShell {
         column_box.set_vexpand(true);
         for pane in &column.panes {
             if let Some(frame) = self.pane_runtime.frame(&pane.id) {
-                remove_frame_from_box_parent(frame.widget());
+                remove_frame_from_parent(frame.widget());
                 column_box.append(frame.widget());
             }
         }
@@ -4341,6 +4391,7 @@ impl ApplicationShell {
         );
         self.render_chrome(&summaries);
         self.schedule_active_worklane_reveal();
+        self.schedule_live_peek_refresh();
     }
 
     fn refresh_sidebar_metadata(&self) {
@@ -4366,6 +4417,26 @@ impl ApplicationShell {
         self.schedule_active_worklane_reveal();
         self.refresh_pane_presentation();
         self.refresh_pane_layout_action_availability();
+        self.schedule_live_peek_refresh();
+    }
+
+    fn schedule_live_peek_refresh(&self) {
+        if !matches!(self.peek_phase, PeekPhase::Peeking { .. })
+            || self.peek_refresh_pending.replace(true)
+        {
+            return;
+        }
+        let weak = self.self_handle.borrow().clone();
+        glib::idle_add_local_once(move || {
+            let Some(shell) = weak.upgrade() else {
+                return;
+            };
+            shell.borrow().peek_refresh_pending.set(false);
+            if matches!(shell.borrow().peek_phase, PeekPhase::Peeking { .. }) {
+                eprintln!("zentty-linux: worklane-peek=live-refresh");
+                Self::refresh_peek_view(&shell, PeekTransition::HardCut);
+            }
+        });
     }
 
     fn refresh_project_context_presentation(&self) {
@@ -4672,38 +4743,56 @@ impl ApplicationShell {
     }
 
     fn peek_previews(&self) -> Vec<PanePreview> {
-        self.state
-            .worklanes()
-            .iter()
-            .enumerate()
-            .flat_map(|(worklane_index, worklane)| {
-                let worklane_title = worklane
-                    .title
-                    .clone()
-                    .unwrap_or_else(|| format!("Worklane {}", worklane_index + 1));
-                worklane.columns.iter().flat_map(move |column| {
-                    let worklane_title = worklane_title.clone();
-                    column.panes.iter().filter_map(move |pane| {
-                        let terminal = self.pane_runtime.surface(&pane.id)?.widget().clone();
-                        Some(PanePreview {
-                            reference: PaneReference::new(&worklane.id, &pane.id),
-                            worklane_title: worklane_title.clone(),
-                            pane_title: pane
-                                .custom_title
-                                .clone()
-                                .unwrap_or_else(|| pane.live_title.clone()),
-                            terminal,
-                            project_icon_path: self
-                                .config
-                                .panes
-                                .show_project_icons
-                                .then(|| self.project_context_runtime.icons.get(&pane.id).cloned())
-                                .flatten(),
-                        })
-                    })
-                })
-            })
-            .collect()
+        let summaries = self
+            .sidebar_summaries()
+            .into_iter()
+            .flat_map(|worklane| worklane.pane_rows)
+            .map(|pane| (pane.pane_id.clone(), pane))
+            .collect::<BTreeMap<_, _>>();
+        let mut previews = Vec::new();
+        for (worklane_index, worklane) in self.state.worklanes().iter().enumerate() {
+            let worklane_title = worklane
+                .title
+                .clone()
+                .unwrap_or_else(|| format!("Worklane {}", worklane_index + 1));
+            for pane in worklane.columns.iter().flat_map(|column| &column.panes) {
+                let Some(terminal) = self.pane_runtime.surface(&pane.id) else {
+                    continue;
+                };
+                let summary = summaries.get(&pane.id);
+                let agent = summary
+                    .and_then(|summary| summary.agent_status.as_ref())
+                    .map(crate::agent_status_view::present);
+                let project_context = summary.and_then(|summary| summary.project_context.as_ref());
+                let folder = pane
+                    .working_directory
+                    .as_deref()
+                    .and_then(|path| std::path::Path::new(path).file_name())
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .or_else(|| {
+                        project_context
+                            .and_then(|context| context.repository_root.file_name())
+                            .map(|name| name.to_string_lossy().into_owned())
+                    });
+                previews.push(PanePreview {
+                    reference: PaneReference::new(&worklane.id, &pane.id),
+                    worklane_title: worklane_title.clone(),
+                    pane_title: pane
+                        .custom_title
+                        .clone()
+                        .unwrap_or_else(|| pane.live_title.clone()),
+                    terminal: terminal.widget().clone(),
+                    project_icon_path: summary
+                        .and_then(|summary| summary.project_icon_path.clone()),
+                    folder,
+                    branch: project_context.map(|context| context.reference.display()),
+                    agent_status: agent.as_ref().map(|presentation| presentation.text.clone()),
+                    requires_attention: agent
+                        .is_some_and(|presentation| presentation.requires_attention),
+                });
+            }
+        }
+        previews
     }
 
     fn refresh_pane_presentation(&self) {
@@ -5140,7 +5229,7 @@ fn build_shell_widgets() -> ShellWidgets {
     let terminal_overlay = gtk::Overlay::new();
     terminal_overlay.set_hexpand(true);
     terminal_overlay.set_vexpand(true);
-    let background_agent_host = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    let background_agent_host = gtk::Overlay::new();
     background_agent_host.set_hexpand(true);
     background_agent_host.set_vexpand(true);
     background_agent_host.set_can_target(false);
@@ -5305,19 +5394,20 @@ fn clear_pane_columns(container: &gtk::Box) {
     }
 }
 
-fn clear_box_children(container: &gtk::Box) {
+fn clear_overlay_children(container: &gtk::Overlay) {
     while let Some(child) = container.first_child() {
-        container.remove(&child);
+        container.remove_overlay(&child);
     }
 }
 
-fn remove_frame_from_box_parent(frame: &impl IsA<gtk::Widget>) {
-    if let Some(parent) = frame
-        .as_ref()
-        .parent()
-        .and_then(|parent| parent.downcast::<gtk::Box>().ok())
-    {
+fn remove_frame_from_parent(frame: &impl IsA<gtk::Widget>) {
+    let Some(parent) = frame.as_ref().parent() else {
+        return;
+    };
+    if let Ok(parent) = parent.clone().downcast::<gtk::Box>() {
         parent.remove(frame);
+    } else if let Ok(parent) = parent.downcast::<gtk::Overlay>() {
+        parent.remove_overlay(frame);
     }
 }
 

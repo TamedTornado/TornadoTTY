@@ -512,7 +512,16 @@ impl ApplicationCoordinator {
             .borrow()
             .window()
             .connect_is_active_notify(move |window| {
-                if teardown_active.get() || !window.is_active() {
+                if teardown_active.get() {
+                    return;
+                }
+                if !window.is_active() {
+                    if let Some(shell) = weak_shell.upgrade() {
+                        ApplicationShell::cancel_peek_for_window_event(
+                            &shell,
+                            "window-deactivated",
+                        );
+                    }
                     return;
                 }
                 if let Some(shell) = weak_shell.upgrade() {
@@ -536,6 +545,7 @@ impl ApplicationCoordinator {
                 return glib::Propagation::Proceed;
             }
             if let Some(shell) = weak_shell.upgrade() {
+                ApplicationShell::cancel_peek_for_window_event(&shell, "window-close-request");
                 shell.borrow().request_close_window();
             }
             glib::Propagation::Stop
@@ -1127,10 +1137,10 @@ impl ApplicationCoordinator {
                 );
             }
         }
-        for (id, shell) in &self.shells {
+        for (id, shell_ref) in &self.shells {
             for command in servers_by_window.remove(id).unwrap_or_default() {
                 let reply = crate::application_shell::server_runtime::handle_ipc(
-                    shell,
+                    shell_ref,
                     &command.target,
                     &command.request,
                 );
@@ -1139,25 +1149,30 @@ impl ApplicationCoordinator {
                 }
             }
             ApplicationShell::apply_agent_inputs(
-                shell,
+                shell_ref,
                 tmux_by_window.remove(id).unwrap_or_default(),
                 events_by_window.remove(id).unwrap_or_default(),
             );
-            let shell = shell.borrow_mut();
+            let shell = shell_ref.borrow();
             shell.reconcile_sidebar_width();
             shell.reconcile_pane_heights();
             let window_size = (shell.window().width(), shell.window().height());
+            let sidebar_width = shell.sidebar_container().width();
+            drop(shell);
             if window_size.0 > 0
                 && window_size.1 > 0
                 && self.last_window_sizes.get(id) != Some(&window_size)
             {
+                let previous_size = self.last_window_sizes.get(id).copied();
+                if previous_size.is_some() {
+                    ApplicationShell::cancel_peek_for_window_event(shell_ref, "window-resized");
+                }
                 eprintln!(
                     "zentty-linux: window-size={}x{}",
                     window_size.0, window_size.1
                 );
                 self.last_window_sizes.insert(id.clone(), window_size);
             }
-            let sidebar_width = shell.sidebar_container().width();
             if sidebar_width > 0 && self.last_sidebar_widths.get(id) != Some(&sidebar_width) {
                 eprintln!("zentty-linux: sidebar-width={sidebar_width}");
                 self.last_sidebar_widths.insert(id.clone(), sidebar_width);

@@ -618,6 +618,42 @@ if [[ "${ZENTTY_MULTI_WINDOW_FLEET_ONLY:-false}" != true &&
 start_product
 create_second_window
 
+# Worklane Peek is window-local. Open it through real input in the second X11
+# toplevel, then transfer compositor focus to the first toplevel. Deactivation
+# must cancel the second window's overlay; no picker may remain mapped over an
+# inactive product window or intercept input intended for its sibling.
+if [[ "${backend}" == x11 ]]; then
+    second_window_id="${ZENTTY_PRODUCT_WINDOW_ID}"
+    first_window_id=""
+    while read -r candidate_id; do
+        [[ "${candidate_id}" == "${second_window_id}" ]] && continue
+        xprop -id "${candidate_id}" _NET_WM_WINDOW_TYPE 2>/dev/null |
+            grep -Fq '_NET_WM_WINDOW_TYPE_NORMAL' || continue
+        first_window_id="${candidate_id}"
+        break
+    done < <(xdotool search --onlyvisible --pid "${product_pid}" --name '^Zentty$' 2>/dev/null)
+    [[ "${first_window_id}" =~ ^[1-9][0-9]*$ ]] || fail "first X11 window identity missing for Peek isolation"
+    peek_cancel_before="$(grep -Fc 'zentty-linux: worklane-peek=window-cancel reason=window-deactivated' "${log}" || true)"
+    xdotool windowfocus --sync "${second_window_id}"
+    xdotool keydown ctrl
+    xdotool keydown Tab
+    sleep 0.3
+    xdotool keyup Tab
+    zentty_product_wait_for_log "${log}" 'zentty-linux: worklane-peek=open trigger=tab-hold' \
+        "second-window Peek did not open" || fail "window-local Peek open missing"
+    xdotool windowfocus --sync "${first_window_id}"
+    xdotool keyup ctrl
+    for _ in {1..100}; do
+        (( $(grep -Fc 'zentty-linux: worklane-peek=window-cancel reason=window-deactivated' "${log}" || true) > peek_cancel_before )) && break
+        sleep 0.05
+    done
+    (( $(grep -Fc 'zentty-linux: worklane-peek=window-cancel reason=window-deactivated' "${log}" || true) > peek_cancel_before )) ||
+        fail "deactivating the Peek owner did not cancel its overlay"
+    ZENTTY_PRODUCT_WINDOW_ID="${second_window_id}"
+    export ZENTTY_PRODUCT_WINDOW_ID
+    xdotool windowfocus --sync "${second_window_id}"
+fi
+
 # A worklane close uses the same typed live-work authority as pane, window,
 # and application close. Exercise its exact target, cancellation, acceptance,
 # and survivor PTY before changing window count.

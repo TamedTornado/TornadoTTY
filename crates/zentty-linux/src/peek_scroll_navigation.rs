@@ -129,4 +129,45 @@ mod tests {
         assert!(SOURCE.contains("static let wheel: CGFloat = 1"));
         assert!(SOURCE.contains("delta > 0 ? .down : .up"));
     }
+
+    #[test]
+    fn precise_scroll_reset_cancels_partial_and_completed_gestures() {
+        let mut gesture = PeekScrollNavigation::default();
+        assert_eq!(
+            gesture.handle(-39.0, -2.0, ScrollUnit::Surface),
+            Result::Consumed
+        );
+        gesture.reset();
+        assert_eq!(
+            gesture.handle(-2.0, -39.0, ScrollUnit::Surface),
+            Result::Consumed
+        );
+        assert_eq!(
+            gesture.handle(-1.0, -2.0, ScrollUnit::Surface),
+            Result::Navigate(Direction::Up)
+        );
+        assert_eq!(
+            gesture.handle(0.0, -100.0, ScrollUnit::Surface),
+            Result::Consumed
+        );
+        gesture.reset();
+        assert_eq!(
+            gesture.handle(-40.0, 0.0, ScrollUnit::Surface),
+            Result::Navigate(Direction::Left)
+        );
+    }
+
+    #[test]
+    fn delivered_natural_scroll_sign_is_not_inverted() {
+        let mut gesture = PeekScrollNavigation::default();
+        assert_eq!(
+            gesture.handle(0.0, 40.0, ScrollUnit::Surface),
+            Result::Navigate(Direction::Down)
+        );
+        gesture.reset();
+        assert_eq!(
+            gesture.handle(40.0, 0.0, ScrollUnit::Surface),
+            Result::Navigate(Direction::Right)
+        );
+    }
 }

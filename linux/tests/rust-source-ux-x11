@@ -29,13 +29,16 @@ trap cleanup EXIT
 [[ "${GDK_BACKEND:-}" == x11 ]] || fail "GDK_BACKEND must be x11"
 [[ "${ZENTTY_NESTED_X11_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
     fail "the source UX scenario must run through linux/tests/nested-x11"
-for dependency in cut grep head mktemp readelf readlink sed seq sleep tail timeout xdotool; do
+for dependency in compare convert cut grep head identify import mktemp readelf readlink sed seq sha256sum sleep tail timeout xdotool; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
 [[ -x "${product}" ]] || fail "delivered Rust product is not built: ${product}"
 zentty_product_bundle_resolve "${product}" || fail "staged product bundle is invalid"
 product="${ZENTTY_PRODUCT_BINARY}"
 bundle_lib="${ZENTTY_PRODUCT_BUNDLE_LIB}"
+screenshot_dir="${repo_root}/build/linux-test-receipts/worklane-peek"
+rm -rf -- "${screenshot_dir}"
+mkdir -p -- "${screenshot_dir}"
 
 log="$(mktemp)"
 state_directory="$(mktemp -d)"
@@ -62,7 +65,7 @@ TOML
         GDK_DPI_SCALE=1 \
         LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
         "${product}" \
-        --command 'printf "\033]2;zentty-title-one\a"; sleep 0.2; printf "\033]2;zentty-title-two\a"; while IFS= read -r line; do printf "\033]2;focus:%s\a" "$line"; done' \
+        --command 'printf "\033]2;zentty-title-one\a"; sleep 0.2; printf "\033]2;zentty-title-two\a"; while IFS= read -r line; do if [ "$line" = peek-live-start ]; then (sleep 1.5; printf "%s" "{\"version\":1,\"event\":\"session.start\",\"agent\":{\"name\":\"Codex\"},\"session\":{\"id\":\"peek-live-agent\"}}" | "$ZENTTY_CLI_BIN" ipc agent-event; printf "%s" "{\"version\":1,\"event\":\"agent.running\",\"agent\":{\"name\":\"Codex\"},\"session\":{\"id\":\"peek-live-agent\"}}" | "$ZENTTY_CLI_BIN" ipc agent-event; printf "%s" "{\"version\":1,\"event\":\"task.progress\",\"session\":{\"id\":\"peek-live-agent\"},\"progress\":{\"done\":2,\"total\":5}}" | "$ZENTTY_CLI_BIN" ipc agent-event; sleep 0.3; i=0; while [ "$i" -lt 80 ]; do i=$((i + 1)); printf "\033]2;peek-live:%s\a" "$i"; if [ "$i" -eq 10 ]; then printf "%s" "{\"version\":1,\"event\":\"agent.needs-input\",\"agent\":{\"name\":\"Codex\"},\"session\":{\"id\":\"peek-live-agent\"},\"state\":{\"text\":\"Approve deployment to the production environment for the frontend worklane?\",\"interaction\":{\"kind\":\"approval\",\"text\":\"Approve deployment to the production environment for the frontend worklane?\"}}}" | "$ZENTTY_CLI_BIN" ipc agent-event; fi; sleep 0.05; done) & else printf "\033]2;focus:%s\a" "$line"; fi; done' \
         --state-directory "${state_directory}" \
         --no-session-restore
 ) >"${log}" 2>&1 &
@@ -91,6 +94,35 @@ hover_pane_controls() {
         sleep 0.05
     done
     fail "pane controls did not become visible for ${pane_id}"
+}
+
+capture_peek_screenshot() {
+    local name="$1"
+    local image="${screenshot_dir}/${name}.png"
+    local pane card x y width
+    # Geometry is emitted from GTK's frame tick before Xvfb necessarily
+    # presents those pixels. Let the private software renderer settle one
+    # bounded frame interval before reading the drawable.
+    sleep 0.1
+    import -silent -window "${window_id}" "${image}"
+    [[ "$(identify -format '%wx%h' "${image}")" == 1200x700 ]] ||
+        fail "${name} Peek screenshot did not preserve controlled 1200x700 geometry"
+    # Mask only each card's live terminal picture. Borders, headings,
+    # selection, context, attention, and labels remain real pixels.
+    for pane in pane-1 pane-3 pane-2 pane-5 pane-6; do
+        card="$(grep -F 'zentty-linux: worklane-peek-card ' "${log}" |
+            grep -F " pane=${pane} " | tail -1 || true)"
+        [[ -n "${card}" ]] || continue
+        printf '%s\n' "${card}" >>"${screenshot_dir}/${name}.geometry"
+        x="$(sed -n 's/.* x=\([0-9][0-9]*\) .*/\1/p' <<<"${card}")"
+        y="$(sed -n 's/.* y=\([0-9][0-9]*\) .*/\1/p' <<<"${card}")"
+        width="$(sed -n 's/.* width=\([0-9][0-9]*\) .*/\1/p' <<<"${card}")"
+        [[ "${x}${y}${width}" =~ ^[0-9]+$ ]] ||
+            fail "${name} Peek screenshot card geometry malformed"
+        convert "${image}" -fill '#080b10' \
+            -draw "rectangle $((x + 8)),$((y + 8)),$((x + width - 8)),$((y + 150))" \
+            "${image}"
+    done
 }
 
 accept_latest_pane_confirmation() {
@@ -650,7 +682,17 @@ done
 (( $(grep -Fxc 'zentty-linux: worklane-peek=mapped' "${log}" || true) > peek_mapped_before )) ||
     fail "held Worklane Peek did not map before pointer selection"
 xdotool keyup --window "${window_id}" Tab
-xdotool mousemove --window "${window_id}" 600 270 click 1
+peek_card="$(grep -F 'zentty-linux: worklane-peek-card worklane=worklane-1 pane=pane-1 ' "${log}" | tail -1)"
+[[ -n "${peek_card}" ]] || fail "the first Worklane Peek card reported no real GTK geometry"
+peek_card_x="$(sed -n 's/.* x=\([0-9][0-9]*\) .*/\1/p' <<<"${peek_card}")"
+peek_card_y="$(sed -n 's/.* y=\([0-9][0-9]*\) .*/\1/p' <<<"${peek_card}")"
+peek_card_width="$(sed -n 's/.* width=\([0-9][0-9]*\) .*/\1/p' <<<"${peek_card}")"
+peek_card_height="$(sed -n 's/.* height=\([0-9][0-9]*\).*/\1/p' <<<"${peek_card}")"
+[[ "${peek_card_x}${peek_card_y}${peek_card_width}${peek_card_height}" =~ ^[0-9]+$ ]] ||
+    fail "the first Worklane Peek card geometry was malformed"
+xdotool mousemove --window "${window_id}" \
+    "$((peek_card_x + peek_card_width / 2))" \
+    "$((peek_card_y + peek_card_height / 2))" click 1
 for _ in $(seq 1 100); do
     grep -Fxq 'zentty-linux: worklane-peek=click worklane=worklane-1 pane=pane-1' "${log}" && break
     sleep 0.05
@@ -660,6 +702,24 @@ grep -Fxq 'zentty-linux: worklane-peek=click worklane=worklane-1 pane=pane-1' "$
 xdotool keyup --window "${window_id}" ctrl
 grep -Fxq 'zentty-linux: worklane-peek=commit worklane=worklane-1 pane=pane-1' "${log}" ||
     fail "the clicked Worklane Peek card was not committed on Control release"
+
+# A live external resize invalidates every preview allocation. The product must
+# cancel instead of animating or accepting a click against stale card geometry.
+resize_cancel_before="$(grep -Fc 'zentty-linux: worklane-peek=window-cancel reason=window-resized' "${log}" || true)"
+xdotool keydown --window "${window_id}" ctrl
+xdotool keydown --window "${window_id}" Tab
+sleep 0.3
+xdotool keyup --window "${window_id}" Tab
+xdotool windowsize --sync "${window_id}" 1180 700
+for _ in $(seq 1 100); do
+    (( $(grep -Fc 'zentty-linux: worklane-peek=window-cancel reason=window-resized' "${log}" || true) > resize_cancel_before )) && break
+    sleep 0.05
+done
+xdotool keyup --window "${window_id}" ctrl
+(( $(grep -Fc 'zentty-linux: worklane-peek=window-cancel reason=window-resized' "${log}" || true) > resize_cancel_before )) ||
+    fail "external resize did not cancel Worklane Peek"
+xdotool windowsize --sync "${window_id}" 1200 700
+sleep 0.15
 
 # Return to pane 2 so the existing horizontal-scroll assertions retain their
 # source-pinned starting state.
@@ -968,6 +1028,150 @@ done
 grep -Fxq 'zentty-linux: title-pane=pane-5 value=focus:arranged-pane' "${log}" ||
     fail "keyboard input did not reach the arranged real Ghostty PTY"
 
+# Build a real neighboring worklane only after the pane-layout journey has
+# finished, so Peek can prove the source's live multi-worklane meaning without
+# perturbing the earlier identity-sensitive layout assertions. Pane 5 keeps
+# emitting OSC titles while it is inactive; a Peek live-refresh receipt tied to
+# those title changes rejects a cached screenshot/card approximation.
+xdotool type --delay 10 'peek-live-start'
+xdotool key Return
+xdotool key ctrl+t
+for _ in $(seq 1 160); do
+    grep -Fxq 'zentty-linux: action=new-worklane id=worklane-2 pane=pane-6' "${log}" &&
+        grep -Fxq 'zentty-linux: terminal-ready-pane=pane-6' "${log}" && break
+    sleep 0.05
+done
+grep -Fxq 'zentty-linux: terminal-ready-pane=pane-6' "${log}" ||
+    fail "the neighboring worklane did not own a real Ghostty PTY"
+for _ in $(seq 1 100); do
+    grep -Fxq 'zentty-linux: title-pane=pane-6 value=zentty-title-two' "${log}" && break
+    sleep 0.05
+done
+grep -Fxq 'zentty-linux: title-pane=pane-6 value=zentty-title-two' "${log}" ||
+    fail "the neighboring PTY child did not finish its real startup handshake"
+focus_pane_six_before_peek="$(grep -Fc 'zentty-linux: focus-pane pane=pane-6' "${log}" || true)"
+xdotool mousemove --sync --window "${window_id}" 750 350 click 1
+for _ in $(seq 1 100); do
+    (( $(grep -Fc 'zentty-linux: focus-pane pane=pane-6' "${log}" || true) > focus_pane_six_before_peek )) && break
+    sleep 0.05
+done
+(( $(grep -Fc 'zentty-linux: focus-pane pane=pane-6' "${log}" || true) > focus_pane_six_before_peek )) ||
+    fail "the neighboring terminal did not settle physical focus before Peek"
+peek_live_refresh_before="$(grep -Fc 'zentty-linux: worklane-peek=live-refresh' "${log}" || true)"
+peek_open_before="$(grep -Fc 'zentty-linux: worklane-peek=open trigger=tab-hold' "${log}" || true)"
+xdotool keydown ctrl
+xdotool keydown Tab
+for _ in $(seq 1 100); do
+    (( $(grep -Fc 'zentty-linux: worklane-peek=open trigger=tab-hold' "${log}" || true) > peek_open_before )) && break
+    sleep 0.05
+done
+xdotool keyup Tab
+(( $(grep -Fc 'zentty-linux: worklane-peek=open trigger=tab-hold' "${log}" || true) > peek_open_before )) ||
+    fail "the held physical chord did not open multiworklane Peek"
+grep -Fxq 'zentty-linux: worklane-peek-live-surfaces mounted=4' "${log}" ||
+    fail "Peek did not map every inactive real Ghostty surface"
+for _ in $(seq 1 100); do
+    grep -Fq 'zentty-linux: worklane-peek-card worklane=worklane-2 pane=pane-6 ' "${log}" && break
+    sleep 0.05
+done
+capture_peek_screenshot open
+pane_five_geometry_before_progress="$(grep -Fc 'zentty-linux: worklane-peek-card worklane=worklane-1 pane=pane-5 ' "${log}" || true)"
+for _ in $(seq 1 160); do
+    grep -Fxq 'zentty-linux: worklane-peek-agent pane=pane-5 status="Codex · Running (2/5)" attention=false' "${log}" &&
+        (( $(grep -Fc 'zentty-linux: worklane-peek-card worklane=worklane-1 pane=pane-5 ' "${log}" || true) > pane_five_geometry_before_progress )) && break
+    sleep 0.05
+done
+grep -Fxq 'zentty-linux: worklane-peek-agent pane=pane-5 status="Codex · Running (2/5)" attention=false' "${log}" ||
+    fail "live agent progress did not reach the inactive Peek card"
+capture_peek_screenshot progress
+pane_five_geometry_before_attention="$(grep -Fc 'zentty-linux: worklane-peek-card worklane=worklane-1 pane=pane-5 ' "${log}" || true)"
+for _ in $(seq 1 160); do
+    if grep -Eq 'zentty-linux: title-pane=pane-5 value=peek-live:[1-9][0-9]*' "${log}" &&
+        (( $(grep -Fc 'zentty-linux: worklane-peek=live-refresh' "${log}" || true) > peek_live_refresh_before )); then
+        break
+    fi
+    sleep 0.05
+done
+grep -Eq 'zentty-linux: title-pane=pane-5 value=peek-live:[1-9][0-9]*' "${log}" ||
+    fail "the inactive neighboring terminal stopped producing live output"
+(( $(grep -Fc 'zentty-linux: worklane-peek=live-refresh' "${log}" || true) > peek_live_refresh_before )) ||
+    fail "live inactive terminal metadata did not refresh the open Peek"
+for _ in $(seq 1 160); do
+    grep -Fxq 'zentty-linux: worklane-peek-agent pane=pane-5 status="Codex · Needs input: Approve deployment to the production environment for the frontend worklane?" attention=true' "${log}" &&
+        (( $(grep -Fc 'zentty-linux: worklane-peek-card worklane=worklane-1 pane=pane-5 ' "${log}" || true) > pane_five_geometry_before_attention )) && break
+    sleep 0.05
+done
+grep -Fxq 'zentty-linux: worklane-peek-agent pane=pane-5 status="Codex · Needs input: Approve deployment to the production environment for the frontend worklane?" attention=true' "${log}" ||
+    fail "live agent attention did not reach the inactive Peek card"
+capture_peek_screenshot attention-long-label
+peek_spatial_before="$(grep -Fc 'zentty-linux: worklane-peek=spatial worklane=worklane-1 pane=pane-5' "${log}" || true)"
+pane_five_geometry_before_selection="$(grep -Fc 'zentty-linux: worklane-peek-card worklane=worklane-1 pane=pane-5 ' "${log}" || true)"
+xdotool key Up
+for _ in $(seq 1 100); do
+    (( $(grep -Fc 'zentty-linux: worklane-peek=spatial worklane=worklane-1 pane=pane-5' "${log}" || true) > peek_spatial_before )) &&
+        (( $(grep -Fc 'zentty-linux: worklane-peek-card worklane=worklane-1 pane=pane-5 ' "${log}" || true) > pane_five_geometry_before_selection )) && break
+    sleep 0.05
+done
+capture_peek_screenshot selected-attention-long-label
+open_attention_difference="$(compare -metric AE \
+    "${screenshot_dir}/open.png" \
+    "${screenshot_dir}/attention-long-label.png" null: 2>&1 >/dev/null || true)"
+[[ "${open_attention_difference}" =~ ^[1-9][0-9]*$ ]] ||
+    fail "normalized open and attention Peek screenshots were not visually distinct"
+progress_selection_difference="$(compare -metric AE \
+    "${screenshot_dir}/progress.png" \
+    "${screenshot_dir}/selected-attention-long-label.png" null: 2>&1 >/dev/null || true)"
+[[ "${progress_selection_difference}" =~ ^[1-9][0-9]*$ ]] ||
+    fail "normalized progress and selected Peek screenshots were not visually distinct"
+(
+    cd "${screenshot_dir}"
+    sha256sum open.png progress.png attention-long-label.png selected-attention-long-label.png >SHA256SUMS
+)
+xdotool keyup ctrl
+for _ in $(seq 1 100); do
+    grep -Fxq 'zentty-linux: worklane-peek=commit worklane=worklane-1 pane=pane-5' "${log}" && break
+    sleep 0.05
+done
+grep -Fxq 'zentty-linux: worklane-peek=commit worklane=worklane-1 pane=pane-5' "${log}" ||
+    fail "Peek did not commit from the neighbor lane back to its live pane"
+
+# Navigate back to the temporary lane through Peek, then remove it through the
+# ordinary close shortcut so the established close-control geometry below is
+# unchanged.
+peek_open_before="$(grep -Fc 'zentty-linux: worklane-peek=open trigger=tab-hold' "${log}" || true)"
+xdotool keydown ctrl
+xdotool keydown Tab
+for _ in $(seq 1 100); do
+    (( $(grep -Fc 'zentty-linux: worklane-peek=open trigger=tab-hold' "${log}" || true) > peek_open_before )) && break
+    sleep 0.05
+done
+xdotool keyup Tab
+(( $(grep -Fc 'zentty-linux: worklane-peek=open trigger=tab-hold' "${log}" || true) > peek_open_before )) ||
+    fail "the held physical chord did not reopen multiworklane Peek"
+xdotool key Down
+xdotool keyup ctrl
+for _ in $(seq 1 100); do
+    grep -Fxq 'zentty-linux: worklane-peek=commit worklane=worklane-2 pane=pane-6' "${log}" && break
+    sleep 0.05
+done
+grep -Fxq 'zentty-linux: worklane-peek=commit worklane=worklane-2 pane=pane-6' "${log}" ||
+    fail "Peek did not return to the temporary neighboring worklane"
+confirmation_count="$(grep -Fc 'zentty-linux: confirmation shown title="Close this pane?"' "${log}" || true)"
+scroll_focus_before_temp_close="$(grep -Fc 'zentty-linux: pane-scroll-focused' "${log}" || true)"
+xdotool key ctrl+w
+accept_latest_pane_confirmation "${confirmation_count}"
+for _ in $(seq 1 100); do
+    grep -Fxq 'zentty-linux: topology=worklane-1[title=none,color=none]:pane-1,pane-3,pane-2,pane-5*' "${log}" &&
+        (( $(grep -Fc 'zentty-linux: pane-scroll-focused' "${log}" || true) > scroll_focus_before_temp_close )) && break
+    sleep 0.05
+done
+grep -Fq 'zentty-linux: action=close-pane pane=pane-6' "${log}" ||
+    fail "the temporary Peek worklane did not close cleanly"
+grep -Fxq 'zentty-linux: topology=worklane-1[title=none,color=none]:pane-1,pane-3,pane-2,pane-5*' "${log}" ||
+    fail "closing the temporary Peek worklane did not restore the real pane layout"
+(( $(grep -Fc 'zentty-linux: pane-scroll-focused' "${log}" || true) > scroll_focus_before_temp_close )) ||
+    fail "closing the temporary Peek worklane did not settle the viewport"
+
 # Close each exact pane through its own hover-revealed Close Pane control. This
 # both exercises the new pane-local targeting contract and gives Ghostty the
 # product-owned surface-disposal sequence instead of destroying the X drawable
@@ -1067,12 +1271,12 @@ grep -Fxq 'zentty-linux: pane-controls pane=pane-1 state=shown' "${log}" ||
     fail "hover did not disclose pane-1's local control cluster"
 grep -Fxq 'zentty-linux: pane-controls pane=pane-1 state=hidden' "${log}" ||
     fail "leaving pane-1 did not dismiss its local control cluster"
-[[ "$(grep -Fxc 'zentty-linux: terminal-ready' "${log}" || true)" -eq 5 ]] ||
-    fail "the pointer-driven controls did not initialize five real Ghostty terminals"
-[[ "$(grep -Fc 'info(io_exec): started subcommand' "${log}" || true)" -eq 5 ]] ||
+[[ "$(grep -Fxc 'zentty-linux: terminal-ready' "${log}" || true)" -eq 6 ]] ||
+    fail "the source UX journey did not initialize six real Ghostty terminals"
+[[ "$(grep -Fc 'info(io_exec): started subcommand' "${log}" || true)" -eq 6 ]] ||
     fail "the scenario did not retain exactly one child process per real pane"
 if grep -Eq 'panicked at|thread caused non-unwinding panic|RefCell already borrowed|CRITICAL: Gtk|has a parent GtkBox' "${log}"; then
     fail "the contextual action reported a panic or GTK lifecycle critical"
 fi
 
-echo "Rust source UX passed: x11, focus=real-pty-and-model, pane-local-right-below-close=real-pointer, contextual-and-arrange-routes=real"
+echo "Rust source UX passed: x11, focus=real-pty-and-model, peek=live-multiworklane, pane-local-right-below-close=real-pointer, contextual-and-arrange-routes=real"

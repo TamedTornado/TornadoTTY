@@ -303,11 +303,11 @@
       "classification": "REQUIRED_INITIAL_RELEASE",
       "origin": "PORT_PARITY",
       "user_impact": "Worklane Peek is Zentty's fast visual context switcher and a major part of the worklane UX, not decorative animation.",
-      "linux_owner_issue": 16,
-      "implementation_status": "PARTIAL",
-      "focused_tests": ["crates/zentty-linux/src/worklane_peek.rs"],
-      "product_scenarios": ["linux/tests/rust-source-ux-x11"],
-      "test_plan": "Retain the physical Tab-duration contract: Tab release before 200ms traverses even while Control stays held, while Tab remaining down beyond 200ms opens Peek. Preserve repeated-key, spatial-arrow, real horizontal-wheel, Escape, Control-release, selected-pane HUD and exact-card-click X11 routes. Add controlled precision-touchpad/natural-direction evidence, multiple-window targeting, attention context, reduced-motion transitions, and proof that every neighboring-lane terminal preview remains live before promoting this feature from PARTIAL.",
+      "linux_owner_issue": 80,
+      "implementation_status": "IMPLEMENTED",
+      "focused_tests": ["crates/zentty-linux/src/worklane_peek.rs", "crates/zentty-linux/src/peek_scroll_navigation.rs"],
+      "product_scenarios": ["linux/tests/rust-source-ux-x11", "linux/tests/rust-project-icons", "linux/tests/rust-multi-window", "linux/tests/rust-worklane-accessibility"],
+      "test_plan": "Physical X11 retains the source Tab-duration contract, repeated traversal, spatial arrows, real horizontal wheel, Escape, Control-release, input shielding, exact-card click and focus restoration. The same staged-product journey proves five inactive real Ghostty surfaces stay mapped while live PTY titles plus authenticated agent progress and attention update an open multiworklane Peek, and retains four terminal-text-masked screenshot receipts. Controlled X11 and input-capable Wayland prove project icon projection and physical motion routes; X11 additionally proves GTK reduced motion and real two-window deactivation cancellation. Pure source-pinned tests own precision Surface threshold, axis lock, cancellation, once-per-gesture and natural direction because the controlled compositors expose wheel/virtual-keyboard input but no virtual precision-touchpad device. Real GTK accessibility trees pass on both display backends.",
       "alternative_or_blocker": null
     },
     {

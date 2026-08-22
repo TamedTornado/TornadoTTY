@@ -66,13 +66,19 @@ fi
 bundle_lib="${repo_root}/build/linux-profiles/release-safe/lib"
 [[ -d "${bundle_lib}" ]] || fail "ReleaseSafe product bundle is not staged"
 
-env \
-    -u NO_AT_BRIDGE \
-    GTK_A11Y=test \
-    LD_LIBRARY_PATH="${bundle_lib}" \
-    "${test_binary}" \
-    actual_worklane_widgets_expose_the_accessibility_contract \
-    --ignored \
-    --test-threads=1
+for test_name in \
+    sidebar::tests::actual_worklane_widgets_expose_the_accessibility_contract \
+    worklane_peek::tests::actual_worklane_peek_widgets_expose_the_accessibility_contract
+do
+    env \
+        -u NO_AT_BRIDGE \
+        GTK_A11Y=test \
+        LD_LIBRARY_PATH="${bundle_lib}" \
+        "${test_binary}" \
+        "${test_name}" \
+        --exact \
+        --ignored \
+        --test-threads=1
+done
 
-echo "rust-worklane-accessibility: PASS backend=${backend} actual-widgets=1 gtk-a11y=test"
+echo "rust-worklane-accessibility: PASS backend=${backend} actual-sidebar-and-peek-widgets=1 gtk-a11y=test"
