@@ -283,7 +283,7 @@ fn prepare_opencode_overlay(environment: &mut BTreeMap<String, String>) -> Resul
     if !plugin.is_file() {
         return Ok(());
     }
-    let directory = create_private_tool_directory(environment, "opencode")?;
+    let directory = create_private_opencode_directory(environment)?;
     let overlay = directory.join("config");
     fs::create_dir(&overlay)
         .and_then(|()| fs::set_permissions(&overlay, fs::Permissions::from_mode(0o700)))
@@ -312,6 +312,136 @@ fn prepare_opencode_overlay(environment: &mut BTreeMap<String, String>) -> Resul
         "ZENTTY_OPENCODE_CONFIG_OVERLAY".to_owned(),
         overlay.to_string_lossy().into_owned(),
     );
+    if let Err(error) = apply_opencode_theme_sync(&overlay, environment)
+        && environment.get("ZENTTY_CLI_DEBUG").map(String::as_str) == Some("1")
+    {
+        eprintln!("zentty: OpenCode theme synchronization skipped: {error}");
+    }
+    Ok(())
+}
+
+fn create_private_opencode_directory(
+    environment: &BTreeMap<String, String>,
+) -> Result<PathBuf, LaunchError> {
+    let socket = environment
+        .get("ZENTTY_INSTANCE_SOCKET")
+        .ok_or_else(|| LaunchError::Plan("ZENTTY_INSTANCE_SOCKET is missing".to_owned()))?;
+    let runtime = Path::new(socket)
+        .parent()
+        .ok_or_else(|| LaunchError::Plan("Zentty runtime directory is invalid".to_owned()))?;
+    let token = environment
+        .get("ZENTTY_PANE_TOKEN")
+        .filter(|token| token.len() >= 32 && token.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .ok_or_else(|| LaunchError::Plan("ZENTTY_PANE_TOKEN is invalid".to_owned()))?;
+    let root = runtime.join("agent-overlays");
+    ensure_private_directory(&root)?;
+    let directory = root.join(format!("opencode-{}", &token[..32]));
+    match fs::symlink_metadata(&directory) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+            return Err(LaunchError::Plan(
+                "OpenCode overlay path is not a private directory".to_owned(),
+            ));
+        }
+        Ok(_) => fs::remove_dir_all(&directory).map_err(|error| {
+            LaunchError::Plan(format!("could not reset OpenCode overlay: {error}"))
+        })?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(LaunchError::Plan(format!(
+                "could not inspect OpenCode overlay: {error}"
+            )));
+        }
+    }
+    fs::create_dir(&directory)
+        .and_then(|()| fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)))
+        .map_err(|error| {
+            LaunchError::Plan(format!("could not create OpenCode overlay: {error}"))
+        })?;
+    Ok(directory)
+}
+
+fn apply_opencode_theme_sync(
+    overlay: &Path,
+    environment: &BTreeMap<String, String>,
+) -> Result<(), LaunchError> {
+    const MAX_THEME_BYTES: u64 = 64 * 1024;
+    let Some(source) = environment
+        .get("ZENTTY_OPENCODE_SYNC_THEME_FILE")
+        .filter(|value| !value.is_empty())
+        .map(Path::new)
+    else {
+        return Ok(());
+    };
+    let metadata = fs::symlink_metadata(source).map_err(|error| {
+        LaunchError::Plan(format!(
+            "could not inspect synchronized OpenCode theme: {error}"
+        ))
+    })?;
+    if metadata.file_type().is_symlink()
+        || !metadata.is_file()
+        || metadata.len() == 0
+        || metadata.len() > MAX_THEME_BYTES
+    {
+        return Err(LaunchError::Plan(
+            "synchronized OpenCode theme is not a bounded regular file".to_owned(),
+        ));
+    }
+    let theme = fs::read(source).map_err(|error| {
+        LaunchError::Plan(format!(
+            "could not read synchronized OpenCode theme: {error}"
+        ))
+    })?;
+    serde_json::from_slice::<serde_json::Value>(&theme)
+        .ok()
+        .filter(serde_json::Value::is_object)
+        .ok_or_else(|| {
+            LaunchError::Plan("synchronized OpenCode theme is invalid JSON".to_owned())
+        })?;
+
+    let tui_path = overlay.join("tui.json");
+    let mut tui = match fs::read(&tui_path) {
+        Ok(bytes) => serde_json::from_slice::<serde_json::Value>(&bytes)
+            .ok()
+            .and_then(|value| value.as_object().cloned())
+            .ok_or_else(|| {
+                LaunchError::Plan(
+                    "OpenCode tui.json is malformed; refusing to overwrite it".to_owned(),
+                )
+            })?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => serde_json::Map::new(),
+        Err(error) => {
+            return Err(LaunchError::Plan(format!(
+                "could not read OpenCode tui.json: {error}"
+            )));
+        }
+    };
+    let themes = overlay.join("themes");
+    if !themes.exists() {
+        fs::create_dir(&themes)
+            .and_then(|()| fs::set_permissions(&themes, fs::Permissions::from_mode(0o700)))
+            .map_err(|error| {
+                LaunchError::Plan(format!(
+                    "could not create OpenCode theme directory: {error}"
+                ))
+            })?;
+    }
+    write_private_replacing_file(
+        &themes.join("zentty-synced.json"),
+        &theme,
+        "synchronized OpenCode theme",
+    )?;
+    tui.insert(
+        "$schema".to_owned(),
+        serde_json::Value::String("https://opencode.ai/tui.json".to_owned()),
+    );
+    tui.insert(
+        "theme".to_owned(),
+        serde_json::Value::String("zentty-synced".to_owned()),
+    );
+    let bytes = serde_json::to_vec_pretty(&tui).map_err(|error| {
+        LaunchError::Plan(format!("could not encode OpenCode TUI config: {error}"))
+    })?;
+    write_private_replacing_file(&tui_path, &bytes, "OpenCode TUI config")?;
     Ok(())
 }
 
@@ -373,6 +503,24 @@ fn write_private_file(path: &Path, bytes: &[u8], label: &str) -> Result<(), Laun
     file.write_all(bytes)
         .and_then(|()| file.sync_all())
         .map_err(|error| LaunchError::Plan(format!("could not write {label}: {error}")))
+}
+
+fn write_private_replacing_file(path: &Path, bytes: &[u8], label: &str) -> Result<(), LaunchError> {
+    if let Ok(metadata) = fs::symlink_metadata(path)
+        && (metadata.file_type().is_symlink() || !metadata.is_file())
+    {
+        return Err(LaunchError::Plan(format!(
+            "refusing to replace non-regular {label}"
+        )));
+    }
+    let parent = path
+        .parent()
+        .ok_or_else(|| LaunchError::Plan(format!("{label} path has no parent")))?;
+    let temporary = parent.join(format!(".zentty-{}.tmp", std::process::id()));
+    let _ = fs::remove_file(&temporary);
+    write_private_file(&temporary, bytes, label)?;
+    fs::rename(&temporary, path)
+        .map_err(|error| LaunchError::Plan(format!("could not publish {label}: {error}")))
 }
 
 fn resource_path(

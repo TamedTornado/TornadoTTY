@@ -158,6 +158,10 @@ path = "${run_root}/bin/browser-that-does-not-exist"
 id = "custom:removable"
 name = "Removable Browser"
 path = "${run_root}/bin/removable-browser"
+
+[[shortcuts.bindings]]
+command_id = "server.open_selected"
+shortcut = "command+option+o"
 EOF
 cat >"${run_root}/run-servers" <<EOF
 #!/usr/bin/env bash
@@ -263,6 +267,23 @@ for _ in $(seq 1 200); do
 done
 grep -Fq "origin=http://localhost:${port} source=Scanner confidence=Pid" "${log}" ||
     fail "real listener was not PID-attributed to its Ghostty pane"
+
+# The source bindable command opens the highest-ranked server in the active
+# worklane. Drive the persisted binding through the real GTK capture controller
+# and require the configured browser process to receive the explicit Watch URL.
+rm -f "${open_receipt}"
+if [[ "${backend}" == x11 ]]; then
+    xdotool windowfocus --sync "${window_id}"
+    xdotool key --window "${window_id}" ctrl+alt+o
+else
+    wtype -M ctrl -M alt -k o -m alt -m ctrl
+fi
+for _ in $(seq 1 200); do [[ -s "${open_receipt}" ]] && break; sleep 0.05; done
+[[ "$(cat "${open_receipt}" 2>/dev/null || true)" == "http://localhost:${watch_port}/fixture" ]] ||
+    fail "bindable Open Selected Server did not launch the active worklane's primary server"
+grep -Fq 'zentty-linux: shortcut=command+option+o action=open-selected-server' "${log}" ||
+    fail "Open Selected Server bypassed the authoritative shortcut/action route"
+rm -f "${open_receipt}"
 if [[ -n "${container_id}" ]]; then
     for _ in $(seq 1 160); do
         grep -Fq "origin=http://localhost:${docker_port} source=Docker confidence=Cwd" "${log}" && break
@@ -566,6 +587,10 @@ done
 [[ -s "${open_receipt}" ]] || fail "server action did not cross the browser launcher boundary"
 [[ "$(cat "${open_receipt}")" == "http://localhost:${port}/" ]] ||
     fail "browser launcher received the wrong normalized URL"
+for _ in $(seq 1 100); do
+    grep -Fq "action=open-server browser=custom:preferred url=http://localhost:${port}/ result=opened" "${log}" && break
+    sleep 0.05
+done
 grep -Fq "action=open-server browser=custom:preferred url=http://localhost:${port}/ result=opened" "${log}" ||
     fail "product did not report successful browser launch"
 
@@ -786,4 +811,4 @@ if grep -Fq '24678-24680' "${config_home}/zentty/config.toml"; then
     fail "removed ignored-port range returned after restart"
 fi
 
-echo "Rust development-server product journey passed: ${backend} real-pty real-listener authenticated-watch preferred-explicit-and-system-browser exact-browser-argv forged-browser-rejection persisted-ignore safe-stop restart"
+echo "Rust development-server product journey passed: ${backend} real-pty real-listener authenticated-watch bindable-primary-server preferred-explicit-and-system-browser exact-browser-argv forged-browser-rejection persisted-ignore safe-stop restart"

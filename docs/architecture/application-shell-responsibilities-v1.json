@@ -50,7 +50,7 @@
     {
       "id": "settings_coordinator",
       "status": "existing",
-      "planned_module": "crates/zentty-linux/src/settings_shell.rs, crates/zentty-linux/src/settings_navigation.rs, crates/zentty-linux/src/general_settings.rs, crates/zentty-linux/src/appearance_settings.rs, crates/zentty-linux/src/theme_catalog.rs, crates/zentty-linux/src/theme_preview.rs, crates/zentty-linux/src/notifications_settings.rs, crates/zentty-linux/src/notification_service.rs, crates/zentty-linux/src/custom_sound_store.rs, and crates/zentty-linux/src/agents_settings.rs",
+      "planned_module": "crates/zentty-linux/src/settings_shell.rs, crates/zentty-linux/src/settings_navigation.rs, crates/zentty-linux/src/general_settings.rs, crates/zentty-linux/src/appearance_settings.rs, crates/zentty-linux/src/theme_catalog.rs, crates/zentty-linux/src/theme_preview.rs, crates/zentty-linux/src/opencode_theme_sync.rs, crates/zentty-linux/src/notifications_settings.rs, crates/zentty-linux/src/notification_service.rs, crates/zentty-linux/src/custom_sound_store.rs, and crates/zentty-linux/src/agents_settings.rs",
       "tracking": "GH-20",
       "responsibility": "The sole nonmodal GTK settings shell, source-section navigation/history policy, Appearance, Notifications, and Agents projections. Theme and agent-wrapper discovery are bounded read-only projections; notification delivery uses the standard session-bus service without owning terminal-attention policy; the focused custom-sound store owns only secure XDG conversion and asset lifecycle; all durable settings writes and native reload authority remain in ConfigStore and ApplicationShell."
     },
@@ -344,7 +344,7 @@
     },
     {
       "owner": "settings_coordinator",
-      "methods": ["apply_appearance", "apply_general", "apply_notifications", "apply_updates", "apply_error_reporting", "apply_workspace_panes", "apply_open_with", "apply_dev_servers", "apply_agents", "validate_reloaded_config", "prepare_reloaded_appearance", "apply_reloaded_config", "settings_refresh_section", "reload_ghostty_config_with_focus", "request_show_settings"]
+      "methods": ["apply_appearance", "refresh_opencode_theme_sources", "apply_general", "apply_notifications", "apply_updates", "apply_error_reporting", "apply_workspace_panes", "apply_open_with", "apply_dev_servers", "apply_agents", "validate_reloaded_config", "prepare_reloaded_appearance", "apply_reloaded_config", "settings_refresh_section", "reload_ghostty_config_with_focus", "request_show_settings"]
     },
     {
       "owner": "existing_ui_projection",
@@ -399,7 +399,7 @@
       "handle_child_exit"
     ],
     "agent_event_coordinator": [
-      "event_route_decision", "start", "environment_for_pane", "control_credential_for_pane", "unregister_pane",
+      "event_route_decision", "start", "environment_for_pane", "control_credential_for_pane", "opencode_theme_source_path", "opencode_overlay_config_directory", "unregister_pane",
       "set_agent_teams_enabled", "set_agent_integrations", "available_integration_wrappers",
       "sync_targets", "schedule_for_pane", "shutdown", "apply_inputs",
       "begin_lifecycle_sweep", "lifecycle_sweep_due", "linux_process_is_alive"
@@ -422,7 +422,7 @@
     "server_runtime_coordinator": [
       "discover", "discover_browser_targets", "install", "refresh_servers", "handle_ipc", "register_ipc_server", "clear_ipc_servers",
       "open_ipc_server", "server_state_json", "ipc_failure", "now_ms", "refresh_registry_projection", "clear_passive_servers",
-      "set_port_ignored", "request_probe", "probe", "apply_servers", "open_server", "open_server_in_browser", "select_browser", "launch_url", "launch_browser_plan",
+      "set_port_ignored", "request_probe", "probe", "apply_servers", "open_server", "open_selected_server", "open_server_in_browser", "select_browser", "launch_url", "launch_browser_plan",
       "stop_server", "pane_probe_source", "stop_owned_server", "signal_process", "normalized_catalog_name", "browser_catalog_names_deduplicate_case_and_desktop_spacing"
     ],
     "task_runner_coordinator": ["run_task", "launch_in_new_pane"],
@@ -459,7 +459,7 @@
     "settings_shell": ["apply_selection", "build", "build_widgets", "connect_navigation", "key_controller", "navigate_back", "navigate_forward", "navigation_actions"],
     "settings_navigation": ["back", "can_back", "can_forward", "current", "forward", "matches", "new", "parse", "record"],
     "general_settings": ["aggressiveness_for_selected", "aggressiveness_row", "bool_value", "build", "section_heading", "selected_for_aggressiveness", "set_bool", "settings_group", "update_bool"],
-    "theme_catalog": ["parse", "hex", "is_dark", "rgb", "repeated_hex", "matches", "discover_themes", "load_directory", "is_eligible_theme_file", "parse_theme", "is_ignored_theme_line", "default_theme_directories"],
+    "theme_catalog": ["parse", "hex", "mixed_hex", "is_dark", "rgb", "repeated_hex", "matches", "discover_themes", "load_directory", "is_eligible_theme_file", "parse_theme", "is_ignored_theme_line", "default_theme_directories"],
     "notification_service": ["drain_activations", "is_available", "new", "notification_proxy", "open_settings", "preview_sound", "send", "send_attention", "send_pane", "send_with_proxy", "settings_launcher"],
     "notifications_settings": ["build", "connect_sound_selection", "notification_row", "rebuild_sound_choices", "row_labels", "section_heading", "set_named_child_sensitive", "set_named_sibling_sensitive", "set_row_margins", "sound_row"],
     "custom_sound_store": ["acquire_lock", "acquire_lock_with_timeout", "copy_source_no_follow", "create_private_directory", "destination_is_missing", "display_name", "drop", "ensure_private_sounds_directory", "finish", "installed_read_limit", "internal_name", "is_custom_name", "lock_wait_remains", "path_for_name", "prepare", "prepare_in_transaction", "probe_duration", "prune", "prune_locked", "rollback", "run_bounded_process", "sounds_directory", "sounds_directory_from", "source_copy_limit", "validate_copied_size", "validate_duration", "validate_installed_size", "validate_source_file", "validate_wav"],
@@ -572,6 +572,7 @@
     {"name":"reset-pane-layout","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"restore-closed-pane","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"open-server","parameter":"string","owner":"action_router","invalid_parameter":"ignore-without-panic"},
+    {"name":"open-selected-server","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"open-server-browser","parameter":"string","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"ignore-server-port","parameter":"string","owner":"action_router","invalid_parameter":"ignore-without-panic"},
     {"name":"refresh-servers","parameter":"none","owner":"action_router","invalid_parameter":"ignore-without-panic"},

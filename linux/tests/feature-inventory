@@ -266,6 +266,25 @@ actual_commands="$(
 [[ "${actual_commands}" == "${expected_commands}" ]] ||
     fail "command registry coverage is stale or incomplete"
 
+linux_shortcut_registry="${ZENTTY_LINUX_SHORTCUT_REGISTRY:-${repo_root}/crates/zentty-linux/src/application_shell/shortcut_registry.rs}"
+[[ -f "${linux_shortcut_registry}" ]] || fail "Linux shortcut registry is missing"
+linux_shortcut_commands="$(
+    awk '
+        /^[[:space:]]*command!\($/ {
+            getline
+            if (match($0, /"[^"]+"/)) {
+                print substr($0, RSTART + 1, RLENGTH - 2)
+            }
+        }
+    ' "${linux_shortcut_registry}" | LC_ALL=C sort
+)"
+missing_linux_shortcut_commands="$(
+    comm -23 <(printf '%s\n' "${expected_commands}") \
+        <(printf '%s\n' "${linux_shortcut_commands}")
+)"
+[[ -z "${missing_linux_shortcut_commands}" ]] ||
+    fail "Linux bindable command registry omits audited source commands: ${missing_linux_shortcut_commands//$'\n'/, }"
+
 pane_command_file="${repo_root}/$(jq -r '.pane_command_registry.location' "${evidence}")"
 expected_pane_commands="$(jq -r '.pane_command_registry.commands | keys[]' "${evidence}" | LC_ALL=C sort)"
 actual_pane_commands="$(

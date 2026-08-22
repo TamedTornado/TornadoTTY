@@ -700,6 +700,23 @@ pub(super) fn open_server(shell: &Rc<RefCell<ApplicationShell>>, origin: &str) {
     }
 }
 
+pub(super) fn open_selected_server(shell: &Rc<RefCell<ApplicationShell>>) {
+    let origin = {
+        let shell = shell.borrow();
+        let active_worklane = shell.state.active_worklane_id();
+        shell
+            .ranked_servers()
+            .into_iter()
+            .find(|ranked| ranked.server.worklane_id == active_worklane)
+            .map(|ranked| ranked.server.origin)
+    };
+    let Some(origin) = origin else {
+        eprintln!("zentty-linux: action=open-selected-server error=not-found");
+        return;
+    };
+    open_server(shell, &origin);
+}
+
 pub(super) fn open_server_in_browser(shell: &Rc<RefCell<ApplicationShell>>, action_id: &str) {
     let request = {
         let shell = shell.borrow();

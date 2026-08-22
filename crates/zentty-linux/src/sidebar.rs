@@ -233,18 +233,18 @@ pub(crate) fn install_styles() {
          .worklane-tint-inactive.worklane-card-indigo { border-left: 4px solid rgba(102, 126, 234, 0.34); }\n\
          .worklane-tint-inactive.worklane-card-purple { border-left: 4px solid rgba(159, 122, 234, 0.34); }\n\
          .worklane-tint-inactive.worklane-card-pink { border-left: 4px solid rgba(237, 100, 166, 0.34); }\n\
-         .worklane-tint-active.worklane-card-red { background: rgba(245, 101, 101, 0.20); border-color: rgba(245, 101, 101, 0.62); border-left: 4px solid rgba(245, 101, 101, 0.95); }\n\
-         .worklane-tint-active.worklane-card-orange { background: rgba(237, 137, 54, 0.20); border-color: rgba(237, 137, 54, 0.62); border-left: 4px solid rgba(237, 137, 54, 0.95); }\n\
-         .worklane-tint-active.worklane-card-amber { background: rgba(214, 158, 46, 0.20); border-color: rgba(214, 158, 46, 0.62); border-left: 4px solid rgba(214, 158, 46, 0.95); }\n\
-         .worklane-tint-active.worklane-card-yellow { background: rgba(236, 201, 75, 0.20); border-color: rgba(236, 201, 75, 0.62); border-left: 4px solid rgba(236, 201, 75, 0.95); }\n\
-         .worklane-tint-active.worklane-card-lime { background: rgba(154, 230, 180, 0.20); border-color: rgba(154, 230, 180, 0.62); border-left: 4px solid rgba(154, 230, 180, 0.95); }\n\
-         .worklane-tint-active.worklane-card-green { background: rgba(72, 187, 120, 0.20); border-color: rgba(72, 187, 120, 0.62); border-left: 4px solid rgba(72, 187, 120, 0.95); }\n\
-         .worklane-tint-active.worklane-card-teal { background: rgba(56, 178, 172, 0.20); border-color: rgba(56, 178, 172, 0.62); border-left: 4px solid rgba(56, 178, 172, 0.95); }\n\
-         .worklane-tint-active.worklane-card-cyan { background: rgba(79, 209, 197, 0.20); border-color: rgba(79, 209, 197, 0.62); border-left: 4px solid rgba(79, 209, 197, 0.95); }\n\
-         .worklane-tint-active.worklane-card-blue { background: rgba(66, 153, 225, 0.20); border-color: rgba(66, 153, 225, 0.62); border-left: 4px solid rgba(66, 153, 225, 0.95); }\n\
-         .worklane-tint-active.worklane-card-indigo { background: rgba(102, 126, 234, 0.20); border-color: rgba(102, 126, 234, 0.62); border-left: 4px solid rgba(102, 126, 234, 0.95); }\n\
-         .worklane-tint-active.worklane-card-purple { background: rgba(159, 122, 234, 0.20); border-color: rgba(159, 122, 234, 0.62); border-left: 4px solid rgba(159, 122, 234, 0.95); }\n\
-         .worklane-tint-active.worklane-card-pink { background: rgba(237, 100, 166, 0.20); border-color: rgba(237, 100, 166, 0.62); border-left: 4px solid rgba(237, 100, 166, 0.95); }\n\
+         .sidebar-emphasis-vivid .worklane-tint-active.worklane-card-red { background: rgba(245, 101, 101, 0.20); border-color: rgba(245, 101, 101, 0.62); border-left: 4px solid rgba(245, 101, 101, 0.95); }\n\
+         .sidebar-emphasis-vivid .worklane-tint-active.worklane-card-orange { background: rgba(237, 137, 54, 0.20); border-color: rgba(237, 137, 54, 0.62); border-left: 4px solid rgba(237, 137, 54, 0.95); }\n\
+         .sidebar-emphasis-vivid .worklane-tint-active.worklane-card-amber { background: rgba(214, 158, 46, 0.20); border-color: rgba(214, 158, 46, 0.62); border-left: 4px solid rgba(214, 158, 46, 0.95); }\n\
+         .sidebar-emphasis-vivid .worklane-tint-active.worklane-card-yellow { background: rgba(236, 201, 75, 0.20); border-color: rgba(236, 201, 75, 0.62); border-left: 4px solid rgba(236, 201, 75, 0.95); }\n\
+         .sidebar-emphasis-vivid .worklane-tint-active.worklane-card-lime { background: rgba(154, 230, 180, 0.20); border-color: rgba(154, 230, 180, 0.62); border-left: 4px solid rgba(154, 230, 180, 0.95); }\n\
+         .sidebar-emphasis-vivid .worklane-tint-active.worklane-card-green { background: rgba(72, 187, 120, 0.20); border-color: rgba(72, 187, 120, 0.62); border-left: 4px solid rgba(72, 187, 120, 0.95); }\n\
+         .sidebar-emphasis-vivid .worklane-tint-active.worklane-card-teal { background: rgba(56, 178, 172, 0.20); border-color: rgba(56, 178, 172, 0.62); border-left: 4px solid rgba(56, 178, 172, 0.95); }\n\
+         .sidebar-emphasis-vivid .worklane-tint-active.worklane-card-cyan { background: rgba(79, 209, 197, 0.20); border-color: rgba(79, 209, 197, 0.62); border-left: 4px solid rgba(79, 209, 197, 0.95); }\n\
+         .sidebar-emphasis-vivid .worklane-tint-active.worklane-card-blue { background: rgba(66, 153, 225, 0.20); border-color: rgba(66, 153, 225, 0.62); border-left: 4px solid rgba(66, 153, 225, 0.95); }\n\
+         .sidebar-emphasis-vivid .worklane-tint-active.worklane-card-indigo { background: rgba(102, 126, 234, 0.20); border-color: rgba(102, 126, 234, 0.62); border-left: 4px solid rgba(102, 126, 234, 0.95); }\n\
+         .sidebar-emphasis-vivid .worklane-tint-active.worklane-card-purple { background: rgba(159, 122, 234, 0.20); border-color: rgba(159, 122, 234, 0.62); border-left: 4px solid rgba(159, 122, 234, 0.95); }\n\
+         .sidebar-emphasis-vivid .worklane-tint-active.worklane-card-pink { background: rgba(237, 100, 166, 0.20); border-color: rgba(237, 100, 166, 0.62); border-left: 4px solid rgba(237, 100, 166, 0.95); }\n\
          .worklane-title { color: #b8bec8; font-weight: 700; }\n\
          .worklane-card-active .worklane-title { color: #ffffff; }\n\
          .worklane-context { color: #a7adb8; font-size: 12px; }\n\
@@ -315,8 +315,17 @@ pub(crate) fn render(
     active_origin_id: Option<&str>,
     current_window_id: &str,
     destination_groups: Option<&[WorklaneDestinationGroup]>,
+    selection_emphasis: zentty_core::SidebarSelectionEmphasis,
 ) {
     sidebar.add_css_class("zentty-sidebar");
+    sidebar.remove_css_class("sidebar-emphasis-vivid");
+    if selection_emphasis == zentty_core::SidebarSelectionEmphasis::Vivid {
+        sidebar.add_css_class("sidebar-emphasis-vivid");
+    }
+    eprintln!(
+        "zentty-linux: sidebar-selection-emphasis value={}",
+        selection_emphasis.config_value()
+    );
     let header = ensure_header(sidebar);
     bookmarks_view::configure_header(&header, window, templates, active_origin_id);
     let expected_ids = summaries

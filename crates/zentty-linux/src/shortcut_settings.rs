@@ -878,6 +878,7 @@ fn replace_conflict(state: &Rc<RefCell<ViewState>>) {
                 .borrow()
                 .physical
                 .set_text("Conflicting command was unbound and this shortcut was saved.");
+            eprintln!("zentty-linux: shortcut-settings action=replace-conflict result=applied");
         }
         Err(error) => state
             .borrow()
@@ -901,7 +902,9 @@ fn connect_header(header: &gtk::Box, window: &gtk::Window, state: &Rc<RefCell<Vi
                     "shortcut-preset-right" => apply_preset(&state, Preset::Right),
                     "shortcut-import" => choose_import(&window, &state),
                     "shortcut-export" => choose_export(&window, &state),
-                    "shortcut-reset" => apply_all(&state, &[], "Defaults restored."),
+                    "shortcut-reset" => {
+                        apply_all(&state, &[], "Defaults restored.", "shortcut-reset");
+                    }
                     _ => {}
                 }
             });
@@ -941,10 +944,19 @@ fn apply_preset(state: &Rc<RefCell<ViewState>>, preset: Preset) {
         Preset::Left => "Left-hand preset applied.",
         Preset::Right => "Right-hand preset applied.",
     };
-    apply_all(state, &bindings, message);
+    let action = match preset {
+        Preset::Left => "shortcut-preset-left",
+        Preset::Right => "shortcut-preset-right",
+    };
+    apply_all(state, &bindings, message, action);
 }
 
-fn apply_all(state: &Rc<RefCell<ViewState>>, bindings: &[ShortcutBinding], message: &str) {
+fn apply_all(
+    state: &Rc<RefCell<ViewState>>,
+    bindings: &[ShortcutBinding],
+    message: &str,
+    action: &str,
+) {
     let result = ShortcutManager::new(&definitions(), bindings)
         .map(|manager| manager.bindings().to_vec())
         .and_then(|bindings| (state.borrow().apply)(bindings));
@@ -954,6 +966,7 @@ fn apply_all(state: &Rc<RefCell<ViewState>>, bindings: &[ShortcutBinding], messa
             state.recording = false;
             state.pending_conflict = None;
             state.physical.set_text(message);
+            eprintln!("zentty-linux: shortcut-settings action={action} result=applied");
         }
         Err(error) => state
             .borrow()
@@ -1064,6 +1077,7 @@ fn choose_export(window: &gtk::Window, state: &Rc<RefCell<ViewState>>) {
         .initial_name("zentty-shortcuts.toml")
         .modal(true)
         .build();
+    chooser.set_initial_folder(Some(&gtk::gio::File::for_path(gtk::glib::home_dir())));
     let bindings = state.borrow().manager.borrow().bindings().to_vec();
     let weak = Rc::downgrade(state);
     chooser.save(
@@ -1075,15 +1089,26 @@ fn choose_export(window: &gtk::Window, state: &Rc<RefCell<ViewState>>) {
             {
                 let result = std::fs::write(&path, encode_bindings(&bindings));
                 if let Some(state) = weak.upgrade() {
+                    let succeeded = result.is_ok();
                     match result {
                         Ok(()) => state
                             .borrow()
                             .physical
                             .set_text(&format!("Exported shortcuts to {}.", path.display())),
-                        Err(error) => state
-                            .borrow()
-                            .physical
-                            .set_text(&format!("Export failed: {error}")),
+                        Err(error) => {
+                            state
+                                .borrow()
+                                .physical
+                                .set_text(&format!("Export failed: {error}"));
+                            eprintln!(
+                                "zentty-linux: shortcut-settings action=shortcut-export result=failed detail={error}"
+                            );
+                        }
+                    }
+                    if succeeded {
+                        eprintln!(
+                            "zentty-linux: shortcut-settings action=shortcut-export result=applied"
+                        );
                     }
                 }
             }
@@ -1097,6 +1122,7 @@ fn choose_import(window: &gtk::Window, state: &Rc<RefCell<ViewState>>) {
         .accept_label("Import")
         .modal(true)
         .build();
+    chooser.set_initial_folder(Some(&gtk::gio::File::for_path(gtk::glib::home_dir())));
     let weak = Rc::downgrade(state);
     chooser.open(
         Some(window),
@@ -1114,7 +1140,7 @@ fn choose_import(window: &gtk::Window, state: &Rc<RefCell<ViewState>>) {
 fn import_path(state: &Rc<RefCell<ViewState>>, path: &Path) {
     let result = decode_import_path(path);
     match result {
-        Ok(bindings) => apply_all(state, &bindings, "Imported shortcuts."),
+        Ok(bindings) => apply_all(state, &bindings, "Imported shortcuts.", "shortcut-import"),
         Err(error) => state
             .borrow()
             .physical

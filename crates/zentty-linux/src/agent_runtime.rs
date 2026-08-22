@@ -181,7 +181,7 @@ impl AgentRuntime {
                 "ZENTTY_INSTANCE_SOCKET".to_owned(),
                 self.socket_path.to_string_lossy().into_owned(),
             ),
-            ("ZENTTY_PANE_TOKEN".to_owned(), token),
+            ("ZENTTY_PANE_TOKEN".to_owned(), token.clone()),
             ("ZENTTY_WINDOW_ID".to_owned(), window_id.to_owned()),
             ("ZENTTY_WORKLANE_ID".to_owned(), worklane_id.to_owned()),
             ("ZENTTY_PANE_ID".to_owned(), pane_id.to_owned()),
@@ -209,6 +209,12 @@ impl AgentRuntime {
             environment.push(("ZENTTY_ALL_WRAPPER_BIN_DIRS".to_owned(), wrappers));
             environment.push(("PATH".to_owned(), path));
         }
+        environment.push((
+            "ZENTTY_OPENCODE_SYNC_THEME_FILE".to_owned(),
+            self.opencode_theme_source_path_for_token(&token)
+                .to_string_lossy()
+                .into_owned(),
+        ));
         let pane_path = pane_path(&environment, &current_path());
         environment.extend(agent_teams_environment(
             &self.tmux_shim_directory,
@@ -227,6 +233,29 @@ impl AgentRuntime {
             std::env::var_os("XDG_DATA_DIRS").as_deref(),
         ));
         Ok(environment)
+    }
+
+    pub(crate) fn opencode_theme_source_path(&self, pane_id: &str) -> Option<PathBuf> {
+        self.tokens_by_pane
+            .get(pane_id)
+            .map(|token| self.opencode_theme_source_path_for_token(token))
+    }
+
+    pub(crate) fn opencode_overlay_config_directory(&self, pane_id: &str) -> Option<PathBuf> {
+        let token = self.tokens_by_pane.get(pane_id)?;
+        Some(
+            self.runtime_directory
+                .join("agent-overlays")
+                .join(format!("opencode-{}", pane_token_component(token)?))
+                .join("config"),
+        )
+    }
+
+    fn opencode_theme_source_path_for_token(&self, token: &str) -> PathBuf {
+        let component = pane_token_component(token).unwrap_or("invalid-token");
+        self.runtime_directory
+            .join("opencode-theme-sources")
+            .join(format!("{component}.json"))
     }
 
     pub(crate) fn available_integration_wrappers(&self) -> std::collections::BTreeSet<String> {
@@ -486,6 +515,10 @@ fn color_terminal_environment(inherited: Option<&std::ffi::OsStr>) -> String {
             || "truecolor".to_owned(),
             |value| value.to_string_lossy().into_owned(),
         )
+}
+
+fn pane_token_component(token: &str) -> Option<&str> {
+    (token.len() >= 32 && token.bytes().all(|byte| byte.is_ascii_hexdigit())).then(|| &token[..32])
 }
 
 fn instance_runtime_directory(

@@ -178,6 +178,7 @@ pub(super) const ACTION_ARRANGE_GOLDEN_SHORT: &str = "arrange-golden-short";
 pub(super) const ACTION_RESET_PANE_LAYOUT: &str = "reset-pane-layout";
 pub(super) const ACTION_RESTORE_CLOSED_PANE: &str = "restore-closed-pane";
 pub(super) const ACTION_OPEN_SERVER: &str = "open-server";
+pub(super) const ACTION_OPEN_SELECTED_SERVER: &str = "open-selected-server";
 pub(super) const ACTION_OPEN_SERVER_BROWSER: &str = "open-server-browser";
 pub(super) const ACTION_IGNORE_SERVER_PORT: &str = "ignore-server-port";
 pub(super) const ACTION_REFRESH_SERVERS: &str = "refresh-servers";
@@ -390,6 +391,7 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
     action!(ACTION_RESET_PANE_LAYOUT, "reset-pane-layout", None),
     action!(ACTION_RESTORE_CLOSED_PANE, "restore-closed-pane", None),
     action!(ACTION_OPEN_SERVER, "open-server", String),
+    action!(ACTION_OPEN_SELECTED_SERVER, "open-selected-server", None),
     action!(ACTION_OPEN_SERVER_BROWSER, "open-server-browser", String),
     action!(ACTION_IGNORE_SERVER_PORT, "ignore-server-port", String),
     action!(ACTION_REFRESH_SERVERS, "refresh-servers", None),
@@ -1013,6 +1015,19 @@ fn install_task_runner_action(
 }
 
 fn install_server_actions(shell: &Rc<RefCell<ApplicationShell>>, group: &gio::SimpleActionGroup) {
+    let selected = gio::SimpleAction::new(ACTION_OPEN_SELECTED_SERVER, None);
+    let weak = Rc::downgrade(shell);
+    selected.connect_activate(move |_, parameter| {
+        if !ParameterSchema::None.accepts(parameter) {
+            eprintln!("zentty-linux: action=open-selected-server rejected parameter-schema");
+            return;
+        }
+        if let Some(shell) = weak.upgrade() {
+            super::server_runtime::open_selected_server(&shell);
+        }
+    });
+    group.add_action(&selected);
+
     let action = gio::SimpleAction::new(ACTION_OPEN_SERVER, Some(glib::VariantTy::STRING));
     let weak = Rc::downgrade(shell);
     action.connect_activate(move |_, parameter| {
@@ -1779,7 +1794,7 @@ mod tests {
 
     #[test]
     fn registry_is_unique_complete_and_typed() {
-        assert_eq!(ACTION_SPECS.len(), 120);
+        assert_eq!(ACTION_SPECS.len(), 121);
         assert_eq!(
             ACTION_SPECS
                 .iter()

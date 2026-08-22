@@ -448,6 +448,7 @@ impl PaneRuntimeCoordinator {
         let mut environment = shell
             .agent_events
             .environment_for_pane(&worklane_id, pane_id)?;
+        shell.refresh_opencode_theme_sources();
         let pending_launch = shell.pane_runtime.take_launch(pane_id);
         if let Some(launch) = &pending_launch {
             for (key, value) in &launch.environment {

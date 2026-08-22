@@ -131,6 +131,22 @@ pub(crate) const COMMANDS: &[ShortcutCommandSpec] = &[
         Some("command+shift+b")
     ),
     command!(
+        "open_with.selected_app",
+        "Open With Selected App",
+        "Open the focused pane directory with the configured primary application.",
+        General,
+        ACTION_OPEN_WITH_PRIMARY,
+        None
+    ),
+    command!(
+        "server.open_selected",
+        "Open Selected Server",
+        "Open the primary development server in the active worklane.",
+        General,
+        ACTION_OPEN_SELECTED_SERVER,
+        None
+    ),
+    command!(
         "notifications.jump_latest",
         "Jump To Latest Attention Item",
         "Focus the most recently updated pane that needs input.",

@@ -479,10 +479,10 @@
       "origin": "PORT_PARITY",
       "user_impact": "Keyboard-first and fully bindable commands are defining source behavior, including preserving terminal input when an app action is unbound.",
       "linux_owner_issue": 20,
-      "implementation_status": "PARTIAL",
+      "implementation_status": "IMPLEMENTED",
       "focused_tests": ["crates/zentty-core/src/shortcut.rs", "crates/zentty-linux/src/application_shell/shortcut_registry.rs", "crates/zentty-linux/src/application_shell/shortcut_runtime.rs", "crates/zentty-linux/src/shortcut_settings.rs"],
       "product_scenarios": ["linux/tests/rust-shortcuts-settings"],
-      "test_plan": "Preserve the passing controlled-X11/Wayland binding, unbound-byte, physical-recorder, and restart-persistence journey plus the zero-survivor shortcut-model mutation receipt. Complete real chooser import/export, preset/reset/conflict UI journeys on both compositor stacks and close the seven command-registry gaps before promotion from PARTIAL.",
+      "test_plan": "Preserve the controlled X11/Wayland real-settings journey for physical recording, conflict replacement, preset/reset, native GTK chooser export/import, source-compatible persistence, restart, active-action interception, and displaced/unbound bytes reaching a real Ghostty PTY. The inventory validator must continue proving that every audited source command is present in the Linux bindable registry; Linux additionally exposes its platform fullscreen and minimize commands. Preserve the zero-survivor shortcut-model mutation receipt.",
       "alternative_or_blocker": null
     },
     {
@@ -495,11 +495,23 @@
       "origin": "PORT_PARITY",
       "user_impact": "Ghostty themes and polished live appearance are advertised product features; Linux must not regress to an unconfigurable embedded terminal.",
       "linux_owner_issue": 20,
-      "implementation_status": "NOT_IMPLEMENTED",
-      "focused_tests": [],
-      "product_scenarios": [],
-      "test_plan": "Load real bundled/custom/included configs, drive settings and external reload, inspect actual multiwindow surfaces under dark/light and scaling, cover symlinks/background images/opacity, and mutation-test precedence/healing.",
-      "alternative_or_blocker": "Use GTK dark/light preference and compositor-supported transparency; expose a documented no-blur degradation where the active compositor provides no safe blur protocol."
+      "implementation_status": "IMPLEMENTED",
+      "focused_tests": [
+        "crates/zentty-core/src/appearance.rs",
+        "crates/zentty-core/tests/app_config.rs",
+        "crates/zentty-linux/src/appearance_settings.rs",
+        "crates/zentty-linux/src/config_store.rs",
+        "crates/zentty-linux/src/opencode_theme_sync.rs",
+        "crates/zentty-linux/src/theme_catalog.rs",
+        "crates/zentty-agent-ipc/tests/launch_cli.rs"
+      ],
+      "product_scenarios": [
+        "linux/tests/rust-shortcuts-settings",
+        "linux/tests/rust-config-reload",
+        "linux/tests/rust-agent-ipc"
+      ],
+      "test_plan": "Preserve the controlled X11/Wayland settings journey for bundled and user theme selection, preview, dark/light/automatic slots, opacity, OpenCode synchronization, sidebar emphasis, physical-key accessibility, persistence, restart, and live Ghostty reload without PTY loss. Preserve the real managed OpenCode launcher journey for private overlay generation, live palette replacement, verified process identity, and SIGUSR2 refresh. Continue config-reload coverage for included files, partial/invalid edits, symlinks, concurrent writes, last-good recovery, and multiwindow projection; keep non-theme Ghostty keys including background-image intact.",
+      "alternative_or_blocker": "Linux uses GTK dark/light preference and real terminal opacity. Existing Ghostty background-image configuration is preserved rather than duplicated in Zentty settings. There is no portable Linux compositor blur protocol across supported Wayland and X11 environments, so blur is an explicit documented no-blur degradation rather than a silent or compositor-specific claim."
     },
     {
       "id": "desktop.notifications-inbox-routing",

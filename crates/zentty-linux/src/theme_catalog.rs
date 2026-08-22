@@ -15,7 +15,7 @@ pub(crate) struct ThemeColor {
 }
 
 impl ThemeColor {
-    fn parse(value: &str) -> Option<Self> {
+    pub(crate) fn parse(value: &str) -> Option<Self> {
         let value = value.trim().trim_matches(['\'', '"']);
         let hex = value.strip_prefix('#')?;
         let (red, green, blue) = match hex.len() {
@@ -56,6 +56,20 @@ impl ThemeColor {
             f64::from(self.blue) / 255.0,
         )
     }
+
+    pub(crate) fn mixed_hex(&self, towards: &Self, amount: f64) -> String {
+        let amount = amount.clamp(0.0, 1.0);
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        // Clamping the interpolation factor guarantees a rounded channel in
+        // the inclusive u8 range; the cast is the final representation step.
+        let mix = |from: u8, to: u8| {
+            (f64::from(from) + (f64::from(to) - f64::from(from)) * amount).round() as u8
+        };
+        let red = mix(self.red, towards.red);
+        let green = mix(self.green, towards.green);
+        let blue = mix(self.blue, towards.blue);
+        format!("#{red:02X}{green:02X}{blue:02X}")
+    }
 }
 
 fn repeated_hex(value: &str) -> Option<u8> {
@@ -68,6 +82,7 @@ pub(crate) struct ThemePreview {
     pub(crate) background: ThemeColor,
     pub(crate) foreground: ThemeColor,
     pub(crate) palette: Vec<ThemeColor>,
+    pub(crate) indexed_palette: BTreeMap<u8, ThemeColor>,
     pub(crate) cursor: Option<ThemeColor>,
     pub(crate) cursor_text: Option<ThemeColor>,
     pub(crate) selection_background: Option<ThemeColor>,
@@ -137,7 +152,7 @@ fn is_eligible_theme_file(is_file: bool, bytes: u64) -> bool {
     is_file && bytes > 0 && bytes <= MAX_THEME_BYTES
 }
 
-fn parse_theme(name: &str, contents: &str, user_owned: bool) -> Option<ThemePreview> {
+pub(crate) fn parse_theme(name: &str, contents: &str, user_owned: bool) -> Option<ThemePreview> {
     let mut background = None;
     let mut foreground = None;
     let mut palette = BTreeMap::<u8, ThemeColor>::new();
@@ -176,7 +191,8 @@ fn parse_theme(name: &str, contents: &str, user_owned: bool) -> Option<ThemePrev
         name: name.to_owned(),
         background: background?,
         foreground: foreground?,
-        palette: palette.into_values().collect(),
+        palette: palette.values().cloned().collect(),
+        indexed_palette: palette,
         cursor,
         cursor_text,
         selection_background,
@@ -254,6 +270,8 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["#00FF00", "#0000FF"]
         );
+        assert_eq!(theme.indexed_palette[&2].hex(), "#00FF00");
+        assert_eq!(theme.indexed_palette[&15].hex(), "#0000FF");
         assert!(theme.background.is_dark());
         assert!(theme.matches(" theme ", ThemeFilter::Dark));
         assert!(!theme.matches("theme", ThemeFilter::Light));

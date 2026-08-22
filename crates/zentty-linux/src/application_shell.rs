@@ -353,8 +353,20 @@ fn render_empty_sidebar(
     sidebar: &gtk::Box,
     window: &gtk::Window,
     clipboard: zentty_core::ClipboardConfig,
+    selection_emphasis: zentty_core::SidebarSelectionEmphasis,
 ) {
-    sidebar::render(sidebar, window, &[], clipboard, &[], &[], None, "", None);
+    sidebar::render(
+        sidebar,
+        window,
+        &[],
+        clipboard,
+        &[],
+        &[],
+        None,
+        "",
+        None,
+        selection_emphasis,
+    );
 }
 
 impl ApplicationShell {
@@ -396,7 +408,12 @@ impl ApplicationShell {
             command_palette,
             restore_notice,
         } = build_shell_widgets();
-        render_empty_sidebar(&sidebar, &window, runtimes.config.clipboard);
+        render_empty_sidebar(
+            &sidebar,
+            &window,
+            runtimes.config.clipboard,
+            runtimes.config.appearance.sidebar_selection_emphasis,
+        );
         let global_search_view = GlobalSearchView::attach(&sidebar);
         let window_template = restored_or_default_window(restored_window, fresh_window_id);
         let fullscreen_window_id = window_template.id.clone();
@@ -594,6 +611,7 @@ impl ApplicationShell {
         self.render_sidebar();
         self.refresh_pane_presentation();
         if appearance_changed {
+            self.refresh_opencode_theme_sources();
             self.reload_ghostty_config_with_focus(false);
         }
         if let Some(section) = settings_refresh {
@@ -2286,8 +2304,109 @@ impl ApplicationShell {
         }
         crate::config_store::ConfigStore::update_default_appearance(&appearance)?;
         self.config.appearance = appearance;
+        self.refresh_opencode_theme_sources();
+        self.render_sidebar();
         self.reload_ghostty_config_with_focus(restore_terminal_focus);
         Ok(())
+    }
+
+    fn refresh_opencode_theme_sources(&self) {
+        let statuses = self
+            .state
+            .sidebar_summaries()
+            .into_iter()
+            .flat_map(|worklane| worklane.pane_rows)
+            .filter_map(|pane| pane.agent_status.map(|status| (pane.pane_id, status)))
+            .collect::<std::collections::BTreeMap<_, _>>();
+        let pane_ids = self
+            .state
+            .worklanes()
+            .iter()
+            .flat_map(|worklane| &worklane.columns)
+            .flat_map(|column| &column.panes)
+            .map(|pane| pane.id.clone())
+            .collect::<Vec<_>>();
+        let data = self
+            .config
+            .appearance
+            .sync_opencode_theme_with_terminal
+            .then(|| crate::opencode_theme_sync::data_for_appearance(&self.config.appearance))
+            .transpose();
+        for pane_id in pane_ids {
+            let Some(path) = self.agent_events.opencode_theme_source_path(&pane_id) else {
+                continue;
+            };
+            match &data {
+                Ok(Some(data)) => {
+                    match crate::opencode_theme_sync::publish_theme_source(&path, data) {
+                        Ok(changed) => eprintln!(
+                            "zentty-linux: opencode-theme-source pane={pane_id} changed={changed}"
+                        ),
+                        Err(error) => eprintln!(
+                            "zentty-linux: opencode-theme-source pane={pane_id} result=failed detail={error}"
+                        ),
+                    }
+                    let Some(status) = statuses.get(&pane_id) else {
+                        continue;
+                    };
+                    let Some(pid) = status
+                        .agent_name
+                        .eq_ignore_ascii_case("OpenCode")
+                        .then_some(status.tracked_pid)
+                        .flatten()
+                    else {
+                        continue;
+                    };
+                    let Some(overlay) = self
+                        .agent_events
+                        .opencode_overlay_config_directory(&pane_id)
+                    else {
+                        continue;
+                    };
+                    if !crate::opencode_theme_sync::process_owns_overlay(pid, &pane_id, &overlay) {
+                        eprintln!(
+                            "zentty-linux: opencode-theme-live pane={pane_id} pid={pid} result=identity-mismatch"
+                        );
+                        continue;
+                    }
+                    match crate::opencode_theme_sync::refresh_running_overlay(
+                        &overlay,
+                        data,
+                        pid,
+                        |pid| {
+                            let status = std::process::Command::new("/bin/kill")
+                                .args(["--signal", "USR2", "--", &pid.to_string()])
+                                .status()
+                                .map_err(|error| error.to_string())?;
+                            if status.success() {
+                                Ok(())
+                            } else {
+                                Err(format!("/bin/kill exited with {status}"))
+                            }
+                        },
+                    ) {
+                        Ok(changed) => eprintln!(
+                            "zentty-linux: opencode-theme-live pane={pane_id} pid={pid} changed={changed}"
+                        ),
+                        Err(error) => eprintln!(
+                            "zentty-linux: opencode-theme-live pane={pane_id} pid={pid} result=failed detail={error}"
+                        ),
+                    }
+                }
+                Ok(None) => {
+                    if let Err(error) = std::fs::remove_file(&path)
+                        && error.kind() != std::io::ErrorKind::NotFound
+                    {
+                        eprintln!(
+                            "zentty-linux: opencode-theme-source pane={pane_id} result=remove-failed detail={error}"
+                        );
+                    }
+                }
+                Err(error) => eprintln!(
+                    "zentty-linux: opencode-theme-source pane={pane_id} result=unresolved detail={error}"
+                ),
+            }
+        }
     }
 
     fn report_ghostty_reload_metrics(&self, stage: &str) {
@@ -4218,6 +4337,7 @@ impl ApplicationShell {
             self.state.active_worklane().bookmark_origin_id.as_deref(),
             &self.window_template.id,
             Some(&destination_groups),
+            self.config.appearance.sidebar_selection_emphasis,
         );
         self.render_chrome(&summaries);
         self.schedule_active_worklane_reveal();
@@ -4239,6 +4359,7 @@ impl ApplicationShell {
                 self.state.active_worklane().bookmark_origin_id.as_deref(),
                 &self.window_template.id,
                 Some(&destination_groups),
+                self.config.appearance.sidebar_selection_emphasis,
             );
         }
         self.render_chrome(&summaries);

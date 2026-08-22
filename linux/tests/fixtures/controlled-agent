@@ -38,6 +38,10 @@ if [[ -n "${ZENTTY_CONTROLLED_AGENT_START_RECEIPT:-}" ]]; then
         "${ZENTTY_PANE_TOKEN:-}" "${ZENTTY_WORKLANE_ID:-}" "${ZENTTY_PANE_ID:-}" \
         "${ZENTTY_PI_HOOKS_DISABLED:-}" "$*" \
         >>"${ZENTTY_CONTROLLED_AGENT_START_RECEIPT}"
+    if [[ "${ZENTTY_AGENT_TOOL:-}" == opencode ]]; then
+        printf 'opencode-config:%s\n' "${OPENCODE_CONFIG_DIR:-}" \
+            >>"${ZENTTY_CONTROLLED_AGENT_START_RECEIPT}"
+    fi
 fi
 if [[ -n "${start_gate}" ]]; then
     for _ in {1..400}; do
@@ -263,6 +267,12 @@ case "${profile}" in
         ;;
     managed-prelaunch)
         sleep 0.3
+        ;;
+    opencode-live-theme)
+        receipt="${ZENTTY_CONTROLLED_OPENCODE_THEME_RECEIPT:-}"
+        [[ -n "${receipt}" ]] || fail "ZENTTY_CONTROLLED_OPENCODE_THEME_RECEIPT is required"
+        trap 'printf "signal=USR2 pid=%s\n" "$$" >"${receipt}"; exit 0' USR2
+        while sleep 0.1; do :; done
         ;;
     small-harness-adapter)
         require_helper

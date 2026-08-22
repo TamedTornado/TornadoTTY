@@ -38,15 +38,31 @@ expect_evidence_rejected() {
     }
 }
 
+expect_linux_shortcut_registry_rejected() {
+    local registry="$1"
+    local receipt="${temp_dir}/linux-shortcut-registry.log"
+    if ZENTTY_LINUX_SHORTCUT_REGISTRY="${registry}" \
+        "${runner}" "${source_inventory}" "${source_evidence}" >"${receipt}" 2>&1; then
+        echo "feature-inventory-test: incomplete Linux shortcut registry unexpectedly passed" >&2
+        exit 1
+    fi
+    grep -F "Linux bindable command registry omits audited source commands" \
+        "${receipt}" >/dev/null || {
+        cat "${receipt}" >&2
+        echo "feature-inventory-test: incomplete Linux shortcut registry lacked expected failure" >&2
+        exit 1
+    }
+}
+
 "${runner}" "${source_inventory}" "${source_evidence}" "${temp_dir}/summary.json" >/dev/null
 jq -e '
     .schema_version == 1 and
     .result == "PASS" and
     .entry_count == 60 and
     .classifications.REQUIRED_INITIAL_RELEASE == 34 and
-    .implementation_statuses.IMPLEMENTED == 28 and
-    .implementation_statuses.PARTIAL == 20 and
-    .implementation_statuses.NOT_IMPLEMENTED == 12 and
+    .implementation_statuses.IMPLEMENTED == 30 and
+    .implementation_statuses.PARTIAL == 19 and
+    .implementation_statuses.NOT_IMPLEMENTED == 11 and
     .evidence.app_commands == 70 and
     .evidence.pane_commands == 33 and
     .evidence.settings_sections == 9 and
@@ -67,6 +83,19 @@ jq -e '
         contains("byte-identical user files"))
 ' "${source_inventory}" >/dev/null || {
     echo "feature-inventory-test: GH22 CLI/shell closeout evidence regressed" >&2
+    exit 1
+}
+jq -e '
+    [.entries[] | select(.linux_owner_issue == 20)] |
+    all(.[]; .implementation_status == "IMPLEMENTED") and
+    (map(select(.id == "configuration.shortcuts-presets"))[0].test_plan |
+        contains("native GTK chooser export/import")) and
+    (map(select(.id == "configuration.ghostty-appearance"))[0].test_plan |
+        contains("live palette replacement")) and
+    (map(select(.id == "configuration.ghostty-appearance"))[0].alternative_or_blocker |
+        contains("explicit documented no-blur degradation"))
+' "${source_inventory}" >/dev/null || {
+    echo "feature-inventory-test: GH20 settings closeout evidence regressed" >&2
     exit 1
 }
 jq -e '
@@ -225,6 +254,11 @@ expect_evidence_rejected empty-release-evidence "evidence ledger schema failed"
 jq 'del(.command_registry.commands["pane.close_focused"])' \
     "${source_evidence}" >"${temp_dir}/stale-command-registry.json"
 expect_evidence_rejected stale-command-registry "command registry coverage is stale or incomplete"
+
+sed '/"server.open_selected",/d' \
+    "${repo_root}/crates/zentty-linux/src/application_shell/shortcut_registry.rs" \
+    >"${temp_dir}/incomplete-shortcut-registry.rs"
+expect_linux_shortcut_registry_rejected "${temp_dir}/incomplete-shortcut-registry.rs"
 
 jq 'del(.settings_registry.sections.agents)' \
     "${source_evidence}" >"${temp_dir}/stale-settings-registry.json"

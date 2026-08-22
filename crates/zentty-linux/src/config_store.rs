@@ -592,6 +592,8 @@ impl ConfigStore {
             }
             document["appearance"]["sync_opencode_theme_with_terminal"] =
                 toml_edit::value(appearance.sync_opencode_theme_with_terminal);
+            document["appearance"]["sidebar_selection_emphasis"] =
+                toml_edit::value(appearance.sidebar_selection_emphasis.config_value());
             atomic_replace(&target, document.to_string().as_bytes())
         })
     }
@@ -1970,7 +1972,7 @@ mod tests {
         let target = dotfiles.join("ghostty.conf");
         fs::write(
             &target,
-            "# retained\nfont-size = 14\ntheme = Old\ntheme = Stale\n",
+            "# retained\nfont-size = 14\nbackground-image = /home/user/wall paper.png\ntheme = Old\ntheme = Stale\n",
         )
         .unwrap();
         let link = config_dir.join("config");
@@ -1991,7 +1993,7 @@ mod tests {
         );
         assert_eq!(
             fs::read_to_string(&target).unwrap(),
-            "# retained\nfont-size = 14\ntheme = dark:Catppuccin Frappe,light:Catppuccin Latte\n"
+            "# retained\nfont-size = 14\nbackground-image = /home/user/wall paper.png\ntheme = dark:Catppuccin Frappe,light:Catppuccin Latte\n"
         );
         assert_eq!(
             fs::metadata(&target).unwrap().permissions().mode() & 0o777,
@@ -2160,11 +2162,13 @@ mod tests {
             preferred_light_theme_name: Some("Catppuccin Latte".into()),
             background_opacity: BackgroundOpacity::from_fraction(0.87),
             sync_opencode_theme_with_terminal: false,
+            sidebar_selection_emphasis: zentty_core::SidebarSelectionEmphasis::Vivid,
         };
         ConfigStore::update_appearance(&path, &appearance).unwrap();
         let contents = fs::read_to_string(&path).unwrap();
         assert!(contents.contains("# retained\n"));
         assert!(contents.contains("[future]\nenabled = true\n"));
+        assert!(contents.contains("sidebar_selection_emphasis = \"vivid\""));
         assert_eq!(
             ConfigStore::load(path).unwrap().config.appearance,
             appearance

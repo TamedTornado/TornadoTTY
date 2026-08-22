@@ -74,6 +74,16 @@ impl AgentEventCoordinator {
         self.runtime.borrow_mut().unregister_pane(pane_id);
     }
 
+    pub(super) fn opencode_theme_source_path(&self, pane_id: &str) -> Option<PathBuf> {
+        self.runtime.borrow().opencode_theme_source_path(pane_id)
+    }
+
+    pub(super) fn opencode_overlay_config_directory(&self, pane_id: &str) -> Option<PathBuf> {
+        self.runtime
+            .borrow()
+            .opencode_overlay_config_directory(pane_id)
+    }
+
     pub(super) fn set_agent_teams_enabled(&self, enabled: bool) {
         self.runtime.borrow_mut().set_agent_teams_enabled(enabled);
     }

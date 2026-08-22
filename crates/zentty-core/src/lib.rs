@@ -65,8 +65,8 @@ pub use app_config::{
     SidebarVisibilityMode, UpdateChannel, UpdatesConfig, WorklaneConfig,
 };
 pub use appearance::{
-    BackgroundOpacity, FALLBACK_DARK_THEME, FALLBACK_LIGHT_THEME, ThemeMode, ThemeModeCommand,
-    ThemeSpec, update_ghostty_value,
+    BackgroundOpacity, FALLBACK_DARK_THEME, FALLBACK_LIGHT_THEME, SidebarSelectionEmphasis,
+    ThemeMode, ThemeModeCommand, ThemeSpec, update_ghostty_value,
 };
 pub use atomic_file_store::{AtomicFileAction, AtomicFileStore, AtomicFileStoreError};
 pub use attention_inbox::{

@@ -53,7 +53,10 @@ impl FakeTool {
                 "ZENTTY_INSTANCE_SOCKET",
                 self.directory.join("instance.sock"),
             )
-            .env("ZENTTY_PANE_TOKEN", "test-token")
+            .env(
+                "ZENTTY_PANE_TOKEN",
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            )
             .env("ZENTTY_WORKLANE_ID", "test-lane")
             .env("ZENTTY_PANE_ID", "test-pane")
             .env("HOME", &self.directory)
@@ -422,6 +425,12 @@ fn opencode_launch_copies_user_config_and_the_staged_plugin_into_a_private_overl
     fs::create_dir_all(&runtime).unwrap();
     fs::create_dir_all(&source).unwrap();
     fs::write(source.join("opencode.json"), b"{\"model\":\"user-choice\"}").unwrap();
+    let synced_theme = tool.directory.join("zentty-synced.json");
+    fs::write(
+        &synced_theme,
+        b"{\"$schema\":\"https://opencode.ai/theme.json\",\"theme\":{}}",
+    )
+    .unwrap();
     tool.resource(
         "opencode/plugins/zentty-opencode-zentty.js",
         "export const source = 'zentty';\n",
@@ -431,6 +440,8 @@ fn opencode_launch_copies_user_config_and_the_staged_plugin_into_a_private_overl
         .command("opencode")
         .arg("run")
         .env("ZENTTY_INSTANCE_SOCKET", runtime.join("instance.sock"))
+        .env("ZENTTY_PANE_TOKEN", "a".repeat(64))
+        .env("ZENTTY_OPENCODE_SYNC_THEME_FILE", &synced_theme)
         .env("OPENCODE_CONFIG_DIR", &source)
         .env("ZENTTY_RESOURCE_ROOT", tool.directory.join("resources"))
         .output()
@@ -460,6 +471,19 @@ fn opencode_launch_copies_user_config_and_the_staged_plugin_into_a_private_overl
     assert_eq!(
         fs::read(std::path::Path::new(overlay).join("opencode.json")).unwrap(),
         b"{\"model\":\"user-choice\"}"
+    );
+    let tui: serde_json::Value =
+        serde_json::from_slice(&fs::read(std::path::Path::new(overlay).join("tui.json")).unwrap())
+            .unwrap();
+    assert_eq!(tui["theme"], "zentty-synced");
+    assert_eq!(
+        fs::read(
+            std::path::Path::new(overlay)
+                .join("themes")
+                .join("zentty-synced.json")
+        )
+        .unwrap(),
+        fs::read(synced_theme).unwrap()
     );
 }
 
@@ -524,7 +548,7 @@ fn opencode_prelaunch_event_crosses_the_authenticated_socket_before_exec() {
     let mut registry = PaneTokenRegistry::default();
     registry
         .register(
-            "test-token",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             AgentTarget::new("window", "test-lane", "test-pane"),
         )
         .unwrap();

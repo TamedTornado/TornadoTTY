@@ -11,6 +11,59 @@ pub enum ThemeMode {
     Light,
 }
 
+/// Source-defined strength of the active worklane's identity-color projection.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum SidebarSelectionEmphasis {
+    #[default]
+    Subtle,
+    Vivid,
+}
+
+impl SidebarSelectionEmphasis {
+    #[must_use]
+    pub const fn config_value(self) -> &'static str {
+        match self {
+            Self::Subtle => "subtle",
+            Self::Vivid => "vivid",
+        }
+    }
+
+    pub(crate) fn parse_config_value(value: &str) -> Option<Self> {
+        match value {
+            "subtle" => Some(Self::Subtle),
+            "vivid" => Some(Self::Vivid),
+            _ => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod sidebar_selection_emphasis_tests {
+    use super::SidebarSelectionEmphasis;
+
+    #[test]
+    fn persisted_values_round_trip_exactly() {
+        for (emphasis, persisted) in [
+            (SidebarSelectionEmphasis::Subtle, "subtle"),
+            (SidebarSelectionEmphasis::Vivid, "vivid"),
+        ] {
+            assert_eq!(emphasis.config_value(), persisted);
+            assert_eq!(
+                SidebarSelectionEmphasis::parse_config_value(persisted),
+                Some(emphasis)
+            );
+        }
+    }
+
+    #[test]
+    fn unknown_persisted_value_is_rejected() {
+        assert_eq!(
+            SidebarSelectionEmphasis::parse_config_value("fluorescent"),
+            None
+        );
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ThemeModeCommand {
     Toggle,

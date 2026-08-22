@@ -1,6 +1,6 @@
 # Linux settings epic execution plan
 
-Status: active plan for GitHub epic #20 and child issues #36–#41  
+Status: final implementation and focused qualification complete; delivery pending for GitHub epic #20
 Ratified: 2026-08-13
 
 ## Why issue #20 was decomposed
@@ -109,3 +109,39 @@ are closed and `platform-settings-contract` is no longer `NOT_IMPLEMENTED`.
 No report may call QA exhaustive while any required cell is FAIL, BLOCKED,
 XFAIL, or NOT_IMPLEMENTED. Valgrind wording remains **PASS with reviewed
 suppressions**, with raw and post-suppression evidence governed separately.
+
+## Final closeout batch
+
+The 2026-08-22 tracker audit found that the aggregate
+`platform-settings-contract` had become executable PASS, but that alone did not
+satisfy the epic. The machine-readable inventory still correctly exposed
+`configuration.ghostty-appearance` as `NOT_IMPLEMENTED`: the Linux Appearance
+page had no source **Sync OpenCode Theme** control or behavior, no source
+**Sidebar selection** emphasis control, and the epic records had not yet
+reconciled background-image preservation or the no-blur platform alternative.
+
+The final batch therefore has one product boundary, not a paperwork-only status
+change:
+
+1. Port the missing source Appearance controls through the existing
+   `AppearanceConfig` and `ConfigStore`; do not add another settings store.
+2. Make OpenCode theme sync use the existing managed OpenCode overlay and agent
+   process identity. Theme changes update only the private managed theme file
+   and signal only a verified live OpenCode process. User configuration remains
+   untouched, and disabling sync is an actual behavior rather than a cosmetic
+   toggle.
+3. Apply subtle/vivid sidebar selection through the existing sidebar projection
+   and worklane-color classes, with no second selection or theme authority.
+4. Prove that arbitrary Ghostty `background-image` configuration survives
+   Zentty-owned appearance writes/reloads. Record compositor blur as the named
+   unsupported Linux degradation; do not pretend an unstandardized compositor
+   effect is available.
+5. Extend the existing physical settings journey on controlled X11 and Wayland,
+   plus focused model/filesystem/process tests for the OpenCode overlay and
+   sidebar policy. Only after those pass may the inventory become `IMPLEMENTED`
+   and #20 close.
+
+The final validation remains bounded to affected settings, agent-overlay,
+sidebar, configuration, ownership, inventory, formatting, and lint gates. A
+complete app-wide qualifier is not required merely to close this already
+aggregated settings epic.

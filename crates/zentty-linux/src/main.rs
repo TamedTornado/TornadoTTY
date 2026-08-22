@@ -26,6 +26,7 @@ mod global_search_view;
 mod notification_service;
 mod notifications_settings;
 mod open_with_settings;
+mod opencode_theme_sync;
 mod pane_controls;
 mod pane_dividers;
 mod pane_scroll_switch;

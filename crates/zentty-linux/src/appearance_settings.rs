@@ -4,7 +4,8 @@ use std::time::Duration;
 
 use gtk::prelude::*;
 use zentty_core::{
-    AppearanceConfig, BackgroundOpacity, FALLBACK_DARK_THEME, FALLBACK_LIGHT_THEME, ThemeMode,
+    AppearanceConfig, BackgroundOpacity, FALLBACK_DARK_THEME, FALLBACK_LIGHT_THEME,
+    SidebarSelectionEmphasis, ThemeMode,
 };
 
 use crate::theme_catalog::{ThemeFilter, ThemePreview, default_theme_directories, discover_themes};
@@ -189,6 +190,61 @@ pub(crate) fn build(
     opacity_row.append(&opacity_value);
     opacity_card.append(&opacity_row);
     root.append(&opacity_card);
+
+    let opencode_card = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    opencode_card.add_css_class("zentty-settings-card");
+    let opencode_copy = gtk::Box::new(gtk::Orientation::Vertical, 3);
+    opencode_copy.set_hexpand(true);
+    opencode_copy.append(&section_title("Sync OpenCode Theme"));
+    let opencode_help = gtk::Label::new(Some(
+        "Override OpenCode's launch theme to match your current terminal theme.",
+    ));
+    opencode_help.add_css_class("dim-label");
+    opencode_help.set_halign(gtk::Align::Start);
+    opencode_help.set_wrap(true);
+    opencode_copy.append(&opencode_help);
+    opencode_card.append(&opencode_copy);
+    let opencode_sync = gtk::Switch::new();
+    opencode_sync.set_widget_name("appearance-opencode-sync");
+    opencode_sync.set_valign(gtk::Align::Center);
+    opencode_sync.set_active(initial.sync_opencode_theme_with_terminal);
+    opencode_sync.update_property(&[gtk::accessible::Property::Label("Sync OpenCode Theme")]);
+    opencode_sync.connect_has_focus_notify(|toggle| {
+        if toggle.has_focus() {
+            eprintln!("zentty-linux: appearance-settings focus=opencode-theme-sync");
+        }
+    });
+    opencode_card.append(&opencode_sync);
+    root.append(&opencode_card);
+
+    let emphasis_card = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    emphasis_card.add_css_class("zentty-settings-card");
+    emphasis_card.append(&section_title("Sidebar selection"));
+    let emphasis_help = gtk::Label::new(Some("How strongly the active worklane is highlighted."));
+    emphasis_help.add_css_class("dim-label");
+    emphasis_help.set_halign(gtk::Align::Start);
+    emphasis_card.append(&emphasis_help);
+    let emphasis_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let subtle_emphasis = gtk::CheckButton::with_mnemonic("_Subtle · Quiet theme tint");
+    subtle_emphasis.set_widget_name("appearance-sidebar-subtle");
+    let vivid_emphasis = gtk::CheckButton::with_mnemonic("_Vivid · Worklane identity color");
+    vivid_emphasis.set_widget_name("appearance-sidebar-vivid");
+    vivid_emphasis.set_group(Some(&subtle_emphasis));
+    subtle_emphasis
+        .set_active(initial.sidebar_selection_emphasis == SidebarSelectionEmphasis::Subtle);
+    vivid_emphasis
+        .set_active(initial.sidebar_selection_emphasis == SidebarSelectionEmphasis::Vivid);
+    for (button, name) in [(&subtle_emphasis, "subtle"), (&vivid_emphasis, "vivid")] {
+        button.connect_has_focus_notify(move |button| {
+            if button.has_focus() {
+                eprintln!("zentty-linux: appearance-settings focus=sidebar-emphasis-{name}");
+            }
+        });
+    }
+    emphasis_row.append(&subtle_emphasis);
+    emphasis_row.append(&vivid_emphasis);
+    emphasis_card.append(&emphasis_row);
+    root.append(&emphasis_card);
 
     let themes = std::env::current_exe()
         .map_err(|error| error.to_string())
@@ -387,6 +443,28 @@ pub(crate) fn build(
                     apply_state(&state, "background-opacity");
                 },
             ));
+        });
+    }
+    {
+        let state = Rc::clone(&state);
+        opencode_sync.connect_active_notify(move |toggle| {
+            state
+                .borrow_mut()
+                .appearance
+                .sync_opencode_theme_with_terminal = toggle.is_active();
+            apply_state(&state, "opencode-theme-sync");
+        });
+    }
+    for (button, emphasis) in [
+        (subtle_emphasis, SidebarSelectionEmphasis::Subtle),
+        (vivid_emphasis, SidebarSelectionEmphasis::Vivid),
+    ] {
+        let state = Rc::clone(&state);
+        button.connect_toggled(move |button| {
+            if button.is_active() {
+                state.borrow_mut().appearance.sidebar_selection_emphasis = emphasis;
+                apply_state(&state, "sidebar-selection-emphasis");
+            }
         });
     }
 

@@ -6,7 +6,8 @@ use serde::de::DeserializeOwned;
 use crate::shortcut::ShortcutDocument;
 use crate::{
     AgentIntegrationState, BackgroundOpacity, CleanCopyOptions, CommandFlattenAggressiveness,
-    LINUX_OPEN_WITH_BUILTIN_IDS, ShortcutBinding, SidebarWidthPreference, ThemeMode, ThemeSpec,
+    LINUX_OPEN_WITH_BUILTIN_IDS, ShortcutBinding, SidebarSelectionEmphasis, SidebarWidthPreference,
+    ThemeMode, ThemeSpec,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -463,6 +464,7 @@ pub struct AppearanceConfig {
     pub preferred_light_theme_name: Option<String>,
     pub background_opacity: Option<BackgroundOpacity>,
     pub sync_opencode_theme_with_terminal: bool,
+    pub sidebar_selection_emphasis: SidebarSelectionEmphasis,
 }
 
 impl Default for AppearanceConfig {
@@ -473,6 +475,7 @@ impl Default for AppearanceConfig {
             preferred_light_theme_name: None,
             background_opacity: None,
             sync_opencode_theme_with_terminal: true,
+            sidebar_selection_emphasis: SidebarSelectionEmphasis::Subtle,
         }
     }
 }
@@ -497,6 +500,7 @@ struct AppearanceDocument {
     #[serde(alias = "background_opacity")]
     local_background_opacity: Option<f64>,
     sync_opencode_theme_with_terminal: Option<bool>,
+    sidebar_selection_emphasis: Option<String>,
 }
 
 impl AppearanceDocument {
@@ -521,6 +525,14 @@ impl AppearanceDocument {
             sync_opencode_theme_with_terminal: self
                 .sync_opencode_theme_with_terminal
                 .unwrap_or(defaults.sync_opencode_theme_with_terminal),
+            sidebar_selection_emphasis: self.sidebar_selection_emphasis.map_or(
+                Ok(defaults.sidebar_selection_emphasis),
+                |value| {
+                    SidebarSelectionEmphasis::parse_config_value(&value).ok_or_else(|| {
+                        format!("invalid appearance.sidebar_selection_emphasis: {value}")
+                    })
+                },
+            )?,
         })
     }
 }

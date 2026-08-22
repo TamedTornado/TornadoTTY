@@ -65,7 +65,7 @@ case "${ZENTTY_REQUIRE_REAL_GEMINI:-false}" in
     false) ;;
     *) fail "ZENTTY_REQUIRE_REAL_GEMINI must be true or false" ;;
 esac
-for dependency in grep mktemp sed sleep stat; do
+for dependency in cut grep jq mktemp sed sha256sum sleep stat; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
 [[ -x "${product}" ]] || fail "staged product is not built: ${product}"
@@ -153,6 +153,20 @@ run_adapter() {
     if [[ -n "${forbidden}" ]] && grep -Fq "${forbidden}" "${log}"; then
         fail "${name} rendered forbidden stale state: ${forbidden}"
     fi
+    if [[ "${name}" == opencode ]]; then
+        local overlay
+        overlay="$(sed -n 's/^opencode-config://p' "${start_receipt}" | tail -1)"
+        [[ -d "${overlay}" ]] || fail "OpenCode did not receive its real managed overlay"
+        [[ "$(stat -c '%a' "${overlay}")" == 700 ]] ||
+            fail "OpenCode managed overlay was not private"
+        jq -e '.theme == "zentty-synced"' "${overlay}/tui.json" >/dev/null ||
+            fail "OpenCode managed overlay did not select the synchronized terminal theme"
+        jq -e '."$schema" == "https://opencode.ai/theme.json" and (.theme.background.dark | startswith("#"))' \
+            "${overlay}/themes/zentty-synced.json" >/dev/null ||
+            fail "OpenCode synchronized theme did not contain the real terminal palette"
+        [[ "$(stat -c '%a' "${overlay}/themes/zentty-synced.json")" == 600 ]] ||
+            fail "OpenCode synchronized theme was not private"
+    fi
 
     socket="$(sed -n 's/^zentty-linux: agent-runtime socket=//p' "${log}" | head -1)"
     [[ -S "${socket}" ]] || fail "private product socket was not live during ${name}"
@@ -177,6 +191,55 @@ run_adapter() {
     start_receipt=""
     rm -rf -- "${state_directory}"
     log=""
+    state_directory=""
+}
+
+run_opencode_live_theme() {
+    local overlay receipt before after
+    log="$(mktemp)"
+    start_receipt="$(mktemp)"
+    receipt="$(mktemp)"
+    rm -f -- "${receipt}"
+    state_directory="$(mktemp -d)"
+    PATH="${fake_bin}:${PATH}" GDK_SCALE=1 GDK_DPI_SCALE=1 \
+        ZENTTY_CLI_DEBUG=1 \
+        ZENTTY_CONTROLLED_AGENT_START_RECEIPT="${start_receipt}" \
+        ZENTTY_CONTROLLED_AGENT_PROFILE=opencode-live-theme \
+        ZENTTY_CONTROLLED_OPENCODE_THEME_RECEIPT="${receipt}" \
+        "${product}" --command opencode --state-directory "${state_directory}" \
+        --no-session-restore >"${log}" 2>&1 &
+    product_pid=$!
+    zentty_product_wait_for_log "${log}" \
+        'zentty-linux: agent-event pane=pane-1 worklane=worklane-1 kind=session.start' \
+        "OpenCode prelaunch identity did not reach the real product"
+    for _ in {1..200}; do
+        overlay="$(sed -n 's/^opencode-config://p' "${start_receipt}" | tail -1)"
+        [[ -f "${overlay}/themes/zentty-synced.json" ]] && break
+        sleep 0.05
+    done
+    [[ -f "${overlay}/themes/zentty-synced.json" ]] ||
+        fail "OpenCode live-theme run had no managed synchronized theme"
+    before="$(sha256sum "${overlay}/themes/zentty-synced.json" | cut -d' ' -f1)"
+    mkdir -p "${XDG_CONFIG_HOME}/zentty"
+    cat >"${XDG_CONFIG_HOME}/zentty/config.toml" <<'EOF'
+[appearance]
+preferred_dark_theme_name = "Abernathy"
+sync_opencode_theme_with_terminal = true
+EOF
+    zentty_product_wait_for_log "${log}" \
+        'zentty-linux: opencode-theme-live pane=pane-1' \
+        "OpenCode live theme did not cross the managed overlay boundary"
+    for _ in {1..200}; do [[ -s "${receipt}" ]] && break; sleep 0.05; done
+    [[ -s "${receipt}" ]] || fail "verified OpenCode process did not receive SIGUSR2"
+    grep -Fq 'signal=USR2' "${receipt}" || fail "OpenCode signal receipt was malformed"
+    after="$(sha256sum "${overlay}/themes/zentty-synced.json" | cut -d' ' -f1)"
+    [[ "${after}" != "${before}" ]] || fail "OpenCode managed theme bytes did not change"
+    wait "${product_pid}" || fail "OpenCode live-theme product run failed"
+    product_pid=""
+    rm -f -- "${log}" "${start_receipt}" "${receipt}"
+    rm -rf -- "${state_directory}"
+    log=""
+    start_receipt=""
     state_directory=""
 }
 
@@ -511,13 +574,14 @@ run_adapter \
     'small-harness' \
     small-harness-adapter \
     'zentty-linux: sidebar-agent-status pane=pane-1 phase=Running interaction=None attention=false progress=2/5'
-for managed_tool in pi opencode omp; do
+for managed_tool in pi omp; do
     run_adapter \
         "${managed_tool}" \
         "${managed_tool}" \
         managed-prelaunch \
         'zentty-linux: agent-event pane=pane-1 worklane=worklane-1 kind=session.start'
 done
+run_opencode_live_theme
 run_adapter \
     gemini \
     'gemini' \

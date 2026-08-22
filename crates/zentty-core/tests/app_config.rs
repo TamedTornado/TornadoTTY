@@ -1,6 +1,7 @@
 use zentty_core::{
     AgentIntegrationState, AppConfig, BackgroundOpacity, CommandFlattenAggressiveness,
-    FocusFollowsMouseDelay, NewWorklanePlacement, PaneRightBehaviorMode, ThemeMode, UpdateChannel,
+    FocusFollowsMouseDelay, NewWorklanePlacement, PaneRightBehaviorMode, SidebarSelectionEmphasis,
+    ThemeMode, UpdateChannel,
 };
 
 #[test]
@@ -9,6 +10,10 @@ fn appearance_defaults_and_source_compatible_values_are_explicit() {
     assert_eq!(defaults.theme_mode, ThemeMode::Dark);
     assert_eq!(defaults.background_opacity, None);
     assert!(defaults.sync_opencode_theme_with_terminal);
+    assert_eq!(
+        defaults.sidebar_selection_emphasis,
+        SidebarSelectionEmphasis::Subtle
+    );
 
     let appearance = AppConfig::parse_toml(
         r#"
@@ -18,6 +23,7 @@ fn appearance_defaults_and_source_compatible_values_are_explicit() {
         preferred_light_theme_name = "Catppuccin Latte"
         local_background_opacity = 0.876
         sync_opencode_theme_with_terminal = false
+        sidebar_selection_emphasis = "vivid"
         "#,
     )
     .unwrap()
@@ -32,6 +38,10 @@ fn appearance_defaults_and_source_compatible_values_are_explicit() {
         BackgroundOpacity::from_fraction(0.88)
     );
     assert!(!appearance.sync_opencode_theme_with_terminal);
+    assert_eq!(
+        appearance.sidebar_selection_emphasis,
+        SidebarSelectionEmphasis::Vivid
+    );
 }
 
 #[test]
@@ -52,6 +62,10 @@ fn appearance_accepts_source_mode_tokens_but_rejects_unknown_or_nonfinite_values
     }
     assert!(AppConfig::parse_toml("[appearance]\ntheme_mode = \"system\"\n").is_err());
     assert!(AppConfig::parse_toml("[appearance]\nlocal_background_opacity = nan\n").is_err());
+    assert!(
+        AppConfig::parse_toml("[appearance]\nsidebar_selection_emphasis = \"fluorescent\"\n")
+            .is_err()
+    );
 }
 
 #[test]
