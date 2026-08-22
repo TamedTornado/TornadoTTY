@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+backend="${1:-}"
+artifact_dir="${repo_root}/build/linux/test-artifacts"
+test_binary="${artifact_dir}/zentty-linux-accessibility-tests"
+
+fail() {
+    echo "rust-worklane-accessibility: error: $*" >&2
+    exit 1
+}
+
+case "${backend}" in
+    prepare) ;;
+    x11) wrapper="${repo_root}/linux/tests/nested-x11" ;;
+    wayland) wrapper="${repo_root}/linux/tests/nested-wayland" ;;
+    *) fail "usage: $0 prepare|x11|wayland" ;;
+esac
+
+for dependency in cargo jq; do
+    command -v "${dependency}" >/dev/null || fail "${dependency} is required"
+done
+
+# Compile outside the isolated display. The display wrappers intentionally use
+# disposable HOME directories, so invoking Cargo inside them would redownload
+# the toolchain and registry rather than test additional product behavior.
+prepare() {
+    local compiled
+    mkdir -p "${artifact_dir}"
+    compiled="$({
+        cargo test \
+            --manifest-path "${repo_root}/Cargo.toml" \
+            --locked \
+            -p zentty-linux \
+            --bin zentty-linux \
+            --no-run \
+            --message-format=json-render-diagnostics
+    } | jq -r '
+        select(.reason == "compiler-artifact")
+        | select(.target.name == "zentty-linux")
+        | select(.profile.test == true)
+        | .executable // empty
+    ' | tail -n 1)"
+    [[ -n "${compiled}" && -x "${compiled}" ]] ||
+        fail "Cargo did not produce the zentty-linux test binary"
+    cp -- "${compiled}" "${test_binary}.new"
+    chmod 0755 "${test_binary}.new"
+    mv -f -- "${test_binary}.new" "${test_binary}"
+    echo "rust-worklane-accessibility: PREPARED binary=${test_binary}"
+}
+
+if [[ "${backend}" == prepare ]]; then
+    prepare
+    exit 0
+fi
+
+if [[ "${backend}" == x11 && -z "${ZENTTY_NESTED_X11_SESSION_ID:-}" ]] ||
+    [[ "${backend}" == wayland && -z "${ZENTTY_NESTED_WAYLAND_SESSION_ID:-}" ]]; then
+    prepare
+    exec "${wrapper}" "$0" "${backend}"
+fi
+
+[[ -x "${test_binary}" ]] || fail "prepared accessibility test binary is missing"
+
+bundle_lib="${repo_root}/build/linux-profiles/release-safe/lib"
+[[ -d "${bundle_lib}" ]] || fail "ReleaseSafe product bundle is not staged"
+
+env \
+    -u NO_AT_BRIDGE \
+    GTK_A11Y=test \
+    LD_LIBRARY_PATH="${bundle_lib}" \
+    "${test_binary}" \
+    actual_worklane_widgets_expose_the_accessibility_contract \
+    --ignored \
+    --test-threads=1
+
+echo "rust-worklane-accessibility: PASS backend=${backend} actual-widgets=1 gtk-a11y=test"

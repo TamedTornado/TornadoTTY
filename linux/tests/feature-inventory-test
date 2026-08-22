@@ -60,8 +60,8 @@ jq -e '
     .result == "PASS" and
     .entry_count == 60 and
     .classifications.REQUIRED_INITIAL_RELEASE == 34 and
-    .implementation_statuses.IMPLEMENTED == 30 and
-    .implementation_statuses.PARTIAL == 19 and
+    .implementation_statuses.IMPLEMENTED == 35 and
+    .implementation_statuses.PARTIAL == 14 and
     .implementation_statuses.NOT_IMPLEMENTED == 11 and
     .evidence.app_commands == 70 and
     .evidence.pane_commands == 33 and
@@ -227,7 +227,7 @@ jq 'del(.linux_issues[] | select(.number == 23))' \
     "${source_evidence}" >"${temp_dir}/missing-owner-issue.json"
 expect_evidence_rejected missing-owner-issue "feature references nonexistent owner issue"
 
-jq '(.linux_issues[] | select(.number == 4) | .state) = "CLOSED"' \
+jq '(.linux_issues[] | select(.number == 7) | .state) = "CLOSED"' \
     "${source_evidence}" >"${temp_dir}/closed-owner-issue.json"
 expect_evidence_rejected closed-owner-issue "feature references closed owner issue"
 

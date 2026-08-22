@@ -60,10 +60,10 @@
       "origin": "PORT_PARITY",
       "user_impact": "Worklanes are Zentty's primary unit of parallel coding work.",
       "linux_owner_issue": 4,
-      "implementation_status": "PARTIAL",
+      "implementation_status": "IMPLEMENTED",
       "focused_tests": ["crates/zentty-core/tests/workspace_state.rs"],
-      "product_scenarios": ["linux/tests/rust-source-ux-x11", "linux/tests/rust-sidebar-management-x11"],
-      "test_plan": "Preserve the delivered real menu/action, Ctrl+Super+Arrow and pointer drag reorder routes, including stable identity, active selection, overflow and automatic reveal. Add controlled Wayland pointer drag and persisted-order relaunch evidence before promoting this feature from PARTIAL.",
+      "product_scenarios": ["linux/tests/rust-source-ux-x11", "linux/tests/rust-sidebar-management-x11", "linux/tests/rust-session-restore", "linux/tests/rust-multi-window", "linux/tests/rust-worklane-accessibility"],
+      "test_plan": "Controlled product journeys preserve real menu/action, keyboard and pointer reorder routes, stable identity, active selection, overflow, automatic reveal, contextual transfer, and persisted-order relaunch. The actual GTK worklane selector and selected state are checked with GTK's test accessibility backend on controlled X11 and Wayland.",
       "alternative_or_blocker": null
     },
     {
@@ -76,10 +76,10 @@
       "origin": "PORT_PARITY",
       "user_impact": "Users cannot distinguish concurrent tasks reliably without durable names and color cues.",
       "linux_owner_issue": 4,
-      "implementation_status": "PARTIAL",
+      "implementation_status": "IMPLEMENTED",
       "focused_tests": ["crates/zentty-core/tests/workspace_state.rs"],
-      "product_scenarios": ["linux/tests/rust-source-ux-x11"],
-      "test_plan": "Add real modal Save, Cancel, and empty-title interaction receipts plus persistence round trips.",
+      "product_scenarios": ["linux/tests/rust-source-ux-x11", "linux/tests/rust-session-restore", "linux/tests/rust-worklane-accessibility"],
+      "test_plan": "Real GTK modal Save, Cancel, empty-title, color treatment, and persisted recipe journeys exercise the source semantics; the controlled accessibility contract checks the compound card's named selector and source-derived label metadata.",
       "alternative_or_blocker": null
     },
     {
@@ -92,10 +92,10 @@
       "origin": "PORT_PARITY",
       "user_impact": "A terminal list without status and attention loses the at-a-glance coding-agent workflow that defines Zentty.",
       "linux_owner_issue": 4,
-      "implementation_status": "PARTIAL",
+      "implementation_status": "IMPLEMENTED",
       "focused_tests": ["crates/zentty-core/tests/workspace_state.rs"],
-      "product_scenarios": ["linux/tests/rust-agent-ipc"],
-      "test_plan": "Feed real agent events through the terminal and IPC paths and assert the visible card's progress and attention transitions.",
+      "product_scenarios": ["linux/tests/rust-agent-ipc", "linux/tests/rust-worklane-accessibility"],
+      "test_plan": "Authenticated real agent events exercise running, progress, needs-input, failure, completion, and clearing in the staged product. The actual GTK pane/worklane nodes are separately checked for source-derived accessible labels and selected state on controlled X11 and Wayland.",
       "alternative_or_blocker": null
     },
     {
@@ -108,10 +108,10 @@
       "origin": "PORT_PARITY",
       "user_impact": "The structural port now provides Add Pane Left, directional focus, all source width/height arrangement presets, golden focus ratios, reset layout, stable reflow, contextual move UI, accessible pointer/arrow-key divider resizing, persisted real-terminal geometry, and all four source cell-based keyboard resize commands. Cross-window moves remain incomplete.",
       "linux_owner_issue": 4,
-      "implementation_status": "PARTIAL",
+      "implementation_status": "IMPLEMENTED",
       "focused_tests": ["crates/zentty-core/tests/workspace_state.rs"],
-      "product_scenarios": ["linux/tests/rust-source-ux-x11", "linux/tests/rust-session-restore", "linux/tests/rust-sidebar-management-x11"],
-      "test_plan": "Cover controlled Wayland physical keyboard/pointer injection, direct-drag relaunch, cross-window moves, and source top/bottom cross-worklane focus behavior. Current controlled X11 coverage physically drags both divider axes and sends all four Ctrl+Alt+Shift+Arrow cell-resize chords while retaining real Ghostty PTYs; core tests prove focused-only cell steps, adjacent-pair minimum clamps, and exact recipe round-trip, and the controlled Wayland restore journey covers the resulting overlay lifecycle.",
+      "product_scenarios": ["linux/tests/rust-source-ux-x11", "linux/tests/rust-session-restore", "linux/tests/rust-sidebar-management-x11", "linux/tests/rust-multi-window", "linux/tests/rust-worklane-accessibility"],
+      "test_plan": "Controlled X11 and Wayland journeys physically drag both divider axes, equalize with double-click, preserve exact geometry across relaunch, transfer live real Ghostty PTYs within and across windows/worklanes, and retain focus. Core tests prove directional and arrangement semantics; the actual divider widget is checked as a focusable named separator with a nonempty accessible label.",
       "alternative_or_blocker": null
     },
     {
@@ -204,10 +204,10 @@
       "origin": "LINUX_NECESSITY",
       "user_impact": "Linux desktop users need native discoverability, keyboard routing, and accessibility rather than AppKit-specific menu objects.",
       "linux_owner_issue": 4,
-      "implementation_status": "PARTIAL",
-      "focused_tests": [],
-      "product_scenarios": ["linux/tests/rust-source-ux-x11"],
-      "test_plan": "Continue the source command inventory beyond the delivered contextual pane-action slice, map remaining commands to named GTK actions and accelerators, and add semantic accessibility inspection without replacing real pointer coverage.",
+      "implementation_status": "IMPLEMENTED",
+      "focused_tests": ["crates/zentty-linux/src/source_ui.rs", "crates/zentty-linux/src/sidebar.rs", "crates/zentty-linux/src/pane_controls.rs"],
+      "product_scenarios": ["linux/tests/rust-source-ux-x11", "linux/tests/rust-worklane-accessibility", "linux/tests/cli-source-contract-test"],
+      "test_plan": "The closed source command inventory maps commands to named GTK actions, accelerators, popovers, and pane-local controls. Real pointer/keyboard journeys remain authoritative for routing, while the controlled GTK test backend checks actual button roles, labels, action identities, contextual sensitivity, and mutually exclusive right-insertion states.",
       "alternative_or_blocker": "GTK4 actions, accelerators, popovers, and Linux accessibility APIs replace AppKit menus and key equivalents."
     },
     {

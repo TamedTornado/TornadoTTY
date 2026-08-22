@@ -3,11 +3,11 @@
   "audit_date": "2026-08-04",
   "source_head": "6e021b0d3d80025900de1a7ab2f37cc6510da3fe",
   "latest_public_release": "v0.1.45",
-  "issue_state_reconciled_at": "2026-08-19",
+  "issue_state_reconciled_at": "2026-08-22",
   "linux_issues": [
     {"number": 2, "state": "CLOSED", "depends_on": [], "features": [], "title": "Rust: define product architecture and workspace contract", "url": "https://github.com/TamedTornado/zentty/issues/2"},
     {"number": 3, "state": "CLOSED", "depends_on": [2, 13], "features": ["workspace.recipe-v3", "workspace.live-clean-snapshots", "pane.cwd-command-title"], "title": "Linux: implement persistent workspace and worklane model", "url": "https://github.com/TamedTornado/zentty/issues/3"},
-    {"number": 4, "state": "OPEN", "depends_on": [2, 3, 13], "features": ["worklane.navigation-identity", "worklane.titles-colors", "worklane.sidebar-summaries-attention", "pane.layout-split-focus-move", "commands.linux-shortcuts-menus"], "title": "Rust/Linux: build the GTK worklane and pane application shell", "url": "https://github.com/TamedTornado/zentty/issues/4"},
+    {"number": 4, "state": "CLOSED", "depends_on": [2, 3, 13], "features": ["worklane.navigation-identity", "worklane.titles-colors", "worklane.sidebar-summaries-attention", "pane.layout-split-focus-move", "commands.linux-shortcuts-menus"], "title": "Rust/Linux: build the GTK worklane and pane application shell", "url": "https://github.com/TamedTornado/zentty/issues/4"},
     {"number": 5, "state": "OPEN", "depends_on": [4, 13], "features": ["pane.close-restore"], "title": "Linux: own terminal pane lifecycle, focus, and restoration handoff", "url": "https://github.com/TamedTornado/zentty/issues/5"},
     {"number": 6, "state": "CLOSED", "depends_on": [3, 5], "features": ["workspace.crash-recovery"], "title": "Linux: qualify restart and crash recovery", "url": "https://github.com/TamedTornado/zentty/issues/6"},
     {"number": 7, "state": "OPEN", "depends_on": [3, 4, 5], "features": ["pane.drag-drop", "pane.search", "commands.palette-routing", "agents.shared-consent-bootstrap", "agents.shared-ipc-status-attention", "agent.codex", "agent.claude-code", "agent.gemini", "agent.opencode", "agent.amp", "agent.copilot", "agent.cursor", "agent.droid", "agent.kimi", "agent.pi", "agent.omp", "agent.grok", "agent.antigravity", "agent.hermes", "agent.vibe", "agent.small-harness", "agent.custom"], "title": "Linux: inventory and deliver essential Zentty workflow parity", "url": "https://github.com/TamedTornado/zentty/issues/7"},

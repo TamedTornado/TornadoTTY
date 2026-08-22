@@ -485,6 +485,7 @@ fn make_worklane_card(
     header.append(&select);
 
     let menu = gtk::MenuButton::new();
+    menu.set_widget_name(&widget_name("worklane-menu", &summary.worklane_id));
     menu.set_icon_name("view-more-symbolic");
     menu.set_tooltip_text(Some("Worklane actions"));
     menu.set_accessible_role(gtk::AccessibleRole::Button);
@@ -1029,6 +1030,7 @@ fn make_pane_row(
         row.add_css_class("pane-row-agent-attention");
     }
     let select = gtk::Button::new();
+    select.set_widget_name(&widget_name("pane-select", &pane.pane_id));
     select.set_has_frame(false);
     select.set_hexpand(true);
     select.set_action_name(Some("workspace.select-pane"));
@@ -1896,12 +1898,21 @@ fn remove_all_children(container: &gtk::Box) {
 #[cfg(test)]
 mod tests {
     use super::{
-        WorklaneDestinationGroup, WorklaneDropEdge, WorklaneSelectionState,
-        local_destination_groups, pane_action_specs, reveal_range, selection_state,
-        worklane_destinations,
+        WorklaneDestinationGroup, WorklaneDropEdge, WorklaneSelectionState, find_named_widget,
+        local_destination_groups, make_worklane_card, pane_accessible_label, pane_action_specs,
+        reveal_range, selection_state, worklane_destinations,
     };
-    use crate::source_ui;
-    use zentty_core::{ClipboardConfig, SidebarPaneSummary, SidebarWorklaneSummary, WorklaneColor};
+    use crate::{
+        pane_controls::{PaneControlAction, PaneFrame},
+        pane_dividers::{PaneDivider, new_handle},
+        source_ui,
+    };
+    use gtk::prelude::*;
+    use zentty_core::{
+        AgentInteractionKind, AgentPhase, AgentProgress, AgentSignalConfidence, AgentSignalOrigin,
+        ClipboardConfig, PaneAgentStatus, PaneRightInsertionBehavior, SidebarPaneSummary,
+        SidebarWorklaneSummary, WorklaneColor,
+    };
 
     fn lane(id: &str, panes: &[&str], color: Option<WorklaneColor>) -> SidebarWorklaneSummary {
         SidebarWorklaneSummary {
@@ -2061,5 +2072,186 @@ mod tests {
             reveal_range(100.0, 300.0, 360.0, 80.0),
             Some((360.0, 440.0))
         );
+    }
+
+    #[test]
+    #[ignore = "requires GTK_A11Y=test and a controlled display"]
+    fn actual_worklane_widgets_expose_the_accessibility_contract() {
+        assert_eq!(std::env::var("GTK_A11Y").as_deref(), Ok("test"));
+        gtk::init().expect("controlled GTK display must initialize");
+        let summary = accessibility_summary();
+        let card = make_worklane_card(
+            &gtk::Window::new(),
+            &summary,
+            std::slice::from_ref(&summary),
+            0,
+            ClipboardConfig::default(),
+            &[],
+            "window-a",
+            None,
+        );
+        assert_sidebar_accessibility(&card, &summary);
+        assert_pane_control_accessibility();
+        assert_divider_accessibility();
+    }
+
+    fn accessibility_summary() -> SidebarWorklaneSummary {
+        let status = PaneAgentStatus {
+            session_id: "session-a".to_owned(),
+            parent_session_id: None,
+            agent_name: "Codex".to_owned(),
+            phase: AgentPhase::NeedsInput,
+            text: Some("Approve command".to_owned()),
+            interaction: AgentInteractionKind::Approval,
+            progress: Some(AgentProgress { done: 2, total: 5 }),
+            tracked_pid: None,
+            transcript_path: None,
+            artifact_link: None,
+            working_directory: None,
+            agent_launch_snapshot: None,
+            signal_origin: AgentSignalOrigin::ExplicitHook,
+            signal_confidence: AgentSignalConfidence::Explicit,
+            updated_at: 1,
+        };
+        SidebarWorklaneSummary {
+            worklane_id: "lane-a".to_owned(),
+            top_label: Some("Frontend".to_owned()),
+            primary_text: "/workspace/frontend".to_owned(),
+            pane_rows: vec![SidebarPaneSummary {
+                pane_id: "pane-a".to_owned(),
+                primary_text: "pnpm dev".to_owned(),
+                custom_title: None,
+                is_focused: true,
+                agent_status: Some(status),
+                project_context: None,
+                project_icon_path: None,
+            }],
+            is_active: true,
+            color: Some(WorklaneColor::Blue),
+        }
+    }
+
+    fn assert_sidebar_accessibility(card: &gtk::Box, summary: &SidebarWorklaneSummary) {
+        let worklane_select = find_named_widget(card.upcast_ref(), "zentty-worklane-select-lane-a")
+            .expect("worklane select must exist")
+            .downcast::<gtk::Button>()
+            .expect("worklane select must remain a button");
+        assert!(gtk::test_accessible_has_role(
+            &worklane_select,
+            gtk::AccessibleRole::Button
+        ));
+        assert!(gtk::test_accessible_has_property(
+            &worklane_select,
+            gtk::AccessibleProperty::Label
+        ));
+        assert!(gtk::test_accessible_has_state(
+            &worklane_select,
+            gtk::AccessibleState::Selected
+        ));
+        assert_eq!(
+            worklane_select.action_name().as_deref(),
+            Some("workspace.select-worklane")
+        );
+
+        let pane_select = find_named_widget(card.upcast_ref(), "zentty-pane-select-pane-a")
+            .expect("pane select must exist")
+            .downcast::<gtk::Button>()
+            .expect("pane select must remain a button");
+        assert!(gtk::test_accessible_has_role(
+            &pane_select,
+            gtk::AccessibleRole::Button
+        ));
+        assert!(gtk::test_accessible_has_property(
+            &pane_select,
+            gtk::AccessibleProperty::Label
+        ));
+        assert!(gtk::test_accessible_has_state(
+            &pane_select,
+            gtk::AccessibleState::Selected
+        ));
+        assert_eq!(
+            pane_select.action_name().as_deref(),
+            Some("workspace.select-pane")
+        );
+        assert!(pane_accessible_label(&summary.pane_rows[0]).contains("Needs input"));
+
+        for (name, expected_role) in [
+            ("zentty-worklane-menu-lane-a", gtk::AccessibleRole::Button),
+            ("zentty-pane-menu-pane-a", gtk::AccessibleRole::Button),
+        ] {
+            let widget = find_named_widget(card.upcast_ref(), name)
+                .unwrap_or_else(|| panic!("missing accessible widget {name}"));
+            assert!(gtk::test_accessible_has_role(&widget, expected_role));
+            assert!(gtk::test_accessible_has_property(
+                &widget,
+                gtk::AccessibleProperty::Label
+            ));
+        }
+        assert!(find_named_widget(card.upcast_ref(), "missing-control").is_none());
+    }
+
+    fn assert_pane_control_accessibility() {
+        let terminal = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        let frame = PaneFrame::new("pane-a", terminal.upcast_ref(), |_| {}, |_| {});
+        frame.set_window_transfer_available(false);
+        for action in [
+            PaneControlAction::SplitRight,
+            PaneControlAction::NewPaneBelow,
+            PaneControlAction::MoveToNewWindow,
+            PaneControlAction::ClosePane,
+        ] {
+            let name = format!("pane-control-{}-pane-a", action.id());
+            let button = find_named_widget(frame.widget().upcast_ref(), &name)
+                .unwrap_or_else(|| panic!("missing pane-local control {name}"))
+                .downcast::<gtk::Button>()
+                .expect("pane-local controls must remain buttons");
+            assert!(gtk::test_accessible_has_role(
+                &button,
+                gtk::AccessibleRole::Button
+            ));
+            assert!(gtk::test_accessible_has_property(
+                &button,
+                gtk::AccessibleProperty::Label
+            ));
+            if action == PaneControlAction::MoveToNewWindow {
+                assert!(!button.is_sensitive());
+            }
+        }
+        frame.set_right_behavior(PaneRightInsertionBehavior::WorklaneAdd);
+        let add_right = find_named_widget(
+            frame.widget().upcast_ref(),
+            "pane-control-add-pane-right-pane-a",
+        )
+        .expect("right control must expose its current add-pane behavior");
+        assert!(gtk::test_accessible_has_role(
+            &add_right,
+            gtk::AccessibleRole::Button
+        ));
+        assert!(
+            find_named_widget(
+                frame.widget().upcast_ref(),
+                "pane-control-split-right-pane-a"
+            )
+            .is_none()
+        );
+    }
+
+    fn assert_divider_accessibility() {
+        let divider = new_handle(
+            &PaneDivider::Column {
+                after_column_id: "column-a".to_owned(),
+            },
+            |delta| delta,
+            || {},
+        );
+        assert!(divider.is_focusable());
+        assert!(gtk::test_accessible_has_role(
+            &divider,
+            gtk::AccessibleRole::Separator
+        ));
+        assert!(gtk::test_accessible_has_property(
+            &divider,
+            gtk::AccessibleProperty::Label
+        ));
     }
 }
