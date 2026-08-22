@@ -658,9 +658,21 @@ fn install_fleet_actions(shell: &Rc<RefCell<ApplicationShell>>, group: &gio::Sim
     });
     group.add_action(&activate);
 
-    add_simple_action(shell, group, ACTION_QUIT_APPLICATION, |shell| {
-        shell.request_quit();
+    // Quit evidence walks every live shell, including the shell that owns this
+    // action. Do not enter through `add_simple_action`, whose callback holds a
+    // mutable borrow of that same shell while the evidence collector runs.
+    let quit = gio::SimpleAction::new(ACTION_QUIT_APPLICATION, None);
+    let weak = Rc::downgrade(shell);
+    quit.connect_activate(move |_, parameter| {
+        if !ParameterSchema::None.accepts(parameter) {
+            eprintln!("zentty-linux: action={ACTION_QUIT_APPLICATION} rejected parameter-schema");
+            return;
+        }
+        if let Some(shell) = weak.upgrade() {
+            shell.borrow().request_quit();
+        }
     });
+    group.add_action(&quit);
 }
 
 fn fleet_target(parameter: Option<&glib::Variant>) -> Option<zentty_core::AttentionTarget> {

@@ -259,6 +259,14 @@ activate_first() {
     fi
 }
 
+dismiss_palette() {
+    if [[ "${backend}" == x11 ]]; then
+        xdotool key --window "${window_id}" Escape
+    else
+        wtype -k Escape
+    fi
+}
+
 activate_palette_action() {
     local query="$1"
     open_palette
@@ -552,6 +560,19 @@ grep -Fxq 'argc=1' "${terminal_receipt}" ||
     fail "terminal launcher did not receive exactly one option"
 grep -Fxq "arg1=--dir=${canonical_project}" "${terminal_receipt}" ||
     fail "terminal launcher did not receive the exact monolithic XDG directory option"
+
+# All three successful Open With routes are source-eligible Recent Actions.
+# Reopen the real empty palette with physical input and require its rendered
+# grouped state rather than inspecting the tracker directly.
+open_palette
+for title in \
+    'Open With: System Terminal' \
+    'Open With: Controlled Editor' \
+    'Open focused pane in Controlled Files'; do
+    grep -Fq "zentty-linux: command-palette-item section=\"Recent Actions\" title=\"${title}\"" "${log}" ||
+        fail "successful Open With action missing from rendered Recent Actions: ${title}"
+done
+dismiss_palette
 
 # A real foreground OpenSSH client must make the same action unavailable. This
 # exercises the synchronous probe too, so the result cannot depend on the

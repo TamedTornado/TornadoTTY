@@ -492,6 +492,11 @@ impl ApplicationShell {
             pending_close_evidence: RefCell::new(None),
             self_handle: RefCell::new(Weak::new()),
         }));
+        let activation_clock = Rc::clone(&shell.borrow().user_activation_clock);
+        shell
+            .borrow()
+            .command_palette
+            .set_user_activation_handler(move |event_time| activation_clock.record(event_time));
         finish_shell_setup(&shell, initial_pane_ids, deferred_live_pane_id)?;
         Ok(shell)
     }
@@ -2491,6 +2496,7 @@ impl ApplicationShell {
                 target.id.clone(),
                 context_available,
             )
+            .with_recent_eligibility(true)
         }));
         items
     }
@@ -2562,13 +2568,16 @@ impl ApplicationShell {
                         )]
                     });
                 }
-                let mut actions = vec![CommandPaletteItem::parameterized_action(
-                    format!("Open {}", server.server.display),
-                    format!("Development server · {lane}"),
-                    "browser localhost server URL",
-                    ACTION_OPEN_SERVER,
-                    server.server.origin.clone(),
-                )];
+                let mut actions = vec![
+                    CommandPaletteItem::parameterized_action(
+                        format!("Open {}", server.server.display),
+                        format!("Development server · {lane}"),
+                        "browser localhost server URL",
+                        ACTION_OPEN_SERVER,
+                        server.server.origin.clone(),
+                    )
+                    .with_recent_eligibility(true),
+                ];
                 for target in &browser_targets {
                     let action_id = format!("server-browser-{next_browser_action}");
                     next_browser_action += 1;
@@ -2623,6 +2632,7 @@ impl ApplicationShell {
                     ACTION_OPEN_SETTINGS_SECTION,
                     section.id(),
                 )
+                .with_recent_eligibility(true)
             })
             .collect::<Vec<_>>();
         items.extend([

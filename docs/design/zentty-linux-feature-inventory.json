@@ -336,10 +336,10 @@
       "origin": "PORT_PARITY",
       "user_impact": "High-pane-count workflows need reversible navigation and direct return to recently used or attention-requesting work.",
       "linux_owner_issue": 16,
-      "implementation_status": "PARTIAL",
-      "focused_tests": ["crates/zentty-core/src/pane_focus_history.rs", "crates/zentty-core/tests/workspace_state.rs"],
-      "product_scenarios": ["linux/tests/rust-source-ux-x11"],
-      "test_plan": "Preserve the delivered browser-style Back/Forward stacks, real Alt+Left/Right and chrome-button routes, adjacent-pane traversal, and Ctrl+PageUp/PageDown worklane actions. Add recent-command UI, attention/search/menu/fleet/palette routing, real keyboard worklane traversal in both display backends, multiple-window history, hidden-column reveal, and mutation coverage before promoting this feature from PARTIAL.",
+      "implementation_status": "IMPLEMENTED",
+      "focused_tests": ["crates/zentty-core/src/pane_focus_history.rs", "crates/zentty-core/src/command_palette.rs", "crates/zentty-core/tests/workspace_state.rs"],
+      "product_scenarios": ["linux/tests/rust-source-ux-x11", "linux/tests/rust-open-with", "linux/tests/rust-multi-window"],
+      "test_plan": "Preserve the delivered browser-style Back/Forward stacks, recent-pane and source-eligible session-scoped Recent Actions, accessible palette grouping, exact stable-identity pane routing, hidden-column reveal, worklane traversal, and cross-window attention/fleet activation. Core tests and mutation pin ordering, capacity, eligibility, stale pruning, and deduplication; controlled X11 and Wayland journeys use physical input and real PTYs.",
       "alternative_or_blocker": null
     },
     {

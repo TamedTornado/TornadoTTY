@@ -333,6 +333,65 @@ done
 grep -Fxq 'zentty-linux: title-pane=pane-1 value=focus:palette-focus' "${log}" ||
     fail "palette dismissal did not restore real PTY input to the selected pane"
 
+# Pane destinations belong to Recent Panes, not Recent Actions. Reopen the
+# empty palette after the pane jump and reject accidental action-history
+# recording before executing a source-eligible command.
+xdotool key --window "${window_id}" ctrl+shift+p
+for _ in $(seq 1 100); do
+    grep -Fq 'zentty-linux: command-palette-section title="Recent Panes"' "${log}" && break
+    sleep 0.05
+done
+grep -Fq 'zentty-linux: command-palette-section title="Recent Panes"' "${log}" ||
+    fail "empty palette did not expose the source Recent Panes section"
+grep -Fq 'zentty-linux: command-palette-section title="Recent Actions"' "${log}" &&
+    fail "pane navigation was incorrectly recorded as a recent action"
+xdotool key --window "${window_id}" Escape
+
+# Execute a source-eligible command through physical palette input. Its stable
+# identity must appear under Recent Actions on the next empty presentation,
+# while the immediate Actions section remains separate.
+xdotool key --window "${window_id}" ctrl+shift+p
+xdotool type --window "${window_id}" --delay 10 'Toggle Sidebar'
+for _ in $(seq 1 100); do
+    grep -Fxq 'zentty-linux: command-palette=query value="Toggle Sidebar" results=1' "${log}" && break
+    sleep 0.05
+done
+grep -Fxq 'zentty-linux: command-palette=query value="Toggle Sidebar" results=1' "${log}" ||
+    fail "eligible Toggle Sidebar command did not resolve uniquely"
+xdotool key --window "${window_id}" Return
+for _ in $(seq 1 100); do
+    grep -Fq 'zentty-linux: command-palette=execute target=Action("toggle-sidebar")' "${log}" && break
+    sleep 0.05
+done
+grep -Fq 'zentty-linux: command-palette=execute target=Action("toggle-sidebar")' "${log}" ||
+    fail "eligible palette command was not executed"
+xdotool key --window "${window_id}" ctrl+shift+p
+for _ in $(seq 1 100); do
+    grep -Fq 'zentty-linux: command-palette-item section="Recent Actions" title="Toggle Sidebar"' "${log}" && break
+    sleep 0.05
+done
+grep -Fq 'zentty-linux: command-palette-section title="Actions"' "${log}" ||
+    fail "empty palette lost its immediate Actions section"
+grep -Fq 'zentty-linux: command-palette-item section="Recent Actions" title="Toggle Sidebar"' "${log}" ||
+    fail "eligible command was not shown in source Recent Actions"
+xdotool key --window "${window_id}" Escape
+# Restore the sidebar so this recents check does not alter the geometry used by
+# the remainder of the established pointer journey. Re-execution also exercises
+# move-to-front deduplication through the real product route.
+xdotool key --window "${window_id}" ctrl+shift+p
+xdotool type --window "${window_id}" --delay 10 'Toggle Sidebar'
+for _ in $(seq 1 100); do
+    [[ "$(grep -Fxc 'zentty-linux: command-palette=query value="Toggle Sidebar" results=1' "${log}" || true)" -ge 2 ]] && break
+    sleep 0.05
+done
+xdotool key --window "${window_id}" Return
+for _ in $(seq 1 100); do
+    [[ "$(grep -Fc 'zentty-linux: command-palette=execute target=Action("toggle-sidebar")' "${log}" || true)" -eq 2 ]] && break
+    sleep 0.05
+done
+[[ "$(grep -Fc 'zentty-linux: command-palette=execute target=Action("toggle-sidebar")' "${log}" || true)" -eq 2 ]] ||
+    fail "second eligible command execution did not restore sidebar geometry"
+
 # Reopen the real overlay and prove that text typed while it owns focus cannot
 # leak into the PTY. Escape must dismiss it and restore focus to pane 1.
 shown_before="$(grep -Fc 'zentty-linux: command-palette=shown' "${log}" || true)"

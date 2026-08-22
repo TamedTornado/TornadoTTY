@@ -149,7 +149,9 @@ pub use codex_transcript::{
     locate_recent_codex_transcript_path,
 };
 pub use command_palette::{
-    CommandPaletteGroup, CommandPaletteItem, CommandPaletteTarget, resolve_command_palette,
+    CommandPaletteGroup, CommandPaletteItem, CommandPaletteSection, CommandPaletteSectionKind,
+    CommandPaletteTarget, RecentCommandTargets, resolve_command_palette,
+    resolve_command_palette_sections,
 };
 pub use dev_server::{
     DetectedServer, DetectedServerConfidence, DetectedServerSource, RankedServer, ServerPortRule,
