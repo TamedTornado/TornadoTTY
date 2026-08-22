@@ -33,6 +33,37 @@ impl ApplicationShell {
         shell
             .borrow()
             .global_search_view
+            .connect_focus_changed(move |focused| {
+                let Some(shell) = weak.upgrade() else {
+                    return;
+                };
+                if focused {
+                    // `focus()` can deliver this notification synchronously while
+                    // `toggle_global_find` already owns the shell. That path has
+                    // projected the focus hold itself, so only independently
+                    // delivered focus changes need work here.
+                    let Ok(mut borrowed) = shell.try_borrow_mut() else {
+                        return;
+                    };
+                    borrowed
+                        .sidebar_visibility
+                        .handle(super::SidebarVisibilityEvent::GlobalSearchFocusEntered);
+                    borrowed.apply_sidebar_visibility();
+                } else {
+                    let Ok(mut borrowed) = shell.try_borrow_mut() else {
+                        return;
+                    };
+                    borrowed
+                        .sidebar_visibility
+                        .handle(super::SidebarVisibilityEvent::GlobalSearchFocusExited);
+                    drop(borrowed);
+                    super::ApplicationShell::schedule_sidebar_dismissal(&shell);
+                }
+            });
+        let weak = Rc::downgrade(shell);
+        shell
+            .borrow()
+            .global_search_view
             .entry
             .connect_activate(move |_| {
                 if let Some(shell) = weak.upgrade() {
@@ -53,12 +84,12 @@ impl ApplicationShell {
 
     pub(super) fn toggle_global_find(&mut self) {
         if self.global_search.state().visible {
-            let effects = self.global_search.end();
-            self.apply_global_search_effects(effects);
-            self.render_global_search();
-            self.focus_selected_surface();
+            self.close_global_find();
             return;
         }
+        self.sidebar_visibility
+            .handle(super::SidebarVisibilityEvent::GlobalSearchFocusEntered);
+        self.apply_sidebar_visibility();
         let targets = self.global_search_targets();
         if !self.global_search.state().has_remembered_search {
             for target in &targets {
@@ -71,6 +102,21 @@ impl ApplicationShell {
         self.render_global_search();
         self.global_search_view.focus(true);
         eprintln!("zentty-linux: global-find shown targets={}", targets.len());
+    }
+
+    pub(super) fn close_global_find(&mut self) {
+        let effects = self.global_search.end();
+        self.apply_global_search_effects(effects);
+        self.render_global_search();
+        self.sidebar_visibility
+            .handle(super::SidebarVisibilityEvent::GlobalSearchFocusExited);
+        let weak = self.self_handle.borrow().clone();
+        glib::idle_add_local_once(move || {
+            if let Some(shell) = weak.upgrade() {
+                Self::schedule_sidebar_dismissal(&shell);
+            }
+        });
+        self.focus_selected_surface();
     }
 
     pub(super) fn update_global_find_query(&mut self, needle: &str) {

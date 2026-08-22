@@ -190,6 +190,21 @@ zentty_product_ctrl_shift_key() {
     fi
 }
 
+zentty_product_move_pointer_to_terminal() {
+    local backend="$1"
+    if zentty_product_uses_xdotool "${backend}"; then
+        [[ "${ZENTTY_PRODUCT_WINDOW_ID:-}" =~ ^[1-9][0-9]*$ ]] || {
+            echo "product-input: pointer move requires a prepared product window" >&2
+            return 1
+        }
+        xdotool windowfocus --sync "${ZENTTY_PRODUCT_WINDOW_ID}"
+        xdotool mousemove --window "${ZENTTY_PRODUCT_WINDOW_ID}" 700 400
+        return
+    fi
+    echo "product-input: controlled terminal pointer movement is unavailable for backend ${backend}" >&2
+    return 1
+}
+
 zentty_product_set_file_clipboard() {
     local backend="$1"
     shift

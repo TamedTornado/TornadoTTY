@@ -374,6 +374,10 @@ else
         sleep 0.2
     fi
 fi
+if uses_xdotool; then
+    ZENTTY_PRODUCT_WINDOW_ID="${window_id}"
+    export ZENTTY_PRODUCT_WINDOW_ID
+fi
 
 if [[ "${ZENTTY_TERMINAL_INPUT_ONLY:-false}" == true ]]; then
     uses_xdotool || fail "terminal interaction proof requires controlled pointer input"
@@ -732,20 +736,65 @@ wait_for_fixed 'zentty-linux: title-pane=pane-3 value=focus:search-ready' \
     "the hidden-worklane PTY did not receive its search corpus"
 
 # Source Global Find uses every live pane's real Ghostty search rather than a
-# copied scrollback index. Source Command maps to Linux Control, so the source
-# Command+Shift+F chord is Ctrl+Shift+F.
-if [[ "${backend}" == x11 ]]; then
-    # Exercise the real sidebar Global Find icon as a pointer surface in the
-    # controlled X11 window. Wayland uses the same action through the physical
-    # chord because its compositor deliberately exposes no global coordinates.
-    xdotool mousemove --window "${window_id}" 257 65 click 1
-else
-    press_ctrl_shift f
-fi
+# copied scrollback index. Open it from the persisted-hidden state through the
+# physical chord on both compositors: focus must reveal and hold a transient
+# floating sidebar without changing the stored preference.
+press_ctrl s
+wait_for_fixed 'zentty-linux: sidebar-visibility=hidden' \
+    "the physical sidebar shortcut did not establish persisted-hidden state"
+for _ in $(seq 1 200); do
+    grep -Fq 'visibility = "hidden"' "${config_file}" && break
+    sleep 0.05
+done
+grep -Fq 'visibility = "hidden"' "${config_file}" ||
+    fail "the physical sidebar shortcut did not persist hidden through ConfigStore"
+sidebar_hidden_before="$(grep -Fc 'zentty-linux: sidebar-visibility=hidden' "${log}" || true)"
+sidebar_peek_before="$(grep -Fc 'zentty-linux: sidebar-visibility=hover-peek' "${log}" || true)"
+press_ctrl_shift f
 wait_for_fixed 'zentty-linux: global-find shown targets=3' \
     "physical Global Find shortcut did not present the window search"
 wait_for_fixed 'zentty-linux: global-find focus=entry' \
     "Global Find did not establish real entry focus before physical typing"
+wait_for_count_greater 'zentty-linux: sidebar-visibility=hover-peek' \
+    "${sidebar_peek_before}" \
+    "Global Find focus did not reveal the persisted-hidden sidebar"
+grep -Fq 'visibility = "hidden"' "${config_file}" ||
+    fail "transient Global Find hover peek changed the persisted sidebar mode"
+sleep 0.35
+[[ "$(grep -Fc 'zentty-linux: sidebar-visibility=hidden' "${log}" || true)" -eq "${sidebar_hidden_before}" ]] ||
+    fail "sidebar dismissed while Global Find retained real entry focus"
+# End the hidden-sidebar probe before continuing the legacy multi-pane Global
+# Find stress journey. Command Palette intentionally takes focus away from the
+# source search field, so keeping the sidebar hidden for that unrelated journey
+# would invalidate its established interaction geometry rather than strengthen
+# this contract.
+global_find_hidden_before="$(grep -Fc 'zentty-linux: global-find-state visible=false remembered=false selected=None total=0' "${log}" || true)"
+zentty_product_move_pointer_to_terminal "${backend}" ||
+    fail "could not move the real pointer outside the transient sidebar"
+press_key Escape
+wait_for_count_greater \
+    'zentty-linux: global-find-state visible=false remembered=false selected=None total=0' \
+    "${global_find_hidden_before}" \
+    "Escape did not close the hidden-sidebar Global Find probe"
+wait_for_count_greater 'zentty-linux: sidebar-visibility=hidden' \
+    "${sidebar_hidden_before}" \
+    "closing Global Find did not restore the persisted hidden sidebar"
+pinned_before="$(grep -Fc 'zentty-linux: sidebar-visibility=pinned-open' "${log}" || true)"
+press_ctrl s
+wait_for_count_greater 'zentty-linux: sidebar-visibility=pinned-open' \
+    "${pinned_before}" \
+    "the physical sidebar shortcut did not restore pinned state for the existing search journey"
+for _ in $(seq 1 200); do
+    grep -Fq 'visibility = "pinnedOpen"' "${config_file}" && break
+    sleep 0.05
+done
+grep -Fq 'visibility = "pinnedOpen"' "${config_file}" ||
+    fail "the physical sidebar shortcut did not persist restored pinned state"
+global_find_shown_before="$(grep -Fc 'zentty-linux: global-find shown targets=3' "${log}" || true)"
+press_ctrl_shift f
+wait_for_count_greater 'zentty-linux: global-find shown targets=3' \
+    "${global_find_shown_before}" \
+    "Global Find did not reopen after the hidden-sidebar focus probe"
 # A two-character query must remain pending until explicit navigation flushes
 # it. Enter is sent immediately, without waiting for a timer receipt, and the
 # actor then requires all three real Ghostty totals plus the selected match.
@@ -910,4 +959,4 @@ wait_for_count_greater \
     "${focus_title_before}" \
     "closing Global Find did not restore the real terminal focus"
 
-echo "Rust pane search passed: ${backend}, pane-and-global=real-ghostty, navigation=physical, focus=real-pty"
+echo "Rust pane search passed: ${backend}, pane-and-global=real-ghostty, navigation=physical, focus=real-pty, sidebar=hidden+search-held"

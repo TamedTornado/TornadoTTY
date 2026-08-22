@@ -107,9 +107,9 @@ fn install_shell_styles() {
     crate::agent_fleet::install_styles();
 }
 
-fn sidebar_tracking_state() -> SidebarTrackingState {
+fn sidebar_tracking_state(config: zentty_core::SidebarConfig) -> SidebarTrackingState {
     (
-        Rc::new(Cell::new(SidebarWidthPreference::DEFAULT)),
+        Rc::new(Cell::new(config.width)),
         Rc::new(Cell::new(false)),
         Rc::new(Cell::new(0)),
     )
@@ -279,9 +279,15 @@ fn report_config_projection(shell: &ApplicationShell) {
         "zentty-linux: config-projected window={} automatic-clean-copy={}",
         shell.window_template.id, shell.config.clipboard.always_clean_copies
     );
+    eprintln!(
+        "zentty-linux: sidebar-config width={} visibility={} result=initial",
+        shell.config.sidebar.width,
+        shell.config.sidebar.visibility.config_value()
+    );
 }
 
 fn finish_initial_render(shell: &Rc<RefCell<ApplicationShell>>) {
+    shell.borrow_mut().apply_sidebar_visibility();
     shell.borrow().render();
     report_config_projection(&shell.borrow());
 }
@@ -316,20 +322,12 @@ fn create_initial_pane_surfaces(
 
 fn finish_shell_setup(
     shell: &Rc<RefCell<ApplicationShell>>,
-    body: &gtk::Paned,
-    preferred_sidebar_width: Rc<Cell<i32>>,
-    adjusting_sidebar_width: Rc<Cell<bool>>,
     initial_pane_ids: Vec<String>,
     deferred_live_pane_id: Option<&str>,
 ) -> Result<(), String> {
     initialize_shell_coordinators(shell);
     ApplicationShell::install_user_activation_tracking(shell);
-    install_sidebar_width_tracking(
-        body,
-        &shell.borrow().sidebar_scroll,
-        preferred_sidebar_width,
-        adjusting_sidebar_width,
-    );
+    install_sidebar_width_tracking(shell);
     let action_router = ActionRouter::install(shell)?;
     shell.borrow_mut().action_router = Some(action_router);
     shortcut_registry::validate()?;
@@ -419,7 +417,7 @@ impl ApplicationShell {
         let (next_worklane_number, next_pane_number) = next_workspace_identities(&state);
         let initial_pane_ids = workspace_pane_ids(&state);
         let (preferred_sidebar_width, adjusting_sidebar_width, sidebar_reveal_generation) =
-            sidebar_tracking_state();
+            sidebar_tracking_state(runtimes.config.sidebar);
         let shell = Rc::new(RefCell::new(Self {
             window,
             chrome,
@@ -445,7 +443,9 @@ impl ApplicationShell {
             preferred_sidebar_width: Rc::clone(&preferred_sidebar_width),
             adjusting_sidebar_width: Rc::clone(&adjusting_sidebar_width),
             sidebar_reveal_generation,
-            sidebar_visibility: crate::sidebar_visibility::State::default(),
+            sidebar_visibility: crate::sidebar_visibility::State::from_persisted(
+                runtimes.config.sidebar.visibility,
+            ),
             sidebar_visibility_generation: 0,
             peek_phase: PeekPhase::Idle,
             peek_generation: 0,
@@ -492,14 +492,7 @@ impl ApplicationShell {
             pending_close_evidence: RefCell::new(None),
             self_handle: RefCell::new(Weak::new()),
         }));
-        finish_shell_setup(
-            &shell,
-            &body,
-            preferred_sidebar_width,
-            adjusting_sidebar_width,
-            initial_pane_ids,
-            deferred_live_pane_id,
-        )?;
+        finish_shell_setup(&shell, initial_pane_ids, deferred_live_pane_id)?;
         Ok(shell)
     }
 
@@ -546,8 +539,20 @@ impl ApplicationShell {
                 .map(|settings| settings.current_section.get()),
         );
         let appearance_changed = self.config.appearance != config.appearance;
+        let sidebar_changed = self.config.sidebar != config.sidebar;
         let passive_was_enabled = self.config.server_detection.passive_detection_enabled;
         self.config.clone_from(config);
+        if sidebar_changed {
+            self.preferred_sidebar_width.set(config.sidebar.width);
+            self.sidebar_visibility =
+                crate::sidebar_visibility::State::from_persisted(config.sidebar.visibility);
+            self.apply_sidebar_visibility();
+            eprintln!(
+                "zentty-linux: sidebar-config width={} visibility={} result=projected",
+                config.sidebar.width,
+                config.sidebar.visibility.config_value()
+            );
+        }
         *self.shortcut_manager.borrow_mut() = shortcut_manager;
         self.agent_events
             .set_agent_teams_enabled(self.config.agent_teams.enabled);
@@ -1289,6 +1294,7 @@ impl ApplicationShell {
     fn schedule_sidebar_dismissal(shell: &Rc<RefCell<Self>>) {
         let generation = {
             let Ok(mut shell) = shell.try_borrow_mut() else {
+                eprintln!("zentty-linux: sidebar-dismissal result=deferred-borrow");
                 return;
             };
             shell.sidebar_visibility_generation =
@@ -1301,17 +1307,23 @@ impl ApplicationShell {
                 return;
             };
             let Ok(mut shell) = shell.try_borrow_mut() else {
+                eprintln!("zentty-linux: sidebar-dismissal result=timer-borrowed");
                 return;
             };
             if shell.sidebar_visibility_generation != generation {
+                eprintln!("zentty-linux: sidebar-dismissal result=superseded");
                 return;
             }
+            let eligible = shell.sidebar_visibility.should_schedule_dismissal();
             if shell
                 .sidebar_visibility
                 .handle(SidebarVisibilityEvent::DismissTimerElapsed)
             {
+                eprintln!("zentty-linux: sidebar-dismissal eligible={eligible} result=hidden");
                 shell.apply_sidebar_visibility();
                 shell.focus_selected_surface();
+            } else {
+                eprintln!("zentty-linux: sidebar-dismissal eligible={eligible} result=held");
             }
         });
     }
@@ -1329,15 +1341,19 @@ impl ApplicationShell {
                     self.body.set_start_child(Some(&self.sidebar_reservation));
                 }
                 self.sidebar_reservation.set_width_request(width);
+                self.adjusting_sidebar_width.set(true);
                 self.body.set_position(width);
+                self.adjusting_sidebar_width.set(false);
                 self.sidebar_scroll
                     .remove_css_class("zentty-sidebar-floating");
                 self.sidebar_scroll.set_visible(true);
+                self.sidebar_scroll.set_can_target(true);
                 self.sidebar_hover_rail.set_visible(false);
                 eprintln!("zentty-linux: sidebar-visibility=pinned-open");
             }
             SidebarVisibilityMode::Hidden => {
                 self.body.set_start_child(None::<&gtk::Widget>);
+                self.sidebar_scroll.set_can_target(false);
                 self.sidebar_scroll.set_visible(false);
                 self.sidebar_hover_rail.set_visible(true);
                 eprintln!("zentty-linux: sidebar-visibility=hidden");
@@ -1346,6 +1362,7 @@ impl ApplicationShell {
                 self.body.set_start_child(None::<&gtk::Widget>);
                 self.sidebar_scroll.add_css_class("zentty-sidebar-floating");
                 self.sidebar_scroll.set_visible(true);
+                self.sidebar_scroll.set_can_target(true);
                 self.sidebar_hover_rail.set_visible(true);
                 eprintln!("zentty-linux: sidebar-visibility=hover-peek");
             }
@@ -2360,11 +2377,7 @@ impl ApplicationShell {
             }
             if key == gdk::Key::Escape {
                 if shell.borrow().global_search.state().visible {
-                    let mut shell = shell.borrow_mut();
-                    let effects = shell.global_search.end();
-                    shell.apply_global_search_effects(effects);
-                    shell.render_global_search();
-                    shell.focus_selected_surface();
+                    shell.borrow_mut().close_global_find();
                     return glib::Propagation::Stop;
                 }
                 let hidden = {
@@ -4902,27 +4915,71 @@ fn is_close_window_shortcut(key: gdk::Key, modifiers: gdk::ModifierType) -> bool
         )
 }
 
-fn install_sidebar_width_tracking(
-    body: &gtk::Paned,
-    sidebar: &gtk::ScrolledWindow,
-    preferred_width: Rc<Cell<i32>>,
-    adjusting_width: Rc<Cell<bool>>,
-) {
-    let sidebar = sidebar.clone();
+fn install_sidebar_width_tracking(shell: &Rc<RefCell<ApplicationShell>>) {
+    let body = shell.borrow().body.clone();
+    let weak = Rc::downgrade(shell);
+    let persistence_generation = Rc::new(Cell::new(0_u64));
     body.connect_position_notify(move |body| {
-        if adjusting_width.get() || body.width() <= 0 {
+        let Some(shell) = weak.upgrade() else {
             return;
+        };
+        let sidebar = {
+            let Ok(mut shell) = shell.try_borrow_mut() else {
+                return;
+            };
+            if shell.adjusting_sidebar_width.get()
+                || body.width() <= 0
+                || shell.sidebar_visibility.mode() != SidebarVisibilityMode::PinnedOpen
+            {
+                return;
+            }
+            let position = body.position();
+            let clamped = SidebarWidthPreference::clamped(position, body.width());
+            shell.preferred_sidebar_width.set(clamped);
+            shell.sidebar_scroll.set_width_request(clamped);
+            if position != clamped {
+                shell.adjusting_sidebar_width.set(true);
+                body.set_position(clamped);
+                shell.adjusting_sidebar_width.set(false);
+            }
+            shell.config.sidebar.width = clamped;
+            shell.config.sidebar.visibility = shell.sidebar_visibility.persisted_mode();
+            shell.config.sidebar
+        };
+        eprintln!("zentty-linux: sidebar-preferred-width={}", sidebar.width);
+        let generation = persistence_generation.get().wrapping_add(1);
+        persistence_generation.set(generation);
+        let tracker = Rc::clone(&persistence_generation);
+        glib::timeout_add_local_once(Duration::from_millis(350), move || {
+            if tracker.get() == generation {
+                persist_sidebar_config(sidebar, "resize");
+            }
+        });
+    });
+}
+
+fn persist_sidebar_config(sidebar: zentty_core::SidebarConfig, origin: &'static str) {
+    glib::spawn_future_local(async move {
+        match gtk::gio::spawn_blocking(move || {
+            crate::config_store::ConfigStore::update_default_sidebar(sidebar)
+        })
+        .await
+        {
+            Ok(Ok(path)) => eprintln!(
+                "zentty-linux: sidebar-persist origin={origin} width={} visibility={} path={} result=persisted",
+                sidebar.width,
+                sidebar.visibility.config_value(),
+                path.display()
+            ),
+            Ok(Err(error)) => eprintln!(
+                "zentty-linux: sidebar-persist origin={origin} width={} visibility={} result=failed detail={error}",
+                sidebar.width,
+                sidebar.visibility.config_value()
+            ),
+            Err(_) => eprintln!(
+                "zentty-linux: sidebar-persist origin={origin} result=failed detail=worker-panic"
+            ),
         }
-        let position = body.position();
-        let clamped = SidebarWidthPreference::clamped(position, body.width());
-        preferred_width.set(clamped);
-        sidebar.set_width_request(clamped);
-        if position != clamped {
-            adjusting_width.set(true);
-            body.set_position(clamped);
-            adjusting_width.set(false);
-        }
-        eprintln!("zentty-linux: sidebar-preferred-width={clamped}");
     });
 }
 
@@ -5009,6 +5066,8 @@ fn build_root(
     hover_rail.set_valign(gtk::Align::Fill);
     hover_rail.set_margin_top(38);
     hover_rail.set_visible(false);
+    hover_rail.set_tooltip_text(Some("Reveal Sidebar"));
+    hover_rail.update_property(&[gtk::accessible::Property::Label("Reveal Sidebar")]);
     overlay.add_overlay(&hover_rail);
     sidebar.set_width_request(SidebarWidthPreference::DEFAULT);
     sidebar.set_halign(gtk::Align::Start);

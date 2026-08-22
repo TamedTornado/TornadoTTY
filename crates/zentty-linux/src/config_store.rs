@@ -12,8 +12,8 @@ use zentty_core::{
     AgentCaffeinationConfig, AgentIntegrationsConfig, AgentTeamsConfig, AppConfig,
     AppearanceConfig, ClipboardConfig, ConfirmationsConfig, FALLBACK_DARK_THEME, MenuBarConfig,
     NotificationsConfig, OpenWithConfig, PaneConfig, PaneLayoutConfig, RestoreConfig,
-    ServerDetectionConfig, ShortcutBinding, ThemeMode, ThemeSpec, UpdatesConfig, WorklaneConfig,
-    update_ghostty_value,
+    ServerDetectionConfig, ShortcutBinding, SidebarConfig, ThemeMode, ThemeSpec, UpdatesConfig,
+    WorklaneConfig, update_ghostty_value,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -125,6 +125,38 @@ impl ConfigStore {
         let path = default_config_file()?;
         Self::update_appearance(&path, appearance)?;
         Ok(path)
+    }
+
+    pub(crate) fn update_default_sidebar(sidebar: SidebarConfig) -> Result<PathBuf, String> {
+        let path = default_config_file()?;
+        Self::update_sidebar(&path, sidebar)?;
+        Ok(path)
+    }
+
+    fn update_sidebar(path: &Path, sidebar: SidebarConfig) -> Result<(), String> {
+        let target = resolve_config_target(path)?;
+        with_config_lock(&target, || {
+            let source = match fs::read_to_string(&target) {
+                Ok(source) => source,
+                Err(error) if error.kind() == ErrorKind::NotFound => String::new(),
+                Err(error) => return Err(format!("could not read {}: {error}", target.display())),
+            };
+            if source.len() as u64 > MAX_CONFIG_BYTES {
+                return Err(format!("configuration exceeds {MAX_CONFIG_BYTES} bytes"));
+            }
+            let mut document = source
+                .parse::<toml_edit::DocumentMut>()
+                .map_err(|error| format!("could not edit invalid configuration: {error}"))?;
+            document
+                .entry("sidebar")
+                .or_insert_with(|| toml_edit::Item::Table(toml_edit::Table::new()));
+            let table = document["sidebar"]
+                .as_table_mut()
+                .ok_or_else(|| "sidebar configuration is not a table".to_owned())?;
+            table["width"] = toml_edit::value(i64::from(sidebar.width));
+            table["visibility"] = toml_edit::value(sidebar.visibility.config_value());
+            atomic_replace(&target, document.to_string().as_bytes())
+        })
     }
 
     pub(crate) fn update_default_general(
@@ -1178,7 +1210,7 @@ mod tests {
         ConfirmationsConfig, FocusFollowsMouseDelay, MenuBarConfig, NewWorklanePlacement,
         NotificationsConfig, OpenWithConfig, OpenWithCustomApp, PaneConfig, PaneLayoutConfig,
         PaneRightBehaviorMode, RestoreConfig, ServerBrowserCustomApp, ServerDetectionConfig,
-        ThemeMode, ThemeSpec, WorklaneConfig,
+        SidebarConfig, SidebarVisibilityMode, ThemeMode, ThemeSpec, WorklaneConfig,
     };
 
     fn private_root(name: &str) -> std::path::PathBuf {
@@ -2137,6 +2169,84 @@ mod tests {
             ConfigStore::load(path).unwrap().config.appearance,
             appearance
         );
+        remove(&root);
+    }
+
+    #[test]
+    fn sidebar_update_round_trips_atomically_and_preserves_unrelated_configuration() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = private_root("zentty-sidebar-update");
+        let path = root.join("zentty/config.toml");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, "# retained\n[future]\nenabled = true\n").unwrap();
+        let sidebar = SidebarConfig {
+            width: 319,
+            visibility: SidebarVisibilityMode::Hidden,
+        };
+        ConfigStore::update_sidebar(&path, sidebar).unwrap();
+        let contents = fs::read_to_string(&path).unwrap();
+        assert!(contents.contains("# retained"));
+        assert!(contents.contains("[future]"));
+        assert!(contents.contains("[sidebar]"));
+        assert!(contents.contains("width = 319"));
+        assert!(contents.contains("visibility = \"hidden\""));
+        assert_eq!(ConfigStore::load(path).unwrap().config.sidebar, sidebar);
+
+        let missing = root.join("missing/config.toml");
+        ConfigStore::update_sidebar(&missing, SidebarConfig::default()).unwrap();
+        assert_eq!(
+            ConfigStore::load(missing).unwrap().config.sidebar,
+            SidebarConfig::default()
+        );
+
+        let unreadable = root.join("unreadable.toml");
+        fs::write(&unreadable, "[sidebar]\n").unwrap();
+        fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o000)).unwrap();
+        let error = ConfigStore::update_sidebar(&unreadable, sidebar).unwrap_err();
+        assert!(error.contains("could not read"), "{error}");
+        fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o600)).unwrap();
+
+        let bounded = root.join("bounded.toml");
+        let prefix = "[sidebar]\nwidth = 319\nvisibility = \"hidden\"\n#";
+        let mut exact = prefix.as_bytes().to_vec();
+        exact.resize(usize::try_from(MAX_CONFIG_BYTES).unwrap(), b' ');
+        fs::write(&bounded, &exact).unwrap();
+        ConfigStore::update_sidebar(&bounded, sidebar).unwrap();
+        exact.push(b' ');
+        fs::write(&bounded, exact).unwrap();
+        assert!(
+            ConfigStore::update_sidebar(&bounded, sidebar)
+                .unwrap_err()
+                .contains("configuration exceeds")
+        );
+        remove(&root);
+    }
+
+    #[test]
+    fn default_sidebar_update_uses_the_single_process_config_authority() {
+        const CHILD_MARKER: &str = "ZENTTY_CONFIG_STORE_SIDEBAR_CHILD";
+        if let Some(expected) = std::env::var_os(CHILD_MARKER) {
+            let sidebar = SidebarConfig {
+                width: 307,
+                visibility: SidebarVisibilityMode::Hidden,
+            };
+            let path = ConfigStore::update_default_sidebar(sidebar).unwrap();
+            assert_eq!(path, Path::new(&expected).join("zentty/config.toml"));
+            assert_eq!(ConfigStore::load(path).unwrap().config.sidebar, sidebar);
+            return;
+        }
+
+        let root = private_root("default-sidebar-xdg");
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .arg("--exact")
+            .arg("config_store::tests::default_sidebar_update_uses_the_single_process_config_authority")
+            .arg("--nocapture")
+            .env("XDG_CONFIG_HOME", &root)
+            .env(CHILD_MARKER, &root)
+            .status()
+            .unwrap();
+        assert!(status.success());
         remove(&root);
     }
 

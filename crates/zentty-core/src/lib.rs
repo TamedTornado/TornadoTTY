@@ -61,8 +61,8 @@ pub use app_config::{
     AppearanceConfig, ClipboardConfig, ConfirmationsConfig, ErrorReportingConfig,
     FocusFollowsMouseDelay, MenuBarConfig, NewWorklanePlacement, NotificationsConfig,
     OpenWithConfig, OpenWithCustomApp, PaneConfig, PaneLayoutConfig, PaneRightBehaviorMode,
-    PartialAppConfig, RestoreConfig, ServerBrowserCustomApp, ServerDetectionConfig, UpdateChannel,
-    UpdatesConfig, WorklaneConfig,
+    PartialAppConfig, RestoreConfig, ServerBrowserCustomApp, ServerDetectionConfig, SidebarConfig,
+    SidebarVisibilityMode, UpdateChannel, UpdatesConfig, WorklaneConfig,
 };
 pub use appearance::{
     BackgroundOpacity, FALLBACK_DARK_THEME, FALLBACK_LIGHT_THEME, ThemeMode, ThemeModeCommand,

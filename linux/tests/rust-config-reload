@@ -122,6 +122,56 @@ if [[ "${backend}" == wayland ]]; then
         "second Wayland window did not receive compositor activation" || fail "Wayland activation missing"
 fi
 
+# Project the source sidebar section through the one config authority into both
+# live windows. Hidden reserves no content width; restoring pinnedOpen must
+# reuse the configured width without replacing either real PTY.
+sidebar_projection_before="$(grep -Fc 'zentty-linux: sidebar-config width=' "${log}" || true)"
+cat >"${config_file}.sidebar-hidden" <<'EOF'
+[sidebar]
+width = 319
+visibility = "hidden"
+
+[confirmations]
+confirm_before_closing_window = false
+confirm_before_quitting = false
+
+[clipboard]
+always_clean_copies = false
+
+[future_plugin]
+operator_key = "preserved"
+EOF
+mv -f -- "${config_file}.sidebar-hidden" "${config_file}"
+zentty_product_wait_for_log_count "${log}" \
+    'zentty-linux: sidebar-config width=319 visibility=hidden result=projected' 2 \
+    "hidden sidebar config did not project into both windows" || fail "hidden sidebar projection missing"
+[[ "$(grep -Fc 'zentty-linux: sidebar-config width=' "${log}" || true)" -eq "$((sidebar_projection_before + 2))" ]] ||
+    fail "hidden sidebar configuration projected more than once per window"
+
+cat >"${config_file}.sidebar-pinned" <<'EOF'
+[sidebar]
+width = 307
+visibility = "pinnedOpen"
+
+[confirmations]
+confirm_before_closing_window = false
+confirm_before_quitting = false
+
+[clipboard]
+always_clean_copies = false
+
+[future_plugin]
+operator_key = "preserved"
+EOF
+mv -f -- "${config_file}.sidebar-pinned" "${config_file}"
+zentty_product_wait_for_log_count "${log}" \
+    'zentty-linux: sidebar-config width=307 visibility=pinnedOpen result=projected' 2 \
+    "pinned sidebar config did not project into both windows" || fail "pinned sidebar projection missing"
+for child in "${children_before[@]}"; do
+    [[ "$(ps -o ppid= -p "${child}" 2>/dev/null | tr -d ' ')" == "${product_pid}" ]] ||
+        fail "sidebar live projection replaced real PTY child ${child}"
+done
+
 replace_config() {
     local clean_copy="$1"
     local confirm="$2"
@@ -439,6 +489,10 @@ write_target() {
     local confirm="$3"
     local temporary="${target}.external.$$"
     cat >"${temporary}" <<EOF
+[sidebar]
+width = 311
+visibility = "hidden"
+
 [confirmations]
 confirm_before_closing_window = ${confirm}
 confirm_before_quitting = ${confirm}
@@ -501,7 +555,48 @@ grep -Fq 'config-live-projected window=window-2 automatic-clean-copy=false confi
 mapfile -t children_after_permission < <(pty_children)
 [[ "${children_after_permission[*]}" == "${children_before[*]}" ]] || fail "permission recovery replaced a real PTY child"
 
+kill -KILL "${product_pid}"
+wait "${product_pid}" 2>/dev/null || true
+product_pid=""
+first_log="${log}"
+log="$(mktemp)"
+LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+    "${product}" --command "${child_command}" --state-directory "${state_dir}/sidebar-restart" \
+    --no-session-restore --async-backend default >"${log}" 2>&1 &
+product_pid=$!
+zentty_product_wait_for_log "${log}" 'zentty-linux: terminal-ready-pane=pane-1' \
+    "crash-style sidebar restart did not create a real terminal" || fail "sidebar restart terminal missing"
+zentty_product_wait_for_log "${log}" 'zentty-linux: sidebar-visibility=hidden' \
+    "crash-style restart did not restore hidden sidebar" || fail "sidebar restart visibility missing"
+zentty_product_wait_for_log "${log}" \
+    'zentty-linux: sidebar-config width=311 visibility=hidden result=initial' \
+    "crash-style restart did not project the persisted sidebar preference" ||
+    fail "sidebar restart preference missing"
+zentty_product_prepare_input "${backend}" "${log}" || fail "could not focus restarted hidden sidebar"
+zentty_product_ctrl_shift_key "${backend}" f
+zentty_product_wait_for_log "${log}" 'zentty-linux: global-find shown targets=1' \
+    "restarted hidden sidebar could not open Global Find" || fail "sidebar restart Global Find missing"
+zentty_product_wait_for_log "${log}" 'zentty-linux: sidebar-visibility=hover-peek' \
+    "Global Find did not reveal the restarted hidden sidebar" || fail "sidebar restart hover peek missing"
+for _ in {1..200}; do
+    grep -Eq 'zentty-linux: sidebar-width=31(0|1)' "${log}" && break
+    sleep 0.025
+done
+grep -Eq 'zentty-linux: sidebar-width=31(0|1)' "${log}" ||
+    fail "crash-style restart did not restore the persisted sidebar width"
+zentty_product_move_pointer_to_terminal "${backend}" ||
+    fail "could not move the real pointer outside the transient sidebar"
+zentty_product_key "${backend}" Escape
+zentty_product_wait_for_log_count "${log}" 'zentty-linux: sidebar-visibility=hidden' 2 \
+    "closing restarted Global Find did not restore hidden mode" || fail "sidebar restart dismissal missing"
+zentty_product_prepare_input "${backend}" "${log}" || fail "could not focus restarted real PTY"
+zentty_product_type "${backend}" "sidebar-restart-focus"
+zentty_product_key "${backend}" Return
+zentty_product_wait_for_log "${log}" 'zentty-linux: title-pane=pane-1 value=sidebar-restart-focus' \
+    "restarted hidden sidebar did not preserve real PTY focus" || fail "sidebar restart PTY focus missing"
+rm -f -- "${first_log}"
+
 kill -TERM "${product_pid}"
 wait "${product_pid}" || true
 product_pid=""
-echo "rust-config-reload: PASS backend=${backend} real-pty=true multi-window=true rename=true coalesced=true partial=true last-good=true symlink-retarget=true permission-recovery=true private-xdg=true product-external-last-writer=true interrupted-temp-ignored=true settings-refresh=true self-write-no-loop=true"
+echo "rust-config-reload: PASS backend=${backend} real-pty=true multi-window=true sidebar=live+hidden+width+crash-restart rename=true coalesced=true partial=true last-good=true symlink-retarget=true permission-recovery=true private-xdg=true product-external-last-writer=true interrupted-temp-ignored=true settings-refresh=true self-write-no-loop=true"

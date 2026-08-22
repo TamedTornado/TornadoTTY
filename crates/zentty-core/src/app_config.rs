@@ -6,7 +6,7 @@ use serde::de::DeserializeOwned;
 use crate::shortcut::ShortcutDocument;
 use crate::{
     AgentIntegrationState, BackgroundOpacity, CleanCopyOptions, CommandFlattenAggressiveness,
-    LINUX_OPEN_WITH_BUILTIN_IDS, ShortcutBinding, ThemeMode, ThemeSpec,
+    LINUX_OPEN_WITH_BUILTIN_IDS, ShortcutBinding, SidebarWidthPreference, ThemeMode, ThemeSpec,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -98,6 +98,46 @@ pub struct ErrorReportingConfig {
     pub enabled: bool,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum SidebarVisibilityMode {
+    #[default]
+    PinnedOpen,
+    Hidden,
+}
+
+impl SidebarVisibilityMode {
+    #[must_use]
+    pub const fn config_value(self) -> &'static str {
+        match self {
+            Self::PinnedOpen => "pinnedOpen",
+            Self::Hidden => "hidden",
+        }
+    }
+
+    fn parse_config_value(value: &str) -> Option<Self> {
+        match value {
+            "pinnedOpen" => Some(Self::PinnedOpen),
+            "hidden" => Some(Self::Hidden),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SidebarConfig {
+    pub width: i32,
+    pub visibility: SidebarVisibilityMode,
+}
+
+impl Default for SidebarConfig {
+    fn default() -> Self {
+        Self {
+            width: SidebarWidthPreference::DEFAULT,
+            visibility: SidebarVisibilityMode::PinnedOpen,
+        }
+    }
+}
+
 impl Default for RestoreConfig {
     fn default() -> Self {
         Self {
@@ -108,6 +148,7 @@ impl Default for RestoreConfig {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct AppConfig {
+    pub sidebar: SidebarConfig,
     pub appearance: AppearanceConfig,
     pub confirmations: ConfirmationsConfig,
     pub restore: RestoreConfig,
@@ -143,6 +184,7 @@ impl AppConfig {
         let document = toml::from_str::<Document>(source)
             .map_err(|error| format!("invalid Zentty configuration: {error}"))?;
         Ok(Self {
+            sidebar: document.sidebar.into_config()?,
             appearance: document.appearance.into_config()?,
             confirmations: document.confirmations.into_config(),
             restore: document.restore.into_config(),
@@ -191,6 +233,7 @@ impl AppConfig {
         }
 
         let config = Self {
+            sidebar: section!(sidebar, SidebarDocument, SidebarDocument::into_config),
             appearance: section!(
                 appearance,
                 AppearanceDocument,
@@ -283,6 +326,7 @@ where
 #[derive(Deserialize, Default)]
 #[serde(default)]
 struct Document {
+    sidebar: SidebarDocument,
     appearance: AppearanceDocument,
     confirmations: ConfirmationsDocument,
     restore: RestoreDocument,
@@ -300,6 +344,28 @@ struct Document {
     menu_bar: MenuBarDocument,
     agent_integrations: AgentIntegrationsDocument,
     shortcuts: ShortcutDocument,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct SidebarDocument {
+    width: Option<i32>,
+    visibility: Option<String>,
+}
+
+impl SidebarDocument {
+    fn into_config(self) -> Result<SidebarConfig, String> {
+        let defaults = SidebarConfig::default();
+        let width = self.width.unwrap_or(defaults.width);
+        if !(SidebarWidthPreference::MINIMUM..=SidebarWidthPreference::MAXIMUM).contains(&width) {
+            return Err(format!("invalid sidebar.width: {width}"));
+        }
+        let visibility = self.visibility.map_or(Ok(defaults.visibility), |value| {
+            SidebarVisibilityMode::parse_config_value(&value)
+                .ok_or_else(|| format!("invalid sidebar.visibility: {value}"))
+        })?;
+        Ok(SidebarConfig { width, visibility })
+    }
 }
 
 #[derive(Deserialize, Default)]
@@ -1230,8 +1296,63 @@ impl From<Aggressiveness> for CommandFlattenAggressiveness {
 
 #[cfg(test)]
 mod tests {
-    use super::{AppConfig, NewWorklanePlacement, PaneLayoutConfig, PaneRightBehaviorMode};
-    use crate::PaneRightInsertionBehavior;
+    use super::{
+        AppConfig, NewWorklanePlacement, PaneLayoutConfig, PaneRightBehaviorMode, SidebarConfig,
+        SidebarVisibilityMode,
+    };
+    use crate::{PaneRightInsertionBehavior, SidebarWidthPreference};
+
+    #[test]
+    fn sidebar_defaults_and_source_values_parse_without_persisting_hover_peek() {
+        assert_eq!(
+            AppConfig::parse_toml("").unwrap().sidebar,
+            SidebarConfig::default()
+        );
+        let config = AppConfig::parse_toml(
+            r#"
+                [sidebar]
+                width = 420
+                visibility = "hidden"
+            "#,
+        )
+        .unwrap();
+        assert_eq!(config.sidebar.width, SidebarWidthPreference::MAXIMUM);
+        assert_eq!(config.sidebar.visibility, SidebarVisibilityMode::Hidden);
+        assert_eq!(config.sidebar.visibility.config_value(), "hidden");
+        let pinned =
+            AppConfig::parse_toml("[sidebar]\nwidth = 180\nvisibility = \"pinnedOpen\"\n").unwrap();
+        assert_eq!(pinned.sidebar.width, SidebarWidthPreference::MINIMUM);
+        assert_eq!(pinned.sidebar.visibility, SidebarVisibilityMode::PinnedOpen);
+        assert_eq!(pinned.sidebar.visibility.config_value(), "pinnedOpen");
+
+        for invalid in [
+            "[sidebar]\nwidth = 179\n",
+            "[sidebar]\nwidth = 421\n",
+            "[sidebar]\nvisibility = \"hoverPeek\"\n",
+            "[sidebar]\nvisibility = \"floating\"\n",
+        ] {
+            assert!(
+                AppConfig::parse_toml(invalid).is_err(),
+                "accepted {invalid}"
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_sidebar_partial_reload_retains_only_last_good_sidebar() {
+        let last_good = AppConfig::parse_toml(
+            "[sidebar]\nwidth = 319\nvisibility = \"hidden\"\n[restore]\nrestore_workspace_on_launch = false\n",
+        )
+        .unwrap();
+        let partial = AppConfig::parse_toml_partial(
+            "[sidebar]\nwidth = 900\n[restore]\nrestore_workspace_on_launch = true\n",
+            &last_good,
+        )
+        .unwrap();
+        assert_eq!(partial.retained_sections, ["sidebar"]);
+        assert_eq!(partial.config.sidebar, last_good.sidebar);
+        assert!(partial.config.restore.restore_workspace_on_launch);
+    }
 
     #[test]
     fn source_shortcut_toml_parses_bindings_and_explicit_unbinds() {

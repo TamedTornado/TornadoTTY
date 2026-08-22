@@ -321,9 +321,9 @@
       "user_impact": "The source interaction model and information hierarchy are core product behavior; a toolbar of text actions is not Zentty UX.",
       "linux_owner_issue": 16,
       "implementation_status": "PARTIAL",
-      "focused_tests": [],
-      "product_scenarios": ["linux/tests/rust-source-ux-x11", "linux/tests/rust-sidebar-management-x11"],
-      "test_plan": "Extend the delivered contextual pane actions, keyed row reconciliation, real overflowing-sidebar reveal, and pinned/hidden/hover-overlay modes with annotated source screenshot coverage, semantic accessibility inspection, persisted visibility, reduced-motion transitions, controlled Wayland hover/drag, and proof that every chrome interaction preserves real terminal focus.",
+      "focused_tests": ["crates/zentty-core/src/app_config.rs", "crates/zentty-linux/src/sidebar_visibility.rs", "crates/zentty-linux/src/config_store.rs"],
+      "product_scenarios": ["linux/tests/rust-source-ux-x11", "linux/tests/rust-sidebar-management-x11", "linux/tests/rust-pane-search", "linux/tests/rust-config-reload"],
+      "test_plan": "Persisted bounded width, pinned/hidden state, transient hover peek, Global Find retention, live multiwindow reload, crash-style restoration, and physical X11/Wayland focus are covered by GH-78. Remaining PARTIAL scope is annotated source screenshot parity, comprehensive semantic accessibility inspection, source motion rather than the documented immediate Linux transition, and controlled Wayland pointer drag for resize.",
       "alternative_or_blocker": null
     },
     {

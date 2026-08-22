@@ -559,14 +559,20 @@ fn install_primary_ui_actions(
     let weak = Rc::downgrade(shell);
     toggle_sidebar.connect_activate(move |_, _| {
         let Some(shell) = weak.upgrade() else { return };
-        let visible = {
+        let (visible, sidebar) = {
             let mut shell = shell.borrow_mut();
             shell
                 .sidebar_visibility
                 .handle(super::SidebarVisibilityEvent::TogglePressed);
             shell.apply_sidebar_visibility();
-            shell.sidebar_visibility.mode() != super::SidebarVisibilityMode::Hidden
+            shell.config.sidebar.width = shell.preferred_sidebar_width.get();
+            shell.config.sidebar.visibility = shell.sidebar_visibility.persisted_mode();
+            (
+                shell.sidebar_visibility.mode() != super::SidebarVisibilityMode::Hidden,
+                shell.config.sidebar,
+            )
         };
+        super::persist_sidebar_config(sidebar, "toggle");
         let weak = Rc::downgrade(&shell);
         glib::idle_add_local_once(move || {
             if let Some(shell) = weak.upgrade() {
@@ -1761,7 +1767,7 @@ mod tests {
 
     #[test]
     fn registry_is_unique_complete_and_typed() {
-        assert_eq!(ACTION_SPECS.len(), 118);
+        assert_eq!(ACTION_SPECS.len(), 120);
         assert_eq!(
             ACTION_SPECS
                 .iter()

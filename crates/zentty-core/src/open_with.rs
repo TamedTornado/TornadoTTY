@@ -466,15 +466,9 @@ mod tests {
 
     #[test]
     fn local_path_plan_rejects_non_file_non_directory_nodes() {
-        let directory = fixture_directory("source-socket");
-        let socket = directory.join("not-a-task-source.sock");
-        let _listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
-
         assert_eq!(
-            target("editor").launch_local_path_plan(&socket),
+            target("editor").launch_local_path_plan(Path::new("/dev/null")),
             Err(OpenWithLaunchError::MissingPath)
         );
-
-        fs::remove_dir_all(directory).unwrap();
     }
 }

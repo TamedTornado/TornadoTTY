@@ -174,6 +174,13 @@ restored_sidebar_width="$(
     fail "the restored divider produced no sidebar allocation receipt"
 (( restored_sidebar_width >= 278 && restored_sidebar_width <= 282 )) ||
     fail "the real divider did not return to Zentty's preferred width"
+for _ in $(seq 1 100); do
+    grep -Fq 'zentty-linux: sidebar-persist origin=resize ' "${log}" &&
+        grep -Eq '^width = (278|279|280|281|282)$' "${XDG_CONFIG_HOME}/zentty/config.toml" && break
+    sleep 0.05
+done
+grep -Eq '^width = (278|279|280|281|282)$' "${XDG_CONFIG_HOME}/zentty/config.toml" ||
+    fail "the restored real divider width was not persisted through ConfigStore"
 [[ "$(grep -Fc 'info(opengl): loaded OpenGL' "${log}" || true)" -eq 1 ]] ||
     fail "title/sidebar updates reattached the Ghostty widget and reloaded its GL presentation"
 [[ "$(grep -Fc 'info(io_exec): started subcommand' "${log}" || true)" -eq 1 ]] ||
@@ -191,6 +198,13 @@ for _ in $(seq 1 100); do
 done
 grep -Fxq 'zentty-linux: sidebar-visibility=hidden' "${log}" ||
     fail "the real leading-chrome toggle did not hide the sidebar"
+for _ in $(seq 1 100); do
+    grep -Fq 'zentty-linux: sidebar-persist origin=toggle ' "${log}" &&
+        grep -Fq 'visibility = "hidden"' "${XDG_CONFIG_HOME}/zentty/config.toml" && break
+    sleep 0.05
+done
+grep -Fq 'visibility = "hidden"' "${XDG_CONFIG_HOME}/zentty/config.toml" ||
+    fail "the source toggle did not persist hidden through ConfigStore"
 hover_count="$(grep -Fxc 'zentty-linux: sidebar-visibility=hover-peek' "${log}" || true)"
 xdotool mousemove --window "${window_id}" 2 350
 for _ in $(seq 1 100); do
@@ -199,6 +213,8 @@ for _ in $(seq 1 100); do
 done
 (( $(grep -Fxc 'zentty-linux: sidebar-visibility=hover-peek' "${log}" || true) > hover_count )) ||
     fail "the hidden sidebar rail did not open the source hover overlay"
+grep -Fq 'visibility = "hidden"' "${XDG_CONFIG_HOME}/zentty/config.toml" ||
+    fail "transient pointer hover peek changed the persisted sidebar mode"
 hidden_count="$(grep -Fxc 'zentty-linux: sidebar-visibility=hidden' "${log}" || true)"
 xdotool mousemove --window "${window_id}" 700 350
 for _ in $(seq 1 100); do
@@ -214,6 +230,12 @@ for _ in $(seq 1 100); do
 done
 grep -Fxq 'zentty-linux: sidebar-visibility=pinned-open' "${log}" ||
     fail "the leading chrome did not remain reachable while the sidebar was hidden"
+for _ in $(seq 1 100); do
+    grep -Fq 'visibility = "pinnedOpen"' "${XDG_CONFIG_HOME}/zentty/config.toml" && break
+    sleep 0.05
+done
+grep -Fq 'visibility = "pinnedOpen"' "${XDG_CONFIG_HOME}/zentty/config.toml" ||
+    fail "the source toggle did not persist pinnedOpen through ConfigStore"
 xdotool type --window "${window_id}" --delay 10 'retained-focus'
 xdotool key --window "${window_id}" Return
 for _ in $(seq 1 100); do

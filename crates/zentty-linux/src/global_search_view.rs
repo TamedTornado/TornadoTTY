@@ -47,11 +47,6 @@ impl GlobalSearchView {
         entry.set_placeholder_text(Some(PLACEHOLDER));
         entry.set_hexpand(true);
         entry.update_property(&[gtk::accessible::Property::Label(GLOBAL_FIND)]);
-        let entry_focus = gtk::EventControllerFocus::new();
-        entry_focus.connect_enter(|_| {
-            eprintln!("zentty-linux: global-find focus=entry");
-        });
-        entry.add_controller(entry_focus);
         let count = gtk::Label::new(None);
         count.add_css_class("sidebar-global-search-count");
         let clear = icon_button("edit-clear-symbolic", CLEAR_GLOBAL_FIND);
@@ -80,6 +75,18 @@ impl GlobalSearchView {
 
     pub(crate) fn set_search_changed_handler(&self, handler: glib::SignalHandlerId) {
         *self.search_changed_handler.borrow_mut() = Some(handler);
+    }
+
+    pub(crate) fn connect_focus_changed(&self, callback: impl Fn(bool) + 'static) {
+        let callback: Rc<dyn Fn(bool)> = Rc::new(callback);
+        let focus = gtk::EventControllerFocus::new();
+        let entered = Rc::clone(&callback);
+        focus.connect_enter(move |_| {
+            eprintln!("zentty-linux: global-find focus=entry");
+            entered(true);
+        });
+        focus.connect_leave(move |_| callback(false));
+        self.entry.add_controller(focus);
     }
 
     pub(crate) fn render(&self, state: &GlobalSearchState) {
