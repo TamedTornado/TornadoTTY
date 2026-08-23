@@ -1,11 +1,22 @@
 {
   "entries": [
     {
+      "id": "fuzzymatch",
+      "displayName": "FuzzyMatch",
+      "repositoryURL": "https://github.com/ordo-one/FuzzyMatch",
+      "homepageURLString": "https://github.com/ordo-one/FuzzyMatch",
+      "versionOverride": "1.3.3",
+      "sourceURLString": "https://github.com/ordo-one/FuzzyMatch/blob/1.3.3/LICENSE",
+      "licenseNameOverride": "Apache License 2.0",
+      "spdxIDOverride": "Apache-2.0",
+      "licenseTextPath": "Vendor/FuzzyMatch/LICENSE"
+    },
+    {
       "id": "ghostty",
       "displayName": "Ghostty",
       "repositoryURL": "https://github.com/ghostty-org/ghostty",
       "homepageURLString": "https://ghostty.org",
-      "versionOverride": "e75f895"
+      "versionOverride": "bee61930c"
     },
     {
       "id": "iterm2-color-schemes",
