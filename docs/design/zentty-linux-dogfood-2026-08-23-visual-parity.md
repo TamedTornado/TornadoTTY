@@ -276,3 +276,34 @@ Issue: GH-84
   a real reviewed baseline and therefore correctly passed. The negative test
   now promotes the still-pending `remote-dark-x11` scenario, preserving the
   intended missing-baseline failure without deleting real evidence.
+
+## Verified remote-session chrome capture
+
+- Remote visuals remain inside the existing consolidated session-restore
+  journey. The capture point follows a real key-authenticated loopback OpenSSH
+  launch, foreground-process identity detection, and rendered sidebar/pane
+  projection. A title string alone is explicitly insufficient to reach it.
+- The disposable SSH actor now clears its real remote PTY and hides the cursor
+  after publishing the fixed `ssh-remote-ready` title. This keeps the full
+  Ghostty surface visible and deterministic; no terminal mask or fake remote
+  model is introduced, and all later clipboard/drop/rollback/cancellation and
+  restore assertions continue in the same actor.
+- X11 uses a real externally resized 1200x700 window. The Wayland session-
+  restore matrix cell is the existing nested Weston multi-window profile, so
+  its physical evidence contract is 1280x1024, not the map's earlier copied
+  1024x768 Cage size.
+- The first Weston image correctly captured the physical output but included
+  compositor wallpaper, panel clock, and native titlebar around the clamped
+  restored window. The clock makes that whole-output image nondeterministic and
+  is not Zentty product chrome. GTK reports the oversized requested allocation
+  (1280x1024), while Weston visibly clips it behind fixed 60px left and 124px
+  top compositor regions. The first attempted allocation-derived crop therefore
+  remained the whole output and the size gate correctly failed. Evidence now
+  validates the 1280x1024 physical output and crops its controlled, visibly
+  presented 1220x900 product-client region at +60+124; it does not synthesize
+  or recapture the application through a fake surface.
+- Two fresh X11 runs matched at AE=0 while completing the entire consolidated
+  restore journey. Two fresh Weston runs matched the cropped Wayland client at
+  AE=0 while completing the real physical remote-file-drop cell. Both remote
+  baselines are unmasked. The missing-baseline negative fixture advances to
+  the still-pending sidebar-overlay scenario.

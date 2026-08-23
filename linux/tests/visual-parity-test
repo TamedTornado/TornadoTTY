@@ -53,7 +53,7 @@ jq '(.scenarios[0].mask) = "whole-window"' \
 expect_failure unknown-mask "scenario references unknown mask" \
     "${runner}" "${temporary}/unknown-mask.json" "${temporary}/empty-baselines"
 
-jq '(.scenarios[] | select(.id == "remote-dark-x11")) |=
+jq '(.scenarios[] | select(.id == "sidebar-overlay-wayland")) |=
     (.status = "PASS" | .tracking_issue = null)' \
     "${source_map}" >"${temporary}/missing-baseline.json"
 expect_failure missing-baseline "has no reviewed baseline" \

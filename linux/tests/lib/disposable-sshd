@@ -70,7 +70,7 @@ EOF
     esac
     cat >"${ZENTTY_DISPOSABLE_SSHD_ROOT}/remote-actor" <<'EOF'
 #!/bin/sh
-printf '\033]2;ssh-remote-ready\007'
+printf '\033]2;ssh-remote-ready\007\033[2J\033[H\033[?25l'
 IFS= read -r _
 EOF
     chmod 700 "${ZENTTY_DISPOSABLE_SSHD_ROOT}/remote-actor"
