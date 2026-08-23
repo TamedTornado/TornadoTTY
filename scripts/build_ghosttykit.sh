@@ -41,6 +41,7 @@ if ! command -v brew >/dev/null 2>&1 && ! command -v port >/dev/null 2>&1; then
   exit 1
 fi
 require_command xcode-select "Install full Xcode."
+require_command xcodebuild "Install full Xcode."
 require_command xcrun "Install full Xcode."
 
 resolve_zig_command() {
@@ -79,7 +80,7 @@ resolve_zig_command() {
   fi
 
   echo "Missing required Zig version ${zig_version}." >&2
-  echo "Install it with: brew install ${formula} OR sudo port install zig" >&2
+  echo "Install it with: brew install zig OR sudo port install zig" >&2
   exit 1
 }
 
@@ -90,6 +91,29 @@ if [[ "${XCODE_PATH}" != */Xcode*.app/Contents/Developer ]]; then
   echo "Full Xcode is not selected. Current developer dir: ${XCODE_PATH}" >&2
   echo "Select full Xcode with: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer" >&2
   exit 1
+fi
+
+# Newer Xcode releases ship the Metal compiler as a separately installed
+# toolchain. Select it explicitly when available; otherwise xcrun may resolve
+# the XcodeDefault shim, which reports that the installed toolchain is missing.
+METAL_TOOLCHAINS="${TOOLCHAINS:-}"
+if METAL_COMPONENT_INFO="$(xcodebuild -showComponent MetalToolchain 2>/dev/null)"; then
+  METAL_TOOLCHAIN_ID=""
+  while IFS= read -r line; do
+    if [[ "${line}" == "Toolchain Identifier: "* ]]; then
+      METAL_TOOLCHAIN_ID="${line#Toolchain Identifier: }"
+      break
+    fi
+  done <<< "${METAL_COMPONENT_INFO}"
+
+  if [[ -n "${METAL_TOOLCHAIN_ID}" ]]; then
+    METAL_TOOLCHAINS="${METAL_TOOLCHAIN_ID}${METAL_TOOLCHAINS:+ ${METAL_TOOLCHAINS}}"
+  fi
+fi
+
+BUILD_ENV=()
+if [[ -n "${METAL_TOOLCHAINS}" ]]; then
+  BUILD_ENV=(env "TOOLCHAINS=${METAL_TOOLCHAINS}")
 fi
 
 has_gettext=0
@@ -106,7 +130,7 @@ if [[ "$has_gettext" -eq 0 ]]; then
   exit 1
 fi
 
-if ! xcrun --find metal >/dev/null 2>&1; then
+if ! "${BUILD_ENV[@]}" xcrun --find metal >/dev/null 2>&1; then
   echo "Missing Metal Toolchain. Install with: xcodebuild -downloadComponent MetalToolchain" >&2
   exit 1
 fi
@@ -136,7 +160,7 @@ fi
 
 (
   cd "${SOURCE_DIR}"
-  "${ZIG_COMMAND}" build -Doptimize=ReleaseFast -Demit-macos-app=false -Dxcframework-target="${build_target}"
+  "${BUILD_ENV[@]}" "${ZIG_COMMAND}" build -Doptimize=ReleaseFast -Demit-macos-app=false -Dxcframework-target="${build_target}"
 )
 
 if [[ ! -d "${ARTIFACT_SOURCE}" ]]; then
