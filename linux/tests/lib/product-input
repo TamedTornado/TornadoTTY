@@ -30,6 +30,47 @@ zentty_product_wait_for_log_count() {
     return 1
 }
 
+zentty_process_is_running() {
+    local pid="$1"
+    local state
+
+    [[ "${pid}" =~ ^[1-9][0-9]*$ ]] || return 1
+    kill -0 "${pid}" 2>/dev/null || return 1
+    state="$(ps -o stat= -p "${pid}" 2>/dev/null || true)"
+    [[ -n "${state}" && "${state}" != Z* ]]
+}
+
+zentty_wait_for_owned_process() {
+    local pid="$1"
+    local label="$2"
+    local attempts="${3:-200}"
+    local interval="${4:-0.05}"
+    local index status
+
+    [[ "${pid}" =~ ^[1-9][0-9]*$ ]] || {
+        echo "product-input: ${label} has an invalid PID" >&2
+        return 64
+    }
+    [[ "${attempts}" =~ ^[1-9][0-9]*$ ]] || {
+        echo "product-input: ${label} exit attempts must be a positive integer" >&2
+        return 64
+    }
+    for ((index = 0; index < attempts; index++)); do
+        if ! zentty_process_is_running "${pid}"; then
+            if wait "${pid}"; then
+                return 0
+            else
+                status=$?
+                echo "product-input: ${label} exited with status ${status}" >&2
+                return "${status}"
+            fi
+        fi
+        sleep "${interval}"
+    done
+    echo "product-input: timed out waiting for ${label} (pid=${pid})" >&2
+    return 124
+}
+
 zentty_product_uses_xdotool() {
     [[ "$1" == x11 || "${ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT:-}" == 1 ]]
 }

@@ -4,6 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
 backend="${GDK_BACKEND:-}"
+scenario="${ZENTTY_AGENT_IPC_SCENARIO:-full}"
 log=""
 state_directory=""
 product_pid=""
@@ -12,6 +13,7 @@ fake_bin=""
 real_gemini_bin=""
 private_home=""
 start_receipt=""
+model_log=""
 actor="${repo_root}/linux/tests/fixtures/controlled-agent"
 # shellcheck disable=SC1091
 source "${repo_root}/linux/tests/lib/product-input"
@@ -22,14 +24,49 @@ fail() {
     exit 1
 }
 
+terminate_owned_process() {
+    local pid="$1"
+    local label="$2"
+    local status
+
+    [[ "${pid}" =~ ^[1-9][0-9]*$ ]] || return
+    if zentty_process_is_running "${pid}"; then
+        kill -TERM "${pid}" 2>/dev/null || true
+    fi
+    status=0
+    zentty_wait_for_owned_process "${pid}" "${label}" 20 0.05 || status=$?
+    if (( status == 124 )); then
+        kill -KILL "${pid}" 2>/dev/null || true
+        zentty_wait_for_owned_process "${pid}" "${label} after SIGKILL" 20 0.05 || true
+    fi
+}
+
+wait_for_product() {
+    local label="$1"
+    local attempts="${2:-200}"
+
+    zentty_wait_for_owned_process "${product_pid}" "${label}" "${attempts}" 0.05 ||
+        fail "${label} failed or missed its exit deadline"
+    product_pid=""
+}
+
+wait_for_server() {
+    local label="$1"
+    local attempts="${2:-200}"
+
+    if ! zentty_wait_for_owned_process "${server_pid}" "${label}" "${attempts}" 0.05; then
+        [[ -z "${model_log}" || ! -f "${model_log}" ]] || cat "${model_log}" >&2
+        fail "${label} failed or missed its exit deadline"
+    fi
+    server_pid=""
+}
+
 cleanup() {
     if [[ "${product_pid}" =~ ^[1-9][0-9]*$ ]]; then
-        kill -TERM "${product_pid}" 2>/dev/null || true
-        wait "${product_pid}" 2>/dev/null || true
+        terminate_owned_process "${product_pid}" "cleanup product"
     fi
     if [[ "${server_pid}" =~ ^[1-9][0-9]*$ ]]; then
-        kill -TERM "${server_pid}" 2>/dev/null || true
-        wait "${server_pid}" 2>/dev/null || true
+        terminate_owned_process "${server_pid}" "cleanup controlled endpoint"
     fi
     [[ -z "${log}" ]] || rm -f -- "${log}"
     [[ -z "${state_directory}" ]] || rm -rf -- "${state_directory}"
@@ -38,6 +75,11 @@ cleanup() {
     [[ -z "${start_receipt}" ]] || rm -f -- "${start_receipt}"
 }
 trap cleanup EXIT
+
+case "${scenario}" in
+    full | installed-gemini) ;;
+    *) fail "ZENTTY_AGENT_IPC_SCENARIO must be full or installed-gemini" ;;
+esac
 
 case "${backend}" in
     x11)
@@ -54,10 +96,8 @@ case "${backend}" in
 esac
 case "${ZENTTY_REQUIRE_REAL_GEMINI:-false}" in
     true)
-        if [[ -z "${ZENTTY_REAL_GEMINI_BIN:-}" ]]; then
-            ZENTTY_REAL_GEMINI_BIN="$(command -v gemini || true)"
-            export ZENTTY_REAL_GEMINI_BIN
-        fi
+        [[ -n "${ZENTTY_REAL_GEMINI_BIN:-}" ]] ||
+            fail "required real Gemini executable must be selected explicitly"
         [[ -n "${ZENTTY_EXPECTED_GEMINI_VERSION:-}" ]] ||
             ZENTTY_EXPECTED_GEMINI_VERSION=0.53.0
         export ZENTTY_EXPECTED_GEMINI_VERSION
@@ -65,7 +105,10 @@ case "${ZENTTY_REQUIRE_REAL_GEMINI:-false}" in
     false) ;;
     *) fail "ZENTTY_REQUIRE_REAL_GEMINI must be true or false" ;;
 esac
-for dependency in cut grep jq mktemp sed sha256sum sleep stat; do
+if [[ "${scenario}" == installed-gemini && "${ZENTTY_REQUIRE_REAL_GEMINI:-false}" != true ]]; then
+    fail "installed-gemini scenario requires the reviewed real Gemini prerequisite"
+fi
+for dependency in cut grep jq mktemp ps sed sha256sum sleep stat; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
 [[ -x "${product}" ]] || fail "staged product is not built: ${product}"
@@ -174,15 +217,7 @@ run_adapter() {
     [[ "$(stat -c '%a' "$(dirname "${socket}")")" == 700 ]] ||
         fail "product socket directory mode was not 0700"
 
-    for _ in {1..200}; do
-        if ! kill -0 "${product_pid}" 2>/dev/null; then
-            wait "${product_pid}" || fail "${name} product run failed"
-            product_pid=""
-            break
-        fi
-        sleep 0.05
-    done
-    [[ -z "${product_pid}" ]] || fail "${name} product did not exit after its real child"
+    wait_for_product "${name} product run" 200
     [[ ! -e "${socket}" ]] || fail "${name} product left its agent socket behind"
     [[ ! -e "$(dirname "${socket}")" ]] ||
         fail "${name} product left its private runtime directory behind"
@@ -222,10 +257,18 @@ run_opencode_live_theme() {
     before="$(sha256sum "${overlay}/themes/zentty-synced.json" | cut -d' ' -f1)"
     mkdir -p "${XDG_CONFIG_HOME}/zentty"
     cat >"${XDG_CONFIG_HOME}/zentty/config.toml" <<'EOF'
+[confirmations]
+confirm_before_closing_pane = false
+confirm_before_closing_window = false
+confirm_before_quitting = false
+
 [appearance]
 preferred_dark_theme_name = "Abernathy"
 sync_opencode_theme_with_terminal = true
 EOF
+    grep -Fq 'confirm_before_quitting = false' \
+        "${XDG_CONFIG_HOME}/zentty/config.toml" ||
+        fail "OpenCode theme fixture removed lifecycle confirmation policy"
     zentty_product_wait_for_log "${log}" \
         'zentty-linux: opencode-theme-live pane=pane-1' \
         "OpenCode live theme did not cross the managed overlay boundary"
@@ -234,8 +277,7 @@ EOF
     grep -Fq 'signal=USR2' "${receipt}" || fail "OpenCode signal receipt was malformed"
     after="$(sha256sum "${overlay}/themes/zentty-synced.json" | cut -d' ' -f1)"
     [[ "${after}" != "${before}" ]] || fail "OpenCode managed theme bytes did not change"
-    wait "${product_pid}" || fail "OpenCode live-theme product run failed"
-    product_pid=""
+    wait_for_product "OpenCode live-theme product run" 400
     rm -f -- "${log}" "${start_receipt}" "${receipt}"
     rm -rf -- "${state_directory}"
     log=""
@@ -294,12 +336,7 @@ run_codex_lifecycle() {
     socket="$(sed -n 's/^zentty-linux: agent-runtime socket=//p' "${log}" | head -1)"
     [[ -S "${socket}" ]] || fail "private product socket was not live during lifecycle"
     zentty_product_close_window "${backend}"
-    for _ in {1..200}; do
-        ! kill -0 "${product_pid}" 2>/dev/null && break
-        sleep 0.05
-    done
-    wait "${product_pid}" || fail "Codex lifecycle product run failed"
-    product_pid=""
+    wait_for_product "Codex lifecycle product run" 200
     [[ ! -e "${socket}" && ! -e "$(dirname "${socket}")" ]] ||
         fail "Codex lifecycle left its socket or runtime directory behind"
     rm -f -- "${log}"
@@ -344,12 +381,7 @@ run_agent_status_lifecycle() {
         fail "hostile lifecycle text escaped into product receipts"
     fi
 
-    for _ in {1..200}; do
-        ! kill -0 "${product_pid}" 2>/dev/null && break
-        sleep 0.05
-    done
-    wait "${product_pid}" || fail "agent-status lifecycle product run failed"
-    product_pid=""
+    wait_for_product "agent-status lifecycle product run" 200
     rm -f -- "${log}"
     rm -rf -- "${state_directory}"
     log=""
@@ -389,12 +421,7 @@ run_codex_title_transcript_enrichment() {
         fail "transcript body or path escaped into product receipts"
     fi
 
-    for _ in {1..200}; do
-        ! kill -0 "${product_pid}" 2>/dev/null && break
-        sleep 0.05
-    done
-    wait "${product_pid}" || fail "Codex transcript-enrichment product run failed"
-    product_pid=""
+    wait_for_product "Codex transcript-enrichment product run" 200
     rm -f -- "${log}"
     rm -rf -- "${state_directory}" "${private_home}"
     log=""
@@ -425,14 +452,7 @@ run_codex_enrichment_shutdown() {
     [[ ! -e "${transcript}" ]] || fail "pending transcript fixture unexpectedly existed"
     zentty_product_prepare_input "${backend}" "${log}"
     zentty_product_close_window "${backend}"
-    for _ in {1..40}; do
-        ! kill -0 "${product_pid}" 2>/dev/null && break
-        sleep 0.05
-    done
-    ! kill -0 "${product_pid}" 2>/dev/null ||
-        fail "window close did not bound in-flight transcript cancellation"
-    wait "${product_pid}" || fail "pending-enrichment shutdown product run failed"
-    product_pid=""
+    wait_for_product "pending-enrichment shutdown product run" 40
     if grep -Fq 'codex-transcript-enriched' "${log}" || grep -Fq "${transcript}" "${log}"; then
         fail "cancelled enrichment completed late or exposed its transcript path"
     fi
@@ -466,12 +486,7 @@ run_codex_osc_progress() {
         'sidebar-agent-status pane=pane-1 phase=Running interaction=None attention=false' \
         "OSC progress did not resume canonical Codex running state"
 
-    for _ in {1..200}; do
-        ! kill -0 "${product_pid}" 2>/dev/null && break
-        sleep 0.05
-    done
-    wait "${product_pid}" || fail "Codex OSC-progress product run failed"
-    product_pid=""
+    wait_for_product "Codex OSC-progress product run" 200
     rm -f -- "${log}"
     rm -rf -- "${state_directory}" "${private_home}"
     log=""
@@ -505,12 +520,7 @@ run_gemini_terminal_notifications() {
         'sidebar-agent-status pane=pane-1 phase=Idle interaction=None attention=false' \
         "Gemini completion notification did not establish ready state"
 
-    for _ in {1..200}; do
-        ! kill -0 "${product_pid}" 2>/dev/null && break
-        sleep 0.05
-    done
-    wait "${product_pid}" || fail "Gemini terminal-notification product run failed"
-    product_pid=""
+    wait_for_product "Gemini terminal-notification product run" 200
     rm -f -- "${log}"
     rm -rf -- "${state_directory}" "${private_home}"
     log=""
@@ -518,6 +528,7 @@ run_gemini_terminal_notifications() {
     private_home=""
 }
 
+if [[ "${scenario}" == full ]]; then
 run_adapter \
     codex \
     'codex' \
@@ -630,13 +641,19 @@ run_adapter \
     vibe-adapter \
     'zentty-linux: sidebar-agent-status pane=pane-1 phase=NeedsInput interaction=Question attention=true' \
     'Choose the Vibe path?'
+fi
 
 if [[ -n "${ZENTTY_REAL_GEMINI_BIN:-}" ]]; then
+    reviewed_gemini="${repo_root}/linux/ci/node-tools/node_modules/.bin/gemini"
     for dependency in jq node pgrep readlink; do
         command -v "${dependency}" >/dev/null ||
             fail "${dependency} is required for the real Gemini journey"
     done
     [[ -x "${ZENTTY_REAL_GEMINI_BIN}" ]] || fail "real Gemini executable is not executable"
+    [[ -x "${reviewed_gemini}" ]] || fail "repository-owned Gemini prerequisite is missing"
+    [[ "$(readlink -f "${ZENTTY_REAL_GEMINI_BIN}")" == "$(readlink -f "${reviewed_gemini}")" ]] ||
+        fail "real Gemini executable is not the repository-owned reviewed prerequisite"
+    ZENTTY_REAL_GEMINI_BIN="${reviewed_gemini}"
     [[ "${ZENTTY_EXPECTED_GEMINI_VERSION:-}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
         fail "ZENTTY_EXPECTED_GEMINI_VERSION must pin the reviewed real CLI version"
     [[ "$(basename "${ZENTTY_REAL_GEMINI_BIN}")" == gemini ]] ||
@@ -661,11 +678,11 @@ if [[ -n "${ZENTTY_REAL_GEMINI_BIN:-}" ]]; then
         --no-session-restore >"${log}" 2>&1 &
     product_pid=$!
     for _ in {1..400}; do
-        [[ -s "${gemini_receipt}" ]] && ! kill -0 "${product_pid}" 2>/dev/null && break
+        [[ -s "${gemini_receipt}" ]] && break
         sleep 0.05
     done
-    wait "${product_pid}" || fail "real Gemini version run failed"
-    product_pid=""
+    [[ -s "${gemini_receipt}" ]] || fail "real Gemini version receipt was not written"
+    wait_for_product "real Gemini version run" 400
     gemini_output="$(tr -d '\r\n' <"${gemini_receipt}")"
     [[ "${gemini_output}" == "${ZENTTY_EXPECTED_GEMINI_VERSION}" ]] ||
         fail "real Gemini version receipt did not match the reviewed executable: ${gemini_output}"
@@ -718,16 +735,10 @@ if [[ -n "${ZENTTY_REAL_GEMINI_BIN:-}" ]]; then
         fail "installed Gemini AfterAgent hook did not reach the reducer"
     grep -Fq '"containsProbe":true' "${model_receipt}" ||
         fail "controlled endpoint did not retain a sanitized Gemini receipt"
-    wait "${server_pid}" || fail "controlled Gemini endpoint failed"
-    server_pid=""
+    wait_for_server "controlled Gemini endpoint" 200
     zentty_product_prepare_input "${backend}" "${log}"
     zentty_product_close_window "${backend}"
-    for _ in {1..240}; do
-        ! kill -0 "${product_pid}" 2>/dev/null && break
-        sleep 0.05
-    done
-    wait "${product_pid}" || fail "installed Gemini product turn failed"
-    product_pid=""
+    wait_for_product "installed Gemini product turn" 240
     jq -e '
         .restoreDraftWindows[0].paneDrafts[0] |
         .toolName == "Gemini" and
@@ -757,12 +768,7 @@ if [[ -n "${ZENTTY_REAL_GEMINI_BIN:-}" ]]; then
         fail "resumed real Gemini TUI did not render"
     zentty_product_prepare_input "${backend}" "${log}"
     zentty_product_close_window "${backend}"
-    for _ in {1..240}; do
-        ! kill -0 "${product_pid}" 2>/dev/null && break
-        sleep 0.05
-    done
-    wait "${product_pid}" || fail "resumed installed Gemini product failed"
-    product_pid=""
+    wait_for_product "resumed installed Gemini product" 240
 
     # Gemini's native dependency loader may briefly finish a node-gyp header
     # cache subprocess after the TUI has acknowledged termination. Do not let
@@ -790,4 +796,9 @@ if [[ -n "${ZENTTY_REAL_GEMINI_BIN:-}" ]]; then
     log=""
 fi
 
-echo "Rust agent launch passed: ${backend}, wrapper=real-process, child=real-pty, helper=real-process, transport=real-unix-socket, compatibility-agent-status=running+needs-input+failed+task-idempotency+reordered-completion+completed+clear, adapters=codex+codex-notify+claude+copilot+opencode+pi+omp+small-harness+gemini+cursor+droid+kimi+grok+agy+hermes+vibe, real-gemini=$([[ -n "${ZENTTY_REAL_GEMINI_BIN:-}" ]] && echo true || echo prerequisite-not-requested)"
+if [[ "${scenario}" == full ]]; then
+    adapters="codex+codex-notify+claude+copilot+opencode+pi+omp+small-harness+gemini+cursor+droid+kimi+grok+agy+hermes+vibe"
+else
+    adapters="not-run-in-installed-gemini-scenario"
+fi
+echo "Rust agent launch passed: ${backend}, scenario=${scenario}, wrapper=real-process, child=real-pty, helper=real-process, transport=real-unix-socket, compatibility-agent-status=running+needs-input+failed+task-idempotency+reordered-completion+completed+clear, adapters=${adapters}, real-gemini=$([[ -n "${ZENTTY_REAL_GEMINI_BIN:-}" ]] && echo true || echo prerequisite-not-requested)"

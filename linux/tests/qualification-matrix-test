@@ -81,6 +81,32 @@ fi
 grep -F 'ZENTTY_QUALIFICATION_INTERACTIVE_JOBS must not exceed display jobs' \
     "${temp_dir}/stderr" >/dev/null
 
+# A killed matrix run may leave its scheduler-owned scratch directory. The next
+# exclusively locked run must remove that stale scratch, but reject unrelated
+# directories rather than silently erasing them.
+scratch_summary="${temp_dir}/scratch-summary.json"
+scratch_logs="${scratch_summary}.logs"
+mkdir -p "${scratch_logs}/.cell-results.interrupted"
+printf '{}\n' >"${temp_dir}/invalid-matrix.json"
+if ZENTTY_QUALIFICATION_MATRIX="${temp_dir}/invalid-matrix.json" \
+    ZENTTY_QUALIFICATION_SUMMARY="${scratch_summary}" "${runner}" \
+    >"${temp_dir}/stdout" 2>"${temp_dir}/stderr"; then
+    echo "qualification-matrix-test: invalid scratch-cleanup fixture passed" >&2
+    exit 1
+fi
+[[ ! -e "${scratch_logs}/.cell-results.interrupted" ]] || {
+    echo "qualification-matrix-test: stale scheduler scratch was retained" >&2
+    exit 1
+}
+mkdir -p "${scratch_logs}/unowned-directory"
+if ZENTTY_QUALIFICATION_MATRIX="${temp_dir}/invalid-matrix.json" \
+    ZENTTY_QUALIFICATION_SUMMARY="${scratch_summary}" "${runner}" \
+    >"${temp_dir}/stdout" 2>"${temp_dir}/stderr"; then
+    echo "qualification-matrix-test: unowned logs directory was accepted" >&2
+    exit 1
+fi
+grep -F 'unexpected entry in matrix logs directory:' "${temp_dir}/stderr" >/dev/null
+
 jq '(.cells[] | select(.id == "ghostty-regression")).blocks_display = "yes"' \
     "${source_matrix}" >"${temp_dir}/matrix.json"
 expect_validation_failure \
@@ -112,6 +138,18 @@ expect_validation_failure 'cells with malformed or unknown dependencies: package
 jq '(.cells[] | select(.id == "installed-product-wayland")).environment_profile = "nested-wayland-v1"' \
     "${source_matrix}" >"${temp_dir}/matrix.json"
 expect_validation_failure 'installed-product cells are missing or malformed'
+
+# Agent lifecycle qualification may not silently drift to an ambient Gemini
+# installation or an unreviewed package version.
+jq '(.cells[] | select(.id == "agent-integration-x11")).command |= sub("ZENTTY_REAL_GEMINI_BIN=linux/ci/node-tools/node_modules/.bin/gemini "; "")' \
+    "${source_matrix}" >"${temp_dir}/matrix.json"
+expect_validation_failure \
+    'agent-integration cells must pin the reviewed repository Gemini executable and version'
+
+jq '(.cells[] | select(.id == "agent-integration-wayland")).command |= sub("ZENTTY_EXPECTED_GEMINI_VERSION=0.53.0"; "ZENTTY_EXPECTED_GEMINI_VERSION=0.56.0")' \
+    "${source_matrix}" >"${temp_dir}/matrix.json"
+expect_validation_failure \
+    'agent-integration cells must pin the reviewed repository Gemini executable and version'
 
 # Package closure is a closed evidence graph. Lifecycle labels may validate the
 # one real producer receipt, but no cell or installed backend may disappear.

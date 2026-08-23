@@ -76,6 +76,13 @@ if ! "${validate_only}"; then
     # looking current. The lock prevents another writer from losing evidence.
     rm -f -- "${summary}"
     if [[ -d "${logs_dir}" ]]; then
+        # An interrupted scheduler can leave only its own hidden scratch
+        # directories behind. They are never receipts, and the exclusive lock
+        # proves that no live matrix worker can still own them.
+        while IFS= read -r -d '' stale_results_directory; do
+            rm -rf -- "${stale_results_directory}"
+        done < <(find "${logs_dir}" -mindepth 1 -maxdepth 1 -type d \
+            -name '.cell-results.*' -print0)
         unexpected_log_entry="$(find "${logs_dir}" -mindepth 1 -maxdepth 1 ! -type f -print -quit)"
         [[ -z "${unexpected_log_entry}" ]] ||
             fail "unexpected entry in matrix logs directory: ${unexpected_log_entry}"
@@ -463,6 +470,21 @@ jq -e '
         .environment_profile == "nested-wayland-input-v1" and
         (.command | startswith("dbus-run-session -- env GDK_BACKEND=wayland ")))
 ' "${matrix}" >/dev/null || fail "installed-product cells are missing or malformed"
+
+# The installed Gemini lifecycle is reviewed against the repository-owned pnpm
+# toolchain, not whichever executable happens to be on the developer's PATH.
+# Keep both graphical backends pinned to the same explicit source and version.
+jq -e '
+    [.cells[] | select(.id == "agent-integration-wayland" or .id == "agent-integration-x11")] as $cells |
+    ($cells | length) == 2 and
+    all($cells[];
+        .status == "PASS" and .capability == "agent_integration" and
+        (.command | contains("ZENTTY_REQUIRE_REAL_GEMINI=true")) and
+        (.command | contains("ZENTTY_REAL_GEMINI_BIN=linux/ci/node-tools/node_modules/.bin/gemini")) and
+        (.command | contains("ZENTTY_EXPECTED_GEMINI_VERSION=0.53.0"))) and
+    any($cells[]; .id == "agent-integration-wayland" and .display == "wayland") and
+    any($cells[]; .id == "agent-integration-x11" and .display == "x11")
+' "${matrix}" >/dev/null || fail "agent-integration cells must pin the reviewed repository Gemini executable and version"
 
 jq -e '
     [.cells[] | select(.capability == "package_qualification")] as $cells |

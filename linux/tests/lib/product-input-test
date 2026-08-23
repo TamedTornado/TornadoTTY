@@ -39,6 +39,30 @@ source "${repo_root}/linux/tests/lib/product-input"
 receipt_log="$(mktemp)"
 trap 'rm -f -- "${calls}" "${receipt_log}"' EXIT
 
+bash -c 'sleep 30' &
+blocking_pid=$!
+set +e
+zentty_wait_for_owned_process "${blocking_pid}" "blocking fixture" 2 0 \
+    2>"${receipt_log}"
+blocking_status=$?
+set -e
+if (( blocking_status != 124 )); then
+    echo "product-input-test: live process escaped its exit deadline" >&2
+    exit 1
+fi
+grep -Fq "timed out waiting for blocking fixture (pid=${blocking_pid})" \
+    "${receipt_log}" || {
+    echo "product-input-test: process timeout did not identify its owner" >&2
+    exit 1
+}
+kill -KILL "${blocking_pid}"
+zentty_wait_for_owned_process "${blocking_pid}" "killed fixture" 2 0 \
+    2>/dev/null || [[ "$?" == 137 ]]
+
+bash -c 'exit 0' &
+exited_pid=$!
+zentty_wait_for_owned_process "${exited_pid}" "exited fixture" 2 0
+
 if zentty_product_prepare_input x11 /dev/null invalid 2>/dev/null; then
     echo "product-input-test: invalid readiness attempt count unexpectedly passed" >&2
     exit 1
@@ -167,4 +191,4 @@ unset mock_wayland_drag ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT \
     ZENTTY_NESTED_WAYLAND_DRAG_TARGET_X ZENTTY_NESTED_WAYLAND_DRAG_TARGET_Y
 rm -f -- "${mock_drag_receipt}"
 
-echo "Product input helper tests passed: counted synchronization, native/Xwayland focus, X11 key release, and physical X11/Wayland drag"
+echo "Product input helper tests passed: counted synchronization, bounded owned-process waits, native/Xwayland focus, X11 key release, and physical X11/Wayland drag"
