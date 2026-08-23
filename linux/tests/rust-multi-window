@@ -298,6 +298,93 @@ find_pointer_target() {
     return 1
 }
 
+drag_pane_to_worklane_physically() {
+    local source_pane="$1"
+    local destination_worklane="$2"
+    local source_toplevel="${3:-}"
+    local destination_toplevel="${4:-}"
+    local release_drop="${5:-true}"
+    local begin_before preview_before
+
+    if [[ -n "${source_toplevel}" ]]; then
+        ZENTTY_PRODUCT_WINDOW_ID="${source_toplevel}"
+        export ZENTTY_PRODUCT_WINDOW_ID
+    fi
+    find_pointer_target \
+        "zentty-linux: pane-drag-zone pane=${source_pane} source=sidebar pointer=entered" any ||
+        fail "physical pointer could not locate ${source_pane}'s pane drag source"
+    begin_before="$(grep -Fc "zentty-linux: pane-drag=begin " "${log}" || true)"
+    xdotool mousedown 1
+    sleep 0.25
+    xdotool mousemove_relative --sync -- 40 0
+    zentty_product_wait_for_log_count "${log}" \
+        "zentty-linux: pane-drag=begin " "$((begin_before + 1))" \
+        "GTK did not claim the cross-window pane drag" ||
+        fail "cross-window pane drag did not begin"
+
+    if [[ -n "${destination_toplevel}" ]]; then
+        ZENTTY_PRODUCT_WINDOW_ID="${destination_toplevel}"
+        export ZENTTY_PRODUCT_WINDOW_ID
+    fi
+    preview_before="$(grep -Fc \
+        "zentty-linux: pane-drag=preview-slot target-worklane=${destination_worklane} " \
+        "${log}" || true)"
+    find_pointer_target \
+        "zentty-linux: pane-drag=preview-slot target-worklane=${destination_worklane} pane-index=1 reflow=live" any || {
+            xdotool mouseup 1 2>/dev/null || true
+            fail "physical drag did not reach ${destination_worklane}'s rendered insertion slot"
+        }
+    (( $(grep -Fc \
+        "zentty-linux: pane-drag=preview-slot target-worklane=${destination_worklane} " \
+        "${log}" || true) > preview_before )) || {
+            xdotool mouseup 1 2>/dev/null || true
+            fail "destination worklane did not render fresh insertion feedback"
+        }
+    if [[ "${release_drop}" == true ]]; then
+        xdotool mouseup 1
+    fi
+}
+
+arrange_wayland_windows_for_pane_drag() {
+    local source_pane="$1"
+    [[ "${backend}" == wayland && "${ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT:-}" == 1 ]] ||
+        fail "Wayland pane drag arrangement requires controlled outer-X11 input"
+    find_pointer_target \
+        "zentty-linux: pane-drag-zone pane=${source_pane} source=sidebar pointer=entered" any ||
+        fail "physical pointer could not locate ${source_pane} before compositor move"
+    # Weston reserves Super+primary-drag for native toplevel movement. Move the
+    # active source window right to reveal the destination beneath it; the app
+    # never receives this compositor-owned gesture.
+    xdotool keydown super
+    xdotool mousedown 1
+    xdotool mousemove_relative --sync -- 500 0
+    xdotool mouseup 1
+    xdotool keyup super
+    sleep 0.2
+}
+
+drag_pane_to_leading_split_physically() {
+    local source_pane="$1"
+    local target_pane="$2"
+    local begin_before
+    find_pointer_target \
+        "zentty-linux: pane-drag-zone pane=${source_pane} source=sidebar pointer=entered" any ||
+        fail "physical pointer could not locate ${source_pane} for same-window drag"
+    begin_before="$(grep -Fc 'zentty-linux: pane-drag=begin ' "${log}" || true)"
+    xdotool mousedown 1
+    sleep 0.25
+    xdotool mousemove_relative --sync -- 40 0
+    zentty_product_wait_for_log_count "${log}" 'zentty-linux: pane-drag=begin ' \
+        "$((begin_before + 1))" "GTK did not claim the same-window pane drag" ||
+        fail "same-window pane drag did not begin"
+    find_pointer_target \
+        "zentty-linux: pane-drag=preview target-pane=${target_pane} hit=Split { axis: Horizontal, leading: true } reflow=live" any || {
+            xdotool mouseup 1 2>/dev/null || true
+            fail "physical drag did not reach ${target_pane}'s leading split zone"
+        }
+    xdotool mouseup 1
+}
+
 # Divider handles span one complete viewport axis. Search only across the
 # narrow axis instead of raster-scanning the whole toplevel. The exact GTK
 # enter receipt remains the authority, while the bounded one-dimensional scan
@@ -1445,6 +1532,62 @@ if [[ "${backend}" == x11 ]]; then
     destination_worklane=worklane-window-2
     destination_existing_pane=pane-window-2
     target_second_window "${source_pane}"
+    source_toplevel="${ZENTTY_PRODUCT_WINDOW_ID}"
+    target_second_window "${destination_existing_pane}"
+    destination_toplevel="${ZENTTY_PRODUCT_WINDOW_ID}"
+    if [[ "${ZENTTY_MULTI_WINDOW_PANE_DRAG_ONLY:-false}" == true ]]; then
+        # Keep both native toplevels simultaneously visible so the pointer
+        # crosses an actual X11 window boundary while GTK owns the drag.
+        xdotool windowmove --sync "${source_toplevel}" 0 0
+        xdotool windowsize --sync "${source_toplevel}" 600 700
+        xdotool windowmove --sync "${destination_toplevel}" 620 0
+        xdotool windowsize --sync "${destination_toplevel}" 600 700
+        if [[ "${ZENTTY_MULTI_WINDOW_PANE_DRAG_DESTROY_ONLY:-false}" == true ]]; then
+            drag_end_before="$(grep -Fc "zentty-linux: pane-drag=end pane=${source_pane}" "${log}" || true)"
+            drag_pane_to_worklane_physically "${source_pane}" "${destination_worklane}" \
+                "${source_toplevel}" "${destination_toplevel}" false
+            close_active_window
+            zentty_product_wait_for_log "${log}" \
+                "zentty-linux: window-closed id=${destination_window} remaining=1" \
+                "destination did not close during the active pane drag" ||
+                fail "active-drag destination destruction missing"
+            xdotool mousemove --sync --window "${source_toplevel}" 300 300
+            xdotool windowfocus --sync "${source_toplevel}"
+            xdotool key Escape
+            xdotool mouseup 1 2>/dev/null || true
+            zentty_product_wait_for_log_count "${log}" \
+                "zentty-linux: pane-drag=end pane=${source_pane}" "$((drag_end_before + 1))" \
+                "destination destruction did not terminate the pane drag" ||
+                fail "destroyed-destination drag did not end"
+            zentty_product_wait_for_log "${log}" \
+                "zentty-linux: pane-drag=focus-restored pane=${source_pane}" \
+                "destination destruction did not restore source terminal focus" ||
+                fail "destroyed-destination focus restoration missing"
+            ! grep -Fq "zentty-linux: pane-drop=commit pane=${source_pane}" "${log}" ||
+                fail "destroyed destination accepted a pane drop"
+            ZENTTY_PRODUCT_WINDOW_ID="${source_toplevel}"
+            export ZENTTY_PRODUCT_WINDOW_ID
+            xdotool windowfocus --sync "${source_toplevel}"
+            xdotool keyup Control_L Control_R Shift_L Shift_R Alt_L Alt_R Super_L Super_R Escape 2>/dev/null || true
+            xdotool mousemove --sync --window "${source_toplevel}" 450 400 click 1
+            sleep 0.2
+            # Escape is a legitimate terminal byte if GTK forwards the
+            # cancellation key after ending DnD. Clear that unfinished input
+            # line physically before the independent liveness marker.
+            xdotool key ctrl+u
+            type_and_expect_title "destroyed-destination-source-live" "${source_pane}"
+            [[ "$(grep -Fc "zentty-linux: terminal-ready-pane=${source_pane}" "${log}")" -eq 1 ]] ||
+                fail "destination destruction recreated the source surface"
+            zentty_product_close_window "${backend}"
+            wait_for_exit
+            echo "Rust pane drag destruction passed: x11, destination=closed-mid-drag, source=unchanged, pty=live"
+            exit 0
+        fi
+        drag_pane_to_worklane_physically "${source_pane}" "${destination_worklane}" \
+            "${source_toplevel}" "${destination_toplevel}"
+    else
+        ZENTTY_PRODUCT_WINDOW_ID="${source_toplevel}"
+        export ZENTTY_PRODUCT_WINDOW_ID
     find_pointer_target \
         "zentty-linux: pane-context-pointer action=open pane=${source_pane}" 250 ||
         fail "physical pointer could not locate ${source_pane}'s rendered action button"
@@ -1459,12 +1602,17 @@ if [[ "${backend}" == x11 ]]; then
         "zentty-linux: pane-context-pointer action=move-pane-to-worklane window=${destination_window} target=${destination_worklane}" any ||
         fail "foreign window worklane destination was not rendered in the source menu"
     xdotool click 1
+    fi
 else
     source_window=window-2
     source_pane=pane-window-2
     destination_window=window-1
     destination_worklane=worklane-1
     destination_existing_pane=pane-1
+    if [[ "${ZENTTY_MULTI_WINDOW_PANE_DRAG_ONLY:-false}" == true ]]; then
+        arrange_wayland_windows_for_pane_drag "${source_pane}"
+        drag_pane_to_worklane_physically "${source_pane}" "${destination_worklane}"
+    else
     find_pointer_target \
         "zentty-linux: pane-context-pointer action=open pane=${source_pane}" any ||
         fail "physical pointer could not locate ${source_pane}'s rendered action button"
@@ -1485,10 +1633,27 @@ else
     # after the exact receipt. Clear only synthetic modifier state inherited
     # from earlier XTest chords before delivery.
     xdotool key --clearmodifiers Return
+    fi
 fi
-zentty_product_wait_for_log "${log}" \
-    "zentty-linux: action=move-pane-to-window-worklane pane=${source_pane} source=${source_window} destination-window=${destination_window} destination-worklane=${destination_worklane}" \
-    "existing-worklane transfer did not commit" || fail "existing-worklane transaction missing"
+if [[ "${ZENTTY_MULTI_WINDOW_PANE_DRAG_ONLY:-false}" == true ]]; then
+    zentty_product_wait_for_log "${log}" \
+        "zentty-linux: pane-drop=commit pane=${source_pane} source=${source_window} destination=${destination_window}" \
+        "cross-window pane drop did not commit" || fail "cross-window pane-drop transaction missing"
+    zentty_product_wait_for_log "${log}" \
+        "zentty-linux: pane-drop=focus-restored pane=${source_pane}" \
+        "cross-window pane drop did not restore terminal focus" ||
+        fail "cross-window pane-drop focus completion missing"
+    if [[ "${backend}" == x11 ]]; then
+        # Move off the surviving toplevel before its geometry changes. This
+        # prevents the released drag pointer from landing on a contextual pane
+        # control when the destination expands into the source window's space.
+        xdotool mousemove --sync 10 10
+    fi
+else
+    zentty_product_wait_for_log "${log}" \
+        "zentty-linux: action=move-pane-to-window-worklane pane=${source_pane} source=${source_window} destination-window=${destination_window} destination-worklane=${destination_worklane}" \
+        "existing-worklane transfer did not commit" || fail "existing-worklane transaction missing"
+fi
 zentty_product_wait_for_log "${log}" "zentty-linux: window-closed id=${source_window} remaining=1" \
     "moving the final source pane did not close its empty window" ||
     fail "empty transfer source survived"
@@ -1501,7 +1666,16 @@ zentty_product_wait_for_log "${log}" \
 mapfile -t existing_transfer_children_after < <(pgrep -P "${product_pid}" | sort -n)
 [[ "${existing_transfer_children_after[*]}" == "${existing_transfer_children_before[*]}" ]] ||
     fail "existing-worklane transfer changed the real PTY child set"
-zentty_product_prepare_input "${backend}" "${log}" || fail "could not focus transfer destination"
+if [[ "${backend}" == x11 && "${ZENTTY_MULTI_WINDOW_PANE_DRAG_ONLY:-false}" == true ]]; then
+    # The transaction already selected and focused the adopted runtime. Give
+    # its surviving native toplevel X focus without clicking blank viewport
+    # exposed by the temporary side-by-side resize.
+    ZENTTY_PRODUCT_WINDOW_ID="${destination_toplevel}"
+    export ZENTTY_PRODUCT_WINDOW_ID
+    xdotool windowfocus --sync "${ZENTTY_PRODUCT_WINDOW_ID}"
+else
+    zentty_product_prepare_input "${backend}" "${log}" || fail "could not focus transfer destination"
+fi
 if [[ "${backend}" == wayland ]]; then
     hover_before="$(grep -Fc "zentty-linux: pane-controls pane=${source_pane} state=shown" "${log}" || true)"
     moved_pane_found=false
@@ -1517,7 +1691,7 @@ if [[ "${backend}" == wayland ]]; then
         done
     done
     [[ "${moved_pane_found}" == true ]] ||
-        fail "physical Wayland pointer could not locate the moved destination pane"
+        fail "physical pointer could not locate the moved destination pane"
 fi
 type_and_expect_title "existing-worklane-live-pty" "${source_pane}"
 zentty_product_type "${backend}" "agent-running"
@@ -1526,10 +1700,91 @@ zentty_product_wait_for_log "${log}" \
     "zentty-linux: agent-event pane=${source_pane} worklane=${destination_worklane} kind=agent.running session=moved-live-pane" \
     "moved pane agent route did not adopt the destination worklane" ||
     fail "existing-worklane agent route missing"
+if [[ "${ZENTTY_MULTI_WINDOW_PANE_DRAG_ONLY:-false}" == true ]]; then
+    zentty_product_type "${backend}" "tmux-route"
+    zentty_product_key "${backend}" Return
+    zentty_product_wait_for_log "${log}" \
+        "zentty-linux: tmux-command pane=${source_pane} worklane=${destination_worklane} command=DisplayMessage" \
+        "dragged pane tmux command did not adopt the destination worklane" ||
+        fail "pane-drag tmux destination route missing"
+    zentty_product_wait_for_log "${log}" \
+        "zentty-linux: title-pane=${source_pane} value=tmux:%${source_pane}" \
+        "dragged pane did not receive its real tmux response" ||
+        fail "pane-drag tmux response missing"
+fi
+if [[ "${backend}" == wayland && "${ZENTTY_MULTI_WINDOW_PANE_DRAG_ONLY:-false}" == true ]]; then
+    drag_pane_to_leading_split_physically "${source_pane}" "${destination_existing_pane}"
+    zentty_product_wait_for_log "${log}" \
+        "zentty-linux: pane-drag=drop pane=${source_pane} target=Split { axis: Horizontal, leading: true }" \
+        "same-window Wayland split drop did not resolve" ||
+        fail "same-window Wayland pane-drop target missing"
+    zentty_product_wait_for_log "${log}" \
+        "zentty-linux: pane-drop=commit pane=${source_pane} source=${destination_window} destination=${destination_window}" \
+        "same-window Wayland pane drop did not commit" ||
+        fail "same-window Wayland pane-drop commit missing"
+    zentty_product_wait_for_log_count "${log}" \
+        "zentty-linux: pane-drop=focus-restored pane=${source_pane}" 2 \
+        "same-window Wayland pane drop did not restore terminal focus" ||
+        fail "same-window Wayland pane-drop focus completion missing"
+    grep -Eq \
+        "zentty-linux: geometry=${destination_worklane}:.*\\[${source_pane}\\],.*\\[${destination_existing_pane}\\]" \
+        "${log}" || fail "same-window Wayland split did not produce two exact columns"
+    [[ "$(grep -Fc "zentty-linux: terminal-ready-pane=${source_pane}" "${log}")" -eq 1 ]] ||
+        fail "same-window Wayland drag recreated the moved Ghostty surface"
+    # Agent routing above intentionally starts a systemd-inhibit lease as an
+    # additional direct child. Compare only the two real PTY shells and the
+    # terminal runtime's own spawn receipt, not unrelated process services.
+    mapfile -t existing_transfer_children_after_split < <(
+        ps -o pid=,comm= --ppid "${product_pid}" |
+            awk '$2 == "sh" {print $1}' |
+            sort -n
+    )
+    [[ "${existing_transfer_children_after_split[*]}" == "${existing_transfer_children_before[*]}" ]] ||
+        fail "same-window Wayland drag changed the real PTY shell set (before=${existing_transfer_children_before[*]} after=${existing_transfer_children_after_split[*]})"
+    [[ "$(grep -Fc 'info(io_exec): started subcommand' "${log}")" -eq 2 ]] ||
+        fail "same-window Wayland drag started an additional terminal child"
+    find_pointer_target \
+        "zentty-linux: pane-controls pane=${source_pane} state=shown" any ||
+        fail "physical Wayland pointer could not relocate the same-window drop result"
+    xdotool click 1
+    type_and_expect_title "same-window-drag-live-pty" "${source_pane}"
+fi
+if [[ "${ZENTTY_MULTI_WINDOW_PANE_DRAG_ONLY:-false}" == true ]]; then
+    for _ in {1..240}; do
+        [[ -f "${state_dir}/restore-snapshot.json" ]] && jq -e \
+            --arg destination_window "${destination_window}" \
+            --arg destination_worklane "${destination_worklane}" \
+            --arg source_pane "${source_pane}" \
+            --arg destination_pane "${destination_existing_pane}" '
+            (.workspace.windows | map(.id)) == [$destination_window] and
+            .workspace.activeWindowID == $destination_window and
+            ([.workspace.windows[0].worklanes[] |
+                select(.id == $destination_worklane) |
+                .columns[].panes[].id] | sort) == ([$source_pane, $destination_pane] | sort)
+        ' "${state_dir}/restore-snapshot.json" >/dev/null 2>&1 && break
+        sleep 0.05
+    done
+    jq -e \
+        --arg destination_window "${destination_window}" \
+        --arg destination_worklane "${destination_worklane}" \
+        --arg source_pane "${source_pane}" \
+        --arg destination_pane "${destination_existing_pane}" '
+        (.workspace.windows | map(.id)) == [$destination_window] and
+        .workspace.activeWindowID == $destination_window and
+        ([.workspace.windows[0].worklanes[] |
+            select(.id == $destination_worklane) |
+            .columns[].panes[].id] | sort) == ([$source_pane, $destination_pane] | sort)
+    ' "${state_dir}/restore-snapshot.json" >/dev/null ||
+        fail "live aggregate snapshot lost pane-drag ownership"
+fi
 zentty_product_close_window "${backend}"
 wait_for_exit
 if [[ "${ZENTTY_MULTI_WINDOW_EXISTING_WORKLANE_ONLY:-false}" == true ]]; then
-    echo "Rust existing-worklane live transfer passed: ${backend}, source=closed, destination=existing, pty=preserved, route=adopted"
+    if [[ "${ZENTTY_MULTI_WINDOW_PANE_DRAG_ONLY:-false}" == true ]]; then
+        echo "Rust cross-window pane drag passed: ${backend}, pointer=real-gtk-dnd, source=closed, destination=existing, pty=preserved, route=adopted"
+    else
+        echo "Rust existing-worklane live transfer passed: ${backend}, source=closed, destination=existing, pty=preserved, route=adopted"
+    fi
     exit 0
 fi
 fi

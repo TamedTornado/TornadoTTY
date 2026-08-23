@@ -29,6 +29,8 @@ mod open_with_settings;
 mod opencode_theme_sync;
 mod pane_controls;
 mod pane_dividers;
+mod pane_drag_drop;
+mod pane_drag_view;
 mod pane_scroll_switch;
 mod peek_scroll_navigation;
 mod persistence_coordinator;

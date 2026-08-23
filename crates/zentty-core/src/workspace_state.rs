@@ -210,6 +210,41 @@ pub struct PaneCrossWindowTransfer {
     pub source_window_should_close: bool,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PaneMoveTarget {
+    ColumnGap {
+        worklane_id: String,
+        column_index: usize,
+    },
+    StackGap {
+        worklane_id: String,
+        column_id: String,
+        pane_index: usize,
+    },
+    Split {
+        worklane_id: String,
+        target_pane_id: String,
+        axis: PaneMoveSplitAxis,
+        leading: bool,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PaneMoveSplitAxis {
+    Horizontal,
+    Vertical,
+}
+
+#[derive(Clone, Debug)]
+struct PaneMoveSource {
+    worklane_index: usize,
+    column_index: usize,
+    pane_index: usize,
+    worklane_id: String,
+    column_id: String,
+    column_width: f64,
+}
+
 impl PaneWindowTransfer {
     /// Projects the destination while retaining source recipe metadata that is
     /// not part of live topology state, including next-pane numbering and a
@@ -1872,6 +1907,380 @@ impl WorkspaceState {
         self.move_focused_pane_vertically(1)
     }
 
+    /// Moves an exact pane to a source-defined drag destination without
+    /// changing its durable identity or auxiliary agent state. Rejection is
+    /// mutation-free.
+    pub fn move_pane_to_target(
+        &mut self,
+        pane_id: &str,
+        target: PaneMoveTarget,
+        default_column_width: f64,
+    ) -> bool {
+        let before = self.clone();
+        let previous = self.current_pane_reference();
+        if !self.apply_pane_move_target(pane_id, target, default_column_width) {
+            *self = before;
+            return false;
+        }
+        self.record_focus_transition(previous);
+        true
+    }
+
+    fn apply_pane_move_target(
+        &mut self,
+        pane_id: &str,
+        target: PaneMoveTarget,
+        default_column_width: f64,
+    ) -> bool {
+        let Some(source) = self.pane_move_source(pane_id) else {
+            return false;
+        };
+        let target_worklane_id = pane_move_target_worklane(&target).to_owned();
+        if !self.pane_move_target_is_valid(pane_id, &source, &target) {
+            return false;
+        }
+
+        let (pane, pane_height) = remove_pane(
+            &mut self.worklanes[source.worklane_index].columns[source.column_index],
+            pane_id,
+        );
+        let source_column_removed = self.worklanes[source.worklane_index].columns
+            [source.column_index]
+            .panes
+            .is_empty();
+        if source_column_removed {
+            self.worklanes[source.worklane_index]
+                .columns
+                .remove(source.column_index);
+            if let Some(replacement_id) = self.worklanes[source.worklane_index]
+                .columns
+                .get(source.column_index)
+                .or_else(|| self.worklanes[source.worklane_index].columns.last())
+                .map(|column| column.id.clone())
+            {
+                self.worklanes[source.worklane_index]
+                    .focused_column_id
+                    .clone_from(&replacement_id);
+            }
+        }
+        if self.worklanes[source.worklane_index].columns.is_empty() {
+            self.worklanes.remove(source.worklane_index);
+        }
+
+        let Some(target_worklane_index) = self
+            .worklanes
+            .iter()
+            .position(|worklane| worklane.id == target_worklane_id)
+        else {
+            return false;
+        };
+        if !self.insert_detached_pane_at_target(
+            pane_id,
+            pane,
+            pane_height,
+            &source,
+            source_column_removed,
+            target_worklane_index,
+            target,
+            default_column_width,
+        ) {
+            return false;
+        }
+        target_worklane_id.clone_into(&mut self.active_worklane_id);
+        true
+    }
+
+    fn pane_move_source(&self, pane_id: &str) -> Option<PaneMoveSource> {
+        self.worklanes
+            .iter()
+            .enumerate()
+            .find_map(|(worklane_index, worklane)| {
+                worklane
+                    .columns
+                    .iter()
+                    .enumerate()
+                    .find_map(|(column_index, column)| {
+                        column
+                            .panes
+                            .iter()
+                            .position(|pane| pane.id == pane_id)
+                            .map(|pane_index| PaneMoveSource {
+                                worklane_index,
+                                column_index,
+                                pane_index,
+                                worklane_id: worklane.id.clone(),
+                                column_id: column.id.clone(),
+                                column_width: column.width,
+                            })
+                    })
+            })
+    }
+
+    fn pane_move_target_is_valid(
+        &self,
+        pane_id: &str,
+        source: &PaneMoveSource,
+        target: &PaneMoveTarget,
+    ) -> bool {
+        let target_worklane_id = pane_move_target_worklane(target);
+        let Some(target_worklane_before) = self
+            .worklanes
+            .iter()
+            .find(|worklane| worklane.id == target_worklane_id)
+        else {
+            return false;
+        };
+        match target {
+            PaneMoveTarget::ColumnGap { column_index, .. } => {
+                if *column_index > target_worklane_before.columns.len() {
+                    return false;
+                }
+                if source.worklane_id == *target_worklane_id
+                    && self.worklanes[source.worklane_index].columns[source.column_index]
+                        .panes
+                        .len()
+                        == 1
+                    && (*column_index == source.column_index
+                        || *column_index == source.column_index + 1)
+                {
+                    return false;
+                }
+            }
+            PaneMoveTarget::StackGap {
+                column_id,
+                pane_index,
+                ..
+            } => {
+                let Some(column) = target_worklane_before
+                    .columns
+                    .iter()
+                    .find(|column| column.id == *column_id)
+                else {
+                    return false;
+                };
+                if *pane_index > column.panes.len()
+                    || (source.worklane_id == *target_worklane_id
+                        && source.column_id == *column_id
+                        && (*pane_index == source.pane_index
+                            || *pane_index == source.pane_index + 1))
+                {
+                    return false;
+                }
+            }
+            PaneMoveTarget::Split { target_pane_id, .. } => {
+                if target_pane_id == pane_id
+                    || !target_worklane_before
+                        .columns
+                        .iter()
+                        .any(|column| column.panes.iter().any(|pane| pane.id == *target_pane_id))
+                {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn insert_detached_pane_at_target(
+        &mut self,
+        pane_id: &str,
+        pane: PaneState,
+        pane_height: f64,
+        source: &PaneMoveSource,
+        source_column_removed: bool,
+        target_worklane_index: usize,
+        target: PaneMoveTarget,
+        default_column_width: f64,
+    ) -> bool {
+        match target {
+            PaneMoveTarget::ColumnGap { column_index, .. } => self.insert_pane_at_column_gap(
+                pane_id,
+                pane,
+                pane_height,
+                source,
+                source_column_removed,
+                target_worklane_index,
+                column_index,
+                default_column_width,
+            ),
+            PaneMoveTarget::StackGap {
+                column_id,
+                pane_index,
+                ..
+            } => self.insert_pane_at_stack_gap(
+                pane_id,
+                pane,
+                source,
+                target_worklane_index,
+                &column_id,
+                pane_index,
+            ),
+            PaneMoveTarget::Split {
+                target_pane_id,
+                axis,
+                leading,
+                ..
+            } => self.insert_pane_as_split(
+                pane_id,
+                pane,
+                pane_height,
+                target_worklane_index,
+                &target_pane_id,
+                axis,
+                leading,
+            ),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn insert_pane_at_column_gap(
+        &mut self,
+        pane_id: &str,
+        pane: PaneState,
+        pane_height: f64,
+        source: &PaneMoveSource,
+        source_column_removed: bool,
+        target_worklane_index: usize,
+        column_index: usize,
+        default_column_width: f64,
+    ) -> bool {
+        let same_worklane = source.worklane_id == self.worklanes[target_worklane_index].id;
+        let mut insertion_index = column_index;
+        if same_worklane && source_column_removed && source.column_index < insertion_index {
+            insertion_index -= 1;
+        }
+        if insertion_index > self.worklanes[target_worklane_index].columns.len() {
+            return false;
+        }
+        let column_id = self.unique_column_id(pane_id);
+        self.worklanes[target_worklane_index].columns.insert(
+            insertion_index,
+            PaneColumnState {
+                id: column_id.clone(),
+                width: sanitize_dimension(if source.column_width.is_finite() {
+                    source.column_width
+                } else {
+                    default_column_width
+                }),
+                panes: vec![pane],
+                pane_heights: vec![pane_height],
+                focused_pane_id: pane_id.to_owned(),
+                last_focused_pane_id: pane_id.to_owned(),
+            },
+        );
+        self.worklanes[target_worklane_index].focused_column_id = column_id;
+        true
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn insert_pane_at_stack_gap(
+        &mut self,
+        pane_id: &str,
+        pane: PaneState,
+        source: &PaneMoveSource,
+        target_worklane_index: usize,
+        column_id: &str,
+        pane_index: usize,
+    ) -> bool {
+        let Some(target_column_index) = self.worklanes[target_worklane_index]
+            .columns
+            .iter()
+            .position(|column| column.id == column_id)
+        else {
+            return false;
+        };
+        let same_worklane = source.worklane_id == self.worklanes[target_worklane_index].id;
+        let target = &mut self.worklanes[target_worklane_index].columns[target_column_index];
+        let mut insertion_index = pane_index;
+        if same_worklane && source.column_id == column_id && source.pane_index < insertion_index {
+            insertion_index -= 1;
+        }
+        if insertion_index > target.panes.len() {
+            return false;
+        }
+        target.panes.insert(insertion_index, pane);
+        target.pane_heights = vec![1.0; target.panes.len()];
+        pane_id.clone_into(&mut target.focused_pane_id);
+        pane_id.clone_into(&mut target.last_focused_pane_id);
+        column_id.clone_into(&mut self.worklanes[target_worklane_index].focused_column_id);
+        true
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn insert_pane_as_split(
+        &mut self,
+        pane_id: &str,
+        pane: PaneState,
+        pane_height: f64,
+        target_worklane_index: usize,
+        target_pane_id: &str,
+        axis: PaneMoveSplitAxis,
+        leading: bool,
+    ) -> bool {
+        let Some(target_column_index) = self.worklanes[target_worklane_index]
+            .columns
+            .iter()
+            .position(|column| {
+                column
+                    .panes
+                    .iter()
+                    .any(|target| target.id == target_pane_id)
+            })
+        else {
+            return false;
+        };
+        match axis {
+            PaneMoveSplitAxis::Horizontal => {
+                if self.worklanes[target_worklane_index].columns[target_column_index]
+                    .panes
+                    .len()
+                    != 1
+                {
+                    return false;
+                }
+                let width =
+                    self.worklanes[target_worklane_index].columns[target_column_index].width;
+                let column_id = self.unique_column_id(pane_id);
+                let insertion_index = target_column_index + usize::from(!leading);
+                self.worklanes[target_worklane_index].columns.insert(
+                    insertion_index,
+                    PaneColumnState {
+                        id: column_id.clone(),
+                        width,
+                        panes: vec![pane],
+                        pane_heights: vec![pane_height],
+                        focused_pane_id: pane_id.to_owned(),
+                        last_focused_pane_id: pane_id.to_owned(),
+                    },
+                );
+                self.worklanes[target_worklane_index].focused_column_id = column_id;
+            }
+            PaneMoveSplitAxis::Vertical => {
+                let target_column_id = {
+                    let target =
+                        &mut self.worklanes[target_worklane_index].columns[target_column_index];
+                    let Some(target_pane_index) = target
+                        .panes
+                        .iter()
+                        .position(|target| target.id == target_pane_id)
+                    else {
+                        return false;
+                    };
+                    let insertion_index = target_pane_index + usize::from(!leading);
+                    target.panes.insert(insertion_index, pane);
+                    target.pane_heights = vec![1.0; target.panes.len()];
+                    pane_id.clone_into(&mut target.focused_pane_id);
+                    pane_id.clone_into(&mut target.last_focused_pane_id);
+                    target.id.clone()
+                };
+                target_column_id
+                    .clone_into(&mut self.worklanes[target_worklane_index].focused_column_id);
+            }
+        }
+        true
+    }
+
     /// Moves the focused pane from the active worklane into a new rightmost
     /// column in an existing worklane, matching the default source transfer.
     /// The destination becomes active and focused; an emptied source worklane
@@ -2218,6 +2627,65 @@ impl WorkspaceState {
         self.worklanes[target_index].focused_column_id = column_id;
         target_worklane_id.clone_into(&mut self.active_worklane_id);
         self.agent_statuses = agent_statuses;
+        self.record_focus_transition(previous);
+        true
+    }
+
+    /// Inserts an extracted foreign pane at an exact drag destination. The
+    /// imported pane and its agent data are committed atomically, and rejection
+    /// leaves the destination equivalent to its prior state.
+    pub fn insert_cross_window_pane_at_target(
+        &mut self,
+        transfer: PaneCrossWindowTransfer,
+        target: PaneMoveTarget,
+        single_column_width: f64,
+    ) -> bool {
+        let before = self.clone();
+        let previous = self.current_pane_reference();
+        let target_worklane_id = match &target {
+            PaneMoveTarget::ColumnGap { worklane_id, .. }
+            | PaneMoveTarget::StackGap { worklane_id, .. }
+            | PaneMoveTarget::Split { worklane_id, .. } => worklane_id.clone(),
+        };
+        let Some(target_index) = self
+            .worklanes
+            .iter()
+            .position(|worklane| worklane.id == target_worklane_id)
+        else {
+            return false;
+        };
+        let original_column_count = self.worklanes[target_index].columns.len();
+        let pane_id = transfer.pane.id.clone();
+        if self.pane(&pane_id).is_some() || self.agent_statuses.has_pane_data(&pane_id) {
+            return false;
+        }
+        if !self
+            .agent_statuses
+            .adopt_pane_data(&pane_id, transfer.agent_statuses)
+        {
+            *self = before;
+            return false;
+        }
+        let temporary_column_id = self.unique_column_id(&pane_id);
+        self.worklanes[target_index].columns.push(PaneColumnState {
+            id: temporary_column_id.clone(),
+            width: sanitize_dimension(single_column_width),
+            panes: vec![transfer.pane],
+            pane_heights: vec![1.0],
+            focused_pane_id: pane_id.clone(),
+            last_focused_pane_id: pane_id.clone(),
+        });
+        self.worklanes[target_index].focused_column_id = temporary_column_id;
+        self.active_worklane_id.clone_from(&target_worklane_id);
+        let already_at_target = matches!(
+            &target,
+            PaneMoveTarget::ColumnGap { column_index, .. } if *column_index == original_column_count
+        );
+        if !already_at_target && !self.apply_pane_move_target(&pane_id, target, single_column_width)
+        {
+            *self = before;
+            return false;
+        }
         self.record_focus_transition(previous);
         true
     }
@@ -2948,6 +3416,14 @@ fn arrange_golden_column_width(
     worklane.columns[focused_index].width = focused_width;
     worklane.columns[neighbor_index].width = neighbor_width;
     changed
+}
+
+fn pane_move_target_worklane(target: &PaneMoveTarget) -> &str {
+    match target {
+        PaneMoveTarget::ColumnGap { worklane_id, .. }
+        | PaneMoveTarget::StackGap { worklane_id, .. }
+        | PaneMoveTarget::Split { worklane_id, .. } => worklane_id,
+    }
 }
 
 fn remove_pane(column: &mut PaneColumnState, pane_id: &str) -> (PaneState, f64) {

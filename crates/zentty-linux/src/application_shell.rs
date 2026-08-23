@@ -8,6 +8,10 @@ use crate::{
     global_search_view::GlobalSearchView,
     pane_controls::{self, PaneControlAction, PanePresentation},
     pane_dividers::{self, PaneDivider},
+    pane_drag_drop::{
+        PaneDragPayload, PaneDragPresentation, PaneDropOutcome, SidebarDropTarget, SplitAxis,
+    },
+    pane_drag_view::{self, PaneDragContext},
     pane_scroll_switch::{PaneScrollSwitch, ScrollSwitchResult, ScrollUnit},
     peek_scroll_navigation::{
         Direction as PeekScrollDirection, PeekScrollNavigation, Result as PeekScrollResult,
@@ -29,10 +33,10 @@ use gtk::prelude::*;
 use zentty_core::{
     AgentPhase, AppConfig, CloseEvidence, ClosePaneOutcome, ColumnRecipe, CommandPaletteItem,
     GlobalSearchCoordinator, GlobalSearchDirection, PaneColumnState, PaneCrossWindowTransfer,
-    PaneLayoutPolicy, PaneRecipe, PaneReference, PaneResizeDirection, PaneRestoreDraft,
-    PaneWindowTransfer, ServerPortRule, ServerRelevanceContext, SidebarWidthPreference,
-    TaskRunnerAction, WindowFrame, WindowRecipe, WorklaneColor, WorklaneRecipe, WorkspaceState,
-    discover_task_runners, rank_servers,
+    PaneLayoutPolicy, PaneMoveSplitAxis, PaneMoveTarget, PaneRecipe, PaneReference,
+    PaneResizeDirection, PaneRestoreDraft, PaneWindowTransfer, ServerPortRule,
+    ServerRelevanceContext, SidebarWidthPreference, TaskRunnerAction, WindowFrame, WindowRecipe,
+    WorklaneColor, WorklaneRecipe, WorkspaceState, discover_task_runners, rank_servers,
 };
 use zentty_ghostty::{GhosttyRuntime, TextExtent};
 
@@ -101,6 +105,7 @@ struct RemotePaneContext {
 
 fn install_shell_styles() {
     sidebar::install_styles();
+    pane_drag_view::install_styles();
     pane_controls::install_styles();
     pane_dividers::install_styles();
     crate::attention_inbox::install_styles();
@@ -134,6 +139,7 @@ pub(crate) enum ApplicationAction {
     ClearAttention,
     AgentCaffeinationChanged(bool),
     StatusNotifierChanged(bool),
+    CommitPaneDrop(PaneDropOutcome),
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -210,6 +216,7 @@ pub(crate) struct ApplicationShell {
     bookmark_runtime: bookmark_runtime::BookmarkRuntime,
     task_runner_actions: BTreeMap<String, TaskRunnerAction>,
     last_pane_viewport_height: Cell<i32>,
+    topology_generation: Cell<u64>,
     action_router: Option<ActionRouter>,
     shortcut_manager: Rc<RefCell<zentty_core::ShortcutManager>>,
     shortcut_controller: Option<gtk::EventControllerKey>,
@@ -367,6 +374,7 @@ fn render_empty_sidebar(
         "",
         None,
         selection_emphasis,
+        None,
     );
 }
 
@@ -486,6 +494,7 @@ impl ApplicationShell {
             bookmark_runtime,
             task_runner_actions: BTreeMap::new(),
             last_pane_viewport_height: Cell::new(0),
+            topology_generation: Cell::new(0),
             action_router: None,
             shortcut_manager: Rc::new(RefCell::new(zentty_core::ShortcutManager::new(
                 &shortcut_registry::definitions(),
@@ -929,6 +938,78 @@ impl ApplicationShell {
         self.state.worklane_ids().contains(&worklane_id)
     }
 
+    pub(crate) fn topology_generation(&self) -> u64 {
+        self.topology_generation.get()
+    }
+
+    pub(crate) fn worklane_id_for_pane(&self, pane_id: &str) -> Option<&str> {
+        self.state.worklane_id_for_pane(pane_id)
+    }
+
+    pub(crate) fn commit_same_window_pane_drop(&mut self, outcome: &PaneDropOutcome) -> bool {
+        let payload = outcome.payload();
+        let Some(target) = self.pane_move_target_for_outcome(outcome) else {
+            return false;
+        };
+        let moved = self.state.move_pane_to_target(
+            &payload.pane_id,
+            target,
+            f64::from(self.pane_viewport_width()),
+        );
+        if moved {
+            self.render();
+            self.focus_selected_surface();
+            self.sync_agent_targets();
+        }
+        moved
+    }
+
+    fn pane_move_target_for_outcome(&self, outcome: &PaneDropOutcome) -> Option<PaneMoveTarget> {
+        Some(match outcome {
+            PaneDropOutcome::ReorderColumn { hit, .. } => PaneMoveTarget::ColumnGap {
+                worklane_id: hit.worklane_id.clone(),
+                column_index: hit.column_index,
+            },
+            PaneDropOutcome::ReorderInColumn { hit, .. } => PaneMoveTarget::StackGap {
+                worklane_id: hit.worklane_id.clone(),
+                column_id: hit.column_id.clone(),
+                pane_index: hit.pane_index,
+            },
+            PaneDropOutcome::Split { hit, .. } => PaneMoveTarget::Split {
+                worklane_id: hit.worklane_id.clone(),
+                target_pane_id: hit.target_pane_id.clone(),
+                axis: match hit.axis {
+                    SplitAxis::Horizontal => PaneMoveSplitAxis::Horizontal,
+                    SplitAxis::Vertical => PaneMoveSplitAxis::Vertical,
+                },
+                leading: hit.leading,
+            },
+            PaneDropOutcome::Worklane {
+                target:
+                    SidebarDropTarget::Worklane {
+                        worklane_id,
+                        pane_index,
+                        ..
+                    },
+                ..
+            } => {
+                let worklane = self
+                    .state
+                    .worklanes()
+                    .iter()
+                    .find(|worklane| worklane.id == *worklane_id)?;
+                let column = worklane.columns.last()?;
+                PaneMoveTarget::StackGap {
+                    worklane_id: worklane_id.clone(),
+                    column_id: column.id.clone(),
+                    pane_index: pane_index
+                        .unwrap_or(column.panes.len())
+                        .min(column.panes.len()),
+                }
+            }
+        })
+    }
+
     pub(crate) fn rollback_live_pane_window_transfer(
         shell: &Rc<RefCell<Self>>,
         transfer: ExtractedWindowPane,
@@ -986,6 +1067,40 @@ impl ApplicationShell {
         ) {
             return Err((
                 format!("pane {pane_id} cannot move into worklane {target_worklane_id:?}"),
+                runtime,
+            ));
+        }
+        if let Err((error, runtime)) =
+            PaneRuntimeCoordinator::adopt_window_transfer(shell, &pane_id, runtime)
+        {
+            shell.borrow_mut().state = destination_before;
+            return Err((error, runtime));
+        }
+        let shell_ref = shell.borrow();
+        shell_ref.render();
+        shell_ref.focus_selected_surface();
+        Ok(())
+    }
+
+    pub(crate) fn adopt_live_pane_at_drop_target(
+        shell: &Rc<RefCell<Self>>,
+        transfer: PaneCrossWindowTransfer,
+        runtime: DetachedPaneRuntime,
+        outcome: &PaneDropOutcome,
+    ) -> Result<(), (String, DetachedPaneRuntime)> {
+        let pane_id = transfer.pane.id.clone();
+        let destination_before = shell.borrow().state.clone();
+        let Some(target) = shell.borrow().pane_move_target_for_outcome(outcome) else {
+            return Err(("pane drop target is unavailable".to_owned(), runtime));
+        };
+        let single_column_width = f64::from(shell.borrow().pane_viewport_width());
+        if !shell.borrow_mut().state.insert_cross_window_pane_at_target(
+            transfer,
+            target,
+            single_column_width,
+        ) {
+            return Err((
+                format!("pane {pane_id} cannot move to drop target"),
                 runtime,
             ));
         }
@@ -3323,6 +3438,42 @@ impl ApplicationShell {
         });
     }
 
+    pub(crate) fn focus_terminal_after_pane_drop(shell: &Rc<RefCell<Self>>, pane_id: &str) {
+        let weak = Rc::downgrade(shell);
+        let pane_id = pane_id.to_owned();
+        glib::idle_add_local_once(move || {
+            let Some(shell) = weak.upgrade() else {
+                return;
+            };
+            let shell = shell.borrow();
+            if shell.shutting_down || shell.state.focused_pane_id() != Some(pane_id.as_str()) {
+                eprintln!(
+                    "zentty-linux: pane-drop=focus-reject pane={pane_id} reason=selection-changed"
+                );
+                return;
+            }
+            shell.present();
+            shell.focus_selected_surface_unchecked();
+            eprintln!("zentty-linux: pane-drop=focus-restored pane={pane_id}");
+        });
+    }
+
+    fn focus_terminal_after_drag_cancel(shell: &Rc<RefCell<Self>>, pane_id: String) {
+        let weak = Rc::downgrade(shell);
+        glib::timeout_add_local_once(Duration::from_millis(16), move || {
+            let Some(shell) = weak.upgrade() else {
+                return;
+            };
+            let shell = shell.borrow();
+            if shell.shutting_down || shell.state.focused_pane_id() != Some(pane_id.as_str()) {
+                return;
+            }
+            shell.present();
+            shell.focus_selected_surface_unchecked();
+            eprintln!("zentty-linux: pane-drag=focus-restored pane={pane_id}");
+        });
+    }
+
     pub(crate) fn preserve_initial_terminal_focus(shell: &Rc<RefCell<Self>>) {
         // GTK may temporarily focus the first mapped child before the window
         // settles. Preserve the workspace's restored selection until that
@@ -3857,6 +4008,8 @@ impl ApplicationShell {
     }
 
     pub(crate) fn render(&self) {
+        self.topology_generation
+            .set(self.topology_generation.get().wrapping_add(1));
         clear_pane_columns(&self.pane_box);
         self.rendered_columns.borrow_mut().clear();
         self.render_sidebar();
@@ -3920,10 +4073,31 @@ impl ApplicationShell {
         column_box.set_width_request(width);
         column_box.set_hexpand(single_column);
         column_box.set_vexpand(true);
-        for pane in &column.panes {
+        let drag_context = self.pane_drag_context();
+        for (pane_index, pane) in column.panes.iter().enumerate() {
             if let Some(frame) = self.pane_runtime.frame(&pane.id) {
+                if let Some(payload) = self.pane_drag_payload(&pane.id) {
+                    frame.install_drag_source(&payload);
+                }
                 remove_frame_from_parent(frame.widget());
-                column_box.append(frame.widget());
+                let target = pane_drag_view::wrap_canvas_target(
+                    frame.widget(),
+                    pane_drag_view::CanvasTarget {
+                        worklane_id: self.state.active_worklane_id(),
+                        column_id: &column.id,
+                        pane_id: &pane.id,
+                        pane_index,
+                        column_index: self
+                            .state
+                            .active_columns()
+                            .iter()
+                            .position(|candidate| candidate.id == column.id)
+                            .unwrap_or(0),
+                        column_pane_count: column.panes.len(),
+                    },
+                    &drag_context,
+                );
+                column_box.append(&target);
             }
         }
         let overlay = gtk::Overlay::new();
@@ -3947,6 +4121,94 @@ impl ApplicationShell {
             overlay.add_overlay(&self.new_column_divider_handle(&column.id));
         }
         overlay
+    }
+
+    fn pane_drag_payload(&self, pane_id: &str) -> Option<PaneDragPayload> {
+        let worklane_index = self.state.worklanes().iter().position(|worklane| {
+            worklane
+                .columns
+                .iter()
+                .flat_map(|column| &column.panes)
+                .any(|pane| pane.id == pane_id)
+        })?;
+        let worklane = &self.state.worklanes()[worklane_index];
+        let summaries = self.sidebar_summaries();
+        let summary = summaries
+            .iter()
+            .find(|summary| summary.worklane_id == worklane.id)?;
+        let pane = summary
+            .pane_rows
+            .iter()
+            .find(|pane| pane.pane_id == pane_id)?;
+        Some(PaneDragPayload {
+            source_window_id: self.window_template.id.clone(),
+            source_worklane_id: worklane.id.clone(),
+            source_column_id: worklane
+                .columns
+                .iter()
+                .find(|column| column.panes.iter().any(|pane| pane.id == pane_id))?
+                .id
+                .clone(),
+            pane_id: pane_id.to_owned(),
+            source_generation: self.topology_generation.get(),
+            presentation: PaneDragPresentation {
+                worklane_title: summary
+                    .top_label
+                    .clone()
+                    .unwrap_or_else(|| format!("Worklane {}", worklane_index + 1)),
+                pane_title: pane.primary_text.clone(),
+                context: summary.primary_text.clone(),
+                agent_status: pane
+                    .agent_status
+                    .as_ref()
+                    .map(|status| crate::agent_status_view::present(status).text),
+            },
+        })
+    }
+
+    fn pane_drag_context(&self) -> PaneDragContext {
+        PaneDragContext {
+            window_id: self.window_template.id.clone(),
+            generation: self.topology_generation.get(),
+            on_drop: {
+                let weak = self.self_handle.borrow().clone();
+                Rc::new(move |outcome| {
+                    let weak = weak.clone();
+                    // GtkDropTarget completes its internal async hand-off
+                    // after the drop callback returns. Commit on a later main
+                    // loop tick so rendering cannot destroy the target while
+                    // GTK still owns that hand-off.
+                    glib::timeout_add_local_once(Duration::from_millis(16), move || {
+                        if let Some(shell) = weak.upgrade() {
+                            shell.borrow().request_application_action(
+                                ApplicationAction::CommitPaneDrop(outcome),
+                            );
+                        }
+                    });
+                })
+            },
+            on_cancel: {
+                let weak = self.self_handle.borrow().clone();
+                Rc::new(move |pane_id| {
+                    if let Some(shell) = weak.upgrade() {
+                        Self::focus_terminal_after_drag_cancel(&shell, pane_id);
+                    }
+                })
+            },
+            source_columns: Rc::new(
+                self.state
+                    .worklanes()
+                    .iter()
+                    .flat_map(|worklane| &worklane.columns)
+                    .flat_map(|column| {
+                        column
+                            .panes
+                            .iter()
+                            .map(move |pane| (pane.id.clone(), column.id.clone()))
+                    })
+                    .collect(),
+            ),
+        }
     }
 
     fn new_pane_divider_handle(&self, column_id: &str, pane_id: &str) -> gtk::Box {
@@ -4377,6 +4639,7 @@ impl ApplicationShell {
         let destination_groups = self.sidebar_destination_groups(&summaries);
         self.reconcile_attention(&summaries);
         let servers = self.ranked_servers();
+        let drag_context = self.pane_drag_context();
         sidebar::render(
             &self.sidebar,
             &self.window,
@@ -4388,6 +4651,7 @@ impl ApplicationShell {
             &self.window_template.id,
             Some(&destination_groups),
             self.config.appearance.sidebar_selection_emphasis,
+            Some(&drag_context),
         );
         self.render_chrome(&summaries);
         self.schedule_active_worklane_reveal();
@@ -4400,6 +4664,7 @@ impl ApplicationShell {
         let servers = self.ranked_servers();
         if !sidebar::update_metadata(&self.sidebar, &summaries) {
             let destination_groups = self.sidebar_destination_groups(&summaries);
+            let drag_context = self.pane_drag_context();
             sidebar::render(
                 &self.sidebar,
                 &self.window,
@@ -4411,6 +4676,7 @@ impl ApplicationShell {
                 &self.window_template.id,
                 Some(&destination_groups),
                 self.config.appearance.sidebar_selection_emphasis,
+                Some(&drag_context),
             );
         }
         self.render_chrome(&summaries);
@@ -5407,7 +5673,15 @@ fn remove_frame_from_parent(frame: &impl IsA<gtk::Widget>) {
     if let Ok(parent) = parent.clone().downcast::<gtk::Box>() {
         parent.remove(frame);
     } else if let Ok(parent) = parent.downcast::<gtk::Overlay>() {
-        parent.remove_overlay(frame);
+        if parent
+            .child()
+            .as_ref()
+            .is_some_and(|child| child == frame.as_ref())
+        {
+            parent.set_child(gtk::Widget::NONE);
+        } else {
+            parent.remove_overlay(frame);
+        }
     }
 }
 

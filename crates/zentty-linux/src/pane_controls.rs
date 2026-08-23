@@ -1,4 +1,4 @@
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use gtk::gdk;
@@ -63,6 +63,8 @@ pub(crate) struct PaneFrame {
     right_button: gtk::Button,
     move_to_window_button: gtk::Button,
     right_action: Rc<Cell<PaneControlAction>>,
+    drag_zone: gtk::Label,
+    drag_source: RefCell<Option<gtk::DragSource>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -145,6 +147,23 @@ impl PaneFrame {
         }
         root.add_overlay(&controls);
 
+        let drag_zone = gtk::Label::new(Some("•••"));
+        drag_zone.set_widget_name(&format!("pane-drag-zone-{pane_id}"));
+        drag_zone.add_css_class("zentty-pane-drag-zone");
+        drag_zone.set_halign(gtk::Align::Fill);
+        drag_zone.set_valign(gtk::Align::Start);
+        drag_zone.set_height_request(15);
+        drag_zone.set_hexpand(true);
+        drag_zone.set_tooltip_text(Some("Drag pane"));
+        drag_zone.update_property(&[gtk::accessible::Property::Label("Drag pane")]);
+        let drag_motion = gtk::EventControllerMotion::new();
+        let drag_pane_id = pane_id.to_owned();
+        drag_motion.connect_enter(move |_, _, _| {
+            eprintln!("zentty-linux: pane-drag-zone pane={drag_pane_id} pointer=entered");
+        });
+        drag_zone.add_controller(drag_motion);
+        root.add_overlay(&drag_zone);
+
         let revealed = Rc::new(Cell::new(false));
         let motion = gtk::EventControllerMotion::new();
         let focus = gtk::EventControllerFocus::new();
@@ -208,6 +227,8 @@ impl PaneFrame {
             right_button,
             move_to_window_button,
             right_action,
+            drag_zone,
+            drag_source: RefCell::new(None),
         }
     }
 
@@ -258,6 +279,17 @@ impl PaneFrame {
 
     pub(crate) fn set_window_transfer_available(&self, available: bool) {
         self.move_to_window_button.set_sensitive(available);
+    }
+
+    pub(crate) fn install_drag_source(&self, payload: &crate::pane_drag_drop::PaneDragPayload) {
+        if let Some(previous) = self.drag_source.borrow_mut().take() {
+            self.drag_zone.remove_controller(&previous);
+        }
+        self.drag_source
+            .replace(Some(crate::pane_drag_view::terminal_source(
+                &self.drag_zone,
+                payload,
+            )));
     }
 
     pub(crate) fn detach_terminal(&self) {

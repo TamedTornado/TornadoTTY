@@ -1,9 +1,157 @@
 use zentty_core::{
     AgentEvent, AgentInteractionKind, AgentPhase, AgentTarget, AuthenticatedAgentEvent,
-    ClosePaneOutcome, CodexTranscriptQuestion, NewWorklanePlacement, PaneRecipe,
-    PaneResizeDirection, SessionRestoreEnvelope, WindowRecipe, WorklaneColor, WorkspaceState,
-    WorkspaceStateImportError,
+    ClosePaneOutcome, CodexTranscriptQuestion, NewWorklanePlacement, PaneMoveSplitAxis,
+    PaneMoveTarget, PaneRecipe, PaneResizeDirection, SessionRestoreEnvelope, WindowRecipe,
+    WorklaneColor, WorkspaceState, WorkspaceStateImportError,
 };
+
+#[test]
+fn pane_drag_column_gap_uses_reduced_space_and_preserves_exact_identity() {
+    let mut state = WorkspaceState::new("lane-a", "pane-a");
+    assert!(state.split_focused_pane_right("pane-b"));
+    assert!(state.move_pane_to_target(
+        "pane-a",
+        PaneMoveTarget::ColumnGap {
+            worklane_id: "lane-a".to_owned(),
+            column_index: 2,
+        },
+        900.0,
+    ));
+    let lane = state.active_worklane();
+    assert_eq!(lane.columns.len(), 2);
+    assert_eq!(lane.columns[0].panes[0].id, "pane-b");
+    assert_eq!(lane.columns[1].panes[0].id, "pane-a");
+    assert_eq!(state.focused_pane_id(), Some("pane-a"));
+}
+
+#[test]
+fn pane_drag_split_supports_source_sibling_vertical_and_horizontal_outcomes() {
+    let mut vertical = WorkspaceState::new("lane-a", "pane-a");
+    assert!(vertical.split_focused_pane_below("pane-b"));
+    assert!(vertical.move_pane_to_target(
+        "pane-a",
+        PaneMoveTarget::Split {
+            worklane_id: "lane-a".to_owned(),
+            target_pane_id: "pane-b".to_owned(),
+            axis: PaneMoveSplitAxis::Vertical,
+            leading: false,
+        },
+        900.0,
+    ));
+    assert_eq!(
+        vertical.active_worklane().columns[0]
+            .panes
+            .iter()
+            .map(|pane| pane.id.as_str())
+            .collect::<Vec<_>>(),
+        ["pane-b", "pane-a"]
+    );
+
+    let mut horizontal = WorkspaceState::new("lane-a", "pane-a");
+    assert!(horizontal.split_focused_pane_below("pane-b"));
+    assert!(horizontal.move_pane_to_target(
+        "pane-a",
+        PaneMoveTarget::Split {
+            worklane_id: "lane-a".to_owned(),
+            target_pane_id: "pane-b".to_owned(),
+            axis: PaneMoveSplitAxis::Horizontal,
+            leading: false,
+        },
+        900.0,
+    ));
+    assert_eq!(horizontal.active_worklane().columns.len(), 2);
+    assert_eq!(
+        horizontal.active_worklane().columns[0].panes[0].id,
+        "pane-b"
+    );
+    assert_eq!(
+        horizontal.active_worklane().columns[1].panes[0].id,
+        "pane-a"
+    );
+}
+
+#[test]
+fn pane_drag_stack_gap_crosses_worklanes_and_rejection_is_mutation_free() {
+    let mut state = WorkspaceState::new("lane-a", "pane-a");
+    assert!(state.split_focused_pane_right("pane-b"));
+    assert!(state.create_worklane("lane-b", "pane-c"));
+    let target_column = state.active_worklane().columns[0].id.clone();
+    assert!(state.move_pane_to_target(
+        "pane-a",
+        PaneMoveTarget::StackGap {
+            worklane_id: "lane-b".to_owned(),
+            column_id: target_column,
+            pane_index: 1,
+        },
+        900.0,
+    ));
+    assert_eq!(state.active_worklane_id(), "lane-b");
+    assert_eq!(
+        state.active_worklane().columns[0]
+            .panes
+            .iter()
+            .map(|pane| pane.id.as_str())
+            .collect::<Vec<_>>(),
+        ["pane-c", "pane-a"]
+    );
+
+    let before = state.clone();
+    assert!(!state.move_pane_to_target(
+        "pane-a",
+        PaneMoveTarget::Split {
+            worklane_id: "lane-b".to_owned(),
+            target_pane_id: "pane-a".to_owned(),
+            axis: PaneMoveSplitAxis::Vertical,
+            leading: true,
+        },
+        900.0,
+    ));
+    assert_eq!(state, before);
+}
+
+#[test]
+fn cross_window_pane_drag_inserts_at_exact_stack_and_rolls_back_invalid_targets() {
+    let mut source = WorkspaceState::new("source-lane", "foreign-pane");
+    let transfer = source
+        .extract_pane_for_cross_window_transfer("foreign-pane")
+        .expect("foreign pane should extract");
+    let mut destination = WorkspaceState::new("lane-a", "pane-a");
+    assert!(destination.split_focused_pane_below("pane-b"));
+    assert!(destination.insert_cross_window_pane_at_target(
+        transfer,
+        PaneMoveTarget::StackGap {
+            worklane_id: "lane-a".to_owned(),
+            column_id: "column-pane-a".to_owned(),
+            pane_index: 1,
+        },
+        640.0,
+    ));
+    assert_eq!(
+        destination.active_columns()[0]
+            .panes
+            .iter()
+            .map(|pane| pane.id.as_str())
+            .collect::<Vec<_>>(),
+        ["pane-a", "foreign-pane", "pane-b"]
+    );
+
+    let before = destination.clone();
+    let mut second_source = WorkspaceState::new("source-2", "foreign-2");
+    let invalid = second_source
+        .extract_pane_for_cross_window_transfer("foreign-2")
+        .expect("second foreign pane should extract");
+    assert!(!destination.insert_cross_window_pane_at_target(
+        invalid,
+        PaneMoveTarget::Split {
+            worklane_id: "missing".to_owned(),
+            target_pane_id: "pane-a".to_owned(),
+            axis: PaneMoveSplitAxis::Horizontal,
+            leading: true,
+        },
+        640.0,
+    ));
+    assert_eq!(destination, before);
+}
 
 #[test]
 fn new_worklane_placement_preserves_source_top_after_current_and_end_semantics() {

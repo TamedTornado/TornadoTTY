@@ -665,12 +665,137 @@ impl ApplicationCoordinator {
                     "zentty-linux: status-notifier setting-enabled={enabled} source=agents-settings"
                 );
             }
+            crate::application_shell::ApplicationAction::CommitPaneDrop(outcome) => {
+                Self::commit_pane_drop(coordinator, &outcome);
+            }
         }
         if refresh_attention {
             for shell in coordinator.borrow().shells.values() {
                 shell.borrow().refresh_attention_inbox();
             }
         }
+    }
+
+    fn commit_pane_drop(
+        coordinator: &Rc<RefCell<Self>>,
+        outcome: &crate::pane_drag_drop::PaneDropOutcome,
+    ) {
+        let payload = outcome.payload();
+        let source_id = payload.source_window_id.clone();
+        let destination_id = outcome.destination_window_id().to_owned();
+        let shells = {
+            let coordinator = coordinator.borrow();
+            (
+                coordinator.shells.get(&source_id).cloned(),
+                coordinator.shells.get(&destination_id).cloned(),
+            )
+        };
+        let (Some(source), Some(destination)) = shells else {
+            eprintln!(
+                "zentty-linux: pane-drop=reject reason=window-unavailable source={source_id} destination={destination_id}"
+            );
+            return;
+        };
+        let source_generation = source.borrow().topology_generation();
+        let destination_generation = destination.borrow().topology_generation();
+        if let Err(reason) =
+            crate::pane_drag_drop::validate(outcome, source_generation, destination_generation)
+        {
+            eprintln!("zentty-linux: pane-drop=reject reason={reason:?}");
+            return;
+        }
+        if source.borrow().worklane_id_for_pane(&payload.pane_id)
+            != Some(payload.source_worklane_id.as_str())
+        {
+            eprintln!(
+                "zentty-linux: pane-drop=reject reason=source-identity-changed pane={}",
+                payload.pane_id
+            );
+            return;
+        }
+        if source_id == destination_id {
+            let moved = source.borrow_mut().commit_same_window_pane_drop(outcome);
+            if moved {
+                ApplicationShell::focus_terminal_after_pane_drop(&source, &payload.pane_id);
+            }
+            eprintln!(
+                "zentty-linux: pane-drop={} pane={} source={} destination={}",
+                if moved { "commit" } else { "reject" },
+                payload.pane_id,
+                source_id,
+                destination_id
+            );
+            return;
+        }
+        if let Err(error) = Self::move_pane_to_drop_target(
+            coordinator,
+            &source_id,
+            &payload.pane_id,
+            &destination_id,
+            outcome,
+        ) {
+            eprintln!("zentty-linux: pane-drop=reject reason={error}");
+        }
+    }
+
+    fn move_pane_to_drop_target(
+        coordinator: &Rc<RefCell<Self>>,
+        source_id: &str,
+        pane_id: &str,
+        destination_id: &str,
+        outcome: &crate::pane_drag_drop::PaneDropOutcome,
+    ) -> Result<(), String> {
+        let (source, destination) = {
+            let coordinator = coordinator.borrow();
+            let source = coordinator
+                .shells
+                .get(source_id)
+                .cloned()
+                .ok_or_else(|| format!("source window {source_id:?} is unavailable"))?;
+            let destination = coordinator
+                .shells
+                .get(destination_id)
+                .cloned()
+                .ok_or_else(|| format!("destination window {destination_id:?} is unavailable"))?;
+            (source, destination)
+        };
+        let transfer = source
+            .borrow_mut()
+            .extract_live_pane_for_existing_window(pane_id)?;
+        let source_window_should_close = transfer.model.source_window_should_close;
+        let crate::application_shell::ExtractedExistingWindowPane {
+            model,
+            runtime,
+            source_before,
+        } = transfer;
+        if let Err((error, runtime)) =
+            ApplicationShell::adopt_live_pane_at_drop_target(&destination, model, runtime, outcome)
+        {
+            ApplicationShell::rollback_live_pane_existing_window_transfer(
+                &source,
+                pane_id,
+                source_before,
+                runtime,
+            )?;
+            return Err(error);
+        }
+        destination.borrow_mut().sync_agent_targets();
+        coordinator
+            .borrow_mut()
+            .window_set
+            .mark_active(destination_id);
+        if source_window_should_close {
+            coordinator.borrow_mut().close_window(source_id)?;
+        } else {
+            source.borrow_mut().sync_agent_targets();
+        }
+        Self::present_shell(coordinator, destination_id, true)?;
+        ApplicationShell::focus_terminal_after_pane_drop(&destination, pane_id);
+        Self::refresh_worklane_destination_catalogs(coordinator);
+        eprintln!(
+            "zentty-linux: pane-drop=commit pane={pane_id} source={source_id} destination={destination_id} runtime=preserved"
+        );
+        Ok(())
     }
 
     fn move_pane_handler(coordinator: &Rc<RefCell<Self>>, source_id: &str) -> Rc<dyn Fn(String)> {

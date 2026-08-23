@@ -4,7 +4,12 @@ use std::cell::Cell;
 use std::rc::Rc;
 use zentty_core::{ClipboardConfig, RankedServer, ServerRelevanceTier, SidebarWorklaneSummary};
 
-use crate::{agent_status_view, bookmarks_view, global_search_view, source_ui};
+use crate::{
+    agent_status_view, bookmarks_view, global_search_view,
+    pane_drag_drop::{PaneDragPayload, PaneDragPresentation},
+    pane_drag_view::{self, PaneDragContext},
+    source_ui,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct PaneActionSpec {
@@ -316,6 +321,7 @@ pub(crate) fn render(
     current_window_id: &str,
     destination_groups: Option<&[WorklaneDestinationGroup]>,
     selection_emphasis: zentty_core::SidebarSelectionEmphasis,
+    pane_drag_context: Option<&PaneDragContext>,
 ) {
     sidebar.add_css_class("zentty-sidebar");
     sidebar.remove_css_class("sidebar-emphasis-vivid");
@@ -349,7 +355,7 @@ pub(crate) fn render(
     for (index, summary) in summaries.iter().enumerate() {
         let name = widget_name("worklane-card", &summary.worklane_id);
         let card = find_named_widget(sidebar.upcast_ref(), &name)
-            .filter(|card| card_is_compatible(card, summary, servers))
+            .filter(|card| card_is_compatible(card, summary, servers, pane_drag_context))
             .unwrap_or_else(|| {
                 if let Some(stale) = find_named_widget(sidebar.upcast_ref(), &name) {
                     sidebar.remove(&stale);
@@ -363,6 +369,7 @@ pub(crate) fn render(
                     servers,
                     current_window_id,
                     destination_groups,
+                    pane_drag_context,
                 );
                 sidebar.append(&card);
                 card.upcast()
@@ -415,6 +422,7 @@ pub(crate) fn clear(sidebar: &gtk::Box) {
 }
 
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_lines)]
 fn make_worklane_card(
     window: &gtk::Window,
     summary: &SidebarWorklaneSummary,
@@ -424,6 +432,7 @@ fn make_worklane_card(
     servers: &[RankedServer],
     current_window_id: &str,
     destination_groups: Option<&[WorklaneDestinationGroup]>,
+    pane_drag_context: Option<&PaneDragContext>,
 ) -> gtk::Box {
     let card = gtk::Box::new(gtk::Orientation::Vertical, 4);
     card.set_widget_name(&widget_name("worklane-card", &summary.worklane_id));
@@ -451,6 +460,15 @@ fn make_worklane_card(
     ));
     project_fingerprint.set_visible(false);
     card.append(&project_fingerprint);
+    let drag_generation = gtk::Label::new(Some(
+        &pane_drag_context.map_or_else(String::new, |context| context.generation.to_string()),
+    ));
+    drag_generation.set_widget_name(&widget_name(
+        "worklane-pane-drag-generation",
+        &summary.worklane_id,
+    ));
+    drag_generation.set_visible(false);
+    card.append(&drag_generation);
 
     let header = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     let select = gtk::Button::new();
@@ -514,7 +532,13 @@ fn make_worklane_card(
             clipboard,
             current_window_id,
             destination_groups,
+            pane_drag_context,
+            &top,
         ));
+    }
+
+    if let Some(context) = pane_drag_context {
+        pane_drag_view::install_worklane_target(&card, &summary.worklane_id, context);
     }
     for server in servers.iter().filter(|server| {
         server.server.worklane_id == summary.worklane_id
@@ -537,6 +561,7 @@ fn card_is_compatible(
     card: &gtk::Widget,
     summary: &SidebarWorklaneSummary,
     servers: &[RankedServer],
+    pane_drag_context: Option<&PaneDragContext>,
 ) -> bool {
     let custom_title = find_named_label(
         card,
@@ -559,6 +584,16 @@ fn card_is_compatible(
     )
     .map(|label| label.text().to_string());
     if current_servers.as_deref() != Some(expected_servers.as_str()) {
+        return false;
+    }
+    let expected_generation =
+        pane_drag_context.map_or_else(String::new, |context| context.generation.to_string());
+    let current_generation = find_named_label(
+        card,
+        &widget_name("worklane-pane-drag-generation", &summary.worklane_id),
+    )
+    .map(|label| label.text().to_string());
+    if current_generation.as_deref() != Some(expected_generation.as_str()) {
         return false;
     }
     let mut pane_ids = Vec::new();
@@ -1007,6 +1042,7 @@ fn make_worklane_drag_preview_card(summary: &SidebarWorklaneSummary, index: usiz
     preview
 }
 
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn make_pane_row(
     window: &gtk::Window,
     summary: &SidebarWorklaneSummary,
@@ -1015,6 +1051,8 @@ fn make_pane_row(
     clipboard: ClipboardConfig,
     current_window_id: &str,
     destination_groups: Option<&[WorklaneDestinationGroup]>,
+    pane_drag_context: Option<&PaneDragContext>,
+    worklane_title: &str,
 ) -> gtk::Box {
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 2);
     row.set_widget_name(&widget_name("pane-row", &pane.pane_id));
@@ -1095,6 +1133,29 @@ fn make_pane_row(
         destination_groups,
     )));
     row.append(&pane_menu);
+    if let Some(context) = pane_drag_context {
+        let payload = PaneDragPayload {
+            source_window_id: context.window_id.clone(),
+            source_worklane_id: summary.worklane_id.clone(),
+            source_column_id: context
+                .source_columns
+                .get(&pane.pane_id)
+                .cloned()
+                .unwrap_or_default(),
+            pane_id: pane.pane_id.clone(),
+            source_generation: context.generation,
+            presentation: PaneDragPresentation {
+                worklane_title: worklane_title.to_owned(),
+                pane_title: pane.primary_text.clone(),
+                context: summary.primary_text.clone(),
+                agent_status: pane
+                    .agent_status
+                    .as_ref()
+                    .map(|status| agent_status_view::present(status).text),
+            },
+        };
+        pane_drag_view::sidebar_source(&select, &row, payload, Rc::clone(&context.on_cancel));
+    }
     row
 }
 
@@ -1905,9 +1966,11 @@ mod tests {
     use crate::{
         pane_controls::{PaneControlAction, PaneFrame},
         pane_dividers::{PaneDivider, new_handle},
+        pane_drag_view::PaneDragContext,
         source_ui,
     };
     use gtk::prelude::*;
+    use std::{collections::BTreeMap, rc::Rc};
     use zentty_core::{
         AgentInteractionKind, AgentPhase, AgentProgress, AgentSignalConfidence, AgentSignalOrigin,
         ClipboardConfig, PaneAgentStatus, PaneRightInsertionBehavior, SidebarPaneSummary,
@@ -2080,6 +2143,16 @@ mod tests {
         assert_eq!(std::env::var("GTK_A11Y").as_deref(), Ok("test"));
         gtk::init().expect("controlled GTK display must initialize");
         let summary = accessibility_summary();
+        let drag_context = PaneDragContext {
+            window_id: "window-a".to_owned(),
+            generation: 4,
+            on_drop: Rc::new(|_| {}),
+            on_cancel: Rc::new(|_| {}),
+            source_columns: Rc::new(BTreeMap::from([(
+                "pane-a".to_owned(),
+                "column-a".to_owned(),
+            )])),
+        };
         let card = make_worklane_card(
             &gtk::Window::new(),
             &summary,
@@ -2089,6 +2162,7 @@ mod tests {
             &[],
             "window-a",
             None,
+            Some(&drag_context),
         );
         assert_sidebar_accessibility(&card, &summary);
         assert_pane_control_accessibility();
@@ -2132,6 +2206,10 @@ mod tests {
     }
 
     fn assert_sidebar_accessibility(card: &gtk::Box, summary: &SidebarWorklaneSummary) {
+        assert!(gtk::test_accessible_has_property(
+            card,
+            gtk::AccessibleProperty::Description
+        ));
         let worklane_select = find_named_widget(card.upcast_ref(), "zentty-worklane-select-lane-a")
             .expect("worklane select must exist")
             .downcast::<gtk::Button>()
@@ -2165,6 +2243,10 @@ mod tests {
             &pane_select,
             gtk::AccessibleProperty::Label
         ));
+        assert!(gtk::test_accessible_has_property(
+            &pane_select,
+            gtk::AccessibleProperty::Description
+        ));
         assert!(gtk::test_accessible_has_state(
             &pane_select,
             gtk::AccessibleState::Selected
@@ -2193,6 +2275,12 @@ mod tests {
     fn assert_pane_control_accessibility() {
         let terminal = gtk::Box::new(gtk::Orientation::Vertical, 0);
         let frame = PaneFrame::new("pane-a", terminal.upcast_ref(), |_| {}, |_| {});
+        let drag_zone = find_named_widget(frame.widget().upcast_ref(), "pane-drag-zone-pane-a")
+            .expect("pane drag zone must expose an accessible identity");
+        assert!(gtk::test_accessible_has_property(
+            &drag_zone,
+            gtk::AccessibleProperty::Label
+        ));
         frame.set_window_transfer_available(false);
         for action in [
             PaneControlAction::SplitRight,

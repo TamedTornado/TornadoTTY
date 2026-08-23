@@ -119,8 +119,9 @@ pub use workspace_recipe::{
 };
 pub use workspace_state::{
     ClosePaneOutcome, CodexTranscriptEnrichmentCandidate, PaneColumnState, PaneCrossWindowTransfer,
-    PaneResizeDirection, PaneState, PaneWindowTransfer, SidebarPaneSummary, SidebarWorklaneSummary,
-    WorklaneColor, WorklaneState, WorkspaceState, WorkspaceStateImportError,
+    PaneMoveSplitAxis, PaneMoveTarget, PaneResizeDirection, PaneState, PaneWindowTransfer,
+    SidebarPaneSummary, SidebarWorklaneSummary, WorklaneColor, WorklaneState, WorkspaceState,
+    WorkspaceStateImportError,
 };
 pub use workspace_template::{
     TemplateKind, TemplateRestoreError, TemplateRestoreFallback, WorkspaceTemplate,
