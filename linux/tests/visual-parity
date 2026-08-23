@@ -1,0 +1,149 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+map="${1:-${repo_root}/docs/design/zentty-linux-visual-parity.json}"
+baseline_root="${2:-${repo_root}/linux/tests/visual-baselines}"
+
+fail() {
+    echo "visual-parity: error: $*" >&2
+    exit 1
+}
+
+command -v jq >/dev/null || fail "jq is required"
+[[ -f "${map}" ]] || fail "map not found: ${map}"
+jq empty "${map}" 2>/dev/null || fail "map is not valid JSON"
+
+jq -e '
+    .schema_version == 1 and
+    (.source_reference.path | type == "string" and length > 0) and
+    (.scope | type == "string" and length > 0) and
+    (.elements | type == "array" and length > 0) and
+    (.scenarios | type == "array" and length > 0) and
+    (.masks | type == "array") and
+    (.qualification_claim | IN(
+        "IMPLEMENTED_LOCAL_SUITE_ONLY", "RELEASE_QUALIFIED", "FULL_VISUAL_PARITY"
+    )) and
+    all(.elements[];
+        (.id | type == "string" and test("^[a-z0-9]+([.-][a-z0-9]+)*$")) and
+        (.region | type == "string" and length > 0) and
+        (.kind | type == "string" and length > 0) and
+        (.source_paths | type == "array" and length > 0) and
+        (.linux_paths | type == "array" and length > 0) and
+        (.source_meaning | type == "string" and length > 20) and
+        (.linux_owner | type == "string" and length > 0) and
+        ((.tooltip == null) or (.tooltip | type == "string" and length > 0)) and
+        ((.focus_order == null) or (.focus_order | type == "number" and . >= 0 and floor == .)) and
+        (.accessible_name | type == "string" and length > 0) and
+        (.status | IN("MATCH", "PARTIAL", "MISSING", "BLOCKED", "DEFERRED", "PLATFORM_ALTERNATIVE")) and
+        (.scenarios | type == "array" and length > 0) and
+        (.semantic_assertions | type == "array" and length > 0) and
+        (if .status == "MATCH"
+         then ((.tracking_issue == null) or (.tracking_issue | type == "number" and . > 0 and floor == .))
+         else (.tracking_issue | type == "number" and . > 0 and floor == .)
+         end)
+    ) and
+    all(.scenarios[];
+        (.id | type == "string" and test("^[a-z0-9]+([.-][a-z0-9]+)*$")) and
+        (.display | IN("x11", "wayland")) and
+        (.theme | IN("dark", "light")) and
+        (.scale | IN("1", "1.5", "2")) and
+        (.size | type == "string" and test("^[1-9][0-9]*x[1-9][0-9]*$")) and
+        (.state | type == "array" and length > 0) and
+        (.actor | type == "string" and startswith("linux/tests/")) and
+        (.receipt | type == "string" and startswith("build/linux-test-receipts/visual-parity/") and endswith(".json")) and
+        (.baseline | type == "string" and startswith("linux/tests/visual-baselines/") and endswith(".png")) and
+        ((.mask == null) or (.mask | type == "string" and length > 0)) and
+        (.semantic_assertions | type == "array" and length > 0) and
+        (.status | IN("PASS", "FAIL", "BLOCKED", "EVIDENCE_PENDING", "NOT_IMPLEMENTED")) and
+        (if .status == "PASS"
+         then ((.tracking_issue == null) or (.tracking_issue | type == "number" and . > 0 and floor == .))
+         else (.tracking_issue | type == "number" and . > 0 and floor == .)
+         end)
+    ) and
+    all(.masks[];
+        (.id | type == "string" and test("^[a-z0-9]+([.-][a-z0-9]+)*$")) and
+        .kind == "dynamic_terminal_rectangles" and
+        .allowed_regions == ["terminal-content"] and
+        (.geometry_authority | type == "string" and length > 20) and
+        (.max_covered_fraction | type == "number" and . > 0 and . <= 0.85) and
+        (.justification | type == "string" and length > 40)
+    )
+' "${map}" >/dev/null || fail "schema or enum contract failed"
+
+for collection in elements scenarios masks; do
+    duplicates="$(jq -r ".${collection}[].id" "${map}" | LC_ALL=C sort | uniq -d)"
+    [[ -z "${duplicates}" ]] || fail "duplicate ${collection} IDs: ${duplicates//$'\n'/, }"
+done
+
+required_scenarios=(
+    empty-dark-x11 multi-lane-dark-x11 attention-dark-x11 progress-dark-x11
+    review-dark-x11 remote-dark-x11 long-label-x11 sidebar-hidden-x11
+    sidebar-overlay-wayland sidebar-resize-x11 sidebar-resize-wayland
+    pane-controls-hidden-x11 pane-controls-revealed-x11 menu-open-x11
+    narrow-dark-x11 wide-dark-x11 wide-light-x11 wide-dark-wayland
+    scale-150-wayland scale-200-wayland fullscreen-wayland multi-window-x11
+    remote-dark-wayland review-light-wayland
+)
+expected_scenarios="$(printf '%s\n' "${required_scenarios[@]}" | LC_ALL=C sort)"
+actual_scenarios="$(jq -r '.scenarios[].id' "${map}" | LC_ALL=C sort)"
+[[ "${actual_scenarios}" == "${expected_scenarios}" ]] ||
+    fail "required visual scenario coverage is missing or unexpected"
+
+declare -A scenario_ids=()
+while IFS= read -r id; do scenario_ids["${id}"]=1; done < <(jq -r '.scenarios[].id' "${map}")
+declare -A mask_ids=()
+while IFS= read -r id; do mask_ids["${id}"]=1; done < <(jq -r '.masks[].id' "${map}")
+
+while IFS= read -r scenario; do
+    [[ -n "${scenario_ids[${scenario}]:-}" ]] ||
+        fail "element references unknown scenario: ${scenario}"
+done < <(jq -r '.elements[].scenarios[]' "${map}" | LC_ALL=C sort -u)
+
+while IFS= read -r mask; do
+    [[ -z "${mask}" || -n "${mask_ids[${mask}]:-}" ]] ||
+        fail "scenario references unknown mask: ${mask}"
+done < <(jq -r '.scenarios[].mask // empty' "${map}" | LC_ALL=C sort -u)
+
+while IFS= read -r path; do
+    [[ "${path}" != /* && "${path}" != *".."* ]] || fail "unsafe repository path: ${path}"
+    [[ -f "${repo_root}/${path}" ]] || fail "referenced source or actor is missing: ${path}"
+done < <(jq -r '
+    .source_reference.path,
+    .elements[].source_paths[],
+    .elements[].linux_paths[],
+    .scenarios[].actor
+' "${map}" | LC_ALL=C sort -u)
+
+while IFS=$'\t' read -r id status baseline; do
+    baseline_path="${repo_root}/${baseline}"
+    if [[ "${status}" == PASS ]]; then
+        [[ -f "${baseline_path}" ]] || fail "PASS scenario ${id} has no reviewed baseline"
+    fi
+done < <(jq -r '.scenarios[] | [.id, .status, .baseline] | @tsv' "${map}")
+
+if [[ -d "${baseline_root}" ]]; then
+    while IFS= read -r baseline; do
+        relative="linux/tests/visual-baselines/${baseline#"${baseline_root}/"}"
+        jq -e --arg path "${relative}" 'any(.scenarios[]; .baseline == $path)' "${map}" >/dev/null ||
+            fail "stale or untracked baseline: ${relative}"
+    done < <(find "${baseline_root}" -type f -name '*.png' | LC_ALL=C sort)
+fi
+
+claim="$(jq -r '.qualification_claim' "${map}")"
+if [[ "${claim}" == FULL_VISUAL_PARITY ]]; then
+    jq -e '
+        all(.elements[]; .status == "MATCH" or .status == "PLATFORM_ALTERNATIVE") and
+        all(.scenarios[]; .status == "PASS")
+    ' "${map}" >/dev/null || fail "false full visual parity claim"
+fi
+if [[ "${claim}" == RELEASE_QUALIFIED ]]; then
+    jq -e 'all(.scenarios[]; .status == "PASS")' "${map}" >/dev/null ||
+        fail "false release visual qualification claim"
+fi
+
+printf 'visual-parity: PASS elements=%s scenarios=%s masks=%s claim=%s\n' \
+    "$(jq '.elements | length' "${map}")" \
+    "$(jq '.scenarios | length' "${map}")" \
+    "$(jq '.masks | length' "${map}")" \
+    "${claim}"
