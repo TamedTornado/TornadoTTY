@@ -583,7 +583,6 @@ def notarize_release_dmg!
 
   notarize(
     package: dmg_path,
-    bundle_id: CredentialsManager::AppfileConfig.try_fetch_value(:app_identifier),
     api_key: load_api_key,
     print_log: true
   )
