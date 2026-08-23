@@ -241,7 +241,11 @@ final class PaneCommandExecutor {
     }
 
     func paneMinimumSizesByPaneID() -> [PaneID: PaneMinimumSize] {
-        guard let worklane = worklaneStore.activeWorklane else {
+        paneMinimumSizesByPaneID(in: worklaneStore.activeWorklaneID)
+    }
+
+    private func paneMinimumSizesByPaneID(in worklaneID: WorklaneID) -> [PaneID: PaneMinimumSize] {
+        guard let worklane = worklaneStore.worklanes.first(where: { $0.id == worklaneID }) else {
             return [:]
         }
 
@@ -284,6 +288,32 @@ final class PaneCommandExecutor {
             leadingVisibleInset: canvas.leadingVisibleInset,
             availableSize: canvas.boundsSize,
             minimumSizeByPaneID: paneMinimumSizesByPaneID(),
+            targetPaneID: targetPaneID,
+            preserveFocusPaneID: preserveFocusPaneID,
+            sessionRequest: sessionRequest
+        )
+    }
+
+    @discardableResult
+    func splitWithLayout(
+        in worklaneID: WorklaneID,
+        placement: PanePlacement,
+        isHorizontal: Bool,
+        layout: SplitLayoutAction,
+        targetPaneID: PaneID? = nil,
+        preserveFocusPaneID: PaneID? = nil,
+        sessionRequest: TerminalSessionRequest? = nil
+    ) -> PaneID? {
+        canvas.settlePaneStripPresentationNow()
+        return worklaneStore.splitWithLayout(
+            in: worklaneID,
+            placement: placement,
+            isHorizontal: isHorizontal,
+            layout: layout,
+            availableWidth: canvas.boundsSize.width,
+            leadingVisibleInset: canvas.leadingVisibleInset,
+            availableSize: canvas.boundsSize,
+            minimumSizeByPaneID: paneMinimumSizesByPaneID(in: worklaneID),
             targetPaneID: targetPaneID,
             preserveFocusPaneID: preserveFocusPaneID,
             sessionRequest: sessionRequest
@@ -336,6 +366,11 @@ final class PaneCommandExecutor {
     }
 
     @discardableResult
+    func launchDeferredPane(id paneID: PaneID, in worklaneID: WorklaneID, nativeCommand: String) -> Bool {
+        worklaneStore.launchDeferredPane(id: paneID, in: worklaneID, nativeCommand: nativeCommand)
+    }
+
+    @discardableResult
     func setPaneTitle(id paneID: PaneID, title: String) -> Bool {
         worklaneStore.setPaneTitle(id: paneID, title: title)
     }
@@ -373,6 +408,18 @@ final class PaneCommandExecutor {
             availableWidth: canvas.boundsSize.width,
             leadingVisibleInset: canvas.leadingVisibleInset,
             minimumSizeByPaneID: paneMinimumSizesByPaneID()
+        )
+    }
+
+    func resizeColumnContainingPane(id paneID: PaneID, in worklaneID: WorklaneID, toFraction fraction: CGFloat) {
+        canvas.settlePaneStripPresentationNow()
+        worklaneStore.resizeColumnContainingPane(
+            id: paneID,
+            in: worklaneID,
+            toFraction: fraction,
+            availableWidth: canvas.boundsSize.width,
+            leadingVisibleInset: canvas.leadingVisibleInset,
+            minimumSizeByPaneID: paneMinimumSizesByPaneID(in: worklaneID)
         )
     }
 

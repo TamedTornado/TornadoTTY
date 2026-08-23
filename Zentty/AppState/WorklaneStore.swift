@@ -1045,11 +1045,46 @@ final class WorklaneStore {
         preserveFocusPaneID: PaneID? = nil,
         sessionRequest: TerminalSessionRequest? = nil
     ) -> PaneID? {
-        guard var worklane = activeWorklane else {
+        splitWithLayout(
+            in: activeWorklaneID,
+            placement: placement,
+            isHorizontal: isHorizontal,
+            layout: layout,
+            availableWidth: availableWidth,
+            leadingVisibleInset: leadingVisibleInset,
+            availableSize: availableSize,
+            minimumSizeByPaneID: minimumSizeByPaneID,
+            targetPaneID: targetPaneID,
+            preserveFocusPaneID: preserveFocusPaneID,
+            sessionRequest: sessionRequest
+        )
+    }
+
+    @discardableResult
+    func splitWithLayout(
+        in worklaneID: WorklaneID,
+        placement: PanePlacement,
+        isHorizontal: Bool,
+        layout: SplitLayoutAction,
+        availableWidth: CGFloat,
+        leadingVisibleInset: CGFloat,
+        availableSize: CGSize,
+        minimumSizeByPaneID: [PaneID: PaneMinimumSize],
+        targetPaneID: PaneID? = nil,
+        preserveFocusPaneID: PaneID? = nil,
+        sessionRequest: TerminalSessionRequest? = nil
+    ) -> PaneID? {
+        guard let worklaneIndex = worklanes.firstIndex(where: { $0.id == worklaneID }) else {
+            return nil
+        }
+        var worklane = worklanes[worklaneIndex]
+        if let targetPaneID,
+           !worklane.paneStripState.panes.contains(where: { $0.id == targetPaneID }) {
             return nil
         }
 
-        let previousPaneRef = currentPaneReference
+        let isActiveWorklane = worklaneID == activeWorklaneID
+        let previousPaneRef = isActiveWorklane ? currentPaneReference : nil
         if let targetPaneID {
             worklane.paneStripState.focusPane(id: targetPaneID)
         }
@@ -1104,15 +1139,17 @@ final class WorklaneStore {
             worklane.paneStripState.focusPane(id: preserveFocusPaneID)
         }
 
-        activeWorklane = worklane
+        worklanes[worklaneIndex] = worklane
 
-        let newPaneRef = currentPaneReference
-        if previousPaneRef != newPaneRef {
-            recordFocusTransition(from: previousPaneRef)
+        if isActiveWorklane {
+            let newPaneRef = currentPaneReference
+            if previousPaneRef != newPaneRef {
+                recordFocusTransition(from: previousPaneRef)
+            }
+
+            refreshLastFocusedLocalWorkingDirectory()
         }
-
-        refreshLastFocusedLocalWorkingDirectory()
-        notify(.paneStructure(activeWorklaneID))
+        notify(.paneStructure(worklaneID))
         return newPaneID
     }
 
@@ -1316,9 +1353,15 @@ final class WorklaneStore {
 
     @discardableResult
     func launchDeferredPane(id paneID: PaneID, nativeCommand: String) -> Bool {
-        guard var worklane = activeWorklane else {
+        launchDeferredPane(id: paneID, in: activeWorklaneID, nativeCommand: nativeCommand)
+    }
+
+    @discardableResult
+    func launchDeferredPane(id paneID: PaneID, in worklaneID: WorklaneID, nativeCommand: String) -> Bool {
+        guard let worklaneIndex = worklanes.firstIndex(where: { $0.id == worklaneID }) else {
             return false
         }
+        var worklane = worklanes[worklaneIndex]
         let trimmedCommand = nativeCommand.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedCommand.isEmpty else {
             return false
@@ -1336,8 +1379,8 @@ final class WorklaneStore {
             worklane.paneStripState.columns[columnIndex].panes[paneIndex].sessionRequest.nativeCommand = trimmedCommand
             worklane.paneStripState.columns[columnIndex].panes[paneIndex].sessionRequest.waitAfterNativeCommand = true
             worklane.paneStripState.columns[columnIndex].panes[paneIndex].sessionRequest.isLaunchDeferred = false
-            activeWorklane = worklane
-            notify(.paneStructure(activeWorklaneID))
+            worklanes[worklaneIndex] = worklane
+            notify(.paneStructure(worklaneID))
             return true
         }
 
@@ -1447,7 +1490,29 @@ final class WorklaneStore {
         leadingVisibleInset: CGFloat = 0,
         minimumSizeByPaneID: [PaneID: PaneMinimumSize]
     ) {
-        guard var worklane = activeWorklane else {
+        resizeColumnContainingPane(
+            id: paneID,
+            in: activeWorklaneID,
+            toFraction: fraction,
+            availableWidth: availableWidth,
+            leadingVisibleInset: leadingVisibleInset,
+            minimumSizeByPaneID: minimumSizeByPaneID
+        )
+    }
+
+    func resizeColumnContainingPane(
+        id paneID: PaneID,
+        in worklaneID: WorklaneID,
+        toFraction fraction: CGFloat,
+        availableWidth: CGFloat,
+        leadingVisibleInset: CGFloat = 0,
+        minimumSizeByPaneID: [PaneID: PaneMinimumSize]
+    ) {
+        guard let worklaneIndex = worklanes.firstIndex(where: { $0.id == worklaneID }) else {
+            return
+        }
+        var worklane = worklanes[worklaneIndex]
+        guard worklane.paneStripState.panes.contains(where: { $0.id == paneID }) else {
             return
         }
 
@@ -1481,15 +1546,15 @@ final class WorklaneStore {
             if let previousPaneID {
                 worklane.paneStripState.focusPane(id: previousPaneID)
             }
-            activeWorklane = worklane
+            worklanes[worklaneIndex] = worklane
             return
         }
         if let previousPaneID {
             worklane.paneStripState.focusPane(id: previousPaneID)
         }
 
-        activeWorklane = worklane
-        notifyLayoutResized(animation: .splitCurve)
+        worklanes[worklaneIndex] = worklane
+        notify(.layoutResized(worklaneID, animation: .splitCurve))
     }
 
     /// Read the absolute pixel width of the column containing `paneID` in
