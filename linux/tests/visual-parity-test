@@ -53,7 +53,8 @@ jq '(.scenarios[0].mask) = "whole-window"' \
 expect_failure unknown-mask "scenario references unknown mask" \
     "${runner}" "${temporary}/unknown-mask.json" "${temporary}/empty-baselines"
 
-jq '(.scenarios[0].status) = "PASS"' \
+jq '(.scenarios[] | select(.id == "review-dark-x11")) |=
+    (.status = "PASS" | .tracking_issue = null)' \
     "${source_map}" >"${temporary}/missing-baseline.json"
 expect_failure missing-baseline "has no reviewed baseline" \
     "${runner}" "${temporary}/missing-baseline.json" "${temporary}/empty-baselines"
@@ -91,7 +92,8 @@ jq -e '
     .scenario_id == "multi-lane-dark-x11" and
     .environment.size == "100x100" and
     .mask.rectangles == [{"x":8,"y":8,"width":84,"height":143}] and
-    .result == "PASS"
+    .scenario_status == "EVIDENCE_PENDING" and
+    .capture_result == "PASS"
 ' "${temporary}/receipts/multi-lane-dark-x11.json" >/dev/null || {
     echo "visual-parity-test: valid visual receipt was malformed" >&2
     exit 1

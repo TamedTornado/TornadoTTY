@@ -70,6 +70,11 @@ cat >"${XDG_CONFIG_HOME}/gtk-4.0/settings.ini" <<'INI'
 [Settings]
 gtk-enable-animations=false
 INI
+mkdir -p -- "${XDG_CONFIG_HOME}/ghostty"
+cat >"${XDG_CONFIG_HOME}/ghostty/config" <<'CONFIG'
+resize-overlay = never
+cursor-opacity = 0
+CONFIG
 # The single quotes intentionally defer PTY-child expansion.
 # shellcheck disable=SC2016
 (
@@ -81,9 +86,10 @@ INI
     exec env \
         GDK_SCALE=1 \
         GDK_DPI_SCALE=1 \
+        ZENTTY_VISUAL_STATE_DIR="${state_directory}" \
         LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
         "${product}" \
-        --command 'printf "\033]2;zentty-title-one\a"; sleep 0.2; printf "\033]2;zentty-title-two\a"; while IFS= read -r line; do if [ "$line" = peek-live-start ]; then (sleep 1.5; printf "%s" "{\"version\":1,\"event\":\"session.start\",\"agent\":{\"name\":\"Codex\"},\"session\":{\"id\":\"peek-live-agent\"}}" | "$ZENTTY_CLI_BIN" ipc agent-event; printf "%s" "{\"version\":1,\"event\":\"agent.running\",\"agent\":{\"name\":\"Codex\"},\"session\":{\"id\":\"peek-live-agent\"}}" | "$ZENTTY_CLI_BIN" ipc agent-event; printf "%s" "{\"version\":1,\"event\":\"task.progress\",\"session\":{\"id\":\"peek-live-agent\"},\"progress\":{\"done\":2,\"total\":5}}" | "$ZENTTY_CLI_BIN" ipc agent-event; sleep 1; i=0; while [ "$i" -lt 10 ]; do i=$((i + 1)); printf "\033]2;peek-live:%s\a" "$i"; sleep 0.05; done; printf "%s" "{\"version\":1,\"event\":\"agent.needs-input\",\"agent\":{\"name\":\"Codex\"},\"session\":{\"id\":\"peek-live-agent\"},\"state\":{\"text\":\"Approve deployment to the production environment for the frontend worklane?\",\"interaction\":{\"kind\":\"approval\",\"text\":\"Approve deployment to the production environment for the frontend worklane?\"}}}" | "$ZENTTY_CLI_BIN" ipc agent-event; printf "\033]2;peek-live-final\a") & else printf "\033]2;focus:%s\a" "$line"; fi; done' \
+        --command 'printf "\033]2;zentty-title-one\a"; sleep 0.2; printf "\033]2;zentty-title-two\a\033[2J\033[H\033[?25l"; while IFS= read -r line; do if [ "$line" = peek-live-start ]; then printf "\033[2J\033[H\033[?25l"; (sleep 1.5; printf "%s" "{\"version\":1,\"event\":\"session.start\",\"agent\":{\"name\":\"Codex\"},\"session\":{\"id\":\"peek-live-agent\"}}" | "$ZENTTY_CLI_BIN" ipc agent-event; printf "%s" "{\"version\":1,\"event\":\"agent.running\",\"agent\":{\"name\":\"Codex\"},\"session\":{\"id\":\"peek-live-agent\"}}" | "$ZENTTY_CLI_BIN" ipc agent-event; printf "%s" "{\"version\":1,\"event\":\"task.progress\",\"session\":{\"id\":\"peek-live-agent\"},\"progress\":{\"done\":2,\"total\":5}}" | "$ZENTTY_CLI_BIN" ipc agent-event; while [ ! -f "$ZENTTY_VISUAL_STATE_DIR/progress-captured" ]; do sleep 0.05; done; i=0; while [ "$i" -lt 10 ]; do i=$((i + 1)); printf "\033]2;peek-live:%s\a" "$i"; sleep 0.05; done; printf "%s" "{\"version\":1,\"event\":\"agent.needs-input\",\"agent\":{\"name\":\"Codex\"},\"session\":{\"id\":\"peek-live-agent\"},\"state\":{\"text\":\"Approve deployment to the production environment for the frontend worklane?\",\"interaction\":{\"kind\":\"approval\",\"text\":\"Approve deployment to the production environment for the frontend worklane?\"}}}" | "$ZENTTY_CLI_BIN" ipc agent-event; printf "\033]2;peek-live-final\a") & else printf "\033]2;focus:%s\a\033[2J\033[H\033[?25l" "$line"; fi; done' \
         --state-directory "${state_directory}" \
         --no-session-restore
 ) >"${log}" 2>&1 &
@@ -151,7 +157,7 @@ capture_peek_screenshot() {
     # Geometry is emitted from GTK's frame tick before Xvfb necessarily
     # presents those pixels. Let the private software renderer settle one
     # bounded frame interval before reading the drawable.
-    sleep 0.1
+    sleep 0.3
     import -silent -window "${window_id}" "${image}"
     [[ "$(identify -format '%wx%h' "${image}")" == 1200x700 ]] ||
         fail "${name} Peek screenshot did not preserve controlled 1200x700 geometry"
@@ -171,6 +177,31 @@ capture_peek_screenshot() {
             -draw "rectangle $((x + 8)),$((y + 8)),$((x + width - 8)),$((y + 150))" \
             "${image}"
     done
+}
+
+capture_unmasked_visual_scenario() {
+    local scenario_id="$1"
+    local capture_scope="${2:-window}"
+    local image="${screenshot_dir}/${scenario_id}.png"
+    local window_geometry x y width height
+    # The PTY command below clears its deterministic terminal after every
+    # synthetic interaction and hides the cursor. Preserve the real Ghostty
+    # pixels rather than covering them with a mask.
+    sleep 0.15
+    if [[ "${capture_scope}" == root-crop ]]; then
+        window_geometry="$(xdotool getwindowgeometry --shell "${window_id}")"
+        x="$(sed -n 's/^X=//p' <<<"${window_geometry}")"
+        y="$(sed -n 's/^Y=//p' <<<"${window_geometry}")"
+        width="$(sed -n 's/^WIDTH=//p' <<<"${window_geometry}")"
+        height="$(sed -n 's/^HEIGHT=//p' <<<"${window_geometry}")"
+        [[ "${x}" =~ ^-?[0-9]+$ && "${y}" =~ ^-?[0-9]+$ &&
+            "${width}" =~ ^[1-9][0-9]*$ && "${height}" =~ ^[1-9][0-9]*$ ]] ||
+            fail "${scenario_id} window geometry was malformed"
+        import -silent -window root -crop "${width}x${height}+${x}+${y}" "${image}"
+    else
+        import -silent -window "${window_id}" "${image}"
+    fi
+    zentty_visual_publish "${scenario_id}" linux/tests/rust-source-ux-x11 "${image}" -
 }
 
 accept_latest_pane_confirmation() {
@@ -359,6 +390,7 @@ done
 latest_sidebar_width="$(grep -F 'zentty-linux: sidebar-width=' "${log}" | tail -1)"
 [[ "${latest_sidebar_width}" == 'zentty-linux: sidebar-width=280' ]] ||
     fail "the preferred sidebar width was lost after temporary window clamping"
+capture_unmasked_visual_scenario empty-dark-x11
 
 # Drag the real GTK divider rather than calling a model setter. The allocation
 # must follow the pointer and the preferred width must survive returning the
@@ -414,6 +446,7 @@ for _ in $(seq 1 100); do
 done
 grep -Fq 'visibility = "hidden"' "${XDG_CONFIG_HOME}/zentty/config.toml" ||
     fail "the source toggle did not persist hidden through ConfigStore"
+capture_unmasked_visual_scenario sidebar-hidden-x11
 hover_count="$(grep -Fxc 'zentty-linux: sidebar-visibility=hover-peek' "${log}" || true)"
 xdotool mousemove --window "${window_id}" 2 350
 for _ in $(seq 1 100); do
@@ -464,6 +497,7 @@ grep -Fxq 'zentty-linux: title-pane=pane-1 value=focus:retained-focus' "${log}" 
 # must remain the sidebar identity instead of being overwritten by OSC churn.
 xdotool mousemove --window "${window_id}" 250 170 click 1
 sleep 0.2
+capture_unmasked_visual_scenario menu-open-x11 root-crop
 xdotool mousemove --window "${window_id}" 250 233 click 1
 rename_window=""
 for _ in $(seq 1 100); do
@@ -723,6 +757,16 @@ done
 (( $(grep -Fxc 'zentty-linux: action=navigate-forward worklane=worklane-1 pane=pane-2' "${log}" || true) > forward_count )) ||
     fail "Ctrl+] did not activate pane history Forward"
 
+# Preserve the same real two-pane state at both responsive extremes. External
+# window sizing remains the input; capture only follows the product's settled
+# size receipt and restores the journey's established geometry afterward.
+xdotool windowsize --sync "${window_id}" 640 600
+capture_unmasked_visual_scenario narrow-dark-x11
+xdotool windowsize --sync "${window_id}" 1600 900
+capture_unmasked_visual_scenario wide-dark-x11
+xdotool windowsize --sync "${window_id}" 1200 700
+sleep 0.15
+
 # Exercise the source quick-tap traversal chord at GTK capture phase while the
 # embedded Ghostty widget owns keyboard focus. Shift+Ctrl+Tab moves backward;
 # Ctrl+Tab moves forward. Distinct PTY title receipts reject a shortcut that
@@ -955,6 +999,15 @@ grep -Fxq 'zentty-linux: focus-pane pane=pane-1' "${log}" ||
 # Hover the original pane and drive its pane-local New Pane Below icon. Because
 # the control owns pane-1, pane-3 must join the original left column regardless
 # of the previously focused right terminal.
+xdotool mousemove --window "${window_id}" 280 680
+for _ in $(seq 1 100); do
+    [[ "$(grep -F 'zentty-linux: pane-controls pane=pane-1 state=' "${log}" | tail -1)" == \
+        'zentty-linux: pane-controls pane=pane-1 state=hidden' ]] && break
+    sleep 0.05
+done
+capture_unmasked_visual_scenario pane-controls-hidden-x11
+hover_pane_controls pane-1 500 350
+capture_unmasked_visual_scenario pane-controls-revealed-x11
 xdotool mousemove --window "${window_id}" 688 60 click 1
 for _ in $(seq 1 100); do
     grep -Fxq 'zentty-linux: pane-control action=new-pane-below target=pane-1' "${log}" && break
@@ -1262,6 +1315,7 @@ done
 grep -Fxq 'zentty-linux: worklane-peek-agent pane=pane-5 status="Codex · Running (2/5)" attention=false' "${log}" ||
     fail "live agent progress did not reach the inactive Peek card"
 capture_peek_screenshot progress
+touch "${state_directory}/progress-captured"
 pane_five_geometry_before_attention="$(grep -Fc 'zentty-linux: worklane-peek-card worklane=worklane-1 pane=pane-5 ' "${log}" || true)"
 for _ in $(seq 1 160); do
     if grep -Eq 'zentty-linux: title-pane=pane-5 value=peek-live:[1-9][0-9]*' "${log}" &&

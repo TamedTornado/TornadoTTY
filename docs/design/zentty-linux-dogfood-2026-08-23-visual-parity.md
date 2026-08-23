@@ -93,3 +93,56 @@ Issue: GH-84
 - Publication contract tests cover a wrong owning actor, wrong real image
   dimensions, and actual pixel mismatch in addition to the map runner's
   missing/stale baseline and false-claim cases.
+
+## Main-shell evidence expansion
+
+- The actor now clears its controlled PTY after each synthetic command and
+  hides the cursor. That keeps real Ghostty/PTY pixels present and deterministic
+  so main-shell states need no terminal mask at all; only the Peek thumbnails
+  retain their geometry-derived masks.
+- The first expanded run caught a 60-pixel difference at the focused pane edge
+  in the progress receipt. Earlier and later state was identical; the X11
+  drawable had been read only 100 ms after a GTK geometry receipt while more UI
+  work now preceded Peek. Capture settling is increased to 300 ms rather than
+  accepting a tolerance or broadening a mask. The direct baseline gate remains
+  strict.
+- Inspection then showed the changed pixels were actually previously unmasked
+  strips of a Peek terminal preview after the new deterministic clear, not an
+  unstable pane border. Existing PASS gates correctly rejected that intentional
+  evidence-input change; candidate images are being regenerated and must prove
+  repeatability before reviewed baselines move.
+- Main-shell captures exposed two additional issues before any baseline was
+  accepted. Ghostty's normal resize-size overlay appeared in responsive states,
+  so the controlled actor now uses Ghostty's real `resize-overlay = never`
+  configuration rather than waiting or masking it. GTK's pane popover is a
+  separate X11 surface, so parent-window capture omitted the open menu; that
+  state now captures the real root pixels cropped to the measured application
+  window.
+- The 1600x900 state also exposed a real Zentty layout gap: two columns retain
+  their prior widths and leave a large blank region instead of distributing
+  the wide viewport. This remains tracked by GH-87 and must not be converted
+  into a passing visual baseline.
+- Two bootstrap runs matched exactly, but the first authoritative run still
+  caught a changing `peek-live:N` title in the progress image. A fixed sleep
+  had merely been lucky twice. The real PTY child now waits on an actor-owned
+  `progress-captured` barrier before starting title churn; the actor releases
+  it only after the progress pixels and receipt exist. Attention/live-refresh
+  behavior remains real, but the progress state no longer depends on scheduler
+  timing.
+- The next authoritative run found a real Ghostty cursor blinking in the eight
+  pixel thumbnail padding just outside the reviewed terminal mask. Two earlier
+  runs happened to capture the same blink phase. The controlled visual profile
+  now sets Ghostty's supported `cursor-opacity = 0`; cursor behavior is not the
+  subject of these shell-chrome scenarios, and hiding it is narrower than
+  masking card borders or allowing pixel tolerance.
+- With the PTY barrier, resize overlay disabled, and cursor hidden, two fresh
+  bootstrap runs again differed by zero pixels across all eleven X11 states.
+  After reviewing and updating the ten non-defective baselines, a separate run
+  against the authoritative map passed every direct comparison. The wide state
+  produced a valid receipt with `scenario_status=FAIL` and
+  `capture_result=PASS`; evidence collection succeeded, but the product layout
+  did not.
+- The map validator previously printed a bare `visual-parity: PASS`, which was
+  technically its schema result but became misleading as soon as a governed
+  scenario was explicitly FAIL. Its report now says `visual-parity-map: VALID`
+  and prints every scenario status total plus the limited qualification claim.

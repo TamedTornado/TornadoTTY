@@ -18,8 +18,8 @@ zentty_visual_publish() {
         echo "visual-evidence: jq is required" >&2
         return 1
     }
-    [[ -f "${source_image}" && -f "${source_geometry}" ]] || {
-        echo "visual-evidence: ${scenario_id} capture or geometry is missing" >&2
+    [[ -f "${source_image}" ]] || {
+        echo "visual-evidence: ${scenario_id} capture is missing" >&2
         return 1
     }
     scenario="$(jq -c --arg id "${scenario_id}" '.scenarios[] | select(.id == $id)' "${map}")"
@@ -51,20 +51,32 @@ zentty_visual_publish() {
     geometry_path="${receipt_root}/${geometry_name}"
     mkdir -p -- "${receipt_root}"
     cp -- "${source_image}" "${image_path}"
-    cp -- "${source_geometry}" "${geometry_path}"
-
-    rectangles="$(jq -Rn '
-        [inputs
-         | capture("x=(?<x>[0-9]+) y=(?<y>[0-9]+) width=(?<width>[0-9]+)")
-         | {x: ((.x | tonumber) + 8),
-            y: ((.y | tonumber) + 8),
-            width: ((.width | tonumber) - 16),
-            height: 143}]
-    ' <"${geometry_path}")"
-    [[ "$(jq 'length' <<<"${rectangles}")" -gt 0 ]] || {
-        echo "visual-evidence: ${scenario_id} has no exact mask rectangles" >&2
-        return 1
-    }
+    if [[ "$(jq -r '.mask // empty' <<<"${scenario}")" == "" ]]; then
+        [[ "${source_geometry}" == - ]] || {
+            echo "visual-evidence: unmasked ${scenario_id} received unexpected mask geometry" >&2
+            return 1
+        }
+        rectangles='[]'
+        geometry_name=""
+    else
+        [[ -f "${source_geometry}" ]] || {
+            echo "visual-evidence: ${scenario_id} mask geometry is missing" >&2
+            return 1
+        }
+        cp -- "${source_geometry}" "${geometry_path}"
+        rectangles="$(jq -Rn '
+            [inputs
+             | capture("x=(?<x>[0-9]+) y=(?<y>[0-9]+) width=(?<width>[0-9]+)")
+             | {x: ((.x | tonumber) + 8),
+                y: ((.y | tonumber) + 8),
+                width: ((.width | tonumber) - 16),
+                height: 143}]
+        ' <"${geometry_path}")"
+        [[ "$(jq 'length' <<<"${rectangles}")" -gt 0 ]] || {
+            echo "visual-evidence: ${scenario_id} has no exact mask rectangles" >&2
+            return 1
+        }
+    fi
 
     baseline="$(jq -r '.baseline' <<<"${scenario}")"
     status="$(jq -r '.status' <<<"${scenario}")"
@@ -77,8 +89,9 @@ zentty_visual_publish() {
         --arg size "$(jq -r '.size' <<<"${scenario}")" \
         --arg image "${expected_image}" \
         --arg baseline "${baseline}" \
+        --arg scenario_status "${status}" \
         --arg mask "$(jq -r '.mask' <<<"${scenario}")" \
-        --arg geometry "build/linux-test-receipts/visual-parity/${geometry_name}" \
+        --arg geometry "${geometry_name:+build/linux-test-receipts/visual-parity/${geometry_name}}" \
         --argjson rectangles "${rectangles}" \
         --argjson assertions "$(jq '.semantic_assertions' <<<"${scenario}")" \
         '{schema_version: 1,
@@ -87,9 +100,12 @@ zentty_visual_publish() {
           environment: {display: $display, theme: $theme, scale: $scale, size: $size},
           image: $image,
           baseline: $baseline,
-          mask: {id: $mask, geometry_receipt: $geometry, rectangles: $rectangles},
+          mask: (if $mask == "null" then null
+                 else {id: $mask, geometry_receipt: $geometry, rectangles: $rectangles}
+                 end),
           semantic_assertions: $assertions,
-          result: "PASS"}' >"${receipt_root}/${scenario_id}.json"
+          scenario_status: $scenario_status,
+          capture_result: "PASS"}' >"${receipt_root}/${scenario_id}.json"
 
     if [[ "${status}" == PASS ]]; then
         [[ -f "${repo_root}/${baseline}" ]] || {

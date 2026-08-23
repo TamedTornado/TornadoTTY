@@ -142,8 +142,13 @@ if [[ "${claim}" == RELEASE_QUALIFIED ]]; then
         fail "false release visual qualification claim"
 fi
 
-printf 'visual-parity: PASS elements=%s scenarios=%s masks=%s claim=%s\n' \
+printf 'visual-parity-map: VALID elements=%s scenarios=%s masks=%s PASS=%s FAIL=%s EVIDENCE_PENDING=%s NOT_IMPLEMENTED=%s BLOCKED=%s claim=%s\n' \
     "$(jq '.elements | length' "${map}")" \
     "$(jq '.scenarios | length' "${map}")" \
     "$(jq '.masks | length' "${map}")" \
+    "$(jq '[.scenarios[] | select(.status == "PASS")] | length' "${map}")" \
+    "$(jq '[.scenarios[] | select(.status == "FAIL")] | length' "${map}")" \
+    "$(jq '[.scenarios[] | select(.status == "EVIDENCE_PENDING")] | length' "${map}")" \
+    "$(jq '[.scenarios[] | select(.status == "NOT_IMPLEMENTED")] | length' "${map}")" \
+    "$(jq '[.scenarios[] | select(.status == "BLOCKED")] | length' "${map}")" \
     "${claim}"
