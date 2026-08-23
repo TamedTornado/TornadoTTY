@@ -643,6 +643,42 @@ final class SettingsWindowControllerTests: XCTestCase {
         XCTAssertEqual(shortcutsFrame.height, initialFrame.height, accuracy: 1.0)
     }
 
+    func test_command_w_closes_settings_window() throws {
+        let store = AppConfigStore(
+            fileURL: AppConfigStore.temporaryFileURL(prefix: "ZenttyTests.SettingsWindow")
+        )
+        let controller = SettingsWindowController(configStore: store, initialSection: .general)
+        addTeardownBlock { controller.window?.close() }
+
+        controller.show(section: .general, sender: nil)
+        waitForLayout()
+
+        let window = try XCTUnwrap(controller.window)
+        window.makeKeyAndOrderFrontForHostedTesting(nil)
+        XCTAssertTrue(window.isVisible)
+
+        let shiftedEvent = try XCTUnwrap(
+            settingsKeyEvent("w", keyCode: UInt16(kVK_ANSI_W), modifiers: [.command, .shift])
+        )
+        XCTAssertFalse(window.performKeyEquivalent(with: shiftedEvent))
+        XCTAssertTrue(window.isVisible)
+
+        let commandW = try XCTUnwrap(
+            settingsKeyEvent("w", keyCode: UInt16(kVK_ANSI_W), modifiers: [.command])
+        )
+
+        XCTAssertTrue(window.performKeyEquivalent(with: commandW))
+        XCTAssertFalse(window.isVisible)
+
+        window.makeKeyAndOrderFrontForHostedTesting(nil)
+        let capsLockCommandW = try XCTUnwrap(
+            settingsKeyEvent("w", keyCode: UInt16(kVK_ANSI_W), modifiers: [.command, .capsLock])
+        )
+
+        XCTAssertTrue(window.performKeyEquivalent(with: capsLockCommandW))
+        XCTAssertFalse(window.isVisible)
+    }
+
     func test_settings_window_has_back_forward_navigation_control() throws {
         let store = AppConfigStore(
             fileURL: AppConfigStore.temporaryFileURL(prefix: "ZenttyTests.SettingsWindow")
@@ -1280,10 +1316,11 @@ final class SettingsWindowControllerTests: XCTestCase {
         shortcutsController.beginRecordingSelectedCommandForTesting()
         shortcutsController.clickPreviewKeyForTesting(UInt16(kVK_Control))
         shortcutsController.clickPreviewKeyForTesting(UInt16(kVK_Option))
+        shortcutsController.clickPreviewKeyForTesting(UInt16(kVK_Shift))
         shortcutsController.clickPreviewKeyForTesting(UInt16(kVK_Command))
         shortcutsController.clickPreviewKeyForTesting(UInt16(kVK_UpArrow))
 
-        XCTAssertEqual(shortcutsController.displayString(for: .closeWindow), "⌃⌥⌘↑")
+        XCTAssertEqual(shortcutsController.displayString(for: .closeWindow), "⌃⌥⇧⌘↑")
         XCTAssertEqual(shortcutsController.previewPrimaryHighlightedKeyCodeForTesting, UInt16(kVK_UpArrow))
 
         shortcutsController.selectCommandForTesting(.reloadConfig)
@@ -2185,6 +2222,18 @@ private extension SettingsWindowControllerTests {
         _ character: String,
         modifiers: NSEvent.ModifierFlags
     ) -> NSEvent? {
+        settingsKeyEvent(
+            character,
+            keyCode: character == "[" ? UInt16(kVK_ANSI_LeftBracket) : UInt16(kVK_ANSI_RightBracket),
+            modifiers: modifiers
+        )
+    }
+
+    func settingsKeyEvent(
+        _ character: String,
+        keyCode: UInt16,
+        modifiers: NSEvent.ModifierFlags
+    ) -> NSEvent? {
         NSEvent.keyEvent(
             with: .keyDown,
             location: .zero,
@@ -2195,7 +2244,7 @@ private extension SettingsWindowControllerTests {
             characters: character,
             charactersIgnoringModifiers: character,
             isARepeat: false,
-            keyCode: character == "[" ? 33 : 30
+            keyCode: keyCode
         )
     }
 }

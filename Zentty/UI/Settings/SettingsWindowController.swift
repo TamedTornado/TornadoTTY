@@ -767,13 +767,23 @@ final class SettingsViewController: NSSplitViewController, SettingsSidebarViewCo
     }
 }
 
-/// Settings window. Intercepts the back/forward key equivalents (⌘[ / ⌘])
-/// before the responder chain, so the shortcuts work regardless of which
-/// control holds first responder.
+/// Settings window. Intercepts window-scoped key equivalents before the
+/// responder chain, so closing and back/forward navigation work regardless
+/// of which control holds first responder.
 private final class SettingsWindow: NSWindow {
     var keyEquivalentHandler: ((NSEvent) -> Bool)?
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        let modifiers = event.modifierFlags
+            .intersection(.deviceIndependentFlagsMask)
+            .subtracting(.capsLock)
+        if event.type == .keyDown,
+           modifiers == .command,
+           event.charactersIgnoringModifiers?.lowercased() == "w" {
+            performClose(nil)
+            return true
+        }
+
         if keyEquivalentHandler?(event) == true {
             return true
         }

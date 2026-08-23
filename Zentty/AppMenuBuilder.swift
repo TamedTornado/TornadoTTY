@@ -175,7 +175,23 @@ enum AppMenuBuilder {
     }
 
     private static func makeViewMenuItem(shortcutManager: ShortcutManager) -> NSMenuItem {
-        makeSectionMenuItem(section: .view, shortcutManager: shortcutManager)
+        let menuItem = makeSectionMenuItem(section: .view, shortcutManager: shortcutManager)
+        guard let menu = menuItem.submenu else {
+            return menuItem
+        }
+
+        menu.addItem(makeSeparatorItem())
+        let fullScreenItem = makeStandardMenuActionItem(
+            title: "Enter Full Screen",
+            action: #selector(AppDelegate.toggleMainWindowFullScreen(_:)),
+            keyEquivalent: "f",
+            modifierMask: [.command, .control]
+        )
+        // AppKit hides this item when it synthesizes the native full-screen
+        // menu entry. Keep the alternate ⌃⌘F equivalent active while hidden.
+        fullScreenItem.allowsKeyEquivalentWhenHidden = true
+        menu.addItem(fullScreenItem)
+        return menuItem
     }
 
     private static func makeWindowMenuItem(shortcutManager: ShortcutManager) -> NSMenuItem {
@@ -246,10 +262,11 @@ enum AppMenuBuilder {
     private static func makeStandardMenuActionItem(
         title: String,
         action: Selector,
-        keyEquivalent: String
+        keyEquivalent: String,
+        modifierMask: NSEvent.ModifierFlags? = nil
     ) -> NSMenuItem {
         let item = NSMenuItem(title: title, action: action, keyEquivalent: keyEquivalent)
-        item.keyEquivalentModifierMask = keyEquivalent.isEmpty ? [] : [.command]
+        item.keyEquivalentModifierMask = modifierMask ?? (keyEquivalent.isEmpty ? [] : [.command])
         return item
     }
 
@@ -377,7 +394,13 @@ enum AppMenuBuilder {
             hasRequiredStructure(expectedEntries(for: .navigation), in: navigationMenu)
         let hasViewItems =
             viewMenu?.title == AppMenuSection.view.rawValue &&
-            hasRequiredStructure(expectedEntries(for: .view), in: viewMenu)
+            hasRequiredStructure(expectedEntries(for: .view), in: viewMenu) &&
+            viewMenu?.items.contains(where: {
+                $0.action == #selector(AppDelegate.toggleMainWindowFullScreen(_:)) &&
+                $0.keyEquivalent == "f" &&
+                $0.keyEquivalentModifierMask == [.command, .control] &&
+                $0.allowsKeyEquivalentWhenHidden
+            }) == true
         let hasWindowItems =
             windowMenu?.title == "Window" &&
             hasRequiredItems([

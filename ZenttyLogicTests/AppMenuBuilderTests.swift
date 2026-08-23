@@ -33,6 +33,24 @@ final class AppMenuBuilderTests: XCTestCase {
         XCTAssertFalse(AppMenuBuilder.hasRequiredMenuItems(in: menuWithoutMarkdown, appName: "Zentty", config: config))
     }
 
+    func test_main_menu_exposes_native_full_screen_for_main_windows() throws {
+        let mainMenu = AppMenuBuilder.makeMainMenu(appName: "Zentty")
+        let fullScreenItem = try XCTUnwrap(
+            menuItem(for: #selector(AppDelegate.toggleMainWindowFullScreen(_:)), in: mainMenu)
+        )
+
+        XCTAssertEqual(fullScreenItem.title, "Enter Full Screen")
+        XCTAssertNil(fullScreenItem.target)
+        XCTAssertEqual(fullScreenItem.keyEquivalent, "f")
+        XCTAssertEqual(fullScreenItem.keyEquivalentModifierMask, [.command, .control])
+        XCTAssertTrue(fullScreenItem.allowsKeyEquivalentWhenHidden)
+        XCTAssertTrue(AppMenuBuilder.hasRequiredMenuItems(in: mainMenu, appName: "Zentty"))
+
+        fullScreenItem.menu?.removeItem(fullScreenItem)
+
+        XCTAssertFalse(AppMenuBuilder.hasRequiredMenuItems(in: mainMenu, appName: "Zentty"))
+    }
+
     private func menuItem(for action: Selector, in mainMenu: NSMenu) -> NSMenuItem? {
         for rootItem in mainMenu.items {
             if let found = menuItem(for: action, in: rootItem.submenu) {
