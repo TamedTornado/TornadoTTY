@@ -21,6 +21,8 @@ product_pid=""
 
 # shellcheck source=linux/tests/lib/product-bundle
 source "${repo_root}/linux/tests/lib/product-bundle"
+# shellcheck source=linux/tests/lib/visual-evidence
+source "${repo_root}/linux/tests/lib/visual-evidence"
 forge_pid=""
 backend="${GDK_BACKEND:-}"
 
@@ -54,7 +56,7 @@ case "${backend}" in
         ;;
     *) fail "GDK_BACKEND must be x11 or wayland" ;;
 esac
-for dependency in curl git grep head mktemp readelf sed seq sleep; do
+for dependency in curl git grep head mktemp readelf sed seq sleep import identify compare convert jq; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
 [[ -x "${product}" ]] || fail "staged product is missing: ${product}"
@@ -66,6 +68,41 @@ bundle_lib="${ZENTTY_PRODUCT_BUNDLE_LIB}"
 
 mkdir -p "${project}/nested/deep" "${state_directory}" "${fixture_bin}" \
     "${fixture_data}/applications"
+mkdir -p "${XDG_CONFIG_HOME}/zentty" "${XDG_CONFIG_HOME}/ghostty" \
+    "${XDG_CONFIG_HOME}/gtk-4.0"
+if [[ "${backend}" == wayland ]]; then
+    cat >"${XDG_CONFIG_HOME}/zentty/config.toml" <<'EOF'
+[appearance]
+theme_mode = "light"
+EOF
+else
+    cat >"${XDG_CONFIG_HOME}/zentty/config.toml" <<'EOF'
+[appearance]
+theme_mode = "dark"
+EOF
+fi
+cat >"${XDG_CONFIG_HOME}/ghostty/config" <<'EOF'
+resize-overlay = never
+cursor-opacity = 0
+EOF
+cat >"${XDG_CONFIG_HOME}/gtk-4.0/settings.ini" <<'EOF'
+[Settings]
+gtk-enable-animations=false
+EOF
+review_shell="${run_root}/review-shell"
+cat >"${review_shell}" <<'EOF'
+#!/usr/bin/env bash
+set -u
+reset_terminal() {
+    printf '\033]2;Review context\a\033[2J\033[H\033[?25l'
+}
+reset_terminal
+while IFS= read -r command; do
+    eval "${command}"
+    reset_terminal
+done
+EOF
+chmod 700 "${review_shell}"
 git -C "${project}" init -b feature/review-context >/dev/null
 git -C "${project}" config user.email test@zentty.invalid
 git -C "${project}" config user.name 'Zentty Integration'
@@ -122,10 +159,10 @@ chmod 700 "${fixture_bin}/gh" "${fixture_bin}/zentty-open-receipt"
         ZENTTY_FORGE_BODY="${forge_body}" \
         ZENTTY_GH_RECEIPT="${gh_receipt}" \
         ZENTTY_OPEN_RECEIPT="${open_receipt}" \
-        GDK_SCALE=1 \
-        GDK_DPI_SCALE=1 \
+        GSK_RENDERER=cairo \
         LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
-        "${product}" --state-directory "${state_directory}" --no-session-restore
+        "${product}" --command "${review_shell}" \
+        --state-directory "${state_directory}" --no-session-restore
 ) >"${log}" 2>&1 &
 product_pid=$!
 
@@ -148,6 +185,38 @@ grep -Fq 'reference=feature/review-context dirty=true pr=42 refresh=fresh' "${lo
 grep -Fxq 'ok' "${forge_body}" || fail "gh boundary did not call the controlled HTTP forge"
 grep -Fq 'pr view feature/review-context --repo acme/rocket --json' "${gh_receipt}" ||
     fail "product did not invoke the source-compatible gh command"
+grep -Fq 'terminal-ready-pane=pane-1' "${log}" ||
+    fail "real review-context Ghostty surface was not ready"
+grep -Fq 'title-pane=pane-1 value=Review context' "${log}" ||
+    fail "review visual terminal did not settle deterministic content"
+
+capture_review_visual() {
+    local scenario_id image
+    if [[ "${backend}" == x11 ]]; then
+        scenario_id=review-dark-x11
+        image="${run_root}/${scenario_id}.png"
+        xdotool windowsize --sync "${window_id}" 1400 800
+        for _ in $(seq 1 100); do
+            grep -Fq 'zentty-linux: window-size=1400x800' "${log}" && break
+            sleep 0.05
+        done
+        grep -Fq 'zentty-linux: window-size=1400x800' "${log}" ||
+            fail "review X11 window did not reach controlled geometry"
+        xdotool mousemove --sync 2000 1500
+        sleep 0.3
+        import -silent -window "${window_id}" "${image}"
+    else
+        scenario_id=review-light-wayland
+        image="${run_root}/${scenario_id}.png"
+        outer="${ZENTTY_NESTED_WAYLAND_OUTER_X11_WINDOW:?}"
+        xdotool mousemove --sync --window "${outer}" 1 1
+        sleep 0.3
+        import -silent -window "${outer}" "${image}"
+    fi
+    zentty_visual_publish "${scenario_id}" linux/tests/rust-git-review-context "${image}" -
+}
+
+capture_review_visual
 
 open_palette() {
     if [[ "${backend}" == x11 ]]; then

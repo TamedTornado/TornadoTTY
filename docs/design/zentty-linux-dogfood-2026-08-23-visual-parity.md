@@ -250,3 +250,29 @@ Issue: GH-84
   `scenario_status=PASS` and `capture_result=PASS`; the obsolete multi-window
   terminal mask was removed because both real PTYs are deterministic and
   fully visible.
+
+## Git and pull-request chrome capture
+
+- Review visuals remain owned by the existing `rust-git-review-context`
+  actor, which already proves a real Git repository, controlled `gh`/HTTP
+  forge boundary, PR metadata, refresh paths, and safe URL opening. Capture is
+  inserted only after those initial real-context assertions; no review-state
+  fixture bypasses the product resolver.
+- The actor now uses an interactive real PTY child that clears its terminal,
+  fixes its title, and hides its cursor after commands. Later Git and agent IPC
+  commands still execute inside that PTY. This permits unmasked review
+  screenshots rather than extending the Peek-specific terminal mask to cover
+  a full shell.
+- Dark X11 is captured from a physically resized 1400x800 native window.
+  Light Wayland uses the actor's controlled compositor output and a persisted
+  `theme_mode = "light"`; it does not infer light mode from an ambient desktop.
+- Two fresh runs on each backend matched at AE=0 while repeating the complete
+  Git/gh/HTTP-forge, refresh, agent-completion, and safe-open journey. The
+  reviewed light receipt intentionally shows a light native titlebar and
+  terminal palette with Zentty's dark product chrome; that is the current
+  persisted light-mode projection, not an ambient-theme accident.
+- Promoting `review-dark-x11` exposed a stale negative-test fixture: the
+  missing-baseline test tried to promote that specific scenario, which now had
+  a real reviewed baseline and therefore correctly passed. The negative test
+  now promotes the still-pending `remote-dark-x11` scenario, preserving the
+  intended missing-baseline failure without deleting real evidence.
