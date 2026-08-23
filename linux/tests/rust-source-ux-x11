@@ -204,6 +204,27 @@ capture_unmasked_visual_scenario() {
     zentty_visual_publish "${scenario_id}" linux/tests/rust-source-ux-x11 "${image}" -
 }
 
+apply_theme_mode_from_palette() {
+    local title="$1"
+    local mode="$2"
+    local persisted_before
+    persisted_before="$(grep -Fxc "zentty-linux: action=theme-mode result=persisted mode=${mode}" "${log}" || true)"
+    xdotool key --window "${window_id}" ctrl+shift+p
+    xdotool type --window "${window_id}" --delay 10 "${title}"
+    for _ in $(seq 1 100); do
+        grep -Fxq "zentty-linux: command-palette=query value=\"${title}\" results=1" "${log}" && break
+        sleep 0.05
+    done
+    grep -Fxq "zentty-linux: command-palette=query value=\"${title}\" results=1" "${log}" ||
+        fail "${title} did not resolve uniquely through the real command palette"
+    xdotool key --window "${window_id}" Return
+    for _ in $(seq 1 100); do
+        (( $(grep -Fxc "zentty-linux: action=theme-mode result=persisted mode=${mode}" "${log}" || true) > persisted_before )) && return 0
+        sleep 0.05
+    done
+    fail "${title} did not persist ${mode} mode"
+}
+
 accept_latest_pane_confirmation() {
     local before="$1"
     local accepted_before
@@ -764,6 +785,30 @@ xdotool windowsize --sync "${window_id}" 640 600
 capture_unmasked_visual_scenario narrow-dark-x11
 xdotool windowsize --sync "${window_id}" 1600 900
 capture_unmasked_visual_scenario wide-dark-x11
+if [[ "${ZENTTY_SOURCE_UX_WIDE_LIGHT_ONLY:-false}" == true ]]; then
+    apply_theme_mode_from_palette 'Use Light Theme' light
+    capture_unmasked_visual_scenario wide-light-x11
+    confirmation_count="$(grep -Fc 'zentty-linux: confirmation shown title="Quit Zentty?"' "${log}" || true)"
+    zentty_product_close_window x11
+    for _ in $(seq 1 100); do
+        (( $(grep -Fc 'zentty-linux: confirmation shown title="Quit Zentty?"' "${log}" || true) > confirmation_count )) && break
+        sleep 0.05
+    done
+    (( $(grep -Fc 'zentty-linux: confirmation shown title="Quit Zentty?"' "${log}" || true) > confirmation_count )) ||
+        fail "wide light evidence profile did not present its real quit confirmation"
+    xdotool key Return
+    set +e
+    timeout --foreground --kill-after=2s 7s tail --pid="${product_pid}" -f /dev/null
+    wait_status=$?
+    wait "${product_pid}"
+    product_status=$?
+    set -e
+    product_pid=""
+    (( wait_status == 0 && product_status == 0 )) ||
+        fail "wide light evidence profile did not close cleanly"
+    echo 'Rust source UX wide light evidence passed: x11, real-palette-theme=light, defect-capture=published'
+    exit 0
+fi
 xdotool windowsize --sync "${window_id}" 1200 700
 sleep 0.15
 

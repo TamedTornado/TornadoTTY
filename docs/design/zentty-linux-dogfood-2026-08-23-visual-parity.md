@@ -307,3 +307,43 @@ Issue: GH-84
   AE=0 while completing the real physical remote-file-drop cell. Both remote
   baselines are unmasked. The missing-baseline negative fixture advances to
   the still-pending sidebar-overlay scenario.
+
+## Wide light-mode evidence
+
+- The existing source-UX actor now switches appearance through the real
+  command palette, captures the same live two-pane 1600x900 topology in light
+  mode, and restores dark mode before continuing its established journey. It
+  does not inject a theme model or add another actor.
+- The wide-layout defect tracked by GH-87 is theme-independent: the two live
+  pane columns retain their prior widths and leave a large unused region on
+  the right. The light scenario is therefore an explicit `FAIL`, not a passing
+  baseline or an evidence-pending omission. Its unmasked receipt must still
+  prove that the expected product state was captured successfully.
+- The first integrated attempt switched back to dark mode and continued the
+  long source-UX journey. Although the mode persistence succeeded, the live
+  Ghostty panes did not recover their prior two-column geometry/palette; the
+  later `pane-controls-hidden-x11` baseline rejected 622,690 changed pixels.
+  That failed run was not accepted. Light evidence now uses an explicit early-
+  exit profile of the same real actor and closes through the native window
+  protocol after capture, while the authoritative full journey retains its
+  previously qualified dark-state sequence. This records, rather than hides,
+  the appearance-switch/layout interaction under GH-87.
+- The first focused profile published the expected `FAIL`/capture-`PASS`
+  receipt, then failed because this host's xdotool `windowclose` command does
+  not support the `--sync` option accepted by several other xdotool commands.
+  The unsupported option was removed; bounded PID waiting remains the actual
+  clean-shutdown assertion. The failed actor invocation is not reported as a
+  passing journey.
+- A native X11 `windowclose` retry destroyed Ghostty's drawable before its
+  renderer lifecycle completed and correctly failed with `BadDrawable` rather
+  than laundering the evidence-only run as clean. The profile now uses the
+  product's ordinary Ctrl+Q route from the shared real-input helper, asserts
+  the configured `Quit Zentty?` confirmation, accepts it physically, and then
+  requires a zero-status process exit.
+- The corrected focused profile passed and published an unmasked 1600x900
+  receipt with `scenario_status=FAIL` and `capture_result=PASS`. Visual review
+  confirms the real two-pane light surface stops at its retained column width
+  and leaves the remaining right side unused. The unchanged complete dark X11
+  source-UX journey then passed all existing baseline gates and lifecycle
+  assertions, proving the focused profile did not weaken the authoritative
+  actor path.
