@@ -1,14 +1,31 @@
 #!/usr/bin/env zsh
 set -euo pipefail
 
-display_name="${ZENTTY_TEST_SCREEN_NAME:-ZenttyTests}"
+script_dir="${0:A:h}"
+display_state_helper="$script_dir/virtual-display-state.swift"
+
+canonical_display_name() {
+  local requested_name="$1"
+
+  # shellcheck disable=SC2076 # zsh treats a quoted =~ operand as a regex.
+  if [[ "$requested_name" =~ '^ZenttyTests( \([0-9]+\)|\+%28[0-9]+%29|%20%28[0-9]+%29)?$' ]]; then
+    print -r -- "ZenttyTests"
+  else
+    print -r -- "$requested_name"
+  fi
+}
+
+requested_display_name="${ZENTTY_TEST_SCREEN_NAME:-ZenttyTests}"
+display_name="$(canonical_display_name "$requested_display_name")"
 provider="${ZENTTY_TEST_DISPLAY_PROVIDER:-auto}"
 display_name_slug="${display_name//[^A-Za-z0-9_.-]/_}"
-display_serial="${ZENTTY_TEST_DISPLAY_SERIAL:-zentty-test-display-${display_name_slug}}"
-display_lock_file="${TMPDIR:-/tmp}/zentty-test-display-${display_name_slug}.lock"
-display_lease_dir="${TMPDIR:-/tmp}/zentty-test-display-${display_name_slug}.leases"
+display_state_dir="${ZENTTY_TEST_DISPLAY_STATE_DIR:-/tmp}"
+display_lock_file="${display_state_dir}/zentty-test-display-${display_name_slug}.lock"
+display_lease_dir="${display_state_dir}/zentty-test-display-${display_name_slug}.leases"
 display_lease_token="${$}.${RANDOM}"
 active_display_name="$display_name"
+active_display_tag_id=""
+original_main_display_uuid=""
 display_lock_fd=""
 display_lease_registered=0
 display_cleanup_ran=0
@@ -35,7 +52,7 @@ betterdisplay_http_available() {
   curl -fsS --max-time 2 "$(betterdisplay_http_base)/help" >/dev/null 2>&1
 }
 
-betterdisplay_http_request() {
+betterdisplay_http_call() {
   local operation="$1"
   shift
 
@@ -47,7 +64,11 @@ betterdisplay_http_request() {
     curl_args+=(--data-urlencode "$parameter")
   done
 
-  curl "${curl_args[@]}" >/dev/null
+  curl "${curl_args[@]}"
+}
+
+betterdisplay_http_request() {
+  betterdisplay_http_call "$@" >/dev/null
 }
 
 resolve_betterdisplay_transport() {
@@ -84,6 +105,16 @@ betterdisplay_request() {
   esac
 }
 
+betterdisplay_query() {
+  resolve_betterdisplay_transport || return 1
+
+  case "$betterdisplay_transport" in
+    command) "$betterdisplay_command_path" "$@" ;;
+    http) betterdisplay_http_call "$@" ;;
+    *) return 1 ;;
+  esac
+}
+
 retry_betterdisplay_request_with_command_transport() {
   [[ "$betterdisplay_transport" == "http" ]] || return 1
 
@@ -106,41 +137,153 @@ print_betterdisplay_integration_help() {
   print -u2 "Tests may also provide ZENTTY_BETTERDISPLAY_COMMAND to override the BetterDisplay command."
 }
 
-matched_screen_name() {
-  if [[ -n "${ZENTTY_TEST_SCREEN_EXISTS_COMMAND:-}" ]]; then
-    "$ZENTTY_TEST_SCREEN_EXISTS_COMMAND" "$display_name" >/dev/null 2>&1 || return 1
-    print -r -- "$display_name"
+capture_main_display_identity() {
+  local identity display_id
+  if [[ -n "${ZENTTY_TEST_MAIN_DISPLAY_COMMAND:-}" ]]; then
+    display_id="$("$ZENTTY_TEST_MAIN_DISPLAY_COMMAND" "$display_name")"
+    original_main_display_uuid="${ZENTTY_TEST_MAIN_DISPLAY_UUID:-TEST-MAIN-UUID}"
+  else
+    identity="$(/usr/bin/swift "$display_state_helper" main-display-identity "$display_name")" || return 1
+    original_main_display_uuid="${identity%%$'\t'*}"
+    display_id="${identity##*$'\t'}"
+  fi
+
+  # shellcheck disable=SC2076 # zsh treats a quoted =~ operand as a regex.
+  if [[ ! "$display_id" =~ '^[1-9][0-9]*$' ]]; then
+    print -u2 "error: could not capture the current main display before connecting '${display_name}'"
+    return 1
+  fi
+
+  [[ -n "$original_main_display_uuid" ]] || return 1
+}
+
+resolve_original_main_display_id() {
+  if [[ -n "${ZENTTY_TEST_RESOLVE_DISPLAY_ID_COMMAND:-}" ]]; then
+    "$ZENTTY_TEST_RESOLVE_DISPLAY_ID_COMMAND" "$original_main_display_uuid"
+  else
+    /usr/bin/swift "$display_state_helper" display-id-for-uuid "$original_main_display_uuid"
+  fi
+}
+
+raw_main_display_id() {
+  if [[ -n "${ZENTTY_TEST_RAW_MAIN_DISPLAY_COMMAND:-}" ]]; then
+    "$ZENTTY_TEST_RAW_MAIN_DISPLAY_COMMAND"
+  else
+    /usr/bin/swift "$display_state_helper" raw-main-display-id
+  fi
+}
+
+restore_original_main_display() {
+  [[ -n "$original_main_display_uuid" ]] || return 0
+
+  local attempt current_main expected_main
+  expected_main="$(resolve_original_main_display_id)" || return 1
+  current_main="$(raw_main_display_id)" || return 1
+  if [[ "$current_main" == "$expected_main" ]]; then
+    return 0
+  fi
+  if [[ "$resolved_provider" != "betterdisplay" ]]; then
+    print -u2 "error: provider '${resolved_provider}' cannot restore display ${original_main_display_uuid} as main"
+    return 1
+  fi
+  if ! required_betterdisplay_request set -UUID="$original_main_display_uuid" -main=on >/dev/null 2>&1; then
+    print -u2 "error: could not restore display ${original_main_display_uuid} as the main display during cleanup"
+    return 1
+  fi
+  for attempt in {1..20}; do
+    expected_main="$(resolve_original_main_display_id)" || return 1
+    current_main="$(raw_main_display_id)" || return 1
+    [[ "$current_main" == "$expected_main" ]] && return 0
+    sleep 0.1
+  done
+  print -u2 "error: display ${original_main_display_uuid} did not remain the main display during cleanup"
+  return 1
+}
+
+display_topology_status() {
+  local test_display_name="$1"
+  local expected_main_display_id="$2"
+
+  if [[ -n "${ZENTTY_TEST_TOPOLOGY_STATUS_COMMAND:-}" ]]; then
+    "$ZENTTY_TEST_TOPOLOGY_STATUS_COMMAND" "$test_display_name" "$expected_main_display_id"
     return
   fi
 
-  ZENTTY_SCREEN_LOOKUP_NAME="$display_name" /usr/bin/swift -e '
-import AppKit
-import Foundation
-
-let screenName = ProcessInfo.processInfo.environment["ZENTTY_SCREEN_LOOKUP_NAME"] ?? ""
-
-func matchesRequestedScreenName(_ localizedName: String, requestedName: String) -> Bool {
-    if localizedName == requestedName {
-        return true
-    }
-
-    let suffixPrefix = requestedName + " ("
-    guard localizedName.hasPrefix(suffixPrefix), localizedName.hasSuffix(")") else {
-        return false
-    }
-
-    let suffixStart = localizedName.index(localizedName.startIndex, offsetBy: suffixPrefix.count)
-    let suffix = localizedName[suffixStart..<localizedName.index(before: localizedName.endIndex)]
-    return Int(suffix) != nil
+  /usr/bin/swift "$display_state_helper" topology-status "$test_display_name" "$expected_main_display_id"
 }
 
-if let screen = NSScreen.screens.first(where: { matchesRequestedScreenName($0.localizedName, requestedName: screenName) }) {
-    print(screen.localizedName)
-    exit(0)
+verify_display_topology() {
+  local expected_main_display_id topology_state
+
+  expected_main_display_id="$(resolve_original_main_display_id)" || return 1
+  topology_state="$(display_topology_status "$active_display_name" "$expected_main_display_id")"
+  case "$topology_state" in
+    ok) return 0 ;;
+    mirrored)
+      print -u2 "error: virtual display '${display_name}' is mirrored; refusing to run tests that would change another display's resolution"
+      ;;
+    main-changed)
+      if [[ "$resolved_provider" != "betterdisplay" ]]; then
+        print -u2 "error: virtual display '${display_name}' became the main display and provider '${resolved_provider}' cannot restore it automatically"
+        return 1
+      fi
+      if ! required_betterdisplay_request set -UUID="$original_main_display_uuid" -main=on >/dev/null 2>&1; then
+        print -u2 "error: could not restore display ${original_main_display_uuid} as the main display"
+        return 1
+      fi
+
+      local attempt
+      for attempt in {1..20}; do
+        expected_main_display_id="$(resolve_original_main_display_id)" || return 1
+        topology_state="$(display_topology_status "$active_display_name" "$expected_main_display_id")"
+        if [[ "$topology_state" == "ok" ]]; then
+          return 0
+        fi
+        if [[ "$topology_state" == "mirrored" ]]; then
+          print -u2 "error: virtual display '${display_name}' became mirrored while restoring the main display"
+          return 1
+        fi
+        sleep 0.1
+      done
+
+      print -u2 "error: display ${expected_main_display_id} did not return as the main display"
+      return 1
+      ;;
+    missing)
+      print -u2 "error: virtual display '${display_name}' is missing during topology verification"
+      ;;
+    *)
+      print -u2 "error: could not verify the display topology for '${display_name}'"
+      ;;
+  esac
+  return 1
 }
 
-exit(1)
-  ' 2>/dev/null
+registered_betterdisplay_plan() {
+  local registered_identifiers
+
+  if [[ -n "${ZENTTY_TEST_REGISTERED_SCREEN_COMMAND:-}" ]]; then
+    "$ZENTTY_TEST_REGISTERED_SCREEN_COMMAND" "$display_name"
+    return
+  fi
+
+  if ! registered_identifiers="$(betterdisplay_query get -type=VirtualScreen -identifiers 2>/dev/null)"; then
+    return 2
+  fi
+
+  ZENTTY_REGISTERED_SCREEN_IDENTIFIERS="$registered_identifiers" \
+    /usr/bin/swift "$display_state_helper" registered-screen-plan "$display_name"
+}
+
+matched_screen_name() {
+  if [[ -n "${ZENTTY_TEST_SCREEN_EXISTS_COMMAND:-}" ]]; then
+    local matched_name
+    matched_name="$("$ZENTTY_TEST_SCREEN_EXISTS_COMMAND" "$display_name" 2>/dev/null)" || return 1
+    print -r -- "${matched_name:-$display_name}"
+    return
+  fi
+
+  /usr/bin/swift "$display_state_helper" matched-screen-name "$display_name" 2>/dev/null
 }
 
 screen_exists() {
@@ -202,6 +345,7 @@ has_active_display_leases() {
 
 wait_for_screen() {
   local attempt
+  # shellcheck disable=SC2034 # zsh needs a loop variable even though its value is unused.
   for attempt in {1..30}; do
     if screen_exists; then
       return 0
@@ -239,9 +383,71 @@ resolve_provider() {
 }
 
 connect_existing_betterdisplay() {
-  betterdisplay_request set -serial="$display_serial" -connected=on >/dev/null 2>&1 && return 0
-  betterdisplay_request set -name="$display_name" -virtualScreenSerial="$display_serial" -connected=on >/dev/null 2>&1 && return 0
-  return 1
+  local tag_id="$1"
+  betterdisplay_request set -tagID="$tag_id" -connected=on >/dev/null 2>&1
+}
+
+resolve_registered_betterdisplay() {
+  local registration_plan registration_status line kind record_fields tag_id display_id
+  local canonical_tag_id=""
+  local -a legacy_records
+
+  if registration_plan="$(registered_betterdisplay_plan)"; then
+    # shellcheck disable=SC2066,SC2296 # ${(@f)...} is zsh newline splitting.
+    for line in "${(@f)registration_plan}"; do
+      kind="${line%%:*}"
+      record_fields="${line#*:}"
+      tag_id="${record_fields%%:*}"
+      display_id="${line##*:}"
+      case "$kind" in
+        canonical) canonical_tag_id="$tag_id" ;;
+        legacy) legacy_records+=("$tag_id:$display_id") ;;
+        *)
+          print -u2 "error: invalid BetterDisplay registration record '${line}'"
+          return 2
+          ;;
+      esac
+    done
+  else
+    registration_status=$?
+    return "$registration_status"
+  fi
+
+  if [[ -n "$canonical_tag_id" ]]; then
+    local legacy_record legacy_tag_id legacy_display_id
+    for legacy_record in "${legacy_records[@]}"; do
+      legacy_tag_id="${legacy_record%%:*}"
+      legacy_display_id="${legacy_record##*:}"
+      if [[ "$legacy_display_id" != "0" ]]; then
+        print -u2 "error: legacy Zentty test display tagID ${legacy_tag_id} is still connected; refusing to alter an active duplicate"
+        return 2
+      fi
+      if ! required_betterdisplay_request discard -tagID="$legacy_tag_id" >/dev/null 2>&1; then
+        print -u2 "error: could not discard disconnected legacy Zentty test display tagID ${legacy_tag_id}"
+        return 2
+      fi
+    done
+    active_display_tag_id="$canonical_tag_id"
+    return 0
+  fi
+
+  if [[ "${#legacy_records[@]}" == "1" ]]; then
+    tag_id="${legacy_records[1]%%:*}"
+    display_id="${legacy_records[1]##*:}"
+    if [[ "$display_id" != "0" ]]; then
+      print -u2 "error: legacy Zentty test display tagID ${tag_id} is still connected; disconnect it before retrying"
+      return 2
+    fi
+    if ! required_betterdisplay_request set -tagID="$tag_id" -virtualScreenName="$display_name" >/dev/null 2>&1; then
+      print -u2 "error: could not rename legacy Zentty test display tagID ${tag_id} to '${display_name}'"
+      return 2
+    fi
+    active_display_tag_id="$tag_id"
+    return 0
+  fi
+
+  print -u2 "error: multiple legacy Zentty test displays are registered; refusing to guess which one to reuse"
+  return 2
 }
 
 ensure_betterdisplay() {
@@ -250,22 +456,37 @@ ensure_betterdisplay() {
     return 1
   fi
 
-  if screen_exists; then
-    active_display_name="$(matched_screen_name || print -r -- "$display_name")"
-    print -r -- "Using existing display '${active_display_name}'. It will be removed by the last test run using it."
-    betterdisplay_request set -name="$active_display_name" -virtualScreenSerial="$display_serial" >/dev/null 2>&1 || true
-    return 0
-  fi
+  local registration_status
+  if resolve_registered_betterdisplay; then
+    if screen_exists; then
+      active_display_name="$(matched_screen_name || print -r -- "$display_name")"
+      print -r -- "Using existing display '${active_display_name}'. It will be disconnected by the last test run using it."
+      return 0
+    fi
 
-  if connect_existing_betterdisplay; then
+    if ! connect_existing_betterdisplay "$active_display_tag_id"; then
+      print -u2 "error: registered virtual display tagID ${active_display_tag_id} could not be connected; refusing to create a duplicate"
+      return 1
+    fi
     wait_for_screen
     active_display_name="$(matched_screen_name || print -r -- "$display_name")"
-    print -r -- "Connected existing BetterDisplay virtual display '${active_display_name}'. It will be removed by the last test run using it."
+    print -r -- "Connected existing BetterDisplay virtual display '${active_display_name}'. It will be disconnected by the last test run using it."
     return 0
+  else
+    registration_status=$?
   fi
 
-  required_betterdisplay_request create -type=VirtualScreen -virtualScreenName="$display_name" -virtualScreenSerial="$display_serial" -aspectWidth=16 -aspectHeight=10 -virtualScreenHiDPI=on
-  required_betterdisplay_request set -name="$display_name" -virtualScreenSerial="$display_serial" -connected=on
+  if [[ "$registration_status" != "1" ]]; then
+    print -u2 "error: could not safely resolve the registered BetterDisplay '${display_name}' screen; refusing to create a duplicate"
+    return 1
+  fi
+
+  required_betterdisplay_request create -type=VirtualScreen -virtualScreenName="$display_name" -aspectWidth=16 -aspectHeight=10 -virtualScreenHiDPI=on
+  if ! resolve_registered_betterdisplay || [[ -z "$active_display_tag_id" ]]; then
+    print -u2 "error: BetterDisplay created '${display_name}' but did not return its stable tagID"
+    return 1
+  fi
+  required_betterdisplay_request set -tagID="$active_display_tag_id" -connected=on
   wait_for_screen
   active_display_name="$(matched_screen_name || print -r -- "$display_name")"
 }
@@ -278,12 +499,43 @@ cleanup_betterdisplay() {
   # discard-per-run leaks a new ghost display into their config every run; it
   # also lets concurrent agents stack duplicate "Name (1)" displays. Keeping the
   # screen registered preserves its UUID, so the next run reconnects the same
-  # screen (by name, via connect_existing_betterdisplay) and Thaw keeps one entry.
-  # BetterDisplay assigns its own serial, so -name is the selector that matches;
-  # -serial is kept only as a harmless last-ditch fallback.
-  betterdisplay_request set -name="$active_display_name" -connected=off >/dev/null 2>&1 || \
-    betterdisplay_request set -name="$display_name" -connected=off >/dev/null 2>&1 || \
-    betterdisplay_request set -serial="$display_serial" -connected=off >/dev/null 2>&1 || true
+  # screen (by stable tagID) and Thaw keeps one entry. BetterDisplay can briefly
+  # reconnect a screen during layout restoration, so verify that disconnect held.
+  [[ -n "$active_display_tag_id" ]] || return 0
+
+  local attempt registration_plan line record_fields tag_id display_id
+  # shellcheck disable=SC2034 # zsh needs a loop variable even though its value is unused.
+  for attempt in {1..5}; do
+    betterdisplay_request set -tagID="$active_display_tag_id" -connected=off >/dev/null 2>&1 || true
+    sleep 0.2
+
+    display_id=""
+    # shellcheck disable=SC2034 # Consumed by zsh's ${(@f)...} expansion below.
+    if registration_plan="$(registered_betterdisplay_plan 2>/dev/null)"; then
+      # shellcheck disable=SC2066,SC2296 # ${(@f)...} is zsh newline splitting.
+      for line in "${(@f)registration_plan}"; do
+        record_fields="${line#*:}"
+        tag_id="${record_fields%%:*}"
+        if [[ "$tag_id" == "$active_display_tag_id" ]]; then
+          display_id="${line##*:}"
+          break
+        fi
+      done
+    fi
+    if [[ "$display_id" == "0" ]]; then
+      restore_original_main_display
+      return
+    fi
+  done
+
+  if ! required_betterdisplay_request discard -tagID="$active_display_tag_id" >/dev/null 2>&1; then
+    restore_original_main_display || true
+    print -u2 "error: BetterDisplay kept reconnecting virtual display tagID ${active_display_tag_id}, and emergency discard failed"
+    return 1
+  fi
+  restore_original_main_display || true
+  print -u2 "error: BetterDisplay kept reconnecting virtual display tagID ${active_display_tag_id}; it was discarded for display safety"
+  return 1
 }
 
 ensure_simpledisplay() {
@@ -311,6 +563,7 @@ cleanup_simpledisplay() {
 
 cleanup_display_if_last_lease() {
   local already_locked=0
+  local cleanup_status=0
 
   if [[ "$display_cleanup_ran" == "1" ]]; then
     return
@@ -327,8 +580,11 @@ cleanup_display_if_last_lease() {
 
   if ! has_active_display_leases; then
     case "$resolved_provider" in
-      betterdisplay) cleanup_betterdisplay ;;
-      simpledisplay) cleanup_simpledisplay ;;
+      betterdisplay) cleanup_betterdisplay || cleanup_status=$? ;;
+      simpledisplay)
+        cleanup_simpledisplay || cleanup_status=$?
+        restore_original_main_display || cleanup_status=$?
+        ;;
     esac
     command rmdir "$display_lease_dir" >/dev/null 2>&1 || true
   fi
@@ -336,6 +592,8 @@ cleanup_display_if_last_lease() {
   if [[ "$already_locked" == "0" ]]; then
     release_display_lock
   fi
+
+  return "$cleanup_status"
 }
 
 resolved_provider="$(resolve_provider)"
@@ -344,17 +602,35 @@ trap cleanup_display_if_last_lease EXIT INT TERM
 register_display_lease
 acquire_display_lock
 prune_stale_display_leases
+capture_main_display_identity
 case "$resolved_provider" in
   betterdisplay) ensure_betterdisplay ;;
   simpledisplay) ensure_simpledisplay ;;
 esac
+if ! verify_display_topology; then
+  cleanup_display_if_last_lease
+  exit 1
+fi
 release_display_lock
 
-export ZENTTY_TEST_SCREEN_NAME="$display_name"
+export ZENTTY_TEST_SCREEN_NAME="$active_display_name"
 
-TEST_RUNNER_SWIFT_BACKTRACE=enable=no \
-  TEST_RUNNER_ZENTTY_TEST_SCREEN_NAME="$display_name" \
-  xcodebuild test \
-  -scheme Zentty \
-  -destination 'platform=macOS' \
-  "$@"
+if TEST_RUNNER_SWIFT_BACKTRACE=enable=no \
+    TEST_RUNNER_ZENTTY_TEST_SCREEN_NAME="$active_display_name" \
+    /usr/bin/caffeinate -di xcodebuild test \
+    -scheme Zentty \
+    -destination 'platform=macOS' \
+    "$@"; then
+  test_status=0
+else
+  test_status=$?
+fi
+
+cleanup_status=0
+cleanup_display_if_last_lease || cleanup_status=$?
+trap - EXIT INT TERM
+
+if [[ "$cleanup_status" != "0" ]]; then
+  exit "$cleanup_status"
+fi
+exit "$test_status"
