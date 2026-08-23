@@ -144,3 +144,44 @@ Issues: GH-87, GH-82
   **32 MATCH, 5 PARTIAL, 2 DEFERRED, 1 PLATFORM_ALTERNATIVE** and scenario
   totals are **27 PASS, 0 non-passing**. Remaining partials are Open With
   primary/menu, Global Find, bookmarks, and the pane-search HUD.
+
+## GH-87 closeout
+
+- Open With already had the source compound primary/chevron implementation and
+  exhaustive real desktop-app, custom executable, terminal, SSH, unavailable,
+  and remote-rejection journeys. An attempted extra screenshot path selected a
+  non-rendering X11 surface and produced a black image; it was removed rather
+  than accreted into the actor or accepted as evidence. The established wide
+  reviewed state shows both icon segments, while the existing Open With actors
+  pass unchanged on controlled X11 and Wayland with exact launcher receipts.
+- Global Find and Bookmarks likewise required reconciliation, not another
+  implementation. Their compact footer controls are present in the reviewed
+  wide state. The existing real actors prove focused search-row controls,
+  previous/next/clear navigation across live Ghostty panes, and physical
+  bookmark popover/save/restore behavior on X11 and Wayland.
+- Pane Find lacked a focused reviewed state. The existing `rust-pane-search`
+  actor now captures the live Ghostty-owned HUD only after its real scrollback
+  reports three matches. The image visibly includes the field, result count,
+  previous/next controls, and close control. GTK cursor blinking plus Ghostty's
+  cursor/resize overlay are disabled only in this controlled X11 visual path;
+  two independent candidates then matched exactly (AE=0). The normal Wayland
+  actor configuration was left untouched.
+- The first Wayland regression run exposed a stale `sidebar-overlay-wayland`
+  baseline from the earlier project-proxy repair. Two independent candidates
+  were byte-identical, visually reviewed, and promoted; a fresh complete
+  Wayland pane/global-search journey then passed. Environmental absence was not
+  converted into success.
+- The final source-UX rerun then exposed the same earlier proxy-icon change in
+  thirteen X11 states that had not been executed in the narrower project-icon
+  slice. The checked-in map stopped at the first mismatch. A temporary
+  non-promoting map let the existing actor capture every owned state; two
+  complete independent journeys matched at AE=0 for all fifteen actor images.
+  Only the thirteen images that differed from their old baselines were
+  promoted, after review, and the complete checked-in-map journey passed. This
+  reconciles the earlier incomplete blast-radius audit rather than hiding it.
+- Final visual inventory totals are **37 MATCH, 2 DEFERRED, 1
+  PLATFORM_ALTERNATIVE**, with no `PARTIAL`, `MISSING`, or `BLOCKED` element.
+  Scenario totals are **28 PASS and zero non-passing**. Hardware Back/Forward
+  remains the acceptance-criteria-approved explicit deferral, and native window
+  controls remain Linux platform-owned. The bounded claim remains
+  `IMPLEMENTED_LOCAL_SUITE_ONLY`; this is not full Linux qualification.
