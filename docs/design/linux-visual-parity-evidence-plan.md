@@ -37,7 +37,8 @@ is evidence policy, not another product model or qualification runner.
    masks/skips, and false full-parity claims.
 4. Extend the owning actors to capture controlled screenshots after their
    semantic assertions settle. Write a receipt containing environment identity,
-   image/baseline hashes, exact masks, and assertion IDs.
+   exact masks, and assertion IDs. Git versions reviewed images and baselines;
+   do not add a parallel hash ledger.
 5. Review mismatches against the source map. Mark remaining implementation work
    explicitly for GH-85, GH-86, or GH-87; never update a baseline merely to
    erase an unexplained difference.

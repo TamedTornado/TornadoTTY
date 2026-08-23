@@ -33,7 +33,7 @@ trap cleanup EXIT
 [[ "${GDK_BACKEND:-}" == x11 ]] || fail "GDK_BACKEND must be x11"
 [[ "${ZENTTY_NESTED_X11_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
     fail "the source UX scenario must run through linux/tests/nested-x11"
-for dependency in compare convert cut grep head identify import mktemp readelf readlink sed seq sha256sum sleep tail timeout xdotool; do
+for dependency in compare convert cut grep head identify import mktemp readelf readlink sed seq sleep tail timeout xdotool; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
 [[ -x "${product}" ]] || fail "delivered Rust product is not built: ${product}"
@@ -145,7 +145,7 @@ capture_peek_screenshot() {
     # selection, context, attention, and labels remain real pixels.
     for pane in pane-1 pane-3 pane-2 pane-5 pane-6; do
         card="$(grep -F 'zentty-linux: worklane-peek-card ' "${log}" |
-            grep -F " pane=${pane} " | tail -1 || true)"
+            grep -F " pane=${pane} " | grep -E ' x=[0-9]+ ' | tail -1 || true)"
         [[ -n "${card}" ]] || continue
         printf '%s\n' "${card}" >>"${screenshot_dir}/${name}.geometry"
         x="$(sed -n 's/.* x=\([0-9][0-9]*\) .*/\1/p' <<<"${card}")"
@@ -431,6 +431,7 @@ for _ in $(seq 1 100); do
 done
 grep -Fq 'visibility = "pinnedOpen"' "${XDG_CONFIG_HOME}/zentty/config.toml" ||
     fail "the source toggle did not persist pinnedOpen through ConfigStore"
+sidebar_card_count_before_title="$(grep -Fc 'zentty-linux: sidebar-card id=' "${log}" || true)"
 xdotool type --window "${window_id}" --delay 10 'retained-focus'
 xdotool key --window "${window_id}" Return
 for _ in $(seq 1 100); do
@@ -441,7 +442,7 @@ grep -Fxq 'zentty-linux: title-pane=pane-1 value=focus:retained-focus' "${log}" 
     fail "keyboard input did not return to the real Ghostty PTY after toggling the sidebar"
 [[ "$(grep -Fc 'info(opengl): loaded OpenGL' "${log}" || true)" -eq 1 ]] ||
     fail "sidebar visibility reattached the Ghostty widget"
-[[ "$(grep -Fc 'zentty-linux: sidebar-card id=' "${log}" || true)" -eq 1 ]] ||
+[[ "$(grep -Fc 'zentty-linux: sidebar-card id=' "${log}" || true)" -eq "${sidebar_card_count_before_title}" ]] ||
     fail "metadata-only title/focus changes destroyed and rebuilt the live sidebar row"
 
 # Drive the source-first Rename Pane item through the real X11 pointer and
@@ -1286,10 +1287,6 @@ progress_selection_difference="$(compare -metric AE \
     "${screenshot_dir}/selected-attention-long-label.png" null: 2>&1 >/dev/null || true)"
 [[ "${progress_selection_difference}" =~ ^[1-9][0-9]*$ ]] ||
     fail "normalized progress and selected Peek screenshots were not visually distinct"
-(
-    cd "${screenshot_dir}"
-    sha256sum open.png progress.png attention-long-label.png selected-attention-long-label.png >SHA256SUMS
-)
 xdotool keyup ctrl
 for _ in $(seq 1 100); do
     grep -Fxq 'zentty-linux: worklane-peek=commit worklane=worklane-1 pane=pane-5' "${log}" && break

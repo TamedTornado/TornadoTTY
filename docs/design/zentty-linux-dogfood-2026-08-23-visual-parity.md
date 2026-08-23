@@ -35,3 +35,33 @@ Issue: GH-84
 - The duplicate hashes were removed before the validator was implemented.
   Visual governance will check schema, required files, narrow masks, semantic
   receipts, and actual pixel comparisons—not maintain a parallel hash ledger.
+
+## Existing actor audit and repair
+
+- The first real X11 source-UX rerun stopped before the screenshot phase. Its
+  sidebar lifecycle assertion expected exactly one `sidebar-card` render for
+  the entire journey, even though the journey had intentionally reprojected
+  configuration before the title-only check. This was a test-boundary bug, not
+  a product failure.
+- The assertion now snapshots the render count immediately before the
+  metadata-only title transition and proves that transition does not rebuild
+  the row. This preserves the lifecycle contract without coupling it to prior,
+  legitimate renders.
+- The actor also wrote `SHA256SUMS` for transient Peek screenshots. Those
+  hashes were unused by any comparison or qualification decision, duplicated
+  the images themselves, and contradicted the no-parallel-ledger decision.
+  The unused hash receipt has been removed; the actor still performs direct
+  pixel-difference assertions on the images.
+- After that repair, the journey reproducibly exposed a product layering bug:
+  the full-width pane drag strip was added after the hover controls and covered
+  the upper portion of their real pointer hit targets. The old coordinate now
+  reached `pane-drag-zone` instead of `New Pane Below`. The overlay order is
+  corrected so the controls render and receive input above the drag strip;
+  the existing real-pointer journey remains the regression proof.
+- The next run reached all four Peek captures but failed while masking the last
+  image because the actor selected the newest card log line even when that line
+  explicitly reported `unavailable=allocation-timeout`. A preceding valid
+  geometry receipt still described the displayed card. Capture now selects the
+  latest valid `x/y/width` receipt, while absence of any valid geometry remains
+  a hard failure. This fixes evidence collection without treating transient
+  allocation absence as success.

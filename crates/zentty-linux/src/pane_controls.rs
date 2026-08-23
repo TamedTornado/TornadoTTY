@@ -145,8 +145,6 @@ impl PaneFrame {
             button.connect_clicked(move |_| on_action(action));
             controls.append(&button);
         }
-        root.add_overlay(&controls);
-
         let drag_zone = gtk::Label::new(Some("•••"));
         drag_zone.set_widget_name(&format!("pane-drag-zone-{pane_id}"));
         drag_zone.add_css_class("zentty-pane-drag-zone");
@@ -163,6 +161,10 @@ impl PaneFrame {
         });
         drag_zone.add_controller(drag_motion);
         root.add_overlay(&drag_zone);
+        // The full-width drag strip and the controls share the pane's top
+        // edge. Keep the buttons above the strip so their complete hit targets
+        // remain clickable rather than only the portion below the drag label.
+        root.add_overlay(&controls);
 
         let revealed = Rc::new(Cell::new(false));
         let motion = gtk::EventControllerMotion::new();
