@@ -55,6 +55,27 @@ enum PaneDisplayIdentityResolver {
         return nil
     }
 
+    static func animatesLocalCodexSpinner(
+        pane: PaneState,
+        presentation: PanePresentationState,
+        metadata: TerminalMetadata?
+    ) -> Bool {
+        guard presentation.isWorking,
+              presentation.recognizedTool == .codex,
+              presentation.isRemotePane == false,
+              hasCustomTitle(for: pane) == false,
+              let title = WorklaneContextFormatter.trimmed(metadata?.title),
+              TerminalMetadataChangeClassifier.codexActivitySpinnerRange(in: title) != nil else {
+            return false
+        }
+
+        return primaryLabel(
+            pane: pane,
+            presentation: presentation,
+            metadata: metadata
+        ) == title
+    }
+
     private static func decomposedRememberedTitle(
         _ rememberedTitle: String,
         presentation: PanePresentationState

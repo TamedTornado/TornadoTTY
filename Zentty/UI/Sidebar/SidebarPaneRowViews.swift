@@ -658,6 +658,14 @@ final class SidebarPanePrimaryRowView: NSView {
         trailingLabelView.textColor ?? .clear
     }
 
+    var animatesBrailleSpinnerForTesting: Bool {
+        shimmerLabel.animatesBrailleSpinner
+    }
+
+    var baseLabelIsHiddenForTesting: Bool {
+        baseLabel.isHidden
+    }
+
     var remoteIconIsVisibleForTesting: Bool {
         remoteIconView.isHidden == false
     }
@@ -813,11 +821,11 @@ final class SidebarPanePrimaryRowView: NSView {
         trailingColor: NSColor,
         isShimmering: Bool,
         shimmerColor: NSColor,
-        reducedMotion: Bool
+        reducedMotion: Bool,
+        animatesLocalCodexSpinner: Bool = false
     ) {
         self.primaryColor = primaryColor
         self.trailingColor = trailingColor
-        baseLabel.textColor = primaryColor
         trailingLabelView.textColor = trailingColor
         remoteIconView.contentTintColor = trailingColor
         // The pane row primary stays single-line with tail truncation (see
@@ -828,6 +836,13 @@ final class SidebarPanePrimaryRowView: NSView {
         shimmerLabel.isShimmering = isShimmering
         shimmerLabel.reducedMotion = reducedMotion
         shimmerLabel.shimmerColor = shimmerColor
+        let animatesBrailleSpinner = isShimmering && animatesLocalCodexSpinner
+        // Keep the native text field present for accessibility while the
+        // CoreText overlay supplies the visible animated glyphs.
+        baseLabel.textColor = animatesBrailleSpinner ? .clear : primaryColor
+        shimmerLabel.animatesBrailleSpinner = animatesBrailleSpinner
+        shimmerLabel.animatedSpinnerBaseColor = animatesBrailleSpinner ? primaryColor : nil
+        baseLabel.isHidden = false
     }
 
     func setShimmerCoordinator(_ coordinator: SidebarShimmerCoordinator?) {

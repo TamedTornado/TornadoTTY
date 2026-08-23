@@ -1860,6 +1860,8 @@ final class WorklaneSidebarSummaryTests: XCTestCase {
         XCTAssertEqual(paneRow.statusText, "Running")
         XCTAssertEqual(paneRow.attentionState, .running)
         XCTAssertTrue(paneRow.isWorking)
+        XCTAssertFalse(paneRow.animatesLocalCodexSpinner)
+        XCTAssertFalse(summary.primaryAnimatesLocalCodexSpinner)
     }
 
     func test_builder_uses_compacting_agent_status_text_while_remaining_running() {
@@ -1939,6 +1941,8 @@ final class WorklaneSidebarSummaryTests: XCTestCase {
         XCTAssertEqual(paneRow.statusText, "Running")
         XCTAssertEqual(paneRow.attentionState, .running)
         XCTAssertTrue(paneRow.isWorking)
+        XCTAssertTrue(paneRow.animatesLocalCodexSpinner)
+        XCTAssertTrue(summary.primaryAnimatesLocalCodexSpinner)
     }
 
     func test_builder_uses_exact_claude_status_title_as_primary_when_running() {

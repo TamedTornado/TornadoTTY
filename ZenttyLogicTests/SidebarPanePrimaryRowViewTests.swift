@@ -66,4 +66,101 @@ final class SidebarPanePrimaryRowViewTests: AppKitTestCase {
 
         XCTAssertEqual(view.remoteIconTintColorForTesting, trailingColor)
     }
+
+    func test_working_braille_title_uses_local_spinner_renderer() {
+        let view = SidebarPanePrimaryRowView()
+        view.configure(
+            primaryText: "Working ⠋ zentty",
+            trailingText: nil,
+            presentationMode: .inline,
+            lineCount: 1
+        )
+
+        view.applyColors(
+            primaryColor: .labelColor,
+            trailingColor: .secondaryLabelColor,
+            isShimmering: true,
+            shimmerColor: .controlAccentColor,
+            reducedMotion: false,
+            animatesLocalCodexSpinner: true
+        )
+
+        XCTAssertTrue(view.animatesBrailleSpinnerForTesting)
+        XCTAssertFalse(view.baseLabelIsHiddenForTesting)
+        XCTAssertEqual(view.renderedPrimaryTextColorForTesting, .clear)
+    }
+
+    func test_non_braille_title_keeps_static_base_label() {
+        let view = SidebarPanePrimaryRowView()
+        view.configure(
+            primaryText: "Working zentty",
+            trailingText: nil,
+            presentationMode: .inline,
+            lineCount: 1
+        )
+
+        view.applyColors(
+            primaryColor: .labelColor,
+            trailingColor: .secondaryLabelColor,
+            isShimmering: true,
+            shimmerColor: .controlAccentColor,
+            reducedMotion: false
+        )
+
+        XCTAssertFalse(view.animatesBrailleSpinnerForTesting)
+        XCTAssertFalse(view.baseLabelIsHiddenForTesting)
+    }
+
+    func test_custom_braille_title_keeps_static_base_label() {
+        let view = SidebarPanePrimaryRowView()
+        view.configure(
+            primaryText: "Working ⠋ literal custom title",
+            trailingText: nil,
+            presentationMode: .inline,
+            lineCount: 1
+        )
+
+        view.applyColors(
+            primaryColor: .labelColor,
+            trailingColor: .secondaryLabelColor,
+            isShimmering: true,
+            shimmerColor: .controlAccentColor,
+            reducedMotion: false,
+            animatesLocalCodexSpinner: false
+        )
+
+        XCTAssertFalse(view.animatesBrailleSpinnerForTesting)
+        XCTAssertFalse(view.baseLabelIsHiddenForTesting)
+        XCTAssertEqual(view.renderedPrimaryTextColorForTesting, .labelColor)
+    }
+
+    func test_stopping_local_spinner_restores_static_base_label_color() {
+        let view = SidebarPanePrimaryRowView()
+        view.configure(
+            primaryText: "Working ⠋ zentty",
+            trailingText: nil,
+            presentationMode: .inline,
+            lineCount: 1
+        )
+        view.applyColors(
+            primaryColor: .labelColor,
+            trailingColor: .secondaryLabelColor,
+            isShimmering: true,
+            shimmerColor: .controlAccentColor,
+            reducedMotion: false,
+            animatesLocalCodexSpinner: true
+        )
+
+        view.applyColors(
+            primaryColor: .systemPink,
+            trailingColor: .secondaryLabelColor,
+            isShimmering: false,
+            shimmerColor: .controlAccentColor,
+            reducedMotion: false
+        )
+
+        XCTAssertFalse(view.animatesBrailleSpinnerForTesting)
+        XCTAssertFalse(view.baseLabelIsHiddenForTesting)
+        XCTAssertEqual(view.renderedPrimaryTextColorForTesting, .systemPink)
+    }
 }
