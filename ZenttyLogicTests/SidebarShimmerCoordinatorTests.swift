@@ -39,4 +39,20 @@ final class SidebarShimmerCoordinatorTests: XCTestCase {
 
         XCTAssertEqual(view.displayedStringValueForTesting, "Working ⠋ zentty")
     }
+
+    func test_braille_in_a_regular_title_is_never_rewritten() {
+        let view = SidebarShimmerTextView()
+        view.stringValue = "Working on ⠹ literal braille"
+        view.animatesBrailleSpinner = true
+
+        XCTAssertEqual(view.displayedStringValueForTesting, "Working on ⠹ literal braille")
+    }
+
+    func test_codex_spinner_replacement_preserves_braille_in_the_subject() {
+        let view = SidebarShimmerTextView()
+        view.stringValue = "Working ⠹ review ⠸ accessibility"
+        view.animatesBrailleSpinner = true
+
+        XCTAssertEqual(view.displayedStringValueForTesting, "Working ⠋ review ⠸ accessibility")
+    }
 }

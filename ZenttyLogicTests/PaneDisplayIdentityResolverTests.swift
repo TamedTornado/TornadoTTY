@@ -59,4 +59,82 @@ final class PaneDisplayIdentityResolverTests: XCTestCase {
         let pane = PaneState(id: PaneID("pn_a"), title: "shell", customTitle: nil)
         XCTAssertFalse(PaneDisplayIdentityResolver.hasCustomTitle(for: pane))
     }
+
+    func test_local_codex_spinner_animation_requires_live_metadata_title() {
+        let pane = PaneState(id: PaneID("pn_a"), title: "shell")
+        let presentation = PanePresentationState(
+            recognizedTool: .codex,
+            isWorking: true
+        )
+        let metadata = TerminalMetadata(title: "Working ⠋ preserve ⠸ subject")
+
+        XCTAssertTrue(
+            PaneDisplayIdentityResolver.animatesLocalCodexSpinner(
+                pane: pane,
+                presentation: presentation,
+                metadata: metadata
+            )
+        )
+    }
+
+    func test_custom_title_with_braille_never_animates_as_codex_spinner() {
+        let pane = PaneState(
+            id: PaneID("pn_a"),
+            title: "shell",
+            customTitle: "Working ⠋ literal braille"
+        )
+        let presentation = PanePresentationState(
+            recognizedTool: .codex,
+            isWorking: true
+        )
+        let metadata = TerminalMetadata(title: "Working ⠹ actual status")
+
+        XCTAssertFalse(
+            PaneDisplayIdentityResolver.animatesLocalCodexSpinner(
+                pane: pane,
+                presentation: presentation,
+                metadata: metadata
+            )
+        )
+    }
+
+    func test_remote_codex_spinner_title_never_animates_locally() {
+        let pane = PaneState(id: PaneID("pn_a"), title: "shell")
+        let presentation = PanePresentationState(
+            isRemoteShell: true,
+            recognizedTool: .codex,
+            isWorking: true
+        )
+        let metadata = TerminalMetadata(title: "Working ⠹ remote status")
+
+        XCTAssertFalse(
+            PaneDisplayIdentityResolver.animatesLocalCodexSpinner(
+                pane: pane,
+                presentation: presentation,
+                metadata: metadata
+            )
+        )
+    }
+
+    func test_codex_spinner_range_requires_phase_delimiter_and_exact_braille_token() {
+        let validTitle = "  Thinking\t⠙ review ⠸ accessibility"
+        let range = TerminalMetadataChangeClassifier.codexActivitySpinnerRange(in: validTitle)
+
+        XCTAssertEqual(range.map { String(validTitle[$0]) }, "⠙")
+        XCTAssertNil(
+            TerminalMetadataChangeClassifier.codexActivitySpinnerRange(
+                in: "Working on ⠙ literal braille"
+            )
+        )
+        XCTAssertNil(
+            TerminalMetadataChangeClassifier.codexActivitySpinnerRange(
+                in: "Working ⠙without-delimiter"
+            )
+        )
+        XCTAssertNil(
+            TerminalMetadataChangeClassifier.codexActivitySpinnerRange(
+                in: "Ready ⠙ zentty"
+            )
+        )
+    }
 }

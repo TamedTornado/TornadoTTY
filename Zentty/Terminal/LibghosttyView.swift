@@ -458,7 +458,6 @@ final class LibghosttySurfaceScrollHostView: NSView, TerminalViewportSyncControl
     private var terminalCursor: NSCursor = .iBeam
     private var retainedProgrammaticViewportCursor: NSCursor?
     private var terminalCursorSuppressionRects: [CGRect] = []
-    private var pendingTerminalCursorRefresh: DispatchWorkItem?
     private var isTerminalScrollCursorActive = false
     private var isPointerInsideTerminal = false
     private var isLiveScrolling = false
@@ -573,6 +572,9 @@ final class LibghosttySurfaceScrollHostView: NSView, TerminalViewportSyncControl
         surfaceView.onMouseMotionDidOccur = { [weak self] in
             self?.handleSurfaceMouseMotionDidOccur()
         }
+        surfaceView.onPointerDrivenMouseCursorResolved = { [weak self] cursor in
+            self?.handlePointerDrivenMouseCursorResolved(cursor)
+        }
         surfaceView.onBackingPropertiesDidChange = { [weak self] in
             self?.beginBackingMetricsReconciliation()
         }
@@ -640,9 +642,9 @@ final class LibghosttySurfaceScrollHostView: NSView, TerminalViewportSyncControl
     deinit {
         NotificationCenter.default.removeObserver(self)
         MainActorShim.assumeIsolated {
-            pendingTerminalCursorRefresh?.cancel()
             surfaceView.onBackingPropertiesDidChange = nil
             surfaceView.onCellSizeDidChange = nil
+            surfaceView.onPointerDrivenMouseCursorResolved = nil
             scrollFrameSampler.stop()
             frameMeterSampler.stop()
         }
@@ -777,25 +779,21 @@ final class LibghosttySurfaceScrollHostView: NSView, TerminalViewportSyncControl
         _ location: CGPoint?,
         restoringStableCursor: Bool = false
     ) {
-        pendingTerminalCursorRefresh?.cancel()
-        pendingTerminalCursorRefresh = nil
         guard location != nil else { return }
 
         setTerminalCursor(
             surfaceView.mouseCursorForHost,
             restoringStableCursor: isTerminalScrollCursorActive || restoringStableCursor
         )
+    }
 
-        let refresh = DispatchWorkItem { [weak self] in
-            guard let self else { return }
-            self.pendingTerminalCursorRefresh = nil
-            self.setTerminalCursor(self.surfaceView.mouseCursorForHost)
+    private func handlePointerDrivenMouseCursorResolved(_ cursor: NSCursor) {
+        guard isPointerInsideTerminal,
+              !isTerminalScrollCursorActive,
+              retainedProgrammaticViewportCursor == nil else {
+            return
         }
-        pendingTerminalCursorRefresh = refresh
-        DispatchQueue.main.asyncAfter(
-            deadline: .now() + Self.terminalCursorRefreshDelay,
-            execute: refresh
-        )
+        setTerminalCursor(cursor)
     }
 
     private func setTerminalCursor(
@@ -810,8 +808,6 @@ final class LibghosttySurfaceScrollHostView: NSView, TerminalViewportSyncControl
         guard !isTerminalScrollCursorActive else { return }
         window?.invalidateCursorRects(for: self)
     }
-
-    private static let terminalCursorRefreshDelay: TimeInterval = 0.1
 
     private func beginTerminalScrollCursorActivity() {
         guard !isTerminalScrollCursorActive else { return }
@@ -949,11 +945,6 @@ final class LibghosttySurfaceScrollHostView: NSView, TerminalViewportSyncControl
             || retainedProgrammaticViewportCursor != nil
         retainedProgrammaticViewportCursor = nil
         handleTerminalPointerActivity(.zero, restoringStableCursor: isRestoringStableCursor)
-    }
-
-    func cancelPendingTerminalCursorRefreshForTesting() {
-        pendingTerminalCursorRefresh?.cancel()
-        pendingTerminalCursorRefresh = nil
     }
 #endif
 
@@ -1853,6 +1844,9 @@ final class LibghosttyView: NSView, TerminalFocusReporting, TerminalViewportDiag
     private var currentCursorStyle: MouseCursorStyle = .text
     private var requestedCursorStyle: MouseCursorStyle = .text
     private var pendingTextCursorTransition: DispatchWorkItem?
+    private var pendingTextCursorTransitionResolvesPointerRequest = false
+    private var nextPointerCursorRequestID: UInt64 = 0
+    private var pendingPointerCursorRequestID: UInt64?
     private var mouseTrackingArea: NSTrackingArea?
     private var mouseInteractionSuppressionRects: [CGRect] = []
     private var activeSecondaryMouseRouting: SecondaryMouseRouting?
@@ -1868,6 +1862,7 @@ final class LibghosttyView: NSView, TerminalFocusReporting, TerminalViewportDiag
     var onSelectionDragStateDidChange: ((Bool) -> Void)?
     var onMouseLocationDidChange: ((CGPoint?) -> Void)?
     var onMouseMotionDidOccur: (() -> Void)?
+    var onPointerDrivenMouseCursorResolved: ((NSCursor) -> Void)?
     var onBackingPropertiesDidChange: (() -> Void)?
     var onCellSizeDidChange: (() -> Void)?
     var contextMenuBuilder: ((NSEvent, NSMenu?) -> NSMenu?)?
@@ -1982,36 +1977,71 @@ final class LibghosttyView: NSView, TerminalFocusReporting, TerminalViewportDiag
 
     func setMouseCursorShape(_ shape: ghostty_action_mouse_shape_e) {
         let cursorStyle = MouseCursorStyle(shape: shape)
+        // Redraws can repeat the same shape while an arrow/text transition is
+        // stabilizing. Preserve pointer causality across that duplicate only;
+        // a different shape remains a background update until pointer motion.
+        let preservesPendingPointerResolution = pendingTextCursorTransition != nil
+            && pendingTextCursorTransitionResolvesPointerRequest
+            && requestedCursorStyle == cursorStyle
+        let resolvesPointerCursorRequest = pendingPointerCursorRequestID != nil
+            || preservesPendingPointerResolution
+        pendingPointerCursorRequestID = nil
 
         pendingTextCursorTransition?.cancel()
         pendingTextCursorTransition = nil
+        pendingTextCursorTransitionResolvesPointerRequest = false
         requestedCursorStyle = cursorStyle
 
-        guard cursorStyle != currentCursorStyle else { return }
+        guard cursorStyle != currentCursorStyle else {
+            if resolvesPointerCursorRequest {
+                onPointerDrivenMouseCursorResolved?(currentCursorStyle.cursor)
+            }
+            return
+        }
         guard Self.isArrowTextTransition(from: currentCursorStyle, to: cursorStyle) else {
-            applyMouseCursorStyle(cursorStyle)
+            applyMouseCursorStyle(
+                cursorStyle,
+                resolvesPointerCursorRequest: resolvesPointerCursorRequest
+            )
             return
         }
 
         let workItem = DispatchWorkItem { [weak self] in
-            self?.commitTextCursorTransition(cursorStyle)
+            self?.commitTextCursorTransition(
+                cursorStyle,
+                resolvesPointerCursorRequest: resolvesPointerCursorRequest
+            )
         }
         pendingTextCursorTransition = workItem
+        pendingTextCursorTransitionResolvesPointerRequest = resolvesPointerCursorRequest
         DispatchQueue.main.asyncAfter(
             deadline: .now() + Self.textCursorTransitionDelay,
             execute: workItem
         )
     }
 
-    private func commitTextCursorTransition(_ cursorStyle: MouseCursorStyle) {
+    private func commitTextCursorTransition(
+        _ cursorStyle: MouseCursorStyle,
+        resolvesPointerCursorRequest: Bool
+    ) {
         guard requestedCursorStyle == cursorStyle else { return }
         pendingTextCursorTransition = nil
-        applyMouseCursorStyle(cursorStyle)
+        pendingTextCursorTransitionResolvesPointerRequest = false
+        applyMouseCursorStyle(
+            cursorStyle,
+            resolvesPointerCursorRequest: resolvesPointerCursorRequest
+        )
     }
 
-    private func applyMouseCursorStyle(_ cursorStyle: MouseCursorStyle) {
+    private func applyMouseCursorStyle(
+        _ cursorStyle: MouseCursorStyle,
+        resolvesPointerCursorRequest: Bool = false
+    ) {
         guard currentCursorStyle != cursorStyle else { return }
         currentCursorStyle = cursorStyle
+        if resolvesPointerCursorRequest {
+            onPointerDrivenMouseCursorResolved?(cursorStyle.cursor)
+        }
     }
 
     private static func isArrowTextTransition(
@@ -2763,10 +2793,21 @@ final class LibghosttyView: NSView, TerminalFocusReporting, TerminalViewportDiag
         onMouseLocationDidChange?(point)
         lastMouseModifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         let position = CGPoint(x: point.x, y: bounds.height - point.y)
+        nextPointerCursorRequestID &+= 1
+        let pointerCursorRequestID = nextPointerCursorRequestID
+        pendingPointerCursorRequestID = pointerCursorRequestID
         surfaceController?.sendMousePosition(
             position,
             modifiers: event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         )
+        // Ghostty enqueues its main-queue action drain during the synchronous
+        // mouse-position call. Queue cleanup afterward so only that response
+        // can consume this request; the ID prevents older cleanup blocks from
+        // clearing a newer pointer request.
+        DispatchQueue.main.async { [weak self] in
+            guard self?.pendingPointerCursorRequestID == pointerCursorRequestID else { return }
+            self?.pendingPointerCursorRequestID = nil
+        }
     }
 
     fileprivate func forwardSyntheticMousePosition(_ point: CGPoint) {

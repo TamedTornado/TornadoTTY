@@ -19,6 +19,7 @@ struct WorklaneSidebarPaneRow: Equatable {
     let paneID: PaneID
     let primaryText: String
     let usesCustomTitle: Bool
+    let animatesLocalCodexSpinner: Bool
     let trailingText: String?
     let detailText: String?
     let statusText: String?
@@ -38,6 +39,7 @@ struct WorklaneSidebarPaneRow: Equatable {
         paneID: PaneID,
         primaryText: String,
         usesCustomTitle: Bool = false,
+        animatesLocalCodexSpinner: Bool = false,
         trailingText: String?,
         detailText: String?,
         statusText: String?,
@@ -56,6 +58,7 @@ struct WorklaneSidebarPaneRow: Equatable {
         self.paneID = paneID
         self.primaryText = primaryText
         self.usesCustomTitle = usesCustomTitle
+        self.animatesLocalCodexSpinner = animatesLocalCodexSpinner
         self.trailingText = trailingText
         self.detailText = detailText
         self.statusText = statusText
@@ -78,6 +81,7 @@ struct WorklaneSidebarSummary: Equatable {
     let badgeText: String
     let topLabel: String?
     let primaryText: String
+    let primaryAnimatesLocalCodexSpinner: Bool
     let contextPrefixText: String?
     let focusedPaneLineIndex: Int
     let statusText: String?
@@ -112,6 +116,7 @@ struct WorklaneSidebarSummary: Equatable {
         badgeText: String,
         topLabel: String? = nil,
         primaryText: String,
+        primaryAnimatesLocalCodexSpinner: Bool = false,
         contextPrefixText: String? = nil,
         focusedPaneLineIndex: Int = 0,
         statusText: String? = nil,
@@ -133,6 +138,7 @@ struct WorklaneSidebarSummary: Equatable {
         self.badgeText = badgeText
         self.topLabel = topLabel
         self.primaryText = primaryText
+        self.primaryAnimatesLocalCodexSpinner = primaryAnimatesLocalCodexSpinner
         self.contextPrefixText = contextPrefixText
         self.focusedPaneLineIndex = focusedPaneLineIndex
         self.statusText = statusText

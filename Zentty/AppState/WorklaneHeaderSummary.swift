@@ -24,7 +24,7 @@ struct WorklaneChromeSummary: Equatable, Sendable {
     /// Custom worklane name, shown left of the proxy icon when set.
     var worklaneTitle: String?
     var focusedLabel: String?
-    var focusedPaneIsWorking: Bool
+    var focusedLabelAnimatesLocalCodexSpinner: Bool
     var remoteContextLabel: String?
     var cwdPath: String?
     var branch: String?
@@ -40,7 +40,7 @@ struct WorklaneChromeSummary: Equatable, Sendable {
     init(
         worklaneTitle: String? = nil,
         focusedLabel: String?,
-        focusedPaneIsWorking: Bool = false,
+        focusedLabelAnimatesLocalCodexSpinner: Bool = false,
         remoteContextLabel: String? = nil,
         cwdPath: String? = nil,
         branch: String?,
@@ -52,7 +52,7 @@ struct WorklaneChromeSummary: Equatable, Sendable {
     ) {
         self.worklaneTitle = worklaneTitle
         self.focusedLabel = focusedLabel
-        self.focusedPaneIsWorking = focusedPaneIsWorking
+        self.focusedLabelAnimatesLocalCodexSpinner = focusedLabelAnimatesLocalCodexSpinner
         self.remoteContextLabel = remoteContextLabel
         self.cwdPath = cwdPath
         self.branch = branch

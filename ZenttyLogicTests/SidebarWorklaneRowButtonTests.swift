@@ -13,6 +13,7 @@ final class SidebarWorklaneRowButtonTests: AppKitTestCase {
         row.configure(
             with: makeSummary(
                 primaryText: "Working ⠋ zentty",
+                primaryAnimatesLocalCodexSpinner: true,
                 statusText: "Running",
                 attentionState: .running,
                 isWorking: true
@@ -22,7 +23,8 @@ final class SidebarWorklaneRowButtonTests: AppKitTestCase {
         )
 
         XCTAssertTrue(row.debugAccessForTesting.primaryLabel.animatesBrailleSpinner)
-        XCTAssertTrue(row.debugAccessForTesting.primaryBaseLabel.isHidden)
+        XCTAssertFalse(row.debugAccessForTesting.primaryBaseLabel.isHidden)
+        XCTAssertEqual(row.debugAccessForTesting.primaryBaseLabel.textColor, .clear)
     }
 
     func test_idle_braille_title_restores_static_base_label() {
@@ -30,6 +32,7 @@ final class SidebarWorklaneRowButtonTests: AppKitTestCase {
         row.configure(
             with: makeSummary(
                 primaryText: "Working ⠋ zentty",
+                primaryAnimatesLocalCodexSpinner: true,
                 statusText: "Running",
                 attentionState: .running,
                 isWorking: true
@@ -46,6 +49,26 @@ final class SidebarWorklaneRowButtonTests: AppKitTestCase {
 
         XCTAssertFalse(row.debugAccessForTesting.primaryLabel.animatesBrailleSpinner)
         XCTAssertFalse(row.debugAccessForTesting.primaryBaseLabel.isHidden)
+        XCTAssertNotEqual(row.debugAccessForTesting.primaryBaseLabel.textColor, .clear)
+    }
+
+    func test_working_custom_braille_title_keeps_static_base_label() {
+        let row = makeRow()
+
+        row.configure(
+            with: makeSummary(
+                primaryText: "Working ⠋ literal custom title",
+                statusText: "Running",
+                attentionState: .running,
+                isWorking: true
+            ),
+            theme: ZenttyTheme.fallback(for: nil),
+            animated: false
+        )
+
+        XCTAssertFalse(row.debugAccessForTesting.primaryLabel.animatesBrailleSpinner)
+        XCTAssertFalse(row.debugAccessForTesting.primaryBaseLabel.isHidden)
+        XCTAssertNotEqual(row.debugAccessForTesting.primaryBaseLabel.textColor, .clear)
     }
 
     func test_working_worklane_row_does_not_animate_until_it_is_hosted_in_a_visible_sidebar() {
@@ -3082,6 +3105,7 @@ final class SidebarWorklaneRowButtonTests: AppKitTestCase {
     private func makeSummary(
         topLabel: String? = nil,
         primaryText: String,
+        primaryAnimatesLocalCodexSpinner: Bool = false,
         contextPrefixText: String? = nil,
         focusedPaneLineIndex: Int = 0,
         statusText: String? = nil,
@@ -3100,6 +3124,7 @@ final class SidebarWorklaneRowButtonTests: AppKitTestCase {
             badgeText: "1",
             topLabel: topLabel,
             primaryText: primaryText,
+            primaryAnimatesLocalCodexSpinner: primaryAnimatesLocalCodexSpinner,
             contextPrefixText: contextPrefixText,
             focusedPaneLineIndex: focusedPaneLineIndex,
             statusText: statusText,

@@ -147,7 +147,7 @@ final class WindowChromeViewTests: AppKitTestCase {
         )
         view.render(summary: WorklaneChromeSummary(
             focusedLabel: "Working ⠂ linkedin-detox | Tasks 0/5",
-            focusedPaneIsWorking: true,
+            focusedLabelAnimatesLocalCodexSpinner: true,
             branch: "main",
             pullRequest: nil,
             reviewChips: []
@@ -163,14 +163,14 @@ final class WindowChromeViewTests: AppKitTestCase {
         XCTAssertEqual(view.focusedLabelText, "Working ⠂ linkedin-detox | Tasks 0/5")
     }
 
-    func test_idle_braille_title_stays_static_in_window_chrome() {
+    func test_custom_braille_title_stays_static_in_window_chrome() {
         let view = WindowChromeView(
             frame: NSRect(x: 0, y: 0, width: 720, height: WindowChromeView.preferredHeight),
             reducedMotionProvider: { false }
         )
         view.render(summary: WorklaneChromeSummary(
-            focusedLabel: "Ready ⠂ linkedin-detox",
-            focusedPaneIsWorking: false,
+            focusedLabel: "Working ⠂ literal custom title",
+            focusedLabelAnimatesLocalCodexSpinner: false,
             branch: "main",
             pullRequest: nil,
             reviewChips: []
@@ -180,7 +180,7 @@ final class WindowChromeViewTests: AppKitTestCase {
         view.advanceFocusedBrailleSpinnerForTesting()
 
         XCTAssertFalse(view.focusedLabelUsesLocalBrailleAnimationForTesting)
-        XCTAssertEqual(view.focusedSpinnerDisplayedTextForTesting, "Ready ⠂ linkedin-detox")
+        XCTAssertEqual(view.focusedSpinnerDisplayedTextForTesting, "Working ⠂ literal custom title")
     }
 
     func test_window_chrome_braille_animation_respects_reduced_motion_and_theme_color() {
@@ -192,7 +192,7 @@ final class WindowChromeViewTests: AppKitTestCase {
         view.apply(theme: theme, animated: false)
         view.render(summary: WorklaneChromeSummary(
             focusedLabel: "Working ⠂ linkedin-detox",
-            focusedPaneIsWorking: true,
+            focusedLabelAnimatesLocalCodexSpinner: true,
             branch: "main",
             pullRequest: nil,
             reviewChips: []

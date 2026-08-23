@@ -62,7 +62,6 @@ final class LibghosttySurfaceScrollHostViewTests: AppKitTestCase {
         ).prepareForAppKitTesting()
         window.contentView = hostView
         addTeardownBlock {
-            hostView.cancelPendingTerminalCursorRefreshForTesting()
             window.contentView = nil
             window.close()
         }
@@ -78,13 +77,75 @@ final class LibghosttySurfaceScrollHostViewTests: AppKitTestCase {
         XCTAssertTrue(window.invalidatedViews.filter { $0 === harness.surfaceView }.isEmpty)
     }
 
+    func test_pointer_driven_delayed_mouse_shape_commit_updates_fixed_cursor_owner() throws {
+        let harness = makeScrollHostHarness()
+        let hostView = harness.hostView
+        let window = HostCursorInvalidationWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 800, height: 160),
+            styleMask: .borderless,
+            backing: .buffered,
+            defer: false
+        ).prepareForAppKitTesting()
+        window.contentView = hostView
+        addTeardownBlock {
+            window.contentView = nil
+            window.close()
+        }
+        harness.surface.onSendMousePosition = { [weak surfaceView = harness.surfaceView] in
+            DispatchQueue.main.async {
+                surfaceView?.setMouseCursorShape(GHOSTTY_MOUSE_SHAPE_DEFAULT)
+            }
+        }
+
+        harness.surfaceView.mouseMoved(
+            with: try makeMouseEvent(type: .mouseMoved, location: CGPoint(x: 120, y: 80))
+        )
+
+        XCTAssertTrue(hostView.displayedTerminalCursorForTesting === NSCursor.iBeam)
+
+        waitForMainQueue()
+        harness.surfaceView.flushPendingTextCursorTransitionForTesting()
+
+        XCTAssertTrue(hostView.displayedTerminalCursorForTesting === NSCursor.arrow)
+    }
+
+    func test_duplicate_delayed_mouse_shape_keeps_pointer_driven_cursor_resolution() throws {
+        let harness = makeScrollHostHarness()
+        let hostView = harness.hostView
+        let window = HostCursorInvalidationWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 800, height: 160),
+            styleMask: .borderless,
+            backing: .buffered,
+            defer: false
+        ).prepareForAppKitTesting()
+        window.contentView = hostView
+        addTeardownBlock {
+            window.contentView = nil
+            window.close()
+        }
+        harness.surface.onSendMousePosition = { [weak surfaceView = harness.surfaceView] in
+            DispatchQueue.main.async {
+                surfaceView?.setMouseCursorShape(GHOSTTY_MOUSE_SHAPE_DEFAULT)
+            }
+        }
+
+        harness.surfaceView.mouseMoved(
+            with: try makeMouseEvent(type: .mouseMoved, location: CGPoint(x: 120, y: 80))
+        )
+        waitForMainQueue()
+
+        harness.surfaceView.setMouseCursorShape(GHOSTTY_MOUSE_SHAPE_DEFAULT)
+        harness.surfaceView.flushPendingTextCursorTransitionForTesting()
+
+        XCTAssertTrue(hostView.displayedTerminalCursorForTesting === NSCursor.arrow)
+    }
+
     func test_live_scroll_uses_arrow_until_pointer_moves() throws {
         let harness = makeScrollHostHarness()
         let hostView = harness.hostView
         let scrollView = try scrollView(from: hostView)
         harness.surfaceView.setMouseCursorShape(GHOSTTY_MOUSE_SHAPE_POINTER)
         hostView.syncTerminalCursorForPointerActivityForTesting()
-        hostView.cancelPendingTerminalCursorRefreshForTesting()
 
         XCTAssertTrue(hostView.displayedTerminalCursorForTesting === NSCursor.pointingHand)
 
@@ -116,7 +177,6 @@ final class LibghosttySurfaceScrollHostViewTests: AppKitTestCase {
         let hostView = harness.hostView
         harness.surfaceView.setMouseCursorShape(GHOSTTY_MOUSE_SHAPE_POINTER)
         hostView.syncTerminalCursorForPointerActivityForTesting()
-        hostView.cancelPendingTerminalCursorRefreshForTesting()
 
         harness.surfaceView.scrollWheel(
             with: try makeScrollEvent(
@@ -143,7 +203,6 @@ final class LibghosttySurfaceScrollHostViewTests: AppKitTestCase {
         harness.surfaceView.setMouseCursorShape(GHOSTTY_MOUSE_SHAPE_POINTER)
         hostView.applyScrollbarUpdate(.init(total: 200, offset: 190, len: 10))
         hostView.syncTerminalCursorForPointerActivityForTesting()
-        hostView.cancelPendingTerminalCursorRefreshForTesting()
 
         XCTAssertTrue(hostView.displayedTerminalCursorForTesting === NSCursor.pointingHand)
 
@@ -162,7 +221,6 @@ final class LibghosttySurfaceScrollHostViewTests: AppKitTestCase {
         hostView.applyScrollbarUpdate(.init(total: 200, offset: 190, len: 10))
         hostView.syncTerminalCursorForPointerActivityForTesting()
         hostView.syncTerminalCursorForPointerEntryForTesting()
-        hostView.cancelPendingTerminalCursorRefreshForTesting()
 
         hostView.applyScrollbarUpdate(.init(total: 210, offset: 200, len: 10))
 
@@ -1537,6 +1595,7 @@ private final class ScrollHostSurfaceSpy: LibghosttySurfaceControlling {
     private(set) var bindingActions: [String] = []
     private(set) var events: [Event] = []
     var mouseButtonResults: [ghostty_input_mouse_button_e: Bool] = [:]
+    var onSendMousePosition: (() -> Void)?
 
     func updateViewport(size: CGSize, scale: CGFloat, displayID: UInt32?) {}
     func setFocused(_ isFocused: Bool) {}
@@ -1556,6 +1615,7 @@ private final class ScrollHostSurfaceSpy: LibghosttySurfaceControlling {
     }
     func sendMousePosition(_ position: CGPoint, modifiers: NSEvent.ModifierFlags) {
         sentMousePositions.append((position, modifiers))
+        onSendMousePosition?()
     }
     func sendMouseButton(
         state: ghostty_input_mouse_state_e,

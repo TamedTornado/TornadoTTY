@@ -246,6 +246,44 @@ enum TerminalMetadataChangeClassifier {
         realtimeAgentTitleSignature(value, recognizedTool: recognizedTool) != nil
     }
 
+    static func codexActivitySpinnerRange(in value: String) -> Range<String.Index>? {
+        var phaseStart = value.startIndex
+        while phaseStart < value.endIndex, value[phaseStart].isWhitespace {
+            phaseStart = value.index(after: phaseStart)
+        }
+
+        var phaseEnd = phaseStart
+        while phaseEnd < value.endIndex, value[phaseEnd].isLetter {
+            phaseEnd = value.index(after: phaseEnd)
+        }
+        let phase = value[phaseStart..<phaseEnd].lowercased()
+        guard ["working", "thinking", "starting"].contains(phase) else {
+            return nil
+        }
+
+        var spinnerStart = phaseEnd
+        guard spinnerStart < value.endIndex, value[spinnerStart].isWhitespace else {
+            return nil
+        }
+        while spinnerStart < value.endIndex, value[spinnerStart].isWhitespace {
+            spinnerStart = value.index(after: spinnerStart)
+        }
+        guard spinnerStart < value.endIndex else {
+            return nil
+        }
+
+        let spinnerEnd = value.index(after: spinnerStart)
+        let spinner = value[spinnerStart]
+        guard spinner.unicodeScalars.count == 1,
+              let scalar = spinner.unicodeScalars.first,
+              (0x2800...0x28FF).contains(scalar.value),
+              spinnerEnd == value.endIndex || value[spinnerEnd].isWhitespace else {
+            return nil
+        }
+
+        return spinnerStart..<spinnerEnd
+    }
+
     static func codexWaitingTitleKind(for value: String?) -> CodexWaitingTitleKind? {
         guard let rawNormalized = WorklaneContextFormatter.trimmed(value) else {
             return nil

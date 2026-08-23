@@ -413,8 +413,7 @@ final class WindowChromeView: NSView {
 
     private func syncFocusedSpinnerPresentation() {
         let text = focusedLabel.stringValue
-        let animatesSpinner = currentSummary.focusedPaneIsWorking
-            && SidebarShimmerTextView.containsBrailleSpinner(in: text)
+        let animatesSpinner = currentSummary.focusedLabelAnimatesLocalCodexSpinner
 
         focusedSpinnerLabel.stringValue = text
         focusedSpinnerLabel.animatesBrailleSpinner = animatesSpinner

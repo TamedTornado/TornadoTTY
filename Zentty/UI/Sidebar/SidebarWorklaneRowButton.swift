@@ -859,18 +859,21 @@ final class SidebarWorklaneRowButton: NSButton {
                 activeTextColor: activeTextColor,
                 inactiveTextColor: inactiveTextColor
             )
-            primaryBaseLabel.textColor = SidebarWorklaneRowStyleResolver.renderedBaseTextColor(
+            let primaryBaseTextColor = SidebarWorklaneRowStyleResolver.renderedBaseTextColor(
                 primaryColor,
                 isShimmering: summary.isWorking,
                 treatment: .shadow
             )
             let animatesBrailleSpinner = summary.isWorking
-                && SidebarShimmerTextView.containsBrailleSpinner(in: summary.primaryText)
+                && summary.primaryAnimatesLocalCodexSpinner
+            // Keep the native text field present for accessibility while the
+            // CoreText overlay supplies the visible animated glyphs.
+            primaryBaseLabel.textColor = animatesBrailleSpinner ? .clear : primaryBaseTextColor
             primaryLabel.animatesBrailleSpinner = animatesBrailleSpinner
             primaryLabel.animatedSpinnerBaseColor = animatesBrailleSpinner
-                ? primaryBaseLabel.textColor
+                ? primaryBaseTextColor
                 : nil
-            primaryBaseLabel.isHidden = animatesBrailleSpinner
+            primaryBaseLabel.isHidden = false
             statusBaseLabel.textColor = SidebarWorklaneRowStyleResolver.statusTextColor(
                 attentionState: summary.attentionState,
                 theme: currentTheme
@@ -1049,7 +1052,8 @@ final class SidebarWorklaneRowButton: NSButton {
                     isActive: isActive,
                     theme: currentTheme
                 ),
-                reducedMotion: reducedMotionProvider()
+                reducedMotion: reducedMotionProvider(),
+                animatesLocalCodexSpinner: paneRow.animatesLocalCodexSpinner
             )
             paneDetailLabels[index].textColor = SidebarWorklaneRowStyleResolver.paneDetailTextColor(
                 isFocused: paneRow.isFocused,

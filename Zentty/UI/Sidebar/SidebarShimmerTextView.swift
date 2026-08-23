@@ -332,32 +332,20 @@ final class SidebarShimmerTextView: NSView {
         return snapshot
     }
 
-    static func containsBrailleSpinner(in text: String) -> Bool {
-        text.contains { character in
-            guard character.unicodeScalars.count == 1,
-                  let value = character.unicodeScalars.first?.value else {
-                return false
-            }
-            return (0x2800...0x28FF).contains(value)
-        }
-    }
-
     private var displayedStringValue: String {
         guard animatesBrailleSpinner,
-              Self.brailleSpinnerFrames.indices.contains(spinnerFrameIndex),
-              let spinnerIndex = stringValue.firstIndex(where: { character in
-                  guard character.unicodeScalars.count == 1,
-                        let value = character.unicodeScalars.first?.value else {
-                      return false
-                  }
-                  return (0x2800...0x28FF).contains(value)
-              }) else {
+              Self.brailleSpinnerFrames.indices.contains(spinnerFrameIndex) else {
             return stringValue
         }
 
         var value = stringValue
+        guard let spinnerRange = TerminalMetadataChangeClassifier.codexActivitySpinnerRange(
+            in: value
+        ) else {
+            return stringValue
+        }
         value.replaceSubrange(
-            spinnerIndex..<value.index(after: spinnerIndex),
+            spinnerRange,
             with: Self.brailleSpinnerFrames[spinnerFrameIndex]
         )
         return value
