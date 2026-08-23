@@ -63,7 +63,7 @@
       "implementation_status": "IMPLEMENTED",
       "focused_tests": ["crates/zentty-core/tests/workspace_state.rs"],
       "product_scenarios": ["linux/tests/rust-source-ux-x11", "linux/tests/rust-sidebar-management-x11", "linux/tests/rust-session-restore", "linux/tests/rust-multi-window", "linux/tests/rust-worklane-accessibility"],
-      "test_plan": "Controlled product journeys preserve real menu/action, keyboard and pointer reorder routes, stable identity, active selection, overflow, automatic reveal, contextual transfer, and persisted-order relaunch. The actual GTK worklane selector and selected state are checked with GTK's test accessibility backend on controlled X11 and Wayland.",
+      "test_plan": "Controlled product journeys preserve real menu/action, keyboard and pointer reorder routes, stable identity, active selection, overflow, automatic reveal, contextual transfer, and persisted-order relaunch. The actual GTK worklane selector and selected state are checked with GTK's test backend, then a separate Rust inspector verifies the same staged-product nodes and live topology changes through private real AT-SPI sessions on controlled X11 and Wayland.",
       "alternative_or_blocker": null
     },
     {
@@ -207,7 +207,7 @@
       "implementation_status": "IMPLEMENTED",
       "focused_tests": ["crates/zentty-linux/src/source_ui.rs", "crates/zentty-linux/src/sidebar.rs", "crates/zentty-linux/src/pane_controls.rs"],
       "product_scenarios": ["linux/tests/rust-source-ux-x11", "linux/tests/rust-worklane-accessibility", "linux/tests/cli-source-contract-test"],
-      "test_plan": "The closed source command inventory maps commands to named GTK actions, accelerators, popovers, and pane-local controls. Real pointer/keyboard journeys remain authoritative for routing, while the controlled GTK test backend checks actual button roles, labels, action identities, contextual sensitivity, and mutually exclusive right-insertion states.",
+      "test_plan": "The closed source command inventory maps commands to named GTK actions, accelerators, popovers, and pane-local controls. Real pointer/keyboard journeys remain authoritative for routing; the GTK test backend checks widget contracts, and a separate Rust AT-SPI process verifies externally exposed roles, labels, states, actions, exact product identity, focus, and a real Add Pane Right topology change on X11 and Wayland.",
       "alternative_or_blocker": "GTK4 actions, accelerators, popovers, and Linux accessibility APIs replace AppKit menus and key equivalents."
     },
     {
@@ -320,10 +320,10 @@
       "origin": "PORT_PARITY",
       "user_impact": "The source interaction model and information hierarchy are core product behavior; a toolbar of text actions is not Zentty UX.",
       "linux_owner_issue": 16,
-      "implementation_status": "PARTIAL",
-      "focused_tests": ["crates/zentty-core/src/app_config.rs", "crates/zentty-linux/src/sidebar_visibility.rs", "crates/zentty-linux/src/config_store.rs"],
-      "product_scenarios": ["linux/tests/rust-source-ux-x11", "linux/tests/rust-sidebar-management-x11", "linux/tests/rust-pane-search", "linux/tests/rust-config-reload"],
-      "test_plan": "Persisted bounded width, pinned/hidden state, transient hover peek, Global Find retention, live multiwindow reload, crash-style restoration, and physical X11/Wayland focus are covered by GH-78. Remaining PARTIAL scope is annotated source screenshot parity, comprehensive semantic accessibility inspection, source motion rather than the documented immediate Linux transition, and controlled Wayland pointer drag for resize.",
+      "implementation_status": "IMPLEMENTED",
+      "focused_tests": ["crates/zentty-core/src/app_config.rs", "crates/zentty-linux/src/sidebar_visibility.rs", "crates/zentty-linux/src/config_store.rs", "crates/zentty-test-support/src/bin/atspi_inspector.rs"],
+      "product_scenarios": ["linux/tests/rust-source-ux-x11", "linux/tests/rust-sidebar-management-x11", "linux/tests/rust-pane-search", "linux/tests/rust-config-reload", "linux/tests/rust-worklane-accessibility", "linux/tests/visual-parity"],
+      "test_plan": "Persisted bounded width and visibility, overlay motion, controlled Wayland pointer resize, Global Find retention, live multiwindow reload, crash restoration, physical focus, source-annotated visual states, and deterministic scaling receipts are covered by maintained product actors. A separate Rust inspector verifies the staged application's real external AT-SPI root, window, worklane, pane controls, selected/focused states, actions, and live pane topology on private X11 and Wayland accessibility sessions.",
       "alternative_or_blocker": null
     },
     {

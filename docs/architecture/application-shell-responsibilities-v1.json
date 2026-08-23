@@ -243,10 +243,10 @@
     {
       "owner": "existing_ui_projection",
       "fields": [
-        "preferred_sidebar_width", "adjusting_sidebar_width", "sidebar_reveal_generation",
+        "preferred_sidebar_width", "adjusting_sidebar_width", "sidebar_motion", "sidebar_reveal_generation",
         "sidebar_visibility", "sidebar_visibility_generation", "peek_phase", "peek_generation",
-        "peek_tab_down", "peek_view", "command_palette", "restore_notice", "global_search_view", "focus_follow_generation", "last_pane_viewport_height",
-        "rendered_columns", "last_vertical_divider", "self_handle"
+        "peek_tab_down", "peek_refresh_pending", "peek_view", "command_palette", "restore_notice", "global_search_view", "focus_follow_generation", "last_pane_viewport_height", "last_pane_viewport_width",
+        "topology_generation", "rendered_columns", "last_vertical_divider", "self_handle"
       ]
     },
     {
@@ -349,11 +349,11 @@
     {
       "owner": "existing_ui_projection",
       "methods": [
-        "reconcile_sidebar_width", "reconcile_pane_heights", "install_sidebar_visibility",
+        "reconcile_sidebar_width", "reconcile_pane_widths", "reconcile_pane_heights", "install_sidebar_visibility",
         "schedule_sidebar_dismissal", "apply_sidebar_visibility", "handle_peek_tab",
         "handle_peek_tab_released", "open_peek_after_tab_hold", "open_peek", "commit_peek",
-        "cancel_peek", "refocus_after_peek_key_release", "spatially_navigate_peek", "preview_peek_selection",
-        "refresh_peek_view", "install_pane_scroll_switching", "command_palette_items",
+        "cancel_peek", "cancel_peek_for_window_event", "refocus_after_peek_key_release", "spatially_navigate_peek", "preview_peek_selection",
+        "refresh_peek_view", "schedule_live_peek_refresh", "mount_live_peek_surfaces", "install_pane_scroll_switching", "command_palette_items",
         "command_palette_server_items", "command_palette_action_items", "install_peek_scroll_navigation", "scroll_panes_to_end",
         "scroll_panes_to_focused", "pane_viewport_width", "pane_viewport_height",
         "apply_pane_height_requests", "resolved_column_widths", "focused_column_render_width",
@@ -366,7 +366,7 @@
         "render_sidebar", "render_chrome", "refresh_sidebar_metadata", "refresh_project_context_presentation", "ranked_servers", "schedule_active_worklane_reveal",
         "navigate_history", "select_adjacent_pane", "select_adjacent_worklane",
         "pane_references_in_sidebar_order", "current_pane_reference", "select_pane_reference",
-        "peek_previews", "refresh_pane_presentation", "refresh_right_insertion_behavior",
+        "peek_previews", "topology_generation", "worklane_id_for_pane", "pane_drag_payload", "pane_drag_context", "pane_move_target_for_outcome", "adopt_live_pane_at_drop_target", "commit_same_window_pane_drop", "focus_terminal_after_pane_drop", "focus_terminal_after_drag_cancel", "refresh_pane_presentation", "refresh_right_insertion_behavior",
         "reload_ghostty_config", "report_ghostty_reload_metrics", "apply_theme_mode_command"
       ]
     }

@@ -5,6 +5,8 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 backend="${1:-}"
 artifact_dir="${repo_root}/build/linux/test-artifacts"
 test_binary="${artifact_dir}/zentty-linux-accessibility-tests"
+inspector_binary="${artifact_dir}/zentty-atspi-inspector"
+initial_contract="${repo_root}/linux/tests/fixtures/external-atspi-initial-contract.jq"
 
 fail() {
     echo "rust-worklane-accessibility: error: $*" >&2
@@ -14,7 +16,7 @@ fail() {
 case "${backend}" in
     prepare) ;;
     x11) wrapper="${repo_root}/linux/tests/nested-x11" ;;
-    wayland) wrapper="${repo_root}/linux/tests/nested-wayland" ;;
+    wayland) wrapper="${repo_root}/linux/tests/nested-wayland-input" ;;
     *) fail "usage: $0 prepare|x11|wayland" ;;
 esac
 
@@ -26,7 +28,7 @@ done
 # disposable HOME directories, so invoking Cargo inside them would redownload
 # the toolchain and registry rather than test additional product behavior.
 prepare() {
-    local compiled
+    local compiled inspector
     mkdir -p "${artifact_dir}"
     compiled="$({
         cargo test \
@@ -47,7 +49,24 @@ prepare() {
     cp -- "${compiled}" "${test_binary}.new"
     chmod 0755 "${test_binary}.new"
     mv -f -- "${test_binary}.new" "${test_binary}"
-    echo "rust-worklane-accessibility: PREPARED binary=${test_binary}"
+    inspector="$({
+        cargo build \
+            --manifest-path "${repo_root}/Cargo.toml" \
+            --locked \
+            -p zentty-test-support \
+            --bin zentty-atspi-inspector \
+            --message-format=json-render-diagnostics
+    } | jq -r '
+        select(.reason == "compiler-artifact")
+        | select(.target.name == "zentty-atspi-inspector")
+        | .executable // empty
+    ' | tail -n 1)"
+    [[ -n "${inspector}" && -x "${inspector}" ]] ||
+        fail "Cargo did not produce the AT-SPI inspector"
+    cp -- "${inspector}" "${inspector_binary}.new"
+    chmod 0755 "${inspector_binary}.new"
+    mv -f -- "${inspector_binary}.new" "${inspector_binary}"
+    echo "rust-worklane-accessibility: PREPARED binary=${test_binary} inspector=${inspector_binary}"
 }
 
 if [[ "${backend}" == prepare ]]; then
@@ -56,29 +75,141 @@ if [[ "${backend}" == prepare ]]; then
 fi
 
 if [[ "${backend}" == x11 && -z "${ZENTTY_NESTED_X11_SESSION_ID:-}" ]] ||
-    [[ "${backend}" == wayland && -z "${ZENTTY_NESTED_WAYLAND_SESSION_ID:-}" ]]; then
+    [[ "${backend}" == wayland && -z "${ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID:-}" ]]; then
     prepare
     exec "${wrapper}" "$0" "${backend}"
 fi
 
 [[ -x "${test_binary}" ]] || fail "prepared accessibility test binary is missing"
+[[ -x "${inspector_binary}" ]] || fail "prepared AT-SPI inspector is missing"
 
 bundle_lib="${repo_root}/build/linux-profiles/release-safe/lib"
 [[ -d "${bundle_lib}" ]] || fail "ReleaseSafe product bundle is not staged"
 
-for test_name in \
-    sidebar::tests::actual_worklane_widgets_expose_the_accessibility_contract \
-    worklane_peek::tests::actual_worklane_peek_widgets_expose_the_accessibility_contract
-do
-    env \
-        -u NO_AT_BRIDGE \
-        GTK_A11Y=test \
-        LD_LIBRARY_PATH="${bundle_lib}" \
-        "${test_binary}" \
-        "${test_name}" \
-        --exact \
-        --ignored \
-        --test-threads=1
-done
+if [[ -z "${ZENTTY_WIDGET_ACCESSIBILITY_DONE:-}" ]]; then
+    for test_name in \
+        sidebar::tests::actual_worklane_widgets_expose_the_accessibility_contract \
+        worklane_peek::tests::actual_worklane_peek_widgets_expose_the_accessibility_contract
+    do
+        env \
+            -u NO_AT_BRIDGE \
+            GTK_A11Y=test \
+            LD_LIBRARY_PATH="${bundle_lib}" \
+            "${test_binary}" \
+            "${test_name}" \
+            --exact \
+            --ignored \
+            --test-threads=1
+    done
+fi
 
-echo "rust-worklane-accessibility: PASS backend=${backend} actual-sidebar-and-peek-widgets=1 gtk-a11y=test"
+if [[ -z "${ZENTTY_PRIVATE_ATSPI_SESSION:-}" ]]; then
+    exec env ZENTTY_PRIVATE_ATSPI_SESSION=1 ZENTTY_WIDGET_ACCESSIBILITY_DONE=1 \
+        "${repo_root}/linux/tests/private-atspi" "$0" "${backend}"
+fi
+
+product="${repo_root}/build/linux-profiles/release-safe/bin/zentty-linux"
+[[ -x "${product}" ]] || fail "staged ReleaseSafe product is missing"
+receipt_dir="${repo_root}/build/linux-test-receipts/external-atspi/${backend}"
+mkdir -p "${receipt_dir}"
+rm -f -- "${receipt_dir}"/*.json "${receipt_dir}"/*.log
+
+owned_pids=()
+cleanup_external() {
+    local pid
+    for pid in "${owned_pids[@]}"; do
+        kill -TERM "${pid}" 2>/dev/null || true
+    done
+    for pid in "${owned_pids[@]}"; do
+        wait "${pid}" 2>/dev/null || true
+    done
+}
+trap cleanup_external EXIT HUP INT TERM
+
+# A separate stock GTK process proves the private service before Zentty is
+# inspected. Its exact PID prevents a stale or unrelated application from
+# satisfying the control.
+zenity --info --title="Zentty AT-SPI control" --text="Private registry control" \
+    >"${receipt_dir}/control.log" 2>&1 &
+control_pid=$!
+owned_pids+=("${control_pid}")
+"${inspector_binary}" snapshot zenity "${control_pid}" 5000 \
+    >"${receipt_dir}/control.json"
+jq -e --argjson pid "${control_pid}" '
+    .schema_version == 1 and
+    (.applications | length) == 1 and
+    .applications[0].name == "zenity" and
+    .applications[0].role == "application" and
+    .applications[0].process_id == $pid and
+    ([.applications[0] | .. | objects | select(.name == "Zentty AT-SPI control")]
+      | length) > 0
+' "${receipt_dir}/control.json" >/dev/null || fail "stock GTK AT-SPI control was incomplete"
+kill -TERM "${control_pid}" 2>/dev/null || true
+wait "${control_pid}" 2>/dev/null || true
+owned_pids=()
+
+state_directory="${TMPDIR}/zentty-atspi-state"
+env GHOSTTY_LOG=false LD_LIBRARY_PATH="${bundle_lib}" \
+    "${product}" \
+    --no-session-restore \
+    --state-directory "${state_directory}" \
+    --command "bash -lc 'printf zentty-atspi-ready; sleep 30'" \
+    >"${receipt_dir}/product.log" 2>&1 &
+product_pid=$!
+owned_pids+=("${product_pid}")
+
+initial_tree_complete() {
+    jq -e --argjson pid "${product_pid}" -f "${initial_contract}" \
+        "${receipt_dir}/before.json" >/dev/null
+}
+initial_ready=false
+for _ in {1..100}; do
+    if "${inspector_binary}" snapshot zentty "${product_pid}" 1000 \
+        >"${receipt_dir}/before.json" 2>"${receipt_dir}/before-inspector.log" &&
+        initial_tree_complete; then
+        initial_ready=true
+        break
+    fi
+    sleep 0.05
+done
+[[ "${initial_ready}" == true ]] || fail "initial Zentty external tree was incomplete"
+
+# Reject a real but wrong application identity and PID pairing. The inspector
+# has no mock/tree-input mode, so an in-process or fabricated tree cannot pass.
+if "${inspector_binary}" snapshot zenity "${product_pid}" 100 \
+    >"${receipt_dir}/wrong-application.json" 2>/dev/null; then
+    fail "wrong application identity satisfied external inspection"
+fi
+
+# Invoke the real externally exposed GTK action, then wait for the external
+# tree—not the model—to report the additional live Ghostty pane.
+"${inspector_binary}" activate zentty "${product_pid}" "Add Pane Right" 5000 \
+    >"${receipt_dir}/activate.json"
+updated=false
+for _ in {1..100}; do
+    "${inspector_binary}" snapshot zentty "${product_pid}" 1000 \
+        >"${receipt_dir}/after.json"
+    if jq -e '
+        def nodes: [.applications[0] | .. | objects | select(has("role"))];
+        (nodes | map(select(.name == "Pane actions")) | length) == 4 and
+        (nodes | map(select(.name == "Close Pane")) | length) == 2 and
+        (nodes | any((.states | index("focused")) != null))
+    ' "${receipt_dir}/after.json" >/dev/null; then
+        updated=true
+        break
+    fi
+    sleep 0.05
+done
+[[ "${updated}" == true ]] || fail "live external pane topology did not update"
+
+kill -TERM "${product_pid}" 2>/dev/null || true
+wait "${product_pid}" 2>/dev/null || true
+owned_pids=()
+if "${inspector_binary}" snapshot zentty "${product_pid}" 250 \
+    >"${receipt_dir}/stale-process.json" 2>/dev/null; then
+    fail "stale product process remained externally inspectable"
+fi
+
+trap - EXIT HUP INT TERM
+
+echo "rust-worklane-accessibility: PASS backend=${backend} actual-sidebar-and-peek-widgets=1 gtk-a11y=test external-atspi=real control=real-gtk live-pane-change=1"

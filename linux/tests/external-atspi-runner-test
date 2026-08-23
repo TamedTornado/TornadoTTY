@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+inspector="${repo_root}/build/linux/test-artifacts/zentty-atspi-inspector"
+initial_contract="${repo_root}/linux/tests/fixtures/external-atspi-initial-contract.jq"
+temporary="$(mktemp -d)"
+trap 'rm -rf -- "${temporary}"' EXIT
+
+fail() {
+    echo "external-atspi-runner-test: error: $*" >&2
+    exit 1
+}
+
+if [[ ! -x "${inspector}" ]]; then
+    "${repo_root}/linux/tests/rust-worklane-accessibility" prepare >/dev/null
+fi
+
+expect_status() {
+    local expected="$1"
+    local label="$2"
+    shift 2
+    set +e
+    "$@" >"${temporary}/${label}.out" 2>"${temporary}/${label}.err"
+    local actual=$?
+    set -e
+    [[ "${actual}" == "${expected}" ]] || {
+        cat "${temporary}/${label}.out" >&2 || true
+        cat "${temporary}/${label}.err" >&2 || true
+        fail "${label} returned ${actual}, expected ${expected}"
+    }
+}
+
+expect_status 64 unknown-mode \
+    "${inspector}" mock zentty 1
+expect_status 64 mock-receipt-input \
+    "${inspector}" snapshot zentty 1 "${temporary}/fabricated.json"
+
+cat >"${temporary}/valid-tree.json" <<'EOF'
+{"schema_version":1,"applications":[{"name":"zentty","role":"application","process_id":4242,"states":[],"actions":[],"children":[{"name":"Zentty","role":"frame","description":"","states":["active"],"actions":[],"children":[{"name":"Worklane 1, shell","role":"push button","description":"","states":["selected"],"actions":["click"],"children":[]},{"name":"shell","role":"push button","description":"Draggable pane. Drop on a pane edge, column boundary, or worklane.","states":["selected"],"actions":["click"],"children":[]},{"name":"Toggle sidebar","role":"push button","description":"","states":[],"actions":["click"],"children":[]},{"name":"Drag pane","role":"label","description":"Draggable pane. Drop on a pane edge, column boundary, or worklane.","states":[],"actions":[],"children":[]},{"name":"","role":"panel","description":"Pane drop destination: worklane worklane-1","states":[],"actions":[],"children":[]},{"name":"","role":"panel","description":"Pane drop destination: pane pane-1 in worklane worklane-1","states":[],"actions":[],"children":[]},{"name":"Add Pane Right","role":"push button","description":"","states":[],"actions":["click"],"children":[]},{"name":"New Pane Below","role":"push button","description":"","states":[],"actions":["click"],"children":[]},{"name":"Close Pane","role":"push button","description":"","states":[],"actions":["click"],"children":[]},{"name":"Pane actions","role":"push button","description":"","states":[],"actions":[],"children":[]},{"name":"Pane actions","role":"toggle button","description":"","states":[],"actions":[],"children":[]},{"name":"","role":"panel","description":"","states":["focused"],"actions":[],"children":[]}]}]}]}
+EOF
+jq -e --argjson pid 4242 -f "${initial_contract}" \
+    "${temporary}/valid-tree.json" >/dev/null || fail "valid contract fixture was rejected"
+jq 'del(.. | objects | select(.name? == "Close Pane"))' \
+    "${temporary}/valid-tree.json" >"${temporary}/missing-node.json"
+expect_status 1 missing-node \
+    jq -e --argjson pid 4242 -f "${initial_contract}" "${temporary}/missing-node.json"
+jq 'walk(if type == "object" and .name? == "Worklane 1, shell" then .states = [] else . end)' \
+    "${temporary}/valid-tree.json" >"${temporary}/missing-state.json"
+expect_status 1 missing-state \
+    jq -e --argjson pid 4242 -f "${initial_contract}" "${temporary}/missing-state.json"
+jq '.applications[0].name = "ghostty"' \
+    "${temporary}/valid-tree.json" >"${temporary}/false-claim.json"
+expect_status 1 false-claim \
+    jq -e --argjson pid 4242 -f "${initial_contract}" "${temporary}/false-claim.json"
+
+missing_socket="${temporary}/missing-atspi.sock"
+expect_status 1 missing-registry \
+    env -u DBUS_SESSION_BUS_ADDRESS -u DISPLAY -u WAYLAND_DISPLAY \
+        AT_SPI_BUS_ADDRESS="unix:path=${missing_socket}" \
+        "${inspector}" snapshot zentty "$$" 100
+grep -F "AT-SPI initialization failed" \
+    "${temporary}/missing-registry.err" >/dev/null ||
+    fail "missing registry was not identified explicitly"
+
+expect_status 1 uncontrolled-display \
+    env -u ZENTTY_NESTED_X11_SESSION_ID -u ZENTTY_NESTED_WAYLAND_SESSION_ID \
+        -u ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID \
+        "${repo_root}/linux/tests/private-atspi" true
+grep -F "must run inside a controlled nested display" \
+    "${temporary}/uncontrolled-display.err" >/dev/null ||
+    fail "private wrapper accepted an uncontrolled desktop"
+
+echo "external-atspi-runner-test: PASS missing-registry=reject mock-input=reject missing-node=reject missing-state=reject false-claim=reject uncontrolled-display=reject"

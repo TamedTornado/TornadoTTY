@@ -153,7 +153,12 @@ impl PaneFrame {
         drag_zone.set_height_request(15);
         drag_zone.set_hexpand(true);
         drag_zone.set_tooltip_text(Some("Drag pane"));
-        drag_zone.update_property(&[gtk::accessible::Property::Label("Drag pane")]);
+        drag_zone.update_property(&[
+            gtk::accessible::Property::Label("Drag pane"),
+            gtk::accessible::Property::Description(
+                "Draggable pane. Drop on a pane edge, column boundary, or worklane.",
+            ),
+        ]);
         let drag_motion = gtk::EventControllerMotion::new();
         let drag_pane_id = pane_id.to_owned();
         drag_motion.connect_enter(move |_, _, _| {

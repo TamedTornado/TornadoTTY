@@ -597,7 +597,7 @@
       "optimize": "ReleaseSafe",
       "async_backend": "default",
       "terminals": "multi",
-      "environment_profile": "nested-wayland-v1",
+      "environment_profile": "nested-wayland-input-v1",
       "command": "GDK_BACKEND=wayland linux/tests/rust-agent-ipc && linux/tests/rust-worklane-accessibility wayland",
       "authoritative": false
     },

@@ -86,6 +86,8 @@ pub enum Error {
     ConstructorFailed {
         backend: AsyncBackend,
     },
+    EmbeddingApplicationMissing,
+    InvalidApplicationId(String),
     InteriorNul {
         field: &'static str,
         source: NulError,
@@ -111,6 +113,15 @@ impl fmt::Display for Error {
                 write!(
                     formatter,
                     "Ghostty runtime construction failed for {backend:?}"
+                )
+            }
+            Self::EmbeddingApplicationMissing => {
+                formatter.write_str("Ghostty embedding application was not installed")
+            }
+            Self::InvalidApplicationId(application_id) => {
+                write!(
+                    formatter,
+                    "invalid embedding application ID: {application_id:?}"
                 )
             }
             Self::InteriorNul { field, .. } => {
@@ -214,6 +225,34 @@ impl GhosttyRuntime {
                 _main_thread: Rc::new(()),
             }),
         })
+    }
+
+    /// Assigns the embedding host's public desktop identity before GTK creates
+    /// an external accessibility application root.
+    ///
+    /// Ghostty installs its private `GApplication` while initializing the
+    /// native runtime. The host still owns the product identity exposed by that
+    /// otherwise shared process-level object.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an invalid reverse-DNS application ID or a missing
+    /// native embedding application.
+    pub fn set_host_application_identity(
+        &self,
+        application_id: &str,
+        application_name: &str,
+        program_name: &str,
+    ) -> Result<(), Error> {
+        if !gtk::gio::Application::id_is_valid(application_id) {
+            return Err(Error::InvalidApplicationId(application_id.to_owned()));
+        }
+        let application =
+            gtk::gio::Application::default().ok_or(Error::EmbeddingApplicationMissing)?;
+        application.set_application_id(Some(application_id));
+        glib::set_prgname(Some(program_name));
+        glib::set_application_name(application_name);
+        Ok(())
     }
 
     /// Drives the native application mailbox from the `GLib` main loop.

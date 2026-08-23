@@ -26,6 +26,7 @@ mapfile -t ci_support_tests < <(jq -r '.support_tests[]' "${repo_root}/linux/ci/
 support_tests=(
     "${ci_support_tests[@]}"
     linux/tests/qualification-matrix-test
+    linux/tests/external-atspi-runner-test
     linux/tests/application-api-inventory-test
     linux/tests/application-api-schema
     linux/tests/packaging-policy-test

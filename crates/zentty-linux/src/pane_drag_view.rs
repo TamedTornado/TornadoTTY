@@ -220,6 +220,7 @@ pub(crate) fn install_worklane_target(
     worklane_id: &str,
     context: &PaneDragContext,
 ) {
+    card.set_accessible_role(gtk::AccessibleRole::Group);
     let target = gtk::DropTarget::new(PaneDragTransfer::static_type(), gtk::gdk::DragAction::MOVE);
     let motion_card = card.clone();
     let motion_worklane = worklane_id.to_owned();
@@ -280,6 +281,7 @@ pub(crate) fn wrap_canvas_target(
     context: &PaneDragContext,
 ) -> gtk::Overlay {
     let wrapper = gtk::Overlay::new();
+    wrapper.set_accessible_role(gtk::AccessibleRole::Group);
     wrapper.set_hexpand(true);
     wrapper.set_vexpand(true);
     wrapper.set_child(Some(frame));

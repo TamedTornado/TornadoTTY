@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+fail() {
+    echo "private-atspi: error: $*" >&2
+    exit 1
+}
+
+if [[ "${1:-}" == "--inner" ]]; then
+    shift
+    (( $# > 0 )) || fail "inner session requires a command"
+    [[ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ]] || fail "private session bus is missing"
+    [[ "${GTK_A11Y:-}" == atspi ]] || fail "GTK AT-SPI backend is not enabled"
+    [[ -z "${NO_AT_BRIDGE:-}" ]] || fail "accessibility bridge remains disabled"
+    [[ "${XDG_RUNTIME_DIR:-}" == "${ZENTTY_PRIVATE_ATSPI_RUNTIME:-}" ]] ||
+        fail "private runtime directory is missing"
+
+    launcher_log="${TMPDIR:?}/atspi-bus-launcher.log"
+    address_receipt="${TMPDIR}/atspi-address.txt"
+    launcher_pid=""
+    cleanup() {
+        trap - EXIT HUP INT TERM
+        if [[ "${launcher_pid}" =~ ^[1-9][0-9]*$ ]]; then
+            kill -TERM "${launcher_pid}" 2>/dev/null || true
+            wait "${launcher_pid}" 2>/dev/null || true
+        fi
+    }
+    trap cleanup EXIT
+    trap 'exit 129' HUP
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+
+    /usr/libexec/at-spi-bus-launcher \
+        --launch-immediately --a11y=1 --screen-reader=1 \
+        >"${launcher_log}" 2>&1 &
+    launcher_pid=$!
+    ready=false
+    for _ in {1..100}; do
+        if gdbus call --session \
+            --dest org.a11y.Bus \
+            --object-path /org/a11y/bus \
+            --method org.a11y.Bus.GetAddress >"${address_receipt}" 2>/dev/null &&
+            grep -F "unix:path=${XDG_RUNTIME_DIR}/at-spi/" \
+                "${address_receipt}" >/dev/null; then
+            ready=true
+            break
+        fi
+        kill -0 "${launcher_pid}" 2>/dev/null || break
+        sleep 0.05
+    done
+    [[ "${ready}" == true ]] || {
+        cat "${launcher_log}" >&2 || true
+        fail "private AT-SPI bus did not become ready"
+    }
+
+    printf 'private-atspi: READY session-bus=private registry=private backend=%s\n' \
+        "${GDK_BACKEND:-unknown}"
+    "$@"
+    status=$?
+    cleanup
+    exit "${status}"
+fi
+
+(( $# > 0 )) || {
+    echo "usage: private-atspi COMMAND [ARG ...]" >&2
+    exit 64
+}
+[[ -n "${ZENTTY_NESTED_X11_SESSION_ID:-}${ZENTTY_NESTED_WAYLAND_SESSION_ID:-}${ZENTTY_NESTED_WAYLAND_INPUT_SESSION_ID:-}" ]] ||
+    fail "must run inside a controlled nested display"
+for dependency in \
+    dbus-run-session gdbus grep sleep mktemp chmod rm findmnt fusermount3; do
+    command -v "${dependency}" >/dev/null || fail "${dependency} is required"
+done
+[[ -x /usr/libexec/at-spi-bus-launcher ]] ||
+    fail "/usr/libexec/at-spi-bus-launcher is required"
+
+unset NO_AT_BRIDGE AT_SPI_BUS_ADDRESS
+export GTK_A11Y=atspi
+# A prior product journey in the same controlled display may have activated a
+# portal against the wrapper runtime. Give this private D-Bus/AT-SPI session a
+# child runtime so those unrelated services and sockets cannot make the matrix
+# cell order-dependent.
+outer_runtime="${XDG_RUNTIME_DIR:?}"
+private_runtime="$(mktemp -d "${outer_runtime}/zentty-private-atspi.XXXXXX")"
+chmod 700 "${private_runtime}"
+private_wayland_display="${WAYLAND_DISPLAY:-}"
+if [[ "${GDK_BACKEND:-}" == wayland && "${private_wayland_display}" != /* ]]; then
+    [[ -S "${outer_runtime}/${private_wayland_display}" ]] ||
+        fail "controlled Wayland socket is missing"
+    private_wayland_display="${outer_runtime}/${private_wayland_display}"
+fi
+cleanup_runtime() {
+    local portal_mount="${private_runtime}/doc"
+
+    for _ in {1..50}; do
+        if findmnt -rn -M "${portal_mount}" -o TARGET 2>/dev/null |
+            grep -Fxq "${portal_mount}"; then
+            fusermount3 -u "${portal_mount}" 2>/dev/null || true
+        fi
+        if rm -rf -- "${private_runtime}" 2>/dev/null; then
+            return
+        fi
+        sleep 0.02
+    done
+    fail "private runtime directory survived cleanup"
+}
+trap cleanup_runtime EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+set +e
+if [[ "${GDK_BACKEND:-}" == wayland ]]; then
+    XDG_RUNTIME_DIR="${private_runtime}" \
+        ZENTTY_PRIVATE_ATSPI_RUNTIME="${private_runtime}" \
+        WAYLAND_DISPLAY="${private_wayland_display}" \
+        dbus-run-session -- "$0" --inner "$@"
+else
+    XDG_RUNTIME_DIR="${private_runtime}" \
+        ZENTTY_PRIVATE_ATSPI_RUNTIME="${private_runtime}" \
+        dbus-run-session -- "$0" --inner "$@"
+fi
+status=$?
+set -e
+trap - EXIT HUP INT TERM
+cleanup_runtime
+exit "${status}"

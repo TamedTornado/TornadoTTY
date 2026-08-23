@@ -274,6 +274,13 @@ fn run() -> Result<(), String> {
 
     // Ghostty owns process-global initialization that must precede GTK.
     let runtime = GhosttyRuntime::new(options.async_backend).map_err(|error| error.to_string())?;
+    // Ghostty initializes GLib for its embedded runtime first. Restore the
+    // host product identity before GTK creates the external accessibility
+    // application root; otherwise assistive technologies see "ghostty" even
+    // though Zentty owns every toplevel and its navigation hierarchy.
+    runtime
+        .set_host_application_identity("com.zentty.zentty", zentty_core::PRODUCT_NAME, "zentty")
+        .map_err(|error| error.to_string())?;
     gtk::init().map_err(|error| format!("GTK initialization failed: {error}"))?;
 
     let active_window_id = launch.active_window_id.clone();

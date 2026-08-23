@@ -12,6 +12,10 @@ name = "zentty-focus-steal-helper"
 path = "src/bin/focus_steal_helper.rs"
 
 [[bin]]
+name = "zentty-atspi-inspector"
+path = "src/bin/atspi_inspector.rs"
+
+[[bin]]
 name = "wayland-keycode-driver"
 path = "src/bin/wayland_keycode_driver.rs"
 required-features = ["wayland-keycode-driver"]
