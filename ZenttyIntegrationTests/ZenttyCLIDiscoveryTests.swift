@@ -41,8 +41,10 @@ final class ZenttyCLIDiscoveryTests: XCTestCase {
         environment["ZENTTY_WORKLANE_ID"] = "worklane-main"
         environment["ZENTTY_PANE_ID"] = "pane-main"
         process.environment = environment
-        process.standardOutput = Pipe()
-        process.standardError = Pipe()
+        let stdoutPipe = Pipe()
+        let stderrPipe = Pipe()
+        process.standardOutput = stdoutPipe
+        process.standardError = stderrPipe
 
         try process.run()
         let request = try server.receiveOneRequest()
@@ -55,6 +57,45 @@ final class ZenttyCLIDiscoveryTests: XCTestCase {
             request.arguments,
             ["--window-id", "window-main", "--worklane-id", "worklane-main"]
         )
+        XCTAssertEqual(stderrPipe.fileHandleForReading.availableData, Data())
+        let output = try JSONSerialization.jsonObject(
+            with: stdoutPipe.fileHandleForReading.availableData
+        )
+        XCTAssertEqual((output as? [Any])?.count, 0)
+    }
+
+    func test_real_cli_list_subcommands_honor_json_before_or_after_subcommand() throws {
+        let cases: [(subcommand: String, arguments: [String], result: AgentIPCResponseResult)] = [
+            ("windows", ["list", "--json", "windows"], AgentIPCResponseResult(discoveredWindows: [])),
+            ("windows", ["list", "windows", "--json"], AgentIPCResponseResult(discoveredWindows: [])),
+            ("worklanes", ["list", "--json", "worklanes"], AgentIPCResponseResult(discoveredWorklanes: [])),
+            ("worklanes", ["list", "worklanes", "--json"], AgentIPCResponseResult(discoveredWorklanes: [])),
+            ("panes", ["list", "--json", "panes"], AgentIPCResponseResult(discoveredPanes: [])),
+            ("panes", ["list", "panes", "--json"], AgentIPCResponseResult(discoveredPanes: [])),
+        ]
+
+        for testCase in cases {
+            try assertRealCLIListOutputsJSON(
+                arguments: testCase.arguments,
+                subcommand: testCase.subcommand,
+                result: testCase.result
+            )
+        }
+    }
+
+    func test_real_cli_list_aliases_output_json() throws {
+        let cases: [(subcommand: String, arguments: [String], result: AgentIPCResponseResult)] = [
+            ("windows", ["window", "list", "--json"], AgentIPCResponseResult(discoveredWindows: [])),
+            ("worklanes", ["worklane", "list", "--json"], AgentIPCResponseResult(discoveredWorklanes: [])),
+        ]
+
+        for testCase in cases {
+            try assertRealCLIListOutputsJSON(
+                arguments: testCase.arguments,
+                subcommand: testCase.subcommand,
+                result: testCase.result
+            )
+        }
     }
 
     func test_real_cli_split_forwards_explicit_targeting_arguments() throws {
@@ -299,6 +340,52 @@ final class ZenttyCLIDiscoveryTests: XCTestCase {
             return testBundleCLIURL.path
         }
         throw XCTSkip("BUILT_PRODUCTS_DIR is unavailable.")
+    }
+
+    private func assertRealCLIListOutputsJSON(
+        arguments: [String],
+        subcommand: String,
+        result: AgentIPCResponseResult,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws {
+        let server = try RequestCaptureServer(
+            response: AgentIPCResponse(id: "list-\(subcommand)", ok: true, result: result)
+        )
+        defer { server.invalidate() }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: try builtCLIPath())
+        process.arguments = arguments
+
+        var environment = ProcessInfo.processInfo.environment
+        environment["ZENTTY_INSTANCE_SOCKET"] = server.socketPath
+        process.environment = environment
+        let stdoutPipe = Pipe()
+        let stderrPipe = Pipe()
+        process.standardOutput = stdoutPipe
+        process.standardError = stderrPipe
+
+        try process.run()
+        let request = try server.receiveOneRequest()
+        process.waitUntilExit()
+
+        let stdoutData = stdoutPipe.fileHandleForReading.availableData
+        let stderrData = stderrPipe.fileHandleForReading.availableData
+        let stderr = String(data: stderrData, encoding: .utf8) ?? ""
+        guard process.terminationStatus == 0 else {
+            XCTFail(
+                "CLI exited with status \(process.terminationStatus): \(stderr)",
+                file: file,
+                line: line
+            )
+            return
+        }
+        XCTAssertEqual(request.kind, .discover, file: file, line: line)
+        XCTAssertEqual(request.subcommand, subcommand, file: file, line: line)
+        XCTAssertEqual(stderrData, Data(), "Unexpected stderr: \(stderr)", file: file, line: line)
+        let output = try JSONSerialization.jsonObject(with: stdoutData)
+        XCTAssertEqual((output as? [Any])?.count, 0, file: file, line: line)
     }
 }
 
