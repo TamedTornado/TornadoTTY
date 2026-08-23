@@ -512,7 +512,6 @@ end
 def notarize_app_bundle!
   notarize(
     package: APP_PATH,
-    bundle_id: CredentialsManager::AppfileConfig.try_fetch_value(:app_identifier),
     api_key: load_api_key,
     print_log: true
   )
