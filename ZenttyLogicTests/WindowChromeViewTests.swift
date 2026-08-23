@@ -1227,6 +1227,42 @@ final class WindowChromeViewTests: AppKitTestCase {
         XCTAssertTrue(view.acceptsWindowDragForTesting(at: NSPoint(x: view.rowFrame.maxX - 2, y: view.rowFrame.midY)))
     }
 
+    func test_window_chrome_drag_targets_accept_first_mouse_for_inactive_window() throws {
+        let view = WindowChromeView(
+            frame: NSRect(x: 0, y: 0, width: 900, height: WindowChromeView.preferredHeight)
+        )
+
+        view.render(summary: WorklaneChromeSummary(
+            focusedLabel: "Claude Code",
+            remoteContextLabel: "remote ~/zentty",
+            branch: "main",
+            pullRequest: WorklanePullRequestSummary(
+                number: 1413,
+                url: URL(string: "https://example.com/pr/1413"),
+                state: .open
+            ),
+            reviewChips: [WorklaneReviewChip(text: "1 failing", style: .danger)]
+        ))
+        view.layoutSubtreeIfNeeded()
+
+        let focusedLabel = try XCTUnwrap(findLabel(in: view, withText: "Claude Code"))
+        let remoteLabel = try XCTUnwrap(findLabel(in: view, withText: "remote ~/zentty"))
+        let reviewChipLabel = try XCTUnwrap(findLabel(in: view, withText: "1 failing"))
+        let points = [
+            ("empty header space", NSPoint(x: view.bounds.minX + 2, y: view.bounds.minY + 2)),
+            ("row padding", NSPoint(x: view.rowFrame.minX + 2, y: view.rowFrame.midY)),
+            ("focused passive label", focusedLabel.convert(center(of: focusedLabel.bounds), to: view)),
+            ("remote passive label", remoteLabel.convert(center(of: remoteLabel.bounds), to: view)),
+            ("review chip", reviewChipLabel.convert(center(of: reviewChipLabel.bounds), to: view)),
+        ]
+
+        for (target, point) in points {
+            XCTAssertTrue(view.acceptsWindowDragForTesting(at: point), "\(target) should accept window dragging")
+            let hitView = try XCTUnwrap(view.hitTest(point), "\(target) should hit a view")
+            XCTAssertTrue(hitView.acceptsFirstMouse(for: nil), "\(target) should accept first mouse")
+        }
+    }
+
     func test_window_chrome_keeps_interactive_items_out_of_window_drag_region() throws {
         let view = WindowChromeView(
             frame: NSRect(x: 0, y: 0, width: 760, height: WindowChromeView.preferredHeight)

@@ -183,6 +183,10 @@ final class WindowChromeView: NSView {
         needsLayout = true
     }
 
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
+    }
+
     override func mouseDown(with event: NSEvent) {
         window?.performDrag(with: event)
     }
@@ -1553,6 +1557,10 @@ final class WindowChromeView: NSView {
 }
 
 private final class WindowChromeDragRegionView: NSView {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
+    }
+
     override func mouseDown(with event: NSEvent) {
         window?.performDrag(with: event)
     }
@@ -2517,6 +2525,10 @@ private final class WindowChromeReviewChipView: NSView {
             width: max(0, bounds.width - 20),
             height: labelHeight
         )
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
     }
 
     override func mouseDown(with event: NSEvent) {
