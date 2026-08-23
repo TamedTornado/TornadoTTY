@@ -4738,6 +4738,8 @@ impl ApplicationShell {
             self.state.can_navigate_forward(),
         );
         self.chrome
+            .configure_servers(&self.ranked_servers(), self.state.active_worklane_id());
+        self.chrome
             .set_open_with_context_available(open_with_runtime::focused_context_is_available(self));
         self.refresh_attention_inbox();
     }

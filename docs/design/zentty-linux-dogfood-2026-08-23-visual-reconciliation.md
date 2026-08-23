@@ -113,3 +113,34 @@ Issues: GH-87, GH-82
   **30 MATCH, 7 PARTIAL, 2 DEFERRED, 1 PLATFORM_ALTERNATIVE**; the seven
   remaining partials are server/Open With compound controls, Global Find,
   bookmarks, and the pane-search HUD.
+
+## Development-server chrome
+
+- The inventory audit exposed another product gap, not merely stale metadata:
+  Linux had the source-compatible server actions and sidebar rows but no
+  dedicated server primary/menu segments in the trailing window chrome.
+- The existing `WindowChrome` now owns a globe primary segment and an
+  independent chevron menu segment before Open With. They are absent when the
+  active worklane has no visible server, and are populated from the existing
+  ranked-server authority when it does. The primary action uses the existing
+  selected-server route; menu entries use the existing targeted server action.
+  No server registry, ranker, URL launcher, or test actor was duplicated.
+- The source actor's foreground server initially made the terminal capture
+  dynamic. The repair did not mask or normalize that output: the same real
+  listener now runs as a child of the actor shell, the shell clears its own PTY
+  only after both listeners are ready, and the actor physically hides unrelated
+  dynamic sidebar rows before the chrome-focused capture. Ghostty's resize
+  overlay and cursor are disabled through its normal test configuration.
+- The existing development-server actor physically opened the chevron popover,
+  closed it, clicked the primary segment, and required the controlled browser
+  launcher to receive the exact selected real-listener URL. Its prior CLI,
+  shortcut, scanner, Watch, browser, ignore, stop, and restart assertions still
+  pass.
+- Two independent X11 candidates were byte-identical (AE=0), were visually
+  reviewed, and were promoted without a mask or tolerance. A fresh checked-in-
+  map X11 journey passed, and the complete existing controlled Wayland journey
+  also passed.
+- Server primary and server menu now report `MATCH`. Element totals are
+  **32 MATCH, 5 PARTIAL, 2 DEFERRED, 1 PLATFORM_ALTERNATIVE** and scenario
+  totals are **27 PASS, 0 non-passing**. Remaining partials are Open With
+  primary/menu, Global Find, bookmarks, and the pane-search HUD.

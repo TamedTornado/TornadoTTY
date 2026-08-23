@@ -1,7 +1,9 @@
 use gtk::glib::variant::ToVariant;
 use gtk::prelude::*;
 use std::cell::RefCell;
-use zentty_core::{OpenWithCatalog, OpenWithTargetKind, SidebarWorklaneSummary};
+use zentty_core::{
+    OpenWithCatalog, OpenWithTargetKind, RankedServer, ServerRelevanceTier, SidebarWorklaneSummary,
+};
 
 use crate::source_ui;
 
@@ -69,6 +71,8 @@ pub(crate) struct WindowChrome {
     fleet: gtk::MenuButton,
     fleet_indicator: gtk::Box,
     rendered_fleet: RefCell<Vec<zentty_core::FleetPaneSnapshot>>,
+    server_primary: gtk::Button,
+    server_menu: gtk::MenuButton,
     open_with_primary: gtk::Button,
     open_with_menu: gtk::MenuButton,
 }
@@ -153,6 +157,25 @@ impl WindowChrome {
 
         let trailing = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         trailing.add_css_class("open-with-control");
+        let server_primary = gtk::Button::new();
+        server_primary.add_css_class("server-primary");
+        server_primary.set_icon_name("web-browser-symbolic");
+        server_primary.set_action_name(Some("workspace.open-selected-server"));
+        server_primary.set_visible(false);
+        let server_menu = gtk::MenuButton::new();
+        server_menu.add_css_class("server-menu");
+        server_menu.set_icon_name("pan-down-symbolic");
+        server_menu.set_tooltip_text(Some("Show server menu"));
+        server_menu.update_property(&[gtk::accessible::Property::Label("Show server menu")]);
+        server_menu.set_visible(false);
+        server_menu.connect_active_notify(|button| {
+            eprintln!(
+                "zentty-linux: chrome-popover=servers state={}",
+                if button.is_active() { "open" } else { "closed" }
+            );
+        });
+        trailing.append(&server_primary);
+        trailing.append(&server_menu);
         let open_with_primary = gtk::Button::new();
         open_with_primary.add_css_class("open-with-primary");
         open_with_primary.set_icon_name("folder-open-symbolic");
@@ -190,6 +213,8 @@ impl WindowChrome {
             fleet,
             fleet_indicator,
             rendered_fleet: RefCell::new(Vec::new()),
+            server_primary,
+            server_menu,
             open_with_primary,
             open_with_menu,
         }
@@ -197,6 +222,54 @@ impl WindowChrome {
 
     pub(crate) fn widget(&self) -> &gtk::CenterBox {
         &self.root
+    }
+
+    pub(crate) fn configure_servers(&self, servers: &[RankedServer], active_worklane: &str) {
+        let visible = servers
+            .iter()
+            .filter(|ranked| {
+                ranked.server.worklane_id == active_worklane
+                    && ranked.tier != ServerRelevanceTier::Hidden
+            })
+            .collect::<Vec<_>>();
+        let Some(primary) = visible.first() else {
+            self.server_primary.set_visible(false);
+            self.server_menu.set_visible(false);
+            return;
+        };
+
+        let label = format!("Open {}", primary.server.display);
+        self.server_primary.set_tooltip_text(Some(&label));
+        self.server_primary
+            .update_property(&[gtk::accessible::Property::Label(&label)]);
+        self.server_primary.set_visible(true);
+        self.server_primary.set_sensitive(true);
+
+        let popover = gtk::Popover::new();
+        let list = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        list.set_margin_top(6);
+        list.set_margin_bottom(6);
+        list.set_margin_start(6);
+        list.set_margin_end(6);
+        let heading = gtk::Label::new(Some("Development Servers"));
+        heading.add_css_class("heading");
+        heading.set_xalign(0.0);
+        heading.set_margin_start(6);
+        list.append(&heading);
+        for ranked in visible {
+            let button = gtk::Button::with_label(&ranked.server.display);
+            button.set_halign(gtk::Align::Fill);
+            button.set_tooltip_text(Some(&ranked.server.url));
+            button.set_action_name(Some("workspace.open-server"));
+            button.set_action_target_value(Some(&ranked.server.origin.to_variant()));
+            let menu = popover.clone();
+            button.connect_clicked(move |_| menu.popdown());
+            list.append(&button);
+        }
+        popover.set_child(Some(&list));
+        self.server_menu.set_popover(Some(&popover));
+        self.server_menu.set_visible(true);
+        self.server_menu.set_sensitive(true);
     }
 
     pub(crate) fn configure_open_with(&self, catalog: &OpenWithCatalog) {

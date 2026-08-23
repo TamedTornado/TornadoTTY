@@ -21,6 +21,8 @@ product_pid=""
 
 # shellcheck source=linux/tests/lib/product-bundle
 source "${repo_root}/linux/tests/lib/product-bundle"
+# shellcheck source=linux/tests/lib/visual-evidence
+source "${repo_root}/linux/tests/lib/visual-evidence"
 backend="${GDK_BACKEND:-}"
 container_id=""
 docker_port=""
@@ -97,7 +99,12 @@ if [[ "${ZENTTY_TEST_DOCKER:-false}" == true ]]; then
 fi
 
 mkdir -p "${run_root}/bin" "${state_directory}" "${config_home}/zentty" \
+    "${config_home}/ghostty" \
     "${data_home}/applications"
+cat >"${config_home}/ghostty/config" <<'EOF'
+resize-overlay = never
+cursor-opacity = 0
+EOF
 cat >"${run_root}/bin/preferred-browser" <<EOF
 #!/usr/bin/env bash
 printf '%s\n' "\$@" >>'${open_receipt}'
@@ -167,10 +174,15 @@ cat >"${run_root}/run-servers" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 watch_pid=""
+server_pid=""
 cleanup_watch() {
     if [[ "\${watch_pid}" =~ ^[1-9][0-9]*$ ]]; then
         kill -TERM "\${watch_pid}" 2>/dev/null || true
         wait "\${watch_pid}" 2>/dev/null || true
+    fi
+    if [[ "\${server_pid}" =~ ^[1-9][0-9]*$ ]]; then
+        kill -TERM "\${server_pid}" 2>/dev/null || true
+        wait "\${server_pid}" 2>/dev/null || true
     fi
 }
 trap cleanup_watch EXIT
@@ -208,7 +220,14 @@ if "\${ZENTTY_CLI_BIN}" server open "\${watch_url}" --browser forged-browser; th
 else
     printf 'rejected\n' >'${forged_browser_receipt}'
 fi
-'${server_fixture}' --receipt '${server_receipt}'
+'${server_fixture}' --receipt '${server_receipt}' &
+server_pid=\$!
+for _ in \$(seq 1 200); do
+    [[ -s '${server_receipt}' ]] && break
+    sleep 0.01
+done
+printf '\033]2;Development servers\a\033[2J\033[H\033[?25l'
+wait "\${server_pid}"
 EOF
 chmod 700 "${run_root}/run-servers"
 
@@ -267,6 +286,46 @@ for _ in $(seq 1 200); do
 done
 grep -Fq "origin=http://localhost:${port} source=Scanner confidence=Pid" "${log}" ||
     fail "real listener was not PID-attributed to its Ghostty pane"
+
+if [[ "${backend}" == x11 ]]; then
+    image="${run_root}/server-chrome-x11.png"
+    xdotool windowsize --sync "${window_id}" 1400 800
+    hidden_before="$(grep -Fc 'zentty-linux: sidebar-visibility=hidden' "${log}" || true)"
+    xdotool mousemove --sync --window "${window_id}" 22 30 click 1
+    for _ in $(seq 1 100); do
+        (( $(grep -Fc 'zentty-linux: sidebar-visibility=hidden' "${log}" || true) > hidden_before )) && break
+        sleep 0.05
+    done
+    (( $(grep -Fc 'zentty-linux: sidebar-visibility=hidden' "${log}" || true) > hidden_before )) ||
+        fail "the controlled capture could not hide unrelated dynamic server rows"
+    xdotool mousemove --sync 2000 1500
+    sleep 0.3
+    import -silent -window "${window_id}" "${image}"
+    zentty_visual_publish server-chrome-x11 linux/tests/rust-development-servers "${image}" -
+
+    xdotool mousemove --sync --window "${window_id}" 1306 30 click 1
+    for _ in $(seq 1 100); do
+        grep -Fq 'zentty-linux: chrome-popover=servers state=open' "${log}" && break
+        sleep 0.05
+    done
+    grep -Fq 'zentty-linux: chrome-popover=servers state=open' "${log}" ||
+        fail "the physical server-menu segment did not open its independent popover"
+    xdotool key --window "${window_id}" Escape
+    for _ in $(seq 1 100); do
+        grep -Fq 'zentty-linux: chrome-popover=servers state=closed' "${log}" && break
+        sleep 0.05
+    done
+    grep -Fq 'zentty-linux: chrome-popover=servers state=closed' "${log}" ||
+        fail "the physical server-menu popover did not close"
+    sleep 0.1
+
+    rm -f "${open_receipt}"
+    xdotool mousemove --sync --window "${window_id}" 1265 30 click 1
+    for _ in $(seq 1 100); do [[ -s "${open_receipt}" ]] && break; sleep 0.05; done
+    [[ "$(cat "${open_receipt}" 2>/dev/null || true)" == "http://localhost:${watch_port}/fixture" ]] ||
+        fail "the physical server-primary segment did not open the selected server"
+    xdotool mousemove --sync --window "${window_id}" 22 30 click 1
+fi
 
 # The source bindable command opens the highest-ranked server in the active
 # worklane. Drive the persisted binding through the real GTK capture controller
