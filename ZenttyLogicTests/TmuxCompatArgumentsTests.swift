@@ -2,6 +2,19 @@ import XCTest
 @testable import Zentty
 
 final class TmuxCompatArgumentsTests: XCTestCase {
+    private func paneEntry(id: String, isFocused: Bool) -> PaneListEntry {
+        PaneListEntry(
+            index: 0,
+            id: id,
+            column: 0,
+            title: id,
+            workingDirectory: nil,
+            isFocused: isFocused,
+            agentTool: nil,
+            agentStatus: nil
+        )
+    }
+
     func test_displayTemplateUsesPositionalFormatAfterPrintFlag() {
         let parsed = TmuxCompatArguments.parse(
             ["-t", "%pn_leader", "-p", "#{session_name}:#{window_index}"],
@@ -100,6 +113,152 @@ final class TmuxCompatArgumentsTests: XCTestCase {
         XCTAssertEqual(parsed.positionals, ["-c", "value"])
     }
 
+    func test_splitWindowStartupRequestDefersExactClaudeBootstrap() {
+        let arguments = [
+            "-d", "-t", "%leader", "-h", "-l", "70%", "-P", "-F", "#{pane_id}", "--", "cat"
+        ]
+        let parsed = TmuxCompatArguments.parse(
+            arguments,
+            valueFlags: ["-c", "-F", "-l", "-t"],
+            boolFlags: ["-P", "-b", "-d", "-h", "-v"]
+        )
+
+        let request = TmuxCompatIPCHandler.splitWindowStartupRequest(
+            arguments: arguments,
+            parsed: parsed,
+            loginShellPath: "/bin/zsh"
+        )
+
+        XCTAssertTrue(request.isLaunchDeferred)
+        XCTAssertNil(request.command)
+        XCTAssertNil(request.nativeCommand)
+    }
+
+    func test_splitWindowStartupRequestKeepsOrdinaryCatImmediate() {
+        let arguments = ["--", "cat"]
+        let parsed = TmuxCompatArguments.parse(
+            arguments,
+            valueFlags: ["-c", "-F", "-l", "-t"],
+            boolFlags: ["-P", "-b", "-d", "-h", "-v"]
+        )
+
+        let request = TmuxCompatIPCHandler.splitWindowStartupRequest(
+            arguments: arguments,
+            parsed: parsed,
+            loginShellPath: "/bin/zsh"
+        )
+
+        XCTAssertFalse(request.isLaunchDeferred)
+        XCTAssertEqual(request.nativeCommand, "'/bin/zsh' -lic 'cat'")
+    }
+
+    func test_splitWindowStartupRequestKeepsNonPlaceholderCommandImmediate() {
+        let arguments = [
+            "-d", "-t", "%leader", "-h", "-l", "70%", "-P", "-F", "#{pane_id}", "--", "cat", "README.md"
+        ]
+        let parsed = TmuxCompatArguments.parse(
+            arguments,
+            valueFlags: ["-c", "-F", "-l", "-t"],
+            boolFlags: ["-P", "-b", "-d", "-h", "-v"]
+        )
+
+        let request = TmuxCompatIPCHandler.splitWindowStartupRequest(
+            arguments: arguments,
+            parsed: parsed,
+            loginShellPath: "/bin/zsh"
+        )
+
+        XCTAssertFalse(request.isLaunchDeferred)
+        XCTAssertEqual(request.nativeCommand, "'/bin/zsh' -lic 'cat README.md'")
+    }
+
+    func test_respawnPaneLaunchRequestPreservesClaudeCompoundCommand() {
+        let leader = paneEntry(id: "leader", isFocused: true)
+        let agent = paneEntry(id: "agent", isFocused: false)
+        let command = "cd /tmp/project && env CLAUDECODE=1 claude --agent-id teammate"
+
+        let request = TmuxCompatIPCHandler.respawnPaneLaunchRequest(
+            arguments: ["-k", "-t", "%agent", "--", command],
+            paneEntries: [leader, agent],
+            loginShellPath: "/bin/zsh"
+        )
+
+        XCTAssertEqual(request?.paneID, PaneID("agent"))
+        XCTAssertEqual(
+            request?.nativeCommand,
+            "'/bin/zsh' -lic 'cd /tmp/project && env CLAUDECODE=1 claude --agent-id teammate'"
+        )
+    }
+
+    func test_respawnPaneLaunchRequestRejectsUnsupportedOrUnsafeShapes() {
+        let leader = paneEntry(id: "leader", isFocused: true)
+        let agent = paneEntry(id: "agent", isFocused: false)
+        let command = "cd /tmp/project && env CLAUDECODE=1 claude --agent-id teammate"
+        let cases: [[String]] = [
+            ["-t", "%agent", "--", command],
+            ["-k", "--", command],
+            ["-k", "-t", "%agent", command],
+            ["-k", "-t", "%agent", "--"],
+            ["-k", "-t", "%agent", "--", command, "extra"],
+            ["-k", "-t", "%missing", "--", command],
+            ["-k", "-k", "-t", "%agent", "--", command],
+            ["-t", "%agent", "-k", "--", command],
+            ["-k", "-t", "%leader", "-t", "%agent", "--", command],
+            ["-k", "-t%agent", "--", command],
+            ["-k", "-x", "-t", "%agent", "--", command],
+        ]
+
+        for arguments in cases {
+            XCTAssertNil(
+                TmuxCompatIPCHandler.respawnPaneLaunchRequest(
+                    arguments: arguments,
+                    paneEntries: [leader, agent],
+                    loginShellPath: "/bin/zsh"
+                ),
+                "Expected nil for arguments: \(arguments)"
+            )
+        }
+    }
+
+    func test_unresolvedTargetResultRejectsTargetDependentLaunchCommands() {
+        for subcommand in ["split-window", "splitw", "respawn-pane", "respawnp"] {
+            XCTAssertThrowsError(try TmuxCompatIPCHandler.unresolvedTargetResult(for: subcommand)) { error in
+                guard let tmuxError = error as? TmuxCompatIPCError else {
+                    return XCTFail("Expected TmuxCompatIPCError, got \(error)")
+                }
+                guard case .targetUnavailable = tmuxError else {
+                    return XCTFail("Expected targetUnavailable, got \(tmuxError)")
+                }
+                XCTAssertEqual(
+                    tmuxError.localizedDescription,
+                    "Cannot route tmux command: the target Zentty worklane or pane is no longer available."
+                )
+            }
+        }
+    }
+
+    func test_validateSplitTargetRejectsMissingLeaderPane() {
+        XCTAssertThrowsError(
+            try TmuxCompatIPCHandler.validateSplitTarget(
+                PaneID("gone"),
+                paneEntries: [paneEntry(id: "other", isFocused: true)]
+            )
+        ) { error in
+            guard let tmuxError = error as? TmuxCompatIPCError else {
+                return XCTFail("Expected TmuxCompatIPCError, got \(error)")
+            }
+            guard case .targetUnavailable = tmuxError else {
+                return XCTFail("Expected targetUnavailable, got \(tmuxError)")
+            }
+        }
+    }
+
+    func test_unresolvedTargetResultAcknowledgesSetOption() throws {
+        let result = try TmuxCompatIPCHandler.unresolvedTargetResult(for: "set-option")
+
+        XCTAssertNil(result.stdout)
+    }
+
     func test_sendKeysTranslatesEnterToCarriageReturn() {
         XCTAssertEqual(
             TmuxCompatIPCHandler.sendKeysText(arguments: ["-t", "%pane", "claude", "Enter"], standardInput: nil),
@@ -170,6 +329,35 @@ final class TmuxCompatArgumentsTests: XCTestCase {
                 paneEntries: panes
             ),
             PaneID("agent")
+        )
+    }
+
+    func test_sendKeysTargetPaneIDDoesNotFallbackWhenExplicitTargetIsMissing() {
+        let panes = [paneEntry(id: "leader", isFocused: true)]
+
+        for arguments in [
+            ["-t", "%gone", "echo", "hello"],
+            ["-t%gone", "echo", "hello"],
+        ] {
+            XCTAssertNil(
+                TmuxCompatIPCHandler.sendKeysTargetPaneID(
+                    arguments: arguments,
+                    fallback: PaneID("leader"),
+                    paneEntries: panes
+                ),
+                "Expected no fallback for arguments: \(arguments)"
+            )
+        }
+    }
+
+    func test_sendKeysTargetPaneIDUsesFallbackWhenTargetFlagIsAbsent() {
+        XCTAssertEqual(
+            TmuxCompatIPCHandler.sendKeysTargetPaneID(
+                arguments: ["echo", "hello"],
+                fallback: PaneID("leader"),
+                paneEntries: []
+            ),
+            PaneID("leader")
         )
     }
 

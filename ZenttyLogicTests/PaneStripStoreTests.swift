@@ -2712,6 +2712,104 @@ final class PaneStripStoreTests: XCTestCase {
         XCTAssertEqual(columns[1].panes[0].sessionRequest.isLaunchDeferred, true)
     }
 
+    func test_splitWithLayoutInInactiveWorklaneOnlyMutatesAndNotifiesRoutedWorklane() throws {
+        let teamWorklaneID = WorklaneID("team")
+        let otherWorklaneID = WorklaneID("other")
+        let layoutContext = PaneLayoutContext(
+            displayClass: .largeDisplay,
+            preset: .balanced,
+            viewportWidth: 1200,
+            leadingVisibleInset: 0,
+            sizing: .balanced
+        )
+        let otherWorklane = WorklaneState(
+            id: otherWorklaneID,
+            title: nil,
+            paneStripState: PaneStripState(
+                panes: [PaneState(id: PaneID("other-pane"), title: "other")],
+                focusedPaneID: PaneID("other-pane")
+            )
+        )
+        let store = WorklaneStore(
+            worklanes: [
+                WorklaneState(
+                    id: teamWorklaneID,
+                    title: nil,
+                    paneStripState: PaneStripState(
+                        panes: [PaneState(id: PaneID("leader"), title: "leader", width: 1194)],
+                        focusedPaneID: PaneID("leader")
+                    )
+                ),
+                otherWorklane,
+            ],
+            layoutContext: layoutContext,
+            activeWorklaneID: otherWorklaneID
+        )
+        let originalOtherWorklane = store.worklanes.first(where: { $0.id == otherWorklaneID })
+        var changes: [WorklaneChange] = []
+        store.subscribe { changes.append($0) }
+
+        let newPaneID = store.splitWithLayout(
+            in: teamWorklaneID,
+            placement: .afterFocused,
+            isHorizontal: true,
+            layout: .golden,
+            availableWidth: layoutContext.viewportWidth,
+            leadingVisibleInset: layoutContext.leadingVisibleInset,
+            availableSize: CGSize(width: layoutContext.viewportWidth, height: 800),
+            minimumSizeByPaneID: [:],
+            targetPaneID: PaneID("leader"),
+            preserveFocusPaneID: PaneID("leader"),
+            sessionRequest: TerminalSessionRequest(isLaunchDeferred: true)
+        )
+
+        let teamWorklane = try XCTUnwrap(store.worklanes.first(where: { $0.id == teamWorklaneID }))
+        let createdPaneID = try XCTUnwrap(newPaneID)
+        XCTAssertEqual(store.activeWorklaneID, otherWorklaneID)
+        XCTAssertEqual(store.worklanes.first(where: { $0.id == otherWorklaneID }), originalOtherWorklane)
+        XCTAssertEqual(teamWorklane.paneStripState.focusedPaneID, PaneID("leader"))
+        XCTAssertEqual(teamWorklane.paneStripState.columns.count, 2)
+        XCTAssertEqual(teamWorklane.paneStripState.columns[1].panes.map(\.id), [createdPaneID])
+        XCTAssertTrue(teamWorklane.paneStripState.columns[1].panes[0].sessionRequest.isLaunchDeferred)
+        XCTAssertEqual(changes, [.paneStructure(teamWorklaneID)])
+    }
+
+    func test_splitWithLayoutInWorklaneRefusesMissingTargetPane() {
+        let teamWorklaneID = WorklaneID("team")
+        let store = WorklaneStore(
+            worklanes: [
+                WorklaneState(
+                    id: teamWorklaneID,
+                    title: nil,
+                    paneStripState: PaneStripState(
+                        panes: [PaneState(id: PaneID("leader"), title: "leader")],
+                        focusedPaneID: PaneID("leader")
+                    )
+                )
+            ],
+            activeWorklaneID: teamWorklaneID
+        )
+        let originalWorklanes = store.worklanes
+        var changes: [WorklaneChange] = []
+        store.subscribe { changes.append($0) }
+
+        let newPaneID = store.splitWithLayout(
+            in: teamWorklaneID,
+            placement: .afterFocused,
+            isHorizontal: true,
+            layout: .equal,
+            availableWidth: 1200,
+            leadingVisibleInset: 0,
+            availableSize: CGSize(width: 1200, height: 800),
+            minimumSizeByPaneID: [:],
+            targetPaneID: PaneID("missing")
+        )
+
+        XCTAssertNil(newPaneID)
+        XCTAssertEqual(store.worklanes, originalWorklanes)
+        XCTAssertTrue(changes.isEmpty)
+    }
+
     func test_launchDeferredPaneStoresNativeCommandWithoutChangingFocus() throws {
         let store = WorklaneStore(
             worklanes: [
@@ -2760,6 +2858,71 @@ final class PaneStripStoreTests: XCTestCase {
         XCTAssertEqual(store.activeWorklane?.paneStripState.focusedPaneID, PaneID("master"))
         XCTAssertFalse(agentPane.sessionRequest.isLaunchDeferred)
         XCTAssertEqual(agentPane.sessionRequest.nativeCommand, "cd /tmp/project && env CLAUDECODE=1 claude")
+        XCTAssertTrue(agentPane.sessionRequest.waitAfterNativeCommand)
+        XCTAssertNil(agentPane.sessionRequest.command)
+    }
+
+    func test_launchDeferredPaneInSpecifiedWorklaneDoesNotChangeActiveWorklaneOrFocus() throws {
+        let teamWorklaneID = WorklaneID("team")
+        let otherWorklaneID = WorklaneID("other")
+        let store = WorklaneStore(
+            worklanes: [
+                WorklaneState(
+                    id: teamWorklaneID,
+                    title: nil,
+                    paneStripState: PaneStripState(
+                        columns: [
+                            PaneColumnState(
+                                id: PaneColumnID("leader-column"),
+                                panes: [PaneState(id: PaneID("leader"), title: "leader")],
+                                width: 400,
+                                focusedPaneID: PaneID("leader"),
+                                lastFocusedPaneID: PaneID("leader")
+                            ),
+                            PaneColumnState(
+                                id: PaneColumnID("agent-column"),
+                                panes: [
+                                    PaneState(
+                                        id: PaneID("agent"),
+                                        title: "agent",
+                                        sessionRequest: TerminalSessionRequest(isLaunchDeferred: true)
+                                    )
+                                ],
+                                width: 700,
+                                focusedPaneID: PaneID("agent"),
+                                lastFocusedPaneID: PaneID("agent")
+                            ),
+                        ],
+                        focusedColumnID: PaneColumnID("leader-column")
+                    )
+                ),
+                WorklaneState(
+                    id: otherWorklaneID,
+                    title: nil,
+                    paneStripState: PaneStripState(
+                        panes: [PaneState(id: PaneID("other-pane"), title: "other")],
+                        focusedPaneID: PaneID("other-pane")
+                    )
+                ),
+            ],
+            activeWorklaneID: otherWorklaneID
+        )
+
+        let didLaunch = store.launchDeferredPane(
+            id: PaneID("agent"),
+            in: teamWorklaneID,
+            nativeCommand: "'/bin/zsh' -lic 'claude --agent-id teammate'"
+        )
+
+        let teamWorklane = try XCTUnwrap(store.worklanes.first(where: { $0.id == teamWorklaneID }))
+        let agentPane = try XCTUnwrap(
+            teamWorklane.paneStripState.panes.first(where: { $0.id == PaneID("agent") })
+        )
+        XCTAssertTrue(didLaunch)
+        XCTAssertEqual(store.activeWorklaneID, otherWorklaneID)
+        XCTAssertEqual(teamWorklane.paneStripState.focusedPaneID, PaneID("leader"))
+        XCTAssertFalse(agentPane.sessionRequest.isLaunchDeferred)
+        XCTAssertEqual(agentPane.sessionRequest.nativeCommand, "'/bin/zsh' -lic 'claude --agent-id teammate'")
         XCTAssertTrue(agentPane.sessionRequest.waitAfterNativeCommand)
         XCTAssertNil(agentPane.sessionRequest.command)
     }
@@ -2817,6 +2980,76 @@ final class PaneStripStoreTests: XCTestCase {
         XCTAssertEqual(store.activeWorklane?.paneStripState.focusedPaneID, PaneID("agent"))
         XCTAssertEqual(columns[0].width, pairUsableWidth * leaderFraction, accuracy: 0.01)
         XCTAssertEqual(columns[1].width, pairUsableWidth * (1 - leaderFraction), accuracy: 0.01)
+    }
+
+    func test_resizeColumnContainingPaneInInactiveWorklaneOnlyMutatesAndNotifiesRoutedWorklane() throws {
+        let teamWorklaneID = WorklaneID("team")
+        let otherWorklaneID = WorklaneID("other")
+        let layoutContext = PaneLayoutContext(
+            displayClass: .largeDisplay,
+            preset: .balanced,
+            viewportWidth: 1200,
+            leadingVisibleInset: 0,
+            sizing: .balanced
+        )
+        let otherWorklane = WorklaneState(
+            id: otherWorklaneID,
+            title: nil,
+            paneStripState: PaneStripState(
+                panes: [PaneState(id: PaneID("other-pane"), title: "other")],
+                focusedPaneID: PaneID("other-pane")
+            )
+        )
+        let store = WorklaneStore(
+            worklanes: [
+                WorklaneState(
+                    id: teamWorklaneID,
+                    title: nil,
+                    paneStripState: PaneStripState(
+                        columns: [
+                            PaneColumnState(
+                                id: PaneColumnID("leader-column"),
+                                panes: [PaneState(id: PaneID("leader"), title: "leader")],
+                                width: 400,
+                                focusedPaneID: PaneID("leader")
+                            ),
+                            PaneColumnState(
+                                id: PaneColumnID("agent-column"),
+                                panes: [PaneState(id: PaneID("agent"), title: "agent")],
+                                width: 788,
+                                focusedPaneID: PaneID("agent")
+                            ),
+                        ],
+                        focusedColumnID: PaneColumnID("agent-column")
+                    )
+                ),
+                otherWorklane,
+            ],
+            layoutContext: layoutContext,
+            activeWorklaneID: otherWorklaneID
+        )
+        let originalOtherWorklane = store.worklanes.first(where: { $0.id == otherWorklaneID })
+        var changes: [WorklaneChange] = []
+        store.subscribe { changes.append($0) }
+        let phi: CGFloat = (1 + sqrt(5)) / 2
+        let leaderFraction = phi / (1 + phi)
+
+        store.resizeColumnContainingPane(
+            id: PaneID("leader"),
+            in: teamWorklaneID,
+            toFraction: leaderFraction,
+            availableWidth: layoutContext.viewportWidth,
+            leadingVisibleInset: layoutContext.leadingVisibleInset,
+            minimumSizeByPaneID: [:]
+        )
+
+        let teamWorklane = try XCTUnwrap(store.worklanes.first(where: { $0.id == teamWorklaneID }))
+        let pairUsableWidth = layoutContext.availableWidth - layoutContext.sizing.interPaneSpacing
+        XCTAssertEqual(store.activeWorklaneID, otherWorklaneID)
+        XCTAssertEqual(store.worklanes.first(where: { $0.id == otherWorklaneID }), originalOtherWorklane)
+        XCTAssertEqual(teamWorklane.paneStripState.focusedPaneID, PaneID("agent"))
+        XCTAssertEqual(teamWorklane.paneStripState.columns[0].width, pairUsableWidth * leaderFraction, accuracy: 0.01)
+        XCTAssertEqual(changes, [.layoutResized(teamWorklaneID, animation: .splitCurve)])
     }
 
     func test_golden_width_arrange_emits_split_curve_layout_resize_change() {

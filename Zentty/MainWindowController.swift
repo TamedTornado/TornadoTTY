@@ -1053,6 +1053,27 @@ final class MainWindowController: NSObject, NSWindowDelegate {
     }
 
     @discardableResult
+    func splitWithLayout(
+        in worklaneID: WorklaneID,
+        placement: PanePlacement,
+        isHorizontal: Bool,
+        layout: SplitLayoutAction,
+        targetPaneID: PaneID? = nil,
+        preserveFocusPaneID: PaneID? = nil,
+        sessionRequest: TerminalSessionRequest? = nil
+    ) -> PaneID? {
+        rootViewController.paneCommands.splitWithLayout(
+            in: worklaneID,
+            placement: placement,
+            isHorizontal: isHorizontal,
+            layout: layout,
+            targetPaneID: targetPaneID,
+            preserveFocusPaneID: preserveFocusPaneID,
+            sessionRequest: sessionRequest
+        )
+    }
+
+    @discardableResult
     func applyGrid(
         sourcePaneID: PaneID,
         rows: Int,
@@ -1093,6 +1114,11 @@ final class MainWindowController: NSObject, NSWindowDelegate {
     @discardableResult
     func launchDeferredPane(id paneID: PaneID, nativeCommand: String) -> Bool {
         rootViewController.paneCommands.launchDeferredPane(id: paneID, nativeCommand: nativeCommand)
+    }
+
+    @discardableResult
+    func launchDeferredPane(id paneID: PaneID, in worklaneID: WorklaneID, nativeCommand: String) -> Bool {
+        rootViewController.paneCommands.launchDeferredPane(id: paneID, in: worklaneID, nativeCommand: nativeCommand)
     }
 
     @discardableResult
@@ -1200,6 +1226,14 @@ final class MainWindowController: NSObject, NSWindowDelegate {
 
     func resizeColumnContainingPane(id paneID: PaneID, toFraction fraction: CGFloat) {
         rootViewController.paneCommands.resizeColumnContainingPane(id: paneID, toFraction: fraction)
+    }
+
+    func resizeColumnContainingPane(id paneID: PaneID, in worklaneID: WorklaneID, toFraction fraction: CGFloat) {
+        rootViewController.paneCommands.resizeColumnContainingPane(
+            id: paneID,
+            in: worklaneID,
+            toFraction: fraction
+        )
     }
 
     func columnWidthForPane(id paneID: PaneID, in worklaneID: WorklaneID) -> CGFloat? {
