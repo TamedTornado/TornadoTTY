@@ -32,9 +32,7 @@ enum MoveToWorklaneMenuBuilder {
         summary: WorklaneDestinationSummary,
         paneID: PaneID
     ) -> NSMenuItem {
-        let title = summary.additionalPaneCount > 0
-            ? "\(summary.primaryPaneTitle)  +\(summary.additionalPaneCount) more"
-            : summary.primaryPaneTitle
+        let title = destinationTitle(for: summary)
         let item = NSMenuItem(
             title: title,
             action: #selector(MainWindowController.movePaneToWorklane(_:)),
@@ -47,6 +45,19 @@ enum MoveToWorklaneMenuBuilder {
             destinationWorklaneID: summary.worklaneID
         )
         return item
+    }
+
+    /// A titled worklane is labelled by its own title, matching the sidebar
+    /// header and every other worklane surface. Only untitled worklanes fall
+    /// back to describing their contents.
+    static func destinationTitle(for summary: WorklaneDestinationSummary) -> String {
+        if let worklaneTitle = WorklaneContextFormatter.trimmed(summary.worklaneTitle) {
+            return worklaneTitle
+        }
+
+        return summary.additionalPaneCount > 0
+            ? "\(summary.primaryPaneTitle)  +\(summary.additionalPaneCount) more"
+            : summary.primaryPaneTitle
     }
 
     static func makeNewWorklaneItem(paneID: PaneID) -> NSMenuItem {

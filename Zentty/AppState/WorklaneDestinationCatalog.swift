@@ -4,6 +4,9 @@ struct WorklaneDestinationSummary: Equatable, Sendable {
     let windowID: WindowID
     let worklaneID: WorklaneID
     let color: WorklaneColor?
+    /// The worklane's own title, trimmed, or nil when the worklane is untitled.
+    /// Callers prefer this over `primaryPaneTitle` when labelling a destination.
+    let worklaneTitle: String?
     let primaryPaneTitle: String
     let additionalPaneCount: Int
 }
@@ -43,6 +46,7 @@ extension WorklaneStore {
                 windowID: windowID,
                 worklaneID: worklane.id,
                 color: worklane.color,
+                worklaneTitle: WorklaneContextFormatter.trimmed(worklane.title),
                 primaryPaneTitle: primary,
                 additionalPaneCount: panes.count - 1
             )
