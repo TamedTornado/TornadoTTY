@@ -81,6 +81,7 @@ required_scenarios=(
     review-dark-x11 remote-dark-x11 long-label-x11 sidebar-hidden-x11
     sidebar-overlay-wayland sidebar-resize-x11 sidebar-resize-wayland
     pane-controls-hidden-x11 pane-controls-revealed-x11 menu-open-x11
+    history-forward-enabled-x11 pane-layout-menu-x11
     narrow-dark-x11 wide-dark-x11 wide-light-x11 wide-dark-wayland
     scale-150-wayland scale-200-wayland fullscreen-wayland multi-window-x11
     remote-dark-wayland review-light-wayland

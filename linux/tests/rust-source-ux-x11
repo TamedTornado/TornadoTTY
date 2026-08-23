@@ -791,6 +791,7 @@ for _ in $(seq 1 100); do
 done
 grep -Fxq 'zentty-linux: title-pane=pane-1 value=focus:history-back' "${log}" ||
     fail "Back did not restore keyboard input to the original real PTY"
+capture_unmasked_visual_scenario history-forward-enabled-x11
 
 xdotool mousemove --window "${window_id}" 140 18 click 1
 for _ in $(seq 1 100); do
@@ -1290,6 +1291,7 @@ for _ in $(seq 1 100); do
 done
 grep -Fxq 'zentty-linux: chrome-popover=arrange-panes state=open' "${log}" ||
     fail "the real arrange-panes icon did not open its popover"
+capture_unmasked_visual_scenario pane-layout-menu-x11 root-crop
 # The source-sized Arrange popover presents Create actions as a two-column
 # grid. Add Pane Right is the first row's second button.
 pane_scroll_before_arrange="$(grep -Fc 'zentty-linux: pane-scroll value=460 maximum=460' "${log}" || true)"
@@ -1316,19 +1318,17 @@ done
 (( $(grep -Fc 'zentty-linux: focus-pane pane=pane-2' "${log}" || true) > focus_pane_two_before_arranged_probe )) ||
     fail "the adjacent pane did not settle real terminal focus"
 next_before_arranged_probe="$(grep -Fc 'zentty-linux: action=next-pane worklane=worklane-1 pane=pane-5' "${log}" || true)"
-focus_pane_five_before_arranged_probe="$(grep -Fc 'zentty-linux: focus-pane pane=pane-5' "${log}" || true)"
 xdotool key ctrl+Tab
 for _ in $(seq 1 100); do
-    if (( $(grep -Fc 'zentty-linux: action=next-pane worklane=worklane-1 pane=pane-5' "${log}" || true) > next_before_arranged_probe )) &&
-        (( $(grep -Fc 'zentty-linux: focus-pane pane=pane-5' "${log}" || true) > focus_pane_five_before_arranged_probe )); then
-        break
-    fi
+    (( $(grep -Fc 'zentty-linux: action=next-pane worklane=worklane-1 pane=pane-5' "${log}" || true) > next_before_arranged_probe )) && break
     sleep 0.05
 done
 (( $(grep -Fc 'zentty-linux: action=next-pane worklane=worklane-1 pane=pane-5' "${log}" || true) > next_before_arranged_probe )) ||
     fail "pane traversal did not settle the arranged real terminal focus"
-(( $(grep -Fc 'zentty-linux: focus-pane pane=pane-5' "${log}" || true) > focus_pane_five_before_arranged_probe )) ||
-    fail "pane traversal did not transfer physical focus to the arranged real terminal"
+# The subsequent PTY title is the physical-focus proof. Do not duplicate that
+# proof with a stderr line that can be byte-interleaved with Ghostty's own
+# concurrent diagnostics from another process.
+sleep 0.2
 xdotool type --delay 10 'arranged-pane'
 xdotool key Return
 for _ in $(seq 1 100); do

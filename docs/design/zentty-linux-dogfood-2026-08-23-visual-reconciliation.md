@@ -43,3 +43,40 @@ Issues: GH-87, GH-82
   BLOCKED**.
 - The visual runner and its negative suite pass. The claim remains
   `IMPLEMENTED_LOCAL_SUITE_ONLY`; GH-87 and GH-82 remain open.
+
+## Focused chrome-state expansion
+
+- The first reconciliation left twelve elements partial rather than pretending
+  that a nearby screenshot proved their state. The next focused slice reuses
+  the existing X11 source-UX journey at two interactions it already performs:
+  Back leaving Forward enabled, and the Arrange Panes icon opening its real
+  popover. It adds no product actor or alternate input route.
+- The first candidate run captured both states successfully, then failed later
+  when pane traversal reached the arranged offscreen terminal in model state
+  but the actor reported that physical GTK focus had not transferred. The
+  candidate images are retained
+  only for repeatability comparison; the incomplete journey is not accepted as
+  passing evidence. This failure occurred after capture and remains subject to
+  a clean complete rerun rather than being converted into a pass.
+- The repeat failed at the same check even though the log showed the model
+  route and GTK focus callback both occurred. Ghostty's concurrent diagnostic
+  write split the `focus-pane pane=pane-5` stderr record across two lines, so an
+  exact-line grep rejected successful behavior. The actor now keeps the exact
+  route receipt and uses the immediately following typed OSC title from pane 5
+  as the stronger physical-focus proof. This removes a duplicate fragile log
+  assertion; it does not replace the real pointer, keyboard, Ghostty, or PTY.
+- The first run after removing that duplicate check exposed the real ordering
+  it had accidentally provided: the model route can be logged just before GTK
+  finishes transferring focus, so immediate typing delivered only the tail of
+  the probe. The actor now gives GTK one bounded 200 ms focus-settlement
+  interval after the exact route receipt, then still requires the complete OSC
+  title from pane 5. It does not accept the delay itself as evidence.
+- The repaired complete journey passed. The first and final history-enabled
+  candidates compared at AE=0, as did the first and final Arrange Panes menu
+  candidates. Both were visually reviewed and promoted without masks or pixel
+  tolerance. Pane layout, Forward history, and the already-reviewed focused
+  context label now report `MATCH`.
+- Current totals are **28 MATCH, 9 PARTIAL, 2 DEFERRED, 1
+  PLATFORM_ALTERNATIVE** across elements and **26 PASS, 0 non-passing** across
+  scenarios. The remaining partials are project/branch context, server/Open
+  With compound controls, Global Find, bookmarks, and the pane-search HUD.
