@@ -394,6 +394,82 @@ if uses_xdotool; then
     export ZENTTY_PRODUCT_WINDOW_ID
 fi
 
+if [[ "${ZENTTY_SIDEBAR_RESIZE_ONLY:-false}" == true ]]; then
+    [[ "${backend}" == wayland && "${ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT:-}" == 1 ]] ||
+        fail "Wayland sidebar resize requires the controlled outer-pointer compositor profile"
+    type_text sidebar-resize-before
+    press_key Return
+    wait_for_fixed 'zentty-linux: title-pane=pane-1 value=focus:sidebar-resize-before' \
+        "pre-resize input did not reach the real PTY"
+
+    resize_persist_before="$(grep -Fc 'zentty-linux: sidebar-persist origin=resize ' "${log}" || true)"
+    xdotool mousemove --sync --window "${window_id}" 293 400
+    sleep 0.2
+    xdotool mousedown 1
+    sleep 0.2
+    xdotool mousemove --sync --window "${window_id}" 373 400
+    sleep 0.2
+    xdotool mouseup 1
+    sleep 0.1
+    dragged_sidebar_width="$(grep -F 'zentty-linux: sidebar-width=' "${log}" | tail -1 | cut -d= -f2)"
+    if [[ ! "${dragged_sidebar_width:-}" =~ ^[0-9]+$ ]] ||
+        (( dragged_sidebar_width < 325 || dragged_sidebar_width > 335 )); then
+        fail "real Wayland pointer drag did not resize the sidebar"
+    fi
+    wait_for_count_greater 'zentty-linux: sidebar-persist origin=resize ' \
+        "${resize_persist_before}" \
+        "Wayland divider width did not persist through ConfigStore"
+    grep -Eq "^width = ${dragged_sidebar_width}$" "${config_file}" ||
+        fail "persisted Wayland sidebar width did not equal the live allocation"
+
+    sidebar_resize_image="${state_directory}/sidebar-resize-wayland.png"
+    import -silent -window "${window_id}" "${sidebar_resize_image}"
+    zentty_visual_publish sidebar-resize-wayland linux/tests/rust-pane-search \
+        "${sidebar_resize_image}" -
+
+    hidden_before="$(grep -Fc 'zentty-linux: sidebar-visibility=hidden' "${log}" || true)"
+    press_ctrl s
+    wait_for_count_greater 'zentty-linux: sidebar-visibility=hidden' "${hidden_before}" \
+        "Wayland sidebar did not hide after resize"
+    pinned_before="$(grep -Fc 'zentty-linux: sidebar-visibility=pinned-open' "${log}" || true)"
+    press_ctrl s
+    wait_for_count_greater 'zentty-linux: sidebar-visibility=pinned-open' "${pinned_before}" \
+        "Wayland sidebar did not return to pinned mode after resize"
+    for _ in $(seq 1 100); do
+        [[ "$(grep -F 'zentty-linux: sidebar-width=' "${log}" | tail -1)" == \
+            "zentty-linux: sidebar-width=${dragged_sidebar_width}" ]] && break
+        sleep 0.05
+    done
+    [[ "$(grep -F 'zentty-linux: sidebar-width=' "${log}" | tail -1)" == \
+        "zentty-linux: sidebar-width=${dragged_sidebar_width}" ]] ||
+        fail "hide/show did not preserve the exact Wayland sidebar width"
+
+    zentty_product_move_pointer_to_terminal wayland ||
+        fail "controlled Wayland pointer did not return to the terminal"
+    xdotool click 1
+    type_text sidebar-resize-after
+    press_key Return
+    wait_for_fixed 'zentty-linux: title-pane=pane-1 value=focus:sidebar-resize-after' \
+        "post-resize input did not return to the same real PTY"
+    [[ "$(grep -Fc 'info(opengl): loaded OpenGL' "${log}" || true)" -eq 1 ]] ||
+        fail "Wayland sidebar resize recreated the Ghostty renderer"
+    [[ "$(grep -Fc 'info(io_exec): started subcommand' "${log}" || true)" -eq 1 ]] ||
+        fail "Wayland sidebar resize restarted the PTY child"
+
+    zentty_product_close_window wayland
+    set +e
+    timeout --foreground --kill-after=2s 7s tail --pid="${product_pid}" -f /dev/null
+    wait_status=$?
+    wait "${product_pid}"
+    product_status=$?
+    set -e
+    product_pid=""
+    (( wait_status == 0 && product_status == 0 )) ||
+        fail "Wayland sidebar resize profile did not close cleanly"
+    echo "Rust sidebar resize passed: wayland, width=${dragged_sidebar_width}, real-pointer=true, live-pty-preserved=true"
+    exit 0
+fi
+
 if [[ "${ZENTTY_TERMINAL_INPUT_ONLY:-false}" == true ]]; then
     uses_xdotool || fail "terminal interaction proof requires controlled pointer input"
     terminal_input_scenario="${ZENTTY_TERMINAL_INPUT_SCENARIO:-all}"

@@ -70,3 +70,50 @@ Parent: GH-82
   exited cleanly through the real confirmation. A fresh unchanged complete
   source-UX run then passed every existing screenshot and lifecycle assertion,
   confirming that X11 resize evidence no longer perturbs unrelated Peek timing.
+
+## Controlled Wayland pointer profile
+
+- `rust-pane-search` now has a focused resize profile that refuses keyboard-
+  only Wayland. It requires the existing outer-pointer compositor contract,
+  sends input through the real PTY before the drag, physically drags the GTK
+  divider, requires the exact live allocation and ConfigStore value, captures
+  the compositor output, hides and re-pins the sidebar, and verifies the exact
+  width and same PTY afterward.
+- Renderer and child-process counts reject Ghostty recreation. The profile
+  quits through the ordinary product shortcut and requires a clean process
+  exit. It reuses the actor, `SidebarWidthPreference`, `ConfigStore`, and nested
+  compositor; no second width model, product API, or actor was added.
+- The first labwc run failed to move the divider because coordinates copied
+  from undecorated X11 ignored the controlled Wayland compositor's outer frame:
+  the outer output was 1024x768 while Zentty reported a centered 1000x700
+  client. The profile now performs a bounded 2px scan only across the expected
+  divider edge in the blank sidebar region and accepts no candidate until the
+  product emits the source-bounded 350–365px allocation. It does not infer a
+  pass from pointer delivery alone.
+- A diagnostic physical output capture showed the exact decorated geometry:
+  the divider is at outer x=293, with the client centered under labwc's frame.
+  Rapid scan drags still failed because they did not dwell long enough for the
+  nested compositor/GTK grab transition. The maintained route now targets that
+  observed edge exactly, allows bounded 200ms enter/grab/presentation steps,
+  and then validates the allocation. The one-off diagnostic image remains in
+  `/tmp` only and is not a project artifact or accepted evidence.
+- The exact-edge run did resize: intermediate receipts were 274px and 330px.
+  The old 350–365px expectation was wrong for this 1000px client because the
+  source maximum is 33% of available width. Linux correctly clamped at 330px.
+  The profile now requires 325–335px, preserving a small compositor rounding
+  allowance while proving the source maximum rather than demanding an invalid
+  X11-sized target.
+- Two complete corrected labwc runs passed at the exact 330px source clamp and
+  their unmasked 1024x768 images matched at AE=0. The second image is the
+  reviewed baseline and Wayland is promoted to `PASS`. Dedicated X11 and
+  Wayland release-tier matrix cells now run the two focused real-pointer
+  profiles under their existing controlled compositor environments; resize
+  evidence cannot disappear behind a larger journey.
+- Promotion also made the missing-baseline negative fixture stale. It now
+  falsely promotes the explicit GH-87 `wide-light-x11` failure, which has a
+  successful defect capture but deliberately no accepted baseline. The runner
+  must continue rejecting that false PASS.
+- A fresh promoted Wayland run passed the complete focused journey and enforced
+  the reviewed baseline at AE=0. The visual map now has 22 PASS, 2 explicit
+  GH-87 FAIL, 0 EVIDENCE_PENDING, 0 NOT_IMPLEMENTED, and 0 BLOCKED scenarios;
+  full parity remains unclaimed because the two FAIL states are real defects.
