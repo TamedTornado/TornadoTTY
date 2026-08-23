@@ -17,6 +17,9 @@ drag_receipt=""
 
 # shellcheck source=linux/tests/lib/product-input
 source "${repo_root}/linux/tests/lib/product-input"
+# shellcheck source=linux/tests/lib/visual-evidence
+# shellcheck disable=SC1091
+source "${repo_root}/linux/tests/lib/visual-evidence"
 
 fail() {
     [[ -z "${log}" || ! -f "${log}" ]] || cat "${log}" >&2
@@ -63,7 +66,7 @@ case "${backend}" in
         ;;
     *) fail "GDK_BACKEND must be x11 or wayland" ;;
 esac
-for dependency in awk base64 cmp dirname grep mkdir mktemp readlink seq sha256sum sleep tail wc; do
+for dependency in awk base64 cmp compare cp dirname grep identify import jq mkdir mktemp readlink seq sha256sum sleep tail wc; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
 [[ -x "${product}" ]] || fail "staged product is not built: ${product}"
@@ -331,11 +334,23 @@ if [[ "${ZENTTY_TERMINAL_INPUT_ONLY:-false}" == true ]]; then
     mkdir -p "${XDG_CONFIG_HOME}/ghostty"
     printf 'clipboard-paste-protection = false\n' >"${XDG_CONFIG_HOME}/ghostty/config.ghostty"
 fi
+product_environment=(GDK_SCALE=1 GDK_DPI_SCALE=1)
+if [[ "${backend}" == wayland ]]; then
+    # Evidence must represent the settled real GTK state rather than a
+    # scheduler-dependent frame of its focus transition. This is scoped to
+    # the Wayland visual profile; X11 retains its qualified interaction path.
+    mkdir -p "${XDG_CONFIG_HOME}/gtk-4.0"
+    cat >"${XDG_CONFIG_HOME}/gtk-4.0/settings.ini" <<'EOF'
+[Settings]
+gtk-enable-animations=false
+EOF
+    product_environment+=(GSK_RENDERER=cairo)
+fi
 # The single quotes intentionally defer PTY-child expansion.
 # shellcheck disable=SC2016
 (
     cd "${state_directory}/working-directory"
-    exec env GDK_SCALE=1 GDK_DPI_SCALE=1 \
+    exec env "${product_environment[@]}" \
     "${product}" \
     --command 'printf "https://example.com/reset?token=noisegamma&utm_source=mail"; while IFS= read -r line; do case "$line" in markdown) printf "\033[2J\033[3J\033[H## Clipboard Notes\n\nOne wrapped\nparagraph"; printf "\033]2;focus:markdown-ready\a" ;; clipboard-second) printf "\033[2J\033[3J\033[Hhttps://second.example/reset?utm_source=other-window"; printf "\033]2;focus:clipboard-second-ready\a" ;; search-corpus) printf "\033[2J\033[3J\033[Hselectable alpha\nnoise\nselectable beta\nselectable gamma\n"; printf "\033]2;focus:search-ready\a" ;; terminal-input-corpus) printf "\033[2J\033[3J\033[H"; for row in $(seq -w 1 160); do printf "AUTOSCROLL-%s\n" "$row"; done; printf "\033]2;focus:terminal-input-ready\a" ;; *) printf "\033]2;focus:%s\a" "$line" ;; esac; done' \
     --state-directory "${state_directory}" \
@@ -673,7 +688,7 @@ wait_for_fixed 'zentty-linux: title-pane=pane-1 value=focus:search-focus' \
 if [[ "${backend}" == x11 ]]; then
     # Select the first rendered word with a real pointer gesture, then route
     # Ctrl+E through Ghostty's own selection-to-search implementation.
-    xdotool mousemove --window "${window_id}" 330 50 click --repeat 2 --delay 80 1
+    xdotool mousemove --window "${window_id}" 330 95 click --repeat 2 --delay 80 1
     press_ctrl e
     wait_for_fixed 'zentty-linux: action=use-selection-for-find pane=pane-1 binding="search_selection"' \
         "physical selection-to-find did not route to Ghostty"
@@ -739,6 +754,7 @@ wait_for_fixed 'zentty-linux: title-pane=pane-3 value=focus:search-ready' \
 # copied scrollback index. Open it from the persisted-hidden state through the
 # physical chord on both compositors: focus must reveal and hold a transient
 # floating sidebar without changing the stored preference.
+config_projected_before="$(grep -Fc 'zentty-linux: config-live-projected window=window-1' "${log}" || true)"
 press_ctrl s
 wait_for_fixed 'zentty-linux: sidebar-visibility=hidden' \
     "the physical sidebar shortcut did not establish persisted-hidden state"
@@ -748,6 +764,9 @@ for _ in $(seq 1 200); do
 done
 grep -Fq 'visibility = "hidden"' "${config_file}" ||
     fail "the physical sidebar shortcut did not persist hidden through ConfigStore"
+wait_for_count_greater 'zentty-linux: config-live-projected window=window-1' \
+    "${config_projected_before}" \
+    "persisted hidden sidebar mode was not projected before Global Find"
 sidebar_hidden_before="$(grep -Fc 'zentty-linux: sidebar-visibility=hidden' "${log}" || true)"
 sidebar_peek_before="$(grep -Fc 'zentty-linux: sidebar-visibility=hover-peek' "${log}" || true)"
 press_ctrl_shift f
@@ -760,7 +779,16 @@ wait_for_count_greater 'zentty-linux: sidebar-visibility=hover-peek' \
     "Global Find focus did not reveal the persisted-hidden sidebar"
 grep -Fq 'visibility = "hidden"' "${config_file}" ||
     fail "transient Global Find hover peek changed the persisted sidebar mode"
-sleep 0.35
+press_key Home
+sleep 0.25
+if [[ "${backend}" == wayland ]]; then
+    sidebar_overlay_image="${state_directory}/sidebar-overlay-wayland.png"
+    outer_window="${ZENTTY_NESTED_WAYLAND_OUTER_X11_WINDOW:?}"
+    import -silent -window "${outer_window}" "${sidebar_overlay_image}"
+    zentty_visual_publish sidebar-overlay-wayland linux/tests/rust-pane-search \
+        "${sidebar_overlay_image}" -
+fi
+sleep 0.1
 [[ "$(grep -Fc 'zentty-linux: sidebar-visibility=hidden' "${log}" || true)" -eq "${sidebar_hidden_before}" ]] ||
     fail "sidebar dismissed while Global Find retained real entry focus"
 # End the hidden-sidebar probe before continuing the legacy multi-pane Global
@@ -769,8 +797,10 @@ sleep 0.35
 # would invalidate its established interaction geometry rather than strengthen
 # this contract.
 global_find_hidden_before="$(grep -Fc 'zentty-linux: global-find-state visible=false remembered=false selected=None total=0' "${log}" || true)"
-zentty_product_move_pointer_to_terminal "${backend}" ||
-    fail "could not move the real pointer outside the transient sidebar"
+if uses_xdotool; then
+    zentty_product_move_pointer_to_terminal "${backend}" ||
+        fail "could not move the real pointer outside the transient sidebar"
+fi
 press_key Escape
 wait_for_count_greater \
     'zentty-linux: global-find-state visible=false remembered=false selected=None total=0' \

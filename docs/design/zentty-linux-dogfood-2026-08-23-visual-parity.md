@@ -347,3 +347,97 @@ Issue: GH-84
   source-UX journey then passed all existing baseline gates and lifecycle
   assertions, proving the focused profile did not weaken the authoritative
   actor path.
+
+## Transient Wayland sidebar capture
+
+- The final pending executable scenario remains owned by the existing
+  `rust-pane-search` actor. Capture is inserted only after the actor has created
+  three real Ghostty panes across two worklanes, persisted hidden sidebar mode,
+  opened Global Find through physical input, proved real entry focus, and
+  observed the focus-held `hover-peek` projection without changing the stored
+  preference.
+- The controlled Cage output is captured from its wrapper-owned outer X11
+  window. The first attempt is deliberately unmasked: terminal output at this
+  point is actor-owned and deterministic, so a mask is not justified unless
+  repeated real runs prove a narrowly bounded live-pixel source.
+- The first capture was rejected before publication because the map incorrectly
+  claimed 1200x700 while the authoritative Cage session facts and physical
+  outer window are 1024x768. The scenario now names the controlled compositor's
+  actual physical output; environmental absence or an invented resize is not
+  converted into a pass.
+- The corrected-size run published the image, then exposed a stale assertion in
+  the pre-existing actor: it unconditionally requested physical pointer motion
+  from the keyboard-only Cage profile, which explicitly cannot provide it.
+  Pointer relocation remains mandatory in profiles that advertise controlled
+  pointer input. Cage never moved the pointer into the sidebar in this journey;
+  the real focused search entry is the only transient hold, so its physical
+  Escape/dismissal receipts remain the appropriate contract there. The failed
+  whole-actor run is not counted as passing.
+- Two complete corrected runs passed semantically, but their unmasked images
+  differed by 18 pixels: amplified comparison localized every changed pixel to
+  the real Global Find entry caret. Capture had been placed 350ms after focus,
+  too close to GTK's blink boundary. It now captures 100ms after the owned
+  focus receipt, then completes the remaining 250ms hold assertion afterward;
+  no terminal or product-chrome pixels are covered or normalized.
+- The next pair exposed a larger 894-pixel difference around only the search
+  field's orange focus ring, proving a GTK focus-transition frame rather than
+  terminal noise. As in the existing source-UX visual actor, this actor now
+  disables GTK presentation animations inside its private configuration root.
+  Interaction, compositor input, focus, and product state remain real; the
+  evidence no longer depends on scheduler timing within a decorative tween.
+- Animation-disabled repeats still differed only around that ring (1,308
+  pixels), which ruled out the tween as the complete cause. Actor logs showed
+  the asynchronous ConfigStore live projection from the immediately preceding
+  sidebar persistence racing the focused capture. The journey now waits for
+  the real window's fresh `config-live-projected` receipt before opening Global
+  Find; it does not replace the reload with a test hook or delay guess.
+- Config-settled repeats reduced the difference to 16 pixels, all in the GTK
+  entry caret. A first attempt reset that blink by entering and clearing a real
+  one-character query. Although the capture succeeded, delayed per-pane search
+  results arrived after the clear and contaminated the actor's later short-
+  query navigation, so the complete journey correctly failed. The repair uses
+  a physical Home key in the already-proven focused empty entry to reset the
+  caret without starting a search, then captures 50ms later. No search fixture
+  or product-side clock control is introduced.
+- Home-synchronized repeats passed the whole journey and reduced the remaining
+  difference to 64 antialiased pixels at only the four rounded focus-ring
+  corners. This is the same controlled GTK renderer variance already found in
+  native-window evidence. The actor now pins GSK's product-chrome renderer to
+  Cairo while Ghostty continues to report and use its real OpenGL terminal
+  renderer; no application pixels are post-processed.
+- Cairo-controlled repeats still differed only in the focus outline, showing
+  that the 50ms post-key frame was too early for the complete entry repaint.
+  The same bounded 350ms focus-hold budget is retained, but capture moves to
+  250ms after Home and the post-capture hold becomes 100ms. This remains well
+  before the caret blink boundary while allowing the real software-rendered
+  focus frame to settle.
+- Two complete settled-frame runs then matched at AE=0 and passed the full
+  real-Ghostty Global Find journey. The second unmasked 1024x768 image is the
+  reviewed baseline. The scenario is now `PASS`, leaving no
+  `EVIDENCE_PENDING` visual cells; GH-84 no longer owns an evidence omission.
+- Promotion made the runner's missing-baseline negative fixture stale because
+  it still tried to promote this now-reviewed scenario. The fixture advances
+  to the explicitly `NOT_IMPLEMENTED` Wayland sidebar-resize scenario, where a
+  false promotion must continue to fail until GH-85 supplies real evidence.
+- The shared actor's first post-promotion X11 run failed its physical
+  selection-to-find assertion when the newly pinned Cairo GSK renderer was
+  applied to both backends. Cairo is an evidence requirement for the controlled
+  Wayland raster, not an X11 product contract. The environment is now assembled
+  explicitly and pins Cairo only for Wayland; X11 retains its previously
+  qualified renderer path.
+- The first renderer-scoped X11 retry failed the same assertion, revealing that
+  the private GTK animation setting was also still shared across backends. It
+  is now created only for the Wayland visual profile alongside the Cairo pin;
+  neither visual control is allowed to alter the established X11 interaction
+  journey.
+- A fully backend-scoped retry still failed, and its product receipt identified
+  the real cause: the old X11 selection coordinate at y=50 now lands in the
+  pane's qualified top drag/control strip, so Ghostty correctly reported no
+  selectable terminal word. The actor now double-clicks the deterministic
+  `selectable` corpus at y=95, below contextual chrome, and continues to require
+  Ghostty's three-match `search_selection` result. No renderer workaround is
+  retained for X11.
+- The promoted Wayland scenario passed a fresh authoritative AE=0 baseline run.
+  The corrected X11 actor then passed its complete physical selection, pane and
+  global search, clipboard, focus, and sidebar journey. Both maintained actor
+  backends are green after the evidence extension.
