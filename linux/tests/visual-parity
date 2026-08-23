@@ -39,7 +39,7 @@ jq -e '
         (.scenarios | type == "array" and length > 0) and
         (.semantic_assertions | type == "array" and length > 0) and
         (if .status == "MATCH"
-         then ((.tracking_issue == null) or (.tracking_issue | type == "number" and . > 0 and floor == .))
+         then .tracking_issue == null
          else (.tracking_issue | type == "number" and . > 0 and floor == .)
          end)
     ) and
@@ -99,6 +99,34 @@ while IFS= read -r scenario; do
     [[ -n "${scenario_ids[${scenario}]:-}" ]] ||
         fail "element references unknown scenario: ${scenario}"
 done < <(jq -r '.elements[].scenarios[]' "${map}" | LC_ALL=C sort -u)
+
+while IFS=$'\t' read -r element assertion; do
+    [[ -z "${element}" ]] ||
+        fail "MATCH element ${element} lacks associated scenario assertion: ${assertion}"
+done < <(jq -r '
+    . as $map |
+    .elements[] as $element |
+    select($element.status == "MATCH") |
+    $element.semantic_assertions[] as $assertion |
+    select(any($map.scenarios[];
+        (.id as $scenario_id | ($element.scenarios | index($scenario_id)) != null) and
+        (.semantic_assertions | index($assertion) != null)
+    ) | not) |
+    [$element.id, $assertion] | @tsv
+' "${map}")
+
+while IFS=$'\t' read -r element scenario status; do
+    [[ -z "${element}" ]] ||
+        fail "MATCH element ${element} references non-PASS scenario ${scenario}: ${status}"
+done < <(jq -r '
+    . as $map |
+    .elements[] as $element |
+    select($element.status == "MATCH") |
+    $element.scenarios[] as $scenario_id |
+    $map.scenarios[] |
+    select(.id == $scenario_id and .status != "PASS") |
+    [$element.id, .id, .status] | @tsv
+' "${map}")
 
 while IFS= read -r mask; do
     [[ -z "${mask}" || -n "${mask_ids[${mask}]:-}" ]] ||

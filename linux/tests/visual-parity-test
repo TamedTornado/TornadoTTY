@@ -48,6 +48,20 @@ jq '(.elements[0].status) = "SKIP"' \
 expect_failure unexpected-skip "schema or enum contract failed" \
     "${runner}" "${temporary}/unexpected-skip.json" "${temporary}/empty-baselines"
 
+jq '(.elements[] | select(.id == "chrome.pane-layout")) |=
+    (.status = "MATCH" | .tracking_issue = null)' \
+    "${source_map}" >"${temporary}/unproved-match.json"
+expect_failure unproved-match \
+    "MATCH element chrome.pane-layout lacks associated scenario assertion" \
+    "${runner}" "${temporary}/unproved-match.json" "${temporary}/empty-baselines"
+
+jq '(.scenarios[] | select(.id == "empty-dark-x11")) |=
+    (.status = "FAIL" | .tracking_issue = 87)' \
+    "${source_map}" >"${temporary}/match-failed-scenario.json"
+expect_failure match-failed-scenario \
+    "MATCH element chrome.new-worklane references non-PASS scenario empty-dark-x11" \
+    "${runner}" "${temporary}/match-failed-scenario.json" "${temporary}/empty-baselines"
+
 jq '(.scenarios[0].mask) = "whole-window"' \
     "${source_map}" >"${temporary}/unknown-mask.json"
 expect_failure unknown-mask "scenario references unknown mask" \
@@ -70,7 +84,10 @@ jq '(.qualification_claim) = "FULL_VISUAL_PARITY"' \
 expect_failure false-full "false full visual parity claim" \
     "${runner}" "${temporary}/false-full.json" "${temporary}/empty-baselines"
 
-jq '(.qualification_claim) = "RELEASE_QUALIFIED" |
+jq '(.scenarios[0].id) as $failed_scenario |
+    (.elements[] | select(.scenarios | index($failed_scenario))) |=
+        (.status = "PARTIAL" | .tracking_issue = 87) |
+    (.qualification_claim) = "RELEASE_QUALIFIED" |
     (.scenarios[0].status) = "FAIL" |
     (.scenarios[0].tracking_issue) = 87' \
     "${source_map}" >"${temporary}/false-release.json"
@@ -124,4 +141,4 @@ expect_failure pixel-mismatch "differs from its reviewed baseline" \
         linux/tests/rust-source-ux-x11 \
         "${temporary}/capture.png" "${temporary}/capture.geometry"
 
-echo "visual-parity-test: PASS negatives=missing-scenario+unexpected-skip+unknown-mask+missing-baseline+stale-baseline+false-claims+wrong-actor+wrong-size+pixel-mismatch"
+echo "visual-parity-test: PASS negatives=missing-scenario+unexpected-skip+unproved-match+match-failed-scenario+unknown-mask+missing-baseline+stale-baseline+false-claims+wrong-actor+wrong-size+pixel-mismatch"
