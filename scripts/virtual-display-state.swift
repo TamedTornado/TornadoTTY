@@ -126,6 +126,9 @@ case "display-id-for-uuid":
           let uuid = CFUUIDCreateFromString(nil, arguments[2] as CFString) else {
         exit(2)
     }
+    // CGDisplayGetDisplayIDFromUUID reaches SkyLight directly and requires the
+    // process-wide display services initialized by AppKit first.
+    _ = NSScreen.screens
     let displayID = CGDisplayGetDisplayIDFromUUID(uuid)
     guard displayID != kCGNullDirectDisplay else {
         exit(1)
