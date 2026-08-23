@@ -146,3 +146,32 @@ Issue: GH-84
   technically its schema result but became misleading as soon as a governed
   scenario was explicitly FAIL. Its report now says `visual-parity-map: VALID`
   and prints every scenario status total plus the limited qualification claim.
+
+## Controlled Wayland scaling capture
+
+- The first map draft assigned dark X11 review/remote scenarios to the broad
+  source-UX actor even though the existing `rust-git-review-context` and
+  `rust-session-restore` actors own those meanings. The map now names the real
+  owners before either actor is extended.
+- For native Wayland scaling, the evidence image is the physical 1024x768
+  nested compositor output at 1x, 1.5x, and 2x. The earlier 682x512/512x384
+  values were logical surface sizes, not screenshot pixel dimensions. Scenario
+  contracts now distinguish scale metadata from the physical reviewed image.
+- The existing scaling actor, not a new actor, captures ReleaseSafe output only
+  after its real PTY geometry, SIGWINCH, pointer, and compositor-commit stage
+  assertions pass. Debug still executes every semantic stage but does not
+  duplicate identical visual evidence.
+- The first 2x image was solid black even though the compositor receipt proved
+  `preferred_scale(240)`: wlroots' X11 backend does not expose a stable mapping
+  from Wayland output names to the wrapper's two outer X windows. Capture now
+  reads both wrapper-owned 1024x768 windows and selects the one containing
+  presented pixels; it hard-fails if both are black. This follows the same
+  output-identity boundary already documented by the actor's pointer path.
+- After output selection was corrected, two controlled native-Wayland runs
+  produced zero pixel differences at physical 1x, fractional 1.5x, and integer
+  2x. All three images retain real Ghostty surfaces without masks. Their
+  reviewed baselines are now PASS candidates subject to a separate run against
+  the authoritative map.
+- The separate authoritative run passed all three direct comparisons while
+  repeating the full ReleaseSafe and Debug semantic scaling journey. This is
+  physical screenshot PASS at each scale, not merely a logical-size receipt.

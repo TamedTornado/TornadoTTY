@@ -13,6 +13,8 @@ product_window=""
 source "${repo_root}/linux/tests/lib/product-bundle"
 # shellcheck source=linux/tests/lib/product-input
 source "${repo_root}/linux/tests/lib/product-input"
+# shellcheck source=linux/tests/lib/visual-evidence
+source "${repo_root}/linux/tests/lib/visual-evidence"
 
 fail() {
     for candidate in "${run_root}"/*.log "${run_root}"/*.receipt "${run_root}"/*.outputs; do
@@ -62,7 +64,7 @@ esac
     fail "controlled mixed-scale compositor session is required"
 [[ -z "${GDK_SCALE:-}" && -z "${GDK_DPI_SCALE:-}" ]] ||
     fail "process-local GDK scaling overrides are forbidden"
-for dependency in wlr-randr wayland-info xdotool jq grep sed awk sort seq ps kill sleep mktemp; do
+for dependency in wlr-randr wayland-info xdotool jq grep sed awk sort seq ps kill sleep mktemp import identify compare convert; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
 if [[ "${scaling_backend}" == xwayland ]]; then
@@ -221,6 +223,28 @@ send_compositor_key() {
     DISPLAY="${outer_display}" xdotool key "${key}"
 }
 
+capture_scaling_visual() {
+    local scenario_id="$1"
+    local image="${run_root}/${scenario_id}.png"
+    local candidate candidate_image candidate_mean selected_mean=-1
+    # wlroots' X11 backend does not expose a stable mapping from Wayland output
+    # names to its two outer X windows. Capture both wrapper-owned outputs and
+    # select the one with presented pixels; the unused output is solid black.
+    for candidate in "${outer_windows[@]}"; do
+        candidate_image="${run_root}/${scenario_id}-${candidate}.png"
+        DISPLAY="${outer_display}" import -silent -window "${candidate}" "${candidate_image}"
+        candidate_mean="$(convert "${candidate_image}" -colorspace gray -format '%[fx:mean]' info:)"
+        if awk -v candidate="${candidate_mean}" -v selected="${selected_mean}" \
+            'BEGIN { exit !(candidate > selected) }'; then
+            cp -- "${candidate_image}" "${image}"
+            selected_mean="${candidate_mean}"
+        fi
+    done
+    awk -v selected="${selected_mean}" 'BEGIN { exit !(selected > 0.001) }' ||
+        fail "${scenario_id} found no presented compositor output"
+    zentty_visual_publish "${scenario_id}" linux/tests/rust-wayland-scaling "${image}" -
+}
+
 run_stage() {
     local profile="$1" stage="$2" pane_count="$3" receipt="$4" log="$5" candidate
     local done_pattern mouse_pattern x commits_before commits_after pointer_display
@@ -294,13 +318,17 @@ run_profile() {
     state="${run_root}/${profile}-state"
     receipt="${run_root}/${profile}.receipt"
     log="${run_root}/${profile}.log"
-    mkdir -p "${state}" "${XDG_CONFIG_HOME}/zentty"
+    mkdir -p "${state}" "${XDG_CONFIG_HOME}/zentty" "${XDG_CONFIG_HOME}/ghostty"
     cat >"${XDG_CONFIG_HOME}/zentty/config.toml" <<'CONFIG'
 [confirmations]
 confirm_before_closing_pane = false
 confirm_before_closing_worklane = false
 confirm_before_closing_window = false
 confirm_before_quitting = false
+CONFIG
+    cat >"${XDG_CONFIG_HOME}/ghostty/config" <<'CONFIG'
+resize-overlay = never
+cursor-opacity = 0
 CONFIG
     : >"${receipt}"
     configure_outputs "${run_root}/${profile}-baseline.outputs" 1
@@ -330,6 +358,9 @@ CONFIG
     fi
     send_compositor_key "${outer_one}" F3
     run_stage "${profile}" 0 1 "${receipt}" "${log}" # single-baseline
+    if [[ "${profile}" == release-safe && "${scaling_backend}" == wayland ]]; then
+        capture_scaling_visual wide-dark-wayland
+    fi
 
     split_pane_one "${cli}"
     wait_for_log "${log}" 'terminal-ready-pane=pane-2' \
@@ -345,6 +376,9 @@ CONFIG
         sleep 0.5
     fi
     run_stage "${profile}" 2 2 "${receipt}" "${log}" # fractional-1.5
+    if [[ "${profile}" == release-safe && "${scaling_backend}" == wayland ]]; then
+        capture_scaling_visual scale-150-wayland
+    fi
 
     if [[ "${scaling_backend}" == wayland ]]; then
         send_compositor_key "${outer_one}" F2
@@ -362,6 +396,9 @@ CONFIG
     fi
     focus_pane_one "${cli}"
     run_stage "${profile}" 3 2 "${receipt}" "${log}" # integer-2
+    if [[ "${profile}" == release-safe && "${scaling_backend}" == wayland ]]; then
+        capture_scaling_visual scale-200-wayland
+    fi
 
     if [[ "${scaling_backend}" == xwayland ]]; then
         xdotool windowfocus --sync "${product_window}"
