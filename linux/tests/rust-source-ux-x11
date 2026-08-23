@@ -840,7 +840,7 @@ if [[ "${ZENTTY_SOURCE_UX_WIDE_LIGHT_ONLY:-false}" == true ]]; then
     apply_theme_mode_from_palette 'Use Light Theme' light
     capture_unmasked_visual_scenario wide-light-x11
     close_focused_evidence_profile
-    echo 'Rust source UX wide light evidence passed: x11, real-palette-theme=light, defect-capture=published'
+    echo 'Rust source UX wide layout passed: x11, real-palette-theme=light, proportional-columns=true'
     exit 0
 fi
 xdotool windowsize --sync "${window_id}" 1200 700

@@ -216,6 +216,7 @@ pub(crate) struct ApplicationShell {
     open_with_runtime: open_with_runtime::OpenWithRuntime,
     bookmark_runtime: bookmark_runtime::BookmarkRuntime,
     task_runner_actions: BTreeMap<String, TaskRunnerAction>,
+    last_pane_viewport_width: Cell<i32>,
     last_pane_viewport_height: Cell<i32>,
     topology_generation: Cell<u64>,
     action_router: Option<ActionRouter>,
@@ -497,6 +498,7 @@ impl ApplicationShell {
             open_with_runtime,
             bookmark_runtime,
             task_runner_actions: BTreeMap::new(),
+            last_pane_viewport_width: Cell::new(0),
             last_pane_viewport_height: Cell::new(0),
             topology_generation: Cell::new(0),
             action_router: None,
@@ -1287,6 +1289,24 @@ impl ApplicationShell {
 
     pub(crate) fn reconcile_pane_heights(&self) {
         self.apply_pane_height_requests(false);
+    }
+
+    pub(crate) fn reconcile_pane_widths(&mut self) {
+        let viewport_width = self.pane_viewport_width();
+        if viewport_width <= 1 {
+            return;
+        }
+        let previous_width = self.last_pane_viewport_width.replace(viewport_width);
+        if previous_width <= 1 || previous_width == viewport_width {
+            return;
+        }
+        let factor = f64::from(viewport_width) / f64::from(previous_width);
+        if self.state.scale_multi_column_widths(factor) {
+            self.apply_column_width_requests();
+            eprintln!(
+                "zentty-linux: pane-readable-width previous={previous_width} current={viewport_width} factor={factor:.6} result=scaled"
+            );
+        }
     }
 
     pub(crate) fn live_children(&self) -> usize {
@@ -4020,14 +4040,7 @@ impl ApplicationShell {
 
         let column_widths = self.resolved_column_widths();
         let single_column = column_widths.len() == 1;
-        let content_width = column_widths
-            .iter()
-            .copied()
-            .fold(0_i32, i32::saturating_add)
-            .saturating_add(
-                i32::try_from(column_widths.len().saturating_sub(1)).unwrap_or(i32::MAX),
-            )
-            .max(self.pane_viewport_width());
+        let content_width = pane_content_width(&column_widths, self.pane_viewport_width());
         self.pane_box.set_width_request(content_width);
         eprintln!(
             "zentty-linux: pane-layout viewport={} content={} columns={}",
@@ -4357,12 +4370,10 @@ impl ApplicationShell {
     }
 
     fn apply_column_width_requests(&self) {
-        for (column, width) in self
-            .state
-            .active_columns()
-            .iter()
-            .zip(self.resolved_column_widths())
-        {
+        let widths = self.resolved_column_widths();
+        self.pane_box
+            .set_width_request(pane_content_width(&widths, self.pane_viewport_width()));
+        for (column, width) in self.state.active_columns().iter().zip(widths) {
             if let Some(overlay) = self.rendered_columns.borrow().get(&column.id) {
                 overlay.set_width_request(width);
                 if let Some(child) = overlay.child() {
@@ -5698,6 +5709,15 @@ fn model_width_to_pixels(width: f64) -> i32 {
     }
 }
 
+fn pane_content_width(column_widths: &[i32], viewport_width: i32) -> i32 {
+    column_widths
+        .iter()
+        .copied()
+        .fold(0_i32, i32::saturating_add)
+        .saturating_add(i32::try_from(column_widths.len().saturating_sub(1)).unwrap_or(i32::MAX))
+        .max(viewport_width)
+}
+
 fn model_heights_to_pixels(weights: &[f64], viewport_height: i32) -> Vec<i32> {
     if weights.is_empty() {
         return Vec::new();
@@ -5885,8 +5905,8 @@ mod allocation_tests {
     use super::{
         TerminalGesture, UserActivationClock, bounded_pane_viewport_height, codex_terminal_gesture,
         default_window_recipe, focus_follow_should_apply, is_close_window_shortcut,
-        model_heights_to_pixels, settings_refresh_section, snapshot_window_frame,
-        validated_window_size,
+        model_heights_to_pixels, pane_content_width, settings_refresh_section,
+        snapshot_window_frame, validated_window_size,
     };
     use gtk::gdk;
     use zentty_core::WindowFrame;
@@ -6073,6 +6093,14 @@ mod allocation_tests {
         assert_eq!(bounded_pane_viewport_height(1, 0, 0, 700), 648);
         assert_eq!(bounded_pane_viewport_height(0, 1, 0, 700), 648);
         assert_eq!(bounded_pane_viewport_height(0, 0, 0, 700), 648);
+    }
+
+    #[test]
+    fn pane_content_fills_the_viewport_and_preserves_intentional_overflow() {
+        assert_eq!(pane_content_width(&[400, 400], 1_200), 1_200);
+        assert_eq!(pane_content_width(&[600, 599], 1_200), 1_200);
+        assert_eq!(pane_content_width(&[800, 800], 1_200), 1_601);
+        assert_eq!(pane_content_width(&[], 1_200), 1_200);
     }
 
     #[test]

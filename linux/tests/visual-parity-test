@@ -54,7 +54,8 @@ expect_failure unknown-mask "scenario references unknown mask" \
     "${runner}" "${temporary}/unknown-mask.json" "${temporary}/empty-baselines"
 
 jq '(.scenarios[] | select(.id == "wide-light-x11")) |=
-    (.status = "PASS" | .tracking_issue = null)' \
+    (.status = "PASS" | .tracking_issue = null |
+     .baseline = "linux/tests/visual-baselines/missing-baseline-fixture.png")' \
     "${source_map}" >"${temporary}/missing-baseline.json"
 expect_failure missing-baseline "has no reviewed baseline" \
     "${runner}" "${temporary}/missing-baseline.json" "${temporary}/empty-baselines"
@@ -69,7 +70,9 @@ jq '(.qualification_claim) = "FULL_VISUAL_PARITY"' \
 expect_failure false-full "false full visual parity claim" \
     "${runner}" "${temporary}/false-full.json" "${temporary}/empty-baselines"
 
-jq '(.qualification_claim) = "RELEASE_QUALIFIED"' \
+jq '(.qualification_claim) = "RELEASE_QUALIFIED" |
+    (.scenarios[0].status) = "FAIL" |
+    (.scenarios[0].tracking_issue) = 87' \
     "${source_map}" >"${temporary}/false-release.json"
 expect_failure false-release "false release visual qualification claim" \
     "${runner}" "${temporary}/false-release.json" "${temporary}/empty-baselines"

@@ -1236,6 +1236,27 @@ impl WorkspaceState {
         changed
     }
 
+    /// Preserves the source application's proportional column layout when the
+    /// readable viewport changes. Single-column lanes resolve directly from
+    /// the current viewport and therefore do not need stored-width mutation.
+    pub fn scale_multi_column_widths(&mut self, factor: f64) -> bool {
+        if !factor.is_finite() || factor <= 0.0 || (factor - 1.0).abs() <= 0.001 {
+            return false;
+        }
+        let mut changed = false;
+        for worklane in &mut self.worklanes {
+            if worklane.columns.len() <= 1 {
+                continue;
+            }
+            for column in &mut worklane.columns {
+                let scaled = sanitize_dimension(column.width * factor);
+                changed |= column.width.to_bits() != scaled.to_bits();
+                column.width = scaled;
+            }
+        }
+        changed
+    }
+
     /// Reflows panes in sidebar/reading order into columns containing the
     /// requested number of panes while preserving stable pane identities and
     /// the focused pane.

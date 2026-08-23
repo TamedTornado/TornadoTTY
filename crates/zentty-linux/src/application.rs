@@ -1278,8 +1278,9 @@ impl ApplicationCoordinator {
                 tmux_by_window.remove(id).unwrap_or_default(),
                 events_by_window.remove(id).unwrap_or_default(),
             );
-            let shell = shell_ref.borrow();
+            let mut shell = shell_ref.borrow_mut();
             shell.reconcile_sidebar_width();
+            shell.reconcile_pane_widths();
             shell.reconcile_pane_heights();
             let window_size = (shell.window().width(), shell.window().height());
             let sidebar_width = shell.sidebar_container().width();

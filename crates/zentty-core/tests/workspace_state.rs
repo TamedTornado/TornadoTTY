@@ -1672,6 +1672,32 @@ fn source_arrangement_presets_reflow_stable_panes_and_preserve_focus() {
 }
 
 #[test]
+fn source_readable_width_changes_scale_every_multi_column_worklane_proportionally() {
+    const SOURCE: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../Zentty/AppState/WorklaneStore.swift"
+    ));
+    let mut state = WorkspaceState::new("lane-a", "pane-a1");
+    assert!(state.split_focused_pane_right("pane-a2"));
+    assert!(state.restore_column_width("pane-a1", 400.0));
+    assert!(state.restore_column_width("pane-a2", 600.0));
+    assert!(state.create_worklane("lane-b", "pane-b1"));
+    assert!(state.split_focused_pane_right("pane-b2"));
+    assert!(state.restore_column_width("pane-b1", 300.0));
+    assert!(state.restore_column_width("pane-b2", 700.0));
+
+    assert!(state.scale_multi_column_widths(1.5));
+    assert_eq!(state.worklanes()[0].columns[0].width, 600.0);
+    assert_eq!(state.worklanes()[0].columns[1].width, 900.0);
+    assert_eq!(state.worklanes()[1].columns[0].width, 450.0);
+    assert_eq!(state.worklanes()[1].columns[1].width, 1_050.0);
+    assert!(!state.scale_multi_column_widths(1.0));
+    assert!(!state.scale_multi_column_widths(f64::NAN));
+    assert!(SOURCE.contains("scalePaneWidths(by: readableWidthScaleFactor)"));
+    assert!(SOURCE.contains("nextReadableWidth / previousReadableWidth"));
+}
+
+#[test]
 fn divider_resize_updates_only_adjacent_columns_and_clamps_to_source_minimums() {
     let mut state = WorkspaceState::new("lane", "pane-left");
     assert!(state.split_focused_pane_right("pane-middle"));
