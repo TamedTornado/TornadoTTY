@@ -65,3 +65,31 @@ Issue: GH-84
   latest valid `x/y/width` receipt, while absence of any valid geometry remains
   a hard failure. This fixes evidence collection without treating transient
   allocation absence as success.
+- Making the visual CWD stable under the repository accidentally reintroduced
+  real Git/project discovery into an actor whose lifecycle checks require a
+  non-project shell. That changed sidebar content and invalidated pointer
+  coordinates before evidence capture. The stable CWD is now the dedicated
+  non-project `/tmp/zentty-source-ux-cwd`; it keeps visible labels deterministic
+  without contaminating the scenario with the developer checkout.
+- The selected long-label capture revealed a second determinism error: the
+  recorded card allocation described one frame of Peek's transition while the
+  X11 drawable had advanced to another, so otherwise narrow terminal masks no
+  longer aligned. Motion itself already has real enabled/reduced coverage in
+  `rust-project-icons`. The source-UX evidence actor now disables GTK animation
+  so each semantic state has one settled geometry, and publication rejects an
+  image whose real dimensions differ from its scenario contract.
+
+## First governed receipts
+
+- The existing X11 source-UX actor now publishes the already exercised
+  multi-lane, progress, attention, and selected long-label states through one
+  shared receipt boundary. It records scenario environment, semantic assertion
+  IDs, and the exact dynamically derived terminal rectangles; it neither
+  launches another product nor hashes evidence.
+- Two consecutive controlled real-product runs produced zero differing pixels
+  for all four normalized images. The reviewed images are now checked in as the
+  first baselines, and a third run passed direct baseline comparison from the
+  actor.
+- Publication contract tests cover a wrong owning actor, wrong real image
+  dimensions, and actual pixel mismatch in addition to the map runner's
+  missing/stale baseline and false-claim cases.

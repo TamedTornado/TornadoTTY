@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+
+# Shared screenshot publication for existing real-product journeys. This file
+# deliberately does not launch Zentty or schedule tests; the owning actor must
+# first establish the product state and its semantic assertions.
+
+zentty_visual_publish() {
+    local scenario_id="$1"
+    local actor="$2"
+    local source_image="$3"
+    local source_geometry="$4"
+    local map="${ZENTTY_VISUAL_MAP:-${repo_root}/docs/design/zentty-linux-visual-parity.json}"
+    local receipt_root="${ZENTTY_VISUAL_RECEIPT_ROOT:-${repo_root}/build/linux-test-receipts/visual-parity}"
+    local scenario expected_actor expected_image expected_receipt baseline status
+    local image_name geometry_name image_path geometry_path rectangles actual_size expected_size
+
+    command -v jq >/dev/null || {
+        echo "visual-evidence: jq is required" >&2
+        return 1
+    }
+    [[ -f "${source_image}" && -f "${source_geometry}" ]] || {
+        echo "visual-evidence: ${scenario_id} capture or geometry is missing" >&2
+        return 1
+    }
+    scenario="$(jq -c --arg id "${scenario_id}" '.scenarios[] | select(.id == $id)' "${map}")"
+    [[ -n "${scenario}" ]] || {
+        echo "visual-evidence: unknown scenario ${scenario_id}" >&2
+        return 1
+    }
+    expected_actor="$(jq -r '.actor' <<<"${scenario}")"
+    [[ "${actor}" == "${expected_actor}" ]] || {
+        echo "visual-evidence: ${scenario_id} belongs to ${expected_actor}, not ${actor}" >&2
+        return 1
+    }
+    actual_size="$(identify -format '%wx%h' "${source_image}")"
+    expected_size="$(jq -r '.size' <<<"${scenario}")"
+    [[ "${actual_size}" == "${expected_size}" ]] || {
+        echo "visual-evidence: ${scenario_id} captured ${actual_size}; expected ${expected_size}" >&2
+        return 1
+    }
+
+    expected_image="build/linux-test-receipts/visual-parity/${scenario_id}.png"
+    expected_receipt="$(jq -r '.receipt' <<<"${scenario}")"
+    [[ "${expected_receipt}" == "build/linux-test-receipts/visual-parity/${scenario_id}.json" ]] || {
+        echo "visual-evidence: ${scenario_id} receipt path is not canonical" >&2
+        return 1
+    }
+    image_name="${scenario_id}.png"
+    geometry_name="${scenario_id}.geometry"
+    image_path="${receipt_root}/${image_name}"
+    geometry_path="${receipt_root}/${geometry_name}"
+    mkdir -p -- "${receipt_root}"
+    cp -- "${source_image}" "${image_path}"
+    cp -- "${source_geometry}" "${geometry_path}"
+
+    rectangles="$(jq -Rn '
+        [inputs
+         | capture("x=(?<x>[0-9]+) y=(?<y>[0-9]+) width=(?<width>[0-9]+)")
+         | {x: ((.x | tonumber) + 8),
+            y: ((.y | tonumber) + 8),
+            width: ((.width | tonumber) - 16),
+            height: 143}]
+    ' <"${geometry_path}")"
+    [[ "$(jq 'length' <<<"${rectangles}")" -gt 0 ]] || {
+        echo "visual-evidence: ${scenario_id} has no exact mask rectangles" >&2
+        return 1
+    }
+
+    baseline="$(jq -r '.baseline' <<<"${scenario}")"
+    status="$(jq -r '.status' <<<"${scenario}")"
+    jq -n \
+        --arg scenario_id "${scenario_id}" \
+        --arg actor "${actor}" \
+        --arg display "$(jq -r '.display' <<<"${scenario}")" \
+        --arg theme "$(jq -r '.theme' <<<"${scenario}")" \
+        --arg scale "$(jq -r '.scale' <<<"${scenario}")" \
+        --arg size "$(jq -r '.size' <<<"${scenario}")" \
+        --arg image "${expected_image}" \
+        --arg baseline "${baseline}" \
+        --arg mask "$(jq -r '.mask' <<<"${scenario}")" \
+        --arg geometry "build/linux-test-receipts/visual-parity/${geometry_name}" \
+        --argjson rectangles "${rectangles}" \
+        --argjson assertions "$(jq '.semantic_assertions' <<<"${scenario}")" \
+        '{schema_version: 1,
+          scenario_id: $scenario_id,
+          actor: $actor,
+          environment: {display: $display, theme: $theme, scale: $scale, size: $size},
+          image: $image,
+          baseline: $baseline,
+          mask: {id: $mask, geometry_receipt: $geometry, rectangles: $rectangles},
+          semantic_assertions: $assertions,
+          result: "PASS"}' >"${receipt_root}/${scenario_id}.json"
+
+    if [[ "${status}" == PASS ]]; then
+        [[ -f "${repo_root}/${baseline}" ]] || {
+            echo "visual-evidence: PASS scenario ${scenario_id} has no reviewed baseline" >&2
+            return 1
+        }
+        compare -metric AE "${image_path}" "${repo_root}/${baseline}" null: 2>"${receipt_root}/${scenario_id}.difference" || true
+        [[ "$(cat "${receipt_root}/${scenario_id}.difference")" == 0 ]] || {
+            echo "visual-evidence: ${scenario_id} differs from its reviewed baseline" >&2
+            return 1
+        }
+    fi
+}

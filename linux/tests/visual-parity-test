@@ -5,7 +5,11 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 runner="${repo_root}/linux/tests/visual-parity"
 source_map="${repo_root}/docs/design/zentty-linux-visual-parity.json"
 temporary="$(mktemp -d)"
-trap 'rm -rf -- "${temporary}"' EXIT
+project_temporary="${repo_root}/build/linux-test-receipts/visual-parity-test"
+trap 'rm -rf -- "${temporary}" "${project_temporary}"' EXIT
+# shellcheck source=linux/tests/lib/visual-evidence
+# shellcheck disable=SC1091
+source "${repo_root}/linux/tests/lib/visual-evidence"
 
 expect_failure() {
     local name="$1" expected="$2"
@@ -23,6 +27,13 @@ expect_failure() {
         echo "visual-parity-test: ${name} reported the wrong failure" >&2
         exit 1
     }
+}
+
+publish_visual_fixture() {
+    local fixture_map="$1" receipt_root="$2" actor="$3" image="$4" geometry="$5"
+    ZENTTY_VISUAL_MAP="${fixture_map}" \
+    ZENTTY_VISUAL_RECEIPT_ROOT="${receipt_root}" \
+        zentty_visual_publish multi-lane-dark-x11 "${actor}" "${image}" "${geometry}"
 }
 
 "${runner}" "${source_map}" "${temporary}/empty-baselines" >/dev/null
@@ -62,4 +73,50 @@ jq '(.qualification_claim) = "RELEASE_QUALIFIED"' \
 expect_failure false-release "false release visual qualification claim" \
     "${runner}" "${temporary}/false-release.json" "${temporary}/empty-baselines"
 
-echo "visual-parity-test: PASS negatives=missing-scenario+unexpected-skip+unknown-mask+missing-baseline+stale-baseline+false-claims"
+# Exercise the publication contract without launching another product actor.
+# The real source-UX journey owns product pixels; these tiny images only prove
+# that the shared receipt boundary rejects false environment/evidence claims.
+convert -size 100x100 xc:black "${temporary}/capture.png"
+printf '%s\n' \
+    'zentty-linux: worklane-peek-card worklane=worklane-1 pane=pane-1 x=0 y=0 width=100 height=100' \
+    >"${temporary}/capture.geometry"
+jq '(.scenarios[] | select(.id == "multi-lane-dark-x11")) |=
+    (.size = "100x100" | .status = "EVIDENCE_PENDING" | .tracking_issue = 84)' \
+    "${source_map}" >"${temporary}/capture-map.json"
+ZENTTY_VISUAL_MAP="${temporary}/capture-map.json" \
+ZENTTY_VISUAL_RECEIPT_ROOT="${temporary}/receipts" \
+    zentty_visual_publish multi-lane-dark-x11 linux/tests/rust-source-ux-x11 \
+        "${temporary}/capture.png" "${temporary}/capture.geometry"
+jq -e '
+    .scenario_id == "multi-lane-dark-x11" and
+    .environment.size == "100x100" and
+    .mask.rectangles == [{"x":8,"y":8,"width":84,"height":143}] and
+    .result == "PASS"
+' "${temporary}/receipts/multi-lane-dark-x11.json" >/dev/null || {
+    echo "visual-parity-test: valid visual receipt was malformed" >&2
+    exit 1
+}
+
+expect_failure wrong-actor "belongs to linux/tests/rust-source-ux-x11" \
+    publish_visual_fixture "${temporary}/capture-map.json" "${temporary}/wrong-actor" \
+        linux/tests/rust-pane-search \
+        "${temporary}/capture.png" "${temporary}/capture.geometry"
+
+convert -size 80x100 xc:black "${temporary}/wrong-size.png"
+expect_failure wrong-size "captured 80x100; expected 100x100" \
+    publish_visual_fixture "${temporary}/capture-map.json" "${temporary}/wrong-size" \
+        linux/tests/rust-source-ux-x11 \
+        "${temporary}/wrong-size.png" "${temporary}/capture.geometry"
+
+mkdir -p -- "${project_temporary}"
+convert -size 100x100 xc:white "${project_temporary}/baseline.png"
+jq --arg baseline 'build/linux-test-receipts/visual-parity-test/baseline.png' '
+    (.scenarios[] | select(.id == "multi-lane-dark-x11")) |=
+    (.size = "100x100" | .status = "PASS" | .tracking_issue = null | .baseline = $baseline)
+' "${source_map}" >"${temporary}/mismatch-map.json"
+expect_failure pixel-mismatch "differs from its reviewed baseline" \
+    publish_visual_fixture "${temporary}/mismatch-map.json" "${temporary}/mismatch" \
+        linux/tests/rust-source-ux-x11 \
+        "${temporary}/capture.png" "${temporary}/capture.geometry"
+
+echo "visual-parity-test: PASS negatives=missing-scenario+unexpected-skip+unknown-mask+missing-baseline+stale-baseline+false-claims+wrong-actor+wrong-size+pixel-mismatch"
