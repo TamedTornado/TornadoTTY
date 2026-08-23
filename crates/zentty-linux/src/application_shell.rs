@@ -175,6 +175,7 @@ pub(crate) struct ApplicationShell {
     chrome: WindowChrome,
     body: gtk::Paned,
     sidebar_reservation: gtk::Box,
+    sidebar_motion: crate::sidebar_motion::SidebarMotion,
     sidebar_hover_rail: gtk::Box,
     sidebar: gtk::Box,
     sidebar_scroll: gtk::ScrolledWindow,
@@ -273,6 +274,7 @@ struct ShellWidgets {
     sidebar: gtk::Box,
     sidebar_scroll: gtk::ScrolledWindow,
     sidebar_reservation: gtk::Box,
+    sidebar_motion: crate::sidebar_motion::SidebarMotion,
     sidebar_hover_rail: gtk::Box,
     pane_scroll: gtk::ScrolledWindow,
     pane_box: gtk::Box,
@@ -409,6 +411,7 @@ impl ApplicationShell {
             sidebar,
             sidebar_scroll,
             sidebar_reservation,
+            sidebar_motion,
             sidebar_hover_rail,
             pane_scroll,
             pane_box,
@@ -449,6 +452,7 @@ impl ApplicationShell {
             chrome,
             body: body.clone(),
             sidebar_reservation,
+            sidebar_motion,
             sidebar_hover_rail,
             sidebar,
             sidebar_scroll,
@@ -1494,7 +1498,8 @@ impl ApplicationShell {
             self.window.width().max(1),
         );
         self.sidebar_scroll.set_width_request(width);
-        match self.sidebar_visibility.mode() {
+        let mode = self.sidebar_visibility.mode();
+        match mode {
             SidebarVisibilityMode::PinnedOpen => {
                 if self.body.start_child().is_none() {
                     self.body.set_start_child(Some(&self.sidebar_reservation));
@@ -1505,7 +1510,6 @@ impl ApplicationShell {
                 self.adjusting_sidebar_width.set(false);
                 self.sidebar_scroll
                     .remove_css_class("zentty-sidebar-floating");
-                self.sidebar_scroll.set_visible(true);
                 self.sidebar_scroll.set_can_target(true);
                 self.sidebar_hover_rail.set_visible(false);
                 eprintln!("zentty-linux: sidebar-visibility=pinned-open");
@@ -1513,19 +1517,18 @@ impl ApplicationShell {
             SidebarVisibilityMode::Hidden => {
                 self.body.set_start_child(None::<&gtk::Widget>);
                 self.sidebar_scroll.set_can_target(false);
-                self.sidebar_scroll.set_visible(false);
                 self.sidebar_hover_rail.set_visible(true);
                 eprintln!("zentty-linux: sidebar-visibility=hidden");
             }
             SidebarVisibilityMode::HoverPeek => {
                 self.body.set_start_child(None::<&gtk::Widget>);
                 self.sidebar_scroll.add_css_class("zentty-sidebar-floating");
-                self.sidebar_scroll.set_visible(true);
                 self.sidebar_scroll.set_can_target(true);
                 self.sidebar_hover_rail.set_visible(true);
                 eprintln!("zentty-linux: sidebar-visibility=hover-peek");
             }
         }
+        self.sidebar_motion.apply(mode);
     }
 
     fn install_pane_traversal_shortcuts(shell: &Rc<RefCell<Self>>) {
@@ -5507,11 +5510,12 @@ fn build_shell_widgets() -> ShellWidgets {
     content.append(&terminal_overlay);
     let sidebar_reservation = gtk::Box::new(gtk::Orientation::Vertical, 0);
     sidebar_reservation.set_width_request(SidebarWidthPreference::DEFAULT);
+    let sidebar_motion = crate::sidebar_motion::SidebarMotion::new(&sidebar_scroll);
     body.set_start_child(Some(&sidebar_reservation));
     body.set_end_child(Some(&content));
     let chrome = WindowChrome::new();
     let (overlay, peek_view, command_palette, restore_notice, sidebar_hover_rail) =
-        build_root(&chrome, &body, &sidebar_scroll);
+        build_root(&chrome, &body, sidebar_motion.sidebar_widget());
     window.set_child(Some(&overlay));
     ShellWidgets {
         window,
@@ -5520,6 +5524,7 @@ fn build_shell_widgets() -> ShellWidgets {
         sidebar,
         sidebar_scroll,
         sidebar_reservation,
+        sidebar_motion,
         sidebar_hover_rail,
         pane_scroll,
         pane_box,
@@ -5533,7 +5538,7 @@ fn build_shell_widgets() -> ShellWidgets {
 fn build_root(
     chrome: &WindowChrome,
     body: &gtk::Paned,
-    sidebar: &gtk::ScrolledWindow,
+    sidebar: &gtk::Revealer,
 ) -> (
     gtk::Overlay,
     WorklanePeekView,
@@ -5555,7 +5560,6 @@ fn build_root(
     hover_rail.set_tooltip_text(Some("Reveal Sidebar"));
     hover_rail.update_property(&[gtk::accessible::Property::Label("Reveal Sidebar")]);
     overlay.add_overlay(&hover_rail);
-    sidebar.set_width_request(SidebarWidthPreference::DEFAULT);
     sidebar.set_halign(gtk::Align::Start);
     sidebar.set_valign(gtk::Align::Fill);
     sidebar.set_margin_top(38);

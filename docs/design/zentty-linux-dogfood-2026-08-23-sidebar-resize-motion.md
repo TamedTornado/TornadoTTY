@@ -117,3 +117,60 @@ Parent: GH-82
   the reviewed baseline at AE=0. The visual map now has 22 PASS, 2 explicit
   GH-87 FAIL, 0 EVIDENCE_PENDING, 0 NOT_IMPLEMENTED, and 0 BLOCKED scenarios;
   full parity remains unclaimed because the two FAIL states are real defects.
+
+## Bounded GTK motion
+
+- Linux initially projected sidebar visibility as an immediate show/hide. The
+  source application's useful contract is the three-state reveal/reservation
+  target, not its AppKit traffic-light choreography or Core Animation timing
+  machinery. Linux now uses one native GTK revealer for the sidebar surface,
+  driven directly from the existing `sidebar_visibility::State`. It does not
+  add another visibility or animation state machine.
+- The standard reveal interval is the source's bounded 240ms. GTK reduced
+  motion is deliberately Linux-native: when `gtk-enable-animations=false`, the
+  duration is zero rather than copying the source application's separate 140ms
+  AppKit path. Startup projection is also a hard cut. The controlled X11
+  project-icon journey physically reverses a hide before completion and
+  requires the final pinned reveal receipt; Cage honestly continues to report
+  its compositor-owned animation setting, while X11 owns the reduced-motion
+  cell.
+- The first implementation also wrapped the `gtk::Paned` reservation in a
+  revealer. A complete source-UX run exposed a real blank-gap defect: the Paned
+  retained its explicit 280px position while the reservation child reported
+  hidden, leaving an empty sidebar-width strip and shrinking the terminal. The
+  run failed against the existing `sidebar-hidden-x11` baseline and was not
+  accepted. Reservation is now synchronous and uses the established Paned
+  attach/detach path; only the overlaid sidebar surface animates. This preserves
+  terminal geometry without recreating a Ghostty surface.
+- A pane-control crossfade experiment was also rejected. Although its focused
+  normal/reduced actor passed, the complete source-UX journey later exposed a
+  stale hover/re-entry failure after a close-confirmation interaction. The
+  experiment was removed entirely. Pane controls and focus retain their proven
+  immediate GTK behavior; GH-85 does not justify importing ornamental macOS
+  focus or control animations.
+- Running the controlled display wrapper inside the filesystem sandbox failed
+  before product launch because the namespaced view of `/tmp/.X11-unix` maps
+  host root to `nobody`, which Xvfb correctly refuses. Running the existing
+  wrapper through the approved elevated boundary sees the host's root-owned
+  socket directory and succeeds. No harness weakening or alternate display
+  path was added.
+- The narrowed sidebar-only implementation passed the complete X11 source-UX
+  journey, including the unchanged hidden-sidebar baseline, pane-control
+  hover/close flows, real PTY focus, and all later topology operations. The
+  exact rebuilt product also passed the controlled X11 normal/reduced-motion
+  journey, the controlled Cage Wayland normal-motion journey, and both focused
+  real-pointer resize journeys (X11 and input-capable labwc Wayland).
+- A workspace test attempt inside the filesystem sandbox failed uniformly at
+  real Unix-socket and loopback-listener creation with `EPERM`; pure tests and
+  the feature tests still ran. The same unchanged workspace suite passed when
+  rerun through the approved elevated boundary, confirming an execution-policy
+  boundary rather than a product regression. Final focused validation also
+  passed shellcheck, the visual runner's negative fixtures, the 22 PASS / 2
+  explicit FAIL visual map, qualification matrix runner tests, and matrix
+  schema/coverage validation. The two GH-87 visual failures remain explicit;
+  this work does not claim full Linux qualification.
+- Workspace-wide pedantic Clippy reached one pre-existing unrelated finding:
+  `worklane_peek::render` is 158 lines against the 100-line lint. The focused
+  Zentty Linux Clippy run, allowing only that already-known lint class, passed
+  with warnings denied. GH-85 does not conceal or opportunistically refactor
+  the unrelated Peek renderer.

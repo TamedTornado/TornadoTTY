@@ -500,6 +500,12 @@ done
 grep -Fxq 'zentty-linux: sidebar-visibility=hidden' "${log}" ||
     fail "the real leading-chrome toggle did not hide the sidebar"
 for _ in $(seq 1 100); do
+    grep -Fxq 'zentty-linux: sidebar-motion-settled reveal=0' "${log}" && break
+    sleep 0.02
+done
+grep -Fxq 'zentty-linux: sidebar-motion-settled reveal=0' "${log}" ||
+    fail "the hidden sidebar did not reach its rendered end state"
+for _ in $(seq 1 100); do
     grep -Fq 'zentty-linux: sidebar-persist origin=toggle ' "${log}" &&
         grep -Fq 'visibility = "hidden"' "${XDG_CONFIG_HOME}/zentty/config.toml" && break
     sleep 0.05
@@ -532,6 +538,12 @@ for _ in $(seq 1 100); do
 done
 grep -Fxq 'zentty-linux: sidebar-visibility=pinned-open' "${log}" ||
     fail "the leading chrome did not remain reachable while the sidebar was hidden"
+for _ in $(seq 1 100); do
+    grep -Fxq 'zentty-linux: sidebar-motion-settled reveal=1' "${log}" && break
+    sleep 0.02
+done
+grep -Fxq 'zentty-linux: sidebar-motion-settled reveal=1' "${log}" ||
+    fail "the pinned sidebar did not reach its rendered end state"
 for _ in $(seq 1 100); do
     grep -Fq 'visibility = "pinnedOpen"' "${XDG_CONFIG_HOME}/zentty/config.toml" && break
     sleep 0.05

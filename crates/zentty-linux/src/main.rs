@@ -41,6 +41,7 @@ mod settings_navigation;
 mod settings_shell;
 mod shortcut_settings;
 mod sidebar;
+mod sidebar_motion;
 mod sidebar_visibility;
 mod sleep_inhibitor;
 mod source_ui;

@@ -95,7 +95,50 @@ activate_palette_action() {
     zentty_product_key "${backend}" Return
 }
 
+exercise_sidebar_motion() {
+    local log="$1"
+    local expected_animations="$2"
+    local receipt="$3"
+    local expected_duration=240
+    local hidden_before pinned_before pinned_settled_before
+
+    [[ "${expected_animations}" == true ]] || expected_duration=0
+
+    hidden_before="$(grep -Fc 'zentty-linux: sidebar-visibility=hidden' "${log}" || true)"
+    zentty_product_ctrl_key "${backend}" s
+    for _ in $(seq 1 100); do
+        (( $(grep -Fc 'zentty-linux: sidebar-visibility=hidden' "${log}" || true) > hidden_before )) && break
+        sleep 0.02
+    done
+    (( $(grep -Fc 'zentty-linux: sidebar-visibility=hidden' "${log}" || true) > hidden_before )) ||
+        fail "${receipt} sidebar hide transition absent"
+    grep -Fq "zentty-linux: sidebar-motion mode=hidden reveal=0 reserve=0 duration-ms=${expected_duration} animations-enabled=${expected_animations}" "${log}" ||
+        fail "${receipt} sidebar hide did not use the GTK motion policy"
+
+    # Reverse the transition before its 240ms interval can finish. GTK's
+    # revealer must converge on the authoritative pinned state rather than
+    # allowing an obsolete completion callback to win.
+    pinned_before="$(grep -Fc 'zentty-linux: sidebar-visibility=pinned-open' "${log}" || true)"
+    pinned_settled_before="$(grep -Fc 'zentty-linux: sidebar-motion-settled reveal=1' "${log}" || true)"
+    zentty_product_ctrl_key "${backend}" s
+    for _ in $(seq 1 100); do
+        (( $(grep -Fc 'zentty-linux: sidebar-visibility=pinned-open' "${log}" || true) > pinned_before )) && break
+        sleep 0.02
+    done
+    (( $(grep -Fc 'zentty-linux: sidebar-visibility=pinned-open' "${log}" || true) > pinned_before )) ||
+        fail "${receipt} reversed sidebar transition did not restore pinned state"
+    grep -Fq "zentty-linux: sidebar-motion mode=pinned-open reveal=1 reserve=1 duration-ms=${expected_duration} animations-enabled=${expected_animations}" "${log}" ||
+        fail "${receipt} sidebar reversal did not use the GTK motion policy"
+    for _ in $(seq 1 100); do
+        (( $(grep -Fc 'zentty-linux: sidebar-motion-settled reveal=1' "${log}" || true) > pinned_settled_before )) && break
+        sleep 0.02
+    done
+    (( $(grep -Fc 'zentty-linux: sidebar-motion-settled reveal=1' "${log}" || true) > pinned_settled_before )) ||
+        fail "${receipt} reversed sidebar transition did not settle"
+}
+
 start_product "${enabled_log}"
+exercise_sidebar_motion "${enabled_log}" true normal-motion
 zentty_product_wait_for_log "${enabled_log}" \
     'zentty-linux: project-icon pane=pane-1 result=missing' \
     'escaping symlink was not resolved as a miss' || fail "escaping icon symlink was accepted"
@@ -161,6 +204,14 @@ cat >"${XDG_CONFIG_HOME}/gtk-4.0/settings.ini" <<'INI'
 gtk-enable-animations=false
 INI
 start_product "${disabled_log}"
+if [[ "${backend}" == x11 ]]; then
+    exercise_sidebar_motion "${disabled_log}" false reduced-motion
+else
+    # Cage owns the effective GTK setting in this controlled profile. As with
+    # Peek below, assert the environment honestly instead of claiming the
+    # private settings file disabled motion when GTK reports otherwise.
+    exercise_sidebar_motion "${disabled_log}" true controlled-wayland-motion
+fi
 zentty_product_wait_for_log "${disabled_log}" \
     "zentty-linux: project-icon pane=pane-1 path=${canonical_icon} result=resolved" \
     'opt-out launch did not exercise discovery' || fail "disabled discovery boundary absent"
