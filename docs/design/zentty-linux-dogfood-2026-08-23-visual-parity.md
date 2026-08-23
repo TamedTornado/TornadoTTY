@@ -175,3 +175,78 @@ Issue: GH-84
 - The separate authoritative run passed all three direct comparisons while
   repeating the full ReleaseSafe and Debug semantic scaling journey. This is
   physical screenshot PASS at each scale, not merely a logical-size receipt.
+
+## Native multi-window and fullscreen capture
+
+- The visual map initially described the Weston fullscreen receipt as
+  1024x768, copying the separate wlroots scaling lab's output size. The real
+  multi-window actor runs in its existing 1280x1024 nested Weston profile; the
+  map now records those physical pixels rather than a convenient logical size.
+- The existing `rust-multi-window` journey now publishes both receipts at the
+  state it already owns: two live native X11 toplevels with distinct Ghostty
+  PTYs, and a compositor-acknowledged Wayland fullscreen toplevel. No visual-
+  only product launcher, fake surface, scheduler, image hash, or terminal mask
+  was added.
+- The first X11 candidate exposed the actor's PID-bearing route-probe title in
+  the real terminal. The PTY actor now clears that probe through a fixed
+  `visual-reset` command and hides its cursor before capture; this preserves
+  real Ghostty pixels without turning nondeterministic process IDs into an
+  accepted baseline.
+- Two visually identical-looking X11 candidates still differed by 1,121 exact
+  pixels: the pointer had sometimes left an Open With segment hovered, and a
+  horizontal scrollbar was captured at different animation frames. Visual
+  capture now parks the pointer outside both windows and disables GTK
+  animations through the same private settings profile already used by the
+  source-UX actor. Motion remains covered by its dedicated real-product actor;
+  no tolerance or extra mask was introduced.
+- With animations disabled, the next two X11 candidates were visually
+  indistinguishable but still differed by 66 antialiased pixels at the two
+  lower corners of the first window's previously hovered split button. The
+  capture settle after parking the pointer was only 200 ms; it is now 500 ms,
+  matching a completed GTK hover-state transition rather than accepting those
+  pixels as noise.
+- A 500 ms settle still alternated between the same two 66-pixel rasters. The
+  only changing pixels were antialiased lower corners of a compound header
+  button in the first 590px-wide window, indicating fractional layout/raster
+  placement rather than motion. The evidence now uses the actor's already-
+  established 600px native-window width with a real 20px inter-window gap
+  (1220x700 physical receipt), avoiding an artificial fractional boundary.
+- Integral geometry produced the same 66-pixel alternation, disproving that
+  hypothesis. The changing pixels are GTK antialiasing on one inactive header
+  button, not product state or Ghostty content. This actor now requests GTK's
+  real Cairo software renderer in its already software-only controlled visual
+  environment. Ghostty remains the real OpenGL terminal surface; only GTK
+  chrome rasterization is pinned so baseline evidence is reproducible across
+  fresh processes.
+- Two fresh Cairo runs matched at AE=0 and completed the full X11 lifecycle.
+  The first subsequent authoritative run failed earlier, in the pre-existing
+  confirmation journey, because an idle Close Window unexpectedly displayed a
+  confirmation. It never reached visual capture, so it did not validate or
+  replace the receipt. This is recorded as an integration failure, not hidden
+  behind the already-repeatable image result; a repeat must complete the whole
+  actor before PASS promotion is final.
+- The first Wayland candidate proved fullscreen capture itself, then the later
+  worklane-close journey failed to route input after returning to windowed
+  mode. Fullscreen had changed the nested compositor's pointer/focus target.
+  The actor now explicitly re-establishes its existing second-window physical
+  input precondition after the round trip instead of treating capture success
+  as a passing integration run. The failed run is not accepted as a baseline.
+- Moving fullscreen into the actor's previously dormant, independent window-
+  state mode exposed why that mode could not simply be promoted into the
+  matrix: it inherited close confirmations and then waited for an unconfirmed
+  close as though it had succeeded. The mode now explicitly disables only its
+  destructive-close confirmations before launch. The main confirmation
+  journey remains unchanged, and the new matrix cell must pass the complete
+  fullscreen/exit/close sequence before its visual receipt can be accepted.
+- The next isolated run closed window 2 correctly but revealed a second stale
+  assumption in that dormant mode: it sent Quit without physically restoring
+  focus to the surviving window, so Weston discarded the shortcut. The actor
+  now reacquires pane 1 through its existing real pointer-target path before
+  quitting. A close log alone is not accepted as whole-mode success.
+- The repeat authoritative X11 run completed the entire existing lifecycle and
+  enforced the reviewed baseline at AE=0. The isolated Wayland window-state
+  cell likewise passed fullscreen entry, physical 1280x1024 capture, exit,
+  survivor focus, and quit with AE=0. Both receipts now report
+  `scenario_status=PASS` and `capture_result=PASS`; the obsolete multi-window
+  terminal mask was removed because both real PTYs are deterministic and
+  fully visible.

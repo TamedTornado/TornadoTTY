@@ -20,6 +20,8 @@ config_file=""
 
 # shellcheck source=linux/tests/lib/product-input
 source "${repo_root}/linux/tests/lib/product-input"
+# shellcheck source=linux/tests/lib/visual-evidence
+source "${repo_root}/linux/tests/lib/visual-evidence"
 
 fail() {
     [[ -z "${log}" || ! -f "${log}" ]] || cat "${log}" >&2
@@ -58,7 +60,7 @@ case "${backend}" in
         ;;
     *) fail "GDK_BACKEND must be x11 or wayland" ;;
 esac
-for dependency in cmp dirname jq mkdir readelf timeout mktemp grep; do
+for dependency in cmp dirname jq mkdir readelf timeout mktemp grep import identify compare convert; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
 if [[ "${backend}" == x11 ]]; then
@@ -99,12 +101,26 @@ cat >"${config_file}" <<'EOF'
 [clipboard]
 always_clean_copies = true
 EOF
+mkdir -p "${XDG_CONFIG_HOME}/ghostty"
+cat >"${XDG_CONFIG_HOME}/ghostty/config" <<'EOF'
+resize-overlay = never
+cursor-opacity = 0
+EOF
+mkdir -p "${XDG_CONFIG_HOME}/gtk-4.0"
+cat >"${XDG_CONFIG_HOME}/gtk-4.0/settings.ini" <<'EOF'
+[Settings]
+gtk-enable-animations=false
+EOF
 # The quoted heredoc defers every expansion to the real PTY child while
 # keeping the controlled agent lifecycle readable and independently auditable.
 child_command="$(cat <<'EOF'
 agent_pid=
+printf '\033[?25l\033[2J\033[H'
 while IFS= read -r value; do
     case "$value" in
+        visual-reset)
+            printf '\033]2;Visual window\a\033[2J\033[H\033[?25l'
+            ;;
         agent-waiting)
             printf '%s' '{"version":1,"event":"session.start","agent":{"name":"Claude Code"},"session":{"id":"fleet-waiting"}}' | "$ZENTTY_CLI_BIN" ipc agent-event
             printf '%s' '{"version":1,"event":"agent.needs-input","agent":{"name":"Claude Code"},"session":{"id":"fleet-waiting"},"state":{"text":"Approve cross-window deployment?","interaction":{"kind":"approval","text":"Approve cross-window deployment?"}}}' | "$ZENTTY_CLI_BIN" ipc agent-event
@@ -159,6 +175,7 @@ launch_command="${child_command}"
 start_product() {
     : >"${log}"
     CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 \
+        GSK_RENDERER=cairo \
         LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
         "${product}" \
         --command "${launch_command}" \
@@ -642,6 +659,56 @@ reply_to_confirmation() {
     fi
 }
 
+capture_multi_window_x11_visual() {
+    local image="${state_dir}/multi-window-x11.png"
+    local first_window_id="" second_window_id="${ZENTTY_PRODUCT_WINDOW_ID}"
+    local candidate_id
+    while read -r candidate_id; do
+        [[ "${candidate_id}" == "${second_window_id}" ]] && continue
+        xprop -id "${candidate_id}" _NET_WM_WINDOW_TYPE 2>/dev/null |
+            grep -Fq '_NET_WM_WINDOW_TYPE_NORMAL' || continue
+        first_window_id="${candidate_id}"
+        break
+    done < <(xdotool search --onlyvisible --pid "${product_pid}" --name '^Zentty$' 2>/dev/null)
+    [[ "${first_window_id}" =~ ^[1-9][0-9]*$ ]] ||
+        fail "visual evidence could not identify the first native X11 window"
+
+    # Both native toplevels remain independently mapped. Arrange them on the
+    # wrapper-owned root so the receipt shows two complete real windows rather
+    # than a synthetic composite or product mock.
+    xdotool windowmove --sync "${first_window_id}" 0 0
+    xdotool windowsize --sync "${first_window_id}" 600 700
+    xdotool windowmove --sync "${second_window_id}" 620 0
+    xdotool windowsize --sync "${second_window_id}" 600 700
+    xdotool windowfocus --sync "${first_window_id}"
+    xdotool type --delay 5 visual-reset
+    xdotool key Return
+    zentty_product_wait_for_log "${log}" \
+        'zentty-linux: title-pane=pane-1 value=Visual window' \
+        "first visual window did not settle deterministic terminal content" ||
+        fail "first visual terminal reset missing"
+    xdotool windowfocus --sync "${second_window_id}"
+    xdotool type --delay 5 visual-reset
+    xdotool key Return
+    zentty_product_wait_for_log "${log}" \
+        'zentty-linux: title-pane=pane-window-2 value=Visual window' \
+        "second visual window did not settle deterministic terminal content" ||
+        fail "second visual terminal reset missing"
+    xdotool mousemove --sync 2000 1500
+    sleep 0.5
+    import -silent -window root -crop 1220x700+0+0 "${image}"
+    zentty_visual_publish multi-window-x11 linux/tests/rust-multi-window "${image}" -
+}
+
+capture_fullscreen_wayland_visual() {
+    local image="${state_dir}/fullscreen-wayland.png"
+    local outer="${ZENTTY_NESTED_WAYLAND_OUTER_X11_WINDOW:?}"
+    xdotool mousemove --sync --window "${outer}" 1 1
+    sleep 0.2
+    import -silent -window "${outer}" "${image}"
+    zentty_visual_publish fullscreen-wayland linux/tests/rust-multi-window "${image}" -
+}
+
 # Lifecycle confirmation journey: drive both cancellation and acceptance for
 # the source's window-close and application-quit contracts against real GTK
 # windows and real Ghostty PTYs. The rest of this already-large multi-window
@@ -651,12 +718,25 @@ if [[ "${ZENTTY_MULTI_WINDOW_WINDOW_STATE_ONLY:-false}" == true ]]; then
 # Keep native window-state qualification independent from destructive-close
 # dialogs. Fullscreen changes compositor geometry and pointer-enter timing; it
 # must not contaminate the separate confirmation journey's input targeting.
-launch_command="${SHELL:-/bin/bash}"
+cat >"${config_file}" <<'EOF'
+[confirmations]
+confirm_before_closing_window = false
+confirm_before_quitting = false
+
+[clipboard]
+always_clean_copies = true
+EOF
+launch_command="${child_command}"
 start_product
 create_second_window false
-zentty_product_wait_for_log "${log}" \
-    'zentty-linux: shell-signal pane=pane-window-2 kind=shell-state state=prompt command-present=false' \
-    "window-state shell did not reach its prompt" || fail "window-state idle prompt missing"
+if [[ "${backend}" == wayland ]]; then
+    zentty_product_type "${backend}" visual-reset
+    zentty_product_key "${backend}" Return
+    zentty_product_wait_for_log "${log}" \
+        'zentty-linux: title-pane=pane-window-2 value=Visual window' \
+        "fullscreen visual window did not settle deterministic terminal content" ||
+        fail "fullscreen visual terminal reset missing"
+fi
 
 # F11 is the standard Linux fullscreen binding. Require the physical shortcut
 # to reach the named action and require GTK to report both compositor-accepted
@@ -666,6 +746,9 @@ zentty_product_wait_for_log "${log}" 'zentty-linux: shortcut=f11 action=toggle-f
     "physical F11 did not route to Toggle Full Screen" || fail "fullscreen shortcut missing"
 zentty_product_wait_for_log "${log}" 'zentty-linux: window-state id=window-2 fullscreen=true' \
     "compositor did not acknowledge fullscreen" || fail "fullscreen transition missing"
+if [[ "${backend}" == wayland ]]; then
+    capture_fullscreen_wayland_visual
+fi
 zentty_product_key "${backend}" F11
 zentty_product_wait_for_log_count "${log}" 'zentty-linux: shortcut=f11 action=toggle-fullscreen' 2 \
     "second physical F11 did not route" || fail "fullscreen exit shortcut missing"
@@ -693,6 +776,7 @@ fi
 close_active_window
 zentty_product_wait_for_log "${log}" 'zentty-linux: window-closed id=window-2 remaining=1' \
     "window-state target did not close after activation" || fail "window-state close missing"
+target_second_window pane-1
 zentty_product_close_window "${backend}"
 wait_for_exit
 echo "Rust multi-window state passed: backend=${backend}, fullscreen=roundtrip, minimize=$([[ "${backend}" == x11 ]] && echo native || echo compositor-request-only)"
@@ -704,6 +788,12 @@ if [[ "${ZENTTY_MULTI_WINDOW_FLEET_ONLY:-false}" != true &&
     "${ZENTTY_MULTI_WINDOW_RESTORE_LAYOUT_ONLY:-false}" != true ]]; then
 start_product
 create_second_window
+
+# Capture governed X11 evidence at the point where this actor already owns two
+# live native windows and two distinct Ghostty PTYs. Wayland fullscreen belongs
+# to the actor's independent window-state mode above so it cannot contaminate
+# the destructive close and transfer journey below.
+[[ "${backend}" != x11 ]] || capture_multi_window_x11_visual
 
 # Worklane Peek is window-local. Open it through real input in the second X11
 # toplevel, then transfer compositor focus to the first toplevel. Deactivation
