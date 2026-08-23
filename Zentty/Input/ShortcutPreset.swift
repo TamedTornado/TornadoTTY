@@ -3,6 +3,7 @@ import Carbon.HIToolbox
 enum ShortcutPreset: String, CaseIterable, Sendable {
     case leftHand
     case rightHand
+    case ghosttyCompatible
 
     var title: String {
         switch self {
@@ -10,6 +11,8 @@ enum ShortcutPreset: String, CaseIterable, Sendable {
             "Left-Hand Preset"
         case .rightHand:
             "Right-Hand Preset"
+        case .ghosttyCompatible:
+            "Ghostty-Compatible Preset"
         }
     }
 
@@ -23,6 +26,8 @@ enum ShortcutPreset: String, CaseIterable, Sendable {
             "This will replace all current shortcut bindings with shortcuts optimized for left-hand use, based on your current keyboard layout."
         case .rightHand:
             "This will replace all current shortcut bindings with shortcuts optimized for right-hand use, based on your current keyboard layout."
+        case .ghosttyCompatible:
+            "This replaces your current shortcut bindings with Ghostty-compatible macOS shortcuts while keeping non-conflicting Zentty shortcuts."
         }
     }
 }
@@ -77,7 +82,19 @@ struct ShortcutPresetResolver {
     }
 
     private func resolveKey(for entry: ShortcutPresetEntry) -> KeyboardShortcutKey? {
-        switch entry.keyKind {
+        switch entry.key {
+        case .logical(let key):
+            return key
+        case .physical(let keyCode, let keyKind):
+            return resolvePhysicalKey(keyCode: keyCode, keyKind: keyKind)
+        }
+    }
+
+    private func resolvePhysicalKey(
+        keyCode: UInt16,
+        keyKind: ShortcutPresetKeyKind
+    ) -> KeyboardShortcutKey? {
+        switch keyKind {
         case .tab:
             return .tab
         case .leftArrow:
@@ -89,10 +106,10 @@ struct ShortcutPresetResolver {
         case .downArrow:
             return .downArrow
         case .character:
-            if isNumberRowKeyCode(entry.keyCode) {
-                return resolveNumberRowKey(for: entry)
+            if isNumberRowKeyCode(keyCode) {
+                return resolveNumberRowKey(keyCode: keyCode)
             }
-            guard let character = sourceProvider.output(for: entry.keyCode, modifiers: []) else {
+            guard let character = sourceProvider.output(for: keyCode, modifiers: []) else {
                 return nil
             }
             return .character(character.lowercased())
@@ -100,10 +117,11 @@ struct ShortcutPresetResolver {
     }
 
     private func resolveModifiers(for entry: ShortcutPresetEntry) -> Set<KeyboardModifier> {
-        guard entry.keyKind == .character, isNumberRowKeyCode(entry.keyCode) else {
+        guard case .physical(let keyCode, .character) = entry.key,
+              isNumberRowKeyCode(keyCode) else {
             return entry.modifiers
         }
-        guard let unshifted = sourceProvider.output(for: entry.keyCode, modifiers: []) else {
+        guard let unshifted = sourceProvider.output(for: keyCode, modifiers: []) else {
             return entry.modifiers
         }
         let isDigitByDefault = unshifted.count == 1 && unshifted.first?.isNumber == true
@@ -113,12 +131,12 @@ struct ShortcutPresetResolver {
         return entry.modifiers.union([.shift])
     }
 
-    private func resolveNumberRowKey(for entry: ShortcutPresetEntry) -> KeyboardShortcutKey? {
-        if let unshifted = sourceProvider.output(for: entry.keyCode, modifiers: []),
+    private func resolveNumberRowKey(keyCode: UInt16) -> KeyboardShortcutKey? {
+        if let unshifted = sourceProvider.output(for: keyCode, modifiers: []),
            unshifted.count == 1, unshifted.first?.isNumber == true {
             return .character(unshifted)
         }
-        if let shifted = sourceProvider.output(for: entry.keyCode, modifiers: [.shift]),
+        if let shifted = sourceProvider.output(for: keyCode, modifiers: [.shift]),
            shifted.count == 1, shifted.first?.isNumber == true {
             return .character(shifted)
         }
@@ -145,11 +163,36 @@ enum ShortcutPresetKeyKind {
     case downArrow
 }
 
+enum ShortcutPresetEntryKey {
+    case physical(keyCode: UInt16, kind: ShortcutPresetKeyKind)
+    case logical(KeyboardShortcutKey)
+}
+
 struct ShortcutPresetEntry {
     let commandID: AppCommandID
-    let keyCode: UInt16
-    let keyKind: ShortcutPresetKeyKind
+    let key: ShortcutPresetEntryKey
     let modifiers: Set<KeyboardModifier>
+
+    init(
+        commandID: AppCommandID,
+        keyCode: UInt16,
+        keyKind: ShortcutPresetKeyKind,
+        modifiers: Set<KeyboardModifier>
+    ) {
+        self.commandID = commandID
+        key = .physical(keyCode: keyCode, kind: keyKind)
+        self.modifiers = modifiers
+    }
+
+    init(
+        commandID: AppCommandID,
+        key: KeyboardShortcutKey,
+        modifiers: Set<KeyboardModifier>
+    ) {
+        self.commandID = commandID
+        self.key = .logical(key)
+        self.modifiers = modifiers
+    }
 }
 
 extension ShortcutPreset {
@@ -159,6 +202,8 @@ extension ShortcutPreset {
             Self.leftHandEntries
         case .rightHand:
             Self.rightHandEntries
+        case .ghosttyCompatible:
+            Self.ghosttyCompatibleEntries
         }
     }
 
@@ -270,5 +315,63 @@ extension ShortcutPreset {
         .init(commandID: .copyFocusedPanePath, keyCode: UInt16(kVK_ANSI_L), keyKind: .character, modifiers: [.command, .shift]),
         .init(commandID: .jumpToLatestNotification, keyCode: UInt16(kVK_ANSI_Semicolon), keyKind: .character, modifiers: [.command, .shift]),
         .init(commandID: .openSettings, keyCode: UInt16(kVK_ANSI_O), keyKind: .character, modifiers: [.command]),
+    ]
+
+    // MARK: - Ghostty-Compatible Preset
+    // Curated against Ghostty's macOS defaults at scripts/ghosttykit.lock.
+    // Logical keys match Ghostty's character-based bindings on non-US layouts.
+
+    private static let ghosttyCompatibleEntries: [ShortcutPresetEntry] = [
+        // Windows and worklanes (Ghostty windows and tabs)
+        .init(commandID: .newWindow, key: .character("n"), modifiers: [.command]),
+        .init(commandID: .closeWindow, key: .character("w"), modifiers: [.command, .shift]),
+        .init(commandID: .newWorklane, key: .character("t"), modifiers: [.command]),
+        .init(commandID: .nextWorklane, key: .tab, modifiers: [.control]),
+        .init(commandID: .previousWorklane, key: .tab, modifiers: [.control, .shift]),
+
+        // Panes (Ghostty surfaces and splits)
+        .init(commandID: .closeFocusedPane, key: .character("w"), modifiers: [.command]),
+        .init(commandID: .restoreClosedPane, key: .character("t"), modifiers: [.command, .shift]),
+        .init(commandID: .splitHorizontally, key: .character("d"), modifiers: [.command]),
+        .init(commandID: .splitVertically, key: .character("d"), modifiers: [.command, .shift]),
+        .init(commandID: .focusPreviousPane, key: .character("["), modifiers: [.command]),
+        .init(commandID: .focusNextPane, key: .character("]"), modifiers: [.command]),
+        .init(commandID: .focusLeftPane, key: .leftArrow, modifiers: [.command, .option]),
+        .init(commandID: .focusRightPane, key: .rightArrow, modifiers: [.command, .option]),
+        .init(commandID: .focusUpInColumn, key: .upArrow, modifiers: [.command, .option]),
+        .init(commandID: .focusDownInColumn, key: .downArrow, modifiers: [.command, .option]),
+        .init(commandID: .resizePaneLeft, key: .leftArrow, modifiers: [.command, .control]),
+        .init(commandID: .resizePaneRight, key: .rightArrow, modifiers: [.command, .control]),
+        .init(commandID: .resizePaneUp, key: .upArrow, modifiers: [.command, .control]),
+        .init(commandID: .resizePaneDown, key: .downArrow, modifiers: [.command, .control]),
+
+        // Search and configuration
+        .init(commandID: .find, key: .character("f"), modifiers: [.command]),
+        .init(commandID: .useSelectionForFind, key: .character("e"), modifiers: [.command]),
+        .init(commandID: .findNext, key: .character("g"), modifiers: [.command]),
+        .init(commandID: .findPrevious, key: .character("g"), modifiers: [.command, .shift]),
+        .init(commandID: .showCommandPalette, key: .character("p"), modifiers: [.command, .shift]),
+        .init(commandID: .openSettings, key: .character(","), modifiers: [.command]),
+        .init(commandID: .reloadConfig, key: .character(","), modifiers: [.command, .shift]),
+
+        // Non-conflicting Zentty shortcuts
+        .init(commandID: .toggleSidebar, key: .character("s"), modifiers: [.command]),
+        .init(commandID: .copyFocusedPanePath, key: .character("c"), modifiers: [.command, .shift]),
+        .init(commandID: .cleanCopy, key: .character("c"), modifiers: [.command, .control]),
+        .init(commandID: .jumpToLatestNotification, key: .character("u"), modifiers: [.command, .shift]),
+        .init(commandID: .arrangeHeightFull, key: .character("1"), modifiers: [.command, .option]),
+        .init(commandID: .arrangeHeightTwoPerColumn, key: .character("2"), modifiers: [.command, .option]),
+        .init(commandID: .arrangeHeightThreePerColumn, key: .character("3"), modifiers: [.command, .option]),
+        .init(commandID: .arrangeHeightFourPerColumn, key: .character("4"), modifiers: [.command, .option]),
+        .init(commandID: .arrangeWidthGoldenFocusWide, key: .character("g"), modifiers: [.command, .control]),
+        .init(commandID: .arrangeWidthGoldenFocusNarrow, key: .character("g"), modifiers: [.command, .control, .option]),
+        .init(commandID: .arrangeHeightGoldenFocusTall, key: .character("g"), modifiers: [.command, .control, .shift]),
+        .init(commandID: .arrangeHeightGoldenFocusShort, key: .character("g"), modifiers: [.command, .control, .option, .shift]),
+        .init(commandID: .movePaneLeft, key: .leftArrow, modifiers: [.command, .control, .option]),
+        .init(commandID: .movePaneRight, key: .rightArrow, modifiers: [.command, .control, .option]),
+        .init(commandID: .movePaneUp, key: .upArrow, modifiers: [.command, .control, .option]),
+        .init(commandID: .movePaneDown, key: .downArrow, modifiers: [.command, .control, .option]),
+        .init(commandID: .resetPaneLayout, key: .character("0"), modifiers: [.command, .control, .option]),
+        .init(commandID: .openBookmarksPopover, key: .character("b"), modifiers: [.command, .shift]),
     ]
 }

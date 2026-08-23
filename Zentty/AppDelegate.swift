@@ -245,6 +245,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc
+    func toggleMainWindowFullScreen(_ sender: Any?) {
+        windowControllers.values
+            .first(where: { $0.window.isKeyWindow })?
+            .window.toggleFullScreen(sender)
+    }
+
+    @objc
     func focusNextWaitingAgentPane(_ sender: Any?) {
         _ = menuBarStatusController?.focusNextWaitingPane()
     }
@@ -993,6 +1000,16 @@ extension AppDelegate: NSMenuItemValidation {
 
         if menuItem.action == #selector(toggleTerminalFrameMeter(_:)) {
             menuItem.state = TerminalFrameMeter.shared.isEnabled ? .on : .off
+            return true
+        }
+
+        if menuItem.action == #selector(toggleMainWindowFullScreen(_:)) {
+            guard let controller = windowControllers.values.first(where: { $0.window.isKeyWindow }) else {
+                return false
+            }
+            menuItem.title = controller.window.styleMask.contains(.fullScreen)
+                ? "Exit Full Screen"
+                : "Enter Full Screen"
             return true
         }
 
