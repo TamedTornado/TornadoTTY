@@ -127,6 +127,7 @@ pub struct SidebarPaneSummary {
     pub pane_id: String,
     pub primary_text: String,
     pub custom_title: Option<String>,
+    pub working_directory: Option<String>,
     pub is_focused: bool,
     pub agent_status: Option<PaneAgentStatus>,
     /// Ephemeral repository/review context supplied by the platform resolver.
@@ -706,6 +707,7 @@ impl WorkspaceState {
                             pane_id: pane.id.clone(),
                             primary_text: pane.display_title().to_owned(),
                             custom_title: pane.custom_title.clone(),
+                            working_directory: pane.working_directory.clone(),
                             is_focused: Some(pane.id.as_str()) == focused_pane_id,
                             agent_status: self.agent_statuses.status_for_pane(&pane.id).cloned(),
                             project_context: None,

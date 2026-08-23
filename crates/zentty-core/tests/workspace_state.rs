@@ -1217,6 +1217,7 @@ fn cross_worklane_transfer_removes_an_empty_source_and_rejects_invalid_targets()
 fn sidebar_summaries_are_compound_worklane_and_pane_presentations() {
     let mut state = WorkspaceState::new("worklane-a", "pane-a");
     assert!(state.split_focused_pane_right("pane-b"));
+    assert!(state.configure_pane_launch("pane-a", Some("/repo/nimbu".to_owned()), None,));
     assert!(state.set_pane_title("pane-a", "project shell"));
     assert!(state.set_pane_title("pane-b", "cargo test"));
     assert!(state.set_worklane_title("worklane-a", Some("  Nimbu API  ")));
@@ -1230,6 +1231,11 @@ fn sidebar_summaries_are_compound_worklane_and_pane_presentations() {
     assert!(summaries[0].is_active);
     assert_eq!(summaries[0].pane_rows.len(), 2);
     assert_eq!(summaries[0].pane_rows[0].primary_text, "project shell");
+    assert_eq!(
+        summaries[0].pane_rows[0].working_directory.as_deref(),
+        Some("/repo/nimbu")
+    );
+    assert_eq!(summaries[0].pane_rows[1].working_directory, None);
     assert!(!summaries[0].pane_rows[0].is_focused);
     assert_eq!(summaries[0].pane_rows[1].primary_text, "cargo test");
     assert!(summaries[0].pane_rows[1].is_focused);

@@ -39,3 +39,31 @@ pub(crate) fn configure(picture: &gtk::Picture, path: Option<&Path>, owner: &str
         }
     }
 }
+
+pub(crate) fn configure_with_fallback(
+    picture: &gtk::Picture,
+    path: Option<&Path>,
+    fallback_icon: &str,
+    tooltip: &str,
+    owner: &str,
+) {
+    if path.is_some() {
+        configure(picture, path, owner);
+        return;
+    }
+    let theme = gtk::IconTheme::for_display(&picture.display());
+    let paintable = theme.lookup_icon(
+        fallback_icon,
+        &[],
+        picture.width_request().max(1),
+        picture.scale_factor().max(1),
+        gtk::TextDirection::None,
+        gtk::IconLookupFlags::empty(),
+    );
+    picture.set_paintable(Some(&paintable));
+    picture.set_visible(true);
+    picture.set_tooltip_text(Some(tooltip));
+    eprintln!(
+        "zentty-linux: project-icon-projected owner={owner} fallback={fallback_icon} decoded=true"
+    );
+}

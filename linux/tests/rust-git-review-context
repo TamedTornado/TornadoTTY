@@ -189,6 +189,8 @@ grep -Fq 'terminal-ready-pane=pane-1' "${log}" ||
     fail "real review-context Ghostty surface was not ready"
 grep -Fq 'title-pane=pane-1 value=Review context' "${log}" ||
     fail "review visual terminal did not settle deterministic content"
+grep -Fq 'project-icon-projected owner=window-chrome fallback=folder-symbolic decoded=true' "${log}" ||
+    fail "working-directory context did not project the source-compatible fallback icon"
 
 capture_review_visual() {
     local scenario_id image

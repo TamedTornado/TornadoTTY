@@ -58,6 +58,7 @@ pub(crate) struct WindowChrome {
     project_icon: gtk::Picture,
     project: gtk::Box,
     branch: gtk::Button,
+    branch_label: gtk::Label,
     pull_request: gtk::Button,
     refresh_review: gtk::Button,
     back: gtk::Button,
@@ -124,7 +125,11 @@ impl WindowChrome {
         branch.set_has_frame(false);
         branch.add_css_class("project-context-branch");
         branch.set_action_name(Some("workspace.open-branch-remote"));
-        branch.set_tooltip_text(Some("Open branch on remote"));
+        let branch_label = gtk::Label::new(None);
+        branch_label.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+        branch_label.set_max_width_chars(36);
+        branch_label.set_xalign(0.5);
+        branch.set_child(Some(&branch_label));
         let pull_request = gtk::Button::new();
         pull_request.set_has_frame(false);
         pull_request.add_css_class("review-chip");
@@ -174,6 +179,7 @@ impl WindowChrome {
             project_icon,
             project,
             branch,
+            branch_label,
             pull_request,
             refresh_review,
             back,
@@ -330,15 +336,23 @@ impl WindowChrome {
             .iter()
             .find(|summary| summary.is_active)
             .and_then(|summary| summary.pane_rows.iter().find(|pane| pane.is_focused));
-        crate::project_icon_view::configure(
-            &self.project_icon,
-            focused_pane.and_then(|pane| pane.project_icon_path.as_deref()),
-            "window-chrome",
-        );
+        if let Some(pane) = focused_pane.filter(|pane| pane.working_directory.is_some()) {
+            crate::project_icon_view::configure_with_fallback(
+                &self.project_icon,
+                pane.project_icon_path.as_deref(),
+                "folder-symbolic",
+                pane.working_directory
+                    .as_deref()
+                    .unwrap_or("Working directory"),
+                "window-chrome",
+            );
+        } else {
+            crate::project_icon_view::configure(&self.project_icon, None, "window-chrome");
+        }
         let project_context = focused_pane.and_then(|pane| pane.project_context.as_ref());
         if let Some(project_context) = project_context {
             let reference = project_context.reference.display();
-            self.branch.set_label(&if project_context.dirty {
+            self.branch_label.set_text(&if project_context.dirty {
                 format!("{reference}  ●")
             } else {
                 reference
@@ -346,6 +360,17 @@ impl WindowChrome {
             let branch_enabled =
                 project_context.reference.branch().is_some() && project_context.remote.is_some();
             self.branch.set_sensitive(branch_enabled);
+            self.branch.set_tooltip_text(Some(&if branch_enabled {
+                format!(
+                    "Open branch {} on remote",
+                    project_context.reference.display()
+                )
+            } else {
+                format!(
+                    "Branch {}; remote unavailable",
+                    project_context.reference.display()
+                )
+            }));
             self.branch
                 .update_property(&[gtk::accessible::Property::Label(&format!(
                     "{} branch {} on remote",

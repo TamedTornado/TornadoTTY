@@ -35,6 +35,7 @@ fn pane(id: &str, title: &str, agent_status: Option<PaneAgentStatus>) -> Sidebar
         pane_id: id.to_owned(),
         primary_text: title.to_owned(),
         custom_title: None,
+        working_directory: None,
         is_focused: false,
         agent_status,
         project_context: None,

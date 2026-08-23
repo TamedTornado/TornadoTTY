@@ -48,11 +48,11 @@ jq '(.elements[0].status) = "SKIP"' \
 expect_failure unexpected-skip "schema or enum contract failed" \
     "${runner}" "${temporary}/unexpected-skip.json" "${temporary}/empty-baselines"
 
-jq '(.elements[] | select(.id == "chrome.project-proxy-icon")) |=
+jq '(.elements[] | select(.id == "chrome.server-primary")) |=
     (.status = "MATCH" | .tracking_issue = null)' \
     "${source_map}" >"${temporary}/unproved-match.json"
 expect_failure unproved-match \
-    "MATCH element chrome.project-proxy-icon lacks associated scenario assertion" \
+    "MATCH element chrome.server-primary lacks associated scenario assertion" \
     "${runner}" "${temporary}/unproved-match.json" "${temporary}/empty-baselines"
 
 jq '(.scenarios[] | select(.id == "empty-dark-x11")) |=

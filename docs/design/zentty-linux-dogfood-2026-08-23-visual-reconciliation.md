@@ -80,3 +80,36 @@ Issues: GH-87, GH-82
   PLATFORM_ALTERNATIVE** across elements and **26 PASS, 0 non-passing** across
   scenarios. The remaining partials are project/branch context, server/Open
   With compound controls, Global Find, bookmarks, and the pane-search HUD.
+
+## Project proxy and branch context
+
+- The source audit found a genuine Linux mismatch rather than an evidence-only
+  gap. macOS always shows the focused working directory's workspace icon as a
+  fallback when no custom project icon is resolved. Linux hid the chrome icon
+  unless a custom bitmap existed, despite already owning the correct picture
+  widget and custom-icon resolver.
+- The focused pane summary now carries its existing working directory into the
+  GTK projection. The existing project-icon view retains custom decoded assets
+  and otherwise uses the platform folder icon with the full working directory
+  as its tooltip. No second path resolver or persisted state was added.
+- The branch control previously used a button's implicit text child. It now
+  owns a bounded label with middle ellipsis, preserves the existing remote URL
+  action, and explains the full branch plus remote availability in its
+  tooltip. This matches the source semantics without copying AppKit widgets.
+- The existing real Git/review actor now requires the fallback-icon projection
+  receipt in addition to its real nested working directory, repository, `gh`
+  boundary, browser-open receipts, and screenshot. It passed on controlled X11
+  and input-capable Wayland.
+- The intentional icon made both reviewed review-context baselines stale. Two
+  independent captures on each compositor were byte-identical (AE=0), were
+  visually inspected, and only then replaced the old baselines. Fresh checked-
+  in-map runs passed on both compositors; no mask, tolerance, skip, or new
+  product actor was added.
+- The focused workspace projection test passes, formatting is clean, and the
+  staged ReleaseSafe product builds. A broad Clippy invocation encountered the
+  already-existing `worklane_peek::render` `too_many_lines` finding outside
+  this slice; it was not hidden or repaired opportunistically in GH-87.
+- Project proxy and branch context now report `MATCH`. Element totals are
+  **30 MATCH, 7 PARTIAL, 2 DEFERRED, 1 PLATFORM_ALTERNATIVE**; the seven
+  remaining partials are server/Open With compound controls, Global Find,
+  bookmarks, and the pane-search HUD.
