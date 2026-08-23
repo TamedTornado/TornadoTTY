@@ -35,13 +35,13 @@ xcodebuild -project Zentty.xcodeproj -scheme Zentty -destination 'platform=macOS
 
 ## Recovery Steps
 
-If the locked Zig version is missing:
+If the locked Zig version is missing (currently `0.16.0`):
 
 ```bash
-brew install zig@0.15
+brew install zig
 ```
 
-`zig@0.15` is keg-only. You do not need to relink Homebrew's default `zig`; `scripts/build_ghosttykit.sh` resolves the locked version directly.
+You do not need to relink a versioned Homebrew formula; `scripts/build_ghosttykit.sh` resolves the locked version directly.
 
 If `gettext` is missing:
 

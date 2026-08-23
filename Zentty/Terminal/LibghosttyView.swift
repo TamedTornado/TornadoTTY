@@ -2280,14 +2280,22 @@ final class LibghosttyView: NSView, TerminalFocusReporting, TerminalViewportDiag
             }
         }
 
+        // An IME may clear marked text while consuming this event (for example,
+        // Backspace cancelling a candidate). Preserve the state the event began in.
+        let wasComposing = hasMarkedText()
         keyTextAccumulator = ""
         interpretKeyEvents([translatedEvent])
-        let keyText = keyTextAccumulator.isEmpty ? fallbackText(for: translatedEvent) : keyTextAccumulator
+        let committedText = keyTextAccumulator.isEmpty ? nil : keyTextAccumulator
+        let keyText = committedText ?? fallbackText(for: translatedEvent)
         _ = surfaceController.sendKey(
             event: event,
             action: event.isARepeat ? .repeatPress : .press,
             text: keyText,
-            composing: hasMarkedText()
+            composing: Self.shouldSendKeyAsComposing(
+                wasComposing: wasComposing,
+                isComposing: hasMarkedText(),
+                committedText: committedText
+            )
         )
         if shouldEmitUserSubmittedInput {
             onLocalEventDidOccur?(.userSubmittedInput)
@@ -2768,6 +2776,14 @@ final class LibghosttyView: NSView, TerminalFocusReporting, TerminalViewportDiag
 
     private func fallbackText(for event: NSEvent) -> String? {
         LibghosttySurface.textForKeyEvent(event)
+    }
+
+    static func shouldSendKeyAsComposing(
+        wasComposing: Bool,
+        isComposing: Bool,
+        committedText: String?
+    ) -> Bool {
+        committedText == nil && (wasComposing || isComposing)
     }
 
     private static func sanitizedInputText(_ text: String) -> String? {
