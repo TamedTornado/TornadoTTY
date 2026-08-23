@@ -225,6 +225,28 @@ apply_theme_mode_from_palette() {
     fail "${title} did not persist ${mode} mode"
 }
 
+close_focused_evidence_profile() {
+    local confirmation_count wait_status product_status
+    confirmation_count="$(grep -Fc 'zentty-linux: confirmation shown title="Quit Zentty?"' "${log}" || true)"
+    zentty_product_close_window x11
+    for _ in $(seq 1 100); do
+        (( $(grep -Fc 'zentty-linux: confirmation shown title="Quit Zentty?"' "${log}" || true) > confirmation_count )) && break
+        sleep 0.05
+    done
+    (( $(grep -Fc 'zentty-linux: confirmation shown title="Quit Zentty?"' "${log}" || true) > confirmation_count )) ||
+        fail "focused evidence profile did not present its real quit confirmation"
+    xdotool key Return
+    set +e
+    timeout --foreground --kill-after=2s 7s tail --pid="${product_pid}" -f /dev/null
+    wait_status=$?
+    wait "${product_pid}"
+    product_status=$?
+    set -e
+    product_pid=""
+    (( wait_status == 0 && product_status == 0 )) ||
+        fail "focused evidence profile did not close cleanly"
+}
+
 accept_latest_pane_confirmation() {
     local before="$1"
     local accepted_before
@@ -426,6 +448,23 @@ dragged_sidebar_width="$(
     fail "the divider drag produced no sidebar allocation receipt"
 (( dragged_sidebar_width >= 350 && dragged_sidebar_width <= 365 )) ||
     fail "the real divider drag did not resize the sidebar"
+if [[ "${ZENTTY_SOURCE_UX_SIDEBAR_RESIZE_ONLY:-false}" == true ]]; then
+    resize_persist_before="$(grep -Fc 'zentty-linux: sidebar-persist origin=resize ' "${log}" || true)"
+    resize_projection_before="$(grep -Fc 'zentty-linux: config-live-projected window=window-1' "${log}" || true)"
+    capture_unmasked_visual_scenario sidebar-resize-x11
+    for _ in $(seq 1 160); do
+        (( $(grep -Fc 'zentty-linux: sidebar-persist origin=resize ' "${log}" || true) > resize_persist_before )) &&
+            (( $(grep -Fc 'zentty-linux: config-live-projected window=window-1' "${log}" || true) > resize_projection_before )) && break
+        sleep 0.05
+    done
+    (( $(grep -Fc 'zentty-linux: sidebar-persist origin=resize ' "${log}" || true) > resize_persist_before )) ||
+        fail "the captured divider width did not persist through ConfigStore"
+    (( $(grep -Fc 'zentty-linux: config-live-projected window=window-1' "${log}" || true) > resize_projection_before )) ||
+        fail "the captured divider width did not complete live projection"
+    close_focused_evidence_profile
+    echo 'Rust source UX sidebar resize evidence passed: x11, real-pointer=true, persisted-width=true'
+    exit 0
+fi
 xdotool mousemove --window "${window_id}" "$((dragged_sidebar_width + 2))" 350 mousedown 1
 xdotool mousemove --sync --window "${window_id}" 288 350 mouseup 1
 sleep 0.2
@@ -788,24 +827,7 @@ capture_unmasked_visual_scenario wide-dark-x11
 if [[ "${ZENTTY_SOURCE_UX_WIDE_LIGHT_ONLY:-false}" == true ]]; then
     apply_theme_mode_from_palette 'Use Light Theme' light
     capture_unmasked_visual_scenario wide-light-x11
-    confirmation_count="$(grep -Fc 'zentty-linux: confirmation shown title="Quit Zentty?"' "${log}" || true)"
-    zentty_product_close_window x11
-    for _ in $(seq 1 100); do
-        (( $(grep -Fc 'zentty-linux: confirmation shown title="Quit Zentty?"' "${log}" || true) > confirmation_count )) && break
-        sleep 0.05
-    done
-    (( $(grep -Fc 'zentty-linux: confirmation shown title="Quit Zentty?"' "${log}" || true) > confirmation_count )) ||
-        fail "wide light evidence profile did not present its real quit confirmation"
-    xdotool key Return
-    set +e
-    timeout --foreground --kill-after=2s 7s tail --pid="${product_pid}" -f /dev/null
-    wait_status=$?
-    wait "${product_pid}"
-    product_status=$?
-    set -e
-    product_pid=""
-    (( wait_status == 0 && product_status == 0 )) ||
-        fail "wide light evidence profile did not close cleanly"
+    close_focused_evidence_profile
     echo 'Rust source UX wide light evidence passed: x11, real-palette-theme=light, defect-capture=published'
     exit 0
 fi
