@@ -75,6 +75,37 @@ zentty_product_uses_xdotool() {
     [[ "$1" == x11 || "${ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT:-}" == 1 ]]
 }
 
+zentty_product_find_x11_window() {
+    local pid="$1"
+    local attempts="${2:-200}"
+    local attempt candidate owner
+
+    [[ "${pid}" =~ ^[1-9][0-9]*$ ]] || {
+        echo "product-input: X11 window lookup requires the real product PID" >&2
+        return 1
+    }
+    [[ "${attempts}" =~ ^[1-9][0-9]*$ ]] || {
+        echo "product-input: X11 window lookup attempts must be a positive integer" >&2
+        return 1
+    }
+    for ((attempt = 0; attempt < attempts; attempt++)); do
+        candidate="$(
+            xdotool search --onlyvisible --pid "${pid}" --name '^Zentty$' \
+                2>/dev/null | head -1 || true
+        )"
+        if [[ "${candidate}" =~ ^[1-9][0-9]*$ ]]; then
+            owner="$(xdotool getwindowpid "${candidate}" 2>/dev/null || true)"
+            if [[ "${owner}" == "${pid}" ]]; then
+                printf '%s\n' "${candidate}"
+                return 0
+            fi
+        fi
+        sleep 0.05
+    done
+    echo "product-input: mapped X11 window owned by product ${pid} did not appear" >&2
+    return 1
+}
+
 zentty_product_xdotool_key() {
     # Keep these as compositor-visible XTEST events. `xdotool key --window`
     # falls back to XSendEvent when the target does not already own focus;
@@ -89,7 +120,6 @@ zentty_product_prepare_input() {
     local backend="$1"
     local log="$2"
     local attempts="${3:-200}"
-    local attempt
     [[ "${attempts}" =~ ^[1-9][0-9]*$ ]] || {
         echo "product-input: input readiness attempts must be a positive integer" >&2
         return 1
@@ -104,28 +134,11 @@ zentty_product_prepare_input() {
                 echo "product-input: X11 input requires the real product PID" >&2
                 return 1
             }
-            ZENTTY_PRODUCT_WINDOW_ID=""
-            for ((attempt = 0; attempt < attempts; attempt++)); do
-                # The qualification cell deliberately reuses one private X
-                # server for several complete product journeys. A name-only
-                # search can race a withdrawing window from the preceding
-                # journey and produce BadWindow on the first input event.
-                # Bind input to this caller's live process and mapped window.
-                ZENTTY_PRODUCT_WINDOW_ID="$(
-                    xdotool search --onlyvisible --pid "${product_pid}" --name '^Zentty$' \
-                        2>/dev/null | head -1 || true
-                )"
-                [[ "${ZENTTY_PRODUCT_WINDOW_ID}" =~ ^[1-9][0-9]*$ ]] && break
-                sleep 0.05
-            done
-            [[ "${ZENTTY_PRODUCT_WINDOW_ID}" =~ ^[1-9][0-9]*$ ]] || {
-                echo "product-input: real X11 Zentty window did not appear" >&2
-                return 1
-            }
-            [[ "$(xdotool getwindowpid "${ZENTTY_PRODUCT_WINDOW_ID}" 2>/dev/null || true)" == "${product_pid}" ]] || {
-                echo "product-input: discovered X11 window is not owned by the product" >&2
-                return 1
-            }
+            # A name-only search can race a withdrawing window from a previous
+            # journey. Bind input to this caller's mapped, PID-owned window.
+            ZENTTY_PRODUCT_WINDOW_ID="$(
+                zentty_product_find_x11_window "${product_pid}" "${attempts}"
+            )" || return 1
             xdotool windowfocus --sync "${ZENTTY_PRODUCT_WINDOW_ID}"
             xdotool mousemove --window "${ZENTTY_PRODUCT_WINDOW_ID}" 700 400 click 1
             # The initially selected pane does not emit `focus-pane` when it

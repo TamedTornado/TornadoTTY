@@ -383,12 +383,8 @@ grep -Fq 'zentty-linux: search-state pane=pane-1 active=false total=None selecte
     fail "Ghostty search overlay was not observed"
 
 if [[ "${backend}" == x11 ]]; then
-    for _ in $(seq 1 160); do
-        window_id="$(xdotool search --name '^Zentty$' 2>/dev/null | head -1 || true)"
-        [[ "${window_id}" =~ ^[1-9][0-9]*$ ]] && break
-        sleep 0.05
-    done
-    [[ "${window_id}" =~ ^[1-9][0-9]*$ ]] || fail "real X11 Zentty window did not appear"
+    window_id="$(zentty_product_find_x11_window "${product_pid}" 160)" ||
+        fail "real mapped X11 Zentty window did not appear"
     xdotool windowfocus --sync "${window_id}"
 else
     if [[ "${ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT:-}" == 1 ]]; then

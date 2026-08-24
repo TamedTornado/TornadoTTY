@@ -49,3 +49,28 @@ cluster evidence is green.
   The shared environment-leak and full-vs-display provenance contracts are now
   checked by the focused orchestration contract. The authoritative full matrix
   has not been rerun.
+
+## GH-90: controlled X11 focus reproduction
+
+- `platform-clipboard-x11` reproduced independently and immediately with X11
+  `BadMatch`, opcode 42 (`X_SetInputFocus`). A shell trace located the exact
+  operation: `rust-pane-search` used a name-only `xdotool search`, accepted
+  window `2097154`, and focused it without checking mapping or PID ownership.
+- This actor had drifted from the shared input contract, which already binds to
+  `--onlyvisible --pid "$product_pid"` and verifies the returned owner. The
+  compositor warnings after the X error were unrelated cleanup noise.
+- `rust-pane-search` owns three of the baseline failures, and
+  `rust-task-runners` used the same stale/unmapped-window pattern. Both now
+  require a mapped window belonging to their exact launched product before
+  physical focus. No X error is suppressed and no alternate window is used.
+- The mapped PID-owned lookup now lives once in `product-input`. Its focused
+  runner rejects a missing mapped window and a visible window owned by another
+  process, while retaining the exact successful XTEST sequence.
+- Independent reruns passed for platform clipboard, terminal input, task
+  runners, and the complete composite Ghostty API product-usage cell. The
+  latter covered API audit, closed-pane restoration, full pane search, and tmux
+  compatibility in one private X11 session.
+- Platform clipboard and task runners were then deliberately run concurrently
+  in two private Xvfb sessions. Both passed with distinct 64-hex session IDs,
+  proving the repair scopes discovery by process/session rather than serializing
+  unrelated X11 cells.

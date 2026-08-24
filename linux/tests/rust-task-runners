@@ -20,6 +20,8 @@ backend="${GDK_BACKEND:-}"
 
 # shellcheck source=linux/tests/lib/product-bundle
 source "${repo_root}/linux/tests/lib/product-bundle"
+# shellcheck source=linux/tests/lib/product-input
+source "${repo_root}/linux/tests/lib/product-input"
 
 fail() {
     [[ ! -f "${log}" ]] || cat "${log}" >&2
@@ -159,10 +161,12 @@ chmod 700 "${project}/task-fixture"
 product_pid=$!
 
 window_id=""
+if [[ "${backend}" == x11 ]]; then
+    window_id="$(zentty_product_find_x11_window "${product_pid}" 300)" ||
+        fail "real mapped X11 Zentty window did not appear"
+fi
 for _ in $(seq 1 300); do
-    if [[ "${backend}" == x11 ]]; then
-        window_id="$(xdotool search --name '^Zentty$' 2>/dev/null | head -1 || true)"
-    else
+    if [[ "${backend}" == wayland ]]; then
         window_id=wayland-focused
     fi
     if [[ -n "${window_id}" ]] && grep -Fxq 'zentty-linux: terminal-ready' "${log}"; then
