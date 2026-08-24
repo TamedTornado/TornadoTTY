@@ -106,7 +106,7 @@ require "the product build does not audit the complete lockfile before Cargo wit
         /linux\/scripts\/audit-cargo-publish-age/ { audit = NR }
         /^GHOSTTY_LIB_DIR=.*\\$/ { environment = NR }
         /^[[:space:]]+cargo "\$\{cargo_arguments\[@\]\}" --jobs/ { cargo = NR }
-        END { exit !(audit > 0 && environment == audit + 1 && cargo == environment + 4) }
+        END { exit !(audit > 0 && environment == audit + 1 && cargo == environment + 5) }
     ' "${repo_root}/linux/scripts/build-local"
 # The qualifier must retain this literal loop-variable expression.
 # shellcheck disable=SC2016
@@ -163,6 +163,9 @@ require "the agent actor does not infer a required Gemini journey from ambient v
     "${repo_root}/linux/tests/rust-agent-ipc"
 require "local builds do not expose the full provenance hash through the public version command" \
     grep -Fq 'ZENTTY_BUILD_COMMIT="${zentty_display_revision}"' \
+    "${repo_root}/linux/scripts/build-local"
+require "local builds embed a separate full revision for catalog provenance validation" \
+    grep -Fq 'ZENTTY_BUILD_REVISION="${zentty_revision}"' \
     "${repo_root}/linux/scripts/build-local"
 require "local build metadata does not lose the full provenance revision" \
     grep -Fq '"${zentty_revision}" \' \
@@ -268,7 +271,7 @@ require "installed package qualification is not pinned to the real package and d
 require "Wayland agent qualification does not name the event, tmux, installed Claude, and consolidated restore journeys" \
     jq -e '
         .cells[] | select(.id == "agent-integration-wayland") |
-        .environment_profile == "nested-wayland-input-v1" and
+        .environment_profile == "nested-wayland-multiwindow-v1" and
         .command == "ZENTTY_REQUIRE_REAL_GEMINI=true ZENTTY_REAL_GEMINI_BIN=linux/ci/node-tools/node_modules/.bin/gemini ZENTTY_EXPECTED_GEMINI_VERSION=0.53.0 ZENTTY_RUN_CODEX_LIFECYCLE=true GDK_BACKEND=wayland linux/tests/rust-agent-ipc && ZENTTY_TOPOLOGY_REPRESENTATIVE=1 GDK_BACKEND=wayland linux/tests/rust-tmux-compat-product && GDK_BACKEND=wayland linux/tests/installed-claude-agent-team && GDK_BACKEND=wayland linux/tests/rust-session-restore"
     ' "${matrix}"
 require "controlled multi-window Wayland remote drop is not an explicit real-product cell" \
@@ -352,7 +355,7 @@ require "Rust/Ghostty adapter cells are not assigned to focused and real existin
             (.command | contains("linux/tests/rust-closed-pane-restore"))) and
         (.cells[] | select(.id == "rust-global-find-product-usage-wayland") |
             .status == "PASS" and .display == "wayland" and
-            .environment_profile == "nested-wayland-input-v1" and
+            .environment_profile == "nested-wayland-multiwindow-v1" and
             (.command | contains("ZENTTY_EXPECTED_PRODUCT_PROFILE=release-safe")) and
             (.command | contains("linux/tests/rust-pane-search"))) and
         (.cells[] | select(.id == "rust-ghostty-config-construction") |

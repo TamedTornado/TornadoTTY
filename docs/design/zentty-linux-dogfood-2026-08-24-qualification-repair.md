@@ -469,3 +469,45 @@ cluster evidence is green.
   and post-restore terminal input. The failure ledger entries are now PASS with
   two attempts each; this repairs two cells only and is not a full Linux
   qualification claim.
+
+### About navigation and catalog provenance
+
+- The reported Wayland Back-action failure initially looked like a product
+  navigation defect because the actor accepted an old `licenses-back` focus
+  receipt. GTK briefly focused Back while changing stack pages, then the
+  product deliberately focused the license search. The later Shift+Tab wait
+  matched that stale line and sent Return to the search field. The actor now
+  records the focus count before physical navigation and requires a new receipt.
+  This exposed the real environment boundary: Cage's wtype virtual-keyboard
+  path did not deliver Shift+Tab as backward GTK navigation, even with explicit
+  modifier-frame separation or a direct `ISO_Left_Tab` keysym. Absence was not
+  converted into a pass. The cell now uses the controlled Weston profile and
+  compositor-visible outer-X11 input, which delivers the physical chord to the
+  real Wayland client and preserves the exact keyboard-order assertion.
+- Advancing past Back uncovered a separate staged-product security defect. The
+  package catalog records a full 40-character Zentty revision, but the build
+  exported only the 12-character display commit. `AboutMetadata` rejected that
+  short value as malformed, reduced it to `unknown`, and catalog loading then
+  intentionally skipped revision matching. A tampered catalog was therefore
+  accepted even though the actor expected an exact mismatch diagnostic.
+- Build metadata now keeps the short public commit while separately embedding
+  `ZENTTY_BUILD_REVISION` with the full provenance identity. About accepts the
+  12-character display commit for presentation but validates package notices
+  only against the full 40-character revision; catalog source identities use
+  that same strict revision validator rather than the display validator.
+  Focused tests distinguish both formats, reject wrong lengths and alphabets,
+  and all 12 generated mutants for the two validators, their parser use, and
+  the compiled-revision selector were caught by the
+  resource-isolated project runner.
+- The build-orchestration mirror had also gone stale after GH-92 moved agent
+  integration and global find to controlled Weston. It now mirrors those
+  authoritative profiles and accounts for the additional provenance variable;
+  the orchestration and matrix validators pass again.
+- Fresh ReleaseSafe About/Licenses journeys passed concurrently and completely
+  on private Xvfb session `26fc6dc7...` and controlled Weston session
+  `17faa4c1...`. They use a
+  real Ghostty PTY, physical palette and keyboard navigation, an exact installed
+  catalog, a controlled external-link handler, and a second copied product
+  bundle whose deliberately stale catalog is rejected but remains recoverable
+  in the UI. Only the Wayland failure-ledger entry changed state; this remains
+  focused evidence, not full qualification.

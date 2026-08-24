@@ -183,9 +183,14 @@ zentty_product_wait_for_log "${log}" 'zentty-linux: license-detail id=cargo/auto
 grep -Fq 'Copyright (c) 2018 Josh Stone' "${notices}/cargo/autocfg-1.5.1/LICENSE-MIT" ||
     fail "real selected package license text is absent"
 
+back_focus_before="$(grep -Fc 'zentty-linux: about-focus widget=licenses-back' "${log}" || true)"
 key shift+Tab
-zentty_product_wait_for_log "${log}" 'zentty-linux: about-focus widget=licenses-back' \
-    "Shift+Tab did not move from search to Back" || fail "Licenses keyboard order is incorrect"
+for _ in {1..200}; do
+    (( $(grep -Fc 'zentty-linux: about-focus widget=licenses-back' "${log}" || true) > back_focus_before )) && break
+    sleep 0.05
+done
+(( $(grep -Fc 'zentty-linux: about-focus widget=licenses-back' "${log}" || true) > back_focus_before )) ||
+    fail "Licenses keyboard order is incorrect"
 key Return
 zentty_product_wait_for_log "${log}" 'zentty-linux: about-view page=about' \
     "Back action did not restore About" || fail "About navigation failed"

@@ -55,6 +55,19 @@ fn nonempty_or(value: &str, fallback: &str) -> String {
 }
 
 fn is_lower_hex_commit(value: &str) -> bool {
+    value.len() == 12
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn compiled_catalog_revision() -> &'static str {
+    option_env!("ZENTTY_BUILD_REVISION")
+        .filter(|revision| is_lower_hex_revision(revision))
+        .unwrap_or("unknown")
+}
+
+fn is_lower_hex_revision(value: &str) -> bool {
     value.len() == 40
         && value
             .bytes()
@@ -178,7 +191,7 @@ pub(crate) fn load_default_catalog() -> Result<LicenseCatalog, String> {
     let executable = std::env::current_exe()
         .map_err(|error| format!("could not locate Zentty executable: {error}"))?;
     let roots = default_notice_roots(&executable)?;
-    load_catalog_from_roots(&roots, &AboutMetadata::compiled().commit)
+    load_catalog_from_roots(&roots, compiled_catalog_revision())
 }
 
 fn load_catalog_from_roots(
@@ -377,7 +390,7 @@ fn source_identity(generated: &Map<String, Value>, name: &str) -> Result<(String
     let source = exact_object(required(generated, name)?, &["repository", "revision"])?;
     let repository = required_string(source, "repository")?;
     let revision = required_string(source, "revision")?;
-    if !is_lower_hex_commit(&revision) {
+    if !is_lower_hex_revision(&revision) {
         return Err(format!("catalog {name} revision is invalid"));
     }
     Ok((repository, revision))
@@ -438,10 +451,10 @@ mod tests {
     #[test]
     fn metadata_is_truthful_and_rejects_non_commit_values() {
         let metadata =
-            AboutMetadata::from_values(" 0.1.0 ", "release-safe", &"b".repeat(40), "dirty");
+            AboutMetadata::from_values(" 0.1.0 ", "release-safe", "abcdef123456", "dirty");
         assert_eq!(metadata.version, "0.1.0");
         assert_eq!(metadata.build, "release-safe (dirty)");
-        assert_eq!(metadata.commit, "b".repeat(40));
+        assert_eq!(metadata.commit, "abcdef123456");
         assert_eq!(
             AboutMetadata::from_values("", "", "ABC", "surprising"),
             AboutMetadata {
@@ -454,6 +467,23 @@ mod tests {
             AboutMetadata::from_values("1.2.3", "release-safe", &"c".repeat(40), "clean").build,
             "release-safe (clean)"
         );
+    }
+
+    #[test]
+    fn display_commits_and_catalog_revisions_have_distinct_provenance_contracts() {
+        assert!(is_lower_hex_commit("abcdef123456"));
+        assert!(!is_lower_hex_commit("abcdef12345"));
+        assert!(!is_lower_hex_commit(&"a".repeat(40)));
+        assert!(!is_lower_hex_commit("ABCDEF123456"));
+
+        assert!(is_lower_hex_revision(&"b".repeat(40)));
+        assert!(!is_lower_hex_revision("abcdef123456"));
+        assert!(!is_lower_hex_revision(&"g".repeat(40)));
+
+        // Ordinary developer test builds deliberately have no staged-product
+        // provenance environment. Staged builds exercise the full value in
+        // the real About integration journey.
+        assert_eq!(compiled_catalog_revision(), "unknown");
     }
 
     #[test]
