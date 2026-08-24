@@ -316,9 +316,13 @@ if [[ "${backend}" == x11 ]]; then
     done
     (( $(grep -Fc 'zentty-linux: sidebar-visibility=hidden' "${log}" || true) > hidden_before )) ||
         fail "the controlled capture could not hide unrelated dynamic server rows"
+    zentty_product_wait_for_log "${log}" \
+        'zentty-linux: project-icon-projected owner=window-chrome fallback=folder-symbolic decoded=true' \
+        'development-server chrome did not settle its project-icon fallback' ||
+        fail "development-server project icon was not settled"
     xdotool mousemove --sync 2000 1500
-    sleep 0.3
-    import -silent -window "${window_id}" "${image}"
+    zentty_visual_capture_stable "${image}" import -silent -window "${window_id}" ||
+        fail "development-server X11 compositor frame did not settle"
     zentty_visual_publish server-chrome-x11 linux/tests/rust-development-servers "${image}" -
 
     xdotool mousemove --sync --window "${window_id}" 1306 30 click 1

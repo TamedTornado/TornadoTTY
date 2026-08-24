@@ -419,3 +419,18 @@ cluster evidence is green.
   and passed the formerly blocked remote visual geometry before reaching a
   separate remote file-drop completion failure. Agent integration therefore
   remains FAIL; the actor-state repair is not presented as completion.
+- Fcitx composition and existing-worklane transfer each passed alone, then
+  passed in two repeated concurrent contender pairs. Their baseline failures
+  are now classified as non-reproducible baseline outcomes, not invented
+  interference: both private Wayland sessions remained distinct, and no shared
+  resource or generic graphical lock is justified by the evidence.
+- The first three-cell cluster combined Wayland confirmation lifecycle,
+  private-PID development-server discovery, and X11 project icons. Lifecycle
+  and icons passed, but development-server visual evidence changed under load
+  despite process isolation. Exact inspection found its screenshot still used
+  a fixed 300 ms delay. It now waits for the asynchronous generic project icon
+  and requires consecutive identical compositor frames through the shared
+  visual-evidence owner. The repeated three-cell cluster then passed all cells:
+  Wayland session `5687afd3...`, development-server X11 session `048f1c8e...`,
+  and project-icons X11 session `8fb47aa6...`. This is bounded settling, not a
+  scheduler mutex or enlarged sleep.
