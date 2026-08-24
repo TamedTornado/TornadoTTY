@@ -643,7 +643,7 @@ run_adapter \
     'Choose the Vibe path?'
 fi
 
-if [[ -n "${ZENTTY_REAL_GEMINI_BIN:-}" ]]; then
+if [[ "${ZENTTY_REQUIRE_REAL_GEMINI:-false}" == true ]]; then
     reviewed_gemini="${repo_root}/linux/ci/node-tools/node_modules/.bin/gemini"
     for dependency in jq node pgrep readlink; do
         command -v "${dependency}" >/dev/null ||
@@ -801,4 +801,4 @@ if [[ "${scenario}" == full ]]; then
 else
     adapters="not-run-in-installed-gemini-scenario"
 fi
-echo "Rust agent launch passed: ${backend}, scenario=${scenario}, wrapper=real-process, child=real-pty, helper=real-process, transport=real-unix-socket, compatibility-agent-status=running+needs-input+failed+task-idempotency+reordered-completion+completed+clear, adapters=${adapters}, real-gemini=$([[ -n "${ZENTTY_REAL_GEMINI_BIN:-}" ]] && echo true || echo prerequisite-not-requested)"
+echo "Rust agent launch passed: ${backend}, scenario=${scenario}, wrapper=real-process, child=real-pty, helper=real-process, transport=real-unix-socket, compatibility-agent-status=running+needs-input+failed+task-idempotency+reordered-completion+completed+clear, adapters=${adapters}, real-gemini=$([[ "${ZENTTY_REQUIRE_REAL_GEMINI:-false}" == true ]] && echo true || echo prerequisite-not-requested)"

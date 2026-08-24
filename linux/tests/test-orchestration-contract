@@ -123,6 +123,20 @@ require "installed Codex journey does not consume the reviewed Responses endpoin
     "${repo_root}/linux/tests/installed-codex-integration"
 require "installed Gemini journey does not consume the reviewed Gemini endpoint" \
     grep -Fq 'controlled_gemini' "${repo_root}/linux/tests/rust-agent-ipc"
+reject "qualify-local leaks the required Gemini journey into unrelated matrix cells" \
+    grep -Eq '^[[:space:]]*ZENTTY_(REAL_GEMINI_BIN|EXPECTED_GEMINI_VERSION)=' \
+    "${repo_root}/linux/tests/qualify-local"
+# The grep intentionally matches the literal shell source expression.
+# shellcheck disable=SC2016
+require "the agent actor does not infer a required Gemini journey from ambient variables" \
+    grep -Fq 'if [[ "${ZENTTY_REQUIRE_REAL_GEMINI:-false}" == true ]]; then' \
+    "${repo_root}/linux/tests/rust-agent-ipc"
+require "local builds do not expose the full provenance hash through the public version command" \
+    grep -Fq 'ZENTTY_BUILD_COMMIT="${zentty_display_revision}"' \
+    "${repo_root}/linux/scripts/build-local"
+require "local build metadata does not lose the full provenance revision" \
+    grep -Fq '"${zentty_revision}" \' \
+    "${repo_root}/linux/scripts/build-local"
 require "installed Claude journey does not consume the single controlled actor" \
     grep -Fq 'linux/tests/fixtures/controlled-agent' \
     "${repo_root}/linux/tests/installed-claude-agent-team"

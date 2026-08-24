@@ -115,6 +115,11 @@ if [[ ! "${zentty_revision}" =~ ^[0-9a-f]{40}$ ]]; then
     echo "error: invalid Zentty revision: ${zentty_revision}" >&2
     exit 1
 fi
+zentty_display_revision="${zentty_revision:0:12}"
+if [[ ! "${zentty_display_revision}" =~ ^[0-9a-f]{12}$ ]]; then
+    echo "error: invalid display revision: ${zentty_display_revision}" >&2
+    exit 1
+fi
 zentty_tree="clean"
 if [[ -n "$(git -C "${repo_root}" status --porcelain=v1)" ]]; then
     zentty_tree="dirty"
@@ -157,7 +162,7 @@ fi
 cp "${layer_shell_library}" "${output_dir}/lib/"
 
 GHOSTTY_LIB_DIR="${ghostty_install_dir}/lib" \
-    ZENTTY_BUILD_COMMIT="${zentty_revision}" \
+    ZENTTY_BUILD_COMMIT="${zentty_display_revision}" \
     ZENTTY_BUILD_TREE="${zentty_tree}" \
     ZENTTY_BUILD_PROFILE="${cargo_profile}" \
     cargo "${cargo_arguments[@]}" --jobs "${build_jobs}"
