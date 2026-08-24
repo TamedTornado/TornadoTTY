@@ -205,7 +205,7 @@ fn decode_ipv6(hex: &str) -> Option<String> {
         return None;
     }
     let mut bytes = [0_u8; 16];
-    for (word_index, chunk) in hex.as_bytes().chunks_exact(8).enumerate() {
+    for (word_index, chunk) in hex.as_bytes().as_chunks::<8>().0.iter().enumerate() {
         let word = u32::from_str_radix(std::str::from_utf8(chunk).ok()?, 16).ok()?;
         bytes[word_index * 4..word_index * 4 + 4].copy_from_slice(&word.to_le_bytes());
     }

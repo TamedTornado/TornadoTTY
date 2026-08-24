@@ -18,6 +18,10 @@ wayland_input_harness="${repo_root}/linux/tests/nested-wayland-input"
 multi_window_harness="${repo_root}/linux/tests/rust-multi-window"
 workspace_settings_harness="${repo_root}/linux/tests/rust-workspace-pane-settings"
 shortcut_settings_harness="${repo_root}/linux/tests/rust-shortcuts-settings"
+cargo_age_policy="${repo_root}/linux/security/cargo-publish-age-policy.json"
+cargo_age_exceptions="${repo_root}/linux/security/cargo-publish-age-exceptions.json"
+cargo_age_audit="${repo_root}/linux/scripts/audit-cargo-publish-age"
+cargo_config="${repo_root}/.cargo/config.toml"
 failures=0
 
 reject() {
@@ -83,6 +87,32 @@ require "the real multi-window product journey is missing or not executable" \
     test -x "${multi_window_harness}"
 require "the real staged CLI contract journey is missing or not executable" \
     test -x "${repo_root}/linux/tests/rust-cli-contract"
+require "the Cargo publication-age audit is missing or not executable" test -x "${cargo_age_audit}"
+require "the Cargo age policy is not a seven-day empty-exception floor" \
+    jq -e '.minimum_age_seconds == 604800 and .minimum_age == "7 days" and
+        .stable_migration_tracking_issue == 96 and
+        .exceptions_manifest == "linux/security/cargo-publish-age-exceptions.json"' \
+        "${cargo_age_policy}"
+require "the Cargo age exception manifest does not start empty" \
+    jq -e '.schema_version == 1 and .exceptions == []' "${cargo_age_exceptions}"
+require "native Cargo min-publish-age is not enabled" \
+    grep -Fq 'min-publish-age = true' "${cargo_config}"
+require "native Cargo does not deny too-new publications" \
+    grep -Fq 'incompatible-publish-age = "deny"' "${cargo_config}"
+require "native Cargo does not enforce a seven-day global publication age" \
+    grep -Fq 'global-min-publish-age = "7 days"' "${cargo_config}"
+require "the product build does not audit the complete lockfile before Cargo without consuming Cargo's build environment" \
+    awk '
+        /linux\/scripts\/audit-cargo-publish-age/ { audit = NR }
+        /^GHOSTTY_LIB_DIR=.*\\$/ { environment = NR }
+        /^[[:space:]]+cargo "\$\{cargo_arguments\[@\]\}" --jobs/ { cargo = NR }
+        END { exit !(audit > 0 && environment == audit + 1 && cargo == environment + 4) }
+    ' "${repo_root}/linux/scripts/build-local"
+# The qualifier must retain this literal loop-variable expression.
+# shellcheck disable=SC2016
+require "local qualification does not serialize the lockfile audit before the matrix" \
+    grep -Fq '"${test_path}" == linux/scripts/audit-cargo-publish-age' \
+        "${repo_root}/linux/tests/qualify-local"
 # The product script must retain this literal runtime path expression.
 # shellcheck disable=SC2016
 require "shortcut settings does not load Ghostty from the selected product bundle" \

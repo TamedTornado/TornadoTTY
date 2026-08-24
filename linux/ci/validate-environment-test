@@ -26,6 +26,7 @@ expect_rejected() {
 expect_rejected missing-baseline 'del(.baseline.architecture)'
 expect_rejected wrong-runner '.baseline.runner_label = "ubuntu-latest"'
 expect_rejected wrong-rust '.toolchains.rust.version = "1.96.0"'
+expect_rejected wrong-rust-channel '.toolchains.rust.channel = "nightly"'
 expect_rejected wrong-zig-hash '.toolchains.zig.sha256 = "unverified"'
 expect_rejected unpinned-blueprint '.toolchains.blueprint_compiler.revision = "main"'
 expect_rejected wrong-pnpm '.toolchains.node.pnpm_version = "10.31.0"'

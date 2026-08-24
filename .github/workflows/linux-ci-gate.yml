@@ -138,6 +138,7 @@ jobs:
             build/linux/ci-*.log
             build/linux/ci-pr-subset-summary.json
             build/linux/ci-pr-subset-logs
+            build/linux/security/cargo-publish-age.json
           if-no-files-found: error
           retention-days: 14
           compression-level: 6

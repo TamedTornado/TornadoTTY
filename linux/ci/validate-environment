@@ -21,7 +21,9 @@ jq -e '
     architecture:"amd64",
     runner_image_identity:"record-from-GITHUB_ACTIONS_IMAGE_VERSION"
   }) and
-  (.toolchains.rust == {version:"1.97.1",source:"rust-toolchain.toml"}) and
+  (.toolchains.rust == {
+    channel:"nightly-2026-08-17",version:"1.100.0-nightly",source:"rust-toolchain.toml"
+  }) and
   (.toolchains.qualification_shells == {
     fish:{
       version:"4.8.1",
@@ -84,9 +86,9 @@ jq -e '
   ((.cache_policy.allowed - .cache_policy.forbidden) == .cache_policy.allowed)
 ' "${manifest}" >/dev/null || fail "manifest shape or pinned policy is invalid"
 
-[[ "$(jq -r '.toolchains.rust.version' "${manifest}")" == \
+[[ "$(jq -r '.toolchains.rust.channel' "${manifest}")" == \
     "$(sed -n 's/^channel = "\([^"]*\)"/\1/p' "${repo_root}/rust-toolchain.toml")" ]] ||
-    fail "Rust manifest version differs from rust-toolchain.toml"
+    fail "Rust manifest channel differs from rust-toolchain.toml"
 [[ "$(jq -r '.source_contract.ghostty_repository' "${manifest}")" == \
     "$(sed -n 's/^repo=//p' "${repo_root}/linux/ghostty.lock")" ]] ||
     fail "Ghostty repository differs from linux/ghostty.lock"

@@ -81,10 +81,13 @@ fi
     fail "Blueprint compiler version mismatch"
 
 rust_version="$(jq -r '.toolchains.rust.version' "${manifest}")"
+rust_channel="$(jq -r '.toolchains.rust.channel' "${manifest}")"
 command -v rustup >/dev/null || fail "rustup is required"
-if ! rustup toolchain list | grep -Eq "^${rust_version}(-x86_64-unknown-linux-gnu)?( \(.*\))?$"; then
-    rustup toolchain install "${rust_version}" --profile minimal --component clippy,rustfmt
+if ! rustup toolchain list | grep -Eq "^${rust_channel}(-x86_64-unknown-linux-gnu)?( \(.*\))?$"; then
+    rustup toolchain install "${rust_channel}" --profile minimal --component clippy,rustfmt
 fi
+[[ "$(rustc +"${rust_channel}" --version | awk '{print $2}')" == "${rust_version}" ]] ||
+    fail "Rust toolchain version mismatch"
 
 fish_version="$(jq -r '.toolchains.qualification_shells.fish.version' "${manifest}")"
 fish_url="$(jq -r '.toolchains.qualification_shells.fish.url' "${manifest}")"

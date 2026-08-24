@@ -21,8 +21,12 @@ repository = "https://github.com/TamedTornado/zentty"
 unsafe_op_in_unsafe_fn = "deny"
 
 [workspace.lints.clippy]
-all = "deny"
-pedantic = "deny"
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+# The pinned nightly promotes this assertion-style preference into pedantic.
+# `assert!(collection.is_empty())` remains clearer when the collection's item
+# type has no useful empty-value diagnostic.
+assert_is_empty = "allow"
 
 [profile.release-safe]
 inherits = "release"

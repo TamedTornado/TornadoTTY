@@ -9,7 +9,8 @@
   },
   "toolchains": {
     "rust": {
-      "version": "1.97.1",
+      "channel": "nightly-2026-08-17",
+      "version": "1.100.0-nightly",
       "source": "rust-toolchain.toml"
     },
     "qualification_shells": {

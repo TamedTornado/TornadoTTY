@@ -1,0 +1,230 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+policy="${ZENTTY_CARGO_AGE_POLICY:-${repo_root}/linux/security/cargo-publish-age-policy.json}"
+exceptions_file="${ZENTTY_CARGO_AGE_EXCEPTIONS:-}"
+receipt="${ZENTTY_CARGO_AGE_RECEIPT:-${repo_root}/build/linux/security/cargo-publish-age.json}"
+lock_file="${ZENTTY_CARGO_AGE_LOCKFILE:-${repo_root}/Cargo.lock}"
+index_cache="${ZENTTY_CARGO_AGE_INDEX_CACHE:-}"
+now_epoch="${ZENTTY_CARGO_AGE_NOW_EPOCH:-$(date -u +%s)}"
+mode=audit
+
+fail() {
+    echo "audit-cargo-publish-age: error: $*" >&2
+    exit 1
+}
+
+case "${1:-}" in
+    --validate-receipt)
+        mode=validate
+        shift
+        receipt="${1:-${receipt}}"
+        ;;
+    "") ;;
+    *) fail "usage: $0 [--validate-receipt [receipt]]" ;;
+esac
+
+for dependency in awk date find jq mktemp sha256sum tr; do
+    command -v "${dependency}" >/dev/null || fail "${dependency} is required"
+done
+
+if [[ "${mode}" == validate ]]; then
+    [[ -f "${receipt}" ]] || fail "receipt is missing: ${receipt}"
+    jq -e '
+        .schema_version == 1 and
+        .policy.minimum_age_seconds > 0 and
+        (.packages | type == "array") and
+        .totals.packages == (.packages | length) and
+        .totals.pass == ([.packages[] | select(.outcome == "PASS")] | length) and
+        .totals.exempt == ([.packages[] | select(.outcome == "EXEMPT")] | length) and
+        .totals.fail == ([.packages[] | select(.outcome == "FAIL")] | length) and
+        all(.packages[];
+            (.name | type == "string" and length > 0) and
+            (.version | type == "string" and length > 0) and
+            (.publish_time | type == "string" and length > 0) and
+            (.age_seconds | type == "number") and
+            (.outcome | IN("PASS", "EXEMPT", "FAIL"))) and
+        (if .claim == "PASS"
+         then .totals.fail == 0 and .totals.exempt >= 0
+         else .claim == "FAIL" and .totals.fail > 0
+         end)
+    ' "${receipt}" >/dev/null || fail "receipt contains an incorrect qualification claim"
+    echo "audit-cargo-publish-age: receipt VALID"
+    exit 0
+fi
+
+[[ -f "${policy}" ]] || fail "policy is missing: ${policy}"
+[[ "${now_epoch}" =~ ^[0-9]+$ ]] || fail "current epoch must be a non-negative integer"
+jq -e '
+    .schema_version == 1 and
+    .registry_source == "registry+https://github.com/rust-lang/crates.io-index" and
+    (.minimum_age_seconds | type == "number" and . >= 604800 and floor == .) and
+    .minimum_age == "7 days" and
+    (.resolver_toolchain | type == "string" and test("^nightly-[0-9]{4}-[0-9]{2}-[0-9]{2}$")) and
+    .stable_migration_tracking_issue == 96 and
+    .exceptions_manifest == "linux/security/cargo-publish-age-exceptions.json"
+' "${policy}" >/dev/null || fail "policy is malformed"
+if [[ -z "${exceptions_file}" ]]; then
+    exceptions_file="${repo_root}/$(jq -r '.exceptions_manifest' "${policy}")"
+fi
+[[ -f "${exceptions_file}" ]] || fail "exception manifest is missing: ${exceptions_file}"
+jq -e '
+    .schema_version == 1 and
+    (.exceptions | type == "array") and
+    all(.exceptions[];
+        (.crate | type == "string" and test("^[A-Za-z0-9_-]+$")) and
+        (.version | type == "string" and length > 0) and
+        .authorized_by == "Jason" and
+        (.authorization_record | type == "string" and length > 0) and
+        (.tracking_issue | type == "number" and . > 0 and floor == .) and
+        (.justification | type == "string" and length >= 20) and
+        (.expires_at | type == "string" and length > 0))
+' "${exceptions_file}" >/dev/null || fail "exception manifest is malformed"
+
+duplicates="$(jq -r '.exceptions[] | "\(.crate)@\(.version)"' "${exceptions_file}" | LC_ALL=C sort | uniq -d)"
+[[ -z "${duplicates}" ]] || fail "duplicate exception records: ${duplicates//$'\n'/, }"
+
+temporary="$(mktemp -d)"
+trap 'rm -rf -- "${temporary}"' EXIT
+[[ -f "${lock_file}" ]] || fail "Cargo lockfile is missing: ${lock_file}"
+
+if [[ -z "${index_cache}" ]]; then
+    cargo_home="${CARGO_HOME:-${HOME}/.cargo}"
+    mapfile -t index_candidates < <(
+        find "${cargo_home}/registry/index" -mindepth 1 -maxdepth 1 -type d \
+            -name 'index.crates.io-*' -print 2>/dev/null | LC_ALL=C sort
+    )
+    (( ${#index_candidates[@]} == 1 )) ||
+        fail "exactly one crates.io sparse index cache is required"
+    index_cache="${index_candidates[0]}/.cache"
+fi
+[[ -d "${index_cache}" ]] || fail "crates.io sparse index cache is missing: ${index_cache}"
+
+minimum_age="$(jq -r '.minimum_age_seconds' "${policy}")"
+registry_source="$(jq -r '.registry_source' "${policy}")"
+rows="${temporary}/packages.jsonl"
+failures=0
+exemptions_used="${temporary}/exceptions-used"
+: >"${rows}"
+: >"${exemptions_used}"
+
+crate_cache_path() {
+    local name lower length
+    name="$1"
+    lower="$(tr '[:upper:]' '[:lower:]' <<<"${name}")"
+    lower="${lower%$'\n'}"
+    length="${#lower}"
+    case "${length}" in
+        1) printf '%s/1/%s\n' "${index_cache}" "${lower}" ;;
+        2) printf '%s/2/%s\n' "${index_cache}" "${lower}" ;;
+        3) printf '%s/3/%s/%s\n' "${index_cache}" "${lower:0:1}" "${lower}" ;;
+        *) printf '%s/%s/%s/%s\n' "${index_cache}" "${lower:0:2}" "${lower:2:2}" "${lower}" ;;
+    esac
+}
+
+locked_packages="${temporary}/locked-packages.tsv"
+awk -v registry_source="${registry_source}" '
+    function unquote(value) {
+        sub(/^[^=]*=[[:space:]]*"/, "", value)
+        sub(/"[[:space:]]*$/, "", value)
+        return value
+    }
+    function emit() {
+        if (name != "" && version != "" && source == registry_source) {
+            print name "\t" version
+        }
+    }
+    /^\[\[package\]\]$/ { emit(); name=""; version=""; source=""; next }
+    /^name[[:space:]]*=/ { name=unquote($0); next }
+    /^version[[:space:]]*=/ { version=unquote($0); next }
+    /^source[[:space:]]*=/ { source=unquote($0); next }
+    END { emit() }
+' "${lock_file}" | LC_ALL=C sort -u >"${locked_packages}"
+[[ -s "${locked_packages}" ]] || fail "Cargo lockfile contains no crates.io packages"
+
+while IFS=$'\t' read -r name version; do
+    cache_file="$(crate_cache_path "${name}")"
+    [[ -f "${cache_file}" ]] || fail "index metadata is missing for ${name}@${version}"
+    record="$(tr '\0' '\n' <"${cache_file}" | jq -Rce \
+        --arg name "${name}" --arg version "${version}" \
+        'fromjson? | select(.name == $name and .vers == $version)' 2>/dev/null | tail -1)" ||
+        fail "index version metadata is missing for ${name}@${version}"
+    publish_time="$(jq -r '.pubtime // empty' <<<"${record}")"
+    [[ -n "${publish_time}" ]] || fail "publication time is missing for ${name}@${version}"
+    publish_epoch="$(date -u -d "${publish_time}" +%s 2>/dev/null)" ||
+        fail "publication time is malformed for ${name}@${version}: ${publish_time}"
+    canonical_time="$(date -u -d "@${publish_epoch}" '+%Y-%m-%dT%H:%M:%SZ')"
+    [[ "${publish_time}" == "${canonical_time}" ]] ||
+        fail "publication time is not canonical UTC for ${name}@${version}: ${publish_time}"
+    age_seconds=$((now_epoch - publish_epoch))
+    outcome=PASS
+    exception_issue=""
+    if (( age_seconds < minimum_age )); then
+        exception="$(jq -ce --arg crate "${name}" --arg version "${version}" \
+            '.exceptions[] | select(.crate == $crate and .version == $version)' \
+            "${exceptions_file}" 2>/dev/null || true)"
+        if [[ -z "${exception}" ]]; then
+            outcome=FAIL
+            failures=$((failures + 1))
+        else
+            expires_at="$(jq -r '.expires_at' <<<"${exception}")"
+            expires_epoch="$(date -u -d "${expires_at}" +%s 2>/dev/null)" ||
+                fail "exception expiry is malformed for ${name}@${version}"
+            (( expires_epoch >= now_epoch )) ||
+                fail "exception is expired for ${name}@${version}"
+            outcome=EXEMPT
+            exception_issue="$(jq -r '.tracking_issue' <<<"${exception}")"
+            printf '%s@%s\n' "${name}" "${version}" >>"${exemptions_used}"
+        fi
+    fi
+    jq -cn \
+        --arg name "${name}" --arg version "${version}" \
+        --arg publish_time "${publish_time}" --argjson age_seconds "${age_seconds}" \
+        --arg outcome "${outcome}" --arg exception_issue "${exception_issue}" \
+        '{name:$name,version:$version,publish_time:$publish_time,
+          age_seconds:$age_seconds,outcome:$outcome,
+          exception_tracking_issue:(if $exception_issue == "" then null else ($exception_issue | tonumber) end)}' \
+        >>"${rows}"
+done <"${locked_packages}"
+
+while IFS= read -r exception_id; do
+    grep -Fxq "${exception_id}" "${exemptions_used}" ||
+        fail "exception is stale or outside the selected lockfile: ${exception_id}"
+done < <(jq -r '.exceptions[] | "\(.crate)@\(.version)"' "${exceptions_file}")
+
+mkdir -p "$(dirname "${receipt}")"
+packages="$(jq -s '.' "${rows}")"
+claim=PASS
+(( failures == 0 )) || claim=FAIL
+jq -n \
+    --arg generated_at "$(date -u -d "@${now_epoch}" '+%Y-%m-%dT%H:%M:%SZ')" \
+    --arg policy_path "${policy#"${repo_root}"/}" \
+    --arg policy_sha256 "$(sha256sum "${policy}" | awk '{print $1}')" \
+    --arg lockfile_path "${lock_file#"${repo_root}"/}" \
+    --arg lockfile_sha256 "$(sha256sum "${lock_file}" | awk '{print $1}')" \
+    --arg exceptions_path "${exceptions_file#"${repo_root}"/}" \
+    --arg exceptions_sha256 "$(sha256sum "${exceptions_file}" | awk '{print $1}')" \
+    --argjson minimum_age_seconds "${minimum_age}" \
+    --arg resolver_toolchain "$(jq -r '.resolver_toolchain' "${policy}")" \
+    --arg claim "${claim}" --argjson packages "${packages}" \
+    '{schema_version:1,generated_at:$generated_at,
+      policy:{path:$policy_path,sha256:$policy_sha256,
+        minimum_age_seconds:$minimum_age_seconds,resolver_toolchain:$resolver_toolchain,
+        exceptions:{path:$exceptions_path,sha256:$exceptions_sha256}},
+      lockfile:{path:$lockfile_path,sha256:$lockfile_sha256},
+      packages:$packages,
+      totals:{packages:($packages|length),
+        pass:([$packages[]|select(.outcome=="PASS")]|length),
+        exempt:([$packages[]|select(.outcome=="EXEMPT")]|length),
+        fail:([$packages[]|select(.outcome=="FAIL")]|length)},
+      claim:$claim}' >"${receipt}"
+
+"${BASH_SOURCE[0]}" --validate-receipt "${receipt}" >/dev/null
+if (( failures > 0 )); then
+    jq -r '.packages[] | select(.outcome == "FAIL") |
+        "audit-cargo-publish-age: rejected \(.name)@\(.version), age=\(.age_seconds)s"' \
+        "${receipt}" >&2
+    exit 1
+fi
+echo "audit-cargo-publish-age: PASS packages=$(jq -r '.totals.packages' "${receipt}") exceptions=$(jq -r '.totals.exempt' "${receipt}")"

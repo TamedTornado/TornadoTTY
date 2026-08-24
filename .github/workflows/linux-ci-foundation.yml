@@ -87,6 +87,10 @@ jobs:
         shell: bash
         run: linux/tests/qualification-matrix --validate-only
 
+      - name: Audit locked Rust dependency publication ages
+        shell: bash
+        run: linux/scripts/audit-cargo-publish-age
+
       - name: Build exact ReleaseSafe product
         shell: bash
         run: |
@@ -131,6 +135,7 @@ jobs:
           path: |
             build/linux/ci-*.json
             build/linux/ci-*.log
+            build/linux/security/cargo-publish-age.json
           if-no-files-found: error
           retention-days: 14
           compression-level: 6

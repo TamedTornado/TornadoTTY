@@ -1,0 +1,168 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+runner="${repo_root}/linux/scripts/audit-cargo-publish-age"
+source_policy="${repo_root}/linux/security/cargo-publish-age-policy.json"
+source_exceptions="${repo_root}/linux/security/cargo-publish-age-exceptions.json"
+temporary="$(mktemp -d)"
+trap 'rm -rf -- "${temporary}"' EXIT
+now_epoch=2000000000
+lock_file="${temporary}/Cargo.lock"
+policy="${temporary}/policy.json"
+exceptions="${temporary}/exceptions.json"
+receipt="${temporary}/receipt.json"
+cache="${temporary}/index/.cache"
+cache_file="${cache}/al/ph/alpha"
+mkdir -p "$(dirname "${cache_file}")"
+
+cat >"${lock_file}" <<'LOCK'
+version = 4
+
+[[package]]
+name = "alpha"
+version = "1.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fixture"
+LOCK
+cp "${source_policy}" "${policy}"
+cp "${source_exceptions}" "${exceptions}"
+
+write_index_record() {
+    local publish_time="${1:-}"
+    if [[ -n "${publish_time}" ]]; then
+        record="$(jq -cn --arg pubtime "${publish_time}" \
+            '{name:"alpha",vers:"1.2.3",pubtime:$pubtime}')"
+    else
+        record='{"name":"alpha","vers":"1.2.3"}'
+    fi
+    printf 'cache-v1\0001.2.3\000%s\000' "${record}" >"${cache_file}"
+}
+
+run_audit() {
+    ZENTTY_CARGO_AGE_POLICY="${policy}" \
+    ZENTTY_CARGO_AGE_EXCEPTIONS="${exceptions}" \
+    ZENTTY_CARGO_AGE_RECEIPT="${receipt}" \
+    ZENTTY_CARGO_AGE_LOCKFILE="${lock_file}" \
+    ZENTTY_CARGO_AGE_INDEX_CACHE="${cache}" \
+    ZENTTY_CARGO_AGE_NOW_EPOCH="${now_epoch}" \
+        "${runner}"
+}
+
+expect_failure() {
+    local name="$1" expected="$2"
+    shift 2
+    set +e
+    "$@" >"${temporary}/${name}.log" 2>&1
+    status=$?
+    set -e
+    (( status != 0 )) || {
+        echo "cargo-publish-age-test: ${name} unexpectedly passed" >&2
+        exit 1
+    }
+    grep -Fq "${expected}" "${temporary}/${name}.log" || {
+        cat "${temporary}/${name}.log" >&2
+        echo "cargo-publish-age-test: ${name} reported the wrong failure" >&2
+        exit 1
+    }
+}
+
+write_index_record '2033-05-01T00:00:00Z'
+run_audit >/dev/null
+jq -e '.claim == "PASS" and .totals == {packages:1,pass:1,exempt:0,fail:0}' \
+    "${receipt}" >/dev/null || {
+    echo "cargo-publish-age-test: old package receipt is malformed" >&2
+    exit 1
+}
+
+write_index_record '2033-05-18T03:32:00Z'
+expect_failure too-new 'rejected alpha@1.2.3' run_audit
+jq -e '.claim == "FAIL" and .totals.fail == 1' "${receipt}" >/dev/null || {
+    echo "cargo-publish-age-test: too-new package did not produce a FAIL receipt" >&2
+    exit 1
+}
+jq '.claim = "PASS"' "${receipt}" >"${temporary}/false-pass.json"
+expect_failure false-pass 'incorrect qualification claim' \
+    "${runner}" --validate-receipt "${temporary}/false-pass.json"
+
+write_index_record
+expect_failure missing-pubtime 'publication time is missing' run_audit
+write_index_record 'not-a-time'
+expect_failure malformed-pubtime 'publication time is malformed' run_audit
+
+jq '.exceptions = [{
+    crate:"alpha",version:"1.2.3",authorized_by:"Jason",
+    authorization_record:"GH-95 operator authorization",
+    tracking_issue:95,
+    justification:"Urgent reviewed security release exception.",
+    expires_at:"2033-05-19T00:00:00Z"
+}]' "${source_exceptions}" >"${exceptions}"
+write_index_record '2033-05-18T03:32:00Z'
+run_audit >/dev/null
+jq -e '.claim == "PASS" and .totals.exempt == 1 and
+    .packages[0].exception_tracking_issue == 95' "${receipt}" >/dev/null || {
+    echo "cargo-publish-age-test: authorized exception receipt is malformed" >&2
+    exit 1
+}
+
+jq '(.exceptions[0].authorized_by) = "untracked-operator"' "${exceptions}" \
+    >"${temporary}/untracked.json"
+mv "${temporary}/untracked.json" "${exceptions}"
+expect_failure untracked-exception 'exception manifest is malformed' run_audit
+
+jq '(.exceptions[0].authorized_by) = "Jason" |
+    (.exceptions[0].expires_at) = "2033-05-17T00:00:00Z"' "${exceptions}" \
+    >"${temporary}/expired.json"
+mv "${temporary}/expired.json" "${exceptions}"
+expect_failure expired-exception 'exception is expired' run_audit
+
+jq '(.exceptions[0].expires_at) = "2033-05-19T00:00:00Z"' "${exceptions}" \
+    >"${temporary}/stale.json"
+mv "${temporary}/stale.json" "${exceptions}"
+write_index_record '2033-05-01T00:00:00Z'
+expect_failure stale-exception 'exception is stale' run_audit
+
+grep -Fqx 'channel = "nightly-2026-08-17"' "${repo_root}/rust-toolchain.toml" || {
+    echo "cargo-publish-age-test: project toolchain does not pin the reviewed Cargo nightly" >&2
+    exit 1
+}
+grep -Fqx 'min-publish-age = true' "${repo_root}/.cargo/config.toml" || {
+    echo "cargo-publish-age-test: native Cargo publication-age feature is not enabled" >&2
+    exit 1
+}
+grep -Fqx 'incompatible-publish-age = "deny"' "${repo_root}/.cargo/config.toml" || {
+    echo "cargo-publish-age-test: Cargo does not deny too-new publications" >&2
+    exit 1
+}
+grep -Fqx 'global-min-publish-age = "7 days"' "${repo_root}/.cargo/config.toml" || {
+    echo "cargo-publish-age-test: Cargo's global publication age is not seven days" >&2
+    exit 1
+}
+git -C "${repo_root}" ls-files --error-unmatch Cargo.lock >/dev/null || {
+    echo "cargo-publish-age-test: Cargo.lock is not committed" >&2
+    exit 1
+}
+unlocked_matrix_commands="$(
+    jq -r '.cells[].command // empty' "${repo_root}/linux/qualification-matrix.json" |
+        sed -e 's/&&/\n/g' -e 's/;/\n/g' |
+        grep -E '(^|[[:space:]])cargo[[:space:]]+(build|test|check|clippy|metadata|fetch)' |
+        grep -v -- '--locked' || true
+)"
+[[ -z "${unlocked_matrix_commands}" ]] || {
+    echo "cargo-publish-age-test: matrix contains an unlocked Cargo command:" >&2
+    printf '%s\n' "${unlocked_matrix_commands}" >&2
+    exit 1
+}
+jq -e '.minimum_age_seconds == 604800 and .minimum_age == "7 days" and
+    .stable_migration_tracking_issue == 96 and
+    .exceptions_manifest == "linux/security/cargo-publish-age-exceptions.json"' \
+    "${source_policy}" >/dev/null || {
+    echo "cargo-publish-age-test: committed policy is not the reviewed empty-exception floor" >&2
+    exit 1
+}
+jq -e '.schema_version == 1 and .exceptions == []' "${source_exceptions}" >/dev/null || {
+    echo "cargo-publish-age-test: committed exception manifest is not empty" >&2
+    exit 1
+}
+
+echo 'cargo-publish-age-test: PASS old+too-new+missing-time+malformed-time+authorized-exception+untracked-exception+expired-exception+stale-exception+false-claim+native-cargo-policy+locked-matrix'

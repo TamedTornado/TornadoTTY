@@ -11,6 +11,8 @@
     "linux/ci/gate-workflow-contract-test",
     "linux/ci/validate-pr-subset-test",
     "linux/ci/run-pr-subset-test",
+    "linux/tests/cargo-publish-age-test",
+    "linux/scripts/audit-cargo-publish-age",
     "linux/tests/test-orchestration-contract"
   ],
   "selected_cells": [

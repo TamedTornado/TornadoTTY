@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "registry_source": "registry+https://github.com/rust-lang/crates.io-index",
+  "minimum_age_seconds": 604800,
+  "minimum_age": "7 days",
+  "resolver_toolchain": "nightly-2026-08-17",
+  "stable_migration_tracking_issue": 96,
+  "exceptions_manifest": "linux/security/cargo-publish-age-exceptions.json"
+}

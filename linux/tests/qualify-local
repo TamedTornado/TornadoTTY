@@ -76,7 +76,8 @@ run_support_test() {
 parallel_support_tests=()
 serial_support_tests=()
 for test_path in "${support_tests[@]}"; do
-    if [[ "${test_path}" == linux/tests/ghostty-async-backend-abi-test ]]; then
+    if [[ "${test_path}" == linux/tests/ghostty-async-backend-abi-test ||
+        "${test_path}" == linux/scripts/audit-cargo-publish-age ]]; then
         serial_support_tests+=("${test_path}")
     else
         parallel_support_tests+=("${test_path}")

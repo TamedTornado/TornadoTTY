@@ -216,6 +216,9 @@ impl WorklanePeekView {
         self.hud.set_text("");
     }
 
+    // This is one declarative GTK projection of a source-owned card hierarchy;
+    // splitting it would obscure rather than reduce the widget construction.
+    #[allow(clippy::too_many_lines)]
     pub(crate) fn render(
         &self,
         previews: Vec<PanePreview>,

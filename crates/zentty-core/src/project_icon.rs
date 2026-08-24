@@ -132,9 +132,7 @@ impl ProjectIconCache {
     }
 
     pub fn invalidate(&mut self, project_root: &Path) -> bool {
-        fs::canonicalize(project_root)
-            .ok()
-            .is_some_and(|root| self.entries.remove(&root).is_some())
+        fs::canonicalize(project_root).is_ok_and(|root| self.entries.remove(&root).is_some())
     }
 
     pub fn invalidate_all(&mut self) {
@@ -237,8 +235,7 @@ fn valid_icon_payload(path: &Path) -> bool {
         Some("png") => bytes.starts_with(b"\x89PNG\r\n\x1a\n"),
         Some("ico") => bytes.starts_with(&[0, 0, 1, 0]),
         Some("svg") => std::str::from_utf8(&bytes)
-            .ok()
-            .is_some_and(|source| source.to_ascii_lowercase().contains("<svg")),
+            .is_ok_and(|source| source.to_ascii_lowercase().contains("<svg")),
         _ => false,
     }
 }

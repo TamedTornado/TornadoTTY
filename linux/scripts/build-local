@@ -161,6 +161,7 @@ if [[ -z "${layer_shell_library}" || ! -f "${layer_shell_library}" ]]; then
 fi
 cp "${layer_shell_library}" "${output_dir}/lib/"
 
+"${repo_root}/linux/scripts/audit-cargo-publish-age"
 GHOSTTY_LIB_DIR="${ghostty_install_dir}/lib" \
     ZENTTY_BUILD_COMMIT="${zentty_display_revision}" \
     ZENTTY_BUILD_TREE="${zentty_tree}" \

@@ -74,3 +74,79 @@ cluster evidence is green.
   in two private Xvfb sessions. Both passed with distinct 64-hex session IDs,
   proving the repair scopes discovery by process/session rather than serializing
   unrelated X11 cells.
+
+## GH-95: seven-day Rust crate quarantine
+
+- An operator alert about an active Rust supply-chain attack interrupted visual
+  qualification. The existing product boundary was useful but incomplete:
+  `Cargo.lock` is committed and every authoritative Cargo build/test invocation
+  uses `--locked`, so ordinary qualification cannot silently select a new
+  publication. A deliberate `cargo update`, however, had no publication-age
+  policy.
+- Cargo 1.97.1 provides crates.io `pubtime` index data but stable Cargo rejects
+  `-Z min-publish-age`. Adding only repository configuration would therefore
+  advertise protection that the product toolchain did not enforce.
+- A real disposable resolver probe selected exact `cc = "=1.4.4"`, published
+  `2026-08-21T08:20:10Z`. Pinned nightly Cargo 1.100.0 rejected it as three days
+  old under the seven-day policy and suggested the eligible 1.4.3 release. No
+  crate was compiled and the product lockfile was not modified.
+- The first attempted repair added a named update wrapper while leaving normal
+  Cargo unconstrained. The operator correctly rejected that as procedural
+  guidance rather than hardening, and the wrapper was removed before commit.
+  The project now pins `nightly-2026-08-17` itself and enables native
+  `min-publish-age` in `.cargo/config.toml`, so ordinary unwrapped Cargo commands
+  inherit denial. GH-96 requires migration to the first stable Cargo release
+  supporting this feature; the nightly pin is explicitly temporary.
+- The independent audit intentionally does not trust resolver behavior because
+  native Cargo permits young versions that are already locked. It enumerates
+  every crates.io package record in `Cargo.lock`, reads the corresponding
+  sparse-index records, requires canonical UTC publication times, and emits a
+  machine-readable PASS/EXEMPT/FAIL receipt. Missing index records, missing or
+  malformed times, and environmental absence are failures rather than passes.
+- The first current-lock audit covered 77 crates.io packages: 77 PASS, 0 FAIL,
+  0 exceptions. The youngest selected crate was
+  `toml 1.1.4+spec-1.1.0`, published `2026-07-28T19:03:26Z` and 2,286,256
+  seconds old at the receipt time. The oldest was `block-buffer 0.10.4`,
+  published `2023-03-09T02:08:25Z`. No exception was needed.
+- Deterministic negative tests now reject a too-new package, missing and
+  malformed publication times, untracked authorization, expired and stale
+  exceptions, a false PASS receipt, a resolver-policy override, and an
+  unauthorized update. The valid paths prove both an old package and an exact
+  Jason-authorized exception. CI consumes this as an advisory check and does
+  not turn its receipt into release authority.
+- **Audit correction before commit:** the initial independent audit consumed
+  Cargo's active metadata graph, not every record retained in `Cargo.lock`.
+  That silently omitted 14 inactive optional/target packages and made the
+  preceding 77-package result incomplete. The complete lockfile contained
+  `cc 1.4.4`, published only three days earlier. Native Cargo proved the gap by
+  rejecting an ordinary `cargo update -p cc --precise 1.4.4`; the audit was
+  repaired to parse all lockfile package records directly and then rejected the
+  same crate. Cargo downgraded it to eligible `cc 1.4.3` without an override.
+- The corrected complete-lock audit covers 91 crates.io packages: 91 PASS,
+  0 FAIL, 0 exceptions. Its youngest package is now `wayland-backend 0.3.17`,
+  published `2026-08-14T21:50:33Z` and more than nine days old. The incomplete
+  77-package receipt is retained here as a discovery, not represented as final
+  evidence.
+- The initially selected `nightly-2026-08-24` resolved dependencies and passed
+  tests, but strict all-target Clippy reproducibly hit a Rust compiler ICE while
+  laying out GTK/GIO async opaque types. That toolchain is not an acceptable
+  project pin. `nightly-2026-08-17` supports the same native Cargo policy and
+  completes strict all-target Clippy, so the pin was moved back one week. GH-96
+  still requires stable migration as soon as stable Cargo supports the policy.
+- Final validation on the selected toolchain passed the deterministic policy
+  suite, the 91-package complete-lock audit with zero exceptions, strict
+  all-target Clippy, the complete workspace/all-target Rust suite, CI manifest
+  and workflow contract tests, and a ReleaseSafe product build. The first
+  sandboxed workspace run could not bind its real Unix test sockets and failed
+  explicitly with `EPERM`; the required elevated rerun exercised those sockets
+  and passed. This was environmental absence, not converted into a pass.
+- A final ordinary, unwrapped `cargo update -p cc --precise 1.4.4` on
+  `nightly-2026-08-17` was rejected because the crate was three days old versus
+  the seven-day minimum. The rejected probe left `Cargo.lock` on eligible
+  `cc 1.4.3`; the complete-lock audit remained 91 PASS and zero exceptions.
+- Final diff review caught an orchestration defect before commit: the first
+  `build-local` edit placed the audit after the build-metadata environment
+  assignments, causing those assignments to apply to the audit instead of the
+  following Cargo build. The audit now runs as a separate command immediately
+  before the intact Cargo environment block. A structural regression test fixes
+  that ordering and adjacency, and the repaired ReleaseSafe build passed.
