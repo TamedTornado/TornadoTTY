@@ -434,3 +434,38 @@ cluster evidence is green.
   Wayland session `5687afd3...`, development-server X11 session `048f1c8e...`,
   and project-icons X11 session `8fb47aa6...`. This is bounded settling, not a
   scheduler mutex or enlarged sleep.
+
+### Pixel-exact workspace divider restoration
+
+- The identical X11 and Wayland restore failures were a product defect, not a
+  compositor discrepancy. A restored 1000 px window initially reported an
+  819 px pane viewport while GTK still allocated only 180 px to the configured
+  280 px pinned sidebar. The next allocation reported the final 719 px pane
+  viewport. Zentty treated that startup allocation correction as a user-visible
+  resize and multiplied every restored multi-column width by `719 / 819`,
+  changing the stored 429 px divider to 376.619 px. The existing diagnostic
+  receipt made the exact factor observable; vertical weights were never
+  affected.
+- The macOS source scales multi-column widths when its resolved readable layout
+  context changes, but it does not publish an unresolved initial layout bound.
+  The Linux shell now follows that ownership boundary: while the sidebar is
+  pinned, pane-width reconciliation waits until GTK's actual sidebar allocation
+  is within one physical pixel of the configured, clamped width. Hidden-sidebar
+  layouts remain immediately eligible, and later settled viewport changes keep
+  the existing proportional-resize behavior.
+- A focused unit contract rejects the observed 180/280 startup state, accepts
+  GTK's one-pixel rounding tolerance, and proves a hidden sidebar cannot block
+  reconciliation. The five generated mutants for this predicate were all
+  caught by the project-owned resource-isolated mutation runner. An initial
+  direct `cargo mutants` invocation correctly failed because its gitignored
+  scratch tree omitted the pinned Ghostty build; no mutant ran. Re-running via
+  `linux/tests/mutate-rust`, as project policy requires, supplied the external
+  library and caught all five mutants in two minutes.
+- Fresh ReleaseSafe real-product journeys now preserve the exact stored
+  horizontal divider and vertical weights through clean exit and relaunch on
+  both backends. The private Xvfb session was `8737df3e...`; the controlled
+  Weston session was `d7f8b26f...`. Both used physical divider drag and
+  double-click input, three real Ghostty PTYs, the persisted clean-exit recipe,
+  and post-restore terminal input. The failure ledger entries are now PASS with
+  two attempts each; this repairs two cells only and is not a full Linux
+  qualification claim.

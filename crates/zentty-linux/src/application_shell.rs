@@ -1292,6 +1292,15 @@ impl ApplicationShell {
     }
 
     pub(crate) fn reconcile_pane_widths(&mut self) {
+        let expected_sidebar_width =
+            SidebarWidthPreference::clamped(self.preferred_sidebar_width.get(), self.body.width());
+        if !pane_width_allocation_is_settled(
+            self.sidebar_visibility.mode(),
+            self.sidebar_scroll.width(),
+            expected_sidebar_width,
+        ) {
+            return;
+        }
         let viewport_width = self.pane_viewport_width();
         if viewport_width <= 1 {
             return;
@@ -5720,6 +5729,15 @@ fn pane_content_width(column_widths: &[i32], viewport_width: i32) -> i32 {
         .max(viewport_width)
 }
 
+fn pane_width_allocation_is_settled(
+    sidebar_mode: SidebarVisibilityMode,
+    allocated_sidebar_width: i32,
+    expected_sidebar_width: i32,
+) -> bool {
+    sidebar_mode != SidebarVisibilityMode::PinnedOpen
+        || allocated_sidebar_width.abs_diff(expected_sidebar_width) <= 1
+}
+
 fn model_heights_to_pixels(weights: &[f64], viewport_height: i32) -> Vec<i32> {
     if weights.is_empty() {
         return Vec::new();
@@ -5907,9 +5925,10 @@ mod allocation_tests {
     use super::{
         TerminalGesture, UserActivationClock, bounded_pane_viewport_height, codex_terminal_gesture,
         default_window_recipe, focus_follow_should_apply, is_close_window_shortcut,
-        model_heights_to_pixels, pane_content_width, settings_refresh_section,
-        snapshot_window_frame, validated_window_size,
+        model_heights_to_pixels, pane_content_width, pane_width_allocation_is_settled,
+        settings_refresh_section, snapshot_window_frame, validated_window_size,
     };
+    use crate::sidebar_visibility::Mode as SidebarVisibilityMode;
     use gtk::gdk;
     use zentty_core::WindowFrame;
 
@@ -5919,6 +5938,25 @@ mod allocation_tests {
         assert!(!focus_follow_should_apply(3, 4, true, false));
         assert!(!focus_follow_should_apply(4, 4, false, false));
         assert!(!focus_follow_should_apply(4, 4, true, true));
+    }
+
+    #[test]
+    fn restored_column_widths_wait_for_the_pinned_sidebar_allocation_to_settle() {
+        assert!(!pane_width_allocation_is_settled(
+            SidebarVisibilityMode::PinnedOpen,
+            180,
+            280,
+        ));
+        assert!(pane_width_allocation_is_settled(
+            SidebarVisibilityMode::PinnedOpen,
+            279,
+            280,
+        ));
+        assert!(pane_width_allocation_is_settled(
+            SidebarVisibilityMode::Hidden,
+            180,
+            280,
+        ));
     }
 
     #[test]
