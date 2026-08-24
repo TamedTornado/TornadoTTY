@@ -182,6 +182,7 @@ capture_peek_screenshot() {
 capture_unmasked_visual_scenario() {
     local scenario_id="$1"
     local capture_scope="${2:-window}"
+    local settle_mode="${3:-single-frame}"
     local image="${screenshot_dir}/${scenario_id}.png"
     local window_geometry x y width height
     # The PTY command below clears its deterministic terminal after every
@@ -198,6 +199,10 @@ capture_unmasked_visual_scenario() {
             "${width}" =~ ^[1-9][0-9]*$ && "${height}" =~ ^[1-9][0-9]*$ ]] ||
             fail "${scenario_id} window geometry was malformed"
         import -silent -window root -crop "${width}x${height}+${x}+${y}" "${image}"
+    elif [[ "${settle_mode}" == stable ]]; then
+        zentty_visual_capture_stable "${image}" \
+            import -silent -window "${window_id}" ||
+            fail "${scenario_id} compositor frame did not settle"
     else
         import -silent -window "${window_id}" "${image}"
     fi
@@ -451,7 +456,11 @@ dragged_sidebar_width="$(
 if [[ "${ZENTTY_SOURCE_UX_SIDEBAR_RESIZE_ONLY:-false}" == true ]]; then
     resize_persist_before="$(grep -Fc 'zentty-linux: sidebar-persist origin=resize ' "${log}" || true)"
     resize_projection_before="$(grep -Fc 'zentty-linux: config-live-projected window=window-1' "${log}" || true)"
-    capture_unmasked_visual_scenario sidebar-resize-x11
+    zentty_product_wait_for_log "${log}" \
+        'zentty-linux: project-icon-projected owner=window-chrome fallback=folder-symbolic decoded=true' \
+        "sidebar resize chrome did not settle its project-icon fallback" ||
+        fail "sidebar resize project icon missing"
+    capture_unmasked_visual_scenario sidebar-resize-x11 window stable
     for _ in $(seq 1 160); do
         (( $(grep -Fc 'zentty-linux: sidebar-persist origin=resize ' "${log}" || true) > resize_persist_before )) &&
             (( $(grep -Fc 'zentty-linux: config-live-projected window=window-1' "${log}" || true) > resize_projection_before )) && break

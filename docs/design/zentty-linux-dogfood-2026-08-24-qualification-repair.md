@@ -232,3 +232,60 @@ cluster evidence is green.
   rerun through their real private environments. Wayland and owned Xwayland
   again passed ReleaseSafe and Debug, proving the shared helper preserved the
   pointer-proven output and exact scaling contracts.
+
+### Remote-file and sidebar-resize visual evidence
+
+- The exact controlled `remote-file-drop-wayland` cell first rejected 1,684
+  changed pixels, all localized to the centered window context: the current
+  product had projected the intentional generic folder icon beside
+  `Active shell · jason@127.0.0.1`, while the stale baseline had sampled the
+  asynchronous chrome before that projection. The actor now requires the owned
+  `project-icon-projected owner=window-chrome fallback=folder-symbolic
+  decoded=true` receipt and two identical compositor frames before publication.
+- The first two pixel-identical Wayland captures nevertheless had different
+  file hashes (`01396...` and `ee9b...`). Image inspection found an ancillary
+  PNG capture-time chunk rather than a pixel difference. The shared settling
+  owner now strips ancillary metadata when publishing the agreed frame, and a
+  negative runner test rejects retained `png:tIME` metadata. Two subsequent
+  captures were byte-identical and pixel-identical at SHA-256
+  `cf51dc767c97e05ed5524daef6d5456893931db03f3aaa756b440583c2d93a6a`
+  with AE 0. The reviewed baseline was updated only then.
+- The same hidden timing defect existed in the X11 remote baseline even though
+  GH-91 had named the Wayland mismatch: the first corrected capture differed by
+  1,759 pixels in the same icon-bearing title context. Two controlled Xvfb
+  captures agreed exactly at
+  `656cf51dbf6adf8107c798c43a8b2a590fd6d8a6a44558ba766468d2a4afcd59`
+  with AE 0, so the X11 baseline was repaired at the same owner rather than
+  preserving backend-dependent stale evidence.
+- Both complete remote journeys then passed, not merely their screenshots.
+  Wayland session `cdc74b00...` and X11 session `735ba50a...` exercised the real
+  loopback SSH server, file and PNG paste, physical drop, batch rollback,
+  identity cancellation, two background agents, exact scrollback, clean
+  relaunch, SIGKILL recovery, and corrupt-state recovery. Their controlled
+  environment reports both record command exit 0.
+- The sidebar-resize mismatches had the same missing project icon: 1,132 changed
+  pixels on X11 and 1,627 on the initial Wayland comparison. Wayland also
+  exposed a second unsettled input: its old baseline retained Ghostty's
+  transient `71x30` resize overlay, while a later frame did not. The actor now
+  disables that overlay and GTK animation on both backends, waits for the
+  project-icon projection, and requires consecutive identical frames. It does
+  not bless whichever transient frame happens to arrive first.
+- Reviewed repeat captures were exact at
+  `61c8937aaa4be16aefc09e50884c678bb294fe92bbe8d2116f9390351fa864be`
+  for X11 and
+  `896f1701ff978a31a41910b1902ae38af89da40d3f004e1d69ef81d938668991`
+  for Wayland, each with AE 0 between independent runs. The final exact cells
+  passed real divider drag and persisted width on X11, and real outer-pointer
+  drag, width 330 persistence, hide/show preservation, same-PTY input, and
+  clean close on Wayland. Environment sessions `209d24f...` and `9ce181e2...`
+  record exit 0.
+- An initial sandboxed X11 invocation could not create the private X socket
+  because `/tmp/.X11-unix` is root-owned. That absence failed explicitly. The
+  required elevated reruns used the harness-owned Xvfb/Xauthority environment
+  and passed; the failed ambient attempt was not converted into evidence.
+- Because PNG canonicalization is shared by the scaling actor, both full scaling
+  clusters were rerun after this repair. Controlled Wayland session
+  `5e8c3314...` and owned-Xwayland session `26dfe58e...` again passed their
+  complete ReleaseSafe and Debug 1x/1.5x/2x geometry, pointer, PTY, and SIGWINCH
+  journeys. Remaining uncertainty is limited to the other matrix cells outside
+  this focused GH-91 cluster; no full-qualification claim is made here.

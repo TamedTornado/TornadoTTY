@@ -348,6 +348,10 @@ done
 
 capture_remote_visual() {
     local scenario_id image outer raw_image outer_size
+    zentty_product_wait_for_log "${log}" \
+        'zentty-linux: project-icon-projected owner=window-chrome fallback=folder-symbolic decoded=true' \
+        "remote visual chrome did not settle its project-icon fallback" ||
+        fail "remote visual project icon missing"
     if [[ "${backend}" == x11 ]]; then
         scenario_id=remote-dark-x11
         image="${state_dir}/${scenario_id}.png"
@@ -359,25 +363,27 @@ capture_remote_visual() {
         grep -Fq 'zentty-linux: window-size=1200x700' "${log}" ||
             fail "remote X11 window did not reach controlled geometry"
         xdotool mousemove --sync 2000 1500
-        sleep 0.3
-        import -silent -window "${ZENTTY_PRODUCT_WINDOW_ID}" "${image}"
+        zentty_visual_capture_stable "${image}" \
+            import -silent -window "${ZENTTY_PRODUCT_WINDOW_ID}" ||
+            fail "remote X11 compositor frame did not settle"
     else
         scenario_id=remote-dark-wayland
         image="${state_dir}/${scenario_id}.png"
         raw_image="${state_dir}/${scenario_id}-physical.png"
         outer="${ZENTTY_NESTED_WAYLAND_OUTER_X11_WINDOW:?}"
         xdotool mousemove --sync --window "${outer}" 1 1
-        sleep 0.3
-        import -silent -window "${outer}" "${raw_image}"
+        zentty_visual_capture_stable "${raw_image}" import -silent -window "${outer}" ||
+            fail "remote Wayland compositor frame did not settle"
         outer_size="$(identify -format '%wx%h' "${raw_image}")"
         [[ "${outer_size}" == 1280x1024 ]] ||
             fail "remote Wayland physical output was ${outer_size}, expected 1280x1024"
         # The oversized restored source frame is clamped to Weston's lower-
         # right output edge. Its visible product client begins after the
         # controlled 60px left and 124px compositor/titlebar regions.
-        convert "${raw_image}" -crop 1220x900+60+124 +repage "${image}"
+        convert "${raw_image}" -crop 1220x900+60+124 +repage -strip "${image}"
     fi
-    zentty_visual_publish "${scenario_id}" linux/tests/rust-session-restore "${image}" -
+    zentty_visual_publish "${scenario_id}" linux/tests/rust-session-restore "${image}" - ||
+        fail "${scenario_id} visual evidence did not match"
 }
 
 capture_remote_visual

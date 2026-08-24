@@ -33,7 +33,10 @@ zentty_visual_capture_stable() {
                 return 1
             }
             if (( compare_status == 0 )); then
-                cp -- "${current}" "${output}"
+                # Canonicalize ancillary PNG metadata so two pixel-identical
+                # captures do not produce different reviewed artifacts solely
+                # because an encoder recorded the capture time.
+                convert "${current}" -strip "${output}"
                 rm -f -- "${output}.candidate-"*.png
                 return
             fi

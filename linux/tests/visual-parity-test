@@ -157,6 +157,10 @@ zentty_visual_capture_stable "${temporary}/stable.png" capture_eventually_stable
     echo "visual-parity-test: settled frame did not become the published image" >&2
     exit 1
 }
+[[ -z "$(identify -format '%[png:tIME]' "${temporary}/stable.png" 2>/dev/null)" ]] || {
+    echo "visual-parity-test: settled frame retained nondeterministic timestamp metadata" >&2
+    exit 1
+}
 stable_capture_index=0
 # The single-quoted program intentionally expands inside the child shell.
 # shellcheck disable=SC2016

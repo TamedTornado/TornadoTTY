@@ -73,18 +73,16 @@ done
 product="$(readlink -f -- "${product}")"
 config_file="${XDG_CONFIG_HOME:?}/zentty/config.toml"
 mkdir -p "$(dirname "${config_file}")"
-if [[ "${backend}" == x11 ]]; then
-    mkdir -p "${XDG_CONFIG_HOME}/ghostty" "${XDG_CONFIG_HOME}/gtk-4.0"
-    cat >"${XDG_CONFIG_HOME}/ghostty/config" <<'EOF'
+mkdir -p "${XDG_CONFIG_HOME}/ghostty" "${XDG_CONFIG_HOME}/gtk-4.0"
+cat >"${XDG_CONFIG_HOME}/ghostty/config" <<'EOF'
 resize-overlay = never
 cursor-opacity = 0
 EOF
-    cat >"${XDG_CONFIG_HOME}/gtk-4.0/settings.ini" <<'EOF'
+cat >"${XDG_CONFIG_HOME}/gtk-4.0/settings.ini" <<'EOF'
 [Settings]
 gtk-enable-animations=false
 gtk-cursor-blink=false
 EOF
-fi
 cat >"${config_file}" <<'EOF'
 [confirmations]
 confirm_before_closing_pane = false
@@ -431,9 +429,16 @@ if [[ "${ZENTTY_SIDEBAR_RESIZE_ONLY:-false}" == true ]]; then
         fail "persisted Wayland sidebar width did not equal the live allocation"
 
     sidebar_resize_image="${state_directory}/sidebar-resize-wayland.png"
-    import -silent -window "${window_id}" "${sidebar_resize_image}"
+    zentty_product_wait_for_log "${log}" \
+        'zentty-linux: project-icon-projected owner=window-chrome fallback=folder-symbolic decoded=true' \
+        "Wayland sidebar resize chrome did not settle its project-icon fallback" ||
+        fail "Wayland sidebar resize project icon missing"
+    zentty_visual_capture_stable "${sidebar_resize_image}" \
+        import -silent -window "${window_id}" ||
+        fail "Wayland sidebar resize compositor frame did not settle"
     zentty_visual_publish sidebar-resize-wayland linux/tests/rust-pane-search \
-        "${sidebar_resize_image}" -
+        "${sidebar_resize_image}" - ||
+        fail "sidebar-resize-wayland visual evidence did not match"
 
     hidden_before="$(grep -Fc 'zentty-linux: sidebar-visibility=hidden' "${log}" || true)"
     press_ctrl s
