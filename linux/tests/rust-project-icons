@@ -142,8 +142,12 @@ exercise_sidebar_motion "${enabled_log}" true normal-motion
 zentty_product_wait_for_log "${enabled_log}" \
     'zentty-linux: project-icon pane=pane-1 result=missing' \
     'escaping symlink was not resolved as a miss' || fail "escaping icon symlink was accepted"
-! grep -Fq 'project-icon-projected owner=' "${enabled_log}" ||
-    fail "escaping icon was projected"
+zentty_product_wait_for_log "${enabled_log}" \
+    'zentty-linux: project-icon-projected owner=window-chrome fallback=folder-symbolic decoded=true' \
+    'safe generic fallback was not projected for the rejected icon' ||
+    fail "escaping icon fallback was absent"
+! grep -Fq "project-icon-projected owner=window-chrome path=${outside}/favicon.svg" \
+    "${enabled_log}" || fail "escaping icon was projected"
 
 rm -- "${project}/favicon.svg"
 cat >"${project}/favicon.svg" <<'SVG'
@@ -216,7 +220,7 @@ zentty_product_wait_for_log "${disabled_log}" \
     "zentty-linux: project-icon pane=pane-1 path=${canonical_icon} result=resolved" \
     'opt-out launch did not exercise discovery' || fail "disabled discovery boundary absent"
 sleep 0.3
-! grep -Fq 'project-icon-projected owner=' "${disabled_log}" ||
+! grep -Fq "project-icon-projected owner=window-chrome path=${canonical_icon}" "${disabled_log}" ||
     fail "show_project_icons=false still projected an icon"
 
 activate_palette_action "${disabled_log}" 'Split Right'

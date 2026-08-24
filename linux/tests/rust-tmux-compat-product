@@ -39,8 +39,23 @@ topology_receipt="${fixture_root}/topology.receipt"
 topology_log="${fixture_root}/topology.log"
 topology_restart_log="${fixture_root}/topology-restart.log"
 tmux_store="${XDG_CONFIG_HOME}/zentty/tmux-compat-store.json"
+outer_restore_window=""
+outer_restore_width=""
+outer_restore_height=""
+if [[ "${ZENTTY_NESTED_WAYLAND_OUTER_X11_WINDOW:-}" =~ ^[1-9][0-9]*$ ]]; then
+    outer_restore_window="${ZENTTY_NESTED_WAYLAND_OUTER_X11_WINDOW}"
+    outer_restore_geometry="$(xdotool getwindowgeometry --shell "${outer_restore_window}")"
+    outer_restore_width="$(sed -n 's/^WIDTH=//p' <<<"${outer_restore_geometry}")"
+    outer_restore_height="$(sed -n 's/^HEIGHT=//p' <<<"${outer_restore_geometry}")"
+fi
 mkdir -p -- "${split_cwd}"
 cleanup() {
+    if [[ "${outer_restore_window}" =~ ^[1-9][0-9]*$ &&
+        "${outer_restore_width}" =~ ^[1-9][0-9]*$ &&
+        "${outer_restore_height}" =~ ^[1-9][0-9]*$ ]]; then
+        xdotool windowsize --sync "${outer_restore_window}" \
+            "${outer_restore_width}" "${outer_restore_height}" 2>/dev/null || true
+    fi
     rm -rf -- "${fixture_root}"
 }
 trap cleanup EXIT

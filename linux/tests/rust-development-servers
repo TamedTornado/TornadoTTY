@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ "${ZENTTY_DEVELOPMENT_SERVER_PID_NAMESPACE:-}" != private ]]; then
+    command -v unshare >/dev/null || {
+        echo "rust-development-servers: error: unshare is required for private process discovery" >&2
+        exit 77
+    }
+    exec unshare --user --map-root-user --pid --kill-child=TERM --mount-proc \
+        env ZENTTY_DEVELOPMENT_SERVER_PID_NAMESPACE=private bash "$0" "$@"
+fi
+
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
 server_fixture="${repo_root}/target/release-safe/development_server"
@@ -23,10 +32,18 @@ product_pid=""
 source "${repo_root}/linux/tests/lib/product-bundle"
 # shellcheck source=linux/tests/lib/visual-evidence
 source "${repo_root}/linux/tests/lib/visual-evidence"
+# shellcheck source=linux/tests/lib/product-input
+source "${repo_root}/linux/tests/lib/product-input"
 backend="${GDK_BACKEND:-}"
 container_id=""
 docker_port=""
 window_manager_pid=""
+
+[[ "$$" -eq 1 ]] || {
+    echo "rust-development-servers: error: private PID namespace was not established" >&2
+    exit 77
+}
+echo "rust-development-servers: isolation pid-namespace=private"
 
 fail() {
     [[ ! -f "${log}" ]] || cat "${log}" >&2
@@ -245,20 +262,21 @@ product_pid=$!
 
 window_id=""
 for _ in $(seq 1 300); do
-    if [[ "${backend}" == x11 ]]; then
-        window_id="$(xdotool search --name '^Zentty$' 2>/dev/null | head -1 || true)"
-    else
-        window_id=wayland-focused
-    fi
-    if [[ -n "${window_id}" ]] && [[ -s "${server_receipt}" ]] && [[ -s "${watch_receipt}" ]] &&
+    if [[ -s "${server_receipt}" ]] && [[ -s "${watch_receipt}" ]] &&
         grep -Fq 'zentty-linux: server-detected ' "${log}"; then
         break
     fi
     sleep 0.05
 done
-[[ -n "${window_id}" ]] || fail "real Zentty window did not appear"
 [[ -s "${server_receipt}" ]] || fail "real PTY server did not publish readiness"
 [[ -s "${watch_receipt}" ]] || fail "watched real server did not publish readiness"
+if [[ "${backend}" == x11 ]]; then
+    zentty_product_prepare_input "${backend}" "${log}" ||
+        fail "mapped PID-owned Zentty window did not accept physical input"
+    window_id="${ZENTTY_PRODUCT_WINDOW_ID}"
+else
+    window_id=wayland-focused
+fi
 port="$(sed -n 's#^url=http://127\.0\.0\.1:\([0-9][0-9]*\)/fixture$#\1#p' "${server_receipt}")"
 server_pid="$(sed -n 's/^pid=\([0-9][0-9]*\)$/\1/p' "${server_receipt}")"
 [[ "${port}" =~ ^[1-9][0-9]*$ ]] || fail "server fixture receipt is malformed"

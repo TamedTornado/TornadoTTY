@@ -9,6 +9,8 @@ product_pid=""
 
 # shellcheck source=linux/tests/lib/product-bundle
 source "${repo_root}/linux/tests/lib/product-bundle"
+# shellcheck source=linux/tests/lib/product-input
+source "${repo_root}/linux/tests/lib/product-input"
 
 fail() {
     grep -E 'worklane-drag|reorder-worklane|sidebar-(reveal|active-visible)' "${log}" >&2 || true
@@ -52,13 +54,11 @@ mkdir -p "${state_directory}/working-directory"
 ) >"${log}" 2>&1 &
 product_pid=$!
 
-window_id=""
-for _ in $(seq 1 200); do
-    window_id="$(xdotool search --name '^Zentty$' 2>/dev/null | head -1 || true)"
-    [[ "${window_id}" =~ ^[1-9][0-9]*$ ]] && grep -Fxq 'zentty-linux: terminal-ready' "${log}" && break
-    sleep 0.05
-done
-[[ "${window_id}" =~ ^[1-9][0-9]*$ ]] || fail "real Zentty window did not appear"
+zentty_product_wait_for_log "${log}" 'zentty-linux: terminal-ready' \
+    'real Zentty terminal did not become ready' || fail "real Zentty terminal did not appear"
+zentty_product_prepare_input x11 "${log}" ||
+    fail "mapped PID-owned Zentty window did not accept physical input"
+window_id="${ZENTTY_PRODUCT_WINDOW_ID}"
 xdotool windowsize --sync "${window_id}" 1000 700
 for _ in $(seq 1 100); do
     grep -Fxq 'zentty-linux: window-size=1000x700' "${log}" && break

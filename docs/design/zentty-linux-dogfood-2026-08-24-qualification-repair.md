@@ -362,3 +362,60 @@ cluster evidence is green.
   The validator is part of both local qualification support and the public PR
   subset's advisory checks, so tracker drift is caught without making GitHub CI
   release authority.
+
+### Remaining independent replays and narrow isolation repairs
+
+- Every remaining graphical or persistence baseline failure was replayed alone.
+  The only ledger entries still `NOT_RUN` are the two Debug Valgrind executions,
+  which belong to the memory-safety child issue. Current totals are 22 PASS,
+  12 FAIL, two NOT_RUN, and six dependency BLOCKED; 22 entries remain unresolved
+  after including passing replays whose interference source is still unknown.
+- Three more X11 actors had independently accreted the name-only window lookup
+  already removed from pane search and task runners in GH-90. Development
+  servers, git review, and sidebar management could resize or click a withdrawn
+  window from another process. They now consume the shared mapped,
+  PID-verified product-input owner. Development servers and git review pass
+  independently with that repair. Sidebar management advanced past its missing
+  pane-3 symptom and exposed a distinct later card-rebuild defect, which remains
+  FAIL rather than being hidden by the input repair.
+- A deliberate development-server/git-review contender pair found the next
+  exact shared resource: private X displays do not isolate `/proc`. The
+  development-server scanner observed the contender's real forge listener and
+  changed governed chrome evidence. The actor now re-execs itself as PID 1 in a
+  user-owned PID namespace with a private `/proc`; absence of `unshare` or the
+  namespace is an explicit skip/failure, never a pass. The ordinary and pinned
+  Docker journeys pass in that namespace. Two repeated concurrent contender
+  pairs then passed with distinct private Xvfb sessions, proving no generic X11
+  or graphical mutex is needed.
+- Both project-icon cells reproduced alone because their test still prohibited
+  every projected icon after an escaping symlink miss. GH-91 had ratified the
+  generic folder fallback as intentional window chrome. The security assertion
+  now rejects the exact outside canonical path while requiring the safe generic
+  fallback; opt-out likewise rejects the resolved project path rather than the
+  generic slot. X11 and Wayland pass alone and in two repeated concurrent
+  private-display pairs. This was stale test policy, not a weakened containment
+  boundary.
+- The X11 shortcut cell passed independently. The Wayland shortcut, About,
+  bookmarks import, workspace restore on both backends, global find, and
+  Valgrind governance failures all reproduced alone and remain explicit FAILs.
+  Workspace restore is notably identical across backends: stored divider width
+  about 429 is relaunched as about 376.619 while vertical weights survive.
+- Two matrix cells selected a compositor incapable of the behavior their actor
+  asserted. Agent integration ends in a remote-session visual contract written
+  for Weston's 1280x1024 output, while default Cage owns 1024x768. Config reload
+  requires real pointer exit from a transient sidebar, which Cage's keyboard-only
+  input profile cannot provide. Global find also needs independent physical
+  targeting of multiple toplevels. These cells now select the private Weston
+  input profile. Raw settings keystrokes in config reload were consolidated
+  onto the environment-aware input owner; the Weston replay then advanced to a
+  separate live quit-confirmation defect. The later failures remain FAILs, so
+  correcting the environment profile does not manufacture a pass.
+- The first full agent replay under Weston exposed an additional within-cell
+  contaminant: the preceding tmux actor deliberately resized the wrapper-owned
+  compositor window and never restored it, so session restore observed
+  1180x974 instead of the owned 1280x1024 output. The tmux actor now snapshots
+  and restores only that exact wrapper window in its cleanup. The next full
+  composite replay passed real Gemini, tmux, and installed Claude integration,
+  and passed the formerly blocked remote visual geometry before reaching a
+  separate remote file-drop completion failure. Agent integration therefore
+  remains FAIL; the actor-state repair is not presented as completion.

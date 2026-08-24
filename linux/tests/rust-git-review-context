@@ -23,6 +23,8 @@ product_pid=""
 source "${repo_root}/linux/tests/lib/product-bundle"
 # shellcheck source=linux/tests/lib/visual-evidence
 source "${repo_root}/linux/tests/lib/visual-evidence"
+# shellcheck source=linux/tests/lib/product-input
+source "${repo_root}/linux/tests/lib/product-input"
 forge_pid=""
 backend="${GDK_BACKEND:-}"
 
@@ -168,20 +170,20 @@ product_pid=$!
 
 window_id=""
 for _ in $(seq 1 300); do
-    if [[ "${backend}" == x11 ]]; then
-        window_id="$(xdotool search --name '^Zentty$' 2>/dev/null | head -1 || true)"
-    else
-        window_id=wayland-focused
-    fi
-    if [[ -n "${window_id}" ]] &&
-        grep -Fq 'reference=feature/review-context dirty=true pr=42 refresh=fresh' "${log}"; then
+    if grep -Fq 'reference=feature/review-context dirty=true pr=42 refresh=fresh' "${log}"; then
         break
     fi
     sleep 0.05
 done
-[[ -n "${window_id}" ]] || fail "real Zentty window did not appear"
 grep -Fq 'reference=feature/review-context dirty=true pr=42 refresh=fresh' "${log}" ||
     fail "real Git/gh context was not projected"
+if [[ "${backend}" == x11 ]]; then
+    zentty_product_prepare_input "${backend}" "${log}" ||
+        fail "mapped PID-owned review window did not accept physical input"
+    window_id="${ZENTTY_PRODUCT_WINDOW_ID}"
+else
+    window_id=wayland-focused
+fi
 grep -Fxq 'ok' "${forge_body}" || fail "gh boundary did not call the controlled HTTP forge"
 grep -Fq 'pr view feature/review-context --repo acme/rocket --json' "${gh_receipt}" ||
     fail "product did not invoke the source-compatible gh command"

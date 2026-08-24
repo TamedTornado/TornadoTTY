@@ -192,19 +192,11 @@ EOF
 }
 
 cancel_confirmation() {
-    if [[ "${backend}" == x11 ]]; then
-        xdotool key Escape
-    else
-        wtype -k Escape
-    fi
+    zentty_product_key "${backend}" Escape
 }
 
 type_product_text() {
-    if [[ "${backend}" == x11 ]]; then
-        xdotool type --delay 5 -- "$1"
-    else
-        wtype -d 35 -- "$1"
-    fi
+    zentty_product_type "${backend}" "$1"
 }
 
 # Keep a real settings editor open while an external atomic replacement changes
@@ -236,7 +228,7 @@ zentty_product_wait_for_log_count "${log}" 'zentty-linux: config-reload result=a
 settings_window=""
 if [[ "${backend}" == x11 ]]; then
     for _ in {1..100}; do
-        settings_window="$(xdotool search --onlyvisible --name '^Zentty Settings$' 2>/dev/null | tail -1 || true)"
+        settings_window="$(xdotool search --onlyvisible --pid "${product_pid}" --name '^Zentty Settings$' 2>/dev/null | tail -1 || true)"
         [[ "${settings_window}" =~ ^[1-9][0-9]*$ ]] && break
         sleep 0.02
     done
@@ -274,7 +266,7 @@ zentty_product_wait_for_log "${log}" \
 if [[ "${backend}" == x11 ]]; then
     settings_window=""
     for _ in {1..100}; do
-        settings_window="$(xdotool search --onlyvisible --name '^Zentty Settings$' 2>/dev/null | tail -1 || true)"
+        settings_window="$(xdotool search --onlyvisible --pid "${product_pid}" --name '^Zentty Settings$' 2>/dev/null | tail -1 || true)"
         [[ "${settings_window}" =~ ^[1-9][0-9]*$ ]] && break
         sleep 0.02
     done
@@ -302,6 +294,8 @@ EOF
 applied_before_self_write="$(grep -Fc 'zentty-linux: config-reload result=applied' "${log}" || true)"
 if [[ "${backend}" == x11 ]]; then
     xdotool windowfocus --sync "${settings_window}"
+    xdotool key alt+s
+elif zentty_product_uses_xdotool "${backend}"; then
     xdotool key alt+s
 else
     wtype -M alt -k s -m alt
@@ -335,7 +329,7 @@ zentty_product_wait_for_log_count "${log}" \
 if [[ "${backend}" == x11 ]]; then
     settings_window=""
     for _ in {1..100}; do
-        settings_window="$(xdotool search --onlyvisible --name '^Zentty Settings$' 2>/dev/null | tail -1 || true)"
+        settings_window="$(xdotool search --onlyvisible --pid "${product_pid}" --name '^Zentty Settings$' 2>/dev/null | tail -1 || true)"
         [[ "${settings_window}" =~ ^[1-9][0-9]*$ ]] && break
         sleep 0.02
     done
@@ -351,6 +345,8 @@ fi
 # Product-last is the inverse ordering. Its read/modify/replace must preserve
 # the complete external document's unknown section while changing only Updates.
 if [[ "${backend}" == x11 ]]; then
+    xdotool key alt+s
+elif zentty_product_uses_xdotool "${backend}"; then
     xdotool key alt+s
 else
     wtype -M alt -k s -m alt
@@ -380,11 +376,7 @@ sleep 0.5
     fail "interrupted sibling write was incorrectly published"
 grep -Fq 'channel = "stable"' "${config_file}" || fail "interrupted write damaged accepted config"
 grep -Fq 'winner = "external"' "${config_file}" || fail "interrupted write damaged preserved external data"
-if [[ "${backend}" == x11 ]]; then
-    xdotool key Escape
-else
-    wtype -k Escape
-fi
+zentty_product_key "${backend}" Escape
 zentty_product_wait_for_log "${log}" 'shortcut-settings hidden parent-presented=true' \
     "settings did not return focus to its product window" || fail "settings close missing"
 
