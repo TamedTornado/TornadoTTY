@@ -539,3 +539,41 @@ cluster evidence is green.
   also passed. The matrix now assigns the Wayland cell to the authoritative
   multiwindow Weston profile. The failure ledger records six bounded attempts
   and marks this one cell PASS; no broader qualification claim is made.
+
+### Bookmark dialogs, keyboard popovers, and native chooser acceptance
+
+- The bookmark replay first exposed a real product lifecycle gap after the Save,
+  Rename, and Edit dialogs closed. Calling `close()` removed the transient, but
+  Weston did not thereby activate its parent. Those exits now present the
+  parent and publish both the request and eventual `is-active` transition. The
+  actor then supplies the compositor-owned physical click that Wayland requires
+  and waits for the real terminal focus receipt before continuing; environment
+  absence or `present()` alone is not accepted as success.
+- Advancing into the nested template action popover exposed a second product
+  bug. Zentty opened both the bookmark popover and its keyboard context menu on
+  key-down, while Weston was still delivering the originating chord releases.
+  The releases returned routing to the underlying terminal and could dismiss
+  the just-opened context menu. Zentty now defers search focus and keyboard-menu
+  presentation by a bounded 50 ms key-release settlement interval. Search
+  changes publish their
+  actual query, so the actor retries only after proving that physical text did
+  not reach the real search entry; a real outside click resets the mapped
+  popover between at most three attempts. This is not a blind pass-producing
+  sleep: focus, query, visibility, and action receipts remain mandatory.
+- The original import failure was then reproduced after export and deletion.
+  A captured real GTK chooser showed the full exact path in its location entry,
+  the matching `Portable.zenttypreset` row selected, and the enabled Open
+  button. The first Return resolves the location and selects that row; it does
+  not accept it. The actor now performs the second ordinary keyboard activation
+  and requires the application's persisted import receipt and portable JSON
+  invariants. The native chooser uses the same 750 ms asynchronous mapping
+  bound already qualified by the shortcut import/export journey.
+- Controlled Weston session `457aa19c...` passed save, real export chooser,
+  physical delete, real import chooser, and persisted portable import. Weston
+  management session `ed75d68d...` separately passed Rename, Edit, Duplicate,
+  Pin, Convert, Export-menu traversal, linked Update/Unlink, and Delete through
+  the same context and dialog paths. Matching private-X11 sessions
+  `cd4e5f1d...` and `079a3330...` passed. The Wayland matrix cell now owns the
+  multiwindow Weston profile, and the ledger records 18 diagnostic/repair
+  attempts before PASS. This changes one failure-ledger cell only and is not a
+  full Linux qualification claim.

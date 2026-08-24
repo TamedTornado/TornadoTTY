@@ -1,5 +1,7 @@
 use gtk::glib::variant::ToVariant;
 use gtk::prelude::*;
+use std::cell::RefCell;
+use std::rc::Rc;
 use zentty_core::{TemplateKind, WorkspaceTemplate};
 
 const BUTTON_NAME: &str = "zentty-bookmarks-button";
@@ -70,7 +72,7 @@ fn make_popover(
     let search_focus = search.clone();
     popover.connect_show(move |_| {
         let search_focus = search_focus.clone();
-        gtk::glib::idle_add_local_once(move || {
+        gtk::glib::timeout_add_local_once(std::time::Duration::from_millis(50), move || {
             let focused = search_focus.grab_focus();
             eprintln!("zentty-linux: bookmarks-search-focused={focused}");
         });
@@ -113,6 +115,7 @@ fn make_popover(
     let rows = list.clone();
     search.connect_search_changed(move |search| {
         let query = search.text().to_lowercase();
+        eprintln!("zentty-linux: bookmarks-search query={query:?}");
         let mut section = rows.first_child();
         while let Some(group) = section {
             section = group.next_sibling();
@@ -343,10 +346,15 @@ fn template_row(
         if !is_context_menu_shortcut(key, modifiers) {
             return gtk::glib::Propagation::Proceed;
         }
-        context_menu.popup();
-        eprintln!(
-            "zentty-linux: bookmarks-context-menu=shown keyboard=true id={context_id} name={context_name:?}"
-        );
+        let context_menu = context_menu.clone();
+        let context_id = context_id.clone();
+        let context_name = context_name.clone();
+        gtk::glib::timeout_add_local_once(std::time::Duration::from_millis(50), move || {
+            context_menu.popup();
+            eprintln!(
+                "zentty-linux: bookmarks-context-menu=shown keyboard=true id={context_id} name={context_name:?}"
+            );
+        });
         gtk::glib::Propagation::Stop
     });
     activate.add_controller(context_keys);
@@ -510,7 +518,7 @@ fn present_edit_dialog(window: &gtk::Window, template: WorkspaceTemplate) {
             });
         });
     }
-    connect_dialog_cancel(&dialog, &cancel);
+    connect_dialog_cancel(&dialog, &cancel, window);
     let action_window = window.clone();
     let action_dialog = dialog.downgrade();
     save.connect_clicked(move |_| {
@@ -533,7 +541,7 @@ fn present_edit_dialog(window: &gtk::Window, template: WorkspaceTemplate) {
             .is_ok()
             && let Some(dialog) = action_dialog.upgrade()
         {
-            dialog.close();
+            close_dialog_and_present_parent(&dialog, &action_window);
         }
     });
     dialog.present();
@@ -597,7 +605,7 @@ fn present_name_dialog(
             eprintln!("zentty-linux: bookmark-name-focused={focused}");
         });
     });
-    connect_dialog_cancel(&dialog, &cancel);
+    connect_dialog_cancel(&dialog, &cancel, window);
     let action_window = window.clone();
     let action_dialog = dialog.downgrade();
     let action_entry = entry.clone();
@@ -627,19 +635,46 @@ fn present_name_dialog(
         if activated.is_ok()
             && let Some(dialog) = action_dialog.upgrade()
         {
-            dialog.close();
+            close_dialog_and_present_parent(&dialog, &action_window);
         }
     });
     dialog.present();
 }
 
-fn connect_dialog_cancel(dialog: &gtk::Window, cancel: &gtk::Button) {
+fn connect_dialog_cancel(dialog: &gtk::Window, cancel: &gtk::Button, parent: &gtk::Window) {
     let dialog = dialog.downgrade();
+    let parent = parent.clone();
     cancel.connect_clicked(move |_| {
         if let Some(dialog) = dialog.upgrade() {
-            dialog.close();
+            close_dialog_and_present_parent(&dialog, &parent);
         }
     });
+}
+
+fn close_dialog_and_present_parent(dialog: &gtk::Window, parent: &gtk::Window) {
+    let handler = Rc::new(RefCell::new(None));
+    let callback_handler = Rc::clone(&handler);
+    let handler_id = parent.connect_is_active_notify(move |parent| {
+        if !parent.is_active() {
+            return;
+        }
+        if let Some(handler_id) = callback_handler.borrow_mut().take() {
+            parent.disconnect(handler_id);
+        }
+        eprintln!("zentty-linux: bookmark-dialog parent-active=true");
+    });
+    *handler.borrow_mut() = Some(handler_id);
+    dialog.close();
+    parent.present();
+    eprintln!("zentty-linux: bookmark-dialog closed parent-presented=true");
+    if parent.is_active() {
+        if let Some(handler_id) = handler.borrow_mut().take() {
+            parent.disconnect(handler_id);
+            eprintln!("zentty-linux: bookmark-dialog parent-active=true");
+        }
+    } else {
+        eprintln!("zentty-linux: bookmark-dialog parent-active=pending");
+    }
 }
 
 fn kind_label(kind: TemplateKind) -> &'static str {
