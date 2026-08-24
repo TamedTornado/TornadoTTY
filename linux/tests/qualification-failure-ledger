@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+ledger="${1:-${repo_root}/linux/qualification-failure-ledger.json}"
+matrix="${2:-${repo_root}/linux/qualification-matrix.json}"
+
+fail() {
+    echo "qualification-failure-ledger: error: $*" >&2
+    exit 1
+}
+
+command -v jq >/dev/null || fail "jq is required"
+[[ -f "${ledger}" ]] || fail "ledger is missing: ${ledger}"
+[[ -f "${matrix}" ]] || fail "matrix is missing: ${matrix}"
+jq -e . "${ledger}" >/dev/null || fail "ledger is not valid JSON"
+jq -e . "${matrix}" >/dev/null || fail "matrix is not valid JSON"
+
+jq -e '
+    .schema_version == 1 and
+    (.baseline.date | type == "string" and length > 0) and
+    (.baseline.source_issue | type == "number") and
+    (.baseline.direct_unexpected | type == "number") and
+    (.baseline.dependency_blocked | type == "number") and
+    (.entries | type == "array" and length > 0)
+' "${ledger}" >/dev/null || fail "top-level contract is invalid"
+
+duplicate_ids="$(jq -r '[.entries[].id] | group_by(.) | map(select(length > 1) | .[0]) | join(",")' "${ledger}")"
+[[ -z "${duplicate_ids}" ]] || fail "duplicate cell ids: ${duplicate_ids}"
+
+jq -e '
+    all(.entries[];
+        (.id | type == "string" and length > 0) and
+        (.baseline.kind == "direct" or .baseline.kind == "dependency") and
+        (.baseline.outcome == "FAIL" or
+         .baseline.outcome == "MISSING_OR_INVALID_VALGRIND_REPORT" or
+         .baseline.outcome == "BLOCKED") and
+        (.replay.status == "PASS" or .replay.status == "FAIL" or
+         .replay.status == "NOT_RUN" or .replay.status == "BLOCKED") and
+        (.replay.classification | type == "string" and length > 0) and
+        (.replay.attempts | type == "number" and floor == . and . >= 0) and
+        (.replay.evidence | type == "string" and length > 0) and
+        ((.replay.resource == null) or
+         (.replay.resource | type == "string" and length > 0)) and
+        (if .baseline.kind == "direct" then
+            (.baseline.outcome != "BLOCKED" and
+             (.baseline.exit_code | type == "number") and
+             .replay.status != "BLOCKED")
+         else
+            (.baseline.outcome == "BLOCKED" and
+             .baseline.exit_code == null and
+             .replay.status == "BLOCKED" and
+             .replay.classification == "dependency")
+         end) and
+        (if (.replay.status == "PASS" or .replay.status == "FAIL") then
+             .replay.attempts > 0
+         else
+             .replay.attempts == 0
+         end)
+    )
+' "${ledger}" >/dev/null || fail "one or more ledger entries violate the entry contract"
+
+direct_actual="$(jq '[.entries[] | select(.baseline.kind == "direct")] | length' "${ledger}")"
+direct_expected="$(jq '.baseline.direct_unexpected' "${ledger}")"
+[[ "${direct_actual}" -eq "${direct_expected}" ]] ||
+    fail "direct count mismatch: declared=${direct_expected} actual=${direct_actual}"
+
+blocked_actual="$(jq '[.entries[] | select(.baseline.kind == "dependency")] | length' "${ledger}")"
+blocked_expected="$(jq '.baseline.dependency_blocked' "${ledger}")"
+[[ "${blocked_actual}" -eq "${blocked_expected}" ]] ||
+    fail "dependency count mismatch: declared=${blocked_expected} actual=${blocked_actual}"
+
+missing_matrix_ids="$(
+    jq -nr --slurpfile ledger "${ledger}" --slurpfile matrix "${matrix}" '
+        ($matrix[0].cells | map(.id)) as $ids |
+        [$ledger[0].entries[].id | select(. as $id | $ids | index($id) | not)] |
+        join(",")
+    '
+)"
+[[ -z "${missing_matrix_ids}" ]] ||
+    fail "ledger ids absent from authoritative matrix: ${missing_matrix_ids}"
+
+jq -c '{
+    schema_version,
+    baseline,
+    total: (.entries | length),
+    replay: (.entries | group_by(.replay.status) |
+        map({key: .[0].replay.status, value: length}) | from_entries),
+    unresolved: ([.entries[] |
+        select(.replay.status != "PASS" or .replay.classification == "pending")] | length)
+}' "${ledger}"

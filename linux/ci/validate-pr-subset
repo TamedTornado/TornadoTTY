@@ -31,6 +31,7 @@ jq -e '
     "linux/ci/validate-pr-subset-test",
     "linux/ci/run-pr-subset-test",
     "linux/tests/cargo-publish-age-test",
+    "linux/tests/qualification-failure-ledger-test",
     "linux/scripts/audit-cargo-publish-age",
     "linux/tests/test-orchestration-contract"
   ] and

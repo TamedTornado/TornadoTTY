@@ -659,6 +659,19 @@ reply_to_confirmation() {
     fi
 }
 
+assert_confirmation_focus() {
+    local pane_id="$1"
+    # Weston nested under X11 does not reactivate a transient's parent when the
+    # transient is dismissed. A real pointer click supplies the compositor
+    # activation that a desktop compositor normally returns to the parent.
+    # The product must then route focus back to the selected Ghostty surface.
+    focus_outer_wayland_pane "${pane_id}"
+    zentty_product_wait_for_log "${log}" \
+        "zentty-linux: confirmation focus-restored pane=${pane_id}" \
+        "confirmation did not restore terminal focus to ${pane_id}" ||
+        fail "confirmation focus restoration missing for ${pane_id}"
+}
+
 capture_multi_window_x11_visual() {
     local image="${state_dir}/multi-window-x11.png"
     local first_window_id="" second_window_id="${ZENTTY_PRODUCT_WINDOW_ID}"
@@ -798,7 +811,9 @@ create_second_window
 # live native windows and two distinct Ghostty PTYs. Wayland fullscreen belongs
 # to the actor's independent window-state mode above so it cannot contaminate
 # the destructive close and transfer journey below.
-[[ "${backend}" != x11 ]] || capture_multi_window_x11_visual
+if [[ "${backend}" == x11 && "${ZENTTY_MULTI_WINDOW_LIFECYCLE_ONLY:-false}" != true ]]; then
+    capture_multi_window_x11_visual
+fi
 
 # Worklane Peek is window-local. Open it through real input in the second X11
 # toplevel, then transfer compositor focus to the first toplevel. Deactivation
@@ -857,6 +872,7 @@ zentty_product_wait_for_log "${log}" 'zentty-linux: confirmation shown title="Cl
 reply_to_confirmation Escape
 zentty_product_wait_for_log "${log}" 'zentty-linux: confirmation accepted=false' \
     "Escape did not cancel Close Worklane" || fail "worklane confirmation cancellation missing"
+assert_confirmation_focus pane-window-2-1
 type_and_expect_title "worklane-close-cancelled" "pane-window-2-1"
 accepted_before="$(grep -Fc 'zentty-linux: confirmation accepted=true' "${log}" || true)"
 execute_palette_action "Close Worklane" "Close Worklane"
@@ -868,6 +884,7 @@ zentty_product_wait_for_log_count "${log}" 'zentty-linux: confirmation accepted=
 zentty_product_wait_for_log "${log}" \
     'zentty-linux: action=close-worklane id=worklane-window-2-1 panes=1' \
     "accepted Close Worklane did not remove its exact target" || fail "confirmed worklane close failed"
+assert_confirmation_focus pane-window-2
 type_and_expect_title "worklane-close-survivor" "pane-window-2"
 
 close_active_window
@@ -876,6 +893,7 @@ zentty_product_wait_for_log "${log}" 'zentty-linux: confirmation shown title="Cl
 reply_to_confirmation Escape
 zentty_product_wait_for_log "${log}" 'zentty-linux: confirmation accepted=false' \
     "Escape did not cancel Close Window" || fail "window confirmation cancellation missing"
+assert_confirmation_focus pane-window-2
 target_second_window
 type_and_expect_title "window-close-cancelled" "pane-window-2"
 accepted_before="$(grep -Fc 'zentty-linux: confirmation accepted=true' "${log}" || true)"
@@ -904,7 +922,7 @@ reply_to_confirmation Escape
 zentty_product_wait_for_log_count "${log}" 'zentty-linux: confirmation accepted=false' 2 \
     "Escape did not cancel Quit" || fail "quit confirmation cancellation missing"
 zentty_product_prepare_input "${backend}" "${log}" || fail "could not refocus after cancelled quit"
-focus_outer_wayland_pane pane-1
+assert_confirmation_focus pane-1
 type_and_expect_title "quit-cancelled" "pane-1"
 accepted_before="$(grep -Fc 'zentty-linux: confirmation accepted=true' "${log}" || true)"
 zentty_product_close_window "${backend}"
@@ -936,6 +954,7 @@ zentty_product_wait_for_log "${log}" 'zentty-linux: window-closed id=window-2 re
 [[ "$(grep -Fc 'zentty-linux: confirmation shown title=' "${log}" || true)" == "${confirmation_before}" ]] ||
     fail "idle shell incorrectly presented a close confirmation"
 zentty_product_prepare_input "${backend}" "${log}" || fail "could not retarget idle surviving window"
+focus_outer_wayland_pane pane-1
 zentty_product_close_window "${backend}"
 wait_for_exit
 [[ "$(grep -Fc 'zentty-linux: confirmation shown title=' "${log}" || true)" == "${confirmation_before}" ]] ||

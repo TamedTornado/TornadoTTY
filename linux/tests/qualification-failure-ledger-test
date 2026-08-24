@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+runner="${repo_root}/linux/tests/qualification-failure-ledger"
+ledger="${repo_root}/linux/qualification-failure-ledger.json"
+matrix="${repo_root}/linux/qualification-matrix.json"
+run_root="$(mktemp -d)"
+trap 'rm -rf -- "${run_root}"' EXIT
+
+fail() {
+    echo "qualification-failure-ledger-test: error: $*" >&2
+    exit 1
+}
+
+expect_failure() {
+    local label="$1"
+    local fixture="$2"
+    local expected="$3"
+    if "${runner}" "${fixture}" "${matrix}" >"${run_root}/${label}.out" 2>"${run_root}/${label}.err"; then
+        fail "${label} unexpectedly passed"
+    fi
+    grep -Fq "${expected}" "${run_root}/${label}.err" || {
+        cat "${run_root}/${label}.err" >&2
+        fail "${label} did not report ${expected}"
+    }
+}
+
+summary="$(${runner} "${ledger}" "${matrix}")"
+jq -e '.total == 42 and .baseline.direct_unexpected == 36 and
+    .baseline.dependency_blocked == 6 and .unresolved > 0' <<<"${summary}" >/dev/null ||
+    fail "authoritative ledger summary is incorrect"
+
+jq 'del(.entries[0])' "${ledger}" >"${run_root}/missing.json"
+expect_failure missing "${run_root}/missing.json" 'direct count mismatch'
+
+jq '.entries += [.entries[0]]' "${ledger}" >"${run_root}/duplicate.json"
+expect_failure duplicate "${run_root}/duplicate.json" 'duplicate cell ids'
+
+jq '.entries[0].replay.status = "FLAKY"' "${ledger}" >"${run_root}/status.json"
+expect_failure status "${run_root}/status.json" 'entry contract'
+
+jq '.entries[0].replay.status = "PASS" | .entries[0].replay.attempts = 0' \
+    "${ledger}" >"${run_root}/attempts.json"
+expect_failure attempts "${run_root}/attempts.json" 'entry contract'
+
+jq '.entries[0].id = "not-a-matrix-cell"' "${ledger}" >"${run_root}/unknown.json"
+expect_failure unknown "${run_root}/unknown.json" 'absent from authoritative matrix'
+
+jq '.entries[-1].baseline.kind = "direct"' "${ledger}" >"${run_root}/blocked.json"
+expect_failure blocked "${run_root}/blocked.json" 'entry contract'
+
+echo "Qualification failure ledger tests passed: baseline=42, negative-fixtures=6"

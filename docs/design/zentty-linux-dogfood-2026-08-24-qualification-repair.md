@@ -289,3 +289,76 @@ cluster evidence is green.
   complete ReleaseSafe and Debug 1x/1.5x/2x geometry, pointer, PTY, and SIGWINCH
   journeys. Remaining uncertainty is limited to the other matrix cells outside
   this focused GH-91 cluster; no full-qualification claim is made here.
+
+## GH-92: graphical and persistence interference isolation
+
+### Recovered baseline and first independent replays
+
+- The original GH-88 console receipt was recovered from the durable Codex
+  rollout rather than reconstructed from memory. It contains 36 direct
+  unexpected outcomes and six dependency-blocked outcomes: 34 ordinary FAILs,
+  two invalid Debug Valgrind reports, and six cells blocked by failed
+  prerequisites. This recovered set is the input to the machine-readable
+  failure ledger; no baseline failure may disappear merely because a later
+  isolated run passes.
+- `ime-fcitx-wayland` passed independently in controlled Weston/Fcitx with real
+  preedit, cancel, commit, and focus transfer. A noisy GNOME portal backend
+  crashed during the run, but the owned Fcitx journey and receipt still
+  completed. The baseline input failure is therefore not independently
+  reproducible; portal noise is retained as uncertainty rather than called a
+  product pass for the whole cluster.
+- `product-existing-worklane-transfer-wayland` also passed independently. Its
+  previously missing physical menu target was present and the exact controlled
+  transfer journey completed.
+- `product-multi-window-clean-crash-size-restore-wayland` reproduced alone at
+  the first cancelled close dialog: after Escape, Weston nested under X11 left
+  the parent toplevel inactive and the next input did not reach
+  `pane-window-2-1`. Instrumentation established the state precisely instead
+  of adding a delay: confirmation cancellation completed, the selected pane
+  remained correct, but the parent was inactive and could not own keyboard
+  focus.
+
+### Confirmation focus repair and private-display overlap
+
+- The application now restores the selected Ghostty surface after a cancelled
+  confirmation. If the compositor has already reactivated the parent it does
+  so immediately; otherwise it waits for the parent's real `is-active`
+  transition and disconnects that one-shot observer before restoring focus.
+  Confirmed pane/worklane removal uses the same path for its surviving surface;
+  window and application shutdown deliberately retain their existing teardown
+  path.
+- Weston-in-X11 does not return activation to a transient's parent on dismissal.
+  The actor therefore supplies a real pointer click to the exact pane before
+  requiring the focus-restored receipt. This is not a sleep-only repair and it
+  does not pretend an inactive window accepted input. The same explicit
+  surviving-pane target was missing from the actor's final idle-window close;
+  that omission caused a second apparent shutdown timeout after the product had
+  correctly closed the other window.
+- The focused lifecycle mode now excludes unrelated X11 screenshot publication.
+  It exercises two real GTK toplevels, real Ghostty PTYs, cancel and accept
+  paths, survivor input, and PTY reaping without allowing a visual baseline to
+  hide lifecycle results.
+- Two repeated paired runs launched the X11 and Wayland lifecycle actors at the
+  same time with private displays and private state. All four runs passed. The
+  Wayland sessions were `381103d8...` and `1b3f99a2...`; X11 sessions were
+  `efc2039d...` and `8f7b915f...`. This proves these unrelated private-display
+  actors can overlap and need no generic graphical mutex.
+- The exact full Wayland cell advanced through the repaired confirmation and
+  idle-close stages, then failed later when its physical pointer scan could not
+  identify pane 2's toplevel. That is a distinct remaining replay finding. The
+  full cell and GH-92 remain non-pass; focused lifecycle evidence is not being
+  represented as full Linux qualification.
+- `linux/qualification-failure-ledger.json` now records all 42 recovered
+  outcomes individually: 36 direct unexpected results and six dependency
+  blocks. Its current replay totals are 16 PASS, two FAIL, 18 NOT_RUN, and six
+  BLOCKED, with 28 unresolved entries once passing-but-unclassified replays are
+  included. A pass on one isolated replay therefore cannot silently erase the
+  baseline or claim that its interference source is known.
+- The ledger validator requires every ID to exist in the authoritative matrix,
+  enforces unique IDs, declared baseline totals, outcome/status vocabulary,
+  attempt counts, evidence text, and direct-versus-dependency invariants. Six
+  negative fixtures cover missing and duplicate cells, unknown status, false
+  zero-attempt PASS, unknown matrix identity, and malformed dependency state.
+  The validator is part of both local qualification support and the public PR
+  subset's advisory checks, so tracker drift is caught without making GitHub CI
+  release authority.

@@ -11,6 +11,45 @@ use zentty_core::{
 use super::ApplicationShell;
 
 impl ApplicationShell {
+    fn focus_terminal_after_confirmation(shell: &Rc<std::cell::RefCell<Self>>) {
+        let window = shell.borrow().window().clone();
+        let restore = |shell: &Rc<std::cell::RefCell<Self>>| {
+            let shell = shell.borrow();
+            if shell.shutting_down {
+                return;
+            }
+            let pane_id = shell.state.focused_pane_id().unwrap_or("none").to_owned();
+            shell.focus_selected_surface_unchecked();
+            eprintln!(
+                "zentty-linux: confirmation focus-restored pane={pane_id} window-active={}",
+                gtk::prelude::GtkWindowExt::is_active(&shell.window)
+            );
+        };
+        if gtk::prelude::GtkWindowExt::is_active(&window) {
+            restore(shell);
+            return;
+        }
+
+        let weak = Rc::downgrade(shell);
+        let handler = Rc::new(std::cell::RefCell::new(None));
+        let callback_handler = Rc::clone(&handler);
+        let handler_id =
+            gtk::prelude::GtkWindowExt::connect_is_active_notify(&window, move |window| {
+                if !gtk::prelude::GtkWindowExt::is_active(window) {
+                    return;
+                }
+                if let Some(handler_id) = callback_handler.borrow_mut().take() {
+                    gtk::prelude::ObjectExt::disconnect(window, handler_id);
+                }
+                let Some(shell) = weak.upgrade() else {
+                    return;
+                };
+                restore(&shell);
+            });
+        *handler.borrow_mut() = Some(handler_id);
+        eprintln!("zentty-linux: confirmation focus-pending reason=window-inactive");
+    }
+
     pub(super) fn pane_close_evidence(&self, pane_id: &str) -> CloseEvidence {
         let worklane_id = self.state.worklane_id_for_pane(pane_id);
         let panes = worklane_id
@@ -172,6 +211,16 @@ impl ApplicationShell {
                         }
                         if !accepted {
                             shell.borrow().pending_close_evidence.borrow_mut().take();
+                            let weak = Rc::downgrade(&shell);
+                            glib::idle_add_local_once(move || {
+                                // AlertDialog completes transient teardown
+                                // after invoking the choose callback. Restore
+                                // on the next main-loop turn, or wait for the
+                                // compositor's parent-window activation event.
+                                if let Some(shell) = weak.upgrade() {
+                                    Self::focus_terminal_after_confirmation(&shell);
+                                }
+                            });
                             return;
                         }
                         let current = shell.borrow().current_close_evidence(&evidence.target);
@@ -195,7 +244,19 @@ impl ApplicationShell {
                                 .take()
                                 .is_some_and(|pending| pending == evidence);
                             if still_pending {
+                                let restores_survivor = matches!(
+                                    evidence.target,
+                                    CloseTarget::Pane { .. } | CloseTarget::Worklane { .. }
+                                );
                                 action();
+                                // A confirmed pane/worklane close may leave a
+                                // surviving surface in this window. The modal
+                                // transient owned focus while the action
+                                // rendered that survivor, so restore it once
+                                // the compositor reactivates the parent.
+                                if restores_survivor {
+                                    Self::focus_terminal_after_confirmation(&shell);
+                                }
                             }
                         });
                     },
