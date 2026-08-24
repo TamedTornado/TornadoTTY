@@ -524,6 +524,48 @@ zentty_product_type() {
     fi
 }
 
+zentty_product_establish_palette_input() {
+    local backend="$1"
+    local log="$2"
+    local attempts="${3:-3}"
+    local attempt shown_before hidden_before focus_before
+
+    [[ "${attempts}" =~ ^[1-9][0-9]*$ ]] || {
+        echo "product-input: palette readiness attempts must be a positive integer" >&2
+        return 64
+    }
+    for ((attempt = 1; attempt <= attempts; attempt++)); do
+        shown_before="$(grep -Fxc 'zentty-linux: command-palette=shown' "${log}" 2>/dev/null || true)"
+        zentty_product_ctrl_shift_key "${backend}" p
+        if zentty_product_wait_for_log_count "${log}" \
+            'zentty-linux: command-palette=shown' "$((shown_before + 1))" \
+            "physical command-palette shortcut was not delivered" 80; then
+            hidden_before="$(grep -Fxc 'zentty-linux: command-palette=hidden' "${log}" 2>/dev/null || true)"
+            focus_before="$(grep -Fc 'zentty-linux: focus-pane pane=' "${log}" 2>/dev/null || true)"
+            zentty_product_key "${backend}" Escape
+            zentty_product_wait_for_log_count "${log}" \
+                'zentty-linux: command-palette=hidden' "$((hidden_before + 1))" \
+                "command-palette readiness probe could not be dismissed" 80 || return
+            zentty_product_wait_for_log_count "${log}" \
+                'zentty-linux: focus-pane pane=' "$((focus_before + 1))" \
+                "command-palette readiness probe did not restore terminal focus" 80 || return
+            printf 'product-input: palette input ready after attempt %s\n' "${attempt}" >&2
+            return 0
+        fi
+
+        # A nested compositor may map its first client before assigning its
+        # keyboard focus. Reset a harmless Escape and explicitly click the
+        # already-proven terminal allocation before the bounded retry.
+        zentty_product_key "${backend}" Escape
+        if zentty_product_uses_xdotool "${backend}"; then
+            zentty_product_move_pointer_to_terminal "${backend}" || return
+            xdotool click 1
+        fi
+    done
+    echo "product-input: compositor never delivered the bounded palette input readiness probe" >&2
+    return 1
+}
+
 zentty_product_disable_lifecycle_confirmations() {
     local config_file="${XDG_CONFIG_HOME:?}/zentty/config.toml"
     mkdir -p -- "$(dirname "${config_file}")"

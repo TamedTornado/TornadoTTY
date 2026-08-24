@@ -280,7 +280,12 @@ impl CommandPaletteView {
         button.connect_clicked(move |_| {
             eprintln!("zentty-linux: command-palette=execute target={target:?}");
             hidden.recent_commands.borrow_mut().record(&recent_item);
-            hidden.hide();
+            // Execute and dismissal are separate GTK action paths. Route the
+            // latter through the workspace action so hiding the entry also
+            // restores focus to the selected real terminal surface.
+            let _ = hidden
+                .root
+                .activate_action("workspace.dismiss-command-palette", None);
         });
         row.set_child(Some(&button));
         self.list.append(&row);

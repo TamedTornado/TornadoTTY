@@ -660,3 +660,60 @@ cluster evidence is green.
   so mutation testing was not applicable to this repair. The ledger marks only
   `config-live-reload-wayland` PASS after nine attempts; this is not full Linux
   qualification.
+
+### Global Find across real Wayland clipboard and window focus boundaries
+
+- The baseline failure did not identify one isolated Global Find defect. Cage
+  could not preserve the second-window corpus required by the multiwindow
+  journey, while the controlled Weston replay initially stopped before the
+  first Clean Copy command. The actor sent a palette chord, query, activation,
+  and the next chord without observing the intervening GTK focus transitions.
+  It also carried a scenario-local X11/wtype input implementation alongside
+  the shared environment-aware product input driver.
+- The same readiness loop already existed inside the Open With actor. It was
+  removed rather than leaving a second implementation beside the new shared
+  helper. Open With now uses the shared physical chord, mapping, entry-focus,
+  dismissal, and terminal-focus contract; complete real-product regressions
+  passed in private-Xvfb session
+  `3face7392ad4bb9df4bd5501bd79db4a010233dca873335e47ee8e9ff1457860`
+  and private-Cage session
+  `c51510a086c7d2ae5b5e2b0a05a69d891825077a98739820c43cb032332919e0`,
+  including real OpenSSH and desktop launcher boundaries.
+- The actor now uses the shared physical key and typing path, proves initial
+  palette readiness, and requires fresh palette mapping, entry focus,
+  dismissal, action, and terminal-focus receipts for every command. Real
+  `wl-copy` and `wl-paste` clients in this Weston profile can leave keyboard
+  focus away from Zentty. The journey physically reactivates the product
+  through its non-terminal header band so the real Ghostty selection remains
+  intact; it does not replace clipboard clients, selection, or PTY input with
+  an application-side fixture.
+- Those stronger waits exposed a product bug: executing a command hid the
+  palette directly, unlike Escape dismissal, and therefore left focus on its
+  now-hidden search entry. Command execution now routes dismissal through the
+  existing workspace action, which hides the overlay and restores the selected
+  Ghostty surface. The same real journey then passed repeated Clean Copy,
+  Select All, Copy, Copy Raw, Copy as Markdown, and clipboard-to-PTY round trips.
+- Later failures were actor routing defects rather than silent exclusions.
+  Direct `wtype` Alt-Tab could not work on Weston without the virtual-keyboard
+  protocol, and an injected Alt-Tab entered Zentty rather than switching
+  Weston windows. The new window already publishes a fresh compositor-backed
+  active-window receipt, so the actor waits for that evidence instead. Shared
+  X11 input now updates its exact window identity when the journey moves to and
+  from window 2. Closing the Wayland window uses a real header click, followed
+  by a fresh Global Find navigation receipt, to prove the surviving window is
+  actually receiving input.
+- The old 1024x768 screenshot was a Cage-output baseline and could not describe
+  the authoritative 1280x1024 Weston profile. Capturing the raw Weston desktop
+  also included its clock. The visual checkpoint now enters Zentty fullscreen,
+  waits for the real window-state receipt and two pixel-identical frames,
+  compares the reviewed 1280x1024 Global Find/sidebar image without a mask, and
+  returns to windowed state before continuing. The reviewed frame contains the
+  live search field, two worklanes, three real panes, contextual pane controls,
+  and terminal chrome; no desktop timestamp is admitted to the baseline.
+- The complete controlled-Weston journey passed in session
+  `7e9a13e9ae1de179d2173b0c3c219e2ac9a9002ab10aeed7079ab6884412461b`.
+  The matching private-Xvfb regression passed in session
+  `148a294479813aaff534e65ff9b13144b255837afcf28961b0a7cfba7460ceb0`.
+  The ledger records 19 diagnostic and repair attempts and changes only
+  `rust-global-find-product-usage-wayland` to PASS. This remains a focused cell
+  repair, not full Linux qualification.

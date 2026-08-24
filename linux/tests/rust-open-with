@@ -6,6 +6,8 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "${repo_root}/linux/tests/lib/disposable-sshd"
 # shellcheck source=linux/tests/lib/product-bundle
 source "${repo_root}/linux/tests/lib/product-bundle"
+# shellcheck source=linux/tests/lib/product-input
+source "${repo_root}/linux/tests/lib/product-input"
 product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
 run_root="$(mktemp -d)"
 project="${run_root}/project path # controlled"
@@ -186,61 +188,30 @@ wait_for_product() {
 
 start_product "${log}"
 wait_for_product
+if [[ "${backend}" == x11 ]]; then
+    ZENTTY_PRODUCT_WINDOW_ID="${window_id}"
+    export ZENTTY_PRODUCT_WINDOW_ID
+fi
 grep -Fq 'open-with-discovery available=4 primary=system-file-manager unavailable=xcode' "${log}" ||
     fail "controlled desktop/terminal/custom discovery and missing-target diagnostics differed"
 
-send_palette_shortcut() {
-    if [[ "${backend}" == x11 ]]; then
-        # Xvfb intentionally has no window manager. Send the physical XTEST
-        # chord to the proven real toplevel without requiring WM activation.
-        xdotool key --window "${window_id}" ctrl+shift+p
-    else
-        wtype -M ctrl -M shift -k p -m shift -m ctrl
-    fi
-}
-
-wait_for_palette_shown() {
-    local shown_before="$1"
-    local attempts="$2"
-    for _ in $(seq 1 "${attempts}"); do
-        (( $(grep -Fxc 'zentty-linux: command-palette=shown' "${log}" || true) > shown_before )) && break
-        sleep 0.05
-    done
-    (( $(grep -Fxc 'zentty-linux: command-palette=shown' "${log}" || true) > shown_before ))
-}
-
 open_palette() {
-    local shown_before
+    local shown_before focus_before
     shown_before="$(grep -Fxc 'zentty-linux: command-palette=shown' "${log}" || true)"
-    send_palette_shortcut
-    wait_for_palette_shown "${shown_before}" 200 ||
-        fail "physical shortcut did not show the command palette after input readiness"
+    focus_before="$(grep -Fxc 'zentty-linux: command-palette-focus=confirmed result=true' "${log}" || true)"
+    zentty_product_ctrl_shift_key "${backend}" p
+    zentty_product_wait_for_log_count "${log}" \
+        'zentty-linux: command-palette=shown' "$((shown_before + 1))" \
+        "physical shortcut did not show the command palette after input readiness" || fail
+    zentty_product_wait_for_log_count "${log}" \
+        'zentty-linux: command-palette-focus=confirmed result=true' "$((focus_before + 1))" \
+        "command palette did not focus its search entry" || fail
 }
 
 establish_wayland_input_readiness() {
     [[ "${backend}" == wayland ]] || return 0
-    local attempt shown_before hidden_before
-    for attempt in 1 2 3; do
-        shown_before="$(grep -Fxc 'zentty-linux: command-palette=shown' "${log}" || true)"
-        send_palette_shortcut
-        if wait_for_palette_shown "${shown_before}" 80; then
-            hidden_before="$(grep -Fxc 'zentty-linux: command-palette=hidden' "${log}" || true)"
-            wtype -k Escape
-            for _ in $(seq 1 80); do
-                (( $(grep -Fxc 'zentty-linux: command-palette=hidden' "${log}" || true) > hidden_before )) && break
-                sleep 0.05
-            done
-            (( $(grep -Fxc 'zentty-linux: command-palette=hidden' "${log}" || true) > hidden_before )) ||
-                fail "Wayland input readiness probe could not dismiss the command palette"
-            printf 'rust-open-with: Wayland physical input ready after attempt %s\n' "${attempt}" >&2
-            return 0
-        fi
-        # Return the application to a known state before another real input
-        # probe. Escape is harmless when the first chord was never delivered.
-        wtype -k Escape
-        sleep 0.1
-    done
-    fail "Wayland compositor never delivered the bounded physical input readiness probe"
+    zentty_product_establish_palette_input "${backend}" "${log}" ||
+        fail "Wayland compositor never delivered the bounded physical input readiness probe"
 }
 
 type_text() {

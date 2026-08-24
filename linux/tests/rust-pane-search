@@ -96,14 +96,7 @@ uses_xdotool() {
 
 press_ctrl_shift() {
     local key="$1"
-    if [[ "${backend}" == x11 ]]; then
-        xdotool key --window "${window_id}" "ctrl+shift+${key}"
-        xdotool keyup Control_L Control_R Shift_L Shift_R "${key}" 2>/dev/null || true
-    elif uses_xdotool; then
-        xdotool key "ctrl+shift+${key}"
-    else
-        wtype -M ctrl -M shift -k "${key}" -m shift -m ctrl
-    fi
+    zentty_product_ctrl_shift_key "${backend}" "${key}"
 }
 
 close_current_window() {
@@ -120,23 +113,13 @@ close_current_window() {
 
 press_ctrl() {
     local key="$1"
-    if [[ "${backend}" == x11 ]]; then
-        xdotool key --window "${window_id}" "ctrl+${key}"
-        xdotool keyup Control_L Control_R "${key}" 2>/dev/null || true
-    elif uses_xdotool; then
-        xdotool key "ctrl+${key}"
-    else
-        wtype -M ctrl -k "${key}" -m ctrl
-    fi
+    zentty_product_ctrl_key "${backend}" "${key}"
 }
 
 press_ctrl_alt_shift() {
     local key="$1"
-    if [[ "${backend}" == x11 ]]; then
-        xdotool key --window "${window_id}" "ctrl+alt+shift+${key}"
-        xdotool keyup Control_L Control_R Alt_L Alt_R Shift_L Shift_R "${key}" 2>/dev/null || true
-    elif uses_xdotool; then
-        xdotool key "ctrl+alt+shift+${key}"
+    if uses_xdotool; then
+        zentty_product_xdotool_key "ctrl+alt+shift+${key}"
     else
         wtype -M ctrl -M alt -M shift -k "${key}" -m shift -m alt -m ctrl
     fi
@@ -144,32 +127,30 @@ press_ctrl_alt_shift() {
 
 press_key() {
     local key="$1"
-    if [[ "${backend}" == x11 ]]; then
-        xdotool key --window "${window_id}" "${key}"
-    elif uses_xdotool; then
-        xdotool key "${key}"
-    else
-        wtype -k "${key}"
-    fi
+    zentty_product_key "${backend}" "${key}"
 }
 
 type_text() {
     local value="$1"
-    if [[ "${backend}" == x11 ]]; then
-        xdotool type --window "${window_id}" --delay 10 "${value}"
-    elif uses_xdotool; then
-        xdotool type --delay 10 "${value}"
-    else
-        wtype "${value}"
-    fi
+    zentty_product_type "${backend}" "${value}"
+}
+
+reactivate_wayland_product_without_terminal_click() {
+    [[ "${backend}" == wayland &&
+        "${ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT:-}" == 1 ]] || return 0
+    # The controlled Weston profile places this coordinate in Zentty's
+    # non-terminal title/header band. Clipboard clients that use
+    # wl_data_device may otherwise leave compositor keyboard focus on their
+    # transient surface, while a terminal click would destroy the real Ghostty
+    # selection this journey is qualifying.
+    xdotool windowfocus --sync "${ZENTTY_PRODUCT_WINDOW_ID}"
+    xdotool mousemove --sync --window "${ZENTTY_PRODUCT_WINDOW_ID}" 700 180
+    xdotool click 1
 }
 
 clear_text() {
-    if [[ "${backend}" == x11 ]]; then
-        xdotool key --window "${window_id}" ctrl+a BackSpace
-        xdotool keyup Control_L Control_R a BackSpace 2>/dev/null || true
-    elif uses_xdotool; then
-        xdotool key ctrl+a BackSpace
+    if uses_xdotool; then
+        zentty_product_xdotool_key ctrl+a BackSpace
     else
         wtype -M ctrl -k a -m ctrl -k BackSpace
     fi
@@ -211,18 +192,31 @@ run_palette_action() {
     local query="$1"
     local action_receipt="$2"
     local expected_results="${3:-1}"
-    local query_before action_before
+    local shown_before focus_before hidden_before query_before action_before
+    shown_before="$(grep -Fxc 'zentty-linux: command-palette=shown' "${log}" || true)"
+    focus_before="$(grep -Fxc 'zentty-linux: command-palette-focus=confirmed result=true' "${log}" || true)"
     query_before="$(grep -Fc "zentty-linux: command-palette=query value=\"${query}\" results=${expected_results}" "${log}" || true)"
     action_before="$(grep -Fc "${action_receipt}" "${log}" || true)"
     press_ctrl_shift p
+    wait_for_count_greater 'zentty-linux: command-palette=shown' "${shown_before}" \
+        "physical command-palette shortcut did not open for ${query}"
+    wait_for_count_greater 'zentty-linux: command-palette-focus=confirmed result=true' \
+        "${focus_before}" \
+        "command palette did not focus its search entry for ${query}"
     type_text "${query}"
     wait_for_count_greater \
         "zentty-linux: command-palette=query value=\"${query}\" results=${expected_results}" \
         "${query_before}" \
         "command palette did not resolve ${query}"
+    hidden_before="$(grep -Fxc 'zentty-linux: command-palette=hidden' "${log}" || true)"
+    focus_before="$(grep -Fc 'zentty-linux: focus-pane pane=' "${log}" || true)"
     press_key Return
     wait_for_count_greater "${action_receipt}" "${action_before}" \
         "command palette did not execute ${query}"
+    wait_for_count_greater 'zentty-linux: command-palette=hidden' "${hidden_before}" \
+        "command palette did not hide after executing ${query}"
+    wait_for_count_greater 'zentty-linux: focus-pane pane=' "${focus_before}" \
+        "terminal focus did not settle after executing ${query}"
 }
 
 assert_standard_clipboard() {
@@ -232,6 +226,7 @@ assert_standard_clipboard() {
         xclip -selection clipboard -out >"${clipboard_actual}"
     else
         wl-paste --no-newline >"${clipboard_actual}"
+        reactivate_wayland_product_without_terminal_click
     fi
     cmp -s "${clipboard_expected}" "${clipboard_actual}" || {
         printf 'expected clipboard sha256=%s bytes=%s\n' \
@@ -251,6 +246,7 @@ assert_primary_clipboard() {
         xclip -selection primary -out >"${clipboard_actual}"
     else
         wl-paste --primary --no-newline >"${clipboard_actual}"
+        reactivate_wayland_product_without_terminal_click
     fi
     cmp -s "${clipboard_expected}" "${clipboard_actual}" || {
         printf 'expected primary clipboard sha256=%s bytes=%s\n' \
@@ -286,6 +282,7 @@ read_primary_clipboard() {
         xclip -selection primary -out
     else
         wl-paste --primary --no-newline
+        reactivate_wayland_product_without_terminal_click
     fi
 }
 
@@ -295,6 +292,7 @@ set_standard_clipboard() {
         printf '%s' "${value}" | xclip -selection clipboard -in
     else
         printf '%s' "${value}" | wl-copy
+        reactivate_wayland_product_without_terminal_click
     fi
 }
 
@@ -303,6 +301,7 @@ set_non_text_clipboard() {
         xclip -selection clipboard -target image/png -in <"${clipboard_non_text}"
     else
         wl-copy --type image/png <"${clipboard_non_text}"
+        reactivate_wayland_product_without_terminal_click
     fi
 }
 
@@ -311,6 +310,7 @@ assert_non_text_clipboard() {
         xclip -selection clipboard -target image/png -out >"${clipboard_actual}"
     else
         wl-paste --type image/png >"${clipboard_actual}"
+        reactivate_wayland_product_without_terminal_click
     fi
     cmp -s "${clipboard_non_text}" "${clipboard_actual}" ||
         fail "no-selection copy replaced the existing ${backend} non-text clipboard owner"
@@ -398,6 +398,11 @@ fi
 if uses_xdotool; then
     ZENTTY_PRODUCT_WINDOW_ID="${window_id}"
     export ZENTTY_PRODUCT_WINDOW_ID
+fi
+
+if [[ "${backend}" == wayland ]]; then
+    zentty_product_establish_palette_input "${backend}" "${log}" ||
+        fail "controlled Wayland compositor did not establish physical palette input"
 fi
 
 if [[ "${ZENTTY_SIDEBAR_RESIZE_ONLY:-false}" == true ]]; then
@@ -882,9 +887,23 @@ sleep 0.25
 if [[ "${backend}" == wayland ]]; then
     sidebar_overlay_image="${state_directory}/sidebar-overlay-wayland.png"
     outer_window="${ZENTTY_NESTED_WAYLAND_OUTER_X11_WINDOW:?}"
-    import -silent -window "${outer_window}" "${sidebar_overlay_image}"
+    fullscreen_before="$(grep -Fc 'zentty-linux: window-state id=window-1 fullscreen=true' "${log}" || true)"
+    press_key F11
+    wait_for_count_greater \
+        'zentty-linux: window-state id=window-1 fullscreen=true' \
+        "${fullscreen_before}" \
+        "controlled Wayland visual state did not enter fullscreen"
+    zentty_visual_capture_stable "${sidebar_overlay_image}" \
+        import -silent -window "${outer_window}" ||
+        fail "controlled Wayland Global Find frame did not settle"
     zentty_visual_publish sidebar-overlay-wayland linux/tests/rust-pane-search \
         "${sidebar_overlay_image}" -
+    windowed_before="$(grep -Fc 'zentty-linux: window-state id=window-1 fullscreen=false' "${log}" || true)"
+    press_key F11
+    wait_for_count_greater \
+        'zentty-linux: window-state id=window-1 fullscreen=false' \
+        "${windowed_before}" \
+        "controlled Wayland visual state did not leave fullscreen"
 fi
 sleep 0.1
 [[ "$(grep -Fc 'zentty-linux: sidebar-visibility=hidden' "${log}" || true)" -eq "${sidebar_hidden_before}" ]] ||
@@ -965,6 +984,8 @@ grep -Fq 'zentty-linux: global-find-state visible=true remembered=true selected=
 # totals, or selection; returning to window 1 must resume the original search.
 single_target_before="$(grep -Fc 'zentty-linux: global-find shown targets=1' "${log}" || true)"
 first_window_id="${window_id}"
+second_window_active_before="$(grep -Fc 'zentty-linux: active-window=window-2' "${log}" || true)"
+second_pane_focus_before="$(grep -Fc 'zentty-linux: focus-pane pane=pane-window-2' "${log}" || true)"
 press_ctrl_shift n
 wait_for_fixed 'zentty-linux: terminal-ready-pane=pane-window-2' \
     "New Window did not initialize its independent real Ghostty surface"
@@ -982,16 +1003,17 @@ if [[ "${backend}" == x11 ]]; then
     done
     [[ "${second_window_id}" =~ ^[1-9][0-9]*$ ]] || fail "second X11 window identity was unavailable"
     window_id="${second_window_id}"
+    ZENTTY_PRODUCT_WINDOW_ID="${window_id}"
+    export ZENTTY_PRODUCT_WINDOW_ID
     xdotool windowfocus --sync "${window_id}"
 else
-    wtype -M alt -k Tab -m alt
+    wait_for_count_greater 'zentty-linux: active-window=window-2' \
+        "${second_window_active_before}" \
+        "Wayland compositor did not activate the newly created window"
 fi
-for _ in $(seq 1 160); do
-    grep -Fq 'zentty-linux: focus-pane pane=pane-window-2' "${log}" && break
-    sleep 0.05
-done
-grep -Fq 'zentty-linux: focus-pane pane=pane-window-2' "${log}" ||
-    fail "physical window targeting did not focus window 2's real terminal"
+wait_for_count_greater 'zentty-linux: focus-pane pane=pane-window-2' \
+    "${second_pane_focus_before}" \
+    "physical window targeting did not focus window 2's real terminal"
 type_text search-corpus
 press_key Return
 wait_for_fixed 'zentty-linux: title-pane=pane-window-2 value=focus:search-ready' \
@@ -1022,7 +1044,11 @@ wait_for_fixed 'zentty-linux: window-closed id=window-2 remaining=1' \
     "the independent search window did not close"
 if [[ "${backend}" == x11 ]]; then
     window_id="${first_window_id}"
+    ZENTTY_PRODUCT_WINDOW_ID="${window_id}"
+    export ZENTTY_PRODUCT_WINDOW_ID
     xdotool windowfocus --sync "${window_id}"
+else
+    reactivate_wayland_product_without_terminal_click
 fi
 window_one_wrap_before="$(grep -Fc 'zentty-linux: global-find-state visible=true remembered=true selected=Some(0) total=3' "${log}" || true)"
 press_key Return
