@@ -728,3 +728,85 @@ cluster evidence is green.
   The ledger records 21 diagnostic, repair, and final-audit attempts and changes only
   `rust-global-find-product-usage-wayland` to PASS. This remains a focused cell
   repair, not full Linux qualification.
+
+### Multi-window lifecycle, activation, overflow, and dependent-cell reconciliation
+
+- The remaining X11 multi-window replay first passed its functional journey
+  only when visual publication was bypassed. The rejected image was not random:
+  a one-column workspace exposed the horizontal scrollbar intended for Zentty's
+  multi-column carousel. The product now disables horizontal scrolling for zero-
+  and one-column layouts and retains automatic overflow for two or more columns.
+  A focused unit contract covers that boundary. Two fresh X11 captures were
+  pixel-identical and were reviewed before replacing the stale baseline; this
+  was a product repair plus evidence refresh, not a tolerance increase or mask.
+  The complete private-Xvfb lifecycle passed in session
+  `c188c726506bd93c469c6e15891a103f155bd49a2de3262777918dd53c90064e`.
+- The Wayland replay exposed a distinction between Zentty's intended active
+  window and GTK's compositor-confirmed active toplevel. The in-memory
+  `WindowSet` was deliberately updated before presentation, so the existing
+  `is-active` handler suppressed its log when GTK later confirmed the same ID.
+  The handler now always publishes a receipt for an actual GTK active
+  transition while retaining the idempotent model update. The controlled actor
+  uses that real transition to decide whether Weston must be asked to switch
+  toplevels; it does not treat `present()` or model state as compositor proof.
+- An `WAYLAND_DEBUG=1` protocol trace showed that the pinned Weston 13 desktop
+  shell does not advertise `xdg_activation_v1`. Experimental startup-token
+  changes therefore could not establish the required guarantee and were fully
+  reverted rather than retained as speculative product code. In this controlled
+  environment, Weston's real desktop-shell `Super+Tab` route is used only when
+  the latest GTK activation receipt identifies the wrong independently mapped
+  toplevel. The complete Wayland lifecycle then passed in session
+  `4f84a4ee73099cbab9b8deab62354c599b4f025714b0a1fc5302d657615913f7`:
+  two real windows, live PTY transfer, clean restore, SIGKILL restore, size
+  restore, and non-final close all completed.
+- The final agent-integration failure was a deterministic actor destination
+  error, not a remote-transfer exemption. A separate real GTK application
+  began a `text/uri-list` drag, and Zentty logged `drop=uri-enter`, but the
+  generic opposite-side endpoint finished over the sidebar after crossing the
+  terminal. GTK consequently reported `DragAction(0x0)` and never emitted a
+  drop. The session-restore journey now names an interior terminal coordinate,
+  as the existing local-drop journey already did. The focused real Weston drop
+  passed in session
+  `4edf8bdd004bbae5ca8fbd1c7b41a31d717fec9a7c0a20d660f6181ab0ace35d`.
+  The full composite passed in session
+  `30fc4fdb75e3219bcc2f82586d1b228cdd223dc867638cf24b3bd380b758677b`,
+  including real Gemini and Codex adapters, tmux topology, the installed Claude
+  team journey, real OpenSSH restore, and byte-verified physical file drop.
+- All six cells that the baseline had blocked were then executed rather than
+  converted to passes. Real cross-window pane drag passed under Weston session
+  `bacd56a370d6554c35c997e8a45e38964b840541a6cc0476cf5952803a4f6e20`
+  and Xvfb session
+  `f5f551b8e73250c32a08652ec660f0a01a1a63610b36bd520a7c4852aee48b0f`.
+  Destination destruction passed under Xvfb session
+  `c6ba71e87e95160d31eaf162a7632b289dac4ef454847d9e39fc9a637409d279`.
+  Real GTK plus external AT-SPI worklane checks passed under Cage session
+  `a125d0d53b7d6c6a6bfd4fd35689433b6b75275f511c61fae3db1a4d705bd131`
+  and Xvfb session
+  `626f5bfa317610d57728e31986e04c0514169854119e2a8fb0f9f07b54027aa8`.
+  The settings-navigation and complete 60-entry feature-inventory contract also
+  passed. The ledger validator previously encoded baseline dependency blockage
+  as permanent; it now permits an explicitly attempted PASS or FAIL with a
+  classified resource while still rejecting silent or evidence-free resolution.
+- GH-94 leaves the original 42-cell failure ledger at 39 PASS, one FAIL, and
+  two NOT_RUN. The three unresolved cells are the separately tracked GH-93
+  Valgrind suppression-governance failure and its two not-yet-run Debug
+  Valgrind prerequisites. This is completion of GH-94's ordinary qualification
+  repair scope, not a claim of exhaustive or full Linux qualification.
+- The first direct `cargo mutants` invocation correctly honored `.gitignore`
+  and did not copy `build/`, but that also meant the scratch checkout lacked
+  Ghostty's prepared embedding library; its unmutated baseline failed before
+  testing any mutant. The result was not counted. Re-running the same five
+  focused cases through `linux/tests/mutate-rust` supplied the existing library
+  by absolute `GHOSTTY_LIB_DIR` and kept the established systemd memory/IO
+  isolation. All five mutants were caught. The full `zentty-linux` package suite
+  (316 ordinary tests passed, two display-only tests intentionally delegated to
+  the real controlled-display cells), strict all-target Clippy, formatting,
+  ShellCheck, and the ledger contracts passed.
+- A closeout command mistakenly invoked `linux/tests/qualification-matrix`
+  directly as though it were a schema validator. It is the execution engine,
+  not the focused contract test, and without `qualify-local`'s preparation it
+  reported `prepare-ghostty` FAIL; it also faithfully retained GH-93's
+  Valgrind-governance FAIL. Neither result was relabelled or used as a GH-94
+  pass. The intended focused validators (`qualification-matrix-test`, the
+  orchestration contract, visual-parity negative fixtures, and the ledger
+  contract) were then invoked by name and passed.

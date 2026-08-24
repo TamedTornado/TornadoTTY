@@ -284,7 +284,13 @@ verify_remote_file_drop() {
         zentty_product_drag_from_x11_window 'Zentty File Drag Source' "${drag_receipt}" ||
             fail "physical X11 file drag could not be completed"
     else
-        zentty_product_drag_in_nested_wayland "${drag_receipt}" ||
+        # The source toplevel may be tiled on either side by Weston.  Name an
+        # interior terminal coordinate explicitly: the helper's generic
+        # opposite-side destination can otherwise finish over the sidebar
+        # after legitimately crossing the terminal drop target.
+        ZENTTY_NESTED_WAYLAND_DRAG_TARGET_X=800 \
+            ZENTTY_NESTED_WAYLAND_DRAG_TARGET_Y=500 \
+            zentty_product_drag_in_nested_wayland "${drag_receipt}" ||
             fail "physical nested-Wayland file drag could not be completed"
     fi
     grep -Fq 'drag-begin:' "${drag_receipt}" || fail "GTK drag source never began a real drag"

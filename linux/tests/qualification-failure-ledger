@@ -49,8 +49,14 @@ jq -e '
          else
             (.baseline.outcome == "BLOCKED" and
              .baseline.exit_code == null and
-             .replay.status == "BLOCKED" and
-             .replay.classification == "dependency")
+             (if .replay.status == "BLOCKED" then
+                  (.replay.classification == "dependency" and
+                   .replay.resource == null)
+              else
+                  ((.replay.status == "PASS" or .replay.status == "FAIL") and
+                   .replay.classification != "dependency" and
+                   (.replay.resource | type == "string" and length > 0))
+              end))
          end) and
         (if (.replay.status == "PASS" or .replay.status == "FAIL") then
              .replay.attempts > 0

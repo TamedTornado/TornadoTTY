@@ -247,6 +247,29 @@ target_second_window() {
         done
         fail "physical route probes could not identify ${pane_id}'s X11 toplevel"
     elif [[ "${ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT:-}" == 1 ]]; then
+        local expected_window latest_active active_before
+        if [[ "${pane_id}" == pane-1 ]]; then
+            expected_window=window-1
+        else
+            expected_window=window-2
+        fi
+        latest_active="$(grep -F 'zentty-linux: active-window=' "${log}" | tail -n 1 || true)"
+        if [[ "${latest_active}" != "zentty-linux: active-window=${expected_window}" ]]; then
+            active_before="$(grep -Fc "zentty-linux: active-window=${expected_window}" "${log}" || true)"
+            # Weston desktop-shell owns Super+Tab. Hold the modifier across
+            # the key transition so the compositor, rather than Zentty,
+            # selects the other independently mapped toplevel.
+            xdotool keydown super
+            xdotool keydown Tab
+            sleep 0.1
+            xdotool keyup Tab
+            xdotool keyup super
+            zentty_product_wait_for_log_count "${log}" \
+                "zentty-linux: active-window=${expected_window}" \
+                "$((active_before + 1))" \
+                "Weston did not activate ${pane_id}'s toplevel" ||
+                fail "physical Wayland window switch could not activate ${pane_id}"
+        fi
         find_pointer_target "zentty-linux: pane-controls pane=${pane_id} state=shown" any ||
             fail "physical Wayland pointer could not identify ${pane_id}'s toplevel"
         xdotool click 1
@@ -1199,6 +1222,7 @@ printf '%s\n' "${children_after_split[@]}" | grep -Fxq "${original_child}" ||
     fail "split replaced the original PTY child"
 type_and_expect_title "before-live-window-move" "pane-2"
 focus_count_before_move="$(grep -Fc 'zentty-linux: focus-pane pane=pane-2' "${log}" || true)"
+active_destination_before="$(grep -Fc 'zentty-linux: active-window=window-2' "${log}" || true)"
 execute_palette_action "Move Pane to New Window" "Move Pane to New Window"
 zentty_product_wait_for_log "${log}" \
     'zentty-linux: action=move-pane-to-new-window pane=pane-2 source=window-1 destination=window-2' \
@@ -1226,7 +1250,14 @@ for _ in {1..40}; do
 done
 [[ "${children_after_move[*]}" == "${children_after_split[*]}" ]] ||
     fail "live pane move changed the real PTY child set"
-target_second_window "pane-2"
+if [[ "${backend}" == wayland ]]; then
+    zentty_product_wait_for_log_count "${log}" 'zentty-linux: active-window=window-2' \
+        "$((active_destination_before + 1))" \
+        "moved pane destination did not become the compositor-active window" ||
+        fail "moved-pane destination compositor activation missing"
+else
+    target_second_window "pane-2"
+fi
 type_and_expect_title "after-live-window-move" "pane-2"
 zentty_product_type "${backend}" "agent-running"
 zentty_product_key "${backend}" Return

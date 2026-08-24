@@ -527,9 +527,8 @@ impl ApplicationCoordinator {
                 if let Some(shell) = weak_shell.upgrade() {
                     shell.borrow().settle_active_window_focus();
                 }
-                if let Some(coordinator) = weak.upgrade()
-                    && coordinator.borrow_mut().window_set.mark_active(&active_id)
-                {
+                if let Some(coordinator) = weak.upgrade() {
+                    coordinator.borrow_mut().window_set.mark_active(&active_id);
                     eprintln!("zentty-linux: active-window={active_id}");
                 }
             });

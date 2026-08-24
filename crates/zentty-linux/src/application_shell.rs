@@ -4047,8 +4047,15 @@ impl ApplicationShell {
         self.render_sidebar();
         self.refresh_pane_presentation();
 
+        let single_column = self.state.active_columns().len() == 1;
+        self.pane_scroll.set_hscrollbar_policy(
+            if pane_layout_can_overflow_horizontally(self.state.active_columns().len()) {
+                gtk::PolicyType::Automatic
+            } else {
+                gtk::PolicyType::Never
+            },
+        );
         let column_widths = self.resolved_column_widths();
-        let single_column = column_widths.len() == 1;
         let content_width = pane_content_width(&column_widths, self.pane_viewport_width());
         self.pane_box.set_width_request(content_width);
         eprintln!(
@@ -5730,6 +5737,10 @@ fn pane_content_width(column_widths: &[i32], viewport_width: i32) -> i32 {
         .max(viewport_width)
 }
 
+fn pane_layout_can_overflow_horizontally(column_count: usize) -> bool {
+    column_count > 1
+}
+
 fn pane_width_allocation_is_settled(
     sidebar_mode: SidebarVisibilityMode,
     allocated_sidebar_width: i32,
@@ -5926,8 +5937,9 @@ mod allocation_tests {
     use super::{
         TerminalGesture, UserActivationClock, bounded_pane_viewport_height, codex_terminal_gesture,
         default_window_recipe, focus_follow_should_apply, is_close_window_shortcut,
-        model_heights_to_pixels, pane_content_width, pane_width_allocation_is_settled,
-        settings_refresh_section, snapshot_window_frame, validated_window_size,
+        model_heights_to_pixels, pane_content_width, pane_layout_can_overflow_horizontally,
+        pane_width_allocation_is_settled, settings_refresh_section, snapshot_window_frame,
+        validated_window_size,
     };
     use crate::sidebar_visibility::Mode as SidebarVisibilityMode;
     use gtk::gdk;
@@ -6142,6 +6154,14 @@ mod allocation_tests {
         assert_eq!(pane_content_width(&[600, 599], 1_200), 1_200);
         assert_eq!(pane_content_width(&[800, 800], 1_200), 1_601);
         assert_eq!(pane_content_width(&[], 1_200), 1_200);
+    }
+
+    #[test]
+    fn horizontal_scrolling_is_reserved_for_multi_column_layouts() {
+        assert!(!pane_layout_can_overflow_horizontally(0));
+        assert!(!pane_layout_can_overflow_horizontally(1));
+        assert!(pane_layout_can_overflow_horizontally(2));
+        assert!(pane_layout_can_overflow_horizontally(8));
     }
 
     #[test]

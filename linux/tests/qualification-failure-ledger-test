@@ -28,7 +28,9 @@ expect_failure() {
 
 summary="$(${runner} "${ledger}" "${matrix}")"
 jq -e '.total == 42 and .baseline.direct_unexpected == 36 and
-    .baseline.dependency_blocked == 6 and .unresolved > 0' <<<"${summary}" >/dev/null ||
+    .baseline.dependency_blocked == 6 and .replay.PASS == 39 and
+    .replay.FAIL == 1 and .replay.NOT_RUN == 2 and .unresolved == 3' \
+    <<<"${summary}" >/dev/null ||
     fail "authoritative ledger summary is incorrect"
 
 jq 'del(.entries[0])' "${ledger}" >"${run_root}/missing.json"
@@ -50,4 +52,14 @@ expect_failure unknown "${run_root}/unknown.json" 'absent from authoritative mat
 jq '.entries[-1].baseline.kind = "direct"' "${ledger}" >"${run_root}/blocked.json"
 expect_failure blocked "${run_root}/blocked.json" 'entry contract'
 
-echo "Qualification failure ledger tests passed: baseline=42, negative-fixtures=6"
+jq '(.entries[] | select(.baseline.kind == "dependency") | .replay.resource) = null' \
+    "${ledger}" >"${run_root}/resolved-without-resource.json"
+expect_failure resolved-without-resource "${run_root}/resolved-without-resource.json" 'entry contract'
+
+jq '(.entries[] | select(.baseline.kind == "dependency") | .replay) = {
+        "status":"BLOCKED", "classification":"dependency", "attempts":1,
+        "resource":null, "evidence":"still blocked"
+    }' "${ledger}" >"${run_root}/blocked-with-attempt.json"
+expect_failure blocked-with-attempt "${run_root}/blocked-with-attempt.json" 'entry contract'
+
+echo "Qualification failure ledger tests passed: baseline=42, negative-fixtures=8"
