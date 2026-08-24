@@ -24,6 +24,9 @@ grep -Fq 'controlled mixed-scale Wayland session is required' <<<"${output}" ||
 # shellcheck disable=SC2016
 for contract in \
     'wlr-randr --output X11-1 --scale 1.5' \
+    'X11-1 scale ${scale_one} did not retain the controlled output order' \
+    'send_compositor_key "${presented_outer}" F1' \
+    'wait_for_log_count_greater' \
     'preferred_scale(180)' \
     'preferred_scale(240)' \
     'owned Xwayland scaling session' \
@@ -31,9 +34,17 @@ for contract in \
     'No current owner for _XSETTINGS_S0 selection' \
     'unexpectedly published X resource DPI' \
     'backend=${scaling_backend}' \
+    'cd "${run_root}"' \
+    'gtk-enable-animations=false' \
+    'pointer-proven compositor output' \
+    'VISUAL_OUTPUT' \
+    'compositor frame did not settle' \
     'single-baseline' \
     'multi-baseline' \
     'fractional-1.5' \
+    'Both scaled outputs have smaller logical geometry' \
+    'wait_for_changed_stable_geometry' \
+    'usable 12-cell-width terminal' \
     'integer-2' \
     'SIGWINCH' \
     'mouse-coordinate'; do

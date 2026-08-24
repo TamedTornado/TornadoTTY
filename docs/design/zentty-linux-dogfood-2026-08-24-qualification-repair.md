@@ -150,3 +150,59 @@ cluster evidence is green.
   following Cargo build. The audit now runs as a separate command immediately
   before the intact Cargo environment block. A structural regression test fixes
   that ordering and adjacency, and the repaired ReleaseSafe build passed.
+
+## GH-91: fractional-scaling visual and geometry repair
+
+- The exact `fractional-scale-wayland` actor correctly rejected an ambient run
+  without its owned mixed-scale compositor. In the required private labwc/Xvfb
+  environment, its first mismatch exposed ambient product state in the reviewed
+  images: the actor launched from the mutable source checkout, so branch,
+  dirty-tree, and review polling changed screenshot content asynchronously.
+  Scaling evidence now launches from its private run root. Two independent
+  `wide-dark-wayland` captures were byte-identical with SHA-256
+  `843d8918f831f0981ac88c1c1df1013fada3dd2ceb87ac7337461bac0a825cfe`.
+- The first private 1.5x captures still alternated by 2,655 pixels. Exact image
+  analysis localized every difference to the fractional pane scrollbars: the
+  screenshots were sampling different frames of their fade. The actor now
+  disables GTK animations and refuses to publish until two consecutive exact
+  compositor captures agree. It does not turn an unsettled frame into a pass.
+- The former capture selected the brighter of both wrapper-owned output
+  windows. After `MoveToOutput`, wlroots can retain the previous frame on the
+  old output, so that heuristic published the 1.5x image again as purported 2x
+  evidence. Each stage now records the exact outer X11 window that delivered
+  real pane-local pointer events and captures only that pointer-proven output.
+- A second false-positive was older `preferred_scale(240)` text satisfying the
+  post-move wait. Scale waits now require the observed event count to increase
+  after the operation. This exposed that the combined `wlr-randr` request had
+  silently reordered outputs: X11-1 was at 1196 rather than the assumed origin,
+  so “move right” never moved the product. Output scale and placement are now
+  applied and asserted in ordered steps; the current pointer-proven output is
+  moved left into the controlled 2x output. ReleaseSafe and Debug both traverse
+  different outer window IDs at stage 3.
+- Output reconfiguration publishes terminal rows and split columns in separate
+  layout steps. The actor initially recorded old or hybrid PTY geometry, even
+  though the eventual UI was correct. Each real PTY now requires changed
+  geometry to remain identical for a sustained 400 ms before recording. The
+  final Wayland receipts agree across both panes and profiles: 1x split
+  `32x36` at `10x21` cells, 1.5x `20x23` at `19x42`, and 2x `14x16` at
+  `19x42`, with increasing SIGWINCH counts at both logical-size transitions.
+- The reviewed 1.5x and 2x images were replaced only after independent exact
+  repeats. Final SHA-256 values are
+  `7203ccf9380a43c771000e153f99e81f783178025616b838e265778142f49a3e`
+  and `ed685f2c36252e0ff8e5fa4e6aa6297ef179fe3efe222c74eede0bf78d7002b8`
+  respectively. The earlier matching-but-unsettled receipts remain documented
+  here as discoveries, not final evidence.
+- The shared repair was also exercised through the real owned Xwayland cell.
+  Its 512-logical-pixel 2x viewport revealed that the old 100-pixel pointer scan
+  could not produce two distinct clicks inside a narrow split pane, and that an
+  arbitrary 180-pixel terminal-width assertion rejected the reviewed compact
+  layout. A 50-pixel physical scan and an explicit minimum of 12 terminal cells
+  now test usability without assuming sidebar geometry. The complete Xwayland
+  ReleaseSafe/Debug journey passed with exact windows `1024x743`, `682x487`,
+  and `512x359`, stable equal pane geometry, real PTY SIGWINCH, and real pointer
+  translation at every stage.
+- Final focused results: the scaling harness contract, ShellCheck, the complete
+  controlled Wayland scaling cell, and the affected complete controlled
+  Xwayland scaling cell all pass. No ambient absence or visual mismatch was
+  converted into a pass. The other GH-91 visual cells and the authoritative
+  full matrix have not yet been rerun.

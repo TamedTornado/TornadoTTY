@@ -8,6 +8,7 @@ scaling_backend="${ZENTTY_COMPOSITOR_SCALING_BACKEND:-wayland}"
 run_root="$(mktemp -d)"
 product_pid=""
 product_window=""
+presented_outer=""
 
 # shellcheck source=linux/tests/lib/product-bundle
 source "${repo_root}/linux/tests/lib/product-bundle"
@@ -127,12 +128,49 @@ mouse_report() {
         "${ZENTTY_SCALE_PROFILE}" "$1" "${first_column}" "${first_row}" \
         "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" >>"${ZENTTY_SCALE_RECEIPT}"
 }
+wait_for_changed_stable_geometry() {
+    local previous_rows="$1" previous_columns="$2"
+    local candidate_rows candidate_columns observed_rows="" observed_columns="" stable=0
+    for _ in {1..400}; do
+        read -r candidate_rows candidate_columns < <(stty size)
+        if [[ "${candidate_rows}" == "${previous_rows}" &&
+            "${candidate_columns}" == "${previous_columns}" ]]; then
+            stable=0
+        elif [[ "${candidate_rows}" == "${observed_rows}" &&
+            "${candidate_columns}" == "${observed_columns}" ]]; then
+            stable=$((stable + 1))
+            # Require a sustained 400 ms plateau. Fractional output changes can
+            # publish rows before the split allocation publishes final columns;
+            # three scheduler ticks accepted that intermediate geometry.
+            if (( stable >= 20 )); then
+                printf '%s\t%s\n' "${candidate_rows}" "${candidate_columns}"
+                return
+            fi
+        else
+            observed_rows="${candidate_rows}"
+            observed_columns="${candidate_columns}"
+            stable=1
+        fi
+        sleep 0.02
+    done
+    return 1
+}
 first_stage=0
 [[ "${ZENTTY_PANE_ID}" != pane-2 ]] || first_stage=1
+previous_rows=""
+previous_columns=""
 for stage_number in $(seq "${first_stage}" 3); do
     marker="${ZENTTY_SCALE_ROOT}/${ZENTTY_SCALE_PROFILE}-stage-${stage_number}"
     while [[ ! -e "${marker}" ]]; do sleep 0.02; done
-    read -r rows columns < <(stty size)
+    if [[ -n "${previous_rows}" ]]; then
+        IFS=$'\t' read -r rows columns < <(
+            wait_for_changed_stable_geometry "${previous_rows}" "${previous_columns}"
+        )
+    else
+        read -r rows columns < <(stty size)
+    fi
+    previous_rows="${rows}"
+    previous_columns="${columns}"
     IFS=$'\t' read -r cell_height cell_width < <(terminal_cell_size)
     printf 'GEOMETRY\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
         "${ZENTTY_SCALE_PROFILE}" "${stage_number}" "${ZENTTY_PANE_ID}" \
@@ -152,6 +190,18 @@ wait_for_log() {
     local file="$1" pattern="$2" description="$3"
     for _ in {1..400}; do
         [[ -f "${file}" ]] && grep -Fq -- "${pattern}" "${file}" && return
+        pid_is_running "${product_pid}" || break
+        sleep 0.02
+    done
+    fail "${description}"
+}
+
+wait_for_log_count_greater() {
+    local file="$1" pattern="$2" before="$3" description="$4" observed
+    for _ in {1..400}; do
+        observed=0
+        [[ ! -f "${file}" ]] || observed="$(grep -aFc -- "${pattern}" "${file}" || true)"
+        (( observed > before )) && return
         pid_is_running "${product_pid}" || break
         sleep 0.02
     done
@@ -183,24 +233,38 @@ split_pane_one() {
 }
 
 configure_outputs() {
-    local output_file="$1" scale_one="$2" expected_scale
+    local output_file="$1" scale_one="$2" expected_scale expected_position expected_two_position
     if [[ "${scale_one}" == 1 ]]; then
-        wlr-randr --output X11-1 --scale 1 --pos 0,0 \
-            --output X11-2 --scale 2 --pos 1024,0
+        # Apply X11-1's scale before moving X11-2 beside it. In a combined
+        # request, wlroots can resolve X11-2 against X11-1's old logical width
+        # and silently relocate X11-1, reversing the intended left/right order.
+        wlr-randr --output X11-1 --scale 1 --pos 0,0
+        wlr-randr --output X11-2 --scale 2 --pos 1024,0
     else
-        wlr-randr --output X11-1 --scale 1.5 --pos 0,0 \
-            --output X11-2 --scale 2 --pos 684,0
+        wlr-randr --output X11-1 --scale 1.5 --pos 0,0
+        # labwc keeps the backend's X11-2-before-X11-1 adjacency when X11-1's
+        # logical width changes. Anchor X11-2 at the origin and assert the
+        # resulting order instead of pretending a rejected reordering worked.
+        wlr-randr --output X11-2 --scale 2 --pos 0,0
+        # Reassert X11-1 only after both logical widths have settled. Without
+        # this final non-overlapping placement, labwc can transiently accept
+        # both outputs at 0,0 depending on surface activity during the update.
+        wlr-randr --output X11-1 --pos 512,0
     fi
     wlr-randr >"${output_file}"
     case "${scale_one}" in
-        1) expected_scale=1.000000 ;;
-        1.5) expected_scale=1.500000 ;;
+        1) expected_scale=1.000000; expected_position=0,0; expected_two_position=1024,0 ;;
+        1.5) expected_scale=1.500000; expected_position=512,0; expected_two_position=0,0 ;;
         *) fail "unsupported X11-1 scale ${scale_one}" ;;
     esac
     grep -A9 '^X11-1 ' "${output_file}" | grep -Fq "Scale: ${expected_scale}" ||
         fail "X11-1 scale ${scale_one} was not observed through output management"
+    grep -A9 '^X11-1 ' "${output_file}" | grep -Fq "Position: ${expected_position}" ||
+        fail "X11-1 scale ${scale_one} did not retain the controlled output order"
     grep -A9 '^X11-2 ' "${output_file}" | grep -Fq 'Scale: 2.000000' ||
         fail "X11-2 scale 2 was not retained"
+    grep -A9 '^X11-2 ' "${output_file}" | grep -Fq "Position: ${expected_two_position}" ||
+        fail "X11-2 did not retain the controlled output order"
     if [[ "${scaling_backend}" == xwayland ]]; then
         xrandr --current >"${output_file}.xwayland"
         [[ "$(grep -c ' connected ' "${output_file}.xwayland")" -eq 2 ]] ||
@@ -226,23 +290,42 @@ send_compositor_key() {
 capture_scaling_visual() {
     local scenario_id="$1"
     local image="${run_root}/${scenario_id}.png"
-    local candidate candidate_image candidate_mean selected_mean=-1
-    # wlroots' X11 backend does not expose a stable mapping from Wayland output
-    # names to its two outer X windows. Capture both wrapper-owned outputs and
-    # select the one with presented pixels; the unused output is solid black.
-    for candidate in "${outer_windows[@]}"; do
-        candidate_image="${run_root}/${scenario_id}-${candidate}.png"
-        DISPLAY="${outer_display}" import -silent -window "${candidate}" "${candidate_image}"
-        candidate_mean="$(convert "${candidate_image}" -colorspace gray -format '%[fx:mean]' info:)"
-        if awk -v candidate="${candidate_mean}" -v selected="${selected_mean}" \
-            'BEGIN { exit !(candidate > selected) }'; then
-            cp -- "${candidate_image}" "${image}"
-            selected_mean="${candidate_mean}"
+    local candidate_mean
+    local attempt current_image previous_image="" compare_status settled=0
+    [[ "${presented_outer}" =~ ^[1-9][0-9]*$ ]] ||
+        fail "${scenario_id} has no pointer-proven compositor output"
+    # run_stage records the exact outer output that delivered this stage's real
+    # pane-local pointer events. Capture that window rather than selecting the
+    # brighter of both outputs: after MoveToOutput, wlroots can retain the last
+    # presented frame on the old output, making brightness select stale pixels.
+    # A visual receipt must describe a settled frame, not whichever fractional
+    # scrollbar or decoration animation happened to be presented after an
+    # arbitrary sleep. Require two consecutive, byte-identical compositor
+    # captures. A session that never settles is a test failure, not a baseline.
+    for attempt in {1..50}; do
+        current_image="${run_root}/${scenario_id}-attempt-${attempt}.png"
+        DISPLAY="${outer_display}" import -silent -window "${presented_outer}" "${current_image}"
+        candidate_mean="$(convert "${current_image}" -colorspace gray -format '%[fx:mean]' info:)"
+        awk -v selected="${candidate_mean}" 'BEGIN { exit !(selected > 0.001) }' ||
+            fail "${scenario_id} found no presented compositor output"
+        if [[ -n "${previous_image}" ]]; then
+            compare_status=0
+            compare -metric AE "${previous_image}" "${current_image}" null: \
+                2>"${run_root}/${scenario_id}.settle-ae" || compare_status=$?
+            (( compare_status <= 1 )) ||
+                fail "${scenario_id} could not compare consecutive compositor frames"
+            if [[ "$(cat "${run_root}/${scenario_id}.settle-ae")" == 0 ]]; then
+                cp -- "${current_image}" "${image}"
+                settled=1
+                break
+            fi
         fi
+        previous_image="${current_image}"
+        sleep 0.1
     done
-    awk -v selected="${selected_mean}" 'BEGIN { exit !(selected > 0.001) }' ||
-        fail "${scenario_id} found no presented compositor output"
-    zentty_visual_publish "${scenario_id}" linux/tests/rust-wayland-scaling "${image}" -
+    (( settled == 1 )) || fail "${scenario_id} compositor frame did not settle"
+    zentty_visual_publish "${scenario_id}" linux/tests/rust-wayland-scaling "${image}" - ||
+        fail "${scenario_id} visual evidence did not match"
 }
 
 run_stage() {
@@ -273,10 +356,21 @@ run_stage() {
         window_width="$(sed -n 's/^WIDTH=//p' <<<"${window_geometry}")"
         window_height="$(sed -n 's/^HEIGHT=//p' <<<"${window_geometry}")"
         DISPLAY="${pointer_display}" xdotool windowfocus --sync "${candidate}"
-        for x in $(seq 50 100 "$((window_width - 50))"); do
+        # The 2x Xwayland viewport is only 512 logical pixels wide, and its
+        # split pane can be narrower than the old 100-pixel scan stride. A
+        # 50-pixel stride guarantees two distinct pane-local columns without
+        # assuming a sidebar width or clicking the same terminal cell twice.
+        for x in $(seq 25 50 "$((window_width - 25))"); do
             DISPLAY="${pointer_display}" xdotool mousemove --sync --window "${candidate}" \
                 "${x}" "$((window_height / 2))" click 1
             if grep -Fq -- "${mouse_pattern}" "${receipt}"; then
+                if [[ "${scaling_backend}" == wayland ]]; then
+                    presented_outer="${candidate}"
+                    printf 'VISUAL_OUTPUT\t%s\t%s\t%s\n' \
+                        "${profile}" "${stage}" "${presented_outer}" >>"${receipt}"
+                    printf 'rust-wayland-scaling: visual-output profile=%s stage=%s outer-x11-window=%s\n' \
+                        "${profile}" "${stage}" "${presented_outer}"
+                fi
                 break 2
             fi
         done
@@ -308,7 +402,7 @@ run_stage() {
 
 run_profile() {
     local profile="$1" requested_binary="$2" product bundle_lib cli state receipt log
-    local xwayland_two_x
+    local xwayland_two_x scale_event_before
     local -a product_environment
     product="${requested_binary}"
     zentty_product_bundle_resolve "${product}" || fail "${profile} staged bundle is invalid"
@@ -326,6 +420,11 @@ confirm_before_closing_worklane = false
 confirm_before_closing_window = false
 confirm_before_quitting = false
 CONFIG
+    mkdir -p "${XDG_CONFIG_HOME}/gtk-4.0"
+    cat >"${XDG_CONFIG_HOME}/gtk-4.0/settings.ini" <<'INI'
+[Settings]
+gtk-enable-animations=false
+INI
     cat >"${XDG_CONFIG_HOME}/ghostty/config" <<'CONFIG'
 resize-overlay = never
 cursor-opacity = 0
@@ -341,9 +440,15 @@ CONFIG
         "LD_LIBRARY_PATH=${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
     )
     [[ "${scaling_backend}" == xwayland ]] || product_environment+=(WAYLAND_DEBUG=client)
-    env "${product_environment[@]}" "${product}" \
-        --command "${actor}" --state-directory "${state}" \
-        --no-session-restore >"${log}" 2>&1 &
+    (
+        # Scaling evidence owns no Git/review scenario. Launch from the private
+        # run root so the mutable source checkout cannot add an asynchronous
+        # branch, dirty-tree, or stale-review transition to these screenshots.
+        cd "${run_root}"
+        exec env "${product_environment[@]}" "${product}" \
+            --command "${actor}" --state-directory "${state}" \
+            --no-session-restore
+    ) >"${log}" 2>&1 &
     product_pid=$!
     wait_for_log "${log}" 'terminal-ready-pane=pane-1' \
         "${profile} single real terminal did not initialize"
@@ -368,9 +473,10 @@ CONFIG
     focus_pane_one "${cli}"
     run_stage "${profile}" 1 2 "${receipt}" "${log}" # multi-baseline
 
+    scale_event_before="$(grep -aFc 'preferred_scale(180)' "${log}" || true)"
     configure_outputs "${run_root}/${profile}-fractional.outputs" 1.5
     if [[ "${scaling_backend}" == wayland ]]; then
-        wait_for_log "${log}" 'preferred_scale(180)' \
+        wait_for_log_count_greater "${log}" 'preferred_scale(180)' "${scale_event_before}" \
             "${profile} did not observe compositor preferred_scale(180)"
     else
         sleep 0.5
@@ -381,8 +487,12 @@ CONFIG
     fi
 
     if [[ "${scaling_backend}" == wayland ]]; then
-        send_compositor_key "${outer_one}" F2
-        wait_for_log "${log}" 'preferred_scale(240)' \
+        scale_event_before="$(grep -aFc 'preferred_scale(240)' "${log}" || true)"
+        # Fractional reconfiguration deterministically leaves X11-1 to the
+        # right of X11-2. Address the pointer-proven current output and move
+        # left, rather than sending a key to an assumed outer-window mapping.
+        send_compositor_key "${presented_outer}" F1
+        wait_for_log_count_greater "${log}" 'preferred_scale(240)' "${scale_event_before}" \
             "${profile} did not observe compositor preferred_scale(240)"
     else
         send_compositor_key "${outer_one}" F4
@@ -449,29 +559,42 @@ validate_profile() {
                 $6 !~ /^[1-9][0-9]*$/ || $7 !~ /^[1-9][0-9]*$/) exit 1
             window_w[$3]=$6; window_h[$3]=$7
         }
+        $1 == "VISUAL_OUTPUT" {
+            if (NF != 4 || $2 != profile || $3 !~ /^[0-3]$/ ||
+                $4 !~ /^[1-9][0-9]*$/ || ($3 in visual_output)) exit 1
+            visual_output[$3]=$4
+        }
         END {
             if (length(rows) != 7 || length(mouse) != 4) exit 1
             for (stage=0; stage<=3; stage++) {
                 key=stage SUBSEP "pane-1"
                 if (!(key in rows) || !(stage in mouse)) exit 1
-                if (rows[key] * cell_h[key] < 150 || columns[key] * cell_w[key] < 180) exit 1
+                # The owned 512-logical-pixel Xwayland output intentionally
+                # fits the sidebar plus two panes. Each pane must retain a
+                # usable 12-cell-width terminal, not an arbitrary 180 pixels
+                # that the reviewed compact layout cannot physically provide.
+                if (rows[key] * cell_h[key] < 150 || columns[key] < 12) exit 1
             }
             for (stage=1; stage<=3; stage++) {
                 one=stage SUBSEP "pane-1"; two=stage SUBSEP "pane-2"
                 if (rows[one] != rows[two] || columns[one] != columns[two] ||
                     cell_h[one] != cell_h[two] || cell_w[one] != cell_w[two]) exit 1
             }
+            # Both scaled outputs have smaller logical geometry than the 1x
+            # output. Each transition must resize both real PTYs exactly far
+            # enough to produce a new cumulative SIGWINCH observation.
             if (winch[2 SUBSEP "pane-1"] <= winch[1 SUBSEP "pane-1"] ||
                 winch[3 SUBSEP "pane-1"] <= winch[2 SUBSEP "pane-1"] ||
                 winch[2 SUBSEP "pane-2"] <= winch[1 SUBSEP "pane-2"] ||
                 winch[3 SUBSEP "pane-2"] <= winch[2 SUBSEP "pane-2"]) exit 1
             if (columns[1 SUBSEP "pane-1"] >= columns[0 SUBSEP "pane-1"]) exit 1
             if (backend == "wayland") {
-                if (length(window_w) != 0 ||
-                    rows[2 SUBSEP "pane-1"] != rows[1 SUBSEP "pane-1"] ||
-                    columns[2 SUBSEP "pane-1"] != columns[1 SUBSEP "pane-1"] ||
-                    cell_h[3 SUBSEP "pane-1"] < cell_h[2 SUBSEP "pane-1"] * 1.8 ||
-                    cell_w[3 SUBSEP "pane-1"] < cell_w[2 SUBSEP "pane-1"] * 1.8 ||
+                if (length(window_w) != 0 || length(visual_output) != 4 ||
+                    rows[2 SUBSEP "pane-1"] >= rows[1 SUBSEP "pane-1"] ||
+                    cell_h[2 SUBSEP "pane-1"] < cell_h[1 SUBSEP "pane-1"] * 1.8 ||
+                    cell_w[2 SUBSEP "pane-1"] < cell_w[1 SUBSEP "pane-1"] * 1.8 ||
+                    cell_h[3 SUBSEP "pane-1"] != cell_h[2 SUBSEP "pane-1"] ||
+                    cell_w[3 SUBSEP "pane-1"] != cell_w[2 SUBSEP "pane-1"] ||
                     rows[3 SUBSEP "pane-1"] >= rows[2 SUBSEP "pane-1"]) exit 1
             } else {
                 if (length(window_w) != 4 || window_w[0] != 1024 || window_w[1] != 1024 ||
@@ -501,6 +624,10 @@ for profile in release-safe debug; do
         $1 == "WINDOW" {
             printf "rust-wayland-scaling: window profile=%s stage=%s position=%s,%s size=%sx%s\n",
                 profile, $3, $4, $5, $6, $7
+        }
+        $1 == "VISUAL_OUTPUT" {
+            printf "rust-wayland-scaling: visual-output profile=%s stage=%s outer-x11-window=%s\n",
+                profile, $3, $4
         }
     ' "${run_root}/${profile}.receipt"
 done
