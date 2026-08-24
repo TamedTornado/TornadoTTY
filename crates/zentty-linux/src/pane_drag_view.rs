@@ -66,10 +66,44 @@ fn set_drop_shields_enabled(enabled: bool) {
 #[derive(Clone)]
 pub(crate) struct PaneDragContext {
     pub(crate) window_id: String,
-    pub(crate) generation: u64,
     pub(crate) on_drop: Rc<dyn Fn(PaneDropOutcome)>,
     pub(crate) on_cancel: Rc<dyn Fn(String)>,
-    pub(crate) source_columns: Rc<BTreeMap<String, String>>,
+    pub(crate) source_state: Rc<PaneDragSourceState>,
+}
+
+#[derive(Default)]
+pub(crate) struct PaneDragSourceState {
+    generation: Cell<u64>,
+    payloads: RefCell<BTreeMap<String, PaneDragPayload>>,
+}
+
+impl PaneDragSourceState {
+    pub(crate) fn advance(&self, payloads: impl IntoIterator<Item = PaneDragPayload>) {
+        let generation = self.generation.get().wrapping_add(1);
+        self.generation.set(generation);
+        self.refresh(payloads);
+    }
+
+    pub(crate) fn refresh(&self, payloads: impl IntoIterator<Item = PaneDragPayload>) {
+        let generation = self.generation();
+        self.payloads.replace(
+            payloads
+                .into_iter()
+                .map(|mut payload| {
+                    payload.source_generation = generation;
+                    (payload.pane_id.clone(), payload)
+                })
+                .collect(),
+        );
+    }
+
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation.get()
+    }
+
+    fn snapshot(&self, pane_id: &str) -> Option<PaneDragPayload> {
+        self.payloads.borrow().get(pane_id).cloned()
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -127,11 +161,12 @@ pub(crate) fn make_identity_card(payload: &PaneDragPayload, class: &str) -> gtk:
 pub(crate) fn sidebar_source(
     select: &gtk::Button,
     row: &gtk::Box,
-    payload: PaneDragPayload,
+    pane_id: &str,
+    source_state: &Rc<PaneDragSourceState>,
     on_cancel: Rc<dyn Fn(String)>,
 ) -> gtk::DragSource {
     let motion = gtk::EventControllerMotion::new();
-    let motion_pane = payload.pane_id.clone();
+    let motion_pane = pane_id.to_owned();
     motion.connect_enter(move |_, _, _| {
         eprintln!("zentty-linux: pane-drag-zone pane={motion_pane} source=sidebar pointer=entered");
     });
@@ -144,32 +179,48 @@ pub(crate) fn sidebar_source(
     let source = gtk::DragSource::new();
     source.set_actions(gtk::gdk::DragAction::MOVE);
     source.set_propagation_phase(gtk::PropagationPhase::Capture);
-    let prepare = payload.clone();
+    let prepared_slot = Rc::new(RefCell::new(None::<PaneDragPayload>));
+    let prepare_pane = pane_id.to_owned();
+    let prepare_state = Rc::clone(source_state);
+    let slot_for_prepare = Rc::clone(&prepared_slot);
     source.connect_prepare(move |_, _, _| {
-        eprintln!("zentty-linux: pane-drag=prepare pane={}", prepare.pane_id);
-        Some(payload_provider(&prepare))
+        slot_for_prepare.replace(None);
+        let payload = prepare_state.snapshot(&prepare_pane)?;
+        eprintln!(
+            "zentty-linux: pane-drag=prepare pane={} generation={} column={}",
+            payload.pane_id, payload.source_generation, payload.source_column_id
+        );
+        let provider = payload_provider(&payload);
+        slot_for_prepare.replace(Some(payload));
+        Some(provider)
     });
-    let begin_payload = payload.clone();
+    let slot_for_begin = Rc::clone(&prepared_slot);
     let begin_row = row.clone();
     source.connect_drag_begin(move |source, _| {
-        begin_active_payload(&begin_payload);
-        let preview = make_identity_card(&begin_payload, "pane-drag-floating");
+        let Some(payload) = slot_for_begin.borrow().clone() else {
+            eprintln!("zentty-linux: pane-drag=begin rejected=no-prepared-payload");
+            return;
+        };
+        begin_active_payload(&payload);
+        let preview = make_identity_card(&payload, "pane-drag-floating");
         let paintable = gtk::WidgetPaintable::new(Some(&preview));
         source.set_icon(Some(&paintable), 20, 18);
         begin_row.add_css_class("pane-dragged");
         eprintln!(
             "zentty-linux: pane-drag=begin window={} worklane={} pane={} visual=full-card",
-            begin_payload.source_window_id, begin_payload.source_worklane_id, begin_payload.pane_id
+            payload.source_window_id, payload.source_worklane_id, payload.pane_id
         );
     });
     let end_row = row.clone();
-    let end_pane = payload.pane_id.clone();
+    let end_pane = pane_id.to_owned();
+    let slot_for_end = Rc::clone(&prepared_slot);
     source.connect_drag_end(move |_, _, _| {
         end_active_payload(&end_pane);
+        slot_for_end.replace(None);
         end_row.remove_css_class("pane-dragged");
         eprintln!("zentty-linux: pane-drag=end pane={end_pane} visual=cleared");
     });
-    let cancel_pane = payload.pane_id;
+    let cancel_pane = pane_id.to_owned();
     source.connect_drag_cancel(move |_, _, reason| {
         eprintln!("zentty-linux: pane-drag=cancel pane={cancel_pane} reason={reason:?}");
         on_cancel(cancel_pane.clone());
@@ -252,7 +303,7 @@ pub(crate) fn install_worklane_target(
                 window_id: drop_context.window_id.clone(),
                 worklane_id: drop_worklane.clone(),
                 pane_index: Some(pane_index),
-                generation: drop_context.generation,
+                generation: drop_context.source_state.generation(),
             }),
             stack_gap_hit: None,
             split_hit: None,
@@ -388,7 +439,7 @@ pub(crate) fn wrap_canvas_target(
                     worklane_id: worklane_id.clone(),
                     column_id: column_id.clone(),
                     pane_index: pane_index + usize::from(after),
-                    generation: drop_context.generation,
+                    generation: drop_context.source_state.generation(),
                 }),
                 None,
                 None,
@@ -401,7 +452,7 @@ pub(crate) fn wrap_canvas_target(
                     target_pane_id: pane_id.clone(),
                     axis,
                     leading,
-                    generation: drop_context.generation,
+                    generation: drop_context.source_state.generation(),
                 }),
                 None,
             ),
@@ -412,7 +463,7 @@ pub(crate) fn wrap_canvas_target(
                     window_id: drop_context.window_id.clone(),
                     worklane_id: worklane_id.clone(),
                     column_index: column_index + usize::from(after),
-                    generation: drop_context.generation,
+                    generation: drop_context.source_state.generation(),
                 }),
             ),
         };
@@ -561,22 +612,69 @@ mod tests {
     use super::*;
     use crate::pane_drag_drop::PaneDragPresentation;
 
-    #[test]
-    fn pane_payload_uses_a_distinct_boxed_type_so_worklane_string_drops_cannot_collide() {
-        assert_ne!(PaneDragTransfer::static_type(), String::static_type());
-        let payload = PaneDragPayload {
+    fn payload() -> PaneDragPayload {
+        PaneDragPayload {
             source_window_id: "window-a".to_owned(),
             source_worklane_id: "lane-a".to_owned(),
-            source_column_id: "column-a".to_owned(),
+            source_column_id: String::new(),
             pane_id: "pane-a".to_owned(),
-            source_generation: 4,
+            source_generation: 0,
             presentation: PaneDragPresentation {
                 worklane_title: "Frontend".to_owned(),
                 pane_title: "pnpm dev".to_owned(),
                 context: "frontend • main".to_owned(),
                 agent_status: None,
             },
-        };
+        }
+    }
+
+    #[test]
+    fn sidebar_drag_snapshot_reads_current_topology_at_drag_start() {
+        let state = PaneDragSourceState::default();
+        let mut old = payload();
+        old.source_column_id = "column-old".to_owned();
+        state.advance([old]);
+        let mut current = payload();
+        current.source_column_id = "column-current".to_owned();
+        current.presentation.pane_title = "current title".to_owned();
+        state.advance([current]);
+
+        let snapshot = state.snapshot("pane-a").expect("pane remains in topology");
+        assert_eq!(snapshot.source_generation, 2);
+        assert_eq!(snapshot.source_column_id, "column-current");
+        assert_eq!(snapshot.presentation.pane_title, "current title");
+    }
+
+    #[test]
+    fn prepared_drag_snapshot_stays_stale_when_topology_advances() {
+        let state = PaneDragSourceState::default();
+        let mut old = payload();
+        old.source_column_id = "column-old".to_owned();
+        state.advance([old]);
+        let prepared = state.snapshot("pane-a").expect("pane exists at prepare");
+
+        let mut new = payload();
+        new.source_column_id = "column-new".to_owned();
+        state.advance([new]);
+
+        assert_eq!(prepared.source_generation, 1);
+        assert_eq!(prepared.source_column_id, "column-old");
+        assert_eq!(state.generation(), 2);
+    }
+
+    #[test]
+    fn sidebar_drag_snapshot_rejects_a_removed_pane() {
+        let state = PaneDragSourceState::default();
+        state.advance([]);
+        assert!(state.snapshot("pane-a").is_none());
+    }
+
+    #[test]
+    fn pane_payload_uses_a_distinct_boxed_type_so_worklane_string_drops_cannot_collide() {
+        assert_ne!(PaneDragTransfer::static_type(), String::static_type());
+        let mut payload = payload();
+        payload.source_column_id = "column-a".to_owned();
+        payload.source_generation = 4;
         let provider = payload_provider(&payload);
         assert!(
             provider

@@ -577,3 +577,40 @@ cluster evidence is green.
   multiwindow Weston profile, and the ledger records 18 diagnostic/repair
   attempts before PASS. This changes one failure-ledger cell only and is not a
   full Linux qualification claim.
+
+### Stable sidebar cards with current pane-drag identity
+
+- The repaired PID-owned X11 actor advanced beyond its earlier window lookup
+  failure and exposed a product lifecycle defect: creating nine real worklanes
+  rebuilt an unaffected worklane card nine times. Card compatibility included
+  the global topology generation, so every render invalidated every card even
+  when its pane membership was unchanged. The journey correctly rejected that
+  churn rather than treating the final visual state as sufficient.
+- The generation coupling had also hidden a correctness dependency. Sidebar
+  drag controllers captured their pane column, generation, and presentation
+  when the card was constructed. Simply dropping the compatibility check would
+  have left retained cards able to start stale drags. Zentty now has one shared
+  `PaneDragSourceState`: topology renders advance its generation and refresh
+  the complete payload catalog; metadata-only refreshes update that catalog
+  without inventing a topology change. A real GTK drag snapshots the current
+  payload during `prepare`. That immutable snapshot remains stale if topology
+  changes while the drag is in flight, so the existing source/destination
+  generation validation still fails closed.
+- Focused tests prove that a retained controller reads the latest column,
+  generation, and presentation, that a prepared payload does not silently
+  become current after a topology change, and that a removed pane cannot start
+  a drag. All six generated `PaneDragSourceState` mutants were exercised by the
+  resource-isolated project runner: five were caught and one was unviable.
+  Strict all-target Clippy passed. The complete package suite passed only in
+  the required elevated environment because its real `/proc` listener test
+  cannot bind inside the filesystem/network sandbox; the initial sandboxed
+  `EPERM` was retained as environmental evidence, not called a pass.
+- A fresh ReleaseSafe bundle passed the complete sidebar journey in private
+  Xvfb session `da8bc03b27687c364c2f969282ef3da44271322783c14ff46d6249c1235ca5cd`:
+  nine real Ghostty PTYs, overflow reveal, pointer reorder, keyboard reorder,
+  contextual transfer, stable unaffected rows, and post-transfer input. The
+  related real GTK pane-drag journey passed in private Xvfb session
+  `3e5eac89e41bcac571b865a151a194a61a2993426eb7702f34d58bc7634a9f81`,
+  preserving exact topology and the live PTY. The ledger now marks only
+  `product-sidebar-management-x11` PASS after four attempts; this is not a
+  claim of full Linux qualification.

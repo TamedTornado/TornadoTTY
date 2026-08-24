@@ -11,7 +11,7 @@ use crate::{
     pane_drag_drop::{
         PaneDragPayload, PaneDragPresentation, PaneDropOutcome, SidebarDropTarget, SplitAxis,
     },
-    pane_drag_view::{self, PaneDragContext},
+    pane_drag_view::{self, PaneDragContext, PaneDragSourceState},
     pane_scroll_switch::{PaneScrollSwitch, ScrollSwitchResult, ScrollUnit},
     peek_scroll_navigation::{
         Direction as PeekScrollDirection, PeekScrollNavigation, Result as PeekScrollResult,
@@ -218,7 +218,7 @@ pub(crate) struct ApplicationShell {
     task_runner_actions: BTreeMap<String, TaskRunnerAction>,
     last_pane_viewport_width: Cell<i32>,
     last_pane_viewport_height: Cell<i32>,
-    topology_generation: Cell<u64>,
+    pane_drag_source_state: Rc<PaneDragSourceState>,
     action_router: Option<ActionRouter>,
     shortcut_manager: Rc<RefCell<zentty_core::ShortcutManager>>,
     shortcut_controller: Option<gtk::EventControllerKey>,
@@ -500,7 +500,7 @@ impl ApplicationShell {
             task_runner_actions: BTreeMap::new(),
             last_pane_viewport_width: Cell::new(0),
             last_pane_viewport_height: Cell::new(0),
-            topology_generation: Cell::new(0),
+            pane_drag_source_state: Rc::new(PaneDragSourceState::default()),
             action_router: None,
             shortcut_manager: Rc::new(RefCell::new(zentty_core::ShortcutManager::new(
                 &shortcut_registry::definitions(),
@@ -945,7 +945,7 @@ impl ApplicationShell {
     }
 
     pub(crate) fn topology_generation(&self) -> u64 {
-        self.topology_generation.get()
+        self.pane_drag_source_state.generation()
     }
 
     pub(crate) fn worklane_id_for_pane(&self, pane_id: &str) -> Option<&str> {
@@ -4040,8 +4040,8 @@ impl ApplicationShell {
     }
 
     pub(crate) fn render(&self) {
-        self.topology_generation
-            .set(self.topology_generation.get().wrapping_add(1));
+        self.pane_drag_source_state
+            .advance(self.pane_drag_payloads());
         clear_pane_columns(&self.pane_box);
         self.rendered_columns.borrow_mut().clear();
         self.render_sidebar();
@@ -4175,7 +4175,7 @@ impl ApplicationShell {
                 .id
                 .clone(),
             pane_id: pane_id.to_owned(),
-            source_generation: self.topology_generation.get(),
+            source_generation: self.pane_drag_source_state.generation(),
             presentation: PaneDragPresentation {
                 worklane_title: summary
                     .top_label
@@ -4191,10 +4191,19 @@ impl ApplicationShell {
         })
     }
 
+    fn pane_drag_payloads(&self) -> Vec<PaneDragPayload> {
+        self.state
+            .worklanes()
+            .iter()
+            .flat_map(|worklane| &worklane.columns)
+            .flat_map(|column| &column.panes)
+            .filter_map(|pane| self.pane_drag_payload(&pane.id))
+            .collect()
+    }
+
     fn pane_drag_context(&self) -> PaneDragContext {
         PaneDragContext {
             window_id: self.window_template.id.clone(),
-            generation: self.topology_generation.get(),
             on_drop: {
                 let weak = self.self_handle.borrow().clone();
                 Rc::new(move |outcome| {
@@ -4220,19 +4229,7 @@ impl ApplicationShell {
                     }
                 })
             },
-            source_columns: Rc::new(
-                self.state
-                    .worklanes()
-                    .iter()
-                    .flat_map(|worklane| &worklane.columns)
-                    .flat_map(|column| {
-                        column
-                            .panes
-                            .iter()
-                            .map(move |pane| (pane.id.clone(), column.id.clone()))
-                    })
-                    .collect(),
-            ),
+            source_state: Rc::clone(&self.pane_drag_source_state),
         }
     }
 
@@ -4658,6 +4655,8 @@ impl ApplicationShell {
     }
 
     fn render_sidebar(&self) {
+        self.pane_drag_source_state
+            .refresh(self.pane_drag_payloads());
         let summaries = self.sidebar_summaries();
         let destination_groups = self.sidebar_destination_groups(&summaries);
         self.reconcile_attention(&summaries);
@@ -4682,6 +4681,8 @@ impl ApplicationShell {
     }
 
     fn refresh_sidebar_metadata(&self) {
+        self.pane_drag_source_state
+            .refresh(self.pane_drag_payloads());
         let summaries = self.sidebar_summaries();
         self.reconcile_attention(&summaries);
         let servers = self.ranked_servers();
