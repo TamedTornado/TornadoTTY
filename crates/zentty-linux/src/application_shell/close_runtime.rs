@@ -13,6 +13,12 @@ use super::ApplicationShell;
 impl ApplicationShell {
     fn focus_terminal_after_confirmation(shell: &Rc<std::cell::RefCell<Self>>) {
         let window = shell.borrow().window().clone();
+        // Dismissing a modal transient does not guarantee that a Wayland
+        // compositor reactivates its parent. Request the parent explicitly;
+        // focus restoration below still waits for the real active transition
+        // and never treats present() itself as compositor acceptance.
+        gtk::prelude::GtkWindowExt::present(&window);
+        eprintln!("zentty-linux: confirmation parent-presented=true");
         let restore = |shell: &Rc<std::cell::RefCell<Self>>| {
             let shell = shell.borrow();
             if shell.shutting_down {

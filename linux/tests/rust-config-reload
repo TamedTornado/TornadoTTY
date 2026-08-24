@@ -147,6 +147,11 @@ zentty_product_wait_for_log_count "${log}" \
     "hidden sidebar config did not project into both windows" || fail "hidden sidebar projection missing"
 [[ "$(grep -Fc 'zentty-linux: sidebar-config width=' "${log}" || true)" -eq "$((sidebar_projection_before + 2))" ]] ||
     fail "hidden sidebar configuration projected more than once per window"
+# The two-window projection is the accepted state, but its directory monitor
+# may still be coalescing duplicate rename notifications. Require the existing
+# observable reload stream to settle before publishing the next independent
+# operator transaction; otherwise two intended states can collapse into one.
+wait_for_applied_quiescence
 
 cat >"${config_file}.sidebar-pinned" <<'EOF'
 [sidebar]
@@ -192,7 +197,28 @@ EOF
 }
 
 cancel_confirmation() {
+    local accepted_before parent_before restored_before
+    accepted_before="$(grep -Fc 'zentty-linux: confirmation accepted=false' "${log}" || true)"
+    parent_before="$(grep -Fc 'zentty-linux: confirmation parent-presented=true' "${log}" || true)"
+    restored_before="$(grep -Fc 'zentty-linux: confirmation focus-restored pane=' "${log}" || true)"
     zentty_product_key "${backend}" Escape
+    zentty_product_wait_for_log_count "${log}" \
+        'zentty-linux: confirmation accepted=false' "$((accepted_before + 1))" \
+        "confirmation cancellation was not accepted" || fail "confirmation cancellation missing"
+    zentty_product_wait_for_log_count "${log}" \
+        'zentty-linux: confirmation parent-presented=true' "$((parent_before + 1))" \
+        "confirmation cancellation did not request its real parent" || fail "confirmation parent presentation missing"
+    if [[ "${backend}" == wayland && "${ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT:-}" == 1 ]]; then
+        # Wayland activation is compositor-owned. The application requests its
+        # parent; this real outer-compositor click grants activation.
+        xdotool mousemove --sync --window "${ZENTTY_PRODUCT_WINDOW_ID}" 700 400 click 1
+    fi
+    zentty_product_wait_for_log_count "${log}" \
+        'zentty-linux: confirmation focus-restored pane=' \
+        "$((restored_before + 1))" \
+        "confirmation cancellation did not restore the live terminal" || fail "confirmation terminal restoration missing"
+    grep 'zentty-linux: confirmation focus-restored pane=' "${log}" | tail -1 | grep -Fq 'window-active=true' ||
+        fail "confirmation restored terminal before its window became active"
 }
 
 type_product_text() {
@@ -376,9 +402,27 @@ sleep 0.5
     fail "interrupted sibling write was incorrectly published"
 grep -Fq 'channel = "stable"' "${config_file}" || fail "interrupted write damaged accepted config"
 grep -Fq 'winner = "external"' "${config_file}" || fail "interrupted write damaged preserved external data"
-zentty_product_key "${backend}" Escape
+if [[ "${backend}" == x11 ]]; then
+    # The process owns two terminal toplevels plus Settings. The generic X11
+    # product target deliberately resolves a terminal, so close the already
+    # discovered Settings window through its actual X input focus instead of
+    # sending Escape to an arbitrary sibling toplevel.
+    xdotool windowfocus --sync "${settings_window}"
+    xdotool key Escape
+else
+    zentty_product_key "${backend}" Escape
+fi
 zentty_product_wait_for_log "${log}" 'shortcut-settings hidden parent-presented=true' \
     "settings did not return focus to its product window" || fail "settings close missing"
+if [[ "${backend}" == wayland && "${ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT:-}" == 1 ]]; then
+    # Presenting the parent does not grant activation under Wayland. Prove the
+    # compositor routes a real gesture back to the live terminal before the
+    # mandatory physical quit shortcut exercises the reloaded configuration.
+    # The surface is already logically focused, so a second focus receipt is
+    # not expected; the following shortcut and confirmation are the acceptance
+    # proof rather than a synthetic activation claim.
+    xdotool mousemove --sync --window "${ZENTTY_PRODUCT_WINDOW_ID}" 700 400 click 1
+fi
 
 # Two replace-by-rename writes inside the quiet period must publish only the
 # final valid state to both real windows.
@@ -404,8 +448,6 @@ zentty_product_close_window "${backend}"
 zentty_product_wait_for_log "${log}" 'zentty-linux: confirmation shown title="Quit Zentty?"' \
     "live confirmation setting did not affect application quit" || fail "live behavior missing"
 cancel_confirmation
-zentty_product_wait_for_log "${log}" 'zentty-linux: confirmation accepted=false' \
-    "confirmation cancellation did not return to the live pane" || fail "confirmation cancellation missing"
 zentty_product_prepare_input "${backend}" "${log}" || fail "could not restore terminal focus"
 zentty_product_type "${backend}" "after-valid-config-reload"
 zentty_product_key "${backend}" Return

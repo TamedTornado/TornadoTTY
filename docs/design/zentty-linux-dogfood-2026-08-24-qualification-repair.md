@@ -614,3 +614,49 @@ cluster evidence is green.
   preserving exact topology and the live PTY. The ledger now marks only
   `product-sidebar-management-x11` PASS after four attempts; this is not a
   claim of full Linux qualification.
+
+### Live configuration across modal cancellation and watcher transactions
+
+- The controlled Weston replay confirmed that both windows received the final
+  externally enabled quit-confirmation setting, but the physical `Ctrl+Q`
+  never reached Zentty after Settings closed. The actor had treated
+  `present()` and a logical pane-focus receipt as Wayland activation. A real
+  compositor click advanced the journey into the confirmation and exposed the
+  product half of the lifecycle defect: cancelling `GtkAlertDialog` left the
+  parent inactive, and Zentty waited for an activation transition it had never
+  requested. Physical terminal input was consequently lost after cancellation.
+- Confirmation cancellation now explicitly presents its real parent and still
+  waits for `is-active` before restoring the Ghostty surface. `present()` is a
+  request, not proof. The actor owns the complementary environment action: in
+  the controlled nested-Weston profile it delivers a real outer-compositor
+  click, then requires the product's `window-active=true` focus-restoration
+  receipt before typing into the live PTY. One cancellation helper owns this
+  transaction for all three confirmation checks, rather than accreting three
+  subtly different activation paths.
+- The matching X11 replay found an independent actor error hidden by the same
+  ambiguity: with two terminal toplevels and Settings, the generic product
+  target deliberately resolved a terminal and sent Settings' Escape there.
+  X11 now focuses the already discovered real Settings toplevel for that one
+  operation. Confirmation restoration is window-agnostic and validates the
+  actual focused pane, because ordinary X11 input may validly select either
+  live terminal window.
+- A later repeat intermittently lost the second of two intentionally distinct
+  atomic sidebar transactions. The first two-window projection was complete,
+  but duplicate directory-monitor notifications were still inside the
+  coalescing interval when the next rename arrived. The actor now uses its
+  existing observable reload-quiescence predicate between those transactions;
+  it does not add a blind delay or weaken either expected state.
+- The final ReleaseSafe real-product journeys passed completely. Controlled
+  Weston session
+  `ee81a4d9d6b0791e179663afb8ba64ad871b65d73bc0a15c8eb1f7f6f993ffc7`
+  and private-Xvfb session
+  `f2b2c14fb78884a062f783ab61412c5db138a9f86bb98588bbd5e681001493ca`
+  each exercised two live Ghostty PTYs, external atomic replacement,
+  coalescing, partial validation, invalid/missing last-good retention, symlink
+  retargeting, permissions, interrupted sibling writes, Settings refresh,
+  external/product last-writer ordering, confirmation behavior, and post-modal
+  physical PTY input. Strict all-target Clippy, focused close-runtime tests,
+  ShellCheck, and the matrix/ledger contracts pass. No trust predicate changed,
+  so mutation testing was not applicable to this repair. The ledger marks only
+  `config-live-reload-wayland` PASS after nine attempts; this is not full Linux
+  qualification.
