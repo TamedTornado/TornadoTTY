@@ -79,7 +79,8 @@ done
 required_scenarios=(
     empty-dark-x11 multi-lane-dark-x11 attention-dark-x11 progress-dark-x11
     review-dark-x11 server-chrome-x11 remote-dark-x11 long-label-x11 sidebar-hidden-x11
-    sidebar-overlay-wayland sidebar-resize-x11 sidebar-resize-wayland
+    sidebar-overlay-wayland sidebar-overlay-wayland-weston
+    sidebar-resize-x11 sidebar-resize-wayland
     pane-controls-hidden-x11 pane-controls-revealed-x11 menu-open-x11 pane-search-hud-x11
     history-forward-enabled-x11 pane-layout-menu-x11
     narrow-dark-x11 wide-dark-x11 wide-light-x11 wide-dark-wayland

@@ -702,18 +702,29 @@ cluster evidence is green.
   from window 2. Closing the Wayland window uses a real header click, followed
   by a fresh Global Find navigation receipt, to prove the surviving window is
   actually receiving input.
-- The old 1024x768 screenshot was a Cage-output baseline and could not describe
-  the authoritative 1280x1024 Weston profile. Capturing the raw Weston desktop
-  also included its clock. The visual checkpoint now enters Zentty fullscreen,
-  waits for the real window-state receipt and two pixel-identical frames,
-  compares the reviewed 1280x1024 Global Find/sidebar image without a mask, and
-  returns to windowed state before continuing. The reviewed frame contains the
-  live search field, two worklanes, three real panes, contextual pane controls,
-  and terminal chrome; no desktop timestamp is admitted to the baseline.
-- The complete controlled-Weston journey passed in session
-  `7e9a13e9ae1de179d2173b0c3c219e2ac9a9002ab10aeed7079ab6884412461b`.
+- The existing 1024x768 screenshot is a valid Cage-kiosk requirement and could
+  not describe the authoritative 1280x1024 Weston profile. A post-commit sanity
+  audit caught that the first repair had replaced that baseline under the same
+  scenario identity. Although the new image was real and reviewed, that reuse
+  changed the visual requirement instead of adding evidence. The Cage scenario
+  and baseline are now restored unchanged. Weston has a separate scenario whose
+  state explicitly includes both `weston` and `fullscreen`.
+- Capturing the raw Weston desktop included its clock. The additional Weston
+  checkpoint enters Zentty fullscreen, waits for the real window-state receipt
+  and two pixel-identical frames, compares the reviewed 1280x1024 Global
+  Find/sidebar image without a mask, and returns to windowed state before
+  continuing. The reviewed frame contains the live search field, two worklanes,
+  three real panes, contextual pane controls, and terminal chrome; no desktop
+  timestamp is admitted to the baseline.
+- The complete controlled-Weston journey passed again after the visual-scenario
+  correction in session
+  `3f6ef2316a685afdb08a87bcb5abfbb366546f9dcb317d814462007373b828c6`.
+  The restored non-fullscreen Cage requirement independently passed in session
+  `572d7138a045b28d1c3e93ea479663f3850d85c2eb2d74d18b048dfad93bf9c9`;
+  the actor chooses the scenario from the actual controlled compositor rather
+  than allowing either compositor to satisfy the other's requirement.
   The matching private-Xvfb regression passed in session
   `148a294479813aaff534e65ff9b13144b255837afcf28961b0a7cfba7460ceb0`.
-  The ledger records 19 diagnostic and repair attempts and changes only
+  The ledger records 21 diagnostic, repair, and final-audit attempts and changes only
   `rust-global-find-product-usage-wayland` to PASS. This remains a focused cell
   repair, not full Linux qualification.

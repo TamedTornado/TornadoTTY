@@ -887,23 +887,29 @@ sleep 0.25
 if [[ "${backend}" == wayland ]]; then
     sidebar_overlay_image="${state_directory}/sidebar-overlay-wayland.png"
     outer_window="${ZENTTY_NESTED_WAYLAND_OUTER_X11_WINDOW:?}"
-    fullscreen_before="$(grep -Fc 'zentty-linux: window-state id=window-1 fullscreen=true' "${log}" || true)"
-    press_key F11
-    wait_for_count_greater \
-        'zentty-linux: window-state id=window-1 fullscreen=true' \
-        "${fullscreen_before}" \
-        "controlled Wayland visual state did not enter fullscreen"
-    zentty_visual_capture_stable "${sidebar_overlay_image}" \
-        import -silent -window "${outer_window}" ||
-        fail "controlled Wayland Global Find frame did not settle"
-    zentty_visual_publish sidebar-overlay-wayland linux/tests/rust-pane-search \
-        "${sidebar_overlay_image}" -
-    windowed_before="$(grep -Fc 'zentty-linux: window-state id=window-1 fullscreen=false' "${log}" || true)"
-    press_key F11
-    wait_for_count_greater \
-        'zentty-linux: window-state id=window-1 fullscreen=false' \
-        "${windowed_before}" \
-        "controlled Wayland visual state did not leave fullscreen"
+    if [[ "${ZENTTY_NESTED_WAYLAND_INPUT_COMPOSITOR:-cage}" == weston ]]; then
+        fullscreen_before="$(grep -Fc 'zentty-linux: window-state id=window-1 fullscreen=true' "${log}" || true)"
+        press_key F11
+        wait_for_count_greater \
+            'zentty-linux: window-state id=window-1 fullscreen=true' \
+            "${fullscreen_before}" \
+            "controlled Wayland visual state did not enter fullscreen"
+        zentty_visual_capture_stable "${sidebar_overlay_image}" \
+            import -silent -window "${outer_window}" ||
+            fail "controlled Wayland Global Find frame did not settle"
+        zentty_visual_publish sidebar-overlay-wayland-weston linux/tests/rust-pane-search \
+            "${sidebar_overlay_image}" -
+        windowed_before="$(grep -Fc 'zentty-linux: window-state id=window-1 fullscreen=false' "${log}" || true)"
+        press_key F11
+        wait_for_count_greater \
+            'zentty-linux: window-state id=window-1 fullscreen=false' \
+            "${windowed_before}" \
+            "controlled Wayland visual state did not leave fullscreen"
+    else
+        import -silent -window "${outer_window}" "${sidebar_overlay_image}"
+        zentty_visual_publish sidebar-overlay-wayland linux/tests/rust-pane-search \
+            "${sidebar_overlay_image}" -
+    fi
 fi
 sleep 0.1
 [[ "$(grep -Fc 'zentty-linux: sidebar-visibility=hidden' "${log}" || true)" -eq "${sidebar_hidden_before}" ]] ||
