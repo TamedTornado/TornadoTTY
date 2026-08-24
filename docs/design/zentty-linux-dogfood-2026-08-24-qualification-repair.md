@@ -204,5 +204,31 @@ cluster evidence is green.
 - Final focused results: the scaling harness contract, ShellCheck, the complete
   controlled Wayland scaling cell, and the affected complete controlled
   Xwayland scaling cell all pass. No ambient absence or visual mismatch was
-  converted into a pass. The other GH-91 visual cells and the authoritative
-  full matrix have not yet been rerun.
+  converted into a pass. At that checkpoint, the remaining GH-91 cells and the
+  authoritative full matrix had not yet been rerun.
+
+### Fullscreen Wayland window state
+
+- The isolated `product-window-state-wayland` mismatch contained only 943
+  pixels in the centered window context. The current product showed the
+  intentional generic project-folder icon beside `Visual window`; the reviewed
+  baseline omitted it. Project icons predate the baseline, and the product log
+  proved `owner=window-chrome fallback=folder-symbolic decoded=true`, so the old
+  image had captured before asynchronous chrome projection rather than
+  documenting an intentional icon-free state.
+- Fullscreen evidence now waits for that exact project-icon projection before
+  capture. Consecutive-frame settling moved into the shared visual-evidence
+  owner, where deterministic tests prove an eventually stable capture is
+  published and an alternating capture fails explicitly. The scaling actor now
+  consumes the same shared contract instead of maintaining a second settling
+  implementation.
+- Two independent private Weston runs produced the byte-identical icon-bearing
+  image `aa16ae3fd62f2186c606920b91fa36e8baf229210b172371f080a033877222ab`.
+  After visual review, that image replaced the stale baseline. A third exact
+  cell run passed the real F11 fullscreen entry and exit round trip; Wayland
+  minimize remains honestly described as a compositor request because the
+  protocol does not acknowledge minimized state.
+- After consolidating capture settling, both complete scaling journeys were
+  rerun through their real private environments. Wayland and owned Xwayland
+  again passed ReleaseSafe and Debug, proving the shared helper preserved the
+  pointer-proven output and exact scaling contracts.

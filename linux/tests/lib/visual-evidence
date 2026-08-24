@@ -4,6 +4,48 @@
 # deliberately does not launch Zentty or schedule tests; the owning actor must
 # first establish the product state and its semantic assertions.
 
+zentty_visual_capture_stable() {
+    local output="$1"
+    shift
+    local attempts="${ZENTTY_VISUAL_SETTLE_ATTEMPTS:-50}"
+    local attempt current previous="" compare_status
+    [[ "${attempts}" =~ ^[1-9][0-9]*$ && "${attempts}" -ge 2 ]] || {
+        echo "visual-evidence: stable capture attempts must be an integer of at least 2" >&2
+        return 1
+    }
+    (( $# > 0 )) || {
+        echo "visual-evidence: stable capture command is missing" >&2
+        return 1
+    }
+    for attempt in $(seq 1 "${attempts}"); do
+        current="${output}.candidate-${attempt}.png"
+        "$@" "${current}" || {
+            rm -f -- "${output}.candidate-"*.png
+            echo "visual-evidence: compositor capture command failed" >&2
+            return 1
+        }
+        if [[ -n "${previous}" ]]; then
+            compare_status=0
+            compare -metric AE "${previous}" "${current}" null: 2>/dev/null || compare_status=$?
+            (( compare_status <= 1 )) || {
+                rm -f -- "${output}.candidate-"*.png
+                echo "visual-evidence: consecutive compositor frames could not be compared" >&2
+                return 1
+            }
+            if (( compare_status == 0 )); then
+                cp -- "${current}" "${output}"
+                rm -f -- "${output}.candidate-"*.png
+                return
+            fi
+        fi
+        previous="${current}"
+        sleep 0.1
+    done
+    rm -f -- "${output}.candidate-"*.png
+    echo "visual-evidence: compositor frame did not settle" >&2
+    return 1
+}
+
 zentty_visual_publish() {
     local scenario_id="$1"
     local actor="$2"

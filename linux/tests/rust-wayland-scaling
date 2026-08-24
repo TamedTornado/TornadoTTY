@@ -291,39 +291,20 @@ capture_scaling_visual() {
     local scenario_id="$1"
     local image="${run_root}/${scenario_id}.png"
     local candidate_mean
-    local attempt current_image previous_image="" compare_status settled=0
     [[ "${presented_outer}" =~ ^[1-9][0-9]*$ ]] ||
         fail "${scenario_id} has no pointer-proven compositor output"
     # run_stage records the exact outer output that delivered this stage's real
     # pane-local pointer events. Capture that window rather than selecting the
     # brighter of both outputs: after MoveToOutput, wlroots can retain the last
     # presented frame on the old output, making brightness select stale pixels.
-    # A visual receipt must describe a settled frame, not whichever fractional
-    # scrollbar or decoration animation happened to be presented after an
-    # arbitrary sleep. Require two consecutive, byte-identical compositor
-    # captures. A session that never settles is a test failure, not a baseline.
-    for attempt in {1..50}; do
-        current_image="${run_root}/${scenario_id}-attempt-${attempt}.png"
-        DISPLAY="${outer_display}" import -silent -window "${presented_outer}" "${current_image}"
-        candidate_mean="$(convert "${current_image}" -colorspace gray -format '%[fx:mean]' info:)"
-        awk -v selected="${candidate_mean}" 'BEGIN { exit !(selected > 0.001) }' ||
-            fail "${scenario_id} found no presented compositor output"
-        if [[ -n "${previous_image}" ]]; then
-            compare_status=0
-            compare -metric AE "${previous_image}" "${current_image}" null: \
-                2>"${run_root}/${scenario_id}.settle-ae" || compare_status=$?
-            (( compare_status <= 1 )) ||
-                fail "${scenario_id} could not compare consecutive compositor frames"
-            if [[ "$(cat "${run_root}/${scenario_id}.settle-ae")" == 0 ]]; then
-                cp -- "${current_image}" "${image}"
-                settled=1
-                break
-            fi
-        fi
-        previous_image="${current_image}"
-        sleep 0.1
-    done
-    (( settled == 1 )) || fail "${scenario_id} compositor frame did not settle"
+    # The shared evidence owner requires consecutive exact frames. A session
+    # that never settles is a test failure, not a baseline.
+    zentty_visual_capture_stable "${image}" \
+        env DISPLAY="${outer_display}" import -silent -window "${presented_outer}" ||
+        fail "${scenario_id} compositor frame did not settle"
+    candidate_mean="$(convert "${image}" -colorspace gray -format '%[fx:mean]' info:)"
+    awk -v selected="${candidate_mean}" 'BEGIN { exit !(selected > 0.001) }' ||
+        fail "${scenario_id} found no presented compositor output"
     zentty_visual_publish "${scenario_id}" linux/tests/rust-wayland-scaling "${image}" - ||
         fail "${scenario_id} visual evidence did not match"
 }

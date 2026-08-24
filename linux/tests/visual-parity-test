@@ -36,6 +36,16 @@ publish_visual_fixture() {
         zentty_visual_publish multi-lane-dark-x11 "${actor}" "${image}" "${geometry}"
 }
 
+stable_capture_index=0
+capture_eventually_stable() {
+    stable_capture_index=$((stable_capture_index + 1))
+    if (( stable_capture_index == 1 )); then
+        convert -size 8x8 xc:black "$1"
+    else
+        convert -size 8x8 xc:white "$1"
+    fi
+}
+
 "${runner}" "${source_map}" "${temporary}/empty-baselines" >/dev/null
 
 jq 'del(.scenarios[] | select(.id == "menu-open-x11"))' \
@@ -141,4 +151,28 @@ expect_failure pixel-mismatch "differs from its reviewed baseline" \
         linux/tests/rust-source-ux-x11 \
         "${temporary}/capture.png" "${temporary}/capture.geometry"
 
-echo "visual-parity-test: PASS negatives=missing-scenario+unexpected-skip+unproved-match+match-failed-scenario+unknown-mask+missing-baseline+stale-baseline+false-claims+wrong-actor+wrong-size+pixel-mismatch"
+stable_capture_index=0
+zentty_visual_capture_stable "${temporary}/stable.png" capture_eventually_stable
+[[ "$(convert "${temporary}/stable.png" -format '%[pixel:p{0,0}]' info:)" == gray*255* ]] || {
+    echo "visual-parity-test: settled frame did not become the published image" >&2
+    exit 1
+}
+stable_capture_index=0
+# The single-quoted program intentionally expands inside the child shell.
+# shellcheck disable=SC2016
+expect_failure unsettled-frame "compositor frame did not settle" \
+    env ZENTTY_VISUAL_SETTLE_ATTEMPTS=4 bash -c '
+        source "$1"
+        capture_index=0
+        capture_alternating() {
+            capture_index=$((capture_index + 1))
+            if (( capture_index % 2 == 0 )); then
+                convert -size 8x8 xc:black "$1"
+            else
+                convert -size 8x8 xc:white "$1"
+            fi
+        }
+        zentty_visual_capture_stable "$2" capture_alternating
+    ' _ "${repo_root}/linux/tests/lib/visual-evidence" "${temporary}/never-stable.png"
+
+echo "visual-parity-test: PASS negatives=missing-scenario+unexpected-skip+unproved-match+match-failed-scenario+unknown-mask+missing-baseline+stale-baseline+false-claims+wrong-actor+wrong-size+pixel-mismatch+unsettled-frame"

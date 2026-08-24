@@ -703,10 +703,15 @@ capture_multi_window_x11_visual() {
 capture_fullscreen_wayland_visual() {
     local image="${state_dir}/fullscreen-wayland.png"
     local outer="${ZENTTY_NESTED_WAYLAND_OUTER_X11_WINDOW:?}"
+    zentty_product_wait_for_log "${log}" \
+        'zentty-linux: project-icon-projected owner=window-chrome fallback=folder-symbolic decoded=true' \
+        "fullscreen visual chrome did not settle its project-icon fallback" ||
+        fail "fullscreen visual project icon missing"
     xdotool mousemove --sync --window "${outer}" 1 1
-    sleep 0.2
-    import -silent -window "${outer}" "${image}"
-    zentty_visual_publish fullscreen-wayland linux/tests/rust-multi-window "${image}" -
+    zentty_visual_capture_stable "${image}" import -silent -window "${outer}" ||
+        fail "fullscreen Wayland compositor frame did not settle"
+    zentty_visual_publish fullscreen-wayland linux/tests/rust-multi-window "${image}" - ||
+        fail "fullscreen Wayland visual evidence did not match"
 }
 
 # Lifecycle confirmation journey: drive both cancellation and acceptance for
