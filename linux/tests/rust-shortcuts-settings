@@ -99,11 +99,7 @@ main_key() {
     local chord="$1"
     case "${chord}" in
         ctrl+alt+*)
-            if zentty_product_uses_xdotool "${backend}"; then
-                zentty_product_xdotool_key "${chord}"
-            else
-                wtype -M ctrl -M alt -k "${chord#ctrl+alt+}" -m alt -m ctrl
-            fi
+            zentty_product_ctrl_alt_key "${backend}" "${chord#ctrl+alt+}"
             ;;
         ctrl+shift+*) zentty_product_ctrl_shift_key "${backend}" "${chord#ctrl+shift+}" ;;
         ctrl+*) zentty_product_ctrl_key "${backend}" "${chord#ctrl+}" ;;
@@ -112,8 +108,8 @@ main_key() {
 }
 
 main_type() {
-    if [[ "${backend}" == x11 ]]; then
-        xdotool type --delay 5 -- "$1"
+    if zentty_product_uses_xdotool "${backend}"; then
+        zentty_product_type "${backend}" "$1"
     else
         # The nested compositor shares CPU with real Ghostty builds and product
         # journeys during the full matrix. Preserve every physical key event
@@ -149,7 +145,10 @@ prepare_settings_input() {
         [[ "${settings_window}" =~ ^[1-9][0-9]*$ ]] || fail "shortcut settings window did not appear"
         xdotool windowfocus --sync "${settings_window}"
     elif [[ "${ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT:-}" == 1 ]]; then
-        xdotool mousemove --sync --window "${ZENTTY_PRODUCT_WINDOW_ID}" 180 34
+        # The settings toplevel is centered inside the nested compositor.
+        # Clicking the compositor's top-left chrome can activate no client at
+        # all after a native file chooser closes; use its content center.
+        xdotool mousemove --sync --window "${ZENTTY_PRODUCT_WINDOW_ID}" 640 400
         xdotool click 1
     fi
 }
@@ -161,11 +160,11 @@ settings_key() {
         xdotool key "${chord}"
     else
         case "${chord}" in
-            ctrl+alt+*) wtype -M ctrl -M alt -k "${chord#ctrl+alt+}" -m alt -m ctrl ;;
-            ctrl+*) wtype -M ctrl -k "${chord#ctrl+}" -m ctrl ;;
-            shift+*) wtype -M shift -k "${chord#shift+}" -m shift ;;
-            alt+*) wtype -M alt -k "${chord#alt+}" -m alt ;;
-            *) wtype -k "${chord}" ;;
+            ctrl+alt+*) zentty_product_ctrl_alt_key "${backend}" "${chord#ctrl+alt+}" ;;
+            ctrl+*) zentty_product_ctrl_key "${backend}" "${chord#ctrl+}" ;;
+            shift+*) zentty_product_shift_key "${backend}" "${chord#shift+}" ;;
+            alt+*) zentty_product_alt_key "${backend}" "${chord#alt+}" ;;
+            *) zentty_product_key "${backend}" "${chord}" ;;
         esac
     fi
 }
@@ -175,7 +174,7 @@ settings_type() {
         xdotool windowfocus --sync "${settings_window}"
         xdotool type --delay 5 -- "$1"
     else
-        wtype -d 5 -- "$1"
+        zentty_product_type "${backend}" "$1"
     fi
 }
 
@@ -206,7 +205,7 @@ dialog_type() {
         xdotool windowfocus --sync "${dialog_window}"
         xdotool type --delay 5 -- "$1"
     else
-        wtype -d 5 -- "$1"
+        zentty_product_type "${backend}" "$1"
     fi
 }
 
@@ -217,9 +216,9 @@ dialog_key() {
         xdotool key "${chord}"
     else
         case "${chord}" in
-            ctrl+*) wtype -M ctrl -k "${chord#ctrl+}" -m ctrl ;;
-            alt+*) wtype -M alt -k "${chord#alt+}" -m alt ;;
-            *) wtype -k "${chord}" ;;
+            ctrl+*) zentty_product_ctrl_key "${backend}" "${chord#ctrl+}" ;;
+            alt+*) zentty_product_alt_key "${backend}" "${chord#alt+}" ;;
+            *) zentty_product_key "${backend}" "${chord}" ;;
         esac
     fi
 }
@@ -422,6 +421,11 @@ focus_count="$(grep -Fc 'zentty-linux: focus-pane pane=pane-1' "${log}" 2>/dev/n
 settings_key Escape
 zentty_product_wait_for_log "${log}" 'shortcut-settings hidden parent-presented=true' \
     "closing settings did not present its parent window" || fail "main focus restoration failed"
+if [[ "${backend}" == wayland && "${ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT:-}" == 1 ]]; then
+    # Weston requires a real compositor gesture before it grants activation
+    # back to the main toplevel after the secondary settings window closes.
+    xdotool mousemove --sync --window "${ZENTTY_PRODUCT_WINDOW_ID}" 700 400 click 1
+fi
 zentty_product_prepare_input "${backend}" "${log}" || fail "main window could not regain focus"
 zentty_product_wait_for_log_count "${log}" 'zentty-linux: focus-pane pane=pane-1' "$((focus_count + 1))" \
     "terminal surface did not regain focus after settings" || fail "terminal focus restoration failed"

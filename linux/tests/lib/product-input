@@ -234,6 +234,26 @@ zentty_product_ctrl_key() {
     fi
 }
 
+zentty_product_ctrl_alt_key() {
+    local backend="$1"
+    local key="$2"
+    if zentty_product_uses_xdotool "${backend}"; then
+        zentty_product_xdotool_key "ctrl+alt+${key}"
+    else
+        wtype -M ctrl -M alt -k "${key}" -m alt -m ctrl
+    fi
+}
+
+zentty_product_shift_key() {
+    local backend="$1"
+    local key="$2"
+    if zentty_product_uses_xdotool "${backend}"; then
+        zentty_product_xdotool_key "shift+${key}"
+    else
+        wtype -M shift -k "${key}" -m shift
+    fi
+}
+
 zentty_product_ctrl_shift_key() {
     local backend="$1"
     local key="$2"

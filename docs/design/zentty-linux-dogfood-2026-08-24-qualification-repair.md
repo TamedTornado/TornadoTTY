@@ -511,3 +511,31 @@ cluster evidence is green.
   bundle whose deliberately stale catalog is rejected but remains recoverable
   in the UI. Only the Wayland failure-ledger entry changed state; this remains
   focused evidence, not full qualification.
+
+### Shortcut settings across real Wayland toplevels
+
+- The initial Wayland replay did not reach the recorded import defect. The
+  actor invoked `wtype` directly for settings-window and native-chooser input,
+  even though the controlled Weston profile deliberately exposes input through
+  its compositor-owned outer X11 window and does not advertise the virtual
+  keyboard protocol. That was a second, scenario-local input system. Shift and
+  Ctrl+Alt injection are now owned by the existing environment-aware product
+  input driver, and every settings and chooser chord/type operation uses that
+  driver rather than selecting a backend independently.
+- Once real input reached the secondary settings toplevel, the journey advanced
+  through recording, conflict replacement, export, and import. Its next failure
+  showed that the old reactivation click targeted `(180, 34)`, outside the
+  centered settings client in the 1280x1024 Weston desktop. The chooser closed
+  correctly, but no Wayland client received that gesture. The actor now clicks
+  the settings content center before continuing. After Settings closes, it
+  likewise performs a real compositor click on the exposed terminal before
+  requiring the existing `focus-pane` receipt; `present()` alone is not treated
+  as compositor activation.
+- Controlled Weston session `85dea5f4...` passed the complete real journey:
+  two GTK toplevels, native export and import choosers, physical shortcut
+  recording and conflict replacement, persisted bindings, two live Ghostty
+  surfaces, runtime configuration reload without PTY replacement, theme
+  projection, and process restart. Matching private-X11 session `f049f9ab...`
+  also passed. The matrix now assigns the Wayland cell to the authoritative
+  multiwindow Weston profile. The failure ledger records six bounded attempts
+  and marks this one cell PASS; no broader qualification claim is made.
