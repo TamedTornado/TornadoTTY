@@ -201,6 +201,20 @@ impl GlobalSearchCoordinator {
         self.state.selected = self.global_ordinal(pane_id, selected);
     }
 
+    /// Reconciles selection callbacks from an embedded terminal search HUD.
+    ///
+    /// Ghostty reports `Some(index)` for a completed navigation and then can
+    /// report `None` when Zentty restores keyboard focus to the global search
+    /// entry. That focus-only transition must not rewind the coordinator to
+    /// its first match. Query replacement, total shrinkage, target removal and
+    /// `end` already own the real selection-reset lifecycles.
+    pub fn handle_surface_selected(&mut self, pane_id: &str, selected: Option<usize>) {
+        if self.state.visible && self.state.has_remembered_search && selected.is_none() {
+            return;
+        }
+        self.handle_selected(pane_id, selected);
+    }
+
     #[must_use]
     pub fn reconcile_live_panes<'a>(
         &mut self,

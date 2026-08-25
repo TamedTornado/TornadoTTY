@@ -34,29 +34,56 @@ zentty_qualification_support_jobs() {
 }
 
 zentty_qualification_display_jobs() {
-    local cpu_count jobs
-    cpu_count="$(nproc)"
-    [[ "${cpu_count}" =~ ^[1-9][0-9]*$ ]] || cpu_count=1
-    # Each real GTK journey includes a compositor/X server, D-Bus services,
-    # file monitors, renderer threads, and one or more PTYs. Eight such actors
-    # use this 32-core host effectively without exhausting per-user inotify and
-    # renderer resources.
-    jobs=$((cpu_count / 4))
+    local physical_cores display_cores jobs
+    physical_cores="$(lscpu -p=CORE 2>/dev/null | awk -F, '!/^#/ && !seen[$1]++ { count++ } END { print count + 0 }')"
+    [[ "${physical_cores}" =~ ^[1-9][0-9]*$ ]] || physical_cores=2
+    # A compositor actor is event-driven, but its X server, renderer, portals,
+    # PTYs, and input services still need one physical core worth of scheduling
+    # headroom. Do not admit eight displays onto the six-core display partition:
+    # that faster-looking configuration produced load-only focus and chooser
+    # failures in three consecutive otherwise-real qualification runs.
+    display_cores=$((physical_cores - (physical_cores * 5 / 8)))
+    jobs="${display_cores}"
     (( jobs >= 2 )) || jobs=2
     (( jobs > 8 )) && jobs=8
     printf '%s\n' "${jobs}"
 }
 
 zentty_qualification_interactive_jobs() {
-    local cpu_count jobs
-    cpu_count="$(nproc)"
-    [[ "${cpu_count}" =~ ^[1-9][0-9]*$ ]] || cpu_count=1
-    # Physical-input product journeys each own several timing-sensitive actors
-    # and real file monitors. Keep them below the broader display/Valgrind pool.
-    jobs=$((cpu_count / 8))
-    (( jobs >= 2 )) || jobs=2
-    (( jobs > 4 )) && jobs=4
-    printf '%s\n' "${jobs}"
+    # Most nested-display actors own independent compositors and can drive real
+    # input concurrently. Input is isolated inside each cell's private
+    # compositor, so it uses the complete display capacity rather than a
+    # second, fictitious shared-input limit.
+    zentty_qualification_display_jobs
+}
+
+# Partition whole physical cores so compiler/Valgrind work cannot starve real
+# compositor input and presentation. Logical siblings always remain together.
+zentty_qualification_cpu_set() {
+    local partition="$1"
+    command -v lscpu >/dev/null || return 1
+    lscpu -p=CPU,CORE | awk -F, -v partition="${partition}" '
+      /^#/ { next }
+      !($2 in seen) { seen[$2] = ++core_count; core_order[core_count] = $2 }
+      { cpus[$2] = cpus[$2] (cpus[$2] == "" ? "" : ",") $1 }
+      END {
+        if (core_count < 4 || (partition != "work" && partition != "display")) exit 1
+        # Build/package producers need ten physical cores on the 16-core
+        # qualification host; six physical cores still provide twelve logical
+        # CPUs for eight predominantly event-driven compositor actors.
+        split_at = int(core_count * 5 / 8)
+        if (split_at < 2) split_at = 2
+        if (split_at >= core_count) split_at = core_count - 1
+        first = partition == "work" ? 1 : split_at + 1
+        last = partition == "work" ? split_at : core_count
+        output = ""
+        for (i = first; i <= last; i++) {
+          core = core_order[i]
+          output = output (output == "" ? "" : ",") cpus[core]
+        }
+        print output
+      }
+    '
 }
 
 zentty_qualification_build_jobs() {

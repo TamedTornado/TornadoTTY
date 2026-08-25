@@ -135,16 +135,45 @@ type_text() {
     zentty_product_type "${backend}" "${value}"
 }
 
+type_focused_text() {
+    local value="$1"
+    if uses_xdotool; then
+        # Do not re-focus the toplevel after a real GTK search entry has
+        # confirmed focus. XSetInputFocus on the parent can make GTK restore
+        # the terminal child and turn the intended query into PTY input.
+        xdotool type --delay 5 "${value}"
+    else
+        wtype "${value}"
+    fi
+}
+
+press_focused_key() {
+    local key="$1"
+    if uses_xdotool; then
+        xdotool key "${key}"
+    else
+        wtype -k "${key}"
+    fi
+}
+
 reactivate_wayland_product_without_terminal_click() {
     [[ "${backend}" == wayland &&
         "${ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT:-}" == 1 ]] || return 0
-    # The controlled Weston profile places this coordinate in Zentty's
-    # non-terminal title/header band. Clipboard clients that use
+    # Click Zentty's own title/context chrome, above the Ghostty allocation.
+    # labwc maximizes the client inside its 1024x768 outer window, while Weston
+    # initially centers the 1000x700 client lower in its 1280x1024 surface.
+    # Treating their coordinates as interchangeable either clicks labwc's
+    # terminal (clearing the primary selection) or Weston's desktop background.
+    local chrome_y=70
+    if [[ "${ZENTTY_NESTED_WAYLAND_INPUT_COMPOSITOR:-}" == weston ]]; then
+        chrome_y=180
+    fi
+    # Clipboard clients that use
     # wl_data_device may otherwise leave compositor keyboard focus on their
     # transient surface, while a terminal click would destroy the real Ghostty
     # selection this journey is qualifying.
     xdotool windowfocus --sync "${ZENTTY_PRODUCT_WINDOW_ID}"
-    xdotool mousemove --sync --window "${ZENTTY_PRODUCT_WINDOW_ID}" 700 180
+    xdotool mousemove --sync --window "${ZENTTY_PRODUCT_WINDOW_ID}" 700 "${chrome_y}"
     xdotool click 1
 }
 
@@ -403,6 +432,8 @@ fi
 if [[ "${backend}" == wayland ]]; then
     zentty_product_establish_palette_input "${backend}" "${log}" ||
         fail "controlled Wayland compositor did not establish physical palette input"
+    reactivate_wayland_product_without_terminal_click
+    sleep 0.1
 fi
 
 if [[ "${ZENTTY_SIDEBAR_RESIZE_ONLY:-false}" == true ]]; then
@@ -669,21 +700,19 @@ if [[ "${ZENTTY_CLIPBOARD_ONLY:-false}" == true ]]; then
     wait_for_fixed 'zentty-linux: focus-pane pane=pane-window-2' \
         "second window did not receive terminal focus"
     if [[ "${backend}" == x11 ]]; then
-        window_id=""
-        for _ in $(seq 1 160); do
-            while IFS= read -r candidate; do
-                if [[ "${candidate}" =~ ^[1-9][0-9]*$ &&
-                    "${candidate}" != "${first_window_id}" ]]; then
-                    window_id="${candidate}"
-                    break
-                fi
-            done < <(xdotool search --onlyvisible --pid "${product_pid}" --name '^Zentty$' 2>/dev/null || true)
-            [[ "${window_id}" =~ ^[1-9][0-9]*$ ]] && break
-            sleep 0.05
-        done
+        # The new toplevel is already the X server's focused window when the
+        # unique pane-window-2 receipt above arrives. Title-based discovery is
+        # ambiguous because GTK can expose more than one visible, PID-owned
+        # XID named "Zentty" for the original toplevel. Preserve the actual
+        # server focus instead of choosing an arbitrary differently numbered
+        # XID and accidentally reactivating window 1.
+        window_id="$(xdotool getwindowfocus 2>/dev/null || true)"
         [[ "${window_id}" =~ ^[1-9][0-9]*$ ]] ||
-            fail "could not identify the second real X11 product window"
-        xdotool windowfocus --sync "${window_id}"
+            fail "the second real X11 product window did not own server focus"
+        [[ "$(xdotool getwindowpid "${window_id}" 2>/dev/null || true)" == "${product_pid}" ]] ||
+            fail "the second X11 focus owner did not belong to the real product"
+        ZENTTY_PRODUCT_WINDOW_ID="${window_id}"
+        export ZENTTY_PRODUCT_WINDOW_ID
     fi
 
     type_text clipboard-second
@@ -706,6 +735,8 @@ if [[ "${ZENTTY_CLIPBOARD_ONLY:-false}" == true ]]; then
     assert_standard_clipboard 'https://second.example/reset?utm_source=other-window'
     window_id="${first_window_id}"
     if [[ "${backend}" == x11 ]]; then
+        ZENTTY_PRODUCT_WINDOW_ID="${window_id}"
+        export ZENTTY_PRODUCT_WINDOW_ID
         xdotool windowfocus --sync "${window_id}"
     fi
     run_palette_action 'Copy as Markdown' \
@@ -944,28 +975,32 @@ done
 grep -Fq 'visibility = "pinnedOpen"' "${config_file}" ||
     fail "the physical sidebar shortcut did not persist restored pinned state"
 global_find_shown_before="$(grep -Fc 'zentty-linux: global-find shown targets=3' "${log}" || true)"
+global_find_focus_before="$(grep -Fc 'zentty-linux: global-find focus=entry' "${log}" || true)"
 press_ctrl_shift f
 wait_for_count_greater 'zentty-linux: global-find shown targets=3' \
     "${global_find_shown_before}" \
     "Global Find did not reopen after the hidden-sidebar focus probe"
+wait_for_count_greater 'zentty-linux: global-find focus=entry' \
+    "${global_find_focus_before}" \
+    "the reopened Global Find field did not receive real GTK focus"
 # A two-character query must remain pending until explicit navigation flushes
 # it. Enter is sent immediately, without waiting for a timer receipt, and the
 # actor then requires all three real Ghostty totals plus the selected match.
-type_text ga
+type_focused_text ga
 for _ in $(seq 1 160); do
     grep -Fq 'zentty-linux: global-find-state visible=true remembered=true selected=None total=0' "${log}" && break
     sleep 0.01
 done
 grep -Fq 'zentty-linux: global-find-state visible=true remembered=true selected=None total=0' "${log}" ||
     fail "the real Global Find field did not publish its pending short query before debounce"
-press_key Return
+press_focused_key Return
 for _ in $(seq 1 200); do
     grep -Fq 'zentty-linux: global-find-state visible=true remembered=true selected=Some(0) total=3' "${log}" && break
     sleep 0.05
 done
 grep -Fq 'zentty-linux: global-find-state visible=true remembered=true selected=Some(0) total=3' "${log}" ||
     fail "Global Find navigation did not flush the short query and wait for all real totals"
-press_key Return
+press_focused_key Return
 for _ in $(seq 1 160); do
     grep -Fq 'zentty-linux: global-find-state visible=true remembered=true selected=Some(1) total=3' "${log}" && break
     sleep 0.05
@@ -974,7 +1009,7 @@ grep -Fq 'zentty-linux: global-find navigate pane=pane-2 selected=0' "${log}" ||
     fail "Global Find did not cross from pane 1 into pane 2"
 grep -Fq 'zentty-linux: global-find-state visible=true remembered=true selected=Some(1) total=3' "${log}" ||
     fail "Global Find did not report pane 2's aggregate ordinal"
-press_key Return
+press_focused_key Return
 for _ in $(seq 1 160); do
     grep -Fq 'zentty-linux: global-find navigate pane=pane-3 selected=0' "${log}" &&
         grep -Fq 'zentty-linux: global-find-state visible=true remembered=true selected=Some(2) total=3' "${log}" && break

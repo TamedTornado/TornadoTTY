@@ -19,6 +19,8 @@ validate_only=false
 qualification_jobs="${ZENTTY_QUALIFICATION_JOBS:-$(zentty_qualification_matrix_jobs)}"
 qualification_display_jobs="${ZENTTY_QUALIFICATION_DISPLAY_JOBS:-$(zentty_qualification_display_jobs)}"
 qualification_interactive_jobs="${ZENTTY_QUALIFICATION_INTERACTIVE_JOBS:-$(zentty_qualification_interactive_jobs)}"
+qualification_work_cpu_set="${ZENTTY_QUALIFICATION_WORK_CPU_SET:-$(zentty_qualification_cpu_set work)}"
+qualification_display_cpu_set="${ZENTTY_QUALIFICATION_DISPLAY_CPU_SET:-$(zentty_qualification_cpu_set display)}"
 
 allowed_tiers='["local","release","full"]'
 allowed_displays='["none","wayland","x11","both"]'
@@ -54,6 +56,15 @@ monotonic_milliseconds() {
     fail "ZENTTY_QUALIFICATION_INTERACTIVE_JOBS must be a positive integer"
 (( qualification_interactive_jobs <= qualification_display_jobs )) ||
     fail "ZENTTY_QUALIFICATION_INTERACTIVE_JOBS must not exceed display jobs"
+[[ "${qualification_work_cpu_set}" =~ ^[0-9]+(,[0-9]+)*$ ]] ||
+    fail "ZENTTY_QUALIFICATION_WORK_CPU_SET must be a comma-separated CPU list"
+[[ "${qualification_display_cpu_set}" =~ ^[0-9]+(,[0-9]+)*$ ]] ||
+    fail "ZENTTY_QUALIFICATION_DISPLAY_CPU_SET must be a comma-separated CPU list"
+if comm -12 \
+    <(tr ',' '\n' <<<"${qualification_work_cpu_set}" | sort) \
+    <(tr ',' '\n' <<<"${qualification_display_cpu_set}" | sort) | grep -q .; then
+    fail "qualification work and display CPU sets must not overlap"
+fi
 
 if ! "${validate_only}"; then
     command -v flock >/dev/null || fail "flock is required"
@@ -99,6 +110,8 @@ command -v readlink >/dev/null || fail "readlink is required"
 command -v date >/dev/null || fail "date is required"
 command -v env >/dev/null || fail "env is required"
 command -v find >/dev/null || fail "find is required"
+command -v taskset >/dev/null || fail "taskset is required"
+command -v lscpu >/dev/null || fail "lscpu is required"
 
 jq -e '.schema_version == 1 and (.cells | type == "array")' \
     "${matrix}" >/dev/null || fail "invalid matrix schema"
@@ -120,7 +133,7 @@ jq -e '
       "Debug":"build-debug","ReleaseSafe":"build-release"
     }) and
     (.execution_graph.resources == [
-      "abi-mismatch-fixture","bookmarks-modal-input","compiler-load","consolidated-session-journey","fcitx5-gtk-source","ghostty-source","multi-window-menu-input","system-sleep-inhibitor"
+      "abi-mismatch-fixture","compiler-load","consolidated-session-journey","fcitx5-gtk-source","ghostty-source","system-sleep-inhibitor"
     ])
 ' "${matrix}" >/dev/null || fail "matrix root, axes, or claims are not closed-world"
 
@@ -490,6 +503,7 @@ jq -e '
 jq -e '
     [.cells[] | select(.capability == "package_qualification")] as $cells |
     [$cells[].id] == [
+      "prepare-package-source",
       "package-clean-build-reproducibility",
       "package-payload-audit",
       "package-install-reinstall-evidence",
@@ -498,12 +512,20 @@ jq -e '
       "package-qualification-summary"
     ] and
     all($cells[]; .status == "PASS" and .tier == "release" and
-      .optimize == "ReleaseSafe" and .environment_profile == "isolated-none-v1" and
-      (.command | contains("linux/tests/package-qualification-evidence"))) and
-    all($cells[] | select(.id != "package-qualification-summary");
-      .depends_on == ["install-uninstall"]) and
+      .environment_profile == "isolated-none-v1") and
+    (first($cells[] | select(.id == "prepare-package-source")) |
+      .optimize == "n/a" and .command == "linux/tests/debian-package-source-fixture") and
     (first($cells[] | select(.id == "package-clean-build-reproducibility")) |
+      .optimize == "n/a" and .depends_on == ["prepare-package-source"] and
       (.command | startswith("linux/tests/debian-package-clean-checkout && "))) and
+    all($cells[] | select(.id != "prepare-package-source" and
+                          .id != "package-clean-build-reproducibility");
+      .optimize == "ReleaseSafe" and
+      (.command | contains("linux/tests/package-qualification-evidence"))) and
+    all($cells[] | select(.id != "prepare-package-source" and
+                          .id != "package-clean-build-reproducibility" and
+                          .id != "package-qualification-summary");
+      .depends_on == ["install-uninstall"]) and
     (first($cells[] | select(.id == "package-qualification-summary")) |
       .display == "both" and .async_backend == "default" and .terminals == "multi" and
       .depends_on == [
@@ -895,6 +917,11 @@ run_qualification_cell() {
                 fail "unhandled runtime environment profile for ${id}: ${environment_profile}"
                 ;;
         esac
+        if [[ "${environment_profile}" == nested-* ]]; then
+            cell_command=(taskset --cpu-list "${qualification_display_cpu_set}" "${cell_command[@]}")
+        else
+            cell_command=(taskset --cpu-list "${qualification_work_cpu_set}" "${cell_command[@]}")
+        fi
         set +e
         if [[ "${is_suppression_governance}" == "true" ]] &&
             ! "${cell_evidence_lock_acquired}"; then
@@ -1069,7 +1096,7 @@ run_qualification_worker() {
     # The scheduler owns the shared result directory. Background functions
     # inherit its EXIT trap, so clear that trap before this worker exits or one
     # completed cell can erase every other worker's unpublished result.
-    trap - EXIT
+    trap - EXIT INT TERM
     id="$(jq -r '.id' <<<"${cell}")"
     result_path="${cell_results_directory}/${id}.json"
     set +e
@@ -1132,6 +1159,21 @@ declare -A cell_display_blockers=()
 declare -A cell_interactive=()
 declare -A cell_statuses=()
 declare -A cell_governance=()
+
+cleanup_qualification_scheduler() {
+    local worker_pid
+    trap - EXIT INT TERM
+    for worker_pid in "${!active_pid_ids[@]}"; do
+        kill -TERM "${worker_pid}" 2>/dev/null || true
+    done
+    for worker_pid in "${!active_pid_ids[@]}"; do
+        wait "${worker_pid}" 2>/dev/null || true
+    done
+    rm -rf -- "${cell_results_directory}"
+}
+trap 'cleanup_qualification_scheduler' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 active_display_cells=0
 active_display_blockers=0
 peak_active_display_cells=0
@@ -1166,8 +1208,7 @@ done < <(jq -r '
     [$cell.id, $dependencies, (($cell.resources // []) | join(" ")),
      $cell.status, (($cell.suppression_review_governance // false) | tostring),
      $cell.display, (($cell.blocks_display // false) | tostring),
-     (($cell.display != "none" and
-       (($cell.environment_profile // "") | startswith("phase-managed-") | not)) | tostring)] |
+     ((($cell.environment_profile // "") | startswith("nested-")) | tostring)] |
     join("|")
 ' "${matrix}")
 
@@ -1369,9 +1410,8 @@ results="$(jq -cs --slurpfile matrix "${matrix}" '
     map(. as $result | ($cells | map(select(.id == $result.id))[0]) as $cell |
       . + {schedule:{dependencies:dependencies($cell),resources:($cell.resources // []),
                      display:$cell.display,
-                     interactive:($cell.display != "none" and
-                       (($cell.environment_profile // "") |
-                         startswith("phase-managed-") | not)),
+                     interactive:(($cell.environment_profile // "") |
+                       startswith("nested-")),
                      blocks_display:($cell.blocks_display // false)}}) |
     sort_by(. as $result |
       ($cells | map(select(.id == $result.id))[0].order), $result.id)
@@ -1625,6 +1665,8 @@ qualification_scheduler="$(jq -cn \
     --argjson observed_peak_workers "${peak_active_workers}" \
     --argjson observed_peak_display_workers "${peak_active_display_cells}" \
     --argjson observed_peak_interactive_workers "${peak_active_interactive_cells}" \
+    --arg work_cpu_set "${qualification_work_cpu_set}" \
+    --arg display_cpu_set "${qualification_display_cpu_set}" \
     --argjson host_logical_cpus "${qualification_host_logical_cpus}" \
     --argjson host_available_memory_kib "${qualification_host_available_memory_kib}" '
     {configured_jobs:$configured_jobs,
@@ -1633,6 +1675,7 @@ qualification_scheduler="$(jq -cn \
      observed_peak_workers:$observed_peak_workers,
      observed_peak_display_workers:$observed_peak_display_workers,
      observed_peak_interactive_workers:$observed_peak_interactive_workers,
+     cpu_partitions:{work:$work_cpu_set,display:$display_cpu_set},
      host_logical_cpus:$host_logical_cpus,
      host_available_memory_kib_at_start:$host_available_memory_kib}
 ')"
@@ -1727,6 +1770,8 @@ printf 'Scheduler:                 jobs=%s peak=%s display_jobs=%s display_peak=
     "${qualification_display_jobs}" "${peak_active_display_cells}" \
     "${qualification_interactive_jobs}" "${peak_active_interactive_cells}" \
     "${qualification_host_logical_cpus}" "${qualification_host_available_memory_kib}"
+printf 'CPU partitions:            work=%s display=%s\n' \
+    "${qualification_work_cpu_set}" "${qualification_display_cpu_set}"
 printf 'Longest cells:             %s\n' "$(jq -r '
     .longest_cells | map(.id + "=" + (.duration_ms | tostring) + "ms") | join(", ")
 ' <<<"${qualification_timing}")"

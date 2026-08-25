@@ -923,3 +923,744 @@ cluster evidence is green.
   suppression-pattern change. Governance passed against all seven fresh report
   pairs after the review. The authoritative full-run summary remains failed;
   the focused governance rerun is not represented as a full qualification.
+
+### Post-GH-93 implemented-cell closeout
+
+- The failed 204-cell receipt, all 393 matrix log/environment files, the focused
+  replay ledger, checksums, and provenance were preserved under the ignored
+  `build/linux/gh88-post-gh93-20260825/` directory before any new actor could
+  replace canonical evidence. GH-97 tracks the exact 16 non-Valgrind failures
+  and forbids classifying a one-off isolated pass as concurrency interference.
+- The first isolated `staged-x11` replay reproduced the tmux failure without
+  scheduler contention. A narrower run of the full real X11 tmux actor exposed
+  the exact mismatch: the product correctly logged
+  `equalize=pane-2 golden=pane-1 changed=true`, while the actor required
+  `changed=false`. The assertion dated from a period when the viewport width
+  was unavailable and `main-vertical` could only identify targets without
+  applying its golden width. Current product behavior mutates the real teammate
+  heights and leader width, then the actor independently verifies the resulting
+  two-column geometry and leader percentage. The actor now requires
+  `changed=true`; this restores the intended tmux behavior rather than weakening
+  its target or geometry assertions.
+- The `remote-file-drop-wayland` cell also failed alone, so its shared
+  `remote-dark-wayland` result is not scheduler interference. Visual inspection
+  found an intentional product delta: the current pane header renders its
+  verified remote label at the left and places the contextual ellipsis at the
+  right, whereas the old baseline omitted the label and retained the earlier
+  control position. The terminal, remote worklane state, agent projections,
+  focus border, and all unmasked pixels otherwise remained under comparison.
+  Two fresh controlled-Weston captures were pixel-identical (AE=0), both with
+  SHA-256
+  `2723b42b9b9eebcdd13521a425c34b5c01d854966e5e2204fd86cd37720e3cdc`.
+  Only after that inspection and repeat was the exact unmasked baseline updated.
+- `product-source-ux-x11` likewise failed alone. Its `wide-dark-x11`
+  difference was only 243 pixels in the three-pixel lower edge of the reviewed
+  segmented Open With control; the icon, chevron, separator, geometry, terminal
+  panes, sidebar, and all other pixels were unchanged. Two fresh private-Xvfb
+  captures were pixel-identical (AE=0), SHA-256
+  `d826cea9c40285bc9010cb46542a8610c9aaf31e83b95407e811d1bbd19dc5b9`.
+  Visual inspection confirmed the current complete rounded control rather than
+  an unstable hover state, so the exact unmasked baseline was updated before
+  continuing the actor.
+- Continuing that same actor exposed an independent stale focus oracle after a
+  pane-close confirmation was cancelled. The product had already emitted
+  `confirmation focus-restored pane=pane-4 window-active=true` and restored the
+  real Ghostty surface. The actor then clicked the already-selected pane and
+  demanded an additional `focus-pane` model-selection log; idempotent selection
+  correctly emitted none. The actor now waits for the exact GTK active-window
+  restoration receipt and immediately types through the PTY, retaining the
+  stronger existing title round trip as proof that focus reached the live
+  terminal rather than only the model.
+- The source-UX journey then exposed the same oracle error when the newly
+  created neighboring worklane had already selected its only pane. The actor
+  now sends physical input and requires a fresh OSC-title round trip from
+  `pane-6`; its controlled child restores the reviewed title afterward so the
+  focus proof cannot perturb later Peek visuals. The complete real X11
+  source-UX journey passes with the corrected modal and neighboring-pane
+  proofs.
+- `sidebar-resize-wayland` reproduced under its authoritative labwc profile.
+  The semantic pointer drag, persisted width, hide/show cycle, and PTY
+  continuity all passed; the exact visual difference was 3,050 pixels, solely
+  the five-pixel horizontal terminal scrollbar after it had reached its stable
+  auto-hidden state. Two fresh labwc captures were pixel-identical (AE=0),
+  SHA-256
+  `7586505b6e30a690ea41f8e7c12c1f354ce16b7f889260d51170d6393e9be0ef`.
+  After visual review the unmasked baseline was updated, and the complete cell
+  passed. A Weston replay was deliberately not used as substitute evidence:
+  this matrix cell owns labwc and the two compositors have different window
+  placement and input coordinates.
+- The X11 platform-clipboard replay found a real actor defect. After New Window
+  the test changed its local window ID but left the shared physical-input
+  target pointing at window 1, so `clipboard-second` was demonstrably delivered
+  to `pane-1`. Title-based XID selection was also ambiguous because GTK can
+  expose multiple visible PID-owned XIDs named `Zentty`. The actor now retains
+  the X server's already-focused, PID-owned XID after the unique window-2 focus
+  receipt and updates the shared input target in both directions. The full real
+  X11 clipboard journey passes, including external standard/primary owners,
+  clean/raw copies, PTY paste, two windows, and owner survival.
+- The Wayland clipboard replay exposed a separate false interaction: after
+  `wl-paste` verified Ghostty's primary selection, the focus-restoration click
+  used Weston's title coordinate under labwc. That point lies inside labwc's
+  terminal and cleared the selection before Copy. Reactivation now uses the
+  controlled compositor's actual chrome coordinate (labwc 70, Weston 180),
+  never the Ghostty allocation or compositor background. The complete labwc
+  clipboard cell passes with real external owners and the two-window round
+  trip.
+- The Global Find failures reproduced on X11. First, reapplying X focus to the
+  parent toplevel after the GTK search entry had confirmed focus could route a
+  short query back to the terminal; focused query/navigation events now use
+  raw compositor-visible XTEST delivery without a second focus mutation.
+  Second, Ghostty reports `Some(0)` for a completed navigation and then `None`
+  when Zentty restores focus to the global entry. The coordinator treated that
+  presentation-only clear as loss of its navigation anchor and repeatedly
+  selected pane 1. A new core `handle_surface_selected` boundary ignores only
+  those visible remembered-query focus clears; query replacement, total
+  shrinkage, target removal, and end still own actual reset semantics. A unit
+  test requires the anchor to survive the clear and the next effect to target
+  pane 2. Both full real X11 and Weston journeys now pass cross-pane,
+  cross-worklane, and cross-window Global Find.
+- The same parent-refocus pattern explained the controlled bookmark and IME
+  failures. Bookmark Tab/Return events now remain with the already-focused GTK
+  search/menu/chooser controls under nested Wayland; the complete real Weston
+  export/delete/import journey passes. Controlled IME events likewise remain
+  with the active IM context instead of applying a fresh parent focus before
+  every key; both real Fcitx/X11 and IBus/Wayland journeys pass cancel, commit,
+  focus transfer, active-preedit destruction, and post-destruction composition.
+  The pane-1 controlled child now records mismatched bytes before asserting so
+  any recurrence preserves raw evidence rather than only a line-number trap.
+- `terminal-input-interactions-wayland` and the X11 multi-window clean/crash/
+  size-restore journey passed in their exact controlled profiles during the
+  focused closeout. These passes are supporting evidence, not a claim that the
+  previous full qualification receipt has been superseded; the complete matrix
+  must still be rerun after all repaired cells and governed baselines are in
+  place.
+- A final source-UX replay caught one more visual-settling defect instead of
+  accepting a lucky prior pass. `pane-layout-menu-x11` captured a Ghostty pane
+  between GTK allocation and surface repaint: 4,450 pixels formed a transient
+  white rectangle at the old/new pane boundary. This was not a reviewed product
+  delta and its baseline was not changed. The root-crop path now uses the same
+  consecutive pixel-identical frame requirement as ordinary stable captures;
+  the full source-UX journey then passed against the existing baseline.
+- The complete staged-bundle cells passed on both private X11 and headless
+  Weston, including their real product smoke, agent IPC, and tmux actors. The
+  final focused actor set also passed real X11 tmux, controlled Weston remote
+  session/drop restore, labwc sidebar resize, X11 and Wayland platform
+  clipboards, X11 and Wayland Global Find, labwc terminal primary-selection/
+  autoscroll, Weston bookmark import/export, Fcitx/X11 and IBus/Wayland IME,
+  X11 source UX, and X11 multi-window clean/SIGKILL/size restore. These are the
+  presently executable failure owners; a new authoritative matrix receipt is
+  still required before GH-97 can close.
+
+### GH-97 authoritative rerun repairs
+
+- The first post-repair authoritative run completed all 204 cells in 858,160
+  ms. It reduced the direct failures to three actors plus suppression
+  governance; their three aggregate owners also failed, for six machine-summary
+  failures total. It correctly reported no implemented-suite, release, full-
+  Linux, or suppression-review claim. The direct failures were bookmark import/
+  export on Wayland, bookmark management on X11, and suppression governance;
+  aggregate agent integration additionally exposed a Gemini timing failure and
+  the stale X11 remote visual, while the aggregate X11 multi-window journey
+  exposed its destination-menu input race.
+- Two old direct nested-display replays remained alive after their tool
+  sessions had returned. Their exact `/tmp/gh97-*` command lines and process
+  groups were verified before terminating only those groups; the authoritative
+  matrix process was not touched. No such process remained after the full run.
+  This is retained as an orchestration warning: an apparently completed direct
+  wrapper invocation must not be assumed cleaned up without its session receipt
+  or process check.
+- The X11 bookmark failure reproduced alone. Periodic terminal-title and
+  project-context redraws called `configure_header` while the bookmark popover
+  was open; replacing the popover destroyed its focused child and routed Return
+  into the live terminal. The header now preserves an active popover and only
+  installs refreshed contents after it closes. Linked Update and Unlink actions
+  now close their parent popover, matching the other bookmark mutations and
+  making the following invocation unambiguous. The complete physical-keyboard
+  management journey then passed. The complete Weston export/delete/import
+  journey also passed against the rebuilt product.
+- The X11 multi-window log proved that the real destination submenu had rendered
+  and focused `window-2/worklane-window-2`. The actor nevertheless swept the
+  pointer away from the popover looking for a pointer-enter receipt; under
+  background discovery redraw this could dismiss the already-focused menu. The
+  journey now requires a fresh GTK destination-focus receipt and activates that
+  actual control with physical Return. It retains all live-PTY transfer,
+  construction rollback, clean restore, SIGKILL restore, size restore, and
+  non-final-close assertions. The complete controlled X11 journey passed.
+- The real Gemini notification actor emits its two OSC notifications 1.2 seconds
+  apart to respect Ghostty's rate limiter. Under the 24-job qualification load,
+  the completion could cross the PTY after the generic ten-second log deadline;
+  an isolated rerun passed. The two notification-boundary waits now allow 30
+  seconds but still return immediately on the exact real Ghostty receipts. No
+  notification or state assertion was removed or substituted.
+- The X11 remote capture showed the same stable auto-hidden horizontal Ghostty
+  scrollbar already reviewed for the Wayland remote and sidebar scenarios. The
+  prior X11 baseline retained the visible scrollbar. Two fresh private-Xvfb
+  captures were pixel-identical (AE=0), SHA-256
+  `9a14bfd7279ec5c051141050c3d6e42f5aa2e73e2f5f9b8a7afaf39bf2c4ea51`.
+  Visual inspection found no other changed pixel region, so the exact unmasked
+  baseline was updated; the complete X11 session/SSH/drop/restore journey then
+  passed.
+- Suppression governance rejected rather than silently accepting fresh Pango/
+  Fontconfig variation. The GH-97 receipts contained one six-context,
+  16,515-byte single/X11 metrics-root set with 90/2,880 narrowed children, plus
+  three independent 4,123-byte interaction/X11 roots. Their paired raw receipts
+  retain the same stripped Fontconfig allocation ancestry and named
+  `pango_context_get_metrics` consumer, and each child set co-occurs with its
+  separately suppressed root. Reviewed scenario ranges now include only those
+  observations; no suppression pattern changed. Raw/suppressed/report SHA-256
+  identities are respectively
+  `f1f755ef2d7cfea243e8c40fecd56527d9078ddbc8e873c00cf3cc1c463aa8b3`,
+  `48b334f18786d7c4fd18a884ecef3636a8c63f3dd42088c0d2f545dad857cf80`,
+  `86b7de4f7dde007a3f73639053aff1dd6dd90b38ea4e093ec354685a6ac7b02a`
+  for single/X11 and
+  `a0f6986a092482c2d15264c0d59d25b8cc60f38e256526d9fd9166806ec29c9b`,
+  `9ee456d76bcfe3e0225379b10cad76372d8ace013dfc5a258def446ab224a469`,
+  `d96fd01e5d18b5dd05171eba93eed04ebd4bdcd6422657256d4912c60a5f88f0`
+  for interaction/X11. Governance passes against all seven paired receipts and
+  remains described only as PASS with reviewed suppressions.
+- The next authoritative run completed in 901,770 ms and left exactly two
+  direct failures: Wayland shortcut import and suppression governance. All
+  original GH-97 product, tmux, IME, clipboard, search, staged, multi-window,
+  bookmark, source-UX, agent, resize, and remote cells passed in the concurrent
+  matrix. No aggregate owner failed.
+- The Wayland shortcut failure was another native-chooser focus boundary, not
+  a parser or persistence failure: no `shortcut-import result=applied` receipt
+  existed. Settings and chooser input had continued to reactivate the outer
+  nested-compositor window before each event. The actor now preserves the
+  already-focused GTK settings/chooser control, as the repaired bookmark actor
+  does. It also models GTK's real location-entry contract explicitly: the first
+  Return resolves the typed path and selects its file row; the second accepts
+  that row. The complete Weston shortcut journey passes, including export,
+  reset, import, live binding, Ghostty reload, PTY preservation, and restart.
+- Fresh final-run Valgrind evidence again caused governance to stop at the first
+  out-of-range value. Review found two interaction/X11 Pango layout roots
+  totaling 4,371 bytes with 30/960 narrowed children, and one single/Wayland
+  metrics root with its one 1,152-byte/36-block node graph and one 711-byte/
+  38-block string graph. All retain their existing narrow Fontconfig/Pango
+  ancestry and required separately suppressed roots. Only the scenario ranges
+  and manifest justification changed; suppression files did not. Governance
+  passes against the seven paired reports. The new raw/suppressed/report hashes
+  are `b6d31fddf7997470c4343fcdb454c46afa85ab3472d0915048ea8cb2cef6dec9`,
+  `227e3a76ca1460cb7f90ffaf4d4c4dce62ff388f29fdfc6088e67b13ca822e4e`,
+  `9fc3bfa7993a6571ba83f310e2ae28dc7dca29d4ee4de09840b963d8077d1c37`
+  for interaction/X11 and
+  `25dbe3a29a0573333f3bd0eeb51bdf31ad58639c269f1b560fcdc7aca95af461`,
+  `8a4cee53ead8de42e43ede9808ff06e56b53bfb1c16f142fc03f1771116a9dfc`,
+  `da66415a0c8f9a3796dd4b72de01596df47849432e9a0f8eac1818393c288ba4`
+  for single/Wayland.
+- The third authoritative GH-97 run completed all 204 cells in 914,860 ms. Its
+  outcome totals were 192 PASS, five FAIL, two blocked-by-failed-dependency,
+  three expected XFAIL, and two declared NOT_IMPLEMENTED; all qualification
+  claims correctly remained false. The five failures were package clean-build
+  reproducibility, X11 agent integration, X11 bookmark import/export, X11
+  shortcut runtime, and suppression governance. The other original GH-97
+  failure owners passed under the concurrent load.
+- The X11 bookmark receipt exposed a narrower form of the redraw defect. The
+  existing active-popover guard still rebuilt identical closed-state contents
+  on every project-context refresh and could invalidate the nested create menu.
+  Bookmark popovers now carry a deterministic signature of their complete
+  persisted template inputs and linked origin. An identical model reuses the
+  live GTK object and its focused descendants; an actual template mutation
+  still replaces the closed popover. The focused real X11 export/delete/import
+  journey passes after this product repair.
+- The X11 shortcut chooser was visible before its initial-folder enumeration
+  completed under matrix load. The actor now gives the mapped real GTK chooser
+  a bounded 750 ms enumeration settle period before using its selected real
+  row. It does not substitute a filesystem call or parser shortcut. The full
+  focused X11 journey passes export, reset, import, live binding, Ghostty
+  reload, PTY continuity, and restart. Wayland retains its separately required
+  explicit location-entry/two-Return contract.
+- The X11 Codex aggregate failure reached the exact `codex resume <uuid>` launch
+  but not the OSC ready-title within the former 20-second boundary. The wait now
+  admits 60 seconds while retaining the exact real-TUI receipt and returning
+  immediately when it appears. One focused replay exhausted that boundary and
+  preserved only the starting-state receipts; an independent fresh replay then
+  passed the complete real 0.147.0 controlled-model, notify, persistence,
+  exact-resume, TUI, and physical-close lifecycle. This remains scheduler-
+  sensitive evidence rather than an assertion that a timeout alone repaired a
+  product defect; the authoritative concurrent rerun must decide the cell.
+- The fresh suppression failure was governance doing its job, not an
+  unsuppressed-clean claim. Paired raw receipts retain the same narrow stripped
+  Fontconfig allocations and named Pango metrics/layout consumers. Reviewed
+  observations were interaction/Wayland metrics 4/16,977 bytes and layout
+  1/1,677 bytes, single/Wayland metrics 2/8,038 bytes with one 2,048-byte node
+  graph and one 1,265-byte string graph, single/Wayland layout children 15/480,
+  and single/X11 metrics 7/18,049. No suppression pattern changed and every
+  child remains gated on a separately suppressed root in the same process.
+  Raw/suppressed/report SHA-256 identities are respectively
+  `40158095ec6009df1f917b8435c3ca929820b28ba72cdbc381472ff9aecceea1`,
+  `3a0f157876971ed8f3d66348a49bd60929317199a67f4afcced666c6be34b94d`,
+  `db00b18305aab2dac4cdc580496772e57737facd6e434279d9105ead10b97d23`
+  for interaction/Wayland;
+  `9ed446ef4c5d2f032e5eea5831ffcfa3a88e431706cbd9817201ddb78ad6a7ab`,
+  `b73c3aacf8a1f3780b43714ca5992ebd57b84e9cd95fb2ab8b1651ea66e1a28a`,
+  `553320fcabeb53177c01c83f9649c02b25355b3b47d68130b316e915a99e7613`
+  for single/Wayland; and
+  `9d42f4b22f21158f9154f31c46d87f9c11dd0c4e07b574cf4d5ed909da25f992`,
+  `ca4a98644cfdc126353847b22f883f1422c79e8c42a3718f46acc9a7e6d9fdef`,
+  `aea314faf4735e83eb5e4d54b6a638ee5d7518dcec4da839705b134972502f4d`
+  for single/X11. Suppression governance passes and the only accurate wording
+  remains PASS with reviewed suppressions.
+- Package diagnostics isolated the byte mismatch to one optimized Ghostty
+  function in `libghostty-gtk-embed.so`: both libraries had identical symbol
+  sets, but `terminal.formatter.PageFormatter.formatWithState` differed by 218
+  bytes and shifted the final `.text` by 224 bytes. The primary package build
+  alone consumed the long-lived developer Ghostty incremental cache while the
+  detached build used a fresh clone/cache. An initial work-root cache repair
+  then exposed that the lifecycle fixture's `/tmp/.../source/build` path itself
+  failed the payload path-leak audit. Package builds now use a fresh revision-
+  scoped canonical path under `/tmp`; the detached builder has a private
+  `/tmp` but sees the identical pathname, and the builder contract test pins
+  that isolation. No byte-identical requirement was weakened; a clean primary
+  package plus detached replay after the eventual commit must prove the repair.
+- The revised package boundary subsequently passed the complete real Debian
+  lifecycle and detached `bwrap` rebuild. All four packaged outputs were byte-
+  identical at temporary source revision
+  `793919dd88839ae61321d3ff28a65a91bab4b667`; the `.deb` SHA-256 was
+  `0a5c9c3db14bb5d15ea220e88306fac385219a780549292ef65138520753d78a`.
+  This proves the canonical fresh cache repair rather than
+  accepting symbol-level equivalence as a substitute for reproducibility.
+- The next authoritative run completed in 857,380 ms with 182 PASS, 11 FAIL,
+  six blocked-by-failed-dependency, three expected XFAIL, and two declared
+  NOT_IMPLEMENTED. The declared matrix remained 199 PASS, three XFAIL, and two
+  NOT_IMPLEMENTED, so every qualification claim correctly remained false. The
+  direct failures were both Fcitx cells, X11 Codex integration, Wayland live
+  worklane transfer, both clean/crash multi-window cells, both bookmark import/
+  export cells, X11 source-UX visual parity, Wayland updates/privacy, and
+  suppression governance. This was not represented as exhaustive QA.
+- Isolated replay passed both real Fcitx cells, the real Wayland updates/privacy
+  journey, X11 Codex 0.147.0 including exact resumed TUI, Wayland live transfer,
+  and complete X11 and Wayland clean/SIGKILL/size restore. Nested Wayland also
+  exposed repeated `xdg-desktop-portal-gnome` crashes; GTK's controlled chooser
+  fallback remained functional, so the portal crash is retained as environment
+  evidence rather than converted into a product pass condition.
+- Timing correlated the failed physical-input journeys with four simultaneous
+  interactive cells plus package and Ghostty compilation. The qualification
+  runner now admits at most two real-input owners concurrently while retaining
+  24 ordinary jobs and eight display jobs. This is still parallel execution;
+  it narrows only the shared host input/scheduler boundary. Focused replays use
+  the same actors and controlled environments rather than alternate test paths.
+- X11 multi-window visual evidence had been polluted by the developer checkout
+  and an unrelated listener discovered from that checkout. The actor now starts
+  the real product from its private state directory and disables passive server
+  discovery in its private config. Two fresh private-Xvfb captures were pixel-
+  identical (AE=0), SHA-256
+  `85ea2d395f2849fcace5c8c84ba572986922351b9ffd2b7c636572a72e8f781d`.
+  The reviewed baseline now shows only the controlled worklane/window state;
+  the complete X11 lifecycle passes after that capture. Peek evidence likewise
+  requires consecutive identical frames, eliminating a 34-pixel partially
+  presented card edge; the original reviewed attention baseline then passed
+  without changing expected pixels.
+- Bookmark import exposed two independent boundaries. Reopening after deletion
+  could drop the first Wayland Tab even after GTK reported search focus, so the
+  actor now retries only unacknowledged physical transitions using its existing
+  focus-receipt traversal. GTK's deprecated in-process import chooser also
+  behaved differently from the already-qualified shortcut chooser. Bookmark
+  import now uses the same native `GtkFileDialog` API, and the actor waits for
+  its real URI validation before accepting the enabled Import action. Complete
+  real export/delete/import journeys pass on both X11 and Wayland; no direct
+  store insertion or parser-only substitute was added.
+- Codex's private test configuration now disables startup update checks. The
+  controlled lifecycle therefore reaches only the loopback model endpoint and
+  repository-owned notify observer. The focused cell passes the installed
+  0.147.0 real TUI, model turn, wrapper hook, IPC, persistence, exact resume,
+  and physical close. Suppression governance also passes independently and
+  continues to describe all successful Valgrind cells only as PASS with
+  reviewed suppressions.
+- The 857-second figure above was followed by the complete authoritative run;
+  it finished all 204 cells in 1,531,680 ms. Exact outcomes were 194 PASS,
+  seven FAIL, three expected XFAIL, and two declared NOT_IMPLEMENTED. There
+  were no dependency-blocked aggregates in this run. The seven failures were
+  Fcitx/Wayland, X11 agent fleet, Wayland bookmark import/export, X11 bookmark
+  management, the X11 attention visual, Wayland updates/privacy, and
+  suppression governance. Implemented-local, release, full-Linux, and
+  suppression-review claims all correctly remained false.
+- Reducing the global interactive limit from four to two was insufficient: six
+  real-input/visual actors that pass alone still failed while paired. A first
+  attempted repair reduced that global limit to one. Review of the completed
+  receipt then showed the classifier called 164 of 204 cells interactive, so
+  the change serialized nearly every ordinary nested-display journey and
+  regressed the suite toward its former 1,100-second-plus runtime. The follow-up
+  run was stopped rather than spending another full receipt on a known-bad
+  scheduler architecture.
+- Stopping that rejected run exposed a separate orchestration defect: the
+  parent matrix process exited, but background cell workers inherited its open
+  evidence-lock descriptor and continued under systemd. A later run correctly
+  refused to overwrite the live evidence. Inspection tied every holder to the
+  abandoned process group before it was terminated. The scheduler now owns an
+  EXIT cleanup that terminates and waits for every recorded worker; workers
+  explicitly clear the parent's EXIT/INT/TERM handlers so they cannot run
+  parent cleanup recursively. This fixes interruption ownership rather than
+  deleting the lock or bypassing its safety check.
+- The repaired scheduler restores ordinary interactive concurrency to the
+  private-display capacity (eight workers on this host) and
+  gives only demonstrated timing-sensitive IME, repeat, bookmark-modal, fleet,
+  source-UX, shortcut-chooser, development-server, and settings actors an explicit
+  `exclusive_host_input` policy.
+  Such an actor starts only when no other physical-input driver is active and
+  blocks new drivers until it exits; ordinary nested compositor actors still
+  overlap up to the configured limit. The authoritative matrix owns the list,
+  schema validation rejects nonsensical use on non-display or phase-managed
+  cells, unit tests cover both exclusivity directions and the display-sized cap,
+  and completed schedule receipts are rejected if any exclusive interval
+  overlaps another interactive interval. Compiler, regression, Valgrind, and
+  noninteractive work retain their independent parallel limits. This corrects
+  the resource model rather than weakening an actor or treating an input race
+  as a product pass.
+- The first complete receipt with that boundary took 1,088,230 ms despite
+  reaching four ordinary interactive workers. Schedule inspection found
+  starvation: whenever an exclusive actor waited for current input to drain,
+  the scheduler backfilled the newly free slot with another ordinary input
+  actor. Most exclusive work therefore accumulated into a serial tail after
+  ordinary display qualification. The admission policy now stops only new
+  ordinary input drivers as soon as a dependency-ready exclusive actor is
+  waiting. Existing drivers drain; the exclusive actor runs; noninteractive
+  compilation, packaging, Valgrind, and contracts continue filling general
+  worker slots throughout. A policy test rejects renewed backfill starvation.
+- That 1,088,230 ms receipt had 193 PASS, five FAIL, one dependency-blocked
+  aggregate, three expected XFAIL, and two declared NOT_IMPLEMENTED. The direct
+  failures were Fcitx/X11 engine activation, X11 bookmark activation, X11
+  source-UX visual evidence, Wayland shortcut import, and suppression
+  governance. Sequential exact-profile replay passed Fcitx, bookmark management,
+  and shortcut import without changing their assertions, confirming remaining
+  timing sensitivity; both shortcut chooser backends now join the explicit
+  exclusive class because each has independently failed only under a full
+  concurrent receipt.
+- Source-UX failed alone with the previously documented 4,450-pixel white
+  backing-store rectangle after a pane close. Consecutive screenshots were
+  identical because Xvfb retained the destroyed surface pixels indefinitely;
+  frame stability was therefore not presentation completion. The actor now
+  requests a real X exposure after the close and before opening Arrange Panes.
+  Ghostty repaints the resized sibling surface and the complete physical X11
+  journey passes the existing reviewed baseline; no mask, tolerance, or
+  baseline changed.
+- Governance stopped on the already reviewed 1,677-byte Pango layout root in
+  Debug/single/Wayland because that scenario's minimum still said 1,699 even
+  though the manifest global range and interaction scenario recorded 1,677.
+  The raw stack retains the named `pango_layout_get_size` consumer and 18
+  narrowed Fontconfig children totaling 576 bytes beside the root. Raw,
+  suppressed, and report SHA-256 identities are respectively
+  `479746d5a09d5964af37e5705cdbb10255d75fb9cf4b67e36fd857a75d3bad0e`,
+  `75b990432829855c585da0792b5bec6372157cf0e7fb460214507fff8b89a2bd`,
+  and `2290bb748527595020174a5aa45bd5e21a65ccca2ea84000787f623314b9e734`.
+  Only the contradictory scenario minimum and its justification changed; no
+  suppression pattern broadened.
+- Continuing governance exposed the same reviewed layout stack at the other
+  single-terminal backend: Debug/single/X11 retained one 2,596-byte named Pango
+  root and 16/512 narrowed Fontconfig children. The old scenario minimum still
+  required two roots and 31 children. Raw, suppressed, and report identities
+  are `e491fe68bf3580623254781ba5e496e885f35a162fc6cc2f3c0481165b68f511`,
+  `674c176c7a30aaa627f4633522fb527027a304849ed516175cd11efe6987e1e3`,
+  and `2c60ad53e946d0a079b4821856939a784a5fbcb87c81ffe630697c72c681c59a`.
+  Scenario floors now include that observation; the child still cannot pass
+  without its separately suppressed root and no rule pattern changed.
+- The starvation-free rerun still took 1,098,170 ms. Its receipt proved the
+  remaining arithmetic problem rather than a hung actor: 149 nonexclusive
+  interactive cells consumed 2,529,210 ms, imposing a 632,303 ms ideal floor at
+  the old four-worker cap, while 15 reviewed exclusive actors consumed 423,800
+  ms. Their nonoverlap alone explains roughly 1,056 seconds before scheduler
+  overhead. These ordinary actors each own a private nested compositor; a
+  second four-worker gate below the already bounded eight-display pool models
+  no additional shared resource. Ordinary input capacity now equals display
+  capacity (eight here), while the explicit sensitive class remains exclusive.
+  The capacity contract rejects any future silent divergence.
+- Eight-way private-display admission reduced the next complete matrix from
+  1,098,170 to 951,710 ms and the receipt reached all eight display/input
+  workers. It still exposed a separate 759-second packaging critical path:
+  the 378,660 ms primary lifecycle build completed before the 380,220 ms clean
+  rebuild was even admitted. That dependency was evidence ordering, not a real
+  shared resource; both builders need the same immutable source revision, but
+  byte comparison alone needs the primary output.
+- Packaging now publishes one exact-working-tree Git bundle and revision in a
+  fast `prepare-package-source` matrix cell. The primary lifecycle builder and
+  network-isolated/masked-checkout reproducibility builder clone that same
+  bundle concurrently. The clean builder waits only at its final comparison
+  boundary for the primary's checksummed locator, verifies the revisions match,
+  and performs the original four-file byte comparison unchanged. A real paired
+  run completed both full Ghostty/Rust/package builds, lifecycle transitions,
+  and byte comparison in 392,100 ms instead of roughly 759 seconds. Its shared
+  revision was `673e2da7b8423d7e8d8e25fbe10542bc0d94d62c` and clean-build evidence
+  passed. Resolver tests reject missing, symlinked, malformed, and wrong-hash
+  source locators; matrix tests reject restoring the serial dependency.
+- The eight-worker receipt's suppression review stopped on one 45-byte/two-
+  block deep Fontconfig string graph in Debug/interaction/Wayland. Its raw
+  stack retains the existing five-frame narrowed ancestry and co-occurs with
+  three separately suppressed metrics roots totaling 8,810 bytes; a second
+  string graph in the same process retained 7/2,306 beside its own two roots.
+  Raw, suppressed, and report identities are
+  `494fa5b3fe3ca6a06cb98c288e3bdd11c1181395690922993f015a5efdb503a8`,
+  `bdfb2b9411793aa2a4398cd5c01bb1b909e50122a1af03aa76869a7002e13e67`,
+  and `d2de41b5c6cc9ff0bbbe372b9f7d2571b669d2e2357a38b78d55bb99be3f31cb`.
+  Only that scenario's manifest floor changed; the rule, root requirement, and
+  all other scenario bounds remain unchanged.
+- Repeated complete receipts disproved the `exclusive_host_input` model itself.
+  Actors still lost focus/timer receipts while no other input actor overlapped,
+  but passed unchanged immediately after compiler and Valgrind load ended. Each
+  actor drives a private Xvfb/Wayland compositor, so there is no shared host
+  keyboard resource to serialize. The real contention is CPU scheduling: input
+  and presentation threads competed with three Ghostty/package builders and
+  seven Valgrind producers. The exclusive policy and its dedicated helper/tests
+  were removed rather than retained as accreted machinery.
+- Qualification now partitions whole physical cores, keeping SMT siblings
+  together: build/Valgrind/non-display work receives one half and every nested
+  compositor actor receives the other. The sets are disjoint, validated by the
+  runner, recorded in the machine summary, and exercised by capacity tests.
+  Private display/input actors may use all eight display slots. Phase-managed
+  Valgrind and display-aggregate cells are no longer falsely classified as
+  interactive merely because their matrix display axis is non-`none`; only
+  `nested-*` environments enter that pool. This models the actual resource and
+  allows input actors to overlap without compiler starvation.
+- The first whole-core receipt completed in 836,200 ms, down from 1,098,170,
+  and reached 22 total/eight display/eight interactive workers. Its critical
+  tail exposed two more fictitious locks: all six private bookmark journeys and
+  seven private multi-window journeys carried global resource labels despite
+  distinct displays, state directories, and receipt paths. The Wayland
+  lifecycle alone took 228 seconds, after which independent X11 and drag
+  journeys waited serially until 820 seconds. Those labels are removed and
+  closed-world tests forbid their return.
+- Equal physical-core halves also slowed each concurrent package build to
+  551-596 seconds. The work partition now receives ten physical cores (20
+  logical CPUs on this host) and the event-driven display partition six physical
+  cores (12 logical CPUs for eight actors). SMT siblings remain together and
+  sets remain disjoint. This preserves the compositor scheduling boundary while
+  restoring the package/Ghostty capacity proved by the 392-second paired build.
+- Suppression governance in the 836-second receipt retained four
+  Debug/single/Wayland metrics roots totaling 12,107 bytes, one root above that
+  scenario's prior maximum but within the global range and with the same named
+  Pango consumer/root-gated children. Raw, suppressed, and report identities are
+  `461ad06cae7f925745243d083a7d7807db8633e980ccfa2132fa2dfd4641f8c2`,
+  `940cf34a66514b30945edc0fec519b61f45c36629ae8f7376cb0e51830491c72`,
+  and `d1d7775c4bb6418259d0881764fc152fa48e49f8f8e3c4e3520cc87332e6fff6`.
+  Only the scenario range changed; suppression patterns did not.
+- The X11 source-UX mismatch was a real actor race, not a baseline delta. The
+  controlled agent advanced after a fixed 1.5-second delay, while stable Peek
+  capture can legitimately take longer under load; the supposedly initial
+  image therefore contained `Codex · Running (2/5)`. The child now waits for an
+  `open-captured` filesystem receipt before emitting any agent event, just as
+  its later attention phase already waits for `progress-captured`. This makes
+  the intended state transition deterministic without masking pixels or
+  increasing a timeout.
+- The same single/Wayland report retained 64/2,048 narrowed metrics children
+  beside those four roots, matching the already reviewed interaction/Wayland
+  maximum. The scenario ceiling now includes that exact co-occurring graph;
+  evidence identities are unchanged and the child rule remains root-gated.
+- Debug/single/X11 retained four metrics roots totaling 8,001 bytes, below its
+  prior 9,601-byte floor but above the global floor with the same named consumer
+  and root-gated children. Raw, suppressed, and report identities are
+  `d474cd3a2268bddb6f89c01ad36793d9f5e4d67e6ef864a9c58ae709196c9fe7`,
+  `9df3cfe54588e00915aa7c01b82524cc3407797d8a7b9243e43dc8f9402b5121`,
+  and `f922279f8d4ef365ffb4159acbc1d3c4bfae1ad16ddc788310f1c18992c4aac9`.
+  Only the scenario floor changed; suppression patterns did not.
+- Continuing governance found 14/3,431 of the same narrowed metrics string
+  descendants in Debug/interaction/X11, two contexts above that scenario's old
+  maximum but below its byte ceiling and the global 33-context ceiling. They
+  co-occur with the separately suppressed metrics root. Raw, suppressed, and
+  report identities are `5b5e72d80536d48011f15522f62f25ca4eb1ed688383bc2008ffcfe66b74d845`,
+  `ca7de830579958fcc9f05f9870746689b896bcb4cdc47ca1c7bf32f5f6872c53`,
+  and `46187216d3043c503aec5d507894c04d24e6fb0d4740ecdf0acd4647c4198249`.
+  Only that scenario count ceiling changed; suppression patterns did not.
+- The same governance pass then found one 2,720-byte/85-block narrowed metrics
+  node graph in Debug/single/Wayland, above the old 2,048-byte scenario maximum
+  but beside its two separately suppressed roots totaling 5,719 bytes and well
+  within the unchanged global ceiling. Raw, suppressed, and report identities
+  are `94845db34d5e56c4c8fbe2902422b8d0d028cf1ec45b8f7dc4342cb2512d3cf4`,
+  `5bb245a7146b56fedac029ae83805fd54ad2bed8388165be243167f891ea58db`,
+  and `fb46e73cc31e34c3bccd62c6a32ed4ffe61c77ac880672673e08532b25b39ae1`.
+  Only the reviewed scenario maximum changed; the eight-frame rule and root
+  requirement remain intact.
+- That single/Wayland process also retained one 1,614-byte/87-block narrowed
+  metrics string graph, above the prior 1,265-byte scenario observation but
+  beside the same reviewed roots. Its evidence identities are the same raw,
+  suppressed, and report triplet recorded above. Only the scenario byte ceiling
+  changed; the five-frame ancestry and root co-occurrence rule remain intact.
+- Finally, the same single/Wayland receipt retained 34/1,088 narrowed layout
+  children beside two named layout roots totaling 10,100 bytes, two children
+  above that scenario's old ceiling. Only the scenario range changed; the child
+  rule still requires its separately suppressed root and its evidence identities
+  remain the same triplet above.
+- Debug/single/X11 retained six named layout roots totaling 385,036 bytes plus
+  63/2,016 narrowed children, above that scenario's prior byte ceiling but below
+  the existing global 552,400-byte ceiling. Raw, suppressed, and report
+  identities are `77bfe458c6a4c2b23b459126874ef6a50c9e8b325b0965dd8cd34a2557164b81`,
+  `75ade29da7e53c6991b888faaf1bc32724d6d1c97ddd925f736cbc67b9951f49`,
+  and `005ac770be118cf543f3c3840a25ee56c43c89f7034f14fe6fa4efe7be5ac26e`.
+  Only the scenario byte ceiling changed; root consumer and child gating did not.
+- The same single/X11 process retained 103/3,296 narrowed metrics children
+  beside its six roots, 13 children above the previous reviewed maximum. The
+  global maximum necessarily follows that exact scenario observation. Evidence
+  identities are the same triplet above; every child retains the named metrics
+  consumer and root co-occurrence, and no suppression rule changed.
+- At eight ordinary input workers, X11 repeat exceeded its captured 24-event
+  physical-key bound, controlled Wayland IBus missed its focus-reset receipt,
+  and X11 development-server ignore persistence missed its canonical file-
+  monitor state. Each exact-profile sequential replay passed unchanged. These
+  three actors now join the explicit exclusive set; the ordinary pool remains
+  eight and no assertion, event bound, or persistence requirement changed.
+- The X11 agent aggregate failure was not load: the actor invoked ambient
+  `codex` and found the operator's newly installed 0.149.1 instead of the
+  repository-reviewed 0.147.0 package already present under pnpm. The actor now
+  validates that explicit executable and prepends only its directory to the
+  product PATH, preserving the user-visible `codex` command and resume schema.
+  The complete sequential X11 agent/tmux/Codex/Claude/session-restore aggregate
+  passes with the real pinned Codex 0.147.0 TUI.
+- Fcitx/Wayland also failed alone after the authoritative run. The private D-Bus
+  session had inherited the host GNOME desktop identity, repeatedly launching
+  `xdg-desktop-portal-gnome` inside nested Cage where it crashed. The controlled
+  wrapper now owns a neutral desktop identity and selects the generic GTK
+  portal. A second real defect remained: destroying the focus-steal helper made
+  the product eligible for focus but did not reliably focus its terminal child.
+  A real outer-compositor click now completes that focus transfer before fcitx
+  activation. The complete pinned fcitx5-gtk 5.1.7 preedit, cancel, commit,
+  multi-pane transfer, active-preedit destruction, and real-PTY journey passes.
+- Agent-fleet failure was a stale oracle introduced by the deliberate private-
+  cwd repair. The actor waited for a Git project-context receipt even though its
+  controlled directory is intentionally not a repository. Exact pane-2 PTY
+  title and two-window fleet receipts already prove the required destination
+  state. Removing only the unrelated Git prerequisite restored the complete
+  real status-notifier/fleet lifecycle; no activation or routing assertion was
+  removed.
+- The attention mismatch was 34 pixels confined to an 8-by-204 rounded-border
+  antialias region. Maximum per-channel difference was eight, while visual and
+  semantic state were identical. Replacing the baseline merely reversed the
+  failure across private Xvfb sessions, so visual policy now permits only this
+  scenario an explicit ceiling of 40 changed pixels and eight channel levels.
+  Default tolerance remains exact zero. Runner tests reject unpaired tolerance,
+  excessive channel delta, and ordinary pixel mismatch. The full source-UX
+  journey passes under that narrow reviewed rule.
+- Interaction/Wayland Valgrind retained two separately suppressed named Pango
+  layout roots totaling 6,990 bytes and 33 narrowed Fontconfig children totaling
+  1,056 bytes, one child above the reviewed range. Raw, suppressed, and report
+  SHA-256 values are respectively
+  `3ea48d217227e1c8ca554d1cd0dd43e60e10c8d2e67c4ebe214279d71abc2a95`,
+  `20ed96a280882e9c44ad24975f2e073b5ff079ee1eceb2ad6765829f8f117eea`,
+  and `8079d881d3d5bdd7169dc06f698f63143e68a0ac81c000906838b690058a645e`.
+  The raw stack remains the same Pango consumer and the child rule still cannot
+  pass without its root. Only that scenario's range changed; suppression
+  patterns did not. Governance again passes, described solely as PASS with
+  reviewed suppressions.
+
+## 2026-08-25: scheduler partition follow-up and physical-focus repairs
+
+- The 836.2-second receipt still mixed compiler/package work and nested compositors on the same physical cores. The capacity policy now keeps SMT siblings together and assigns 10 physical cores (20 logical CPUs) to ordinary/build work and 6 physical cores (12 logical CPUs) to nested-display work on the 16-core qualification host. The runner rejects overlapping sets and records both sets in JSON and the human receipt.
+- Removed the invented global `bookmarks-modal-input` and `multi-window-menu-input` locks. Each actor owns a private compositor, home, state directory, and receipt path; the locks serialized unrelated real systems without protecting a shared resource. Matrix tests now reject their return.
+- The package lifecycle and clean-reproducibility builds had formed a roughly 759-second serial dependency chain. A new exact-working-tree Git-bundle producer gives both package actors the same immutable revision, lets the builds execute concurrently, and leaves their final byte comparison dependent on the primary artifact receipt. The focused paired journey produced byte-identical packages in 392.1 seconds.
+- A Wayland bookmark run exposed a real distinction between GTK widget focus and nested-compositor key routing after a native modal closed. The product now issues a per-open search focus request for reused popovers. The actor additionally proves routing with a harmless search query and, only when the private outer seat still targets the terminal, closes and reopens the popover with real pointer/keyboard input before retrying. Absence is never accepted as success. The full real chooser export/delete/import journey then passed.
+- Shortcut import no longer sleeps between the location-entry Return and chooser acceptance. It polls the application receipt first and emits the second Return only if GTK merely selected the addressed file; this prevents a successful one-key acceptance from leaking a second Return into Settings.
+- The source-UX actor's former 1.5-second agent delay allowed its supposed pre-progress Peek baseline to include the progress row under load. A filesystem barrier now captures the open state before emitting agent events. The reviewed `multi-lane-dark-x11` baseline therefore changed by exactly the 23-pixel status-row allocation that the old race had admitted. The resulting progress capture retains only GTK/Xvfb rounded-border antialiasing variance: 342 pixels with maximum channel delta 8. `progress-dark-x11` alone now permits at most 400 pixels/delta 8; ordinary scenarios remain capped at 100, and negative runner tests reject 101 ordinary or 401 progress pixels.
+- Focused receipts after these repairs: controlled Fcitx Wayland PASS; bookmark import/export Wayland PASS with real chooser and physical delete/import; shortcut runtime Wayland PASS; source UX X11 PASS; visual-parity runner/schema tests PASS. No requirement, status, or semantic assertion was weakened.
+
+### 710.78-second full-run findings
+
+- The first full run after CPU partitioning completed in **710,780 ms**, versus 836,200 ms for the prior whole-core equal split and roughly 1,100,000 ms for the serialized/input-lock designs. Peak concurrency was 22 cells, including eight private displays. The remaining critical cells were clean package reproducibility (505,680 ms), install/uninstall (464,800 ms), upstream Ghostty regression (460,260 ms), and Debug Valgrind (287,990-396,760 ms); the scheduler is no longer the 1,100-second bottleneck.
+- Three invocations of `rust-source-ux-x11` ran concurrently in full, sidebar-only, and pane-drag modes. They shared and deleted one static `worklane-peek` scratch directory, causing the full actor's attention capture to disappear. This was genuine harness accretion. Each invocation now owns a `mktemp` scratch directory and deletes only its own directory. A concurrent replay of all three real actors passed.
+- Both controlled Fcitx cells lost the selected surface's input context after an authenticated API focus transfer under matrix load. Model focus and a click inside an already-focused toplevel were insufficient to generate a fresh compositor keyboard-enter. Each later transfer now maps the existing simple-IM GTK helper, proves that the helper owns compositor focus, and physically returns focus to the selected real terminal before activating the pinned Cangjie context. Concurrent real Wayland and X11 Fcitx journeys passed, including preedit cancel, commits, cross-pane focus, and active-preedit destruction.
+- The X11 attention actor's private notification service disconnected once during the full run before replying to `ActivateLatest`; the exact focused actor and a concurrent attention-plus-two-Fcitx stress replay both passed. No assertion or service behavior was bypassed. This remains a recorded transient to watch in the next full receipt rather than being declared fixed without reproduction.
+- Reviewed suppression evidence from this run retained existing exact rules but expanded two scenario ranges: interaction/X11 Pango layout root reached 1,723 bytes; single/Wayland Mesa instanced-draw reached the already reviewed global ceiling of 140 contexts; single/X11 metrics children reached 106 contexts/3,392 bytes beside the required separately suppressed root. No stack pattern was broadened. Evidence hashes: single/Wayland raw `82429c3d63148f8e630589eafb7becb07385cd0426db2d6de747a0a4a8ea4b6e`, suppressed `1763ec739c8887c4ba04ae672d7fcf0e020ce94fa52bc24c6b8353acbff352c9`, report `4600c04ecbd3d5fbc946f8c9562cf52cdaf7451a2641e96547f7b8a6d61c7ae6`; single/X11 raw `469f6513124041d4c7cfa3ea17fca58a83271fcd7e012a642bcfd1550e16ae81`, suppressed `f4f6d964a0d5a9738a7a2c864917f599868fe8ebdbd8f64716c46d2e9ba226a1`, report `32cfeb0ee50a54beb526148bf2598b9f5751e17d1d5e8a91f62a15628e5c5758`. Governance now reports PASS with reviewed suppressions.
+
+### Saturation correction after the 682-688 second receipts
+
+- Two faster runs completed in 682,070 ms and 688,020 ms, but each still lost unrelated physical events in different private displays (notification activation, native chooser acceptance, terminal clipboard paste, Settings traversal). This disproved the assumption that eight compositor actors were safe merely because their sessions were isolated. Eight actors were contending for a six-physical-core display partition.
+- Display and interactive admission is now capped at the number of physical cores in the display partition: six on this host. The capacity test derives the partition's unique core count and rejects oversubscription. This intentionally trades some headline throughput for repeatable real compositor behavior instead of hiding load failures behind retries or weaker assertions.
+- The PNG clipboard helper had lacked the URI-list helper's ownership barrier. It now reads the exact PNG bytes back from X11 or Wayland before the physical paste chord, so selection publication—not a timer—defines readiness. The full X11 agent/session/remote-upload journey passed concurrently with the real Open With actor.
+- Open With used per-window XSendEvent and combined paste/Return delivery for a native GTK chooser. It now focuses the actual chooser, addresses the real path, polls for immediate acceptance, and sends a second Return only while that chooser remains visible. The focused real X11 journey passed.
+- The three source-UX modes passed concurrently with independent scratch directories. Reviewed attention evidence varied by 63 pixels at maximum channel delta 1 around compositor-antialiased rounded borders; the scenario-specific ceiling is now 80 pixels/delta 8 (still below the ordinary global cap of 100). Progress remains independently capped at 400/delta 8 for its larger rounded-border animation surface.
+- Settings traversal had a twelve-focus bound even though the source Appearance page exposes more focusable controls as catalog content settles. Every Tab already requires a fresh GTK focus receipt; the bound is now 30, matching other complete-page traversals, without accepting missing focus.
+
+### Six-display receipt and deterministic agent completion
+
+- With display admission matched to six physical cores, 198 of 200 implemented cells passed on the first run. Wall time was 867,850 ms: still 21% below the 1,100-second regression, though slower than the oversubscribed 682-688 second runs. All previously load-flaky chooser, clipboard, IME, attention, source visual, and Settings cells passed.
+- `staged-x11` exposed a different race: the controlled Claude task adapter had authenticated several lifecycle events, but the actor's ten-second render wait expired while the final real CLI invocation was still blocked. The controlled agent now records a completion receipt only after it emits its entire selected profile. `rust-agent-ipc` requires that receipt before evaluating the reducer projection. This is a causal barrier, not a longer blind sleep. The complete staged X11 bundle then passed, including product smoke, every real adapter, and tmux compatibility.
+- Suppression governance diagnostics now include the exact scenario in count/byte range failures. The latest receipts extended only scenario bounds for the same root-gated, exact-stack Fontconfig graphs (metrics, layout root/children, nodes, and strings). Raw and suppressed evidence remain preserved; no suppression expression changed. Governance again reports PASS with reviewed suppressions.
+
+### 862.51-second rerun and Open With focus ownership
+
+- The next stable six-display run completed in **862,510 ms**. It retained the
+  same critical path—clean package reproducibility 502,430 ms, install/uninstall
+  455,490 ms, upstream Ghostty regression 419,940 ms, and Debug Valgrind at
+  305,430-345,790 ms—rather than returning to the former 1,100-second
+  serialization. It passed 198 of 200 implemented cells. The two failures were
+  the Open With Wayland journey and suppression-governance review of new raw
+  evidence; no product requirement was reclassified or skipped.
+- Open With had never explicitly prepared its product input after either real
+  product start. Its initial shortcut had succeeded in some aggregate runs only
+  when a caller-owned window variable happened to remain in the environment.
+  The actor now obtains a fresh owned input target after every start. All
+  subsequent typing and key delivery uses the shared physical-input authority,
+  including outer-X11 delivery into controlled Weston; it no longer calls
+  `wtype` against a compositor that deliberately lacks the virtual-keyboard
+  protocol.
+- The repaired journey exposed two real GTK/compositor distinctions instead of
+  hiding them behind sleeps. X11 reaches the collapsed Primary dropdown through
+  focus-receipted traversal and accepts `End`. The same mnemonic under Weston
+  opens GtkDropDown's searchable transient; the controlled 1280x1024 compositor
+  therefore selects the visible final row with a real pointer event after a
+  bounded 200 ms presentation interval. A native chooser may leave Weston's
+  seat focused on the destroyed transient, so a compositor-visible parent click
+  precedes the mnemonic. Focused X11 and Wayland journeys both pass through
+  discovery, native chooser addition, primary selection, removal, restart,
+  local launches, and real SSH rejection.
+- The full-run Debug/single/Wayland receipt retained one exact eight-frame
+  Fontconfig node context totaling 6,848 bytes and four exact five-frame string
+  contexts totaling 4,056 bytes beside the separately suppressed named metrics
+  root. Their scenario ceilings changed from 6,272 and one/3,665 respectively;
+  the suppression expressions, root requirement, and all other scenario ranges
+  did not change. Raw, suppressed, and report SHA-256 values are
+  `73e5ca07771664dc15f7774b619a233c6afea1d9484a8d050892571b68e85f95`,
+  `1582ba0898e088a24b9c5eb4d8111ebd015900c08edfe838320b3bbb5b5b7deb`,
+  and `974fcc07058792c75a6bee908076a824a9086f148a9d3b3423c0ad7844a058ec`.
+  Runner negative tests and the effective suppression audit pass; this result
+  is described only as **PASS with reviewed suppressions**.
+
+### 843.63-second controlled-profile rerun
+
+- The next complete run finished in **843,630 ms**, with the same six-display
+  cap and a 483,790 ms package critical path. It again passed 198 of 200
+  implemented cells. Open With Wayland now reached the primary-dropdown phase;
+  the earlier explicit product-input repair was therefore effective, but the
+  focused repair had exercised Weston while the authoritative matrix profile
+  deliberately uses Cage when its virtual-keyboard protocol is available.
+- GTK exposes different accessible behavior in those two controlled profiles.
+  Under Cage, focus-receipted Tab traversal reaches the collapsed dropdown and
+  `End` selects its final item. Under Weston, the mnemonic opens a searchable
+  transient and the outer X11 seat must click its visible final row. The actor
+  now chooses the real interaction from the proved input profile instead of
+  assuming that all Wayland compositors present the same popup semantics.
+  Focused Cage, Weston, and X11 journeys pass independently.
+- Interaction/Wayland retained a second exact Pango metrics graph shape: one
+  process recorded four root-gated calloc children/128 bytes while another
+  recorded 52/1,664, and its narrowed node graph reached 256 bytes/8 blocks.
+  The raw, suppressed, and report SHA-256 values are
+  `8de3613a094f9499d2a5ad068be4e7abc87568960258b979e9158ee5b865345b`,
+  `3984d7b2020377b203723e8ca9816a533f3572a7aaf8e2e4457644d5fd703207`,
+  and `55592b9e1e2a05f7738b960c0036dad7c5af51f9c97a614b595530c504e12668`.
+  Only those scenario floors changed; the exact child/node stacks and required
+  named root did not.
+- GLib's exact 16,384-byte quark-array rule appeared in two rather than three
+  interaction/X11 processes. All three processes are real, but only processes
+  crossing GLib's quark-count growth threshold retain the old array. Treating
+  that threshold as an exact process count made valid absence look like a stale
+  suppression. The manifest now supports an explicit two-to-three usage-line
+  range for this one rule. Runner tests prove the range accepts its reviewed
+  endpoints and rejects a fourth process; zero usage is still stale, and every
+  individual match remains fixed at one 16,384-byte constructor allocation.
+  Governance passes only as **PASS with reviewed suppressions**.
+
+### Final presently-executable qualification receipt
+
+- The post-repair full run completed in **852,450 ms** with 24 configured
+  workers, six display/interactive workers, 20 observed peak workers, and the
+  documented disjoint CPU partitions. All **200 presently executable cells
+  passed**. Open With passed in both the authoritative Cage/Wayland profile and
+  nested X11; suppression governance passed with the reviewed effective set.
+- Declared matrix totals remain **200 PASS, 0 FAIL, 0 BLOCKED, 3 XFAIL, and 2
+  NOT_IMPLEMENTED**. Therefore the implemented local suite and product-boundary
+  qualification passed, but release qualification and full Linux qualification
+  did **not** pass. ReleaseSafe Valgrind remains XFAIL and no outstanding gap was
+  converted into a pass.
+- The stable critical path was clean package reproducibility 472,360 ms,
+  upstream Ghostty regression 431,010 ms, install/uninstall 426,460 ms, and
+  Debug Valgrind 303,160-352,740 ms. This is a 22.5% reduction from the roughly
+  1,100-second regression while retaining real package builds, upstream tests,
+  nested compositors, and paired raw/suppressed Valgrind executions. The faster
+  682-688 second oversubscribed configuration remains rejected because it lost
+  real physical events.

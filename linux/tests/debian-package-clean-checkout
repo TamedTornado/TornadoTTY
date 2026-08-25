@@ -12,6 +12,8 @@ masked_checkout="${temporary}/masked-checkout"
 output_directory="${ZENTTY_PACKAGE_QUALIFICATION_DIR:-${repo_root}/build/linux/package-qualification}"
 trap 'rm -rf -- "${temporary}"' EXIT
 source "${repo_root}/linux/tests/lib/qualified-package-artifact"
+# shellcheck source=linux/tests/lib/qualified-package-source
+source "${repo_root}/linux/tests/lib/qualified-package-source"
 
 for dependency in bwrap getent git rustup; do
     command -v "${dependency}" >/dev/null || {
@@ -36,12 +38,11 @@ mkdir -p -- "${masked_checkout}" "${isolated_zig_cache}/p" \
     echo "debian-package-clean-checkout: prepared Cargo registry is missing" >&2
     exit 1
 }
-zentty_qualified_package_artifact "${repo_root}" || {
-    echo "debian-package-clean-checkout: qualified primary artifact set is missing or stale" >&2
+zentty_qualified_package_source "${repo_root}" || {
+    echo "debian-package-clean-checkout: qualified source snapshot is missing or stale" >&2
     exit 1
 }
 revision="${ZENTTY_PACKAGE_REVISION}"
-primary_output="$(dirname "${ZENTTY_PACKAGE_ARTIFACT}")"
 git clone --quiet --no-local --no-hardlinks \
     "${ZENTTY_PACKAGE_SOURCE_BUNDLE}" "${isolated}"
 git -C "${isolated}" checkout --quiet --detach "${revision}"
@@ -92,6 +93,22 @@ version="$(dpkg-deb -f "${artifact}" Version)"
 manifest="${isolated}/build/isolated-package/zentty_${version}_amd64.manifest.json"
 provenance="${isolated}/build/isolated-package/zentty_${version}_amd64.provenance.json"
 checksums="${isolated}/build/isolated-package/SHA256SUMS"
+
+# The primary and isolated builders intentionally run in parallel. Wait only
+# for the primary's immutable locator before performing byte comparison.
+for _ in $(seq 1 2400); do
+    zentty_qualified_package_artifact "${repo_root}" && break
+    sleep 0.25
+done
+zentty_qualified_package_artifact "${repo_root}" || {
+    echo "debian-package-clean-checkout: qualified primary artifact set was not published" >&2
+    exit 1
+}
+[[ "${ZENTTY_PACKAGE_REVISION}" == "${revision}" ]] || {
+    echo "debian-package-clean-checkout: primary and isolated revisions differ" >&2
+    exit 1
+}
+primary_output="$(dirname "${ZENTTY_PACKAGE_ARTIFACT}")"
 
 [[ "$(jq -er '.zentty_revision' "${provenance}")" == "${revision}" ]]
 jq -e '

@@ -451,4 +451,8 @@ case "${profile}" in
     *) fail "unknown profile: ${profile}" ;;
 esac
 
+if [[ -n "${ZENTTY_CONTROLLED_AGENT_START_RECEIPT:-}" ]]; then
+    printf 'completed pid:%s profile:%s\n' "$$" "${profile}" \
+        >>"${ZENTTY_CONTROLLED_AGENT_START_RECEIPT}"
+fi
 sleep "${sleep_seconds}"

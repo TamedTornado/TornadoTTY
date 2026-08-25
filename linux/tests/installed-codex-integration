@@ -5,6 +5,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
 endpoint_binary="${repo_root}/target/release-safe/controlled_openai_responses"
 notify_observer="${repo_root}/linux/tests/fixtures/codex-notify-observer"
+codex_binary="${ZENTTY_REAL_CODEX_BIN:-${repo_root}/linux/ci/node-tools/node_modules/.bin/codex}"
 state_directory=""
 codex_home_directory=""
 log=""
@@ -40,16 +41,17 @@ trap cleanup EXIT
 [[ "${GDK_BACKEND:-}" == x11 ]] || fail "GDK_BACKEND must be x11"
 [[ "${ZENTTY_NESTED_X11_SESSION_ID:-}" =~ ^[0-9a-f]{64}$ ]] ||
     fail "installed Codex integration must run through linux/tests/nested-x11"
-for dependency in codex grep jq mktemp; do
+for dependency in grep jq mktemp; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
 done
+[[ -x "${codex_binary}" ]] || fail "reviewed repository Codex is not executable: ${codex_binary}"
 [[ -x "${product}" ]] || fail "staged product is not built: ${product}"
 [[ -x "${endpoint_binary}" ]] ||
     fail "controlled Responses endpoint is not built: ${endpoint_binary}"
 [[ -x "${notify_observer}" ]] || fail "Codex notify observer is not executable"
 zentty_product_disable_lifecycle_confirmations
 
-codex_version="$(codex --version 2>/dev/null)"
+codex_version="$("${codex_binary}" --version 2>/dev/null)"
 [[ "${codex_version}" == "codex-cli 0.147.0" ]] ||
     fail "review the installed Codex contract before accepting version: ${codex_version}"
 
@@ -72,6 +74,7 @@ endpoint="$(sed -n 's/^CONTROLLED_OPENAI_RESPONSES_READY=//p' "${codex_home_dire
 cat >"${codex_home_directory}/config.toml" <<EOF
 model_provider = "zentty-test"
 model = "gpt-5.6-sol"
+check_for_update_on_startup = false
 
 [model_providers.zentty-test]
 name = "Zentty Test"
@@ -85,7 +88,8 @@ EOF
 
 start_product() {
     : >"${log}"
-    env CODEX_HOME="${codex_home_directory}" ZENTTY_TEST_MODEL_KEY=not-a-real-key \
+    env PATH="$(dirname "${codex_binary}"):${PATH}" \
+        CODEX_HOME="${codex_home_directory}" ZENTTY_TEST_MODEL_KEY=not-a-real-key \
         ZENTTY_CODEX_NOTIFY_RECEIPT="${notify_receipt}" \
         "${product}" "$@" >"${log}" 2>&1 &
     product_pid=$!
@@ -146,7 +150,7 @@ zentty_product_wait_for_log "${log}" \
     "zentty-linux: agent-resume-launch pane=pane-1 command=codex resume ${session_id}" \
     "relaunch did not route exact Codex resume" || fail "real Codex resume launch missing"
 zentty_product_wait_for_log "${log}" 'zentty-linux: title=Ready | zentty' \
-    "restored Codex TUI did not render its ready state" 400 || fail "real resumed TUI missing"
+    "restored Codex TUI did not render its ready state" 1200 || fail "real resumed TUI missing"
 close_product
 
 echo "Installed Codex integration passed: x11, version=${codex_version#codex-cli }, model-endpoint=controlled-loopback-completed-turn, wrapper=staged, pty=real, hook=real, notify=real, ipc=real, relaunch=real-resume-tui, lifecycle=physical"

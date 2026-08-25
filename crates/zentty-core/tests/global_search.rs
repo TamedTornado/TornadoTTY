@@ -274,6 +274,34 @@ fn shrinking_totals_and_selected_clear_events_obey_exact_pane_boundaries() {
 }
 
 #[test]
+fn surface_focus_clear_after_navigation_does_not_rewind_global_selection() {
+    let targets = [target("lane", "pane-1"), target("lane", "pane-2")];
+    let mut search = GlobalSearchCoordinator::default();
+    search.show(&targets);
+    let _ = search.update_query("needle", &targets);
+    let _ = search.handle_total("pane-1", 1);
+    let _ = search.handle_total("pane-2", 1);
+    search.handle_surface_selected("pane-1", Some(0));
+    assert_eq!(search.state().selected, Some(0));
+
+    search.handle_surface_selected("pane-1", None);
+    assert_eq!(search.state().selected, Some(0));
+    assert_eq!(
+        search.find_next(Some(&targets[0])),
+        [
+            GlobalSearchEffect::ResetSelection {
+                pane_id: "pane-1".to_owned(),
+            },
+            GlobalSearchEffect::Navigate {
+                target: targets[1].clone(),
+                direction: GlobalSearchDirection::Next,
+                selected_index: 0,
+            },
+        ]
+    );
+}
+
+#[test]
 fn previous_navigation_uses_exact_last_and_within_pane_indices() {
     let targets = [target("lane", "pane-1"), target("lane", "pane-2")];
     let mut search = GlobalSearchCoordinator::default();

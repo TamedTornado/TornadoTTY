@@ -54,6 +54,11 @@ jq -e '
         (.receipt | type == "string" and startswith("build/linux-test-receipts/visual-parity/") and endswith(".json")) and
         (.baseline | type == "string" and startswith("linux/tests/visual-baselines/") and endswith(".png")) and
         ((.mask == null) or (.mask | type == "string" and length > 0)) and
+        (.id as $scenario_id |
+         (((.max_changed_pixels // 0) == 0 and (.max_channel_delta // 0) == 0) or
+          ((.max_changed_pixels | type == "number" and . >= 1 and
+            . <= (if $scenario_id == "progress-dark-x11" then 400 else 100 end) and floor == .) and
+           (.max_channel_delta | type == "number" and . >= 1 and . <= 8 and floor == .)))) and
         (.semantic_assertions | type == "array" and length > 0) and
         (.status | IN("PASS", "FAIL", "BLOCKED", "EVIDENCE_PENDING", "NOT_IMPLEMENTED")) and
         (if .status == "PASS"

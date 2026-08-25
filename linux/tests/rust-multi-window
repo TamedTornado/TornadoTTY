@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-product="${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}"
+product="$(readlink -f "${ZENTTY_LINUX_BINARY:-${repo_root}/build/linux/bin/zentty-linux}")"
 backend="${GDK_BACKEND:-}"
 bundle_root="$(cd "$(dirname "${product}")/.." 2>/dev/null && pwd)" || bundle_root=""
 bundle_lib="${bundle_root}/lib"
@@ -100,6 +100,9 @@ mkdir -p "$(dirname "${config_file}")"
 cat >"${config_file}" <<'EOF'
 [clipboard]
 always_clean_copies = true
+
+[server_detection]
+passive_detection_enabled = false
 EOF
 mkdir -p "${XDG_CONFIG_HOME}/ghostty"
 cat >"${XDG_CONFIG_HOME}/ghostty/config" <<'EOF'
@@ -174,14 +177,22 @@ launch_command="${child_command}"
 
 start_product() {
     : >"${log}"
-    CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 \
-        GSK_RENDERER=cairo \
-        LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
-        "${product}" \
-        --command "${launch_command}" \
-        --state-directory "${state_dir}" \
-        --async-backend default \
-        "${product_args[@]}" >"${log}" 2>&1 &
+    # Multi-window qualification owns its real PTYs but not the developer's
+    # current Git checkout or ambient listening processes. Launch from the
+    # private state root and disable passive server discovery above so visual
+    # evidence cannot gain unrelated project/server rows mid-capture.
+    (
+        cd "${state_dir}"
+        exec env \
+            CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 \
+            GSK_RENDERER=cairo \
+            LD_LIBRARY_PATH="${bundle_lib}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+            "${product}" \
+            --command "${launch_command}" \
+            --state-directory "${state_dir}" \
+            --async-backend default \
+            "${product_args[@]}"
+    ) >"${log}" 2>&1 &
     product_pid=$!
     zentty_product_wait_for_log "${log}" 'zentty-linux: window-opened id=window-1' \
         "first real product window did not open" || fail "first window missing"
@@ -732,7 +743,8 @@ capture_multi_window_x11_visual() {
         fail "second visual terminal reset missing"
     xdotool mousemove --sync 2000 1500
     sleep 0.5
-    import -silent -window root -crop 1220x700+0+0 "${image}"
+    zentty_visual_capture_stable "${image}" \
+        import -silent -window root -crop 1220x700+0+0
     zentty_visual_publish multi-window-x11 linux/tests/rust-multi-window "${image}" -
 }
 
@@ -1287,9 +1299,10 @@ if [[ "${ZENTTY_STATUS_NOTIFIER:-false}" == true ]]; then
         --method be.zenjoy.Zentty.TestStatusNotifierWatcher.Inspect >/dev/null
     grep -Fq '"event":"inspected","status":"NeedsAttention"' "${status_notifier_receipt}" ||
         fail "status-notifier did not expose the waiting aggregate"
-    zentty_product_wait_for_log "${log}" 'zentty-linux: project-context pane=pane-2 root=' \
-        "destination context did not settle before status-item activation" ||
-        fail "status-notifier destination context barrier missing"
+    # The preceding exact PTY title and fleet-refresh receipts already prove
+    # that pane-2 is live and represented in the destination window. A Git
+    # project-context receipt is neither required by the status item nor valid
+    # in this actor's deliberately non-repository private working directory.
     gdbus call --session --dest org.kde.StatusNotifierWatcher --object-path /StatusNotifierWatcher \
         --method be.zenjoy.Zentty.TestStatusNotifierWatcher.Activate >/dev/null
     zentty_product_wait_for_log "${log}" 'zentty-linux: status-notifier activation=opened-fleet window=window-2' \
@@ -1741,12 +1754,19 @@ if [[ "${backend}" == x11 ]]; then
     find_pointer_target \
         "zentty-linux: pane-context-pointer action=move-pane-to-worklane pane=${source_pane}" any ||
         fail "physical pointer could not locate Move Pane to Worklane"
+    destination_focus_before="$(grep -Fc \
+        "zentty-linux: pane-context-focus action=move-pane-to-worklane window=${destination_window} target=${destination_worklane}" \
+        "${log}" || true)"
     xdotool click 1
-    sleep 0.1
-    find_pointer_target \
-        "zentty-linux: pane-context-pointer action=move-pane-to-worklane window=${destination_window} target=${destination_worklane}" any ||
+    zentty_product_wait_for_log_count "${log}" \
+        "zentty-linux: pane-context-focus action=move-pane-to-worklane window=${destination_window} target=${destination_worklane}" \
+        "$((destination_focus_before + 1))" \
+        "foreign window worklane destination was not keyboard focused" ||
         fail "foreign window worklane destination was not rendered in the source menu"
-    xdotool click 1
+    # The destination submenu deliberately focuses its first real destination.
+    # Activate that GTK control immediately instead of sweeping the pointer
+    # away from the popover while background project discovery is active.
+    xdotool key --clearmodifiers Return
     fi
 else
     source_window=window-2

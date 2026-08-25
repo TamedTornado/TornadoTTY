@@ -66,6 +66,9 @@ if [[ "${backend}" == x11 ]]; then
     dependencies+=(xdotool)
 else
     dependencies+=(wtype)
+    if [[ "${ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT:-}" == 1 ]]; then
+        dependencies+=(xdotool)
+    fi
 fi
 for dependency in "${dependencies[@]}"; do
     command -v "${dependency}" >/dev/null || fail "${dependency} is required"
@@ -100,6 +103,78 @@ activate_fcitx() {
     busctl --user tree org.fcitx.Fcitx5 2>&1 |
         sed 's/^/rust-ime-composition: fcitx-tree: /' >&2 || true
     fail "focused pane did not activate the pinned fcitx engine"
+}
+
+reactivate_fcitx_for_selected_pane() {
+    [[ "${ime_provider}" == fcitx ]] || return 0
+    local transition_log transition_pid transition_window=""
+    transition_log="$(mktemp "${run_root}/focus-transition.XXXXXX.log")"
+    GTK_IM_MODULE=gtk-im-context-simple XMODIFIERS='' \
+        "${focus_helper}" >"${transition_log}" 2>&1 &
+    transition_pid=$!
+    zentty_product_wait_for_log "${transition_log}" \
+        'zentty-focus-steal-helper: ACTIVE compositor-focus-owned' \
+        'selected-pane focus transition helper did not become active' ||
+        fail "selected-pane focus transition helper failed"
+    if [[ "${backend}" == x11 ]]; then
+        for _ in {1..100}; do
+            transition_window="$(
+                xdotool search --onlyvisible --pid "${transition_pid}" \
+                    --name '^Zentty controlled IME focus helper$' 2>/dev/null |
+                    head -1 || true
+            )"
+            [[ "${transition_window}" =~ ^[1-9][0-9]*$ ]] && break
+            sleep 0.02
+        done
+        [[ "${transition_window}" =~ ^[1-9][0-9]*$ ]] ||
+            fail "selected-pane X11 focus transition was not observable"
+        xdotool windowfocus --sync "${transition_window}"
+        xdotool windowfocus --sync "${ZENTTY_PRODUCT_WINDOW_ID}"
+        xdotool mousemove --window "${ZENTTY_PRODUCT_WINDOW_ID}" 700 400 click 1
+    else
+        # Cage gives the newly mapped helper compositor focus. Destroy it and
+        # use a real outer-seat click to generate a fresh keyboard enter for
+        # the already-selected terminal surface.
+        kill -TERM "${transition_pid}"
+        wait "${transition_pid}" || true
+        transition_pid=""
+        xdotool mousemove --sync --window "${ZENTTY_PRODUCT_WINDOW_ID}" 700 400 click 1
+    fi
+    activate_fcitx
+    if [[ "${transition_pid}" =~ ^[1-9][0-9]*$ ]]; then
+        kill -TERM "${transition_pid}"
+        wait "${transition_pid}" || true
+    fi
+}
+
+ime_type() {
+    local value="$1"
+    if zentty_product_uses_xdotool "${backend}"; then
+        # IM context focus is itself the behavior under test. Re-applying X11
+        # focus to the parent before every synthetic physical event can emit a
+        # spurious GTK focus cycle and cancel the controlled preedit.
+        xdotool type --delay 5 -- "${value}"
+    else
+        wtype "${value}"
+    fi
+}
+
+ime_key() {
+    local key="$1"
+    if zentty_product_uses_xdotool "${backend}"; then
+        xdotool key "${key}"
+    else
+        wtype -k "${key}"
+    fi
+}
+
+ime_ctrl_key() {
+    local key="$1"
+    if zentty_product_uses_xdotool "${backend}"; then
+        xdotool key "ctrl+${key}"
+    else
+        wtype -M ctrl -k "${key}" -m ctrl
+    fi
 }
 
 wait_fcitx_context_published() {
@@ -146,6 +221,9 @@ case "${ZENTTY_PANE_ID}" in
         while [[ ! -e "${ZENTTY_IME_FOCUS_MARKER}" ]]; do sleep 0.02; done
         "${ZENTTY_CLI_BIN}" pane focus --pane-id pane-1
         IFS= read -r after_focus
+        if [[ "${after_focus}" != 1 ]]; then
+            record "MISMATCH:${after_focus@Q}"
+        fi
         [[ "${after_focus}" == 1 ]]
         record "${after_focus}"
         : >"${ZENTTY_IME_RETURN_MARKER}"
@@ -242,11 +320,17 @@ if [[ "${ime_provider}" == fcitx ]]; then
         xdotool windowfocus --sync "${ZENTTY_PRODUCT_WINDOW_ID}"
         xdotool mousemove --window "${ZENTTY_PRODUCT_WINDOW_ID}" 700 400 click 1
     else
-        # Cage deterministically returns focus to the product when the only
-        # newer toplevel is destroyed.
+        # Destroying the helper makes the product eligible for activation, but
+        # nested Cage does not always deliver keyboard focus to its terminal
+        # child without a compositor gesture. Click the real product surface
+        # through the wrapper-owned outer X11 input path before asking fcitx to
+        # open the newly focused context.
         kill -TERM "${focus_helper_pid}"
         wait "${focus_helper_pid}" || true
         focus_helper_pid=""
+        if [[ "${ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT:-}" == 1 ]]; then
+            xdotool mousemove --sync --window "${ZENTTY_PRODUCT_WINDOW_ID}" 700 400 click 1
+        fi
     fi
     zentty_product_wait_for_log_count "${log}" 'focus-pane pane=pane-1' \
         "$((initial_focus_before + 1))" \
@@ -260,7 +344,7 @@ if [[ "${ime_provider}" == fcitx ]]; then
     fi
 fi
 pane_2_focus_before="$(grep -Fc 'focus-pane pane=pane-2' "${log}" || true)"
-zentty_product_ctrl_key "${backend}" t
+ime_ctrl_key t
 zentty_product_wait_for_log "${log}" 'terminal-ready-pane=pane-2' \
     "second real pane was not created" || fail "IME multi-pane setup failed"
 zentty_product_wait_for_log_count "${log}" 'focus-pane pane=pane-2' \
@@ -272,28 +356,28 @@ activate_fcitx
 # A Cangjie `a` creates a visible preedit candidate. Escape cancels it. The
 # second `a`, Space, Return sequence commits 日 and supplies the PTY newline.
 # Exact child matching proves the cancelled preedit did not leak.
-zentty_product_type "${backend}" a
-zentty_product_key "${backend}" Escape
-zentty_product_type "${backend}" a
-zentty_product_key "${backend}" space
-zentty_product_key "${backend}" Return
+ime_type a
+ime_key Escape
+ime_type a
+ime_key space
+ime_key Return
 zentty_product_wait_for_log "${receipt}" 'pane-2:日' \
     "cancelled preedit did not produce one exact composed commit" ||
     fail "preedit cancel/commit journey failed"
 
 # Move focus through the public application API while `a` is still preedit.
 # Plain `1` in pane 1 proves the pending pane-2 preedit stays owned by pane 2.
-zentty_product_type "${backend}" a
+ime_type a
 pane_1_focus_before="$(grep -Fc 'focus-pane pane=pane-1' "${log}" || true)"
 : >"${focus_marker}"
 zentty_product_wait_for_log_count "${log}" 'focus-pane pane=pane-1' \
     "$((pane_1_focus_before + 1))" \
     "public API did not restore focus to the first pane" ||
     fail "IME focus restoration failed"
-activate_fcitx
+reactivate_fcitx_for_selected_pane
 pane_2_focus_before="$(grep -Fc 'focus-pane pane=pane-2' "${log}" || true)"
-zentty_product_type "${backend}" 1
-zentty_product_key "${backend}" Return
+ime_type 1
+ime_key Return
 zentty_product_wait_for_log "${receipt}" 'pane-1:1' \
     "focus transfer retained or leaked pending preedit text" ||
     fail "IME focus reset failed"
@@ -301,10 +385,10 @@ zentty_product_wait_for_log_count "${log}" 'focus-pane pane=pane-2' \
     "$((pane_2_focus_before + 1))" \
     "first pane did not restore focus to the second pane" ||
     fail "IME second focus restoration failed"
-activate_fcitx
-zentty_product_type "${backend}" a
-zentty_product_key "${backend}" space
-zentty_product_key "${backend}" Return
+reactivate_fcitx_for_selected_pane
+ime_type a
+ime_key space
+ime_key Return
 zentty_product_wait_for_log_count "${receipt}" 'pane-2:日' 2 \
     "refocused second pane did not receive an independent composition" ||
     fail "IME post-focus composition failed"
@@ -312,7 +396,7 @@ zentty_product_wait_for_log_count "${receipt}" 'pane-2:日' 2 \
 # Destroy pane 2 from pane 1's authenticated CLI while pane 2 has active
 # preedit. The exact close receipt, continued product life, and a fresh
 # composition in pane 1 jointly guard the surface/IM-context teardown path.
-zentty_product_type "${backend}" a
+ime_type a
 pane_1_focus_before="$(grep -Fc 'focus-pane pane=pane-1' "${log}" || true)"
 : >"${close_marker}"
 zentty_product_wait_for_log "${log}" 'action=close-pane pane=pane-2' \
@@ -323,10 +407,10 @@ zentty_product_wait_for_log_count "${log}" 'focus-pane pane=pane-1' \
     "surviving terminal did not regain focus after destruction" ||
     fail "IME post-destruction focus barrier failed"
 kill -0 "${product_pid}" 2>/dev/null || fail "product died after active-preedit destruction"
-activate_fcitx
-zentty_product_type "${backend}" a
-zentty_product_key "${backend}" space
-zentty_product_key "${backend}" Return
+reactivate_fcitx_for_selected_pane
+ime_type a
+ime_key space
+ime_key Return
 zentty_product_wait_for_log "${receipt}" 'pane-1:日' \
     "surviving pane could not compose after active-preedit destruction" ||
     fail "IME post-destruction composition failed"

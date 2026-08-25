@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+# shellcheck source=linux/tests/lib/qualified-package-source
+source "${repo_root}/linux/tests/lib/qualified-package-source"
+temporary="$(mktemp -d)"
+trap 'rm -rf -- "${temporary}"' EXIT
+bundle="${temporary}/source.bundle"
+locator="${temporary}/source.json"
+printf 'immutable source fixture\n' >"${bundle}"
+bundle_sha="$(sha256sum "${bundle}" | awk '{print $1}')"
+
+write_locator() {
+    jq -n --arg bundle "${bundle}" --arg sha "${bundle_sha}" '
+      {schema_version:1,revision:"0123456789abcdef0123456789abcdef01234567",
+       bundle:{path:$bundle,sha256:$sha}}
+    ' >"${locator}"
+}
+
+write_locator
+ZENTTY_QUALIFIED_PACKAGE_SOURCE_LOCATOR="${locator}" \
+    zentty_qualified_package_source "${repo_root}"
+[[ "${ZENTTY_PACKAGE_REVISION}" == 0123456789abcdef0123456789abcdef01234567 ]]
+[[ "${ZENTTY_PACKAGE_SOURCE_BUNDLE}" == "${bundle}" ]]
+
+rm -f -- "${locator}"
+if ZENTTY_QUALIFIED_PACKAGE_SOURCE_LOCATOR="${locator}" \
+    zentty_qualified_package_source "${repo_root}"; then
+    echo "qualified-package-source-test: missing locator passed" >&2
+    exit 1
+fi
+write_locator
+ln -s "${locator}" "${temporary}/linked.json"
+if ZENTTY_QUALIFIED_PACKAGE_SOURCE_LOCATOR="${temporary}/linked.json" \
+    zentty_qualified_package_source "${repo_root}"; then
+    echo "qualified-package-source-test: symlink locator passed" >&2
+    exit 1
+fi
+jq '.bundle.sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"' \
+    "${locator}" >"${locator}.bad"
+if ZENTTY_QUALIFIED_PACKAGE_SOURCE_LOCATOR="${locator}.bad" \
+    zentty_qualified_package_source "${repo_root}"; then
+    echo "qualified-package-source-test: wrong bundle identity passed" >&2
+    exit 1
+fi
+
+echo "Qualified package source resolver tests passed"

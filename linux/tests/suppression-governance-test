@@ -392,6 +392,19 @@ jq '(.rules[] | select(.rule_name == "fixture rule") |
 mv "${temp_dir}/usage-line-manifest.json" "${manifest}"
 write_report 1 wayland "fixture rule" 10 2
 expect_failure increased-usage-lines "suppression usage-line count changed"
+jq '(.rules[] | select(.rule_name == "fixture rule") |
+    .expected_usage_lines_by_scenario) = {"Debug/single/wayland": {"min": 1, "max": 2}}' \
+    "${manifest}" >"${temp_dir}/usage-line-range-manifest.json"
+mv "${temp_dir}/usage-line-range-manifest.json" "${manifest}"
+ZENTTY_SUPPRESSION_MANIFEST="${manifest}" \
+ZENTTY_SUPPRESSION_REPORTS_DIR="${reports}" \
+ZENTTY_VALGRIND_EXPECTED_REPORTS_JSON="${expected_reports_json}" \
+ZENTTY_SUPPRESSION_VALIDATION_NOW_EPOCH="$(date +%s)" \
+    "${validator}" >/dev/null
+write_report 1 wayland "fixture rule" 10 3
+expect_failure usage-lines-above-reviewed-range "suppression usage-line count changed"
+write_report 1 wayland "fixture rule"
+write_manifest
 write_report 1 wayland "fixture rule"
 ZENTTY_SUPPRESSION_MANIFEST="${manifest}" \
 ZENTTY_SUPPRESSION_REPORTS_DIR="${reports}" \

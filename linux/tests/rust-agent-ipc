@@ -183,6 +183,16 @@ run_adapter() {
         --no-session-restore >"${log}" 2>&1 &
     product_pid=$!
 
+    for _ in {1..600}; do
+        grep -Fq "completed pid:" "${start_receipt}" 2>/dev/null &&
+            grep -Fq "profile:${profile}" "${start_receipt}" 2>/dev/null && break
+        sleep 0.05
+    done
+    if ! grep -Fq "completed pid:" "${start_receipt}" 2>/dev/null ||
+        ! grep -Fq "profile:${profile}" "${start_receipt}" 2>/dev/null; then
+        cat "${start_receipt}" >>"${log}"
+        fail "${name} controlled child did not finish emitting its real lifecycle"
+    fi
     for _ in {1..200}; do
         grep -Fq "${expected}" "${log}" && break
         sleep 0.05
@@ -509,13 +519,13 @@ run_gemini_terminal_notifications() {
 
     zentty_product_wait_for_log "${log}" \
         'zentty-linux: terminal-notification pane=pane-1 title="Gemini" body="Action required"' \
-        "real Gemini action notification did not cross the Ghostty embedding boundary"
+        "real Gemini action notification did not cross the Ghostty embedding boundary" 600
     zentty_product_wait_for_log "${log}" \
         'sidebar-agent-status pane=pane-1 phase=NeedsInput interaction=Approval attention=true' \
         "Gemini action notification did not establish approval attention"
     zentty_product_wait_for_log "${log}" \
         'zentty-linux: terminal-notification pane=pane-1 title="Gemini" body="Session complete"' \
-        "real Gemini completion notification did not cross the Ghostty embedding boundary"
+        "real Gemini completion notification did not cross the Ghostty embedding boundary" 600
     zentty_product_wait_for_log "${log}" \
         'sidebar-agent-status pane=pane-1 phase=Idle interaction=None attention=false' \
         "Gemini completion notification did not establish ready state"

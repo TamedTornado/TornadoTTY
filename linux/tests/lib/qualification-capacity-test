@@ -11,13 +11,37 @@ display_jobs="$(zentty_qualification_display_jobs)"
 interactive_jobs="$(zentty_qualification_interactive_jobs)"
 build_jobs="$(zentty_qualification_build_jobs)"
 regression_jobs="$(zentty_qualification_regression_jobs)"
+work_cpu_set="$(zentty_qualification_cpu_set work)"
+display_cpu_set="$(zentty_qualification_cpu_set display)"
+display_physical_cores="$(lscpu -p=CPU,CORE | awk -F, -v allowed=",${display_cpu_set}," '
+    !/^#/ && index(allowed, "," $1 ",") && !seen[$2]++ { count++ }
+    END { print count + 0 }
+')"
 [[ "${matrix_jobs}" =~ ^[1-9][0-9]*$ && "${matrix_jobs}" -le 32 ]]
 [[ "${support_jobs}" =~ ^[1-9][0-9]*$ && "${support_jobs}" -le 8 ]]
 [[ "${display_jobs}" =~ ^[1-9][0-9]*$ && "${display_jobs}" -le 8 ]]
 [[ "${interactive_jobs}" =~ ^[1-9][0-9]*$ &&
     "${interactive_jobs}" -le "${display_jobs}" ]]
+[[ "${interactive_jobs}" == "${display_jobs}" ]] || {
+    echo "qualification-capacity-test: ordinary interactive capacity diverged from isolated displays" >&2
+    exit 1
+}
 [[ "${build_jobs}" =~ ^[1-9][0-9]*$ ]]
 [[ "${regression_jobs}" =~ ^[1-9][0-9]*$ && "${regression_jobs}" -le 16 ]]
+[[ "${work_cpu_set}" =~ ^[0-9]+(,[0-9]+)*$ ]]
+[[ "${display_cpu_set}" =~ ^[0-9]+(,[0-9]+)*$ ]]
+(( display_jobs <= display_physical_cores )) || {
+    echo "qualification-capacity-test: display workers exceed their physical-core partition" >&2
+    exit 1
+}
+taskset --cpu-list "${work_cpu_set}" true
+taskset --cpu-list "${display_cpu_set}" true
+if comm -12 \
+    <(tr ',' '\n' <<<"${work_cpu_set}" | sort) \
+    <(tr ',' '\n' <<<"${display_cpu_set}" | sort) | grep -q .; then
+    echo "qualification-capacity-test: work and display CPU partitions overlap" >&2
+    exit 1
+fi
 
 # This project's qualification host has enough capacity that silently
 # returning to the former four-worker emergency throttle is a regression.
@@ -26,4 +50,4 @@ if (( $(nproc) >= 16 )) && (( matrix_jobs <= 4 )); then
     exit 1
 fi
 
-echo "Qualification capacity tests passed: matrix=${matrix_jobs} display=${display_jobs} interactive=${interactive_jobs} support=${support_jobs} build=${build_jobs} regression=${regression_jobs}"
+echo "Qualification capacity tests passed: matrix=${matrix_jobs} display=${display_jobs} interactive=${interactive_jobs} support=${support_jobs} build=${build_jobs} regression=${regression_jobs} work_cpus=${work_cpu_set} display_cpus=${display_cpu_set}"

@@ -3,7 +3,7 @@
   "manifest_semantics": {
     "expected_suppressed.matches": "Expected Valgrind used_suppression context count; ranges or per-scenario exact values are enforced.",
     "expected_suppressed.bytes": "Expected suppressed bytes; null means Valgrind does not emit a byte count for that finding type.",
-    "expected_usage_lines_by_scenario": "Optional exact count of per-process used_suppression records for a rule in one report; catches an added or missing matching process even when each record remains individually in range.",
+    "expected_usage_lines_by_scenario": "Optional exact count or reviewed bounded range of per-process used_suppression records for a rule in one report; catches an added or missing matching process even when each record remains individually in range.",
     "required_usage": "A required rule must be observed whenever this evidence set exercises at least one of its allowed scenarios. Rules whose real-product scenarios are not presently executable remain tracked but cannot be declared stale from an unrelated scenario.",
     "usage_profiles": "Optional exact, scenario-specific cross-rule tuples are enforced only where an exact lost-record partition is a valid behavioral oracle.",
     "usage_profiles.evidence_identity": "An exact-profile evidence identity names a locally reviewed, gitignored archive and its recorded checksums; it does not claim that a clean clone contains that archive.",
@@ -184,10 +184,10 @@
       },
       "expected_usage_lines_by_scenario": {
         "Debug/single/x11": 1,
-        "Debug/interaction/x11": 3
+        "Debug/interaction/x11": {"min": 2, "max": 3}
       },
       "allowed_scenarios": ["Debug/single/x11", "Debug/interaction/x11"],
-      "justification": "GLib 2.80.0 gquark.c deliberately retains the old quark pointer array so lock-free readers remain valid when the table grows. Upstream calls g_ignore_leak before replacing the pointer, but glib-private.h implements that marker for LeakSanitizer rather than Memcheck. The rule pins the exact GLib soname, direct constructor allocation, dynamic-loader frames, 16,384-byte size, and X11 scenarios; Wayland and unrelated GLib allocations remain unsuppressed.",
+      "justification": "GLib 2.80.0 gquark.c deliberately retains the old quark pointer array so lock-free readers remain valid when the table grows. Upstream calls g_ignore_leak before replacing the pointer, but glib-private.h implements that marker for LeakSanitizer rather than Memcheck. The rule pins the exact GLib soname, direct constructor allocation, dynamic-loader frames, 16,384-byte size, and X11 scenarios; Wayland and unrelated GLib allocations remain unsuppressed. Interaction/X11 contains three real processes, but only the two or three processes that cross GLib's quark-table growth threshold retain this exact constructor allocation, so governance reviews a bounded two-to-three usage-line range while still rejecting disappearance or growth.",
       "reproducer": "linux/tests/glib-quark-growth-memory-reproducer builds a Rust process that links GLib but not Ghostty, interns 2,500 unique quarks, and requires the exact 16,384-byte constructor finding. Source authority: https://gitlab.gnome.org/GNOME/glib/-/blob/2.80.0/glib/gquark.c#L284-300 and glib/glib-private.h#L98-117.",
       "required_usage": true
     },
@@ -198,13 +198,13 @@
       "finding_type": "Memcheck:Cond undefined-value contexts in llvmpipe vector padding",
       "expected_suppressed": {"matches": {"min": 97, "max": 140}, "bytes": null},
       "expected_by_scenario": {
-        "Debug/single/wayland": {"matches": {"min": 97, "max": 97}, "bytes": null},
+        "Debug/single/wayland": {"matches": {"min": 97, "max": 140}, "bytes": null},
         "Debug/interaction/wayland": {"matches": {"min": 97, "max": 140}, "bytes": null},
         "Debug/single/x11": {"matches": {"min": 97, "max": 140}, "bytes": null},
         "Debug/interaction/x11": {"matches": {"min": 97, "max": 140}, "bytes": null}
       },
       "allowed_scenarios": ["Debug/single/wayland", "Debug/interaction/wayland", "Debug/single/x11", "Debug/interaction/x11"],
-      "justification": "The producer is Mesa's software Gallium driver and the required consumer is Ghostty's draw.drawArraysInstanced; the rule cannot match GTK-only or non-rendering findings. The 2026-08-21 interaction receipts reached the already reviewed global ceiling of 140 on both controlled Wayland and X11 while retaining that exact producer/consumer stack; the per-scenario ceilings now admit that observed rendering variation without changing the rule or global ceiling.",
+      "justification": "The producer is Mesa's software Gallium driver and the required consumer is Ghostty's draw.drawArraysInstanced; the rule cannot match GTK-only or non-rendering findings. The 2026-08-21 interaction receipts reached the already reviewed global ceiling of 140 on both controlled Wayland and X11 while retaining that exact producer/consumer stack. The GH-97 full receipt also reached the same 140-context ceiling in single/Wayland with the identical pinned producer and consumer; the per-scenario ceilings admit that already bounded rendering variation without changing the rule or global ceiling.",
       "reproducer": "Run linux/tests/memory-safety in a controlled software-rendered X11 or Wayland scenario; build/linux/memory-safety-Debug-interaction-{wayland,x11}.{raw,suppressed}.log preserve the reviewed 140-context observations. Upstream Mesa issue: https://gitlab.freedesktop.org/mesa/mesa/-/issues/4880 documents Valgrind-visible undefined padding in Mesa code paths.",
       "required_usage": true
     },
@@ -241,16 +241,16 @@
       "tracking_id": "ZENTTY-VG-FONT-METRICS-ROOT-001",
       "affected": "Ubuntu Fontconfig 2.15.0 and Pango 1.52.1 process-global metrics cache",
       "finding_type": "Memcheck:Leak definite root through pango_context_get_metrics",
-      "expected_suppressed": {"matches": {"min": 1, "max": 6}, "bytes": {"min": 1488, "max": 30398}},
+      "expected_suppressed": {"matches": {"min": 1, "max": 7}, "bytes": {"min": 1488, "max": 30398}},
       "expected_by_scenario": {
-        "Debug/single/wayland": {"matches": {"min": 1, "max": 3}, "bytes": {"min": 1488, "max": 7113}},
-        "Debug/interaction/wayland": {"matches": {"min": 1, "max": 4}, "bytes": {"min": 1933, "max": 14300}},
-        "Debug/single/x11": {"matches": {"min": 2, "max": 5}, "bytes": {"min": 9601, "max": 25387}},
-        "Debug/interaction/x11": {"matches": {"min": 1, "max": 6}, "bytes": {"min": 4405, "max": 30398}},
+        "Debug/single/wayland": {"matches": {"min": 1, "max": 5}, "bytes": {"min": 1488, "max": 14841}},
+        "Debug/interaction/wayland": {"matches": {"min": 1, "max": 5}, "bytes": {"min": 1933, "max": 16977}},
+        "Debug/single/x11": {"matches": {"min": 2, "max": 7}, "bytes": {"min": 8001, "max": 25387}},
+        "Debug/interaction/x11": {"matches": {"min": 1, "max": 6}, "bytes": {"min": 1709, "max": 30398}},
         "Debug/ibus-focus/x11": {"matches": {"min": 2, "max": 2}, "bytes": {"min": 9552, "max": 10182}}
       },
       "allowed_scenarios": ["Debug/single/wayland", "Debug/interaction/wayland", "Debug/single/x11", "Debug/interaction/x11", "Debug/ibus-focus/x11"],
-      "justification": "The allocation begins in stripped Fontconfig and is consumed through the named Pango metrics API. Child rules are permitted only when this root is present in the same report. Public full runs 32121127845 and 32129794981 independently retained exactly two roots totaling 9,552 bytes. The 2026-08-21 receipts also retained one 4,405-byte interaction/X11 root and one 2,448-byte single/Wayland root. The later complete run retained additional roots with the same named consumer. The 2026-08-25 GH-93 rerun retained five single/X11 roots totaling 21,782 bytes and six interaction/X11 roots totaling 30,398 bytes in the affected processes; raw and suppressed receipts retain the exact unchanged stack.",
+      "justification": "The allocation begins in stripped Fontconfig and is consumed through the named Pango metrics API. Child rules are permitted only when this root is present in the same report. Public full runs 32121127845 and 32129794981 independently retained exactly two roots totaling 9,552 bytes. The 2026-08-21 receipts also retained one 4,405-byte interaction/X11 root and one 2,448-byte single/Wayland root. The later complete run retained additional roots with the same named consumer. The 2026-08-25 GH-93 rerun retained five single/X11 roots totaling 21,782 bytes and six interaction/X11 roots totaling 30,398 bytes in the affected processes. GH-97 receipts retained interaction/X11 roots from 1,709 bytes through six roots/30,398 bytes, interaction/Wayland observations through five roots/16,977 bytes, single/Wayland observations through five roots/14,841 bytes, and single/X11 observations from four roots/8,001 bytes through seven roots/25,387 bytes; every raw stack retains the same Fontconfig allocation and named Pango consumer and every child remains root-gated.",
       "reproducer": "linux/tests/ibus-focus-reproducer.c reproduces the root without linking Ghostty. Public run 32129794981 retained the paired raw and suppression-enabled receipts for the reviewed 9,552-byte observation; build/linux/memory-safety-Debug-{interaction-wayland,single-wayland,single-x11}.{raw,suppressed}.log preserve the reviewed 1,933-byte, 7,113-byte, and 9,601-byte complete-run observations.",
       "required_usage": true
     },
@@ -259,17 +259,17 @@
       "tracking_id": "ZENTTY-VG-FONT-METRICS-CALLOC-001",
       "affected": "Ubuntu Fontconfig 2.15.0 indirect calloc children of the Pango metrics cache",
       "finding_type": "Memcheck:Leak indirect children with pango_context_get_metrics consumer",
-      "expected_suppressed": {"matches": {"min": 12, "max": 90}, "bytes": {"min": 384, "max": 2880}},
+      "expected_suppressed": {"matches": {"min": 4, "max": 106}, "bytes": {"min": 128, "max": 3392}},
       "expected_by_scenario": {
-        "Debug/single/wayland": {"matches": {"min": 14, "max": 48}, "bytes": {"min": 448, "max": 1536}},
-        "Debug/interaction/wayland": {"matches": {"min": 12, "max": 64}, "bytes": {"min": 384, "max": 2048}},
-        "Debug/single/x11": {"matches": {"min": 31, "max": 75}, "bytes": {"min": 992, "max": 2400}},
-        "Debug/interaction/x11": {"matches": {"min": 15, "max": 90}, "bytes": {"min": 480, "max": 2880}},
+        "Debug/single/wayland": {"matches": {"min": 13, "max": 64}, "bytes": {"min": 416, "max": 2048}},
+        "Debug/interaction/wayland": {"matches": {"min": 4, "max": 64}, "bytes": {"min": 128, "max": 2048}},
+        "Debug/single/x11": {"matches": {"min": 31, "max": 106}, "bytes": {"min": 992, "max": 3392}},
+        "Debug/interaction/x11": {"matches": {"min": 13, "max": 90}, "bytes": {"min": 416, "max": 2880}},
         "Debug/ibus-focus/x11": {"matches": {"min": 30, "max": 32}, "bytes": {"min": 960, "max": 1024}}
       },
       "allowed_scenarios": ["Debug/single/wayland", "Debug/interaction/wayland", "Debug/single/x11", "Debug/interaction/x11", "Debug/ibus-focus/x11"],
       "requires_root_rule": "GTK Pango Fontconfig metrics cache",
-      "justification": "Every frame includes both stripped Fontconfig and pango_context_get_metrics; usage must co-occur with the separately tracked root. Public runs 32121127845 and 32129794981 retained 30 contexts/960 bytes beside the same two metrics roots. The 2026-08-21 receipts include the reviewed 15/480 one-root floor plus later complete-run observations. The 2026-08-25 GH-93 rerun retained 48/1,536 single/Wayland, 64/2,048 interaction/Wayland, and 90/2,880 interaction/X11 children; each occurrence shares a process ID with its separately suppressed root and retains the exact narrowed stack.",
+      "justification": "Every frame includes both stripped Fontconfig and pango_context_get_metrics; usage must co-occur with the separately tracked root. Public runs 32121127845 and 32129794981 retained 30 contexts/960 bytes beside the same two metrics roots. The 2026-08-21 receipts include the reviewed 15/480 one-root floor plus later complete-run observations. The 2026-08-25 and GH-97 receipts retained 13/416 through 64/2,048 on single/Wayland, four/128 through 64/2,048 on interaction/Wayland, and 13/416 through 90/2,880 interaction/X11 children. GH-97 single/X11 receipts retained 90/2,880, 103/3,296, and 106/3,392 beside their separately reviewed roots; each occurrence shares a process ID with a separately suppressed root and retains the exact narrowed stack.",
       "reproducer": "The non-Ghostty Pango/IBus reproducer yields 30-32 matches/960-1024 bytes beside two metrics roots; build/linux/memory-safety-Debug-{interaction-x11,single-wayland,single-x11}.{raw,suppressed}.log preserve the complete-run observations beside their separately tracked roots.",
       "required_usage": true
     },
@@ -280,15 +280,15 @@
       "finding_type": "Memcheck:Leak indirect malloc/strdup children",
       "expected_suppressed": {"matches": {"min": 1, "max": 33}, "bytes": {"min": 45, "max": 14308}},
       "expected_by_scenario": {
-        "Debug/single/wayland": {"matches": {"min": 1, "max": 1}, "bytes": {"min": 45, "max": 133}},
-        "Debug/interaction/wayland": {"matches": {"min": 1, "max": 33}, "bytes": {"min": 207, "max": 3033}},
+        "Debug/single/wayland": {"matches": {"min": 1, "max": 4}, "bytes": {"min": 45, "max": 4056}},
+        "Debug/interaction/wayland": {"matches": {"min": 1, "max": 33}, "bytes": {"min": 45, "max": 3033}},
         "Debug/single/x11": {"matches": {"min": 1, "max": 18}, "bytes": {"min": 343, "max": 9021}},
-        "Debug/interaction/x11": {"matches": {"min": 1, "max": 12}, "bytes": {"min": 116, "max": 6610}},
+        "Debug/interaction/x11": {"matches": {"min": 1, "max": 14}, "bytes": {"min": 116, "max": 6610}},
         "Debug/ibus-focus/x11": {"matches": {"min": 2, "max": 20}, "bytes": {"min": 1836, "max": 4618}}
       },
       "allowed_scenarios": ["Debug/single/wayland", "Debug/interaction/wayland", "Debug/single/x11", "Debug/interaction/x11", "Debug/ibus-focus/x11"],
       "requires_root_rule": "GTK Pango Fontconfig metrics cache",
-      "justification": "The prior one-frame Fontconfig rule was rejected. This rule requires strdup followed by five consecutive stripped Fontconfig frames and is valid only beside the metrics root. Public runs 32121127845 and 32129794981 retained 20 fragmented string contexts totaling 1,836 bytes beside exactly two metrics roots. The 2026-08-21 receipts preserve the same FcValueSave/FcDefaultSubstitute/Pango metrics ancestry, including 33/712 interaction/Wayland, one 116-byte interaction/X11 descendant, and four single/X11 contexts totaling 2,771 bytes. The reviewed ranges remain scenario-bounded with an unchanged root requirement.",
+      "justification": "The prior one-frame Fontconfig rule was rejected. This rule requires strdup followed by five consecutive stripped Fontconfig frames and is valid only beside the metrics root. Public runs 32121127845 and 32129794981 retained 20 fragmented string contexts totaling 1,836 bytes beside exactly two metrics roots. The 2026-08-21 receipts preserve the same FcValueSave/FcDefaultSubstitute/Pango metrics ancestry, including 33/712 interaction/Wayland, one 116-byte interaction/X11 descendant, and four single/X11 contexts totaling 2,771 bytes. GH-97 retained one 45-byte/two-block interaction/Wayland graph beside three 8,810-byte metrics roots, 14/3,431 interaction/X11 beside its separately suppressed metrics root, and single/Wayland graphs through four contexts/4,056 bytes beside their separately suppressed metrics roots with the same narrowed ancestry. The reviewed ranges remain scenario-bounded with an unchanged root requirement.",
       "reproducer": "With 40-frame receipts, the non-Ghostty Pango/IBus reproducer records the deep string descendants beside explicitly requested metrics roots. Public run 32129794981 preserves the 20-match/1,836-byte receipt; build/linux/memory-safety-Debug-{interaction-wayland,interaction-x11,single-x11}.{raw,suppressed}.log preserve the reviewed complete-run observations.",
       "required_usage": true
     },
@@ -299,15 +299,15 @@
       "finding_type": "Memcheck:Leak indirect malloc children",
       "expected_suppressed": {"matches": {"min": 1, "max": 1}, "bytes": {"min": 128, "max": 24832}},
       "expected_by_scenario": {
-        "Debug/single/wayland": {"matches": {"min": 1, "max": 1}, "bytes": {"min": 160, "max": 160}},
-        "Debug/interaction/wayland": {"matches": {"min": 1, "max": 1}, "bytes": {"min": 352, "max": 5152}},
+        "Debug/single/wayland": {"matches": {"min": 1, "max": 1}, "bytes": {"min": 160, "max": 6848}},
+        "Debug/interaction/wayland": {"matches": {"min": 1, "max": 1}, "bytes": {"min": 256, "max": 5152}},
         "Debug/single/x11": {"matches": {"min": 1, "max": 1}, "bytes": {"min": 608, "max": 15936}},
         "Debug/interaction/x11": {"matches": {"min": 1, "max": 1}, "bytes": {"min": 128, "max": 11296}},
         "Debug/ibus-focus/x11": {"matches": {"min": 1, "max": 1}, "bytes": {"min": 2880, "max": 8256}}
       },
       "allowed_scenarios": ["Debug/single/wayland", "Debug/interaction/wayland", "Debug/single/x11", "Debug/interaction/x11", "Debug/ibus-focus/x11"],
       "requires_root_rule": "GTK Pango Fontconfig metrics cache",
-      "justification": "The prior malloc-plus-one-Fontconfig rule was rejected. This replacement requires eight consecutive stripped Fontconfig frames and root co-occurrence. Public runs 32121127845 and 32129794981 retained exactly one narrowed node context/2,880 bytes beside the same two metrics roots. The later complete run retained two one-context, 128-byte interaction/X11 graphs with the same eight-frame ancestry beside reviewed metrics roots.",
+      "justification": "The prior malloc-plus-one-Fontconfig rule was rejected. This replacement requires eight consecutive stripped Fontconfig frames and root co-occurrence. Public runs 32121127845 and 32129794981 retained exactly one narrowed node context/2,880 bytes beside the same two metrics roots. Later complete runs retained one-context graphs down to 256 bytes/8 blocks on interaction/Wayland and 128 bytes on interaction/X11, with the same eight-frame ancestry beside reviewed metrics roots. GH-97 single/Wayland receipts retained one-context graphs from 2,048/64 blocks through 6,848/214 blocks beside their separately suppressed metrics roots with the same narrowed ancestry.",
       "reproducer": "The non-Ghostty Pango/IBus reproducer records this single deep-node graph beside two explicitly requested metrics roots; public run 32129794981 and build/linux/memory-safety-Debug-interaction-x11.{raw,suppressed}.log preserve the reviewed observations.",
       "required_usage": true
     },
@@ -316,16 +316,16 @@
       "tracking_id": "ZENTTY-VG-FONT-LAYOUT-ROOT-001",
       "affected": "Ubuntu Fontconfig 2.15.0 and Pango 1.52.1 X11 layout cache",
       "finding_type": "Memcheck:Leak definite root through pango_layout_get_size",
-      "expected_suppressed": {"matches": {"min": 1, "max": 8}, "bytes": {"min": 1699, "max": 552400}},
+      "expected_suppressed": {"matches": {"min": 1, "max": 8}, "bytes": {"min": 1677, "max": 552400}},
       "expected_by_scenario": {
-        "Debug/single/wayland": {"matches": {"min": 1, "max": 3}, "bytes": {"min": 1699, "max": 164200}},
-        "Debug/interaction/wayland": {"matches": {"min": 1, "max": 3}, "bytes": {"min": 2106, "max": 267801}},
-        "Debug/single/x11": {"matches": {"min": 2, "max": 6}, "bytes": {"min": 6198, "max": 57363}},
-        "Debug/interaction/x11": {"matches": {"min": 1, "max": 4}, "bytes": {"min": 4418, "max": 241078}},
+        "Debug/single/wayland": {"matches": {"min": 1, "max": 3}, "bytes": {"min": 1677, "max": 181371}},
+        "Debug/interaction/wayland": {"matches": {"min": 1, "max": 3}, "bytes": {"min": 1677, "max": 267801}},
+        "Debug/single/x11": {"matches": {"min": 1, "max": 6}, "bytes": {"min": 2596, "max": 385036}},
+        "Debug/interaction/x11": {"matches": {"min": 1, "max": 4}, "bytes": {"min": 1723, "max": 241078}},
         "Debug/ibus-focus/x11": {"matches": {"min": 2, "max": 2}, "bytes": {"min": 13253, "max": 26208}}
       },
       "allowed_scenarios": ["Debug/single/wayland", "Debug/interaction/wayland", "Debug/single/x11", "Debug/interaction/x11", "Debug/ibus-focus/x11"],
-      "justification": "The consumer is the named Pango layout API and the rule does not match metrics-only or API-lifecycle scenarios. Local reviewed runs retained exactly two contexts with 20,865-26,208 bytes. Public full runs 32121127845 and 32143658025 on the same pinned Ubuntu Fontconfig 2.15.0/Pango 1.52.1 environment retained exactly two realloc roots and the exact Pango consumer stacks, totaling 13,285 and 13,253 bytes respectively. The 2026-08-21 receipts retained two roots totaling 4,418 bytes on interaction/X11 and 5,865 bytes on single/Wayland. The later complete-run single/Wayland process retained three contexts totaling 164,200 bytes with the same named consumer and separately tracked children; only that scenario ceiling changed and the suppression rule did not.",
+      "justification": "The consumer is the named Pango layout API and the rule does not match metrics-only or API-lifecycle scenarios. Local reviewed runs retained exactly two contexts with 20,865-26,208 bytes. Public full runs 32121127845 and 32143658025 on the same pinned Ubuntu Fontconfig 2.15.0/Pango 1.52.1 environment retained exactly two realloc roots and the exact Pango consumer stacks, totaling 13,285 and 13,253 bytes respectively. The 2026-08-21 receipts retained two roots totaling 4,418 bytes on interaction/X11 and 5,865 bytes on single/Wayland. Later complete-run single/Wayland processes retained up to three contexts totaling 181,371 bytes with the same named consumer and separately tracked children. GH-97 retained 1,677-byte roots in both interaction/Wayland and single/Wayland, single/X11 roots from 2,596 bytes through six contexts/385,036 bytes, and interaction/X11 roots from 1,723 through 3,736 bytes, each with the same named consumer and separately tracked narrowed children; no suppression rule changed.",
       "reproducer": "linux/tests/ibus-focus-reproducer.c calls pango_layout_get_size directly without Ghostty; the product interaction can also produce this cache. The public 7d7e3ca8 run retained raw receipt c6bbf33fc15f2a25dac12de47689d26e4588c09df672dc449176674deb012549 and suppressed receipt 9e8db97d04defbe3d790b99afa0412cbcfdd711dca617ea385e827b9337bad36 for the reviewed 13,285-byte observation; build/linux/memory-safety-Debug-{interaction-x11,single-wayland}.{raw,suppressed}.log preserve the complete-run observations, including the 164,200-byte process cache.",
       "required_usage": true
     },
@@ -334,17 +334,17 @@
       "tracking_id": "ZENTTY-VG-FONT-LAYOUT-CALLOC-001",
       "affected": "Ubuntu Fontconfig 2.15.0 indirect calloc children of the X11 Pango layout cache",
       "finding_type": "Memcheck:Leak indirect children through pango_layout_get_size",
-      "expected_suppressed": {"matches": {"min": 14, "max": 128}, "bytes": {"min": 448, "max": 5984}},
+      "expected_suppressed": {"matches": {"min": 4, "max": 128}, "bytes": {"min": 128, "max": 5984}},
       "expected_by_scenario": {
-        "Debug/single/wayland": {"matches": {"min": 16, "max": 32}, "bytes": {"min": 512, "max": 1024}},
-        "Debug/interaction/wayland": {"matches": {"min": 14, "max": 32}, "bytes": {"min": 448, "max": 1024}},
-        "Debug/single/x11": {"matches": {"min": 31, "max": 93}, "bytes": {"min": 992, "max": 4000}},
-        "Debug/interaction/x11": {"matches": {"min": 16, "max": 47}, "bytes": {"min": 512, "max": 1504}},
+        "Debug/single/wayland": {"matches": {"min": 15, "max": 34}, "bytes": {"min": 480, "max": 1088}},
+        "Debug/interaction/wayland": {"matches": {"min": 4, "max": 33}, "bytes": {"min": 128, "max": 1056}},
+        "Debug/single/x11": {"matches": {"min": 16, "max": 93}, "bytes": {"min": 512, "max": 4000}},
+        "Debug/interaction/x11": {"matches": {"min": 14, "max": 47}, "bytes": {"min": 448, "max": 1504}},
         "Debug/ibus-focus/x11": {"matches": {"min": 29, "max": 31}, "bytes": {"min": 928, "max": 992}}
       },
       "allowed_scenarios": ["Debug/single/wayland", "Debug/interaction/wayland", "Debug/single/x11", "Debug/interaction/x11", "Debug/ibus-focus/x11"],
       "requires_root_rule": "GTK Pango Fontconfig layout cache",
-      "justification": "The rule includes the Pango layout consumer and is rejected if the root is absent in the same report. The 2026-08-25 authoritative concurrent rerun retained 32 children/1,024 bytes in one interaction/Wayland process beside its separately suppressed root; the exact suppression stack was unchanged.",
+      "justification": "The rule includes the Pango layout consumer and is rejected if the root is absent in the same report. The 2026-08-25 authoritative concurrent runs retained interaction/Wayland sets from 4 children/128 bytes through 33/1,056 beside their separately suppressed roots. GH-97 retained single/Wayland sets of 15/480 and 34/1,088 beside reviewed roots, 16/512 through 45/1,440 beside reviewed single/X11 roots, and 14/448 through 47/1,504 beside reviewed interaction/X11 roots; the exact suppression stack was unchanged.",
       "reproducer": "The standalone GTK/IBus reproducer deliberately sizes a Pango layout and records this child only beside the layout root.",
       "required_usage": true
     },

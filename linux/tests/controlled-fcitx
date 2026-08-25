@@ -21,6 +21,10 @@ if [[ "${1:-}" == --private-bus-inner ]]; then
     daemon_log="${run_root}/fcitx5.log"
     daemon_pid=""
     child_pid=""
+    [[ "${XDG_CURRENT_DESKTOP:-}" == ZenttyTest &&
+        "${XDG_SESSION_DESKTOP:-}" == zentty-test &&
+        "${DESKTOP_SESSION:-}" == zentty-test ]] ||
+        fail "private session inherited an uncontrolled desktop identity"
 
     cleanup_inner() {
         trap - EXIT HUP INT TERM
@@ -172,6 +176,14 @@ export GIO_USE_VFS=local
 export NO_AT_BRIDGE=1
 export GTK_A11Y=none
 export LIBGL_ALWAYS_SOFTWARE=1
+# Do not inherit the developer desktop identity into the private D-Bus
+# session. On GNOME hosts that caused xdg-desktop-portal to repeatedly launch
+# the host GNOME backend inside a nested compositor, where it crashes before
+# fcitx can finish activating the controlled engine. The generic GTK portal is
+# sufficient for this IM-only environment.
+export XDG_CURRENT_DESKTOP=ZenttyTest
+export XDG_SESSION_DESKTOP=zentty-test
+export DESKTOP_SESSION=zentty-test
 
 set +e
 setsid dbus-run-session -- \

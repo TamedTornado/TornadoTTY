@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+
+# Resolve the immutable exact-working-tree source snapshot shared by the two
+# independent package builders. Publishing this before either build lets the
+# reproducibility pair run concurrently without guessing developer HEAD.
+zentty_qualified_package_source() {
+    local repo_root="$1"
+    local locator="${ZENTTY_QUALIFIED_PACKAGE_SOURCE_LOCATOR:-${repo_root}/build/linux/package-lifecycle/qualified-source.json}"
+    local expected_sha
+
+    [[ -f "${locator}" && ! -L "${locator}" ]] || return 1
+    jq -e '
+      .schema_version == 1 and
+      (.revision | test("^[0-9a-f]{40}$")) and
+      (.bundle.path | type == "string" and length > 0) and
+      (.bundle.sha256 | test("^[0-9a-f]{64}$"))
+    ' "${locator}" >/dev/null || return 1
+    # Published for callers sourcing this resolver.
+    # shellcheck disable=SC2034
+    ZENTTY_PACKAGE_REVISION="$(jq -r '.revision' "${locator}")"
+    # shellcheck disable=SC2034
+    ZENTTY_PACKAGE_SOURCE_BUNDLE="$(jq -r '.bundle.path' "${locator}")"
+    [[ "${ZENTTY_PACKAGE_SOURCE_BUNDLE}" == /* ]] ||
+        ZENTTY_PACKAGE_SOURCE_BUNDLE="${repo_root}/${ZENTTY_PACKAGE_SOURCE_BUNDLE}"
+    expected_sha="$(jq -r '.bundle.sha256' "${locator}")"
+    [[ -f "${ZENTTY_PACKAGE_SOURCE_BUNDLE}" &&
+       ! -L "${ZENTTY_PACKAGE_SOURCE_BUNDLE}" &&
+       "$(sha256sum "${ZENTTY_PACKAGE_SOURCE_BUNDLE}" | awk '{print $1}')" == "${expected_sha}" ]]
+}

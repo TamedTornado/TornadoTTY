@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+lifecycle_root="${ZENTTY_PACKAGE_LIFECYCLE_DIR:-${repo_root}/build/linux/package-lifecycle}"
+# shellcheck source=linux/tests/lib/working-tree-fixture
+source "${repo_root}/linux/tests/lib/working-tree-fixture"
+
+temporary="$(mktemp -d)"
+source_fixture="${temporary}/source"
+trap 'rm -rf -- "${temporary}"' EXIT
+mkdir -p -- "${lifecycle_root}"
+rm -f -- "${lifecycle_root}/package-artifact.json" \
+    "${lifecycle_root}/qualified-source.json" \
+    "${lifecycle_root}/qualified-source.bundle"
+
+zentty_create_working_tree_fixture \
+    "${repo_root}" "${source_fixture}" 'package lifecycle source fixture'
+revision="$(git -C "${source_fixture}" rev-parse HEAD)"
+bundle_temp="${lifecycle_root}/qualified-source.bundle.tmp"
+locator_temp="${lifecycle_root}/qualified-source.json.tmp"
+git -C "${source_fixture}" bundle create "${bundle_temp}" HEAD
+mv -f -- "${bundle_temp}" "${lifecycle_root}/qualified-source.bundle"
+jq -n \
+    --arg revision "${revision}" \
+    --arg bundle "$(realpath --relative-to="${repo_root}" "${lifecycle_root}/qualified-source.bundle")" \
+    --arg sha256 "$(sha256sum "${lifecycle_root}/qualified-source.bundle" | awk '{print $1}')" '
+    {schema_version:1,revision:$revision,bundle:{path:$bundle,sha256:$sha256}}
+' >"${locator_temp}"
+mv -f -- "${locator_temp}" "${lifecycle_root}/qualified-source.json"
+echo "debian-package-source-fixture: PASS revision=${revision}"

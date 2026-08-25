@@ -192,7 +192,8 @@ impl ApplicationShell {
             self.global_search.handle_total(pane_id, total)
         });
         if total.is_some() {
-            self.global_search.handle_selected(pane_id, selected);
+            self.global_search
+                .handle_surface_selected(pane_id, selected);
         }
         self.apply_global_search_effects(effects);
         self.render_global_search();

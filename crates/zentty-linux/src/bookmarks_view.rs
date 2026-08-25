@@ -1,10 +1,13 @@
 use gtk::glib::variant::ToVariant;
 use gtk::prelude::*;
 use std::cell::RefCell;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::rc::Rc;
 use zentty_core::{TemplateKind, WorkspaceTemplate};
 
 const BUTTON_NAME: &str = "zentty-bookmarks-button";
+const POPOVER_NAME_PREFIX: &str = "zentty-bookmarks-popover-";
+const SEARCH_NAME: &str = "zentty-bookmarks-search";
 
 pub(crate) fn open_from(root: &gtk::Widget) -> bool {
     let Some(button) = find_named_widget(root, BUTTON_NAME)
@@ -13,6 +16,20 @@ pub(crate) fn open_from(root: &gtk::Widget) -> bool {
         return false;
     };
     button.popup();
+    // Keyboard activation can reopen a popover which GTK kept realized while
+    // it was hidden. In that case neither realization nor mapping is a useful
+    // per-open focus boundary, so explicitly focus its search field after the
+    // popup request has reached the main loop.
+    if let Some(search) = button
+        .popover()
+        .and_then(|popover| find_named_widget(popover.upcast_ref(), SEARCH_NAME))
+        .and_then(|widget| widget.downcast::<gtk::SearchEntry>().ok())
+    {
+        gtk::glib::idle_add_local_once(move || {
+            let focused = search.grab_focus();
+            eprintln!("zentty-linux: bookmarks-search-focused={focused}");
+        });
+    }
     true
 }
 
@@ -45,7 +62,37 @@ pub(crate) fn configure_header(
             header.append(&button);
             button
         });
-    button.set_popover(Some(&make_popover(window, templates, active_origin_id)));
+    let signature = popover_signature(templates, active_origin_id);
+    if button
+        .popover()
+        .is_some_and(|popover| popover.widget_name() == format!("{POPOVER_NAME_PREFIX}{signature}"))
+    {
+        return;
+    }
+    // Project-context and terminal-title updates can redraw the header while
+    // the user is traversing this popover. Replacing an open popover destroys
+    // its focused child and routes the following physical key back to the
+    // terminal. Mutations pop the menu down before changing the store, so the
+    // next closed-state redraw still installs the refreshed contents.
+    if button.is_active() {
+        return;
+    }
+    let popover = make_popover(window, templates, active_origin_id);
+    popover.set_widget_name(&format!("{POPOVER_NAME_PREFIX}{signature}"));
+    button.set_popover(Some(&popover));
+}
+
+fn popover_signature(templates: &[WorkspaceTemplate], active_origin_id: Option<&str>) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    active_origin_id.hash(&mut hasher);
+    // WorkspaceTemplate deliberately contains floating-point geometry and
+    // therefore does not implement Hash. Its canonical persisted form covers
+    // every field rendered by this popover and lets unrelated sidebar redraws
+    // retain the live GTK popover and its keyboard focus.
+    serde_json::to_string(templates)
+        .expect("workspace templates serialize")
+        .hash(&mut hasher);
+    hasher.finish()
 }
 
 fn make_popover(
@@ -64,6 +111,7 @@ fn make_popover(
 
     let search_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     let search = gtk::SearchEntry::new();
+    search.set_widget_name(SEARCH_NAME);
     search.set_hexpand(true);
     search.set_placeholder_text(Some("Search bookmarks and presets"));
     search_row.append(&search);
@@ -72,7 +120,7 @@ fn make_popover(
     let search_focus = search.clone();
     popover.connect_show(move |_| {
         let search_focus = search_focus.clone();
-        gtk::glib::timeout_add_local_once(std::time::Duration::from_millis(50), move || {
+        gtk::glib::idle_add_local_once(move || {
             let focused = search_focus.grab_focus();
             eprintln!("zentty-linux: bookmarks-search-focused={focused}");
         });
@@ -102,9 +150,13 @@ fn make_popover(
         let update = gtk::Button::with_label("Update linked bookmark");
         update.set_action_name(Some("workspace.update-linked-template"));
         connect_action_focus(&update, "update-linked-template");
+        let update_popover = popover.clone();
+        update.connect_clicked(move |_| update_popover.popdown());
         let unlink = gtk::Button::with_label("Unlink worklane");
         unlink.set_action_name(Some("workspace.unlink-template"));
         connect_action_focus(&unlink, "unlink-template");
+        let unlink_popover = popover.clone();
+        unlink.connect_clicked(move |_| unlink_popover.popdown());
         linked.append(&update);
         linked.append(&unlink);
         linked.set_tooltip_text(Some(&format!("Linked to {origin_id}")));

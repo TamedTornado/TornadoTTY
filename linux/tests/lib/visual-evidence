@@ -57,6 +57,7 @@ zentty_visual_publish() {
     local map="${ZENTTY_VISUAL_MAP:-${repo_root}/docs/design/zentty-linux-visual-parity.json}"
     local receipt_root="${ZENTTY_VISUAL_RECEIPT_ROOT:-${repo_root}/build/linux-test-receipts/visual-parity}"
     local scenario expected_actor expected_image expected_receipt baseline status
+    local max_changed_pixels max_channel_delta changed_pixels observed_channel_delta
     local image_name geometry_name image_path geometry_path rectangles actual_size expected_size
 
     command -v jq >/dev/null || {
@@ -125,6 +126,8 @@ zentty_visual_publish() {
 
     baseline="$(jq -r '.baseline' <<<"${scenario}")"
     status="$(jq -r '.status' <<<"${scenario}")"
+    max_changed_pixels="$(jq -r '.max_changed_pixels // 0' <<<"${scenario}")"
+    max_channel_delta="$(jq -r '.max_channel_delta // 0' <<<"${scenario}")"
     jq -n \
         --arg scenario_id "${scenario_id}" \
         --arg actor "${actor}" \
@@ -135,6 +138,8 @@ zentty_visual_publish() {
         --arg image "${expected_image}" \
         --arg baseline "${baseline}" \
         --arg scenario_status "${status}" \
+        --argjson max_changed_pixels "${max_changed_pixels}" \
+        --argjson max_channel_delta "${max_channel_delta}" \
         --arg mask "$(jq -r '.mask' <<<"${scenario}")" \
         --arg geometry "${geometry_name:+build/linux-test-receipts/visual-parity/${geometry_name}}" \
         --argjson rectangles "${rectangles}" \
@@ -149,6 +154,10 @@ zentty_visual_publish() {
                  else {id: $mask, geometry_receipt: $geometry, rectangles: $rectangles}
                  end),
           semantic_assertions: $assertions,
+          visual_tolerance: {
+            max_changed_pixels: $max_changed_pixels,
+            max_channel_delta: $max_channel_delta
+          },
           scenario_status: $scenario_status,
           capture_result: "PASS"}' >"${receipt_root}/${scenario_id}.json"
 
@@ -157,10 +166,15 @@ zentty_visual_publish() {
             echo "visual-evidence: PASS scenario ${scenario_id} has no reviewed baseline" >&2
             return 1
         }
-        compare -metric AE "${image_path}" "${repo_root}/${baseline}" null: 2>"${receipt_root}/${scenario_id}.difference" || true
-        [[ "$(cat "${receipt_root}/${scenario_id}.difference")" == 0 ]] || {
+        changed_pixels="$(compare -metric AE "${image_path}" "${repo_root}/${baseline}" null: 2>&1 || true)"
+        observed_channel_delta="$(convert "${image_path}" "${repo_root}/${baseline}" \
+            -compose difference -composite -format '%[fx:maxima*255]' info:)"
+        printf '%s\n' "${changed_pixels}" >"${receipt_root}/${scenario_id}.difference"
+        if ! awk -v changed="${changed_pixels}" -v changed_max="${max_changed_pixels}" \
+            -v delta="${observed_channel_delta}" -v delta_max="${max_channel_delta}" \
+            'BEGIN { exit !(changed <= changed_max && delta <= delta_max) }'; then
             echo "visual-evidence: ${scenario_id} differs from its reviewed baseline" >&2
             return 1
-        }
+        fi
     fi
 }

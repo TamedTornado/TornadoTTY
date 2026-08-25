@@ -31,6 +31,10 @@ zentty_short="${zentty_revision:0:12}"
 source_date_epoch="$(git -C "${repo_root}" show -s --format=%ct HEAD)"
 [[ "${source_date_epoch}" =~ ^[1-9][0-9]*$ ]] || fail "invalid source commit epoch"
 export SOURCE_DATE_EPOCH="${source_date_epoch}"
+package_zig_cache_root="/tmp/zentty-package-${zentty_revision}"
+rm -rf -- "${package_zig_cache_root}"
+install -d -m 0700 "${package_zig_cache_root}/zig-local-cache"
+trap 'rm -rf -- "${package_zig_cache_root}"' EXIT
 
 ghostty_revision="$(sed -n 's/^revision=//p' "${repo_root}/linux/ghostty.lock")"
 [[ "${ghostty_revision}" =~ ^[0-9a-f]{40}$ ]] || fail "invalid pinned Ghostty revision"
@@ -59,6 +63,11 @@ mkdir -p -- "${output_root}" "${stage}" "${ghostty_install}" "${package_root}"
 build_environment=(
     "ZENTTY_GHOSTTY_INSTALL_DIR=${ghostty_install}"
     "ZENTTY_BUILD_OUTPUT_DIR=${stage}"
+    # Package builds must not consume the developer checkout's incremental
+    # Ghostty cache. The revision-scoped canonical path is identical inside the
+    # detached builder's private /tmp, avoids source-path leakage, and prevents
+    # stale optimized code from entering the reproducibility comparison.
+    "ZENTTY_ZIG_LOCAL_CACHE_DIR=${package_zig_cache_root}/zig-local-cache"
     "RUSTFLAGS=--remap-path-prefix=${repo_root}=/usr/src/zentty --remap-path-prefix=${cargo_home}=/usr/src/cargo"
     "GHOSTTY_OPTIMIZE=ReleaseSafe"
     "GHOSTTY_SYSTEM_INTEGRATIONS=fontconfig"

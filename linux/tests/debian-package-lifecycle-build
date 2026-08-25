@@ -2,12 +2,12 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-# shellcheck source=linux/tests/lib/working-tree-fixture
-source "${repo_root}/linux/tests/lib/working-tree-fixture"
 output_root="${ZENTTY_PACKAGE_OUTPUT_DIR:-${repo_root}/build/linux-package}"
 lifecycle_root="${ZENTTY_PACKAGE_LIFECYCLE_DIR:-${repo_root}/build/linux/package-lifecycle}"
 # shellcheck disable=SC1091
 source "${repo_root}/linux/tests/lib/exact-package-artifact"
+# shellcheck source=linux/tests/lib/qualified-package-source
+source "${repo_root}/linux/tests/lib/qualified-package-source"
 
 # Package the exact tracked working tree under qualification without weakening
 # build-deb's clean, immutable-source contract. The temporary commit is only a
@@ -17,11 +17,15 @@ temporary="$(mktemp -d)"
 source_fixture="${temporary}/source"
 trap 'rm -rf -- "${temporary}"' EXIT
 mkdir -p -- "${lifecycle_root}"
-rm -f -- "${lifecycle_root}/package-artifact.json" \
-    "${lifecycle_root}/qualified-source.bundle"
-zentty_create_working_tree_fixture \
-    "${repo_root}" "${source_fixture}" 'package lifecycle source fixture'
-revision="$(git -C "${source_fixture}" rev-parse HEAD)"
+rm -f -- "${lifecycle_root}/package-artifact.json"
+zentty_qualified_package_source "${repo_root}" || {
+    echo "debian-package-lifecycle-build: error: qualified source snapshot is missing or stale" >&2
+    exit 1
+}
+revision="${ZENTTY_PACKAGE_REVISION}"
+git clone --quiet --no-local --no-hardlinks \
+    "${ZENTTY_PACKAGE_SOURCE_BUNDLE}" "${source_fixture}"
+git -C "${source_fixture}" checkout --quiet --detach "${revision}"
 printf '/target\n' >>"${source_fixture}/.git/info/exclude"
 ln -s -- "${repo_root}/target" "${source_fixture}/target"
 
@@ -42,14 +46,11 @@ zentty_exact_package_artifact "${source_fixture}" "${output_root}" || {
 "${repo_root}/linux/tests/debian-package-lifecycle" \
     "${ZENTTY_PACKAGE_ARTIFACT}" "${ZENTTY_PACKAGE_MANIFEST}"
 
-bundle_temp="${lifecycle_root}/qualified-source.bundle.tmp"
 locator_temp="${lifecycle_root}/package-artifact.json.tmp"
-git -C "${source_fixture}" bundle create "${bundle_temp}" HEAD
-mv -f -- "${bundle_temp}" "${lifecycle_root}/qualified-source.bundle"
 jq -n \
     --arg revision "${revision}" \
-    --arg bundle "$(realpath --relative-to="${repo_root}" "${lifecycle_root}/qualified-source.bundle")" \
-    --arg bundle_sha "$(sha256sum "${lifecycle_root}/qualified-source.bundle" | awk '{print $1}')" \
+    --arg bundle "$(realpath --relative-to="${repo_root}" "${ZENTTY_PACKAGE_SOURCE_BUNDLE}")" \
+    --arg bundle_sha "$(sha256sum "${ZENTTY_PACKAGE_SOURCE_BUNDLE}" | awk '{print $1}')" \
     --arg artifact "$(realpath --relative-to="${repo_root}" "${ZENTTY_PACKAGE_ARTIFACT}")" \
     --arg artifact_sha "$(sha256sum "${ZENTTY_PACKAGE_ARTIFACT}" | awk '{print $1}')" \
     --arg manifest "$(realpath --relative-to="${repo_root}" "${ZENTTY_PACKAGE_MANIFEST}")" \

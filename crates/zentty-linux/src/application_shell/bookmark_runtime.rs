@@ -405,61 +405,55 @@ pub(super) fn unlink(shell: &Rc<RefCell<ApplicationShell>>) -> Result<(), String
     Ok(())
 }
 
-// GTK deprecated its in-process chooser in favor of a portal-backed API in
-// 4.10. Zentty intentionally owns this transient chooser because isolated X11
-// and Wayland sessions cannot rely on a desktop-specific portal implementation.
-#[allow(deprecated)]
 pub(super) fn choose_import(shell: &Rc<RefCell<ApplicationShell>>) {
     eprintln!("zentty-linux: bookmark-import-chooser-requested=true");
     let window = shell.borrow().window.clone();
-    let dialog = gtk::FileChooserDialog::builder()
+    let dialog = gtk::FileDialog::builder()
         .title("Import Zentty preset")
-        .action(gtk::FileChooserAction::Open)
-        .transient_for(&window)
+        .accept_label("Import")
         .modal(true)
         .build();
-    dialog.add_buttons(&[
-        ("_Cancel", gtk::ResponseType::Cancel),
-        ("_Open", gtk::ResponseType::Accept),
-    ]);
-    dialog.set_default_response(gtk::ResponseType::Accept);
     let weak = Rc::downgrade(shell);
-    glib::MainContext::default().spawn_local(async move {
-        let response = dialog.run_future().await;
-        if response != gtk::ResponseType::Accept {
-            dialog.destroy();
-            return;
-        }
-        let file = dialog.file();
-        dialog.destroy();
-        window.present();
-        let result = async {
-            let file = file.ok_or_else(|| "no imported preset was selected".to_owned())?;
-            let (bytes, _) = file
-                .load_contents_future()
-                .await
-                .map_err(|error| format!("could not read imported preset: {error}"))?;
-            let now = now_iso8601()?;
-            let id = format!("template-{}", glib::uuid_string_random());
-            let template = WorkspaceTemplateExportEnvelope::import(&bytes, &id, &now)
-                .map_err(|error| format!("could not import preset: {error}"))?;
-            let shell = weak
-                .upgrade()
-                .ok_or_else(|| "window closed during preset import".to_owned())?;
-            let mut shell_ref = shell.borrow_mut();
-            shell_ref
-                .bookmark_runtime
-                .store
-                .upsert(template, &now)
-                .map_err(|error| format!("could not persist imported preset: {error}"))?;
-            shell_ref.bookmark_runtime.reload()?;
-            drop(shell_ref);
-            defer_sidebar_refresh(&shell);
-            Ok::<_, String>(())
-        }
-        .await;
-        report_async_result("import-template", result);
-    });
+    let parent = window.clone();
+    dialog.open(
+        Some(&window),
+        None::<&gtk::gio::Cancellable>,
+        move |result| {
+            let Ok(file) = result else {
+                parent.present();
+                return;
+            };
+            parent.present();
+            let weak = weak.clone();
+            glib::MainContext::default().spawn_local(async move {
+                let result = async {
+                    let (bytes, _) = file
+                        .load_contents_future()
+                        .await
+                        .map_err(|error| format!("could not read imported preset: {error}"))?;
+                    let now = now_iso8601()?;
+                    let id = format!("template-{}", glib::uuid_string_random());
+                    let template = WorkspaceTemplateExportEnvelope::import(&bytes, &id, &now)
+                        .map_err(|error| format!("could not import preset: {error}"))?;
+                    let shell = weak
+                        .upgrade()
+                        .ok_or_else(|| "window closed during preset import".to_owned())?;
+                    let mut shell_ref = shell.borrow_mut();
+                    shell_ref
+                        .bookmark_runtime
+                        .store
+                        .upsert(template, &now)
+                        .map_err(|error| format!("could not persist imported preset: {error}"))?;
+                    shell_ref.bookmark_runtime.reload()?;
+                    drop(shell_ref);
+                    defer_sidebar_refresh(&shell);
+                    Ok::<_, String>(())
+                }
+                .await;
+                report_async_result("import-template", result);
+            });
+        },
+    );
 }
 
 #[allow(deprecated)]

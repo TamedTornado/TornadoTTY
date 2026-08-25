@@ -57,6 +57,9 @@ ZENTTY_FAKE_FCITX_PID_FILE="${daemon_pid_file}" \
 ZENTTY_CONTROLLED_FCITX_RUN_ROOT="${run_root}" \
 ZENTTY_CONTROLLED_FCITX_PENDING_SESSION_ID="${session_id}" \
 XDG_CONFIG_HOME="${run_root}/config" \
+XDG_CURRENT_DESKTOP=ZenttyTest \
+XDG_SESSION_DESKTOP=zentty-test \
+DESKTOP_SESSION=zentty-test \
 "${wrapper}" --private-bus-inner bash -ceu '
     [[ "${GTK_IM_MODULE}" == fcitx ]]
     [[ "${XMODIFIERS}" == @im=fcitx ]]

@@ -158,6 +158,11 @@ settings_key() {
     if [[ "${backend}" == x11 ]]; then
         xdotool windowfocus --sync "${settings_window}"
         xdotool key "${chord}"
+    elif zentty_product_uses_xdotool "${backend}"; then
+        # The settings control already owns focus inside the nested Wayland
+        # client. Re-activating the outer compositor window before every key
+        # can restore the terminal while a native chooser is mapping.
+        xdotool key "${chord}"
     else
         case "${chord}" in
             ctrl+alt+*) zentty_product_ctrl_alt_key "${backend}" "${chord#ctrl+alt+}" ;;
@@ -172,6 +177,8 @@ settings_key() {
 settings_type() {
     if [[ "${backend}" == x11 ]]; then
         xdotool windowfocus --sync "${settings_window}"
+        xdotool type --delay 5 -- "$1"
+    elif zentty_product_uses_xdotool "${backend}"; then
         xdotool type --delay 5 -- "$1"
     else
         zentty_product_type "${backend}" "$1"
@@ -190,6 +197,9 @@ prepare_dialog_input() {
         done
         [[ "${dialog_window}" =~ ^[1-9][0-9]*$ ]] || fail "${title} dialog did not appear"
         xdotool windowfocus --sync "${dialog_window}"
+        # Mapping precedes initial-folder enumeration. Under the concurrent
+        # matrix the chooser can be visible before its first real row exists.
+        sleep 0.75
     else
         # GtkFileDialog maps asynchronously on Wayland and deliberately does
         # not expose its transient GtkWindow. Cage also omits the transient
@@ -204,6 +214,8 @@ dialog_type() {
     if [[ "${backend}" == x11 ]]; then
         xdotool windowfocus --sync "${dialog_window}"
         xdotool type --delay 5 -- "$1"
+    elif zentty_product_uses_xdotool "${backend}"; then
+        xdotool type --delay 5 -- "$1"
     else
         zentty_product_type "${backend}" "$1"
     fi
@@ -213,6 +225,8 @@ dialog_key() {
     local chord="$1"
     if [[ "${backend}" == x11 ]]; then
         xdotool windowfocus --sync "${dialog_window}"
+        xdotool key "${chord}"
+    elif zentty_product_uses_xdotool "${backend}"; then
         xdotool key "${chord}"
     else
         case "${chord}" in
@@ -401,11 +415,24 @@ settings_key space
 prepare_dialog_input 'Import Zentty Shortcuts'
 if [[ "${backend}" == wayland ]]; then
     # Address the selected real file explicitly. Relying on the initial list
-    # selection proved scheduler-sensitive under a nested compositor.
+    # selection proved scheduler-sensitive under a nested compositor. GTK's
+    # first Return resolves the location entry and selects that real row; the
+    # second Return below accepts the selected file.
     dialog_key ctrl+l
     dialog_type "${shortcut_export}"
+    dialog_key Return
+    # Depending on whether enumeration has completed, GTK may either accept
+    # the explicit location immediately or merely select its real row. Poll
+    # the application receipt first so a successful one-key acceptance cannot
+    # receive a stray second Return in the settings window.
+    for _ in {1..40}; do
+        grep -Fq 'zentty-linux: shortcut-settings action=shortcut-import result=applied' "${log}" && break
+        sleep 0.05
+    done
 fi
-dialog_key Return
+if ! grep -Fq 'zentty-linux: shortcut-settings action=shortcut-import result=applied' "${log}"; then
+    dialog_key Return
+fi
 for _ in {1..200}; do
     grep -Fq 'zentty-linux: shortcut-settings action=shortcut-import result=applied' "${log}" && break
     sleep 0.05
@@ -571,7 +598,7 @@ settings_type 'TokyoNight Moon'
 zentty_product_wait_for_log "${log}" 'zentty-linux: appearance-catalog query="TokyoNight Moon" results=1' \
     "source theme was not searchable in the staged catalog" || fail "theme catalog search failed"
 settings_tab_until_focus_marker \
-    'zentty-linux: appearance-settings focus=background-opacity' 12 ||
+    'zentty-linux: appearance-settings focus=background-opacity' 30 ||
     fail "keyboard traversal did not reach the opacity control"
 opacity_apply_before="$(grep -Fc 'zentty-linux: appearance-settings action=background-opacity result=applied' "${log}" 2>/dev/null || true)"
 opacity_acknowledged=false

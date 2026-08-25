@@ -77,7 +77,15 @@ jq -e '
         all((.expected_usage_lines_by_scenario // {}) | to_entries[];
             (.key as $scenario |
                 $rule.allowed_scenarios | index($scenario) != null) and
-            (.value | type == "number" and floor == . and . >= 1))
+            (.value |
+                if type == "number" then
+                    floor == . and . >= 1
+                else
+                    type == "object" and
+                    (.min | type == "number" and floor == . and . >= 1) and
+                    (.max | type == "number" and floor == . and . >= 1) and
+                    (.min <= .max)
+                end))
     ) and
     ([.rules[].rule_name] | length == (unique | length)) and
     ([.rules[].tracking_id] | length == (unique | length)) and
@@ -512,7 +520,7 @@ validate_protocol_ceiling_report() {
     seen_protocol_ceilings["${ceiling_id}"]=1
 }
 
-project_suffix="${project_path#${repo_root}/}"
+project_suffix="${project_path#"${repo_root}"/}"
 for report in "${reports[@]}"; do
     record_evidence_identity "${report}" "Valgrind report"
     jq -e '
@@ -699,7 +707,7 @@ for report in "${reports[@]}"; do
         minimum="$(jq -r '.matches.min' <<<"${expected}")"
         maximum="$(jq -r '.matches.max' <<<"${expected}")"
         if (( matches < minimum || matches > maximum )); then
-            fail "suppression count outside reviewed range: ${rule}=${matches}, expected ${minimum}-${maximum}"
+            fail "suppression count outside reviewed range: ${rule}=${matches}, expected ${minimum}-${maximum}, scenario=${scenario}"
         fi
         expected_bytes="$(jq -c '.bytes' <<<"${expected}")"
         if [[ "${expected_bytes}" == "null" ]]; then
@@ -709,7 +717,7 @@ for report in "${reports[@]}"; do
             byte_max="$(jq -r '.max' <<<"${expected_bytes}")"
             [[ "${bytes}" != "null" ]] || fail "missing byte count for ${rule}"
             if (( bytes < byte_min || bytes > byte_max )); then
-                fail "suppressed bytes outside reviewed range: ${rule}=${bytes}, expected ${byte_min}-${byte_max}"
+                fail "suppressed bytes outside reviewed range: ${rule}=${bytes}, expected ${byte_min}-${byte_max}, scenario=${scenario}"
             fi
         fi
         root="$(jq -r --arg rule "${rule}" '.rules[] | select(.rule_name == $rule) | .requires_root_rule // empty' "${manifest}")"
@@ -725,7 +733,7 @@ for report in "${reports[@]}"; do
         --arg suffix "${project_suffix}" \
         '.suppression_usage[] | select(.file | endswith($suffix))' \
         "${report}")
-    while IFS=$'\t' read -r occurrence_rule expected_occurrences; do
+    while IFS=$'\t' read -r occurrence_rule expected_min_occurrences expected_max_occurrences; do
         [[ -n "${occurrence_rule}" ]] || continue
         actual_occurrences="$(jq -r \
             --arg suffix "${project_suffix}" \
@@ -734,12 +742,16 @@ for report in "${reports[@]}"; do
                     select((.file | endswith($suffix)) and
                         .rule_name == $rule)] | length
             ' "${report}")"
-        [[ "${actual_occurrences}" -eq "${expected_occurrences}" ]] ||
-            fail "suppression usage-line count changed: ${occurrence_rule}=${actual_occurrences}, expected ${expected_occurrences} in ${scenario}"
+        (( actual_occurrences >= expected_min_occurrences &&
+            actual_occurrences <= expected_max_occurrences )) ||
+            fail "suppression usage-line count changed: ${occurrence_rule}=${actual_occurrences}, expected ${expected_min_occurrences}-${expected_max_occurrences} in ${scenario}"
     done < <(jq -r --arg scenario "${scenario}" '
         .rules[] |
         select(.expected_usage_lines_by_scenario[$scenario] != null) |
-        [.rule_name, .expected_usage_lines_by_scenario[$scenario]] | @tsv
+        .expected_usage_lines_by_scenario[$scenario] as $expected |
+        [.rule_name,
+            (if ($expected | type) == "number" then $expected else $expected.min end),
+            (if ($expected | type) == "number" then $expected else $expected.max end)] | @tsv
     ' "${manifest}")
     if jq -e --arg scenario "${scenario}" \
         '.usage_profiles | any(.scenario == $scenario)' \

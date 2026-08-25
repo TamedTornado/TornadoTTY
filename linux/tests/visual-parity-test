@@ -151,6 +151,42 @@ expect_failure pixel-mismatch "differs from its reviewed baseline" \
         linux/tests/rust-source-ux-x11 \
         "${temporary}/capture.png" "${temporary}/capture.geometry"
 
+jq '(.scenarios[] | select(.id == "multi-lane-dark-x11")) |=
+    (.max_changed_pixels = 40 | .max_channel_delta = 0)' \
+    "${source_map}" >"${temporary}/unpaired-tolerance.json"
+expect_failure unpaired-tolerance "schema or enum contract failed" \
+    "${runner}" "${temporary}/unpaired-tolerance.json" "${temporary}/empty-baselines"
+
+jq '(.scenarios[] | select(.id == "multi-lane-dark-x11")) |=
+    (.max_changed_pixels = 101 | .max_channel_delta = 8)' \
+    "${source_map}" >"${temporary}/broad-ordinary-tolerance.json"
+expect_failure broad-ordinary-tolerance "schema or enum contract failed" \
+    "${runner}" "${temporary}/broad-ordinary-tolerance.json" "${temporary}/empty-baselines"
+
+jq '(.scenarios[] | select(.id == "progress-dark-x11")) |=
+    (.max_changed_pixels = 401 | .max_channel_delta = 8)' \
+    "${source_map}" >"${temporary}/broad-progress-tolerance.json"
+expect_failure broad-progress-tolerance "schema or enum contract failed" \
+    "${runner}" "${temporary}/broad-progress-tolerance.json" "${temporary}/empty-baselines"
+
+convert -size 100x100 xc:black "${project_temporary}/tolerance-baseline.png"
+convert "${project_temporary}/tolerance-baseline.png" -fill 'rgb(8,8,8)' \
+    -draw 'point 0,0' "${temporary}/tolerance-capture.png"
+jq --arg baseline 'build/linux-test-receipts/visual-parity-test/tolerance-baseline.png' '
+    (.scenarios[] | select(.id == "multi-lane-dark-x11")) |=
+    (.size = "100x100" | .status = "PASS" | .tracking_issue = null |
+     .baseline = $baseline | .max_changed_pixels = 1 | .max_channel_delta = 8)
+' "${source_map}" >"${temporary}/tolerance-map.json"
+publish_visual_fixture "${temporary}/tolerance-map.json" "${temporary}/tolerance" \
+    linux/tests/rust-source-ux-x11 \
+    "${temporary}/tolerance-capture.png" "${temporary}/capture.geometry"
+convert "${project_temporary}/tolerance-baseline.png" -fill 'rgb(9,9,9)' \
+    -draw 'point 0,0' "${temporary}/excess-delta.png"
+expect_failure excessive-tolerance-delta "differs from its reviewed baseline" \
+    publish_visual_fixture "${temporary}/tolerance-map.json" "${temporary}/excess-delta" \
+        linux/tests/rust-source-ux-x11 \
+        "${temporary}/excess-delta.png" "${temporary}/capture.geometry"
+
 stable_capture_index=0
 zentty_visual_capture_stable "${temporary}/stable.png" capture_eventually_stable
 [[ "$(convert "${temporary}/stable.png" -format '%[pixel:p{0,0}]' info:)" == gray*255* ]] || {
@@ -179,4 +215,4 @@ expect_failure unsettled-frame "compositor frame did not settle" \
         zentty_visual_capture_stable "$2" capture_alternating
     ' _ "${repo_root}/linux/tests/lib/visual-evidence" "${temporary}/never-stable.png"
 
-echo "visual-parity-test: PASS negatives=missing-scenario+unexpected-skip+unproved-match+match-failed-scenario+unknown-mask+missing-baseline+stale-baseline+false-claims+wrong-actor+wrong-size+pixel-mismatch+unsettled-frame"
+echo "visual-parity-test: PASS negatives=missing-scenario+unexpected-skip+unproved-match+match-failed-scenario+unknown-mask+missing-baseline+stale-baseline+false-claims+wrong-actor+wrong-size+pixel-mismatch+unpaired-tolerance+excessive-tolerance-delta+unsettled-frame"

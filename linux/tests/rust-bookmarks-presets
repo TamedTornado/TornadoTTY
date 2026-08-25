@@ -125,11 +125,57 @@ open_bookmarks() {
         'zentty-linux: bookmarks-search-focused=true' "$((search_before + 1))" \
         'bookmark popover did not focus its real search field' ||
         fail "bookmark search did not receive focus"
+
+    # A has-focus notification can precede compositor delivery of injected
+    # keyboard events. Prove the private seat is actually routing characters
+    # into this popover before attempting positional Tab traversal. Clear the
+    # probe again so every caller starts from an unfiltered bookmark list.
+    local probe="zqfocus"
+    local query_before empty_before visible_retry_before search_retry_before
+    query_before="$(grep -Fc "zentty-linux: bookmarks-search query=\"${probe}\"" "${log}" 2>/dev/null || true)"
+    empty_before="$(grep -Fc 'zentty-linux: bookmarks-search query=""' "${log}" 2>/dev/null || true)"
+    for _ in {1..3}; do
+        input_type "${probe}"
+        for _ in {1..40}; do
+            (( $(grep -Fc "zentty-linux: bookmarks-search query=\"${probe}\"" "${log}" 2>/dev/null || true) > query_before )) && break 2
+            sleep 0.05
+        done
+        # After a native modal closes, the outer nested compositor can retain
+        # the parent while GTK restores its terminal child as the keyboard
+        # target. Close the popover with a real pointer gesture, then reopen it
+        # through its physical shortcut and require a fresh focus receipt.
+        [[ "${backend}" == wayland && "${ZENTTY_NESTED_WAYLAND_OUTER_X11_INPUT:-}" == 1 ]] || continue
+        visible_retry_before="$(grep -Fc 'zentty-linux: bookmarks-popover visible=false' "${log}" 2>/dev/null || true)"
+        xdotool mousemove --sync --window "${ZENTTY_PRODUCT_WINDOW_ID}" 700 400 click 1
+        zentty_product_wait_for_log_count "${log}" 'zentty-linux: bookmarks-popover visible=false' \
+            "$((visible_retry_before + 1))" 'bookmark input-routing retry did not close the popover' ||
+            fail "bookmark input-routing retry could not reset the popover"
+        visible_retry_before="$(grep -Fc 'zentty-linux: bookmarks-popover visible=true' "${log}" 2>/dev/null || true)"
+        search_retry_before="$(grep -Fc 'zentty-linux: bookmarks-search-focused=true' "${log}" 2>/dev/null || true)"
+        zentty_product_ctrl_shift_key "${backend}" b
+        zentty_product_wait_for_log_count "${log}" 'zentty-linux: bookmarks-popover visible=true' \
+            "$((visible_retry_before + 1))" 'bookmark input-routing retry did not reopen the popover' ||
+            fail "bookmark input-routing retry could not reopen the popover"
+        zentty_product_wait_for_log_count "${log}" 'zentty-linux: bookmarks-search-focused=true' \
+            "$((search_retry_before + 1))" 'bookmark input-routing retry did not refocus search' ||
+            fail "bookmark input-routing retry did not restore search focus"
+    done
+    (( $(grep -Fc "zentty-linux: bookmarks-search query=\"${probe}\"" "${log}" 2>/dev/null || true) > query_before )) ||
+        fail "bookmark search input routing barrier failed"
+    for _ in {1..7}; do input_key BackSpace; done
+    zentty_product_wait_for_log_count "${log}" 'zentty-linux: bookmarks-search query=""' \
+        "$((empty_before + 1))" \
+        'bookmark focus probe did not restore the unfiltered list' ||
+        fail "bookmark search focus probe cleanup failed"
 }
 
 input_key() {
     local key="$1"
-    if [[ "${backend}" == x11 ]]; then
+    if zentty_product_uses_xdotool "${backend}"; then
+        # Once a GTK bookmark field/control has confirmed focus, deliver the
+        # physical event to that focus owner. Re-focusing the outer nested-
+        # compositor X11 window can make GTK restore the terminal child before
+        # Tab/Return arrives.
         xdotool key "${key}"
     else
         zentty_product_key "${backend}" "${key}"
@@ -138,7 +184,7 @@ input_key() {
 
 input_type() {
     local value="$1"
-    if [[ "${backend}" == x11 ]]; then
+    if zentty_product_uses_xdotool "${backend}"; then
         xdotool type --delay 5 -- "${value}"
     else
         zentty_product_type "${backend}" "${value}"
@@ -147,7 +193,7 @@ input_type() {
 
 input_ctrl_key() {
     local key="$1"
-    if [[ "${backend}" == x11 ]]; then
+    if zentty_product_uses_xdotool "${backend}"; then
         xdotool key "ctrl+${key}"
     else
         zentty_product_ctrl_key "${backend}" "${key}"
@@ -156,7 +202,11 @@ input_ctrl_key() {
 
 input_shift_key() {
     local key="$1"
-    zentty_product_shift_key "${backend}" "${key}"
+    if zentty_product_uses_xdotool "${backend}"; then
+        xdotool key "shift+${key}"
+    else
+        zentty_product_shift_key "${backend}" "${key}"
+    fi
 }
 
 replace_text() {
@@ -543,7 +593,10 @@ chooser_path() {
     else
         # GtkFileDialog maps its native chooser asynchronously. This matches
         # the qualified shortcuts import/export journey's real chooser bound.
-        sleep 0.75
+        # The native chooser can be mapped before its initial folder model is
+        # populated. Under the release matrix, accepting the location during
+        # that interval leaves the chooser open without selecting a row.
+        sleep 1.5
     fi
     if [[ "${mode}" == save ]]; then
         # The default name is already Portable.zenttypreset. Do not turn this
@@ -559,7 +612,10 @@ chooser_path() {
         # The first Return resolves the explicit location and selects the real
         # file row. A second activation accepts that selected row.
         input_key Return
-        sleep 0.15
+        # GtkFileDialog validates the typed URI asynchronously before enabling
+        # its accept action. Wait for that bounded native transition rather
+        # than delivering Return while the real Import button is still inert.
+        sleep 2
         input_key Return
     fi
 }
@@ -596,12 +652,7 @@ run_import_export() {
     jq_wait '(.templates | length) == 0' || fail "live bookmark was not deleted before import"
 
     open_bookmarks "${first_log}"
-    before="$(grep -Fc 'zentty-linux: bookmarks-focus=create-menu' "${first_log}" 2>/dev/null || true)"
-    input_key Tab
-    zentty_product_wait_for_log_count "${first_log}" \
-        'zentty-linux: bookmarks-focus=create-menu' "$((before + 1))" \
-        'Tab from bookmark search did not reach the create/import menu' ||
-        fail "bookmark create/import menu was not keyboard reachable"
+    focus_bookmark_control_after "${first_log}" create-menu
     input_key Return
     focus_bookmark_control_after "${first_log}" import-template
     input_key Return
